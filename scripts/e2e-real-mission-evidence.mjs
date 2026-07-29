@@ -571,11 +571,15 @@ export function assertRealMissionPassEvidence(raw) {
       handoff?.consumedDeliveryAttemptId === accepted.id
     );
   };
-  const handoffMatches = (handoff, dispatch, fromAgent) => {
+  const handoffMatches = (handoff, dispatch, member) => {
     const physical = record(handoff?.physicalReceipt);
     const audit = record(handoff?.auditIntent);
     const scope = record(audit?.scope);
     const accepted = exactAcceptedAttempt(handoff);
+    const expectedSource =
+      member?.kind === "advisory" && member?.cli === "agy"
+        ? "pty-stream"
+        : "http-mcp";
     return (
       hasExactKeys(handoff, [
         "id",
@@ -630,7 +634,7 @@ export function assertRealMissionPassEvidence(raw) {
       physical?.handoffId === handoff?.id &&
       physical?.receiptId === physical?.toolCallId &&
       physical?.toolName === "nexus_handoff_submit" &&
-      physical?.source === "http-mcp" &&
+      physical?.source === expectedSource &&
       physical?.missionId === mission?.id &&
       physical?.sessionId === handoff?.sessionId &&
       physical?.workerIncarnationId === handoff?.workerIncarnationId &&
@@ -653,7 +657,7 @@ export function assertRealMissionPassEvidence(raw) {
       audit.occurredAt <= physical.issuedAt &&
       physical.issuedAt <= accepted.acceptedAt &&
       physical.issuedAt <= dispatch?.handoffAcceptedAt &&
-      handoff?.fromAgent === fromAgent &&
+      handoff?.fromAgent === member?.agentName &&
       handoff?.sessionId === dispatch?.sessionId &&
       handoff?.workerIncarnationId === dispatch?.workerIncarnationId &&
       handoff?.status === "success" &&
@@ -927,7 +931,7 @@ export function assertRealMissionPassEvidence(raw) {
       handoffMatches(
         chainHandoffs[index],
         chainDispatches[index],
-        member.agentName,
+        member,
       ),
     ) &&
     new Set(chainHandoffs.map((handoff) => handoff?.id)).size ===
@@ -1092,7 +1096,7 @@ export function assertRealMissionPassEvidence(raw) {
       );
     });
   // Cada advisor credenciada prova PTY físico, primeira tool nexus_* e o
-  // handoff físico; handoffAt casa exatamente com o receipt MCP auditado.
+  // handoff físico; handoffAt casa exatamente com o receipt Main-owned.
   const participationIsComplete = participation.every((rawRow) => {
     const row = record(rawRow);
     if (row === null || row.skipped !== null) return row !== null;

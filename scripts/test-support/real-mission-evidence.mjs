@@ -54,6 +54,10 @@ const milestoneAttestationId = (missionId, stepId, binding) =>
   }))}`;
 
 const memberSlug = (agentRef) => agentRef.replace(/^e2e-/u, "");
+const handoffSource = (member) =>
+  member.kind === "advisory" && member.cli === "agy"
+    ? "pty-stream"
+    : "http-mcp";
 
 export function makeValidRealMissionEvidence({
   appVersion = "1.2.3",
@@ -399,7 +403,7 @@ export function makeValidRealMissionEvidence({
         handoffId: `handoff-${step.slug}`,
         toolCallId: `tool-call-${step.slug}`,
         toolName: "nexus_handoff_submit",
-        source: "http-mcp",
+        source: handoffSource(step.member),
         missionId: "mission-real",
         sessionId: `session-${step.slug}`,
         workerIncarnationId: `incarnation-${step.slug}`,
@@ -411,7 +415,7 @@ export function makeValidRealMissionEvidence({
       auditIntent: {
         invocationId: `tool-call-${step.slug}`,
         toolName: "nexus_handoff_submit",
-        source: "http-mcp",
+        source: handoffSource(step.member),
         sessionId: `session-${step.slug}`,
         missionId: "mission-real",
         scope: {

@@ -213,6 +213,94 @@ function createObserver(options?: {
   });
 }
 
+type TestAdvisorCli = "agy" | "grok";
+type TestHandoffSource = "http-mcp" | "pty-stream";
+
+function seedAdvisorPhysicalHandoff(
+  cli: TestAdvisorCli,
+  source: TestHandoffSource,
+): { readonly sessionId: string; readonly issuedAt: number } {
+  const agentRef = `e2e-advisor-${cli}`;
+  const agentName = cli === "agy" ? "E2E Advisor Agy" : "E2E Advisor Grok";
+  const sessionId = `session-${cli}`;
+  const workerIncarnationId = `incarnation-${cli}`;
+  const handoffId = `handoff-${cli}`;
+  const toolCallId = `tool-call-${cli}`;
+  const issuedAt = 290;
+
+  harness.mission = {
+    id: MISSION_ID,
+    status: "running",
+    intentVersion: 1,
+    squadId: REAL_MISSION_E2E_SQUAD_ID,
+    intentContract: {
+      squadRevisionHash: squadBinding.squadRevisionHash,
+    },
+  };
+  harness.agentInfos.set(sessionId, {
+    sessionId,
+    missionId: MISSION_ID,
+    adapterId: cli,
+    role: "worker",
+    agentName,
+    workerIncarnationId,
+    readOnly: true,
+    nativeReadOnly: false,
+  });
+  harness.dispatches = [
+    {
+      taskId: `task-${cli}`,
+      agentRef,
+      executionMode: "read_only",
+      state: "handoff_ready",
+      sessionId,
+      workerIncarnationId,
+      handoffId,
+      handoffAcceptedAt: 300,
+    },
+  ];
+  harness.handoffs.set(handoffId, {
+    id: handoffId,
+    sessionId,
+    workerIncarnationId,
+    fromAgent: agentName,
+    authorityOrigin: "agent",
+    summary: `achados do advisor ${cli}`,
+    mcpProvenance: {
+      receiptId: toolCallId,
+      toolCallId,
+      toolName: "nexus_handoff_submit",
+      source,
+      missionId: MISSION_ID,
+      sessionId,
+      workerIncarnationId,
+      authoritySha256: "b".repeat(64),
+      worktreeHeadSha: "a".repeat(40),
+      issuedAt,
+    },
+    status: "success",
+    deliveryState: "submitted",
+    delivered: true,
+  });
+  harness.auditEntries = [
+    {
+      timestamp: new Date(280).toISOString(),
+      session: sessionId,
+      project_id: "project-e2e",
+      checkout_id: "checkout-e2e",
+      mission_id: MISSION_ID,
+      source,
+      tool: "nexus_handoff_submit",
+      args: {},
+      result: "intent",
+      invocation_id: toolCallId,
+      duration_ms: 0,
+      user_authorized: false,
+    },
+  ];
+  return { sessionId, issuedAt };
+}
+
 describe("real mission observer advisor participation", () => {
   beforeEach(() => {
     harness.finishes = [];
@@ -384,6 +472,67 @@ describe("real mission observer advisor participation", () => {
     // A sessão advisor nunca entra no conjunto PTY codex de quatro panes.
     expect(evidence.physicalPty.ids).not.toContain("session-grok");
     observer.stop();
+  });
+
+  it("projects AGY's exact Main-owned PTY-stream handoff and audit receipt", () => {
+    const { sessionId, issuedAt } = seedAdvisorPhysicalHandoff(
+      "agy",
+      "pty-stream",
+    );
+    const observer = createObserver();
+    observer.start();
+    harness.stateTap?.(sessionId, "busy");
+
+    const evidence = observer.evidence(Date.now(), "fail", "timeout");
+    const handoff = evidence.handoffs.find(
+      (candidate) => candidate.sessionId === sessionId,
+    );
+    const participation = evidence.participation.find(
+      (row) => row.cli === "agy",
+    );
+
+    expect(handoff?.physicalReceipt).toMatchObject({
+      source: "pty-stream",
+      sessionId,
+      issuedAt,
+    });
+    expect(handoff?.auditIntent).toMatchObject({
+      source: "pty-stream",
+      sessionId,
+      occurredAt: 280,
+    });
+    expect(participation).toMatchObject({
+      skipped: null,
+      firstNexusToolAt: 280,
+      handoffAt: issuedAt,
+    });
+    observer.stop();
+  });
+
+  it("does not project PTY-stream provenance for a non-AGY advisor", () => {
+    const { sessionId } = seedAdvisorPhysicalHandoff("grok", "pty-stream");
+    const observer = createObserver();
+
+    const evidence = observer.evidence(Date.now(), "fail", "timeout");
+    const handoff = evidence.handoffs.find(
+      (candidate) => candidate.sessionId === sessionId,
+    );
+
+    expect(handoff?.physicalReceipt).toBeNull();
+    expect(handoff?.auditIntent).toBeNull();
+  });
+
+  it("does not project HTTP-MCP provenance for AGY's PTY-pinned route", () => {
+    const { sessionId } = seedAdvisorPhysicalHandoff("agy", "http-mcp");
+    const observer = createObserver();
+
+    const evidence = observer.evidence(Date.now(), "fail", "timeout");
+    const handoff = evidence.handoffs.find(
+      (candidate) => candidate.sessionId === sessionId,
+    );
+
+    expect(handoff?.physicalReceipt).toBeNull();
+    expect(handoff?.auditIntent).toBeNull();
   });
 
   it("keeps a proven advisor retry and attributes evidence to the current session", () => {

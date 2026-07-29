@@ -24,6 +24,15 @@ function memberSlug(agentRef: string): string {
   return agentRef.replace(/^e2e-/u, "");
 }
 
+function handoffSource(member: {
+  readonly kind: string;
+  readonly cli: string;
+}): "http-mcp" | "pty-stream" {
+  return member.kind === "advisory" && member.cli === "agy"
+    ? "pty-stream"
+    : "http-mcp";
+}
+
 export function validPassEvidence(
   launchSurface: "private-runner" | "product-wizard" = "private-runner",
   options: {
@@ -187,7 +196,7 @@ export function validPassEvidence(
       handoffId: `handoff-${step.slug}`,
       toolCallId: `tool-call-${step.slug}`,
       toolName: "nexus_handoff_submit",
-      source: "http-mcp",
+      source: handoffSource(step.member),
       missionId: "mission-e2e",
       sessionId: `session-${step.slug}`,
       workerIncarnationId: `incarnation-${step.slug}`,
@@ -199,7 +208,7 @@ export function validPassEvidence(
     auditIntent: {
       invocationId: `tool-call-${step.slug}`,
       toolName: "nexus_handoff_submit",
-      source: "http-mcp",
+      source: handoffSource(step.member),
       sessionId: `session-${step.slug}`,
       missionId: "mission-e2e",
       scope: {

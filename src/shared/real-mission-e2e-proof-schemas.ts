@@ -202,13 +202,15 @@ export const dispatchProofSchema = z
   })
   .strict();
 
+const physicalHandoffSourceSchema = z.enum(["http-mcp", "pty-stream"]);
+
 const physicalHandoffReceiptSchema = z
   .object({
     receiptId: idSchema,
     handoffId: idSchema,
     toolCallId: idSchema,
     toolName: z.literal("nexus_handoff_submit"),
-    source: z.literal("http-mcp"),
+    source: physicalHandoffSourceSchema,
     missionId: idSchema,
     sessionId: idSchema,
     workerIncarnationId: idSchema.nullable(),
@@ -223,7 +225,7 @@ const physicalAuditIntentSchema = z
   .object({
     invocationId: idSchema,
     toolName: z.literal("nexus_handoff_submit"),
-    source: z.literal("http-mcp"),
+    source: physicalHandoffSourceSchema,
     sessionId: idSchema,
     missionId: idSchema,
     scope: z
@@ -302,7 +304,8 @@ export const durableHandoffSetSchema = z
 
 /**
  * Recibo de participação de uma CLI advisor: PTY físico (spawn), primeira
- * tool nexus_* na fronteira HTTP MCP e submissão do handoff. Advisors sem
+ * ação nexus_* na fronteira Main-owned e submissão do handoff. AGY usa o
+ * stream PTY; os demais advisors usam HTTP MCP. Advisors sem
  * credencial materializável entram como `skipped: "no-credential"` (via env
  * NEXUS_REAL_MISSION_ADVISOR_SKIP); na variante orquestrador Claude, a advisor
  * claude entra como `skipped: "orchestrator-reserved"` (reserveClaude: um

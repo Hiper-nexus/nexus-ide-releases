@@ -114,6 +114,23 @@ const HARNESS_WORKER_ROSTER = new Map<
   ),
 ]);
 
+type HarnessHandoffSource = "http-mcp" | "pty-stream";
+
+/**
+ * The release harness pins each worker to its real physical completion
+ * transport. AGY 1.1 cannot consume Nexus MCP projections, so Main observes
+ * its terminal marker and mints a PTY-stream receipt. Every other harness
+ * worker remains HTTP-MCP-bound; widening PTY receipts globally would hide an
+ * accidental MCP regression in another adapter.
+ */
+function harnessHandoffSource(
+  agentRef: string | null | undefined,
+): HarnessHandoffSource | null {
+  const roster = agentRef ? HARNESS_WORKER_ROSTER.get(agentRef) : undefined;
+  if (!roster) return null;
+  return roster.cli === "agy" ? "pty-stream" : "http-mcp";
+}
+
 /** plannerIds que o Guided Planner pode selar para o roster do harness. */
 function harnessPlannerId(plannerId: string): string | null {
   return plannerId === "guided-execution" ||
@@ -609,7 +626,13 @@ export class RealMissionObserver {
       const handoff = this.#suite.handoffs.get(dispatch.handoffId);
       if (!handoff) return [];
       const provenance = handoff.mcpProvenance;
-      const auditIntent = exactAuditIntent(provenance);
+      const expectedSource = harnessHandoffSource(dispatch.agentRef);
+      const physicalSource: HarnessHandoffSource | null =
+        expectedSource !== null && provenance?.source === expectedSource
+          ? expectedSource
+          : null;
+      const physicalProvenance = physicalSource ? provenance : null;
+      const auditIntent = exactAuditIntent(physicalProvenance ?? undefined);
       const durableConsumption = durableAuthority.handoffConsumptions.get(
         handoff.id,
       );
@@ -625,35 +648,37 @@ export class RealMissionObserver {
           authorityOrigin: handoff.authorityOrigin ?? null,
           summarySha256: sha256(handoff.summary.trim()),
           physicalReceipt:
-            provenance?.source === "http-mcp"
+            physicalProvenance && physicalSource
               ? {
-                  receiptId: provenance.receiptId,
+                  receiptId: physicalProvenance.receiptId,
                   handoffId: handoff.id,
-                  toolCallId: provenance.toolCallId,
-                  toolName: provenance.toolName,
-                  source: "http-mcp" as const,
-                  missionId: provenance.missionId,
-                  sessionId: provenance.sessionId,
-                  workerIncarnationId: provenance.workerIncarnationId ?? null,
-                  authoritySha256: provenance.authoritySha256,
-                  worktreeHeadSha: provenance.worktreeHeadSha ?? null,
-                  issuedAt: provenance.issuedAt,
+                  toolCallId: physicalProvenance.toolCallId,
+                  toolName: physicalProvenance.toolName,
+                  source: physicalSource,
+                  missionId: physicalProvenance.missionId,
+                  sessionId: physicalProvenance.sessionId,
+                  workerIncarnationId:
+                    physicalProvenance.workerIncarnationId ?? null,
+                  authoritySha256: physicalProvenance.authoritySha256,
+                  worktreeHeadSha:
+                    physicalProvenance.worktreeHeadSha ?? null,
+                  issuedAt: physicalProvenance.issuedAt,
                   worktreeHeadIntegrated:
-                    provenance.worktreeHeadSha !== undefined &&
+                    physicalProvenance.worktreeHeadSha !== undefined &&
                     repository.finalHeadSha !== null &&
                     gitCommitIsAncestor(
                       this.#scratch.workspacePath,
-                      provenance.worktreeHeadSha,
+                      physicalProvenance.worktreeHeadSha,
                       repository.finalHeadSha,
                     ),
                 }
               : null,
           auditIntent:
-            provenance?.source === "http-mcp" && auditIntent
+            physicalProvenance && physicalSource && auditIntent
               ? {
                   invocationId: auditIntent.invocation_id!,
                   toolName: "nexus_handoff_submit" as const,
-                  source: "http-mcp" as const,
+                  source: physicalSource,
                   sessionId: auditIntent.session,
                   missionId: auditIntent.mission_id!,
                   scope: {

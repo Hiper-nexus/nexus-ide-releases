@@ -633,6 +633,49 @@ describe("independent evidence verifier", () => {
     expect(assertRealMissionPassEvidence(validEvidence()).status).toBe("pass");
   });
 
+  it("requires the AGY advisor handoff to use its physical PTY stream", () => {
+    const physicalAgy = validEvidence();
+    const dispatch = physicalAgy.dispatches.find(
+      (candidate) => candidate.agentRef === "e2e-advisor-agy",
+    );
+    const handoff = physicalAgy.handoffs.find(
+      (candidate) => candidate.id === dispatch.handoffId,
+    );
+    handoff.physicalReceipt.source = "pty-stream";
+    handoff.auditIntent.source = "pty-stream";
+
+    expect(assertRealMissionPassEvidence(physicalAgy).status).toBe("pass");
+
+    const forgedHttpAgy = validEvidence();
+    const forgedDispatch = forgedHttpAgy.dispatches.find(
+      (candidate) => candidate.agentRef === "e2e-advisor-agy",
+    );
+    const forgedHandoff = forgedHttpAgy.handoffs.find(
+      (candidate) => candidate.id === forgedDispatch.handoffId,
+    );
+    forgedHandoff.physicalReceipt.source = "http-mcp";
+    forgedHandoff.auditIntent.source = "http-mcp";
+    expect(() => assertRealMissionPassEvidence(forgedHttpAgy)).toThrow(
+      /incomplete/,
+    );
+  });
+
+  it("rejects PTY-stream handoffs from every non-AGY worker", () => {
+    const forgedExecutor = validEvidence();
+    const dispatch = forgedExecutor.dispatches.find(
+      (candidate) => candidate.agentRef === "e2e-executor",
+    );
+    const handoff = forgedExecutor.handoffs.find(
+      (candidate) => candidate.id === dispatch.handoffId,
+    );
+    handoff.physicalReceipt.source = "pty-stream";
+    handoff.auditIntent.source = "pty-stream";
+
+    expect(() => assertRealMissionPassEvidence(forgedExecutor)).toThrow(
+      /incomplete/,
+    );
+  });
+
   it("binds an independent advisor HEAD to the executor integration chronology", () => {
     const withAdvisorHead = (head, noChangeHead = head, issuedAt) => {
       const evidence = validEvidence();

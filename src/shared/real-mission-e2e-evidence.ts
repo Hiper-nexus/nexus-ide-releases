@@ -523,12 +523,16 @@ export const realMissionE2EEvidenceSchema = z
     const handoffMatchesDispatch = (
       handoff: (typeof evidence.handoffs)[number] | undefined,
       dispatch: (typeof evidence.dispatches)[number] | undefined,
-      fromAgent: string,
+      member: (typeof chain)[number],
     ): boolean => {
       if (!handoff || !dispatch) return false;
       const physical = handoff.physicalReceipt;
       const audit = handoff.auditIntent;
       const accepted = exactAcceptedAttempt(handoff);
+      const expectedSource =
+        member.kind === "advisory" && member.cli === "agy"
+          ? "pty-stream"
+          : "http-mcp";
       return Boolean(
         physical &&
           audit &&
@@ -543,13 +547,14 @@ export const realMissionE2EEvidenceSchema = z
           physical.worktreeHeadIntegrated &&
           audit.invocationId === physical.toolCallId &&
           audit.toolName === physical.toolName &&
+          physical.source === expectedSource &&
           audit.source === physical.source &&
           audit.missionId === physical.missionId &&
           audit.sessionId === physical.sessionId &&
           audit.occurredAt <= physical.issuedAt &&
           physical.issuedAt <= (dispatch.handoffAcceptedAt ?? -1) &&
           physical.issuedAt <= (accepted.acceptedAt ?? -1) &&
-          handoff.fromAgent === fromAgent &&
+          handoff.fromAgent === member.agentName &&
           handoff.sessionId === dispatch.sessionId &&
           handoff.workerIncarnationId === dispatch.workerIncarnationId &&
           handoff.status === "success" &&
@@ -599,7 +604,7 @@ export const realMissionE2EEvidenceSchema = z
         handoffMatchesDispatch(
           chainHandoffs[index],
           chainDispatches[index],
-          member.agentName,
+          member,
         ),
       ) &&
       new Set(chainHandoffs.map((handoff) => handoff?.id)).size ===
@@ -734,8 +739,8 @@ export const realMissionE2EEvidenceSchema = z
           deliveredAt <= (completion?.completedAt ?? -1)
         );
       });
-    // Cada advisor credenciada prova PTY físico, primeira tool nexus_* e o
-    // handoff físico; handoffAt casa exatamente com o receipt MCP auditado.
+    // Cada advisor credenciada prova PTY físico, primeira ação nexus_* e o
+    // handoff físico; handoffAt casa exatamente com o receipt Main-owned.
     const participationIsExact = evidence.participation.every((row) => {
       if (row.skipped !== null) return true;
       const advisor = REAL_MISSION_E2E_ADVISORS.find(

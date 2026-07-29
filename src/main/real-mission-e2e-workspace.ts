@@ -15,7 +15,10 @@ import {
   type RealMissionE2EAdvisorCli,
   type RealMissionE2EEvidence,
 } from "../shared/real-mission-e2e";
-import type { Adapter } from "../shared/adapter-types";
+import {
+  hasNexusMcpCapability,
+  type Adapter,
+} from "../shared/adapter-types";
 import type { Mission } from "../shared/orch-types";
 import {
   getAdapter,
@@ -371,13 +374,21 @@ export function isHarnessAdvisorAdapter(
   adapter: Adapter | null,
 ): boolean {
   const hostBin = realMissionAdvisorHostBin(cli);
+  const hasExpectedTransport =
+    cli === "agy"
+      ? adapter?.kind === "cli-pty" &&
+        adapter.quirks.mcpAutoload === false &&
+        adapter.quirks.nexusMcp === "none"
+      : adapter?.kind === "cli-pty" &&
+        hasNexusMcpCapability(adapter.quirks);
   return Boolean(
     adapter &&
       adapter.kind === "cli-pty" &&
       adapter.id === cli &&
       adapter.bin === hostBin &&
       adapter.spawn.ptyRequired &&
-      taskHandoffCapabilityForAdapter(adapter, "builtin"),
+      taskHandoffCapabilityForAdapter(adapter, "builtin") &&
+      hasExpectedTransport,
   );
 }
 

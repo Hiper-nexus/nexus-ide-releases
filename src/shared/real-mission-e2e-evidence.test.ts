@@ -14,6 +14,54 @@ describe("real mission E2E PASS graph", () => {
     );
   });
 
+  it("requires the AGY advisor handoff to use its physical PTY stream", () => {
+    const physicalAgy = validPassEvidence();
+    const dispatch = (
+      physicalAgy.dispatches as Array<Record<string, unknown>>
+    ).find((candidate) => candidate.agentRef === "e2e-advisor-agy")!;
+    const handoff = (
+      physicalAgy.handoffs as Array<Record<string, unknown>>
+    ).find((candidate) => candidate.id === dispatch.handoffId)!;
+    const physicalReceipt = handoff.physicalReceipt as Record<string, unknown>;
+    const auditIntent = handoff.auditIntent as Record<string, unknown>;
+    physicalReceipt.source = "pty-stream";
+    auditIntent.source = "pty-stream";
+
+    expect(parseRealMissionE2EEvidence(physicalAgy).status).toBe("pass");
+
+    const forgedHttpAgy = validPassEvidence();
+    const forgedDispatch = (
+      forgedHttpAgy.dispatches as Array<Record<string, unknown>>
+    ).find((candidate) => candidate.agentRef === "e2e-advisor-agy")!;
+    const forgedHandoff = (
+      forgedHttpAgy.handoffs as Array<Record<string, unknown>>
+    ).find((candidate) => candidate.id === forgedDispatch.handoffId)!;
+    (forgedHandoff.physicalReceipt as Record<string, unknown>).source =
+      "http-mcp";
+    (forgedHandoff.auditIntent as Record<string, unknown>).source = "http-mcp";
+    expect(() => parseRealMissionE2EEvidence(forgedHttpAgy)).toThrow(
+      /real-mission invariants/,
+    );
+  });
+
+  it("rejects PTY-stream handoffs from every non-AGY worker", () => {
+    const forgedExecutor = validPassEvidence();
+    const dispatch = (
+      forgedExecutor.dispatches as Array<Record<string, unknown>>
+    ).find((candidate) => candidate.agentRef === "e2e-executor")!;
+    const handoff = (
+      forgedExecutor.handoffs as Array<Record<string, unknown>>
+    ).find((candidate) => candidate.id === dispatch.handoffId)!;
+    const physicalReceipt = handoff.physicalReceipt as Record<string, unknown>;
+    const auditIntent = handoff.auditIntent as Record<string, unknown>;
+    physicalReceipt.source = "pty-stream";
+    auditIntent.source = "pty-stream";
+
+    expect(() => parseRealMissionE2EEvidence(forgedExecutor)).toThrow(
+      /real-mission invariants/,
+    );
+  });
+
   it("cannot label the synthetic zero-findings council as review coverage", () => {
     const misleading = validPassEvidence();
     misleading.reviewOrigin = "e2e-merge-review-fixture";
