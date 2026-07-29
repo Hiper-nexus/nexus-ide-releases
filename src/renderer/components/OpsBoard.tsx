@@ -104,7 +104,8 @@ export function OpsBoard() {
       await window.nexus.orch.updateMission(current.id, { status: to });
       setNote(null);
     } catch (err) {
-      setNote(err instanceof Error ? err.message : 'Falha ao mover a missão.');
+      // Raw IPC/English diagnostics must not reach the operator here.
+      setNote(toUserFacingMissionError(err, 'Falha ao mover a missão.'));
     }
   }
 
