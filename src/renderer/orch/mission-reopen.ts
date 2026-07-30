@@ -3,6 +3,7 @@ import type { PaneModel } from '../../shared/types';
 import { createPane, listPanes } from '../lib/split-tree';
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
+import { useHomeStore } from '../state/home-store';
 import { getActiveWorkspacePath } from '../state/active-workspace';
 import {
   getPaneSessionId,
@@ -252,12 +253,21 @@ export async function reopenMission(
   }
 
   const kept = existing.filter((pane) => !newIds.has(pane.id));
-  if (kept.length + panes.length > MAX_MERGED_PANES) {
+  // Um placeholder estrutural nunca reclamado pelo operador não é conteúdo:
+  // os caminhos de apresentação main-owned já o substituem. Mantê-lo deixava
+  // um shell vazio no primeiro tile (e, se maximizado, cobrindo a missão).
+  const keptDurable =
+    kept.length === 1 &&
+    kept[0]!.kind === 'shell' &&
+    kept[0]!.isStructuralPlaceholder === true
+      ? []
+      : kept;
+  if (keptDurable.length + panes.length > MAX_MERGED_PANES) {
     return {
       ok: false,
       error:
         `A missão precisa de ${panes.length} pane(s), mas o grid só tem ` +
-        `${Math.max(0, MAX_MERGED_PANES - kept.length)} vaga(s). ` +
+        `${Math.max(0, MAX_MERGED_PANES - keptDurable.length)} vaga(s). ` +
         'Feche panes que não pertencem à missão e tente novamente.',
     };
   }
@@ -280,6 +290,9 @@ export async function reopenMission(
       (sessionId): sessionId is string => Boolean(sessionId),
     )
   ) {
+    // Mesmo no soft-focus a missão é dona da tela (Home aberto pela paleta
+    // cobriria um grid de pane único — o auto-hide exige 2+ panes).
+    useHomeStore.getState().hide();
     useLayoutStore.getState().focus(panes[0]!.id);
     return acknowledgedReopen(mission.id, existingSessionIds, {
       panes: panes.length,
@@ -297,11 +310,15 @@ export async function reopenMission(
 
   // Safe multi-mission: keep every live pane, append this mission's panes.
   // (reconcileHosts only kills hosts for panes removed from the tree.)
-  if (kept.length === 0) {
+  if (keptDurable.length === 0) {
     useLayoutStore.getState().setPanes(panes);
   } else {
-    useLayoutStore.getState().setPanes([...kept, ...panes]);
+    useLayoutStore.getState().setPanes([...keptDurable, ...panes]);
   }
+
+  // A missão reaberta é dona da tela: o Home não pode ficar por cima nem de
+  // um grid de pane único (o auto-hide do deck só dispara com 2+ panes).
+  useHomeStore.getState().hide();
 
   for (const pane of panes) {
     useOrchStore.getState().bindPaneMission(pane.id, mission.id);

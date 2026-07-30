@@ -82,6 +82,7 @@ import {
 } from "./guided-mission-planner";
 import { warmSquadRuntimeSubscriptionAuth } from "./squad-runtime-inventory";
 import { missionRequiresGuidedPrevc } from "./guided-mission-authority";
+import { ensureGuidedMissionPrevcForScope } from "./guided-mission-prevc";
 import { prepareOpportunisticPrevcContext } from "./prevc-merge-preparation";
 import { assertPromotedPlanSnapshot } from "./plan-promotion-authority";
 import { ensurePlanLaneGitBaseline } from "../runtime/guided-greenfield-baseline";
@@ -297,6 +298,21 @@ export interface MissionOrchestratorBootstrapDeps {
   ): unknown;
   /** Warm standard-lane context in parallel; never freezes or delays launch. */
   prepareOpportunisticPrevc?(
+    scope: ProjectExecutionScope,
+    missionId: string,
+  ): unknown | Promise<unknown>;
+  /**
+   * Main-owned guided PREVC freeze, started in parallel and never awaited by
+   * bootstrap. It is the only production call that persists
+   * `mission_contracts` for a standard-lane guided mission: without it the
+   * fence in guided-prevc-mcp-fence.ts blocks nexus_route_task,
+   * nexus_mission_spawn_pane and nexus_workflow_prepare_execution forever,
+   * because ensurePrevcMergeReady only runs once a dispatch already reached
+   * merge — which itself requires a worker that this fence would never let
+   * spawn. ensureGuidedMissionPrevc refuses to (re)freeze once any worker
+   * pane/dispatch has materialized, so calling this repeatedly is safe.
+   */
+  ensureMissionPrevc?(
     scope: ProjectExecutionScope,
     missionId: string,
   ): unknown | Promise<unknown>;
@@ -730,6 +746,8 @@ const productionDeps: MissionOrchestratorBootstrapDeps = {
   warmSubscriptionAuth: () => warmSquadRuntimeSubscriptionAuth(),
   prepareOpportunisticPrevc: (scope, missionId) =>
     prepareOpportunisticPrevcContext(scope, missionId),
+  ensureMissionPrevc: (scope, missionId) =>
+    ensureGuidedMissionPrevcForScope(scope, missionId),
 };
 
 /**
@@ -957,6 +975,25 @@ export class MissionOrchestratorBootstrapService {
       } catch (error) {
         console.warn(
           `[mission-bootstrap] PREVC context preparation deferred for ${missionId}:`,
+          error,
+        );
+      }
+      // Only production call that persists mission_contracts for a guided
+      // mission. Never awaited: a slow/blocked Doctor bootstrap must not
+      // delay or fail the Maestro's own spawn. ensureGuidedMissionPrevc is
+      // idempotent and refuses to (re)freeze once a worker has materialized.
+      try {
+        void Promise.resolve(
+          this.#deps.ensureMissionPrevc?.(scope, missionId),
+        ).catch((error) => {
+          console.warn(
+            `[mission-bootstrap] PREVC freeze deferred for ${missionId}:`,
+            error,
+          );
+        });
+      } catch (error) {
+        console.warn(
+          `[mission-bootstrap] PREVC freeze deferred for ${missionId}:`,
           error,
         );
       }

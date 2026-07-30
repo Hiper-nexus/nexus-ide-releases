@@ -653,6 +653,53 @@ describe('initial main-owned orchestrator bootstrap', () => {
     expect(h.kickoffPrompts[0]).toMatch(/PREVC paralelo/i);
   });
 
+  it('starts the Main-owned PREVC freeze in the background for a guided delivery mission', async () => {
+    // Regression for the permanent deadlock found live in mission
+    // mission-746c6542-0a95-47a5-982c-e7479145469e: commit 58d35664
+    // ("destravar missões no autopiloto multi-CLI") removed the only
+    // production call to ensureGuidedMissionPrevcForScope from #bootstrap
+    // without replacing it. guided-prevc-mcp-fence.ts still requires a
+    // frozen contract before nexus_route_task / nexus_mission_spawn_pane /
+    // nexus_workflow_prepare_execution are callable, and nothing else in
+    // production freezes the first contract (ensurePrevcMergeReady only
+    // fires once a dispatch already reached merge, which itself requires a
+    // spawned worker) — so every standard-lane guided-PREVC "delivery"
+    // mission stalls forever with zero worker panes ever dispatched.
+    const h = harness();
+    const goal =
+      'Todos os agentes devem responder o que fazem nesta missão';
+    h.mission = {
+      ...h.mission,
+      description: goal,
+      intentContract: {
+        ...h.mission.intentContract!,
+        goal,
+      },
+    };
+    h.deps.ensurePlanGitBaseline = vi.fn();
+    h.deps.ensureMissionPlan = vi.fn(() => ({
+      applicable: true,
+      sealed: false,
+      reason: 'already-sealed',
+      topology: 'delivery',
+      workerAgentRef: 'worker-a',
+      taskId: 'task-a',
+    }));
+    h.deps.prepareOpportunisticPrevc = vi.fn();
+    h.deps.ensureMissionPrevc = vi.fn();
+
+    const result = await new MissionOrchestratorBootstrapService(
+      h.deps,
+    ).bootstrap(scope, h.mission.id);
+
+    expect(result).toMatchObject({ ok: true, missionId: h.mission.id });
+    expect(h.deps.ensureMissionPrevc).toHaveBeenCalledOnce();
+    expect(h.deps.ensureMissionPrevc).toHaveBeenCalledWith(
+      scope,
+      h.mission.id,
+    );
+  });
+
   it('keeps Git and PREVC prework for a team mission that mutates code', async () => {
     const h = harness();
     const goal =

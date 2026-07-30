@@ -518,7 +518,10 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
           )
         : canvasNodeLayouts;
     bumpTreeVersion();
-    set({ root, focusedPaneId, canvasNodeLayouts: updatedLayouts });
+    // Substituição deliberada do grid (retomada/apresentação de missão, Modo
+    // Livre) encerra qualquer zoom de pane único: um maximize stale deixava o
+    // pane ampliado (às vezes um shell vazio) cobrindo os panes recém-montados.
+    set({ root, focusedPaneId, maximizedPaneId: null, canvasNodeLayouts: updatedLayouts });
     persist({ ...get(), root, focusedPaneId, canvasNodeLayouts: updatedLayouts });
   },
 
@@ -676,8 +679,16 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
   },
 
   focus: (paneId) => {
-    if (get().focusedPaneId === paneId) return;
-    set({ focusedPaneId: paneId });
+    // Um pane maximizado cobre o grid inteiro (PaneGrid renderiza só ele).
+    // Foco programático em OUTRO pane (retomada de missão, CTA de toast,
+    // paleta, "focar agente" do rail) é um pedido explícito de mostrar esse
+    // pane — sem derrubar o maximize ele vira no-op invisível e o operador
+    // fica olhando um pane vazio com os panes reais montados embaixo.
+    const maximizedPaneId =
+      get().maximizedPaneId === paneId ? get().maximizedPaneId : null;
+    if (get().focusedPaneId === paneId && get().maximizedPaneId === maximizedPaneId)
+      return;
+    set({ focusedPaneId: paneId, maximizedPaneId });
     // Focus changes don't debounce-persist — too frequent, not load-bearing.
   },
 

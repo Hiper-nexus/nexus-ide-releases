@@ -93,6 +93,74 @@ describe('layout-store pane maximize', () => {
   });
 });
 
+describe('layout-store maximize vs foco programático', () => {
+  const shell: PaneModel = { id: 'shell-1', kind: 'shell', title: 'Terminal' };
+  const orch: PaneModel = {
+    id: 'm-orch',
+    kind: 'cli-agent',
+    title: 'orch',
+    adapterId: 'claude',
+    missionId: 'm1',
+    role: 'orchestrator',
+  };
+  const worker: PaneModel = {
+    id: 'm-worker',
+    kind: 'cli-agent',
+    title: 'worker',
+    adapterId: 'codex',
+    missionId: 'm1',
+    role: 'worker',
+  };
+
+  beforeEach(() => {
+    useLayoutStore.setState({
+      root: buildGridTree([shell]),
+      focusedPaneId: shell.id,
+      maximizedPaneId: null,
+      hydrated: true,
+      viewKind: 'grid',
+      canvasNodeLayouts: {},
+      canvasViewport: { x: 0, y: 0, zoom: 1 },
+    });
+  });
+
+  it('foco programático derruba um maximize stale cobrindo os panes da missão', () => {
+    // Cenário do bug: shell vazio maximizado; a retomada da missão monta os
+    // panes reais e foca o orquestrador — o grid renderizava SÓ o shell.
+    useLayoutStore.getState().toggleMaximizePane(shell.id);
+
+    useLayoutStore.getState().setPanes([shell, orch, worker]);
+    useLayoutStore.getState().focus(orch.id);
+
+    const s = useLayoutStore.getState();
+    expect(s.maximizedPaneId).toBeNull();
+    expect(s.focusedPaneId).toBe(orch.id);
+    expect(listPanes(s.root).map((pane) => pane.id)).toEqual([
+      shell.id,
+      orch.id,
+      worker.id,
+    ]);
+  });
+
+  it('focar o próprio pane maximizado mantém o maximize', () => {
+    useLayoutStore.getState().toggleMaximizePane(shell.id);
+
+    useLayoutStore.getState().focus(shell.id);
+
+    expect(useLayoutStore.getState().maximizedPaneId).toBe(shell.id);
+    expect(useLayoutStore.getState().focusedPaneId).toBe(shell.id);
+  });
+
+  it('foco comum sem maximize continua só trocando o foco', () => {
+    useLayoutStore.getState().setPanes([shell, orch]);
+
+    useLayoutStore.getState().focus(orch.id);
+
+    expect(useLayoutStore.getState().maximizedPaneId).toBeNull();
+    expect(useLayoutStore.getState().focusedPaneId).toBe(orch.id);
+  });
+});
+
 describe('layout-store transient pane recovery', () => {
   it('removes new and legacy PREVC reviewers before hydrate or restore', async () => {
     const reviewerSuffix = 'a1b2c3d4e5f6';

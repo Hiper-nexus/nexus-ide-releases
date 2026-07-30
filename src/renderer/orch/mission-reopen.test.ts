@@ -27,6 +27,7 @@ let layoutPanes: Array<{
   kind: string;
   role?: string;
   adapterId?: string;
+  isStructuralPlaceholder?: boolean;
 }> = [{ id: 'live-1', kind: 'cli-agent', role: 'orchestrator', adapterId: 'codex' }];
 
 let paneMissions: Record<string, string> = { 'live-1': 'mission-live' };
@@ -230,6 +231,74 @@ describe('reopenMission soft / multi', () => {
       'mission-b',
       'session-orch-b',
     );
+  });
+
+  it('drops the lone unused structural placeholder when reopening (no empty shell tile)', async () => {
+    layoutPanes = [
+      { id: 'shell-1', kind: 'shell', isStructuralPlaceholder: true },
+    ];
+    paneMissions = {};
+    terminalMocks.getPaneSessionId.mockImplementation(() => null);
+    listMissionPanes.mockResolvedValueOnce([
+      {
+        id: 'spec-orch',
+        missionId: 'mission-solo',
+        adapterId: 'codex',
+        title: 'orch',
+        role: 'orchestrator',
+        paneId: 'orch-x',
+        createdAt: 1,
+      },
+    ]);
+
+    const result = await reopenMission({
+      id: 'mission-solo',
+      title: 'Solo',
+      description: '',
+      status: 'running',
+      milestones: [],
+      learnings: '',
+      createdAt: 1,
+      updatedAt: 2,
+    });
+
+    expect(result.ok).toBe(true);
+    const mounted = setPanes.mock.calls[0]![0] as Array<{ id: string }>;
+    expect(mounted.map((pane) => pane.id)).toEqual(['orch-x']);
+    // A missão reaberta é dona da tela — Home não cobre nem grid de 1 pane.
+    expect(hideHome).toHaveBeenCalled();
+  });
+
+  it('keeps a shell the operator claimed (not a structural placeholder)', async () => {
+    layoutPanes = [{ id: 'shell-1', kind: 'shell' }];
+    paneMissions = {};
+    terminalMocks.getPaneSessionId.mockImplementation(() => null);
+    listMissionPanes.mockResolvedValueOnce([
+      {
+        id: 'spec-orch',
+        missionId: 'mission-claimed',
+        adapterId: 'codex',
+        title: 'orch',
+        role: 'orchestrator',
+        paneId: 'orch-y',
+        createdAt: 1,
+      },
+    ]);
+
+    const result = await reopenMission({
+      id: 'mission-claimed',
+      title: 'Claimed',
+      description: '',
+      status: 'running',
+      milestones: [],
+      learnings: '',
+      createdAt: 1,
+      updatedAt: 2,
+    });
+
+    expect(result.ok).toBe(true);
+    const mounted = setPanes.mock.calls[0]![0] as Array<{ id: string }>;
+    expect(mounted.map((pane) => pane.id)).toEqual(['shell-1', 'orch-y']);
   });
 
   it('fails closed before changing layout on a forced hard reopen', async () => {
