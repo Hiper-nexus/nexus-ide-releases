@@ -26,6 +26,7 @@ import {
 } from '../lib/canvas-layout';
 import { getActiveWorkspacePath } from './active-workspace';
 import { useHomeStore } from './home-store';
+import { notifyIfLastMissionPaneClosed } from '../orch/mission-last-pane-notify';
 import { isAutomatedReviewerPaneIdentity } from '../../shared/automated-reviewer-pane';
 
 const DEFAULT_CANVAS_VIEWPORT = { x: 0, y: 0, zoom: 1 };
