@@ -85,7 +85,11 @@ import {
 import type { RealMissionEvidenceAttester } from "./real-mission-e2e-attestation";
 import { hasAutomaticTechnicalRecovery } from "../shared/mission-recovery-policy";
 
-const DONE_SETTLE_MS = 20_000;
+// Receipts de ack/estado final de PTY podem aterrissar bem depois da
+// transação de integração (campo: run físico com advisor AGY só estabilizou
+// ~20s após o done). 120s ainda cabe folgado no budget do gate (done ~8min,
+// timeout 32min) e não enfraquece o invariante — o parse completo é exigido.
+const DONE_SETTLE_MS = 120_000;
 const OBSERVE_INTERVAL_MS = 500;
 
 /** Roster worker exato do harness: agentRef → categoria/CLI esperados. */
@@ -178,6 +182,7 @@ export class RealMissionObserver {
   #changedBeforeWorker = false;
   #workerObserved = false;
   #doneSeenAt: number | null = null;
+  #lastSettleLogAt = 0;
   #evaluationQueued = false;
   #stopped = false;
   #interval: ReturnType<typeof setInterval> | null = null;
@@ -1283,10 +1288,20 @@ export class RealMissionObserver {
       parseRealMissionE2EEvidence(this.evidence(Date.now(), "pass", null));
       this.#onFinish(null);
       return;
-    } catch {
+    } catch (settleError) {
       // Delivery acknowledgement and the final PTY state can land just after
       // the scheduler integration transaction. Give those bounded receipts a
-      // short settle window; never promote a partial snapshot to PASS.
+      // settle window; never promote a partial snapshot to PASS. Log the
+      // cause (throttled — this evaluates every 500ms) so an exhausted window
+      // reports the actual missing receipt instead of a bare invariant-failed.
+      const now = Date.now();
+      if (now - this.#lastSettleLogAt >= 10_000) {
+        this.#lastSettleLogAt = now;
+        console.warn(
+          `[real-mission] aguardando evidência estabilizar pós-done:`,
+          settleError instanceof Error ? settleError.message : settleError,
+        );
+      }
     }
     if (Date.now() - this.#doneSeenAt >= DONE_SETTLE_MS) {
       this.#onFinish("invariant-failed");
