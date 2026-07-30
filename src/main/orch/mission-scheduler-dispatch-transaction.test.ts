@@ -7,8 +7,24 @@ import {
   captureMissionSchedulerPreProviderAuthority,
   isMissionSchedulerCapacityWait,
   isMissionSchedulerRetryableDispatchError,
+  missionSchedulerLiveRosterAdapter,
   persistMissionSchedulerDispatchFailure,
+  warmMissionSchedulerRosterSubscriptionAuth,
 } from "./mission-scheduler-dispatch-transaction";
+import { resolveSealedWorkerRoute } from "./mission-scheduler-plan";
+import { refreshAgySubscriptionAuthCache } from "../adapters/subscription-auth";
+
+vi.mock("../adapters/subscription-auth", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../adapters/subscription-auth")>();
+  return {
+    ...actual,
+    refreshAgySubscriptionAuthCache: vi.fn(async () => ({
+      value: true,
+      cacheUpdated: true,
+    })),
+  };
+});
 import { TASK_DISPATCH_SESSION_EXIT_REASON } from "./task-dispatch-persistence";
 import { compileIntentContract } from "../../shared/mission-intent";
 import type { Mission, Squad } from "../../shared/orch-types";
@@ -454,5 +470,92 @@ describe("mission scheduler dispatch bootstrap failure provenance", () => {
         "falha antes do exit tap",
     });
     expect(refineBootstrapSessionExitBlock).not.toHaveBeenCalled();
+  });
+});
+
+describe("sealed roster auth gate for keychain-only providers (AGY)", () => {
+  const agent = {
+    id: "e2e-advisor-agy",
+    agentName: "E2E Advisor Agy",
+    category: "scout" as const,
+    cli: "agy",
+    model: "gemini-3.6-flash-high",
+  };
+  const agyProvider = (authStrategy: string) => ({
+    adapterId: "agy",
+    enabled: true,
+    installed: true,
+    authStrategy,
+    models: ["gemini-3.6-flash-high"],
+    defaultModel: "gemini-3.6-flash-high",
+  });
+
+  it("throws a retryable roster_route_unavailable while the subscription cache is cold", () => {
+    // The physical E2E stall: isolated HOME + keychain-only session read as
+    // login-needed on every scheduler tick, so the pre-claim route gate threw
+    // a default-retryable error the runtime swallowed without a single log.
+    const roster = missionSchedulerLiveRosterAdapter({
+      provider: agyProvider("login-needed"),
+      requestedModel: "gemini-3.6-flash-high",
+      hasAvailableAccount: () => true,
+    });
+    expect(roster.installed).toBe(false);
+
+    let thrown: unknown;
+    try {
+      resolveSealedWorkerRoute({
+        taskText: "Atue como scout independente.",
+        agent,
+        adapters: [roster],
+        rosterHash: "a".repeat(64),
+      });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toMatch(/roster_route_unavailable/);
+    expect(isMissionSchedulerRetryableDispatchError(thrown)).toBe(true);
+    expect(isMissionSchedulerCapacityWait(thrown)).toBe(false);
+  });
+
+  it("resolves the sealed agy route once the subscription session is visible", () => {
+    const roster = missionSchedulerLiveRosterAdapter({
+      provider: agyProvider("subscription"),
+      requestedModel: "gemini-3.6-flash-high",
+      hasAvailableAccount: () => true,
+    });
+    expect(roster.installed).toBe(true);
+
+    const route = resolveSealedWorkerRoute({
+      taskText: "Atue como scout independente.",
+      agent,
+      adapters: [roster],
+      rosterHash: "a".repeat(64),
+    });
+    expect(route.routeContract).toMatchObject({
+      adapterId: "agy",
+      model: "gemini-3.6-flash-high",
+    });
+  });
+
+  it("warms the authoritative AGY keychain probe before roster resolution", async () => {
+    const refresh = vi.mocked(refreshAgySubscriptionAuthCache);
+    refresh.mockClear();
+
+    await warmMissionSchedulerRosterSubscriptionAuth("agy");
+
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(refresh).toHaveBeenCalledWith(expect.any(String), undefined, {
+      authoritative: true,
+    });
+  });
+
+  it("leaves providers with file/token auth out of the keychain warm", async () => {
+    const refresh = vi.mocked(refreshAgySubscriptionAuthCache);
+    refresh.mockClear();
+
+    await warmMissionSchedulerRosterSubscriptionAuth("codex");
+
+    expect(refresh).not.toHaveBeenCalled();
   });
 });

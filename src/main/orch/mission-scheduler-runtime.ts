@@ -31,6 +31,16 @@ import { throwIfMissionSchedulerAborted } from './mission-scheduler-abort';
 
 export const PARALLEL_SCHEDULER_FLAG_ID = 'orch.parallelScheduler' as const;
 
+/**
+ * Consecutive pre-claim retryable dispatch failures tolerated for one task
+ * before the failure is escalated through `markFailed` (production persists
+ * an observable pre-claim block). Capacity waits are excluded: they carry
+ * their own natural bound (lease expiry / sibling completion). At a 5s
+ * scheduler tick, six consecutive failures surface in ~30s instead of
+ * hanging silently forever.
+ */
+export const MISSION_SCHEDULER_MAX_PRECLAIM_RETRYABLE_FAILURES = 6 as const;
+
 export interface SchedulerRuntimeTask {
   readonly id: string;
   readonly status: ScheduleTask['status'];
@@ -94,6 +104,24 @@ export interface SchedulerRuntimeDeps {
    */
   isRetryableDispatchError?(error: unknown): boolean;
   /**
+   * Distinguishes bounded capacity waits (lease/slot reservation) from other
+   * retryable failures. Capacity waits never count toward the pre-claim
+   * failure bound and need no failure telemetry of their own.
+   */
+  isCapacityWaitError?(error: unknown): boolean;
+  /**
+   * Observability hook for retryable pre-claim dispatch failures, called once
+   * per failed attempt with the consecutive count for that task. Production
+   * wires a throttled warn so a stuck task is never silent; `willBlock`
+   * marks the attempt that escalates to `markFailed`.
+   */
+  onRetryableDispatchFailure?(failure: {
+    readonly taskId: string;
+    readonly error: unknown;
+    readonly consecutiveFailures: number;
+    readonly willBlock: boolean;
+  }): void;
+  /**
    * Prepare merge: return changed files for ownership enforcement, then
    * caller invokes mergeTask after enforcement passes.
    */
@@ -115,6 +143,12 @@ export interface SchedulerRuntimeDeps {
 export interface SchedulerRuntimeState {
   telemetry: SchedulerTelemetry;
   adaptiveCap: AdaptiveCapState;
+  /**
+   * Consecutive pre-claim retryable dispatch failures per task id. Cleared on
+   * the first successful dispatch or terminal mark; capacity waits are never
+   * counted.
+   */
+  preClaimRetryableFailures: Readonly<Record<string, number>>;
 }
 
 export function createSchedulerRuntimeState(
@@ -123,6 +157,7 @@ export function createSchedulerRuntimeState(
   return {
     telemetry: seed?.telemetry ?? { ...EMPTY_SCHEDULER_TELEMETRY },
     adaptiveCap: seed?.adaptiveCap ?? { ...DEFAULT_ADAPTIVE_CAP },
+    preClaimRetryableFailures: seed?.preClaimRetryableFailures ?? {},
   };
 }
 
@@ -221,6 +256,9 @@ export async function runSchedulerTick(
     const dispatchPlan = decision.plan;
     const taskMap = new Map(runtimeTasks.map((t) => [t.id, t]));
     const waveParallel = parallelEnabled && dispatchPlan.waveSize > 1;
+    const preClaimFailures = new Map(
+      Object.entries(state.preClaimRetryableFailures),
+    );
 
     const dispatchOne = async (taskId: string): Promise<string | null> => {
       throwIfMissionSchedulerAborted(signal);
@@ -236,14 +274,46 @@ export async function runSchedulerTick(
           signal,
         );
         throwIfMissionSchedulerAborted(signal);
+        preClaimFailures.delete(taskId);
         return taskId;
       } catch (error) {
         throwIfMissionSchedulerAborted(signal);
-        if (deps.isRetryableDispatchError?.(error)) {
-          return null;
-        }
         const reason =
           error instanceof Error ? error.message : 'dispatch failed';
+        if (deps.isRetryableDispatchError?.(error)) {
+          // Capacity waits carry their own natural bound (lease expiry or a
+          // sibling freeing its slot); never escalate them to a block.
+          if (deps.isCapacityWaitError?.(error)) {
+            return null;
+          }
+          const consecutiveFailures =
+            (preClaimFailures.get(taskId) ?? 0) + 1;
+          const willBlock =
+            consecutiveFailures >=
+            MISSION_SCHEDULER_MAX_PRECLAIM_RETRYABLE_FAILURES;
+          if (willBlock) {
+            preClaimFailures.delete(taskId);
+          } else {
+            preClaimFailures.set(taskId, consecutiveFailures);
+          }
+          deps.onRetryableDispatchFailure?.({
+            taskId,
+            error,
+            consecutiveFailures,
+            willBlock,
+          });
+          if (willBlock) {
+            // Bounded silence: a permanently failing pre-claim route becomes
+            // one observable terminal block instead of an infinite 5s retry.
+            await deps.markFailed(
+              taskId,
+              `pre-claim dispatch falhou ${consecutiveFailures} ` +
+                `vezes seguidas: ${reason}`,
+            );
+          }
+          return null;
+        }
+        preClaimFailures.delete(taskId);
         await deps.markFailed(taskId, reason);
         return null;
       }
@@ -277,7 +347,13 @@ export async function runSchedulerTick(
           kind: 'wave',
           waveSize: decision.plan.waveSize,
         });
-    nextState = { telemetry, adaptiveCap };
+    nextState = {
+      telemetry,
+      adaptiveCap,
+      preClaimRetryableFailures: Object.freeze(
+        Object.fromEntries(preClaimFailures),
+      ),
+    };
     deps.onTelemetry?.(telemetry, decision.plan);
   }
 
@@ -336,7 +412,11 @@ export async function finalizeTaskForMerge(
     const adaptiveCap = decideAdaptiveCap(state.adaptiveCap, {
       kind: 'violation',
     });
-    const next = { telemetry, adaptiveCap };
+    const next = {
+      telemetry,
+      adaptiveCap,
+      preClaimRetryableFailures: state.preClaimRetryableFailures,
+    };
     await deps.markFailed(taskId, enforcement.reason);
     await deps.reRunSequentially(taskId, enforcement.reason);
     return {
@@ -371,7 +451,11 @@ export async function finalizeTaskForMerge(
       const adaptiveCap = decideAdaptiveCap(state.adaptiveCap, {
         kind: 'conflict',
       });
-      const next = { telemetry, adaptiveCap };
+      const next = {
+        telemetry,
+        adaptiveCap,
+        preClaimRetryableFailures: state.preClaimRetryableFailures,
+      };
       await deps.markFailed(taskId, reason);
       await deps.reRunSequentially(taskId, reason);
       return {

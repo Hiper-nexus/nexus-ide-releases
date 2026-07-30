@@ -36,6 +36,7 @@ import {
 } from "./mission-scheduler-authority";
 import {
   dispatchMissionSchedulerTask,
+  isMissionSchedulerCapacityWait,
   isMissionSchedulerRetryableDispatchError,
   MissionSchedulerDispatchAuthorityError,
 } from "./mission-scheduler-dispatch-transaction";
@@ -1309,6 +1310,26 @@ async function tickMission(
               dispatchSignal,
             ),
           isRetryableDispatchError: isMissionSchedulerRetryableDispatchError,
+          isCapacityWaitError: isMissionSchedulerCapacityWait,
+          onRetryableDispatchFailure: (failure) => {
+            // First failure and the blocking one always log; in between,
+            // ~1 line/minute at the 5s tick keeps the stuck task visible
+            // without flooding the child stdout.
+            if (
+              !failure.willBlock &&
+              failure.consecutiveFailures !== 1 &&
+              failure.consecutiveFailures % 12 !== 0
+            ) {
+              return;
+            }
+            console.warn(
+              `[mission-scheduler] pre-claim dispatch failure for ` +
+                `${missionId}/${failure.taskId} (attempt ` +
+                `${failure.consecutiveFailures}` +
+                `${failure.willBlock ? ", blocking task" : ""}):`,
+              failure.error,
+            );
+          },
           getChangedFiles: async () => [],
           mergeTask: async () => undefined,
           markMerged: async () => undefined,

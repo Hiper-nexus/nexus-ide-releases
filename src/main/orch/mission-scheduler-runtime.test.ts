@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createSchedulerRuntimeState,
   finalizeTaskForMerge,
+  MISSION_SCHEDULER_MAX_PRECLAIM_RETRYABLE_FAILURES,
   resolveEffectiveCapForTest,
   runSchedulerTick,
   type SchedulerRuntimeDeps,
@@ -24,7 +25,11 @@ import {
   featureFlagDefinitionSchema,
 } from '../../shared/feature-flags';
 import { PARALLEL_SCHEDULER_FLAG_ID } from './mission-scheduler-runtime';
-import { isMissionSchedulerRetryableDispatchError } from './mission-scheduler-dispatch-transaction';
+import {
+  isMissionSchedulerCapacityWait,
+  isMissionSchedulerRetryableDispatchError,
+  MissionSchedulerCapacityWaitError,
+} from './mission-scheduler-dispatch-transaction';
 
 const NOW = 1_700_000_000_000;
 
@@ -57,6 +62,13 @@ function makeDeps(opts: {
   dispatchThrows?: Record<string, Error>;
   dispatchDelayMs?: Record<string, number>;
   isRetryableDispatchError?: (error: unknown) => boolean;
+  isCapacityWaitError?: (error: unknown) => boolean;
+  onRetryableDispatchFailure?: (failure: {
+    readonly taskId: string;
+    readonly error: unknown;
+    readonly consecutiveFailures: number;
+    readonly willBlock: boolean;
+  }) => void;
   useConfiguredCapForCurrentWave?: () => boolean;
 }): {
   deps: SchedulerRuntimeDeps;
@@ -105,6 +117,12 @@ function makeDeps(opts: {
     },
     ...(opts.isRetryableDispatchError
       ? { isRetryableDispatchError: opts.isRetryableDispatchError }
+      : {}),
+    ...(opts.isCapacityWaitError
+      ? { isCapacityWaitError: opts.isCapacityWaitError }
+      : {}),
+    ...(opts.onRetryableDispatchFailure
+      ? { onRetryableDispatchFailure: opts.onRetryableDispatchFailure }
       : {}),
     getChangedFiles: async (taskId) =>
       opts.changedFiles?.[taskId] ?? [`src/${taskId}.ts`],
@@ -385,6 +403,159 @@ describe('mission-scheduler-runtime P2 flag + driver', () => {
     const round2 = makeDeps({ enabled: true, tasks: after });
     const second = await runSchedulerTick(round2.deps, first.state);
     expect(second.dispatched).toEqual(['b']);
+  });
+});
+
+describe('mission-scheduler-runtime pre-claim failure observability + bound', () => {
+  it('surfaces consecutive retryable failures and blocks the task at the bound', async () => {
+    const tasks = [baseTask('a')];
+    const stuck = new Error(
+      'roster_route_unavailable: CLI agy do agente Advisor não está instalada',
+    );
+    const seen: {
+      taskId: string;
+      consecutiveFailures: number;
+      willBlock: boolean;
+    }[] = [];
+    const { deps, dispatched, failed } = makeDeps({
+      enabled: true,
+      tasks,
+      dispatchThrows: { a: stuck },
+      isRetryableDispatchError: isMissionSchedulerRetryableDispatchError,
+      isCapacityWaitError: isMissionSchedulerCapacityWait,
+      onRetryableDispatchFailure: (failure) => {
+        seen.push({
+          taskId: failure.taskId,
+          consecutiveFailures: failure.consecutiveFailures,
+          willBlock: failure.willBlock,
+        });
+      },
+    });
+
+    let state = createSchedulerRuntimeState();
+    for (
+      let tick = 1;
+      tick < MISSION_SCHEDULER_MAX_PRECLAIM_RETRYABLE_FAILURES;
+      tick += 1
+    ) {
+      const result = await runSchedulerTick(deps, state);
+      state = result.state;
+      expect(failed).toEqual([]);
+      expect(tasks[0]?.status).toBe('pending');
+    }
+    expect(seen.map((entry) => entry.consecutiveFailures)).toEqual([
+      1, 2, 3, 4, 5,
+    ]);
+    expect(seen.every((entry) => !entry.willBlock)).toBe(true);
+
+    const blocking = await runSchedulerTick(deps, state);
+    state = blocking.state;
+    expect(seen).toHaveLength(MISSION_SCHEDULER_MAX_PRECLAIM_RETRYABLE_FAILURES);
+    expect(seen.at(-1)).toEqual({
+      taskId: 'a',
+      consecutiveFailures: MISSION_SCHEDULER_MAX_PRECLAIM_RETRYABLE_FAILURES,
+      willBlock: true,
+    });
+    expect(failed).toHaveLength(1);
+    expect(failed[0]?.id).toBe('a');
+    expect(failed[0]?.reason).toContain('roster_route_unavailable');
+    expect(dispatched).toEqual([]);
+
+    // Terminal task leaves the ready set: no further silent retries.
+    const after = await runSchedulerTick(deps, state);
+    expect(after.decision.plan.kind).toBe('idle-failed');
+    expect(seen).toHaveLength(
+      MISSION_SCHEDULER_MAX_PRECLAIM_RETRYABLE_FAILURES,
+    );
+  });
+
+  it('never counts bounded capacity waits toward the pre-claim failure bound', async () => {
+    const tasks = [baseTask('a')];
+    const capacity = new MissionSchedulerCapacityWaitError('slot occupied');
+    const seen: number[] = [];
+    const { deps, failed } = makeDeps({
+      enabled: true,
+      tasks,
+      dispatchThrows: { a: capacity },
+      isRetryableDispatchError: isMissionSchedulerRetryableDispatchError,
+      isCapacityWaitError: isMissionSchedulerCapacityWait,
+      onRetryableDispatchFailure: (failure) => {
+        seen.push(failure.consecutiveFailures);
+      },
+    });
+
+    let state = createSchedulerRuntimeState();
+    for (
+      let tick = 0;
+      tick < MISSION_SCHEDULER_MAX_PRECLAIM_RETRYABLE_FAILURES + 2;
+      tick += 1
+    ) {
+      const result = await runSchedulerTick(deps, state);
+      state = result.state;
+    }
+
+    expect(failed).toEqual([]);
+    expect(seen).toEqual([]);
+    expect(tasks[0]?.status).toBe('pending');
+  });
+
+  it('unblocks the exclusive QA gate once the permanently failing advisor is blocked', async () => {
+    // Reproduces the physical release E2E stall: the agy advisor (sealed
+    // route unresolvable) sorted ahead of the sequential-only QA task in
+    // every ready set; each tick admitted the advisor first and deferred the
+    // exclusive QA, while the advisor's retryable failure stayed silent.
+    const advisorError = new Error(
+      'roster_route_unavailable: CLI agy do agente Advisor não está instalada',
+    );
+    const tasks: SchedulerRuntimeTask[] = [
+      baseTask('a-advisor', {
+        ownership: { files: [], symbols: [], domains: ['guided-advisory'] },
+      }),
+      baseTask('q-qa', {
+        dependsOn: ['r-reviewer'],
+        ownership: {
+          files: [],
+          symbols: [],
+          domains: ['guided-quality-gate'],
+        },
+        parallelEligible: false,
+      }),
+      baseTask('r-reviewer', {
+        status: 'done',
+        merged: true,
+        ownership: {
+          files: [],
+          symbols: [],
+          domains: ['guided-independent-review'],
+        },
+      }),
+    ];
+    const { deps, dispatched, failed } = makeDeps({
+      enabled: true,
+      tasks,
+      dispatchThrows: { 'a-advisor': advisorError },
+      isRetryableDispatchError: isMissionSchedulerRetryableDispatchError,
+      isCapacityWaitError: isMissionSchedulerCapacityWait,
+    });
+
+    let state = createSchedulerRuntimeState();
+    for (
+      let tick = 0;
+      tick < MISSION_SCHEDULER_MAX_PRECLAIM_RETRYABLE_FAILURES;
+      tick += 1
+    ) {
+      const result = await runSchedulerTick(deps, state);
+      state = result.state;
+      // The advisor is admitted first every tick; QA's exclusive slot
+      // requires an empty wave, so it never dispatches while the advisor
+      // stays pending.
+      expect(dispatched).not.toContain('q-qa');
+    }
+    expect(failed.map((entry) => entry.id)).toEqual(['a-advisor']);
+
+    const unblocked = await runSchedulerTick(deps, state);
+    expect(unblocked.dispatched).toEqual(['q-qa']);
+    expect(dispatched).toEqual(['q-qa']);
   });
 });
 
