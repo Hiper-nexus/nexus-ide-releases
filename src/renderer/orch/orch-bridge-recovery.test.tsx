@@ -425,6 +425,76 @@ describe('orchestration bridge pane recovery', () => {
     act(() => mounted.root.unmount());
   });
 
+  it('spawn channel replaces the lone structural placeholder and hides Home', async () => {
+    let spawnHandler: ((request: OrchPaneSpawnRequest) => void) | null = null;
+    const sendPaneSpawnResult = vi.fn();
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        orch: {
+          onPaneSpawnRequest: vi.fn(
+            (cb: (request: OrchPaneSpawnRequest) => void) => {
+              spawnHandler = cb;
+              return vi.fn();
+            },
+          ),
+          onPanePresentationRequest: listener(),
+          onPaneRecoveryRequest: listener(),
+          onBrowserOpenRequest: listener(),
+          onPaneCloseRequest: listener(),
+          onMissionsChanged: listener(),
+          onHandoffsChanged: listener(),
+          onTodosChanged: listener(),
+          onSquadsChanged: listener(),
+          syncPanes: vi.fn(),
+          sendPaneSpawnResult,
+          sendPaneRecoveryResult: vi.fn(),
+          sendBrowserOpenResult: vi.fn(),
+        },
+      },
+    });
+    useHomeStore.setState({ visible: true });
+    useLayoutStore.setState({
+      root: {
+        kind: 'leaf',
+        id: 'leaf-spawn-placeholder',
+        pane: {
+          id: 'shell-spawn-placeholder',
+          kind: 'shell',
+          title: 'Shell',
+          isStructuralPlaceholder: true,
+        },
+      },
+      focusedPaneId: 'shell-spawn-placeholder',
+    });
+    const mounted = mount();
+
+    act(() => {
+      spawnHandler?.({
+        requestId: 'orchspawn-launch',
+        paneId: 'pane-launch',
+        adapterId: 'claude',
+        missionId: 'mission-launch',
+        role: 'orchestrator',
+        resume: false,
+        resumeLatestOnly: false,
+        restorePersistedAuthority: false,
+      });
+    });
+    await vi.waitFor(() => {
+      expect(sendPaneSpawnResult).toHaveBeenCalledWith(
+        expect.objectContaining({ ok: true, paneId: 'pane-launch' }),
+      );
+    });
+
+    // O placeholder vazio não sobra como tile: o primeiro pane real da
+    // orquestração o substitui (mesma regra do canal de apresentação).
+    expect(listPanes(useLayoutStore.getState().root).map((pane) => pane.id))
+      .toEqual(['pane-launch']);
+    expect(useHomeStore.getState().visible).toBe(false);
+    act(() => mounted.root.unmount());
+  });
+
   it('re-presents the same live pane after switching A to B and back to A', async () => {
     let presentationHandler:
       | ((req: MissionPanePresentationRequest) => void)

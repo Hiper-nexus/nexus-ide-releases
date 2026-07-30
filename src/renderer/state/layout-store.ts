@@ -11,7 +11,9 @@ import {
   buildGridTree,
   closePane,
   createPane,
+  createLeaf,
   initialTree,
+  isStructuralPlaceholderPane,
   listPanes,
   MAX_LIVE_PANES_HARD,
   MAX_LIVE_PANES_SOFT,
@@ -440,11 +442,22 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
       agentName: req.agentName,
       role: req.role,
     };
+    // Um placeholder estrutural solitário nunca é conteúdo do operador: o
+    // primeiro pane real da orquestração o SUBSTITUI (mesma regra de
+    // panesAfterMainOwnedPresentation). Splitar ao lado deixava um tile vazio
+    // permanente no grid — e, se maximizado, cobrindo os panes da missão.
+    const replaceLonePlaceholder =
+      existingPanes.length === 1 &&
+      isStructuralPlaceholderPane(existingPanes[0]!);
     // Alvo balanceado: workers de squad em grade ~quadrada, nunca em tira.
-    const target = pickBalancedTarget(currentRoot);
-    const root = target.paneId
-      ? splitPane(currentRoot, target.paneId, target.direction, newPane)
-      : splitPane(initialTree(), firstPaneId(initialTree()) ?? '', 'row', newPane);
+    const target = replaceLonePlaceholder
+      ? { paneId: null, direction: 'row' as SplitDirection }
+      : pickBalancedTarget(currentRoot);
+    const root = replaceLonePlaceholder
+      ? createLeaf(newPane)
+      : target.paneId
+        ? splitPane(currentRoot, target.paneId, target.direction, newPane)
+        : splitPane(initialTree(), firstPaneId(initialTree()) ?? '', 'row', newPane);
 
     const paneCount = listPanes(root).length;
     const baseCanvasLayouts =
@@ -454,14 +467,19 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
     const pivot = target.paneId ?? firstPaneId(currentRoot);
     const updatedLayouts =
       viewKind === 'canvas'
-        ? {
-            ...baseCanvasLayouts,
-            [newPane.id]: nextCanvasLayout(baseCanvasLayouts, pivot, paneCount - 1),
-          }
+        ? replaceLonePlaceholder
+          ? { [newPane.id]: defaultCanvasLayout(0) }
+          : {
+              ...baseCanvasLayouts,
+              [newPane.id]: nextCanvasLayout(baseCanvasLayouts, pivot, paneCount - 1),
+            }
         : canvasNodeLayouts;
 
     bumpTreeVersion();
-    set({ root, focusedPaneId: newPane.id, canvasNodeLayouts: updatedLayouts });
+    // O foco deliberado no pane recém-montado encerra qualquer maximize stale
+    // (mesmo idioma de focus()/setPanes): senão o pane ampliado continua
+    // cobrindo o agente que a orquestração acabou de apresentar.
+    set({ root, focusedPaneId: newPane.id, maximizedPaneId: null, canvasNodeLayouts: updatedLayouts });
     persist({ ...get(), root, focusedPaneId: newPane.id, canvasNodeLayouts: updatedLayouts });
     return newPane.id;
   },

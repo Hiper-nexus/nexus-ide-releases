@@ -49,6 +49,16 @@ export function initialTree(): LayoutNode {
 }
 
 /**
+ * The marker lives here (initialTree mints it; claimStructuralPlaceholder
+ * clears it). A fresh workspace owns exactly one such shell until the first
+ * real surface mounts — presentation paths replace it instead of splitting
+ * beside it, and this predicate is the single source of that identity.
+ */
+export function isStructuralPlaceholderPane(pane: PaneModel): boolean {
+  return pane.kind === 'shell' && pane.isStructuralPlaceholder === true;
+}
+
+/**
  * Lay out N panes as a balanced grid (recursively bisecting the list,
  * alternating row/column by depth). Guarantees EXACTLY `panes.length` leaves —
  * used by Modo Livre so "2 panes" reliably opens two, "4 panes" a 2×2, etc.

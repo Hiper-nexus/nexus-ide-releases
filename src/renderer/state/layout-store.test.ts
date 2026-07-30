@@ -380,3 +380,88 @@ describe('layout-store orch spawn ceiling', () => {
     expect(orchSpawn).toThrow(`Limite de panes (${MAX_LIVE_PANES_SOFT})`);
   });
 });
+
+describe('layout-store orch spawn vs structural placeholder', () => {
+  const placeholder: PaneModel = {
+    id: 'pane-placeholder',
+    kind: 'shell',
+    title: 'shell',
+    isStructuralPlaceholder: true,
+  };
+
+  function seed(panes: PaneModel[]): void {
+    useLayoutStore.setState({
+      root: buildGridTree(panes),
+      focusedPaneId: panes[0]?.id ?? null,
+      maximizedPaneId: null,
+      hydrated: true,
+      viewKind: 'grid',
+      canvasNodeLayouts: {},
+      canvasViewport: { x: 0, y: 0, zoom: 1 },
+    });
+  }
+
+  const spawn = () =>
+    useLayoutStore.getState().spawnOrchPane({
+      paneId: 'pane-orch',
+      adapterId: 'claude',
+      title: 'orquestrador',
+      orchRequestId: 'orchspawn-placeholder',
+      missionId: 'mission-launch',
+      role: 'orchestrator',
+    });
+
+  it('replaces a lone structural placeholder instead of splitting beside it', () => {
+    seed([placeholder]);
+
+    expect(spawn()).toBe('pane-orch');
+
+    const panes = listPanes(useLayoutStore.getState().root);
+    expect(panes.map((pane) => pane.id)).toEqual(['pane-orch']);
+    expect(panes[0]).toMatchObject({
+      kind: 'cli-agent',
+      missionId: 'mission-launch',
+      role: 'orchestrator',
+    });
+    expect(useLayoutStore.getState().focusedPaneId).toBe('pane-orch');
+  });
+
+  it('clears a stale maximize so the spawned pane is not covered by the empty shell', () => {
+    seed([placeholder]);
+    useLayoutStore.getState().toggleMaximizePane(placeholder.id);
+
+    spawn();
+
+    expect(useLayoutStore.getState().maximizedPaneId).toBeNull();
+    expect(listPanes(useLayoutStore.getState().root).map((pane) => pane.id)).toEqual([
+      'pane-orch',
+    ]);
+  });
+
+  it('keeps a shell the operator claimed (marker cleared)', () => {
+    seed([{ ...placeholder, isStructuralPlaceholder: undefined }]);
+
+    spawn();
+
+    expect(listPanes(useLayoutStore.getState().root).map((pane) => pane.id)).toEqual([
+      'pane-placeholder',
+      'pane-orch',
+    ]);
+  });
+
+  it('keeps the placeholder when other real panes exist (not lone)', () => {
+    const agent: PaneModel = {
+      id: 'pane-agent',
+      kind: 'cli-agent',
+      title: 'agent',
+      adapterId: 'codex',
+    };
+    seed([placeholder, agent]);
+
+    spawn();
+
+    expect(
+      listPanes(useLayoutStore.getState().root).map((pane) => pane.id),
+    ).toContain('pane-placeholder');
+  });
+});

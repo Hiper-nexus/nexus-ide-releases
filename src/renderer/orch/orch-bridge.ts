@@ -12,7 +12,7 @@ import { useHomeStore } from '../state/home-store';
 import { useOrchStore } from '../state/orch-store';
 import { useSessionStateStore } from '../state/session-state-store';
 import { useWorkspaceStore } from '../state/workspace-store';
-import { createPane, listPanes } from '../lib/split-tree';
+import { createPane, isStructuralPlaceholderPane, listPanes } from '../lib/split-tree';
 import {
   cancelPaneRecovery,
   getPaneSessionId,
@@ -186,7 +186,7 @@ function paneFromPresentation(
 }
 
 function isStructuralWorkspacePlaceholder(pane: PaneModel): boolean {
-  return pane.kind === 'shell' && pane.isStructuralPlaceholder === true;
+  return isStructuralPlaceholderPane(pane);
 }
 
 /**
@@ -431,6 +431,10 @@ export function useOrchBridge(): void {
                 agentName: req.agentName,
                 role: req.role ?? 'worker',
               });
+            // Um spawn da orquestração é uma superfície real: o Home não pode
+            // ficar por cima (o auto-hide do deck só dispara com 2+ panes —
+            // mesmo motivo do hide em presentLiveMainOwnedPane).
+            useHomeStore.getState().hide();
             useOrchStore.getState().bindPaneMission(paneId, req.missionId);
             const sessionId = await waitForSession(paneId, 75_000);
             if (!sessionId) {
