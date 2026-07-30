@@ -729,10 +729,19 @@ export function spawnSession(
     shell,
   );
   const shellArgs = shellIntegrationSpawnArgs(shell, shellEnv);
+  // Pane do operador abre como login shell (-l): .zprofile/.zlogin e o PATH
+  // real da conta (homebrew, ~/.local/bin) só entram na cadeia de login.
+  // bash com rcfile composto mantém o fluxo da shell integration (o composite
+  // já carrega o ~/.bashrc), então o -l só entra sem NEXUS_BASHRC.
+  const shellBaseName = path.basename(shell).toLowerCase();
+  const loginArgs =
+    shellBaseName.includes('bash') && shellEnv.NEXUS_BASHRC
+      ? []
+      : ['-l'];
   const spec: PtySpawnSpec = {
     sessionId,
     file: shell,
-    args: shellArgs,
+    args: [...loginArgs, ...shellArgs],
     cwd,
     cols: req.cols,
     rows: req.rows,

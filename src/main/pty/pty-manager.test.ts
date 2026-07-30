@@ -898,6 +898,22 @@ describe("PTY session ownership (renderer capability boundary)", () => {
     expect(getSessionState(sessionId)).toBeNull();
   });
 
+  it("spawns the operator shell as a login shell (-l) so the account PATH loads", () => {
+    const h = fakeHost();
+    setPtyHost(h.host);
+    const trusted = trustedSpawn();
+    const { sessionId } = spawnSession(
+      fakeWc(),
+      { kind: "shell", cols: 80, rows: 24 },
+      { scope: trusted.scope, cwd: trusted.cwd, shell: "/bin/zsh" },
+    );
+
+    // Sem -l o zsh não lê .zprofile/.zlogin: homebrew e ~/.local/bin somem do
+    // PATH do pane — fricção direta no vibecode (foi o bash-3.2 pelado de campo).
+    expect(h.specFor(sessionId).args[0]).toBe("-l");
+    orchKillSession(sessionId);
+  });
+
   it("does not authorize replacement until the PTY host proves physical exit", async () => {
     let handlers: PtySessionHandlers | null = null;
     let resolveProof!: (proof: {
