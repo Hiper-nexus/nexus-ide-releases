@@ -373,6 +373,9 @@ describe('agent pane workspace confinement', () => {
 
   it('starts an AGY worker with the final brief in main-owned argv instead of typing into its booting TUI', async () => {
     const onPromptAccepted = vi.fn();
+    // Provider already streaming the turn when boot settles: physical proof,
+    // no extra input.
+    stubs.sessionState.mockReturnValue('busy');
 
     await spawnPaneAndMaybePrompt(
       {
@@ -400,7 +403,11 @@ describe('agent pane workspace confinement', () => {
       }),
     );
     expect(spawnOptions?.initialPrompt).toContain('marker');
-    expect(stubs.waitForIdle).not.toHaveBeenCalled();
+    expect(stubs.waitForIdle).toHaveBeenCalledWith(
+      'session-1',
+      60_000,
+      undefined,
+    );
     expect(stubs.writeSession).not.toHaveBeenCalled();
     expect(onPromptAccepted).toHaveBeenCalledOnce();
     expect(onPromptAccepted).toHaveBeenCalledWith(
@@ -408,6 +415,173 @@ describe('agent pane workspace confinement', () => {
       'session-1',
       spawnOptions?.initialPrompt,
     );
+  });
+
+  it('accepts the AGY argv brief when the turn opens after boot settles', async () => {
+    const onPromptAccepted = vi.fn();
+    stubs.sessionState.mockReturnValue('idle');
+
+    const pending = spawnPaneAndMaybePrompt(
+      {
+        adapterId: 'agy',
+        missionId: 'm1',
+        role: 'worker',
+        readOnly: true,
+        prompt: 'Mapeie os panes e entregue o parecer.',
+        scope,
+        executionScope: taskExecutionScope,
+      },
+      { onPromptAccepted },
+    );
+    await vi.waitFor(() =>
+      expect(stubs.stateTaps.length).toBeGreaterThan(0),
+    );
+    // Busy edge alone is not enough (a lone repaint also edges): the turn is
+    // confirmed by the output stream that follows it.
+    for (const tap of [...stubs.stateTaps]) tap('session-1', 'busy');
+    for (const tap of [...stubs.dataTaps]) tap('session-1', 'spinner frame');
+    for (const tap of [...stubs.dataTaps]) tap('session-1', 'more output');
+    await pending;
+
+    expect(stubs.writeSession).not.toHaveBeenCalled();
+    expect(onPromptAccepted).toHaveBeenCalledOnce();
+  });
+
+  it('presses a single Enter when the AGY argv brief sits quiet past the activity window', async () => {
+    vi.useFakeTimers();
+    try {
+      const onPromptAccepted = vi.fn();
+      stubs.sessionState.mockReturnValue('idle');
+      stubs.writeSession.mockImplementation(
+        ((sessionId: string, data: string) => {
+          if (data === '\r') {
+            queueMicrotask(() => {
+              stubs.sessionState.mockReturnValue('busy');
+              for (const tap of [...stubs.stateTaps]) tap(sessionId, 'busy');
+              for (const tap of [...stubs.dataTaps]) {
+                tap(sessionId, 'turn accepted after composer submit');
+              }
+            });
+          }
+          return true;
+        }) as typeof stubs.writeSession,
+      );
+
+      const pending = spawnPaneAndMaybePrompt(
+        {
+          adapterId: 'agy',
+          missionId: 'm1',
+          role: 'worker',
+          readOnly: true,
+          prompt: 'Mapeie os panes e entregue o parecer.',
+          scope,
+          executionScope: taskExecutionScope,
+        },
+        { onPromptAccepted },
+      );
+      // 30s quiet window, then the Enter rescue proves acceptance.
+      await vi.advanceTimersByTimeAsync(45_000);
+      await pending;
+
+      const written = (
+        stubs.writeSession.mock.calls as unknown as Array<
+          readonly [string, string]
+        >
+      ).map(([, data]) => data);
+      expect(written).toEqual(['', '\r']);
+      expect(onPromptAccepted).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('falls back to the legacy typed brief when the Enter rescue gets no response', async () => {
+    vi.useFakeTimers();
+    try {
+      const onPromptAccepted = vi.fn();
+      stubs.sessionState.mockReturnValue('idle');
+      let briefPasted = false;
+      stubs.writeSession.mockImplementation(
+        ((sessionId: string, data: string) => {
+          // The argv brief never starts; only the typed legacy delivery opens
+          // a turn — and acceptance output must follow the submit Enter.
+          if (data.includes('Mapeie os panes')) briefPasted = true;
+          if (data === '\r' && briefPasted) {
+            queueMicrotask(() => {
+              stubs.sessionState.mockReturnValue('busy');
+              for (const tap of [...stubs.stateTaps]) tap(sessionId, 'busy');
+              for (const tap of [...stubs.dataTaps]) {
+                tap(sessionId, 'typed brief accepted');
+              }
+            });
+          }
+          return true;
+        }) as typeof stubs.writeSession,
+      );
+
+      const pending = spawnPaneAndMaybePrompt(
+        {
+          adapterId: 'agy',
+          missionId: 'm1',
+          role: 'worker',
+          readOnly: true,
+          prompt: 'Mapeie os panes e entregue o parecer.',
+          scope,
+          executionScope: taskExecutionScope,
+        },
+        { onPromptAccepted },
+      );
+      // 30s window + Enter proof window (12s) + typed delivery proof.
+      await vi.advanceTimersByTimeAsync(90_000);
+      await pending;
+
+      const written = (
+        stubs.writeSession.mock.calls as unknown as Array<
+          readonly [string, string]
+        >
+      ).map(([, data]) => data);
+      // Enter rescue first, then the legacy bracketed-paste brief.
+      expect(written[0]).toBe('');
+      expect(written.some((data) => data.includes('Mapeie os panes'))).toBe(
+        true,
+      );
+      expect(onPromptAccepted).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('closes the AGY pane when neither the Enter rescue nor the typed fallback start a turn', async () => {
+    vi.useFakeTimers();
+    try {
+      const onPromptAccepted = vi.fn();
+      stubs.sessionState.mockReturnValue('idle');
+      // writeSession never produces activity: the brief is swallowed twice.
+      stubs.writeSession.mockImplementation(
+        (() => true) as typeof stubs.writeSession,
+      );
+
+      const pending = spawnPaneAndMaybePrompt(
+        {
+          adapterId: 'agy',
+          missionId: 'm1',
+          role: 'worker',
+          readOnly: true,
+          prompt: 'Mapeie os panes e entregue o parecer.',
+          scope,
+          executionScope: taskExecutionScope,
+        },
+        { onPromptAccepted },
+      );
+      const rejected = expect(pending).rejects.toThrow(/did not start/i);
+      await vi.advanceTimersByTimeAsync(120_000);
+
+      await rejected;
+      expect(stubs.requestPaneClose).toHaveBeenCalledWith('pane-1');
+      expect(onPromptAccepted).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('keeps probe infrastructure fail-closed only in explicit hardened mode', async () => {

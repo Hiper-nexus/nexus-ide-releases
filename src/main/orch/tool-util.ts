@@ -78,6 +78,20 @@ const AGENT_BOOT_TIMEOUT_MS = 60_000;
  */
 const PROMPT_ACCEPTANCE_WINDOW_MS = 12_000;
 const RESTORED_PROMPT_ACCEPTANCE_WINDOW_MS = 3_000;
+/**
+ * After an AGY argv brief (`--prompt-interactive`), the provider must open a
+ * turn within this window once boot settles. A still-quiet pane means the
+ * brief is queued behind a boot dialog the autoresponder already stopped
+ * watching (its bind window is 20s) or, on some builds, sitting unsubmitted
+ * in the composer — both physically observed against agy 1.1.8.
+ */
+const AGY_ARGV_PROMPT_ACTIVITY_WINDOW_MS = 30_000;
+/**
+ * A lone TUI repaint flips the pane busy for about one idle timeout. A real
+ * turn start streams output (or stays busy) — require that confirmation
+ * before the argv brief counts as accepted.
+ */
+const AGY_ARGV_ACTIVITY_CONFIRM_MS = 4_000;
 const MAX_AGY_INITIAL_PROMPT_BYTES = 64 * 1024;
 const CLAUDE_FAMILY_TURN_PROOF_ADAPTERS = new Set([
   'claude',
@@ -424,12 +438,18 @@ export function submitPendingAgentPrompt(
   options: {
     readonly adapterId?: string;
     readonly canSubmit?: () => boolean;
+    /**
+     * Override the acceptance-proof window. A restored prompt re-submit is
+     * near-instant (3s default); a boot-dialog/composer rescue needs the
+     * provider's full turn-start latency.
+     */
+    readonly windowMs?: number;
   } = {},
 ): Promise<boolean> {
   return injectWithBusyProof(
     sessionId,
     '',
-    RESTORED_PROMPT_ACCEPTANCE_WINDOW_MS,
+    options.windowMs ?? RESTORED_PROMPT_ACCEPTANCE_WINDOW_MS,
     invocation,
     options.adapterId === 'codex',
     CLAUDE_FAMILY_TURN_PROOF_ADAPTERS.has(options.adapterId ?? ''),
@@ -475,6 +495,129 @@ export async function deliverAgentPrompt(
   }
   if (lastError instanceof Error) throw lastError;
   throw new Error('agent pane did not start after prompt delivery');
+}
+
+/**
+ * Bounded watch for physical turn activity: a busy edge confirmed by a
+ * continuing output stream (or sustained busy), so a one-frame TUI repaint
+ * does not read as acceptance. Resolves true on the first confirmed activity,
+ * false on window expiry or session exit.
+ */
+function waitForAgentActivity(
+  sessionId: string,
+  windowMs: number,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  if (signal?.aborted) {
+    return Promise.reject(signal.reason ?? new Error('aborted'));
+  }
+  if (getSessionState(sessionId) === 'busy') return Promise.resolve(true);
+  return new Promise<boolean>((resolve, reject) => {
+    let confirmTimer: ReturnType<typeof setTimeout> | null = null;
+    let edgeArmed = false;
+    let dataAfterEdge = 0;
+    const untapState = tapSessionState((changedSessionId, state) => {
+      if (changedSessionId !== sessionId) return;
+      if (state === 'busy' && !edgeArmed) {
+        edgeArmed = true;
+        dataAfterEdge = 0;
+        confirmTimer = setTimeout(() => {
+          confirmTimer = null;
+          // Still busy past the confirm bound: a working turn, not a repaint.
+          if (getSessionState(sessionId) === 'busy') finish(true);
+          else edgeArmed = false;
+        }, AGY_ARGV_ACTIVITY_CONFIRM_MS);
+      } else if (state === 'idle' && edgeArmed) {
+        // Repaint burst settled without a stream: re-arm for a real edge.
+        if (confirmTimer) clearTimeout(confirmTimer);
+        confirmTimer = null;
+        edgeArmed = false;
+      }
+    });
+    const untapData = tapSessionData((changedSessionId, data) => {
+      // The chunk that caused the busy edge arrives before the state tap, so
+      // only data after the edge counts — a lone repaint frame never does.
+      if (changedSessionId !== sessionId || data.length === 0 || !edgeArmed) {
+        return;
+      }
+      dataAfterEdge += 1;
+      if (dataAfterEdge >= 2) finish(true);
+    });
+    const untapExit = tapSessionExit((exitedSessionId) => {
+      if (exitedSessionId === sessionId) finish(false);
+    });
+    const onAbort = () => {
+      cleanup();
+      reject(signal?.reason ?? new Error('aborted'));
+    };
+    const cleanup = () => {
+      if (confirmTimer) clearTimeout(confirmTimer);
+      clearTimeout(windowTimer);
+      signal?.removeEventListener('abort', onAbort);
+      untapState();
+      untapData();
+      untapExit();
+    };
+    let settled = false;
+    const finish = (accepted: boolean) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(accepted);
+    };
+    const windowTimer = setTimeout(() => finish(false), windowMs);
+    signal?.addEventListener('abort', onAbort, { once: true });
+    // The edge may have landed between the entry snapshot and the taps.
+    if (getSessionState(sessionId) === 'busy') finish(true);
+  });
+}
+
+/**
+ * Prove that an AGY worker's argv-delivered brief (`--prompt-interactive`)
+ * physically opened a turn — spawn argv has no delivery receipt, so acceptance
+ * is observed on the PTY: boot held busy (turn already streaming) or a
+ * confirmed busy edge inside the bounded window. A pane still quiet past the
+ * window gets ONE bounded nudge — a single Enter, whose physical effect on
+ * agy is submitting the preloaded composer or accepting the safe default of
+ * its boot dialogs (the trust-folder default is "Yes, I trust this folder";
+ * verified against agy 1.1.8) — and only if that also fails, the legacy
+ * typed injection, which carries its own acceptance proof. Any failure throws
+ * so the caller tears the pane down instead of parking a mute zombie worker.
+ */
+async function ensureAgyArgvPromptAccepted(
+  sessionId: string,
+  finalPrompt: string,
+  adapterId: string,
+  invocation?: McpToolInvocation,
+): Promise<void> {
+  const boot = await waitForIdle(
+    sessionId,
+    AGENT_BOOT_TIMEOUT_MS,
+    invocation?.signal,
+  );
+  if (boot === 'exited') throw agentBootExitError(sessionId);
+  // Boot output never settled: the provider is already streaming the turn.
+  if (boot === 'timeout' && getSessionState(sessionId) === 'busy') return;
+  assertMcpInvocationCurrent(invocation);
+  if (
+    await waitForAgentActivity(
+      sessionId,
+      AGY_ARGV_PROMPT_ACTIVITY_WINDOW_MS,
+      invocation?.signal,
+    )
+  ) {
+    return;
+  }
+  assertMcpInvocationCurrent(invocation);
+  const rescued = await submitPendingAgentPrompt(sessionId, invocation, {
+    adapterId,
+    windowMs: PROMPT_ACCEPTANCE_WINDOW_MS,
+  });
+  // A busy session here means the turn opened while the proof was pending —
+  // re-typing the brief would interleave with live work.
+  if (rescued || getSessionState(sessionId) === 'busy') return;
+  assertMcpInvocationCurrent(invocation);
+  await deliverAgentPrompt(sessionId, finalPrompt, invocation, { adapterId });
 }
 
 export interface SpawnToolOptions {
@@ -774,6 +917,16 @@ export async function spawnPaneAndMaybePrompt(
     try {
       if (initialPrompt) {
         assertMcpInvocationCurrent(hooks.invocation);
+        // The argv brief has no delivery receipt: prove the turn physically
+        // opened, nudge once (Enter) when it did not, and only then fall back
+        // to the legacy typed injection. Any failure closes the pane (catch
+        // below) instead of parking a mute worker no watchdog can see.
+        await ensureAgyArgvPromptAccepted(
+          result.sessionId,
+          finalPrompt,
+          adapter.id,
+          hooks.invocation,
+        );
         hooks.onPromptAccepted?.(
           result.paneId,
           result.sessionId,

@@ -20,6 +20,65 @@ export interface LegacyHandoffPayload {
 }
 
 /**
+ * Terminal transports hard-wrap long lines at the pane width: the TUI emits
+ * CR/LF plus the transcript indent in the MIDDLE of the block text. Inside a
+ * JSON string literal that raw newline makes the candidate unparseable, so a
+ * real handoff with a realistic summary never completed (field case: AGY/gemini
+ * TUI wrapped `"summary":"...visíveis␍␊  encontradas."` and the block was
+ * dropped while the placeholder example block — short enough to fit one line —
+ * kept parsing). Repair joins a wrapped continuation with a single space, and
+ * can only affect sequences that are invalid JSON anyway: raw CR/LF inside a
+ * string literal. Newlines between JSON tokens (pretty-printed blocks) are
+ * valid and untouched. Payload validation downstream is unchanged.
+ */
+export function repairTerminalLineWrap(candidate: string): string {
+  let out = '';
+  let inString = false;
+  let escaped = false;
+  for (let index = 0; index < candidate.length; index += 1) {
+    const ch = candidate[index];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+        out += ch;
+        continue;
+      }
+      if (ch === '\\') {
+        escaped = true;
+        out += ch;
+        continue;
+      }
+      if (ch === '"') {
+        inString = false;
+        out += ch;
+        continue;
+      }
+      if (ch === '\n' || ch === '\r') {
+        // Hard-wrap: consume the newline run and the continuation indent.
+        let end = index;
+        while (
+          end < candidate.length &&
+          (candidate[end] === '\n' ||
+            candidate[end] === '\r' ||
+            candidate[end] === ' ' ||
+            candidate[end] === '\t')
+        ) {
+          end += 1;
+        }
+        out += ' ';
+        index = end - 1;
+        continue;
+      }
+      out += ch;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    out += ch;
+  }
+  return out;
+}
+
+/**
  * Extract the first balanced top-level JSON object from `text`. Returns the
  * parsed value and the index just past it, or null while incomplete.
  */
@@ -44,10 +103,18 @@ export function extractJsonObject(
     else if (ch === '}') {
       depth--;
       if (depth === 0) {
+        const candidate = text.slice(start, i + 1);
         try {
-          return { value: JSON.parse(text.slice(start, i + 1)), end: i + 1 };
+          return { value: JSON.parse(candidate), end: i + 1 };
         } catch {
-          return null;
+          try {
+            return {
+              value: JSON.parse(repairTerminalLineWrap(candidate)),
+              end: i + 1,
+            };
+          } catch {
+            return null;
+          }
         }
       }
     }

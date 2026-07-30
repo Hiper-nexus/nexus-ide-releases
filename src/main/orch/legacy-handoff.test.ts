@@ -37,6 +37,26 @@ describe('extractJsonObject', () => {
   it('returns null while the object is incomplete', () => {
     expect(extractJsonObject('{"a": 1, ')).toBeNull();
   });
+
+  it('repairs a terminal hard-wrap inside a string literal', () => {
+    // TUI line-wrap at the pane width inserts CR/LF + transcript indent in the
+    // middle of the JSON text (field case: AGY/gemini transcript).
+    const wrapped =
+      '{"status":"success","summary":"Inspeção somente leitura realizada: 0 ' +
+      'entradas visíveis\r\n  encontradas.","artifacts":[]}';
+    const result = extractJsonObject(wrapped);
+    expect(JSON.parse(JSON.stringify(result?.value))).toEqual({
+      status: 'success',
+      summary: 'Inspeção somente leitura realizada: 0 entradas visíveis encontradas.',
+      artifacts: [],
+    });
+  });
+
+  it('keeps pretty-printed blocks and rejects still-invalid JSON', () => {
+    const pretty = '{\n  "a": 1,\n  "b": "x"\n}';
+    expect(extractJsonObject(pretty)?.value).toEqual({ a: 1, b: 'x' });
+    expect(extractJsonObject('{"a": }')).toBeNull();
+  });
 });
 
 describe('LegacyHandoffParser', () => {
@@ -99,6 +119,35 @@ describe('LegacyHandoffParser', () => {
     parser.feed('s1', 'x'.repeat(20_000));
     parser.feed('s1', '"}');
     expect(received).toHaveLength(0);
+  });
+
+  it('delivers a real handoff whose summary the TUI hard-wrapped', () => {
+    const { parser, received } = collect();
+    const summary =
+      'Inspeção somente leitura realizada no nível raiz: 0 entradas visíveis encontradas.';
+    // Exactly what the AGY transcript emitted after ANSI-strip: the JSON string
+    // broken by CR/LF + two-space continuation indent.
+    const wrappedBlock =
+      `${LEGACY_MARKER}\r\n  \r\n  {"status":"success","summary":"Inspeção ` +
+      `somente leitura realizada no nível raiz: 0 entradas visíveis\r\n  ` +
+      `encontradas.","artifacts":[]}\r\n`;
+    parser.feed('s1', wrappedBlock);
+    expect(received).toHaveLength(1);
+    expect(received[0].payload).toEqual({
+      status: 'success',
+      summary,
+      artifacts: [],
+    });
+  });
+
+  it('still rejects a wrapped placeholder example block', () => {
+    const { parser, received } = collect();
+    const wrappedPlaceholder =
+      `${LEGACY_MARKER}\r\n  {"status":"success","summary":"<resumo objetivo ` +
+      `do que\r\n  fez>","artifacts":[]}`;
+    parser.feed('s1', wrappedPlaceholder);
+    expect(received).toHaveLength(1);
+    expect(isPlaceholderSummary(received[0].payload.summary)).toBe(true);
   });
 });
 
