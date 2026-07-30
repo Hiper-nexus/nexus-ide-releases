@@ -10,12 +10,12 @@ import type {
  * effects — every function returns a fresh tree so the store can swap it in.
  */
 
-/**
- * Soft/hard caps for live panes. Above soft, new orch spawns are refused so a
- * stalled mission cannot flood a small screen; hard is a hard stop for any path.
- */
-export const MAX_LIVE_PANES_SOFT = 12;
-export const MAX_LIVE_PANES_HARD = 20;
+// The caps live in shared/ so the main-process scheduler derives its pane
+// budget from the same renderer limit this tree enforces.
+export {
+  MAX_LIVE_PANES_HARD,
+  MAX_LIVE_PANES_SOFT,
+} from '../../shared/pane-limits';
 
 function id(prefix: string): string {
   return `${prefix}-${crypto.randomUUID().slice(0, 8)}`;

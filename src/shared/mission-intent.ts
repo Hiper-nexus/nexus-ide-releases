@@ -549,14 +549,17 @@ export function defaultBudgetsForRisk(
       // (2 workers/200 steps) foram calibrados na era do teto de token que já
       // não existe e sufocavam missões reais (caso de campo 17/07).
       executionTokens: 200_000,
-      maxWorkers: 3,
+      // Risco restringe a SUPERFÍCIE DE APROVAÇÃO (modal nativo), não o
+      // paralelismo: sensitive recebe o mesmo teto de workers que normal —
+      // goals comuns como "corrija o login" não podem encolher a wave.
+      maxWorkers: 8,
       maxSteps: 400,
     };
   }
   return {
     planningTokens: 1_200,
     executionTokens: 800_000,
-    maxWorkers: 4,
+    maxWorkers: 8,
     maxSteps: 600,
   };
 }

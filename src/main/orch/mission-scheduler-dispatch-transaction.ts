@@ -73,6 +73,26 @@ import { throwIfMissionSchedulerAborted } from "./mission-scheduler-abort";
 export const MISSION_SCHEDULER_BOOTSTRAP_FAILURE_PREFIX =
   "Falha durante o bootstrap do worker:";
 
+// Mutex async por checkout ao redor de `git worktree add`: uma wave paralela
+// despacha os workers concorrentemente e o Git falha com lock em vez de
+// enfileirar — sem a serialização, creates irmãos derrubam uns aos outros.
+const worktreeCreateChains = new Map<string, Promise<unknown>>();
+
+export function runWorktreeCreateSerialized<T>(
+  scope: Pick<ProjectExecutionScope, "projectId" | "checkoutId">,
+  create: () => Promise<T>,
+): Promise<T> {
+  const key = `${scope.projectId}:${scope.checkoutId}`;
+  const previous = worktreeCreateChains.get(key) ?? Promise.resolve();
+  const next = previous.catch(() => undefined).then(create);
+  worktreeCreateChains.set(key, next);
+  return next.finally(() => {
+    if (worktreeCreateChains.get(key) === next) {
+      worktreeCreateChains.delete(key);
+    }
+  });
+}
+
 export class MissionSchedulerCapacityWaitError extends Error {
   constructor(message: string, cause?: unknown) {
     super(
@@ -805,14 +825,16 @@ export async function dispatchMissionSchedulerTask(
     dispatchWorkerIncarnationId = claim.workerIncarnationId;
     const worktree =
       useTaskWorktree
-        ? await requireWorktreeRuntimeRegistry().create({
-            scope,
-            missionId,
-            taskId,
-            workerId,
-            ownership: mapped.ownership,
-            dependsOn: worktreeDependencies,
-          })
+        ? await runWorktreeCreateSerialized(scope, () =>
+            requireWorktreeRuntimeRegistry().create({
+              scope,
+              missionId,
+              taskId,
+              workerId,
+              ownership: mapped.ownership,
+              dependsOn: worktreeDependencies,
+            }),
+          )
         : null;
     throwIfMissionSchedulerAborted(signal);
     worktreeCreated = worktree !== null;

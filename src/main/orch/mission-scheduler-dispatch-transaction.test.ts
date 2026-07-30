@@ -9,6 +9,7 @@ import {
   isMissionSchedulerRetryableDispatchError,
   missionSchedulerLiveRosterAdapter,
   persistMissionSchedulerDispatchFailure,
+  runWorktreeCreateSerialized,
   warmMissionSchedulerRosterSubscriptionAuth,
 } from "./mission-scheduler-dispatch-transaction";
 import { resolveSealedWorkerRoute } from "./mission-scheduler-plan";
@@ -557,5 +558,45 @@ describe("sealed roster auth gate for keychain-only providers (AGY)", () => {
     await warmMissionSchedulerRosterSubscriptionAuth("codex");
 
     expect(refresh).not.toHaveBeenCalled();
+  });
+});
+
+describe("runWorktreeCreateSerialized", () => {
+  const scope = { projectId: "p1", checkoutId: "c1" };
+
+  it("serializes concurrent creates per checkout", async () => {
+    const order: string[] = [];
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const first = runWorktreeCreateSerialized(scope, async () => {
+      order.push("first:start");
+      await firstGate;
+      order.push("first:end");
+      return 1;
+    });
+    const second = runWorktreeCreateSerialized(scope, async () => {
+      order.push("second:start");
+      return 2;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(order).toEqual(["first:start"]);
+    releaseFirst();
+    await expect(first).resolves.toBe(1);
+    await expect(second).resolves.toBe(2);
+    expect(order).toEqual(["first:start", "first:end", "second:start"]);
+  });
+
+  it("keeps the chain alive after a failed create", async () => {
+    const other = { projectId: "p1", checkoutId: "c2" };
+    await expect(
+      runWorktreeCreateSerialized(other, async () => {
+        throw new Error("git lock");
+      }),
+    ).rejects.toThrow("git lock");
+    await expect(
+      runWorktreeCreateSerialized(other, async () => "ok"),
+    ).resolves.toBe("ok");
   });
 });

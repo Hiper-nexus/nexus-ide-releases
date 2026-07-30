@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PaneModel, WorkspaceLayout } from '../../shared/types';
 import { defaultCanvasLayout } from '../lib/canvas-layout';
-import { buildGridTree, listPanes } from '../lib/split-tree';
+import { buildGridTree, listPanes, MAX_LIVE_PANES_SOFT } from '../lib/split-tree';
 import {
   detachWorkspaceLayout,
   flushLayout,
@@ -269,5 +269,46 @@ describe('layout-store workspace load failure', () => {
     await new Promise((resolve) => setTimeout(resolve, 350));
 
     expect(save).not.toHaveBeenCalled();
+  });
+});
+
+describe('layout-store orch spawn ceiling', () => {
+  function seedPanes(count: number): void {
+    const panes: PaneModel[] = Array.from({ length: count }, (_, i) => ({
+      id: `pane-${i}`,
+      kind: 'shell',
+      title: `T${i}`,
+    }));
+    useLayoutStore.setState({
+      root: buildGridTree(panes),
+      focusedPaneId: 'pane-0',
+      hydrated: true,
+      viewKind: 'grid',
+      canvasNodeLayouts: {},
+      canvasViewport: { x: 0, y: 0, zoom: 1 },
+    });
+  }
+
+  const orchSpawn = () =>
+    useLayoutStore.getState().spawnOrchPane({
+      paneId: 'pane-orch-new',
+      adapterId: 'claude',
+      title: 'worker',
+      orchRequestId: 'orchspawn-ceiling',
+      missionId: 'mission-ceiling',
+      role: 'worker',
+    });
+
+  it('admits orch spawns up to the soft ceiling (orchestrator + 8 workers + user panes)', () => {
+    seedPanes(MAX_LIVE_PANES_SOFT - 1);
+    expect(orchSpawn()).toBe('pane-orch-new');
+    expect(listPanes(useLayoutStore.getState().root)).toHaveLength(
+      MAX_LIVE_PANES_SOFT,
+    );
+  });
+
+  it('refuses orch spawns at the soft ceiling', () => {
+    seedPanes(MAX_LIVE_PANES_SOFT);
+    expect(orchSpawn).toThrow(`Limite de panes (${MAX_LIVE_PANES_SOFT})`);
   });
 });

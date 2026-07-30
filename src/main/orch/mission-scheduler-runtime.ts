@@ -89,6 +89,13 @@ export interface SchedulerRuntimeDeps {
   useConfiguredCapForCurrentWave?(
     tasks: readonly SchedulerRuntimeTask[],
   ): boolean;
+  /**
+   * Adaptive cap ladder gate. When it returns false (operator-choice default:
+   * frictionless parallel path), the wave cap is the approved configured
+   * ceiling with no adaptive clamp. Defaults to true (governed keeps the
+   * conservative ladder).
+   */
+  isAdaptiveCapEnabled?(): boolean;
   now(): number;
   /** Optional blast-radius expander (pure file set). */
   expandFiles?(files: readonly string[]): readonly string[];
@@ -204,6 +211,12 @@ function resolveConfig(
     };
   }
   if (useConfiguredCap) return base;
+  if (deps.isAdaptiveCapEnabled?.() === false) {
+    // Operator-choice (default): the approved configured ceiling IS the wave
+    // cap — frictionless parallel path, no adaptive clamp. Machine limits
+    // (cores/panes) still apply downstream in effectiveConcurrencyCap.
+    return base;
+  }
   // Adaptive cap is the configured ceiling when flag is on (starts 2–3).
   return {
     configuredCap: Math.min(base.configuredCap, state.adaptiveCap.currentCap),
@@ -476,6 +489,7 @@ export function resolveEffectiveCapForTest(
   base: ScheduleConfig,
   adaptive: AdaptiveCapState,
   parallelEnabled: boolean,
+  adaptiveCapEnabled = true,
 ): number {
   if (!parallelEnabled) {
     return effectiveConcurrencyCap({
@@ -483,6 +497,9 @@ export function resolveEffectiveCapForTest(
       cores: base.cores,
       paneBudget: base.paneBudget,
     });
+  }
+  if (!adaptiveCapEnabled) {
+    return effectiveConcurrencyCap(base);
   }
   return effectiveConcurrencyCap({
     configuredCap: Math.min(base.configuredCap, adaptive.currentCap),

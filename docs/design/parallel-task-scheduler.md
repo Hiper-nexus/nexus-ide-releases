@@ -59,6 +59,10 @@ Loop (deterministic, re-entrant on every tick / task-completion event):
    wave, nor (b) any `running` worker's ownership. Deterministic order (task id) so it is
    reproducible and testable.
 3. **Concurrency cap** = admit up to `min(configuredCap, cores-2, MAX_LIVE_PANES budget)`.
+   In `governed` policy `configuredCap` is further clamped by the adaptive ladder
+   (starts 2, widens after clean waves); in `operator-choice` (the frictionless
+   default) the approved `maxWorkers` from the intent contract IS the wave cap —
+   machine limits (real host cores, renderer pane budget) still apply.
 4. **Dispatch** = for each admitted task: `nexus_worktree_create` (existing) → spawn a
    worker pane in that worktree → mark `running`. (Reuses the existing spawn + worktree path.)
 5. **On task done** = enqueue its worktree on the `MergeQueue` (serial barrier). On merge

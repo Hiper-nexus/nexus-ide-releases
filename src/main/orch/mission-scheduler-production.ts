@@ -1,9 +1,13 @@
 import type { ProjectExecutionScope } from "../../shared/types";
+import os from "node:os";
 import { FEATURE_FLAG_IDS } from "../../shared/feature-flags";
 import type { MissionIntentContract } from "../../shared/mission-intent";
+import { MAX_LIVE_PANES_SOFT } from "../../shared/pane-limits";
+import { isOperatorChoicePolicy } from "../../shared/squad-cli-policy";
 import { getFeatureFlagRegistry } from "../feature-flags/feature-flag-registry";
 import { getContextWorkflowService } from "../context/context-workflow-registry";
 import { MergeValidationCoordinator } from "../context/merge-validation-coordinator";
+import { getOrchSettings } from "../persistence/settings-store";
 import {
   getProjectDomainStores,
   requireProjectDomainStoreRegistry,
@@ -108,6 +112,19 @@ export function missionSchedulerConfiguredWorkerCap(
   contract: Pick<MissionIntentContract, "budgets">,
 ): number {
   return contract.budgets.maxWorkers;
+}
+
+/**
+ * Real machine limits feeding the scheduler's effective cap: host cores and
+ * the pane budget derived from the renderer live-pane soft cap, reserving the
+ * orchestrator + one operator pane so an admitted wave never exceeds what the
+ * layout would refuse.
+ */
+export function missionSchedulerMachineLimits(
+  cores: number = os.cpus().length,
+  paneSoftCap: number = MAX_LIVE_PANES_SOFT,
+): { readonly cores: number; readonly paneBudget: number } {
+  return { cores, paneBudget: Math.max(0, paneSoftCap - 2) };
 }
 
 /**
@@ -1296,9 +1313,15 @@ async function tickMission(
             configuredCap: mission?.intentContract
               ? missionSchedulerConfiguredWorkerCap(mission.intentContract)
               : 0,
-            cores: 8,
-            paneBudget: 8,
+            // Real machine limits, not pretend config (host cores + renderer
+            // pane budget — see missionSchedulerMachineLimits).
+            ...missionSchedulerMachineLimits(),
           }),
+          // Operator-choice (frictionless default): the approved maxWorkers
+          // IS the wave cap, no adaptive clamp. Governed keeps the
+          // conservative adaptive ladder.
+          isAdaptiveCapEnabled: () =>
+            !isOperatorChoicePolicy(getOrchSettings().squadCliPolicy),
           useConfiguredCapForCurrentWave: () =>
             isTeamReadOnlyFanoutSchedulerWave(currentSchedulerTasks),
           now: () => configured?.now?.() ?? Date.now(),

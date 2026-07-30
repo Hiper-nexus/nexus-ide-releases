@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import os from "node:os";
 import {
   awaitMissionSchedulerAuthorityFence,
   buildMissionSchedulerTaskPrompt,
@@ -10,6 +11,7 @@ import {
   MISSION_SCHEDULER_WORKER_LEASE_POLICY,
   missionAccountQuotaScores,
   missionSchedulerConfiguredWorkerCap,
+  missionSchedulerMachineLimits,
   isTeamReadOnlyFanoutSchedulerWave,
   missionSchedulerLiveRosterAdapter,
   missionSchedulerRouteRequiresAccount,
@@ -29,6 +31,7 @@ import {
   validateMissionMergeWithLifecycleFence,
 } from "./mission-scheduler-production";
 import { compileIntentContract } from "../../shared/mission-intent";
+import { MAX_LIVE_PANES_SOFT } from "../../shared/pane-limits";
 import {
   EMPTY_GIT_DIFF_SHA256,
   type TaskDispatchRecord,
@@ -565,6 +568,18 @@ describe("mission scheduler asynchronous authority fence", () => {
         budgets: { ...intent.budgets, maxWorkers: 1 },
       }),
     ).toBe(1);
+  });
+
+  it("derives machine limits from real cores and the renderer pane ceiling", () => {
+    // Defaults read the host and the shared soft cap — no pretend 8/8.
+    const live = missionSchedulerMachineLimits();
+    expect(live.cores).toBe(os.cpus().length);
+    expect(live.paneBudget).toBe(MAX_LIVE_PANES_SOFT - 2);
+    // Injection keeps the policy explicit and testable.
+    expect(missionSchedulerMachineLimits(4, 12)).toEqual({
+      cores: 4,
+      paneBudget: 10,
+    });
   });
 
   it("routes a promoted builtin mission only through the post-merge PREVC bridge", async () => {

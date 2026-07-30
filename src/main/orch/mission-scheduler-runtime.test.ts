@@ -70,6 +70,7 @@ function makeDeps(opts: {
     readonly willBlock: boolean;
   }) => void;
   useConfiguredCapForCurrentWave?: () => boolean;
+  isAdaptiveCapEnabled?: () => boolean;
 }): {
   deps: SchedulerRuntimeDeps;
   dispatched: string[];
@@ -95,6 +96,9 @@ function makeDeps(opts: {
           useConfiguredCapForCurrentWave:
             opts.useConfiguredCapForCurrentWave,
         }
+      : {}),
+    ...(opts.isAdaptiveCapEnabled
+      ? { isAdaptiveCapEnabled: opts.isAdaptiveCapEnabled }
       : {}),
     now: () => NOW,
     dispatchTask: async (req) => {
@@ -210,6 +214,60 @@ describe('mission-scheduler-runtime P2 flag + driver', () => {
 
     expect(result.decision.plan.kind).toBe('dispatch');
     if (result.decision.plan.kind !== 'dispatch') return;
+    expect(result.decision.plan.effectiveCap).toBe(2);
+    expect(result.decision.plan.waveSize).toBe(2);
+    expect(dispatched).toEqual(['a', 'b']);
+  });
+
+  it('operator-choice: adaptive ladder off admits the approved configured cap', async () => {
+    const tasks = [
+      baseTask('a'),
+      baseTask('b'),
+      baseTask('c'),
+      baseTask('d'),
+    ];
+    const { deps, dispatched } = makeDeps({
+      enabled: true,
+      tasks,
+      config: { configuredCap: 4, cores: 8, paneBudget: 4 },
+      isAdaptiveCapEnabled: () => false,
+    });
+
+    const result = await runSchedulerTick(
+      deps,
+      createSchedulerRuntimeState(),
+    );
+
+    expect(result.decision.plan.kind).toBe('dispatch');
+    if (result.decision.plan.kind !== 'dispatch') return;
+    // DEFAULT_ADAPTIVE_CAP starts at 2, but operator-choice skips the clamp.
+    expect(result.decision.plan.effectiveCap).toBe(4);
+    expect(result.decision.plan.waveSize).toBe(4);
+    expect(dispatched).toEqual(['a', 'b', 'c', 'd']);
+  });
+
+  it('operator-choice: machine limits still bound the wave', async () => {
+    const tasks = [
+      baseTask('a'),
+      baseTask('b'),
+      baseTask('c'),
+      baseTask('d'),
+    ];
+    const { deps, dispatched } = makeDeps({
+      enabled: true,
+      tasks,
+      config: { configuredCap: 8, cores: 4, paneBudget: 8 },
+      isAdaptiveCapEnabled: () => false,
+    });
+
+    const result = await runSchedulerTick(
+      deps,
+      createSchedulerRuntimeState(),
+    );
+
+    expect(result.decision.plan.kind).toBe('dispatch');
+    if (result.decision.plan.kind !== 'dispatch') return;
+    // cores-2 = 2 binds even without the adaptive clamp.
     expect(result.decision.plan.effectiveCap).toBe(2);
     expect(result.decision.plan.waveSize).toBe(2);
     expect(dispatched).toEqual(['a', 'b']);
@@ -687,6 +745,19 @@ describe('mission-scheduler-runtime P4 flag registration + adaptive', () => {
         true,
       ),
     ).toBe(3);
+    // Operator-choice (adaptive ladder off): the configured cap is the wave
+    // cap, still bounded by machine limits (cores-2, paneBudget).
+    expect(
+      resolveEffectiveCapForTest(base, DEFAULT_ADAPTIVE_CAP, true, false),
+    ).toBe(8);
+    expect(
+      resolveEffectiveCapForTest(
+        { ...base, configuredCap: 8, cores: 4 },
+        DEFAULT_ADAPTIVE_CAP,
+        true,
+        false,
+      ),
+    ).toBe(2);
   });
 });
 
