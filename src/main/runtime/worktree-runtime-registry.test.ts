@@ -775,4 +775,35 @@ describe("project worktree runtime registry", () => {
         .get(record.scopeKey),
     ).toEqual({ reason: "relocated-runtime-binding" });
   });
+
+  it("self-heals an ownership-overlap block left by a deleted mission's task, without a fresh registry", async () => {
+    const { scope, manager } = fixture();
+    const registry = new WorktreeRuntimeRegistry(manager);
+    const orphan = await createTrackedWorktree(registry, manager, {
+      scope,
+      missionId: "mission-deleted",
+      taskId: "task-deleted-owner",
+      workerId: "worker-deleted-owner",
+      ownership: { files: ["owned.txt"], symbols: [], domains: ["core"] },
+    });
+    // Simulate the owning mission being deleted after its worktree record
+    // was already created: only the `tasks` row disappears, the same
+    // long-lived registry instance still holds the stale worktree_state
+    // record in memory (no new WorktreeRuntimeRegistry is constructed).
+    manager
+      .open(scope)
+      .db.prepare("DELETE FROM tasks WHERE id = ?")
+      .run(orphan.taskId);
+
+    const successor = await createTrackedWorktree(registry, manager, {
+      scope,
+      missionId: "mission-successor",
+      taskId: "task-successor-owner",
+      workerId: "worker-successor-owner",
+      ownership: { files: ["owned.txt"], symbols: [], domains: ["core"] },
+    });
+
+    expect(successor.taskId).toBe("task-successor-owner");
+    expect(registry.listMission(scope, "mission-deleted")).toEqual([]);
+  });
 });

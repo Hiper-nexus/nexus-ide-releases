@@ -5648,3 +5648,394 @@ describe('advisory provider-unavailable waiver', () => {
     ).toBe(false);
   });
 });
+
+describe('superseded plan generation retirement', () => {
+  const generationSquad = {
+    id: 'golden-squad',
+    agents: [
+      {
+        id: 'worker',
+        agentName: 'Golden Worker',
+        category: 'executor' as const,
+        cli: 'codex',
+        model: 'gpt-5.6-sol',
+        effort: 'high' as const,
+      },
+    ],
+  };
+
+  function generationRow(plannerId: string, title: string) {
+    return {
+      plannerId,
+      title,
+      detail: encodeTaskScheduleDetail('Implementar e testar.', {
+        dependsOn: [],
+        ownership: { files: ['src/golden.ts'], symbols: [], domains: [] },
+        merged: false,
+        agentRef: 'worker',
+        agentCategory: 'executor' as const,
+        executionMode: 'isolated_worktree' as const,
+      }),
+      agentRef: 'worker',
+      agentCategory: 'executor' as const,
+    };
+  }
+
+  /**
+   * Two sealed generations of the same logical plan: v1 left pending (the
+   * orphan wedge from a PREVC refreeze), v2 current and pending.
+   */
+  function twoGenerationFixture() {
+    const runtime = manager();
+    const scope = testProjectScope({ rootRealPath: process.cwd() });
+    const missions = createScopedMissionStore(runtime, scope);
+    const tasks = createScopedTaskStore(runtime, scope);
+    const dispatches = createTaskDispatchStore(runtime, scope);
+    const mission = missions.create({
+      title: 'Gerações superseded',
+      squadId: 'golden-squad',
+      intentVersion: 1,
+      intentState: 'executing',
+      intentContract: approvedIntentContract({
+        goal: 'Completar pelo motor com prova real',
+        intentVersion: 1,
+      }),
+      orchestratorSessionId: 'orchestrator-golden',
+    });
+    missions.setStatus(mission.id, 'running');
+    const [staleExecutor, staleReviewer] = tasks.createPlanAtomically({
+      missionId: mission.id,
+      intentVersion: 1,
+      squad: generationSquad,
+      rows: [
+        generationRow('implement', 'Entregar v1'),
+        generationRow('review', 'Revisar v1'),
+      ],
+    });
+    missions.update(mission.id, {
+      intentVersion: 2,
+      intentContract: approvedIntentContract({
+        goal: 'Completar pelo motor com prova real',
+        intentVersion: 2,
+      }),
+    });
+    const [currentExecutor] = tasks.createPlanAtomically({
+      missionId: mission.id,
+      intentVersion: 2,
+      squad: generationSquad,
+      rows: [generationRow('implement', 'Entregar v2')],
+    });
+    return {
+      runtime,
+      scope,
+      missions,
+      tasks,
+      dispatches,
+      mission,
+      staleExecutor: staleExecutor!,
+      staleReviewer: staleReviewer!,
+      currentExecutor: currentExecutor!,
+    };
+  }
+
+  function taskStatus(
+    fixture: ReturnType<typeof twoGenerationFixture>,
+    taskId: string,
+  ): string | undefined {
+    return fixture.tasks.list(fixture.mission.id).find(
+      (task) => task.id === taskId,
+    )?.status;
+  }
+
+  it('retires orphan pending tasks of superseded generations and admits the current executor', () => {
+    const fixture = twoGenerationFixture();
+
+    const retired = fixture.dispatches.retireSupersededPlanGenerations({
+      missionId: fixture.mission.id,
+      intentVersion: 2,
+    });
+
+    expect(new Set(retired)).toEqual(
+      new Set([fixture.staleExecutor.id, fixture.staleReviewer.id]),
+    );
+    expect(taskStatus(fixture, fixture.staleExecutor.id)).toBe('failed');
+    expect(taskStatus(fixture, fixture.staleReviewer.id)).toBe('failed');
+    expect(taskStatus(fixture, fixture.currentExecutor.id)).toBe('pending');
+    // Idempotent: a second pass retires nothing.
+    expect(
+      fixture.dispatches.retireSupersededPlanGenerations({
+        missionId: fixture.mission.id,
+        intentVersion: 2,
+      }),
+    ).toEqual([]);
+    // The current generation's executor is still admissible afterwards.
+    const receipt = fixture.tasks.getPlanReceipt(fixture.mission.id, 2)!;
+    const claim = fixture.dispatches.claim({
+      missionId: fixture.mission.id,
+      taskId: fixture.currentExecutor.id,
+      intentVersion: 2,
+      workerId: 'Golden Worker',
+      leaseOwner: 'main',
+      leaseMs: 30_000,
+      ownership: { files: ['src/golden.ts'], symbols: [], domains: [] },
+      executionMode: 'isolated_worktree',
+      agentRef: 'worker',
+      agentCategory: 'executor',
+      rosterHash: receipt.rosterHash,
+      routeContract: {
+        adapterId: 'codex',
+        model: 'gpt-5.6-sol',
+        effort: 'high',
+      },
+    });
+    expect(claim.taskId).toBe(fixture.currentExecutor.id);
+  });
+
+  it('heals the exact refreeze wedge: pending task with a dead superseded retry dispatch', () => {
+    const fixture = twoGenerationFixture();
+    // Replay the production wedge on the stale generation: claim → retryable
+    // bootstrap failure → task back to pending, dispatch parked in the
+    // superseded retry lane, no receipts. The later intent bump strands it.
+    const db = fixture.runtime.open(fixture.scope).db;
+    db.prepare(
+      `INSERT INTO task_dispatch_queue
+         (id, task_id, mission_id, intent_version, revision, attempt, state,
+          worker_id, agent_ref, agent_category, execution_mode,
+          ownership_json, route_contract_json, roster_hash,
+          lease_owner, lease_token_hash, lease_expires_at,
+          worker_incarnation_id, created_at, updated_at)
+       VALUES (?, ?, ?, 1, 1, 1, 'superseded',
+               'Golden Worker', 'worker', 'executor', 'isolated_worktree',
+               '{"files":["src/golden.ts"],"symbols":[],"domains":[]}', NULL,
+               'roster-hash', 'main', 'lease-hash', 0,
+               'incarnation-stale', 1, 1)`,
+    ).run(
+      `dispatch-${fixture.staleExecutor.id}`,
+      fixture.staleExecutor.id,
+      fixture.mission.id,
+    );
+
+    const retired = fixture.dispatches.retireSupersededPlanGenerations({
+      missionId: fixture.mission.id,
+      intentVersion: 2,
+    });
+
+    expect(retired).toContain(fixture.staleExecutor.id);
+    expect(taskStatus(fixture, fixture.staleExecutor.id)).toBe('failed');
+    // The stale dispatch row stays as immutable audit history.
+    expect(
+      db
+        .prepare(
+          `SELECT state FROM task_dispatch_queue WHERE task_id = ?`,
+        )
+        .get(fixture.staleExecutor.id),
+    ).toEqual({ state: 'superseded' });
+  });
+
+  it('never touches superseded tasks with physical work or receipts', () => {
+    const fixture = twoGenerationFixture();
+    const db = fixture.runtime.open(fixture.scope).db;
+    // Completed physical work: terminal task + receipt-bearing dispatch.
+    db.prepare(`UPDATE tasks SET status = 'done' WHERE id = ?`).run(
+      fixture.staleExecutor.id,
+    );
+    db.prepare(
+      `INSERT INTO task_dispatch_queue
+         (id, task_id, mission_id, intent_version, revision, attempt, state,
+          worker_id, agent_ref, agent_category, execution_mode,
+          ownership_json, route_contract_json, roster_hash,
+          lease_owner, lease_token_hash, lease_expires_at,
+          worker_incarnation_id, integration_receipt_json, completed_at,
+          created_at, updated_at)
+       VALUES (?, ?, ?, 1, 1, 1, 'completed',
+               'Golden Worker', 'worker', 'executor', 'isolated_worktree',
+               '{"files":["src/golden.ts"],"symbols":[],"domains":[]}', NULL,
+               'roster-hash', 'main', 'lease-hash', 0,
+               'incarnation-done', '{}', 1, 1, 1)`,
+    ).run(
+      `dispatch-${fixture.staleExecutor.id}`,
+      fixture.staleExecutor.id,
+      fixture.mission.id,
+    );
+
+    const retired = fixture.dispatches.retireSupersededPlanGenerations({
+      missionId: fixture.mission.id,
+      intentVersion: 2,
+    });
+
+    expect(retired).toEqual([fixture.staleReviewer.id]);
+    expect(taskStatus(fixture, fixture.staleExecutor.id)).toBe('done');
+    expect(taskStatus(fixture, fixture.staleReviewer.id)).toBe('failed');
+  });
+
+  it('rejects retirement against a stale intentVersion', () => {
+    const fixture = twoGenerationFixture();
+
+    expect(() =>
+      fixture.dispatches.retireSupersededPlanGenerations({
+        missionId: fixture.mission.id,
+        intentVersion: 1,
+      }),
+    ).toThrow(/intentVersion obsoleta/i);
+    expect(taskStatus(fixture, fixture.staleExecutor.id)).toBe('pending');
+  });
+
+  it('fails closed on a hash-corrupted stale plan without retiring anything', () => {
+    const fixture = twoGenerationFixture();
+    fixture.runtime
+      .open(fixture.scope)
+      .db.prepare(
+        `UPDATE mission_task_plans SET plan_hash = ?
+         WHERE mission_id = ? AND intent_version = 1`,
+      )
+      .run('0'.repeat(64), fixture.mission.id);
+
+    expect(() =>
+      fixture.dispatches.retireSupersededPlanGenerations({
+        missionId: fixture.mission.id,
+        intentVersion: 2,
+      }),
+    ).toThrow(/invalid.*stale sealed task plan hash/i);
+    expect(taskStatus(fixture, fixture.staleExecutor.id)).toBe('pending');
+    expect(taskStatus(fixture, fixture.currentExecutor.id)).toBe('pending');
+  });
+
+  it('completes the mission from the current generation with retired orphans present', () => {
+    const fixture = twoGenerationFixture();
+    const { runtime, scope, missions, tasks, dispatches, mission } = fixture;
+    const handoffs = createScopedHandoffStore(runtime, scope);
+    const receipt = tasks.getPlanReceipt(mission.id, 2)!;
+    const ownership = { files: ['src/golden.ts'], symbols: [], domains: [] };
+    const route = missions.reserveRouteDecision(
+      mission.id,
+      fixture.currentExecutor.title,
+      {
+        tier: 'hard',
+        adapterId: 'codex',
+        model: 'gpt-5.6-sol',
+        effort: 'high',
+        reason: 'roster selado',
+        alternatives: [],
+      },
+    );
+    const claim = dispatches.claim({
+      missionId: mission.id,
+      taskId: fixture.currentExecutor.id,
+      intentVersion: 2,
+      workerId: 'Golden Worker',
+      leaseOwner: 'main',
+      leaseMs: 30_000,
+      ownership,
+      executionMode: 'isolated_worktree',
+      agentRef: 'worker',
+      agentCategory: 'executor',
+      rosterHash: receipt.rosterHash,
+      routeContract: {
+        adapterId: 'codex',
+        model: 'gpt-5.6-sol',
+        effort: 'high',
+      },
+    });
+    const routed = dispatches.attachRoute({
+      taskId: fixture.currentExecutor.id,
+      revision: claim.revision,
+      leaseToken: claim.leaseToken,
+      routeReservationId: route.id,
+      adapterId: 'codex',
+      model: 'gpt-5.6-sol',
+      effort: 'high',
+    });
+    missions.consumeRouteReservation(
+      {
+        reservationId: route.id,
+        missionId: mission.id,
+        adapterId: 'codex',
+        model: 'gpt-5.6-sol',
+        effort: 'high',
+      },
+      `dispatch:${claim.id}`,
+    );
+    dispatches.bindSpawn({
+      taskId: fixture.currentExecutor.id,
+      revision: routed.revision,
+      leaseToken: claim.leaseToken,
+      workerIncarnationId: claim.workerIncarnationId,
+      paneId: 'pane-golden',
+      sessionId: 'session-golden',
+    });
+    const handoff = handoffs.submit({
+      missionId: mission.id,
+      sessionId: 'session-golden',
+      workerIncarnationId: claim.workerIncarnationId,
+      fromAgent: 'Golden Worker',
+      status: 'success',
+      summary: 'Implementação integrada com testes e commit local verificados.',
+    });
+    insertPhysicalHandoffAuthority({
+      runtime,
+      scope,
+      missionId: mission.id,
+      handoffId: handoff.id,
+      sessionId: 'session-golden',
+      workerIncarnationId: claim.workerIncarnationId,
+      worktreeHeadSha: repositoryHead(),
+    });
+    const ready = dispatches.acceptHandoff({
+      sessionId: 'session-golden',
+      workerIncarnationId: claim.workerIncarnationId,
+      handoffId: handoff.id,
+    });
+    const integratedHeadSha = repositoryHead();
+    const qualityEvidenceIds = seedIntegratedQualityAuthority({
+      runtime,
+      scope,
+      missionId: mission.id,
+      headSha: integratedHeadSha,
+      label: 'superseded-generation-completion',
+    });
+    dispatches.completeByCoordinator({
+      taskId: fixture.currentExecutor.id,
+      revision: ready.revision,
+      receipt: {
+        kind: 'worktree_integrated',
+        reference: integratedHeadSha,
+        completedAt: Date.now(),
+        evidenceIds: [...qualityEvidenceIds],
+      },
+    });
+    const attempt = handoffs.reserveDeliveryAttempt({
+      handoffId: handoff.id,
+      missionId: mission.id,
+      orchestratorSessionId: 'orchestrator-golden',
+      maxAttempts: 2,
+    });
+    handoffs.markDeliveryAttemptPasted({
+      attemptId: attempt.id,
+      handoffId: handoff.id,
+      acceptDeadlineAt: Date.now() + 10_000,
+    });
+    expect(
+      handoffs.acceptDeliveryAttempt({
+        attemptId: attempt.id,
+        handoffId: handoff.id,
+      }),
+    ).toBe(true);
+
+    expect(
+      dispatches.retireSupersededPlanGenerations({
+        missionId: mission.id,
+        intentVersion: 2,
+      }),
+    ).toEqual([fixture.staleExecutor.id, fixture.staleReviewer.id]);
+    expect(
+      dispatches.completeMissionFromVerifiedPlan({
+        missionId: mission.id,
+        intentVersion: 2,
+      }),
+    ).toBe(true);
+    expect(missions.get(mission.id)).toMatchObject({
+      status: 'done',
+      intentState: 'done',
+    });
+  });
+});

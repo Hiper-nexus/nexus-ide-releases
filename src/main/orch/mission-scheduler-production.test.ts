@@ -31,6 +31,7 @@ import {
   requeueRetiredQualityRepairs,
   reconcileMissionCompletionAfterSchedulerTick,
   reconcileInterruptedWorktreeReservationFailuresForScope,
+  reconcileSupersededPlanGenerations,
   reconcileTerminalMergeFailureForScope,
   validateMissionMergeWithLifecycleFence,
 } from "./mission-scheduler-production";
@@ -2353,5 +2354,109 @@ describe("mission scheduler worker lease contract", () => {
       revision: 3,
       reason: expect.stringMatching(/após restart.*ambiguous/i),
     });
+  });
+});
+
+describe("superseded plan generation reconciliation", () => {
+  it("returns no retirements when the mission has no approved contract", () => {
+    const scope = testProjectScope();
+    const retireSupersededPlanGenerations = vi.fn();
+    const result = reconcileSupersededPlanGenerations(
+      scope,
+      "mission-without-contract",
+      {
+        registry: { get: vi.fn(), markFailed: vi.fn() } as never,
+        getStores: () =>
+          ({
+            missions: { get: vi.fn(() => null) },
+            taskDispatches: { retireSupersededPlanGenerations },
+          }) as never,
+      },
+    );
+    expect(result).toEqual([]);
+    expect(retireSupersededPlanGenerations).not.toHaveBeenCalled();
+  });
+
+  it("retires orphan generations and terminalizes their active worktrees", () => {
+    const scope = testProjectScope();
+    const retireSupersededPlanGenerations = vi.fn(() => [
+      "task-stale-a",
+      "task-stale-b",
+    ]);
+    const records = new Map<string, { status: string }>([
+      ["task-stale-a", { status: "ready" }],
+      ["task-stale-b", { status: "integrated" }],
+    ]);
+    const markFailed = vi.fn();
+    const registry = {
+      get: vi.fn(
+        (_scope: unknown, _missionId: string, taskId: string) =>
+          records.get(taskId) ?? null,
+      ),
+      markFailed,
+    };
+    const result = reconcileSupersededPlanGenerations(
+      scope,
+      "mission-generations",
+      {
+        registry: registry as never,
+        getStores: () =>
+          ({
+            missions: {
+              get: vi.fn(() => ({
+                intentContract: { intentVersion: 2 },
+              })),
+            },
+            taskDispatches: { retireSupersededPlanGenerations },
+          }) as never,
+      },
+    );
+    expect(result).toEqual(["task-stale-a", "task-stale-b"]);
+    expect(retireSupersededPlanGenerations).toHaveBeenCalledWith({
+      missionId: "mission-generations",
+      intentVersion: 2,
+    });
+    // Only the still-active record releases ownership; an integrated one is
+    // physical history and must stay untouched.
+    expect(markFailed).toHaveBeenCalledTimes(1);
+    expect(markFailed).toHaveBeenCalledWith(
+      scope,
+      "mission-generations",
+      "task-stale-a",
+      expect.stringMatching(/gera|superseded|substitu/i),
+    );
+  });
+
+  it("still reports retirements when a worktree release fails", () => {
+    const scope = testProjectScope();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const result = reconcileSupersededPlanGenerations(
+        scope,
+        "mission-generations",
+        {
+          registry: {
+            get: vi.fn(() => ({ status: "reserved" })),
+            markFailed: vi.fn(() => {
+              throw new WorktreeStateConflictError("cas lost");
+            }),
+          } as never,
+          getStores: () =>
+            ({
+              missions: {
+                get: vi.fn(() => ({
+                  intentContract: { intentVersion: 2 },
+                })),
+              },
+              taskDispatches: {
+                retireSupersededPlanGenerations: vi.fn(() => ["task-stale"]),
+              },
+            }) as never,
+        },
+      );
+      expect(result).toEqual(["task-stale"]);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

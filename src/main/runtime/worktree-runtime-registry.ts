@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { ProjectExecutionScope } from "../../shared/types";
 import type { ProjectRuntimeManager } from "./project-runtime-manager";
 import {
+  OwnershipOverlapError,
   WorktreeManager,
   type CreateWorktreeInput,
   type WorktreeRecord,
@@ -105,29 +106,7 @@ export class WorktreeRuntimeRegistry {
     // operator cannot inspect or clear it. Reconcile only converges `reserved`
     // rows and never saw these. Drop records whose task row is gone; no Git
     // path, ref or worktree is touched.
-    try {
-      const liveTaskIds = new Set(
-        (
-          new ScopedStoreBinding(this.#manager, immutableScope)
-            .readDatabase()
-            .prepare('SELECT id FROM tasks')
-            .all() as ReadonlyArray<{ id: string }>
-        ).map((row) => row.id),
-      );
-      const purged = worktrees.purgeRecordsWithoutTask(
-        immutableScope,
-        liveTaskIds,
-      );
-      if (purged.length > 0) {
-        console.warn(
-          `[worktree-runtime] dropped ${purged.length} worktree record(s) ` +
-            'whose task no longer exists; no Git path or ref was removed',
-        );
-      }
-    } catch (error) {
-      // Never block runtime startup on an opportunistic cleanup.
-      console.warn('[worktree-runtime] orphan record sweep skipped', error);
-    }
+    this.#purgeOrphanWorktrees(immutableScope, worktrees);
     queue.reconcile(immutableScope);
     const value = Object.freeze({
       scope: immutableScope,
@@ -140,8 +119,55 @@ export class WorktreeRuntimeRegistry {
     return value;
   }
 
-  create(input: CreateWorktreeInput): Promise<WorktreeRecord> {
-    return this.forScope(input.scope).worktrees.create(input);
+  /**
+   * `forScope` only runs this sweep once per process (the ScopeRuntime is
+   * memoized), so a mission deleted after that first call left its worktree
+   * record orphaned for the rest of the process lifetime — permanently
+   * blocking any later task whose ownership overlaps it. `create` re-runs
+   * the sweep on demand so a stale record cannot wedge every future mission
+   * until restart.
+   */
+  #purgeOrphanWorktrees(
+    scope: ProjectExecutionScope,
+    worktrees: WorktreeManager,
+  ): readonly WorktreeRecord[] {
+    try {
+      const liveTaskIds = new Set(
+        (
+          new ScopedStoreBinding(this.#manager, scope)
+            .readDatabase()
+            .prepare('SELECT id FROM tasks')
+            .all() as ReadonlyArray<{ id: string }>
+        ).map((row) => row.id),
+      );
+      const purged = worktrees.purgeRecordsWithoutTask(scope, liveTaskIds);
+      if (purged.length > 0) {
+        console.warn(
+          `[worktree-runtime] dropped ${purged.length} worktree record(s) ` +
+            'whose task no longer exists; no Git path or ref was removed',
+        );
+      }
+      return purged;
+    } catch (error) {
+      // Never block a dispatch attempt on an opportunistic cleanup.
+      console.warn('[worktree-runtime] orphan record sweep skipped', error);
+      return [];
+    }
+  }
+
+  async create(input: CreateWorktreeInput): Promise<WorktreeRecord> {
+    const runtime = this.forScope(input.scope);
+    try {
+      return await runtime.worktrees.create(input);
+    } catch (error) {
+      if (!(error instanceof OwnershipOverlapError)) throw error;
+      const purged = this.#purgeOrphanWorktrees(
+        input.scope,
+        runtime.worktrees,
+      );
+      if (purged.length === 0) throw error;
+      return runtime.worktrees.create(input);
+    }
   }
 
   get(

@@ -56,6 +56,7 @@ import { MISSION_SCHEDULER_TICK_MS } from "./mission-scheduler-policy";
 import {
   projectTerminalMergeFailure,
   reconcileInterruptedWorktreeReservationFailuresForScope,
+  reconcileSupersededPlanGenerations,
   reconcileTerminalMergeFailureForScope,
 } from "./mission-scheduler-reconciliation";
 import { runMissionSchedulerLaunchPass } from "./mission-scheduler-pass";
@@ -113,6 +114,7 @@ export {
 export {
   projectTerminalMergeFailure,
   reconcileInterruptedWorktreeReservationFailuresForScope,
+  reconcileSupersededPlanGenerations,
   reconcileTerminalMergeFailureForScope,
 } from "./mission-scheduler-reconciliation";
 
@@ -1414,6 +1416,19 @@ async function tickMission(
   const mission = stores.missions.get(missionId);
   const key = missionKey(scope, missionId);
   const state = states.get(key) ?? createSchedulerRuntimeState();
+  // Heal superseded plan generations before admission: a PREVC refreeze or
+  // reapproval seals a fresh generation, and older generations' orphan
+  // pending tasks (plus their reusable worktrees) otherwise hold ownership
+  // forever and wedge the current executor behind OwnershipOverlapError.
+  try {
+    reconcileSupersededPlanGenerations(scope, missionId);
+  } catch (error) {
+    throwIfMissionSchedulerAborted(signal);
+    console.warn(
+      `[mission-scheduler] stale plan generation retirement deferred for ${missionId}:`,
+      error,
+    );
+  }
   const result = await runMissionSchedulerLaunchPass({
     ...(signal ? { signal } : {}),
     reconcile: async (passSignal) => {

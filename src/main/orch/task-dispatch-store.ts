@@ -1451,6 +1451,134 @@ export class TaskDispatchStore {
     return changed;
   }
 
+  /**
+   * Retire orphan pending tasks from superseded sealed plan generations.
+   *
+   * A PREVC refreeze/reapproval seals a fresh plan under a new intentVersion.
+   * Scheduler admission and mission completion authority bind to the current
+   * sealed plan only, so an older generation's pending task can never dispatch
+   * again — but left pending it (and any worktree reserved before a retryable
+   * bootstrap failure) claims ownership forever and wedges the current
+   * executor behind OwnershipOverlapError. Transition exactly those orphan
+   * rows to the terminal `failed` state. A task with physical work — running
+   * or done status, an active dispatch, or any handoff/integration receipt —
+   * is never touched; only mission intent revocation owns that transition.
+   */
+  retireSupersededPlanGenerations(input: {
+    readonly missionId: string;
+    readonly intentVersion: number;
+  }): readonly string[] {
+    const missionId = idSchema.parse(input.missionId);
+    const intentVersion = z
+      .number()
+      .int()
+      .nonnegative()
+      .parse(input.intentVersion);
+    const now = this.#binding.now();
+    const db = this.#binding.writeDatabase();
+    const retired = db
+      .transaction(() => {
+        const mission = db
+          .prepare(`SELECT intent_version FROM missions WHERE id = ?`)
+          .get(missionId) as { intent_version: number } | undefined;
+        if (!mission) throw new Error(`missão não encontrada: ${missionId}`);
+        if (mission.intent_version !== intentVersion) {
+          throw new Error(
+            "retirement de gerações superseded rejeitou intentVersion obsoleta",
+          );
+        }
+        const stalePlans = db
+          .prepare(
+            `SELECT intent_version, plan_hash, planner_json
+               FROM mission_task_plans
+              WHERE mission_id = ? AND intent_version <> ?`,
+          )
+          .all(missionId, intentVersion) as ReadonlyArray<{
+          intent_version: number;
+          plan_hash: string;
+          planner_json: string;
+        }>;
+        const retiredIds: string[] = [];
+        for (const stalePlan of stalePlans) {
+          if (tokenHash(stalePlan.planner_json) !== stalePlan.plan_hash) {
+            throw new ScopedStoreCorruptionError(
+              "stale sealed task plan hash",
+            );
+          }
+          let plan: z.infer<typeof sealedPlanDispatchSchema>;
+          try {
+            plan = sealedPlanDispatchSchema.parse(
+              JSON.parse(stalePlan.planner_json),
+            );
+          } catch (error) {
+            throw new ScopedStoreCorruptionError(
+              "stale sealed task plan membership",
+              { cause: error },
+            );
+          }
+          for (const entry of plan.tasks) {
+            const task = db
+              .prepare(
+                `SELECT status FROM tasks WHERE id = ? AND mission_id = ?`,
+              )
+              .get(entry.taskId, missionId) as
+              | { status: string }
+              | undefined;
+            if (!task) {
+              throw new ScopedStoreCorruptionError(
+                "stale sealed task projection",
+              );
+            }
+            if (task.status !== "pending") continue;
+            const dispatch = db
+              .prepare(
+                `SELECT state, handoff_id, handoff_accepted_at,
+                        integration_receipt_json, completed_at
+                   FROM task_dispatch_queue WHERE task_id = ?`,
+              )
+              .get(entry.taskId) as
+              | {
+                  state: string;
+                  handoff_id: string | null;
+                  handoff_accepted_at: number | null;
+                  integration_receipt_json: string | null;
+                  completed_at: number | null;
+                }
+              | undefined;
+            if (
+              dispatch &&
+              (dispatch.handoff_id !== null ||
+                dispatch.handoff_accepted_at !== null ||
+                dispatch.integration_receipt_json !== null ||
+                dispatch.completed_at !== null ||
+                [
+                  "claimed",
+                  "routed",
+                  "spawning",
+                  "running",
+                  "handoff_ready",
+                  "merging",
+                  "suspended",
+                ].includes(dispatch.state))
+            ) {
+              continue;
+            }
+            const updated = db
+              .prepare(
+                `UPDATE tasks SET status = 'failed', updated_at = ?
+                 WHERE id = ? AND mission_id = ? AND status = 'pending'`,
+              )
+              .run(now, entry.taskId, missionId);
+            if (updated.changes === 1) retiredIds.push(entry.taskId);
+          }
+        }
+        return retiredIds;
+      })
+      .immediate();
+    if (retired.length > 0) this.#binding.emitChange();
+    return Object.freeze(retired);
+  }
+
   /** A bound live PTY is the only authority allowed to revive/renew a lease. */
   heartbeat(input: {
     readonly sessionId: string;

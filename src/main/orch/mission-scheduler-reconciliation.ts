@@ -4,7 +4,11 @@ import {
   type WorktreeRuntimeRegistry,
 } from "../runtime/worktree-runtime-registry";
 import { INTERRUPTED_WORKTREE_RESERVATION_FAILURE_MARKER } from "../runtime/worktree-manager";
-import { getProjectDomainStores } from "./project-domain-store-registry";
+import { ACTIVE_WORKTREE_STATUSES } from "../runtime/worktree-contract";
+import {
+  getProjectDomainStores,
+  type ProjectDomainStoreSuite,
+} from "./project-domain-store-registry";
 import type { TaskDispatchStore } from "./task-dispatch-store";
 import { terminalOperationalFailureReason } from "../runtime/operational-failure-policy";
 
@@ -170,4 +174,70 @@ export function reconcileTerminalMergeFailureForScope(
     },
     deps.getDispatches(scope),
   );
+}
+
+export const SUPERSEDED_PLAN_GENERATION_WORKTREE_REASON =
+  "geração do plano selado substituída; ownership do worktree liberada";
+
+type SupersededPlanGenerationStoreAuthority = Pick<
+  ProjectDomainStoreSuite,
+  "missions" | "taskDispatches"
+>;
+
+interface SupersededPlanGenerationReconciliationDeps {
+  readonly registry: Pick<WorktreeRuntimeRegistry, "get" | "markFailed">;
+  readonly getStores: (
+    scope: ProjectExecutionScope,
+  ) => SupersededPlanGenerationStoreAuthority;
+}
+
+/**
+ * A PREVC refreeze/reapproval seals a fresh plan generation under a new
+ * intentVersion; scheduler admission and mission completion authority bind to
+ * the current sealed plan only, so an older generation's pending task can
+ * never dispatch again. Left pending, that row — and any reusable worktree
+ * reserved before a retryable bootstrap failure — claims ownership forever
+ * and wedges the current executor behind OwnershipOverlapError. Retire
+ * exactly those orphan pending rows in the dispatch store, then terminalize
+ * their active worktree records so the overlap check and the worker-slot
+ * projection release the surface. Tasks with physical work (running/done,
+ * active dispatch, receipts) are never touched by the store transition.
+ */
+export function reconcileSupersededPlanGenerations(
+  scope: ProjectExecutionScope,
+  missionId: string,
+  dependencies?: SupersededPlanGenerationReconciliationDeps,
+): readonly string[] {
+  const deps = dependencies ?? {
+    registry: requireWorktreeRuntimeRegistry(),
+    getStores: (currentScope: ProjectExecutionScope) =>
+      getProjectDomainStores(currentScope),
+  };
+  const stores = deps.getStores(scope);
+  const intentVersion = stores.missions.get(missionId)?.intentContract
+    ?.intentVersion;
+  if (intentVersion === undefined) return Object.freeze([]);
+  const retired = stores.taskDispatches.retireSupersededPlanGenerations({
+    missionId,
+    intentVersion,
+  });
+  for (const taskId of retired) {
+    const record = deps.registry.get(scope, missionId, taskId);
+    if (!record || !ACTIVE_WORKTREE_STATUSES.has(record.status)) continue;
+    try {
+      deps.registry.markFailed(
+        scope,
+        missionId,
+        taskId,
+        SUPERSEDED_PLAN_GENERATION_WORKTREE_REASON,
+      );
+    } catch (error) {
+      console.warn(
+        `[mission-scheduler] stale-generation worktree release deferred for ` +
+          `${missionId}/${taskId}:`,
+        error,
+      );
+    }
+  }
+  return retired;
 }
