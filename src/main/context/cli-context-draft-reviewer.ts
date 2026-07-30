@@ -25,6 +25,7 @@ import {
 import { resolveCwdForScope } from '../orch/workspace-path';
 import { sameProjectScope } from '../orch/project-scoped-broadcast';
 import { assertPreSpawnProbe } from '../pty/pre-spawn-probe';
+import { warmSquadRuntimeSubscriptionAuth } from '../orch/squad-runtime-inventory';
 import { getContextKnowledgeService } from './context-workflow-registry';
 import type { ContextDraftRecord } from './context-draft-store';
 import {
@@ -524,6 +525,11 @@ export class CliContextDraftReviewer {
     if (!HASH_PATTERN.test(initial.contentHash)) {
       throw new Error('context draft has an invalid content hash');
     }
+    // Preserved-pane revalidation and route selection both read the sync
+    // subscription-auth cache; warm the keychain-only providers (AGY) first
+    // so a live session is not read as login-needed and the review quorum is
+    // not lost to a cold cache.
+    await warmSquadRuntimeSubscriptionAuth();
     // The draft exhausted its preserved-pane resumes: do not spawn yet another
     // silent reviewer — the human approval path owns this draft now.
     if (autoReviewUnavailableDrafts.has(autoReviewKey(scope, draftId))) {

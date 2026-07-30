@@ -79,6 +79,12 @@ const harness = vi.hoisted(() => {
     bootstrapMissionOrchestrator: vi.fn(),
     stopPlanPromotion: vi.fn(),
     restartPlanPromotion: vi.fn(),
+    warmSquadRuntimeSubscriptionAuth: vi.fn(
+      async (..._args: unknown[]) => {},
+    ),
+    submitMissionKickoff: vi.fn(
+      async (_owner: unknown, _raw: unknown) => ({ ok: true }),
+    ),
     terminatePty: vi.fn(async (_sessionId: string) => true),
     missionRemovalCandidate: vi.fn(),
     prepareMissionRemoval: vi.fn(),
@@ -439,6 +445,23 @@ vi.mock('./mission-orchestrator-bootstrap', () => ({
   restartMissionOrchestratorAfterPlanPromotionForScope:
     harness.restartPlanPromotion,
 }));
+vi.mock('./squad-runtime-inventory', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('./squad-runtime-inventory')>();
+  return {
+    ...actual,
+    warmSquadRuntimeSubscriptionAuth: (...args: unknown[]) =>
+      harness.warmSquadRuntimeSubscriptionAuth(...args),
+  };
+});
+vi.mock('./mission-kickoff', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./mission-kickoff')>();
+  return {
+    ...actual,
+    submitMissionKickoffFromRenderer: (owner: unknown, raw: unknown) =>
+      harness.submitMissionKickoff(owner, raw),
+  };
+});
 vi.mock("./promoted-plan-git-authority", () => ({
   commitPromotedPlanToGit: vi.fn(() => ({
     headSha: "a".repeat(40),
@@ -886,6 +909,8 @@ beforeEach(() => {
     ok: true,
     missionId: 'mission-plan',
   });
+  harness.warmSquadRuntimeSubscriptionAuth.mockImplementation(async () => {});
+  harness.submitMissionKickoff.mockResolvedValue({ ok: true });
   harness.restartPlanPromotion.mockImplementation(async () => {
     harness.operatorInput.missions.delete('mission-plan');
     return {
@@ -1767,6 +1792,95 @@ describe('mission authority native confirmation', () => {
     expect(harness.missionApprovalCandidate).toHaveBeenCalledOnce();
     expect(harness.approveMission).not.toHaveBeenCalled();
     expect(harness.bootstrapMissionOrchestrator).not.toHaveBeenCalled();
+  });
+
+  it('awaits the keychain-only subscription warm before the approve readiness gate', async () => {
+    const sender = owner();
+    harness.scopes.set(sender.id, SCOPE_A);
+    harness.windows.set(sender.id, { isDestroyed: () => false });
+    const order: string[] = [];
+    // Defer the warm behind a macrotask: if the handler did not await it, the
+    // sync readiness read would run BEFORE the warm completes.
+    harness.warmSquadRuntimeSubscriptionAuth.mockImplementation(
+      () =>
+        new Promise<void>((resolve) =>
+          setTimeout(() => {
+            order.push('warm');
+            resolve();
+          }, 0),
+        ),
+    );
+    const base = harness.missionApprovalCandidate();
+    harness.missionApprovalCandidate.mockClear();
+    harness.missionApprovalCandidate.mockImplementation(() => {
+      order.push('candidate');
+      return base;
+    });
+    const handler = missionHandler(ORCH_CHANNELS.missionApproveIntent);
+
+    await expect(
+      handler({ sender }, { missionId: 'mission-1' }),
+    ).resolves.toMatchObject({ id: 'mission-1', status: 'running' });
+
+    expect(order[0]).toBe('warm');
+    expect(order[1]).toBe('candidate');
+  });
+
+  it('awaits the keychain-only subscription warm before the plan-promotion readiness gate', async () => {
+    const sender = owner();
+    harness.scopes.set(sender.id, SCOPE_A);
+    harness.windows.set(sender.id, { isDestroyed: () => false });
+    const order: string[] = [];
+    harness.warmSquadRuntimeSubscriptionAuth.mockImplementation(
+      () =>
+        new Promise<void>((resolve) =>
+          setTimeout(() => {
+            order.push('warm');
+            resolve();
+          }, 0),
+        ),
+    );
+    const base = harness.planPromotionCandidate();
+    harness.planPromotionCandidate.mockClear();
+    harness.planPromotionCandidate.mockImplementation(() => {
+      order.push('candidate');
+      return base;
+    });
+    const handler = missionHandler(ORCH_CHANNELS.missionPromotePlanLane);
+
+    await expect(
+      handler({ sender }, { missionId: 'mission-plan' }),
+    ).resolves.toMatchObject({ id: 'mission-plan', status: 'running' });
+
+    expect(order[0]).toBe('warm');
+    expect(order[1]).toBe('candidate');
+  });
+
+  it('awaits the keychain-only subscription warm before the kickoff plan gate', async () => {
+    const sender = owner();
+    harness.scopes.set(sender.id, SCOPE_A);
+    harness.windows.set(sender.id, { isDestroyed: () => false });
+    const order: string[] = [];
+    harness.warmSquadRuntimeSubscriptionAuth.mockImplementation(
+      () =>
+        new Promise<void>((resolve) =>
+          setTimeout(() => {
+            order.push('warm');
+            resolve();
+          }, 0),
+        ),
+    );
+    harness.submitMissionKickoff.mockImplementation(async () => {
+      order.push('kickoff');
+      return { ok: true };
+    });
+    const handler = missionHandler(ORCH_CHANNELS.missionKickoffSubmit);
+
+    await expect(
+      handler({ sender }, { missionId: 'mission-1' }),
+    ).resolves.toEqual({ ok: true });
+
+    expect(order).toEqual(['warm', 'kickoff']);
   });
 
   it('amarra aprovação ao scope e fence em um resumo nativo que cabe em tela pequena', async () => {

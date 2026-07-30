@@ -32,6 +32,7 @@ import {
 } from '../orch/prevc-reviewer-profile';
 import { isCurrentProcessRealMissionE2E } from '../../shared/real-mission-e2e';
 import { listIndependentCliReviewCandidates } from './cli-independent-review-policy';
+import { warmSquadRuntimeSubscriptionAuth } from '../orch/squad-runtime-inventory';
 import {
   createDetachedReviewWorktree,
   type DetachedReviewWorktree,
@@ -536,6 +537,10 @@ export class CliAutomatedReviewer {
       assertCurrentAuthority: input.assertCurrentAuthority,
     };
     assertMcpInvocationCurrent(invocation);
+    // Route selection reads the sync subscription-auth cache; warm the
+    // keychain-only providers (AGY) first so a live session is not read as
+    // login-needed and the review quorum is not lost to a cold cache.
+    await warmSquadRuntimeSubscriptionAuth();
     const routes = await this.#selectRoutes(
       input.contract,
       [

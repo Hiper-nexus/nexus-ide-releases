@@ -80,6 +80,7 @@ import {
   ensureGuidedMissionPlanForScope,
   type GuidedMissionPlanResult,
 } from "./guided-mission-planner";
+import { warmSquadRuntimeSubscriptionAuth } from "./squad-runtime-inventory";
 import { missionRequiresGuidedPrevc } from "./guided-mission-authority";
 import { prepareOpportunisticPrevcContext } from "./prevc-merge-preparation";
 import { assertPromotedPlanSnapshot } from "./plan-promotion-authority";
@@ -282,6 +283,13 @@ export interface MissionOrchestratorBootstrapDeps {
   ): MissionAttachmentSnapshot[] | undefined;
   /** Main-owned planning preflight; runs before every external bootstrap effect. */
   ensureMissionPlan?(scope: ProjectExecutionScope, missionId: string): unknown;
+  /**
+   * Async warm of the keychain-only subscription cache (AGY). The sync
+   * squad-readiness gate inside `ensureMissionPlan` reads only that warm
+   * cache, so a cold cache reads a live operator session as login-needed and
+   * blocks the bootstrap. Awaited immediately before `ensureMissionPlan`.
+   */
+  warmSubscriptionAuth?(): Promise<void>;
   /** Proves the Git baseline/source for plan and promoted-plan journeys. */
   ensurePlanGitBaseline?(
     scope: ProjectExecutionScope,
@@ -719,6 +727,7 @@ const productionDeps: MissionOrchestratorBootstrapDeps = {
   },
   ensureMissionPlan: (scope, missionId) =>
     ensureGuidedMissionPlanForScope(scope, missionId),
+  warmSubscriptionAuth: () => warmSquadRuntimeSubscriptionAuth(),
   prepareOpportunisticPrevc: (scope, missionId) =>
     prepareOpportunisticPrevcContext(scope, missionId),
 };
@@ -799,6 +808,15 @@ export class MissionOrchestratorBootstrapService {
     // the promotion boundary so their seal cannot invalidate live workers.
     const guidedPrevcFrozen = false;
     let standardTopology: StandardMissionTopology = "delivery";
+    // The sync squad-readiness gate inside ensureMissionPlan reads only the
+    // warm subscription cache; warm the keychain-only providers (AGY) first
+    // so a live operator session is not read as login-needed. Recovery and
+    // resume paths reach this bootstrap without any renderer IPC, so the
+    // IPC-level warm alone is not sufficient here. Conditional await: when no
+    // warm is configured the bootstrap must keep its synchronous
+    // run-up-to-spawn so concurrent same-tick retries singleflight.
+    const subscriptionAuthWarm = this.#deps.warmSubscriptionAuth?.();
+    if (subscriptionAuthWarm) await subscriptionAuthWarm;
     try {
       const requiresPrePlanGitBaseline =
         initial.intentContract?.lane === "plan" ||

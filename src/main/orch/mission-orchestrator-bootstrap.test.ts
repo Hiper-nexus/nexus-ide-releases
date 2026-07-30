@@ -547,6 +547,24 @@ describe('initial main-owned orchestrator bootstrap', () => {
     expect(h.deps.prepareOpportunisticPrevc).not.toHaveBeenCalled();
   });
 
+  it('awaits the subscription-auth warm before the sync squad-readiness plan gate', async () => {
+    const h = harness();
+    const order: string[] = [];
+    h.deps.warmSubscriptionAuth = vi.fn(async () => {
+      order.push('warm');
+    });
+    h.deps.ensureMissionPlan = vi.fn(() => {
+      order.push('plan');
+    });
+
+    const result = await new MissionOrchestratorBootstrapService(
+      h.deps,
+    ).bootstrap(scope, h.mission.id);
+
+    expect(result).toMatchObject({ ok: true });
+    expect(order).toEqual(['warm', 'plan']);
+  });
+
   it('launches an explicit read-only team fanout without Git baseline or PREVC preparation', async () => {
     const h = harness();
     const goal =

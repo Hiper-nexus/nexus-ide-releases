@@ -16,7 +16,10 @@ import { getOrchSettings } from "../persistence/settings-store";
 import { isOperatorChoicePolicy } from "../../shared/squad-cli-policy";
 import { orchestrationEvidenceOf } from "../../shared/adapter-types";
 import { assessStandardSquadReadiness } from "./squad-runtime-policy";
-import { liveSquadRuntimeInventory } from "./squad-runtime-inventory";
+import {
+  liveSquadRuntimeInventory,
+  warmSquadRuntimeSubscriptionAuth,
+} from "./squad-runtime-inventory";
 import { applyGuidedSquadSkillPolicy } from "./guided-squad-skills";
 
 /**
@@ -380,6 +383,10 @@ export async function designSquadForWorkspace(
   workspacePath: string,
   options: SquadDesignOptions = {},
 ): Promise<ArchitectResult> {
+  // The sync inventory below reads only the warm subscription cache; warm the
+  // keychain-only providers (AGY) first so a live session is not read as
+  // login-needed and wrongly excluded from the designed roster.
+  await warmSquadRuntimeSubscriptionAuth();
   return designSquad({ workspacePath, options });
 }
 
@@ -393,6 +400,9 @@ export async function designSquadFromIntent(
   options: SquadDesignOptions = {},
 ): Promise<ArchitectResult> {
   assertSquadDesignAuthority(options);
+  // Same cold-keychain hazard as designSquadForWorkspace: warm before the
+  // sync liveSquadRuntimeInventory reads below.
+  await warmSquadRuntimeSubscriptionAuth();
   const clean = intent.trim();
   if (!clean) return { ok: false, error: "descreva o objetivo da missão" };
   // Reuso de um squad salvo é OPT-IN. Modo Agêntico = "desenhe um time novo

@@ -13,7 +13,7 @@ import {
   warmMissionSchedulerRosterSubscriptionAuth,
 } from "./mission-scheduler-dispatch-transaction";
 import { resolveSealedWorkerRoute } from "./mission-scheduler-plan";
-import { refreshAgySubscriptionAuthCache } from "../adapters/subscription-auth";
+import { warmKeychainOnlySubscriptionAuth } from "../adapters/subscription-auth";
 
 vi.mock("../adapters/subscription-auth", async (importOriginal) => {
   const actual =
@@ -24,6 +24,7 @@ vi.mock("../adapters/subscription-auth", async (importOriginal) => {
       value: true,
       cacheUpdated: true,
     })),
+    warmKeychainOnlySubscriptionAuth: vi.fn(async () => {}),
   };
 });
 import { TASK_DISPATCH_SESSION_EXIT_REASON } from "./task-dispatch-persistence";
@@ -540,24 +541,25 @@ describe("sealed roster auth gate for keychain-only providers (AGY)", () => {
   });
 
   it("warms the authoritative AGY keychain probe before roster resolution", async () => {
-    const refresh = vi.mocked(refreshAgySubscriptionAuthCache);
-    refresh.mockClear();
+    const warm = vi.mocked(warmKeychainOnlySubscriptionAuth);
+    warm.mockClear();
 
     await warmMissionSchedulerRosterSubscriptionAuth("agy");
 
-    expect(refresh).toHaveBeenCalledTimes(1);
-    expect(refresh).toHaveBeenCalledWith(expect.any(String), undefined, {
-      authoritative: true,
-    });
+    expect(warm).toHaveBeenCalledTimes(1);
+    expect(warm).toHaveBeenCalledWith("agy");
   });
 
-  it("leaves providers with file/token auth out of the keychain warm", async () => {
-    const refresh = vi.mocked(refreshAgySubscriptionAuthCache);
-    refresh.mockClear();
+  it("delegates file/token providers to the shared helper, which no-ops them", async () => {
+    const warm = vi.mocked(warmKeychainOnlySubscriptionAuth);
+    warm.mockClear();
 
     await warmMissionSchedulerRosterSubscriptionAuth("codex");
 
-    expect(refresh).not.toHaveBeenCalled();
+    // The scheduler wrapper always delegates; the shared helper itself
+    // no-ops non-keychain providers (covered in subscription-auth.test.ts).
+    expect(warm).toHaveBeenCalledTimes(1);
+    expect(warm).toHaveBeenCalledWith("codex");
   });
 });
 

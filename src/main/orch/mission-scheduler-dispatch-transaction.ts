@@ -1,5 +1,4 @@
 import { app } from "electron";
-import os from "node:os";
 import type { Mission, Squad } from "../../shared/orch-types";
 import {
   hasCurrentDispatchAuthority,
@@ -15,7 +14,7 @@ import {
   isCredentiallessOpenCodeModel,
   isProviderAuthReadyForModel,
 } from "../adapters/model-auth-readiness";
-import { refreshAgySubscriptionAuthCache } from "../adapters/subscription-auth";
+import { warmKeychainOnlySubscriptionAuth } from "../adapters/subscription-auth";
 import {
   hasAvailableAccount,
   listAccounts,
@@ -338,16 +337,13 @@ export function missionSchedulerRouteRequiresAccount(
  * providers — file probes also see an isolated E2E HOME, never the native
  * session. The scheduler's sealed-roster gate consumes that cache, so a live
  * operator session otherwise loops on roster_route_unavailable until the
- * pre-claim bound blocks the mission. Warm the cache with the authoritative
- * async probe (main-loop-safe, memoized) before building the roster.
+ * pre-claim bound blocks the mission. Delegates to the shared warm helper
+ * (main-loop-safe, memoized, authoritative) before building the roster.
  */
 export async function warmMissionSchedulerRosterSubscriptionAuth(
   cliId: string,
 ): Promise<void> {
-  if (cliId !== "agy") return;
-  await refreshAgySubscriptionAuthCache(os.homedir(), undefined, {
-    authoritative: true,
-  });
+  await warmKeychainOnlySubscriptionAuth(cliId);
 }
 
 export function missionSchedulerLiveRosterAdapter(input: {

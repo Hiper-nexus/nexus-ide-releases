@@ -54,7 +54,10 @@ import { emitPlannedTasksWithContract } from './mission-scheduler';
 import { encodeTaskScheduleDetail } from './mission-scheduler-meta';
 import { isTaskQueueManagedMission } from './task-dispatch-authority';
 import { planMissionTasks } from './mission-task-plan-authority';
-import { liveSquadRuntimeInventory } from './squad-runtime-inventory';
+import {
+  liveSquadRuntimeInventory,
+  warmSquadRuntimeSubscriptionAuth,
+} from './squad-runtime-inventory';
 import { standardTopologyFromSealedTaskDetails } from './guided-mission-topology-authority';
 
 /**
@@ -1033,6 +1036,12 @@ const routeTaskTool: McpToolDef = {
     // 'shell' não é um provider roteável (sem modelos avaliados); incluí-lo
     // mantinha o gate de cobertura do task-router sempre falso, matando a
     // avaliação por dimensão. Alinha com o filtro id!=='shell' do architect.
+    if (missionId) {
+      // O inventário síncrono lê apenas o cache quente de assinatura; aqueça
+      // os providers keychain-only (AGY) para não ler uma sessão viva como
+      // login-needed e derrubar o roteamento da missão.
+      await warmSquadRuntimeSubscriptionAuth();
+    }
     const governedMissionWorkerIds = missionId
       ? liveSquadRuntimeInventory().policy.routableWorkerCliIds
       : null;

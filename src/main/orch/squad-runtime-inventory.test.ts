@@ -6,9 +6,14 @@ const listAdapterInfosMock = vi.fn();
 const listProviderSettingsMock = vi.fn();
 const hasAvailableAccountMock = vi.fn();
 const getOrchSettingsMock = vi.fn();
+const warmKeychainOnlyMock = vi.fn();
 
 vi.mock("../adapters/adapter-registry", () => ({
   listAdapterInfos: (...args: unknown[]) => listAdapterInfosMock(...args),
+}));
+vi.mock("../adapters/subscription-auth", () => ({
+  warmKeychainOnlySubscriptionAuth: (...args: unknown[]) =>
+    warmKeychainOnlyMock(...args),
 }));
 vi.mock("../persistence/provider-config-store", () => ({
   listProviderSettings: (...args: unknown[]) =>
@@ -25,6 +30,7 @@ vi.mock("../persistence/settings-store", () => ({
 import {
   assertLiveGuidedSquadReadiness,
   liveSquadRuntimeInventory,
+  warmSquadRuntimeSubscriptionAuth,
 } from "./squad-runtime-inventory";
 
 function adapter(
@@ -142,6 +148,7 @@ describe("live squad runtime inventory", () => {
     listProviderSettingsMock.mockReset();
     hasAvailableAccountMock.mockReset();
     getOrchSettingsMock.mockReset();
+    warmKeychainOnlyMock.mockReset();
     listAdapterInfosMock.mockReturnValue([
       adapter("claude", { evidence: "verified" }),
       adapter("codex", { evidence: "verified" }),
@@ -237,6 +244,61 @@ describe("live squad runtime inventory", () => {
     expect(() => assertLiveGuidedSquadReadiness(squad("codex"))).toThrow(
       /executor-unavailable/i,
     );
+  });
+
+  it("blocks a cold-cache AGY worker with the concrete auth cause, then routes it after the warm", async () => {
+    // AGY 1.1 keeps its session token only in the macOS login keychain: the
+    // sync inventory reads login-needed until the async warm runs. The flag
+    // plays the role of the subscription-auth cache flipped by the probe.
+    let agySessionVisible = false;
+    warmKeychainOnlyMock.mockImplementation(async (cliId: string) => {
+      if (cliId === "agy") agySessionVisible = true;
+    });
+    listAdapterInfosMock.mockReturnValue([
+      adapter("claude", { evidence: "verified" }),
+      adapter("codex", { evidence: "verified" }),
+      adapter("agy"),
+    ]);
+    listProviderSettingsMock.mockImplementation(() => [
+      provider("claude"),
+      provider("codex"),
+      provider("agy", {
+        authStrategy: agySessionVisible ? "subscription" : "login-needed",
+        models: ["gemini-3.6-flash-high"],
+        defaultModel: "gemini-3.6-flash-high",
+      }),
+    ]);
+    const agyWorkerSquad: Squad = {
+      id: "agy-squad",
+      name: "AGY squad",
+      createdAt: "1",
+      builtin: false,
+      orchestratorInstructions: "Coordene pelo Nexus.",
+      agents: [
+        { id: "orch", agentName: "Maestro", category: "orchestrator", cli: "claude" },
+        { id: "exec", agentName: "Executor", category: "executor", cli: "codex" },
+        { id: "qa", agentName: "QA", category: "reviewer", cli: "codex" },
+        { id: "agy", agentName: "AGY", category: "executor", cli: "agy" },
+      ],
+    };
+
+    // Cold cache: AGY reads as login-needed and the gate names that cause.
+    expect(liveSquadRuntimeInventory().policy.routableCliIds.has("agy")).toBe(
+      false,
+    );
+    expect(() => assertLiveGuidedSquadReadiness(agyWorkerSquad)).toThrow(
+      /worker-unavailable: o worker em agy.*login-needed \(sessão AGY não detectada/i,
+    );
+
+    // The async boundary warms the keychain-only providers before the sync
+    // readiness check; afterwards the same roster is routable.
+    await warmSquadRuntimeSubscriptionAuth();
+    expect(warmKeychainOnlyMock).toHaveBeenCalledWith("agy");
+
+    const warmed = liveSquadRuntimeInventory();
+    expect(warmed.policy.routableCliIds.has("agy")).toBe(true);
+    expect(warmed.policy.routableWorkerCliIds.has("agy")).toBe(true);
+    expect(() => assertLiveGuidedSquadReadiness(agyWorkerSquad)).not.toThrow();
   });
 
 });

@@ -170,6 +170,7 @@ import {
   stopMissionOrchestratorBeforePlanPromotionForScope,
 } from './mission-orchestrator-bootstrap';
 import { ensureGuidedMissionPlanForScope } from './guided-mission-planner';
+import { warmSquadRuntimeSubscriptionAuth } from './squad-runtime-inventory';
 import {
   snapshotSquadAuthority,
   squadAuthorityReviewStrings,
@@ -2070,6 +2071,11 @@ export function registerOrchIpc(): void {
     if (!parsed.success) throw new Error("invalid mission approve intent payload");
     const scope = requireLiveRendererWorkspaceScope(event.sender);
     const authority = requireMissionAuthority();
+    // The sync squad-readiness gate below reads only the warm subscription
+    // cache; a cold AGY keychain session would otherwise read as login-needed
+    // and block a healthy roster. Warm it (async, memoized) before every
+    // candidate/approve read inside this handler.
+    await warmSquadRuntimeSubscriptionAuth();
     const candidate = authority.missionApprovalCandidateFromRenderer(
       event.sender,
       parsed.data,
@@ -2145,6 +2151,9 @@ export function registerOrchIpc(): void {
     if (!parsed.success) throw new Error("invalid promote plan lane payload");
     const scope = requireLiveRendererWorkspaceScope(event.sender);
     const authority = requireMissionAuthority();
+    // Same cold-keychain hazard as missionApproveIntent: the sync readiness
+    // gate inside every candidate/promote read must see the real AGY session.
+    await warmSquadRuntimeSubscriptionAuth();
     const candidate = authority.planPromotionCandidateFromRenderer(
       event.sender,
       parsed.data,
@@ -2232,9 +2241,14 @@ export function registerOrchIpc(): void {
     return getProjectDomainStores(scope).missions.get(promoted.id) ?? promoted;
   });
 
-  ipcMain.handle(ORCH_CHANNELS.missionKickoffSubmit, (event, raw) =>
-    submitMissionKickoffFromRenderer(event.sender, raw),
-  );
+  ipcMain.handle(ORCH_CHANNELS.missionKickoffSubmit, async (event, raw) => {
+    // ensureGuidedMissionPlanForScope (sync, inside the kickoff authority
+    // path) re-runs the squad-readiness gate; warm the keychain-only
+    // subscription cache first so a live AGY session is not read as
+    // login-needed.
+    await warmSquadRuntimeSubscriptionAuth();
+    return submitMissionKickoffFromRenderer(event.sender, raw);
+  });
 
   const missionPrepareProjectSchema = z.object({
     missionId: z.string().min(1).max(128),

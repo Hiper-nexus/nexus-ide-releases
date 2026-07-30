@@ -796,6 +796,32 @@ export function refreshAgySubscriptionAuthCache(
   return agyRefreshInFlight;
 }
 
+/**
+ * Shared warm step for sync mission gates.
+ *
+ * Keychain-only subscription providers (AGY 1.1 keeps its session token ONLY
+ * in the macOS login keychain) read as `login-needed` from the warm status
+ * cache whenever no renderer/settings flow recently listed providers — the
+ * sync file probes never see the native session. Sync readiness/roster
+ * decisions (squad runtime inventory, sealed scheduler roster, reviewer
+ * quorum) deliberately consume only that cache so a locked login Keychain can
+ * never freeze Electron's main event loop; the price is that a cold cache
+ * reads a live operator session as unauthenticated and the mission gate
+ * blocks. Every ASYNC ancestor of such a sync gate must await this first:
+ * the probe is main-loop-safe (async `security` call) and memoized, so the
+ * sync decision right after it sees reality. No-op for providers whose auth
+ * is file/token based.
+ */
+export async function warmKeychainOnlySubscriptionAuth(
+  cliId: string,
+  keychainProbe?: () => Promise<boolean>,
+): Promise<void> {
+  if (cliId !== 'agy') return;
+  await refreshAgySubscriptionAuthCache(os.homedir(), keychainProbe, {
+    authoritative: true,
+  });
+}
+
 /** Test hook. */
 export function resetSubscriptionAuthCacheForTests(): void {
   cache.clear();

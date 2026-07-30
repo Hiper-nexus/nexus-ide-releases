@@ -52,6 +52,13 @@ export interface SquadRuntimeCliPolicy {
   >;
   /** Default used when a saved agent omits its model. */
   readonly authReadyDefaultModelByCliId: Readonly<Record<string, string>>;
+  /**
+   * One-line PT-BR diagnostic (no secrets) for a CLI that failed to enter
+   * `routableCliIds`, keyed by adapter id. Surfaced verbatim by readiness
+   * errors so the operator sees the concrete cause instead of a generic
+   * "worker unavailable".
+   */
+  readonly unroutableReasonByCliId?: Readonly<Record<string, string>>;
 }
 
 export interface SquadRuntimeAgentLike {
@@ -194,13 +201,23 @@ export function buildSquadRuntimeCliPolicy(
   const credentiallessDefaultModelByCliId: Record<string, string> = {};
   const authReadyModelsByCliId: Record<string, readonly string[]> = {};
   const authReadyDefaultModelByCliId: Record<string, string> = {};
+  const unroutableReasonByCliId: Record<string, string> = {};
   for (const provider of providers) {
-    if (
-      provider.adapterId === "shell" ||
-      !provider.enabled ||
-      !provider.installed ||
-      !provider.adapterLoaded
-    ) {
+    if (provider.adapterId === "shell") {
+      continue;
+    }
+    if (!provider.enabled) {
+      unroutableReasonByCliId[provider.adapterId] =
+        "provider desabilitado em Configurações › Providers";
+      continue;
+    }
+    if (!provider.installed) {
+      unroutableReasonByCliId[provider.adapterId] = "CLI não instalada";
+      continue;
+    }
+    if (!provider.adapterLoaded) {
+      unroutableReasonByCliId[provider.adapterId] =
+        "adapter não carregado no processo principal";
       continue;
     }
     const candidateModels = [
@@ -216,10 +233,16 @@ export function buildSquadRuntimeCliPolicy(
     );
     const modelAuthReady = authReadyModels.length > 0;
     if (!modelAuthReady) {
+      unroutableReasonByCliId[provider.adapterId] =
+        provider.authStrategy === "login-needed"
+          ? `auth: login-needed (sessão ${provider.adapterId.toUpperCase()} não detectada — abra um pane ${provider.adapterId.toUpperCase()} ou revalide a conta)`
+          : `auth: ${provider.authStrategy} (nenhum modelo pronto para auth nesta sessão)`;
       continue;
     }
     const accountAvailable = hasAvailableAccount(provider.adapterId);
     if (!accountAvailable && credentiallessModels.length === 0) {
+      unroutableReasonByCliId[provider.adapterId] =
+        "sem conta disponível para esta CLI";
       continue;
     }
     routableCliIds.add(provider.adapterId);
@@ -288,6 +311,9 @@ export function buildSquadRuntimeCliPolicy(
     authReadyDefaultModelByCliId: Object.freeze({
       ...authReadyDefaultModelByCliId,
     }),
+    unroutableReasonByCliId: Object.freeze({
+      ...unroutableReasonByCliId,
+    }),
   });
 }
 
@@ -320,6 +346,42 @@ function isReadOnlyParticipant(
     policy.handoffCapableCliIds.has(agent.cli) &&
     isSquadRuntimeAgentRoutable(agent, policy)
   );
+}
+
+/**
+ * Concrete one-line PT-BR cause (no secrets) for a worker that failed
+ * `isSquadRuntimeAgentRoutable`, so the readiness gate names the exact
+ * failing condition instead of a generic "adapter unavailable".
+ */
+export function squadWorkerUnavailableReason(
+  agent: SquadRuntimeAgentLike,
+  policy: SquadRuntimeCliPolicy,
+): string {
+  if (typeof agent.cli !== "string") {
+    return "CLI não identificada no roster aprovado";
+  }
+  const cli = agent.cli;
+  const unroutable = policy.unroutableReasonByCliId?.[cli];
+  if (unroutable) return unroutable;
+  if (!policy.routableCliIds.has(cli)) {
+    return "CLI sem provider configurado neste workspace";
+  }
+  if (policy.routableWorkerCliIds.has(cli)) {
+    // Routable as a worker, but the selected model is not executable now.
+    const scopedModels = policy.authReadyModelsByCliId[cli];
+    const selected =
+      typeof agent.model === "string" && agent.model.trim().length > 0
+        ? agent.model.trim()
+        : policy.authReadyDefaultModelByCliId[cli];
+    if (scopedModels && (!selected || !scopedModels.includes(selected))) {
+      return `modelo ${selected ?? "padrão"} não está pronto para auth nesta CLI`;
+    }
+    return "modelo selecionado indisponível para execução autônoma";
+  }
+  if (!policy.handoffCapableCliIds.has(cli)) {
+    return "adapter sem handoff físico qualificado pelo Nexus";
+  }
+  return "adapter sem confinamento autônomo de escrita qualificado pelo Nexus";
 }
 
 /**
@@ -433,8 +495,8 @@ export function assessStandardSquadReadiness(
       ok: false,
       code: "worker-unavailable",
       detail:
-        `o worker em ${cli} não possui adapter ativo com handoff físico e ` +
-        "confinamento autônomo qualificado pelo Nexus",
+        `o worker em ${cli} não possui rota ativa qualificada pelo Nexus ` +
+        `— motivo: ${squadWorkerUnavailableReason(unroutableWorker, policy)}`,
     });
   }
 

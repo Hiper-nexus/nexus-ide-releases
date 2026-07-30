@@ -17,6 +17,7 @@ import {
   refreshClaudeSubscriptionAuthCache,
   resetSubscriptionAuthCacheForTests,
   resolveAuthStrategy,
+  warmKeychainOnlySubscriptionAuth,
 } from './subscription-auth';
 
 const tempDirs: string[] = [];
@@ -784,5 +785,30 @@ describe('detectSubscriptionAuth', () => {
         probeClaudeKeychain: false,
       }),
     ).toBe(false);
+  });
+});
+
+describe('warmKeychainOnlySubscriptionAuth', () => {
+  it('warms the AGY keychain session into the sync status cache consumed by mission gates', async () => {
+    const asyncKeychainProbe = vi.fn(async () => true);
+
+    // Cold cache: the status view fails closed (AGY 1.1 keeps its token only
+    // in the login keychain; file probes never see it).
+    expect(hasSubscriptionAuthForStatus('agy', undefined, tempHome())).toBe(
+      false,
+    );
+
+    await warmKeychainOnlySubscriptionAuth('agy', asyncKeychainProbe);
+
+    // The same sync view the squad-readiness gate consumes now sees reality.
+    expect(hasSubscriptionAuthForStatus('agy')).toBe(true);
+  });
+
+  it('leaves file/token providers out of the keychain warm', async () => {
+    const asyncKeychainProbe = vi.fn(async () => true);
+
+    await warmKeychainOnlySubscriptionAuth('codex', asyncKeychainProbe);
+
+    expect(asyncKeychainProbe).not.toHaveBeenCalled();
   });
 });

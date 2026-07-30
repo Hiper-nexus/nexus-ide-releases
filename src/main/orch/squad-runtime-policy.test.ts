@@ -411,6 +411,63 @@ describe("assessStandardSquadReadiness", () => {
     });
   });
 
+  it("names the concrete auth cause when a keychain-only worker reads login-needed", () => {
+    const coldAgyPolicy = buildSquadRuntimeCliPolicy(
+      [
+        provider("claude"),
+        provider("codex"),
+        provider("agy", { authStrategy: "login-needed" }),
+      ],
+      () => true,
+    );
+
+    expect(coldAgyPolicy.unroutableReasonByCliId?.["agy"]).toMatch(
+      /login-needed/,
+    );
+    expect(
+      assessStandardSquadReadiness(
+        [
+          { category: "orchestrator", cli: "claude" },
+          { category: "executor", cli: "codex" },
+          { category: "reviewer", cli: "codex" },
+          { category: "executor", cli: "agy" },
+        ],
+        coldAgyPolicy,
+        verified,
+      ),
+    ).toMatchObject({
+      ok: false,
+      code: "worker-unavailable",
+      detail: expect.stringMatching(
+        /agy.*login-needed.*sessão AGY não detectada/i,
+      ),
+    });
+  });
+
+  it("names the missing account when no credential can serve the CLI", () => {
+    const noAccountPolicy = buildSquadRuntimeCliPolicy(
+      [provider("claude"), provider("codex"), provider("kimi")],
+      (adapterId) => adapterId !== "kimi",
+    );
+
+    expect(
+      assessStandardSquadReadiness(
+        [
+          { category: "orchestrator", cli: "claude" },
+          { category: "executor", cli: "codex" },
+          { category: "reviewer", cli: "codex" },
+          { category: "executor", cli: "kimi" },
+        ],
+        noAccountPolicy,
+        verified,
+      ),
+    ).toMatchObject({
+      ok: false,
+      code: "worker-unavailable",
+      detail: expect.stringMatching(/kimi.*sem conta disponível/i),
+    });
+  });
+
   it("admits read-only advisors that never write autonomously", () => {
     const advisoryPolicy = buildSquadRuntimeCliPolicy(
       [provider("claude"), provider("codex"), provider("grok"), provider("kimi")],

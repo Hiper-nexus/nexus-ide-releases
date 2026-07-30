@@ -6,6 +6,7 @@ import {
 import type { Squad } from "../../shared/orch-types";
 import { isOperatorChoicePolicy } from "../../shared/squad-cli-policy";
 import { listAdapterInfos } from "../adapters/adapter-registry";
+import { warmKeychainOnlySubscriptionAuth } from "../adapters/subscription-auth";
 import { hasAvailableAccount } from "../persistence/account-store";
 import { listProviderSettings } from "../persistence/provider-config-store";
 import { getOrchSettings } from "../persistence/settings-store";
@@ -137,6 +138,26 @@ export function liveSquadRuntimeInventory(): LiveSquadRuntimeInventory {
       verifiedOrchestrators.map((adapter) => adapter.id),
     ),
   });
+}
+
+/**
+ * Async companion to the sync inventory above. AGY 1.1 keeps its session
+ * token ONLY in the macOS login keychain, and the sync inventory deliberately
+ * reads only the warm status cache (main-loop safety), so a cold cache reads
+ * a live operator session as `login-needed` and the readiness gate blocks a
+ * healthy roster. Every async boundary that precedes a sync readiness check
+ * (mission approve/promote IPC, kickoff submit, orchestrator bootstrap, squad
+ * design, route_task, reviewer quorum) must await this first; the probe is
+ * async and memoized, so the sync gate right after it sees reality.
+ */
+export async function warmSquadRuntimeSubscriptionAuth(
+  cliIds: readonly string[] = listProviderSettings().map(
+    (provider) => provider.adapterId,
+  ),
+): Promise<void> {
+  await Promise.all(
+    [...new Set(cliIds)].map((cliId) => warmKeychainOnlySubscriptionAuth(cliId)),
+  );
 }
 
 /**
