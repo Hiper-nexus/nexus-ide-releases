@@ -6,8 +6,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   MAX_BACKGROUND_QUEUE_CHARS,
+  MAX_UNPARSED_WRITE_CHARS,
   discardTerminalOutput,
   flushTerminalOutput,
+  getPendingParseChars,
   getQueuedChars,
   getTerminalOutputSchedulerDebugSnapshot,
   removeTransientCursorShowSequences,
@@ -65,6 +67,46 @@ describe('terminal output scheduler', () => {
     expect(onParsed).not.toHaveBeenCalled();
     parseCallback?.();
     expect(onParsed).toHaveBeenCalledTimes(1);
+  });
+
+  it('routes foreground output through the bounded queue when unparsed writes exceed the budget', () => {
+    vi.useFakeTimers();
+    const written: string[] = [];
+    const parseCallbacks: Array<() => void> = [];
+    // Sink that never finishes parsing until the test says so.
+    const terminal: TerminalOutputSink = {
+      write: vi.fn((data: string, callback?: () => void) => {
+        written.push(data);
+        if (callback) parseCallbacks.push(callback);
+      }),
+    };
+
+    const big = 'x'.repeat(MAX_UNPARSED_WRITE_CHARS);
+    writeTerminalOutput(terminal, big, { foreground: true, onParsed: () => {} });
+    expect(getPendingParseChars(terminal)).toBe(big.length);
+
+    // Parse backlog is over budget: the next foreground chunk must NOT reach
+    // write() directly — it routes through the bounded queue instead.
+    writeTerminalOutput(terminal, 'tail', { foreground: true, onParsed: () => {} });
+    expect(written).toEqual([big]);
+    expect(getQueuedChars(terminal)).toBe(4);
+
+    // Drains stay parked while the sink is parse-blocked.
+    vi.advanceTimersByTime(1000);
+    expect(written).toEqual([big]);
+
+    // Parse catches up → the queued output drains in order.
+    parseCallbacks.splice(0).forEach((cb) => cb());
+    expect(getPendingParseChars(terminal)).toBe(0);
+    vi.advanceTimersByTime(1000);
+    expect(written.join('')).toBe(big + 'tail');
+  });
+
+  it('does not track unparsed chars for writes without a parse callback', () => {
+    const terminal = createTerminal();
+    writeTerminalOutput(terminal, 'plain', { foreground: true });
+    expect(getPendingParseChars(terminal)).toBe(0);
+    expect(terminal.written).toEqual(['plain']);
   });
 
   it('coalesces background output until the shared drain runs', () => {

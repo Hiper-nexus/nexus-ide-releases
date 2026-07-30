@@ -110,6 +110,10 @@ interface Session {
   outputSequence: number;
   acknowledgedSequence: number;
   replay: Array<{ sequence: number; data: string }>;
+  /** Sum of `replay` data lengths — maintained incrementally, never walked. */
+  replayChars: number;
+  /** Throttle marker for the output-backpressure warning. */
+  lastBackpressureWarnAt: number;
   /** Temp ZDOTDIR/bashrc dirs for OSC 133 — cleaned on session end. */
   shellIntegrationCleanup: string[];
 }
@@ -544,6 +548,37 @@ function canSend(wc: WebContents | null): wc is WebContents {
   return Boolean(wc && !wc.isDestroyed() && !wc.isCrashed());
 }
 
+/**
+ * Push backpressure budget per session. `replay` holds exactly the unacked
+ * chunks and is trimmed at ~1 MB chars; once unacked output exceeds half that
+ * window the renderer is provably not draining, so `wc.send` pauses — a
+ * wedged renderer must not queue unbounded IPC inside the MAIN process.
+ * Chunks keep landing in the capped replay window; the preload recover pull
+ * drains them and the resulting acks resume the push. Half the window keeps
+ * the full hole pullable before eviction.
+ */
+const MAX_UNACKED_OUTPUT_CHARS = 512 * 1024;
+const OUTPUT_BACKPRESSURE_WARN_INTERVAL_MS = 30_000;
+
+function warnOutputBackpressureThrottled(
+  sessionId: string,
+  session: Session,
+): void {
+  const now = Date.now();
+  if (
+    now - session.lastBackpressureWarnAt <
+    OUTPUT_BACKPRESSURE_WARN_INTERVAL_MS
+  ) {
+    return;
+  }
+  session.lastBackpressureWarnAt = now;
+  console.warn(
+    `[pty-manager] output backpressure for ${sessionId}: ` +
+      `${session.replayChars} unacked chars exceed ${MAX_UNACKED_OUTPUT_CHARS}; ` +
+      `push paused until the renderer drains`,
+  );
+}
+
 function emitStateChange(
   wc: WebContents | null,
   sessionId: string,
@@ -618,16 +653,26 @@ function onSessionData(
   session.outputSequence += 1;
   const event = { sessionId, data, sequence: session.outputSequence };
   session.replay.push({ sequence: event.sequence, data });
+  session.replayChars += data.length;
   let bufferedChars = 0;
   for (let index = session.replay.length - 1; index >= 0; index -= 1) {
     bufferedChars += session.replay[index].data.length;
     if (bufferedChars > 1_000_000) {
       session.replay.splice(0, index + 1);
+      session.replayChars =
+        bufferedChars - session.replay[index].data.length;
       break;
     }
   }
   if (canSend(session.wc)) {
-    session.wc.send(PTY_CHANNELS.data, event);
+    if (session.replayChars > MAX_UNACKED_OUTPUT_CHARS) {
+      // Renderer is not draining: pause the push. The chunk above still
+      // landed in the replay window, so the recover pull catches up and its
+      // acks resume the push — no data loss, no unbounded main-side IPC queue.
+      warnOutputBackpressureThrottled(sessionId, session);
+    } else {
+      session.wc.send(PTY_CHANNELS.data, event);
+    }
   }
   fireTaps(dataTaps, sessionId, data);
   if (session.state !== "busy") {
@@ -768,6 +813,8 @@ export function spawnSession(
       outputSequence: 0,
       acknowledgedSequence: 0,
       replay: [],
+      replayChars: 0,
+      lastBackpressureWarnAt: 0,
       shellIntegrationCleanup: [...cleanupPaths],
     };
     sessions.set(sessionId, session);
@@ -1688,6 +1735,8 @@ export function spawnAgentSession(
     outputSequence: 0,
     acknowledgedSequence: 0,
     replay: [],
+    replayChars: 0,
+    lastBackpressureWarnAt: 0,
     shellIntegrationCleanup: [],
   };
   sessions.set(sessionId, session);
@@ -1901,9 +1950,16 @@ export function acknowledgeSessionOutput(
     session.acknowledgedSequence,
     Math.min(sequence, session.outputSequence),
   );
-  session.replay = session.replay.filter(
-    (entry) => entry.sequence > session.acknowledgedSequence,
-  );
+  const kept: Array<{ sequence: number; data: string }> = [];
+  let keptChars = 0;
+  for (const entry of session.replay) {
+    if (entry.sequence > session.acknowledgedSequence) {
+      kept.push(entry);
+      keptChars += entry.data.length;
+    }
+  }
+  session.replay = kept;
+  session.replayChars = keptChars;
 }
 
 export function recoverSessionOutput(

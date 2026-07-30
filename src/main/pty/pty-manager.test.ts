@@ -864,6 +864,77 @@ describe("PTY session ownership (renderer capability boundary)", () => {
     orchKillSession(sessionId);
   });
 
+  it("pauses output push over the backpressure budget and resumes after acks", () => {
+    let handlers: PtySessionHandlers | null = null;
+    const proc: PtyProcHandle = {
+      write: vi.fn(),
+      resize: vi.fn(),
+      kill: vi.fn(),
+      terminate: vi.fn(async () => ({
+        ok: false,
+        rootExited: false,
+        descendantsExited: false,
+      })),
+    };
+    setPtyHost({
+      spawn(_spec, nextHandlers) {
+        handlers = nextHandlers;
+        return proc;
+      },
+    });
+    const send = vi.fn();
+    const owner = {
+      isDestroyed: () => false,
+      isCrashed: () => false,
+      send,
+    } as unknown as WebContents;
+    const trusted = trustedSpawn();
+    const { sessionId } = spawnSession(
+      owner,
+      { kind: "shell", cols: 80, rows: 24 },
+      { scope: trusted.scope, cwd: trusted.cwd, shell: "/bin/zsh" },
+    );
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const h = handlers as PtySessionHandlers | null;
+      const big = "x".repeat(200 * 1024);
+      const dataSends = () =>
+        send.mock.calls.filter(([channel]) => channel === PTY_CHANNELS.data);
+
+      h?.onData(big); // seq 1 — 200K unacked: sent
+      h?.onData(big); // seq 2 — 400K unacked: sent
+      h?.onData(big); // seq 3 — 600K over the 512K budget: push paused
+      h?.onData(big); // seq 4 — still paused
+      expect(dataSends()).toHaveLength(2);
+
+      // Paused chunks still land in the replay window and stay pullable.
+      expect(
+        recoverSessionOutput(owner, sessionId, 2).map((e) => e.sequence),
+      ).toEqual([3, 4]);
+
+      // One throttled warning despite repeated trips.
+      expect(
+        warn.mock.calls.filter(([message]) =>
+          String(message).includes("backpressure"),
+        ),
+      ).toHaveLength(1);
+
+      // Acks drain the replay window → the push resumes.
+      acknowledgeSessionOutput(owner, sessionId, 4);
+      h?.onData("tail");
+      expect(dataSends()).toHaveLength(3);
+      expect(dataSends().at(-1)?.[1]).toEqual({
+        sessionId,
+        data: "tail",
+        sequence: 5,
+      });
+    } finally {
+      warn.mockRestore();
+      orchKillSession(sessionId);
+    }
+  });
+
   it("only the owning WebContents can write to / kill a session", async () => {
     const h = fakeHost();
     setPtyHost(h.host);

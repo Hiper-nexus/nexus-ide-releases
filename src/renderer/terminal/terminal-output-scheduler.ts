@@ -70,6 +70,14 @@ const LARGE_BACKLOG_CHARS = 512 * 1024;
 const SYNC_FOREGROUND_FLUSH_CHARS = 256 * 1024;
 /** Max queued chars for a background/hidden terminal before controlled drop. */
 export const MAX_BACKGROUND_QUEUE_CHARS = 2 * 1024 * 1024;
+/**
+ * Max written-but-unparsed chars per terminal before foreground output stops
+ * going straight to `write` and routes through the bounded queue instead.
+ * xterm's own WriteBuffer is unbounded; when the renderer lags, immediate
+ * foreground writes were the one uncapped growth path left. Mirrors the
+ * background queue budget.
+ */
+export const MAX_UNPARSED_WRITE_CHARS = 2 * 1024 * 1024;
 const MAX_BACKGROUND_QUEUE_CHUNKS = 4096;
 const FOREGROUND_COALESCE_DELAY_MS = 1000;
 const FOREGROUND_HOLD_SAFETY_DELAY_MS = 250;
@@ -84,6 +92,12 @@ const BACKGROUND_BACKLOG_WARNING =
   '\x18\x1b[0m\r\n[Nexus skipped hidden terminal output because the backlog exceeded 2 MB.]\r\n';
 
 const queuedByTerminal = new Map<TerminalOutputSink, QueueEntry>();
+/**
+ * Chars handed to `write` whose parse callback has not fired yet, per sink.
+ * Only tracked when a parse callback exists (arity-1 sinks settle inline and
+ * never accumulate).
+ */
+const pendingParseByTerminal = new Map<TerminalOutputSink, number>();
 let drainTimer: ReturnType<typeof setTimeout> | null = null;
 let drainTimerDelayMs: number | null = null;
 
@@ -546,6 +560,30 @@ function replaceBacklogWithWarning(entry: QueueEntry): void {
   }
 }
 
+/** True when xterm's unparsed backlog for this sink is over budget. */
+function isParseBlocked(terminal: TerminalOutputSink): boolean {
+  return (
+    (pendingParseByTerminal.get(terminal) ?? 0) >= MAX_UNPARSED_WRITE_CHARS
+  );
+}
+
+function noteParsed(terminal: TerminalOutputSink, chars: number): void {
+  const before = pendingParseByTerminal.get(terminal) ?? 0;
+  const remaining = before - chars;
+  if (remaining > 0) {
+    pendingParseByTerminal.set(terminal, remaining);
+  } else {
+    pendingParseByTerminal.delete(terminal);
+  }
+  if (before >= MAX_UNPARSED_WRITE_CHARS) {
+    // The sink was parse-blocked; queued output may be drainable again now.
+    const entry = queuedByTerminal.get(terminal);
+    if (entry && isEntryDrainable(entry)) {
+      scheduleDrain(0);
+    }
+  }
+}
+
 function hasQueuedChunks(entry: QueueEntry): boolean {
   return entry.chunkIndex < entry.chunks.length;
 }
@@ -554,6 +592,7 @@ function hasHighPriorityBacklog(): boolean {
   for (const entry of queuedByTerminal.values()) {
     if (
       isEntryDrainable(entry) &&
+      !isParseBlocked(entry.terminal) &&
       (entry.highPriority || entry.queuedChars > LARGE_BACKLOG_CHARS)
     ) {
       return true;
@@ -564,7 +603,7 @@ function hasHighPriorityBacklog(): boolean {
 
 function hasDrainableBacklog(): boolean {
   for (const entry of queuedByTerminal.values()) {
-    if (isEntryDrainable(entry)) return true;
+    if (isEntryDrainable(entry) && !isParseBlocked(entry.terminal)) return true;
   }
   return false;
 }
@@ -578,10 +617,15 @@ function writeSinkChunk(
     terminal.write(data);
     return;
   }
+  pendingParseByTerminal.set(
+    terminal,
+    (pendingParseByTerminal.get(terminal) ?? 0) + data.length,
+  );
   let settled = false;
   const done = (): void => {
     if (settled) return;
     settled = true;
+    noteParsed(terminal, data.length);
     onParsed();
   };
   // Prefer xterm's post-parse callback when the sink accepts a 2nd argument.
@@ -595,6 +639,7 @@ function writeSinkChunk(
 function takeNextDrainableEntry(): QueueEntry | null {
   for (const entry of queuedByTerminal.values()) {
     if (!isEntryDrainable(entry)) continue;
+    if (isParseBlocked(entry.terminal)) continue;
     queuedByTerminal.delete(entry.terminal);
     return entry;
   }
@@ -779,6 +824,26 @@ export function writeTerminalOutput(
       scheduleDrain(0);
       return;
     }
+    if (isParseBlocked(terminal)) {
+      // xterm's WriteBuffer is already over budget (renderer lagging): route
+      // the flood through the bounded queue instead of growing unparsed
+      // writes without limit. The drain re-arms as parse callbacks fire.
+      const queued = entry ?? createQueueEntry(terminal, options);
+      queued.beforeWrite = options.beforeWrite;
+      queued.onBackgroundBacklogDropped = options.onBackgroundBacklogDropped;
+      queued.highPriority = true;
+      queuedByTerminal.set(terminal, queued);
+      enqueueChunk(queued, data, {
+        foreground: true,
+        onParsed: options.onParsed,
+      });
+      if (debugEnabled) {
+        debugState.foregroundWriteCount++;
+        debugState.deferredForegroundEnqueueCount++;
+      }
+      scheduleDrain(0);
+      return;
+    }
     flushTerminalOutput(terminal);
     if (debugEnabled) {
       debugState.foregroundWriteCount++;
@@ -868,12 +933,18 @@ export function discardTerminalOutput(terminal: TerminalOutputSink): void {
     clearForegroundCoalesce(entry);
   }
   queuedByTerminal.delete(terminal);
+  pendingParseByTerminal.delete(terminal);
   recordQueueDebugPressure();
 }
 
 /** Queued char count for a sink (tests / benchmarks). */
 export function getQueuedChars(terminal: TerminalOutputSink): number {
   return queuedByTerminal.get(terminal)?.queuedChars ?? 0;
+}
+
+/** Written-but-unparsed char count for a sink (tests / benchmarks). */
+export function getPendingParseChars(terminal: TerminalOutputSink): number {
+  return pendingParseByTerminal.get(terminal) ?? 0;
 }
 
 /** Reset all module state (tests only). */
@@ -888,5 +959,6 @@ export function resetTerminalOutputSchedulerForTests(): void {
     clearForegroundCoalesce(entry);
   }
   queuedByTerminal.clear();
+  pendingParseByTerminal.clear();
   resetTerminalOutputSchedulerDebug();
 }

@@ -26,6 +26,7 @@ import { VOICE_CHANNELS } from '../shared/voice-channels';
 import { VISION_CHANNELS } from '../shared/vision-ipc';
 import type { ScreenCaptureMetadata } from '../shared/vision-ipc';
 import { getAxTree, performAxAction } from './ax-tree';
+import { PTY_GAP_NOTICE, PtyGapBuffer } from './pty-gap-buffer';
 import { runFunctionalSmokeProbes } from './functional-smoke';
 import {
   prepareRealMissionProductWizardE2E,
@@ -150,10 +151,16 @@ type StateCb = (state: PaneSessionState) => void;
 type AdapterChangedCb = (adapters: AdapterInfo[]) => void;
 
 const dataSubs = new Map<string, Set<DataCb>>();
-/** Contiguous high-water: only advances for in-order sequences. */
-const lastPtySequence = new Map<string, number>();
-/** Out-of-order chunks waiting for the gap to fill (seq → data). */
-const pendingPtyChunks = new Map<string, Map<number, string>>();
+/**
+ * Per-session contiguous delivery with a BOUNDED gap buffer. An unrecoverable
+ * hole (evicted from main's replay window) is accepted instead of buffering —
+ * and re-recovering — forever.
+ */
+const ptyGapBuffers = new Map<string, PtyGapBuffer>();
+/** Single in-flight recover pull per session: a gap must not spawn a storm. */
+const ptyRecoverFlights = new Set<string>();
+const ptyGapWarnAt = new Map<string, number>();
+const PTY_GAP_WARN_INTERVAL_MS = 30_000;
 const exitSubs = new Map<string, Set<ExitCb>>();
 const stateSubs = new Map<string, Set<StateCb>>();
 const browserStateListeners = new Set<(state: BrowserPaneState) => void>();
@@ -169,55 +176,91 @@ ipcRenderer.on(
 );
 
 function clearPtySequenceState(sessionId: string): void {
-  lastPtySequence.delete(sessionId);
-  pendingPtyChunks.delete(sessionId);
+  ptyGapBuffers.delete(sessionId);
+  ptyRecoverFlights.delete(sessionId);
+  ptyGapWarnAt.delete(sessionId);
+}
+
+function ptyGapBuffer(sessionId: string): PtyGapBuffer {
+  let buffer = ptyGapBuffers.get(sessionId);
+  if (!buffer) {
+    buffer = new PtyGapBuffer();
+    ptyGapBuffers.set(sessionId, buffer);
+  }
+  return buffer;
+}
+
+function warnPtyGapThrottled(sessionId: string, detail: string): void {
+  const now = Date.now();
+  if (now - (ptyGapWarnAt.get(sessionId) ?? 0) < PTY_GAP_WARN_INTERVAL_MS) {
+    return;
+  }
+  ptyGapWarnAt.set(sessionId, now);
+  console.warn(`[preload] pty output gap accepted for ${sessionId}: ${detail}`);
 }
 
 function emitContiguousPtyData(sessionId: string, sequence: number, data: string): void {
-  lastPtySequence.set(sessionId, sequence);
   dataSubs.get(sessionId)?.forEach((cb) => cb(data));
   ipcRenderer.send(PTY_CHANNELS.acknowledge, { sessionId, sequence });
 }
 
+/** Single-flighted pull from the contiguous high-water mark. */
+function requestPtyRecover(sessionId: string): void {
+  if (ptyRecoverFlights.has(sessionId)) return;
+  ptyRecoverFlights.add(sessionId);
+  void ipcRenderer
+    .invoke(PTY_CHANNELS.recover, {
+      sessionId,
+      afterSequence: ptyGapBuffer(sessionId).highWater,
+    })
+    .then((events: PtyDataEvent[]) => deliverRecoveredPtyData(sessionId, events))
+    .catch(() => {})
+    .finally(() => ptyRecoverFlights.delete(sessionId));
+}
+
+function deliverRecoveredPtyData(sessionId: string, events: PtyDataEvent[]): void {
+  if (events.length === 0) return;
+  const buffer = ptyGapBuffers.get(sessionId);
+  if (!buffer) return; // session exited while the pull was in flight
+  const first = events[0];
+  if (first.sequence > buffer.highWater + 1) {
+    // The hole was evicted from main's replay window and will never heal —
+    // accept it, notice the terminal once, and resume from what is available.
+    warnPtyGapThrottled(
+      sessionId,
+      `recover resumed at sequence ${first.sequence} past the high-water mark`,
+    );
+    dataSubs.get(sessionId)?.forEach((cb) => cb(PTY_GAP_NOTICE));
+    for (const chunk of buffer.acceptHole(first.sequence)) {
+      emitContiguousPtyData(sessionId, chunk.sequence, chunk.data);
+    }
+  }
+  events.forEach(deliverPtyData);
+}
+
 /**
- * Deliver PTY data only in contiguous sequence order. Gaps are buffered and
- * recovered; reordered chunks are never permanently dropped by advancing the
- * high-water mark past a hole.
+ * Deliver PTY data only in contiguous sequence order. Gaps are buffered
+ * (bounded) and recovered; holes that prove unrecoverable are accepted once
+ * so delivery always resumes instead of storming recover invokes.
  */
 function deliverPtyData(payload: PtyDataEvent): void {
   const sessionId = payload.sessionId;
-  const previous = lastPtySequence.get(sessionId) ?? 0;
-  const expected = previous + 1;
-  if (payload.sequence <= previous) return; // duplicate / already acked
-  if (payload.sequence > expected) {
-    let pending = pendingPtyChunks.get(sessionId);
-    if (!pending) {
-      pending = new Map();
-      pendingPtyChunks.set(sessionId, pending);
-    }
-    pending.set(payload.sequence, payload.data);
-    // Pull the gap immediately (quiet cadence is a backstop only).
-    void ipcRenderer
-      .invoke(PTY_CHANNELS.recover, {
-        sessionId,
-        afterSequence: previous,
-      })
-      .then((events: PtyDataEvent[]) => events.forEach(deliverPtyData))
-      .catch(() => {});
-    return;
+  const buffer = ptyGapBuffer(sessionId);
+  const result = buffer.push(payload.sequence, payload.data);
+  if (result.gapHealed) {
+    warnPtyGapThrottled(
+      sessionId,
+      `gap buffer over budget; resumed at sequence ${buffer.highWater}`,
+    );
+    dataSubs.get(sessionId)?.forEach((cb) => cb(PTY_GAP_NOTICE));
+  } else if (result.chunks.length === 0 && payload.sequence > buffer.highWater) {
+    // Buffered behind a hole: pull it immediately (quiet cadence is a
+    // backstop only). Single-flighted — one recover per session at a time.
+    requestPtyRecover(sessionId);
   }
-  // Contiguous: emit this chunk then any buffered successors.
-  emitContiguousPtyData(sessionId, payload.sequence, payload.data);
-  const pending = pendingPtyChunks.get(sessionId);
-  if (!pending || pending.size === 0) return;
-  let next = payload.sequence + 1;
-  while (pending.has(next)) {
-    const chunk = pending.get(next)!;
-    pending.delete(next);
-    emitContiguousPtyData(sessionId, next, chunk);
-    next += 1;
+  for (const chunk of result.chunks) {
+    emitContiguousPtyData(sessionId, chunk.sequence, chunk.data);
   }
-  if (pending.size === 0) pendingPtyChunks.delete(sessionId);
 }
 
 ipcRenderer.on(PTY_CHANNELS.data, (_event, payload: PtyDataEvent) => {
@@ -228,11 +271,7 @@ ipcRenderer.on(PTY_CHANNELS.data, (_event, payload: PtyDataEvent) => {
 // contiguous high-water so recover never skips a hole.
 setInterval(() => {
   for (const sessionId of dataSubs.keys()) {
-    const afterSequence = lastPtySequence.get(sessionId) ?? 0;
-    void ipcRenderer
-      .invoke(PTY_CHANNELS.recover, { sessionId, afterSequence })
-      .then((events: PtyDataEvent[]) => events.forEach(deliverPtyData))
-      .catch(() => {});
+    requestPtyRecover(sessionId);
   }
 }, 15_000);
 
@@ -777,12 +816,12 @@ const api: NexusApi = {
     spawn: (req: SpawnRequest): Promise<SpawnResult> =>
       ipcRenderer.invoke(PTY_CHANNELS.spawn, req),
     replay: async (sessionId: string): Promise<void> => {
-      const afterSequence = lastPtySequence.get(sessionId) ?? 0;
+      const afterSequence = ptyGapBuffers.get(sessionId)?.highWater ?? 0;
       const events = (await ipcRenderer.invoke(PTY_CHANNELS.recover, {
         sessionId,
         afterSequence,
       })) as PtyDataEvent[];
-      events.forEach(deliverPtyData);
+      deliverRecoveredPtyData(sessionId, events);
     },
     write: (sessionId, data) =>
       ipcRenderer.send(PTY_CHANNELS.write, { sessionId, data }),
