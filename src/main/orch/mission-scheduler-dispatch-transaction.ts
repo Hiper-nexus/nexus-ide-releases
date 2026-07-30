@@ -61,7 +61,10 @@ import {
 } from "./task-dispatch-worker-retirement";
 import { taskDispatchQualityRepairReason } from "./task-dispatch-store";
 import { TASK_DISPATCH_SESSION_EXIT_REASON } from "./task-dispatch-persistence";
-import type { TaskDispatchRecord } from "./task-dispatch-codec";
+import {
+  hasBoundHandoffForExactDispatchWorker,
+  type TaskDispatchRecord,
+} from "./task-dispatch-codec";
 import type { PlannedTaskRecord } from "./task-store";
 import { reserveWorkerSpawnSlot } from "./tools-panes";
 import { requestMissionPaneClose } from "./pane-registry";
@@ -512,6 +515,20 @@ async function compensateRetryableBootstrapFailure(input: {
     throw new MissionSchedulerDispatchAuthorityError(
       "bootstrap retry encontrou identidade física parcial",
     );
+  }
+  // The exact worker's handoff may already be durably bound (AGY exits by
+  // itself right after printing the block, so a bootstrap-phase abort/error
+  // can race the ingest). Then there is nothing to compensate: the physical
+  // work product exists and the normal handoff-consumption path owns the
+  // dispatch. A requeue attempt would (correctly) be refused by the store —
+  // never let that refusal terminalize a delivered handoff.
+  if (
+    hasBoundHandoffForExactDispatchWorker(
+      input.stores.taskDispatches.get(input.taskId),
+      { missionId: input.missionId, sessionId, workerIncarnationId },
+    )
+  ) {
+    return;
   }
   if (paneId && sessionId) {
     const exactIdentity = { paneId, sessionId, workerIncarnationId };
@@ -988,6 +1005,28 @@ export async function dispatchMissionSchedulerTask(
           );
     }
     const disposition = classifyOperationalFailure(error);
+    // AGY exits by itself right after printing its handoff block, so a fast
+    // advisory can surface a bootstrap-phase error (e.g. the acceptance watch
+    // observing the physical exit) AFTER the handoff was durably bound to this
+    // exact worker incarnation. That binding is the bootstrap's intended
+    // physical outcome — a strictly stronger proof than any spawn-phase
+    // signal — and every downstream consumer (read-only completion, worker
+    // retirement) already handles a naturally exited session. Terminalizing
+    // here would strand a delivered handoff and fail the mission.
+    if (dispatchWorkerIncarnationId && boundSessionId) {
+      if (
+        hasBoundHandoffForExactDispatchWorker(
+          stores.taskDispatches.get(taskId),
+          {
+            missionId,
+            sessionId: boundSessionId,
+            workerIncarnationId: dispatchWorkerIncarnationId,
+          },
+        )
+      ) {
+        return;
+      }
+    }
     if (
       disposition === "retryable" &&
       dispatchLeaseToken &&

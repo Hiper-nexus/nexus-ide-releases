@@ -30,6 +30,7 @@ const stubs = vi.hoisted(() => ({
     (entry: { sessionId: string; sequence: number }) => void
   >,
   missionPanesRecord: vi.fn(),
+  taskDispatchesList: vi.fn((): Array<unknown> => []),
   missionGet: vi.fn((missionId: string) =>
     missionId === 'm1'
       ? {
@@ -156,6 +157,7 @@ vi.mock('./project-domain-store-registry', () => ({
   getProjectDomainStores: vi.fn(() => ({
     missions: { get: stubs.missionGet },
     missionPanes: { record: stubs.missionPanesRecord },
+    taskDispatches: { list: stubs.taskDispatchesList },
   })),
 }));
 vi.mock('./squad-store', () => ({ listSquads: stubs.listSquads }));
@@ -202,6 +204,7 @@ describe('agent pane workspace confinement', () => {
     stubs.readSessionOutput.mockReturnValue('');
     stubs.requestPaneClose.mockResolvedValue(true);
     stubs.terminateSession.mockResolvedValue(true);
+    stubs.taskDispatchesList.mockReturnValue([]);
   });
 
   it('pins every orchestration spawn to the canonical active workspace', async () => {
@@ -582,6 +585,84 @@ describe('agent pane workspace confinement', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('accepts the AGY argv brief when the worker self-exits after delivering its handoff', async () => {
+    const onPromptAccepted = vi.fn();
+    // AGY exits by itself right after printing the handoff block: the boot
+    // wait observes the physical exit, but the handoff is already durably
+    // bound to this exact worker incarnation — a stronger acceptance proof.
+    stubs.waitForIdle.mockResolvedValue('exited');
+    stubs.taskDispatchesList.mockReturnValue([
+      {
+        missionId: 'm1',
+        sessionId: 'session-1',
+        workerIncarnationId: 'inc-1',
+        handoffId: 'handoff-1',
+      },
+    ]);
+
+    await spawnPaneAndMaybePrompt(
+      {
+        adapterId: 'agy',
+        missionId: 'm1',
+        role: 'worker',
+        readOnly: true,
+        prompt: 'Mapeie os panes e entregue o parecer.',
+        workerIncarnationId: 'inc-1',
+        scope,
+        executionScope: taskExecutionScope,
+      },
+      { onPromptAccepted },
+    );
+
+    expect(stubs.writeSession).not.toHaveBeenCalled();
+    expect(stubs.requestPaneClose).not.toHaveBeenCalled();
+    expect(onPromptAccepted).toHaveBeenCalledOnce();
+  });
+
+  it('closes the AGY pane when the session exits during boot without a handoff', async () => {
+    const onPromptAccepted = vi.fn();
+    stubs.waitForIdle.mockResolvedValue('exited');
+    // No handoff bound anywhere: the exit is a plain boot failure.
+    stubs.taskDispatchesList.mockReturnValue([
+      {
+        missionId: 'm1',
+        sessionId: 'session-1',
+        workerIncarnationId: 'inc-1',
+      },
+      {
+        missionId: 'm1',
+        sessionId: 'session-1',
+        workerIncarnationId: 'inc-OTHER',
+        handoffId: 'handoff-other-incarnation',
+      },
+      {
+        missionId: 'm1',
+        sessionId: 'session-OTHER',
+        workerIncarnationId: 'inc-1',
+        handoffId: 'handoff-other-session',
+      },
+    ]);
+
+    await expect(
+      spawnPaneAndMaybePrompt(
+        {
+          adapterId: 'agy',
+          missionId: 'm1',
+          role: 'worker',
+          readOnly: true,
+          prompt: 'Mapeie os panes e entregue o parecer.',
+          workerIncarnationId: 'inc-1',
+          scope,
+          executionScope: taskExecutionScope,
+        },
+        { onPromptAccepted },
+      ),
+    ).rejects.toThrow(/exited during boot/i);
+
+    expect(stubs.requestPaneClose).toHaveBeenCalledWith('pane-1');
+    expect(onPromptAccepted).not.toHaveBeenCalled();
   });
 
   it('keeps probe infrastructure fail-closed only in explicit hardened mode', async () => {

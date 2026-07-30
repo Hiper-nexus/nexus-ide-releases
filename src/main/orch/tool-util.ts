@@ -23,6 +23,7 @@ import { getAdapter } from '../adapters/adapter-registry';
 import { discoverCliModels } from '../adapters/cli-model-discovery';
 import { resolveRoutableModel } from './task-router';
 import { getProjectDomainStores } from './project-domain-store-registry';
+import { hasBoundHandoffForExactDispatchWorker } from './task-dispatch-codec';
 import { resolveCwdForScope } from './workspace-path';
 import { withHandoffContract } from './worker-handoff-contract';
 import {
@@ -573,6 +574,35 @@ function waitForAgentActivity(
 }
 
 /**
+ * AGY exits by itself right after printing its handoff block (verified on agy
+ * 1.1.8). A handoff durably bound to THIS exact worker incarnation is a
+ * stronger physical acceptance proof than any busy edge: the session exit
+ * that follows is the provider's normal teardown, not a boot failure. Any
+ * doubt fails closed — a store read error never fabricates acceptance.
+ */
+function hasBoundHandoffForExactWorker(
+  scope: AgentGateContext['scope'],
+  missionId: string | undefined,
+  sessionId: string,
+  workerIncarnationId: string | undefined,
+): boolean {
+  if (!missionId || !workerIncarnationId) return false;
+  try {
+    return getProjectDomainStores(scope)
+      .taskDispatches.list(missionId)
+      .some((dispatch) =>
+        hasBoundHandoffForExactDispatchWorker(dispatch, {
+          missionId,
+          sessionId,
+          workerIncarnationId,
+        }),
+      );
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Prove that an AGY worker's argv-delivered brief (`--prompt-interactive`)
  * physically opened a turn — spawn argv has no delivery receipt, so acceptance
  * is observed on the PTY: boot held busy (turn already streaming) or a
@@ -589,13 +619,31 @@ async function ensureAgyArgvPromptAccepted(
   finalPrompt: string,
   adapterId: string,
   invocation?: McpToolInvocation,
+  worker?: {
+    readonly scope: AgentGateContext['scope'];
+    readonly missionId?: string;
+    readonly workerIncarnationId?: string;
+  },
 ): Promise<void> {
+  const handoffDelivered = (): boolean =>
+    worker !== undefined &&
+    hasBoundHandoffForExactWorker(
+      worker.scope,
+      worker.missionId,
+      sessionId,
+      worker.workerIncarnationId,
+    );
   const boot = await waitForIdle(
     sessionId,
     AGENT_BOOT_TIMEOUT_MS,
     invocation?.signal,
   );
-  if (boot === 'exited') throw agentBootExitError(sessionId);
+  if (boot === 'exited') {
+    // A fast AGY turn can deliver the handoff and self-exit inside the boot
+    // window; the durable handoff outranks the exit.
+    if (handoffDelivered()) return;
+    throw agentBootExitError(sessionId);
+  }
   // Boot output never settled: the provider is already streaming the turn.
   if (boot === 'timeout' && getSessionState(sessionId) === 'busy') return;
   assertMcpInvocationCurrent(invocation);
@@ -608,6 +656,8 @@ async function ensureAgyArgvPromptAccepted(
   ) {
     return;
   }
+  // The activity wait also resolves false on physical session exit.
+  if (handoffDelivered()) return;
   assertMcpInvocationCurrent(invocation);
   const rescued = await submitPendingAgentPrompt(sessionId, invocation, {
     adapterId,
@@ -616,6 +666,7 @@ async function ensureAgyArgvPromptAccepted(
   // A busy session here means the turn opened while the proof was pending —
   // re-typing the brief would interleave with live work.
   if (rescued || getSessionState(sessionId) === 'busy') return;
+  if (handoffDelivered()) return;
   assertMcpInvocationCurrent(invocation);
   await deliverAgentPrompt(sessionId, finalPrompt, invocation, { adapterId });
 }
@@ -926,6 +977,11 @@ export async function spawnPaneAndMaybePrompt(
           finalPrompt,
           adapter.id,
           hooks.invocation,
+          {
+            scope: options.scope,
+            missionId: options.missionId,
+            workerIncarnationId: options.workerIncarnationId,
+          },
         );
         hooks.onPromptAccepted?.(
           result.paneId,

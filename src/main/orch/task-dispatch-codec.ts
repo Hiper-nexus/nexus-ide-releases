@@ -307,6 +307,31 @@ export interface TaskDispatchFencedMutation {
   readonly leaseToken: string;
 }
 
+/**
+ * Physical proof that THIS exact worker incarnation delivered its handoff:
+ * the durable dispatch binds the handoff id to the same mission, session and
+ * worker incarnation. Providers that exit by themselves right after printing
+ * the handoff block (AGY) must complete bootstrap on this fact instead of
+ * terminalizing on the exit observation.
+ */
+export function hasBoundHandoffForExactDispatchWorker(
+  dispatch: TaskDispatchRecord | null,
+  identity: {
+    readonly missionId: string;
+    readonly sessionId: string | null;
+    readonly workerIncarnationId: string;
+  },
+): boolean {
+  return Boolean(
+    dispatch &&
+      dispatch.handoffId !== undefined &&
+      dispatch.missionId === identity.missionId &&
+      dispatch.workerIncarnationId === identity.workerIncarnationId &&
+      (identity.sessionId === null ||
+        dispatch.sessionId === identity.sessionId),
+  );
+}
+
 export function taskDispatchTokenHash(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
