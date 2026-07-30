@@ -601,6 +601,13 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
     // took Home's place. Keeping a dead mission's output on screen has to be
     // solved by not closing its pane, never by rendering nothing.
     if (next === null) useHomeStore.getState().show();
+    // Missão viva que perdeu o último pane visível continua rodando Main-owned
+    // em segundo plano — avisa com ação de reabrir (o Home acima permanece;
+    // o toast cavalga por cima dele). Ver mission-last-pane-notify.ts.
+    const closedPane = before.find((pane) => pane.id === paneId);
+    if (closedPane) {
+      notifyIfLastMissionPaneClosed(closedPane, reason, listPanes(root));
+    }
   },
 
   toggleMaximizePane: (paneId) => {
