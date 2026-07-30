@@ -447,7 +447,7 @@ export type SpawnResult =
   | {
       ok: true;
       sessionId: string;
-      resumeMode?: 'exact' | 'latest' | 'unsupported';
+      resumeMode?: 'exact' | 'latest' | 'unsupported' | 'fresh-context';
       /** Existing main-owned mission PTY was attached; no provider restart. */
       adopted?: boolean;
       /** Current state snapshot for an adopted session (push may predate listeners). */

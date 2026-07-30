@@ -372,6 +372,31 @@ function persistedMissionGrant(
   };
 }
 
+function persistedWorkerGrant(
+  cwd = fs.realpathSync(process.cwd()),
+): BoundSpawnAuthority {
+  const base = trustedSpawn(cwd);
+  const coordinationScope = {
+    ...base.scope,
+    rootRealPath: path.dirname(cwd),
+  };
+  return {
+    ...base,
+    source: "persisted-pane",
+    coordinationScope,
+    context: {
+      missionId: "mission-persisted-worker",
+      agentName: "Persisted worker",
+      role: "worker",
+      workerIncarnationId: "worker-incarnation-persisted",
+      allowedTools: [],
+      allowedSkills: null,
+      scope: coordinationScope,
+      executionScope: base.scope,
+    },
+  };
+}
+
 // A minimal, valid cli-pty adapter shaped just enough for agentEnv(). Only the
 // `env` block matters here; the rest satisfies the type.
 function makeAdapter(
@@ -1600,9 +1625,56 @@ describe("cli-agent spawn argv hardening", () => {
     }
   });
 
-  it("refuses persisted mission resume when no exact provider session exists", () => {
-    const spawn = vi.fn();
-    setPtyHost({ spawn });
+  it("respawns a persisted mission fresh when its provider session died with the app", () => {
+    const h = fakeHost();
+    setPtyHost(h.host);
+    setResumeSessionLookup(() => null);
+    const adapter = makeAdapter(
+      { static: {}, passthrough: [], ephemeralHome: false },
+      {
+        resumeArgs: ["--continue"],
+        resumeIdArgs: ["--resume"],
+        sessionIdArg: "--session-id",
+      },
+    );
+
+    try {
+      const spawned = spawnAgentSession(
+        fakeWc(),
+        {
+          kind: "cli-agent",
+          paneId: "pane-persisted",
+          accountId: "account-main",
+          resume: true,
+          resumeLatestOnly: false,
+          cols: 80,
+          rows: 24,
+        },
+        adapter,
+        {},
+        persistedMissionGrant(),
+      );
+      // No dead pane: fresh incarnation under the same sealed contract.
+      expect(spawned.resumeMode).toBe("fresh-context");
+      const args = h.specFor(spawned.sessionId).args;
+      expect(args).not.toContain("--resume");
+      expect(args).not.toContain("--continue");
+      // A fresh spawn dictates a NEW provider session id, never a reused one.
+      const sessionArgIndex = args.indexOf("--session-id");
+      expect(sessionArgIndex).toBeGreaterThanOrEqual(0);
+      expect(args[sessionArgIndex + 1]).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f-]{27,}$/,
+      );
+      orchKillSession(spawned.sessionId);
+    } finally {
+      setResumeSessionLookup(null);
+    }
+  });
+
+  it("respawns a persisted mission worker fresh when its provider session is gone", () => {
+    setSquadCliPolicyLookupForTests(() => "operator-choice");
+    const h = fakeHost();
+    setPtyHost(h.host);
     setResumeSessionLookup(() => null);
     const adapter = makeAdapter(
       { static: {}, passthrough: [], ephemeralHome: false },
@@ -1613,24 +1685,64 @@ describe("cli-agent spawn argv hardening", () => {
     );
 
     try {
-      expect(() =>
-        spawnAgentSession(
-          fakeWc(),
-          {
-            kind: "cli-agent",
-            paneId: "pane-persisted",
-            accountId: "account-main",
-            resume: true,
-            resumeLatestOnly: false,
-            cols: 80,
-            rows: 24,
-          },
-          adapter,
-          {},
-          persistedMissionGrant(),
-        ),
-      ).toThrow(/exact main-owned provider session/i);
-      expect(spawn).not.toHaveBeenCalled();
+      const spawned = spawnAgentSession(
+        fakeWc(),
+        {
+          kind: "cli-agent",
+          paneId: "pane-persisted-worker",
+          accountId: "account-main",
+          resume: true,
+          resumeLatestOnly: false,
+          cols: 80,
+          rows: 24,
+        },
+        adapter,
+        {},
+        persistedWorkerGrant(),
+      );
+      expect(spawned.resumeMode).toBe("fresh-context");
+      const args = h.specFor(spawned.sessionId).args;
+      expect(args).not.toContain("--resume");
+      expect(args).not.toContain("--continue");
+      orchKillSession(spawned.sessionId);
+    } finally {
+      setResumeSessionLookup(null);
+    }
+  });
+
+  it("keeps the direct-user pane on the latest-session fallback when no exact session exists", () => {
+    const h = fakeHost();
+    setPtyHost(h.host);
+    setResumeSessionLookup(() => null);
+    const adapter = makeAdapter(
+      { static: {}, passthrough: [], ephemeralHome: false },
+      {
+        resumeArgs: ["--continue"],
+        resumeIdArgs: ["--resume"],
+      },
+    );
+
+    try {
+      const spawned = spawnAgentSession(
+        fakeWc(),
+        {
+          kind: "cli-agent",
+          paneId: "pane-direct",
+          accountId: "account-main",
+          resume: true,
+          resumeLatestOnly: false,
+          cols: 80,
+          rows: 24,
+        },
+        adapter,
+        {},
+        trustedSpawn(),
+      );
+      // Non-mission panes keep the pre-existing choices: exact when captured,
+      // otherwise the adapter's latest-session fallback — never a throw.
+      expect(spawned.resumeMode).toBe("latest");
+      expect(h.specFor(spawned.sessionId).args).toContain("--continue");
+      orchKillSession(spawned.sessionId);
     } finally {
       setResumeSessionLookup(null);
     }

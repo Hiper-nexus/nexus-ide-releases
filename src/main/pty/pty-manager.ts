@@ -752,7 +752,7 @@ function finalizeSession(
 
 export interface SpawnedSession {
   sessionId: string;
-  resumeMode?: "exact" | "latest" | "unsupported";
+  resumeMode?: "exact" | "latest" | "unsupported" | "fresh-context";
 }
 
 /** Spawn a shell PTY. */
@@ -980,32 +980,40 @@ export function spawnAgentSession(
   // Cross-account failover must spawn fresh + inject a continuity pack instead.
   let resumeMode: SpawnedSession["resumeMode"];
   let trustedResumeArgs: string[] = [];
+  // A persisted mission pane whose exact provider session died with the app
+  // must not fail into a dead pane: the sealed mission contract stays the
+  // authority, so the pane respawns FRESH under the same contract (no resume
+  // argv) and the renderer delivers the mission continuity path. Same
+  // philosophy as the cross-account failover above.
+  let persistedMissionFreshContext = false;
   if (req.resume) {
     if (authority.source === "persisted-pane") {
-      if (
-        req.resumeLatestOnly ||
-        !req.paneId ||
-        !adapter.spawn.resumeIdArgs?.length
-      ) {
-        throw new Error(
-          "exact main-owned provider session is required for persisted mission resume",
-        );
-      }
       const captured =
-        resumeSessionLookup?.(
-          authority.scope,
-          req.paneId,
-          adapter.id,
-          req.accountId,
-        ) ?? null;
-      if (!captured) {
+        !req.resumeLatestOnly &&
+        req.paneId &&
+        adapter.spawn.resumeIdArgs?.length
+          ? (resumeSessionLookup?.(
+              authority.scope,
+              req.paneId,
+              adapter.id,
+              req.accountId,
+            ) ?? null)
+          : null;
+      if (captured) {
+        args.push(...adapter.spawn.resumeIdArgs!, captured);
+        trustedResumeArgs = [...adapter.spawn.resumeIdArgs!, captured];
+        resumeMode = "exact";
+      } else if (authority.context?.missionId) {
+        persistedMissionFreshContext = true;
+        resumeMode = "fresh-context";
+      } else {
+        // Authority anomaly, NOT physical death: a persisted pane without a
+        // mission contract has no sanctioned fresh-context respawn.
         throw new Error(
-          "exact main-owned provider session is unavailable for persisted mission resume",
+          "persisted pane authority is not bound to a mission contract, so " +
+            "no fresh-context respawn is authorized — retome a missão pelo card",
         );
       }
-      args.push(...adapter.spawn.resumeIdArgs, captured);
-      trustedResumeArgs = [...adapter.spawn.resumeIdArgs, captured];
-      resumeMode = "exact";
     } else {
       const captured =
         !req.resumeLatestOnly &&
@@ -1031,11 +1039,17 @@ export function spawnAgentSession(
     }
   }
 
+  // True only when argv actually asks the provider to resume a conversation.
+  // The fresh-context fallback is a FRESH spawn under the sealed contract, so
+  // it dictates a new provider session id like any other fresh spawn.
+  const providerResumeRequested =
+    req.resume === true && !persistedMissionFreshContext;
+
   // Telemetria real: dita o session id do provider em spawns FRESCOS (num
   // resume o CLI decide o id — a atribuição fica com o watcher de transcript).
   let dictatedSessionId: string | null = null;
   let trustedSessionArgs: string[] = [];
-  if (adapter.spawn.sessionIdArg && !req.resume) {
+  if (adapter.spawn.sessionIdArg && !providerResumeRequested) {
     dictatedSessionId = randomUUID();
     args.push(adapter.spawn.sessionIdArg, dictatedSessionId);
     trustedSessionArgs = [adapter.spawn.sessionIdArg, dictatedSessionId];
@@ -1311,7 +1325,7 @@ export function spawnAgentSession(
     }
     if (nativeReadOnly || enforceWorkspaceWriteSandbox) {
       if (
-        req.resume &&
+        providerResumeRequested &&
         trustedResumeArgs.length === 0
       ) {
         throw new Error(

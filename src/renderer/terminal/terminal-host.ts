@@ -535,11 +535,13 @@ function startSpawn(
       const spawnedAt = Date.now();
       if (resume && !res.adopted) {
         const message =
-          res.resumeMode === 'exact'
-            ? '[nexus] sessão exata recuperada para este pane.'
-            : res.resumeMode === 'latest'
-              ? '[nexus] retomada aproximada: a CLI abriu a conversa mais recente deste workspace.'
-              : '[nexus] nova sessão: esta CLI não oferece recuperação nativa.';
+          res.resumeMode === 'fresh-context'
+            ? '[nexus] a sessão anterior morreu com o app — a missão continuará em contexto novo.'
+            : res.resumeMode === 'exact'
+              ? '[nexus] sessão exata recuperada para este pane.'
+              : res.resumeMode === 'latest'
+                ? '[nexus] retomada aproximada: a CLI abriu a conversa mais recente deste workspace.'
+                : '[nexus] nova sessão: esta CLI não oferece recuperação nativa.';
         host.term.writeln(`\r\n\x1b[${res.resumeMode === 'exact' ? '32' : '33'}m${message}\x1b[0m`);
       }
 

@@ -19,7 +19,11 @@ const ptyDeps = vi.hoisted(() => ({
   adoptMainOwnedAgentSession: vi.fn((): unknown => null),
   getSessionState: vi.fn((_sessionId: string): unknown => null),
   listAgentSessionsForPane: vi.fn((): unknown[] => []),
-  spawnAgentSession: vi.fn(() => ({ sessionId: "pty-created" })),
+  spawnAgentSession: vi.fn(
+    (): { sessionId: string; resumeMode?: string } => ({
+      sessionId: "pty-created",
+    }),
+  ),
   spawnSession: vi.fn(() => ({ sessionId: "shell-created" })),
   setPtyHost: vi.fn(),
   killSession: vi.fn(),
@@ -796,6 +800,73 @@ describe("registerPtyIpc account fail-fast", () => {
       persisted.paneId,
     );
     expect(ptyDeps.spawnAgentSession).toHaveBeenCalled();
+  });
+
+  it("forwards the fresh-context resumeMode when the dead provider session respawns fresh", () => {
+    providerDeps.prepareProviderSpawn.mockReturnValueOnce({
+      ok: true,
+      overrides: {},
+    });
+    const persisted = {
+      id: "mpane-orch-fresh-context",
+      missionId: "mission-a",
+      adapterId: "claude",
+      model: "claude-opus-4-1",
+      accountId: "account-main",
+      effort: "high",
+      title: "Orchestrator",
+      role: "orchestrator" as const,
+      paneId: "pane-orch-fresh-context",
+      cwd: "/workspace/a/trusted-cwd",
+      scope: authorityDeps.scope,
+      authoritySeal: authoritySealFor(),
+      createdAt: 1,
+    };
+    authorityDeps.findMissionPaneByPaneId.mockReturnValueOnce(persisted);
+    authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
+    // Physical death of the provider session: main resolves the fresh-context
+    // fallback inside spawnAgentSession instead of failing into a dead pane.
+    ptyDeps.spawnAgentSession.mockReturnValueOnce({
+      sessionId: "pty-created",
+      resumeMode: "fresh-context",
+    });
+    const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
+
+    const result = handler?.(
+      { sender: { id: 7 } },
+      {
+        kind: "cli-agent",
+        adapterId: persisted.adapterId,
+        model: persisted.model,
+        accountId: persisted.accountId,
+        effort: persisted.effort,
+        missionId: persisted.missionId,
+        paneId: persisted.paneId,
+        resume: true,
+        resumeLatestOnly: false,
+        restorePersistedAuthority: false,
+        cwd: persisted.cwd,
+        cols: 100,
+        rows: 30,
+      },
+    );
+
+    // The renderer needs the fresh-context signal to print the PT-BR CTA and
+    // inject the mission continuity path; the new session is bound to the
+    // same persisted mission authority, not thrown away.
+    expect(result).toEqual({
+      ok: true,
+      sessionId: "pty-created",
+      resumeMode: "fresh-context",
+    });
+    expect(authorityDeps.attachOrchMeta).toHaveBeenCalledWith(
+      { id: 7 },
+      persisted.paneId,
+      expect.objectContaining({
+        missionId: persisted.missionId,
+        role: "orchestrator",
+      }),
+    );
   });
 
   it("reattaches instead of fresh when the persisted pane session is alive", () => {
