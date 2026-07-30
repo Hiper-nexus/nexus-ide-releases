@@ -497,6 +497,7 @@ export function initRealMissionE2E(): void {
       attestEvidence,
       onFinish: finish,
       orchestratorCli,
+      startedAt,
     });
     observer.start();
     observedMissionId = mission.id;

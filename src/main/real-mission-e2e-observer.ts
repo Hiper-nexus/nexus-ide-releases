@@ -183,6 +183,7 @@ export class RealMissionObserver {
   #workerObserved = false;
   #doneSeenAt: number | null = null;
   #lastSettleLogAt = 0;
+  readonly #runStartedAt: number;
   #evaluationQueued = false;
   #stopped = false;
   #interval: ReturnType<typeof setInterval> | null = null;
@@ -210,6 +211,12 @@ export class RealMissionObserver {
     advisorSkipClis?: readonly string[];
     /** Variante de orquestrador do harness; default: env do processo. */
     orchestratorCli?: RealMissionE2EOrchestratorCli;
+    /**
+     * Início real do run físico. O probe pós-done precisa deste boundary:
+     * o invariante de participação exige spawnedAt >= startedAt, então usar
+     * o relógio da avaliação (pós-done) derruba o PASS deterministicamente.
+     */
+    startedAt?: number;
   }) {
     this.#owner = input.owner;
     this.#runId = input.runId;
@@ -223,6 +230,7 @@ export class RealMissionObserver {
     this.#wizardReceiptForMission = input.wizardReceiptForMission;
     this.#attestEvidence = input.attestEvidence;
     this.#onFinish = input.onFinish;
+    this.#runStartedAt = input.startedAt ?? Date.now();
     this.#advisorExpectations = expectedRealMissionAdvisors(
       input.advisorSkipClis ?? realMissionE2EAdvisorSkipClis(),
       {
@@ -1285,7 +1293,7 @@ export class RealMissionObserver {
       return;
     }
     try {
-      parseRealMissionE2EEvidence(this.evidence(Date.now(), "pass", null));
+      parseRealMissionE2EEvidence(this.evidence(this.#runStartedAt, "pass", null));
       this.#onFinish(null);
       return;
     } catch (settleError) {

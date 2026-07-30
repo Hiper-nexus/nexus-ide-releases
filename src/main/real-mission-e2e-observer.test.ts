@@ -188,6 +188,7 @@ function doneMission() {
 
 function createObserver(options?: {
   advisorSkipClis?: readonly string[];
+  startedAt?: number;
 }): RealMissionObserver {
   return new RealMissionObserver({
     owner,
@@ -209,6 +210,9 @@ function createObserver(options?: {
     },
     ...(options?.advisorSkipClis
       ? { advisorSkipClis: options.advisorSkipClis }
+      : {}),
+    ...(options?.startedAt !== undefined
+      ? { startedAt: options.startedAt }
       : {}),
   });
 }
@@ -738,5 +742,40 @@ describe("real mission observer advisor participation", () => {
 
     expect(harness.finishes).toEqual(["mission-blocked"]);
     terminalBlockedObserver.stop();
+  });
+
+  it("probes the post-done PASS evidence with the run startedAt, not the evaluation clock", () => {
+    harness.mission = {
+      id: MISSION_ID,
+      status: "done",
+      intentState: "done",
+      intentVersion: 1,
+      squadId: REAL_MISSION_E2E_SQUAD_ID,
+      milestones: [],
+      intentContract: {
+        goal: "Executar a missão real",
+        intentVersion: 1,
+        approvedAt: 100,
+        dispatchedAt: 110,
+        squadRevisionHash: squadBinding.squadRevisionHash,
+      },
+    };
+
+    const observer = createObserver({
+      advisorSkipClis: ["agy", "grok", "kimi", "opencode", "glm", "claude"],
+      startedAt: 123_000,
+    });
+    const evidenceSpy = vi.spyOn(observer, "evidence");
+    observer.start();
+
+    // O probe pós-done é o único caminho de PASS; usar o relógio da avaliação
+    // (pós-done) como startedAt derruba o invariante spawnedAt >= startedAt
+    // deterministicamente — foi o invariant-failed do run físico.
+    const passProbes = evidenceSpy.mock.calls.filter(
+      (call) => call[1] === "pass",
+    );
+    expect(passProbes.length).toBeGreaterThan(0);
+    expect(passProbes[0]?.[0]).toBe(123_000);
+    observer.stop();
   });
 });
