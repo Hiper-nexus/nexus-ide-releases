@@ -3,11 +3,14 @@ import os from "node:os";
 import {
   awaitMissionSchedulerAuthorityFence,
   buildMissionSchedulerTaskPrompt,
+  explainUncommittedWorktreeConflict,
+  finalizeGuidedImplementationNoChange,
   finalizeGuidedIsolatedAdvisory,
   finalizeGuidedNoChangeQualityGate,
   finalizeRestartedIntegratedMerge,
   isGuidedDeliveryOwnership,
   loadMissionSchedulerDependencyHandoffs,
+  MISSION_SCHEDULER_MAX_MERGE_DEFERRALS,
   MISSION_SCHEDULER_WORKER_LEASE_POLICY,
   missionAccountQuotaScores,
   missionSchedulerConfiguredWorkerCap,
@@ -17,6 +20,7 @@ import {
   missionSchedulerRouteRequiresAccount,
   missionSchedulerHasKickoffAuthority,
   orderMissionDispatchesForReconciliation,
+  projectBoundedMergeDeferral,
   projectMissionSchedulerActiveWorkers,
   projectQualityRepairFailure,
   projectUnchangedQueueRepair,
@@ -37,6 +41,9 @@ import {
   type TaskDispatchRecord,
 } from "./task-dispatch-codec";
 import type { PreparedWorktreeNoChangeValidation } from "../runtime/worktree-contract";
+import { WorktreeStateConflictError } from "../runtime/worktree-contract";
+import { MergeQueueBusyError } from "../runtime/merge-queue-contract";
+import { TASK_WORKTREE_NOT_CLEAN_MESSAGE } from "../runtime/worktree-manager-git";
 import type { MergeValidationContext } from "../runtime/merge-queue";
 import { runBoundedMissionSchedulerPass } from "./mission-scheduler-concurrency";
 import { testProjectScope } from "./__tests__/scope-fixture";
@@ -824,6 +831,53 @@ function isolatedAdvisoryPreparation(
         files: ["src"],
         symbols: [],
         domains: ["guided-isolated-advisory", "sequential-only"],
+      },
+      dependencies: [],
+    },
+  };
+}
+
+function guidedImplementationDispatch(
+  overrides: Partial<TaskDispatchRecord> = {},
+): TaskDispatchRecord {
+  return {
+    ...guidedQualityGateDispatch(),
+    id: "dispatch-guided-implementation",
+    taskId: "guided-execution",
+    workerId: "Executor guiado",
+    ownership: {
+      files: ["src"],
+      symbols: [],
+      domains: ["guided-implementation", "sequential-only"],
+    },
+    agentRef: "executor",
+    agentCategory: "executor",
+    workerIncarnationId: "worker-incarnation-guided-implementation",
+    sessionId: "session-guided-implementation",
+    handoffId: "handoff-guided-implementation",
+    ...overrides,
+  };
+}
+
+function implementationNoChangePreparation(
+  scope = testProjectScope(),
+): PreparedWorktreeNoChangeValidation {
+  const prepared = noChangePreparation(scope);
+  return {
+    ...prepared,
+    diffHash: EMPTY_GIT_DIFF_SHA256,
+    record: {
+      ...prepared.record,
+      id: "worktree-guided-implementation",
+      taskId: "guided-execution",
+      taskKey: "mission-guided:guided-execution",
+      workerId: "Executor guiado",
+      worktreePath: "/runtime/worktrees/guided-execution",
+      branchRef: "refs/heads/nexus/guided-execution",
+      ownership: {
+        files: ["src"],
+        symbols: [],
+        domains: ["guided-implementation", "sequential-only"],
       },
       dependencies: [],
     },
@@ -1806,6 +1860,321 @@ describe("mission scheduler worker lease contract", () => {
 
     expect(markValidated).not.toHaveBeenCalled();
     expect(complete).not.toHaveBeenCalled();
+  });
+
+  it("completes the honest zero-commit executor from exact physical no-change proof", () => {
+    const scope = testProjectScope();
+    const handoffReady = guidedImplementationDispatch();
+    const mergingDispatch = {
+      ...handoffReady,
+      state: "merging" as const,
+      revision: handoffReady.revision + 1,
+    };
+    const prepared = implementationNoChangePreparation(scope);
+    const beginMerge = vi.fn(() => mergingDispatch);
+    const assertAuthority = vi.fn(() => mergingDispatch);
+    const markValidated = vi.fn();
+    const complete = vi.fn();
+
+    expect(
+      finalizeGuidedImplementationNoChange(
+        {
+          scope,
+          missionId: "mission-guided",
+          taskId: "guided-execution",
+          expectedTaskHeadSha: prepared.taskHeadSha,
+          dispatch: handoffReady,
+        },
+        {
+          prepare: () => prepared,
+          beginMerge,
+          assertAuthority,
+          markValidated,
+          complete,
+          now: () => 42,
+        },
+      ),
+    ).toBe(true);
+
+    expect(beginMerge).toHaveBeenCalledWith(handoffReady.revision);
+    expect(assertAuthority).toHaveBeenCalledTimes(2);
+    expect(markValidated).toHaveBeenCalledWith(prepared);
+    expect(complete).toHaveBeenCalledWith(mergingDispatch.revision, {
+      kind: "worktree_validated_no_change",
+      reference: `no-change:${prepared.taskHeadSha}:${EMPTY_GIT_DIFF_SHA256}`,
+      completedAt: 42,
+      evidenceIds: ["handoff-guided-implementation"],
+    });
+    expect(markValidated.mock.invocationCallOrder[0]).toBeLessThan(
+      complete.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("keeps real executor commits on the ordinary MergeQueue path", () => {
+    const prepare = vi.fn(() => null);
+    const beginMerge = vi.fn();
+    const markValidated = vi.fn();
+    const complete = vi.fn();
+
+    expect(
+      finalizeGuidedImplementationNoChange(
+        {
+          scope: testProjectScope(),
+          missionId: "mission-guided",
+          taskId: "guided-execution",
+          dispatch: guidedImplementationDispatch(),
+        },
+        {
+          prepare,
+          beginMerge,
+          assertAuthority: vi.fn(),
+          markValidated,
+          complete,
+          now: () => 42,
+        },
+      ),
+    ).toBe(false);
+
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(beginMerge).not.toHaveBeenCalled();
+    expect(markValidated).not.toHaveBeenCalled();
+    expect(complete).not.toHaveBeenCalled();
+  });
+
+  it("never applies implementation no-change semantics to other guided kinds", () => {
+    const prepare = vi.fn(() => implementationNoChangePreparation());
+
+    expect(
+      finalizeGuidedImplementationNoChange(
+        {
+          scope: testProjectScope(),
+          missionId: "mission-guided",
+          taskId: "guided-quality-gate",
+          dispatch: guidedQualityGateDispatch(),
+        },
+        {
+          prepare,
+          beginMerge: vi.fn(),
+          assertAuthority: vi.fn(),
+          markValidated: vi.fn(),
+          complete: vi.fn(),
+          now: () => 42,
+        },
+      ),
+    ).toBe(false);
+    expect(prepare).not.toHaveBeenCalled();
+  });
+
+  it("rejects an executor no-change whose prepared HEAD diverges from the physical handoff", () => {
+    const beginMerge = vi.fn();
+    const markValidated = vi.fn();
+    const complete = vi.fn();
+
+    expect(() =>
+      finalizeGuidedImplementationNoChange(
+        {
+          scope: testProjectScope(),
+          missionId: "mission-guided",
+          taskId: "guided-execution",
+          expectedTaskHeadSha: "f".repeat(40),
+          dispatch: guidedImplementationDispatch(),
+        },
+        {
+          prepare: () => implementationNoChangePreparation(),
+          beginMerge,
+          assertAuthority: vi.fn(),
+          markValidated,
+          complete,
+          now: () => 42,
+        },
+      ),
+    ).toThrow(/physical handoff HEAD/i);
+
+    expect(beginMerge).not.toHaveBeenCalled();
+    expect(markValidated).not.toHaveBeenCalled();
+    expect(complete).not.toHaveBeenCalled();
+  });
+
+  it("rejects a fabricated no-change diff hash for an implementation task", () => {
+    const markValidated = vi.fn();
+    const complete = vi.fn();
+
+    expect(() =>
+      finalizeGuidedImplementationNoChange(
+        {
+          scope: testProjectScope(),
+          missionId: "mission-guided",
+          taskId: "guided-execution",
+          dispatch: guidedImplementationDispatch(),
+        },
+        {
+          prepare: () => ({
+            ...implementationNoChangePreparation(),
+            diffHash: "e".repeat(64),
+          }),
+          beginMerge: vi.fn(),
+          assertAuthority: vi.fn(),
+          markValidated,
+          complete,
+          now: () => 42,
+        },
+      ),
+    ).toThrow(/preparation diverged/i);
+    expect(markValidated).not.toHaveBeenCalled();
+    expect(complete).not.toHaveBeenCalled();
+  });
+
+  it("rejects executor no-change completion when the lifecycle authority is revoked", () => {
+    const handoffReady = guidedImplementationDispatch();
+    const mergingDispatch = {
+      ...handoffReady,
+      state: "merging" as const,
+      revision: handoffReady.revision + 1,
+    };
+    const markValidated = vi.fn();
+    const complete = vi.fn();
+
+    expect(() =>
+      finalizeGuidedImplementationNoChange(
+        {
+          scope: testProjectScope(),
+          missionId: "mission-guided",
+          taskId: "guided-execution",
+          expectedTaskHeadSha: "a".repeat(40),
+          dispatch: handoffReady,
+        },
+        {
+          prepare: () => implementationNoChangePreparation(),
+          beginMerge: () => mergingDispatch,
+          assertAuthority: () => ({
+            ...mergingDispatch,
+            workerIncarnationId: "substituted-worker-incarnation",
+          }),
+          markValidated,
+          complete,
+          now: () => 42,
+        },
+      ),
+    ).toThrow(/authority was revoked/i);
+
+    expect(markValidated).not.toHaveBeenCalled();
+    expect(complete).not.toHaveBeenCalled();
+  });
+
+  it("translates a dirty worktree conflict into the worker-contract reason", () => {
+    const explained = explainUncommittedWorktreeConflict(
+      new WorktreeStateConflictError(TASK_WORKTREE_NOT_CLEAN_MESSAGE),
+    );
+    expect(explained).toBeInstanceOf(WorktreeStateConflictError);
+    expect((explained as Error).message).toBe(
+      "mudanças não comitadas no worktree — o worker deveria ter comitado",
+    );
+
+    const other = new WorktreeStateConflictError(
+      "task dependency is not integrated: mission:dep",
+    );
+    expect(explainUncommittedWorktreeConflict(other)).toBe(other);
+  });
+
+  it("blocks a dirty executor worktree as a terminal worker-contract violation", () => {
+    const blockMergeFailureByCoordinator = vi.fn(() => ({
+      state: "blocked",
+    }));
+    const dispatches = {
+      get: vi.fn(() => ({
+        taskId: "guided-execution",
+        missionId: "mission-guided",
+        state: "merging",
+        revision: 7,
+      })),
+      blockMergeFailureByCoordinator,
+    };
+    const explained = explainUncommittedWorktreeConflict(
+      new WorktreeStateConflictError(TASK_WORKTREE_NOT_CLEAN_MESSAGE),
+    );
+
+    expect(
+      projectTerminalFinalizationFailure(
+        { missionId: "mission-guided", taskId: "guided-execution", error: explained },
+        dispatches as never,
+      ),
+    ).toBe(true);
+    expect(blockMergeFailureByCoordinator).toHaveBeenCalledWith({
+      taskId: "guided-execution",
+      revision: 7,
+      reason: expect.stringContaining(
+        "mudanças não comitadas no worktree — o worker deveria ter comitado",
+      ),
+    });
+  });
+
+  it("blocks observably after the consecutive merge-deferral bound", () => {
+    const blockMergeFailureByCoordinator = vi.fn(() => ({
+      state: "blocked",
+    }));
+    const dispatches = {
+      get: vi.fn(() => ({
+        taskId: "task-loop",
+        missionId: "mission-loop",
+        state: "merging",
+        revision: 7,
+      })),
+      blockMergeFailureByCoordinator,
+    };
+    const error = new Error(
+      "merge queue is blocked: task has no committed changes",
+    );
+    const input = {
+      key: "project-test:checkout-test:mission-loop:task-loop",
+      missionId: "mission-loop",
+      taskId: "task-loop",
+      error,
+    };
+
+    for (let count = 1; count < MISSION_SCHEDULER_MAX_MERGE_DEFERRALS; count += 1) {
+      expect(
+        projectBoundedMergeDeferral(input, dispatches as never),
+      ).toBe(false);
+    }
+    expect(blockMergeFailureByCoordinator).not.toHaveBeenCalled();
+
+    expect(projectBoundedMergeDeferral(input, dispatches as never)).toBe(true);
+    expect(blockMergeFailureByCoordinator).toHaveBeenCalledWith({
+      taskId: "task-loop",
+      revision: 7,
+      reason: expect.stringMatching(
+        /merge diferido 12 vezes consecutivas.*task has no committed changes/s,
+      ),
+    });
+
+    // The bound consumed the counter: a fresh deferral restarts the count.
+    expect(projectBoundedMergeDeferral(input, dispatches as never)).toBe(false);
+  });
+
+  it("never counts a genuinely busy merge queue toward the deferral bound", () => {
+    const blockMergeFailureByCoordinator = vi.fn();
+    const dispatches = {
+      get: vi.fn(() => ({
+        taskId: "task-busy",
+        missionId: "mission-busy",
+        state: "merging",
+        revision: 3,
+      })),
+      blockMergeFailureByCoordinator,
+    };
+    const input = {
+      key: "project-test:checkout-test:mission-busy:task-busy",
+      missionId: "mission-busy",
+      taskId: "task-busy",
+      error: new MergeQueueBusyError("mission-busy:other-task"),
+    };
+
+    for (let count = 0; count < MISSION_SCHEDULER_MAX_MERGE_DEFERRALS + 3; count += 1) {
+      expect(
+        projectBoundedMergeDeferral(input, dispatches as never),
+      ).toBe(false);
+    }
+    expect(blockMergeFailureByCoordinator).not.toHaveBeenCalled();
   });
 
   it("projects a runtime merge failure through the current dispatch CAS", () => {

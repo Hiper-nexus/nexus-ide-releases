@@ -63,6 +63,12 @@ export function isGuidedIsolatedAdvisory(
   return guidedTaskKindForDispatch(dispatch) === "isolated-advisory";
 }
 
+export function isGuidedImplementationDelivery(
+  dispatch: TaskDispatchRecord,
+): boolean {
+  return guidedTaskKindForDispatch(dispatch) === "implementation";
+}
+
 export function isGuidedDeliveryOwnership(
   domains: readonly string[],
 ): boolean {
@@ -97,6 +103,22 @@ export interface GuidedIsolatedAdvisoryDeps {
   complete(revision: number, reference: string): void;
 }
 
+export interface GuidedImplementationNoChangeDeps {
+  prepare(): PreparedWorktreeNoChangeValidation | null;
+  beginMerge(revision: number): TaskDispatchRecord;
+  assertAuthority(): TaskDispatchRecord;
+  markValidated(prepared: PreparedWorktreeNoChangeValidation): void;
+  complete(
+    revision: number,
+    receipt: {
+      readonly kind: "worktree_validated_no_change";
+      readonly reference: string;
+      readonly completedAt: number;
+      readonly evidenceIds: readonly string[];
+    },
+  ): void;
+  now(): number;
+}
 /**
  * Finalize the compatibility confinement used by advisory CLIs that cannot be
  * launched under a mechanical read-only sandbox.
@@ -337,6 +359,128 @@ export async function finalizeGuidedNoChangeQualityGate(
     reference: `no-change:${prepared.taskHeadSha}:${prepared.diffHash}`,
     completedAt: deps.now(),
     evidenceIds,
+  });
+  return true;
+}
+
+/**
+ * Complete the honest zero-commit executor handoff.
+ *
+ * A guided executor that ran its verification goal and found nothing to
+ * change cannot produce a merge candidate: the MergeQueue would defer
+ * forever on "task has no committed changes". When the isolated worktree
+ * HEAD is still exactly the sealed base SHA (zero commits, clean tree), Main
+ * mints the no-change receipt and the reviewer/QA chain downstream decides
+ * whether "no change" is an acceptable outcome for the goal — a lazy
+ * executor is caught there, never here. Admission still requires the exact
+ * physical handoff, the exact Git identity and durable evidence; a worker
+ * commit (`null` preparation) keeps the ordinary MergeQueue path and a
+ * dirty worktree is a contract violation surfaced by the caller.
+ */
+export function finalizeGuidedImplementationNoChange(
+  input: {
+    readonly scope: ProjectExecutionScope;
+    readonly missionId: string;
+    readonly taskId: string;
+    readonly expectedTaskHeadSha?: string;
+    readonly dispatch: TaskDispatchRecord;
+  },
+  deps: GuidedImplementationNoChangeDeps,
+): boolean {
+  if (!isGuidedImplementationDelivery(input.dispatch)) return false;
+  if (
+    input.dispatch.missionId !== input.missionId ||
+    input.dispatch.taskId !== input.taskId ||
+    input.dispatch.projectId !== input.scope.projectId ||
+    input.dispatch.checkoutId !== input.scope.checkoutId
+  ) {
+    throw new MissionSchedulerDispatchAuthorityError(
+      "guided implementation no-change diverged from the authorized task identity",
+    );
+  }
+  const prepared = deps.prepare();
+  if (!prepared) return false;
+  if (
+    prepared.record.projectId !== input.scope.projectId ||
+    prepared.record.checkoutId !== input.scope.checkoutId ||
+    prepared.record.rootRealPath !== input.scope.rootRealPath ||
+    prepared.record.missionId !== input.missionId ||
+    prepared.record.taskId !== input.taskId ||
+    prepared.record.workerId !== input.dispatch.workerId ||
+    !sameStringSet(
+      prepared.record.ownership.files,
+      input.dispatch.ownership.files,
+    ) ||
+    !sameStringSet(
+      prepared.record.ownership.symbols,
+      input.dispatch.ownership.symbols,
+    ) ||
+    !sameStringSet(
+      prepared.record.ownership.domains,
+      input.dispatch.ownership.domains,
+    ) ||
+    (input.expectedTaskHeadSha !== undefined &&
+      prepared.taskHeadSha !== input.expectedTaskHeadSha) ||
+    prepared.taskHeadSha !== prepared.integrationHeadSha ||
+    prepared.changedFiles.length !== 0 ||
+    !GIT_SHA.test(prepared.taskHeadSha) ||
+    !SHA256.test(prepared.diffHash) ||
+    prepared.diffHash !== EMPTY_GIT_DIFF_SHA256
+  ) {
+    throw new MissionSchedulerDispatchAuthorityError(
+      input.expectedTaskHeadSha !== undefined &&
+        prepared.taskHeadSha !== input.expectedTaskHeadSha
+        ? "guided implementation no-change diverged from the physical handoff HEAD"
+        : "guided implementation no-change preparation diverged from the authorized task identity",
+    );
+  }
+  let dispatch = input.dispatch;
+  if (dispatch.state === "handoff_ready") {
+    dispatch = deps.beginMerge(dispatch.revision);
+  }
+  if (dispatch.state !== "merging") {
+    throw new MissionSchedulerDispatchAuthorityError(
+      "guided implementation no-change requires handoff_ready or merging dispatch",
+    );
+  }
+  const assertCurrentAuthority = () => {
+    const current = deps.assertAuthority();
+    if (
+      current.state !== "merging" ||
+      current.id !== input.dispatch.id ||
+      current.projectId !== input.dispatch.projectId ||
+      current.checkoutId !== input.dispatch.checkoutId ||
+      current.missionId !== input.dispatch.missionId ||
+      current.taskId !== input.dispatch.taskId ||
+      current.intentVersion !== input.dispatch.intentVersion ||
+      current.workerId !== input.dispatch.workerId ||
+      current.workerIncarnationId !== input.dispatch.workerIncarnationId ||
+      current.handoffId !== input.dispatch.handoffId ||
+      current.agentRef !== input.dispatch.agentRef ||
+      !isGuidedImplementationDelivery(current)
+    ) {
+      throw new MissionSchedulerDispatchAuthorityError(
+        "guided implementation no-change lifecycle authority was revoked",
+      );
+    }
+    return current;
+  };
+  assertCurrentAuthority();
+  deps.markValidated(prepared);
+  const current = assertCurrentAuthority();
+  if (!current.handoffId) {
+    throw new MissionSchedulerDispatchAuthorityError(
+      "guided implementation no-change lost its physical handoff identity",
+    );
+  }
+  deps.complete(current.revision, {
+    kind: "worktree_validated_no_change",
+    reference: `no-change:${prepared.taskHeadSha}:${prepared.diffHash}`,
+    completedAt: deps.now(),
+    // The durable evidence for this receipt is the exact physical handoff
+    // Main re-proved above; PREVC quality proof is intentionally absent —
+    // the downstream reviewer/QA chain is the validator of this outcome.
+    evidenceIds: [current.handoffId],
   });
   return true;
 }

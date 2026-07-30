@@ -501,6 +501,16 @@ function verifyCompletedTaskPlanAuthority(
           sealed.schedule.guidedTaskKind === "quality-gate" &&
           (receipt.evidenceIds?.length ?? 0) > 0 &&
           noChangeMatch !== null) ||
+        // Honest zero-commit executor: admitted only with durable evidence
+        // and the canonical empty-diff reference. No PREVC qualityProof is
+        // required — the sealed reviewer/QA tasks downstream are the
+        // validators of this outcome, and they complete under their own
+        // receipts before the mission may finish.
+        (receipt.kind === "worktree_validated_no_change" &&
+          sealed.schedule.guidedTaskKind === "implementation" &&
+          (receipt.evidenceIds?.length ?? 0) > 0 &&
+          noChangeMatch !== null &&
+          noChangeMatch[2] === EMPTY_GIT_DIFF_SHA256) ||
         (receipt.kind === "isolated_advisory_validated" &&
           sealed.schedule.guidedTaskKind === "isolated-advisory" &&
           (receipt.evidenceIds?.length ?? 0) > 0 &&
@@ -550,15 +560,19 @@ function verifyCompletedTaskPlanAuthority(
               expectedHeadSha: noChangeMatch[1]!,
               checkoutMayHaveAdvanced: true,
             });
-            assertTaskQualityReceiptAuthority({
-              db,
-              coordinates: binding.coordinates,
-              rootRealPath: binding.scope.rootRealPath,
-              missionId,
-              physicalHeadSha: physicalHandoff.worktreeHeadSha!,
-              receipt,
-              requireEmbeddedProof: true,
-            });
+            // The implementation no-change receipt carries no embedded PREVC
+            // proof by construction; the quality-gate receipt always does.
+            if (sealed.schedule.guidedTaskKind !== "implementation") {
+              assertTaskQualityReceiptAuthority({
+                db,
+                coordinates: binding.coordinates,
+                rootRealPath: binding.scope.rootRealPath,
+                missionId,
+                physicalHeadSha: physicalHandoff.worktreeHeadSha!,
+                receipt,
+                requireEmbeddedProof: true,
+              });
+            }
           } else if (
             receipt.kind === "isolated_advisory_validated" &&
             advisoryMatch

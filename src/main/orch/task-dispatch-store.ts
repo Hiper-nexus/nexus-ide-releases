@@ -428,10 +428,24 @@ export class TaskDispatchStore {
           sealed.schedule.guidedTaskKind === "quality-gate" &&
           (receipt.evidenceIds?.length ?? 0) > 0 &&
           noChangeMatch !== null;
-        if (receipt.kind !== "worktree_integrated" && !noChangeQualityGate) {
+        // Honest zero-commit executor: admitted only for the sealed guided
+        // implementation domain, with durable evidence and the canonical
+        // empty-diff hash. It carries no PREVC qualityProof — the downstream
+        // reviewer/QA chain validates whether "no change" fits the goal.
+        const noChangeImplementation =
+          receipt.kind === "worktree_validated_no_change" &&
+          sealed.schedule.guidedTaskKind === "implementation" &&
+          (receipt.evidenceIds?.length ?? 0) > 0 &&
+          noChangeMatch !== null &&
+          noChangeMatch[2] === EMPTY_GIT_DIFF_SHA256;
+        if (
+          receipt.kind !== "worktree_integrated" &&
+          !noChangeQualityGate &&
+          !noChangeImplementation
+        ) {
           throw new Error(
             `receipt ${receipt.kind} inválido para isolated_worktree; ` +
-              "esperado merge integrado ou QA guiado no-change com evidência",
+              "esperado merge integrado ou no-change guiado com evidência",
           );
         }
         if (receipt.kind === "worktree_integrated") {

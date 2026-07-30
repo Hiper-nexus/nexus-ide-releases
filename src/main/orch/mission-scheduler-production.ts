@@ -45,8 +45,10 @@ import {
   MissionSchedulerDispatchAuthorityError,
 } from "./mission-scheduler-dispatch-transaction";
 import {
+  finalizeGuidedImplementationNoChange,
   finalizeGuidedIsolatedAdvisory,
   finalizeGuidedNoChangeQualityGate,
+  isGuidedImplementationDelivery,
   isGuidedIsolatedAdvisory,
   isGuidedNoChangeQualityGate,
 } from "./mission-scheduler-guided-finalization";
@@ -67,9 +69,14 @@ import type {
   MergeQueueEntry,
   MergeQueueStateSnapshot,
 } from "../runtime/merge-queue-contract";
+import { WorktreeStateConflictError } from "../runtime/worktree-contract";
+import { TASK_WORKTREE_NOT_CLEAN_MESSAGE } from "../runtime/worktree-manager-git";
 import type { WorktreeRecord } from "../runtime/worktree-contract";
 import type { TaskDispatchRecord } from "./task-dispatch-codec";
-import { taskDispatchQualityRepairReason } from "./task-dispatch-store";
+import {
+  taskDispatchQualityRepairReason,
+  type TaskDispatchStore,
+} from "./task-dispatch-store";
 import { reconcileLegacyGuidedDirtyCheckoutBootstrap } from "./task-dispatch-lifecycle";
 import { hasTeamReadOnlyFanoutDomain } from "../../shared/mission-topology";
 
@@ -91,9 +98,11 @@ export {
   missionSchedulerRouteRequiresAccount,
 } from "./mission-scheduler-dispatch-transaction";
 export {
+  finalizeGuidedImplementationNoChange,
   finalizeGuidedIsolatedAdvisory,
   finalizeGuidedNoChangeQualityGate,
   isGuidedDeliveryOwnership,
+  type GuidedImplementationNoChangeDeps,
   type GuidedIsolatedAdvisoryDeps,
   type GuidedNoChangeQualityGateDeps,
 } from "./mission-scheduler-guided-finalization";
@@ -459,6 +468,83 @@ const states = new Map<
   ReturnType<typeof createSchedulerRuntimeState>
 >();
 const merging = new Set<string>();
+
+/**
+ * Retryable merge-lane deferrals lack their own natural bound (unlike lease
+ * expiry or sibling completion). At a 5s scheduler tick, twelve consecutive
+ * deferrals surface in ~1min as an observable technical block instead of
+ * hanging the mission silently forever — the same philosophy as
+ * MISSION_SCHEDULER_MAX_PRECLAIM_RETRYABLE_FAILURES for pre-claim failures.
+ */
+export const MISSION_SCHEDULER_MAX_MERGE_DEFERRALS = 12 as const;
+const mergeDeferrals = new Map<string, number>();
+
+type MergeDeferralDispatchAuthority = Pick<
+  TaskDispatchStore,
+  "get" | "blockMergeFailureByCoordinator"
+>;
+
+/**
+ * Count one consecutive merge-lane deferral for the exact task and, past the
+ * bound, project an observable technical block with the last deferral reason.
+ * Returns true once the dispatch was blocked (the silent loop ends there).
+ * A genuinely busy merge queue (MergeQueueBusyError) is a bounded wait for
+ * the in-flight sibling merge and never counts toward the bound.
+ */
+export function projectBoundedMergeDeferral(
+  input: {
+    readonly key: string;
+    readonly missionId: string;
+    readonly taskId: string;
+    readonly error: unknown;
+  },
+  dispatches: MergeDeferralDispatchAuthority,
+): boolean {
+  if (
+    input.error instanceof Error &&
+    input.error.name === "MergeQueueBusyError"
+  ) {
+    return false;
+  }
+  const consecutive = (mergeDeferrals.get(input.key) ?? 0) + 1;
+  if (consecutive < MISSION_SCHEDULER_MAX_MERGE_DEFERRALS) {
+    mergeDeferrals.set(input.key, consecutive);
+    return false;
+  }
+  mergeDeferrals.delete(input.key);
+  const lastReason =
+    input.error instanceof Error ? input.error.message : String(input.error);
+  return projectTerminalMergeFailure(
+    {
+      missionId: input.missionId,
+      taskId: input.taskId,
+      reason:
+        `merge diferido ${consecutive} vezes consecutivas sem progresso ` +
+        `(último motivo: ${lastReason}). ` +
+        "O coordenador bloqueou a task para encerrar o retry silencioso; " +
+        "verifique o worktree e o handoff físico e replaneje a missão.",
+    },
+    dispatches,
+  );
+}
+
+/**
+ * A dirty executor worktree is a worker contract violation (workers must
+ * commit or clean their changes), never a no-change candidate. Translate the
+ * generic Git cleanliness conflict into the exact operator-facing reason.
+ */
+export function explainUncommittedWorktreeConflict(error: unknown): unknown {
+  if (
+    error instanceof WorktreeStateConflictError &&
+    error.message === TASK_WORKTREE_NOT_CLEAN_MESSAGE
+  ) {
+    return new WorktreeStateConflictError(
+      "mudanças não comitadas no worktree — o worker deveria ter comitado",
+    );
+  }
+  return error;
+}
+
 let configured: MissionSchedulerOptions | null = null;
 let unsubscribe: (() => void) | null = null;
 let timer: ReturnType<typeof setInterval> | null = null;
@@ -609,6 +695,9 @@ async function mergeCompletedTask(
   const domainStores = getProjectDomainStores(scope);
   let dispatch = domainStores.taskDispatches.get(taskId);
   if (!dispatch || !["handoff_ready", "merging"].includes(dispatch.state)) {
+    // A terminal dispatch (completed/blocked) leaves the merge lane: drop any
+    // stale deferral counter so a future task reusing the key starts fresh.
+    mergeDeferrals.delete(key);
     mergeSkip(`dispatch state=${dispatch?.state ?? "ausente"}`);
     return;
   }
@@ -856,6 +945,123 @@ async function mergeCompletedTask(
       merging.delete(key);
     }
   }
+  // Honest zero-commit executor: when the guided implementation worktree is
+  // still exactly its sealed base (clean tree, HEAD == base), the MergeQueue
+  // would defer forever on "task has no committed changes". Mint the audited
+  // no-change receipt instead and let the reviewer/QA chain judge the
+  // outcome. Real commits (`handled === false`) fall through to MergeQueue.
+  if (
+    isGuidedImplementationDelivery(dispatch) &&
+    (worktree.status === "ready" || noChangeMarker)
+  ) {
+    merging.add(key);
+    try {
+      const expectedTaskHeadSha =
+        domainStores.taskDispatches.assertPhysicalHandoffTaskHead({
+          taskId,
+          missionId,
+          intentVersion: mergeIntentVersion,
+          expectedStates: ["handoff_ready", "merging"],
+        });
+      const registry = requireWorktreeRuntimeRegistry();
+      const handled = finalizeGuidedImplementationNoChange(
+        {
+          scope,
+          missionId,
+          taskId,
+          dispatch,
+          expectedTaskHeadSha,
+        },
+        {
+          prepare: () => {
+            try {
+              return registry.prepareNoChangeValidation(
+                scope,
+                missionId,
+                taskId,
+              );
+            } catch (error) {
+              throw explainUncommittedWorktreeConflict(error);
+            }
+          },
+          beginMerge: (revision) =>
+            domainStores.taskDispatches.beginMerge({ taskId, revision }),
+          assertAuthority: () => {
+            const current =
+              domainStores.taskDispatches.assertLifecycleAuthority({
+                taskId,
+                missionId,
+                intentVersion: mergeIntentVersion,
+                expectedStates: ["merging"],
+              });
+            if (
+              domainStores.taskDispatches.assertPhysicalHandoffTaskHead({
+                taskId,
+                missionId,
+                intentVersion: mergeIntentVersion,
+                expectedStates: ["merging"],
+              }) !== expectedTaskHeadSha
+            ) {
+              throw new MissionSchedulerDispatchAuthorityError(
+                "implementation no-change physical handoff HEAD changed",
+              );
+            }
+            return current;
+          },
+          markValidated: (prepared) => {
+            registry.markValidatedNoChange(
+              scope,
+              missionId,
+              taskId,
+              prepared.taskHeadSha,
+              prepared.integrationHeadSha,
+            );
+          },
+          complete: (revision, receipt) => {
+            domainStores.taskDispatches.completeByCoordinator({
+              taskId,
+              revision,
+              receipt: {
+                ...receipt,
+                evidenceIds: [...receipt.evidenceIds],
+              },
+            });
+          },
+          now: () => configured?.now?.() ?? Date.now(),
+        },
+      );
+      if (handled) {
+        mergeDeferrals.delete(key);
+        return;
+      }
+      // Real committed changes: the ordinary MergeQueue path below owns them.
+    } catch (error) {
+      throwIfMissionSchedulerAborted(signal);
+      const blocked =
+        projectTerminalFinalizationFailure(
+          {
+            missionId,
+            taskId,
+            error,
+          },
+          domainStores.taskDispatches,
+        ) ||
+        projectBoundedMergeDeferral(
+          { key, missionId, taskId, error },
+          domainStores.taskDispatches,
+        );
+      if (blocked) mergeDeferrals.delete(key);
+      console.warn(
+        `[mission-scheduler] implementation no-change ${
+          blocked ? "blocked" : "finalization deferred"
+        } for ${missionId}/${taskId}:`,
+        error,
+      );
+      return;
+    } finally {
+      merging.delete(key);
+    }
+  }
   const registry = requireWorktreeRuntimeRegistry();
   registry.reconcileMergeIfIdle(scope);
   const queueSnapshot = registry.mergeSnapshot(scope);
@@ -1096,6 +1302,7 @@ async function mergeCompletedTask(
         }
       },
     });
+    mergeDeferrals.delete(key);
     throwIfMissionSchedulerAborted(signal);
   } catch (error) {
     throwIfMissionSchedulerAborted(signal);
@@ -1113,7 +1320,7 @@ async function mergeCompletedTask(
       !repairProjected &&
       classifyOperationalFailure(error) === "terminal"
     ) {
-      projectTerminalMergeFailure(
+      repairProjected = projectTerminalMergeFailure(
         {
           missionId,
           taskId,
@@ -1122,6 +1329,16 @@ async function mergeCompletedTask(
         getProjectDomainStores(scope).taskDispatches,
       );
     }
+    if (!repairProjected) {
+      // Retryable deferrals (capacity waits, blocked queue, transient Git
+      // conflicts) are bounded: past the limit the task receives an
+      // observable technical block instead of looping silently forever.
+      repairProjected = projectBoundedMergeDeferral(
+        { key, missionId, taskId, error },
+        getProjectDomainStores(scope).taskDispatches,
+      );
+    }
+    if (repairProjected) mergeDeferrals.delete(key);
     console.warn(
       `[mission-scheduler] merge deferred for ${missionId}/${taskId}:`,
       error,
@@ -1506,4 +1723,5 @@ export function disposeMissionScheduler(): void {
   externalReconcileRequest = null;
   states.clear();
   merging.clear();
+  mergeDeferrals.clear();
 }

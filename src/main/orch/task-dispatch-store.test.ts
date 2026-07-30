@@ -873,6 +873,8 @@ function guidedNoChangeDispatchFixture(
     domains?: readonly string[];
     agentModel?: string;
     routeModel?: string;
+    plannerId?: string;
+    orchestratorSessionId?: string;
   } = {},
 ) {
   const runtime = manager();
@@ -898,6 +900,9 @@ function guidedNoChangeDispatchFixture(
     intentVersion: 3,
     intentState: 'executing',
     intentContract: contract,
+    ...(options.orchestratorSessionId
+      ? { orchestratorSessionId: options.orchestratorSessionId }
+      : {}),
   });
   missions.setStatus(mission.id, 'running');
   const qualityHeadSha = repositoryHead();
@@ -996,7 +1001,7 @@ function guidedNoChangeDispatchFixture(
     },
     rows: [
       {
-        plannerId: 'guided-quality-gate',
+        plannerId: options.plannerId ?? 'guided-quality-gate',
         title: 'Validar entrega',
         detail: encodeTaskScheduleDetail('Validar sem fabricar diff.', {
           dependsOn: [],
@@ -1087,7 +1092,186 @@ function guidedNoChangeDispatchFixture(
     workerIncarnationId: claim.workerIncarnationId,
     handoffId: handoff.id,
   });
-  return { runtime, scope, dispatches, task: task!, ready };
+  return { runtime, scope, missions, tasks, handoffs, dispatches, mission, handoff, task: task!, ready };
+}
+
+/**
+ * Sealed guided chain executor → QA: the executor may complete with an
+ * honest no-change receipt, but the mission can only finish after the
+ * reviewer/QA task validates that outcome.
+ */
+function guidedImplementationChainFixture() {
+  const runtime = manager();
+  const scope = testProjectScope({ rootRealPath: process.cwd() });
+  const missions = createScopedMissionStore(runtime, scope);
+  const tasks = createScopedTaskStore(runtime, scope);
+  const handoffs = createScopedHandoffStore(runtime, scope);
+  const dispatches = createTaskDispatchStore(runtime, scope);
+  const contract = approvedIntentContract({
+    goal: 'Verificar a entrega guiada do executor',
+    intentVersion: 5,
+  });
+  const mission = missions.create({
+    title: 'Cadeia guiada executor e QA',
+    squadId: 'agentic-guided-squad',
+    intentVersion: 5,
+    intentState: 'executing',
+    intentContract: contract,
+    orchestratorSessionId: 'orchestrator-guided-chain',
+  });
+  missions.setStatus(mission.id, 'running');
+  const executorOwnership = {
+    files: ['src'],
+    symbols: [],
+    domains: ['guided-implementation', 'sequential-only'],
+  };
+  const qaOwnership = {
+    files: ['src'],
+    symbols: [],
+    domains: ['guided-quality-gate', 'sequential-only'],
+  };
+  const [executorTask, qaTask] = tasks.createPlanAtomically({
+    missionId: mission.id,
+    intentVersion: 5,
+    squad: {
+      id: 'agentic-guided-squad',
+      agents: [
+        {
+          id: 'exec',
+          agentName: 'Executor guiado',
+          category: 'executor',
+          cli: 'codex',
+          effort: 'high',
+        },
+        {
+          id: 'qa',
+          agentName: 'QA independente',
+          category: 'reviewer',
+          cli: 'codex',
+          effort: 'high',
+        },
+      ],
+    },
+    rows: [
+      {
+        plannerId: 'guided-execution',
+        title: 'Verificar a entrega',
+        detail: encodeTaskScheduleDetail('Verificar e reportar com honestidade.', {
+          dependsOn: [],
+          ownership: executorOwnership,
+          merged: false,
+          agentRef: 'exec',
+          agentCategory: 'executor',
+          executionMode: 'isolated_worktree',
+        }),
+        agentRef: 'exec',
+        agentCategory: 'executor',
+      },
+      {
+        plannerId: 'guided-quality-gate',
+        title: 'Validar a verificação',
+        detail: encodeTaskScheduleDetail('Validar se o resultado é aceitável.', {
+          dependsOn: [],
+          ownership: qaOwnership,
+          merged: false,
+          agentRef: 'qa',
+          agentCategory: 'reviewer',
+          executionMode: 'isolated_worktree',
+        }),
+        agentRef: 'qa',
+        agentCategory: 'reviewer',
+      },
+    ],
+  });
+  const planReceipt = tasks.getPlanReceipt(mission.id, 5)!;
+  const route = missions.reserveRouteDecision(mission.id, executorTask!.title, {
+    tier: 'hard',
+    adapterId: 'codex',
+    model: 'gpt-5.6-sol',
+    effort: 'high',
+    reason: 'rota selada para o executor guiado',
+    alternatives: [],
+  });
+  const claim = dispatches.claim({
+    missionId: mission.id,
+    taskId: executorTask!.id,
+    intentVersion: 5,
+    workerId: 'Executor guiado',
+    leaseOwner: 'main',
+    leaseMs: 30_000,
+    ownership: executorOwnership,
+    executionMode: 'isolated_worktree',
+    agentRef: 'exec',
+    agentCategory: 'executor',
+    rosterHash: planReceipt.rosterHash,
+    routeContract: {
+      adapterId: 'codex',
+      model: 'gpt-5.6-sol',
+      effort: 'high',
+    },
+  });
+  const routed = dispatches.attachRoute({
+    taskId: executorTask!.id,
+    revision: claim.revision,
+    leaseToken: claim.leaseToken,
+    routeReservationId: route.id,
+    adapterId: 'codex',
+    model: 'gpt-5.6-sol',
+    effort: 'high',
+  });
+  missions.consumeRouteReservation(
+    {
+      reservationId: route.id,
+      missionId: mission.id,
+      adapterId: 'codex',
+      model: 'gpt-5.6-sol',
+      effort: 'high',
+    },
+    `dispatch:${claim.id}`,
+  );
+  dispatches.bindSpawn({
+    taskId: executorTask!.id,
+    revision: routed.revision,
+    leaseToken: claim.leaseToken,
+    workerIncarnationId: claim.workerIncarnationId,
+    paneId: 'pane-guided-exec',
+    sessionId: 'session-guided-exec',
+  });
+  const handoff = handoffs.submit({
+    missionId: mission.id,
+    sessionId: 'session-guided-exec',
+    workerIncarnationId: claim.workerIncarnationId,
+    fromAgent: 'Executor guiado',
+    status: 'success',
+    summary: 'Suítes executadas; nenhuma alteração necessária.',
+  });
+  insertPhysicalHandoffAuthority({
+    runtime,
+    scope,
+    missionId: mission.id,
+    handoffId: handoff.id,
+    sessionId: 'session-guided-exec',
+    workerIncarnationId: claim.workerIncarnationId,
+    worktreeHeadSha: repositoryHead(),
+  });
+  const ready = dispatches.acceptHandoff({
+    sessionId: 'session-guided-exec',
+    workerIncarnationId: claim.workerIncarnationId,
+    handoffId: handoff.id,
+  });
+  return {
+    runtime,
+    scope,
+    missions,
+    tasks,
+    handoffs,
+    dispatches,
+    mission,
+    executorTask: executorTask!,
+    qaTask: qaTask!,
+    handoff,
+    ready,
+  };
 }
 
 function readOnlyPhysicalHandoffFixture(
@@ -1875,6 +2059,175 @@ describe('durable task dispatcher authority', () => {
       state: 'handoff_ready',
       integrationReceipt: undefined,
     });
+  });
+
+  it('accepts the implementation no-change receipt from the sealed guided executor with physical evidence', () => {
+    const fixture = guidedNoChangeDispatchFixture({
+      agentCategory: 'executor',
+      domains: ['guided-implementation', 'sequential-only'],
+      plannerId: 'guided-execution',
+      orchestratorSessionId: 'orchestrator-guided-implementation',
+    });
+    const headSha = repositoryHead();
+
+    const completed = fixture.dispatches.completeByCoordinator({
+      taskId: fixture.task.id,
+      revision: fixture.ready.revision,
+      receipt: {
+        kind: 'worktree_validated_no_change',
+        reference: `no-change:${headSha}:${EMPTY_GIT_DIFF_SHA256}`,
+        completedAt: Date.now(),
+        evidenceIds: [fixture.handoff.id],
+      },
+    });
+
+    expect(completed).toMatchObject({
+      state: 'completed',
+      integrationReceipt: {
+        kind: 'worktree_validated_no_change',
+        reference: `no-change:${headSha}:${EMPTY_GIT_DIFF_SHA256}`,
+        evidenceIds: [fixture.handoff.id],
+      },
+    });
+    // No PREVC quality proof: the downstream reviewer/QA chain validates the
+    // "no change" outcome, not the merge lane.
+    expect(completed.integrationReceipt?.qualityProof).toBeUndefined();
+
+    const attempt = fixture.handoffs.reserveDeliveryAttempt({
+      handoffId: fixture.handoff.id,
+      missionId: fixture.mission.id,
+      orchestratorSessionId: 'orchestrator-guided-implementation',
+      maxAttempts: 2,
+    });
+    fixture.handoffs.markDeliveryAttemptPasted({
+      attemptId: attempt.id,
+      handoffId: fixture.handoff.id,
+      acceptDeadlineAt: Date.now() + 10_000,
+    });
+    expect(
+      fixture.handoffs.acceptDeliveryAttempt({
+        attemptId: attempt.id,
+        handoffId: fixture.handoff.id,
+      }),
+    ).toBe(true);
+    expect(
+      fixture.handoffs.markConsumedAfterAcceptedDelivery(
+        fixture.handoff.id,
+        fixture.mission.id,
+        'orchestrator-guided-implementation',
+      ),
+    ).toBe(true);
+    // The mission-level authority replays the whole chain and admits the
+    // executor no-change receipt with all physical proofs re-verified.
+    expect(
+      fixture.dispatches.hasVerifiedGuidedPlanAuthority({
+        missionId: fixture.mission.id,
+        intentVersion: 3,
+      }),
+    ).toBe(true);
+    expect(fixture.missions.get(fixture.mission.id)).toMatchObject({
+      status: 'running',
+      intentState: 'executing',
+    });
+  });
+
+  it('rejects the implementation no-change receipt when the checkout advanced past the sealed base', () => {
+    const fixture = guidedNoChangeDispatchFixture({
+      agentCategory: 'executor',
+      domains: ['guided-implementation', 'sequential-only'],
+      plannerId: 'guided-execution',
+    });
+
+    expect(() =>
+      fixture.dispatches.completeByCoordinator({
+        taskId: fixture.task.id,
+        revision: fixture.ready.revision,
+        receipt: {
+          kind: 'worktree_validated_no_change',
+          reference: `no-change:${'c'.repeat(40)}:${EMPTY_GIT_DIFF_SHA256}`,
+          completedAt: Date.now(),
+          evidenceIds: [fixture.handoff.id],
+        },
+      }),
+    ).toThrow(/no-change|physical|HEAD/i);
+    expect(fixture.dispatches.get(fixture.task.id)).toMatchObject({
+      state: 'handoff_ready',
+      integrationReceipt: undefined,
+    });
+  });
+
+  it.each([
+    {
+      label: 'sem evidência',
+      evidenceIds: [] as string[],
+      reference: `no-change:${'a'.repeat(40)}:${EMPTY_GIT_DIFF_SHA256}`,
+    },
+    {
+      label: 'com hash de diff fabricado',
+      evidenceIds: ['handoff-guided-implementation'],
+      reference: `no-change:${'a'.repeat(40)}:${'e'.repeat(64)}`,
+    },
+    {
+      label: 'com referência não física',
+      evidenceIds: ['handoff-guided-implementation'],
+      reference: 'handoff-only',
+    },
+  ])('rejects the implementation no-change receipt $label', ({ evidenceIds, reference }) => {
+    const fixture = guidedNoChangeDispatchFixture({
+      agentCategory: 'executor',
+      domains: ['guided-implementation', 'sequential-only'],
+      plannerId: 'guided-execution',
+    });
+
+    expect(() =>
+      fixture.dispatches.completeByCoordinator({
+        taskId: fixture.task.id,
+        revision: fixture.ready.revision,
+        receipt: {
+          kind: 'worktree_validated_no_change',
+          reference,
+          completedAt: Date.now(),
+          evidenceIds,
+        },
+      }),
+    ).toThrow(/no-change|inválido|evidência|physical|HEAD/i);
+    expect(fixture.dispatches.get(fixture.task.id)).toMatchObject({
+      state: 'handoff_ready',
+      integrationReceipt: undefined,
+    });
+  });
+
+  it('does not let an executor no-change receipt finish the mission without the reviewer chain', () => {
+    const fixture = guidedImplementationChainFixture();
+    const headSha = repositoryHead();
+
+    const completed = fixture.dispatches.completeByCoordinator({
+      taskId: fixture.executorTask.id,
+      revision: fixture.ready.revision,
+      receipt: {
+        kind: 'worktree_validated_no_change',
+        reference: `no-change:${headSha}:${EMPTY_GIT_DIFF_SHA256}`,
+        completedAt: Date.now(),
+        evidenceIds: [fixture.handoff.id],
+      },
+    });
+    expect(completed.state).toBe('completed');
+
+    // A lazy executor gets no free pass: while the sealed reviewer/QA task
+    // is unfinished — or later rejects — the mission can never complete on
+    // the executor's no-change receipt alone; the normal chain owns the
+    // verdict on whether "no change" is acceptable for the goal.
+    expect(
+      fixture.dispatches.hasVerifiedGuidedPlanAuthority({
+        missionId: fixture.mission.id,
+        intentVersion: 5,
+      }),
+    ).toBe(false);
+    expect(fixture.missions.get(fixture.mission.id)).toMatchObject({
+      status: 'running',
+      intentState: 'executing',
+    });
+    expect(fixture.dispatches.get(fixture.qaTask.id)).toBeNull();
   });
 
   it('projects a failed interrupted worktree reservation immediately with one PT-BR CTA', () => {

@@ -22,6 +22,9 @@ import { INTERRUPTED_WORKTREE_RESERVATION_FAILURE_MARKER } from "./worktree-mana
 
 const MAX_CAS_ATTEMPTS = 16;
 
+/** Stable contract reason shared with the scheduler merge lane. */
+export const TASK_WORKTREE_NOT_CLEAN_MESSAGE = "task worktree must be clean";
+
 export type RepositorySnapshot = IntegrationCheckoutInspection;
 
 export function gitOutput(
@@ -165,7 +168,7 @@ export function assertTaskWorktree(
     "--untracked-files=all",
   ]).stdout;
   if (status.length > 0) {
-    throw new WorktreeStateConflictError("task worktree must be clean");
+    throw new WorktreeStateConflictError(TASK_WORKTREE_NOT_CLEAN_MESSAGE);
   }
   return assertSha(
     gitOutput(git, real, ["rev-parse", "--verify", "HEAD^{commit}"]),
