@@ -110,6 +110,12 @@ export function guidedPlanEligibility(
   options: {
     readonly hasExistingPlan?: boolean;
     readonly existingTopology?: StandardMissionTopology;
+    /**
+     * Squad resolver used by the delivery-authority check. Callers that
+     * resolve rosters through injected deps (the planner) must pass the same
+     * resolver here so eligibility and sealing read one squad authority.
+     */
+    readonly resolveSquad?: (squadId: string) => Squad | null;
   } = {},
 ):
   | "lane-not-standard"
@@ -128,11 +134,12 @@ export function guidedPlanEligibility(
     return "automation-owned";
   }
   // Guided Planner v2 is the deterministic completion contract for squads
-  // synthesized by the beginner flow. Saved/manual specialty squads keep
-  // their established orchestrator-authored plan: forcing executor→reviewer
-  // would invalidate legitimate rosters such as review/research-only squads.
+  // synthesized by the beginner flow AND for saved-team launch snapshots
+  // (mission-runtime) with a delivery-shaped roster. Review/research-only
+  // saved squads keep their orchestrator-authored plan: forcing
+  // executor→reviewer would invalidate those rosters.
   if (
-    !hasMainOwnedGuidedDeliveryAuthority(mission) &&
+    !hasMainOwnedGuidedDeliveryAuthority(mission, options.resolveSquad) &&
     (
       (options.hasExistingPlan === true &&
         options.existingTopology !== "team-read-only-fanout") ||

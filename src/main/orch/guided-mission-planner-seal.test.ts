@@ -537,3 +537,70 @@ describe("Guided Planner v2", () => {
   });
 
 });
+
+describe("saved-team (mission-runtime) sealing", () => {
+  const SAVED_TEAM_SNAPSHOT_ID =
+    "mission-runtime-0c83c9b1-6ab8-4b35-a9b4-6468b001c92c";
+
+  it("seals the guided plan for a saved-team snapshot with an executor", () => {
+    const liveSquad = { ...squad, id: SAVED_TEAM_SNAPSHOT_ID };
+    const contract = compileIntentContract({
+      goal: "crie um arquivo TESTE-PARALELO.md na raiz com um resumo do projeto",
+      intentVersion: 3,
+      source: "typed",
+      lane: "standard",
+    });
+    const currentMission = mission({
+      squadId: SAVED_TEAM_SNAPSHOT_ID,
+      description: contract.goal,
+      intentContract: {
+        ...contract,
+        approvedAt: 10,
+        dispatchedAt: 10,
+        squadRevisionHash: snapshotSquadAuthority(liveSquad).hash,
+      },
+    });
+    const h = harness({ currentMission, liveSquad });
+
+    // Before the fix this returned applicable:false
+    // ("squad-not-engine-generated") and Modo Squad missions ran forever with
+    // zero sealed tasks until the orchestrator gave up.
+    expect(
+      ensureGuidedMissionPlan(h.suite, currentMission.id, h.deps),
+    ).toMatchObject({ applicable: true, sealed: true });
+    expect(h.createPlanAtomically).toHaveBeenCalledOnce();
+  });
+
+  it("keeps review-only saved teams on the orchestrator-authored route", () => {
+    const reviewOnly = {
+      ...squad,
+      id: SAVED_TEAM_SNAPSHOT_ID,
+      agents: squad.agents.filter((agent) => agent.category !== "executor"),
+    };
+    const contract = compileIntentContract({
+      goal: "crie um arquivo TESTE-PARALELO.md na raiz com um resumo do projeto",
+      intentVersion: 3,
+      source: "typed",
+      lane: "standard",
+    });
+    const currentMission = mission({
+      squadId: SAVED_TEAM_SNAPSHOT_ID,
+      description: contract.goal,
+      intentContract: {
+        ...contract,
+        approvedAt: 10,
+        dispatchedAt: 10,
+        squadRevisionHash: snapshotSquadAuthority(reviewOnly).hash,
+      },
+    });
+    const h = harness({ currentMission, liveSquad: reviewOnly });
+
+    expect(
+      ensureGuidedMissionPlan(h.suite, currentMission.id, h.deps),
+    ).toMatchObject({
+      applicable: false,
+      reason: "squad-not-engine-generated",
+    });
+    expect(h.createPlanAtomically).not.toHaveBeenCalled();
+  });
+});

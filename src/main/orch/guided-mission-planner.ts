@@ -228,6 +228,7 @@ export function ensureGuidedMissionPlan(
   const ineligible = guidedPlanEligibility(mission, {
     hasExistingPlan: existing.length > 0,
     existingTopology,
+    resolveSquad: deps.getSquad,
   });
   if (ineligible) {
     return Object.freeze({
