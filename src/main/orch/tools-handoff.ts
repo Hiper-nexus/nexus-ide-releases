@@ -19,7 +19,10 @@ import { compactText } from "./session-compaction";
 import { TASK_DISPATCH_HEARTBEAT_LEASE_MS } from "./task-dispatch-lifecycle";
 import type { ScopedHandoff } from "./handoff-store";
 import { handoffRawPayloadSha256 } from "./handoff-payload-identity";
-import { committedPhysicalWorkerHead } from "./physical-handoff-git";
+import {
+  committedPhysicalWorkerHead,
+  assertReadOnlyLaneObservationCurrent,
+} from "./physical-handoff-git";
 
 function requireHandoffMcpEffectIntent(
   invocation: McpToolInvocation | undefined,
@@ -139,8 +142,9 @@ const handoffSubmitTool: McpToolDef = {
     ) {
       throw new Error("evidenceIds must be an array of Nexus evidence IDs");
     }
+    const missionDispatches = suite.taskDispatches?.list(mission.id) ?? [];
     const sessionDispatches = ctx.sessionId
-      ? (suite.taskDispatches?.list(mission.id) ?? []).filter(
+      ? missionDispatches.filter(
           (dispatch) => dispatch.sessionId === ctx.sessionId,
         )
       : [];
@@ -173,6 +177,17 @@ const handoffSubmitTool: McpToolDef = {
       ctx,
       ctx.role === "worker" && boundDispatch !== undefined,
     );
+    // Stale-observation fence: a Guided read_only lane whose tree went stale
+    // between bind and handoff (executor integrated meanwhile) is refused
+    // here — before any receipt state exists — so the task is retried
+    // honestly against the integrated tree.
+    if (boundDispatch && worktreeHeadSha) {
+      assertReadOnlyLaneObservationCurrent({
+        lane: boundDispatch,
+        missionDispatches,
+        worktreeHeadSha,
+      });
+    }
     const status = handoffStatusSchema.parse(args.status);
     assertMcpInvocationCurrent(invocation);
     const handoffInput = {

@@ -25,7 +25,10 @@ import {
   runInsidePtyStreamAgentTransport,
 } from "./http-mcp-boundary";
 import { onHandoffSubmitted } from "./idle-delivery";
-import { committedPhysicalWorkerHead } from "./physical-handoff-git";
+import {
+  committedPhysicalWorkerHead,
+  assertReadOnlyLaneObservationCurrent,
+} from "./physical-handoff-git";
 import {
   getProjectDomainStores,
   type ProjectDomainStoreSuite,
@@ -178,6 +181,15 @@ async function preparePtyHandoff(
   if (!worktreeHeadSha) {
     throw new Error("handoff_provenance: physical worker HEAD is required");
   }
+  // Stale-observation fence (shared with the HTTP MCP transport): a Guided
+  // read_only lane whose tree went stale between bind and handoff is
+  // refused before any receipt/audit state exists, so the scheduler retry
+  // re-reviews the integrated tree and seals it honestly.
+  assertReadOnlyLaneObservationCurrent({
+    lane: dispatch,
+    missionDispatches: suite.taskDispatches.list(mission.id),
+    worktreeHeadSha,
+  });
   return Object.freeze({
     sessionId,
     ctx,
