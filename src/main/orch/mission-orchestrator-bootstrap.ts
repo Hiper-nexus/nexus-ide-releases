@@ -899,6 +899,35 @@ export class MissionOrchestratorBootstrapService {
         "user",
       );
     }
+    // Only production call that persists mission_contracts for a guided
+    // mission. It MUST fire before the authority seal is computed below:
+    // freezing rotates the PREVC seal (contextRevision/contractHash), and a
+    // seal captured before the freeze no longer matches the spawn fence,
+    // which re-resolves the now-frozen contract ("stale mission pane
+    // authority"). Never awaited: a slow/blocked Doctor bootstrap must not
+    // delay or fail the Maestro's own spawn — but its synchronous prefix
+    // (the actual freezeContract persistence) runs inline at this call, so
+    // resolveMissionPaneAuthoritySeal already sees the frozen contract.
+    // ensureGuidedMissionPrevc is idempotent and refuses to (re)freeze once
+    // a worker has materialized; when the context is not ready (greenfield)
+    // nothing freezes and both sides keep the intent-hash fallback seal.
+    if (!isTeamReadOnlyFanout) {
+      try {
+        void Promise.resolve(
+          this.#deps.ensureMissionPrevc?.(scope, missionId),
+        ).catch((error) => {
+          console.warn(
+            `[mission-bootstrap] PREVC freeze deferred for ${missionId}:`,
+            error,
+          );
+        });
+      } catch (error) {
+        console.warn(
+          `[mission-bootstrap] PREVC freeze deferred for ${missionId}:`,
+          error,
+        );
+      }
+    }
     const authoritySeal = resolveMissionPaneAuthoritySeal(
       scope,
       initial,
@@ -978,25 +1007,9 @@ export class MissionOrchestratorBootstrapService {
           error,
         );
       }
-      // Only production call that persists mission_contracts for a guided
-      // mission. Never awaited: a slow/blocked Doctor bootstrap must not
-      // delay or fail the Maestro's own spawn. ensureGuidedMissionPrevc is
-      // idempotent and refuses to (re)freeze once a worker has materialized.
-      try {
-        void Promise.resolve(
-          this.#deps.ensureMissionPrevc?.(scope, missionId),
-        ).catch((error) => {
-          console.warn(
-            `[mission-bootstrap] PREVC freeze deferred for ${missionId}:`,
-            error,
-          );
-        });
-      } catch (error) {
-        console.warn(
-          `[mission-bootstrap] PREVC freeze deferred for ${missionId}:`,
-          error,
-        );
-      }
+      // O freeze Main-owned roda antes do cômputo do authority seal (ver
+      // acima, antes de resolveMissionPaneAuthoritySeal) — aqui ele já é
+      // idempotentemente no-op.
     };
 
     let activeOrchestratorSessionId = initial.orchestratorSessionId;
