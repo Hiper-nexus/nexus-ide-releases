@@ -56,6 +56,7 @@ import { MISSION_SCHEDULER_TICK_MS } from "./mission-scheduler-policy";
 import {
   projectTerminalMergeFailure,
   reconcileInterruptedWorktreeReservationFailuresForScope,
+  reconcileOrphanedMissionMergeBlockForScope,
   reconcileSupersededPlanGenerations,
   reconcileTerminalDispatchWorktreeReleaseForScope,
   reconcileTerminalMergeFailureForScope,
@@ -1647,6 +1648,10 @@ async function tick(signal?: AbortSignal): Promise<void> {
       );
       throwIfMissionSchedulerAborted(signal);
       reconcileInterruptedWorktreeReservationFailuresForScope(scope);
+      // Before projecting merge failures: a block orphaned mid-process (its
+      // mission removed after scope construction) must lift here, or every
+      // later mission of the scope inherits it as a terminal deferral chain.
+      reconcileOrphanedMissionMergeBlockForScope(scope);
       reconcileTerminalMergeFailureForScope(scope);
       reconcileTerminalDispatchWorktreeReleaseForScope(scope);
     },

@@ -10,6 +10,7 @@ import {
 import {
   MergeQueue,
   type EnqueueMergeInput,
+  type MergeQueueBlock,
   type MergeQueueReconciliationResult,
   type MergeQueueResult,
   type MergeQueueStateSnapshot,
@@ -130,6 +131,12 @@ export class WorktreeRuntimeRegistry {
       worktrees,
     });
     queue.reconcile(immutableScope);
+    // A durable merge block can only be acknowledged by its exact blocked
+    // task. If that task's mission was deleted, the block is permanently
+    // unacknowledgeable and every future mission of this scope inherits
+    // MergeQueueBlockedError until its dispatch goes terminal. Lift exactly
+    // those orphaned blocks here so a bricked scope heals on open.
+    this.#retireOrphanedMissionMergeBlock(immutableScope, queue);
     const value = Object.freeze({
       scope: immutableScope,
       worktreeState,
@@ -139,6 +146,41 @@ export class WorktreeRuntimeRegistry {
     });
     this.#runtimes.set(key, value);
     return value;
+  }
+
+  /**
+   * Best-effort orphan-block sweep for scope construction. Reads the live
+   * mission ids straight from the scoped database — the same trusted source
+   * `#purgeOrphanWorktrees` uses — so a block whose mission row disappeared
+   * is provably unownable before it is lifted.
+   */
+  #retireOrphanedMissionMergeBlock(
+    scope: ProjectExecutionScope,
+    queue: MergeQueue,
+  ): void {
+    try {
+      const liveMissionIds = new Set(
+        (
+          new ScopedStoreBinding(this.#manager, scope)
+            .readDatabase()
+            .prepare('SELECT id FROM missions')
+            .all() as ReadonlyArray<{ id: string }>
+        ).map((row) => row.id),
+      );
+      const retired = queue.retireOrphanedMissionBlock(scope, (missionId) =>
+        liveMissionIds.has(missionId),
+      );
+      if (retired) {
+        console.warn(
+          '[worktree-runtime] lifted an orphaned merge block ' +
+            `(${retired.errorName}: ${retired.reason.slice(0, 160)}); ` +
+            'the owning mission no longer exists',
+        );
+      }
+    } catch (error) {
+      // Never block scope construction on an opportunistic cleanup.
+      console.warn('[worktree-runtime] orphan merge block sweep skipped', error);
+    }
   }
 
   /**
@@ -301,6 +343,22 @@ export class WorktreeRuntimeRegistry {
       runtime.worktreeState
         .read(runtime.worktrees.scopeKey(scope))
         .records.filter((record) => record.missionId === missionId),
+    );
+  }
+
+  /**
+   * Mid-process orphan-block retirement for callers that just removed a
+   * mission (or observed one missing). The predicate is the caller's mission
+   * authority; the queue only lifts the block when it returns false for the
+   * blocked entry's mission.
+   */
+  retireOrphanedMissionMergeBlock(
+    scope: ProjectExecutionScope,
+    isMissionAlive: (missionId: string) => boolean,
+  ): MergeQueueBlock | null {
+    return this.forScope(scope).queue.retireOrphanedMissionBlock(
+      scope,
+      isMissionAlive,
     );
   }
 

@@ -59,6 +59,7 @@ import {
 } from "./pane-activity-summary";
 import type { ProjectExecutionScope } from "../../shared/types";
 import { requireRendererWorkspaceScope } from "../persistence/renderer-workspace-scope";
+import { requireWorktreeRuntimeRegistry } from "../runtime/worktree-runtime-registry";
 import {
   bindOwnedAgentSessionMission,
   consumeMissionOrchestratorGrant,
@@ -786,6 +787,25 @@ export class RendererMissionAuthority {
       throw new Error(
         "mission_removal_stale: a missão mudou durante o teardown; o histórico foi preservado",
       );
+    }
+    if (result === "removed") {
+      // The removed mission may own the scope's durable merge block. Nothing
+      // can acknowledge that block anymore, so lift it now instead of letting
+      // every future mission of this scope defer merges into a technical
+      // block. Best-effort: the scope-construction sweep also covers it.
+      try {
+        const scope = requireRendererWorkspaceScope(owner);
+        requireWorktreeRuntimeRegistry().retireOrphanedMissionMergeBlock(
+          scope,
+          (ownerMissionId) =>
+            Boolean(candidate.suite.missions.get(ownerMissionId)),
+        );
+      } catch (error) {
+        console.warn(
+          "[mission-authority] orphan merge block sweep after removal skipped",
+          error,
+        );
+      }
     }
     return result === "removed";
   }

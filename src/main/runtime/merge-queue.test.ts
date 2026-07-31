@@ -1627,3 +1627,71 @@ describe('MergeQueue', () => {
     expect(git(root, 'rev-parse', 'HEAD')).toBe(originalHead);
   });
 });
+
+describe('orphaned mission block retirement', () => {
+  it('lifts a block whose mission no longer exists and unbricks the scope', async () => {
+    await commitTask('mission-dead', 'task-dead', 'worker-dead', 'dead.txt', 'D\n');
+    await commitTask('mission-live', 'task-live', 'worker-live', 'live.txt', 'L\n');
+
+    await expect(
+      queue.enqueue({
+        scope,
+        missionId: 'mission-dead',
+        taskId: 'task-dead',
+        validate: async () => ({
+          sensorsPassed: false,
+          reviewPassed: true,
+          evidenceIds: ['rejected-dead'],
+        }),
+      }),
+    ).rejects.toThrow(MergeValidationRejectedError);
+
+    // A different mission inherits the block while the owner still exists.
+    await expect(
+      queue.enqueue({
+        scope,
+        missionId: 'mission-live',
+        taskId: 'task-live',
+        validate: approved,
+      }),
+    ).rejects.toThrow(MergeQueueBlockedError);
+
+    // Owner alive → retirement refuses to touch the block.
+    expect(queue.retireOrphanedMissionBlock(scope, () => true)).toBeNull();
+    expect(queue.snapshot(scope).blocked).not.toBeNull();
+
+    // Owner mission removed → the block is provably unownable and lifts.
+    const retired = queue.retireOrphanedMissionBlock(
+      scope,
+      (missionId) => missionId !== 'mission-dead',
+    );
+    expect(retired?.errorName).toBe('MergeValidationRejectedError');
+
+    const after = queue.snapshot(scope);
+    expect(after.blocked).toBeNull();
+    // Audit evidence survives: the blocked entry and a reconciliation event.
+    expect(
+      after.entries.some(
+        (entry) => entry.missionId === 'mission-dead' && entry.status === 'blocked',
+      ),
+    ).toBe(true);
+    expect(after.events.at(-1)).toMatchObject({
+      type: 'restart-reconciled',
+      fromStatus: 'blocked',
+    });
+
+    // The scope is usable again end-to-end.
+    const result = await queue.enqueue({
+      scope,
+      missionId: 'mission-live',
+      taskId: 'task-live',
+      validate: approved,
+    });
+    expect(git(root, 'rev-parse', 'HEAD')).toBe(result.integratedSha);
+    expect(fs.readFileSync(path.join(root, 'live.txt'), 'utf8')).toBe('L\n');
+  });
+
+  it('returns null when the scope has no block', () => {
+    expect(queue.retireOrphanedMissionBlock(scope, () => false)).toBeNull();
+  });
+});

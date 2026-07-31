@@ -180,6 +180,59 @@ export function reconcileTerminalMergeFailureForScope(
   );
 }
 
+type OrphanedMergeBlockStoreAuthority = Pick<ProjectDomainStoreSuite, "missions">;
+
+interface OrphanedMergeBlockReconciliationDeps {
+  readonly registry: Pick<
+    WorktreeRuntimeRegistry,
+    "retireOrphanedMissionMergeBlock"
+  >;
+  readonly getStores: (
+    scope: ProjectExecutionScope,
+  ) => OrphanedMergeBlockStoreAuthority;
+}
+
+/**
+ * Scope-construction and mission-removal sweeps miss one window: a block
+ * whose mission disappears AFTER the memoized scope runtime was built (the
+ * registry is per-process, so the init sweep never re-runs). Left alone, the
+ * unacknowledgeable block turns every later mission of the scope into "merge
+ * diferido 12 vezes" → technical block. This tick-level layer closes that
+ * window; it is a no-op while the blocked mission still exists.
+ */
+export function reconcileOrphanedMissionMergeBlockForScope(
+  scope: ProjectExecutionScope,
+  dependencies?: OrphanedMergeBlockReconciliationDeps,
+): boolean {
+  const deps = dependencies ?? {
+    registry: requireWorktreeRuntimeRegistry(),
+    getStores: (currentScope: ProjectExecutionScope) =>
+      getProjectDomainStores(currentScope),
+  };
+  try {
+    const missions = deps.getStores(scope).missions;
+    const retired = deps.registry.retireOrphanedMissionMergeBlock(
+      scope,
+      (missionId) => Boolean(missions.get(missionId)),
+    );
+    if (retired) {
+      console.warn(
+        "[mission-scheduler] lifted an orphaned merge block " +
+          `(${retired.errorName}: ${retired.reason.slice(0, 120)}); ` +
+          "the owning mission no longer exists",
+      );
+      return true;
+    }
+  } catch (error) {
+    // Opportunistic cleanup: a contended CAS just retries next tick.
+    console.warn(
+      "[mission-scheduler] orphan merge block sweep deferred:",
+      error,
+    );
+  }
+  return false;
+}
+
 export const SUPERSEDED_PLAN_GENERATION_WORKTREE_REASON =
   "geração do plano selado substituída; ownership do worktree liberada";
 

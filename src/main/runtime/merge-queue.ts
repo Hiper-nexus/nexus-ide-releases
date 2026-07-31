@@ -26,6 +26,7 @@ import {
   MergeQueueStateError,
   MergeValidationRejectedError,
   type EnqueueMergeInput,
+  type MergeQueueBlock,
   type MergeQueueOptions,
   type MergeQueueReconciliationResult,
   type MergeQueueResult,
@@ -227,6 +228,69 @@ export class MergeQueue {
       return Object.freeze({ action: 'none' });
     }
     return this.#recovery.reconcile(scope);
+  }
+
+  /**
+   * Lifts a durable scope block whose owning mission no longer exists.
+   *
+   * A block is acknowledgeable only by its exact blocked task; once that
+   * task's mission is removed, nothing can ever acknowledge it and every
+   * future mission of the scope inherits MergeQueueBlockedError forever. The
+   * blocked entry and its events stay untouched as audit evidence — only the
+   * scope-level block is lifted, recorded as a restart-reconciled event.
+   */
+  retireOrphanedMissionBlock(
+    scope: ProjectExecutionScope,
+    isMissionAlive: (missionId: string) => boolean,
+  ): MergeQueueBlock | null {
+    const scopeKey = this.#worktrees.scopeKey(scope);
+    if (this.#tails.has(scopeKey)) return null;
+    const snapshot = this.snapshot(scope);
+    const block = snapshot.blocked;
+    if (!block) return null;
+    const entry = snapshot.entries.find(
+      (candidate) => candidate.taskKey === block.taskKey,
+    );
+    if (!entry || isMissionAlive(entry.missionId)) return null;
+    const now = this.#now();
+    this.#state.mutate(
+      scopeKey,
+      (state, nextRevision) => {
+        if (
+          !state.blocked ||
+          state.blocked.taskKey !== block.taskKey ||
+          state.blocked.blockedAt !== block.blockedAt
+        ) {
+          throw new MergeQueueStateError(
+            'merge queue block changed before orphan retirement',
+          );
+        }
+        return {
+          ...state,
+          blocked: null,
+          events: [
+            ...state.events,
+            this.#state.event(
+              scopeKey,
+              entry,
+              'restart-reconciled',
+              nextRevision,
+              now,
+              {
+                fromStatus: 'blocked',
+                integrationState: 'not-integrated',
+                errorName: block.errorName,
+                reason:
+                  `bloqueio órfão retirado: a missão ${entry.missionId} foi ` +
+                  'removida e ninguém poderia mais reconhecer o bloqueio',
+              },
+            ),
+          ],
+        };
+      },
+      snapshot.revision,
+    );
+    return block;
   }
 
   #schedule(
