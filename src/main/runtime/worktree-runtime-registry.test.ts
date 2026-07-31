@@ -1056,6 +1056,82 @@ describe("project worktree runtime registry", () => {
     expect(retried).toMatchObject({ id: original.id, status: "ready" });
   });
 
+  it("lets the reroute substitute reclaim the dead owner's reservation", async () => {
+    const { scope, manager } = fixture();
+    const registry = new WorktreeRuntimeRegistry(manager);
+    seedWorkState(manager, scope, {
+      missionId: "mission-reroute",
+      taskId: "task-reroute",
+      missionStatus: "running",
+      taskStatus: "running",
+    });
+    const original = await registry.create({
+      scope,
+      missionId: "mission-reroute",
+      taskId: "task-reroute",
+      workerId: "E2E Advisor Claude",
+      ownership: { files: ["owned.txt"], symbols: [], domains: ["core"] },
+    });
+    // O caminho do reroute libera a reserva da encarnação morta com o
+    // marcador de dono-morto (releaseRerouteWorktreeClaim).
+    registry.markFailed(
+      scope,
+      "mission-reroute",
+      "task-reroute",
+      `${DEAD_OWNER_WORKTREE_RELEASE_MARKER} provider claude morto; reserva ` +
+        "liberada para E2E Advisor Grok reclamar via reroute do roster selado",
+    );
+
+    // O agente SUBSTITUTO reclama a mesma reserva — antes disto o claim
+    // re-roteado morria para sempre em WorktreeWorkerConflictError.
+    const reclaimed = await registry.create({
+      scope,
+      missionId: "mission-reroute",
+      taskId: "task-reroute",
+      workerId: "E2E Advisor Grok",
+      ownership: { files: ["owned.txt"], symbols: [], domains: ["core"] },
+    });
+    expect(reclaimed).toMatchObject({
+      id: original.id,
+      status: "ready",
+      worktreePath: original.worktreePath,
+    });
+  });
+
+  it("still refuses a different worker when the release lacks the dead-owner marker", async () => {
+    const { scope, manager } = fixture();
+    const registry = new WorktreeRuntimeRegistry(manager);
+    seedWorkState(manager, scope, {
+      missionId: "mission-guarded",
+      taskId: "task-guarded",
+      missionStatus: "running",
+      taskStatus: "running",
+    });
+    await registry.create({
+      scope,
+      missionId: "mission-guarded",
+      taskId: "task-guarded",
+      workerId: "worker-vivo",
+      ownership: { files: ["owned.txt"], symbols: [], domains: ["core"] },
+    });
+    registry.markFailed(
+      scope,
+      "mission-guarded",
+      "task-guarded",
+      "falha comum sem marcador de dono-morto",
+    );
+
+    await expect(
+      registry.create({
+        scope,
+        missionId: "mission-guarded",
+        taskId: "task-guarded",
+        workerId: "worker-intruso",
+        ownership: { files: ["owned.txt"], symbols: [], domains: ["core"] },
+      }),
+    ).rejects.toThrow(/already owned by another worker/i);
+  });
+
   it("stays fail-closed when a resumed mission's kept record now overlaps a live claim", async () => {
     const { scope, manager } = fixture();
     const registry = new WorktreeRuntimeRegistry(manager);

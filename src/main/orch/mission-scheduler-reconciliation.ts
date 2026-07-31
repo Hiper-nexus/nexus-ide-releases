@@ -352,6 +352,39 @@ function pickRosterRerouteCandidate(input: {
 }
 
 /**
+ * Libera a reserva de worktree da encarnação MORTA logo após o commit da
+ * diretiva de reroute. Sem isto o claim do agente substituto morre para sempre
+ * em WorktreeWorkerConflictError — a reserva ainda pertence ao workerId do
+ * agente que caiu (flagrado ao vivo: attempt 59 no gate da 0.20.0). O marcador
+ * de dono-morto torna o registro reclamável pelo substituto, que reaproveita o
+ * MESMO worktree físico. Best-effort: task advisory read_only pode nem ter
+ * reserva, e falhar aqui não pode desfazer o reroute já commitado.
+ */
+function releaseRerouteWorktreeClaim(
+  scope: ProjectExecutionScope,
+  missionId: string,
+  taskId: string,
+  detail: { readonly deadAdapterId: string; readonly candidateName: string },
+): void {
+  try {
+    requireWorktreeRuntimeRegistry().markFailed(
+      scope,
+      missionId,
+      taskId,
+      `${DEAD_OWNER_WORKTREE_RELEASE_MARKER} provider ${detail.deadAdapterId} ` +
+        `morto; reserva liberada para ${detail.candidateName} reclamar via ` +
+        "reroute do roster selado",
+    );
+  } catch (error) {
+    console.warn(
+      `[mission-scheduler] liberação da reserva de worktree do reroute ` +
+        `adiada para ${missionId}/${taskId}:`,
+      error,
+    );
+  }
+}
+
+/**
  * Reroute automático dentro do roster selado. Um worker que esgota as
  * tentativas físicas de spawn terminaliza a task e bloqueia a missão; se o
  * MESMO roster selado tem outro agente da mesma categoria cuja CLI resolve
@@ -435,6 +468,10 @@ export function reconcileExhaustedProviderRerouteForScope(
         revision: dispatch.revision,
         directive,
         note,
+      });
+      releaseRerouteWorktreeClaim(scope, dispatch.missionId, dispatch.taskId, {
+        deadAdapterId,
+        candidateName: candidate.agentName,
       });
       rerouted += 1;
       // A missão volta a running sozinha; sem esta entrada durável o operador
@@ -570,6 +607,10 @@ export function rerouteLiveProviderDeadDispatch(
     workerIncarnationId: input.workerIncarnationId,
     directive,
     note,
+  });
+  releaseRerouteWorktreeClaim(scope, dispatch.missionId, dispatch.taskId, {
+    deadAdapterId: input.deadAdapterId,
+    candidateName: candidate.agentName,
   });
   try {
     stores.missions.appendLearning(

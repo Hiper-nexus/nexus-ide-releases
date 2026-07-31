@@ -296,7 +296,21 @@ export class WorktreeManager {
             "task worktree belongs to another checkout root",
           );
         }
-        if (existing.workerId !== workerId) {
+        // Um registro liberado pelo marcador de dono-morto é SEM DONO por
+        // definição — o reroute de provider grava exatamente esse marcador
+        // para que o agente substituto do MESMO roster reclame a mesma
+        // reserva. Sem esta exceção, o claim re-roteado morria para sempre em
+        // WorktreeWorkerConflictError (flagrado ao vivo: attempt 59 no gate
+        // da 0.20.0). Qualquer outro caso de worker divergente continua
+        // recusado.
+        const releasedByDeadOwner =
+          existing.status === "failed" &&
+          existing.taskHeadSha === undefined &&
+          existing.integratedSha === undefined &&
+          existing.failureReason?.startsWith(
+            DEAD_OWNER_WORKTREE_RELEASE_MARKER,
+          ) === true;
+        if (existing.workerId !== workerId && !releasedByDeadOwner) {
           throw new WorktreeWorkerConflictError();
         }
         if (
@@ -315,12 +329,7 @@ export class WorktreeManager {
             result: { record: existing, isNew: false, resurrected: false },
           };
         }
-        if (
-          existing.status === "failed" &&
-          existing.taskHeadSha === undefined &&
-          existing.integratedSha === undefined &&
-          existing.failureReason?.startsWith(DEAD_OWNER_WORKTREE_RELEASE_MARKER)
-        ) {
+        if (releasedByDeadOwner) {
           // The record was released only because its owner went terminal; the
           // physical worktree was kept exactly for this resume/retry lane.
           // Reclaim the slot under the same ownership exclusivity as a fresh
@@ -333,6 +342,9 @@ export class WorktreeManager {
           });
           const resurrected = cloneRecord({
             ...existing,
+            // Reatribuição: no reroute o reclamante é OUTRO agente do roster;
+            // no resume clássico é o mesmo worker e isto é um no-op.
+            workerId,
             status: "reserved" as const,
             failureReason: undefined,
             updatedAt: now,
