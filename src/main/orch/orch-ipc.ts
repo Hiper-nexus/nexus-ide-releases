@@ -2655,6 +2655,14 @@ export function registerOrchIpc(): void {
             ? await designSquadFromIntent(intent, wsPath, {
                 signal: fence.signal,
                 assertCurrentAuthority: fence.assertCurrentAuthority,
+                // O time salvo do operador é lei: um squad pronto (todos os
+                // CLIs roteáveis e verificados) carrega os modelos/efforts
+                // que ele escolheu. O template determinístico roteava o
+                // modelo default do adapter — vide as 3 mortes de worker em
+                // gpt-5.5 com o time salvo apontando gpt-5.6-luna. O aviso
+                // "Reusando o squad salvo…" + o editor de roster na tela
+                // seguinte preservam a visibilidade e a troca em um clique.
+                preferSavedSquad: true,
               })
             : await designSquadForWorkspace(wsPath, {
                 signal: fence.signal,
