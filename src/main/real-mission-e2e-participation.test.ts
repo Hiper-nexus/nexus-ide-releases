@@ -200,6 +200,36 @@ describe("real mission advisor participation receipts", () => {
       "glm",
     ]);
   });
+
+  it("credits a rerouted advisor through the substitute's durable directive", () => {
+    // Gate 5 da 0.20.0 ao vivo: o claude morreu de 401, o reroute re-vinculou
+    // a task selada ao grok (agent_ref trocou), e a checagem por agentRef
+    // declarava o claude ausente numa missão DONE com 8/8 handoffs.
+    const participation = buildRealMissionParticipation({
+      expectations: expectedRealMissionAdvisors([]),
+      ptyByCli: new Map([
+        ["claude", { sessionId: "session-claude", spawnedAt: 90 }],
+      ]),
+      dispatches: [
+        {
+          agentRef: "e2e-advisor-grok",
+          sessionId: "session-grok-substituto",
+          handoffId: "handoff-claude-task",
+          handoffAcceptedAt: 500,
+          providerReroute: { fromAgentRef: "e2e-advisor-claude" },
+        },
+      ],
+      handoffIssuedAt: (handoffId) =>
+        handoffId === "handoff-claude-task" ? 480 : null,
+      firstNexusToolAt: () => null,
+    });
+
+    const claude = participation.find((row) => row.cli === "claude");
+    expect(claude).toMatchObject({ skipped: null, handoffAt: 480 });
+    expect(realMissionAdvisorsMissingHandoff(participation)).not.toContain(
+      "claude",
+    );
+  });
 });
 
 describe("real mission physical PTY gate with advisors", () => {

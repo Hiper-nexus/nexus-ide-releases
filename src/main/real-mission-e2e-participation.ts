@@ -68,6 +68,8 @@ export interface RealMissionParticipationInput {
     readonly sessionId?: string | null;
     readonly handoffId?: string | null;
     readonly handoffAcceptedAt?: number | null;
+    /** Diretiva durável de reroute (fromAgentRef = advisor selado ORIGINAL). */
+    readonly providerReroute?: { readonly fromAgentRef: string } | null;
   }[];
   /** issuedAt do receipt MCP físico do handoff (null se ausente). */
   readonly handoffIssuedAt: (handoffId: string) => number | null;
@@ -98,10 +100,20 @@ export function buildRealMissionParticipation(
       };
     }
     const capture = input.ptyByCli.get(expectation.cli) ?? null;
+    // Participação por SUBSTITUIÇÃO: quando o provider do advisor morre
+    // (401/cota), o reroute re-vincula a task selada a outro agente do roster
+    // e o agent_ref do dispatch passa a ser o substituto. A diretiva durável
+    // guarda o advisor original em fromAgentRef — o handoff entregue por essa
+    // cadeia É o handoff da task selada deste advisor, não uma ausência.
     const dispatch =
       input.dispatches.find(
         (candidate) => candidate.agentRef === expectation.agentRef,
-      ) ?? null;
+      ) ??
+      input.dispatches.find(
+        (candidate) =>
+          candidate.providerReroute?.fromAgentRef === expectation.agentRef,
+      ) ??
+      null;
     const handoffAt = dispatch?.handoffId
       ? (input.handoffIssuedAt(dispatch.handoffId) ??
         dispatch.handoffAcceptedAt ??
