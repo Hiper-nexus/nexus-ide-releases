@@ -131,6 +131,28 @@ export const taskProviderWaiverBindingSchema = z
     causeSha256: z.string().regex(/^[a-f0-9]{64}$/),
   })
   .strict();
+/**
+ * Diretiva durável de reroute dentro do roster selado. Só o coordenador a
+ * grava (após provar o esgotamento físico terminal do worker) e só o claim a
+ * honra: o dispatch re-claimado deve vir exatamente como `toAgentRef`, um
+ * agente do MESMO roster selado e da MESMA categoria do agente original.
+ * `exhaustedAdapterIds` limita a cadeia — cada CLI do roster é tentada no
+ * máximo uma vez por intentVersion.
+ */
+export const taskProviderRerouteDirectiveSchema = z
+  .object({
+    version: z.literal(1),
+    /** agentRef selado no plano (nunca muda ao longo da cadeia de reroutes). */
+    fromAgentRef: taskDispatchIdSchema,
+    /** Agente alternativo do mesmo roster que assume a task. */
+    toAgentRef: taskDispatchIdSchema,
+    /** CLIs já provadas mortas para esta task nesta intentVersion. */
+    exhaustedAdapterIds: z.array(taskDispatchIdSchema).min(1).max(32),
+    reason: z.string().min(1).max(4_000),
+    reroutedAt: z.number().int().nonnegative(),
+  })
+  .strict();
+
 export const taskIntegrationReceiptSchema = z
   .object({
     kind: z.enum([
@@ -216,6 +238,9 @@ export type TaskDispatchWorkerCategory = z.infer<
 export type TaskDispatchRouteContract = z.infer<
   typeof taskDispatchRouteContractSchema
 >;
+export type TaskProviderRerouteDirective = z.infer<
+  typeof taskProviderRerouteDirectiveSchema
+>;
 
 export const taskDispatchRowSchema = z
   .object({
@@ -244,6 +269,7 @@ export const taskDispatchRowSchema = z
       .regex(/^[a-f0-9]{64}$/)
       .nullable(),
     route_contract_json: z.string().nullable(),
+    provider_reroute_json: z.string().nullable(),
     pane_id: taskDispatchIdSchema.nullable(),
     session_id: taskDispatchIdSchema.nullable(),
     handoff_id: taskDispatchIdSchema.nullable(),
@@ -282,6 +308,7 @@ export interface TaskDispatchRecord {
   readonly agentCategory?: TaskDispatchWorkerCategory;
   readonly rosterHash?: string;
   readonly routeContract?: TaskDispatchRouteContract;
+  readonly providerReroute?: TaskProviderRerouteDirective;
   readonly paneId?: string;
   readonly sessionId?: string;
   readonly handoffId?: string;
@@ -374,6 +401,11 @@ export function taskDispatchRecordFromParsedRow(
     routeContract: row.route_contract_json
       ? taskDispatchRouteContractSchema.parse(
           JSON.parse(row.route_contract_json),
+        )
+      : undefined,
+    providerReroute: row.provider_reroute_json
+      ? taskProviderRerouteDirectiveSchema.parse(
+          JSON.parse(row.provider_reroute_json),
         )
       : undefined,
     paneId: row.pane_id ?? undefined,

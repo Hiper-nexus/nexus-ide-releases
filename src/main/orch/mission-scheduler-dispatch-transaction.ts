@@ -676,6 +676,40 @@ export async function dispatchMissionSchedulerTask(
   ) {
     throw new Error(`scheduler request ${taskId} divergiu do plano selado`);
   }
+  // Reroute durável dentro do roster selado: se o coordenador re-vinculou o
+  // dispatch a um agente alternativo (CLI original esgotou spawn físico), o
+  // dispatch inteiro — rota, claim, prompt, pane — usa esse agente. O plano
+  // selado permanece imutável; o claim re-valida a diretiva contra o mesmo
+  // roster/hash na transação SQLite.
+  const rerouteDirective = (() => {
+    const currentDispatch = stores.taskDispatches.get(taskId);
+    return currentDispatch?.state === "superseded" &&
+      currentDispatch.intentVersion === mission.intentContract.intentVersion
+      ? currentDispatch.providerReroute
+      : undefined;
+  })();
+  const effectiveAgent = (() => {
+    if (!rerouteDirective) return planned.agent;
+    if (rerouteDirective.fromAgentRef !== planned.agentRef) {
+      throw new Error(
+        "diretiva de reroute divergiu do agentRef selado do plano",
+      );
+    }
+    const receipt = stores.tasks.getPlanReceipt(
+      missionId,
+      mission.intentContract.intentVersion,
+    );
+    const candidate = receipt?.agents.find(
+      (agent) => agent.id === rerouteDirective.toAgentRef,
+    );
+    if (!candidate || candidate.category !== planned.agentCategory) {
+      throw new Error(
+        "agente alternativo do reroute não existe no roster selado com a categoria da task",
+      );
+    }
+    return candidate;
+  })();
+  const effectiveAgentRef = rerouteDirective?.toAgentRef ?? planned.agentRef;
   const squad = mission.squadId ? getSquad(mission.squadId) : null;
   const dispatchAuthority = captureMissionSchedulerPreProviderAuthority({
     mission,
@@ -709,13 +743,13 @@ export async function dispatchMissionSchedulerTask(
     });
   const executionMode = meta.executionMode;
   const taskText = `${task.title}\n${decoded.body}`;
-  await warmMissionSchedulerRosterSubscriptionAuth(planned.agent.cli);
+  await warmMissionSchedulerRosterSubscriptionAuth(effectiveAgent.cli);
   const adapters = listProviderSettings()
     .filter((provider) => provider.adapterId !== "shell")
     .map((provider) => {
       const requestedModel =
-        provider.adapterId === planned.agent.cli
-          ? (planned.agent.model ?? provider.defaultModel)
+        provider.adapterId === effectiveAgent.cli
+          ? (effectiveAgent.model ?? provider.defaultModel)
           : provider.defaultModel;
       return missionSchedulerLiveRosterAdapter({
         provider,
@@ -727,7 +761,7 @@ export async function dispatchMissionSchedulerTask(
     squad?.agents.find((agent) => agent.category === "orchestrator")?.cli;
   const sealedRoute = resolveSealedWorkerRoute({
     taskText,
-    agent: planned.agent,
+    agent: effectiveAgent,
     adapters,
     rosterHash: planned.rosterHash,
     orchestratorCliId,
@@ -787,8 +821,8 @@ export async function dispatchMissionSchedulerTask(
       );
     }
   }
-  const workerId = planned.agent.agentName;
-  const plannedAllowedTools = planned.agent.allowedTools ?? [];
+  const workerId = effectiveAgent.agentName;
+  const plannedAllowedTools = effectiveAgent.allowedTools ?? [];
   const dispatches = stores.taskDispatches.list(missionId);
   const workerSlotProjection = projectMissionSchedulerWorkerSlots(
     missionId,
@@ -842,7 +876,7 @@ export async function dispatchMissionSchedulerTask(
       maxWorkers: mission.intentContract.budgets.maxWorkers,
       ownership: mapped.ownership,
       executionMode,
-      agentRef: planned.agentRef,
+      agentRef: effectiveAgentRef,
       agentCategory: meta.agentCategory,
       rosterHash: planned.rosterHash,
       routeContract: sealedRoute.routeContract,
@@ -927,7 +961,7 @@ export async function dispatchMissionSchedulerTask(
       if (
         current.workerIncarnationId !== claim.workerIncarnationId ||
         current.workerId !== workerId ||
-        current.agentRef !== planned.agentRef
+        current.agentRef !== effectiveAgentRef
       ) {
         throw new Error(
           "scheduler spawn authority diverged from the sealed worker incarnation",
@@ -949,7 +983,7 @@ export async function dispatchMissionSchedulerTask(
         }),
         scope,
         missionId,
-        agentName: planned.agent.agentName,
+        agentName: effectiveAgent.agentName,
         workerIncarnationId: claim.workerIncarnationId,
         agentCategory: meta.agentCategory,
         role: "worker",
@@ -957,7 +991,7 @@ export async function dispatchMissionSchedulerTask(
         prompt: buildMissionSchedulerTaskPrompt(
           { ...mapped, title: task.title, detail: decoded.body },
           {
-            agentName: planned.agent.agentName,
+            agentName: effectiveAgent.agentName,
             category: meta.agentCategory,
             executionMode,
             qualityRepairReason,
@@ -966,10 +1000,10 @@ export async function dispatchMissionSchedulerTask(
         ),
         allowedTools: [...(reservation.allowedTools ?? plannedAllowedTools)],
         allowedSkills:
-          planned.agent.allowedSkills === null ||
-          planned.agent.allowedSkills === undefined
+          effectiveAgent.allowedSkills === null ||
+          effectiveAgent.allowedSkills === undefined
             ? null
-            : [...planned.agent.allowedSkills],
+            : [...effectiveAgent.allowedSkills],
         readOnly: executionMode === "read_only",
       },
       {

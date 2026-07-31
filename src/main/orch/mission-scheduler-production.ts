@@ -55,6 +55,7 @@ import {
 import { MISSION_SCHEDULER_TICK_MS } from "./mission-scheduler-policy";
 import {
   projectTerminalMergeFailure,
+  reconcileExhaustedProviderRerouteForScope,
   reconcileInterruptedWorktreeReservationFailuresForScope,
   reconcileOrphanedMissionMergeBlockForScope,
   reconcileSupersededPlanGenerations,
@@ -115,6 +116,7 @@ export {
 } from "./mission-scheduler-policy";
 export {
   projectTerminalMergeFailure,
+  reconcileExhaustedProviderRerouteForScope,
   reconcileInterruptedWorktreeReservationFailuresForScope,
   reconcileSupersededPlanGenerations,
   reconcileTerminalDispatchWorktreeReleaseForScope,
@@ -1654,6 +1656,10 @@ async function tick(signal?: AbortSignal): Promise<void> {
       reconcileOrphanedMissionMergeBlockForScope(scope);
       reconcileTerminalMergeFailureForScope(scope);
       reconcileTerminalDispatchWorktreeReleaseForScope(scope);
+      // After the terminal projections above: a worker whose CLI exhausted
+      // physical spawn attempts gets re-routed to another live agent of the
+      // SAME sealed roster, and the mission reopens for the recovery loop.
+      reconcileExhaustedProviderRerouteForScope(scope);
     },
     listMissions: (scope) => {
       throwIfMissionSchedulerAborted(signal);

@@ -9,6 +9,7 @@ import {
   taskDispatchOwnershipSchema,
   taskDispatchRouteContractSchema,
   taskDispatchTokenHash,
+  taskProviderRerouteDirectiveSchema,
   type TaskDispatchRow,
 } from "./task-dispatch-codec";
 import type { TaskDispatchDatabase } from "./task-dispatch-persistence";
@@ -190,8 +191,29 @@ export function assertSealedTaskDispatchPlanAuthority(
       cause: error,
     });
   }
+  // Sob diretiva de reroute (gravada só pelo coordenador após esgotamento
+  // físico terminal e re-validada pelo claim), a identidade executora
+  // vinculada é o agente ALTERNATIVO do mesmo roster selado. O receipt do
+  // plano permanece com o agentRef original — a diretiva é o único elo.
+  let boundAgentRef = schedule.agentRef;
+  if (dispatch.provider_reroute_json) {
+    let directive: z.infer<typeof taskProviderRerouteDirectiveSchema>;
+    try {
+      directive = taskProviderRerouteDirectiveSchema.parse(
+        JSON.parse(dispatch.provider_reroute_json),
+      );
+    } catch (error) {
+      throw new ScopedStoreCorruptionError("sealed task provider reroute", {
+        cause: error,
+      });
+    }
+    if (directive.fromAgentRef !== schedule.agentRef) {
+      throw new ScopedStoreCorruptionError("sealed task reroute identity");
+    }
+    boundAgentRef = directive.toAgentRef;
+  }
   if (
-    dispatch.agent_ref !== schedule.agentRef ||
+    dispatch.agent_ref !== boundAgentRef ||
     dispatch.agent_category !== schedule.agentCategory ||
     dispatch.execution_mode !== schedule.executionMode ||
     !sameJson(dispatchOwnership, schedule.ownership)
@@ -200,7 +222,7 @@ export function assertSealedTaskDispatchPlanAuthority(
   }
 
   const agents = roster.agents.filter(
-    (candidate) => candidate.id === entry.agentRef,
+    (candidate) => candidate.id === boundAgentRef,
   );
   if (agents.length !== 1) {
     throw new ScopedStoreCorruptionError("sealed task roster identity");

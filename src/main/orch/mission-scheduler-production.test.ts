@@ -30,6 +30,7 @@ import {
   recoverableIntegratedMergeEntry,
   requeueRetiredQualityRepairs,
   reconcileMissionCompletionAfterSchedulerTick,
+  reconcileExhaustedProviderRerouteForScope,
   reconcileInterruptedWorktreeReservationFailuresForScope,
   reconcileSupersededPlanGenerations,
   reconcileTerminalDispatchWorktreeReleaseForScope,
@@ -37,6 +38,7 @@ import {
   validateMissionMergeWithLifecycleFence,
 } from "./mission-scheduler-production";
 import { compileIntentContract } from "../../shared/mission-intent";
+import { TERMINAL_WORKER_RECOVERY_REASON_PREFIX } from "./task-dispatch-store";
 import { MAX_LIVE_PANES_SOFT } from "../../shared/pane-limits";
 import {
   EMPTY_GIT_DIFF_SHA256,
@@ -2574,5 +2576,182 @@ describe("terminal dispatch worktree release reconciliation", () => {
     } finally {
       warn.mockRestore();
     }
+  });
+});
+
+describe("reroute automático de provider esgotado", () => {
+  const TERMINAL_REASON =
+    `${TERMINAL_WORKER_RECOVERY_REASON_PREFIX} Corrija a sessão do provider.`;
+
+  function rosterAgent(
+    id: string,
+    cli: string,
+    category = "executor",
+  ): never {
+    return {
+      id,
+      agentName: `${id}-name`,
+      category,
+      cli,
+      model: "m1",
+      effort: "high",
+    } as never;
+  }
+
+  function rerouteFixture(
+    overrides: {
+      readonly dispatch?: Record<string, unknown>;
+      readonly mission?: Record<string, unknown>;
+      readonly agents?: readonly unknown[];
+      readonly resolvableClis?: readonly string[];
+    } = {},
+  ) {
+    const scope = testProjectScope();
+    const reroute = vi.fn(
+      (input: unknown) => input as never,
+    );
+    const dispatch = {
+      taskId: "task-1",
+      missionId: "mission-1",
+      intentVersion: 3,
+      revision: 7,
+      state: "blocked",
+      lastError: TERMINAL_REASON,
+      agentRef: "exec-codex",
+      routeContract: { adapterId: "codex" },
+      ...overrides.dispatch,
+    };
+    const mission = {
+      id: "mission-1",
+      status: "blocked",
+      intentVersion: 3,
+      intentContract: {
+        ...compileIntentContract({
+          goal: "Entregar mesmo com CLI morta",
+          source: "typed",
+          intentVersion: 3,
+        }),
+        approvedAt: 1,
+        dispatchedAt: 1,
+      },
+      ...overrides.mission,
+    };
+    const agents = overrides.agents ?? [
+      rosterAgent("maestro", "claude", "orchestrator"),
+      rosterAgent("exec-codex", "codex"),
+      rosterAgent("exec-kimi", "kimi"),
+    ];
+    const resolvable = new Set(overrides.resolvableClis ?? ["codex", "kimi"]);
+    const rerouted = reconcileExhaustedProviderRerouteForScope(scope, {
+      getStores: () =>
+        ({
+          missions: { get: vi.fn(() => mission) },
+          taskDispatches: {
+            list: vi.fn(() => [dispatch]),
+            rerouteExhaustedWorkerByCoordinator: reroute,
+          },
+          tasks: {
+            getPlanReceipt: vi.fn(() => ({
+              rosterHash: "a".repeat(64),
+              agents,
+              tasks: [
+                {
+                  taskId: "task-1",
+                  title: "Implementar",
+                  detail: "detalhe",
+                  agentRef: "exec-codex",
+                  agentCategory: "executor",
+                },
+              ],
+            })),
+          },
+        }) as never,
+      listAdaptersFor: (agent) =>
+        resolvable.has(agent.cli)
+          ? [
+              {
+                id: agent.cli,
+                installed: true,
+                models: { list: ["m1"], default: "m1" },
+              },
+            ]
+          : [],
+      isOperatorChoice: () => true,
+      now: () => 9_000,
+    });
+    return { rerouted, reroute };
+  }
+
+  it("re-rota para o próximo agente vivo do mesmo roster com nota durável", () => {
+    const { rerouted, reroute } = rerouteFixture();
+    expect(rerouted).toBe(1);
+    expect(reroute).toHaveBeenCalledTimes(1);
+    expect(reroute.mock.calls[0]![0]).toMatchObject({
+      taskId: "task-1",
+      revision: 7,
+      directive: {
+        version: 1,
+        fromAgentRef: "exec-codex",
+        toAgentRef: "exec-kimi",
+        exhaustedAdapterIds: ["codex"],
+        reroutedAt: 9_000,
+      },
+      note: expect.stringMatching(/codex.*kimi/is),
+    });
+  });
+
+  it("não toca em bloqueios que não são o esgotamento físico do worker", () => {
+    const { rerouted, reroute } = rerouteFixture({
+      dispatch: { lastError: "[NEXUS_FAILURE:terminal] Falha de merge." },
+    });
+    expect(rerouted).toBe(0);
+    expect(reroute).not.toHaveBeenCalled();
+  });
+
+  it("mantém o diagnóstico terminal quando nenhuma CLI do roster resolve", () => {
+    const { rerouted, reroute } = rerouteFixture({
+      resolvableClis: ["codex"],
+    });
+    expect(rerouted).toBe(0);
+    expect(reroute).not.toHaveBeenCalled();
+  });
+
+  it("nunca reabre uma missão cuja aprovação vigente foi perdida", () => {
+    const { rerouted, reroute } = rerouteFixture({
+      mission: { intentContract: undefined },
+    });
+    expect(rerouted).toBe(0);
+    expect(reroute).not.toHaveBeenCalled();
+  });
+
+  it("estende a cadeia acumulando cada CLI já provada morta", () => {
+    const { reroute } = rerouteFixture({
+      dispatch: {
+        agentRef: "exec-kimi",
+        routeContract: { adapterId: "kimi" },
+        providerReroute: {
+          version: 1,
+          fromAgentRef: "exec-codex",
+          toAgentRef: "exec-kimi",
+          exhaustedAdapterIds: ["codex"],
+          reason: "codex morreu",
+          reroutedAt: 5_000,
+        },
+      },
+      agents: [
+        rosterAgent("maestro", "claude", "orchestrator"),
+        rosterAgent("exec-codex", "codex"),
+        rosterAgent("exec-kimi", "kimi"),
+        rosterAgent("exec-grok", "grok"),
+      ],
+      resolvableClis: ["codex", "kimi", "grok"],
+    });
+    expect(reroute.mock.calls[0]![0]).toMatchObject({
+      directive: {
+        fromAgentRef: "exec-codex",
+        toAgentRef: "exec-grok",
+        exhaustedAdapterIds: ["codex", "kimi"],
+      },
+    });
   });
 });

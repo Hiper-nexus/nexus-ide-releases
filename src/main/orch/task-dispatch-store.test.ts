@@ -6039,3 +6039,328 @@ describe('superseded plan generation retirement', () => {
     });
   });
 });
+
+/**
+ * Cenário de campo (31/07): o worker selado esgota as tentativas físicas de
+ * spawn (ex.: codex sem cota), o dispatch vira `blocked` terminal e a missão
+ * inteira congela. O reroute dentro do roster devolve a task ao mesmo plano
+ * selado, executada por outro agente da MESMA categoria — sem waiver, sem
+ * replanejamento e sem tocar no receipt imutável.
+ */
+describe('reroute de provider esgotado dentro do roster selado', () => {
+  function sealedRerouteFixture(runtime: ProjectRuntimeManager) {
+    const scope = testProjectScope();
+    let now = 1_000;
+    let id = 0;
+    const missions = createScopedMissionStore(runtime, scope, {
+      now: () => now,
+    });
+    const tasks = createScopedTaskStore(runtime, scope, { now: () => now });
+    const dispatches = createTaskDispatchStore(runtime, scope, {
+      now: () => now,
+      idFactory: (prefix) => `${prefix}-${++id}`,
+    });
+    const mission = missions.create({
+      title: 'Entregar com roster de dois executores',
+      intentVersion: 1,
+      intentState: 'dispatched',
+      intentContract: approvedIntentContract({
+        goal: 'Entregar mesmo quando a primeira CLI morre',
+        intentVersion: 1,
+      }),
+      squadId: 'squad-reroute',
+    });
+    missions.setStatus(mission.id, 'running');
+    const detail = encodeTaskScheduleDetail('Implementar a mudança', {
+      dependsOn: [],
+      ownership: { files: ['src/app.ts'], symbols: [], domains: [] },
+      merged: false,
+      agentRef: 'exec-codex',
+      agentCategory: 'executor',
+      executionMode: 'isolated_worktree',
+    });
+    const [task] = tasks.createPlanAtomically({
+      missionId: mission.id,
+      intentVersion: 1,
+      squad: {
+        id: 'squad-reroute',
+        agents: [
+          {
+            id: 'exec-codex',
+            agentName: 'Codex Dev',
+            category: 'executor',
+            cli: 'codex',
+            model: 'gpt-5.6-sol',
+            effort: 'high',
+          },
+          {
+            id: 'exec-kimi',
+            agentName: 'Kimi Dev',
+            category: 'executor',
+            cli: 'codex',
+            model: 'gpt-5.6-sol',
+            effort: 'high',
+          },
+        ],
+      },
+      rows: [
+        {
+          plannerId: 'implement',
+          title: 'Implementar',
+          detail,
+          agentRef: 'exec-codex',
+          agentCategory: 'executor',
+        },
+      ],
+    });
+    const receipt = tasks.getPlanReceipt(mission.id, 1)!;
+    const ownership = {
+      files: ['src/app.ts'],
+      symbols: [],
+      domains: [],
+    };
+    const routeContract = {
+      adapterId: 'codex',
+      model: 'gpt-5.6-sol',
+      effort: 'high',
+    } as const;
+    const exhaustSpawnAttempts = (): void => {
+      for (
+        let attempt = 1;
+        attempt <= TASK_DISPATCH_MAX_SESSION_EXIT_ATTEMPTS;
+        attempt += 1
+      ) {
+        const claim = dispatches.claim({
+          missionId: mission.id,
+          taskId: task!.id,
+          intentVersion: 1,
+          workerId: 'Codex Dev',
+          leaseOwner: 'main',
+          leaseMs: 30_000,
+          agentRef: 'exec-codex',
+          agentCategory: 'executor',
+          rosterHash: receipt.rosterHash,
+          routeContract,
+          ownership,
+          executionMode: 'isolated_worktree',
+        });
+        const route = missions.reserveRouteDecision(mission.id, task!.title, {
+          tier: 'hard',
+          ...routeContract,
+          reason: 'rota selada',
+          alternatives: [],
+        });
+        const routed = dispatches.attachRoute({
+          taskId: task!.id,
+          revision: claim.revision,
+          leaseToken: claim.leaseToken,
+          routeReservationId: route.id,
+          ...routeContract,
+        });
+        dispatches.bindSpawn({
+          taskId: task!.id,
+          revision: routed.revision,
+          leaseToken: claim.leaseToken,
+          paneId: `pane-${attempt}`,
+          sessionId: `session-${attempt}`,
+          workerIncarnationId: claim.workerIncarnationId,
+        });
+        const exited = dispatches.blockSessionExit({
+          sessionId: `session-${attempt}`,
+          workerIncarnationId: claim.workerIncarnationId,
+          reason: TASK_DISPATCH_SESSION_EXIT_REASON,
+        });
+        if (attempt < TASK_DISPATCH_MAX_SESSION_EXIT_ATTEMPTS) {
+          now = exited!.leaseExpiresAt + 1;
+        }
+      }
+    };
+    return {
+      scope,
+      missions,
+      tasks,
+      dispatches,
+      mission,
+      task: task!,
+      receipt,
+      ownership,
+      routeContract,
+      exhaustSpawnAttempts,
+      advance: (ms: number) => {
+        now += ms;
+      },
+    };
+  }
+
+  const directive = (overrides: Record<string, unknown> = {}) => ({
+    version: 1 as const,
+    fromAgentRef: 'exec-codex',
+    toAgentRef: 'exec-kimi',
+    exhaustedAdapterIds: ['codex'],
+    reason: 'codex esgotou o spawn físico',
+    reroutedAt: 5_000,
+    ...overrides,
+  });
+
+  it('reabre a missão e devolve a task ao roster pelo agente alternativo', () => {
+    const fixture = sealedRerouteFixture(manager());
+    fixture.exhaustSpawnAttempts();
+    const blocked = fixture.dispatches.get(fixture.task.id)!;
+    expect(blocked.state).toBe('blocked');
+    expect(fixture.missions.get(fixture.mission.id)).toMatchObject({
+      status: 'blocked',
+      intentState: 'blocked_technical',
+    });
+
+    const rerouted = fixture.dispatches.rerouteExhaustedWorkerByCoordinator({
+      taskId: fixture.task.id,
+      revision: blocked.revision,
+      directive: directive(),
+      note: 'reroute para Kimi Dev',
+    });
+    expect(rerouted).toMatchObject({
+      state: 'superseded',
+      attempt: 1,
+      providerReroute: { fromAgentRef: 'exec-codex', toAgentRef: 'exec-kimi' },
+    });
+    expect(fixture.missions.get(fixture.mission.id)).toMatchObject({
+      status: 'running',
+      intentState: 'executing',
+    });
+    expect(
+      fixture.missions.get(fixture.mission.id)!.description,
+    ).not.toMatch(TERMINAL_OPERATIONAL_FAILURE_MARKER);
+    expect(fixture.tasks.list(fixture.mission.id)[0]?.status).toBe('pending');
+
+    fixture.advance(rerouted.leaseExpiresAt + 1);
+    const claim = fixture.dispatches.claim({
+      missionId: fixture.mission.id,
+      taskId: fixture.task.id,
+      intentVersion: 1,
+      workerId: 'Kimi Dev',
+      leaseOwner: 'main',
+      leaseMs: 30_000,
+      agentRef: 'exec-kimi',
+      agentCategory: 'executor',
+      rosterHash: fixture.receipt.rosterHash,
+      routeContract: fixture.routeContract,
+      ownership: fixture.ownership,
+      executionMode: 'isolated_worktree',
+    });
+    expect(claim).toMatchObject({
+      state: 'claimed',
+      agentRef: 'exec-kimi',
+      workerId: 'Kimi Dev',
+      providerReroute: { toAgentRef: 'exec-kimi' },
+    });
+    // O receipt selado permanece com o agente original: o reroute é uma
+    // vinculação de dispatch, nunca uma reescrita do plano.
+    expect(fixture.tasks.getPlanReceipt(fixture.mission.id, 1)).toMatchObject({
+      planHash: fixture.receipt.planHash,
+      tasks: [{ agentRef: 'exec-codex' }],
+    });
+  });
+
+  it('recusa o claim do agente selado original enquanto a diretiva vigora', () => {
+    const fixture = sealedRerouteFixture(manager());
+    fixture.exhaustSpawnAttempts();
+    const blocked = fixture.dispatches.get(fixture.task.id)!;
+    const rerouted = fixture.dispatches.rerouteExhaustedWorkerByCoordinator({
+      taskId: fixture.task.id,
+      revision: blocked.revision,
+      directive: directive(),
+      note: 'reroute para Kimi Dev',
+    });
+    fixture.advance(rerouted.leaseExpiresAt + 1);
+    expect(() =>
+      fixture.dispatches.claim({
+        missionId: fixture.mission.id,
+        taskId: fixture.task.id,
+        intentVersion: 1,
+        workerId: 'Codex Dev',
+        leaseOwner: 'main',
+        leaseMs: 30_000,
+        agentRef: 'exec-codex',
+        agentCategory: 'executor',
+        rosterHash: fixture.receipt.rosterHash,
+        routeContract: fixture.routeContract,
+        ownership: fixture.ownership,
+        executionMode: 'isolated_worktree',
+      }),
+    ).toThrow(/agente alternativo da diretiva/i);
+  });
+
+  it('recusa uma diretiva que aponta para fora do agentRef selado', () => {
+    const fixture = sealedRerouteFixture(manager());
+    fixture.exhaustSpawnAttempts();
+    const blocked = fixture.dispatches.get(fixture.task.id)!;
+    expect(() =>
+      fixture.dispatches.rerouteExhaustedWorkerByCoordinator({
+        taskId: fixture.task.id,
+        revision: blocked.revision,
+        directive: directive({ fromAgentRef: 'exec-kimi' }),
+        note: 'diretiva forjada',
+      }),
+    ).toThrow(/agentRef selado original/i);
+  });
+
+  it('nunca reroteia um dispatch que não provou esgotamento físico terminal', () => {
+    const runtime = manager();
+    const scope = testProjectScope();
+    let now = 1_000;
+    const missions = createScopedMissionStore(runtime, scope, {
+      now: () => now,
+    });
+    const tasks = createScopedTaskStore(runtime, scope, { now: () => now });
+    const dispatches = createTaskDispatchStore(runtime, scope, {
+      now: () => now,
+    });
+    const mission = missions.create({
+      title: 'Bloqueio de outra natureza',
+      intentVersion: 1,
+      intentState: 'dispatched',
+      intentContract: approvedIntentContract({
+        goal: 'Bloquear por merge, não por spawn',
+        intentVersion: 1,
+      }),
+    });
+    missions.setStatus(mission.id, 'running');
+    const task = tasks.create({ missionId: mission.id, title: 'Task' });
+    const route = missions.reserveRouteDecision(mission.id, task.title, {
+      tier: 'medium',
+      adapterId: 'codex',
+      reason: 'rota',
+      alternatives: [],
+    });
+    const claim = dispatches.claim({
+      missionId: mission.id,
+      taskId: task.id,
+      intentVersion: 1,
+      workerId: 'worker',
+      leaseOwner: 'main',
+      leaseMs: 30_000,
+    });
+    const routed = dispatches.attachRoute({
+      taskId: task.id,
+      revision: claim.revision,
+      leaseToken: claim.leaseToken,
+      routeReservationId: route.id,
+      adapterId: 'codex',
+    });
+    now = 1_000 + 30_001;
+    const blocked = dispatches.blockExpired({
+      taskId: task.id,
+      revision: routed.revision,
+      reason: 'lease expirada sem prova física',
+    });
+    expect(blocked.state).toBe('blocked');
+    expect(() =>
+      dispatches.rerouteExhaustedWorkerByCoordinator({
+        taskId: task.id,
+        revision: blocked.revision,
+        directive: directive(),
+        note: 'reroute indevido',
+      }),
+    ).toThrow(/bloqueio terminal canônico/i);
+  });
+});

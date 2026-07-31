@@ -15,6 +15,7 @@ import {
   taskDispatchRowSchema,
   taskDispatchTokenHash,
   taskIntegrationReceiptSchema,
+  taskProviderRerouteDirectiveSchema,
 } from "./task-dispatch-codec";
 import { assertTaskDispatchMissionLifecycleAuthority } from "./task-dispatch-handoff-authority";
 import { assertPhysicalTaskHandoffAuthority } from "./task-dispatch-physical-handoff-authority";
@@ -345,12 +346,32 @@ function verifyCompletedTaskPlanAuthority(
     }> = [];
     for (const entry of plan.tasks) {
       const row = dispatchByTask.get(entry.taskId);
-      const rosterAgent = rosterById.get(entry.agentRef);
+      if (!row) return false;
+      // Um dispatch re-roteado dentro do roster (diretiva durável do
+      // coordenador, re-validada no claim) completa pelo agente ALTERNATIVO;
+      // o receipt do plano mantém o agentRef original.
+      let effectiveAgentRef = entry.agentRef;
+      if (row.provider_reroute_json) {
+        let directive: z.infer<typeof taskProviderRerouteDirectiveSchema>;
+        try {
+          directive = taskProviderRerouteDirectiveSchema.parse(
+            JSON.parse(row.provider_reroute_json),
+          );
+        } catch (error) {
+          throw new ScopedStoreCorruptionError(
+            "mission completion provider reroute",
+            { cause: error },
+          );
+        }
+        if (directive.fromAgentRef !== entry.agentRef) return false;
+        effectiveAgentRef = directive.toAgentRef;
+      }
+      const rosterAgent = rosterById.get(effectiveAgentRef);
       if (
-        !row ||
         !rosterAgent ||
+        rosterAgent.category !== entry.agentCategory ||
         row.roster_hash !== rawPlan.roster_hash ||
-        row.agent_ref !== entry.agentRef ||
+        row.agent_ref !== effectiveAgentRef ||
         row.agent_category !== entry.agentCategory ||
         row.worker_id !== rosterAgent.agentName ||
         row.state !== "completed" ||

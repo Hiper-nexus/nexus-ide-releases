@@ -24,9 +24,11 @@ import {
   taskDispatchRouteContractSchema,
   taskDispatchTokenHash,
   taskDispatchWorkerCategorySchema,
+  taskProviderRerouteDirectiveSchema,
   type ClaimedTaskDispatch,
   type TaskDispatchRouteContract,
   type TaskDispatchWorkerCategory,
+  type TaskProviderRerouteDirective,
 } from "./task-dispatch-codec";
 import { assertTaskDispatchMissionLifecycleAuthority } from "./task-dispatch-handoff-authority";
 import {
@@ -128,6 +130,25 @@ export function claimTaskDispatch(
         missionId,
         intentVersion,
       );
+      const existing = getTaskDispatchRow(db, taskId);
+      // A diretiva durável de reroute só vale para a MESMA intentVersion e só
+      // sobre a retomada de um dispatch superseded pelo coordenador. Uma
+      // geração nova do plano volta ao agente selado original.
+      let reroute: TaskProviderRerouteDirective | null = null;
+      if (
+        existing?.provider_reroute_json &&
+        existing.intent_version === intentVersion
+      ) {
+        try {
+          reroute = taskProviderRerouteDirectiveSchema.parse(
+            JSON.parse(existing.provider_reroute_json),
+          );
+        } catch (error) {
+          throw new ScopedStoreCorruptionError("task provider reroute", {
+            cause: error,
+          });
+        }
+      }
       const plan = db
         .prepare(
           `SELECT squad_id, roster_hash, roster_snapshot_json, planner_json, plan_hash
@@ -191,8 +212,14 @@ export function claimTaskDispatch(
               `task ${taskId} não pertence ao plano selado atual`,
             );
           }
+          // Sob diretiva de reroute, a identidade vinculada é o agente
+          // ALTERNATIVO — que precisa ter identidade canônica no MESMO
+          // roster selado. Sem diretiva, é o agente selado da entry.
+          const boundAgentRef = reroute
+            ? reroute.toAgentRef
+            : sealedEntry.agentRef;
           const agentMatches = roster.agents.filter(
-            (candidate) => candidate.id === sealedEntry!.agentRef,
+            (candidate) => candidate.id === boundAgentRef,
           );
           if (agentMatches.length !== 1) {
             throw new Error(
@@ -209,8 +236,21 @@ export function claimTaskDispatch(
             cause: error,
           });
         }
+        if (reroute) {
+          if (agentRef !== reroute.toAgentRef) {
+            throw new Error(
+              "dispatch re-roteado exige exatamente o agente alternativo da diretiva durável",
+            );
+          }
+          if (sealedEntry.agentRef !== reroute.fromAgentRef) {
+            throw new Error(
+              "diretiva de reroute divergiu do agentRef selado do plano",
+            );
+          }
+        } else if (sealedEntry.agentRef !== agentRef) {
+          throw new Error("dispatch agente/categoria diverge do plano selado");
+        }
         if (
-          sealedEntry.agentRef !== agentRef ||
           sealedEntry.agentCategory !== agentCategory ||
           sealedAgent.id !== agentRef ||
           sealedAgent.category !== agentCategory
@@ -294,9 +334,11 @@ export function claimTaskDispatch(
           throw new Error("task row diverge do receipt selado");
         }
         const schedule = decodeTaskScheduleDetail(task.detail).meta;
+        // O detail selado sempre carrega o agentRef ORIGINAL do plano; um
+        // reroute nunca reescreve o receipt, só a vinculação do dispatch.
         if (
           !schedule ||
-          schedule.agentRef !== agentRef ||
+          schedule.agentRef !== sealedEntry.agentRef ||
           schedule.agentCategory !== agentCategory ||
           schedule.executionMode !== executionMode ||
           JSON.stringify(
@@ -308,7 +350,6 @@ export function claimTaskDispatch(
           );
         }
       }
-      const existing = getTaskDispatchRow(db, taskId);
       if (existing && existing.state !== "superseded") {
         throw new Error(
           `task ${taskId} já foi reservada por dispatch ativo (${existing.state})`,
@@ -382,6 +423,11 @@ export function claimTaskDispatch(
       const routeContractJson = routeContract
         ? JSON.stringify(routeContract)
         : null;
+      // A diretiva honrada permanece na linha claimada (auditoria + base para
+      // estender a cadeia se a CLI alternativa também morrer). Uma diretiva de
+      // geração anterior — ou sem plano selado que a valide — nunca sobrevive
+      // ao claim.
+      const rerouteJson = plan && reroute ? JSON.stringify(reroute) : null;
       if (existing) {
         const retried = db
           .prepare(
@@ -394,7 +440,8 @@ export function claimTaskDispatch(
                     worker_id = ?, worker_incarnation_id = ?,
                     ownership_json = ?, execution_mode = ?,
                     agent_ref = ?, agent_category = ?, roster_hash = ?,
-                    route_contract_json = ?, pane_id = NULL, session_id = NULL,
+                    route_contract_json = ?, provider_reroute_json = ?,
+                    pane_id = NULL, session_id = NULL,
                     handoff_id = NULL, handoff_accepted_at = NULL,
                     integration_receipt_json = NULL, completed_at = NULL,
                     last_heartbeat_at = NULL, last_error = NULL, updated_at = ?
@@ -417,6 +464,7 @@ export function claimTaskDispatch(
             agentCategory ?? null,
             rosterHash ?? null,
             routeContractJson,
+            rerouteJson,
             now,
             taskId,
           );

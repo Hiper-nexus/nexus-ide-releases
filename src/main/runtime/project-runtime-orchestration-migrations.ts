@@ -480,6 +480,17 @@ BEGIN
 END;
 `;
 
+/**
+ * Durable within-roster provider reroute. When a sealed worker CLI exhausts
+ * its physical spawn attempts, the coordinator may re-bind the dispatch to
+ * another agent of the SAME sealed roster (same category). The directive is
+ * the only authority the claim gate accepts for that substitution and it
+ * carries the exhausted adapter set so the reroute chain is bounded.
+ */
+const TASK_PROVIDER_REROUTE_SCHEMA = `
+ALTER TABLE task_dispatch_queue ADD COLUMN provider_reroute_json TEXT;
+`;
+
 export const ORCHESTRATION_PROJECT_MIGRATION_SPECS: readonly ProjectMigrationSpec[] =
   [
     {
@@ -553,5 +564,11 @@ export const ORCHESTRATION_PROJECT_MIGRATION_SPECS: readonly ProjectMigrationSpe
       schemaVersion: 26,
       appVersion: '0.19.38',
       sql: FANOUT_PHYSICAL_COMPLETION_PROOF_SCHEMA,
+    },
+    {
+      id: '027-task-provider-reroute',
+      schemaVersion: 27,
+      appVersion: '0.19.42',
+      sql: TASK_PROVIDER_REROUTE_SCHEMA,
     },
   ];

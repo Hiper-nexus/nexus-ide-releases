@@ -15,6 +15,7 @@ import {
   taskDispatchRowSchema as rowSchema,
   taskDispatchTokenHash as tokenHash,
   taskIntegrationReceiptSchema,
+  taskProviderRerouteDirectiveSchema,
   taskProviderWaiverHitKindSchema,
   taskDispatchRecordFromRow,
   type ClaimedTaskDispatch,
@@ -22,6 +23,7 @@ import {
   type TaskDispatchRecord,
   type TaskDispatchState,
   type TaskIntegrationReceipt,
+  type TaskProviderRerouteDirective,
   type TaskProviderWaiverHitKind,
 } from "./task-dispatch-codec";
 import {
@@ -109,14 +111,29 @@ function taskDispatchRetryDelay(attempt: number): number {
   );
 }
 
+export const TERMINAL_WORKER_RECOVERY_REASON_PREFIX =
+  `${TERMINAL_OPERATIONAL_FAILURE_MARKER} O worker não entregou um handoff ` +
+  `após ${TASK_DISPATCH_MAX_SESSION_EXIT_ATTEMPTS} tentativas físicas.`;
+
 function terminalWorkerRecoveryReason(reason: string): string {
   return (
-    `${TERMINAL_OPERATIONAL_FAILURE_MARKER} O worker não entregou um handoff ` +
-    `após ${TASK_DISPATCH_MAX_SESSION_EXIT_ATTEMPTS} tentativas físicas. ` +
+    `${TERMINAL_WORKER_RECOVERY_REASON_PREFIX} ` +
     "Isso normalmente indica autenticação, configuração ou falha persistente " +
     "da CLI. " +
     `Corrija a sessão do provider e retome a missão. Última causa: ${reason}`
   ).slice(0, 65_536);
+}
+
+/**
+ * Identifica exatamente o bloqueio terminal de esgotamento físico do worker —
+ * a única família de bloqueio elegível ao reroute dentro do roster. Bloqueios
+ * terminais de merge, worktree ou operador têm outros prefixos e nunca
+ * autorizam substituição de provider.
+ */
+export function isTerminalWorkerRecoveryReason(
+  value: string | null | undefined,
+): boolean {
+  return Boolean(value?.startsWith(TERMINAL_WORKER_RECOVERY_REASON_PREFIX));
 }
 
 export const LEGACY_GUIDED_DIRTY_CHECKOUT_BOOTSTRAP_CAUSE =
@@ -2318,6 +2335,154 @@ export class TaskDispatchStore {
       })
       .immediate();
     if (!record) throw new Error("dispatch desapareceu após retry técnico");
+    this.#binding.emitChange();
+    return record;
+  }
+
+  /**
+   * Converte o bloqueio TERMINAL de esgotamento físico do worker num retry
+   * re-roteado dentro do mesmo roster selado. O coordenador (sweep do
+   * scheduler) prova antes que existe um agente alternativo vivo; aqui a
+   * transação re-valida o estado exato: dispatch blocked com o motivo
+   * terminal canônico, task failed, missão bloqueada pelo MESMO sufixo
+   * canônico (reaberta via o helper de retry técnico) e nenhum receipt.
+   * A diretiva durável é a única autoridade que o claim aceita para a
+   * substituição de agente — e carrega o conjunto de CLIs esgotadas que
+   * limita a cadeia.
+   */
+  rerouteExhaustedWorkerByCoordinator(input: {
+    readonly taskId: string;
+    readonly revision: number;
+    readonly directive: TaskProviderRerouteDirective;
+    readonly note: string;
+  }): TaskDispatchRecord {
+    const taskId = idSchema.parse(input.taskId);
+    const revision = z.number().int().positive().parse(input.revision);
+    const directive = taskProviderRerouteDirectiveSchema.parse(
+      input.directive,
+    );
+    const note = input.note.trim().slice(0, 65_536);
+    if (!note) throw new Error("reroute exige nota durável registrada");
+    const now = this.#binding.now();
+    const db = this.#binding.writeDatabase();
+    const record = db
+      .transaction(() => {
+        const current = this.#getRow(db, taskId);
+        if (!current) throw new Error(`dispatch não encontrado: ${taskId}`);
+        // A autoridade de lifecycle padrão exige missão running — e o reroute
+        // existe exatamente quando ela está bloqueada. A âncora aqui é a
+        // intentVersion: só a geração vigente do plano pode ser re-roteada.
+        const mission = db
+          .prepare(
+            `SELECT status, intent_state, intent_version FROM missions
+              WHERE id = ?`,
+          )
+          .get(current.mission_id) as
+          | { status: string; intent_state: string; intent_version: number }
+          | undefined;
+        if (
+          mission?.status !== "blocked" ||
+          mission.intent_state !== "blocked_technical" ||
+          mission.intent_version !== current.intent_version
+        ) {
+          throw new Error(
+            "reroute exige missão bloqueada tecnicamente na geração vigente do plano",
+          );
+        }
+        if (current.revision !== revision) {
+          throw new Error("reroute perdeu CAS do dispatch");
+        }
+        if (current.state !== "blocked") {
+          throw new Error(
+            `reroute recusou dispatch no estado ${current.state}`,
+          );
+        }
+        if (!isTerminalWorkerRecoveryReason(current.last_error)) {
+          throw new Error(
+            "reroute exige o bloqueio terminal canônico de esgotamento do worker",
+          );
+        }
+        if (
+          current.handoff_id !== null ||
+          current.handoff_accepted_at !== null ||
+          current.integration_receipt_json !== null ||
+          current.completed_at !== null
+        ) {
+          throw new Error("reroute recusou dispatch com receipt");
+        }
+        const previous = current.provider_reroute_json
+          ? taskProviderRerouteDirectiveSchema.parse(
+              JSON.parse(current.provider_reroute_json),
+            )
+          : null;
+        const expectedFrom = previous
+          ? previous.fromAgentRef
+          : current.agent_ref;
+        if (!expectedFrom || directive.fromAgentRef !== expectedFrom) {
+          throw new Error(
+            "reroute divergiu do agentRef selado original da cadeia",
+          );
+        }
+        if (directive.toAgentRef === current.agent_ref) {
+          throw new Error(
+            "reroute exige um agente diferente do atualmente vinculado",
+          );
+        }
+        if (
+          previous &&
+          !previous.exhaustedAdapterIds.every((adapterId) =>
+            directive.exhaustedAdapterIds.includes(adapterId),
+          )
+        ) {
+          throw new Error(
+            "reroute não pode esquecer CLIs já provadas mortas",
+          );
+        }
+        // Reabre a missão removendo exatamente o sufixo canônico deste
+        // bloqueio (idempotente se a missão já voltou a running por um
+        // reroute-irmão no mesmo tick).
+        resumeTaskDispatchMissionAfterTechnicalFailure(
+          db,
+          current.mission_id,
+          current.last_error,
+          now,
+        );
+        const retryAt = now + taskDispatchRetryDelay(1);
+        const updated = db
+          .prepare(
+            `UPDATE task_dispatch_queue
+                SET state = 'superseded', last_error = ?,
+                    provider_reroute_json = ?, attempt = 1,
+                    revision = revision + 1, lease_expires_at = ?,
+                    updated_at = ?
+              WHERE task_id = ? AND revision = ? AND state = 'blocked'
+                AND handoff_id IS NULL AND handoff_accepted_at IS NULL
+                AND integration_receipt_json IS NULL AND completed_at IS NULL`,
+          )
+          .run(
+            note,
+            JSON.stringify(directive),
+            retryAt,
+            now,
+            taskId,
+            revision,
+          );
+        if (updated.changes !== 1) {
+          throw new Error("reroute perdeu CAS do dispatch");
+        }
+        const task = db
+          .prepare(
+            `UPDATE tasks SET status = 'pending', updated_at = ?
+             WHERE id = ? AND mission_id = ? AND status = 'failed'`,
+          )
+          .run(now, taskId, current.mission_id);
+        if (task.changes !== 1) {
+          throw new Error("reroute não encontrou a task failed exata");
+        }
+        return this.#getFromDatabase(db, taskId);
+      })
+      .immediate();
+    if (!record) throw new Error("dispatch desapareceu após reroute");
     this.#binding.emitChange();
     return record;
   }
