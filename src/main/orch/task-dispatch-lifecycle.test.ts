@@ -1057,6 +1057,76 @@ describe('main-owned task dispatch lifecycle', () => {
     });
   });
 
+  it('renews only on new output: byte-identical repaints never extend the lease', async () => {
+    const hookless = {
+      id: 'dispatch-repaint-filter',
+      taskId: 'task-repaint-filter',
+      missionId: 'mission-a',
+      revision: 3,
+      state: 'running',
+      paneId: 'pane-repaint-filter',
+      sessionId: 'session-repaint-filter',
+      leaseExpiresAt: 1_500,
+      workerIncarnationId: 'worker-incarnation-repaint-filter',
+    };
+    mocks.list.mockReturnValue([hookless]);
+    mocks.getContextBySession.mockReturnValue({
+      role: 'worker',
+      missionId: hookless.missionId,
+      workerIncarnationId: hookless.workerIncarnationId,
+      scope,
+    });
+    mocks.getAgentSessionInfo.mockReturnValue({
+      sessionId: hookless.sessionId,
+      paneId: hookless.paneId,
+      role: 'worker',
+      missionId: hookless.missionId,
+      workerIncarnationId: hookless.workerIncarnationId,
+      scope,
+    });
+    mocks.getAgentSemanticStatusBySession.mockReturnValue(null);
+
+    mocks.dataTap?.(hookless.sessionId, 'placeholder handoff frame');
+    expect(mocks.heartbeat).toHaveBeenCalledTimes(1);
+
+    // The stalled TUI repaints the identical frame: no new output, no
+    // renewal — neither via the data tap nor via the busy transition it
+    // causes.
+    now += TASK_DISPATCH_ACTIVITY_THROTTLE_MS + 1;
+    mocks.dataTap?.(hookless.sessionId, 'placeholder handoff frame');
+    mocks.stateTap?.(hookless.sessionId, 'busy');
+    expect(mocks.heartbeat).toHaveBeenCalledTimes(1);
+
+    // Real new output renews again...
+    now += TASK_DISPATCH_ACTIVITY_THROTTLE_MS + 1;
+    mocks.dataTap?.(hookless.sessionId, 'real turn output');
+    expect(mocks.heartbeat).toHaveBeenCalledTimes(2);
+
+    // ...and a later identical repeat of THAT chunk is repaint again.
+    now += TASK_DISPATCH_ACTIVITY_THROTTLE_MS + 1;
+    mocks.dataTap?.(hookless.sessionId, 'real turn output');
+    mocks.stateTap?.(hookless.sessionId, 'busy');
+    expect(mocks.heartbeat).toHaveBeenCalledTimes(2);
+
+    // With repaint-only activity the durable lease expires and the ordinary
+    // stall recovery retires the worker.
+    await reconcileTaskDispatchLifecycle(now);
+
+    expect(mocks.heartbeat).toHaveBeenCalledTimes(2);
+    expect(mocks.closeWorker).toHaveBeenCalledWith({
+      paneId: hookless.paneId,
+      sessionId: hookless.sessionId,
+      missionId: hookless.missionId,
+      workerIncarnationId: hookless.workerIncarnationId,
+      scope,
+    });
+    expect(mocks.blockSessionExit).toHaveBeenCalledWith({
+      sessionId: hookless.sessionId,
+      workerIncarnationId: hookless.workerIncarnationId,
+      reason: expect.stringMatching(/sem atividade|stalled/i),
+    });
+  });
+
   it('keeps an expired external transport fenced without a physical close authority', async () => {
     mocks.list.mockReturnValue([{
       id: 'dispatch-external',

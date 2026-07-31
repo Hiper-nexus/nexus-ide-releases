@@ -62,6 +62,7 @@ import { taskDispatchQualityRepairReason } from "./task-dispatch-store";
 import { TASK_DISPATCH_SESSION_EXIT_REASON } from "./task-dispatch-persistence";
 import {
   hasBoundHandoffForExactDispatchWorker,
+  type TaskDispatchExecutionMode,
   type TaskDispatchRecord,
 } from "./task-dispatch-codec";
 import type { PlannedTaskRecord } from "./task-store";
@@ -329,6 +330,36 @@ export function missionSchedulerRouteRequiresAccount(
   model: string | undefined,
 ): boolean {
   return !isCredentiallessOpenCodeModel(adapterId, model);
+}
+
+/**
+ * Re-anchor gate for the (re)bind of a read_only lane. The kickoff wave
+ * claims every root task in one pass and each claim materializes the task
+ * worktree at the HEAD of that moment; an advisor whose session is only
+ * (re)bound after the executor integrated would otherwise validate the
+ * stale claim-time tree and seal a receipt whose worktreeHeadSha predates
+ * the integration it postdates — causal nonsense the completion chronology
+ * invariant (chainHeadIsExact) rejects. Before such a worker session
+ * starts, its worktree is fast-forwarded to the current integration HEAD.
+ * Never eligible: a lane whose durable dispatch already binds physical
+ * output (handoff/integration receipt — re-anchoring would rewrite the
+ * tree a delivered receipt was sealed against), and any writable lane
+ * (isolated_worktree), whose branch identity IS the delivery.
+ */
+export function readOnlyWorktreeReanchorEligible(input: {
+  readonly executionMode: TaskDispatchExecutionMode;
+  readonly dispatch: Pick<
+    TaskDispatchRecord,
+    "handoffId" | "handoffAcceptedAt" | "integrationReceipt" | "completedAt"
+  > | null;
+}): boolean {
+  return (
+    input.executionMode === "read_only" &&
+    input.dispatch?.handoffId === undefined &&
+    input.dispatch?.handoffAcceptedAt === undefined &&
+    input.dispatch?.integrationReceipt === undefined &&
+    input.dispatch?.completedAt === undefined
+  );
 }
 
 /**
@@ -834,6 +865,19 @@ export async function dispatchMissionSchedulerTask(
         : null;
     throwIfMissionSchedulerAborted(signal);
     worktreeCreated = worktree !== null;
+    if (
+      worktree &&
+      readOnlyWorktreeReanchorEligible({ executionMode, dispatch: claim })
+    ) {
+      // Re-anchor BEFORE this worker session starts: the advisor must
+      // observe (and seal a receipt against) the tree that contains every
+      // integration completed since the claim-time base was frozen.
+      requireWorktreeRuntimeRegistry().reanchorReadyWorktreeToIntegrationHead(
+        scope,
+        missionId,
+        taskId,
+      );
+    }
     const executionRoot = worktree?.worktreePath ?? scope.rootRealPath;
     if (worktree?.worktreePath) {
       try {

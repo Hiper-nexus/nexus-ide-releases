@@ -160,6 +160,47 @@ describe("project worktree runtime registry", () => {
     });
   });
 
+  it("re-anchors a claim-time advisory worktree to the integrated HEAD on (re)bind", async () => {
+    const { root, scope, manager } = fixture();
+    const registry = new WorktreeRuntimeRegistry(manager);
+    const advisor = await createTrackedWorktree(registry, manager, {
+      scope,
+      missionId: "mission-advisory-reanchor",
+      taskId: "advisor-read-only",
+      workerId: "advisor",
+      ownership: {
+        files: [],
+        symbols: [],
+        domains: ["review-only"],
+      },
+    });
+    expect(advisor.baseSha).toBe(git(root, "rev-parse", "HEAD"));
+    // A sibling executor integrates before the advisor session is (re)bound.
+    fs.writeFileSync(path.join(root, "owned.txt"), "integrated\n");
+    git(root, "add", "owned.txt");
+    git(root, "commit", "-qm", "integrated result");
+    const integratedHead = git(root, "rev-parse", "HEAD");
+
+    const reanchored = registry.reanchorReadyWorktreeToIntegrationHead(
+      scope,
+      advisor.missionId,
+      advisor.taskId,
+    );
+
+    expect(reanchored).toMatchObject({
+      id: advisor.id,
+      status: "ready",
+      baseSha: integratedHead,
+    });
+    // The physical handoff boundary reads exactly this HEAD for the receipt.
+    expect(git(advisor.worktreePath, "rev-parse", "HEAD")).toBe(
+      integratedHead,
+    );
+    expect(
+      registry.get(scope, advisor.missionId, advisor.taskId),
+    ).toMatchObject({ status: "ready", baseSha: integratedHead });
+  });
+
   it("resolves a disposable no-change task validated after an executor merge across restart", async () => {
     const { root, scope, manager } = fixture();
     const registry = new WorktreeRuntimeRegistry(manager);

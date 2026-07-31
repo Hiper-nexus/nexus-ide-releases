@@ -859,3 +859,180 @@ describe("WorktreeManager", () => {
     ).toThrow(/state store/i);
   });
 });
+
+
+describe("WorktreeManager re-anchor of a stale read_only worktree", () => {
+  const advisorInput = () => ({
+    scope: projectScope(),
+    missionId: "mission-advisory-reanchor",
+    taskId: "advisor-read-only",
+    workerId: "Advisor AGY",
+    ownership: {
+      files: [] as string[],
+      symbols: [] as string[],
+      domains: ["advisory"],
+    },
+  });
+
+  function advanceIntegrationHead(label: string): string {
+    write(`src/${label}.ts`, `export const ${label} = true;\n`);
+    git(root, "add", `src/${label}.ts`);
+    git(root, "commit", "-m", `test: integrate ${label}`);
+    return git(root, "rev-parse", "HEAD");
+  }
+
+  it("re-anchors a claim-time worktree bound only after the executor integrated", async () => {
+    // The kickoff wave claims the advisor and materializes its worktree at
+    // the initial HEAD; the executor integrates before the advisor session
+    // is (re)bound. The re-anchor moves the proven output-free worktree to
+    // the integrated HEAD so the advisor validates the final tree.
+    const assignment = await manager.create(advisorInput());
+    const claimTimeBase = assignment.baseSha;
+    expect(git(assignment.worktreePath, "rev-parse", "HEAD")).toBe(
+      claimTimeBase,
+    );
+    const integratedHead = advanceIntegrationHead("integrated-result");
+
+    const reanchored = manager.reanchorReadyWorktreeToIntegrationHead(
+      projectScope(),
+      "mission-advisory-reanchor",
+      "advisor-read-only",
+    );
+
+    expect(reanchored).toMatchObject({
+      id: assignment.id,
+      status: "ready",
+      baseSha: integratedHead,
+      branchRef: assignment.branchRef,
+      ownership: assignment.ownership,
+    });
+    // This is the exact read the physical handoff boundary performs
+    // (committedPhysicalWorkerHead): a receipt issued now seals the final
+    // HEAD with a post-integration issuedAt — the chronology the completion
+    // invariant chainHeadIsExact demands from an advisor.
+    expect(git(assignment.worktreePath, "rev-parse", "HEAD")).toBe(
+      integratedHead,
+    );
+    expect(git(assignment.worktreePath, "symbolic-ref", "--quiet", "HEAD"))
+      .toBe(assignment.branchRef);
+    expect(
+      fs.existsSync(
+        path.join(assignment.worktreePath, "src/integrated-result.ts"),
+      ),
+    ).toBe(true);
+
+    // A second (re)bind at the same HEAD is a no-op.
+    const resetsBeforeReplay = gitRunner.calls.filter(
+      (call) => call.args[0] === "reset",
+    ).length;
+    const replay = manager.reanchorReadyWorktreeToIntegrationHead(
+      projectScope(),
+      "mission-advisory-reanchor",
+      "advisor-read-only",
+    );
+    expect(replay).toEqual(reanchored);
+    expect(
+      gitRunner.calls.filter((call) => call.args[0] === "reset"),
+    ).toHaveLength(resetsBeforeReplay);
+  });
+
+  it("keeps the claim-time base while the integration HEAD is unchanged", async () => {
+    const assignment = await manager.create(advisorInput());
+
+    const record = manager.reanchorReadyWorktreeToIntegrationHead(
+      projectScope(),
+      "mission-advisory-reanchor",
+      "advisor-read-only",
+    );
+
+    expect(record).toEqual(assignment);
+    expect(
+      gitRunner.calls.filter((call) => call.args[0] === "reset"),
+    ).toEqual([]);
+  });
+
+  it("refuses to re-anchor once the worker produced commits", async () => {
+    const assignment = await manager.create(advisorInput());
+    write("src/advisor-note.ts", "export const note = true;\n", assignment.worktreePath);
+    git(assignment.worktreePath, "add", "src/advisor-note.ts");
+    git(assignment.worktreePath, "commit", "-m", "advisor output");
+    const workerHead = git(assignment.worktreePath, "rev-parse", "HEAD");
+    advanceIntegrationHead("integrated-result");
+
+    expect(() =>
+      manager.reanchorReadyWorktreeToIntegrationHead(
+        projectScope(),
+        "mission-advisory-reanchor",
+        "advisor-read-only",
+      ),
+    ).toThrow(/diverged from its frozen base/i);
+    // Fail-closed: the branch and the durable base are left untouched.
+    expect(git(assignment.worktreePath, "rev-parse", "HEAD")).toBe(workerHead);
+    expect(
+      manager.get(
+        projectScope(),
+        "mission-advisory-reanchor",
+        "advisor-read-only",
+      ),
+    ).toMatchObject({ status: "ready", baseSha: assignment.baseSha });
+  });
+
+  it("refuses to re-anchor a dirty worktree", async () => {
+    const assignment = await manager.create(advisorInput());
+    write("src/untracked-note.txt", "not committed\n", assignment.worktreePath);
+    advanceIntegrationHead("integrated-result");
+
+    expect(() =>
+      manager.reanchorReadyWorktreeToIntegrationHead(
+        projectScope(),
+        "mission-advisory-reanchor",
+        "advisor-read-only",
+      ),
+    ).toThrow(/worktree must be clean/i);
+    expect(
+      manager.get(
+        projectScope(),
+        "mission-advisory-reanchor",
+        "advisor-read-only",
+      ),
+    ).toMatchObject({ status: "ready", baseSha: assignment.baseSha });
+  });
+
+  it("never re-anchors a queued record whose task head is the delivery", async () => {
+    const assignment = await manager.create(advisorInput());
+    write("src/executor-change.ts", "export const change = 1;\n", assignment.worktreePath);
+    git(assignment.worktreePath, "add", "src/executor-change.ts");
+    git(assignment.worktreePath, "commit", "-m", "task output");
+    const taskHead = git(assignment.worktreePath, "rev-parse", "HEAD");
+    manager.markQueued(
+      projectScope(),
+      "mission-advisory-reanchor",
+      "advisor-read-only",
+      taskHead,
+    );
+    advanceIntegrationHead("integrated-result");
+
+    const record = manager.reanchorReadyWorktreeToIntegrationHead(
+      projectScope(),
+      "mission-advisory-reanchor",
+      "advisor-read-only",
+    );
+
+    expect(record).toMatchObject({
+      status: "queued",
+      baseSha: assignment.baseSha,
+      taskHeadSha: taskHead,
+    });
+    expect(git(assignment.worktreePath, "rev-parse", "HEAD")).toBe(taskHead);
+  });
+
+  it("returns null when the task has no worktree record", () => {
+    expect(
+      manager.reanchorReadyWorktreeToIntegrationHead(
+        projectScope(),
+        "mission-advisory-reanchor",
+        "advisor-read-only",
+      ),
+    ).toBeNull();
+  });
+});

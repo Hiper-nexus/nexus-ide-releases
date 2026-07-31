@@ -46,6 +46,20 @@ interface TaskDispatchLifecycleOptions {
 
 const suites = new Map<string, ProjectDomainStoreSuite>();
 const lastActivityRefresh = new Map<string, number>();
+/**
+ * Repaint probe: a stalled TUI redraws the identical frame over and over
+ * (the placeholder handoff block echoed from the kickoff prompt, a frozen
+ * screen) — bytes that carry no new information. Same cheap rule as the
+ * LegacyHandoffDedupe repaint detection, kept to the immediately-previous
+ * chunk so no fingerprint engine is needed: an identical repeat is not
+ * progress and must not renew the durable worker lease. A repaint-only
+ * worker is then retired by the ordinary stall path when its lease
+ * expires, instead of being kept alive indefinitely by its own repaints.
+ */
+const activityChunkProbe = new Map<
+  string,
+  { readonly chunk: string; readonly repeat: boolean }
+>();
 const pendingExitReasons = new Map<string, string>();
 const terminalRecoveryTimers = new Map<
   string,
@@ -281,6 +295,7 @@ async function retireTerminalTurnWorkerOnce(
   }
 
   lastActivityRefresh.delete(target.sessionId);
+  activityChunkProbe.delete(target.sessionId);
   try {
     target.suite.taskDispatches.blockSessionExit({
       sessionId: target.sessionId,
@@ -549,6 +564,7 @@ function blockExitedSession(
   } | null,
 ): void {
   lastActivityRefresh.delete(sessionId);
+  activityChunkProbe.delete(sessionId);
   const authority = authorityHint ?? sessionAuthority(sessionId);
   // No generation proof means the exit may be a delayed event from a replaced
   // process. Leave the durable lease to expire instead of blocking a newer
@@ -604,9 +620,19 @@ export function prepareTaskDispatchLifecycle(
       const suite = suites.get(scopeKey(scope));
       if (suite) scheduleTerminalWorkerRetirement(suite);
     }),
-    tapSessionData((sessionId) => renewFromActivity(sessionId)),
+    tapSessionData((sessionId, data) => {
+      const previous = activityChunkProbe.get(sessionId);
+      const repeat = previous?.chunk === data;
+      activityChunkProbe.set(sessionId, { chunk: data, repeat });
+      if (repeat) return;
+      renewFromActivity(sessionId);
+    }),
     tapSessionState((sessionId, state) => {
-      if (state === 'busy') renewFromActivity(sessionId);
+      if (state !== 'busy') return;
+      // An idle→busy transition caused by a pure repaint carries no new
+      // output either — the data tap for those same bytes was suppressed.
+      if (activityChunkProbe.get(sessionId)?.repeat) return;
+      renewFromActivity(sessionId);
     }),
     tapAgentSemanticStatus((entry) => {
       if (isTerminalTurnStatus(entry.status)) {
@@ -627,7 +653,9 @@ export function prepareTaskDispatchLifecycle(
  * activity or an explicit nexus_worker_heartbeat proves PTY progress. A
  * working hook has an absolute freshness limit; hookless CLIs receive the same
  * bounded compatibility window and must use the explicit heartbeat for longer
- * turns. Thus an idle TUI repaint cannot keep a task alive forever. An expired
+ * turns. Pure TUI repaints (the chunk is byte-identical to the previous one)
+ * are filtered before any of this and never renew the lease. Thus an idle TUI
+ * repaint cannot keep a task alive forever. An expired
  * exact worker is retired first and then requeued through the same
  * physical-exit fence as a natural exit.
  * Missing runtimes and expired ambiguous pre-bind effects also return to the
@@ -738,6 +766,7 @@ export async function reconcileTaskDispatchLifecycle(
           continue;
         }
         lastActivityRefresh.delete(dispatch.sessionId!);
+        activityChunkProbe.delete(dispatch.sessionId!);
         suite.taskDispatches.blockSessionExit({
           sessionId: dispatch.sessionId!,
           workerIncarnationId: dispatch.workerIncarnationId!,
@@ -779,6 +808,7 @@ export function shutdownTaskDispatchLifecycle(): void {
   productionTaskDispatchWorkerRetirement.reset();
   suites.clear();
   lastActivityRefresh.clear();
+  activityChunkProbe.clear();
   pendingExitReasons.clear();
   now = Date.now;
 }

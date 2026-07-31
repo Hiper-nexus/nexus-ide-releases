@@ -449,6 +449,95 @@ export class WorktreeManager {
     }
   }
 
+  /**
+   * Re-anchor a proven output-free `ready` worktree to the current
+   * integration HEAD.
+   *
+   * Advisory (read_only) lanes are claimed in the kickoff wave — the claim
+   * transaction materializes the task worktree at the HEAD of that moment —
+   * but the worker session may only be (re)bound after a sibling executor
+   * integrated. Bound to the claim-time tree, the advisor would validate a
+   * checkout that does not contain the mission result and its physical
+   * handoff receipt would seal the stale base with a post-integration
+   * timestamp, which the completion chronology invariant rejects.
+   *
+   * This is a fast-forward, never a blind reset: the exact physical identity
+   * and cleanliness are proven by `assertTaskWorktree` (same proof as the
+   * ready/queued reuse contract), the task HEAD must still equal the frozen
+   * base (any worker commit means physical output exists and re-anchoring is
+   * refused), the integration HEAD must be a descendant of that base, and
+   * the durable base SHA only advances through the same CAS used by every
+   * other transition. Records that are not `ready` (a queued/integrated task
+   * already produced output; a reserved/failed one has no proven tree) are
+   * returned untouched.
+   *
+   * Returns the current record — re-anchored or not — or null when the task
+   * has no worktree record.
+   */
+  reanchorReadyWorktreeToIntegrationHead(
+    scope: ProjectExecutionScope,
+    missionId: string,
+    taskId: string,
+  ): WorktreeRecord | null {
+    const record = this.get(scope, missionId, taskId);
+    if (!record || record.status !== "ready") return record;
+    const snapshot = this.inspectIntegration(record);
+    if (snapshot.headSha === record.baseSha) return record;
+    const taskHeadSha = assertTaskWorktree(this.#git, record);
+    if (taskHeadSha !== record.baseSha) {
+      throw new WorktreeStateConflictError(
+        "task worktree HEAD diverged from its frozen base",
+      );
+    }
+    const ancestry = this.#git.run(
+      record.worktreePath,
+      ["merge-base", "--is-ancestor", record.baseSha, snapshot.headSha],
+      { allowFailure: true },
+    );
+    if (ancestry.status === 1) {
+      throw new WorktreeStateConflictError(
+        "integration HEAD is not a descendant of the frozen worktree base",
+      );
+    }
+    if (ancestry.status !== 0) {
+      throw new GitCommandError(
+        "Git could not prove the integration HEAD ancestry",
+        ["merge-base", "--is-ancestor", record.baseSha, snapshot.headSha],
+        ancestry,
+      );
+    }
+    this.#git.run(record.worktreePath, [
+      "reset",
+      "--hard",
+      snapshot.headSha,
+    ]);
+    const reanchoredHead = assertTaskWorktree(this.#git, record);
+    if (reanchoredHead !== snapshot.headSha) {
+      throw new WorktreeStateConflictError(
+        "re-anchored worktree HEAD diverged from the integration HEAD",
+      );
+    }
+    return this.#transition(
+      this.scopeKey(scope),
+      record.taskKey,
+      (current) => {
+        if (
+          current.status !== "ready" ||
+          current.baseSha !== record.baseSha
+        ) {
+          throw new WorktreeStateConflictError(
+            "worktree state changed during the re-anchor",
+          );
+        }
+        return {
+          ...current,
+          baseSha: snapshot.headSha,
+          updatedAt: this.#timestamp(),
+        };
+      },
+    );
+  }
+
   get(
     scope: ProjectExecutionScope,
     missionId: string,

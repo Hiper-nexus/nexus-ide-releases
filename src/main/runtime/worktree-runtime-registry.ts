@@ -275,6 +275,23 @@ export class WorktreeRuntimeRegistry {
     return this.forScope(scope).worktrees.get(scope, missionId, taskId);
   }
 
+  /**
+   * Scheduler (re)bind hook for advisory lanes: fast-forward a stale,
+   * output-free ready worktree to the current integration HEAD. See
+   * `WorktreeManager.reanchorReadyWorktreeToIntegrationHead` for the proofs.
+   */
+  reanchorReadyWorktreeToIntegrationHead(
+    scope: ProjectExecutionScope,
+    missionId: string,
+    taskId: string,
+  ): WorktreeRecord | null {
+    return this.forScope(scope).worktrees.reanchorReadyWorktreeToIntegrationHead(
+      scope,
+      missionId,
+      taskId,
+    );
+  }
+
   listMission(
     scope: ProjectExecutionScope,
     missionId: string,

@@ -9,6 +9,7 @@ import {
   isMissionSchedulerRetryableDispatchError,
   missionSchedulerLiveRosterAdapter,
   persistMissionSchedulerDispatchFailure,
+  readOnlyWorktreeReanchorEligible,
   runWorktreeCreateSerialized,
   warmMissionSchedulerRosterSubscriptionAuth,
 } from "./mission-scheduler-dispatch-transaction";
@@ -600,5 +601,67 @@ describe("runWorktreeCreateSerialized", () => {
     await expect(
       runWorktreeCreateSerialized(other, async () => "ok"),
     ).resolves.toBe("ok");
+  });
+});
+
+describe("read_only worktree re-anchor gate at (re)bind", () => {
+  const bareClaim = {
+    handoffId: undefined,
+    handoffAcceptedAt: undefined,
+    integrationReceipt: undefined,
+    completedAt: undefined,
+  };
+
+  it("allows a read_only lane whose dispatch binds no physical output yet", () => {
+    expect(
+      readOnlyWorktreeReanchorEligible({
+        executionMode: "read_only",
+        dispatch: bareClaim,
+      }),
+    ).toBe(true);
+  });
+
+  it("never re-anchors across a handoff already delivered for the task", () => {
+    // (ii) the advisor already delivered: its receipt sealed the tree it
+    // physically observed — re-anchoring would rewrite that tree afterwards.
+    for (const dispatch of [
+      { ...bareClaim, handoffId: "handoff-delivered" },
+      { ...bareClaim, handoffAcceptedAt: 123 },
+      {
+        ...bareClaim,
+        integrationReceipt: {
+          kind: "read_only_validated",
+          reference: "head",
+          completedAt: 123,
+        },
+      },
+      { ...bareClaim, completedAt: 123 },
+    ] as const) {
+      expect(
+        readOnlyWorktreeReanchorEligible({
+          executionMode: "read_only",
+          dispatch,
+        }),
+      ).toBe(false);
+    }
+  });
+
+  it("never re-anchors a writable implementation lane", () => {
+    // (iii) an isolated_worktree branch identity IS the delivery; moving its
+    // base under the worker would destroy the integration candidate.
+    for (const executionMode of ["isolated_worktree", "same_checkout"] as const) {
+      expect(
+        readOnlyWorktreeReanchorEligible({
+          executionMode,
+          dispatch: bareClaim,
+        }),
+      ).toBe(false);
+    }
+    expect(
+      readOnlyWorktreeReanchorEligible({
+        executionMode: "isolated_worktree",
+        dispatch: null,
+      }),
+    ).toBe(false);
   });
 });
