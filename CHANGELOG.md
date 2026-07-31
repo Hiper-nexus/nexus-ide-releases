@@ -1,5 +1,50 @@
 # Changelog
 
+## 0.19.39 — Vibecode sem atrito
+
+Data: 2026-07-30
+
+### Paralelismo e caminho padrão
+
+- **Até 8 workers por missão**: o teto aprovado é o cap da wave no
+  operator-choice (o clamp adaptativo conservador ficou só no modo governado).
+  Núcleos e budget de panes são lidos da máquina real, risco restringe a
+  superfície de aprovação e não o paralelismo, e worktrees de uma mesma onda
+  são criados sob mutex por checkout.
+- **AGY como cidadão pleno**: a auth por assinatura no Keychain é aquecida em
+  todos os limites de missão (squad readiness, scheduler, bootstrap,
+  architect, reviewers). Briefing nativo por argv com prova física de aceite,
+  parser de handoff tolerante a hard-wrap do TUI e exit pós-entrega aceito
+  como conclusão.
+- **Executor sem mudança completa**: zero commit + worktree limpo + HEAD
+  igual à base selada gera receipt de no-change validado por reviewer/QA —
+  fim do deadlock "task has no committed changes". Worktree sujo sem commit
+  bloqueia na hora, com motivo claro.
+
+### Nada trava em silêncio
+
+- **Limites visíveis em todo retry**: falhas pré-claim de dispatch, defers de
+  merge e provider sem rota têm bounds auditáveis em vez de loops infinitos.
+- **Gerações órfãs aposentadas**: re-freeze do PREVC não deixa mais gerações
+  antigas de tasks segurando ownership; worktrees de dono morto são liberados
+  com marcador e ressurreição provada para a retry lane.
+- **Retomada pós-restart**: pane de missão cuja sessão morreu com o app
+  continua em contexto novo sob o contrato selado, sem pane vermelho morto.
+- **Erros que dizem o motivo**: worker sem rota e falhas de merge nomeiam a
+  causa concreta (login-needed, sem conta, modelo não pronto, ownership).
+
+### Interface e estabilidade
+
+- **Pane vazio eliminado**: placeholder estrutural é substituído pelo pane
+  real no lançamento e no reopen; maximize obsoleto não esconde a missão;
+  Home não cobre grid com missão montada.
+- **Missão sempre visível**: fechar o último pane de uma missão em execução
+  mostra toast com "Reabrir panes".
+- **Shell correto**: panes abrem o login shell real da conta como login
+  shell, com o PATH completo do usuário.
+- **Memória contida**: buffer de gap do PTY com cap e heal, recover
+  single-flight, backpressure main→renderer e throttle de escrita no xterm.
+
 ## 0.19.38 — Missões que seguem em frente
 
 Data: 2026-07-29

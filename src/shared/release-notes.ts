@@ -13,6 +13,58 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.19.39',
+  date: '2026-07-30',
+  codename: 'Vibecode sem atrito',
+  summary:
+    'O caminho padrão fica liso de verdade: até 8 workers em paralelo, providers autenticados reconhecidos na hora, executor que termina sem mudança completa sem deadlock, e nenhum retry silencioso infinito — todo bloqueio tem saída automática ou motivo acionável.',
+  highlights: [
+    {
+      title: 'Paralelismo real por padrão',
+      detail:
+        'O teto aprovado de workers é o cap da wave no operator-choice — fim do clamp adaptativo que iniciava em 2. Limites de máquina são lidos de verdade (núcleos e budget de panes do renderer), risco restringe a aprovação e não o paralelismo, e a criação de worktrees em onda é serializada para não correr em lock do Git.',
+    },
+    {
+      title: 'AGY participa sem truque',
+      detail:
+        'A sessão AGY vive no Keychain do macOS: todos os limites de missão aquecem essa prova antes de montar rosters e squads. O briefing vai nativamente por argv com prova física de aceite, o handoff real é lido mesmo com quebra de linha do TUI e o exit pós-entrega vale como conclusão, não como falha de boot.',
+    },
+    {
+      title: 'Executor sem mudança também completa',
+      detail:
+        'Objetivos de verificação que terminam sem nenhum commit ganham caminho legítimo: handoff físico + worktree limpo + HEAD igual à base selada completam com receipt de no-change, e reviewer/QA validam a decisão. Worktree sujo sem commit bloqueia na hora com motivo claro.',
+    },
+    {
+      title: 'Nada trava em silêncio',
+      detail:
+        'Dispatch pré-claim, defer de merge e retry de provider têm limites visíveis com bloco técnico auditável. Gerações órfãs de plano são aposentadas, worktrees de dono morto são liberados e a recuperação pós-restart continua a missão em contexto novo em vez de morrer num pane vermelho.',
+    },
+    {
+      title: 'Memória sob controle',
+      detail:
+        'O transporte PTY ganhou cap de buffer de gap, recover single-flight com heal de buraco, backpressure de envio main→renderer e throttle de escrita no xterm — sessões pesadas não inflam mais o app.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Pane certo, shell certo',
+      detail:
+        'Panes do operador abrem o login shell real da conta (via Directory Services) como login shell, com o PATH completo. O placeholder estrutural não cobre mais o grid no lançamento nem um maximize esquecido esconde os panes da missão.',
+    },
+    {
+      title: 'Missão nunca some atrás de um shell',
+      detail:
+        'Fechar o último pane de uma missão em execução mostra um toast com "Reabrir panes" pelo mesmo caminho do card. A missão continua visível e a um clique de distância.',
+    },
+    {
+      title: 'Erro que diz o motivo',
+      detail:
+        'Worker sem rota, merge sem commit e falhas de bootstrap agora nomeiam a causa concreta em português — login-needed, conta ausente, modelo não pronto, ownership sobreposto — em vez de mensagens crípticas.',
+    },
+  ],
+};
+
+export const PREVIOUS_RELEASE: AppRelease = {
   version: '0.19.38',
   date: '2026-07-29',
   codename: 'Missões que seguem em frente',
@@ -135,43 +187,6 @@ export const CURRENT_RELEASE: AppRelease = {
       title: 'Gates honestos e rápidos',
       detail:
         'Risco em português recebe a mesma severidade do equivalente em inglês, requisitos explícitos desconhecidos permanecem pendentes e worktrees antigos em .dev-user-data deixam de contaminar testes e indexadores.',
-    },
-  ],
-};
-
-export const PREVIOUS_RELEASE: AppRelease = {
-  version: '0.19.26',
-  date: '2026-07-22',
-  codename: 'Piloto Automático sem Modal',
-  summary:
-    'Aprovar a missão autoriza a execução inteira: o agente não para em modal a cada comando, o PREVC garante sem bloquear e o wizard virou fluxo único sem jargão.',
-  highlights: [
-    {
-      title: 'Execução sem interrupção',
-      detail:
-        'A aprovação da missão é a autorização — deploy, SSH, edição de código e browser fluem direto, tudo auditado; só comandos destrutivos pedem confirmação.',
-    },
-    {
-      title: 'PREVC que garante sem limitar',
-      detail:
-        'Sem contrato congelado a missão executa normalmente; com contrato, stage, drift e receipts continuam valendo. Tarefas mistas de infra + código funcionam.',
-    },
-    {
-      title: 'Wizard fluxo único',
-      detail:
-        'Objetivo + lançar. Tipos de entrega viraram Opções avançadas colapsadas, em linguagem simples, com Sem restrições como padrão.',
-    },
-  ],
-  fixes: [
-    {
-      title: 'Fim do stall de confirmação',
-      detail:
-        'O agente não fica mais minutos parado esperando clique em modal a cada ação — a autorização vem da missão aprovada, com auditoria fail-closed.',
-    },
-    {
-      title: 'Kickoff anti-travamento',
-      detail:
-        'O orquestrador executa direto e trata freeze/bootstrap PREVC como best-effort em segundo plano, nunca como pré-condição.',
     },
   ],
 };
