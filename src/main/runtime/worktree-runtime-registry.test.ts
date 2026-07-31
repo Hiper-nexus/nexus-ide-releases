@@ -6,6 +6,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { ProjectExecutionScope } from "../../shared/types";
 import { ProjectRuntimeManager } from "./project-runtime-manager";
 import { WorktreeRuntimeRegistry } from "./worktree-runtime-registry";
+import {
+  DEAD_OWNER_WORKTREE_RELEASE_MARKER,
+  OwnershipOverlapError,
+  worktreeTaskKey,
+} from "./worktree-manager";
 
 const roots: string[] = [];
 const managers: ProjectRuntimeManager[] = [];
@@ -61,6 +66,39 @@ async function createTrackedWorktree(
     )
     .run(input.taskId, input.taskId, now, now);
   return registry.create(input);
+}
+
+/**
+ * Seeds the mission/task rows the dead-owner release sweep reads, mirroring
+ * exactly what the dispatch store persists: a schedulable task under a
+ * non-terminal mission keeps its worktree record active; terminal states
+ * make the record eligible for release.
+ */
+function seedWorkState(
+  manager: ProjectRuntimeManager,
+  scope: ProjectExecutionScope,
+  input: {
+    missionId: string;
+    taskId: string;
+    missionStatus: string;
+    taskStatus: string;
+  },
+) {
+  const now = Date.now();
+  const db = manager.open(scope).db;
+  db.prepare(
+    `INSERT INTO missions (id, title, status, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE
+       SET status = excluded.status, updated_at = excluded.updated_at`,
+  ).run(input.missionId, input.missionId, input.missionStatus, now, now);
+  db.prepare(
+    `INSERT INTO tasks
+       (id, mission_id, title, detail, status, created_at, updated_at)
+     VALUES (?, ?, ?, '', ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE
+       SET status = excluded.status, updated_at = excluded.updated_at`,
+  ).run(input.taskId, input.missionId, input.taskId, input.taskStatus, now, now);
 }
 
 afterEach(() => {
@@ -805,5 +843,217 @@ describe("project worktree runtime registry", () => {
 
     expect(successor.taskId).toBe("task-successor-owner");
     expect(registry.listMission(scope, "mission-deleted")).toEqual([]);
+  });
+
+  it("releases ownership of a blocked mission's leftover worktree so a new overlapping dispatch proceeds", async () => {
+    const { scope, manager } = fixture();
+    const registry = new WorktreeRuntimeRegistry(manager);
+    seedWorkState(manager, scope, {
+      missionId: "mission-wedged",
+      taskId: "task-wedged",
+      missionStatus: "running",
+      taskStatus: "running",
+    });
+    const wedged = await registry.create({
+      scope,
+      missionId: "mission-wedged",
+      taskId: "task-wedged",
+      workerId: "worker-wedged",
+      ownership: { files: ["owned.txt"], symbols: [], domains: ["core"] },
+    });
+    expect(wedged.status).toBe("ready");
+    // The exact persisted wedge: the merge terminally blocked the dispatch
+    // (task failed) and the mission went blocked, but the worktree record
+    // stayed `ready` with no active dispatch row.
+    seedWorkState(manager, scope, {
+      missionId: "mission-wedged",
+      taskId: "task-wedged",
+      missionStatus: "blocked",
+      taskStatus: "failed",
+    });
+
+    seedWorkState(manager, scope, {
+      missionId: "mission-new",
+      taskId: "task-new",
+      missionStatus: "running",
+      taskStatus: "pending",
+    });
+    const successor = await registry.create({
+      scope,
+      missionId: "mission-new",
+      taskId: "task-new",
+      workerId: "worker-new",
+      ownership: { files: ["owned.txt"], symbols: [], domains: ["core"] },
+    });
+
+    expect(successor.status).toBe("ready");
+    // The leftover stays on disk — released with the marker so a later
+    // resume can provably resurrect it — but no longer exerts ownership.
+    expect(registry.listMission(scope, "mission-wedged")).toMatchObject([
+      {
+        taskId: "task-wedged",
+        status: "failed",
+        failureReason: expect.stringContaining(
+          DEAD_OWNER_WORKTREE_RELEASE_MARKER,
+        ),
+      },
+    ]);
+    expect(fs.existsSync(wedged.worktreePath)).toBe(true);
+  });
+
+  it("keeps blocking an overlapping dispatch while the owning mission is active", async () => {
+    const { scope, manager } = fixture();
+    const registry = new WorktreeRuntimeRegistry(manager);
+    seedWorkState(manager, scope, {
+      missionId: "mission-active",
+      taskId: "task-active",
+      missionStatus: "running",
+      taskStatus: "running",
+    });
+    const active = await registry.create({
+      scope,
+      missionId: "mission-active",
+      taskId: "task-active",
+      workerId: "worker-active",
+      ownership: { files: ["owned.txt"], symbols: [], domains: ["core"] },
+    });
+    seedWorkState(manager, scope, {
+      missionId: "mission-contender",
+      taskId: "task-contender",
+      missionStatus: "running",
+      taskStatus: "pending",
+    });
+
+    await expect(
+      registry.create({
+        scope,
+        missionId: "mission-contender",
+        taskId: "task-contender",
+        workerId: "worker-contender",
+        ownership: { files: ["owned.txt"], symbols: [], domains: ["core"] },
+      }),
+    ).rejects.toBeInstanceOf(OwnershipOverlapError);
+    await expect(
+      registry.create({
+        scope,
+        missionId: "mission-contender",
+        taskId: "task-contender",
+        workerId: "worker-contender",
+        ownership: { files: ["owned.txt"], symbols: [], domains: ["core"] },
+      }),
+    ).rejects.toMatchObject({
+      conflictingTaskKey: worktreeTaskKey("mission-active", "task-active"),
+    });
+    expect(active.status).toBe("ready");
+  });
+
+  it("keeps the worktree reusable for the same mission's retry while it is blocked", async () => {
+    const { scope, manager } = fixture();
+    const registry = new WorktreeRuntimeRegistry(manager);
+    seedWorkState(manager, scope, {
+      missionId: "mission-retry",
+      taskId: "task-retry",
+      missionStatus: "running",
+      taskStatus: "running",
+    });
+    const input = {
+      scope,
+      missionId: "mission-retry",
+      taskId: "task-retry",
+      workerId: "worker-retry",
+      ownership: { files: ["owned.txt"], symbols: [], domains: ["core"] },
+    } as const;
+    const original = await registry.create(input);
+    // Technical bootstrap failure lane: the dispatch store blocks the task
+    // and the mission while deliberately keeping the physical worktree. The
+    // same-task retry sweeps the claim and provably resurrects the record.
+    seedWorkState(manager, scope, {
+      missionId: "mission-retry",
+      taskId: "task-retry",
+      missionStatus: "blocked",
+      taskStatus: "failed",
+    });
+
+    const retained = await registry.create(input);
+    expect(retained).toMatchObject({
+      id: original.id,
+      status: "ready",
+      worktreePath: original.worktreePath,
+      branchRef: original.branchRef,
+    });
+    expect(retained.failureReason).toBeUndefined();
+
+    // requeueTechnicalBootstrapFailure persists task pending + mission
+    // running again; the retry still reuses the exact same record.
+    seedWorkState(manager, scope, {
+      missionId: "mission-retry",
+      taskId: "task-retry",
+      missionStatus: "running",
+      taskStatus: "pending",
+    });
+    const retried = await registry.create(input);
+    expect(retried).toMatchObject({ id: original.id, status: "ready" });
+  });
+
+  it("stays fail-closed when a resumed mission's kept record now overlaps a live claim", async () => {
+    const { scope, manager } = fixture();
+    const registry = new WorktreeRuntimeRegistry(manager);
+    seedWorkState(manager, scope, {
+      missionId: "mission-resumed",
+      taskId: "task-resumed",
+      missionStatus: "running",
+      taskStatus: "running",
+    });
+    const input = {
+      scope,
+      missionId: "mission-resumed",
+      taskId: "task-resumed",
+      workerId: "worker-resumed",
+      ownership: { files: ["owned.txt"], symbols: [], domains: ["core"] },
+    } as const;
+    await registry.create(input);
+    seedWorkState(manager, scope, {
+      missionId: "mission-resumed",
+      taskId: "task-resumed",
+      missionStatus: "blocked",
+      taskStatus: "failed",
+    });
+    // While the mission was blocked, another mission legitimately claimed
+    // the overlapping surface.
+    seedWorkState(manager, scope, {
+      missionId: "mission-claimer",
+      taskId: "task-claimer",
+      missionStatus: "running",
+      taskStatus: "running",
+    });
+    await registry.create({
+      scope,
+      missionId: "mission-claimer",
+      taskId: "task-claimer",
+      workerId: "worker-claimer",
+      ownership: { files: ["owned.txt"], symbols: [], domains: ["core"] },
+    });
+
+    // Resuming must not silently resurrect the stale claim over the live one.
+    seedWorkState(manager, scope, {
+      missionId: "mission-resumed",
+      taskId: "task-resumed",
+      missionStatus: "running",
+      taskStatus: "pending",
+    });
+    await expect(registry.create(input)).rejects.toMatchObject({
+      name: "OwnershipOverlapError",
+      conflictingTaskKey: worktreeTaskKey("mission-claimer", "task-claimer"),
+    });
+    // The stale claim stays released on disk; nothing was resurrected.
+    expect(registry.listMission(scope, "mission-resumed")).toMatchObject([
+      {
+        taskId: "task-resumed",
+        status: "failed",
+        failureReason: expect.stringContaining(
+          DEAD_OWNER_WORKTREE_RELEASE_MARKER,
+        ),
+      },
+    ]);
   });
 });

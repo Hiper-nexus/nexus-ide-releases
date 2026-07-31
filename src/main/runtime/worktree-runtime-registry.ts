@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { ProjectExecutionScope } from "../../shared/types";
 import type { ProjectRuntimeManager } from "./project-runtime-manager";
 import {
-  OwnershipOverlapError,
+  DEAD_OWNER_WORKTREE_RELEASE_MARKER,
   WorktreeManager,
   type CreateWorktreeInput,
   type WorktreeRecord,
@@ -50,6 +50,20 @@ function sameScope(
     left.rootRealPath === right.rootRealPath
   );
 }
+
+/**
+ * A worktree record exerts ownership only while the work that owns it can
+ * still run: a schedulable task (`pending`/`running`) under a non-terminal
+ * mission (`pending`/`running`). Terminal task states (`done`/`failed`) and
+ * terminal mission states (`blocked`/`done`/`failed`) make the record
+ * eligible for the dead-owner release sweep.
+ */
+const LIVE_TASK_STATUSES = new Set(["pending", "running"]);
+const LIVE_MISSION_STATUSES = new Set(["pending", "running"]);
+
+const DEAD_OWNER_WORKTREE_RELEASE_REASON =
+  `${DEAD_OWNER_WORKTREE_RELEASE_MARKER} owning task or mission is terminal; ` +
+  "ownership released, physical worktree kept for resume";
 
 export class WorktreeRuntimeRegistry {
   readonly #manager: ProjectRuntimeManager;
@@ -107,6 +121,14 @@ export class WorktreeRuntimeRegistry {
     // rows and never saw these. Drop records whose task row is gone; no Git
     // path, ref or worktree is touched.
     this.#purgeOrphanWorktrees(immutableScope, worktrees);
+    // A blocked/failed mission's leftover `ready` record is the other wedge:
+    // its task row still exists (so the purge keeps it) yet no dispatch can
+    // ever run it again, and the strict no-overlap invariant then blocks
+    // every later mission. Release those claims before the first dispatch.
+    this.#releaseDeadOwnerWorktrees(immutableScope, {
+      worktreeState,
+      worktrees,
+    });
     queue.reconcile(immutableScope);
     const value = Object.freeze({
       scope: immutableScope,
@@ -122,10 +144,9 @@ export class WorktreeRuntimeRegistry {
   /**
    * `forScope` only runs this sweep once per process (the ScopeRuntime is
    * memoized), so a mission deleted after that first call left its worktree
-   * record orphaned for the rest of the process lifetime — permanently
-   * blocking any later task whose ownership overlaps it. `create` re-runs
-   * the sweep on demand so a stale record cannot wedge every future mission
-   * until restart.
+   * record orphaned for the rest of the process lifetime. `create` re-runs
+   * the sweep before each reservation so the stale row is dropped from disk
+   * before the ownership-overlap check evaluates it.
    */
   #purgeOrphanWorktrees(
     scope: ProjectExecutionScope,
@@ -155,19 +176,95 @@ export class WorktreeRuntimeRegistry {
     }
   }
 
+  /**
+   * Releases the ownership claim of records whose owning work can no longer
+   * run — a terminal task (`done`/`failed`) or a task of a terminal mission
+   * (`blocked`/`done`/`failed`). The state validator forbids two overlapping
+   * active records, so a blocked mission's leftover `ready` row wedges every
+   * later dispatch whose ownership overlaps it. The record is terminally
+   * failed with a marker reason and stays on disk; the physical worktree is
+   * never touched, and `WorktreeManager.create` provably resurrects exactly
+   * these marked records when the same taskKey is reserved again, preserving
+   * the technical retry lane (`requeueTechnicalBootstrapFailure`) and manual
+   * resume. `queued` rows belong to the merge queue's own recovery and are
+   * never released here.
+   */
+  #releaseDeadOwnerWorktrees(
+    scope: ProjectExecutionScope,
+    runtime: Pick<ScopeRuntime, "worktreeState" | "worktrees">,
+  ): readonly WorktreeRecord[] {
+    try {
+      const rows = new ScopedStoreBinding(this.#manager, scope)
+        .readDatabase()
+        .prepare(
+          `SELECT t.id AS task_id, t.mission_id AS mission_id,
+                  t.status AS task_status, m.status AS mission_status
+             FROM tasks t LEFT JOIN missions m ON m.id = t.mission_id`,
+        )
+        .all() as ReadonlyArray<{
+        task_id: string;
+        mission_id: string | null;
+        task_status: string;
+        mission_status: string | null;
+      }>;
+      const workStates = new Map(
+        rows.map((row) => [`${row.mission_id}\0${row.task_id}`, row] as const),
+      );
+      const released: WorktreeRecord[] = [];
+      const records = runtime.worktreeState.read(
+        runtime.worktrees.scopeKey(scope),
+      ).records;
+      for (const record of records) {
+        if (record.status !== "reserved" && record.status !== "ready") {
+          continue;
+        }
+        const work = workStates.get(`${record.missionId}\0${record.taskId}`);
+        // A missing task row is the orphan purge's lane, not this one.
+        if (!work) continue;
+        const live =
+          LIVE_TASK_STATUSES.has(work.task_status) &&
+          work.mission_status !== null &&
+          LIVE_MISSION_STATUSES.has(work.mission_status);
+        if (live) continue;
+        try {
+          released.push(
+            runtime.worktrees.markFailed(
+              scope,
+              record.missionId,
+              record.taskId,
+              DEAD_OWNER_WORKTREE_RELEASE_REASON,
+            ),
+          );
+        } catch (error) {
+          console.warn(
+            `[worktree-runtime] dead-owner worktree release deferred for ` +
+              `${record.missionId}/${record.taskId}:`,
+            error,
+          );
+        }
+      }
+      if (released.length > 0) {
+        console.warn(
+          `[worktree-runtime] released ${released.length} worktree record(s) ` +
+            'whose owning task or mission is terminal; no Git path or ref ' +
+            'was removed',
+        );
+      }
+      return Object.freeze(released);
+    } catch (error) {
+      // Never block a dispatch attempt on an opportunistic cleanup.
+      console.warn('[worktree-runtime] dead-owner release sweep skipped', error);
+      return Object.freeze([]);
+    }
+  }
+
   async create(input: CreateWorktreeInput): Promise<WorktreeRecord> {
     const runtime = this.forScope(input.scope);
-    try {
-      return await runtime.worktrees.create(input);
-    } catch (error) {
-      if (!(error instanceof OwnershipOverlapError)) throw error;
-      const purged = this.#purgeOrphanWorktrees(
-        input.scope,
-        runtime.worktrees,
-      );
-      if (purged.length === 0) throw error;
-      return runtime.worktrees.create(input);
-    }
+    // `forScope` memoizes, so observe both stale-record lanes again before
+    // the ownership-overlap check evaluates them.
+    this.#purgeOrphanWorktrees(input.scope, runtime.worktrees);
+    this.#releaseDeadOwnerWorktrees(input.scope, runtime);
+    return runtime.worktrees.create(input);
   }
 
   get(

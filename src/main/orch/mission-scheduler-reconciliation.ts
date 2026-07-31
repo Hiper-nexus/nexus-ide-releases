@@ -10,6 +10,7 @@ import {
   type ProjectDomainStoreSuite,
 } from "./project-domain-store-registry";
 import type { TaskDispatchStore } from "./task-dispatch-store";
+import type { TaskDispatchRecord } from "./task-dispatch-codec";
 import { terminalOperationalFailureReason } from "../runtime/operational-failure-policy";
 
 type WorktreeCreationFailureDispatchAuthority = Pick<
@@ -240,4 +241,73 @@ export function reconcileSupersededPlanGenerations(
     }
   }
   return retired;
+}
+
+export const TERMINAL_DISPATCH_WORKTREE_RELEASE_REASON =
+  "dispatch alcançou estado terminal (blocked/failed); ownership do worktree liberada";
+
+const TERMINAL_DISPATCH_STATES = new Set<TaskDispatchRecord["state"]>([
+  "blocked",
+  "failed",
+]);
+
+type TerminalDispatchWorktreeReleaseAuthority = Pick<
+  TaskDispatchStore,
+  "list"
+>;
+
+interface TerminalDispatchWorktreeReleaseDeps {
+  readonly registry: Pick<WorktreeRuntimeRegistry, "get" | "markFailed">;
+  readonly getDispatches: (
+    scope: ProjectExecutionScope,
+  ) => TerminalDispatchWorktreeReleaseAuthority;
+}
+
+/**
+ * A dispatch reaching blocked/failed is terminal for that task, but its
+ * owning mission may reach a terminal status of its own (or simply stop
+ * being 'running') in the very same beat — the scheduler tick() only lists
+ * running missions, so that mission may never tick again to release the
+ * worktree via its own per-mission reconciliation. Left reserved, that
+ * worktree's ownership (routinely the unscoped "everything" default) blocks
+ * every future mission's overlapping claim forever, across mission
+ * boundaries. This mirrors reconcileSupersededPlanGenerations but runs at
+ * scope granularity, every tick, independent of any single mission's status,
+ * so a dispatch that already went terminal is healed even if its mission
+ * never ticks again. Tasks with physical work already integrated
+ * ("integrated" worktree status) are never touched — only still-active
+ * reservations for an already-terminal dispatch are released.
+ */
+export function reconcileTerminalDispatchWorktreeReleaseForScope(
+  scope: ProjectExecutionScope,
+  dependencies?: TerminalDispatchWorktreeReleaseDeps,
+): readonly string[] {
+  const deps = dependencies ?? {
+    registry: requireWorktreeRuntimeRegistry(),
+    getDispatches: (currentScope: ProjectExecutionScope) =>
+      getProjectDomainStores(currentScope).taskDispatches,
+  };
+  const dispatches = deps.getDispatches(scope);
+  const released: string[] = [];
+  for (const dispatch of dispatches.list()) {
+    if (!TERMINAL_DISPATCH_STATES.has(dispatch.state)) continue;
+    const record = deps.registry.get(scope, dispatch.missionId, dispatch.taskId);
+    if (!record || !ACTIVE_WORKTREE_STATUSES.has(record.status)) continue;
+    try {
+      deps.registry.markFailed(
+        scope,
+        dispatch.missionId,
+        dispatch.taskId,
+        TERMINAL_DISPATCH_WORKTREE_RELEASE_REASON,
+      );
+      released.push(dispatch.taskId);
+    } catch (error) {
+      console.warn(
+        `[mission-scheduler] terminal-dispatch worktree release deferred for ` +
+          `${dispatch.missionId}/${dispatch.taskId}:`,
+        error,
+      );
+    }
+  }
+  return released;
 }

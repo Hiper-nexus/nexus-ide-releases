@@ -26,12 +26,14 @@ import {
   type PreparedWorktreeIntegration,
   type PreparedWorktreeNoChangeValidation,
   type WorktreeManagerOptions,
+  type WorktreeOwnership,
   type WorktreeRecord,
   type WorktreeStateSnapshot,
   type WorktreeStateStore,
 } from "./worktree-contract";
 import { validateWorktreeStateSnapshot } from "./worktree-state";
 import { materializeGitWorktree } from "./worktree-cow";
+import { DEAD_OWNER_WORKTREE_RELEASE_MARKER } from "./worktree-manager-markers";
 import {
   assertRepositoryUnchanged,
   assertTaskWorktree,
@@ -50,7 +52,10 @@ import {
 export * from "./git-command";
 export * from "./worktree-contract";
 export { cowWorktreeAvailable, materializeGitWorktree } from "./worktree-cow";
-export { INTERRUPTED_WORKTREE_RESERVATION_FAILURE_MARKER } from "./worktree-manager-markers";
+export {
+  DEAD_OWNER_WORKTREE_RELEASE_MARKER,
+  INTERRUPTED_WORKTREE_RESERVATION_FAILURE_MARKER,
+} from "./worktree-manager-markers";
 
 const MAX_CAS_ATTEMPTS = 16;
 
@@ -120,6 +125,30 @@ export class WorktreeManager {
     this.#now = options.now ?? Date.now;
   }
 
+  /**
+   * Throws when `candidate` overlaps another active record. Dependency links
+   * in either direction never conflict.
+   */
+  #assertNoOwnershipConflict(
+    records: readonly WorktreeRecord[],
+    candidate: {
+      readonly taskKey: string;
+      readonly ownership: WorktreeOwnership;
+      readonly dependencies: readonly string[];
+    },
+  ): void {
+    for (const record of records) {
+      if (record.taskKey === candidate.taskKey) continue;
+      if (!ACTIVE_STATUSES.has(record.status)) continue;
+      if (candidate.dependencies.includes(record.taskKey)) continue;
+      if (record.dependencies.includes(candidate.taskKey)) continue;
+      const claimOverlap = overlap(candidate.ownership, record.ownership);
+      if (hasOverlap(claimOverlap)) {
+        throw new OwnershipOverlapError(record.taskKey, claimOverlap);
+      }
+    }
+  }
+
   scopeKey(
     scope: Pick<ProjectExecutionScope, "projectId" | "checkoutId">,
   ): string {
@@ -169,7 +198,7 @@ export class WorktreeManager {
   /**
    * Drops records whose task row no longer exists.
    *
-   * Ownership overlap is checked against every non-terminal record, so a
+   * Ownership overlap is checked against every live non-terminal record, so a
    * record left behind by a deleted mission keeps claiming files forever and
    * blocks the next mission with "worktree ownership overlaps active task
    * &lt;id&gt;" — pointing at a task that cannot be inspected because it is gone.
@@ -281,7 +310,39 @@ export class WorktreeManager {
           );
         }
         if (existing.status === "ready" || existing.status === "queued") {
-          return { records, result: { record: existing, isNew: false } };
+          return {
+            records,
+            result: { record: existing, isNew: false, resurrected: false },
+          };
+        }
+        if (
+          existing.status === "failed" &&
+          existing.taskHeadSha === undefined &&
+          existing.integratedSha === undefined &&
+          existing.failureReason?.startsWith(DEAD_OWNER_WORKTREE_RELEASE_MARKER)
+        ) {
+          // The record was released only because its owner went terminal; the
+          // physical worktree was kept exactly for this resume/retry lane.
+          // Reclaim the slot under the same ownership exclusivity as a fresh
+          // reservation, then prove the physical identity below before
+          // promoting it back to ready.
+          this.#assertNoOwnershipConflict(records, {
+            taskKey,
+            ownership,
+            dependencies,
+          });
+          const resurrected = cloneRecord({
+            ...existing,
+            status: "reserved" as const,
+            failureReason: undefined,
+            updatedAt: now,
+          });
+          return {
+            records: records.map((record) =>
+              record.taskKey === taskKey ? resurrected : record,
+            ),
+            result: { record: resurrected, isNew: true, resurrected: true },
+          };
         }
         throw new WorktreeStateConflictError(
           `task worktree is already ${existing.status}`,
@@ -303,16 +364,11 @@ export class WorktreeManager {
         }
       }
 
-      for (const record of records) {
-        if (!ACTIVE_STATUSES.has(record.status)) continue;
-        const claimOverlap = overlap(ownership, record.ownership);
-        if (
-          hasOverlap(claimOverlap) &&
-          !dependencies.includes(record.taskKey)
-        ) {
-          throw new OwnershipOverlapError(record.taskKey, claimOverlap);
-        }
-      }
+      this.#assertNoOwnershipConflict(records, {
+        taskKey,
+        ownership,
+        dependencies,
+      });
       if (
         records.some(
           (record) =>
@@ -326,7 +382,7 @@ export class WorktreeManager {
       }
       return {
         records: [...records, candidate],
-        result: { record: candidate, isNew: true },
+        result: { record: candidate, isNew: true, resurrected: false },
       };
     });
 
@@ -337,33 +393,40 @@ export class WorktreeManager {
 
     try {
       assertRepositoryUnchanged(this.#git, repository, true);
-      if (fs.existsSync(worktreePath)) {
-        throw new Error("derived worktree path already exists");
-      }
-      const branchExists = this.#git.run(
-        repository.rootRealPath,
-        ["show-ref", "--verify", "--quiet", branchRef],
-        { allowFailure: true },
-      );
-      if (branchExists.status === 0) {
-        throw new Error("derived Nexus branch already exists");
-      }
-      if (branchExists.status !== 1) {
-        throw new GitCommandError(
-          "Git could not verify the derived branch",
+      if (reservation.resurrected) {
+        // The derived path and branch exist by design: the slot was released
+        // without touching Git. Prove the exact physical identity instead of
+        // materializing, mirroring the ready/queued reuse contract.
+        assertTaskWorktree(this.#git, reservation.record);
+      } else {
+        if (fs.existsSync(worktreePath)) {
+          throw new Error("derived worktree path already exists");
+        }
+        const branchExists = this.#git.run(
+          repository.rootRealPath,
           ["show-ref", "--verify", "--quiet", branchRef],
-          branchExists,
+          { allowFailure: true },
         );
+        if (branchExists.status === 0) {
+          throw new Error("derived Nexus branch already exists");
+        }
+        if (branchExists.status !== 1) {
+          throw new GitCommandError(
+            "Git could not verify the derived branch",
+            ["show-ref", "--verify", "--quiet", branchRef],
+            branchExists,
+          );
+        }
+        // CoW-aware materialization (APFS clonefile path when enabled; else git).
+        await materializeGitWorktree({
+          repositoryRoot: repository.rootRealPath,
+          worktreePath,
+          branchRef,
+          headSha: repository.headSha,
+          git: this.#git,
+        });
+        assertTaskWorktree(this.#git, candidate);
       }
-      // CoW-aware materialization (APFS clonefile path when enabled; else git).
-      await materializeGitWorktree({
-        repositoryRoot: repository.rootRealPath,
-        worktreePath,
-        branchRef,
-        headSha: repository.headSha,
-        git: this.#git,
-      });
-      assertTaskWorktree(this.#git, candidate);
       assertRepositoryUnchanged(this.#git, repository, true);
       return this.#transition(scopeKey, taskKey, (record) => ({
         ...record,

@@ -32,6 +32,7 @@ import {
   reconcileMissionCompletionAfterSchedulerTick,
   reconcileInterruptedWorktreeReservationFailuresForScope,
   reconcileSupersededPlanGenerations,
+  reconcileTerminalDispatchWorktreeReleaseForScope,
   reconcileTerminalMergeFailureForScope,
   validateMissionMergeWithLifecycleFence,
 } from "./mission-scheduler-production";
@@ -2455,6 +2456,95 @@ describe("superseded plan generation reconciliation", () => {
         },
       );
       expect(result).toEqual(["task-stale"]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
+
+describe("terminal dispatch worktree release reconciliation", () => {
+  it("releases an active worktree owned by a blocked or failed dispatch, across missions", () => {
+    const scope = testProjectScope();
+    const dispatches = [
+      { taskId: "task-blocked", missionId: "mission-old", state: "blocked" },
+      { taskId: "task-failed", missionId: "mission-older", state: "failed" },
+      { taskId: "task-running", missionId: "mission-current", state: "running" },
+    ];
+    const records = new Map<string, { status: string }>([
+      ["task-blocked", { status: "ready" }],
+      ["task-failed", { status: "reserved" }],
+    ]);
+    const markFailed = vi.fn();
+    const result = reconcileTerminalDispatchWorktreeReleaseForScope(scope, {
+      registry: {
+        get: vi.fn(
+          (_scope: unknown, _missionId: string, taskId: string) =>
+            records.get(taskId) ?? null,
+        ),
+        markFailed,
+      } as never,
+      getDispatches: () => ({ list: vi.fn(() => dispatches) }) as never,
+    });
+    expect(result).toEqual(["task-blocked", "task-failed"]);
+    expect(markFailed).toHaveBeenCalledTimes(2);
+    expect(markFailed).toHaveBeenCalledWith(
+      scope,
+      "mission-old",
+      "task-blocked",
+      expect.stringMatching(/terminal|blocked|failed/i),
+    );
+    expect(markFailed).toHaveBeenCalledWith(
+      scope,
+      "mission-older",
+      "task-failed",
+      expect.stringMatching(/terminal|blocked|failed/i),
+    );
+  });
+
+  it("never touches a dispatch with no worktree or an already-terminal worktree status", () => {
+    const scope = testProjectScope();
+    const dispatches = [
+      { taskId: "task-no-worktree", missionId: "mission-a", state: "blocked" },
+      { taskId: "task-integrated", missionId: "mission-b", state: "failed" },
+    ];
+    const records = new Map<string, { status: string } | null>([
+      ["task-no-worktree", null],
+      ["task-integrated", { status: "integrated" }],
+    ]);
+    const markFailed = vi.fn();
+    const result = reconcileTerminalDispatchWorktreeReleaseForScope(scope, {
+      registry: {
+        get: vi.fn(
+          (_scope: unknown, _missionId: string, taskId: string) =>
+            records.get(taskId) ?? null,
+        ),
+        markFailed,
+      } as never,
+      getDispatches: () => ({ list: vi.fn(() => dispatches) }) as never,
+    });
+    expect(result).toEqual([]);
+    expect(markFailed).not.toHaveBeenCalled();
+  });
+
+  it("still reports releases when a worktree release fails", () => {
+    const scope = testProjectScope();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const result = reconcileTerminalDispatchWorktreeReleaseForScope(scope, {
+        registry: {
+          get: vi.fn(() => ({ status: "ready" })),
+          markFailed: vi.fn(() => {
+            throw new WorktreeStateConflictError("cas lost");
+          }),
+        } as never,
+        getDispatches: () =>
+          ({
+            list: vi.fn(() => [
+              { taskId: "task-x", missionId: "mission-x", state: "blocked" },
+            ]),
+          }) as never,
+      });
+      expect(result).toEqual([]);
     } finally {
       warn.mockRestore();
     }

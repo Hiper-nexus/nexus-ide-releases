@@ -57,6 +57,7 @@ import {
   projectTerminalMergeFailure,
   reconcileInterruptedWorktreeReservationFailuresForScope,
   reconcileSupersededPlanGenerations,
+  reconcileTerminalDispatchWorktreeReleaseForScope,
   reconcileTerminalMergeFailureForScope,
 } from "./mission-scheduler-reconciliation";
 import { runMissionSchedulerLaunchPass } from "./mission-scheduler-pass";
@@ -115,6 +116,7 @@ export {
   projectTerminalMergeFailure,
   reconcileInterruptedWorktreeReservationFailuresForScope,
   reconcileSupersededPlanGenerations,
+  reconcileTerminalDispatchWorktreeReleaseForScope,
   reconcileTerminalMergeFailureForScope,
 } from "./mission-scheduler-reconciliation";
 
@@ -1646,6 +1648,7 @@ async function tick(signal?: AbortSignal): Promise<void> {
       throwIfMissionSchedulerAborted(signal);
       reconcileInterruptedWorktreeReservationFailuresForScope(scope);
       reconcileTerminalMergeFailureForScope(scope);
+      reconcileTerminalDispatchWorktreeReleaseForScope(scope);
     },
     listMissions: (scope) => {
       throwIfMissionSchedulerAborted(signal);
