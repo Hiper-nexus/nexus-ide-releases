@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.19.42 — A missão não para por causa de uma CLI
+
+Data: 2026-07-31
+
+### Uma CLI morta deixou de ser o fim da missão
+
+- **Reroute automático dentro do time aprovado**: quando um worker esgota as
+  três tentativas físicas de spawn (cota esgotada, login expirado, binário
+  quebrado), o Nexus re-vincula a tarefa a outro agente da MESMA categoria do
+  mesmo roster selado — com CLI viva e rota resolvível agora — e reabre a
+  missão sozinho. O plano permanece imutável: o reroute é uma re-vinculação de
+  despacho, nunca um replanejamento nem uma dispensa de tarefa. Cada CLI já
+  provada morta fica registrada na diretiva durável, então a cadeia é finita e
+  auditável. Sem candidato vivo, o diagnóstico terminal permanece como está.
+- **A troca é contada ao operador**: cada reroute vira uma entrada durável nos
+  aprendizados da missão — qual CLI morreu, quem assumiu, e que o plano segue o
+  mesmo. Recuperação automática deixou de ser invisível.
+
+### Missões que nasciam mortas
+
+- **Squad salvo ganha plano selado pelo Main**: um time salvo com pelo menos um
+  executor entra na política guiada e recebe plano selado. Antes essas missões
+  caíam numa rota de planejamento pelo orquestrador que morria em
+  `workflow_authority_revoked`, deixando a missão despachada com zero tarefas
+  para sempre. Times de revisão/pesquisa (sem executor) continuam na rota
+  anterior.
+- **Agêntico reusa o time salvo por padrão**: o modo agêntico prefere um squad
+  salvo elegível em vez de sintetizar um time novo com os modelos default do
+  adapter — origem do `gpt-5.5` aparecendo em missão que ninguém pediu.
+
+### Interface
+
+- **Pane que está subindo diz quem está subindo**: enquanto o PTY não reporta
+  sessão, o pane mostra "Subindo…" com agente, CLI e modelo, e avisa
+  honestamente quando passa do tempo normal de cold start. O retângulo preto
+  sem explicação era lido como "pane morto tapando a missão".
+- **Frota da missão visível fora do foco**: a lista de agentes aparece sempre
+  que existirem panes da missão, não só quando ela está aberta no grid.
+
 ## 0.19.41 — Missão destrava, diagnóstico aparece
 
 Data: 2026-07-31

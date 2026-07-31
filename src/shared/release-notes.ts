@@ -13,6 +13,69 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.19.42',
+  date: '2026-07-31',
+  codename: 'A missão não para por causa de uma CLI',
+  summary:
+    'Uma CLI sem cota, sem login ou com binário quebrado deixou de ser o fim da ' +
+    'missão: o Nexus passa a tarefa para outro agente do mesmo time aprovado e ' +
+    'retoma sozinho, contando o que fez. Missões de squad salvo voltam a ganhar ' +
+    'plano selado pelo Main, o modo agêntico reusa o time que você montou, e um ' +
+    'pane que está subindo diz quem está subindo em vez de ficar preto.',
+  highlights: [
+    {
+      title: 'Provider morto não trava mais a missão',
+      detail:
+        'Quando um worker esgota as três tentativas físicas de spawn (cota, ' +
+        'login expirado, binário quebrado), a tarefa é re-roteada para outro ' +
+        'agente da MESMA categoria do time aprovado, com CLI viva, e a missão ' +
+        'volta a rodar sozinha. O plano não muda: o reroute é uma re-vinculação ' +
+        'de despacho, nunca um replanejamento nem uma dispensa de tarefa. Cada ' +
+        'CLI já provada morta fica registrada, então a cadeia é finita.',
+    },
+    {
+      title: 'O Nexus conta a troca que fez sozinho',
+      detail:
+        'Toda troca automática de provider vira uma entrada durável nos ' +
+        'aprendizados da missão: qual CLI morreu, quem assumiu e que o plano ' +
+        'continua o mesmo. Recuperação automática deixou de ser invisível.',
+    },
+    {
+      title: 'Missão de squad salvo ganha plano selado',
+      detail:
+        'Um time salvo com pelo menos um executor entra na política guiada do ' +
+        'Main e recebe plano selado. Antes essas missões caíam numa rota de ' +
+        'planejamento pelo orquestrador que morria em ' +
+        '"workflow_authority_revoked", deixando a missão despachada com zero ' +
+        'tarefas para sempre.',
+    },
+    {
+      title: 'Agêntico reusa o time que você montou',
+      detail:
+        'O modo agêntico agora prefere por padrão um squad salvo elegível em ' +
+        'vez de sintetizar um time novo com modelos default — que era a origem ' +
+        'do gpt-5.5 aparecendo em missão nenhuma pediu.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Pane que está subindo diz quem está subindo',
+      detail:
+        'Enquanto o PTY não reporta sessão, o pane mostra "Subindo…" com o ' +
+        'agente, a CLI e o modelo — e avisa honestamente quando passa do tempo ' +
+        'normal de cold start. O retângulo preto sem explicação era lido como ' +
+        '"pane morto tapando a missão".',
+    },
+    {
+      title: 'Frota da missão visível fora do foco',
+      detail:
+        'A lista de agentes de uma missão aparece sempre que existirem panes ' +
+        'dela, não só quando a missão está aberta no grid.',
+    },
+  ],
+};
+
+export const PREVIOUS_RELEASE: AppRelease = {
   version: '0.19.41',
   date: '2026-07-31',
   codename: 'Missão destrava, diagnóstico aparece',
@@ -73,7 +136,7 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const PREVIOUS_RELEASE: AppRelease = {
+export const RELEASE_01940: AppRelease = {
   version: '0.19.40',
   date: '2026-07-31',
   codename: 'Sem cerimônia',
