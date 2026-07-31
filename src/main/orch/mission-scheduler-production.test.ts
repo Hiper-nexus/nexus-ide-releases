@@ -2501,6 +2501,32 @@ describe("terminal dispatch worktree release reconciliation", () => {
     );
   });
 
+  it("releases with the dead-owner marker so the retry lane can resurrect the record", () => {
+    // Regressão de produção: a razão sem o marcador impedia a ressurreição em
+    // WorktreeManager.create ("task worktree is already failed") e quebrava
+    // definitivamente a retry lane do bootstrap recovery.
+    const scope = testProjectScope();
+    const markFailed = vi.fn();
+    reconcileTerminalDispatchWorktreeReleaseForScope(scope, {
+      registry: {
+        get: vi.fn(() => ({ status: "ready" })),
+        markFailed,
+      } as never,
+      getDispatches: () =>
+        ({
+          list: vi.fn(() => [
+            { taskId: "task-x", missionId: "mission-x", state: "failed" },
+          ]),
+        }) as never,
+    });
+    expect(markFailed).toHaveBeenCalledWith(
+      scope,
+      "mission-x",
+      "task-x",
+      expect.stringMatching(/^\[NEXUS_DEAD_OWNER_WORKTREE_RELEASE\]/),
+    );
+  });
+
   it("never touches a dispatch with no worktree or an already-terminal worktree status", () => {
     const scope = testProjectScope();
     const dispatches = [

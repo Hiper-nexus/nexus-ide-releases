@@ -3,7 +3,10 @@ import {
   requireWorktreeRuntimeRegistry,
   type WorktreeRuntimeRegistry,
 } from "../runtime/worktree-runtime-registry";
-import { INTERRUPTED_WORKTREE_RESERVATION_FAILURE_MARKER } from "../runtime/worktree-manager";
+import {
+  DEAD_OWNER_WORKTREE_RELEASE_MARKER,
+  INTERRUPTED_WORKTREE_RESERVATION_FAILURE_MARKER,
+} from "../runtime/worktree-manager";
 import { ACTIVE_WORKTREE_STATUSES } from "../runtime/worktree-contract";
 import {
   getProjectDomainStores,
@@ -244,7 +247,8 @@ export function reconcileSupersededPlanGenerations(
 }
 
 export const TERMINAL_DISPATCH_WORKTREE_RELEASE_REASON =
-  "dispatch alcançou estado terminal (blocked/failed); ownership do worktree liberada";
+  `${DEAD_OWNER_WORKTREE_RELEASE_MARKER} dispatch alcançou estado terminal ` +
+  "(blocked/failed); ownership do worktree liberada";
 
 const TERMINAL_DISPATCH_STATES = new Set<TaskDispatchRecord["state"]>([
   "blocked",
