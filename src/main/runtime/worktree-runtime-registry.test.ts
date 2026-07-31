@@ -11,9 +11,26 @@ import {
   OwnershipOverlapError,
   worktreeTaskKey,
 } from "./worktree-manager";
+import { ScopedStoreBinding } from "../orch/scoped-store";
 
 const roots: string[] = [];
 const managers: ProjectRuntimeManager[] = [];
+
+/** Seeds a live mission row so scope reconstruction sees an owned block. */
+function seedMission(
+  manager: ProjectRuntimeManager,
+  scope: ProjectExecutionScope,
+  missionId: string,
+): void {
+  new ScopedStoreBinding(manager, scope)
+    .writeDatabase()
+    .prepare(
+      "INSERT OR IGNORE INTO missions " +
+        "(id, title, status, created_at, updated_at) " +
+        "VALUES (?, ?, 'running', 1, 1)",
+    )
+    .run(missionId, missionId);
+}
 
 function git(root: string, ...args: string[]): string {
   return execFileSync("git", ["-C", root, ...args], {
@@ -558,6 +575,9 @@ describe("project worktree runtime registry", () => {
   it("automatically reconciles an interrupted active merge after reopening", async () => {
     const { root, scope, manager } = fixture();
     const registry = new WorktreeRuntimeRegistry(manager);
+    // The interrupted merge belongs to a LIVE mission: reconstruction must
+    // keep the reconciled block instead of retiring it as orphaned.
+    seedMission(manager, scope, "mission-restart");
     const record = await createTrackedWorktree(registry, manager, {
       scope,
       missionId: "mission-restart",
