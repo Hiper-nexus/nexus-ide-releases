@@ -221,6 +221,59 @@ describe('orchestration bridge pane recovery', () => {
     act(() => mounted.root.unmount());
   });
 
+  it('holds a presentation until the layout hydrates, then replaces the placeholder (ghost pane race)', async () => {
+    // The exact production race: the bridge mounts and Main presents mission
+    // panes BEFORE the persisted workspace layout hydrates. Un-gated, the
+    // later hydrate replaced the mission panes with the persisted structural
+    // placeholder — the "empty pane covering a live mission" bug.
+    useLayoutStore.setState({
+      hydrated: false,
+      root: {
+        kind: 'leaf',
+        id: 'leaf-boot',
+        pane: {
+          id: 'shell-boot',
+          kind: 'shell',
+          title: 'shell',
+          isStructuralPlaceholder: true,
+        },
+      },
+      focusedPaneId: 'shell-boot',
+    });
+    terminal.waitForSession.mockResolvedValueOnce('session-boot');
+    const present = installPresentationHarness();
+    const mounted = mount();
+
+    act(() => {
+      present(presentationRequest('boot'));
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    // Not hydrated yet: the presentation must not have touched the tree.
+    expect(terminal.waitForSession).not.toHaveBeenCalled();
+    expect(listPanes(useLayoutStore.getState().root).map((pane) => pane.id))
+      .toEqual(['shell-boot']);
+
+    // The persisted layout lands (placeholder-only restore). Only now may the
+    // presentation proceed — and it replaces the placeholder, never the
+    // other way around.
+    act(() => {
+      useLayoutStore.getState().hydrate(null);
+    });
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(terminal.waitForSession).toHaveBeenCalledWith(
+          'pane-boot',
+          75_000,
+        );
+      });
+    });
+    expect(listPanes(useLayoutStore.getState().root).map((pane) => pane.id))
+      .toEqual(['pane-boot']);
+    act(() => mounted.root.unmount());
+  });
+
   it('normalizes a restored bare shell beside the exact healthy mission pane', async () => {
     terminal.getPaneSessionId.mockImplementation((paneId: string) =>
       paneId === 'pane-restored' ? 'session-restored' : null,
