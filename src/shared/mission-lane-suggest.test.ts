@@ -30,6 +30,33 @@ describe('suggestMissionLaneFromGoal', () => {
     ).toBe('consult');
   });
 
+  it('suggests consult for analysis/audit wording (vibe-coder autopilot)', () => {
+    expect(
+      suggestMissionLaneFromGoal(
+        'analise no nexus. do disparo de panes de como ele esta se ' +
+          'comprtando do que precisamos melhorar no sistema',
+      ),
+    ).toBe('consult');
+    expect(
+      suggestMissionLaneFromGoal('Fazer uma análise da arquitetura de billing'),
+    ).toBe('consult');
+    expect(
+      suggestMissionLaneFromGoal('Audite a segurança das rotas da API'),
+    ).toBe('consult');
+    expect(
+      suggestMissionLaneFromGoal('Explique como funciona o fluxo de login'),
+    ).toBe('consult');
+    expect(
+      suggestMissionLaneFromGoal('Mapeie os pontos de acoplamento do módulo'),
+    ).toBe('consult');
+  });
+
+  it('keeps implement precedence over analysis wording', () => {
+    expect(
+      suggestMissionLaneFromGoal('Analise o bug e corrigir o fluxo de login'),
+    ).toBeNull();
+  });
+
   it('does not suggest plan when implement signals dominate', () => {
     expect(
       suggestMissionLaneFromGoal(

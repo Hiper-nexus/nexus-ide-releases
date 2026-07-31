@@ -682,7 +682,7 @@ export function suggestMissionLaneFromGoal(goal: string): MissionLane | null {
     );
   if (implement) return null;
   const consult =
-    /\b(consultar|consulta\b|somente\s+leitura|read-?only|ler\s+logs?|status\s+de|investigar|diagn[oó]stico|doctor|o\s+que\s+est[aá]\s+acontecendo)\b/i.test(
+    /\b(consultar|consulta\b|somente\s+leitura|read-?only|ler\s+logs?|status\s+de|investigar|investigue|diagn[oó]stico|diagnosticar|doctor|o\s+que\s+est[aá]\s+acontecendo|analis(?:e|a|ar|em)|an[aá]lise|analy(?:ze|sis)|audit(?:e|ar|oria)?\b|mapea(?:r|m)|mapeie|entend(?:er|a)|explique|explicar|avali(?:e|ar)|como\s+funciona|por\s*que\s+(?:o|a|isso|ele|ela)\b)\b/i.test(
       g,
     );
   if (consult) return 'consult';

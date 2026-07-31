@@ -276,19 +276,30 @@ export function MissionWizard() {
   // before `spawning` has reached the DOM.
   const missionTransitionInFlightRef = useRef(false);
 
-  const suggestedLane = useMemo(
-    () => suggestMissionLaneFromGoal(missionGoal),
-    [missionGoal],
-  );
-
-  // Lane suggestion: only applies INSIDE the advanced section. With the
-  // section collapsed the lane stays standard — the default never restricts.
-  useEffect(() => {
-    if (laneTouchedByUserRef.current) return;
-    setMissionLane(advancedOpen ? (suggestedLane ?? "standard") : "standard");
-  }, [suggestedLane, advancedOpen]);
   // Modo Agêntico: intenção em linguagem natural + estado do arquiteto.
   const [intent, setIntent] = useState("");
+
+  // The active goal text lives in `missionGoal` on the squad/goal-composer
+  // path and in `intent` on the (default) agentic path. Suggesting only from
+  // `missionGoal` left the vibe-coder's main path permanently on standard —
+  // an analysis request then got a full delivery graph with merge queue.
+  const suggestedLane = useMemo(
+    () =>
+      suggestMissionLaneFromGoal(
+        missionGoal.trim() ? missionGoal : intent,
+      ),
+    [missionGoal, intent],
+  );
+
+  // Lane suggestion applies whether or not the advanced section is open —
+  // an analysis goal must reach the consult lane on autopilot, otherwise it
+  // gets a full delivery graph (worktree + merge queue) for a question. The
+  // visible chip keeps the choice inspectable and reversible; an operator
+  // pick always wins.
+  useEffect(() => {
+    if (laneTouchedByUserRef.current) return;
+    setMissionLane(suggestedLane ?? "standard");
+  }, [suggestedLane]);
   const [designing, setDesigning] = useState(false);
   // Main returns an unpublished design plus an opaque, renderer/workspace-bound
   // capability. It remains local until the operator explicitly saves it or
@@ -1986,6 +1997,26 @@ export function MissionWizard() {
                 onChange={(e) => setIntent(e.target.value)}
                 autoFocus
               />
+              {missionLane !== "standard" && (
+                <button
+                  type="button"
+                  className="wizard__btn wizard__btn--ghost"
+                  style={{ marginTop: 6, color: "var(--accent)" }}
+                  title="O objetivo sugere este modo; clique para executar sem restrições"
+                  onClick={() => {
+                    laneTouchedByUserRef.current = true;
+                    setMissionLane("standard");
+                  }}
+                >
+                  Modo:{" "}
+                  {missionLane === "consult"
+                    ? "Só pesquisar (somente leitura)"
+                    : missionLane === "plan"
+                      ? "Só planejar"
+                      : "Só infra"}{" "}
+                  · mudar para execução
+                </button>
+              )}
               <p className="wizard__hint-sm">
                 O Nexus lê seu objetivo e o projeto, monta a equipe certa e
                 inclui revisão, segurança ou UX quando necessário. Você confere
@@ -2298,6 +2329,23 @@ export function MissionWizard() {
                 >
                   {advancedOpen ? "▾" : "▸"} Opções avançadas
                 </button>
+                {!advancedOpen && missionLane !== "standard" && (
+                  <button
+                    type="button"
+                    className="wizard__btn wizard__btn--ghost"
+                    style={{ marginLeft: 8, color: "var(--accent)" }}
+                    title="O objetivo sugere este modo; clique para revisar ou trocar"
+                    onClick={() => setAdvancedOpen(true)}
+                  >
+                    Modo:{" "}
+                    {missionLane === "consult"
+                      ? "Só pesquisar (somente leitura)"
+                      : missionLane === "plan"
+                        ? "Só planejar"
+                        : "Só infra"}{" "}
+                    · trocar
+                  </button>
+                )}
                 {advancedOpen && (
                   <fieldset
                     className="wizard__mode-desc"
