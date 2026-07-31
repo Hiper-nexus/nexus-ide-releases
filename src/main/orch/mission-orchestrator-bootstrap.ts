@@ -82,6 +82,7 @@ import {
 } from "./guided-mission-planner";
 import { warmSquadRuntimeSubscriptionAuth } from "./squad-runtime-inventory";
 import { missionRequiresGuidedPrevc } from "./guided-mission-authority";
+import { warnGuidedDeliveryDriverInactive } from "./guided-driver-visibility";
 import { ensureGuidedMissionPrevcForScope } from "./guided-mission-prevc";
 import { prepareOpportunisticPrevcContext } from "./prevc-merge-preparation";
 import { assertPromotedPlanSnapshot } from "./plan-promotion-authority";
@@ -316,6 +317,19 @@ export interface MissionOrchestratorBootstrapDeps {
     scope: ProjectExecutionScope,
     missionId: string,
   ): unknown | Promise<unknown>;
+  /**
+   * Driver mode in force. Guided delivery completion is driver-owned, so a
+   * guided mission starting under a non-active driver must be surfaced.
+   */
+  missionDriverMode?(): "shadow" | "active";
+  /**
+   * Loud once-per-mission warning that guided delivery completion requires
+   * the mission driver enabled. Advisory: never blocks the bootstrap.
+   */
+  warnDriverInactive?(
+    scope: ProjectExecutionScope,
+    missionId: string,
+  ): void;
 }
 
 export interface MissionOrchestratorBootstrapRecoveryDeps {
@@ -748,6 +762,10 @@ const productionDeps: MissionOrchestratorBootstrapDeps = {
     prepareOpportunisticPrevcContext(scope, missionId),
   ensureMissionPrevc: (scope, missionId) =>
     ensureGuidedMissionPrevcForScope(scope, missionId),
+  missionDriverMode: () =>
+    getOrchSettings().missionDriverActiveMode === true ? "active" : "shadow",
+  warnDriverInactive: (scope, missionId) =>
+    warnGuidedDeliveryDriverInactive(scope, missionId),
 };
 
 /**
@@ -874,6 +892,15 @@ export class MissionOrchestratorBootstrapService {
       standardTopology === "team-read-only-fanout";
     const guidedPrevcRequired =
       missionRequiresGuidedPrevc(initial, standardTopology);
+    // Guided delivery completion is driver-owned: with the driver disabled the
+    // mission executes and then silently never flips to done. Surface that at
+    // mission start instead of letting it die quietly at the finish line.
+    if (
+      guidedPrevcRequired &&
+      (this.#deps.missionDriverMode?.() ?? "active") !== "active"
+    ) {
+      this.#deps.warnDriverInactive?.(scope, missionId);
+    }
 
     const squad = initial.squadId ? this.#deps.getSquad(initial.squadId) : null;
     const orchestrator = squad ? chooseOrchestrator(squad) : null;

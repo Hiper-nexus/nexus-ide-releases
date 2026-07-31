@@ -133,6 +133,7 @@ function standardStateLines(input: IntentDispatchKickoffInput): string[] {
   } else if (input.guidedPrevcRequired) {
     lines.push(
       '- PREVC já congelado: o main conclui revisões e sensores na fronteira de promoção sem bloquear o início dos workers.',
+      '- NÃO chame freeze, refreeze, Doctor ou prepare_execution — o contrato já foi congelado pelo Main.',
     );
   } else {
     lines.push(
@@ -150,8 +151,25 @@ function standardStateLines(input: IntentDispatchKickoffInput): string[] {
  * ponta: você coordena" next to "o main é o único dispatcher / apenas
  * acompanhe". A model told simultaneously that it conducts and that nearly
  * every action belongs to someone else stalls instead of acting.
+ *
+ * Guided Main-owned PREVC delivery missions get a ceremony-free sequence:
+ * freeze, planning advance, council reviews, merge-boundary advance, the
+ * post-merge bridge and the done flip are all Main-owned, and delivery
+ * handoffs need no manual ACK (idle-delivery.ts no_manual_ack_required).
+ * Teaching the old ceremony made the Maestro burn turns polling toward a
+ * set_status=done call that tools-domain.ts hard-rejects in this topology.
+ * Fan-out topologies keep mandatory ACKs in their own kickoff prompt.
  */
-function standardSequenceLines(): string[] {
+function standardSequenceLines(input: IntentDispatchKickoffInput): string[] {
+  if (input.guidedPrevcRequired === true) {
+    return [
+      '1. Comece a execução: o Main já é dono do PREVC desta missão — contrato congelado, planejamento, revisões, sensores, validação e confirmação avançam sozinhos. Não chame freeze, refreeze, Doctor ou prepare_execution.',
+      '2. Consulte nexus_task list. O plano desta intenção já é selado pelo Main: acompanhe e delegue a partir dele. Lista vazia é recuperação transitória do Main; consulte novamente sem criar um plano paralelo.',
+      '3. Conduza: acompanhe os especialistas, destrave dependências e mantenha paralelismo dentro do limite. Comandos longos de implementação rodam no worktree da task; acompanhe-os por task, heartbeat e handoff. O Maestro não assume a implementação no checkout de coordenação.',
+      '4. A cada entrega: processe o handoff do especialista. Nesta topologia o ACK manual não é exigido (no_manual_ack_required): o Main reconhece cada entrega, integra o resultado e avança o PREVC.',
+      '5. Não feche a missão: o motor Nexus conclui o PREVC e marca a missão como done sozinho; nexus_mission_set_status com done é rejeitado nesta topologia. Vigie handoffs e trate bloqueios e escalonamentos dos workers — não faça polling esperando uma chamada proibida.',
+    ];
+  }
   const lines = [
     '1. Comece a execução: o main prepara o contexto PREVC em paralelo. Não pare a missão para rodar Doctor/freeze; freeze, sensores e revisão serão concluídos automaticamente antes da promoção final.',
   ];
@@ -405,7 +423,7 @@ export function buildIntentDispatchKickoffPrompt(
     ...standardStateLines(input),
     '',
     '## Como conduzir',
-    ...standardSequenceLines(),
+    ...standardSequenceLines(input),
     '',
     '## Quando algo não sai como esperado',
     ...standardEscalationLines(input),

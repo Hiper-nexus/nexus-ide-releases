@@ -1270,6 +1270,93 @@ describe('initial main-owned orchestrator bootstrap', () => {
     );
   });
 
+  function armGuidedMission(value: Harness): Squad {
+    const guidedSquad: Squad = {
+      ...squad,
+      id: 'agentic-guided-squad',
+      agents: squad.agents.map((agent) => ({ ...agent })),
+    };
+    value.mission = {
+      ...value.mission,
+      squadId: guidedSquad.id,
+      intentContract: {
+        ...value.mission.intentContract!,
+        squadRevisionHash: snapshotSquadAuthority(guidedSquad).hash,
+      },
+    };
+    value.deps.getSquad = (id) => (id === guidedSquad.id ? guidedSquad : null);
+    const targetSeal = createMissionPaneAuthoritySeal({
+      mission: value.mission,
+      squad: guidedSquad,
+    });
+    if (!targetSeal) throw new Error('missing guided authority seal');
+    value.deps.getAgentSessionInfo = (sessionId) =>
+      sessionId === 'pty-main-orch'
+        ? {
+            sessionId,
+            paneId: 'pane-main-orch',
+            adapterId: 'codex',
+            model: 'gpt-5.6-sol',
+            requestedModel: 'gpt-5.6-sol',
+            accountId: 'account-codex',
+            effort: 'high',
+            cwd: scope.rootRealPath,
+            scope,
+            source: 'pending',
+            role: 'orchestrator',
+            missionId: value.mission.id,
+            agentName: 'Maestro',
+            readOnly: false,
+            nativeReadOnly: true,
+            allowedTools: ['nexus_task'],
+            allowedSkills: ['check-work'],
+            authoritySeal: targetSeal,
+          }
+        : null;
+    return guidedSquad;
+  }
+
+  it('warns once at mission start when a guided delivery starts with the driver disabled', async () => {
+    const value = harness();
+    armGuidedMission(value);
+    const warnDriverInactive = vi.fn();
+    value.deps.missionDriverMode = () => 'shadow';
+    value.deps.warnDriverInactive = warnDriverInactive;
+
+    const result = await new MissionOrchestratorBootstrapService(
+      value.deps,
+    ).bootstrap(scope, value.mission.id);
+
+    expect(result.ok).toBe(true);
+    expect(warnDriverInactive).toHaveBeenCalledTimes(1);
+    expect(warnDriverInactive).toHaveBeenCalledWith(scope, value.mission.id);
+  });
+
+  it('stays silent when the driver is active or the mission is not guided', async () => {
+    const guided = harness();
+    armGuidedMission(guided);
+    const guidedWarn = vi.fn();
+    guided.deps.missionDriverMode = () => 'active';
+    guided.deps.warnDriverInactive = guidedWarn;
+
+    const guidedResult = await new MissionOrchestratorBootstrapService(
+      guided.deps,
+    ).bootstrap(scope, guided.mission.id);
+    expect(guidedResult.ok).toBe(true);
+    expect(guidedWarn).not.toHaveBeenCalled();
+
+    const legacy = harness();
+    const legacyWarn = vi.fn();
+    legacy.deps.missionDriverMode = () => 'shadow';
+    legacy.deps.warnDriverInactive = legacyWarn;
+
+    const legacyResult = await new MissionOrchestratorBootstrapService(
+      legacy.deps,
+    ).bootstrap(scope, legacy.mission.id);
+    expect(legacyResult.ok).toBe(true);
+    expect(legacyWarn).not.toHaveBeenCalled();
+  });
+
   it('validates the sealed requested model instead of the provider-normalized model', async () => {
     const value = harness();
     const defaultRuntime = {

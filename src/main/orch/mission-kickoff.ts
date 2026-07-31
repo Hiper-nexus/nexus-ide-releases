@@ -28,6 +28,7 @@ import {
 } from '../pty/pty-manager';
 import { requireRendererWorkspaceScope } from '../persistence/renderer-workspace-scope';
 import { getContextBySession } from './gate';
+import { missionRequiresGuidedPrevc } from './guided-mission-authority';
 import {
   getPaneRuntimeAuthorityBySession,
   type PaneRuntimeAuthority,
@@ -669,6 +670,9 @@ export function buildCanonicalMissionKickoffPrompt(
     promotedPlan: contract.promotedPlan
       ? assertPromotedPlanSnapshot(contract.promotedPlan)
       : undefined,
+    // Renderer-path kickoffs must describe the same Main-owned PREVC reality
+    // as the bootstrap path, or a resumed Maestro re-learns the ceremony.
+    guidedPrevcRequired: missionRequiresGuidedPrevc(mission, standardTopology),
     operatorChoice: isOperatorChoicePolicy(getOrchSettings().squadCliPolicy),
     standardTopology,
   });

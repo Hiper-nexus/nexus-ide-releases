@@ -49,6 +49,8 @@ import {
   runPrevcFinalValidation,
 } from './prevc-autopilot-coordinator';
 import { ensurePrevcMergeReady } from './prevc-merge-preparation';
+import { missionRequiresGuidedPrevc } from './guided-mission-authority';
+import { standardTopologyFromSealedTaskDetails } from './guided-mission-topology-authority';
 
 // Doctor is an idempotent project operation, not a fan-out primitive. Several
 // model retries used to launch independent reviewers for the same drafts.
@@ -430,6 +432,58 @@ function invocationAuthority(
   return () => assertMcpInvocationCurrent(invocation);
 }
 
+/**
+ * Guided Main-owned PREVC boundary, mirroring guided-prevc-mcp-fence.ts:
+ * the same missionRequiresGuidedPrevc predicate over the sealed task receipt.
+ * For these missions the Main already froze the contract and advances every
+ * PREVC step itself, so the manual ceremony tools (freeze/refreeze/Doctor/
+ * prepare_execution) fail fast with a clear message instead of letting the
+ * Maestro burn turns on calls that can never help. Missions outside the
+ * boundary (legacy squads, consult/plan/ops lanes) keep the tools.
+ *
+ * This is an affordance, never an authority gate: when the mission stores
+ * cannot be read the call proceeds and the real fence decides.
+ */
+function mainOwnsGuidedPrevc(
+  ctx: AgentGateContext,
+  missionId: string,
+): boolean {
+  try {
+    const stores = getProjectDomainStores(ctx.scope);
+    const mission = stores.missions.get(missionId);
+    const approved = mission?.intentContract;
+    if (!mission || !approved) return false;
+    const receipt = stores.tasks.getPlanReceipt(
+      missionId,
+      approved.intentVersion,
+    );
+    const topology = standardTopologyFromSealedTaskDetails(
+      receipt?.tasks.map((task) => task.detail) ?? [],
+    );
+    // Mixed-authority receipts are the fence's stale authority, not a cue to
+    // fail fast here.
+    if (topology === 'invalid') return false;
+    return missionRequiresGuidedPrevc(mission, topology);
+  } catch {
+    return false;
+  }
+}
+
+function assertPrevcCeremonyNotMainOwned(
+  ctx: AgentGateContext,
+  missionId: string | undefined,
+  toolName: string,
+): void {
+  if (!missionId) return;
+  if (mainOwnsGuidedPrevc(ctx, missionId)) {
+    throw new Error(
+      `${toolName}: o Main já é dono do PREVC desta missão — nenhuma ação ` +
+        'necessária. Contrato congelado, planejamento, revisões, sensores e ' +
+        'validação avançam sozinhos.',
+    );
+  }
+}
+
 function markMergedTaskDone(
   ctx: AgentGateContext,
   taskId: string,
@@ -489,6 +543,10 @@ const doctorTool: McpToolDef = {
           : 'Context not ready. Orchestrator must run bootstrap pilot.',
       });
     }
+
+    // Guided Main-owned PREVC: the bootstrap Doctor is Main-owned, so the
+    // Maestro's own Doctor run is pure ceremony — fail fast before any flight.
+    assertPrevcCeremonyNotMainOwned(ctx, ctx.missionId, 'nexus_context_doctor');
 
     const key = contextDoctorScopeKey(ctx);
     let flight = contextDoctorFlights.get(key);
@@ -813,7 +871,7 @@ const contextCommitTool: McpToolDef = {
 const freezeTool: McpToolDef = {
   name: 'nexus_mission_freeze_contract',
   description:
-    'Compile and freeze the mission contract against the current committed context, Git base, invariants and declarative sensors. Must happen before coding.',
+    'Compile and freeze the mission contract against the current committed context, Git base, invariants and declarative sensors. For missions outside Main-owned guided PREVC (legacy squads): in guided missions the Main freezes and advances PREVC itself and this call fails fast.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -858,6 +916,11 @@ const freezeTool: McpToolDef = {
       })),
     };
     assertMission(ctx, input.missionId);
+    assertPrevcCeremonyNotMainOwned(
+      ctx,
+      input.missionId,
+      'nexus_mission_freeze_contract',
+    );
     const mission = getProjectDomainStores(ctx.scope).missions.get(input.missionId);
     const authorized = bindFreezeDraftToApprovedIntent(mission, input);
     const service = getContextWorkflowService(ctx.scope);
@@ -912,6 +975,11 @@ const refreezeTool: McpToolDef = {
     }
     const parsed = z.object({ missionId: z.string().min(1) }).parse(args);
     assertMission(ctx, parsed.missionId);
+    assertPrevcCeremonyNotMainOwned(
+      ctx,
+      parsed.missionId,
+      'nexus_mission_refreeze_contract',
+    );
     const service = getContextWorkflowService(ctx.scope);
     const assertCurrentAuthority = invocationAuthority(invocation);
     const previousRevision =
@@ -1070,6 +1138,11 @@ const prepareExecutionTool: McpToolDef = {
     }
     const missionId = identifier.parse(args.missionId);
     assertMission(ctx, missionId);
+    assertPrevcCeremonyNotMainOwned(
+      ctx,
+      missionId,
+      'nexus_workflow_prepare_execution',
+    );
     const service = getContextWorkflowService(ctx.scope);
     const before = service.getMissionWorkflow(missionId);
     if (!before.contract || !before.workflow) {
