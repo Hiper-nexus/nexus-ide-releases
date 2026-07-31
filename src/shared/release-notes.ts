@@ -13,6 +13,48 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.19.40',
+  date: '2026-07-31',
+  codename: 'Sem cerimônia',
+  summary:
+    'O Maestro para de gastar minutos e tokens com burocracia PREVC que o Main já executa sozinho, a aprovação da missão volta a ser um clique só, e as travas de retomada descobertas em produção foram eliminadas.',
+  highlights: [
+    {
+      title: 'Fim da cerimônia PREVC do orquestrador',
+      detail:
+        'Em missões guiadas o Main já congela o contrato, avança estágios, roda revisões e sensores e conclui a missão. O kickoff agora diz isso explicitamente: sem freeze/Doctor/prepare_execution manual, sem ACK obrigatório em entregas, sem polling para um set_status que sempre seria rejeitado. As tools de cerimônia falham rápido com orientação clara nesse caminho.',
+    },
+    {
+      title: 'Aprovação em um clique',
+      detail:
+        'O "Começar" do plano revisado no wizard já é a aprovação — nada de modal nativo duplicado na primeira missão. O modal continua para risco destrutivo, promoção de plano, modo governado e chamadas fora do wizard.',
+    },
+    {
+      title: 'Roteador dentro do roster',
+      detail:
+        'nexus_route_task honra o roster selado da missão: nunca mais sugere um adapter fora do plano aprovado. Tarefa fora do plano falha com motivo claro; sem missão, o roteamento livre continua.',
+    },
+    {
+      title: 'Restore sem diálogo e sessão marcada',
+      detail:
+        'Panes restaurados voltam direto (ask/pause viram opt-in), e quando uma sessão é recriada sobre um pane com histórico, um divisor visível separa o scrollback morto da sessão viva.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Retry não morre mais em worktree failed',
+      detail:
+        'A liberação de worktree de dispatch terminal agora usa o marcador de ressurreição: a tentativa seguinte do bootstrap recovery re-prova a identidade física e segue, em vez de bloquear a missão com "task worktree is already failed".',
+    },
+    {
+      title: 'Driver desligado não falha em silêncio',
+      detail:
+        'Missão guiada com o mission driver desativado recebe aviso explícito no início — a conclusão depende dele — em vez de nunca terminar sem explicação.',
+    },
+  ],
+};
+
+export const PREVIOUS_RELEASE: AppRelease = {
   version: '0.19.39',
   date: '2026-07-30',
   codename: 'Vibecode sem atrito',
@@ -64,7 +106,7 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const PREVIOUS_RELEASE: AppRelease = {
+export const RELEASE_01938: AppRelease = {
   version: '0.19.38',
   date: '2026-07-29',
   codename: 'Missões que seguem em frente',

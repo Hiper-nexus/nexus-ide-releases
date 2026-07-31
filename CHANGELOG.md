@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.19.40 — Sem cerimônia
+
+Data: 2026-07-31
+
+### Menos burocracia, mais execução
+
+- **Fim da cerimônia PREVC do orquestrador**: em missões guiadas o Main
+  congela o contrato, avança estágios, roda revisões/sensores e conclui —
+  o kickoff agora ensina isso (sem freeze/Doctor/prepare_execution manual,
+  sem ACK obrigatório em entregas, sem polling para um set_status proibido)
+  e as tools de cerimônia falham rápido com orientação nesse caminho.
+- **Aprovação em um clique**: o "Começar" do plano revisado no wizard já é
+  a aprovação. O modal nativo fica só para risco destrutivo, promoção,
+  modo governado e chamadas fora do wizard.
+- **Roteador dentro do roster**: nexus_route_task honra o roster selado e
+  nunca sugere adapter fora do plano aprovado.
+- **Restore sem diálogo** e divisor visível separando scrollback morto da
+  sessão viva quando uma sessão é recriada no pane.
+
+### Correções de produção
+
+- **Retry lane curada**: a liberação de worktree de dispatch terminal usa o
+  marcador de ressurreição — bootstrap recovery re-prova a identidade e
+  segue, sem "task worktree is already failed".
+- **Driver desligado avisa**: missão guiada com driver inativo recebe aviso
+  explícito no início em vez de nunca concluir em silêncio.
+
 ## 0.19.39 — Vibecode sem atrito
 
 Data: 2026-07-30
