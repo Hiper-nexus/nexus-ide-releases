@@ -2340,6 +2340,148 @@ export class TaskDispatchStore {
   }
 
   /**
+   * Reroute AO VIVO: a CLI do worker provou-se inutilizável no meio da
+   * execução (401 de auth, cota esgotada) e não existe conta alternativa do
+   * mesmo adapter. Em vez de gastar as 3 tentativas físicas respawnando um
+   * binário que morre em segundos — ou dispensar a task no waiver — a
+   * transação re-vincula o dispatch a outro agente do roster selado ANTES de
+   * qualquer terminalização. Diferenças deliberadas da variante blocked:
+   * missão RUNNING na geração vigente (a falha aconteceu em pleno voo),
+   * identidade física exata (pane+sessão+encarnação — nunca supersede outra
+   * encarnação), task running→pending, e nenhum resume de missão.
+   */
+  rerouteLiveProviderDeadWorkerByCoordinator(input: {
+    readonly taskId: string;
+    readonly revision: number;
+    readonly paneId: string;
+    readonly sessionId: string;
+    readonly workerIncarnationId: string;
+    readonly directive: TaskProviderRerouteDirective;
+    readonly note: string;
+  }): TaskDispatchRecord {
+    const taskId = idSchema.parse(input.taskId);
+    const revision = z.number().int().positive().parse(input.revision);
+    const directive = taskProviderRerouteDirectiveSchema.parse(
+      input.directive,
+    );
+    const note = input.note.trim().slice(0, 65_536);
+    if (!note) throw new Error("reroute exige nota durável registrada");
+    const now = this.#binding.now();
+    const db = this.#binding.writeDatabase();
+    const record = db
+      .transaction(() => {
+        const current = this.#getRow(db, taskId);
+        if (!current) throw new Error(`dispatch não encontrado: ${taskId}`);
+        const mission = db
+          .prepare(
+            `SELECT status, intent_version FROM missions WHERE id = ?`,
+          )
+          .get(current.mission_id) as
+          | { status: string; intent_version: number }
+          | undefined;
+        if (
+          mission?.status !== "running" ||
+          mission.intent_version !== current.intent_version
+        ) {
+          throw new Error(
+            "reroute ao vivo exige missão running na geração vigente do plano",
+          );
+        }
+        if (current.revision !== revision) {
+          throw new Error("reroute perdeu CAS do dispatch");
+        }
+        if (current.state !== "running" && current.state !== "spawning") {
+          throw new Error(
+            `reroute ao vivo recusou dispatch no estado ${current.state}`,
+          );
+        }
+        if (
+          current.pane_id !== input.paneId ||
+          current.session_id !== input.sessionId ||
+          current.worker_incarnation_id !== input.workerIncarnationId
+        ) {
+          throw new Error(
+            "reroute ao vivo exige a encarnação física exata do worker",
+          );
+        }
+        if (
+          current.handoff_id !== null ||
+          current.handoff_accepted_at !== null ||
+          current.integration_receipt_json !== null ||
+          current.completed_at !== null
+        ) {
+          throw new Error("reroute recusou dispatch com receipt");
+        }
+        const previous = current.provider_reroute_json
+          ? taskProviderRerouteDirectiveSchema.parse(
+              JSON.parse(current.provider_reroute_json),
+            )
+          : null;
+        const expectedFrom = previous
+          ? previous.fromAgentRef
+          : current.agent_ref;
+        if (!expectedFrom || directive.fromAgentRef !== expectedFrom) {
+          throw new Error(
+            "reroute divergiu do agentRef selado original da cadeia",
+          );
+        }
+        if (directive.toAgentRef === current.agent_ref) {
+          throw new Error(
+            "reroute exige um agente diferente do atualmente vinculado",
+          );
+        }
+        if (
+          previous &&
+          !previous.exhaustedAdapterIds.every((adapterId) =>
+            directive.exhaustedAdapterIds.includes(adapterId),
+          )
+        ) {
+          throw new Error(
+            "reroute não pode esquecer CLIs já provadas mortas",
+          );
+        }
+        const retryAt = now + taskDispatchRetryDelay(1);
+        const updated = db
+          .prepare(
+            `UPDATE task_dispatch_queue
+                SET state = 'superseded', last_error = ?,
+                    provider_reroute_json = ?, attempt = 1,
+                    revision = revision + 1, lease_expires_at = ?,
+                    updated_at = ?
+              WHERE task_id = ? AND revision = ?
+                AND state IN ('running', 'spawning')
+                AND handoff_id IS NULL AND handoff_accepted_at IS NULL
+                AND integration_receipt_json IS NULL AND completed_at IS NULL`,
+          )
+          .run(
+            note,
+            JSON.stringify(directive),
+            retryAt,
+            now,
+            taskId,
+            revision,
+          );
+        if (updated.changes !== 1) {
+          throw new Error("reroute perdeu CAS do dispatch");
+        }
+        const task = db
+          .prepare(
+            `UPDATE tasks SET status = 'pending', updated_at = ?
+             WHERE id = ? AND mission_id = ? AND status = 'running'`,
+          )
+          .run(now, taskId, current.mission_id);
+        if (task.changes !== 1) {
+          throw new Error("reroute ao vivo não encontrou a task running exata");
+        }
+        return this.#getFromDatabase(db, taskId);
+      })
+      .immediate();
+    if (!record) throw new Error("dispatch desapareceu após reroute");
+    this.#binding.emitChange();
+    return record;
+  }
+
+  /**
    * Converte o bloqueio TERMINAL de esgotamento físico do worker num retry
    * re-roteado dentro do mesmo roster selado. O coordenador (sweep do
    * scheduler) prova antes que existe um agente alternativo vivo; aqui a
@@ -2380,13 +2522,22 @@ export class TaskDispatchStore {
           .get(current.mission_id) as
           | { status: string; intent_state: string; intent_version: number }
           | undefined;
+        // Duas formas do mesmo esgotamento: missão bloqueada tecnicamente
+        // (o bloqueio do worker derrubou a missão) OU missão ainda running
+        // (um advisor esgotou enquanto a cadeia de entrega seguia — gate 3 de
+        // 31/07: 7/8 dispatches completos, missão pendurada para sempre num
+        // advisor blocked-terminal que nenhum caminho de recuperação cobria).
+        const missionBlockedTechnical =
+          mission?.status === "blocked" &&
+          mission.intent_state === "blocked_technical";
+        const missionRunning = mission?.status === "running";
         if (
-          mission?.status !== "blocked" ||
-          mission.intent_state !== "blocked_technical" ||
-          mission.intent_version !== current.intent_version
+          (!missionBlockedTechnical && !missionRunning) ||
+          mission?.intent_version !== current.intent_version
         ) {
           throw new Error(
-            "reroute exige missão bloqueada tecnicamente na geração vigente do plano",
+            "reroute exige missão bloqueada tecnicamente ou running na " +
+              "geração vigente do plano",
           );
         }
         if (current.revision !== revision) {
@@ -2440,13 +2591,15 @@ export class TaskDispatchStore {
         }
         // Reabre a missão removendo exatamente o sufixo canônico deste
         // bloqueio (idempotente se a missão já voltou a running por um
-        // reroute-irmão no mesmo tick).
-        resumeTaskDispatchMissionAfterTechnicalFailure(
-          db,
-          current.mission_id,
-          current.last_error,
-          now,
-        );
+        // reroute-irmão no mesmo tick). Missão running não tem o que reabrir.
+        if (missionBlockedTechnical) {
+          resumeTaskDispatchMissionAfterTechnicalFailure(
+            db,
+            current.mission_id,
+            current.last_error,
+            now,
+          );
+        }
         const retryAt = now + taskDispatchRetryDelay(1);
         const updated = db
           .prepare(

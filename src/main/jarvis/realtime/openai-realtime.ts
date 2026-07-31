@@ -32,7 +32,29 @@ export interface OpenAIRealtimeProviderOptions {
   wsFactory?: (url: string, init: RealtimeWsInit) => RealtimeWsLike;
   setTimeoutFn?: typeof setTimeout;
   clearTimeoutFn?: (timer: ReturnType<typeof setTimeout>) => void;
+  /**
+   * Base do WebSocket sem query. Existe porque a xAI publica uma superfície
+   * Realtime-compatível (`wss://api.x.ai/v1/realtime`, mesmo Bearer, mesmo
+   * fluxo de eventos): trocar o host reaproveita todo o transporte em vez de
+   * duplicá-lo. Ver grok-realtime.ts.
+   */
+  realtimeUrl?: string;
+  /**
+   * Construtor do `session.update`. Os dialetos divergem só aqui — a xAI põe
+   * `voice` e `turn_detection` na raiz da sessão e usa `server_vad`, enquanto a
+   * OpenAI aninha em `audio.output.voice` / `audio.input.turn_detection`.
+   */
+  sessionUpdateBuilder?: SessionUpdateBuilder;
 }
+
+export type SessionUpdateBuilder = (opts: {
+  model: string;
+  voice: string;
+  instructions: string;
+  turnDetection?: OpenAIRealtimeTurnDetection;
+  inputRate?: number;
+  tools?: RealtimeToolDefinition[];
+}) => Record<string, unknown>;
 
 export interface ParsedOpenAIRealtimeEvent {
   type?: string;
@@ -53,6 +75,7 @@ const DEFAULT_VOICE = 'ash';
 const DEFAULT_TRANSCRIPTION_LANGUAGE = 'pt';
 const DEFAULT_SOURCE_RATE = 16_000;
 const DEFAULT_TARGET_RATE = 24_000;
+const DEFAULT_REALTIME_URL = 'wss://api.openai.com/v1/realtime';
 const CONNECT_TIMEOUT_MS = 10_000;
 const PENDING_AUDIO_MAX_BYTES = 512 * 1024;
 const EMITTED_TOOL_CALL_IDS_MAX = 256;
@@ -306,8 +329,13 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
   private readonly wsFactory: (url: string, init: RealtimeWsInit) => RealtimeWsLike;
   private readonly setTimeoutFn: typeof setTimeout;
   private readonly clearTimeoutFn: (timer: ReturnType<typeof setTimeout>) => void;
+  private readonly realtimeUrl: string;
+  private readonly sessionUpdateBuilder: SessionUpdateBuilder;
 
   constructor(options: OpenAIRealtimeProviderOptions) {
+    this.realtimeUrl = options.realtimeUrl ?? DEFAULT_REALTIME_URL;
+    this.sessionUpdateBuilder =
+      options.sessionUpdateBuilder ?? buildOpenAISessionUpdate;
     this.apiKey = options.apiKey;
     this.instructions = options.instructions;
     this.model = options.model ?? DEFAULT_MODEL;
@@ -335,7 +363,7 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
     this.ready = false;
     this.emittedToolCallIds = new Set();
     this.emittedToolCallOrder = [];
-    const url = `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(this.model)}`;
+    const url = `${this.realtimeUrl}?model=${encodeURIComponent(this.model)}`;
     const ws = this.wsFactory(url, {
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
@@ -557,7 +585,7 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
       ? `${this.instructions}\n\nCurrent Nexus IDE context:\n${this.latestContext}`
       : this.instructions;
     this.sendEvent(
-      buildOpenAISessionUpdate({
+      this.sessionUpdateBuilder({
         model: this.model,
         voice: this.voice,
         instructions: contextBlock,

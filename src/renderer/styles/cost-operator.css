@@ -1113,8 +1113,10 @@
 }
 
 /* ---- HUD "nerd polish": barra viva + varredura no hover ---- */
+/* HUD persistente não ganha glow — brilho é privilégio dos FX transitórios de
+   celebração logo acima; cromo que fica na tela o dia todo fala em cor chapada. */
 .operator-hud__power {
-  text-shadow: 0 0 8px color-mix(in oklab, var(--accent) 32%, transparent);
+  color: var(--accent);
 }
 /* Shimmer contínuo e sutil percorrendo a barra de progresso. */
 /* Shimmer só quando o operador OLHA (hover/foco) — "calmo em ruído": nada

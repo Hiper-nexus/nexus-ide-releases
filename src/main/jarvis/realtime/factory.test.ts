@@ -36,10 +36,11 @@ describe('resolveRealtimeProviderId', () => {
         },
       }),
     ).toBe('openai');
-    // Default transport is now realtime (gemini-live) — the 2026-07-06
-    // hibernation ('classic' → no provider) was reverted by the approved
-    // decision; runtime degradation to Classic replaces config coercion.
-    expect(resolveRealtimeProviderId(DEFAULT_VOICE_CONFIG)).toBe('gemini');
+    // Default transport is realtime — the 2026-07-06 hibernation ('classic' →
+    // no provider) was reverted by the approved decision; runtime degradation
+    // to Classic replaces config coercion. Since 2026-07-31 the official voice
+    // route is Grok Voice, with openai/gemini kept as automatic degradation.
+    expect(resolveRealtimeProviderId(DEFAULT_VOICE_CONFIG)).toBe('grok');
     expect(
       resolveRealtimeProviderId({
         ...DEFAULT_VOICE_CONFIG,

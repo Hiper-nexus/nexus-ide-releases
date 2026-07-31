@@ -13,6 +13,96 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.20.0',
+  date: '2026-07-31',
+  codename: 'Operacional de verdade',
+  summary:
+    'A régua desta versão é a frase do operador: "se o Nexus estiver ' +
+    'operacional de verdade". Provider morto re-rota na hora para outro agente ' +
+    'do time — no primeiro 401, no esgotamento físico e até com a missão ainda ' +
+    'rodando. Merge abandonado ganha watchdog. Tarefa dispensada é contada, ' +
+    'nunca escondida. A voz oficial vira Grok Voice. E o visual inteiro foi ' +
+    'redesenhado: hierarquia, anéis em vez de neon, rail quieto.',
+  highlights: [
+    {
+      title: 'Reroute imediato no primeiro 401',
+      detail:
+        'Credencial revogada ou cota esgotada não espera mais três tentativas ' +
+        'nem vira dispensa silenciosa: o failover consulta o roster selado ' +
+        'ANTES de qualquer waiver e re-vincula a tarefa a outro agente da ' +
+        'mesma categoria com CLI viva — com a missão ainda running. Soluços ' +
+        'curtos (rate-limit) continuam na espera-pela-irmã, que resolve em ' +
+        'minutos sem queimar um agente saudável.',
+    },
+    {
+      title: 'Advisor esgotado não pendura mais a missão',
+      detail:
+        'A terceira forma do mesmo bug, flagrada no gate desta release: um ' +
+        'advisor esgotava o spawn com a missão RODANDO (7/8 tarefas ' +
+        'completas) e ela esperava para sempre. O sweep de reroute agora ' +
+        'aceita missão running e re-vincula na hora.',
+    },
+    {
+      title: 'Watchdog de merge abandonado',
+      detail:
+        'Uma tentativa de merge que o próprio processo abandonou (flagrada ao ' +
+        'vivo: 22,7 min parada, sem erro, sem validador existindo) agora é ' +
+        'detectada por idade — acima de todos os bounds legítimos de ' +
+        'validação — e reconciliada como interrompida. O watchdog bate nos ' +
+        'dois loops (driver e scheduler), e cada projeção do tick ficou ' +
+        'isolada: uma que lança não silencia mais as seguintes.',
+    },
+    {
+      title: 'Grok Voice é a voz oficial',
+      detail:
+        'O realtime padrão vira grok-voice-think-fast-2.0 (voz rex), com ' +
+        'OpenAI e Gemini como degradação automática. O seletor mostra a rota, ' +
+        'as configurações ganham campo para a XAI_API_KEY, e a versão do ' +
+        'modelo é fixa de propósito: alias que migra sozinho não decide a voz ' +
+        'do produto.',
+    },
+    {
+      title: 'Visual redesenhado de ponta a ponta',
+      detail:
+        'Nome do agente domina o pane; badges viram metadado quieto; ações ' +
+        'recuam até o ponteiro chegar; TODOS os halos de neon persistentes ' +
+        'viraram anéis nítidos ou sombra de elevação; o rail trocou caixas ' +
+        'coloridas por cabeçalhos quietos com ponto de estado — a missão em ' +
+        'execução é o único card aceso. Orbe de voz, boot e mascote seguem ' +
+        'brilhando: atmosfera é deliberada, cromo não.',
+    },
+    {
+      title: 'Gateway de IA local na frente das CLIs',
+      detail:
+        'NEXUS_AI_GATEWAY_BASE_URL aponta as CLIs para um gateway ' +
+        'OmniRoute-like local (ANTHROPIC_BASE_URL/OPENAI_BASE_URL, só nas ' +
+        'vars que cada adapter declara; planos com endpoint próprio como GLM ' +
+        'e LongCat ficam intocados). O gateway troca de provider por baixo — ' +
+        'a CLI nem vê a falha.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Tarefa dispensada é contada, nunca escondida',
+      detail:
+        'Um waiver por provider indisponível sempre foi durável no recibo, ' +
+        'mas invisível na tela — a tarefa aparecia idêntica a uma que ' +
+        'trabalhou. Agora toda dispensa vira aprendizado da missão dizendo o ' +
+        'nome da tarefa, que ela NÃO foi executada, qual CLI falhou e o ' +
+        'remédio certo (login só quando a causa é auth).',
+    },
+    {
+      title: 'PTY órfão não escreve mais em worktree liberado',
+      detail:
+        'Liberar o registro de um worktree agora encerra os PTYs que ' +
+        'provadamente moram nele (prova por caminho, fail-closed: na dúvida ' +
+        'não mata). Era a origem do worktree órfão que travava missões ' +
+        'futuras.',
+    },
+  ],
+};
+
+export const PREVIOUS_RELEASE: AppRelease = {
   version: '0.19.42',
   date: '2026-07-31',
   codename: 'A missão não para por causa de uma CLI',
@@ -75,7 +165,7 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const PREVIOUS_RELEASE: AppRelease = {
+export const RELEASE_01941: AppRelease = {
   version: '0.19.41',
   date: '2026-07-31',
   codename: 'Missão destrava, diagnóstico aparece',

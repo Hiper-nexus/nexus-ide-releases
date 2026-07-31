@@ -30,6 +30,15 @@ import { isMac } from '../lib/platform';
 
 type RealtimeTransport = Exclude<JarvisLiveTransport, 'classic'>;
 
+/** Rota oficial da voz do produto (ver voice-config.ts). */
+const DEFAULT_REALTIME_TRANSPORT: RealtimeTransport = 'grok-realtime';
+
+const REALTIME_TRANSPORT_LABEL: Record<RealtimeTransport, string> = {
+  'grok-realtime': 'Grok Voice',
+  'gemini-live': 'Gemini Live',
+  'openai-realtime': 'OpenAI Realtime',
+};
+
 type VoiceSettingsTab =
   | 'canal'
   | 'live'
@@ -148,7 +157,7 @@ export function VoiceSettings() {
   const [jarvisLiveOn, setJarvisLiveOn] = useState(false);
   const [liveRealtime, setLiveRealtime] = useState(false);
   const [realtimeTransport, setRealtimeTransport] =
-    useState<RealtimeTransport>('gemini-live');
+    useState<RealtimeTransport>(DEFAULT_REALTIME_TRANSPORT);
   const [assistantName, setAssistantName] = useState('Jarvis');
   const [userName, setUserName] = useState('');
   const [customInstructions, setCustomInstructions] = useState('');
@@ -252,10 +261,14 @@ export function VoiceSettings() {
     setLiveRealtime(info.jarvisLive.transport !== 'classic');
     // Gemini Live é o transporte prioritário do produto; classic também
     // pré-seleciona Gemini para o próximo enable de realtime.
+    // Preserva a rota que está gravada. O colapso anterior ("openai se
+    // explícito, senão gemini") reescrevia em silêncio qualquer transporte
+    // novo — com o Grok existindo, abrir as configurações rebaixaria a escolha
+    // do operador para Gemini sem ele pedir.
     setRealtimeTransport(
-      info.jarvisLive.transport === 'openai-realtime'
-        ? 'openai-realtime'
-        : 'gemini-live',
+      info.jarvisLive.transport === 'classic'
+        ? DEFAULT_REALTIME_TRANSPORT
+        : info.jarvisLive.transport,
     );
     setAssistantName(info.persona.assistantName);
     setUserName(info.persona.userName ?? '');
@@ -407,13 +420,8 @@ export function VoiceSettings() {
     const transport: JarvisLiveTransport = !on
       ? 'classic'
       : liveRealtime
-        ? realtimeTransport === 'openai-realtime'
-          ? 'openai-realtime'
-          : 'gemini-live'
+        ? realtimeTransport
         : 'classic';
-    if (on && liveRealtime && transport === 'gemini-live') {
-      setRealtimeTransport('gemini-live');
-    }
     void persistLive({
       jarvisLiveEnabled: on,
       ...(on ? { jarvisLiveTransport: transport } : {}),
@@ -424,10 +432,10 @@ export function VoiceSettings() {
     setLiveRealtime(on);
     if (on) {
       setJarvisLiveOn(true);
-      // Prioridade do produto: Gemini Live. Só mantém OpenAI se o usuário
-      // já tiver escolhido explicitamente openai-realtime no seletor.
-      const transport: RealtimeTransport =
-        realtimeTransport === 'openai-realtime' ? 'openai-realtime' : 'gemini-live';
+      // A escolha do operador no seletor manda; o default do produto (Grok
+      // Voice) já é o valor inicial do estado. Reescrever aqui era como o
+      // seletor perdia rotas novas.
+      const transport: RealtimeTransport = realtimeTransport;
       setRealtimeTransport(transport);
       void persistLive({
         jarvisLiveEnabled: true,
@@ -576,8 +584,7 @@ export function VoiceSettings() {
   const activeBrain =
     info?.jarvisBrain.active?.provider ?? info?.jarvisBrain.chain[0]?.provider ?? 'fallback';
   const realtimeActive = Boolean(jarvisLiveOn && liveRealtime && liveState?.realtimeReady);
-  const liveTransportLabel =
-    realtimeTransport === 'gemini-live' ? 'Gemini Live' : 'OpenAI Realtime';
+  const liveTransportLabel = REALTIME_TRANSPORT_LABEL[realtimeTransport];
   const realtimeConfigured = Boolean(jarvisLiveOn && liveRealtime);
   const liveConnectionTone = realtimeActive
     ? 'online'
@@ -804,7 +811,8 @@ return (
                             )
                           }
                         >
-                          <option value="gemini-live">Gemini Live (principal)</option>
+                          <option value="grok-realtime">Grok Voice (principal)</option>
+                          <option value="gemini-live">Gemini Live (fallback)</option>
                           <option value="openai-realtime">
                             OpenAI Realtime (fallback)
                           </option>

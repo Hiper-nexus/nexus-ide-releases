@@ -170,8 +170,8 @@
 }
 .home-deck__stat--live .home-deck__dot {
   background: var(--live);
-  /* O que está vivo, brilha — sinal, não decoração. */
-  box-shadow: 0 0 8px color-mix(in srgb, var(--live) 55%, transparent);
+  /* O que está vivo ganha ANEL, não bloom: sinal com aresta, sem borrar. */
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--live) 20%, transparent);
 }
 
 .home-deck__next {
@@ -263,12 +263,12 @@
   background: var(--accent);
   border: 1px solid var(--accent);
   color: var(--accent-ink);
-  box-shadow: 0 4px 18px -8px var(--accent-glow);
+  box-shadow: 0 4px 14px -6px rgba(0, 0, 0, 0.55);
 }
 .home-deck__cta:hover {
   background: var(--accent-hover);
   border-color: var(--accent-hover);
-  box-shadow: 0 6px 22px -8px var(--accent-glow);
+  box-shadow: 0 6px 18px -6px rgba(0, 0, 0, 0.6);
 }
 .home-deck__cta:active {
   transform: translateY(0.5px);

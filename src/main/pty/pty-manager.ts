@@ -72,6 +72,7 @@ import {
 import { resolveMissionCliExecutionPolicy } from "./mission-cli-execution-policy";
 import { getOrchSettings } from "../persistence/settings-store";
 import { assertSafePtyPrompt } from "../orch/pty-prompt-safety";
+import { applyGatewayBaseUrls, resolveGatewayBaseUrl } from "./gateway-env";
 
 /**
  * Owns every live PTY session — one per pane, addressed by an opaque id. The
@@ -525,6 +526,10 @@ export function agentEnv(adapter: CliPtyAdapter): NodeJS.ProcessEnv {
     const value = process.env[key];
     if (value !== undefined) env[key] = value;
   }
+  // Gateway local (OmniRoute-like) entre passthrough e static: o operador
+  // aponta as CLIs para o gateway com uma variável só, e um adapter que PINA o
+  // próprio endpoint em static (glm, longcat) continua intocado logo abaixo.
+  applyGatewayBaseUrls(env, adapter, resolveGatewayBaseUrl());
   for (const [key, value] of Object.entries(adapter.env.static)) {
     if (isDangerousEnvKey(key)) {
       console.warn(
@@ -2576,4 +2581,20 @@ export function getSessionCwd(sessionId: string): string | null {
 
 export function getLiveSessionCount(): number {
   return sessions.size;
+}
+
+/**
+ * Inventário (sessionId, cwd) das sessões vivas. Alimenta a varredura de PTY do
+ * teardown de worktree, que precisa PROVAR quais processos moram dentro de um
+ * worktree liberado antes de encerrá-los.
+ */
+export function listLiveSessionLocations(): ReadonlyArray<{
+  readonly sessionId: string;
+  readonly cwd: string | null;
+}> {
+  return Object.freeze(
+    [...sessions.entries()].map(([sessionId, session]) =>
+      Object.freeze({ sessionId, cwd: session.cwd ?? null }),
+    ),
+  );
 }

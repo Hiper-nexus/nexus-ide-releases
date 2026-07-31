@@ -38,7 +38,11 @@ import { listProviderSettings } from "../persistence/provider-config-store";
 import { hasAvailableAccount } from "../persistence/account-store";
 import { getOrchSettings } from "../persistence/settings-store";
 import { isOperatorChoicePolicy } from "../../shared/squad-cli-policy";
-import type { TaskPlanAgentSnapshot } from "./task-store";
+import type {
+  TaskPlanAgentSnapshot,
+  TaskPlanReceipt,
+  TaskPlanReceiptEntry,
+} from "./task-store";
 
 type WorktreeCreationFailureDispatchAuthority = Pick<
   TaskDispatchStore,
@@ -291,6 +295,63 @@ function defaultLiveAdaptersFor(
 }
 
 /**
+ * Seleção de candidato compartilhada pelos DOIS caminhos de reroute — o sweep
+ * de bloqueio terminal (abaixo) e o reroute ao vivo do failover. O claim
+ * re-prova estas capacidades em SQL; escolher um candidato que ele rejeitaria
+ * transformaria o reroute num busy-wedge.
+ */
+function pickRosterRerouteCandidate(input: {
+  readonly receipt: TaskPlanReceipt;
+  readonly entry: TaskPlanReceiptEntry;
+  readonly dispatchAgentRef: string;
+  readonly exhaustedAdapterIds: readonly string[];
+  readonly listAdaptersFor: ExhaustedProviderRerouteDeps["listAdaptersFor"];
+  readonly isOperatorChoice: () => boolean;
+}): TaskPlanAgentSnapshot | null {
+  const { receipt, entry } = input;
+  const orchestratorCliId = receipt.agents.find(
+    (agent) => agent.category === "orchestrator",
+  )?.cli;
+  const taskText = `${entry.title}\n${entry.detail}`;
+  const executionMode = decodeTaskScheduleDetail(entry.detail).meta
+    ?.executionMode;
+  const operatorChoice = input.isOperatorChoice();
+  const supportsSealedExecutionMode = (cli: string): boolean => {
+    if (executionMode === "isolated_worktree") {
+      return supportsMechanicallyWorkspaceWriteCli(cli, operatorChoice);
+    }
+    if (executionMode === "read_only") {
+      return (
+        supportsMechanicallyReadOnlyCli(cli) ||
+        supportsAdvisoryParticipationCli(cli)
+      );
+    }
+    return true;
+  };
+  return selectProviderRerouteCandidate({
+    currentAgentRef: input.dispatchAgentRef,
+    agentCategory: entry.agentCategory,
+    rosterAgents: receipt.agents,
+    exhaustedAdapterIds: input.exhaustedAdapterIds,
+    isRouteResolvable: (agent) => {
+      if (!supportsSealedExecutionMode(agent.cli)) return false;
+      try {
+        resolveSealedWorkerRoute({
+          taskText,
+          agent,
+          adapters: input.listAdaptersFor(agent),
+          rosterHash: receipt.rosterHash,
+          ...(orchestratorCliId ? { orchestratorCliId } : {}),
+        });
+        return true;
+      } catch {
+        return false;
+      }
+    },
+  });
+}
+
+/**
  * Reroute automático dentro do roster selado. Um worker que esgota as
  * tentativas físicas de spawn terminaliza a task e bloqueia a missão; se o
  * MESMO roster selado tem outro agente da mesma categoria cuja CLI resolve
@@ -320,9 +381,12 @@ export function reconcileExhaustedProviderRerouteForScope(
     if (!dispatch.agentRef) continue;
     try {
       const mission = stores.missions.get(dispatch.missionId);
+      // running também: um advisor esgotado com a cadeia de entrega viva
+      // deixa a missão pendurada em running com o dispatch blocked-terminal —
+      // forma capturada no gate 3 de 31/07 (7/8 completos, missão eterna).
       if (
         !mission ||
-        mission.status !== "blocked" ||
+        (mission.status !== "blocked" && mission.status !== "running") ||
         (mission.intentVersion ?? 0) !== dispatch.intentVersion ||
         !hasCurrentApprovedDispatchContract(mission)
       ) {
@@ -348,47 +412,13 @@ export function reconcileExhaustedProviderRerouteForScope(
           deadAdapterId,
         ]),
       ];
-      const orchestratorCliId = receipt.agents.find(
-        (agent) => agent.category === "orchestrator",
-      )?.cli;
-      const taskText = `${entry.title}\n${entry.detail}`;
-      // O claim re-prova estas capacidades em SQL; escolher um candidato que
-      // ele rejeitaria transformaria o reroute num busy-wedge do tick.
-      const executionMode = decodeTaskScheduleDetail(entry.detail).meta
-        ?.executionMode;
-      const operatorChoice = deps.isOperatorChoice();
-      const supportsSealedExecutionMode = (cli: string): boolean => {
-        if (executionMode === "isolated_worktree") {
-          return supportsMechanicallyWorkspaceWriteCli(cli, operatorChoice);
-        }
-        if (executionMode === "read_only") {
-          return (
-            supportsMechanicallyReadOnlyCli(cli) ||
-            supportsAdvisoryParticipationCli(cli)
-          );
-        }
-        return true;
-      };
-      const candidate = selectProviderRerouteCandidate({
-        currentAgentRef: dispatch.agentRef,
-        agentCategory: entry.agentCategory,
-        rosterAgents: receipt.agents,
+      const candidate = pickRosterRerouteCandidate({
+        receipt,
+        entry,
+        dispatchAgentRef: dispatch.agentRef,
         exhaustedAdapterIds,
-        isRouteResolvable: (agent) => {
-          if (!supportsSealedExecutionMode(agent.cli)) return false;
-          try {
-            resolveSealedWorkerRoute({
-              taskText,
-              agent,
-              adapters: deps.listAdaptersFor(agent),
-              rosterHash: receipt.rosterHash,
-              ...(orchestratorCliId ? { orchestratorCliId } : {}),
-            });
-            return true;
-          } catch {
-            return false;
-          }
-        },
+        listAdaptersFor: deps.listAdaptersFor,
+        isOperatorChoice: deps.isOperatorChoice,
       });
       if (!candidate) continue;
       const note = providerRerouteNote({ deadAdapterId, candidate });
@@ -440,6 +470,129 @@ export function reconcileExhaustedProviderRerouteForScope(
     }
   }
   return rerouted;
+}
+
+export interface LiveProviderRerouteInput {
+  readonly missionId: string;
+  readonly taskId: string;
+  readonly paneId: string;
+  readonly sessionId: string;
+  readonly workerIncarnationId: string;
+  /** CLI provada morta AGORA (401/cota) — vai para o conjunto esgotado. */
+  readonly deadAdapterId: string;
+}
+
+/**
+ * Reroute ao vivo, chamado pelo failover ANTES de qualquer waiver: a CLI do
+ * worker morreu em pleno voo (auth revogada, cota esgotada) e não há conta
+ * alternativa do mesmo adapter. Se o roster selado tem outro agente da mesma
+ * categoria com CLI viva, a task é re-vinculada a ele em vez de ser
+ * dispensada — waiver vira o ÚLTIMO recurso, não o primeiro reflexo.
+ * Devolve o candidato para o log do chamador, ou null quando não há rota
+ * (aí o waiver/retry existente decide).
+ */
+export function rerouteLiveProviderDeadDispatch(
+  scope: ProjectExecutionScope,
+  input: LiveProviderRerouteInput,
+  dependencies?: ExhaustedProviderRerouteDeps,
+): TaskPlanAgentSnapshot | null {
+  const deps = dependencies ?? {
+    getStores: (currentScope: ProjectExecutionScope) =>
+      getProjectDomainStores(currentScope),
+    listAdaptersFor: defaultLiveAdaptersFor,
+    isOperatorChoice: () =>
+      isOperatorChoicePolicy(getOrchSettings().squadCliPolicy),
+    now: () => Date.now(),
+  };
+  const stores = deps.getStores(scope);
+  const dispatch = stores.taskDispatches.get(input.taskId);
+  if (
+    !dispatch ||
+    dispatch.missionId !== input.missionId ||
+    !dispatch.agentRef ||
+    (dispatch.state !== "running" && dispatch.state !== "spawning")
+  ) {
+    return null;
+  }
+  const mission = stores.missions.get(dispatch.missionId);
+  if (
+    !mission ||
+    mission.status !== "running" ||
+    (mission.intentVersion ?? 0) !== dispatch.intentVersion ||
+    !hasCurrentApprovedDispatchContract(mission)
+  ) {
+    return null;
+  }
+  const receipt = stores.tasks.getPlanReceipt(
+    dispatch.missionId,
+    dispatch.intentVersion,
+  );
+  const entry = receipt?.tasks.find(
+    (candidate) => candidate.taskId === dispatch.taskId,
+  );
+  if (!receipt || !entry) return null;
+  const currentAgent = receipt.agents.find(
+    (agent) => agent.id === dispatch.agentRef,
+  );
+  if (!currentAgent) return null;
+  const exhaustedAdapterIds = [
+    ...new Set([
+      ...(dispatch.providerReroute?.exhaustedAdapterIds ?? []),
+      input.deadAdapterId,
+    ]),
+  ];
+  const candidate = pickRosterRerouteCandidate({
+    receipt,
+    entry,
+    dispatchAgentRef: dispatch.agentRef,
+    exhaustedAdapterIds,
+    listAdaptersFor: deps.listAdaptersFor,
+    isOperatorChoice: deps.isOperatorChoice,
+  });
+  if (!candidate) return null;
+  const note = providerRerouteNote({
+    deadAdapterId: input.deadAdapterId,
+    candidate,
+  });
+  const directive = buildProviderRerouteDirective({
+    previousDirective: dispatch.providerReroute,
+    sealedAgentRef: entry.agentRef,
+    deadAdapterId: input.deadAdapterId,
+    candidate,
+    reason: note,
+    now: deps.now(),
+  });
+  stores.taskDispatches.rerouteLiveProviderDeadWorkerByCoordinator({
+    taskId: dispatch.taskId,
+    revision: dispatch.revision,
+    paneId: input.paneId,
+    sessionId: input.sessionId,
+    workerIncarnationId: input.workerIncarnationId,
+    directive,
+    note,
+  });
+  try {
+    stores.missions.appendLearning(
+      dispatch.missionId,
+      providerRerouteLearning({
+        taskTitle: entry.title,
+        deadAdapterId: input.deadAdapterId,
+        previousAgentName: currentAgent.agentName,
+        candidate,
+      }),
+    );
+  } catch (error) {
+    console.warn(
+      "[mission-scheduler] live provider reroute learning deferred:",
+      error,
+    );
+  }
+  console.warn(
+    `[mission-scheduler] live provider reroute: ${dispatch.missionId}/` +
+      `${dispatch.taskId} saiu de ${input.deadAdapterId} para ` +
+      `${candidate.agentName} (${candidate.cli}) dentro do roster selado`,
+  );
+  return candidate;
 }
 
 export const SUPERSEDED_PLAN_GENERATION_WORKTREE_REASON =

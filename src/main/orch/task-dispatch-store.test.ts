@@ -6363,4 +6363,164 @@ describe('reroute de provider esgotado dentro do roster selado', () => {
       }),
     ).toThrow(/bloqueio terminal canônico/i);
   });
+
+  /** Spawn físico único (o análogo vivo do primeiro attempt da exaustão). */
+  function spawnLiveWorker(fixture: ReturnType<typeof sealedRerouteFixture>) {
+    const claim = fixture.dispatches.claim({
+      missionId: fixture.mission.id,
+      taskId: fixture.task.id,
+      intentVersion: 1,
+      workerId: 'Codex Dev',
+      leaseOwner: 'main',
+      leaseMs: 30_000,
+      agentRef: 'exec-codex',
+      agentCategory: 'executor',
+      rosterHash: fixture.receipt.rosterHash,
+      routeContract: fixture.routeContract,
+      ownership: fixture.ownership,
+      executionMode: 'isolated_worktree',
+    });
+    const route = fixture.missions.reserveRouteDecision(
+      fixture.mission.id,
+      fixture.task.title,
+      {
+        tier: 'hard',
+        ...fixture.routeContract,
+        reason: 'rota selada',
+        alternatives: [],
+      },
+    );
+    const routed = fixture.dispatches.attachRoute({
+      taskId: fixture.task.id,
+      revision: claim.revision,
+      leaseToken: claim.leaseToken,
+      routeReservationId: route.id,
+      ...fixture.routeContract,
+    });
+    const bound = fixture.dispatches.bindSpawn({
+      taskId: fixture.task.id,
+      revision: routed.revision,
+      leaseToken: claim.leaseToken,
+      paneId: 'pane-live',
+      sessionId: 'session-live',
+      workerIncarnationId: claim.workerIncarnationId,
+    });
+    return { claim, bound };
+  }
+
+  const liveIdentity = (claim: { workerIncarnationId: string }) => ({
+    paneId: 'pane-live',
+    sessionId: 'session-live',
+    workerIncarnationId: claim.workerIncarnationId,
+  });
+
+  it('re-rota ao vivo o worker de provider morto sem jamais bloquear a missão', () => {
+    const fixture = sealedRerouteFixture(manager());
+    const { claim, bound } = spawnLiveWorker(fixture);
+
+    const rerouted = fixture.dispatches.rerouteLiveProviderDeadWorkerByCoordinator({
+      taskId: fixture.task.id,
+      revision: bound.revision,
+      ...liveIdentity(claim),
+      directive: directive({ reason: 'codex morreu com 401 no primeiro spawn' }),
+      note: '[NEXUS_PROVIDER_REROUTE] codex 401; re-roteado para Kimi Dev',
+    });
+
+    expect(rerouted).toMatchObject({
+      state: 'superseded',
+      attempt: 1,
+      providerReroute: {
+        fromAgentRef: 'exec-codex',
+        toAgentRef: 'exec-kimi',
+        exhaustedAdapterIds: ['codex'],
+      },
+    });
+    // A task volta ao roster e a missão NUNCA visitou blocked — este é o
+    // contrato inteiro da variante viva.
+    expect(fixture.tasks.list(fixture.mission.id)[0]).toMatchObject({
+      status: 'pending',
+    });
+    expect(fixture.missions.get(fixture.mission.id)).toMatchObject({
+      status: 'running',
+    });
+  });
+
+  it('exige a identidade física exata do worker que detectou a falha', () => {
+    const fixture = sealedRerouteFixture(manager());
+    const { claim, bound } = spawnLiveWorker(fixture);
+
+    expect(() =>
+      fixture.dispatches.rerouteLiveProviderDeadWorkerByCoordinator({
+        taskId: fixture.task.id,
+        revision: bound.revision,
+        ...liveIdentity(claim),
+        sessionId: 'session-de-outro-worker',
+        directive: directive(),
+        note: 'identidade errada',
+      }),
+    ).toThrow(/encarnação física exata/i);
+    // A recusa não pode ter efeito colateral: o dispatch continua vivo.
+    expect(fixture.dispatches.get(fixture.task.id)?.state).toBe('running');
+    expect(fixture.tasks.list(fixture.mission.id)[0]?.status).toBe('running');
+  });
+
+  it('recusa o reroute vivo quando a missão saiu de running', () => {
+    const fixture = sealedRerouteFixture(manager());
+    const { claim, bound } = spawnLiveWorker(fixture);
+    fixture.missions.setStatus(fixture.mission.id, 'blocked');
+
+    expect(() =>
+      fixture.dispatches.rerouteLiveProviderDeadWorkerByCoordinator({
+        taskId: fixture.task.id,
+        revision: bound.revision,
+        ...liveIdentity(claim),
+        directive: directive(),
+        note: 'missão pausada',
+      }),
+    ).toThrow(/missão running/i);
+  });
+
+  it('recusa a diretiva viva que aponta para o mesmo agente já vinculado', () => {
+    const fixture = sealedRerouteFixture(manager());
+    const { claim, bound } = spawnLiveWorker(fixture);
+
+    expect(() =>
+      fixture.dispatches.rerouteLiveProviderDeadWorkerByCoordinator({
+        taskId: fixture.task.id,
+        revision: bound.revision,
+        ...liveIdentity(claim),
+        directive: directive({ toAgentRef: 'exec-codex' }),
+        note: 'auto-reroute proibido',
+      }),
+    ).toThrow(/agente diferente/i);
+  });
+
+  it('gate 3: reroteia o esgotado mesmo com a missão ainda running', () => {
+    // A forma capturada em 31/07: um advisor esgota as 3 tentativas com a
+    // cadeia de entrega viva — dispatch blocked-terminal, missão running — e
+    // nenhum caminho de recuperação cobria (o sweep exigia missão bloqueada;
+    // o waiver só roda no attempt 0). A missão ficava eterna com 7/8 pronto.
+    const fixture = sealedRerouteFixture(manager());
+    fixture.exhaustSpawnAttempts();
+    expect(fixture.missions.get(fixture.mission.id)!.status).toBe('blocked');
+    fixture.missions.setStatus(fixture.mission.id, 'running');
+
+    const blocked = fixture.dispatches.get(fixture.task.id)!;
+    const rerouted = fixture.dispatches.rerouteExhaustedWorkerByCoordinator({
+      taskId: fixture.task.id,
+      revision: blocked.revision,
+      directive: directive(),
+      note: 'codex morto com a missão viva',
+    });
+
+    expect(rerouted.state).toBe('superseded');
+    expect(rerouted.providerReroute?.toAgentRef).toBe('exec-kimi');
+    expect(
+      fixture.tasks
+        .list(fixture.mission.id)
+        .find((candidate) => candidate.id === fixture.task.id),
+    ).toMatchObject({ status: 'pending' });
+    // Missão running não tem bloqueio a reabrir — segue exatamente como está.
+    expect(fixture.missions.get(fixture.mission.id)!.status).toBe('running');
+  });
 });

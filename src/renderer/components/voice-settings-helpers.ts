@@ -26,12 +26,23 @@ export function keyPlaceholder(key: VoiceApiKeyStatus): string {
   return `Paste ${key.envVar}`;
 }
 
+/**
+ * Mapa exaustivo de propósito: um ternário binário mandava toda rota que não
+ * fosse Gemini para a chave da OpenAI, então a chegada do Grok pediria
+ * XAI_API_KEY e o diagnóstico mandaria o operador conferir a chave errada. Com
+ * Record<RealtimeTransport, …> o compilador cobra a entrada de cada rota nova.
+ */
+const REALTIME_TRANSPORT_ENV_VAR: Record<RealtimeTransport, string> = {
+  'grok-realtime': 'XAI_API_KEY',
+  'gemini-live': 'GEMINI_API_KEY',
+  'openai-realtime': 'OPENAI_API_KEY',
+};
+
 export function liveSmokeFailureMessage(
   reason: JarvisLiveSmokeFailureReason,
   transport: RealtimeTransport,
 ): string {
-  const providerKey =
-    transport === 'gemini-live' ? 'GEMINI_API_KEY' : 'OPENAI_API_KEY';
+  const providerKey = REALTIME_TRANSPORT_ENV_VAR[transport];
   const messages: Record<JarvisLiveSmokeFailureReason, string> = {
     busy: 'Já existe um diagnóstico realtime em andamento.',
     invalid_request: 'O diagnóstico realtime recebeu dados inválidos.',

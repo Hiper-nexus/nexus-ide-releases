@@ -1554,12 +1554,12 @@
 
 .quota-chip--ok .quota-chip__dot {
   background: var(--ok, #5fd38d);
-  box-shadow: 0 0 6px color-mix(in srgb, var(--ok, #5fd38d) 45%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok, #5fd38d) 20%, transparent);
 }
 
 .quota-chip--warn .quota-chip__dot {
   background: var(--warn, #e0af68);
-  box-shadow: 0 0 6px color-mix(in srgb, var(--warn, #e0af68) 40%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn, #e0af68) 20%, transparent);
 }
 
 .quota-chip--warn .quota-chip__value {
@@ -1568,7 +1568,7 @@
 
 .quota-chip--danger .quota-chip__dot {
   background: var(--danger);
-  box-shadow: 0 0 6px color-mix(in srgb, var(--danger) 45%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 20%, transparent);
 }
 
 .quota-chip--danger .quota-chip__value {
@@ -1883,7 +1883,6 @@
     color-mix(in srgb, var(--accent) 55%, transparent),
     var(--accent)
   );
-  box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 35%, transparent);
   transform-origin: left center;
   transition: transform 180ms var(--ease-out-expo, ease-out);
 }
@@ -1894,7 +1893,6 @@
     color-mix(in srgb, var(--ok, #5fd38d) 40%, transparent),
     var(--ok, #5fd38d)
   );
-  box-shadow: 0 0 12px color-mix(in srgb, var(--ok, #5fd38d) 30%, transparent);
 }
 
 .rank-race__bar[data-cost='high'] {

@@ -5,6 +5,7 @@ import type { ProjectExecutionScope } from '../../shared/types';
 import { scheduleProjectOrientationAfterMerge } from '../context/orientation/orientation-service';
 import { retainTrustedMemoryBestEffort } from '../memory/trusted-memory';
 import { classifyOperationalFailure } from './operational-failure-policy';
+import { findStalledActiveMergeEntry } from './merge-stall-watchdog';
 import { rollbackIntegrationCheckout } from './merge-integration-rollback';
 import {
   GitCommandError,
@@ -227,6 +228,35 @@ export class MergeQueue {
     if (this.#tails.has(scopeKey)) {
       return Object.freeze({ action: 'none' });
     }
+    return this.#recovery.reconcile(scope);
+  }
+
+  /**
+   * Watchdog do merge abandonado NO MESMO processo. `reconcileIfIdle` respeita
+   * o tail vivo por contrato — mas um tail cuja entrada ativa não anda há mais
+   * que o maior bound legítimo de validação está provadamente encravado
+   * (flagrado ao vivo em 31/07: candidate-validating parado 22,7 min, blocked
+   * null, nenhum validador existindo). Aqui a idade vence a posse: o tail é
+   * descartado e a recovery trata a tentativa como interrompida — a mesma
+   * máquina de disposição do reinício, que já sabe classificar cada status.
+   */
+  reconcileIfStalled(
+    scope: ProjectExecutionScope,
+    nowMs: number = Date.now(),
+  ): MergeQueueReconciliationResult {
+    const scopeKey = this.#worktrees.scopeKey(scope);
+    const stalled = findStalledActiveMergeEntry(
+      this.#state.snapshot(scopeKey),
+      nowMs,
+    );
+    if (!stalled) return Object.freeze({ action: 'none' });
+    console.warn(
+      `[merge-queue] tentativa de merge estagnada há ` +
+        `${Math.round((nowMs - stalled.updatedAt) / 60_000)} min em ` +
+        `${stalled.status} (${stalled.missionId}/${stalled.taskId}); ` +
+        'descartando a posse local e reconciliando como interrompida',
+    );
+    this.#tails.delete(scopeKey);
     return this.#recovery.reconcile(scope);
   }
 

@@ -1645,21 +1645,53 @@ async function tick(signal?: AbortSignal): Promise<void> {
     missionConcurrency: MISSION_SCHEDULER_CONCURRENCY_LIMITS.missionsPerScope,
     reconcileScope: async (scope) => {
       throwIfMissionSchedulerAborted(signal);
+      // Cada projeção isolada: uma que lança cronicamente silenciava TODAS as
+      // seguintes — o sweep de reroute nunca rodava e ninguém via erro algum.
+      const guarded = (label: string, run: () => unknown): void => {
+        try {
+          run();
+        } catch (error) {
+          console.warn(
+            `[mission-scheduler] projeção ${label} falhou no scope:`,
+            error,
+          );
+        }
+      };
       await reconcileLegacyGuidedDirtyCheckoutBootstrap(
         getProjectDomainStores(scope),
-      );
+      ).catch((error) => {
+        console.warn(
+          '[mission-scheduler] projeção legacy-bootstrap falhou no scope:',
+          error,
+        );
+      });
       throwIfMissionSchedulerAborted(signal);
-      reconcileInterruptedWorktreeReservationFailuresForScope(scope);
+      guarded('interrupted-worktree', () =>
+        reconcileInterruptedWorktreeReservationFailuresForScope(scope),
+      );
+      // Merge abandonado pelo PRÓPRIO processo: por idade, antes das projeções
+      // terminais — sem isto a missão espera para sempre sem erro nenhum.
+      guarded('stalled-merge', () =>
+        requireWorktreeRuntimeRegistry().reconcileMergeIfStalled(scope),
+      );
       // Before projecting merge failures: a block orphaned mid-process (its
       // mission removed after scope construction) must lift here, or every
       // later mission of the scope inherits it as a terminal deferral chain.
-      reconcileOrphanedMissionMergeBlockForScope(scope);
-      reconcileTerminalMergeFailureForScope(scope);
-      reconcileTerminalDispatchWorktreeReleaseForScope(scope);
+      guarded('orphaned-merge-block', () =>
+        reconcileOrphanedMissionMergeBlockForScope(scope),
+      );
+      guarded('terminal-merge', () =>
+        reconcileTerminalMergeFailureForScope(scope),
+      );
+      guarded('terminal-dispatch-worktree', () =>
+        reconcileTerminalDispatchWorktreeReleaseForScope(scope),
+      );
       // After the terminal projections above: a worker whose CLI exhausted
       // physical spawn attempts gets re-routed to another live agent of the
       // SAME sealed roster, and the mission reopens for the recovery loop.
-      reconcileExhaustedProviderRerouteForScope(scope);
+      guarded('exhausted-provider-reroute', () =>
+        reconcileExhaustedProviderRerouteForScope(scope),
+      );
     },
     listMissions: (scope) => {
       throwIfMissionSchedulerAborted(signal);

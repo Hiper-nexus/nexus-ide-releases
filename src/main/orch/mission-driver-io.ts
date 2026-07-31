@@ -49,6 +49,7 @@ import {
 } from './project-domain-store-registry';
 import { inspectGuidedPrevcPostMergeAuthority } from './prevc-autopilot-coordinator';
 import { sameProjectScope } from './project-scoped-broadcast';
+import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
 import { missionHasSchedulerProgress } from './mission-scheduler-authority';
 
 /** Production Mission Driver IO over scoped stores and active apply ports. */
@@ -642,6 +643,11 @@ export function createDefaultDriveDeps(options: {
     (config.mode === 'active' ? createProductionApplyPorts() : undefined);
   return {
     listScopes: options.listScopes,
+    // O driver é o loop com prova de vida nos incidentes; o watchdog de merge
+    // estagnado pega carona no batimento dele (além do tick do scheduler).
+    reconcileStalledMergeForScope: (scope) => {
+      requireWorktreeRuntimeRegistry().reconcileMergeIfStalled(scope);
+    },
     listRunningMissions: (scope) => {
       const suite = getProjectDomainStores(scope);
       return suite.missions

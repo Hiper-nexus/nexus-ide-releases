@@ -30,6 +30,7 @@ vi.mock('./mission-driver-runtime', () => ({
 import {
   configureProviderFailureWaiver,
   handleMissionWorkerProviderNoRoute,
+  providerWaiverLearning,
 } from './provider-failure-waiver';
 
 let baseDir = '';
@@ -312,5 +313,171 @@ describe('provider failure waiver glue (Main-owned)', () => {
       handleMissionWorkerProviderNoRoute(noRouteInputFor(fixture)),
     ).toBe('retry');
     expect(fixture.dispatches.get(fixture.task.id)?.state).toBe('running');
+  });
+});
+
+describe('reroute dentro do roster ANTES do waiver', () => {
+  const rosterCandidate = {
+    id: 'advisor-glm',
+    agentName: 'Advisor GLM',
+    category: 'architect',
+    cli: 'glm',
+    model: 'glm-4.7',
+    effort: 'high',
+  } as const;
+
+  function authHitInputFor(
+    fixture: ReturnType<typeof runningWorkerFixture>,
+  ) {
+    return {
+      ...noRouteInputFor(fixture),
+      hit: {
+        kind: 'auth' as const,
+        reason: 'Error: 401 OAuth access token has been revoked',
+        cooldownMs: 60_000,
+      },
+    };
+  }
+
+  it('re-rota em vez de dispensar quando o roster tem um agente vivo', () => {
+    const fixture = runningWorkerFixture();
+    const attemptLiveReroute = vi.fn(() => rosterCandidate);
+    configureProviderFailureWaiver({
+      runtimeManager: fixture.runtime,
+      attemptLiveReroute,
+    });
+
+    const outcome = handleMissionWorkerProviderNoRoute(
+      authHitInputFor(fixture),
+    );
+
+    expect(outcome).toBe('rerouted');
+    expect(attemptLiveReroute).toHaveBeenCalledTimes(1);
+    expect(attemptLiveReroute).toHaveBeenCalledWith(fixture.scope, {
+      missionId: fixture.mission.id,
+      taskId: fixture.task.id,
+      paneId: fixture.paneId,
+      sessionId: fixture.sessionId,
+      workerIncarnationId: fixture.claim.workerIncarnationId,
+      deadAdapterId: 'codex',
+    });
+    // A vitória inteira: NENHUM waiver foi persistido — a task pertence a
+    // outro agente, não foi dispensada.
+    expect(fixture.dispatches.get(fixture.task.id)).toMatchObject({
+      integrationReceipt: undefined,
+    });
+    // Sessão física morta fechada pela identidade exata + scheduler acordado.
+    expect(
+      registryMocks.requestMissionWorkerPaneRetirement,
+    ).toHaveBeenCalledWith({
+      paneId: fixture.paneId,
+      sessionId: fixture.sessionId,
+      missionId: fixture.mission.id,
+      workerIncarnationId: fixture.claim.workerIncarnationId,
+      scope: fixture.scope,
+    });
+    expect(driverMocks.requestMissionDriverTick).toHaveBeenCalled();
+  });
+
+  it('nunca consulta o reroute por um soluço curto: rate-limit segue a política antiga', () => {
+    const fixture = runningWorkerFixture();
+    const attemptLiveReroute = vi.fn(() => rosterCandidate);
+    configureProviderFailureWaiver({
+      runtimeManager: fixture.runtime,
+      attemptLiveReroute,
+    });
+
+    // noRouteInputFor usa rate-limit — que se resolve em minutos pela
+    // espera-pela-irmã; re-rotear por ele jogaria fora um agente saudável.
+    const outcome = handleMissionWorkerProviderNoRoute(
+      noRouteInputFor(fixture),
+    );
+
+    expect(attemptLiveReroute).not.toHaveBeenCalled();
+    expect(outcome).toBe('waived');
+  });
+
+  it('sem candidato vivo no roster, o waiver volta a ser o último recurso', () => {
+    const fixture = runningWorkerFixture();
+    const attemptLiveReroute = vi.fn(() => null);
+    configureProviderFailureWaiver({
+      runtimeManager: fixture.runtime,
+      attemptLiveReroute,
+    });
+
+    const outcome = handleMissionWorkerProviderNoRoute(
+      authHitInputFor(fixture),
+    );
+
+    expect(attemptLiveReroute).toHaveBeenCalledTimes(1);
+    expect(outcome).toBe('waived');
+    expect(fixture.dispatches.get(fixture.task.id)).toMatchObject({
+      state: 'completed',
+      integrationReceipt: { kind: 'advisory_provider_unavailable' },
+    });
+  });
+
+  it('um reroute que explode cai para o waiver em vez de derrubar o failover', () => {
+    const fixture = runningWorkerFixture();
+    const attemptLiveReroute = vi.fn(() => {
+      throw new Error('registry de stores indisponível');
+    });
+    configureProviderFailureWaiver({
+      runtimeManager: fixture.runtime,
+      attemptLiveReroute,
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const outcome = handleMissionWorkerProviderNoRoute(
+      authHitInputFor(fixture),
+    );
+
+    expect(outcome).toBe('waived');
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+});
+
+describe('providerWaiverLearning', () => {
+  it('states plainly that the task did not run, and names the CLI', () => {
+    const learning = providerWaiverLearning({
+      taskTitle: 'Mapear com E2E Advisor Claude',
+      adapterId: 'claude',
+      hitKind: 'auth',
+    });
+
+    expect(learning).toContain('Mapear com E2E Advisor Claude');
+    expect(learning).toContain('**não foi executada**');
+    expect(learning).toContain('claude');
+    expect(learning).toContain('a credencial expirou ou foi revogada');
+  });
+
+  it('only prescribes a new login when the cause is authentication', () => {
+    const auth = providerWaiverLearning({
+      taskTitle: 'Mapear',
+      adapterId: 'claude',
+      hitKind: 'auth',
+    });
+    const quota = providerWaiverLearning({
+      taskTitle: 'Mapear',
+      adapterId: 'codex',
+      hitKind: 'quota',
+    });
+
+    expect(auth).toContain('Refaça o login');
+    // Cota esgotada não se resolve com login: prescrever isso mandaria o
+    // operador para o caminho errado.
+    expect(quota).not.toContain('Refaça o login');
+    expect(quota).toContain('a cota do provider acabou');
+  });
+
+  it('never lets a long task title blow the durable learning budget', () => {
+    const learning = providerWaiverLearning({
+      taskTitle: 'x'.repeat(8_000),
+      adapterId: 'grok',
+      hitKind: 'transient',
+    });
+
+    expect(learning.length).toBeLessThanOrEqual(4_000);
   });
 });

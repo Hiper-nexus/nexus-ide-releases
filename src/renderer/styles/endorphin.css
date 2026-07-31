@@ -152,7 +152,7 @@
 
 .prog-onb__step-dot.is-active {
   background: var(--accent);
-  box-shadow: 0 0 10px var(--accent-glow);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 .prog-onb__subtitle {

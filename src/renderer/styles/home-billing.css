@@ -479,11 +479,14 @@
 /* Account roster styles live in panels.css (single source for CLI accounts). */
 
 /* Identidade do pane: quem opera aqui (orquestrador × worker do squad). */
+/* O papel (orquestrador × worker) é a ÚNICA distinção da barra que merece cor:
+   ela responde "quem manda neste pane". Peso 700 num chip de 10px só borrava o
+   glifo — a cor sozinha já carrega o sinal. */
 .toolbar__badge--orch {
   color: var(--accent);
-  border-color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
   background: var(--accent-soft);
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .toolbar__badge--worker {

@@ -1,5 +1,80 @@
 # Changelog
 
+## 0.20.0 — Operacional de verdade
+
+Data: 2026-07-31
+
+A régua desta versão é a frase do operador: "se o Nexus estiver operacional de
+verdade". Cada item abaixo nasceu de uma falha flagrada ao vivo nos gates de
+release do próprio dia — nada é especulativo.
+
+### Provider morto re-rota na hora, em TODAS as formas
+
+- **Reroute imediato no primeiro 401/cota**: o failover consulta o roster
+  selado ANTES de qualquer waiver ou retry e re-vincula a tarefa a outro
+  agente da mesma categoria com CLI viva — com a missão ainda running, pela
+  identidade física exata do worker que falhou. Soluços curtos (rate-limit,
+  transient) continuam na espera-pela-irmã, que resolve em minutos sem
+  descartar um agente saudável.
+- **Advisor esgotado com a missão rodando**: a terceira forma do mesmo bug
+  (7/8 tarefas completas, missão pendurada para sempre num advisor
+  blocked-terminal) — o sweep de reroute passou a aceitar missão running.
+- **Waiver é último recurso e é CONTADO**: toda dispensa por provider
+  indisponível vira aprendizado durável da missão — o nome da tarefa, que ela
+  **não foi executada**, qual CLI falhou e o remédio certo (login só quando a
+  causa é auth). O recibo sempre existiu; agora ele chega ao operador.
+
+### Merge abandonado tem watchdog
+
+- Uma tentativa de merge que o próprio processo abandonou (flagrada ao vivo:
+  22,7 min em candidate-validating, sem erro, sem validador existindo) é
+  detectada por idade — 25 min, acima de todos os bounds legítimos — e
+  reconciliada como interrompida pela mesma máquina de disposição do reinício.
+  O watchdog bate nos dois loops (mission-driver e scheduler).
+- **Projeções do tick isoladas**: uma reconciliação que lança não silencia
+  mais todas as seguintes — cada uma falha alto e sozinha.
+
+### Voz oficial: Grok Voice
+
+- O transporte realtime padrão vira `grok-voice-think-fast-2.0` (voz rex) via
+  `wss://api.x.ai/v1/realtime`, com OpenAI Realtime e Gemini Live como
+  degradação automática. Campo próprio para a `XAI_API_KEY` nas configurações,
+  seletor mostrando "Grok Voice (principal)", e versão de modelo fixa de
+  propósito: alias que migra sozinho não decide a voz do produto.
+- O transporte reaproveita o provider Realtime já testado (host e dialeto de
+  sessão são parâmetros) — o Grok difere só no `session.update` (voz e
+  `turn_detection: server_vad` na raiz) e no endpoint.
+
+### Visual redesenhado de ponta a ponta
+
+- **Pane**: nome do agente domina (sans 12px peso 560); badges viram metadado
+  quieto em mono 10px sobre fundo lavado; ações recuam a 50% de opacidade até
+  o pane receber ponteiro/foco; Fechar neutro em repouso (vermelho só no
+  hover); sombra de elevação real no card.
+- **Fim do neon**: os halos persistentes viraram anéis nítidos de 3px na cor
+  do estado ou sombra escura de elevação. Orbe de voz, logo do boot, mascote e
+  FX de celebração seguem brilhando — atmosfera é deliberada, cromo não.
+- **Rail**: as quatro seções deixaram de ser caixas coloridas empilhadas;
+  cabeçalhos quietos com ponto de estado de 6px, contagem neutra, e a missão
+  em execução é o único card aceso da coluna.
+- **Barra superior**: zonas separadas por filete e respiro — frota, cota,
+  missão, ferramentas e sistema lêem como grupos, não como fileira de chips.
+
+### Gateway de IA local (OmniRoute-like)
+
+- `NEXUS_AI_GATEWAY_BASE_URL` aponta as CLIs para um gateway local: as vars
+  `ANTHROPIC_BASE_URL`/`OPENAI_BASE_URL` são injetadas SÓ nos adapters que as
+  declaram, e planos com endpoint próprio pinado (GLM, LongCat) ficam
+  intocados por construção. O gateway troca de provider por baixo — a CLI nem
+  vê a falha.
+
+### Segurança de worktree
+
+- **Varredura de PTY no teardown**: liberar o registro de um worktree agora
+  encerra os PTYs que provadamente moram nele (prova por contenção de caminho,
+  fail-closed: sem cwd ou raiz vazia, não mata nada). Era a origem do worktree
+  órfão que travava missões futuras.
+
 ## 0.19.42 — A missão não para por causa de uma CLI
 
 Data: 2026-07-31

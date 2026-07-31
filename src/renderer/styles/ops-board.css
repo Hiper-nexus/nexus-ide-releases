@@ -144,14 +144,12 @@
 }
 .ops-board__col--running .ops-board__col-rail {
   background: var(--state-running);
-  box-shadow: 0 0 10px var(--accent-glow);
 }
 .ops-board__col--blocked .ops-board__col-rail {
   background: var(--state-blocked);
 }
 .ops-board__col--done .ops-board__col-rail {
   background: var(--state-done);
-  box-shadow: 0 0 10px color-mix(in srgb, var(--state-done) 40%, transparent);
 }
 .ops-board__col--failed .ops-board__col-rail {
   background: var(--state-failed);
@@ -275,7 +273,7 @@
   height: 5px;
   border-radius: 50%;
   background: var(--live);
-  box-shadow: 0 0 5px var(--live);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--live) 20%, transparent);
 }
 .ops-board__card-title {
   margin: 0;

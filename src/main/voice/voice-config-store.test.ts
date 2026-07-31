@@ -47,10 +47,15 @@ describe('voice-config-store', () => {
     expect(updated.jarvisLive.enabled).toBe(false);
   });
 
-  it('default é realtime (gemini-live) — hibernação revertida', async () => {
+  it('default é realtime (grok-realtime) — Grok Voice é a rota oficial', async () => {
     const { store } = await loadStoreInTempHome();
     const config = store.loadVoiceConfig();
-    expect(config.jarvisLive.transport).toBe('gemini-live');
+    expect(config.jarvisLive.transport).toBe('grok-realtime');
+    // Versão explícita, nunca o alias `grok-voice-latest`: o alias migra
+    // sozinho no provedor e trocaria a voz do produto sem decisão de ninguém.
+    expect(config.jarvisLive.grokModel).toBe('grok-voice-think-fast-2.0');
+    expect(config.jarvisLive.grokVoice).toBe('rex');
+    // As rotas de degradação continuam configuradas e prontas.
     expect(config.jarvisLive.liveModel).toBe('gemini-3.1-flash-live-preview');
     expect(config.jarvisLive.voiceName).toBe('Charon');
     expect(config.jarvisLive.openaiVoice).toBe('ash');
@@ -137,6 +142,8 @@ describe('voice-config-store', () => {
     expect(classic.jarvisLive.transport).toBe('classic');
     const gemini = store.applyConfigPatch({ jarvisLiveTransport: 'gemini-live' });
     expect(gemini.jarvisLive.transport).toBe('gemini-live');
+    const grok = store.applyConfigPatch({ jarvisLiveTransport: 'grok-realtime' });
+    expect(grok.jarvisLive.transport).toBe('grok-realtime');
   });
 
   it('ITEM 5: sempre expõe GEMINI/OPENAI (keys do realtime) mesmo sem estar no brain/stt/tts', async () => {

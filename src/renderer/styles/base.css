@@ -35,18 +35,25 @@
 }
 
 :root {
-  /* Cockpit: azul-negro profundo com um acento ciano operacional. A doutrina
-     de cor é aviônica — ciano = vivo/interativo, verde = nominal/pronto,
-     âmbar = atenção/bloqueado, vermelho = falha. Decoração nunca usa sinal. */
-  --bg: #0a0e15;
-  --bg-elevated: #101623;
-  --bg-bar: #0c1119;
-  --border: #1d2637;
-  --border-strong: #2c3a55;
-  --text: #d7dfec;
+  /* Cockpit NEUTRO com um acento ciano operacional. A doutrina de cor é
+     aviônica — ciano = vivo/interativo, verde = nominal/pronto, âmbar =
+     atenção/bloqueado, vermelho = falha. Decoração nunca usa sinal.
+
+     A base era azul-negro (#0a0e15/#101623) com borda azul sólida (#1d2637):
+     um fundo tingido faz TODA superfície parecer levemente acesa, e aí o ciano
+     de sinal não tem contra o quê se destacar. Cinza neutro devolve ao acento o
+     poder de significar. Bordas viraram branco translúcido: um fio de opacidade
+     compõe corretamente sobre qualquer superfície da pilha (bar, elevated,
+     modal) em vez de exigir um hex por camada. */
+  --bg: #0a0a0b;
+  --bg-elevated: #151517;
+  --bg-bar: #101012;
+  --border: rgb(255 255 255 / 0.07);
+  --border-strong: rgb(255 255 255 / 0.14);
+  --text: #fafafa;
   /* Secondary text. Mantido ≥5:1 sobre --bg e --bg-elevated (WCAG AA para
      meta/detail/empty-state). Não baixar. */
-  --text-dim: #8a94aa;
+  --text-dim: #a1a1a1;
   --accent: #3dd9ff;
   /* Tinta sobre superfícies sólidas de acento (CTA). Um token, não #hex solto:
      temas claros trocam para branco via ui-theme.ts. */
@@ -66,9 +73,9 @@
   --scrollbar-thumb: rgba(124, 134, 158, 0.36);
   --scrollbar-thumb-hover: color-mix(in srgb, var(--accent) 62%, transparent);
   --pixel-grid: color-mix(in srgb, var(--accent) 5%, transparent);
-  --radius: 8px;
+  --radius: 10px;
   --bar-height: 44px;
-  --toolbar-height: 28px;
+  --toolbar-height: 30px;
   --font-ui: 'Inter', ui-sans-serif, -apple-system, "SF Pro Text", Segoe UI,
     system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, "SF Mono", Menlo, monospace;
@@ -485,10 +492,20 @@ body {
 .workspace-bar__zone {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   flex: 0 0 auto;
   min-width: 0;
   -webkit-app-region: no-drag;
+}
+
+/* As zonas existiam na marcação mas não no olho: com o mesmo respiro entre
+   itens e entre grupos, frota, cota, missão, ferramentas e conta liam como uma
+   fileira única de chips avulsos. O filete e o respiro maior entre zonas — e
+   só entre elas — dão a leitura de grupos que a estrutura já afirmava. */
+.workspace-bar__zone + .workspace-bar__zone {
+  margin-left: 4px;
+  padding-left: 10px;
+  border-left: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
 }
 
 .workspace-bar__zone--status {
@@ -944,18 +961,23 @@ body {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius);
+  /* Em superfície escura a elevação se lê por LUMINOSIDADE, não por sombra:
+     mais claro = mais alto (--bg → --bg-elevated). Sombra difusa sobre preto
+     não projeta nada, só embaça a borda — e aqui ainda repintava o canvas do
+     xterm. A escada de claridade faz o mesmo trabalho de graça. */
   overflow: hidden;
   transition:
     border-color 150ms var(--ease-out-quart),
     box-shadow 150ms var(--ease-out-quart);
 }
 
+/* Foco = anel nítido de 1px + superfície um degrau mais clara. O halo ciano
+   difuso (0 0 18px) era o tell de "gabinete gamer": borra a borda, não informa
+   nada que o anel já não diga, e some em tela clara. */
 .pane--focused {
   border-color: var(--accent);
-  box-shadow:
-    0 0 0 1px var(--accent-soft),
-    0 0 18px -6px var(--accent-glow),
-    0 6px 24px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 0 0 1px var(--accent-strong);
+  background: color-mix(in srgb, #ffffff 2%, var(--bg-elevated));
 }
 
 /* Estado da frota legível de LONGE, não só no glifo de 10px: agente
@@ -963,8 +985,7 @@ body {
    Sem animação de box-shadow no pane — em Electron isso repinta o
    canvas do xterm e parece o terminal “piscando” a cada busy↔idle. */
 .pane--state-busy:not(.pane--focused) {
-  border-color: color-mix(in srgb, var(--state-running) 55%, var(--border));
-  box-shadow: 0 0 12px -8px var(--accent-glow);
+  border-color: color-mix(in srgb, var(--state-running) 55%, var(--border-strong));
 }
 
 /* Anel respirante de "trabalhando": o glifo de 10px na toolbar não basta para
@@ -999,8 +1020,7 @@ body {
 }
 
 .pane--state-exited:not(.pane--focused) {
-  border-color: color-mix(in srgb, var(--state-failed) 60%, var(--border));
-  box-shadow: 0 0 14px -8px var(--danger);
+  border-color: color-mix(in srgb, var(--state-failed) 60%, var(--border-strong));
 }
 
 .pane--state-exited .toolbar {
@@ -1109,12 +1129,12 @@ body {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 0 4px 0 8px;
+  padding: 0 5px 0 9px;
   background: var(--bg-bar);
   border-bottom: 1px solid var(--border);
   font-size: 11px;
   user-select: none;
-  min-height: 28px;
+  min-height: 30px;
   min-width: 0;
   width: 100%;
   container-type: inline-size;
@@ -1138,7 +1158,7 @@ body {
   overflow: hidden;
   flex-wrap: wrap;
   row-gap: 160px;
-  max-height: 26px;
+  max-height: 28px;
 }
 
 /* Rígido de propósito: quem poda o conteúdo é o density JS + container
@@ -1149,6 +1169,24 @@ body {
   align-items: center;
   gap: 4px;
   flex: 0 0 auto;
+  /* Sete ícones acesos em todo pane, o tempo todo, competiam com o conteúdo do
+     terminal. Recuados até o pane receber ponteiro, foco ou teclado, eles
+     continuam LEGÍVEIS (opacidade, nunca display:none — some do mouse mas
+     também do leitor de tela e do Tab) e param de gritar. */
+  opacity: 0.5;
+  transition: opacity 140ms var(--ease-out-quart);
+}
+
+.pane:hover .toolbar__actions,
+.pane:focus-within .toolbar__actions,
+.pane--focused .toolbar__actions {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toolbar__actions {
+    transition: none;
+  }
 }
 
 /* Pin de fechar — sempre no canto direito, legível mesmo em pane estreito. */
@@ -1163,9 +1201,12 @@ body {
   min-height: 24px;
   margin-left: 2px;
   padding: 3px 8px;
-  border: 1px solid color-mix(in srgb, var(--danger, #ff7a90) 35%, var(--border-strong));
+  /* Neutro em repouso: o pin permanentemente tingido de vermelho lia como um
+     alerta em cada pane. A cor de perigo pertence ao momento em que o
+     ponteiro está SOBRE o botão — aí ela é confirmação, não ruído. */
+  border: 1px solid color-mix(in srgb, var(--border-strong) 70%, transparent);
   border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--danger, #ff7a90) 8%, transparent);
+  background: transparent;
   color: var(--text-dim);
   cursor: pointer;
   font-size: 10px;
@@ -1233,9 +1274,11 @@ body {
   flex: 0 0 auto;
 }
 
+/* LED aceso = anel nítido, não bloom: em fundo escuro o blur colorido borra a
+   barra inteira; o spread de 3px dá a mesma leitura de "vivo" com aresta. */
 .toolbar__dot--on {
   background: var(--accent);
-  box-shadow: 0 0 8px var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 /* Estado do agente no toolbar: cor + borda comunicam; motion leve só no
@@ -1284,9 +1327,17 @@ body {
   }
 }
 
+/* O nome do agente é a PRIMEIRA coisa que se lê num pane. Em mono 11px, com o
+   mesmo peso dos badges, ele competia de igual para igual com o id do pane e
+   com o rótulo do adapter — três coisas do mesmo tamanho, nenhuma dominante.
+   Sans com peso e um degrau de tamanho a mais estabelece a hierarquia sem
+   ocupar mais espaço. */
 .toolbar__title {
   position: relative;
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 560;
+  letter-spacing: -0.005em;
   color: var(--text);
   white-space: nowrap;
   overflow: hidden;
@@ -1297,18 +1348,21 @@ body {
   cursor: default;
 }
 
+/* Badges são METADADO, não manchete. Em VT323 caixa-alta com 0.1em de tracking
+   e borda sólida, cada um lia como um selo — quatro selos disputando a mesma
+   linha do nome do agente. Mono 10px sobre um fundo lavado diz a mesma coisa
+   e devolve o primeiro plano ao título. A identidade pixel continua viva no
+   modo pixel, que promove --font-pixel para --font-ui. */
 .toolbar__badge {
   position: relative;
-  /* Identidade pixel no default: VT323 é condensada, 12px aqui lê como os
-     10px da sans e respeita o piso de legibilidade da fonte bitmap. */
-  font-family: var(--font-pixel);
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.01em;
   color: var(--text-dim);
-  border: 1px solid var(--border-strong);
+  border: 1px solid transparent;
+  background: color-mix(in srgb, var(--border) 55%, transparent);
   border-radius: var(--radius-sm);
-  padding: 1px 5px;
+  padding: 2px 6px;
   flex: 0 1 auto;
   min-width: 0;
   max-width: 140px;
@@ -1339,16 +1393,27 @@ body {
   border-color: var(--accent);
 }
 
-/* Grouped action clusters: sessão | layout (Fechar é pin separado) */
+/* Grouped action clusters: sessão | layout (Fechar é pin separado)
+   Sem caixa desenhada. O contêiner com fundo e borda transformava cada
+   cluster num bloco competindo com o próximo — a barra virava uma fileira de
+   caixas dentro de uma caixa. Separação por espaço e por um filete entre
+   grupos basta, e some junto com os botões quando o pane não está sob o
+   ponteiro. */
 .toolbar__group {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: 1px;
   flex: 0 0 auto;
-  padding: 1px;
+  padding: 0;
   border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--border, #333) 35%, transparent);
-  border: 1px solid color-mix(in srgb, var(--border-strong, #444) 55%, transparent);
+  background: transparent;
+  border: none;
+}
+
+.toolbar__group + .toolbar__group {
+  margin-left: 5px;
+  padding-left: 6px;
+  border-left: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
 }
 
 .toolbar__btn {
@@ -1664,7 +1729,7 @@ body {
   flex: 0 0 auto;
   border-radius: 50%;
   background: var(--state-running);
-  box-shadow: 0 0 7px color-mix(in srgb, var(--state-running) 70%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--state-running) 20%, transparent);
 }
 
 .pane-activity__text {
@@ -2146,13 +2211,17 @@ body {
    accent no hover) — o override local ficou redundante e foi removido. */
 
 /* ---- Toolbar agent extensions ---- */
+/* CLI + modelo é metadado estático, não sinal operacional. Em ciano com borda
+   ciano ele virava o elemento mais alto da barra — mais alto que o nome do
+   agente e do mesmo tom que o estado "vivo", violando a doutrina em que ciano
+   significa ativo/interativo. Neutro aqui; a cor da identidade fica por conta
+   do logo do provider, que já é colorido. */
 .toolbar__badge--agent {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  color: var(--accent);
-  border-color: var(--accent);
-  opacity: 0.8;
+  color: var(--text-dim);
+  border-color: transparent;
   max-width: 200px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2538,7 +2607,7 @@ body {
 }
 .fleet-chip__seg--working .fleet-chip__dot {
   background: var(--state-running);
-  box-shadow: 0 0 6px var(--accent-glow);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--state-running) 20%, transparent);
   animation: state-breathe 2.2s ease-in-out infinite;
 }
 
@@ -2555,7 +2624,7 @@ body {
 }
 .fleet-chip__seg--down .fleet-chip__dot {
   background: var(--state-failed);
-  box-shadow: 0 0 6px var(--danger-soft);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--state-failed) 20%, transparent);
 }
 
 @media (prefers-reduced-motion: reduce) {

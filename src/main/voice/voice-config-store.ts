@@ -364,13 +364,18 @@ function collectVoiceEnvVars(
 }
 
 /**
- * ITEM 5: the realtime transport authenticates with GEMINI_API_KEY (gemini-live)
- * or OPENAI_API_KEY (openai-realtime) — keys the STT/TTS/brain chains may not
- * reference. Surfacing them as synthetic providers guarantees a settings field
- * (and a valid store target) for each, so the user can paste the GEMINI key that
- * the engage gate then resolves, even on a config that dropped the gemini brain.
+ * ITEM 5: the realtime transport authenticates with XAI_API_KEY (grok-realtime),
+ * GEMINI_API_KEY (gemini-live) or OPENAI_API_KEY (openai-realtime) — keys the
+ * STT/TTS/brain chains may not reference. Surfacing them as synthetic providers
+ * guarantees a settings field (and a valid store target) for each, so the user
+ * can paste the key that the engage gate then resolves, even on a config that
+ * dropped the matching brain.
+ *
+ * A rota oficial precisa aparecer aqui PRIMEIRO: sem este campo o operador não
+ * teria onde colar a chave da xAI e o Grok degradaria em silêncio para Gemini.
  */
 const REALTIME_KEY_PROVIDERS: VoicePlugin[] = [
+  { type: 'stt', provider: 'grok-realtime', auth: { type: 'api_key', envVar: 'XAI_API_KEY' } },
   { type: 'stt', provider: 'gemini-live', auth: { type: 'api_key', envVar: 'GEMINI_API_KEY' } },
   { type: 'stt', provider: 'openai-realtime', auth: { type: 'api_key', envVar: 'OPENAI_API_KEY' } },
 ];

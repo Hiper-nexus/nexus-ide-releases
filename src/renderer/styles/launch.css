@@ -106,7 +106,7 @@
 
 .launch__readiness .is-live i {
   background: var(--live);
-  box-shadow: 0 0 8px color-mix(in srgb, var(--live) 55%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--live) 20%, transparent);
 }
 
 .launch__next {
@@ -173,13 +173,13 @@
   background: var(--accent);
   color: var(--accent-ink);
   border: 1px solid var(--accent);
-  box-shadow: 0 4px 18px -8px var(--accent-glow);
+  box-shadow: 0 4px 14px -6px rgba(0, 0, 0, 0.55);
 }
 
 .launch__primary:hover:not(:disabled) {
   background: var(--accent-hover);
   border-color: var(--accent-hover);
-  box-shadow: 0 6px 22px -8px var(--accent-glow);
+  box-shadow: 0 6px 18px -6px rgba(0, 0, 0, 0.6);
 }
 
 .launch__primary:disabled,

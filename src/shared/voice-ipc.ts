@@ -80,7 +80,9 @@ export const setConfigRequestSchema = z.object({
   /** Toggle Jarvis Live: continuous session mode over the Classic fallback. */
   jarvisLiveEnabled: z.boolean().optional(),
   /** Transporte da sessão live: FSM batch (classic) ou áudio realtime. */
-  jarvisLiveTransport: z.enum(['classic', 'openai-realtime', 'gemini-live']).optional(),
+  jarvisLiveTransport: z
+    .enum(['classic', 'openai-realtime', 'gemini-live', 'grok-realtime'])
+    .optional(),
   /** OpenAI Realtime model override, e.g. gpt-realtime-2.1 or gpt-realtime-2.1-mini. */
   jarvisLiveOpenaiModel: z.string().min(1).max(128).optional(),
   /** OpenAI Realtime voice override. */
@@ -184,8 +186,9 @@ export interface VoiceRuntimeInfo {
   };
   jarvisLive: {
     enabled: boolean;
-    /** 'classic' = FSM batch; 'openai-realtime'/'gemini-live' = audio realtime. */
-    transport: 'classic' | 'openai-realtime' | 'gemini-live';
+    /** 'classic' = FSM batch; os demais = áudio realtime ('grok-realtime' é o
+     *  padrão oficial da voz). */
+    transport: 'classic' | 'openai-realtime' | 'gemini-live' | 'grok-realtime';
     openaiModel: string;
     openaiVoice: string;
     /** Gemini Live prebuilt voice (Charon, Fenrir, …). */

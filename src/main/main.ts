@@ -154,8 +154,11 @@ import {
 import {
   configureAgentHookEndpointPath,
   APP_SHUTDOWN_PTY_TERMINATION,
+  listLiveSessionLocations,
+  orchTerminateSession,
   terminateAllSessions,
 } from "./pty/pty-manager";
+import { configureWorktreePtySweep } from "./runtime/worktree-pty-sweep";
 import {
   liveRuntimeProcessSummary,
   sealRuntimeProcessAdmissionForShutdown,
@@ -420,6 +423,13 @@ function bootstrap(): void {
   configurePtyProjectRuntimeManager(projectRuntimeManager);
   configureRendererMissionAuthority(projectRuntimeManager);
   configureProviderFailureWaiver({ runtimeManager: projectRuntimeManager });
+  // Liga a varredura de PTY do teardown de worktree. Injetado aqui, e não
+  // importado dentro do registry, porque pty-manager já importa de runtime/ —
+  // o import de volta fecharia um ciclo ESM.
+  configureWorktreePtySweep({
+    listSessions: listLiveSessionLocations,
+    terminate: (sessionId) => orchTerminateSession(sessionId),
+  });
   const worktreeRuntime = configureWorktreeRuntimeRegistry(projectRuntimeManager);
   configureMissionScheduler({ listScopes: knownCronScopes });
   configureContextWorkflowRegistry(projectRuntimeManager, {

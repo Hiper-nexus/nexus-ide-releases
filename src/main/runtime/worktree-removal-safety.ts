@@ -47,6 +47,22 @@ function getPathOps(...paths: string[]): PathOps {
   return paths.some(isWindowsAbsolutePathLike) ? win32 : posix;
 }
 
+/**
+ * Contenção de caminho segura em POSIX e Windows. Exportada para a varredura de
+ * PTY do teardown de worktree (worktree-pty-sweep.ts) reusar esta prova em vez
+ * de nascer uma quarta implementação de "está dentro de?" no repositório.
+ */
+export function isPathInsideOrEqual(
+  parentPath: string,
+  childPath: string,
+): boolean {
+  return containsPath(
+    parentPath,
+    childPath,
+    getPathOps(parentPath, childPath),
+  );
+}
+
 function containsPath(parentPath: string, childPath: string, pathOps: PathOps): boolean {
   const relativePath = pathOps.relative(parentPath, childPath);
   // Why: `..name` is a valid child name; only `..` and `../...` escape.

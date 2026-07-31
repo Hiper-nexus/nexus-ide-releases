@@ -4,6 +4,7 @@ import { resolveVoiceApiKey } from '../../voice/voice-secrets';
 import type { VoiceConfig } from '../../../shared/voice-config';
 import { coarseVoiceToolsAsRealtimeDefinitions } from './coarse-voice-tools';
 import { GeminiLiveProvider } from './gemini-live-provider';
+import { createGrokRealtimeProvider } from './grok-realtime';
 import { createNexusRealtimeTools } from './nexus-realtime-tools';
 import { createGeminiRealtimeTools } from './gemini-realtime-tools';
 import { OpenAIRealtimeProvider } from './openai-realtime';
@@ -122,7 +123,16 @@ export function resolveRealtimeProviderIds(
   env: NodeJS.ProcessEnv = process.env,
 ): RealtimeProviderId[] {
   const forced = env.NEXUS_REALTIME_PROVIDER?.trim().toLowerCase();
-  if (forced === 'openai' || forced === 'gemini') return [forced];
+  if (forced === 'grok' || forced === 'openai' || forced === 'gemini') {
+    return [forced];
+  }
+  // Grok Voice é a rota oficial da voz; openai e gemini seguem como degradação
+  // automática quando a XAI_API_KEY não resolve (createRealtimeProviderCandidates
+  // só constrói candidato de provider com chave, então um Grok sem chave é
+  // pulado em silêncio em vez de derrubar o realtime).
+  if (config.jarvisLive.transport === 'grok-realtime') {
+    return ['grok', 'openai', 'gemini'];
+  }
   if (config.jarvisLive.transport === 'openai-realtime') return ['openai', 'gemini'];
   // gemini-live prefers Gemini but falls back to OpenAI Realtime: if the
   // configured Gemini key is absent while OPENAI_API_KEY resolves, realtime
@@ -159,6 +169,26 @@ export function createRealtimeProviderCandidates(
     options.instructions ?? loadJarvisSystemPrompt(options.promptPath);
   const candidates: RealtimeProviderCandidate[] = [];
   for (const providerId of resolveRealtimeProviderIds(options.config)) {
+    if (providerId === 'grok') {
+      const apiKey = resolveVoiceApiKey('XAI_API_KEY');
+      if (apiKey) {
+        candidates.push({
+          id: providerId,
+          provider: createGrokRealtimeProvider({
+            apiKey,
+            model: live.grokModel,
+            voice: live.grokVoice,
+            instructions: withNexusVoicePolicy(baseInstructions),
+            tools: [
+              ...coarseVoiceToolsAsRealtimeDefinitions(),
+              ...createNexusRealtimeTools(),
+            ],
+          }),
+        });
+      }
+      continue;
+    }
+
     if (providerId === 'openai') {
       const apiKey = resolveVoiceApiKey('OPENAI_API_KEY');
       if (apiKey) {

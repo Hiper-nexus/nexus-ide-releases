@@ -25,6 +25,7 @@ import {
   SqliteWorktreeStateStore,
 } from "./sqlite-workflow-state-stores";
 import { ScopedStoreBinding } from "../orch/scoped-store";
+import { sweepPtysInsideWorktree } from "./worktree-pty-sweep";
 import { inspectGitBinding } from "../context/git-binding";
 import type { IntegratedMissionResult } from "../context/context-workflow-service";
 
@@ -291,6 +292,12 @@ export class WorktreeRuntimeRegistry {
             'whose owning task or mission is terminal; no Git path or ref ' +
             'was removed',
         );
+        // Liberar o REGISTRO nunca olhou para os processos: um PTY com cwd
+        // dentro do worktree seguia vivo escrevendo num diretório já dado como
+        // livre — a origem do worktree órfão que trava a próxima missão.
+        for (const record of released) {
+          sweepPtysInsideWorktree(record.rootRealPath);
+        }
       }
       return Object.freeze(released);
     } catch (error) {
@@ -468,6 +475,12 @@ export class WorktreeRuntimeRegistry {
     scope: ProjectExecutionScope,
   ): MergeQueueReconciliationResult {
     return this.forScope(scope).queue.reconcileIfIdle(scope);
+  }
+
+  reconcileMergeIfStalled(
+    scope: ProjectExecutionScope,
+  ): MergeQueueReconciliationResult {
+    return this.forScope(scope).queue.reconcileIfStalled(scope);
   }
 
   resolveIntegratedMission(

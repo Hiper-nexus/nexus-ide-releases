@@ -90,7 +90,20 @@ export const voicePluginSchema: z.ZodType<VoicePlugin> = z.lazy(() =>
 export type VoiceRouting = 'jarvis' | 'focused-pane' | 'orchestrator' | 'ask';
 export type VoiceSpeakMode = 'summary' | 'full' | 'off';
 export type JarvisBrainProviderId = 'gemini' | 'openai' | 'groq';
-export type JarvisLiveTransport = 'classic' | 'openai-realtime' | 'gemini-live';
+export type JarvisLiveTransport =
+  | 'classic'
+  | 'openai-realtime'
+  | 'gemini-live'
+  | 'grok-realtime';
+
+/**
+ * Grok Voice (xAI) — rota oficial da voz do Nexus. Versão explícita de
+ * propósito: o alias `grok-voice-latest` migra sozinho no provedor e trocaria a
+ * voz do produto sem ninguém decidir isso.
+ */
+export const DEFAULT_GROK_VOICE_MODEL = 'grok-voice-think-fast-2.0';
+/** Voz interna masculina da xAI (as outras rotas também abrem em masculina). */
+export const DEFAULT_GROK_VOICE = 'rex';
 
 export const DEFAULT_GEMINI_LIVE_MODEL = 'gemini-3.1-flash-live-preview';
 /** Voz masculina Gemini Live (padrão produto). */
@@ -163,8 +176,14 @@ export const jarvisLiveConfigSchema = z
      * esgotada, o Classic (agora muito melhor) segue valendo mid-session.
      */
     transport: z
-      .enum(['classic', 'openai-realtime', 'gemini-live'])
-      .default('gemini-live'),
+      .enum(['classic', 'openai-realtime', 'gemini-live', 'grok-realtime'])
+      .default('grok-realtime'),
+    /** Modelo de voz da xAI (rota oficial). Versão explícita de propósito: o
+     *  alias `grok-voice-latest` migra sozinho e trocaria a voz do Nexus sem
+     *  decisão de ninguém. */
+    grokModel: z.string().min(1).max(128).default(DEFAULT_GROK_VOICE_MODEL),
+    /** Voz interna da xAI (masculina, como as outras rotas). */
+    grokVoice: z.string().min(1).max(64).default(DEFAULT_GROK_VOICE),
     /** Modelo realtime OpenAI padrao. */
     openaiModel: z.string().min(1).max(128).default('gpt-realtime-2.1-mini'),
     /** Voz OpenAI Realtime padrao (masculina). */
@@ -186,7 +205,9 @@ export const jarvisLiveConfigSchema = z
   })
   .default({
     enabled: false,
-    transport: 'gemini-live',
+    transport: 'grok-realtime',
+    grokModel: DEFAULT_GROK_VOICE_MODEL,
+    grokVoice: DEFAULT_GROK_VOICE,
     openaiModel: 'gpt-realtime-2.1-mini',
     openaiVoice: DEFAULT_OPENAI_VOICE,
     liveModel: DEFAULT_GEMINI_LIVE_MODEL,
@@ -366,7 +387,9 @@ export const DEFAULT_VOICE_CONFIG: VoiceConfig = {
   persona: { assistantName: 'Jarvis' },
   jarvisLive: {
     enabled: false,
-    transport: 'gemini-live',
+    transport: 'grok-realtime',
+    grokModel: DEFAULT_GROK_VOICE_MODEL,
+    grokVoice: DEFAULT_GROK_VOICE,
     openaiModel: 'gpt-realtime-2.1-mini',
     openaiVoice: DEFAULT_OPENAI_VOICE,
     liveModel: DEFAULT_GEMINI_LIVE_MODEL,

@@ -195,92 +195,43 @@
   padding: 0 8px;
 }
 
-/* ── Seções com cor de estado (ops: trilho + tinta, legível de relance) ─ */
+/* ── Seções: navegação quieta, estado num ponto ─
+   As quatro variantes eram CAIXAS tingidas (borda + fundo + rótulo + chip, cada
+   uma na sua cor) empilhadas — um totem de semáforo em que seção competia com
+   missão. Cabeçalho de seção é navegação; o estado pertence aos ITENS, que já
+   têm seus dots. Sobrou da cor um único ponto de 6px antes do rótulo: o
+   suficiente para varrer o rail de relance sem pintar contêiner nenhum. */
 .activity-rail__section--active,
 .activity-rail__section--queue,
 .activity-rail__section--done,
 .activity-rail__section--pinned {
   position: relative;
   padding: 6px 0 6px;
-  border-radius: 10px;
-  border: 1px solid transparent;
-  overflow: hidden;
 }
 
-/* Trilho superior de 2px — mesmo idioma do Ops Board (sem side-stripe). */
-.activity-rail__section--active::before,
-.activity-rail__section--queue::before,
-.activity-rail__section--done::before,
-.activity-rail__section--pinned::before {
+.activity-rail__section--active > .activity-rail__section-head::before,
+.activity-rail__section--queue > .activity-rail__section-head::before,
+.activity-rail__section--done > .activity-rail__section-head::before,
+.activity-rail__section--pinned > .activity-rail__section-head::before {
   content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  pointer-events: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: 0 0 auto;
 }
 
-.activity-rail__section--active {
-  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
-  background: color-mix(in srgb, var(--accent) 9%, transparent);
-}
-.activity-rail__section--active::before {
+.activity-rail__section--active > .activity-rail__section-head::before {
   background: var(--state-running);
-  box-shadow: 0 0 10px var(--accent-glow);
 }
-.activity-rail__section--active .activity-rail__section-label {
-  color: var(--accent);
-}
-.activity-rail__section--active .activity-rail__section-count {
-  background: color-mix(in srgb, var(--accent) 24%, transparent);
-  color: var(--accent);
-}
-
-.activity-rail__section--queue {
-  border-color: color-mix(in srgb, var(--warn) 34%, var(--border));
-  background: color-mix(in srgb, var(--warn) 7%, transparent);
-}
-.activity-rail__section--queue::before {
+.activity-rail__section--queue > .activity-rail__section-head::before {
   background: var(--warn);
 }
-.activity-rail__section--queue .activity-rail__section-label {
-  color: color-mix(in srgb, var(--warn) 90%, var(--text));
-}
-.activity-rail__section--queue .activity-rail__section-count {
-  background: color-mix(in srgb, var(--warn) 20%, transparent);
-  color: var(--warn);
-}
-
-.activity-rail__section--done {
-  border-color: color-mix(in srgb, var(--ok) 26%, var(--border));
-  background: color-mix(in srgb, var(--ok) 5%, transparent);
-}
-.activity-rail__section--done::before {
+.activity-rail__section--done > .activity-rail__section-head::before {
   background: var(--ok);
   opacity: 0.85;
 }
-.activity-rail__section--done .activity-rail__section-label {
-  color: color-mix(in srgb, var(--ok) 85%, var(--text));
-}
-.activity-rail__section--done .activity-rail__section-count {
-  background: color-mix(in srgb, var(--ok) 16%, transparent);
-  color: var(--ok);
-}
-
-.activity-rail__section--pinned {
-  border-color: color-mix(in srgb, var(--gold) 34%, var(--border));
-  background: color-mix(in srgb, var(--gold) 7%, transparent);
-}
-.activity-rail__section--pinned::before {
+.activity-rail__section--pinned > .activity-rail__section-head::before {
   background: var(--gold);
-}
-.activity-rail__section--pinned .activity-rail__section-label {
-  color: color-mix(in srgb, var(--gold) 85%, var(--text));
-}
-.activity-rail__section--pinned .activity-rail__section-count {
-  background: color-mix(in srgb, var(--gold) 18%, transparent);
-  color: var(--gold);
 }
 
 /* ── Workspace ≠ missão: chip compacto ─ */
@@ -1360,7 +1311,7 @@
 }
 .mission-rail__item--active .mission-rail__dot {
   background: var(--live);
-  box-shadow: 0 0 8px color-mix(in srgb, var(--live) 55%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--live) 20%, transparent);
 }
 .mission-rail__item--active .mission-rail__item-title {
   font-weight: 650;
@@ -1385,7 +1336,7 @@
    falha = vermelho, pendente = dim. */
 .mission-rail__dot--running {
   background: var(--state-running);
-  box-shadow: 0 0 6px var(--accent-glow);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--state-running) 20%, transparent);
   animation: state-breathe 2.2s ease-in-out infinite;
 }
 .mission-rail__dot--done {
@@ -1570,7 +1521,7 @@
 
 .mission-rail__agent-dot--busy {
   background: var(--state-running);
-  box-shadow: 0 0 5px var(--accent-glow);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--state-running) 20%, transparent);
 }
 
 .mission-rail__agent-dot--spawning {

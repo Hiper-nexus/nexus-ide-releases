@@ -486,6 +486,23 @@ function performSwitch(req: SwitchRequest): void {
         adapterId,
         hit,
       });
+      if (outcome === 'rerouted') {
+        // A task já pertence a outro agente do roster e a sessão morta foi
+        // fechada — agendar a espera-pela-irmã aqui reagendaria um retry para
+        // uma encarnação que não existe mais.
+        emitFailover(authority, {
+          paneId,
+          fromAccountLabel: fromLabel,
+          toAccountLabel: '',
+          reason:
+            `${hit.reason} — tarefa re-roteada para outro agente do roster`,
+          kind: hit.kind,
+          switched: false,
+          fromAccountId,
+          missionId: authority.missionId,
+        });
+        return;
+      }
       if (outcome === 'waived') {
         console.info(
           '[failover]',

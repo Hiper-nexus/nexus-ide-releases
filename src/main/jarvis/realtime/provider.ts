@@ -59,7 +59,7 @@ export interface TurnManagedRealtimeProvider extends RoleAwareRealtimeProvider {
   sendScreenUpdate?(text: string): void;
 }
 
-export type RealtimeProviderId = 'openai' | 'gemini';
+export type RealtimeProviderId = 'grok' | 'openai' | 'gemini';
 
 export function int16ArrayToBase64(samples: Int16Array): string {
   return Buffer.from(samples.buffer, samples.byteOffset, samples.byteLength).toString(

@@ -41,6 +41,13 @@ export interface DriveSnapshot {
 
 export interface DriveDeps {
   listScopes(): readonly ProjectExecutionScope[];
+  /**
+   * Watchdog opcional de merge estagnado no mesmo processo. Mora no driver
+   * porque este é o loop com prova de vida nos incidentes (91 ticks durante a
+   * estagnação de 22,7 min de 31/07) — o scheduler também chama o watchdog,
+   * mas quem garante o batimento é o coração que comprovadamente bate.
+   */
+  reconcileStalledMergeForScope?(scope: ProjectExecutionScope): void;
   listRunningMissions(scope: ProjectExecutionScope): readonly { id: string }[];
   /** Retorna null se a missão não existe (removida entre list e load). */
   loadDriveState(
@@ -127,6 +134,14 @@ export async function runDriveTick(
   let applied = 0;
   let applyErrors = 0;
   for (const scope of deps.listScopes()) {
+    try {
+      deps.reconcileStalledMergeForScope?.(scope);
+    } catch (error) {
+      console.warn(
+        '[mission-driver] watchdog de merge estagnado falhou no scope:',
+        error,
+      );
+    }
     let running: readonly { id: string }[];
     try {
       running = deps.listRunningMissions(scope);
