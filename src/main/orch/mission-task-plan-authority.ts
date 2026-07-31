@@ -379,6 +379,34 @@ export function planMissionTasks(
   );
 }
 
+const TERMINAL_WORKTREE_STATUSES: ReadonlySet<string> = new Set([
+  "failed",
+  "abandoned",
+  "integrated",
+]);
+
+/**
+ * Seal immutability counts only worktrees that still hold an execution slot.
+ *
+ * Terminal records (failed/abandoned/integrated) belong to a prior plan
+ * generation — routinely a blocked dispatch whose ownership was already
+ * released with the dead-owner marker — and remain governed by
+ * `WorktreeManager.create`'s own per-taskKey conflict and resurrection rules.
+ * Counting them here made every reopen of a technically blocked mission die
+ * with "sealed after the first worktree allocation", killing automatic
+ * recovery. Records without a recognizable status stay fail-closed as live.
+ */
+export function hasLiveMissionWorktreeAllocation(
+  records: readonly unknown[],
+): boolean {
+  return records.some((record) => {
+    const status = (record as { readonly status?: unknown } | null)?.status;
+    return !(
+      typeof status === "string" && TERMINAL_WORKTREE_STATUSES.has(status)
+    );
+  });
+}
+
 /**
  * Trusted-main seal for an immutable task plan.
  *
@@ -399,7 +427,11 @@ export function sealMainOwnedMissionTaskPlan(
   authority?: MainOwnedApprovedPreflightAuthority,
 ): MissionTaskPlanResult {
   const missionId = input.missionId;
-  if (deps.listMissionWorktrees(scope, missionId).length > 0) {
+  if (
+    hasLiveMissionWorktreeAllocation(
+      deps.listMissionWorktrees(scope, missionId),
+    )
+  ) {
     throw new Error(
       "mission task plan is sealed after the first worktree allocation",
     );

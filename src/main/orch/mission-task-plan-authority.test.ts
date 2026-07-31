@@ -398,6 +398,47 @@ describe("mission task plan authority", () => {
     expect(createPlanAtomically).not.toHaveBeenCalled();
   });
 
+  it("reseals across released terminal worktrees so recovery can replan", () => {
+    const { suite, deps, createPlanAtomically } = harness({
+      worktrees: [
+        { taskId: "released", status: "failed" },
+        { taskId: "merged", status: "integrated" },
+        { taskId: "gone", status: "abandoned" },
+      ],
+    });
+    const result = planMissionTasks(
+      { missionId: "mission-a", tasks: [validTask] },
+      orchestratorContext(),
+      suite,
+      deps,
+    );
+    expect(createPlanAtomically).toHaveBeenCalledOnce();
+    expect(result.planned).toHaveLength(1);
+  });
+
+  it.each(["reserved", "ready", "queued"])(
+    "still refuses to reseal over a live %s worktree",
+    (status) => {
+      const { suite, deps, createPlanAtomically } = harness({
+        worktrees: [
+          { taskId: "released", status: "failed" },
+          { taskId: "live", status },
+        ],
+      });
+      expect(() =>
+        planMissionTasks(
+          { missionId: "mission-a", tasks: [validTask] },
+          orchestratorContext(),
+          suite,
+          deps,
+        ),
+      ).toThrow(
+        "mission task plan is sealed after the first worktree allocation",
+      );
+      expect(createPlanAtomically).not.toHaveBeenCalled();
+    },
+  );
+
   it.each([
     [{ ...validTask, agentRef: "" }, /requires agentRef from the saved squad/],
     [

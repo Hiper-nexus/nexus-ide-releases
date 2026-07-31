@@ -54,7 +54,10 @@ import { isCurrentProcessRealMissionE2E } from '../../shared/real-mission-e2e';
 import { emitPlannedTasksWithContract } from './mission-scheduler';
 import { encodeTaskScheduleDetail } from './mission-scheduler-meta';
 import { isTaskQueueManagedMission } from './task-dispatch-authority';
-import { planMissionTasks } from './mission-task-plan-authority';
+import {
+  hasLiveMissionWorktreeAllocation,
+  planMissionTasks,
+} from './mission-task-plan-authority';
 import {
   liveSquadRuntimeInventory,
   warmSquadRuntimeSubscriptionAuth,
@@ -744,7 +747,11 @@ const taskTool: McpToolDef = {
               'task_dispatcher_authority: o plano durável já existe; liste as tasks em vez de criar dispatch manual',
             );
           }
-          if (requireWorktreeRuntimeRegistry().listMission(ctx.scope, missionId).length > 0) {
+          if (
+            hasLiveMissionWorktreeAllocation(
+              requireWorktreeRuntimeRegistry().listMission(ctx.scope, missionId),
+            )
+          ) {
             throw new Error('mission task plan is sealed after the first worktree allocation');
           }
         }
