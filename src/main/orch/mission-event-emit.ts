@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
@@ -51,6 +52,20 @@ export function emitMissionEvent(
  * same decision (attemptCount, lastSignalAt, or similar) so journal
  * idempotency dedupes — never embed wall-clock uniqueness.
  */
+const MAX_IDEMPOTENCY_KEY_LENGTH = 128;
+
+/**
+ * The journal schema caps idempotency keys at 128 chars. A full mission UUID
+ * plus a long reason routinely crossed that cap and the zod rejection was
+ * swallowed as a silent `false` — several decision kinds simply never reached
+ * the journal. Hash-compress deterministic long keys instead of dropping them.
+ */
+function boundedIdempotencyKey(key: string): string {
+  if (key.length <= MAX_IDEMPOTENCY_KEY_LENGTH) return key;
+  const digest = createHash('sha256').update(key).digest('hex').slice(0, 24);
+  return `${key.slice(0, MAX_IDEMPOTENCY_KEY_LENGTH - 25)}#${digest}`;
+}
+
 export function emitDriverDecision(
   scope: ProjectExecutionScope,
   missionId: string,
@@ -67,7 +82,9 @@ export function emitDriverDecision(
     runId: `drive-${missionId}`,
     type,
     origin: 'driver',
-    idempotencyKey: `drive:${missionId}:${actionKind}:${reasonKey}:${tick}`,
+    idempotencyKey: boundedIdempotencyKey(
+      `drive:${missionId}:${actionKind}:${reasonKey}:${tick}`,
+    ),
     payload: {
       actionKind,
       reason: reason.slice(0, 512),

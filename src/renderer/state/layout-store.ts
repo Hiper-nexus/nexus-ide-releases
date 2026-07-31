@@ -377,6 +377,38 @@ export function detachWorkspaceLayout(): void {
   persistKey = null;
 }
 
+const LAYOUT_SETTLE_TIMEOUT_MS = 15_000;
+
+/**
+ * Resolves once the workspace layout hydrate has landed (immediately when it
+ * already did). Main-owned pane presentations await this so the persisted
+ * layout can never hydrate OVER panes presented first — the race that left an
+ * empty structural placeholder covering a live mission until any layout
+ * mutation forced a replay. The timeout keeps presentations alive when no
+ * workspace ever hydrates (launcher, tests).
+ */
+export function whenWorkspaceLayoutSettled(
+  timeoutMs = LAYOUT_SETTLE_TIMEOUT_MS,
+): Promise<void> {
+  if (useLayoutStore.getState().hydrated) return Promise.resolve();
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (): void => {
+      if (settled) return;
+      settled = true;
+      unsubscribe();
+      if (timer !== undefined) clearTimeout(timer);
+      resolve();
+    };
+    const unsubscribe = useLayoutStore.subscribe((state) => {
+      if (state.hydrated) finish();
+    });
+    timer = setTimeout(finish, timeoutMs);
+    if (useLayoutStore.getState().hydrated) finish();
+  });
+}
+
 if (typeof window !== 'undefined') {
   window.addEventListener('beforeunload', () => flushLayout(true));
 }
@@ -402,8 +434,9 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
     );
     const root = splitPane(get().root, paneId, direction, newPane);
     bumpTreeVersion();
-    const s = { ...get(), root, focusedPaneId: newPane.id };
-    set({ root, focusedPaneId: newPane.id });
+    // A stale maximize would keep covering the freshly split pane.
+    const s = { ...get(), root, focusedPaneId: newPane.id, maximizedPaneId: null };
+    set({ root, focusedPaneId: newPane.id, maximizedPaneId: null });
     persist(s);
   },
 
@@ -505,7 +538,12 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
           }
         : canvasNodeLayouts;
     bumpTreeVersion();
-    set({ root, focusedPaneId: newPane.id, canvasNodeLayouts: updatedLayouts });
+    set({
+      root,
+      focusedPaneId: newPane.id,
+      maximizedPaneId: null,
+      canvasNodeLayouts: updatedLayouts,
+    });
     persist({ ...get(), root, focusedPaneId: newPane.id, canvasNodeLayouts: updatedLayouts });
     return newPane.id;
   },
@@ -578,7 +616,12 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
 
     const focusedPaneId = newPane.id;
     bumpTreeVersion();
-    set({ root, focusedPaneId, canvasNodeLayouts: updatedLayouts });
+    set({
+      root,
+      focusedPaneId,
+      maximizedPaneId: null,
+      canvasNodeLayouts: updatedLayouts,
+    });
     persist({ ...get(), root, focusedPaneId, canvasNodeLayouts: updatedLayouts });
   },
 
@@ -691,7 +734,12 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
           }
         : canvasNodeLayouts;
     bumpTreeVersion();
-    set({ root, focusedPaneId: newPane.id, canvasNodeLayouts: updatedLayouts });
+    set({
+      root,
+      focusedPaneId: newPane.id,
+      maximizedPaneId: null,
+      canvasNodeLayouts: updatedLayouts,
+    });
     persist({ ...get(), root, focusedPaneId: newPane.id, canvasNodeLayouts: updatedLayouts });
     return newPane.id;
   },

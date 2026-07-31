@@ -6,7 +6,10 @@ import type {
   PaneRegistryEntry,
 } from '../../shared/orch-types';
 import type { PaneModel } from '../../shared/types';
-import { useLayoutStore } from '../state/layout-store';
+import {
+  useLayoutStore,
+  whenWorkspaceLayoutSettled,
+} from '../state/layout-store';
 import { getActiveWorkspacePath } from '../state/active-workspace';
 import { useHomeStore } from '../state/home-store';
 import { useOrchStore } from '../state/orch-store';
@@ -236,6 +239,11 @@ async function presentLiveMainOwnedPane(
   req: MissionPanePresentationRequest,
   scope: PresentationScope,
 ): Promise<void> {
+  // The bridge mounts before the workspace layout hydrates. Presenting first
+  // let the later hydrate replace the mission panes with the persisted
+  // structural placeholder (empty tile covering a live mission). Order is the
+  // contract: hydrate settles, then presentations land on the final tree.
+  await whenWorkspaceLayoutSettled();
   if (!isPresentationScopeCurrent(scope)) return;
   const existing = listPanes(useLayoutStore.getState().root);
   const current = existing.find((pane) => pane.id === req.paneId);
@@ -310,6 +318,9 @@ async function recoverMissionPane(
   let replacementSessionId: string | undefined;
   let recoveryOwned = false;
   try {
+    // Same ordering contract as presentLiveMainOwnedPane: never race the
+    // workspace layout hydrate with recovery-mounted panes.
+    await whenWorkspaceLayoutSettled();
     let pane = listPanes(useLayoutStore.getState().root).find(
       (candidate) => candidate.id === req.paneId,
     );
@@ -332,7 +343,12 @@ async function recoverMissionPane(
       markPersistedAuthorityOnSpawn(pane.id);
       useOrchStore.getState().bindPaneMission(pane.id, req.missionId);
       const existing = listPanes(useLayoutStore.getState().root);
-      useLayoutStore.getState().setPanes([...existing, pane]);
+      // Same placeholder rule as presentations: a lone structural shell is
+      // never operator content — the recovered mission pane replaces it
+      // instead of leaving a permanent empty tile beside the mission.
+      useLayoutStore
+        .getState()
+        .setPanes(panesAfterMainOwnedPresentation(existing, pane));
       replacementSessionId =
         (await waitForHealthyPaneSession(
           pane.id,

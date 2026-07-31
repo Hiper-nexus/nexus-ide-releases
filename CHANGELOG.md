@@ -1,5 +1,58 @@
 # Changelog
 
+## 0.19.41 — Missão destrava, diagnóstico aparece
+
+Data: 2026-07-31
+
+### O fim do "travou pra sempre"
+
+- **Bloqueio órfão de merge não brica mais o projeto**: um bloqueio da fila
+  de merge cuja missão foi removida é retirado automaticamente (na abertura
+  do escopo e na remoção da missão), com evento de auditoria. Antes, UMA
+  missão rejeitada e deletada condenava TODAS as missões seguintes do
+  checkout a "merge diferido 12 vezes" para sempre.
+- **Retomar missão volta a funcionar**: o selo do plano ignora worktrees
+  terminais (failed/abandoned/integrated) do plano anterior. O reopen
+  bumpava a intent, tentava selar de novo e morria com "mission task plan is
+  sealed after the first worktree allocation" — matando a recuperação
+  automática exatamente quando ela era mais necessária.
+
+### Diagnóstico que finalmente mostra o erro
+
+- **"Ver diagnóstico" abre o diagnóstico**: o toast de falha técnica navega
+  direto para o detalhe da missão que falhou (o PetEvent agora carrega o
+  missionId), em vez de abrir o Ops Board sem nenhum erro visível.
+- **Detalhe da missão para missões travadas**: o painel de resultado agora
+  também abre para `blocked`, com as notas técnicas parseadas em seções
+  legíveis (sem `[NEXUS_FAILURE:terminal]` nem comentários HTML crus) e com
+  o botão "Retomar missão" ao lado do diagnóstico.
+- **Card do Ops Board clicável**: o título abre o diagnóstico/relatório; o
+  card TRAVADA mostra a primeira linha do erro real.
+- **Rail**: clicar numa missão com falha técnica abre o diagnóstico primeiro
+  em vez de disparar um reopen cego que repete a mesma falha.
+- **Journal de missão deixou de perder eventos**: idempotency keys longas
+  eram rejeitadas em silêncio pelo limite de 128 chars; agora são
+  hash-comprimidas.
+
+### Análise vira missão de consulta (autopilot)
+
+- **"analise…" agora sugere e aplica a lane consult** mesmo com as opções
+  avançadas fechadas — com um chip visível "Modo: Só pesquisar · trocar".
+  Antes, qualquer pedido de análise virava um pipeline completo de entrega
+  (worktree + merge queue) que podia falhar na integração de um relatório.
+- O detector de lane reconhece análise/auditoria/mapear/explicar/avaliar,
+  mantendo a precedência de implementação ("analise e corrija" continua
+  standard).
+
+### Pane vazio ao abrir missão
+
+- **Apresentação espera a hidratação do layout**: o placeholder estrutural
+  persistido não substitui mais os panes reais da missão numa corrida de
+  boot (a causa do "abre um pane sem nada; fecho e a missão aparece").
+- Recovery de pane descarta o placeholder solitário como as demais
+  apresentações; dividir/adicionar panes limpa um maximize obsoleto que
+  cobria o grid.
+
 ## 0.19.40 — Sem cerimônia
 
 Data: 2026-07-31
