@@ -85,8 +85,9 @@ describe('orchSettingsSchema', () => {
     expect(DEFAULT_ORCH_SETTINGS.defaultAdapterId).toBe('claude');
     expect(DEFAULT_ORCH_SETTINGS.defaultModel).toBe('');
     expect(DEFAULT_ORCH_SETTINGS.defaultAccountId).toBe('');
-    // Multi-OS safe default: never silent-resume agents on layout restore.
-    expect(DEFAULT_ORCH_SETTINGS.agentRestorePolicy).toBe('ask');
+    // Frictionless default: restored agents resume without a dialog on every
+    // platform; `ask`/`pause` stay available as hardened opt-ins.
+    expect(DEFAULT_ORCH_SETTINGS.agentRestorePolicy).toBe('resume');
     // Intent-first is on by default: squad select does not burn tokens.
     expect(DEFAULT_ORCH_SETTINGS.intentFirstMissionRuntimeV1).toBe(true);
     // Ralph coordinates autopilot missions unless the user explicitly opts out.

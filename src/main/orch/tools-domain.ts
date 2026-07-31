@@ -9,13 +9,14 @@ import {
 } from './mcp-protocol';
 import { findPane, readSessionOutput, waitForIdle } from './pane-registry';
 import { listProviderSettings } from '../persistence/provider-config-store';
-import { routeTask, type TaskTier } from './task-router';
+import { routeTask, type RouteDecision, type TaskTier } from './task-router';
+import { resolveSealedWorkerRoute } from './mission-scheduler-plan';
 import { countAdapterUses } from './route-pipeline';
 import { recordRouteDecision } from './route-provenance';
 import { recordRouteLog, recentRouteLog } from './route-log';
 import { hasAvailableAccount } from '../persistence/account-store';
 import { authReadyModelsForProvider } from '../adapters/model-auth-readiness';
-import { missionStatusSchema } from '../../shared/orch-types';
+import { missionStatusSchema, type Mission } from '../../shared/orch-types';
 import { buildClarify } from '../../shared/clarify';
 import { emitClarifyQuestion } from './clarify-flow';
 import { findAgent, listAgents, saveSquad } from './squad-store';
@@ -968,6 +969,104 @@ const routeLogTool: McpToolDef = {
   },
 };
 
+/**
+ * Plano selado = autoridade fechada de rota. Com roster aprovado o router não
+ * rankeia providers: resolve o membro EXATO do roster para a task planejada
+ * (role/agentRef → cli/model/effort do selo) e falha fechado quando a task não
+ * consta no plano — nunca recomenda uma CLI fora do roster. Sem plano selado
+ * retorna null e o roteamento livre/governado existente segue intacto.
+ */
+function sealedRosterRouteDecision(input: {
+  readonly stores: ReturnType<typeof getProjectDomainStores>;
+  readonly mission: Mission;
+  readonly task: string;
+  readonly tierOverride?: TaskTier;
+}): RouteDecision | null {
+  const intentVersion =
+    input.mission.intentContract?.intentVersion ?? input.mission.intentVersion;
+  if (intentVersion === undefined) return null;
+  const receipt = input.stores.tasks.getPlanReceipt(
+    input.mission.id,
+    intentVersion,
+  );
+  if (!receipt) return null;
+  const wanted = input.task.trim();
+  const exact = receipt.tasks.filter(
+    (entry) => entry.taskId === wanted || entry.title.trim() === wanted,
+  );
+  const matches =
+    exact.length > 0
+      ? exact
+      : receipt.tasks.filter(
+          (entry) =>
+            entry.title.trim().toLowerCase() === wanted.toLowerCase(),
+        );
+  if (matches.length === 0) {
+    const planned = receipt.tasks
+      .map((entry) => `"${entry.title}"`)
+      .join(', ');
+    throw new Error(
+      'roster_sealed_task_fora_do_plano: a missão tem plano selado e a ' +
+        `tarefa "${wanted.slice(0, 120)}" não consta no plano aprovado; ` +
+        'route_task não recomenda CLI fora do roster selado. Tarefas do ' +
+        `plano: ${planned}`,
+    );
+  }
+  if (matches.length > 1) {
+    throw new Error(
+      'roster_sealed_task_ambigua: mais de uma task do plano selado tem o ' +
+        `título "${wanted.slice(0, 120)}"; a seleção do roster exige título ` +
+        'único — corrija o plano em vez de rotear no chute',
+    );
+  }
+  const entry = matches[0]!;
+  const agent = receipt.agents.find(
+    (candidate) => candidate.id === entry.agentRef,
+  );
+  if (!agent) {
+    throw new Error(
+      `roster_sealed_agent_ausente: o agente ${entry.agentRef} da task ` +
+        `"${entry.title}" não consta no roster selado`,
+    );
+  }
+  const liveAdapters = listProviderSettings()
+    .filter((provider) => provider.adapterId !== 'shell')
+    .map((provider) => {
+      const models = [
+        ...authReadyModelsForProvider(provider, provider.models),
+      ];
+      return {
+        id: provider.adapterId,
+        installed:
+          provider.enabled &&
+          provider.installed &&
+          models.length > 0 &&
+          hasAvailableAccount(provider.adapterId),
+        models: { list: models, default: provider.defaultModel },
+      };
+    });
+  const sealed = resolveSealedWorkerRoute({
+    taskText: input.task,
+    agent,
+    adapters: liveAdapters,
+    rosterHash: receipt.rosterHash,
+    orchestratorCliId: receipt.agents.find(
+      (candidate) => candidate.category === 'orchestrator',
+    )?.cli,
+  });
+  const routeLabel =
+    sealed.routeContract.adapterId +
+    (sealed.routeContract.model ? `/${sealed.routeContract.model}` : '');
+  return {
+    ...sealed.decision,
+    tier: input.tierOverride ?? sealed.decision.tier,
+    reason:
+      `roster selado: ${agent.category}=${routeLabel} ` +
+      `(agente ${agent.id}/${agent.agentName}, plano ` +
+      `${receipt.rosterHash.slice(0, 12)}); sem reroute automático`,
+  };
+}
+
 const routeTaskTool: McpToolDef = {
   name: 'nexus_route_task',
   description:
@@ -981,7 +1080,11 @@ const routeTaskTool: McpToolDef = {
     'returned runtime snapshot so removed, deprecated or unavailable models are never forced by a stale playbook. ' +
     'Inside a running mission, candidates are restricted to release-qualified ' +
     'governed workers (Codex in this release). Other CLIs remain available ' +
-    'for direct/manual Terminal use, never through a mission RouteReservation.',
+    'for direct/manual Terminal use, never through a mission RouteReservation. ' +
+    'When the mission has a sealed task plan, routing is closed: the task must ' +
+    'match a planned task (by title or taskId) and the answer is exactly that ' +
+    "task's roster cli/model/effort — never an adapter outside the sealed " +
+    'roster.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -1020,8 +1123,11 @@ const routeTaskTool: McpToolDef = {
       );
     }
     const missionId = childMissionId(ctx, str(args, 'missionId'));
+    const missionStores = missionId ? getProjectDomainStores(ctx.scope) : null;
+    const mission = missionId && missionStores
+      ? missionStores.missions.get(missionId)
+      : null;
     if (missionId) {
-      const mission = getProjectDomainStores(ctx.scope).missions.get(missionId);
       if (!mission) throw new Error(`mission not found: ${missionId}`);
       assertCurrentMissionOrchestratorSession(ctx, mission);
     }
@@ -1041,6 +1147,39 @@ const routeTaskTool: McpToolDef = {
       // os providers keychain-only (AGY) para não ler uma sessão viva como
       // login-needed e derrubar o roteamento da missão.
       await warmSquadRuntimeSubscriptionAuth();
+      // Roster selado = autoridade fechada: a rota sai do membro exato do
+      // roster para a task planejada; task fora do plano falha fechado em vez
+      // de cair no roteamento livre (que já sugeriu CLI fora do roster).
+      const sealedDecision = sealedRosterRouteDecision({
+        stores: missionStores!,
+        mission: mission!,
+        task,
+        tierOverride: tier,
+      });
+      if (sealedDecision) {
+        recordRouteDecision({
+          adapterId: sealedDecision.adapterId,
+          model: sealedDecision.model,
+        });
+        recordRouteLog({
+          task,
+          tier: sealedDecision.tier,
+          adapterId: sealedDecision.adapterId,
+          model: sealedDecision.model,
+          effort: sealedDecision.effort,
+          reason: sealedDecision.reason,
+        });
+        const sealedReservation = missionStores!.missions.reserveRouteDecision(
+          missionId,
+          task,
+          sealedDecision,
+        );
+        return {
+          ...sealedDecision,
+          routeReservationId: sealedReservation.id,
+          routeReservationExpiresAt: sealedReservation.expiresAt,
+        };
+      }
     }
     const governedMissionWorkerIds = missionId
       ? liveSquadRuntimeInventory().policy.routableWorkerCliIds

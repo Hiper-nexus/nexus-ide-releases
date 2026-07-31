@@ -21,7 +21,7 @@ const RESTORE_OPTIONS: {
   {
     value: 'resume',
     label: 'Retomar tudo automaticamente',
-    hint: 'Agentes avulsos também voltam a trabalhar sem diálogo.',
+    hint: 'Padrão: agentes avulsos também voltam a trabalhar sem diálogo.',
   },
 ];
 
@@ -29,7 +29,7 @@ export function MissionDriverSettings() {
   const [isActive, setIsActive] = useState(false);
   const [autoResponderEnabled, setAutoResponderEnabled] = useState(true);
   const [restorePolicy, setRestorePolicy] =
-    useState<AgentRestorePolicy>('ask');
+    useState<AgentRestorePolicy>('resume');
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -43,7 +43,7 @@ export function MissionDriverSettings() {
         if (!cancelled) {
           setIsActive(settings.missionDriverActiveMode);
           setAutoResponderEnabled(settings.cliPromptAutoResponderEnabled ?? true);
-          setRestorePolicy(settings.agentRestorePolicy ?? 'ask');
+          setRestorePolicy(settings.agentRestorePolicy ?? 'resume');
         }
       })
       .catch((cause) => {
@@ -99,7 +99,7 @@ export function MissionDriverSettings() {
       const saved = await window.nexus.settings.orchSet({
         agentRestorePolicy: next,
       });
-      setRestorePolicy(saved.agentRestorePolicy ?? 'ask');
+      setRestorePolicy(saved.agentRestorePolicy ?? 'resume');
     } catch (cause) {
       setRestorePolicy(previous);
       setError(

@@ -125,11 +125,13 @@ export const orchSettingsSchema = z.object({
    * Restore preference for standalone agent panes. Main-owned mission panes
    * always resume their persisted authority automatically on app/workspace
    * restore; technical recovery remains Main-owned and retryable.
-   * - `ask` (default): confirm before standalone agents run
+   * - `ask`: confirm before standalone agents run
    * - `pause`: keep standalone agents paused
-   * - `resume`: silently resume standalone agents too
+   * - `resume` (default): silently resume standalone agents too — they were
+   *   already running with auto-approve; the dialog only added friction to
+   *   every cold start. `ask`/`pause` remain as hardened opt-ins.
    */
-  agentRestorePolicy: z.enum(['ask', 'pause', 'resume']).default('ask'),
+  agentRestorePolicy: z.enum(['ask', 'pause', 'resume']).default('resume'),
   /** CLI provider used by the next squad orchestrator. */
   defaultAdapterId: z.string().max(64).default('claude'),
   /** Empty means the selected provider's configured default model. */

@@ -233,8 +233,9 @@ function applyDecision(
 }
 
 /**
- * Hold restored CLI agents and apply the product policy. Safe default is
- * ask → dialog with focus on cancel ("Deixar em pausa").
+ * Hold restored CLI agents and apply the product policy. The default is
+ * resume — restored agents continue without a dialog; `ask` (dialog with
+ * focus on cancel, "Deixar em pausa") and `pause` remain hardened opt-ins.
  */
 export async function gateRestoredAgents(
   panes: readonly PaneModel[],

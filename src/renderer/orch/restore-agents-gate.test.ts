@@ -145,6 +145,13 @@ describe('restore-agents-gate', () => {
     expect(releaseHeldSpawns).toHaveBeenCalledWith(['a1'], { resume: true });
   });
 
+  it('default policy (no explicit preference): resumes without a dialog', async () => {
+    orchGet.mockResolvedValue({});
+    await gateRestoredAgents([agent('a1', 'Orq')]);
+    expect(askConfirm).not.toHaveBeenCalled();
+    expect(releaseHeldSpawns).toHaveBeenCalledWith(['a1'], { resume: true });
+  });
+
   it('always resumes mission panes through their persisted main authority', async () => {
     orchGet.mockResolvedValue({ agentRestorePolicy: 'resume' });
     await gateRestoredAgents([

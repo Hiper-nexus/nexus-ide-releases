@@ -31,6 +31,10 @@ import {
 import { WebglLeasePool } from './webgl-lease';
 import { resumeTerminalVisibilityBeforePaint } from './terminal-visibility-resume';
 import { shouldAutoPinPaneAccount } from './pane-account-authority';
+import {
+  SESSION_BOUNDARY_NOTICE,
+  terminalBufferHasContent,
+} from './session-boundary-notice';
 
 /**
  * Persistent terminal manager.
@@ -77,6 +81,13 @@ interface Host {
    * cursor absoluto. Por isso o replay espera a largura definitiva.
    */
   pendingScrollback?: string;
+  /**
+   * The pane already shows (or is about to replay) content from a previous
+   * session — persisted scrollback or an earlier live session in this same
+   * xterm. A new session attaching to such a pane prints the
+   * SESSION_BOUNDARY_NOTICE divider first; an empty first spawn never does.
+   */
+  hasVisibleContent?: boolean;
 }
 
 /**
@@ -533,6 +544,19 @@ function startSpawn(
       }
       setHostSession(host, pane.id, res.sessionId);
       const spawnedAt = Date.now();
+      // Session boundary: a NEW session attaching to a pane that already shows
+      // content (restored scrollback, respawn in the same xterm) gets a divider
+      // so dead-session output cannot blend into the live one. Adopted sessions
+      // are the same live process continuing — no boundary — and a first spawn
+      // of an empty pane stays clean.
+      if (
+        !res.adopted &&
+        (host.hasVisibleContent ||
+          terminalBufferHasContent(host.term.buffer.active))
+      ) {
+        host.term.writeln(SESSION_BOUNDARY_NOTICE);
+      }
+      host.hasVisibleContent = true;
       if (resume && !res.adopted) {
         const message =
           res.resumeMode === 'fresh-context'
@@ -1068,7 +1092,13 @@ export function attachHost(pane: PaneModel, slot: HTMLElement): void {
     // NUNCA reescrever o scrollback antes da largura definitiva: o replay fica
     // pendente e o flush acontece no primeiro fit bem-sucedido (aqui embaixo ou
     // no ResizeObserver, quando o slot ainda não é mensurável neste frame).
-    if (pane.terminalScrollback) host.pendingScrollback = pane.terminalScrollback;
+    if (pane.terminalScrollback) {
+      host.pendingScrollback = pane.terminalScrollback;
+      // Latched at assignment: flushPendingScrollback drops the pending copy
+      // before xterm finishes parsing it, so a fast spawn must still see the
+      // restored content and print the session boundary divider.
+      host.hasVisibleContent = true;
+    }
     host.opened = true;
     registerWebglLease(pane.id, host);
   }
