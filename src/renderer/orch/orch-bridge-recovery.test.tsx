@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   BrowserPaneOpenRequest,
   MissionPanePresentationRequest,
@@ -104,6 +104,12 @@ function presentationRequest(id: string): MissionPanePresentationRequest {
 }
 
 describe('orchestration bridge pane recovery', () => {
+  beforeEach(() => {
+    // Presentations await the workspace layout hydrate in production; these
+    // scenarios all model a workspace whose layout already settled.
+    useLayoutStore.setState({ hydrated: true });
+  });
+
   afterEach(() => {
     setActiveWorkspacePath(null);
     useHomeStore.setState({ visible: false });

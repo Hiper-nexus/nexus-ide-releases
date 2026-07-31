@@ -331,7 +331,7 @@ describe("MissionWizard lane default (sem restrições)", () => {
     vi.restoreAllMocks();
   });
 
-  it("submits lane standard for an infra-sounding goal when advanced stays collapsed", async () => {
+  it("applies the suggested lane on autopilot with advanced collapsed", async () => {
     const { host } = mount(<MissionWizard />);
     await act(async () => {});
 
@@ -342,12 +342,15 @@ describe("MissionWizard lane default (sem restrições)", () => {
 
     typeGoal(host, OPS_GOAL);
     await act(async () => {});
+    // A sugestão vale mesmo com a seção fechada — com um chip visível e
+    // reversível em vez de silenciosamente cair no grafo de entrega.
+    expect(host.textContent).toContain("Modo: Só infra");
     await submitAndFlush(host);
 
     expect(submitMissionIntent).toHaveBeenCalledOnce();
     expect(submitMissionIntent.mock.calls[0]?.[0]).toMatchObject({
       goal: OPS_GOAL,
-      lane: "standard",
+      lane: "ops",
     });
   });
 

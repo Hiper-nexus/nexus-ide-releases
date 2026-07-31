@@ -13,6 +13,67 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.19.41',
+  date: '2026-07-31',
+  codename: 'Missão destrava, diagnóstico aparece',
+  summary:
+    'Uma missão que falha não condena mais o projeto: bloqueios órfãos da fila ' +
+    'de merge são retirados sozinhos, o Retomar volta a funcionar, o erro real ' +
+    'aparece legível com um clique, e pedidos de análise viram missões de ' +
+    'consulta que terminam com relatório em vez de um pipeline de código.',
+  highlights: [
+    {
+      title: 'Fila de merge não brica mais o projeto',
+      detail:
+        'Um bloqueio cuja missão foi removida é retirado automaticamente — na ' +
+        'abertura do projeto, na remoção da missão e a cada passada do ' +
+        'scheduler — com evento de auditoria. Antes, UMA missão rejeitada e ' +
+        'deletada condenava todas as seguintes a "merge diferido 12 vezes".',
+    },
+    {
+      title: 'Diagnóstico da falha a um clique',
+      detail:
+        'Clicar numa missão com falha técnica abre o diagnóstico parseado em ' +
+        'seções legíveis (sem códigos internos), com "Retomar missão" ao lado. ' +
+        'O toast "Ver diagnóstico" navega direto para a missão certa e o card ' +
+        'do Ops Board ficou clicável mostrando a primeira linha do erro.',
+    },
+    {
+      title: 'Análise vira missão de consulta no piloto automático',
+      detail:
+        '"analise…", "audite…", "explique…" agora sugerem e aplicam a lane de ' +
+        'consulta (somente leitura, termina com relatório durável) com um chip ' +
+        'visível e reversível — em vez de montar worktree e fila de merge para ' +
+        'responder uma pergunta.',
+    },
+    {
+      title: 'Retomar missão volta a funcionar',
+      detail:
+        'O selo do plano ignora worktrees terminais do plano anterior; a ' +
+        'retomada replaneja, ressuscita o worktree preservado e redespacha em ' +
+        'vez de morrer em "sealed after the first worktree allocation".',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Pane vazio não cobre mais a missão',
+      detail:
+        'A apresentação de panes espera a hidratação do layout: o placeholder ' +
+        'salvo não substitui mais os panes reais numa corrida de boot, o ' +
+        'recovery descarta o placeholder solitário e dividir/adicionar panes ' +
+        'limpa um maximize obsoleto que escondia o grid.',
+    },
+    {
+      title: 'Journal de missão não perde eventos',
+      detail:
+        'Chaves de idempotência longas eram rejeitadas em silêncio pelo limite ' +
+        'de 128 caracteres; agora são comprimidas por hash e os eventos chegam ' +
+        'ao journal.',
+    },
+  ],
+};
+
+export const PREVIOUS_RELEASE: AppRelease = {
   version: '0.19.40',
   date: '2026-07-31',
   codename: 'Sem cerimônia',
@@ -54,7 +115,7 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const PREVIOUS_RELEASE: AppRelease = {
+export const RELEASE_01939: AppRelease = {
   version: '0.19.39',
   date: '2026-07-30',
   codename: 'Vibecode sem atrito',
