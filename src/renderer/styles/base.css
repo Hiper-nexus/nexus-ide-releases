@@ -1566,6 +1566,83 @@ body {
   padding: 4px 6px 2px;
 }
 
+/* Pane nascendo: enquanto o PTY não reporta sessão o terminal é um retângulo
+   preto sem explicação — foi lido em campo como "pane morto tapando a
+   missão". Nomear a espera (quem, CLI, modelo) custa zero e some sozinho
+   quando a sessão real assume. pointer-events:none para nunca roubar clique
+   do terminal que está chegando. */
+.pane-birth {
+  position: absolute;
+  inset: auto var(--space-3) var(--space-3) var(--space-3);
+  z-index: var(--z-soft-overlay);
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-areas:
+    'pulse headline'
+    'pulse detail';
+  align-items: center;
+  gap: 0 var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--border));
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--bg-elevated) 88%, var(--accent) 4%);
+  box-shadow: 0 6px 20px -12px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+}
+
+.pane-birth__pulse {
+  grid-area: pulse;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: pane-birth-pulse 1.5s var(--ease-out-quart) infinite;
+}
+
+.pane-birth__headline {
+  grid-area: headline;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--text);
+}
+
+.pane-birth__detail {
+  grid-area: detail;
+  font-size: 10px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pane-birth--slow {
+  border-color: color-mix(in srgb, var(--warn) 45%, var(--border));
+}
+
+.pane-birth--slow .pane-birth__pulse {
+  background: var(--warn);
+}
+
+@keyframes pane-birth-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pane-birth__pulse {
+    animation: none;
+    opacity: 0.8;
+  }
+}
+
 .pane-activity {
   flex: 0 0 auto;
   min-width: 0;

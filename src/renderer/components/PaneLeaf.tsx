@@ -5,6 +5,7 @@ import { useSessionStateStore } from '../state/session-state-store';
 import { attachHost, blurHost, focusHost } from '../terminal/terminal-host';
 import { BrowserPane } from './BrowserPane';
 import { PaneActivityStrip } from './PaneActivityStrip';
+import { PaneBirthOverlay } from './PaneBirthOverlay';
 import { PaneInteractionSurface } from './PaneInteractionSurface';
 import { PaneToolbar } from './PaneToolbar';
 
@@ -54,6 +55,9 @@ function TerminalPaneLeaf({ pane }: Props) {
     >
       <PaneToolbar pane={pane} isFocused={isFocused} />
       {pane.kind === 'cli-agent' && <PaneActivityStrip paneId={pane.id} />}
+      {/* Irmão do slot, nunca filho: o nó do terminal é re-parentado para
+          dentro de `pane__terminal` por fora do React. */}
+      {pane.kind === 'cli-agent' && <PaneBirthOverlay pane={pane} />}
       <div className="pane__terminal" ref={slotRef} />
     </PaneInteractionSurface>
   );
