@@ -2610,6 +2610,7 @@ describe("reroute automático de provider esgotado", () => {
     const reroute = vi.fn(
       (input: unknown) => input as never,
     );
+    const appendLearning = vi.fn(() => null as never);
     const dispatch = {
       taskId: "task-1",
       missionId: "mission-1",
@@ -2645,7 +2646,10 @@ describe("reroute automático de provider esgotado", () => {
     const rerouted = reconcileExhaustedProviderRerouteForScope(scope, {
       getStores: () =>
         ({
-          missions: { get: vi.fn(() => mission) },
+          missions: {
+            get: vi.fn(() => mission),
+            appendLearning: appendLearning,
+          },
           taskDispatches: {
             list: vi.fn(() => [dispatch]),
             rerouteExhaustedWorkerByCoordinator: reroute,
@@ -2679,7 +2683,7 @@ describe("reroute automático de provider esgotado", () => {
       isOperatorChoice: () => true,
       now: () => 9_000,
     });
-    return { rerouted, reroute };
+    return { rerouted, reroute, appendLearning };
   }
 
   it("re-rota para o próximo agente vivo do mesmo roster com nota durável", () => {
@@ -2698,6 +2702,20 @@ describe("reroute automático de provider esgotado", () => {
       },
       note: expect.stringMatching(/codex.*kimi/is),
     });
+  });
+
+  it("conta a troca ao operador nos learnings duráveis da missão", () => {
+    const { appendLearning } = rerouteFixture();
+    expect(appendLearning).toHaveBeenCalledTimes(1);
+    const [missionId, entry] = appendLearning.mock.calls[0]! as unknown as [
+      string,
+      string,
+    ];
+    expect(missionId).toBe("mission-1");
+    expect(entry).toMatch(/Troca automática de provider/i);
+    expect(entry).toContain("codex");
+    expect(entry).toContain("exec-kimi-name");
+    expect(entry).toMatch(/plano não mudou/i);
   });
 
   it("não toca em bloqueios que não são o esgotamento físico do worker", () => {

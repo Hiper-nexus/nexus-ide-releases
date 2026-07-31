@@ -21,6 +21,7 @@ import type { TaskDispatchRecord } from "./task-dispatch-codec";
 import { terminalOperationalFailureReason } from "../runtime/operational-failure-policy";
 import {
   buildProviderRerouteDirective,
+  providerRerouteLearning,
   providerRerouteNote,
   selectProviderRerouteCandidate,
 } from "./provider-reroute-policy";
@@ -406,6 +407,24 @@ export function reconcileExhaustedProviderRerouteForScope(
         note,
       });
       rerouted += 1;
+      // A missão volta a running sozinha; sem esta entrada durável o operador
+      // nunca saberia por que outro agente assumiu.
+      try {
+        stores.missions.appendLearning(
+          dispatch.missionId,
+          providerRerouteLearning({
+            taskTitle: entry.title,
+            deadAdapterId,
+            previousAgentName: currentAgent.agentName,
+            candidate,
+          }),
+        );
+      } catch (error) {
+        console.warn(
+          "[mission-scheduler] provider reroute learning deferred:",
+          error,
+        );
+      }
       console.warn(
         `[mission-scheduler] provider reroute: ${dispatch.missionId}/` +
           `${dispatch.taskId} saiu de ${deadAdapterId} para ` +

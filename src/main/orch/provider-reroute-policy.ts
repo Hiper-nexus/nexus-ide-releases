@@ -78,3 +78,26 @@ export function providerRerouteNote(input: {
     "roster selado."
   );
 }
+
+/**
+ * A mesma troca contada para o humano. O reroute acontece sozinho e devolve a
+ * missão a running — sem esta entrada durável, a recuperação seria invisível e
+ * o operador só notaria que "de repente" outro agente está trabalhando.
+ */
+export function providerRerouteLearning(input: {
+  readonly taskTitle: string;
+  readonly deadAdapterId: string;
+  readonly previousAgentName: string;
+  readonly candidate: Pick<TaskPlanAgentSnapshot, "agentName" | "cli">;
+}): string {
+  return (
+    `## Troca automática de provider\n` +
+    `A tarefa "${input.taskTitle}" ficou sem execução porque a CLI ` +
+    `${input.deadAdapterId} (${input.previousAgentName}) não subiu depois de ` +
+    "três tentativas — normalmente cota esgotada, login expirado ou binário " +
+    "quebrado.\n\n" +
+    `O Nexus passou a tarefa para **${input.candidate.agentName}** ` +
+    `(${input.candidate.cli}), do mesmo time aprovado, e retomou a missão ` +
+    "sozinho. O plano não mudou."
+  ).slice(0, 4_000);
+}

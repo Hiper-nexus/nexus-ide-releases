@@ -927,7 +927,11 @@ export function MissionRail() {
                                 </span>
                               </span>
                             </button>
-                            {liveInGrid && missionPanes.length > 0 && (
+                            {/* A frota aparece sempre que existirem panes da
+                                missão: exigir `liveInGrid` escondia os agentes
+                                exatamente quando o operador procurava por eles
+                                (missão rodando fora do foco atual). */}
+                            {missionPanes.length > 0 && (
                               <ul
                                 className="mission-rail__agents"
                                 aria-label={`Agentes de ${m.title}`}
