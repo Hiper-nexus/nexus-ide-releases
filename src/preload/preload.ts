@@ -1069,6 +1069,11 @@ const api: NexusApi = {
       /** standard | consult | plan (design-only) | ops (infra, sem PREVC). */
       lane?: 'standard' | 'consult' | 'plan' | 'ops';
       evidenceAttached?: boolean;
+      /**
+       * Wizard de produto apenas: ESTA submissão será exibida na revisão de
+       * plano in-app, cujo Start vale como aprovação (grant main-owned).
+       */
+      planReviewSurface?: 'product-wizard';
     }) => ipcRenderer.invoke(ORCH_CHANNELS.missionSubmitIntent, input),
     approveMissionIntent: (input: {
       missionId: string;

@@ -1467,6 +1467,14 @@ export function MissionWizard() {
         evidenceAttached: submission.attachments.length > 0,
         source: submission.source,
         lane: submission.lane,
+        // Somente a rota que REALMENTE exibe esta submissão na revisão de
+        // plano in-app marca a superfície: o Start da revisão vale como a
+        // aprovação (grant main-owned, single-use). As rotas que vão direto
+        // para a aprovação nativa (beginner / "Continuar para aprovação")
+        // mantêm o modal como a única autorização.
+        ...(submission.reviewPlan === true && !directApproval
+          ? { planReviewSurface: "product-wizard" as const }
+          : {}),
       });
       await recordRealMissionProductWizardStep(
         "intent-submitted",

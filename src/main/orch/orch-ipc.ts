@@ -84,6 +84,10 @@ import {
   missionApprovalTrustKeyFrom,
   rememberMissionApprovalTrust,
 } from "./mission-approval-trust";
+import {
+  consumeWizardPlanReviewGrant,
+  recordWizardPlanReviewGrant,
+} from "./mission-wizard-plan-review-grant";
 import { deleteMissionPromptQueue } from "./mission-prompt-queue-registry";
 import { withMissionLifecycleLock } from "./mission-lifecycle-lock";
 import {
@@ -389,6 +393,13 @@ export const missionSubmitIntentSchema = z.object({
   acceptanceCriteria: z.array(z.string().min(1).max(2_048)).max(32).optional(),
   lane: z.enum(["standard", "consult", "plan", "ops"]).optional(),
   evidenceAttached: z.boolean().optional(),
+  /**
+   * Somente o wizard de produto marca isto, e apenas na submissão que ele
+   * mesmo exibirá na revisão de plano in-app: main emite um grant
+   * (sender+missão+intentVersion, single-use, TTL) e o Start dessa revisão
+   * vale como a aprovação. Qualquer outro caller cai no modal nativo.
+   */
+  planReviewSurface: z.enum(["product-wizard"]).optional(),
 });
 
 export const missionApproveIntentSchema = z
@@ -817,6 +828,7 @@ async function confirmMissionAuthorityChange(
   candidate: RendererMissionAuthorityCandidate,
   action: "approve" | "promote",
   replacement?: ExclusiveOrchestratorReplacementCandidate,
+  delegation?: { wizardPlanReviewVerified?: boolean },
 ): Promise<string | null> {
   const window = BrowserWindow.fromWebContents(owner);
   if (!window || window.isDestroyed()) {
@@ -848,6 +860,24 @@ async function confirmMissionAuthorityChange(
       console.log(
         `[orch] mission approval delegated project=${scope.projectId} ` +
           `squadHash=${candidate.squad.hash.slice(0, 12)}`,
+      );
+      return review.reviewSha256;
+    }
+    // Delegação frictionless (approve only): o wizard de produto exibiu a
+    // revisão do plano DESTA submissão (grant main-owned, single-use, ligado
+    // a sender+missão+intentVersion) — o clique em Start já é a aprovação, e
+    // o contrato recebe o mesmo reviewSha256 do review integral. Risco
+    // destrutivo, rota experimental e promoção continuam no modal nativo; o
+    // gate E2E real desliga a delegação na emissão do grant.
+    if (
+      !isPromotion &&
+      !isExperimental &&
+      delegation?.wizardPlanReviewVerified === true &&
+      candidate.risk !== "destructive"
+    ) {
+      console.log(
+        `[orch] mission approval delegated to wizard plan review ` +
+          `project=${scope.projectId} mission=${candidate.missionId}`,
       );
       return review.reviewSha256;
     }
@@ -2060,10 +2090,19 @@ export function registerOrchIpc(): void {
   ipcMain.handle(ORCH_CHANNELS.missionSubmitIntent, (event, raw) => {
     const parsed = missionSubmitIntentSchema.safeParse(raw);
     if (!parsed.success) throw new Error("invalid mission submit intent payload");
-    return requireMissionAuthority().submitIntentFromRenderer(
+    const { planReviewSurface, ...input } = parsed.data;
+    const mission = requireMissionAuthority().submitIntentFromRenderer(
       event.sender,
-      parsed.data,
+      input,
     );
+    if (planReviewSurface === "product-wizard") {
+      recordWizardPlanReviewGrant(
+        event.sender,
+        mission.id,
+        mission.intentVersion ?? 0,
+      );
+    }
+    return mission;
   });
 
   ipcMain.handle(ORCH_CHANNELS.missionApproveIntent, async (event, raw) => {
@@ -2080,6 +2119,14 @@ export function registerOrchIpc(): void {
       event.sender,
       parsed.data,
     );
+    // Single-use: consome aqui para que um grant válido nunca autorize dois
+    // approves — se qualquer guarda abaixo cair no modal ou negar, o próximo
+    // approve volta ao diálogo nativo.
+    const wizardPlanReviewVerified = consumeWizardPlanReviewGrant(
+      event.sender,
+      candidate.missionId,
+      candidate.intentVersion,
+    );
     const replacement = prepareExclusiveOrchestratorReplacement({
       incomingMissionId: candidate.missionId,
       incomingAdapterId: candidate.orchestratorRuntime.adapterId,
@@ -2090,6 +2137,7 @@ export function registerOrchIpc(): void {
       candidate,
       "approve",
       replacement.entries.length > 0 ? replacement : undefined,
+      { wizardPlanReviewVerified },
     );
     if (!approvalReviewSha256) throw new Error("user_denied");
     requireLiveRendererWorkspaceScope(event.sender, scope);

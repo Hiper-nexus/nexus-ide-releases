@@ -351,6 +351,35 @@ describe("MissionWizard lane default (sem restrições)", () => {
     });
   });
 
+  it("marks the plan-review submission as wizard-verified and lands on the review", async () => {
+    const { host } = mount(<MissionWizard />);
+    await act(async () => {});
+    typeGoal(host, OPS_GOAL);
+    await act(async () => {});
+
+    await clickButtonAndFlush(host, "Revisar plano");
+
+    expect(submitMissionIntent).toHaveBeenCalledOnce();
+    expect(submitMissionIntent).toHaveBeenCalledWith(
+      expect.objectContaining({ planReviewSurface: "product-wizard" }),
+    );
+    expect(host.textContent).toContain("REVISÃO DA MISSÃO");
+  });
+
+  it("keeps the direct native-approval route unmarked", async () => {
+    const { host } = mount(<MissionWizard />);
+    await act(async () => {});
+    typeGoal(host, OPS_GOAL);
+    await act(async () => {});
+
+    await submitAndFlush(host);
+
+    expect(submitMissionIntent).toHaveBeenCalledOnce();
+    expect(submitMissionIntent.mock.calls[0]?.[0]).not.toHaveProperty(
+      "planReviewSurface",
+    );
+  });
+
   it("shows the goal suggestion only inside the advanced section", async () => {
     const { host } = mount(<MissionWizard />);
     await act(async () => {});

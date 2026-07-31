@@ -277,8 +277,8 @@ export function MissionWizardPlanReview({
         </p>
       )}
       <p className="wizard__approval-note">
-        Nenhum agente será iniciado neste clique. A próxima janela é a única
-        autorização para começar a missão.
+        Nenhum agente será iniciado antes deste clique. Este envio aprova a
+        missão exatamente como revisada acima.
       </p>
       <div className="wizard__actions">
         <button className="wizard__btn wizard__btn--ghost" onClick={onBack}>

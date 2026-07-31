@@ -133,7 +133,7 @@ describe('MissionWizardPlanReview', () => {
     expect(host.querySelectorAll('.wizard__plan-card > h3')).toHaveLength(4);
     expect(host.textContent).toContain('Ainda não confirmado');
     expect(host.textContent).toContain(
-      'A próxima janela é a única autorização para começar a missão.',
+      'Este envio aprova a missão exatamente como revisada acima.',
     );
     expect(
       Array.from(host.querySelectorAll('button')).some(

@@ -91,6 +91,7 @@ const harness = vi.hoisted(() => {
     removeMission: vi.fn(),
     missionApprovalCandidate: vi.fn(),
     approveMission: vi.fn(),
+    submitMissionIntent: vi.fn(),
     planPromotionCandidate: vi.fn(),
     promotePlan: vi.fn(),
     missionLifecycleCandidate: vi.fn(),
@@ -362,6 +363,9 @@ vi.mock('../pty/pty-manager', () => ({
 }));
 vi.mock('./renderer-mission-authority', () => ({
   RendererMissionAuthority: class {
+    submitIntentFromRenderer(owner: unknown, input: unknown) {
+      return harness.submitMissionIntent(owner, input);
+    }
     missionApprovalCandidateFromRenderer(owner: unknown, input: unknown) {
       return harness.missionApprovalCandidate(owner, input);
     }
@@ -558,6 +562,7 @@ import {
   registerOrchIpc,
 } from './orch-ipc';
 import { consumeImmediateSquadSpawnGrant } from './spawn-authority';
+import { clearWizardPlanReviewGrantsForTests } from './mission-wizard-plan-review-grant';
 import {
   startOrchestrationCoordinator,
   stopOrchestrationCoordinator,
@@ -840,6 +845,8 @@ beforeEach(() => {
     fence: 'approval-fence-3',
   });
   harness.approveMission.mockReturnValue({ id: 'mission-1', status: 'running' });
+  harness.submitMissionIntent.mockReturnValue({ id: 'mission-1', intentVersion: 3 });
+  clearWizardPlanReviewGrantsForTests();
   harness.planPromotionCandidate.mockReturnValue({
     missionId: 'mission-plan',
     title: 'Plano revisado',
@@ -1704,6 +1711,23 @@ describe('agent spec renderer authority', () => {
 });
 
 describe('mission intent IPC evidence contract', () => {
+  it('accepts only the product-wizard plan review surface on submit', () => {
+    expect(
+      missionSubmitIntentSchema.parse({
+        missionId: 'mission-1',
+        goal: 'Analisar os anexos da missão',
+        planReviewSurface: 'product-wizard',
+      }),
+    ).toMatchObject({ planReviewSurface: 'product-wizard' });
+    expect(() =>
+      missionSubmitIntentSchema.parse({
+        missionId: 'mission-1',
+        goal: 'Analisar os anexos da missão',
+        planReviewSurface: 'forged-surface',
+      }),
+    ).toThrow();
+  });
+
   it('preserves evidenceAttached through submit and approve validation', () => {
     expect(missionSubmitIntentSchema.parse({
       missionId: 'mission-1',
@@ -1792,6 +1816,162 @@ describe('mission authority native confirmation', () => {
     expect(harness.missionApprovalCandidate).toHaveBeenCalledOnce();
     expect(harness.approveMission).not.toHaveBeenCalled();
     expect(harness.bootstrapMissionOrchestrator).not.toHaveBeenCalled();
+  });
+
+  it('delega a aprovação à revisão de plano verificada do wizard, sem modal nativo', async () => {
+    const sender = owner();
+    harness.scopes.set(sender.id, SCOPE_A);
+    harness.windows.set(sender.id, { isDestroyed: () => false });
+    const submit = missionHandler(ORCH_CHANNELS.missionSubmitIntent);
+    await submit(
+      { sender },
+      {
+        missionId: 'mission-1',
+        goal: 'Implementar, testar e entregar a missão real',
+        planReviewSurface: 'product-wizard',
+      },
+    );
+    const handler = missionHandler(ORCH_CHANNELS.missionApproveIntent);
+
+    await expect(
+      handler({ sender }, { missionId: 'mission-1' }),
+    ).resolves.toMatchObject({ id: 'mission-1', status: 'running' });
+
+    expect(harness.dialog.showMessageBox).not.toHaveBeenCalled();
+    // O contrato ainda registra uma aprovação legítima: fence intacto e o
+    // reviewSha256 do review integral, exatamente como no caminho do modal.
+    const reviewSha256 = harness.approveMission.mock.calls.at(-1)?.[3];
+    expect(reviewSha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(harness.approveMission).toHaveBeenCalledWith(
+      sender,
+      { missionId: 'mission-1' },
+      'approval-fence-3',
+      reviewSha256,
+    );
+  });
+
+  it('limita a delegação do wizard a um único approve — o segundo volta ao modal', async () => {
+    const sender = owner();
+    harness.scopes.set(sender.id, SCOPE_A);
+    harness.windows.set(sender.id, { isDestroyed: () => false });
+    const submit = missionHandler(ORCH_CHANNELS.missionSubmitIntent);
+    await submit(
+      { sender },
+      {
+        missionId: 'mission-1',
+        goal: 'Implementar, testar e entregar a missão real',
+        planReviewSurface: 'product-wizard',
+      },
+    );
+    const handler = missionHandler(ORCH_CHANNELS.missionApproveIntent);
+
+    await handler({ sender }, { missionId: 'mission-1' });
+    expect(harness.dialog.showMessageBox).not.toHaveBeenCalled();
+
+    await handler({ sender }, { missionId: 'mission-1' });
+    expect(harness.dialog.showMessageBox).toHaveBeenCalledOnce();
+  });
+
+  it('mantém o modal nativo quando a submissão não veio da revisão do wizard', async () => {
+    const sender = owner();
+    harness.scopes.set(sender.id, SCOPE_A);
+    harness.windows.set(sender.id, { isDestroyed: () => false });
+    // Submissão sem planReviewSurface (voz/Jarvis/IPC direto): nenhum plano
+    // foi exibido ao operador, então o approve exige o clique nativo.
+    const submit = missionHandler(ORCH_CHANNELS.missionSubmitIntent);
+    await submit(
+      { sender },
+      { missionId: 'mission-1', goal: 'Implementar, testar e entregar a missão real' },
+    );
+    const handler = missionHandler(ORCH_CHANNELS.missionApproveIntent);
+
+    await expect(
+      handler({ sender }, { missionId: 'mission-1' }),
+    ).resolves.toMatchObject({ id: 'mission-1', status: 'running' });
+    expect(harness.dialog.showMessageBox).toHaveBeenCalledOnce();
+  });
+
+  it('mantém o modal nativo para risco destrutivo mesmo com revisão do wizard', async () => {
+    const sender = owner();
+    harness.scopes.set(sender.id, SCOPE_A);
+    harness.windows.set(sender.id, { isDestroyed: () => false });
+    const base = harness.missionApprovalCandidate();
+    harness.missionApprovalCandidate.mockReturnValue({
+      ...base,
+      risk: 'destructive',
+    });
+    const submit = missionHandler(ORCH_CHANNELS.missionSubmitIntent);
+    await submit(
+      { sender },
+      {
+        missionId: 'mission-1',
+        goal: 'Apagar os dados e recomeçar do zero',
+        planReviewSurface: 'product-wizard',
+      },
+    );
+    const handler = missionHandler(ORCH_CHANNELS.missionApproveIntent);
+
+    await expect(
+      handler({ sender }, { missionId: 'mission-1' }),
+    ).resolves.toMatchObject({ id: 'mission-1', status: 'running' });
+    expect(harness.dialog.showMessageBox).toHaveBeenCalledOnce();
+    expect(harness.dialog.showMessageBox.mock.calls[0]?.[1]).toMatchObject({
+      type: 'warning',
+    });
+  });
+
+  it('mantém o modal nativo para rota experimental mesmo com revisão do wizard', async () => {
+    const sender = owner();
+    harness.scopes.set(sender.id, SCOPE_A);
+    harness.windows.set(sender.id, { isDestroyed: () => false });
+    const base = harness.missionApprovalCandidate();
+    harness.missionApprovalCandidate.mockReturnValue({
+      ...base,
+      orchestratorEvidence: 'experimental',
+    });
+    const submit = missionHandler(ORCH_CHANNELS.missionSubmitIntent);
+    await submit(
+      { sender },
+      {
+        missionId: 'mission-1',
+        goal: 'Implementar, testar e entregar a missão real',
+        planReviewSurface: 'product-wizard',
+      },
+    );
+    const handler = missionHandler(ORCH_CHANNELS.missionApproveIntent);
+
+    await expect(
+      handler({ sender }, { missionId: 'mission-1' }),
+    ).resolves.toMatchObject({ id: 'mission-1', status: 'running' });
+    expect(harness.dialog.showMessageBox).toHaveBeenCalledOnce();
+  });
+
+  it('mantém o modal nativo na promoção mesmo com grant do wizard para a missão', async () => {
+    const sender = owner();
+    harness.scopes.set(sender.id, SCOPE_A);
+    harness.windows.set(sender.id, { isDestroyed: () => false });
+    harness.submitMissionIntent.mockReturnValue({
+      id: 'mission-plan',
+      intentVersion: 5,
+    });
+    const submit = missionHandler(ORCH_CHANNELS.missionSubmitIntent);
+    await submit(
+      { sender },
+      {
+        missionId: 'mission-plan',
+        goal: 'Aplicar o plano aprovado no workspace',
+        planReviewSurface: 'product-wizard',
+      },
+    );
+    const handler = missionHandler(ORCH_CHANNELS.missionPromotePlanLane);
+
+    await expect(
+      handler({ sender }, { missionId: 'mission-plan' }),
+    ).resolves.toMatchObject({ id: 'mission-plan', status: 'running' });
+    expect(harness.dialog.showMessageBox).toHaveBeenCalledOnce();
+    expect(harness.dialog.showMessageBox.mock.calls[0]?.[1]).toMatchObject({
+      title: 'Nexus IDE — promover plano',
+    });
   });
 
   it('awaits the keychain-only subscription warm before the approve readiness gate', async () => {

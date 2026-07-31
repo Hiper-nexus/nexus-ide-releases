@@ -588,6 +588,11 @@ export interface NexusApi {
       lane?: 'standard' | 'consult' | 'plan' | 'ops';
       /** Current print/audio evidence must be present before dispatch. */
       evidenceAttached?: boolean;
+      /**
+       * Product wizard only: THIS submission will be shown in the in-app plan
+       * review, whose Start click counts as the approval (main-owned grant).
+       */
+      planReviewSurface?: 'product-wizard';
     }): Promise<Mission>;
     approveMissionIntent(input: {
       missionId: string;
