@@ -30,7 +30,7 @@ describe('MissionTransitionTracker', () => {
     t.ingest('a', [{ id: '1', title: 'Deploy', status: 'running' }], at);
     expect(
       t.ingest('a', [{ id: '1', title: 'Deploy', status: 'done' }], at + 1),
-    ).toEqual([{ kind: 'mission-done', title: 'Deploy', at: at + 1 }]);
+    ).toEqual([{ kind: 'mission-done', title: 'Deploy', at: at + 1, missionId: '1' }]);
   });
 
   it('dispara mission-blocked quando a missão passa a esperar um humano', () => {
@@ -38,7 +38,7 @@ describe('MissionTransitionTracker', () => {
     t.ingest('a', [{ id: '1', title: 'Deploy', status: 'running' }], at);
     expect(
       t.ingest('a', [{ id: '1', title: 'Deploy', status: 'blocked' }], at),
-    ).toEqual([{ kind: 'mission-blocked', title: 'Deploy', at }]);
+    ).toEqual([{ kind: 'mission-blocked', title: 'Deploy', at, missionId: '1' }]);
   });
 
   it('não pede intervenção durante retry técnico, mas avisa se virar espera humana', () => {
@@ -77,7 +77,7 @@ describe('MissionTransitionTracker', () => {
         at + 2,
       ),
     ).toEqual([
-      { kind: 'mission-blocked', title: 'Deploy', at: at + 2 },
+      { kind: 'mission-blocked', title: 'Deploy', at: at + 2, missionId: '1' },
     ]);
   });
 
@@ -99,7 +99,12 @@ describe('MissionTransitionTracker', () => {
         at + 1,
       ),
     ).toEqual([
-      { kind: 'mission-technical-failure', title: 'Deploy', at: at + 1 },
+      {
+        kind: 'mission-technical-failure',
+        title: 'Deploy',
+        at: at + 1,
+        missionId: '1',
+      },
     ]);
   });
 
@@ -143,7 +148,12 @@ describe('MissionTransitionTracker', () => {
         at + 2,
       ),
     ).toEqual([
-      { kind: 'mission-technical-failure', title: 'Deploy', at: at + 2 },
+      {
+        kind: 'mission-technical-failure',
+        title: 'Deploy',
+        at: at + 2,
+        missionId: '1',
+      },
     ]);
   });
 
@@ -165,7 +175,7 @@ describe('MissionTransitionTracker', () => {
         at + 1,
       ),
     ).toEqual([
-      { kind: 'mission-blocked', title: 'Deploy', at: at + 1 },
+      { kind: 'mission-blocked', title: 'Deploy', at: at + 1, missionId: '1' },
     ]);
 
     expect(
@@ -210,6 +220,7 @@ describe('MissionTransitionTracker', () => {
         kind: 'mission-blocked',
         title: 'Handoff não entregue — Deploy',
         at: at + 1,
+        missionId: '1',
       },
     ]);
   });
@@ -222,7 +233,7 @@ describe('MissionTransitionTracker', () => {
     ).toEqual([]);
     expect(
       t.ingest('a', [{ id: '1', title: 'Build', status: 'failed' }], at),
-    ).toEqual([{ kind: 'mission-failed', title: 'Build', at }]);
+    ).toEqual([{ kind: 'mission-failed', title: 'Build', at, missionId: '1' }]);
   });
 
   it('missão nova aparecendo já como done (após o seed) não comemora', () => {
@@ -245,7 +256,7 @@ describe('MissionTransitionTracker', () => {
     t.seed('a', [{ id: '1', title: 'Boot', status: 'running' }]);
     expect(
       t.ingest('a', [{ id: '1', title: 'Boot', status: 'done' }], at),
-    ).toEqual([{ kind: 'mission-done', title: 'Boot', at }]);
+    ).toEqual([{ kind: 'mission-done', title: 'Boot', at, missionId: '1' }]);
   });
 
   it('poda missões que saíram da lista do escopo', () => {
@@ -278,7 +289,7 @@ describe('MissionTransitionTracker', () => {
     // transição real no escopo a continua funcionando
     expect(
       t.ingest('a', [{ id: '1', title: 'A', status: 'done' }], at),
-    ).toEqual([{ kind: 'mission-done', title: 'A', at }]);
+    ).toEqual([{ kind: 'mission-done', title: 'A', at, missionId: '1' }]);
   });
 
   it('status repetido não repete evento', () => {

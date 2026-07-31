@@ -58,9 +58,19 @@ export class MissionTransitionTracker {
         continue;
       }
       if (mission.status === 'done') {
-        events.push({ kind: 'mission-done', title: mission.title, at });
+        events.push({
+          kind: 'mission-done',
+          title: mission.title,
+          at,
+          missionId: mission.id,
+        });
       } else if (mission.status === 'failed') {
-        events.push({ kind: 'mission-failed', title: mission.title, at });
+        events.push({
+          kind: 'mission-failed',
+          title: mission.title,
+          at,
+          missionId: mission.id,
+        });
       } else if (mission.status === 'blocked') {
         const hasAutomaticRecovery = hasAutomaticTechnicalRecovery({
           ...mission,
@@ -72,6 +82,7 @@ export class MissionTransitionTracker {
               kind: 'mission-technical-failure',
               title: mission.title,
               at,
+              missionId: mission.id,
             });
           }
           continue;
@@ -87,6 +98,7 @@ export class MissionTransitionTracker {
             ? `Handoff não entregue — ${mission.title}`
             : mission.title,
           at,
+          missionId: mission.id,
         });
       }
     }

@@ -358,6 +358,44 @@
   overflow-wrap: anywhere;
 }
 
+.orch-item__detail--failure {
+  color: var(--danger, #e5484d);
+}
+
+.mission-result__diagnostic {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  border: 1px solid
+    color-mix(in oklab, var(--danger, #e5484d) 35%, transparent);
+  border-radius: 8px;
+  padding: var(--space-3);
+  background: color-mix(in oklab, var(--danger, #e5484d) 6%, transparent);
+}
+
+.mission-result__diagnostic > h3 {
+  margin: 0;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--danger, #e5484d);
+}
+
+.mission-result__diagnostic-item > h4 {
+  margin: 0 0 2px;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.mission-result__diagnostic-item > p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .orch-item__meta {
   color: var(--text-dim);
   font-size: 10px;

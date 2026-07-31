@@ -9,6 +9,7 @@ import type {
 } from '../../shared/orch-types';
 import { isMissionRuntimeSquadId } from '../../shared/orch-types';
 import { useOrchStore, type OrchPanelTab } from '../state/orch-store';
+import { presentMissionFailure } from '../../shared/mission-failure-presentation';
 import { askConfirm } from '../state/confirm-store';
 import { confirmAndReopenMission } from '../orch/confirm-reopen-mission';
 import { useMissionWizardStore } from '../state/mission-wizard-store';
@@ -92,6 +93,9 @@ function MissionRow({
   const listAction = missionListAction(mission, hasVisiblePanes);
   const hasTerminalResult =
     mission.status === 'done' || mission.status === 'failed';
+  const failure = presentMissionFailure(mission.description ?? '');
+  const hasDiagnostic =
+    mission.status === 'blocked' && failure.sections.length > 0;
   return (
     <li className="orch-item">
       <div className="orch-item__head">
@@ -103,6 +107,15 @@ function MissionRow({
           <span className="orch-tag">
             {handoffCount} entrega{handoffCount === 1 ? '' : 's'}
           </span>
+        )}
+        {hasDiagnostic && (
+          <button
+            className="orch-panel__btn"
+            onClick={() => onViewResult(mission)}
+            title="Abre o diagnóstico completo da falha, sem iniciar uma CLI"
+          >
+            Ver diagnóstico
+          </button>
         )}
         <button
           className="orch-panel__btn"
@@ -130,8 +143,13 @@ function MissionRow({
           </button>
         )}
       </div>
-      {mission.description && (
-        <p className="orch-item__detail">{mission.description}</p>
+      {failure.summary && (
+        <p className="orch-item__detail">{failure.summary}</p>
+      )}
+      {failure.headline && (
+        <p className="orch-item__detail orch-item__detail--failure">
+          {failure.headline}
+        </p>
       )}
       {mission.milestones.length > 0 && (
         <p className="orch-item__detail">
@@ -442,6 +460,11 @@ export function OrchestrationPanel() {
               <MissionResultDetail
                 mission={selectedMission}
                 onBack={clearMissionDetail}
+                onReopen={
+                  selectedMission.status === 'blocked'
+                    ? () => onReopenMission(selectedMission)
+                    : undefined
+                }
               />
             ) : missions.length === 0 ? (
               <EmptyState

@@ -344,6 +344,11 @@ export interface PetEvent {
   /** Título curto para o balão (nome da missão / título do pane). */
   title: string;
   at: number;
+  /**
+   * Missão exata do evento, quando ele nasce de uma única missão. Permite ao
+   * renderer navegar direto para o diagnóstico em vez de abrir uma lista.
+   */
+  missionId?: string;
 }
 
 /** Atenção operacional: atravessa o modo "dormindo" e abre o Ops Board. */

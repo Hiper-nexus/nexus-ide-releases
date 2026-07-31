@@ -2,6 +2,7 @@ import type { Mission } from '../../shared/orch-types';
 import {
   PRIOR_MISSION_MEMORY_MARKER,
 } from '../../shared/mission-result-format';
+import { presentMissionFailure } from '../../shared/mission-failure-presentation';
 
 const MISSION_LEARNINGS_LIMIT = 65_536;
 
@@ -97,10 +98,14 @@ function MissionResultContent({ mission }: { mission: Mission }) {
 export function MissionResultDetail({
   mission,
   onBack,
+  onReopen,
 }: {
   mission: Mission;
   onBack: () => void;
+  /** Present only when the mission can be resumed (e.g. technical block). */
+  onReopen?: () => void;
 }) {
+  const failure = presentMissionFailure(mission.description ?? '');
   return (
     <article
       className="mission-result"
@@ -123,8 +128,36 @@ export function MissionResultDetail({
           Relatório durável · atualizado em {missionResultMoment(mission)}
         </p>
       </header>
-      {mission.description && (
-        <p className="mission-result__description">{mission.description}</p>
+      {failure.summary && (
+        <p className="mission-result__description">{failure.summary}</p>
+      )}
+      {failure.sections.length > 0 && (
+        <section
+          className="mission-result__diagnostic"
+          aria-labelledby="mission-result-diagnostic-title"
+          data-testid="mission-result-diagnostic"
+        >
+          <h3 id="mission-result-diagnostic-title">Diagnóstico da falha</h3>
+          {failure.sections.map((section, index) => (
+            <article
+              key={`${section.title}-${index}`}
+              className="mission-result__diagnostic-item"
+            >
+              <h4>{section.title}</h4>
+              <p>{section.body}</p>
+            </article>
+          ))}
+          {onReopen && (
+            <button
+              type="button"
+              className="orch-panel__btn mission-result__reopen"
+              onClick={onReopen}
+              title="Replaneja e retoma a missão a partir do diagnóstico acima"
+            >
+              Retomar missão
+            </button>
+          )}
+        </section>
       )}
       <MissionResultContent mission={mission} />
     </article>

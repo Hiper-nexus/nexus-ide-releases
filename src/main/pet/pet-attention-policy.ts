@@ -227,6 +227,9 @@ function flushDigestBuffer(
               ? technical[0]!.title
               : `${technical.length} missões com falha técnica`,
           at: now,
+          ...(technical.length === 1 && technical[0]!.missionId
+            ? { missionId: technical[0]!.missionId }
+            : {}),
         },
         now,
         false,

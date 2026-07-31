@@ -472,11 +472,18 @@ export function App() {
           }
           if (isTechnicalFailure) {
             useToastStore.getState().push('error', 'Falha técnica na missão', {
-              detail: `${event.title} — a recuperação automática parou. Abra o Ops Board para ver o diagnóstico e tentar novamente.`,
+              detail: `${event.title} — a recuperação automática parou. Veja o diagnóstico para entender a causa e tentar novamente.`,
               action: {
                 label: 'Ver diagnóstico',
                 onClick: () => {
                   const orch = useOrchStore.getState();
+                  if (event.missionId) {
+                    // Direto ao diagnóstico da missão; o board cobriria o
+                    // painel, então garante que ele está fechado.
+                    if (orch.boardOpen) orch.closeBoard();
+                    orch.openMissionDetail(event.missionId);
+                    return;
+                  }
                   if (!orch.boardOpen) orch.toggleBoard();
                   orch.openPanel('missions');
                 },
@@ -486,6 +493,11 @@ export function App() {
             return;
           }
           const multi = /·|\d+\s+(missões|agentes)/i.test(event.title);
+          const detail = multi
+            ? `${event.title}. Abra o Ops Board ou o pet.`
+            : isBlock
+              ? `${event.title} — travada aguardando decisão.`
+              : `${event.title} — permissão/resposta pendente no terminal.`;
           useToastStore.getState().push(
             'warn',
             multi
@@ -493,11 +505,20 @@ export function App() {
               : isBlock
                 ? 'Missão precisa de você'
                 : 'Agente pediu input',
-            multi
-              ? `${event.title}. Abra o Ops Board ou o pet.`
-              : isBlock
-                ? `${event.title} — travada aguardando decisão.`
-                : `${event.title} — permissão/resposta pendente no terminal.`,
+            isBlock && !multi && event.missionId
+              ? {
+                  detail,
+                  action: {
+                    label: 'Abrir missão',
+                    onClick: () => {
+                      const orch = useOrchStore.getState();
+                      if (orch.boardOpen) orch.closeBoard();
+                      orch.openMissionDetail(event.missionId!);
+                    },
+                  },
+                  dedupeKey: `mission-blocked:${event.missionId}`,
+                }
+              : detail,
           );
         }),
       );

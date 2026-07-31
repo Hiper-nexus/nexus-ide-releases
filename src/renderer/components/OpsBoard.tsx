@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { usePanelZ } from '../lib/panel-stack';
 import type { Mission, MissionStatus } from '../../shared/orch-types';
 import { useOrchStore } from '../state/orch-store';
+import { presentMissionFailure } from '../../shared/mission-failure-presentation';
 import { useMissionWizardStore } from '../state/mission-wizard-store';
 import { askConfirm } from '../state/confirm-store';
 import { confirmAndBlockMission } from '../orch/block-mission';
@@ -350,7 +351,35 @@ export function OpsBoard() {
                               </span>
                             )}
                           </div>
-                          <h3 className="ops-board__card-title">{m.title}</h3>
+                          <h3 className="ops-board__card-title">
+                            <button
+                              type="button"
+                              className="ops-board__card-open"
+                              title="Abrir o diagnóstico e o relatório desta missão"
+                              onMouseDown={(event) => event.stopPropagation()}
+                              onDragStart={(event) => event.stopPropagation()}
+                              onClick={() => {
+                                useOrchStore.getState().openMissionDetail(m.id);
+                                closeBoard();
+                              }}
+                            >
+                              {m.title}
+                            </button>
+                          </h3>
+                          {m.status === 'blocked' &&
+                            (() => {
+                              const headline = presentMissionFailure(
+                                m.description ?? '',
+                              ).headline;
+                              return headline ? (
+                                <p
+                                  className="ops-board__card-failure"
+                                  title={headline}
+                                >
+                                  {headline}
+                                </p>
+                              ) : null;
+                            })()}
                           {crew.length > 0 && (
                             <div className="ops-board__crew">
                               <span className="agent-avatar-group" aria-label="Tripulação da missão">

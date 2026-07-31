@@ -65,6 +65,7 @@ import {
 } from '../orch/close-mission-runtime';
 import { paneSessionView } from '../../shared/pane-session-view';
 import { hasAutomaticTechnicalRecovery } from '../../shared/mission-recovery-policy';
+import { hasMissionFailureNotes } from '../../shared/mission-failure-presentation';
 
 /**
  * Activity Rail — missões **deste workspace** apenas:
@@ -517,6 +518,17 @@ export function MissionRail() {
     }
     if (hasAutomaticTechnicalRecovery(m)) {
       setNote('Recuperação automática em andamento.');
+      setBusy(null);
+      return;
+    }
+    // A technically failed mission opens its diagnostic first: the operator
+    // sees WHY it stopped and chooses "Retomar" from there, instead of a
+    // blind reopen that repeats the same failure without explanation.
+    if (
+      m.status === 'blocked' &&
+      hasMissionFailureNotes(m.description ?? '')
+    ) {
+      useOrchStore.getState().openMissionDetail(m.id);
       setBusy(null);
       return;
     }

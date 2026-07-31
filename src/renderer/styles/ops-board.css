@@ -286,6 +286,31 @@
   overflow-wrap: anywhere;
 }
 
+.ops-board__card-open {
+  all: unset;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  overflow-wrap: anywhere;
+}
+.ops-board__card-open:hover,
+.ops-board__card-open:focus-visible {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.ops-board__card-failure {
+  margin: var(--space-1) 0 0;
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--danger, #e5484d);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
 .ops-board__crew {
   display: flex;
   align-items: flex-start;
