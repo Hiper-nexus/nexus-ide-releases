@@ -19,6 +19,11 @@ import {
   markHandoffSubmitted,
   type AgentGateContext,
 } from "./gate";
+import {
+  attestationGateErrorMessage,
+  gateHandoffAttestation,
+} from "./agent-attestation-gate";
+import { lookupIssuedHandoffAttestation } from "./agent-attestation-lookup";
 import { handoffRawPayloadSha256 } from "./handoff-payload-identity";
 import {
   mintAgentTransportPhysicalReceipt,
@@ -35,6 +40,7 @@ import {
 } from "./project-domain-store-registry";
 import { compactText } from "./session-compaction";
 import type { TaskDispatchRecord } from "./task-dispatch-codec";
+import { getMissionEventRuntimeManager } from "./mission-event-emit";
 
 const ptyStreamHandoffPayloadSchema = z
   .object({
@@ -219,6 +225,34 @@ function commitPhysicalPtyHandoff(
   physicalReceipt: ReturnType<typeof mintAgentTransportPhysicalReceipt>,
 ) {
   const { ctx, dispatch, missionId, payload, sessionId, suite } = prepared;
+  const manager = getMissionEventRuntimeManager();
+  let attestation:
+    | {
+        readonly agentPubkey: string;
+        readonly ownerPubkey: string;
+        readonly credential: import("../../shared/agent-attestation").AgentAttestation;
+      }
+    | undefined;
+  if (manager) {
+    const runtime = manager.open(ctx.scope);
+    const proof = lookupIssuedHandoffAttestation(
+      runtime.db,
+      missionId,
+      dispatch.workerId,
+      Math.floor(Date.now() / 1000),
+    );
+    const gate = gateHandoffAttestation(runtime.db, missionId, proof);
+    if (gate.required && !gate.accepted) {
+      throw new Error(attestationGateErrorMessage(gate));
+    }
+    if (gate.required && gate.accepted) {
+      attestation = {
+        agentPubkey: gate.agentPubkey,
+        ownerPubkey: gate.ownerPubkey,
+        credential: gate.credential,
+      };
+    }
+  }
   return suite.handoffs.submitFromPhysicalAgentBoundaryAndTransitionDispatch(
     {
       status: payload.status,
@@ -239,6 +273,7 @@ function commitPhysicalPtyHandoff(
       workerIncarnationId: ctx.workerIncarnationId!,
       detail: `${payload.status}: ${prepared.summary}`,
     },
+    attestation,
   );
 }
 

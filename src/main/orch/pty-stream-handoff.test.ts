@@ -22,6 +22,9 @@ import {
   disposeProjectDomainStoreRegistry,
   getProjectDomainStores,
 } from "./project-domain-store-registry";
+import { issueAgentIdentityRequired } from "./agent-identity-spawn";
+import { setAgentKeyringVaultForTests } from "./agent-keyring-persistence";
+import { configureMissionEventEmit } from "./mission-event-emit";
 
 vi.mock("./idle-delivery", () => ({
   onHandoffSubmitted: vi.fn(() => null),
@@ -49,6 +52,7 @@ describe("PTY stream physical handoff", () => {
   let baseDir = "";
   let worktree = "";
   let manager: ProjectRuntimeManager;
+  const vault = new Map<string, string>();
 
   beforeEach(() => {
     baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-pty-handoff-"));
@@ -64,6 +68,18 @@ describe("PTY stream physical handoff", () => {
       baseDir: path.join(baseDir, "runtime"),
       appVersion: "pty-stream-handoff-test",
     });
+    setAgentKeyringVaultForTests({
+      getSecret: (key) => vault.get(key) ?? null,
+      setSecret: (key, value) => {
+        vault.set(key, value);
+        return { ok: true };
+      },
+      deleteSecret: (key) => {
+        vault.delete(key);
+        return { ok: true };
+      },
+    });
+    configureMissionEventEmit(manager);
     configureProjectDomainStoreRegistry(manager);
     configureAuditLogRuntime(manager);
     resetGateForTests();
@@ -73,6 +89,9 @@ describe("PTY stream physical handoff", () => {
     resetGateForTests();
     disposeProjectDomainStoreRegistry();
     disposeAuditLogRuntime();
+    configureMissionEventEmit(null);
+    setAgentKeyringVaultForTests(null);
+    vault.clear();
     manager?.closeAll();
     if (baseDir) fs.rmSync(baseDir, { recursive: true, force: true });
   });
@@ -132,6 +151,11 @@ describe("PTY stream physical handoff", () => {
       sessionId: SESSION_ID,
       workerIncarnationId: claim.workerIncarnationId,
     });
+    issueAgentIdentityRequired({
+      missionId: mission.id,
+      scope,
+      agentId: WORKER_ID,
+    });
     const ctx = mintToken({
       label: WORKER_ID,
       agentName: WORKER_ID,
@@ -180,7 +204,7 @@ describe("PTY stream physical handoff", () => {
       .open(scope)
       .db.prepare(
         `SELECT source, mission_id, session_id, worker_incarnation_id,
-                worktree_head_sha
+                worktree_head_sha, agent_pubkey, owner_pubkey, attestation_json
          FROM handoff_mcp_receipts WHERE handoff_id = ?`,
       )
       .get(result.handoffId);
@@ -190,6 +214,9 @@ describe("PTY stream physical handoff", () => {
       session_id: SESSION_ID,
       worker_incarnation_id: claim.workerIncarnationId,
       worktree_head_sha: head,
+      agent_pubkey: expect.stringMatching(/^[a-f0-9]{64}$/),
+      owner_pubkey: expect.stringMatching(/^[a-f0-9]{64}$/),
+      attestation_json: expect.stringContaining('["auth"'),
     });
     expect(
       readAuditLog({ scope, missionId: mission.id }, 20).filter(
