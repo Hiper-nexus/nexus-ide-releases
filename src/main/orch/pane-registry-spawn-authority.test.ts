@@ -43,6 +43,14 @@ const missionAuthority = vi.hoisted(() => ({
   },
 }));
 
+// This suite exercises renderer ownership and the pending-spawn token. The
+// Main-held identity boundary is covered by pane-registry-main-owned and the
+// identity suites; keep this fixture's agent issuance successful so a missing
+// renderer handoff cannot be mistaken for an identity failure.
+const identity = vi.hoisted(() => ({
+  issue: vi.fn(),
+}));
+
 vi.mock("./project-domain-store-registry", () => ({
   getProjectDomainStores: vi.fn(() => ({
     missions: {
@@ -65,6 +73,10 @@ vi.mock("./mission-pane-authority", () => ({
   resolveMissionPaneAuthoritySeal: vi.fn(() => missionAuthority.seal),
   sameMissionPaneAuthoritySeal: (left: unknown, right: unknown) =>
     JSON.stringify(left) === JSON.stringify(right),
+}));
+
+vi.mock("./agent-identity-spawn", () => ({
+  issueAgentIdentityRequired: identity.issue,
 }));
 
 let rendererId = 100;
