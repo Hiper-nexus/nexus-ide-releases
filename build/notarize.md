@@ -171,6 +171,61 @@ o script a envia somente após assinatura/notarização, verificação e E2E. N�
 use `gh release create` à mão. O workflow anterior está arquivado fora de
 `.github/workflows` e não é executável pelo GitHub Actions.
 
+## Um `make:release` por vez na máquina
+
+O comando isola o *checkout* num worktree git temporário — por isso ele nunca
+corrompe `node_modules` nem a árvore principal. Mas o `electron-packager` usa
+uma raiz temporária **compartilhada do sistema** (`$TMPDIR/electron-packager/`).
+Dois builds simultâneos escrevem lá dentro e a limpeza de um remove a árvore do
+outro no meio da assinatura.
+
+O sintoma é enganoso e manda quem diagnostica para o lado errado — parece
+certificado ou corrupção de assinatura:
+
+```
+codesign … NexusIDE Helper (Renderer): replacing existing signature
+codesign … NexusIDE Helper (Renderer): No such file or directory
+```
+
+O arquivo desaparece entre o início e o fim da própria assinatura. O
+isolamento de git não protege contra isso.
+
+Antes de começar, confirme que a máquina está vazia — inclusive de apps de E2E
+ainda drenando, que continuam disputando o mesmo temp:
+
+```bash
+pgrep -fl "make-release|electron-forge|electron-packager|release-candidate-gate|publish-release|nexus-release-e2e"
+```
+
+O mesmo vale para dois `release:publish` simultâneos: cada um reexecuta a
+missão real por conta própria.
+
+## Pendência: esgotamento de provider não é observável antes do gate
+
+Cada ciclo do gate roda uma missão real com CLIs de verdade (codex, claude,
+grok, glm, agy, opencode). Depois de várias execuções seguidas, os provedores
+começam a não responder e a missão degrada de forma monotônica — observado numa
+noite de release, no MESMO commit e MESMOS artefatos:
+
+| Execução | Missão | Panes | Dispatches | Handoffs |
+|---|---|---|---|---|
+| 1 | `done` | 4 | 8 | 8 |
+| 2 | `running` | 3 | 7 | 7 |
+| 3 | `blocked` | 3 | 6 | 5 |
+
+O recibo da terceira nomeou a causa: *"O worker não entregou um handoff após 3
+tentativas físicas… Última causa: O worker ficou sem atividade e sem heartbeat
+por 10 minutos (stalled)"*.
+
+Isso **não é bug de código** — é desgaste de ambiente. Mas hoje só se descobre
+~40 minutos depois de iniciar o ciclo, e a tabela `accounts` do `nexus.db` não
+revela: ela cobre as contas do vault, enquanto grok, glm, agy, opencode e codex
+autenticam pelos próprios HOMEs.
+
+**A fazer**: uma checagem de saúde de provider antes do gate, que falhe rápido
+com "provedor X não responde" em vez de custar um ciclo inteiro. Enquanto não
+existir, espace os ciclos de release quando um falhar por worker stalled.
+
 ## Limite de assinatura Windows
 
 A release canônica não executa o CodeSignTool/eSigner 1.3.3. Essa versão aceita

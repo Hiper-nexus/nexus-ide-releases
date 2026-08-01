@@ -639,6 +639,7 @@ async function runPackagedRealMissionCore(
     destination,
   ) => {
     let userData = null;
+    let succeeded = false;
     try {
       userData = await fsp.mkdtemp(
         path.join(os.tmpdir(), "nexus-real-mission-"),
@@ -869,11 +870,21 @@ async function runPackagedRealMissionCore(
         throw validationError;
       }
       await atomicWriteEvidence(evidence, destination);
+      succeeded = true;
       return { evidence, evidencePath: destination, runtimeProof };
     } finally {
       if (userData !== null) {
-        // Preserve the last failed gate state for local diagnosis when requested.
-        if (environment.NEXUS_REAL_MISSION_PRESERVE_USERDATA === "1") {
+        // FALHA SEMPRE PRESERVA. O banco da missão é a única fonte que explica
+        // por que ela não avançou — os motivos persistidos por camada (wait do
+        // driver, ready:false do autopilot) vivem lá. Depender de alguém ter
+        // lembrado de exportar uma variável ANTES do ciclo já custou um
+        // diagnóstico inteiro: um publish reprovou por worker stalled e o
+        // teardown apagou a prova. Sucesso continua limpando — não há o que
+        // diagnosticar e é espaço em disco por execução.
+        if (
+          !succeeded ||
+          environment.NEXUS_REAL_MISSION_PRESERVE_USERDATA === "1"
+        ) {
           process.stderr.write(`[real-mission] preserved userData=${userData}\n`);
         } else {
           await fsp.rm(userData, { recursive: true, force: true });
