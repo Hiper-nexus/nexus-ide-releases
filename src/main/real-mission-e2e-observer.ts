@@ -532,9 +532,13 @@ export class RealMissionObserver {
           reservation.decision.effort === dispatch.effort &&
           dispatch.adapterId ===
             HARNESS_WORKER_ROSTER.get(dispatch.agentRef ?? "")?.cli &&
-          planned?.agentRef === dispatch.agentRef &&
+          // Plano e schedule guardam o agentRef SELADO original; um dispatch
+          // re-roteado carrega o substituto, e a diretiva durável é a ponte.
+          (planned?.agentRef ===
+            (dispatch.providerReroute?.fromAgentRef ?? dispatch.agentRef)) &&
           planned?.agentCategory === dispatch.agentCategory &&
-          schedule?.agentRef === dispatch.agentRef &&
+          (schedule?.agentRef ===
+            (dispatch.providerReroute?.fromAgentRef ?? dispatch.agentRef)) &&
           schedule?.agentCategory === dispatch.agentCategory &&
           schedule?.executionMode === dispatch.executionMode,
         workerIncarnationId: dispatch.workerIncarnationId ?? null,

@@ -213,9 +213,16 @@ export const realMissionE2EEvidenceSchema = z
     );
     // O DAG selado é derivado do roster advisor presente: scouts e executor
     // são raízes do fan-out; a cadeia de reviewers parte do executor e termina
-    // no QA. Advisors skipped ficam fora do grafo.
+    // no QA. Advisors skipped por credencial/reserva ficam fora do grafo —
+    // eles nunca ganharam task no plano. Um advisor `provider-rerouted` é o
+    // OPOSTO: a task selada dele EXISTE e foi entregue pelo substituto (a
+    // diretiva durável prova a origem), então o membro permanece na cadeia;
+    // só a participação PESSOAL é dispensada.
     const presentAdvisorClis = evidence.participation
-      .filter((row) => row.skipped === null)
+      .filter(
+        (row) =>
+          row.skipped === null || row.skipped === "provider-rerouted",
+      )
       .map((row) => row.cli);
     const chain = realMissionE2EExpectedTaskChain(presentAdvisorClis);
     const chainPlans = chain.map((member) =>
@@ -532,8 +539,22 @@ export const realMissionE2EEvidenceSchema = z
       const physical = handoff.physicalReceipt;
       const audit = handoff.auditIntent;
       const accepted = exactAcceptedAttempt(handoff);
+      // Substituição por reroute: a diretiva durável (validada em CAS no
+      // claim) vincula este dispatch ao membro selado original — o handoff é
+      // fisicamente do SUBSTITUTO, então nome e superfície esperados são os
+      // dele, resolvidos pelo roster canônico do harness.
+      const substitute =
+        dispatch.providerReroute &&
+        dispatch.providerReroute.fromAgentRef === member.agentRef
+          ? (REAL_MISSION_E2E_ADVISORS.find(
+              (advisor) =>
+                advisor.id === dispatch.providerReroute?.toAgentRef,
+            ) ?? null)
+          : null;
+      const expectedFromAgent = substitute?.name ?? member.agentName;
+      const expectedCli = substitute?.cli ?? member.cli;
       const expectedSource =
-        member.kind === "advisory" && member.cli === "agy"
+        member.kind === "advisory" && expectedCli === "agy"
           ? "pty-stream"
           : "http-mcp";
       return Boolean(
@@ -557,7 +578,7 @@ export const realMissionE2EEvidenceSchema = z
           audit.occurredAt <= physical.issuedAt &&
           physical.issuedAt <= (dispatch.handoffAcceptedAt ?? -1) &&
           physical.issuedAt <= (accepted.acceptedAt ?? -1) &&
-          handoff.fromAgent === member.agentName &&
+          handoff.fromAgent === expectedFromAgent &&
           handoff.sessionId === dispatch.sessionId &&
           handoff.workerIncarnationId === dispatch.workerIncarnationId &&
           handoff.status === "success" &&
@@ -767,136 +788,191 @@ export const realMissionE2EEvidenceSchema = z
           row.handoffAt === handoff.physicalReceipt.issuedAt,
       );
     });
-    const pass =
-      evidence.failure === null &&
-      evidence.coverageTier === "guided-delivery-core" &&
-      evidence.planOrigin === "production-guided-planner" &&
-      evidence.prevcOrigin === "e2e-fixture" &&
-      evidence.reviewOrigin === "production-physical-worker" &&
-      evidence.qaOrigin === "production-physical-worker" &&
-      ((evidence.launchSurface === "private-runner" &&
-        evidence.wizardCoverage === "not-covered" &&
-        evidence.wizardReceipt === null) ||
-        (evidence.launchSurface === "product-wizard" &&
-          evidence.wizardCoverage === "main-owned-product-sequence" &&
-          evidence.wizardReceipt !== null &&
-          evidence.wizardReceipt.missionId === evidence.mission?.id &&
-          evidence.wizardReceipt.workspaceSha256 ===
-            evidence.workspaceSha256 &&
-          evidence.wizardReceipt.sourceSquadRevisionHash ===
-            evidence.mission?.squadSourceRevisionHash &&
-          evidence.wizardReceipt.squadRevisionHash ===
-            evidence.mission?.squadRevisionHash &&
-          evidence.wizardReceipt.nativeDialogAcceptedAt <=
-            (evidence.mission?.approvedAt ?? -1) &&
-          (evidence.mission?.approvedAt ?? -1) <=
-            evidence.wizardReceipt.approvalReturnedAt &&
-          (evidence.mission?.dispatchedAt ?? -1) <=
-            evidence.wizardReceipt.approvalReturnedAt)) &&
-      evidence.interaction.evidenceOrigin ===
-        "main-owned-instrumentation" &&
-      evidence.interaction.nativeDialogCount === 1 &&
-      evidence.interaction.missionApprovalDialogCount === 1 &&
-      evidence.interaction.missionApprovalAcceptedCount === 1 &&
-      evidence.interaction.codexMcpPromptCount === 0 &&
-      evidence.mission?.status === "done" &&
-      exactMissionInventory &&
-      evidence.mission.intentState === "done" &&
-      evidence.mission.intentVersion === 1 &&
-      evidence.plan?.squadId === evidence.mission.squadId &&
-      ((evidence.launchSurface === "private-runner" &&
-        evidence.mission.squadId === REAL_MISSION_E2E_SQUAD_ID &&
-        evidence.mission.squadSourceRevisionHash ===
-          evidence.mission.squadRevisionHash) ||
-        (evidence.launchSurface === "product-wizard" &&
-          isMissionRuntimeSquadId(evidence.mission.squadId) &&
-          evidence.mission.squadSourceRevisionHash !==
-            evidence.mission.squadRevisionHash)) &&
-      evidence.mission.approvedAt !== null &&
-      evidence.mission.dispatchedAt !== null &&
-      evidence.mission.approvedAt <= evidence.mission.dispatchedAt &&
-      evidence.mission.dispatchedAt <= (evidence.kickoff.idleAt ?? -1) &&
-      evidence.kickoff.sessionId !== null &&
-      evidence.kickoff.idleAt !== null &&
-      evidence.kickoff.busyAt !== null &&
-      evidence.kickoff.ptyDataAt !== null &&
-      evidence.kickoff.ptyChunkSha256 !== null &&
-      evidence.kickoff.idleAt <= evidence.kickoff.busyAt &&
-      evidence.kickoff.idleAt <= evidence.kickoff.ptyDataAt &&
-      chainPlanIsExact &&
-      evidence.panes.length === 4 &&
-      orchestrators.length === 1 &&
-      executors.length === 1 &&
-      reviewers.length === 1 &&
-      qualityAssurers.length === 1 &&
-      evidence.panes.every(physicalPaneIsComplete) &&
-      exactPhysicalPtySet &&
-      orchestrators[0]?.readOnly === false &&
-      orchestrators[0]?.nativeReadOnly === false &&
-      // Variante coerente: orquestrador Claude exige a advisor claude marcada
-      // orchestrator-reserved (reserveClaude); orquestrador codex proíbe essa
-      // marca (lá a advisor claude participa ou é no-credential).
-      ((orchestrators[0]?.adapterId === "claude" &&
-        evidence.participation.find((row) => row.cli === "claude")?.skipped ===
-          "orchestrator-reserved") ||
-        (orchestrators[0]?.adapterId === "codex" &&
+    // Conjunção final NOMEADA: quando o PASS falha, a mensagem lista QUAIS
+    // grupos falharam — uma noite de gates provou que "missing one or more"
+    // sem nome custa um ciclo inteiro de build para descobrir o conjunto.
+    const invariantGroups: ReadonlyArray<readonly [string, boolean]> = [
+      [
+        "provenance",
+        evidence.failure === null &&
+          evidence.coverageTier === "guided-delivery-core" &&
+          evidence.planOrigin === "production-guided-planner" &&
+          evidence.prevcOrigin === "e2e-fixture" &&
+          evidence.reviewOrigin === "production-physical-worker" &&
+          evidence.qaOrigin === "production-physical-worker",
+      ],
+      [
+        "launchSurfaceReceipt",
+        (evidence.launchSurface === "private-runner" &&
+          evidence.wizardCoverage === "not-covered" &&
+          evidence.wizardReceipt === null) ||
+          (evidence.launchSurface === "product-wizard" &&
+            evidence.wizardCoverage === "main-owned-product-sequence" &&
+            evidence.wizardReceipt !== null &&
+            evidence.wizardReceipt.missionId === evidence.mission?.id &&
+            evidence.wizardReceipt.workspaceSha256 ===
+              evidence.workspaceSha256 &&
+            evidence.wizardReceipt.sourceSquadRevisionHash ===
+              evidence.mission?.squadSourceRevisionHash &&
+            evidence.wizardReceipt.squadRevisionHash ===
+              evidence.mission?.squadRevisionHash &&
+            evidence.wizardReceipt.nativeDialogAcceptedAt <=
+              (evidence.mission?.approvedAt ?? -1) &&
+            (evidence.mission?.approvedAt ?? -1) <=
+              evidence.wizardReceipt.approvalReturnedAt &&
+            (evidence.mission?.dispatchedAt ?? -1) <=
+              evidence.wizardReceipt.approvalReturnedAt),
+      ],
+      [
+        "interaction",
+        evidence.interaction.evidenceOrigin ===
+          "main-owned-instrumentation" &&
+          evidence.interaction.nativeDialogCount === 1 &&
+          evidence.interaction.missionApprovalDialogCount === 1 &&
+          evidence.interaction.missionApprovalAcceptedCount === 1 &&
+          evidence.interaction.codexMcpPromptCount === 0,
+      ],
+      [
+        "missionState",
+        evidence.mission !== null &&
+          evidence.mission.status === "done" &&
+          exactMissionInventory &&
+          evidence.mission.intentState === "done" &&
+          evidence.mission.intentVersion === 1,
+      ],
+      [
+        "missionIdentity",
+        evidence.mission !== null &&
+          evidence.plan?.squadId === evidence.mission.squadId &&
+          ((evidence.launchSurface === "private-runner" &&
+            evidence.mission.squadId === REAL_MISSION_E2E_SQUAD_ID &&
+            evidence.mission.squadSourceRevisionHash ===
+              evidence.mission.squadRevisionHash) ||
+            (evidence.launchSurface === "product-wizard" &&
+              isMissionRuntimeSquadId(evidence.mission.squadId) &&
+              evidence.mission.squadSourceRevisionHash !==
+                evidence.mission.squadRevisionHash)) &&
+          evidence.mission.approvedAt !== null &&
+          evidence.mission.dispatchedAt !== null &&
+          evidence.mission.approvedAt <= evidence.mission.dispatchedAt &&
+          evidence.mission.dispatchedAt <= (evidence.kickoff.idleAt ?? -1),
+      ],
+      [
+        "kickoff",
+        evidence.kickoff.sessionId !== null &&
+          evidence.kickoff.idleAt !== null &&
+          evidence.kickoff.busyAt !== null &&
+          evidence.kickoff.ptyDataAt !== null &&
+          evidence.kickoff.ptyChunkSha256 !== null &&
+          evidence.kickoff.idleAt <= evidence.kickoff.busyAt &&
+          evidence.kickoff.idleAt <= evidence.kickoff.ptyDataAt,
+      ],
+      ["chainPlanIsExact", chainPlanIsExact],
+      [
+        "physicalPanes",
+        evidence.panes.length === 4 &&
+          orchestrators.length === 1 &&
+          executors.length === 1 &&
+          reviewers.length === 1 &&
+          qualityAssurers.length === 1 &&
+          evidence.panes.every(physicalPaneIsComplete) &&
+          exactPhysicalPtySet &&
+          new Set(evidence.panes.map((pane) => pane.sessionId)).size === 4,
+      ],
+      [
+        "mutationAuthority",
+        orchestrators[0]?.readOnly === false &&
+          orchestrators[0]?.nativeReadOnly === false &&
+          executors[0]?.readOnly === false &&
+          executors[0]?.nativeReadOnly === false &&
+          reviewers[0]?.readOnly === true &&
+          reviewers[0]?.nativeReadOnly === false &&
+          qualityAssurers[0]?.readOnly === true &&
+          qualityAssurers[0]?.nativeReadOnly === false &&
+          executors[0]?.workerIncarnationId !== null &&
+          reviewers[0]?.workerIncarnationId !== null &&
+          qualityAssurers[0]?.workerIncarnationId !== null,
+      ],
+      [
+        // Variante coerente: orquestrador Claude exige a advisor claude marcada
+        // orchestrator-reserved (reserveClaude); orquestrador codex proíbe essa
+        // marca (lá a advisor claude participa, é no-credential ou foi
+        // re-roteada).
+        "orchestratorVariant",
+        (orchestrators[0]?.adapterId === "claude" &&
           evidence.participation.find((row) => row.cli === "claude")
-            ?.skipped !== "orchestrator-reserved")) &&
-      executors[0]?.readOnly === false &&
-      executors[0]?.nativeReadOnly === false &&
-      reviewers[0]?.readOnly === true &&
-      reviewers[0]?.nativeReadOnly === false &&
-      qualityAssurers[0]?.readOnly === true &&
-      qualityAssurers[0]?.nativeReadOnly === false &&
-      executors[0]?.workerIncarnationId !== null &&
-      reviewers[0]?.workerIncarnationId !== null &&
-      qualityAssurers[0]?.workerIncarnationId !== null &&
-      new Set(evidence.panes.map((pane) => pane.sessionId)).size === 4 &&
-      chainDispatchIsExact &&
-      chainHandoffIsExact &&
-      chainHeadIsExact &&
-      chainConsumptionIsExact &&
-      chainTimingIsExact &&
-      participationIsExact &&
-      executorPlan !== undefined &&
-      reviewerPlan !== undefined &&
-      qaPlan !== undefined &&
-      executorDispatch !== undefined &&
-      reviewerDispatch !== undefined &&
-      qaDispatch !== undefined &&
-      executorReceipt !== null &&
-      reviewerReceipt !== null &&
-      qaReceipt !== null &&
-      exactMissionDriverCompletion &&
-      (qaDispatch.completedAt ?? Number.MAX_SAFE_INTEGER) <=
-        completion.completedAt &&
-      evidence.repository.finalHeadSha !== null &&
-      evidence.repository.initialHeadSha !== null &&
-      evidence.repository.resultSha256 === evidence.expectedContentSha256 &&
-      // Fast-forward (2) or real merge commit (3); exactSingleCommit already
-      // proved HEAD descends from the initial commit with only resultado.txt
-      // changed, so both integration shapes are the same logical result.
-      (evidence.repository.commitCount === 2 ||
-        evidence.repository.commitCount === 3) &&
-      evidence.repository.clean &&
-      !evidence.repository.changedBeforeWorker &&
-      evidence.repository.exactSingleCommit &&
-      evidence.repository.initialHeadSha !== evidence.repository.finalHeadSha &&
-      executorReceipt.reference === evidence.repository.finalHeadSha &&
-      executors[0]?.sessionId === executorDispatch.sessionId &&
-      executors[0]?.workerIncarnationId ===
-        executorDispatch.workerIncarnationId &&
-      reviewers[0]?.sessionId === reviewerDispatch.sessionId &&
-      reviewers[0]?.workerIncarnationId ===
-        reviewerDispatch.workerIncarnationId &&
-      qualityAssurers[0]?.sessionId === qaDispatch.sessionId &&
-      qualityAssurers[0]?.workerIncarnationId ===
-        qaDispatch.workerIncarnationId &&
-      orchestrators[0]?.sessionId === evidence.kickoff.sessionId;
+            ?.skipped === "orchestrator-reserved") ||
+          (orchestrators[0]?.adapterId === "codex" &&
+            evidence.participation.find((row) => row.cli === "claude")
+              ?.skipped !== "orchestrator-reserved"),
+      ],
+      ["chainDispatchIsExact", chainDispatchIsExact],
+      ["chainHandoffIsExact", chainHandoffIsExact],
+      ["chainHeadIsExact", chainHeadIsExact],
+      ["chainConsumptionIsExact", chainConsumptionIsExact],
+      ["chainTimingIsExact", chainTimingIsExact],
+      ["participationIsExact", participationIsExact],
+      [
+        "deliveryChainPresence",
+        executorPlan !== undefined &&
+          reviewerPlan !== undefined &&
+          qaPlan !== undefined &&
+          executorDispatch !== undefined &&
+          reviewerDispatch !== undefined &&
+          qaDispatch !== undefined &&
+          executorReceipt !== null &&
+          reviewerReceipt !== null &&
+          qaReceipt !== null,
+      ],
+      [
+        "missionDriverCompletion",
+        exactMissionDriverCompletion &&
+          (qaDispatch?.completedAt ?? Number.MAX_SAFE_INTEGER) <=
+            completion.completedAt,
+      ],
+      [
+        "repository",
+        evidence.repository.finalHeadSha !== null &&
+          evidence.repository.initialHeadSha !== null &&
+          evidence.repository.resultSha256 ===
+            evidence.expectedContentSha256 &&
+          // Fast-forward (2) or real merge commit (3); exactSingleCommit
+          // already proved HEAD descends from the initial commit with only
+          // resultado.txt changed, so both integration shapes are the same
+          // logical result.
+          (evidence.repository.commitCount === 2 ||
+            evidence.repository.commitCount === 3) &&
+          evidence.repository.clean &&
+          !evidence.repository.changedBeforeWorker &&
+          evidence.repository.exactSingleCommit &&
+          evidence.repository.initialHeadSha !==
+            evidence.repository.finalHeadSha &&
+          executorReceipt?.reference === evidence.repository.finalHeadSha,
+      ],
+      [
+        "physicalSessionIdentity",
+        executors[0]?.sessionId === executorDispatch?.sessionId &&
+          executors[0]?.workerIncarnationId ===
+            executorDispatch?.workerIncarnationId &&
+          reviewers[0]?.sessionId === reviewerDispatch?.sessionId &&
+          reviewers[0]?.workerIncarnationId ===
+            reviewerDispatch?.workerIncarnationId &&
+          qualityAssurers[0]?.sessionId === qaDispatch?.sessionId &&
+          qualityAssurers[0]?.workerIncarnationId ===
+            qaDispatch?.workerIncarnationId &&
+          orchestrators[0]?.sessionId === evidence.kickoff.sessionId,
+      ],
+    ];
+    const failedInvariants = invariantGroups
+      .filter(([, holds]) => !holds)
+      .map(([name]) => name);
+    const pass = failedInvariants.length === 0;
     if (!pass) {
       context.addIssue({
         code: "custom",
-        message: "PASS evidence is missing one or more real-mission invariants",
+        message:
+          "PASS evidence is missing one or more real-mission invariants: " +
+          failedInvariants.join(", "),
       });
     }
   });

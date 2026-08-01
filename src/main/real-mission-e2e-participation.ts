@@ -100,9 +100,15 @@ export function buildRealMissionParticipation(
       };
     }
     const capture = input.ptyByCli.get(expectation.cli) ?? null;
+    // O dispatch PESSOAL deste advisor nunca carrega diretiva de reroute — um
+    // substituto assumindo a task de OUTRO advisor fica com o mesmo agentRef,
+    // e casar só por agentRef ligaria o recibo pessoal ao handoff alheio
+    // (flagrado no gate 8: a linha do grok casou com a task do claude).
     const dispatch =
       input.dispatches.find(
-        (candidate) => candidate.agentRef === expectation.agentRef,
+        (candidate) =>
+          candidate.agentRef === expectation.agentRef &&
+          !candidate.providerReroute,
       ) ?? null;
     // Participação por SUBSTITUIÇÃO: o provider do advisor morreu (401/cota)
     // e o reroute re-vinculou a task selada a outro agente do roster — o
