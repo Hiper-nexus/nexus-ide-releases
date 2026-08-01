@@ -169,6 +169,11 @@ export const dispatchProofSchema = z
     agentCategory: z
       .enum(["executor", "reviewer", "scout", "architect"])
       .nullable(),
+    /** Diretiva durável de reroute: a task selada foi entregue por substituto. */
+    providerReroute: z
+      .object({ fromAgentRef: idSchema, toAgentRef: idSchema })
+      .strict()
+      .nullable(),
     executionMode: z.enum(["isolated_worktree", "same_checkout", "read_only"]),
     dependsOn: z.array(idSchema).max(64),
     state: z.enum([
@@ -315,7 +320,9 @@ export const advisorParticipationProofSchema = z
   .object({
     cli: z.enum(["grok", "kimi", "agy", "opencode", "claude", "glm"]),
     tier: z.enum(["mechanically-confined", "advisory-unconfined"]),
-    skipped: z.enum(["no-credential", "orchestrator-reserved"]).nullable(),
+    skipped: z
+      .enum(["no-credential", "orchestrator-reserved", "provider-rerouted"])
+      .nullable(),
     spawnedAt: timestampSchema.nullable(),
     firstNexusToolAt: timestampSchema.nullable(),
     handoffAt: timestampSchema.nullable(),

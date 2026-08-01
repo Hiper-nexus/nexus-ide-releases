@@ -1088,7 +1088,8 @@ export function assertRealMissionPassEvidence(raw) {
         row?.tier === advisor.tier &&
         (row?.skipped === null ||
           row?.skipped === "no-credential" ||
-          row?.skipped === "orchestrator-reserved") &&
+          row?.skipped === "orchestrator-reserved" ||
+          row?.skipped === "provider-rerouted") &&
         (row?.skipped === null ||
           (row?.spawnedAt === null &&
             row?.firstNexusToolAt === null &&
@@ -1314,7 +1315,8 @@ export function assertRealMissionReleaseEvidence(raw) {
       if (row === null) return false;
       if (
         row.skipped === "no-credential" ||
-        row.skipped === "orchestrator-reserved"
+        row.skipped === "orchestrator-reserved" ||
+        row.skipped === "provider-rerouted"
       ) {
         return (
           row.spawnedAt === null &&

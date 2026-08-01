@@ -507,6 +507,14 @@ export class RealMissionObserver {
         taskId: dispatch.taskId,
         plannerId: planned ? harnessPlannerId(planned.plannerId) : null,
         agentRef: dispatch.agentRef ?? null,
+        // Substituição por reroute: a prova precisa da origem selada para a
+        // cadeia de exatidão casar plano↔dispatch pelo advisor original.
+        providerReroute: dispatch.providerReroute
+          ? {
+              fromAgentRef: dispatch.providerReroute.fromAgentRef,
+              toAgentRef: dispatch.providerReroute.toAgentRef,
+            }
+          : null,
         agentCategory: dispatch.agentCategory ?? null,
         executionMode: dispatch.executionMode,
         dependsOn: schedule ? [...schedule.dependsOn] : [],

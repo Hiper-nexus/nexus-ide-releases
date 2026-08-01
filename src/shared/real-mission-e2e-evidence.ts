@@ -225,11 +225,14 @@ export const realMissionE2EEvidenceSchema = z
           task.agentRef === member.agentRef,
       ),
     );
+    // Substituição por reroute: o dispatch da task selada pode carregar o
+    // agentRef do SUBSTITUTO; a diretiva durável prova a origem selada.
     const chainDispatches = chain.map((member) =>
       evidence.dispatches.find(
         (dispatch) =>
           dispatch.plannerId === member.plannerId &&
-          dispatch.agentRef === member.agentRef,
+          (dispatch.agentRef === member.agentRef ||
+            dispatch.providerReroute?.fromAgentRef === member.agentRef),
       ),
     );
     const chainHandoffs = chainDispatches.map((dispatch) =>

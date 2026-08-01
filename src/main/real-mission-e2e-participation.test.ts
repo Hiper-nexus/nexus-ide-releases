@@ -201,10 +201,12 @@ describe("real mission advisor participation receipts", () => {
     ]);
   });
 
-  it("credits a rerouted advisor through the substitute's durable directive", () => {
-    // Gate 5 da 0.20.0 ao vivo: o claude morreu de 401, o reroute re-vinculou
-    // a task selada ao grok (agent_ref trocou), e a checagem por agentRef
-    // declarava o claude ausente numa missão DONE com 8/8 handoffs.
+  it("marks a rerouted advisor as provider-rerouted instead of absent or fake", () => {
+    // Gates 5-6 da 0.20.x ao vivo: o claude morreu de 401 e o reroute
+    // re-vinculou a task selada ao grok. Declará-lo ausente derrubava uma
+    // missão DONE 8/8; emprestar o handoff do substituto era mentira que o
+    // invariante profundo (firstNexusToolAt da sessão própria) flagrou. A
+    // verdade é um skip explícito: task entregue, participação pessoal não.
     const participation = buildRealMissionParticipation({
       expectations: expectedRealMissionAdvisors([]),
       ptyByCli: new Map([
@@ -225,7 +227,14 @@ describe("real mission advisor participation receipts", () => {
     });
 
     const claude = participation.find((row) => row.cli === "claude");
-    expect(claude).toMatchObject({ skipped: null, handoffAt: 480 });
+    expect(claude).toEqual({
+      cli: "claude",
+      tier: "mechanically-confined",
+      skipped: "provider-rerouted",
+      spawnedAt: null,
+      firstNexusToolAt: null,
+      handoffAt: null,
+    });
     expect(realMissionAdvisorsMissingHandoff(participation)).not.toContain(
       "claude",
     );
