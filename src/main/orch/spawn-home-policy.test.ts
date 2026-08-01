@@ -22,6 +22,44 @@ function adapter(
   };
 }
 
+describe('endpoint oficial da Anthropic não é terceiro', () => {
+  // REGRESSÃO: shells, wrappers de CLI e imagens de CI exportam
+  // ANTHROPIC_BASE_URL=https://api.anthropic.com. O passthrough copiava isso
+  // para o env efetivo e o Claude de assinatura era classificado como plano de
+  // terceiro: HOME isolado, sem credencial nativa carregada e sem token
+  // injetado — /login no meio da missão, sem nenhum terceiro envolvido.
+  const official = { ANTHROPIC_BASE_URL: 'https://api.anthropic.com' };
+
+  it('não classifica a URL oficial herdada como terceiro', () => {
+    expect(isThirdPartyClaudeFamily(adapter(true), official)).toBe(false);
+  });
+
+  it('preserva o HOME nativo com a URL oficial herdada no autopiloto', () => {
+    expect(
+      shouldUseEphemeralHome(adapter(true), true, {
+        mode: 'operator-choice',
+        effectiveEnv: official,
+      }),
+    ).toBe(false);
+  });
+
+  it('continua isolando endpoint de plano de terceiro', () => {
+    expect(
+      isThirdPartyClaudeFamily(adapter(true), {
+        ANTHROPIC_BASE_URL: 'https://api.z.ai/api/anthropic',
+      }),
+    ).toBe(true);
+  });
+
+  it('trata URL ilegível como terceiro (fail-closed)', () => {
+    expect(
+      isThirdPartyClaudeFamily(adapter(true), {
+        ANTHROPIC_BASE_URL: 'não-é-url',
+      }),
+    ).toBe(true);
+  });
+});
+
 describe('shouldUseEphemeralHome', () => {
   it('preserva o HOME nativo do Claude no autopiloto mesmo com gate ativo', () => {
     expect(

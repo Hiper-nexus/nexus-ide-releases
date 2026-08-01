@@ -75,11 +75,29 @@ export function isThirdPartyClaudeFamily(
     effectiveEnv?.ANTHROPIC_BASE_URL,
     adapter.env.static?.ANTHROPIC_BASE_URL,
   ];
-  return (
-    adapter.quirks.mcpAutoload &&
-    baseUrls.some(
-      (baseUrl) =>
-        typeof baseUrl === 'string' && baseUrl.trim().length > 0,
-    )
-  );
+  return adapter.quirks.mcpAutoload && baseUrls.some(isThirdPartyBaseUrl);
+}
+
+/**
+ * Host oficial da Anthropic. Uma `ANTHROPIC_BASE_URL` HERDADA do ambiente
+ * apontando para cá não é plano de terceiro — é o Claude nativo com a URL
+ * padrão escrita à mão (shells, wrappers de CLI e imagens de CI fazem isso).
+ * Tratar presença-de-string como terceiro dava a esse Claude um HOME isolado
+ * SEM `carryNativeClaudeAuth` e sem token injetado: a CLI subia sem credencial
+ * nenhuma e pedia `/login` no meio da missão, sem nenhum terceiro envolvido.
+ */
+const NATIVE_ANTHROPIC_HOSTS: ReadonlySet<string> = new Set([
+  'api.anthropic.com',
+]);
+
+function isThirdPartyBaseUrl(baseUrl: string | undefined): boolean {
+  const value = baseUrl?.trim();
+  if (!value) return false;
+  try {
+    return !NATIVE_ANTHROPIC_HOSTS.has(new URL(value).host);
+  } catch {
+    // URL ilegível conta como terceiro: fail-closed preserva o isolamento em
+    // vez de expor a linhagem nativa a um endpoint que não sabemos ler.
+    return true;
+  }
 }

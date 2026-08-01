@@ -162,6 +162,49 @@ describe('mission driver loop coordination', () => {
   });
 });
 
+describe('watchdog de merge estagnado dentro do loop', () => {
+  // O watchdog tinha teste da função pura de decisão por idade, mas nada
+  // provava que ESTE loop de fato o invoca — regressão silenciosa se alguém
+  // remover a chamada: os testes continuariam verdes e o merge abandonado
+  // voltaria a pendurar a missão para sempre.
+  it('roda uma vez por scope a cada tick', async () => {
+    const scopes = [
+      testProjectScope({ projectId: 'p1' }),
+      testProjectScope({ projectId: 'p2' }),
+    ];
+    const swept: string[] = [];
+    const deps: DriveDeps = {
+      ...makeDeps({ scopes }),
+      reconcileStalledMergeForScope: (scope) => {
+        swept.push(scope.projectId);
+      },
+    };
+
+    await runDriveTick(deps);
+
+    expect(swept).toEqual(['p1', 'p2']);
+  });
+
+  it('watchdog que lança não impede o processamento do scope', async () => {
+    const decisions: DriveSnapshot[] = [];
+    const deps: DriveDeps = {
+      ...makeDeps({
+        missionsByScope: new Map([['p1', [{ id: 'm-fresh' }]]]),
+        statesById: new Map([['m-fresh', FRESH]]),
+        onDecision: (snapshot) => decisions.push(snapshot),
+      }),
+      reconcileStalledMergeForScope: () => {
+        throw new Error('watchdog-boom');
+      },
+    };
+
+    const result = await runDriveTick(deps);
+
+    expect(result.scanned).toBe(1);
+    expect(decisions).toHaveLength(1);
+  });
+});
+
 describe('runDriveTick', () => {
   it('itera missões running de cada scope e chama onDecision para cada', async () => {
     const decisions: DriveSnapshot[] = [];

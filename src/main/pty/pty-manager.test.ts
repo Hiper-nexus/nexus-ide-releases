@@ -14,6 +14,14 @@ import {
   PET_STUDIO_SQUAD_ID,
 } from "../../shared/pet-studio";
 import { snapshotSquadAuthority } from "../orch/squad-authority-snapshot";
+import {
+  isThirdPartyClaudeFamily,
+  shouldUseEphemeralHome,
+} from "../orch/spawn-home-policy";
+import {
+  applyGatewayCredential,
+  gatewayForwardsProviderCredential,
+} from "./gateway-env";
 
 // Unit tests use a fake PTY host — pin absolute bin paths so spawn never
 // depends on the machine PATH (same contract as production discovery).
@@ -592,6 +600,118 @@ function expectHookLoopbackGrant(
       `(allow network-outbound (remote tcp "localhost:${port}")))`,
   );
 }
+
+describe("gateway de IA local (OmniRoute-like)", () => {
+  const GATEWAY = "http://127.0.0.1:20128/v1";
+
+  // A máquina do desenvolvedor (ou o wrapper da CLI) pode exportar
+  // ANTHROPIC_BASE_URL; o passthrough a copiaria e o teste deixaria de medir o
+  // gateway. Ambiente controlado por bloco.
+  const inheritedBaseUrl = process.env.ANTHROPIC_BASE_URL;
+  beforeEach(() => {
+    delete process.env.ANTHROPIC_BASE_URL;
+  });
+  afterEach(() => {
+    if (inheritedBaseUrl === undefined) delete process.env.ANTHROPIC_BASE_URL;
+    else process.env.ANTHROPIC_BASE_URL = inheritedBaseUrl;
+  });
+
+  // Claude nativo: declara a base URL no passthrough, NÃO pina endpoint em
+  // static, e é Claude-family (mcpAutoload) — o caso que o gateway quebrava.
+  function claudeLike(): CliPtyAdapter {
+    const adapter = makeAdapter({
+      static: { MCP_TIMEOUT: "15000" },
+      passthrough: ["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"],
+      ephemeralHome: false,
+    });
+    return {
+      ...adapter,
+      id: "claude",
+      quirks: { ...adapter.quirks, mcpAutoload: true },
+    };
+  }
+
+  it("aponta para o gateway a base URL que o adapter declarou", () => {
+    const env = agentEnv(claudeLike(), GATEWAY);
+    expect(env.ANTHROPIC_BASE_URL).toBe(GATEWAY);
+    expect(env.OPENAI_BASE_URL).toBeUndefined();
+  });
+
+  it("mantém o endpoint do plano quando o adapter o pina em static", () => {
+    const glmLike = makeAdapter({
+      static: { ANTHROPIC_BASE_URL: "https://api.z.ai/api/anthropic" },
+      passthrough: ["ANTHROPIC_BASE_URL"],
+      ephemeralHome: false,
+    });
+    const env = agentEnv(glmLike, GATEWAY);
+    expect(env.ANTHROPIC_BASE_URL).toBe("https://api.z.ai/api/anthropic");
+  });
+
+  it("constrói um env de identidade sem o gateway", () => {
+    const adapter = claudeLike();
+    expect(agentEnv(adapter, GATEWAY).ANTHROPIC_BASE_URL).toBe(GATEWAY);
+    expect(agentEnv(adapter, null).ANTHROPIC_BASE_URL).toBeUndefined();
+  });
+
+  // REGRESSÃO: o gateway chegava ao snapshot que o spawn hook usa para decidir
+  // HOME/credencial. O Claude de assinatura virava "provider de terceiro",
+  // ganhava HOME efêmero SEM carregar a credencial nativa e pedia /login no
+  // meio da missão. As três chamadas de shouldUseEphemeralHome (pty-ipc,
+  // main-owned-pane-runtime e mcp-server) têm de concordar — só a última
+  // recebe effectiveEnv, então o env de identidade não pode conter o gateway.
+  it("não classifica o Claude nativo como provider de terceiro com o gateway ligado", () => {
+    const adapter = claudeLike();
+    // Exatamente o que pty-manager passa ao spawn hook: agentEnv(adapter, null).
+    const identityEnv = agentEnv(adapter, null) as Record<string, string>;
+
+    expect(isThirdPartyClaudeFamily(adapter, identityEnv)).toBe(false);
+
+    // pty-ipc / main-owned-pane-runtime (sem effectiveEnv) vs mcp-server (com).
+    const semEffectiveEnv = shouldUseEphemeralHome(adapter, true, {
+      mode: "operator-choice",
+    });
+    const comEffectiveEnv = shouldUseEphemeralHome(adapter, true, {
+      mode: "operator-choice",
+      effectiveEnv: identityEnv,
+    });
+    expect(comEffectiveEnv).toBe(semEffectiveEnv);
+    expect(comEffectiveEnv).toBe(false);
+  });
+
+  it("ainda reconhece provider de terceiro de verdade (endpoint do plano)", () => {
+    const glmLike = makeAdapter({
+      static: { ANTHROPIC_BASE_URL: "https://api.z.ai/api/anthropic" },
+      passthrough: ["ANTHROPIC_BASE_URL"],
+      ephemeralHome: false,
+    });
+    const thirdParty: CliPtyAdapter = {
+      ...glmLike,
+      quirks: { ...glmLike.quirks, mcpAutoload: true },
+    };
+    expect(
+      isThirdPartyClaudeFamily(
+        thirdParty,
+        agentEnv(thirdParty, GATEWAY) as Record<string, string>,
+      ),
+    ).toBe(true);
+  });
+
+  it("injeta a credencial do gateway só nas vars que a CLI declarou", () => {
+    const env: NodeJS.ProcessEnv = {};
+    applyGatewayCredential(env, claudeLike(), GATEWAY, "gw-key");
+    expect(env.ANTHROPIC_API_KEY).toBe("gw-key");
+    expect(env.OPENAI_API_KEY).toBeUndefined();
+  });
+
+  it("sem chave de gateway, avisa que a credencial do provider vai junto", () => {
+    expect(
+      gatewayForwardsProviderCredential(claudeLike(), GATEWAY, null),
+    ).toBe(true);
+    expect(
+      gatewayForwardsProviderCredential(claudeLike(), GATEWAY, "gw-key"),
+    ).toBe(false);
+  });
+});
 
 describe("agentEnv linker-injection guard (plugin trust boundary)", () => {
   it("drops DYLD_ keys from env.static", () => {

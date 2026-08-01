@@ -60,6 +60,7 @@ let hotkeyMode: HotkeyMode = 'toggle';
 
 const VALID_JARVIS_LIVE_TRANSPORTS: ReadonlySet<string> = new Set([
   'classic',
+  'grok-realtime',
   'openai-realtime',
   'gemini-live',
 ]);

@@ -4,6 +4,10 @@ import type {
   VoiceApiKeyStatus,
 } from '../../shared/voice-ipc';
 import type { JarvisLiveTransport } from '../../shared/voice-config';
+import {
+  REALTIME_FALLBACK_CHAIN,
+  REALTIME_PROVIDER_ENV_VAR,
+} from '../../shared/voice-config';
 
 type RealtimeTransport = Exclude<JarvisLiveTransport, 'classic'>;
 
@@ -27,26 +31,34 @@ export function keyPlaceholder(key: VoiceApiKeyStatus): string {
 }
 
 /**
- * Mapa exaustivo de propósito: um ternário binário mandava toda rota que não
- * fosse Gemini para a chave da OpenAI, então a chegada do Grok pediria
- * XAI_API_KEY e o diagnóstico mandaria o operador conferir a chave errada. Com
- * Record<RealtimeTransport, …> o compilador cobra a entrada de cada rota nova.
+ * `realtime_unavailable` significa que NENHUMA rota da cadeia conectou — uma
+ * rota sem credencial nem chega a virar candidata. Nomear só a chave do
+ * transporte configurado mandava o operador conferir a credencial errada:
+ * com Grok escolhido e sem XAI_API_KEY, quem de fato falhava era a OpenAI, e a
+ * mensagem ainda dizia "verifique XAI_API_KEY". A cadeia vem de
+ * REALTIME_FALLBACK_CHAIN (shared), a mesma que o runtime percorre.
  */
-const REALTIME_TRANSPORT_ENV_VAR: Record<RealtimeTransport, string> = {
-  'grok-realtime': 'XAI_API_KEY',
-  'gemini-live': 'GEMINI_API_KEY',
-  'openai-realtime': 'OPENAI_API_KEY',
-};
+export function realtimeChainEnvVars(transport: RealtimeTransport): string[] {
+  return REALTIME_FALLBACK_CHAIN[transport].map(
+    (provider) => REALTIME_PROVIDER_ENV_VAR[provider],
+  );
+}
 
 export function liveSmokeFailureMessage(
   reason: JarvisLiveSmokeFailureReason,
   transport: RealtimeTransport,
 ): string {
-  const providerKey = REALTIME_TRANSPORT_ENV_VAR[transport];
+  const chainKeys = realtimeChainEnvVars(transport);
+  const keyList =
+    chainKeys.length > 1
+      ? `${chainKeys.slice(0, -1).join(', ')} ou ${chainKeys.at(-1)}`
+      : chainKeys[0];
   const messages: Record<JarvisLiveSmokeFailureReason, string> = {
     busy: 'Já existe um diagnóstico realtime em andamento.',
     invalid_request: 'O diagnóstico realtime recebeu dados inválidos.',
-    realtime_unavailable: `Realtime indisponível; verifique ${providerKey}.`,
+    realtime_unavailable:
+      `Realtime indisponível: nenhuma rota da cadeia conectou. ` +
+      `Verifique ${keyList}.`,
     provider_error: 'O provider realtime desconectou ou retornou erro.',
     response_timeout: 'Realtime conectou, mas não respondeu em 15 segundos.',
     no_audio_response: 'Realtime respondeu sem produzir áudio.',

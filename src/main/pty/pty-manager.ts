@@ -72,7 +72,17 @@ import {
 import { resolveMissionCliExecutionPolicy } from "./mission-cli-execution-policy";
 import { getOrchSettings } from "../persistence/settings-store";
 import { assertSafePtyPrompt } from "../orch/pty-prompt-safety";
-import { applyGatewayBaseUrls, resolveGatewayBaseUrl } from "./gateway-env";
+import {
+  applyGatewayBaseUrls,
+  applyGatewayCredential,
+  GATEWAY_API_KEY_ENV,
+  GATEWAY_OUT_OF_REACH_VARS,
+  gatewayForwardsProviderCredential,
+  gatewayRoutedVars,
+  normalizeGatewayBaseUrl,
+  resolveGatewayApiKey,
+  resolveGatewayBaseUrl,
+} from "./gateway-env";
 
 /**
  * Owns every live PTY session — one per pane, addressed by an opaque id. The
@@ -509,12 +519,86 @@ function isDangerousEnvKey(key: string): boolean {
 }
 
 /**
+ * Base URL do gateway de IA local: settings do orquestrador primeiro, variável
+ * de ambiente como fallback (mesma cadeia das keys de voz). A settings existe
+ * para o recurso ser descobrível sem reiniciar o app exportando env var.
+ */
+export function configuredGatewayBaseUrl(): string | null {
+  const configured = normalizeGatewayBaseUrl(
+    getOrchSettings().aiGatewayBaseUrl,
+    "gateway de IA (configurações)",
+  );
+  return configured ?? resolveGatewayBaseUrl();
+}
+
+/**
+ * Observabilidade do gateway: sem isto o operador aponta as CLIs para um
+ * gateway e não tem NENHUMA forma de saber se alguma foi de fato roteada — o
+ * único sinal existente era o warn de URL inválida. Uma linha por adapter por
+ * processo (o spawn se repete muitas vezes numa missão).
+ */
+const gatewayRoutingLogged = new Set<string>();
+
+function logGatewayRouting(
+  adapter: CliPtyAdapter,
+  gatewayBaseUrl: string | null,
+  gatewayApiKey: string | null,
+): void {
+  if (!gatewayBaseUrl) return;
+  const logKey = `${adapter.id}::${gatewayBaseUrl}`;
+  if (gatewayRoutingLogged.has(logKey)) return;
+  gatewayRoutingLogged.add(logKey);
+
+  const routed = gatewayRoutedVars(adapter);
+  // `static` vence o gateway (aplicado depois em agentEnv): planos com
+  // endpoint próprio — GLM, LongCat — continuam no endpoint deles.
+  const pinnedByPlan = routed.filter((key) => key in adapter.env.static);
+  const effective = routed.filter((key) => !(key in adapter.env.static));
+  const outOfReach = adapter.env.passthrough.filter((key) =>
+    GATEWAY_OUT_OF_REACH_VARS.has(key),
+  );
+
+  if (effective.length === 0) {
+    const reason =
+      pinnedByPlan.length > 0
+        ? `endpoint do plano pinado (${pinnedByPlan.join(", ")})`
+        : "não declara base URL roteável";
+    console.info(`[gateway] ${adapter.id}: fora do gateway — ${reason}`);
+  } else {
+    console.info(
+      `[gateway] ${adapter.id} → ${gatewayBaseUrl} (${effective.join(", ")})`,
+    );
+  }
+  for (const key of outOfReach) {
+    console.info(
+      `[gateway] ${adapter.id}: ${key} não roteada — ` +
+        `${GATEWAY_OUT_OF_REACH_VARS.get(key)}`,
+    );
+  }
+  if (
+    gatewayForwardsProviderCredential(adapter, gatewayBaseUrl, gatewayApiKey)
+  ) {
+    console.warn(
+      `[gateway] ${adapter.id}: sem ${GATEWAY_API_KEY_ENV} — a credencial do ` +
+        "provider (assinatura/API key) será enviada ao gateway",
+    );
+  }
+}
+
+/**
  * Build the env for a cli-agent session. Starts from the base allowlist, then
  * adds adapter-declared passthrough vars and static vars. Auth env vars enter
  * ONLY this specific PTY — not all shells. Linker-injection keys from the plugin
  * are refused as a trust-boundary control (see DANGEROUS_ENV_PREFIXES).
+ *
+ * `gatewayBaseUrl` é parâmetro de propósito: o mesmo adapter precisa render um
+ * env de TRANSPORTE (com gateway, o que a CLI realmente usa) e um env de
+ * IDENTIDADE (`null`, o que responde "que plano é este?"). Ver o spawn abaixo.
  */
-export function agentEnv(adapter: CliPtyAdapter): NodeJS.ProcessEnv {
+export function agentEnv(
+  adapter: CliPtyAdapter,
+  gatewayBaseUrl: string | null = configuredGatewayBaseUrl(),
+): NodeJS.ProcessEnv {
   const env = baseChildEnv();
   for (const key of adapter.env.passthrough) {
     if (isDangerousEnvKey(key)) {
@@ -529,7 +613,7 @@ export function agentEnv(adapter: CliPtyAdapter): NodeJS.ProcessEnv {
   // Gateway local (OmniRoute-like) entre passthrough e static: o operador
   // aponta as CLIs para o gateway com uma variável só, e um adapter que PINA o
   // próprio endpoint em static (glm, longcat) continua intocado logo abaixo.
-  applyGatewayBaseUrls(env, adapter, resolveGatewayBaseUrl());
+  applyGatewayBaseUrls(env, adapter, gatewayBaseUrl);
   for (const [key, value] of Object.entries(adapter.env.static)) {
     if (isDangerousEnvKey(key)) {
       console.warn(
@@ -1095,25 +1179,44 @@ export function spawnAgentSession(
     args.push("--prompt-interactive", safeInitialPrompt);
   }
   const sessionId = makeSessionId();
-  const env = agentEnv(adapter);
+  const gatewayBaseUrl = configuredGatewayBaseUrl();
+  const gatewayApiKey = resolveGatewayApiKey();
+  // TRANSPORTE: o env que a CLI realmente recebe, com as base URLs no gateway.
+  const env = agentEnv(adapter, gatewayBaseUrl);
+  // IDENTIDADE: o mesmo env SEM o gateway. É ele que responde "que plano é
+  // este?" para o spawn hook (HOME efêmero, credencial nativa, third-party).
+  // O gateway é infraestrutura do próprio operador, não outro plano: se
+  // vazasse para cá, o Claude de assinatura seria classificado como provider
+  // de terceiro e spawnaria com HOME isolado e SEM credencial nenhuma — o
+  // /login no meio da missão.
+  const identityEnv = gatewayBaseUrl ? agentEnv(adapter, null) : env;
+  const spawnEnvs = identityEnv === env ? [env] : [env, identityEnv];
   if (agentHookEndpointPath) {
-    env.NEXUS_AGENT_HOOK_ENDPOINT = agentHookEndpointPath;
-    env.NEXUS_PANE_KEY = sessionId;
+    for (const target of spawnEnvs) {
+      target.NEXUS_AGENT_HOOK_ENDPOINT = agentHookEndpointPath;
+      target.NEXUS_PANE_KEY = sessionId;
+    }
   }
   // Subscription-first: strip inherited key/token vars before any injection.
   for (const name of overrides.suppressEnv ?? []) {
-    delete env[name];
+    for (const target of spawnEnvs) delete target[name];
   }
   // Inject the keychain-stored API key as the adapter's auth env var. Linker
   // vars are still refused (isDangerousEnvKey) as a defense-in-depth check.
   for (const [key, value] of Object.entries(overrides.keyEnv ?? {})) {
-    if (!isDangerousEnvKey(key)) env[key] = value;
+    if (isDangerousEnvKey(key)) continue;
+    for (const target of spawnEnvs) target[key] = value;
   }
+  // A credencial do gateway vence a do provider e por isso entra DEPOIS do
+  // keyEnv: se o operador configurou uma chave para o gateway, é ela que
+  // autentica o tráfego que agora vai para lá.
+  applyGatewayCredential(env, adapter, gatewayBaseUrl, gatewayApiKey);
+  logGatewayRouting(adapter, gatewayBaseUrl, gatewayApiKey);
 
   // Orchestration decoration: MCP endpoint env, optional HOME override and
   // extra argv (e.g. --mcp-config). The hook is trusted main-process code.
   // Pass prepared env so MCP overlays (Grok/Kimi) can source managed-account homes.
-  const preparedEnvSnapshot = cleanEnv(env);
+  const preparedEnvSnapshot = cleanEnv(identityEnv);
   const decoration = agentSpawnHook
     ? agentSpawnHook(adapter, req, authority, preparedEnvSnapshot)
     : null;

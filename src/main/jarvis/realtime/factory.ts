@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import bundledSystemPrompt from '../prompts/system.en.md?raw';
 import { resolveVoiceApiKey } from '../../voice/voice-secrets';
 import type { VoiceConfig } from '../../../shared/voice-config';
+import { REALTIME_FALLBACK_CHAIN } from '../../../shared/voice-config';
 import { coarseVoiceToolsAsRealtimeDefinitions } from './coarse-voice-tools';
 import { GeminiLiveProvider } from './gemini-live-provider';
 import { createGrokRealtimeProvider } from './grok-realtime';
@@ -126,21 +127,16 @@ export function resolveRealtimeProviderIds(
   if (forced === 'grok' || forced === 'openai' || forced === 'gemini') {
     return [forced];
   }
-  // Grok Voice é a rota oficial da voz; openai e gemini seguem como degradação
-  // automática quando a XAI_API_KEY não resolve (createRealtimeProviderCandidates
-  // só constrói candidato de provider com chave, então um Grok sem chave é
-  // pulado em silêncio em vez de derrubar o realtime).
-  if (config.jarvisLive.transport === 'grok-realtime') {
-    return ['grok', 'openai', 'gemini'];
-  }
-  if (config.jarvisLive.transport === 'openai-realtime') return ['openai', 'gemini'];
-  // gemini-live prefers Gemini but falls back to OpenAI Realtime: if the
-  // configured Gemini key is absent while OPENAI_API_KEY resolves, realtime
-  // still engages (createRealtimeProviderCandidates only builds a candidate for
-  // a provider whose key resolves, so a keyless Gemini is skipped and OpenAI
-  // wins). Order encodes the gemini→openai→classic degrade path.
-  if (config.jarvisLive.transport === 'gemini-live') return ['gemini', 'openai'];
-  return [];
+  // A ordem de degradação vive em REALTIME_FALLBACK_CHAIN (shared) porque o
+  // diagnóstico da UI precisa da MESMA cadeia para não mandar o operador
+  // conferir a credencial errada. Grok Voice é a rota oficial; openai e gemini
+  // seguem como degradação automática quando a XAI_API_KEY não resolve
+  // (createRealtimeProviderCandidates só constrói candidato de provider com
+  // chave, então uma rota sem chave é pulada em silêncio em vez de derrubar o
+  // realtime). `classic` não tem cadeia: sai vazio e o Classic assume.
+  const transport = config.jarvisLive.transport;
+  if (transport === 'classic') return [];
+  return [...REALTIME_FALLBACK_CHAIN[transport]];
 }
 
 export function loadJarvisSystemPrompt(promptPath?: string): string {

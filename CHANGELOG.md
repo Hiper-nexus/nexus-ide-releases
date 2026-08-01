@@ -1,5 +1,81 @@
 # Changelog
 
+## 0.20.1 — O gateway não desloga ninguém
+
+Data: 2026-07-31
+
+A 0.20.0 pôs um gateway de IA local na frente das CLIs. A auditoria da
+integração inteira mostrou o preço escondido: ligar o gateway fazia o Claude de
+assinatura ser lido como provider de terceiro e subir sem credencial nenhuma. A
+causa era mais funda que o gateway.
+
+### Transporte deixou de responder "que plano é este?"
+
+- Cada spawn constrói dois ambientes a partir do mesmo adapter: o de
+  **transporte** (`agentEnv(adapter, gateway)`), que a CLI recebe com as base
+  URLs no gateway, e o de **identidade** (`agentEnv(adapter, null)`), que é
+  quem responde à pergunta do título — HOME efêmero, credencial nativa e
+  classificação de terceiro saem dele.
+- O gateway vazava para a segunda decisão: `isThirdPartyClaudeFamily` via uma
+  `ANTHROPIC_BASE_URL` estrangeira, o Claude de assinatura ganhava HOME isolado
+  com `carryNativeClaudeAuth` falso e nenhum token injetado — `/login` no meio
+  da missão.
+- Das três chamadas de `shouldUseEphemeralHome`, só a do `mcp-server` recebe
+  `effectiveEnv`. Manter o gateway fora do env de identidade faz as três
+  concordarem **por construção**, sem sincronizar argumento entre camadas.
+
+### A URL oficial da Anthropic parou de ser "provider de terceiro"
+
+- Bug mais antigo, achado pelo teste de regressão do item acima: QUALQUER
+  `ANTHROPIC_BASE_URL` não vazia marcava a CLI como plano de terceiro —
+  inclusive `api.anthropic.com`. Shells, wrappers de CLI e imagens de CI
+  exportam essa variável; quando ela alcançava o processo do Nexus, a
+  assinatura perdia a credencial sem nenhum terceiro envolvido.
+- O host oficial passa a ser reconhecido como nativo. URL ilegível continua
+  contando como terceiro (fail-closed).
+
+### Gateway ganhou configuração, credencial e documentação
+
+- Campo próprio em **Configurações → Orquestrador**; `NEXUS_AI_GATEWAY_BASE_URL`
+  segue como fallback. Só `http(s)`, validado nos dois lados.
+- `NEXUS_AI_GATEWAY_API_KEY` injeta a credencial do gateway **depois** da do
+  provider — quem roteia para o gateway autentica com a chave dele. Sem ela, um
+  aviso explícito diz que a credencial do provider viaja junto.
+- O log diz, por adapter e uma vez por processo, quem foi roteado, quem ficou
+  fora e por quê. `KIMI_MODEL_BASE_URL` fica fora de propósito: é endpoint de
+  modelo, amarrado a `PROVIDER_TYPE` e `API_KEY` no mesmo trio.
+- Documentação nova em [`docs/ai-gateway.md`](docs/ai-gateway.md).
+
+### Diagnóstico da voz para de acusar a chave errada
+
+- `realtime_unavailable` significa que NENHUMA rota da cadeia conectou, mas a
+  mensagem nomeava só a credencial do transporte escolhido: com Grok
+  configurado e sem `XAI_API_KEY`, quem falhava era a OpenAI e o operador era
+  mandado conferir a chave do Grok.
+- A ordem de degradação virou fonte única (`REALTIME_FALLBACK_CHAIN`) lida pelo
+  runtime e pela UI — não há mais duas listas para divergir.
+- O validador de transporte não listava `grok-realtime`: a rota oficial passava
+  pelo ramo de coerção e só sobrevivia porque o default é ela mesma.
+
+### Notas de versão e DESIGN.md dizendo a verdade
+
+- A 0.20.0 anunciava "sombra de elevação real no card". O código rejeitou
+  sombra de propósito — sobre preto ela não projeta nada, só embaça a borda, e
+  ainda repintava o canvas do xterm; a elevação se lê por luminosidade.
+- O "TODOS os halos" ignorava o sprite do agente, cuja luz pertence ao
+  personagem (mesma família do orbe de voz e do mascote) e num elemento de 2px
+  não caberia anel. Agora é exceção documentada no CSS.
+- `DESIGN.md` ainda trazia a paleta azul-negra que o código trocou por cinza
+  neutro.
+
+### Cobertura
+
+- Regressão das três camadas de decisão de HOME, endpoint oficial vs terceiro,
+  credencial do gateway e encaminhamento; reroute com missão `running` (o ramo
+  que as fixtures existentes não exercitavam); e prova de que o loop do
+  mission-driver de fato invoca o watchdog de merge — antes só a função pura de
+  decisão por idade era testada.
+
 ## 0.20.0 — Operacional de verdade
 
 Data: 2026-07-31
@@ -50,10 +126,13 @@ release do próprio dia — nada é especulativo.
 - **Pane**: nome do agente domina (sans 12px peso 560); badges viram metadado
   quieto em mono 10px sobre fundo lavado; ações recuam a 50% de opacidade até
   o pane receber ponteiro/foco; Fechar neutro em repouso (vermelho só no
-  hover); sombra de elevação real no card.
+  hover); elevação lida por LUMINOSIDADE (`--bg` → `--bg-elevated`), não por
+  sombra — sobre preto a sombra difusa não projeta nada, só embaça a borda e
+  ainda repintava o canvas do xterm.
 - **Fim do neon**: os halos persistentes viraram anéis nítidos de 3px na cor
-  do estado ou sombra escura de elevação. Orbe de voz, logo do boot, mascote e
-  FX de celebração seguem brilhando — atmosfera é deliberada, cromo não.
+  do estado ou sombra escura de elevação. Orbe de voz, logo do boot, mascote,
+  sprite do agente e FX de celebração seguem brilhando — atmosfera é
+  deliberada, cromo não.
 - **Rail**: as quatro seções deixaram de ser caixas coloridas empilhadas;
   cabeçalhos quietos com ponto de estado de 6px, contagem neutra, e a missão
   em execução é o único card aceso da coluna.

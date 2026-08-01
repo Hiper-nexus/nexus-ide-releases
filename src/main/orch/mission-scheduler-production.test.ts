@@ -2704,6 +2704,26 @@ describe("reroute automático de provider esgotado", () => {
     });
   });
 
+  // A terceira forma do bug (gate de 31/07): 7/8 tarefas completas, a cadeia de
+  // entrega viva, e a missão pendurada para sempre num advisor blocked-terminal.
+  // O sweep passou a aceitar missão running — as demais fixtures deste bloco
+  // usam `blocked`, então esse ramo não tinha teste próprio.
+  it("re-rota advisor esgotado com a missão ainda running", () => {
+    const { rerouted, reroute } = rerouteFixture({
+      mission: { status: "running" },
+    });
+    expect(rerouted).toBe(1);
+    expect(reroute).toHaveBeenCalledTimes(1);
+  });
+
+  it("não re-rota missão em estado terminal", () => {
+    const { rerouted, reroute } = rerouteFixture({
+      mission: { status: "done" },
+    });
+    expect(rerouted).toBe(0);
+    expect(reroute).not.toHaveBeenCalled();
+  });
+
   it("conta a troca ao operador nos learnings duráveis da missão", () => {
     const { appendLearning } = rerouteFixture();
     expect(appendLearning).toHaveBeenCalledTimes(1);

@@ -13,6 +13,7 @@ type OrchestratorDefaultsValue = Pick<
   | "defaultModel"
   | "defaultAccountId"
   | "squadCliPolicy"
+  | "aiGatewayBaseUrl"
 >;
 
 const INITIAL_DEFAULTS: OrchestratorDefaultsValue = {
@@ -20,7 +21,19 @@ const INITIAL_DEFAULTS: OrchestratorDefaultsValue = {
   defaultModel: "",
   defaultAccountId: "",
   squadCliPolicy: "operator-choice",
+  aiGatewayBaseUrl: "",
 };
+
+/** Mesmo predicado do schema em settings-types: vazio desliga, senão http(s). */
+function isGatewayUrlAcceptable(value: string): boolean {
+  if (value.trim() === "") return true;
+  try {
+    const parsed = new URL(value.trim());
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
 
 const SQUAD_CLI_POLICY_LABELS: Record<OrchSettings["squadCliPolicy"], string> =
   {
@@ -34,6 +47,7 @@ function selectDefaults(settings: OrchSettings): OrchestratorDefaultsValue {
     defaultModel: settings.defaultModel,
     defaultAccountId: settings.defaultAccountId,
     squadCliPolicy: settings.squadCliPolicy ?? "operator-choice",
+    aiGatewayBaseUrl: settings.aiGatewayBaseUrl ?? "",
   };
 }
 
@@ -57,6 +71,9 @@ export function OrchestratorDefaults() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const savingRef = useRef(false);
+  // Campo de texto tem rascunho local: salvar a cada tecla mandaria URL pela
+  // metade para o schema e o valor voltaria sozinho no meio da digitação.
+  const [gatewayDraft, setGatewayDraft] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -97,6 +114,13 @@ export function OrchestratorDefaults() {
       stopAccounts();
     };
   }, []);
+
+  // O valor autoritativo é o que voltou do main: sincroniza o rascunho no load
+  // e quando um save falha e reverte, sem atrapalhar a digitação (o valor só
+  // muda fora do input).
+  useEffect(() => {
+    setGatewayDraft(defaults.aiGatewayBaseUrl);
+  }, [defaults.aiGatewayBaseUrl]);
 
   const capableAdapters = useMemo(
     () =>
@@ -166,6 +190,19 @@ export function OrchestratorDefaults() {
       savingRef.current = false;
       setSaving(false);
     }
+  };
+
+  const commitGateway = async () => {
+    const next = gatewayDraft.trim();
+    if (next === defaults.aiGatewayBaseUrl) return;
+    if (!isGatewayUrlAcceptable(next)) {
+      setGatewayDraft(defaults.aiGatewayBaseUrl);
+      setError(
+        "Gateway de IA: informe uma URL http(s) — ex.: http://127.0.0.1:20128/v1",
+      );
+      return;
+    }
+    await save({ aiGatewayBaseUrl: next });
   };
 
   const disabled = loading || saving;
@@ -368,6 +405,41 @@ export function OrchestratorDefaults() {
         autoaprovação e acesso de rede, trabalha em worktree isolado e só o
         Nexus faz o merge validado. Hardened adiciona sandbox de processo e a
         lista estreita de CLIs qualificadas.
+      </p>
+
+      <div className="settings-orchestrator__grid">
+        <label className="settings-field">
+          Gateway de IA local
+          <input
+            className="settings-input"
+            type="url"
+            inputMode="url"
+            spellCheck={false}
+            placeholder="desligado — ex.: http://127.0.0.1:20128/v1"
+            aria-label="Base URL do gateway de IA local"
+            value={gatewayDraft}
+            disabled={disabled}
+            onChange={(event) => setGatewayDraft(event.target.value)}
+            onBlur={() => void commitGateway()}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                void commitGateway();
+              }
+              if (event.key === "Escape") {
+                setGatewayDraft(defaults.aiGatewayBaseUrl);
+              }
+            }}
+          />
+        </label>
+      </div>
+      <p className="settings-field__note">
+        Vazio desliga. Quando preenchido, as CLIs que declaram{" "}
+        <code>ANTHROPIC_BASE_URL</code>/<code>OPENAI_BASE_URL</code> (Claude,
+        Codex, Aider, OpenCode) passam a falar com o gateway, que troca de
+        provider por baixo. Planos com endpoint próprio — GLM e LongCat —
+        continuam intocados. Sem <code>NEXUS_AI_GATEWAY_API_KEY</code>, a
+        credencial do provider é enviada ao gateway.
       </p>
     </div>
   );

@@ -13,6 +13,82 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.20.1',
+  date: '2026-07-31',
+  codename: 'O gateway não desloga ninguém',
+  summary:
+    'A 0.20.0 pôs um gateway de IA local na frente das CLIs. Auditando a ' +
+    'integração inteira apareceu o preço escondido: ligar o gateway fazia o ' +
+    'Claude de assinatura ser lido como provider de terceiro e subir sem ' +
+    'credencial nenhuma. A causa era mais funda que o gateway — qualquer ' +
+    'ANTHROPIC_BASE_URL herdada do ambiente, até a oficial, causava o mesmo. ' +
+    'Esta versão separa transporte de identidade, dá ao gateway configuração, ' +
+    'credencial e documentação próprias, e conserta o diagnóstico da voz.',
+  highlights: [
+    {
+      title: 'Transporte deixou de responder "que plano é este?"',
+      detail:
+        'Cada spawn passa a construir dois ambientes: o de TRANSPORTE, que a ' +
+        'CLI recebe com as base URLs no gateway, e o de IDENTIDADE, sem o ' +
+        'gateway, que é quem decide HOME, credencial e classificação de ' +
+        'provider. Antes o gateway vazava para a segunda decisão e o Claude ' +
+        'de assinatura ganhava HOME isolado SEM a credencial nativa: /login no ' +
+        'meio da missão. As três camadas que decidem isso agora concordam por ' +
+        'construção, sem precisar sincronizar argumento.',
+    },
+    {
+      title: 'A URL oficial da Anthropic parou de ser "provider de terceiro"',
+      detail:
+        'Bug mais antigo, achado pelo teste de regressão do item acima: ' +
+        'QUALQUER ANTHROPIC_BASE_URL não vazia marcava a CLI como plano de ' +
+        'terceiro — inclusive api.anthropic.com. Shells, wrappers de CLI e ' +
+        'imagens de CI exportam essa variável; quando ela alcançava o Nexus, a ' +
+        'assinatura perdia a credencial sem nenhum terceiro envolvido. Agora ' +
+        'o host oficial é reconhecido, e URL ilegível continua fail-closed.',
+    },
+    {
+      title: 'Gateway ganhou configuração, credencial e documentação',
+      detail:
+        'Campo próprio nas Configurações → Orquestrador (a variável de ' +
+        'ambiente segue como fallback), NEXUS_AI_GATEWAY_API_KEY para quando o ' +
+        'gateway exige a própria chave, e um aviso explícito quando ela falta ' +
+        'e a credencial do provider viaja junto. O log diz, por adapter, quem ' +
+        'foi roteado, quem ficou fora e por quê — antes ligar o gateway não ' +
+        'produzia sinal nenhum.',
+    },
+    {
+      title: 'Diagnóstico da voz para de acusar a chave errada',
+      detail:
+        '"Realtime indisponível" significa que NENHUMA rota da cadeia ' +
+        'conectou, mas a mensagem nomeava só a credencial do transporte ' +
+        'escolhido: com Grok configurado e sem XAI_API_KEY, quem falhava era a ' +
+        'OpenAI e o operador era mandado conferir a chave do Grok. A cadeia de ' +
+        'degradação virou fonte única compartilhada entre runtime e UI.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Grok Voice deixou de depender de coincidência',
+      detail:
+        'O validador de transporte não listava grok-realtime: a rota oficial ' +
+        'passava pelo ramo de coerção e só sobrevivia porque o default é ela ' +
+        'mesma. Qualquer troca futura de default trocaria a voz do produto em ' +
+        'silêncio.',
+    },
+    {
+      title: 'Notas de versão e DESIGN.md dizendo a verdade',
+      detail:
+        'A 0.20.0 anunciava "sombra de elevação real no card" — o código ' +
+        'rejeitou sombra de propósito (sobre preto ela não projeta nada, só ' +
+        'embaça a borda e repintava o canvas do xterm; a elevação se lê por ' +
+        'luminosidade). E o "TODOS os halos" ignorava o sprite do agente, cuja ' +
+        'luz é do personagem e agora está documentada como exceção. O ' +
+        'DESIGN.md ainda trazia a paleta azul-negra trocada por cinza neutro.',
+    },
+  ],
+};
+
+export const PREVIOUS_RELEASE: AppRelease = {
   version: '0.20.0',
   date: '2026-07-31',
   codename: 'Operacional de verdade',
@@ -65,8 +141,9 @@ export const CURRENT_RELEASE: AppRelease = {
       title: 'Visual redesenhado de ponta a ponta',
       detail:
         'Nome do agente domina o pane; badges viram metadado quieto; ações ' +
-        'recuam até o ponteiro chegar; TODOS os halos de neon persistentes ' +
-        'viraram anéis nítidos ou sombra de elevação; o rail trocou caixas ' +
+        'recuam até o ponteiro chegar; os halos de neon persistentes do cromo ' +
+        'viraram anéis nítidos (orbe de voz, mascote, sprite do agente e FX ' +
+        'de celebração seguem brilhando de propósito); o rail trocou caixas ' +
         'coloridas por cabeçalhos quietos com ponto de estado — a missão em ' +
         'execução é o único card aceso. Orbe de voz, boot e mascote seguem ' +
         'brilhando: atmosfera é deliberada, cromo não.',
@@ -102,7 +179,7 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const PREVIOUS_RELEASE: AppRelease = {
+export const RELEASE_01942: AppRelease = {
   version: '0.19.42',
   date: '2026-07-31',
   codename: 'A missão não para por causa de uma CLI',

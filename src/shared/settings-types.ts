@@ -1,5 +1,15 @@
 import { z } from 'zod';
 
+function isHttpUrlOrEmpty(value: string): boolean {
+  if (value.trim() === '') return true;
+  try {
+    const parsed = new URL(value.trim());
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 function isAbsoluteShellPath(value: string): boolean {
   return (
     value === '' ||
@@ -132,6 +142,20 @@ export const orchSettingsSchema = z.object({
    *   every cold start. `ask`/`pause` remain as hardened opt-ins.
    */
   agentRestorePolicy: z.enum(['ask', 'pause', 'resume']).default('resume'),
+  /**
+   * Gateway de IA local (OmniRoute-like) na frente das CLIs. Vazio = desligado
+   * (a env var `NEXUS_AI_GATEWAY_BASE_URL` continua valendo como fallback).
+   * Só http(s): o valor vira `ANTHROPIC_BASE_URL`/`OPENAI_BASE_URL` dentro do
+   * PTY das CLIs que declaram essas vars, então um esquema exótico aqui viraria
+   * endpoint em toda CLI roteada.
+   */
+  aiGatewayBaseUrl: z
+    .string()
+    .max(2048)
+    .refine(isHttpUrlOrEmpty, {
+      message: 'gateway base URL must be empty or an http(s) URL',
+    })
+    .default(''),
   /** CLI provider used by the next squad orchestrator. */
   defaultAdapterId: z.string().max(64).default('claude'),
   /** Empty means the selected provider's configured default model. */

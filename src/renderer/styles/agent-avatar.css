@@ -37,6 +37,13 @@
   transition: filter 180ms var(--ease-out-quart), opacity 180ms var(--ease-out-quart);
 }
 
+/* EXCEÇÃO DELIBERADA ao "fim do neon" (0.20.0) — não varrer daqui.
+   O core e o sensor são a luz DO PERSONAGEM, mesma família do orbe de voz e do
+   mascote: brilho que pertence à arte, não cromo aplicado a uma superfície de
+   UI. E a regra geral ("halo vira anel nítido de 3px") é fisicamente impossível
+   aqui: o sensor tem max(2px, 7%) de diâmetro — um anel de 3px seria maior que
+   o próprio elemento. O glow É o sinal de estado nesse tamanho.
+   Quem varrer neon de novo: confira esta nota antes de remover. */
 .agent-avatar__core {
   position: absolute;
   z-index: 2;

@@ -17,16 +17,23 @@ cards brancos, nunca IDE corporativo de 40 ícones na toolbar.
 
 | Token | Valor (nexus-dark) | Uso |
 |---|---|---|
-| `--bg` | `#0a0e15` | fundo raiz |
-| `--bg-elevated` | `#101623` | panes, cards |
-| `--bg-bar` | `#0c1119` | barras/chrome |
-| `--border` / `--border-strong` | `#1d2637` / `#2c3a55` | divisórias |
-| `--text` / `--text-dim` | `#d7dfec` / `#8a94aa` | texto (dim ≥5:1, WCAG AA — não baixar) |
+| `--bg` | `#0a0a0b` | fundo raiz |
+| `--bg-elevated` | `#151517` | panes, cards |
+| `--bg-bar` | `#101012` | barras/chrome |
+| `--border` / `--border-strong` | `rgb(255 255 255 / .07)` / `rgb(255 255 255 / .14)` | divisórias |
+| `--text` / `--text-dim` | `#fafafa` / `#a1a1a1` | texto (dim ≥5:1, WCAG AA — não baixar) |
 | `--accent` | `#3dd9ff` | **só o que está vivo/interativo**: ação primária, foco, agente ativo |
 | `--accent-ink` | `#051019` | tinta sobre CTA sólido de acento |
 | `--danger` | `#ff7a90` | falha, destrutivo |
 | `--design` | `#2f6ae0` | segunda voz: design mode |
 | `--ok` / `--live` / `--warn` / `--gold` | `#7ee2a8` / `#3ce08d` / `#e5c07b` / `#ffd166` | sinais |
+
+A base é **cinza neutro**, não azul-negro. Um fundo tingido faz toda superfície
+parecer levemente acesa e o ciano de sinal perde contra o quê se destacar; o
+neutro devolve ao acento o poder de significar. As bordas são branco
+translúcido de propósito: um fio de opacidade compõe corretamente sobre
+qualquer camada da pilha (bar, elevated, modal) em vez de exigir um hex por
+camada.
 
 Derivados do acento (`--accent-soft/strong/hover/glow`) são `color-mix` do
 `--accent` — **nunca** sobrescreva por tema; temas trocam só `--accent`.

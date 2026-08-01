@@ -96,6 +96,35 @@ export type JarvisLiveTransport =
   | 'gemini-live'
   | 'grok-realtime';
 
+/** Rota realtime concreta; a credencial de cada uma está no mapa abaixo. */
+export type RealtimeProviderKey = 'grok' | 'openai' | 'gemini';
+
+/** Credencial que cada rota realtime exige. */
+export const REALTIME_PROVIDER_ENV_VAR: Record<RealtimeProviderKey, string> = {
+  grok: 'XAI_API_KEY',
+  openai: 'OPENAI_API_KEY',
+  gemini: 'GEMINI_API_KEY',
+};
+
+/**
+ * Ordem de degradação de cada transporte. FONTE ÚNICA: o runtime (main,
+ * `resolveRealtimeProviderIds`) e o diagnóstico da UI (renderer) leem daqui.
+ *
+ * O diagnóstico precisa da CADEIA, não do transporte escolhido: uma rota sem
+ * credencial nem vira candidata, então `realtime_unavailable` significa que
+ * TODAS falharam. Nomear só a chave do transporte configurado mandava o
+ * operador conferir a credencial errada — a mesma classe de bug que o mapa
+ * exaustivo em voice-settings-helpers já tinha corrigido um nível abaixo.
+ */
+export const REALTIME_FALLBACK_CHAIN: Record<
+  Exclude<JarvisLiveTransport, 'classic'>,
+  readonly RealtimeProviderKey[]
+> = {
+  'grok-realtime': ['grok', 'openai', 'gemini'],
+  'openai-realtime': ['openai', 'gemini'],
+  'gemini-live': ['gemini', 'openai'],
+};
+
 /**
  * Grok Voice (xAI) — rota oficial da voz do Nexus. Versão explícita de
  * propósito: o alias `grok-voice-latest` migra sozinho no provedor e trocaria a
