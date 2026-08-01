@@ -8,6 +8,11 @@ Esta release fecha as fundações que faltavam para uma missão observável,
 transportável e verificável de ponta a ponta. O trabalho não fica apenas em
 documentação: o Main, o renderer e o storage participam do mesmo contrato.
 
+### Correção adicional
+
+- O gate de missão real usa um vault de identidade volátil, exclusivo do
+  processo E2E, sem tocar o Keychain nem gravar chave privada em disco.
+
 ### Observer plane e ACP
 
 - Hooks e sessões ACP emitem frames tipados de turno, ferramenta, status e

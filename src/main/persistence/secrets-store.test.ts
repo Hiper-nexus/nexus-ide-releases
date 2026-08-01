@@ -12,6 +12,7 @@ const secretDeps = vi.hoisted(() => ({
   sequence: 0,
   isAvailable: true,
   backend: 'unknown',
+  realMissionE2E: false,
 }));
 
 vi.mock('node:os', () => ({
@@ -36,9 +37,15 @@ vi.mock('electron', () => ({
   },
 }));
 
+vi.mock('../../shared/real-mission-e2e', () => ({
+  isCurrentProcessRealMissionE2E: () => secretDeps.realMissionE2E,
+}));
+
 import {
   deleteSecret,
   getSecret,
+  hasSecret,
+  isSecureStorageAvailable,
   isSecureStorageBackendAllowed,
   resetSecretsCacheForTests,
   setSecret,
@@ -74,6 +81,7 @@ describe('durable secret persistence', () => {
     secretDeps.sequence = 0;
     secretDeps.isAvailable = true;
     secretDeps.backend = 'unknown';
+    secretDeps.realMissionE2E = false;
     resetSecretsCacheForTests();
   });
 
@@ -173,6 +181,21 @@ describe('durable secret persistence', () => {
 
     expect(deleteSecret('provider').ok).toBe(false);
     expect(getSecret('provider')).toBe('previous');
+  });
+
+  it('keeps the release mission identity vault in memory without touching Keychain or disk', () => {
+    secretDeps.realMissionE2E = true;
+    secretDeps.isAvailable = false;
+
+    expect(isSecureStorageAvailable()).toBe(false);
+    expect(setSecret('agent-key', 'private-material')).toEqual({ ok: true });
+    expect(getSecret('agent-key')).toBe('private-material');
+    expect(hasSecret('agent-key')).toBe(true);
+    expect(fs.existsSync(secretsFile)).toBe(false);
+
+    resetSecretsCacheForTests();
+    expect(getSecret('agent-key')).toBeNull();
+    expect(hasSecret('agent-key')).toBe(false);
   });
 
   it('rejects the Linux basic_text backend instead of trusting weak ciphertext', () => {

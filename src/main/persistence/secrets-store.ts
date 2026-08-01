@@ -28,6 +28,14 @@ const LOCK_ACQUIRE_TIMEOUT_MS = 500;
 // adapterId → decrypted key (in-memory cache; the disk copy is encrypted).
 let cache: Map<string, string> | null = null;
 let temporaryFileSequence = 0;
+/**
+ * The packaged release mission runs with an isolated HOME and deliberately
+ * does not touch the operator's login Keychain. Agent identity still needs a
+ * private-key vault for the lifetime of that one process, so keep that narrow
+ * harness-only material in memory. This branch is never used by the normal
+ * app path and nothing from it is written to disk.
+ */
+const realMissionE2EVolatileSecrets = new Map<string, string>();
 
 export interface SecretWriteResult {
   ok: boolean;
@@ -297,6 +305,9 @@ function persistDelta(key: string, plainValue: string | null): SecretWriteResult
 // `acctcred:<id>` (Claude subscription credential blobs). Same encrypted file.
 
 export function getSecret(key: string): string | null {
+  if (isCurrentProcessRealMissionE2E()) {
+    return realMissionE2EVolatileSecrets.get(key) ?? null;
+  }
   const store = ensureCache();
   if (store.has(key)) return store.get(key) ?? null;
   if (!isSecureStorageAvailable()) return null;
@@ -318,6 +329,9 @@ export function getSecret(key: string): string | null {
  * Boot/getInfo must use this so SecItemCopyMatching never blocks the UI/mic.
  */
 export function hasSecret(key: string): boolean {
+  if (isCurrentProcessRealMissionE2E()) {
+    return realMissionE2EVolatileSecrets.has(key);
+  }
   if (ensureCache().has(key)) return true;
   try {
     const raw = readRawFromDisk();
@@ -336,6 +350,16 @@ export function hasCachedSecret(key: string): boolean {
 }
 
 export function setSecret(key: string, value: string): SecretWriteResult {
+  if (isCurrentProcessRealMissionE2E()) {
+    if (value === '') {
+      realMissionE2EVolatileSecrets.delete(key);
+      cache?.delete(key);
+    } else {
+      realMissionE2EVolatileSecrets.set(key, value);
+      ensureCache().set(key, value);
+    }
+    return { ok: true };
+  }
   const store = ensureCache();
   if (value === '') return deleteSecret(key);
   if (!isSecureStorageAvailable()) {
@@ -348,6 +372,11 @@ export function setSecret(key: string, value: string): SecretWriteResult {
 }
 
 export function deleteSecret(key: string): SecretWriteResult {
+  if (isCurrentProcessRealMissionE2E()) {
+    realMissionE2EVolatileSecrets.delete(key);
+    cache?.delete(key);
+    return { ok: true };
+  }
   const store = ensureCache();
   const result = persistDelta(key, null);
   if (!result.ok) return result;
@@ -387,4 +416,5 @@ export function setKey(adapterId: string, key: string): SecretWriteResult {
 /** Test-only reset. */
 export function resetSecretsCacheForTests(): void {
   cache = null;
+  realMissionE2EVolatileSecrets.clear();
 }
