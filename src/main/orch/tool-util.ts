@@ -54,6 +54,7 @@ import {
 } from '../memory/workspace-memory-context';
 import { getOrchSettings } from '../persistence/settings-store';
 import { isOperatorChoicePolicy } from '../../shared/squad-cli-policy';
+import { issueAgentIdentityRequired } from './agent-identity-spawn';
 
 export { assertSafePtyPrompt } from './pty-prompt-safety';
 
@@ -860,6 +861,13 @@ export async function spawnPaneAndMaybePrompt(
     ),
   });
   assertMcpInvocationCurrent(hooks.invocation);
+  if (options.missionId && options.role) {
+    issueAgentIdentityRequired({
+      missionId: options.missionId,
+      scope: options.scope,
+      agentId: options.agentName?.trim() || adapter.id,
+    });
+  }
   if (options.missionId && options.prompt) {
     options = {
       ...options,

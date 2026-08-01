@@ -53,7 +53,9 @@ const stubs = vi.hoisted(() => ({
     seniorMode: false,
     designPro: false,
     squadCliPolicy: 'operator-choice',
+    agentAttestationGate: undefined as 'required' | undefined,
   },
+  issueAgentIdentityRequired: vi.fn(),
 }));
 
 vi.mock('./workspace-path', () => ({ resolveCwdForScope: stubs.resolveCwdForScope }));
@@ -170,6 +172,9 @@ vi.mock('./legacy-handoff', () => ({ LEGACY_MARKER: 'marker' }));
 vi.mock('./ponytail', () => ({ PONYTAIL_RULES: '' }));
 vi.mock('./engineering-charter', () => ({ ENGINEERING_CHARTER: '' }));
 vi.mock('./design-charter', () => ({ DESIGN_CHARTER: '' }));
+vi.mock('./agent-identity-spawn', () => ({
+  issueAgentIdentityRequired: stubs.issueAgentIdentityRequired,
+}));
 vi.mock('../persistence/settings-store', () => ({
   getOrchSettings: vi.fn(() => stubs.orchSettings),
 }));
@@ -205,6 +210,7 @@ describe('agent pane workspace confinement', () => {
     stubs.requestPaneClose.mockResolvedValue(true);
     stubs.terminateSession.mockResolvedValue(true);
     stubs.taskDispatchesList.mockReturnValue([]);
+    stubs.orchSettings.agentAttestationGate = undefined;
   });
 
   it('pins every orchestration spawn to the canonical active workspace', async () => {
@@ -255,6 +261,25 @@ describe('agent pane workspace confinement', () => {
         },
       }),
     );
+  });
+
+  it('issues the Main-held identity before a renderer-backed mission spawn', async () => {
+    stubs.orchSettings.agentAttestationGate = 'required';
+
+    await spawnPaneAndMaybePrompt({
+      adapterId: 'codex',
+      missionId: 'm1',
+      role: 'worker',
+      agentName: 'Worker A',
+      scope,
+      executionScope: taskExecutionScope,
+    });
+
+    expect(stubs.issueAgentIdentityRequired).toHaveBeenCalledWith({
+      missionId: 'm1',
+      scope,
+      agentId: 'Worker A',
+    });
   });
 
   it('never records an ephemeral internal reviewer in mission composition', async () => {
