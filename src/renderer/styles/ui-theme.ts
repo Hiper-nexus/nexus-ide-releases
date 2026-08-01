@@ -13,7 +13,7 @@ import type { TerminalThemeId } from "../../shared/settings-types";
  * contraste por tema, não conta de cor.
  */
 
-interface UiPalette {
+export interface UiPalette {
   bg: string;
   bgElevated: string;
   bgBar: string;
@@ -26,18 +26,37 @@ interface UiPalette {
   danger: string;
 }
 
+/**
+ * Paleta ciano legada (mantida para integrações antigas). NÃO apagada:
+ * a Camada 2 a registra como tema selecionável ("nexus-legacy"), o que exige
+ * ampliar TERMINAL_THEME_IDS em src/shared/settings-types.ts + o picker de
+ * Settings — ambos fora do escopo styles/ desta camada.
+ */
+export const LEGACY_NEXUS_CYAN_PALETTE: UiPalette = {
+  bg: "#0a0e15",
+  bgElevated: "#101623",
+  bgBar: "#0c1119",
+  border: "#1d2637",
+  borderStrong: "#2c3a55",
+  text: "#d7dfec",
+  textDim: "#8a94aa",
+  accent: "#3dd9ff",
+  accentInk: "#051019",
+  danger: "#ff7a90",
+};
+
 const PALETTES: Record<TerminalThemeId, UiPalette> = {
+  // Tema "Nexus" (id estável `nexus-dark`, DEFAULT do app): superfícies
+  // neutras em camadas e acento cyan operacional. Tem que casar com
+  // os defaults de base.css:root.
   "nexus-dark": {
-    bg: "#0a0e15",
-    bgElevated: "#101623",
-    bgBar: "#0c1119",
-    border: "#1d2637",
-    borderStrong: "#2c3a55",
-    text: "#d7dfec",
-    // ≥5:1 sobre --bg e --bg-elevated (WCAG AA). Não baixar — tem que casar
-    // com o valor de base.css:root.
-    textDim: "#8a94aa",
-    // Ciano operacional: o que está VIVO (agente ativo, ação primária).
+    bg: "#0a0a0b",
+    bgElevated: "#151517",
+    bgBar: "#101012",
+    border: "rgb(255 255 255 / 0.07)",
+    borderStrong: "rgb(255 255 255 / 0.14)",
+    text: "#fafafa",
+    textDim: "#a1a1a1",
     accent: "#3dd9ff",
     accentInk: "#051019",
     danger: "#ff7a90",

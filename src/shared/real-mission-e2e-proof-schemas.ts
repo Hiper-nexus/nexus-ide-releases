@@ -207,7 +207,7 @@ export const dispatchProofSchema = z
   })
   .strict();
 
-const physicalHandoffSourceSchema = z.enum(["http-mcp", "pty-stream"]);
+const physicalHandoffSourceSchema = z.enum(["http-mcp", "acp-stdio", "pty-stream"]);
 
 const physicalHandoffReceiptSchema = z
   .object({

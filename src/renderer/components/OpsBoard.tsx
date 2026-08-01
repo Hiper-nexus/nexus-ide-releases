@@ -272,7 +272,8 @@ export function OpsBoard() {
                         fallbackBranch={snapshot.branch}
                         fallbackSkin={snapshot.selectedSkin}
                       />
-                      <span>operador ocioso</span>
+                      <span>Nenhuma missão</span>
+                      <small>Arraste uma missão para esta etapa.</small>
                     </div>
                   ) : (
                     col.missions.map((m) => {

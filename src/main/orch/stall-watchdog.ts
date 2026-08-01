@@ -16,6 +16,7 @@ import {
 import { getProjectDomainStores } from './project-domain-store-registry';
 import { onHandoffSubmitted } from './idle-delivery';
 import { sameProjectScope } from './project-scoped-broadcast';
+import { publishObserverFrame, snapshotObserverFrames } from './observer-bus';
 
 /**
  * Watchdog de stall (benchmark §4.4): um worker que fica BUSY em silêncio por
@@ -148,6 +149,19 @@ function scan(now: number = Date.now(), stallMs: number = STALL_MS): void {
 
     watch.isFlagged = true;
     const minutes = Math.round((now - candidate.lastActivityAt) / 60_000);
+    const previousFrames = snapshotObserverFrames(authority.sessionId);
+    publishObserverFrame({
+      sessionId: authority.sessionId,
+      paneId: authority.paneId,
+      missionId: authority.missionId,
+      at: now,
+      kind: 'stall_suspected',
+      payload: {
+        silentForMs: Math.max(0, now - candidate.lastActivityAt),
+        lastSeq: previousFrames.at(-1)?.seq ?? null,
+        detector: 'stall-watchdog',
+      },
+    });
     const handoff = getProjectDomainStores(authority.scope).handoffs.submit({
       status: 'stalled',
       summary:

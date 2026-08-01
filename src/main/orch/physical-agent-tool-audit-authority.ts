@@ -16,14 +16,14 @@ const auditIntentPayloadSchema = z
     schema: z.literal("nexus.mcp-audit/v1"),
     project_id: identifierSchema,
     checkout_id: identifierSchema,
-    source: z.enum(["http-mcp", "pty-stream"]),
+    source: z.enum(["http-mcp", "acp-stdio", "pty-stream"]),
     invocation_id: identifierSchema,
   })
   .passthrough();
 
 export interface PhysicalAgentToolAuditAuthority {
   readonly toolName: "nexus_handoff_ack" | "nexus_mission_set_status";
-  readonly source: "http-mcp" | "pty-stream";
+  readonly source: "http-mcp" | "acp-stdio" | "pty-stream";
   readonly toolCallId: string;
   readonly missionId: string;
   readonly sessionId: string;

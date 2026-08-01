@@ -79,16 +79,18 @@
 .ops-board__new {
   font-size: var(--text-sm);
   font-weight: 600;
-  color: var(--bg);
-  background: var(--accent);
-  border: 1px solid var(--accent);
+  color: var(--btn-primary-ink);
+  background: var(--btn-primary);
+  border: 1px solid var(--btn-primary);
   border-radius: var(--radius-md);
   padding: 6px 12px;
   cursor: pointer;
-  transition: filter 150ms var(--ease-out-quart);
+  transition: background-color 150ms var(--ease-out-quart),
+    border-color 150ms var(--ease-out-quart);
 }
 .ops-board__new:hover {
-  filter: brightness(1.12);
+  background: var(--btn-primary-hover);
+  border-color: var(--btn-primary-hover);
 }
 .ops-board__new:focus-visible {
   outline: 2px solid var(--accent);
@@ -118,7 +120,7 @@
 .ops-board__cols {
   flex: 1;
   display: grid;
-  grid-template-columns: repeat(5, minmax(200px, 1fr));
+  grid-template-columns: repeat(5, minmax(220px, 1fr));
   gap: 1px;
   background: var(--border);
   overflow: auto;
@@ -159,7 +161,8 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-3) var(--space-3) var(--space-2);
+  padding: 14px var(--space-4) 10px;
+  border-bottom: 1px solid var(--border);
 }
 .ops-board__col-glyph {
   width: 8px;
@@ -181,7 +184,7 @@
   background: var(--state-failed);
 }
 .ops-board__col-label {
-  font-size: var(--text-xs);
+  font-size: var(--text-sm);
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -213,7 +216,7 @@
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  padding: var(--space-3);
+  padding: var(--space-4);
   cursor: grab;
   transition:
     border-color 150ms var(--ease-out-quart),
@@ -408,15 +411,29 @@
   flex-direction: column;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-5) var(--space-2);
-  opacity: 0.5;
+  min-height: 150px;
+  margin: var(--space-2);
+  padding: var(--space-5) var(--space-3);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+  opacity: 0.72;
   font-size: var(--text-xs);
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--text-dim);
+  text-align: center;
 }
 .ops-board__empty-col canvas {
   image-rendering: pixelated;
+}
+
+.ops-board__empty-col small {
+  max-width: 16ch;
+  color: var(--text-dim);
+  font-size: var(--text-2xs);
+  letter-spacing: 0;
+  line-height: 1.4;
+  text-transform: none;
 }
 
 .ops-board__empty {

@@ -14,6 +14,7 @@ import { formatShortcut } from "../lib/platform";
 import { PixelIcon } from "./PixelIcon";
 import { AgentAvatar } from "./AgentAvatar";
 import { EndorphinPresence } from "./EndorphinPresence";
+import { MissionComposer } from "./MissionComposer";
 import {
   homeCliBeat,
   homeReadyBeat,
@@ -193,7 +194,29 @@ export function HomeDeck() {
       ? homeCliBeat()
       : needsExecutionSetup
         ? homeSetupBeat()
-        : homeWarmingBeat();
+      : homeWarmingBeat();
+
+  const composerInputDisabled =
+    adaptersLoading ||
+    adapterLoadFailed ||
+    needsCli ||
+    needsExecutionSetup;
+
+  function submitObjective(intent: string): void {
+    if (adapterLoadFailed) {
+      setAdapterLoadAttempt((attempt) => attempt + 1);
+      return;
+    }
+    if (needsCli || needsExecutionSetup) {
+      openSettings();
+      return;
+    }
+    if (intent.trim()) {
+      openAgentic(intent.trim());
+      return;
+    }
+    openAgentic();
+  }
 
   function openTerminalFromHome(): void {
     const panes = listPanes(useLayoutStore.getState().root);
@@ -295,45 +318,33 @@ export function HomeDeck() {
             </p>
           </div>
           <div className="home-deck__actions">
-            <button
-              ref={primaryActionRef}
-              className="home-deck__cta"
-              onClick={
-                adapterLoadFailed
-                  ? () => setAdapterLoadAttempt((attempt) => attempt + 1)
-                  : needsCli || needsExecutionSetup
-                    ? openSettings
-                    : () => openAgentic()
+            <MissionComposer
+              inputDisabled={composerInputDisabled}
+              submitDisabled={adaptersLoading}
+              submitButtonRef={primaryActionRef}
+              submitIcon={
+                adaptersLoading
+                  ? "agent"
+                  : adapterLoadFailed
+                    ? "restart"
+                    : needsCli || needsExecutionSetup
+                      ? "config"
+                      : "mission"
               }
-              disabled={adaptersLoading}
-            >
-              <PixelIcon
-                name={
-                  adaptersLoading
-                    ? "agent"
-                    : adapterLoadFailed
-                      ? "restart"
-                      : needsCli
-                        ? "config"
-                        : needsExecutionSetup
-                          ? "config"
-                          : "mission"
-                }
-              />
-              {adaptersLoading
-                ? "Verificando…"
-                : adapterLoadFailed
-                  ? "Tentar novamente"
-                  : needsCli
-                    ? "Conectar uma IA"
-                    : needsExecutionSetup
-                      ? "Configurar execução"
-                      : "Descrever objetivo"}
-            </button>
-            <button className="home-deck__btn" onClick={openTerminalFromHome}>
-              <PixelIcon name="terminal" />
-              Abrir terminal
-            </button>
+              submitLabel={
+                adaptersLoading
+                  ? "Verificando…"
+                  : adapterLoadFailed
+                    ? "Tentar novamente"
+                    : needsCli
+                      ? "Conectar uma IA"
+                      : needsExecutionSetup
+                        ? "Configurar execução"
+                        : "Descrever objetivo"
+              }
+              onSubmit={submitObjective}
+              onOpenTerminal={openTerminalFromHome}
+            />
           </div>
         </section>
 
@@ -430,23 +441,42 @@ export function HomeDeck() {
         </details>
 
         <footer className="home-deck__foot">
-          <span className="home-deck__keys">
-            {viewKind === "canvas" ? (
-              <>
-                <kbd>{formatShortcut("mod", "K")}</kbd> comandos · <kbd>F</kbd>{" "}
-                centralizar · arraste panes
-              </>
-            ) : (
-              <>
-                <kbd>{formatShortcut("mod", "K")}</kbd> comandos ·{" "}
-                <kbd>{formatShortcut("mod", "N")}</kbd> missão ·{" "}
-                <kbd>{formatShortcut("mod", "D")}</kbd> dividir ·{" "}
-                <kbd>{formatShortcut("mod", "1-9")}</kbd> focar
-              </>
-            )}
-          </span>
-          <button className="home-deck__dismiss" onClick={hide}>
-            Ir para o terminal <PixelIcon name="chevron" size={10} />
+          <div className="home-deck__instrument" aria-label="Instrumentos operacionais">
+            <div className="home-deck__instrument-signals">
+              <span className="home-deck__instrument-signal">
+                <i
+                  className={`home-deck__instrument-dot${mcpInfo?.running ? " home-deck__instrument-dot--live" : ""}`}
+                  aria-hidden="true"
+                />
+                {mcpInfo?.running ? "MCP online" : "MCP conectando"}
+              </span>
+              <span className="home-deck__instrument-signal">
+                <i
+                  className={`home-deck__instrument-dot${readiness.detectedAdapters.length > 0 ? " home-deck__instrument-dot--live" : ""}`}
+                  aria-hidden="true"
+                />
+                {readiness.detectedAdapters.length} CLI
+                {readiness.detectedAdapters.length === 1 ? "" : "s"} local
+              </span>
+            </div>
+            <span className="home-deck__keys">
+              {viewKind === "canvas" ? (
+                <>
+                  <kbd>{formatShortcut("mod", "K")}</kbd> comandos · <kbd>F</kbd>{" "}
+                  centralizar · arraste panes
+                </>
+              ) : (
+                <>
+                  <kbd>{formatShortcut("mod", "K")}</kbd> comandos ·{" "}
+                  <kbd>{formatShortcut("mod", "N")}</kbd> missão ·{" "}
+                  <kbd>{formatShortcut("mod", "D")}</kbd> dividir ·{" "}
+                  <kbd>{formatShortcut("mod", "1-9")}</kbd> focar
+                </>
+              )}
+            </span>
+          </div>
+          <button className="home-deck__dismiss" onClick={openTerminalFromHome}>
+            Abrir terminal <PixelIcon name="chevron" size={10} />
           </button>
         </footer>
       </div>

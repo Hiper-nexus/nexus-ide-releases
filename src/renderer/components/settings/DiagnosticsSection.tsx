@@ -63,6 +63,33 @@ function formatMs(value: number | null): string {
   return value === null ? 'sem amostras' : `${Math.round(value)}ms`;
 }
 
+function micHealthLabel(value: string): string {
+  return (
+    {
+      healthy: 'saudável',
+      needsPermission: 'permissão pendente',
+      phantomGrant: 'permissão inconsistente',
+      silent: 'sem sinal',
+      unavailable: 'indisponível',
+    }[value] ?? value
+  );
+}
+
+function liveStatusLabel(value: string | undefined): string {
+  if (!value || value === 'off') return 'desligado';
+  return (
+    {
+      dormant: 'em espera',
+      listening: 'ouvindo',
+      thinking: 'processando',
+      speaking: 'falando',
+      interrupted: 'interrompido',
+      connecting: 'conectando',
+      error: 'erro',
+    }[value] ?? value
+  );
+}
+
 export function DiagnosticsSection() {
   const info = useVoiceStore((s) => s.info);
   const level = useVoiceStore((s) => s.level);
@@ -114,7 +141,7 @@ export function DiagnosticsSection() {
 
       <div className="ops-metric-grid">
         <MetricTile
-          label="Mic permission"
+          label="Permissão do mic"
           value={permissionLabel(micPermission)}
           tone={permissionTone(micPermission)}
           detail={devices.error ?? `${devices.count} entrada(s) detectada(s)`}
@@ -126,13 +153,13 @@ export function DiagnosticsSection() {
           detail="macOS só libera nomes após consentimento de microfone."
         />
         <MetricTile
-          label="RMS ao vivo"
+          label="Nível do microfone"
           value={inputLevel}
           tone={level > 0.05 ? 'ok' : 'warn'}
-          detail={`Saúde: ${micHealth}`}
+          detail={`Saúde: ${micHealthLabel(micHealth)}`}
         />
         <MetricTile
-          label="Screen Recording"
+          label="Gravação de tela"
           value={permissionLabel(screenPermission)}
           tone={permissionTone(screenPermission)}
           detail="Necessário para Vision capturar a janela Nexus."
@@ -144,8 +171,8 @@ export function DiagnosticsSection() {
           detail={info?.wakeWordEnabled ? 'Hey Jarvis habilitado.' : 'Wake word desligada.'}
         />
         <MetricTile
-          label="Realtime"
-          value={liveState?.status ?? 'off'}
+          label="Sessão em tempo real"
+          value={liveStatusLabel(liveState?.status)}
           tone={liveState?.realtimeReady ? 'ok' : 'warn'}
           detail={liveState ? `${liveState.turns} turno(s), ativo ${formatAge(liveState.lastActiveAt)}` : 'Sem sessão live.'}
         />

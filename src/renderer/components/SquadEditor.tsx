@@ -4,6 +4,7 @@ import type { Squad, AgentCategory } from '../../shared/orch-types';
 import type { AdapterInfo } from '../../shared/adapter-types';
 import { applySquadEdit, type EditableAgent } from '../../shared/squad-edit';
 import { CloseButton } from './CloseButton';
+import { PixelIcon } from './PixelIcon';
 
 const CATEGORIES: AgentCategory[] = [
   'orchestrator',
@@ -214,7 +215,7 @@ export function SquadEditor({ squad, onClose, onSaved }: Props) {
       </div>
       {error && (
         <p className="squad-editor__error" role="alert">
-          ⚠ {error}
+          <PixelIcon name="warn" size={11} /> {error}
         </p>
       )}
       <div className="squad-editor__actions">

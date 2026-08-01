@@ -6,6 +6,7 @@ import { DESIGN_BREAKPOINTS } from '../browser/viewport-override';
 import { listPanes } from '../lib/split-tree';
 import { useDesignSelectionStore } from '../state/design-selection-store';
 import { useLayoutStore } from '../state/layout-store';
+import { PixelIcon } from './PixelIcon';
 
 const EMPTY_SELECTIONS: never[] = [];
 const EMPTY_ANNOTATIONS: never[] = [];
@@ -547,7 +548,7 @@ export function BrowserDesignBar({ paneId, stylesOpen, onToggleStyles }: Props) 
                   aria-label={`Excluir anotação ${annotation.index}`}
                   onClick={() => void deleteAnnotation(annotation.id)}
                 >
-                  ✕
+                  <PixelIcon name="close" size={11} />
                 </button>
               </li>
             ))}

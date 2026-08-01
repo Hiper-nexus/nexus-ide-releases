@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Note, NoteColor } from '../../shared/note-types';
 import { NOTE_COLORS } from '../../shared/note-types';
+import { PixelIcon } from './PixelIcon';
 
 /**
  * A single connectable sticky note. Standalone component — NOT mounted
@@ -122,7 +123,7 @@ export function StickyNote({ note, onChange, onRemove, onMove }: StickyNoteProps
         </div>
         {note.linkedPaneId && (
           <span className="note-link-badge" title={`Conectada ao pane ${note.linkedPaneId}`}>
-            ⛓
+            <PixelIcon name="link" size={11} />
           </span>
         )}
         <button
@@ -132,7 +133,7 @@ export function StickyNote({ note, onChange, onRemove, onMove }: StickyNoteProps
           onPointerDown={(e) => e.stopPropagation()}
           onClick={onRemove}
         >
-          ×
+          <PixelIcon name="close" size={11} />
         </button>
       </div>
       <textarea

@@ -251,7 +251,7 @@ function harness(): Harness {
     },
     getSquad: (id) => (id === squad.id ? squad : null),
     resolveRuntime: () => approvedRuntime,
-    spawnMainOwnedPane: (input) => {
+    spawnMainOwnedPane: async (input) => {
       value.spawned.push(input as unknown as Record<string, unknown>);
       return {
         requestId: 'bootstrap-1',
@@ -1413,6 +1413,7 @@ describe('initial main-owned orchestrator bootstrap', () => {
     const second = service.bootstrap(scope, value.mission.id);
 
     expect(second).toBe(first);
+    await Promise.resolve();
     expect(value.spawned).toHaveLength(1);
 
     releaseKickoff?.({ accepted: true });
@@ -1758,7 +1759,7 @@ describe('initial main-owned orchestrator bootstrap', () => {
               paneId: 'pane-main-orch-fresh',
             }
           : null;
-    unproven.deps.spawnMainOwnedPane = (input) => {
+    unproven.deps.spawnMainOwnedPane = async (input) => {
       unproven.spawned.push(input as unknown as Record<string, unknown>);
       return {
         requestId: 'bootstrap-fresh',

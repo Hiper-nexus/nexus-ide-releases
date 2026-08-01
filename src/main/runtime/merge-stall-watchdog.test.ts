@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   findStalledActiveMergeEntry,
+  MERGE_VALIDATION_UPPER_BOUND_MS,
+  STALL_DEADLINE_BUFFER_MS,
   STALLED_MERGE_ATTEMPT_MS,
 } from './merge-stall-watchdog';
 import type { MergeQueueEntry } from './merge-queue-contract';
@@ -23,6 +25,16 @@ function entry(overrides: Partial<MergeQueueEntry> = {}): MergeQueueEntry {
 }
 
 describe('findStalledActiveMergeEntry', () => {
+  it('derives the deadline as operation timeout + buffer, never smaller than the timeout', () => {
+    // Regra do buzz (crates/buzz-acp/src/queue.rs): deadline = timeout da
+    // operação + buffer. Um deadline menor que o timeout mataria validações
+    // vivas por construção.
+    expect(STALL_DEADLINE_BUFFER_MS).toBeGreaterThan(0);
+    expect(STALLED_MERGE_ATTEMPT_MS).toBe(
+      MERGE_VALIDATION_UPPER_BOUND_MS + STALL_DEADLINE_BUFFER_MS,
+    );
+  });
+
   it('flags the exact live incident: candidate-validating parked past the bound', () => {
     const stalled = findStalledActiveMergeEntry(
       { activeTaskKey: 'key-1', entries: [entry()] },

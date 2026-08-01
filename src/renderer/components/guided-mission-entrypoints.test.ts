@@ -26,9 +26,11 @@ describe("guided mission entrypoints", () => {
     expect(cmdN).toContain("e.key.toLowerCase() === 'n' && !e.shiftKey");
     expect(cmdN).toContain("openForAgentic()");
     expect(cmdN).not.toContain("openForMission()");
-    expect(home).toMatch(
-      /onClick=\{[\s\S]*?needsCli[\s\S]*?openSettings[\s\S]*?: \(\) => openAgentic\(\)[\s\S]*?\}/,
-    );
+    expect(home).toContain("<MissionComposer");
+    expect(home).toContain("onSubmit={submitObjective}");
+    expect(home).toContain("openAgentic(intent.trim())");
+    expect(home).toContain("openAgentic();");
+    expect(home).not.toContain('className="home-deck__btn"');
     expect(home).not.toContain("openForMission");
     expect(workspaceBar).toMatch(
       /workspace-bar__btn--primary[\s\S]*?onClick=\{\(\) => openAgentic\(\)\}/,

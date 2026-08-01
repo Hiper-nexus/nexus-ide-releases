@@ -824,15 +824,15 @@
 }
 
 .voice-settings .agent-picker__btn--primary {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: var(--accent-ink, #061018);
+  border-color: var(--btn-primary, #fafafa);
+  background: var(--btn-primary, #fafafa);
+  color: var(--btn-primary-ink, #0b0b0c);
 }
 
 .voice-settings .agent-picker__btn--primary:hover:not(:disabled) {
-  border-color: var(--accent-hover, var(--accent));
-  background: var(--accent-hover, var(--accent));
-  color: var(--accent-ink, #061018);
+  border-color: var(--btn-primary-hover, var(--btn-primary));
+  background: var(--btn-primary-hover, var(--btn-primary));
+  color: var(--btn-primary-ink, #0b0b0c);
 }
 
 .voice-settings .agent-picker__btn:disabled {

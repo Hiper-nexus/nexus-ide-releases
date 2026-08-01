@@ -157,7 +157,7 @@ export const promotedPlanSnapshotSchema = z
       .object({
         receiptId: z.string().min(1).max(256),
         toolCallId: z.string().min(1).max(256),
-        source: z.enum(['http-mcp', 'pty-stream', 'omp-rpc-stdio']),
+        source: z.enum(['http-mcp', 'acp-stdio', 'pty-stream', 'omp-rpc-stdio']),
         authoritySha256: z.string().regex(/^[a-f0-9]{64}$/),
         worktreeHeadSha: z
           .string()

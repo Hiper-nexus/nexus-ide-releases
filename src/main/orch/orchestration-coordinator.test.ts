@@ -16,6 +16,11 @@ import {
   MISSION_SCHEDULER_PARTICIPANT_TIMEOUT_MS,
   runMissionSchedulerCoordinatorParticipant,
 } from "./orchestration-coordinator";
+import {
+  MERGE_VALIDATION_UPPER_BOUND_MS,
+  STALL_DEADLINE_BUFFER_MS,
+  STALLED_MERGE_ATTEMPT_MS,
+} from "../runtime/merge-stall-watchdog";
 
 beforeEach(() => {
   schedulerMocks.reconcileMissionScheduler.mockClear();
@@ -25,6 +30,21 @@ describe("orchestration coordinator scheduler participant", () => {
   it("does not preempt the packaged physical review council's own bound", () => {
     expect(MISSION_SCHEDULER_PARTICIPANT_TIMEOUT_MS).toBeGreaterThan(
       20 * 60_000,
+    );
+  });
+
+  it("keeps the stalled-merge deadline mirror derived from the real participant timeout", () => {
+    // O watchdog de merge estagnado (runtime/merge-stall-watchdog.ts) espelha
+    // este timeout em vez de importá-lo (ciclo runtime→orch). Este teste é a
+    // trava anti-drift: se o timeout real mudar, o espelho tem que acompanhar,
+    // e o deadline efetivo nunca pode ficar menor que o timeout da operação
+    // (regra do buzz: deadline = timeout + buffer).
+    expect(MERGE_VALIDATION_UPPER_BOUND_MS).toBe(
+      MISSION_SCHEDULER_PARTICIPANT_TIMEOUT_MS,
+    );
+    expect(STALL_DEADLINE_BUFFER_MS).toBeGreaterThan(0);
+    expect(STALLED_MERGE_ATTEMPT_MS).toBe(
+      MISSION_SCHEDULER_PARTICIPANT_TIMEOUT_MS + STALL_DEADLINE_BUFFER_MS,
     );
   });
 

@@ -1,15 +1,16 @@
 import type { ITheme } from '@xterm/xterm';
 import type { TerminalThemeId } from '../../shared/settings-types';
 
-/** Terminal palette tuned to the NexusIDE deep-navy shell.
-    background/cursor casados com os tokens da UI (--bg #0a0e15, --accent
-    ciano #3dd9ff) — hex-drift entre shell e terminal é regressão. */
+/** Terminal palette casada com o shell operacional.
+    background/cursor seguem os tokens da UI (--bg #0a0a0b, --accent cyan
+    #3dd9ff) — hex-drift entre shell e terminal é regressão. A tabela ANSI
+    continua a anterior: é cor de CONTEÚDO do terminal, não de chrome. */
 export const TERMINAL_THEME: ITheme = {
-  background: '#0a0e15',
-  foreground: '#d7dfec',
+  background: '#0a0a0b',
+  foreground: '#fafafa',
   cursor: '#3dd9ff',
-  cursorAccent: '#0a0e15',
-  selectionBackground: '#2a3a5c',
+  cursorAccent: '#051019',
+  selectionBackground: '#174757',
   black: '#0b0e14',
   red: '#f7768e',
   green: '#9ece6a',
@@ -26,6 +27,18 @@ export const TERMINAL_THEME: ITheme = {
   brightMagenta: '#d3b6ff',
   brightCyan: '#a4e0ff',
   brightWhite: '#eef2ff',
+};
+
+/** Paleta xterm ciano legada (pré-0.21) — preservada para a Camada 2
+    registrar junto com o tema "nexus-legacy" (par da
+    LEGACY_NEXUS_CYAN_PALETTE de ui-theme.ts). */
+export const LEGACY_NEXUS_CYAN_TERMINAL: ITheme = {
+  ...TERMINAL_THEME,
+  background: '#0a0e15',
+  foreground: '#d7dfec',
+  cursor: '#3dd9ff',
+  cursorAccent: '#0a0e15',
+  selectionBackground: '#2a3a5c',
 };
 
 const NEXUS_LIGHT: ITheme = {
@@ -105,7 +118,7 @@ export const TERMINAL_THEMES: Record<
   TerminalThemeId,
   { label: string; theme: ITheme }
 > = {
-  'nexus-dark': { label: 'Nexus Dark', theme: TERMINAL_THEME },
+  'nexus-dark': { label: 'Nexus', theme: TERMINAL_THEME },
   'nexus-light': { label: 'Nexus Light', theme: NEXUS_LIGHT },
   dracula: { label: 'Dracula', theme: DRACULA },
   'solarized-dark': { label: 'Solarized Dark', theme: SOLARIZED_DARK },

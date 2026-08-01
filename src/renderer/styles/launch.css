@@ -170,15 +170,15 @@
 }
 
 .launch__primary {
-  background: var(--accent);
-  color: var(--accent-ink);
-  border: 1px solid var(--accent);
+  background: var(--btn-primary);
+  color: var(--btn-primary-ink);
+  border: 1px solid var(--btn-primary);
   box-shadow: 0 4px 14px -6px rgba(0, 0, 0, 0.55);
 }
 
 .launch__primary:hover:not(:disabled) {
-  background: var(--accent-hover);
-  border-color: var(--accent-hover);
+  background: var(--btn-primary-hover);
+  border-color: var(--btn-primary-hover);
   box-shadow: 0 6px 18px -6px rgba(0, 0, 0, 0.6);
 }
 

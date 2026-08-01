@@ -414,7 +414,7 @@ export interface HandoffMcpProvenance {
   readonly receiptId: string;
   readonly toolCallId: string;
   readonly toolName: 'nexus_handoff_submit';
-  readonly source: 'http-mcp' | 'pty-stream' | 'omp-rpc-stdio';
+  readonly source: 'http-mcp' | 'acp-stdio' | 'pty-stream' | 'omp-rpc-stdio';
   readonly missionId: string;
   readonly sessionId: string;
   readonly workerIncarnationId?: string;
@@ -700,6 +700,8 @@ export interface MissionPanePresentationRequest {
   paneId: string;
   sessionId: string;
   role: 'orchestrator' | 'worker';
+  /** Physical transport backing the pane. ACP panes have no PTY to adopt. */
+  transport?: 'cli-pty' | 'acp';
   pane: Pick<
     MissionPaneSpec,
     | 'adapterId'

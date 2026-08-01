@@ -13,6 +13,7 @@ import { useGamificationStore } from '../state/gamification-store';
 import { ChosenPetPortrait } from './ChosenPetPortrait';
 import { fmt } from './operator-sprite-data';
 import { formatShortcut } from '../lib/platform';
+import { PixelIcon } from './PixelIcon';
 
 /**
  * Perfil de Operador — cockpit gamificado vivo:
@@ -176,7 +177,7 @@ export function OperatorProfile() {
             onClick={close}
             aria-label="Fechar perfil"
           >
-            ✕
+            <PixelIcon name="close" size={12} />
           </button>
         </header>
 

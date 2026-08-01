@@ -15,7 +15,7 @@ import { useOrchStore } from '../state/orch-store';
 import { useMemoryStore } from '../state/memory-store';
 import { useConfigInventoryStore } from '../state/config-inventory-store';
 import { useFilesStore } from '../state/files-store';
-import { PixelIcon } from './PixelIcon';
+import { PixelIcon, type PixelIconName } from './PixelIcon';
 
 /**
  * Workspace-bar agent notification inbox (BridgeMind-style):
@@ -32,10 +32,10 @@ function kindClass(kind: AgentNotificationKind): string {
   return 'agent-notif__item--exited';
 }
 
-function kindIcon(kind: AgentNotificationKind): string {
-  if (kind === 'completed') return '✓';
-  if (kind === 'needs_input') return '!';
-  return '×';
+function kindIcon(kind: AgentNotificationKind): PixelIconName {
+  if (kind === 'completed') return 'check';
+  if (kind === 'needs_input') return 'warn';
+  return 'close';
 }
 
 const PANEL_VIEWPORT_GUTTER = 8;
@@ -128,7 +128,7 @@ function NotificationRow({
       ].join(' ')}
     >
       <span className="agent-notif__status-icon" aria-hidden="true">
-        {kindIcon(item.kind)}
+        <PixelIcon name={kindIcon(item.kind)} size={12} />
       </span>
       <div className="agent-notif__body">
         <div className="agent-notif__row-top">
@@ -417,7 +417,7 @@ export function AgentNotifications() {
                 disabled={unread === 0}
                 onClick={() => markAllRead()}
               >
-                ✓
+                <PixelIcon name="check" size={12} />
               </button>
               <button
                 type="button"
@@ -427,7 +427,7 @@ export function AgentNotifications() {
                 disabled={items.length === 0}
                 onClick={() => clear()}
               >
-                ⌫
+                <PixelIcon name="trash" size={12} />
               </button>
               <button
                 ref={closeBtnRef}
@@ -437,7 +437,7 @@ export function AgentNotifications() {
                 aria-label="Fechar notificações"
                 onClick={() => setOpen(false)}
               >
-                ×
+                <PixelIcon name="close" size={12} />
               </button>
             </div>
           </header>

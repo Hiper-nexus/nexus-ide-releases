@@ -40,10 +40,7 @@ import { usePlanLaneMetricsStore } from '../state/plan-lane-metrics-store';
 import { AgentDropZone } from './AgentDropZone';
 import type { ExternalIssue } from '../../shared/integrations-types';
 import { INTEGRATIONS_CHANGED_EVENT } from '../lib/integrations-events';
-import {
-  summarizeMissionBudget,
-  summarizeWorkspaceMissionBudgets,
-} from '../../shared/mission-budget';
+import { summarizeWorkspaceMissionBudgets } from '../../shared/mission-budget';
 import { humanElapsed } from '../../shared/mission-glance';
 import { resolveDispatchAuthorizedAt } from '../../shared/mission-intent';
 import {
@@ -394,13 +391,9 @@ export function MissionRail() {
     const recovering = hasAutomaticTechnicalRecovery(mission);
     const displayIntentState = mission.intentState;
     const hands = handoffCountByMission.get(mission.id) ?? 0;
-    const handBit =
-      hands > 0 ? ` · ${hands} entrega${hands === 1 ? '' : 's'}` : '';
-    const budget = summarizeMissionBudget(mission);
-    const budgetBit =
-      budget.hasContract && budget.label !== '—' ? ` · ${budget.label}` : '';
-    const route = missionRouteDisplay(mission.latestRoute);
-    const routeBit = route ? ` · ${route.meta}` : '';
+    const handBit = hands > 0
+      ? ` · ${hands} entrega${hands === 1 ? '' : 's'}`
+      : '';
     const laneBit =
       mission.intentContract?.lane === 'plan'
         ? ' · plano'
@@ -414,9 +407,10 @@ export function MissionRail() {
       minute: '2-digit',
     }).format(mission.createdAt);
 
-    // Status já vai na pill — meta fica operacional (tempo / panes / budget).
+    // O status já vai na pill. A segunda linha só responde ao que o operador
+    // precisa decidir agora; rota, orçamento e hashes ficam no diagnóstico.
     if (mission.status === 'pending' && !liveInGrid) {
-      return `Retomar · ${started}${laneBit}${handBit}${budgetBit}${routeBit}`;
+      return `Retomar · ${started}${laneBit}${handBit}`;
     }
 
     if (recovering) {
@@ -425,11 +419,11 @@ export function MissionRail() {
         liveInGrid,
         'blocked_technical',
       );
-      return `${recovery.meta ?? 'Recuperação automática'}${laneBit}${handBit}${budgetBit}${routeBit}`;
+      return `${recovery.meta ?? 'Recuperação automática'}${laneBit}${handBit}`;
     }
 
     if (mission.intentState === 'blocked_technical') {
-      return `Falha técnica · ver diagnóstico e tentar novamente${laneBit}${handBit}${budgetBit}${routeBit}`;
+      return `Falha técnica · ver diagnóstico${laneBit}${handBit}`;
     }
 
     if (liveInGrid) {
@@ -459,13 +453,13 @@ export function MissionRail() {
       );
       const elapsedBit = elapsed ? ` · ${elapsed}` : '';
       if (busyCount > 0) {
-        return `${busyCount} agente${busyCount === 1 ? '' : 's'} trabalhando${elapsedBit}${handBit}${budgetBit}${routeBit}`;
+        return `${busyCount} agente${busyCount === 1 ? '' : 's'} trabalhando${elapsedBit}${handBit}`;
       }
       if (spawningCount > 0) {
-        return `${spawningCount} agente${spawningCount === 1 ? '' : 's'} iniciando${elapsedBit}${handBit}${budgetBit}${routeBit}`;
+        return `${spawningCount} agente${spawningCount === 1 ? '' : 's'} iniciando${elapsedBit}${handBit}`;
       }
       if (activeIds.length > 0) {
-        return `${activeIds.length} agente${activeIds.length === 1 ? '' : 's'} no grid${elapsedBit}${handBit}${budgetBit}${routeBit}`;
+        return `${activeIds.length} agente${activeIds.length === 1 ? '' : 's'} no grid${elapsedBit}${handBit}`;
       }
       if (endedCount > 0) {
         const latestStatus = latestHandoffByMission.get(mission.id)?.status;
@@ -475,23 +469,23 @@ export function MissionRail() {
             : latestStatus === 'failed'
               ? ' · falha reportada'
               : '';
-        return `${endedCount} agente${endedCount === 1 ? '' : 's'} encerrado${endedCount === 1 ? '' : 's'}${report}${handBit}${budgetBit}${routeBit}`;
+        return `${endedCount} agente${endedCount === 1 ? '' : 's'} encerrado${endedCount === 1 ? '' : 's'}${report}${handBit}`;
       }
     }
 
     if (mission.status === 'running') {
-      return `${missionRailResumeCopy(mission.status, liveInGrid, displayIntentState).meta ?? 'Retomar'}${laneBit}${handBit}${budgetBit}${routeBit}`;
+      return `${missionRailResumeCopy(mission.status, liveInGrid, displayIntentState).meta ?? 'Retomar'}${laneBit}${handBit}`;
     }
     if (mission.status === 'blocked') {
       return `${
         missionRailResumeCopy(mission.status, liveInGrid, displayIntentState)
           .meta ?? 'Clique para retomar'
-      }${laneBit}${handBit}${budgetBit}${routeBit}`;
+      }${laneBit}${handBit}`;
     }
     if (mission.status === 'done' || mission.status === 'failed') {
-      return `${started}${laneBit}${handBit}${budgetBit}${routeBit}`;
+      return `${started}${laneBit}${handBit}`;
     }
-    return `${statusLabel(mission.status)} · ${started}${laneBit}${handBit}${budgetBit}${routeBit}`;
+    return `${statusLabel(mission.status)} · ${started}${laneBit}${handBit}`;
   }
 
   function selectMission(m: Mission) {
@@ -893,6 +887,7 @@ export function MissionRail() {
                                   ? 'mission-rail__item--active'
                                   : 'mission-rail__item--idle'
                               } mission-rail__item--tone-${statusUi.tone}`}
+                              data-active={liveInGrid ? 'true' : 'false'}
                               disabled={busy !== null}
                               aria-current={liveInGrid ? 'true' : undefined}
                               aria-label={`${m.title}. ${statusUi.label}. ${openTitle}`}

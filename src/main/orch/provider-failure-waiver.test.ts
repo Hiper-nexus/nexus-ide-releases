@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import { compileIntentContract } from '../../shared/mission-intent';
@@ -8,6 +9,7 @@ import { testProjectScope } from './__tests__/scope-fixture';
 import { createScopedMissionStore } from './mission-store';
 import { createScopedTaskStore } from './task-store';
 import { createTaskDispatchStore } from './task-dispatch-store';
+import { createScopedHandoffStore } from './handoff-store';
 import { encodeTaskScheduleDetail } from './mission-scheduler-meta';
 
 const registryMocks = vi.hoisted(() => ({
@@ -31,6 +33,7 @@ import {
   configureProviderFailureWaiver,
   handleMissionWorkerProviderNoRoute,
   providerWaiverLearning,
+  providerWaiverNeverExecutedReason,
 } from './provider-failure-waiver';
 
 let baseDir = '';
@@ -56,7 +59,68 @@ function approvedIntentContract(
 }
 
 let fixtureSequence = 0;
-function runningWorkerFixture(options: { executor?: boolean } = {}) {
+let physicalReceiptSequence = 0;
+
+/**
+ * Réplica mínima do helper do task-dispatch-store.test.ts: ancora o handoff ao
+ * recibo físico MCP + audit intent que a autoridade de aceitação re-prova.
+ */
+function insertPhysicalHandoffAuthority(input: {
+  readonly runtime: ProjectRuntimeManager;
+  readonly scope: ReturnType<typeof testProjectScope>;
+  readonly missionId: string;
+  readonly handoffId: string;
+  readonly sessionId: string;
+  readonly workerIncarnationId: string;
+}): void {
+  const db = input.runtime.open(input.scope).db;
+  const handoff = db
+    .prepare(`SELECT created_at FROM handoffs WHERE id = ?`)
+    .get(input.handoffId) as { created_at: number };
+  const receiptId = `physical-waiver-${++physicalReceiptSequence}`;
+  db.prepare(
+    `INSERT INTO audit_events
+       (id, mission_id, actor, action, outcome, payload_json, occurred_at)
+     VALUES (?, ?, ?, 'nexus_handoff_submit', 'intent', ?, ?)`,
+  ).run(
+    `audit-${receiptId}`,
+    input.missionId,
+    input.sessionId,
+    JSON.stringify({
+      schema: 'nexus.mcp-audit/v1',
+      timestamp: new Date(handoff.created_at).toISOString(),
+      project_id: input.scope.projectId,
+      checkout_id: input.scope.checkoutId,
+      source: 'http-mcp',
+      invocation_id: receiptId,
+      args: {},
+      duration_ms: 0,
+      user_authorized: false,
+    }),
+    handoff.created_at,
+  );
+  db.prepare(
+    `INSERT INTO handoff_mcp_receipts
+       (receipt_id, handoff_id, tool_call_id, tool_name, source,
+        mission_id, session_id, worker_incarnation_id,
+        authority_sha256, worktree_head_sha, issued_at)
+     VALUES (?, ?, ?, 'nexus_handoff_submit', 'http-mcp', ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    receiptId,
+    input.handoffId,
+    receiptId,
+    input.missionId,
+    input.sessionId,
+    input.workerIncarnationId,
+    createHash('sha256').update(receiptId).digest('hex'),
+    null,
+    handoff.created_at,
+  );
+}
+
+function runningWorkerFixture(
+  options: { executor?: boolean; extraGlmAgent?: boolean } = {},
+) {
   const suffix = `glue-${++fixtureSequence}`;
   const paneId = `pane-${suffix}`;
   const sessionId = `session-${suffix}`;
@@ -103,6 +167,18 @@ function runningWorkerFixture(options: { executor?: boolean } = {}) {
           model: 'gpt-5.6-sol',
           effort: 'high',
         },
+        ...(options.extraGlmAgent === true
+          ? [
+              {
+                id: 'advisor-glm',
+                agentName: 'Advisor GLM',
+                category: agentCategory,
+                cli: 'glm',
+                model: 'glm-4.7',
+                effort: 'high' as const,
+              },
+            ]
+          : []),
       ],
     },
     rows: [
@@ -187,6 +263,10 @@ function runningWorkerFixture(options: { executor?: boolean } = {}) {
     claim,
     paneId,
     sessionId,
+    ownership,
+    executionMode,
+    agentCategory,
+    planReceipt,
   };
 }
 
@@ -203,6 +283,26 @@ function noRouteInputFor(
     hit: {
       kind: 'rate-limit' as const,
       reason: 'rate limit',
+      cooldownMs: 60_000,
+    },
+  };
+}
+
+const rosterCandidate = {
+  id: 'advisor-glm',
+  agentName: 'Advisor GLM',
+  category: 'architect',
+  cli: 'glm',
+  model: 'glm-4.7',
+  effort: 'high',
+} as const;
+
+function authHitInputFor(fixture: ReturnType<typeof runningWorkerFixture>) {
+  return {
+    ...noRouteInputFor(fixture),
+    hit: {
+      kind: 'auth' as const,
+      reason: 'Error: 401 OAuth access token has been revoked',
       cooldownMs: 60_000,
     },
   };
@@ -317,28 +417,6 @@ describe('provider failure waiver glue (Main-owned)', () => {
 });
 
 describe('reroute dentro do roster ANTES do waiver', () => {
-  const rosterCandidate = {
-    id: 'advisor-glm',
-    agentName: 'Advisor GLM',
-    category: 'architect',
-    cli: 'glm',
-    model: 'glm-4.7',
-    effort: 'high',
-  } as const;
-
-  function authHitInputFor(
-    fixture: ReturnType<typeof runningWorkerFixture>,
-  ) {
-    return {
-      ...noRouteInputFor(fixture),
-      hit: {
-        kind: 'auth' as const,
-        reason: 'Error: 401 OAuth access token has been revoked',
-        cooldownMs: 60_000,
-      },
-    };
-  }
-
   it('re-rota em vez de dispensar quando o roster tem um agente vivo', () => {
     const fixture = runningWorkerFixture();
     const attemptLiveReroute = vi.fn(() => rosterCandidate);
@@ -362,10 +440,11 @@ describe('reroute dentro do roster ANTES do waiver', () => {
       deadAdapterId: 'codex',
     });
     // A vitória inteira: NENHUM waiver foi persistido — a task pertence a
-    // outro agente, não foi dispensada.
+    // outro agente, não foi dispensada. NUNCA done por este caminho.
     expect(fixture.dispatches.get(fixture.task.id)).toMatchObject({
       integrationReceipt: undefined,
     });
+    expect(fixture.tasks.list(fixture.mission.id)[0]?.status).not.toBe('done');
     // Sessão física morta fechada pela identidade exata + scheduler acordado.
     expect(
       registryMocks.requestMissionWorkerPaneRetirement,
@@ -435,6 +514,222 @@ describe('reroute dentro do roster ANTES do waiver', () => {
     expect(outcome).toBe('waived');
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
+  });
+});
+
+describe('reply guard do waiver: evidência, orçamento e reason explícito', () => {
+  it('roster esgotado: o waiver grava reason durável de que a task nunca executou', () => {
+    const fixture = runningWorkerFixture();
+    const attemptLiveReroute = vi.fn(() => null);
+    configureProviderFailureWaiver({
+      runtimeManager: fixture.runtime,
+      attemptLiveReroute,
+    });
+
+    const outcome = handleMissionWorkerProviderNoRoute(
+      authHitInputFor(fixture),
+    );
+
+    expect(outcome).toBe('waived');
+    expect(attemptLiveReroute).toHaveBeenCalledTimes(1);
+    const receipt = fixture.dispatches.get(fixture.task.id)?.integrationReceipt;
+    expect(receipt?.kind).toBe('advisory_provider_unavailable');
+    // Nada de done silencioso: o registro durável diz que a task nunca rodou
+    // e por quê o roster não a resgatou.
+    expect(receipt?.waiver?.reason).toContain('nunca executou');
+    expect(receipt?.waiver?.reason).toContain('roster esgotado');
+  });
+
+  it('task com evidência de execução: caminho atual intocado — nem reroute nem waiver', () => {
+    const fixture = runningWorkerFixture();
+    // O worker PUBLICOU: handoff físico aceito ancorado ao dispatch exato.
+    const handoffs = createScopedHandoffStore(fixture.runtime, fixture.scope);
+    const handoff = handoffs.submit({
+      missionId: fixture.mission.id,
+      sessionId: fixture.sessionId,
+      workerIncarnationId: fixture.claim.workerIncarnationId,
+      fromAgent: 'Advisor independente',
+      status: 'success',
+      summary: 'Análise publicada antes do provider morrer.',
+    });
+    insertPhysicalHandoffAuthority({
+      runtime: fixture.runtime,
+      scope: fixture.scope,
+      missionId: fixture.mission.id,
+      handoffId: handoff.id,
+      sessionId: fixture.sessionId,
+      workerIncarnationId: fixture.claim.workerIncarnationId,
+    });
+    fixture.dispatches.acceptHandoff({
+      sessionId: fixture.sessionId,
+      workerIncarnationId: fixture.claim.workerIncarnationId,
+      handoffId: handoff.id,
+    });
+    const attemptLiveReroute = vi.fn(() => rosterCandidate);
+    configureProviderFailureWaiver({
+      runtimeManager: fixture.runtime,
+      attemptLiveReroute,
+    });
+
+    const outcome = handleMissionWorkerProviderNoRoute(
+      authHitInputFor(fixture),
+    );
+
+    // Evidência presente = o "reply" já foi publicado: o guard não intervém.
+    // O retry limitado + a cadeia de entrega existente seguem donos do destino.
+    expect(outcome).toBe('retry');
+    expect(attemptLiveReroute).not.toHaveBeenCalled();
+    const dispatch = fixture.dispatches.get(fixture.task.id);
+    expect(dispatch?.state).toBe('handoff_ready');
+    expect(dispatch?.handoffId).toBe(handoff.id);
+    expect(dispatch?.integrationReceipt).toBeUndefined();
+    expect(fixture.tasks.list(fixture.mission.id)[0]?.status).toBe('running');
+  });
+
+  it('orçamento 1: dispatch já re-roteado nunca consulta o reroute de novo e o waiver nomeia o orçamento', () => {
+    const fixture = runningWorkerFixture({ extraGlmAgent: true });
+    // 1º hit real: diretiva durável commitada pelo coordenador (mecanismo da
+    // 0.19.42) — o orçamento do guard para esta task fica consumido.
+    const bound = fixture.dispatches.get(fixture.task.id)!;
+    fixture.dispatches.rerouteLiveProviderDeadWorkerByCoordinator({
+      taskId: fixture.task.id,
+      revision: bound.revision,
+      paneId: fixture.paneId,
+      sessionId: fixture.sessionId,
+      workerIncarnationId: fixture.claim.workerIncarnationId,
+      directive: {
+        version: 1,
+        fromAgentRef: 'advisor',
+        toAgentRef: 'advisor-glm',
+        exhaustedAdapterIds: ['codex'],
+        reason: 'codex morreu com 401 no primeiro spawn',
+        reroutedAt: Date.now(),
+      },
+      note: '[NEXUS_PROVIDER_REROUTE] codex 401; re-roteado para Advisor GLM',
+    });
+    // O substituto reclama a task (claim honra a diretiva) e sobe fisicamente.
+    // O lease do reroute expira em +1s; um relógio adiantado dispensa sleep.
+    const futureDispatches = createTaskDispatchStore(
+      fixture.runtime,
+      fixture.scope,
+      { now: () => Date.now() + 5_000 },
+    );
+    const claim2 = futureDispatches.claim({
+      missionId: fixture.mission.id,
+      taskId: fixture.task.id,
+      intentVersion: 4,
+      workerId: 'Advisor GLM',
+      leaseOwner: 'main',
+      leaseMs: 30_000,
+      ownership: fixture.ownership,
+      executionMode: fixture.executionMode,
+      agentRef: 'advisor-glm',
+      agentCategory: fixture.agentCategory,
+      rosterHash: fixture.planReceipt.rosterHash,
+      routeContract: { adapterId: 'glm', model: 'glm-4.7', effort: 'high' },
+    });
+    const route2 = fixture.missions.reserveRouteDecision(
+      fixture.mission.id,
+      fixture.task.title,
+      {
+        tier: 'hard',
+        adapterId: 'glm',
+        model: 'glm-4.7',
+        effort: 'high',
+        reason: 'rota do substituto do roster',
+        alternatives: [],
+      },
+    );
+    const routed2 = futureDispatches.attachRoute({
+      taskId: fixture.task.id,
+      revision: claim2.revision,
+      leaseToken: claim2.leaseToken,
+      routeReservationId: route2.id,
+      adapterId: 'glm',
+      model: 'glm-4.7',
+      effort: 'high',
+    });
+    fixture.missions.consumeRouteReservation(
+      {
+        reservationId: route2.id,
+        missionId: fixture.mission.id,
+        adapterId: 'glm',
+        model: 'glm-4.7',
+        effort: 'high',
+      },
+      `dispatch:${claim2.id}`,
+    );
+    futureDispatches.bindSpawn({
+      taskId: fixture.task.id,
+      revision: routed2.revision,
+      leaseToken: claim2.leaseToken,
+      workerIncarnationId: claim2.workerIncarnationId,
+      paneId: 'pane-substituto',
+      sessionId: 'session-substituto',
+    });
+    const attemptLiveReroute = vi.fn(() => rosterCandidate);
+    configureProviderFailureWaiver({
+      runtimeManager: fixture.runtime,
+      attemptLiveReroute,
+    });
+
+    // 2º hit de provider, agora no substituto: orçamento 1 já foi gasto.
+    const outcome = handleMissionWorkerProviderNoRoute({
+      scope: fixture.scope,
+      missionId: fixture.mission.id,
+      paneId: 'pane-substituto',
+      sessionId: 'session-substituto',
+      workerIncarnationId: claim2.workerIncarnationId,
+      adapterId: 'glm',
+      hit: {
+        kind: 'auth' as const,
+        reason: 'Error: 401 token do substituto também revogado',
+        cooldownMs: 60_000,
+      },
+    });
+
+    expect(attemptLiveReroute).not.toHaveBeenCalled();
+    expect(outcome).toBe('waived');
+    const receipt = fixture.dispatches.get(fixture.task.id)?.integrationReceipt;
+    expect(receipt?.kind).toBe('advisory_provider_unavailable');
+    expect(receipt?.waiver?.reason).toContain('nunca executou');
+    expect(receipt?.waiver?.reason).toContain('orçamento');
+  });
+});
+
+describe('providerWaiverNeverExecutedReason', () => {
+  it('nomeia causa, CLI e o desfecho da consulta ao roster', () => {
+    const exhausted = providerWaiverNeverExecutedReason({
+      hitKind: 'auth',
+      adapterId: 'claude',
+      rosterConsult: 'exhausted',
+    });
+    expect(exhausted).toContain('nunca executou');
+    expect(exhausted).toContain('claude');
+    expect(exhausted).toContain('roster esgotado');
+
+    const budget = providerWaiverNeverExecutedReason({
+      hitKind: 'auth',
+      adapterId: 'glm',
+      rosterConsult: 'budget-spent',
+    });
+    expect(budget).toContain('orçamento');
+
+    const shortWindow = providerWaiverNeverExecutedReason({
+      hitKind: 'rate-limit',
+      adapterId: 'codex',
+      rosterConsult: 'not-consulted',
+    });
+    expect(shortWindow).toContain('espera-pela-irmã');
+  });
+
+  it('nunca estoura o orçamento durável do reason', () => {
+    const reason = providerWaiverNeverExecutedReason({
+      hitKind: 'transient',
+      adapterId: 'x'.repeat(4_000),
+      rosterConsult: 'consult-failed',
+    });
+    expect(reason.length).toBeLessThanOrEqual(2_000);
   });
 });
 

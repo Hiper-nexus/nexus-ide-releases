@@ -113,6 +113,8 @@ export type WorkflowAuthorityResolver = (
 ) => WorkflowEffectAuthority;
 
 export interface McpDispatchOptions {
+  /** Physical source override for the authenticated ACP bridge boundary. */
+  source?: McpDispatchSource;
   confirm?: McpConfirmationHandler;
   /** Renderer/voice seam: revalidate the exact native caller after awaits. */
   assertCurrentCaller?: () => boolean;

@@ -129,6 +129,13 @@ export const taskProviderWaiverBindingSchema = z
     hitKind: taskProviderWaiverHitKindSchema,
     /** sha256 do texto da causa detectada pelo limit-detector. */
     causeSha256: z.string().regex(/^[a-f0-9]{64}$/),
+    /**
+     * Reply guard (design do block/buzz): registro humano-legível de que a
+     * task NUNCA executou e por quê o roster não a resgatou (esgotado,
+     * orçamento de reroute consumido, janela curta). Todo waiver novo o
+     * carrega; opcional apenas para receipts persistidos antes do guard.
+     */
+    reason: z.string().min(1).max(2_000).optional(),
   })
   .strict();
 /**

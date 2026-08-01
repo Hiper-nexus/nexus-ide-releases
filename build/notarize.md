@@ -235,13 +235,47 @@ Ele classifica cada provedor em `healthy` / `absent` / `unresponsive` /
 - sonda que explode conta como não-responsiva — o gate não começa apostando
   que o provedor está bem.
 
-**Falta ligar a sonda viva ao gate.** O núcleo é puro e testado, mas cada CLI
-precisa do seu comando de sonda validado contra um provedor **saudável** antes
-de virar bloqueio de release — um preflight mal calibrado reprova release boa,
-que é pior que o problema. Valide quando os provedores estiverem descansados.
+**Desde a 0.20.3 a sonda viva está ligada ao gate** (codex/grok/claude
+calibradas em `PROVIDER_PROBE_SPECS`; agy/kimi/glm/opencode permanecem
+não-calibradas de propósito — ver `PROVIDER_PROBE_UNCALIBRATED` e o porquê de
+cada uma). Regra permanente: nenhuma CLI vira bloqueio sem o comando de sonda
+validado contra provedor **saudável** — preflight mal calibrado reprova release
+boa, que é pior que o problema.
 
-Enquanto isso não existir, a regra operacional é: **quando um ciclo falhar por
-worker stalled, espace o próximo.** Disparar de novo em seguida degrada mais.
+Quando mesmo assim um ciclo falhar por worker stalled, **espace o próximo.**
+Disparar de novo em seguida degrada mais.
+
+## Variante claude-orquestrador: skip declarado até o wiring de hooks ser provado
+
+Na 0.20.3 a variante claude-orquestrador do gate reprovou 2/2 com a mesma
+assinatura: `invariant-failed`, missão `blocked` por
+`orchestrator_session_exited_before_first_dispatch`, kickoff
+`recusado (timeout)` com `turnStart=0/0` — e diagnóstico post-mortem provou que
+**o claude estava saudável** (mesma HOME preservada respondeu `claude -p` na
+primeira; auth, trust e onboarding corretamente semeados pelo harness). A
+mensagem do kickoff ENTROU na sessão do claude (user message no transcript da
+sessão), mas nenhum evento `UserPromptSubmit` chegou ao canal de hooks — a
+missão morreu esperando um sinal que o wiring nunca entregou.
+
+Contexto que explica por que ninguém viu antes: a variante nasceu na campanha
+da 0.20.2 **com o claude desta máquina quebrado** — ela passou a vida
+skip-declarada e a 0.20.3 foi seu primeiro exercício real. O elo exato do
+wiring (settings do overlay vs `--settings` vs servidor de hooks) não pôde ser
+provado post-mortem porque o teardown limpa os arquivos token-scoped de
+`~/.nexus/mcp-configs/`.
+
+Decisão operacional (0.20.4):
+
+- A variante volta a **skip declarado** (`NEXUS_REAL_MISSION_ADVISOR_SKIP`
+  contendo `claude` antes do gate) — o mecanismo honesto da 0.20.2: o skip
+  entra na evidência (`skippedOrchestrators`) e aparece no publish.
+- O refusal do kickoff agora registra `hooks=` (canal-vivo vs
+  nenhum-evento-recebido) — `src/main/orch/mission-kickoff.ts`. Na próxima
+  tentativa da variante, a recusa nomeia qual metade quebrou em vez de exigir
+  arqueologia de userData.
+- Reativar a variante exige: exercitá-la em dev com claude saudável, ler o
+  `hooks=` da recusa (se recusar) e provar o elo quebrado. Só então remover o
+  skip.
 
 ## Limite de assinatura Windows
 

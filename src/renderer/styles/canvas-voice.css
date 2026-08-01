@@ -172,6 +172,8 @@
   font-size: 9px;
   letter-spacing: 0.1em;
   line-height: 1;
+  display: inline-flex;
+  align-items: center;
 }
 
 .voice-hud__ctls {
@@ -193,6 +195,11 @@
   height: 18px;
   padding: 0;
   cursor: pointer;
+}
+
+.voice-hud__ctl .pixel-icon {
+  display: block;
+  margin: auto;
 }
 
 .voice-hud__ctl:hover {

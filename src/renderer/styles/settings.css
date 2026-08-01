@@ -174,7 +174,7 @@
 }
 
 .settings-nav {
-  flex: 0 0 244px;
+  flex: 0 0 256px;
   display: flex;
   flex-direction: column;
   gap: 3px;
@@ -192,7 +192,7 @@
   display: flex;
   flex-direction: column;
   gap: 3px;
-  padding: 12px;
+  padding: 14px 12px;
   overflow-y: auto;
   scrollbar-gutter: stable;
 }
@@ -264,11 +264,12 @@
 }
 
 .settings-nav__section {
-  color: var(--text-dim);
+  color: var(--text-faint);
   font-family: var(--font-ui);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.04em;
+  text-transform: uppercase;
   margin: 12px 4px 5px;
 }
 
@@ -281,7 +282,8 @@
   background: color-mix(in srgb, var(--bg) 16%, transparent);
   border: 1px solid transparent;
   border-radius: var(--radius-md);
-  padding: 8px 9px;
+  min-height: 44px;
+  padding: 8px 10px;
   cursor: pointer;
   text-align: left;
   color: var(--text);
@@ -296,6 +298,7 @@
 .settings-nav__item--active {
   background: color-mix(in srgb, var(--accent) 14%, transparent);
   border-color: color-mix(in srgb, var(--accent) 72%, transparent);
+  box-shadow: inset 1px 0 0 var(--accent);
 }
 
 .settings-nav__icon {
@@ -338,7 +341,7 @@
 .settings-nav__subtitle {
   color: var(--text-dim);
   font-family: var(--font-ui);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.35;
   white-space: nowrap;
   overflow: hidden;
@@ -526,6 +529,174 @@
 .settings-section-heading--with-count h4 {
   margin: 0;
   font: inherit;
+}
+
+/* ACP / BYOH: a deliberate settings surface, not an unstyled JSON escape hatch. */
+.acp-harness {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--border));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-elevated) 94%, var(--accent) 6%);
+}
+
+.acp-harness__header h3,
+.acp-harness__header p {
+  margin: 0;
+}
+
+.acp-harness__header h3 {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.acp-harness__header p {
+  max-width: 680px;
+  margin-top: 5px;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.acp-harness__transport {
+  display: flex;
+  gap: 6px;
+}
+
+.acp-harness__transport button,
+.acp-harness__actions button,
+.acp-harness > .btn-primary {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.acp-harness__transport button.is-active,
+.acp-harness__transport button:hover:not(:disabled),
+.acp-harness__actions button[aria-pressed='true'],
+.acp-harness__actions button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 72%, var(--border));
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg));
+  color: var(--text);
+}
+
+.acp-harness__transport button:focus-visible,
+.acp-harness__actions button:focus-visible,
+.acp-harness__editor textarea:focus-visible,
+.acp-harness > .btn-primary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.acp-harness__status {
+  margin: 0;
+  padding: 8px 10px;
+  border-left: 2px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 7%, var(--bg));
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.acp-harness__list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.acp-harness__list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg);
+}
+
+.acp-harness__list li strong,
+.acp-harness__list li span {
+  display: block;
+}
+
+.acp-harness__list li strong {
+  color: var(--text);
+  font-size: 11px;
+}
+
+.acp-harness__list li span {
+  margin-top: 3px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.acp-harness__actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 5px;
+}
+
+.acp-harness__editor {
+  display: grid;
+  gap: 6px;
+}
+
+.acp-harness__editor > span {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.acp-harness__editor textarea {
+  width: 100%;
+  min-height: 132px;
+  box-sizing: border-box;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  resize: vertical;
+}
+
+.acp-harness__probe {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+}
+
+.acp-harness__probe.ok {
+  background: color-mix(in srgb, var(--ok) 10%, var(--bg));
+  color: var(--ok);
+}
+
+.acp-harness__probe.err {
+  background: color-mix(in srgb, var(--danger) 10%, var(--bg));
+  color: var(--danger);
+}
+
+@media (max-width: 620px) {
+  .acp-harness__list li {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .acp-harness__actions {
+    flex-wrap: wrap;
+  }
 }
 
 .settings-toggle-list {

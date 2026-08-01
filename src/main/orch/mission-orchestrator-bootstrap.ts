@@ -40,6 +40,7 @@ import {
   getSessionState,
   type OwnedAgentSessionInfo,
 } from "../pty/pty-manager";
+import { getAcpDriverSession } from "../acp/acp-harness-driver";
 import { releaseSession } from "./gate";
 import type {
   RebindOrchestratorAuthorityInput,
@@ -57,7 +58,7 @@ import {
   listPaneSnapshots,
   requestMissionPaneClose,
   requestPaneClose,
-  spawnMainOwnedMissionPane,
+  spawnMainOwnedMissionPaneAsync,
   type MissionPaneCloseRequest,
   type PaneRuntimeAuthority,
   type PaneSpawnOptions,
@@ -122,6 +123,20 @@ const PLAN_PROMOTION_TEARDOWN_BLOCK_MARKER =
   "<!-- nexus:plan-promotion-teardown-blocked -->";
 const BOOTSTRAP_CTA = "Retomar missão";
 const BOOTSTRAP_AUTO_RETRY_CTA = "Recuperação automática";
+
+/** Main-owned session inventory shared by PTY and ACP mission transports. */
+function runtimeAgentSessionInfo(
+  sessionId: string,
+): OwnedAgentSessionInfo | null {
+  return getAgentSessionInfo(sessionId) ?? getAcpDriverSession(sessionId)?.agent ?? null;
+}
+
+function runtimeSessionState(
+  sessionId: string,
+): ReturnType<typeof getSessionState> {
+  return getSessionState(sessionId) ??
+    (getAcpDriverSession(sessionId) ? "idle" : null);
+}
 
 function bootstrapFlightKey(
   scope: Readonly<ProjectExecutionScope>,
@@ -259,7 +274,7 @@ export interface MissionOrchestratorBootstrapDeps {
       missionId: string;
       role: "orchestrator";
     },
-  ): ReturnType<typeof spawnMainOwnedMissionPane>;
+  ): ReturnType<typeof spawnMainOwnedMissionPaneAsync>;
   closePane(paneId: string): boolean | Promise<boolean>;
   suppressIntentionalExit(input: {
     readonly scope: ProjectExecutionScope;
@@ -722,13 +737,13 @@ const productionDeps: MissionOrchestratorBootstrapDeps = {
   getSquad: (squadId) => getSquad(squadId),
   resolveRuntime: (squad, orchestrator) =>
     resolveProductionMissionOrchestratorRuntime(squad, orchestrator),
-  spawnMainOwnedPane: (input) => spawnMainOwnedMissionPane(input),
+  spawnMainOwnedPane: (input) => spawnMainOwnedMissionPaneAsync(input),
   closePane: (paneId) => requestPaneClose(paneId),
   suppressIntentionalExit: (input) =>
     suppressIntentionalMissionOrchestratorExit(input),
   listRuntimePanes: () => listPaneSnapshots(),
-  getSessionState: (sessionId) => getSessionState(sessionId),
-  getAgentSessionInfo: (sessionId) => getAgentSessionInfo(sessionId),
+  getSessionState: (sessionId) => runtimeSessionState(sessionId),
+  getAgentSessionInfo: (sessionId) => runtimeAgentSessionInfo(sessionId),
   getRuntimeAuthority: (sessionId) =>
     getPaneRuntimeAuthorityBySession(sessionId),
   submitKickoff: (scope, input) => submitMissionKickoffFromMain(scope, input),
@@ -1249,7 +1264,7 @@ export class MissionOrchestratorBootstrapService {
 
     const title = `${squad.name} · orq`;
     preparePrevcInBackground();
-    const spawn = this.#deps.spawnMainOwnedPane({
+    const spawn = await this.#deps.spawnMainOwnedPane({
       adapterId: runtime.adapterId,
       model: runtime.model,
       accountId: runtime.accountId,

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { BrowserPaneState, PaneModel } from '../../shared/types';
 import { attachBrowserPane } from '../browser/browser-host';
 import { useLayoutStore } from '../state/layout-store';
+import { PixelIcon } from './PixelIcon';
 import { BrowserDesignBar } from './BrowserDesignBar';
 import { DesignSidebar } from './DesignSidebar';
 import { PaneToolbar } from './PaneToolbar';
@@ -87,7 +88,7 @@ export function BrowserPane({ pane, isCanvas }: Props) {
           aria-label="Voltar"
           onClick={() => void nav('back')}
         >
-          ‹
+          <PixelIcon name="arrow-left" size={12} />
         </button>
         <button
           type="button"
@@ -97,7 +98,7 @@ export function BrowserPane({ pane, isCanvas }: Props) {
           aria-label="Avançar"
           onClick={() => void nav('forward')}
         >
-          ›
+          <PixelIcon name="arrow-right" size={12} />
         </button>
         <button
           type="button"
@@ -106,7 +107,7 @@ export function BrowserPane({ pane, isCanvas }: Props) {
           aria-label={state.loading ? 'Parar' : 'Recarregar'}
           onClick={() => void nav(state.loading ? 'stop' : 'reload')}
         >
-          {state.loading ? '×' : '↻'}
+          <PixelIcon name={state.loading ? 'stop' : 'refresh'} size={12} />
         </button>
         <input
           className="browser-bar__url"

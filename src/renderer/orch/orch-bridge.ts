@@ -158,6 +158,14 @@ function isExactHealthyPresentation(
   const pane = listPanes(useLayoutStore.getState().root).find(
     (candidate) => candidate.id === req.paneId,
   );
+  if (req.transport === 'acp') {
+    return (
+      pane?.kind === 'cli-agent' &&
+      pane.missionId === req.missionId &&
+      pane.role === req.role &&
+      pane.agentTransport === 'acp'
+    );
+  }
   return (
     pane?.kind === 'cli-agent' &&
     pane.missionId === req.missionId &&
@@ -185,6 +193,7 @@ function paneFromPresentation(
     missionId: req.missionId,
     agentName: req.pane.agentName,
     role: req.role,
+    agentTransport: req.transport ?? 'cli-pty',
   };
 }
 
@@ -204,22 +213,30 @@ function panesAfterMainOwnedPresentation(
   pane: PaneModel,
 ): PaneModel[] {
   const current = existing.find((candidate) => candidate.id === pane.id);
+  const presented = current
+    ? { ...current, ...pane }
+    : pane;
   if (!current) {
     return (
       existing.length === 1 &&
       isStructuralWorkspacePlaceholder(existing[0]!)
     )
-      ? [pane]
-      : [...existing, pane];
+      ? [presented]
+      : [...existing, presented];
   }
 
   const others = existing.filter((candidate) => candidate.id !== pane.id);
-  return (
+  const next = (
     others.length === 1 &&
     isStructuralWorkspacePlaceholder(others[0]!)
   )
-    ? [current]
-    : existing;
+    ? [presented]
+    : existing.map((candidate) =>
+        candidate.id === pane.id ? presented : candidate,
+      );
+  return next.every((candidate, index) => candidate === existing[index])
+    ? existing
+    : next;
 }
 
 function normalizeExactHealthyPresentation(
@@ -229,7 +246,10 @@ function normalizeExactHealthyPresentation(
   const existing = listPanes(layout.root);
   const current = existing.find((candidate) => candidate.id === req.paneId);
   if (!current) return;
-  const next = panesAfterMainOwnedPresentation(existing, current);
+  const next = panesAfterMainOwnedPresentation(
+    existing,
+    paneFromPresentation(req),
+  );
   if (next === existing) return;
   useHomeStore.getState().hide();
   layout.setPanes(next);
@@ -256,6 +276,15 @@ async function presentLiveMainOwnedPane(
       (current.role && current.role !== req.role))
   ) {
     throw new Error('main-owned pane presentation identity diverged');
+  }
+
+  if (req.transport === 'acp') {
+    useOrchStore.getState().bindPaneMission(req.paneId, req.missionId);
+    useHomeStore.getState().hide();
+    const pane = current ? { ...current, agentTransport: 'acp' as const } : paneFromPresentation(req);
+    const next = panesAfterMainOwnedPresentation(existing, pane);
+    if (next !== existing) useLayoutStore.getState().setPanes(next);
+    return;
   }
 
   // This flag asks the PTY boundary to adopt persisted Main authority. It

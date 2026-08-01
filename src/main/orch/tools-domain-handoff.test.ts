@@ -647,6 +647,7 @@ describe("handoff MCP stop receipt", () => {
         workerIncarnationId: "worker-incarnation-a",
         detail: `success: ${submitted.summary}`,
       },
+      undefined,
     );
     expect(mocks.submit).not.toHaveBeenCalled();
     expect(mocks.acceptHandoff).not.toHaveBeenCalled();

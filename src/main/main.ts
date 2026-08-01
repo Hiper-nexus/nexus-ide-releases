@@ -167,6 +167,7 @@ import { shutdownPtyHost } from "./pty/pty-host-client";
 import {
   shutdownOrchestrationRuntimesWithProof,
 } from "./app-shutdown";
+import { shutdownAllAcpDriverSessions } from "./acp/acp-harness-driver";
 import { createShutdownNoticeController } from "./app-shutdown-ui";
 import {
   ensureCommandBlockTracking,
@@ -174,6 +175,7 @@ import {
 } from "./terminal/command-block-tracker";
 import { createCommandBlockPersister } from "./terminal/command-block-persist";
 import { configureMissionEventEmit } from "./orch/mission-event-emit";
+import { installObserverMissionEventProjector } from "./orch/observer-mission-event-projector";
 import { registerTerminalBlockActionsIpc } from "./terminal/terminal-block-actions-ipc";
 import { registerSearchMixerIpc } from "./search/search-mixer-ipc";
 import { getSearchMixer } from "./search/search-mixer-bootstrap";
@@ -287,8 +289,14 @@ import {
   configureGamificationService,
   shutdownGamificationService,
 } from "./gamification/gamification-service";
-import { requireProjectDomainStoreRegistry } from "./orch/project-domain-store-registry";
-import { configureProviderFailureWaiver } from "./orch/provider-failure-waiver";
+import {
+  getProjectDomainStores,
+  requireProjectDomainStoreRegistry,
+} from "./orch/project-domain-store-registry";
+import {
+  configureProviderFailureWaiver,
+  providerWaiverLearning,
+} from "./orch/provider-failure-waiver";
 import {
   configureCronRuntime,
   disposeCronRuntime,
@@ -422,7 +430,23 @@ function bootstrap(): void {
   configureAuditLogRuntime(projectRuntimeManager);
   configurePtyProjectRuntimeManager(projectRuntimeManager);
   configureRendererMissionAuthority(projectRuntimeManager);
-  configureProviderFailureWaiver({ runtimeManager: projectRuntimeManager });
+  configureProviderFailureWaiver({
+    runtimeManager: projectRuntimeManager,
+    appendLearning: ({ scope, missionId, taskId, adapterId, hitKind }) => {
+      const stores = getProjectDomainStores(scope);
+      const taskTitle =
+        stores.tasks.list(missionId).find((task) => task.id === taskId)?.title ??
+        taskId;
+      stores.missions.appendLearning(
+        missionId,
+        providerWaiverLearning({
+          taskTitle,
+          adapterId,
+          hitKind,
+        }),
+      );
+    },
+  });
   // Liga a varredura de PTY do teardown de worktree. Injetado aqui, e não
   // importado dentro do registry, porque pty-manager já importa de runtime/ —
   // o import de volta fecharia um ciclo ESM.
@@ -485,6 +509,7 @@ function bootstrap(): void {
   );
   ensureCommandBlockTracking();
   configureMissionEventEmit(projectRuntimeManager);
+  installObserverMissionEventProjector();
   registerMissionEventIpc();
   // Product paths: CommandBlock actions, SearchMixer, full product-wave IPC.
   registerTerminalBlockActionsIpc();
@@ -908,6 +933,10 @@ function shutdown(): Promise<void> {
     // complete. A failed proof must leave the next retry operational.
     await stopCronLoop();
     await closeAllDesignWritebacks();
+    // ACP children are not part of the PTY host inventory. Close them before
+    // proving the PTY half, otherwise quitting could leave a harness orphaned
+    // even though the normal terminal shutdown gate passed.
+    await shutdownAllAcpDriverSessions();
     await shutdownOrchestrationRuntimesWithProof({
       quiesceOrchestration: quiesceOrchestrationCoordinator,
       // Generous fence: Darwin supervisor proof is unbounded once SIGTERM is

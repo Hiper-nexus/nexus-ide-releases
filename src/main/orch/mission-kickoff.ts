@@ -26,6 +26,7 @@ import {
   tapSessionState,
   type OwnedAgentSessionInfo,
 } from '../pty/pty-manager';
+import { getAcpDriverSession } from '../acp/acp-harness-driver';
 import { requireRendererWorkspaceScope } from '../persistence/renderer-workspace-scope';
 import { getContextBySession } from './gate';
 import { missionRequiresGuidedPrevc } from './guided-mission-authority';
@@ -41,6 +42,7 @@ import { getSquad } from './squad-store';
 import { snapshotSquadAuthority } from './squad-authority-snapshot';
 import { assertPromotedPlanSnapshot } from './plan-promotion-authority';
 import {
+  getAgentSemanticStatusBySession,
   getAgentTurnStartSequence,
   isSessionInjectableIdle,
   tapAgentSemanticStatus,
@@ -225,6 +227,15 @@ export interface MissionKickoffAcceptancePorts {
   ) => () => void;
   /** Monotonic, session-scoped native UserPromptSubmit sequence. */
   readonly getTurnStartSequence: () => number;
+  /**
+   * Uma linha sobre o canal de hooks da sessão. turnStart=0 tem DUAS causas
+   * possíveis com remédios opostos: wiring de hooks morto (settings/--settings
+   * nunca chegaram ao CLI) versus detector que não reconheceu o turno. Se
+   * QUALQUER evento canônico já chegou, o wiring está vivo — sem esta linha o
+   * post-mortem não distingue os dois (provado no gate claude-orquestrador da
+   * 0.20.3: recusa 2/2 sem como saber qual metade quebrou).
+   */
+  readonly getHookChannelDetail?: () => string;
   readonly onTurnStart: (
     tap: (sessionId: string, sequence: number) => void,
   ) => () => void;
@@ -434,7 +445,8 @@ export async function runMissionKickoffAcceptance(
         `session=${input.sessionId} ptyState=${ports.getState(input.sessionId)} ` +
         `injetavel=${ports.isInjectableIdle?.() ?? 'n/a'} ` +
         `saidaVista=${outputSeen} busyVisto=${busySeen} ` +
-        `turnStart=${ports.getTurnStartSequence()}/${turnStartBaseline}`,
+        `turnStart=${ports.getTurnStartSequence()}/${turnStartBaseline} ` +
+        `hooks=${ports.getHookChannelDetail?.() ?? 'n/a'}`,
     );
     // The production block port has its own mission/intent/session fence. That
     // lets mid-flight authority drift become visible while stale rebinds are a
@@ -717,6 +729,19 @@ function sameScope(
     left.rootRealPath === right.rootRealPath;
 }
 
+function runtimeAgentSessionInfo(
+  sessionId: string,
+): OwnedAgentSessionInfo | null {
+  return getAgentSessionInfo(sessionId) ?? getAcpDriverSession(sessionId)?.agent ?? null;
+}
+
+function runtimeSessionState(
+  sessionId: string,
+): PaneSessionState | null {
+  return getSessionState(sessionId) ??
+    (getAcpDriverSession(sessionId) ? 'idle' : null);
+}
+
 function requireKickoffAuthority(
   scope: Readonly<ProjectExecutionScope>,
   input: z.infer<typeof missionKickoffRequestSchema>,
@@ -732,15 +757,23 @@ function requireKickoffAuthority(
   ) {
     throw new Error('kickoff exige missão running, aprovada e sessão atual');
   }
-  const agent = getAgentSessionInfo(input.sessionId);
+  const agent = runtimeAgentSessionInfo(input.sessionId);
   const paneAuthority = getPaneRuntimeAuthorityBySession(input.sessionId);
   const gate = getContextBySession(input.sessionId);
+  const ownerMatches =
+    expectedOwner === undefined ||
+    paneAuthority?.owner === expectedOwner ||
+    // ACP sessions remain main-owned even after their semantic pane is
+    // presented in a renderer. The workspace scope and bearer gate below are
+    // still required; owner=null is the deliberate transport distinction.
+    (getAcpDriverSession(input.sessionId) !== null &&
+      paneAuthority?.owner === null);
   if (
     !agent || agent.role !== 'orchestrator' || agent.missionId !== mission.id ||
     !sameScope(agent.scope, scope) ||
     !paneAuthority || paneAuthority.kind !== 'cli-agent' ||
     paneAuthority.sessionId !== input.sessionId ||
-    (expectedOwner !== undefined && paneAuthority.owner !== expectedOwner) ||
+    !ownerMatches ||
     paneAuthority.role !== 'orchestrator' || paneAuthority.missionId !== mission.id ||
     !paneAuthority.scope || !sameScope(paneAuthority.scope, scope) ||
     !gate || gate.role !== 'orchestrator' || gate.missionId !== mission.id ||
@@ -795,17 +828,21 @@ export function submitMissionKickoffFromRenderer(
   const plan = ensureGuidedMissionPlanForScope(scope, initial.mission.id);
   const standardTopology: StandardMissionTopology =
     plan.applicable ? plan.topology : 'delivery';
+  const acpSession = getAcpDriverSession(request.sessionId);
+  const canonicalPrompt = buildCanonicalMissionKickoffPrompt(
+    initial.mission,
+    squad,
+    standardTopology,
+  );
   const input = {
     ...request,
-    prompt: bindPtyMissionControlToKickoff(
-      initial.mission,
-      request.sessionId,
-      buildCanonicalMissionKickoffPrompt(
-        initial.mission,
-        squad,
-        standardTopology,
-      ),
-    ),
+    prompt: acpSession
+      ? canonicalPrompt
+      : bindPtyMissionControlToKickoff(
+          initial.mission,
+          request.sessionId,
+          canonicalPrompt,
+        ),
   };
   assertSafePtyPrompt(input.prompt);
   return submitMissionKickoffWithAuthority(scope, input, initial, owner);
@@ -823,13 +860,16 @@ export function submitMissionKickoffFromMain(
   const parsed = missionKickoffRequestSchema.parse(raw);
   assertSafePtyPrompt(parsed.prompt);
   const initial = requireKickoffAuthority(scope, parsed);
+  const acpSession = getAcpDriverSession(parsed.sessionId);
   const input = {
     ...parsed,
-    prompt: bindPtyMissionControlToKickoff(
-      initial.mission,
-      parsed.sessionId,
-      parsed.prompt,
-    ),
+    prompt: acpSession
+      ? parsed.prompt
+      : bindPtyMissionControlToKickoff(
+          initial.mission,
+          parsed.sessionId,
+          parsed.prompt,
+        ),
   };
   assertSafePtyPrompt(input.prompt);
   return submitMissionKickoffWithAuthority(scope, input, initial);
@@ -854,15 +894,56 @@ function hasScheduledKickoffRecovery(
       expectedSessionId: sessionId,
       hasCurrentKickoffAcceptance:
         stores.missions.hasCurrentKickoffAcceptance(missionId),
-      sessionState: getSessionState(sessionId),
+      sessionState: runtimeSessionState(sessionId),
       pane,
-      agent: getAgentSessionInfo(sessionId),
+      agent: runtimeAgentSessionInfo(sessionId),
       authority: getPaneRuntimeAuthorityBySession(sessionId),
     });
   } catch {
     // A promise of automatic recovery requires positive durable proof.
     return false;
   }
+}
+
+/**
+ * ACP has a structured turn boundary, so kickoff acceptance is the moment the
+ * `session/prompt` request is accepted and the typed turn_started frame is
+ * emitted. Waiting for the complete provider turn here would hold bootstrap
+ * open for the whole mission and make a healthy orchestrator look stalled.
+ */
+async function runAcpMissionKickoffAcceptance(
+  input: { readonly sessionId: string; readonly prompt: string },
+  ports: {
+    readonly isAuthorized: () => boolean;
+    readonly block: (reason: MissionKickoffFailureReason) => Promise<void>;
+  },
+): Promise<MissionKickoffResult> {
+  const fail = async (
+    reason: MissionKickoffFailureReason,
+  ): Promise<MissionKickoffResult> => {
+    await ports.block(reason);
+    return {
+      accepted: false,
+      reason,
+      detail: missionKickoffFailureDetail(reason),
+      cta: KICKOFF_CTA,
+    };
+  };
+  if (!ports.isAuthorized()) return fail('authority_lost');
+  const session = getAcpDriverSession(input.sessionId);
+  if (!session) return fail('session_exited');
+  try {
+    // `prompt` enters the driver synchronously until its first streamed ACP
+    // event. The promise is intentionally observed in the background: the
+    // durable kickoff receipt records turn acceptance, not mission completion.
+    void session.prompt(input.prompt).catch((error) => {
+      console.warn('[mission-kickoff] ACP turn ended after acceptance:', error);
+    });
+  } catch {
+    return fail('write_failed');
+  }
+  if (!ports.isAuthorized()) return fail('authority_lost');
+  return { accepted: true };
 }
 
 function submitMissionKickoffWithAuthority(
@@ -912,7 +993,41 @@ function submitMissionKickoffWithAuthority(
       return false;
     }
   };
-  const promise = runMissionKickoffAcceptance(
+  const promise = (getAcpDriverSession(input.sessionId)
+    ? runAcpMissionKickoffAcceptance(
+        { sessionId: input.sessionId, prompt: input.prompt },
+        {
+          isAuthorized,
+          block: async (reason) => {
+            const current = initial.stores.missions.get(input.missionId);
+            if (
+              !current ||
+              current.status !== 'running' ||
+              !hasCurrentDispatchAuthority(current) ||
+              current.orchestratorSessionId !== input.sessionId ||
+              (current.intentVersion ?? 0) !== intentVersion
+            ) return;
+            const detail = missionKickoffFailureDetail(reason);
+            const note =
+              `${KICKOFF_BLOCK_MARKER}\n${missionKickoffFailureMarker(reason)}\n` +
+              `## Kickoff não aceito\n${detail} ` +
+              'O Nexus tentará novamente automaticamente; nenhuma nova aprovação ' +
+              'é necessária enquanto este contrato continuar vigente.';
+            const description = current.description.includes(KICKOFF_BLOCK_MARKER)
+              ? current.description
+              : [current.description.trim(), note]
+                  .filter(Boolean)
+                  .join('\n\n')
+                  .slice(0, 65_536);
+            initial.stores.missions.update(input.missionId, {
+              status: 'blocked',
+              intentState: 'blocked_technical',
+              description,
+            });
+          },
+        },
+      )
+    : runMissionKickoffAcceptance(
     { sessionId: input.sessionId, prompt: input.prompt },
     {
       getState: getSessionState,
@@ -928,6 +1043,12 @@ function submitMissionKickoffWithAuthority(
       }),
       getTurnStartSequence: () =>
         getAgentTurnStartSequence(input.sessionId),
+      getHookChannelDetail: () => {
+        const entry = getAgentSemanticStatusBySession(input.sessionId);
+        return entry
+          ? `canal-vivo(${entry.status})`
+          : 'nenhum-evento-recebido';
+      },
       onTurnStart: (tap) => tapAgentTurnStart((entry) => {
         tap(entry.sessionId, entry.sequence);
       }),
@@ -963,7 +1084,7 @@ function submitMissionKickoffWithAuthority(
         });
       },
     },
-  ).then((result) => {
+  )).then((result) => {
     if (!result.accepted) {
       return {
         ...result,

@@ -23,6 +23,12 @@ import {
   committedPhysicalWorkerHead,
   assertReadOnlyLaneObservationCurrent,
 } from "./physical-handoff-git";
+import {
+  attestationGateErrorMessage,
+  gateHandoffAttestation,
+} from "./agent-attestation-gate";
+import { lookupIssuedHandoffAttestation } from "./agent-attestation-lookup";
+import { getMissionEventRuntimeManager } from "./mission-event-emit";
 
 function requireHandoffMcpEffectIntent(
   invocation: McpToolInvocation | undefined,
@@ -30,7 +36,7 @@ function requireHandoffMcpEffectIntent(
   const intent = invocation?.effectIntent;
   if (
     !intent ||
-    (intent.source !== "http-mcp" && intent.source !== "pty-stream") ||
+    !["http-mcp", "acp-stdio", "pty-stream"].includes(intent.source) ||
     intent.toolName !== "nexus_handoff_submit" ||
     !invocation?.agentTransportPhysicalReceipt
   ) {
@@ -48,7 +54,7 @@ function requireHandoffAckPhysicalReceipt(
   const intent = invocation?.effectIntent;
   if (
     !intent ||
-    (intent.source !== "http-mcp" && intent.source !== "pty-stream") ||
+    !["http-mcp", "acp-stdio", "pty-stream"].includes(intent.source) ||
     intent.toolName !== "nexus_handoff_ack" ||
     !invocation?.agentTransportPhysicalReceipt
   ) {
@@ -190,6 +196,38 @@ const handoffSubmitTool: McpToolDef = {
     }
     const status = handoffStatusSchema.parse(args.status);
     assertMcpInvocationCurrent(invocation);
+    const fromAgent = ctx.agentName ?? ctx.label;
+    const atSeconds = Math.floor(Date.now() / 1000);
+    let attestationBind:
+      | {
+          readonly agentPubkey: string;
+          readonly ownerPubkey: string;
+          readonly credential: import("../../shared/agent-attestation").AgentAttestation;
+        }
+      | null = null;
+    if (ctx.missionId) {
+      const manager = getMissionEventRuntimeManager();
+      if (manager) {
+        const runtime = manager.open(ctx.scope);
+        const proof = lookupIssuedHandoffAttestation(
+          runtime.db,
+          ctx.missionId,
+          fromAgent,
+          atSeconds,
+        );
+        const gate = gateHandoffAttestation(runtime.db, ctx.missionId, proof);
+        if (gate.required && !gate.accepted) {
+          throw new Error(attestationGateErrorMessage(gate));
+        }
+        if (gate.required && gate.accepted) {
+          attestationBind = {
+            agentPubkey: gate.agentPubkey,
+            ownerPubkey: gate.ownerPubkey,
+            credential: gate.credential,
+          };
+        }
+      }
+    }
     const handoffInput = {
       status,
       summary,
@@ -198,7 +236,7 @@ const handoffSubmitTool: McpToolDef = {
       missionId: ctx.missionId,
       sessionId: ctx.sessionId,
       workerIncarnationId: ctx.workerIncarnationId,
-      fromAgent: ctx.agentName ?? ctx.label,
+      fromAgent,
     };
     let handoff: ScopedHandoff;
     let taskDispatchState: string | undefined;
@@ -217,6 +255,7 @@ const handoffSubmitTool: McpToolDef = {
             workerIncarnationId: ctx.workerIncarnationId,
             detail: `${status}: ${summary}`,
           },
+          attestationBind ?? undefined,
         );
       handoff = committed.handoff;
       taskDispatchState = committed.taskDispatch.state;
@@ -230,6 +269,7 @@ const handoffSubmitTool: McpToolDef = {
             worktreeHeadSha,
             rawPayloadSha256,
           },
+          attestationBind ?? undefined,
         );
       handoff = committed.handoff;
       replayed = committed.replayed;

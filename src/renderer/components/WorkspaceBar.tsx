@@ -47,8 +47,8 @@ type MenuFocusPosition = 'first' | 'last';
 function densityFromWidth(width: number): BarDensity {
   // Thresholds um pouco mais cedo: labels longos em PT não devem empurrar
   // botões uns sobre os outros nem sobrepor o brand.
-  if (width < 1080) return 'compact';
-  if (width < 1380) return 'icons';
+  if (width < 1160) return 'compact';
+  if (width < 1480) return 'icons';
   return 'full';
 }
 

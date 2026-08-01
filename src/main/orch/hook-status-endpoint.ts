@@ -21,6 +21,7 @@ import type { AgentGateContext } from './gate';
 import {
   applyCanonicalHookEvent,
   type AgentStatusApplyResult,
+  type AgentStatusHookMeta,
 } from './agent-status';
 
 /** Hook payloads are CLI event metadata — 16 KB is generous, not a file drop. */
@@ -63,7 +64,34 @@ export type HookStatusHandlerResult =
 type ApplyEventFn = (input: {
   sessionId: string;
   event: CanonicalHookEvent;
+  /** Raw envelope metadata consumed only by observer-frame emission. */
+  hook?: AgentStatusHookMeta;
 }) => AgentStatusApplyResult;
+
+/** Tool names are labels, not payloads — cap defensively. */
+export const HOOK_TOOL_NAME_MAX_LENGTH = 120;
+
+/**
+ * Extract the tool name from a raw hook body. Mirrors the key set the
+ * vendored emdash parser probes (tool_name / toolName / name / tool.name)
+ * so observer tool frames agree with the canonical interactive-tool
+ * classification. Returns undefined — never a fabricated name.
+ */
+export function extractHookToolName(
+  body: Record<string, unknown>,
+): string | undefined {
+  const nested = body.tool;
+  const candidate =
+    body.tool_name ??
+    body.toolName ??
+    body.name ??
+    (nested && typeof nested === 'object'
+      ? (nested as Record<string, unknown>).name
+      : undefined);
+  if (typeof candidate !== 'string') return undefined;
+  const trimmed = candidate.trim().slice(0, HOOK_TOOL_NAME_MAX_LENGTH);
+  return trimmed.length > 0 ? trimmed : undefined;
+}
 
 /**
  * Handle one validated hook POST. `applyEvent` is injectable so tests can
@@ -110,7 +138,13 @@ export function handleHookStatusRequest(
   }
 
   try {
-    const result = applyEvent({ sessionId: ctx.sessionId, event });
+    const result = applyEvent({
+      sessionId: ctx.sessionId,
+      event,
+      // Observer-frame emission needs the wire event type + tool name the
+      // canonical event intentionally drops (additive; reducer ignores it).
+      hook: { eventType, toolName: extractHookToolName(body) },
+    });
     return {
       statusCode: 200,
       payload: {

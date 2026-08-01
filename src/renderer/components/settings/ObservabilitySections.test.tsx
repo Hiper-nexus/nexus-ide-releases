@@ -139,8 +139,8 @@ describe('Observability settings sections', () => {
     await act(async () => {});
 
     expect(host.textContent).toContain('Diagnóstico');
-    expect(host.textContent).toContain('Mic permission');
-    expect(host.textContent).toContain('Screen Recording');
+    expect(host.textContent).toContain('Permissão do mic');
+    expect(host.textContent).toContain('Gravação de tela');
 
     act(() => root.unmount());
   });

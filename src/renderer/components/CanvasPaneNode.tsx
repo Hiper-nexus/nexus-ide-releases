@@ -9,6 +9,7 @@ import {
 } from '@xyflow/react';
 import { attachHost, blurHost, focusHost } from '../terminal/terminal-host';
 import { PaneToolbar } from './PaneToolbar';
+import { AcpPaneView } from './AcpPaneView';
 import { BrowserPane } from './BrowserPane';
 import { useLayoutStore } from '../state/layout-store';
 import { useSessionStateStore } from '../state/session-state-store';
@@ -68,7 +69,7 @@ export const CanvasPaneNode = memo(function CanvasPaneNode({
 
   // Attach (or re-attach after snapshot) the terminal into this slot.
   useLayoutEffect(() => {
-    if (pane.kind === 'browser') return undefined;
+    if (pane.kind === 'browser' || pane.agentTransport === 'acp') return undefined;
     const slot = slotRef.current;
     if (!slot || isSnapshot) return undefined;
     attachHost(pane, slot);
@@ -85,8 +86,14 @@ export const CanvasPaneNode = memo(function CanvasPaneNode({
   }, [pane.id, isSnapshot]);
 
   useLayoutEffect(() => {
-    if (pane.kind !== 'browser' && isFocused && !isSnapshot) focusHost(id);
-    else if (pane.kind !== 'browser') blurHost(id);
+    if (
+      pane.kind !== 'browser' &&
+      pane.agentTransport !== 'acp' &&
+      isFocused &&
+      !isSnapshot
+    )
+      focusHost(id);
+    else if (pane.kind !== 'browser' && pane.agentTransport !== 'acp') blurHost(id);
   }, [isFocused, id, isSnapshot, pane.kind]);
 
   return (
@@ -125,6 +132,11 @@ export const CanvasPaneNode = memo(function CanvasPaneNode({
       />
       {pane.kind === 'browser' ? (
         <BrowserPane pane={pane} isCanvas />
+      ) : pane.agentTransport === 'acp' ? (
+        <>
+          <PaneToolbar pane={pane} isFocused={isFocused} isCanvas />
+          <AcpPaneView missionId={pane.missionId ?? ''} compact />
+        </>
       ) : isSnapshot ? (
         <div className="canvas-pane__snapshot">
           <span

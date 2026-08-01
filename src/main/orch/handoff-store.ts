@@ -43,6 +43,14 @@ import {
 } from "./task-dispatch-handoff-authority";
 import type { TaskDispatchRecord } from "./task-dispatch-codec";
 import { handoffLogicalOperationKey } from "./handoff-payload-identity";
+import {
+  computeChainHash,
+  handoffReceiptChainEntry,
+  verifyChain,
+  type ChainedReceiptEntry,
+  type ReceiptChainVerification,
+} from "../../shared/receipt-chain";
+import type { AgentAttestation } from "../../shared/agent-attestation";
 
 const identifierSchema = z
   .string()
@@ -104,7 +112,7 @@ const mcpAuditIntentPayloadSchema = z
   .object({
     project_id: identifierSchema,
     checkout_id: identifierSchema,
-    source: z.enum(["http-mcp", "pty-stream", "omp-rpc-stdio"]),
+    source: z.enum(["http-mcp", "acp-stdio", "pty-stream", "omp-rpc-stdio"]),
     invocation_id: identifierSchema,
   })
   .passthrough();
@@ -115,7 +123,7 @@ const mcpReceiptRowSchema = z
     handoff_id: identifierSchema,
     tool_call_id: identifierSchema,
     tool_name: z.literal("nexus_handoff_submit"),
-    source: z.enum(["http-mcp", "pty-stream", "omp-rpc-stdio"]),
+    source: z.enum(["http-mcp", "acp-stdio", "pty-stream", "omp-rpc-stdio"]),
     mission_id: identifierSchema,
     session_id: identifierSchema,
     worker_incarnation_id: identifierSchema.nullable(),
@@ -124,6 +132,21 @@ const mcpReceiptRowSchema = z
     raw_payload_sha256: sha256Schema.nullable(),
     logical_operation_key: sha256Schema.nullable(),
     issued_at: z.number().int().nonnegative(),
+    // Null is retained for pre-029 receipts. They remain readable, but only
+    // rows with a complete chain link participate in the new verification.
+    chain_seq: z.number().int().positive().nullable(),
+    prev_receipt_hash: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .nullable(),
+    chain_hash: sha256Schema.nullable(),
+  })
+  .strict();
+
+const receiptChainHeadRowSchema = z
+  .object({
+    chain_seq: z.number().int().positive(),
+    chain_hash: sha256Schema,
   })
   .strict();
 
@@ -239,6 +262,13 @@ export interface PhysicalHandoffCommitResult {
 export interface PhysicalHandoffSubmitResult {
   readonly handoff: ScopedHandoff;
   readonly replayed: boolean;
+}
+
+/** Verified agent identity bound atomically to the physical MCP receipt row. */
+export interface HandoffAgentAttestationBinding {
+  readonly agentPubkey: string;
+  readonly ownerPubkey: string;
+  readonly credential: AgentAttestation;
 }
 
 export interface ListHandoffsFilter {
@@ -389,11 +419,13 @@ export class ScopedHandoffStore {
     rawInput: SubmitHandoffInput,
     physicalReceipt: AgentTransportPhysicalReceipt,
     rawOptions: z.input<typeof mcpBoundaryOptionsSchema>,
+    attestation?: HandoffAgentAttestationBinding,
   ): ScopedHandoff {
     return this.submitFromPhysicalAgentBoundaryWithReplay(
       rawInput,
       physicalReceipt,
       rawOptions,
+      attestation,
     ).handoff;
   }
 
@@ -405,10 +437,12 @@ export class ScopedHandoffStore {
     rawInput: SubmitHandoffInput,
     physicalReceipt: AgentTransportPhysicalReceipt,
     rawOptions: z.input<typeof mcpBoundaryOptionsSchema>,
+    attestation?: HandoffAgentAttestationBinding,
   ): PhysicalHandoffSubmitResult {
     const committed = this.#submit(rawInput, "agent", {
       physicalReceipt,
       options: mcpBoundaryOptionsSchema.parse(rawOptions),
+      attestation,
     });
     return {
       handoff: committed.handoff,
@@ -426,11 +460,13 @@ export class ScopedHandoffStore {
     physicalReceipt: AgentTransportPhysicalReceipt,
     rawOptions: z.input<typeof mcpBoundaryOptionsSchema>,
     transition: PhysicalHandoffDispatchTransition,
+    attestation?: HandoffAgentAttestationBinding,
   ): PhysicalHandoffCommitResult {
     const committed = this.#submit(rawInput, "agent", {
       physicalReceipt,
       options: mcpBoundaryOptionsSchema.parse(rawOptions),
       dispatchTransition: transition,
+      attestation,
     });
     if (!committed.taskDispatch) {
       throw new Error("physical handoff transaction lost its dispatch result");
@@ -454,6 +490,7 @@ export class ScopedHandoffStore {
       readonly physicalReceipt: AgentTransportPhysicalReceipt;
       readonly options: z.infer<typeof mcpBoundaryOptionsSchema>;
       readonly dispatchTransition?: PhysicalHandoffDispatchTransition;
+      readonly attestation?: HandoffAgentAttestationBinding;
     },
   ): {
     readonly handoff: ScopedHandoff;
@@ -708,27 +745,17 @@ export class ScopedHandoffStore {
         handoff.createdAt,
       );
       if (handoff.mcpProvenance) {
-        db.prepare(
-          `INSERT INTO handoff_mcp_receipts
-             (receipt_id, handoff_id, tool_call_id, tool_name, source,
-              mission_id, session_id, worker_incarnation_id,
-              authority_sha256, worktree_head_sha, raw_payload_sha256,
-              logical_operation_key, issued_at)
-           VALUES (?, ?, ?, 'nexus_handoff_submit', ?,
-                   ?, ?, ?, ?, ?, ?, ?, ?)`,
-        ).run(
-          handoff.mcpProvenance.receiptId,
+        const chainLink = this.#nextReceiptChainLinkInTransaction(
+          db,
           handoff.id,
-          handoff.mcpProvenance.toolCallId,
-          handoff.mcpProvenance.source,
-          handoff.mcpProvenance.missionId,
-          handoff.mcpProvenance.sessionId,
-          handoff.mcpProvenance.workerIncarnationId ?? null,
-          handoff.mcpProvenance.authoritySha256,
-          handoff.mcpProvenance.worktreeHeadSha ?? null,
-          handoff.mcpProvenance.rawPayloadSha256,
-          handoff.mcpProvenance.logicalOperationKey,
-          handoff.mcpProvenance.issuedAt,
+          handoff.mcpProvenance,
+        );
+        this.#insertHandoffMcpReceiptInTransaction(
+          db,
+          handoff.id,
+          handoff.mcpProvenance,
+          chainLink,
+          mcpBoundary?.attestation,
         );
       }
       const taskDispatch = mcpBoundary?.dispatchTransition
@@ -787,6 +814,225 @@ export class ScopedHandoffStore {
     };
   }
 
+  /**
+   * Computes the next link of this mission's receipt hash chain (derived from
+   * block/buzz buzz-audit — see src/shared/receipt-chain.ts). Must run inside
+   * the same transaction that inserts the receipt row: the head read and the
+   * chained insert are one atomic append, and the partial unique index on
+   * (mission_id, chain_seq) rejects any concurrent double-append.
+   */
+  #receiptAttestationColumnsAvailable(db: Database.Database): boolean {
+    const row = db
+      .prepare(
+        `SELECT 1 AS ok FROM pragma_table_info('handoff_mcp_receipts')
+         WHERE name = 'attestation_json'`,
+      )
+      .get() as { ok: number } | undefined;
+    return row?.ok === 1;
+  }
+
+  #insertHandoffMcpReceiptInTransaction(
+    db: Database.Database,
+    handoffId: string,
+    provenance: HandoffMcpProvenance,
+    chainLink: {
+      readonly chainSeq: number;
+      readonly prevReceiptHash: string | null;
+      readonly chainHash: string;
+    },
+    attestation?: HandoffAgentAttestationBinding,
+  ): void {
+    const attestationColumns =
+      attestation !== undefined &&
+      this.#receiptAttestationColumnsAvailable(db);
+    if (attestation && !attestationColumns) {
+      throw new Error(
+        "handoff attestation binding requires migration 030 attestation columns",
+      );
+    }
+    if (attestationColumns && attestation) {
+      db.prepare(
+        `INSERT INTO handoff_mcp_receipts
+           (receipt_id, handoff_id, tool_call_id, tool_name, source,
+            mission_id, session_id, worker_incarnation_id,
+            authority_sha256, worktree_head_sha, raw_payload_sha256,
+            logical_operation_key, issued_at,
+            chain_seq, prev_receipt_hash, chain_hash,
+            agent_pubkey, owner_pubkey, attestation_json)
+         VALUES (?, ?, ?, 'nexus_handoff_submit', ?,
+                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                 ?, ?, ?)`,
+      ).run(
+        provenance.receiptId,
+        handoffId,
+        provenance.toolCallId,
+        provenance.source,
+        provenance.missionId,
+        provenance.sessionId,
+        provenance.workerIncarnationId ?? null,
+        provenance.authoritySha256,
+        provenance.worktreeHeadSha ?? null,
+        provenance.rawPayloadSha256,
+        provenance.logicalOperationKey,
+        provenance.issuedAt,
+        chainLink.chainSeq,
+        chainLink.prevReceiptHash,
+        chainLink.chainHash,
+        attestation.agentPubkey,
+        attestation.ownerPubkey,
+        JSON.stringify(attestation.credential),
+      );
+      return;
+    }
+    db.prepare(
+      `INSERT INTO handoff_mcp_receipts
+         (receipt_id, handoff_id, tool_call_id, tool_name, source,
+          mission_id, session_id, worker_incarnation_id,
+          authority_sha256, worktree_head_sha, raw_payload_sha256,
+          logical_operation_key, issued_at,
+          chain_seq, prev_receipt_hash, chain_hash)
+       VALUES (?, ?, ?, 'nexus_handoff_submit', ?,
+               ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      provenance.receiptId,
+      handoffId,
+      provenance.toolCallId,
+      provenance.source,
+      provenance.missionId,
+      provenance.sessionId,
+      provenance.workerIncarnationId ?? null,
+      provenance.authoritySha256,
+      provenance.worktreeHeadSha ?? null,
+      provenance.rawPayloadSha256,
+      provenance.logicalOperationKey,
+      provenance.issuedAt,
+      chainLink.chainSeq,
+      chainLink.prevReceiptHash,
+      chainLink.chainHash,
+    );
+  }
+
+  #nextReceiptChainLinkInTransaction(
+    db: Database.Database,
+    handoffId: string,
+    provenance: HandoffMcpProvenance,
+  ): {
+    readonly chainSeq: number;
+    readonly prevReceiptHash: string | null;
+    readonly chainHash: string;
+  } {
+    const rawHead = db
+      .prepare(
+        `SELECT chain_seq, chain_hash
+           FROM handoff_mcp_receipts
+          WHERE mission_id = ? AND chain_seq IS NOT NULL
+          ORDER BY chain_seq DESC LIMIT 1`,
+      )
+      .get(provenance.missionId);
+    let head: z.infer<typeof receiptChainHeadRowSchema> | undefined;
+    if (rawHead !== undefined) {
+      try {
+        head = receiptChainHeadRowSchema.parse(rawHead);
+      } catch (error) {
+        throw new ScopedStoreCorruptionError("handoff receipt chain head", {
+          cause: error,
+        });
+      }
+    }
+    const chainSeq = (head?.chain_seq ?? 0) + 1;
+    const prevReceiptHash = head?.chain_hash ?? null;
+    const chainHash = computeChainHash(
+      handoffReceiptChainEntry({
+        missionId: provenance.missionId,
+        seq: chainSeq,
+        issuedAt: provenance.issuedAt,
+        receiptId: provenance.receiptId,
+        handoffId,
+        toolCallId: provenance.toolCallId,
+        toolName: provenance.toolName,
+        source: provenance.source,
+        sessionId: provenance.sessionId,
+        workerIncarnationId: provenance.workerIncarnationId ?? null,
+        authoritySha256: provenance.authoritySha256,
+        worktreeHeadSha: provenance.worktreeHeadSha ?? null,
+        rawPayloadSha256: provenance.rawPayloadSha256 ?? null,
+        logicalOperationKey: provenance.logicalOperationKey ?? null,
+      }),
+      prevReceiptHash,
+    );
+    return { chainSeq, prevReceiptHash, chainHash };
+  }
+
+  /**
+   * Rebuild and verify every chained receipt for one mission from storage.
+   * Legacy rows are deliberately excluded because migration 029 could not
+   * safely invent their historical chain position. A malformed chained row
+   * is corruption, not an ordinary missing handoff.
+   */
+  #verifyReceiptChainForMission(
+    db: Database.Database,
+    missionId: string,
+  ): ReceiptChainVerification {
+    const rawRows = db
+      .prepare(
+        `SELECT receipt_id, handoff_id, tool_call_id, tool_name, source,
+                mission_id, session_id, worker_incarnation_id,
+                authority_sha256, worktree_head_sha, raw_payload_sha256,
+                logical_operation_key, issued_at,
+                chain_seq, prev_receipt_hash, chain_hash
+           FROM handoff_mcp_receipts
+          WHERE mission_id = ? AND chain_seq IS NOT NULL
+          ORDER BY chain_seq ASC`,
+      )
+      .all(missionId);
+    if (rawRows.length === 0) return { status: "empty" };
+
+    const entries: ChainedReceiptEntry[] = [];
+    for (const raw of rawRows) {
+      let row: z.infer<typeof mcpReceiptRowSchema>;
+      try {
+        row = mcpReceiptRowSchema.parse(raw);
+      } catch (error) {
+        throw new ScopedStoreCorruptionError("handoff receipt chain row", {
+          cause: error,
+        });
+      }
+      if (row.chain_seq === null || row.chain_hash === null) {
+        throw new ScopedStoreCorruptionError("handoff receipt chain columns");
+      }
+      entries.push({
+        ...handoffReceiptChainEntry({
+          missionId: row.mission_id,
+          seq: row.chain_seq,
+          issuedAt: row.issued_at,
+          receiptId: row.receipt_id,
+          handoffId: row.handoff_id,
+          toolCallId: row.tool_call_id,
+          toolName: row.tool_name,
+          source: row.source,
+          sessionId: row.session_id,
+          workerIncarnationId: row.worker_incarnation_id,
+          authoritySha256: row.authority_sha256,
+          worktreeHeadSha: row.worktree_head_sha,
+          rawPayloadSha256: row.raw_payload_sha256,
+          logicalOperationKey: row.logical_operation_key,
+        }),
+        chainHash: row.chain_hash,
+        prevReceiptHash: row.prev_receipt_hash,
+      });
+    }
+    return verifyChain(entries, { requireGenesis: true });
+  }
+
+  /** Read-only release/audit gate for the complete chained mission trail. */
+  verifyReceiptChain(rawMissionId: string): ReceiptChainVerification {
+    const missionId = identifierSchema.parse(rawMissionId);
+    return this.#verifyReceiptChainForMission(
+      this.#binding.readDatabase(),
+      missionId,
+    );
+  }
+
   #findCommittedPhysicalReceipt(
     db: Database.Database,
     missionId: string,
@@ -799,7 +1045,8 @@ export class ScopedHandoffStore {
         `SELECT receipt_id, handoff_id, tool_call_id, tool_name, source,
                 mission_id, session_id, worker_incarnation_id,
                 authority_sha256, worktree_head_sha, raw_payload_sha256,
-                logical_operation_key, issued_at
+                logical_operation_key, issued_at,
+                chain_seq, prev_receipt_hash, chain_hash
          FROM handoff_mcp_receipts
          WHERE mission_id = ? AND session_id = ?
            AND worker_incarnation_id IS ?`,
@@ -838,7 +1085,7 @@ export class ScopedHandoffStore {
     input: z.infer<typeof submitHandoffInputSchema>,
     artifactsJson: string,
     evidenceIdsJson: string,
-    replaySource: "http-mcp" | "pty-stream" | "omp-rpc-stdio",
+    replaySource: "http-mcp" | "acp-stdio" | "pty-stream" | "omp-rpc-stdio",
     replayWorktreeHeadSha: string | undefined,
     replayRawPayloadSha256: string,
     logicalOperationKey: string,
@@ -976,7 +1223,7 @@ export class ScopedHandoffStore {
   #assertCorrelatedMcpAuditIntent(
     db: Database.Database,
     receipt: {
-      readonly source: "http-mcp" | "pty-stream" | "omp-rpc-stdio";
+      readonly source: "http-mcp" | "acp-stdio" | "pty-stream" | "omp-rpc-stdio";
       readonly toolCallId: string;
       readonly missionId: string;
       readonly sessionId: string;
@@ -1728,7 +1975,8 @@ export class ScopedHandoffStore {
         `SELECT receipt_id, handoff_id, tool_call_id, tool_name, source,
                 mission_id, session_id, worker_incarnation_id,
                 authority_sha256, worktree_head_sha, raw_payload_sha256,
-                logical_operation_key, issued_at
+                logical_operation_key, issued_at,
+                chain_seq, prev_receipt_hash, chain_hash
          FROM handoff_mcp_receipts WHERE handoff_id = ?`,
       )
       .get(handoffId);
@@ -1739,6 +1987,18 @@ export class ScopedHandoffStore {
     } catch (error) {
       throw new ScopedStoreCorruptionError("handoff MCP provenance", {
         cause: error,
+      });
+    }
+    const chainVerification = this.#verifyReceiptChainForMission(
+      db,
+      row.mission_id,
+    );
+    if (
+      chainVerification.status !== "valid" &&
+      chainVerification.status !== "empty"
+    ) {
+      throw new ScopedStoreCorruptionError("handoff receipt chain", {
+        cause: new Error(JSON.stringify(chainVerification)),
       });
     }
     if (row.handoff_id !== handoffId) {

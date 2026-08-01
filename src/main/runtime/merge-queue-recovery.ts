@@ -16,6 +16,10 @@ import {
   type RetryMergeInput,
 } from './merge-queue-contract';
 import { cloneMergeQueueEntry as cloneEntry } from './merge-queue-state';
+import {
+  stalledMergeReason,
+  type MergeReconcileStallContext,
+} from './merge-stall-watchdog';
 import { rollbackIntegrationCheckout } from './merge-integration-rollback';
 import { classifyOperationalFailure } from './operational-failure-policy';
 import {
@@ -108,7 +112,10 @@ export class MergeQueueRecovery {
     this.#now = options.now;
   }
 
-  reconcile(scope: ProjectExecutionScope): MergeQueueReconciliationResult {
+  reconcile(
+    scope: ProjectExecutionScope,
+    stall?: MergeReconcileStallContext,
+  ): MergeQueueReconciliationResult {
     const scopeKey = this.#worktrees.scopeKey(scope);
     const snapshot = this.#state.snapshot(scopeKey);
     if (!snapshot.activeTaskKey) {
@@ -132,14 +139,21 @@ export class MergeQueueRecovery {
     );
     const now = this.#timestamp();
     const reason = boundedText(
-      `merge attempt ${entry.attempt} was interrupted during ${entry.status}; ` +
-        `integration state is ${integrationState}`,
+      stall
+        ? stalledMergeReason(
+            entry,
+            integrationState,
+            disposition,
+            stall.stalledForMs,
+          )
+        : `merge attempt ${entry.attempt} was interrupted during ` +
+          `${entry.status}; integration state is ${integrationState}`,
       'merge attempt was interrupted and requires explicit retry evidence',
       2_048,
     );
     const block = Object.freeze({
       taskKey: entry.taskKey,
-      errorName: 'MergeInterruptedError',
+      errorName: stall ? 'MergeStalledError' : 'MergeInterruptedError',
       reason,
       blockedAt: now,
       disposition,

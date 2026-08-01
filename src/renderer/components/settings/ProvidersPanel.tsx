@@ -12,6 +12,7 @@ import { openExternalFromAnchor } from '../../lib/open-external';
 import { ActionCard } from '../ActionCard';
 import { AccountsManager } from './AccountsManager';
 import { ProviderLogo } from '../ProviderLogo';
+import { PixelIcon } from '../PixelIcon';
 import {
   filterProvidersForTab,
   isLocalCliProvider,
@@ -169,7 +170,7 @@ function KeyField({ provider }: { provider: ProviderSettingsInfo }) {
       </div>
       {!provider.secureStorageAvailable && (
         <p className="prov__warn">
-          ⚠ Keychain indisponível nesta máquina — a key não será persistida em
+          <PixelIcon name="warn" size={11} /> Keychain indisponível nesta máquina — a key não será persistida em
           disco (só nesta sessão). Nunca gravamos em plaintext.
         </p>
       )}
@@ -216,7 +217,7 @@ function CustomModels({ provider }: { provider: ProviderSettingsInfo }) {
                 title="Remover"
                 aria-label={`Remover modelo ${m}`}
               >
-                ✕
+                <PixelIcon name="close" size={10} />
               </button>
             </span>
           ))}
@@ -433,7 +434,7 @@ function ProviderDetail({ provider }: { provider: ProviderSettingsInfo }) {
           )}
           {installError && (
             <p className="prov-detail__install-error" role="alert">
-              ⚠ {installError}
+              <PixelIcon name="warn" size={11} /> {installError}
             </p>
           )}
         </div>

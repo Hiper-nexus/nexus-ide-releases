@@ -31,11 +31,14 @@ import type {
   NotificationType,
 } from '../../vendor/emdash/hooks/hooks-types';
 import type { PaneSessionState } from '../../shared/types';
+import type { ObserverFrameInput } from '../../shared/observer-frame';
 import {
   getAgentSessionInfo,
   getSessionState,
   publishSessionActivityState,
 } from '../pty/pty-manager';
+import { publishObserverFrame } from './observer-bus';
+import { detectLimit } from './limit-detector';
 
 export const AGENT_SEMANTIC_STATUSES = [
   'working',
@@ -61,6 +64,19 @@ export interface AgentStatusApplyResult {
   /** True only when the semantic status actually changed (toast/sound gate). */
   transitioned: boolean;
   entry: AgentSemanticStatusEntry | null;
+}
+
+/**
+ * Optional raw gate-envelope metadata forwarded by the hook endpoint. Only
+ * the additive observer-frame emission reads it (tool_call/tool_result need
+ * the wire event type and tool name, which the CanonicalHookEvent — by
+ * design — does not carry). Absence changes nothing in the reducer.
+ */
+export interface AgentStatusHookMeta {
+  /** Normalized wire event type ('tool-use', 'tool-complete', …). */
+  eventType?: string;
+  /** Tool name extracted from the raw hook body, when present. */
+  toolName?: string;
 }
 
 /**
@@ -180,6 +196,213 @@ function resolvePaneId(sessionId: string): string {
   return paneBySession.get(sessionId) ?? sessionId;
 }
 
+// ---------------------------------------------------------------------------
+// Observer-frame emission (additive observability plane).
+// Design distilled from block/buzz NIP-AO / buzz-acp observer.rs (Apache-2.0).
+// Applied hook events additionally flow as typed ObserverFrames into the
+// in-process bus so detectors/UI can consume structure instead of regexing
+// scrollback. Emission is a TOTAL side channel: any failure here is contained
+// and can never alter the reducer result or break the gate endpoint.
+// ---------------------------------------------------------------------------
+
+const OBSERVER_TOOL_CALL_PHASES = new Set(['tool-use']);
+const OBSERVER_TOOL_RESULT_PHASES = new Set(['tool-complete', 'tool-use-failure']);
+/** Bound for calls whose results never arrive (crash mid-tool); oldest drops. */
+const OBSERVER_OPEN_TOOL_CALLS_MAX = 64;
+
+interface ObserverToolCallState {
+  nextCallSequence: number;
+  open: { callId: string; toolName: string | null }[];
+}
+const observerToolCallsBySession = new Map<string, ObserverToolCallState>();
+
+/** `turn-<n>` correlation id for the session's current turn, if one opened. */
+function observerTurnId(sessionId: string): string | undefined {
+  const sequence = turnStartSequenceBySession.get(sessionId);
+  return sequence !== undefined && sequence > 0 ? `turn-${sequence}` : undefined;
+}
+
+/** Shared identity fields for every frame of one session at one instant. */
+function observerFrameScope(
+  sessionId: string,
+  paneId: string | undefined,
+): Pick<ObserverFrameInput, 'sessionId' | 'paneId' | 'missionId' | 'turnId'> {
+  let missionId: string | undefined;
+  try {
+    missionId = getAgentSessionInfo(sessionId)?.missionId;
+  } catch {
+    // Attribution is best-effort; a registry failure drops missionId only.
+    missionId = undefined;
+  }
+  return { sessionId, paneId, missionId, turnId: observerTurnId(sessionId) };
+}
+
+function openObserverToolCall(
+  sessionId: string,
+  toolName: string | null,
+): string {
+  let state = observerToolCallsBySession.get(sessionId);
+  if (!state) {
+    state = { nextCallSequence: 1, open: [] };
+    observerToolCallsBySession.set(sessionId, state);
+  }
+  const callId = `call-${state.nextCallSequence}`;
+  state.nextCallSequence += 1;
+  state.open.push({ callId, toolName });
+  if (state.open.length > OBSERVER_OPEN_TOOL_CALLS_MAX) state.open.shift();
+  return callId;
+}
+
+/**
+ * Pair a tool result with its open call. Named results match the most recent
+ * open call of the same tool. Unnamed results match only when exactly one
+ * call is open — with parallel calls in flight, attribution would be a guess,
+ * and the contract is honesty over guessing (callId: null).
+ */
+function takeObserverToolCall(
+  sessionId: string,
+  toolName: string | null,
+): string | null {
+  const state = observerToolCallsBySession.get(sessionId);
+  if (!state || state.open.length === 0) return null;
+  if (toolName === null) {
+    if (state.open.length !== 1) return null;
+    const only = state.open.pop();
+    return only?.callId ?? null;
+  }
+  for (let i = state.open.length - 1; i >= 0; i--) {
+    if (state.open[i]?.toolName === toolName) {
+      const [taken] = state.open.splice(i, 1);
+      return taken?.callId ?? null;
+    }
+  }
+  return null;
+}
+
+/**
+ * Publish the frames one applied hook event implies. Frame order within the
+ * event: turn_started (turn opens) → tool_call/tool_result (the action) →
+ * status_changed (always) → turn_ended (turn closes). Total function.
+ */
+function publishHookObserverFrames(args: {
+  sessionId: string;
+  paneId: string;
+  event: CanonicalHookEvent;
+  hook: AgentStatusHookMeta | undefined;
+  previousStatus: AgentSemanticStatus | null;
+  entry: AgentSemanticStatusEntry;
+  transitioned: boolean;
+}): void {
+  try {
+    if (args.event.kind !== 'status') return;
+    const { sessionId, paneId, event, entry } = args;
+    const at = entry.updatedAt;
+
+    if (event.type === 'start' && event.promptSubmitted === true) {
+      const turnSequence = getAgentTurnStartSequence(sessionId);
+      if (turnSequence > 0) {
+        publishObserverFrame({
+          ...observerFrameScope(sessionId, paneId),
+          at,
+          kind: 'turn_started',
+          payload: { turnId: `turn-${turnSequence}`, turnSequence },
+        });
+      }
+    }
+
+    const phase = args.hook?.eventType;
+    const toolName = args.hook?.toolName ?? null;
+    if (phase !== undefined && OBSERVER_TOOL_CALL_PHASES.has(phase)) {
+      const callId = openObserverToolCall(sessionId, toolName);
+      publishObserverFrame({
+        ...observerFrameScope(sessionId, paneId),
+        at,
+        kind: 'tool_call',
+        payload: { callId, toolName },
+      });
+    } else if (phase !== undefined && OBSERVER_TOOL_RESULT_PHASES.has(phase)) {
+      publishObserverFrame({
+        ...observerFrameScope(sessionId, paneId),
+        at,
+        kind: 'tool_result',
+        payload: {
+          callId: takeObserverToolCall(sessionId, toolName),
+          toolName,
+          ok: phase === 'tool-complete',
+        },
+      });
+    }
+
+    // Canonical provider errors are authority-bearing observer input. Keep
+    // the bounded classifier here, at the hook boundary, so failover and the
+    // mission journal do not need to infer a limit from mixed PTY prose.
+    if (event.type === 'error' && typeof event.message === 'string') {
+      const hit = detectLimit(event.message);
+      if (hit) {
+        publishObserverFrame({
+          ...observerFrameScope(sessionId, paneId),
+          at,
+          kind: 'provider_error',
+          payload: {
+            source: 'provider-hook',
+            kind: hit.kind,
+            reason: hit.reason,
+            cooldownMs: hit.cooldownMs,
+            ...(hit.scope ? { scope: hit.scope } : {}),
+          },
+        });
+      }
+    }
+
+    publishObserverFrame({
+      ...observerFrameScope(sessionId, paneId),
+      at,
+      kind: 'status_changed',
+      payload: {
+        paneId,
+        status: entry.status,
+        previousStatus: args.previousStatus,
+        transitioned: args.transitioned,
+        notificationType: entry.notificationType,
+      },
+    });
+
+    if (event.type === 'stop' || event.type === 'error') {
+      const scope = observerFrameScope(sessionId, paneId);
+      publishObserverFrame({
+        ...scope,
+        at,
+        kind: 'turn_ended',
+        payload: {
+          turnId: scope.turnId ?? null,
+          outcome: event.type === 'stop' ? 'completed' : 'error',
+        },
+      });
+    }
+  } catch (err) {
+    console.warn('[agent-status] observer frame emission failed (frames dropped):', err);
+  }
+}
+
+/** session_exited frame — every PTY death frames, even hookless sessions. */
+function publishSessionExitedObserverFrame(sessionId: string, now: number): void {
+  try {
+    const paneId = paneBySession.get(sessionId);
+    const prev = paneId ? statusByPane.get(paneId) : undefined;
+    publishObserverFrame({
+      ...observerFrameScope(sessionId, paneId),
+      at: now,
+      kind: 'session_exited',
+      payload: {
+        reason: 'pty-exit',
+        lastStatus: prev?.sessionId === sessionId ? prev.status : null,
+      },
+    });
+  } catch (err) {
+    console.warn('[agent-status] session_exited frame emission failed:', err);
+  }
+}
+
 /**
  * Fold one canonical hook event into the pane's semantic status and project
  * it onto the pane lifecycle channel. Total function: a reducer failure must
@@ -190,6 +413,8 @@ export function applyCanonicalHookEvent(input: {
   sessionId: string;
   event: CanonicalHookEvent;
   now?: number;
+  /** Optional raw envelope metadata for observer-frame emission only. */
+  hook?: AgentStatusHookMeta;
 }): AgentStatusApplyResult {
   try {
     const { sessionId, event } = input;
@@ -263,6 +488,18 @@ export function applyCanonicalHookEvent(input: {
         }
       }
     }
+
+    // Additive observability plane: total function, never alters the result.
+    publishHookObserverFrames({
+      sessionId,
+      paneId,
+      event,
+      hook: input.hook,
+      previousStatus: prev?.status ?? null,
+      entry,
+      transitioned,
+    });
+
     return { applied: true, transitioned, entry };
   } catch (err) {
     console.warn('[agent-status] reducer failed (hook event dropped):', err);
@@ -276,6 +513,11 @@ export function applyCanonicalHookEvent(input: {
  */
 export function resetAgentStatusOnExit(sessionId: string, now = Date.now()): void {
   try {
+    // "Never go dark": frame the exit BEFORE any state is dropped, so the
+    // frame still carries pane/turn/status attribution. Total side channel.
+    publishSessionExitedObserverFrame(sessionId, now);
+    observerToolCallsBySession.delete(sessionId);
+
     const paneId = paneBySession.get(sessionId);
     paneBySession.delete(sessionId);
     turnStartSequenceBySession.delete(sessionId);
@@ -308,6 +550,7 @@ export function __resetAgentStatusForTests(): void {
   statusByPane.clear();
   paneBySession.clear();
   turnStartSequenceBySession.clear();
+  observerToolCallsBySession.clear();
   statusTaps.clear();
   turnStartTaps.clear();
 }

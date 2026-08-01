@@ -511,7 +511,7 @@ export function MediaStudioPanel({
 
           {error && (
             <section className="ms-error" role="alert">
-              <p className="ms-error__msg">⚠ {error.message}</p>
+              <p className="ms-error__msg"><PixelIcon name="warn" size={11} /> {error.message}</p>
               {error.recoverJobId && (
                 <button
                   type="button"

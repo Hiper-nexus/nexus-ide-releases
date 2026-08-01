@@ -8,6 +8,7 @@ import { PaneActivityStrip } from './PaneActivityStrip';
 import { PaneBirthOverlay } from './PaneBirthOverlay';
 import { PaneInteractionSurface } from './PaneInteractionSurface';
 import { PaneToolbar } from './PaneToolbar';
+import { AcpPaneView } from './AcpPaneView';
 
 interface Props {
   pane: PaneModel;
@@ -23,7 +24,23 @@ export function PaneLeaf({ pane }: Props) {
   if (pane.kind === 'browser') {
     return <BrowserPane pane={pane} />;
   }
+  if (pane.kind === 'cli-agent' && pane.agentTransport === 'acp') {
+    return <AcpPaneLeaf pane={pane} />;
+  }
   return <TerminalPaneLeaf pane={pane} />;
+}
+
+function AcpPaneLeaf({ pane }: Props) {
+  const isFocused = useLayoutStore((s) => s.focusedPaneId === pane.id);
+  return (
+    <PaneInteractionSurface
+      pane={pane}
+      className={`pane ${isFocused ? 'pane--focused' : ''} pane--acp`}
+    >
+      <PaneToolbar pane={pane} isFocused={isFocused} />
+      <AcpPaneView missionId={pane.missionId ?? ''} />
+    </PaneInteractionSurface>
+  );
 }
 
 function TerminalPaneLeaf({ pane }: Props) {

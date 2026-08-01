@@ -313,6 +313,10 @@ async function handleMcpRequest(
       }
       const response = await handleMcpMessage(registry!, ctx, message, {
         confirm: confirmHttpMcpTool,
+        source:
+          req.headers['x-nexus-transport'] === 'acp-stdio'
+            ? 'acp-stdio'
+            : 'http-mcp',
       });
       if (response) responses.push(response);
     }

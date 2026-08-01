@@ -124,13 +124,20 @@ const STEP_LABELS: Record<Step, string> = {
 };
 
 function StepsBar({ steps, current }: { steps: Step[]; current: Step }) {
+  const currentIndex = steps.indexOf(current);
   return (
     <div className="wizard__steps" aria-label="Etapas">
       {steps.map((s, i) => (
         <span key={s} className="wizard__step-wrap">
           {i > 0 && <span className="wizard__step-line" />}
           <span
-            className={`wizard__step ${s === current ? "wizard__step--active" : ""}`}
+            className={`wizard__step ${
+              s === current
+                ? "wizard__step--active"
+                : i < currentIndex
+                  ? "wizard__step--complete"
+                  : ""
+            }`}
             aria-current={s === current ? "step" : undefined}
           >
             {STEP_LABELS[s].toUpperCase()}
@@ -1851,7 +1858,7 @@ export function MissionWizard() {
     >
       {/* Soft-close: keeps typed objective. Hard discard only via Cancelar. */}
       <div className="wizard__overlay" onClick={softClose} />
-      <div className="wizard__panel">
+      <div className="wizard__panel" data-step={step}>
         <header className="wizard__header">
           <span className="wizard__logo">&gt;_</span>
           <span className="wizard__title">

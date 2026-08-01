@@ -10,6 +10,7 @@ export const OPS_CHANNELS = {
 
 export type AuditSource =
   | 'http-mcp'
+  | 'acp-stdio'
   | 'pty-stream'
   | 'omp-rpc-stdio'
   | 'ipc-renderer'

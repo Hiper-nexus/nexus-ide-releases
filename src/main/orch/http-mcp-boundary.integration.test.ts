@@ -31,6 +31,10 @@ import {
 import { createScopedHandoffStore } from "./handoff-store";
 import { handoffRawPayloadSha256 } from "./handoff-payload-identity";
 import {
+  handoffReceiptChainEntry,
+  verifyChain,
+} from "../../shared/receipt-chain";
+import {
   consumeAgentTransportPhysicalReceipt,
   mintAgentTransportPhysicalReceipt,
   runInsideHttpMcpTransport,
@@ -974,6 +978,124 @@ describe("physical HTTP MCP handoff boundary", () => {
         )
         .run(receipt.handoff_id),
     ).toThrow(/immutable/i);
+  });
+
+  it("chains physical receipts per mission into a verifiable hash chain", async () => {
+    const first = await post(
+      "Physical loopback worker handoff completed successfully.",
+    );
+    expect(first).toMatchObject({ status: 200, body: { ok: true } });
+
+    const secondSession = "session-http-physical-2";
+    const workerCtx2 = mintToken({
+      label: "physical worker 2",
+      role: "worker",
+      providerId: "grok",
+      missionId: MISSION_ID,
+      contextRevision: CONTEXT_REVISION,
+      workerIncarnationId: "incarnation-http-physical-2",
+      scope: testProjectScope(),
+      allowedTools: ["nexus_handoff_submit"],
+    });
+    bindTokenToSession(workerCtx2.token, secondSession);
+    const second = await runInsidePtyStreamAgentTransport(
+      secondSession,
+      workerCtx2,
+      () =>
+        dispatchToolCall(
+          "pty-stream",
+          registry,
+          "nexus_handoff_submit",
+          {
+            status: "success",
+            summary:
+              "Physical second worker handoff extends the mission receipt chain.",
+          },
+          workerCtx2,
+          dispatchOptions(() => currentMission),
+        ),
+    );
+    expect(second).toMatchObject({ ok: true });
+    expect(countRows(manager, "handoff_mcp_receipts")).toBe(2);
+
+    interface ChainRow {
+      readonly receipt_id: string;
+      readonly handoff_id: string;
+      readonly tool_call_id: string;
+      readonly tool_name: string;
+      readonly source: string;
+      readonly mission_id: string;
+      readonly session_id: string;
+      readonly worker_incarnation_id: string | null;
+      readonly authority_sha256: string;
+      readonly worktree_head_sha: string | null;
+      readonly raw_payload_sha256: string | null;
+      readonly logical_operation_key: string | null;
+      readonly issued_at: number;
+      readonly chain_seq: number;
+      readonly prev_receipt_hash: string | null;
+      readonly chain_hash: string;
+    }
+    const rows = manager
+      .open(testProjectScope())
+      .db.prepare(
+        `SELECT receipt_id, handoff_id, tool_call_id, tool_name, source,
+                mission_id, session_id, worker_incarnation_id,
+                authority_sha256, worktree_head_sha, raw_payload_sha256,
+                logical_operation_key, issued_at,
+                chain_seq, prev_receipt_hash, chain_hash
+           FROM handoff_mcp_receipts
+          ORDER BY chain_seq ASC`,
+      )
+      .all() as readonly ChainRow[];
+
+    // The persisted link: genesis has NULL prev; receipt 2 carries receipt 1.
+    expect(rows.map((row) => row.chain_seq)).toEqual([1, 2]);
+    expect(rows[0].prev_receipt_hash).toBeNull();
+    expect(rows[0].chain_hash).toMatch(/^[a-f0-9]{64}$/u);
+    expect(rows[1].prev_receipt_hash).toBe(rows[0].chain_hash);
+    expect(rows.map((row) => row.session_id)).toEqual([
+      SESSION_ID,
+      secondSession,
+    ]);
+
+    // The whole mission trail re-verifies from the stored rows alone.
+    const chainMaterial = (row: ChainRow) => ({
+      missionId: row.mission_id,
+      seq: row.chain_seq,
+      issuedAt: row.issued_at,
+      receiptId: row.receipt_id,
+      handoffId: row.handoff_id,
+      toolCallId: row.tool_call_id,
+      toolName: row.tool_name,
+      source: row.source,
+      sessionId: row.session_id,
+      workerIncarnationId: row.worker_incarnation_id,
+      authoritySha256: row.authority_sha256,
+      worktreeHeadSha: row.worktree_head_sha,
+      rawPayloadSha256: row.raw_payload_sha256,
+      logicalOperationKey: row.logical_operation_key,
+    });
+    const chain = rows.map((row) => ({
+      ...handoffReceiptChainEntry(chainMaterial(row)),
+      chainHash: row.chain_hash,
+      prevReceiptHash: row.prev_receipt_hash,
+    }));
+    expect(verifyChain(chain)).toEqual({ status: "valid", length: 2 });
+
+    // A forged column stops verifying from that link onward.
+    const forged = {
+      ...handoffReceiptChainEntry({
+        ...chainMaterial(rows[1]),
+        sessionId: "session-forged",
+      }),
+      chainHash: rows[1].chain_hash,
+      prevReceiptHash: rows[1].prev_receipt_hash,
+    };
+    expect(verifyChain([chain[0], forged])).toEqual({
+      status: "hash-mismatch",
+      seq: 2,
+    });
   });
 
   it("accepts a physical worker handoff over HTTP while guided PREVC prepares", async () => {

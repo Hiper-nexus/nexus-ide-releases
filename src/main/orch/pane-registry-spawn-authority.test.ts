@@ -743,6 +743,7 @@ describe("pending pane spawn authority", () => {
       scope,
       recap: "Continue the mission.",
     });
+    await Promise.resolve();
     const request = owner.send.mock.calls[0]?.[1] as MissionPaneRecoveryRequest;
     expect(request.paneId).toBe("pane-missing");
     resolveMissionPaneRecovery({

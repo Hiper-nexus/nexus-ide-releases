@@ -45,3 +45,38 @@ describe("Nexus Light UI palette", () => {
     expect(contrast(accentInk, accent)).toBeGreaterThanOrEqual(4.5);
   });
 });
+
+describe("Nexus operational dark default palette", () => {
+  afterEach(() => {
+    document.documentElement.removeAttribute("style");
+    delete document.documentElement.dataset.theme;
+    delete document.documentElement.dataset.platform;
+  });
+
+  it("uses the cyan operational accent and neutral surfaces", () => {
+    applyUiTheme("nexus-dark");
+    const root = document.documentElement.style;
+    expect(root.getPropertyValue("--accent")).toBe("#3dd9ff");
+    expect(root.getPropertyValue("--bg")).toBe("#0a0a0b");
+  });
+
+  it("keeps the solid accent ink at WCAG AA contrast over the accent", () => {
+    applyUiTheme("nexus-dark");
+    const root = document.documentElement.style;
+    expect(
+      contrast(root.getPropertyValue("--accent-ink"), root.getPropertyValue("--accent")),
+    ).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("keeps secondary text at >=5:1 over both surface levels", () => {
+    applyUiTheme("nexus-dark");
+    const root = document.documentElement.style;
+    const textDim = root.getPropertyValue("--text-dim");
+    expect(
+      contrast(textDim, root.getPropertyValue("--bg")),
+    ).toBeGreaterThanOrEqual(5);
+    expect(
+      contrast(textDim, root.getPropertyValue("--bg-elevated")),
+    ).toBeGreaterThanOrEqual(5);
+  });
+});

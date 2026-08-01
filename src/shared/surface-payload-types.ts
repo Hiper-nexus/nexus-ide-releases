@@ -338,6 +338,8 @@ export interface PaneModel {
   browserOpenRequestId?: string;
   /** Set for cli-agent panes — identifies which adapter backs this pane. */
   adapterId?: string;
+  /** Semantic transport for agent panes; ACP renders a typed activity feed. */
+  agentTransport?: 'cli-pty' | 'acp';
   /** The model selected for this agent pane (e.g. "claude-sonnet-4-5"). */
   model?: string;
   /** Account pinned to this pane; absent means the provider's active/default. */

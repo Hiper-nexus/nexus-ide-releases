@@ -44,6 +44,13 @@
   isolation: isolate;
 }
 
+/* O primeiro passo é uma coleta curta de objetivo/anexos. Não obrigamos o
+   operador a atravessar um modal de revisão só para preencher duas coisas;
+   as etapas técnicas continuam com a altura completa e scroll próprio. */
+.wizard__panel:is([data-step='agentic-intent'], [data-step='intent-compose']) {
+  height: min(600px, calc(100dvh - 32px));
+}
+
 .wizard__header {
   display: flex;
   flex: 0 0 auto;
@@ -84,6 +91,14 @@
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
+  gap: 6px;
+}
+
+.wizard__step-line {
+  width: 24px;
+  height: 1px;
+  flex: 0 0 24px;
+  background: var(--border-strong);
 }
 
 .wizard__step {
@@ -99,6 +114,14 @@
 .wizard__step--active {
   color: var(--accent);
   border-color: var(--accent);
+  background: var(--accent-soft);
+  font-weight: 650;
+}
+
+.wizard__step--complete {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 62%, var(--border));
+  background: color-mix(in srgb, var(--ok) 10%, transparent);
 }
 
 .wizard__close {
@@ -112,7 +135,7 @@
 .wizard__body {
   flex: 1 1 auto;
   min-height: 0;
-  padding: 20px 20px
+  padding: 24px 28px
     calc(78px + max(0px, env(safe-area-inset-bottom)));
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -417,7 +440,7 @@
   gap: 10px;
   min-height: 64px;
   margin: 0;
-  padding: 10px 20px
+  padding: 12px 28px
     calc(10px + max(0px, env(safe-area-inset-bottom)));
   border-top: 1px solid var(--border);
   background: color-mix(in srgb, var(--bg-elevated) 94%, transparent);

@@ -50,6 +50,7 @@ import {
   retainClaimedPendingSpawn as retainClaimedPendingSpawnRuntime,
   setMainOwnedPane,
   spawnMainOwnedMissionPane as spawnMainOwnedMissionPaneRuntime,
+  spawnMainOwnedMissionPaneAsync as spawnMainOwnedMissionPaneRuntimeAsync,
   type MainOwnedPane,
   type MainOwnedPaneHooks,
   type PaneOrchMeta,
@@ -78,6 +79,8 @@ import {
   sameMissionPaneAuthoritySeal,
 } from "./mission-pane-authority";
 import { isAutomatedReviewerCompositionPane } from "./mission-pane-store";
+import { getOrchSettings } from "../persistence/settings-store";
+import { getAcpDriverSession } from "../acp/acp-harness-driver";
 
 /**
  * Main-process mirror of the renderer's pane grid plus per-session output ring
@@ -207,6 +210,25 @@ function resolvePaneRecoveryOnce(
 async function terminateRecoveryReplacement(
   sessionId: string,
 ): Promise<boolean> {
+  return terminateOwnedMissionSession(sessionId);
+}
+
+/**
+ * Main-owned mission panes may be PTYs or ACP subprocesses. Keeping the
+ * physical-exit proof in one helper prevents an ACP pane from being removed
+ * from the registry while its child process is still alive.
+ */
+async function terminateOwnedMissionSession(sessionId: string): Promise<boolean> {
+  const acp = getAcpDriverSession(sessionId);
+  if (acp) {
+    try {
+      await acp.shutdown();
+      return getAcpDriverSession(sessionId) === null;
+    } catch {
+      return false;
+    }
+  }
+  if (getSessionState(sessionId) === null) return true;
   return orchTerminateSession(sessionId);
 }
 
@@ -809,13 +831,14 @@ function resolveMainOwnedPanePresentation(
   if (!sessionId) {
     return stalePresentation("main-owned entry has no physical session");
   }
-  if (getSessionState(sessionId) === null) {
+  const acpSession = getAcpDriverSession(sessionId);
+  if (!acpSession && getSessionState(sessionId) === null) {
     return stalePresentation("main-owned physical session has exited");
   }
   if (!missionId || (role !== "orchestrator" && role !== "worker")) {
     return stalePresentation("main-owned entry has no mission role authority");
   }
-  const agent = getAgentSessionInfo(sessionId);
+  const agent = acpSession?.agent ?? getAgentSessionInfo(sessionId);
   const executionScope = meta.executionScope ?? meta.scope;
   if (
     !agent ||
@@ -874,6 +897,7 @@ function resolveMainOwnedPanePresentation(
       paneId: entry.paneId,
       sessionId,
       role,
+      transport: acpSession ? 'acp' : 'cli-pty',
       pane: {
         adapterId: agent.adapterId,
         ...(agent.requestedModel ?? entry.model
@@ -903,8 +927,8 @@ function retireStaleMainOwnedPane(
   const { paneId, sessionId } = pane.entry;
   const retirement = (async () => {
     try {
-      if (sessionId && getSessionState(sessionId) !== null) {
-        const exited = await orchTerminateSession(sessionId);
+      if (sessionId) {
+        const exited = await terminateOwnedMissionSession(sessionId);
         if (!exited) {
           console.warn(
             `[pane-registry] stale pane remains live pane=${paneId} ` +
@@ -1589,6 +1613,30 @@ export function spawnMainOwnedMissionPane(
   }
 }
 
+/** Async variant — required when orch.agentTransport === 'acp'. */
+export function spawnMainOwnedMissionPaneAsync(
+  options: PaneSpawnOptions & {
+    missionId: string;
+    role: "orchestrator" | "worker";
+  },
+): Promise<OrchPaneSpawnResult> {
+  try {
+    return spawnMainOwnedMissionPaneRuntimeAsync(
+      canonicalMissionPaneSpawnOptions(options),
+      mainOwnedPaneHooks,
+    );
+  } catch (error) {
+    return Promise.resolve({
+      requestId: "",
+      ok: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "mission pane authority is stale",
+    });
+  }
+}
+
 export function requestPaneSpawn(
   options: PaneSpawnOptions & { readonly abortSignal?: AbortSignal },
 ): Promise<OrchPaneSpawnResult> {
@@ -1614,6 +1662,26 @@ export function requestPaneSpawn(
           : "mission pane authority is stale",
     });
   }
+  if (getOrchSettings().agentTransport === "acp") {
+    if (
+      !options.missionId ||
+      (options.role !== "orchestrator" && options.role !== "worker")
+    ) {
+      return Promise.resolve({
+        requestId: "",
+        ok: false,
+        error: "transporte ACP exige uma missão main-owned com role explícito",
+      });
+    }
+    // ACP owns the physical child in Main. Never hand the request to the
+    // renderer, whose normal handler would create a PTY and silently defeat
+    // the selected transport.
+    return spawnMainOwnedMissionPaneAsync({
+      ...options,
+      missionId: options.missionId,
+      role: options.role,
+    });
+  }
   if (options.transient === true) {
     if (
       !options.missionId ||
@@ -1628,13 +1696,11 @@ export function requestPaneSpawn(
     // Internal verification lanes must not contend for renderer layout slots
     // or enter crash recovery. Main still owns the physical PTY and registry
     // proof, while the pane remains headless and process-local.
-    return Promise.resolve(
-      spawnMainOwnedMissionPane({
+    return spawnMainOwnedMissionPaneAsync({
         ...options,
         missionId: options.missionId,
         role: options.role,
-      }),
-    );
+      });
   }
   const owner = rendererForMission(options.missionId, options.scope);
   if (!owner) {
@@ -1642,13 +1708,11 @@ export function requestPaneSpawn(
       options.missionId &&
       (options.role === "orchestrator" || options.role === "worker")
     ) {
-      return Promise.resolve(
-        spawnMainOwnedMissionPane({
+      return spawnMainOwnedMissionPaneAsync({
           ...options,
           missionId: options.missionId,
           role: options.role,
-        }),
-      );
+        });
     }
     return Promise.resolve({
       requestId: "",
@@ -1663,13 +1727,11 @@ export function requestPaneSpawn(
       options.missionId &&
       (options.role === "orchestrator" || options.role === "worker")
     ) {
-      return Promise.resolve(
-        spawnMainOwnedMissionPane({
+      return spawnMainOwnedMissionPaneAsync({
           ...options,
           missionId: options.missionId,
           role: options.role,
-        }),
-      );
+        });
     }
     return Promise.resolve({
       requestId: "",
@@ -2004,9 +2066,7 @@ export async function requestMissionPaneRecovery(options: {
   const sessionToTerminate =
     options.expectedSessionId ?? currentSessionId;
   if (sessionToTerminate) {
-    const exited = getSessionState(sessionToTerminate) === null
-      ? true
-      : await orchTerminateSession(sessionToTerminate);
+    const exited = await terminateOwnedMissionSession(sessionToTerminate);
     if (!exited) {
       return {
         requestId: "",
@@ -2230,7 +2290,7 @@ export async function requestMissionPaneClose(
     }
     const sessionId = detached.entry.sessionId;
     if (sessionId) {
-      const exited = await orchTerminateSession(sessionId);
+      const exited = await terminateOwnedMissionSession(sessionId);
       if (!exited) return false;
     }
     const current = getMainOwnedPane(expected.paneId);
@@ -2267,7 +2327,7 @@ export async function requestMissionPaneClose(
   }
   const sessionId = target.entry.sessionId;
   if (sessionId) {
-    const exited = await orchTerminateSession(sessionId);
+    const exited = await terminateOwnedMissionSession(sessionId);
     if (!exited) return false;
   }
   try {
@@ -2424,7 +2484,7 @@ export async function requestPaneClose(paneId: string): Promise<boolean> {
   if (detached) {
     const sessionId = detached.entry.sessionId;
     if (sessionId) {
-      const exited = await orchTerminateSession(sessionId);
+      const exited = await terminateOwnedMissionSession(sessionId);
       if (!exited) return false;
     }
     const currentDetached = getMainOwnedPane(paneId);
@@ -2456,7 +2516,7 @@ export async function requestPaneClose(paneId: string): Promise<boolean> {
     }
   }
   if (sessionId) {
-    const exited = await orchTerminateSession(sessionId);
+    const exited = await terminateOwnedMissionSession(sessionId);
     if (!exited) return false;
   }
   if (expectedScope) {

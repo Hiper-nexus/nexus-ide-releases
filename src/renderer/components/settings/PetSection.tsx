@@ -25,6 +25,7 @@ import {
 } from '../../pet/pet-hatch-flow';
 import { useToastStore } from '../../state/toast-store';
 import { askConfirm } from '../../state/confirm-store';
+import { PixelIcon } from '../PixelIcon';
 
 /**
  * Settings → Aparência → Pet de mesa: liga/desliga o companion, escolhe o
@@ -170,7 +171,7 @@ function LibraryPetCard({
             onDelete();
           }}
         >
-          ×
+          <PixelIcon name="close" size={10} />
         </button>
       )}
       <button
@@ -715,7 +716,7 @@ export function PetSection() {
                     aria-label={`Remover ${PRESET_LABEL[preset]}`}
                     onClick={() => onRemovePet(preset as 'custom' | 'sheet')}
                   >
-                    ×
+                    <PixelIcon name="close" size={10} />
                   </button>
                 )}
                 <button

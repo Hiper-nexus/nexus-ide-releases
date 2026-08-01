@@ -202,7 +202,7 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
   const actions = useMemo((): ToolbarAction[] => {
     const list: ToolbarAction[] = [];
 
-    if (pane.kind !== 'browser') {
+    if (pane.kind !== 'browser' && pane.agentTransport !== 'acp') {
       list.push({
         id: 'scroll-end',
         label: 'Fim',
@@ -239,7 +239,7 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
       });
     }
 
-    if (pane.kind === 'cli-agent') {
+    if (pane.kind === 'cli-agent' && pane.agentTransport !== 'acp') {
       list.push({
         id: 'restart',
         label: 'Reiniciar',
@@ -430,7 +430,9 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
             <span className="toolbar__badge-text">{adapterLabel}</span>
           </span>
         ) : (
-          <span className="toolbar__badge">{pane.kind}</span>
+          <span className="toolbar__badge">
+            {pane.agentTransport === 'acp' ? 'acp' : pane.kind}
+          </span>
         )}
         {pane.kind === 'cli-agent' && (
           <StateIndicator paneId={pane.id} compact={density === 'compact'} />

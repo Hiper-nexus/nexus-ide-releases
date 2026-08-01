@@ -61,6 +61,71 @@ function sameJson(left: unknown, right: unknown): boolean {
 }
 
 /**
+ * Read only the roster identity needed before a provider reroute. A reroute
+ * can happen while the route reservation is intentionally being retired, so
+ * it must not require the stronger "consumed reservation" proof used by the
+ * normal claim/completion path. The plan and roster hashes remain mandatory,
+ * and the substitute must stay in the task's sealed category.
+ */
+export function assertSealedRerouteTargetAgent(
+  db: TaskDispatchDatabase,
+  dispatch: TaskDispatchRow,
+  targetAgentRef: string,
+) {
+  const rawPlan = db
+    .prepare(
+      `SELECT plan_hash, planner_json, squad_id, roster_hash,
+              roster_snapshot_json
+       FROM mission_task_plans
+       WHERE mission_id = ? AND intent_version = ?`,
+    )
+    .get(dispatch.mission_id, dispatch.intent_version) as
+    | RawPlanAuthority
+    | undefined;
+  if (
+    !rawPlan ||
+    !rawPlan.squad_id ||
+    !rawPlan.roster_hash ||
+    !rawPlan.roster_snapshot_json ||
+    taskDispatchTokenHash(rawPlan.planner_json) !== rawPlan.plan_hash ||
+    taskDispatchTokenHash(rawPlan.roster_snapshot_json) !== rawPlan.roster_hash
+  ) {
+    throw new ScopedStoreCorruptionError("sealed reroute roster hash");
+  }
+  let plan: z.infer<typeof sealedAuthorityPlanSchema>;
+  let roster: z.infer<typeof sealedRosterDispatchSchema>;
+  try {
+    plan = sealedAuthorityPlanSchema.parse(JSON.parse(rawPlan.planner_json));
+    roster = sealedRosterDispatchSchema.parse(
+      JSON.parse(rawPlan.roster_snapshot_json),
+    );
+  } catch (error) {
+    throw new ScopedStoreCorruptionError("sealed reroute roster", {
+      cause: error,
+    });
+  }
+  const taskEntry = plan.tasks.find(
+    (entry) => entry.taskId === dispatch.task_id,
+  );
+  const target = roster.agents.find((agent) => agent.id === targetAgentRef);
+  if (
+    plan.missionId !== dispatch.mission_id ||
+    plan.intentVersion !== dispatch.intent_version ||
+    plan.squadId !== rawPlan.squad_id ||
+    plan.rosterHash !== rawPlan.roster_hash ||
+    dispatch.roster_hash !== rawPlan.roster_hash ||
+    !taskEntry ||
+    !target ||
+    target.category !== taskEntry.agentCategory
+  ) {
+    throw new Error(
+      "reroute exige agente substituto da categoria no roster selado",
+    );
+  }
+  return Object.freeze({ ...target });
+}
+
+/**
  * Re-read one task's complete execution contract from the immutable,
  * hash-bound planner receipt. Mutable task/dispatch projections are compared
  * with the seal, but never become the source of dependency or ownership
@@ -305,6 +370,10 @@ export function assertSealedTaskDispatchPlanAuthority(
 
   return Object.freeze({
     entry: Object.freeze({ ...entry, plannerId }),
+    roster: Object.freeze({
+      ...roster,
+      agents: Object.freeze(roster.agents.map((candidate) => Object.freeze({ ...candidate }))),
+    }),
     schedule: Object.freeze({
       ...schedule,
       dependsOn: Object.freeze([...schedule.dependsOn]),

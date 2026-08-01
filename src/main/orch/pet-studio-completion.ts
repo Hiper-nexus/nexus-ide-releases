@@ -579,7 +579,7 @@ export function completePetStudioHandoff(
     handoff.authorityOrigin !== 'agent' ||
     !provenance ||
     provenance.toolName !== 'nexus_handoff_submit' ||
-    provenance.source !== 'http-mcp' ||
+    (provenance.source !== 'http-mcp' && provenance.source !== 'acp-stdio') ||
     provenance.missionId !== handoff.missionId ||
     provenance.sessionId !== handoff.sessionId ||
     provenance.issuedAt + CLOCK_SKEW_TOLERANCE_MS < mission.createdAt

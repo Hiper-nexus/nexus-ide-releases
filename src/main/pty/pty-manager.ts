@@ -83,6 +83,7 @@ import {
   resolveGatewayApiKey,
   resolveGatewayBaseUrl,
 } from "./gateway-env";
+import { publishObserverFrame } from "../orch/observer-bus";
 
 /**
  * Owns every live PTY session — one per pane, addressed by an opaque id. The
@@ -1862,6 +1863,19 @@ export function spawnAgentSession(
     shellIntegrationCleanup: [],
   };
   sessions.set(sessionId, session);
+  publishObserverFrame({
+    sessionId,
+    ...(req.paneId ? { paneId: req.paneId } : {}),
+    ...(authority.context?.missionId
+      ? { missionId: authority.context.missionId }
+      : {}),
+    at: Date.now(),
+    kind: "session_spawned",
+    payload: {
+      adapterId: adapter.id,
+      role: session.agent?.role ?? "user",
+    },
+  });
   if (missionOrchestratorGrantAvailable) {
     session.missionOrchestratorGrantTimer = setTimeout(() => {
       const live = sessions.get(sessionId);

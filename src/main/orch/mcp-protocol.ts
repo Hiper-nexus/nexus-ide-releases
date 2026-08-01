@@ -69,7 +69,7 @@ export interface McpToolInvocation {
     readonly toolCallId: string;
     readonly toolName: string;
     readonly source:
-      "http-mcp" | "pty-stream" | "ipc-renderer" | "jarvis-voice";
+      "http-mcp" | "acp-stdio" | "pty-stream" | "ipc-renderer" | "jarvis-voice";
     readonly issuedAt: number;
   };
   /**
@@ -216,7 +216,7 @@ export async function handleMcpMessage(
       }
       const args = (message.params?.arguments as Record<string, unknown>) ?? {};
       const result = await dispatchToolCall(
-        "http-mcp",
+        dispatchOptions.source ?? "http-mcp",
         registry,
         name,
         args,

@@ -1048,9 +1048,9 @@
   background: color-mix(in srgb, var(--accent) 20%, transparent);
 }
 .mission-rail__new--primary {
-  color: var(--accent-ink);
-  background: var(--accent);
-  border-color: var(--accent);
+  color: var(--btn-primary-ink);
+  background: var(--btn-primary);
+  border-color: var(--btn-primary);
   box-shadow: 0 1px 0 color-mix(in srgb, #000 25%, transparent);
 }
 
@@ -1064,8 +1064,8 @@
   display: inline;
 }
 .mission-rail__new--primary:hover {
-  background: var(--accent-hover);
-  border-color: var(--accent-hover);
+  background: var(--btn-primary-hover);
+  border-color: var(--btn-primary-hover);
 }
 .mission-rail__new:active {
   transform: translateY(1px);

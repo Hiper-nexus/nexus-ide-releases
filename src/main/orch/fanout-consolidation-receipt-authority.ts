@@ -29,7 +29,7 @@ export interface FanoutConsolidationRow {
   readonly receipt_id: string;
   readonly tool_call_id: string;
   readonly tool_name: string;
-  readonly source: "http-mcp" | "pty-stream";
+  readonly source: "http-mcp" | "acp-stdio" | "pty-stream";
   readonly authority_sha256: string;
   readonly payload_sha256: string;
   readonly final_output: string;
@@ -46,7 +46,7 @@ interface AckReceiptRow {
   readonly delivery_attempt_id: string;
   readonly tool_call_id: string;
   readonly tool_name: string;
-  readonly source: "http-mcp" | "pty-stream";
+  readonly source: "http-mcp" | "acp-stdio" | "pty-stream";
   readonly mission_id: string;
   readonly orchestrator_session_id: string;
   readonly authority_sha256: string;

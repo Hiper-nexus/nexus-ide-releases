@@ -53,6 +53,23 @@ const ORCH_MISSIONS_EMPTY = orchMissionsEmptyBeat();
 const ORCH_HANDOFFS_EMPTY = orchHandoffsEmptyBeat();
 const ORCH_TODOS_EMPTY = orchTodosEmptyBeat();
 
+const MISSION_STATUS_LABEL: Record<Mission['status'], string> = {
+  pending: 'na fila',
+  running: 'em execução',
+  blocked: 'bloqueada',
+  done: 'concluída',
+  failed: 'falhou',
+};
+
+const HANDOFF_STATUS_LABEL: Record<Handoff['status'], string> = {
+  success: 'entrega válida',
+  partial: 'parcial',
+  blocked: 'bloqueada',
+  failed: 'falhou',
+  progress: 'em progresso',
+  stalled: 'sem resposta',
+};
+
 const TABS: Array<{ id: OrchPanelTab; label: string }> = [
   { id: 'missions', label: 'Missões' },
   { id: 'handoffs', label: 'Entregas' },
@@ -100,7 +117,7 @@ function MissionRow({
     <li className="orch-item">
       <div className="orch-item__head">
         <span className={`orch-badge orch-badge--${mission.status}`}>
-          {mission.status}
+          {MISSION_STATUS_LABEL[mission.status]}
         </span>
         <span className="orch-item__title">{mission.title}</span>
         {handoffCount > 0 && (
@@ -180,7 +197,7 @@ function HandoffRow({ handoff }: { handoff: Handoff }) {
     <li className="orch-item">
       <div className="orch-item__head">
         <span className={`orch-badge orch-badge--${handoff.status}`}>
-          {handoff.status}
+          {HANDOFF_STATUS_LABEL[handoff.status]}
         </span>
         <span className="orch-item__title">
           {(handoff.fromAgent ?? 'worker') + ' → orquestrador'}

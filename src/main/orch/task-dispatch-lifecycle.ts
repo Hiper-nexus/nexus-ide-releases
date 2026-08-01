@@ -15,6 +15,10 @@ import { getContextBySession, MAX_STOP_ATTEMPTS } from './gate';
 import { ensureGuidedGitBaselineForWorktreeAsync } from '../runtime/guided-greenfield-baseline';
 import { getExternalWorkerSessionInfo } from './external-worker-session-registry';
 import {
+  getAcpDriverSemanticStatus,
+  getAcpDriverSession,
+} from '../acp/acp-harness-driver';
+import {
   requireProjectDomainStoreRegistry,
   type ProjectDomainStoreSuite,
 } from './project-domain-store-registry';
@@ -123,7 +127,9 @@ function suiteForSession(sessionId: string): ProjectDomainStoreSuite | null {
 
 function sessionAuthority(sessionId: string) {
   return getContextBySession(sessionId) ??
-    getExternalWorkerSessionInfo(sessionId);
+    getExternalWorkerSessionInfo(sessionId) ??
+    getAcpDriverSession(sessionId)?.agent ??
+    null;
 }
 
 interface TerminalRecoveryTarget {
@@ -679,7 +685,11 @@ export async function reconcileTaskDispatchLifecycle(
         dispatch.sessionId && !ptyLive
           ? getExternalWorkerSessionInfo(dispatch.sessionId)
           : null;
-      const live = ptyLive ?? externalLive;
+      const acpLive =
+        dispatch.sessionId && !ptyLive && !externalLive
+          ? getAcpDriverSession(dispatch.sessionId)
+          : null;
+      const live = ptyLive ?? externalLive ?? acpLive?.agent ?? null;
       const hasExactLiveRuntime =
         live &&
         live.role === 'worker' &&
@@ -690,6 +700,9 @@ export async function reconcileTaskDispatchLifecycle(
       if (hasExactLiveRuntime) {
         const semantic = dispatch.sessionId
           ? getAgentSemanticStatusBySession(dispatch.sessionId)
+          : null;
+        const acpSemantic = dispatch.sessionId
+          ? getAcpDriverSemanticStatus(dispatch.sessionId)
           : null;
         if (
           ptyLive &&
@@ -714,12 +727,40 @@ export async function reconcileTaskDispatchLifecycle(
           }
           continue;
         }
-        if (semantic?.status === 'awaiting-input') continue;
+        if (semantic?.status === 'awaiting-input' || acpSemantic === 'awaiting-input') continue;
         if (dispatch.leaseExpiresAt >= at) continue;
+        if (!ptyLive && acpLive) {
+          const workerKey = physicalWorkerKey(
+            dispatch.sessionId!,
+            dispatch.workerIncarnationId!,
+          );
+          pendingExitReasons.set(workerKey, TASK_DISPATCH_STALLED_REASON);
+          let retired = false;
+          try {
+            retired = await acpLive.shutdown().then(
+              () => getAcpDriverSession(dispatch.sessionId!) === null,
+            );
+          } catch (error) {
+            console.warn(
+              '[task-dispatch-lifecycle] stalled ACP worker shutdown failed:',
+              error,
+            );
+          }
+          if (retired) {
+            lastActivityRefresh.delete(dispatch.sessionId!);
+            activityChunkProbe.delete(dispatch.sessionId!);
+            suite.taskDispatches.blockSessionExit({
+              sessionId: dispatch.sessionId!,
+              workerIncarnationId: dispatch.workerIncarnationId!,
+              reason: TASK_DISPATCH_STALLED_REASON,
+            });
+          }
+          pendingExitReasons.delete(workerKey);
+          continue;
+        }
         if (!ptyLive) {
-          // External transports need their own close-and-exit proof. There is
-          // no production registrar today; keeping the row fenced is safer
-          // than pretending a PTY pane retirement closed an external worker.
+          // A non-ACP external transport has no close authority in this
+          // process. Keep its row fenced rather than claiming a false exit.
           console.warn(
             '[task-dispatch-lifecycle] expired external worker lacks close authority:',
             `${dispatch.missionId}/${dispatch.taskId}`,

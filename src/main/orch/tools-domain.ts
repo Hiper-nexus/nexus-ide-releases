@@ -236,7 +236,7 @@ function requireFanoutConsolidationPhysicalReceipt(
   const intent = invocation?.effectIntent;
   if (
     !intent ||
-    (intent.source !== 'http-mcp' && intent.source !== 'pty-stream') ||
+    !['http-mcp', 'acp-stdio', 'pty-stream'].includes(intent.source) ||
     intent.toolName !== 'nexus_mission_set_status' ||
     !invocation?.agentTransportPhysicalReceipt
   ) {

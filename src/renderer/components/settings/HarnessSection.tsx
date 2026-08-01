@@ -15,7 +15,9 @@ import {
   type HarnessTierFilter,
 } from './harness-view-model';
 
-type HarnessView = 'arsenal' | 'recipes';
+import { AcpHarnessPanel } from './AcpHarnessPanel';
+
+type HarnessView = 'arsenal' | 'recipes' | 'acp';
 
 const TIER_FILTERS: HarnessTierFilter[] = [
   'todos',
@@ -24,6 +26,20 @@ const TIER_FILTERS: HarnessTierFilter[] = [
   'reviewer',
   'pendente',
 ];
+
+const KIND_LABEL: Record<HarnessKindFilter, string> = {
+  todos: 'todas',
+  agent: 'agentes',
+  skill: 'skills',
+};
+
+const TIER_LABEL: Record<HarnessTierFilter, string> = {
+  todos: 'todos',
+  scout: 'scout',
+  builder: 'builder',
+  reviewer: 'revisor',
+  pendente: 'sem tier',
+};
 
 export function HarnessSection() {
   const workspace = useWorkspaceStore((state) => state.current);
@@ -116,9 +132,9 @@ export function HarnessSection() {
 
       <div className="harness-hub__metrics" aria-label="Resumo do harness">
         {[
-          ['Agents', agentCount],
+          ['Agentes', agentCount],
           ['Skills', skillCount],
-          ['Tools MCP', mcpToolCount],
+          ['Ferramentas MCP', mcpToolCount],
           ['Cobertura', `${coverage}%`],
         ].map(([label, value]) => (
           <div className="harness-hub__metric" key={label}>
@@ -145,9 +161,19 @@ export function HarnessSection() {
         >
           Recipes
         </button>
+        <button
+          className={view === 'acp' ? 'is-active' : ''}
+          onClick={() => setView('acp')}
+          role="tab"
+          aria-selected={view === 'acp'}
+        >
+          Runtime ACP
+        </button>
       </div>
 
-      {view === 'recipes' ? (
+      {view === 'acp' ? (
+        <AcpHarnessPanel />
+      ) : view === 'recipes' ? (
         <RecipesSection />
       ) : (
         <>
@@ -158,7 +184,7 @@ export function HarnessSection() {
                 className="settings-input"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="buscar por nome, papel ou quando usar…"
+                placeholder="buscar por nome, papel ou contexto…"
               />
             </label>
             <div className="settings-pill-row" aria-label="Tipo">
@@ -168,7 +194,7 @@ export function HarnessSection() {
                   className={`settings-chip ${kind === value ? 'settings-chip--ok' : ''}`}
                   onClick={() => setKind(value)}
                 >
-                  {value}
+                  {KIND_LABEL[value]}
                 </button>
               ))}
             </div>
@@ -179,7 +205,7 @@ export function HarnessSection() {
                   className={`settings-chip ${tier === value ? 'settings-chip--ok' : ''}`}
                   onClick={() => setTier(value)}
                 >
-                  {value}
+                  {TIER_LABEL[value]}
                 </button>
               ))}
             </div>
@@ -200,7 +226,12 @@ export function HarnessSection() {
             )}
           </div>
 
-          {error && <p className="settings-detail__hint">✗ {error}</p>}
+          {error && (
+            <p className="settings-detail__hint settings-detail__hint--error" role="alert">
+              <PixelIcon name="warn" size={11} />
+              {error}
+            </p>
+          )}
           {visible.length === 0 ? (
             <EmptyState
               icon="sparkle"
@@ -218,7 +249,7 @@ export function HarnessSection() {
                     ) : (
                       <span className="settings-chip settings-chip--warn">pendente</span>
                     )}
-                    <span className="settings-chip">{row.item.kind}</span>
+                    <span className="settings-chip">{row.item.kind === 'agent' ? 'agente' : 'skill'}</span>
                     <span className="settings-chip">{row.origin}</span>
                   </div>
                   {row.blurb && <p className="settings-list__detail">{row.blurb}</p>}

@@ -21,6 +21,7 @@ import {
 } from '../../shared/contextual-panel-persist';
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 import { useContextualPanelNavStore } from '../state/contextual-panel-nav-store';
+import { PixelIcon } from './PixelIcon';
 
 const MIN_PANEL_WIDTH = 200;
 const MAX_PANEL_WIDTH = 900;
@@ -178,6 +179,17 @@ export function ContextualPanel({
     return () => window.removeEventListener('keydown', onKey);
   }, [state.visible, update]);
 
+  // The tab strip is intentionally single-line so narrow panels do not turn
+  // into a two-row toolbar. Keep the active context reachable after keyboard
+  // navigation or a launcher request.
+  useEffect(() => {
+    if (!state.visible) return;
+    const tab = tabRefs.current.get(state.activeTab);
+    if (tab && typeof tab.scrollIntoView === 'function') {
+      tab.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    }
+  }, [state.activeTab, state.visible]);
+
   if (!flagEnabled) {
     return (
       <aside
@@ -295,7 +307,7 @@ export function ContextualPanel({
           title="Ocultar (Alt+])"
           aria-label="Ocultar painel"
         >
-          ×
+          <PixelIcon name="close" size={12} />
         </button>
       </div>
       <div

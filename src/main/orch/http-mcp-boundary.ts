@@ -8,7 +8,10 @@ import {
   type AgentGateContext,
 } from "./gate";
 
-export type AgentTransportProvenanceSource = "http-mcp" | "pty-stream";
+export type AgentTransportProvenanceSource =
+  | "http-mcp"
+  | "acp-stdio"
+  | "pty-stream";
 
 /**
  * Opaque, one-shot proof minted while an authenticated CLI handoff is inside
@@ -196,6 +199,11 @@ function isLoopbackAddress(value: string | undefined): boolean {
   );
 }
 
+function reqHeaderIsAcpStdio(request: IncomingMessage): boolean {
+  const value = request.headers['x-nexus-transport'];
+  return value === 'acp-stdio' || (Array.isArray(value) && value.includes('acp-stdio'));
+}
+
 function assertPhysicalHttpRequest(
   request: IncomingMessage,
   ctx: AgentGateContext,
@@ -235,9 +243,12 @@ export function runInsideHttpMcpTransport<T>(
     );
   }
   enteredHttpRequests.add(request);
+  const source = reqHeaderIsAcpStdio(request)
+    ? "acp-stdio"
+    : "http-mcp";
   const binding: AgentTransportBinding = {
     live: true,
-    source: "http-mcp",
+    source,
     requestId: randomUUID(),
     token: ctx.token,
     projectId: ctx.scope.projectId,

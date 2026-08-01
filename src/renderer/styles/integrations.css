@@ -225,9 +225,9 @@
 
 .diff-panel__btn--primary,
 .int-panel__btn--primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--accent-ink);
+  background: var(--btn-primary);
+  border-color: var(--btn-primary);
+  color: var(--btn-primary-ink);
 }
 
 .int-panel__field input {

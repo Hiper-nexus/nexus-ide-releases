@@ -40,6 +40,8 @@ import {
 import { quotaAvailabilityScore } from '../quota/quota-policy';
 import { requestMissionDriverTick } from './mission-driver-runtime';
 import { handleMissionWorkerProviderNoRoute } from './provider-failure-waiver';
+import { tapObserverFrames } from './observer-bus';
+import type { ObserverFrame } from '../../shared/observer-frame';
 
 /**
  * Automatic account failover. Watches each pane's output for a limit signature
@@ -106,6 +108,7 @@ const ownerKeys = new WeakMap<WebContents, number>();
 let nextOwnerKey = 1;
 let untapData: (() => void) | null = null;
 let untapExit: (() => void) | null = null;
+let untapObserver: (() => void) | null = null;
 let unsubscribeScopeChanges: (() => void) | null = null;
 
 function ownerKey(owner: WebContents | null): number {
@@ -692,32 +695,26 @@ function fireScheduledRetry(
   });
 }
 
-function handleChunk(sessionId: string, data: string, now: number): void {
-  const authority = resolveAuthority(sessionId);
-  if (!authority) return;
-  const pane = resolvePaneDetails(authority);
-  if (!pane) {
-    return;
-  }
+type FailoverSignalSource = 'observer' | 'scrollback';
 
+function watchFor(authority: FailoverAuthority): [string, SessionWatch] {
   const key = watchKey(authority);
   let watch = watches.get(key);
   if (!watch) {
     watch = { authority, buffer: '', firedAt: 0 };
     watches.set(key, watch);
   }
-  // Debounce: don't re-fire within REARM_MS of a switch.
-  if (now - watch.firedAt < REARM_MS) return;
+  return [key, watch];
+}
 
-  watch.buffer = (watch.buffer + stripAnsi(data)).slice(-WINDOW_CHARS);
-  const hit = detectLimit(watch.buffer);
-  if (!hit) return;
-
-  watch.firedAt = now;
-  watch.buffer = ''; // consumed
-  // Um hit fresco supersede qualquer espera-pela-irmã pendente deste watch.
-  cancelScheduledRetry(key);
-
+function handleLimitHit(
+  authority: FailoverAuthority,
+  pane: NonNullable<ReturnType<typeof resolvePaneDetails>>,
+  key: string,
+  hit: LimitHit,
+  now: number,
+  source: FailoverSignalSource,
+): void {
   const adapterId = pane.adapterId;
   const pinned = pane.accountId ? getAccount(pane.accountId) : null;
   const current =
@@ -726,12 +723,13 @@ function handleChunk(sessionId: string, data: string, now: number): void {
     ? quotaEntryFor(adapterId, current.id)
     : undefined;
 
-  // Second-layer defense: a fresh, authoritative provider-api reading can
-  // refute a PTY-scraped limit. If the account is demonstrably healthy, the
-  // terminal signal is untrusted (echoed handoff/prose/logs) — do not cool it
-  // down or switch. Source-isolation in detectLimit already drops Nexus's own
-  // pack; this also catches false positives from the surrounding output.
-  if (current && providerApiRefutesLimit(quotaEntry, hit, now)) {
+  // The typed hook frame is already provider-native evidence. Only the legacy
+  // mixed PTY stream needs the second-layer API refutation.
+  if (
+    source === 'scrollback' &&
+    current &&
+    providerApiRefutesLimit(quotaEntry, hit, now)
+  ) {
     console.info(
       '[failover]',
       JSON.stringify({
@@ -741,6 +739,7 @@ function handleChunk(sessionId: string, data: string, now: number): void {
         reason: hit.reason,
         switched: false,
         suppressed: 'provider-api-healthy',
+        source,
       }),
     );
     return;
@@ -748,9 +747,11 @@ function handleChunk(sessionId: string, data: string, now: number): void {
 
   // A PTY is an untrusted mixed stream (provider output + quoted logs + agent
   // prose). It may trigger short recovery, auth rotation, or transient backoff,
-  // but it cannot be the sole authority for a 1h/5h/12h usage quarantine.
-  // Keep the rejected signal observable without poisoning quota UI/cooldowns.
+  // but it cannot be the sole authority for a long usage quarantine. Typed
+  // provider-hook errors have already crossed the canonical boundary and can
+  // carry the provider's cooldown directly.
   if (
+    source === 'scrollback' &&
     longCooldownNeedsFreshProviderApi(hit) &&
     !hasFreshProviderApiWindowForLimit(quotaEntry, hit, now)
   ) {
@@ -764,6 +765,7 @@ function handleChunk(sessionId: string, data: string, now: number): void {
         cooldownMs: hit.cooldownMs,
         switched: false,
         suppressed: 'provider-api-required-for-long-cooldown',
+        source,
       }),
     );
     return;
@@ -795,8 +797,56 @@ function handleChunk(sessionId: string, data: string, now: number): void {
   });
 }
 
+function handleChunk(sessionId: string, data: string, now: number): void {
+  const authority = resolveAuthority(sessionId);
+  if (!authority) return;
+  const pane = resolvePaneDetails(authority);
+  if (!pane) return;
+
+  const [key, watch] = watchFor(authority);
+  // Debounce: don't re-fire within REARM_MS of a switch.
+  if (now - watch.firedAt < REARM_MS) return;
+
+  watch.buffer = (watch.buffer + stripAnsi(data)).slice(-WINDOW_CHARS);
+  const hit = detectLimit(watch.buffer);
+  if (!hit) return;
+
+  watch.firedAt = now;
+  watch.buffer = ''; // consumed
+  cancelScheduledRetry(key);
+  handleLimitHit(authority, pane, key, hit, now, 'scrollback');
+}
+
+function handleObserverFrame(frame: ObserverFrame): void {
+  if (frame.kind !== 'provider_error') return;
+  const authority = resolveAuthority(frame.sessionId);
+  if (!authority) return;
+  const pane = resolvePaneDetails(authority);
+  if (!pane) return;
+
+  const now = frame.at;
+  const [key, watch] = watchFor(authority);
+  if (now - watch.firedAt < REARM_MS) return;
+  watch.firedAt = now;
+  watch.buffer = '';
+  cancelScheduledRetry(key);
+  handleLimitHit(
+    authority,
+    pane,
+    key,
+    {
+      kind: frame.payload.kind,
+      reason: frame.payload.reason,
+      cooldownMs: frame.payload.cooldownMs,
+      ...(frame.payload.scope ? { scope: frame.payload.scope } : {}),
+    },
+    now,
+    'observer',
+  );
+}
+
 export function initFailover(): void {
-  if (untapData) return;
+  if (untapData || untapObserver) return;
   untapData = tapSessionData((sessionId, data) => {
     try {
       handleChunk(sessionId, data, Date.now());
@@ -812,13 +862,25 @@ export function initFailover(): void {
       if (pending.authority.sessionId === sessionId) cancelScheduledRetry(key);
     }
   });
+  // Canonical provider failures reach this path without passing through the
+  // mixed terminal stream. Keep the scrollback tap above for older providers
+  // that do not emit hooks yet.
+  untapObserver = tapObserverFrames((frame) => {
+    try {
+      handleObserverFrame(frame);
+    } catch (err) {
+      console.warn('[failover] observer tap error:', err);
+    }
+  });
 }
 
 export function shutdownFailover(): void {
   untapData?.();
   untapExit?.();
+  untapObserver?.();
   untapData = null;
   untapExit = null;
+  untapObserver = null;
   watches.clear();
   for (const key of [...pendingRetries.keys()]) cancelScheduledRetry(key);
   coalesceByFrom.clear();

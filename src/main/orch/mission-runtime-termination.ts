@@ -18,6 +18,10 @@ import {
   orchTerminateSession,
 } from '../pty/pty-manager';
 import {
+  getAcpDriverSession,
+  listAcpDriverAgentSessions,
+} from '../acp/acp-harness-driver';
+import {
   getPaneRuntimeAuthorityBySession,
   listPaneSnapshots,
   requestMissionPaneClose,
@@ -63,6 +67,26 @@ interface RuntimeTarget {
   readonly spec?: MissionPaneSpec;
   readonly workerIncarnationId?: string;
   readonly orphaned: boolean;
+}
+
+function physicalSessionIsLive(sessionId: string): boolean {
+  return (
+    getAcpDriverSession(sessionId) !== null ||
+    getSessionState(sessionId) !== null
+  );
+}
+
+async function terminatePhysicalSession(sessionId: string): Promise<boolean> {
+  const acp = getAcpDriverSession(sessionId);
+  if (acp) {
+    try {
+      await acp.shutdown();
+      return getAcpDriverSession(sessionId) === null;
+    } catch {
+      return false;
+    }
+  }
+  return orchTerminateSession(sessionId);
 }
 
 function sameScope(
@@ -149,7 +173,10 @@ function runtimeTargets(input: {
 
   // Physical inventories are the source of truth. Detached/headless workers
   // remain visible here even when the renderer mirror lost their pane.
-  for (const agent of listAgentSessions()) {
+  for (const agent of [
+    ...listAgentSessions(),
+    ...listAcpDriverAgentSessions(),
+  ]) {
     addPhysical({
       sessionId: agent.sessionId,
       paneId: agent.paneId,
@@ -178,7 +205,7 @@ function runtimeTargets(input: {
   }
   for (const sessionId of snapshotSessionIds) {
     if (targets.has(sessionId)) continue;
-    const physicalLive = getSessionState(sessionId) !== null;
+    const physicalLive = physicalSessionIsLive(sessionId);
     // A durable pointer to an already-dead process closes cleanly: there is
     // no runtime left to prove anything about.
     if (!physicalLive) continue;
@@ -264,7 +291,10 @@ function orphanRuntimeInventory(input: {
 
   // This complete main-owned PTY inventory is sufficient authority for
   // mission+scope selection even after the durable mission row disappeared.
-  for (const agent of listAgentSessions()) add(agent);
+  for (const agent of [
+    ...listAgentSessions(),
+    ...listAcpDriverAgentSessions(),
+  ]) add(agent);
 
   // Preserve visual leaves even when their PTY already exited. A live legacy
   // snapshot absent from the agent inventory is admitted only through its
@@ -280,7 +310,7 @@ function orphanRuntimeInventory(input: {
     if (
       !snapshot.sessionId ||
       targets.has(snapshot.sessionId) ||
-      getSessionState(snapshot.sessionId) === null
+      !physicalSessionIsLive(snapshot.sessionId)
     ) {
       continue;
     }
@@ -338,11 +368,11 @@ export async function closeOrphanedMissionRuntime(input: {
       const inventory = orphanRuntimeInventory(input);
       for (const paneId of inventory.paneIds) paneIds.add(paneId);
       const pending = inventory.targets.filter(
-        (target) => getSessionState(target.sessionId) !== null,
+        (target) => physicalSessionIsLive(target.sessionId),
       );
       if (pending.length === 0) break;
       for (const target of pending) {
-        if (!(await orchTerminateSession(target.sessionId))) {
+        if (!(await terminatePhysicalSession(target.sessionId))) {
           return {
             ok: false,
             terminatedSessionIds: [...terminated].sort(),
@@ -355,7 +385,7 @@ export async function closeOrphanedMissionRuntime(input: {
       }
     }
     const remaining = orphanRuntimeInventory(input).targets.filter(
-      (target) => getSessionState(target.sessionId) !== null,
+      (target) => physicalSessionIsLive(target.sessionId),
     );
     if (remaining.length > 0) {
       return {
@@ -501,7 +531,7 @@ export async function terminateMissionRuntime(input: {
     if (pending.length === 0) break;
     for (const target of pending) {
       panesToCollapse.add(target.paneId);
-      const exited = await orchTerminateSession(target.sessionId);
+      const exited = await terminatePhysicalSession(target.sessionId);
       if (!exited) {
         return {
           ok: false,

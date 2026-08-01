@@ -8,6 +8,7 @@ import { listPanes } from '../lib/split-tree';
 import { useDesignSelectionStore } from '../state/design-selection-store';
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
+import { PixelIcon } from './PixelIcon';
 
 type Props = {
   paneId: string;
@@ -380,7 +381,7 @@ export function DesignSidebar({ paneId }: Props) {
                     )
                   }
                 >
-                  ■
+                  <PixelIcon name="stop" size={12} />
                 </button>
               </div>
             </>

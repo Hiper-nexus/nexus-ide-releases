@@ -6,6 +6,7 @@ import {
 import type { ScopeCoordinates } from "./scoped-store";
 import { ScopedStoreCorruptionError } from "./scoped-store";
 import type { TaskDispatchDatabase } from "./task-dispatch-persistence";
+import { assertStoredHandoffAgentAttestation } from "./agent-attestation-gate";
 
 const identifierSchema = z
   .string()
@@ -30,13 +31,16 @@ const physicalHandoffRowSchema = z
     receipt_id: identifierSchema,
     tool_call_id: identifierSchema,
     tool_name: z.literal("nexus_handoff_submit"),
-    source: z.enum(["http-mcp", "pty-stream", "omp-rpc-stdio"]),
+    source: z.enum(["http-mcp", "acp-stdio", "pty-stream", "omp-rpc-stdio"]),
     receipt_mission_id: identifierSchema,
     receipt_session_id: identifierSchema,
     receipt_worker_incarnation_id: identifierSchema,
     authority_sha256: sha256Schema,
     worktree_head_sha: commitSchema.nullable(),
     issued_at: z.number().int().nonnegative(),
+    agent_pubkey: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+    owner_pubkey: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+    attestation_json: z.string().nullable(),
   })
   .strict();
 
@@ -45,7 +49,7 @@ const auditIntentPayloadSchema = z
     schema: z.literal("nexus.mcp-audit/v1"),
     project_id: identifierSchema,
     checkout_id: identifierSchema,
-    source: z.enum(["http-mcp", "pty-stream", "omp-rpc-stdio"]),
+    source: z.enum(["http-mcp", "acp-stdio", "pty-stream", "omp-rpc-stdio"]),
     invocation_id: identifierSchema,
   })
   .passthrough();
@@ -53,7 +57,7 @@ const auditIntentPayloadSchema = z
 export interface PhysicalTaskHandoffAuthority {
   readonly receiptId: string;
   readonly toolCallId: string;
-  readonly source: "http-mcp" | "pty-stream";
+  readonly source: "http-mcp" | "acp-stdio" | "pty-stream";
   readonly authoritySha256: string;
   readonly worktreeHeadSha?: string;
   readonly issuedAt: number;
@@ -111,7 +115,8 @@ export function assertPhysicalTaskHandoffAuthority(
               r.mission_id AS receipt_mission_id,
               r.session_id AS receipt_session_id,
               r.worker_incarnation_id AS receipt_worker_incarnation_id,
-              r.authority_sha256, r.worktree_head_sha, r.issued_at
+              r.authority_sha256, r.worktree_head_sha, r.issued_at,
+              r.agent_pubkey, r.owner_pubkey, r.attestation_json
        FROM handoffs AS h
        JOIN handoff_mcp_receipts AS r ON r.handoff_id = h.id
        WHERE h.id = ?`,
@@ -165,6 +170,17 @@ export function assertPhysicalTaskHandoffAuthority(
         : "task handoff blocking requires a non-success status",
     );
   }
+
+  assertStoredHandoffAgentAttestation(
+    db,
+    input.missionId,
+    row.handoff_from_agent,
+    {
+      agentPubkey: row.agent_pubkey,
+      ownerPubkey: row.owner_pubkey,
+      attestationJson: row.attestation_json,
+    },
+  );
 
   if (input.requireCorrelatedAuditIntent) {
     const auditRows = db

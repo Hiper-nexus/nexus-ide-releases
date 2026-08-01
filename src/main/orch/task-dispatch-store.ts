@@ -34,8 +34,12 @@ import {
 import {
   assertPhysicalTaskHandoffAuthority,
 } from "./task-dispatch-physical-handoff-authority";
-import { assertSealedTaskDispatchPlanAuthority } from "./task-dispatch-sealed-plan-authority";
-import { sealedPlanTaskConsumers } from "./task-dispatch-sealed-plan-authority";
+import {
+  assertSealedRerouteTargetAgent,
+  assertSealedTaskDispatchPlanAuthority,
+  sealedPlanTaskConsumers,
+} from "./task-dispatch-sealed-plan-authority";
+import { ensureRerouteTargetAgentIdentity } from "./agent-attestation-gate";
 import { decideProviderFailureTaskPolicy } from "./provider-failure-task-policy";
 import type { GuidedTaskKind } from "./guided-task-kind";
 import {
@@ -883,6 +887,11 @@ export class TaskDispatchStore {
     readonly adapterId: string;
     readonly hitKind: TaskProviderWaiverHitKind;
     readonly causeSha256: string;
+    /**
+     * Reply guard: texto durável dizendo que a task nunca executou e por quê
+     * o roster não a resgatou. Vai no binding do receipt — nunca um done mudo.
+     */
+    readonly reason?: string;
   }): TaskDispatchRecord {
     const taskId = idSchema.parse(input.taskId);
     const revision = z.number().int().positive().parse(input.revision);
@@ -895,6 +904,10 @@ export class TaskDispatchStore {
       .string()
       .regex(/^[a-f0-9]{64}$/)
       .parse(input.causeSha256);
+    const waiverReason =
+      input.reason === undefined
+        ? undefined
+        : z.string().trim().min(1).max(2_000).parse(input.reason);
     const now = this.#binding.now();
     const db = this.#binding.writeDatabase();
     const record = db
@@ -951,6 +964,7 @@ export class TaskDispatchStore {
             adapterId,
             hitKind,
             causeSha256,
+            ...(waiverReason !== undefined ? { reason: waiverReason } : {}),
           },
         };
         const updated = db
@@ -2440,6 +2454,17 @@ export class TaskDispatchStore {
             "reroute não pode esquecer CLIs já provadas mortas",
           );
         }
+        const target = assertSealedRerouteTargetAgent(
+          db,
+          current,
+          directive.toAgentRef,
+        );
+        ensureRerouteTargetAgentIdentity(
+          db,
+          current.mission_id,
+          target.agentName,
+          Math.floor(now / 1000),
+        );
         const retryAt = now + taskDispatchRetryDelay(1);
         const updated = db
           .prepare(
@@ -2589,6 +2614,17 @@ export class TaskDispatchStore {
             "reroute não pode esquecer CLIs já provadas mortas",
           );
         }
+        const target = assertSealedRerouteTargetAgent(
+          db,
+          current,
+          directive.toAgentRef,
+        );
+        ensureRerouteTargetAgentIdentity(
+          db,
+          current.mission_id,
+          target.agentName,
+          Math.floor(now / 1000),
+        );
         // Reabre a missão removendo exatamente o sufixo canônico deste
         // bloqueio (idempotente se a missão já voltou a running por um
         // reroute-irmão no mesmo tick). Missão running não tem o que reabrir.

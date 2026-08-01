@@ -35,44 +35,39 @@
 }
 
 :root {
-  /* Cockpit NEUTRO com um acento ciano operacional. A doutrina de cor é
-     aviônica — ciano = vivo/interativo, verde = nominal/pronto, âmbar =
-     atenção/bloqueado, vermelho = falha. Decoração nunca usa sinal.
-
-     A base era azul-negro (#0a0e15/#101623) com borda azul sólida (#1d2637):
-     um fundo tingido faz TODA superfície parecer levemente acesa, e aí o ciano
-     de sinal não tem contra o quê se destacar. Cinza neutro devolve ao acento o
-     poder de significar. Bordas viraram branco translúcido: um fio de opacidade
-     compõe corretamente sobre qualquer superfície da pilha (bar, elevated,
-     modal) em vez de exigir um hex por camada. */
+  /* Contrato visual do Nexus: sinal operacional cyan, superfícies neutras e
+     hierarquia feita por espaço/contraste. A cor só aparece quando existe
+     estado ou ação; não usamos neon como textura de fundo. */
   --bg: #0a0a0b;
   --bg-elevated: #151517;
   --bg-bar: #101012;
-  --border: rgb(255 255 255 / 0.07);
-  --border-strong: rgb(255 255 255 / 0.14);
+  --border: rgb(255 255 255 / .07);
+  --border-strong: rgb(255 255 255 / .14);
+  --card-hi: rgb(255 255 255 / .05);
   --text: #fafafa;
-  /* Secondary text. Mantido ≥5:1 sobre --bg e --bg-elevated (WCAG AA para
-     meta/detail/empty-state). Não baixar. */
   --text-dim: #a1a1a1;
+  --text-faint: #8f8f8f;
+  /* Acento de ação/vida definido em DESIGN.md. */
   --accent: #3dd9ff;
-  /* Tinta sobre superfícies sólidas de acento (CTA). Um token, não #hex solto:
-     temas claros trocam para branco via ui-theme.ts. */
   --accent-ink: #051019;
-  /* Derivados do acento — color-mix segue o tema automaticamente (Dracula,
-     Solarized…), então NÃO os sobrescreva por tema. */
   --accent-soft: color-mix(in srgb, var(--accent) 15%, transparent);
   --accent-strong: color-mix(in srgb, var(--accent) 30%, transparent);
-  --accent-hover: color-mix(in srgb, var(--accent) 80%, #ffffff);
-  --accent-glow: color-mix(in srgb, var(--accent) 45%, transparent);
+  --accent-hover: color-mix(in srgb, var(--accent) 82%, #ffffff);
+  --accent-glow: color-mix(in srgb, var(--accent) 28%, transparent);
+  --btn-primary: var(--accent);
+  --btn-primary-ink: var(--accent-ink);
+  --btn-primary-hover: color-mix(in srgb, var(--accent) 84%, #ffffff);
   --danger: #ff7a90;
   /* Acento do DESIGN MODE (segunda voz deliberada, azul-ferramenta): fora da
      doutrina de sinal operacional de propósito — marca "modo de edição". */
   --design: #2f6ae0;
   --danger-soft: color-mix(in srgb, var(--danger) 14%, transparent);
   --scrollbar-track: rgba(4, 6, 10, 0.44);
-  --scrollbar-thumb: rgba(124, 134, 158, 0.36);
+  --scrollbar-thumb: rgba(255, 255, 255, 0.22);
   --scrollbar-thumb-hover: color-mix(in srgb, var(--accent) 62%, transparent);
-  --pixel-grid: color-mix(in srgb, var(--accent) 5%, transparent);
+  /* Grid de pixels MORTO por padrão (0.21): linhas transparentes — ops-board,
+     settings e launch mantêm os gradientes (layout intacto), sem o desenho. */
+  --pixel-grid: transparent;
   --radius: 10px;
   --bar-height: 44px;
   --toolbar-height: 30px;
@@ -135,7 +130,7 @@
   --shadow-2: 0 12px 32px rgba(0, 0, 0, 0.45);
   --shadow-3: 0 24px 64px rgba(0, 0, 0, 0.5);
 
-  /* Estados operacionais compartilhados entre temas — sinal, não decoração. */
+  /* Estados operacionais: ponto + verbo + tempo. */
   --ok: #7ee2a8;
   --live: #3ce08d;
   --warn: #e5c07b;
@@ -162,6 +157,13 @@
   --live: #08783f;
   --warn: #9a6b00;
   --gold: #8a6d00;
+  /* Terceiro nível de texto re-escurecido para AA sobre fundo claro. */
+  --text-faint: #6b7080;
+  /* CTA primário invertido no claro: sólido escuro, tinta clara — a mesma
+     escola (CTA neutro; o acento indica, não vende). */
+  --btn-primary: #16181d;
+  --btn-primary-ink: #fafafa;
+  --btn-primary-hover: #23262e;
 }
 
 * {
@@ -182,18 +184,18 @@ body,
 }
 
 body {
-  /* Atmosfera de cockpit: um respiro de acento no alto (a "luz" da sala de
-     controle) e um contra-luz frio no canto oposto, ambos a ~5% — dimensão
-     sem virar decoração. Segue o tema via color-mix do --accent/--design. */
+  /* Atmosfera: um respiro de acento no alto e um contra-luz frio no canto
+     oposto, a ≤5% — dimensão sem virar decoração (orçamento de acento da
+     direção 0.21 é <5% da tela). Segue o tema via color-mix. */
   background:
     radial-gradient(
       1100px 480px at 50% -12%,
-      color-mix(in srgb, var(--accent) 7%, transparent),
+      color-mix(in srgb, var(--accent) 5%, transparent),
       transparent 62%
     ),
     radial-gradient(
       900px 560px at 88% 112%,
-      color-mix(in srgb, var(--design) 5%, transparent),
+      color-mix(in srgb, var(--design) 4%, transparent),
       transparent 58%
     ),
     var(--bg);
@@ -585,15 +587,15 @@ body {
 }
 
 .workspace-bar__menu-item--accent {
-  color: var(--accent-ink);
-  background: var(--accent);
-  border-color: var(--accent);
+  color: var(--btn-primary-ink);
+  background: var(--btn-primary);
+  border-color: var(--btn-primary);
   font-weight: 600;
 }
 
 .workspace-bar__menu-item--accent:hover {
-  background: var(--accent-hover);
-  border-color: var(--accent-hover);
+  background: var(--btn-primary-hover);
+  border-color: var(--btn-primary-hover);
 }
 
 .workspace-bar__menu-mission {
@@ -723,7 +725,7 @@ body {
   letter-spacing: 0.08em;
 }
 
-/* Density: full (≥1280) labels; icons (980–1279) no labels; compact (<980) overflow */
+/* Density: full (≥1480) labels; icons (1160–1479) no labels; compact (<1160) overflow */
 .workspace-bar--icons .workspace-bar__btn,
 .workspace-bar--compact .workspace-bar__btn {
   padding: 4px 7px;
@@ -1629,6 +1631,107 @@ body {
   min-height: 0;
   position: relative;
   padding: 4px 6px 2px;
+}
+
+.acp-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--bg-elevated) 94%, var(--accent) 6%), var(--bg));
+}
+
+.acp-pane__summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-3) var(--space-3) var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--border));
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg-elevated));
+}
+
+.acp-pane__summary strong,
+.acp-pane__summary span {
+  display: block;
+}
+
+.acp-pane__summary strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.acp-pane__summary span {
+  margin-top: 2px;
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
+.acp-pane__pulse {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.acp-pane__events {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 1px;
+  min-height: 0;
+  margin: 0;
+  padding: 0 var(--space-3) var(--space-3);
+  overflow: auto;
+  list-style: none;
+}
+
+.acp-pane__events li {
+  display: grid;
+  grid-template-columns: 58px 1fr;
+  gap: var(--space-2);
+  padding: 6px 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.acp-pane__events li strong {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.acp-pane__events li span {
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.acp-pane__empty,
+.acp-pane__error {
+  margin: auto var(--space-3) var(--space-3);
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.acp-pane__error {
+  color: var(--danger);
+}
+
+.acp-pane--compact .acp-pane__summary {
+  margin: 8px;
+}
+
+.acp-pane--compact .acp-pane__events {
+  padding: 0 8px 8px;
+}
+
+.acp-pane--compact .acp-pane__events li {
+  grid-template-columns: 46px 1fr;
+  padding: 5px 4px;
+  font-size: 10px;
 }
 
 /* Pane nascendo: enquanto o PTY não reporta sessão o terminal é um retângulo

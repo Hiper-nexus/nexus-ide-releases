@@ -5,9 +5,11 @@ import { createTaskDispatchStore } from "./task-dispatch-store";
 import { requestMissionWorkerPaneRetirement } from "./pane-registry";
 import { decideProviderFailureTaskPolicy } from "./provider-failure-task-policy";
 import { requestMissionDriverTick } from "./mission-driver-runtime";
-import { getProjectDomainStores } from "./project-domain-store-registry";
 import { rerouteLiveProviderDeadDispatch } from "./mission-scheduler-reconciliation";
-import type { TaskProviderWaiverHitKind } from "./task-dispatch-codec";
+import type {
+  TaskDispatchRecord,
+  TaskProviderWaiverHitKind,
+} from "./task-dispatch-codec";
 import type { LimitHit } from "./limit-detector";
 
 /**
@@ -22,6 +24,24 @@ import type { LimitHit } from "./limit-detector";
  *   identidade exata + o caminho limitado de retry/failover existente
  *   (espera-pela-irmã do failover e a recuperação de session-exit do
  *   scheduler, com teto de tentativas físicas).
+ *
+ * REPLY GUARD (design do block/buzz aplicado ao waiver): um término que
+ * marcaria a task `done` SEM nenhum resultado publicado ganha uma chance de
+ * correção limitada antes da dispensa —
+ *
+ * 1. Evidência primeiro: se o dispatch já tem handoff/receipt do worker, o
+ *    guard não intervém — a entrega em andamento e o retry limitado seguem
+ *    donos do destino (o "reply" já foi publicado).
+ * 2. Sem evidência + kind durável (auth/quota): consulta a diretiva de
+ *    reroute do roster (mecanismo da 0.19.42) ANTES de qualquer waiver. Com
+ *    rota viva, a task é re-vinculada — nunca `done` por este caminho.
+ * 3. Orçamento 1 por task: uma diretiva de reroute já commitada prova que a
+ *    chance de correção foi usada; o guard nunca re-consulta (o buzz usa no
+ *    máximo 2 re-rolls; aqui 1 basta porque a cadeia do reroute já é limitada
+ *    por exhaustedAdapterIds).
+ * 4. Nunca um done silencioso: quando o waiver é inevitável (roster esgotado,
+ *    orçamento consumido ou janela curta), o receipt durável carrega o reason
+ *    explícito de que a task nunca executou e por quê.
  *
  * O renderer nunca participa da decisão; o fechamento usa a mesma função
  * authority-sealed do retirement coordinator, que re-prova
@@ -59,6 +79,61 @@ const WAIVER_CAUSE_PT: Record<TaskProviderWaiverHitKind, string> = {
 };
 
 /**
+ * Predicado de evidência de execução do reply guard: o worker "publicou" se o
+ * dispatch carrega qualquer âncora durável de entrega — handoff físico
+ * (submetido ou aceito), receipt de integração ou conclusão. É o mesmo
+ * conjunto de colunas que as transações do store exigem NULL antes de aceitar
+ * um waiver; aqui ele decide se o guard sequer pode intervir.
+ */
+export function hasWorkerExecutionEvidence(
+  dispatch: Pick<
+    TaskDispatchRecord,
+    "handoffId" | "handoffAcceptedAt" | "integrationReceipt" | "completedAt"
+  >,
+): boolean {
+  return (
+    dispatch.handoffId !== undefined ||
+    dispatch.handoffAcceptedAt !== undefined ||
+    dispatch.integrationReceipt !== undefined ||
+    dispatch.completedAt !== undefined
+  );
+}
+
+/** Desfecho da consulta ao roster no caminho do waiver — vai para o reason. */
+export type ProviderWaiverRosterConsult =
+  | "exhausted"
+  | "budget-spent"
+  | "consult-failed"
+  | "not-consulted";
+
+const ROSTER_CONSULT_PT: Record<ProviderWaiverRosterConsult, string> = {
+  exhausted:
+    "roster esgotado — nenhum agente alternativo da mesma categoria com CLI viva",
+  "budget-spent":
+    "orçamento do reroute (1 por task) já consumido — a substituição anterior também falhou",
+  "consult-failed":
+    "a consulta de reroute ao roster falhou — substituição indisponível neste attempt",
+  "not-consulted":
+    "reroute não consultado por design — janela curta segue a espera-pela-irmã",
+};
+
+/**
+ * Reason durável do waiver: diz sem eufemismo que a task nunca executou, qual
+ * foi a causa de provider e por quê o roster não a resgatou. Gravado no
+ * binding do receipt `advisory_provider_unavailable` — o done nunca é mudo.
+ */
+export function providerWaiverNeverExecutedReason(input: {
+  readonly hitKind: TaskProviderWaiverHitKind;
+  readonly adapterId: string;
+  readonly rosterConsult: ProviderWaiverRosterConsult;
+}): string {
+  return (
+    `task nunca executou: ${WAIVER_CAUSE_PT[input.hitKind]} na CLI ` +
+    `${input.adapterId}; ${ROSTER_CONSULT_PT[input.rosterConsult]}`
+  ).slice(0, 2_000);
+}
+
+/**
  * O waiver já era durável — o recibo em `integration_receipt_json` guarda causa,
  * adapter e CAS binding. O que faltava era ele CHEGAR ao operador: a task grava
  * `done` e o dispatch `completed`, então na tela a tarefa dispensada é idêntica
@@ -86,6 +161,17 @@ export function providerWaiverLearning(input: {
 
 let configuredRuntimeManager: ProjectRuntimeManager | null = null;
 let configuredLiveReroute: typeof rerouteLiveProviderDeadDispatch | null = null;
+export interface ProviderWaiverLearningRequest {
+  readonly scope: ProjectExecutionScope;
+  readonly missionId: string;
+  readonly taskId: string;
+  readonly adapterId: string;
+  readonly hitKind: TaskProviderWaiverHitKind;
+}
+type ProviderWaiverLearningSink = (
+  request: ProviderWaiverLearningRequest,
+) => void;
+let configuredLearningSink: ProviderWaiverLearningSink | null = null;
 
 /** Bootstrap de produção (main.ts) instala o runtime; testes reconfiguram.
  *  `attemptLiveReroute` é injetável porque o resolvedor real depende de
@@ -94,12 +180,14 @@ let configuredLiveReroute: typeof rerouteLiveProviderDeadDispatch | null = null;
 export function configureProviderFailureWaiver(input: {
   readonly runtimeManager: ProjectRuntimeManager | null;
   readonly attemptLiveReroute?: typeof rerouteLiveProviderDeadDispatch | null;
+  readonly appendLearning?: ProviderWaiverLearningSink | null;
 }): void {
   configuredRuntimeManager = input.runtimeManager;
   configuredLiveReroute =
     input.attemptLiveReroute === undefined
       ? rerouteLiveProviderDeadDispatch
       : input.attemptLiveReroute;
+  configuredLearningSink = input.appendLearning ?? null;
 }
 
 function requestExactWorkerClose(
@@ -161,46 +249,90 @@ export function handleMissionWorkerProviderNoRoute(
     return "retry";
   }
 
-  // ORDEM: reroute dentro do roster ANTES de qualquer waiver ou retry. A frota
-  // que o operador aprovou existe para isto — dispensar uma task (ou queimar 3
-  // respawns num binário 401) enquanto outro agente da mesma categoria está
-  // vivo é desperdiçar o roster. Só kinds duráveis re-roteiam; soluços curtos
-  // seguem a espera-pela-irmã.
-  if (configuredLiveReroute && LIVE_REROUTE_HIT_KINDS.has(input.hit.kind)) {
-    try {
-      const candidate = configuredLiveReroute(input.scope, {
+  // REPLY GUARD, passo 1 — evidência primeiro: um dispatch com handoff ou
+  // receipt já "publicou" o resultado. O guard não intervém — nem reroute nem
+  // waiver tocam uma entrega em andamento; o retry limitado e a cadeia de
+  // entrega existente seguem exatamente como hoje.
+  if (hasWorkerExecutionEvidence(dispatch)) {
+    console.info(
+      "[failover]",
+      JSON.stringify({
+        providerNoRoute:
+          "evidência de execução presente (handoff/receipt); retry limitado",
         missionId: input.missionId,
         taskId: dispatch.taskId,
         paneId: input.paneId,
         sessionId: input.sessionId,
-        workerIncarnationId: input.workerIncarnationId,
-        deadAdapterId: input.adapterId,
-      });
-      if (candidate) {
-        console.info(
-          "[failover]",
-          JSON.stringify({
-            liveReroute: "provider morto re-roteado dentro do roster",
-            missionId: input.missionId,
-            taskId: dispatch.taskId,
-            paneId: input.paneId,
-            fromAdapterId: input.adapterId,
-            toAgent: candidate.agentName,
-            toCli: candidate.cli,
-            hitKind: input.hit.kind,
-          }),
-        );
-        // Diretiva commitada: fecha a sessão física morta e acorda o
-        // scheduler para despachar pelo agente alternativo.
-        requestExactWorkerClose(input, "live-reroute");
-        requestMissionDriverTick();
-        return "rerouted";
-      }
-    } catch (error) {
-      console.warn(
-        "[failover] reroute ao vivo falhou; caindo para waiver/retry:",
-        error,
+        hitKind: input.hit.kind,
+      }),
+    );
+    return "retry";
+  }
+
+  // ORDEM: reroute dentro do roster ANTES de qualquer waiver ou retry. A frota
+  // que o operador aprovou existe para isto — dispensar uma task (ou queimar 3
+  // respawns num binário 401) enquanto outro agente da mesma categoria está
+  // vivo é desperdiçar o roster. Só kinds duráveis re-roteiam; soluços curtos
+  // seguem a espera-pela-irmã. Orçamento do guard: 1 reroute por task — uma
+  // diretiva durável já commitada (provider_reroute_json) prova que a chance
+  // de correção foi usada e o guard nunca re-consulta; a cadeia mais longa
+  // pertence ao sweep de esgotamento físico, não a este caminho.
+  const rerouteBudgetSpent = dispatch.providerReroute !== undefined;
+  let rosterConsult: ProviderWaiverRosterConsult = "not-consulted";
+  if (LIVE_REROUTE_HIT_KINDS.has(input.hit.kind)) {
+    if (rerouteBudgetSpent) {
+      rosterConsult = "budget-spent";
+      console.info(
+        "[failover]",
+        JSON.stringify({
+          providerNoRoute:
+            "orçamento do reroute (1 por task) já consumido; sem nova consulta",
+          missionId: input.missionId,
+          taskId: dispatch.taskId,
+          toAgentRef: dispatch.providerReroute?.toAgentRef,
+          hitKind: input.hit.kind,
+        }),
       );
+    } else if (!configuredLiveReroute) {
+      rosterConsult = "consult-failed";
+    } else {
+      try {
+        const candidate = configuredLiveReroute(input.scope, {
+          missionId: input.missionId,
+          taskId: dispatch.taskId,
+          paneId: input.paneId,
+          sessionId: input.sessionId,
+          workerIncarnationId: input.workerIncarnationId,
+          deadAdapterId: input.adapterId,
+        });
+        if (candidate) {
+          console.info(
+            "[failover]",
+            JSON.stringify({
+              liveReroute: "provider morto re-roteado dentro do roster",
+              missionId: input.missionId,
+              taskId: dispatch.taskId,
+              paneId: input.paneId,
+              fromAdapterId: input.adapterId,
+              toAgent: candidate.agentName,
+              toCli: candidate.cli,
+              hitKind: input.hit.kind,
+            }),
+          );
+          // Diretiva commitada: fecha a sessão física morta e acorda o
+          // scheduler para despachar pelo agente alternativo.
+          requestExactWorkerClose(input, "live-reroute");
+          requestMissionDriverTick();
+          return "rerouted";
+        }
+        rosterConsult = "exhausted";
+      } catch (error) {
+        rosterConsult = "consult-failed";
+        console.warn(
+          "[failover] reroute ao vivo falhou; caindo para waiver/retry:",
+          error,
+        );
+      }
     }
   }
 
@@ -232,6 +364,13 @@ export function handleMissionWorkerProviderNoRoute(
     const causeSha256 = createHash("sha256")
       .update(input.hit.reason)
       .digest("hex");
+    // REPLY GUARD, passo 4 — nunca um done silencioso: o receipt durável diz
+    // que a task nunca executou e por quê o roster não a resgatou.
+    const waiverReason = providerWaiverNeverExecutedReason({
+      hitKind: input.hit.kind,
+      adapterId: input.adapterId,
+      rosterConsult,
+    });
     try {
       store.completeSealedAdvisoryProviderWaiver({
         taskId: dispatch.taskId,
@@ -242,6 +381,7 @@ export function handleMissionWorkerProviderNoRoute(
         adapterId: input.adapterId,
         hitKind: input.hit.kind,
         causeSha256,
+        reason: waiverReason,
       });
     } catch (error) {
       console.warn(
@@ -262,30 +402,27 @@ export function handleMissionWorkerProviderNoRoute(
         adapterId: input.adapterId,
         hitKind: input.hit.kind,
         causeSha256,
+        rosterConsult,
+        neverExecuted: true,
       }),
     );
     // Best-effort e nunca fatal: a dispensa já está commitada e auditável no
     // recibo; falhar em narrá-la não pode reverter nem travar a missão.
-    try {
-      const stores = getProjectDomainStores(input.scope);
-      const taskTitle =
-        stores.tasks
-          .list(input.missionId)
-          .find((task) => task.id === dispatch.taskId)?.title ??
-        dispatch.taskId;
-      stores.missions.appendLearning(
-        input.missionId,
-        providerWaiverLearning({
-          taskTitle,
+    if (configuredLearningSink) {
+      try {
+        configuredLearningSink({
+          scope: input.scope,
+          missionId: input.missionId,
+          taskId: dispatch.taskId,
           adapterId: input.adapterId,
           hitKind: input.hit.kind,
-        }),
-      );
-    } catch (error) {
-      console.warn(
-        "[failover] waiver commitado, mas o aprendizado não foi registrado:",
-        error,
-      );
+        });
+      } catch (error) {
+        console.warn(
+          "[failover] waiver commitado, mas o aprendizado não foi registrado:",
+          error,
+        );
+      }
     }
     // Waiver commitado: fecha a sessão física exata e acorda o scheduler.
     requestExactWorkerClose(input, "advisory-waiver");

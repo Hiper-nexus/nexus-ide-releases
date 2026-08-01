@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.21.0 — O agente deixou de ser texto
+
+Data: 2026-08-01
+
+Esta release fecha as fundações que faltavam para uma missão observável,
+transportável e verificável de ponta a ponta. O trabalho não fica apenas em
+documentação: o Main, o renderer e o storage participam do mesmo contrato.
+
+### Observer plane e ACP
+
+- Hooks e sessões ACP emitem frames tipados de turno, ferramenta, status e
+  lifecycle; a timeline da missão consome esses eventos sem raspar scrollback.
+- Driver ACP JSON-RPC sobre stdio com handshake, timeouts limitados,
+  cancelamento e kill garantido, injeção MCP via `session/new` e provenance
+  `acp-stdio`.
+- Settings → Runtime ACP permite escolher preset, salvar/testar BYOH custom e
+  mostra permission requests em uma UI nativa fail-closed.
+
+### Fila, receipts e identidade
+
+- Watchdog de fila com deadline e dead-letter libera recursos e registra erro
+  acionável quando merge ou dispatch ficam in-flight além do limite.
+- Receipts SHA-256 agora formam cadeia verificável, com hash anterior e
+  `verify_chain` no gate.
+- Cada agente de handoff recebe identidade Ed25519 e atestação com escopo,
+  expiração e revogação; reroute emite a identidade no Main e merge revalida a
+  credencial armazenada na mesma transação do receipt.
+- Reply guard, waiver e failover preservam evidência explícita quando uma task
+  nunca executou; nenhum waiver transforma ausência de execução em sucesso.
+
+### UI que executa o contrato
+
+- Composer, wizard, journal, Ops Board, panes ACP e settings foram conectados a
+  ações e estados reais, incluindo erros retryable e feedback de probe.
+- Tokens, motion, densidade, foco, scrollbars e estados de seleção seguem o
+  design system Nexus; a superfície ACP tem testes de comportamento próprios.
+
 ## 0.20.3 — O gate pergunta antes de gastar
 
 Data: 2026-08-01

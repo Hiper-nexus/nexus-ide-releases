@@ -74,7 +74,7 @@ export function VoiceButton() {
 
   const label =
     wakeBlocked
-      ? 'wake preso'
+      ? 'wake ocupado'
       : responseMuted
         ? 'muda'
       : liveOn && liveState?.status && liveState.status !== 'off'
@@ -97,6 +97,10 @@ export function VoiceButton() {
       setHudMode('expanded');
       return;
     }
+    if (wakeBlocked) {
+      openSettings();
+      return;
+    }
     requestJarvisWake();
   }
 
@@ -112,8 +116,8 @@ export function VoiceButton() {
       onContextMenu={handleContextMenu}
       title={
         info
-          ? `${responseMuted ? 'Clique para abrir os controles e ativar o áudio' : 'Clique para acordar a Jarvis'} · ${isMac() ? '⌥/⌘' : 'Alt/Ctrl'} clique para ajustes · Push-to-talk: ${info.shortcut} (${info.hotkeyMode}) · STT ${stt} · TTS ${tts}${liveOn ? ' · Jarvis Live' : ''}${responseMuted ? ' · respostas mudas' : ''}${wakeBlocked ? ` · wake preso pelo PID ${wakeBlockedPid}` : ''}`
-          : 'Voice pipeline'
+          ? `${responseMuted ? 'Clique para abrir os controles e ativar o áudio' : wakeBlocked ? 'Clique para abrir o diagnóstico de voz' : 'Clique para acordar a Jarvis'} · ${isMac() ? '⌥/⌘' : 'Alt/Ctrl'} clique para ajustes · Push-to-talk: ${info.shortcut} (${info.hotkeyMode}) · STT ${stt} · TTS ${tts}${liveOn ? ' · Jarvis Live' : ''}${responseMuted ? ' · respostas mudas' : ''}${wakeBlocked ? ` · wake ocupado pelo PID ${wakeBlockedPid}` : ''}`
+          : 'Pipeline de voz'
       }
     >
       <span className={`voice-dot ${armed ? 'voice-dot--on' : ''} ${active ? 'voice-dot--pulse' : ''}`} />

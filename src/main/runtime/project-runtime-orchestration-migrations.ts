@@ -513,6 +513,241 @@ ALTER TABLE mission_drive_state ADD COLUMN last_autopilot_reason_at INTEGER
   CHECK (last_autopilot_reason_at IS NULL OR last_autopilot_reason_at >= 0);
 `;
 
+/**
+ * Hash chain over the physical handoff receipts of one mission (derived from
+ * block/buzz crates/buzz-audit — see src/shared/receipt-chain.ts). Each new
+ * receipt is inserted with its 1-based chain_seq, the chain_hash of the
+ * previous receipt of the SAME mission (NULL for genesis, hashed as 32 zero
+ * bytes) and its own chain_hash covering every receipt column plus that link.
+ *
+ * Columns are nullable only for migration compatibility: pre-029 rows are
+ * immutable (UPDATE trigger) and cannot be safely backfilled, so legacy rows
+ * stay outside the chain. The single writer (handoff-store.ts) computes the
+ * link inside the same transaction that inserts the receipt; the partial
+ * unique index makes a double-append of the same chain position impossible.
+ */
+const HANDOFF_RECEIPT_CHAIN_SCHEMA = `
+ALTER TABLE handoff_mcp_receipts ADD COLUMN chain_seq INTEGER
+  CHECK (chain_seq IS NULL OR chain_seq >= 1);
+ALTER TABLE handoff_mcp_receipts ADD COLUMN prev_receipt_hash TEXT
+  CHECK (
+    (prev_receipt_hash IS NULL OR length(prev_receipt_hash) = 64)
+    AND (prev_receipt_hash IS NULL OR chain_seq >= 2)
+  );
+ALTER TABLE handoff_mcp_receipts ADD COLUMN chain_hash TEXT
+  CHECK (
+    (chain_hash IS NULL OR length(chain_hash) = 64)
+    AND ((chain_hash IS NULL) = (chain_seq IS NULL))
+  );
+
+CREATE UNIQUE INDEX idx_handoff_mcp_receipts_chain_seq
+  ON handoff_mcp_receipts(mission_id, chain_seq)
+  WHERE chain_seq IS NOT NULL;
+`;
+
+/**
+ * Cryptographic agent identity (NIP-OA). Public keys + issued attestations +
+ * revocation tombstones live in the project DB. Private keys NEVER land here
+ * — they are stored only in the encrypted secrets vault
+ * (`agentkey:v1:<mission>:<role>:<id>`).
+ *
+ * Attestation columns on handoff_mcp_receipts are nullable for migration
+ * compatibility: legacy receipts stay outside the identity gate; new writes
+ * under `agentAttestationGate=required` populate and verify them.
+ */
+const AGENT_IDENTITY_SCHEMA = `
+CREATE TABLE IF NOT EXISTS mission_agent_identity (
+  mission_id TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('owner', 'agent')),
+  identity_id TEXT NOT NULL,
+  public_key_hex TEXT NOT NULL CHECK (length(public_key_hex) = 64),
+  created_at INTEGER NOT NULL CHECK (created_at >= 0),
+  revoked_at INTEGER CHECK (revoked_at IS NULL OR revoked_at >= 0),
+  PRIMARY KEY (mission_id, role, identity_id)
+);
+
+CREATE TABLE IF NOT EXISTS mission_agent_attestations (
+  mission_id TEXT NOT NULL,
+  owner_id TEXT NOT NULL,
+  agent_id TEXT NOT NULL,
+  owner_pubkey TEXT NOT NULL CHECK (length(owner_pubkey) = 64),
+  agent_pubkey TEXT NOT NULL CHECK (length(agent_pubkey) = 64),
+  conditions TEXT NOT NULL,
+  credential_json TEXT NOT NULL,
+  issued_at INTEGER NOT NULL CHECK (issued_at >= 0),
+  PRIMARY KEY (mission_id, owner_pubkey, credential_json)
+);
+
+CREATE INDEX IF NOT EXISTS idx_mission_agent_attestations_agent
+  ON mission_agent_attestations(mission_id, agent_id);
+
+CREATE TABLE IF NOT EXISTS mission_agent_revocations (
+  mission_id TEXT NOT NULL,
+  owner_id TEXT NOT NULL,
+  owner_pubkey TEXT NOT NULL CHECK (length(owner_pubkey) = 64),
+  revoked_at INTEGER NOT NULL CHECK (revoked_at >= 0),
+  PRIMARY KEY (mission_id, owner_id)
+);
+
+ALTER TABLE handoff_mcp_receipts ADD COLUMN agent_pubkey TEXT
+  CHECK (agent_pubkey IS NULL OR length(agent_pubkey) = 64);
+ALTER TABLE handoff_mcp_receipts ADD COLUMN owner_pubkey TEXT
+  CHECK (owner_pubkey IS NULL OR length(owner_pubkey) = 64);
+ALTER TABLE handoff_mcp_receipts ADD COLUMN attestation_json TEXT;
+`;
+
+/**
+ * ACP speaks MCP over a short-lived stdio bridge. The bridge still enters the
+ * authenticated loopback boundary, but immutable receipts retain that
+ * physical transport instead of collapsing it into ordinary HTTP MCP.
+ * SQLite CHECK constraints require a table rebuild.
+ */
+const ACP_STDIO_PROVENANCE_SCHEMA = `
+DROP TRIGGER IF EXISTS handoff_mcp_receipt_immutable;
+DROP INDEX IF EXISTS idx_handoff_mcp_receipts_worker;
+DROP INDEX IF EXISTS idx_handoff_mcp_receipts_logical_operation;
+DROP INDEX IF EXISTS idx_handoff_mcp_receipts_chain_seq;
+ALTER TABLE handoff_mcp_receipts RENAME TO handoff_mcp_receipts_v30;
+
+CREATE TABLE handoff_mcp_receipts (
+  receipt_id             TEXT PRIMARY KEY,
+  handoff_id             TEXT NOT NULL UNIQUE,
+  tool_call_id           TEXT NOT NULL UNIQUE,
+  tool_name              TEXT NOT NULL CHECK (tool_name = 'nexus_handoff_submit'),
+  source                 TEXT NOT NULL CHECK (
+    source IN ('http-mcp', 'acp-stdio', 'pty-stream', 'omp-rpc-stdio')
+  ),
+  mission_id             TEXT NOT NULL,
+  session_id             TEXT NOT NULL,
+  worker_incarnation_id  TEXT,
+  authority_sha256       TEXT NOT NULL CHECK (length(authority_sha256) = 64),
+  worktree_head_sha      TEXT CHECK (
+    worktree_head_sha IS NULL OR length(worktree_head_sha) IN (40, 64)
+  ),
+  issued_at              INTEGER NOT NULL CHECK (issued_at >= 0),
+  raw_payload_sha256     TEXT CHECK (
+    raw_payload_sha256 IS NULL OR length(raw_payload_sha256) = 64
+  ),
+  logical_operation_key  TEXT CHECK (
+    logical_operation_key IS NULL OR length(logical_operation_key) = 64
+  ),
+  chain_seq              INTEGER CHECK (chain_seq IS NULL OR chain_seq >= 1),
+  prev_receipt_hash      TEXT CHECK (
+    (prev_receipt_hash IS NULL OR length(prev_receipt_hash) = 64)
+    AND (prev_receipt_hash IS NULL OR chain_seq >= 2)
+  ),
+  chain_hash             TEXT CHECK (
+    (chain_hash IS NULL OR length(chain_hash) = 64)
+    AND ((chain_hash IS NULL) = (chain_seq IS NULL))
+  ),
+  agent_pubkey           TEXT CHECK (agent_pubkey IS NULL OR length(agent_pubkey) = 64),
+  owner_pubkey           TEXT CHECK (owner_pubkey IS NULL OR length(owner_pubkey) = 64),
+  attestation_json       TEXT,
+  FOREIGN KEY (handoff_id) REFERENCES handoffs(id) ON DELETE CASCADE,
+  FOREIGN KEY (mission_id) REFERENCES missions(id) ON DELETE CASCADE
+);
+
+INSERT INTO handoff_mcp_receipts (
+  receipt_id, handoff_id, tool_call_id, tool_name, source,
+  mission_id, session_id, worker_incarnation_id, authority_sha256,
+  worktree_head_sha, issued_at, raw_payload_sha256, logical_operation_key,
+  chain_seq, prev_receipt_hash, chain_hash,
+  agent_pubkey, owner_pubkey, attestation_json
+)
+SELECT
+  receipt_id, handoff_id, tool_call_id, tool_name, source,
+  mission_id, session_id, worker_incarnation_id, authority_sha256,
+  worktree_head_sha, issued_at, raw_payload_sha256, logical_operation_key,
+  chain_seq, prev_receipt_hash, chain_hash,
+  agent_pubkey, owner_pubkey, attestation_json
+FROM handoff_mcp_receipts_v30;
+
+DROP TABLE handoff_mcp_receipts_v30;
+
+CREATE INDEX idx_handoff_mcp_receipts_worker
+  ON handoff_mcp_receipts(mission_id, session_id, worker_incarnation_id, issued_at);
+CREATE UNIQUE INDEX idx_handoff_mcp_receipts_logical_operation
+  ON handoff_mcp_receipts(logical_operation_key)
+  WHERE logical_operation_key IS NOT NULL;
+CREATE UNIQUE INDEX idx_handoff_mcp_receipts_chain_seq
+  ON handoff_mcp_receipts(mission_id, chain_seq)
+  WHERE chain_seq IS NOT NULL;
+CREATE TRIGGER handoff_mcp_receipt_immutable
+BEFORE UPDATE ON handoff_mcp_receipts
+BEGIN
+  SELECT RAISE(ABORT, 'handoff physical receipt is immutable');
+END;
+
+DROP TRIGGER IF EXISTS handoff_ack_receipts_immutable;
+DROP INDEX IF EXISTS idx_handoff_ack_receipts_mission;
+DROP INDEX IF EXISTS idx_handoff_ack_receipts_handoff;
+ALTER TABLE handoff_ack_receipts RENAME TO handoff_ack_receipts_v26;
+CREATE TABLE handoff_ack_receipts (
+  receipt_id              TEXT PRIMARY KEY,
+  handoff_id              TEXT NOT NULL,
+  delivery_attempt_id     TEXT NOT NULL UNIQUE,
+  tool_call_id            TEXT NOT NULL UNIQUE,
+  tool_name               TEXT NOT NULL CHECK (tool_name = 'nexus_handoff_ack'),
+  source                  TEXT NOT NULL CHECK (source IN ('http-mcp', 'acp-stdio', 'pty-stream')),
+  mission_id              TEXT NOT NULL,
+  orchestrator_session_id TEXT NOT NULL,
+  authority_sha256        TEXT NOT NULL CHECK (length(authority_sha256) = 64),
+  payload_sha256          TEXT NOT NULL CHECK (length(payload_sha256) = 64),
+  issued_at               INTEGER NOT NULL CHECK (issued_at >= 0),
+  acknowledged_at         INTEGER NOT NULL CHECK (acknowledged_at >= issued_at),
+  CHECK (receipt_id = tool_call_id),
+  FOREIGN KEY (handoff_id) REFERENCES handoffs(id) ON DELETE CASCADE,
+  FOREIGN KEY (delivery_attempt_id) REFERENCES handoff_delivery_attempts(id) ON DELETE CASCADE,
+  FOREIGN KEY (mission_id) REFERENCES missions(id) ON DELETE CASCADE
+);
+INSERT INTO handoff_ack_receipts SELECT * FROM handoff_ack_receipts_v26;
+DROP TABLE handoff_ack_receipts_v26;
+CREATE INDEX idx_handoff_ack_receipts_mission
+  ON handoff_ack_receipts(mission_id, orchestrator_session_id, acknowledged_at);
+CREATE INDEX idx_handoff_ack_receipts_handoff
+  ON handoff_ack_receipts(handoff_id, orchestrator_session_id, acknowledged_at);
+CREATE TRIGGER handoff_ack_receipts_immutable
+BEFORE UPDATE ON handoff_ack_receipts
+BEGIN
+  SELECT RAISE(ABORT, 'handoff ACK receipt is immutable');
+END;
+
+DROP TRIGGER IF EXISTS mission_fanout_consolidation_immutable;
+DROP INDEX IF EXISTS idx_fanout_consolidation_session;
+ALTER TABLE mission_fanout_consolidation_receipts RENAME TO mission_fanout_consolidation_v26;
+CREATE TABLE mission_fanout_consolidation_receipts (
+  mission_id              TEXT NOT NULL,
+  intent_version          INTEGER NOT NULL CHECK (intent_version >= 0),
+  plan_hash               TEXT NOT NULL CHECK (length(plan_hash) = 64),
+  topology                TEXT NOT NULL CHECK (topology = 'team-read-only-fanout'),
+  orchestrator_session_id TEXT NOT NULL,
+  receipt_id              TEXT NOT NULL UNIQUE,
+  tool_call_id            TEXT NOT NULL UNIQUE,
+  tool_name               TEXT NOT NULL CHECK (tool_name = 'nexus_mission_set_status'),
+  source                  TEXT NOT NULL CHECK (source IN ('http-mcp', 'acp-stdio', 'pty-stream')),
+  authority_sha256        TEXT NOT NULL CHECK (length(authority_sha256) = 64),
+  payload_sha256          TEXT NOT NULL CHECK (length(payload_sha256) = 64),
+  final_output            TEXT NOT NULL CHECK (length(trim(final_output)) >= 40),
+  final_output_sha256     TEXT NOT NULL CHECK (length(final_output_sha256) = 64),
+  maestro_perspective     TEXT NOT NULL CHECK (length(trim(maestro_perspective)) >= 20),
+  maestro_sha256          TEXT NOT NULL CHECK (length(maestro_sha256) = 64),
+  issued_at               INTEGER NOT NULL CHECK (issued_at >= 0),
+  created_at              INTEGER NOT NULL CHECK (created_at >= issued_at),
+  PRIMARY KEY (mission_id, intent_version, orchestrator_session_id),
+  CHECK (receipt_id = tool_call_id),
+  FOREIGN KEY (mission_id) REFERENCES missions(id) ON DELETE CASCADE
+);
+INSERT INTO mission_fanout_consolidation_receipts SELECT * FROM mission_fanout_consolidation_v26;
+DROP TABLE mission_fanout_consolidation_v26;
+CREATE INDEX idx_fanout_consolidation_session
+  ON mission_fanout_consolidation_receipts(mission_id, orchestrator_session_id, created_at);
+CREATE TRIGGER mission_fanout_consolidation_immutable
+BEFORE UPDATE ON mission_fanout_consolidation_receipts
+BEGIN
+  SELECT RAISE(ABORT, 'mission fanout consolidation receipt is immutable');
+END;
+`;
+
 export const ORCHESTRATION_PROJECT_MIGRATION_SPECS: readonly ProjectMigrationSpec[] =
   [
     {
@@ -598,5 +833,23 @@ export const ORCHESTRATION_PROJECT_MIGRATION_SPECS: readonly ProjectMigrationSpe
       schemaVersion: 28,
       appVersion: '0.20.2',
       sql: MISSION_STALL_DIAGNOSTICS_SCHEMA,
+    },
+    {
+      id: '029-handoff-receipt-chain',
+      schemaVersion: 29,
+      appVersion: '0.20.4',
+      sql: HANDOFF_RECEIPT_CHAIN_SCHEMA,
+    },
+    {
+      id: '030-agent-identity',
+      schemaVersion: 30,
+      appVersion: '0.21.0',
+      sql: AGENT_IDENTITY_SCHEMA,
+    },
+    {
+      id: '031-acp-stdio-provenance',
+      schemaVersion: 31,
+      appVersion: '0.21.0',
+      sql: ACP_STDIO_PROVENANCE_SCHEMA,
     },
   ];

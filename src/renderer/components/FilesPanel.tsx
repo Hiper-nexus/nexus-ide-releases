@@ -32,7 +32,7 @@ function TreeNode({ node, depth }: { node: FileNode; depth: number }) {
           {isDir ? (
             <PixelIcon name={expanded ? 'chevron-down' : 'chevron'} size={10} />
           ) : (
-            '·'
+            <PixelIcon name="file" size={10} />
           )}
         </span>
         <span className="files-node__name">{node.name}</span>
@@ -65,7 +65,9 @@ function Editor() {
   if (!file) {
     return (
       <div className="files-editor files-editor--empty">
-        Selecione um arquivo à esquerda para ver ou editar.
+        <PixelIcon name="file" size={20} />
+        <strong>Editor de workspace</strong>
+        <span>Selecione um arquivo à esquerda para ver ou editar.</span>
       </div>
     );
   }
@@ -130,10 +132,10 @@ export function FilesPanel() {
     >
       <header className="files__header">
         <span className="files__title">
-          FILES{workspace ? ` · ${workspace.name}` : ''}
+          ARQUIVOS{workspace ? ` · ${workspace.name}` : ''}
         </span>
-        <button className="files__close" onClick={closePanel} aria-label="Fechar">
-          ✕
+        <button className="files__close" onClick={closePanel} aria-label="Fechar painel de arquivos" title="Fechar painel de arquivos">
+          <PixelIcon name="close" size={12} />
         </button>
       </header>
       <div className="files__body">

@@ -127,15 +127,15 @@
 }
 
 .agent-picker__btn--primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--accent-ink);
+  background: var(--btn-primary);
+  border-color: var(--btn-primary);
+  color: var(--btn-primary-ink);
   font-weight: 600;
 }
 
 .agent-picker__btn--primary:hover {
-  background: var(--accent-hover);
-  border-color: var(--accent-hover);
+  background: var(--btn-primary-hover);
+  border-color: var(--btn-primary-hover);
 }
 
 .agent-picker__btn--primary:disabled {
@@ -365,15 +365,16 @@
 }
 
 .update-modal__btn--primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--accent-ink);
+  background: var(--btn-primary);
+  border-color: var(--btn-primary);
+  color: var(--btn-primary-ink);
   font-weight: 600;
 }
 
 .update-modal__btn--primary:hover {
-  color: var(--accent-ink);
-  filter: brightness(1.08);
+  color: var(--btn-primary-ink);
+  background: var(--btn-primary-hover);
+  border-color: var(--btn-primary-hover);
 }
 
 .update-modal__hint {

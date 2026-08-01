@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { PixelIcon } from './PixelIcon';
 import type {
   ExternalIssue,
   ForgePrSummary,
@@ -500,7 +501,7 @@ export function IntegrationsPanel({
                 )}
                 {hasGh && ghError && (
                   <li className="int-panel__error" role="alert">
-                    ⚠ {ghError}
+                    <PixelIcon name="warn" size={11} /> {ghError}
                   </li>
                 )}
                 {!hasGh && (
@@ -531,7 +532,7 @@ export function IntegrationsPanel({
                 ))}
                 {hasGh && ghError && (
                   <li className="int-panel__error" role="alert">
-                    ⚠ {ghError}
+                    <PixelIcon name="warn" size={11} /> {ghError}
                   </li>
                 )}
                 {hasGh && !ghError && ghIssues.length === 0 && (
@@ -564,7 +565,7 @@ export function IntegrationsPanel({
                 ))}
                 {hasLin && linError && (
                   <li className="int-panel__error" role="alert">
-                    ⚠ {linError}
+                    <PixelIcon name="warn" size={11} /> {linError}
                   </li>
                 )}
                 {hasLin && !linError && linIssues.length === 0 && (

@@ -133,6 +133,7 @@ export function findCurrentSchedulerOwnedHandoffDispatch(
     provenance.receiptId !== provenance.toolCallId ||
     provenance.toolName !== "nexus_handoff_submit" ||
     (provenance.source !== "http-mcp" &&
+      provenance.source !== "acp-stdio" &&
       provenance.source !== "pty-stream") ||
     provenance.missionId !== mission.id ||
     provenance.sessionId !== handoff.sessionId ||

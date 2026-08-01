@@ -311,6 +311,25 @@ Copyright Brian White / mscdex and contributors), used for production SSH
 sessions, remote worktree create, and SFTP. Optional native helpers may be
 built by `cpu-features` on install.
 
+## block/buzz (buzz-audit) — mission receipt hash chain
+
+The mission receipt hash-chain module (`src/shared/receipt-chain.ts`) is
+derived from the audit hash-chain of
+[`block/buzz`](https://github.com/block/buzz) at commit
+`8e81afa431deecd172f1ad6aab6f022f31cd812c` — specifically
+`crates/buzz-audit/src/hash.rs` (preimage discipline: storage-precision
+timestamp truncation, canonical sorted-key JSON, presence tags for optional
+fields, big-endian sequence, zero-byte genesis sentinel) with the append and
+`verify_chain` semantics of the neighbouring `service.rs`/`entry.rs`.
+
+Copyright 2026 Block, Inc. Distributed under the Apache License 2.0.
+
+The port is a TypeScript reimplementation (Rust is not redistributed); the
+per-mission tenant binding replaces buzz's per-community binding, and the
+hashed fields are Nexus handoff-receipt columns. Copyright header and license
+reference: `third_party/licenses/buzz-APACHE-2.0.txt`; full license text:
+`third_party/licenses/Apache-2.0.txt`.
+
 ## Impeccable (pbakaus/impeccable) — frontend visual audit skill
 
 NexusIDE bundles the complete `impeccable` design and visual audit skill, copied from [`pbakaus/impeccable`](https://github.com/pbakaus/impeccable) at commit `8259c28209b92792005cec14dad573df39f68eaf`. Copyright remains with the Impeccable contributors. The skill files are distributed under the Apache License 2.0.

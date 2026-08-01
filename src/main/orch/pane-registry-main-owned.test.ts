@@ -368,6 +368,7 @@ describe("main-owned mission pane spawn", () => {
         paneId: result.paneId,
         sessionId: "pty-headless-1",
         role: "worker",
+        transport: "cli-pty",
         pane: {
           adapterId: "codex",
           model: "gpt-5.6-sol",

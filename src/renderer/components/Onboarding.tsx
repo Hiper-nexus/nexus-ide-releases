@@ -6,6 +6,7 @@ import {
 } from '../../shared/real-mission-e2e';
 import { useOnboardingStore } from '../state/onboarding-store';
 import { NexusMark } from './NexusMark';
+import { PixelIcon } from './PixelIcon';
 import { ProviderLogo } from './ProviderLogo';
 
 /**
@@ -329,12 +330,12 @@ export function Onboarding() {
         </footer>
         {installDone && installed.length === 0 && (
           <p className="onb__install-done" role="status">
-            ✓ {installDone} instalada — o login acontece no primeiro uso.
+            <PixelIcon name="check" size={11} /> {installDone} instalada — o login acontece no primeiro uso.
           </p>
         )}
         {installError && (
           <p className="onb__install-error" role="alert">
-            ⚠ {installError} — tente pelo comando em “Instalar mais CLIs”.
+            <PixelIcon name="warn" size={11} /> {installError} — tente pelo comando em “Instalar mais CLIs”.
           </p>
         )}
       </div>

@@ -250,14 +250,15 @@ export class MergeQueue {
       nowMs,
     );
     if (!stalled) return Object.freeze({ action: 'none' });
+    const stalledForMs = nowMs - stalled.updatedAt;
     console.warn(
       `[merge-queue] tentativa de merge estagnada há ` +
-        `${Math.round((nowMs - stalled.updatedAt) / 60_000)} min em ` +
+        `${Math.round(stalledForMs / 60_000)} min em ` +
         `${stalled.status} (${stalled.missionId}/${stalled.taskId}); ` +
         'descartando a posse local e reconciliando como interrompida',
     );
     this.#tails.delete(scopeKey);
-    return this.#recovery.reconcile(scope);
+    return this.#recovery.reconcile(scope, { stalledForMs });
   }
 
   /**

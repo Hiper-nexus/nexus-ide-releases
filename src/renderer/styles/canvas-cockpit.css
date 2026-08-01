@@ -193,15 +193,15 @@
 }
 
 .canvas-command__actions .canvas-command__primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--accent-ink);
+  background: var(--btn-primary);
+  border-color: var(--btn-primary);
+  color: var(--btn-primary-ink);
 }
 
 .canvas-command__actions .canvas-command__primary:hover {
-  background: var(--accent-hover);
-  border-color: var(--accent-hover);
-  color: var(--accent-ink);
+  background: var(--btn-primary-hover);
+  border-color: var(--btn-primary-hover);
+  color: var(--btn-primary-ink);
 }
 
 .canvas-command__actions kbd {
@@ -238,6 +238,15 @@
   min-height: 0;
   position: relative;
   padding: 6px 8px 4px;
+}
+
+.canvas-pane .acp-pane {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0 8px 8px;
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  border-radius: var(--radius);
+  overflow: hidden;
 }
 
 /* The terminal host element lives inside the canvas slot, same as grid. */

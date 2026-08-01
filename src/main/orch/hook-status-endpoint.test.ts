@@ -8,6 +8,8 @@ import type { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   HOOK_STATUS_MAX_BODY_BYTES,
+  HOOK_TOOL_NAME_MAX_LENGTH,
+  extractHookToolName,
   handleHookStatusHttp,
   handleHookStatusRequest,
 } from './hook-status-endpoint';
@@ -16,6 +18,10 @@ import {
   getAgentSemanticStatus,
   type AgentStatusApplyResult,
 } from './agent-status';
+import {
+  __resetObserverBusForTests,
+  snapshotObserverFrames,
+} from './observer-bus';
 
 let server: http.Server | null = null;
 let baseUrl = '';
@@ -46,10 +52,14 @@ async function boot(
   baseUrl = `http://127.0.0.1:${(server!.address() as AddressInfo).port}`;
 }
 
-beforeEach(() => __resetAgentStatusForTests());
+beforeEach(() => {
+  __resetAgentStatusForTests();
+  __resetObserverBusForTests();
+});
 
 afterEach(async () => {
   __resetAgentStatusForTests();
+  __resetObserverBusForTests();
   if (server) {
     await new Promise((resolve) => server!.close(resolve));
     server = null;
@@ -215,5 +225,86 @@ describe('fail-closed contract', () => {
     );
 
     expect(result.statusCode).toBe(500);
+  });
+});
+
+describe('observer-frame flow (real HTTP → reducer → bus)', () => {
+  it('a claude PreToolUse post lands a tool_call frame with the tool name', async () => {
+    await boot();
+
+    const res = await postHook({
+      event: 'tool-use',
+      flavor: 'claude',
+      body: JSON.stringify({ tool_name: 'Bash' }),
+    });
+
+    expect(res.status).toBe(200);
+    const frames = snapshotObserverFrames('pty-hook-1');
+    expect(frames.map((f) => f.kind)).toEqual(['tool_call', 'status_changed']);
+    expect(frames[0]).toMatchObject({
+      sessionId: 'pty-hook-1',
+      payload: { callId: 'call-1', toolName: 'Bash' },
+    });
+  });
+
+  it('a PostToolUse post pairs a tool_result with its call', async () => {
+    await boot();
+
+    await postHook({
+      event: 'tool-use',
+      flavor: 'claude',
+      body: JSON.stringify({ tool_name: 'Edit' }),
+    });
+    await postHook({
+      event: 'tool-complete',
+      flavor: 'claude',
+      body: JSON.stringify({ tool_name: 'Edit' }),
+    });
+
+    const results = snapshotObserverFrames('pty-hook-1').filter(
+      (f) => f.kind === 'tool_result',
+    );
+    expect(results).toHaveLength(1);
+    expect(results[0]?.payload).toEqual({
+      callId: 'call-1',
+      toolName: 'Edit',
+      ok: true,
+    });
+  });
+
+  it('a claude Stop post frames status_changed(completed) + turn_ended', async () => {
+    await boot();
+
+    await postHook({ event: 'user-submit', flavor: 'claude' });
+    await postHook({ event: 'stop', flavor: 'claude' });
+
+    const kinds = snapshotObserverFrames('pty-hook-1').map((f) => f.kind);
+    expect(kinds).toEqual([
+      'turn_started',
+      'status_changed',
+      'status_changed',
+      'turn_ended',
+    ]);
+  });
+});
+
+describe('extractHookToolName', () => {
+  it('probes the same key set as the vendored parser', () => {
+    expect(extractHookToolName({ tool_name: 'Bash' })).toBe('Bash');
+    expect(extractHookToolName({ toolName: 'Edit' })).toBe('Edit');
+    expect(extractHookToolName({ name: 'Read' })).toBe('Read');
+    expect(extractHookToolName({ tool: { name: 'Grep' } })).toBe('Grep');
+  });
+
+  it('never fabricates a name', () => {
+    expect(extractHookToolName({})).toBeUndefined();
+    expect(extractHookToolName({ tool_name: 42 })).toBeUndefined();
+    expect(extractHookToolName({ tool_name: '   ' })).toBeUndefined();
+    expect(extractHookToolName({ tool: 'Bash' })).toBeUndefined();
+  });
+
+  it('caps oversized names', () => {
+    const name = extractHookToolName({ tool_name: 'x'.repeat(500) });
+    expect(name).toHaveLength(HOOK_TOOL_NAME_MAX_LENGTH);
   });
 });

@@ -28,6 +28,98 @@ function formatTime(ts: number): string {
   }
 }
 
+function observerPayload(event: MissionEvent): Record<string, unknown> | null {
+  if (!event.type.startsWith('observer.')) return null;
+  const value = event.payload.observer;
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function observerSummary(event: MissionEvent): string | null {
+  const payload = observerPayload(event);
+  if (!payload) return null;
+  switch (event.type) {
+    case 'observer.turn_started':
+      return `Turn ${String(payload.turnSequence ?? '?')} iniciado`;
+    case 'observer.turn_ended':
+      return payload.outcome === 'completed'
+        ? 'Turn concluído'
+        : 'Turn terminou com erro';
+    case 'observer.tool_call':
+      return `Ferramenta ${String(payload.toolName ?? 'não identificada')} chamada`;
+    case 'observer.tool_result':
+      return `${String(payload.toolName ?? 'Ferramenta')} ${payload.ok === true ? 'passou' : 'falhou'}`;
+    case 'observer.status_changed':
+      return `Status: ${
+        {
+          working: 'trabalhando',
+          completed: 'concluído',
+          'awaiting-input': 'aguardando você',
+          idle: 'em espera',
+          error: 'erro',
+        }[String(payload.status)] ?? 'desconhecido'
+      }`;
+    case 'observer.session_spawned':
+      return `Sessão ${String(payload.adapterId ?? 'agente')} iniciou`;
+    case 'observer.session_exited':
+      return 'Sessão encerrou';
+    case 'observer.stall_suspected': {
+      const silentForMs = Number(payload.silentForMs);
+      const minutes = Number.isFinite(silentForMs)
+        ? Math.max(0, Math.round(silentForMs / 60_000))
+        : 0;
+      return `Possível stall: ${minutes} min sem atividade`;
+    }
+    case 'observer.provider_error': {
+      const kind =
+        {
+          quota: 'cota esgotada',
+          'rate-limit': 'limite de uso',
+          auth: 'credencial inválida',
+          transient: 'indisponibilidade temporária',
+        }[String(payload.kind)] ?? 'erro do provider';
+      return `${kind} — failover acionado`;
+    }
+    default:
+      return null;
+  }
+}
+
+function eventLabel(type: MissionEvent['type']): string {
+  const labels: Partial<Record<MissionEvent['type'], string>> = {
+    'mission.created': 'Missão criada',
+    'mission.status_changed': 'Status atualizado',
+    'mission.intent_armed': 'Objetivo armado',
+    'mission.run_started': 'Execução iniciada',
+    'mission.run_finished': 'Execução encerrada',
+    'agent.spawned': 'Agente iniciou',
+    'agent.finished': 'Agente terminou',
+    'agent.needs_input': 'Agente pediu decisão',
+    'agent.reaped': 'Agente encerrado',
+    'tool.invoked': 'Ferramenta acionada',
+    'tool.completed': 'Ferramenta concluída',
+    'tool.denied': 'Ferramenta bloqueada',
+    'handoff.submitted': 'Entrega enviada',
+    'handoff.acked': 'Entrega reconhecida',
+    'budget.reserved': 'Orçamento reservado',
+    'budget.released': 'Orçamento liberado',
+    'driver.tick': 'Driver sinalizou',
+    'driver.error': 'Driver reportou erro',
+    'ui.projection': 'Timeline atualizada',
+    'observer.turn_started': 'Turn iniciado',
+    'observer.turn_ended': 'Turn encerrado',
+    'observer.tool_call': 'Ferramenta acionada',
+    'observer.tool_result': 'Resultado de ferramenta',
+    'observer.status_changed': 'Status do agente',
+    'observer.session_spawned': 'Sessão iniciada',
+    'observer.session_exited': 'Sessão encerrou',
+    'observer.stall_suspected': 'Possível stall',
+    'observer.provider_error': 'Limite do provider detectado',
+  };
+  return labels[type] ?? 'Evento da missão';
+}
+
 export function MissionJournalPanel() {
   const missions = useOrchStore((s) => s.missions);
   const [missionId, setMissionId] = useState<string>('');
@@ -58,7 +150,7 @@ export function MissionJournalPanel() {
       return;
     }
     if (!window.nexus?.orch?.missionEventsRecent) {
-      setError('Journal API unavailable');
+      setError('A timeline da missão está indisponível nesta sessão.');
       return;
     }
     setBusy(true);
@@ -89,7 +181,11 @@ export function MissionJournalPanel() {
           : 0;
       setCursorSeq(Number.isFinite(last) ? last : 0);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'load failed');
+      setError(
+        err instanceof Error
+          ? `Não foi possível carregar a timeline: ${err.message}`
+          : 'Não foi possível carregar a timeline.',
+      );
     } finally {
       setBusy(false);
     }
@@ -109,16 +205,16 @@ export function MissionJournalPanel() {
         consumerId: CONSUMER_ID,
       });
       if (!result.ok) {
-        pushToast('warn', 'Journal ACK', result.error ?? 'ack failed');
+        pushToast('warn', 'Timeline', result.error ?? 'falha ao marcar como lido');
         return;
       }
-      pushToast('success', 'Journal', `ACK até seq ${maxSeq}`);
+      pushToast('success', 'Timeline', `Marcado como lido até #${maxSeq}`);
       await refresh();
     } catch (err) {
       pushToast(
         'warn',
-        'Journal ACK',
-        err instanceof Error ? err.message : 'ack failed',
+        'Timeline',
+        err instanceof Error ? err.message : 'falha ao marcar como lido',
       );
     }
   };
@@ -161,9 +257,19 @@ export function MissionJournalPanel() {
           className="product-pane__btn"
           disabled={!enabled || events.length === 0}
           onClick={() => void ackThroughLatest()}
+          aria-label="Marcar eventos como lidos"
         >
-          ACK
+          Marcar como lido
         </button>
+      </div>
+      <div className="mission-journal__intro">
+        <div>
+          <strong>Timeline da missão</strong>
+          <span>Eventos persistentes, em ordem de execução.</span>
+        </div>
+        <span className="mission-journal__cursor">
+          Lido até #{cursorSeq}
+        </span>
       </div>
       {!enabled && (
         <p className="product-pane__meta">
@@ -171,9 +277,6 @@ export function MissionJournalPanel() {
         </p>
       )}
       {error && <p className="product-pane__error">{error}</p>}
-      <p className="product-pane__meta">
-        Cursor {CONSUMER_ID}: seq ≤ {cursorSeq}
-      </p>
       <ul className="product-pane__list mission-journal__list">
         {[...events].reverse().map((ev) => {
           const unread = ev.sequence > cursorSeq;
@@ -183,22 +286,27 @@ export function MissionJournalPanel() {
               className={`product-pane__item${unread ? ' mission-journal__item--unread' : ''}`}
             >
               <span className="product-pane__sub">
-                #{ev.sequence} · {ev.type} · {ev.origin}
+                #{ev.sequence} · {formatTime(ev.occurredAt)}
               </span>
-              <strong className="mission-journal__type">{ev.deliveryStatus}</strong>
+              <strong className="mission-journal__type">
+                {eventLabel(ev.type)}
+              </strong>
               <p className="product-pane__snip">
-                {formatTime(ev.occurredAt)} · run {ev.runId.slice(0, 12)}
-                {ev.payload && Object.keys(ev.payload).length > 0
-                  ? ` · ${JSON.stringify(ev.payload).slice(0, 120)}`
-                  : ''}
+                {observerSummary(ev) ??
+                  (ev.deliveryStatus === 'failed'
+                    ? 'A entrega do evento falhou; abra o diagnóstico para detalhes.'
+                    : 'Evento registrado na trilha da missão.')}
               </p>
+              <span className="mission-journal__technical">
+                {ev.type} · {ev.origin} · run {ev.runId.slice(0, 12)}
+              </span>
             </li>
           );
         })}
       </ul>
       {enabled && events.length === 0 && !busy && (
         <p className="product-pane__meta">
-          Sem eventos ainda. O driver grava ticks quando a missão roda.
+          Sem eventos ainda. A trilha aparece quando um agente iniciar.
         </p>
       )}
     </div>

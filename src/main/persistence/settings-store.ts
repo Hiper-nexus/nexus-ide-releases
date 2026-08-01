@@ -152,6 +152,50 @@ export function getOrchSettings(): OrchSettings {
 }
 
 /**
+ * Main-process patch of orch settings (BYOH catalog, transport, probe
+ * results). Validates through the same Zod schema as the IPC orchSet path.
+ */
+export function replaceOrchSettings(patch: Partial<OrchSettings>): OrchSettings {
+  const parsed = orchSettingsSchema.safeParse({ ...orchSettings, ...patch });
+  if (!parsed.success) return orchSettings;
+  persist(snapshot({ orch: parsed.data }));
+  orchSettings = parsed.data;
+  return orchSettings;
+}
+
+function scheduleAcpHarnessProbe(request: {
+  readonly id: string;
+  readonly requestId: string;
+}): void {
+  void import('../acp/harness-store')
+    .then(({ probeAcpHarness }) => probeAcpHarness(request.id))
+    .then((result) => {
+      replaceOrchSettings({
+        acpHarnessProbeRequest: null,
+        acpHarnessLastProbe: {
+          requestId: request.requestId,
+          harnessId: result.harnessId,
+          ok: result.ok,
+          detail: result.detail,
+          at: Date.now(),
+        },
+      });
+    })
+    .catch((error: unknown) => {
+      replaceOrchSettings({
+        acpHarnessProbeRequest: null,
+        acpHarnessLastProbe: {
+          requestId: request.requestId,
+          harnessId: request.id,
+          ok: false,
+          detail: error instanceof Error ? error.message : String(error),
+          at: Date.now(),
+        },
+      });
+    });
+}
+
+/**
  * One-way boot migration for defaults that reference a provider removed from
  * the live catalog. The complete settings snapshot is replaced atomically
  * before the in-memory value changes, so a failed disk write keeps the prior
@@ -244,10 +288,24 @@ export function registerSettingsIpc(): void {
   ipcMain.handle(SETTINGS_CHANNELS.orchGet, () => orchSettings);
 
   handleTrusted(SETTINGS_CHANNELS.orchSet, (_event, raw) => {
+    const previousProbeRequestId = orchSettings.acpHarnessProbeRequest?.requestId;
     const parsed = orchSettingsSchema.safeParse({ ...orchSettings, ...(raw ?? {}) });
     if (parsed.success) {
-      persist(snapshot({ orch: parsed.data }));
-      orchSettings = parsed.data;
+      const next = {
+        ...parsed.data,
+        // Probe request is a one-shot trigger — never leave it sticky on disk.
+        acpHarnessProbeRequest: null,
+      };
+      persist(snapshot({ orch: next }));
+      orchSettings = next;
+      const probe = parsed.data.acpHarnessProbeRequest;
+      if (
+        probe &&
+        probe.requestId.length > 0 &&
+        probe.requestId !== previousProbeRequestId
+      ) {
+        scheduleAcpHarnessProbe(probe);
+      }
     }
     return orchSettings;
   });

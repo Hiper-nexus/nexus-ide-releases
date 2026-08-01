@@ -41,6 +41,8 @@ import { resolveCwdForScope } from "./workspace-path";
 import { sameMissionPaneAuthoritySeal } from "./mission-pane-authority";
 import { getOrchSettings } from "../persistence/settings-store";
 import { isOperatorChoicePolicy } from "../../shared/squad-cli-policy";
+import { spawnMainOwnedAcpMissionPane } from "./acp-mission-spawn";
+import { issueAgentIdentityRequired } from "./agent-identity-spawn";
 
 export interface PaneOrchMeta {
   missionId?: string;
@@ -366,6 +368,15 @@ export function spawnMainOwnedMissionPane(
       error: `unknown adapter: ${options.adapterId}`,
     };
   }
+  if (getOrchSettings().agentTransport === "acp") {
+    return {
+      requestId,
+      ok: false,
+      error:
+        "transporte ACP selecionado — use spawnMainOwnedMissionPaneAsync; " +
+        "nunca faz fallback silencioso para PTY",
+    };
+  }
   if (adapter.kind !== "cli-pty") {
     return {
       requestId,
@@ -536,6 +547,11 @@ export function spawnMainOwnedMissionPane(
     cwd,
   });
   try {
+    issueAgentIdentityRequired({
+      missionId: options.missionId,
+      scope: options.scope,
+      agentId: options.agentName ?? adapter.id,
+    });
     const { sessionId } = spawnMainOwnedAgentSession(
       {
         kind: "cli-agent",
@@ -582,4 +598,67 @@ export function spawnMainOwnedMissionPane(
           : "main-owned mission pane spawn failed",
     };
   }
+}
+
+/**
+ * Async mission-pane spawn — required for ACP transport. PTY path delegates
+ * to the synchronous implementation unchanged.
+ */
+export async function spawnMainOwnedMissionPaneAsync(
+  options: PaneSpawnOptions & {
+    missionId: string;
+    role: "orchestrator" | "worker";
+  },
+  hooks: MainOwnedPaneHooks,
+): Promise<OrchPaneSpawnResult> {
+  if (getOrchSettings().agentTransport !== "acp") {
+    return spawnMainOwnedMissionPane(options, hooks);
+  }
+  const requestId = makeId("orchspawn");
+  const authoritySeal = options.authoritySeal;
+  if (!authoritySeal) {
+    return {
+      requestId,
+      ok: false,
+      error:
+        "mission pane authority seal is unavailable; replane and approve " +
+        "the current mission revision",
+    };
+  }
+  const sealedAuthority = Object.freeze({ ...authoritySeal });
+  try {
+    hooks.assertMissionAuthorityCurrent({
+      missionId: options.missionId,
+      scope: options.scope,
+      contextRevision: sealedAuthority.contextRevision,
+      authoritySeal: sealedAuthority,
+    });
+  } catch (error) {
+    return {
+      requestId,
+      ok: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "mission pane authority is stale",
+    };
+  }
+  return spawnMainOwnedAcpMissionPane(
+    {
+      ...options,
+      contextRevision: sealedAuthority.contextRevision,
+      authoritySeal: sealedAuthority,
+    },
+    hooks,
+    (paneId, entry, meta) => {
+      panes.set(paneId, {
+        entry,
+        meta: {
+          ...meta,
+          scope: options.scope,
+          executionScope: meta.executionScope ?? options.scope,
+        },
+      });
+    },
+  );
 }

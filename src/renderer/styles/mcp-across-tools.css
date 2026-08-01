@@ -115,14 +115,14 @@
 }
 
 .mcp-ritual__btn--primary {
-  background: var(--accent);
-  color: var(--accent-ink);
-  border-color: var(--accent);
+  background: var(--btn-primary);
+  color: var(--btn-primary-ink);
+  border-color: var(--btn-primary);
 }
 
 .mcp-ritual__btn--primary:hover:not(:disabled) {
-  background: var(--accent-hover);
-  border-color: var(--accent-hover);
+  background: var(--btn-primary-hover);
+  border-color: var(--btn-primary-hover);
 }
 
 .mcp-ritual__export {

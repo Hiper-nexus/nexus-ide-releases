@@ -7,6 +7,7 @@ import {
   setResponseMuted,
   stopJarvisSpeech,
 } from '../voice/response-output-gate';
+import { PixelIcon } from './PixelIcon';
 
 /**
  * HUD flutuante da JARVIS: fase do pipeline ao vivo (ouvindo → transcrevendo →
@@ -102,7 +103,7 @@ export function VoiceHud() {
 
   const liveLabel = LIVE_LABEL[liveStatus] ?? liveStatus;
   const label = wakeBlocked
-    ? 'Wake word preso'
+    ? 'Wake ocupado'
     : canClickWake
       ? 'Jarvis pronta'
       : status === 'idle'
@@ -247,7 +248,7 @@ export function VoiceHud() {
         {orb}
         <span className="voice-hud__mini-label">
           {wakeBlocked
-            ? 'wake preso'
+            ? 'wake ocupado'
             : isError
               ? 'erro'
               : responseMuted
@@ -274,7 +275,7 @@ export function VoiceHud() {
             aria-pressed={responseMuted}
             onClick={() => setResponseMuted(!responseMuted)}
           >
-            {responseMuted ? '🔇' : '🔊'}
+            <PixelIcon name={responseMuted ? 'volume-off' : 'volume'} size={12} />
           </button>
           <button
             className="voice-hud__ctl"
@@ -282,7 +283,7 @@ export function VoiceHud() {
             aria-label="Parar fala atual da JARVIS"
             onClick={() => stopJarvisSpeech()}
           >
-            ■
+            <PixelIcon name="stop" size={12} />
           </button>
           <button
             className="voice-hud__ctl"
@@ -290,7 +291,7 @@ export function VoiceHud() {
             aria-label="Desligar sessão da JARVIS"
             onClick={() => void powerOffJarvis()}
           >
-            ⏻
+            <PixelIcon name="power" size={12} />
           </button>
           <button
             className="voice-hud__ctl"
@@ -298,7 +299,7 @@ export function VoiceHud() {
             aria-label="Ocultar HUD da JARVIS (modo só áudio)"
             onClick={() => setHudMode('hidden')}
           >
-            ✕
+            <PixelIcon name="close" size={12} />
           </button>
         </span>
       </div>
@@ -322,7 +323,7 @@ export function VoiceHud() {
         onPointerCancel={endDrag}
       >
         <span className="voice-hud__grip" aria-hidden="true">
-          ▚▚
+          <PixelIcon name="grip" size={12} />
         </span>
         <span className="voice-hud__eyebrow">
           {info?.jarvisLive.enabled ? 'JARVIS LIVE' : 'JARVIS'}
@@ -345,7 +346,7 @@ export function VoiceHud() {
             onPointerDown={(e) => e.stopPropagation()}
             onClick={() => setResponseMuted(!responseMuted)}
           >
-            {responseMuted ? '🔇' : '🔊'}
+            <PixelIcon name={responseMuted ? 'volume-off' : 'volume'} size={12} />
           </button>
           <button
             className="voice-hud__ctl"
@@ -354,7 +355,7 @@ export function VoiceHud() {
             onPointerDown={(e) => e.stopPropagation()}
             onClick={() => stopJarvisSpeech()}
           >
-            ■
+            <PixelIcon name="stop" size={12} />
           </button>
           <button
             className="voice-hud__ctl"
@@ -363,7 +364,7 @@ export function VoiceHud() {
             onPointerDown={(e) => e.stopPropagation()}
             onClick={() => void powerOffJarvis()}
           >
-            ⏻
+            <PixelIcon name="power" size={12} />
           </button>
           <button
             className="voice-hud__ctl"
@@ -372,7 +373,7 @@ export function VoiceHud() {
             onPointerDown={(e) => e.stopPropagation()}
             onClick={() => setHudMode('mini')}
           >
-            ▁
+            <PixelIcon name="minimize" size={12} />
           </button>
           <button
             className="voice-hud__ctl"
@@ -381,7 +382,7 @@ export function VoiceHud() {
             onPointerDown={(e) => e.stopPropagation()}
             onClick={() => setHudMode('hidden')}
           >
-            ✕
+            <PixelIcon name="close" size={12} />
           </button>
         </span>
       </div>
@@ -395,7 +396,7 @@ export function VoiceHud() {
             <>
               {wakeBlocked && (
                 <span className="voice-hud__detail voice-hud__detail--error">
-                  Outra instância do NexusIDE está ouvindo "Hey Jarvis" (PID {wakeBlockedPid}).
+                  Outra instância do NexusIDE está ouvindo “Hey Jarvis” (PID {wakeBlockedPid}).
                   Feche a outra instância ou reinicie o app.
                 </span>
               )}

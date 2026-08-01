@@ -186,10 +186,61 @@ export const orchSettingsSchema = z.object({
   squadCliPolicy: z
     .enum(['governed', 'operator-choice'])
     .default('operator-choice'),
+  /**
+   * Physical agent transport for main-owned mission panes.
+   * - `cli-pty` (default): legacy CLI adapters over PTY — unchanged path.
+   * - `acp`: ACP stdio harness from the BYOH catalog. Never silently falls
+   *   back to PTY when this is selected; spawn fails with an explicit error.
+   */
+  agentTransport: z.enum(['cli-pty', 'acp']).default('cli-pty'),
+  /**
+   * Selected ACP harness id (preset or custom) when `agentTransport === 'acp'`.
+   * Empty means "no harness chosen" — ACP spawn refuses until the operator
+   * picks one in Settings → Harness ACP.
+   */
+  acpHarnessId: z.string().max(64).default(''),
+  /**
+   * Cryptographic agent-identity gate on physical handoff submits.
+   * - `off`: legacy path (no attestation required) — for rollback only.
+   * - `required` (default): when a mission has issued identity material,
+   *   handoff fails closed unless the presented attestation verifies
+   *   (signature, scope, expiry, revocation, issued-set membership).
+   */
+  agentAttestationGate: z.enum(['off', 'required']).default('required'),
+  /**
+   * User-supplied BYOH definitions (tier custom). Validated via
+   * `parseHarnessDefinition` before spawn; reserved ids rejected.
+   */
+  acpCustomHarnesses: z.array(z.record(z.string(), z.unknown())).max(32).default([]),
+  /**
+   * Write-only probe trigger. Settings UI sets `{ id, requestId }`; main
+   * runs `probeAcpHarness` and publishes the result into
+   * `acpHarnessLastProbe`. Cleared after the probe is scheduled.
+   */
+  acpHarnessProbeRequest: z
+    .object({
+      id: z.string().max(64),
+      requestId: z.string().max(128),
+    })
+    .nullable()
+    .default(null),
+  /** Last ACP harness probe result (read by Settings UI). */
+  acpHarnessLastProbe: z
+    .object({
+      requestId: z.string().max(128),
+      harnessId: z.string().max(64),
+      ok: z.boolean(),
+      detail: z.string().max(2048),
+      at: z.number().int().nonnegative(),
+    })
+    .nullable()
+    .default(null),
 });
 export type OrchSettings = z.infer<typeof orchSettingsSchema>;
 export const DEFAULT_ORCH_SETTINGS: OrchSettings = orchSettingsSchema.parse({});
 export type SquadCliPolicy = OrchSettings['squadCliPolicy'];
+export type AgentTransport = OrchSettings['agentTransport'];
+export type AgentAttestationGate = OrchSettings['agentAttestationGate'];
 
 /**
  * App-wide voice audio routing. `default` follows the current operating-system
