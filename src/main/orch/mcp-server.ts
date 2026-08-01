@@ -62,7 +62,10 @@ import {
   LegacyHandoffParser,
 } from "./legacy-handoff";
 import { getProjectDomainStores } from "./project-domain-store-registry";
-import { submitPtyStreamHandoff } from "./pty-stream-handoff";
+import {
+  submitPtyStreamHandoff,
+  terminateStaleReadOnlyPtyStreamSession,
+} from "./pty-stream-handoff";
 import {
   installPtyStreamMissionControl,
   PtyStreamMissionControl,
@@ -957,6 +960,20 @@ function installLegacyParser(
         `[handoff] PTY stream handoff rejected (${sessionId}):`,
         error,
       );
+      void terminateStaleReadOnlyPtyStreamSession(sessionId, error)
+        .then((terminated) => {
+          if (terminated) {
+            console.warn(
+              `[handoff] stale read-only PTY session terminated for recovery (${sessionId})`,
+            );
+          }
+        })
+        .catch((terminationError) => {
+          console.warn(
+            `[handoff] stale read-only PTY recovery failed (${sessionId}):`,
+            terminationError,
+          );
+        });
     });
   });
   // Prefiltro: stripAnsi + parse custam ~104ms/10k chunks e rodavam em TODO

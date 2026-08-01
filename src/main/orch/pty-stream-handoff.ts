@@ -33,7 +33,9 @@ import { onHandoffSubmitted } from "./idle-delivery";
 import {
   committedPhysicalWorkerHead,
   assertReadOnlyLaneObservationCurrent,
+  StaleReadOnlyObservationError,
 } from "./physical-handoff-git";
+import { orchTerminateSession } from "../pty/pty-manager";
 import {
   getProjectDomainStores,
   type ProjectDomainStoreSuite,
@@ -58,6 +60,32 @@ export interface PtyStreamHandoffResult {
   readonly handoffId: string;
   readonly taskDispatchState: string;
   readonly replayed: boolean;
+}
+
+export function isStaleReadOnlyObservationHandoffError(
+  error: unknown,
+): boolean {
+  return (
+    error instanceof StaleReadOnlyObservationError ||
+    (error instanceof Error &&
+      error.name === StaleReadOnlyObservationError.name)
+  );
+}
+
+/**
+ * A legacy PTY marker has no channel for returning the handoff rejection to
+ * the provider. Once the read-only tree is stale, keeping that process alive
+ * only produces placeholder repaint loops and prevents scheduler recovery.
+ * Terminate the exact main-owned session so the normal physical-exit path can
+ * requeue and re-anchor the task on the integrated HEAD.
+ */
+export async function terminateStaleReadOnlyPtyStreamSession(
+  sessionId: string,
+  error: unknown,
+  terminate: (sessionId: string) => Promise<boolean> = orchTerminateSession,
+): Promise<boolean> {
+  if (!isStaleReadOnlyObservationHandoffError(error)) return false;
+  return terminate(sessionId);
 }
 
 interface PreparedPtyHandoff {

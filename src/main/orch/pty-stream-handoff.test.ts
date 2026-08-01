@@ -25,12 +25,17 @@ import {
 import { issueAgentIdentityRequired } from "./agent-identity-spawn";
 import { setAgentKeyringVaultForTests } from "./agent-keyring-persistence";
 import { configureMissionEventEmit } from "./mission-event-emit";
+import { StaleReadOnlyObservationError } from "./physical-handoff-git";
 
 vi.mock("./idle-delivery", () => ({
   onHandoffSubmitted: vi.fn(() => null),
 }));
 
-import { submitPtyStreamHandoff } from "./pty-stream-handoff";
+import {
+  isStaleReadOnlyObservationHandoffError,
+  submitPtyStreamHandoff,
+  terminateStaleReadOnlyPtyStreamSession,
+} from "./pty-stream-handoff";
 
 const SESSION_ID = "session-pty-stream";
 const WORKER_ID = "agy-worker";
@@ -305,5 +310,32 @@ describe("PTY stream physical handoff", () => {
       state: "running",
       handoffId: undefined,
     });
+  });
+
+  it("terminates a stale read-only PTY so scheduler recovery can re-anchor it", async () => {
+    const terminate = vi.fn(async () => true);
+    const stale = new StaleReadOnlyObservationError();
+
+    expect(isStaleReadOnlyObservationHandoffError(stale)).toBe(true);
+    await expect(
+      terminateStaleReadOnlyPtyStreamSession(
+        SESSION_ID,
+        stale,
+        terminate,
+      ),
+    ).resolves.toBe(true);
+    expect(terminate).toHaveBeenCalledWith(SESSION_ID);
+
+    expect(
+      isStaleReadOnlyObservationHandoffError(new Error("other failure")),
+    ).toBe(false);
+    await expect(
+      terminateStaleReadOnlyPtyStreamSession(
+        SESSION_ID,
+        new Error("other failure"),
+        terminate,
+      ),
+    ).resolves.toBe(false);
+    expect(terminate).toHaveBeenCalledTimes(1);
   });
 });
