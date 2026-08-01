@@ -121,22 +121,21 @@ export const PROVIDER_PROBE_SPECS = Object.freeze({
     ]),
     kind: "turn",
   }),
-  opencode: Object.freeze({
-    args: Object.freeze([
-      "run",
-      `Responda exatamente ${PROVIDER_PROBE_MARKER} e nada mais.`,
-    ]),
-    kind: "turn",
-  }),
 });
 
 /** CLIs do roster sem comando de sonda validado — documentado, não esquecido. */
 export const PROVIDER_PROBE_UNCALIBRATED = Object.freeze([
   // agy exige TTY (o launcher do E2E tem o probe próprio dele);
-  // kimi e glm não tiveram comando validado contra provedor saudável.
+  // kimi e glm não tiveram comando validado contra provedor saudável;
+  // opencode autentica por credencial GERENCIADA que o Nexus injeta no spawn
+  // (keyEnv do vault) — no shell do operador a sonda falha com "API key is
+  // missing" enquanto o harness roda normalmente. Provado em campo: ele
+  // entregou handoffs em todas as execuções da noite sem a variável no shell.
+  // Sondar aqui daria falso negativo, o defeito que este módulo mais evita.
   "agy",
   "kimi",
   "glm",
+  "opencode",
 ]);
 
 export function providerProbeSpec(cli) {

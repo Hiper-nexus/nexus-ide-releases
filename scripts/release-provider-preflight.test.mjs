@@ -136,7 +136,7 @@ describe("sondas calibradas", () => {
       "opencode",
     ]);
     expect(calibradas.sort()).toEqual(
-      ["claude", "codex", "grok", "opencode"].sort(),
+      ["claude", "codex", "grok"].sort(),
     );
     for (const cli of PROVIDER_PROBE_UNCALIBRATED) {
       expect(providerProbeSpec(cli)).toBeNull();
@@ -178,16 +178,6 @@ describe("sondas calibradas", () => {
     }));
     expect(classifyProviderProbe(claude)).toBe("unauthenticated");
 
-    // opencode: "OpenRouter API key is missing"
-    const opencode = probeProviderWithSpec("opencode", () => ({
-      status: 1,
-      stderr: "Error: OpenRouter API key is missing. Pass it using apiKey.",
-    }));
-    // Sem palavra de auth na mensagem, cai em unresponsive -- ainda bloqueia,
-    // que e o que importa; o remedio exato vem do stderr no relatorio.
-    expect(["unauthenticated", "unresponsive"]).toContain(
-      classifyProviderProbe(opencode),
-    );
 
     // codex saudavel: turno real respondido.
     const codex = probeProviderWithSpec("codex", () => ({
