@@ -220,6 +220,59 @@ export function assertVerifiedRealMissionRuntimeProof(
   return evidence;
 }
 
+/**
+ * Persiste o recibo quando uma validação PÓS-PASS rejeita a evidência que o
+ * filho declarou aprovada. O rawEvidence de um PASS não tem bloco `failure`,
+ * então o motivo da rejeição precisa ser injetado — sem isso o recibo sairia
+ * com `detail: null` e o operador teria os dados da missão sem saber o que os
+ * desqualificou.
+ *
+ * `observer-invalid` é o código honesto aqui: a missão pode ter ido bem; o que
+ * não serve para release é a evidência dela. Best-effort de propósito — o
+ * erro de validação continua sendo o diagnóstico primário e não pode ser
+ * mascarado por uma falha de escrita.
+ */
+export async function persistPostPassRejectionReceipt(
+  rawEvidence,
+  result,
+  releaseBinding,
+  launchSurface,
+  destination,
+  validationError,
+) {
+  if (!rawEvidence) return;
+  try {
+    const detail =
+      validationError instanceof Error
+        ? validationError.message
+        : String(validationError);
+    const receipt = safeRealMissionFailureReceipt(
+      {
+        ...rawEvidence,
+        status: "fail",
+        failure: {
+          code: "observer-invalid",
+          reason: null,
+          detail,
+          cta: REAL_MISSION_CTA,
+          snapshot: rawEvidence.failure?.snapshot ?? {
+            missionStatus: null,
+            paneCount: 0,
+            dispatchCount: 0,
+            handoffCount: 0,
+          },
+        },
+      },
+      result,
+      releaseBinding,
+      launchSurface,
+    );
+    await atomicWriteEvidence(receipt, destination);
+  } catch {
+    // O erro de validação segue sendo relançado pelo chamador.
+  }
+}
+
 async function atomicWriteEvidence(evidence, destination) {
   const content = Buffer.from(`${JSON.stringify(evidence, null, 2)}\n`);
   await fsp.mkdir(path.dirname(destination), {
@@ -760,41 +813,60 @@ async function runPackagedRealMissionCore(
         }
         throw new Error(summary);
       }
-      if (rawEvidence?.appVersion !== releaseBinding.appVersion) {
-        throw new Error(
-          "real mission app version does not match the exact release binding",
+      // As validações pós-PASS rejeitam uma evidência que o FILHO declarou
+      // aprovada. Todas lançavam ANTES de persistir qualquer coisa, então o
+      // gate morria sem deixar recibo nenhum: missão selada, zero rastro, e o
+      // motivo só no stdout de quem rodou. Aconteceu num ciclo de release e
+      // custou o diagnóstico inteiro. Agora o recibo é gravado antes de
+      // relançar — as validações seguem idênticas, nada é afrouxado.
+      let evidence;
+      try {
+        if (rawEvidence?.appVersion !== releaseBinding.appVersion) {
+          throw new Error(
+            "real mission app version does not match the exact release binding",
+          );
+        }
+        evidence = assertRealMissionPassEvidence({
+          ...rawEvidence,
+          release: {
+            ...releaseBinding,
+            runId,
+            startedAt,
+            finishedAt: now().toISOString(),
+          },
+        });
+        if (
+          evidence.launchSurface !== launchSurface ||
+          (launchSurface === "private-runner" &&
+            evidence.wizardCoverage !== "not-covered") ||
+          (launchSurface === "product-wizard" &&
+            evidence.wizardCoverage !== "main-owned-product-sequence")
+        ) {
+          throw new Error(
+            "real mission evidence launch surface does not match the main-owned runner mode",
+          );
+        }
+        if (launchSurface === "product-wizard") {
+          assertRealMissionReleaseEvidence(evidence);
+        }
+        if (!result.passLineSeen) {
+          const child = safeChildExitSummary(result);
+          throw new Error(
+            `[real-mission] FAIL code=missing-pass-line exit=${child.exitCode} ` +
+              `phase=${child.phase} status=done panes=0 ` +
+              `dispatches=0 handoffs=0 CTA: ${REAL_MISSION_CTA}`,
+          );
+        }
+      } catch (validationError) {
+        await persistPostPassRejectionReceipt(
+          rawEvidence,
+          result,
+          releaseBinding,
+          launchSurface,
+          destination,
+          validationError,
         );
-      }
-      const evidence = assertRealMissionPassEvidence({
-        ...rawEvidence,
-        release: {
-          ...releaseBinding,
-          runId,
-          startedAt,
-          finishedAt: now().toISOString(),
-        },
-      });
-      if (
-        evidence.launchSurface !== launchSurface ||
-        (launchSurface === "private-runner" &&
-          evidence.wizardCoverage !== "not-covered") ||
-        (launchSurface === "product-wizard" &&
-          evidence.wizardCoverage !== "main-owned-product-sequence")
-      ) {
-        throw new Error(
-          "real mission evidence launch surface does not match the main-owned runner mode",
-        );
-      }
-      if (launchSurface === "product-wizard") {
-        assertRealMissionReleaseEvidence(evidence);
-      }
-      if (!result.passLineSeen) {
-        const child = safeChildExitSummary(result);
-        throw new Error(
-          `[real-mission] FAIL code=missing-pass-line exit=${child.exitCode} ` +
-            `phase=${child.phase} status=done panes=0 ` +
-            `dispatches=0 handoffs=0 CTA: ${REAL_MISSION_CTA}`,
-        );
+        throw validationError;
       }
       await atomicWriteEvidence(evidence, destination);
       return { evidence, evidencePath: destination, runtimeProof };

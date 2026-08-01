@@ -25,6 +25,17 @@ Esta versão **não conserta a parada** — ela faz a parada dizer o nome dela.
 - Migração `028-mission-stall-diagnostics`: quatro colunas em
   `mission_drive_state`, uma linha por missão, cada motivo com o instante da
   sua própria transição.
+- **Recibo garantido em todo caminho de falha**: as validações pós-PASS do
+  runner rejeitam uma evidência que o processo filho declarou aprovada — e
+  todas lançavam ANTES de qualquer escrita. Um ciclo de release terminou com a
+  missão **selada** (`done`, 8/8 handoffs) e zero rastro em disco: nem recibo,
+  nem motivo. Agora o recibo é persistido antes de relançar, com o erro de
+  validação injetado no `detail` (um PASS não tem bloco `failure`, então o
+  motivo precisa ser posto ali) e código `observer-invalid` — a missão pode ter
+  ido bem; o que não serve para release é a evidência dela. A persistência é
+  best-effort de propósito: uma falha de escrita não pode mascarar o erro de
+  validação, que continua sendo o diagnóstico primário. Nenhuma validação foi
+  afrouxada.
 - **Observer do E2E**: `invariant-failed` pós-done nascia com `detail: null`. O
   motivo real — qual recibo não estabilizou — vivia num `console.warn`
   throttled que o gate não captura, então o arquivo de evidência que sobrevive

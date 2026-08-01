@@ -34,6 +34,7 @@ import {
   realMissionAcceptanceCriteria,
   realMissionExpectedTaskChain,
 } from "./e2e-real-mission-contract.mjs";
+import { persistPostPassRejectionReceipt } from "./e2e-real-mission-runtime.mjs";
 import { makeValidRealMissionEvidence } from "./test-support/real-mission-evidence.mjs";
 import {
   assertAdvisorBinaries,
@@ -2309,5 +2310,91 @@ describe("real mission advisor authentication staging", () => {
         JSON.stringify(hostile),
       ).toBeUndefined();
     }
+  });
+});
+
+// REGRESSAO: as validacoes pos-PASS rejeitam uma evidencia que o filho
+// declarou aprovada -- e todas lancavam ANTES de qualquer escrita. Um ciclo de
+// release terminou com a missao selada (done, 8/8 handoffs) e ZERO rastro em
+// disco: nem recibo, nem motivo. O diagnostico inteiro se perdeu.
+describe("recibo de rejeicao pos-PASS", () => {
+  const releaseBinding = {
+    appVersion: "0.20.2",
+    commitSha: "a".repeat(40),
+    artifact: {
+      sha256: "b".repeat(64),
+      identity: "Developer ID Application: Cleofas Pereira rocha (35P5XL3JN6)",
+    },
+  };
+
+  function passShapedRawEvidence() {
+    return {
+      schemaVersion: REAL_MISSION_EVIDENCE_SCHEMA_VERSION,
+      status: "pass",
+      // Um PASS nao tem bloco `failure`: e justamente por isso que o motivo
+      // da rejeicao precisa ser injetado, senao o recibo sai com detail null.
+      failure: null,
+      prompt: "never persist this",
+      rawOutput: "never persist this either",
+    };
+  }
+
+  async function persistInto(rawEvidence, error) {
+    const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "nexus-postpass-"));
+    const destination = path.join(dir, "real-mission-evidence.json");
+    await persistPostPassRejectionReceipt(
+      rawEvidence,
+      { code: 0, phase: "observer-armed" },
+      releaseBinding,
+      "private-runner",
+      destination,
+      error,
+    );
+    return { destination, dir };
+  }
+
+  it("grava recibo com o motivo da rejeicao quando o PASS e desqualificado", async () => {
+    const { destination, dir } = await persistInto(
+      passShapedRawEvidence(),
+      new Error(
+        "PASS evidence is missing one or more real-mission invariants: participationIsExact",
+      ),
+    );
+
+    const written = JSON.parse(await fsp.readFile(destination, "utf8"));
+    expect(written.status).toBe("fail");
+    expect(written.failure.code).toBe("observer-invalid");
+    expect(written.failure.detail).toContain("participationIsExact");
+    expect(written.release.appVersion).toBe("0.20.2");
+    // O recibo continua sanitizado: nada de prompt/rawOutput vaza.
+    expect(JSON.stringify(written)).not.toMatch(/never persist this/u);
+
+    await fsp.rm(dir, { recursive: true, force: true });
+  });
+
+  it("nao inventa arquivo quando nao houve evidencia nenhuma", async () => {
+    const { destination, dir } = await persistInto(
+      null,
+      new Error("missing evidence"),
+    );
+
+    expect(fs.existsSync(destination)).toBe(false);
+
+    await fsp.rm(dir, { recursive: true, force: true });
+  });
+
+  it("falha de escrita nao mascara o erro de validacao", async () => {
+    // Destino impossivel: a persistencia e best-effort e nao pode lancar,
+    // porque quem manda no diagnostico e o erro de validacao relancado acima.
+    await expect(
+      persistPostPassRejectionReceipt(
+        passShapedRawEvidence(),
+        { code: 0, phase: "observer-armed" },
+        releaseBinding,
+        "private-runner",
+        path.join(os.tmpdir(), "nexus-postpass-inexistente ", "e.json"),
+        new Error("qualquer rejeicao"),
+      ),
+    ).resolves.toBeUndefined();
   });
 });
