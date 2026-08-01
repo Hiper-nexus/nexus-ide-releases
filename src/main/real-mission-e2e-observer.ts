@@ -166,7 +166,7 @@ export class RealMissionObserver {
   readonly #onFinish: (code: FailureCode | null) => void;
   readonly #physicalPtyGate: ExactRealMissionPhysicalPtyGate;
   readonly #advisorExpectations: readonly RealMissionAdvisorExpectation[];
-  readonly #advisorPty = new Map<string, RealMissionAdvisorPtyCapture>();
+  readonly #advisorPty = new Map<string, RealMissionAdvisorPtyCapture[]>();
   readonly #kickoff: KickoffCapture = {
     sessionId: null,
     idleAt: null,
@@ -1123,12 +1123,14 @@ export class RealMissionObserver {
   ): void {
     if (!identity.startsWith("advisor:")) return;
     const cli = identity.slice("advisor:".length);
-    const previous = this.#advisorPty.get(cli);
-    if (previous?.sessionId === sessionId) return;
-    this.#advisorPty.set(cli, {
-      sessionId,
-      spawnedAt: Math.min(previous?.spawnedAt ?? at, at),
-    });
+    // TODAS as sessões do CLI ficam registradas: retry do próprio advisor e
+    // substituto de reroute são sessões distintas do MESMO cli, e quem decide
+    // qual delas é a participação pessoal é o sessionId do dispatch pessoal
+    // (participation builder). Sobrescrever misturava identidades — o recibo
+    // do grok saía com firstNexusToolAt da sessão substituta (gate 9).
+    const captures = this.#advisorPty.get(cli) ?? [];
+    if (captures.some((capture) => capture.sessionId === sessionId)) return;
+    this.#advisorPty.set(cli, [...captures, { sessionId, spawnedAt: at }]);
   }
 
   /** Recibos de participação por CLI advisor a partir das fontes físicas. */

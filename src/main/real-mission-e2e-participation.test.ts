@@ -134,8 +134,8 @@ describe("real mission advisor participation receipts", () => {
     const participation = buildRealMissionParticipation({
       expectations: expectedRealMissionAdvisors([]),
       ptyByCli: new Map([
-        ["grok", { sessionId: "session-grok", spawnedAt: 100 }],
-        ["kimi", { sessionId: "session-kimi", spawnedAt: 110 }],
+        ["grok", [{ sessionId: "session-grok", spawnedAt: 100 }]],
+        ["kimi", [{ sessionId: "session-kimi", spawnedAt: 110 }]],
       ]),
       dispatches,
       handoffIssuedAt: (handoffId) =>
@@ -210,7 +210,7 @@ describe("real mission advisor participation receipts", () => {
     const participation = buildRealMissionParticipation({
       expectations: expectedRealMissionAdvisors([]),
       ptyByCli: new Map([
-        ["claude", { sessionId: "session-claude", spawnedAt: 90 }],
+        ["claude", [{ sessionId: "session-claude", spawnedAt: 90 }]],
       ]),
       dispatches: [
         {

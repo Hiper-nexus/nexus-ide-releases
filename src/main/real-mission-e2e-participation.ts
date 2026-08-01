@@ -62,7 +62,10 @@ export interface RealMissionAdvisorPtyCapture {
 
 export interface RealMissionParticipationInput {
   readonly expectations: readonly RealMissionAdvisorExpectation[];
-  readonly ptyByCli: ReadonlyMap<string, RealMissionAdvisorPtyCapture>;
+  readonly ptyByCli: ReadonlyMap<
+    string,
+    readonly RealMissionAdvisorPtyCapture[]
+  >;
   readonly dispatches: readonly {
     readonly agentRef?: string | null;
     readonly sessionId?: string | null;
@@ -99,7 +102,6 @@ export function buildRealMissionParticipation(
         handoffAt: null,
       };
     }
-    const capture = input.ptyByCli.get(expectation.cli) ?? null;
     // O dispatch PESSOAL deste advisor nunca carrega diretiva de reroute — um
     // substituto assumindo a task de OUTRO advisor fica com o mesmo agentRef,
     // e casar só por agentRef ligaria o recibo pessoal ao handoff alheio
@@ -110,6 +112,16 @@ export function buildRealMissionParticipation(
           candidate.agentRef === expectation.agentRef &&
           !candidate.providerReroute,
       ) ?? null;
+    // A captura pessoal é a SESSÃO do dispatch pessoal: retry do próprio
+    // advisor usa a sessão atual; a sessão de um substituto (mesmo cli, task
+    // alheia) nunca contamina o recibo pessoal.
+    const captures = input.ptyByCli.get(expectation.cli) ?? [];
+    const capture =
+      (dispatch?.sessionId
+        ? captures.find(
+            (candidate) => candidate.sessionId === dispatch.sessionId,
+          )
+        : captures[0]) ?? null;
     // Participação por SUBSTITUIÇÃO: o provider do advisor morreu (401/cota)
     // e o reroute re-vinculou a task selada a outro agente do roster — o
     // agent_ref do dispatch é o substituto e a diretiva durável guarda o
