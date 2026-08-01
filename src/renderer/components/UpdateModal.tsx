@@ -126,7 +126,6 @@ type UpdateStatusButtonProps = {
   alwaysVisible?: boolean;
   /** Icon-only bar chip (hide version label on narrow toolbars). */
   compact?: boolean;
-  variant?: 'bar' | 'floating';
 };
 
 export function UpdateStatusButton({
@@ -134,24 +133,20 @@ export function UpdateStatusButton({
   onClick,
   alwaysVisible = false,
   compact = false,
-  variant = 'bar',
 }: UpdateStatusButtonProps) {
   if (!alwaysVisible && !isUpdateNoticeVisible(state)) return null;
   const title = getUpdateButtonTitle(state);
-  const className =
-    variant === 'bar'
-      ? [
-          'workspace-bar__btn',
-          'workspace-bar__btn--update',
-          `workspace-bar__btn--update-${state.phase}`,
-          'update-status-btn',
-          'update-status-btn--bar',
-          compact ? 'update-status-btn--compact' : '',
-          `update-status-btn--${state.phase}`,
-        ]
-          .filter(Boolean)
-          .join(' ')
-      : `update-status-btn update-status-btn--floating update-status-btn--${state.phase}`;
+  const className = [
+    'workspace-bar__btn',
+    'workspace-bar__btn--update',
+    `workspace-bar__btn--update-${state.phase}`,
+    'update-status-btn',
+    'update-status-btn--bar',
+    compact ? 'update-status-btn--compact' : '',
+    `update-status-btn--${state.phase}`,
+  ]
+    .filter(Boolean)
+    .join(' ');
 
   return (
     <button
@@ -168,30 +163,6 @@ export function UpdateStatusButton({
         <span className="update-status-btn__label">{getUpdateButtonLabel(state)}</span>
       )}
     </button>
-  );
-}
-
-type UpdateNotifierProps = {
-  alwaysVisible?: boolean;
-};
-
-export function UpdateNotifier({ alwaysVisible = false }: UpdateNotifierProps) {
-  const state = useUpdateState();
-  const [open, setOpen] = useState(false);
-  if (!state) return null;
-
-  return (
-    <>
-      <div className="update-notifier">
-        <UpdateStatusButton
-          state={state}
-          variant="floating"
-          alwaysVisible={alwaysVisible}
-          onClick={() => setOpen(true)}
-        />
-      </div>
-      {open && <UpdateModal state={state} onClose={() => setOpen(false)} />}
-    </>
   );
 }
 
@@ -216,6 +187,7 @@ export function UpdateModal({ state, onClose }: Props) {
       <div
         className="update-modal"
         role="dialog"
+        aria-modal="true"
         aria-label="Atualização do NexusIDE"
         onClick={(e) => e.stopPropagation()}
       >

@@ -21,6 +21,7 @@ const suppressionReasons = new Set<string>();
 const viewportOverrides = new Map<string, number>();
 const lastStates = new Map<string, BrowserPaneState>();
 const creationWaiters = new Map<string, CreationWaiter[]>();
+let pendingBoundsFrame: number | null = null;
 
 function boundsOf(slot: HTMLElement): {
   x: number;
@@ -63,6 +64,22 @@ function syncPaneBounds(paneId: string, slot: HTMLElement): void {
       viewportOverrides.get(paneId) ?? null,
     ),
   );
+}
+
+/**
+ * React Flow moves panes with CSS transforms. Those transforms do not fire a
+ * ResizeObserver, so native WebContentsViews otherwise stay at their previous
+ * screen coordinates and bleed outside the visual pane. Coalesce all move,
+ * drag and zoom notifications into the next painted frame.
+ */
+export function scheduleBrowserPaneBoundsSync(): void {
+  if (pendingBoundsFrame !== null) return;
+  pendingBoundsFrame = requestAnimationFrame(() => {
+    pendingBoundsFrame = null;
+    for (const [paneId, slot] of attachedSlots) {
+      syncPaneBounds(paneId, slot);
+    }
+  });
 }
 
 /** Breakpoint preview (F4): narrow the view to `width` CSS px (null = full). */

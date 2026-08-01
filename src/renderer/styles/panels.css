@@ -26,6 +26,21 @@
   -webkit-app-region: no-drag;
 }
 
+.launch__topbar-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  -webkit-app-region: no-drag;
+}
+
+@media (max-width: 480px) {
+  .launch__topbar .workspace-bar__name {
+    display: none;
+  }
+}
+
 .launch__panel {
   margin: auto;
 }

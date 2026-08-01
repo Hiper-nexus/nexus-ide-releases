@@ -250,6 +250,7 @@ beforeEach(() => {
   git(root, 'config', 'user.name', 'Nexus Test');
   git(root, 'config', 'user.email', 'nexus@example.test');
   write(root, 'shared.txt', 'base\n');
+  write(root, '.gitignore', 'node_modules/\n');
   git(root, 'add', '.');
   git(root, 'commit', '-m', 'initial');
   scope = {
@@ -283,6 +284,40 @@ afterEach(() => {
 });
 
 describe('MergeQueue', () => {
+
+  it.runIf(process.platform === 'darwin')(
+    'materializes ignored dependencies in the detached validation candidate',
+    async () => {
+      await commitTask(
+        'mission-deps',
+        'task-deps',
+        'worker-deps',
+        'feature-deps.txt',
+        'feature\n',
+      );
+      write(root, 'node_modules/.bin/nexus-test-tool', '#!/bin/sh\nexit 0\n');
+
+      await queue.enqueue({
+        scope,
+        missionId: 'mission-deps',
+        taskId: 'task-deps',
+        async validate(context) {
+          if (context.phase === 'candidate') {
+            expect(
+              fs.existsSync(
+                path.join(
+                  context.checkoutPath,
+                  'node_modules/.bin/nexus-test-tool',
+                ),
+              ),
+            ).toBe(true);
+            expect(git(context.checkoutPath, 'status', '--porcelain')).toBe('');
+          }
+          return approved(context);
+        },
+      });
+    },
+  );
   it('validates a detached candidate before an exact fast-forward and revalidates after', async () => {
     await commitTask(
       'mission-a',

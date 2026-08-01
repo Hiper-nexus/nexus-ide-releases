@@ -76,7 +76,6 @@ import {
   REAL_MISSION_E2E_PRODUCT_WIZARD_READY_STORAGE_KEY,
   REAL_MISSION_E2E_SQUAD_ID,
 } from '../shared/real-mission-e2e';
-import { UpdateNotifier } from './components/UpdateModal';
 import { requestPaneClose } from './terminal/pane-close-guard';
 import { NexusMark } from './components/NexusMark';
 import { PixelIcon } from './components/PixelIcon';
@@ -545,7 +544,6 @@ export function App() {
         <OperatorProfile />
         <ConfirmDialog />
         <Toasts />
-        <UpdateNotifier alwaysVisible />
       </div>
     );
   }

@@ -22,6 +22,11 @@ import {
   DEFAULT_ORCH_SETTINGS,
   type SquadCliPolicy,
 } from "../../shared/settings-types";
+import {
+  UpdateModal,
+  UpdateStatusButton,
+  useUpdateState,
+} from "./UpdateModal";
 
 /**
  * Launch / onboarding screen — the first surface when no workspace is open:
@@ -59,6 +64,8 @@ export function LaunchScreen() {
   const [adaptersLoaded, setAdaptersLoaded] = useState(false);
   const [readinessError, setReadinessError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const updateState = useUpdateState();
+  const [updateOpen, setUpdateOpen] = useState(false);
   const [advanced, setAdvanced] = useState(() => {
     try {
       return sessionStorage.getItem(SKIP_KEY) === "1";
@@ -228,14 +235,24 @@ export function LaunchScreen() {
             <NexusMark size={15} className="workspace-bar__logo" />
             <span className="workspace-bar__name">NexusIDE</span>
           </div>
-          <button
-            className="workspace-bar__btn"
-            onClick={openSettings}
-            title="Providers, keys, catálogo e temas"
-          >
-            <PixelIcon name="config" />
-            Configurações
-          </button>
+          <div className="launch__topbar-actions">
+            {updateState && (
+              <UpdateStatusButton
+                state={updateState}
+                alwaysVisible
+                compact
+                onClick={() => setUpdateOpen(true)}
+              />
+            )}
+            <button
+              className="workspace-bar__btn"
+              onClick={openSettings}
+              title="Providers, keys, catálogo e temas"
+            >
+              <PixelIcon name="config" />
+              Configurações
+            </button>
+          </div>
         </header>
         <main className="launch__panel" aria-busy={busy}>
           <ProgressiveOnboarding
@@ -267,6 +284,9 @@ export function LaunchScreen() {
             </p>
           )}
         </main>
+        {updateOpen && updateState && (
+          <UpdateModal state={updateState} onClose={() => setUpdateOpen(false)} />
+        )}
       </div>
     );
   }
@@ -278,28 +298,38 @@ export function LaunchScreen() {
           <NexusMark size={15} className="workspace-bar__logo" />
           <span className="workspace-bar__name">NexusIDE</span>
         </div>
-        <button
-          className="workspace-bar__btn"
-          onClick={() => {
-            try {
-              sessionStorage.removeItem(SKIP_KEY);
-            } catch {
-              /* ignore */
-            }
-            setAdvanced(false);
-          }}
-          title="Voltar ao início guiado"
-        >
-          Início guiado
-        </button>
-        <button
-          className="workspace-bar__btn"
-          onClick={openSettings}
-          title="Providers, keys, catálogo e temas"
-        >
-          <PixelIcon name="config" />
-          Configurações
-        </button>
+        <div className="launch__topbar-actions">
+          <button
+            className="workspace-bar__btn"
+            onClick={() => {
+              try {
+                sessionStorage.removeItem(SKIP_KEY);
+              } catch {
+                /* ignore */
+              }
+              setAdvanced(false);
+            }}
+            title="Voltar ao início guiado"
+          >
+            Início guiado
+          </button>
+          {updateState && (
+            <UpdateStatusButton
+              state={updateState}
+              alwaysVisible
+              compact
+              onClick={() => setUpdateOpen(true)}
+            />
+          )}
+          <button
+            className="workspace-bar__btn"
+            onClick={openSettings}
+            title="Providers, keys, catálogo e temas"
+          >
+            <PixelIcon name="config" />
+            Configurações
+          </button>
+        </div>
       </header>
       <main className="launch__panel" aria-busy={busy}>
         <section className="launch__command" aria-labelledby="launch-title">
@@ -470,6 +500,9 @@ export function LaunchScreen() {
           </footer>
         </section>
       </main>
+      {updateOpen && updateState && (
+        <UpdateModal state={updateState} onClose={() => setUpdateOpen(false)} />
+      )}
     </div>
   );
 }

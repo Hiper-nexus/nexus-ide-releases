@@ -156,6 +156,21 @@ function setNexusApi(
       orch: {
         removeMission: vi.fn(async () => ({ removed: true })),
       },
+      update: {
+        getState: vi.fn(async () => ({
+          phase: "uptodate",
+          source: "gh",
+          currentVersion: "0.21.0",
+          available: null,
+          checkedAt: Date.now(),
+          canInstall: false,
+          error: null,
+        })),
+        onState: vi.fn(() => () => {}),
+        check: vi.fn(async () => undefined),
+        install: vi.fn(async () => undefined),
+        restart: vi.fn(async () => undefined),
+      },
     },
   });
 }
@@ -212,6 +227,21 @@ function setReactiveNexusApi(
       },
       orch: {
         removeMission: vi.fn(async () => ({ removed: true })),
+      },
+      update: {
+        getState: vi.fn(async () => ({
+          phase: "uptodate",
+          source: "gh",
+          currentVersion: "0.21.0",
+          available: null,
+          checkedAt: Date.now(),
+          canInstall: false,
+          error: null,
+        })),
+        onState: vi.fn(() => () => {}),
+        check: vi.fn(async () => undefined),
+        install: vi.fn(async () => undefined),
+        restart: vi.fn(async () => undefined),
       },
     },
   });
@@ -305,6 +335,13 @@ describe("operational Home and Launch surfaces", () => {
       "Rota de missão autenticada e pronta",
     );
     expect(host.textContent).toContain("MCP online · 71 ferramentas");
+    const topbarActions = host.querySelector(".launch__topbar-actions");
+    expect(topbarActions?.textContent).toContain("Configurações");
+    expect(
+      topbarActions?.querySelector(
+        'button[aria-label*="NexusIDE v0.21.0 está atualizado"]',
+      ),
+    ).not.toBeNull();
 
     const resume = [...host.querySelectorAll("button")].find((button) =>
       button.textContent?.includes("Continuar nexus-ide"),

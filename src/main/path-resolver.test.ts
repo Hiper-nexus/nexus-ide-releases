@@ -46,6 +46,7 @@ describe('path-resolver CLI binary resolution', () => {
     expect(dirs).toContain(path.join(home, '.local', 'bin'));
     expect(dirs).toContain(path.join(home, '.volta', 'bin'));
     expect(dirs).toContain(path.join(home, '.bun', 'bin'));
+    expect(dirs).toContain('/opt/homebrew/opt/node@22/bin');
     expect(dirs).toContain('/opt/homebrew/bin');
   });
 

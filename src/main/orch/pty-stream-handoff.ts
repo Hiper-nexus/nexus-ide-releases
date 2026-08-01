@@ -144,6 +144,16 @@ function summarizeForPersistence(
     : compactText(summary, { maxChars: 4_000 }).text;
 }
 
+/**
+ * Terminal UIs may repaint the same JSON marker with different indentation.
+ * Horizontal spacing is presentation noise on this legacy PTY transport; the
+ * words, line boundaries, status and artifacts remain part of the physical
+ * replay identity and therefore stay fail-closed.
+ */
+function normalizePtySummary(rawSummary: string): string {
+  return rawSummary.replace(/[\t\f\v ]+/gu, " ").trim();
+}
+
 function requireBoundDispatch(
   suite: ProjectDomainStoreSuite,
   missionId: string,
@@ -196,7 +206,11 @@ async function preparePtyHandoff(
   rawPayload: PtyStreamHandoffPayload,
 ): Promise<PreparedPtyHandoff> {
   const sessionId = z.string().min(1).max(256).parse(rawSessionId);
-  const payload = ptyStreamHandoffPayloadSchema.parse(rawPayload);
+  const parsedPayload = ptyStreamHandoffPayloadSchema.parse(rawPayload);
+  const payload = Object.freeze({
+    ...parsedPayload,
+    summary: normalizePtySummary(parsedPayload.summary),
+  });
   const ctx = requireCurrentPtyWorkerContext(sessionId);
   const suite = getProjectDomainStores(ctx.scope);
   const mission = suite.missions.get(ctx.missionId!);

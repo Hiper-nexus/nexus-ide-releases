@@ -79,6 +79,10 @@ export function commonCliBinDirs(home = realUserHome()): string[] {
     path.join(home, '.hermes', 'node', 'bin'),
     path.join(home, '.local', 'share', 'claude', 'versions'),
     // Package managers / version managers.
+    // Nexus releases are built and validated on Node 22. Homebrew keeps
+    // versioned formulae keg-only, so Finder-launched apps do not see this
+    // directory through /opt/homebrew/bin.
+    '/opt/homebrew/opt/node@22/bin',
     '/opt/homebrew/bin',
     '/opt/homebrew/sbin',
     '/usr/local/bin',

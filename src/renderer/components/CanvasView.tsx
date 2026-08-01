@@ -18,7 +18,10 @@ import { useLayoutStore } from '../state/layout-store';
 import { listPanes } from '../lib/split-tree';
 import { defaultCanvasLayout } from '../lib/canvas-layout';
 import { reconcileHosts } from '../terminal/terminal-host';
-import { reconcileBrowserPanes } from '../browser/browser-host';
+import {
+  reconcileBrowserPanes,
+  scheduleBrowserPaneBoundsSync,
+} from '../browser/browser-host';
 import {
   CanvasPaneNode,
   type CanvasPaneNodeData,
@@ -323,6 +326,7 @@ export function CanvasView() {
   const onNodesChange = useCallback(
     (changes: NodeChange<Node>[]) => {
       setNodes((nds) => applyNodeChanges(changes, nds));
+      scheduleBrowserPaneBoundsSync();
 
       // Persist pane dimension changes at resize end (notes persist their own).
       for (const change of changes) {
@@ -341,6 +345,7 @@ export function CanvasView() {
 
   const onNodeDragStop = useCallback(
     (_: MouseEvent | TouchEvent, node: Node) => {
+      scheduleBrowserPaneBoundsSync();
       if (isNoteNodeId(node.id)) {
         persistNoteDrag(node.id, node.position.x, node.position.y);
         return;
@@ -353,6 +358,7 @@ export function CanvasView() {
   const onViewportChange = useCallback(
     (vp: Viewport) => {
       setCanvasViewport(vp);
+      scheduleBrowserPaneBoundsSync();
     },
     [setCanvasViewport],
   );

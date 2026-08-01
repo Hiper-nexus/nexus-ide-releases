@@ -250,6 +250,31 @@ describe("PTY stream physical handoff", () => {
     ).toEqual({ count: 1 });
   });
 
+  it("accepts a terminal repaint whose summary differs only in horizontal spacing", async () => {
+    const { scope, suite } = fixture();
+    const first = await submitPtyStreamHandoff(SESSION_ID, {
+      ...VALID_PAYLOAD,
+      summary:
+        "Implementei   a correção solicitada,\t fiz commit e validei o resultado no worktree.",
+    });
+    const replay = await submitPtyStreamHandoff(SESSION_ID, VALID_PAYLOAD);
+
+    expect(replay).toEqual({
+      handoffId: first.handoffId,
+      taskDispatchState: "handoff_ready",
+      replayed: true,
+    });
+    expect(suite.handoffs.get(first.handoffId)?.summary).toBe(
+      VALID_PAYLOAD.summary,
+    );
+    expect(
+      manager
+        .open(scope)
+        .db.prepare("SELECT COUNT(*) AS count FROM handoff_mcp_receipts")
+        .get(),
+    ).toEqual({ count: 1 });
+  });
+
   it("rejects an unbound or stale session/incarnation without a handoff row", async () => {
     const { scope, claim } = fixture();
 

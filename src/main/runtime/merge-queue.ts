@@ -42,6 +42,7 @@ import {
   type MergeQueueClaim,
 } from './merge-queue-state-controller';
 import { MergeQueueRecovery } from './merge-queue-recovery';
+import { cowCopyHeavyDirs } from './worktree-cow';
 
 export * from './merge-queue-contract';
 
@@ -483,6 +484,23 @@ export class MergeQueue {
         candidate.candidateSha,
       ]);
       candidateAttached = true;
+      // The detached integration checkout contains only tracked Git files.
+      // Project gates such as `npm run typecheck` need the already-installed
+      // dependency tree too; without it npm starts successfully but its script
+      // binaries fail with `command not found`. Clone only ignored heavy dirs
+      // so candidate identity remains clean and the source checkout is never
+      // mutated. APFS clonefile keeps this fast and copy-on-write.
+      const nodeModulesIgnored = this.#git.run(
+        prepared.record.rootRealPath,
+        ['check-ignore', '--quiet', 'node_modules'],
+        { allowFailure: true },
+      );
+      if (nodeModulesIgnored.status === 0) {
+        await cowCopyHeavyDirs(
+          prepared.record.rootRealPath,
+          candidate.path,
+        );
+      }
       this.#assertCheckout(candidate.path, candidate.candidateSha, candidate.treeSha);
 
       const candidateDecision = await input.validate(
