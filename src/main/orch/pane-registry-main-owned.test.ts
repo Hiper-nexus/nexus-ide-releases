@@ -68,6 +68,9 @@ const provider = vi.hoisted(() => ({
 const orchSettings = vi.hoisted(() => ({
   squadCliPolicy: "operator-choice" as "operator-choice" | "governed",
 }));
+const identity = vi.hoisted(() => ({
+  issue: vi.fn(),
+}));
 const binaryTrust = vi.hoisted(() => ({
   rejectedBinPath: null as string | null,
 }));
@@ -170,6 +173,10 @@ vi.mock("../persistence/settings-store", () => ({
   getOrchSettings: () => orchSettings,
 }));
 
+vi.mock("./agent-identity-spawn", () => ({
+  issueAgentIdentityRequired: identity.issue,
+}));
+
 vi.mock("../pty/trusted-native-cli-binary", () => ({
   assertTrustedNativeConfinementBinary: vi.fn(
     ({ requestedBinPath }: { requestedBinPath: string }) => {
@@ -267,6 +274,7 @@ describe("main-owned mission pane spawn", () => {
     missionAuthority.paneSpecSeal = missionAuthority.seal;
     missionAuthority.paneSpecAvailable = true;
     orchSettings.squadCliPolicy = "operator-choice";
+    identity.issue.mockClear();
   });
 
   it("creates the physical worker and registry authority without a renderer", async () => {
@@ -293,6 +301,11 @@ describe("main-owned mission pane spawn", () => {
       sessionId: "pty-headless-1",
     });
     expect(pty.spawn).toHaveBeenCalledOnce();
+    expect(identity.issue).toHaveBeenCalledWith({
+      missionId: "mission-headless",
+      scope,
+      agentId: "Worker Headless",
+    });
     // Discovery path stays in overrides — sealed native path is not fed back
     // as requestedBinPath (that would diverge from canonical discovery).
     expect(pty.spawn.mock.calls[0]?.[2]).toMatchObject({
