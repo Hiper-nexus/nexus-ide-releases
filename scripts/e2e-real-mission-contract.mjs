@@ -7,7 +7,13 @@ export const REAL_MISSION_PRODUCT_WIZARD_FLAG =
 // fan-out; depois encadeia revisor Codex → QA. São 9 PTYs físicos de worker no
 // roster completo (mais o orquestrador), com até sete tarefas elegíveis em
 // paralelo antes da cadeia de entrega.
-export const REAL_MISSION_TIMEOUT_MS = 32 * 60_000;
+// 45 min: o harness roda de propósito numa máquina com credenciais quebradas
+// (claude 401, opencode sem auth) para exercitar as cadeias de reroute — e um
+// roster com DOIS providers mortos custa os ciclos de lease de cada exaustão
+// antes de re-vincular. O gate 7 da 0.20.1 completou 8/8 aos 32:00 cravados
+// (photo finish); 32 min era o orçamento de uma missão sem falha nenhuma. Os
+// travamentos genuínos continuam cobertos pelos watchdogs do produto (25 min).
+export const REAL_MISSION_TIMEOUT_MS = 45 * 60_000;
 export const REAL_MISSION_EVIDENCE_FILE = "real-mission-evidence.json";
 export const REAL_MISSION_EVIDENCE_SCHEMA_VERSION = 9;
 export const REAL_MISSION_EXPECTED_CONTENT = "nexus-real-mission-e2e-ok\n";
