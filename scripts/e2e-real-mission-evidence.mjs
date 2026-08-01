@@ -250,8 +250,14 @@ export function assertRealMissionPassEvidence(raw) {
   const participation = Array.isArray(evidence?.participation)
     ? evidence.participation
     : [];
+  // Advisor re-roteado permanece na cadeia: a task selada dele existe e foi
+  // entregue pelo substituto (diretiva durável); só a participação pessoal é
+  // dispensada — mesma regra do validador in-app.
   const presentAdvisorClis = participation
-    .filter((row) => record(row)?.skipped === null)
+    .filter((row) => {
+      const skipped = record(row)?.skipped;
+      return skipped === null || skipped === "provider-rerouted";
+    })
     .map((row) => row.cli);
   const expectedAcceptanceCriteria =
     evidence?.launchSurface === "product-wizard"
@@ -348,7 +354,9 @@ export function assertRealMissionPassEvidence(raw) {
     dispatches.find(
       (dispatch) =>
         dispatch?.plannerId === member.plannerId &&
-        dispatch?.agentRef === member.agentRef,
+        (dispatch?.agentRef === member.agentRef ||
+          record(dispatch?.providerReroute)?.fromAgentRef ===
+            member.agentRef),
     ),
   );
   const chainReceipts = chainDispatches.map((dispatch) =>
@@ -465,6 +473,7 @@ export function assertRealMissionPassEvidence(raw) {
       "taskId",
       "plannerId",
       "agentRef",
+      "providerReroute",
       "agentCategory",
       "executionMode",
       "dependsOn",
@@ -576,8 +585,19 @@ export function assertRealMissionPassEvidence(raw) {
     const audit = record(handoff?.auditIntent);
     const scope = record(audit?.scope);
     const accepted = exactAcceptedAttempt(handoff);
+    // Substituição por reroute: nome e superfície esperados são do SUBSTITUTO,
+    // provado pela diretiva durável — espelho exato do validador in-app.
+    const reroute = record(dispatch?.providerReroute);
+    const substitute =
+      reroute && reroute.fromAgentRef === member?.agentRef
+        ? (REAL_MISSION_ADVISORS.find(
+            (candidate) => candidate.id === reroute.toAgentRef,
+          ) ?? null)
+        : null;
+    const expectedFromAgent = substitute?.name ?? member?.agentName;
+    const expectedCli = substitute?.cli ?? member?.cli;
     const expectedSource =
-      member?.kind === "advisory" && member?.cli === "agy"
+      member?.kind === "advisory" && expectedCli === "agy"
         ? "pty-stream"
         : "http-mcp";
     return (
@@ -657,7 +677,7 @@ export function assertRealMissionPassEvidence(raw) {
       audit.occurredAt <= physical.issuedAt &&
       physical.issuedAt <= accepted.acceptedAt &&
       physical.issuedAt <= dispatch?.handoffAcceptedAt &&
-      handoff?.fromAgent === member?.agentName &&
+      handoff?.fromAgent === expectedFromAgent &&
       handoff?.sessionId === dispatch?.sessionId &&
       handoff?.workerIncarnationId === dispatch?.workerIncarnationId &&
       handoff?.status === "success" &&
@@ -1279,6 +1299,15 @@ export function assertRealMissionPassEvidence(raw) {
     panes.find((pane) => pane?.agentRef === "e2e-qa")
       ?.workerIncarnationId === qaDispatch?.workerIncarnationId;
   if (!valid) {
+    if (process.env.NEXUS_E2E_EVIDENCE_DEBUG === "1") {
+      console.error("[evidence-debug]", JSON.stringify({
+        exactTopLevelEnvelope, exactMission, exactRuntimeAttestation,
+        exactSingleMissionInventory, exactWizardSurfaceEvidence,
+        exactReleaseBinding, exactRepository, exactPhysicalPtySet,
+        exactDurableHandoffSet, exactPlan, exactKickoff,
+        exactMissionDriverCompletion, chainPlanIsExact, chainDispatchIsExact,
+      }));
+    }
     throw new Error("real mission evidence is incomplete or not a PASS");
   }
   return evidence;

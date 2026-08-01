@@ -365,6 +365,7 @@ export function makeValidRealMissionEvidence({
       taskId: step.taskId,
       plannerId: step.member.plannerId,
       agentRef: step.member.agentRef,
+      providerReroute: null,
       agentCategory: step.member.agentCategory,
       executionMode: step.member.executionMode,
       dependsOn: [...step.dependencyTaskIds],
