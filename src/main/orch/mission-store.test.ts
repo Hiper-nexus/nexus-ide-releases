@@ -1513,6 +1513,80 @@ describe('scoped mission store', () => {
     ]);
   });
 
+  // REGRESSÃO: uma missão entregou 8/8 handoffs, todos os dispatches
+  // completed e worktrees integrated, e mesmo assim ficou eterna em `running`.
+  // O gate de release morreu por timeout e o post-mortem no banco não tinha o
+  // que ler: o motivo do `wait` do driver e o not-ready do autopilot só
+  // existiam em memória. Estas colunas são o que transforma "travou" em
+  // "travou por X".
+  it('persiste o motivo da parada por camada, sem consumir orçamento de tentativa', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope({ checkoutId: 'stall-diag' });
+    const store = createScopedMissionStore(runtimeManager, scope, {
+      idFactory: () => 'mission-stall',
+    });
+    store.create({ title: 'Missão que não sela' });
+    const initial = store.ensureDriveRuntimeState('mission-stall', 100);
+
+    expect(
+      store.recordDriveStallReason(
+        'mission-stall',
+        'driver-wait',
+        'mission is running',
+        200,
+      ),
+    ).toBe(true);
+    expect(
+      store.recordDriveStallReason(
+        'mission-stall',
+        'autopilot',
+        'plano selado ainda não terminal',
+        210,
+      ),
+    ).toBe(true);
+
+    const diagnosed = store.getDriveRuntimeState('mission-stall')!;
+    expect(diagnosed).toMatchObject({
+      lastWaitReason: 'mission is running',
+      lastWaitReasonAt: 200,
+      lastAutopilotReason: 'plano selado ainda não terminal',
+      lastAutopilotReasonAt: 210,
+    });
+    // Parar não é tentativa: nada de orçamento, revisão ou falso progresso.
+    expect(diagnosed.attemptCount).toBe(initial.attemptCount);
+    expect(diagnosed.revision).toBe(initial.revision);
+    expect(diagnosed.updatedAt).toBe(initial.updatedAt);
+    expect(diagnosed.lastActionKind).toBeUndefined();
+
+    // A 5s por tick, repetir o mesmo motivo não pode reescrever a linha.
+    expect(
+      store.recordDriveStallReason(
+        'mission-stall',
+        'driver-wait',
+        'mission is running',
+        300,
+      ),
+    ).toBe(false);
+    expect(store.getDriveRuntimeState('mission-stall')).toMatchObject({
+      lastWaitReasonAt: 200,
+    });
+
+    // Só a transição de motivo grava — e carimba o instante dela.
+    expect(
+      store.recordDriveStallReason(
+        'mission-stall',
+        'driver-wait',
+        'trusted evidence missing for current step',
+        400,
+      ),
+    ).toBe(true);
+    expect(store.getDriveRuntimeState('mission-stall')).toMatchObject({
+      lastWaitReason: 'trusted evidence missing for current step',
+      lastWaitReasonAt: 400,
+      lastAutopilotReason: 'plano selado ainda não terminal',
+    });
+  });
+
   it('persists Ralph budget, failed attempts and signal debounce across restart', () => {
     const runtimeManager = manager();
     const scope = testProjectScope({ checkoutId: 'ralph-runtime' });

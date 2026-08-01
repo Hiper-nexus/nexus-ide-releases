@@ -183,6 +183,8 @@ export class RealMissionObserver {
   #workerObserved = false;
   #doneSeenAt: number | null = null;
   #lastSettleLogAt = 0;
+  /** Último motivo pelo qual a evidência pós-done não estabilizou. */
+  #lastSettleErrorDetail: string | null = null;
   readonly #runStartedAt: number;
   #evaluationQueued = false;
   #stopped = false;
@@ -968,7 +970,14 @@ export class RealMissionObserver {
                 ? taskDispatchBlockDetailFromDescription(
                     mission?.description ?? "",
                   )
-                : null,
+                : // `invariant-failed` pós-done nascia SEM detail: o gate
+                  // reportava "invariant-failed reason=null" e o motivo real
+                  // — qual recibo não estabilizou — ficava só num console.warn
+                  // que o gate não captura. Três execuções do release foram
+                  // diagnosticadas no escuro por causa disso. O erro de
+                  // estabilização é exatamente o "porquê" que este campo de
+                  // texto livre existe para preservar.
+                  (this.#lastSettleErrorDetail ?? null),
             cta: REAL_MISSION_E2E_CTA,
             snapshot: {
               missionStatus: mission?.status ?? null,
@@ -1311,6 +1320,12 @@ export class RealMissionObserver {
       // cause (throttled — this evaluates every 500ms) so an exhausted window
       // reports the actual missing receipt instead of a bare invariant-failed.
       const now = Date.now();
+      // Guardado SEMPRE (não só quando o log throttled dispara): se a janela
+      // esgotar, este é o único registro do recibo que faltou, e ele precisa
+      // chegar ao arquivo de evidência que o gate deixa para trás.
+      this.#lastSettleErrorDetail = (
+        settleError instanceof Error ? settleError.message : String(settleError)
+      ).slice(0, 4_000);
       if (now - this.#lastSettleLogAt >= 10_000) {
         this.#lastSettleLogAt = now;
         console.warn(

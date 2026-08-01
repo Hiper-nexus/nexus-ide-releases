@@ -126,6 +126,15 @@ const orchestratorPreDispatchExitInputSchema = z
   })
   .strict();
 
+/**
+ * Motivo de missão parada é diagnóstico, não payload: truncar mantém a linha
+ * barata mesmo quando a origem concatena contexto longo.
+ */
+const STALL_REASON_MAX = 512;
+
+/** Camada que explicou a parada — as duas decidem em ritmos diferentes. */
+export type MissionStallReasonSource = 'driver-wait' | 'autopilot';
+
 const missionDriveStateRowSchema = z
   .object({
     mission_id: entityIdSchema,
@@ -138,6 +147,10 @@ const missionDriveStateRowSchema = z
     last_action_kind: z.string().min(1).max(64).nullable(),
     last_outcome: z.enum(['reserved', 'success', 'failed']).nullable(),
     last_error: z.string().max(4096).nullable(),
+    last_wait_reason: z.string().max(STALL_REASON_MAX).nullable(),
+    last_wait_reason_at: timestampSchema.nullable(),
+    last_autopilot_reason: z.string().max(STALL_REASON_MAX).nullable(),
+    last_autopilot_reason_at: timestampSchema.nullable(),
     updated_at: timestampSchema,
   })
   .strict();
@@ -157,6 +170,12 @@ export interface MissionDriveRuntimeState {
   readonly lastActionKind?: string;
   readonly lastOutcome?: 'reserved' | 'success' | 'failed';
   readonly lastError?: string;
+  /** Por que o driver decidiu `wait` da última vez que decidiu isso. */
+  readonly lastWaitReason?: string;
+  readonly lastWaitReasonAt?: number;
+  /** Por que o autopilot do PREVC se declarou not-ready da última vez. */
+  readonly lastAutopilotReason?: string;
+  readonly lastAutopilotReasonAt?: number;
   readonly updatedAt: number;
 }
 
@@ -354,7 +373,9 @@ export class ScopedMissionStore {
       .prepare(
         `SELECT mission_id, revision, run_started_at, attempt_count,
                 last_attempt_at, last_success_at, last_signal_at,
-                last_action_kind, last_outcome, last_error, updated_at
+                last_action_kind, last_outcome, last_error,
+                last_wait_reason, last_wait_reason_at,
+                last_autopilot_reason, last_autopilot_reason_at, updated_at
          FROM mission_drive_state WHERE mission_id = ?`,
       )
       .get(id);
@@ -382,6 +403,18 @@ export class ScopedMissionStore {
           ? {}
           : { lastOutcome: row.last_outcome }),
         ...(row.last_error === null ? {} : { lastError: row.last_error }),
+        ...(row.last_wait_reason === null
+          ? {}
+          : { lastWaitReason: row.last_wait_reason }),
+        ...(row.last_wait_reason_at === null
+          ? {}
+          : { lastWaitReasonAt: row.last_wait_reason_at }),
+        ...(row.last_autopilot_reason === null
+          ? {}
+          : { lastAutopilotReason: row.last_autopilot_reason }),
+        ...(row.last_autopilot_reason_at === null
+          ? {}
+          : { lastAutopilotReasonAt: row.last_autopilot_reason_at }),
         updatedAt: row.updated_at,
       });
     } catch (error) {
@@ -406,6 +439,45 @@ export class ScopedMissionStore {
     const state = this.getDriveRuntimeState(id);
     if (!state) throw new Error(`mission drive state requires mission ${id}`);
     return state;
+  }
+
+  /**
+   * Registra POR QUE a missão não avançou neste tick. É diagnóstico puro:
+   * nunca toca `revision`, `attempt_count` nem `updated_at` — parar não é
+   * tentativa e não pode consumir orçamento de recuperação nem parecer
+   * progresso para quem observa `updated_at`.
+   *
+   * Só escreve quando o motivo MUDA. A 5s por tick, reescrever a mesma frase
+   * centenas de vezes só gasta I/O; o valor está na transição (o motivo virou
+   * outro) e no instante em que ela aconteceu.
+   *
+   * Devolve `true` quando gravou — o teste de regressão usa isso para provar
+   * que a segunda chamada idêntica não escreveu.
+   */
+  recordDriveStallReason(
+    rawId: string,
+    source: MissionStallReasonSource,
+    rawReason: string,
+    rawAt?: number,
+  ): boolean {
+    const id = entityIdSchema.parse(rawId);
+    const at = timestampSchema.parse(rawAt ?? this.#binding.now());
+    const reason = rawReason.trim().slice(0, STALL_REASON_MAX);
+    if (!reason) return false;
+    const [column, columnAt] =
+      source === 'driver-wait'
+        ? ['last_wait_reason', 'last_wait_reason_at']
+        : ['last_autopilot_reason', 'last_autopilot_reason_at'];
+    const result = this.#binding
+      .writeDatabase()
+      .prepare(
+        `UPDATE mission_drive_state
+         SET ${column} = ?, ${columnAt} = ?
+         WHERE mission_id = ?
+           AND (${column} IS NULL OR ${column} <> ?)`,
+      )
+      .run(reason, at, id, reason);
+    return result.changes === 1;
   }
 
   reserveDriveAttempt(

@@ -648,6 +648,14 @@ export function createDefaultDriveDeps(options: {
     reconcileStalledMergeForScope: (scope) => {
       requireWorktreeRuntimeRegistry().reconcileMergeIfStalled(scope);
     },
+    recordStallReason: (missionId, scope, reason, at) => {
+      getProjectDomainStores(scope).missions.recordDriveStallReason(
+        missionId,
+        'driver-wait',
+        reason,
+        at,
+      );
+    },
     listRunningMissions: (scope) => {
       const suite = getProjectDomainStores(scope);
       return suite.missions

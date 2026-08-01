@@ -48,6 +48,16 @@ export interface DriveDeps {
    * mas quem garante o batimento é o coração que comprovadamente bate.
    */
   reconcileStalledMergeForScope?(scope: ProjectExecutionScope): void;
+  /**
+   * Persiste POR QUE a missão ficou parada. Opcional para não quebrar os
+   * harnesses de teste que montam DriveDeps à mão; em produção sempre existe.
+   */
+  recordStallReason?(
+    missionId: string,
+    scope: ProjectExecutionScope,
+    reason: string,
+    at: number,
+  ): void;
   listRunningMissions(scope: ProjectExecutionScope): readonly { id: string }[];
   /** Retorna null se a missão não existe (removida entre list e load). */
   loadDriveState(
@@ -198,6 +208,20 @@ export async function runDriveTick(
       }
       const action = decideDriveAction(effectiveState, now, config);
       if (action.kind !== 'wait') decidedNonWait += 1;
+      else {
+        // O motivo do wait só existia em memória: uma missão que entrega tudo
+        // e nunca sela morria no gate por timeout, sem nome de causa e sem
+        // nada no banco para o post-mortem ler. Falha aqui nunca derruba o
+        // tick — diagnóstico não pode competir com a condução da missão.
+        try {
+          deps.recordStallReason?.(mission.id, scope, action.reason, now);
+        } catch (error) {
+          console.warn(
+            `[mission-driver] registro de motivo de espera falhou para ${mission.id}:`,
+            error,
+          );
+        }
+      }
       const snapshot: DriveSnapshot = {
         missionId: mission.id,
         scope,

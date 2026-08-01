@@ -491,6 +491,28 @@ const TASK_PROVIDER_REROUTE_SCHEMA = `
 ALTER TABLE task_dispatch_queue ADD COLUMN provider_reroute_json TEXT;
 `;
 
+/**
+ * Diagnóstico durável de missão que não sela. Uma missão pode entregar 100% do
+ * trabalho (tasks done, dispatches completed, worktrees integrated) e mesmo
+ * assim ficar eterna em `running` porque o autopilot do PREVC se declara
+ * not-ready e o driver decide `wait` — dezenas de vezes, a cada tick de 5s.
+ * O motivo de ambos existia SÓ em memória: o gate de release morria por
+ * timeout sem nome de causa, e o post-mortem no banco não tinha o que ler.
+ *
+ * Uma linha por missão, last-writer-wins de propósito: a 5s por tick um ledger
+ * append-only cresceria sem limite e o valor diagnóstico está no motivo ATUAL,
+ * não na repetição dele. Timestamps separados porque as duas camadas decidem
+ * em ritmos diferentes.
+ */
+const MISSION_STALL_DIAGNOSTICS_SCHEMA = `
+ALTER TABLE mission_drive_state ADD COLUMN last_wait_reason TEXT;
+ALTER TABLE mission_drive_state ADD COLUMN last_wait_reason_at INTEGER
+  CHECK (last_wait_reason_at IS NULL OR last_wait_reason_at >= 0);
+ALTER TABLE mission_drive_state ADD COLUMN last_autopilot_reason TEXT;
+ALTER TABLE mission_drive_state ADD COLUMN last_autopilot_reason_at INTEGER
+  CHECK (last_autopilot_reason_at IS NULL OR last_autopilot_reason_at >= 0);
+`;
+
 export const ORCHESTRATION_PROJECT_MIGRATION_SPECS: readonly ProjectMigrationSpec[] =
   [
     {
@@ -570,5 +592,11 @@ export const ORCHESTRATION_PROJECT_MIGRATION_SPECS: readonly ProjectMigrationSpe
       schemaVersion: 27,
       appVersion: '0.19.42',
       sql: TASK_PROVIDER_REROUTE_SCHEMA,
+    },
+    {
+      id: '028-mission-stall-diagnostics',
+      schemaVersion: 28,
+      appVersion: '0.20.2',
+      sql: MISSION_STALL_DIAGNOSTICS_SCHEMA,
     },
   ];

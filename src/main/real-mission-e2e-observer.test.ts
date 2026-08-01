@@ -744,6 +744,47 @@ describe("real mission observer advisor participation", () => {
     terminalBlockedObserver.stop();
   });
 
+  // REGRESSÃO: três execuções do gate de release reprovaram com
+  // "invariant-failed reason=null" e detail nulo. O motivo real — qual recibo
+  // não estabilizou pós-done — existia só num console.warn throttled que o
+  // gate não captura, e o arquivo de evidência que sobrevive à execução saía
+  // sem o "porquê". Diagnosticamos três releases no escuro por causa disso.
+  it("preserva no detail o motivo de a evidência pós-done não estabilizar", () => {
+    harness.mission = {
+      id: MISSION_ID,
+      status: "done",
+      intentState: "done",
+      intentVersion: 1,
+      squadId: REAL_MISSION_E2E_SQUAD_ID,
+      milestones: [],
+      intentContract: {
+        goal: "Executar a missão real",
+        intentVersion: 1,
+        approvedAt: 100,
+        dispatchedAt: 110,
+        squadRevisionHash: squadBinding.squadRevisionHash,
+      },
+    };
+
+    // Mesmo cenário determinístico do teste abaixo: o probe pós-done falha.
+    const observer = createObserver({
+      advisorSkipClis: ["agy", "grok", "kimi", "opencode", "glm", "claude"],
+      startedAt: 123_000,
+    });
+    observer.start();
+
+    const failed = observer.evidence(123_000, "fail", "invariant-failed");
+
+    expect(failed.failure?.code).toBe("invariant-failed");
+    expect(failed.failure?.detail).toBeTruthy();
+    expect(typeof failed.failure?.detail).toBe("string");
+    // Um bloqueio de missão continua usando a descrição, não o settle error.
+    expect(
+      observer.evidence(123_000, "fail", "mission-blocked").failure?.detail,
+    ).not.toBe(failed.failure?.detail);
+    observer.stop();
+  });
+
   it("probes the post-done PASS evidence with the run startedAt, not the evaluation clock", () => {
     harness.mission = {
       id: MISSION_ID,

@@ -1318,6 +1318,30 @@ export function runPrevcFinalValidation(input: {
  * only the trusted final-validation handoff and wakes the Mission Driver; it
  * never writes mission/milestone completion itself.
  */
+/**
+ * Grava o motivo de o autopilot não fechar. Diagnóstico nunca pode derrubar a
+ * ponte: a missão continua sendo conduzida mesmo que o registro falhe, e a
+ * linha de drive state pode ainda não existir (o driver a cria no início da
+ * missão) — nesse caso o UPDATE simplesmente não afeta ninguém.
+ */
+function recordAutopilotStall(
+  dependencies: PrevcAutopilotCoordinatorDependencies,
+  scope: ProjectExecutionScope,
+  missionId: string,
+  reason: string,
+): void {
+  try {
+    dependencies
+      .storesForScope(scope)
+      .missions.recordDriveStallReason(missionId, "autopilot", reason);
+  } catch (error) {
+    console.warn(
+      `[prevc-autopilot] registro de motivo de parada falhou para ${missionId}:`,
+      error,
+    );
+  }
+}
+
 export function runGuidedPrevcPostMergeBridge(
   scope: ProjectExecutionScope,
   missionId: string,
@@ -1349,6 +1373,7 @@ export function runGuidedPrevcPostMergeBridge(
           "guided post-merge mission topology is mixed; replan and reapprove",
         );
       }
+      recordAutopilotStall(dependencies, scope, missionId, inspection.reason);
       return Object.freeze({
         applicable: missionRequiresGuidedPrevc(
           currentMission ?? {},
@@ -1376,6 +1401,17 @@ export function runGuidedPrevcPostMergeBridge(
     const driverWakeRequested = ready
       ? dependencies.requestDriverTick()
       : false;
+    // Uma ponte que não fica ready deixa a missão em `running` para sempre com
+    // o trabalho todo entregue, e o motivo morria aqui: o gate de release via
+    // só o timeout. Persistir é o que transforma "travou" em "travou por X".
+    if (!ready) {
+      recordAutopilotStall(
+        dependencies,
+        scope,
+        missionId,
+        autopilot.reason ?? `autopilot parou em ${autopilot.state}`,
+      );
+    }
     return Object.freeze({
       applicable: true,
       ready,

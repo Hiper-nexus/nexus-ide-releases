@@ -13,6 +13,48 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.20.2',
+  date: '2026-07-31',
+  codename: 'Travar deixou de ser mudo',
+  summary:
+    'Uma missão entregou tudo — 8 tasks done, 8 dispatches completed, 8 ' +
+    'worktrees integrated — e mesmo assim ficou eterna em "running". O gate ' +
+    'de release morreu por timeout e o post-mortem no banco não tinha o que ' +
+    'ler: o motivo do wait do driver e o not-ready do autopilot do PREVC só ' +
+    'existiam em memória. Esta versão torna esses dois motivos duráveis. Ela ' +
+    'não conserta a parada; ela faz a parada dizer o nome dela.',
+  highlights: [
+    {
+      title: 'O motivo da parada agora sobrevive ao processo',
+      detail:
+        'Duas camadas decidem não avançar: o Mission Driver, quando escolhe ' +
+        'esperar, e o autopilot do PREVC, quando se declara not-ready. Os ' +
+        'dois motivos passam a ser gravados por missão, cada um com o ' +
+        'instante da sua transição. Uma missão que trava para de ser um ' +
+        'timeout sem causa e passa a ser um motivo com nome e hora.',
+    },
+    {
+      title: 'Diagnóstico não vira progresso nem consome orçamento',
+      detail:
+        'Parar não é tentativa: o registro nunca toca revisão, contagem de ' +
+        'tentativas ou updated_at — senão uma missão parada pareceria estar ' +
+        'progredindo e queimaria orçamento de recuperação sem agir. E o ' +
+        'registro só grava quando o motivo MUDA: a 5 segundos por tick, ' +
+        'reescrever a mesma frase centenas de vezes é só I/O, o valor está ' +
+        'na transição.',
+    },
+    {
+      title: 'Instrumentação nunca derruba a missão',
+      detail:
+        'Falha ao registrar é engolida com aviso nas duas camadas. ' +
+        'Diagnóstico não pode competir com a condução da missão — se o ' +
+        'registro quebrar, o tick segue e a missão continua sendo conduzida.',
+    },
+  ],
+  fixes: [],
+};
+
+export const PREVIOUS_RELEASE: AppRelease = {
   version: '0.20.1',
   date: '2026-07-31',
   codename: 'O gateway não desloga ninguém',
@@ -88,7 +130,7 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const PREVIOUS_RELEASE: AppRelease = {
+export const RELEASE_02000: AppRelease = {
   version: '0.20.0',
   date: '2026-07-31',
   codename: 'Operacional de verdade',

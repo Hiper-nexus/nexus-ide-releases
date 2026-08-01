@@ -1,5 +1,57 @@
 # Changelog
 
+## 0.20.2 — Travar deixou de ser mudo
+
+Data: 2026-07-31
+
+Uma missão do gate de release entregou **tudo** — 8 tasks `done`, 8 dispatches
+`completed`, 8 worktrees `integrated`, 8 handoffs — e mesmo assim ficou eterna
+em `running`. O gate morreu por `timeout` e o post-mortem no banco não tinha o
+que ler: o workflow PREVC parado em `execution` desde o primeiro segundo, zero
+recibos de step, e o drive state criado no início e nunca mais tocado.
+
+O motivo existia. Ele só não sobrevivia ao processo.
+
+Esta versão **não conserta a parada** — ela faz a parada dizer o nome dela.
+
+### Os dois motivos viraram duráveis
+
+- **Driver**: quando `decideDriveAction` escolhe `wait`, o motivo é gravado na
+  missão. Antes ele existia só no snapshot em memória do tick.
+- **Autopilot do PREVC**: quando a ponte pós-merge se declara `ready: false` —
+  tanto na saída antecipada de autoridade quanto depois de rodar o autopilot —
+  o motivo é gravado. Era o dado que faltava para saber por que uma missão com
+  o plano inteiro integrado não avança de `execution`.
+- Migração `028-mission-stall-diagnostics`: quatro colunas em
+  `mission_drive_state`, uma linha por missão, cada motivo com o instante da
+  sua própria transição.
+- **Observer do E2E**: `invariant-failed` pós-done nascia com `detail: null`. O
+  motivo real — qual recibo não estabilizou — vivia num `console.warn`
+  throttled que o gate não captura, então o arquivo de evidência que sobrevive
+  à execução saía sem o "porquê". Três execuções do gate foram diagnosticadas
+  no escuro por isso. O erro de estabilização passa a ser preservado no campo
+  de texto livre que existe exatamente para isso.
+
+### O que o registro deliberadamente NÃO faz
+
+- **Não consome orçamento**: nunca toca `revision`, `attempt_count` nem
+  `updated_at`. Parar não é tentativa — se contasse, uma missão parada
+  pareceria estar progredindo e queimaria orçamento de recuperação sem agir.
+- **Não repete**: só grava quando o motivo MUDA. A 5 segundos por tick,
+  reescrever a mesma frase centenas de vezes é só I/O; o valor diagnóstico
+  está na transição e no instante dela.
+- **Não derruba nada**: falha de registro é engolida com aviso nas duas
+  camadas. Diagnóstico não pode competir com a condução da missão.
+- **Não afrouxa evidência**: nada aqui muda o que conta como verificado. O
+  driver continua exigindo evidência atestada de verdade para avançar o PREVC.
+
+### Por que uma linha por missão, e não um ledger
+
+`mission_events` é append-only com semântica de entrega. A 5s por tick, um
+motivo repetido viraria crescimento sem limite para registrar a mesma frase. O
+diagnóstico útil é o motivo **atual** e quando ele mudou — não a contagem de
+vezes que o loop reafirmou o mesmo impasse.
+
 ## 0.20.1 — O gateway não desloga ninguém
 
 Data: 2026-07-31

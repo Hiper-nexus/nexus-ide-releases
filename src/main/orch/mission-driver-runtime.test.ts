@@ -162,6 +162,51 @@ describe('mission driver loop coordination', () => {
   });
 });
 
+describe('motivo da parada persistido', () => {
+  // REGRESSÃO: missão entregou 8/8 handoffs e ficou eterna em `running`; o
+  // gate morreu por timeout e o motivo do `wait` só existia em memória.
+  it('registra o motivo quando o driver decide esperar', async () => {
+    const recorded: { missionId: string; reason: string; at: number }[] = [];
+    const deps: DriveDeps = {
+      ...makeDeps({
+        missionsByScope: new Map([['p1', [{ id: 'm-fresh' }]]]),
+        statesById: new Map([['m-fresh', FRESH]]),
+      }),
+      recordStallReason: (missionId, _scope, reason, at) => {
+        recorded.push({ missionId, reason, at });
+      },
+    };
+
+    await runDriveTick(deps, { ...defaultDriveConfig, mode: 'shadow' });
+
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]).toMatchObject({ missionId: 'm-fresh', at: NOW });
+    expect(recorded[0]!.reason.length).toBeGreaterThan(0);
+  });
+
+  it('registro que lança não derruba o tick', async () => {
+    const decisions: DriveSnapshot[] = [];
+    const deps: DriveDeps = {
+      ...makeDeps({
+        missionsByScope: new Map([['p1', [{ id: 'm-fresh' }]]]),
+        statesById: new Map([['m-fresh', FRESH]]),
+        onDecision: (snapshot) => decisions.push(snapshot),
+      }),
+      recordStallReason: () => {
+        throw new Error('diag-boom');
+      },
+    };
+
+    const result = await runDriveTick(deps, {
+      ...defaultDriveConfig,
+      mode: 'shadow',
+    });
+
+    expect(result.scanned).toBe(1);
+    expect(decisions).toHaveLength(1);
+  });
+});
+
 describe('watchdog de merge estagnado dentro do loop', () => {
   // O watchdog tinha teste da função pura de decisão por idade, mas nada
   // provava que ESTE loop de fato o invoca — regressão silenciosa se alguém
