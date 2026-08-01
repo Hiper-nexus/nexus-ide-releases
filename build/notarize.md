@@ -222,9 +222,26 @@ Isso **não é bug de código** — é desgaste de ambiente. Mas hoje só se des
 revela: ela cobre as contas do vault, enquanto grok, glm, agy, opencode e codex
 autenticam pelos próprios HOMEs.
 
-**A fazer**: uma checagem de saúde de provider antes do gate, que falhe rápido
-com "provedor X não responde" em vez de custar um ciclo inteiro. Enquanto não
-existir, espace os ciclos de release quando um falhar por worker stalled.
+**Estado**: o núcleo de decisão existe em
+[`scripts/release-provider-preflight.mjs`](../scripts/release-provider-preflight.mjs).
+Ele classifica cada provedor em `healthy` / `absent` / `unresponsive` /
+`unauthenticated` e consolida o veredito do ciclo:
+
+- `absent` **não** bloqueia — CLI não instalada já é tratada pelo roster, e
+  reprovar aqui travaria o gate por um provedor que a missão nem usaria;
+- `timedOut` é o sinal mais valioso: é a forma exata que o esgotamento assume;
+- auth e indisponibilidade são separadas porque o remédio difere (relogar vs
+  esperar a cota);
+- sonda que explode conta como não-responsiva — o gate não começa apostando
+  que o provedor está bem.
+
+**Falta ligar a sonda viva ao gate.** O núcleo é puro e testado, mas cada CLI
+precisa do seu comando de sonda validado contra um provedor **saudável** antes
+de virar bloqueio de release — um preflight mal calibrado reprova release boa,
+que é pior que o problema. Valide quando os provedores estiverem descansados.
+
+Enquanto isso não existir, a regra operacional é: **quando um ciclo falhar por
+worker stalled, espace o próximo.** Disparar de novo em seguida degrada mais.
 
 ## Limite de assinatura Windows
 
