@@ -1,5 +1,10 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import {
+  calibratedProvidersFrom,
+  probeProviderWithSpec,
+  runProviderPreflight,
+} from './release-provider-preflight.mjs';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
@@ -157,6 +162,45 @@ function defaultRunChecked(command, args, options = {}) {
     stdout: result.stdout ?? '',
     stderr: result.stderr ?? '',
   };
+}
+
+/** Roster real da missão do gate — o preflight nunca diverge do que ela usa. */
+const RELEASE_GATE_ROSTER_CLIS = Object.freeze([
+  'codex',
+  'claude',
+  'grok',
+  'agy',
+  'opencode',
+  'kimi',
+  'glm',
+]);
+const PROVIDER_PROBE_TIMEOUT_MS = 90_000;
+const PROVIDER_PROBE_MAX_BUFFER = 256 * 1024;
+
+/**
+ * Sonda viva dos provedores exigidos. Timeout curto de propósito: um provedor
+ * que demora 90s numa pergunta trivial é exatamente o que pendura a missão.
+ */
+async function defaultProviderPreflight(environment) {
+  const clis = calibratedProvidersFrom(RELEASE_GATE_ROSTER_CLIS);
+  return runProviderPreflight(clis, (cli) =>
+    probeProviderWithSpec(cli, (command, args) => {
+      const result = spawnSync(command, [...args], {
+        encoding: 'utf8',
+        env: environment,
+        maxBuffer: PROVIDER_PROBE_MAX_BUFFER,
+        shell: false,
+        timeout: PROVIDER_PROBE_TIMEOUT_MS,
+      });
+      return {
+        spawnFailed: result.error?.code === 'ENOENT',
+        timedOut: result.signal !== null && result.status === null,
+        status: result.status,
+        stdout: result.stdout,
+        stderr: result.stderr,
+      };
+    }),
+  );
 }
 
 function assertPublishEnvironment(environment) {
@@ -380,6 +424,8 @@ async function runReleaseCandidateGateCore(
   const runUiE2E = authoritative
     ? runPackagedRealMissionProductWizard
     : options.runUiE2E;
+  const runPreflight =
+    options.runPreflight ?? (() => defaultProviderPreflight(environment));
   const extractE2EApp =
     options.extractE2EApp ??
     ((zipPath, expectedSha256, callback) =>
@@ -548,6 +594,20 @@ async function runReleaseCandidateGateCore(
     }
     return evidence;
   };
+  // PREFLIGHT DE PROVEDOR — antes de gastar o ciclo. Uma CLI com sessão
+  // expirada ou sem chave só se revela ~40 min depois, como "worker sem
+  // atividade e sem heartbeat por 10 minutos (stalled)", e o ciclo inteiro é
+  // perdido. Numa noite de release isso custou sete execuções. Só bloqueia com
+  // sonda CALIBRADA contra provedor real; CLI sem spec validada nunca reprova.
+  if (authoritative) {
+    const preflight = await runPreflight();
+    if (!preflight.ok) {
+      throw new Error(`[release-candidate] ${preflight.summary}`);
+    }
+    process.stderr.write(
+      `[release-candidate] preflight de provedor: ${preflight.summary}\n`,
+    );
+  }
   let runtimeProof = null;
   let claudeOrchestratorRuntimeProof = null;
   await extractE2EApp(

@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.20.3 — O gate pergunta antes de gastar
+
+Data: 2026-08-01
+
+Uma CLI com sessão expirada ou sem chave só se revelava ~40 minutos depois de
+iniciar o ciclo de release, como "worker sem atividade e sem heartbeat por 10
+minutos (stalled)" — e o ciclo inteiro era perdido. Numa noite isso se repetiu
+sete vezes, com degradação monotônica no mesmo commit (8/8 → 7/7 → 6/5
+handoffs).
+
+### Preflight de provedor no gate
+
+- Antes da missão real, cada CLI exigida responde a uma sonda mínima com
+  timeout de 90s: `codex exec` e `claude -p` num turno barato; `grok models`
+  numa checagem de login que nem gasta turno de LLM.
+- Sessão expirada, chave ausente e provedor mudo são **distinguidos** — o
+  remédio de cada um é diferente (relogar, exportar a chave, esperar a cota).
+  Os padrões de classificação são os TEXTOS REAIS observados nas CLIs desta
+  máquina; o teste de regressão pegou um match que passava batido ("Failed to
+  authenticate" não casava com "authentication").
+- **CLI sem sonda calibrada nunca bloqueia** (`agy`, `kimi`, `glm` ficam de
+  fora documentadamente): preflight mal calibrado reprova release boa, que é
+  pior que o problema que resolve. Binário ausente também não bloqueia — o
+  roster já trata CLI não instalada.
+- Sonda que explode conta como não-responsiva: o gate não começa apostando que
+  o provedor está bem.
+
+### A causa da noite tinha nome
+
+A primeira aplicação real da sonda encontrou o que sete ciclos não disseram: a
+sessão OAuth do Claude expirada e irrecuperável — exatamente o provedor cuja
+exaustão disparava os reroutes que reprovavam `participationIsExact` (o
+substituto ficava com dois dispatches sob o mesmo `agent_ref`). Noventa
+segundos de sonda contra quarenta minutos por descoberta.
+
 ## 0.20.2 — Travar deixou de ser mudo
 
 Data: 2026-07-31

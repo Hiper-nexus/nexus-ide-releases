@@ -13,6 +13,41 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.20.3',
+  date: '2026-08-01',
+  codename: 'O gate pergunta antes de gastar',
+  summary:
+    'Uma CLI com sessão expirada ou sem chave só se revelava ~40 minutos ' +
+    'depois de iniciar o ciclo de release, como worker travado sem heartbeat ' +
+    '— e o ciclo inteiro era perdido. Numa noite isso se repetiu sete vezes. ' +
+    'Agora o gate sonda os provedores ANTES de começar, com comandos ' +
+    'calibrados contra as CLIs reais, e reprova em 90 segundos nomeando o ' +
+    'provedor e o remédio: relogar, configurar a chave ou esperar a cota.',
+  highlights: [
+    {
+      title: 'Preflight de provedor no gate de release',
+      detail:
+        'Antes da missão real, cada CLI exigida responde a uma sonda mínima: ' +
+        'codex e claude num turno barato, grok numa checagem de login que nem ' +
+        'gasta turno. Sessão OAuth expirada, chave ausente e provedor mudo ' +
+        'são distinguidos — o remédio de cada um é diferente. CLI sem sonda ' +
+        'CALIBRADA nunca bloqueia: preflight mal calibrado reprova release ' +
+        'boa, que é pior que o problema que resolve.',
+    },
+    {
+      title: 'A causa da noite tinha nome',
+      detail:
+        'A sonda encontrou na primeira aplicação real o que sete ciclos não ' +
+        'disseram: a sessão OAuth do Claude expirada e irrecuperável — ' +
+        'exatamente o provedor cuja exaustão disparava os reroutes que ' +
+        'reprovavam a evidência de participação. Noventa segundos de sonda ' +
+        'contra quarenta minutos por descoberta.',
+    },
+  ],
+  fixes: [],
+};
+
+export const RELEASE_02002: AppRelease = {
   version: '0.20.2',
   date: '2026-07-31',
   codename: 'Travar deixou de ser mudo',
