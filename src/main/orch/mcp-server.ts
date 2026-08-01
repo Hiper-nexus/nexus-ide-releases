@@ -764,6 +764,15 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           "--settings",
           writeClaudeFamilyZeroClickSettings(ctx.token),
         );
+        if (gated) {
+          // A mission-owned pane must not inherit the operator's unrelated
+          // MCP connectors from the native HOME. Those connectors can require
+          // their own OAuth/bootstrap round trips and leave Claude with a
+          // pasted prompt that never reaches the model. The per-session Nexus
+          // config above is the complete MCP surface for governed agents;
+          // direct user panes intentionally keep the native profile behavior.
+          extraArgs.push("--strict-mcp-config");
+        }
       }
       // CLIs não-Claude: injeta o servidor MCP DE VERDADE (não só env), para
       // que Codex/AGY chamem as tools nexus_* e submetam

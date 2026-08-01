@@ -289,7 +289,7 @@ describe('mcp-server governed CLI profile wiring', () => {
     expect(decoration.env.HOME).toBeUndefined();
     expect(decoration.extraArgs).toContain('--mcp-config');
     expect(decoration.extraArgs).toContain('--settings');
-    expect(decoration.extraArgs).not.toContain('--strict-mcp-config');
+    expect(decoration.extraArgs).toContain('--strict-mcp-config');
     expect(
       getContext(decoration.env.NEXUS_MCP_TOKEN),
     ).toMatchObject({
@@ -300,6 +300,30 @@ describe('mcp-server governed CLI profile wiring', () => {
     expect(fs.readFileSync(path.join(home, '.claude.json'), 'utf8')).toBe(
       nativeProfile,
     );
+
+    decoration.onSpawnFailed?.();
+  });
+
+  it('keeps native external MCPs available to direct user panes', () => {
+    const root = tempRoot();
+    const home = path.join(root, 'home');
+    const workspace = path.join(root, 'workspace');
+    fs.mkdirSync(workspace, { recursive: true });
+    fs.mkdirSync(home, { recursive: true });
+    const cwd = fs.realpathSync(workspace);
+    vi.stubEnv('HOME', home);
+
+    const decoration = prepareAgentSpawnDecoration(
+      adapter('claude'),
+      { kind: 'cli-agent', cols: 80, rows: 24 },
+      authority(cwd, false),
+      undefined,
+    );
+    if (!decoration) throw new Error('expected direct Claude decoration');
+
+    expect(decoration.extraArgs).toContain('--mcp-config');
+    expect(decoration.extraArgs).toContain('--settings');
+    expect(decoration.extraArgs).not.toContain('--strict-mcp-config');
 
     decoration.onSpawnFailed?.();
   });
