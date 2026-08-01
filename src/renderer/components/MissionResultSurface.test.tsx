@@ -106,7 +106,7 @@ function mount(element: React.ReactElement): {
 
 describe('durable mission result surface', () => {
   beforeEach(() => {
-    localStorage.clear();
+    window.localStorage?.clear();
     installNexusApi();
     confirmAndReopenMissionMock.mockClear();
     setActiveWorkspacePath('/ws/nexus');

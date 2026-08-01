@@ -19,7 +19,11 @@ import { useLayoutStore } from "../state/layout-store";
 import { useHomeStore } from "../state/home-store";
 import { useOrchStore } from "../state/orch-store";
 import { useToastStore } from "../state/toast-store";
-import { listPanes, createPane } from "../lib/split-tree";
+import {
+  createPane,
+  isStructuralPlaceholderPane,
+  listPanes,
+} from "../lib/split-tree";
 import { getActiveWorkspacePath } from "../state/active-workspace";
 import {
   getPaneSessionId,
@@ -294,7 +298,7 @@ export function panesAfterSquadLaunch(
 ): PaneModel[] {
   if (
     existing.length === 0 ||
-    existing.every((pane) => pane.kind === 'shell') ||
+    (existing.length === 1 && isStructuralPlaceholderPane(existing[0]!)) ||
     (killedIds.size > 0 && existing.every((pane) => killedIds.has(pane.id)))
   ) {
     return [orchestrator];
