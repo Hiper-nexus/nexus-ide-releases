@@ -6523,4 +6523,39 @@ describe('reroute de provider esgotado dentro do roster selado', () => {
     // Missão running não tem bloqueio a reabrir — segue exatamente como está.
     expect(fixture.missions.get(fixture.mission.id)!.status).toBe('running');
   });
+
+  // Os dois caminhos gravam a MESMA coluna durável. Sem a proveniência, o
+  // reply guard do waiver lê a diretiva do sweep como se fosse a sua e
+  // dispensa a task sem ter consultado o roster nenhuma vez.
+  it('a diretiva viva sai carimbada como live-guard — o chamador não pode mentir', () => {
+    const fixture = sealedRerouteFixture(manager());
+    const { claim, bound } = spawnLiveWorker(fixture);
+
+    const rerouted =
+      fixture.dispatches.rerouteLiveProviderDeadWorkerByCoordinator({
+        taskId: fixture.task.id,
+        revision: bound.revision,
+        ...liveIdentity(claim),
+        // O chamador tenta se passar pelo sweep: a transação sobrescreve.
+        directive: directive({ emittedBy: 'exhaustion-sweep' }),
+        note: '[NEXUS_PROVIDER_REROUTE] codex 401 ao vivo',
+      });
+
+    expect(rerouted.providerReroute?.emittedBy).toBe('live-guard');
+  });
+
+  it('a diretiva do sweep sai carimbada como exhaustion-sweep', () => {
+    const fixture = sealedRerouteFixture(manager());
+    fixture.exhaustSpawnAttempts();
+    const blockedDispatch = fixture.dispatches.get(fixture.task.id)!;
+
+    const rerouted = fixture.dispatches.rerouteExhaustedWorkerByCoordinator({
+      taskId: fixture.task.id,
+      revision: blockedDispatch.revision,
+      directive: directive({ emittedBy: 'live-guard' }),
+      note: 'sweep de esgotamento físico',
+    });
+
+    expect(rerouted.providerReroute?.emittedBy).toBe('exhaustion-sweep');
+  });
 });

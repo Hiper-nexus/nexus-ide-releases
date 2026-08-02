@@ -35,7 +35,7 @@
 
 .git-scm::-webkit-scrollbar-thumb:hover,
 .git-scm *::-webkit-scrollbar-thumb:hover {
-  background-color: var(--accent, #3dd9ff);
+  background-color: var(--accent, #7c86ff);
 }
 
 .git-scm::-webkit-scrollbar-corner,
@@ -75,7 +75,7 @@
 
 .git-scm__branch {
   font-size: var(--text-2xs);
-  color: var(--accent, #3dd9ff);
+  color: var(--accent, #7c86ff);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
@@ -100,7 +100,7 @@
 
 .git-scm__tabs button.is-active {
   color: var(--text, #d7dfec);
-  background: color-mix(in srgb, var(--accent, #3dd9ff) 14%, transparent);
+  background: color-mix(in srgb, var(--accent, #7c86ff) 14%, transparent);
 }
 
 .git-scm__empty {
@@ -177,7 +177,7 @@
   appearance: none;
   border: none;
   background: none;
-  color: var(--accent, #3dd9ff);
+  color: var(--accent, #7c86ff);
   font-size: var(--text-2xs);
   cursor: pointer;
   padding: 0;
@@ -200,7 +200,7 @@
 }
 
 .git-scm__file.is-selected {
-  background: color-mix(in srgb, var(--accent, #3dd9ff) 12%, transparent);
+  background: color-mix(in srgb, var(--accent, #7c86ff) 12%, transparent);
 }
 
 .git-scm__file-main {
@@ -239,7 +239,7 @@
 }
 
 .git-scm__code[data-status='D'] {
-  color: var(--danger, #ff7a90);
+  color: var(--danger, #f85149);
 }
 
 .git-scm__name {
@@ -271,8 +271,8 @@
 }
 
 .git-scm__file-action:hover {
-  color: var(--accent, #3dd9ff);
-  background: color-mix(in srgb, var(--accent, #3dd9ff) 12%, transparent);
+  color: var(--accent, #7c86ff);
+  background: color-mix(in srgb, var(--accent, #7c86ff) 12%, transparent);
 }
 
 .git-scm__diff {
@@ -368,5 +368,5 @@
 
 .git-scm__hash {
   font-size: var(--text-2xs);
-  color: var(--accent, #3dd9ff);
+  color: var(--accent, #7c86ff);
 }

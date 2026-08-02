@@ -6,6 +6,7 @@ import {
   PROVIDER_PROBE_MARKER,
   PROVIDER_PROBE_UNCALIBRATED,
   probeProviderWithSpec,
+  isGatewayConfigured,
   providerProbeSpec,
   runProviderPreflight,
   summarizeProviderPreflight,
@@ -185,5 +186,55 @@ describe("sondas calibradas", () => {
       stdout: `${PROVIDER_PROBE_MARKER}\n`,
     }));
     expect(classifyProviderProbe(codex)).toBe("healthy");
+  });
+});
+
+// REGRESSAO: com o gateway de IA ligado (ex.: um roteador proprio do
+// operador), a credencial de claude/codex passa a ser a CHAVE DO GATEWAY,
+// injetada pelo Nexus no spawn. A sonda roda no shell do gate, que NAO tem
+// essa injecao, entao ela reportaria "unauthenticated" para um provedor que a
+// missao usaria sem problema — o mesmo falso negativo ja provado no opencode.
+describe("preflight ciente do gateway", () => {
+  it("sonda normalmente quando o gateway esta desligado", () => {
+    expect(providerProbeSpec("claude", {})).not.toBeNull();
+    expect(providerProbeSpec("codex", {})).not.toBeNull();
+    expect(
+      calibratedProvidersFrom(["codex", "claude", "grok"], {}).sort(),
+    ).toEqual(["claude", "codex", "grok"]);
+  });
+
+  it("nao sonda as CLIs roteadas pelo gateway quando ele esta ligado", () => {
+    const env = { NEXUS_AI_GATEWAY_BASE_URL: "https://gateway.example" };
+    expect(providerProbeSpec("claude", env)).toBeNull();
+    expect(providerProbeSpec("codex", env)).toBeNull();
+    // grok nao e roteado pelo gateway: continua sondado de verdade.
+    expect(providerProbeSpec("grok", env)).not.toBeNull();
+    expect(calibratedProvidersFrom(["codex", "claude", "grok"], env)).toEqual([
+      "grok",
+    ]);
+  });
+
+  it("CLI roteada e tratada como absent, nunca como falha", () => {
+    const env = { NEXUS_AI_GATEWAY_BASE_URL: "https://gateway.example" };
+    let chamou = false;
+    const probe = probeProviderWithSpec(
+      "claude",
+      () => {
+        chamou = true;
+        return { status: 1, stderr: "Failed to authenticate" };
+      },
+      env,
+    );
+    expect(chamou).toBe(false);
+    expect(classifyProviderProbe(probe)).toBe("absent");
+  });
+
+  it("URL vazia ou so espaco nao liga o gateway", () => {
+    expect(isGatewayConfigured({ NEXUS_AI_GATEWAY_BASE_URL: "" })).toBe(false);
+    expect(isGatewayConfigured({ NEXUS_AI_GATEWAY_BASE_URL: "   " })).toBe(false);
+    expect(isGatewayConfigured({})).toBe(false);
+    expect(
+      isGatewayConfigured({ NEXUS_AI_GATEWAY_BASE_URL: "https://x.example" }),
+    ).toBe(true);
   });
 });

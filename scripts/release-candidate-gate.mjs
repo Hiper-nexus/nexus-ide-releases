@@ -17,6 +17,10 @@ import {
   runPackagedRealMissionProductWizard,
 } from './e2e-real-mission.mjs';
 import {
+  mergeRealMissionAdvisorSkipEnv,
+  REAL_MISSION_ADVISOR_SKIP_ENV,
+} from './e2e-real-mission-contract.mjs';
+import {
   assertReleaseSecurityManifest,
   buildReleaseSecurityArtifactsWithPinnedNpm,
   finalizeReleaseSecurityArtifacts,
@@ -174,6 +178,26 @@ const RELEASE_GATE_ROSTER_CLIS = Object.freeze([
   'kimi',
   'glm',
 ]);
+
+/**
+ * Provedores que a missão do gate REALMENTE vai usar: o roster menos os skips
+ * DECLARADOS pelo operador antes do ciclo.
+ *
+ * Sem este filtro o preflight sondava o roster inteiro e um advisor deslogado
+ * bloqueava a release mesmo quando ela já declarava que não o usaria — sondar
+ * quem não participa é falso negativo, o defeito que o preflight mais evita.
+ * O skip continua honesto: é declarado antes do ciclo, entra na evidência como
+ * `skippedOrchestrators`/advisor skip e aparece no publish; ele reduz o que a
+ * missão exige, nunca esconde uma falha de quem participou.
+ */
+export function preflightRosterFor(environment, roster = RELEASE_GATE_ROSTER_CLIS) {
+  const declared = mergeRealMissionAdvisorSkipEnv(
+    environment?.[REAL_MISSION_ADVISOR_SKIP_ENV],
+    [],
+  );
+  const skipped = new Set(declared ? declared.split(',') : []);
+  return roster.filter((cli) => !skipped.has(cli));
+}
 const PROVIDER_PROBE_TIMEOUT_MS = 90_000;
 const PROVIDER_PROBE_MAX_BUFFER = 256 * 1024;
 
@@ -182,7 +206,10 @@ const PROVIDER_PROBE_MAX_BUFFER = 256 * 1024;
  * que demora 90s numa pergunta trivial é exatamente o que pendura a missão.
  */
 async function defaultProviderPreflight(environment) {
-  const clis = calibratedProvidersFrom(RELEASE_GATE_ROSTER_CLIS);
+  const clis = calibratedProvidersFrom(
+    preflightRosterFor(environment),
+    environment,
+  );
   return runProviderPreflight(clis, (cli) =>
     probeProviderWithSpec(cli, (command, args) => {
       const result = spawnSync(command, [...args], {
@@ -199,7 +226,7 @@ async function defaultProviderPreflight(environment) {
         stdout: result.stdout,
         stderr: result.stderr,
       };
-    }),
+    }, environment),
   );
 }
 

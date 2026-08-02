@@ -52,6 +52,21 @@ const RESERVED_ENV_KEY_SET: ReadonlySet<string> = new Set(
 );
 
 /**
+ * Reserved-key test, case-INSENSITIVE on every platform.
+ *
+ * Windows resolves environment variables case-insensitively: a definition
+ * setting `nexus_mcp_token` would hand the child the very variable this list
+ * exists to protect. Comparing case-sensitively would make the guarantee
+ * platform-dependent — and a harness definition is meant to be portable, so
+ * the same JSON must produce the same (stripped) environment on macOS, Linux
+ * and Windows alike. Only the membership test is normalized: the caller's
+ * original spelling is preserved for non-reserved keys.
+ */
+export function isReservedHarnessEnvKey(key: string): boolean {
+  return RESERVED_ENV_KEY_SET.has(key.toUpperCase());
+}
+
+/**
  * Tier-1 reserved ids. Nothing is compiled-in yet in this increment — the
  * ids are reserved now (mirroring buzz's `BUILTIN_IDS`) so that increment 2
  * can wire the npm adapters (`@agentclientprotocol/claude-agent-acp`,
@@ -87,7 +102,7 @@ export interface HarnessDefinition {
    * regardless of input): no definition may trigger an install.
    */
   readonly canAutoInstall: boolean;
-  /** Shown when the binary is not on PATH. */
+  /** Shown when the binary is not on PATH. https only, length-capped. */
   readonly installInstructionsUrl?: string;
   readonly installHint?: string;
 }
@@ -114,9 +129,34 @@ const HARNESS_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const MAX_ID_LENGTH = 64;
 const MAX_LABEL_LENGTH = 120;
+/** Same cap the `app:openExternal` IPC handler enforces on any outbound link. */
+const MAX_INSTALL_URL_LENGTH = 2_048;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * A definition's docs link ends up in `shell.openExternal`, so it obeys the
+ * same policy as every other outbound link in Nexus (`handleOpenExternalRequest`):
+ * https only, bounded length. `javascript:`, `file:` and `data:` URLs from a
+ * dropped-in JSON file must never reach the OS handler. Returns the error
+ * message, or `null` when the URL is acceptable.
+ */
+function installUrlError(raw: string): string | null {
+  if (raw.length > MAX_INSTALL_URL_LENGTH) {
+    return `installInstructionsUrl exceeds ${MAX_INSTALL_URL_LENGTH} characters`;
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return 'installInstructionsUrl is not a valid absolute URL';
+  }
+  if (parsed.protocol !== 'https:') {
+    return `installInstructionsUrl must use https (got ${JSON.stringify(parsed.protocol)})`;
+  }
+  return null;
 }
 
 function deepFreezeDefinition(definition: HarnessDefinition): HarnessDefinition {
@@ -195,11 +235,13 @@ const RESERVED_HARNESS_ID_SET: ReadonlySet<string> = new Set(
  * (custom JSON file dropped by the user, or a preset entry self-check).
  *
  * Strict: unknown ids in reserved namespaces, malformed ids, empty
- * commands, non-string args/env are all explicit errors — an invalid file
- * must never produce a spawnable definition. Reserved env keys are not an
- * error: they are silently stripped and reported in `strippedEnvKeys`, so
- * a definition written on another PC still loads (portability) without
- * ever overriding Nexus identity.
+ * commands, non-string args/env and non-https install links are all explicit
+ * errors — an invalid file must never produce a spawnable definition.
+ * Reserved env keys are the one exception: they are silently stripped and
+ * reported in `strippedEnvKeys` (case-insensitively), so a definition written
+ * on another PC still loads (portability) without ever overriding Nexus
+ * identity. A hostile `javascript:` docs link is not a portability problem,
+ * so it fails loudly instead.
  *
  * The returned definition is deeply frozen — immutable by construction.
  */
@@ -262,7 +304,7 @@ export function parseHarnessDefinition(
       errors.push('env must be an object of string values');
     } else {
       for (const [key, value] of Object.entries(env)) {
-        if (RESERVED_ENV_KEY_SET.has(key)) {
+        if (isReservedHarnessEnvKey(key)) {
           strippedEnvKeys.push(key);
           continue;
         }
@@ -279,11 +321,15 @@ export function parseHarnessDefinition(
     }
   }
 
-  const installInstructionsUrl =
+  let installInstructionsUrl: string | undefined;
+  if (
     typeof input.installInstructionsUrl === 'string' &&
     input.installInstructionsUrl.length > 0
-      ? input.installInstructionsUrl
-      : undefined;
+  ) {
+    const urlError = installUrlError(input.installInstructionsUrl);
+    if (urlError !== null) errors.push(urlError);
+    else installInstructionsUrl = input.installInstructionsUrl;
+  }
   const installHint =
     typeof input.installHint === 'string' && input.installHint.length > 0
       ? input.installHint

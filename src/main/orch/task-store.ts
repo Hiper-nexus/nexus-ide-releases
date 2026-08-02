@@ -46,6 +46,12 @@ const taskRowSchema = z
     title: z.string().min(1).max(1_024),
     detail: z.string().max(65_536),
     status: taskStatusSchema,
+    /**
+     * Não-NULL só em task DISPENSADA por provider indisponível (migração 032).
+     * Viaja junto do status para que `done` por dispensa nunca se confunda com
+     * `done` por trabalho em superfícies que leem apenas `tasks`.
+     */
+    provider_waiver_reason: z.string().min(1).max(2_000).nullable(),
     created_at: z.number().int().nonnegative(),
     updated_at: z.number().int().nonnegative(),
   })
@@ -643,16 +649,16 @@ export class ScopedTaskStore {
     const rows = missionId
       ? db
           .prepare(
-            `SELECT id, mission_id, title, detail, status, created_at,
-                    updated_at
+            `SELECT id, mission_id, title, detail, status,
+                    provider_waiver_reason, created_at, updated_at
              FROM tasks WHERE mission_id = ?
              ORDER BY created_at DESC, id ASC`,
           )
           .all(missionId)
       : db
           .prepare(
-            `SELECT id, mission_id, title, detail, status, created_at,
-                    updated_at
+            `SELECT id, mission_id, title, detail, status,
+                    provider_waiver_reason, created_at, updated_at
              FROM tasks ORDER BY created_at DESC, id ASC`,
           )
           .all();
@@ -665,7 +671,8 @@ export class ScopedTaskStore {
   ): ScopedTaskRecord | null {
     const row = db
       .prepare(
-        `SELECT id, mission_id, title, detail, status, created_at, updated_at
+        `SELECT id, mission_id, title, detail, status,
+                provider_waiver_reason, created_at, updated_at
          FROM tasks WHERE id = ?`,
       )
       .get(id);
@@ -826,6 +833,9 @@ export class ScopedTaskStore {
       title: row.title,
       detail: row.detail,
       status: row.status as TaskStatus,
+      ...(row.provider_waiver_reason !== null
+        ? { providerWaiverReason: row.provider_waiver_reason }
+        : {}),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       ...this.#binding.coordinates,

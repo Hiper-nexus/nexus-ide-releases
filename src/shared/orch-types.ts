@@ -483,6 +483,13 @@ export interface TaskRecord {
   title: string;
   detail: string;
   status: TaskStatus;
+  /**
+   * Presente APENAS quando a task foi dispensada por provider indisponível
+   * (waiver advisory): explica, sem consultar o dispatch, por que ela chegou a
+   * `done` sem ninguém ter executado o trabalho. Ausente = status significa o
+   * que aparenta.
+   */
+  providerWaiverReason?: string;
   createdAt: number;
   updatedAt: number;
 }

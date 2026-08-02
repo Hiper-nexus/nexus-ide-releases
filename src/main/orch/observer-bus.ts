@@ -13,7 +13,10 @@
 //   bounded in-memory ring buffer").
 // - `seq` is monotonic per session starting at 1 (single-threaded main
 //   process — the increment is trivially atomic). A gap at a consumer means
-//   frames were dropped, never reordered.
+//   frames were dropped, never reordered. Monotonicity outlives the ring: a
+//   session whose ring was evicted keeps a seq tombstone, so reviving it
+//   continues the count instead of replaying seq 1 (a backwards seq would
+//   look like a different session, not like a drop).
 // - Total function: publishing NEVER throws. The bus is an additive
 //   observability plane — a bus failure must never break the emitter (the
 //   hook gate endpoint above all).
@@ -27,14 +30,27 @@ import type {
 export const OBSERVER_RING_CAP = 1000;
 /**
  * Max sessions with a live ring. Long-running apps spawn workers for days;
- * without a bound the per-session map is a slow leak. The least-recently-
- * published session is evicted (its ring AND its seq counter — a session
- * revived after eviction restarts at seq 1, acceptable for long-dead PTYs).
+ * without a bound the per-session map is a slow leak. Eviction drops the
+ * REPLAY BUFFER, never the seq contract: the victim is the coldest session
+ * that already framed `session_exited` (a death is the only honest signal
+ * that a session is done talking) and only when no dead session is available
+ * does the least-recently-published live session go — a live session can be
+ * silent for hours and still be doing work.
  */
 export const OBSERVER_MAX_SESSIONS = 512;
 
+/**
+ * Max seq tombstones kept for evicted sessions. A tombstone is one string key
+ * + one number, three orders of magnitude cheaper than the ring it replaces,
+ * so the bound can be generous; past it the oldest tombstone drops (that
+ * session would restart at 1, the pre-tombstone behaviour).
+ */
+export const OBSERVER_MAX_SEQ_TOMBSTONES = 4096;
+
 interface SessionRing {
   nextSeq: number;
+  /** True while the last frame published for this session was its death. */
+  ended: boolean;
   frames: ObserverFrame[];
 }
 
@@ -43,6 +59,12 @@ interface SessionRing {
  * the first key = least-recently-published session (cheap LRU).
  */
 const ringsBySession = new Map<string, SessionRing>();
+
+/**
+ * seq counter of sessions whose ring was evicted, so a revived session picks
+ * the count back up. Insertion order = LRU, same as the ring map.
+ */
+const seqTombstones = new Map<string, number>();
 
 export type ObserverFrameTap = (frame: ObserverFrame) => void;
 const frameTaps = new Set<ObserverFrameTap>();
@@ -93,8 +115,11 @@ export function publishObserverFrame(input: ObserverFrameInput): ObserverFrame |
       // Re-insert to mark this session most-recently-published.
       ringsBySession.delete(input.sessionId);
     } else {
-      ring = { nextSeq: 1, frames: [] };
+      ring = { nextSeq: reclaimSeq(input.sessionId), ended: false, frames: [] };
     }
+    // A session that frames again after its death is alive again (resumed pane
+    // on the same physical id) and stops being a preferred eviction victim.
+    ring.ended = input.kind === 'session_exited';
     ringsBySession.set(input.sessionId, ring);
     evictColdestSessions(input.sessionId);
 
@@ -121,14 +146,52 @@ export function publishObserverFrame(input: ObserverFrameInput): ObserverFrame |
 
 function evictColdestSessions(protectedSessionId: string): void {
   while (ringsBySession.size > OBSERVER_MAX_SESSIONS) {
-    const coldest = ringsBySession.keys().next().value;
-    if (coldest === undefined || coldest === protectedSessionId) return;
-    ringsBySession.delete(coldest);
+    const victim = pickEvictionVictim(protectedSessionId);
+    if (victim === null) return;
+    rememberSeq(victim);
+    ringsBySession.delete(victim);
   }
 }
 
-/** Test-only: drop all rings, seq counters and taps. */
+/**
+ * Coldest ENDED session first (its replay buffer can never grow again);
+ * otherwise the coldest live session. Map iteration is insertion order, so
+ * the first match in each class is the least-recently-published one.
+ */
+function pickEvictionVictim(protectedSessionId: string): string | null {
+  let coldestLive: string | null = null;
+  for (const [sessionId, ring] of ringsBySession) {
+    if (sessionId === protectedSessionId) continue;
+    if (ring.ended) return sessionId;
+    if (coldestLive === null) coldestLive = sessionId;
+  }
+  return coldestLive;
+}
+
+/** Keep the evicted session's seq so a revival never replays seq 1. */
+function rememberSeq(sessionId: string): void {
+  const ring = ringsBySession.get(sessionId);
+  if (!ring) return;
+  seqTombstones.delete(sessionId);
+  seqTombstones.set(sessionId, ring.nextSeq);
+  while (seqTombstones.size > OBSERVER_MAX_SEQ_TOMBSTONES) {
+    const oldest = seqTombstones.keys().next().value;
+    if (oldest === undefined) return;
+    seqTombstones.delete(oldest);
+  }
+}
+
+/** seq a (re)created ring starts from: the tombstone, or 1 for a new session. */
+function reclaimSeq(sessionId: string): number {
+  const kept = seqTombstones.get(sessionId);
+  if (kept === undefined) return 1;
+  seqTombstones.delete(sessionId);
+  return kept;
+}
+
+/** Test-only: drop all rings, seq counters, tombstones and taps. */
 export function __resetObserverBusForTests(): void {
   ringsBySession.clear();
+  seqTombstones.clear();
   frameTaps.clear();
 }

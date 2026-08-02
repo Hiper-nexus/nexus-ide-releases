@@ -10,6 +10,7 @@ import {
   assertCandidateArtifactSeal,
   captureCandidateArtifactSeal,
   assertReleaseRepositoryState,
+  preflightRosterFor,
   runReleaseCandidateGate,
   runReleaseCandidateGateTestCore,
 } from './release-candidate-gate.mjs';
@@ -578,5 +579,36 @@ describe('manual release candidate gate', () => {
         ),
       ),
     ).toBe(false);
+  });
+});
+
+// REGRESSAO: o preflight sondava o roster FIXO, entao um advisor deslogado
+// (claude sem sessao OAuth) bloqueava a release mesmo quando o operador ja
+// havia declarado o skip antes do ciclo. Sondar quem nao participa e falso
+// negativo — exatamente o defeito que o preflight existe para evitar. O skip
+// continua honesto: e declarado antes, entra na evidencia e aparece no publish.
+describe('preflightRosterFor', () => {
+  it('sonda o roster inteiro quando nada foi declarado', () => {
+    expect(preflightRosterFor({})).toContain('claude');
+    expect(preflightRosterFor({})).toContain('codex');
+  });
+
+  it('remove do preflight o provedor com skip DECLARADO antes do ciclo', () => {
+    const roster = preflightRosterFor({
+      NEXUS_REAL_MISSION_ADVISOR_SKIP: 'claude',
+    });
+    expect(roster).not.toContain('claude');
+    expect(roster).toContain('codex');
+    expect(roster).toContain('grok');
+  });
+
+  it('aceita varios skips e ignora lixo fora do formato declarado', () => {
+    expect(
+      preflightRosterFor({ NEXUS_REAL_MISSION_ADVISOR_SKIP: 'claude,kimi' }),
+    ).toEqual(['codex', 'grok', 'agy', 'opencode', 'glm']);
+    // Valor fora do padrao nao pode virar skip silencioso: o roster fica inteiro.
+    expect(
+      preflightRosterFor({ NEXUS_REAL_MISSION_ADVISOR_SKIP: 'claude; rm -rf /' }),
+    ).toContain('claude');
   });
 });

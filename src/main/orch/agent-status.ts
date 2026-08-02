@@ -254,10 +254,17 @@ function openObserverToolCall(
 }
 
 /**
- * Pair a tool result with its open call. Named results match the most recent
- * open call of the same tool. Unnamed results match only when exactly one
- * call is open — with parallel calls in flight, attribution would be a guess,
- * and the contract is honesty over guessing (callId: null).
+ * Pair a tool result with its open call — under one rule for both the named
+ * and the unnamed case: pair only when exactly ONE open call can be the
+ * source, never guess between candidates.
+ *
+ * - Unnamed result: pairs only when a single call is open at all.
+ * - Named result: pairs only when a single open call carries that tool name.
+ *   Two parallel calls of the same tool are indistinguishable (the hook body
+ *   carries no provider call id), so a LIFO pick would close the wrong
+ *   mutate-in-place row half the time. The ambiguous group is instead dropped
+ *   whole: every result of that batch frames with `callId: null` (honest), and
+ *   the ledger self-heals so a later sequential call still pairs.
  */
 function takeObserverToolCall(
   sessionId: string,
@@ -270,13 +277,14 @@ function takeObserverToolCall(
     const only = state.open.pop();
     return only?.callId ?? null;
   }
-  for (let i = state.open.length - 1; i >= 0; i--) {
-    if (state.open[i]?.toolName === toolName) {
-      const [taken] = state.open.splice(i, 1);
-      return taken?.callId ?? null;
-    }
+  const matches = state.open.filter((call) => call.toolName === toolName);
+  if (matches.length === 0) return null;
+  if (matches.length > 1) {
+    state.open = state.open.filter((call) => call.toolName !== toolName);
+    return null;
   }
-  return null;
+  state.open = state.open.filter((call) => call !== matches[0]);
+  return matches[0]?.callId ?? null;
 }
 
 /**

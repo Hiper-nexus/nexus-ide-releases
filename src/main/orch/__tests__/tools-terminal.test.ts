@@ -153,7 +153,21 @@ describe('tools-terminal', () => {
       expect(result.killed).toBe(true);
       const childPid = Number(fs.readFileSync(pidFile, 'utf8'));
       expect(Number.isSafeInteger(childPid)).toBe(true);
-      expect(() => process.kill(childPid, 0)).toThrow();
+      // FLAKE: SIGKILL no grupo é assíncrono — o kernel só reap o neto depois
+      // que o pai sai, e sob a suíte cheia essa janela passa de um tick. A
+      // assertiva imediata reprovava um kill correto. Espera limitada: o que o
+      // teste prova é que o neto MORRE, não que morre no mesmo instante.
+      const deadline = Date.now() + 5_000;
+      let alive = true;
+      while (alive && Date.now() < deadline) {
+        try {
+          process.kill(childPid, 0);
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        } catch {
+          alive = false;
+        }
+      }
+      expect(alive).toBe(false);
     },
   );
 

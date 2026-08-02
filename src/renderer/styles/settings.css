@@ -21,9 +21,12 @@
   bottom: 0;
   width: 100vw;
   display: flex;
+  /* As DUAS linhas da grade saem do mesmo token: morto no default, vivo no
+     modo pixel (base.css). Um rgba solto aqui deixava meia grade acesa fora
+     do sistema de tokens — e sem seguir tema nenhum. */
   background:
     linear-gradient(90deg, var(--pixel-grid) 1px, transparent 1px),
-    linear-gradient(0deg, rgba(124, 134, 158, 0.035) 1px, transparent 1px),
+    linear-gradient(0deg, var(--pixel-grid) 1px, transparent 1px),
     var(--bg-elevated);
   background-size: 24px 24px, 24px 24px, auto;
   border-right: 0;
@@ -1915,7 +1918,7 @@
 }
 
 .rank-ops__chip--on {
-  color: var(--accent-ink, #051019);
+  color: var(--accent-ink, #0b0b0c);
   background: var(--accent);
   border-color: var(--accent);
 }

@@ -168,6 +168,46 @@ describe('revocation by owner removal (NIP-AA semantics)', () => {
     expect(ring.revokeOwner('nobody')).toBe(0);
   });
 
+  it('a revoked owner id can never materialize a keypair again (ensureOwner is not a bypass)', () => {
+    // Arrange — the exact bypass flow: revoke, then re-mint via ensureOwner.
+    const ring = new MissionAgentKeyring('mission-1');
+    ring.issueAttestation('owner', 'worker-a', 'kind=1');
+    ring.revokeOwner('owner');
+
+    // Act + Assert — no path materializes a live keypair for a dead id.
+    expect(() => ring.ensureOwner('owner')).toThrow(/revoked/);
+    expect(ring.ownerPubkey('owner')).toBeUndefined();
+    expect(
+      ring.listPublicIdentities().some((id) => id.role === 'owner'),
+    ).toBe(false);
+    expect(
+      ring.peekKeypairForPersistence('owner', 'owner'),
+    ).toBeUndefined();
+    // ...and issuance stays impossible after the re-mint attempt.
+    expect(() => ring.issueAttestation('owner', 'worker-a', 'kind=1')).toThrow(
+      /revoked/,
+    );
+  });
+
+  it('a restored tombstone blocks ensureOwner after restart, not just in-process revocation', () => {
+    const ring = new MissionAgentKeyring('mission-1');
+    ring.restoreOwnerTombstone('owner', 'a'.repeat(64));
+
+    expect(() => ring.ensureOwner('owner')).toThrow(/revoked/);
+    expect(() => ring.issueAttestation('owner', 'worker-a', 'kind=1')).toThrow(
+      /revoked/,
+    );
+  });
+
+  it('revocation is namespaced: the same id in the agent namespace still works', () => {
+    const ring = new MissionAgentKeyring('mission-1');
+    ring.ensureOwner('dual');
+    ring.revokeOwner('dual');
+
+    expect(ring.ensureAgent('dual')).toMatch(HEX_64);
+    expect(() => ring.ensureOwner('dual')).toThrow(/revoked/);
+  });
+
   it('dropMission forgets keys and attestations for that mission only', () => {
     const registry = new AgentKeyringRegistry();
     const before = registry.forMission('m1');

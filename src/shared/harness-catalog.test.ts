@@ -103,6 +103,86 @@ describe('parseHarnessDefinition — reserved env keys are always stripped', () 
     expect(result.harness.env).not.toHaveProperty('NEXUS_MCP_TOKEN');
     expect(result.strippedEnvKeys).toContain('NEXUS_MCP_TOKEN');
   });
+
+  test.each([
+    ['lowercase', 'nexus_mcp_token'],
+    ['mixed case', 'Nexus_Mcp_Token'],
+    ['snake shout', 'NeXuS_mCp_ToKeN'],
+  ])(
+    'strips a reserved key spelled in %s — Windows env is case-insensitive',
+    (_desc, key) => {
+      // Arrange — on win32 `nexus_mcp_token` IS `NEXUS_MCP_TOKEN`; a
+      // case-sensitive strip would hand the child a shadow identity var.
+      const result = parseHarnessDefinition({
+        id: 'sneaky-case',
+        command: 'sneaky-bin',
+        env: { [key]: 'stolen', SAFE_KEY: 'ok' },
+      });
+
+      // Assert
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(Object.keys(result.harness.env)).toEqual(['SAFE_KEY']);
+      // The stripped report keeps the key exactly as the definition spelled it.
+      expect(result.strippedEnvKeys).toEqual([key]);
+    },
+  );
+
+  test('non-reserved keys keep their original casing in the output', () => {
+    const result = parseHarnessDefinition({
+      id: 'casing',
+      command: 'bin',
+      env: { my_agent_mode: 'acp', Mixed_Case: 'v' },
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.harness.env).toEqual({ my_agent_mode: 'acp', Mixed_Case: 'v' });
+    expect(result.strippedEnvKeys).toEqual([]);
+  });
+});
+
+describe('parseHarnessDefinition — installInstructionsUrl is a validated link', () => {
+  test.each([
+    ['javascript', 'javascript:alert(1)'],
+    ['file', 'file:///etc/passwd'],
+    ['data', 'data:text/html,<script>alert(1)</script>'],
+    ['plain http', 'http://example.com/docs'],
+    ['not a URL at all', 'example.com/docs'],
+  ])('rejects a %s installInstructionsUrl', (_desc, installInstructionsUrl) => {
+    const result = parseHarnessDefinition({
+      ...VALID_INPUT,
+      installInstructionsUrl,
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors.join(' ')).toContain('installInstructionsUrl');
+  });
+
+  test('rejects an oversized https installInstructionsUrl', () => {
+    const result = parseHarnessDefinition({
+      ...VALID_INPUT,
+      installInstructionsUrl: `https://example.com/${'a'.repeat(2_048)}`,
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors.join(' ')).toContain('installInstructionsUrl');
+  });
+
+  test('accepts an https url and preserves it verbatim', () => {
+    const result = parseHarnessDefinition({
+      ...VALID_INPUT,
+      installInstructionsUrl: 'https://example.com/docs?a=1#top',
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.harness.installInstructionsUrl).toBe(
+      'https://example.com/docs?a=1#top',
+    );
+  });
 });
 
 describe('parseHarnessDefinition — invalid inputs rejected with explicit errors', () => {
