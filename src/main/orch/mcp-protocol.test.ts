@@ -210,6 +210,31 @@ describe('handleMcpMessage', () => {
     });
   });
 
+  it('reports the completed tool result to the transport observer without changing the response', async () => {
+    const onToolResult = vi.fn();
+    const response = await handleMcpMessage(
+      makeRegistry(),
+      userCtx(),
+      req('tools/call', {
+        name: 'nexus_pane_read',
+        arguments: { paneId: 'pane-observed' },
+      }),
+      { onToolResult },
+    );
+
+    expect(onToolResult).toHaveBeenCalledOnce();
+    expect(onToolResult).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ok: true,
+        tool: 'nexus_pane_read',
+        result: { echoed: { paneId: 'pane-observed' } },
+      }),
+    );
+    expect(
+      (response?.result as { isError?: boolean } | undefined)?.isError,
+    ).toBeUndefined();
+  });
+
   it('falls back to the default protocol version for unknown requests', async () => {
     const res = await handleMcpMessage(
       makeRegistry(),

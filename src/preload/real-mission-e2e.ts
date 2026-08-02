@@ -135,7 +135,10 @@ export async function runRealMissionE2E(
       source: "typed",
       contextPolicy: "minimal",
       acceptanceCriteria: [
-        ...realMissionE2EAcceptanceCriteria(payload.orchestratorCli),
+        ...realMissionE2EAcceptanceCriteria(
+          payload.orchestratorCli,
+          payload.admittedAdvisorClis,
+        ),
       ],
       lane: "standard",
     });

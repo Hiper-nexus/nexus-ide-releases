@@ -116,6 +116,12 @@ export interface McpDispatchOptions {
   /** Physical source override for the authenticated ACP bridge boundary. */
   source?: McpDispatchSource;
   confirm?: McpConfirmationHandler;
+  /**
+   * Transport-owned observation of the completed dispatch result. The MCP
+   * protocol uses this only for post-response lifecycle recovery; observers
+   * must never change the tool result or become a second authority path.
+   */
+  onToolResult?: (result: Readonly<ToolDispatchResult>) => void;
   /** Renderer/voice seam: revalidate the exact native caller after awaits. */
   assertCurrentCaller?: () => boolean;
   /** Aborted when the native caller disappears while a handler is running. */

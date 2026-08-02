@@ -499,6 +499,7 @@ function installGovernedCodexTestHook(root: string): () => void {
     });
     tokens.push(ctx.token);
     return {
+      authorityToken: ctx.token,
       env: { NEXUS_MCP_TOKEN: ctx.token },
       extraArgs: [],
     };
@@ -1432,6 +1433,67 @@ describe("AGY advisory native profile", () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+
+  macosIt(
+    "uses OpenCode headless run for a main-owned mission worker initial prompt",
+    async () => {
+      setSquadCliPolicyLookupForTests(() => "operator-choice");
+      const root = fs.mkdtempSync(
+        path.join(os.tmpdir(), "nexus-opencode-headless-worker-"),
+      );
+      const worktree = path.join(root, "worktree");
+      fs.mkdirSync(worktree);
+      const baseAuthority = revisionBoundWorker(
+        fs.realpathSync.native(worktree),
+      );
+      const initialPrompt =
+        "Revise o projeto e chame nexus_handoff_submit ao concluir.";
+      const authority: BoundSpawnAuthority = {
+        ...baseAuthority,
+        context: {
+          ...baseAuthority.context!,
+          readOnly: true,
+          nativeReadOnly: false,
+          initialPrompt,
+        },
+      };
+      const host = fakeHost();
+      setPtyHost(host.host);
+      let sessionId: string | null = null;
+
+      try {
+        ({ sessionId } = spawnMainOwnedAgentSession(
+          {
+            kind: "cli-agent",
+            paneId: "opencode-headless-worker",
+            cols: 100,
+            rows: 30,
+            model: "opencode/big-pickle",
+          },
+          builtinCliPtyAdapter("opencode"),
+          {},
+          authority,
+        ));
+
+        const spec = host.specFor(sessionId);
+        expect(spec.file).toBe("/mock/bin/opencode");
+        expect(spec.args[0]).toBe("run");
+        expect(spec.args).toEqual(
+          expect.arrayContaining([
+            "--model",
+            "opencode/big-pickle",
+            "--auto",
+            initialPrompt,
+          ]),
+        );
+        expect(spec.args.filter((arg) => arg === initialPrompt)).toHaveLength(1);
+        expect(spec.args).not.toContain("--mini");
+      } finally {
+        if (sessionId) await orchTerminateSession(sessionId);
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 });
 
 describe("cli-agent spawn argv hardening", () => {
@@ -1466,6 +1528,7 @@ describe("cli-agent spawn argv hardening", () => {
       });
       mintedTokens.push(ctx.token);
       return {
+        authorityToken: ctx.token,
         env: {
           NEXUS_MCP_TOKEN: ctx.token,
           NEXUS_HOOK_URL: "http://127.0.0.1:5123/hook/status",
@@ -2422,6 +2485,8 @@ describe("cli-agent spawn argv hardening", () => {
     try {
       const coordination = trustedSpawn(fs.realpathSync(root)).scope;
       const execution = trustedSpawn(fs.realpathSync(worktree)).scope;
+      const initialPrompt =
+        "Implemente a tarefa selada e chame nexus_handoff_submit.";
       const authority: BoundSpawnAuthority = {
         source: "pending",
         cwd: execution.rootRealPath,
@@ -2434,6 +2499,7 @@ describe("cli-agent spawn argv hardening", () => {
           workerIncarnationId: "worker-isolated",
           allowedTools: [],
           allowedSkills: null,
+          initialPrompt,
           scope: coordination,
           executionScope: execution,
         },
@@ -2498,7 +2564,11 @@ describe("cli-agent spawn argv hardening", () => {
         "danger-full-access",
         "--ask-for-approval",
         "on-request",
+        initialPrompt,
       ]);
+      expect(
+        governedCodexArgv(spec).filter((arg) => arg === initialPrompt),
+      ).toHaveLength(1);
       expect(
         config.permissions?.[CODEX_WORKSPACE_PERMISSION_PROFILE]
           ?.filesystem?.[protectedAgentsPath],

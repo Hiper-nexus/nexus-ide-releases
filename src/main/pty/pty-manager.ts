@@ -179,7 +179,7 @@ let allSessionsTerminationInProgress = false;
 let allSessionsTerminationSealed = false;
 let counter = 0;
 const MISSION_ORCHESTRATOR_GRANT_TTL_MS = 120_000;
-const MAX_AGY_INITIAL_PROMPT_BYTES = 64 * 1024;
+const MAX_NATIVE_INITIAL_PROMPT_BYTES = 64 * 1024;
 
 let ptyHost: PtyHost | null = null;
 let agentHookEndpointPath: string | null = null;
@@ -287,6 +287,8 @@ function fireTaps<T extends (...args: never[]) => void>(
  * concrete sessionId once the PTY exists.
  */
 export interface AgentSpawnDecoration {
+  /** Main-owned bearer used only for internal governed-profile preparation. */
+  authorityToken: string;
   env: Record<string, string>;
   extraArgs: string[];
   /**
@@ -1147,37 +1149,55 @@ export function spawnAgentSession(
   if (overrides.extraArgs && overrides.extraArgs.length > 0) {
     args.push(...overrides.extraArgs);
   }
-  const agyInitialPrompt =
-    adapter.id === "agy" &&
+  const nativeInitialPrompt =
+    (adapter.id === "agy" ||
+      adapter.id === "codex" ||
+      adapter.id === "opencode") &&
     authority.source === "pending" &&
     authority.context?.role === "worker" &&
     Boolean(authority.context.missionId?.trim()) &&
     !req.resume
       ? authority.context.initialPrompt
       : undefined;
-  if (agyInitialPrompt !== undefined) {
-    const safeInitialPrompt = assertSafePtyPrompt(agyInitialPrompt);
+  let safeNativeInitialPrompt: string | undefined;
+  if (nativeInitialPrompt !== undefined) {
+    const safeInitialPrompt = assertSafePtyPrompt(nativeInitialPrompt);
     if (
       !safeInitialPrompt ||
       Buffer.byteLength(safeInitialPrompt, "utf8") >
-        MAX_AGY_INITIAL_PROMPT_BYTES
+        MAX_NATIVE_INITIAL_PROMPT_BYTES
     ) {
       throw new Error(
-        `AGY initial prompt must contain 1-${MAX_AGY_INITIAL_PROMPT_BYTES} bytes`,
+        `${adapter.label} initial prompt must contain ` +
+          `1-${MAX_NATIVE_INITIAL_PROMPT_BYTES} bytes`,
       );
     }
-    if (
-      args.some(
-        (arg) =>
-          arg === "--prompt-interactive" ||
-          arg.startsWith("--prompt-interactive="),
-      )
-    ) {
-      throw new Error(
-        "AGY initial prompt conflicts with provider settings extraArgs",
-      );
+    safeNativeInitialPrompt = safeInitialPrompt;
+    if (adapter.id === "agy") {
+      if (
+        args.some(
+          (arg) =>
+            arg === "--prompt-interactive" ||
+            arg.startsWith("--prompt-interactive="),
+        )
+      ) {
+        throw new Error(
+          "AGY initial prompt conflicts with provider settings extraArgs",
+        );
+      }
+      args.push("--prompt-interactive", safeInitialPrompt);
+    } else if (adapter.id === "opencode") {
+      if (args.includes("run")) {
+        throw new Error(
+          "OpenCode initial prompt conflicts with provider settings extraArgs",
+        );
+      }
+      // Mission advisors are one-shot workers. OpenCode's native headless
+      // route retains PTY output and MCP tools while avoiding the Bun/OpenTUI
+      // renderer that can segfault during terminal-capability negotiation.
+      args.unshift("run");
+      args.push(safeInitialPrompt);
     }
-    args.push("--prompt-interactive", safeInitialPrompt);
   }
   const sessionId = makeSessionId();
   const gatewayBaseUrl = configuredGatewayBaseUrl();
@@ -1335,7 +1355,7 @@ export function spawnAgentSession(
   let codexProcessSandbox: CodexGovernedProcessSandbox | undefined;
   if (governedProfile) {
     try {
-      const token = decoration!.env.NEXUS_MCP_TOKEN;
+      const token = decoration!.authorityToken;
       if (!token) {
         throw new Error("governed CLI spawn is missing its main-owned bearer");
       }
@@ -1474,6 +1494,13 @@ export function spawnAgentSession(
       operatorChoiceWorkspaceWrite,
       operatorChoiceParticipation: executionPolicy.isFrictionless,
     });
+    if (adapter.id === "codex" && safeNativeInitialPrompt !== undefined) {
+      // `codex [PROMPT]` starts the first interactive turn without racing the
+      // cold TUI editor. Append only after the governed argv allowlist has
+      // reconstructed every option: this prompt came from Main's sealed
+      // mission authority and must remain the sole positional argument.
+      args.push(safeNativeInitialPrompt);
+    }
     if (
       executionPolicy.enableLiveWeb &&
       adapter.id === "codex" &&

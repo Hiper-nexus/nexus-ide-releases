@@ -672,8 +672,13 @@ describe('mcp-server governed CLI profile wiring', () => {
 
     const agy = decorations.get('agy')!;
     expect(
-      getContext(agy.env.NEXUS_MCP_TOKEN)?.governedNativeProvider,
+      getContext(agy.authorityToken)?.governedNativeProvider,
     ).toBeUndefined();
+    expect(agy.env.NEXUS_MCP_URL).toBeUndefined();
+    expect(agy.env.NEXUS_MCP_TOKEN).toBeUndefined();
+    expect(agy.env.NEXUS_GATE_URL).toBeUndefined();
+    expect(agy.env.NEXUS_GATE_TOKEN).toBeUndefined();
+    expect(agy.env.NEXUS_HOOK_URL).toBeUndefined();
     expect(agy.env.HOME).toBeUndefined();
     expect(agy.env.GEMINI_CLI_HOME).toBeUndefined();
     expect(agy.extraArgs.join(' ')).not.toContain('mcp_config');

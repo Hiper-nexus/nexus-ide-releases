@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  REAL_MISSION_E2E_ADVISORS,
   REAL_MISSION_E2E_CLAUDE_ORCHESTRATOR_ACCEPTANCE_CRITERIA,
   REAL_MISSION_E2E_CLAUDE_ORCHESTRATOR_CRITERION,
   REAL_MISSION_E2E_ACCEPTANCE_CRITERIA,
@@ -102,18 +103,27 @@ describe("real mission E2E closed receipts", () => {
       realMissionE2ERunPayloadSchema.parse({
         workspacePath: "/tmp/nexus-real-workspace",
         rendererFailureToken,
+        admittedAdvisorClis: REAL_MISSION_E2E_ADVISORS.map(
+          (advisor) => advisor.cli,
+        ),
       }),
     ).toEqual({
       workspacePath: "/tmp/nexus-real-workspace",
       rendererFailureToken,
       // Ausente = variante codex (default do harness).
       orchestratorCli: "codex",
+      admittedAdvisorClis: REAL_MISSION_E2E_ADVISORS.map(
+        (advisor) => advisor.cli,
+      ),
     });
     expect(
       realMissionE2ERunPayloadSchema.parse({
         workspacePath: "/tmp/nexus-real-workspace",
         rendererFailureToken,
         orchestratorCli: "claude",
+        admittedAdvisorClis: REAL_MISSION_E2E_ADVISORS.map(
+          (advisor) => advisor.cli,
+        ),
       }).orchestratorCli,
     ).toBe("claude");
     expect(() =>
@@ -121,6 +131,9 @@ describe("real mission E2E closed receipts", () => {
         workspacePath: "/tmp/nexus-real-workspace",
         rendererFailureToken,
         orchestratorCli: "grok",
+        admittedAdvisorClis: REAL_MISSION_E2E_ADVISORS.map(
+          (advisor) => advisor.cli,
+        ),
       }),
     ).toThrow();
     expect(() =>
@@ -132,6 +145,9 @@ describe("real mission E2E closed receipts", () => {
       realMissionE2ERunPayloadSchema.parse({
         workspacePath: "/tmp/nexus-real-workspace",
         rendererFailureToken: "predictable",
+        admittedAdvisorClis: REAL_MISSION_E2E_ADVISORS.map(
+          (advisor) => advisor.cli,
+        ),
       }),
     ).toThrow();
   });

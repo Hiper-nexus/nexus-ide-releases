@@ -84,6 +84,7 @@ export function validPassEvidence(
     "planning",
     "execution",
     "validation-primary",
+    "confirmation",
   ] as const;
 
   // Linha do tempo física do DAG: roots de advisory + executor se sobrepõem;
@@ -309,10 +310,10 @@ export function validPassEvidence(
   const receiptTransitions = acceptanceCriteria.map(
     (_, index) =>
       [
-        "validation-primary",
+        "confirmation",
         index === acceptanceCriteria.length - 1
           ? "complete"
-          : "validation-primary",
+          : "confirmation",
         3,
         index === acceptanceCriteria.length - 1 ? 4 : 3,
         completionCompletedAt,

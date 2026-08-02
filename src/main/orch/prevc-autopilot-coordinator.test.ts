@@ -76,6 +76,7 @@ function createWorld(
   options: {
     readonly sensorPasses?: boolean;
     readonly prematureComplete?: boolean;
+    readonly completedMilestones?: boolean;
     readonly preExecutionGate?: ReturnType<
       ContextWorkflowService["inspectCurrentPreExecutionReviewGate"]
     >;
@@ -131,8 +132,8 @@ function createWorld(
     milestones: Array.from({ length: 6 }, (_, index) => ({
       id: `step-${index + 1}`,
       label: `Etapa ${index + 1}`,
-      status: "pending" as const,
-      evidenceIds: [],
+      status: options.completedMilestones ? ("done" as const) : ("pending" as const),
+      evidenceIds: options.completedMilestones ? [milestoneIds()[index]!] : [],
     })),
     learnings: "",
     intentState: "executing",
@@ -227,7 +228,11 @@ function createWorld(
         revision: 2,
       };
   let currentEvidenceIds: string[] = options.prematureComplete
-    ? ["sensor:unit", "review:final"]
+    ? [
+        "sensor:unit",
+        "review:final",
+        ...(options.completedMilestones ? milestoneIds() : []),
+      ]
     : [];
   let receipt: TaskPlanReceipt = {
     version: 1,
@@ -1213,6 +1218,33 @@ describe("production guided PREVC post-merge bridge", () => {
       evidenceIds: milestoneIds(),
     });
     expect(world.requestDriverTick).toHaveBeenCalledOnce();
+  });
+
+  it("reuses durable milestone attestations when every mission step is already done", async () => {
+    const world = createWorld({
+      prematureComplete: true,
+      completedMilestones: true,
+    });
+
+    const result = await runGuidedPrevcPostMergeBridge(
+      world.scope,
+      world.missionId,
+      world.dependencies,
+    );
+
+    expect(result).toMatchObject({
+      applicable: true,
+      ready: true,
+      autopilot: {
+        state: "complete",
+        finalHandoffId: "handoff-final-1",
+      },
+    });
+    expect(world.recordMilestones).not.toHaveBeenCalled();
+    expect(world.publishFinalHandoff).toHaveBeenCalledOnce();
+    expect(world.handoffs[0]).toMatchObject({
+      evidenceIds: milestoneIds(),
+    });
   });
 
   it("recovers a crash after durable handoff publication without rerunning validation", async () => {

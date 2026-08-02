@@ -1054,6 +1054,13 @@ export class RealMissionObserver {
   ): { readonly identity: RealMissionPhysicalPtyIdentity; readonly agent: RealMissionPhysicalPtyAgent } | null {
     const inspected = this.#physicalPtyGate.inspect(sessionId, agent);
     if (inspected.kind === "violation") {
+      console.error("[real-mission] physical PTY invariant violation", {
+        sessionId,
+        adapterId: agent?.adapterId ?? null,
+        role: agent?.role ?? null,
+        agentName: agent?.agentName ?? null,
+        workerIncarnationId: agent?.workerIncarnationId ?? null,
+      });
       this.#onFinish("invariant-failed");
     }
     return inspected.kind === "accepted"

@@ -38,10 +38,28 @@ function missionResultSections(learnings: string): {
 }
 
 function missionResultStatus(mission: Mission): string {
-  if (mission.status === 'done') return 'Concluída';
-  if (mission.status === 'failed') return 'Falhou';
-  if (mission.status === 'blocked') return 'Encerrada com bloqueio';
-  return 'Encerrada';
+  switch (mission.status) {
+    case 'pending':
+      return 'Planejada';
+    case 'running':
+      return 'Em andamento';
+    case 'done':
+      return 'Concluída';
+    case 'failed':
+      return 'Falhou';
+    case 'blocked':
+      return 'Encerrada com bloqueio';
+  }
+}
+
+function emptyMissionResult(mission: Mission): string {
+  if (mission.status === 'pending') {
+    return 'A missão ainda não começou; o relatório será criado durante a execução.';
+  }
+  if (mission.status === 'running') {
+    return 'A missão está em andamento; o relatório final será persistido quando a cadeia concluir.';
+  }
+  return 'Esta missão foi encerrada sem relatório final persistido.';
 }
 
 function missionResultMoment(mission: Mission): string {
@@ -82,7 +100,7 @@ function MissionResultContent({ mission }: { mission: Mission }) {
         </pre>
       ) : (
         <p className="mission-result__empty">
-          Esta missão foi encerrada sem relatório final persistido.
+          {emptyMissionResult(mission)}
         </p>
       )}
       {priorContext && (

@@ -231,7 +231,7 @@ export function MissionJournalPanel() {
 
   return (
     <div className="product-pane" data-testid="mission-journal">
-      <div className="product-pane__form product-pane__form--row">
+      <div className="product-pane__form product-pane__form--row mission-journal__controls">
         <select
           className="product-pane__input"
           value={missionId}

@@ -85,6 +85,45 @@ describe('LegacyHandoffParser', () => {
     expect(received).toHaveLength(1);
   });
 
+  it.each(['## NEXUS_HANDOFF v1', '#### NEXUS_HANDOFF v1'])(
+    'accepts the provider-normalized Markdown heading %s',
+    (marker) => {
+      const { parser, received } = collect();
+      const split = marker.length - 3;
+      parser.feed('agy-session', `provider output\n${marker.slice(0, split)}`);
+      parser.feed(
+        'agy-session',
+        `${marker.slice(split)}\n` +
+          '{"status":"success","summary":"Mapeamento independente concluído sem alterar arquivos.","artifacts":[]}',
+      );
+
+      expect(received).toEqual([
+        {
+          sessionId: 'agy-session',
+          payload: {
+            status: 'success',
+            summary:
+              'Mapeamento independente concluído sem alterar arquivos.',
+            artifacts: [],
+          },
+        },
+      ]);
+    },
+  );
+
+  it.each(['# NEXUS_HANDOFF v1', 'NEXUS_HANDOFF v1', '## nexus_handoff v1'])(
+    'keeps non-contract sentinel %s rejected',
+    (marker) => {
+      const { parser, received } = collect();
+      parser.feed(
+        's1',
+        `${marker}\n` +
+          '{"status":"success","summary":"Entrega que não possui framing confiável.","artifacts":[]}',
+      );
+      expect(received).toHaveLength(0);
+    },
+  );
+
   it('buffers JSON split across chunks', () => {
     const { parser, received } = collect();
     parser.feed('s1', `${LEGACY_MARKER}\n{"status": "partial",`);

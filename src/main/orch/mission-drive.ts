@@ -191,8 +191,21 @@ export function decideDriveAction(
     };
   }
 
-  // Recovery / progress actions sit behind exponential backoff so a fixed
-  // DRIVE_TICK_MS poll cannot thrash respawn/stall/advance/re-route.
+  // A trusted PREVC receipt is deterministic forward progress, not a recovery
+  // retry. Advancing it immediately prevents a long plan from accumulating an
+  // exponential delay after every already-proven milestone. The evidence gate
+  // in advanceStep remains the authority boundary, and the finite iteration
+  // budget above still applies.
+  if (state.currentStepId && state.trustedEvidenceReadyForCurrent) {
+    return {
+      kind: 'advance',
+      reason: 'trusted evidence ready for current step',
+      stepId: state.currentStepId,
+    };
+  }
+
+  // Recovery actions sit behind exponential backoff so a fixed DRIVE_TICK_MS
+  // poll cannot thrash respawn/stall/re-route.
   if (isWithinBackoff(state, now, config)) {
     return {
       kind: 'wait',
@@ -227,14 +240,6 @@ export function decideDriveAction(
   }
   if (state.contextRot) {
     return { kind: 'respawn-fresh-context', reason: 'context rot' };
-  }
-
-  if (state.currentStepId && state.trustedEvidenceReadyForCurrent) {
-    return {
-      kind: 'advance',
-      reason: 'trusted evidence ready for current step',
-      stepId: state.currentStepId,
-    };
   }
 
   // Clock-skew / NaN defense: lastProgressAt no futuro ou NaN não mascara stall.

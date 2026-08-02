@@ -376,7 +376,11 @@ export const realMissionE2EEvidenceSchema = z
           completion?.workflow.binding.baseSha &&
         receipt.evidenceBinding.workflowRevision ===
           receipt.workflowRevisionBefore &&
-        receipt.fromStage.startsWith("validation") &&
+        // Final validation has already advanced PREVC to confirmation before
+        // the mission driver consumes its ordered milestone attestations.
+        // Accepting an older validation-stage receipt would no longer prove
+        // the current atomic completion path exercised by the product.
+        receipt.fromStage === "confirmation" &&
         receipt.evidenceBinding.headSha ===
           completion?.workflow.binding.headSha &&
         receipt.evidenceBinding.diffHash ===

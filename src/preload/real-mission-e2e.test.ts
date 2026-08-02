@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  REAL_MISSION_E2E_ADVISORS,
   REAL_MISSION_E2E_ACCEPTANCE_CRITERIA,
   REAL_MISSION_E2E_GOAL,
+  realMissionE2EAcceptanceCriteria,
   realMissionE2ERendererFailureSignal,
 } from "../shared/real-mission-e2e";
 import {
@@ -15,6 +17,9 @@ const rendererFailureToken = "f".repeat(64);
 const runPayload = {
   workspacePath: "/tmp/nexus-real-workspace",
   rendererFailureToken,
+  admittedAdvisorClis: REAL_MISSION_E2E_ADVISORS.map(
+    (advisor) => advisor.cli,
+  ),
 } as const;
 
 function apiFixture(events: string[] = []): RealMissionE2EApi {
@@ -143,6 +148,32 @@ describe("real mission E2E preload runner", () => {
     expect(observeMission).toHaveBeenCalledExactlyOnceWith("mission-real-1");
   });
 
+  it("uses the advisor roster sealed by main instead of preload process.env", async () => {
+    const api = apiFixture();
+    const admittedAdvisorClis = runPayload.admittedAdvisorClis.filter(
+      (cli) => cli !== "grok",
+    );
+
+    await expect(
+      runRealMissionE2E(
+        api,
+        { ...runPayload, admittedAdvisorClis },
+        {
+          prepareFixture: async () => ({ ok: true }),
+          observeMission: async () => ({ ok: true }),
+        },
+      ),
+    ).resolves.toBe("mission-real-1");
+
+    expect(api.orch.submitMissionIntent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        acceptanceCriteria: [
+          ...realMissionE2EAcceptanceCriteria("codex", admittedAdvisorClis),
+        ],
+      }),
+    );
+  });
+
   it("does not bootstrap when the main-owned observer rejects the mission id", async () => {
     const api = apiFixture();
     await expect(
@@ -186,6 +217,7 @@ describe("real mission E2E preload runner", () => {
         {
           workspacePath: "/tmp/nexus-real-workspace",
           rendererFailureToken,
+          admittedAdvisorClis: runPayload.admittedAdvisorClis,
           missionId: "forged",
           pass: true,
           rawOutput: "forged",

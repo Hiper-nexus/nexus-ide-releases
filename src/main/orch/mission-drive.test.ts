@@ -334,6 +334,25 @@ describe('decideDriveAction', () => {
     ).toBe('complete');
   });
 
+  it('trusted milestone progress bypasses recovery backoff', () => {
+    const state = baseRunning({
+      lastProgressAt: NOW - 1_000,
+      iteration: 8,
+      lastActionAt: NOW - 100,
+      currentStepId: 's1',
+      trustedEvidenceReadyForCurrent: true,
+    });
+    const action = decideDriveAction(state, NOW, {
+      ...CONFIG,
+      baseBackoffMs: 1_000,
+    });
+    expect(action).toEqual({
+      kind: 'advance',
+      reason: 'trusted evidence ready for current step',
+      stepId: 's1',
+    });
+  });
+
   it('chronic stall block-human bypasses exponential backoff', () => {
     const state = baseRunning({
       lastProgressAt: NOW - CONFIG.stallMs - 1,

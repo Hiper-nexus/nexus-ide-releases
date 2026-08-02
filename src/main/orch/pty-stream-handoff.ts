@@ -33,8 +33,10 @@ import { onHandoffSubmitted } from "./idle-delivery";
 import {
   committedPhysicalWorkerHead,
   assertReadOnlyLaneObservationCurrent,
+  STALE_READ_ONLY_OBSERVATION_REASON,
   StaleReadOnlyObservationError,
 } from "./physical-handoff-git";
+import type { ToolDispatchResult } from "./mcp-dispatch-contract";
 import { orchTerminateSession } from "../pty/pty-manager";
 import {
   getProjectDomainStores,
@@ -73,6 +75,22 @@ export function isStaleReadOnlyObservationHandoffError(
 }
 
 /**
+ * HTTP/ACP dispatch catches handler exceptions so it can return a proper MCP
+ * tool error. Preserve the stable stale-observation classification after that
+ * boundary without treating arbitrary tool failures as a reason to kill a
+ * physical worker.
+ */
+export function isStaleReadOnlyObservationHandoffResult(
+  result: Readonly<ToolDispatchResult>,
+): boolean {
+  return (
+    !result.ok &&
+    result.tool === "nexus_handoff_submit" &&
+    result.error?.startsWith(`${STALE_READ_ONLY_OBSERVATION_REASON}:`) === true
+  );
+}
+
+/**
  * A legacy PTY marker has no channel for returning the handoff rejection to
  * the provider. Once the read-only tree is stale, keeping that process alive
  * only produces placeholder repaint loops and prevents scheduler recovery.
@@ -85,6 +103,20 @@ export async function terminateStaleReadOnlyPtyStreamSession(
   terminate: (sessionId: string) => Promise<boolean> = orchTerminateSession,
 ): Promise<boolean> {
   if (!isStaleReadOnlyObservationHandoffError(error)) return false;
+  return terminate(sessionId);
+}
+
+/**
+ * MCP transports can return the rejection before retiring the stale worker.
+ * The caller invokes this only after writing the HTTP response, then the normal
+ * physical-exit lifecycle requeues and re-anchors the read-only task.
+ */
+export async function terminateStaleReadOnlyMcpSession(
+  sessionId: string,
+  result: Readonly<ToolDispatchResult>,
+  terminate: (sessionId: string) => Promise<boolean> = orchTerminateSession,
+): Promise<boolean> {
+  if (!isStaleReadOnlyObservationHandoffResult(result)) return false;
   return terminate(sessionId);
 }
 

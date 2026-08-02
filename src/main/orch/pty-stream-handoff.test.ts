@@ -32,8 +32,10 @@ vi.mock("./idle-delivery", () => ({
 }));
 
 import {
+  isStaleReadOnlyObservationHandoffResult,
   isStaleReadOnlyObservationHandoffError,
   submitPtyStreamHandoff,
+  terminateStaleReadOnlyMcpSession,
   terminateStaleReadOnlyPtyStreamSession,
 } from "./pty-stream-handoff";
 
@@ -360,6 +362,37 @@ describe("PTY stream physical handoff", () => {
         new Error("other failure"),
         terminate,
       ),
+    ).resolves.toBe(false);
+    expect(terminate).toHaveBeenCalledTimes(1);
+  });
+
+  it("terminates only the stale HTTP/ACP handoff result after MCP reports it", async () => {
+    const terminate = vi.fn(async () => true);
+    const stale = new StaleReadOnlyObservationError();
+    const staleResult = {
+      ok: false,
+      tool: "nexus_handoff_submit",
+      error: stale.message,
+      effectMayHaveCommitted: true,
+    } as const;
+
+    expect(isStaleReadOnlyObservationHandoffResult(staleResult)).toBe(true);
+    await expect(
+      terminateStaleReadOnlyMcpSession(
+        SESSION_ID,
+        staleResult,
+        terminate,
+      ),
+    ).resolves.toBe(true);
+    expect(terminate).toHaveBeenCalledWith(SESSION_ID);
+
+    const unrelated = {
+      ...staleResult,
+      tool: "nexus_worker_heartbeat",
+    } as const;
+    expect(isStaleReadOnlyObservationHandoffResult(unrelated)).toBe(false);
+    await expect(
+      terminateStaleReadOnlyMcpSession(SESSION_ID, unrelated, terminate),
     ).resolves.toBe(false);
     expect(terminate).toHaveBeenCalledTimes(1);
   });

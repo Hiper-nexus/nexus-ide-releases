@@ -144,7 +144,8 @@ vi.mock('../adapters/adapter-registry', () => ({
           kind: 'cli-pty',
           bin: id,
           models: { default: 'provider/model', list: ['provider/model'] },
-          quirks: {},
+          quirks:
+            id === 'opencode' ? { nexusMcp: 'opencode' } : {},
         },
   ),
   isBuiltinAdapter: vi.fn((id: string) => id === 'codex'),
@@ -445,6 +446,81 @@ describe('agent pane workspace confinement', () => {
     );
   });
 
+  it('starts a Codex mission worker with its sealed brief in native argv', async () => {
+    const onPromptAccepted = vi.fn();
+    stubs.sessionState.mockReturnValue('busy');
+
+    await spawnPaneAndMaybePrompt(
+      {
+        adapterId: 'codex',
+        missionId: 'm1',
+        role: 'worker',
+        prompt: 'Implemente a tarefa e entregue o handoff.',
+        scope,
+        executionScope: taskExecutionScope,
+      },
+      { onPromptAccepted },
+    );
+
+    const spawnCalls = stubs.requestPaneSpawn.mock.calls as unknown as Array<
+      [{ initialPrompt?: string }]
+    >;
+    const spawnOptions = spawnCalls.at(-1)?.[0];
+    expect(spawnOptions).toEqual(
+      expect.objectContaining({
+        adapterId: 'codex',
+        initialPrompt: expect.stringContaining(
+          'Implemente a tarefa e entregue o handoff.',
+        ),
+      }),
+    );
+    expect(spawnOptions?.initialPrompt).toContain('nexus_handoff_submit');
+    expect(stubs.writeSession).not.toHaveBeenCalled();
+    expect(onPromptAccepted).toHaveBeenCalledWith(
+      'pane-1',
+      'session-1',
+      spawnOptions?.initialPrompt,
+    );
+  });
+
+  it('starts an OpenCode mission worker with its final brief in main-owned argv', async () => {
+    const onPromptAccepted = vi.fn();
+    stubs.sessionState.mockReturnValue('busy');
+
+    await spawnPaneAndMaybePrompt(
+      {
+        adapterId: 'opencode',
+        missionId: 'm1',
+        role: 'worker',
+        readOnly: true,
+        prompt: 'Revise o projeto e entregue o parecer.',
+        scope,
+        executionScope: taskExecutionScope,
+      },
+      { onPromptAccepted },
+    );
+
+    const spawnCalls = stubs.requestPaneSpawn.mock.calls as unknown as Array<
+      [{ initialPrompt?: string }]
+    >;
+    const spawnOptions = spawnCalls.at(-1)?.[0];
+    expect(spawnOptions).toEqual(
+      expect.objectContaining({
+        adapterId: 'opencode',
+        initialPrompt: expect.stringContaining(
+          'Revise o projeto e entregue o parecer.',
+        ),
+      }),
+    );
+    expect(spawnOptions?.initialPrompt).toContain('nexus_handoff_submit');
+    expect(stubs.writeSession).not.toHaveBeenCalled();
+    expect(onPromptAccepted).toHaveBeenCalledWith(
+      'pane-1',
+      'session-1',
+      spawnOptions?.initialPrompt,
+    );
+  });
+
   it('accepts the AGY argv brief when the turn opens after boot settles', async () => {
     const onPromptAccepted = vi.fn();
     stubs.sessionState.mockReturnValue('idle');
@@ -646,6 +722,53 @@ describe('agent pane workspace confinement', () => {
     expect(onPromptAccepted).toHaveBeenCalledOnce();
   });
 
+  it('accepts a fast Codex handoff before the running-dispatch authority fence', async () => {
+    const onPromptAccepted = vi.fn();
+    let running = true;
+    stubs.waitForIdle.mockImplementationOnce(async () => {
+      running = false;
+      return 'idle';
+    });
+    stubs.taskDispatchesList.mockReturnValue([
+      {
+        missionId: 'm1',
+        sessionId: 'session-1',
+        workerIncarnationId: 'inc-fast',
+        handoffId: 'handoff-fast',
+      },
+    ]);
+
+    await expect(
+      spawnPaneAndMaybePrompt(
+        {
+          adapterId: 'codex',
+          missionId: 'm1',
+          role: 'worker',
+          prompt: 'Conclua e entregue imediatamente.',
+          workerIncarnationId: 'inc-fast',
+          scope,
+          executionScope: taskExecutionScope,
+        },
+        {
+          invocation: {
+            assertCurrentAuthority: () => {
+              if (!running) {
+                throw new Error(
+                  'dispatch sem autoridade de efeito no estado handoff_ready',
+                );
+              }
+            },
+          },
+          onPromptAccepted,
+        },
+      ),
+    ).resolves.toEqual({ paneId: 'pane-1', sessionId: 'session-1' });
+
+    expect(stubs.requestPaneClose).not.toHaveBeenCalled();
+    expect(stubs.writeSession).not.toHaveBeenCalled();
+    expect(onPromptAccepted).toHaveBeenCalledOnce();
+  });
+
   it('closes the AGY pane when the session exits during boot without a handoff', async () => {
     const onPromptAccepted = vi.fn();
     stubs.waitForIdle.mockResolvedValue('exited');
@@ -812,6 +935,7 @@ describe('agent pane workspace confinement', () => {
   });
 
   it('preserves the physical PTY exit cause before the blocked dispatch fence', async () => {
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
     let current = true;
     stubs.waitForIdle.mockImplementationOnce(async () => {
       current = false;
@@ -847,6 +971,40 @@ describe('agent pane workspace confinement', () => {
     expect(assertCurrentAuthority).toHaveBeenCalled();
     expect(stubs.writeSession).not.toHaveBeenCalled();
     expect(stubs.requestPaneClose).toHaveBeenCalledWith('pane-1');
+    expect(errorLog).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /\[spawn\] agent boot failed \(session-1\):.*model glm-5\.2 is unavailable/is,
+      ),
+    );
+    errorLog.mockRestore();
+  });
+
+  it('logs a bounded redacted PTY tail when native prompt acceptance fails', async () => {
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+    stubs.waitForIdle.mockRejectedValueOnce(new Error('prompt proof failed'));
+    stubs.readSessionOutput.mockReturnValueOnce(
+      'authorization: Bearer this-must-never-appear\nlast safe line',
+    );
+
+    await expect(
+      spawnPaneAndMaybePrompt({
+        adapterId: 'codex',
+        missionId: 'm1',
+        role: 'worker',
+        prompt: 'never accepted',
+        scope,
+        executionScope: taskExecutionScope,
+      }),
+    ).rejects.toThrow('prompt proof failed');
+
+    const logged = errorLog.mock.calls.flat().join('\n');
+    expect(logged).toContain(
+      '[spawn] agent prompt failed (codex/session-1)',
+    );
+    expect(logged).toContain('last safe line');
+    expect(logged).not.toContain('this-must-never-appear');
+    expect(stubs.requestPaneClose).toHaveBeenCalledWith('pane-1');
+    errorLog.mockRestore();
   });
 
   it('reports the pane before later mission persistence can fail', async () => {
@@ -886,21 +1044,7 @@ describe('worker handoff capability contract', () => {
   });
 
   it('does not append handoff_submit to merge-council reviewer briefs', async () => {
-    stubs.sessionState.mockReturnValue('idle');
-    const writes: string[] = [];
-    stubs.writeSession.mockImplementation(
-      ((sessionId: string, data: string) => {
-        writes.push(String(data));
-        if (data === '\r') {
-          queueMicrotask(() => {
-            stubs.sessionState.mockReturnValue('busy');
-            for (const tap of stubs.stateTaps) tap(sessionId, 'busy');
-            for (const tap of stubs.dataTaps) tap(sessionId, 'ok');
-          });
-        }
-        return true;
-      }) as typeof stubs.writeSession,
-    );
+    stubs.sessionState.mockReturnValue('busy');
 
     await spawnPaneAndMaybePrompt({
       adapterId: 'codex',
@@ -916,9 +1060,13 @@ describe('worker handoff capability contract', () => {
       executionScope: taskExecutionScope,
     });
 
-    const pasted = writes.join('\n');
-    expect(pasted).toContain('nexus_merge_review_submit');
-    expect(pasted).not.toContain('nexus_handoff_submit');
+    const spawnCalls = stubs.requestPaneSpawn.mock.calls as unknown as Array<
+      [{ initialPrompt?: string }]
+    >;
+    const initialPrompt = spawnCalls.at(-1)?.[0].initialPrompt;
+    expect(initialPrompt).toContain('nexus_merge_review_submit');
+    expect(initialPrompt).not.toContain('nexus_handoff_submit');
+    expect(stubs.writeSession).not.toHaveBeenCalled();
   });
 });
 
@@ -1330,6 +1478,42 @@ describe('agent prompt injection', () => {
       } else {
         process.env.NEXUS_REAL_MISSION_E2E = previous;
       }
+      vi.useRealTimers();
+    }
+  });
+
+  it('accepts a sustained Claude turn when hook wiring is absent but PTY work is physical', async () => {
+    vi.useFakeTimers();
+    try {
+      stubs.sessionState.mockReturnValue('idle');
+      stubs.writeSession.mockImplementation(
+        ((sessionId: string, data: string) => {
+          if (data === '\r') {
+            queueMicrotask(() => {
+              stubs.sessionState.mockReturnValue('busy');
+              for (const tap of [...stubs.stateTaps]) tap(sessionId, 'busy');
+              for (const tap of [...stubs.dataTaps]) {
+                tap(sessionId, 'reading workspace');
+                tap(sessionId, 'running command');
+              }
+            });
+          }
+          return true;
+        }) as typeof stubs.writeSession,
+      );
+      const pending = deliverAgentPrompt(
+        'session-1',
+        'review this task',
+        undefined,
+        { adapterId: 'claude' },
+      );
+
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      await expect(pending).resolves.toBe(true);
+      expect(stubs.turnStartSequence).toBe(0);
+      expect(stubs.writeSession).toHaveBeenCalledTimes(2);
+    } finally {
       vi.useRealTimers();
     }
   });

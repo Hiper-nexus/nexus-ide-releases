@@ -223,6 +223,13 @@ export async function handleMcpMessage(
         ctx,
         dispatchOptions,
       );
+      try {
+        dispatchOptions.onToolResult?.(result);
+      } catch (error) {
+        // Observability is not authority. A broken lifecycle observer must not
+        // rewrite a completed tool result or prevent the agent receiving it.
+        console.warn("[orch] tool result observer failed:", error);
+      }
       if (result.ok) {
         console.log(`[orch] tool ${result.tool} ok (${ctx.label})`);
         return ok(id, toolText(result.result));

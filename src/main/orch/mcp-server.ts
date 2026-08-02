@@ -63,7 +63,9 @@ import {
 } from "./legacy-handoff";
 import { getProjectDomainStores } from "./project-domain-store-registry";
 import {
+  isStaleReadOnlyObservationHandoffResult,
   submitPtyStreamHandoff,
+  terminateStaleReadOnlyMcpSession,
   terminateStaleReadOnlyPtyStreamSession,
 } from "./pty-stream-handoff";
 import {
@@ -88,6 +90,7 @@ import { codexStatusHookArgs } from "./hook-status-config";
 import { codexHookTrustBypassArgs } from "./codex-cli-version";
 import {
   cleanupAgyMcpConfig,
+  canUseNexusMcp,
   codexMcpArgs,
   purgeStaleAgyMcpConfigs,
   supportsMcpInjection,
@@ -305,6 +308,7 @@ async function handleMcpRequest(
 
   const messages = Array.isArray(parsed) ? parsed : [parsed];
   const responses: JsonRpcResponse[] = [];
+  const staleHandoffResults = new Map<string, ToolDispatchResult>();
   let authorityRevoked = false;
   await runInsideHttpMcpTransport(req, ctx, async () => {
     for (const message of messages) {
@@ -320,18 +324,46 @@ async function handleMcpRequest(
           req.headers['x-nexus-transport'] === 'acp-stdio'
             ? 'acp-stdio'
             : 'http-mcp',
+        onToolResult: (result) => {
+          if (
+            ctx.sessionId &&
+            isStaleReadOnlyObservationHandoffResult(result)
+          ) {
+            staleHandoffResults.set(ctx.sessionId, result);
+          }
+        },
       });
       if (response) responses.push(response);
     }
   });
   if (authorityRevoked) return;
   const headers = { "mcp-session-id": ctx.token.slice(0, 16) };
+  const recoverStaleHandoffs = (): void => {
+    for (const [sessionId, result] of staleHandoffResults) {
+      void terminateStaleReadOnlyMcpSession(sessionId, result)
+        .then((terminated) => {
+          if (terminated) {
+            console.warn(
+              `[handoff] stale read-only MCP session terminated for recovery (${sessionId})`,
+            );
+          }
+        })
+        .catch((error) => {
+          console.warn(
+            `[handoff] stale read-only MCP recovery failed (${sessionId}):`,
+            error,
+          );
+        });
+    }
+  };
   if (responses.length === 0) {
     res.writeHead(202, headers);
     res.end();
+    recoverStaleHandoffs();
     return;
   }
   sendJson(res, 200, Array.isArray(parsed) ? responses : responses[0], headers);
+  recoverStaleHandoffs();
 }
 
 interface GateBody {
@@ -661,14 +693,16 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
       executionScope: authority.scope,
     });
 
-    const env: Record<string, string> = {
-      NEXUS_MCP_URL: mcpUrl(),
-      NEXUS_MCP_TOKEN: ctx.token,
-      NEXUS_GATE_URL: gateUrl(),
-      NEXUS_GATE_TOKEN: ctx.token,
-      // Status hooks inherit this from the PTY env (never written to disk).
-      NEXUS_HOOK_URL: hookStatusUrl(),
-    };
+    const env: Record<string, string> = canUseNexusMcp(adapter)
+      ? {
+          NEXUS_MCP_URL: mcpUrl(),
+          NEXUS_MCP_TOKEN: ctx.token,
+          NEXUS_GATE_URL: gateUrl(),
+          NEXUS_GATE_TOKEN: ctx.token,
+          // Status hooks inherit this from the PTY env (never written to disk).
+          NEXUS_HOOK_URL: hookStatusUrl(),
+        }
+      : {};
     const extraArgs: string[] = [];
     let ephemeralHomeDir: string | null = null;
     let skillsPrepared = false;
@@ -855,6 +889,7 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
     }
 
     const decoration: AgentSpawnDecoration = {
+      authorityToken: ctx.token,
       env,
       extraArgs,
       ...(advisoryProviderStateHome

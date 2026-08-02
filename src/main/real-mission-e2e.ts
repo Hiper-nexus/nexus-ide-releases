@@ -6,6 +6,7 @@ import type { WebContents } from "electron";
 import { WINDOW_CHANNELS } from "../shared/channels";
 import {
   REAL_MISSION_E2E_CHANNELS,
+  REAL_MISSION_E2E_ADVISORS,
   REAL_MISSION_E2E_CTA,
   REAL_MISSION_E2E_CLAUDE_ORCHESTRATOR_EVIDENCE_FILE,
   REAL_MISSION_E2E_EVIDENCE_FILE,
@@ -183,6 +184,12 @@ export function initRealMissionE2E(): void {
   // Variante de orquestrador selada pelo launcher (default codex): define o
   // roster do fixture, a cerca física e o nome do arquivo de evidência.
   const orchestratorCli = realMissionE2EOrchestratorCli();
+  const skippedAdvisorClis = new Set(realMissionE2EAdvisorSkipClis());
+  const admittedAdvisorClis = REAL_MISSION_E2E_ADVISORS.filter(
+    (advisor) =>
+      !skippedAdvisorClis.has(advisor.cli) &&
+      !(orchestratorCli === "claude" && advisor.cli === "claude"),
+  ).map((advisor) => advisor.cli);
   const evidenceFileName =
     orchestratorCli === "claude"
       ? REAL_MISSION_E2E_CLAUDE_ORCHESTRATOR_EVIDENCE_FILE
@@ -409,6 +416,7 @@ export function initRealMissionE2E(): void {
         workspacePath: scratch.workspacePath,
         rendererFailureToken,
         orchestratorCli,
+        admittedAdvisorClis,
       },
     );
   };
@@ -690,11 +698,22 @@ export function initRealMissionE2E(): void {
     const suite = getProjectDomainStores(scope);
     const mission = suite.missions.get(parsed.data.missionId);
     const squadBinding = resolvePrivateRealMissionE2ESquadBinding();
+    const missionValid = isRealMissionE2EPreApprovalMission(mission);
+    const squadValid = validateHarnessSquad();
+    const codexValid = validateHarnessCodexAdapter();
+    const advisorsValid = validateHarnessAdvisorAdapters();
     if (
-      !isRealMissionE2EPreApprovalMission(mission) ||
+      !missionValid ||
       !squadBinding ||
-      !validateHarnessRoster()
+      !squadValid ||
+      !codexValid ||
+      !advisorsValid
     ) {
+      console.error(
+        "[real-mission] observer-invalid reason=private-roster-or-binding " +
+          `mission=${missionValid} binding=${Boolean(squadBinding)} ` +
+          `squad=${squadValid} codex=${codexValid} advisors=${advisorsValid}`,
+      );
       finish("observer-invalid");
       throw new Error(
         "real mission contract is not the sealed release fixture",

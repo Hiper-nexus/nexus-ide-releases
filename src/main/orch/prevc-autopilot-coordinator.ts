@@ -1154,6 +1154,24 @@ async function drivePrevcAutopilotUnlocked(input: {
       const currentEvidenceIds = service.listCurrentPersistedEvidenceIds(
         input.missionId,
       );
+      const recoveredAttestationIds = currentEvidenceIds.filter((id) =>
+        id.startsWith("milestone:"),
+      );
+      if (recoveredAttestationIds.length > 0) {
+        // The mission driver may have consumed every pending milestone after
+        // validation but before this recovery pass. Those immutable
+        // attestations remain the exact authority for the final receipt;
+        // asking the service to create attestations again would correctly
+        // fail because no pending step remains.
+        validatedEvidenceIds = recoveredAttestationIds;
+        const handoff = publishFinalReceiptEvidence();
+        return Object.freeze({
+          state: "complete",
+          transitions,
+          finalHandoffId: handoff.id,
+          reason: "final PREVC transition awaits the atomic mission-step receipt",
+        });
+      }
       const sourceEvidenceIds = currentEvidenceIds.filter(
         (id) => !id.startsWith("milestone:"),
       );

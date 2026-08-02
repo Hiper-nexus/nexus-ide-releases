@@ -150,6 +150,12 @@ export const realMissionE2ERunPayloadSchema = z
     rendererFailureToken: sha256Schema,
     // Variante de orquestrador selada pelo main; ausente = codex (default).
     orchestratorCli: z.enum(["codex", "claude"]).default("codex"),
+    // O preload sandboxed não é autoridade para ler process.env. Main envia o
+    // roster advisor já admitido para que o intent compilado use exatamente o
+    // mesmo conjunto persistido e posteriormente validado pelo observer.
+    admittedAdvisorClis: z
+      .array(z.enum(["grok", "kimi", "agy", "opencode", "claude", "glm"]))
+      .max(6),
   })
   .strict();
 

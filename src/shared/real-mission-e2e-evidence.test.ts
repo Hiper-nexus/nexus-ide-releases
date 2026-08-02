@@ -628,4 +628,15 @@ describe("real mission E2E v9 claude orchestrator variant", () => {
       /real-mission invariants/,
     );
   });
+
+  it("rejects legacy milestone receipts recorded before confirmation", () => {
+    const evidence = validPassEvidence();
+    const completion = evidence.completion as {
+      stepReceipts: Array<{ fromStage: string }>;
+    };
+    completion.stepReceipts[0]!.fromStage = "validation-primary";
+    expect(() => parseRealMissionE2EEvidence(evidence)).toThrow(
+      /real-mission invariants/,
+    );
+  });
 });

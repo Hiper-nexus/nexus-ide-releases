@@ -10,8 +10,42 @@ import { handoffStatusSchema, type HandoffStatus } from '../../shared/orch-types
 
 export const LEGACY_MARKER = '### NEXUS_HANDOFF v1';
 
+/**
+ * Some terminal-native providers normalize a Markdown heading by one level
+ * when rendering their final answer (field case: AGY emitted `##` although
+ * the sealed prompt contained `###`). The marker is only a framing token: the
+ * Main still derives mission/session/incarnation from the physical PTY tap and
+ * validates the strict payload plus the authenticated worker HEAD. Accept the
+ * three common heading levels without accepting a bare/case-folded sentinel.
+ */
+const LEGACY_MARKER_VARIANTS = Object.freeze([
+  LEGACY_MARKER,
+  '## NEXUS_HANDOFF v1',
+  '#### NEXUS_HANDOFF v1',
+]);
+
 const MAX_BLOCK_CHARS = 16_384;
-const TAIL_KEEP = LEGACY_MARKER.length - 1;
+const TAIL_KEEP =
+  Math.max(...LEGACY_MARKER_VARIANTS.map((marker) => marker.length)) - 1;
+
+function findLegacyMarker(text: string): {
+  index: number;
+  length: number;
+} | null {
+  let found: { index: number; length: number } | null = null;
+  for (const marker of LEGACY_MARKER_VARIANTS) {
+    const index = text.indexOf(marker);
+    if (index === -1) continue;
+    if (
+      found === null ||
+      index < found.index ||
+      (index === found.index && marker.length > found.length)
+    ) {
+      found = { index, length: marker.length };
+    }
+  }
+  return found;
+}
 
 export interface LegacyHandoffPayload {
   status: HandoffStatus;
@@ -217,15 +251,15 @@ export class LegacyHandoffParser {
       return;
     }
     const buffered = (this.pending.get(sessionId) ?? '') + chunk;
-    const markerIndex = buffered.indexOf(LEGACY_MARKER);
-    if (markerIndex === -1) {
+    const marker = findLegacyMarker(buffered);
+    if (!marker) {
       // Keep only enough tail to detect a marker that spans two chunks.
       this.pending.set(sessionId, buffered.slice(-TAIL_KEEP));
       return;
     }
     this.pending.delete(sessionId);
     this.collecting.set(sessionId, '');
-    this.collect(sessionId, buffered.slice(markerIndex + LEGACY_MARKER.length));
+    this.collect(sessionId, buffered.slice(marker.index + marker.length));
   }
 
   private collect(sessionId: string, chunk: string): void {

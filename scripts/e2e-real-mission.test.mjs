@@ -1111,6 +1111,13 @@ describe("independent evidence verifier", () => {
       /incomplete/,
     );
 
+    const legacyReceiptPhase = validEvidence();
+    legacyReceiptPhase.completion.stepReceipts[0].fromStage =
+      "validation-primary";
+    expect(() => assertRealMissionPassEvidence(legacyReceiptPhase)).toThrow(
+      /incomplete/,
+    );
+
     const forgedBinding = validEvidence();
     forgedBinding.completion.stepReceipts[0].evidenceBinding.headSha =
       "f".repeat(40);

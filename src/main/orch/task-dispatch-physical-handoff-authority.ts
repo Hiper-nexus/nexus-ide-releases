@@ -60,6 +60,7 @@ export interface PhysicalTaskHandoffAuthority {
   readonly source: "http-mcp" | "acp-stdio" | "pty-stream";
   readonly authoritySha256: string;
   readonly worktreeHeadSha?: string;
+  readonly auditIntentOccurredAt?: number;
   readonly issuedAt: number;
   readonly status: HandoffStatus;
 }
@@ -182,6 +183,7 @@ export function assertPhysicalTaskHandoffAuthority(
     },
   );
 
+  let auditIntentOccurredAt: number | undefined;
   if (input.requireCorrelatedAuditIntent) {
     const auditRows = db
       .prepare(
@@ -216,6 +218,7 @@ export function assertPhysicalTaskHandoffAuthority(
         "task handoff requires one exact correlated physical audit intent",
       );
     }
+    auditIntentOccurredAt = matches[0]!.occurred_at;
   }
 
   return Object.freeze({
@@ -225,6 +228,9 @@ export function assertPhysicalTaskHandoffAuthority(
     authoritySha256: row.authority_sha256,
     ...(row.worktree_head_sha
       ? { worktreeHeadSha: row.worktree_head_sha }
+      : {}),
+    ...(auditIntentOccurredAt !== undefined
+      ? { auditIntentOccurredAt }
       : {}),
     issuedAt: row.issued_at,
     status: row.handoff_status,

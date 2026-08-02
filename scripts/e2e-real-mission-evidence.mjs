@@ -780,7 +780,9 @@ export function assertRealMissionPassEvidence(raw) {
       Number.isInteger(evidenceBinding?.workflowRevision) &&
       evidenceBinding.workflowRevision > 0 &&
       evidenceBinding.workflowRevision === receipt?.workflowRevisionBefore &&
-      receipt?.fromStage.startsWith("validation") &&
+      // The current PREVC lifecycle records mission-driver checkpoints only
+      // after final validation advances to confirmation.
+      receipt?.fromStage === "confirmation" &&
       evidenceBinding?.headSha === completionWorkflowBinding?.headSha &&
       evidenceBinding?.diffHash === completionWorkflowBinding?.diffHash &&
       (checkpoint || transition) &&

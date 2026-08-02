@@ -178,9 +178,9 @@ export function makeValidRealMissionEvidence({
   }));
   const stepReceipts = milestones.map((milestone, index) => ({
     stepId: milestone.stepId,
-    fromStage: "validation-primary",
+    fromStage: "confirmation",
     toStage:
-      index === milestones.length - 1 ? "complete" : "validation-primary",
+      index === milestones.length - 1 ? "complete" : "confirmation",
     workflowRevisionBefore: 3,
     workflowRevisionAfter: index === milestones.length - 1 ? 4 : 3,
     evidenceIds: [...milestone.evidenceIds],
@@ -521,7 +521,12 @@ export function makeValidRealMissionEvidence({
       workflow: {
         stage: "complete",
         revision: 4,
-        route: ["planning", "execution", "validation-primary"],
+        route: [
+          "planning",
+          "execution",
+          "validation-primary",
+          "confirmation",
+        ],
         binding: {
           missionId: "mission-real",
           contractHash,

@@ -628,6 +628,7 @@ describe("real mission observer advisor participation", () => {
   });
 
   it("rejects an advisor replacement while the prior physical session is live", () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
     harness.mission = { id: MISSION_ID, status: "running" };
     harness.agentInfos.set("session-grok-1", {
       sessionId: "session-grok-1",
@@ -674,7 +675,17 @@ describe("real mission observer advisor participation", () => {
     harness.stateTap?.("session-grok-2", "busy");
 
     expect(harness.finishes).toEqual(["invariant-failed"]);
+    expect(errorLog).toHaveBeenCalledWith(
+      "[real-mission] physical PTY invariant violation",
+      expect.objectContaining({
+        sessionId: "session-grok-2",
+        adapterId: "grok",
+        agentName: "E2E Advisor Grok",
+        workerIncarnationId: "incarnation-grok-2",
+      }),
+    );
     observer.stop();
+    errorLog.mockRestore();
   });
 
   it("fails closed when a skipped advisor opens a physical session", () => {

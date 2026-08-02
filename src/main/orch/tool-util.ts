@@ -81,20 +81,20 @@ const AGENT_BOOT_TIMEOUT_MS = 60_000;
 const PROMPT_ACCEPTANCE_WINDOW_MS = 12_000;
 const RESTORED_PROMPT_ACCEPTANCE_WINDOW_MS = 3_000;
 /**
- * After an AGY argv brief (`--prompt-interactive`), the provider must open a
- * turn within this window once boot settles. A still-quiet pane means the
- * brief is queued behind a boot dialog the autoresponder already stopped
- * watching (its bind window is 20s) or, on some builds, sitting unsubmitted
- * in the composer — both physically observed against agy 1.1.8.
+ * After a provider-native argv brief, the provider must open a turn within
+ * this window once boot settles. Codex uses its interactive positional
+ * prompt, AGY uses `--prompt-interactive`, and OpenCode mission workers use
+ * its headless `run` transport so a provider TUI cannot swallow the sealed
+ * dispatch before prompt acceptance.
  */
-const AGY_ARGV_PROMPT_ACTIVITY_WINDOW_MS = 30_000;
+const NATIVE_ARGV_PROMPT_ACTIVITY_WINDOW_MS = 30_000;
 /**
  * A lone TUI repaint flips the pane busy for about one idle timeout. A real
  * turn start streams output (or stays busy) — require that confirmation
  * before the argv brief counts as accepted.
  */
-const AGY_ARGV_ACTIVITY_CONFIRM_MS = 4_000;
-const MAX_AGY_INITIAL_PROMPT_BYTES = 64 * 1024;
+const NATIVE_ARGV_ACTIVITY_CONFIRM_MS = 4_000;
+const MAX_NATIVE_INITIAL_PROMPT_BYTES = 64 * 1024;
 const CLAUDE_FAMILY_TURN_PROOF_ADAPTERS = new Set([
   'claude',
   'glm',
@@ -105,8 +105,28 @@ function agentBootExitError(sessionId: string): Error {
   const outputTail = sanitizeMissionOrchestratorExitOutput(
     readSessionOutput(sessionId, 80),
   );
-  return new Error(
+  const error = new Error(
     `agent session exited during boot before prompt acceptance\n` +
+      `PTY tail:\n${outputTail}`,
+  );
+  // The scheduler may legitimately compensate and replace a failed worker.
+  // Preserve the bounded, credential-redacted physical cause in Main's log
+  // before that retry overwrites the dispatch row and closes the dead pane.
+  console.error(`[spawn] agent boot failed (${sessionId}):\n${error.message}`);
+  return error;
+}
+
+function logAgentPromptFailure(
+  adapterId: string,
+  sessionId: string,
+  error: unknown,
+): void {
+  const outputTail = sanitizeMissionOrchestratorExitOutput(
+    readSessionOutput(sessionId, 80),
+  );
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(
+    `[spawn] agent prompt failed (${adapterId}/${sessionId}): ${message}\n` +
       `PTY tail:\n${outputTail}`,
   );
 }
@@ -322,24 +342,61 @@ async function injectWithBusyProof(
   const realMission = isCurrentProcessRealMissionE2E();
   let observedBusy = getSessionState(sessionId) === 'busy';
   let observedOutput = false;
+  let observedOutputChunks = 0;
   let submitted = false;
   let sessionExited = false;
   let turnStartBaseline = getAgentTurnStartSequence(sessionId);
   let turnStartObserved = false;
+  let sustainedPhysicalTurn = false;
+  let physicalConfirmTimer: ReturnType<typeof setTimeout> | null = null;
   let settle: ((accepted: boolean) => void) | null = null;
   const hasAcceptanceProof = () =>
     requireTurnStartProof
-      ? turnStartObserved
+      ? turnStartObserved || sustainedPhysicalTurn
       : observedBusy &&
         (observedOutput || (allowSilentBusyProof && realMission));
   const maybeAccept = () => {
     if (hasAcceptanceProof()) settle?.(true);
   };
+  const armPhysicalTurnConfirmation = () => {
+    if (
+      !requireTurnStartProof ||
+      !submitted ||
+      !observedBusy ||
+      observedOutputChunks < 2 ||
+      physicalConfirmTimer ||
+      sustainedPhysicalTurn
+    ) {
+      return;
+    }
+    physicalConfirmTimer = setTimeout(() => {
+      physicalConfirmTimer = null;
+      // Claude installations with broken UserPromptSubmit hook wiring still
+      // expose a real turn physically: multiple post-submit PTY chunks plus a
+      // sustained busy state. Requiring both rejects paste echoes and the
+      // one-frame/plugin-bootstrap repaint covered by the tests below.
+      if (
+        getSessionState(sessionId) === 'busy' &&
+        observedOutputChunks >= 2
+      ) {
+        sustainedPhysicalTurn = true;
+        maybeAccept();
+      }
+    }, NATIVE_ARGV_ACTIVITY_CONFIRM_MS);
+  };
   const untapState = tapSessionState((changedSessionId, state) => {
     // Count busy even before submitted flips — paste can auto-start the turn.
-    if (changedSessionId !== sessionId || state !== 'busy') return;
-    observedBusy = true;
-    if (submitted) maybeAccept();
+    if (changedSessionId !== sessionId) return;
+    if (state === 'busy') {
+      observedBusy = true;
+      if (submitted) {
+        armPhysicalTurnConfirmation();
+        maybeAccept();
+      }
+    } else if (state === 'idle' && physicalConfirmTimer) {
+      clearTimeout(physicalConfirmTimer);
+      physicalConfirmTimer = null;
+    }
   });
   const untapData = tapSessionData((changedSessionId, data) => {
     if (
@@ -351,6 +408,8 @@ async function injectWithBusyProof(
     // output proves only local editing, not that the provider accepted the
     // turn. Count output only after the submit linearization point.
     observedOutput = true;
+    observedOutputChunks += 1;
+    armPhysicalTurnConfirmation();
     maybeAccept();
   });
   const untapExit = tapSessionExit((exitedSessionId) => {
@@ -396,6 +455,7 @@ async function injectWithBusyProof(
       turnStartObserved = true;
     }
     if (getSessionState(sessionId) === 'busy') observedBusy = true;
+    armPhysicalTurnConfirmation();
     if (hasAcceptanceProof()) {
       await assertAcceptedPromptAuthority(sessionId, invocation);
       return true;
@@ -420,6 +480,7 @@ async function injectWithBusyProof(
     return accepted;
   } finally {
     settle = null;
+    if (physicalConfirmTimer) clearTimeout(physicalConfirmTimer);
     untapState();
     untapData();
     untapExit();
@@ -528,7 +589,7 @@ function waitForAgentActivity(
           // Still busy past the confirm bound: a working turn, not a repaint.
           if (getSessionState(sessionId) === 'busy') finish(true);
           else edgeArmed = false;
-        }, AGY_ARGV_ACTIVITY_CONFIRM_MS);
+        }, NATIVE_ARGV_ACTIVITY_CONFIRM_MS);
       } else if (state === 'idle' && edgeArmed) {
         // Repaint burst settled without a stream: re-arm for a real edge.
         if (confirmTimer) clearTimeout(confirmTimer);
@@ -604,18 +665,16 @@ function hasBoundHandoffForExactWorker(
 }
 
 /**
- * Prove that an AGY worker's argv-delivered brief (`--prompt-interactive`)
- * physically opened a turn — spawn argv has no delivery receipt, so acceptance
- * is observed on the PTY: boot held busy (turn already streaming) or a
- * confirmed busy edge inside the bounded window. A pane still quiet past the
- * window gets ONE bounded nudge — a single Enter, whose physical effect on
- * agy is submitting the preloaded composer or accepting the safe default of
- * its boot dialogs (the trust-folder default is "Yes, I trust this folder";
- * verified against agy 1.1.8) — and only if that also fails, the legacy
- * typed injection, which carries its own acceptance proof. Any failure throws
- * so the caller tears the pane down instead of parking a mute zombie worker.
+ * Prove that a provider-native argv brief physically opened a turn. Spawn argv
+ * has no delivery receipt, so acceptance is observed on the PTY: boot held
+ * busy, a confirmed busy edge, or the exact worker's durable handoff. An
+ * interactive provider may still need one bounded Enter nudge for its
+ * preloaded composer. OpenCode's headless `run` normally exits after its
+ * handoff; that exact durable receipt outranks the normal process exit. Any
+ * failure throws so the caller tears the pane down instead of parking a mute
+ * zombie worker.
  */
-async function ensureAgyArgvPromptAccepted(
+async function ensureNativeArgvPromptAccepted(
   sessionId: string,
   finalPrompt: string,
   adapterId: string,
@@ -645,13 +704,19 @@ async function ensureAgyArgvPromptAccepted(
     if (handoffDelivered()) return;
     throw agentBootExitError(sessionId);
   }
+  // A very fast worker can durably submit its exact handoff while the boot
+  // observer is still settling. That transition legitimately revokes the
+  // dispatch's running authority (`handoff_ready`); the bound handoff is a
+  // stronger proof than the now-stale invocation, so recognize it before the
+  // post-boot authority fence.
+  if (handoffDelivered()) return;
   // Boot output never settled: the provider is already streaming the turn.
   if (boot === 'timeout' && getSessionState(sessionId) === 'busy') return;
   assertMcpInvocationCurrent(invocation);
   if (
     await waitForAgentActivity(
       sessionId,
-      AGY_ARGV_PROMPT_ACTIVITY_WINDOW_MS,
+      NATIVE_ARGV_PROMPT_ACTIVITY_WINDOW_MS,
       invocation?.signal,
     )
   ) {
@@ -892,18 +957,24 @@ export async function spawnPaneAndMaybePrompt(
           hints: [options.title, options.agentName],
         })
     : undefined;
-  const shouldUseAgyInitialPrompt = Boolean(
-    adapter.id === 'agy' &&
+  const shouldUseNativeInitialPrompt = Boolean(
+    (adapter.id === 'agy' ||
+      adapter.id === 'codex' ||
+      adapter.id === 'opencode') &&
       options.missionId &&
       options.role === 'worker' &&
       finalPrompt,
   );
   let initialPrompt: string | undefined;
-  if (shouldUseAgyInitialPrompt && finalPrompt) {
+  if (shouldUseNativeInitialPrompt && finalPrompt) {
     initialPrompt = assertSafePtyPrompt(finalPrompt);
-    if (Buffer.byteLength(initialPrompt, 'utf8') > MAX_AGY_INITIAL_PROMPT_BYTES) {
+    if (
+      Buffer.byteLength(initialPrompt, 'utf8') >
+      MAX_NATIVE_INITIAL_PROMPT_BYTES
+    ) {
       throw new Error(
-        `AGY initial prompt exceeds ${MAX_AGY_INITIAL_PROMPT_BYTES} bytes`,
+        `${adapter.label} initial prompt exceeds ` +
+          `${MAX_NATIVE_INITIAL_PROMPT_BYTES} bytes`,
       );
     }
   }
@@ -980,7 +1051,7 @@ export async function spawnPaneAndMaybePrompt(
         // opened, nudge once (Enter) when it did not, and only then fall back
         // to the legacy typed injection. Any failure closes the pane (catch
         // below) instead of parking a mute worker no watchdog can see.
-        await ensureAgyArgvPromptAccepted(
+        await ensureNativeArgvPromptAccepted(
           result.sessionId,
           finalPrompt,
           adapter.id,
@@ -1040,6 +1111,7 @@ export async function spawnPaneAndMaybePrompt(
       // Never leave a mute zombie pane occupying a mission worker slot. The
       // durable row remains as audit history, but a fenced worker incarnation
       // is never respawned as a different physical process.
+      logAgentPromptFailure(adapter.id, result.sessionId, error);
       try {
         await requestPaneClose(result.paneId);
       } catch {

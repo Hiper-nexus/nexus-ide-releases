@@ -77,11 +77,17 @@ interface RawDependency {
 /**
  * Persist the exact dependency results physically accepted in a worker prompt.
  *
- * The scheduler invokes this synchronously from the prompt-acceptance callback,
- * after the pane has been bound to the dispatch. The sealed task metadata and
- * every physical predecessor receipt are independently re-read in the same
- * SQLite transaction; a caller cannot acknowledge a different dependency,
- * handoff, worker incarnation or prompt.
+ * The scheduler invokes this from the prompt-acceptance callback after the
+ * pane has been bound to the dispatch. A fast worker may submit its own exact
+ * physical handoff before the callback runs; that handoff is accepted as the
+ * terminal prompt proof and pins `consumed_at` to its immutable correlated
+ * audit-intent instant. The receipt issue and acceptance happen milliseconds
+ * later, so using either one here would place prompt consumption after the
+ * consumer's own invocation and make the final chronology impossible. The
+ * sealed task metadata and every
+ * physical predecessor receipt are independently re-read in the same SQLite
+ * transaction; a caller cannot acknowledge a different dependency, handoff,
+ * worker incarnation or prompt.
  */
 export function recordTaskDependencyPromptConsumption(
   binding: ScopedStoreBinding,
@@ -101,15 +107,30 @@ export function recordTaskDependencyPromptConsumption(
       const parsedCurrent = current
         ? taskDispatchRowSchema.parse(current)
         : undefined;
-      if (
-        !parsedCurrent ||
-        parsedCurrent.state !== "running" ||
-        parsedCurrent.revision !== input.revision ||
-        parsedCurrent.lease_token_hash !==
-          taskDispatchTokenHash(input.leaseToken) ||
-        parsedCurrent.session_id !== input.sessionId ||
-        parsedCurrent.worker_incarnation_id !== input.workerIncarnationId
-      ) {
+      const exactLeaseAndWorker = Boolean(
+        parsedCurrent &&
+          parsedCurrent.lease_token_hash ===
+            taskDispatchTokenHash(input.leaseToken) &&
+          parsedCurrent.session_id === input.sessionId &&
+          parsedCurrent.worker_incarnation_id === input.workerIncarnationId,
+      );
+      const runningPromptProof = Boolean(
+        parsedCurrent &&
+          parsedCurrent.state === "running" &&
+          parsedCurrent.revision === input.revision &&
+          exactLeaseAndWorker,
+      );
+      const terminalHandoffPromptProof = Boolean(
+        parsedCurrent &&
+          ["handoff_ready", "merging", "completed"].includes(
+            parsedCurrent.state,
+          ) &&
+          parsedCurrent.revision >= input.revision &&
+          exactLeaseAndWorker &&
+          parsedCurrent.handoff_id &&
+          parsedCurrent.handoff_accepted_at !== null,
+      );
+      if (!parsedCurrent || (!runningPromptProof && !terminalHandoffPromptProof)) {
         throw new Error(
           "dependency consumption lost dispatch/session/incarnation authority",
         );
@@ -130,6 +151,35 @@ export function recordTaskDependencyPromptConsumption(
           "dependency consumption diverges from the sealed dependency edges",
         );
       }
+      let terminalHandoffAuditIntentAt: number | null = null;
+      if (terminalHandoffPromptProof) {
+        // The consumer's own exact MCP handoff proves that this physical
+        // session/incarnation completed the argv-delivered dependency prompt.
+        // Its immutable audit intent is the earliest durable physical point
+        // of the invocation, and the only authority allowed to recover this
+        // race without placing consumption after the consumer's own handoff.
+        const terminalPhysical = assertPhysicalTaskHandoffAuthority(
+          db,
+          binding.coordinates,
+          {
+            missionId: parsedCurrent.mission_id,
+            handoffId: parsedCurrent.handoff_id!,
+            sessionId: input.sessionId,
+            workerIncarnationId: input.workerIncarnationId,
+            workerId: parsedCurrent.worker_id,
+            noLaterThan: parsedCurrent.handoff_accepted_at!,
+            requireCorrelatedAuditIntent: true,
+            expectedStatus: "success",
+          },
+        );
+        if (terminalPhysical.auditIntentOccurredAt === undefined) {
+          throw new Error(
+            "terminal dependency recovery requires correlated audit intent time",
+          );
+        }
+        terminalHandoffAuditIntentAt = terminalPhysical.auditIntentOccurredAt;
+      }
+      const consumedAt = terminalHandoffAuditIntentAt ?? now;
 
       const existing = db
         .prepare(
@@ -220,7 +270,7 @@ export function recordTaskDependencyPromptConsumption(
           source.handoff_accepted_at === null ||
           source.completed_at === null ||
           source.handoff_accepted_at > source.completed_at ||
-          source.completed_at > now ||
+          source.completed_at > consumedAt ||
           source.handoff_status !== "success" ||
           source.authority_origin !== "agent" ||
           source.receipt_mission_id !== parsedCurrent.mission_id ||
@@ -305,7 +355,7 @@ export function recordTaskDependencyPromptConsumption(
             input.workerIncarnationId,
             promptSha256,
             dependency.summarySha256,
-            now,
+            consumedAt,
           );
         }
       }

@@ -357,6 +357,8 @@ describe("guided result consumption chain", () => {
           .prepare(`SELECT created_at FROM handoffs WHERE id = ?`)
           .get(handoff.id) as { created_at: number }
       ).created_at;
+      const auditIntentOccurredAt = handoffCreatedAt - 2;
+      const physicalIssuedAt = handoffCreatedAt - 1;
       db.prepare(
         `INSERT INTO audit_events
            (id, mission_id, actor, action, outcome, payload_json, occurred_at)
@@ -367,7 +369,7 @@ describe("guided result consumption chain", () => {
         started.sessionId,
         JSON.stringify({
           schema: "nexus.mcp-audit/v1",
-          timestamp: new Date(handoffCreatedAt).toISOString(),
+          timestamp: new Date(auditIntentOccurredAt).toISOString(),
           project_id: scope.projectId,
           checkout_id: scope.checkoutId,
           source: "http-mcp",
@@ -376,7 +378,7 @@ describe("guided result consumption chain", () => {
           duration_ms: 0,
           user_authorized: false,
         }),
-        handoffCreatedAt,
+        auditIntentOccurredAt,
       );
       db.prepare(
         `INSERT INTO handoff_mcp_receipts
@@ -394,7 +396,7 @@ describe("guided result consumption chain", () => {
         started.claim.workerIncarnationId,
         createHash("sha256").update(receiptId).digest("hex"),
         repositoryHead(),
-        handoffCreatedAt,
+        physicalIssuedAt,
       );
       const ready = dispatches.acceptHandoff({
         sessionId: started.sessionId,
@@ -632,13 +634,49 @@ describe("guided result consumption chain", () => {
     ).toBe(true);
 
     const reviewer = startTask(reviewTaskId);
-    const reviewerPrompt = feedDependencies(reviewer);
+    const lateReviewerConsumption = dependencyPrompt(reviewer);
+    const reviewerPrompt = lateReviewerConsumption.prompt;
     expect(reviewerPrompt).toContain(
       "Executor aplicou a correção de autenticação",
     );
     const reviewerResult = finishTask(
       reviewer,
       "Review independente confirmou a correção e pediu validação de regressão.",
+    );
+    // A real provider can submit its handoff before the async prompt observer
+    // calls back. The exact terminal handoff must recover that race without
+    // losing the immutable predecessor-consumption receipt.
+    expect(() =>
+      dispatches.recordDependencyPromptConsumption(
+        lateReviewerConsumption.input,
+      ),
+    ).not.toThrow();
+    const lateReceipt = runtime
+      .open(scope)
+      .db.prepare(
+        `SELECT receipt.consumed_at, dispatch.handoff_accepted_at,
+                physical.issued_at, audit.occurred_at AS audit_intent_occurred_at
+           FROM task_dependency_consumption_receipts AS receipt
+           JOIN task_dispatch_queue AS dispatch
+             ON dispatch.task_id = receipt.consumer_task_id
+           JOIN handoff_mcp_receipts AS physical
+             ON physical.handoff_id = dispatch.handoff_id
+           JOIN audit_events AS audit
+             ON audit.id = 'audit-' || physical.receipt_id
+          WHERE receipt.consumer_task_id = ?`,
+      )
+      .get(reviewTaskId) as {
+      consumed_at: number;
+      handoff_accepted_at: number;
+      issued_at: number;
+      audit_intent_occurred_at: number;
+    };
+    expect(lateReceipt.consumed_at).toBe(
+      lateReceipt.audit_intent_occurred_at,
+    );
+    expect(lateReceipt.consumed_at).toBeLessThan(lateReceipt.issued_at);
+    expect(lateReceipt.consumed_at).toBeLessThanOrEqual(
+      lateReceipt.handoff_accepted_at,
     );
     expect(
       handoffs.markConsumedAfterAcceptedDelivery(
