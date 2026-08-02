@@ -118,16 +118,58 @@ export interface WorktreeManagerOptions {
   readonly now?: () => number;
 }
 
+/** Human-inspectable identity of the task that already holds the claim. */
+export interface OwnershipConflictIdentity {
+  readonly missionId: string;
+  readonly taskId: string;
+}
+
+const MAX_REPORTED_OVERLAP_CLAIMS = 8;
+
+function ownershipOverlapMessage(
+  conflictingTaskKey: string,
+  overlap: WorktreeOwnership,
+  identity?: OwnershipConflictIdentity,
+): string {
+  // `taskKey` is a digest: naming it alone tells the operator nothing they can
+  // look up. Prefer mission/task plus the claims that actually collided.
+  const who = identity
+    ? `${identity.missionId}/${identity.taskId}`
+    : conflictingTaskKey;
+  const claims = [
+    ...overlap.files,
+    ...overlap.symbols.map((symbol) => `symbol:${symbol}`),
+    ...overlap.domains.map((domain) => `domain:${domain}`),
+  ];
+  if (claims.length === 0) {
+    return `worktree ownership overlaps active task ${who}`;
+  }
+  const shown = claims.slice(0, MAX_REPORTED_OVERLAP_CLAIMS).join(", ");
+  const rest =
+    claims.length > MAX_REPORTED_OVERLAP_CLAIMS
+      ? `, +${claims.length - MAX_REPORTED_OVERLAP_CLAIMS}`
+      : "";
+  return `worktree ownership overlaps active task ${who} (${shown}${rest})`;
+}
+
 export class OwnershipOverlapError extends Error {
   readonly conflictingTaskKey: string;
+  readonly conflictingMissionId?: string;
+  readonly conflictingTaskId?: string;
   readonly files: readonly string[];
   readonly symbols: readonly string[];
   readonly domains: readonly string[];
 
-  constructor(conflictingTaskKey: string, overlap: WorktreeOwnership) {
-    super(`worktree ownership overlaps active task ${conflictingTaskKey}`);
+  constructor(
+    conflictingTaskKey: string,
+    overlap: WorktreeOwnership,
+    identity?: OwnershipConflictIdentity,
+  ) {
+    super(ownershipOverlapMessage(conflictingTaskKey, overlap, identity));
     this.name = "OwnershipOverlapError";
     this.conflictingTaskKey = conflictingTaskKey;
+    this.conflictingMissionId = identity?.missionId;
+    this.conflictingTaskId = identity?.taskId;
     this.files = overlap.files;
     this.symbols = overlap.symbols;
     this.domains = overlap.domains;
@@ -232,11 +274,34 @@ export function normalizeOwnership(
 }
 
 /**
+ * Marks the `files` set as a WRITE PERMIT, not an exclusive claim.
+ *
+ * A planner that cannot narrow a natural-language goal seals a bounded
+ * projection of the repository inventory (plus the greenfield scaffold seed)
+ * so the merge fence has something to check the diff against. That set is a
+ * statement about what the task is ALLOWED to touch — never about what it will
+ * touch — and it is byte-identical for every mission on the same checkout.
+ * Treating it as exclusive made mission B collide with mission A by
+ * arithmetic, so no two missions could ever run at once on one checkout.
+ *
+ * Consequences, all deliberate:
+ * - Coverage files never exclude anyone at reservation time.
+ * - Coverage files still bound the merge fence exactly as before
+ *   (`enforceOwnershipOnDiff` / the integration permit check).
+ * - Symbol claims stay exclusive even under coverage: a symbol claim is
+ *   always precise.
+ * - A coverage task's REAL diff is checked against every live exclusive claim
+ *   at integration, which is the first moment the real write set exists.
+ */
+export const OWNERSHIP_COVERAGE_DOMAIN = "repository-coverage";
+
+/**
  * Kind/fence labels carried on ownership.domains for scheduler identity — they
  * are not mutual-exclusion claims. File/symbol disjointness decides overlap.
  */
 export const OWNERSHIP_NON_CLAIM_DOMAINS = Object.freeze(
   new Set([
+    OWNERSHIP_COVERAGE_DOMAIN,
     "guided-advisory",
     "guided-independent-review",
     "guided-isolated-advisory",
@@ -288,6 +353,48 @@ export function ownershipOverlap(
         claimOwnershipDomains(right.domains),
       ),
     ),
+  });
+}
+
+export function ownershipIsCoverage(ownership: WorktreeOwnership): boolean {
+  return ownership.domains.some(
+    (domain) => domain.toLocaleLowerCase("en-US") === OWNERSHIP_COVERAGE_DOMAIN,
+  );
+}
+
+export interface OwnershipExclusivityContext {
+  /**
+   * Two records of the SAME mission share one sealed delivery contract, so a
+   * coverage permit is that mission's own single write surface and stays fully
+   * exclusive — the guided chain must not open a second writer on itself.
+   * Across missions the very same set is an unrelated fabrication that every
+   * mission on the checkout carries identically, so it excludes nobody.
+   */
+  readonly sameMission: boolean;
+}
+
+/**
+ * Overlap restricted to claims that are genuinely mutually exclusive.
+ *
+ * Identical to `ownershipOverlap` between two precise claims — a directory
+ * claim still swallows every nested file claim, in both directions — and
+ * identical for any two records of the same mission. The single difference:
+ * ACROSS missions, a coverage permit contributes no FILE exclusivity, because
+ * a fabricated superset cannot prove a shared writer. Symbols and claim
+ * domains are never relaxed: a symbol claim is always precise.
+ */
+export function exclusiveOwnershipOverlap(
+  left: WorktreeOwnership,
+  right: WorktreeOwnership,
+  context: OwnershipExclusivityContext,
+): WorktreeOwnership {
+  const full = ownershipOverlap(left, right);
+  if (context.sameMission) return full;
+  if (!ownershipIsCoverage(left) && !ownershipIsCoverage(right)) return full;
+  return Object.freeze({
+    files: Object.freeze([]),
+    symbols: full.symbols,
+    domains: full.domains,
   });
 }
 

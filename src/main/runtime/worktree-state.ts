@@ -7,9 +7,9 @@ import {
   assertIdentifier,
   cloneWorktreeRecord,
   digest,
+  exclusiveOwnershipOverlap,
   hasOwnershipOverlap,
   normalizeOwnership,
-  ownershipOverlap,
   sameValues,
   worktreeTaskKey,
   type WorktreeOwnership,
@@ -192,7 +192,14 @@ export function validateWorktreeStateSnapshot(
       if (
         ACTIVE_WORKTREE_STATUSES.has(record.status) &&
         ACTIVE_WORKTREE_STATUSES.has(other.status) &&
-        hasOwnershipOverlap(ownershipOverlap(record.ownership, other.ownership)) &&
+        // Same exclusivity rule the reservation fence applies. If this
+        // disagreed with `#assertNoOwnershipConflict`, the manager would write
+        // a state it could never read back.
+        hasOwnershipOverlap(
+          exclusiveOwnershipOverlap(record.ownership, other.ownership, {
+            sameMission: record.missionId === other.missionId,
+          }),
+        ) &&
         !record.dependencies.includes(other.taskKey) &&
         !other.dependencies.includes(record.taskKey)
       ) {

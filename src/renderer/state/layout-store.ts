@@ -155,6 +155,11 @@ function rootWithTerminalSnapshots(root: LayoutNode): LayoutNode {
   if (!terminalSnapshotProvider) return root;
   if (root.kind === 'leaf') {
     if (root.pane.kind === 'browser') return root;
+    // I6 (write side). A vacancy has no session to snapshot, and writing one
+    // into it is what taught the placeholder to impersonate a terminal on the
+    // next restore. Whatever a stray host reports for this id, it is not this
+    // pane's work.
+    if (isStructuralPlaceholderPane(root.pane)) return root;
     const terminalScrollback = terminalSnapshotProvider(root.pane.id);
     return {
       ...root,
@@ -569,6 +574,32 @@ function rootWithPaneGuaranteed(
 }
 
 /**
+ * I6 — a vacancy carries no session residue.
+ *
+ * `terminalScrollback` is a SESSION artifact. Persisted into a structural
+ * placeholder it survives every restore, and `attachHost` replays it before
+ * anything else: the operator reads "[nexus] process exited (code 0)", a fresh
+ * shell spawns underneath and prints "sessão anterior encerrada · nova sessão
+ * iniciada". A vacancy that replays a dead session is indistinguishable from
+ * work in progress — that is precisely how the reported "pane solto tapando
+ * tudo" survived four fixes that all reasoned about the TREE and never about
+ * what the surviving node was allowed to CARRY.
+ *
+ * Applied at the seam and not at the restore path on purpose: the poisoned
+ * rows are already on disk, and any future writer (recovery, reopen, a canvas
+ * import) would otherwise re-introduce them.
+ */
+function rootWithoutVacancyResidue(root: LayoutNode): LayoutNode {
+  let next = root;
+  for (const pane of listPanes(root)) {
+    if (!isStructuralPlaceholderPane(pane)) continue;
+    if (pane.terminalScrollback === undefined) continue;
+    next = updatePane(next, pane.id, { terminalScrollback: undefined });
+  }
+  return next;
+}
+
+/**
  * THE layout invariant. Every write that touches the pane tree passes through
  * here, so a new call site cannot reintroduce the two defects this store keeps
  * growing back — and no future path has to remember to re-implement them:
@@ -596,6 +627,10 @@ function rootWithPaneGuaranteed(
  *       phantom focus then became the split pivot of the next addShellPane,
  *       `splitPane` silently no-opped, and the store handed back the id of a
  *       pane that exists nowhere for a caller to spawn a PTY on.
+ *
+ *   I6  A vacancy carries no session residue (see rootWithoutVacancyResidue).
+ *       I1 only asks WHETHER the placeholder may stay; I6 asks what it may
+ *       LOOK like while it legitimately does.
  */
 export function enforceLayoutInvariants(
   previous: Pick<LayoutState, 'root' | 'focusedPaneId' | 'maximizedPaneId'>,
@@ -630,7 +665,10 @@ export function enforceLayoutInvariants(
         requestedZoom && liveIds.has(requestedZoom) ? requestedZoom : null,
     };
   }
-  const proposed = listPanes(partial.root);
+  // I6 runs FIRST: the panes read below must already be residue-free, or a
+  // surviving vacancy would be re-published carrying a dead session's output.
+  const proposedRoot = rootWithoutVacancyResidue(partial.root);
+  const proposed = listPanes(proposedRoot);
   const durable = proposed.filter((pane) => !isStructuralPlaceholderPane(pane));
   const reclaimsVacancy = durable.length > 0 && durable.length < proposed.length;
   if (reclaimsVacancy) {
@@ -638,7 +676,7 @@ export function enforceLayoutInvariants(
       `[layout] dropped ${proposed.length - durable.length} structural placeholder(s) beside ${durable.length} live pane(s)`,
     );
   }
-  const root = reclaimsVacancy ? buildGridTree(durable) : partial.root;
+  const root = reclaimsVacancy ? buildGridTree(durable) : proposedRoot;
   const live = reclaimsVacancy ? durable : proposed;
   const liveIds = new Set(live.map((pane) => pane.id));
 

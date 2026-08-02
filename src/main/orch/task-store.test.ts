@@ -194,6 +194,12 @@ describe('scoped task store', () => {
 
     expect(tasks.hasPlan(mission.id, 2)).toBe(true);
     expect(tasks.hasPlan(mission.id, 3)).toBe(false);
+    // Plano selado noutra versão da intenção é ÓRFÃO, não ausência: devolver
+    // `null` aqui era o que fazia o roteador oferecer CLI fora do roster.
+    expect(tasks.listPlanIntentVersions(mission.id)).toEqual([2]);
+    expect(() => tasks.getPlanReceipt(mission.id, 3)).toThrow(
+      /orphan_sealed_plan/i,
+    );
     const receipt = tasks.getPlanReceipt(mission.id, 2);
     expect(receipt).toMatchObject({
       version: 1,
@@ -242,6 +248,61 @@ describe('scoped task store', () => {
       }),
     );
     expect(tasks.getPlannedTask('task-not-planned')).toBeNull();
+    // A saída do órfão é re-selar: a leitura literal usada pelo planner nunca
+    // pode ser barrada, senão a versão nova jamais consegue ganhar plano.
+    expect(tasks.listPlannedTasks(mission.id, 3)).toEqual([]);
+  });
+
+  it('separa os três estados do plano: nunca teve, versão corrente e órfão', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope();
+    const missions = createScopedMissionStore(runtimeManager, scope);
+    const mission = missions.create({
+      title: 'Órfão',
+      squadId: squad.id,
+      intentVersion: 1,
+      intentState: 'dispatched',
+      intentContract: compileIntentContract({
+        goal: 'Plano que fica para trás',
+        intentVersion: 1,
+      }),
+    });
+    missions.setStatus(mission.id, 'running');
+    const tasks = createScopedTaskStore(runtimeManager, scope);
+
+    // (a) nunca selou plano → caminho livre, legítimo.
+    expect(tasks.listPlanIntentVersions(mission.id)).toEqual([]);
+    expect(tasks.getPlanReceipt(mission.id, 1)).toBeNull();
+
+    tasks.createPlanAtomically({
+      missionId: mission.id,
+      intentVersion: 1,
+      squad: { id: squad.id, agents: squad.agents },
+      rows: [{
+        plannerId: 'api',
+        title: 'API',
+        detail: 'Implementar API',
+        agentRef: 'api-worker',
+        agentCategory: 'executor',
+      }],
+    });
+
+    // (b) plano na versão corrente → autoridade normal.
+    expect(tasks.getPlanReceipt(mission.id, 1)).toMatchObject({
+      intentVersion: 1,
+    });
+
+    // (c) a intenção avança e o plano fica para trás → ÓRFÃO, falha nomeada.
+    expect(tasks.listPlanIntentVersions(mission.id)).toEqual([1]);
+    expect(() => tasks.getPlanReceipt(mission.id, 2)).toThrow(
+      /orphan_sealed_plan/i,
+    );
+    expect(() => tasks.getPlanReceipt(mission.id, 2)).toThrow(
+      /versão 1 da intenção e a missão está na versão 2/,
+    );
+    expect(() => tasks.getPlanReceipt(mission.id, 2)).toThrow(
+      /Retome a missão para re-selar/,
+    );
   });
 
   it('seals a pending approved plan only with the exact main-owned preflight capability', () => {

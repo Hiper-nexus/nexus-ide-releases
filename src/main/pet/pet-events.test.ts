@@ -38,7 +38,20 @@ describe('MissionTransitionTracker', () => {
     t.ingest('a', [{ id: '1', title: 'Deploy', status: 'running' }], at);
     expect(
       t.ingest('a', [{ id: '1', title: 'Deploy', status: 'blocked' }], at),
-    ).toEqual([{ kind: 'mission-blocked', title: 'Deploy', at, missionId: '1' }]);
+    ).toEqual([
+      {
+        kind: 'mission-blocked',
+        title: 'Deploy',
+        at,
+        missionId: '1',
+        // Sem nota durável, o evento admite que não sabe — nunca inventa.
+        cause: {
+          code: 'unknown',
+          headline: 'Motivo não registrado.',
+          action: 'Abra o diagnóstico da missão para ver o que aconteceu.',
+        },
+      },
+    ]);
   });
 
   it('não pede intervenção durante retry técnico, mas avisa se virar espera humana', () => {
@@ -77,7 +90,18 @@ describe('MissionTransitionTracker', () => {
         at + 2,
       ),
     ).toEqual([
-      { kind: 'mission-blocked', title: 'Deploy', at: at + 2, missionId: '1' },
+      {
+        kind: 'mission-blocked',
+        title: 'Deploy',
+        at: at + 2,
+        missionId: '1',
+        // Bloqueio sem nota durável: honesto, nunca "aguardando decisão".
+        cause: {
+          code: 'unknown',
+          headline: 'Motivo não registrado.',
+          action: 'Abra o diagnóstico da missão para ver o que aconteceu.',
+        },
+      },
     ]);
   });
 
@@ -104,6 +128,11 @@ describe('MissionTransitionTracker', () => {
         title: 'Deploy',
         at: at + 1,
         missionId: '1',
+        cause: {
+          code: 'unknown',
+          headline: 'Motivo não registrado.',
+          action: 'Abra o diagnóstico da missão para ver o que aconteceu.',
+        },
       },
     ]);
   });
@@ -153,6 +182,12 @@ describe('MissionTransitionTracker', () => {
         title: 'Deploy',
         at: at + 2,
         missionId: '1',
+        cause: {
+          code: 'terminal-failure',
+          headline: 'A recuperação automática se esgotou nesta falha.',
+          action:
+            'Abra o diagnóstico da missão, corrija a causa e retome a missão.',
+        },
       },
     ]);
   });
@@ -175,7 +210,17 @@ describe('MissionTransitionTracker', () => {
         at + 1,
       ),
     ).toEqual([
-      { kind: 'mission-blocked', title: 'Deploy', at: at + 1, missionId: '1' },
+      {
+        kind: 'mission-blocked',
+        title: 'Deploy',
+        at: at + 1,
+        missionId: '1',
+        cause: {
+          code: 'unknown',
+          headline: 'Motivo não registrado.',
+          action: 'Abra o diagnóstico da missão para ver o que aconteceu.',
+        },
+      },
     ]);
 
     expect(
@@ -221,6 +266,11 @@ describe('MissionTransitionTracker', () => {
         title: 'Handoff não entregue — Deploy',
         at: at + 1,
         missionId: '1',
+        cause: {
+          code: 'handoff-not-delivered',
+          headline: 'O worker terminou, mas a entrega não chegou ao orquestrador.',
+          action: 'Abra o diagnóstico da missão e reenvie a entrega pendente.',
+        },
       },
     ]);
   });

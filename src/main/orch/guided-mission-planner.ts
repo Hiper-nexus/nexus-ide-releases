@@ -13,6 +13,7 @@ import { listAdapterInfos } from "../adapters/adapter-registry";
 import { hasAvailableAccount } from "../persistence/account-store";
 import { listProviderSettings } from "../persistence/provider-config-store";
 import { getOrchSettings } from "../persistence/settings-store";
+import { OWNERSHIP_COVERAGE_DOMAIN } from "../runtime/worktree-contract";
 import { requireWorktreeRuntimeRegistry } from "../runtime/worktree-runtime-registry";
 import {
   assertExactRosterRoutes,
@@ -438,6 +439,14 @@ export function ensureGuidedMissionPlan(
     workGraph.workKind === "doc"
       ? documentOwnershipFence(baseOwnership)
       : baseOwnership;
+  // Provenance travels WITH the claim, because only the planner knows it.
+  // Intent-derived paths are an assertion about this goal and stay exclusive.
+  // Inventory-derived paths are the planner admitting it could not narrow the
+  // goal: identical for every mission on the checkout, so enforcing them as
+  // exclusive meant a second mission could never reserve a worktree here.
+  // They stay the merge permit; they stop being a veto.
+  const ownershipCoverageDomains: readonly string[] =
+    intentOwnership.length > 0 ? [] : [OWNERSHIP_COVERAGE_DOMAIN];
   const advisoryTasks = workGraph.advisors.map((agent, index) => {
     const executionMode = guidedAdvisoryExecutionMode(agent);
     const isolated = executionMode === "isolated_worktree";
@@ -454,7 +463,11 @@ export function ensureGuidedMissionPlan(
         files: isolated ? [...ownershipFiles] : [],
         symbols: [],
         domains: isolated
-          ? [GUIDED_ISOLATED_ADVISORY_DOMAIN, "sequential-only"]
+          ? [
+              GUIDED_ISOLATED_ADVISORY_DOMAIN,
+              "sequential-only",
+              ...ownershipCoverageDomains,
+            ]
           : [GUIDED_TASK_DOMAINS.advisory],
       },
       dependsOn: [],
@@ -563,7 +576,11 @@ export function ensureGuidedMissionPlan(
         files: isolated ? [...ownershipFiles] : [],
         symbols: [],
         domains: isolated
-          ? [GUIDED_ISOLATED_ADVISORY_DOMAIN, "sequential-only"]
+          ? [
+              GUIDED_ISOLATED_ADVISORY_DOMAIN,
+              "sequential-only",
+              ...ownershipCoverageDomains,
+            ]
           : [GUIDED_TASK_DOMAINS.independentReview],
       },
       dependsOn:
@@ -600,7 +617,10 @@ export function ensureGuidedMissionPlan(
       ownership: {
         files: [...ownershipFiles],
         symbols: [],
-        domains: [GUIDED_TASK_DOMAINS.implementation],
+        domains: [
+          GUIDED_TASK_DOMAINS.implementation,
+          ...ownershipCoverageDomains,
+        ],
       },
       dependsOn: reproductionTasks.map((task) => task.id),
     },
@@ -623,7 +643,11 @@ export function ensureGuidedMissionPlan(
         symbols: [],
         // Gate is exclusive even when read_only/empty so unfinished tip
         // advisories cannot share a wave with the final QA pass.
-        domains: [GUIDED_TASK_DOMAINS.qualityGate, "sequential-only"],
+        domains: [
+          GUIDED_TASK_DOMAINS.qualityGate,
+          "sequential-only",
+          ...(qualityGateReadOnly ? [] : ownershipCoverageDomains),
+        ],
       },
       dependsOn: qualityGateDependencies,
     },

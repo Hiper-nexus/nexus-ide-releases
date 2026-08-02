@@ -6,11 +6,14 @@ import { createHash } from "node:crypto";
 import type { ProjectExecutionScope } from "../../shared/types";
 import type { GitRunner } from "./git-command";
 import {
+  ACTIVE_WORKTREE_STATUSES,
+  OwnershipOverlapError,
   OwnershipViolationError,
   WorktreeStateConflictError,
   assertSha,
   fileOwnershipClaimsOverlap,
   normalizeFileOwnership,
+  ownershipIsCoverage,
   worktreeTaskKey,
   type IntegrationCheckoutSnapshot,
   type PreparedWorktreeIntegration,
@@ -300,6 +303,49 @@ export function markDiscardedNoChange(
   });
 }
 
+/**
+ * A coverage permit buys the right to write wherever the planner could not
+ * narrow. It never buys the right to write over a path another live task named
+ * precisely.
+ *
+ * At reservation time a coverage set is fiction — it is the whole inventory,
+ * so enforcing it there is what wedged every second mission. At integration
+ * time the diff is fact, and this is the first moment the real write set can
+ * be matched against real exclusive claims. Fail-closed, before any merge.
+ */
+function assertCoverageDiffClearsExclusiveClaims(
+  record: WorktreeRecord,
+  records: readonly WorktreeRecord[],
+  changedFiles: readonly string[],
+): void {
+  if (!ownershipIsCoverage(record.ownership)) return;
+  for (const other of records) {
+    if (other.taskKey === record.taskKey) continue;
+    if (!ACTIVE_WORKTREE_STATUSES.has(other.status)) continue;
+    if (record.dependencies.includes(other.taskKey)) continue;
+    if (other.dependencies.includes(record.taskKey)) continue;
+    // Two coverage permits cannot be ordered by claim: neither named the file.
+    // Git's own merge stays the authority there, fail-closed on conflict.
+    if (ownershipIsCoverage(other.ownership)) continue;
+    const collisions = changedFiles.filter((file) =>
+      other.ownership.files.some((claim) =>
+        fileOwnershipClaimsOverlap(claim, file),
+      ),
+    );
+    if (collisions.length > 0) {
+      throw new OwnershipOverlapError(
+        other.taskKey,
+        Object.freeze({
+          files: Object.freeze([...new Set(collisions)].sort()),
+          symbols: Object.freeze([]),
+          domains: Object.freeze([]),
+        }),
+        { missionId: other.missionId, taskId: other.taskId },
+      );
+    }
+  }
+}
+
 export function prepareIntegrationInternal(
   host: IntegrationHost,
   scope: ProjectExecutionScope,
@@ -364,6 +410,7 @@ export function prepareIntegrationInternal(
         ),
     );
     if (undeclared.length > 0) throw new OwnershipViolationError(undeclared);
+    assertCoverageDiffClearsExclusiveClaims(record, records, changedFiles);
     const diff = host.git.run(record.worktreePath, [
       "diff",
       "--no-ext-diff",

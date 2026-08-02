@@ -200,6 +200,11 @@ function flushDigestBuffer(
     );
   }
   if (humanParts.length > 0) {
+    // Digest de UMA missão bloqueada continua sendo aquela missão: manter
+    // missionId + cause é o que deixa o toast abrir o diagnóstico certo e
+    // dizer o porquê. Agregado de várias não tem causa única — e não inventa.
+    const soleBlocked =
+      blocked.length === 1 && waiting.length === 0 ? blocked[0]! : null;
     decisions.push(
       toDecision(
         state,
@@ -210,6 +215,10 @@ function flushDigestBuffer(
               : 'agent-waiting',
           title: humanParts.join(' · '),
           at: now,
+          ...(soleBlocked?.missionId
+            ? { missionId: soleBlocked.missionId }
+            : {}),
+          ...(soleBlocked?.cause ? { cause: soleBlocked.cause } : {}),
         },
         now,
         false,
@@ -229,6 +238,9 @@ function flushDigestBuffer(
           at: now,
           ...(technical.length === 1 && technical[0]!.missionId
             ? { missionId: technical[0]!.missionId }
+            : {}),
+          ...(technical.length === 1 && technical[0]!.cause
+            ? { cause: technical[0]!.cause }
             : {}),
         },
         now,

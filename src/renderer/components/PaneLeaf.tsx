@@ -2,12 +2,14 @@ import { useLayoutEffect, useRef } from 'react';
 import type { PaneModel } from '../../shared/types';
 import { useLayoutStore } from '../state/layout-store';
 import { useSessionStateStore } from '../state/session-state-store';
+import { isStructuralPlaceholderPane } from '../lib/split-tree';
 import { attachHost, blurHost, focusHost } from '../terminal/terminal-host';
 import { BrowserPane } from './BrowserPane';
 import { PaneActivityStrip } from './PaneActivityStrip';
 import { PaneBirthOverlay } from './PaneBirthOverlay';
 import { PaneInteractionSurface } from './PaneInteractionSurface';
 import { PaneToolbar } from './PaneToolbar';
+import { PaneVacancy } from './PaneVacancy';
 import { AcpPaneView } from './AcpPaneView';
 
 interface Props {
@@ -21,6 +23,14 @@ interface Props {
  * behind the pane never resets on split/close.
  */
 export function PaneLeaf({ pane }: Props) {
+  // The marker outranks the kind. A structural placeholder is minted as a
+  // shell for one reason only — the tree has no "empty slot" type — and every
+  // terminal behaviour it inherits (scrollback replay, PTY spawn, prompt) is
+  // an accident of that choice. Branching here, on the same predicate the
+  // store uses, keeps the rendered surface and the layout rule from drifting.
+  if (isStructuralPlaceholderPane(pane)) {
+    return <PaneVacancy pane={pane} />;
+  }
   if (pane.kind === 'browser') {
     return <BrowserPane pane={pane} />;
   }

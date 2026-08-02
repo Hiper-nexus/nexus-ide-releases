@@ -2,9 +2,22 @@ import {
   isPetUrgentEvent,
   petOpenActionFor,
   type PetEvent,
+  type PetEventCause,
   type PetEventKind,
   type PetOpenAction,
 } from '../../shared/pet-types';
+import { missionBlockCauseText } from '../../shared/mission-block-cause';
+
+/** Teto do balão: o porquê pode ser cortado, o acionável nunca. */
+const BALLOON_CAUSE_LIMIT = 150;
+
+function causeText(cause: PetEventCause | undefined): string | null {
+  if (!cause) return null;
+  return missionBlockCauseText(
+    { ...cause, detail: null },
+    BALLOON_CAUSE_LIMIT,
+  );
+}
 
 /**
  * Fila de balões do pet — reducer puro (testável): um balão visível por vez,
@@ -61,23 +74,29 @@ export function balloonContentFor(
         text: event.title,
         cta: 'Ver no Ops Board',
       };
-    case 'mission-technical-failure':
+    case 'mission-technical-failure': {
+      const why =
+        causeText(event.cause) ??
+        'A recuperação automática parou. Abra o diagnóstico para tentar novamente.';
       return {
         title: 'Falha técnica',
-        text: event.title.trim()
-          ? `${event.title.trim()} — a recuperação automática parou. Abra o diagnóstico para tentar novamente.`
-          : 'A recuperação automática parou. Abra o diagnóstico para tentar novamente.',
+        text: event.title.trim() ? `${event.title.trim()} — ${why}` : why,
         cta: 'Ver diagnóstico',
       };
-    case 'mission-blocked':
+    }
+    case 'mission-blocked': {
+      // O PORQUÊ vem no evento. Sem ele o balão dizia "parou esperando uma
+      // decisão", que não deixa o operador entender, resolver nem ajustar.
+      const why =
+        causeText(event.cause) ??
+        'Motivo não registrado. Abra o diagnóstico da missão para ver o que aconteceu.';
       return {
         title: 'Preciso de você',
         // Texto completo; a UI do balão faz wrap (sem line-clamp).
-        text: event.title.trim()
-          ? `${event.title.trim()} — a missão parou esperando uma decisão.`
-          : 'A missão parou esperando uma decisão sua.',
+        text: event.title.trim() ? `${event.title.trim()} — ${why}` : why,
         cta: 'Intervir agora',
       };
+    }
     case 'agent-waiting':
       return {
         title: 'Agente pediu input',

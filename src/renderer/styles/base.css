@@ -1067,6 +1067,29 @@ body {
   border-color: color-mix(in srgb, var(--text-dim) 40%, var(--border));
 }
 
+/* Vaga estrutural: presença de SLOT, não de sessão. Tracejada e recuada, para
+   nunca ser lida como um pane com trabalho dentro. */
+.pane--vacancy {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--text-dim) 34%, var(--border));
+  background: color-mix(in srgb, var(--bg) 60%, var(--bg-elevated));
+}
+
+.pane__vacancy {
+  display: grid;
+  place-items: center;
+  flex: 1;
+  min-height: 0;
+  padding: var(--space-6);
+  overflow: auto;
+  cursor: default;
+}
+
+.pane__vacancy .empty-state {
+  max-width: 46ch;
+  background: color-mix(in srgb, var(--bg-elevated) 70%, transparent);
+}
+
 .pane--skill-target {
   border-color: var(--accent);
 }

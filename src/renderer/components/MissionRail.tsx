@@ -63,6 +63,17 @@ import {
 import { paneSessionView } from '../../shared/pane-session-view';
 import { hasAutomaticTechnicalRecovery } from '../../shared/mission-recovery-policy';
 import { hasMissionFailureNotes } from '../../shared/mission-failure-presentation';
+import { missionBlockCause } from '../../shared/mission-block-cause';
+
+/** A segunda linha do card é estreita: corta o porquê, nunca a ação do card. */
+const RAIL_CAUSE_LIMIT = 64;
+
+function clipRailCause(value: string): string {
+  if (value.length <= RAIL_CAUSE_LIMIT) return value;
+  const cut = value.slice(0, RAIL_CAUSE_LIMIT - 1);
+  const space = cut.lastIndexOf(' ');
+  return `${(space > 24 ? cut.slice(0, space) : cut).trimEnd()}…`;
+}
 
 /**
  * Activity Rail — missões **deste workspace** apenas:
@@ -477,10 +488,20 @@ export function MissionRail() {
       return `${missionRailResumeCopy(mission.status, liveInGrid, displayIntentState).meta ?? 'Retomar'}${laneBit}${handBit}`;
     }
     if (mission.status === 'blocked') {
-      return `${
-        missionRailResumeCopy(mission.status, liveInGrid, displayIntentState)
-          .meta ?? 'Clique para retomar'
-      }${laneBit}${handBit}`;
+      // O card mostra o PORQUÊ, não só "Clique para retomar": a razão já está
+      // gravada na descrição da missão e é o que decide o próximo passo.
+      const cause = missionBlockCause({
+        status: mission.status,
+        intentState: mission.intentState ?? null,
+        description: mission.description ?? '',
+      });
+      // Causa desconhecida ADMITE que é desconhecida: "Clique para retomar"
+      // escondia que o Nexus também não sabia por que a missão parou.
+      const why =
+        cause.code === 'unknown'
+          ? 'Motivo não registrado · ver diagnóstico'
+          : clipRailCause(cause.headline);
+      return `${why}${laneBit}${handBit}`;
     }
     if (mission.status === 'done' || mission.status === 'failed') {
       return `${started}${laneBit}${handBit}`;

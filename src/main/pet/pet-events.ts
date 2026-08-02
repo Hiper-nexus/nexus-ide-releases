@@ -1,6 +1,7 @@
-import type { PetEvent } from '../../shared/pet-types';
+import type { PetEvent, PetEventCause } from '../../shared/pet-types';
 import type { MissionIntentContract } from '../../shared/mission-intent';
 import { hasAutomaticTechnicalRecovery } from '../../shared/mission-recovery-policy';
+import { missionBlockCause } from '../../shared/mission-block-cause';
 
 /**
  * Detecção de TRANSIÇÕES — o pet reage a mudanças, não a estados. Funções
@@ -32,6 +33,25 @@ function missionAttentionState(mission: MissionLike): string {
     return hasAutomaticRecovery ? 'blocked:technical:recovering' : 'blocked:user';
   }
   return mission.status;
+}
+
+/**
+ * A razão do bloqueio já está gravada na descrição da missão (espelho do
+ * `task_dispatch_queue.last_error`). Aqui ela só é NOMEADA e embarcada no
+ * evento: a janela do pet não acessa lojas, então sem isto o motivo morria no
+ * main e o operador via apenas "Bloqueado".
+ */
+function causeFor(mission: MissionLike): PetEventCause {
+  const cause = missionBlockCause({
+    status: mission.status,
+    intentState: mission.intentState ?? null,
+    description: mission.description ?? '',
+  });
+  return {
+    code: cause.code,
+    headline: cause.headline,
+    action: cause.action,
+  };
 }
 
 export class MissionTransitionTracker {
@@ -83,12 +103,15 @@ export class MissionTransitionTracker {
               title: mission.title,
               at,
               missionId: mission.id,
+              cause: causeFor(mission),
             });
           }
           continue;
         }
         if (hasAutomaticRecovery) continue;
-        // O aviso que mais importa: a missão parou esperando um humano.
+        // O aviso que mais importa: a missão parou e alguém precisa agir. O
+        // título fica sendo o da missão; o PORQUÊ viaja em `cause` para o
+        // balão/toast poderem dizer o que aconteceu e o que fazer.
         const handoffDeliveryFailed = mission.description?.includes(
           '<!-- nexus:handoff-delivery-failed:',
         );
@@ -99,6 +122,7 @@ export class MissionTransitionTracker {
             : mission.title,
           at,
           missionId: mission.id,
+          cause: causeFor(mission),
         });
       }
     }

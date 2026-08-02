@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { compileIntentContract } from "../../shared/mission-intent";
+import { OWNERSHIP_COVERAGE_DOMAIN } from "../runtime/worktree-contract";
 import { decodeTaskScheduleDetail } from "./mission-scheduler-meta";
 import {
   ensureGuidedMissionPlan,
@@ -54,6 +55,86 @@ describe("Guided Planner v2", () => {
     expect(decodeTaskScheduleDetail(implementation!.detail).meta?.ownership.files)
       .toEqual(["package.json", "src", "tests"]);
     expect(h.deps.listRepositoryOwnership).toHaveBeenCalledOnce();
+  });
+
+  it("labels the inventory surface as coverage so a second mission is not vetoed by it", () => {
+    const base = mission();
+    const intentContract = compileIntentContract({
+      goal:
+        "Analise o projeto e corrija os bugs que impedem as missões de avançar.",
+      acceptanceCriteria: [
+        "As missões iniciam, retomam após reinício e chegam à validação final.",
+      ],
+      intentVersion: base.intentVersion!,
+      source: "typed",
+      lane: "standard",
+    });
+    const h = harness({
+      currentMission: mission({
+        description: intentContract.goal,
+        intentContract: {
+          ...intentContract,
+          approvedAt: 10,
+          dispatchedAt: 10,
+          squadRevisionHash: base.intentContract!.squadRevisionHash,
+        },
+      }),
+    });
+
+    expect(
+      ensureGuidedMissionPlan(h.suite, "mission-guided", h.deps),
+    ).toMatchObject({ applicable: true, sealed: true });
+
+    const rows = h.createPlanAtomically.mock.calls[0]![0].rows;
+    const implementation = rows.find(
+      (row) => row.plannerId === GUIDED_MISSION_PLANNER_TASK_ID,
+    );
+    const ownership = decodeTaskScheduleDetail(implementation!.detail).meta
+      ?.ownership;
+    expect(ownership?.files).toEqual(["package.json", "src", "tests"]);
+    expect(ownership?.domains).toContain(OWNERSHIP_COVERAGE_DOMAIN);
+    // Every task that actually carries the inventory files must carry the
+    // label too, or it re-becomes a checkout-wide veto.
+    for (const row of rows) {
+      const meta = decodeTaskScheduleDetail(row.detail).meta;
+      if (!meta?.ownership || meta.ownership.files.length === 0) continue;
+      expect(meta.ownership.domains).toContain(OWNERSHIP_COVERAGE_DOMAIN);
+    }
+  });
+
+  it("keeps an intent-named write surface exclusive — no coverage label", () => {
+    const base = mission();
+    const intentContract = compileIntentContract({
+      goal: "Edite o arquivo src/feature/checkout.ts para corrigir o total.",
+      acceptanceCriteria: ["O total do carrinho fecha com o esperado."],
+      intentVersion: base.intentVersion!,
+      source: "typed",
+      lane: "standard",
+    });
+    const h = harness({
+      currentMission: mission({
+        description: intentContract.goal,
+        intentContract: {
+          ...intentContract,
+          approvedAt: 10,
+          dispatchedAt: 10,
+          squadRevisionHash: base.intentContract!.squadRevisionHash,
+        },
+      }),
+    });
+
+    expect(
+      ensureGuidedMissionPlan(h.suite, "mission-guided", h.deps),
+    ).toMatchObject({ applicable: true, sealed: true });
+
+    const implementation = h.createPlanAtomically.mock.calls[0]![0].rows.find(
+      (row) => row.plannerId === GUIDED_MISSION_PLANNER_TASK_ID,
+    );
+    const ownership = decodeTaskScheduleDetail(implementation!.detail).meta
+      ?.ownership;
+    expect(ownership?.files).toEqual(["src/feature/checkout.ts"]);
+    expect(ownership?.domains).not.toContain(OWNERSHIP_COVERAGE_DOMAIN);
+    expect(h.deps.listRepositoryOwnership).not.toHaveBeenCalled();
   });
 
   it("covers common web, backend, CLI, mobile and service scaffold roots explicitly", () => {

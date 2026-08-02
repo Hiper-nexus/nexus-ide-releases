@@ -10,6 +10,10 @@ import type {
 import { isMissionRuntimeSquadId } from '../../shared/orch-types';
 import { useOrchStore, type OrchPanelTab } from '../state/orch-store';
 import { presentMissionFailure } from '../../shared/mission-failure-presentation';
+import {
+  missionBlockCause,
+  redactMissionBlockDetail,
+} from '../../shared/mission-block-cause';
 import { askConfirm } from '../state/confirm-store';
 import { confirmAndReopenMission } from '../orch/confirm-reopen-mission';
 import { useMissionWizardStore } from '../state/mission-wizard-store';
@@ -113,6 +117,17 @@ function MissionRow({
   const failure = presentMissionFailure(mission.description ?? '');
   const hasDiagnostic =
     mission.status === 'blocked' && failure.sections.length > 0;
+  // Missão bloqueada SEM seções de diagnóstico era a pior tela: status
+  // "bloqueada" e nada mais. A causa nomeada (ou a admissão honesta de que
+  // não foi registrada) sempre aparece, com o próximo passo.
+  const blockCause =
+    mission.status === 'blocked'
+      ? missionBlockCause({
+          status: mission.status,
+          intentState: mission.intentState ?? null,
+          description: mission.description ?? '',
+        })
+      : null;
   return (
     <li className="orch-item">
       <div className="orch-item__head">
@@ -163,9 +178,16 @@ function MissionRow({
       {failure.summary && (
         <p className="orch-item__detail">{failure.summary}</p>
       )}
+      {blockCause && (
+        <p className="orch-item__detail orch-item__detail--failure">
+          <strong>{blockCause.headline}</strong> {blockCause.action}
+        </p>
+      )}
       {failure.headline && (
         <p className="orch-item__detail orch-item__detail--failure">
-          {failure.headline}
+          {/* Linha compacta da lista: caminho absoluto/token/e-mail ficam para
+              o diagnóstico completo, que é onde o operador realmente precisa. */}
+          {redactMissionBlockDetail(failure.headline)}
         </p>
       )}
       {mission.milestones.length > 0 && (

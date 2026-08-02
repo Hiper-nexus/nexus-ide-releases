@@ -4,6 +4,9 @@
  * no mesmo espírito de channels.ts.
  */
 
+// Import APENAS de tipo: apagado na compilação, o preload segue sem runtime.
+import type { MissionBlockCauseCode } from './mission-block-cause';
+
 export const PET_CHANNELS = {
   /** invoke: renderer (qualquer janela) → main. Lê as prefs atuais. */
   getPrefs: 'pet:getPrefs',
@@ -339,6 +342,20 @@ export type PetEventKind =
 /** Ação que o pet pede à janela principal quando o usuário interage. */
 export type PetOpenAction = 'focus-main' | 'open-ops';
 
+/**
+ * POR QUE a missão parou, já apresentado. Viaja com o evento porque a janela
+ * do pet não tem acesso às lojas: sem isto o balão só sabia dizer "a missão
+ * parou esperando uma decisão", que não deixa ninguém agir. Campos já
+ * truncados e saneados em `mission-block-cause.ts`.
+ */
+export interface PetEventCause {
+  code: MissionBlockCauseCode;
+  /** O que aconteceu, em uma frase. */
+  headline: string;
+  /** O que o operador faz agora. */
+  action: string;
+}
+
 export interface PetEvent {
   kind: PetEventKind;
   /** Título curto para o balão (nome da missão / título do pane). */
@@ -349,6 +366,8 @@ export interface PetEvent {
    * renderer navegar direto para o diagnóstico em vez de abrir uma lista.
    */
   missionId?: string;
+  /** Razão do bloqueio/falha, quando o evento nasce de uma missão. */
+  cause?: PetEventCause;
 }
 
 /** Atenção operacional: atravessa o modo "dormindo" e abre o Ops Board. */
