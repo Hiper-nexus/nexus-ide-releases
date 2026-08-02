@@ -1,5 +1,53 @@
 # Changelog
 
+## 0.22.0 — O piloto aprende a pilotar
+
+Data: 2026-08-02
+
+O Nexus passa a saber O QUE está executando. Antes desta release, "corrigir um
+bug" e "criar uma feature" seguiam o caminho byte a byte idêntico, o objetivo
+em português natural não ativava o caminho visual, e um projeto novo nascia
+sem contrato de design — caindo no default do modelo.
+
+### Tipo de trabalho e grafo
+
+- Classificador de trabalho (bug/feature/doc/visual/ops/unknown) com
+  confiança e sinais; `unknown` é o caminho genérico declarado, nunca chute.
+- Missão de bug ganha reprodução ANTES da correção e teste de regressão
+  DEPOIS, com aceite "o teste falha no HEAD atual e passa depois".
+- Documentação fica fisicamente cercada fora do código, com deny-list para
+  requirements.txt e parentes (build, não doc). Classificação fraca nunca
+  aplica restrição irreversível.
+- O roster automático cria consultores; revisões independentes rodam em
+  paralelo sobre o MESMO HEAD integrado, com a cerca de observação cobrindo
+  também as lanes novas.
+
+### Contrato de design de ponta a ponta
+
+- Catálogo com três fontes: referências locais, getdesign (74 marcas, SEM
+  chave de API) e designmd.ai; o botão Importar cai na cadeia sem chave em
+  vez de morrer no 401.
+- Missão de UI sem contrato materializa um sozinha, com procedência e hash;
+  projeto maduro recebe contrato DERIVADO dos próprios tokens.
+- Os bytes do contrato são selados no plano e chegam ao executor e ao gate;
+  o revisor visual lê o arquivo que existe ou reporta a ausência.
+- O sensor compara token declarado com o valor documentado — prosa não
+  declara, comentário não satisfaz, cor é verificada por token.
+- Uma gramática única de "isto é UI?" substitui as cinco divergentes;
+  português natural ("trocar as cores do tema") ativa o caminho visual.
+
+### Instrumentos e operação
+
+- Cinco leituras novas para o orquestrador: cota por conta, ranking de
+  modelos, MCPs, inventário de skills e de CLIs — papel-cientes, sem segredo
+  por construção, honestas sobre o que o produto não mede.
+- Entrega física de skills consertada no Codex e no Claude nativos, com
+  marcador de reversibilidade; BMAD entregue a quem escreve PRD/stories.
+- Layout: invariantes na costura de escrita — placeholder nunca cobre a
+  missão, foco nunca fica órfão, teto de panes falha nomeado.
+- Cota esgotada na frase da OpenAI volta a trocar de conta.
+- Fila de testes do servidor: 13 fixtures de PGlite vazando fechadas.
+
 ## 0.21.0 — O agente deixou de ser texto
 
 Data: 2026-08-01
