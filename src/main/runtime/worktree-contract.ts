@@ -242,6 +242,8 @@ export const OWNERSHIP_NON_CLAIM_DOMAINS = Object.freeze(
     "guided-isolated-advisory",
     "guided-implementation",
     "guided-quality-gate",
+    "guided-reproduction",
+    "guided-regression",
     "sequential-only",
     TEAM_READ_ONLY_FANOUT_DOMAIN,
   ]),

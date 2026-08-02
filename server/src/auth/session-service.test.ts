@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, onTestFinished } from 'vitest';
 import { PGlite } from '@electric-sql/pglite';
 import { drizzle } from 'drizzle-orm/pglite';
 import * as schema from '../db/schema';
@@ -12,6 +12,13 @@ import {
 
 async function makeTestDb(): Promise<Db> {
   const client = new PGlite();
+  // PGlite sobe um PostgreSQL WASM por fixture. Sem fechar, cada teste do
+  // arquivo deixa mais um runtime residente e a rodada inteira disputa
+  // CPU/memória com os demais workers. Fechar ao fim do teste mantém
+  // exatamente um vivo por vez.
+  onTestFinished(async () => {
+    await client.close();
+  });
   await client.exec(CREATE_TABLES_SQL);
   return drizzle(client, { schema }) as unknown as Db;
 }

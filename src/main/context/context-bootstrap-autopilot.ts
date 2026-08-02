@@ -28,6 +28,20 @@ import { inspectGitBinding } from './git-binding';
 import { getProjectDomainStores } from '../orch/project-domain-store-registry';
 import { assertPromotedPlanSnapshot } from '../orch/plan-promotion-authority';
 import { resolvePromotedPlanGitSource } from '../orch/promoted-plan-git-authority';
+import { getOrchSettings } from '../persistence/settings-store';
+import {
+  buildDesignContractBootstrap,
+  DESIGN_CONTRACT_BINDABLE_SOURCES,
+  DESIGN_CONTRACT_TARGET_PATH,
+  type DesignContractBootstrapDecision,
+} from './design-contract-bootstrap';
+import {
+  describeDesignContractProposed,
+  describeDesignContractRejected,
+  describeDesignContractReviewDeferred,
+  describeDesignContractSkip,
+  type DesignContractSkipReason,
+} from '../../shared/design-contract-policy';
 
 export type BootstrapAutopilotPhase =
   | 'ready'
@@ -49,6 +63,33 @@ export interface BootstrapDraftOutcome {
   readonly error?: string;
 }
 
+/**
+ * What the design branch did this pass. `null` only when the branch is
+ * explicitly disabled; otherwise it always explains itself, including the
+ * skips — silence about design is exactly the state that let projects ship
+ * without a contract.
+ */
+export interface DesignContractBootstrapOutcome {
+  readonly targetPath: string;
+  readonly status: 'applied' | 'proposed' | 'rejected' | 'skipped';
+  /** `project-own` when the contract describes tokens the project already had. */
+  readonly directionMode:
+    | 'setting'
+    | 'match'
+    | 'neutral'
+    | 'project-own'
+    | null;
+  readonly skipReason: DesignContractSkipReason | null;
+  /** Agent-facing instruction; only present when a contract was materialized. */
+  readonly hint: string | null;
+  /**
+   * Operator-facing prose, ALWAYS present. Every decision this branch makes —
+   * including every skip — says what happened and what the operator can do.
+   * The enum alone died inside the MCP payload and nobody could read it.
+   */
+  readonly message: string;
+}
+
 export interface ContextBootstrapAutopilotResult {
   readonly phase: BootstrapAutopilotPhase;
   readonly readiness: ContextReadinessReport;
@@ -67,6 +108,7 @@ export interface ContextBootstrapAutopilotResult {
   readonly commitSha: string | null;
   readonly blockingError: string | null;
   readonly quorumAvailable: boolean;
+  readonly designContract: DesignContractBootstrapOutcome | null;
   readonly autopilotHint: string;
 }
 
@@ -93,6 +135,21 @@ export interface ContextBootstrapAutopilotOptions {
     }): Promise<ContextDraftRecord>;
   };
   readonly selectQuorum?: (authorProvider: string) => { adapterId: string } | null;
+  /**
+   * Design branch seams. `null` disables the branch entirely (rollback);
+   * each `undefined` field resolves from the live mission / settings.
+   */
+  readonly designContract?: DesignContractBootstrapOptions | null;
+}
+
+export interface DesignContractBootstrapOptions {
+  /** Mission goal; `undefined` reads the live mission intent contract. */
+  readonly missionGoal?: string | null;
+  /** `undefined` reads `orch.designDefaultKit`. */
+  readonly pinnedKitId?: string | null;
+  /** `undefined` reads `orch.designLocalCatalogDir`. */
+  readonly catalogDir?: string | null;
+  readonly targetPath?: string;
 }
 
 const DEFAULT_MAX_AUTO_REVIEWS_PER_PASS = 1;
@@ -104,6 +161,32 @@ const BOOTSTRAP_SOURCE_POLICY_REVIEWER = Object.freeze({
 const CANONICAL_SOURCE_MECHANICAL_REVIEWER = Object.freeze({
   id: 'nexus-canonical-context-reviewer',
   sessionId: 'deterministic-read-only-v1',
+  provider: 'nexus-mechanical-review',
+});
+/**
+ * WHY THE DESIGN DRAFT DOES NOT GO TO THE CLI REVIEWER.
+ *
+ * `buildContextDraftReviewerPrompt` binds its reviewer to one method: "check
+ * every material claim against all bound sources; insufficient evidence
+ * requires rejection." That method fits a DESCRIPTIVE draft — a doc that
+ * asserts facts about the repository. A design contract is PRESCRIPTIVE: apart
+ * from the project name (bound to `package.json`) it asserts nothing about the
+ * repository at all; the rest is Nexus's own house template plus an
+ * identifier + hash of a reference file. Handing that to the CLI reviewer
+ * would buy either an arbitrary approval (fabricated evidence) or a permanent
+ * rejection (a deadlock that leaves the project with no contract). Both are
+ * worse than the truth.
+ *
+ * So the design draft is verified the way the canonical projections above are
+ * verified: an independent Nexus identity RE-DERIVES the document from the
+ * same inputs and approves only on a byte-exact match. That covers 100% of
+ * what the document actually claims — its provenance, its bound source hash,
+ * and the fact that no foreign content was injected. It is a distinct
+ * identity from the author, and apply/commit remain separate steps.
+ */
+const DESIGN_CONTRACT_MECHANICAL_REVIEWER = Object.freeze({
+  id: 'nexus-design-contract-reviewer',
+  sessionId: 'deterministic-house-contract-v1',
   provider: 'nexus-mechanical-review',
 });
 
@@ -188,7 +271,45 @@ const HUMAN_CONTEXT_REVIEW_HINT =
   'the independent review. Alternative: install/auth a second CLI provider, ' +
   'then nexus_context_draft_review_run on each draftId.';
 
+/**
+ * Skips that a mission does not need to hear about on its loudest channel: the
+ * goal is not about UI at all, so leading every backend hint with design prose
+ * would be noise. Their `message` still travels in the payload — silence in the
+ * hint is a volume decision, never a decision to hide.
+ */
+const QUIET_DESIGN_SKIPS: ReadonlySet<DesignContractSkipReason> = new Set([
+  'no-goal',
+  'not-visual-work',
+  'asset-not-interface',
+]);
+
+/**
+ * The design branch leads the hint whenever it has something a UI mission must
+ * act on — the contract it just materialized, or the reason there is none.
+ *
+ * It used to speak ONLY on `applied`. Every other outcome (six skip reasons, a
+ * rejection, a deferred review) was an enum in a payload with no prose anywhere
+ * in the product, so the operator could not tell "no contract was needed" from
+ * "the contract failed to materialize".
+ */
 function hintFor(result: Omit<ContextBootstrapAutopilotResult, 'autopilotHint'>): string {
+  const design = result.designContract;
+  const quiet =
+    !design ||
+    (design.status === 'skipped' &&
+      design.skipReason !== null &&
+      QUIET_DESIGN_SKIPS.has(design.skipReason));
+  const lead = quiet
+    ? ''
+    : design.status === 'applied' && design.hint
+      ? `${design.hint} `
+      : `${design.message} `;
+  return `${lead}${structuralHintFor(result)}`;
+}
+
+function structuralHintFor(
+  result: Omit<ContextBootstrapAutopilotResult, 'autopilotHint'>,
+): string {
   if (result.blockingError) {
     return (
       `Workflow binding blocked: ${result.blockingError}. ` +
@@ -266,6 +387,215 @@ function hintFor(result: Omit<ContextBootstrapAutopilotResult, 'autopilotHint'>)
     'Never invent business rules.' +
     invariantsGuidance(result.readiness)
   );
+}
+
+/**
+ * The mission goal, read from the live intent contract. Design is additive:
+ * any failure to read the goal means "do not propose a design contract",
+ * never "fail the bootstrap".
+ */
+function resolveMissionGoal(
+  options: ContextBootstrapAutopilotOptions,
+): string | null {
+  const configured = options.designContract?.missionGoal;
+  if (configured !== undefined) return configured;
+  const missionId = options.missionId;
+  if (!missionId) return null;
+  try {
+    const mission = getProjectDomainStores(options.scope).missions.get(missionId);
+    return mission?.intentContract?.goal ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function resolveDesignSettings(options: ContextBootstrapAutopilotOptions): {
+  pinnedKitId: string | null;
+  catalogDir: string | null;
+} {
+  const explicit = options.designContract ?? {};
+  const needsSettings =
+    explicit.pinnedKitId === undefined || explicit.catalogDir === undefined;
+  let settingsPin: string | null = null;
+  let settingsDir: string | null = null;
+  if (needsSettings) {
+    try {
+      const settings = getOrchSettings();
+      settingsPin = settings.designDefaultKit;
+      settingsDir = settings.designLocalCatalogDir;
+    } catch {
+      // Settings must never be the reason a project ships with no contract.
+    }
+  }
+  return {
+    pinnedKitId:
+      explicit.pinnedKitId === undefined ? settingsPin : explicit.pinnedKitId,
+    catalogDir:
+      explicit.catalogDir === undefined ? settingsDir : explicit.catalogDir,
+  };
+}
+
+/**
+ * Another author already owns this target when a proposed/approved draft sits
+ * there that this pass could not resume (different bytes, or bound to another
+ * mission). Their work wins: the autopilot steps aside instead of racing the
+ * UNIQUE active-target index or rejecting a human's import under a policy that
+ * was never written for it.
+ */
+function designTargetOwnedByAnotherDraft(
+  knowledge: ReturnType<typeof getContextKnowledgeService>,
+  proposal: BootstrapDocProposal,
+  missionId: string | null,
+): boolean {
+  const occupying = [
+    ...knowledge.list({ status: 'proposed' }),
+    ...knowledge.list({ status: 'approved' }),
+  ].filter((draft) => draft.targetPath === proposal.targetPath);
+  return occupying.some(
+    (draft) =>
+      draft.content !== proposal.content ||
+      (draft.missionId !== null && draft.missionId !== missionId),
+  );
+}
+
+/**
+ * The outcome of the design draft's independent re-derivation.
+ *
+ * WHY THIS IS THREE STATES AND NOT `proposal | null` (A1)
+ * ------------------------------------------------------
+ * It used to swallow every throw and answer `null`, and `null` meant "reject".
+ * But `buildDesignContractBootstrap` throws for TRANSIENT reasons too:
+ * `findExistingDesignContractInScope` re-raises anything that is not ENOENT, so
+ * one momentary EACCES/EISDIR on DESIGN.md became a DURABLE rejection. The next
+ * pass then re-derived byte-identical content, matched the rejection memory,
+ * recorded `rejected-stable` and never proposed again — and the one recovery
+ * path, the "replace a rejected draft" loop, excludes design explicitly. The
+ * target was blocked forever, with nothing in the product able to unblock it.
+ *
+ * A read failure is not evidence that a document is irreproducible. So:
+ *   - `derived`     — it ran and produced a proposal; compare the bytes.
+ *   - `refused`     — it ran and decided NOT to build (a contract appeared, the
+ *                     evidence vanished). That is a real non-reproducibility.
+ *   - `unavailable` — it could not run. Neither approve nor reject; retry.
+ */
+type DesignReDerivation =
+  | { readonly kind: 'derived'; readonly proposal: BootstrapDocProposal }
+  | { readonly kind: 'refused'; readonly detail: string }
+  | { readonly kind: 'unavailable'; readonly error: string };
+
+/**
+ * A second, independent pass over exactly the same pure inputs. This is the
+ * design draft's reviewer: it does not read the draft first and then look for
+ * agreement — it rebuilds the document from scratch and the caller demands the
+ * same bytes.
+ */
+async function reDeriveDesignProposal(
+  options: ContextBootstrapAutopilotOptions,
+  targetPath: string,
+): Promise<DesignReDerivation> {
+  const settings = resolveDesignSettings(options);
+  let decision: DesignContractBootstrapDecision;
+  try {
+    decision = await buildDesignContractBootstrap({
+      scope: options.scope,
+      goal: resolveMissionGoal(options),
+      pinnedKitId: settings.pinnedKitId,
+      catalogDir: settings.catalogDir,
+      targetPath,
+    });
+  } catch (error) {
+    rethrowIfBootstrapAborted(options.signal, error);
+    return Object.freeze({
+      kind: 'unavailable' as const,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+  return decision.proposal
+    ? Object.freeze({ kind: 'derived' as const, proposal: decision.proposal })
+    : Object.freeze({
+        kind: 'refused' as const,
+        detail: decision.skipReason ?? 'unknown',
+      });
+}
+
+/** Named so the outcome error is greppable and the hint can key off it. */
+const DESIGN_CONTRACT_REVIEW_DEFERRED =
+  'design-contract mechanical review could not re-derive the contract in this pass';
+
+function sameProposalBytes(
+  left: BootstrapDocProposal,
+  right: BootstrapDocProposal,
+): boolean {
+  return (
+    left.targetPath === right.targetPath &&
+    left.content === right.content &&
+    left.sources.length === right.sources.length &&
+    left.sources.every(
+      (source, index) =>
+        source.type === right.sources[index]?.type &&
+        source.locator === right.sources[index]?.locator &&
+        source.sourceHash === right.sources[index]?.sourceHash,
+    )
+  );
+}
+
+function designDirectionMode(
+  decision: DesignContractBootstrapDecision,
+): DesignContractBootstrapOutcome['directionMode'] {
+  if (decision.choice) return decision.choice.mode;
+  return decision.contractKind === 'project-derived' ? 'project-own' : null;
+}
+
+function designMessage(input: {
+  readonly decision: DesignContractBootstrapDecision;
+  readonly targetPath: string;
+  readonly status: DesignContractBootstrapOutcome['status'];
+  readonly skipReason: DesignContractSkipReason | null;
+  readonly reviewDeferredError: string | null;
+}): string {
+  const { decision, targetPath, status, skipReason } = input;
+  if (status === 'skipped') {
+    return describeDesignContractSkip({
+      reason: skipReason ?? 'not-visual-work',
+      targetPath,
+      workKind: decision.workKind?.kind ?? null,
+      workKindReason: decision.workKind?.reason ?? null,
+      existingContractPath: decision.existingContractPath,
+      bindableSources: DESIGN_CONTRACT_BINDABLE_SOURCES,
+    });
+  }
+  if (status === 'applied') {
+    return decision.hint ?? describeDesignContractProposed(targetPath);
+  }
+  if (status === 'rejected') return describeDesignContractRejected(targetPath);
+  return input.reviewDeferredError !== null
+    ? describeDesignContractReviewDeferred(targetPath, input.reviewDeferredError)
+    : describeDesignContractProposed(targetPath);
+}
+
+function designOutcome(
+  decision: DesignContractBootstrapDecision,
+  targetPath: string,
+  status: DesignContractBootstrapOutcome['status'],
+  skipReason: DesignContractSkipReason | null = null,
+  reviewDeferredError: string | null = null,
+): DesignContractBootstrapOutcome {
+  const resolvedSkipReason =
+    status === 'skipped' ? (skipReason ?? decision.skipReason) : null;
+  return Object.freeze({
+    targetPath,
+    status,
+    directionMode: designDirectionMode(decision),
+    skipReason: resolvedSkipReason,
+    hint: status !== 'skipped' ? decision.hint : null,
+    message: designMessage({
+      decision,
+      targetPath,
+      status,
+      skipReason: resolvedSkipReason,
+      reviewDeferredError,
+    }),
+  });
 }
 
 function workflowBindingError(scope: ProjectExecutionScope): string | null {
@@ -373,9 +703,62 @@ export async function runContextBootstrapAutopilot(
     // scaffold may fail if scope root is read-only; propose path will surface blockers
   }
 
+  // DESIGN BRANCH. Resolved before the readiness fast-path on purpose: a
+  // project can have a perfectly green context corpus and still have no design
+  // contract at all, which is precisely the state in which a UI mission starts
+  // inventing its own palette. Structural readiness must not hide it.
+  throwIfBootstrapAborted(options.signal);
+  const designTargetPath =
+    options.designContract?.targetPath ?? DESIGN_CONTRACT_TARGET_PATH;
+  let designDecision: DesignContractBootstrapDecision | null = null;
+  let designProposal: BootstrapDocProposal | null = null;
+  let designOwnedByAnother = false;
+  /** Set when the re-derivation could not run at all; see A1. */
+  let designReviewDeferredError: string | null = null;
+  if (options.designContract !== null) {
+    const designSettings = resolveDesignSettings(options);
+    try {
+      designDecision = await buildDesignContractBootstrap({
+        scope: options.scope,
+        goal: resolveMissionGoal(options),
+        pinnedKitId: designSettings.pinnedKitId,
+        catalogDir: designSettings.catalogDir,
+        targetPath: designTargetPath,
+      });
+      throwIfBootstrapAborted(options.signal);
+      designProposal = designDecision.proposal;
+      if (
+        designProposal &&
+        designTargetOwnedByAnotherDraft(
+          knowledge,
+          designProposal,
+          options.missionId ?? null,
+        )
+      ) {
+        designOwnedByAnother = true;
+        designProposal = null;
+      }
+    } catch (error) {
+      rethrowIfBootstrapAborted(options.signal, error);
+      // Additive by construction: a broken catalog or an unreadable
+      // package.json must never take the structural bootstrap down with it.
+      designDecision = null;
+      designProposal = null;
+    }
+  }
+  const designSkipOutcome = (): DesignContractBootstrapOutcome | null =>
+    designDecision
+      ? designOutcome(
+          designDecision,
+          designTargetPath,
+          'skipped',
+          designOwnedByAnother ? 'foreign-active-draft' : null,
+        )
+      : null;
+
   throwIfBootstrapAborted(options.signal);
   let readiness = workflow.inspectReadiness();
-  if (readiness.ready) {
+  if (readiness.ready && !designProposal) {
     const durableApplied = knowledge.list({ status: 'applied' })
       .filter((draft) => draft.appliedCommit === null);
     let recoveredCommitSha: string | null = null;
@@ -410,31 +793,41 @@ export async function runContextBootstrapAutopilot(
           options.author.provider,
         ),
       ),
+      designContract: designSkipOutcome(),
     };
     return Object.freeze({ ...base, autopilotHint: hintFor(base) });
   }
 
   const proposalOptions = Object.freeze({ promotedPlanSource });
-  const proposals: BootstrapDocProposal[] = map
-    ? [
-        ...buildContextBootstrapProposals(
-          options.scope,
-          map,
-          proposalOptions,
-        ),
-      ]
-    : [];
+  // Design is APPENDED, never merged into the structural builder: the
+  // greenfield and promoted-plan branches of buildContextBootstrapProposals
+  // return their own closed set, and a design contract must not change what
+  // those projections mean.
+  const proposals: BootstrapDocProposal[] = [
+    ...(map
+      ? buildContextBootstrapProposals(options.scope, map, proposalOptions)
+      : []),
+    ...(designProposal ? [designProposal] : []),
+  ];
+  const isDesignProposal = (proposal: BootstrapDocProposal): boolean =>
+    designProposal !== null && proposal.targetPath === designProposal.targetPath;
+  // The design contract is mechanically reviewable by construction: it was
+  // rendered from a pure function of scope + goal + settings in this very
+  // pass, and the review step re-derives it before approving.
+  const isMechanicallyReviewable = (proposal: BootstrapDocProposal): boolean =>
+    isDesignProposal(proposal) ||
+    isMechanicallyReviewableBootstrapProposal(
+      options.scope,
+      proposal,
+      proposalOptions,
+    );
   const proposalMeta = proposals.map((p) =>
     Object.freeze({
       targetPath: p.targetPath,
       rationale: p.rationale,
       sourceCount: p.sources.length,
       autoReviewable: isAutoReviewableBootstrapProposal(p),
-      mechanicallyReviewable: isMechanicallyReviewableBootstrapProposal(
-        options.scope,
-        p,
-        proposalOptions,
-      ),
+      mechanicallyReviewable: isMechanicallyReviewable(p),
     }),
   );
 
@@ -482,12 +875,7 @@ export async function runContextBootstrapAutopilot(
       });
       continue;
     }
-    const mechanicallyReviewable =
-      isMechanicallyReviewableBootstrapProposal(
-        options.scope,
-        proposal,
-        proposalOptions,
-      );
+    const mechanicallyReviewable = isMechanicallyReviewable(proposal);
     if (
       mechanicallyReviewable &&
       !exactDraftMatchesProposal(
@@ -533,10 +921,21 @@ export async function runContextBootstrapAutopilot(
   // infinite Doctor loop that drains the mission execution budget. Remember
   // which targets already carry a rejected draft with identical content so we
   // can escalate instead of re-proposing.
+  //
+  // THE DESIGN TARGET IS EXEMPT, ON PURPOSE (A1). This memory is a guard
+  // against re-asking an OPINION that already said no — an independent CLI
+  // reviewer given the same bytes will answer the same way, so re-proposing
+  // burns budget for nothing. The design contract has no such reviewer: it is
+  // verified by a deterministic re-derivation, and that verdict is a function
+  // of the ENVIRONMENT at that instant, not of the content. Remembering it as
+  // if it were an opinion is what turned one rejection into a permanently
+  // blocked target with no product-level way out. Re-proposing here costs one
+  // pure rebuild and no CLI, and it stops the moment the environment settles.
   const rejectedContentByTarget = new Map<string, Set<string>>();
   for (const draft of knowledge.list({ status: 'rejected' })) {
     if (draft.missionId !== null && draft.missionId !== (options.missionId ?? null)) continue;
     if (!proposalsByTarget.has(draft.targetPath)) continue;
+    if (draft.targetPath === designTargetPath) continue;
     const contents = rejectedContentByTarget.get(draft.targetPath) ?? new Set<string>();
     contents.add(draft.content);
     rejectedContentByTarget.set(draft.targetPath, contents);
@@ -575,13 +974,7 @@ export async function runContextBootstrapAutopilot(
         status: draft.status,
         autoReviewable,
       });
-      if (
-        isMechanicallyReviewableBootstrapProposal(
-          options.scope,
-          proposal,
-          proposalOptions,
-        )
-      ) {
+      if (isMechanicallyReviewable(proposal)) {
         mechanicalReviewQueue.push(draft.id);
       } else if (autoReviewable) {
         autoReviewQueue.push(draft.id);
@@ -610,14 +1003,36 @@ export async function runContextBootstrapAutopilot(
       const proposal = current
         ? proposalsByTarget.get(current.targetPath)
         : undefined;
+      const isDesign = Boolean(proposal && isDesignProposal(proposal));
+      // Independent re-derivation for the design draft: rebuild the contract
+      // from scope + goal + settings a SECOND time and demand the same bytes.
+      // Anything that drifted between propose and review (catalog edited,
+      // setting changed, a contract appeared) breaks the match and rejects.
+      const reDerived =
+        isDesign && proposal
+          ? await reDeriveDesignProposal(options, designTargetPath)
+          : null;
+      if (isDesign) throwIfBootstrapAborted(options.signal);
+      // A re-derivation that could not RUN proves nothing. Leave the draft
+      // proposed and retry next pass instead of converting a transient read
+      // failure into a durable rejection (A1).
+      if (reDerived?.kind === 'unavailable') {
+        designReviewDeferredError = reDerived.error;
+        throw new Error(
+          `${DESIGN_CONTRACT_REVIEW_DEFERRED}: ${reDerived.error}`,
+        );
+      }
       if (
         !current ||
         !proposal ||
-        !isMechanicallyReviewableBootstrapProposal(
-          options.scope,
-          proposal,
-          proposalOptions,
-        ) ||
+        (isDesign
+          ? reDerived?.kind !== 'derived' ||
+            !sameProposalBytes(reDerived.proposal, proposal)
+          : !isMechanicallyReviewableBootstrapProposal(
+              options.scope,
+              proposal,
+              proposalOptions,
+            )) ||
         !exactDraftMatchesProposal(
           current,
           proposal,
@@ -628,22 +1043,28 @@ export async function runContextBootstrapAutopilot(
           const rejected = knowledge.review(current.id, {
             decision: 'reject',
             reviewer: BOOTSTRAP_SOURCE_POLICY_REVIEWER,
-            rationale:
-              'Rejected by fail-closed canonical-source policy immediately before review: durable draft authority diverged from the sanctioned proposal.',
+            rationale: isDesign
+              ? 'Rejected by fail-closed design-contract policy: a fresh re-derivation ran for this scope and goal and did not produce these bytes.'
+              : 'Rejected by fail-closed canonical-source policy immediately before review: durable draft authority diverged from the sanctioned proposal.',
           });
           rejectedDraftIds.push(rejected.id);
         }
         throw new Error(
-          'canonical-source mechanical review refused a non-canonical durable draft',
+          isDesign
+            ? 'design-contract mechanical review refused a non-reproducible durable draft'
+            : 'canonical-source mechanical review refused a non-canonical durable draft',
         );
       }
       const source = proposal.sources[0]!;
       const reviewed = knowledge.review(draftId, {
         decision: 'approve',
-        reviewer: CANONICAL_SOURCE_MECHANICAL_REVIEWER,
-        rationale:
-          `Approved by deterministic read-only review: target bytes and sole sanctioned source ` +
-          `${source.locator}@${source.sourceHash} match the canonical projection.`,
+        reviewer: isDesign
+          ? DESIGN_CONTRACT_MECHANICAL_REVIEWER
+          : CANONICAL_SOURCE_MECHANICAL_REVIEWER,
+        rationale: isDesign
+          ? `Approved by deterministic re-derivation: the design contract rebuilt from this scope and goal is byte-identical, and its first bound source ${source.locator}@${source.sourceHash} still hashes as stated. No third-party kit content is present.`
+          : `Approved by deterministic read-only review: target bytes and sole sanctioned source ` +
+            `${source.locator}@${source.sourceHash} match the canonical projection.`,
       });
       const applied =
         reviewed.status === 'applied'
@@ -744,6 +1165,11 @@ export async function runContextBootstrapAutopilot(
         !rejected ||
         !replacement ||
         rejected.content === replacement.content ||
+        // The design contract never enters CLI review (see
+        // DESIGN_CONTRACT_MECHANICAL_REVIEWER). A rejected design draft is
+        // re-derived and re-proposed on the NEXT pass, not smuggled into a
+        // reviewer whose method does not fit a prescriptive document.
+        isDesignProposal(replacement) ||
         !isAutoReviewableBootstrapProposal(replacement)
       ) {
         continue;
@@ -822,6 +1248,29 @@ export async function runContextBootstrapAutopilot(
   else if (proposedDraftIds.length > 0 && !quorumAvailable) phase = 'awaiting-quorum';
   else if (proposedDraftIds.length > 0) phase = 'proposed';
 
+  const designStatus = ((): DesignContractBootstrapOutcome['status'] => {
+    if (!designProposal) return 'skipped';
+    const outcome = outcomes.find(
+      (item) => item.targetPath === designTargetPath,
+    );
+    if (!outcome) return 'skipped';
+    if (outcome.status === 'applied') return 'applied';
+    // A refused re-derivation records `review-failed` on the outcome while the
+    // durable draft is genuinely rejected; read the rejection ledger, not just
+    // the loop's local status, or the mission is told "proposed" about a draft
+    // that will never be applied. A DEFERRED re-derivation also records
+    // `review-failed`, but nothing was rejected — so it correctly falls through
+    // to `proposed`, which is exactly what it is (A1).
+    if (
+      outcome.status === 'rejected' ||
+      outcome.status === 'rejected-stable' ||
+      (outcome.draftId !== '' && rejectedDraftIds.includes(outcome.draftId))
+    ) {
+      return 'rejected';
+    }
+    return 'proposed';
+  })();
+
   const base = {
     phase,
     readiness,
@@ -834,6 +1283,15 @@ export async function runContextBootstrapAutopilot(
     commitSha,
     blockingError,
     quorumAvailable,
+    designContract: designDecision
+      ? designOutcome(
+          designDecision,
+          designTargetPath,
+          designStatus,
+          designOwnedByAnother ? 'foreign-active-draft' : null,
+          designReviewDeferredError,
+        )
+      : null,
   };
   return Object.freeze({
     ...base,

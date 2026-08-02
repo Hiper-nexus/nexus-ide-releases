@@ -2,6 +2,9 @@ import type { AgentCategory } from "../../shared/orch-types";
 
 export const GUIDED_MISSION_PLANNER_TASK_ID = "guided-execution";
 export const GUIDED_MISSION_QA_TASK_ID = "guided-quality-gate";
+/** Canonical identities of the bug-shaped stages (at most one of each). */
+export const GUIDED_MISSION_REPRODUCTION_TASK_ID = "guided-reproduction";
+export const GUIDED_MISSION_REGRESSION_TASK_ID = "guided-regression";
 
 export const GUIDED_TASK_DOMAINS = Object.freeze({
   advisory: "guided-advisory",
@@ -9,6 +12,14 @@ export const GUIDED_TASK_DOMAINS = Object.freeze({
   isolatedAdvisory: "guided-isolated-advisory",
   implementation: "guided-implementation",
   qualityGate: "guided-quality-gate",
+  /**
+   * Work-kind shaped stages (see guided-mission-work-graph). They exist only
+   * on a `bug` graph and are deliberately read_only: a defect repair is
+   * single-writer by nature, so proving the defect and proving the regression
+   * never open a second mutation surface.
+   */
+  reproduction: "guided-reproduction",
+  regression: "guided-regression",
 } as const);
 
 export type GuidedTaskKind =
@@ -16,7 +27,9 @@ export type GuidedTaskKind =
   | "independent-review"
   | "isolated-advisory"
   | "implementation"
-  | "quality-gate";
+  | "quality-gate"
+  | "reproduction"
+  | "regression";
 
 type GuidedWorkerCategory = Exclude<AgentCategory, "orchestrator">;
 
@@ -60,7 +73,9 @@ export function parseGuidedTaskKind(
   if (guidedDomains.length === 0) {
     if (
       input.plannerId === GUIDED_MISSION_PLANNER_TASK_ID ||
-      input.plannerId === GUIDED_MISSION_QA_TASK_ID
+      input.plannerId === GUIDED_MISSION_QA_TASK_ID ||
+      input.plannerId === GUIDED_MISSION_REPRODUCTION_TASK_ID ||
+      input.plannerId === GUIDED_MISSION_REGRESSION_TASK_ID
     ) {
       invalidGuidedTask(
         input,
@@ -117,6 +132,24 @@ export function parseGuidedTaskKind(
       }
       kind = "isolated-advisory";
       break;
+    case GUIDED_TASK_DOMAINS.reproduction:
+      if (input.executionMode !== "read_only") {
+        invalidGuidedTask(
+          input,
+          "reprodução exige read_only (a correção de bug é single-writer)",
+        );
+      }
+      kind = "reproduction";
+      break;
+    case GUIDED_TASK_DOMAINS.regression:
+      if (input.executionMode !== "read_only") {
+        invalidGuidedTask(
+          input,
+          "regressão exige read_only (a correção de bug é single-writer)",
+        );
+      }
+      kind = "regression";
+      break;
     case GUIDED_TASK_DOMAINS.implementation:
       if (
         input.executionMode !== "isolated_worktree" ||
@@ -146,17 +179,20 @@ export function parseGuidedTaskKind(
       return invalidGuidedTask(input, `domínio Guided desconhecido: ${domain}`);
   }
 
+  const canonicalIdentities: readonly (readonly [string, GuidedTaskKind])[] = [
+    [GUIDED_MISSION_PLANNER_TASK_ID, "implementation"],
+    [GUIDED_MISSION_QA_TASK_ID, "quality-gate"],
+    [GUIDED_MISSION_REPRODUCTION_TASK_ID, "reproduction"],
+    [GUIDED_MISSION_REGRESSION_TASK_ID, "regression"],
+  ];
   if (
-    (input.plannerId === GUIDED_MISSION_PLANNER_TASK_ID &&
-      kind !== "implementation") ||
-    (input.plannerId === GUIDED_MISSION_QA_TASK_ID &&
-      kind !== "quality-gate") ||
-    (kind === "implementation" &&
-      input.plannerId !== undefined &&
-      input.plannerId !== GUIDED_MISSION_PLANNER_TASK_ID) ||
-    (kind === "quality-gate" &&
-      input.plannerId !== undefined &&
-      input.plannerId !== GUIDED_MISSION_QA_TASK_ID)
+    canonicalIdentities.some(
+      ([plannerId, canonicalKind]) =>
+        (input.plannerId === plannerId && kind !== canonicalKind) ||
+        (kind === canonicalKind &&
+          input.plannerId !== undefined &&
+          input.plannerId !== plannerId),
+    )
   ) {
     invalidGuidedTask(
       input,

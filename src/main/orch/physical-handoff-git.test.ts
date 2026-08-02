@@ -11,8 +11,10 @@ import {
   type WorktreeStateStore,
 } from "../runtime/worktree-manager";
 import type { AgentGateContext } from "./gate";
+import type { GuidedTaskKind } from "./guided-task-kind";
 import {
   assertReadOnlyLaneObservationCurrent,
+  FENCED_READ_ONLY_LANE_KINDS,
   committedPhysicalWorkerHead,
   STALE_READ_ONLY_OBSERVATION_REASON,
   StaleReadOnlyObservationError,
@@ -359,5 +361,35 @@ describe("stale-observation fence over real Git", () => {
         worktreeHeadSha: finalRead!,
       }),
     ).not.toThrow();
+  });
+});
+
+// REGRESSAO: a cerca de observacao obsoleta cobria so as tres lanes originais.
+// Quando o grafo por tipo de trabalho acrescentou `reproduction` e
+// `regression`, elas nasceram FORA dela — e `reproduction` tem dependsOn: [],
+// logo roda concorrente com a implementacao: no modo governado seu HEAD vem do
+// checkout primario, que a integracao move debaixo dela.
+//
+// O teste NAO fixa a lista (isso seria repetir a decisao); ele fixa o
+// INVARIANTE: toda lane Guided que pode rodar read_only tem que estar cercada,
+// exceto a implementacao, que escreve. Assim, lane nova sem decisao consciente
+// quebra aqui em vez de vazar um recibo causalmente impossivel.
+describe('cobertura da cerca de observacao', () => {
+  it('toda lane read_only do grafo esta cercada — implementacao e a unica fora', () => {
+    const readOnlyCapableLanes: readonly GuidedTaskKind[] = [
+      'advisory',
+      'isolated-advisory',
+      'independent-review',
+      'quality-gate',
+      'reproduction',
+      'regression',
+    ];
+    const naoCercadas = readOnlyCapableLanes.filter(
+      (kind) => !FENCED_READ_ONLY_LANE_KINDS.has(kind),
+    );
+    // `isolated-advisory` roda em worktree propria: a cerca nao se aplica e a
+    // ausencia dela aqui e decisao, nao esquecimento.
+    expect(naoCercadas).toEqual(['isolated-advisory']);
+    expect(FENCED_READ_ONLY_LANE_KINDS.has('implementation')).toBe(false);
   });
 });

@@ -4,6 +4,7 @@ import {
   projectExecutionScopeSchema,
   type ProjectExecutionScope,
 } from '../../shared/types';
+import { requiresDesignAuthority } from '../../shared/mission-work-kind';
 import { canonicalJson } from './canonical-json';
 
 export const missionRiskSchema = z.enum(['low', 'medium', 'high', 'critical']);
@@ -203,8 +204,21 @@ const CRITICAL_SIGNAL =
   /\b(payment|payments|pagamentos?|billing|charges?|cobrancas?|faturamento|refunds?|reembolsos?|estornos?|tenant[- ]?isolation|isolamento (?:de )?(?:tenant|inquilino)|rls|secrets?|segredos?|credentials?|credencia(?:l|is)|licenses?|licencas?|updaters?|atualizador(?:es)?|policy engine|motor de politica)\b/i;
 const HIGH_SIGNAL =
   /\b(auth|autenticacao|oauth|sessions?|sessoes?|permissions?|permissoes?|authorization|autorizacao|migrations?|migracoes?|schemas?|esquemas?|databases?|bancos? de dados|concurr\w*|concorrencia|races?|condicao de corrida|ipc|networks?|redes?|webhooks?|queues?|filas?|delet\w*|exclu\w*|apag\w*|remov\w*|security|seguranca|encryption|criptografia|sandbox)\b/i;
-const UI_SIGNAL =
-  /\b(landing|website|frontend|interface|\bui\b|\bux\b|design|responsive|accessibility|acessibilidade|page|página|pagina|dashboard|mobile|desktop)\b/i;
+/*
+ * There is NO `UI_SIGNAL` regex here anymore.
+ *
+ * It used to be a fourth, private grammar for "is this UI?", and it disagreed
+ * with the classifier that decides whether a design contract gets written.
+ * `"implementar o CRUD de usuários com paginação"` matched it — `pagina`
+ * inside `paginação`, because `ç` is not a `\w` and the `\b` closed right
+ * there — so the compiler demanded the `design-system` sensor for a backend
+ * CRUD while the bootstrap refused to author any contract for it. A required
+ * sensor with nothing to check is a red gate nobody can turn green.
+ *
+ * `decideDesignAuthority` (src/shared/mission-work-kind.ts) is now the single
+ * authority, shared with `buildDesignContractBootstrap`. See the coherence
+ * test in contract-compiler.test.ts.
+ */
 
 /** Reads the offending value so a rejection can name it, never the whole tree. */
 function valueAtPath(root: unknown, path: readonly PropertyKey[]): unknown {
@@ -379,7 +393,8 @@ export function compileMissionContract(
   const requiredSensors = sortedUnique([
     ...proposal.requestedSensors,
     ...proposal.acceptanceCriteria.flatMap((criterion) => criterion.requiredSensorIds),
-    ...(UI_SIGNAL.test(uiCorpus) && context.availableSensorIds.has('design-system')
+    ...(requiresDesignAuthority(uiCorpus) &&
+    context.availableSensorIds.has('design-system')
       ? ['design-system']
       : []),
   ]);

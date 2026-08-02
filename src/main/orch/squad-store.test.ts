@@ -395,6 +395,48 @@ describe('squad-store save path', () => {
     ).toBe(true);
   });
 
+  it('sela o piso de skills main-owned quando o roster recebido não declara nenhum', () => {
+    const db = makeDb();
+    openDb = db;
+    initSquadStore(db);
+    const source = BUILTIN_SQUADS.find(
+      (squad) => squad.id === 'nexus-story-impl',
+    )!;
+    const runtime: Squad = {
+      ...source,
+      id: 'mission-runtime-123e4567-e89b-42d3-a456-426614174010',
+      createdAt: '2',
+      builtin: false,
+      runtimeSourceSquadId: source.id,
+      runtimeSourceSquadRevisionHash: snapshotSquadAuthority(source).hash,
+      // Bytes do renderer sem NENHUMA autoridade de skill declarada.
+      agents: source.agents.map((agent) => ({
+        id: agent.id,
+        agentName: agent.agentName,
+        category: agent.category,
+        cli: agent.cli,
+        allowedTools: agent.allowedTools ?? null,
+      })),
+    };
+
+    const prepared = prepareMissionRuntimeSquadSave(
+      runtime,
+      source,
+      false,
+      'catalog',
+    );
+
+    const byId = Object.fromEntries(
+      prepared.squad.agents.map((agent) => [agent.id, agent.allowedSkills]),
+    );
+    expect(byId.sm).toContain('bmad-templates');
+    expect(byId.qa).toContain('bmad-templates');
+    expect(byId.dev).toEqual(['ponytail']);
+    expect(
+      prepared.squad.agents.every((agent) => agent.allowedSkills !== undefined),
+    ).toBe(true);
+  });
+
   it('rejects forged or stale runtime lineage before persistence', () => {
     const db = makeDb();
     openDb = db;

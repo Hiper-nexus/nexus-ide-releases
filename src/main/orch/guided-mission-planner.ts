@@ -37,11 +37,20 @@ import {
   guidedFanoutPlannerId,
   guidedIndependentReviewDetail,
   guidedQualityGateDetail,
+  guidedRegressionDetail,
+  guidedReproductionDetail,
   guidedTeamCoordinationDetail,
+  type GuidedWorkKindContractOptions,
 } from "./guided-mission-prompt";
+import {
+  documentOwnershipFence,
+  planGuidedWorkGraph,
+} from "./guided-mission-work-graph";
 import {
   GUIDED_MISSION_PLANNER_TASK_ID,
   GUIDED_MISSION_QA_TASK_ID,
+  GUIDED_MISSION_REGRESSION_TASK_ID,
+  GUIDED_MISSION_REPRODUCTION_TASK_ID,
   GUIDED_TASK_DOMAINS,
 } from "./guided-task-kind";
 import {
@@ -387,25 +396,49 @@ export function ensureGuidedMissionPlan(
   const independentReviewers = rosterWorkers.filter(
     (agent) => agent.category === "reviewer" && agent.id !== qualityGate.id,
   );
+  // Work kind decides SHAPE (which stages exist and how they are wired); the
+  // roster still decides bodies. `unknown` is deliberately the generic path.
+  const workGraph = planGuidedWorkGraph({
+    goal: mission.intentContract.goal,
+    advisors: advisoryAgents,
+    reviewers: independentReviewers,
+    isReadOnlyCapable: (agent) =>
+      guidedAdvisoryExecutionMode(agent) === "read_only",
+  });
+  const workKindContract: GuidedWorkKindContractOptions = {
+    workKind: workGraph.workKind,
+    reproductionInContractOnly: workGraph.reproductionInContractOnly,
+    regressionInContractOnly: workGraph.regressionInContractOnly,
+    // Design contract is resolved from the MAIN root and sealed into the task
+    // detail: the isolated worktree is built from a commit and may not carry a
+    // contract the bootstrap autopilot just materialized under `.context/`.
+    workspaceRoot: suite.tasks.scope.rootRealPath,
+  };
   const intentOwnership = resolveGuidedMutationOwnership(
     mission.intentContract,
   );
   // A filename-aware goal keeps the narrow intent surface. Natural goals do
   // not force a vibe coder to guess the repository layout: Main derives a
   // bounded, path-by-path inventory for the isolated worktree instead.
-  const ownershipFiles =
+  const baseOwnership =
     intentOwnership.length > 0
       ? intentOwnership
       : resolveGuidedMutationOwnership(
           mission.intentContract,
           deps.listRepositoryOwnership(suite.tasks.scope),
         );
-  if (ownershipFiles.length === 0) {
+  if (baseOwnership.length === 0) {
     throw new Error(
       "guided_plan_ownership_missing: o inventário seguro do projeto está vazio",
     );
   }
-  const advisoryTasks = advisoryAgents.map((agent, index) => {
+  // A documentation mission must be mechanically unable to reach code — the
+  // plan lane's write fence (PLAN_LANE_WRITABLE_PATHS) generalized.
+  const ownershipFiles =
+    workGraph.workKind === "doc"
+      ? documentOwnershipFence(baseOwnership)
+      : baseOwnership;
+  const advisoryTasks = workGraph.advisors.map((agent, index) => {
     const executionMode = guidedAdvisoryExecutionMode(agent);
     const isolated = executionMode === "isolated_worktree";
     return {
@@ -427,11 +460,98 @@ export function ensureGuidedMissionPlan(
       dependsOn: [],
     };
   });
-  const independentReviewTasks = independentReviewers.map((agent, index) => {
+  // Bug stages are read_only by construction: a defect repair is single-writer,
+  // so proving the defect and proving the regression never open a second
+  // mutation surface. planGuidedWorkGraph already refused any body that would
+  // have to run in an isolated worktree.
+  const reproductionTasks: GuidedPlanTaskDetailInput[] =
+    workGraph.reproduction
+      ? [
+          {
+            id: GUIDED_MISSION_REPRODUCTION_TASK_ID,
+            title: `Reproduzir: ${mission.title}`.slice(0, 1_024),
+            detail: guidedReproductionDetail(mission, workGraph.reproduction),
+            agentRef: workGraph.reproduction.id,
+            category: workGraph.reproduction.category as GuidedPlanTaskDetailInput["category"],
+            executionMode: "read_only",
+            ownership: {
+              files: [],
+              symbols: [],
+              domains: [GUIDED_TASK_DOMAINS.reproduction],
+            },
+            dependsOn: [],
+          },
+        ]
+      : [];
+  const regressionTasks: GuidedPlanTaskDetailInput[] = workGraph.regression
+    ? [
+        {
+          id: GUIDED_MISSION_REGRESSION_TASK_ID,
+          title: `Provar a regressão: ${mission.title}`.slice(0, 1_024),
+          detail: guidedRegressionDetail(mission, workGraph.regression),
+          agentRef: workGraph.regression.id,
+          category: workGraph.regression.category as GuidedPlanTaskDetailInput["category"],
+          executionMode: "read_only",
+          ownership: {
+            files: [],
+            symbols: [],
+            domains: [GUIDED_TASK_DOMAINS.regression],
+          },
+          dependsOn: [GUIDED_MISSION_PLANNER_TASK_ID],
+        },
+      ]
+    : [];
+  // Independent reviews write nothing and read the SAME integrated HEAD, so
+  // they are genuinely independent and run concurrently.
+  //
+  // "SAME integrated HEAD" is not an assumption of this planner — naming where
+  // it is mechanized is part of the claim. It is enforced at the SEAL boundary,
+  // not at dispatch: `assertReadOnlyLaneObservationCurrent`
+  // (physical-handoff-git.ts, wired in tools-handoff.ts before any receipt
+  // state exists) refuses any read_only handoff of a Guided advisory /
+  // independent-review / quality-gate lane whose observed `worktreeHeadSha` is
+  // not exactly the mission's latest `worktree_integrated` reference. And the
+  // fence can never degrade to "no integration to compare against" for these
+  // reviewers: `computeReadySet` only releases a task whose dependencies are
+  // done AND merged, and `merged` is `dispatch.state === "completed"` — the
+  // same transaction that writes the integration receipt. So a reviewer that
+  // drifted is refused and re-dispatched onto the integrated tree; divergence
+  // is fail-closed, never a silently inconsistent receipt.
+  //
+  // What is deliberately NOT a pin: the dispatch-time worktree re-anchor
+  // (readOnlyWorktreeReanchorEligible, mission-scheduler-dispatch-transaction)
+  // is per-reviewer and unserialized, and under a governed squad policy a
+  // read_only lane gets no worktree at all — it runs in the operator's
+  // checkout, confined read-only by the provider's own profile or by the Nexus
+  // kernel sandbox. Both are convergence, so the seal fence is the authority.
+  //
+  // The exception is a reviewer whose CLI cannot hold a mechanically read-only
+  // lane: it must run in an isolated worktree, which takes an exclusive
+  // scheduler slot, so those stay chained (making them "parallel" would only
+  // produce deferrals plus a receipt that lies about the shape).
+  const reviewPivot =
+    regressionTasks.length > 0
+      ? GUIDED_MISSION_REGRESSION_TASK_ID
+      : GUIDED_MISSION_PLANNER_TASK_ID;
+  const orderedReviewers = [
+    ...workGraph.reviewers.filter(
+      (agent) => guidedAdvisoryExecutionMode(agent) === "read_only",
+    ),
+    ...workGraph.reviewers.filter(
+      (agent) => guidedAdvisoryExecutionMode(agent) !== "read_only",
+    ),
+  ];
+  const concurrentReviewCount = orderedReviewers.filter(
+    (agent) => guidedAdvisoryExecutionMode(agent) === "read_only",
+  ).length;
+  const reviewIds = orderedReviewers.map((agent, index) =>
+    guidedFanoutPlannerId("review", agent, index),
+  );
+  const independentReviewTasks = orderedReviewers.map((agent, index) => {
     const executionMode = guidedAdvisoryExecutionMode(agent);
     const isolated = executionMode === "isolated_worktree";
     return {
-      id: guidedFanoutPlannerId("review", agent, index),
+      id: reviewIds[index]!,
       title: `Revisar com ${agent.agentName}: ${mission.title}`.slice(0, 1_024),
       detail: guidedIndependentReviewDetail(mission, agent, {
         qualityGateReadOnly,
@@ -447,28 +567,33 @@ export function ensureGuidedMissionPlan(
           : [GUIDED_TASK_DOMAINS.independentReview],
       },
       dependsOn:
-        index > 0
-          ? [
-              guidedFanoutPlannerId(
-                "review",
-                independentReviewers[index - 1]!,
-                index - 1,
-              ),
-            ]
-          : [GUIDED_MISSION_PLANNER_TASK_ID],
+        index > concurrentReviewCount
+          ? [reviewIds[index - 1]!]
+          : [reviewPivot],
     };
   });
   // Implementation does not wait on advisories — tip/discovery is parallel.
+  // The gate joins the whole delivery frontier: every concurrent review plus
+  // the tail of the sequential chain, or the last delivery stage when the
+  // roster produced no independent reviewer at all.
+  const concurrentReviewIds = reviewIds.slice(0, concurrentReviewCount);
+  const sequentialTailId =
+    reviewIds.length > concurrentReviewCount
+      ? reviewIds[reviewIds.length - 1]!
+      : null;
+  const deliveryFrontier = [
+    ...concurrentReviewIds,
+    ...(sequentialTailId ? [sequentialTailId] : []),
+  ];
   const qualityGateDependencies =
-    independentReviewTasks.length > 0
-      ? [independentReviewTasks[independentReviewTasks.length - 1]!.id]
-      : [GUIDED_MISSION_PLANNER_TASK_ID];
+    deliveryFrontier.length > 0 ? deliveryFrontier : [reviewPivot];
   const guidedTasks: GuidedPlanTaskDetailInput[] = [
     ...advisoryTasks,
+    ...reproductionTasks,
     {
       id: GUIDED_MISSION_PLANNER_TASK_ID,
       title: `Entregar: ${mission.title}`.slice(0, 1_024),
-      detail: buildGuidedMissionTaskDetail(mission),
+      detail: buildGuidedMissionTaskDetail(mission, workKindContract),
       agentRef: worker.id,
       category: "executor",
       executionMode: "isolated_worktree",
@@ -477,14 +602,16 @@ export function ensureGuidedMissionPlan(
         symbols: [],
         domains: [GUIDED_TASK_DOMAINS.implementation],
       },
-      dependsOn: [],
+      dependsOn: reproductionTasks.map((task) => task.id),
     },
+    ...regressionTasks,
     ...independentReviewTasks,
     {
       id: GUIDED_MISSION_QA_TASK_ID,
       title: `Validar e endurecer: ${mission.title}`.slice(0, 1_024),
       detail: guidedQualityGateDetail(mission, {
         readOnly: qualityGateReadOnly,
+        ...workKindContract,
       }),
       agentRef: qualityGate.id,
       category: "reviewer",

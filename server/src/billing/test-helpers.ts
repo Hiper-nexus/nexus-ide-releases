@@ -1,4 +1,5 @@
 import express from 'express';
+import { onTestFinished } from 'vitest';
 import { PGlite } from '@electric-sql/pglite';
 import { drizzle } from 'drizzle-orm/pglite';
 import { generateKeyPair, exportPKCS8, exportSPKI } from 'jose';
@@ -14,6 +15,13 @@ import { buildBillingRouter } from './billing-routes';
 /** Setup de teste do billing: banco pglite + env fake + app com o router. */
 export async function setup(fake = makeFakeStripe()) {
   const client = new PGlite();
+  // PGlite sobe um PostgreSQL WASM por fixture. Sem fechar, cada teste do
+  // arquivo deixa mais um runtime residente e a rodada inteira disputa
+  // CPU/memória com os demais workers. Fechar ao fim do teste mantém
+  // exatamente um vivo por vez.
+  onTestFinished(async () => {
+    await client.close();
+  });
   await client.exec(CREATE_TABLES_SQL);
   const db = drizzle(client, { schema }) as unknown as Db;
   const { publicKey, privateKey } = await generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true });

@@ -1,11 +1,9 @@
-import { createHash } from 'node:crypto';
 import path from 'node:path';
 import {
   assertMcpInvocationCurrent,
   type McpToolDef,
 } from './mcp-protocol';
 import type { AgentGateContext } from './gate';
-import { isCurrentGateContext } from './gate';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { getContextKnowledgeService } from '../context/context-workflow-registry';
 import type { ContextAttestationSource } from '../context/context-attestation';
@@ -19,6 +17,21 @@ import {
   DembrandtExtractError,
   extractDesignSystemFromUrl,
 } from '../design/dembrandt-extractor';
+import {
+  renderDesignContract,
+  sanitizeDesignCommentValue,
+} from '../design/design-kit-source';
+import {
+  DEFAULT_DESIGN_TARGET_PATH,
+  assertDesignSystemAuthority,
+  assertMission,
+  designSha256 as sha256,
+  expectedTargetHash,
+  missionIdentity,
+  sanitizeIdentifier,
+  type DesignSystemToolOptions,
+} from './design-system-authority';
+import { buildKeylessDesignSystemTools } from './tools-design-system-local';
 import { requireStr, str, strArray, num } from './tool-util';
 import {
   ensureWorkspaceDirectory,
@@ -38,56 +51,8 @@ import {
 
 const EVIDENCE_DIR = '.context/nexus/evidence/designmd-ai';
 const DEMBRANDT_EVIDENCE_DIR = '.context/nexus/evidence/dembrandt';
-const DEFAULT_TARGET_PATH = '.context/docs/design-system.md';
+const DEFAULT_TARGET_PATH = DEFAULT_DESIGN_TARGET_PATH;
 const SORT_OPTIONS = new Set(['popular', 'recent', 'likes', 'downloads']);
-
-function missionIdentity(ctx: AgentGateContext) {
-  if (!ctx.sessionId) throw new Error('design system action requires a bound agent session');
-  return {
-    id: ctx.agentName ?? ctx.label,
-    sessionId: ctx.sessionId,
-    provider: ctx.providerId ?? ctx.label,
-  };
-}
-
-function assertMission(ctx: AgentGateContext, requested: string): void {
-  if (ctx.missionId && ctx.missionId !== requested) {
-    throw new Error('not authorized: mission differs from session mission');
-  }
-  if (!ctx.missionId && ctx.role !== 'user') {
-    throw new Error('not authorized: agent session is not bound to a mission');
-  }
-}
-
-function sha256(content: string): string {
-  return createHash('sha256').update(content).digest('hex');
-}
-
-function expectedTargetHash(
-  ctx: AgentGateContext,
-  targetPath: string,
-): string | null {
-  try {
-    return sha256(readWorkspaceTextFile(ctx.scope, targetPath).content);
-  } catch (error) {
-    if (error instanceof Error && /file not found:/i.test(error.message)) return null;
-    throw error;
-  }
-}
-
-function sanitizeIdentifier(raw: string): string {
-  // Collapse slashes and non-portable characters so the evidence filename is
-  // safe and deterministic, while keeping it human-readable.
-  const normalized = raw
-    .trim()
-    .toLowerCase()
-    .replace(/https:\/\/designmd\.ai\//g, '')
-    .replace(/[^a-z0-9._-]+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '');
-  if (!normalized) return 'unknown';
-  return normalized.slice(0, 128);
-}
 
 function evidencePath(identifierValue: string): string {
   return `${EVIDENCE_DIR}/${sanitizeIdentifier(identifierValue)}.json`;
@@ -138,19 +103,21 @@ function prefixedDesignMdContent(
   kit: { name: string; author: string; url: string; license: string; slug: string },
   content: string,
 ): string {
-  return [
-    '<!-- DESIGN.md imported from designmd.ai -->',
-    `<!-- source: ${kit.url} -->`,
-    `<!-- slug: ${kit.slug} | author: ${kit.author} | license: ${kit.license} -->`,
-    '<!-- This file is a PROPOSED context draft. Do not apply without review. -->',
-    '',
+  // Same renderer as the keyless catalog sources: one provenance format, and
+  // the source that produced the contract is always named.
+  return renderDesignContract({
+    marker: 'DESIGN.md imported from designmd.ai',
+    sourceId: 'designmd.ai',
+    kitId: kit.slug,
+    details: [
+      `source: ${kit.url}`,
+      `slug: ${kit.slug} | author: ${kit.author} | license: ${kit.license}`,
+    ],
     content,
-  ].join('\n');
+  });
 }
 
-function sanitizeHtmlCommentValue(value: string): string {
-  return value.replace(/-->/g, '').replace(/[\r\n]+/g, ' ').trim().slice(0, 512);
-}
+const sanitizeHtmlCommentValue = sanitizeDesignCommentValue;
 
 function prefixedDembrandtDesignMdContent(
   meta: { sourceUrl: string; normalizedUrl: string },
@@ -322,42 +289,6 @@ const designSystemGetTool: McpToolDef = {
     };
   },
 };
-
-export interface DesignSystemToolOptions {
-  /** Renderer IPC supplies a live-scope fence; MCP defaults to bearer identity. */
-  readonly assertCurrentAuthority?: (ctx: AgentGateContext) => void;
-  /**
-   * Internal/test-only runner whose browser layer enforces URL policy on every
-   * redirect and subresource request. Production intentionally injects none
-   * until a real per-request route guard exists.
-   */
-  readonly routeGuardedExtractDesignSystem?: (request: {
-    readonly normalizedUrl: string;
-    readonly paths: readonly string[];
-    readonly darkMode: boolean;
-    readonly mobile: boolean;
-    readonly wcag: boolean;
-    readonly workDir: string;
-    readonly signal?: AbortSignal;
-  }) => Promise<{ designMd: string }>;
-  /** Defense-in-depth URL assessment; never substitutes a request route guard. */
-  readonly assessExtractUrl?: (
-    raw: string,
-  ) => Promise<import('../browser/url-policy').BrowserUrlDecision>;
-}
-
-function assertDesignSystemAuthority(
-  ctx: AgentGateContext,
-  options: DesignSystemToolOptions,
-): void {
-  if (options.assertCurrentAuthority) {
-    options.assertCurrentAuthority(ctx);
-    return;
-  }
-  if (!isCurrentGateContext(ctx)) {
-    throw new Error('design system authority revoked');
-  }
-}
 
 function designSystemImportTool(
   options: DesignSystemToolOptions,
@@ -665,8 +596,13 @@ export function buildDesignSystemTools(
     designSystemImportTool(options),
     designSystemExtractTool(options),
     designSystemPublishTool,
+    // Keyless sources (local catalog + open getdesign catalog). They carry the
+    // same authority guards and exist so a missing designmd.ai key never leaves
+    // a project without a design contract.
+    ...buildKeylessDesignSystemTools(options),
   ];
 }
 
 // Re-export error classes so the toolset and tests can distinguish them.
 export { DesignMdApiError, DesignMdAuthError, DesignMdLicenseError, DembrandtExtractError };
+export type { DesignSystemToolOptions };

@@ -92,7 +92,15 @@ interface LayoutState {
   setBrowserUrl(paneId: string, url: string): void;
   /** Pin the account used by this pane (used by account failover + resume). */
   setAccountId(paneId: string, accountId: string | undefined): void;
-  hydrate(layout: WorkspaceLayout | null): void;
+  /**
+   * Restore a persisted tree. A restore is a HINT, never authority: with
+   * `preserveLiveMissionPanes` the panes bound to a live mission survive it
+   * (see enforceLayoutInvariants / I3).
+   */
+  hydrate(
+    layout: WorkspaceLayout | null,
+    options?: { readonly preserveLiveMissionPanes?: boolean },
+  ): void;
   toggleView(): void;
   updateCanvasNodeLayout(paneId: string, patch: Partial<CanvasNodeLayout>): void;
   setCanvasViewport(vp: { x: number; y: number; zoom: number }): void;
@@ -101,11 +109,40 @@ interface LayoutState {
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
 
 /**
- * Layouts are keyed per workspace folder. `persistKey`
- * pins which workspace the CURRENT in-memory tree belongs to, so a debounced
- * save that fires mid-switch can never write panes into the wrong workspace.
+ * Layouts are keyed per workspace folder. `persistKey` is the ADDRESS saves are
+ * written to, and whether persistence is attached at all (null = detached).
+ *
+ * It is NOT proof of ownership: a switch adopts the new key before the target's
+ * layout read resolves, so between those two moments the key already names the
+ * incoming workspace while the tree in memory is still the outgoing one. Only
+ * `layoutWorkspacePath` below answers "whose panes are these?".
  */
 let persistKey: string | null = null;
+
+/**
+ * Which workspace the CURRENT in-memory tree belongs to. `persistKey` cannot
+ * answer this: it is nulled while a switch is being prepared, and it is adopted
+ * BEFORE the target's layout read resolves, yet the tree (and its live mission
+ * panes) still belongs to the previous workspace during that whole window.
+ *
+ * Two things depend on the distinction:
+ *   - a restore of the SAME workspace is a refresh, where live mission panes
+ *     outrank the saved copy (see hydrate / I3);
+ *   - a save may only be written under the key that OWNS the tree being
+ *     written (see persist / flushLayout), or a mid-switch operator action
+ *     lands the outgoing panes in the incoming workspace.
+ */
+let layoutWorkspacePath: string | null = null;
+
+/**
+ * Whether the in-memory tree may be written under `key`. Persisting is the one
+ * operation where "which workspace is being opened" is the wrong question: the
+ * only correct key is the one the CURRENT tree belongs to.
+ */
+function ownsPersistedLayout(key: string): boolean {
+  return layoutWorkspacePath === key;
+}
+
 let terminalSnapshotProvider: ((paneId: string) => string | undefined) | null = null;
 
 export function setTerminalSnapshotProvider(
@@ -178,17 +215,30 @@ export function sanitizeWorkspaceLayout(
   };
 }
 
-type PersistPayload = Pick<
-  LayoutState,
-  'root' | 'focusedPaneId' | 'viewKind' | 'canvasNodeLayouts' | 'canvasViewport'
->;
-
-function persist(state: PersistPayload): void {
+/**
+ * Debounced save of the CURRENT store state.
+ *
+ * It deliberately takes no snapshot argument: callers used to pass the raw tree
+ * they had just computed, which now differs from what the store committed
+ * (enforceLayoutInvariants may drop a placeholder or a stale zoom). Persisting
+ * the caller's copy would write back the exact ghost the invariant removed.
+ */
+function persist(): void {
   if (!persistKey) return; // No workspace open — nothing to persist against.
   const key = persistKey;
   if (persistTimer) clearTimeout(persistTimer);
   persistTimer = setTimeout(() => {
     persistTimer = null;
+    // Checked HERE, not at schedule time: the debounce is exactly long enough
+    // for a workspace switch to adopt the new key while the tree on screen is
+    // still the old one.
+    if (!ownsPersistedLayout(key)) {
+      console.warn(
+        `[layout] skip save under ${key}: tree belongs to ${layoutWorkspacePath ?? 'no workspace'}`,
+      );
+      return;
+    }
+    const state = useLayoutStore.getState();
     const durableLayout = sanitizeWorkspaceLayout({
       root: state.root,
       focusedPaneId: state.focusedPaneId,
@@ -209,6 +259,12 @@ export function flushLayout(sync = false): void {
     persistTimer = null;
   }
   if (!persistKey) return;
+  if (!ownsPersistedLayout(persistKey)) {
+    console.warn(
+      `[layout] skip flush under ${persistKey}: tree belongs to ${layoutWorkspacePath ?? 'no workspace'}`,
+    );
+    return;
+  }
   const { root, focusedPaneId, viewKind, canvasNodeLayouts, canvasViewport } =
     useLayoutStore.getState();
   const durableLayout = sanitizeWorkspaceLayout({
@@ -281,6 +337,33 @@ export function bumpTreeVersion(): void {
 
 let inFlightSwitch: { path: string; promise: Promise<boolean> } | null = null;
 
+/**
+ * Number of workspace-layout reads in flight. `hydrated` alone cannot gate
+ * presentations: it is a one-shot latch that never goes back down, so from the
+ * second read onward every presentation sailed straight past the gate and the
+ * restore landed on top of it. "Settled" means hydrated AND nothing loading.
+ */
+let layoutLoadsInFlight = 0;
+const layoutSettleWaiters = new Set<() => void>();
+
+function isWorkspaceLayoutSettled(): boolean {
+  return useLayoutStore.getState().hydrated && layoutLoadsInFlight === 0;
+}
+
+function releaseLayoutSettleWaiters(): void {
+  if (!isWorkspaceLayoutSettled()) return;
+  for (const waiter of [...layoutSettleWaiters]) waiter();
+}
+
+function beginWorkspaceLayoutLoad(): void {
+  layoutLoadsInFlight += 1;
+}
+
+function endWorkspaceLayoutLoad(): void {
+  layoutLoadsInFlight = Math.max(0, layoutLoadsInFlight - 1);
+  releaseLayoutSettleWaiters();
+}
+
 let restoredPanesHandler: ((panes: readonly PaneModel[]) => void) | null = null;
 
 /** Terminal runtime hook: restored CLI panes must request provider resume on first spawn. */
@@ -303,6 +386,9 @@ export function switchWorkspaceLayout(workspacePath: string): Promise<boolean> {
   if (persistKey === workspacePath && !inFlightSwitch) {
     return Promise.resolve(true);
   }
+  // Arm the settle gate BEFORE the first await: a presentation racing this read
+  // must wait for the tree it is about to land on.
+  beginWorkspaceLayoutLoad();
   const run = (async () => {
     flushLayout();
     persistKey = workspacePath;
@@ -320,10 +406,22 @@ export function switchWorkspaceLayout(workspacePath: string): Promise<boolean> {
     // A stale response from a slower earlier switch must not clobber the tree.
     if (persistKey !== workspacePath) return true;
     // A local mutation landed while we were loading — it wins; don't hydrate.
-    if (treeVersion !== versionAtStart) return layout !== null;
+    if (treeVersion !== versionAtStart) {
+      // That live tree IS this workspace's tree now. Recording it matters: the
+      // next re-read has to recognise it as a refresh, or it would treat the
+      // mission on screen as foreign and restore right over it.
+      layoutWorkspacePath = workspacePath;
+      return layout !== null;
+    }
     const durableLayout = layout ? sanitizeWorkspaceLayout(layout) : null;
     if (durableLayout) restoredPanesHandler?.(listPanes(durableLayout.root));
-    useLayoutStore.getState().hydrate(durableLayout);
+    // Re-reading the workspace the tree already belongs to is a refresh, not a
+    // switch: whatever mission is live on screen outranks the saved copy.
+    const sameWorkspace = layoutWorkspacePath === workspacePath;
+    useLayoutStore
+      .getState()
+      .hydrate(durableLayout, { preserveLiveMissionPanes: sameWorkspace });
+    layoutWorkspacePath = workspacePath;
     if (
       layout &&
       durableLayout &&
@@ -335,10 +433,11 @@ export function switchWorkspaceLayout(workspacePath: string): Promise<boolean> {
     return layout !== null;
   })();
   inFlightSwitch = { path: workspacePath, promise: run };
-  const clearInFlight = (): void => {
+  const settleLoad = (): void => {
     if (inFlightSwitch?.promise === run) inFlightSwitch = null;
+    endWorkspaceLayoutLoad();
   };
-  void run.then(clearInFlight, clearInFlight);
+  void run.then(settleLoad, settleLoad);
   return run;
 }
 
@@ -367,7 +466,13 @@ export async function switchWorkspaceLayoutWithFallback(
     }
   }
   if (options.isCurrent && !options.isCurrent()) return false;
-  useLayoutStore.getState().hydrate(null);
+  // The read failed; the RUNTIME did not. A live main-owned mission must not be
+  // wiped off the screen by an unreadable file — that produced the "empty pane
+  // covering the mission; I close it and the mission reappears" report.
+  useLayoutStore.getState().hydrate(null, {
+    preserveLiveMissionPanes: layoutWorkspacePath === workspacePath,
+  });
+  layoutWorkspacePath = workspacePath;
   throw lastError;
 }
 
@@ -375,22 +480,29 @@ export async function switchWorkspaceLayoutWithFallback(
 export function detachWorkspaceLayout(): void {
   flushLayout();
   persistKey = null;
+  // The panes are about to be disposed with their PTYs; nothing may follow the
+  // tree into the next workspace.
+  layoutWorkspacePath = null;
 }
 
 const LAYOUT_SETTLE_TIMEOUT_MS = 15_000;
 
 /**
- * Resolves once the workspace layout hydrate has landed (immediately when it
- * already did). Main-owned pane presentations await this so the persisted
- * layout can never hydrate OVER panes presented first — the race that left an
- * empty structural placeholder covering a live mission until any layout
- * mutation forced a replay. The timeout keeps presentations alive when no
- * workspace ever hydrates (launcher, tests).
+ * Resolves once the workspace layout is SETTLED: hydrated at least once and no
+ * read in flight. Main-owned pane presentations await this so a restore can
+ * never land on top of panes presented first.
+ *
+ * The `hydrated` flag alone was not enough. It is a one-shot latch, so it only
+ * ever gated the FIRST boot read; every later read (workspace re-activation,
+ * retry, Main-owned switch) ran with `hydrated === true` and the gate became a
+ * no-op — which is why the ghost pane kept coming back after the ordering fix.
+ * The timeout keeps presentations alive when no workspace ever hydrates
+ * (launcher, tests).
  */
 export function whenWorkspaceLayoutSettled(
   timeoutMs = LAYOUT_SETTLE_TIMEOUT_MS,
 ): Promise<void> {
-  if (useLayoutStore.getState().hydrated) return Promise.resolve();
+  if (isWorkspaceLayoutSettled()) return Promise.resolve();
   return new Promise((resolve) => {
     let settled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -398,14 +510,17 @@ export function whenWorkspaceLayoutSettled(
       if (settled) return;
       settled = true;
       unsubscribe();
+      layoutSettleWaiters.delete(check);
       if (timer !== undefined) clearTimeout(timer);
       resolve();
     };
-    const unsubscribe = useLayoutStore.subscribe((state) => {
-      if (state.hydrated) finish();
-    });
+    const check = (): void => {
+      if (isWorkspaceLayoutSettled()) finish();
+    };
+    layoutSettleWaiters.add(check);
+    const unsubscribe = useLayoutStore.subscribe(check);
     timer = setTimeout(finish, timeoutMs);
-    if (useLayoutStore.getState().hydrated) finish();
+    check();
   });
 }
 
@@ -418,7 +533,147 @@ function firstPaneId(root: LayoutNode): string | null {
   return panes.length > 0 ? panes[0].id : null;
 }
 
-export const useLayoutStore = create<LayoutState>((set, get) => ({
+/**
+ * The operator split / reused THIS pane on purpose. If it is the structural
+ * placeholder they are claiming it, so it stops being a vacancy before the
+ * invariant below gets to reclaim it.
+ */
+function claimPlaceholderTarget(root: LayoutNode, paneId: string | null): LayoutNode {
+  if (!paneId) return root;
+  const pane = listPanes(root).find((candidate) => candidate.id === paneId);
+  if (!pane || !isStructuralPlaceholderPane(pane)) return root;
+  return updatePane(root, paneId, { isStructuralPlaceholder: undefined });
+}
+
+/**
+ * A returned paneId is a CONTRACT: the caller spawns a PTY on it, waits for its
+ * session, writes a command into it. `splitPane` returns the tree UNCHANGED
+ * when the pivot is not in it, so a stale pivot made the insertion a silent
+ * no-op while the store still handed the id back — the caller then waited out
+ * its full session timeout on a pane that exists nowhere.
+ *
+ * Fall back to appending the pane to the grid so the id is always honest.
+ */
+function rootWithPaneGuaranteed(
+  proposed: LayoutNode,
+  previous: LayoutNode,
+  pane: PaneModel,
+): LayoutNode {
+  if (listPanes(proposed).some((candidate) => candidate.id === pane.id)) {
+    return proposed;
+  }
+  console.warn(
+    `[layout] split pivot not in tree — appending pane=${pane.id} to the grid`,
+  );
+  return buildGridTree([...listPanes(previous), pane]);
+}
+
+/**
+ * THE layout invariant. Every write that touches the pane tree passes through
+ * here, so a new call site cannot reintroduce the two defects this store keeps
+ * growing back — and no future path has to remember to re-implement them:
+ *
+ *   I1  A structural placeholder is a VACANCY, not content. The moment the tree
+ *       holds one real pane, no placeholder may remain beside it. This rule used
+ *       to be re-implemented at six call sites in three mutually inconsistent
+ *       ways (`length === 1 && placeholder`, `every(kind === 'shell')`, an
+ *       inline copy in mission-reopen) — and `hydrate`, the one path that can
+ *       install a placeholder OVER live content, never implemented it at all.
+ *
+ *   I2  A zoom is a view of ONE pane: PaneGrid renders only `maximizedPaneId`.
+ *       It may not survive a write that ADDS panes (they would be mounted, live
+ *       and invisible), nor point at a pane that left the tree. Seven call
+ *       sites carried a hand-written `maximizedPaneId: null`; `hydrate`
+ *       deliberately carried the zoom forward instead.
+ *
+ * Focus is normalized with it: it may only name a pane that survived the write.
+ *
+ *   I5  The two pointers (focus, zoom) may only name a pane that is IN the
+ *       tree — including on writes that do not carry a `root`. Skipping those
+ *       writes was not free: `setPanes` truncates at MAX_LIVE_PANES_HARD, the
+ *       presentation channel focuses the pane it just presented, and on a
+ *       saturated grid that pane is precisely the one truncation dropped. The
+ *       phantom focus then became the split pivot of the next addShellPane,
+ *       `splitPane` silently no-opped, and the store handed back the id of a
+ *       pane that exists nowhere for a caller to spawn a PTY on.
+ */
+export function enforceLayoutInvariants(
+  previous: Pick<LayoutState, 'root' | 'focusedPaneId' | 'maximizedPaneId'>,
+  partial: Partial<LayoutState>,
+): Partial<LayoutState> {
+  if (partial.root === undefined) {
+    // The tree does not change, so I1/I2's "did this write add panes?" question
+    // does not apply — but I5 still does, against the tree that IS live.
+    if (
+      partial.focusedPaneId === undefined &&
+      partial.maximizedPaneId === undefined
+    ) {
+      return partial;
+    }
+    const live = listPanes(previous.root);
+    const liveIds = new Set(live.map((pane) => pane.id));
+    const requestedFocus =
+      partial.focusedPaneId !== undefined
+        ? partial.focusedPaneId
+        : previous.focusedPaneId;
+    const requestedZoom =
+      partial.maximizedPaneId !== undefined
+        ? partial.maximizedPaneId
+        : previous.maximizedPaneId;
+    return {
+      ...partial,
+      focusedPaneId:
+        requestedFocus && liveIds.has(requestedFocus)
+          ? requestedFocus
+          : (live[0]?.id ?? null),
+      maximizedPaneId:
+        requestedZoom && liveIds.has(requestedZoom) ? requestedZoom : null,
+    };
+  }
+  const proposed = listPanes(partial.root);
+  const durable = proposed.filter((pane) => !isStructuralPlaceholderPane(pane));
+  const reclaimsVacancy = durable.length > 0 && durable.length < proposed.length;
+  if (reclaimsVacancy) {
+    console.info(
+      `[layout] dropped ${proposed.length - durable.length} structural placeholder(s) beside ${durable.length} live pane(s)`,
+    );
+  }
+  const root = reclaimsVacancy ? buildGridTree(durable) : partial.root;
+  const live = reclaimsVacancy ? durable : proposed;
+  const liveIds = new Set(live.map((pane) => pane.id));
+
+  const requestedFocus =
+    partial.focusedPaneId !== undefined
+      ? partial.focusedPaneId
+      : previous.focusedPaneId;
+  const focusedPaneId =
+    requestedFocus && liveIds.has(requestedFocus)
+      ? requestedFocus
+      : (live[0]?.id ?? null);
+
+  const previousIds = new Set(listPanes(previous.root).map((pane) => pane.id));
+  const gainedPanes = live.some((pane) => !previousIds.has(pane.id));
+  const requestedZoom =
+    partial.maximizedPaneId !== undefined
+      ? partial.maximizedPaneId
+      : previous.maximizedPaneId;
+  const maximizedPaneId =
+    requestedZoom && liveIds.has(requestedZoom) && !gainedPanes
+      ? requestedZoom
+      : null;
+
+  return { ...partial, root, focusedPaneId, maximizedPaneId };
+}
+
+export const useLayoutStore = create<LayoutState>((rawSet, get) => {
+  /**
+   * Single write seam. Not a convenience: it is what makes the invariant a
+   * property of the STORE instead of a rule every caller has to remember.
+   */
+  const set = (partial: Partial<LayoutState>): void => {
+    rawSet(enforceLayoutInvariants(get(), partial));
+  };
+  return {
   root: initialTree(),
   focusedPaneId: null,
   maximizedPaneId: null,
@@ -432,12 +687,13 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
       'shell',
       getActiveWorkspacePath() ?? undefined,
     );
-    const root = splitPane(get().root, paneId, direction, newPane);
+    // Splitting the placeholder IS using it — claim it so the vacancy rule
+    // does not reclaim the terminal the operator just asked to keep.
+    const claimed = claimPlaceholderTarget(get().root, paneId);
+    const root = splitPane(claimed, paneId, direction, newPane);
     bumpTreeVersion();
-    // A stale maximize would keep covering the freshly split pane.
-    const s = { ...get(), root, focusedPaneId: newPane.id, maximizedPaneId: null };
-    set({ root, focusedPaneId: newPane.id, maximizedPaneId: null });
-    persist(s);
+    set({ root, focusedPaneId: newPane.id });
+    persist();
   },
 
   spawnOrchPane: (req) => {
@@ -513,7 +769,7 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
     // (mesmo idioma de focus()/setPanes): senão o pane ampliado continua
     // cobrindo o agente que a orquestração acabou de apresentar.
     set({ root, focusedPaneId: newPane.id, maximizedPaneId: null, canvasNodeLayouts: updatedLayouts });
-    persist({ ...get(), root, focusedPaneId: newPane.id, canvasNodeLayouts: updatedLayouts });
+    persist();
     return newPane.id;
   },
 
@@ -521,8 +777,15 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
     const { root: currentRoot, focusedPaneId, viewKind, canvasNodeLayouts } = get();
     const newPane = createPane('shell', getActiveWorkspacePath() ?? undefined);
     const pivot = focusedPaneId ?? firstPaneId(currentRoot);
+    // ＋ Terminal on a fresh workspace means "I want two terminals", so the
+    // placeholder being split becomes the operator's first one.
+    const claimed = claimPlaceholderTarget(currentRoot, pivot);
     const root = pivot
-      ? splitPane(currentRoot, pivot, 'row', newPane)
+      ? rootWithPaneGuaranteed(
+          splitPane(claimed, pivot, 'row', newPane),
+          claimed,
+          newPane,
+        )
       : buildGridTree([newPane]);
     const existingPanes = listPanes(currentRoot);
     const paneCount = listPanes(root).length;
@@ -544,7 +807,7 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
       maximizedPaneId: null,
       canvasNodeLayouts: updatedLayouts,
     });
-    persist({ ...get(), root, focusedPaneId: newPane.id, canvasNodeLayouts: updatedLayouts });
+    persist();
     return newPane.id;
   },
 
@@ -578,7 +841,7 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
     // Livre) encerra qualquer zoom de pane único: um maximize stale deixava o
     // pane ampliado (às vezes um shell vazio) cobrindo os panes recém-montados.
     set({ root, focusedPaneId, maximizedPaneId: null, canvasNodeLayouts: updatedLayouts });
-    persist({ ...get(), root, focusedPaneId, canvasNodeLayouts: updatedLayouts });
+    persist();
   },
 
   spawnAgent: (adapterId, model) => {
@@ -622,7 +885,7 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
       maximizedPaneId: null,
       canvasNodeLayouts: updatedLayouts,
     });
-    persist({ ...get(), root, focusedPaneId, canvasNodeLayouts: updatedLayouts });
+    persist();
   },
 
   close: (paneId, reason = 'unspecified') => {
@@ -652,9 +915,8 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
     const maximizedPaneId =
       get().maximizedPaneId === paneId ? null : get().maximizedPaneId;
     bumpTreeVersion();
-    const s = { ...get(), root, focusedPaneId, maximizedPaneId };
     set({ root, focusedPaneId, maximizedPaneId });
-    persist(s);
+    persist();
     // Closing the LAST pane replaces it with a fresh shell — visually a no-op.
     // Surface the Home deck so the click has feedback and a next step.
     //
@@ -686,7 +948,7 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
     if (!pane?.orchRequestId) return;
     const root = updatePane(get().root, paneId, { orchRequestId: undefined });
     set({ root });
-    persist({ ...get(), root });
+    persist();
   },
 
   claimStructuralPlaceholder: (paneId) => {
@@ -701,7 +963,7 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
       isStructuralPlaceholder: undefined,
     });
     set({ root });
-    persist({ ...get(), root });
+    persist();
   },
 
   addBrowserPane: (url, paneId, browserOpenRequestId) => {
@@ -718,7 +980,11 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
     };
     const pivot = focusedPaneId ?? firstPaneId(currentRoot);
     const root = pivot
-      ? splitPane(currentRoot, pivot, 'row', newPane)
+      ? rootWithPaneGuaranteed(
+          splitPane(currentRoot, pivot, 'row', newPane),
+          currentRoot,
+          newPane,
+        )
       : buildGridTree([newPane]);
     const existingPanes = listPanes(currentRoot);
     const paneCount = listPanes(root).length;
@@ -740,11 +1006,20 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
       maximizedPaneId: null,
       canvasNodeLayouts: updatedLayouts,
     });
-    persist({ ...get(), root, focusedPaneId: newPane.id, canvasNodeLayouts: updatedLayouts });
+    persist();
     return newPane.id;
   },
 
   focus: (paneId) => {
+    // Focar um pane que não está na árvore não é "focar nada": o id fica
+    // gravado em focusedPaneId e vira o PIVÔ de addShellPane/addBrowserPane —
+    // o split não acha o pivô, não insere nada, e o pane novo nunca aparece.
+    // Acontece de verdade quando o cap de setPanes descarta o pane que a
+    // apresentação acabou de montar (grid saturado de squad).
+    if (!listPanes(get().root).some((pane) => pane.id === paneId)) {
+      console.warn(`[layout] focus no-op: pane not in tree pane=${paneId}`);
+      return;
+    }
     // Um pane maximizado cobre o grid inteiro (PaneGrid renderiza só ele).
     // Foco programático em OUTRO pane (retomada de missão, CTA de toast,
     // paleta, "focar agente" do rail) é um pedido explícito de mostrar esse
@@ -766,7 +1041,7 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
     if (pane?.titlePinned) return;
     const root = updatePane(get().root, paneId, { title: clean });
     set({ root });
-    persist({ ...get(), root });
+    persist();
   },
 
   renameTitle: (paneId, title) => {
@@ -777,25 +1052,42 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
       titlePinned: true,
     });
     set({ root });
-    persist({ ...get(), root });
+    persist();
   },
 
   setBrowserUrl: (paneId, url) => {
     const root = updatePane(get().root, paneId, { browserUrl: url });
     set({ root });
-    persist({ ...get(), root });
+    persist();
   },
 
   setAccountId: (paneId, accountId) => {
     const root = updatePane(get().root, paneId, { accountId });
-    const state = { ...get(), root };
     set({ root });
-    persist(state);
+    persist();
   },
 
-  hydrate: (layout) => {
+  hydrate: (layout, options = {}) => {
+    // I3 — a restore is a HINT, a live mission is AUTHORITY.
+    //
+    // `hydrate` is the only tree write that can install a saved tree over
+    // whatever is on screen, and it is the one path that never had a rule. A
+    // re-read of the SAME workspace (re-activation, retry, unreadable file)
+    // routinely returns a layout written BEFORE the mission started — the lone
+    // structural placeholder — because the mission pane's debounced save had
+    // not landed, or was cancelled outright by
+    // abandonWorkspaceLayoutAfterMainSwitch. Letting that win is exactly the
+    // reported bug: a shell replaying its persisted scrollback takes the whole
+    // grid, the running mission is gone, and closing the shell forces a replay
+    // that brings the mission back.
+    const carried =
+      options.preserveLiveMissionPanes === true
+        ? listPanes(get().root).filter((pane) => pane.missionId !== undefined)
+        : [];
     if (!layout) {
-      const root = initialTree();
+      const restored = initialTree();
+      const root =
+        carried.length > 0 ? buildGridTree(carried) : restored;
       set({
         root,
         focusedPaneId: firstPaneId(root),
@@ -808,18 +1100,24 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
       return;
     }
     const durableLayout = sanitizeWorkspaceLayout(layout);
-    const focusedPaneId =
-      durableLayout.focusedPaneId ?? firstPaneId(durableLayout.root);
-    const currentMaximized = get().maximizedPaneId;
-    const maximizedPaneId = listPanes(durableLayout.root).some(
-      (pane) => pane.id === currentMaximized,
-    )
-      ? currentMaximized
-      : null;
+    const restoredPanes = listPanes(durableLayout.root);
+    const restoredIds = new Set(restoredPanes.map((pane) => pane.id));
+    const survivors = carried.filter((pane) => !restoredIds.has(pane.id));
+    if (survivors.length > 0) {
+      console.info(
+        `[layout] restore kept ${survivors.length} live mission pane(s) the saved layout did not contain`,
+      );
+    }
+    const root =
+      survivors.length > 0
+        ? buildGridTree([...restoredPanes, ...survivors])
+        : durableLayout.root;
+    // The zoom is deliberately NOT decided here: enforceLayoutInvariants owns
+    // it, so a restore that adds panes can never leave one covering them.
     set({
-      root: durableLayout.root,
-      focusedPaneId,
-      maximizedPaneId,
+      root,
+      focusedPaneId:
+        durableLayout.focusedPaneId ?? firstPaneId(durableLayout.root),
       hydrated: true,
       viewKind: durableLayout.viewKind ?? 'grid',
       canvasNodeLayouts: durableLayout.canvasNodeLayouts ?? {},
@@ -829,17 +1127,15 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
   },
 
   toggleView: () => {
-    const { viewKind, root, canvasNodeLayouts, canvasViewport } = get();
+    const { viewKind, root, canvasNodeLayouts } = get();
     if (viewKind === 'grid') {
       const panes = listPanes(root);
       const updatedLayouts = ensureCanvasLayouts(panes, canvasNodeLayouts);
-      const s = { ...get(), viewKind: 'canvas' as const, canvasNodeLayouts: updatedLayouts };
       set({ viewKind: 'canvas', canvasNodeLayouts: updatedLayouts });
-      persist(s);
+      persist();
     } else {
-      const s = { ...get(), viewKind: 'grid' as const };
       set({ viewKind: 'grid' });
-      persist({ ...s, canvasNodeLayouts, canvasViewport });
+      persist();
     }
   },
 
@@ -849,12 +1145,13 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
     const updated = { ...existing, ...patch };
     const updatedLayouts = { ...canvasNodeLayouts, [paneId]: updated };
     set({ canvasNodeLayouts: updatedLayouts });
-    persist({ ...get(), canvasNodeLayouts: updatedLayouts });
+    persist();
   },
 
   setCanvasViewport: (vp) => {
     set({ canvasViewport: vp });
     // Debounce viewport persist separately (fires on every pan/zoom frame).
-    persist({ ...get(), canvasViewport: vp });
+    persist();
   },
-}));
+  };
+});

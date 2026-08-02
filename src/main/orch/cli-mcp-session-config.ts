@@ -10,6 +10,7 @@ export {
   purgeStaleCliMcpSessions,
 } from './cli-mcp-session-artifacts';
 export { prepareCodexGovernedSession } from './cli-mcp-session-codex';
+export { deliverGrantedSkillsToProviderHome } from './cli-mcp-session-governance';
 export { prepareGrokMcpSession } from './cli-mcp-session-grok';
 export { prepareKimiMcpSession } from './cli-mcp-session-kimi';
 export { prepareOpenCodeMcpSession } from './cli-mcp-session-opencode';

@@ -162,10 +162,18 @@ function legacyGuidedReceipt(detail: string, cause?: unknown): never {
   );
 }
 
+type GuidedRecoveredStage =
+  | "advisory"
+  | "reproduction"
+  | "implementation"
+  | "regression"
+  | "independent-review"
+  | "quality-gate";
+
 function recoveredGuidedStage(
   kind: GuidedTaskKind,
   category: GuidedWorkerAgent["category"],
-): "advisory" | "implementation" | "independent-review" | "quality-gate" {
+): GuidedRecoveredStage {
   if (kind === "isolated-advisory") {
     return category === "reviewer" ? "independent-review" : "advisory";
   }
@@ -287,24 +295,16 @@ export function assertRosterCompleteGuidedV2Receipt(
       );
     }
 
-    let implementationCount = 0;
-    let qualityGateCount = 0;
-    let implementationTaskId: string | null = null;
-    let qualityGateTaskId: string | null = null;
-    const dependencyGraph: Array<{
-      id: string;
+    type ScheduleRow = Readonly<{
+      entry: PlannedTaskRecord;
+      stage: GuidedRecoveredStage;
       dependsOn: readonly string[];
-    }> = [];
-    const dependentCounts = new Map<string, number>();
-    const dependentByTaskId = new Map<string, string>();
-    const schedules = new Map<
-      string,
-      Readonly<{
-        entry: PlannedTaskRecord;
-        kind: GuidedTaskKind;
-        category: GuidedWorkerAgent["category"];
-      }>
-    >();
+    }>;
+
+    const rows: ScheduleRow[] = [];
+    const byTaskId = new Map<string, ScheduleRow>();
+    const dependents = new Map<string, string[]>();
+    const singletons = new Map<GuidedRecoveredStage, string>();
     for (const entry of planned) {
       const meta = assertSealedTaskSchedule(
         entry,
@@ -316,176 +316,179 @@ export function assertRosterCompleteGuidedV2Receipt(
           `a tarefa ${entry.taskId} não possui domínio Guided v2 exato`,
         );
       }
-      if (kind === "implementation") {
-        implementationCount += 1;
-        implementationTaskId = entry.taskId;
-      } else if (kind === "quality-gate") {
-        qualityGateCount += 1;
-        qualityGateTaskId = entry.taskId;
-      }
-      if (meta.dependsOn.length > 1) {
+      const stage = recoveredGuidedStage(kind, meta.agentCategory);
+      // Fan-in is a quality-gate privilege. Every other stage keeps at most one
+      // predecessor, so a receipt can never smuggle an arbitrary DAG past the
+      // recovery contract.
+      if (meta.dependsOn.length > 1 && stage !== "quality-gate") {
         legacyGuidedReceipt(
-          `a tarefa ${entry.taskId} não pertence ao encadeamento v2`,
+          `a tarefa ${entry.taskId} declara mais de uma dependência sem ser o quality gate`,
         );
       }
-      for (const dependency of meta.dependsOn) {
-        dependentCounts.set(
-          dependency,
-          (dependentCounts.get(dependency) ?? 0) + 1,
-        );
-        dependentByTaskId.set(dependency, entry.taskId);
+      if (
+        stage === "implementation" ||
+        stage === "quality-gate" ||
+        stage === "reproduction" ||
+        stage === "regression"
+      ) {
+        if (singletons.has(stage)) {
+          legacyGuidedReceipt(`o receipt possui mais de um estágio ${stage}`);
+        }
+        singletons.set(stage, entry.taskId);
       }
-      schedules.set(
-        entry.taskId,
-        Object.freeze({
-          entry,
-          kind,
-          category: meta.agentCategory,
-        }),
-      );
-      dependencyGraph.push({
-        id: entry.taskId,
+      const row: ScheduleRow = Object.freeze({
+        entry,
+        stage,
         dependsOn: meta.dependsOn,
       });
+      rows.push(row);
+      byTaskId.set(entry.taskId, row);
+      for (const dependency of meta.dependsOn) {
+        dependents.set(dependency, [
+          ...(dependents.get(dependency) ?? []),
+          entry.taskId,
+        ]);
+      }
     }
-    if (implementationCount !== 1 || qualityGateCount !== 1) {
-      legacyGuidedReceipt(
-        "o receipt não contém executor e quality gate canônicos",
-      );
-    }
-    assertClosedAcyclicPlanDependencies(dependencyGraph);
+
+    const implementationTaskId = singletons.get("implementation");
+    const qualityGateTaskId = singletons.get("quality-gate");
     if (!implementationTaskId || !qualityGateTaskId) {
       legacyGuidedReceipt(
         "o receipt não contém executor e quality gate canônicos",
       );
     }
-
-    type ScheduleRow = Readonly<{
-      entry: PlannedTaskRecord;
-      kind: GuidedTaskKind;
-      category: GuidedWorkerAgent["category"];
-    }>;
-
-    const implementationSchedule = schedules.get(implementationTaskId);
-    const qualityGateSchedule = schedules.get(qualityGateTaskId);
-    if (!implementationSchedule || !qualityGateSchedule) {
-      legacyGuidedReceipt(
-        "o receipt não permite recuperar executor e quality gate canônicos",
-      );
-    }
-
-    const implementationNode = dependencyGraph.find(
-      (entry) => entry.id === implementationTaskId,
+    const reproductionTaskId = singletons.get("reproduction") ?? null;
+    assertClosedAcyclicPlanDependencies(
+      rows.map((row) => ({ id: row.entry.taskId, dependsOn: row.dependsOn })),
     );
-    const qualityGateNode = dependencyGraph.find(
-      (entry) => entry.id === qualityGateTaskId,
-    );
-    if (
-      !implementationNode ||
-      implementationNode.dependsOn.length !== 0 ||
-      !qualityGateNode ||
-      qualityGateNode.dependsOn.length !== 1 ||
-      dependentCounts.has(qualityGateTaskId)
-    ) {
-      legacyGuidedReceipt(
-        "o receipt não preserva implementation raiz e quality-gate folha",
-      );
-    }
 
-    const advisoryRoots: ScheduleRow[] = [];
-    let reviewCount = 0;
-    for (const entry of dependencyGraph) {
-      const schedule = schedules.get(entry.id);
-      if (!schedule) {
-        legacyGuidedReceipt(
-          `a tarefa ${entry.id} não possui schedule Guided recuperável`,
-        );
-      }
-      const stage = recoveredGuidedStage(schedule.kind, schedule.category);
-      if (stage === "advisory") {
-        if (entry.dependsOn.length !== 0 || dependentCounts.has(entry.id)) {
-          legacyGuidedReceipt(
-            `advisory ${entry.id} deve ser raiz tip-only sem dependentes`,
-          );
+    const dependentsOf = (taskId: string): readonly string[] =>
+      dependents.get(taskId) ?? [];
+    const sameSet = (
+      left: readonly string[],
+      right: readonly string[],
+    ): boolean => {
+      const rightSet = new Set(right);
+      return (
+        new Set(left).size === left.length &&
+        left.length === rightSet.size &&
+        left.every((value) => rightSet.has(value))
+      );
+    };
+
+    // Per-stage edge contract. Written as explicit invariants (not a chain
+    // walk) so a bug graph, a serial-review graph and a parallel-review graph
+    // are all recoverable from the same rules.
+    for (const row of rows) {
+      const taskId = row.entry.taskId;
+      const consumers = dependentsOf(taskId);
+      switch (row.stage) {
+        case "advisory":
+          if (row.dependsOn.length !== 0 || consumers.length !== 0) {
+            legacyGuidedReceipt(
+              `advisory ${taskId} deve ser raiz tip-only sem dependentes`,
+            );
+          }
+          break;
+        case "reproduction":
+          if (
+            row.dependsOn.length !== 0 ||
+            !sameSet([...consumers], [implementationTaskId])
+          ) {
+            legacyGuidedReceipt(
+              `reprodução ${taskId} deve ser raiz consumida apenas pela implementação`,
+            );
+          }
+          break;
+        case "implementation":
+          if (
+            !sameSet(
+              [...row.dependsOn],
+              reproductionTaskId ? [reproductionTaskId] : [],
+            )
+          ) {
+            legacyGuidedReceipt(
+              `implementação ${taskId} deve depender exatamente da reprodução selada (ou de nada)`,
+            );
+          }
+          break;
+        case "regression":
+          if (!sameSet([...row.dependsOn], [implementationTaskId])) {
+            legacyGuidedReceipt(
+              `regressão ${taskId} deve depender exatamente da implementação`,
+            );
+          }
+          break;
+        case "independent-review": {
+          const predecessor = row.dependsOn[0];
+          const predecessorStage = predecessor
+            ? byTaskId.get(predecessor)?.stage
+            : undefined;
+          if (
+            row.dependsOn.length !== 1 ||
+            (predecessorStage !== "implementation" &&
+              predecessorStage !== "regression" &&
+              predecessorStage !== "independent-review")
+          ) {
+            legacyGuidedReceipt(
+              `revisão ${taskId} exige exatamente um predecessor de entrega`,
+            );
+          }
+          break;
         }
-        advisoryRoots.push(schedule);
-      } else if (stage === "independent-review") {
-        if (entry.dependsOn.length !== 1) {
-          legacyGuidedReceipt(
-            `revisão ${entry.id} exige exatamente uma dependência`,
-          );
-        }
-        reviewCount += 1;
-      } else if (stage !== "implementation" && stage !== "quality-gate") {
-        legacyGuidedReceipt(`estágio Guided desconhecido em ${entry.id}`);
+        case "quality-gate":
+          if (consumers.length !== 0) {
+            legacyGuidedReceipt(`quality gate ${taskId} não pode ter dependentes`);
+          }
+          break;
+        default:
+          legacyGuidedReceipt(`estágio Guided desconhecido em ${taskId}`);
       }
     }
 
-    const deliveryOrdered: ScheduleRow[] = [implementationSchedule];
-    // `cursor` is narrowed to string inside the loop: the map lookup below is
-    // what advances it, so the guard has to prove non-undefined first.
-    let cursor: string = implementationTaskId;
-    const seen = new Set<string>([implementationTaskId]);
-    while (dependentByTaskId.has(cursor)) {
-      const nextId: string = dependentByTaskId.get(cursor)!;
-      if (seen.has(nextId)) {
-        legacyGuidedReceipt("ciclo na cadeia de delivery Guided");
-      }
-      seen.add(nextId);
-      const next = schedules.get(nextId);
-      if (!next) {
-        legacyGuidedReceipt(
-          `a tarefa ${nextId} não possui schedule Guided recuperável`,
-        );
-      }
-      deliveryOrdered.push(next);
-      cursor = nextId;
-      if (nextId === qualityGateTaskId) break;
-    }
+    // The gate joins the whole delivery frontier: every non-advisory task that
+    // nothing else consumes. This single invariant covers the legacy serial
+    // chain (frontier = last review) and concurrent reviews (frontier = all of
+    // them) without letting an unconsumed stage escape validation.
+    const frontier = rows
+      .filter(
+        (row) =>
+          row.stage !== "advisory" &&
+          row.entry.taskId !== qualityGateTaskId &&
+          dependentsOf(row.entry.taskId).every(
+            (consumer) => consumer === qualityGateTaskId,
+          ),
+      )
+      .map((row) => row.entry.taskId);
+    const qualityGateRow = byTaskId.get(qualityGateTaskId)!;
     if (
-      deliveryOrdered[deliveryOrdered.length - 1]?.entry.taskId !==
-      qualityGateTaskId
+      frontier.length === 0 ||
+      !sameSet([...qualityGateRow.dependsOn], frontier)
     ) {
       legacyGuidedReceipt(
-        "a cadeia de delivery não termina no quality-gate",
-      );
-    }
-    const deliveryStages = deliveryOrdered.map((schedule) =>
-      recoveredGuidedStage(schedule.kind, schedule.category),
-    );
-    if (
-      deliveryStages[0] !== "implementation" ||
-      deliveryStages[deliveryStages.length - 1] !== "quality-gate" ||
-      deliveryStages
-        .slice(1, -1)
-        .some((stage) => stage !== "independent-review")
-    ) {
-      legacyGuidedReceipt(
-        "o receipt não preserva implementation → independent-review* → quality-gate",
-      );
-    }
-    if (
-      advisoryRoots.length + deliveryOrdered.length !== planned.length ||
-      reviewCount !== deliveryStages.length - 2
-    ) {
-      legacyGuidedReceipt(
-        "o receipt não forma o grafo Guided paralelo completo",
+        "o quality gate não fecha exatamente a fronteira de entrega selada",
       );
     }
 
-    const orderedSchedules = [
-      ...advisoryRoots.sort((left, right) =>
+    const stageRank: Record<GuidedRecoveredStage, number> = {
+      advisory: 0,
+      reproduction: 1,
+      implementation: 2,
+      regression: 3,
+      "independent-review": 4,
+      "quality-gate": 5,
+    };
+    const orderedRows = [...rows].sort(
+      (left, right) =>
+        stageRank[left.stage] - stageRank[right.stage] ||
         left.entry.taskId.localeCompare(right.entry.taskId),
-      ),
-      ...deliveryOrdered,
-    ];
+    );
 
     return Object.freeze({
-      implementation: implementationSchedule.entry,
-      qualityGate: qualityGateSchedule.entry,
-      ordered: Object.freeze(
-        orderedSchedules.map((schedule) => schedule.entry),
-      ),
+      implementation: byTaskId.get(implementationTaskId)!.entry,
+      qualityGate: qualityGateRow.entry,
+      ordered: Object.freeze(orderedRows.map((row) => row.entry)),
     });
   } catch (error) {
     if (

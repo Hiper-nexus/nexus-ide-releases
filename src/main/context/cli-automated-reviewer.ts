@@ -38,6 +38,11 @@ import {
   type DetachedReviewWorktree,
 } from './detached-review-worktree';
 import { canonicalJson } from './canonical-json';
+import {
+  DESIGN_SYSTEM_CANDIDATE_PATHS,
+  resolveWorkspaceDesignContract,
+  type WorkspaceDesignContract,
+} from '../orch/design-system-reader';
 import { getProjectDomainStores } from '../orch/project-domain-store-registry';
 import {
   isAutomatedReviewerCompositionPane,
@@ -300,12 +305,51 @@ export function selectAutomatedReviewerRoutes(
   return Object.freeze(routes);
 }
 
+/**
+ * The design-inspection clause, bound to the contract that ACTUALLY exists in
+ * the checkout the reviewer can read.
+ *
+ * This used to be the literal `Read DESIGN.md`. A workspace whose contract was
+ * materialized at `.context/docs/design-system.md` sent the reviewer to a file
+ * that did not exist — and a reviewer that cannot read the contract approves
+ * the delivery anyway. Resolution is delegated to the single workspace reader,
+ * so this clause can never drift from what the executor was given.
+ */
+export function designContractInspectionLines(
+  checkoutPath: string,
+  resolve: (
+    rootDir?: string,
+  ) => WorkspaceDesignContract | null = resolveWorkspaceDesignContract,
+): readonly string[] {
+  let contract: WorkspaceDesignContract | null = null;
+  try {
+    contract = resolve(checkoutPath);
+  } catch {
+    contract = null;
+  }
+  const inspection =
+    'Inspect the rendered implementation, not only source. Verify responsive behavior, keyboard/focus flow, contrast, loading/empty/error/disabled states, reduced motion, typography and visual hierarchy.';
+  if (contract) {
+    return [
+      `Read the workspace design contract at \`${contract.path}\` (resolved by Nexus in this exact checkout) and hold the delivered styling to it. ${inspection}`,
+    ];
+  }
+  return [
+    `No design contract resolved in this checkout: Nexus searched ${DESIGN_SYSTEM_CANDIDATE_PATHS.join(
+      ' and ',
+    )} and found none. Do not invent one and do not assume the styling is conformant.`,
+    'Report the missing contract as a finding (category ux) citing the delivered styling it leaves unjustified.',
+    inspection,
+  ];
+}
+
 function reviewerPrompt(
   reviewSessionId: string,
   contract: MissionContract,
   contextMarkdown: string,
   reviewPurpose: RunAutomatedReviewInput['reviewPurpose'],
   requiresDesignInspection: boolean,
+  checkoutPath: string,
   designSurface?: AutomatedReviewDesignSurface,
 ): string {
   const isPreExecution = reviewPurpose === 'pre-execution';
@@ -346,7 +390,7 @@ function reviewerPrompt(
           `Main-provisioned browser paneId: ${designSurface?.paneId ?? 'unavailable'}`,
           'The pane is already loaded. Use nexus_browser_wait, nexus_browser_read, nexus_browser_screenshot and nexus_browser_inspect with that exact paneId. Do not navigate, click, type, start a process, or open any other URL.',
           'A successful review submission requires both a browser read and screenshot from this bound pane.',
-          'Read DESIGN.md and inspect the rendered implementation, not only source. Verify responsive behavior, keyboard/focus flow, contrast, loading/empty/error/disabled states, reduced motion, typography and visual hierarchy.',
+          ...designContractInspectionLines(checkoutPath),
           'Reject generic AI design patterns: decorative glassmorphism, gradient text, repetitive icon-card grids, excessive rounding, purple-gradient defaults and repeated uppercase eyebrows.',
           'Use the impeccable guidance available to this reviewer and cite concrete visual or accessibility evidence.',
           ]
@@ -602,6 +646,7 @@ export class CliAutomatedReviewer {
             input.contextMarkdown,
             input.reviewPurpose,
             requiresDesignInspection,
+            input.checkoutPath,
             designSurface ?? undefined,
           );
           const reviewerSuffix = reviewSessionId.replaceAll('-', '').slice(0, 12);

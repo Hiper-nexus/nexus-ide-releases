@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, onTestFinished } from 'vitest';
 import { PGlite } from '@electric-sql/pglite';
 import { drizzle } from 'drizzle-orm/pglite';
 import { sql } from 'drizzle-orm';
@@ -9,6 +9,11 @@ import { CREATE_TABLES_SQL } from './schema';
 describe('schema', () => {
   it('cria as tabelas e insere uma account', async () => {
     const client = new PGlite();
+    // PGlite sobe um PostgreSQL WASM por fixture; fechar ao fim do teste
+    // impede que a rodada acumule runtimes residentes.
+    onTestFinished(async () => {
+      await client.close();
+    });
     const db = drizzle(client, { schema });
     await client.exec(CREATE_TABLES_SQL); // DDL literal p/ teste (migrations reais no deploy)
     await db.insert(schema.accounts).values({
@@ -39,6 +44,11 @@ describe('schema', () => {
 
   it('billing: tabelas novas aceitam o fluxo mínimo', async () => {
     const client = new PGlite();
+    // PGlite sobe um PostgreSQL WASM por fixture; fechar ao fim do teste
+    // impede que a rodada acumule runtimes residentes.
+    onTestFinished(async () => {
+      await client.close();
+    });
     const db = drizzle(client, { schema });
     await client.exec(CREATE_TABLES_SQL);
     const [acc] = await db.insert(schema.accounts).values({ email: 't@x.com' }).returning({ id: schema.accounts.id });

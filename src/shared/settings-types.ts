@@ -10,7 +10,7 @@ function isHttpUrlOrEmpty(value: string): boolean {
   }
 }
 
-function isAbsoluteShellPath(value: string): boolean {
+function isAbsolutePathOrEmpty(value: string): boolean {
   return (
     value === '' ||
     value.startsWith('/') ||
@@ -46,7 +46,7 @@ export const terminalSettingsSchema = z.object({
   shell: z
     .string()
     .max(4096)
-    .refine(isAbsoluteShellPath, {
+    .refine(isAbsolutePathOrEmpty, {
       message: 'shell must be an absolute path',
     })
     .default(''),
@@ -70,7 +70,7 @@ export const terminalSettingsPatchSchema = z.object({
   shell: z
     .string()
     .max(4096)
-    .refine(isAbsoluteShellPath, {
+    .refine(isAbsolutePathOrEmpty, {
       message: 'shell must be an absolute path',
     })
     .optional(),
@@ -118,6 +118,39 @@ export const orchSettingsSchema = z.object({
   designMotion: designDialSchema,
   /** Densidade visual: 1 = uma ideia por viewport, 10 = UI densa em dados. */
   designDensity: designDialSchema,
+  /**
+   * Diretório do catálogo LOCAL de design (um `.md` por marca, no formato
+   * DESIGN.md). Vazio = `~/.design-references`, a convenção do `getdesign`.
+   * É a fonte de contrato de design que não depende de rede nem de chave:
+   * designmd.ai serve metadados públicos mas exige
+   * `external:designmd-api-key` para o corpo do DESIGN.md.
+   */
+  designLocalCatalogDir: z
+    .string()
+    .max(4096)
+    .refine(isAbsolutePathOrEmpty, {
+      message: 'design catalog directory must be empty or an absolute path',
+    })
+    .default(''),
+  /**
+   * Kit do catálogo local fixado como direção padrão do contrato de design que
+   * o bootstrap materializa sozinho (`orch.designDefaultKit`). Vazio = sem
+   * pino: a escolha cai no casamento por sinais do objetivo e, se nada casar
+   * com folga, no contrato NEUTRO de casa.
+   *
+   * Este setting é a ÚNICA forma de uma marca famosa entrar por decisão
+   * humana. Um pino que não existe no catálogo NUNCA vira outro kit por
+   * aproximação — cai direto no neutro, com o motivo declarado no documento.
+   */
+  designDefaultKit: z
+    .string()
+    .trim()
+    .max(64)
+    .refine((value) => value === '' || /^[a-z0-9][a-z0-9._-]*$/.test(value), {
+      message:
+        'design default kit must be empty or a lowercase catalog kit id',
+    })
+    .default(''),
   /** Modo sóbrio: oculta HUD/celebrações/narração da gamificação (o XP
    *  continua acumulando em silêncio). */
   soberMode: z.boolean().default(false),

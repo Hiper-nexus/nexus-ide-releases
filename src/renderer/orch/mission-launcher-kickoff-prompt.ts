@@ -130,12 +130,19 @@ export function buildMissionKickoffPrompt(
     '## Código, contexto vivo e design\n' +
       'Prefira mudanças pequenas, reversíveis e sem abstração especulativa. Se faltarem ' +
       'AGENTS.md/CLAUDE.md, inclua um starter baseado no repositório e registre descobertas úteis. ' +
-      'Em tarefas de UI, leia o DESIGN.md do workspace ou `.context/docs/design-system.md`. ' +
-      'Se o contrato visual faltar OU o objetivo citar URL/referência (inspirado em, parecido com, ' +
-      'mockup, brand site), tente `nexus_design_system_extract` uma vez. Se retornar ' +
-      '`NETWORK_GUARD_UNAVAILABLE`, não repita nem bloqueie a missão: use contexto local/designmd ' +
-      'e registre a limitação, sem fingir que preflight protege redirects/subresources. Se o sistema externo for um kit ' +
-      'designmd.ai, use nexus_design_system_search/get/import pelo fluxo de drafts; nunca publique ' +
+      'Em tarefas de UI, NUNCA comece sem contrato de design: sem ele o resultado é o ' +
+      'default do modelo. Desça a escada até uma fonte responder:\n' +
+      '(1) DESIGN.md do workspace ou `.context/docs/design-system.md` — se já existe, é ele que manda;\n' +
+      '(2) `nexus_design_system_local_list` + `nexus_design_system_local_import` com ' +
+      'source=local-catalog (pasta local de referências; offline, sem chave nenhuma);\n' +
+      '(3) as mesmas duas com source=getdesign (catálogo aberto de marcas; sem chave, custa uma execução de CLI);\n' +
+      '(4) `nexus_design_system_search/get/import` (designmd.ai) só quando o segredo ' +
+      '`external:designmd-api-key` estiver configurado — sem ele o endpoint /raw responde 401.\n' +
+      'Se o objetivo citar URL/referência (inspirado em, parecido com, mockup, brand site), ' +
+      'tente `nexus_design_system_extract` uma vez. Se retornar ' +
+      '`NETWORK_GUARD_UNAVAILABLE`, não repita nem bloqueie a missão: volte para a escada ' +
+      'e registre a limitação, sem fingir que preflight protege redirects/subresources. ' +
+      'Todo import vira draft para revisão e ADAPTA tokens — nunca copia marca de terceiro; nunca publique ' +
       'com nexus_design_system_publish sem solicitação explícita. Finalize UI com crítica de UX, ' +
       'estados hover/focus/empty/error e validação visual (skill impeccable). Rejeite o ' +
       '"look de IA": sparkles ✨/emoji como ícone, gradiente roxo, ' +

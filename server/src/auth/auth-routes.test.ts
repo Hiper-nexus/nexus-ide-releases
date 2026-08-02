@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import { PGlite } from '@electric-sql/pglite';
@@ -13,6 +13,14 @@ import { errorHandler } from '../middleware/errors';
 
 async function setup() {
   const client = new PGlite();
+  // Cada PGlite sobe um PostgreSQL WASM próprio e este arquivo chama setup()
+  // uma vez por teste: sem fechar, os 8 ficam residentes até o fim do arquivo
+  // e disputam CPU/memória com os outros workers da rodada — pressão que
+  // aparece como falha "impossível" no último teste. Fechar ao fim do teste
+  // mantém exatamente um vivo por vez (mesma disciplina de cron-service.test).
+  onTestFinished(async () => {
+    await client.close();
+  });
   await client.exec(CREATE_TABLES_SQL);
   const db = drizzle(client, { schema }) as unknown as Db;
   const { publicKey, privateKey } = await generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true });
@@ -118,6 +126,10 @@ describe('auth-routes', () => {
     const cb = await request(app).get(`/v1/auth/github/callback?code=abc&state=${state}`);
     const code = deepLinkCode(cb.headers.location);
     const ex = await request(app).post('/v1/auth/exchange').send({ code });
+    // Status antes do deref: sem isto um 500 e um 400 falham igual
+    // ("Cannot read properties of undefined") e a próxima quebra não se
+    // distingue numa rodada só.
+    expect(ex.status).toBe(200);
     const session = ex.body.data.session as string;
     // Conta de origem com plano pago + um code válido apontando pra ela
     const [paid] = await db.insert(schema.accounts)
@@ -144,6 +156,7 @@ describe('auth-routes', () => {
     const cb = await request(app).get(`/v1/auth/github/callback?code=abc&state=${state}`);
     const code = deepLinkCode(cb.headers.location);
     const ex = await request(app).post('/v1/auth/exchange').send({ code });
+    expect(ex.status).toBe(200);
     const del = await request(app).delete('/v1/me').set('authorization', `Bearer ${ex.body.data.session}`);
     expect(del.status).toBe(200);
     expect(await db.select().from(schema.accounts)).toHaveLength(0);
@@ -156,6 +169,7 @@ describe('auth-routes', () => {
     const cb = await request(app).get(`/v1/auth/github/callback?code=abc&state=${state}`);
     const code = deepLinkCode(cb.headers.location);
     const ex = await request(app).post('/v1/auth/exchange').send({ code });
+    expect(ex.status).toBe(200);
     const bearer = `Bearer ${ex.body.data.session}`;
     const accountId = (await db.select().from(schema.accounts))[0].id;
     const [team] = await db.insert(schema.teams)

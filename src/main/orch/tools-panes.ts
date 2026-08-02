@@ -584,7 +584,32 @@ const paneListProviders: McpToolDef = {
     'List the CLI/API providers (adapters) available on this machine: id, ' +
     'label, models, install status.',
   inputSchema: { type: 'object', properties: {} },
-  handler: async () => listAdapterInfos(),
+  // `listAdapterInfos()` carrega `resolvedBinPath` — caminho ABSOLUTO, que na
+  // prática contém o nome de usuário do sistema operacional. Devolvê-lo
+  // verbatim entregava esse dado a todo agente que listasse providers, sem
+  // nenhuma decisão depender dele: para escolher provider basta saber se está
+  // instalado.
+  //
+  // Projeção campo a campo, NÃO rest-spread: filtro por exclusão deixa qualquer
+  // campo novo do registry vazar por omissão — o oposto da garantia que este
+  // comentário precisa sustentar. Campo novo aqui é decisão consciente.
+  handler: async () =>
+    listAdapterInfos().map((info) => ({
+      id: info.id,
+      kind: info.kind,
+      label: info.label,
+      icon: info.icon,
+      models: info.models,
+      installed: info.installed,
+      installCommand: info.installCommand,
+      loginHint: info.loginHint,
+      idleTimeoutMs: info.idleTimeoutMs,
+      orchestratorCapable: info.orchestratorCapable,
+      taskHandoffCapable: info.taskHandoffCapable,
+      missionControlCapable: info.missionControlCapable,
+      autonomousWorkspaceWriteCapable: info.autonomousWorkspaceWriteCapable,
+      orchestrationEvidence: info.orchestrationEvidence,
+    })),
 };
 
 const paneRead: McpToolDef = {

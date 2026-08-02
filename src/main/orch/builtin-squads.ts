@@ -8,6 +8,7 @@ import {
   NEXUS_PLAN_SQUAD_ID,
   NEXUS_STORY_IMPLEMENTATION_SQUAD_ID,
 } from '../../shared/builtin-squad-ids';
+import { withGuidedSkillDefaults } from './guided-squad-skills';
 
 /**
  * NEXUS ORIGINALS — squads embutidos, semeados no primeiro run (marcados
@@ -51,6 +52,15 @@ const SPEAK_HUMAN =
  * (sempre permitido). Tools nativas continuam sob o sandbox/modo de permissão
  * seguro do próprio CLI; o hook distingue essas tools das chamadas MCP Nexus.
  * Ver gate.ts isHookToolAllowed/isToolAllowed + mcp-protocol.ts.
+ *
+ * CORREÇÃO (`allowedSkills`): "aberto de propósito" valia enquanto ausente
+ * significasse irrestrito. No modo governado ausente significa NENHUMA skill
+ * (governed-cli-profile → skill-mirror), então o roster builtin rodava sem
+ * ferramenta alguma em máquina limpa. O piso determinístico por papel vive em
+ * `withGuidedSkillDefaults` (guided-squad-skills.ts) e é aplicado AO LADO
+ * desta função — nunca dentro dela: `withAllowlists` também roda na hidratação
+ * do SQLite, e preencher o roster de um squad de missão já selado mudaria o
+ * hash de autoridade de missões em voo.
  */
 export function withAllowlists(agents: SquadAgent[]): SquadAgent[] {
   return agents.map((agent) => ({
@@ -656,7 +666,16 @@ const RAW_SQUADS: Squad[] = [
       'de docs/plan.md e artifacts estrutura os futuros caminhos em docs/prd/, ' +
       'docs/architecture/ e docs/stories/. Nesta lane escreva somente docs/plan.md.',
     agents: [
-      { id: 'orch', agentName: 'Maestro', category: 'orchestrator', cli: 'claude', effort: 'high' },
+      {
+        id: 'orch',
+        agentName: 'Maestro',
+        category: 'orchestrator',
+        cli: 'claude',
+        effort: 'high',
+        // Escreve PRD, arquitetura e stories em docs/plan.md pelos templates
+        // e checklists BMAD — é o autor do documento desta lane.
+        ownsPlanDocs: true,
+      },
     ],
   },
   {
@@ -712,11 +731,38 @@ const RAW_SQUADS: Squad[] = [
       '- Ao final (ou ao parar), o handoff lista stories concluídas, ' +
       'reprovadas e restantes.',
     agents: [
-      { id: 'orch', agentName: 'Maestro', category: 'orchestrator', cli: 'claude', effort: 'high' },
-      { id: 'sm', agentName: 'SM', category: 'executor', cli: 'codex', effort: 'medium' },
+      {
+        id: 'orch',
+        agentName: 'Maestro',
+        category: 'orchestrator',
+        cli: 'claude',
+        effort: 'high',
+        // Materializa docs/prd, docs/architecture e docs/stories a partir do
+        // payload promovido (e o diagrama archify especificado no plano).
+        ownsPlanDocs: true,
+      },
+      {
+        id: 'sm',
+        agentName: 'SM',
+        category: 'executor',
+        cli: 'codex',
+        effort: 'medium',
+        // Escreve o pacote da story pelo stories/story-template.md e o valida
+        // com stories/story-checklist.md antes de entregar ao Dev.
+        ownsPlanDocs: true,
+      },
       { id: 'dev', agentName: 'Dev', category: 'executor', cli: 'codex', effort: 'medium' },
       { id: 'dev-b', agentName: 'Dev B', category: 'executor', cli: 'codex', effort: 'medium' },
-      { id: 'qa', agentName: 'QA', category: 'reviewer', cli: 'codex', effort: 'medium' },
+      {
+        id: 'qa',
+        agentName: 'QA',
+        category: 'reviewer',
+        cli: 'codex',
+        effort: 'medium',
+        // Percorre implementation/dev-story-checklist.md (Definition of Done)
+        // item a item: sem o vocabulário BMAD o gate não existe.
+        ownsPlanDocs: true,
+      },
     ],
   },
   {
@@ -777,12 +823,15 @@ const RAW_SQUADS: Squad[] = [
   },
 ];
 
-/** Built-in squads with the per-role tool allowlists applied (SEC#5). */
+/**
+ * Built-in squads with the per-role tool allowlists applied (SEC#5) and the
+ * deterministic skill floor filled in for every agent that declares none.
+ */
 export const BUILTIN_SQUADS: Squad[] = RAW_SQUADS.map((squad) => ({
   ...squad,
   orchestratorInstructions:
     squad.id === PET_STUDIO_SQUAD_ID
       ? squad.orchestratorInstructions
       : `${squad.orchestratorInstructions}${SPEAK_HUMAN}`,
-  agents: withAllowlists(squad.agents),
+  agents: withGuidedSkillDefaults(withAllowlists(squad.agents)),
 }));

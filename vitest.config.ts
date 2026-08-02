@@ -14,8 +14,13 @@ export default defineConfig({
       'assets/**',
     ],
     setupFiles: ['./src/test/vitest.setup.ts'],
-    // The root run also collects server PGlite suites. Keep concurrency finite
-    // so WASM Postgres, OCR and Electron imports do not starve one another.
+    // The root run also collects server PGlite suites, and `server/vitest.config.ts`
+    // does NOT apply to it: Vitest resolves `maxWorkers`/`poolOptions` from the
+    // config of the run, and the worker pool is global — there is no per-project
+    // worker budget to inherit. This number is therefore the ONLY concurrency
+    // bound the server suites get under `npm test` (what CI runs), so keep it
+    // finite: WASM Postgres, OCR and Electron imports must not starve one
+    // another. Asserted by server/src/vitest-resource-policy.test.ts.
     hookTimeout: 15_000,
     maxWorkers: 4,
     testTimeout: 15_000,

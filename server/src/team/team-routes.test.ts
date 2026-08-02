@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, onTestFinished } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import { PGlite } from '@electric-sql/pglite';
@@ -14,6 +14,13 @@ import { buildTeamRouter } from './team-routes';
 
 async function setupTwo() {
   const client = new PGlite();
+  // PGlite sobe um PostgreSQL WASM por fixture. Sem fechar, cada teste do
+  // arquivo deixa mais um runtime residente e a rodada inteira disputa
+  // CPU/memória com os demais workers. Fechar ao fim do teste mantém
+  // exatamente um vivo por vez.
+  onTestFinished(async () => {
+    await client.close();
+  });
   await client.exec(CREATE_TABLES_SQL);
   const db = drizzle(client, { schema }) as unknown as Db;
   const { publicKey, privateKey } = await generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true });

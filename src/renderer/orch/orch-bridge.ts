@@ -15,7 +15,12 @@ import { useHomeStore } from '../state/home-store';
 import { useOrchStore } from '../state/orch-store';
 import { useSessionStateStore } from '../state/session-state-store';
 import { useWorkspaceStore } from '../state/workspace-store';
-import { createPane, isStructuralPlaceholderPane, listPanes } from '../lib/split-tree';
+import {
+  createPane,
+  isStructuralPlaceholderPane,
+  listPanes,
+  MAX_LIVE_PANES_HARD,
+} from '../lib/split-tree';
 import {
   cancelPaneRecovery,
   getPaneSessionId,
@@ -239,6 +244,43 @@ function panesAfterMainOwnedPresentation(
     : next;
 }
 
+/**
+ * I4 — the presentation channel owns focus for the pane it just mounted.
+ *
+ * `setPanes` focuses the FIRST pane of the new set, which on a merge is the
+ * pane that was already there. Presenting a mission then left the operator
+ * focused on the previous surface, with the mission mounted somewhere else on
+ * the grid. The renderer-side sibling (presentMainOwnedMissionPane) has always
+ * focused its pane; the Main-owned channel never did.
+ *
+ * Only a NEW mount takes focus: Main replays presentations for panes that are
+ * already live, and those must not steal focus from the operator.
+ */
+function focusFreshlyPresentedPane(
+  paneId: string,
+  existedBefore: boolean,
+): void {
+  if (existedBefore) return;
+  useLayoutStore.getState().focus(paneId);
+}
+
+/**
+ * `setPanes` enforces MAX_LIVE_PANES_HARD by TRUNCATING the tail, and
+ * `panesAfterMainOwnedPresentation` appends the presented pane last — so on a
+ * saturated grid the pane this request just presented is exactly the one
+ * discarded. Reporting success for it left Main waiting out the full
+ * 75s session timeout for a pane that was never mounted.
+ */
+function assertPresentedPaneMounted(paneId: string): void {
+  const mounted = listPanes(useLayoutStore.getState().root).some(
+    (pane) => pane.id === paneId,
+  );
+  if (mounted) return;
+  throw new Error(
+    `main-owned pane was not mounted (layout at the ${MAX_LIVE_PANES_HARD}-pane cap): ${paneId}`,
+  );
+}
+
 function normalizeExactHealthyPresentation(
   req: MissionPanePresentationRequest,
 ): void {
@@ -284,6 +326,8 @@ async function presentLiveMainOwnedPane(
     const pane = current ? { ...current, agentTransport: 'acp' as const } : paneFromPresentation(req);
     const next = panesAfterMainOwnedPresentation(existing, pane);
     if (next !== existing) useLayoutStore.getState().setPanes(next);
+    focusFreshlyPresentedPane(req.paneId, current !== undefined);
+    assertPresentedPaneMounted(req.paneId);
     return;
   }
 
@@ -297,6 +341,8 @@ async function presentLiveMainOwnedPane(
   if (next !== existing) {
     useLayoutStore.getState().setPanes(next);
   }
+  focusFreshlyPresentedPane(req.paneId, current !== undefined);
+  assertPresentedPaneMounted(req.paneId);
 
   const sessionId = await waitForSession(
     req.paneId,

@@ -28,6 +28,12 @@ vi.mock("../adapters/subscription-auth", async (importOriginal) => {
     warmKeychainOnlySubscriptionAuth: vi.fn(async () => {}),
   };
 });
+import {
+  assertReadOnlyLaneObservationCurrent,
+  StaleReadOnlyObservationError,
+} from "./physical-handoff-git";
+import { GUIDED_TASK_DOMAINS } from "./guided-task-kind";
+import type { TaskDispatchRecord } from "./task-dispatch-codec";
 import { TASK_DISPATCH_SESSION_EXIT_REASON } from "./task-dispatch-persistence";
 import { compileIntentContract } from "../../shared/mission-intent";
 import type { Mission, Squad } from "../../shared/orch-types";
@@ -663,5 +669,92 @@ describe("read_only worktree re-anchor gate at (re)bind", () => {
         dispatch: null,
       }),
     ).toBe(false);
+  });
+});
+
+describe("concurrent read_only lanes: same-HEAD premise is fenced at the seal", () => {
+  /**
+   * The Guided planner runs independent reviews concurrently on the claim that
+   * they all read the same integrated HEAD. Neither the planner nor this
+   * dispatch transaction pins that HEAD: the re-anchor above is unserialized
+   * convergence, and under a governed squad policy a read_only lane gets no
+   * worktree at all (`useTaskWorktree` is false, so `executionRoot` is the
+   * operator checkout). The premise is enforced downstream, at the handoff
+   * boundary.
+   *
+   * This test is the WIRE between the two halves: the domains the planner
+   * attaches to a concurrent read_only lane must be domains
+   * `assertReadOnlyLaneObservationCurrent` actually fences. Change one side and
+   * the concurrency claim silently stops being true, with no other test failing.
+   */
+  const SHA_OBSERVED = "a".repeat(40);
+  const SHA_INTEGRATED = "b".repeat(40);
+
+  function laneWithDomains(
+    domains: readonly string[],
+    agentCategory: TaskDispatchRecord["agentCategory"],
+  ): TaskDispatchRecord {
+    return {
+      id: "dispatch-review",
+      taskId: "guided-review-1",
+      missionId: "mission-guided",
+      intentVersion: 1,
+      revision: 1,
+      attempt: 1,
+      state: "running",
+      leaseOwner: "main-orchestration-coordinator",
+      leaseExpiresAt: 1_000,
+      workerId: "Revisor",
+      ownership: { files: [], symbols: [], domains: [...domains] },
+      executionMode: "read_only",
+      agentCategory,
+      createdAt: 1,
+      updatedAt: 1,
+      projectId: "project-guided",
+      checkoutId: "checkout-guided",
+    };
+  }
+
+  const integratedExecutor: TaskDispatchRecord = {
+    ...laneWithDomains(["guided-implementation"], "executor"),
+    id: "dispatch-executor",
+    taskId: "guided-execution",
+    executionMode: "isolated_worktree",
+    state: "completed",
+    completedAt: 50,
+    integrationReceipt: {
+      kind: "worktree_integrated",
+      reference: SHA_INTEGRATED,
+      completedAt: 50,
+    },
+  };
+
+  it("fences every domain the planner gives a concurrent read_only lane", () => {
+    for (const [domains, agentCategory] of [
+      [[GUIDED_TASK_DOMAINS.independentReview], "reviewer"],
+      [[GUIDED_TASK_DOMAINS.advisory], "scout"],
+      [[GUIDED_TASK_DOMAINS.qualityGate, "sequential-only"], "reviewer"],
+    ] as const) {
+      const lane = laneWithDomains(domains, agentCategory);
+      // Observed a tree that is not the integrated one: refused, so the
+      // divergence never becomes a sealed receipt.
+      expect(() =>
+        assertReadOnlyLaneObservationCurrent({
+          lane,
+          missionDispatches: [lane, integratedExecutor],
+          worktreeHeadSha: SHA_OBSERVED,
+        }),
+      ).toThrow(StaleReadOnlyObservationError);
+      // Observed exactly the integrated HEAD: this is the only receipt the
+      // boundary accepts, which is what makes "the SAME HEAD" true for all of
+      // them at once.
+      expect(() =>
+        assertReadOnlyLaneObservationCurrent({
+          lane,
+          missionDispatches: [lane, integratedExecutor],
+          worktreeHeadSha: SHA_INTEGRATED,
+        }),
+      ).not.toThrow();
+    }
   });
 });

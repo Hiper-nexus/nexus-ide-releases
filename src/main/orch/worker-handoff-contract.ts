@@ -1,3 +1,7 @@
+import {
+  collectUiWorkEvidence,
+  isUiWorkText,
+} from '../../shared/ui-work-signal';
 import { LEGACY_MARKER } from './legacy-handoff';
 import { PONYTAIL_RULES } from './ponytail';
 import { ENGINEERING_CHARTER } from './engineering-charter';
@@ -6,12 +10,34 @@ import { getOrchSettings } from '../persistence/settings-store';
 import { canUseNexusMcp } from './cli-mcp-inject';
 
 /**
- * UI-shaped work, detected on the task brief + pane title/agent name. Biased
- * generous (false positive = status quo ante: charter included); superset of
- * the contract-compiler UI_SIGNAL so design guidance never misses real UI.
+ * UI-shaped work, detectado no brief da tarefa + título do pane/nome do agente.
+ *
+ * Usa a MESMA tabela de termos de `src/shared/ui-work-signal.ts` — a regex
+ * local anterior era a QUINTA gramática de "isto é UI?" do produto e carregava
+ * o defeito de acento das outras (`p[aá]gina` casava dentro de `paginação`, e
+ * todo worker de CRUD de backend recebia a carta de design).
+ *
+ * Mas o LIMIAR aqui é deliberadamente mais generoso que o da missão guiada, e
+ * é por isso que este predicado existe em vez de chamar `isUiWorkText` direto.
+ * Os custos são assimétricos:
+ *
+ *   - Na missão guiada, um falso positivo concede skills de design, escreve um
+ *     DESIGN.md e passa a exigir screenshot do revisor. Caro. Daí o quórum de
+ *     dois termos ambíguos.
+ *   - Aqui, um falso positivo custa ~8 KB de prompt; um falso NEGATIVO manda
+ *     alguém construir "a página de onboarding" sem nenhuma orientação de
+ *     design — exatamente o resultado genérico que o produto existe para
+ *     evitar.
+ *
+ * Então: qualquer termo de UI basta (craft, locativo ou traço), sem quórum. O
+ * que NÃO acontece mais é casar dentro de outra palavra — a canonicalização e
+ * as fronteiras vêm da tabela compartilhada, não de um regex paralelo.
  */
-const WORKER_UI_SIGNAL =
-  /\b(ui|ux|frontend|front-end|design|layout|estilo|style|styling|css|tailwind|component|componente|tsx|jsx|html|tela|p[aá]gina|bot[aã]o|modal|landing|website|interface|responsive|responsivo|acessibilidade|accessibility|dashboard|visual|dark ?mode|tema|theme|icon|[ií]cone)\b/i;
+function isUiShapedWork(corpus: string): boolean {
+  if (isUiWorkText(corpus)) return true;
+  const evidence = collectUiWorkEvidence(corpus);
+  return evidence.matches.length > 0;
+}
 
 export interface HandoffContractHints {
   /** Squad role category — scouts/architects read and plan, they don't ship diffs. */
@@ -33,7 +59,7 @@ export function charterTierForWorker(
   const corpus = [input.prompt, ...(input.hints ?? [])]
     .filter(Boolean)
     .join('\n');
-  const uiTask = WORKER_UI_SIGNAL.test(corpus);
+  const uiTask = isUiShapedWork(corpus);
   if (category === 'reviewer') {
     // Reviewers judge against the engineering bar (and may refine code), but
     // the ponytail diff ladder targets authors, not critics.

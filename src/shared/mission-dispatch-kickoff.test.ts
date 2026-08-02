@@ -102,3 +102,27 @@ describe('guided Main-owned PREVC kickoff', () => {
     expect(prompt).toMatch(/nexus_mission_set_status[\s\S]*status:"done"/i);
   });
 });
+
+describe('escada de fontes de design no kickoff', () => {
+  it('ensina as quatro fontes em ordem, com as duas sem chave nomeadas', () => {
+    const prompt = guidedPrompt();
+
+    expect(prompt).toMatch(
+      /\(1\)[^\n]*DESIGN\.md[^\n]*\.context\/docs\/design-system\.md/i,
+    );
+    expect(prompt).toMatch(/\(2\)[^\n]*nexus_design_system_local_list/);
+    expect(prompt).toMatch(/\(2\)[^\n]*source=local-catalog[^\n]*sem chave/i);
+    expect(prompt).toMatch(/\(3\)[^\n]*source=getdesign[^\n]*sem chave/i);
+    expect(prompt).toMatch(/\(4\)[^\n]*designmd\.ai[^\n]*external:designmd-api-key/);
+  });
+
+  it('mantém extract como tentativa única e não deixa o modelo cair no default', () => {
+    const prompt = guidedPrompt();
+
+    expect(prompt).toContain('nexus_design_system_local_import');
+    expect(prompt).toMatch(/nexus_design_system_extract[^\n]*uma vez/i);
+    expect(prompt).toMatch(/NETWORK_GUARD_UNAVAILABLE[^\n]*não/i);
+    expect(prompt).toMatch(/nunca comece[^\n]*sem contrato|default do modelo/i);
+    expect(prompt).toMatch(/impeccable/i);
+  });
+});

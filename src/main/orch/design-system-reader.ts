@@ -13,17 +13,35 @@ import { join } from 'node:path';
  * prompt automatically picks it up as trusted design-system context.
  *
  * Also reads `.context/docs/design-system.md` (Dembrandt extract / designmd.ai
- * import apply target) when the root DESIGN.md is absent.
+ * import apply target, and what the context bootstrap autopilot materializes)
+ * when the root DESIGN.md is absent.
  *
  * Returns null when no usable file exists — design mode degrades gracefully
  * to page-derived context only.
+ *
+ * THIS IS THE ONLY PLACE THAT ANSWERS "where is the design contract?".
+ * A design contract has two legitimate homes — the hand-authored root
+ * convention and the reviewed ContextDraft target — so no consumer may hardcode
+ * a filename. A prompt that names one path while the workspace uses the other
+ * sends the agent to a file that does not exist, and an agent that cannot read
+ * the contract proceeds on its own defaults.
  */
 export const MAX_DESIGN_SYSTEM_CHARS = 10_000;
 
-const DESIGN_SYSTEM_CANDIDATES = [
+/**
+ * Resolution order is authority order: a human-authored root DESIGN.md
+ * outranks a materialized/imported contract under `.context/docs`.
+ */
+export const DESIGN_SYSTEM_CANDIDATE_PATHS = [
   'DESIGN.md',
   '.context/docs/design-system.md',
 ] as const;
+
+export interface WorkspaceDesignContract {
+  /** Workspace-relative path that actually answered — never a guess. */
+  readonly path: (typeof DESIGN_SYSTEM_CANDIDATE_PATHS)[number];
+  readonly content: string;
+}
 
 function readCandidate(rootDir: string, relativePath: string): string | null {
   const filePath = join(rootDir, relativePath);
@@ -48,11 +66,22 @@ function readCandidate(rootDir: string, relativePath: string): string | null {
   );
 }
 
-export function readWorkspaceDesignSystem(rootDir?: string): string | null {
+/**
+ * Which contract this workspace has, and where. Consumers that must NAME the
+ * file to an agent (task prompt, reviewer prompt) need the path, not only the
+ * bytes: naming a path that did not answer is the whole defect this closes.
+ */
+export function resolveWorkspaceDesignContract(
+  rootDir?: string,
+): WorkspaceDesignContract | null {
   if (!rootDir) return null;
-  for (const relativePath of DESIGN_SYSTEM_CANDIDATES) {
+  for (const relativePath of DESIGN_SYSTEM_CANDIDATE_PATHS) {
     const content = readCandidate(rootDir, relativePath);
-    if (content) return content;
+    if (content) return Object.freeze({ path: relativePath, content });
   }
   return null;
+}
+
+export function readWorkspaceDesignSystem(rootDir?: string): string | null {
+  return resolveWorkspaceDesignContract(rootDir)?.content ?? null;
 }
