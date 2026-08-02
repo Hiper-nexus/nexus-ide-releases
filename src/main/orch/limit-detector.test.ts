@@ -152,6 +152,21 @@ describe('detectLimit', () => {
     expect(detectLimit('HTTP 402 payment required')?.kind).toBe('quota');
   });
 
+  // REGRESSAO: prova de campo com os quatro textos reais de esgotamento — este
+  // era o UNICO nao reconhecido. A frase da OpenAI inverte a ordem ("exceeded
+  // your current quota") e o padrao existente so casava "quota exceeded", entao
+  // a mensagem humana sem o codigo ao lado nunca virava troca de conta.
+  it('reconhece a frase de cota da OpenAI na ordem em que ela e escrita', () => {
+    expect(
+      detectLimit(
+        'You exceeded your current quota, please check your plan and billing details.',
+      )?.kind,
+    ).toBe('quota');
+    expect(detectLimit('exceeded your monthly quota')?.kind).toBe('quota');
+    // Prosa de agente NAO pode virar limite: sem "exceeded ... quota" junto.
+    expect(detectLimit('o time exceeded expectations neste sprint')).toBeNull();
+  });
+
   it('detects auth errors', () => {
     expect(detectLimit('401 authentication_error')?.kind).toBe('auth');
     expect(detectLimit('invalid api key provided')?.kind).toBe('auth');
