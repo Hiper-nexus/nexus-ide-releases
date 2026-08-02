@@ -99,7 +99,7 @@
       ]
     },
     "grok": {
-      "default": "grok-build",
+      "default": "grok-4.5",
       "models": [
         {
           "id": "grok-4.5",
@@ -128,12 +128,6 @@
         },
         {
           "id": "grok-code-fast-1",
-          "availability": "cheap",
-          "costTier": "low",
-          "source": "remote"
-        },
-        {
-          "id": "grok-build",
           "availability": "cheap",
           "costTier": "low",
           "source": "remote"

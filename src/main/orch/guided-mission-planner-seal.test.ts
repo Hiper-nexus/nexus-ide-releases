@@ -29,6 +29,45 @@ import {
 } from "./guided-mission-planner-test-harness";
 
 describe("Guided Planner v2", () => {
+  it("names an unapproved intent as unbound instead of accusing an intact squad", () => {
+    const approved = mission();
+    const unboundContract = { ...approved.intentContract! };
+    delete (unboundContract as { squadRevisionHash?: string })
+      .squadRevisionHash;
+    const h = harness({
+      currentMission: {
+        ...approved,
+        intentState: "awaiting_approval",
+        intentContract: unboundContract,
+      },
+    });
+    // `squadRevisionHash` é opcional no contrato, então `undefined !== hash`
+    // era sempre verdadeiro e o planner acusava "o squad mudou depois da
+    // aprovação" para uma equipe que ninguém tocou. A causa real — missão não
+    // aprovada — precisa de nome próprio, senão a única ação que destrava
+    // (aprovar) fica escondida atrás de uma auditoria inútil da equipe.
+    expect(() =>
+      ensureGuidedMissionPlan(h.suite, "mission-guided", h.deps),
+    ).toThrow(/guided_plan_squad_unbound/i);
+    expect(() =>
+      ensureGuidedMissionPlan(h.suite, "mission-guided", h.deps),
+    ).not.toThrow(/guided_plan_squad_stale/i);
+  });
+
+  it("still reports a genuinely changed squad as stale", () => {
+    const h = harness();
+    const tampered = {
+      ...squad,
+      agents: squad.agents.map((agent) => ({ ...agent, model: "tampered" })),
+    };
+    expect(() =>
+      ensureGuidedMissionPlan(h.suite, "mission-guided", {
+        ...h.deps,
+        getSquad: () => tampered,
+      }),
+    ).toThrow(/guided_plan_squad_stale/i);
+  });
+
   it("adds the exact approved greenfield artifact without opening unrelated files", () => {
     const contract = compileIntentContract({
       goal: REAL_MISSION_E2E_GOAL,

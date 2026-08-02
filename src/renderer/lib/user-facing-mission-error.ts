@@ -50,6 +50,9 @@ function knownMissionRecovery(raw: string): string | null {
   if (/guided_plan_legacy_receipt_blocked/i.test(raw)) {
     return "O plano aprovado ficou desatualizado. Revise a equipe e aprove a missão novamente.";
   }
+  if (/guided_plan_squad_unbound/i.test(raw)) {
+    return "Esta missão ainda não foi aprovada. Revise a equipe e aprove para começar.";
+  }
   if (/guided_plan_squad_stale/i.test(raw)) {
     return "A equipe mudou depois da revisão. Revise o plano e aprove a missão novamente.";
   }

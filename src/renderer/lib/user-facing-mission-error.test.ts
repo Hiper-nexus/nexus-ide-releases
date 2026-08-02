@@ -16,6 +16,24 @@ describe("user-facing mission errors", () => {
     );
   });
 
+  it("tells an unapproved mission to approve, not to audit an intact team", () => {
+    // O contrato sem `squadRevisionHash` caía na cópia de squad alterado, que
+    // manda revisar uma equipe que ninguém mexeu e esconde a ação que destrava.
+    expect(
+      humanizeMissionErrorDetail(
+        "guided_plan_preflight_blocked: guided_plan_squad_unbound: a intenção " +
+          "não foi aprovada com uma revisão de equipe",
+      ),
+    ).toBe("Esta missão ainda não foi aprovada. Revise a equipe e aprove para começar.");
+    expect(
+      humanizeMissionErrorDetail(
+        "guided_plan_preflight_blocked: guided_plan_squad_stale: o squad mudou",
+      ),
+    ).toBe(
+      "A equipe mudou depois da revisão. Revise o plano e aprove a missão novamente.",
+    );
+  });
+
   it("leads with recovery copy but discloses the raw reason when unmapped", () => {
     // Field trap (28/07): an unmapped pre-launch failure showed only "tente
     // novamente". There is no mission journal before launch, so the operator
