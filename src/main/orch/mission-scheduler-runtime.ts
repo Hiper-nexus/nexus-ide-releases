@@ -28,6 +28,15 @@ import {
   effectiveConcurrencyCap,
 } from './mission-scheduler';
 import { throwIfMissionSchedulerAborted } from './mission-scheduler-abort';
+import {
+  clearOwnershipWaitEdge,
+  crossMissionOwnershipConflict,
+  decideOwnershipWait,
+  ownershipWaitEdges,
+  pruneOwnershipWaitEdgesForMission,
+  recordOwnershipWaitEdge,
+  type OwnershipWaitDecision,
+} from './mission-ownership-wait';
 
 export const PARALLEL_SCHEDULER_FLAG_ID = 'orch.parallelScheduler' as const;
 
@@ -117,6 +126,24 @@ export interface SchedulerRuntimeDeps {
    */
   isCapacityWaitError?(error: unknown): boolean;
   /**
+   * Identity of the mission this tick schedules. Required to tell a REAL
+   * cross-mission ownership collision (enqueue, naming the holder) from an
+   * intra-mission one (`decideSchedule` is the authority there). When absent
+   * the cross-mission wait lane is off and every overlap keeps today's
+   * behaviour — fail-safe, never fail-open.
+   */
+  missionId?(): string;
+  /**
+   * Observability hook for a cross-mission ownership collision: fired once per
+   * tick per waiting task, including the tick that expires the ceiling or
+   * names a deadlock. This is the only surface a plain `wait` reaches, so
+   * production wires the operator-facing log here.
+   */
+  onOwnershipWait?(wait: {
+    readonly taskId: string;
+    readonly decision: OwnershipWaitDecision;
+  }): void;
+  /**
    * Observability hook for retryable pre-claim dispatch failures, called once
    * per failed attempt with the consecutive count for that task. Production
    * wires a throttled warn so a stuck task is never silent; `willBlock`
@@ -147,6 +174,19 @@ export interface SchedulerRuntimeDeps {
   onDecision?(decision: ScheduleDecision): void;
 }
 
+/**
+ * Uma tarefa parada por colisão REAL com outra missão. `since` é o começo da
+ * espera e nunca é reiniciado enquanto ela dura: o teto mede quanto a tarefa
+ * ficou parada, não quanto o detentor da vez segurou.
+ */
+export interface OwnershipWaitRecord {
+  readonly since: number;
+  /** Detentor da vez, para não recontar o mesmo como novo a cada tick. */
+  readonly holderKey: string;
+  /** Quantos detentores distintos já bloquearam a tarefa nesta espera. */
+  readonly holdersSeen: number;
+}
+
 export interface SchedulerRuntimeState {
   telemetry: SchedulerTelemetry;
   adaptiveCap: AdaptiveCapState;
@@ -156,6 +196,12 @@ export interface SchedulerRuntimeState {
    * counted.
    */
   preClaimRetryableFailures: Readonly<Record<string, number>>;
+  /**
+   * Cross-mission ownership waits in flight, per task id. A wait is not a
+   * failure and never touches `preClaimRetryableFailures`; its bound is
+   * `OWNERSHIP_WAIT_CEILING_MS`, not a failure count.
+   */
+  ownershipWaits: Readonly<Record<string, OwnershipWaitRecord>>;
 }
 
 export function createSchedulerRuntimeState(
@@ -165,6 +211,7 @@ export function createSchedulerRuntimeState(
     telemetry: seed?.telemetry ?? { ...EMPTY_SCHEDULER_TELEMETRY },
     adaptiveCap: seed?.adaptiveCap ?? { ...DEFAULT_ADAPTIVE_CAP },
     preClaimRetryableFailures: seed?.preClaimRetryableFailures ?? {},
+    ownershipWaits: seed?.ownershipWaits ?? {},
   };
 }
 
@@ -272,6 +319,73 @@ export async function runSchedulerTick(
     const preClaimFailures = new Map(
       Object.entries(state.preClaimRetryableFailures),
     );
+    const ownershipWaits = new Map(Object.entries(state.ownershipWaits));
+    const waiterMissionId = deps.missionId?.() ?? null;
+
+    const endOwnershipWait = (taskId: string): void => {
+      ownershipWaits.delete(taskId);
+      if (waiterMissionId !== null) {
+        clearOwnershipWaitEdge(waiterMissionId, taskId);
+      }
+    };
+
+    /**
+     * Colisão REAL com outra missão: enfileirar em vez de matar. Devolve
+     * `true` quando este erro foi tratado como espera (ou como o fim nomeado
+     * dela) e o caminho de falha normal não deve mais ser percorrido.
+     */
+    const handleCrossMissionOwnership = async (
+      taskId: string,
+      error: unknown,
+    ): Promise<boolean> => {
+      if (waiterMissionId === null) return false;
+      const conflict = crossMissionOwnershipConflict(error, waiterMissionId);
+      if (conflict === null) return false;
+
+      const holderKey = `${conflict.holderMissionId}/${conflict.holderTaskId}`;
+      const previous = ownershipWaits.get(taskId);
+      const since = previous?.since ?? deps.now();
+      const holdersSeen =
+        previous === undefined
+          ? 1
+          : previous.holderKey === holderKey
+            ? previous.holdersSeen
+            : previous.holdersSeen + 1;
+
+      // The edge goes in BEFORE the decision so the cycle check sees this
+      // mission's own wait: a deadlock is only provable with both halves.
+      recordOwnershipWaitEdge({
+        waiterMissionId,
+        waiterTaskId: taskId,
+        holderMissionId: conflict.holderMissionId,
+        holderTaskId: conflict.holderTaskId,
+        since,
+      });
+      const decision = decideOwnershipWait({
+        conflict,
+        waiter: { missionId: waiterMissionId, taskId },
+        since,
+        now: deps.now(),
+        holdersSeen,
+        edges: ownershipWaitEdges(),
+      });
+      deps.onOwnershipWait?.({ taskId, decision });
+
+      if (decision.kind === 'wait') {
+        // A wait is not a failure: it must never feed the pre-claim bound,
+        // which would turn a healthy queue into the very 5-tasks-in-4s death
+        // this lane exists to prevent.
+        preClaimFailures.delete(taskId);
+        ownershipWaits.set(taskId, { since, holderKey, holdersSeen });
+        return true;
+      }
+
+      // Ceiling blown or mutual wait: the wait is over and says why.
+      endOwnershipWait(taskId);
+      preClaimFailures.delete(taskId);
+      await deps.markFailed(taskId, decision.reason);
+      return true;
+    };
 
     const dispatchOne = async (taskId: string): Promise<string | null> => {
       throwIfMissionSchedulerAborted(signal);
@@ -288,11 +402,14 @@ export async function runSchedulerTick(
         );
         throwIfMissionSchedulerAborted(signal);
         preClaimFailures.delete(taskId);
+        endOwnershipWait(taskId);
         return taskId;
       } catch (error) {
         throwIfMissionSchedulerAborted(signal);
         const reason =
           error instanceof Error ? error.message : 'dispatch failed';
+        if (await handleCrossMissionOwnership(taskId, error)) return null;
+        endOwnershipWait(taskId);
         if (deps.isRetryableDispatchError?.(error)) {
           // Capacity waits carry their own natural bound (lease expiry or a
           // sibling freeing its slot); never escalate them to a block.
@@ -360,12 +477,21 @@ export async function runSchedulerTick(
           kind: 'wave',
           waveSize: decision.plan.waveSize,
         });
+    if (waiterMissionId !== null) {
+      // Ghost edges forge deadlocks. Every tick this mission runs, its own
+      // edges are reconciled against the waits that actually survived it.
+      pruneOwnershipWaitEdgesForMission(
+        waiterMissionId,
+        new Set(ownershipWaits.keys()),
+      );
+    }
     nextState = {
       telemetry,
       adaptiveCap,
       preClaimRetryableFailures: Object.freeze(
         Object.fromEntries(preClaimFailures),
       ),
+      ownershipWaits: Object.freeze(Object.fromEntries(ownershipWaits)),
     };
     deps.onTelemetry?.(telemetry, decision.plan);
   }
@@ -429,6 +555,7 @@ export async function finalizeTaskForMerge(
       telemetry,
       adaptiveCap,
       preClaimRetryableFailures: state.preClaimRetryableFailures,
+      ownershipWaits: state.ownershipWaits,
     };
     await deps.markFailed(taskId, enforcement.reason);
     await deps.reRunSequentially(taskId, enforcement.reason);
@@ -468,6 +595,7 @@ export async function finalizeTaskForMerge(
         telemetry,
         adaptiveCap,
         preClaimRetryableFailures: state.preClaimRetryableFailures,
+        ownershipWaits: state.ownershipWaits,
       };
       await deps.markFailed(taskId, reason);
       await deps.reRunSequentially(taskId, reason);

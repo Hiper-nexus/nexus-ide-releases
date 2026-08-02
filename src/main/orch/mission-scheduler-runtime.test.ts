@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createSchedulerRuntimeState,
   finalizeTaskForMerge,
@@ -29,7 +29,15 @@ import {
   isMissionSchedulerCapacityWait,
   isMissionSchedulerRetryableDispatchError,
   MissionSchedulerCapacityWaitError,
+  MissionSchedulerRetryableDispatchError,
 } from './mission-scheduler-dispatch-transaction';
+import {
+  OWNERSHIP_WAIT_CEILING_MS,
+  ownershipWaitEdges,
+  recordOwnershipWaitEdge,
+  resetOwnershipWaitGraph,
+  type OwnershipWaitDecision,
+} from './mission-ownership-wait';
 
 const NOW = 1_700_000_000_000;
 
@@ -71,6 +79,12 @@ function makeDeps(opts: {
   }) => void;
   useConfiguredCapForCurrentWave?: () => boolean;
   isAdaptiveCapEnabled?: () => boolean;
+  now?: () => number;
+  missionId?: () => string;
+  onOwnershipWait?: (wait: {
+    readonly taskId: string;
+    readonly decision: OwnershipWaitDecision;
+  }) => void;
 }): {
   deps: SchedulerRuntimeDeps;
   dispatched: string[];
@@ -100,7 +114,9 @@ function makeDeps(opts: {
     ...(opts.isAdaptiveCapEnabled
       ? { isAdaptiveCapEnabled: opts.isAdaptiveCapEnabled }
       : {}),
-    now: () => NOW,
+    now: opts.now ?? (() => NOW),
+    ...(opts.missionId ? { missionId: opts.missionId } : {}),
+    ...(opts.onOwnershipWait ? { onOwnershipWait: opts.onOwnershipWait } : {}),
     dispatchTask: async (req) => {
       const delay = opts.dispatchDelayMs?.[req.taskId] ?? 0;
       if (delay > 0) {
@@ -793,5 +809,245 @@ describe('task schedule meta codec', () => {
     });
     const merged = withMergedFlag(encoded, true);
     expect(decodeTaskScheduleDetail(merged).meta?.merged).toBe(true);
+  });
+});
+
+describe('mission-scheduler-runtime cross-mission ownership collision', () => {
+  /** Shape-compatible stand-in for runtime/worktree-contract OwnershipOverlapError. */
+  function overlapError(holderMissionId: string, holderTaskId: string): Error {
+    return Object.assign(
+      new Error(
+        `worktree ownership overlaps active task ${holderMissionId}/${holderTaskId}`,
+      ),
+      {
+        name: 'OwnershipOverlapError',
+        conflictingTaskKey: 'deadbeef',
+        conflictingMissionId: holderMissionId,
+        conflictingTaskId: holderTaskId,
+        files: Object.freeze(['src/a.ts']),
+        symbols: Object.freeze([]),
+        domains: Object.freeze([]),
+      },
+    );
+  }
+
+  beforeEach(() => {
+    resetOwnershipWaitGraph();
+  });
+
+  it('WAITS naming the holder, then runs when the holder releases', async () => {
+    const tasks = [baseTask('a')];
+    const throws: Record<string, Error> = {
+      a: overlapError('mission-b', 'task-9'),
+    };
+    const waits: OwnershipWaitDecision[] = [];
+    let clock = NOW;
+    const { deps, dispatched, failed } = makeDeps({
+      enabled: true,
+      tasks,
+      dispatchThrows: throws,
+      missionId: () => 'mission-a',
+      now: () => clock,
+      isRetryableDispatchError: isMissionSchedulerRetryableDispatchError,
+      isCapacityWaitError: isMissionSchedulerCapacityWait,
+      onOwnershipWait: (wait) => waits.push(wait.decision),
+    });
+
+    let state = createSchedulerRuntimeState();
+    // Well past the pre-claim failure bound: a real wait must not be a
+    // failure counter in disguise.
+    for (
+      let tick = 0;
+      tick < MISSION_SCHEDULER_MAX_PRECLAIM_RETRYABLE_FAILURES + 4;
+      tick += 1
+    ) {
+      state = (await runSchedulerTick(deps, state)).state;
+      clock += 5_000;
+    }
+
+    expect(failed).toEqual([]);
+    expect(dispatched).toEqual([]);
+    expect(tasks[0]?.status).toBe('pending');
+    expect(waits).toHaveLength(
+      MISSION_SCHEDULER_MAX_PRECLAIM_RETRYABLE_FAILURES + 4,
+    );
+    expect(waits.every((decision) => decision.kind === 'wait')).toBe(true);
+    expect(waits[0]?.reason).toContain('mission-b/task-9');
+    expect(state.preClaimRetryableFailures).toEqual({});
+    // The wait is visible in the process-wide graph while it lasts.
+    expect(ownershipWaitEdges()).toEqual([
+      expect.objectContaining({
+        waiterMissionId: 'mission-a',
+        waiterTaskId: 'a',
+        holderMissionId: 'mission-b',
+      }),
+    ]);
+
+    // Holder releases.
+    delete throws.a;
+    const released = await runSchedulerTick(deps, state);
+    expect(released.dispatched).toEqual(['a']);
+    expect(dispatched).toEqual(['a']);
+    expect(failed).toEqual([]);
+    expect(released.state.ownershipWaits).toEqual({});
+    expect(ownershipWaitEdges()).toEqual([]);
+  });
+
+  it('EXPIRES into an actionable failure when the holder never releases', async () => {
+    const tasks = [baseTask('a')];
+    let clock = NOW;
+    const { deps, failed } = makeDeps({
+      enabled: true,
+      tasks,
+      dispatchThrows: { a: overlapError('mission-b', 'task-9') },
+      missionId: () => 'mission-a',
+      now: () => clock,
+      isRetryableDispatchError: isMissionSchedulerRetryableDispatchError,
+      isCapacityWaitError: isMissionSchedulerCapacityWait,
+    });
+
+    let state = createSchedulerRuntimeState();
+    state = (await runSchedulerTick(deps, state)).state;
+    expect(failed).toEqual([]);
+
+    clock += OWNERSHIP_WAIT_CEILING_MS;
+    state = (await runSchedulerTick(deps, state)).state;
+
+    expect(failed).toHaveLength(1);
+    expect(failed[0]?.id).toBe('a');
+    expect(failed[0]?.reason).toContain('mission-b/task-9');
+    expect(failed[0]?.reason).toMatch(/libere a reserva/iu);
+    expect(state.ownershipWaits).toEqual({});
+    expect(ownershipWaitEdges()).toEqual([]);
+  });
+
+  it('DETECTS mutual wait and names the cycle instead of sleeping', async () => {
+    const tasks = [baseTask('a')];
+    const { deps, failed } = makeDeps({
+      enabled: true,
+      tasks,
+      dispatchThrows: { a: overlapError('mission-b', 'task-9') },
+      missionId: () => 'mission-a',
+      isRetryableDispatchError: isMissionSchedulerRetryableDispatchError,
+      isCapacityWaitError: isMissionSchedulerCapacityWait,
+    });
+    // The other mission is already waiting on us.
+    recordOwnershipWaitEdge({
+      waiterMissionId: 'mission-b',
+      waiterTaskId: 'task-9',
+      holderMissionId: 'mission-a',
+      holderTaskId: 'a',
+      since: NOW,
+    });
+
+    await runSchedulerTick(deps, createSchedulerRuntimeState());
+
+    expect(failed).toHaveLength(1);
+    expect(failed[0]?.reason).toMatch(/espera mútua/iu);
+    expect(failed[0]?.reason).toContain('mission-a → mission-b → mission-a');
+  });
+
+  it('leaves an INTRA-mission overlap on the pre-claim bound exactly as today', async () => {
+    const tasks = [baseTask('a')];
+    const { deps, failed } = makeDeps({
+      enabled: true,
+      tasks,
+      // Same mission holds it: decideSchedule is the authority for that, and
+      // an intra overlap reaching dispatch is a real race, not contention.
+      dispatchThrows: { a: overlapError('mission-a', 'task-2') },
+      missionId: () => 'mission-a',
+      isRetryableDispatchError: isMissionSchedulerRetryableDispatchError,
+      isCapacityWaitError: isMissionSchedulerCapacityWait,
+    });
+
+    let state = createSchedulerRuntimeState();
+    for (
+      let tick = 0;
+      tick < MISSION_SCHEDULER_MAX_PRECLAIM_RETRYABLE_FAILURES;
+      tick += 1
+    ) {
+      state = (await runSchedulerTick(deps, state)).state;
+    }
+
+    expect(failed).toHaveLength(1);
+    expect(failed[0]?.reason).toContain('pre-claim dispatch falhou');
+    expect(state.ownershipWaits).toEqual({});
+    expect(ownershipWaitEdges()).toEqual([]);
+  });
+
+  it('keeps today behaviour when the mission identity is unknown', async () => {
+    const tasks = [baseTask('a')];
+    const { deps, failed } = makeDeps({
+      enabled: true,
+      tasks,
+      // No missionId dep: cross vs intra cannot be told apart, so the wait
+      // lane stays off rather than waiting blindly.
+      dispatchThrows: { a: overlapError('mission-b', 'task-9') },
+      isRetryableDispatchError: isMissionSchedulerRetryableDispatchError,
+      isCapacityWaitError: isMissionSchedulerCapacityWait,
+    });
+
+    let state = createSchedulerRuntimeState();
+    for (
+      let tick = 0;
+      tick < MISSION_SCHEDULER_MAX_PRECLAIM_RETRYABLE_FAILURES;
+      tick += 1
+    ) {
+      state = (await runSchedulerTick(deps, state)).state;
+    }
+
+    expect(failed).toHaveLength(1);
+    expect(failed[0]?.reason).toContain('pre-claim dispatch falhou');
+    expect(ownershipWaitEdges()).toEqual([]);
+  });
+});
+
+describe('dispatch-transaction → runtime ownership wait seam', () => {
+  beforeEach(() => {
+    resetOwnershipWaitGraph();
+  });
+
+  it('recognizes the collision through the wrapper the dispatch actually throws', async () => {
+    // mission-scheduler-dispatch-transaction wraps a retryable bootstrap
+    // failure as MissionSchedulerRetryableDispatchError(detail, error) after
+    // compensating the claim. The overlap therefore reaches the runtime as a
+    // `cause`, never as the top-level error — if the seam ever stops
+    // preserving it, the wait lane silently degrades back to killing the
+    // dispatch, which is exactly the field bug.
+    const overlap = Object.assign(new Error('worktree ownership overlaps'), {
+      name: 'OwnershipOverlapError',
+      conflictingTaskKey: 'deadbeef',
+      conflictingMissionId: 'mission-b',
+      conflictingTaskId: 'task-9',
+      files: Object.freeze(['src/a.ts']),
+      symbols: Object.freeze([]),
+      domains: Object.freeze([]),
+    });
+    const wrapped = new MissionSchedulerRetryableDispatchError(
+      'bootstrap falhou',
+      overlap,
+    );
+    const tasks = [baseTask('a')];
+    const { deps, failed } = makeDeps({
+      enabled: true,
+      tasks,
+      dispatchThrows: { a: wrapped },
+      missionId: () => 'mission-a',
+      isRetryableDispatchError: isMissionSchedulerRetryableDispatchError,
+      isCapacityWaitError: isMissionSchedulerCapacityWait,
+    });
+
+    let state = createSchedulerRuntimeState();
+    for (
+      let tick = 0;
+      tick < MISSION_SCHEDULER_MAX_PRECLAIM_RETRYABLE_FAILURES + 2;
+      tick += 1
+    ) {
+      state = (await runSchedulerTick(deps, state)).state;
+    }
+
+    expect(failed).toEqual([]);
+    expect(tasks[0]?.status).toBe('pending');
+    expect(state.ownershipWaits.a?.holderKey).toBe('mission-b/task-9');
   });
 });
