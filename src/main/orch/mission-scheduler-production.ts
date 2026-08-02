@@ -1571,6 +1571,29 @@ async function tickMission(
             ),
           isRetryableDispatchError: isMissionSchedulerRetryableDispatchError,
           isCapacityWaitError: isMissionSchedulerCapacityWait,
+          // Identity of the waiter: without it a real cross-mission collision
+          // cannot be told from an intra-mission race, and the wait lane
+          // correctly stays off.
+          missionId: () => missionId,
+          onOwnershipWait: (wait) => {
+            // A plain wait reaches no durable surface (nothing is blocked),
+            // so this log is the only place it is visible. `expired` and
+            // `deadlock` also go through markFailed → blockBeforeClaim, which
+            // missionBlockCause presents to the operator as an ownership
+            // conflict. Throttle the plain wait to ~1 line/minute at the 5s
+            // tick; never throttle an outcome that ends the wait.
+            if (
+              wait.decision.kind === 'wait' &&
+              wait.decision.waitedMs > 0 &&
+              wait.decision.waitedMs % 60_000 >= MISSION_SCHEDULER_TICK_MS
+            ) {
+              return;
+            }
+            console.warn(
+              `[mission-scheduler] ownership ${wait.decision.kind} for ` +
+                `${missionId}/${wait.taskId}: ${wait.decision.reason}`,
+            );
+          },
           onRetryableDispatchFailure: (failure) => {
             // First failure and the blocking one always log; in between,
             // ~1 line/minute at the 5s tick keeps the stuck task visible
