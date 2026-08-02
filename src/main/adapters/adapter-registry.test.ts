@@ -7,6 +7,7 @@ import {
 } from '../../shared/adapter-types';
 import type { Adapter } from '../../shared/adapter-types';
 import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
+import publishedModelCatalog from '../../../resources/model-catalog.json';
 import {
   adapterCapabilityMatrixForAdapter,
   mergeAdapters,
@@ -170,6 +171,50 @@ describe('builtin adapters', () => {
       };
       control?: { permission?: { safe?: string[]; yolo?: string[] } };
     } | undefined;
+
+  it('never publishes a model id the adapter itself does not offer', () => {
+    // Campo (02/08): o roster selou `grok/grok-build` para o Revisor sênior. O
+    // pane abriu, a CLI respondeu `Couldn't switch model: Invalid params:
+    // "unknown model id"`, e a task ficou `running` PARA SEMPRE — a missão
+    // parou sem nunca falhar, e a task seguinte nunca destravou.
+    //
+    // `grok-build` não é modelo: é o nome do projeto que este repositório cita
+    // como fonte de ideia em uma dúzia de comentários. Ele estava publicado no
+    // catálogo de runtime como `default` do grok E marcado
+    // `availability: cheap`, e o roteador prefere rota barata — então ganhava
+    // sempre. Um id inválido não falha na selagem; falha depois, calado.
+    //
+    // A invariante que pega a classe inteira é cruzada: o catálogo publicado
+    // só pode oferecer o que o adapter builtin realmente aceita.
+    const published = publishedModelCatalog.adapters as Record<
+      string,
+      { default?: string; models?: readonly { id: string }[] } | undefined
+    >;
+    for (const raw of BUILTIN_ADAPTERS) {
+      const adapter = raw as {
+        id?: string;
+        models?: { list?: string[]; default?: string };
+      };
+      const offered = adapter.models?.list ?? [];
+      if (adapter.models?.default !== undefined) {
+        expect(offered).toContain(adapter.models.default);
+      }
+      const entry = adapter.id ? published[adapter.id] : undefined;
+      if (!entry) continue;
+      for (const model of entry.models ?? []) {
+        expect(
+          offered,
+          `${adapter.id}: catálogo publica "${model.id}", que o adapter não oferece`,
+        ).toContain(model.id);
+      }
+      if (entry.default !== undefined) {
+        expect(
+          offered,
+          `${adapter.id}: default publicado "${entry.default}" não é oferecido pelo adapter`,
+        ).toContain(entry.default);
+      }
+    }
+  });
 
   it('all builtins pass schema validation', () => {
     for (const raw of BUILTIN_ADAPTERS) {
