@@ -16,7 +16,12 @@ vi.mock("../context/context-workflow-registry", () => ({
   getContextWorkflowService: h.getWorkflowService,
 }));
 
-import { resolveProductionGuidedPrevcMcpFence } from "./guided-prevc-mcp-fence";
+import {
+  assertGuidedPrevcMcpFence,
+  resolveProductionGuidedPrevcMcpFence,
+  type GuidedPrevcMcpFenceSnapshot,
+} from "./guided-prevc-mcp-fence";
+import type { AgentGateContext } from "./gate";
 
 const scope = testProjectScope();
 const mission = {
@@ -394,5 +399,96 @@ describe("production guided PREVC MCP fence snapshot", () => {
       resolveProductionGuidedPrevcMcpFence(scope, mission.id),
     ).toThrow(/guided_prevc_contract_stale.*compiled context snapshot/i);
     expect(compileMissionSnapshot).toHaveBeenCalledWith(mission.id);
+  });
+});
+
+describe("assertGuidedPrevcMcpFence Overclock-order delegation", () => {
+  const activeFence: GuidedPrevcMcpFenceSnapshot = Object.freeze({
+    required: true,
+    active: true,
+    hasContract: true,
+    stage: "planning",
+    risk: "high",
+    contractHash: "c".repeat(64),
+    workflowRevision: 1,
+  });
+
+  function maestroCtx(): AgentGateContext {
+    return {
+      token: "token-maestro",
+      label: "Maestro",
+      role: "orchestrator",
+      missionId: mission.id,
+      sessionId: "session-maestro",
+      providerId: "codex",
+      scope,
+      allowedTools: null,
+      allowedSkills: null,
+      stopAttempts: 0,
+      handoffSubmitted: false,
+    };
+  }
+
+  function workerCtx(): AgentGateContext {
+    return {
+      token: "token-worker",
+      label: "Worker",
+      role: "worker",
+      missionId: mission.id,
+      sessionId: "session-worker",
+      workerIncarnationId: "incarnation-1",
+      providerId: "codex",
+      scope,
+      allowedTools: null,
+      allowedSkills: null,
+      stopAttempts: 0,
+      handoffSubmitted: false,
+    };
+  }
+
+  it("lets the physical Maestro route and spawn read-only before execution", () => {
+    expect(() =>
+      assertGuidedPrevcMcpFence(
+        activeFence,
+        "nexus_route_task",
+        { task: "delegate" },
+        maestroCtx(),
+      ),
+    ).not.toThrow();
+    expect(() =>
+      assertGuidedPrevcMcpFence(
+        activeFence,
+        "nexus_pane_spawn",
+        { readOnly: true },
+        maestroCtx(),
+      ),
+    ).not.toThrow();
+  });
+
+  it("still blocks workers, writable panes, and code mutation before execution", () => {
+    expect(() =>
+      assertGuidedPrevcMcpFence(
+        activeFence,
+        "nexus_pane_spawn",
+        { readOnly: true },
+        workerCtx(),
+      ),
+    ).toThrow(/physical mission Maestro/i);
+    expect(() =>
+      assertGuidedPrevcMcpFence(
+        activeFence,
+        "nexus_pane_spawn",
+        {},
+        maestroCtx(),
+      ),
+    ).toThrow(/readOnly=true/i);
+    expect(() =>
+      assertGuidedPrevcMcpFence(
+        activeFence,
+        "nexus_file_write",
+        { path: "a.ts", content: "x" },
+        maestroCtx(),
+      ),
+    ).toThrow(/unavailable before stage=execution/i);
   });
 });

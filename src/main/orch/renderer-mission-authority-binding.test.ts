@@ -169,6 +169,9 @@ const authority = new RendererMissionAuthority(
     nativeReadOnly: true,
   }),
   deps.snapshotAttachmentPaths,
+  undefined,
+  () => undefined,
+  (squad) => squad,
 );
 
 beforeEach(() => {

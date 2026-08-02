@@ -204,6 +204,10 @@ function assertPhysicalMaestro(ctx: AgentGateContext): void {
  * allowlist, role, read-only, intent, workflow and handler authorities in
  * mcp-dispatch. This fence owns only the exact PREVC bootstrap/reviewer phase
  * and a narrow pre-execution policy boundary.
+ *
+ * Overclock-order copy: Maestro may route work and spawn native read-only
+ * scouts/reviewers while the fence is still active. Writable panes remain
+ * execution-stage only because provider-native tools do not pass through MCP.
  */
 export function assertGuidedPrevcMcpFence(
   snapshot: GuidedPrevcMcpFenceSnapshot,
@@ -374,9 +378,34 @@ export function assertGuidedPrevcMcpFence(
         );
       }
       return;
+    case "route_task":
+      assertPhysicalMaestro(ctx);
+      assertOptionalMissionArgument(args, ctx.missionId);
+      return;
+    case "agent_invoke":
+    case "mission_spawn_pane":
+    case "pane_spawn":
+      assertPhysicalMaestro(ctx);
+      assertOptionalMissionArgument(args, ctx.missionId);
+      if (args.readOnly !== true) {
+        throw new Error(
+          `guided_prevc_mcp_fence: ${toolName} must set readOnly=true before stage=execution`,
+        );
+      }
+      return;
     default: {
       const policy = effectPolicyForTool(canonical);
       if (policy === "read-only") {
+        return;
+      }
+      if (policy === "delegation-authority") {
+        assertPhysicalMaestro(ctx);
+        assertOptionalMissionArgument(args, ctx.missionId);
+        if (canonical !== "route_task" && args.readOnly !== true) {
+          throw new Error(
+            `guided_prevc_mcp_fence: ${toolName} must set readOnly=true before stage=execution`,
+          );
+        }
         return;
       }
       throw new Error(

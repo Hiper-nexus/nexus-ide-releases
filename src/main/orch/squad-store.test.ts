@@ -7,6 +7,7 @@ import {
   PET_STUDIO_SQUAD_ID,
 } from '../../shared/pet-studio';
 import { BUILTIN_SQUADS } from './builtin-squads';
+import { isMissionRuntimeSquadId } from '../../shared/orch-types';
 import {
   applyPreparedSquadSave,
   applyPreparedSquadsImport,
@@ -17,6 +18,7 @@ import {
   importLegacySquadsJson,
   initSquadStore,
   isSquadStoreReadOnly,
+  pinMissionRuntimeSquad,
   prepareMissionRuntimeSquadSave,
   prepareSquadSave,
   prepareSquadsImport,
@@ -435,6 +437,80 @@ describe('squad-store save path', () => {
     expect(
       prepared.squad.agents.every((agent) => agent.allowedSkills !== undefined),
     ).toBe(true);
+  });
+
+  it('pinMissionRuntimeSquad keeps approval hash stable after catalog source mutates', () => {
+    const db = makeDb();
+    openDb = db;
+    initSquadStore(db);
+    const source = saveSquad({
+      id: 'catalog-source-for-pin',
+      name: 'Catalog source',
+      createdAt: '1',
+      builtin: false,
+      orchestratorInstructions: '# Exact playbook at approval',
+      nativeInstructions: 'Native',
+      agents: [
+        {
+          id: 'orch',
+          agentName: 'Maestro',
+          category: 'orchestrator',
+          cli: 'claude',
+        },
+        {
+          id: 'worker',
+          agentName: 'Worker',
+          category: 'executor',
+          cli: 'codex',
+        },
+      ],
+    });
+    const sourceHashAtApproval = snapshotSquadAuthority(source).hash;
+    const pinned = pinMissionRuntimeSquad(source);
+    const approvedHash = snapshotSquadAuthority(pinned).hash;
+
+    expect(isMissionRuntimeSquadId(pinned.id)).toBe(true);
+    expect(pinned.runtimeSourceSquadId).toBe(source.id);
+    expect(pinned.runtimeSourceSquadRevisionHash).toBe(sourceHashAtApproval);
+    expect(pinMissionRuntimeSquad(pinned).id).toBe(pinned.id);
+
+    // Simulate syncBuiltins / catalog rewrite after approval.
+    const mutated = saveSquad({
+      ...source,
+      orchestratorInstructions: '# Exact playbook at approval\n# product bump',
+    });
+    expect(snapshotSquadAuthority(mutated).hash).not.toBe(sourceHashAtApproval);
+
+    // Without a pin, bootstrap would compare the approved hash to the live
+    // catalog squad and throw guided_plan_squad_stale. With the pin, the
+    // mission keeps reading immutable runtime bytes.
+    expect(snapshotSquadAuthority(getSquad(pinned.id)!).hash).toBe(
+      approvedHash,
+    );
+    expect(snapshotSquadAuthority(getSquad(source.id)!).hash).not.toBe(
+      approvedHash,
+    );
+  });
+
+  it('pinMissionRuntimeSquad seals builtins into mission-runtime copies', () => {
+    const db = makeDb();
+    openDb = db;
+    initSquadStore(db);
+    const builtin = BUILTIN_SQUADS.find(
+      (squad) => squad.id === 'nexus-story-impl',
+    );
+    if (!builtin) throw new Error('missing nexus-story-impl builtin');
+    const live = getSquad(builtin.id);
+    if (!live) throw new Error('builtin was not synced into the store');
+
+    const pinned = pinMissionRuntimeSquad(live);
+    expect(pinned.id).toMatch(/^mission-runtime-/i);
+    expect(isMissionRuntimeSquadId(pinned.id)).toBe(true);
+    expect(pinned.builtin).toBe(false);
+    expect(pinned.runtimeSourceSquadId).toBe(live.id);
+    expect(pinned.runtimeSourceSquadRevisionHash).toBe(
+      snapshotSquadAuthority(live).hash,
+    );
   });
 
   it('rejects forged or stale runtime lineage before persistence', () => {

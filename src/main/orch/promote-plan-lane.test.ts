@@ -210,6 +210,7 @@ describe('promotePlanLaneFromRenderer', () => {
       undefined,
       undefined,
       assertStandardSquadReadiness,
+      (source) => source,
     );
   }
 
@@ -287,7 +288,7 @@ describe('promotePlanLaneFromRenderer', () => {
       artifacts: handoff.artifacts,
       digest: expect.stringMatching(/^[a-f0-9]{64}$/),
     });
-    expect(assertStandardSquadReadiness).toHaveBeenCalledTimes(3);
+    expect(assertStandardSquadReadiness).toHaveBeenCalledTimes(4);
   });
 
   it('promove o snapshot do atalho Planejar · PRD para o squad builtin de execução revisado', () => {
@@ -434,7 +435,7 @@ describe('promotePlanLaneFromRenderer', () => {
         >[0],
       ),
     ).toBe(true);
-    expect(assertStandardSquadReadiness).toHaveBeenCalledTimes(3);
+    expect(assertStandardSquadReadiness).toHaveBeenCalledTimes(4);
     expect(assertStandardSquadReadiness).toHaveBeenCalledWith(
       executionTarget,
     );

@@ -98,6 +98,48 @@ describe('project identity', () => {
     expect(first).toMatch(/^[0-9a-f-]{36}$/);
   });
 
+  it('retries a fresh checkouts.json.lock instead of failing the first EEXIST', () => {
+    const source = path.join(root, 'lock-retry-source');
+    initializeRepository(source, {
+      origin: 'git@github.com:Acme/Nexus.git',
+      content: 'lock-retry',
+    });
+    commitManifest(source);
+    const registryFile = path.join(root, 'checkouts-lock-retry.json');
+    const lockFile = `${registryFile}.lock`;
+    fs.mkdirSync(path.dirname(registryFile), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(lockFile, 'holder\n', { mode: 0o600 });
+
+    let attempts = 0;
+    const realOpenSync = fs.openSync.bind(fs);
+    const retrySpy = vi.spyOn(fs, 'openSync').mockImplementation(
+      ((target: fs.PathLike, flags: fs.OpenMode, mode?: fs.Mode) => {
+        if (String(target) === lockFile && flags === 'wx') {
+          attempts += 1;
+          if (attempts === 1) {
+            const busy = new Error('EEXIST') as NodeJS.ErrnoException;
+            busy.code = 'EEXIST';
+            throw busy;
+          }
+          fs.rmSync(lockFile, { force: true });
+        }
+        return realOpenSync(target, flags, mode);
+      }) as typeof fs.openSync,
+    );
+
+    try {
+      const scope = resolveProjectExecutionScope(source, {
+        ...options(root, 'installation-lock-retry'),
+        checkoutRegistryFile: registryFile,
+      });
+      expect(scope.projectId).toBe(PROJECT_ID);
+      expect(attempts).toBeGreaterThan(1);
+    } finally {
+      retrySpy.mockRestore();
+      fs.rmSync(lockFile, { force: true });
+    }
+  });
+
   it('re-reads the winning installation id when another process publishes first', () => {
     const stateFile = path.join(root, 'installation.json');
     const winningInstallationId = '018f6f5e-c2e8-7a59-8d75-3f7e5ab87c92';

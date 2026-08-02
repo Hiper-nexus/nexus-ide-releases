@@ -4,6 +4,7 @@ import { z } from 'zod';
 import type Database from 'better-sqlite3';
 import {
   canMarkMilestoneDone,
+  isMissionRuntimeSquadId,
   missionIntentContractSchema,
   missionIntentStateSchema,
   missionMilestoneInputSchema,
@@ -1158,6 +1159,81 @@ export class ScopedMissionStore {
     this.#binding.emitChange();
     const mission = this.get(id);
     if (!mission) throw new Error('mission not found after plan promotion');
+    return mission;
+  }
+
+  /**
+   * Main-only: rebind a mission to an immutable `mission-runtime-*` /
+   * `agentic-runtime-*` squad before approval hashes are sealed.
+   *
+   * Deliberately outside `MissionPatch` so the renderer cannot choose
+   * `squad_id`. Builtins stay free to evolve via `syncBuiltins()`; in-flight
+   * missions keep reading the pinned runtime copy.
+   */
+  bindMissionRuntimeSquad(
+    rawId: string,
+    expected: Mission,
+    rawSquadId: string,
+  ): ScopedMission {
+    const id = entityIdSchema.parse(rawId);
+    const squadId = z.string().min(1).max(128).parse(rawSquadId);
+    if (!isMissionRuntimeSquadId(squadId)) {
+      throw new Error('mission runtime squad binding requires a runtime id');
+    }
+    if (expected.id !== id) {
+      throw new Error('mission runtime squad binding target mismatch');
+    }
+    if (expected.squadId === squadId) {
+      const current = this.get(id);
+      if (!current) throw new Error('mission not found');
+      return current;
+    }
+
+    const db = this.#binding.writeDatabase();
+    const updated = db.transaction(() => {
+      const existing = this.#getFromDatabase(db, id);
+      if (!existing) throw new Error('mission not found');
+      if (
+        existing.squadId !== expected.squadId ||
+        (existing.intentVersion ?? 0) !== (expected.intentVersion ?? 0) ||
+        existing.updatedAt !== expected.updatedAt ||
+        existing.status !== expected.status
+      ) {
+        throw new Error('mission runtime squad binding CAS changed');
+      }
+      const updatedAt = this.#binding.now();
+      const result = db
+        .prepare(
+          `UPDATE missions
+              SET squad_id = ?, updated_at = ?
+            WHERE id = ?
+              AND updated_at = ?
+              AND (
+                (squad_id IS NULL AND ? IS NULL)
+                OR squad_id = ?
+              )`,
+        )
+        .run(
+          squadId,
+          updatedAt,
+          id,
+          expected.updatedAt,
+          expected.squadId ?? null,
+          expected.squadId ?? null,
+        );
+      if (result.changes !== 1) {
+        throw new Error('mission runtime squad binding CAS changed');
+      }
+      return true;
+    }).immediate();
+    if (!updated) {
+      throw new Error('mission runtime squad binding failed');
+    }
+    this.#binding.emitChange();
+    const mission = this.get(id);
+    if (!mission) {
+      throw new Error('mission not found after runtime squad binding');
+    }
     return mission;
   }
 

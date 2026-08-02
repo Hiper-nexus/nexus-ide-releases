@@ -230,6 +230,11 @@ const paneSpawn: McpToolDef = {
       },
       taskId: { type: 'string' },
       prompt: { type: 'string' },
+      readOnly: {
+        type: 'boolean',
+        description:
+          'Spawn with provider-native read-only enforcement. Required before PREVC execution.',
+      },
     },
   },
   handler: async (args, ctx, invocation) => {
@@ -285,6 +290,7 @@ const paneSpawn: McpToolDef = {
         ),
         allowedSkills: attenuateSkills(ctx.allowedSkills, agent.allowedSkills ?? null),
         role,
+        readOnly: args.readOnly === true,
         prompt: str(args, 'prompt'),
         scope: ctx.scope,
       };
@@ -318,6 +324,7 @@ const paneSpawn: McpToolDef = {
         allowedTools: attenuateTools(ctx.allowedTools, []),
         allowedSkills: attenuateSkills(ctx.allowedSkills, null),
         role: 'worker',
+        readOnly: args.readOnly === true,
         prompt: str(args, 'prompt'),
         scope: ctx.scope,
       };

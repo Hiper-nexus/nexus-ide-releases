@@ -105,6 +105,11 @@ const agentInvokeTool: McpToolDef = {
       taskId: { type: 'string' },
       cwd: { type: 'string' },
       timeoutMs: { type: 'number', description: 'Default 300000' },
+      readOnly: {
+        type: 'boolean',
+        description:
+          'Invoke with provider-native read-only enforcement. Required before PREVC execution.',
+      },
     },
     required: ['agent', 'prompt'],
   },
@@ -124,6 +129,7 @@ const agentInvokeTool: McpToolDef = {
       missionId: childMissionId(ctx),
       taskId: str(args, 'taskId'),
       agentName: agent.agentName,
+      readOnly: args.readOnly === true,
       prompt: requireStr(args, 'prompt'),
     }, ctx, invocation)) as { paneId: string; sessionId: string };
     const { paneId, sessionId } = spawned;
@@ -465,6 +471,11 @@ const missionSpawnPaneTool: McpToolDef = {
       taskId: { type: 'string' },
       cwd: { type: 'string' },
       prompt: { type: 'string' },
+      readOnly: {
+        type: 'boolean',
+        description:
+          'Spawn with provider-native read-only enforcement. Required before PREVC execution.',
+      },
     },
     required: ['missionId'],
   },
