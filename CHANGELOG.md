@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.22.1 — O piloto para de girar em falso
+
+Data: 2026-08-02
+
+Esta release fecha o ciclo que fazia missões aprovadas morrerem antes do
+primeiro provider e serem religadas indefinidamente. O Nexus agora separa
+falhas transitórias de condições que exigem nova aprovação, executa sobre uma
+cópia imutável do squad e preserva a delegação antecipada sem liberar escrita
+antes do PREVC.
+
+### Missões que nascem e seguem
+
+- Aprovação materializa um `mission-runtime-*` imutável; `syncBuiltins()` pode
+  atualizar o catálogo sem alterar a autoridade de uma missão em curso.
+- Preview nativo continua somente leitura. Persistência e vínculo do runtime
+  acontecem apenas após a confirmação do operador.
+- `guided_plan_squad_stale` e demais preflights determinísticos são terminais
+  para a revisão atual, com causa e CTA acionáveis.
+- Falhas técnicas recuperáveis têm backoff e teto; esgotamento vira bloqueio
+  durável em vez de `recovery attempt 20`, 21, 22…
+- O reviewer deixa de selecionar um modelo inexistente e o motivo real do
+  bloqueio volta a aparecer para o operador.
+
+### Overclock-order com DNA Nexus
+
+- O Maestro pode rotear trabalho e abrir scouts/revisores antes da execução.
+- Panes antecipados exigem `readOnly=true` com enforcement nativo do provider;
+  escrita, shell e Git continuam presos à execução e ao worktree governado.
+- Contenção em `checkouts.json.lock` repete com espera bloqueante limitada, sem
+  falhar no primeiro `EEXIST` nem consumir CPU em busy-wait.
+
+### Interface
+
+- O pane recém-lançado do orquestrador recebe foco depois que shells existentes
+  são preservados. No Canvas, a missão volta a ocupar o topo correto do
+  stacking e não fica escondida atrás de um terminal antigo.
+
 ## 0.22.0 — O piloto aprende a pilotar
 
 Data: 2026-08-02
