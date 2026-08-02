@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { resolveMissionBlockingIntentState } from './mission-blocking';
+import { classifyStandardMissionTopology } from './mission-topology';
 
 export {
   missionBlockKindSchema,
@@ -755,7 +756,9 @@ export function isDocumentWritablePath(relativePath: string): boolean {
  *
  * Order: implement signals win first (never suggest a lane for code work —
  * this is also the guard that keeps "subir" from catching "subir código/PR"),
- * then consult (investigation), then plan (design-only), then ops (infra).
+ * Explicit team fan-out stays on standard after that guard; consult has no
+ * worker budget and would otherwise silently collapse the requested round.
+ * Then consult (investigation), plan (design-only), and ops (infra).
  */
 export function suggestMissionLaneFromGoal(goal: string): MissionLane | null {
   const g = goal.trim();
@@ -765,6 +768,9 @@ export function suggestMissionLaneFromGoal(goal: string): MissionLane | null {
       g,
     );
   if (implement) return null;
+  if (classifyStandardMissionTopology(g) === 'team-read-only-fanout') {
+    return null;
+  }
   const consult =
     /\b(consultar|consulta\b|somente\s+leitura|read-?only|ler\s+logs?|status\s+de|investigar|investigue|diagn[oó]stico|diagnosticar|doctor|o\s+que\s+est[aá]\s+acontecendo|analis(?:e|a|ar|em)|an[aá]lise|analy(?:ze|sis)|audit(?:e|ar|oria)?\b|mapea(?:r|m)|mapeie|entend(?:er|a)|explique|explicar|avali(?:e|ar)|como\s+funciona|por\s*que\s+(?:o|a|isso|ele|ela)\b)\b/i.test(
       g,

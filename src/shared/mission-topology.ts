@@ -13,6 +13,16 @@ const TEAM_RESPONSE =
 const TEAM_RESPONSE_SUBJECT =
   /\b(?:papel|funcao|o\s*que\s+(?:\w+\s+){0,2}(?:faz|fazem)|oque\s+(?:\w+\s+){0,2}(?:faz|fazem)|perspectiva|opiniao|achados?|riscos?|recomendacoes?|diagnostico|contexto|analise|role|what\s+(?:it|they|you)\s+do|perspective|opinion|findings?|risks?|recommendations?|diagnosis|context|analysis)\b/;
 
+const TEAM_RUNTIME_OBSERVATION =
+  /\b(?:teste|testar|quero\s+ver|ver\s+como(?:\s+se\s+sai)?|test|watch\s+how)\b/;
+
+const TEAM_RUNNING_ACTIVITY = /\b(?:rodando|executando|running)\b/;
+
+const TEAM_ANALYSIS_ACTIVITY = /\b(?:analisando|analyzing)\b/;
+
+const TEAM_OUTPUT_ACTIVITY =
+  /\b(?:soltando|respondendo|relatando|answering|reporting)\b/;
+
 const ROLE_RESPONSE_SUBJECT =
   /\b(?:papel|funcao|o\s*que\s+(?:\w+\s+){0,2}(?:faz|fazem)|oque\s+(?:\w+\s+){0,2}(?:faz|fazem)|role|what\s+(?:it|they|you)\s+do)\b/;
 
@@ -277,6 +287,8 @@ function canonicalGoal(goal: string): string {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLocaleLowerCase("en-US")
+    // ponytail: normalize the observed one-key typo without opening fuzzy routing.
+    .replace(/\btopdos?\b/g, "todos")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -317,12 +329,20 @@ export function classifyStandardMissionTopology(
   goal: string,
 ): StandardMissionTopology {
   const canonical = canonicalGoal(goal);
+  const hasObservedTeamRuntime =
+    TEAM_RUNTIME_OBSERVATION.test(canonical) &&
+    TEAM_RUNNING_ACTIVITY.test(canonical) &&
+    TEAM_ANALYSIS_ACTIVITY.test(canonical) &&
+    TEAM_OUTPUT_ACTIVITY.test(canonical);
   const hasClosedReadOnlyRequest =
     (
       EXPLICIT_READ_ONLY.test(canonical) &&
       hasClosedExplicitReadOnlyResponse(canonical)
     ) ||
-    hasClosedRoleResponse(canonical);
+    hasClosedRoleResponse(canonical) ||
+    hasObservedTeamRuntime;
+  const hasTeamResponse =
+    TEAM_RESPONSE.test(canonical) && TEAM_RESPONSE_SUBJECT.test(canonical);
   const mutationCandidate = canonical.replace(
     EXPLICIT_READ_ONLY,
     " read-only ",
@@ -332,8 +352,7 @@ export function classifyStandardMissionTopology(
     MUTATING_ACTION.test(mutationCandidate) ||
     PRODUCT_SURFACE_MUTATION.test(canonical) ||
     !TEAM_SCOPE.test(canonical) ||
-    !TEAM_RESPONSE.test(canonical) ||
-    !TEAM_RESPONSE_SUBJECT.test(canonical) ||
+    (!hasTeamResponse && !hasObservedTeamRuntime) ||
     !hasClosedReadOnlyRequest
   ) {
     return "delivery";

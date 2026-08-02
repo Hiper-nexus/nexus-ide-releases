@@ -18,6 +18,7 @@ describe("classifyStandardMissionTopology", () => {
     "Todos os panes me falem o que fazem atualmente no sistema",
     "Cada agente, sem alterar arquivos, analise o código e apresente riscos",
     "Each agent, do not edit, inspect the code and report findings",
+    "teste nexus. quero ver como. se sai com. topdos panes rodando analisando soltando",
   ])("selects a read-only team fan-out for %j", (goal) => {
     expect(classifyStandardMissionTopology(goal)).toBe(
       "team-read-only-fanout",
@@ -69,6 +70,7 @@ describe("classifyStandardMissionTopology", () => {
     "Cada especialista, sem escrever, rode as migrações e apresente o diagnóstico",
     "Cada agente sem editar faça push na main e descreva seu papel",
     "Each agent, do not edit, change the code and report findings",
+    "Teste o Nexus com todos os panes analisando e corrija os bugs",
     "Organizar a semana do time de produto",
   ])("keeps delivery topology for mutating or ambiguous goal %j", (goal) => {
     expect(classifyStandardMissionTopology(goal)).toBe("delivery");

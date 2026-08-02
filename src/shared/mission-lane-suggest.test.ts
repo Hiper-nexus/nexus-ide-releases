@@ -51,6 +51,13 @@ describe('suggestMissionLaneFromGoal', () => {
     ).toBe('consult');
   });
 
+  it.each([
+    'Peça para toda a equipe analisar o contexto em paralelo, sem editar, e responder',
+    'teste nexus. quero ver como. se sai com. topdos panes rodando analisando soltando',
+  ])('keeps explicit team fan-out on the standard lane for %j', (goal) => {
+    expect(suggestMissionLaneFromGoal(goal)).toBeNull();
+  });
+
   it('keeps implement precedence over analysis wording', () => {
     expect(
       suggestMissionLaneFromGoal('Analise o bug e corrigir o fluxo de login'),
