@@ -493,12 +493,64 @@ describe("guided PREVC MCP pre-execution fence", () => {
     }
   });
 
+  it("allows Maestro delegation before execution while still blocking mutation", async () => {
+    for (const stage of [
+      null,
+      "planning",
+      "review-primary",
+      "review-secondary",
+    ] as const) {
+      for (const [name, args] of [
+        ["nexus_route_task", { task: "delegate" }],
+        ["nexus_pane_spawn", { readOnly: true }],
+        [
+          "nexus_mission_spawn_pane",
+          { missionId: MISSION_ID, readOnly: true },
+        ],
+      ] as const) {
+        const called = await call({
+          name,
+          args,
+          snapshot: fence(stage),
+          ctx: physicalMaestro(),
+        });
+        expect(
+          called.result,
+          `${stage ?? "no-contract"}:${name}`,
+        ).toMatchObject({ ok: true });
+        expect(called.handler).toHaveBeenCalledOnce();
+      }
+
+      const workerDenied = await call({
+        name: "nexus_pane_spawn",
+        args: { readOnly: true },
+        snapshot: fence(stage),
+        ctx: ordinaryWorker(),
+      });
+      expect(workerDenied.result).toMatchObject({
+        ok: false,
+        denied: true,
+        error: expect.stringMatching(/physical mission Maestro/i),
+      });
+
+      const writableDenied = await call({
+        name: "nexus_pane_spawn",
+        args: {},
+        snapshot: fence(stage),
+        ctx: physicalMaestro(),
+      });
+      expect(writableDenied.result).toMatchObject({
+        ok: false,
+        denied: true,
+        error: expect.stringMatching(/readOnly=true/i),
+      });
+    }
+  });
+
   it("blocks execution, external mutation, and PREVC transition handlers before execution", async () => {
     const denied = [
       ["nexus_preview_start", {}],
       ["nexus_catalog_overlay", {}],
-      ["nexus_route_task", { task: "delegate" }],
-      ["nexus_pane_spawn", {}],
       ["nexus_terminal_run", { command: "npm test" }],
       ["nexus_bg_run", { command: "npm test" }],
       ["nexus_file_write", { path: "src/index.ts", content: "changed" }],

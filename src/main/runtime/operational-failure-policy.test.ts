@@ -65,4 +65,20 @@ describe("operational failure policy", () => {
       ),
     ).toBe("terminal");
   });
+
+  it.each([
+    "guided_plan_squad_stale: o squad mudou depois da aprovação",
+    "guided_plan_squad_missing: missão sem squad aprovado",
+    "guided_plan_mixed_topology_blocked: replaneje e reaprove",
+    "guided_plan_legacy_receipt_blocked: receipt antigo",
+    "O squad salvo mudou depois da aprovação. Revise a intenção.",
+  ])("classifies permanent plan/squad preflight as terminal: %s", (message) => {
+    expect(classifyOperationalFailure(new Error(message))).toBe("terminal");
+  });
+
+  it("keeps transient route unavailability retryable for bootstrap recovery", () => {
+    expect(
+      classifyOperationalFailure(new Error("guided_plan_route_unavailable")),
+    ).toBe("retryable");
+  });
 });

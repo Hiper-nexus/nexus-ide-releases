@@ -29,6 +29,7 @@ import type {
   Squad,
   SquadAgent,
 } from "../../shared/orch-types";
+import { isMissionRuntimeSquadId } from "../../shared/orch-types";
 import type { ProjectExecutionScope } from "../../shared/types";
 import { requireRendererWorkspaceScope } from "../persistence/renderer-workspace-scope";
 import {
@@ -97,6 +98,7 @@ import { hasRetiredRosterRouteMarker } from "../../shared/retired-adapter-policy
 import {
   hasAutomaticTechnicalRecovery,
   hasTerminalOperationalFailureMarker,
+  TERMINAL_OPERATIONAL_FAILURE_MARKER,
 } from "../../shared/mission-recovery-policy";
 import type {
   TaskDispatchRecord,
@@ -363,6 +365,15 @@ export interface MissionOrchestratorBootstrapRecoveryDeps {
     scope: ProjectExecutionScope,
     missionId: string,
   ): Promise<MissionOrchestratorBootstrapResult>;
+  /**
+   * Persist a terminal operator-facing stop when recoverable retries are
+   * exhausted for the current approved revision. Optional in narrow tests.
+   */
+  exhaustTechnicalRecovery?(
+    scope: ProjectExecutionScope,
+    missionId: string,
+    attempts: number,
+  ): void;
   now?(): number;
   warn?(message: string, error: unknown): void;
 }
@@ -370,6 +381,8 @@ export interface MissionOrchestratorBootstrapRecoveryDeps {
 export const MISSION_ORCHESTRATOR_BOOTSTRAP_RECONCILE_MS = 5_000;
 const TECHNICAL_RECOVERY_BASE_DELAY_MS = 5_000;
 const TECHNICAL_RECOVERY_MAX_DELAY_MS = 60_000;
+/** Hard cap for recoverable technical retries on one approved revision. */
+export const TECHNICAL_RECOVERY_MAX_ATTEMPTS = 8;
 
 interface TechnicalRecoveryState {
   readonly attempts: number;
@@ -382,6 +395,12 @@ interface TechnicalRecoveryState {
    * proves a later durable block and opens a fresh recovery lane.
    */
   readonly settled: boolean;
+  /**
+   * Terminal preflight or attempt exhaustion: the approved revision itself is
+   * closed. Ignore later updatedAt churn (block notes, exhaust writes) until
+   * intentVersion/approvedAt mint a new revisionKey.
+   */
+  readonly revisionClosed: boolean;
 }
 
 type KickoffSessionRetirementResult =
@@ -404,6 +423,9 @@ function isRetryableBootstrapResult(
 ): boolean {
   if (result.ok) return result.kickoff.accepted === false;
   if (hasTerminalOperationalFailureMarker(result.error)) return false;
+  // Permanent preflight drifts (squad stale, mixed topology, missing roster)
+  // classify as terminal even when the durable marker has not been written yet.
+  if (classifyOperationalFailure(result.error) === "terminal") return false;
   return (
     result.reason === "not_authorized" ||
     result.reason === "preflight_failed" ||
@@ -929,14 +951,29 @@ export class MissionOrchestratorBootstrapService {
         "user",
       );
     }
+    // Overclock-order: in-flight missions never bind to a live builtin/catalog
+    // id that syncBuiltins can rewrite. Approval must have pinned a
+    // mission-runtime-* copy; anything else is a permanent reapprove.
+    if (!isMissionRuntimeSquadId(squad.id)) {
+      return this.#failure(
+        scope,
+        missionId,
+        "preflight_failed",
+        "guided_plan_squad_stale: a missão ainda aponta para um squad de " +
+          "catálogo mutável. Reaprove para selar um mission-runtime imutável " +
+          "antes de iniciar qualquer provider.",
+        undefined,
+        "user",
+      );
+    }
     const squadSnapshot = snapshotSquadAuthority(squad);
     if (initial.intentContract?.squadRevisionHash !== squadSnapshot.hash) {
       return this.#failure(
         scope,
         missionId,
         "preflight_failed",
-        "O squad salvo mudou depois da aprovação. Revise a intenção e aprove " +
-          "novamente antes de iniciar qualquer provider.",
+        "guided_plan_squad_stale: o squad mudou depois da aprovação. Revise a " +
+          "intenção e aprove novamente antes de iniciar qualquer provider.",
         undefined,
         "user",
       );
@@ -1933,7 +1970,8 @@ export class MissionOrchestratorBootstrapRecovery {
             this.#technicalRecoveryByRevision.get(revisionKey);
           const recovery =
             previous &&
-            (!previous.settled ||
+            (previous.revisionClosed ||
+              !previous.settled ||
               previous.observedBlockedUpdatedAt === mission.updatedAt)
               ? previous
               : undefined;
@@ -1952,6 +1990,7 @@ export class MissionOrchestratorBootstrapRecovery {
                     nextAttemptAt: Number.POSITIVE_INFINITY,
                     observedBlockedUpdatedAt: mission.updatedAt,
                     settled: true,
+                    revisionClosed: false,
                   });
                   return;
                 }
@@ -1961,10 +2000,40 @@ export class MissionOrchestratorBootstrapRecovery {
                     nextAttemptAt: Number.POSITIVE_INFINITY,
                     observedBlockedUpdatedAt: mission.updatedAt,
                     settled: true,
+                    revisionClosed: true,
                   });
                   this.#warn(
                     `[mission-orchestrator-bootstrap] automatic recovery needs a ` +
                       `new approved revision for ${mission.id}:`,
+                    result,
+                  );
+                  return;
+                }
+                if (attempt >= TECHNICAL_RECOVERY_MAX_ATTEMPTS) {
+                  this.#technicalRecoveryByRevision.set(revisionKey, {
+                    attempts: attempt,
+                    nextAttemptAt: Number.POSITIVE_INFINITY,
+                    observedBlockedUpdatedAt: mission.updatedAt,
+                    settled: true,
+                    revisionClosed: true,
+                  });
+                  try {
+                    this.#deps.exhaustTechnicalRecovery?.(
+                      scope,
+                      mission.id,
+                      attempt,
+                    );
+                  } catch (exhaustError) {
+                    this.#warn(
+                      `[mission-orchestrator-bootstrap] could not persist ` +
+                        `exhausted recovery for ${mission.id}:`,
+                      exhaustError,
+                    );
+                  }
+                  this.#warn(
+                    `[mission-orchestrator-bootstrap] technical recovery exhausted ` +
+                      `after ${attempt} attempts for ${mission.id}; ` +
+                      `operator action required:`,
                     result,
                   );
                   return;
@@ -1976,6 +2045,7 @@ export class MissionOrchestratorBootstrapRecovery {
                   observedBlockedUpdatedAt:
                     recovery?.observedBlockedUpdatedAt ?? mission.updatedAt,
                   settled: false,
+                  revisionClosed: false,
                 });
                 this.#warn(
                   `[mission-orchestrator-bootstrap] technical recovery attempt ${attempt} ` +
@@ -1984,6 +2054,35 @@ export class MissionOrchestratorBootstrapRecovery {
                 );
               },
               (error) => {
+                if (attempt >= TECHNICAL_RECOVERY_MAX_ATTEMPTS) {
+                  this.#technicalRecoveryByRevision.set(revisionKey, {
+                    attempts: attempt,
+                    nextAttemptAt: Number.POSITIVE_INFINITY,
+                    observedBlockedUpdatedAt: mission.updatedAt,
+                    settled: true,
+                    revisionClosed: true,
+                  });
+                  try {
+                    this.#deps.exhaustTechnicalRecovery?.(
+                      scope,
+                      mission.id,
+                      attempt,
+                    );
+                  } catch (exhaustError) {
+                    this.#warn(
+                      `[mission-orchestrator-bootstrap] could not persist ` +
+                        `exhausted recovery for ${mission.id}:`,
+                      exhaustError,
+                    );
+                  }
+                  this.#warn(
+                    `[mission-orchestrator-bootstrap] technical recovery exhausted ` +
+                      `after ${attempt} attempts for ${mission.id}; ` +
+                      `operator action required:`,
+                    error,
+                  );
+                  return;
+                }
                 this.#technicalRecoveryByRevision.set(revisionKey, {
                   attempts: attempt,
                   nextAttemptAt:
@@ -1991,6 +2090,7 @@ export class MissionOrchestratorBootstrapRecovery {
                   observedBlockedUpdatedAt:
                     recovery?.observedBlockedUpdatedAt ?? mission.updatedAt,
                   settled: false,
+                  revisionClosed: false,
                 });
                 this.#warn(
                   `[mission-orchestrator-bootstrap] technical recovery attempt ${attempt} ` +
@@ -2055,6 +2155,31 @@ const productionRecovery = new MissionOrchestratorBootstrapRecovery({
     bootstrapMissionOrchestratorForScope(scope, missionId),
   resumeBlocked: (scope, missionId) =>
     resumeAutomaticallyBlockedMissionBootstrapForScope(scope, missionId),
+  exhaustTechnicalRecovery: (scope, missionId, attempts) => {
+    const stores = getProjectDomainStores(scope);
+    const current = stores.missions.get(missionId);
+    if (!current || !hasAutomaticTechnicalRecovery(current)) return;
+    const detail = terminalOperationalFailureReason(
+      `Recuperação automática esgotou ${attempts} tentativas sem iniciar o ` +
+        `orquestrador. A falha não cedeu com retry; revise o plano e aprove ` +
+        `novamente, ou use ${BOOTSTRAP_CTA}.`,
+    );
+    const note =
+      `${BOOTSTRAP_BLOCK_MARKER}\n## Orquestrador não iniciado\n${detail} ` +
+      `CTA: ${BOOTSTRAP_CTA}.`;
+    const description = current.description.includes(BOOTSTRAP_BLOCK_MARKER)
+      ? current.description.includes(TERMINAL_OPERATIONAL_FAILURE_MARKER)
+        ? current.description
+        : `${current.description}\n${detail}`.slice(0, 65_536)
+      : [current.description.trim(), note]
+          .filter(Boolean)
+          .join("\n\n")
+          .slice(0, 65_536);
+    stores.missions.update(missionId, {
+      ...missionBlockPatch("user"),
+      description,
+    });
+  },
 });
 let disposeProductionScopeListener: (() => void) | null = null;
 

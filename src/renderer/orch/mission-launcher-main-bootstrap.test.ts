@@ -99,6 +99,7 @@ const squad = {
 describe('approved mission main-owned presentation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    harness.conflictingOrchestratorPanes.mockReturnValue([]);
     harness.paneMissions = {};
     harness.missions = [];
     vi.stubGlobal('window', {
@@ -117,6 +118,19 @@ describe('approved mission main-owned presentation', () => {
         quota: { snapshot: harness.quotaSnapshot },
         orch: {
           updateMission: vi.fn(),
+          authorizeImmediateSquadLaunch: vi.fn(async () => ({
+            grant: 'grant-immediate',
+          })),
+          createMission: vi.fn(async () => ({
+            id: 'mission-immediate',
+            title: 'Squad salvo',
+            description: 'Squad salvo',
+            status: 'running' as const,
+            milestones: [],
+            learnings: '',
+            createdAt: 1,
+            updatedAt: 1,
+          })),
           bootstrapMissionOrchestrator: vi.fn(async () => ({
             ok: true as const,
             missionId: 'mission-approved',
@@ -141,7 +155,13 @@ describe('approved mission main-owned presentation', () => {
             },
           })),
           bindMissionOrchestrator: vi.fn(),
-          submitMissionKickoff: vi.fn(),
+          submitMissionKickoff: vi.fn(async () => ({
+            accepted: true as const,
+            reason: 'accepted' as const,
+            detail: 'ok',
+            cta: 'Abrir missão',
+            retryScheduled: false,
+          })),
         },
       },
     });
@@ -303,5 +323,58 @@ describe('approved mission main-owned presentation', () => {
       window.nexus.orch.bootstrapMissionOrchestrator,
     ).not.toHaveBeenCalled();
     expect(harness.setPanes).not.toHaveBeenCalled();
+  });
+
+  it('focuses the launched orchestrator after preserving shells so Canvas cannot stack a shell above the mission', async () => {
+    const currentSettings = await window.nexus.settings.orchGet();
+    vi.mocked(window.nexus.settings.orchGet).mockResolvedValueOnce({
+      ...currentSettings,
+      intentFirstMissionRuntimeV1: false,
+      defaultAdapterId: 'codex',
+      defaultModel: '',
+      defaultAccountId: '',
+    });
+
+    const result = await launchSquadMission(
+      squad,
+      [
+        {
+          id: 'codex',
+          kind: 'cli-pty',
+          label: 'Codex',
+          icon: 'C',
+          models: { list: ['gpt-5.6-sol'], default: 'gpt-5.6-sol' },
+          installed: true,
+          installCommand: 'npm i -g codex',
+          idleTimeoutMs: 800,
+          orchestratorCapable: true,
+          orchestrationEvidence: 'verified',
+        },
+      ],
+      { forceLegacyLaunch: true },
+    );
+
+    if (!result.ok) {
+      throw new Error(result.error);
+    }
+    expect(result).toMatchObject({
+      ok: true,
+      missionId: 'mission-immediate',
+    });
+    if (!result.paneId) {
+      throw new Error('legacy squad launch did not return its orchestrator pane');
+    }
+    expect(harness.setPanes).toHaveBeenCalledWith([
+      expect.objectContaining({ id: 'shell-1', kind: 'shell' }),
+      expect.objectContaining({
+        id: result.paneId,
+        kind: 'cli-agent',
+        role: 'orchestrator',
+      }),
+    ]);
+    expect(harness.focus).toHaveBeenCalledWith(result.paneId);
+    expect(harness.focus.mock.invocationCallOrder[0]).toBeGreaterThan(
+      harness.setPanes.mock.invocationCallOrder[0]!,
+    );
   });
 });

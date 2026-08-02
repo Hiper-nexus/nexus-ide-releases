@@ -1,10 +1,11 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { Db } from '../persistence/db';
 import type { Squad, SquadAgent } from '../../shared/orch-types';
 import {
+  isEngineGeneratedSquadId,
   isMissionRuntimeSquadId,
   squadSchema,
   squadsFileSchema,
@@ -590,6 +591,50 @@ export function applyPreparedSquadSave(
   squads.set(exact.id, exact);
   hub.emit();
   return exact;
+}
+
+/**
+ * Seal an immutable `mission-runtime-*` / `agentic-runtime-*` copy for approval.
+ *
+ * Builtins are rewritten by `syncBuiltins()` on every boot. Missions that keep
+ * pointing at those live ids go `guided_plan_squad_stale` after restart. The
+ * approval path must pin here so `squadRevisionHash` is computed against bytes
+ * that never move again.
+ */
+export function pinMissionRuntimeSquad(sourceSquad: Squad): Squad {
+  if (isMissionRuntimeSquadId(sourceSquad.id)) {
+    const current = squads.get(sourceSquad.id);
+    if (!current) {
+      throw new Error('mission runtime squad is unavailable');
+    }
+    return current;
+  }
+  const liveSource = squads.get(sourceSquad.id);
+  if (!liveSource) {
+    throw new Error('mission runtime source squad is unavailable');
+  }
+  const sourceSnapshot = snapshotSquadAuthority(liveSource);
+  const guided = isEngineGeneratedSquadId(liveSource.id);
+  const runtimeSquad: Squad = {
+    ...liveSource,
+    id: `${guided ? 'agentic' : 'mission'}-runtime-${randomUUID()}`,
+    createdAt: String(Date.now()),
+    builtin: false,
+    runtimeSourceSquadId: liveSource.id,
+    runtimeSourceSquadRevisionHash: sourceSnapshot.hash,
+    agents: liveSource.agents.map((agent) => ({ ...agent })),
+  };
+  if (!isMissionRuntimeSquadId(runtimeSquad.id)) {
+    throw new Error('main generated an invalid mission runtime squad id');
+  }
+  return applyPreparedSquadSave(
+    prepareMissionRuntimeSquadSave(
+      runtimeSquad,
+      liveSource,
+      guided,
+      'catalog',
+    ),
+  );
 }
 
 /** Validate, normalize and synchronously save a squad. */

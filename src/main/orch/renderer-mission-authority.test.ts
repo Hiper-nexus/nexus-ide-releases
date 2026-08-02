@@ -21,6 +21,7 @@ const deps = vi.hoisted(() => ({
   setMissionOrchestratorSession: vi.fn(),
   rebindMissionOrchestratorSession: vi.fn(),
   updateMission: vi.fn(),
+  bindMissionRuntimeSquad: vi.fn(),
   commitPlanPromotionRevision: vi.fn(),
   blockMission: vi.fn(),
   removeMission: vi.fn(),
@@ -80,6 +81,7 @@ import {
   peekMissionPromptQueue,
   resetMissionPromptQueues,
 } from "./mission-prompt-queue-registry";
+import { snapshotSquadAuthority } from "./squad-authority-snapshot";
 
 const owner = { id: 7 } as WebContents;
 const scope = testProjectScope({
@@ -198,6 +200,8 @@ function physicalPlanHandoff(
   };
 }
 
+const identityPin = (squad: Squad): Squad => squad;
+
 const authority = new RendererMissionAuthority(
   { forScope: deps.forScope } as never,
   () => "context-revision-a",
@@ -210,6 +214,7 @@ const authority = new RendererMissionAuthority(
   deps.snapshotAttachmentPaths,
   deps.ensureMissionPlanBeforeBootstrap,
   () => undefined,
+  identityPin,
 );
 
 function useStatefulMission(initial: Mission): () => Mission {
@@ -218,6 +223,12 @@ function useStatefulMission(initial: Mission): () => Mission {
   deps.updateMission.mockImplementation(
     (_missionId: string, patch: Partial<Mission>) => {
       current = { ...current, ...patch };
+      return current;
+    },
+  );
+  deps.bindMissionRuntimeSquad.mockImplementation(
+    (_missionId: string, _expected: Mission, squadId: string) => {
+      current = { ...current, squadId };
       return current;
     },
   );
@@ -231,6 +242,7 @@ beforeEach(() => {
   deps.setMissionOrchestratorSession.mockReset();
   deps.rebindMissionOrchestratorSession.mockReset();
   deps.updateMission.mockReset();
+  deps.bindMissionRuntimeSquad.mockReset();
   deps.removeMission.mockReset();
   deps.removeMissionIfUnchanged.mockReset();
   deps.blockMission.mockReset();
@@ -258,6 +270,10 @@ beforeEach(() => {
   deps.setMissionOrchestratorSession.mockReturnValue(mission);
   deps.rebindMissionOrchestratorSession.mockReturnValue(mission);
   deps.updateMission.mockReturnValue(mission);
+  deps.bindMissionRuntimeSquad.mockImplementation(
+    (missionId: string, expected: Mission, squadId: string) =>
+      deps.updateMission(missionId, { ...expected, squadId }),
+  );
   deps.removeMission.mockReturnValue(true);
   deps.removeMissionIfUnchanged.mockReturnValue("removed");
   deps.blockMission.mockImplementation(
@@ -317,6 +333,7 @@ beforeEach(() => {
       setOrchestratorSession: deps.setMissionOrchestratorSession,
       rebindOrchestratorSession: deps.rebindMissionOrchestratorSession,
       update: deps.updateMission,
+      bindMissionRuntimeSquad: deps.bindMissionRuntimeSquad,
       commitPlanPromotionRevision:
         deps.commitPlanPromotionRevision,
       block: deps.blockMission,
@@ -745,6 +762,73 @@ describe("renderer mission authority", () => {
     });
   });
 
+  it("keeps native preview read-only and pins only after confirmation", () => {
+    const awaitingApproval = {
+      ...approvedMission,
+      status: "pending" as const,
+      intentState: "awaiting_approval" as const,
+      intentContract: {
+        ...approvedMission.intentContract,
+        approvedAt: undefined,
+        dispatchedAt: undefined,
+        squadRevisionHash: undefined,
+      },
+    };
+    const currentMission = useStatefulMission(awaitingApproval);
+    const runtimeSquad: Squad = {
+      ...savedSquad,
+      id: "mission-runtime-123e4567-e89b-42d3-a456-426614174099",
+      builtin: false,
+      runtimeSourceSquadId: savedSquad.id,
+      runtimeSourceSquadRevisionHash: snapshotSquadAuthority(savedSquad).hash,
+    };
+    const pinRuntimeSquad = vi.fn((source: Squad) =>
+      source.id === runtimeSquad.id ? source : runtimeSquad,
+    );
+    const pinningAuthority = new RendererMissionAuthority(
+      { forScope: deps.forScope } as never,
+      () => "context-revision-a",
+      () => true,
+      deps.resolvePaneActivity,
+      deps.validateAttachmentPaths,
+      deps.requestMissionOrchestratorBootstrap,
+      (squadId) =>
+        squadId === runtimeSquad.id
+          ? runtimeSquad
+          : squadId === savedSquad.id
+            ? savedSquad
+            : null,
+      deps.resolveOrchestratorRuntime,
+      deps.snapshotAttachmentPaths,
+      deps.ensureMissionPlanBeforeBootstrap,
+      () => undefined,
+      pinRuntimeSquad,
+    );
+
+    const candidate = pinningAuthority.missionApprovalCandidateFromRenderer(
+      owner,
+      { missionId: mission.id },
+    );
+    expect(pinRuntimeSquad).not.toHaveBeenCalled();
+    expect(deps.bindMissionRuntimeSquad).not.toHaveBeenCalled();
+    expect(currentMission().squadId).toBe(savedSquad.id);
+    expect(candidate.squad.id).toBe(savedSquad.id);
+    expect(candidate.squad.hash).toBe(snapshotSquadAuthority(savedSquad).hash);
+
+    const result = pinningAuthority.approveIntentFromRenderer(
+      owner,
+      { missionId: mission.id },
+      candidate.fence,
+    );
+    expect(result.squadId).toBe(runtimeSquad.id);
+    expect(result.intentContract?.squadRevisionHash).toBe(
+      snapshotSquadAuthority(runtimeSquad).hash,
+    );
+    expect(pinRuntimeSquad).toHaveBeenCalledOnce();
+    expect(pinRuntimeSquad).toHaveBeenCalledWith(savedSquad);
+    expect(deps.bindMissionRuntimeSquad).toHaveBeenCalledOnce();
+  });
+
   it("rechecks every standard worker after native review before dispatch", () => {
     const guidedSquad = {
       ...savedSquad,
@@ -781,6 +865,7 @@ describe("renderer mission authority", () => {
       deps.snapshotAttachmentPaths,
       deps.ensureMissionPlanBeforeBootstrap,
       assertStandardSquadReadiness,
+      identityPin,
     );
     deps.getMission.mockReturnValue(awaitingApproval);
 
@@ -828,6 +913,7 @@ describe("renderer mission authority", () => {
       deps.snapshotAttachmentPaths,
       deps.ensureMissionPlanBeforeBootstrap,
       guidedOnlyReadiness,
+      identityPin,
     );
     deps.getMission.mockReturnValue(awaitingApproval);
 
@@ -1096,6 +1182,7 @@ describe("renderer mission authority", () => {
       undefined,
       undefined,
       () => undefined,
+      identityPin,
     );
     const awaitingApproval = {
       ...approvedMission,

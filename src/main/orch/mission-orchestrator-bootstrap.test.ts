@@ -25,6 +25,7 @@ import {
   restartMissionOrchestratorAfterPlanPromotionForScope,
   runtimeAuthorityMismatches,
   stopMissionOrchestratorBeforePlanPromotionForScope,
+  TECHNICAL_RECOVERY_MAX_ATTEMPTS,
   type MissionOrchestratorBootstrapDeps,
   type DeadGraphReapprovalDeps,
   type PlanPromotionRestartDeps,
@@ -59,10 +60,12 @@ const scope = Object.freeze({
 });
 
 const squad: Squad = {
-  id: 'saved-squad',
+  id: 'mission-runtime-123e4567-e89b-42d3-a456-426614174000',
   name: 'Squad salvo',
   createdAt: '1',
   builtin: false,
+  runtimeSourceSquadId: 'saved-squad-source',
+  runtimeSourceSquadRevisionHash: 'a'.repeat(64),
   orchestratorInstructions: '# Missão antiga\nCoordene pelo Nexus.',
   agents: [
     {
@@ -752,6 +755,71 @@ describe('initial main-owned orchestrator bootstrap', () => {
     });
   });
 
+  it('stops automatic recovery when plan seal fails with a permanent squad drift', async () => {
+    const h = harness();
+    h.deps.ensureMissionPlan = vi.fn(() => {
+      throw new Error(
+        'guided_plan_squad_stale: o squad mudou depois da aprovação',
+      );
+    });
+    const service = new MissionOrchestratorBootstrapService(h.deps);
+
+    const result = await service.bootstrap(scope, h.mission.id);
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: 'preflight_failed',
+      error: expect.stringMatching(
+        new RegExp(
+          `${TERMINAL_OPERATIONAL_FAILURE_MARKER}.*guided_plan_squad_stale`,
+          'i',
+        ),
+      ),
+      cta: 'Retomar missão',
+    });
+    expect(result).not.toHaveProperty('retryScheduled');
+    expect(h.spawned).toEqual([]);
+    expect(h.recorded).toEqual([]);
+    expect(h.kickoffPrompts).toEqual([]);
+    expect(h.mission).toMatchObject({
+      status: 'blocked',
+      intentState: 'blocked_user',
+      description: expect.stringContaining(TERMINAL_OPERATIONAL_FAILURE_MARKER),
+    });
+  });
+
+  it('refuses bootstrap when the mission still points at a mutable catalog squad', async () => {
+    const h = harness();
+    const catalogSquad: Squad = {
+      ...squad,
+      id: 'nexus-story-impl',
+      builtin: true,
+      runtimeSourceSquadId: undefined,
+      runtimeSourceSquadRevisionHash: undefined,
+    };
+    h.mission = {
+      ...h.mission,
+      squadId: catalogSquad.id,
+      intentContract: {
+        ...h.mission.intentContract!,
+        squadRevisionHash: snapshotSquadAuthority(catalogSquad).hash,
+      },
+    };
+    h.deps.getSquad = (id) => (id === catalogSquad.id ? catalogSquad : null);
+    const service = new MissionOrchestratorBootstrapService(h.deps);
+
+    const result = await service.bootstrap(scope, h.mission.id);
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: 'preflight_failed',
+      error: expect.stringMatching(/guided_plan_squad_stale.*mission-runtime/i),
+      cta: 'Retomar missão',
+    });
+    expect(result).not.toHaveProperty('retryScheduled');
+    expect(h.spawned).toEqual([]);
+  });
+
   it('blocks a saved squad with mixed sealed topology before any provider effect', async () => {
     const h = harness();
     const current = guidedMission({
@@ -1153,7 +1221,9 @@ describe('initial main-owned orchestrator bootstrap', () => {
     const value = harness();
     const deliverySquad: Squad = {
       ...squad,
-      id: NEXUS_STORY_IMPLEMENTATION_SQUAD_ID,
+      id: 'mission-runtime-123e4567-e89b-42d3-a456-426614174010',
+      runtimeSourceSquadId: NEXUS_STORY_IMPLEMENTATION_SQUAD_ID,
+      runtimeSourceSquadRevisionHash: 'c'.repeat(64),
       name: 'Implementação por Stories',
       orchestratorInstructions:
         '# Implementação por Stories\nConsuma o pacote promovido e execute as stories.',
@@ -1209,7 +1279,7 @@ describe('initial main-owned orchestrator bootstrap', () => {
     });
     value.mission = {
       ...value.mission,
-      squadId: NEXUS_STORY_IMPLEMENTATION_SQUAD_ID,
+      squadId: deliverySquad.id,
       intentVersion: 2,
       intentContract: {
         ...value.mission.intentContract!,
@@ -1273,7 +1343,9 @@ describe('initial main-owned orchestrator bootstrap', () => {
   function armGuidedMission(value: Harness): Squad {
     const guidedSquad: Squad = {
       ...squad,
-      id: 'agentic-guided-squad',
+      id: 'agentic-runtime-123e4567-e89b-42d3-a456-426614174001',
+      runtimeSourceSquadId: 'agentic-guided-source',
+      runtimeSourceSquadRevisionHash: 'b'.repeat(64),
       agents: squad.agents.map((agent) => ({ ...agent })),
     };
     value.mission = {
@@ -1675,6 +1747,98 @@ describe('initial main-owned orchestrator bootstrap', () => {
 
     expect(resumeBlocked).not.toHaveBeenCalled();
     expect(bootstrap).not.toHaveBeenCalled();
+  });
+
+  it('settles permanently when resume returns a terminal preflight_failed', async () => {
+    const value = harness();
+    const blocked: Mission = {
+      ...value.mission,
+      status: 'blocked',
+      intentState: 'blocked_technical',
+      updatedAt: 10,
+    };
+    let now = 1_000;
+    const resumeBlocked = vi.fn(async () => ({
+      ok: false as const,
+      missionId: blocked.id,
+      reason: 'preflight_failed' as const,
+      error:
+        `${TERMINAL_OPERATIONAL_FAILURE_MARKER} O plano main-owned não pôde ` +
+        `ser selado. guided_plan_squad_stale: o squad mudou depois da aprovação`,
+      cta: 'Retomar missão',
+    }));
+    const warn = vi.fn();
+    const recovery = new MissionOrchestratorBootstrapRecovery({
+      listScopes: () => [scope],
+      listBootstrapCandidates: () => [blocked],
+      bootstrap: vi.fn(),
+      resumeBlocked,
+      now: () => now,
+      warn,
+    });
+
+    await recovery.reconcile();
+    now += 60_000;
+    await recovery.reconcile();
+    now += 60_000;
+    await recovery.reconcile();
+
+    expect(resumeBlocked).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringMatching(/new approved revision/i),
+      expect.objectContaining({ reason: 'preflight_failed' }),
+    );
+  });
+
+  it('exhausts recoverable technical retries after the attempt ceiling', async () => {
+    const value = harness();
+    let blocked: Mission = {
+      ...value.mission,
+      status: 'blocked',
+      intentState: 'blocked_technical',
+      updatedAt: 10,
+    };
+    let now = 1_000;
+    const resumeBlocked = vi.fn(async () => {
+      blocked = { ...blocked, updatedAt: blocked.updatedAt + 1 };
+      return {
+        ok: false as const,
+        missionId: blocked.id,
+        reason: 'not_authorized' as const,
+        error: 'o dispatch anterior ainda está terminando',
+        cta: 'retry',
+      };
+    });
+    const exhaustTechnicalRecovery = vi.fn();
+    const warn = vi.fn();
+    const recovery = new MissionOrchestratorBootstrapRecovery({
+      listScopes: () => [scope],
+      listBootstrapCandidates: () => [blocked],
+      bootstrap: vi.fn(),
+      resumeBlocked,
+      exhaustTechnicalRecovery,
+      now: () => now,
+      warn,
+    });
+
+    for (let i = 0; i < TECHNICAL_RECOVERY_MAX_ATTEMPTS; i += 1) {
+      await recovery.reconcile();
+      now += 60_000;
+    }
+    expect(resumeBlocked).toHaveBeenCalledTimes(TECHNICAL_RECOVERY_MAX_ATTEMPTS);
+    expect(exhaustTechnicalRecovery).toHaveBeenCalledOnce();
+    expect(exhaustTechnicalRecovery).toHaveBeenCalledWith(
+      scope,
+      blocked.id,
+      TECHNICAL_RECOVERY_MAX_ATTEMPTS,
+    );
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringMatching(/technical recovery exhausted/i),
+      expect.objectContaining({ reason: 'not_authorized' }),
+    );
+
+    await recovery.reconcile();
+    expect(resumeBlocked).toHaveBeenCalledTimes(TECHNICAL_RECOVERY_MAX_ATTEMPTS);
   });
 
   it('reconciles only missing or torn durable bindings, not a complete legacy pane', () => {
@@ -2380,7 +2544,7 @@ describe('initial main-owned orchestrator bootstrap', () => {
     await expect(service.bootstrap(scope, value.mission.id)).resolves.toMatchObject({
       ok: false,
       reason: 'preflight_failed',
-      error: expect.stringMatching(/squad salvo mudou.*aprova/i),
+      error: expect.stringMatching(/guided_plan_squad_stale.*mudou depois da aprovação/i),
     });
     expect(value.spawned).toEqual([]);
     expect(value.kickoffPrompts).toEqual([]);
@@ -2448,12 +2612,15 @@ describe('initial main-owned orchestrator bootstrap', () => {
 });
 
 describe('plan promotion runtime restart', () => {
+  const promotedRuntimeSquadId =
+    'mission-runtime-123e4567-e89b-42d3-a456-426614174030';
+
   function promotedMission(): Mission {
     const prior = approvedMission();
     return {
       ...prior,
       id: 'mission-promoted',
-      squadId: NEXUS_STORY_IMPLEMENTATION_SQUAD_ID,
+      squadId: promotedRuntimeSquadId,
       status: 'pending',
       intentState: 'ready_to_start',
       intentVersion: 2,
@@ -2601,7 +2768,7 @@ describe('plan promotion runtime restart', () => {
     const standard = promotedMission();
     return {
       ...standard,
-      squadId: 'mission-runtime-plan-v1',
+      squadId: 'mission-runtime-123e4567-e89b-42d3-a456-426614174020',
       status: 'running',
       intentState: 'executing',
       intentVersion: 1,
@@ -2664,7 +2831,7 @@ describe('plan promotion runtime restart', () => {
     });
     expect(h.removed).toEqual(['mpane-plan-v1']);
     expect(h.mission).toMatchObject({
-      squadId: 'mission-runtime-plan-v1',
+      squadId: 'mission-runtime-123e4567-e89b-42d3-a456-426614174020',
       status: 'running',
       intentState: 'executing',
       intentVersion: 1,
@@ -2730,7 +2897,7 @@ describe('plan promotion runtime restart', () => {
     expect(h.removed).toEqual([]);
     expect(h.panes).toEqual([]);
     expect(h.mission).toMatchObject({
-      squadId: NEXUS_STORY_IMPLEMENTATION_SQUAD_ID,
+      squadId: promotedRuntimeSquadId,
       status: 'running',
       intentState: 'dispatched',
       intentVersion: 2,
@@ -2774,7 +2941,7 @@ describe('plan promotion runtime restart', () => {
     expect(h.mission).toMatchObject({
       status: 'blocked',
       intentState: 'blocked_technical',
-      squadId: NEXUS_STORY_IMPLEMENTATION_SQUAD_ID,
+      squadId: promotedRuntimeSquadId,
       intentContract: {
         promotedPlan: expect.objectContaining({
           handoffId: 'handoff-plan-v1',

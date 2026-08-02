@@ -88,7 +88,7 @@ import {
   snapshotDroppedAttachmentPaths,
   validateDroppedAttachmentPaths,
 } from "../persistence/dropped-files";
-import { getSquad } from "./squad-store";
+import { getSquad, pinMissionRuntimeSquad } from "./squad-store";
 import {
   snapshotSquadAuthority,
   squadAuthorityReviewStrings,
@@ -459,6 +459,7 @@ export class RendererMissionAuthority {
     orchestrator: Squad["agents"][number],
   ) => ResolvedMissionOrchestratorRuntime;
   readonly #assertStandardSquadReadiness: (squad: Squad) => void;
+  readonly #pinMissionRuntimeSquad: (sourceSquad: Squad) => Squad;
 
   constructor(
     stores: ProjectDomainStoreRegistry,
@@ -498,6 +499,7 @@ export class RendererMissionAuthority {
     ) => unknown = () => undefined,
     assertStandardSquadReadiness: (squad: Squad) => void =
       assertLiveGuidedSquadReadiness,
+    pinRuntimeSquad: (sourceSquad: Squad) => Squad = pinMissionRuntimeSquad,
   ) {
     this.#stores = stores;
     this.#resolveContextRevision = resolveContextRevision;
@@ -511,6 +513,32 @@ export class RendererMissionAuthority {
     this.#snapshotAttachmentPaths = snapshotAttachmentPaths;
     this.#ensureMissionPlanBeforeBootstrap = ensureMissionPlanBeforeBootstrap;
     this.#assertStandardSquadReadiness = assertStandardSquadReadiness;
+    this.#pinMissionRuntimeSquad = pinRuntimeSquad;
+  }
+
+  /**
+   * Rebind the mission to an immutable runtime copy before any approval hash
+   * is computed. Candidate + approve share this so the native fence never
+   * seals against a builtin that `syncBuiltins()` can rewrite on the next boot.
+   */
+  #sealMissionSquadForApproval(
+    scope: ProjectExecutionScope,
+    mission: Mission,
+    sourceSquad: Squad,
+  ): { mission: Mission; squad: Squad } {
+    const squad = this.#pinMissionRuntimeSquad(sourceSquad);
+    if (mission.squadId === squad.id) {
+      return { mission, squad };
+    }
+    // Test doubles may identity-pin a catalog squad; never persist a mutable
+    // catalog id through the main-owned runtime binder.
+    if (!isMissionRuntimeSquadId(squad.id)) {
+      return { mission, squad };
+    }
+    const rebound = this.#stores
+      .forScope(scope)
+      .missions.bindMissionRuntimeSquad(mission.id, mission, squad.id);
+    return { mission: rebound, squad };
   }
 
   #attachmentsForApproval(paths: readonly string[] | undefined): {
@@ -1167,12 +1195,18 @@ export class RendererMissionAuthority {
     const deniedTools = contract.deniedTools ? [...contract.deniedTools] : [];
     const reviewedAttachments = [...attachmentPaths];
     const reviewedAttachmentSnapshots = attachments.snapshots;
-    const squad = current.squadId ? this.#resolveSquad(current.squadId) : null;
-    if (!squad) {
+    const sourceSquad = current.squadId
+      ? this.#resolveSquad(current.squadId)
+      : null;
+    if (!sourceSquad) {
       throw new Error(
         "squad_required: saved squad is unavailable for approval",
       );
     }
+    // Native review is read-only. Review the exact live source and fence it;
+    // only the confirmed approval path may persist/bind its immutable runtime
+    // copy. Re-reading this source below closes the review-to-write gap.
+    const squad = sourceSquad;
     const squadSnapshot = snapshotSquadAuthority(squad);
     const orchestratorRuntime = this.#runtimeForSquad(
       squad,
@@ -1243,14 +1277,14 @@ export class RendererMissionAuthority {
     const reviewReceipt = validateApprovalReviewSha256(approvalReviewSha256);
     const scope = requireRendererWorkspaceScope(owner);
     const missions = this.#stores.forScope(scope).missions;
-    const current = missions.get(input.missionId);
-    if (!current) throw new Error("mission not found");
-    if (current.status === "done") {
+    const loaded = missions.get(input.missionId);
+    if (!loaded) throw new Error("mission not found");
+    if (loaded.status === "done") {
       throw new Error("completed missions are immutable");
     }
     if (
-      current.intentContract &&
-      current.intentContract.intentVersion !== current.intentVersion
+      loaded.intentContract &&
+      loaded.intentContract.intentVersion !== loaded.intentVersion
     ) {
       throw new Error(
         "stale_intent: contract intent version does not match the mission",
@@ -1258,45 +1292,59 @@ export class RendererMissionAuthority {
     }
     const requestedAttachmentPaths =
       input.attachmentPaths === undefined
-        ? current.intentContract?.attachmentPaths
-          ? [...current.intentContract.attachmentPaths]
+        ? loaded.intentContract?.attachmentPaths
+          ? [...loaded.intentContract.attachmentPaths]
           : undefined
         : this.#validateAttachmentPaths(input.attachmentPaths);
     const attachments = this.#attachmentsForApproval(requestedAttachmentPaths);
     const attachmentPaths = attachments.paths;
     const evidenceAttached =
       (input.evidenceAttached === undefined
-        ? current.intentContract?.evidenceAttached === true
+        ? loaded.intentContract?.evidenceAttached === true
         : input.evidenceAttached === true) || attachmentPaths.length > 0;
-    const squad = current.squadId ? this.#resolveSquad(current.squadId) : null;
-    if (!squad) {
+    const sourceSquad = loaded.squadId
+      ? this.#resolveSquad(loaded.squadId)
+      : null;
+    if (!sourceSquad) {
       throw new Error(
         "squad_required: saved squad is unavailable for approval",
       );
     }
-    const squadSnapshot = snapshotSquadAuthority(squad);
-    const orchestratorRuntime = this.#runtimeForSquad(
-      squad,
-      (current.intentContract?.lane ?? "standard") === "standard",
+    const reviewSquadSnapshot = snapshotSquadAuthority(sourceSquad);
+    const reviewOrchestratorRuntime = this.#runtimeForSquad(
+      sourceSquad,
+      (loaded.intentContract?.lane ?? "standard") === "standard",
     );
-    const orchestratorEvidence = missionOrchestratorEvidence(
-      orchestratorRuntime.adapterId,
+    const reviewOrchestratorEvidence = missionOrchestratorEvidence(
+      reviewOrchestratorRuntime.adapterId,
     );
     if (
       expectedFence !== undefined &&
-      missionAuthorityFence(current, {
+      missionAuthorityFence(loaded, {
         evidenceAttached,
         attachmentPaths,
         attachmentSnapshots: attachments.snapshots,
-        squadRevisionHash: squadSnapshot.hash,
-        orchestratorRuntime,
-        orchestratorEvidence,
+        squadRevisionHash: reviewSquadSnapshot.hash,
+        orchestratorRuntime: reviewOrchestratorRuntime,
+        orchestratorEvidence: reviewOrchestratorEvidence,
       }) !== expectedFence
     ) {
       throw new Error(
         "approval_stale: mission intent, attachments, squad or runtime changed while native confirmation was open",
       );
     }
+    const sealed = this.#sealMissionSquadForApproval(
+      scope,
+      loaded,
+      sourceSquad,
+    );
+    const current = sealed.mission;
+    const squad = sealed.squad;
+    const squadSnapshot = snapshotSquadAuthority(squad);
+    const orchestratorRuntime = this.#runtimeForSquad(
+      squad,
+      (current.intentContract?.lane ?? "standard") === "standard",
+    );
 
     const from = current.intentState ?? "ready_to_start";
     let nextState = from;
@@ -1658,12 +1706,15 @@ export class RendererMissionAuthority {
     const deniedTools = contract.deniedTools ? [...contract.deniedTools] : [];
     const attachments = this.#attachmentsForApproval(contract.attachmentPaths);
     const attachmentPaths = attachments.paths;
-    const squad = this.#executionSquadForPlanPromotion(current);
-    if (!squad) {
+    const sourceSquad = this.#executionSquadForPlanPromotion(current);
+    if (!sourceSquad) {
       throw new Error(
         "squad_required: saved squad is unavailable for promotion",
       );
     }
+    // Promotion preview is read-only for the same reason as initial approval:
+    // the operator reviews/fences the live source, and confirmation seals it.
+    const squad = sourceSquad;
     const squadSnapshot = snapshotSquadAuthority(squad);
     const orchestratorRuntime = this.#runtimeForSquad(squad, true, true);
     const orchestratorEvidence = missionOrchestratorEvidence(
@@ -1744,12 +1795,12 @@ export class RendererMissionAuthority {
     const scope = requireRendererWorkspaceScope(owner);
     const stores = this.#stores.forScope(scope);
     const missions = stores.missions;
-    const current = missions.get(input.missionId);
-    if (!current) throw new Error("mission not found");
-    if (current.status === "done" || current.status === "failed") {
+    const loaded = missions.get(input.missionId);
+    if (!loaded) throw new Error("mission not found");
+    if (loaded.status === "done" || loaded.status === "failed") {
       throw new Error("mission is terminal");
     }
-    const contract = current.intentContract;
+    const contract = loaded.intentContract;
     if (!contract || contract.lane !== "plan") {
       throw new Error(
         "promote_plan: mission is not in plan lane (or has no contract)",
@@ -1758,36 +1809,40 @@ export class RendererMissionAuthority {
     if (!contract.goal?.trim()) {
       throw new Error("intent_required: plan mission has empty goal");
     }
-    if (current.orchestratorSessionId !== undefined) {
+    if (loaded.orchestratorSessionId !== undefined) {
       throw new Error(
         "promotion_runtime_live: a sessão plan precisa estar fisicamente encerrada",
       );
     }
     const promotedPlan = revalidatePhysicalPlanHandoff({
-      mission: current,
+      mission: loaded,
       expected: expectedPlan,
       handoffs: stores.handoffs,
     });
-    const squad = this.#executionSquadForPlanPromotion(current);
-    if (!squad) {
+    const sourceSquad = this.#executionSquadForPlanPromotion(loaded);
+    if (!sourceSquad) {
       throw new Error(
         "squad_required: saved squad is unavailable for promotion",
       );
     }
-    const squadSnapshot = snapshotSquadAuthority(squad);
-    const orchestratorRuntime = this.#runtimeForSquad(squad, true, true);
-    const orchestratorEvidence = missionOrchestratorEvidence(
-      orchestratorRuntime.adapterId,
-    );
     const attachments = this.#attachmentsForApproval(contract.attachmentPaths);
+    const reviewSquadSnapshot = snapshotSquadAuthority(sourceSquad);
+    const reviewOrchestratorRuntime = this.#runtimeForSquad(
+      sourceSquad,
+      true,
+      true,
+    );
+    const reviewOrchestratorEvidence = missionOrchestratorEvidence(
+      reviewOrchestratorRuntime.adapterId,
+    );
     if (
-      missionAuthorityFence(current, {
+      missionAuthorityFence(loaded, {
         evidenceAttached: contract.evidenceAttached === true,
         attachmentPaths: contract.attachmentPaths ?? [],
         attachmentSnapshots: attachments.snapshots,
-        squadRevisionHash: squadSnapshot.hash,
-        orchestratorRuntime,
-        orchestratorEvidence,
+        squadRevisionHash: reviewSquadSnapshot.hash,
+        orchestratorRuntime: reviewOrchestratorRuntime,
+        orchestratorEvidence: reviewOrchestratorEvidence,
         promotedPlan,
       }) !== expectedFence
     ) {
@@ -1795,6 +1850,15 @@ export class RendererMissionAuthority {
         "promotion_stale: mission, saved squad or runtime changed while native confirmation was open",
       );
     }
+    const sealed = this.#sealMissionSquadForApproval(
+      scope,
+      loaded,
+      sourceSquad,
+    );
+    const current = sealed.mission;
+    const squad = sealed.squad;
+    const squadSnapshot = snapshotSquadAuthority(squad);
+    const orchestratorRuntime = this.#runtimeForSquad(squad, true, true);
     const risk = classifyGoalRisk(contract.goal);
     const nextVersion = (current.intentVersion ?? 0) + 1;
     const now = Date.now();

@@ -44,6 +44,22 @@ const TERMINAL_AUTHORITY_PATTERNS = [
   /\bperdeu CAS\b/iu,
 ];
 
+/**
+ * Bootstrap/plan preflights that cannot heal by retrying the same approved
+ * revision. The squad hash, roster composition, or receipt proof has already
+ * drifted — only a fresh operator approval opens a new recovery lane.
+ */
+const TERMINAL_PREFLIGHT_PATTERNS = [
+  /\bguided_plan_squad_stale\b/iu,
+  /\bguided_plan_squad_missing\b/iu,
+  /\bguided_plan_mixed_topology_blocked\b/iu,
+  /\bguided_plan_legacy_receipt_blocked\b/iu,
+  /\bguided_plan_executor_missing\b/iu,
+  /\bguided_plan_reviewer_missing\b/iu,
+  /\bguided_plan_unborn_with_files\b/iu,
+  /\bsquad salvo mudou depois da aprovação\b/iu,
+];
+
 function errorName(error: unknown): string {
   if (!error || typeof error !== "object" || !("name" in error)) return "";
   return String((error as { readonly name?: unknown }).name ?? "");
@@ -66,9 +82,13 @@ export function classifyOperationalFailure(
   if (REPAIR_ERROR_NAMES.has(name)) return "repair";
   if (TERMINAL_ERROR_NAMES.has(name)) return "terminal";
   const message = errorMessage(error);
-  return TERMINAL_AUTHORITY_PATTERNS.some((pattern) => pattern.test(message))
-    ? "terminal"
-    : "retryable";
+  if (TERMINAL_AUTHORITY_PATTERNS.some((pattern) => pattern.test(message))) {
+    return "terminal";
+  }
+  if (TERMINAL_PREFLIGHT_PATTERNS.some((pattern) => pattern.test(message))) {
+    return "terminal";
+  }
+  return "retryable";
 }
 
 export function isRetryableOperationalFailure(error: unknown): boolean {

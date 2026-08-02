@@ -420,28 +420,50 @@ function writeCheckoutRegistry(file: string, registry: CheckoutRegistry): void {
     fs.rmSync(temp, { force: true });
   }
 }
+const CHECKOUT_REGISTRY_LOCK_RETRY_ATTEMPTS = 8;
+const CHECKOUT_REGISTRY_LOCK_RETRY_BASE_MS = 15;
+
+function sleepSync(ms: number): void {
+  if (ms <= 0) return;
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
 function acquireRegistryLock(file: string): () => void {
   const lockFile = `${file}.lock`;
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   const tryAcquire = (): number => fs.openSync(lockFile, 'wx', PRIVATE_FILE_MODE);
-  let fd: number;
-  try {
-    fd = tryAcquire();
-  } catch (error) {
-    if (!isErrnoCode(error, 'EEXIST')) throw error;
-    let isStale = false;
+  let fd: number | undefined;
+  let lastError: unknown;
+  for (let attempt = 0; attempt < CHECKOUT_REGISTRY_LOCK_RETRY_ATTEMPTS; attempt += 1) {
     try {
-      isStale =
-        Date.now() - fs.statSync(lockFile).mtimeMs >
-        CHECKOUT_REGISTRY_LOCK_STALE_MS;
-    } catch {
-      // The lock owner may have released it between open and stat.
+      fd = tryAcquire();
+      break;
+    } catch (error) {
+      lastError = error;
+      if (!isErrnoCode(error, 'EEXIST')) throw error;
+      let isStale = false;
+      try {
+        isStale =
+          Date.now() - fs.statSync(lockFile).mtimeMs >
+          CHECKOUT_REGISTRY_LOCK_STALE_MS;
+      } catch {
+        // The lock owner may have released it between open and stat.
+      }
+      if (isStale) {
+        fs.rmSync(lockFile, { force: true });
+        continue;
+      }
+      if (attempt + 1 >= CHECKOUT_REGISTRY_LOCK_RETRY_ATTEMPTS) {
+        break;
+      }
+      sleepSync(
+        CHECKOUT_REGISTRY_LOCK_RETRY_BASE_MS * (attempt + 1) +
+          Math.floor(Math.random() * CHECKOUT_REGISTRY_LOCK_RETRY_BASE_MS),
+      );
     }
-    if (!isStale) {
-      throw new Error(`checkout registry is busy: ${file}`, { cause: error });
-    }
-    fs.rmSync(lockFile, { force: true });
-    fd = tryAcquire();
+  }
+  if (fd === undefined) {
+    throw new Error(`checkout registry is busy: ${file}`, { cause: lastError });
   }
   fs.writeFileSync(fd, `${process.pid}\n`, 'utf8');
   fs.fsyncSync(fd);

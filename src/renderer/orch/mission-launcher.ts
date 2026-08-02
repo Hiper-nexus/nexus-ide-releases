@@ -657,6 +657,11 @@ export async function launchSquadMission(
     useLayoutStore.getState().setPanes(
       panesAfterSquadLaunch(existing, killedIds, orchPane),
     );
+    // `setPanes` preserves ordering and therefore focuses the first retained
+    // shell. In Canvas that focus is also the stacking authority (z=1000), so
+    // the shell was literally rendered in front of the newly launched mission
+    // even though I2 had correctly cleared `maximizedPaneId`.
+    useLayoutStore.getState().focus(orchPane.id);
     const materialized = await materializeSquadMission({
       paneId: orchPane.id,
       title: immediateMissionTitle,
