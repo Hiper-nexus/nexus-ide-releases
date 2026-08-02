@@ -255,7 +255,22 @@ export function ensureGuidedMissionPlan(
     throw new Error("guided_plan_squad_missing: squad aprovado indisponível");
   }
   const squadSnapshot = snapshotSquadAuthority(squad);
-  if (mission.intentContract.squadRevisionHash !== squadSnapshot.hash) {
+  const boundSquadRevision = mission.intentContract.squadRevisionHash;
+  if (boundSquadRevision === undefined) {
+    // `squadRevisionHash` é opcional no contrato de intenção: uma intenção que
+    // ainda não foi aprovada — ou que foi re-versionada e aguarda nova
+    // aprovação — não carrega vínculo com revisão de equipe nenhuma. Comparar
+    // `undefined` contra o hash corrente é SEMPRE desigual, então o caminho
+    // herdado acusava "o squad mudou depois da aprovação" para uma missão cuja
+    // equipe está intacta e que apenas nunca foi aprovada. Diagnóstico errado
+    // manda o operador auditar uma equipe que não mudou, e esconde a única
+    // ação que destrava: aprovar. Ausência de vínculo é falha própria.
+    throw new Error(
+      "guided_plan_squad_unbound: a intenção não foi aprovada com uma revisão " +
+        "de equipe; aprove a missão para selar o plano",
+    );
+  }
+  if (boundSquadRevision !== squadSnapshot.hash) {
     throw new Error(
       "guided_plan_squad_stale: o squad mudou depois da aprovação",
     );

@@ -244,7 +244,13 @@ describe('nexus_route_task com roster selado', () => {
     };
 
     expect(['codex', 'glm']).toContain(decision.adapterId);
-    expect(decision.reason).not.toContain('roster selado');
+    // O que precisa ser provado é que NENHUM roster restringiu esta rota. Um
+    // `not.toContain('roster selado')` cru reprovava a frase que diz
+    // exatamente isso ("nenhum roster selado foi consultado"), porque casa com
+    // o substring da negação. A asserção passa a exigir a negação explícita e
+    // a ausência de qualquer alegação de roster aplicado.
+    expect(decision.reason).toMatch(/nenhum roster selado foi consultado/i);
+    expect(decision.reason).not.toMatch(/(?:conforme|segundo|pelo) roster selado/i);
     expect(decision.routeReservationId).toBeUndefined();
   });
 });
