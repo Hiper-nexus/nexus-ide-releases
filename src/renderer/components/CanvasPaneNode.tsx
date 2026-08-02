@@ -9,8 +9,10 @@ import {
 } from '@xyflow/react';
 import { attachHost, blurHost, focusHost } from '../terminal/terminal-host';
 import { PaneToolbar } from './PaneToolbar';
+import { PaneVacancyBody } from './PaneVacancy';
 import { AcpPaneView } from './AcpPaneView';
 import { BrowserPane } from './BrowserPane';
+import { isStructuralPlaceholderPane } from '../lib/split-tree';
 import { useLayoutStore } from '../state/layout-store';
 import { useSessionStateStore } from '../state/session-state-store';
 import type { PaneModel } from '../../shared/types';
@@ -54,6 +56,7 @@ export const CanvasPaneNode = memo(function CanvasPaneNode({
   id,
 }: NodeProps<CanvasPaneNodeType>) {
   const { pane } = data;
+  const isVacancy = isStructuralPlaceholderPane(pane);
   const slotRef = useRef<HTMLDivElement>(null);
   const { zoom } = useViewport();
   const isFocused = useLayoutStore((s) => s.focusedPaneId === id);
@@ -69,6 +72,7 @@ export const CanvasPaneNode = memo(function CanvasPaneNode({
 
   // Attach (or re-attach after snapshot) the terminal into this slot.
   useLayoutEffect(() => {
+    if (isVacancy) return undefined;
     if (pane.kind === 'browser' || pane.agentTransport === 'acp') return undefined;
     const slot = slotRef.current;
     if (!slot || isSnapshot) return undefined;
@@ -82,10 +86,14 @@ export const CanvasPaneNode = memo(function CanvasPaneNode({
       for (const child of Array.from(slot.children)) child.remove();
     };
     // pane.id is the stable identity; isSnapshot controls live vs. frozen.
+    // `isVacancy` MUST be here: claiming a vacancy keeps the same pane.id, so
+    // without it the effect never re-runs and the claimed pane would render a
+    // terminal slot that no host is ever attached to.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pane.id, isSnapshot]);
+  }, [pane.id, isSnapshot, isVacancy]);
 
   useLayoutEffect(() => {
+    if (isVacancy) return;
     if (
       pane.kind !== 'browser' &&
       pane.agentTransport !== 'acp' &&
@@ -94,7 +102,7 @@ export const CanvasPaneNode = memo(function CanvasPaneNode({
     )
       focusHost(id);
     else if (pane.kind !== 'browser' && pane.agentTransport !== 'acp') blurHost(id);
-  }, [isFocused, id, isSnapshot, pane.kind]);
+  }, [isFocused, id, isSnapshot, isVacancy, pane.kind]);
 
   return (
     <div
@@ -130,7 +138,15 @@ export const CanvasPaneNode = memo(function CanvasPaneNode({
         className="canvas-pane__handle canvas-pane__handle--out"
         title="Enviar saída para outro pane"
       />
-      {pane.kind === 'browser' ? (
+      {isVacancy ? (
+        // Mesma superfície do grid: uma vaga é uma vaga em qualquer view. Duas
+        // implementações é como o placeholder passou a se comportar de um jeito
+        // no grid e de outro no canvas.
+        <>
+          <PaneToolbar pane={pane} isFocused={isFocused} isCanvas />
+          <PaneVacancyBody pane={pane} />
+        </>
+      ) : pane.kind === 'browser' ? (
         <BrowserPane pane={pane} isCanvas />
       ) : pane.agentTransport === 'acp' ? (
         <>
