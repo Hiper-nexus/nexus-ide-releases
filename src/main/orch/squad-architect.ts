@@ -21,6 +21,7 @@ import {
   warmSquadRuntimeSubscriptionAuth,
 } from "./squad-runtime-inventory";
 import { applyGuidedSquadSkillPolicy } from "./guided-squad-skills";
+import { classifyWorkKind } from "../../shared/mission-work-kind";
 
 /**
  * Squad Architect — lê o workspace (stack, estrutura, README) e GERA um squad
@@ -55,6 +56,13 @@ Regras:
   React, QA, security, reviewer).
 - SEMPRE inclua um agente de QA (category reviewer) cujo papel é RODAR o
   app/os testes de verdade e tentar quebrar as entregas — não só ler código.
+- Inclua UM agente consultivo (category scout ou architect) quando o objetivo
+  justificar: scout para investigar/reproduzir defeito ou levantar fontes,
+  architect para mapear arquitetura, pontos de extensão e contrato de design
+  antes do código. Ele roda EM PARALELO à implementação e nunca escreve. Só a
+  lane consultiva (scout/architect, ou um executor que não seja o principal)
+  produz paralelismo real no grafo guiado; sem ela a missão vira fila.
+  Se o objetivo não permitir dizer sobre O QUE consultar, não invente o papel.
 - Inclua um reviewer de Segurança sempre que o projeto tocar auth,
   pagamentos, APIs expostas, rede ou dados de usuário.
 - Inclua um UX/UI Designer (category reviewer, em uma CLI de worker elegível)
@@ -212,6 +220,83 @@ function noMaestroError(operatorChoice: boolean): string {
     : "Nenhum Maestro com orquestração verificada está pronto. Instale, ative ou autentique Claude Code ou Codex e confira Configurações › Providers. Integrações experimentais só podem ser escolhidas manualmente na revisão.";
 }
 
+export interface ConsultantRole {
+  readonly id: string;
+  readonly agentName: string;
+  readonly category: "scout" | "architect";
+  /** One line for the orchestrator playbook, so the role is not decorative. */
+  readonly mandate: string;
+}
+
+/**
+ * Consultative identity for the automatic roster.
+ *
+ * WHY: the deterministic roster only ever produced executor + reviewers, so
+ * `advisoryAgents` in the Guided planner (executor/scout/architect that are
+ * not the primary executor) was ALWAYS empty. Field evidence: a four-agent
+ * squad opened two panes, because there was no consultative body the graph
+ * could place in parallel. This is where the consultative lane gets a body.
+ *
+ * The mandate is derived from the classified work kind, never invented:
+ * `unknown` gets NO consultant, because we cannot state what it should
+ * consult about, and inventing a role would be exactly the guess the work-kind
+ * classifier refuses to make.
+ *
+ * Which CLI runs it is decided by the caller against the live installed
+ * adapters — this function never names a provider.
+ */
+export function consultantRoleForObjective(
+  objective: string,
+): ConsultantRole | null {
+  switch (classifyWorkKind(objective).kind) {
+    case "bug":
+      return {
+        id: "reproducao",
+        agentName: "Investigador de reprodução",
+        category: "scout",
+        mandate:
+          "O investigador de reprodução prova o defeito ANTES da correção: caminho de código exato, receita de reprodução e a verificação de regressão que deve falhar no HEAD atual.",
+      };
+    case "feature":
+      return {
+        id: "arquiteto",
+        agentName: "Arquiteto consultivo",
+        category: "architect",
+        mandate:
+          "O arquiteto consultivo mapeia, em paralelo à entrega, a arquitetura existente, os pontos de extensão e os riscos de integração; ele não escreve código.",
+      };
+    case "visual":
+      return {
+        id: "arquiteto-visual",
+        agentName: "Arquiteto de interface",
+        category: "architect",
+        mandate:
+          "O arquiteto de interface levanta o contrato de design vigente (tokens, tipografia, espaçamento, estados) antes do primeiro CSS; sem contrato, a entrega visual é bloqueada.",
+      };
+    case "doc":
+      return {
+        id: "scout-fontes",
+        agentName: "Scout de fontes",
+        category: "scout",
+        mandate:
+          "O scout de fontes levanta arquivo:linha reais que sustentam cada afirmação do documento; nada entra no texto sem fonte no repositório.",
+      };
+    case "ops":
+      return {
+        id: "scout-infra",
+        agentName: "Scout de infraestrutura",
+        category: "scout",
+        mandate:
+          "O scout de infraestrutura inventaria o estado real (serviços, credenciais, pipelines, rollback) antes de qualquer mudança operacional.",
+      };
+    case "unknown":
+    default:
+      // Explicitly no consultant: an unclassified objective gets today's
+      // generic roster instead of a role we cannot justify.
+      return null;
+  }
+}
+
 function deterministicSquadFallback(
   workspacePath: string,
   intent: string | undefined,
@@ -293,6 +378,7 @@ function deterministicSquadFallback(
   const visualExecutor = imageGeneration
     ? eligibleWorkerAdapters[0]?.id
     : undefined;
+  const consultant = consultantRoleForObjective(objective);
   const agents = [
     worker(
       "executor",
@@ -304,6 +390,16 @@ function deterministicSquadFallback(
     worker("qa", "QA de execução", "reviewer", 1),
     worker("reviewer", "Revisor sênior", "reviewer", 2),
     ...(visual ? [worker("ux", "UX e validação visual", "reviewer", 3)] : []),
+    ...(consultant
+      ? [
+          worker(
+            consultant.id,
+            consultant.agentName,
+            consultant.category,
+            visual ? 4 : 3,
+          ),
+        ]
+      : []),
   ];
   const candidate = {
     id: `agentic-fallback-${Date.now()}`,
@@ -315,6 +411,7 @@ function deterministicSquadFallback(
       "Inspecione os manifests e use os comandos reais de build, lint e teste do workspace.",
       "Delegue execução e revisão em paralelo quando os escopos não se sobrepuserem.",
       "Não declare conclusão sem evidência local dos testes e pós-condições da entrega.",
+      consultant?.mandate ?? "",
       visual
         ? "A entrega visual exige QA da imagem/interface, estados completos e comparação com a referência anexada."
         : "",

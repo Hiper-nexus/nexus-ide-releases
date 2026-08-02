@@ -25,7 +25,10 @@ import {
   snapshotSquadAuthority,
   type SquadAuthoritySnapshot,
 } from './squad-authority-snapshot';
-import { applyGuidedSquadSkillPolicy } from './guided-squad-skills';
+import {
+  applyGuidedSquadSkillPolicy,
+  withGuidedSkillDefaults,
+} from './guided-squad-skills';
 
 /**
  * Squad store. SQLite is authoritative. The in-memory map is a read cache that
@@ -98,11 +101,18 @@ function currentTargetExpectation(id: string): SquadTargetExpectation {
   });
 }
 
+/**
+ * Canonical save-time normalization. `withAllowlists` fixes tool authority;
+ * `withGuidedSkillDefaults` fills the skill floor of agents that declare none
+ * (absent = zero skills under governance) without ever rewriting a reviewed
+ * list. Deliberately NOT applied on the hydration path: a sealed mission
+ * runtime roster must keep the exact bytes its authority hash was computed on.
+ */
 function normalizeUserSquad(squad: Squad): Squad {
   return {
     ...squad,
     builtin: false,
-    agents: withAllowlists(squad.agents),
+    agents: withGuidedSkillDefaults(withAllowlists(squad.agents)),
   };
 }
 
@@ -523,7 +533,11 @@ export function prepareMissionRuntimeSquadSave(
   // Recompute capability authority from the exact main-owned source and
   // reviewed categories so renderer/model allowlist bytes can neither widen
   // nor remove the governed grants captured by the seal. Manual/catalog
-  // launches keep their explicit policies.
+  // launches keep their explicit policies — a reviewed allowlist (including
+  // `[]`) stays exactly as reviewed; only agents that declare NO skill
+  // authority are filled, and the floor is derived from the main-owned source
+  // roster, so renderer bytes cannot claim a role/flag they were not
+  // reviewed with.
   const governed =
     guided && sourceAuthority === 'ephemeral'
       ? applyGuidedSquadSkillPolicy(parsed, {
@@ -532,7 +546,10 @@ export function prepareMissionRuntimeSquadSave(
             `${sourceSquad.orchestratorInstructions}\n` +
             `${sourceSquad.nativeInstructions ?? ''}`,
         })
-      : parsed;
+      : {
+          ...parsed,
+          agents: withGuidedSkillDefaults(parsed.agents, sourceSquad.agents),
+        };
   const squad = assertManagedSavePolicy(governed, 'mission-runtime');
   const canonicalJson = canonicalSquadJson(squad);
   const candidate = Object.freeze({

@@ -34,11 +34,15 @@ import type { LimitHit } from "./limit-detector";
  *    donos do destino (o "reply" já foi publicado).
  * 2. Sem evidência + kind durável (auth/quota): consulta a diretiva de
  *    reroute do roster (mecanismo da 0.19.42) ANTES de qualquer waiver. Com
- *    rota viva, a task é re-vinculada — nunca `done` por este caminho.
- * 3. Orçamento 1 por task: uma diretiva de reroute já commitada prova que a
- *    chance de correção foi usada; o guard nunca re-consulta (o buzz usa no
- *    máximo 2 re-rolls; aqui 1 basta porque a cadeia do reroute já é limitada
- *    por exhaustedAdapterIds).
+ *    rota viva, a task é re-vinculada — nunca `done` por este caminho. Se a
+ *    consulta EXPLODE, o guard é fail-closed: retry limitado, nunca waiver
+ *    (incerteza do Main não pode virar task dispensada).
+ * 3. Orçamento 1 por task: uma diretiva de reroute emitida por ESTE guard
+ *    (`emittedBy: "live-guard"`) prova que a chance de correção foi usada e
+ *    ele nunca re-consulta (o buzz usa no máximo 2 re-rolls; aqui 1 basta
+ *    porque a cadeia do reroute já é limitada por exhaustedAdapterIds). A
+ *    diretiva do sweep de esgotamento físico grava a mesma coluna e NÃO
+ *    consome este orçamento — ela é do outro caminho.
  * 4. Nunca um done silencioso: quando o waiver é inevitável (roster esgotado,
  *    orçamento consumido ou janela curta), o receipt durável carrega o reason
  *    explícito de que a task nunca executou e por quê.
@@ -103,18 +107,27 @@ export function hasWorkerExecutionEvidence(
 export type ProviderWaiverRosterConsult =
   | "exhausted"
   | "budget-spent"
-  | "consult-failed"
+  | "not-installed"
   | "not-consulted";
 
+/**
+ * Não existe desfecho "consulta falhou" aqui de propósito: uma consulta que
+ * explode não produz waiver nenhum (fail-closed → retry limitado), então ela
+ * nunca chega a virar reason durável.
+ */
 const ROSTER_CONSULT_PT: Record<ProviderWaiverRosterConsult, string> = {
   exhausted:
     "roster esgotado — nenhum agente alternativo da mesma categoria com CLI viva",
   "budget-spent":
     "orçamento do reroute (1 por task) já consumido — a substituição anterior também falhou",
-  "consult-failed":
-    "a consulta de reroute ao roster falhou — substituição indisponível neste attempt",
+  "not-installed":
+    "resolvedor de reroute não instalado neste processo — sem roster a consultar",
+  // Descreve o que ACONTECEU, não um desfecho que não ocorre: a task está
+  // sendo dispensada agora, então prometer a espera-pela-irmã seria falso no
+  // registro durável. O que ficou de fora foi a consulta ao roster, e o
+  // motivo é o kind curto.
   "not-consulted":
-    "reroute não consultado por design — janela curta segue a espera-pela-irmã",
+    "roster não consultado — falha curta fora do conjunto durável (auth/quota) que autoriza substituição",
 };
 
 /**
@@ -266,6 +279,12 @@ export function handleMissionWorkerProviderNoRoute(
         hitKind: input.hit.kind,
       }),
     );
+    // "O guard não intervém" vale para o DESTINO da task (nada de waiver, nada
+    // de reroute) — nunca para a sessão física. A CLI que levou o hit continua
+    // morta; deixá-la aberta seguraria o slot de maxWorkers e é exatamente o
+    // que o caminho anterior ao reply guard fechava aqui. O fechamento é o
+    // mesmo authority-sealed de sempre, e o retry limitado segue dono.
+    requestExactWorkerClose(input, "execution-evidence");
     return "retry";
   }
 
@@ -273,11 +292,18 @@ export function handleMissionWorkerProviderNoRoute(
   // que o operador aprovou existe para isto — dispensar uma task (ou queimar 3
   // respawns num binário 401) enquanto outro agente da mesma categoria está
   // vivo é desperdiçar o roster. Só kinds duráveis re-roteiam; soluços curtos
-  // seguem a espera-pela-irmã. Orçamento do guard: 1 reroute por task — uma
-  // diretiva durável já commitada (provider_reroute_json) prova que a chance
-  // de correção foi usada e o guard nunca re-consulta; a cadeia mais longa
-  // pertence ao sweep de esgotamento físico, não a este caminho.
-  const rerouteBudgetSpent = dispatch.providerReroute !== undefined;
+  // seguem a espera-pela-irmã.
+  //
+  // Orçamento do guard: 1 reroute por task — mas SÓ conta a diretiva que ESTE
+  // guard emitiu. `provider_reroute_json` é gravada também pelo sweep de
+  // esgotamento físico (reconcileExhaustedProviderRerouteForScope), e tratar a
+  // diretiva do sweep como orçamento gasto dispensava a task sem que o roster
+  // tivesse sido consultado uma única vez por este caminho. A proveniência
+  // vem carimbada pela transação do store (`emittedBy`), não pelo chamador;
+  // diretiva antiga sem carimbo conta como NÃO-emitida-pelo-guard, o lado que
+  // preserva a chance de substituição em vez de consumi-la.
+  const rerouteBudgetSpent =
+    dispatch.providerReroute?.emittedBy === "live-guard";
   let rosterConsult: ProviderWaiverRosterConsult = "not-consulted";
   if (LIVE_REROUTE_HIT_KINDS.has(input.hit.kind)) {
     if (rerouteBudgetSpent) {
@@ -294,7 +320,10 @@ export function handleMissionWorkerProviderNoRoute(
         }),
       );
     } else if (!configuredLiveReroute) {
-      rosterConsult = "consult-failed";
+      // Ausência DECLARADA do resolvedor (bootstrap sem roster vivo, testes do
+      // caminho antigo): não é falha de consulta, é a política anterior ao
+      // mecanismo de reroute — e ela continua valendo.
+      rosterConsult = "not-installed";
     } else {
       try {
         const candidate = configuredLiveReroute(input.scope, {
@@ -327,11 +356,29 @@ export function handleMissionWorkerProviderNoRoute(
         }
         rosterConsult = "exhausted";
       } catch (error) {
-        rosterConsult = "consult-failed";
+        // FAIL-CLOSED: a consulta explodiu, então NÃO sabemos se existe
+        // substituto vivo. Dispensar a task aqui converteria uma incerteza do
+        // Main (registry indisponível, settings em migração) em "trabalho que
+        // ninguém fez, marcado como entregue". O lado seguro é o retry
+        // limitado — que ainda re-consulta o roster no próximo attempt.
         console.warn(
-          "[failover] reroute ao vivo falhou; caindo para waiver/retry:",
+          "[failover] reroute ao vivo falhou; mantido o retry limitado " +
+            "(nunca waiver por incerteza):",
           error,
         );
+        console.info(
+          "[failover]",
+          JSON.stringify({
+            providerNoRoute: "consulta de reroute falhou; retry limitado",
+            missionId: input.missionId,
+            taskId: dispatch.taskId,
+            paneId: input.paneId,
+            sessionId: input.sessionId,
+            hitKind: input.hit.kind,
+          }),
+        );
+        requestExactWorkerClose(input, "reroute-consult-failed");
+        return "retry";
       }
     }
   }

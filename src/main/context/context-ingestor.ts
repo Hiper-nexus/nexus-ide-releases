@@ -76,6 +76,14 @@ const DOCUMENT_ROOTS = [
   '.context/agents',
   '.context/skills',
 ] as const;
+/**
+ * Root-level authority documents. The other design-contract home,
+ * `.context/docs/design-system.md`, is deliberately absent here: it is already
+ * covered by the `.context/docs` entry in DOCUMENT_ROOTS above. Both paths of
+ * `DESIGN_SYSTEM_CANDIDATE_PATHS` are therefore ingested — the design-fact
+ * adapter below keys off the basename (`design` / `design-system`), not the
+ * directory. `context-ingestor.test.ts` asserts that alignment mechanically.
+ */
 const ROOT_DOCUMENTS = ['AGENTS.md', 'CLAUDE.md', 'DESIGN.md', 'GEMINI.md'] as const;
 const STRUCTURED_ROOTS: ReadonlyArray<{
   root: string;

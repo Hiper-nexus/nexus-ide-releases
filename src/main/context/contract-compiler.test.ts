@@ -29,6 +29,10 @@ import {
   compileMissionContract,
   ContractCompilationError,
 } from './contract-compiler';
+import {
+  decideDesignAuthority,
+  isUiMissionText,
+} from '../../shared/mission-work-kind';
 
 const scope: ProjectExecutionScope = Object.freeze({
   version: 1,
@@ -183,5 +187,117 @@ describe('compileMissionContract', () => {
       availableSensorIds: new Set(['unit', 'typecheck']),
     });
     expect(withoutDesignSystem.requiredSensors).not.toContain('design-system');
+  });
+});
+
+/**
+ * THE HARD COHERENCE RULE (C2).
+ *
+ * Whoever REQUIRES the `design-system` sensor must be whoever CREATES the
+ * design contract. Before this, the compiler owned a private `UI_SIGNAL` regex
+ * and `buildDesignContractBootstrap` owned `classifyWorkKind`, and they
+ * disagreed on the most common product goal there is:
+ *
+ *   "implementar o CRUD de usuários com paginação"
+ *     compiler  → UI_SIGNAL matched (`pagina` INSIDE `paginação`: `ç` is not a
+ *                 `\w`, so the `\b` closed right there) → design-system REQUIRED
+ *     bootstrap → classifyWorkKind said feature/high     → contract REFUSED
+ *
+ * Net effect on a backend CRUD: a required sensor with nothing to check, a
+ * worker with no design clause (so it also lost the anti-slop line), and a
+ * merge blocked by an English JSON nobody asked for.
+ *
+ * Both ends now call `decideDesignAuthority`. The table below is the proof,
+ * over real goals in pt-BR and English, that the two answers are the SAME
+ * answer — not two rules that happen to agree today.
+ */
+describe('design-system sensor ⟺ design contract (one predicate)', () => {
+  /** Criterion statement = goal, no domains: both ends read the same corpus. */
+  function proposalForGoal(goal: string) {
+    return {
+      ...proposal(),
+      goal,
+      impactedDomains: [],
+      riskHints: [],
+      requestedSensors: ['unit'],
+      acceptanceCriteria: [
+        { id: 'ac-1', statement: goal, requiredSensorIds: ['unit'] },
+      ],
+    };
+  }
+
+  const GOALS = [
+    // ── pt-BR, must NOT get design authority ──────────────────────────────
+    'implementar o CRUD de usuários com paginação',
+    'refatorar o core do serviço de pagamento',
+    'extrair o core da engine para um pacote',
+    'implementar o design pattern repository no backend',
+    'implementar cache no serviço de imagens',
+    'documentar o esquema de cores do log',
+    'corrigir o bug da tela de erro que trava o backend',
+    'melhorar a performance do dashboard',
+    'configurar o backup do servidor de staging',
+    'Criar desktop pet v2, avatar e spritesheet animada com QA visual',
+    // ── pt-BR, must GET design authority ──────────────────────────────────
+    'redesenhar a tela de cobrança',
+    'trocar as cores do tema',
+    'criar a nova tela de cobrança',
+    'Criar landing page inspirada em https://stripe.com',
+    'melhorar a acessibilidade do dashboard',
+    'ajustar a tipografia e o espaçamento do painel de agentes',
+    // ── English ───────────────────────────────────────────────────────────
+    'implement the CRUD of users with pagination',
+    'refactor the core of the payment service',
+    'fix the crash on startup',
+    'redesign the landing page',
+    'add a dark mode toggle to the settings screen',
+    'improve the accessibility of the metrics dashboard',
+  ] as const;
+
+  it.each(GOALS)(
+    'the sensor is required exactly when the contract is created: %j',
+    (goal) => {
+      const contract = compileMissionContract(proposalForGoal(goal), context);
+      const sensorRequired = contract.requiredSensors.includes('design-system');
+
+      // The bootstrap pilot's FIRST gate, called verbatim.
+      const contractCreated = decideDesignAuthority(goal).required;
+
+      expect(sensorRequired).toBe(contractCreated);
+    },
+  );
+
+  it('never demands the sensor for the goal that started this', () => {
+    const contract = compileMissionContract(
+      proposalForGoal('implementar o CRUD de usuários com paginação'),
+      context,
+    );
+    expect(contract.requiredSensors).toEqual(['unit']);
+    expect(decideDesignAuthority('implementar o CRUD de usuários com paginação'))
+      .toMatchObject({ required: false, refusal: 'not-visual-work' });
+  });
+
+  it('a mission that gets the sensor also gets the design skills', () => {
+    // The third leg: no goal may carry a design obligation while its roster is
+    // told nothing about design. (`isUiMissionText` is what
+    // `isGuidedUiMissionObjective` delegates to.)
+    for (const goal of GOALS) {
+      if (decideDesignAuthority(goal).required) {
+        expect(isUiMissionText(goal)).toBe(true);
+      }
+    }
+  });
+
+  it('still injects the sensor only when the project registered it', () => {
+    const input = proposalForGoal('redesenhar a tela de cobrança');
+    expect(
+      compileMissionContract(input, context).requiredSensors,
+    ).toContain('design-system');
+    expect(
+      compileMissionContract(input, {
+        ...context,
+        availableSensorIds: new Set(['unit', 'typecheck']),
+      }).requiredSensors,
+    ).not.toContain('design-system');
   });
 });

@@ -142,9 +142,22 @@ interface SkillSource {
   dir: string;
 }
 
+export interface MirroredSkill {
+  /** Skill directory name, already normalized. */
+  readonly name: string;
+  /** Directory this copy was written into. */
+  readonly targetDir: string;
+}
+
 export interface SkillMirrorResult {
   mirrored: number;
   targetDirs: string[];
+  /**
+   * Exactly what THIS call materialized (never what was already there).
+   * Callers that write into a real, user-owned provider profile need this to
+   * mark their own copies, so the delivery stays reversible.
+   */
+  copied: MirroredSkill[];
 }
 
 export interface SkillMirrorOptions {
@@ -354,11 +367,14 @@ export function ensureSkillsForCli(
   ];
 
   let mirrored = 0;
+  const copied: MirroredSkill[] = [];
   for (const targetDir of targetDirs) {
     for (const source of sources) {
-      if (copySkill(source, targetDir)) mirrored += 1;
+      if (!copySkill(source, targetDir)) continue;
+      mirrored += 1;
+      copied.push({ name: source.name, targetDir });
     }
   }
 
-  return { mirrored, targetDirs };
+  return { mirrored, targetDirs, copied };
 }

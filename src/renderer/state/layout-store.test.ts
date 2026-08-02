@@ -4,6 +4,7 @@ import { defaultCanvasLayout } from '../lib/canvas-layout';
 import { buildGridTree, listPanes, MAX_LIVE_PANES_SOFT } from '../lib/split-tree';
 import {
   detachWorkspaceLayout,
+  enforceLayoutInvariants,
   flushLayout,
   sanitizeWorkspaceLayout,
   setRestoredPanesHandler,
@@ -18,6 +19,31 @@ const basePane: PaneModel = {
   title: 'Terminal',
 };
 
+type LayoutSeed = Parameters<typeof enforceLayoutInvariants>[1];
+
+/**
+ * Seed a fixture THROUGH the write seam.
+ *
+ * `useLayoutStore.setState` bypasses enforceLayoutInvariants, so a fixture
+ * written that way can install a state the store itself forbids and then
+ * "prove" behaviour on a tree production can never reach. Every fixture below
+ * goes through the same rule the store applies to a real write.
+ */
+function seedLayout(partial: LayoutSeed): void {
+  useLayoutStore.setState(
+    enforceLayoutInvariants(useLayoutStore.getState(), partial),
+  );
+}
+
+/**
+ * Raw seed, deliberately OUTSIDE the seam. Only for states that PREDATE the
+ * invariant (a layout persisted by an older release) or that exist to prove
+ * the store repairs them. Never use it for a fixture the store could produce.
+ */
+function seedPreInvariantLayout(partial: LayoutSeed): void {
+  useLayoutStore.setState(partial);
+}
+
 afterEach(() => {
   setRestoredPanesHandler(null);
   detachWorkspaceLayout();
@@ -27,7 +53,7 @@ afterEach(() => {
 describe('layout-store canvas placement', () => {
   beforeEach(() => {
     const root = buildGridTree([basePane]);
-    useLayoutStore.setState({
+    seedLayout({
       root,
       focusedPaneId: basePane.id,
       hydrated: true,
@@ -57,7 +83,7 @@ describe('layout-store pane maximize', () => {
       { id: 'pane-a', kind: 'shell', title: 'A' },
       { id: 'pane-b', kind: 'shell', title: 'B' },
     ];
-    useLayoutStore.setState({
+    seedLayout({
       root: buildGridTree(panes),
       focusedPaneId: 'pane-a',
       maximizedPaneId: null,
@@ -113,7 +139,7 @@ describe('layout-store maximize vs foco programático', () => {
   };
 
   beforeEach(() => {
-    useLayoutStore.setState({
+    seedLayout({
       root: buildGridTree([shell]),
       focusedPaneId: shell.id,
       maximizedPaneId: null,
@@ -301,7 +327,7 @@ describe('layout-store workspace load failure', () => {
         },
       },
     });
-    useLayoutStore.setState({ hydrated: false });
+    seedLayout({ hydrated: false });
 
     await expect(
       switchWorkspaceLayoutWithFallback('/workspace/unavailable'),
@@ -347,7 +373,7 @@ describe('layout-store orch spawn ceiling', () => {
       kind: 'shell',
       title: `T${i}`,
     }));
-    useLayoutStore.setState({
+    seedLayout({
       root: buildGridTree(panes),
       focusedPaneId: 'pane-0',
       hydrated: true,
@@ -390,7 +416,7 @@ describe('layout-store orch spawn vs structural placeholder', () => {
   };
 
   function seed(panes: PaneModel[]): void {
-    useLayoutStore.setState({
+    seedLayout({
       root: buildGridTree(panes),
       focusedPaneId: panes[0]?.id ?? null,
       maximizedPaneId: null,
@@ -449,19 +475,248 @@ describe('layout-store orch spawn vs structural placeholder', () => {
     ]);
   });
 
-  it('keeps the placeholder when other real panes exist (not lone)', () => {
+  it('reclaims an unclaimed placeholder that was already stranded beside real panes', () => {
+    // Previously this store KEPT the placeholder whenever it was not alone —
+    // the rule only fired for a lone one. That is precisely how the ghost tile
+    // became permanent: the first real pane stranded the placeholder, and from
+    // then on no path would ever remove it. A placeholder is a vacancy, so it
+    // exists only while nothing real does. An operator who actually uses that
+    // terminal claims it first (Home deck, split, ＋Terminal, or clicking into
+    // it), which is covered by the test above.
     const agent: PaneModel = {
       id: 'pane-agent',
       kind: 'cli-agent',
       title: 'agent',
       adapterId: 'codex',
     };
-    seed([placeholder, agent]);
+    // Seeded OUTSIDE the seam on purpose: the invariant now forbids this state,
+    // so `seed()` would repair it before the test ran. It still reaches the
+    // store from a layout persisted by a release that predates the rule.
+    seedPreInvariantLayout({
+      root: buildGridTree([placeholder, agent]),
+      focusedPaneId: placeholder.id,
+      maximizedPaneId: null,
+      hydrated: true,
+      viewKind: 'grid',
+      canvasNodeLayouts: {},
+      canvasViewport: { x: 0, y: 0, zoom: 1 },
+    });
 
     spawn();
 
     expect(
+      listPanes(useLayoutStore.getState().root).map((pane) => pane.id).sort(),
+    ).toEqual(['pane-agent', 'pane-orch']);
+  });
+});
+
+describe('enforceLayoutInvariants (the rule itself)', () => {
+  const placeholder: PaneModel = {
+    id: 'pane-vacancy',
+    kind: 'shell',
+    title: 'shell',
+    isStructuralPlaceholder: true,
+  };
+  const agent: PaneModel = {
+    id: 'pane-agent',
+    kind: 'cli-agent',
+    title: 'orq',
+    adapterId: 'codex',
+    missionId: 'mission-1',
+  };
+
+  it('leaves a lone placeholder alone — a vacancy is legal while nothing real exists', () => {
+    const root = buildGridTree([placeholder]);
+    const next = enforceLayoutInvariants(
+      { root: buildGridTree([placeholder]), focusedPaneId: null, maximizedPaneId: null },
+      { root },
+    );
+    expect(listPanes(next.root!).map((pane) => pane.id)).toEqual(['pane-vacancy']);
+  });
+
+  it('reclaims the vacancy the moment real content shares the tree', () => {
+    const next = enforceLayoutInvariants(
+      { root: buildGridTree([placeholder]), focusedPaneId: 'pane-vacancy', maximizedPaneId: null },
+      { root: buildGridTree([placeholder, agent]) },
+    );
+    expect(listPanes(next.root!).map((pane) => pane.id)).toEqual(['pane-agent']);
+    // Focus followed the pane that survived; it may never name a dead pane.
+    expect(next.focusedPaneId).toBe('pane-agent');
+  });
+
+  it('ends a zoom when the write mounts a pane the operator has not seen', () => {
+    const next = enforceLayoutInvariants(
+      { root: buildGridTree([agent]), focusedPaneId: 'pane-agent', maximizedPaneId: 'pane-agent' },
+      { root: buildGridTree([agent, { ...agent, id: 'pane-worker', missionId: 'mission-1' }]) },
+    );
+    expect(next.maximizedPaneId).toBeNull();
+  });
+
+  it('keeps a zoom when the write only removes panes', () => {
+    const worker: PaneModel = { ...agent, id: 'pane-worker' };
+    const next = enforceLayoutInvariants(
+      { root: buildGridTree([agent, worker]), focusedPaneId: 'pane-agent', maximizedPaneId: 'pane-agent' },
+      { root: buildGridTree([agent]) },
+    );
+    expect(next.maximizedPaneId).toBe('pane-agent');
+  });
+
+  it('is a no-op for writes that do not touch the tree', () => {
+    const partial = { hydrated: true } as const;
+    expect(
+      enforceLayoutInvariants(
+        { root: buildGridTree([agent]), focusedPaneId: 'pane-agent', maximizedPaneId: 'pane-agent' },
+        partial,
+      ),
+    ).toBe(partial);
+  });
+
+  // M1 — a write WITHOUT a root still moves the two pointers INTO the tree.
+  // Skipping the whole rule for those writes is what let a phantom id survive.
+  it('normalizes focus against the live tree when the write carries no root', () => {
+    const next = enforceLayoutInvariants(
+      { root: buildGridTree([agent]), focusedPaneId: 'pane-agent', maximizedPaneId: null },
+      { focusedPaneId: 'pane-that-left-the-tree' },
+    );
+    expect(next.focusedPaneId).toBe('pane-agent');
+  });
+
+  it('drops a zoom naming a pane outside the tree when the write carries no root', () => {
+    const next = enforceLayoutInvariants(
+      { root: buildGridTree([agent]), focusedPaneId: 'pane-agent', maximizedPaneId: null },
+      { maximizedPaneId: 'pane-that-left-the-tree' },
+    );
+    expect(next.maximizedPaneId).toBeNull();
+  });
+
+  it('keeps a legitimate rootless focus/zoom write untouched', () => {
+    const worker: PaneModel = { ...agent, id: 'pane-worker' };
+    const next = enforceLayoutInvariants(
+      { root: buildGridTree([agent, worker]), focusedPaneId: 'pane-agent', maximizedPaneId: null },
+      { focusedPaneId: 'pane-worker', maximizedPaneId: 'pane-worker' },
+    );
+    expect(next.focusedPaneId).toBe('pane-worker');
+    expect(next.maximizedPaneId).toBe('pane-worker');
+  });
+});
+
+describe('layout-store focus vs. panes that are not there', () => {
+  it('focus() ignores an id that names no pane in the tree', () => {
+    seedLayout({
+      root: buildGridTree([basePane]),
+      focusedPaneId: basePane.id,
+      maximizedPaneId: null,
+      hydrated: true,
+      viewKind: 'grid',
+      canvasNodeLayouts: {},
+      canvasViewport: { x: 0, y: 0, zoom: 1 },
+    });
+
+    useLayoutStore.getState().focus('pane-that-left-the-tree');
+
+    expect(useLayoutStore.getState().focusedPaneId).toBe(basePane.id);
+  });
+});
+
+describe('layout-store split pivot vs. the id it hands back', () => {
+  const live: PaneModel = { id: 'pane-live', kind: 'shell', title: 'live' };
+
+  beforeEach(() => {
+    // Defense in depth: `splitPane` returns the tree UNCHANGED when the pivot
+    // is not in it, and the caller spawns a PTY on the returned id — so the id
+    // must never name a pane that was not inserted. Seeded raw because the
+    // store itself may no longer produce a phantom focus.
+    seedPreInvariantLayout({
+      root: buildGridTree([live]),
+      focusedPaneId: 'pane-that-left-the-tree',
+      maximizedPaneId: null,
+      hydrated: true,
+      viewKind: 'grid',
+      canvasNodeLayouts: {},
+      canvasViewport: { x: 0, y: 0, zoom: 1 },
+    });
+  });
+
+  it('addShellPane never returns the id of a pane it failed to insert', () => {
+    const paneId = useLayoutStore.getState().addShellPane();
+
+    expect(
       listPanes(useLayoutStore.getState().root).map((pane) => pane.id),
-    ).toContain('pane-placeholder');
+    ).toContain(paneId);
+  });
+
+  it('addBrowserPane never returns the id of a pane it failed to insert', () => {
+    const paneId = useLayoutStore.getState().addBrowserPane('about:blank');
+
+    expect(
+      listPanes(useLayoutStore.getState().root).map((pane) => pane.id),
+    ).toContain(paneId);
+  });
+});
+
+describe('layout-store persistence key vs. the tree it owns', () => {
+  it('never writes the outgoing tree under the incoming workspace key', async () => {
+    const save = vi.fn(
+      async (_workspacePath: string, _layout: WorkspaceLayout) => undefined,
+    );
+    let releaseLoad: () => void = () => undefined;
+    const load = vi.fn(async (path: string) => {
+      if (path === '/workspace/b') {
+        await new Promise<void>((resolve) => {
+          releaseLoad = resolve;
+        });
+      }
+      return null;
+    });
+    vi.stubGlobal('window', {
+      nexus: { layout: { load, save, saveSync: vi.fn() } },
+    });
+
+    await switchWorkspaceLayout('/workspace/a');
+    expect(useLayoutStore.getState().hydrated).toBe(true);
+
+    // The switch adopts the new persistence key BEFORE the load resolves; the
+    // tree in memory is still A's. An operator action in that window must not
+    // be saved as B's workspace composition.
+    const switching = switchWorkspaceLayout('/workspace/b');
+    useLayoutStore.getState().addShellPane();
+    await new Promise((resolve) => setTimeout(resolve, 350));
+
+    expect(save.mock.calls.map(([path]) => path)).not.toContain('/workspace/b');
+
+    releaseLoad();
+    await switching;
+  });
+});
+
+describe('layout-store test fixtures go through the seam', () => {
+  it('seedLayout cannot install a state the store forbids', () => {
+    const placeholder: PaneModel = {
+      id: 'pane-vacancy',
+      kind: 'shell',
+      title: 'shell',
+      isStructuralPlaceholder: true,
+    };
+    const agent: PaneModel = {
+      id: 'pane-agent',
+      kind: 'cli-agent',
+      title: 'orq',
+      adapterId: 'codex',
+    };
+
+    seedLayout({
+      root: buildGridTree([placeholder, agent]),
+      focusedPaneId: placeholder.id,
+      maximizedPaneId: null,
+      hydrated: true,
+      viewKind: 'grid',
+      canvasNodeLayouts: {},
+      canvasViewport: { x: 0, y: 0, zoom: 1 },
+    });
+
+    expect(
+      listPanes(useLayoutStore.getState().root).map((pane) => pane.id),
+    ).toEqual(['pane-agent']);
+    expect(useLayoutStore.getState().focusedPaneId).toBe('pane-agent');
   });
 });

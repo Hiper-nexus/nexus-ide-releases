@@ -30,10 +30,50 @@ describe('balloonTextFor', () => {
     );
     expect(text).toContain('Preciso de você');
     expect(text).toContain('Execução + QA');
-    expect(text).toContain('esperando uma decisão');
+    // Sem causa no evento o balão ADMITE que não sabe; o texto antigo
+    // ("a missão parou esperando uma decisão") prometia uma decisão que
+    // ninguém sabia qual era, e deixava o operador sem ação.
+    expect(text).toContain('Motivo não registrado');
+    expect(text).toContain('Abra o diagnóstico');
+    expect(text).not.toContain('esperando uma decisão');
     // Não pode sair truncado no conteúdo (ellipsis era só CSS; string é integral).
     expect(text).not.toContain('…');
-    expect(text).not.toMatch(/uma\.\.\.$/);
+  });
+
+  it('mission-blocked mostra a causa e o que fazer quando ela é conhecida', () => {
+    const text = balloonTextFor({
+      kind: 'mission-blocked',
+      title: 'Execução + QA',
+      at: 1,
+      cause: {
+        code: 'orphan-plan',
+        headline: 'O plano selado ficou numa versão anterior da intenção.',
+        action: 'Retome a missão para re-selar o plano na versão atual.',
+      },
+    });
+
+    expect(text).toBe(
+      'Preciso de você: Execução + QA — O plano selado ficou numa versão ' +
+        'anterior da intenção. Retome a missão para re-selar o plano na ' +
+        'versão atual.',
+    );
+  });
+
+  it('causa longa é cortada no PORQUÊ, nunca no acionável', () => {
+    const action = 'Retome a missão para re-selar o plano na versão atual.';
+    const text = balloonTextFor({
+      kind: 'mission-blocked',
+      title: 'M',
+      at: 1,
+      cause: {
+        code: 'dispatch-failed',
+        headline: `${'motivo muito comprido '.repeat(20)}fim.`,
+        action,
+      },
+    })!;
+
+    expect(text).toContain('…');
+    expect(text.endsWith(action)).toBe(true);
   });
 
   it('falha técnica esgotada oferece diagnóstico sem simular decisão humana', () => {

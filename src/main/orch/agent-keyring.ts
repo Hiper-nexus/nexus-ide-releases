@@ -81,7 +81,10 @@ export class MissionAgentKeyring {
     this.missionId = missionId;
   }
 
-  /** Generate (once) and return the owner's public key hex. */
+  /**
+   * Generate (once) and return the owner's public key hex. Throws for a
+   * revoked owner id: a tombstoned identity never comes back.
+   */
   ensureOwner(ownerId: string): string {
     return this.ensureKeypair(this.ownerKeys, ownerId, 'owner').publicKeyHex;
   }
@@ -105,20 +108,16 @@ export class MissionAgentKeyring {
    * Owner signs an attestation over the agent's public key under strict
    * conditions. Throws on malformed conditions (grammar is enforced at the
    * source, mirroring `compute_auth_tag`) and on issuance attempts by a
-   * revoked owner identity — revocation is not survivable by reuse of the id.
+   * revoked owner identity — revocation is not survivable by reuse of the id
+   * (the tombstone is enforced inside `ensureKeypair`, so no caller can mint
+   * a replacement owner keypair behind this guard's back).
    */
   issueAttestation(
     ownerId: string,
     agentId: string,
     conditions: string,
   ): IssuedAttestation {
-    const existing = this.ownerKeys.get(ownerId);
-    if (existing === undefined && this.revokedOwnerIds.has(ownerId)) {
-      throw new Error(
-        `owner ${JSON.stringify(ownerId)} was revoked; a fresh identity is required`,
-      );
-    }
-    const owner = existing ?? this.ensureKeypair(this.ownerKeys, ownerId, 'owner');
+    const owner = this.ensureKeypair(this.ownerKeys, ownerId, 'owner');
     const agent = this.ensureKeypair(this.agentKeys, agentId, 'agent');
     const credential = createAttestation(
       owner.privateKey,
@@ -299,6 +298,14 @@ export class MissionAgentKeyring {
     return (role === 'owner' ? this.ownerKeys : this.agentKeys).get(identityId);
   }
 
+  /**
+   * The ONLY place owner/agent key material is materialized — which is why
+   * the revocation tombstone is enforced here and nowhere else. A revoked
+   * owner id must never come back to life through any caller (`ensureOwner`,
+   * `issueAttestation`, persistence hydration): NIP-AA revocation removes the
+   * owner, and reusing their id is not a way around that. Agents live in a
+   * disjoint namespace and are unaffected by an owner tombstone.
+   */
   private ensureKeypair(
     store: Map<string, Ed25519Keypair>,
     id: string,
@@ -306,6 +313,11 @@ export class MissionAgentKeyring {
   ): Ed25519Keypair {
     if (id.length === 0) {
       throw new Error(`mission keyring requires a non-empty ${label} id`);
+    }
+    if (label === 'owner' && this.revokedOwnerIds.has(id)) {
+      throw new Error(
+        `owner ${JSON.stringify(id)} was revoked; a fresh identity is required`,
+      );
     }
     const existing = store.get(id);
     if (existing !== undefined) return existing;

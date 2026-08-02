@@ -47,19 +47,21 @@ export const LEGACY_NEXUS_CYAN_PALETTE: UiPalette = {
 
 const PALETTES: Record<TerminalThemeId, UiPalette> = {
   // Tema "Nexus" (id estável `nexus-dark`, DEFAULT do app): superfícies
-  // neutras em camadas e acento cyan operacional. Tem que casar com
-  // os defaults de base.css:root.
+  // neutras em camadas e acento índigo operacional (0.21 — o ciano-neon saiu
+  // do default por ser o visual-padrão de toda ferramenta de IA; segue
+  // disponível como LEGACY_NEXUS_CYAN_PALETTE). Tem que casar com os
+  // defaults de base.css:root.
   "nexus-dark": {
-    bg: "#0a0a0b",
-    bgElevated: "#151517",
+    bg: "#0b0b0c",
+    bgElevated: "#141416",
     bgBar: "#101012",
     border: "rgb(255 255 255 / 0.07)",
     borderStrong: "rgb(255 255 255 / 0.14)",
     text: "#fafafa",
     textDim: "#a1a1a1",
-    accent: "#3dd9ff",
-    accentInk: "#051019",
-    danger: "#ff7a90",
+    accent: "#7c86ff",
+    accentInk: "#0b0b0c",
+    danger: "#f85149",
   },
   "nexus-light": {
     bg: "#f7f8fb",

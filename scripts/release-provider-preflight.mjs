@@ -138,7 +138,35 @@ export const PROVIDER_PROBE_UNCALIBRATED = Object.freeze([
   "opencode",
 ]);
 
-export function providerProbeSpec(cli) {
+/**
+ * CLIs cuja base URL o gateway de IA ROTEIA. Quando o gateway está ligado, a
+ * credencial delas passa a ser a chave do gateway, injetada pelo Nexus no
+ * spawn — e a sonda do shell do operador, que não tem essa injeção, falharia
+ * com "auth" mesmo com o provedor perfeitamente utilizável pela missão.
+ *
+ * Espelha `GATEWAY_CREDENTIAL_VARS` de `src/main/pty/gateway-env.ts`
+ * (ANTHROPIC_BASE_URL/OPENAI_BASE_URL). A duplicação é deliberada: reproduzir
+ * o contrato inteiro de env do produto dentro do gate seria pior — bastaria
+ * uma divergência para a sonda testar um caminho que a missão não usa.
+ */
+const GATEWAY_ROUTED_CLIS = Object.freeze(["claude", "codex"]);
+
+/** O gateway está ligado neste ambiente? Só a URL decide (a chave é opcional
+ *  para provedores que já autenticam por conta própria). */
+export function isGatewayConfigured(environment = {}) {
+  const raw = environment.NEXUS_AI_GATEWAY_BASE_URL;
+  return typeof raw === "string" && raw.trim().length > 0;
+}
+
+/**
+ * Sondas em vigor para ESTE ambiente. Com o gateway ligado, as CLIs roteadas
+ * saem da tabela: é o mesmo motivo do opencode — credencial gerenciada não é
+ * sondável de fora do spawn, e falso negativo bloqueia release boa.
+ */
+export function providerProbeSpec(cli, environment = {}) {
+  if (isGatewayConfigured(environment) && GATEWAY_ROUTED_CLIS.includes(cli)) {
+    return null;
+  }
   return PROVIDER_PROBE_SPECS[cli] ?? null;
 }
 
@@ -173,8 +201,8 @@ export async function runProviderPreflight(clis, probe) {
  * Sonda viva de um provedor. CLI sem spec calibrada devolve `absent` — nunca
  * bloqueia por comando adivinhado.
  */
-export function probeProviderWithSpec(cli, runCommand) {
-  const spec = providerProbeSpec(cli);
+export function probeProviderWithSpec(cli, runCommand, environment = {}) {
+  const spec = providerProbeSpec(cli, environment);
   if (!spec) return { installed: false, uncalibrated: true };
   const result = runCommand(cli, spec.args);
   const stdout = String(result?.stdout ?? "");
@@ -197,6 +225,8 @@ export function probeProviderWithSpec(cli, runCommand) {
  * calibrada. Fonte é o roster real passado pelo chamador, para o preflight
  * nunca divergir do que a missão vai de fato usar.
  */
-export function calibratedProvidersFrom(rosterClis) {
-  return [...new Set(rosterClis)].filter((cli) => providerProbeSpec(cli) !== null);
+export function calibratedProvidersFrom(rosterClis, environment = {}) {
+  return [...new Set(rosterClis)].filter(
+    (cli) => providerProbeSpec(cli, environment) !== null,
+  );
 }

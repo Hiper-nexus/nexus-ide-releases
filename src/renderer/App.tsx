@@ -26,6 +26,7 @@ import { useCommandPaletteStore } from './state/command-palette-store';
 import { ConfirmDialog } from './components/ConfirmDialog';
 import { useConfirmStore } from './state/confirm-store';
 import { useToastStore } from './state/toast-store';
+import { missionBlockCauseText } from '../shared/mission-block-cause';
 import { KeyboardCheatsheet } from './components/KeyboardCheatsheet';
 import { useCheatsheetStore } from './state/cheatsheet-store';
 import { FilesPanel } from './components/FilesPanel';
@@ -469,9 +470,18 @@ export function App() {
             );
             return;
           }
+          // A razão do bloqueio viaja no evento (main a lê da descrição
+          // durável da missão). Sem ela o toast só dizia "travada aguardando
+          // decisão" — nada que o operador pudesse entender ou resolver.
+          const why = event.cause
+            ? missionBlockCauseText({ ...event.cause, detail: null }, 150)
+            : null;
           if (isTechnicalFailure) {
             useToastStore.getState().push('error', 'Falha técnica na missão', {
-              detail: `${event.title} — a recuperação automática parou. Veja o diagnóstico para entender a causa e tentar novamente.`,
+              detail: `${event.title} — ${
+                why ??
+                'a recuperação automática parou. Veja o diagnóstico para entender a causa e tentar novamente.'
+              }`,
               action: {
                 label: 'Ver diagnóstico',
                 onClick: () => {
@@ -495,7 +505,10 @@ export function App() {
           const detail = multi
             ? `${event.title}. Abra o Ops Board ou o pet.`
             : isBlock
-              ? `${event.title} — travada aguardando decisão.`
+              ? `${event.title} — ${
+                  why ??
+                  'Motivo não registrado. Abra o diagnóstico da missão para ver o que aconteceu.'
+                }`
               : `${event.title} — permissão/resposta pendente no terminal.`;
           useToastStore.getState().push(
             'warn',

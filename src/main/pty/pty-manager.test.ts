@@ -1496,6 +1496,136 @@ describe("AGY advisory native profile", () => {
   );
 });
 
+describe("entrega física das skills concedidas ao Codex", () => {
+  function seedSourceSkills(home: string): void {
+    for (const name of ["granted-skill", "ungranted-skill"]) {
+      const dir = path.join(home, ".claude", "skills", name);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(
+        path.join(dir, "SKILL.md"),
+        `---\nname: ${name}\ndescription: fixture\n---\n`,
+      );
+    }
+  }
+
+  function workerWithSkills(
+    allowedSkills: string[] | null,
+  ): BoundSpawnAuthority {
+    const base = revisionBoundWorker();
+    return {
+      ...base,
+      context: { ...base.context!, allowedSkills },
+    };
+  }
+
+  it("materializa no perfil real do Codex APENAS a skill concedida (modo default)", () => {
+    setSquadCliPolicyLookupForTests(() => "operator-choice");
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-codex-skills-"));
+    const home = path.join(root, "home");
+    const cleanupHook = installGovernedCodexTestHook(root);
+    seedSourceSkills(home);
+    const h = fakeHost();
+    setPtyHost(h.host);
+    const owner = fakeWc();
+
+    try {
+      const worker = spawnAgentSession(
+        owner,
+        { kind: "cli-agent", cols: 80, rows: 24 },
+        makeCodexAdapter(),
+        {},
+        workerWithSkills(["granted-skill"]),
+      );
+      const spec = h.specFor(worker.sessionId);
+      // O modo default NÃO prepara o CODEX_HOME privado: o worker lê o perfil
+      // real, então é lá que a concessão precisa aterrissar.
+      expect(spec.env.CODEX_HOME).toBeUndefined();
+      const realSkills = path.join(home, ".codex", "skills");
+      expect(
+        fs.existsSync(path.join(realSkills, "granted-skill", "SKILL.md")),
+      ).toBe(true);
+      expect(fs.existsSync(path.join(realSkills, "ungranted-skill"))).toBe(
+        false,
+      );
+      killSession(owner, worker.sessionId);
+    } finally {
+      cleanupHook();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("não entrega skill nenhuma quando o agente não recebeu concessão nominal", () => {
+    setSquadCliPolicyLookupForTests(() => "operator-choice");
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-codex-nogrant-"));
+    const home = path.join(root, "home");
+    const cleanupHook = installGovernedCodexTestHook(root);
+    seedSourceSkills(home);
+    const h = fakeHost();
+    setPtyHost(h.host);
+    const owner = fakeWc();
+
+    try {
+      // allowedTools: [] já torna a sessão gated; allowedSkills null é o gate
+      // LÓGICO aberto, que nunca vira herança física de skill executável.
+      const worker = spawnAgentSession(
+        owner,
+        { kind: "cli-agent", cols: 80, rows: 24 },
+        makeCodexAdapter(),
+        {},
+        workerWithSkills(null),
+      );
+      const realSkills = path.join(home, ".codex", "skills");
+      expect(fs.existsSync(path.join(realSkills, "granted-skill"))).toBe(false);
+      expect(fs.existsSync(path.join(realSkills, "ungranted-skill"))).toBe(
+        false,
+      );
+      killSession(owner, worker.sessionId);
+    } finally {
+      cleanupHook();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("modo endurecido continua entregando só no CODEX_HOME privado", () => {
+    setSquadCliPolicyLookupForTests(() => "governed");
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-codex-sealed-"));
+    const home = path.join(root, "home");
+    const cleanupHook = installGovernedCodexTestHook(root);
+    seedSourceSkills(home);
+    const h = fakeHost();
+    setPtyHost(h.host);
+    const owner = fakeWc();
+
+    try {
+      const worker = spawnAgentSession(
+        owner,
+        { kind: "cli-agent", cols: 80, rows: 24 },
+        makeCodexAdapter(),
+        {},
+        workerWithSkills(["granted-skill"]),
+      );
+      const spec = h.specFor(worker.sessionId);
+      expect(spec.env.CODEX_HOME).toBeTruthy();
+      expect(
+        fs.existsSync(
+          path.join(spec.env.CODEX_HOME!, "skills", "granted-skill", "SKILL.md"),
+        ),
+      ).toBe(true);
+      expect(
+        fs.existsSync(path.join(spec.env.CODEX_HOME!, "skills", "ungranted-skill")),
+      ).toBe(false);
+      // O perfil real do usuário nunca é semeado quando existe overlay.
+      expect(
+        fs.existsSync(path.join(home, ".codex", "skills", "granted-skill")),
+      ).toBe(false);
+      killSession(owner, worker.sessionId);
+    } finally {
+      cleanupHook();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("cli-agent spawn argv hardening", () => {
   it("replaces governed Codex CODEX_HOME in the final spawn but preserves direct panes", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-codex-spawn-"));

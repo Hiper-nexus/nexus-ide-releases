@@ -883,6 +883,10 @@ function createShellHost(pane: PaneModel): Host {
     host.inputVisibility.onScroll(viewportY, host.term.buffer.active.baseY);
   });
   element.addEventListener('mousedown', () => {
+    // Clicking INTO the terminal is the operator taking it: a structural
+    // placeholder stops being a vacancy here, so the layout invariant can
+    // never reclaim a shell someone is actually working in.
+    useLayoutStore.getState().claimStructuralPlaceholder(pane.id);
     useLayoutStore.getState().focus(pane.id);
     // Clicking an already-focused pane produces no store transition. Touch
     // the renderer explicitly so a recovered context cannot remain stale.

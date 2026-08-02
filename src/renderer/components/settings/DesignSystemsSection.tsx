@@ -1,5 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
+import type { DesignSystemSourceId } from '../../../shared/surface-payload-types';
 import { EmptyState } from '../ActionCard';
+
+/**
+ * designmd.ai needs `external:designmd-api-key`; without it the import walks
+ * down to the keyless sources. The operator is told which one answered, so
+ * "imported" is never an anonymous success.
+ */
+const SOURCE_LABELS: Record<DesignSystemSourceId, string> = {
+  'designmd.ai': 'designmd.ai',
+  'local-catalog': 'catálogo local (sem chave)',
+  getdesign: 'catálogo aberto getdesign (sem chave)',
+};
 
 type Kit = {
   slug: string;
@@ -16,7 +28,12 @@ type Kit = {
 type ImportState =
   | { status: 'idle' }
   | { status: 'loading' }
-  | { status: 'success'; draftId: string; targetPath: string }
+  | {
+      status: 'success';
+      draftId: string;
+      targetPath: string;
+      servedBy: DesignSystemSourceId;
+    }
   | { status: 'error'; message: string };
 
 export function DesignSystemsSection() {
@@ -70,6 +87,7 @@ export function DesignSystemsSection() {
             status: 'success',
             draftId: res.draftId,
             targetPath: res.targetPath,
+            servedBy: res.servedBy,
           }
         : { status: 'error', message: res.error },
     }));
@@ -83,8 +101,10 @@ export function DesignSystemsSection() {
     <section>
       <h3 className="settings-detail__title">Design Systems</h3>
       <p className="settings-detail__hint">
-        Catálogo público de DESIGN.md no designmd.ai. Kits importados viram
-        ContextDrafts propostos para revisão independente.
+        Catálogo público de DESIGN.md no designmd.ai. Sem a chave
+        <code> external:designmd-api-key</code> o import cai automaticamente no
+        catálogo local e no getdesign — o chip mostra qual fonte serviu. Kits
+        importados viram ContextDrafts propostos para revisão independente.
       </p>
 
       <div className="settings-row">
@@ -142,9 +162,14 @@ export function DesignSystemsSection() {
                   {state.status === 'loading' ? 'Importando…' : 'Importar'}
                 </button>
                 {state.status === 'success' && (
-                  <span className="settings-chip settings-chip--ok">
-                    Draft {state.draftId.slice(0, 8)} em {state.targetPath}
-                  </span>
+                  <>
+                    <span className="settings-chip settings-chip--ok">
+                      Draft {state.draftId.slice(0, 8)} em {state.targetPath}
+                    </span>
+                    <span className="settings-chip">
+                      via {SOURCE_LABELS[state.servedBy] ?? state.servedBy}
+                    </span>
+                  </>
                 )}
                 {state.status === 'error' && (
                   <span className="settings-chip settings-chip--danger">

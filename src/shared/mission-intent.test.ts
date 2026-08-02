@@ -19,6 +19,7 @@ import {
   hasApprovedDispatchContract,
   hasCurrentDispatchAuthority,
   isAutoDerivedCriterion,
+  isDocumentWritablePath,
   isHumanWaitIntentState,
   isRecoveryEligibleIntentState,
   missionBlockPatch,
@@ -627,5 +628,56 @@ describe('budget and parent/child ceilings', () => {
         intentState: 'awaiting_goal',
       }).ok,
     ).toBe(false);
+  });
+});
+
+describe('documentation write fence', () => {
+  it('accepts real documentation, including plain-text notes', () => {
+    for (const file of [
+      'plan.md',
+      'docs/plan.md',
+      'README.md',
+      'docs/adr/0007-merge-queue.md',
+      'documentation/guide.rst',
+      'NOTES.txt',
+      'docs/release-notes.txt',
+      'src/components/Button.md',
+    ]) {
+      expect(isDocumentWritablePath(file)).toBe(true);
+    }
+  });
+
+  it('rejects dependency manifests and build scripts that only look like text', () => {
+    // The guided ownership catalog seeds EVERY plan with these three names
+    // unconditionally (guided-mission-ownership), so a `doc` mission would
+    // otherwise own a dependency pin and a build script.
+    for (const file of [
+      'requirements.txt',
+      'requirements-dev.txt',
+      'CMakeLists.txt',
+      'cmakelists.txt',
+      'conanfile.txt',
+      'constraints.txt',
+      'dev-requirements.txt',
+      'test_requirements.txt',
+      'server/requirements.txt',
+      // A manifest under a documentation directory is still a manifest.
+      'docs/requirements.txt',
+      'docs/CMakeLists.txt',
+    ]) {
+      expect(isDocumentWritablePath(file)).toBe(false);
+    }
+  });
+
+  it('still rejects code, config and directory claims that are not documentation', () => {
+    for (const file of [
+      'src',
+      'src/app.ts',
+      'package.json',
+      'vite.config.ts',
+      'Makefile',
+    ]) {
+      expect(isDocumentWritablePath(file)).toBe(false);
+    }
   });
 });

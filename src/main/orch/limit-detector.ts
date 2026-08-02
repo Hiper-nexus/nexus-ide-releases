@@ -96,6 +96,13 @@ const PATTERNS: Pattern[] = [
   { kind: 'quota', cooldownMs: 12 * HOUR, re: /insufficient[_\s]?quota/i },
   { kind: 'quota', cooldownMs: 12 * HOUR, re: /credit balance is too low/i },
   { kind: 'quota', cooldownMs: 12 * HOUR, re: /quota (?:exceeded|exhausted)/i },
+  // Ordem inversa da mesma frase. A OpenAI escreve "You exceeded your current
+  // quota, please check your plan and billing details" — o padrão acima só
+  // casa "quota exceeded", então a mensagem HUMANA passava batido sempre que a
+  // CLI imprimia o texto sem o código `insufficient_quota` ao lado. Provado em
+  // campo com os quatro textos reais de esgotamento: era o único não
+  // reconhecido, e não reconhecer significa não trocar de conta.
+  { kind: 'quota', cooldownMs: 12 * HOUR, re: /exceeded your (?:current |monthly |plan )?quota/i },
   // Error-shaped (like the 429 pattern below): a bare status number only counts
   // as a limit when framed by http/status/error — never a bare "402" in prose or
   // in Nexus's own handoff text (which echoes the code back onto the PTY).

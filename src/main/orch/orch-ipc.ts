@@ -148,6 +148,8 @@ import {
 } from "./catalog";
 import { DesignMdApiClient } from "../design/designmd-api-client";
 import { buildDesignSystemTools } from "./tools-design-system";
+import { DEFAULT_DESIGN_TARGET_PATH } from "./design-system-authority";
+import { importDesignContractWithKeylessFallback } from "./design-system-import-fallback";
 import type { AgentGateContext } from "./gate";
 import { reconcileCompletedPetStudioMissions } from "./pet-studio-completion";
 import { requestMissionDriverTick } from "./mission-driver-runtime";
@@ -3184,10 +3186,11 @@ export function registerOrchIpc(): void {
     }
     try {
       const scope = requireLiveRendererWorkspaceScope(event.sender);
+      const assertCurrentAuthority = (): void => {
+        requireLiveRendererWorkspaceScope(event.sender, scope);
+      };
       const importTool = buildDesignSystemTools({
-        assertCurrentAuthority: () => {
-          requireLiveRendererWorkspaceScope(event.sender, scope);
-        },
+        assertCurrentAuthority,
       }).find(
         (tool) => tool.name === "nexus_design_system_import",
       );
@@ -3208,8 +3211,23 @@ export function registerOrchIpc(): void {
         stopAttempts: 0,
         handoffSubmitted: false,
       };
-      const result = await importTool.handler(parsed.data, ctx);
-      return { ok: true, ...(result as Record<string, unknown>) };
+      // designmd.ai answers 401 without `external:designmd-api-key`, so the
+      // button walks down to the keyless sources instead of failing outright —
+      // and always reports which one served. Real failures still surface.
+      const outcome = await importDesignContractWithKeylessFallback({
+        ctx,
+        identifier: parsed.data.identifier,
+        targetPath: parsed.data.targetPath ?? DEFAULT_DESIGN_TARGET_PATH,
+        assertCurrentAuthority,
+        runRemoteImport: async () =>
+          (await importTool.handler(parsed.data, ctx)) as Record<string, unknown>,
+      });
+      return {
+        ok: true,
+        servedBy: outcome.servedBy,
+        attempts: outcome.attempts,
+        ...outcome.draft,
+      };
     } catch (err) {
       return {
         ok: false,

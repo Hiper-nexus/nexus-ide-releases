@@ -29,6 +29,14 @@ function statusInput(
 
 type ObserverFrameBaseLike = { paneId?: string; at?: number };
 
+function exitInput(sessionId: string): ObserverFrameInput {
+  return {
+    sessionId,
+    kind: 'session_exited',
+    payload: { reason: 'pty-exit', lastStatus: null },
+  };
+}
+
 beforeEach(() => {
   __resetObserverBusForTests();
 });
@@ -143,5 +151,67 @@ describe('session bound — least-recently-published eviction', () => {
     expect(snapshotObserverFrames('sess-1')).toEqual([]);
     expect(snapshotObserverFrames('sess-0')).toHaveLength(2);
     expect(snapshotObserverFrames('sess-overflow')).toHaveLength(1);
+  });
+
+  it('evicts an already-exited session before a live but silent one', () => {
+    // sess-live is the coldest by publication time, but it never died.
+    publishObserverFrame(statusInput('sess-live'));
+    publishObserverFrame(exitInput('sess-dead'));
+    for (let i = 0; i < OBSERVER_MAX_SESSIONS - 2; i++) {
+      publishObserverFrame(statusInput(`filler-${i}`));
+    }
+
+    publishObserverFrame(statusInput('sess-overflow'));
+
+    expect(snapshotObserverFrames('sess-dead')).toEqual([]);
+    expect(snapshotObserverFrames('sess-live')).toHaveLength(1);
+  });
+
+  it('a session that frames again after exiting stops being the eviction victim', () => {
+    publishObserverFrame(statusInput('sess-live'));
+    publishObserverFrame(exitInput('sess-resumed'));
+    // The pane came back on the same physical session id: it is alive again.
+    publishObserverFrame(statusInput('sess-resumed'));
+    for (let i = 0; i < OBSERVER_MAX_SESSIONS - 2; i++) {
+      publishObserverFrame(statusInput(`filler-${i}`));
+    }
+
+    publishObserverFrame(statusInput('sess-overflow'));
+
+    // No ended session left → the coldest (sess-live) is the victim again.
+    expect(snapshotObserverFrames('sess-live')).toEqual([]);
+    expect(snapshotObserverFrames('sess-resumed')).toHaveLength(2);
+  });
+});
+
+describe('seq monotonicity survives eviction', () => {
+  it('a session revived after eviction resumes its seq instead of restarting at 1', () => {
+    publishObserverFrame(statusInput('sess-old'));
+    publishObserverFrame(statusInput('sess-old'));
+    for (let i = 0; i < OBSERVER_MAX_SESSIONS; i++) {
+      publishObserverFrame(statusInput(`filler-${i}`));
+    }
+    // The ring is gone (replay is best-effort) …
+    expect(snapshotObserverFrames('sess-old')).toEqual([]);
+
+    const revived = publishObserverFrame(statusInput('sess-old'));
+
+    // … but seq never goes backwards: the consumer reads a gap (2 → 3 here is
+    // contiguous; a dropped frame would show as a jump), never a replay of
+    // seq 1 that would look like a brand-new session.
+    expect(revived?.seq).toBe(3);
+  });
+
+  it('keeps seq counters independent per evicted session', () => {
+    publishObserverFrame(statusInput('sess-a'));
+    publishObserverFrame(statusInput('sess-a'));
+    publishObserverFrame(statusInput('sess-a'));
+    publishObserverFrame(statusInput('sess-b'));
+    for (let i = 0; i < OBSERVER_MAX_SESSIONS; i++) {
+      publishObserverFrame(statusInput(`filler-${i}`));
+    }
+
+    expect(publishObserverFrame(statusInput('sess-b'))?.seq).toBe(2);
+    expect(publishObserverFrame(statusInput('sess-a'))?.seq).toBe(4);
   });
 });

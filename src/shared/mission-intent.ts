@@ -665,6 +665,90 @@ export function isPlanLaneWritablePath(relativePath: string): boolean {
 }
 
 /**
+ * Documentation surface — the plan-lane write fence generalized.
+ *
+ * The plan lane already proved the shape: when the deliverable is prose, the
+ * agent must be unable to reach code at all, and the cheapest enforceable
+ * boundary is the ownership path list itself. A `doc` work-kind mission
+ * (guided-mission-work-graph) reuses this predicate to intersect its mutation
+ * ownership, so "escreva o ADR" cannot silently become a refactor.
+ *
+ * Deliberately narrow: a documentation extension anywhere, or anything under a
+ * documentation directory claim. `src/components/Button.md` is doc; `src` is
+ * not. Ownership entries can be directory claims (`docs`) or files
+ * (`README.md`), so both forms are accepted.
+ */
+export const DOCUMENT_WRITABLE_EXTENSIONS = [
+  'md',
+  'mdx',
+  'markdown',
+  'rst',
+  'adoc',
+  'asciidoc',
+  'txt',
+] as const;
+
+export const DOCUMENT_WRITABLE_DIRECTORIES = [
+  'doc',
+  'docs',
+  'documentation',
+  'documentacao',
+] as const;
+
+/**
+ * Names that end in a documentation extension and are NOT documents: a
+ * dependency manifest or a build script the next `install`/configure run
+ * EXECUTES. `.txt` has to stay writable (release notes, ADR drafts), so the
+ * fence needs this deny-list to keep its promise.
+ *
+ * This is not hypothetical: the guided ownership catalog seeds every plan with
+ * `requirements.txt`, `requirements-dev.txt` and `CMakeLists.txt`
+ * unconditionally (guided-mission-ownership), so without the deny-list a doc
+ * mission ("escreva o ADR do módulo X") owned a dependency pin and a build
+ * script, and the ownership diff accepted a malicious pin as a documentation
+ * change. Matched on the BASENAME regardless of directory: `docs/CMakeLists.txt`
+ * is a real, executed CMake file too.
+ */
+const DOCUMENT_DENIED_BASENAME_PATTERNS: readonly RegExp[] = [
+  /^cmakelists\.txt$/,
+  /^conanfile\.txt$/,
+  /(?:^|[-_.])requirements(?:[-_.][^/]*)?\.txt$/,
+  /(?:^|[-_.])constraints(?:[-_.][^/]*)?\.txt$/,
+];
+
+export function isDocumentDeniedBasename(basename: string): boolean {
+  const name = basename.trim().toLowerCase();
+  return DOCUMENT_DENIED_BASENAME_PATTERNS.some((pattern) =>
+    pattern.test(name),
+  );
+}
+
+export function isDocumentWritablePath(relativePath: string): boolean {
+  const normalized = relativePath
+    .replaceAll('\\', '/')
+    .replace(/^\.\//, '')
+    .replace(/\/+$/, '');
+  if (!normalized) return false;
+  if ((PLAN_LANE_WRITABLE_PATHS as readonly string[]).includes(normalized)) {
+    return true;
+  }
+  const segments = normalized.split('/');
+  const basename = segments[segments.length - 1] ?? '';
+  // Deny before any allow: the documentation directory claim must not launder
+  // a manifest that happens to live under `docs/`.
+  if (isDocumentDeniedBasename(basename)) return false;
+  const root = (segments[0] ?? '').toLowerCase();
+  if ((DOCUMENT_WRITABLE_DIRECTORIES as readonly string[]).includes(root)) {
+    return true;
+  }
+  const dot = basename.lastIndexOf('.');
+  if (dot <= 0) return false;
+  return (DOCUMENT_WRITABLE_EXTENSIONS as readonly string[]).includes(
+    basename.slice(dot + 1).toLowerCase(),
+  );
+}
+
+/**
  * Soft lane suggestion from goal text for the mission wizard autopilot.
  * Returns null when the goal is neutral (keep standard). Never forces a lane
  * after the operator has manually picked one (wizard owns that).

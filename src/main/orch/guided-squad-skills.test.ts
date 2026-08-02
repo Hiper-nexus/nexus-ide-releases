@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 import type { Squad } from '../../shared/orch-types';
 import {
   applyGuidedSquadSkillPolicy,
+  defaultGuidedSkillsForAgent,
+  isGuidedUiMissionObjective,
   NEXUS_GUIDED_SKILL_ORDER,
+  withGuidedSkillDefaults,
 } from './guided-squad-skills';
 import { snapshotSquadAuthority } from './squad-authority-snapshot';
 import { isToolAllowed } from './gate';
@@ -247,5 +250,242 @@ describe('guided squad deterministic skill policy', () => {
     expect(Object.isFrozen(snapshot.agents)).toBe(true);
     expect(Object.isFrozen(snapshot.agents[0]?.allowedSkills)).toBe(true);
     expect(snapshotSquadAuthority(changed).hash).not.toBe(snapshot.hash);
+  });
+});
+
+/**
+ * Documentos de plano (PRD, arquitetura, épicos, stories) são escritos por
+ * papéis explícitos do roster e pelo orquestrador de uma missão de lane plan —
+ * nunca por adivinhação de id de squad. Estes testes fixam o contrato.
+ */
+describe('guided squad policy — vocabulário BMAD', () => {
+  /** Espelho do roster builtin "Implementação por Stories". */
+  function storySquad(): Squad {
+    return {
+      id: 'story-policy',
+      name: 'Implementação por Stories',
+      createdAt: '1',
+      builtin: false,
+      orchestratorInstructions: '# Ciclo por story',
+      agents: [
+        {
+          id: 'orch',
+          agentName: 'Maestro',
+          category: 'orchestrator',
+          cli: 'claude',
+          ownsPlanDocs: true,
+        },
+        {
+          id: 'sm',
+          agentName: 'SM',
+          category: 'executor',
+          cli: 'codex',
+          ownsPlanDocs: true,
+        },
+        { id: 'dev', agentName: 'Dev', category: 'executor', cli: 'codex' },
+        {
+          id: 'qa',
+          agentName: 'QA',
+          category: 'reviewer',
+          cli: 'codex',
+          ownsPlanDocs: true,
+        },
+      ],
+    };
+  }
+
+  it('entrega bmad-templates ao orquestrador de uma missão de plano (PRD)', () => {
+    const squad = applyGuidedSquadSkillPolicy(
+      {
+        ...storySquad(),
+        agents: [
+          {
+            id: 'orch',
+            agentName: 'Maestro',
+            category: 'orchestrator',
+            cli: 'claude',
+          },
+        ],
+      },
+      {
+        objective:
+          'Escrever o PRD e o plano de arquitetura do módulo de billing',
+        availableSkillNames: NEXUS_GUIDED_SKILL_ORDER,
+      },
+    );
+
+    expect(squad.agents[0]?.allowedSkills).toEqual([
+      'ponytail',
+      'check-work',
+      'bmad-templates',
+    ]);
+  });
+
+  it('não entrega archify na lane plan: só docs/plan.md é gravável ali', () => {
+    const squad = applyGuidedSquadSkillPolicy(storySquad(), {
+      objective: 'Planejar a migração do vault sem escrever código',
+      lane: 'plan',
+      availableSkillNames: NEXUS_GUIDED_SKILL_ORDER,
+    });
+
+    const orch = squad.agents.find((agent) => agent.id === 'orch');
+    expect(orch?.allowedSkills).toContain('bmad-templates');
+    expect(orch?.allowedSkills).not.toContain('archify');
+  });
+
+  it('entrega o vocabulário BMAD a quem escreve/valida stories e a mais ninguém', () => {
+    const squad = applyGuidedSquadSkillPolicy(storySquad(), {
+      objective: 'Implementar as stories abertas do plano aprovado',
+      availableSkillNames: NEXUS_GUIDED_SKILL_ORDER,
+    });
+
+    expect(squad.agents.map((agent) => [agent.id, agent.allowedSkills])).toEqual(
+      [
+        // Materializa docs/prd, docs/architecture, docs/stories + diagrama.
+        ['orch', ['ponytail', 'check-work', 'archify', 'bmad-templates']],
+        // Escreve o pacote da story pelo story-template.
+        ['sm', ['ponytail', 'bmad-templates']],
+        // Executor comum: a política continua restritiva.
+        ['dev', ['ponytail']],
+        // Percorre implementation/dev-story-checklist.md (Definition of Done).
+        ['qa', ['check-work', 'bmad-templates']],
+      ],
+    );
+  });
+
+  it('mantém a lane plan inferida do objetivo quando o chamador não a informa', () => {
+    const squad = applyGuidedSquadSkillPolicy(storySquad(), {
+      objective: 'Escrever o PRD do novo onboarding',
+      availableSkillNames: NEXUS_GUIDED_SKILL_ORDER,
+    });
+
+    expect(
+      squad.agents.find((agent) => agent.id === 'orch')?.allowedSkills,
+    ).not.toContain('archify');
+  });
+
+  it('deriva o piso determinístico de papel sem objetivo nem inventário', () => {
+    expect(
+      defaultGuidedSkillsForAgent({
+        id: 'sm',
+        agentName: 'SM',
+        category: 'executor',
+        cli: 'codex',
+        ownsPlanDocs: true,
+      }),
+    ).toEqual(['ponytail', 'bmad-templates']);
+    expect(
+      defaultGuidedSkillsForAgent({
+        id: 'dev',
+        agentName: 'Dev',
+        category: 'executor',
+        cli: 'codex',
+      }),
+    ).toEqual(['ponytail']);
+  });
+
+  it('preenche só o buraco: allowedSkills explícito nunca é sobrescrito', () => {
+    const filled = withGuidedSkillDefaults([
+      { id: 'dev', agentName: 'Dev', category: 'executor', cli: 'codex' },
+      {
+        id: 'reader',
+        agentName: 'Reviewer read-only',
+        category: 'reviewer',
+        cli: 'codex',
+        allowedSkills: [],
+      },
+      {
+        id: 'pet',
+        agentName: 'Pet Maker',
+        category: 'orchestrator',
+        cli: 'codex',
+        allowedSkills: ['nexus-pet-studio'],
+      },
+    ]);
+
+    expect(filled.map((agent) => agent.allowedSkills)).toEqual([
+      ['ponytail'],
+      [],
+      ['nexus-pet-studio'],
+    ]);
+  });
+
+  it('usa o roster main-owned como autoridade do preenchimento, não os bytes recebidos', () => {
+    const filled = withGuidedSkillDefaults(
+      [
+        {
+          id: 'sm',
+          agentName: 'SM',
+          category: 'executor',
+          cli: 'codex',
+          // Bytes forjados pedindo autoridade de documento.
+          ownsPlanDocs: true,
+        },
+      ],
+      [{ id: 'sm', agentName: 'SM', category: 'executor', cli: 'codex' }],
+    );
+
+    expect(filled[0]?.allowedSkills).toEqual(['ponytail']);
+  });
+});
+
+/**
+ * O vocabulário visual concede impeccable/dembrandt E liga o contrato de
+ * revisão visual (build estático + screenshot). Precisão importa nos dois
+ * sentidos: falso negativo deixa a missão visual sem ferramenta; falso
+ * positivo exige artefato visual de missão que não é visual.
+ */
+describe('vocabulário de missão visual', () => {
+  const VISUAL_OBJECTIVES = [
+    'arrumar o visual do rail de missoes',
+    'mexer no visual do app',
+    'deixar a tela de missao mais bonita',
+    'corrigir o alinhamento dos botoes',
+    'trocar as cores do tema',
+    'revisar a tipografia e o espaçamento do painel',
+    'deixar o app responsivo no celular',
+    'trocar o layout do rail lateral',
+    'ajustar o CSS do composer',
+    'melhorar a aparência da lista de tarefas',
+    'redesenhar a UI do composer',
+    'ajustar o dashboard',
+    'melhorar o frontend da tela inicial',
+    'Criar landing page inspirada em https://stripe.com',
+  ];
+
+  const NON_VISUAL_OBJECTIVES = [
+    'documentar o esquema de cores do log',
+    'corrigir o bug da tela de erro que trava o backend',
+    'Rebuild electron packaging and fix mobile clients deploy',
+    'migrar o banco de dados e revisar o design do schema',
+    'investigar por que o cron de billing para de rodar',
+    'implementar o tema do relatório mensal',
+    'alinhar as expectativas do contrato com o time',
+    // Missão de ASSET visual (nexus-visual-media), não de interface: não há
+    // UI estática para o contrato de revisão visual exigir.
+    'Criar desktop pet v2, avatar e spritesheet animada com QA visual',
+  ];
+
+  it.each(VISUAL_OBJECTIVES)('reconhece missão visual: %s', (objective) => {
+    expect(isGuidedUiMissionObjective(objective)).toBe(true);
+  });
+
+  it.each(NON_VISUAL_OBJECTIVES)(
+    'não dispara em prosa não-visual: %s',
+    (objective) => {
+      expect(isGuidedUiMissionObjective(objective)).toBe(false);
+    },
+  );
+
+  it('concede impeccable/dembrandt no português natural do usuário', () => {
+    const squad = applyGuidedSquadSkillPolicy(policySquad(), {
+      objective: 'deixar a tela de missao mais bonita',
+      availableSkillNames: NEXUS_GUIDED_SKILL_ORDER,
+    });
+
+    expect(squad.agents.find((agent) => agent.id === 'orch')?.allowedSkills)
+      .toEqual(['ponytail', 'check-work', 'dembrandt']);
+    expect(squad.agents.find((agent) => agent.id === 'qa')?.allowedSkills)
+      .toEqual(['check-work', 'impeccable']);
   });
 });

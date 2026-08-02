@@ -2,6 +2,7 @@ import type { RecipeOverlayResult } from '../../shared/types';
 import { countAgentCategories, lintSquadRecipes } from '../../shared/recipe-lint';
 import { listSquads } from './squad-store';
 import { listInstalledCatalogItems } from './catalog';
+import { BUNDLED_GUIDED_SKILLS } from './guided-squad-skills';
 import { getToolCatalog } from './mcp-server';
 import {
   effectiveStacks,
@@ -17,9 +18,16 @@ export function buildRecipeOverlay(workspacePath?: string): RecipeOverlayResult 
     squads,
     catalog: {
       toolNames: tools.map((tool) => tool.name),
-      skillNames: installed
-        .filter((item) => item.kind === 'skill')
-        .map((item) => item.name),
+      skillNames: [
+        // Skills que o próprio Nexus empacota existem por construção: o
+        // skill-mirror as materializa a partir do bundle. Sem isso o lint
+        // acusaria o vocabulário do app como "ausente do catálogo local"
+        // enquanto nenhum pane ainda tiver espelhado para a home do provider.
+        ...BUNDLED_GUIDED_SKILLS,
+        ...installed
+          .filter((item) => item.kind === 'skill')
+          .map((item) => item.name),
+      ],
     },
   });
   return {

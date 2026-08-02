@@ -83,6 +83,16 @@ export const squadAgentSchema = z.preprocess(
       .max(32)
       .regex(/^[A-Za-z0-9_-]+$/)
       .optional(),
+    /**
+     * Explicit planning-document authority: this roster member authors the
+     * mission's PRD / architecture / epics / stories, or gates them against
+     * the BMAD checklists. It is the only per-agent signal that unlocks the
+     * `bmad-templates` vocabulary, so the skill policy never has to infer
+     * authorship from a squad id or an agent name. Reviewed authority, at the
+     * same level as `category`: main-owned rosters declare it, and the
+     * governed policy only ever reads it from a main-owned roster.
+     */
+    ownsPlanDocs: z.boolean().optional(),
     /** null/absent = unrestricted. */
     allowedSkills: z
       .array(authorityString(128, 'allowed skill'))
@@ -483,6 +493,13 @@ export interface TaskRecord {
   title: string;
   detail: string;
   status: TaskStatus;
+  /**
+   * Presente APENAS quando a task foi dispensada por provider indisponível
+   * (waiver advisory): explica, sem consultar o dispatch, por que ela chegou a
+   * `done` sem ninguém ter executado o trabalho. Ausente = status significa o
+   * que aparenta.
+   */
+  providerWaiverReason?: string;
   createdAt: number;
   updatedAt: number;
 }

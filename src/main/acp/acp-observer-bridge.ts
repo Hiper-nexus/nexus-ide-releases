@@ -38,6 +38,7 @@ export function acpExitReasonFromError(error: AcpClientError): AcpExitReason {
     case 'agent-error':
     case 'protocol':
     case 'spawn-failed':
+    case 'backpressure':
       return 'acp-error';
     default:
       return 'acp-error';

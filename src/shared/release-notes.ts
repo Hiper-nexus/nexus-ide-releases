@@ -13,6 +13,86 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.22.0',
+  date: '2026-08-02',
+  codename: 'O piloto aprende a pilotar',
+  summary:
+    'O Nexus passa a saber O QUE está executando: bug, feature, documento e ' +
+    'visual têm caminhos próprios, o objetivo em português natural ativa o ' +
+    'caminho certo, e nenhum projeto de UI nasce sem contrato de design — ' +
+    'com catálogo aberto de 74 marcas sem chave de API. O orquestrador ganha ' +
+    'instrumentos de leitura (cota, ranking, skills, CLIs) para decidir antes ' +
+    'de gastar.',
+  highlights: [
+    {
+      title: 'Tipo de trabalho muda o grafo',
+      detail:
+        'Corrigir um bug deixa de ser o mesmo caminho de criar uma feature: ' +
+        'a missão de bug ganha reprodução antes da correção e teste de ' +
+        'regressão depois, com aceite "falha no HEAD atual, passa depois". ' +
+        'Documentação fica fisicamente cercada fora do código. Classificação ' +
+        'fraca nunca vira restrição irreversível.',
+    },
+    {
+      title: 'Contrato de design de ponta a ponta',
+      detail:
+        'Missão de UI sem contrato materializa um sozinha — das suas ' +
+        'referências locais, do catálogo aberto getdesign (74 marcas, sem ' +
+        'chave) ou derivado dos tokens que o projeto já tem. Os bytes são ' +
+        'selados no plano e chegam ao executor e ao revisor; o sensor mede ' +
+        'token declarado com o valor documentado, e comentário não engana.',
+    },
+    {
+      title: 'Instrumentos do piloto',
+      detail:
+        'Cota por conta, ranking de modelos, inventário de skills, CLIs e ' +
+        'MCPs viram leitura que o orquestrador consulta antes de montar o ' +
+        'time — sem vazar segredo, e-mail nem caminho, e dizendo "não sei" ' +
+        'quando o produto não mede (liveness de MCP, ranking estimado).',
+    },
+    {
+      title: 'Português natural ativa o caminho visual',
+      detail:
+        '"Arrumar o visual", "trocar as cores do tema" e "deixar a tela mais ' +
+        'bonita" passam a conceder as skills de design e o revisor de UX. ' +
+        'Uma gramática única substitui as cinco que divergiam — "paginação" ' +
+        'não é mais página, "core" não é mais cor.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Pane fantasma: invariantes na costura do layout',
+      detail:
+        'O placeholder que cobria a missão (com scrollback de shell antigo) ' +
+        'morreu pela raiz: apresentação da missão determina o que fica ' +
+        'visível, zoom e foco obsoletos não sobrevivem, e o teto de panes ' +
+        'falha nomeado em vez de criar PTY órfão de 75 segundos.',
+    },
+    {
+      title: 'Entrega física de skills nos CLIs nativos',
+      detail:
+        'O que a política concede agora chega de verdade ao Codex e ao ' +
+        'Claude no modo padrão, com marcador de reversibilidade. BMAD é ' +
+        'entregue a quem escreve PRD e stories.',
+    },
+    {
+      title: 'Cota esgotada na frase da OpenAI troca de conta',
+      detail:
+        '"You exceeded your current quota" não era reconhecido e a frota ' +
+        'parava numa conta morta em silêncio. Detectado e coberto por teste, ' +
+        'com guarda contra falso positivo em prosa.',
+    },
+    {
+      title: 'Revisões concorrentes com o mesmo HEAD, cerca completa',
+      detail:
+        'Revisores independentes rodam em paralelo lendo o mesmo HEAD ' +
+        'integrado — e a cerca que recusa observação obsoleta agora cobre ' +
+        'também as lanes novas de reprodução e regressão.',
+    },
+  ],
+};
+
+export const RELEASE_02100: AppRelease = {
   version: '0.21.0',
   date: '2026-08-01',
   codename: 'O agente deixou de ser texto',

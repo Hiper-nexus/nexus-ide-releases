@@ -722,15 +722,23 @@
   white-space: nowrap;
 }
 
+/* Ação primária do editor de arquivos — mesmo CTA do resto da app
+   (--btn-primary), não acento sólido: o acento indica estado, o CTA age. */
 .files-editor__save {
-  background: var(--accent);
-  color: var(--accent-ink);
-  border: none;
+  background: var(--btn-primary);
+  color: var(--btn-primary-ink);
+  border: 1px solid var(--btn-primary);
   border-radius: var(--radius-md);
   font-size: 11px;
   font-weight: 600;
   padding: 5px 12px;
   cursor: pointer;
+}
+
+.files-editor__save:hover:not(:disabled),
+.files-editor__save:focus-visible:not(:disabled) {
+  background: var(--btn-primary-hover);
+  border-color: var(--btn-primary-hover);
 }
 
 .files-editor__save:disabled {
@@ -1469,21 +1477,28 @@
   overflow-wrap: anywhere;
   white-space: normal;
 }
+/* Ação SECUNDÁRIA por decisão: o toast é transitório e o mesmo destino existe
+   no Ops Board — quem ignorar não perde nada. Um CTA sólido no canto criaria
+   um segundo primário competindo com o da tela e, em toast de erro/alerta,
+   colidiria com o ícone semântico (vermelho/âmbar) dentro de 340px. Fica na
+   mesma língua discreta do .confirm__btn: contorno quieto, acento só no
+   hover/foco. */
 .toast__action {
   align-self: flex-start;
   margin-top: 4px;
   min-height: 44px;
   padding: 8px 12px;
   border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--accent);
-  color: var(--accent-ink);
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--text);
   font-size: 11px;
   font-weight: 600;
   cursor: pointer;
 }
 .toast__action:hover {
-  filter: brightness(1.08);
+  border-color: var(--accent);
+  background: var(--accent-soft);
 }
 .toast__action:focus-visible {
   outline: 2px solid var(--accent);

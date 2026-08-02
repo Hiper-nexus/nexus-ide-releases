@@ -2,15 +2,15 @@ import type { ITheme } from '@xterm/xterm';
 import type { TerminalThemeId } from '../../shared/settings-types';
 
 /** Terminal palette casada com o shell operacional.
-    background/cursor seguem os tokens da UI (--bg #0a0a0b, --accent cyan
-    #3dd9ff) — hex-drift entre shell e terminal é regressão. A tabela ANSI
+    background/cursor seguem os tokens da UI (--bg #0b0b0c, --accent índigo
+    #7c86ff) — hex-drift entre shell e terminal é regressão. A tabela ANSI
     continua a anterior: é cor de CONTEÚDO do terminal, não de chrome. */
 export const TERMINAL_THEME: ITheme = {
-  background: '#0a0a0b',
-  foreground: '#fafafa',
-  cursor: '#3dd9ff',
-  cursorAccent: '#051019',
-  selectionBackground: '#174757',
+  background: '#0b0b0c',
+  foreground: '#ededef',
+  cursor: '#7c86ff',
+  cursorAccent: '#0b0b0c',
+  selectionBackground: '#2d3055',
   black: '#0b0e14',
   red: '#f7768e',
   green: '#9ece6a',

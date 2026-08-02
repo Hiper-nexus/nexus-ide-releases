@@ -871,10 +871,22 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
         }
       }
       if (!skillsPrepared) {
+        // O Claude nativo no autopiloto mantém HOME/Keychain reais: nenhum
+        // overlay é tomado, então ~/.claude/skills é o ÚNICO namespace que
+        // esse worker lê. Sem incluir o alvo real, a skill CONCEDIDA não
+        // chega fisicamente a lugar nenhum. Esse alvo recebe SÓ os nomes
+        // concedidos — o gate lógico `null = aberto` nunca vira herança de
+        // extensão executável — e a cópia é não-destrutiva (skill já
+        // instalada sempre vence). Providers com overlay próprio (Claude de
+        // terceiro, Codex/Kimi/Grok/OpenCode governados) continuam fora daqui.
+        const deliversToRealProfile =
+          gated && ephemeralHomeDir === null && adapter.quirks.mcpAutoload;
         ensureSkillsForCli(adapter.id, {
-          allowedSkills: meta?.allowedSkills ?? null,
+          allowedSkills: deliversToRealProfile
+            ? [...(meta?.allowedSkills ?? [])]
+            : (meta?.allowedSkills ?? null),
           ephemeralHomeDir,
-          includeCliTarget: !gated,
+          includeCliTarget: !gated || deliversToRealProfile,
         });
       }
     } catch (err) {

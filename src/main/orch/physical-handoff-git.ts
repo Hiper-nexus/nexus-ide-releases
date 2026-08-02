@@ -96,6 +96,31 @@ export class StaleReadOnlyObservationError extends Error {
   }
 }
 
+/**
+ * Toda lane Guided read_only que observa a árvore de trabalho.
+ *
+ * A cerca cobria só as três lanes originais. Quando o grafo por tipo de
+ * trabalho acrescentou `guided-reproduction` e `guided-regression`, elas
+ * nasceram FORA dela — e a reprodução é o caso pior: ela tem `dependsOn: []`,
+ * então roda concorrente com a implementação. No modo governado (sem worktree
+ * própria) o HEAD que ela reporta é lido do checkout primário, que a
+ * integração da implementação move debaixo dela: o recibo sairia carimbando um
+ * HEAD pós-integração para uma leitura pré-integração. É exatamente o absurdo
+ * causal que esta cerca existe para impedir.
+ *
+ * Lista explícita, e não "tudo que não é implementação", de propósito: uma
+ * lane nova entra aqui por decisão consciente. Mas o teste de cobertura ao
+ * lado garante que ninguém adicione lane read_only ao grafo e esqueça deste
+ * arquivo — o esquecimento é o modo de falha real, não a discordância.
+ */
+export const FENCED_READ_ONLY_LANE_KINDS: ReadonlySet<string> = new Set([
+  "advisory",
+  "independent-review",
+  "quality-gate",
+  "reproduction",
+  "regression",
+]);
+
 function guidedReadOnlyLaneKind(
   dispatch: TaskDispatchRecord,
 ): ReturnType<typeof parseGuidedTaskKind> {
@@ -144,13 +169,7 @@ export function assertReadOnlyLaneObservationCurrent(input: {
   const { lane } = input;
   if (lane.executionMode !== "read_only") return;
   const kind = guidedReadOnlyLaneKind(lane);
-  if (
-    kind !== "advisory" &&
-    kind !== "independent-review" &&
-    kind !== "quality-gate"
-  ) {
-    return;
-  }
+  if (!FENCED_READ_ONLY_LANE_KINDS.has(kind as string)) return;
   if (
     lane.handoffId !== undefined ||
     lane.handoffAcceptedAt !== undefined ||

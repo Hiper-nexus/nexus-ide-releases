@@ -730,3 +730,114 @@ describe('ProjectRuntimeManager lifecycle', () => {
     }
   });
 });
+
+describe('handoff receipt chain schema invariants', () => {
+  function chainFixture(): ReturnType<ProjectRuntimeManager['open']> {
+    const runtime = manager().open(scope(PROJECT_A, 'checkout-chain'));
+    runtime.db
+      .prepare(
+        `INSERT INTO missions
+           (id, title, description, status, milestones_json, created_at,
+            updated_at)
+         VALUES ('m-chain', 'Cadeia', '', 'running', '[]', 1, 1)`,
+      )
+      .run();
+    runtime.db
+      .prepare(
+        `INSERT INTO handoffs
+           (id, mission_id, session_id, from_agent, status, summary,
+            artifacts_json, delivered, created_at)
+         VALUES (?, 'm-chain', 'sess-chain', 'worker', 'success', 'resumo',
+                 '[]', 0, 1)`,
+      )
+      .run('handoff-chain-1');
+    runtime.db
+      .prepare(
+        `INSERT INTO handoffs
+           (id, mission_id, session_id, from_agent, status, summary,
+            artifacts_json, delivered, created_at)
+         VALUES (?, 'm-chain', 'sess-chain', 'worker', 'success', 'resumo',
+                 '[]', 0, 1)`,
+      )
+      .run('handoff-chain-2');
+    return runtime;
+  }
+
+  function insertReceipt(
+    runtime: ReturnType<ProjectRuntimeManager['open']>,
+    receipt: {
+      readonly id: string;
+      readonly handoffId: string;
+      readonly chainSeq: number | null;
+      readonly prevReceiptHash: string | null;
+      readonly chainHash: string | null;
+    },
+  ): void {
+    runtime.db
+      .prepare(
+        `INSERT INTO handoff_mcp_receipts
+           (receipt_id, handoff_id, tool_call_id, tool_name, source,
+            mission_id, session_id, worker_incarnation_id, authority_sha256,
+            worktree_head_sha, issued_at, raw_payload_sha256,
+            logical_operation_key, chain_seq, prev_receipt_hash, chain_hash)
+         VALUES (?, ?, ?, 'nexus_handoff_submit', 'http-mcp', 'm-chain',
+                 'sess-chain', NULL, ?, NULL, 1, NULL, NULL, ?, ?, ?)`,
+      )
+      .run(
+        receipt.id,
+        receipt.handoffId,
+        receipt.id,
+        'a'.repeat(64),
+        receipt.chainSeq,
+        receipt.prevReceiptHash,
+        receipt.chainHash,
+      );
+  }
+
+  it('recusa um elo com hash anterior mas sem posição na cadeia', () => {
+    // O CHECK sozinho não reprova: em SQLite `chain_seq >= 2` com chain_seq
+    // NULL avalia NULL, e NULL num CHECK passa. A intenção declarada ali só
+    // vale de fato com este guard.
+    const runtime = chainFixture();
+
+    expect(() =>
+      insertReceipt(runtime, {
+        id: 'receipt-orfao',
+        handoffId: 'handoff-chain-1',
+        chainSeq: null,
+        prevReceiptHash: 'b'.repeat(64),
+        chainHash: null,
+      }),
+    ).toThrow(/chain_seq/i);
+    expect(
+      runtime.db
+        .prepare('SELECT COUNT(*) AS total FROM handoff_mcp_receipts')
+        .get(),
+    ).toMatchObject({ total: 0 });
+  });
+
+  it('deixa passar o elo genesis e a linha legada fora da cadeia', () => {
+    const runtime = chainFixture();
+
+    insertReceipt(runtime, {
+      id: 'receipt-genesis',
+      handoffId: 'handoff-chain-1',
+      chainSeq: 1,
+      prevReceiptHash: null,
+      chainHash: 'c'.repeat(64),
+    });
+    insertReceipt(runtime, {
+      id: 'receipt-legado',
+      handoffId: 'handoff-chain-2',
+      chainSeq: null,
+      prevReceiptHash: null,
+      chainHash: null,
+    });
+
+    expect(
+      runtime.db
+        .prepare('SELECT COUNT(*) AS total FROM handoff_mcp_receipts')
+        .get(),
+    ).toMatchObject({ total: 2 });
+  });
+});

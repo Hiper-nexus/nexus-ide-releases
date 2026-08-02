@@ -989,12 +989,22 @@ export class TaskDispatchStore {
         if (updated.changes !== 1) {
           throw new Error("advisory provider waiver perdeu CAS");
         }
+        // A MESMA instrução que marca `done` marca POR QUE marcou. Sem isto o
+        // motivo vive só no receipt do dispatch e qualquer superfície que leia
+        // `tasks` sem join mostra a task dispensada como entregue. O fallback
+        // garante que a distinção nunca dependa de o chamador ter passado
+        // reason: o que prova a dispensa é a transação, não o texto.
+        const taskWaiverReason = (
+          waiverReason ??
+          `task dispensada: provider ${adapterId} indisponível (${hitKind})`
+        ).slice(0, 2_000);
         const taskUpdate = db
           .prepare(
-            `UPDATE tasks SET status = 'done', updated_at = ?
+            `UPDATE tasks SET status = 'done', provider_waiver_reason = ?,
+                updated_at = ?
          WHERE id = ? AND status = 'running'`,
           )
-          .run(now, taskId);
+          .run(taskWaiverReason, now, taskId);
         if (taskUpdate.changes !== 1) {
           throw new Error("advisory provider waiver: task não estava running");
         }
@@ -2375,9 +2385,13 @@ export class TaskDispatchStore {
   }): TaskDispatchRecord {
     const taskId = idSchema.parse(input.taskId);
     const revision = z.number().int().positive().parse(input.revision);
-    const directive = taskProviderRerouteDirectiveSchema.parse(
-      input.directive,
-    );
+    // A proveniência é da TRANSAÇÃO, não do chamador: quem entra por aqui é o
+    // reply guard do waiver (sessão viva). O guard usa esta marca para saber
+    // se o orçamento de 1 substituição por task já foi o dele.
+    const directive = taskProviderRerouteDirectiveSchema.parse({
+      ...input.directive,
+      emittedBy: "live-guard",
+    });
     const note = input.note.trim().slice(0, 65_536);
     if (!note) throw new Error("reroute exige nota durável registrada");
     const now = this.#binding.now();
@@ -2525,9 +2539,13 @@ export class TaskDispatchStore {
   }): TaskDispatchRecord {
     const taskId = idSchema.parse(input.taskId);
     const revision = z.number().int().positive().parse(input.revision);
-    const directive = taskProviderRerouteDirectiveSchema.parse(
-      input.directive,
-    );
+    // Proveniência da transação (ver a variante ao vivo): esta é a porta do
+    // sweep de esgotamento físico. Uma diretiva gravada aqui NÃO consome o
+    // orçamento do reply guard — ele nunca chegou a consultar o roster.
+    const directive = taskProviderRerouteDirectiveSchema.parse({
+      ...input.directive,
+      emittedBy: "exhaustion-sweep",
+    });
     const note = input.note.trim().slice(0, 65_536);
     if (!note) throw new Error("reroute exige nota durável registrada");
     const now = this.#binding.now();

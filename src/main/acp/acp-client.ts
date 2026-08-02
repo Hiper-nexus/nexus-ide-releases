@@ -12,17 +12,18 @@
  *   6. client.shutdown()      — SIGKILL the process group, bounded wait
  *
  * Invariants:
- *  - Every exit path (timeout, protocol violation, peer death, shutdown)
- *    kills the whole process group — grandchildren (MCP servers, tools)
- *    die too; nothing is orphaned.
- *  - Every wait is bounded by a named constant. This client never hangs
- *    forever: that is the whole point of replacing terminal scraping.
+ *  - Every exit path (timeout, protocol violation, agent error, peer death,
+ *    backpressure, shutdown) kills the whole process TREE — grandchildren
+ *    (MCP servers, tools) die too, on Windows as well; nothing is orphaned.
+ *  - Every wait is bounded by a named constant, and so is every buffer.
+ *    This client never hangs forever and never grows forever: that is the
+ *    whole point of replacing terminal scraping.
  *  - Zero interleaving on stdin: writes are serialized per call and bounded
  *    by a write timeout (a peer that stops reading stdin is dead to us).
  */
 
-import { spawn, type ChildProcess } from 'node:child_process';
-import { isAbsolute } from 'node:path';
+import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
+import { isAbsolute, win32 as pathWin32 } from 'node:path';
 
 import {
   ACP_METHODS,
@@ -44,7 +45,7 @@ import {
   type AcpStopReason,
   type JsonRpcId,
 } from '../../shared/acp-protocol';
-import { RESERVED_HARNESS_ENV_KEYS } from '../../shared/harness-catalog';
+import { isReservedHarnessEnvKey } from '../../shared/harness-catalog';
 
 // ---------------------------------------------------------------------------
 // Named timeout constants (defaults; each is overridable per client/turn)
@@ -80,6 +81,20 @@ export const ACP_SHUTDOWN_WAIT_MS = 5_000;
 /** Bounded stderr tail retained for diagnostics on failure. */
 const STDERR_TAIL_MAX_BYTES = 8 * 1024;
 
+/**
+ * Max turn events buffered for a consumer that has not drained them yet.
+ *
+ * Policy: FAIL, never drop-oldest. A dropped update is a hole in the mission's
+ * transcript — the observer frames built from these events are the evidence
+ * receipts and the journal are made of, so a silently truncated stream would
+ * produce a receipt that lies about what the agent did. Backpressure is
+ * therefore surfaced as a named error that runs the normal teardown funnel
+ * (process group included), exactly like every other bound in this module.
+ * The cap is high enough that reaching it means the consumer is dead, not
+ * merely slow: a live `for await` loop never accumulates 10k events.
+ */
+export const ACP_TURN_EVENT_BUFFER_MAX = 10_000;
+
 // ---------------------------------------------------------------------------
 // Errors
 // ---------------------------------------------------------------------------
@@ -94,6 +109,7 @@ export type AcpClientErrorCode =
   | 'cancel-drain-timeout'
   | 'protocol'
   | 'agent-error'
+  | 'backpressure'
   | 'disposed';
 
 export class AcpClientError extends Error {
@@ -133,15 +149,34 @@ interface PendingRequest {
  * Single-consumer push queue backing the turn's AsyncIterable. Buffered
  * events drain before a failure is thrown; settle operations after the
  * first finish/fail are ignored (multiple failure paths may race).
+ *
+ * Bounded by construction: a peer that streams faster than the consumer
+ * drains hits `capacity` and triggers `onOverflow` instead of growing the
+ * main process's heap without limit. Nothing already buffered is discarded —
+ * the consumer still sees every event it was promised, then the failure.
  */
 class AsyncEventQueue<T> implements AsyncIterable<T> {
   private readonly items: T[] = [];
   private done = false;
   private failure: Error | null = null;
   private wake: (() => void) | null = null;
+  private overflowed = false;
+
+  constructor(
+    private readonly capacity: number,
+    private readonly onOverflow: () => void,
+  ) {}
 
   push(item: T): void {
     if (this.done) return;
+    if (this.items.length >= this.capacity) {
+      if (this.overflowed) return;
+      this.overflowed = true;
+      // The handler funnels through the client's teardown, which calls
+      // fail() on this queue — the buffered events survive that call.
+      this.onOverflow();
+      return;
+    }
     this.items.push(item);
     this.notify();
   }
@@ -201,6 +236,8 @@ export interface AcpSpawnOptions {
   requestTimeoutMs?: number;
   writeTimeoutMs?: number;
   cancelDrainTimeoutMs?: number;
+  /** Max unconsumed turn events buffered before backpressure fails the turn. */
+  turnEventBufferMax?: number;
   /** Main-owned UI callback for agent-initiated permission requests. */
   requestPermission?: (
     params: Record<string, unknown> | undefined,
@@ -243,12 +280,108 @@ function validateSpawnOptions(options: AcpSpawnOptions): void {
   }
 }
 
-function sanitizedEnvironment(
+/**
+ * Build the child's environment with the reserved Nexus identity keys removed.
+ *
+ * The strip is case-insensitive because Windows resolves env vars that way:
+ * a definition carrying `nexus_mcp_token` would otherwise reach the child as
+ * the very variable the reserved list protects. Same input, same environment,
+ * on every platform. Exported for unit testing.
+ */
+export function sanitizeHarnessSpawnEnv(
+  base: NodeJS.ProcessEnv,
   extra: Readonly<Record<string, string>> | undefined,
 ): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env, ...(extra ?? {}) };
-  for (const key of RESERVED_HARNESS_ENV_KEYS) delete env[key];
+  const merged: NodeJS.ProcessEnv = { ...base, ...(extra ?? {}) };
+  const env: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(merged)) {
+    if (isReservedHarnessEnvKey(key)) continue;
+    env[key] = value;
+  }
   return env;
+}
+
+/** Options a Windows tree kill or a POSIX group kill needs; injectable for tests. */
+export interface AcpProcessTreeKillDeps {
+  readonly platform?: NodeJS.Platform;
+  readonly spawnProcess?: (
+    command: string,
+    args: readonly string[],
+    options: SpawnOptions,
+  ) => {
+    unref?: () => void;
+    on?: (event: 'error', listener: (error: Error) => void) => unknown;
+  };
+  readonly signalProcessGroup?: (pid: number, signal: NodeJS.Signals) => void;
+  readonly systemRoot?: string;
+}
+
+/**
+ * Kill the harness and everything it spawned.
+ *
+ * POSIX: the child owns its process group (`detached`), so SIGKILL to `-pid`
+ * takes the grandchildren (MCP servers, tools) with it.
+ *
+ * Windows has no process groups: `child.kill()` reaps only the direct child
+ * and leaves its descendants running. The repo's established answer is
+ * `taskkill /T /F` with a fixed absolute path and no shell (same call the
+ * dembrandt runner and the packaged-app smoke use); it is fire-and-forget
+ * here because `destroy()` is synchronous — `shutdown()`'s bounded
+ * `waitForExit` is what observes the result.
+ *
+ * Best-effort by contract: the process may already be gone.
+ */
+export function killHarnessProcessTree(
+  child: {
+    readonly pid?: number | undefined;
+    kill(signal?: NodeJS.Signals): boolean;
+  },
+  deps: AcpProcessTreeKillDeps = {},
+): void {
+  const pid = child.pid;
+  if (pid === undefined) return;
+  const platform = deps.platform ?? process.platform;
+  const spawnProcess = deps.spawnProcess ?? spawn;
+  const signalProcessGroup =
+    deps.signalProcessGroup ??
+    ((target: number, signal: NodeJS.Signals) => {
+      process.kill(target, signal);
+    });
+
+  try {
+    if (platform === 'win32') {
+      // Stop the direct child first so it cannot spawn more descendants
+      // while taskkill walks the tree.
+      try {
+        child.kill();
+      } catch {
+        // taskkill below is the authoritative Windows teardown.
+      }
+      const systemRoot =
+        deps.systemRoot ??
+        process.env.SystemRoot ??
+        process.env.windir ??
+        'C:\\Windows';
+      const killer = spawnProcess(
+        pathWin32.join(systemRoot, 'System32', 'taskkill.exe'),
+        ['/pid', String(pid), '/T', '/F'],
+        { stdio: 'ignore', shell: false, windowsHide: true },
+      );
+      // A missing/blocked taskkill.exe emits 'error'; with no listener Node
+      // turns that into an uncaught exception in the main process. Teardown
+      // is best-effort and must never take the app down with it.
+      killer.on?.('error', () => {});
+      killer.unref?.();
+      return;
+    }
+    signalProcessGroup(-pid, 'SIGKILL');
+  } catch {
+    try {
+      child.kill('SIGKILL');
+    } catch {
+      // already gone
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -262,6 +395,7 @@ export class AcpClient {
   private readonly requestTimeoutMs: number;
   private readonly writeTimeoutMs: number;
   private readonly cancelDrainTimeoutMs: number;
+  private readonly turnEventBufferMax: number;
   private readonly clientName: string;
   private readonly clientVersion: string;
   private readonly requestPermission:
@@ -283,6 +417,10 @@ export class AcpClient {
     this.writeTimeoutMs = options.writeTimeoutMs ?? ACP_WRITE_TIMEOUT_MS;
     this.cancelDrainTimeoutMs =
       options.cancelDrainTimeoutMs ?? ACP_CANCEL_DRAIN_TIMEOUT_MS;
+    this.turnEventBufferMax =
+      options.turnEventBufferMax !== undefined && options.turnEventBufferMax > 0
+        ? Math.floor(options.turnEventBufferMax)
+        : ACP_TURN_EVENT_BUFFER_MAX;
     this.clientName = options.clientName ?? 'nexus-ide';
     this.clientVersion = options.clientVersion ?? '0.1.0';
     this.requestPermission = options.requestPermission;
@@ -298,7 +436,7 @@ export class AcpClient {
     validateSpawnOptions(options);
     const child = spawn(options.command, [...(options.args ?? [])], {
       cwd: options.cwd,
-      env: sanitizedEnvironment(options.env),
+      env: sanitizeHarnessSpawnEnv(process.env, options.env),
       stdio: ['pipe', 'pipe', 'pipe'],
       detached: process.platform !== 'win32',
     });
@@ -428,7 +566,15 @@ export class AcpClient {
 
     const idleTimeoutMs = options.idleTimeoutMs ?? ACP_PROMPT_IDLE_TIMEOUT_MS;
     const maxDurationMs = options.maxDurationMs ?? ACP_PROMPT_MAX_DURATION_MS;
-    const queue = new AsyncEventQueue<AcpTurnEvent>();
+    const bufferMax = this.turnEventBufferMax;
+    const queue = new AsyncEventQueue<AcpTurnEvent>(bufferMax, () => {
+      this.destroy(
+        new AcpClientError(
+          'backpressure',
+          `turn buffered ${bufferMax} unconsumed events without being drained`,
+        ),
+      );
+    });
     const turn: ActiveTurn = {
       sessionId,
       queue,
@@ -584,15 +730,21 @@ export class AcpClient {
         return;
       }
       case 'error-response': {
-        const error = new AcpClientError(
-          'agent-error',
-          `agent reported error (code ${message.code}): ${message.message}`,
-        );
         if (message.id === null) {
           this.recordDiagnostic(`agent error without id: ${message.message}`);
           return;
         }
-        this.settleResponse(message.id, { ok: false, error });
+        const error = new AcpClientError(
+          'agent-error',
+          `agent reported error (code ${message.code}): ${message.message}`,
+        );
+        const routed = this.settleResponse(message.id, { ok: false, error });
+        // This client only ever sends mandatory RPCs (initialize, session/new,
+        // session/prompt): an agent that fails one of them has ended the
+        // session, so the failure takes the same teardown funnel as every
+        // other one. Without this the subprocess (and its MCP grandchildren)
+        // would outlive the failed turn as orphans.
+        if (routed) this.destroy(error);
         return;
       }
       case 'session-update': {
@@ -653,19 +805,21 @@ export class AcpClient {
     });
   }
 
+  /** Returns whether the frame actually settled one of our own requests. */
   private settleResponse(
     id: JsonRpcId,
     outcome: { ok: true; result: unknown } | { ok: false; error: AcpClientError },
-  ): void {
+  ): boolean {
     const key = String(id);
     const pendingRequest = this.pending.get(key);
     if (pendingRequest === undefined) {
       this.recordDiagnostic(`response for unknown request id ${key}`);
-      return;
+      return false;
     }
     this.pending.delete(key);
     if (pendingRequest.timer !== null) clearTimeout(pendingRequest.timer);
     pendingRequest.settle(outcome);
+    return true;
   }
 
   // -- outbound -------------------------------------------------------------
@@ -833,23 +987,9 @@ export class AcpClient {
     this.killProcessGroup();
   }
 
-  /**
-   * SIGKILL the whole process group (unix) so grandchildren die too; plain
-   * kill on win32. Best-effort — the process may already be gone.
-   */
+  /** Kill the harness and every process it spawned (see the helper). */
   private killProcessGroup(): void {
-    const pid = this.child.pid;
-    if (pid === undefined) return;
-    try {
-      if (process.platform === 'win32') this.child.kill();
-      else process.kill(-pid, 'SIGKILL');
-    } catch {
-      try {
-        this.child.kill('SIGKILL');
-      } catch {
-        // already gone
-      }
-    }
+    killHarnessProcessTree(this.child);
   }
 
   private recordDiagnostic(detail: string): void {

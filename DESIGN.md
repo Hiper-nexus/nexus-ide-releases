@@ -7,7 +7,7 @@ vencem — e o outro se corrige. Validador: `scripts/design-system-sensor.mjs`.
 ## 1. Identidade
 
 Sci-fi operacional refinado: centro de comando denso em sinal, calmo em ruído.
-Dark-first, um acento ciano para o que está VIVO, tipografia neutra (Inter) com
+Dark-first, um acento índigo para o que está VIVO, tipografia neutra (Inter) com
 assinatura pixel (VT323) usada com parcimônia. Nunca gamer-RGB, nunca SaaS de
 cards brancos, nunca IDE corporativo de 40 ícones na toolbar.
 
@@ -17,30 +17,47 @@ cards brancos, nunca IDE corporativo de 40 ícones na toolbar.
 
 | Token | Valor (nexus-dark) | Uso |
 |---|---|---|
-| `--bg` | `#0a0a0b` | fundo raiz |
-| `--bg-elevated` | `#151517` | panes, cards |
+| `--bg` | `#0b0b0c` | fundo raiz |
+| `--bg-elevated` | `#141416` | panes, cards |
 | `--bg-bar` | `#101012` | barras/chrome |
 | `--border` / `--border-strong` | `rgb(255 255 255 / .07)` / `rgb(255 255 255 / .14)` | divisórias |
 | `--text` / `--text-dim` | `#fafafa` / `#a1a1a1` | texto (dim ≥5:1, WCAG AA — não baixar) |
-| `--accent` | `#3dd9ff` | **só o que está vivo/interativo**: ação primária, foco, agente ativo |
-| `--accent-ink` | `#051019` | tinta sobre CTA sólido de acento |
-| `--danger` | `#ff7a90` | falha, destrutivo |
+| `--accent` | `#7c86ff` | **só o que está vivo/interativo**: foco, agente ativo, item selecionado |
+| `--accent-ink` | `#0b0b0c` | tinta sobre superfície de acento (~7:1) |
+| `--btn-primary` / `--btn-primary-ink` | `#fafafa` / `#0b0b0c` | **CTA primário: branco, não acento** |
+| `--accent-glow` | `transparent` | **morto no default** — ver abaixo |
+| `--danger` | `#f85149` | falha, destrutivo |
 | `--design` | `#2f6ae0` | segunda voz: design mode |
 | `--ok` / `--live` / `--warn` / `--gold` | `#7ee2a8` / `#3ce08d` / `#e5c07b` / `#ffd166` | sinais |
 
 A base é **cinza neutro**, não azul-negro. Um fundo tingido faz toda superfície
-parecer levemente acesa e o ciano de sinal perde contra o quê se destacar; o
-neutro devolve ao acento o poder de significar. As bordas são branco
-translúcido de propósito: um fio de opacidade compõe corretamente sobre
-qualquer camada da pilha (bar, elevated, modal) em vez de exigir um hex por
-camada.
+parecer levemente acesa e o sinal perde contra o quê se destacar; o neutro
+devolve ao acento o poder de significar. As bordas são branco translúcido de
+propósito: um fio de opacidade compõe corretamente sobre qualquer camada da
+pilha (bar, elevated, modal) em vez de exigir um hex por camada.
+
+### Por que índigo, e por que o CTA é branco (0.21)
+
+Até a 0.20 o acento era ciano `#3dd9ff` com halo (`--accent-glow`). Os dois
+saíram do default por um motivo específico: **near-black + um acento neon com
+glow é o visual-padrão de toda ferramenta de IA de 2026** — não distingue o
+Nexus de nada. O índigo tem presença sem estridência, e o halo morreu porque
+profundidade se faz com camada e sombra, não com brilho.
+
+A regra que sustenta a identidade: **a ação primária é a coisa mais clara da
+tela (branco), e o acento fica reservado para ESTADO.** Se o CTA voltar a
+derivar de `--accent`, a assinatura se perde — foi exatamente esse acoplamento
+(`--btn-primary: var(--accent)`) que anulou a primeira tentativa de redesign.
+
+O ciano segue disponível como escolha explícita do usuário
+(`LEGACY_NEXUS_CYAN_PALETTE` em `ui-theme.ts`), nunca como default.
 
 Derivados do acento (`--accent-soft/strong/hover/glow`) são `color-mix` do
 `--accent` — **nunca** sobrescreva por tema; temas trocam só `--accent`.
 
 ### Estado operacional — um estado, uma cor, em toda superfície
 
-`--state-running: accent` (respira em ciano) · `--state-ready/done: ok` ·
+`--state-running: accent` (respira no acento) · `--state-ready/done: ok` ·
 `--state-blocked: warn` · `--state-failed: danger` · `--state-pending: text-dim`.
 Rail, OpsBoard, toolbar de pane, FleetChip e bordas de pane consomem SÓ estes
 tokens. Estado nunca viaja só em cor: sempre com glifo/palavra
@@ -99,7 +116,7 @@ corrija os dele).
   Gamificação (XP) fora da zona de status. "Novo workspace" é uma ação compacta
   única junto à identidade do workspace; nunca se repete no menu ▾ da marca.
 - Frota em linguagem clara: "2 trabalhando · 1 morto" (nunca "zzz"/"x").
-- Pane comunica estado pela borda: busy = ciano, morto = danger, hibernado =
+- Pane comunica estado pela borda: busy = acento, morto = danger, hibernado =
   tracejado dim; foco = acento + glow contido.
 - Densidade: monitoramento denso é OK (terminal, telemetria); **CTAs de
   produto são grandes** (≥32px de alvo; primário ≥40px).

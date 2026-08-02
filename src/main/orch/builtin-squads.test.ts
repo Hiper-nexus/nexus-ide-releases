@@ -111,6 +111,68 @@ describe('built-in squads (invariantes gerais)', () => {
     );
   });
 
+  it('todo agente builtin declara allowedSkills (indefinido = zero skills no modo governed)', () => {
+    // governed-cli-profile trata allowedSkills ausente como [] e o
+    // skill-mirror não materializa nada: um roster builtin sem allowedSkills
+    // roda sem NENHUMA skill em máquina limpa/endurecida.
+    for (const squad of BUILTIN_SQUADS) {
+      for (const agent of squad.agents) {
+        expect(
+          agent.allowedSkills,
+          `${squad.id}/${agent.id} sem allowedSkills`,
+        ).toBeDefined();
+      }
+    }
+  });
+
+  it('entrega bmad-templates a quem escreve PRD/stories e a mais ninguém', () => {
+    const planning = BUILTIN_SQUADS.find((squad) => squad.id === 'nexus-plan');
+    const delivery = BUILTIN_SQUADS.find(
+      (squad) => squad.id === 'nexus-story-impl',
+    );
+    const bmadOwners = BUILTIN_SQUADS.flatMap((squad) =>
+      squad.agents
+        .filter((agent) => agent.allowedSkills?.includes('bmad-templates'))
+        .map((agent) => `${squad.id}/${agent.id}`),
+    );
+
+    expect(planning?.agents[0]?.allowedSkills).toContain('bmad-templates');
+    expect(
+      delivery?.agents.find((agent) => agent.id === 'sm')?.allowedSkills,
+    ).toContain('bmad-templates');
+    expect(
+      delivery?.agents.find((agent) => agent.id === 'qa')?.allowedSkills,
+    ).toContain('bmad-templates');
+    expect(
+      delivery?.agents.find((agent) => agent.id === 'dev')?.allowedSkills,
+    ).not.toContain('bmad-templates');
+    expect(bmadOwners).toEqual([
+      // Architects já recebiam o vocabulário (regra pré-existente da política).
+      'outcome-landing-page/ux-content',
+      'nexus-research/architect',
+      // Novos donos explícitos de documento de plano.
+      'nexus-plan/orch',
+      'nexus-story-impl/orch',
+      'nexus-story-impl/sm',
+      'nexus-story-impl/qa',
+      'kimi-code-cell/planner',
+    ]);
+  });
+
+  it('preserva allowedSkills explícito dos rosters que já declaravam política', () => {
+    const review = BUILTIN_SQUADS.find((squad) => squad.id === 'review-p0p3');
+    const petStudio = BUILTIN_SQUADS.find(
+      (squad) => squad.id === 'nexus-pet-studio',
+    );
+
+    expect(
+      review?.agents
+        .filter((agent) => agent.category === 'reviewer')
+        .map((agent) => agent.allowedSkills),
+    ).toEqual([[], [], [], []]);
+    expect(petStudio?.agents[0]?.allowedSkills).toEqual(['nexus-pet-studio']);
+  });
+
   it('kimi-code-cell keeps the Kimi method but uses governed Codex workers', () => {
     const squad = BUILTIN_SQUADS.find((entry) => entry.id === 'kimi-code-cell');
     expect(squad).toBeDefined();

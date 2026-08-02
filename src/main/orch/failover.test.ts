@@ -948,6 +948,68 @@ describe('mission worker main-owned sem rota de failover', () => {
     expect(sends[0]![1]).not.toHaveProperty('missionTaskWaived');
   });
 
+  it('retry agendado volta a consultar a política: auth que só se prova sem rota no attempt>0 não espera o caminho lento', async () => {
+    const { detectLimit } = await import('./limit-detector');
+    const { pickAvailableForFailover } = await import(
+      '../persistence/account-store'
+    );
+    const owner = armMainOwnedWorker(904);
+    // 1º hit: a política ainda não consegue decidir (dispatch não vinculado,
+    // evidência presente, política retry-required) e devolve retry.
+    waiverMocks.outcome = 'retry';
+    vi.mocked(detectLimit).mockImplementationOnce((buffer: string) =>
+      buffer.includes('LIMIT')
+        ? {
+            kind: 'auth' as const,
+            reason: 'Error: 401 OAuth access token has been revoked',
+            cooldownMs: 60_000,
+          }
+        : null,
+    );
+    vi.mocked(pickAvailableForFailover).mockImplementation(() => ({
+      account: null,
+      probe: false,
+      nextUnblockAtMs: 130_000,
+    }));
+
+    ptyMocks.dataTaps[0]!('sess-main-904', 'LIMIT');
+
+    expect(waiverMocks.calls).toHaveLength(1);
+    expect(failoverSends(owner)[0]![1]).toEqual(
+      expect.objectContaining({ scheduledRetryAtMs: 131_000 }),
+    );
+
+    // A espera-pela-irmã dispara: mesma encarnação física, e agora a política
+    // consegue decidir. Antes do fix o guard nunca era reconsultado e a task
+    // só se resolvia por session-exit ×3 → blocked → sweep.
+    waiverMocks.outcome = 'waived';
+    vi.advanceTimersByTime(31_001);
+
+    expect(waiverMocks.calls).toHaveLength(2);
+    expect(waiverMocks.calls[1]).toMatchObject({
+      missionId: 'm-main-904',
+      paneId: 'pane-main-904',
+      sessionId: 'sess-main-904',
+      workerIncarnationId: 'inc-main-904',
+      adapterId: 'claude',
+    });
+    const sends = failoverSends(owner);
+    expect(sends).toHaveLength(2);
+    expect(sends[1]![1]).toEqual(
+      expect.objectContaining({
+        missionTaskWaived: true,
+        missionId: 'm-main-904',
+        switched: false,
+      }),
+    );
+
+    // Desfecho terminal encerra a cadeia: nenhum novo retry agendado.
+    vi.advanceTimersByTime(300_000);
+    expect(waiverMocks.calls).toHaveLength(2);
+    expect(failoverSends(owner)).toHaveLength(2);
+    vi.mocked(pickAvailableForFailover).mockReset();
+  });
+
   it('mission worker sem encarnação não aciona a política de waiver', async () => {
     const { detectLimit } = await import('./limit-detector');
     const { pickAvailableForFailover } = await import(

@@ -1300,6 +1300,17 @@ const routeTaskTool: McpToolDef = {
         reason: `${decision.reason}${quotaFallbackNote}`,
       };
     }
+    if (!missionId) {
+      // Sem missão vinculada não existe roster para honrar — e o chamador não
+      // tem como saber disso pelo retorno. Dizer que é SUGESTÃO evita que uma
+      // resposta livre seja lida como a rota selada de alguma missão.
+      decision = {
+        ...decision,
+        reason:
+          `${decision.reason}; sugestão livre: nenhuma missão vinculada, ` +
+          'portanto nenhum roster selado foi consultado',
+      };
+    }
     // Proveniência: o spawn ad-hoc de modelos com warning de catálogo exige
     // uma decisão recente do router (ver adHocSpawnGateError em tools-panes).
     recordRouteDecision({ adapterId: decision.adapterId, model: decision.model });

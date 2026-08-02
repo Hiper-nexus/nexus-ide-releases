@@ -275,8 +275,10 @@ export function createMainWindow(
     height: 820,
     minWidth: 640,
     minHeight: 420,
-    // Precisa casar com --bg (base.css) — cor de pré-paint da janela.
-    backgroundColor: '#0a0e15',
+    // Precisa casar com --bg (base.css) — cor de pré-paint da janela. Ficou
+    // preso no azul-negro de duas identidades atrás: sem isto o primeiro paint
+    // pisca a cor antiga antes do renderer assumir.
+    backgroundColor: '#0b0b0c',
     title: 'NexusIDE',
     // Do not expose the native surface while the custom protocol is still
     // retrying. A first ERR_FAILED is recoverable, but showing each retry makes

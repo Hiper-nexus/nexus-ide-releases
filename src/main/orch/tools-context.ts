@@ -579,6 +579,10 @@ const doctorTool: McpToolDef = {
       commitSha: result.commitSha,
       blockingError: result.blockingError,
       quorumAvailable: result.quorumAvailable,
+      // How the design contract stands for this scope: materialized, waiting,
+      // or deliberately skipped (with the reason). A UI mission must not have
+      // to guess whether it has an authority to build against.
+      designContract: result.designContract,
       autopilotHint: result.autopilotHint,
     });
   },

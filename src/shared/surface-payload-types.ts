@@ -66,6 +66,20 @@ export interface DesignSystemImportRequest {
   targetPath?: string;
 }
 
+/**
+ * Mirrors `DESIGN_KIT_SOURCES` in src/main/design/design-kit-source.ts. Kept in
+ * step by a compile-time assertion in
+ * src/main/orch/design-system-import-fallback.test.ts.
+ */
+export type DesignSystemSourceId = 'local-catalog' | 'getdesign' | 'designmd.ai';
+
+export interface DesignSystemImportAttempt {
+  sourceId: DesignSystemSourceId;
+  ok: boolean;
+  /** Why this source did not serve; null when it did. */
+  detail: string | null;
+}
+
 export type DesignSystemImportResult =
   | {
       ok: true;
@@ -73,6 +87,19 @@ export type DesignSystemImportResult =
       targetPath: string;
       status: string;
       evidencePath: string;
+      /**
+       * Which source actually produced the draft. designmd.ai answers 401
+       * without `external:designmd-api-key`, so the import walks down to the
+       * keyless sources — the operator must never be told "imported" without
+       * being told from where.
+       */
+      servedBy: DesignSystemSourceId;
+      /** Every source tried, in order, with the reason each one did not serve. */
+      attempts: DesignSystemImportAttempt[];
+      /** Present on keyless imports: the kit and content that were read. */
+      sourceId?: DesignSystemSourceId;
+      kitId?: string;
+      contentHash?: string;
     }
   | { ok: false; error: string };
 

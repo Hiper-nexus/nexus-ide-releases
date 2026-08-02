@@ -344,9 +344,18 @@ describe('provider failure waiver glue (Main-owned)', () => {
         },
       },
     });
+    // A tabela `tasks` sozinha distingue dispensa de trabalho: sem esta marca
+    // qualquer superfície que não faça join com o dispatch mostra a task
+    // dispensada idêntica a uma entregue.
     expect(fixture.tasks.list(fixture.mission.id)[0]).toMatchObject({
       status: 'done',
     });
+    expect(
+      fixture.tasks.list(fixture.mission.id)[0]?.providerWaiverReason,
+    ).toContain('nunca executou');
+    expect(
+      fixture.tasks.list(fixture.mission.id)[0]?.providerWaiverReason,
+    ).toContain('codex');
     expect(
       registryMocks.requestMissionWorkerPaneRetirement,
     ).toHaveBeenCalledWith({
@@ -378,6 +387,10 @@ describe('provider failure waiver glue (Main-owned)', () => {
     expect(fixture.tasks.list(fixture.mission.id)[0]).toMatchObject({
       status: 'running',
     });
+    // Task que não foi dispensada nunca carrega a marca de dispensa.
+    expect(
+      fixture.tasks.list(fixture.mission.id)[0]?.providerWaiverReason,
+    ).toBeUndefined();
     // Escolha documentada (requisito 10): o encerramento vai pela mesma
     // função authority-sealed do retirement (identidade exata re-provada pelo
     // registry); se for recusado, apenas o retry limitado permanece.
@@ -496,7 +509,7 @@ describe('reroute dentro do roster ANTES do waiver', () => {
     });
   });
 
-  it('um reroute que explode cai para o waiver em vez de derrubar o failover', () => {
+  it('um reroute que explode NÃO dispensa a task: fail-closed para o retry limitado', () => {
     const fixture = runningWorkerFixture();
     const attemptLiveReroute = vi.fn(() => {
       throw new Error('registry de stores indisponível');
@@ -511,9 +524,43 @@ describe('reroute dentro do roster ANTES do waiver', () => {
       authHitInputFor(fixture),
     );
 
-    expect(outcome).toBe('waived');
+    // Não saber se existe substituto NUNCA pode virar "dispensa a task": o
+    // lado seguro é o retry limitado, que ainda pode re-consultar o roster.
+    expect(outcome).toBe('retry');
+    expect(fixture.dispatches.get(fixture.task.id)).toMatchObject({
+      state: 'running',
+      integrationReceipt: undefined,
+    });
+    expect(fixture.tasks.list(fixture.mission.id)[0]?.status).toBe('running');
+    // A sessão física morta continua sendo encerrada pela identidade exata.
+    expect(
+      registryMocks.requestMissionWorkerPaneRetirement,
+    ).toHaveBeenCalledWith({
+      paneId: fixture.paneId,
+      sessionId: fixture.sessionId,
+      missionId: fixture.mission.id,
+      workerIncarnationId: fixture.claim.workerIncarnationId,
+      scope: fixture.scope,
+    });
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
+  });
+
+  it('sem mecanismo de reroute instalado, o waiver continua sendo o último recurso', () => {
+    const fixture = runningWorkerFixture();
+    configureProviderFailureWaiver({
+      runtimeManager: fixture.runtime,
+      attemptLiveReroute: null,
+    });
+
+    // Ausência declarada do resolvedor não é falha de consulta: é a política
+    // antiga (sem roster para consultar), e ela continua valendo.
+    expect(handleMissionWorkerProviderNoRoute(authHitInputFor(fixture))).toBe(
+      'waived',
+    );
+    const receipt = fixture.dispatches.get(fixture.task.id)?.integrationReceipt;
+    expect(receipt?.kind).toBe('advisory_provider_unavailable');
+    expect(receipt?.waiver?.reason).toContain('reroute não instalado');
   });
 });
 
@@ -584,6 +631,21 @@ describe('reply guard do waiver: evidência, orçamento e reason explícito', ()
     expect(dispatch?.handoffId).toBe(handoff.id);
     expect(dispatch?.integrationReceipt).toBeUndefined();
     expect(fixture.tasks.list(fixture.mission.id)[0]?.status).toBe('running');
+    // "Intocado" nunca significou deixar a sessão morta viva: a CLI que levou
+    // o hit de provider continua sendo encerrada pela identidade exata — é o
+    // que o caminho anterior ao reply guard fazia e o que libera o slot de
+    // maxWorkers para a recuperação limitada seguir.
+    expect(
+      registryMocks.requestMissionWorkerPaneRetirement,
+    ).toHaveBeenCalledWith({
+      paneId: fixture.paneId,
+      sessionId: fixture.sessionId,
+      missionId: fixture.mission.id,
+      workerIncarnationId: fixture.claim.workerIncarnationId,
+      scope: fixture.scope,
+    });
+    // Sem tick do scheduler: a entrega em andamento é dona do destino.
+    expect(driverMocks.requestMissionDriverTick).not.toHaveBeenCalled();
   });
 
   it('orçamento 1: dispatch já re-roteado nunca consulta o reroute de novo e o waiver nomeia o orçamento', () => {
@@ -695,6 +757,48 @@ describe('reply guard do waiver: evidência, orçamento e reason explícito', ()
     expect(receipt?.waiver?.reason).toContain('nunca executou');
     expect(receipt?.waiver?.reason).toContain('orçamento');
   });
+
+  it('diretiva emitida pelo SWEEP de esgotamento não consome o orçamento do guard', () => {
+    const fixture = runningWorkerFixture({ extraGlmAgent: true });
+    // O sweep de esgotamento físico (mission-scheduler-reconciliation) grava a
+    // MESMA coluna durável. Ela prova que o coordenador re-roteou — nunca que
+    // este guard já teve sua chance de correção.
+    fixture.runtime
+      .open(fixture.scope)
+      .db.prepare(
+        `UPDATE task_dispatch_queue SET provider_reroute_json = ?
+          WHERE task_id = ?`,
+      )
+      .run(
+        JSON.stringify({
+          version: 1,
+          fromAgentRef: 'advisor',
+          toAgentRef: 'advisor-glm',
+          exhaustedAdapterIds: ['claude'],
+          reason: 'claude esgotou o spawn físico; sweep re-roteou',
+          reroutedAt: Date.now(),
+          emittedBy: 'exhaustion-sweep',
+        }),
+        fixture.task.id,
+      );
+    const attemptLiveReroute = vi.fn(() => rosterCandidate);
+    configureProviderFailureWaiver({
+      runtimeManager: fixture.runtime,
+      attemptLiveReroute,
+    });
+
+    const outcome = handleMissionWorkerProviderNoRoute(
+      authHitInputFor(fixture),
+    );
+
+    // O guard ainda tem a sua única chance: consulta o roster e re-rota.
+    expect(attemptLiveReroute).toHaveBeenCalledTimes(1);
+    expect(outcome).toBe('rerouted');
+    expect(fixture.dispatches.get(fixture.task.id)?.integrationReceipt).toBe(
+      undefined,
+    );
+    expect(fixture.tasks.list(fixture.mission.id)[0]?.status).not.toBe('done');
+  });
 });
 
 describe('providerWaiverNeverExecutedReason', () => {
@@ -715,19 +819,25 @@ describe('providerWaiverNeverExecutedReason', () => {
     });
     expect(budget).toContain('orçamento');
 
+    // O reason descreve o que DE FATO aconteceu: a task está sendo dispensada
+    // agora, então prometer "espera-pela-irmã" seria mentir no registro
+    // durável. O que a consulta não fez foi olhar o roster — e o motivo é o
+    // kind curto, fora do conjunto durável que autoriza substituição.
     const shortWindow = providerWaiverNeverExecutedReason({
       hitKind: 'rate-limit',
       adapterId: 'codex',
       rosterConsult: 'not-consulted',
     });
-    expect(shortWindow).toContain('espera-pela-irmã');
+    expect(shortWindow).not.toContain('espera-pela-irmã');
+    expect(shortWindow).toContain('falha curta');
+    expect(shortWindow).toContain('auth/quota');
   });
 
   it('nunca estoura o orçamento durável do reason', () => {
     const reason = providerWaiverNeverExecutedReason({
       hitKind: 'transient',
       adapterId: 'x'.repeat(4_000),
-      rosterConsult: 'consult-failed',
+      rosterConsult: 'not-installed',
     });
     expect(reason.length).toBeLessThanOrEqual(2_000);
   });

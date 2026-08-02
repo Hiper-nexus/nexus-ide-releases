@@ -10,9 +10,15 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest';
 
-import { AcpClient, AcpClientError, type AcpTurnEvent } from './acp-client';
+import {
+  AcpClient,
+  AcpClientError,
+  killHarnessProcessTree,
+  sanitizeHarnessSpawnEnv,
+  type AcpTurnEvent,
+} from './acp-client';
 
 /**
  * The fake ACP peer. Behavior selected via argv[2]:
@@ -21,6 +27,8 @@ import { AcpClient, AcpClientError, type AcpTurnEvent } from './acp-client';
  *  - hang-prompt:        answers init/session, then goes silent on prompt
  *  - die-mid-turn:       emits one chunk then exits(17) mid-turn
  *  - stream-until-cancel: emits chunks forever until session/cancel arrives
+ *  - error-on-prompt:    answers session/prompt with a JSON-RPC error, then
+ *                        stays alive forever (would orphan without teardown)
  */
 const FAKE_PEER_SOURCE = `
 import readline from 'node:readline';
@@ -66,6 +74,14 @@ rl.on('line', (line) => {
     promptSessionId = params.sessionId;
     const update = (u) => write({ jsonrpc: '2.0', method: 'session/update',
       params: { sessionId: promptSessionId, update: u } });
+
+    if (behavior === 'error-on-prompt') {
+      // Answer the prompt with an error and keep running: only a real
+      // teardown funnel can stop this process.
+      write({ jsonrpc: '2.0', id, error: { code: -32000, message: 'model provider is down' } });
+      setInterval(() => {}, 1000);
+      return;
+    }
 
     if (behavior === 'die-mid-turn') {
       update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'partial…' } });
@@ -324,6 +340,60 @@ describe('AcpClient — bounded failure paths (never hangs)', () => {
     await expectPeerDead(client);
   });
 
+  test('an agent error response tears the process group down (never orphaned)', async () => {
+    // Arrange — the peer answers session/prompt with a JSON-RPC error and
+    // then keeps running: nothing else would ever reap it.
+    const client = spawnFakePeer('error-on-prompt');
+    await client.initialize();
+    const sessionId = await client.sessionNew(fixtureDir);
+
+    // Act + Assert — the turn fails with the agent's own error…
+    await expect(
+      collectTurn(client.prompt(sessionId, 'please fail', { idleTimeoutMs: 5_000 })),
+    ).rejects.toMatchObject({ code: 'agent-error' });
+
+    // …and the failure went through the single teardown funnel.
+    expect(client.disposed).toBe(true);
+    await expectPeerDead(client);
+  });
+
+  test('an unconsumed turn stops at the named buffer cap instead of growing forever', async () => {
+    // Arrange — peer streams faster than this test consumes (never consumes).
+    const client = AcpClient.spawn({
+      command: process.execPath,
+      args: [fakePeerPath, 'stream-until-cancel'],
+      cwd: fixtureDir,
+      turnEventBufferMax: 3,
+    });
+    await client.initialize();
+    const sessionId = await client.sessionNew(fixtureDir);
+
+    // Act — hold the turn without draining it while the peer keeps pushing.
+    const turn = client.prompt(sessionId, 'stream forever', {
+      idleTimeoutMs: 10_000,
+      maxDurationMs: 30_000,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    const events: AcpTurnEvent[] = [];
+    let caught: unknown = null;
+    try {
+      for await (const event of turn) events.push(event);
+    } catch (error: unknown) {
+      caught = error;
+    }
+
+    // Assert — exactly the capped buffer is delivered, then a typed failure.
+    expect(events).toHaveLength(3);
+    expect(events.every((event) => event.type === 'update')).toBe(true);
+    expect(caught).toBeInstanceOf(AcpClientError);
+    if (caught instanceof AcpClientError) {
+      expect(caught.code).toBe('backpressure');
+      expect(caught.message).toContain('3');
+    }
+    await expectPeerDead(client);
+  });
+
   test('requests after disposal fail fast with disposed', async () => {
     const client = spawnFakePeer('happy');
     await client.initialize();
@@ -397,5 +467,109 @@ describe('AcpClient — cancel', () => {
     } finally {
       await client.shutdown();
     }
+  });
+});
+
+describe('process-tree teardown is platform-correct', () => {
+  function fakeChild(pid: number | undefined) {
+    return { pid, kill: vi.fn(() => true) };
+  }
+
+  test('win32 kills the whole tree with taskkill (a plain kill orphans grandchildren)', () => {
+    // Arrange
+    const child = fakeChild(4_242);
+    const killer = { unref: vi.fn(), on: vi.fn() };
+    const spawnProcess = vi.fn(() => killer);
+    const signalProcessGroup = vi.fn();
+
+    // Act
+    killHarnessProcessTree(child, {
+      platform: 'win32',
+      spawnProcess,
+      signalProcessGroup,
+      systemRoot: 'C:\\Windows',
+    });
+
+    // Assert — same teardown contract the rest of the repo uses on Windows
+    expect(spawnProcess).toHaveBeenCalledWith(
+      'C:\\Windows\\System32\\taskkill.exe',
+      ['/pid', '4242', '/T', '/F'],
+      expect.objectContaining({
+        shell: false,
+        windowsHide: true,
+        stdio: 'ignore',
+      }),
+    );
+    expect(killer.unref).toHaveBeenCalled();
+    // A spawn failure must not become an uncaught 'error' event in main.
+    expect(killer.on).toHaveBeenCalledWith('error', expect.any(Function));
+    // Windows has no process groups: signalling -pid would be meaningless.
+    expect(signalProcessGroup).not.toHaveBeenCalled();
+  });
+
+  test('posix SIGKILLs the detached process group, never taskkill', () => {
+    const child = fakeChild(4_243);
+    const spawnProcess = vi.fn();
+    const signalProcessGroup = vi.fn();
+
+    killHarnessProcessTree(child, {
+      platform: 'linux',
+      spawnProcess,
+      signalProcessGroup,
+    });
+
+    expect(signalProcessGroup).toHaveBeenCalledWith(-4_243, 'SIGKILL');
+    expect(spawnProcess).not.toHaveBeenCalled();
+  });
+
+  test('falls back to a direct kill when the group/tree teardown throws', () => {
+    const child = fakeChild(4_244);
+    const signalProcessGroup = vi.fn(() => {
+      throw new Error('ESRCH');
+    });
+
+    killHarnessProcessTree(child, {
+      platform: 'darwin',
+      spawnProcess: vi.fn(),
+      signalProcessGroup,
+    });
+
+    expect(child.kill).toHaveBeenCalledWith('SIGKILL');
+  });
+
+  test('a child without a pid is a safe no-op', () => {
+    const child = fakeChild(undefined);
+    const spawnProcess = vi.fn();
+    const signalProcessGroup = vi.fn();
+
+    killHarnessProcessTree(child, {
+      platform: 'win32',
+      spawnProcess,
+      signalProcessGroup,
+    });
+
+    expect(spawnProcess).not.toHaveBeenCalled();
+    expect(signalProcessGroup).not.toHaveBeenCalled();
+    expect(child.kill).not.toHaveBeenCalled();
+  });
+});
+
+describe('spawn environment strips reserved keys regardless of casing', () => {
+  test('a lowercase reserved key never reaches the child (win32 env is case-insensitive)', () => {
+    const env = sanitizeHarnessSpawnEnv(
+      { PATH: '/usr/bin', NEXUS_MCP_TOKEN: 'real' },
+      { nexus_mcp_token: 'stolen', Nexus_Gate_Url: 'http://evil', OK: '1' },
+    );
+
+    expect(env).toEqual({ PATH: '/usr/bin', OK: '1' });
+  });
+
+  test('unrelated keys keep their exact casing', () => {
+    const env = sanitizeHarnessSpawnEnv(
+      { Path: 'C:\\bin' },
+      { my_agent_mode: 'acp' },
+    );
+
+    expect(env).toEqual({ Path: 'C:\\bin', my_agent_mode: 'acp' });
   });
 });

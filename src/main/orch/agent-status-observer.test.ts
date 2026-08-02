@@ -300,6 +300,95 @@ describe('tool_call / tool_result emission', () => {
     expect(results[0]?.payload).toEqual({ callId: 'call-1', toolName: null, ok: true });
     expect(results[1]?.payload).toEqual({ callId: null, toolName: null, ok: true });
   });
+
+  it('two parallel calls of the SAME tool make every result unattributable — no LIFO guess', () => {
+    applyCanonicalHookEvent({
+      sessionId: 'pty-1',
+      event: start,
+      hook: { eventType: 'tool-use', toolName: 'Bash' },
+    });
+    applyCanonicalHookEvent({
+      sessionId: 'pty-1',
+      event: start,
+      hook: { eventType: 'tool-use', toolName: 'Bash' },
+    });
+    applyCanonicalHookEvent({
+      sessionId: 'pty-1',
+      event: start,
+      hook: { eventType: 'tool-complete', toolName: 'Bash' },
+    });
+    applyCanonicalHookEvent({
+      sessionId: 'pty-1',
+      event: start,
+      hook: { eventType: 'tool-complete', toolName: 'Bash' },
+    });
+
+    const results = snapshotObserverFrames('pty-1').filter(
+      (f) => f.kind === 'tool_result',
+    );
+    expect(results).toHaveLength(2);
+    // Either result could belong to either call: the frame is emitted, the
+    // attribution is null. A wrong callId would close the wrong UI row.
+    expect(results.map((f) => f.payload.callId)).toEqual([null, null]);
+  });
+
+  it('ambiguity does not contaminate later sequential calls of the same tool', () => {
+    for (const eventType of ['tool-use', 'tool-use', 'tool-complete', 'tool-complete'] as const) {
+      applyCanonicalHookEvent({
+        sessionId: 'pty-1',
+        event: start,
+        hook: { eventType, toolName: 'Bash' },
+      });
+    }
+    // The ambiguous group is settled; a fresh, single call pairs normally.
+    applyCanonicalHookEvent({
+      sessionId: 'pty-1',
+      event: start,
+      hook: { eventType: 'tool-use', toolName: 'Bash' },
+    });
+    applyCanonicalHookEvent({
+      sessionId: 'pty-1',
+      event: start,
+      hook: { eventType: 'tool-complete', toolName: 'Bash' },
+    });
+
+    const results = snapshotObserverFrames('pty-1').filter(
+      (f) => f.kind === 'tool_result',
+    );
+    expect(results.map((f) => f.payload.callId)).toEqual([null, null, 'call-3']);
+  });
+
+  it('a named result still pairs when the other open calls are different tools', () => {
+    applyCanonicalHookEvent({
+      sessionId: 'pty-1',
+      event: start,
+      hook: { eventType: 'tool-use', toolName: 'Read' },
+    });
+    applyCanonicalHookEvent({
+      sessionId: 'pty-1',
+      event: start,
+      hook: { eventType: 'tool-use', toolName: 'Bash' },
+    });
+    applyCanonicalHookEvent({
+      sessionId: 'pty-1',
+      event: start,
+      hook: { eventType: 'tool-use', toolName: 'Grep' },
+    });
+    applyCanonicalHookEvent({
+      sessionId: 'pty-1',
+      event: start,
+      hook: { eventType: 'tool-complete', toolName: 'Bash' },
+    });
+
+    const results = snapshotObserverFrames('pty-1').filter(
+      (f) => f.kind === 'tool_result',
+    );
+    expect(results[0]?.payload).toEqual({
+      callId: 'call-2',
+      toolName: 'Bash',
+      ok: true,
+    });
+  });
 });
 
 describe('session_exited emission', () => {

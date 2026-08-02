@@ -83,6 +83,19 @@ const READ_ONLY_TOOLS = new Set([
   'bg_list',
   'bg_wait',
   'hunks_analyze',
+  // Instrument panel (tools-instruments.ts): five gauges an orchestrator reads
+  // BEFORE deciding. Each handler is a pure projection of state another part of
+  // the product already computed — no install, no auth, no selection, no
+  // network probe, no write of any kind (not even a counter). Reviewed for the
+  // read-only boundary field by field: account labels/e-mails, MCP env/header
+  // values and argv, CLI binary paths and key previews are never shaped into a
+  // response. Gating them behind confirmation would make consulting the fuel
+  // gauge cost a human click on every routing decision.
+  'quota_status',
+  'model_ranking',
+  'mcp_servers',
+  'skills_inventory',
+  'cli_inventory',
 ]);
 
 /**

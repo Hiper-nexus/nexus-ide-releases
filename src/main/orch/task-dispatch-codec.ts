@@ -157,6 +157,21 @@ export const taskProviderRerouteDirectiveSchema = z
     exhaustedAdapterIds: z.array(taskDispatchIdSchema).min(1).max(32),
     reason: z.string().min(1).max(4_000),
     reroutedAt: z.number().int().nonnegative(),
+    /**
+     * Qual caminho main-owned emitiu ESTA diretiva. Não é autoridade nova — a
+     * diretiva continua sendo a única autoridade da substituição — é a
+     * proveniência dela: `live-guard` é o reply guard do waiver (hit de
+     * provider numa sessão viva) e `exhaustion-sweep` é o sweep de
+     * esgotamento físico do scheduler. Os dois gravam a MESMA coluna, então
+     * sem esta marca o guard confunde a diretiva do sweep com a sua própria e
+     * dispensa a task sem nunca ter consultado o roster.
+     *
+     * Opcional por compatibilidade: diretivas persistidas antes desta marca
+     * (0.19.42–0.21.0) não a têm e são tratadas como "não emitida pelo guard"
+     * — o lado seguro, que preserva a chance de substituição em vez de
+     * consumi-la. Quem grava é a transação do store, nunca o chamador.
+     */
+    emittedBy: z.enum(["live-guard", "exhaustion-sweep"]).optional(),
   })
   .strict();
 

@@ -10,6 +10,10 @@ import {
   type TaskStatus,
 } from '../../shared/orch-types';
 import { missionIntentContractSchema } from '../../shared/mission-intent';
+import {
+  OrphanSealedPlanError,
+  sealedPlanPresence,
+} from '../../shared/mission-plan-orphan';
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import {
@@ -46,6 +50,12 @@ const taskRowSchema = z
     title: z.string().min(1).max(1_024),
     detail: z.string().max(65_536),
     status: taskStatusSchema,
+    /**
+     * Não-NULL só em task DISPENSADA por provider indisponível (migração 032).
+     * Viaja junto do status para que `done` por dispensa nunca se confunda com
+     * `done` por trabalho em superfícies que leem apenas `tasks`.
+     */
+    provider_waiver_reason: z.string().min(1).max(2_000).nullable(),
     created_at: z.number().int().nonnegative(),
     updated_at: z.number().int().nonnegative(),
   })
@@ -569,17 +579,56 @@ export class ScopedTaskStore {
     return this.#getPlanReceiptFromDatabase(db, missionId, intentVersion) !== null;
   }
 
+  /**
+   * TODAS as versões da intenção com plano selado para esta missão, em ordem
+   * crescente. É o dado que separa "nunca teve plano" de "plano órfão".
+   */
+  listPlanIntentVersions(rawMissionId: string): number[] {
+    const missionId = entityIdSchema.parse(rawMissionId);
+    const rows = this.#binding.readDatabase().prepare(
+      `SELECT intent_version FROM mission_task_plans
+       WHERE mission_id = ? ORDER BY intent_version ASC`,
+    ).all(missionId) as Array<{ intent_version: number }>;
+    return rows.map((row) => row.intent_version);
+  }
+
+  /**
+   * Leitura de AUTORIDADE do plano selado. `null` significa exatamente uma
+   * coisa — a missão nunca selou plano nenhum. Se existe plano em OUTRA versão
+   * da intenção, isto falha fechado com `OrphanSealedPlanError` em vez de
+   * devolver `null`: era esse `null` ambíguo que fazia o roteador oferecer
+   * adapter fora do roster, a validação de merge rodar sem vínculo com o plano
+   * e o fluxo "avançar" sem autoridade.
+   *
+   * `listPlannedTasks` continua literal de propósito — a re-selagem precisa
+   * perguntar "esta versão já tem plano?" sem ser barrada pelo órfão.
+   */
   getPlanReceipt(
     rawMissionId: string,
     rawIntentVersion: number,
   ): TaskPlanReceipt | null {
     const missionId = entityIdSchema.parse(rawMissionId);
     const intentVersion = z.number().int().nonnegative().parse(rawIntentVersion);
-    return this.#getPlanReceiptFromDatabase(
+    const receipt = this.#getPlanReceiptFromDatabase(
       this.#binding.readDatabase(),
       missionId,
       intentVersion,
     );
+    if (receipt) return receipt;
+    const sealedIntentVersions = this.listPlanIntentVersions(missionId);
+    if (
+      sealedPlanPresence({
+        missionIntentVersion: intentVersion,
+        sealedIntentVersions,
+      }) === 'orphan'
+    ) {
+      throw new OrphanSealedPlanError({
+        missionId,
+        missionIntentVersion: intentVersion,
+        sealedIntentVersions,
+      });
+    }
+    return null;
   }
 
   getPlannedTask(rawTaskId: string): PlannedTaskRecord | null {
@@ -643,16 +692,16 @@ export class ScopedTaskStore {
     const rows = missionId
       ? db
           .prepare(
-            `SELECT id, mission_id, title, detail, status, created_at,
-                    updated_at
+            `SELECT id, mission_id, title, detail, status,
+                    provider_waiver_reason, created_at, updated_at
              FROM tasks WHERE mission_id = ?
              ORDER BY created_at DESC, id ASC`,
           )
           .all(missionId)
       : db
           .prepare(
-            `SELECT id, mission_id, title, detail, status, created_at,
-                    updated_at
+            `SELECT id, mission_id, title, detail, status,
+                    provider_waiver_reason, created_at, updated_at
              FROM tasks ORDER BY created_at DESC, id ASC`,
           )
           .all();
@@ -665,7 +714,8 @@ export class ScopedTaskStore {
   ): ScopedTaskRecord | null {
     const row = db
       .prepare(
-        `SELECT id, mission_id, title, detail, status, created_at, updated_at
+        `SELECT id, mission_id, title, detail, status,
+                provider_waiver_reason, created_at, updated_at
          FROM tasks WHERE id = ?`,
       )
       .get(id);
@@ -826,6 +876,9 @@ export class ScopedTaskStore {
       title: row.title,
       detail: row.detail,
       status: row.status as TaskStatus,
+      ...(row.provider_waiver_reason !== null
+        ? { providerWaiverReason: row.provider_waiver_reason }
+        : {}),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       ...this.#binding.coordinates,

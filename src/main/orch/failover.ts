@@ -475,11 +475,21 @@ function performSwitch(req: SwitchRequest): void {
     // raiz sem consumidores recebe waiver auditável (task done + sessão física
     // exata fechada + slot liberado); qualquer outra task segue o retry
     // limitado e a sessão problemática é encerrada pela identidade exata.
-    if (
-      attempt === 0 &&
-      authority.missionId &&
-      authority.workerIncarnationId
-    ) {
+    //
+    // Sobre o attempt: a política é consultada em TODOS os attempts, não só no
+    // hit original. Prender ao attempt 0 fazia uma auth revogada que só se
+    // provava sem rota no retry (dispatch ainda não vinculado no instante do
+    // hit, evidência que sumiu, política retry-required naquele momento)
+    // recuperar apenas pelo caminho lento: session-exit ×3 → blocked → sweep.
+    // Estender é seguro porque (a) `fireScheduledRetry` re-prova a identidade
+    // exata (isCurrentAuthority + resolvePaneDetails) antes de chegar aqui,
+    // então a consulta fala sempre da MESMA encarnação física; (b) os dois
+    // desfechos terminais — `rerouted` e `waived` — retornam sem re-agendar,
+    // encerrando a cadeia; (c) o desfecho `retry` cai na espera-pela-irmã de
+    // sempre, limitada por MAX_SCHEDULED_RETRIES; e (d) o orçamento de 1
+    // substituição por task é durável (a diretiva carimbada pelo guard), então
+    // re-consultar não vira reroute duplo nem waiver antecipado.
+    if (authority.missionId && authority.workerIncarnationId) {
       const outcome = handleMissionWorkerProviderNoRoute({
         scope: authority.scope,
         missionId: authority.missionId,
@@ -507,6 +517,10 @@ function performSwitch(req: SwitchRequest): void {
         return;
       }
       if (outcome === 'waived') {
+        // Emitido mesmo em retry agendado: a regra de "retry falha em
+        // silêncio" vale para o não-desfecho (segue esperando); um waiver é
+        // fato terminal novo — a task foi dispensada — e o operador precisa
+        // vê-lo no attempt em que aconteceu.
         console.info(
           '[failover]',
           JSON.stringify({

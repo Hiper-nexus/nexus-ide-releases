@@ -15,9 +15,9 @@ import {
   assertSha,
   cloneWorktreeRecord as cloneRecord,
   digest,
+  exclusiveOwnershipOverlap as exclusiveOverlap,
   hasOwnershipOverlap as hasOverlap,
   normalizeOwnership,
-  ownershipOverlap as overlap,
   sameValues,
   worktreeTaskKey,
   type CreateWorktreeInput,
@@ -128,11 +128,18 @@ export class WorktreeManager {
   /**
    * Throws when `candidate` overlaps another active record. Dependency links
    * in either direction never conflict.
+   *
+   * The scope here is the whole checkout, so this is the fence that decides
+   * whether two MISSIONS can run at once. It measures exclusivity, not
+   * permission: a coverage permit (`OWNERSHIP_COVERAGE_DOMAIN`) contributes no
+   * file exclusivity, otherwise every guided mission would veto every other
+   * one over an inventory superset neither of them wrote.
    */
   #assertNoOwnershipConflict(
     records: readonly WorktreeRecord[],
     candidate: {
       readonly taskKey: string;
+      readonly missionId: string;
       readonly ownership: WorktreeOwnership;
       readonly dependencies: readonly string[];
     },
@@ -142,9 +149,16 @@ export class WorktreeManager {
       if (!ACTIVE_STATUSES.has(record.status)) continue;
       if (candidate.dependencies.includes(record.taskKey)) continue;
       if (record.dependencies.includes(candidate.taskKey)) continue;
-      const claimOverlap = overlap(candidate.ownership, record.ownership);
+      const claimOverlap = exclusiveOverlap(
+        candidate.ownership,
+        record.ownership,
+        { sameMission: record.missionId === candidate.missionId },
+      );
       if (hasOverlap(claimOverlap)) {
-        throw new OwnershipOverlapError(record.taskKey, claimOverlap);
+        throw new OwnershipOverlapError(record.taskKey, claimOverlap, {
+          missionId: record.missionId,
+          taskId: record.taskId,
+        });
       }
     }
   }
@@ -337,6 +351,7 @@ export class WorktreeManager {
           // promoting it back to ready.
           this.#assertNoOwnershipConflict(records, {
             taskKey,
+            missionId,
             ownership,
             dependencies,
           });
@@ -378,6 +393,7 @@ export class WorktreeManager {
 
       this.#assertNoOwnershipConflict(records, {
         taskKey,
+        missionId,
         ownership,
         dependencies,
       });

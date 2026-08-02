@@ -304,6 +304,79 @@ describe('mcp-server governed CLI profile wiring', () => {
     decoration.onSpawnFailed?.();
   });
 
+  it('delivers only the granted skill to the real Claude profile when no overlay is taken', () => {
+    const root = tempRoot();
+    const home = path.join(root, 'home');
+    const workspace = path.join(root, 'workspace');
+    fs.mkdirSync(workspace, { recursive: true });
+    const cwd = fs.realpathSync(workspace);
+    vi.stubEnv('HOME', home);
+    write(
+      path.join(home, '.agents', 'skills', 'allowed', 'SKILL.md'),
+      '# allowed',
+    );
+    write(
+      path.join(home, '.agents', 'skills', 'blocked', 'SKILL.md'),
+      '# blocked',
+    );
+
+    const decoration = prepareAgentSpawnDecoration(
+      adapter('claude'),
+      { kind: 'cli-agent', cols: 80, rows: 24 },
+      authority(cwd, true),
+      undefined,
+    );
+    if (!decoration) throw new Error('expected native Claude decoration');
+
+    // Operator-choice keeps the real HOME: it is the only namespace this
+    // worker reads, so the grant has to land there or it reaches nothing.
+    expect(decoration.env.HOME).toBeUndefined();
+    expect(
+      fs.existsSync(path.join(home, '.claude', 'skills', 'allowed', 'SKILL.md')),
+    ).toBe(true);
+    expect(fs.existsSync(path.join(home, '.claude', 'skills', 'blocked'))).toBe(
+      false,
+    );
+
+    decoration.onSpawnFailed?.();
+  });
+
+  it('keeps a granted Claude skill out of the real profile once an overlay exists', () => {
+    homePolicyDeps.getOrchSettings.mockReturnValue({
+      squadCliPolicy: 'governed',
+    });
+    const root = tempRoot();
+    const home = path.join(root, 'home');
+    const workspace = path.join(root, 'workspace');
+    fs.mkdirSync(workspace, { recursive: true });
+    const cwd = fs.realpathSync(workspace);
+    vi.stubEnv('HOME', home);
+    write(
+      path.join(home, '.agents', 'skills', 'allowed', 'SKILL.md'),
+      '# allowed',
+    );
+
+    const decoration = prepareAgentSpawnDecoration(
+      adapter('claude'),
+      { kind: 'cli-agent', cols: 80, rows: 24 },
+      authority(cwd, true),
+      undefined,
+    );
+    if (!decoration) throw new Error('expected native Claude decoration');
+
+    expect(decoration.env.HOME).toBeTruthy();
+    expect(
+      fs.existsSync(
+        path.join(decoration.env.HOME, '.claude', 'skills', 'allowed'),
+      ),
+    ).toBe(true);
+    expect(fs.existsSync(path.join(home, '.claude', 'skills', 'allowed'))).toBe(
+      false,
+    );
+
+    decoration.onSpawnFailed?.();
+  });
+
   it('keeps native external MCPs available to direct user panes', () => {
     const root = tempRoot();
     const home = path.join(root, 'home');

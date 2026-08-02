@@ -39,6 +39,7 @@ import {
 } from "../adapters/adapter-registry";
 import { resolveGovernedCliProfile } from "../orch/governed-cli-profile";
 import {
+  deliverGrantedSkillsToProviderHome,
   prepareCodexGovernedSession,
   type CodexGovernedProcessSandbox,
 } from "../orch/cli-mcp-session-config";
@@ -1344,10 +1345,11 @@ export function spawnAgentSession(
     const value = overrides.keyEnv?.[homeKey];
     if (value) env[homeKey] = value;
   }
+  const gatedSpawn = requiresSpawnGate(authority.context);
   const governedProfile = Boolean(
     decoration &&
       executionPolicy.preparePrivateCodexProfile &&
-      (requiresSpawnGate(authority.context) ||
+      (gatedSpawn ||
         missionBoundWritableWorker ||
         petStudioWritableOrchestrator),
   );
@@ -1388,6 +1390,42 @@ export function spawnAgentSession(
     } catch (error) {
       decoration?.onSpawnFailed?.();
       throw error;
+    }
+  } else if (
+    decoration &&
+    adapter.id === "codex" &&
+    gatedSpawn &&
+    executionPolicy.isFrictionless
+  ) {
+    // O autopiloto não prepara o CODEX_HOME privado, então o mirror governado
+    // nunca roda e o Codex lê o perfil real: a skill que a política CONCEDEU
+    // não chegava fisicamente a lugar nenhum. Materializa só os nomes
+    // concedidos no perfil que o processo realmente lê — a autoridade continua
+    // sendo decidida pela política de skills, aqui só a entrega é fechada.
+    // `isFrictionless` é falso em todo o modo endurecido (e no Pet Studio):
+    // essas lanes seguem entregando apenas dentro do overlay privado.
+    try {
+      const token = decoration.env.NEXUS_MCP_TOKEN;
+      if (!token) {
+        throw new Error("gated CLI spawn is missing its main-owned bearer");
+      }
+      deliverGrantedSkillsToProviderHome(
+        "codex",
+        os.homedir(),
+        path.join(
+          env.CODEX_HOME ?? path.join(os.homedir(), ".codex"),
+          "skills",
+        ),
+        resolveGovernedCliProfile(token).allowedSkills,
+      );
+    } catch (error) {
+      // Entrega de skill é disponibilidade, não confinamento: um perfil que não
+      // aceita escrita degrada a capacidade do agente, não a autoridade dele.
+      // Falha visível em vez de missão morta — e nunca silenciosa.
+      console.warn(
+        "[pty-manager] failed to deliver granted skills to the Codex profile:",
+        error,
+      );
     }
   }
   // Adapter-enforced argv is included before the autonomous policy. The final

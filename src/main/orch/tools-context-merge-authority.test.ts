@@ -6,6 +6,7 @@ import { testProjectScope } from './__tests__/scope-fixture';
 const mocks = vi.hoisted(() => ({
   mission: null as any,
   hasPlan: false,
+  planIntentVersions: [] as number[],
   pane: null as any,
   live: null as any,
   gate: null as any,
@@ -24,6 +25,7 @@ vi.mock('./project-domain-store-registry', () => ({
     missions: { get: () => mocks.mission },
     tasks: {
       hasPlan: () => mocks.hasPlan,
+      listPlanIntentVersions: () => mocks.planIntentVersions,
       update: mocks.taskUpdate,
     },
     missionPanes: { findByPaneId: () => mocks.pane },
@@ -156,6 +158,7 @@ function installQueueAttempt(
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.hasPlan = false;
+  mocks.planIntentVersions = [];
   const contract = compileIntentContract({
     goal: 'Integrar somente sob a autoridade aprovada',
     intentVersion: 2,
@@ -244,5 +247,19 @@ describe('manual merge lifecycle authority', () => {
     }, ctx)).rejects.toThrow(/exclusivo do motor Nexus/i);
     expect(mocks.enqueue).not.toHaveBeenCalled();
     expect(mocks.retry).not.toHaveBeenCalled();
+  });
+
+  it('plano ÓRFÃO mantém o merge manual fora da autoridade do LLM', async () => {
+    // Plano selado na versão 1, missão na versão corrente: `hasPlan` responde
+    // false e o merge manual voltava a ser permitido — sem vínculo com plano
+    // nenhum. Órfão continua sendo plano.
+    mocks.hasPlan = false;
+    mocks.planIntentVersions = [1];
+
+    await expect(tool('nexus_merge_task').handler({
+      missionId: 'mission-merge',
+      taskId: 'task-a',
+    }, ctx)).rejects.toThrow(/exclusivo do motor Nexus/i);
+    expect(mocks.enqueue).not.toHaveBeenCalled();
   });
 });

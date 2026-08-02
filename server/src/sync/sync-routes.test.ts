@@ -2,7 +2,7 @@ import express from 'express';
 import { PGlite } from '@electric-sql/pglite';
 import { drizzle } from 'drizzle-orm/pglite';
 import request from 'supertest';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, onTestFinished } from 'vitest';
 import { issueTokens } from '../auth/session-service';
 import type { Db } from '../db/client';
 import { accounts, CREATE_TABLES_SQL } from '../db/schema';
@@ -33,6 +33,13 @@ async function setup(options: {
   };
 } = {}) {
   const client = new PGlite();
+  // PGlite sobe um PostgreSQL WASM por fixture. Sem fechar, cada teste do
+  // arquivo deixa mais um runtime residente e a rodada inteira disputa
+  // CPU/memória com os demais workers. Fechar ao fim do teste mantém
+  // exatamente um vivo por vez.
+  onTestFinished(async () => {
+    await client.close();
+  });
   await client.exec(CREATE_TABLES_SQL);
   const db = drizzle(client, { schema }) as unknown as Db;
   const [account] = await db

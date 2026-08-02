@@ -906,6 +906,17 @@ export async function dispatchMissionSchedulerTask(
       // Re-anchor BEFORE this worker session starts: the advisor must
       // observe (and seal a receipt against) the tree that contains every
       // integration completed since the claim-time base was frozen.
+      //
+      // Convergence, not authority — and deliberately so. This call is not
+      // serialized against sibling re-anchors, and when `useTaskWorktree` is
+      // false (governed policy + read_only) there is no worktree to re-anchor
+      // at all: `executionRoot` is the operator checkout, which the lane can
+      // only read (provider read-only profile or the Nexus kernel sandbox).
+      // What guarantees that concurrent read_only lanes seal the same tree is
+      // `assertReadOnlyLaneObservationCurrent` at the handoff boundary, which
+      // refuses any receipt whose `worktreeHeadSha` is not exactly the
+      // mission's latest `worktree_integrated` reference. A lane that drifted
+      // is refused and requeued; nothing inconsistent is ever persisted.
       requireWorktreeRuntimeRegistry().reanchorReadyWorktreeToIntegrationHead(
         scope,
         missionId,

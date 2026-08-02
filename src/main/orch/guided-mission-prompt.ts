@@ -1,8 +1,18 @@
 import type { Mission, SquadAgent } from "../../shared/orch-types";
+import type { WorkKind } from "../../shared/mission-work-kind";
 import { assertPromotedPlanSnapshot } from "./plan-promotion-authority";
 import { supportsMechanicallyReadOnlyCli } from "./mission-scheduler-plan";
 import { supportsAdvisoryParticipationCli } from "../../shared/mission-advisory";
 import { isGuidedUiMissionObjective } from "./guided-squad-skills";
+import {
+  DESIGN_SYSTEM_CANDIDATE_PATHS,
+  resolveWorkspaceDesignContract,
+  type WorkspaceDesignContract,
+} from "./design-system-reader";
+import {
+  DESIGN_SYSTEM_BEGIN,
+  DESIGN_SYSTEM_END,
+} from "./design-context-format";
 
 export const GUIDED_SEALED_TASK_DETAIL_MAX_CHARS = 65_536;
 
@@ -88,7 +98,171 @@ function guidedUiReviewArtifactInstructions(mission: Mission): string[] {
   ];
 }
 
-export function buildGuidedMissionTaskDetail(mission: Mission): string {
+export interface GuidedWorkKindContractOptions {
+  readonly workKind?: WorkKind;
+  /** No reproduction body was sealed: the executor owns that proof. */
+  readonly reproductionInContractOnly?: boolean;
+  /** No regression body was sealed: the gate owns that verification. */
+  readonly regressionInContractOnly?: boolean;
+  /**
+   * Main workspace root used to resolve the design contract at PLAN time.
+   *
+   * Sealing the bytes (rather than telling the worker to go read a file) is
+   * deliberate: the worker runs in an isolated worktree built from a commit, so
+   * a contract the bootstrap autopilot just materialized under `.context/` may
+   * not physically exist there. Sealing also binds the executor and the gate to
+   * the exact revision the plan was approved against.
+   */
+  readonly workspaceRoot?: string;
+  /** Test seam; production always resolves through the workspace reader. */
+  readonly resolveDesignContract?: (
+    rootDir?: string,
+  ) => WorkspaceDesignContract | null;
+}
+
+/** Never let an unreadable workspace turn prompt assembly into a plan failure. */
+function guidedDesignContract(
+  options: GuidedWorkKindContractOptions,
+): WorkspaceDesignContract | null {
+  const resolve =
+    options.resolveDesignContract ?? resolveWorkspaceDesignContract;
+  try {
+    return resolve(options.workspaceRoot);
+  } catch {
+    return null;
+  }
+}
+
+const GUIDED_DESIGN_CANDIDATE_LIST = DESIGN_SYSTEM_CANDIDATE_PATHS.join(" ou ");
+
+/**
+ * The blocked reason stops being a bare token the model may or may not echo:
+ * the handoff body is templated with the surface and the exact paths Nexus
+ * searched, so a human reading `design_contract_missing` learns what to create
+ * and where. This adds no authority — it only makes the existing one legible.
+ */
+function guidedDesignContractMissingHandoff(goal: string): string {
+  const surface = goal.replace(/\s+/g, " ").trim().slice(0, 240);
+  return (
+    "O handoff blocked precisa carregar, textualmente: " +
+    `reason=design_contract_missing; superficie=${surface}; ` +
+    `caminho_esperado=${DESIGN_SYSTEM_CANDIDATE_PATHS.join(" | ")}`
+  );
+}
+
+/** The contract itself, fenced as trusted, with the path that answered named. */
+function guidedDesignContractBlock(
+  contract: WorkspaceDesignContract,
+): readonly string[] {
+  return [
+    `O Nexus resolveu o contrato de design vigente em \`${contract.path}\` e entrega o conteúdo inteiro abaixo. Ele é a autoridade desta superfície: tokens, tipografia, escala de espaçamento, estados e referência visual saem dele, não do seu default.`,
+    DESIGN_SYSTEM_BEGIN,
+    contract.content.trimEnd(),
+    DESIGN_SYSTEM_END,
+  ];
+}
+
+/**
+ * Work-kind clauses for the single writer.
+ *
+ * These are the ONLY place a work kind changes what the executor is asked to
+ * deliver. Keeping them here (and not in the planner) means the graph module
+ * decides shape and this module decides obligation — one reason each.
+ */
+function guidedWorkKindImplementationContract(
+  options: GuidedWorkKindContractOptions,
+  goal: string,
+): readonly string[] {
+  if (options.workKind === "bug") {
+    return [
+      "",
+      "Contrato de correção de defeito:",
+      options.reproductionInContractOnly
+        ? "1. Nenhum agente de reprodução foi selado nesta missão: reproduzir o defeito é obrigação sua. Registre o comando exato e a saída observada antes de alterar qualquer arquivo."
+        : "1. Confirme a reprodução entregue pelo agente de reprodução antes de alterar qualquer arquivo; se não conseguir reproduzir, envie handoff blocked em vez de adivinhar a causa.",
+      "2. Escreva a verificação durável de regressão ANTES da correção. Ela precisa FALHAR no HEAD atual: cole no handoff o comando e a saída dessa falha.",
+      "3. Corrija a causa-raiz e prove que exatamente a MESMA verificação passa depois. Cole no handoff a saída verde.",
+      "4. Um teste que passa nos dois HEADs não é regressão: é decoração. Nunca declare sucesso com ele.",
+    ];
+  }
+  if (options.workKind === "doc") {
+    return [
+      "",
+      "Contrato de entrega de documentação:",
+      "O artefato desta missão é o documento, não código. Sua ownership contém somente caminhos de documentação e o Nexus rejeita fisicamente qualquer diff fora dela.",
+      "Não altere código, configuração, testes ou build para 'apoiar' o documento. Se o documento depender de uma mudança de código, descreva-a e envie handoff blocked.",
+      "Não invente API nem comportamento: cada afirmação técnica precisa apontar para arquivo:linha real que você leu no workspace.",
+    ];
+  }
+  if (options.workKind === "visual") {
+    const designContract = guidedDesignContract(options);
+    return [
+      "",
+      "Contrato de design obrigatório antes do primeiro CSS:",
+      ...(designContract
+        ? [
+            "Antes de escrever a primeira linha de estilo, CSS ou token, leia o contrato de design vigente desta superfície — você não precisa procurá-lo.",
+            ...guidedDesignContractBlock(designContract),
+            "Não crie tokens paralelos nem restyle além do que ele autoriza. Se ele não cobrir algo que a superfície exige, diga isso no handoff em vez de improvisar.",
+          ]
+        : [
+            `Antes de escrever a primeira linha de estilo, CSS ou token, o contrato de design vigente desta superfície precisa existir. O Nexus procurou em ${GUIDED_DESIGN_CANDIDATE_LIST} e não encontrou nenhum.`,
+            "NÃO invente um contrato e NÃO comece pelo CSS: envie handoff blocked com o motivo `design_contract_missing`.",
+            guidedDesignContractMissingHandoff(goal),
+          ]),
+      "Visual genérico de IA (sparkles, gradiente roxo, glassmorphism, grid de cards idênticos) é rejeição automática na revisão.",
+    ];
+  }
+  return [];
+}
+
+function guidedWorkKindGateContract(
+  options: GuidedWorkKindContractOptions,
+  goal: string,
+): readonly string[] {
+  if (options.workKind === "bug") {
+    return [
+      "",
+      "Contrato de correção de defeito (gate):",
+      "Exija a prova de regressão: a verificação durável precisa falhar no HEAD anterior à correção e passar no HEAD integrado. Rode-a você mesmo no HEAD atual.",
+      options.regressionInContractOnly
+        ? "Nenhum agente de regressão foi selado nesta missão: conferir os dois lados dessa prova é obrigação sua."
+        : "Confira também a evidência do agente de regressão; divergência entre a evidência dele e a sua é defeito.",
+      "Se a verificação não existir, ou passar nos dois HEADs, o defeito não foi provado corrigido: bloqueie a entrega.",
+    ];
+  }
+  if (options.workKind === "doc") {
+    return [
+      "",
+      "Contrato de entrega de documentação (gate):",
+      "O artefato é o documento. Não exija build, typecheck ou suíte de testes de código como condição de aceite.",
+      "Verifique o que é verificável no documento: cada afirmação técnica aponta para arquivo:linha real, os comandos citados existem, e nenhum arquivo de código foi tocado.",
+    ];
+  }
+  if (options.workKind === "visual") {
+    const designContract = guidedDesignContract(options);
+    return [
+      "",
+      "Contrato de design (gate):",
+      ...(designContract
+        ? [
+            ...guidedDesignContractBlock(designContract),
+            `Se houver CSS, tokens ou estilo no diff, confira-o contra \`${designContract.path}\` — é exatamente o contrato que o executor recebeu. Divergência entre o diff e esse contrato é defeito: bloqueie com a evidência.`,
+          ]
+        : [
+            `O Nexus procurou o contrato de design em ${GUIDED_DESIGN_CANDIDATE_LIST} e não encontrou nenhum.`,
+            "Estilo entregue sem contrato de design vigente é defeito: bloqueie com o motivo `design_contract_missing`.",
+            guidedDesignContractMissingHandoff(goal),
+          ]),
+    ];
+  }
+  return [];
+}
+
+export function buildGuidedMissionTaskDetail(
+  mission: Mission,
+  options: GuidedWorkKindContractOptions = {},
+): string {
   const contract = mission.intentContract;
   if (!contract) {
     throw new Error(
@@ -110,10 +284,73 @@ export function buildGuidedMissionTaskDetail(mission: Mission): string {
     ),
     ...(promotedPlanContext ? ["", promotedPlanContext] : []),
     ...uiReviewArtifact,
+    ...guidedWorkKindImplementationContract(options, contract.goal),
     "",
     "Entregue a menor solução completa e segura. Rode os checks relevantes e não alegue sucesso sem evidência.",
   ].join("\n");
   return detail;
+}
+
+/** Read-only stage that must prove the defect BEFORE the single writer runs. */
+export function guidedReproductionDetail(
+  mission: Mission,
+  agent: SquadAgent,
+): string {
+  const contract = mission.intentContract;
+  if (!contract) {
+    throw new Error(
+      "guided_plan_contract_missing: missão sem contrato aprovado",
+    );
+  }
+  return [
+    `Atue como agente de reprodução (${agent.agentName}) ANTES da correção.`,
+    "Você está sob confinamento mecânico read-only do Nexus: não edite arquivos e não crie commit.",
+    "Sua entrega é a prova do defeito, não a correção:",
+    "1. Localize o comportamento defeituoso no HEAD atual e registre o caminho de código exato (arquivo:linha) onde ele nasce.",
+    "2. Entregue a RECEITA DE REPRODUÇÃO: comando exato, passos, entrada e saída observada versus a esperada.",
+    "3. Proponha a verificação durável de regressão que o executor deve escrever, e explique por que ela FALHA no HEAD atual.",
+    "4. Se o defeito não reproduzir, diga isso explicitamente com a evidência: uma correção sem defeito reproduzido é chute.",
+    "",
+    "Objetivo aprovado:",
+    contract.goal,
+    "",
+    "Critérios de aceite:",
+    ...contract.acceptanceCriteria.map(
+      (criterion, index) => `${index + 1}. ${criterion}`,
+    ),
+  ].join("\n");
+}
+
+/** Read-only stage that verifies the durable regression check after the fix. */
+export function guidedRegressionDetail(
+  mission: Mission,
+  agent: SquadAgent,
+): string {
+  const contract = mission.intentContract;
+  if (!contract) {
+    throw new Error(
+      "guided_plan_contract_missing: missão sem contrato aprovado",
+    );
+  }
+  return [
+    `Atue como agente de regressão (${agent.agentName}) depois da integração da correção.`,
+    "Você está sob confinamento mecânico read-only do Nexus: não edite arquivos e não crie commit.",
+    "Critério de aceite desta tarefa: o teste de regressão FALHA no HEAD anterior à correção e PASSA no HEAD integrado.",
+    "1. Identifique no diff integrado a verificação durável que cobre o defeito.",
+    "2. Rode-a no HEAD atual e cole a saída verde.",
+    "3. Prove o outro lado: mostre por que ela falharia sem a correção (a saída da falha registrada pelo executor, o trecho corrigido que ela exercita, ou uma execução equivalente que não escreva no repositório).",
+    "4. Se a verificação não existir, ou se você não conseguir demonstrar que ela distinguiria os dois HEADs, envie handoff blocked: o defeito não foi provado corrigido.",
+    "",
+    "Objetivo aprovado:",
+    contract.goal,
+    "",
+    ...guidedVerificationAuthorityBoundary("revisão"),
+    "",
+    "Critérios aprovados:",
+    ...contract.acceptanceCriteria.map(
+      (criterion, index) => `${index + 1}. ${criterion}`,
+    ),
+  ].join("\n");
 }
 
 export function guidedFanoutPlannerId(
@@ -239,7 +476,7 @@ export function guidedIndependentReviewDetail(
 
 export function guidedQualityGateDetail(
   mission: Mission,
-  options: { readonly readOnly?: boolean } = {},
+  options: { readonly readOnly?: boolean } & GuidedWorkKindContractOptions = {},
 ): string {
   const contract = mission.intentContract;
   if (!contract) {
@@ -262,6 +499,7 @@ export function guidedQualityGateDetail(
       ...contract.acceptanceCriteria.map(
         (criterion, index) => `${index + 1}. ${criterion}`,
       ),
+      ...guidedWorkKindGateContract(options, contract.goal),
       "",
       "Se encontrar qualquer defeito, não o corrija: envie handoff blocked com a evidência exata para o Nexus impedir a entrega.",
       "Se todas as verificações observáveis sob sua autoridade estiverem verdes, envie handoff success descrevendo exatamente os checks executados e as evidências observadas.",
@@ -282,6 +520,7 @@ export function guidedQualityGateDetail(
       (criterion, index) => `${index + 1}. ${criterion}`,
     ),
     ...guidedUiReviewArtifactInstructions(mission),
+    ...guidedWorkKindGateContract(options, contract.goal),
     "",
     "Se encontrar defeito, corrija-o no mesmo worktree e acrescente ou fortaleça uma verificação durável ligada aos critérios (teste de regressão/aceite, assertion de acessibilidade, validação de segurança ou automação equivalente). Faça commit apenas dessa correção verificável.",
     "Se todas as verificações observáveis sob sua autoridade estiverem verdes e nenhuma correção for necessária, não altere arquivos e não crie commit: envie handoff success descrevendo exatamente os checks executados. O Nexus provará fisicamente que HEAD e diff permaneceram intactos.",

@@ -748,6 +748,64 @@ BEGIN
 END;
 `;
 
+/**
+ * Uma task dispensada por provider indisponível grava `status = 'done'` na
+ * MESMA coluna de uma task entregue. O motivo existia só em
+ * `task_dispatch_queue.integration_receipt_json`, então toda superfície que lê
+ * `tasks` sem join (lista de tasks do renderer, registry de worktree,
+ * leituras de status do workflow) mostrava trabalho que ninguém fez como
+ * entregue — a origem da queixa de "critérios não seguidos".
+ *
+ * A marca vive aqui para ser legível SEM join, e é escrita exclusivamente pela
+ * transação do waiver (`completeSealedAdvisoryProviderWaiver`), na mesma
+ * instrução que move a task para `done`. NULL = a task não foi dispensada.
+ *
+ * Não há caminho de limpeza porque não há caminho de volta: a task dispensada
+ * pertence a um plano selado (TaskStore.update recusa planned tasks) e todas
+ * as transições de reabertura do dispatch exigem status running/failed/pending
+ * — `done` nunca volta dentro da mesma intentVersion.
+ */
+const TASK_PROVIDER_WAIVER_VISIBILITY_SCHEMA = `
+ALTER TABLE tasks ADD COLUMN provider_waiver_reason TEXT
+  CHECK (
+    provider_waiver_reason IS NULL
+    OR (length(provider_waiver_reason) BETWEEN 1 AND 2000)
+  );
+`;
+
+/**
+ * A cadeia de receipts (029/031) declara a intenção "prev_receipt_hash só
+ * existe em elos de posição >= 2" num CHECK — mas em SQLite um CHECK que
+ * avalia NULL NÃO reprova a linha. Com `chain_seq` NULL a expressão
+ * `chain_seq >= 2` vira NULL e a linha passa mesmo carregando um prev hash,
+ * ou seja, exatamente o caso que o CHECK queria proibir.
+ *
+ * O reforço vem como trigger e não como CHECK endurecido de propósito: SQLite
+ * não altera CHECK sem reconstruir a tabela, e reconstruir `handoff_mcp_receipts`
+ * (copiando todos os receipts de todas as missões de todos os usuários) é um
+ * risco desproporcional para fechar uma brecha de tampering. O trigger cobre o
+ * único vetor restante — INSERT —, já que qualquer UPDATE na tabela é abortado
+ * pelo trigger de imutabilidade.
+ *
+ * DELETE continua deliberadamente sem trigger: `handoff_mcp_receipts` tem
+ * ON DELETE CASCADE de `handoffs` e de `missions`, e apagar uma missão é
+ * operação suportada (MissionStore.remove/removeIfUnchanged). Um ABORT geral
+ * em DELETE tornaria impossível remover qualquer missão com receipts, e SQLite
+ * não permite distinguir a exclusão em cascata da direta dentro do trigger.
+ * A cadeia é por missão: apagar a missão apaga a cadeia inteira, o que é
+ * remoção legítima, não adulteração. Deleção NO MEIO da cadeia continua
+ * detectável por `verifyChain` (a contiguidade de `chain_seq` quebra); só a
+ * truncagem do rabo é silenciosa — e essa é a limitação assumida aqui.
+ */
+const HANDOFF_RECEIPT_CHAIN_LINK_GUARD_SCHEMA = `
+CREATE TRIGGER handoff_mcp_receipt_chain_link_guard
+BEFORE INSERT ON handoff_mcp_receipts
+WHEN NEW.prev_receipt_hash IS NOT NULL AND NEW.chain_seq IS NULL
+BEGIN
+  SELECT RAISE(ABORT, 'handoff receipt chain link requires its chain_seq');
+END;
+`;
+
 export const ORCHESTRATION_PROJECT_MIGRATION_SPECS: readonly ProjectMigrationSpec[] =
   [
     {
@@ -836,6 +894,15 @@ export const ORCHESTRATION_PROJECT_MIGRATION_SPECS: readonly ProjectMigrationSpe
     },
     {
       id: '029-handoff-receipt-chain',
+      // CONGELADO. `appVersion` entra no checksum da migração E é comparado
+      // linha a linha contra `__nexus_schema_migrations.app_version`
+      // (validateAppliedHistory): corrigir este '0.20.4' para a release em que
+      // a migração de fato saiu (0.21.0, já publicada com ela) derrubaria todo
+      // banco existente em migration_history_invalid + checksum_mismatch, ou
+      // seja, runtime em modo somente-leitura seguro para quem já migrou —
+      // confirmado num banco local (app_version '0.20.4', applied_by '0.20.3').
+      // O campo documenta a versão de autoria e é imutável depois do primeiro
+      // usuário; migrações NOVAS devem nascer com a versão correta.
       schemaVersion: 29,
       appVersion: '0.20.4',
       sql: HANDOFF_RECEIPT_CHAIN_SCHEMA,
@@ -851,5 +918,17 @@ export const ORCHESTRATION_PROJECT_MIGRATION_SPECS: readonly ProjectMigrationSpe
       schemaVersion: 31,
       appVersion: '0.21.0',
       sql: ACP_STDIO_PROVENANCE_SCHEMA,
+    },
+    {
+      id: '032-task-provider-waiver-visibility',
+      schemaVersion: 32,
+      appVersion: '0.21.0',
+      sql: TASK_PROVIDER_WAIVER_VISIBILITY_SCHEMA,
+    },
+    {
+      id: '033-handoff-receipt-chain-link-guard',
+      schemaVersion: 33,
+      appVersion: '0.21.0',
+      sql: HANDOFF_RECEIPT_CHAIN_LINK_GUARD_SCHEMA,
     },
   ];

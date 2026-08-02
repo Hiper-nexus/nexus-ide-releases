@@ -35,11 +35,13 @@
 }
 
 :root {
-  /* Contrato visual do Nexus: sinal operacional cyan, superfícies neutras e
-     hierarquia feita por espaço/contraste. A cor só aparece quando existe
-     estado ou ação; não usamos neon como textura de fundo. */
-  --bg: #0a0a0b;
-  --bg-elevated: #151517;
+  /* Hallmark · theme: nexus-dark-premium · accent: indigo ~4% · genre: modern-minimal(dark)
+     Contrato visual do Nexus (0.21): superfícies neutras EM CAMADAS, hierarquia
+     por espaço e contraste, e sinal operacional índigo — o ciano-neon com glow
+     era o visual-padrão de toda ferramenta de IA e saiu do default. A cor só
+     aparece quando existe estado ou ação; nunca como textura de fundo. */
+  --bg: #0b0b0c;
+  --bg-elevated: #141416;
   --bg-bar: #101012;
   --border: rgb(255 255 255 / .07);
   --border-strong: rgb(255 255 255 / .14);
@@ -47,17 +49,25 @@
   --text: #fafafa;
   --text-dim: #a1a1a1;
   --text-faint: #8f8f8f;
-  /* Acento de ação/vida definido em DESIGN.md. */
-  --accent: #3dd9ff;
-  --accent-ink: #051019;
+  /* Acento de ação/vida. Índigo: presença sem estridência, usado em menos de
+     5% da tela (indicador ativo, foco, um link). Tinta escura sobre ele por
+     contraste (~7:1); branco daria ~3:1. */
+  --accent: #7c86ff;
+  --accent-ink: #0b0b0c;
   --accent-soft: color-mix(in srgb, var(--accent) 15%, transparent);
   --accent-strong: color-mix(in srgb, var(--accent) 30%, transparent);
   --accent-hover: color-mix(in srgb, var(--accent) 82%, #ffffff);
-  --accent-glow: color-mix(in srgb, var(--accent) 28%, transparent);
-  --btn-primary: var(--accent);
-  --btn-primary-ink: var(--accent-ink);
-  --btn-primary-hover: color-mix(in srgb, var(--accent) 84%, #ffffff);
-  --danger: #ff7a90;
+  /* Glow MORTO no default (0.21): halo de neon era a assinatura do visual
+     genérico de ferramenta de IA. Superfícies ganham profundidade por camada e
+     sombra, não por brilho. */
+  --accent-glow: transparent;
+  /* CTA primário BRANCO sobre escuro — a assinatura da escola dark premium.
+     Deliberadamente NÃO deriva do acento: a ação principal é a coisa mais
+     clara da tela, e o acento fica reservado para estado. */
+  --btn-primary: #fafafa;
+  --btn-primary-ink: #0b0b0c;
+  --btn-primary-hover: #ffffff;
+  --danger: #f85149;
   /* Acento do DESIGN MODE (segunda voz deliberada, azul-ferramenta): fora da
      doutrina de sinal operacional de propósito — marca "modo de edição". */
   --design: #2f6ae0;
@@ -65,8 +75,10 @@
   --scrollbar-track: rgba(4, 6, 10, 0.44);
   --scrollbar-thumb: rgba(255, 255, 255, 0.22);
   --scrollbar-thumb-hover: color-mix(in srgb, var(--accent) 62%, transparent);
-  /* Grid de pixels MORTO por padrão (0.21): linhas transparentes — ops-board,
-     settings e launch mantêm os gradientes (layout intacto), sem o desenho. */
+  /* Grid de pixels MORTO no DEFAULT (0.21): linhas transparentes — ops-board,
+     settings e launch mantêm os gradientes (layout intacto), sem o desenho.
+     O modo pixel é escolha explícita do usuário e recupera o grid abaixo, em
+     [data-theme-pixel='on']. */
   --pixel-grid: transparent;
   --radius: 10px;
   --bar-height: 44px;
@@ -166,6 +178,21 @@
   --btn-primary-hover: #23262e;
 }
 
+/* O terceiro nível de texto é calculado POR TEMA: #8f8f8f só atinge AA sobre
+   as superfícies do Nexus dark. Sobre o elevated do Dracula (#2f3242) cai a
+   3.92:1 e sobre o do Solarized (#073642) a 4.02:1 — rótulo de seção de 11px
+   abaixo do mínimo. Estes valores ficam ≥4.5:1 sobre --bg E --bg-elevated do
+   próprio tema, e um degrau abaixo de --text-dim (a hierarquia continua). */
+[data-theme='dracula'] {
+  /* 5.32:1 sobre #282a36, 4.74:1 sobre #2f3242. */
+  --text-faint: #979dba;
+}
+
+[data-theme='solarized-dark'] {
+  /* 5.49:1 sobre #002b36, 4.75:1 sobre #073642. */
+  --text-faint: #8ca0a3;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -223,6 +250,11 @@ body {
    cantos retos em toda a escala de raio, fonte bitmap como UI e sem antialias.
    Fora deste bloco os tokens default continuam intactos. */
 [data-theme-pixel='on'] {
+  /* O grid volta a existir SÓ aqui: matá-lo no default é direção 0.21, mas o
+     modo pixel é uma escolha do usuário — sem a grade ele perde a identidade
+     e vira só "cantos retos + fonte bitmap". Deriva do acento do tema atual,
+     então Dracula/Solarized/claro herdam a versão correta de graça. */
+  --pixel-grid: color-mix(in srgb, var(--accent) 5%, transparent);
   --radius: 0px;
   --radius-xs: 0px;
   --radius-sm: 0px;
@@ -1035,6 +1067,29 @@ body {
   border-color: color-mix(in srgb, var(--text-dim) 40%, var(--border));
 }
 
+/* Vaga estrutural: presença de SLOT, não de sessão. Tracejada e recuada, para
+   nunca ser lida como um pane com trabalho dentro. */
+.pane--vacancy {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--text-dim) 34%, var(--border));
+  background: color-mix(in srgb, var(--bg) 60%, var(--bg-elevated));
+}
+
+.pane__vacancy {
+  display: grid;
+  place-items: center;
+  flex: 1;
+  min-height: 0;
+  padding: var(--space-6);
+  overflow: auto;
+  cursor: default;
+}
+
+.pane__vacancy .empty-state {
+  max-width: 46ch;
+  background: color-mix(in srgb, var(--bg-elevated) 70%, transparent);
+}
+
 .pane--skill-target {
   border-color: var(--accent);
 }
@@ -1220,9 +1275,9 @@ body {
 
 .toolbar__close:hover,
 .toolbar__close:focus-visible {
-  color: var(--danger, #ff7a90);
-  border-color: var(--danger, #ff7a90);
-  background: color-mix(in srgb, var(--danger, #ff7a90) 18%, transparent);
+  color: var(--danger, #f85149);
+  border-color: var(--danger, #f85149);
+  background: color-mix(in srgb, var(--danger, #f85149) 18%, transparent);
   outline: none;
 }
 
