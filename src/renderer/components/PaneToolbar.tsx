@@ -25,6 +25,7 @@ import { ProviderLogo } from './ProviderLogo';
 import { CommandBlockMenu } from './CommandBlockMenu';
 import { paneSessionView } from '../../shared/pane-session-view';
 import { formatShortcut } from '../lib/platform';
+import { isStructuralPlaceholderPane } from '../lib/split-tree';
 
 interface Props {
   pane: PaneModel;
@@ -136,6 +137,7 @@ function ToolbarBtn({
  * Density adapts to pane width; compact mode collapses secondary actions into ⋯.
  */
 export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
+  const isVacancy = isStructuralPlaceholderPane(pane);
   const split = useLayoutStore((s) => s.split);
   const maximizedPaneId = useLayoutStore((s) => s.maximizedPaneId);
   const toggleMaximizePane = useLayoutStore((s) => s.toggleMaximizePane);
@@ -202,7 +204,15 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
   const actions = useMemo((): ToolbarAction[] => {
     const list: ToolbarAction[] = [];
 
-    if (pane.kind !== 'browser' && pane.agentTransport !== 'acp') {
+    // A vacancy has no session, so "Fim" and "Dormir" would operate on
+    // nothing. Offering them is the same lie as rendering a prompt: controls
+    // that imply a process behind the pane. Layout actions stay — splitting a
+    // vacancy is one of the ways the operator claims it.
+    if (
+      pane.kind !== 'browser' &&
+      pane.agentTransport !== 'acp' &&
+      !isVacancy
+    ) {
       list.push({
         id: 'scroll-end',
         label: 'Fim',
@@ -297,7 +307,16 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
     }
 
     return list;
-  }, [pane, isCanvas, isHibernated, isMaximized, paneState, split, toggleMaximizePane]);
+  }, [
+    pane,
+    isVacancy,
+    isCanvas,
+    isHibernated,
+    isMaximized,
+    paneState,
+    split,
+    toggleMaximizePane,
+  ]);
 
   const closeAction: ToolbarAction = {
     id: 'close',
@@ -443,7 +462,7 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
 
       <div className="toolbar__actions">
         {renderGroup(sessionVisible, 'Sessão')}
-        {pane.kind !== 'browser' && density !== 'compact' && (
+        {pane.kind !== 'browser' && !isVacancy && density !== 'compact' && (
           <div className="toolbar__group" role="group" aria-label="Command blocks">
             <CommandBlockMenu paneId={pane.id} density={density} />
           </div>

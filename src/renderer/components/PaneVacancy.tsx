@@ -23,6 +23,24 @@ import { paneVacancyIntent } from './pane-vacancy-intent';
  */
 export function PaneVacancy({ pane }: { readonly pane: PaneModel }) {
   const isFocused = useLayoutStore((state) => state.focusedPaneId === pane.id);
+  return (
+    <PaneInteractionSurface
+      pane={pane}
+      className={`pane pane--vacancy ${isFocused ? 'pane--focused' : ''}`}
+    >
+      <PaneToolbar pane={pane} isFocused={isFocused} />
+      <PaneVacancyBody pane={pane} />
+    </PaneInteractionSurface>
+  );
+}
+
+/**
+ * The vacancy itself, without pane chrome — ONE implementation shared by every
+ * surface that can host a pane (grid leaf and canvas node). A second copy is
+ * how the placeholder ended up behaving differently depending on which view
+ * you happened to be in.
+ */
+export function PaneVacancyBody({ pane }: { readonly pane: PaneModel }) {
   const missions = useOrchStore((state) => state.missions);
   const intent = useMemo(() => paneVacancyIntent(missions), [missions]);
 
@@ -47,14 +65,9 @@ export function PaneVacancy({ pane }: { readonly pane: PaneModel }) {
   );
 
   return (
-    <PaneInteractionSurface
-      pane={pane}
-      className={`pane pane--vacancy ${isFocused ? 'pane--focused' : ''}`}
-    >
-      <PaneToolbar pane={pane} isFocused={isFocused} />
-      {/* Clicar na área vazia É reivindicá-la: substitui o mousedown que o
-          elemento do xterm registrava, e que deixa de existir sem terminal. */}
-      <div className="pane__vacancy" onClick={claim} role="presentation">
+    // Clicar na área vazia É reivindicá-la: substitui o mousedown que o
+    // elemento do xterm registrava, e que deixa de existir sem terminal.
+    <div className="pane__vacancy" onClick={claim} role="presentation">
         {intent.kind === 'idle' ? (
           <EmptyState
             icon="grid"
@@ -111,7 +124,6 @@ export function PaneVacancy({ pane }: { readonly pane: PaneModel }) {
             }
           />
         )}
-      </div>
-    </PaneInteractionSurface>
+    </div>
   );
 }

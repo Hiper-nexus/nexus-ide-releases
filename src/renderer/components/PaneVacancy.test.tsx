@@ -63,6 +63,15 @@ vi.mock('../browser/browser-host', () => ({
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
   .IS_REACT_ACT_ENVIRONMENT = true;
 
+// jsdom ships no ResizeObserver; react-resizable-panels constructs one the
+// moment a split Group mounts. Environment gap, not product behaviour.
+class ResizeObserverStub {
+  observe(): void {}
+  unobserve(): void {}
+  disconnect(): void {}
+}
+globalThis.ResizeObserver ??= ResizeObserverStub as unknown as typeof ResizeObserver;
+
 /**
  * Byte-for-byte the row read out of a real install
  * (project-runtime/.../runtime.sqlite3 → workspace_layout.layout_json): ONE
@@ -300,6 +309,42 @@ describe('a SOLITARY structural placeholder is a vacancy, not a session', () => 
     act(() => (surface as HTMLElement).click());
 
     expect(livePane().isStructuralPlaceholder).toBeUndefined();
+
+    act(() => root.unmount());
+  });
+
+  /**
+   * Same lie, smaller: "Fim", "Dormir" and "Cmds" are SESSION operations on a
+   * pane that has no session. The layout group stays — splitting a vacancy is
+   * one of the ways the operator claims it.
+   */
+  it('the vacancy toolbar drops session controls and keeps the layout ones', () => {
+    seedPlaceholderOnly();
+
+    render();
+
+    const labels = [...host.querySelectorAll('button')].map(
+      (button) => button.textContent ?? '',
+    );
+    expect(labels).not.toContain('Fim');
+    expect(labels).not.toContain('Dormir');
+    expect(labels).not.toContain('Cmds');
+    expect(buttonWith('À direita')).toBeTruthy();
+
+    act(() => root.unmount());
+  });
+
+  it('splitting the vacancy claims it — the operator gets two real terminals', () => {
+    seedPlaceholderOnly();
+    render();
+
+    act(() => buttonWith('À direita').click());
+
+    const panes = listPanes(useLayoutStore.getState().root);
+    expect(panes).toHaveLength(2);
+    expect(panes.every((pane) => pane.isStructuralPlaceholder === undefined)).toBe(
+      true,
+    );
 
     act(() => root.unmount());
   });
