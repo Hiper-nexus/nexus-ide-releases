@@ -532,7 +532,9 @@ export function MissionRail() {
       return;
     }
     if (hasAutomaticTechnicalRecovery(m)) {
-      setNote('Recuperação automática em andamento.');
+      // O diagnóstico mostra a tentativa N/8, a razão persistida e a saída
+      // manual quando a recuperação não cede — a nota antiga era um beco.
+      useOrchStore.getState().openMissionDetail(m.id);
       setBusy(null);
       return;
     }
