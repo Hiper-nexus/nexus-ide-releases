@@ -109,6 +109,7 @@
     "@electron/node-gyp": "10.2.0-electron.1",
     "brace-expansion": "$brace-expansion",
     "fast-uri": "3.1.5",
+    "ip-address": "10.4.0",
     "postcss": "8.5.25",
     "tar": "^7.5.22",
     "tmp": "^0.2.7",
