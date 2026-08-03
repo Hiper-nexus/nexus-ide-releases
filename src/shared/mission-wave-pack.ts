@@ -6,8 +6,14 @@
  * See docs/design/mission-wave-pack.md.
  */
 
+import { z } from "zod";
 import type { MissionIntentRisk } from "./mission-intent";
 import type { StandardMissionTopology } from "./mission-topology";
+import {
+  isWavePackTemplateId,
+  storiesForWavePackTemplate,
+  type WavePackTemplateId,
+} from "./wave-pack-templates";
 
 export const WAVE_PACK_DOMAIN = "wave-pack";
 
@@ -19,12 +25,19 @@ export const MISSION_ORCHESTRATION_MODES = [
 export type MissionOrchestrationMode =
   (typeof MISSION_ORCHESTRATION_MODES)[number];
 
-export type ExtractedWavePackStory = {
-  readonly id: string;
-  readonly epicStoryId: string;
-  readonly title: string;
-  readonly body: string;
-};
+export const wavePackStorySchema = z
+  .object({
+    id: z.string().trim().min(1).max(128),
+    epicStoryId: z.string().trim().min(1).max(32),
+    title: z.string().trim().min(1).max(256),
+    body: z.string().max(8_192),
+  })
+  .strict();
+
+export type ExtractedWavePackStory = z.infer<typeof wavePackStorySchema>;
+
+export const wavePackTemplateIdSchema = z.enum(["landing", "saas", "fix"]);
+
 
 const STORY_HEADING_RE =
   /^(#{1,3})\s*Story\s+(\d+)\.(\d+)\s*:\s*(.+?)\s*$/gim;
@@ -65,6 +78,48 @@ export function extractStoriesFromPromotedPlanSummary(
   return Object.freeze(stories);
 }
 
+/**
+ * Canonical Pack stories: structured contract field wins; markdown summary is
+ * fallback only (Wave 2).
+ */
+export function resolveWavePackStories(input: {
+  readonly wavePackStories?: readonly ExtractedWavePackStory[] | null;
+  readonly promotedPlanSummary?: string | null;
+}): readonly ExtractedWavePackStory[] {
+  if (input.wavePackStories && input.wavePackStories.length > 0) {
+    return Object.freeze(
+      input.wavePackStories.map((story) =>
+        Object.freeze({ ...wavePackStorySchema.parse(story) }),
+      ),
+    );
+  }
+  const summary = input.promotedPlanSummary?.trim();
+  if (!summary) return Object.freeze([]);
+  return extractStoriesFromPromotedPlanSummary(summary);
+}
+
+/**
+ * Freeze stories onto a contract at promote/compile time.
+ * Markdown with ≥2 stories wins; otherwise a Pack template fills the fan-out.
+ */
+export function freezeWavePackStoriesForContract(input: {
+  readonly summary?: string | null;
+  readonly templateId?: WavePackTemplateId | null;
+  readonly existingStories?: readonly ExtractedWavePackStory[] | null;
+}): readonly ExtractedWavePackStory[] {
+  if (input.existingStories && input.existingStories.length > 0) {
+    return resolveWavePackStories({ wavePackStories: input.existingStories });
+  }
+  const fromMarkdown = input.summary?.trim()
+    ? extractStoriesFromPromotedPlanSummary(input.summary)
+    : Object.freeze([] as ExtractedWavePackStory[]);
+  if (fromMarkdown.length >= 2) return fromMarkdown;
+  if (input.templateId && isWavePackTemplateId(input.templateId)) {
+    return storiesForWavePackTemplate(input.templateId);
+  }
+  return fromMarkdown;
+}
+
 export function wavePackStoryDomain(storyId: string): string {
   const slug = storyId
     .toLocaleLowerCase("en-US")
@@ -90,7 +145,7 @@ export type ResolveMissionOrchestrationModeInput = {
 };
 
 /**
- * Pure mode resolver. Pack requires a promoted plan with ≥2 stories and
+ * Pure mode resolver. Pack requires ≥2 stories (structured or markdown) and
  * non-destructive risk. Destructive stays guided (single writer).
  */
 export function resolveMissionOrchestrationMode(
@@ -99,7 +154,8 @@ export function resolveMissionOrchestrationMode(
   if (input.forcedMode) return input.forcedMode;
   if ((input.lane ?? "standard") !== "standard") return "livre";
   if (input.risk === "destructive") return "guided";
-  if (input.hasPromotedPlan && input.extractedStoryCount >= 2) return "pack";
+  // Wave 2: structured stories alone are enough — promoted plan is optional.
+  if (input.extractedStoryCount >= 2) return "pack";
   return "guided";
 }
 

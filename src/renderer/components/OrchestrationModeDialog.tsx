@@ -1,11 +1,16 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   useOrchestrationModeStore,
   type PromoteOrchestrationChoice,
 } from "../state/orchestration-mode-store";
+import {
+  WAVE_PACK_TEMPLATES,
+  type WavePackTemplateId,
+} from "../../shared/wave-pack-templates";
 
 /**
  * Pack vs Guiado before ▶ Executar plano. Escape = cancel (no promote).
+ * Pack may require a Landing/SaaS/Fix template when the plan has &lt;2 BMAD stories.
  */
 export function OrchestrationModeDialog() {
   const pending = useOrchestrationModeStore((s) => s.pending);
@@ -13,9 +18,14 @@ export function OrchestrationModeDialog() {
   const cancelRef = useRef<HTMLButtonElement>(null);
   const primaryRef = useRef<HTMLButtonElement>(null);
   const secondaryRef = useRef<HTMLButtonElement>(null);
+  const [templateId, setTemplateId] = useState<WavePackTemplateId | "">("");
 
   useEffect(() => {
-    if (!pending) return undefined;
+    if (!pending) {
+      setTemplateId("");
+      return undefined;
+    }
+    setTemplateId(pending.templateRequiredForPack ? "landing" : "");
     const preferred =
       pending.recommended === "pack" ? primaryRef.current : secondaryRef.current;
     preferred?.focus();
@@ -46,6 +56,18 @@ export function OrchestrationModeDialog() {
   if (!pending) return null;
 
   const packFirst = pending.recommended === "pack";
+  const pick = (mode: PromoteOrchestrationChoice) => {
+    if (mode === "pack" && pending.templateRequiredForPack && !templateId) {
+      return;
+    }
+    decide({
+      mode,
+      ...(mode === "pack" && templateId
+        ? { wavePackTemplateId: templateId }
+        : {}),
+    });
+  };
+
   const choices: Array<{
     mode: PromoteOrchestrationChoice;
     label: string;
@@ -56,7 +78,10 @@ export function OrchestrationModeDialog() {
         {
           mode: "pack",
           label: "Wave Pack",
-          hint: `${pending.storyCount} stories em panes paralelos`,
+          hint:
+            pending.storyCount >= 2
+              ? `${pending.storyCount} stories em panes paralelos`
+              : "Template declara o fan-out (Landing / SaaS / Fix)",
           primary: true,
         },
         {
@@ -76,7 +101,10 @@ export function OrchestrationModeDialog() {
         {
           mode: "pack",
           label: "Wave Pack",
-          hint: `${pending.storyCount} stories em panes paralelos`,
+          hint:
+            pending.storyCount >= 2
+              ? `${pending.storyCount} stories em panes paralelos`
+              : "Template declara o fan-out (Landing / SaaS / Fix)",
           primary: false,
         },
       ];
@@ -101,7 +129,7 @@ export function OrchestrationModeDialog() {
               className={`confirm__orch-choice${
                 choice.primary ? " confirm__orch-choice--recommended" : ""
               }`}
-              onClick={() => decide(choice.mode)}
+              onClick={() => pick(choice.mode)}
             >
               <span className="confirm__orch-choice-label">
                 {choice.label}
@@ -113,6 +141,27 @@ export function OrchestrationModeDialog() {
             </button>
           ))}
         </div>
+        <label className="confirm__body" style={{ display: "block", marginTop: 12 }}>
+          Template Pack (opcional se o plano já tem ≥2 stories)
+          <select
+            className="wizard__input"
+            style={{ display: "block", width: "100%", marginTop: 6 }}
+            value={templateId}
+            onChange={(e) =>
+              setTemplateId((e.target.value || "") as WavePackTemplateId | "")
+            }
+            aria-required={pending.templateRequiredForPack}
+          >
+            {!pending.templateRequiredForPack ? (
+              <option value="">Usar stories do plano</option>
+            ) : null}
+            {WAVE_PACK_TEMPLATES.map((template) => (
+              <option key={template.id} value={template.id}>
+                {template.label} — {template.hint}
+              </option>
+            ))}
+          </select>
+        </label>
         <div className="confirm__actions">
           <button
             ref={cancelRef}

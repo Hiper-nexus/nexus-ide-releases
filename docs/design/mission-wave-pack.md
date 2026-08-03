@@ -1,6 +1,6 @@
 # ADR — Mission Wave Pack (Livre · Pack · Guiado)
 
-**Status:** Accepted (Wave 1 authority field landed; wizard picker optional)  
+**Status:** Accepted (Wave 2 landed — structured stories, templates, Livre wizard)  
 **Date:** 2026-08-03  
 **Branch:** `feat/mission-wave-pack`  
 **Owner:** orchestration  
@@ -82,8 +82,11 @@ handoff, merge validation.
    suppressed. Promote UI asks Pack vs Guiado when the physical plan has ≥2
    BMAD stories (MissionRail ▶ and toast “Executar plano”); native review stays
    the authority boundary. Full Livre picker in MissionWizard remains optional.
-3. **Wave 2:** structured story artifacts (stop relying on markdown parse);
-   Pack templates (Landing / SaaS / Fix) with declared fan-out.
+3. **Wave 2 (landed):** structured `wavePackStories` on the intent contract
+   (markdown parse is fallback only); Pack templates Landing / SaaS / Fix with
+   declared fan-out; MissionWizard radios Livre | Pack | Guiado (Livre →
+   `orchestration-livre`, no guided seal); promote dialog always offers Pack/
+   Guiado and a template when the plan has &lt;2 BMAD stories.
 
 ## Wave 0 fix log (2026-08-03 review)
 

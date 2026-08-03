@@ -5,9 +5,9 @@ import {
   type StandardMissionTopology,
 } from "../../shared/mission-topology";
 import {
-  extractStoriesFromPromotedPlanSummary,
   planWavePackTasks,
   resolveMissionOrchestrationMode,
+  resolveWavePackStories,
   topologyForOrchestrationMode,
 } from "../../shared/mission-wave-pack";
 import type { ProjectExecutionScope } from "../../shared/types";
@@ -123,7 +123,10 @@ export type GuidedMissionPlanResult =
       applicable: false;
       sealed: false;
       reason:
-        "lane-not-standard" | "automation-owned" | "squad-not-engine-generated";
+        | "lane-not-standard"
+        | "automation-owned"
+        | "squad-not-engine-generated"
+        | "orchestration-livre";
     }>
   | Readonly<{
       applicable: true;
@@ -729,20 +732,21 @@ export function ensureGuidedMissionPlan(
 function resolveSealTopology(mission: Mission): StandardMissionTopology {
   const contract = mission.intentContract;
   if (!contract) return "delivery";
-  if (!contract.promotedPlan) {
-    return classifyStandardMissionTopology(contract.goal);
-  }
-  const stories = extractStoriesFromPromotedPlanSummary(
-    contract.promotedPlan.summary,
-  );
+  const stories = resolveWavePackStories({
+    wavePackStories: contract.wavePackStories,
+    promotedPlanSummary: contract.promotedPlan?.summary,
+  });
   const mode = resolveMissionOrchestrationMode({
     lane: contract.lane,
     risk: contract.risk,
-    hasPromotedPlan: true,
+    hasPromotedPlan: Boolean(contract.promotedPlan),
     extractedStoryCount: stories.length,
     forcedMode: contract.orchestrationMode ?? null,
   });
-  return topologyForOrchestrationMode(mode, "delivery");
+  const fallback = contract.promotedPlan
+    ? "delivery"
+    : classifyStandardMissionTopology(contract.goal);
+  return topologyForOrchestrationMode(mode, fallback);
 }
 
 function sealWavePackMissionPlan(input: {
@@ -760,9 +764,10 @@ function sealWavePackMissionPlan(input: {
 }): GuidedMissionPlanResult {
   const { mission, missionId, intentVersion, squad, suite, deps } = input;
   const contract = mission.intentContract!;
-  const stories = extractStoriesFromPromotedPlanSummary(
-    contract.promotedPlan!.summary,
-  );
+  const stories = resolveWavePackStories({
+    wavePackStories: contract.wavePackStories,
+    promotedPlanSummary: contract.promotedPlan?.summary,
+  });
   const allExecutors = input.rosterWorkers
     .filter((agent) => agent.category === "executor")
     .map((agent) =>

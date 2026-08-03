@@ -28,6 +28,7 @@ export interface PromotePlanFlowOptions {
    * Native Main review still runs.
    */
   readonly orchestrationMode?: PromoteOrchestrationModeInput;
+  readonly wavePackTemplateId?: 'landing' | 'saas' | 'fix';
   readonly skipModePicker?: boolean;
 }
 
@@ -81,6 +82,7 @@ export async function promotePlanMissionToExecution(
     }
 
     let orchestrationMode = options.orchestrationMode;
+    let wavePackTemplateId = options.wavePackTemplateId;
     if (!orchestrationMode && !options.skipModePicker) {
       const summary = latestPlanSummaryForMission(
         latest.id,
@@ -96,21 +98,27 @@ export async function promotePlanMissionToExecution(
         const choice = await askPromoteOrchestrationMode({
           title: 'Como executar o plano?',
           body:
-            `Encontrei ${storyCount} stories no plano de “${latest.title}”. ` +
-            'Wave Pack abre panes em paralelo; Guiado serializa a entrega.',
+            storyCount >= 2
+              ? `Encontrei ${storyCount} stories no plano de “${latest.title}”. ` +
+                'Wave Pack abre panes em paralelo; Guiado serializa a entrega.'
+              : `O plano de “${latest.title}” não tem stories BMAD suficientes. ` +
+                'Escolha Guiado, ou Wave Pack com um template (Landing / SaaS / Fix).',
           storyCount,
           recommended,
+          templateRequiredForPack: storyCount < 2,
         });
         if (!choice) {
           return { ok: false, cancelled: true };
         }
-        orchestrationMode = choice;
+        orchestrationMode = choice.mode;
+        wavePackTemplateId = choice.wavePackTemplateId;
       }
     }
 
     const updated = await window.nexus.orch.promotePlanLane({
       missionId: latest.id,
       ...(orchestrationMode ? { orchestrationMode } : {}),
+      ...(wavePackTemplateId ? { wavePackTemplateId } : {}),
     });
     usePlanLaneMetricsStore.getState().notePlanPromoted();
     const modeBit =

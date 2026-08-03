@@ -14,11 +14,12 @@ Body
 `;
 
 describe("promote orchestration mode helpers", () => {
-  it("counts BMAD stories and gates the picker at ≥2", () => {
+  it("counts BMAD stories and always opens the Wave 2 picker", () => {
     expect(countPromotableStories(TWO_STORIES)).toBe(2);
     expect(countPromotableStories("sem stories")).toBe(0);
     expect(shouldAskPromoteOrchestrationMode(2)).toBe(true);
-    expect(shouldAskPromoteOrchestrationMode(1)).toBe(false);
+    expect(shouldAskPromoteOrchestrationMode(1)).toBe(true);
+    expect(shouldAskPromoteOrchestrationMode(0)).toBe(true);
   });
 
   it("recommends Pack for multi-story non-destructive plans", () => {

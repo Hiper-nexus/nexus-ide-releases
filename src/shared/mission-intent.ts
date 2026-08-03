@@ -1,7 +1,14 @@
 import { z } from 'zod';
 import { resolveMissionBlockingIntentState } from './mission-blocking';
 import { classifyStandardMissionTopology } from './mission-topology';
-import { MISSION_ORCHESTRATION_MODES } from './mission-wave-pack';
+import {
+  freezeWavePackStoriesForContract,
+  MISSION_ORCHESTRATION_MODES,
+  wavePackStorySchema,
+  wavePackTemplateIdSchema,
+  type MissionOrchestrationMode,
+} from './mission-wave-pack';
+import type { WavePackTemplateId } from './wave-pack-templates';
 
 export {
   missionBlockKindSchema,
@@ -200,6 +207,12 @@ export const missionIntentContractSchema = z.object({
    * Missing/legacy contracts leave mode selection to the pure resolver.
    */
   orchestrationMode: z.enum(MISSION_ORCHESTRATION_MODES).optional(),
+  /**
+   * Canonical Pack stories (Wave 2). Prefer over markdown parse of promotedPlan.
+   */
+  wavePackStories: z.array(wavePackStorySchema).min(1).max(64).optional(),
+  /** Declared fan-out template that seeded wavePackStories (Landing / SaaS / Fix). */
+  wavePackTemplateId: wavePackTemplateIdSchema.optional(),
   contextPolicy: missionContextPolicySchema,
   approvedAt: z.number().int().nonnegative().optional(),
   /**
@@ -600,6 +613,10 @@ export function compileIntentContract(input: {
   acceptanceCriteria?: string[];
   /** Explicit delivery lane; default standard (code PREVC). */
   lane?: MissionLane;
+  /** Operator override Livre / Pack / Guiado. */
+  orchestrationMode?: MissionOrchestrationMode;
+  /** Pack template that seeds structured stories when mode is pack. */
+  wavePackTemplateId?: WavePackTemplateId;
 }): MissionIntentContract {
   const goal = input.goal.trim();
   if (!goal) {
@@ -633,6 +650,13 @@ export function compileIntentContract(input: {
           // negada no intent gate, então workers nunca são esperados.
           { ...defaultBudgetsForRisk(risk), maxWorkers: 0 }
         : defaultBudgetsForRisk(risk);
+  const orchestrationMode = input.orchestrationMode;
+  const wavePackTemplateId =
+    orchestrationMode === 'pack' ? input.wavePackTemplateId : undefined;
+  const wavePackStories =
+    orchestrationMode === 'pack' && wavePackTemplateId
+      ? freezeWavePackStoriesForContract({ templateId: wavePackTemplateId })
+      : undefined;
   return missionIntentContractSchema.parse({
     version: 1,
     source: input.source ?? 'typed',
@@ -643,6 +667,11 @@ export function compileIntentContract(input: {
     // still requires approval, and every effect remains behind PREVC/budgets.
     executionMode: input.executionMode ?? 'autopilot',
     lane,
+    ...(orchestrationMode ? { orchestrationMode } : {}),
+    ...(wavePackTemplateId ? { wavePackTemplateId } : {}),
+    ...(wavePackStories && wavePackStories.length > 0
+      ? { wavePackStories: [...wavePackStories] }
+      : {}),
     contextPolicy: input.contextPolicy ?? 'on-demand',
     intentVersion: input.intentVersion,
     budgets,

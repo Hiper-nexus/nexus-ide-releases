@@ -70,7 +70,7 @@ describe('promotePlanMissionToExecution', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.handoffs.length = 0;
-    mocks.askMode.mockResolvedValue('pack');
+    mocks.askMode.mockResolvedValue({ mode: 'pack', wavePackTemplateId: 'landing' });
     mocks.promotePlanLane.mockResolvedValue({
       ...planMission(),
       status: 'running',
@@ -86,11 +86,15 @@ describe('promotePlanMissionToExecution', () => {
     } as unknown as Window & typeof globalThis;
   });
 
-  it('uses only the main-owned native promotion review', async () => {
+  it('asks Pack vs Guiado even without BMAD stories (Wave 2 templates)', async () => {
     const result = await promotePlanMissionToExecution(planMission());
     expect(result.ok).toBe(true);
-    expect(mocks.askMode).not.toHaveBeenCalled();
-    expect(mocks.promotePlanLane).toHaveBeenCalledTimes(1);
+    expect(mocks.askMode).toHaveBeenCalledOnce();
+    expect(mocks.promotePlanLane).toHaveBeenCalledWith({
+      missionId: 'm-plan',
+      orchestrationMode: 'pack',
+      wavePackTemplateId: 'landing',
+    });
     expect(mocks.bump).toHaveBeenCalled();
     expect(mocks.push).toHaveBeenCalledWith(
       'success',
@@ -105,7 +109,7 @@ describe('promotePlanMissionToExecution', () => {
       status: 'success',
       summary: '### Story 1.1: A\n\n### Story 1.2: B\n',
     });
-    mocks.askMode.mockResolvedValueOnce('guided');
+    mocks.askMode.mockResolvedValueOnce({ mode: 'guided' });
     const result = await promotePlanMissionToExecution(planMission());
     expect(result.ok).toBe(true);
     expect(mocks.askMode).toHaveBeenCalledOnce();
@@ -149,6 +153,7 @@ describe('promotePlanMissionToExecution', () => {
   });
 
   it('promotes an already-dispatched plan through the main-owned runtime restart', async () => {
+    mocks.askMode.mockResolvedValueOnce({ mode: 'guided' });
     const mission = {
       ...planMission(),
       status: 'running' as const,
@@ -166,6 +171,7 @@ describe('promotePlanMissionToExecution', () => {
     expect(result.ok).toBe(true);
     expect(mocks.promotePlanLane).toHaveBeenCalledWith({
       missionId: mission.id,
+      orchestrationMode: 'guided',
     });
     expect(mocks.push).toHaveBeenCalledWith(
       'success',
@@ -175,6 +181,7 @@ describe('promotePlanMissionToExecution', () => {
   });
 
   it('surfaces denial from the single native authority boundary', async () => {
+    mocks.askMode.mockResolvedValueOnce({ mode: 'guided' });
     mocks.promotePlanLane.mockRejectedValueOnce(new Error('user_denied'));
     const result = await promotePlanMissionToExecution(planMission());
     expect(result).toEqual({ ok: false, error: 'user_denied' });

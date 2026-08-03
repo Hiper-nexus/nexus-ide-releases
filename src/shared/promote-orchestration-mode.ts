@@ -21,9 +21,10 @@ export function countPromotableStories(summary: string | null | undefined): numb
 
 /**
  * Whether the promote flow should ask Pack vs Guiado before native review.
+ * Always ask — Wave 2 templates allow Pack even without BMAD markdown stories.
  */
-export function shouldAskPromoteOrchestrationMode(storyCount: number): boolean {
-  return storyCount >= 2;
+export function shouldAskPromoteOrchestrationMode(_storyCount: number): boolean {
+  return true;
 }
 
 export function recommendPromoteOrchestrationMode(input: {

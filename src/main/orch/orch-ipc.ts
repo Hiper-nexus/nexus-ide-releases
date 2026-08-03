@@ -395,6 +395,8 @@ export const missionSubmitIntentSchema = z.object({
   contextPolicy: z.enum(["none", "minimal", "on-demand"]).optional(),
   acceptanceCriteria: z.array(z.string().min(1).max(2_048)).max(32).optional(),
   lane: z.enum(["standard", "consult", "plan", "ops"]).optional(),
+  orchestrationMode: z.enum(["livre", "pack", "guided"]).optional(),
+  wavePackTemplateId: z.enum(["landing", "saas", "fix"]).optional(),
   evidenceAttached: z.boolean().optional(),
   /**
    * Somente o wizard de produto marca isto, e apenas na submissão que ele
@@ -2200,6 +2202,7 @@ export function registerOrchIpc(): void {
     .object({
       missionId: z.string().min(1).max(128),
       orchestrationMode: z.enum(['pack', 'guided']).optional(),
+      wavePackTemplateId: z.enum(['landing', 'saas', 'fix']).optional(),
     })
     .strict();
   ipcMain.handle(ORCH_CHANNELS.missionPromotePlanLane, async (event, raw) => {

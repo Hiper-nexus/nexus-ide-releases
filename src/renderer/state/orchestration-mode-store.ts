@@ -4,28 +4,36 @@
  */
 import { create } from "zustand";
 import type { MissionOrchestrationMode } from "../../shared/mission-wave-pack";
+import type { WavePackTemplateId } from "../../shared/wave-pack-templates";
 
 export type PromoteOrchestrationChoice = Extract<
   MissionOrchestrationMode,
   "pack" | "guided"
 >;
 
+export type PromoteOrchestrationDecision = {
+  readonly mode: PromoteOrchestrationChoice;
+  readonly wavePackTemplateId?: WavePackTemplateId;
+};
+
 export interface OrchestrationModeRequest {
   readonly title: string;
   readonly body: string;
   readonly storyCount: number;
   readonly recommended: PromoteOrchestrationChoice;
+  /** When true, Pack requires a template (markdown has fewer than 2 stories). */
+  readonly templateRequiredForPack: boolean;
 }
 
 interface PendingChoice extends OrchestrationModeRequest {
-  resolve(choice: PromoteOrchestrationChoice | null): void;
+  resolve(choice: PromoteOrchestrationDecision | null): void;
 }
 
 interface OrchestrationModeStore {
   pending: PendingChoice | null;
   queue: PendingChoice[];
-  ask(request: OrchestrationModeRequest): Promise<PromoteOrchestrationChoice | null>;
-  decide(choice: PromoteOrchestrationChoice | null): void;
+  ask(request: OrchestrationModeRequest): Promise<PromoteOrchestrationDecision | null>;
+  decide(choice: PromoteOrchestrationDecision | null): void;
 }
 
 export const useOrchestrationModeStore = create<OrchestrationModeStore>(
@@ -33,7 +41,7 @@ export const useOrchestrationModeStore = create<OrchestrationModeStore>(
     pending: null,
     queue: [],
     ask: (request) =>
-      new Promise<PromoteOrchestrationChoice | null>((resolve) => {
+      new Promise<PromoteOrchestrationDecision | null>((resolve) => {
         const entry: PendingChoice = { ...request, resolve };
         const { pending, queue } = get();
         if (pending) set({ queue: [...queue, entry] });
@@ -51,6 +59,6 @@ export const useOrchestrationModeStore = create<OrchestrationModeStore>(
 
 export function askPromoteOrchestrationMode(
   request: OrchestrationModeRequest,
-): Promise<PromoteOrchestrationChoice | null> {
+): Promise<PromoteOrchestrationDecision | null> {
   return useOrchestrationModeStore.getState().ask(request);
 }

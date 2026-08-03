@@ -128,7 +128,12 @@ export function guidedPlanEligibility(
   | "lane-not-standard"
   | "automation-owned"
   | "squad-not-engine-generated"
+  | "orchestration-livre"
   | null {
+  // Livre: operator opted out of Guided/Pack seal — Maestro/operator spawn.
+  if (mission.intentContract?.orchestrationMode === "livre") {
+    return "orchestration-livre";
+  }
   if ((mission.intentContract?.lane ?? "standard") !== "standard") {
     return "lane-not-standard";
   }
@@ -171,6 +176,7 @@ function legacyGuidedReceipt(detail: string, cause?: unknown): never {
 
 type GuidedRecoveredStage =
   | "advisory"
+  | "warmup"
   | "reproduction"
   | "implementation"
   | "regression"
@@ -581,6 +587,7 @@ export function assertRosterCompleteGuidedV2Receipt(
 
     const stageRank: Record<GuidedRecoveredStage, number> = {
       advisory: 0,
+      warmup: 0.5,
       reproduction: 1,
       implementation: 2,
       regression: 3,

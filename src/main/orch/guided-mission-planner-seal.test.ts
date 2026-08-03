@@ -802,4 +802,65 @@ describe("saved-team (mission-runtime) sealing", () => {
       storyRows.every((entry) => (entry.meta?.ownership.files.length ?? 0) > 0),
     ).toBe(true);
   });
+
+  it("Livre skips guided seal (orchestration-livre)", () => {
+    const contract = compileIntentContract({
+      goal: "spawn panes freely",
+      intentVersion: 3,
+      source: "typed",
+      lane: "standard",
+      orchestrationMode: "livre",
+    });
+    const currentMission = mission({
+      description: contract.goal,
+      intentContract: {
+        ...contract,
+        approvedAt: 10,
+        dispatchedAt: 10,
+        squadRevisionHash: snapshotSquadAuthority(squad).hash,
+      },
+    });
+    const h = harness({ currentMission });
+    expect(ensureGuidedMissionPlan(h.suite, currentMission.id, h.deps)).toMatchObject({
+      applicable: false,
+      reason: "orchestration-livre",
+    });
+    expect(h.createPlanAtomically).not.toHaveBeenCalled();
+  });
+
+  it("Pack seals from structured template stories without promotedPlan", () => {
+    const contract = compileIntentContract({
+      goal: "Ship a landing page with hero and sections",
+      intentVersion: 3,
+      source: "typed",
+      lane: "standard",
+      orchestrationMode: "pack",
+      wavePackTemplateId: "fix",
+    });
+    expect(contract.wavePackStories).toHaveLength(2);
+    const currentMission = mission({
+      description: contract.goal,
+      intentContract: {
+        ...contract,
+        approvedAt: 10,
+        dispatchedAt: 10,
+        squadRevisionHash: snapshotSquadAuthority(squad).hash,
+      },
+    });
+    const h = harness({ currentMission });
+    expect(ensureGuidedMissionPlan(h.suite, currentMission.id, h.deps)).toMatchObject({
+      applicable: true,
+      sealed: true,
+      topology: "wave-pack",
+    });
+    const rows = h.createPlanAtomically.mock.calls[0]![0].rows;
+    const storyRows = rows
+      .map((row: { detail: string }) => decodeTaskScheduleDetail(row.detail))
+      .filter((entry) =>
+        entry.meta?.ownership.domains.some((domain) =>
+          domain.startsWith("wave-pack-story:"),
+        ),
+      );
+    expect(storyRows).toHaveLength(2);
+  });
 });

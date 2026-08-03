@@ -1,13 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
   extractStoriesFromPromotedPlanSummary,
+  freezeWavePackStoriesForContract,
   hasWavePackDomain,
   planWavePackTasks,
   resolveMissionOrchestrationMode,
+  resolveWavePackStories,
   topologyForOrchestrationMode,
   WAVE_PACK_DOMAIN,
   wavePackStoryDomain,
 } from "./mission-wave-pack";
+import { storiesForWavePackTemplate } from "./wave-pack-templates";
 
 const SAMPLE_PLAN = `
 # Plano
@@ -55,6 +58,44 @@ describe("extractStoriesFromPromotedPlanSummary", () => {
     expect(
       extractStoriesFromPromotedPlanSummary("# só um PRD sem stories"),
     ).toEqual([]);
+  });
+});
+
+describe("resolveWavePackStories", () => {
+  it("prefers structured contract stories over markdown", () => {
+    const structured = storiesForWavePackTemplate("fix");
+    const stories = resolveWavePackStories({
+      wavePackStories: structured,
+      promotedPlanSummary: SAMPLE_PLAN,
+    });
+    expect(stories).toHaveLength(2);
+    expect(stories[0]!.title).toBe("Reproduzir e corrigir");
+  });
+
+  it("falls back to markdown when structured stories are absent", () => {
+    expect(
+      resolveWavePackStories({ promotedPlanSummary: SAMPLE_PLAN }),
+    ).toHaveLength(3);
+  });
+});
+
+describe("freezeWavePackStoriesForContract", () => {
+  it("keeps markdown when it already has ≥2 stories", () => {
+    const frozen = freezeWavePackStoriesForContract({
+      summary: SAMPLE_PLAN,
+      templateId: "landing",
+    });
+    expect(frozen).toHaveLength(3);
+    expect(frozen[0]!.title).toBe("Login form");
+  });
+
+  it("fills from template when markdown is thin", () => {
+    const frozen = freezeWavePackStoriesForContract({
+      summary: "# plano sem stories BMAD",
+      templateId: "saas",
+    });
+    expect(frozen).toHaveLength(5);
+    expect(frozen[0]!.title).toBe("Auth mínima");
   });
 });
 

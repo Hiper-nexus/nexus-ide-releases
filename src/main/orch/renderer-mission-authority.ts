@@ -18,6 +18,9 @@ import {
   type PromotedPlanSnapshot,
 } from "../../shared/mission-intent";
 import {
+  freezeWavePackStoriesForContract,
+} from "../../shared/mission-wave-pack";
+import {
   missionGoalNeedsFutureEvidence,
   MISSION_EVIDENCE_WAIT_MESSAGE,
 } from "../../shared/mission-evidence";
@@ -148,6 +151,10 @@ export interface RendererMissionSubmitIntentInput {
    * default / omitted = standard PREVC code.
    */
   lane?: "standard" | "consult" | "plan" | "ops";
+  /** Operator override Livre / Pack / Guiado. */
+  orchestrationMode?: "livre" | "pack" | "guided";
+  /** Pack template (Landing / SaaS / Fix) when orchestrationMode is pack. */
+  wavePackTemplateId?: "landing" | "saas" | "fix";
   /** Set by the renderer only when current print/audio files are attached. */
   evidenceAttached?: boolean;
 }
@@ -958,6 +965,12 @@ export class RendererMissionAuthority {
         contextPolicy,
         acceptanceCriteria: input.acceptanceCriteria,
         lane,
+        ...(input.orchestrationMode
+          ? { orchestrationMode: input.orchestrationMode }
+          : {}),
+        ...(input.wavePackTemplateId
+          ? { wavePackTemplateId: input.wavePackTemplateId }
+          : {}),
       });
       const evidenceAttached = input.evidenceAttached === true;
       const needsFutureEvidence = missionGoalNeedsFutureEvidence(
@@ -1789,6 +1802,7 @@ export class RendererMissionAuthority {
     input: {
       missionId: string;
       orchestrationMode?: "pack" | "guided";
+      wavePackTemplateId?: "landing" | "saas" | "fix";
     },
     expectedFence: string,
     expectedPlan: PromotedPlanSnapshot,
@@ -1867,8 +1881,25 @@ export class RendererMissionAuthority {
     const now = Date.now();
     const {
       orchestrationMode: _priorOrchestrationMode,
+      wavePackStories: _priorWavePackStories,
+      wavePackTemplateId: _priorWavePackTemplateId,
       ...contractWithoutMode
     } = contract;
+    const orchestrationMode = input.orchestrationMode;
+    const wavePackTemplateId =
+      orchestrationMode === "pack" ? input.wavePackTemplateId : undefined;
+    const wavePackStories =
+      orchestrationMode === "pack"
+        ? freezeWavePackStoriesForContract({
+            summary: promotedPlan.summary,
+            templateId: wavePackTemplateId,
+          })
+        : orchestrationMode === "guided"
+          ? undefined
+          : freezeWavePackStoriesForContract({
+              summary: promotedPlan.summary,
+              templateId: input.wavePackTemplateId,
+            });
     const nextContract = {
       ...contractWithoutMode,
       lane: "standard" as const,
@@ -1892,8 +1923,10 @@ export class RendererMissionAuthority {
         : undefined,
       squadRevisionHash: squadSnapshot.hash,
       orchestratorRuntime: { ...orchestratorRuntime },
-      ...(input.orchestrationMode
-        ? { orchestrationMode: input.orchestrationMode }
+      ...(orchestrationMode ? { orchestrationMode } : {}),
+      ...(wavePackTemplateId ? { wavePackTemplateId } : {}),
+      ...(wavePackStories && wavePackStories.length > 0
+        ? { wavePackStories: [...wavePackStories] }
         : {}),
       promotedPlan: {
         ...promotedPlan,

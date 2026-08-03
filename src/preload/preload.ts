@@ -1068,6 +1068,8 @@ const api: NexusApi = {
       acceptanceCriteria?: string[];
       /** standard | consult | plan (design-only) | ops (infra, sem PREVC). */
       lane?: 'standard' | 'consult' | 'plan' | 'ops';
+      orchestrationMode?: 'livre' | 'pack' | 'guided';
+      wavePackTemplateId?: 'landing' | 'saas' | 'fix';
       evidenceAttached?: boolean;
       /**
        * Wizard de produto apenas: ESTA submissão será exibida na revisão de
@@ -1090,6 +1092,7 @@ const api: NexusApi = {
     promotePlanLane: (input: {
       missionId: string;
       orchestrationMode?: 'pack' | 'guided';
+      wavePackTemplateId?: 'landing' | 'saas' | 'fix';
     }) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionPromotePlanLane, input),
     submitMissionKickoff: (input: {

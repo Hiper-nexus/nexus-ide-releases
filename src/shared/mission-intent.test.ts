@@ -124,6 +124,18 @@ describe('mission intent transitions', () => {
     ).toBe(false);
   });
 
+  it('materializes Pack template stories at compile when mode is pack', () => {
+    const contract = compileIntentContract({
+      goal: 'Ship a landing page',
+      intentVersion: 1,
+      orchestrationMode: 'pack',
+      wavePackTemplateId: 'landing',
+    });
+    expect(contract.orchestrationMode).toBe('pack');
+    expect(contract.wavePackTemplateId).toBe('landing');
+    expect(contract.wavePackStories).toHaveLength(3);
+  });
+
   it('walks the happy path select → goal → compile → start', () => {
     expect(transitionIntentState({ from: 'draft', event: 'select_squad' })).toEqual({
       ok: true,

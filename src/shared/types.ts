@@ -587,6 +587,8 @@ export interface NexusApi {
       acceptanceCriteria?: string[];
       /** standard | consult | plan (design-only plan.md) | ops (infra, sem PREVC). */
       lane?: 'standard' | 'consult' | 'plan' | 'ops';
+      orchestrationMode?: 'livre' | 'pack' | 'guided';
+      wavePackTemplateId?: 'landing' | 'saas' | 'fix';
       /** Current print/audio evidence must be present before dispatch. */
       evidenceAttached?: boolean;
       /**
@@ -627,6 +629,7 @@ export interface NexusApi {
       missionId: string;
       /** Operator Pack/Guiado override stamped on the promoted contract. */
       orchestrationMode?: 'pack' | 'guided';
+      wavePackTemplateId?: 'landing' | 'saas' | 'fix';
     }): Promise<Mission>;
     /** Submit an approved mission kickoff through main-owned PTY authority. */
     submitMissionKickoff(input: {
