@@ -21,6 +21,10 @@ import {
 export type MissionBlockCauseCode =
   /** O despacho abortou antes de o worker existir. */
   | 'dispatch-failed'
+  /** O Maestro nasceu, mas o kickoff não foi aceito (boot/idle/timeout). */
+  | 'kickoff-failed'
+  /** O Maestro encerrou antes do primeiro dispatch — nenhum worker começou. */
+  | 'maestro-pre-dispatch-exit'
   /** O worker rodou e encerrou sem entregar handoff. */
   | 'worker-no-handoff'
   /** A CLI/modelo do roster não está utilizável agora. */
@@ -65,6 +69,16 @@ const COPY: Readonly<
   'dispatch-failed': {
     headline: 'O despacho da tarefa abortou antes de o worker começar.',
     action: 'Abra o diagnóstico da missão e clique em Retomar missão.',
+  },
+  'kickoff-failed': {
+    headline: 'O Maestro abriu, mas o kickoff não foi aceito a tempo.',
+    action:
+      'Abra o pane do Maestro, confira se a CLI ficou ociosa, e retome a missão.',
+  },
+  'maestro-pre-dispatch-exit': {
+    headline: 'O Maestro encerrou antes de delegar a primeira tarefa.',
+    action:
+      'Abra o diagnóstico, confira a saída do Maestro e clique em Retomar missão.',
   },
   'worker-no-handoff': {
     headline: 'O worker encerrou sem entregar o resultado da tarefa.',
@@ -133,8 +147,16 @@ const RULES: readonly {
     test: /\[NEXUS_WORKER_RUNTIME_LOST\]|não entregou um handoff|sem entregar um handoff/u,
   },
   {
+    code: 'maestro-pre-dispatch-exit',
+    test: /<!--\s*nexus:orchestrator-pre-dispatch-exit|orchestrator_session_exited_before_first_dispatch/u,
+  },
+  {
+    code: 'kickoff-failed',
+    test: /<!--\s*nexus:kickoff-not-accepted|<!--\s*nexus:kickoff-failure:/u,
+  },
+  {
     code: 'dispatch-failed',
-    test: /\[NEXUS_TASK_DISPATCH_BLOCKED\]|\[NEXUS_DEAD_ORCHESTRATOR_RECOVERY_BLOCKED\]|<!--\s*nexus:kickoff-not-accepted|<!--\s*nexus:kickoff-failure:|<!--\s*nexus:orchestrator-bootstrap-blocked|<!--\s*nexus:orchestrator-pre-dispatch-exit|<!--\s*nexus:guided-plan-block|<!--\s*nexus:plan-promotion-[a-z]+-blocked/u,
+    test: /\[NEXUS_TASK_DISPATCH_BLOCKED\]|\[NEXUS_DEAD_ORCHESTRATOR_RECOVERY_BLOCKED\]|<!--\s*nexus:orchestrator-bootstrap-blocked|<!--\s*nexus:guided-plan-block|<!--\s*nexus:plan-promotion-[a-z]+-blocked/u,
   },
   // Último: `[NEXUS_FAILURE:terminal]` é marcador de SEVERIDADE, não de causa.
   // Sozinho ele só garante que a recuperação automática acabou.

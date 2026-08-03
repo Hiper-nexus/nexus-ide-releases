@@ -13,6 +13,61 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.22.1',
+  date: '2026-08-02',
+  codename: 'O piloto para de girar em falso',
+  summary:
+    'Missões aprovadas passam a executar sobre squads imutáveis, falhas ' +
+    'permanentes deixam de alimentar recovery infinito e delegação antecipada ' +
+    'continua rápida sem abrir escrita antes do PREVC. O pane da missão também ' +
+    'assume o foco correto no Canvas.',
+  highlights: [
+    {
+      title: 'Squad aprovado não muda no próximo boot',
+      detail:
+        'A confirmação materializa um mission-runtime imutável e vincula a ' +
+        'missão antes de selar o hash. O preview permanece sem efeitos, e o ' +
+        'sync de squads builtin pode evoluir sem invalidar missões em curso.',
+    },
+    {
+      title: 'Recovery automático agora é finito',
+      detail:
+        'Falhas de preflight determinísticas viram bloqueio acionável na hora; ' +
+        'as recuperáveis têm backoff e teto de tentativas. A missão para de ' +
+        'repetir a mesma falha indefinidamente e pede uma nova aprovação.',
+    },
+    {
+      title: 'Spawn cedo, autoridade estreita',
+      detail:
+        'O Maestro pode rotear e abrir scouts/revisores antes da execução, mas ' +
+        'panes antecipados exigem readOnly nativo. Escrita, shell e Git seguem ' +
+        'presos ao estágio de execução e ao worktree governado.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'A missão fica na frente no Canvas',
+      detail:
+        'Após preservar shells existentes, o pane recém-lançado do ' +
+        'orquestrador recebe foco explícito e o z-index correto; um shell antigo ' +
+        'não cobre mais a missão.',
+    },
+    {
+      title: 'Lock de checkout espera sem queimar CPU',
+      detail:
+        'Contenção do registro de checkouts usa retry limitado com espera ' +
+        'bloqueante, em vez de falhar no primeiro EEXIST ou girar o event loop.',
+    },
+    {
+      title: 'Revisor usa modelo real do catálogo',
+      detail:
+        'O modelo inexistente que matava o reviewer foi removido da rota padrão, ' +
+        'e erros de bloqueio voltam a chegar ao operador em vez de parar calados.',
+    },
+  ],
+};
+
+export const RELEASE_02200: AppRelease = {
   version: '0.22.0',
   date: '2026-08-02',
   codename: 'O piloto aprende a pilotar',

@@ -41,6 +41,7 @@ import { resolveGovernedCliProfile } from "../orch/governed-cli-profile";
 import {
   deliverGrantedSkillsToProviderHome,
   prepareCodexGovernedSession,
+  prepareCodexOperatorMissionHome,
   type CodexGovernedProcessSandbox,
 } from "../orch/cli-mcp-session-config";
 import { requiresSpawnGate } from "../orch/spawn-home-policy";
@@ -1397,35 +1398,31 @@ export function spawnAgentSession(
     gatedSpawn &&
     executionPolicy.isFrictionless
   ) {
-    // O autopiloto não prepara o CODEX_HOME privado, então o mirror governado
-    // nunca roda e o Codex lê o perfil real: a skill que a política CONCEDEU
-    // não chegava fisicamente a lugar nenhum. Materializa só os nomes
-    // concedidos no perfil que o processo realmente lê — a autoridade continua
-    // sendo decidida pela política de skills, aqui só a entrega é fechada.
-    // `isFrictionless` é falso em todo o modo endurecido (e no Pet Studio):
-    // essas lanes seguem entregando apenas dentro do overlay privado.
+    // Autopiloto: não prepara o perfil governado completo (Seatbelt/deny),
+    // mas AINDA isola mcp_servers ambient do ~/.codex real — senão cloudflare/
+    // figma/higgsfield não autenticados travam o boot antes do prompt. Skills
+    // concedidas caem no CODEX_HOME privado, não no perfil do operador.
     try {
       const token = decoration.env.NEXUS_MCP_TOKEN;
       if (!token) {
         throw new Error("gated CLI spawn is missing its main-owned bearer");
       }
+      const operatorHome = prepareCodexOperatorMissionHome(token, {
+        providerHome: env.CODEX_HOME,
+      });
+      Object.assign(env, operatorHome.env);
       deliverGrantedSkillsToProviderHome(
         "codex",
         os.homedir(),
-        path.join(
-          env.CODEX_HOME ?? path.join(os.homedir(), ".codex"),
-          "skills",
-        ),
+        path.join(operatorHome.env.CODEX_HOME, "skills"),
         resolveGovernedCliProfile(token).allowedSkills,
       );
     } catch (error) {
-      // Entrega de skill é disponibilidade, não confinamento: um perfil que não
-      // aceita escrita degrada a capacidade do agente, não a autoridade dele.
-      // Falha visível em vez de missão morta — e nunca silenciosa.
-      console.warn(
-        "[pty-manager] failed to deliver granted skills to the Codex profile:",
-        error,
-      );
+      // Isolamento de MCP ambient é disponibilidade do worker, não
+      // confinamento: falha visível + spawn abortado bate fail-closed em
+      // vez de herdar servers quebrados e travar a missão em silêncio.
+      decoration?.onSpawnFailed?.();
+      throw error;
     }
   }
   // Adapter-enforced argv is included before the autonomous policy. The final

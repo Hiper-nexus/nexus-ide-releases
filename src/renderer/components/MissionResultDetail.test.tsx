@@ -68,4 +68,35 @@ describe('MissionResultDetail status presentation', () => {
     );
     act(() => root.unmount());
   });
+
+  it('presents automatic technical recovery as recovering, not closed', () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const recovering: Mission = {
+      ...mission('blocked'),
+      intentState: 'blocked_technical',
+      intentVersion: 3,
+      intentContract: {
+        goal: 'Corrigir o projeto',
+        intentVersion: 3,
+        approvedAt: 100,
+      } as Mission['intentContract'],
+      description:
+        'objetivo\n\n<!-- nexus:orchestrator-pre-dispatch-exit -->\n' +
+        '## Maestro encerrou antes da delegação\nSessão saiu cedo.',
+    };
+    act(() =>
+      root.render(
+        <MissionResultDetail mission={recovering} onBack={() => {}} />,
+      ),
+    );
+    expect(host.textContent).toContain('Recuperando');
+    expect(host.textContent).not.toContain('Encerrada com bloqueio');
+    expect(host.textContent).toContain('A missão está em andamento');
+    expect(host.textContent).not.toContain(
+      'Esta missão foi encerrada sem relatório final persistido.',
+    );
+    act(() => root.unmount());
+  });
 });

@@ -19,6 +19,11 @@
 - O schema compartilhado do recibo aplica a mesma regra ao runner privado,
   mantendo `squadSourceId`, hash de origem, snapshot runtime e plano
   causalmente vinculados.
+- Contenção em `checkouts.json.lock` repete com espera bloqueante limitada, sem
+  falhar no primeiro `EEXIST` nem consumir CPU em busy-wait.
+- O pane recém-lançado do orquestrador recebe foco depois que shells existentes
+  são preservados. No Canvas, a missão volta a ocupar o topo correto do
+  stacking e não fica escondida atrás de um terminal antigo.
 
 ## 0.22.0 — O piloto aprende a pilotar
 

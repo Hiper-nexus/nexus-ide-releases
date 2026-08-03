@@ -33,6 +33,7 @@ vi.mock('../pty/pty-manager', () => ({
 vi.mock('./pane-registry', () => ({
   readSessionOutput: (sessionId: string, lines?: number) =>
     harness.tail(sessionId, lines),
+  getOwnedPaneAuthzInfoBySession: () => null,
 }));
 
 vi.mock('./agent-status', () => ({
@@ -41,6 +42,24 @@ vi.mock('./agent-status', () => ({
 
 vi.mock('../adapters/adapter-registry', () => ({
   getAdapter: (id: string) => harness.adapter(id),
+}));
+
+vi.mock('../persistence/renderer-workspace-scope', () => ({
+  getRendererWorkspaceScope: () => null,
+}));
+
+vi.mock('./project-domain-store-registry', () => ({
+  getProjectDomainStores: () => ({
+    handoffs: { submit: vi.fn() },
+  }),
+}));
+
+vi.mock('./idle-delivery', () => ({
+  onHandoffSubmitted: vi.fn(),
+}));
+
+vi.mock('./project-scoped-broadcast', () => ({
+  sameProjectScope: () => true,
 }));
 
 import {
@@ -238,6 +257,73 @@ describe('createLoginStuckWatchdog', () => {
       watchdog.tick();
     }
     expect(rig.events).toHaveLength(0);
+  });
+  it('declares mcp-auth stuck and keeps it under a working semantic hook', () => {
+    const mcpCalls: PaneLoginStuckEvent[] = [];
+    const { watchdog, rig } = makeFactoryRig({
+      onMcpAuthStuck: (event) => mcpCalls.push(event),
+    });
+    watchdog.trackSession('s1', 'p1', 'codex');
+    rig.tails.set(
+      's1',
+      'mcp server cloudflare-api: not logged in\nmcp server figma: handshake failed',
+    );
+    // Semantic status may claim "working" while the handshake loop freezes
+    // the quietKey — that must NOT clear an mcp-auth pattern.
+    rig.statuses.set('p1', 'working');
+
+    for (let t = 5_000; t <= 40_000; t += 5_000) {
+      rig.setNow(t);
+      watchdog.tick();
+    }
+
+    const stuck = rig.events.filter((e) => e.stuck);
+    expect(stuck).toHaveLength(1);
+    expect(stuck[0]).toMatchObject({
+      paneId: 'p1',
+      pattern: 'mcp not logged in',
+      canOpenLogin: false,
+    });
+    expect(mcpCalls).toHaveLength(1);
+    expect(mcpCalls[0].pattern).toBe('mcp not logged in');
+    expect(watchdog.paneState('p1')?.stuck).toBe(true);
+  });
+
+  it('fires onMcpAuthStuck only once per stuck episode', () => {
+    const mcpCalls: PaneLoginStuckEvent[] = [];
+    const { watchdog, rig } = makeFactoryRig({
+      onMcpAuthStuck: (event) => mcpCalls.push(event),
+    });
+    watchdog.trackSession('s1', 'p1', 'claude');
+    rig.tails.set('s1', 'Error: handshake failed for server higgsfield');
+    for (let t = 5_000; t <= 120_000; t += 5_000) {
+      rig.setNow(t);
+      watchdog.tick();
+    }
+    expect(mcpCalls).toHaveLength(1);
+    expect(mcpCalls[0].pattern).toBe('mcp handshake failed');
+  });
+
+  it('still clears CLI-login stuck when the working hook fires', () => {
+    const mcpCalls: PaneLoginStuckEvent[] = [];
+    const { watchdog, rig } = makeFactoryRig({
+      onMcpAuthStuck: (event) => mcpCalls.push(event),
+    });
+    watchdog.trackSession('s1', 'p1', 'claude');
+    rig.tails.set('s1', 'Select login method:');
+    for (let t = 5_000; t <= 40_000; t += 5_000) {
+      rig.setNow(t);
+      watchdog.tick();
+    }
+    expect(rig.events.filter((e) => e.stuck)).toHaveLength(1);
+    expect(mcpCalls).toHaveLength(0);
+
+    rig.statuses.set('p1', 'working');
+    rig.setNow(45_000);
+    watchdog.tick();
+
+    expect(rig.events.filter((e) => !e.stuck)).toHaveLength(1);
+    expect(watchdog.paneState('p1')).toBeNull();
   });
 });
 

@@ -9,7 +9,7 @@ export {
   cleanupCliMcpSession,
   purgeStaleCliMcpSessions,
 } from './cli-mcp-session-artifacts';
-export { prepareCodexGovernedSession } from './cli-mcp-session-codex';
+export { prepareCodexGovernedSession, prepareCodexOperatorMissionHome } from './cli-mcp-session-codex';
 export { deliverGrantedSkillsToProviderHome } from './cli-mcp-session-governance';
 export { prepareGrokMcpSession } from './cli-mcp-session-grok';
 export { prepareKimiMcpSession } from './cli-mcp-session-kimi';

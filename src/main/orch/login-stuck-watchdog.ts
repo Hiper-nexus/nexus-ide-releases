@@ -4,11 +4,18 @@ import {
   tapSessionExit,
   tapSessionState,
 } from '../pty/pty-manager';
-import { readSessionOutput } from './pane-registry';
+import {
+  getOwnedPaneAuthzInfoBySession,
+  readSessionOutput,
+} from './pane-registry';
 import { getAgentSemanticStatus } from './agent-status';
 import { getAdapter } from '../adapters/adapter-registry';
 import { ORCH_CHANNELS } from '../../shared/orch-channels';
 import type { PaneLoginStuckEvent } from '../../shared/types';
+import { getRendererWorkspaceScope } from '../persistence/renderer-workspace-scope';
+import { getProjectDomainStores } from './project-domain-store-registry';
+import { onHandoffSubmitted } from './idle-delivery';
+import { sameProjectScope } from './project-scoped-broadcast';
 
 /**
  * Login-stuck watchdog (Overclock v1.2 harvest, fix F-256): marker + recheck
@@ -18,16 +25,19 @@ import type { PaneLoginStuckEvent } from '../../shared/types';
  * agent that will never start.
  *
  * Hard rules:
- *  - NEVER destructive: no kill, no auto-respawn, no input injection. The
- *    watchdog only reports a typed `login-stuck` state (renderer event +
- *    queryable getter + log) so the UI can offer the adapter's login flow.
+ *  - NEVER kill / auto-respawn / inject input. CLI-login stuck only reports a
+ *    typed `login-stuck` state (renderer event + queryable getter + log) so
+ *    the UI can offer the adapter's login flow.
+ *  - MCP-auth stuck (ambient servers hung on boot) additionally submits a
+ *    synthetic `failed` handoff — same non-destructive wake pattern as the
+ *    stall-watchdog — so the Maestro can fail-fast instead of looping sleep.
  *  - Never on the hot path: PTY output is NOT scanned per chunk. Tails are
  *    read (from the ring buffer pane-registry already keeps) once per tick
  *    (5s), only for sessions that transitioned to busy, capped at
  *    LOGIN_STUCK_MAX_SESSIONS.
  *  - Clears on the first sign of progress: new significant output, the
- *    pattern leaving the tail, or the wave-1 semantic hook reporting the
- *    pane as `working` (getAgentSemanticStatus).
+ *    pattern leaving the tail, or (for CLI-login only) the wave-1 semantic
+ *    hook reporting the pane as `working`.
  */
 
 export const LOGIN_STUCK_TICK_MS = 5_000;
@@ -42,6 +52,13 @@ interface StuckPattern {
   flavor: string;
   re: RegExp;
   label: string;
+  /**
+   * `cli-login` = provider OAuth / device-flow screen (UI can offer login).
+   * `mcp-auth` = third-party MCP server hung on boot (handoff fail-fast; do
+   * not clear just because the semantic hook reports `working` — the CLI can
+   * look "busy" while stuck in an MCP handshake loop).
+   */
+  kind: 'cli-login' | 'mcp-auth';
 }
 
 // Curated, deliberately short heuristics: every entry costs one RegExp.test
@@ -51,20 +68,34 @@ interface StuckPattern {
 // of ordinary agent output.
 const STUCK_PATTERNS: StuckPattern[] = [
   // Claude Code OAuth menu shown when no readable session exists.
-  { flavor: 'claude', re: /select login method/i, label: 'claude login menu' },
+  { flavor: 'claude', re: /select login method/i, label: 'claude login menu', kind: 'cli-login' },
   // Grok's OAuth spinner ("Signing in…") repaints forever on a dead flow.
-  { flavor: 'grok', re: /signing in/i, label: 'grok signing-in spinner' },
+  { flavor: 'grok', re: /signing in/i, label: 'grok signing-in spinner', kind: 'cli-login' },
   // Device-flow prompts that wait for a keypress nobody will send.
-  { flavor: '*', re: /press enter to log ?in/i, label: 'press-enter-to-login prompt' },
+  { flavor: '*', re: /press enter to log ?in/i, label: 'press-enter-to-login prompt', kind: 'cli-login' },
   // Codex ChatGPT login screen.
-  { flavor: 'codex', re: /sign in with chatgpt/i, label: 'codex ChatGPT login screen' },
+  { flavor: 'codex', re: /sign in with chatgpt/i, label: 'codex ChatGPT login screen', kind: 'cli-login' },
   // AGY (Antigravity) Google OAuth screen.
-  { flavor: 'agy', re: /sign in with google/i, label: 'agy Google OAuth screen' },
+  { flavor: 'agy', re: /sign in with google/i, label: 'agy Google OAuth screen', kind: 'cli-login' },
   // Kimi Code login-required screen.
-  { flavor: 'kimi', re: /login required/i, label: 'kimi login-required screen' },
+  { flavor: 'kimi', re: /login required/i, label: 'kimi login-required screen', kind: 'cli-login' },
   // Generic "waiting for authentication/login" hold screens.
-  { flavor: '*', re: /waiting for (authentication|login)/i, label: 'generic auth wait' },
+  { flavor: '*', re: /waiting for (authentication|login)/i, label: 'generic auth wait', kind: 'cli-login' },
+  // Ambient MCP servers hanging boot (field: cloudflare-api / higgsfield /
+  // figma). Fail-fast path — synthetic handoff, not a login UI offer.
+  { flavor: '*', re: /\bnot logged in\b/i, label: 'mcp not logged in', kind: 'mcp-auth' },
+  { flavor: '*', re: /handshake failed/i, label: 'mcp handshake failed', kind: 'mcp-auth' },
+  {
+    flavor: '*',
+    re: /mcp(?:\s+server)?[^\n]{0,80}(?:unauthorized|authentication required|auth(?:entication)? (?:failed|error))/i,
+    label: 'mcp auth failure',
+    kind: 'mcp-auth',
+  },
 ];
+
+export function isMcpAuthStuckPattern(label: string): boolean {
+  return STUCK_PATTERNS.some((p) => p.kind === 'mcp-auth' && p.label === label);
+}
 
 // Braille spinners (⠋⠙⠹…) and digit counters ("Signing in… 12s") repaint
 // every frame WITHOUT meaning progress — strip both before comparing tails,
@@ -92,6 +123,12 @@ export interface LoginStuckWatchdogDeps {
   canOpenLogin(adapterId: string): boolean;
   emit(event: PaneLoginStuckEvent): void;
   log?(message: string): void;
+  /**
+   * Optional side-effect for mission workers stuck on MCP auth (fail-fast
+   * handoff). Never called for ordinary CLI login screens — those stay UI-only
+   * so the operator can complete OAuth.
+   */
+  onMcpAuthStuck?(event: PaneLoginStuckEvent): void;
 }
 
 interface WatchedSession {
@@ -129,7 +166,11 @@ export function createLoginStuckWatchdog(
       adapterId: watch.adapterId,
       stuck,
       pattern: watch.matchedPattern?.label ?? '',
-      canOpenLogin: deps.canOpenLogin(watch.adapterId),
+      // MCP-auth hangs are not cured by opening the CLI login flow.
+      canOpenLogin:
+        watch.matchedPattern?.kind === 'mcp-auth'
+          ? false
+          : deps.canOpenLogin(watch.adapterId),
       at: deps.now(),
     };
   }
@@ -141,7 +182,22 @@ export function createLoginStuckWatchdog(
         `"${watch.matchedPattern?.label ?? 'login'}" — sem saída nova por ` +
         `${LOGIN_STUCK_REQUIRED_WINDOWS}×${LOGIN_STUCK_WINDOW_MS / 1000}s`,
     );
-    deps.emit(buildEvent(watch, true));
+    const event = buildEvent(watch, true);
+    deps.emit(event);
+    if (
+      watch.matchedPattern?.kind === 'mcp-auth' &&
+      deps.onMcpAuthStuck
+    ) {
+      try {
+        deps.onMcpAuthStuck(event);
+      } catch (err) {
+        log(
+          `[login-stuck] onMcpAuthStuck failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
   }
 
   function clearProgress(watch: WatchedSession): void {
@@ -184,16 +240,20 @@ export function createLoginStuckWatchdog(
     tick() {
       const now = deps.now();
       for (const watch of sessions.values()) {
-        // Wave-1 hook integration: hooks reporting real work beat tail
-        // heuristics — the agent is progressing, never stuck.
-        if (deps.getSemanticStatus(watch.paneId)?.status === 'working') {
+        const tail = deps.readTail(watch.sessionId);
+        const pattern = matchPattern(watch.adapterId, tail);
+        // Wave-1 hook: real work beats CLI-login heuristics. MCP-auth hangs
+        // can keep the semantic status on `working` while the quietKey is
+        // frozen (handshake loop), so those patterns are NOT cleared here.
+        if (
+          pattern?.kind !== 'mcp-auth' &&
+          deps.getSemanticStatus(watch.paneId)?.status === 'working'
+        ) {
           clearProgress(watch);
           continue;
         }
-        const tail = deps.readTail(watch.sessionId);
-        const pattern = matchPattern(watch.adapterId, tail);
         if (!pattern) {
-          // No login screen in the tail → progress (or never stuck).
+          // No login/MCP screen in the tail → progress (or never stuck).
           clearProgress(watch);
           continue;
         }
@@ -212,11 +272,13 @@ export function createLoginStuckWatchdog(
         // Same screen, no significant new output: accumulate quiet windows.
         if (watch.windowStartedAt === null) {
           watch.windowStartedAt = now;
+          watch.matchedPattern = pattern;
           continue;
         }
         if (now - watch.windowStartedAt >= LOGIN_STUCK_WINDOW_MS) {
           watch.quietWindows += 1;
           watch.windowStartedAt = now;
+          watch.matchedPattern = pattern;
           if (watch.quietWindows >= LOGIN_STUCK_REQUIRED_WINDOWS && !watch.stuck) {
             declareStuck(watch);
           }
@@ -306,12 +368,53 @@ export function installLoginStuckWatchdog(
   options: { readonly autoTick?: boolean } = {},
 ): () => void {
   if (activeWatchdog) return () => {};
+  const mcpAuthHandoffSubmitted = new Set<string>();
   const watchdog = createLoginStuckWatchdog({
     now: () => Date.now(),
     readTail: (sessionId) => readSessionOutput(sessionId, TAIL_LINES),
     getSemanticStatus: (paneId) => getAgentSemanticStatus(paneId),
     canOpenLogin,
     emit: emitLoginStuck,
+    onMcpAuthStuck: (event) => {
+      // One synthetic handoff per session per stuck episode — declareStuck
+      // already fires once, but guard against reinstall / re-emit races.
+      if (mcpAuthHandoffSubmitted.has(event.sessionId)) return;
+      const pane = getOwnedPaneAuthzInfoBySession(event.sessionId);
+      const rendererScope = pane
+        ? getRendererWorkspaceScope(pane.owner)
+        : null;
+      if (
+        !pane ||
+        pane.sessionId !== event.sessionId ||
+        pane.paneId !== event.paneId ||
+        pane.kind !== 'cli-agent' ||
+        pane.role !== 'worker' ||
+        !pane.missionId ||
+        !pane.scope ||
+        !rendererScope ||
+        !sameProjectScope(rendererScope, pane.scope)
+      ) {
+        return;
+      }
+      mcpAuthHandoffSubmitted.add(event.sessionId);
+      const handoff = getProjectDomainStores(pane.scope).handoffs.submit({
+        status: 'failed',
+        summary:
+          `watchdog: o worker "${pane.agentName ?? pane.title}" (${pane.paneId}) ` +
+          `travou no bootstrap de MCP ("${event.pattern}") sem progresso por ` +
+          `${LOGIN_STUCK_REQUIRED_WINDOWS}×${LOGIN_STUCK_WINDOW_MS / 1000}s. ` +
+          `Os servidores MCP ambient do perfil do CLI não estão autenticados ` +
+          `ou falharam o handshake. Reautentique-os fora da missão, ou rode ` +
+          `sem eles — o Nexus já isola MCP ambient em workers Codex gated.`,
+        missionId: pane.missionId,
+        sessionId: pane.sessionId,
+        fromAgent: 'nexus-watchdog',
+      });
+      onHandoffSubmitted(handoff, pane.scope);
+      console.warn(
+        `[login-stuck] mcp-auth fail-fast handoff: ${pane.paneId} (${event.pattern})`,
+      );
+    },
   });
   activeWatchdog = watchdog;
   const untapState = tapSessionState((sessionId, state) => {
@@ -322,7 +425,10 @@ export function installLoginStuckWatchdog(
     if (!info?.paneId) return;
     watchdog.trackSession(sessionId, info.paneId, info.adapterId);
   });
-  const untapExit = tapSessionExit((sessionId) => watchdog.dropSession(sessionId));
+  const untapExit = tapSessionExit((sessionId) => {
+    mcpAuthHandoffSubmitted.delete(sessionId);
+    watchdog.dropSession(sessionId);
+  });
   const timer = options.autoTick === false
     ? null
     : setInterval(() => watchdog.tick(), LOGIN_STUCK_TICK_MS);

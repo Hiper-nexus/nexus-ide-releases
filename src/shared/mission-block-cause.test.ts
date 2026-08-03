@@ -35,6 +35,40 @@ describe('missionBlockCause — uma causa nomeada por caso', () => {
     );
   });
 
+  it('kickoff falhou: não culpa cota do provider', () => {
+    const cause = missionBlockCause(
+      blocked(
+        'objetivo\n\n<!-- nexus:kickoff-not-accepted -->\n' +
+          '<!-- nexus:kickoff-failure:boot_timeout -->\n' +
+          '## Kickoff não aceito\nO terminal não ficou ocioso a tempo.\n',
+      ),
+    );
+
+    expect(cause.code).toBe('kickoff-failed');
+    expect(cause.headline).toBe(
+      'O Maestro abriu, mas o kickoff não foi aceito a tempo.',
+    );
+    expect(cause.action).toMatch(/pane do Maestro|retome a missão/i);
+    expect(cause.action).not.toMatch(/cota/i);
+  });
+
+  it('Maestro saiu antes do dispatch: ação é diagnóstico, não cota', () => {
+    const cause = missionBlockCause(
+      blocked(
+        'objetivo\n\n<!-- nexus:orchestrator-pre-dispatch-exit -->\n' +
+          '## Maestro encerrou antes da delegação\n' +
+          'Código técnico: `orchestrator_session_exited_before_first_dispatch`.\n',
+      ),
+    );
+
+    expect(cause.code).toBe('maestro-pre-dispatch-exit');
+    expect(cause.headline).toBe(
+      'O Maestro encerrou antes de delegar a primeira tarefa.',
+    );
+    expect(cause.action).toMatch(/diagnóstico|Retomar missão/i);
+    expect(cause.action).not.toMatch(/cota/i);
+  });
+
   it('worker sem handoff: o worker encerrou sem entregar', () => {
     const cause = missionBlockCause(
       blocked(

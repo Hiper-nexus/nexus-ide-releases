@@ -3,6 +3,7 @@ import {
   PRIOR_MISSION_MEMORY_MARKER,
 } from '../../shared/mission-result-format';
 import { presentMissionFailure } from '../../shared/mission-failure-presentation';
+import { hasAutomaticTechnicalRecovery } from '../../shared/mission-recovery-policy';
 
 const MISSION_LEARNINGS_LIMIT = 65_536;
 
@@ -38,6 +39,7 @@ function missionResultSections(learnings: string): {
 }
 
 function missionResultStatus(mission: Mission): string {
+  if (hasAutomaticTechnicalRecovery(mission)) return 'Recuperando';
   switch (mission.status) {
     case 'pending':
       return 'Planejada';
@@ -52,11 +54,18 @@ function missionResultStatus(mission: Mission): string {
   }
 }
 
+function missionResultBadgeTone(mission: Mission): Mission['status'] | 'running' {
+  return hasAutomaticTechnicalRecovery(mission) ? 'running' : mission.status;
+}
+
 function emptyMissionResult(mission: Mission): string {
   if (mission.status === 'pending') {
     return 'A missão ainda não começou; o relatório será criado durante a execução.';
   }
-  if (mission.status === 'running') {
+  if (
+    mission.status === 'running' ||
+    hasAutomaticTechnicalRecovery(mission)
+  ) {
     return 'A missão está em andamento; o relatório final será persistido quando a cadeia concluir.';
   }
   return 'Esta missão foi encerrada sem relatório final persistido.';
@@ -138,7 +147,9 @@ export function MissionResultDetail({
         Voltar às missões
       </button>
       <header className="mission-result__header">
-        <span className={`orch-badge orch-badge--${mission.status}`}>
+        <span
+          className={`orch-badge orch-badge--${missionResultBadgeTone(mission)}`}
+        >
           {missionResultStatus(mission)}
         </span>
         <h2 id="mission-result-title">{mission.title}</h2>
