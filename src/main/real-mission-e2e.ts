@@ -101,11 +101,17 @@ function scheduleProductWizardTrustedLaunchClicks(
   let clicked = false;
   let sawButton = false;
   let sawDisabled = false;
+  // Single-flight: two overlapping async probes could both read a pre-click
+  // DOM, then both send trusted clicks — the second one lands on whatever the
+  // post-click relayout moved under the stale coordinates (the "Salvar
+  // configuração" incident that re-parented the runtime squad lineage).
+  let probing = false;
   const timer = setInterval(() => {
     if (isSettled() || clicked || sender.isDestroyed() || sender.isCrashed()) {
       clearInterval(timer);
       return;
     }
+    if (probing) return;
     attempts += 1;
     if (attempts > 120) {
       clearInterval(timer);
@@ -116,6 +122,7 @@ function scheduleProductWizardTrustedLaunchClicks(
       onGaveUp?.();
       return;
     }
+    probing = true;
     void (async () => {
       try {
         if (sender.isDestroyed() || sender.isCrashed()) return;
@@ -133,14 +140,20 @@ function scheduleProductWizardTrustedLaunchClicks(
             const title = el.getAttribute("title") || "";
             return { kind: "disabled", title };
           }
-          return {
-            kind: "ready",
-            x: Math.round(rect.left + rect.width / 2),
-            y: Math.round(rect.top + rect.height / 2),
-          };
+          const x = Math.round(rect.left + rect.width / 2);
+          const y = Math.round(rect.top + rect.height / 2);
+          // The enable transition collapses the advanced-roster details and
+          // reflows the wizard. Only click when the center of the measured
+          // rect still resolves to the launch button itself.
+          const hit = document.elementFromPoint(x, y);
+          if (!hit || !(el === hit || el.contains(hit))) {
+            return { kind: "obscured" };
+          }
+          return { kind: "ready", x, y };
         })()`)) as
-          | { kind: "missing" | "hidden" | "disabled"; title?: string }
+          | { kind: "missing" | "hidden" | "disabled" | "obscured"; title?: string }
           | { kind: "ready"; x: number; y: number };
+        if (clicked || isSettled()) return;
         if (state.kind === "disabled") {
           sawButton = true;
           sawDisabled = true;
@@ -170,6 +183,8 @@ function scheduleProductWizardTrustedLaunchClicks(
         );
       } catch {
         // Button may not be mounted yet; keep polling.
+      } finally {
+        probing = false;
       }
     })();
   }, 250);
