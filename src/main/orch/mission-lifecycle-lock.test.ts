@@ -1,6 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { testProjectScope } from "./__tests__/scope-fixture";
-import { withMissionLifecycleLock } from "./mission-lifecycle-lock";
+import {
+  MissionLifecycleLockBusyError,
+  withMissionLifecycleLock,
+} from "./mission-lifecycle-lock";
 
 function deferred(): {
   readonly promise: Promise<void>;
@@ -80,5 +83,62 @@ describe("mission lifecycle lock", () => {
         () => "recovery continued",
       ),
     ).resolves.toBe("recovery continued");
+  });
+
+  describe("timeout de aquisição", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("faz o waiter desistir sem rodar a operação; holder e fila seguem intactos", async () => {
+      vi.useFakeTimers();
+      const scope = testProjectScope();
+      const releaseHolder = deferred();
+      const order: string[] = [];
+
+      const holder = withMissionLifecycleLock(scope, "mission-t", async () => {
+        order.push("holder:start");
+        await releaseHolder.promise;
+        order.push("holder:end");
+      });
+      await Promise.resolve();
+
+      const waiter = withMissionLifecycleLock(
+        scope,
+        "mission-t",
+        async () => {
+          order.push("waiter");
+        },
+        { acquireTimeoutMs: 30_000 },
+      );
+      // Attach BEFORE the timer fires, or the rejection floats unhandled.
+      const waiterExpectation = expect(waiter).rejects.toBeInstanceOf(
+        MissionLifecycleLockBusyError,
+      );
+      await vi.advanceTimersByTimeAsync(30_000);
+      await waiterExpectation;
+      expect(order).toEqual(["holder:start"]);
+
+      const next = withMissionLifecycleLock(scope, "mission-t", async () => {
+        order.push("next");
+      });
+      releaseHolder.resolve();
+      await holder;
+      await next;
+      expect(order).toEqual(["holder:start", "holder:end", "next"]);
+    });
+
+    it("adquire normalmente quando o lock está livre", async () => {
+      vi.useFakeTimers();
+      const scope = testProjectScope();
+      await expect(
+        withMissionLifecycleLock(
+          scope,
+          "mission-free",
+          () => "ok",
+          { acquireTimeoutMs: 30_000 },
+        ),
+      ).resolves.toBe("ok");
+    });
   });
 });
