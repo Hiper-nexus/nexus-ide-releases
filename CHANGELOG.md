@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.24.0 — Wave Pack, fast path e missão que conta o que faz
+
+Data: 2026-08-03
+
+### Orquestração
+
+- Mission Wave Pack: N stories em panes paralelos, templates Landing/SaaS/Fix,
+  e escolha Livre / Pack / Guiado no wizard e no promote do plano.
+- Fast path: `risk=normal` pula a cerimônia PREVC antes do primeiro pane
+  (opt-out via `orch.fastPath`).
+- Warm-up read-only de reviewer/QA na onda 1 (flag
+  `feature.mission.warmupAdvisories`) sem quebrar o single-writer.
+- Fence de promote amarra Pack/Guiado, template e contagem de stories ao que
+  o operador revisou no diálogo nativo.
+
+### Experiência do operador
+
+- Boot da missão mostra etapa viva no card de vaga (poll 5s) em vez de
+  silêncio de 30–90s.
+- Kickoff standard enxuto (<2,4KB) sem `promotedPlan`, com condução colapsada
+  por topologia.
+- Cronograma de ondas no diagnóstico (IPC read-only, detail selado intacto).
+- Recuperação deixa de ser beco sem saída: timeout 120s por tentativa, contagem
+  N/8, lock 30s, e escape hatch na UI (Forçar retomada / Encerrar).
+- Quatro caminhos gravam causa legível na description quando a missão fecha
+  sem veredito.
+
 ## 0.23.0 — Missão nasce, anda e respira melhor
 
 Data: 2026-08-03

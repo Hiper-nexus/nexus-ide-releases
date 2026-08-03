@@ -13,6 +13,55 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.24.0',
+  date: '2026-08-03',
+  codename: 'Wave Pack, fast path e missão que conta o que faz',
+  summary:
+    'Missões ganham Wave Pack (stories em paralelo), fast path sem PREVC ' +
+    'em risco normal, warm-ups read-only na onda 1, boot com etapa ao vivo, ' +
+    'kickoff enxuto, cronograma de ondas e recuperação com saída. O promote ' +
+    'amarra Pack/Guiado ao fence que o operador revisou.',
+  highlights: [
+    {
+      title: 'Wave Pack e orquestração explícita',
+      detail:
+        'Templates Landing/SaaS/Fix e escolha Livre / Pack / Guiado no ' +
+        'wizard e no promote; N stories abrem panes em paralelo com QA no ' +
+        'fan-in, sem surpresa Pack no caminho destrutivo.',
+    },
+    {
+      title: 'Fast path e warm-ups na onda 1',
+      detail:
+        'risk=normal pula PREVC antes do primeiro pane; reviewer/QA fazem ' +
+        'warm-up read-only na mesma onda do executor, com single-writer e ' +
+        'kill-switch por feature flag.',
+    },
+    {
+      title: 'Missão que mostra o que está fazendo',
+      detail:
+        'Card de vaga com etapa de boot ao vivo, kickoff <2,4KB, cronograma ' +
+        'de ondas no diagnóstico e recuperação que conta tentativas e ' +
+        'oferece Forçar retomada / Encerrar.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Promote sem divergência pós-revisão',
+      detail:
+        'O fence nativo inclui orchestrationMode, template e contagem de ' +
+        'stories — o commit não pode promover um modo diferente do ' +
+        'confirmado.',
+    },
+    {
+      title: 'Fechamento com causa legível',
+      detail:
+        'Quatro caminhos gravam motivo na description quando a missão ' +
+        'fechava sem veredito; recovery deixa de parecer eterna.',
+    },
+  ],
+};
+
+export const RELEASE_02300: AppRelease = {
   version: '0.23.0',
   date: '2026-08-03',
   codename: 'Missão nasce, anda e respira melhor',
