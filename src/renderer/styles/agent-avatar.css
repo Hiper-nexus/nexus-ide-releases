@@ -49,14 +49,14 @@
 
 .agent-avatar__status-dot {
   position: absolute;
-  z-index: 5;
-  bottom: 1px;
-  right: 1px;
-  width: 6px;
-  height: 6px;
+  z-index: 6;
+  bottom: -1px;
+  right: -1px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   background: var(--agent-state);
-  box-shadow: 0 0 0 2px #090a0f;
+  box-shadow: 0 0 0 2px var(--bg-elevated, #141416);
   transition: background-color 200ms ease;
 }
 
@@ -199,16 +199,25 @@
 
 .agent-avatar-group {
   display: inline-flex;
+  align-items: center;
   flex: 0 0 auto;
-  padding-left: 4px;
+  padding-left: 2px;
 }
-.agent-avatar-group .agent-avatar + .agent-avatar {
-  margin-left: -7px;
-}
-.agent-avatar-group .agent-avatar {
+.agent-avatar-group .agent-avatar,
+.agent-avatar-group .ops-board__agent-focus .agent-avatar {
+  border-radius: 50% !important;
   box-shadow:
-    0 0 0 2px var(--bg-elevated),
-    inset 0 0 0 1px color-mix(in srgb, var(--agent-state) 28%, var(--border));
+    0 0 0 2px var(--bg-elevated, #141416),
+    inset 0 0 0 1px color-mix(in srgb, var(--agent-state) 30%, var(--border));
+  transition: transform 140ms var(--ease-out-quart, ease), box-shadow 140ms ease;
+}
+.agent-avatar-group .agent-avatar:hover,
+.agent-avatar-group .ops-board__agent-focus:hover .agent-avatar {
+  transform: translateY(-2px) scale(1.14);
+  z-index: 10;
+  box-shadow:
+    0 0 0 2px var(--bg-elevated, #141416),
+    0 4px 12px rgba(0, 0, 0, 0.45);
 }
 
 @container pane-toolbar (max-width: 340px) {

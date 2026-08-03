@@ -337,15 +337,14 @@
 
 .ops-board__crew .agent-avatar-group {
   padding-left: 2px;
+  align-items: center;
 }
-.ops-board__crew .agent-avatar-group .agent-avatar + .agent-avatar,
-.ops-board__crew .agent-avatar-group .ops-board__agent-focus + .ops-board__agent-focus,
-.ops-board__crew .agent-avatar-group .ops-board__agent-focus + .agent-avatar,
-.ops-board__crew .agent-avatar-group .agent-avatar + .ops-board__agent-focus {
-  margin-left: -8px;
+.ops-board__crew .agent-avatar-group > *:not(:first-child) {
+  margin-left: -7px;
 }
 .ops-board__agent-avatar {
-  --agent-size: 32px;
+  --agent-size: 28px;
+  border-radius: 50% !important;
 }
 .ops-board__agent-focus {
   position: relative;
@@ -354,13 +353,14 @@
   margin: 0;
   padding: 0;
   border: 0;
-  border-radius: var(--radius-md);
+  border-radius: 50% !important;
   background: transparent;
   cursor: pointer;
+  outline: none;
 }
 .ops-board__agent-focus:hover,
 .ops-board__agent-focus:focus-visible {
-  z-index: 2;
+  z-index: 10;
 }
 .ops-board__agent-focus:hover .agent-avatar,
 .ops-board__agent-focus:focus-visible .agent-avatar {
