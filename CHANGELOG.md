@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.25.0 — Autopiloto no chão — vibe first, multi-LLM
+
+Data: 2026-08-03
+
+### Produto (chão do vibe)
+
+- Autopiloto é o default real no boot: `squadCliPolicy=operator-choice`,
+  atestação off e sandbox de kernel desligado.
+- Seatbelt/bwrap e ladder Hardened só com `governed` explícito nas
+  Configurações; policy ausente/desconhecida não reativa Hardened.
+- No Autopiloto, catálogo, hash/plan seal drift e identity vault avisam e
+  seguem — não matam o Maestro. Hardened continua fail-closed.
+- Kickoff por squad enxuto (~1,7KB): objetivo + roster + condução, sem
+  manifesto gigante no caminho vibe.
+- Frota multi-provedor pronta: runtime deixa de travar em um único LLM
+  quando o restante está apto.
+
+### Release
+
+- DMG/ZIP macOS arm64 assinados, notarizados e stapled como release público.
+
 ## 0.24.0 — Wave Pack, fast path e missão que conta o que faz
 
 Data: 2026-08-03

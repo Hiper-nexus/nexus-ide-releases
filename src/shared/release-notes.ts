@@ -13,6 +13,62 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.25.0',
+  date: '2026-08-03',
+  codename: 'Autopiloto no chão — vibe first, multi-LLM',
+  summary:
+    'O chão do produto é Autopiloto: sem Seatbelt por omissão, gates pré-PTY ' +
+    'avisam em vez de matar o Maestro, kickoff enxuto (~1,7KB) e frota multi-' +
+    'provedor pronta. Hardened continua opt-in fail-closed. Release notarizado ' +
+    'público com a experiência vibe completa.',
+  highlights: [
+    {
+      title: 'Autopiloto é o default real',
+      detail:
+        'Floor único no boot: squadCliPolicy=operator-choice, atestação off e ' +
+        'sandbox de kernel desligado. Seatbelt/bwrap e ladder Hardened só com ' +
+        'governed explícito nas Configurações.',
+    },
+    {
+      title: 'Menos freio pré-PTY no caminho vibe',
+      detail:
+        'No Autopiloto, catálogo, hash/plan seal drift e identity vault avisam ' +
+        'e seguem — não reabrem aprovação nem derrubam a missão. Worktree, ' +
+        'login CLI e merge Main permanecem.',
+    },
+    {
+      title: 'Kickoff curto e multi-provedor',
+      detail:
+        'Missão por squad cola objetivo + roster + condução enxuta (~1,7KB) ' +
+        'em vez de manifesto gigante. Runtime de frota multi-LLM deixa de ' +
+        'travar em um único provedor quando o resto está pronto.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Policy ausente não reativa Hardened',
+      detail:
+        'Valor desconhecido/ausente de squadCliPolicy deixa de cair no ' +
+        'governed: sandbox e perfil privado do Codex só com governed ' +
+        'explícito (case/whitespace normalizados).',
+    },
+    {
+      title: 'Atestação e identity best-effort no Autopiloto',
+      detail:
+        'agentAttestationGate default off; vault de identity não mata o ' +
+        'primeiro pane. Drift de runtime e mismatch pós-spawn viram aviso ' +
+        'no Autopiloto e fail-closed só no Hardened.',
+    },
+    {
+      title: 'Release público limpo',
+      detail:
+        '0.25.0 fecha o ciclo de publish notarizado com a experiência vibe ' +
+        'como produto padrão — DMG/ZIP assinados, stapled e publicados.',
+    },
+  ],
+};
+
+export const RELEASE_02400: AppRelease = {
   version: '0.24.0',
   date: '2026-08-03',
   codename: 'Wave Pack, fast path e missão que conta o que faz',
