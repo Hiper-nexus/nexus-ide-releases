@@ -17,7 +17,7 @@ const provenance = require(
     root,
     'third_party',
     'provenance',
-    'brace-expansion-5.0.8-compat.json',
+    'brace-expansion-5.0.9-compat.json',
   ),
 );
 
@@ -31,7 +31,7 @@ function minimatchFunction(api) {
   throw new TypeError('installed minimatch has no callable API');
 }
 
-describe('brace-expansion 5.0.8 compatibility boundary', () => {
+describe('brace-expansion 5.0.9 compatibility boundary', () => {
   it('keeps every copied upstream artifact byte-for-byte pinned', () => {
     for (const file of provenance.files) {
       expect(sha256(path.join(root, file.nexusPath)), file.nexusPath).toBe(
@@ -173,7 +173,7 @@ describe('brace-expansion 5.0.8 compatibility boundary', () => {
     expect(packageLock.packages[''].version).toBe(packageJson.version);
     expect(packageLock.packages.server.version).toBe(serverPackageJson.version);
     expect(packageLock.packages['third_party/brace-expansion-compat'].version).toBe(
-      '5.0.8',
+      '5.0.9',
     );
     expect(braceEntries).toEqual([
       [
