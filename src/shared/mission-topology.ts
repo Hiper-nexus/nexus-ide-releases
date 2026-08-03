@@ -23,6 +23,9 @@ const TEAM_ANALYSIS_ACTIVITY = /\b(?:analisando|analyzing)\b/;
 const TEAM_OUTPUT_ACTIVITY =
   /\b(?:soltando|respondendo|relatando|answering|reporting)\b/;
 
+const SHORT_PANE_SMOKE_TEST =
+  /^(?:teste|testar|test)\s+(?:de\s+|the\s+)?panes?$/;
+
 const ROLE_RESPONSE_SUBJECT =
   /\b(?:papel|funcao|o\s*que\s+(?:\w+\s+){0,2}(?:faz|fazem)|oque\s+(?:\w+\s+){0,2}(?:faz|fazem)|role|what\s+(?:it|they|you)\s+do)\b/;
 
@@ -334,13 +337,16 @@ export function classifyStandardMissionTopology(
     TEAM_RUNNING_ACTIVITY.test(canonical) &&
     TEAM_ANALYSIS_ACTIVITY.test(canonical) &&
     TEAM_OUTPUT_ACTIVITY.test(canonical);
+  const hasShortPaneSmokeTest =
+    canonical.split(" ").length <= 4 && SHORT_PANE_SMOKE_TEST.test(canonical);
   const hasClosedReadOnlyRequest =
     (
       EXPLICIT_READ_ONLY.test(canonical) &&
       hasClosedExplicitReadOnlyResponse(canonical)
     ) ||
     hasClosedRoleResponse(canonical) ||
-    hasObservedTeamRuntime;
+    hasObservedTeamRuntime ||
+    hasShortPaneSmokeTest;
   const hasTeamResponse =
     TEAM_RESPONSE.test(canonical) && TEAM_RESPONSE_SUBJECT.test(canonical);
   const mutationCandidate = canonical.replace(
@@ -351,8 +357,8 @@ export function classifyStandardMissionTopology(
     canonical.length < 8 ||
     MUTATING_ACTION.test(mutationCandidate) ||
     PRODUCT_SURFACE_MUTATION.test(canonical) ||
-    !TEAM_SCOPE.test(canonical) ||
-    (!hasTeamResponse && !hasObservedTeamRuntime) ||
+    (!TEAM_SCOPE.test(canonical) && !hasShortPaneSmokeTest) ||
+    (!hasTeamResponse && !hasObservedTeamRuntime && !hasShortPaneSmokeTest) ||
     !hasClosedReadOnlyRequest
   ) {
     return "delivery";

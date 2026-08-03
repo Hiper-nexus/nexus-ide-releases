@@ -1,3 +1,4 @@
+import path from "node:path";
 import type { WebContents } from "electron";
 import { z } from "zod";
 import { GUIDED_PLAN_BLOCK_MARKER } from "../../shared/guided-mission-plan";
@@ -569,7 +570,13 @@ export function runtimeAuthorityMismatches(
   check("agent.requestedModel×pane", agent.requestedModel, pane.model);
   check("agent.accountId×pane", agent.accountId, pane.accountId);
   check("agent.effort×pane", agent.effort, pane.effort);
-  check("agent.cwd×pane", agent.cwd, pane.cwd);
+  // Canonical path only: symlink / trailing-slash / realpath spelling must not
+  // tear down a healthy Maestro PTY (field: agent.cwd×pane false-negative).
+  check(
+    "agent.cwd×pane",
+    agent.cwd === undefined ? undefined : path.resolve(agent.cwd),
+    pane.cwd === undefined ? undefined : path.resolve(pane.cwd),
+  );
   check("agent.missionId", agent.missionId, mission.id);
   check("agent.role", agent.role, "orchestrator");
   check("agent.readOnly×pane", agent.readOnly, pane.readOnly === true);

@@ -553,14 +553,17 @@ export function defaultBudgetsForRisk(
       // Risco restringe a SUPERFÍCIE DE APROVAÇÃO (modal nativo), não o
       // paralelismo: sensitive recebe o mesmo teto de workers que normal —
       // goals comuns como "corrija o login" não podem encolher a wave.
-      maxWorkers: 8,
+      maxWorkers: 12,
       maxSteps: 400,
     };
   }
   return {
     planningTokens: 1_200,
     executionTokens: 800_000,
-    maxWorkers: 8,
+    // Overclock sobe ~12 panes do mesmo LLM em fan-out; o spawn já aceita o
+    // mesmo adapterId N vezes — o teto útil era 8 e engessava a paridade
+    // visual/operacional. Schema permite até 64.
+    maxWorkers: 12,
     maxSteps: 600,
   };
 }

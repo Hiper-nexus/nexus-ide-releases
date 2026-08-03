@@ -57,7 +57,13 @@ import {
 } from './pty-stream-mission-control';
 import { ensureGuidedMissionPlanForScope } from './guided-mission-planner';
 
-const BOOT_IDLE_WINDOW_MS = 15_000;
+/**
+ * Após o primeiro byte, o Claude/Codex ainda pode ficar "busy" enquanto carrega
+ * MCP/plugins no HOME efêmero. 15s era curto demais: o processo já tinha nascido
+ * e a missão caía em `boot_timeout` / "não ficou ocioso a tempo" sem colar o
+ * kickoff. 60s cobre o boot frio observado em campo sem esconder um hang real.
+ */
+export const BOOT_IDLE_WINDOW_MS = 60_000;
 /**
  * Prazo até o primeiro byte do provider. Generoso de propósito: cobre o boot
  * frio de um HOME efêmero carregando as ferramentas MCP. Continua finito —
@@ -69,11 +75,27 @@ const BRACKETED_PASTE_WINDOW_MS = 3_000;
 // Orca's production TUI path also gives bracketed paste 500 ms before Enter.
 // Nexus retains the stronger post-Enter UserPromptSubmit receipt below.
 const PASTE_SETTLE_MS = 500;
-const PASTE_IDLE_WINDOW_MS = 3_000;
-const ACCEPTANCE_WINDOW_MS = 12_000;
+/**
+ * Echo/repaint após o paste pode manter o PTY busy por alguns segundos. 3s
+ * derrubava o kickoff antes do Enter em CLIs lentas (Claude + MCP frio).
+ */
+const PASTE_IDLE_WINDOW_MS = 8_000;
+/**
+ * UserPromptSubmit pode atrasar ou falhar no HOME efêmero. A janela precisa
+ * cobrir o turno real; abaixo disso o Maestro nasce, o brief some e o
+ * scheduler nunca despacha workers.
+ */
+export const ACCEPTANCE_WINDOW_MS = 30_000;
 /** Real-mission Codex may keep processing after paste; give it longer to re-idle. */
-const REAL_MISSION_PASTE_IDLE_WINDOW_MS = 8_000;
-const REAL_MISSION_ACCEPTANCE_WINDOW_MS = 20_000;
+const REAL_MISSION_PASTE_IDLE_WINDOW_MS = 12_000;
+const REAL_MISSION_ACCEPTANCE_WINDOW_MS = 45_000;
+/**
+ * Prova física secundária quando o hook UserPromptSubmit não chega: busy
+ * sustentado + ≥2 chunks de saída pós-Enter. Espelha o fallback de
+ * `deliverAgentPrompt` — rejeita repaint de um frame.
+ */
+export const KICKOFF_PHYSICAL_TURN_CONFIRM_MS = 4_000;
+const KICKOFF_PHYSICAL_MIN_OUTPUT_CHUNKS = 2;
 const KICKOFF_BLOCK_MARKER = '<!-- nexus:kickoff-not-accepted -->';
 const KICKOFF_CTA = 'Retomar missão';
 
@@ -254,6 +276,8 @@ export interface MissionKickoffTiming {
   readonly pasteSettleMs?: number;
   readonly pasteIdleWindowMs?: number;
   readonly acceptanceWindowMs?: number;
+  /** Override da confirmação física (testes); produção usa 4s. */
+  readonly physicalTurnConfirmMs?: number;
 }
 
 export function missionKickoffFailureDetail(reason: MissionKickoffFailureReason): string {
@@ -295,11 +319,16 @@ export async function runMissionKickoffAcceptance(
   const acceptanceWindowMs =
     timing.acceptanceWindowMs ??
     (realMission ? REAL_MISSION_ACCEPTANCE_WINDOW_MS : ACCEPTANCE_WINDOW_MS);
+  const physicalTurnConfirmMs =
+    timing.physicalTurnConfirmMs ?? KICKOFF_PHYSICAL_TURN_CONFIRM_MS;
   const timers = new Set<ReturnType<typeof setTimeout>>();
   let exited = false;
   let submitted = false;
   let outputSeen = false;
   let busySeen = false;
+  let outputChunks = 0;
+  let sustainedPhysicalTurn = false;
+  let physicalConfirmTimer: ReturnType<typeof setTimeout> | null = null;
   let turnStartBaseline = 0;
   let idleWaiter: ((outcome: 'idle' | 'timeout' | 'exited') => void) | null = null;
   let birthWaiter: ((outcome: 'born' | 'timeout' | 'exited') => void) | null =
@@ -308,6 +337,33 @@ export async function runMissionKickoffAcceptance(
   const isInjectableIdle = () =>
     ports.getState(input.sessionId) === 'idle' &&
     (ports.isInjectableIdle?.() ?? true);
+  const hasAcceptanceProof = () =>
+    ports.getTurnStartSequence() > turnStartBaseline || sustainedPhysicalTurn;
+  const settleAccepted = () => {
+    if (hasAcceptanceProof()) acceptanceWaiter?.(true);
+  };
+  const armPhysicalTurnConfirmation = () => {
+    if (
+      !submitted ||
+      sustainedPhysicalTurn ||
+      physicalConfirmTimer ||
+      ports.getState(input.sessionId) !== 'busy' ||
+      outputChunks < KICKOFF_PHYSICAL_MIN_OUTPUT_CHUNKS
+    ) {
+      return;
+    }
+    physicalConfirmTimer = setTimeout(() => {
+      physicalConfirmTimer = null;
+      if (
+        ports.getState(input.sessionId) === 'busy' &&
+        outputChunks >= KICKOFF_PHYSICAL_MIN_OUTPUT_CHUNKS
+      ) {
+        sustainedPhysicalTurn = true;
+        settleAccepted();
+      }
+    }, physicalTurnConfirmMs);
+    timers.add(physicalConfirmTimer);
+  };
 
   const untapState = ports.onState((sessionId, state) => {
     if (sessionId !== input.sessionId) return;
@@ -322,6 +378,7 @@ export async function runMissionKickoffAcceptance(
     }
     if (submitted && state === 'busy') {
       busySeen = true;
+      armPhysicalTurnConfirmation();
     }
     if (state === 'exited') {
       exited = true;
@@ -346,6 +403,8 @@ export async function runMissionKickoffAcceptance(
     }
     if (!submitted) return;
     outputSeen = true;
+    outputChunks += 1;
+    armPhysicalTurnConfirmation();
   });
   const untapExit = ports.onExit((sessionId) => {
     if (sessionId !== input.sessionId) return;
@@ -531,7 +590,9 @@ export async function runMissionKickoffAcceptance(
         clearTimeout(timer);
         timers.delete(timer);
         if (acceptanceWaiter === finish) acceptanceWaiter = null;
-        resolve(value);
+        // Janela esgotada: ainda aceita se a prova física sustentada venceu
+        // a corrida no mesmo tick (hook morto, turno real no PTY).
+        resolve(value || hasAcceptanceProof());
       };
       const timer = setTimeout(() => finish(false), acceptanceWindowMs);
       timers.add(timer);
@@ -540,6 +601,8 @@ export async function runMissionKickoffAcceptance(
     });
     outputSeen = false;
     busySeen = false;
+    outputChunks = 0;
+    sustainedPhysicalTurn = false;
     turnStartBaseline = ports.getTurnStartSequence();
     submitted = true;
     // Busy already present at submit arm time is diagnostic only. Repaint,
@@ -558,14 +621,13 @@ export async function runMissionKickoffAcceptance(
       settleAcceptance(false);
       return await fail('write_failed');
     }
-    // Snapshot after Enter for diagnostics. Acceptance is exclusively the
-    // content-free UserPromptSubmit sequence emitted by agent-status.
+    // Aceite preferencial: UserPromptSubmit. Secundário: turno físico
+    // sustentado (busy + ≥2 chunks) quando o canal de hooks falha.
     if (ports.getState(input.sessionId) === 'busy') {
       busySeen = true;
+      armPhysicalTurnConfirmation();
     }
-    if (ports.getTurnStartSequence() > turnStartBaseline) {
-      settleAcceptance(true);
-    }
+    settleAccepted();
     if (await accepted) return { accepted: true };
     if (exited || ports.getState(input.sessionId) === null) {
       return await fail('session_exited');
@@ -579,6 +641,11 @@ export async function runMissionKickoffAcceptance(
     if (!ports.isAuthorized()) return await fail('authority_lost');
     return await fail('write_failed');
   } finally {
+    if (physicalConfirmTimer) {
+      clearTimeout(physicalConfirmTimer);
+      timers.delete(physicalConfirmTimer);
+      physicalConfirmTimer = null;
+    }
     for (const timer of timers) clearTimeout(timer);
     timers.clear();
     idleWaiter = null;

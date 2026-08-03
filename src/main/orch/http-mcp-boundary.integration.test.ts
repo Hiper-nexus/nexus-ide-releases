@@ -732,9 +732,6 @@ describe("physical HTTP MCP handoff boundary", () => {
         ),
       );
 
-    await expect(dispatchAck()).resolves.toMatchObject({ ok: false });
-    expect(handoffs.get(handoff.id)?.deliveryState).toBe("queued");
-
     const attempt = handoffs.reserveDeliveryAttempt({
       handoffId: handoff.id,
       missionId: MISSION_ID,
@@ -884,6 +881,69 @@ describe("physical HTTP MCP handoff boundary", () => {
         .db.prepare(`SELECT COUNT(*) AS count FROM handoff_ack_receipts`)
         .get(),
     ).toEqual({ count: 2 });
+  });
+
+  it("consumes a queued handoff the orchestrator read instead of one pasted", async () => {
+    // Push delivery only pastes into an idle PTY, so an orchestrator that polls
+    // for results never receives one — it stays `working` for its whole turn.
+    // Requiring a pasted attempt before the ACK deadlocked the mission.
+    const handoff = handoffs.submit({
+      missionId: MISSION_ID,
+      sessionId: SESSION_ID,
+      fromAgent: "worker",
+      status: "success",
+      summary: "Durable result the Maestro read via nexus_handoff_list.",
+    });
+    expect(handoffs.get(handoff.id)?.deliveryState).toBe("queued");
+
+    const dispatchAck = () =>
+      runInsidePtyStreamAgentTransport(
+        orchestratorCtx.sessionId!,
+        orchestratorCtx,
+        () =>
+          dispatchToolCall(
+            "pty-stream",
+            registry,
+            "nexus_handoff_ack",
+            { handoffId: handoff.id },
+            orchestratorCtx,
+            dispatchOptions(() => currentMission),
+          ),
+      );
+
+    await expect(dispatchAck()).resolves.toMatchObject({
+      ok: true,
+      result: { handoffId: handoff.id, deliveryState: "consumed" },
+    });
+    expect(handoffs.get(handoff.id)?.deliveryState).toBe("consumed");
+
+    // The synthesized attempt keeps the ACK receipt chain intact.
+    expect(
+      manager
+        .open(testProjectScope())
+        .db.prepare(
+          `SELECT state, orchestrator_session_id
+           FROM handoff_delivery_attempts WHERE handoff_id = ?`,
+        )
+        .all(handoff.id),
+    ).toEqual([
+      {
+        state: "accepted",
+        orchestrator_session_id: ORCHESTRATOR_SESSION_ID,
+      },
+    ]);
+
+    manager.close(testProjectScope());
+    await expect(dispatchAck()).resolves.toMatchObject({ ok: true });
+    expect(
+      manager
+        .open(testProjectScope())
+        .db.prepare(
+          `SELECT COUNT(*) AS count FROM handoff_ack_receipts
+           WHERE handoff_id = ?`,
+        )
+        .get(handoff.id),
+    ).toEqual({ count: 1 });
   });
 
   it("revokes detached HTTP async resources after the request operation settles", async () => {

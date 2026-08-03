@@ -8,6 +8,7 @@ import {
   activateArtifact,
   ensurePrivateDirectory,
   linkSelectedEntries,
+  readTomlObject,
   runtimeServerName,
   withCliMcpArtifactTransaction,
   writePrivateFileAtomic,
@@ -761,6 +762,78 @@ export function prepareCodexGovernedSession(
           providerStatePaths: Object.freeze([...providerStatePaths]),
           protectedWritePaths: Object.freeze([...protectedWritePaths]),
         }),
+      };
+    },
+  );
+}
+
+/**
+ * Operator-choice mission workers keep live auth identity (and therefore the
+ * frictionless autopilot UX) but must not inherit ambient user MCP servers
+ * from `~/.codex/config.toml`. Those servers (cloudflare/figma/higgsfield…)
+ * handshake on boot and can freeze the pane before the pasted prompt reaches
+ * the model — observed as identical output across 30s windows and a Maestro
+ * `blocked_user` decision that was correct for the hang, wrong for product.
+ *
+ * This preparer is deliberately thinner than `prepareCodexGovernedSession`:
+ * no filesystem deny table, no Seatbelt profile, no project-trust rewrite.
+ * It only stages a private CODEX_HOME with auth linked and `mcp_servers`
+ * stripped. Nexus still arrives via the existing `-c mcp_servers.nexus_*`
+ * argv injection from `codexMcpArgs`.
+ */
+export function prepareCodexOperatorMissionHome(
+  token: string,
+  options: Pick<
+    CliMcpSessionOptions,
+    'home' | 'providerHome' | 'artifactRoot'
+  > = {},
+): Pick<CliMcpSessionResult, 'env' | 'artifactDir' | 'serverName'> {
+  if (!token) throw new Error('Nexus MCP token is required');
+  const home = path.resolve(options.home ?? os.homedir());
+  const providerHome = path.resolve(
+    options.providerHome ?? path.join(home, '.codex'),
+  );
+  const artifactRoot = path.resolve(
+    options.artifactRoot ??
+      path.join(home, '.nexus', 'ephemeral', 'mcp-clients'),
+  );
+  return withCliMcpArtifactTransaction(
+    'codex',
+    token,
+    artifactRoot,
+    (preparedArtifactDir) => {
+      const artifactDir = fs.realpathSync.native(preparedArtifactDir);
+      const serverName = runtimeServerName(token);
+      linkSelectedEntries(providerHome, artifactDir, CODEX_LIVE_AUTH_STATE);
+      // Preserve user prefs (model, TUI, notice) but drop ambient MCP servers.
+      // A malformed user config degrades to an empty private config — Nexus
+      // still injects via argv, so the worker remains callable.
+      let userConfig: Record<string, unknown> = {};
+      try {
+        userConfig = readTomlObject(path.join(providerHome, 'config.toml'));
+      } catch {
+        userConfig = {};
+      }
+      const { mcp_servers: _drop, ...rest } = userConfig;
+      writePrivateFileAtomic(
+        path.join(artifactDir, 'config.toml'),
+        `${stringify(rest).trimEnd()}\n`,
+      );
+      // Skills live under the private home so deliverGrantedSkills can land
+      // without mutating the operator's real ~/.codex/skills permanently.
+      ensurePrivateDirectory(path.join(artifactDir, 'skills'));
+      activateArtifact(token, {
+        artifactDir,
+        providerHome,
+        configFiles: ['config.toml'],
+        // Auth may refresh in-pane; sync the linked auth.json back. Never
+        // sync the stripped config (it would wipe the user's MCP roster).
+        syncBack: true,
+      });
+      return {
+        env: { CODEX_HOME: artifactDir },
+        serverName,
+        artifactDir,
       };
     },
   );

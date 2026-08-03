@@ -487,17 +487,17 @@ describe('budget and parent/child ceilings', () => {
       goal: 'small task',
       intentVersion: 1,
     });
-    // default maxWorkers for normal is 8
-    expect(assertWorkerBudget(contract, 7).ok).toBe(true);
-    expect(assertWorkerBudget(contract, 8).ok).toBe(false);
+    // default maxWorkers for normal is 12 (Overclock-scale fan-out)
+    expect(assertWorkerBudget(contract, 11).ok).toBe(true);
+    expect(assertWorkerBudget(contract, 12).ok).toBe(false);
     // No contract = no ceiling (legacy mid-migration).
     expect(assertWorkerBudget(null, 99).ok).toBe(true);
   });
 
   it('risk gates the approval surface, not parallelism', () => {
     // Normal e sensitive dividem o mesmo teto de workers; destructive fica 1.
-    expect(defaultBudgetsForRisk('normal').maxWorkers).toBe(8);
-    expect(defaultBudgetsForRisk('sensitive').maxWorkers).toBe(8);
+    expect(defaultBudgetsForRisk('normal').maxWorkers).toBe(12);
+    expect(defaultBudgetsForRisk('sensitive').maxWorkers).toBe(12);
     expect(defaultBudgetsForRisk('destructive').maxWorkers).toBe(1);
   });
 

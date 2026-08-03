@@ -3663,6 +3663,27 @@ describe('seal capability canonicalization (field: agent.allowedSkills×pane)', 
     ).toEqual([]);
   });
 
+  it('treats equivalent cwd spellings as the same authority', () => {
+    const { mission, pane, agent, authority } = sealInputs({
+      agentSkills: null,
+      paneSkills: undefined,
+    });
+    const withSlash = {
+      ...pane,
+      cwd: `${scope.rootRealPath}/`,
+    };
+    expect(
+      runtimeAuthorityMismatches(
+        scope,
+        mission,
+        withSlash,
+        agent,
+        authority,
+        approvedRuntime,
+      ),
+    ).toEqual([]);
+  });
+
   it('still rejects a real capability divergence (explicit [] blocks everything)', () => {
     const { mission, pane, agent, authority } = sealInputs({
       agentSkills: [],

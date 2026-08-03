@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   cleanupCliMcpSession,
   prepareCodexGovernedSession,
+  prepareCodexOperatorMissionHome,
   prepareGrokMcpSession,
   prepareKimiMcpSession,
   prepareOpenCodeMcpSession,
@@ -292,6 +293,52 @@ describe('prepareOpenCodeMcpSession', () => {
     ).toBe(false);
     expect(JSON.stringify(result.env)).not.toContain('external-mcp');
     expect(JSON.stringify(result.env)).not.toContain('external-plugin');
+  });
+});
+
+describe('prepareCodexOperatorMissionHome', () => {
+  it('keeps live auth and strips ambient mcp_servers from the private home', () => {
+    const root = tempRoot();
+    const home = path.join(root, 'home');
+    const artifacts = path.join(root, 'artifacts');
+    const codexHome = path.join(home, '.codex');
+    write(path.join(codexHome, 'auth.json'), '{"tokens":{"access":"live"}}');
+    write(
+      path.join(codexHome, 'config.toml'),
+      [
+        'model = "gpt-5.4"',
+        '[mcp_servers.cloudflare-api]',
+        'command = "cloudflare-mcp"',
+        '[mcp_servers.figma]',
+        'url = "https://example.invalid/figma"',
+        '[tui]',
+        'resume_cwd = "current"',
+      ].join('\n') + '\n',
+    );
+    const token = 'operator-mission-mcp-isolation';
+    tokens.push(token);
+    const result = prepareCodexOperatorMissionHome(token, {
+      home,
+      providerHome: codexHome,
+      artifactRoot: artifacts,
+    });
+    expect(result.env.CODEX_HOME).toBe(result.artifactDir);
+    expect(result.artifactDir).not.toBe(codexHome);
+    expect(fs.existsSync(path.join(result.env.CODEX_HOME, 'auth.json'))).toBe(
+      true,
+    );
+    const privateConfig = fs.readFileSync(
+      path.join(result.env.CODEX_HOME, 'config.toml'),
+      'utf8',
+    );
+    const parsed = parse(privateConfig) as Record<string, unknown>;
+    expect(parsed.mcp_servers).toBeUndefined();
+    expect(parsed.model).toBe('gpt-5.4');
+    expect(privateConfig).not.toContain('cloudflare');
+    expect(privateConfig).not.toContain('figma');
+    expect(fs.existsSync(path.join(result.env.CODEX_HOME, 'skills'))).toBe(
+      true,
+    );
   });
 });
 

@@ -166,9 +166,27 @@ export class UsageTelemetryService {
   start(): void {
     if (this.#stopped) throw new Error('usage telemetry service is stopped');
     setSessionDictationHook((info) => this.#onSessionDictated(info));
-    setResumeSessionLookup((scope, paneId, adapterId, accountId) =>
-      this.#resumeSessionForPane(scope, paneId, adapterId, accountId),
-    );
+    // O lookup só existe para acrescentar `--resume <id>` ao spawn. Falhar aqui
+    // não é motivo para matar o pane: sem id o pane nasce com sessão nova, que
+    // é o resultado estritamente MAIS restrito. Uma exceção vazando daqui
+    // atravessava o pty-manager e virava
+    // `[nexus] falha ao iniciar o processo: usage telemetry scope identity
+    // collision` — telemetria abortando o nascimento do processo.
+    setResumeSessionLookup((scope, paneId, adapterId, accountId) => {
+      try {
+        return this.#resumeSessionForPane(scope, paneId, adapterId, accountId);
+      } catch (error) {
+        console.warn(
+          '[usage] resume lookup indisponível; pane nasce com sessão nova',
+          JSON.stringify({
+            paneId,
+            adapterId,
+            reason: error instanceof Error ? error.message : String(error),
+          }),
+        );
+        return null;
+      }
+    });
   }
 
   snapshot(scope: ProjectExecutionScope): UsageSnapshot {

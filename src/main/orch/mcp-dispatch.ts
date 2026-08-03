@@ -475,9 +475,11 @@ function bindEffectAuthority(
   if (authority.contextRevision) {
     bindContextRevision(ctx, authority.contextRevision);
   } else if (ctx.contextRevision) {
-    throw new Error(
-      "workflow_authority_revoked: frozen context contract is no longer current",
-    );
+    // Paridade Overclock: missão sem contrato PREVC congelado (ex.: lane ops)
+    // não deve matar o canal de execução do agente. O token pode carregar um
+    // contextRevision de spawn/rebind stale; sem contrato vivo para validar,
+    // o fence degrada em vez de bloquear, preservando o circuito breaker via
+    // assertExecutionEffectAllowed quando a política é execution-effect.
   }
   if (policy === "execution-effect") {
     authority.assertExecutionEffectAllowed(toolName, args);

@@ -1,0 +1,3323 @@
+{
+  "schemaVersion": 1,
+  "projectId": "31781d36-3f22-41b8-ad9d-8690c85d3343",
+  "checkoutId": "checkout-2c325c1aae830f6d74b14a2cc7051e31",
+  "headSha": "71e6147145db6408a18dc539b3e616d5846e3368",
+  "treeFingerprint": "1fa5871b4e13d05f9ae507a6f5c5b7a3d219d834ea2de84701966f7273e59518",
+  "builtAt": "2026-08-03T02:40:58.046Z",
+  "buildDurationMs": 2536,
+  "status": "partial",
+  "error": "inventory truncated by file/byte/depth limits",
+  "limits": {
+    "maxFiles": 50000,
+    "maxFileBytes": 2097152,
+    "maxTotalBytes": 134217728,
+    "maxDepth": 16,
+    "buildBudgetMs": 30000,
+    "markdownMaxChars": 12000,
+    "maxHubs": 24
+  },
+  "inventory": {
+    "languages": [
+      {
+        "id": "ts",
+        "files": 1738,
+        "bytes": 19706760
+      },
+      {
+        "id": "tsx",
+        "files": 166,
+        "bytes": 1623955
+      },
+      {
+        "id": "js",
+        "files": 155,
+        "bytes": 2706897
+      },
+      {
+        "id": "sql",
+        "files": 7,
+        "bytes": 10562
+      },
+      {
+        "id": "c",
+        "files": 1,
+        "bytes": 84172
+      },
+      {
+        "id": "py",
+        "files": 1,
+        "bytes": 2315
+      }
+    ],
+    "topDirs": [
+      {
+        "path": ".dev-user-data-qa",
+        "files": 2429,
+        "bytes": 78659620
+      },
+      {
+        "path": "src",
+        "files": 1884,
+        "bytes": 23117995
+      },
+      {
+        "path": "assets",
+        "files": 144,
+        "bytes": 3863690
+      },
+      {
+        "path": "docs",
+        "files": 127,
+        "bytes": 7281294
+      },
+      {
+        "path": "server",
+        "files": 90,
+        "bytes": 438255
+      },
+      {
+        "path": "scripts",
+        "files": 75,
+        "bytes": 853954
+      },
+      {
+        "path": "resources",
+        "files": 21,
+        "bytes": 18780284
+      },
+      {
+        "path": ".",
+        "files": 15,
+        "bytes": 784665
+      },
+      {
+        "path": ".firecrawl",
+        "files": 11,
+        "bytes": 306976
+      },
+      {
+        "path": "mobile",
+        "files": 6,
+        "bytes": 7512
+      },
+      {
+        "path": ".impeccable",
+        "files": 3,
+        "bytes": 12163
+      },
+      {
+        "path": "companion",
+        "files": 3,
+        "bytes": 12504
+      }
+    ],
+    "entrypoints": [
+      "src/main/main.ts"
+    ],
+    "manifests": [
+      "assets/skills/archify/package.json",
+      "mobile/package.json",
+      "package-lock.json",
+      "package.json",
+      "server/package.json"
+    ],
+    "scripts": {
+      "typecheck": "tsc --noEmit",
+      "test": "vitest run",
+      "lint": "tsc --noEmit",
+      "start": "node scripts/dev-start.mjs",
+      "build:darwin-pty-supervisor": "node scripts/build-darwin-pty-supervisor.mjs",
+      "prestart": "node scripts/patch-node-pty-darwin.mjs && npm run build:darwin-pty-supervisor",
+      "prestart:forge": "node scripts/patch-node-pty-darwin.mjs && npm run build:darwin-pty-supervisor",
+      "pretest": "node scripts/check-node-natives.mjs",
+      "rebuild": "npm run rebuild:electron",
+      "rebuild:electron": "electron-rebuild -f -s -w @lydell/node-pty -w better-sqlite3 -w onnxruntime-node && node scripts/patch-node-pty-darwin.mjs",
+      "rebuild:node": "node scripts/rebuild-node-natives.mjs && node scripts/check-node-natives.mjs",
+      "start:forge": "electron-forge start"
+    },
+    "packageManagers": [
+      "npm"
+    ],
+    "fileCount": 4814,
+    "sourceFileCount": 2068,
+    "bytesScanned": 134217100,
+    "projectName": "nexus-ide"
+  },
+  "symbols": {
+    "filesScanned": 2068,
+    "symbolCount": 28738,
+    "hubs": [
+      {
+        "name": "result",
+        "score": 1345,
+        "samplePaths": [
+          "assets/skills/archify/bin/archify.mjs",
+          "assets/skills/archify/test/cli.test.mjs",
+          "assets/skills/archify/test/generate-validators.test.mjs"
+        ]
+      },
+      {
+        "name": "root",
+        "score": 635,
+        "samplePaths": [
+          "assets/skills/archify/scripts/generate-validators.mjs",
+          "assets/skills/impeccable/scripts/cleanup-deprecated.mjs",
+          "assets/skills/impeccable/scripts/design-parser.mjs"
+        ]
+      },
+      {
+        "name": "scope",
+        "score": 557,
+        "samplePaths": [
+          "assets/skills/impeccable/scripts/live-browser.js",
+          "assets/skills/impeccable/scripts/live-commit-manual-edits.mjs",
+          "assets/skills/impeccable/scripts/live-resume.mjs"
+        ]
+      },
+      {
+        "name": "parsed",
+        "score": 385,
+        "samplePaths": [
+          "assets/skills/archify/test/cli.test.mjs",
+          "assets/skills/impeccable/scripts/design-parser.mjs",
+          "assets/skills/impeccable/scripts/detector/cli/main.mjs"
+        ]
+      },
+      {
+        "name": "current",
+        "score": 376,
+        "samplePaths": [
+          "assets/skills/archify/scripts/check-render-output.mjs",
+          "assets/skills/archify/scripts/generate-validators.mjs",
+          "assets/skills/impeccable/scripts/design-parser.mjs"
+        ]
+      },
+      {
+        "name": "project-runtime-manager",
+        "score": 339,
+        "samplePaths": [
+          "src/main/runtime/project-runtime-manager.ts",
+          "src/main/browser/browser-artifact-store.test.ts",
+          "src/main/browser/browser-artifact-store.ts"
+        ]
+      },
+      {
+        "name": "scope-fixture",
+        "score": 333,
+        "samplePaths": [
+          "src/main/orch/__tests__/scope-fixture.ts",
+          "src/main/context/automated-review-design-surface.test.ts",
+          "src/main/context/automated-review-session.test.ts"
+        ]
+      },
+      {
+        "name": "mission",
+        "score": 298,
+        "samplePaths": [
+          "scripts/e2e-real-mission-evidence.mjs",
+          "scripts/spikes/e2e-fanout-done-proof.mjs",
+          "scripts/spikes/e2e-handoff-proof.mjs"
+        ]
+      },
+      {
+        "name": "gate",
+        "score": 291,
+        "samplePaths": [
+          "src/main/orch/gate.ts",
+          "src/main/acp/acp-harness-driver.ts",
+          "src/main/context/detached-review-worktree.test.ts"
+        ]
+      },
+      {
+        "name": "now",
+        "score": 267,
+        "samplePaths": [
+          "assets/skills/impeccable/scripts/live-browser.js",
+          "assets/skills/impeccable/scripts/live-server.mjs",
+          "scripts/release-candidate-gate.mjs"
+        ]
+      },
+      {
+        "name": "db",
+        "score": 256,
+        "samplePaths": [
+          "server/src/auth/account-service.test.ts",
+          "server/src/auth/auth-code-service.test.ts",
+          "server/src/auth/auth-routes.test.ts"
+        ]
+      },
+      {
+        "name": "project-domain-store-registry",
+        "score": 219,
+        "samplePaths": [
+          "src/main/orch/project-domain-store-registry.ts",
+          "src/main/context/cli-automated-reviewer.ts",
+          "src/main/context/context-bootstrap-autopilot.ts"
+        ]
+      },
+      {
+        "name": "value",
+        "score": 212,
+        "samplePaths": [
+          "assets/skills/archify/renderers/shared/generated-validators.mjs",
+          "assets/skills/archify/renderers/shared/geometry.mjs",
+          "assets/skills/archify/scripts/check-render-output.mjs"
+        ]
+      },
+      {
+        "name": "raw",
+        "score": 208,
+        "samplePaths": [
+          "assets/skills/archify/renderers/architecture/grid.mjs",
+          "assets/skills/archify/scripts/check-render-output.mjs",
+          "assets/skills/impeccable/scripts/critique-storage.mjs"
+        ]
+      },
+      {
+        "name": "key",
+        "score": 206,
+        "samplePaths": [
+          "assets/skills/archify/renderers/architecture/grid.mjs",
+          "assets/skills/impeccable/scripts/critique-storage.mjs",
+          "assets/skills/impeccable/scripts/design-parser.mjs"
+        ]
+      },
+      {
+        "name": "state",
+        "score": 202,
+        "samplePaths": [
+          "assets/skills/impeccable/scripts/live-browser.js",
+          "assets/skills/impeccable/scripts/live-server.mjs",
+          "scripts/make-release.mjs"
+        ]
+      },
+      {
+        "name": "out",
+        "score": 201,
+        "samplePaths": [
+          "assets/skills/archify/bin/archify.mjs",
+          "assets/skills/archify/test/cli.test.mjs",
+          "assets/skills/archify/test/degraded.test.mjs"
+        ]
+      },
+      {
+        "name": "input",
+        "score": 195,
+        "samplePaths": [
+          "assets/skills/archify/bin/archify.mjs",
+          "assets/skills/archify/scripts/check-render-output.mjs",
+          "assets/skills/archify/test/animation.test.mjs"
+        ]
+      },
+      {
+        "name": "id",
+        "score": 178,
+        "samplePaths": [
+          "assets/skills/impeccable/scripts/live-accept.mjs",
+          "assets/skills/impeccable/scripts/live-browser.js",
+          "assets/skills/impeccable/scripts/live-commit-manual-edits.mjs"
+        ]
+      },
+      {
+        "name": "next",
+        "score": 178,
+        "samplePaths": [
+          "assets/skills/archify/test/degraded.test.mjs",
+          "assets/skills/impeccable/scripts/context.mjs",
+          "assets/skills/impeccable/scripts/detector/engines/static-html/css-cascade.mjs"
+        ]
+      },
+      {
+        "name": "handler",
+        "score": 171,
+        "samplePaths": [
+          "server/src/middleware/rate-limit.ts",
+          "src/main/agent-hooks/codex-hook-trust.ts",
+          "src/main/deep-link.ts"
+        ]
+      },
+      {
+        "name": "pending",
+        "score": 168,
+        "samplePaths": [
+          "assets/skills/impeccable/scripts/live-browser.js",
+          "assets/skills/impeccable/scripts/live-resume.mjs",
+          "assets/skills/impeccable/scripts/live-session-store.mjs"
+        ]
+      },
+      {
+        "name": "source",
+        "score": 168,
+        "samplePaths": [
+          "companion/worker-security.test.ts",
+          "scripts/build-darwin-pty-supervisor.mjs",
+          "scripts/codesign-with-retry.test.mjs"
+        ]
+      },
+      {
+        "name": "first",
+        "score": 165,
+        "samplePaths": [
+          "assets/skills/impeccable/scripts/detector/browser/injected/index.mjs",
+          "assets/skills/impeccable/scripts/detector/detect-antipatterns-browser.js",
+          "assets/skills/impeccable/scripts/detector/rules/checks.mjs"
+        ]
+      }
+    ],
+    "coverage": [
+      "c",
+      "js",
+      "py",
+      "sql",
+      "ts",
+      "tsx"
+    ]
+  },
+  "graph": {
+    "mode": "imports",
+    "nodeCount": 2059,
+    "edgeCount": 5413,
+    "sampleEdges": [
+      {
+        "from": "src/main/browser/browser-artifact-store.test.ts",
+        "to": "src/main/runtime/project-runtime-manager.ts",
+        "relation": "imports"
+      },
+      {
+        "from": "src/main/browser/browser-artifact-store.ts",
+        "to": "src/main/runtime/project-runtime-manager.ts",
+        "relation": "imports"
+      },
+      {
+        "from": "src/main/browser/browser-manager.ts",
+        "to": "src/main/runtime/project-runtime-manager.ts",
+        "relation": "imports"
+      },
+      {
+        "from": "src/main/context/context-draft-ipc.test.ts",
+        "to": "src/main/runtime/project-runtime-manager.ts",
+        "relation": "imports"
+      },
+      {
+        "from": "src/main/context/context-draft-store.test.ts",
+        "to": "src/main/runtime/project-runtime-manager.ts",
+        "relation": "imports"
+      },
+      {
+        "from": "src/main/context/context-draft-store.ts",
+        "to": "src/main/runtime/project-runtime-manager.ts",
+        "relation": "imports"
+      },
+      {
+        "from": "src/main/context/context-knowledge-service.test.ts",
+        "to": "src/main/runtime/project-runtime-manager.ts",
+        "relation": "imports"
+      },
+      {
+        "from": "src/main/context/context-knowledge-service.ts",
+        "to": "src/main/runtime/project-runtime-manager.ts",
+        "relation": "imports"
+      },
+      {
+        "from": "src/main/context/context-workflow-registry.ts",
+        "to": "src/main/runtime/project-runtime-manager.ts",
+        "relation": "imports"
+      },
+      {
+        "from": "src/main/context/context-workflow-service.test.ts",
+        "to": "src/main/runtime/project-runtime-manager.ts",
+        "relation": "imports"
+      },
+      {
+        "from": "src/main/context/context-workflow-service.ts",
+        "to": "src/main/runtime/project-runtime-manager.ts",
+        "relation": "imports"
+      },
+      {
+        "from": "src/main/context/context-workflow-store.test.ts",
+        "to": "src/main/runtime/project-runtime-manager.ts",
+        "relation": "imports"
+      },
+      {
+        "from": "src/main/context/context-workflow-store.ts",
+        "to": "src/main/runtime/project-runtime-manager.ts",
+        "relation": "imports"
+      },
+      {
+        "from": "src/main/context/sqlite-event-ledger-storage.test.ts",
+        "to": "src/main/runtime/project-runtime-manager.ts",
+        "relation": "imports"
+      },
+      {
+        "from": "src/main/context/sqlite-event-ledger-storage.ts",
+        "to": "src/main/runtime/project-runtime-manager.ts",
+        "relation": "imports"
+      },
+      {
+        "from": "src/main/gamification/gamification-ipc.test.ts",
+        "to": "src/main/runtime/project-runtime-manager.ts",
+        "relation": "imports"
+      },
+      {
+        "from": "src/main/gamification/gamification-service.test.ts",
+        "to": "src/main/runtime/project-runtime-manager.ts",
+        "relation": "imports"
+      },
+      {
+        "from": "src/main/gamification/gamification-service.ts",
+        "to": "src/main/runtime/project-runtime-manager.ts",
+        "relation": "imports"
+      },
+      {
+        "from": "src/main/gamification/gamification-store.test.ts",
+        "to": "src/main/runtime/project-runtime-manager.ts",
+        "relation": "imports"
+      },
+      {
+        "from": "src/main/jarvis/audit-log.ts",
+        "to": "src/main/runtime/project-runtime-manager.ts",
+        "relation": "imports"
+      },
+      {
+        "from": "src/main/jarvis/transcript-store.test.ts",
+        "to": "src/main/runtime/project-runtime-manager.ts",
+        "relation": "imports"
+      },
+      {
+        "from": "src/main/jarvis/transcript-store.ts",
+        "to": "src/main/runtime/project-runtime-manager.ts",
+        "relation": "imports"
+      },
+      {
+        "from": "src/main/main.ts",
+        "to": "src/main/runtime/project-runtime-manager.ts",
+        "relation": "imports"
+      },
+      {
+        "from": "src/main/media/media-ipc.test.ts",
+        "to": "src/main/runtime/project-runtime-manager.ts",
+        "relation": "imports"
+      }
+    ],
+    "enricher": "none",
+    "adjacency": {
+      "src/main/runtime/project-runtime-manager.ts": [
+        "src/main/runtime/project-runtime-schema.ts"
+      ],
+      "src/main/main.ts": [
+        "src/main/acp/acp-harness-driver.ts",
+        "src/main/adapters/adapter-registry.ts",
+        "src/main/agent-runtime/agent-runtime-bridge.ts",
+        "src/main/browser/browser-manager.ts",
+        "src/main/context/context-workflow-registry.ts",
+        "src/main/context/orientation/orientation-service.ts",
+        "src/main/feature-flags/feature-flag-registry.ts",
+        "src/main/gamification/gamification-service.ts",
+        "src/main/integrations/integrations-ipc.ts",
+        "src/main/jarvis/audit-log.ts",
+        "src/main/jarvis/mcp-ipc.ts",
+        "src/main/media/media-ipc.ts",
+        "src/main/orch/cron-runtime.ts",
+        "src/main/orch/mission-driver-io.ts",
+        "src/main/orch/mission-event-emit.ts",
+        "src/main/orch/mission-orchestrator-exit-lifecycle.ts",
+        "src/main/orch/mission-scheduler-production.ts",
+        "src/main/orch/orch-ipc.ts",
+        "src/main/orch/orchestration-coordinator.ts",
+        "src/main/orch/project-domain-store-registry.ts",
+        "src/main/persistence/account-store.ts",
+        "src/main/persistence/provider-config-store.ts",
+        "src/main/persistence/settings-store.ts",
+        "src/main/pet/pet-window.ts",
+        "src/main/product-wave-ipc.ts",
+        "src/main/pty/pty-ipc.ts",
+        "src/main/pty/pty-manager.ts",
+        "src/main/quota/quota-service.ts",
+        "src/main/real-mission-e2e.ts",
+        "src/main/remote/remote-bridge.ts",
+        "src/main/runtime/project-runtime-manager.ts",
+        "src/main/runtime/worktree-runtime-registry.ts",
+        "src/main/search/search-mixer-bootstrap.ts",
+        "src/main/usage/usage-service.ts",
+        "src/main/voice/voice-ipc.ts",
+        "src/main/window.ts"
+      ],
+      "src/main/orch/project-domain-store-registry.ts": [
+        "src/main/orch/handoff-store.ts",
+        "src/main/orch/mission-store.ts",
+        "src/main/orch/task-dispatch-store.ts",
+        "src/main/orch/task-store.ts",
+        "src/main/runtime/project-runtime-manager.ts"
+      ],
+      "src/main/pty/pty-manager.ts": [
+        "src/main/adapters/adapter-registry.ts",
+        "src/main/orch/cli-mcp-session-config.ts",
+        "src/main/orch/spawn-authority.ts",
+        "src/main/persistence/settings-store.ts",
+        "src/main/pty/autonomous-cli-policy.ts",
+        "src/main/pty/darwin-pty-supervisor.ts"
+      ],
+      "src/renderer/App.tsx": [
+        "src/renderer/components/CanvasView.tsx",
+        "src/renderer/components/CommandPalette.tsx",
+        "src/renderer/components/HomeDeck.tsx",
+        "src/renderer/components/LaunchScreen.tsx",
+        "src/renderer/components/MissionRail.tsx",
+        "src/renderer/components/MissionWizard.tsx",
+        "src/renderer/components/OpsBoard.tsx",
+        "src/renderer/components/OrchestrationPanel.tsx",
+        "src/renderer/components/PixelIcon.tsx",
+        "src/renderer/components/WorkspaceBar.tsx",
+        "src/renderer/components/settings/SettingsDrawer.tsx",
+        "src/renderer/lib/split-tree.ts",
+        "src/renderer/orch/orch-bridge.ts",
+        "src/renderer/state/confirm-store.ts",
+        "src/renderer/state/home-store.ts",
+        "src/renderer/state/layout-store.ts",
+        "src/renderer/state/mission-wizard-store.ts",
+        "src/renderer/state/orch-store.ts",
+        "src/renderer/state/settings-store.ts",
+        "src/renderer/state/toast-store.ts",
+        "src/renderer/state/workspace-store.ts"
+      ],
+      "src/renderer/state/layout-store.ts": [
+        "src/renderer/lib/split-tree.ts",
+        "src/renderer/state/active-workspace.ts",
+        "src/renderer/state/home-store.ts"
+      ],
+      "src/main/orch/pane-registry.ts": [
+        "src/main/acp/acp-harness-driver.ts",
+        "src/main/orch/main-owned-pane-runtime.ts",
+        "src/main/orch/mission-pane-authority.ts",
+        "src/main/orch/pane-authz.ts",
+        "src/main/orch/project-domain-store-registry.ts",
+        "src/main/orch/project-scoped-broadcast.ts",
+        "src/main/orch/squad-store.ts",
+        "src/main/persistence/renderer-workspace-scope.ts",
+        "src/main/persistence/settings-store.ts",
+        "src/main/pty/pty-manager.ts"
+      ],
+      "src/renderer/state/orch-store.ts": [
+        "src/renderer/state/active-workspace.ts"
+      ],
+      "src/main/orch/orch-ipc.ts": [
+        "src/main/orch/design-system-authority.ts",
+        "src/main/orch/gate.ts",
+        "src/main/orch/guided-mission-planner.ts",
+        "src/main/orch/idle-delivery.ts",
+        "src/main/orch/login-stuck-watchdog.ts",
+        "src/main/orch/mcp-server.ts",
+        "src/main/orch/mission-kickoff.ts",
+        "src/main/orch/mission-orchestrator-bootstrap.ts",
+        "src/main/orch/orchestration-coordinator.ts",
+        "src/main/orch/pane-registry.ts",
+        "src/main/orch/project-domain-store-registry.ts",
+        "src/main/orch/project-scoped-broadcast.ts",
+        "src/main/orch/renderer-mission-authority.ts",
+        "src/main/orch/spawn-authority.ts",
+        "src/main/orch/squad-architect.ts",
+        "src/main/orch/squad-authority-snapshot.ts",
+        "src/main/orch/squad-runtime-inventory.ts",
+        "src/main/orch/squad-store.ts",
+        "src/main/orch/tools-design-system.ts",
+        "src/main/persistence/renderer-workspace-scope.ts",
+        "src/main/persistence/settings-store.ts",
+        "src/main/pty/pty-manager.ts",
+        "src/main/remote/remote-bridge.ts",
+        "src/main/runtime/project-runtime-manager.ts"
+      ],
+      "src/main/orch/tool-util.ts": [
+        "src/main/adapters/adapter-registry.ts",
+        "src/main/orch/agent-status.ts",
+        "src/main/orch/gate.ts",
+        "src/main/orch/mcp-protocol.ts",
+        "src/main/orch/mission-pane-authority.ts",
+        "src/main/orch/pane-authz.ts",
+        "src/main/orch/pane-registry.ts",
+        "src/main/orch/project-domain-store-registry.ts",
+        "src/main/orch/squad-store.ts",
+        "src/main/orch/task-dispatch-codec.ts",
+        "src/main/orch/task-router.ts",
+        "src/main/orch/workspace-path.ts",
+        "src/main/persistence/settings-store.ts",
+        "src/main/pty/pty-manager.ts"
+      ],
+      "src/main/orch/mcp-protocol.ts": [
+        "src/main/orch/gate.ts",
+        "src/main/orch/http-mcp-boundary.ts",
+        "src/main/orch/mcp-dispatch.ts",
+        "src/main/orch/mcp-effect-policy.ts"
+      ],
+      "src/main/orch/mission-scheduler-dispatch-transaction.ts": [
+        "src/main/adapters/adapter-registry.ts",
+        "src/main/orch/mission-driver-io.ts",
+        "src/main/orch/mission-pane-authority.ts",
+        "src/main/orch/mission-scheduler-meta.ts",
+        "src/main/orch/mission-scheduler-plan.ts",
+        "src/main/orch/pane-registry.ts",
+        "src/main/orch/project-domain-store-registry.ts",
+        "src/main/orch/squad-authority-snapshot.ts",
+        "src/main/orch/squad-store.ts",
+        "src/main/orch/task-dispatch-codec.ts",
+        "src/main/orch/task-dispatch-persistence.ts",
+        "src/main/orch/task-dispatch-store.ts",
+        "src/main/orch/task-store.ts",
+        "src/main/orch/tool-util.ts",
+        "src/main/orch/tools-panes.ts",
+        "src/main/persistence/account-store.ts",
+        "src/main/persistence/provider-config-store.ts",
+        "src/main/persistence/settings-store.ts",
+        "src/main/pty/autonomous-cli-policy.ts",
+        "src/main/pty/pty-manager.ts",
+        "src/main/quota/quota-service.ts",
+        "src/main/runtime/worktree-runtime-registry.ts"
+      ],
+      "src/main/orch/mcp-server.ts": [
+        "src/main/context/automated-review-session.ts",
+        "src/main/context/cli-context-draft-reviewer.ts",
+        "src/main/context/context-workflow-registry.ts",
+        "src/main/jarvis/permissions.ts",
+        "src/main/orch/agent-status.ts",
+        "src/main/orch/cli-mcp-session-config.ts",
+        "src/main/orch/gate.ts",
+        "src/main/orch/http-mcp-boundary.ts",
+        "src/main/orch/mcp-dispatch.ts",
+        "src/main/orch/mcp-effect-policy.ts",
+        "src/main/orch/mcp-protocol.ts",
+        "src/main/orch/pane-registry.ts",
+        "src/main/orch/project-domain-store-registry.ts",
+        "src/main/orch/pty-stream-handoff.ts",
+        "src/main/orch/spawn-authority.ts",
+        "src/main/orch/tools.ts",
+        "src/main/orch/workspace-path.ts",
+        "src/main/persistence/settings-store.ts",
+        "src/main/pty/autonomous-cli-policy.ts",
+        "src/main/pty/pty-manager.ts"
+      ],
+      "src/main/orch/scoped-store.ts": [
+        "src/main/runtime/project-runtime-manager.ts"
+      ],
+      "src/main/orch/tools-domain.ts": [
+        "src/main/context/context-workflow-registry.ts",
+        "src/main/orch/cron-runtime.ts",
+        "src/main/orch/gate.ts",
+        "src/main/orch/mcp-protocol.ts",
+        "src/main/orch/mission-scheduler-meta.ts",
+        "src/main/orch/mission-scheduler-plan.ts",
+        "src/main/orch/mission-scheduler.ts",
+        "src/main/orch/mission-task-plan-authority.ts",
+        "src/main/orch/pane-registry.ts",
+        "src/main/orch/project-domain-store-registry.ts",
+        "src/main/orch/squad-runtime-inventory.ts",
+        "src/main/orch/squad-store.ts",
+        "src/main/orch/task-router.ts",
+        "src/main/orch/tool-util.ts",
+        "src/main/orch/tools-browser.ts",
+        "src/main/orch/tools-handoff.ts",
+        "src/main/orch/tools-panes.ts",
+        "src/main/persistence/account-store.ts",
+        "src/main/persistence/provider-config-store.ts",
+        "src/main/runtime/worktree-runtime-registry.ts"
+      ],
+      "server/src/db/client.ts": [
+        "server/src/db/schema.ts"
+      ],
+      "src/main/context/context-workflow-service.ts": [
+        "src/main/context/canonical-json.ts",
+        "src/main/context/context-doctor.ts",
+        "src/main/context/context-ingestor.ts",
+        "src/main/context/context-workflow-store.ts",
+        "src/main/context/contract-compiler.ts",
+        "src/main/context/orientation/orientation-service.ts",
+        "src/main/context/prevc-engine.ts",
+        "src/main/context/review-council.ts",
+        "src/main/context/sensor-broker.ts",
+        "src/main/orch/handoff-store.ts",
+        "src/main/orch/mission-store.ts",
+        "src/main/runtime/project-runtime-manager.ts"
+      ],
+      "src/main/orch/mission-scheduler-production.ts": [
+        "src/main/context/context-workflow-registry.ts",
+        "src/main/context/merge-validation-coordinator.ts",
+        "src/main/feature-flags/feature-flag-registry.ts",
+        "src/main/orch/mission-scheduler-dispatch-transaction.ts",
+        "src/main/orch/mission-scheduler-reconciliation.ts",
+        "src/main/orch/pane-registry.ts",
+        "src/main/orch/prevc-autopilot-coordinator.ts",
+        "src/main/orch/prevc-merge-preparation.ts",
+        "src/main/orch/project-domain-store-registry.ts",
+        "src/main/orch/task-dispatch-codec.ts",
+        "src/main/orch/task-dispatch-lifecycle.ts",
+        "src/main/orch/task-dispatch-store.ts",
+        "src/main/persistence/settings-store.ts",
+        "src/main/runtime/merge-queue-contract.ts",
+        "src/main/runtime/worktree-contract.ts",
+        "src/main/runtime/worktree-runtime-registry.ts"
+      ],
+      "src/main/orch/task-dispatch-codec.ts": [
+        "src/main/orch/mission-scheduler.ts",
+        "src/main/orch/scoped-store.ts"
+      ],
+      "src/main/context/context-workflow-registry.ts": [
+        "src/main/context/context-knowledge-service.ts",
+        "src/main/context/context-workflow-service.ts",
+        "src/main/runtime/project-runtime-manager.ts"
+      ],
+      "src/main/orch/guided-mission-planner.ts": [
+        "src/main/adapters/adapter-registry.ts",
+        "src/main/orch/guided-mission-plan-authority.ts",
+        "src/main/orch/guided-task-kind.ts",
+        "src/main/orch/mission-scheduler-plan.ts",
+        "src/main/orch/mission-task-plan-authority.ts",
+        "src/main/orch/project-domain-store-registry.ts",
+        "src/main/orch/squad-authority-snapshot.ts",
+        "src/main/orch/squad-runtime-inventory.ts",
+        "src/main/orch/squad-store.ts",
+        "src/main/orch/task-store.ts",
+        "src/main/persistence/account-store.ts",
+        "src/main/persistence/provider-config-store.ts",
+        "src/main/persistence/settings-store.ts",
+        "src/main/runtime/worktree-contract.ts",
+        "src/main/runtime/worktree-runtime-registry.ts"
+      ],
+      "src/main/orch/mission-scheduler-meta.ts": [
+        "src/main/orch/mission-scheduler.ts"
+      ],
+      "src/main/persistence/provider-config-store.ts": [
+        "src/main/adapters/adapter-registry.ts",
+        "src/main/adapters/model-catalog.ts",
+        "src/main/persistence/account-store.ts",
+        "src/main/persistence/secrets-store.ts"
+      ],
+      "src/main/adapters/adapter-registry.ts": [
+        "src/main/adapters/model-catalog.ts",
+        "src/main/pty/autonomous-cli-policy.ts"
+      ],
+      "src/main/orch/mission-orchestrator-bootstrap.ts": [
+        "src/main/acp/acp-harness-driver.ts",
+        "src/main/orch/gate.ts",
+        "src/main/orch/guided-mission-authority.ts",
+        "src/main/orch/guided-mission-planner.ts",
+        "src/main/orch/guided-mission-prevc.ts",
+        "src/main/orch/mission-kickoff.ts",
+        "src/main/orch/mission-orchestrator-exit-lifecycle.ts",
+        "src/main/orch/mission-pane-authority.ts",
+        "src/main/orch/pane-registry.ts",
+        "src/main/orch/prevc-merge-preparation.ts",
+        "src/main/orch/project-domain-store-registry.ts",
+        "src/main/orch/squad-authority-snapshot.ts",
+        "src/main/orch/squad-runtime-inventory.ts",
+        "src/main/orch/squad-store.ts",
+        "src/main/orch/task-dispatch-store.ts",
+        "src/main/persistence/renderer-workspace-scope.ts",
+        "src/main/persistence/settings-store.ts",
+        "src/main/pty/pty-manager.ts"
+      ],
+      "src/renderer/components/MissionRail.tsx": [
+        "src/renderer/components/ActionCard.tsx",
+        "src/renderer/components/PixelIcon.tsx",
+        "src/renderer/lib/platform.ts",
+        "src/renderer/lib/split-tree.ts",
+        "src/renderer/orch/mission-reopen.ts",
+        "src/renderer/state/confirm-store.ts",
+        "src/renderer/state/home-store.ts",
+        "src/renderer/state/layout-store.ts",
+        "src/renderer/state/mission-wizard-store.ts",
+        "src/renderer/state/orch-store.ts",
+        "src/renderer/state/session-state-store.ts",
+        "src/renderer/state/workspace-store.ts"
+      ],
+      "src/main/orch/mission-store.ts": [
+        "src/main/orch/mission-pane-authority.ts",
+        "src/main/orch/scoped-store.ts",
+        "src/main/orch/task-router.ts",
+        "src/main/runtime/project-runtime-manager.ts"
+      ],
+      "src/main/orch/task-dispatch-store.ts": [
+        "src/main/orch/guided-task-kind.ts",
+        "src/main/orch/scoped-store.ts",
+        "src/main/orch/task-dispatch-codec.ts",
+        "src/main/orch/task-dispatch-mission-completion-authority.ts",
+        "src/main/orch/task-dispatch-persistence.ts",
+        "src/main/orch/task-dispatch-quality-receipt-authority.ts",
+        "src/main/runtime/project-runtime-manager.ts"
+      ],
+      "src/main/orch/task-store.ts": [
+        "src/main/orch/scoped-store.ts",
+        "src/main/runtime/project-runtime-manager.ts"
+      ],
+      "src/renderer/components/WorkspaceBar.tsx": [
+        "src/renderer/components/ActionCard.tsx",
+        "src/renderer/components/AgentNotifications.tsx",
+        "src/renderer/components/PixelIcon.tsx",
+        "src/renderer/lib/platform.ts",
+        "src/renderer/lib/split-tree.ts",
+        "src/renderer/state/layout-store.ts",
+        "src/renderer/state/mission-wizard-store.ts",
+        "src/renderer/state/orch-store.ts",
+        "src/renderer/state/settings-store.ts",
+        "src/renderer/state/workspace-store.ts"
+      ],
+      "src/main/orch/mcp-dispatch.ts": [
+        "src/main/context/context-workflow-registry.ts",
+        "src/main/context/context-workflow-service.ts",
+        "src/main/jarvis/audit-log.ts",
+        "src/main/jarvis/permissions.ts",
+        "src/main/orch/gate.ts",
+        "src/main/orch/guided-mission-authority.ts",
+        "src/main/orch/guided-prevc-mcp-fence.ts",
+        "src/main/orch/http-mcp-boundary.ts",
+        "src/main/orch/mcp-effect-policy.ts",
+        "src/main/orch/mcp-protocol.ts",
+        "src/main/orch/project-domain-store-registry.ts"
+      ],
+      "src/main/orch/project-scoped-broadcast.ts": [
+        "src/main/persistence/renderer-workspace-scope.ts"
+      ],
+      "src/main/orch/squad-store.ts": [
+        "src/main/orch/squad-authority-snapshot.ts"
+      ],
+      "src/main/orch/tools-panes.ts": [
+        "src/main/adapters/adapter-registry.ts",
+        "src/main/adapters/model-catalog.ts",
+        "src/main/context/context-workflow-registry.ts",
+        "src/main/orch/gate.ts",
+        "src/main/orch/mcp-protocol.ts",
+        "src/main/orch/mission-driver-io.ts",
+        "src/main/orch/pane-registry.ts",
+        "src/main/orch/project-domain-store-registry.ts",
+        "src/main/orch/squad-store.ts",
+        "src/main/orch/tool-util.ts",
+        "src/main/persistence/settings-store.ts",
+        "src/main/pty/pty-manager.ts",
+        "src/main/runtime/worktree-runtime-registry.ts"
+      ],
+      "src/main/orch/tools.ts": [
+        "src/main/orch/mcp-protocol.ts",
+        "src/main/orch/tools-context.ts",
+        "src/main/orch/tools-design-system.ts",
+        "src/main/orch/tools-domain.ts",
+        "src/main/orch/tools-files.ts",
+        "src/main/orch/tools-instruments.ts",
+        "src/main/orch/tools-panes.ts"
+      ],
+      "src/main/voice/voice-ipc.ts": [
+        "src/main/orch/project-domain-store-registry.ts",
+        "src/main/orch/project-scoped-broadcast.ts",
+        "src/main/persistence/renderer-workspace-scope.ts",
+        "src/main/runtime/project-runtime-manager.ts",
+        "src/main/voice/jarvis-brain.ts",
+        "src/main/voice/live-transport-controller.ts"
+      ],
+      "src/main/orch/tools-context.ts": [
+        "src/main/context/automated-review-session.ts",
+        "src/main/context/cli-context-draft-reviewer.ts",
+        "src/main/context/context-bootstrap-autopilot.ts",
+        "src/main/context/context-workflow-registry.ts",
+        "src/main/context/context-workflow-service.ts",
+        "src/main/context/contract-compiler.ts",
+        "src/main/context/merge-validation-coordinator.ts",
+        "src/main/context/orientation/orientation-service.ts",
+        "src/main/orch/gate.ts",
+        "src/main/orch/guided-mission-authority.ts",
+        "src/main/orch/mcp-protocol.ts",
+        "src/main/orch/mission-pane-authority.ts",
+        "src/main/orch/pane-registry.ts",
+        "src/main/orch/prevc-autopilot-coordinator.ts",
+        "src/main/orch/prevc-merge-preparation.ts",
+        "src/main/orch/project-domain-store-registry.ts",
+        "src/main/orch/squad-store.ts",
+        "src/main/pty/pty-manager.ts",
+        "src/main/runtime/nexus-doctor.ts",
+        "src/main/runtime/worktree-runtime-registry.ts"
+      ],
+      "src/main/persistence/account-store.ts": [
+        "src/main/persistence/secrets-store.ts"
+      ],
+      "src/main/browser/browser-manager.ts": [
+        "src/main/context/context-workflow-registry.ts",
+        "src/main/orch/pane-registry.ts",
+        "src/main/orch/project-scoped-broadcast.ts",
+        "src/main/orch/tool-util.ts",
+        "src/main/orch/workspace-path.ts",
+        "src/main/persistence/renderer-workspace-scope.ts",
+        "src/main/runtime/project-runtime-manager.ts"
+      ],
+      "src/main/context/cli-automated-reviewer.ts": [
+        "src/main/context/automated-review-session.ts",
+        "src/main/context/canonical-json.ts",
+        "src/main/context/context-workflow-store.ts",
+        "src/main/context/contract-compiler.ts",
+        "src/main/context/review-council.ts",
+        "src/main/orch/agent-status.ts",
+        "src/main/orch/mcp-protocol.ts",
+        "src/main/orch/pane-registry.ts",
+        "src/main/orch/project-domain-store-registry.ts",
+        "src/main/orch/squad-runtime-inventory.ts",
+        "src/main/orch/task-router.ts",
+        "src/main/orch/tool-util.ts",
+        "src/main/pty/pty-manager.ts"
+      ],
+      "src/main/context/context-doctor.ts": [
+        "src/main/context/canonical-json.ts",
+        "src/main/context/context-attestation.ts",
+        "src/main/context/context-ingestor.ts",
+        "src/main/context/sensor-broker.ts",
+        "src/main/orch/workspace-file.ts",
+        "src/main/orch/workspace-path.ts"
+      ],
+      "src/main/context/orientation/orientation-service.ts": [
+        "src/main/context/canonical-json.ts",
+        "src/main/context/context-doctor.ts",
+        "src/main/context/orientation/orientation-types.ts",
+        "src/main/runtime/worktree-manager.ts"
+      ],
+      "src/main/orch/handoff-store.ts": [
+        "src/main/context/prevc-engine.ts",
+        "src/main/context/review-council.ts",
+        "src/main/context/sensor-broker.ts",
+        "src/main/orch/http-mcp-boundary.ts",
+        "src/main/orch/scoped-store.ts",
+        "src/main/orch/task-dispatch-codec.ts",
+        "src/main/runtime/project-runtime-manager.ts"
+      ],
+      "src/main/orch/mission-kickoff.ts": [
+        "src/main/acp/acp-harness-driver.ts",
+        "src/main/orch/agent-status.ts",
+        "src/main/orch/gate.ts",
+        "src/main/orch/guided-mission-authority.ts",
+        "src/main/orch/guided-mission-planner.ts",
+        "src/main/orch/mission-pane-authority.ts",
+        "src/main/orch/pane-registry.ts",
+        "src/main/orch/project-domain-store-registry.ts",
+        "src/main/orch/project-scoped-broadcast.ts",
+        "src/main/orch/squad-authority-snapshot.ts",
+        "src/main/orch/squad-store.ts",
+        "src/main/persistence/renderer-workspace-scope.ts",
+        "src/main/persistence/settings-store.ts",
+        "src/main/pty/pty-manager.ts"
+      ],
+      "src/renderer/state/workspace-store.ts": [
+        "src/renderer/state/active-workspace.ts",
+        "src/renderer/state/layout-store.ts"
+      ],
+      "src/main/orch/renderer-mission-authority.ts": [
+        "src/main/context/context-workflow-registry.ts",
+        "src/main/context/orientation/orientation-service.ts",
+        "src/main/orch/gate.ts",
+        "src/main/orch/mission-pane-authority.ts",
+        "src/main/orch/pane-registry.ts",
+        "src/main/orch/project-domain-store-registry.ts",
+        "src/main/orch/squad-authority-snapshot.ts",
+        "src/main/orch/squad-runtime-inventory.ts",
+        "src/main/orch/squad-store.ts",
+        "src/main/persistence/renderer-workspace-scope.ts",
+        "src/main/persistence/settings-store.ts",
+        "src/main/pty/pty-manager.ts",
+        "src/main/runtime/worktree-runtime-registry.ts"
+      ],
+      "src/renderer/components/MissionWizard.tsx": [
+        "src/renderer/components/PixelIcon.tsx",
+        "src/renderer/orch/mission-launcher.ts",
+        "src/renderer/orch/mission-reopen.ts",
+        "src/renderer/state/layout-store.ts",
+        "src/renderer/state/mission-wizard-store.ts",
+        "src/renderer/state/orch-store.ts",
+        "src/renderer/state/toast-store.ts",
+        "src/renderer/state/workspace-store.ts"
+      ],
+      "src/main/context/contract-compiler.ts": [
+        "src/main/context/canonical-json.ts"
+      ],
+      "src/main/orch/prevc-autopilot-coordinator.ts": [
+        "src/main/context/cli-automated-reviewer.ts",
+        "src/main/context/context-workflow-registry.ts",
+        "src/main/context/context-workflow-service.ts",
+        "src/main/context/contract-compiler.ts",
+        "src/main/context/merge-validation-coordinator.ts",
+        "src/main/orch/guided-mission-authority.ts",
+        "src/main/orch/mission-pane-authority.ts",
+        "src/main/orch/project-domain-store-registry.ts",
+        "src/main/orch/squad-authority-snapshot.ts",
+        "src/main/orch/squad-store.ts",
+        "src/main/orch/task-dispatch-codec.ts",
+        "src/main/orch/task-store.ts",
+        "src/main/runtime/worktree-contract.ts",
+        "src/main/runtime/worktree-runtime-registry.ts"
+      ],
+      "src/main/runtime/worktree-manager.ts": [
+        "src/main/runtime/git-command.ts",
+        "src/main/runtime/worktree-contract.ts"
+      ],
+      "src/main/runtime/worktree-runtime-registry.ts": [
+        "src/main/context/context-workflow-service.ts",
+        "src/main/orch/scoped-store.ts",
+        "src/main/runtime/merge-queue.ts",
+        "src/main/runtime/project-runtime-manager.ts",
+        "src/main/runtime/worktree-contract.ts",
+        "src/main/runtime/worktree-manager.ts"
+      ],
+      "src/main/voice/live-transport-controller.ts": [
+        "src/main/jarvis/realtime/factory.ts",
+        "src/main/jarvis/realtime/provider.ts"
+      ],
+      "src/main/jarvis/audit-log.ts": [
+        "src/main/orch/scoped-store.ts",
+        "src/main/runtime/project-runtime-manager.ts"
+      ],
+      "src/main/orch/idle-delivery.ts": [
+        "src/main/orch/agent-status.ts",
+        "src/main/orch/handoff-store.ts",
+        "src/main/orch/pane-registry.ts",
+        "src/main/orch/project-domain-store-registry.ts",
+        "src/main/orch/project-scoped-broadcast.ts",
+        "src/main/persistence/renderer-workspace-scope.ts",
+        "src/main/pty/pty-manager.ts"
+      ],
+      "src/main/orch/workspace-file.ts": [
+        "src/main/orch/workspace-path.ts"
+      ],
+      "src/main/pty/pty-ipc.ts": [
+        "src/main/adapters/adapter-registry.ts",
+        "src/main/orch/main-owned-agent-spawn.ts",
+        "src/main/orch/pane-registry.ts",
+        "src/main/orch/project-domain-store-registry.ts",
+        "src/main/orch/task-dispatch-persistence.ts",
+        "src/main/orch/task-dispatch-store.ts",
+        "src/main/orch/workspace-path.ts",
+        "src/main/persistence/provider-config-store.ts",
+        "src/main/persistence/renderer-workspace-scope.ts",
+        "src/main/persistence/settings-store.ts",
+        "src/main/pty/autonomous-cli-policy.ts",
+        "src/main/pty/pty-manager.ts",
+        "src/main/runtime/project-runtime-manager.ts"
+      ],
+      "src/main/runtime/worktree-contract.ts": [
+        "src/main/runtime/git-command.ts"
+      ],
+      "src/renderer/components/OpsBoard.tsx": [
+        "src/renderer/components/PixelIcon.tsx",
+        "src/renderer/lib/platform.ts",
+        "src/renderer/lib/split-tree.ts",
+        "src/renderer/state/confirm-store.ts",
+        "src/renderer/state/layout-store.ts",
+        "src/renderer/state/mission-wizard-store.ts",
+        "src/renderer/state/orch-store.ts",
+        "src/renderer/state/session-state-store.ts",
+        "src/renderer/state/workspace-store.ts"
+      ],
+      "src/renderer/components/settings/SettingsDrawer.tsx": [
+        "src/renderer/components/PixelIcon.tsx",
+        "src/renderer/state/orch-store.ts",
+        "src/renderer/state/settings-store.ts"
+      ],
+      "src/main/context/context-attestation.ts": [
+        "src/main/context/canonical-json.ts",
+        "src/main/orch/workspace-file.ts"
+      ],
+      "src/main/orch/mission-driver-io.ts": [
+        "src/main/context/context-workflow-registry.ts",
+        "src/main/context/context-workflow-service.ts",
+        "src/main/orch/idle-delivery.ts",
+        "src/main/orch/mission-event-emit.ts",
+        "src/main/orch/pane-registry.ts",
+        "src/main/orch/prevc-autopilot-coordinator.ts",
+        "src/main/orch/project-domain-store-registry.ts",
+        "src/main/orch/project-scoped-broadcast.ts",
+        "src/main/runtime/worktree-runtime-registry.ts"
+      ],
+      "src/renderer/components/OrchestrationPanel.tsx": [
+        "src/renderer/components/ActionCard.tsx",
+        "src/renderer/lib/split-tree.ts",
+        "src/renderer/orch/mission-reopen.ts",
+        "src/renderer/state/confirm-store.ts",
+        "src/renderer/state/layout-store.ts",
+        "src/renderer/state/mission-wizard-store.ts",
+        "src/renderer/state/orch-store.ts",
+        "src/renderer/state/session-state-store.ts"
+      ],
+      "server/src/index.ts": [
+        "server/src/auth/auth-routes.ts",
+        "server/src/billing/billing-routes.ts",
+        "server/src/db/client.ts",
+        "server/src/env.ts",
+        "server/src/middleware/errors.ts"
+      ],
+      "src/main/orch/mission-pane-authority.ts": [
+        "src/main/context/context-workflow-registry.ts",
+        "src/main/orch/squad-authority-snapshot.ts"
+      ],
+      "src/main/product-wave-ipc.ts": [
+        "src/main/feature-flags/feature-flag-registry.ts",
+        "src/main/memory/workspace-memory.ts",
+        "src/main/orch/workspace-path.ts",
+        "src/main/search/search-mixer-bootstrap.ts"
+      ],
+      "src/renderer/orch/mission-launcher.ts": [
+        "src/renderer/lib/split-tree.ts",
+        "src/renderer/state/active-workspace.ts",
+        "src/renderer/state/home-store.ts",
+        "src/renderer/state/layout-store.ts",
+        "src/renderer/state/orch-store.ts",
+        "src/renderer/state/toast-store.ts"
+      ],
+      "src/main/context/context-bootstrap-autopilot.ts": [
+        "src/main/context/cli-context-draft-reviewer.ts",
+        "src/main/context/context-attestation.ts",
+        "src/main/context/context-doctor.ts",
+        "src/main/context/context-draft-store.ts",
+        "src/main/context/context-workflow-registry.ts",
+        "src/main/context/design-contract-bootstrap.ts",
+        "src/main/context/orientation/orientation-bootstrap-context.ts",
+        "src/main/context/orientation/orientation-service.ts",
+        "src/main/orch/project-domain-store-registry.ts",
+        "src/main/persistence/settings-store.ts"
+      ],
+      "src/main/orch/main-owned-pane-runtime.ts": [
+        "src/main/adapters/adapter-registry.ts",
+        "src/main/orch/acp-mission-spawn.ts",
+        "src/main/orch/mission-pane-authority.ts",
+        "src/main/orch/pane-authz.ts",
+        "src/main/orch/project-scoped-broadcast.ts",
+        "src/main/orch/spawn-authority.ts",
+        "src/main/orch/workspace-path.ts",
+        "src/main/persistence/provider-config-store.ts",
+        "src/main/persistence/settings-store.ts",
+        "src/main/pty/autonomous-cli-policy.ts",
+        "src/main/pty/pty-manager.ts"
+      ],
+      "src/main/orch/squad-runtime-inventory.ts": [
+        "src/main/adapters/adapter-registry.ts",
+        "src/main/persistence/account-store.ts",
+        "src/main/persistence/provider-config-store.ts",
+        "src/main/persistence/settings-store.ts"
+      ],
+      "src/main/orch/task-dispatch-lifecycle.ts": [
+        "src/main/acp/acp-harness-driver.ts",
+        "src/main/orch/agent-status.ts",
+        "src/main/orch/gate.ts",
+        "src/main/orch/pane-registry.ts",
+        "src/main/orch/project-domain-store-registry.ts",
+        "src/main/orch/project-scoped-broadcast.ts",
+        "src/main/orch/task-dispatch-persistence.ts",
+        "src/main/orch/task-dispatch-store.ts",
+        "src/main/orch/tool-util.ts",
+        "src/main/pty/pty-manager.ts"
+      ],
+      "src/main/real-mission-e2e.ts": [
+        "src/main/orch/orch-ipc.ts",
+        "src/main/orch/project-domain-store-registry.ts",
+        "src/main/persistence/renderer-workspace-scope.ts",
+        "src/main/real-mission-e2e-observer.ts"
+      ],
+      "src/main/context/cli-context-draft-reviewer.ts": [
+        "src/main/context/context-draft-store.ts",
+        "src/main/context/context-workflow-registry.ts",
+        "src/main/orch/mcp-protocol.ts",
+        "src/main/orch/pane-registry.ts",
+        "src/main/orch/project-scoped-broadcast.ts",
+        "src/main/orch/squad-runtime-inventory.ts",
+        "src/main/orch/task-router.ts",
+        "src/main/orch/tool-util.ts",
+        "src/main/orch/workspace-path.ts",
+        "src/main/pty/pty-manager.ts"
+      ],
+      "src/main/context/review-council.ts": [
+        "src/main/context/canonical-json.ts",
+        "src/main/context/contract-compiler.ts"
+      ],
+      "src/main/integrations/integrations-ipc.ts": [
+        "src/main/persistence/renderer-workspace-scope.ts",
+        "src/main/persistence/settings-store.ts",
+        "src/main/remote/ssh/ssh-session-manager.ts"
+      ],
+      "src/main/orch/cron-runtime.ts": [
+        "src/main/orch/cron-loop.ts",
+        "src/main/orch/mcp-protocol.ts",
+        "src/main/orch/mission-orchestrator-bootstrap.ts",
+        "src/main/orch/project-domain-store-registry.ts",
+        "src/main/orch/workspace-path.ts",
+        "src/main/runtime/project-runtime-manager.ts"
+      ],
+      "src/main/orch/guided-greenfield-cycle.integration.test.ts": [
+        "src/main/context/context-attestation.ts",
+        "src/main/context/context-bootstrap-autopilot.ts",
+        "src/main/context/context-workflow-registry.ts",
+        "src/main/context/orientation/orientation-bootstrap-context.ts",
+        "src/main/context/orientation/orientation-service.ts",
+        "src/main/orch/guided-mission-planner.ts",
+        "src/main/orch/guided-mission-prevc.ts",
+        "src/main/orch/mission-scheduler-meta.ts",
+        "src/main/orch/project-domain-store-registry.ts",
+        "src/main/orch/squad-authority-snapshot.ts",
+        "src/main/orch/task-store.ts",
+        "src/main/runtime/git-command.ts",
+        "src/main/runtime/project-runtime-manager.ts",
+        "src/main/runtime/worktree-runtime-registry.ts"
+      ],
+      "src/main/orch/orchestration-coordinator.ts": [
+        "src/main/orch/idle-delivery.ts",
+        "src/main/orch/login-stuck-watchdog.ts",
+        "src/main/orch/mission-orchestrator-bootstrap.ts",
+        "src/main/orch/mission-orchestrator-exit-lifecycle.ts",
+        "src/main/orch/mission-scheduler-production.ts",
+        "src/main/orch/project-domain-store-registry.ts",
+        "src/main/orch/task-dispatch-lifecycle.ts"
+      ],
+      "src/main/real-mission-e2e-observer.ts": [
+        "src/main/context/context-workflow-registry.ts",
+        "src/main/jarvis/audit-log.ts",
+        "src/main/orch/mission-kickoff.ts",
+        "src/main/orch/mission-scheduler-meta.ts",
+        "src/main/orch/project-domain-store-registry.ts",
+        "src/main/orch/task-dispatch-persistence.ts",
+        "src/main/pty/pty-manager.ts"
+      ],
+      "src/main/remote/remote-bridge.ts": [
+        "src/main/orch/pane-authz.ts",
+        "src/main/orch/pane-registry.ts",
+        "src/main/orch/project-domain-store-registry.ts",
+        "src/main/pty/pty-manager.ts"
+      ],
+      "src/renderer/components/CommandPalette.tsx": [
+        "src/renderer/components/ActionCard.tsx",
+        "src/renderer/components/PixelIcon.tsx",
+        "src/renderer/lib/platform.ts",
+        "src/renderer/lib/split-tree.ts",
+        "src/renderer/state/home-store.ts",
+        "src/renderer/state/layout-store.ts",
+        "src/renderer/state/mission-wizard-store.ts",
+        "src/renderer/state/orch-store.ts",
+        "src/renderer/state/session-state-store.ts",
+        "src/renderer/state/settings-store.ts"
+      ],
+      "src/main/acp/acp-harness-driver.ts": [
+        "src/main/orch/gate.ts",
+        "src/main/pty/pty-manager.ts"
+      ],
+      "src/main/agent-runtime/agent-runtime-bridge.ts": [
+        "src/main/pty/pty-manager.ts"
+      ],
+      "src/main/orch/mission-scheduler-reconciliation.ts": [
+        "src/main/orch/mission-scheduler-dispatch-transaction.ts",
+        "src/main/orch/mission-scheduler-meta.ts",
+        "src/main/orch/mission-scheduler-plan.ts",
+        "src/main/orch/project-domain-store-registry.ts",
+        "src/main/orch/task-dispatch-codec.ts",
+        "src/main/orch/task-dispatch-store.ts",
+        "src/main/orch/task-store.ts",
+        "src/main/persistence/account-store.ts",
+        "src/main/persistence/provider-config-store.ts",
+        "src/main/persistence/settings-store.ts",
+        "src/main/runtime/worktree-contract.ts",
+        "src/main/runtime/worktree-manager.ts",
+        "src/main/runtime/worktree-runtime-registry.ts"
+      ],
+      "src/main/orch/mission-task-plan-authority.ts": [
+        "src/main/adapters/adapter-registry.ts",
+        "src/main/orch/gate.ts",
+        "src/main/orch/mission-scheduler-meta.ts",
+        "src/main/orch/mission-scheduler-plan.ts",
+        "src/main/orch/mission-scheduler.ts",
+        "src/main/orch/project-domain-store-registry.ts",
+        "src/main/orch/squad-authority-snapshot.ts",
+        "src/main/orch/squad-store.ts",
+        "src/main/orch/task-store.ts",
+        "src/main/orch/tools-panes.ts",
+        "src/main/persistence/settings-store.ts",
+        "src/main/runtime/worktree-runtime-registry.ts"
+      ],
+      "src/main/orch/task-dispatch-persistence.ts": [
+        "src/main/orch/scoped-store.ts",
+        "src/main/orch/task-dispatch-codec.ts"
+      ],
+      "src/main/orch/task-dispatch-store.test.ts": [
+        "src/main/context/context-workflow-store.ts",
+        "src/main/context/contract-compiler.ts",
+        "src/main/context/prevc-engine.ts",
+        "src/main/context/review-council.ts",
+        "src/main/orch/__tests__/scope-fixture.ts",
+        "src/main/orch/gate.ts",
+        "src/main/orch/handoff-store.ts",
+        "src/main/orch/http-mcp-boundary.ts",
+        "src/main/orch/mission-scheduler-meta.ts",
+        "src/main/orch/mission-store.ts",
+        "src/main/orch/task-dispatch-codec.ts",
+        "src/main/orch/task-dispatch-persistence.ts",
+        "src/main/orch/task-dispatch-quality-receipt-authority.ts",
+        "src/main/orch/task-dispatch-store.ts",
+        "src/main/orch/task-store.ts",
+        "src/main/runtime/project-runtime-manager.ts"
+      ],
+      "src/main/runtime/merge-queue.ts": [
+        "src/main/context/orientation/orientation-service.ts",
+        "src/main/runtime/merge-queue-contract.ts",
+        "src/main/runtime/worktree-manager.ts"
+      ],
+      "src/main/runtime/nexus-doctor.ts": [
+        "src/main/runtime/git-command.ts",
+        "src/main/runtime/project-runtime-manager.ts"
+      ],
+      "src/main/usage/usage-service.ts": [
+        "src/main/gamification/gamification-service.ts",
+        "src/main/orch/gate.ts",
+        "src/main/orch/pane-registry.ts",
+        "src/main/orch/project-scoped-broadcast.ts",
+        "src/main/persistence/renderer-workspace-scope.ts",
+        "src/main/pty/pty-manager.ts",
+        "src/main/runtime/project-runtime-manager.ts"
+      ],
+      "src/renderer/components/PaneToolbar.tsx": [
+        "src/renderer/components/PixelIcon.tsx",
+        "src/renderer/lib/platform.ts",
+        "src/renderer/lib/split-tree.ts",
+        "src/renderer/state/confirm-store.ts",
+        "src/renderer/state/layout-store.ts",
+        "src/renderer/state/orch-store.ts",
+        "src/renderer/state/session-state-store.ts"
+      ],
+      "src/main/orch/agent-status.ts": [
+        "src/main/pty/pty-manager.ts"
+      ],
+      "src/main/orch/guided-mission-prevc.ts": [
+        "src/main/context/context-bootstrap-autopilot.ts",
+        "src/main/context/context-workflow-registry.ts",
+        "src/main/context/context-workflow-service.ts",
+        "src/main/context/contract-compiler.ts",
+        "src/main/orch/guided-mission-authority.ts",
+        "src/main/orch/guided-task-kind.ts",
+        "src/main/orch/mission-scheduler-meta.ts",
+        "src/main/orch/project-domain-store-registry.ts"
+      ],
+      "src/main/orch/guided-result-consumption.test.ts": [
+        "src/main/context/context-workflow-store.ts",
+        "src/main/context/contract-compiler.ts",
+        "src/main/context/prevc-engine.ts",
+        "src/main/context/review-council.ts",
+        "src/main/orch/__tests__/scope-fixture.ts",
+        "src/main/orch/handoff-store.ts",
+        "src/main/orch/mission-driver-io.ts",
+        "src/main/orch/mission-scheduler-meta.ts",
+        "src/main/orch/mission-scheduler-production.ts",
+        "src/main/orch/mission-store.ts",
+        "src/main/orch/project-domain-store-registry.ts",
+        "src/main/orch/task-dispatch-codec.ts",
+        "src/main/orch/task-dispatch-store.ts",
+        "src/main/orch/task-store.ts",
+        "src/main/runtime/project-runtime-manager.ts"
+      ],
+      "src/main/orch/mission-scheduler-plan.ts": [
+        "src/main/orch/guided-task-kind.ts",
+        "src/main/orch/mission-scheduler-meta.ts",
+        "src/main/orch/task-router.ts",
+        "src/main/orch/task-store.ts"
+      ],
+      "src/main/orch/pty-stream-handoff.ts": [
+        "src/main/jarvis/audit-log.ts",
+        "src/main/orch/gate.ts",
+        "src/main/orch/http-mcp-boundary.ts",
+        "src/main/orch/idle-delivery.ts",
+        "src/main/orch/mission-event-emit.ts",
+        "src/main/orch/project-domain-store-registry.ts",
+        "src/main/orch/task-dispatch-codec.ts",
+        "src/main/pty/pty-manager.ts"
+      ],
+      "src/main/orch/task-router.ts": [
+        "src/main/adapters/model-catalog.ts"
+      ],
+      "src/main/window.ts": [
+        "src/main/agent-runtime/agent-runtime-bridge.ts",
+        "src/main/pty/pty-manager.ts"
+      ],
+      "src/renderer/components/CanvasView.tsx": [
+        "src/renderer/components/PixelIcon.tsx",
+        "src/renderer/lib/split-tree.ts",
+        "src/renderer/state/layout-store.ts",
+        "src/renderer/state/orch-store.ts",
+        "src/renderer/state/session-state-store.ts"
+      ],
+      "server/src/auth/auth-routes.ts": [
+        "server/src/auth/session-service.ts",
+        "server/src/db/client.ts",
+        "server/src/db/schema.ts",
+        "server/src/env.ts",
+        "server/src/middleware/errors.ts"
+      ],
+      "src/main/context/orientation/orientation-bootstrap-context.ts": [
+        "src/main/context/orientation/orientation-types.ts",
+        "src/main/orch/workspace-file.ts",
+        "src/main/runtime/git-command.ts",
+        "src/main/runtime/worktree-contract.ts"
+      ],
+      "src/main/context/prevc-engine.ts": [
+        "src/main/context/contract-compiler.ts"
+      ],
+      "src/main/jarvis/realtime/factory.ts": [
+        "src/main/jarvis/realtime/provider.ts"
+      ],
+      "src/main/orch/guided-mission-planner-test-harness.ts": [
+        "src/main/orch/__tests__/scope-fixture.ts",
+        "src/main/orch/guided-mission-planner.ts",
+        "src/main/orch/project-domain-store-registry.ts",
+        "src/main/orch/squad-authority-snapshot.ts",
+        "src/main/orch/task-store.ts",
+        "src/main/runtime/worktree-manager.ts"
+      ],
+      "src/main/orch/http-mcp-boundary.integration.test.ts": [
+        "src/main/jarvis/audit-log.ts",
+        "src/main/orch/__tests__/scope-fixture.ts",
+        "src/main/orch/gate.ts",
+        "src/main/orch/guided-prevc-mcp-fence.ts",
+        "src/main/orch/handoff-store.ts",
+        "src/main/orch/http-mcp-boundary.ts",
+        "src/main/orch/mcp-dispatch.ts",
+        "src/main/orch/mcp-protocol.ts",
+        "src/main/orch/mission-store.ts",
+        "src/main/orch/project-domain-store-registry.ts",
+        "src/main/orch/task-dispatch-store.ts",
+        "src/main/orch/task-store.ts",
+        "src/main/runtime/project-runtime-manager.ts"
+      ],
+      "src/main/orch/mcp-effect-policy.ts": [
+        "src/main/orch/gate.ts"
+      ],
+      "src/main/orch/tools-design-system-local.ts": [
+        "src/main/context/context-attestation.ts",
+        "src/main/context/context-workflow-registry.ts",
+        "src/main/design/design-kit-source.ts",
+        "src/main/orch/design-system-authority.ts",
+        "src/main/orch/gate.ts",
+        "src/main/orch/mcp-protocol.ts",
+        "src/main/orch/tool-util.ts",
+        "src/main/orch/workspace-file.ts",
+        "src/main/persistence/settings-store.ts"
+      ],
+      "src/main/pet/pet-window.ts": [
+        "src/main/orch/orch-ipc.ts",
+        "src/main/persistence/renderer-workspace-scope.ts",
+        "src/main/pty/pty-manager.ts"
+      ],
+      "src/renderer/components/ActionCard.tsx": [
+        "src/renderer/components/PixelIcon.tsx"
+      ],
+      "src/renderer/components/HomeDeck.tsx": [
+        "src/renderer/components/PixelIcon.tsx",
+        "src/renderer/lib/platform.ts",
+        "src/renderer/lib/split-tree.ts",
+        "src/renderer/state/home-store.ts",
+        "src/renderer/state/layout-store.ts",
+        "src/renderer/state/mission-wizard-store.ts",
+        "src/renderer/state/orch-store.ts",
+        "src/renderer/state/settings-store.ts",
+        "src/renderer/state/workspace-store.ts"
+      ],
+      "src/renderer/orch/orch-bridge.ts": [
+        "src/renderer/lib/split-tree.ts",
+        "src/renderer/state/active-workspace.ts",
+        "src/renderer/state/home-store.ts",
+        "src/renderer/state/layout-store.ts",
+        "src/renderer/state/orch-store.ts",
+        "src/renderer/state/session-state-store.ts",
+        "src/renderer/state/workspace-store.ts"
+      ],
+      "src/main/context/merge-validation-coordinator.ts": [
+        "src/main/context/cli-automated-reviewer.ts",
+        "src/main/context/context-doctor.ts",
+        "src/main/context/context-workflow-service.ts",
+        "src/main/context/sensor-broker.ts",
+        "src/main/orch/mcp-protocol.ts",
+        "src/main/orch/project-domain-store-registry.ts",
+        "src/main/runtime/merge-queue.ts",
+        "src/main/runtime/worktree-runtime-registry.ts"
+      ],
+      "src/main/context/sensor-broker.ts": [
+        "src/main/context/canonical-json.ts",
+        "src/main/orch/mcp-protocol.ts"
+      ],
+      "src/main/gamification/gamification-service.ts": [
+        "src/main/orch/project-domain-store-registry.ts",
+        "src/main/runtime/project-runtime-manager.ts"
+      ],
+      "src/main/orch/failover.ts": [
+        "src/main/orch/pane-registry.ts",
+        "src/main/orch/project-scoped-broadcast.ts",
+        "src/main/persistence/account-store.ts",
+        "src/main/persistence/renderer-workspace-scope.ts",
+        "src/main/pty/pty-manager.ts",
+        "src/main/quota/quota-service.ts"
+      ],
+      "src/main/orch/guided-mission-authority.ts": [
+        "src/main/orch/squad-store.ts"
+      ],
+      "src/main/orch/http-mcp-boundary.ts": [
+        "src/main/orch/gate.ts"
+      ],
+      "src/main/orch/spawn-authority.ts": [
+        "src/main/orch/pane-registry.ts",
+        "src/main/orch/squad-authority-snapshot.ts",
+        "src/main/orch/workspace-path.ts"
+      ],
+      "src/main/orch/tools-design-system.ts": [
+        "src/main/context/context-attestation.ts",
+        "src/main/context/context-workflow-registry.ts",
+        "src/main/design/design-kit-source.ts",
+        "src/main/orch/design-system-authority.ts",
+        "src/main/orch/gate.ts",
+        "src/main/orch/mcp-protocol.ts",
+        "src/main/orch/tool-util.ts",
+        "src/main/orch/tools-design-system-local.ts",
+        "src/main/orch/workspace-file.ts"
+      ],
+      "src/main/orch/tools-files.ts": [
+        "src/main/orch/gate.ts",
+        "src/main/orch/mcp-protocol.ts",
+        "src/main/orch/project-domain-store-registry.ts",
+        "src/main/orch/tool-util.ts",
+        "src/main/orch/workspace-file.ts",
+        "src/main/orch/workspace-path.ts"
+      ],
+      "src/main/orch/tools-handoff.ts": [
+        "src/main/orch/gate.ts",
+        "src/main/orch/handoff-store.ts",
+        "src/main/orch/idle-delivery.ts",
+        "src/main/orch/mcp-protocol.ts",
+        "src/main/orch/mission-event-emit.ts",
+        "src/main/orch/project-domain-store-registry.ts",
+        "src/main/orch/task-dispatch-lifecycle.ts",
+        "src/main/orch/tool-util.ts"
+      ],
+      "src/main/pty/autonomous-cli-policy.ts": [
+        "src/main/orch/spawn-authority.ts",
+        "src/main/orch/squad-authority-snapshot.ts"
+      ],
+      "src/main/quota/quota-service.ts": [
+        "src/main/quota/claude-oauth-usage.ts",
+        "src/main/quota/quota-normalize.ts"
+      ],
+      "src/renderer/components/LaunchScreen.tsx": [
+        "src/renderer/components/PixelIcon.tsx",
+        "src/renderer/lib/platform.ts",
+        "src/renderer/state/mission-wizard-store.ts",
+        "src/renderer/state/orch-store.ts",
+        "src/renderer/state/settings-store.ts",
+        "src/renderer/state/workspace-store.ts"
+      ],
+      "src/renderer/components/operational-surfaces.test.tsx": [
+        "src/renderer/components/HomeDeck.tsx",
+        "src/renderer/components/LaunchScreen.tsx",
+        "src/renderer/components/MissionRail.tsx",
+        "src/renderer/lib/split-tree.ts",
+        "src/renderer/state/active-workspace.ts",
+        "src/renderer/state/home-store.ts",
+        "src/renderer/state/layout-store.ts",
+        "src/renderer/state/mission-wizard-store.ts",
+        "src/renderer/state/orch-store.ts",
+        "src/renderer/state/session-state-store.ts",
+        "src/renderer/state/settings-store.ts",
+        "src/renderer/state/workspace-store.ts"
+      ],
+      "src/renderer/components/settings/PetSection.tsx": [
+        "src/renderer/components/ActionCard.tsx",
+        "src/renderer/components/PixelIcon.tsx",
+        "src/renderer/state/confirm-store.ts",
+        "src/renderer/state/settings-store.ts",
+        "src/renderer/state/toast-store.ts"
+      ],
+      "src/main/context/context-workflow-store.ts": [
+        "src/main/context/canonical-json.ts",
+        "src/main/context/contract-compiler.ts",
+        "src/main/context/prevc-engine.ts",
+        "src/main/context/review-council.ts",
+        "src/main/context/sensor-broker.ts",
+        "src/main/orch/scoped-store.ts",
+        "src/main/runtime/project-runtime-manager.ts"
+      ],
+      "src/main/jarvis/mcp-ipc.ts": [
+        "src/main/jarvis/audit-log.ts",
+        "src/main/jarvis/permissions.ts",
+        "src/main/orch/mcp-dispatch.ts",
+        "src/main/orch/mcp-protocol.ts",
+        "src/main/orch/project-scoped-broadcast.ts",
+        "src/main/orch/tools.ts",
+        "src/main/persistence/renderer-workspace-scope.ts"
+      ],
+      "src/main/orch/design-system-authority.ts": [
+        "src/main/orch/gate.ts",
+        "src/main/orch/workspace-file.ts"
+      ],
+      "src/main/orch/guided-prevc-mcp-authority.test.ts": [
+        "src/main/context/automated-review-session.ts",
+        "src/main/jarvis/audit-log.ts",
+        "src/main/orch/__tests__/scope-fixture.ts",
+        "src/main/orch/gate.ts",
+        "src/main/orch/guided-prevc-mcp-fence.ts",
+        "src/main/orch/http-mcp-boundary.ts",
+        "src/main/orch/mcp-dispatch.ts",
+        "src/main/orch/mcp-protocol.ts",
+        "src/main/orch/mission-scheduler-meta.ts",
+        "src/main/runtime/project-runtime-manager.ts"
+      ],
+      "src/main/orch/mission-event-emit.ts": [
+        "src/main/feature-flags/feature-flag-registry.ts",
+        "src/main/runtime/project-runtime-manager.ts"
+      ],
+      "src/main/orch/prevc-merge-preparation.ts": [
+        "src/main/context/context-bootstrap-autopilot.ts",
+        "src/main/context/context-doctor.ts",
+        "src/main/context/context-ingestor.ts",
+        "src/main/context/context-workflow-registry.ts",
+        "src/main/context/context-workflow-service.ts",
+        "src/main/orch/guided-mission-prevc.ts",
+        "src/main/orch/prevc-autopilot-coordinator.ts",
+        "src/main/orch/project-domain-store-registry.ts"
+      ],
+      "src/main/orch/task-dispatch-mission-completion-authority.ts": [
+        "src/main/orch/guided-mission-authority.ts",
+        "src/main/orch/http-mcp-boundary.ts",
+        "src/main/orch/scoped-store.ts",
+        "src/main/orch/task-dispatch-codec.ts",
+        "src/main/orch/task-dispatch-quality-receipt-authority.ts"
+      ],
+      "src/main/orch/tools-instruments.ts": [
+        "src/main/adapters/adapter-registry.ts",
+        "src/main/feature-flags/feature-flag-registry.ts",
+        "src/main/orch/gate.ts",
+        "src/main/orch/mcp-protocol.ts",
+        "src/main/persistence/provider-config-store.ts",
+        "src/main/quota/quota-service.ts"
+      ],
+      "src/main/runtime/merge-queue-contract.ts": [
+        "src/main/runtime/git-command.ts",
+        "src/main/runtime/worktree-manager.ts"
+      ],
+      "src/main/search/search-mixer-bootstrap.ts": [
+        "src/main/feature-flags/feature-flag-registry.ts",
+        "src/main/memory/workspace-memory.ts",
+        "src/main/orch/workspace-path.ts"
+      ],
+      "server/src/env.ts": [
+        "server/src/db/client.ts"
+      ],
+      "src/main/context/automated-review-session.ts": [
+        "src/main/context/contract-compiler.ts",
+        "src/main/context/review-council.ts"
+      ],
+      "src/main/context/design-contract-bootstrap.ts": [
+        "src/main/context/orientation/orientation-bootstrap-context.ts",
+        "src/main/orch/design-system-authority.ts",
+        "src/main/orch/workspace-file.ts"
+      ],
+      "src/main/eval/eval-pipeline.ts": [
+        "src/main/adapters/model-catalog.ts"
+      ],
+      "src/main/orch/guided-prevc-mcp-fence.ts": [
+        "src/main/context/context-workflow-registry.ts",
+        "src/main/context/contract-compiler.ts",
+        "src/main/orch/gate.ts",
+        "src/main/orch/guided-mission-authority.ts",
+        "src/main/orch/mcp-effect-policy.ts",
+        "src/main/orch/project-domain-store-registry.ts"
+      ],
+      "src/main/orch/mission-orchestrator-exit-lifecycle.ts": [
+        "src/main/orch/mission-pane-authority.ts",
+        "src/main/orch/mission-store.ts",
+        "src/main/orch/project-domain-store-registry.ts",
+        "src/main/orch/project-scoped-broadcast.ts",
+        "src/main/pty/pty-manager.ts"
+      ],
+      "src/main/orch/mission-scheduler-production.test.ts": [
+        "src/main/orch/__tests__/scope-fixture.ts",
+        "src/main/orch/mission-scheduler-dispatch-transaction.ts",
+        "src/main/orch/mission-scheduler-production.ts",
+        "src/main/orch/task-dispatch-codec.ts",
+        "src/main/orch/task-dispatch-store.ts",
+        "src/main/runtime/merge-queue-contract.ts",
+        "src/main/runtime/merge-queue.ts",
+        "src/main/runtime/worktree-contract.ts",
+        "src/main/runtime/worktree-manager.ts"
+      ],
+      "src/main/orch/squad-architect.ts": [
+        "src/main/orch/squad-runtime-inventory.ts",
+        "src/main/orch/squad-store.ts",
+        "src/main/persistence/settings-store.ts",
+        "src/main/voice/jarvis-brain.ts"
+      ],
+      "src/main/orch/task-dispatch-quality-receipt-authority.ts": [
+        "src/main/context/canonical-json.ts",
+        "src/main/context/contract-compiler.ts",
+        "src/main/context/prevc-engine.ts",
+        "src/main/context/review-council.ts",
+        "src/main/context/sensor-broker.ts",
+        "src/main/orch/scoped-store.ts",
+        "src/main/orch/task-dispatch-codec.ts",
+        "src/main/orch/task-dispatch-persistence.ts"
+      ],
+      "src/main/orch/tools-browser.ts": [
+        "src/main/browser/browser-manager.ts",
+        "src/main/orch/gate.ts",
+        "src/main/orch/mcp-protocol.ts",
+        "src/main/orch/pane-authz.ts",
+        "src/main/orch/pane-registry.ts",
+        "src/main/orch/tool-util.ts",
+        "src/main/orch/workspace-path.ts"
+      ],
+      "src/main/pty/pty-manager.test.ts": [
+        "src/main/adapters/adapter-registry.ts",
+        "src/main/orch/cli-mcp-session-config.ts",
+        "src/main/orch/gate.ts",
+        "src/main/orch/spawn-authority.ts",
+        "src/main/orch/squad-authority-snapshot.ts",
+        "src/main/pty/pty-manager.ts"
+      ],
+      "src/main/quota/claude-oauth-usage.ts": [
+        "src/main/quota/quota-normalize.ts"
+      ],
+      "src/renderer/components/AgentNotifications.tsx": [
+        "src/renderer/components/PixelIcon.tsx",
+        "src/renderer/lib/split-tree.ts",
+        "src/renderer/state/layout-store.ts",
+        "src/renderer/state/orch-store.ts",
+        "src/renderer/state/settings-store.ts",
+        "src/renderer/state/toast-store.ts"
+      ],
+      "src/renderer/orch/mission-reopen.ts": [
+        "src/renderer/lib/split-tree.ts",
+        "src/renderer/orch/mission-launcher.ts",
+        "src/renderer/state/active-workspace.ts",
+        "src/renderer/state/home-store.ts",
+        "src/renderer/state/layout-store.ts",
+        "src/renderer/state/orch-store.ts"
+      ],
+      "server/src/auth/session-service.ts": [
+        "server/src/db/client.ts",
+        "server/src/db/schema.ts"
+      ],
+      "server/src/billing/billing-routes.ts": [
+        "server/src/db/client.ts",
+        "server/src/db/schema.ts",
+        "server/src/env.ts",
+        "server/src/middleware/errors.ts"
+      ],
+      "src/main/context/context-draft-store.ts": [
+        "src/main/context/canonical-json.ts",
+        "src/main/context/context-attestation.ts",
+        "src/main/orch/scoped-store.ts",
+        "src/main/runtime/project-runtime-manager.ts"
+      ],
+      "src/main/context/context-ingestor.ts": [
+        "src/main/context/canonical-json.ts",
+        "src/main/context/context-attestation.ts",
+        "src/main/orch/workspace-file.ts"
+      ],
+      "src/main/context/context-knowledge-service.ts": [
+        "src/main/context/context-attestation.ts",
+        "src/main/context/context-doctor.ts",
+        "src/main/context/context-draft-store.ts",
+        "src/main/context/context-ingestor.ts",
+        "src/main/orch/scoped-store.ts",
+        "src/main/orch/workspace-file.ts",
+        "src/main/runtime/git-command.ts",
+        "src/main/runtime/project-runtime-manager.ts"
+      ],
+      "src/main/context/context-workflow-service.test.ts": [
+        "src/main/context/context-attestation.ts",
+        "src/main/context/context-doctor.ts",
+        "src/main/context/context-workflow-service.ts",
+        "src/main/context/prevc-engine.ts",
+        "src/main/context/review-council.ts",
+        "src/main/orch/__tests__/scope-fixture.ts",
+        "src/main/orch/handoff-store.ts",
+        "src/main/orch/mission-store.ts",
+        "src/main/runtime/project-runtime-manager.ts"
+      ],
+      "src/main/media/media-ipc.ts": [
+        "src/main/orch/project-scoped-broadcast.ts",
+        "src/main/persistence/renderer-workspace-scope.ts",
+        "src/main/runtime/project-runtime-manager.ts"
+      ],
+      "src/main/orch/acp-mission-spawn.ts": [
+        "src/main/acp/acp-harness-driver.ts",
+        "src/main/orch/gate.ts",
+        "src/main/orch/main-owned-pane-runtime.ts",
+        "src/main/orch/mcp-server.ts",
+        "src/main/orch/workspace-path.ts",
+        "src/main/persistence/settings-store.ts"
+      ],
+      "src/main/orch/guided-mission-plan-authority.ts": [
+        "src/main/orch/guided-mission-authority.ts",
+        "src/main/orch/guided-task-kind.ts",
+        "src/main/orch/mission-scheduler-meta.ts",
+        "src/main/orch/mission-scheduler-plan.ts",
+        "src/main/orch/mission-scheduler.ts",
+        "src/main/orch/mission-task-plan-authority.ts",
+        "src/main/orch/task-store.ts",
+        "src/main/persistence/settings-store.ts"
+      ],
+      "src/main/orch/login-stuck-watchdog.ts": [
+        "src/main/adapters/adapter-registry.ts",
+        "src/main/orch/agent-status.ts",
+        "src/main/orch/idle-delivery.ts",
+        "src/main/orch/pane-registry.ts",
+        "src/main/orch/project-domain-store-registry.ts",
+        "src/main/orch/project-scoped-broadcast.ts",
+        "src/main/persistence/renderer-workspace-scope.ts",
+        "src/main/pty/pty-manager.ts"
+      ],
+      "src/main/orch/main-owned-agent-spawn.ts": [
+        "src/main/orch/mission-pane-authority.ts",
+        "src/main/orch/mission-store.ts",
+        "src/main/orch/pane-registry.ts",
+        "src/main/orch/spawn-authority.ts",
+        "src/main/orch/squad-store.ts",
+        "src/main/persistence/renderer-workspace-scope.ts",
+        "src/main/persistence/settings-store.ts",
+        "src/main/runtime/project-runtime-manager.ts"
+      ]
+    },
+    "reverse": {
+      "src/main/runtime/project-runtime-manager.ts": [
+        "src/main/browser/browser-manager.ts",
+        "src/main/context/context-draft-store.ts",
+        "src/main/context/context-knowledge-service.ts",
+        "src/main/context/context-workflow-registry.ts",
+        "src/main/context/context-workflow-service.test.ts",
+        "src/main/context/context-workflow-service.ts",
+        "src/main/context/context-workflow-store.ts",
+        "src/main/gamification/gamification-service.ts",
+        "src/main/jarvis/audit-log.ts",
+        "src/main/main.ts",
+        "src/main/media/media-ipc.ts",
+        "src/main/orch/cron-runtime.ts",
+        "src/main/orch/guided-greenfield-cycle.integration.test.ts",
+        "src/main/orch/guided-prevc-mcp-authority.test.ts",
+        "src/main/orch/guided-result-consumption.test.ts",
+        "src/main/orch/handoff-store.ts",
+        "src/main/orch/http-mcp-boundary.integration.test.ts",
+        "src/main/orch/main-owned-agent-spawn.ts",
+        "src/main/orch/mission-event-emit.ts",
+        "src/main/orch/mission-store.ts",
+        "src/main/orch/orch-ipc.ts",
+        "src/main/orch/project-domain-store-registry.ts",
+        "src/main/orch/scoped-store.ts",
+        "src/main/orch/task-dispatch-store.test.ts",
+        "src/main/orch/task-dispatch-store.ts",
+        "src/main/orch/task-store.ts",
+        "src/main/pty/pty-ipc.ts",
+        "src/main/runtime/nexus-doctor.ts",
+        "src/main/runtime/worktree-runtime-registry.ts",
+        "src/main/usage/usage-service.ts",
+        "src/main/voice/voice-ipc.ts"
+      ],
+      "src/main/orch/__tests__/scope-fixture.ts": [
+        "src/main/context/context-workflow-service.test.ts",
+        "src/main/orch/guided-mission-planner-test-harness.ts",
+        "src/main/orch/guided-prevc-mcp-authority.test.ts",
+        "src/main/orch/guided-result-consumption.test.ts",
+        "src/main/orch/http-mcp-boundary.integration.test.ts",
+        "src/main/orch/mission-scheduler-production.test.ts",
+        "src/main/orch/task-dispatch-store.test.ts"
+      ],
+      "src/main/orch/gate.ts": [
+        "src/main/acp/acp-harness-driver.ts",
+        "src/main/orch/acp-mission-spawn.ts",
+        "src/main/orch/design-system-authority.ts",
+        "src/main/orch/guided-prevc-mcp-authority.test.ts",
+        "src/main/orch/guided-prevc-mcp-fence.ts",
+        "src/main/orch/http-mcp-boundary.integration.test.ts",
+        "src/main/orch/http-mcp-boundary.ts",
+        "src/main/orch/mcp-dispatch.ts",
+        "src/main/orch/mcp-effect-policy.ts",
+        "src/main/orch/mcp-protocol.ts",
+        "src/main/orch/mcp-server.ts",
+        "src/main/orch/mission-kickoff.ts",
+        "src/main/orch/mission-orchestrator-bootstrap.ts",
+        "src/main/orch/mission-task-plan-authority.ts",
+        "src/main/orch/orch-ipc.ts",
+        "src/main/orch/pty-stream-handoff.ts",
+        "src/main/orch/renderer-mission-authority.ts",
+        "src/main/orch/task-dispatch-lifecycle.ts",
+        "src/main/orch/task-dispatch-store.test.ts",
+        "src/main/orch/tool-util.ts",
+        "src/main/orch/tools-browser.ts",
+        "src/main/orch/tools-context.ts",
+        "src/main/orch/tools-design-system-local.ts",
+        "src/main/orch/tools-design-system.ts",
+        "src/main/orch/tools-domain.ts",
+        "src/main/orch/tools-files.ts",
+        "src/main/orch/tools-handoff.ts",
+        "src/main/orch/tools-instruments.ts",
+        "src/main/orch/tools-panes.ts",
+        "src/main/pty/pty-manager.test.ts",
+        "src/main/usage/usage-service.ts"
+      ],
+      "src/main/orch/project-domain-store-registry.ts": [
+        "src/main/context/cli-automated-reviewer.ts",
+        "src/main/context/context-bootstrap-autopilot.ts",
+        "src/main/context/merge-validation-coordinator.ts",
+        "src/main/gamification/gamification-service.ts",
+        "src/main/main.ts",
+        "src/main/orch/cron-runtime.ts",
+        "src/main/orch/guided-greenfield-cycle.integration.test.ts",
+        "src/main/orch/guided-mission-planner-test-harness.ts",
+        "src/main/orch/guided-mission-planner.ts",
+        "src/main/orch/guided-mission-prevc.ts",
+        "src/main/orch/guided-prevc-mcp-fence.ts",
+        "src/main/orch/guided-result-consumption.test.ts",
+        "src/main/orch/http-mcp-boundary.integration.test.ts",
+        "src/main/orch/idle-delivery.ts",
+        "src/main/orch/login-stuck-watchdog.ts",
+        "src/main/orch/mcp-dispatch.ts",
+        "src/main/orch/mcp-server.ts",
+        "src/main/orch/mission-driver-io.ts",
+        "src/main/orch/mission-kickoff.ts",
+        "src/main/orch/mission-orchestrator-bootstrap.ts",
+        "src/main/orch/mission-orchestrator-exit-lifecycle.ts",
+        "src/main/orch/mission-scheduler-dispatch-transaction.ts",
+        "src/main/orch/mission-scheduler-production.ts",
+        "src/main/orch/mission-scheduler-reconciliation.ts",
+        "src/main/orch/mission-task-plan-authority.ts",
+        "src/main/orch/orch-ipc.ts",
+        "src/main/orch/orchestration-coordinator.ts",
+        "src/main/orch/pane-registry.ts",
+        "src/main/orch/prevc-autopilot-coordinator.ts",
+        "src/main/orch/prevc-merge-preparation.ts",
+        "src/main/orch/pty-stream-handoff.ts",
+        "src/main/orch/renderer-mission-authority.ts",
+        "src/main/orch/task-dispatch-lifecycle.ts",
+        "src/main/orch/tool-util.ts",
+        "src/main/orch/tools-context.ts",
+        "src/main/orch/tools-domain.ts",
+        "src/main/orch/tools-files.ts",
+        "src/main/orch/tools-handoff.ts",
+        "src/main/orch/tools-panes.ts",
+        "src/main/pty/pty-ipc.ts",
+        "src/main/real-mission-e2e-observer.ts",
+        "src/main/real-mission-e2e.ts",
+        "src/main/remote/remote-bridge.ts",
+        "src/main/voice/voice-ipc.ts"
+      ],
+      "src/main/pty/pty-manager.ts": [
+        "src/main/acp/acp-harness-driver.ts",
+        "src/main/agent-runtime/agent-runtime-bridge.ts",
+        "src/main/context/cli-automated-reviewer.ts",
+        "src/main/context/cli-context-draft-reviewer.ts",
+        "src/main/main.ts",
+        "src/main/orch/agent-status.ts",
+        "src/main/orch/failover.ts",
+        "src/main/orch/idle-delivery.ts",
+        "src/main/orch/login-stuck-watchdog.ts",
+        "src/main/orch/main-owned-pane-runtime.ts",
+        "src/main/orch/mcp-server.ts",
+        "src/main/orch/mission-kickoff.ts",
+        "src/main/orch/mission-orchestrator-bootstrap.ts",
+        "src/main/orch/mission-orchestrator-exit-lifecycle.ts",
+        "src/main/orch/mission-scheduler-dispatch-transaction.ts",
+        "src/main/orch/orch-ipc.ts",
+        "src/main/orch/pane-registry.ts",
+        "src/main/orch/pty-stream-handoff.ts",
+        "src/main/orch/renderer-mission-authority.ts",
+        "src/main/orch/task-dispatch-lifecycle.ts",
+        "src/main/orch/tool-util.ts",
+        "src/main/orch/tools-context.ts",
+        "src/main/orch/tools-panes.ts",
+        "src/main/pet/pet-window.ts",
+        "src/main/pty/pty-ipc.ts",
+        "src/main/pty/pty-manager.test.ts",
+        "src/main/real-mission-e2e-observer.ts",
+        "src/main/remote/remote-bridge.ts",
+        "src/main/usage/usage-service.ts",
+        "src/main/window.ts"
+      ],
+      "src/renderer/state/layout-store.ts": [
+        "src/renderer/App.tsx",
+        "src/renderer/components/AgentNotifications.tsx",
+        "src/renderer/components/CanvasView.tsx",
+        "src/renderer/components/CommandPalette.tsx",
+        "src/renderer/components/HomeDeck.tsx",
+        "src/renderer/components/MissionRail.tsx",
+        "src/renderer/components/MissionWizard.tsx",
+        "src/renderer/components/OpsBoard.tsx",
+        "src/renderer/components/OrchestrationPanel.tsx",
+        "src/renderer/components/PaneToolbar.tsx",
+        "src/renderer/components/WorkspaceBar.tsx",
+        "src/renderer/components/operational-surfaces.test.tsx",
+        "src/renderer/orch/mission-launcher.ts",
+        "src/renderer/orch/mission-reopen.ts",
+        "src/renderer/orch/orch-bridge.ts",
+        "src/renderer/state/workspace-store.ts"
+      ],
+      "src/main/orch/pane-registry.ts": [
+        "src/main/browser/browser-manager.ts",
+        "src/main/context/cli-automated-reviewer.ts",
+        "src/main/context/cli-context-draft-reviewer.ts",
+        "src/main/orch/failover.ts",
+        "src/main/orch/idle-delivery.ts",
+        "src/main/orch/login-stuck-watchdog.ts",
+        "src/main/orch/main-owned-agent-spawn.ts",
+        "src/main/orch/mcp-server.ts",
+        "src/main/orch/mission-driver-io.ts",
+        "src/main/orch/mission-kickoff.ts",
+        "src/main/orch/mission-orchestrator-bootstrap.ts",
+        "src/main/orch/mission-scheduler-dispatch-transaction.ts",
+        "src/main/orch/mission-scheduler-production.ts",
+        "src/main/orch/orch-ipc.ts",
+        "src/main/orch/renderer-mission-authority.ts",
+        "src/main/orch/spawn-authority.ts",
+        "src/main/orch/task-dispatch-lifecycle.ts",
+        "src/main/orch/tool-util.ts",
+        "src/main/orch/tools-browser.ts",
+        "src/main/orch/tools-context.ts",
+        "src/main/orch/tools-domain.ts",
+        "src/main/orch/tools-panes.ts",
+        "src/main/pty/pty-ipc.ts",
+        "src/main/remote/remote-bridge.ts",
+        "src/main/usage/usage-service.ts"
+      ],
+      "src/renderer/state/orch-store.ts": [
+        "src/renderer/App.tsx",
+        "src/renderer/components/AgentNotifications.tsx",
+        "src/renderer/components/CanvasView.tsx",
+        "src/renderer/components/CommandPalette.tsx",
+        "src/renderer/components/HomeDeck.tsx",
+        "src/renderer/components/LaunchScreen.tsx",
+        "src/renderer/components/MissionRail.tsx",
+        "src/renderer/components/MissionWizard.tsx",
+        "src/renderer/components/OpsBoard.tsx",
+        "src/renderer/components/OrchestrationPanel.tsx",
+        "src/renderer/components/PaneToolbar.tsx",
+        "src/renderer/components/WorkspaceBar.tsx",
+        "src/renderer/components/operational-surfaces.test.tsx",
+        "src/renderer/components/settings/SettingsDrawer.tsx",
+        "src/renderer/orch/mission-launcher.ts",
+        "src/renderer/orch/mission-reopen.ts",
+        "src/renderer/orch/orch-bridge.ts"
+      ],
+      "src/main/persistence/renderer-workspace-scope.ts": [
+        "src/main/browser/browser-manager.ts",
+        "src/main/integrations/integrations-ipc.ts",
+        "src/main/jarvis/mcp-ipc.ts",
+        "src/main/media/media-ipc.ts",
+        "src/main/orch/failover.ts",
+        "src/main/orch/idle-delivery.ts",
+        "src/main/orch/login-stuck-watchdog.ts",
+        "src/main/orch/main-owned-agent-spawn.ts",
+        "src/main/orch/mission-kickoff.ts",
+        "src/main/orch/mission-orchestrator-bootstrap.ts",
+        "src/main/orch/orch-ipc.ts",
+        "src/main/orch/pane-registry.ts",
+        "src/main/orch/project-scoped-broadcast.ts",
+        "src/main/orch/renderer-mission-authority.ts",
+        "src/main/pet/pet-window.ts",
+        "src/main/pty/pty-ipc.ts",
+        "src/main/real-mission-e2e.ts",
+        "src/main/usage/usage-service.ts",
+        "src/main/voice/voice-ipc.ts"
+      ],
+      "src/main/orch/orch-ipc.ts": [
+        "src/main/main.ts",
+        "src/main/pet/pet-window.ts",
+        "src/main/real-mission-e2e.ts"
+      ],
+      "src/main/orch/tool-util.ts": [
+        "src/main/browser/browser-manager.ts",
+        "src/main/context/cli-automated-reviewer.ts",
+        "src/main/context/cli-context-draft-reviewer.ts",
+        "src/main/orch/mission-scheduler-dispatch-transaction.ts",
+        "src/main/orch/task-dispatch-lifecycle.ts",
+        "src/main/orch/tools-browser.ts",
+        "src/main/orch/tools-design-system-local.ts",
+        "src/main/orch/tools-design-system.ts",
+        "src/main/orch/tools-domain.ts",
+        "src/main/orch/tools-files.ts",
+        "src/main/orch/tools-handoff.ts",
+        "src/main/orch/tools-panes.ts"
+      ],
+      "src/renderer/components/PixelIcon.tsx": [
+        "src/renderer/App.tsx",
+        "src/renderer/components/ActionCard.tsx",
+        "src/renderer/components/AgentNotifications.tsx",
+        "src/renderer/components/CanvasView.tsx",
+        "src/renderer/components/CommandPalette.tsx",
+        "src/renderer/components/HomeDeck.tsx",
+        "src/renderer/components/LaunchScreen.tsx",
+        "src/renderer/components/MissionRail.tsx",
+        "src/renderer/components/MissionWizard.tsx",
+        "src/renderer/components/OpsBoard.tsx",
+        "src/renderer/components/PaneToolbar.tsx",
+        "src/renderer/components/WorkspaceBar.tsx",
+        "src/renderer/components/settings/PetSection.tsx",
+        "src/renderer/components/settings/SettingsDrawer.tsx"
+      ],
+      "src/main/orch/mcp-protocol.ts": [
+        "src/main/context/cli-automated-reviewer.ts",
+        "src/main/context/cli-context-draft-reviewer.ts",
+        "src/main/context/merge-validation-coordinator.ts",
+        "src/main/context/sensor-broker.ts",
+        "src/main/jarvis/mcp-ipc.ts",
+        "src/main/orch/cron-runtime.ts",
+        "src/main/orch/guided-prevc-mcp-authority.test.ts",
+        "src/main/orch/http-mcp-boundary.integration.test.ts",
+        "src/main/orch/mcp-dispatch.ts",
+        "src/main/orch/mcp-server.ts",
+        "src/main/orch/tool-util.ts",
+        "src/main/orch/tools-browser.ts",
+        "src/main/orch/tools-context.ts",
+        "src/main/orch/tools-design-system-local.ts",
+        "src/main/orch/tools-design-system.ts",
+        "src/main/orch/tools-domain.ts",
+        "src/main/orch/tools-files.ts",
+        "src/main/orch/tools-handoff.ts",
+        "src/main/orch/tools-instruments.ts",
+        "src/main/orch/tools-panes.ts",
+        "src/main/orch/tools.ts"
+      ],
+      "src/main/persistence/settings-store.ts": [
+        "src/main/context/context-bootstrap-autopilot.ts",
+        "src/main/integrations/integrations-ipc.ts",
+        "src/main/main.ts",
+        "src/main/orch/acp-mission-spawn.ts",
+        "src/main/orch/guided-mission-plan-authority.ts",
+        "src/main/orch/guided-mission-planner.ts",
+        "src/main/orch/main-owned-agent-spawn.ts",
+        "src/main/orch/main-owned-pane-runtime.ts",
+        "src/main/orch/mcp-server.ts",
+        "src/main/orch/mission-kickoff.ts",
+        "src/main/orch/mission-orchestrator-bootstrap.ts",
+        "src/main/orch/mission-scheduler-dispatch-transaction.ts",
+        "src/main/orch/mission-scheduler-production.ts",
+        "src/main/orch/mission-scheduler-reconciliation.ts",
+        "src/main/orch/mission-task-plan-authority.ts",
+        "src/main/orch/orch-ipc.ts",
+        "src/main/orch/pane-registry.ts",
+        "src/main/orch/renderer-mission-authority.ts",
+        "src/main/orch/squad-architect.ts",
+        "src/main/orch/squad-runtime-inventory.ts",
+        "src/main/orch/tool-util.ts",
+        "src/main/orch/tools-design-system-local.ts",
+        "src/main/orch/tools-panes.ts",
+        "src/main/pty/pty-ipc.ts",
+        "src/main/pty/pty-manager.ts"
+      ],
+      "src/main/orch/mission-scheduler-dispatch-transaction.ts": [
+        "src/main/orch/mission-scheduler-production.test.ts",
+        "src/main/orch/mission-scheduler-production.ts",
+        "src/main/orch/mission-scheduler-reconciliation.ts"
+      ],
+      "src/main/orch/mcp-server.ts": [
+        "src/main/orch/acp-mission-spawn.ts",
+        "src/main/orch/orch-ipc.ts"
+      ],
+      "src/main/orch/scoped-store.ts": [
+        "src/main/context/context-draft-store.ts",
+        "src/main/context/context-knowledge-service.ts",
+        "src/main/context/context-workflow-store.ts",
+        "src/main/jarvis/audit-log.ts",
+        "src/main/orch/handoff-store.ts",
+        "src/main/orch/mission-store.ts",
+        "src/main/orch/task-dispatch-codec.ts",
+        "src/main/orch/task-dispatch-mission-completion-authority.ts",
+        "src/main/orch/task-dispatch-persistence.ts",
+        "src/main/orch/task-dispatch-quality-receipt-authority.ts",
+        "src/main/orch/task-dispatch-store.ts",
+        "src/main/orch/task-store.ts",
+        "src/main/runtime/worktree-runtime-registry.ts"
+      ],
+      "src/main/orch/squad-authority-snapshot.ts": [
+        "src/main/orch/guided-greenfield-cycle.integration.test.ts",
+        "src/main/orch/guided-mission-planner-test-harness.ts",
+        "src/main/orch/guided-mission-planner.ts",
+        "src/main/orch/mission-kickoff.ts",
+        "src/main/orch/mission-orchestrator-bootstrap.ts",
+        "src/main/orch/mission-pane-authority.ts",
+        "src/main/orch/mission-scheduler-dispatch-transaction.ts",
+        "src/main/orch/mission-task-plan-authority.ts",
+        "src/main/orch/orch-ipc.ts",
+        "src/main/orch/prevc-autopilot-coordinator.ts",
+        "src/main/orch/renderer-mission-authority.ts",
+        "src/main/orch/spawn-authority.ts",
+        "src/main/orch/squad-store.ts",
+        "src/main/pty/autonomous-cli-policy.ts",
+        "src/main/pty/pty-manager.test.ts"
+      ],
+      "src/main/orch/tools-domain.ts": [
+        "src/main/orch/tools.ts"
+      ],
+      "src/renderer/lib/split-tree.ts": [
+        "src/renderer/App.tsx",
+        "src/renderer/components/AgentNotifications.tsx",
+        "src/renderer/components/CanvasView.tsx",
+        "src/renderer/components/CommandPalette.tsx",
+        "src/renderer/components/HomeDeck.tsx",
+        "src/renderer/components/MissionRail.tsx",
+        "src/renderer/components/OpsBoard.tsx",
+        "src/renderer/components/OrchestrationPanel.tsx",
+        "src/renderer/components/PaneToolbar.tsx",
+        "src/renderer/components/WorkspaceBar.tsx",
+        "src/renderer/components/operational-surfaces.test.tsx",
+        "src/renderer/orch/mission-launcher.ts",
+        "src/renderer/orch/mission-reopen.ts",
+        "src/renderer/orch/orch-bridge.ts",
+        "src/renderer/state/layout-store.ts"
+      ],
+      "server/src/db/client.ts": [
+        "server/src/auth/auth-routes.ts",
+        "server/src/auth/session-service.ts",
+        "server/src/billing/billing-routes.ts",
+        "server/src/env.ts",
+        "server/src/index.ts"
+      ],
+      "src/main/context/context-workflow-service.ts": [
+        "src/main/context/context-workflow-registry.ts",
+        "src/main/context/context-workflow-service.test.ts",
+        "src/main/context/merge-validation-coordinator.ts",
+        "src/main/orch/guided-mission-prevc.ts",
+        "src/main/orch/mcp-dispatch.ts",
+        "src/main/orch/mission-driver-io.ts",
+        "src/main/orch/prevc-autopilot-coordinator.ts",
+        "src/main/orch/prevc-merge-preparation.ts",
+        "src/main/orch/tools-context.ts",
+        "src/main/runtime/worktree-runtime-registry.ts"
+      ],
+      "src/main/feature-flags/feature-flag-registry.ts": [
+        "src/main/main.ts",
+        "src/main/orch/mission-event-emit.ts",
+        "src/main/orch/mission-scheduler-production.ts",
+        "src/main/orch/tools-instruments.ts",
+        "src/main/product-wave-ipc.ts",
+        "src/main/search/search-mixer-bootstrap.ts"
+      ],
+      "src/main/orch/mission-scheduler-production.ts": [
+        "src/main/main.ts",
+        "src/main/orch/guided-result-consumption.test.ts",
+        "src/main/orch/mission-scheduler-production.test.ts",
+        "src/main/orch/orchestration-coordinator.ts"
+      ],
+      "src/main/orch/task-dispatch-codec.ts": [
+        "src/main/orch/guided-result-consumption.test.ts",
+        "src/main/orch/handoff-store.ts",
+        "src/main/orch/mission-scheduler-dispatch-transaction.ts",
+        "src/main/orch/mission-scheduler-production.test.ts",
+        "src/main/orch/mission-scheduler-production.ts",
+        "src/main/orch/mission-scheduler-reconciliation.ts",
+        "src/main/orch/prevc-autopilot-coordinator.ts",
+        "src/main/orch/pty-stream-handoff.ts",
+        "src/main/orch/task-dispatch-mission-completion-authority.ts",
+        "src/main/orch/task-dispatch-persistence.ts",
+        "src/main/orch/task-dispatch-quality-receipt-authority.ts",
+        "src/main/orch/task-dispatch-store.test.ts",
+        "src/main/orch/task-dispatch-store.ts",
+        "src/main/orch/tool-util.ts"
+      ],
+      "src/main/context/context-workflow-registry.ts": [
+        "src/main/browser/browser-manager.ts",
+        "src/main/context/cli-context-draft-reviewer.ts",
+        "src/main/context/context-bootstrap-autopilot.ts",
+        "src/main/main.ts",
+        "src/main/orch/guided-greenfield-cycle.integration.test.ts",
+        "src/main/orch/guided-mission-prevc.ts",
+        "src/main/orch/guided-prevc-mcp-fence.ts",
+        "src/main/orch/mcp-dispatch.ts",
+        "src/main/orch/mcp-server.ts",
+        "src/main/orch/mission-driver-io.ts",
+        "src/main/orch/mission-pane-authority.ts",
+        "src/main/orch/mission-scheduler-production.ts",
+        "src/main/orch/prevc-autopilot-coordinator.ts",
+        "src/main/orch/prevc-merge-preparation.ts",
+        "src/main/orch/renderer-mission-authority.ts",
+        "src/main/orch/tools-context.ts",
+        "src/main/orch/tools-design-system-local.ts",
+        "src/main/orch/tools-design-system.ts",
+        "src/main/orch/tools-domain.ts",
+        "src/main/orch/tools-panes.ts",
+        "src/main/real-mission-e2e-observer.ts"
+      ],
+      "src/main/orch/guided-mission-planner.ts": [
+        "src/main/orch/guided-greenfield-cycle.integration.test.ts",
+        "src/main/orch/guided-mission-planner-test-harness.ts",
+        "src/main/orch/mission-kickoff.ts",
+        "src/main/orch/mission-orchestrator-bootstrap.ts",
+        "src/main/orch/orch-ipc.ts"
+      ],
+      "src/main/orch/mission-scheduler-meta.ts": [
+        "src/main/orch/guided-greenfield-cycle.integration.test.ts",
+        "src/main/orch/guided-mission-plan-authority.ts",
+        "src/main/orch/guided-mission-prevc.ts",
+        "src/main/orch/guided-prevc-mcp-authority.test.ts",
+        "src/main/orch/guided-result-consumption.test.ts",
+        "src/main/orch/mission-scheduler-dispatch-transaction.ts",
+        "src/main/orch/mission-scheduler-plan.ts",
+        "src/main/orch/mission-scheduler-reconciliation.ts",
+        "src/main/orch/mission-task-plan-authority.ts",
+        "src/main/orch/task-dispatch-store.test.ts",
+        "src/main/orch/tools-domain.ts",
+        "src/main/real-mission-e2e-observer.ts"
+      ],
+      "src/main/persistence/provider-config-store.ts": [
+        "src/main/main.ts",
+        "src/main/orch/guided-mission-planner.ts",
+        "src/main/orch/main-owned-pane-runtime.ts",
+        "src/main/orch/mission-scheduler-dispatch-transaction.ts",
+        "src/main/orch/mission-scheduler-reconciliation.ts",
+        "src/main/orch/squad-runtime-inventory.ts",
+        "src/main/orch/tools-domain.ts",
+        "src/main/orch/tools-instruments.ts",
+        "src/main/pty/pty-ipc.ts"
+      ],
+      "src/main/adapters/adapter-registry.ts": [
+        "src/main/main.ts",
+        "src/main/orch/guided-mission-planner.ts",
+        "src/main/orch/login-stuck-watchdog.ts",
+        "src/main/orch/main-owned-pane-runtime.ts",
+        "src/main/orch/mission-scheduler-dispatch-transaction.ts",
+        "src/main/orch/mission-task-plan-authority.ts",
+        "src/main/orch/squad-runtime-inventory.ts",
+        "src/main/orch/tool-util.ts",
+        "src/main/orch/tools-instruments.ts",
+        "src/main/orch/tools-panes.ts",
+        "src/main/persistence/provider-config-store.ts",
+        "src/main/pty/pty-ipc.ts",
+        "src/main/pty/pty-manager.test.ts",
+        "src/main/pty/pty-manager.ts"
+      ],
+      "src/main/orch/mission-orchestrator-bootstrap.ts": [
+        "src/main/orch/cron-runtime.ts",
+        "src/main/orch/orch-ipc.ts",
+        "src/main/orch/orchestration-coordinator.ts"
+      ],
+      "src/renderer/components/MissionRail.tsx": [
+        "src/renderer/App.tsx",
+        "src/renderer/components/operational-surfaces.test.tsx"
+      ],
+      "server/src/db/schema.ts": [
+        "server/src/auth/auth-routes.ts",
+        "server/src/auth/session-service.ts",
+        "server/src/billing/billing-routes.ts",
+        "server/src/db/client.ts"
+      ],
+      "src/main/orch/mission-store.ts": [
+        "src/main/context/context-workflow-service.test.ts",
+        "src/main/context/context-workflow-service.ts",
+        "src/main/orch/guided-result-consumption.test.ts",
+        "src/main/orch/http-mcp-boundary.integration.test.ts",
+        "src/main/orch/main-owned-agent-spawn.ts",
+        "src/main/orch/mission-orchestrator-exit-lifecycle.ts",
+        "src/main/orch/project-domain-store-registry.ts",
+        "src/main/orch/task-dispatch-store.test.ts"
+      ],
+      "src/main/orch/task-dispatch-store.ts": [
+        "src/main/orch/guided-result-consumption.test.ts",
+        "src/main/orch/http-mcp-boundary.integration.test.ts",
+        "src/main/orch/mission-orchestrator-bootstrap.ts",
+        "src/main/orch/mission-scheduler-dispatch-transaction.ts",
+        "src/main/orch/mission-scheduler-production.test.ts",
+        "src/main/orch/mission-scheduler-production.ts",
+        "src/main/orch/mission-scheduler-reconciliation.ts",
+        "src/main/orch/project-domain-store-registry.ts",
+        "src/main/orch/task-dispatch-lifecycle.ts",
+        "src/main/orch/task-dispatch-store.test.ts",
+        "src/main/pty/pty-ipc.ts"
+      ],
+      "src/main/orch/task-store.ts": [
+        "src/main/orch/guided-greenfield-cycle.integration.test.ts",
+        "src/main/orch/guided-mission-plan-authority.ts",
+        "src/main/orch/guided-mission-planner-test-harness.ts",
+        "src/main/orch/guided-mission-planner.ts",
+        "src/main/orch/guided-result-consumption.test.ts",
+        "src/main/orch/http-mcp-boundary.integration.test.ts",
+        "src/main/orch/mission-scheduler-dispatch-transaction.ts",
+        "src/main/orch/mission-scheduler-plan.ts",
+        "src/main/orch/mission-scheduler-reconciliation.ts",
+        "src/main/orch/mission-task-plan-authority.ts",
+        "src/main/orch/prevc-autopilot-coordinator.ts",
+        "src/main/orch/project-domain-store-registry.ts",
+        "src/main/orch/task-dispatch-store.test.ts"
+      ],
+      "src/renderer/components/WorkspaceBar.tsx": [
+        "src/renderer/App.tsx"
+      ],
+      "src/main/orch/mcp-dispatch.ts": [
+        "src/main/jarvis/mcp-ipc.ts",
+        "src/main/orch/guided-prevc-mcp-authority.test.ts",
+        "src/main/orch/http-mcp-boundary.integration.test.ts",
+        "src/main/orch/mcp-protocol.ts",
+        "src/main/orch/mcp-server.ts"
+      ],
+      "src/main/orch/project-scoped-broadcast.ts": [
+        "src/main/browser/browser-manager.ts",
+        "src/main/context/cli-context-draft-reviewer.ts",
+        "src/main/jarvis/mcp-ipc.ts",
+        "src/main/media/media-ipc.ts",
+        "src/main/orch/failover.ts",
+        "src/main/orch/idle-delivery.ts",
+        "src/main/orch/login-stuck-watchdog.ts",
+        "src/main/orch/main-owned-pane-runtime.ts",
+        "src/main/orch/mission-driver-io.ts",
+        "src/main/orch/mission-kickoff.ts",
+        "src/main/orch/mission-orchestrator-exit-lifecycle.ts",
+        "src/main/orch/orch-ipc.ts",
+        "src/main/orch/pane-registry.ts",
+        "src/main/orch/task-dispatch-lifecycle.ts",
+        "src/main/usage/usage-service.ts",
+        "src/main/voice/voice-ipc.ts"
+      ],
+      "src/main/orch/squad-store.ts": [
+        "src/main/orch/guided-mission-authority.ts",
+        "src/main/orch/guided-mission-planner.ts",
+        "src/main/orch/main-owned-agent-spawn.ts",
+        "src/main/orch/mission-kickoff.ts",
+        "src/main/orch/mission-orchestrator-bootstrap.ts",
+        "src/main/orch/mission-scheduler-dispatch-transaction.ts",
+        "src/main/orch/mission-task-plan-authority.ts",
+        "src/main/orch/orch-ipc.ts",
+        "src/main/orch/pane-registry.ts",
+        "src/main/orch/prevc-autopilot-coordinator.ts",
+        "src/main/orch/renderer-mission-authority.ts",
+        "src/main/orch/squad-architect.ts",
+        "src/main/orch/tool-util.ts",
+        "src/main/orch/tools-context.ts",
+        "src/main/orch/tools-domain.ts",
+        "src/main/orch/tools-panes.ts"
+      ],
+      "src/main/orch/tools-panes.ts": [
+        "src/main/orch/mission-scheduler-dispatch-transaction.ts",
+        "src/main/orch/mission-task-plan-authority.ts",
+        "src/main/orch/tools-domain.ts",
+        "src/main/orch/tools.ts"
+      ],
+      "src/main/orch/tools.ts": [
+        "src/main/jarvis/mcp-ipc.ts",
+        "src/main/orch/mcp-server.ts"
+      ],
+      "src/main/voice/voice-ipc.ts": [
+        "src/main/main.ts"
+      ],
+      "src/main/orch/tools-context.ts": [
+        "src/main/orch/tools.ts"
+      ],
+      "src/main/orch/workspace-path.ts": [
+        "src/main/browser/browser-manager.ts",
+        "src/main/context/cli-context-draft-reviewer.ts",
+        "src/main/context/context-doctor.ts",
+        "src/main/orch/acp-mission-spawn.ts",
+        "src/main/orch/cron-runtime.ts",
+        "src/main/orch/main-owned-pane-runtime.ts",
+        "src/main/orch/mcp-server.ts",
+        "src/main/orch/spawn-authority.ts",
+        "src/main/orch/tool-util.ts",
+        "src/main/orch/tools-browser.ts",
+        "src/main/orch/tools-files.ts",
+        "src/main/orch/workspace-file.ts",
+        "src/main/product-wave-ipc.ts",
+        "src/main/pty/pty-ipc.ts",
+        "src/main/search/search-mixer-bootstrap.ts"
+      ],
+      "src/main/persistence/account-store.ts": [
+        "src/main/main.ts",
+        "src/main/orch/failover.ts",
+        "src/main/orch/guided-mission-planner.ts",
+        "src/main/orch/mission-scheduler-dispatch-transaction.ts",
+        "src/main/orch/mission-scheduler-reconciliation.ts",
+        "src/main/orch/squad-runtime-inventory.ts",
+        "src/main/orch/tools-domain.ts",
+        "src/main/persistence/provider-config-store.ts"
+      ],
+      "src/main/browser/browser-manager.ts": [
+        "src/main/main.ts",
+        "src/main/orch/tools-browser.ts"
+      ],
+      "src/main/context/cli-automated-reviewer.ts": [
+        "src/main/context/merge-validation-coordinator.ts",
+        "src/main/orch/prevc-autopilot-coordinator.ts"
+      ],
+      "src/main/context/context-doctor.ts": [
+        "src/main/context/context-bootstrap-autopilot.ts",
+        "src/main/context/context-knowledge-service.ts",
+        "src/main/context/context-workflow-service.test.ts",
+        "src/main/context/context-workflow-service.ts",
+        "src/main/context/merge-validation-coordinator.ts",
+        "src/main/context/orientation/orientation-service.ts",
+        "src/main/orch/prevc-merge-preparation.ts"
+      ],
+      "src/main/context/orientation/orientation-service.ts": [
+        "src/main/context/context-bootstrap-autopilot.ts",
+        "src/main/context/context-workflow-service.ts",
+        "src/main/main.ts",
+        "src/main/orch/guided-greenfield-cycle.integration.test.ts",
+        "src/main/orch/renderer-mission-authority.ts",
+        "src/main/orch/tools-context.ts",
+        "src/main/runtime/merge-queue.ts"
+      ],
+      "src/main/orch/handoff-store.ts": [
+        "src/main/context/context-workflow-service.test.ts",
+        "src/main/context/context-workflow-service.ts",
+        "src/main/orch/guided-result-consumption.test.ts",
+        "src/main/orch/http-mcp-boundary.integration.test.ts",
+        "src/main/orch/idle-delivery.ts",
+        "src/main/orch/project-domain-store-registry.ts",
+        "src/main/orch/task-dispatch-store.test.ts",
+        "src/main/orch/tools-handoff.ts"
+      ],
+      "src/main/orch/mission-kickoff.ts": [
+        "src/main/orch/mission-orchestrator-bootstrap.ts",
+        "src/main/orch/orch-ipc.ts",
+        "src/main/real-mission-e2e-observer.ts"
+      ],
+      "src/renderer/state/workspace-store.ts": [
+        "src/renderer/App.tsx",
+        "src/renderer/components/HomeDeck.tsx",
+        "src/renderer/components/LaunchScreen.tsx",
+        "src/renderer/components/MissionRail.tsx",
+        "src/renderer/components/MissionWizard.tsx",
+        "src/renderer/components/OpsBoard.tsx",
+        "src/renderer/components/WorkspaceBar.tsx",
+        "src/renderer/components/operational-surfaces.test.tsx",
+        "src/renderer/orch/orch-bridge.ts"
+      ],
+      "src/main/orch/renderer-mission-authority.ts": [
+        "src/main/orch/orch-ipc.ts"
+      ],
+      "src/renderer/components/MissionWizard.tsx": [
+        "src/renderer/App.tsx"
+      ],
+      "src/main/context/contract-compiler.ts": [
+        "src/main/context/automated-review-session.ts",
+        "src/main/context/cli-automated-reviewer.ts",
+        "src/main/context/context-workflow-service.ts",
+        "src/main/context/context-workflow-store.ts",
+        "src/main/context/prevc-engine.ts",
+        "src/main/context/review-council.ts",
+        "src/main/orch/guided-mission-prevc.ts",
+        "src/main/orch/guided-prevc-mcp-fence.ts",
+        "src/main/orch/guided-result-consumption.test.ts",
+        "src/main/orch/prevc-autopilot-coordinator.ts",
+        "src/main/orch/task-dispatch-quality-receipt-authority.ts",
+        "src/main/orch/task-dispatch-store.test.ts",
+        "src/main/orch/tools-context.ts"
+      ],
+      "src/main/orch/prevc-autopilot-coordinator.ts": [
+        "src/main/orch/mission-driver-io.ts",
+        "src/main/orch/mission-scheduler-production.ts",
+        "src/main/orch/prevc-merge-preparation.ts",
+        "src/main/orch/tools-context.ts"
+      ],
+      "src/main/runtime/git-command.ts": [
+        "src/main/context/context-knowledge-service.ts",
+        "src/main/context/orientation/orientation-bootstrap-context.ts",
+        "src/main/orch/guided-greenfield-cycle.integration.test.ts",
+        "src/main/runtime/merge-queue-contract.ts",
+        "src/main/runtime/nexus-doctor.ts",
+        "src/main/runtime/worktree-contract.ts",
+        "src/main/runtime/worktree-manager.ts"
+      ],
+      "src/main/runtime/worktree-manager.ts": [
+        "src/main/context/orientation/orientation-service.ts",
+        "src/main/orch/guided-mission-planner-test-harness.ts",
+        "src/main/orch/mission-scheduler-production.test.ts",
+        "src/main/orch/mission-scheduler-reconciliation.ts",
+        "src/main/runtime/merge-queue-contract.ts",
+        "src/main/runtime/merge-queue.ts",
+        "src/main/runtime/worktree-runtime-registry.ts"
+      ],
+      "src/main/runtime/worktree-runtime-registry.ts": [
+        "src/main/context/merge-validation-coordinator.ts",
+        "src/main/main.ts",
+        "src/main/orch/guided-greenfield-cycle.integration.test.ts",
+        "src/main/orch/guided-mission-planner.ts",
+        "src/main/orch/mission-driver-io.ts",
+        "src/main/orch/mission-scheduler-dispatch-transaction.ts",
+        "src/main/orch/mission-scheduler-production.ts",
+        "src/main/orch/mission-scheduler-reconciliation.ts",
+        "src/main/orch/mission-task-plan-authority.ts",
+        "src/main/orch/prevc-autopilot-coordinator.ts",
+        "src/main/orch/renderer-mission-authority.ts",
+        "src/main/orch/tools-context.ts",
+        "src/main/orch/tools-domain.ts",
+        "src/main/orch/tools-panes.ts"
+      ],
+      "src/main/voice/live-transport-controller.ts": [
+        "src/main/voice/voice-ipc.ts"
+      ],
+      "src/renderer/state/active-workspace.ts": [
+        "src/renderer/components/operational-surfaces.test.tsx",
+        "src/renderer/orch/mission-launcher.ts",
+        "src/renderer/orch/mission-reopen.ts",
+        "src/renderer/orch/orch-bridge.ts",
+        "src/renderer/state/layout-store.ts",
+        "src/renderer/state/orch-store.ts",
+        "src/renderer/state/workspace-store.ts"
+      ],
+      "src/renderer/state/settings-store.ts": [
+        "src/renderer/App.tsx",
+        "src/renderer/components/AgentNotifications.tsx",
+        "src/renderer/components/CommandPalette.tsx",
+        "src/renderer/components/HomeDeck.tsx",
+        "src/renderer/components/LaunchScreen.tsx",
+        "src/renderer/components/WorkspaceBar.tsx",
+        "src/renderer/components/operational-surfaces.test.tsx",
+        "src/renderer/components/settings/PetSection.tsx",
+        "src/renderer/components/settings/SettingsDrawer.tsx"
+      ],
+      "src/renderer/state/toast-store.ts": [
+        "src/renderer/App.tsx",
+        "src/renderer/components/AgentNotifications.tsx",
+        "src/renderer/components/MissionWizard.tsx",
+        "src/renderer/components/settings/PetSection.tsx",
+        "src/renderer/orch/mission-launcher.ts"
+      ],
+      "src/main/context/canonical-json.ts": [
+        "src/main/context/cli-automated-reviewer.ts",
+        "src/main/context/context-attestation.ts",
+        "src/main/context/context-doctor.ts",
+        "src/main/context/context-draft-store.ts",
+        "src/main/context/context-ingestor.ts",
+        "src/main/context/context-workflow-service.ts",
+        "src/main/context/context-workflow-store.ts",
+        "src/main/context/contract-compiler.ts",
+        "src/main/context/orientation/orientation-service.ts",
+        "src/main/context/review-council.ts",
+        "src/main/context/sensor-broker.ts",
+        "src/main/orch/task-dispatch-quality-receipt-authority.ts"
+      ],
+      "src/main/jarvis/audit-log.ts": [
+        "src/main/jarvis/mcp-ipc.ts",
+        "src/main/main.ts",
+        "src/main/orch/guided-prevc-mcp-authority.test.ts",
+        "src/main/orch/http-mcp-boundary.integration.test.ts",
+        "src/main/orch/mcp-dispatch.ts",
+        "src/main/orch/pty-stream-handoff.ts",
+        "src/main/real-mission-e2e-observer.ts"
+      ],
+      "src/main/orch/idle-delivery.ts": [
+        "src/main/orch/login-stuck-watchdog.ts",
+        "src/main/orch/mission-driver-io.ts",
+        "src/main/orch/orch-ipc.ts",
+        "src/main/orch/orchestration-coordinator.ts",
+        "src/main/orch/pty-stream-handoff.ts",
+        "src/main/orch/tools-handoff.ts"
+      ],
+      "src/main/orch/workspace-file.ts": [
+        "src/main/context/context-attestation.ts",
+        "src/main/context/context-doctor.ts",
+        "src/main/context/context-ingestor.ts",
+        "src/main/context/context-knowledge-service.ts",
+        "src/main/context/design-contract-bootstrap.ts",
+        "src/main/context/orientation/orientation-bootstrap-context.ts",
+        "src/main/orch/design-system-authority.ts",
+        "src/main/orch/tools-design-system-local.ts",
+        "src/main/orch/tools-design-system.ts",
+        "src/main/orch/tools-files.ts"
+      ],
+      "src/main/pty/pty-ipc.ts": [
+        "src/main/main.ts"
+      ],
+      "src/main/runtime/worktree-contract.ts": [
+        "src/main/context/orientation/orientation-bootstrap-context.ts",
+        "src/main/orch/guided-mission-planner.ts",
+        "src/main/orch/mission-scheduler-production.test.ts",
+        "src/main/orch/mission-scheduler-production.ts",
+        "src/main/orch/mission-scheduler-reconciliation.ts",
+        "src/main/orch/prevc-autopilot-coordinator.ts",
+        "src/main/runtime/worktree-manager.ts",
+        "src/main/runtime/worktree-runtime-registry.ts"
+      ],
+      "src/renderer/components/OpsBoard.tsx": [
+        "src/renderer/App.tsx"
+      ],
+      "src/renderer/components/settings/SettingsDrawer.tsx": [
+        "src/renderer/App.tsx"
+      ],
+      "src/main/context/context-attestation.ts": [
+        "src/main/context/context-bootstrap-autopilot.ts",
+        "src/main/context/context-doctor.ts",
+        "src/main/context/context-draft-store.ts",
+        "src/main/context/context-ingestor.ts",
+        "src/main/context/context-knowledge-service.ts",
+        "src/main/context/context-workflow-service.test.ts",
+        "src/main/orch/guided-greenfield-cycle.integration.test.ts",
+        "src/main/orch/tools-design-system-local.ts",
+        "src/main/orch/tools-design-system.ts"
+      ],
+      "src/main/orch/mission-driver-io.ts": [
+        "src/main/main.ts",
+        "src/main/orch/guided-result-consumption.test.ts",
+        "src/main/orch/mission-scheduler-dispatch-transaction.ts",
+        "src/main/orch/tools-panes.ts"
+      ],
+      "src/renderer/components/OrchestrationPanel.tsx": [
+        "src/renderer/App.tsx"
+      ],
+      "src/main/orch/mission-pane-authority.ts": [
+        "src/main/orch/main-owned-agent-spawn.ts",
+        "src/main/orch/main-owned-pane-runtime.ts",
+        "src/main/orch/mission-kickoff.ts",
+        "src/main/orch/mission-orchestrator-bootstrap.ts",
+        "src/main/orch/mission-orchestrator-exit-lifecycle.ts",
+        "src/main/orch/mission-scheduler-dispatch-transaction.ts",
+        "src/main/orch/mission-store.ts",
+        "src/main/orch/pane-registry.ts",
+        "src/main/orch/prevc-autopilot-coordinator.ts",
+        "src/main/orch/renderer-mission-authority.ts",
+        "src/main/orch/tool-util.ts",
+        "src/main/orch/tools-context.ts"
+      ],
+      "src/main/product-wave-ipc.ts": [
+        "src/main/main.ts"
+      ],
+      "src/renderer/orch/mission-launcher.ts": [
+        "src/renderer/components/MissionWizard.tsx",
+        "src/renderer/orch/mission-reopen.ts"
+      ],
+      "src/main/context/context-bootstrap-autopilot.ts": [
+        "src/main/orch/guided-greenfield-cycle.integration.test.ts",
+        "src/main/orch/guided-mission-prevc.ts",
+        "src/main/orch/prevc-merge-preparation.ts",
+        "src/main/orch/tools-context.ts"
+      ],
+      "src/main/orch/main-owned-pane-runtime.ts": [
+        "src/main/orch/acp-mission-spawn.ts",
+        "src/main/orch/pane-registry.ts"
+      ],
+      "src/main/orch/squad-runtime-inventory.ts": [
+        "src/main/context/cli-automated-reviewer.ts",
+        "src/main/context/cli-context-draft-reviewer.ts",
+        "src/main/orch/guided-mission-planner.ts",
+        "src/main/orch/mission-orchestrator-bootstrap.ts",
+        "src/main/orch/orch-ipc.ts",
+        "src/main/orch/renderer-mission-authority.ts",
+        "src/main/orch/squad-architect.ts",
+        "src/main/orch/tools-domain.ts"
+      ],
+      "src/main/orch/task-dispatch-lifecycle.ts": [
+        "src/main/orch/mission-scheduler-production.ts",
+        "src/main/orch/orchestration-coordinator.ts",
+        "src/main/orch/tools-handoff.ts"
+      ],
+      "src/main/real-mission-e2e.ts": [
+        "src/main/main.ts"
+      ],
+      "server/src/middleware/errors.ts": [
+        "server/src/auth/auth-routes.ts",
+        "server/src/billing/billing-routes.ts",
+        "server/src/index.ts"
+      ],
+      "src/main/context/cli-context-draft-reviewer.ts": [
+        "src/main/context/context-bootstrap-autopilot.ts",
+        "src/main/orch/mcp-server.ts",
+        "src/main/orch/tools-context.ts"
+      ],
+      "src/main/context/review-council.ts": [
+        "src/main/context/automated-review-session.ts",
+        "src/main/context/cli-automated-reviewer.ts",
+        "src/main/context/context-workflow-service.test.ts",
+        "src/main/context/context-workflow-service.ts",
+        "src/main/context/context-workflow-store.ts",
+        "src/main/orch/guided-result-consumption.test.ts",
+        "src/main/orch/handoff-store.ts",
+        "src/main/orch/task-dispatch-quality-receipt-authority.ts",
+        "src/main/orch/task-dispatch-store.test.ts"
+      ],
+      "src/main/integrations/integrations-ipc.ts": [
+        "src/main/main.ts"
+      ],
+      "src/main/jarvis/realtime/provider.ts": [
+        "src/main/jarvis/realtime/factory.ts",
+        "src/main/voice/live-transport-controller.ts"
+      ],
+      "src/main/orch/cron-runtime.ts": [
+        "src/main/main.ts",
+        "src/main/orch/tools-domain.ts"
+      ],
+      "src/main/orch/orchestration-coordinator.ts": [
+        "src/main/main.ts",
+        "src/main/orch/orch-ipc.ts"
+      ],
+      "src/main/real-mission-e2e-observer.ts": [
+        "src/main/real-mission-e2e.ts"
+      ],
+      "src/main/remote/remote-bridge.ts": [
+        "src/main/main.ts",
+        "src/main/orch/orch-ipc.ts"
+      ],
+      "src/renderer/components/CommandPalette.tsx": [
+        "src/renderer/App.tsx"
+      ],
+      "src/renderer/state/mission-wizard-store.ts": [
+        "src/renderer/App.tsx",
+        "src/renderer/components/CommandPalette.tsx",
+        "src/renderer/components/HomeDeck.tsx",
+        "src/renderer/components/LaunchScreen.tsx",
+        "src/renderer/components/MissionRail.tsx",
+        "src/renderer/components/MissionWizard.tsx",
+        "src/renderer/components/OpsBoard.tsx",
+        "src/renderer/components/OrchestrationPanel.tsx",
+        "src/renderer/components/WorkspaceBar.tsx",
+        "src/renderer/components/operational-surfaces.test.tsx"
+      ],
+      "src/renderer/state/session-state-store.ts": [
+        "src/renderer/components/CanvasView.tsx",
+        "src/renderer/components/CommandPalette.tsx",
+        "src/renderer/components/MissionRail.tsx",
+        "src/renderer/components/OpsBoard.tsx",
+        "src/renderer/components/OrchestrationPanel.tsx",
+        "src/renderer/components/PaneToolbar.tsx",
+        "src/renderer/components/operational-surfaces.test.tsx",
+        "src/renderer/orch/orch-bridge.ts"
+      ],
+      "src/main/acp/acp-harness-driver.ts": [
+        "src/main/main.ts",
+        "src/main/orch/acp-mission-spawn.ts",
+        "src/main/orch/mission-kickoff.ts",
+        "src/main/orch/mission-orchestrator-bootstrap.ts",
+        "src/main/orch/pane-registry.ts",
+        "src/main/orch/task-dispatch-lifecycle.ts"
+      ],
+      "src/main/adapters/model-catalog.ts": [
+        "src/main/adapters/adapter-registry.ts",
+        "src/main/eval/eval-pipeline.ts",
+        "src/main/orch/task-router.ts",
+        "src/main/orch/tools-panes.ts",
+        "src/main/persistence/provider-config-store.ts"
+      ],
+      "src/main/agent-runtime/agent-runtime-bridge.ts": [
+        "src/main/main.ts",
+        "src/main/window.ts"
+      ],
+      "src/main/orch/mission-scheduler-reconciliation.ts": [
+        "src/main/orch/mission-scheduler-production.ts"
+      ],
+      "src/main/orch/mission-task-plan-authority.ts": [
+        "src/main/orch/guided-mission-plan-authority.ts",
+        "src/main/orch/guided-mission-planner.ts",
+        "src/main/orch/tools-domain.ts"
+      ],
+      "src/main/orch/task-dispatch-persistence.ts": [
+        "src/main/orch/mission-scheduler-dispatch-transaction.ts",
+        "src/main/orch/task-dispatch-lifecycle.ts",
+        "src/main/orch/task-dispatch-quality-receipt-authority.ts",
+        "src/main/orch/task-dispatch-store.test.ts",
+        "src/main/orch/task-dispatch-store.ts",
+        "src/main/pty/pty-ipc.ts",
+        "src/main/real-mission-e2e-observer.ts"
+      ],
+      "src/main/runtime/merge-queue.ts": [
+        "src/main/context/merge-validation-coordinator.ts",
+        "src/main/orch/mission-scheduler-production.test.ts",
+        "src/main/runtime/worktree-runtime-registry.ts"
+      ],
+      "src/main/runtime/nexus-doctor.ts": [
+        "src/main/orch/tools-context.ts"
+      ],
+      "src/main/usage/usage-service.ts": [
+        "src/main/main.ts"
+      ],
+      "src/main/context/orientation/orientation-types.ts": [
+        "src/main/context/orientation/orientation-bootstrap-context.ts",
+        "src/main/context/orientation/orientation-service.ts"
+      ],
+      "src/main/orch/agent-status.ts": [
+        "src/main/context/cli-automated-reviewer.ts",
+        "src/main/orch/idle-delivery.ts",
+        "src/main/orch/login-stuck-watchdog.ts",
+        "src/main/orch/mcp-server.ts",
+        "src/main/orch/mission-kickoff.ts",
+        "src/main/orch/task-dispatch-lifecycle.ts",
+        "src/main/orch/tool-util.ts"
+      ],
+      "src/main/orch/guided-mission-prevc.ts": [
+        "src/main/orch/guided-greenfield-cycle.integration.test.ts",
+        "src/main/orch/mission-orchestrator-bootstrap.ts",
+        "src/main/orch/prevc-merge-preparation.ts"
+      ],
+      "src/main/orch/mission-scheduler-plan.ts": [
+        "src/main/orch/guided-mission-plan-authority.ts",
+        "src/main/orch/guided-mission-planner.ts",
+        "src/main/orch/mission-scheduler-dispatch-transaction.ts",
+        "src/main/orch/mission-scheduler-reconciliation.ts",
+        "src/main/orch/mission-task-plan-authority.ts",
+        "src/main/orch/tools-domain.ts"
+      ],
+      "src/main/orch/pty-stream-handoff.ts": [
+        "src/main/orch/mcp-server.ts"
+      ],
+      "src/main/orch/task-router.ts": [
+        "src/main/context/cli-automated-reviewer.ts",
+        "src/main/context/cli-context-draft-reviewer.ts",
+        "src/main/orch/mission-scheduler-plan.ts",
+        "src/main/orch/mission-store.ts",
+        "src/main/orch/tool-util.ts",
+        "src/main/orch/tools-domain.ts"
+      ],
+      "src/main/window.ts": [
+        "src/main/main.ts"
+      ],
+      "src/renderer/components/CanvasView.tsx": [
+        "src/renderer/App.tsx"
+      ],
+      "src/renderer/lib/platform.ts": [
+        "src/renderer/components/CommandPalette.tsx",
+        "src/renderer/components/HomeDeck.tsx",
+        "src/renderer/components/LaunchScreen.tsx",
+        "src/renderer/components/MissionRail.tsx",
+        "src/renderer/components/OpsBoard.tsx",
+        "src/renderer/components/PaneToolbar.tsx",
+        "src/renderer/components/WorkspaceBar.tsx"
+      ],
+      "src/renderer/state/confirm-store.ts": [
+        "src/renderer/App.tsx",
+        "src/renderer/components/MissionRail.tsx",
+        "src/renderer/components/OpsBoard.tsx",
+        "src/renderer/components/OrchestrationPanel.tsx",
+        "src/renderer/components/PaneToolbar.tsx",
+        "src/renderer/components/settings/PetSection.tsx"
+      ],
+      "server/src/auth/auth-routes.ts": [
+        "server/src/index.ts"
+      ],
+      "src/main/context/orientation/orientation-bootstrap-context.ts": [
+        "src/main/context/context-bootstrap-autopilot.ts",
+        "src/main/context/design-contract-bootstrap.ts",
+        "src/main/orch/guided-greenfield-cycle.integration.test.ts"
+      ],
+      "src/main/context/prevc-engine.ts": [
+        "src/main/context/context-workflow-service.test.ts",
+        "src/main/context/context-workflow-service.ts",
+        "src/main/context/context-workflow-store.ts",
+        "src/main/orch/guided-result-consumption.test.ts",
+        "src/main/orch/handoff-store.ts",
+        "src/main/orch/task-dispatch-quality-receipt-authority.ts",
+        "src/main/orch/task-dispatch-store.test.ts"
+      ],
+      "src/main/jarvis/realtime/factory.ts": [
+        "src/main/voice/live-transport-controller.ts"
+      ],
+      "src/main/orch/mcp-effect-policy.ts": [
+        "src/main/orch/guided-prevc-mcp-fence.ts",
+        "src/main/orch/mcp-dispatch.ts",
+        "src/main/orch/mcp-protocol.ts",
+        "src/main/orch/mcp-server.ts"
+      ],
+      "src/main/orch/tools-design-system-local.ts": [
+        "src/main/orch/tools-design-system.ts"
+      ],
+      "src/main/pet/pet-window.ts": [
+        "src/main/main.ts"
+      ],
+      "src/renderer/components/ActionCard.tsx": [
+        "src/renderer/components/CommandPalette.tsx",
+        "src/renderer/components/MissionRail.tsx",
+        "src/renderer/components/OrchestrationPanel.tsx",
+        "src/renderer/components/WorkspaceBar.tsx",
+        "src/renderer/components/settings/PetSection.tsx"
+      ],
+      "src/renderer/components/HomeDeck.tsx": [
+        "src/renderer/App.tsx",
+        "src/renderer/components/operational-surfaces.test.tsx"
+      ],
+      "src/renderer/orch/orch-bridge.ts": [
+        "src/renderer/App.tsx"
+      ],
+      "src/renderer/state/home-store.ts": [
+        "src/renderer/App.tsx",
+        "src/renderer/components/CommandPalette.tsx",
+        "src/renderer/components/HomeDeck.tsx",
+        "src/renderer/components/MissionRail.tsx",
+        "src/renderer/components/operational-surfaces.test.tsx",
+        "src/renderer/orch/mission-launcher.ts",
+        "src/renderer/orch/mission-reopen.ts",
+        "src/renderer/orch/orch-bridge.ts",
+        "src/renderer/state/layout-store.ts"
+      ],
+      "src/main/context/merge-validation-coordinator.ts": [
+        "src/main/orch/mission-scheduler-production.ts",
+        "src/main/orch/prevc-autopilot-coordinator.ts",
+        "src/main/orch/tools-context.ts"
+      ],
+      "src/main/context/sensor-broker.ts": [
+        "src/main/context/context-doctor.ts",
+        "src/main/context/context-workflow-service.ts",
+        "src/main/context/context-workflow-store.ts",
+        "src/main/context/merge-validation-coordinator.ts",
+        "src/main/orch/handoff-store.ts",
+        "src/main/orch/task-dispatch-quality-receipt-authority.ts"
+      ],
+      "src/main/gamification/gamification-service.ts": [
+        "src/main/main.ts",
+        "src/main/usage/usage-service.ts"
+      ],
+      "src/main/orch/guided-mission-authority.ts": [
+        "src/main/orch/guided-mission-plan-authority.ts",
+        "src/main/orch/guided-mission-prevc.ts",
+        "src/main/orch/guided-prevc-mcp-fence.ts",
+        "src/main/orch/mcp-dispatch.ts",
+        "src/main/orch/mission-kickoff.ts",
+        "src/main/orch/mission-orchestrator-bootstrap.ts",
+        "src/main/orch/prevc-autopilot-coordinator.ts",
+        "src/main/orch/task-dispatch-mission-completion-authority.ts",
+        "src/main/orch/tools-context.ts"
+      ],
+      "src/main/orch/http-mcp-boundary.ts": [
+        "src/main/orch/guided-prevc-mcp-authority.test.ts",
+        "src/main/orch/handoff-store.ts",
+        "src/main/orch/http-mcp-boundary.integration.test.ts",
+        "src/main/orch/mcp-dispatch.ts",
+        "src/main/orch/mcp-protocol.ts",
+        "src/main/orch/mcp-server.ts",
+        "src/main/orch/pty-stream-handoff.ts",
+        "src/main/orch/task-dispatch-mission-completion-authority.ts",
+        "src/main/orch/task-dispatch-store.test.ts"
+      ],
+      "src/main/orch/spawn-authority.ts": [
+        "src/main/orch/main-owned-agent-spawn.ts",
+        "src/main/orch/main-owned-pane-runtime.ts",
+        "src/main/orch/mcp-server.ts",
+        "src/main/orch/orch-ipc.ts",
+        "src/main/pty/autonomous-cli-policy.ts",
+        "src/main/pty/pty-manager.test.ts",
+        "src/main/pty/pty-manager.ts"
+      ],
+      "src/main/orch/tools-design-system.ts": [
+        "src/main/orch/orch-ipc.ts",
+        "src/main/orch/tools.ts"
+      ],
+      "src/main/orch/tools-files.ts": [
+        "src/main/orch/tools.ts"
+      ],
+      "src/main/orch/tools-handoff.ts": [
+        "src/main/orch/tools-domain.ts"
+      ],
+      "src/main/pty/autonomous-cli-policy.ts": [
+        "src/main/adapters/adapter-registry.ts",
+        "src/main/orch/main-owned-pane-runtime.ts",
+        "src/main/orch/mcp-server.ts",
+        "src/main/orch/mission-scheduler-dispatch-transaction.ts",
+        "src/main/pty/pty-ipc.ts",
+        "src/main/pty/pty-manager.ts"
+      ],
+      "src/main/quota/quota-service.ts": [
+        "src/main/main.ts",
+        "src/main/orch/failover.ts",
+        "src/main/orch/mission-scheduler-dispatch-transaction.ts",
+        "src/main/orch/tools-instruments.ts"
+      ],
+      "src/main/runtime/project-runtime-schema.ts": [
+        "src/main/runtime/project-runtime-manager.ts"
+      ],
+      "src/renderer/components/LaunchScreen.tsx": [
+        "src/renderer/App.tsx",
+        "src/renderer/components/operational-surfaces.test.tsx"
+      ],
+      "src/main/context/context-workflow-store.ts": [
+        "src/main/context/cli-automated-reviewer.ts",
+        "src/main/context/context-workflow-service.ts",
+        "src/main/orch/guided-result-consumption.test.ts",
+        "src/main/orch/task-dispatch-store.test.ts"
+      ],
+      "src/main/jarvis/mcp-ipc.ts": [
+        "src/main/main.ts"
+      ],
+      "src/main/memory/workspace-memory.ts": [
+        "src/main/product-wave-ipc.ts",
+        "src/main/search/search-mixer-bootstrap.ts"
+      ],
+      "src/main/orch/design-system-authority.ts": [
+        "src/main/context/design-contract-bootstrap.ts",
+        "src/main/orch/orch-ipc.ts",
+        "src/main/orch/tools-design-system-local.ts",
+        "src/main/orch/tools-design-system.ts"
+      ],
+      "src/main/orch/guided-task-kind.ts": [
+        "src/main/orch/guided-mission-plan-authority.ts",
+        "src/main/orch/guided-mission-planner.ts",
+        "src/main/orch/guided-mission-prevc.ts",
+        "src/main/orch/mission-scheduler-plan.ts",
+        "src/main/orch/task-dispatch-store.ts"
+      ],
+      "src/main/orch/mission-event-emit.ts": [
+        "src/main/main.ts",
+        "src/main/orch/mission-driver-io.ts",
+        "src/main/orch/pty-stream-handoff.ts",
+        "src/main/orch/tools-handoff.ts"
+      ],
+      "src/main/orch/mission-scheduler.ts": [
+        "src/main/orch/guided-mission-plan-authority.ts",
+        "src/main/orch/mission-scheduler-meta.ts",
+        "src/main/orch/mission-task-plan-authority.ts",
+        "src/main/orch/task-dispatch-codec.ts",
+        "src/main/orch/tools-domain.ts"
+      ],
+      "src/main/orch/prevc-merge-preparation.ts": [
+        "src/main/orch/mission-orchestrator-bootstrap.ts",
+        "src/main/orch/mission-scheduler-production.ts",
+        "src/main/orch/tools-context.ts"
+      ],
+      "src/main/orch/task-dispatch-mission-completion-authority.ts": [
+        "src/main/orch/task-dispatch-store.ts"
+      ],
+      "src/main/orch/tools-instruments.ts": [
+        "src/main/orch/tools.ts"
+      ],
+      "src/main/persistence/secrets-store.ts": [
+        "src/main/persistence/account-store.ts",
+        "src/main/persistence/provider-config-store.ts"
+      ],
+      "src/main/quota/quota-normalize.ts": [
+        "src/main/quota/claude-oauth-usage.ts",
+        "src/main/quota/quota-service.ts"
+      ],
+      "src/main/runtime/merge-queue-contract.ts": [
+        "src/main/orch/mission-scheduler-production.test.ts",
+        "src/main/orch/mission-scheduler-production.ts",
+        "src/main/runtime/merge-queue.ts"
+      ],
+      "src/main/search/search-mixer-bootstrap.ts": [
+        "src/main/main.ts",
+        "src/main/product-wave-ipc.ts"
+      ],
+      "src/main/voice/jarvis-brain.ts": [
+        "src/main/orch/squad-architect.ts",
+        "src/main/voice/voice-ipc.ts"
+      ],
+      "server/src/env.ts": [
+        "server/src/auth/auth-routes.ts",
+        "server/src/billing/billing-routes.ts",
+        "server/src/index.ts"
+      ],
+      "src/main/context/automated-review-session.ts": [
+        "src/main/context/cli-automated-reviewer.ts",
+        "src/main/orch/guided-prevc-mcp-authority.test.ts",
+        "src/main/orch/mcp-server.ts",
+        "src/main/orch/tools-context.ts"
+      ],
+      "src/main/context/design-contract-bootstrap.ts": [
+        "src/main/context/context-bootstrap-autopilot.ts"
+      ],
+      "src/main/design/design-kit-source.ts": [
+        "src/main/orch/tools-design-system-local.ts",
+        "src/main/orch/tools-design-system.ts"
+      ],
+      "src/main/jarvis/permissions.ts": [
+        "src/main/jarvis/mcp-ipc.ts",
+        "src/main/orch/mcp-dispatch.ts",
+        "src/main/orch/mcp-server.ts"
+      ],
+      "src/main/orch/guided-prevc-mcp-fence.ts": [
+        "src/main/orch/guided-prevc-mcp-authority.test.ts",
+        "src/main/orch/http-mcp-boundary.integration.test.ts",
+        "src/main/orch/mcp-dispatch.ts"
+      ],
+      "src/main/orch/mission-orchestrator-exit-lifecycle.ts": [
+        "src/main/main.ts",
+        "src/main/orch/mission-orchestrator-bootstrap.ts",
+        "src/main/orch/orchestration-coordinator.ts"
+      ],
+      "src/main/orch/pane-authz.ts": [
+        "src/main/orch/main-owned-pane-runtime.ts",
+        "src/main/orch/pane-registry.ts",
+        "src/main/orch/tool-util.ts",
+        "src/main/orch/tools-browser.ts",
+        "src/main/remote/remote-bridge.ts"
+      ],
+      "src/main/orch/squad-architect.ts": [
+        "src/main/orch/orch-ipc.ts"
+      ],
+      "src/main/orch/task-dispatch-quality-receipt-authority.ts": [
+        "src/main/orch/task-dispatch-mission-completion-authority.ts",
+        "src/main/orch/task-dispatch-store.test.ts",
+        "src/main/orch/task-dispatch-store.ts"
+      ],
+      "src/main/orch/tools-browser.ts": [
+        "src/main/orch/tools-domain.ts"
+      ],
+      "src/main/pty/darwin-pty-supervisor.ts": [
+        "src/main/pty/pty-manager.ts"
+      ],
+      "src/main/quota/claude-oauth-usage.ts": [
+        "src/main/quota/quota-service.ts"
+      ],
+      "src/main/remote/ssh/ssh-session-manager.ts": [
+        "src/main/integrations/integrations-ipc.ts"
+      ],
+      "src/renderer/components/AgentNotifications.tsx": [
+        "src/renderer/components/WorkspaceBar.tsx"
+      ],
+      "src/renderer/orch/mission-reopen.ts": [
+        "src/renderer/components/MissionRail.tsx",
+        "src/renderer/components/MissionWizard.tsx",
+        "src/renderer/components/OrchestrationPanel.tsx"
+      ],
+      "server/src/auth/session-service.ts": [
+        "server/src/auth/auth-routes.ts"
+      ],
+      "server/src/billing/billing-routes.ts": [
+        "server/src/index.ts"
+      ],
+      "src/main/context/context-draft-store.ts": [
+        "src/main/context/cli-context-draft-reviewer.ts",
+        "src/main/context/context-bootstrap-autopilot.ts",
+        "src/main/context/context-knowledge-service.ts"
+      ],
+      "src/main/context/context-ingestor.ts": [
+        "src/main/context/context-doctor.ts",
+        "src/main/context/context-knowledge-service.ts",
+        "src/main/context/context-workflow-service.ts",
+        "src/main/orch/prevc-merge-preparation.ts"
+      ],
+      "src/main/context/context-knowledge-service.ts": [
+        "src/main/context/context-workflow-registry.ts"
+      ],
+      "src/main/media/media-ipc.ts": [
+        "src/main/main.ts"
+      ],
+      "src/main/orch/acp-mission-spawn.ts": [
+        "src/main/orch/main-owned-pane-runtime.ts"
+      ],
+      "src/main/orch/cli-mcp-session-config.ts": [
+        "src/main/orch/mcp-server.ts",
+        "src/main/pty/pty-manager.test.ts",
+        "src/main/pty/pty-manager.ts"
+      ],
+      "src/main/orch/cron-loop.ts": [
+        "src/main/orch/cron-runtime.ts"
+      ],
+      "src/main/orch/guided-mission-plan-authority.ts": [
+        "src/main/orch/guided-mission-planner.ts"
+      ],
+      "src/main/orch/login-stuck-watchdog.ts": [
+        "src/main/orch/orch-ipc.ts",
+        "src/main/orch/orchestration-coordinator.ts"
+      ],
+      "src/main/orch/main-owned-agent-spawn.ts": [
+        "src/main/pty/pty-ipc.ts"
+      ]
+    }
+  },
+  "docs": {
+    "rootDocs": [
+      "AGENTS.md",
+      "DESIGN.md",
+      "README.md",
+      "PRODUCT.md"
+    ],
+    "contextDocsPresent": [
+      ".context/docs/project-overview.md",
+      ".context/docs/business-model.md",
+      ".context/docs/domain-glossary.md",
+      ".context/docs/architecture.md",
+      ".context/docs/testing.md"
+    ],
+    "contextDocsMissing": [],
+    "hasContextScaffold": true
+  },
+  "contextSummary": {
+    "ready": true,
+    "contextRevision": "79938f64187e2337bfc7652309aad8916ae729e1306cc40705916b94b7ab90e4",
+    "blockerCodes": [],
+    "warningCodes": [
+      "missing-quality-sensors",
+      "invalid-context-attestation"
+    ]
+  },
+  "orientationMarkdown": "# Project orientation\n\n- Project: nexus-ide\n- HEAD: 71e6147145db\n- Status: partial\n- Languages: ts (1738), tsx (166), js (155), sql (7), c (1), py (1)\n- Package managers: npm\n- Scripts: build:darwin-pty-supervisor, lint, prestart, prestart:forge, pretest, rebuild, rebuild:electron, rebuild:node, start, start:forge, test, typecheck\n- Entrypoints: src/main/main.ts\n- Files scanned: 4814 (2068 source)\n\n## Top directories\n- .dev-user-data-qa (2429 files)\n- src (1884 files)\n- assets (144 files)\n- docs (127 files)\n- server (90 files)\n- scripts (75 files)\n- resources (21 files)\n- . (15 files)\n- .firecrawl (11 files)\n- mobile (6 files)\n\n## Symbol hubs\n- result (score 1345) — assets/skills/archify/bin/archify.mjs\n- root (score 635) — assets/skills/archify/scripts/generate-validators.mjs\n- scope (score 557) — assets/skills/impeccable/scripts/live-browser.js\n- parsed (score 385) — assets/skills/archify/test/cli.test.mjs\n- current (score 376) — assets/skills/archify/scripts/check-render-output.mjs\n- project-runtime-manager (score 339) — src/main/runtime/project-runtime-manager.ts\n- scope-fixture (score 333) — src/main/orch/__tests__/scope-fixture.ts\n- mission (score 298) — scripts/e2e-real-mission-evidence.mjs\n- gate (score 291) — src/main/orch/gate.ts\n- now (score 267) — assets/skills/impeccable/scripts/live-browser.js\n- db (score 256) — server/src/auth/account-service.test.ts\n- project-domain-store-registry (score 219) — src/main/orch/project-domain-store-registry.ts\n- value (score 212) — assets/skills/archify/renderers/shared/generated-validators.mjs\n- raw (score 208) — assets/skills/archify/renderers/architecture/grid.mjs\n- key (score 206) — assets/skills/archify/renderers/architecture/grid.mjs\n- state (score 202) — assets/skills/impeccable/scripts/live-browser.js\n\n## Import sketch\n- src/main/browser/browser-artifact-store.test.ts → src/main/runtime/project-runtime-manager.ts (imports)\n- src/main/browser/browser-artifact-store.ts → src/main/runtime/project-runtime-manager.ts (imports)\n- src/main/browser/browser-manager.ts → src/main/runtime/project-runtime-manager.ts (imports)\n- src/main/context/context-draft-ipc.test.ts → src/main/runtime/project-runtime-manager.ts (imports)\n- src/main/context/context-draft-store.test.ts → src/main/runtime/project-runtime-manager.ts (imports)\n- src/main/context/context-draft-store.ts → src/main/runtime/project-runtime-manager.ts (imports)\n- src/main/context/context-knowledge-service.test.ts → src/main/runtime/project-runtime-manager.ts (imports)\n- src/main/context/context-knowledge-service.ts → src/main/runtime/project-runtime-manager.ts (imports)\n- src/main/context/context-workflow-registry.ts → src/main/runtime/project-runtime-manager.ts (imports)\n- src/main/context/context-workflow-service.test.ts → src/main/runtime/project-runtime-manager.ts (imports)\n- src/main/context/context-workflow-service.ts → src/main/runtime/project-runtime-manager.ts (imports)\n- src/main/context/context-workflow-store.test.ts → src/main/runtime/project-runtime-manager.ts (imports)\n\n## Docs & context readiness\n- Present: AGENTS.md, DESIGN.md, README.md, PRODUCT.md, .context/docs/project-overview.md, .context/docs/business-model.md, .context/docs/domain-glossary.md, .context/docs/architecture.md, .context/docs/testing.md\n- Missing context: none\n- Ready: true\n- Blockers: none\n\n## Agent guidance\n- Prefer small diffs; reuse modules under the hubs above.\n- Structural map is orientation only — not mission authority.\n- Do not invent business rules; use nexus_context_doctor / drafts for authority.\n- Call nexus_code_map_get if you need the map again; nexus_code_map_refresh after large refactors.\n\n## Build notes\n- inventory truncated by file/byte/depth limits",
+  "mapHash": "e6a0d8e5ded89264fc438ea243cfcc135b430622d77fd6604f8750967afc84fe"
+}
