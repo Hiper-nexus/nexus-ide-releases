@@ -115,6 +115,9 @@
     "undici": "7.29.0",
     "@esbuild-kit/core-utils": {
       "esbuild": "^0.25.12"
+    },
+    "node-gyp": {
+      "undici": "6.28.0"
     }
   },
   "allowScripts": {
