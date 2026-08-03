@@ -106,7 +106,9 @@ out/
 .dev-electron/
 
 # Dev-only SQLite/settings/session state; keeps the installed app untouched.
-.dev-user-data/
+# Cobre também os perfis de QA (.dev-user-data-qa, -qa2...) — lixo de cache que
+# nunca deve entrar no histórico.
+.dev-user-data*/
 
 # Generated codebase graph and extraction cache (kept locally for audits).
 graphify-out/
