@@ -65,6 +65,7 @@ import {
   type MissionIntentSource,
   type MissionLane,
 } from "../../shared/mission-intent";
+import { isUiMissionText } from "../../shared/mission-work-kind";
 import { NEXUS_PLAN_SQUAD_ID } from "../../shared/builtin-squad-ids";
 import {
   REAL_MISSION_E2E_GOAL,
@@ -1783,6 +1784,9 @@ export function MissionWizard() {
           : null,
         lane: contract.lane ?? "standard",
         operatorChoice: squadCliPolicy === "operator-choice",
+        uiMissionObjective: isUiMissionText(
+          [contract.goal, ...contract.acceptanceCriteria].join("\n"),
+        ),
       }),
       buildMissionAttachmentsContext(attachments),
     ]

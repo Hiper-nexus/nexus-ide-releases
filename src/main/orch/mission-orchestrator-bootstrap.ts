@@ -10,6 +10,7 @@ import {
 import { buildIntentDispatchKickoffPrompt } from "../../shared/mission-dispatch-kickoff";
 import type { StandardMissionTopology } from "../../shared/mission-topology";
 import { isOperatorChoicePolicy } from "../../shared/squad-cli-policy";
+import { isUiMissionText } from "../../shared/mission-work-kind";
 import { getOrchSettings } from "../persistence/settings-store";
 import {
   hasCurrentApprovedDispatchContract,
@@ -1519,6 +1520,12 @@ export class MissionOrchestratorBootstrapService {
         // Maestro substitutes Codex for the operator's chosen executor.
         operatorChoice: isOperatorChoicePolicy(
           getOrchSettings().squadCliPolicy,
+        ),
+        uiMissionObjective: isUiMissionText(
+          [
+            current.intentContract!.goal,
+            ...current.intentContract!.acceptanceCriteria,
+          ].join("\n"),
         ),
       });
       this.#emitProgress(scope, missionId, "kickoff_submitted");
