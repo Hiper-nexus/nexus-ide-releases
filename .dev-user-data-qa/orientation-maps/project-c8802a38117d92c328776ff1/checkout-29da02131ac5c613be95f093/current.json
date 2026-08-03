@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "projectId": "31781d36-3f22-41b8-ad9d-8690c85d3343",
   "checkoutId": "checkout-2c325c1aae830f6d74b14a2cc7051e31",
-  "headSha": "71e6147145db6408a18dc539b3e616d5846e3368",
-  "treeFingerprint": "1fa5871b4e13d05f9ae507a6f5c5b7a3d219d834ea2de84701966f7273e59518",
-  "builtAt": "2026-08-03T02:40:58.046Z",
-  "buildDurationMs": 2536,
+  "headSha": "7a2a1f9d0e13457c282119025408244fa05b5d00",
+  "treeFingerprint": "a63ad00657c99f3825ff4f50a53d0dfc9a9375b000fdc17e4311cccfff9c3fe9",
+  "builtAt": "2026-08-03T02:41:58.024Z",
+  "buildDurationMs": 2419,
   "status": "partial",
   "error": "inventory truncated by file/byte/depth limits",
   "limits": {
@@ -54,12 +54,12 @@
       {
         "path": ".dev-user-data-qa",
         "files": 2429,
-        "bytes": 78659620
+        "bytes": 78795091
       },
       {
         "path": "src",
-        "files": 1884,
-        "bytes": 23117995
+        "files": 1878,
+        "bytes": 22978023
       },
       {
         "path": "assets",
@@ -139,9 +139,9 @@
     "packageManagers": [
       "npm"
     ],
-    "fileCount": 4814,
+    "fileCount": 4808,
     "sourceFileCount": 2068,
-    "bytesScanned": 134217100,
+    "bytesScanned": 134212599,
     "projectName": "nexus-ide"
   },
   "symbols": {
@@ -3318,6 +3318,6 @@
       "invalid-context-attestation"
     ]
   },
-  "orientationMarkdown": "# Project orientation\n\n- Project: nexus-ide\n- HEAD: 71e6147145db\n- Status: partial\n- Languages: ts (1738), tsx (166), js (155), sql (7), c (1), py (1)\n- Package managers: npm\n- Scripts: build:darwin-pty-supervisor, lint, prestart, prestart:forge, pretest, rebuild, rebuild:electron, rebuild:node, start, start:forge, test, typecheck\n- Entrypoints: src/main/main.ts\n- Files scanned: 4814 (2068 source)\n\n## Top directories\n- .dev-user-data-qa (2429 files)\n- src (1884 files)\n- assets (144 files)\n- docs (127 files)\n- server (90 files)\n- scripts (75 files)\n- resources (21 files)\n- . (15 files)\n- .firecrawl (11 files)\n- mobile (6 files)\n\n## Symbol hubs\n- result (score 1345) — assets/skills/archify/bin/archify.mjs\n- root (score 635) — assets/skills/archify/scripts/generate-validators.mjs\n- scope (score 557) — assets/skills/impeccable/scripts/live-browser.js\n- parsed (score 385) — assets/skills/archify/test/cli.test.mjs\n- current (score 376) — assets/skills/archify/scripts/check-render-output.mjs\n- project-runtime-manager (score 339) — src/main/runtime/project-runtime-manager.ts\n- scope-fixture (score 333) — src/main/orch/__tests__/scope-fixture.ts\n- mission (score 298) — scripts/e2e-real-mission-evidence.mjs\n- gate (score 291) — src/main/orch/gate.ts\n- now (score 267) — assets/skills/impeccable/scripts/live-browser.js\n- db (score 256) — server/src/auth/account-service.test.ts\n- project-domain-store-registry (score 219) — src/main/orch/project-domain-store-registry.ts\n- value (score 212) — assets/skills/archify/renderers/shared/generated-validators.mjs\n- raw (score 208) — assets/skills/archify/renderers/architecture/grid.mjs\n- key (score 206) — assets/skills/archify/renderers/architecture/grid.mjs\n- state (score 202) — assets/skills/impeccable/scripts/live-browser.js\n\n## Import sketch\n- src/main/browser/browser-artifact-store.test.ts → src/main/runtime/project-runtime-manager.ts (imports)\n- src/main/browser/browser-artifact-store.ts → src/main/runtime/project-runtime-manager.ts (imports)\n- src/main/browser/browser-manager.ts → src/main/runtime/project-runtime-manager.ts (imports)\n- src/main/context/context-draft-ipc.test.ts → src/main/runtime/project-runtime-manager.ts (imports)\n- src/main/context/context-draft-store.test.ts → src/main/runtime/project-runtime-manager.ts (imports)\n- src/main/context/context-draft-store.ts → src/main/runtime/project-runtime-manager.ts (imports)\n- src/main/context/context-knowledge-service.test.ts → src/main/runtime/project-runtime-manager.ts (imports)\n- src/main/context/context-knowledge-service.ts → src/main/runtime/project-runtime-manager.ts (imports)\n- src/main/context/context-workflow-registry.ts → src/main/runtime/project-runtime-manager.ts (imports)\n- src/main/context/context-workflow-service.test.ts → src/main/runtime/project-runtime-manager.ts (imports)\n- src/main/context/context-workflow-service.ts → src/main/runtime/project-runtime-manager.ts (imports)\n- src/main/context/context-workflow-store.test.ts → src/main/runtime/project-runtime-manager.ts (imports)\n\n## Docs & context readiness\n- Present: AGENTS.md, DESIGN.md, README.md, PRODUCT.md, .context/docs/project-overview.md, .context/docs/business-model.md, .context/docs/domain-glossary.md, .context/docs/architecture.md, .context/docs/testing.md\n- Missing context: none\n- Ready: true\n- Blockers: none\n\n## Agent guidance\n- Prefer small diffs; reuse modules under the hubs above.\n- Structural map is orientation only — not mission authority.\n- Do not invent business rules; use nexus_context_doctor / drafts for authority.\n- Call nexus_code_map_get if you need the map again; nexus_code_map_refresh after large refactors.\n\n## Build notes\n- inventory truncated by file/byte/depth limits",
-  "mapHash": "e6a0d8e5ded89264fc438ea243cfcc135b430622d77fd6604f8750967afc84fe"
+  "orientationMarkdown": "# Project orientation\n\n- Project: nexus-ide\n- HEAD: 7a2a1f9d0e13\n- Status: partial\n- Languages: ts (1738), tsx (166), js (155), sql (7), c (1), py (1)\n- Package managers: npm\n- Scripts: build:darwin-pty-supervisor, lint, prestart, prestart:forge, pretest, rebuild, rebuild:electron, rebuild:node, start, start:forge, test, typecheck\n- Entrypoints: src/main/main.ts\n- Files scanned: 4808 (2068 source)\n\n## Top directories\n- .dev-user-data-qa (2429 files)\n- src (1878 files)\n- assets (144 files)\n- docs (127 files)\n- server (90 files)\n- scripts (75 files)\n- resources (21 files)\n- . (15 files)\n- .firecrawl (11 files)\n- mobile (6 files)\n\n## Symbol hubs\n- result (score 1345) — assets/skills/archify/bin/archify.mjs\n- root (score 635) — assets/skills/archify/scripts/generate-validators.mjs\n- scope (score 557) — assets/skills/impeccable/scripts/live-browser.js\n- parsed (score 385) — assets/skills/archify/test/cli.test.mjs\n- current (score 376) — assets/skills/archify/scripts/check-render-output.mjs\n- project-runtime-manager (score 339) — src/main/runtime/project-runtime-manager.ts\n- scope-fixture (score 333) — src/main/orch/__tests__/scope-fixture.ts\n- mission (score 298) — scripts/e2e-real-mission-evidence.mjs\n- gate (score 291) — src/main/orch/gate.ts\n- now (score 267) — assets/skills/impeccable/scripts/live-browser.js\n- db (score 256) — server/src/auth/account-service.test.ts\n- project-domain-store-registry (score 219) — src/main/orch/project-domain-store-registry.ts\n- value (score 212) — assets/skills/archify/renderers/shared/generated-validators.mjs\n- raw (score 208) — assets/skills/archify/renderers/architecture/grid.mjs\n- key (score 206) — assets/skills/archify/renderers/architecture/grid.mjs\n- state (score 202) — assets/skills/impeccable/scripts/live-browser.js\n\n## Import sketch\n- src/main/browser/browser-artifact-store.test.ts → src/main/runtime/project-runtime-manager.ts (imports)\n- src/main/browser/browser-artifact-store.ts → src/main/runtime/project-runtime-manager.ts (imports)\n- src/main/browser/browser-manager.ts → src/main/runtime/project-runtime-manager.ts (imports)\n- src/main/context/context-draft-ipc.test.ts → src/main/runtime/project-runtime-manager.ts (imports)\n- src/main/context/context-draft-store.test.ts → src/main/runtime/project-runtime-manager.ts (imports)\n- src/main/context/context-draft-store.ts → src/main/runtime/project-runtime-manager.ts (imports)\n- src/main/context/context-knowledge-service.test.ts → src/main/runtime/project-runtime-manager.ts (imports)\n- src/main/context/context-knowledge-service.ts → src/main/runtime/project-runtime-manager.ts (imports)\n- src/main/context/context-workflow-registry.ts → src/main/runtime/project-runtime-manager.ts (imports)\n- src/main/context/context-workflow-service.test.ts → src/main/runtime/project-runtime-manager.ts (imports)\n- src/main/context/context-workflow-service.ts → src/main/runtime/project-runtime-manager.ts (imports)\n- src/main/context/context-workflow-store.test.ts → src/main/runtime/project-runtime-manager.ts (imports)\n\n## Docs & context readiness\n- Present: AGENTS.md, DESIGN.md, README.md, PRODUCT.md, .context/docs/project-overview.md, .context/docs/business-model.md, .context/docs/domain-glossary.md, .context/docs/architecture.md, .context/docs/testing.md\n- Missing context: none\n- Ready: true\n- Blockers: none\n\n## Agent guidance\n- Prefer small diffs; reuse modules under the hubs above.\n- Structural map is orientation only — not mission authority.\n- Do not invent business rules; use nexus_context_doctor / drafts for authority.\n- Call nexus_code_map_get if you need the map again; nexus_code_map_refresh after large refactors.\n\n## Build notes\n- inventory truncated by file/byte/depth limits",
+  "mapHash": "32beeb751dc7da75ae0fa93eca02d9dbd5e4841fe9cf6484e97fbe80da283ce4"
 }
