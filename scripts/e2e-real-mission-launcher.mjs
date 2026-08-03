@@ -637,11 +637,11 @@ export function preflightStagedGrokAuthentication(
   }
 }
 
-const AGY_AUTH_PROBE_TIMEOUT_MS = 75_000;
+const AGY_AUTH_PROBE_TIMEOUT_MS = 90_000;
 const AGY_AUTH_PROBE_MAX_BUFFER_BYTES = 256 * 1024;
 /** Bounded retries for transient AGY eligibility/backend blips (503/UNAVAILABLE). */
-const AGY_AUTH_PROBE_MAX_ATTEMPTS = 3;
-const AGY_AUTH_PROBE_RETRY_DELAY_MS = 2_000;
+const AGY_AUTH_PROBE_MAX_ATTEMPTS = 5;
+const AGY_AUTH_PROBE_RETRY_DELAY_MS = 5_000;
 const AGY_MISSING_CREDENTIAL_PATTERN =
   /(?:you are not authenticated|not authenticated|not logged in|not signed in|authentication required|login required|please (?:log|sign) in|run\s+\/login|complete (?:the )?(?:google )?(?:oauth|authentication)|no (?:oauth )?credentials?)/iu;
 const AGY_TRANSIENT_PROBE_PATTERN =
@@ -779,21 +779,24 @@ export function preflightNativeAgyAuthentication(
       }
       throw agyProbeOperationalFailure(lastFailure);
     }
-    const output = `${result?.stdout ?? ""}\n${result?.stderr ?? ""}`;
+    const stdout =
+      typeof result?.stdout === "string" ? result.stdout.trim() : "";
+    const stderr =
+      typeof result?.stderr === "string" ? result.stderr.trim() : "";
+    const output = `${stdout}\n${stderr}`;
     if (AGY_MISSING_CREDENTIAL_PATTERN.test(output)) {
       return Object.freeze({ kind: "missing-credential" });
     }
-    if (
-      result?.status === 0 &&
-      typeof result.stdout === "string" &&
-      result.stdout.trim() === marker
-    ) {
+    if (result?.status === 0 && stdout === marker) {
       return Object.freeze({ kind: "authenticated" });
     }
     if (result?.status === 0) {
       throw agyProbeOperationalFailure("returned an unverified response");
     }
-    lastFailure = `exited with status ${String(result?.status ?? "unknown")}`;
+    const detail = stderr
+      ? `${stderr.replace(/\s+/gu, " ").slice(0, 240)}`
+      : "no stderr";
+    lastFailure = `exited with status ${String(result?.status ?? "unknown")} (${detail})`;
     if (attempt < attempts && agyProbeIsTransientFailure(result)) {
       sleepSyncMs(delayMs, sleep);
       continue;

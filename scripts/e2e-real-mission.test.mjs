@@ -1670,7 +1670,7 @@ describe("real mission advisor authentication staging", () => {
         cwd: path.resolve(operatorHome),
         encoding: "utf8",
         shell: false,
-        timeout: 75_000,
+        timeout: 90_000,
         maxBuffer: 256 * 1024,
         env: expect.objectContaining({
           HOME: path.resolve(operatorHome),
@@ -1725,13 +1725,19 @@ describe("real mission advisor authentication staging", () => {
       stdout: "",
       stderr: "",
     }));
+    const sleep = vi.fn();
     expect(() =>
       preflightNativeAgyAuthentication(operatorHome, {
         binary: "/trusted/agy",
         environment: {},
         run: timedOut,
+        sleep,
+        maxAttempts: 2,
+        retryDelayMs: 1,
       }),
     ).toThrow(/AGY authentication probe failed operationally/u);
+    expect(timedOut).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledWith(1);
   });
 
   it("does not downgrade an available AGY binary failure to an advisor skip", () => {
@@ -1810,7 +1816,9 @@ describe("real mission advisor authentication staging", () => {
         maxAttempts: 3,
         retryDelayMs: 5,
       }),
-    ).toThrow(/AGY authentication probe failed operationally: exited with status 1/u);
+    ).toThrow(
+      /AGY authentication probe failed operationally: exited with status 1 \(Error: Eligibility check failed: UNAVAILABLE \(code 503\): The service is currently unavailable\.\)/u,
+    );
     expect(run).toHaveBeenCalledTimes(3);
     expect(sleep).toHaveBeenCalledTimes(2);
   });
