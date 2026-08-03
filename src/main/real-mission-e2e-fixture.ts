@@ -145,6 +145,13 @@ export function resolvePrivateRealMissionE2ESquadBinding(
  * Resolve only the immutable runtime copy minted by main from the exact E2E
  * source roster. Model choice may vary, but executable identities, CLIs,
  * capability policies and playbook remain exactly bound to the fixture.
+ *
+ * The runtime lineage may pass through ONE operator copy of the fixture
+ * ("Salvar configuração" on the review screen mints a `squad-*` user copy and
+ * reselects it before launch). That copy is accepted only when its authority
+ * bytes — name, instructions and the full reviewed roster — hash exactly to
+ * the compiled fixture with the id normalized; any content drift still fails
+ * closed.
  */
 export function resolveProductWizardRealMissionE2ESquadBinding(
   squadId: string,
@@ -161,9 +168,26 @@ export function resolveProductWizardRealMissionE2ESquadBinding(
   }
   const sourceRevisionHash = snapshotSquadAuthority(source).hash;
   const candidateRevisionHash = snapshotSquadAuthority(candidate).hash;
+  const lineageIsFixture =
+    candidate.runtimeSourceSquadId === REAL_MISSION_E2E_SQUAD_ID &&
+    candidate.runtimeSourceSquadRevisionHash === sourceRevisionHash;
+  const lineageIsExactOperatorCopy = (): boolean => {
+    if (typeof candidate.runtimeSourceSquadId !== 'string') return false;
+    const intermediate = lookup(candidate.runtimeSourceSquadId);
+    if (!intermediate || isMissionRuntimeSquadId(intermediate.id)) {
+      return false;
+    }
+    return (
+      candidate.runtimeSourceSquadRevisionHash ===
+        snapshotSquadAuthority(intermediate).hash &&
+      snapshotSquadAuthority({
+        ...intermediate,
+        id: REAL_MISSION_E2E_SQUAD_ID,
+      }).hash === sourceRevisionHash
+    );
+  };
   if (
-    candidate.runtimeSourceSquadId !== REAL_MISSION_E2E_SQUAD_ID ||
-    candidate.runtimeSourceSquadRevisionHash !== sourceRevisionHash ||
+    (!lineageIsFixture && !lineageIsExactOperatorCopy()) ||
     candidate.name !== source.name ||
     candidate.nativeInstructions !== source.nativeInstructions ||
     (candidate.orchestratorInstructions !== source.orchestratorInstructions &&

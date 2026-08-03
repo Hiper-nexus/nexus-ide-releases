@@ -10,7 +10,10 @@ import {
   getRendererWorkspaceScope,
   onRendererWorkspaceScopeChange,
 } from '../persistence/renderer-workspace-scope';
-import { getProjectDomainStores } from './project-domain-store-registry';
+import {
+  getProjectDomainStores,
+  type ProjectDomainStoreSuite,
+} from './project-domain-store-registry';
 import {
   getPaneRuntimeAuthorityBySession,
   type PaneRuntimeAuthority,
@@ -991,10 +994,12 @@ export function shutdownIdleDelivery(): void {
 function targetAuthority(
   handoff: Handoff,
   scope: ProjectExecutionScope,
+  overrideStores?: ProjectDomainStoreSuite,
 ): DeliveryAuthority | null {
   if (!handoff.missionId) return null;
   const missionId = handoff.missionId;
-  const sessionId = getProjectDomainStores(scope).missions.get(
+  const stores = overrideStores ?? getProjectDomainStores(scope);
+  const sessionId = stores.missions.get(
     missionId,
   )?.orchestratorSessionId;
   if (!sessionId) return null;
@@ -1028,13 +1033,18 @@ function targetAuthority(
 export function onHandoffSubmitted(
   handoff: Handoff,
   scope: ProjectExecutionScope,
+  overrideStores?: ProjectDomainStoreSuite,
 ): PetStudioCompletionResult | null {
-  const petCompletion = completePetStudioHandoff(handoff, scope);
+  const petCompletion = completePetStudioHandoff(
+    handoff,
+    scope,
+    overrideStores ? { getStores: () => overrideStores } : {},
+  );
   // Pet Studio has no worker/orchestrator loop: its sole Codex session submits
   // its own validated result. Never queue that message back into the same PTY.
   if (petCompletion) return petCompletion;
   if (isDiagnosticDriverHandoff(handoff)) return null;
-  const authority = targetAuthority(handoff, scope);
+  const authority = targetAuthority(handoff, scope, overrideStores);
   if (!authority) return null; // No trusted orchestrator — stays listed as pending.
   if (
     isSessionInjectableIdle(authority.sessionId) &&
@@ -1055,12 +1065,13 @@ export function onHandoffSubmitted(
 export function redeliverPendingHandoffs(
   scope: ProjectExecutionScope,
   missionId: string,
+  overrideStores?: ProjectDomainStoreSuite,
 ): number {
-  const stores = getProjectDomainStores(scope);
+  const stores = overrideStores ?? getProjectDomainStores(scope);
   const pending = stores.handoffs.list({
     missionId,
     includeDelivered: false,
   });
-  for (const handoff of pending) onHandoffSubmitted(handoff, scope);
+  for (const handoff of pending) onHandoffSubmitted(handoff, scope, stores);
   return pending.length;
 }

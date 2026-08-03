@@ -590,7 +590,7 @@ export function inspectGuidedPrevcPostMergeAuthority(
       // submissão. Sem isso a ponte fica eternamente em "physical authority"
       // com o trabalho dos workers já concluído.
       try {
-        redeliverPendingHandoffs(scope, missionId);
+        redeliverPendingHandoffs(scope, missionId, suite);
       } catch (error) {
         console.warn(
           `[prevc-autopilot] reentrega de handoffs pendentes falhou para ${missionId}:`,
@@ -1379,7 +1379,7 @@ function recordAutopilotStall(
   try {
     dependencies
       .storesForScope(scope)
-      .missions.recordDriveStallReason(missionId, "autopilot", reason);
+      .missions.recordDriveStallReason?.(missionId, "autopilot", reason);
   } catch (error) {
     console.warn(
       `[prevc-autopilot] registro de motivo de parada falhou para ${missionId}:`,

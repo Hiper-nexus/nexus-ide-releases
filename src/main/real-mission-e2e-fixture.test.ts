@@ -265,4 +265,68 @@ describe("main-owned real mission squad fixture", () => {
       ),
     ).toBeNull();
   });
+
+  it("binds a runtime minted from a byte-identical operator copy of the fixture", () => {
+    // "Salvar configuração" na revisão salva o fixture como cópia de usuário
+    // (`squad-*`) e reseleciona a cópia; o launch cunha o runtime a partir
+    // dela. Conteúdo idêntico (só o id muda) continua sendo o fixture.
+    const source = createRealMissionE2ESquadFixture();
+    const operatorCopy: Squad = {
+      ...source,
+      id: "squad-4efe96d6-9d43-4408-8af6-6b8a8b32803c",
+    };
+    const runtime: Squad = {
+      ...source,
+      id: "mission-runtime-11111111-1111-4111-8111-111111111111",
+      createdAt: "runtime",
+      builtin: false,
+      runtimeSourceSquadId: operatorCopy.id,
+      runtimeSourceSquadRevisionHash:
+        snapshotSquadAuthority(operatorCopy).hash,
+    };
+    const lookup = (id: string) =>
+      id === source.id
+        ? source
+        : id === operatorCopy.id
+          ? operatorCopy
+          : id === runtime.id
+            ? runtime
+            : null;
+
+    expect(
+      resolveProductWizardRealMissionE2ESquadBinding(runtime.id, lookup),
+    ).toMatchObject({
+      squadId: runtime.id,
+      sourceSquadId: source.id,
+      sourceSquadRevisionHash: snapshotSquadAuthority(source).hash,
+      squadRevisionHash: snapshotSquadAuthority(runtime).hash,
+    });
+
+    // Cópia com conteúdo divergente (roster editado) continua rejeitada.
+    const driftedCopy: Squad = {
+      ...operatorCopy,
+      agents: operatorCopy.agents.map((agent) =>
+        agent.id === "e2e-qa" ? { ...agent, cli: "kimi" } : agent,
+      ),
+    };
+    const runtimeFromDrifted: Squad = {
+      ...runtime,
+      agents: driftedCopy.agents.map((agent) => ({ ...agent })),
+      runtimeSourceSquadRevisionHash:
+        snapshotSquadAuthority(driftedCopy).hash,
+    };
+    expect(
+      resolveProductWizardRealMissionE2ESquadBinding(
+        runtimeFromDrifted.id,
+        (id) =>
+          id === source.id
+            ? source
+            : id === driftedCopy.id
+              ? driftedCopy
+              : id === runtimeFromDrifted.id
+                ? runtimeFromDrifted
+                : null,
+      ),
+    ).toBeNull();
+  });
 });
