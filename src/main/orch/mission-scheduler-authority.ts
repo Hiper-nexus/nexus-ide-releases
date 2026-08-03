@@ -3,6 +3,7 @@ import {
   hasTeamReadOnlyFanoutDomain,
   type StandardMissionTopology,
 } from "../../shared/mission-topology";
+import { hasWavePackDomain } from "../../shared/mission-wave-pack";
 import type { ScopedMissionStore } from "./mission-store";
 import { missionRequiresGuidedPrevc } from "./guided-mission-authority";
 import type {
@@ -70,11 +71,17 @@ export function missionSchedulerCompletionTopology(
       dispatch.intentVersion === intentVersion,
   );
   if (current.length === 0) return "delivery";
-  const markerCount = current.filter((dispatch) =>
+  const fanoutCount = current.filter((dispatch) =>
     hasTeamReadOnlyFanoutDomain(dispatch.ownership.domains),
   ).length;
-  if (markerCount === 0) return "delivery";
-  if (markerCount === current.length) return "team-read-only-fanout";
+  const wavePackCount = current.filter((dispatch) =>
+    hasWavePackDomain(dispatch.ownership.domains),
+  ).length;
+  if (fanoutCount === 0 && wavePackCount === 0) return "delivery";
+  if (wavePackCount === current.length && fanoutCount === 0) return "wave-pack";
+  if (fanoutCount === current.length && wavePackCount === 0) {
+    return "team-read-only-fanout";
+  }
   return null;
 }
 

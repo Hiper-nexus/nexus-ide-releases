@@ -130,6 +130,7 @@ describe("main-owned guided PREVC preflight", () => {
         },
       }),
     ).toBe(false);
+    expect(missionRequiresGuidedPrevc(guided, "wave-pack")).toBe(false);
     expect(
       missionRequiresGuidedPrevc({
         ...guided,

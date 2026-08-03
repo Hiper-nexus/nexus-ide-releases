@@ -106,7 +106,7 @@ export function assertUnfrozenGuidedExecutionEffectAllowed(
   if (sealedTopology === "invalid") {
     throw new Error(
       "guided_plan_mixed_topology_blocked: o receipt selado mistura " +
-        "delivery e team-read-only-fanout; replaneje e reaprove a missão",
+        "delivery, team-read-only-fanout e wave-pack; replaneje e reaprove a missão",
     );
   }
   if (!missionRequiresGuidedPrevc(mission, sealedTopology)) return;

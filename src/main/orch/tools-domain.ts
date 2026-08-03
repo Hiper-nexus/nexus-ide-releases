@@ -330,9 +330,9 @@ const missionSetStatusTool: McpToolDef = {
         if (topology !== 'team-read-only-fanout') {
           if (current.status === 'done') return current;
           throw new Error(
-            'task_dispatcher_authority: missão delivery com plano selado só ' +
-              'conclui pelo motor Nexus após receipts verificados; status=done ' +
-              'do Maestro não substitui PREVC ou integração',
+            'task_dispatcher_authority: missão com plano selado ' +
+              '(delivery/wave-pack) só conclui pelo motor Nexus após receipts ' +
+              'verificados; status=done do Maestro não substitui integração',
           );
         }
         assertCurrentMissionOrchestratorSession(ctx, current);

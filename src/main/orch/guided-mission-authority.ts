@@ -86,6 +86,9 @@ export function missionRequiresGuidedPrevc(
       HUMAN_GUIDED_INTENT_SOURCES.has(contract.source) &&
       !contract.requiredWorkerAgentRef &&
       topology !== "team-read-only-fanout" &&
+      // Wave Pack: N story writers under ownership+merge — not the 1-writer
+      // Guided PREVC fence (docs/design/mission-wave-pack.md).
+      topology !== "wave-pack" &&
       hasMainOwnedGuidedDeliveryAuthority(mission),
   );
 }

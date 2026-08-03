@@ -142,6 +142,65 @@ describe("mission scheduler durable authority", () => {
     expect(completeLegacy).not.toHaveBeenCalled();
   });
 
+  it("completes Wave Pack via legacy when every dispatch carries the pack marker", async () => {
+    const intent = compileIntentContract({
+      goal: "implementar as stories do plano promovido",
+      acceptanceCriteria: ["Stories entregues"],
+      intentVersion: 7,
+      source: "typed",
+      lane: "standard",
+    });
+    const currentMission = mission({
+      squadId: "nexus-story-impl",
+      intentContract: {
+        ...intent,
+        approvedAt: 1,
+        dispatchedAt: 2,
+        promotedPlan: {} as never,
+      },
+      intentState: "executing",
+    });
+    const runGuidedBridge = vi.fn(async () => undefined);
+    const completeLegacy = vi.fn();
+
+    await expect(
+      reconcileMissionCompletionAfterSchedulerTick({
+        mission: currentMission,
+        dispatches: [
+          dispatch({
+            executionMode: "isolated_worktree",
+            ownership: {
+              files: ["src"],
+              symbols: [],
+              domains: [
+                "guided-implementation",
+                "wave-pack",
+                "wave-pack-story:story-1-1",
+              ],
+            },
+          }),
+          dispatch({
+            taskId: "task-b",
+            executionMode: "isolated_worktree",
+            ownership: {
+              files: ["src"],
+              symbols: [],
+              domains: [
+                "guided-implementation",
+                "wave-pack",
+                "wave-pack-story:story-1-2",
+              ],
+            },
+          }),
+        ],
+        runGuidedBridge,
+        completeLegacy,
+      }),
+    ).resolves.toBe("legacy");
+    expect(completeLegacy).toHaveBeenCalledWith(7);
+    expect(runGuidedBridge).not.toHaveBeenCalled();
+  });
+
   it("refuses mixed fan-out markers for a saved squad instead of completing as legacy", async () => {
     const intent = compileIntentContract({
       goal: "todos os panes me falam o que fazem nesta missão",

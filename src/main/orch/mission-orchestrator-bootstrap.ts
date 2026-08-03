@@ -911,13 +911,15 @@ export class MissionOrchestratorBootstrapService {
         "applicable" in planResult &&
         planResult.applicable === true &&
         "topology" in planResult &&
-        planResult.topology === "team-read-only-fanout"
+        (planResult.topology === "team-read-only-fanout" ||
+          planResult.topology === "wave-pack")
       ) {
-        standardTopology = "team-read-only-fanout";
+        standardTopology = planResult.topology;
       }
       if (
         !requiresPrePlanGitBaseline &&
-        standardTopology !== "team-read-only-fanout"
+        standardTopology !== "team-read-only-fanout" &&
+        standardTopology !== "wave-pack"
       ) {
         this.#deps.ensurePlanGitBaseline?.(scope, missionId);
       }

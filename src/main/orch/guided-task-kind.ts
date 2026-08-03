@@ -185,7 +185,14 @@ export function parseGuidedTaskKind(
     [GUIDED_MISSION_REPRODUCTION_TASK_ID, "reproduction"],
     [GUIDED_MISSION_REGRESSION_TASK_ID, "regression"],
   ];
+  // Wave Pack seals N implementation roots (`wave-pack-story-*`) plus an
+  // optional `wave-pack-quality-gate`. Those planner ids are Pack topology
+  // authority, not the single Guided v2 canonical pair.
+  const isWavePackPlannerId =
+    typeof input.plannerId === "string" &&
+    input.plannerId.startsWith("wave-pack-");
   if (
+    !isWavePackPlannerId &&
     canonicalIdentities.some(
       ([plannerId, canonicalKind]) =>
         (input.plannerId === plannerId && kind !== canonicalKind) ||

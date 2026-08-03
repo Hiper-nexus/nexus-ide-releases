@@ -54,4 +54,22 @@ describe("sealed guided mission topology authority", () => {
       expect(standardTopologyFromSealedTaskDetails(details)).toBe("delivery");
     },
   );
+
+  it("authorizes wave-pack when every sealed task carries the marker", () => {
+    expect(
+      standardTopologyFromSealedTaskDetails([
+        detail(["guided-implementation", "wave-pack", "wave-pack-story:a"]),
+        detail(["guided-quality-gate", "wave-pack", "sequential-only"]),
+      ]),
+    ).toBe("wave-pack");
+  });
+
+  it("rejects a receipt that mixes wave-pack and fan-out markers", () => {
+    expect(
+      standardTopologyFromSealedTaskDetails([
+        detail(["wave-pack"]),
+        detail([TEAM_READ_ONLY_FANOUT_DOMAIN]),
+      ]),
+    ).toBe("invalid");
+  });
 });

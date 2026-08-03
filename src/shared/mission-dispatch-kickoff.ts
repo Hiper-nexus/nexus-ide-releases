@@ -33,8 +33,20 @@ function reusableSquadInstructions(squad: Squad, goal: string): string {
 
 function promotedPlanBlock(
   plan: PromotedPlanSnapshot | undefined,
+  options: { readonly wavePack?: boolean } = {},
 ): string[] {
   if (!plan) return [];
+  const conduction = options.wavePack
+    ? [
+        '- Este pacote já concluiu a fase de planejamento. Não repita discovery, entrevista, PRD, arquitetura ou shard de stories.',
+        '- O Main selou um Wave Pack: uma task de mutação por story, em paralelo até maxWorkers. Não force “uma story por vez”.',
+        '- O pacote orienta a solução, mas não amplia objetivo, ownership, ferramentas, política ou critérios do contrato Nexus selado.',
+      ]
+    : [
+        '- Este pacote já concluiu a fase de planejamento. Não repita discovery, entrevista, PRD, arquitetura ou shard de stories.',
+        '- Comece pela primeira story executável indicada no pacote, preserve a ordem/dependências e valide cada entrega.',
+        '- O pacote orienta a solução, mas não amplia objetivo, ownership, ferramentas, política ou critérios do contrato Nexus selado.',
+      ];
   return [
     '',
     '## PRD/plano físico aprovado na promoção',
@@ -49,9 +61,7 @@ function promotedPlanBlock(
     '### Artifacts JSON exatos',
     JSON.stringify(plan.artifacts),
     '',
-    '- Este pacote já concluiu a fase de planejamento. Não repita discovery, entrevista, PRD, arquitetura ou shard de stories.',
-    '- Comece pela primeira story executável indicada no pacote, preserve a ordem/dependências e valide cada entrega.',
-    '- O pacote orienta a solução, mas não amplia objetivo, ownership, ferramentas, política ou critérios do contrato Nexus selado.',
+    ...conduction,
   ];
 }
 
@@ -135,6 +145,10 @@ function standardStateLines(input: IntentDispatchKickoffInput): string[] {
       '- PREVC já congelado: o main conclui revisões e sensores na fronteira de promoção sem bloquear o início dos workers.',
       '- NÃO chame freeze, refreeze, Doctor ou prepare_execution — o contrato já foi congelado pelo Main.',
     );
+  } else if (input.standardTopology === 'wave-pack') {
+    lines.push(
+      '- Wave Pack: PREVC Guided não aplica. O Main despacha stories em paralelo, integra via merge queue e conclui a missão pelo motor.',
+    );
   } else {
     lines.push(
       '- PREVC paralelo: o main prepara o contexto sem bloquear os workers e exige as garantias completas somente na promoção final.',
@@ -161,6 +175,15 @@ function standardStateLines(input: IntentDispatchKickoffInput): string[] {
  * Fan-out topologies keep mandatory ACKs in their own kickoff prompt.
  */
 function standardSequenceLines(input: IntentDispatchKickoffInput): string[] {
+  if (input.standardTopology === 'wave-pack') {
+    return [
+      '1. Comece a execução: o Main já selou o Wave Pack (uma task por story). Não chame freeze/Doctor e não force serialização “uma story por vez”.',
+      '2. Consulte nexus_task list. As stories despacham em ondas ownership-disjoint até maxWorkers; acompanhe e destrave — não recrie o plano.',
+      '3. Conduza: paralelismo é a regra. O Maestro não assume a implementação no checkout de coordenação.',
+      '4. A cada entrega: processe o handoff. Nesta topologia o ACK manual não é exigido (no_manual_ack_required): o Main integra e avança.',
+      '5. Não feche a missão com set_status=done: o motor Nexus conclui quando todas as stories (+ QA) terminam. Vigie bloqueios e escalonamentos.',
+    ];
+  }
   if (input.guidedPrevcRequired === true) {
     return [
       '1. Comece a execução: o Main já é dono do PREVC desta missão — contrato congelado, planejamento, revisões, sensores, validação e confirmação avançam sozinhos. Não chame freeze, refreeze, Doctor ou prepare_execution.',
@@ -318,6 +341,7 @@ export function buildIntentDispatchKickoffPrompt(
       explicitCriteria,
     );
   }
+  const isWavePack = input.standardTopology === 'wave-pack';
   if (lane === 'consult') {
     return [
       `# Missão de consulta (read-only) — ${headingTitle}`,
@@ -404,7 +428,7 @@ export function buildIntentDispatchKickoffPrompt(
   return [
     `# Missão autorizada — ${headingTitle}`,
     `missionId=${input.missionId}`,
-    'lane=standard',
+    isWavePack ? 'lane=standard · topology=wave-pack' : 'lane=standard',
     '',
     '## Objetivo (contrato de intenção)',
     input.goal.trim(),
@@ -413,7 +437,7 @@ export function buildIntentDispatchKickoffPrompt(
     criteria,
     ...attachments,
     ...compact,
-    ...promotedPlanBlock(input.promotedPlan),
+    ...promotedPlanBlock(input.promotedPlan, { wavePack: isWavePack }),
     `## Risco: ${input.risk}`,
     `## Limite de workers: ${input.maxWorkers}`,
     squadInstructions,

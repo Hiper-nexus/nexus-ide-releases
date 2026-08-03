@@ -4,6 +4,7 @@ import {
   hasTeamReadOnlyFanoutDomain,
   type StandardMissionTopology,
 } from "../../shared/mission-topology";
+import { hasWavePackDomain } from "../../shared/mission-wave-pack";
 import { hasMainOwnedGuidedDeliveryAuthority } from "./guided-mission-authority";
 import {
   GUIDED_MISSION_PLANNER_TASK_ID,
@@ -54,6 +55,12 @@ export interface GuidedV2ReceiptAuthority {
 export interface GuidedTeamFanoutReceiptAuthority {
   readonly primary: PlannedTaskRecord;
   readonly ordered: readonly PlannedTaskRecord[];
+}
+
+export interface GuidedWavePackReceiptAuthority {
+  readonly primary: PlannedTaskRecord;
+  readonly stories: readonly PlannedTaskRecord[];
+  readonly qualityGate: PlannedTaskRecord | null;
 }
 
 export function isGuidedWorkerAgent(
@@ -257,6 +264,107 @@ function assertGuidedTeamFanoutEntry(
   ) {
     legacyGuidedReceipt(
       `a tarefa ${entry.taskId} não é uma raiz paralela somente leitura`,
+    );
+  }
+}
+
+/**
+ * Recovers a Wave Pack receipt: ≥2 story mutation roots (+ optional QA),
+ * every task marked with the wave-pack domain.
+ */
+export function assertRosterCompleteGuidedWavePackReceipt(
+  planned: readonly PlannedTaskRecord[],
+  squad: Squad,
+): GuidedWavePackReceiptAuthority {
+  try {
+    if (planned.length < 2) {
+      legacyGuidedReceipt(
+        "o Wave Pack precisa de pelo menos 2 tarefas seladas",
+      );
+    }
+    const rosterHash = snapshotTaskPlanRoster(squad.agents).hash;
+    if (
+      planned.some(
+        (entry) =>
+          entry.squadId !== squad.id || entry.rosterHash !== rosterHash,
+      )
+    ) {
+      legacyGuidedReceipt(
+        "o Wave Pack diverge do squad/roster atualmente aprovado",
+      );
+    }
+
+    const stories: PlannedTaskRecord[] = [];
+    let qualityGate: PlannedTaskRecord | null = null;
+    for (const entry of planned) {
+      const meta = assertSealedTaskSchedule(
+        entry,
+        decodeTaskScheduleDetail(entry.task.detail).meta,
+      );
+      if (!hasWavePackDomain(meta.ownership.domains)) {
+        legacyGuidedReceipt(
+          `a tarefa ${entry.taskId} não carrega o marcador wave-pack`,
+        );
+      }
+      if (meta.guidedTaskKind === "quality-gate") {
+        if (qualityGate) {
+          legacyGuidedReceipt("o Wave Pack tem mais de um quality-gate");
+        }
+        if (meta.executionMode !== "read_only") {
+          legacyGuidedReceipt(
+            `o quality-gate ${entry.taskId} deve ser read_only`,
+          );
+        }
+        qualityGate = entry;
+        continue;
+      }
+      if (
+        meta.guidedTaskKind !== "implementation" ||
+        meta.executionMode !== "isolated_worktree" ||
+        meta.dependsOn.length !== 0 ||
+        meta.parallelEligible !== true
+      ) {
+        legacyGuidedReceipt(
+          `a tarefa ${entry.taskId} não é uma story raiz do Wave Pack`,
+        );
+      }
+      stories.push(entry);
+    }
+    if (stories.length < 2) {
+      legacyGuidedReceipt(
+        "o Wave Pack precisa de pelo menos 2 stories de mutação",
+      );
+    }
+    if (qualityGate) {
+      const meta = assertSealedTaskSchedule(
+        qualityGate,
+        decodeTaskScheduleDetail(qualityGate.task.detail).meta,
+      );
+      const storyIds = new Set(stories.map((story) => story.taskId));
+      if (
+        meta.dependsOn.length !== stories.length ||
+        meta.dependsOn.some((dep) => !storyIds.has(dep))
+      ) {
+        legacyGuidedReceipt(
+          "o quality-gate do Wave Pack deve depender de todas as stories",
+        );
+      }
+    }
+    return Object.freeze({
+      primary: stories[0]!,
+      stories: Object.freeze(stories),
+      qualityGate,
+    });
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message.startsWith("guided_plan_legacy_receipt_blocked:")
+    ) {
+      throw error;
+    }
+    legacyGuidedReceipt(
+      error instanceof Error ? error.message : String(error),
+      error,
     );
   }
 }
