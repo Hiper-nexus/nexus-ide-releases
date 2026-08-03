@@ -781,8 +781,10 @@ export function assertRealMissionPassEvidence(raw) {
       evidenceBinding.workflowRevision > 0 &&
       evidenceBinding.workflowRevision === receipt?.workflowRevisionBefore &&
       // The current PREVC lifecycle records mission-driver checkpoints only
-      // after final validation advances to confirmation.
-      receipt?.fromStage === "confirmation" &&
+      // after final validation advances to the last stage of the sealed risk
+      // route ("confirmation" on high/critical, "validation-primary" on
+      // low/medium).
+      receipt?.fromStage === completionRoute[completionRoute.length - 1] &&
       evidenceBinding?.headSha === completionWorkflowBinding?.headSha &&
       evidenceBinding?.diffHash === completionWorkflowBinding?.diffHash &&
       (checkpoint || transition) &&
