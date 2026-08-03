@@ -60,6 +60,21 @@ const TERMINAL_PREFLIGHT_PATTERNS = [
   /\bsquad salvo mudou depois da aprovação\b/iu,
 ];
 
+/**
+ * Durable worktree identities cannot heal by retrying the same task claim.
+ *
+ * These diagnostics can cross an async/process boundary as a plain `Error`,
+ * losing the original `WorktreeStateConflictError` prototype. Matching the
+ * stable closed messages prevents the scheduler from retrying an immutable
+ * checkout/ownership conflict forever.
+ */
+const TERMINAL_WORKTREE_PATTERNS = [
+  /\btask worktree belongs to another checkout root\b/iu,
+  /\btask ownership and dependencies are immutable after reservation\b/iu,
+  /\bderived worktree path or branch is already reserved\b/iu,
+  /\btask worktree is already (?:integrated|abandoned)\b/iu,
+];
+
 function errorName(error: unknown): string {
   if (!error || typeof error !== "object" || !("name" in error)) return "";
   return String((error as { readonly name?: unknown }).name ?? "");
@@ -74,8 +89,10 @@ function errorMessage(error: unknown): string {
   }
 }
 
-export function classifyOperationalFailure(
+function classifyOperationalFailureInternal(
   error: unknown,
+  visited: Set<object>,
+  depth: number,
 ): OperationalFailureDisposition {
   if (hasRetiredRosterRouteMarker(error)) return "terminal";
   const name = errorName(error);
@@ -88,7 +105,34 @@ export function classifyOperationalFailure(
   if (TERMINAL_PREFLIGHT_PATTERNS.some((pattern) => pattern.test(message))) {
     return "terminal";
   }
+  if (TERMINAL_WORKTREE_PATTERNS.some((pattern) => pattern.test(message))) {
+    return "terminal";
+  }
+  if (
+    depth < 8 &&
+    error !== null &&
+    typeof error === "object" &&
+    !visited.has(error) &&
+    "cause" in error
+  ) {
+    visited.add(error);
+    const cause = (error as { readonly cause?: unknown }).cause;
+    if (cause !== undefined && cause !== error) {
+      const causeDisposition = classifyOperationalFailureInternal(
+        cause,
+        visited,
+        depth + 1,
+      );
+      if (causeDisposition !== "retryable") return causeDisposition;
+    }
+  }
   return "retryable";
+}
+
+export function classifyOperationalFailure(
+  error: unknown,
+): OperationalFailureDisposition {
+  return classifyOperationalFailureInternal(error, new Set<object>(), 0);
 }
 
 export function isRetryableOperationalFailure(error: unknown): boolean {

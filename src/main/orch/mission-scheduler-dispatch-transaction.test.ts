@@ -263,6 +263,11 @@ describe("mission scheduler dispatch bootstrap failure provenance", () => {
     const corruption = new Error("dispatch database is corrupt");
     corruption.name = "ScopedStoreCorruptionError";
     expect(isMissionSchedulerRetryableDispatchError(corruption)).toBe(false);
+    expect(
+      isMissionSchedulerRetryableDispatchError(
+        new Error("task worktree belongs to another checkout root"),
+      ),
+    ).toBe(false);
   });
 
   it("refines the exact generic exit block with the real bootstrap cause", () => {

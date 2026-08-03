@@ -1,5 +1,19 @@
 # Changelog
 
+## Não lançado — missão deixa de girar em falso
+
+- A aprovação sela uma cópia imutável do squad para a missão; sincronização de
+  catálogo/builtins no boot não invalida mais o hash já aprovado.
+- Recuperação técnica ganhou teto e distingue falhas permanentes de
+  indisponibilidade transitória, inclusive quando a causa terminal atravessa
+  wrappers assíncronos.
+- Identidade de worktree ligada a outro checkout/branch bloqueia uma vez com
+  causa acionável, em vez de consumir repetidamente tentativas de bootstrap.
+- Kickoff tolera boot frio de CLIs e aceita um turno físico sustentado quando o
+  hook nativo não chega, sem confundir repaint de um frame com execução real.
+- O Maestro pode delegar scouts/revisores read-only antes da execução PREVC,
+  mantendo escrita e shell presos ao estágio autorizado.
+
 ## 0.22.0 — O piloto aprende a pilotar
 
 Data: 2026-08-02

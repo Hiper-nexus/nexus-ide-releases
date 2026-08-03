@@ -81,4 +81,40 @@ describe("operational failure policy", () => {
       classifyOperationalFailure(new Error("guided_plan_route_unavailable")),
     ).toBe("retryable");
   });
+
+  it.each([
+    "task worktree belongs to another checkout root",
+    "task ownership and dependencies are immutable after reservation",
+    "derived worktree path or branch is already reserved",
+    "task worktree is already integrated",
+    "task worktree is already abandoned",
+  ])("does not recycle a permanent worktree identity failure: %s", (message) => {
+    expect(classifyOperationalFailure(new Error(message))).toBe("terminal");
+  });
+
+  it("keeps a transient Git/worktree preparation failure retryable", () => {
+    expect(
+      classifyOperationalFailure(
+        new Error("Git could not create the task worktree: index.lock busy"),
+      ),
+    ).toBe("retryable");
+  });
+
+  it("preserves a terminal cause through bounded async wrappers", () => {
+    const terminal = new Error(
+      "task worktree belongs to another checkout root",
+    );
+    const wrapped = new Error("worker bootstrap failed", {
+      cause: new Error("provider preparation failed", { cause: terminal }),
+    });
+    expect(classifyOperationalFailure(wrapped)).toBe("terminal");
+  });
+
+  it("bounds cyclic cause chains and keeps unknown failures retryable", () => {
+    const first = new Error("outer");
+    const second = new Error("inner");
+    Object.defineProperty(first, "cause", { value: second });
+    Object.defineProperty(second, "cause", { value: first });
+    expect(classifyOperationalFailure(first)).toBe("retryable");
+  });
 });

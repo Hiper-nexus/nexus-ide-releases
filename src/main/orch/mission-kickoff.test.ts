@@ -427,7 +427,7 @@ describe('main-owned mission kickoff acceptance', () => {
     ]);
   });
 
-  it('does not accept PTY output+busy without a native turn boundary', async () => {
+  it('does not accept a one-frame busy+output repaint as a turn', async () => {
     vi.useFakeTimers();
     const value = harness((current, data) => {
       if (data === '\r') {
@@ -441,11 +441,82 @@ describe('main-owned mission kickoff acceptance', () => {
     const result = runMissionKickoffAcceptance(
       { sessionId: 'session-no-output', prompt: 'Exija prova.' },
       value.ports,
-      { pasteSettleMs: 10, bootIdleWindowMs: 50, acceptanceWindowMs: 100, bracketedPasteWindowMs: 0 },
+      {
+        pasteSettleMs: 10,
+        bootIdleWindowMs: 50,
+        acceptanceWindowMs: 100,
+        bracketedPasteWindowMs: 0,
+        physicalTurnConfirmMs: 50,
+      },
     );
     await vi.advanceTimersByTimeAsync(111);
 
     await expect(result).resolves.toMatchObject({ accepted: false, reason: 'timeout' });
+    expect(value.blocked).toEqual(['timeout']);
+  });
+
+  it('accepts a sustained physical turn when UserPromptSubmit never arrives', async () => {
+    vi.useFakeTimers();
+    const value = harness((current, data) => {
+      if (data === '\r') {
+        current.state = 'busy';
+        current.stateTap?.('session-physical', 'busy');
+        current.dataTap?.('session-physical', 'thinking…');
+        current.dataTap?.('session-physical', 'tool call');
+      }
+      return true;
+    });
+
+    const result = runMissionKickoffAcceptance(
+      { sessionId: 'session-physical', prompt: 'Comece a missão.' },
+      value.ports,
+      {
+        pasteSettleMs: 10,
+        bootIdleWindowMs: 50,
+        acceptanceWindowMs: 200,
+        bracketedPasteWindowMs: 0,
+        physicalTurnConfirmMs: 40,
+      },
+    );
+    await vi.advanceTimersByTimeAsync(60);
+
+    await expect(result).resolves.toEqual({ accepted: true });
+    expect(value.blocked).toEqual([]);
+  });
+
+  it('cancels physical fallback when busy returns to idle before the guard window', async () => {
+    vi.useFakeTimers();
+    const value = harness((current, data) => {
+      if (data === '\r') {
+        current.state = 'busy';
+        current.stateTap?.('session-repaint', 'busy');
+        current.dataTap?.('session-repaint', 'frame 1');
+        current.dataTap?.('session-repaint', 'frame 2');
+        setTimeout(() => {
+          current.state = 'idle';
+          current.stateTap?.('session-repaint', 'idle');
+        }, 20);
+      }
+      return true;
+    });
+
+    const result = runMissionKickoffAcceptance(
+      { sessionId: 'session-repaint', prompt: 'Não aceite animação.' },
+      value.ports,
+      {
+        pasteSettleMs: 10,
+        bootIdleWindowMs: 50,
+        acceptanceWindowMs: 100,
+        bracketedPasteWindowMs: 0,
+        physicalTurnConfirmMs: 40,
+      },
+    );
+    await vi.advanceTimersByTimeAsync(111);
+
+    await expect(result).resolves.toMatchObject({
+      accepted: false,
+      reason: 'timeout',
+    });
     expect(value.blocked).toEqual(['timeout']);
   });
 
