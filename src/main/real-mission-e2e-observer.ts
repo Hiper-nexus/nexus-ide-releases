@@ -1120,6 +1120,10 @@ export class RealMissionObserver {
     ) {
       return "reject";
     }
+    // Drop the retired Maestro from the physical set. Keeping it made Claude
+    // kickoff recovery finish the mission with physicalPty.count=5 while panes
+    // stayed at 4, failing the exact physicalPanes invariant after PASS work.
+    this.#physicalPty.delete(replacement.priorSessionId);
     return "accept";
   }
 
