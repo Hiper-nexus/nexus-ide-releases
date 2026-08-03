@@ -158,8 +158,14 @@ function defaultRunChecked(command, args, options = {}) {
   });
   if (result.error) throw result.error;
   if (result.status !== 0) {
+    const detail = [result.stderr, result.stdout]
+      .filter((chunk) => typeof chunk === 'string' && chunk.trim())
+      .map((chunk) => chunk.trim().replace(/\s+/gu, ' ').slice(0, 400))
+      .join(' | ');
     throw new Error(
-      `${path.basename(command)} failed with exit ${result.status ?? 1}`,
+      detail
+        ? `${path.basename(command)} failed with exit ${result.status ?? 1}: ${detail}`
+        : `${path.basename(command)} failed with exit ${result.status ?? 1}`,
     );
   }
   return {
