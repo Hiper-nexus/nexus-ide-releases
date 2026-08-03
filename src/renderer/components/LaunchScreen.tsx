@@ -17,7 +17,10 @@ import { ProgressiveOnboarding } from "./ProgressiveOnboarding";
 import { useProductFlags } from "../lib/use-product-flags";
 import { formatShortcut } from "../lib/platform";
 import { FEATURE_FLAG_IDS } from "../../shared/feature-flags";
-import { missionRuntimeReadiness } from "../orch/mission-runtime-readiness";
+import {
+  formatReadyProviderIds,
+  missionRuntimeReadiness,
+} from "../orch/mission-runtime-readiness";
 import {
   DEFAULT_ORCH_SETTINGS,
   type SquadCliPolicy,
@@ -352,11 +355,30 @@ export function LaunchScreen() {
                 ? `${readiness.detectedAdapters.length} CLI${readiness.detectedAdapters.length === 1 ? "" : "s"} detectada${readiness.detectedAdapters.length === 1 ? "" : "s"}`
                 : "Verificando CLIs"}
             </span>
+            <span
+              className={
+                readiness.readyProviders.length > 0 ? "is-live" : ""
+              }
+              title={
+                readiness.readyProviders.length > 0
+                  ? formatReadyProviderIds(readiness)
+                  : undefined
+              }
+            >
+              <i aria-hidden="true" />
+              {adaptersLoaded
+                ? readiness.readyProviders.length > 0
+                  ? `${readiness.readyProviders.length} provider${readiness.readyProviders.length === 1 ? "" : "s"}: ${formatReadyProviderIds(readiness)}`
+                  : "Nenhum provider autenticado"
+                : "Verificando providers"}
+            </span>
             <span className={readiness.hasOperationalRoute ? "is-live" : ""}>
               <i aria-hidden="true" />
               {readiness.hasOperationalRoute
                 ? squadCliPolicy === "operator-choice"
-                  ? "Rota de missão autenticada e pronta"
+                  ? readiness.multiProviderReady
+                    ? `Multi-LLM pronto · ${readiness.readyProviders.length} CLIs`
+                    : "Rota de missão autenticada e pronta"
                   : "Rota de missão autenticada e verificada"
                 : adaptersLoaded
                   ? "Rota de missão requer configuração"

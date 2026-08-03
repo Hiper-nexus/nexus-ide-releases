@@ -21,7 +21,10 @@ import {
   homeSetupBeat,
   homeWarmingBeat,
 } from "../../shared/endorphin";
-import { missionRuntimeReadiness } from "../orch/mission-runtime-readiness";
+import {
+  formatReadyProviderIds,
+  missionRuntimeReadiness,
+} from "../orch/mission-runtime-readiness";
 import {
   DEFAULT_ORCH_SETTINGS,
   type SquadCliPolicy,
@@ -365,16 +368,29 @@ export function HomeDeck() {
                   : "Verificando CLIs"}
             </span>
             <span
-              className={`home-deck__stat ${readiness.verifiedMaestros.length > 0 ? "home-deck__stat--live" : ""}`}
+              className={`home-deck__stat ${readiness.readyProviders.length > 0 ? "home-deck__stat--live" : ""}`}
+              title={
+                readiness.readyProviders.length > 0
+                  ? formatReadyProviderIds(readiness)
+                  : undefined
+              }
             >
               <i className="home-deck__dot" aria-hidden="true" />
-              {readiness.verifiedMaestros.length > 0
-                ? squadCliPolicy === "operator-choice"
-                  ? `${readiness.verifiedMaestros.length} CLI${readiness.verifiedMaestros.length === 1 ? "" : "s"} autenticada${readiness.verifiedMaestros.length === 1 ? "" : "s"} com handoff`
-                  : `${readiness.verifiedMaestros.length} Maestro${readiness.verifiedMaestros.length === 1 ? "" : "s"} autenticado${readiness.verifiedMaestros.length === 1 ? "" : "s"} e verificado${readiness.verifiedMaestros.length === 1 ? "" : "s"}`
-                : squadCliPolicy === "operator-choice"
-                  ? "Nenhuma CLI autenticada com handoff"
-                  : "Nenhum Maestro autenticado e verificado"}
+              {readiness.readyProviders.length > 0
+                ? `${readiness.readyProviders.length} provider${readiness.readyProviders.length === 1 ? "" : "s"} pronto${readiness.readyProviders.length === 1 ? "" : "s"}: ${formatReadyProviderIds(readiness)}`
+                : "Nenhum provider autenticado"}
+            </span>
+            <span
+              className={`home-deck__stat ${readiness.multiProviderReady ? "home-deck__stat--live" : ""}`}
+            >
+              <i className="home-deck__dot" aria-hidden="true" />
+              {readiness.multiProviderReady
+                ? `Multi-LLM ativo · cota espalhada em ${readiness.readyProviders.length} CLIs`
+                : readiness.readyProviders.length === 1
+                  ? "Uma CLI só — autenticar mais providers multiplica economia e paralelismo"
+                  : squadCliPolicy === "operator-choice"
+                    ? "Autentique CLIs em Configurações › Providers"
+                    : "Nenhum Maestro autenticado e verificado"}
             </span>
             <span
               className={`home-deck__stat ${readiness.qualifiedWorkers.length > 0 ? "home-deck__stat--live" : ""}`}
@@ -382,7 +398,7 @@ export function HomeDeck() {
               <i className="home-deck__dot" aria-hidden="true" />
               {readiness.qualifiedWorkers.length > 0
                 ? squadCliPolicy === "operator-choice"
-                  ? `${readiness.qualifiedWorkers.length} worker${readiness.qualifiedWorkers.length === 1 ? "" : "s"} com handoff`
+                  ? `${readiness.qualifiedWorkers.length} worker${readiness.qualifiedWorkers.length === 1 ? "" : "s"} com handoff (${readiness.qualifiedWorkers.map((w) => w.id).join(", ")})`
                   : `${readiness.qualifiedWorkers.length} worker${readiness.qualifiedWorkers.length === 1 ? "" : "s"} com escrita confinada`
                 : squadCliPolicy === "operator-choice"
                   ? "Nenhum worker autenticado com handoff"

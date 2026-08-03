@@ -243,6 +243,11 @@ describe("mission runtime readiness", () => {
       "kimi",
       "custom-cli",
     ]);
+    expect(ready.readyProviders.map((item) => item.id)).toEqual([
+      "kimi",
+      "custom-cli",
+    ]);
+    expect(ready.multiProviderReady).toBe(true);
     expect(ready.hasOperationalRoute).toBe(true);
   });
 
@@ -266,6 +271,10 @@ describe("mission runtime readiness", () => {
     expect(ready.qualifiedWorkers.map((item) => item.id)).toEqual([
       "worker-only",
     ]);
+    expect(ready.readyProviders.map((item) => item.id)).toEqual([
+      "worker-only",
+    ]);
+    expect(ready.multiProviderReady).toBe(false);
     expect(ready.hasOperationalRoute).toBe(false);
   });
 
