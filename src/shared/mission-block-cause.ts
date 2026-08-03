@@ -37,6 +37,14 @@ export type MissionBlockCauseCode =
   | 'orphan-plan'
   /** Falha marcada como terminal, sem causa mais específica registrada. */
   | 'terminal-failure'
+  /** O driver parou a missão no lado humano (paneDead/contextRot após tentativas). */
+  | 'driver-block-human'
+  /** O próprio orquestrador encerrou a missão via status=blocked/failed com nota. */
+  | 'agent-status-block'
+  /** Outra missão/instância assumiu o orquestrador exclusivo desta missão. */
+  | 'exclusive-replacement'
+  /** O operador encerrou a execução preservando histórico e receipts. */
+  | 'runtime-closed'
   /** Existe pergunta pendente esperando o operador — decisão de verdade. */
   | 'human-decision'
   /** Nenhuma razão foi registrada; admitir é melhor que inventar. */
@@ -104,6 +112,22 @@ const COPY: Readonly<
     headline: 'A recuperação automática se esgotou nesta falha.',
     action: 'Abra o diagnóstico da missão, corrija a causa e retome a missão.',
   },
+  'driver-block-human': {
+    headline: 'O piloto automático parou a missão num ponto que precisa de você.',
+    action: 'Abra o diagnóstico, leia o motivo registrado e retome a missão.',
+  },
+  'agent-status-block': {
+    headline: 'O próprio orquestrador encerrou a missão com um motivo registrado.',
+    action: 'Leia o motivo e retome a missão com o objetivo mais preciso.',
+  },
+  'exclusive-replacement': {
+    headline: 'O orquestrador exclusivo foi assumido por outra missão.',
+    action: 'Retome a missão para reabrir o Maestro.',
+  },
+  'runtime-closed': {
+    headline: 'A execução foi encerrada pelo operador; histórico preservado.',
+    action: 'Retome a missão para recomeçar de onde parou.',
+  },
   'human-decision': {
     headline: 'A missão está esperando uma resposta sua.',
     action: 'Abra a missão e responda a pergunta pendente.',
@@ -153,6 +177,25 @@ const RULES: readonly {
   {
     code: 'kickoff-failed',
     test: /<!--\s*nexus:kickoff-not-accepted|<!--\s*nexus:kickoff-failure:/u,
+  },
+  // Vereditos do lado humano: mais específicos que dispatch-failed, mas as
+  // causas técnicas acima (ownership, provider, handoff) seguem vencendo —
+  // o veredito humano frequentemente AS CITA como motivo.
+  {
+    code: 'driver-block-human',
+    test: /<!--\s*nexus:driver-block-human|\[NEXUS_DRIVER_BLOCK_HUMAN\]/u,
+  },
+  {
+    code: 'agent-status-block',
+    test: /<!--\s*nexus:agent-status-block|\[NEXUS_AGENT_STATUS_BLOCK\]/u,
+  },
+  {
+    code: 'exclusive-replacement',
+    test: /<!--\s*nexus:exclusive-orchestrator-replacement/u,
+  },
+  {
+    code: 'runtime-closed',
+    test: /<!--\s*nexus:runtime-closed/u,
   },
   {
     code: 'dispatch-failed',
@@ -256,4 +299,28 @@ export function missionBlockCauseText(
 /** True quando a razão é conhecida — usado para escolher a CTA da superfície. */
 export function hasNamedMissionBlockCause(cause: MissionBlockCause): boolean {
   return cause.code !== 'unknown';
+}
+
+/** Teto do schema de description da missão (mission-store). */
+export const MISSION_DESCRIPTION_LIMIT = 65_536;
+
+/**
+ * Anexa um veredito legível à description sem destruir o que já existe e sem
+ * duplicar o marcador em re-arm/recovery (idempotente por markerHtml). O bloco
+ * novo sempre cabe: se o teto estourar, quem cede é o meio do texto antigo.
+ */
+export function appendMissionVerdict(
+  description: string,
+  markerHtml: string,
+  markerToken: string,
+  reason: string,
+): string {
+  if (description.includes(markerHtml)) return description;
+  const block = `${markerHtml}\n${markerToken} ${reason.trim()}`;
+  const base = description.trim();
+  if (base.length === 0) return block.slice(0, MISSION_DESCRIPTION_LIMIT);
+  const room = MISSION_DESCRIPTION_LIMIT - block.length - 2;
+  const kept =
+    base.length <= room ? base : base.slice(0, Math.max(0, room)).trimEnd();
+  return `${kept}\n\n${block}`;
 }

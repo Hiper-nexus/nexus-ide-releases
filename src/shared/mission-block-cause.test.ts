@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  appendMissionVerdict,
   missionBlockCause,
   missionBlockCauseText,
   MISSION_BLOCK_CAUSE_TEXT_LIMIT,
+  MISSION_DESCRIPTION_LIMIT,
 } from './mission-block-cause';
 import { orphanSealedPlanMessage } from './mission-plan-orphan';
 
@@ -322,6 +324,142 @@ describe('missionBlockCause — detalhe saneado', () => {
     );
 
     expect(cause.detail!.length).toBeLessThanOrEqual(160);
+  });
+});
+
+describe('missionBlockCause — vereditos do lado humano (fechamento sem silêncio)', () => {
+  it('driver block-human: o piloto parou num ponto que precisa do operador', () => {
+    const cause = missionBlockCause(
+      blocked(
+        'objetivo\n\n<!-- nexus:driver-block-human -->\n' +
+          '[NEXUS_DRIVER_BLOCK_HUMAN] paneDead após 3 respawns; contexto sem progresso.\n',
+        'blocked_user',
+      ),
+    );
+
+    expect(cause.code).toBe('driver-block-human');
+    expect(cause.headline).toBe(
+      'O piloto automático parou a missão num ponto que precisa de você.',
+    );
+    expect(cause.detail).toContain('paneDead após 3 respawns');
+  });
+
+  it('agent-status-block: o orquestrador encerrou com nota própria', () => {
+    const cause = missionBlockCause(
+      blocked(
+        'objetivo\n\n<!-- nexus:agent-status-block -->\n' +
+          '[NEXUS_AGENT_STATUS_BLOCK] O orquestrador declarou status=blocked: ' +
+          'bloqueio ambiental comprovado; worktree órfão nunca liberou a reserva.\n',
+        'blocked_user',
+      ),
+    );
+
+    expect(cause.code).toBe('agent-status-block');
+    expect(cause.headline).toBe(
+      'O próprio orquestrador encerrou a missão com um motivo registrado.',
+    );
+    expect(cause.detail).toContain('bloqueio ambiental comprovado');
+  });
+
+  it('exclusive-replacement: outra missão assumiu o orquestrador', () => {
+    const cause = missionBlockCause(
+      blocked(
+        'objetivo\n\n<!-- nexus:exclusive-orchestrator-replacement -->\n' +
+          '[NEXUS_EXCLUSIVE_ORCHESTRATOR_REPLACED] O orquestrador exclusivo foi assumido por outra missão/instância.\n',
+        'blocked_user',
+      ),
+    );
+
+    expect(cause.code).toBe('exclusive-replacement');
+    expect(cause.action).toBe('Retome a missão para reabrir o Maestro.');
+  });
+
+  it('runtime-closed: o operador encerrou preservando histórico', () => {
+    const cause = missionBlockCause(
+      blocked(
+        'objetivo\n\n<!-- nexus:runtime-closed -->\n' +
+          '[NEXUS_RUNTIME_CLOSED] Execução encerrada pelo operador; histórico e receipts preservados.\n',
+        'blocked_user',
+      ),
+    );
+
+    expect(cause.code).toBe('runtime-closed');
+    expect(cause.headline).toBe(
+      'A execução foi encerrada pelo operador; histórico preservado.',
+    );
+  });
+
+  it('causa técnica citada no veredito humano ainda vence o veredito', () => {
+    // O agente explicou fechando com ownership: a causa acionável é a reserva,
+    // não o wrapper "o agente fechou".
+    const cause = missionBlockCause(
+      blocked(
+        'objetivo\n\n[NEXUS_INTERRUPTED_WORKTREE_RESERVATION] reserva pendente\n\n' +
+          '<!-- nexus:agent-status-block -->\n' +
+          '[NEXUS_AGENT_STATUS_BLOCK] status=blocked: worktree ocupado por outra task.\n',
+        'blocked_user',
+      ),
+    );
+
+    expect(cause.code).toBe('ownership-conflict');
+  });
+});
+
+describe('appendMissionVerdict — veredito durável sem destruir o existente', () => {
+  it('anexa o bloco ao fim preservando a description', () => {
+    const next = appendMissionVerdict(
+      'objetivo do operador',
+      '<!-- nexus:runtime-closed -->',
+      '[NEXUS_RUNTIME_CLOSED]',
+      'Execução encerrada pelo operador.',
+    );
+
+    expect(next.startsWith('objetivo do operador')).toBe(true);
+    expect(next).toContain('<!-- nexus:runtime-closed -->');
+    expect(next).toContain('[NEXUS_RUNTIME_CLOSED] Execução encerrada pelo operador.');
+  });
+
+  it('idempotente: re-arm/recovery nunca duplicam o marcador', () => {
+    const once = appendMissionVerdict(
+      'objetivo',
+      '<!-- nexus:runtime-closed -->',
+      '[NEXUS_RUNTIME_CLOSED]',
+      'motivo',
+    );
+    const twice = appendMissionVerdict(
+      once,
+      '<!-- nexus:runtime-closed -->',
+      '[NEXUS_RUNTIME_CLOSED]',
+      'motivo',
+    );
+
+    expect(twice).toBe(once);
+  });
+
+  it('description vazia vira só o veredito', () => {
+    const next = appendMissionVerdict(
+      '',
+      '<!-- nexus:driver-block-human -->',
+      '[NEXUS_DRIVER_BLOCK_HUMAN]',
+      'contexto exausto',
+    );
+
+    expect(next).toBe(
+      '<!-- nexus:driver-block-human -->\n[NEXUS_DRIVER_BLOCK_HUMAN] contexto exausto',
+    );
+  });
+
+  it('o bloco novo sempre cabe: quem cede é o meio do texto antigo', () => {
+    const huge = `objetivo\n${'ruído '.repeat(20_000)}`;
+    const next = appendMissionVerdict(
+      huge,
+      '<!-- nexus:runtime-closed -->',
+      '[NEXUS_RUNTIME_CLOSED]',
+      'fim',
+    );
+
+    expect(next.length).toBeLessThanOrEqual(MISSION_DESCRIPTION_LIMIT);
+    expect(next).toContain('[NEXUS_RUNTIME_CLOSED] fim');
   });
 });
 

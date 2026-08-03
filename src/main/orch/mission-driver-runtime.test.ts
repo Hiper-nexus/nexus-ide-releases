@@ -131,6 +131,9 @@ function fakePorts(log: string[]): ApplyActionPorts {
     setMissionStatus: async (missionId, _s, status) => {
       log.push(`status:${missionId}:${status}`);
     },
+    blockHuman: async (missionId, _s, reason) => {
+      log.push(`blockHuman:${missionId}:${reason.slice(0, 40)}`);
+    },
     completeMission: async (missionId) => {
       log.push(`complete:${missionId}`);
     },
@@ -557,7 +560,7 @@ describe('runDriveTick', () => {
     expect(iterationById.get('m-adv')).toBe(1);
   });
 
-  it('active mode: budget exhausted aplica block-human (setStatus blocked)', async () => {
+  it('active mode: budget exhausted aplica block-human via port blockHuman (veredito legível)', async () => {
     const log: string[] = [];
     const deps = makeDeps({
       missionsByScope: new Map([['p1', [{ id: 'm-budget' }]]]),
@@ -578,9 +581,11 @@ describe('runDriveTick', () => {
       mode: 'active',
     });
     expect(result.applied).toBe(1);
-    expect(log.some((line) => line.startsWith('status:m-budget:blocked'))).toBe(
+    expect(log.some((line) => line.startsWith('blockHuman:m-budget:'))).toBe(
       true,
     );
+    expect(log.some((line) => line.startsWith('learn:m-budget:block-human')))
+      .toBe(true);
   });
 
   it('active mode: apply que throw conta applyErrors e não aborta', async () => {

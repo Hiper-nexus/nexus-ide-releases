@@ -1,6 +1,7 @@
 // Adapted from stablyai/orca @ c3620f0954ae283b3b71b295a241f6a9596af6aa
 // (MIT): physical-exit-before-replacement authority, under Nexus fences.
 import { createHash } from 'node:crypto';
+import { appendMissionVerdict } from '../../shared/mission-block-cause';
 import {
   hasCurrentDispatchAuthority,
   missionBlockPatch,
@@ -735,7 +736,15 @@ export async function closeMissionRuntimePreservingHistory(input: {
     (current.status === 'blocked' || current.status === 'failed') &&
     !hasAutomaticTechnicalRecovery(current)
       ? current
-      : input.suite.missions.block(current.id, 'user');
+      : input.suite.missions.update(current.id, {
+          ...missionBlockPatch('user'),
+          description: appendMissionVerdict(
+            current.description,
+            '<!-- nexus:runtime-closed -->',
+            '[NEXUS_RUNTIME_CLOSED]',
+            'Execução encerrada pelo operador; histórico e receipts preservados.',
+          ),
+        });
   if (!blocked) {
     return {
       ok: false,

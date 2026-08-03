@@ -72,10 +72,15 @@ function harness(options: {
     current = { ...current, status: 'blocked' };
     return current;
   });
+  const update = vi.fn((_id: string, patch: Partial<Mission>) => {
+    current = { ...current, ...patch };
+    return current;
+  });
   const suite = {
     missions: {
       get: vi.fn(() => current),
       block,
+      update,
     },
   } as unknown as ProjectDomainStoreSuite;
   const deps: ExclusiveOrchestratorReplacementDeps = {
@@ -102,6 +107,7 @@ function harness(options: {
   return {
     deps,
     block,
+    update,
     suite,
     current: () => current,
     setCurrent: (next: Mission) => {
@@ -225,7 +231,18 @@ describe('exclusive orchestrator replacement', () => {
         h.deps,
       ),
     ).resolves.toEqual(['pty-old']);
-    expect(h.block).toHaveBeenCalledWith('mission-old', 'user');
+    // O demote agora carrega veredito legível (nunca block silencioso).
+    expect(h.block).not.toHaveBeenCalled();
+    expect(h.update).toHaveBeenCalledWith(
+      'mission-old',
+      expect.objectContaining({
+        status: 'blocked',
+        intentState: 'blocked_user',
+        description: expect.stringContaining(
+          '<!-- nexus:exclusive-orchestrator-replacement -->',
+        ),
+      }),
+    );
     expect(h.deps.settleDemotion).toHaveBeenCalledOnce();
   });
 

@@ -16,6 +16,7 @@ import { recordRouteDecision } from './route-provenance';
 import { recordRouteLog, recentRouteLog } from './route-log';
 import { hasAvailableAccount } from '../persistence/account-store';
 import { authReadyModelsForProvider } from '../adapters/model-auth-readiness';
+import { appendMissionVerdict } from '../../shared/mission-block-cause';
 import { missionStatusSchema, type Mission } from '../../shared/orch-types';
 import { buildClarify } from '../../shared/clarify';
 import { emitClarifyQuestion } from './clarify-flow';
@@ -447,6 +448,22 @@ const missionSetStatusTool: McpToolDef = {
               ? '## Consulta / conclusão'
               : '## Nota de status';
       stores.missions.appendLearning(missionId, `${heading}\n${note}`);
+    }
+    // Fail-safe demotion used to vanish into learnings only — the rail showed
+    // "motivo não registrado". Mirror the agent's own verdict into description
+    // so every surface can name the cause (learnings keep the full note).
+    if ((status === 'blocked' || status === 'failed') && note.length > 0) {
+      const before = stores.missions.get(missionId);
+      if (before) {
+        stores.missions.update(missionId, {
+          description: appendMissionVerdict(
+            before.description,
+            '<!-- nexus:agent-status-block -->',
+            '[NEXUS_AGENT_STATUS_BLOCK]',
+            `O orquestrador declarou status=${status}: ${note}`,
+          ),
+        });
+      }
     }
     const mission = stores.missions.setStatus(missionId, status);
     if (!mission) throw new Error('mission not found');
