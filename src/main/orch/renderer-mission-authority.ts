@@ -230,6 +230,10 @@ interface MissionApprovalFenceInput {
   readonly orchestratorRuntime: MissionOrchestratorRuntimeSnapshot;
   readonly orchestratorEvidence: OrchestrationEvidence;
   readonly promotedPlan?: PromotedPlanSnapshot;
+  /** Bound into promote fence so reviewed Pack/Guiado cannot diverge on commit. */
+  readonly orchestrationMode?: "livre" | "pack" | "guided";
+  readonly wavePackTemplateId?: "landing" | "saas" | "fix";
+  readonly wavePackStoryCount?: number;
 }
 
 const MAX_NATIVE_MISSION_REVIEW_CHARS = 6_000;
@@ -1838,6 +1842,9 @@ export class RendererMissionAuthority {
         orchestratorRuntime,
         orchestratorEvidence,
         promotedPlan,
+        orchestrationMode: previewMode,
+        ...(previewTemplateId ? { wavePackTemplateId: previewTemplateId } : {}),
+        wavePackStoryCount: previewStories.length,
       }),
     });
   }
@@ -1897,47 +1904,13 @@ export class RendererMissionAuthority {
     const reviewOrchestratorEvidence = missionOrchestratorEvidence(
       reviewOrchestratorRuntime.adapterId,
     );
-    if (
-      missionAuthorityFence(loaded, {
-        evidenceAttached: contract.evidenceAttached === true,
-        attachmentPaths: contract.attachmentPaths ?? [],
-        attachmentSnapshots: attachments.snapshots,
-        squadRevisionHash: reviewSquadSnapshot.hash,
-        orchestratorRuntime: reviewOrchestratorRuntime,
-        orchestratorEvidence: reviewOrchestratorEvidence,
-        promotedPlan,
-      }) !== expectedFence
-    ) {
-      throw new Error(
-        "promotion_stale: mission, saved squad or runtime changed while native confirmation was open",
-      );
-    }
-    const sealed = this.#sealMissionSquadForApproval(
-      scope,
-      loaded,
-      sourceSquad,
-    );
-    const current = sealed.mission;
-    const squad = sealed.squad;
-    const squadSnapshot = snapshotSquadAuthority(squad);
-    const orchestratorRuntime = this.#runtimeForSquad(squad, true, true);
     const risk = classifyGoalRisk(contract.goal);
-    const nextVersion = (current.intentVersion ?? 0) + 1;
-    const now = Date.now();
-    const {
-      orchestrationMode: _priorOrchestrationMode,
-      wavePackStories: _priorWavePackStories,
-      wavePackTemplateId: _priorWavePackTemplateId,
-      ...contractWithoutMode
-    } = contract;
-    // No mode → guided. Never auto-freeze stories for surprise Pack.
-    let orchestrationMode =
+    // Resolve reviewed orchestration before the fence check so Pack/Guiado
+    // (and template/story count) are bound to the same hash the operator saw.
+    const orchestrationMode: "pack" | "guided" =
       risk === "destructive"
         ? "guided"
         : (input.orchestrationMode ?? "guided");
-    if (orchestrationMode === "pack" && risk === "destructive") {
-      orchestrationMode = "guided";
-    }
     const wavePackTemplateId =
       orchestrationMode === "pack" ? input.wavePackTemplateId : undefined;
     const wavePackStories =
@@ -1953,6 +1926,41 @@ export class RendererMissionAuthority {
         "promotePlanLane",
       );
     }
+    if (
+      missionAuthorityFence(loaded, {
+        evidenceAttached: contract.evidenceAttached === true,
+        attachmentPaths: contract.attachmentPaths ?? [],
+        attachmentSnapshots: attachments.snapshots,
+        squadRevisionHash: reviewSquadSnapshot.hash,
+        orchestratorRuntime: reviewOrchestratorRuntime,
+        orchestratorEvidence: reviewOrchestratorEvidence,
+        promotedPlan,
+        orchestrationMode,
+        ...(wavePackTemplateId ? { wavePackTemplateId } : {}),
+        wavePackStoryCount: wavePackStories?.length ?? 0,
+      }) !== expectedFence
+    ) {
+      throw new Error(
+        "promotion_stale: mission, saved squad or runtime changed while native confirmation was open",
+      );
+    }
+    const sealed = this.#sealMissionSquadForApproval(
+      scope,
+      loaded,
+      sourceSquad,
+    );
+    const current = sealed.mission;
+    const squad = sealed.squad;
+    const squadSnapshot = snapshotSquadAuthority(squad);
+    const orchestratorRuntime = this.#runtimeForSquad(squad, true, true);
+    const nextVersion = (current.intentVersion ?? 0) + 1;
+    const now = Date.now();
+    const {
+      orchestrationMode: _priorOrchestrationMode,
+      wavePackStories: _priorWavePackStories,
+      wavePackTemplateId: _priorWavePackTemplateId,
+      ...contractWithoutMode
+    } = contract;
     const nextContract = {
       ...contractWithoutMode,
       lane: "standard" as const,
