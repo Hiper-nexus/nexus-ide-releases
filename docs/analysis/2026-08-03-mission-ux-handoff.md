@@ -15,6 +15,19 @@ dos reviewer/QA na onda do executor + cronograma de ondas visível**.
 
 ## FEITO (commits desta sessão)
 
+> Atualização 13:30: Incremento 2 (sintoma 1) completo e commitado
+> (`6bdb7ac0` esqueleto + `16bc034d` emissões/UI). Incremento 4 (sintoma 5)
+> completo: `0c69c6c6` (bloco tentativa N/8 + lock com timeout), `82150cba`
+> (races ACP spawn/shutdown), guardas do recovery (timeout por tentativa,
+> lock 30s → recovery_lock_busy, persistência por tentativa, warm keychain
+> 10s, dead-graph estrutural terminal) e UI de escape (`aef291b5`) — parte
+> landing nos commits próprios e parte incorporada nos commits fast-path da
+> sessão paralela (`87fbd433`, `4822d542`), tudo verificado verde em HEAD.
+> **Incremento 3 foi implementado por inteiro mas a sessão paralela restaurou
+> `mission-dispatch-kickoff.ts` para HEAD duas vezes durante a edição — o
+> trabalho foi descartado para não lutar contra o restore; reaplicar depois
+> que a sessão paralela commitar (detalhes abaixo em PENDENTE).**
+
 ### A. Veredito nos 4 caminhos silenciosos (sintoma 4) — completo e testado
 - `src/shared/mission-block-cause.ts`: helper puro `appendMissionVerdict`
   (idempotente por marcador, teto 65.536) + 4 códigos novos
@@ -47,28 +60,13 @@ dos reviewer/QA na onda do executor + cronograma de ondas visível**.
 
 ## PENDENTE (ordem de execução do plano)
 
-### Incremento 2 — terminar o sintoma 1
-1. Pontos de emissão em `#bootstrap` via `this.#deps.emitProgress?.(...)`:
-   `authority_checked` (após os `#authorized*Snapshots.set`), `subscription_auth`
-   (antes do warm), `plan_baseline` (após try/catch de `ensureMissionPlan`),
-   `squad_sealed` (após cheque de `squadRevisionHash`), `prevc_freeze` (antes
-   do `void ensureMissionPrevc`), `runtime_checked` (após
-   `const runtime = approvedRuntime`), `drift_retired` (após os retirement
-   ifs), `attachments_verified` (após validação de anexos), `pane_spawned`
-   (após spawn ok), `kickoff_submitted`/`kickoff_accepted` (após
-   `submitKickoff`). Nunca awaited; emissão já é try/catch.
-2. Renderer: `src/renderer/components/pane-vacancy-progress.ts` novo e puro
-   (`bootstrapStepLabel(step)` PT-BR); `PaneVacancy.tsx` (`PaneVacancyBody`)
-   com `useEffect`+interval 5s fazendo poll de
-   `window.nexus.orch.missionEventsRecent({missionId, limit:30})` filtrando
-   `payload.kind==='bootstrap_progress'`, headline `"‹etapa› · há Ns"`;
-   `paneVacancyIntent` ganha param opcional `progress` — fallback byte a byte
-   na copy atual (`pane-vacancy-intent.ts:62-65`). Testes:
-   `pane-vacancy-progress.test.ts`, `pane-vacancy-intent.test.ts`, emissão em
-   `mission-orchestrator-bootstrap.test.ts` (ordem + emissão falhando não
-   quebra o bootstrap).
+### Incremento 2 — ~~terminar o sintoma 1~~ FEITO (`16bc034d`)
 
-### Incremento 3 — enxugar kickoff standard (sintoma 2)
+### Incremento 3 — enxugar kickoff standard (sintoma 2) — BLOQUEADO POR CONFLITO
+> Já foi implementado e testado uma vez, mas a sessão paralela restaurou
+> `src/shared/mission-dispatch-kickoff.ts` para HEAD no meio da edição
+> (duas vezes). Especificação completa para reaplicar quando o trabalho
+> paralelo estiver commitado:
 `src/shared/mission-dispatch-kickoff.ts`: colapsar `standardStateLines`+
 `standardSequenceLines`+`standardEscalationLines` (:124-207) num
 `standardConductLines` **preservando as frases-contrato assertadas** em
@@ -81,7 +79,12 @@ ilimitado (contagem+SHA+≤8 nomes, teto 1.024); `reusableSquadInstructions` cap
 regressão: standard < 2,4KB sem promoted plan. NÃO mexer em roundtable/lanes/
 `mission-scheduler-task-prompt.ts`/`guided-mission-prompt.ts`.
 
-### Incremento 4 — recovery "para sempre" (sintoma 5)
+### Incremento 4 — ~~recovery "para sempre" (sintoma 5)~~ FEITO
+> `0c69c6c6`, `82150cba`, `aef291b5` + guardas do recovery em HEAD
+> (timeout por tentativa 120s contando attempt, lock 30s →
+> recovery_lock_busy retryable, bloco tentativa N/8 substituível, warm
+> keychain 10s, spawn ACP 60s, shutdown ACP 10s, dead-graph estrutural
+> terminal, escape hatch na UI). Detalhes da especificação original:
 Em `MissionOrchestratorBootstrapRecovery.#pass`: `RECOVERY_ATTEMPT_TIMEOUT_MS
 = 120_000` com race (timeout conta attempt e persiste razão — fix do H9);
 `withMissionLifecycleLock(..., { acquireTimeoutMs: 30_000 })` (waiter desiste,
