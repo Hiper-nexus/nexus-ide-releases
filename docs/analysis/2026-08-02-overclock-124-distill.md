@@ -1,6 +1,6 @@
 # Destilação Overclock 1.2.4 — site + DMG + RE do sidecar
 
-**Data:** 2026-08-02  
+**Data:** 2026-08-02
 **Fontes:**
 - Site público `https://overclock.sh` (Firecrawl: 100 páginas do domínio + 67 aulas)
 - DMG `~/Downloads/Overclock_1.2.4_aarch64.dmg` (montado RO em `/tmp/overclock-124`)
@@ -18,11 +18,11 @@ DMG: `21db9339b306158ac3f774777b7f57bdbccf97f9da3ccbddee90efdafe3bb8ba`.
 
 Overclock se posiciona como **ADE** (Agentic Development Environment), não IDE:
 
-1. **Briefing** — texto ou voz, sem formulário pesado  
-2. **Squad / maestro** — reparte, cobra, junta  
-3. **Entrega** — panes visíveis + custo em tempo real  
+1. **Briefing** — texto ou voz, sem formulário pesado
+2. **Squad / maestro** — reparte, cobra, junta
+3. **Entrega** — panes visíveis + custo em tempo real
 
-Slogan operacional: *“Delegar é a regra — executar é proibido”* (maestro sem edit/shell).  
+Slogan operacional: *“Delegar é a regra — executar é proibido”* (maestro sem edit/shell).
 Filosofia: *“Não jogamos prompt em modelo — montamos o harness”*.
 
 Modelo de negócio: **cockpit por assinatura**; tokens/modelos ficam nas CLIs já pagas pelo usuário (Claude Code, Codex, Gemini, Antigravity, OpenRouter, locais…).
@@ -74,17 +74,17 @@ flowchart LR
 | **Squad** | Maestro + roster preset | Pro+ |
 | **Agêntico** | Piloto + chefes (Cadeia ou Torre) | Ultra |
 
-**Chefes (Agêntico):** scout · builder · reviewer · controller (Torre).  
+**Chefes (Agêntico):** scout · builder · reviewer · controller (Torre).
 Gate: só o piloto da missão agêntica invoca chefe (string no binário confirma recusa fora desse papel).
 
 ### Mecânica que evita o “cola contexto”
 
-- Maestro **sem** ferramentas de edição/shell → obrigado a delegar  
-- Workers fecham ~30s após handoff limpo (opt-in / F-295 coleta no done da missão)  
-- Handoffs **duráveis** em SQLite (`handoffs` table no sidecar)  
-- `pane_write_many` serializa writes no mesmo pane (F-292)  
-- `requireHandoff` + footer de contrato injetado no brief  
-- Schema validation em artifacts → re-prompt de correção  
+- Maestro **sem** ferramentas de edição/shell → obrigado a delegar
+- Workers fecham ~30s após handoff limpo (opt-in / F-295 coleta no done da missão)
+- Handoffs **duráveis** em SQLite (`handoffs` table no sidecar)
+- `pane_write_many` serializa writes no mesmo pane (F-292)
+- `requireHandoff` + footer de contrato injetado no brief
+- Schema validation em artifacts → re-prompt de correção
 
 ---
 
@@ -117,23 +117,23 @@ bootstrap. O Tauri também supervisiona queda do sidecar e emite
 
 ### Superfície MCP / API interna (strings 1.2.4)
 
-Grupo **pane:** `pane_spawn`, `pane_write`, `pane_write_many`, `pane_read`, `pane_read_many`, `pane_list`, `pane_list_providers`, `pane_wait_idle`, `pane_wait_many`, `pane_close`, `pane_whoami`  
+Grupo **pane:** `pane_spawn`, `pane_write`, `pane_write_many`, `pane_read`, `pane_read_many`, `pane_list`, `pane_list_providers`, `pane_wait_idle`, `pane_wait_many`, `pane_close`, `pane_whoami`
 
-Grupo **handoff:** `handoff_submit`, `handoff_list`  
+Grupo **handoff:** `handoff_submit`, `handoff_list`
 
-Grupo **missão:** `overclock_mission_create`, `_get`, `_list`, `_set_status`, `_mission_spawn_pane`  
+Grupo **missão:** `overclock_mission_create`, `_get`, `_list`, `_set_status`, `_mission_spawn_pane`
 
-Grupo **squad/agente:** `overclock_squad_{get,list,save,spawn}`, `overclock_agent_{get,list,invoke}`, `overclock_task`, `overclock_workflow`, `overclock_clarify`  
+Grupo **squad/agente:** `overclock_squad_{get,list,save,spawn}`, `overclock_agent_{get,list,invoke}`, `overclock_task`, `overclock_workflow`, `overclock_clarify`
 
-Grupo **catálogo/receita:** `catalog_*`, `marketplace_search`, `recipe_{list,get,save}`, `skill_list`, `stack_get`, `model_list`  
+Grupo **catálogo/receita:** `catalog_*`, `marketplace_search`, `recipe_{list,get,save}`, `skill_list`, `stack_get`, `model_list`
 
-Grupo **cron:** `cron_create`, `cron_list`, `cron_delete`  
+Grupo **cron:** `cron_create`, `cron_list`, `cron_delete`
 
-Grupo **mídia:** `image_generate`, `video_generate`, `audio_generate`, `media_providers`, `open_browser`, `navigate`  
+Grupo **mídia:** `image_generate`, `video_generate`, `audio_generate`, `media_providers`, `open_browser`, `navigate`
 
-Grupo **memória:** `memory_remember/recall/forget`, `overclock_memory_read/write`  
+Grupo **memória:** `memory_remember/recall/forget`, `overclock_memory_read/write`
 
-Grupo **observação (QA do próprio app):** `app_status`, `app_watch`, `app_screenshot`, `app_events`, `app_pane_contents`, `app_observe_once`  
+Grupo **observação (QA do próprio app):** `app_status`, `app_watch`, `app_screenshot`, `app_events`, `app_pane_contents`, `app_observe_once`
 
 Inventário bruto: [`_overclock-124-mcp-surface.txt`](./_overclock-124-mcp-surface.txt).
 
@@ -159,9 +159,9 @@ caller, mas a contagem pública não é uma invariável do runtime.
 - App assinado, notarizado e updater Tauri com manifesto assinado
 
 **Ausente / não enforced como no Nexus:**
-- Sem Seatbelt / Bubblewrap / OCI de OS nos panes  
-- Autonomia-first: bypass/yolo são caminhos de produto, não exceção  
-- Builtins de squad **re-sincronizam a cada boot** (site: “atualizados automaticamente”) — o oposto do hash imutável pós-aprovação do Nexus  
+- Sem Seatbelt / Bubblewrap / OCI de OS nos panes
+- Autonomia-first: bypass/yolo são caminhos de produto, não exceção
+- Builtins de squad **re-sincronizam a cada boot** (site: “atualizados automaticamente”) — o oposto do hash imutável pós-aprovação do Nexus
 - Sem entitlement `com.apple.security.app-sandbox`
 - Política observada `write_external` permite acesso fora do workspace
 - RemoteBridge escuta em todas as interfaces
@@ -177,9 +177,9 @@ a ordem dos gates, não esse blast radius.
 
 ## 5. Harness (produto + binário)
 
-Bundle por **tipo de task**: agente + skills + CLI + modelo + effort.  
-Precedência determinística (site): **roster > invoke > default do catálogo**.  
-Receitas = formações prontas com steps, media tiers, fan-out e gates humanos (`recipe_get` no start de `[RECIPE-RUN]`).  
+Bundle por **tipo de task**: agente + skills + CLI + modelo + effort.
+Precedência determinística (site): **roster > invoke > default do catálogo**.
+Receitas = formações prontas com steps, media tiers, fan-out e gates humanos (`recipe_get` no start de `[RECIPE-RUN]`).
 `overclock_task` / `overclock_workflow` = runtime determinístico (JSON-Schema em artifacts).
 
 ---
@@ -210,7 +210,7 @@ wake delivery, recuperação de drafts e recusa explícita de skill gaps.
 | Empacote | Tauri + sidecar Node 22 | Electron + nativos (ABI hell) |
 | Produto | Resultado publicado (squads com cases) | Missão quase nunca nasce |
 
-**Lição estratégica (não é “copiar Overclock”):**  
+**Lição estratégica (não é “copiar Overclock”):**
 Manter enforcement **depois** que o PTY existe. Antes disso, só gates que o vibe coder entende em uma frase (reaprovar / pasta suja / login CLI). Qualquer hash/CAS/PREVC que impeça o primeiro pane é dívida de produto disfarçada de segurança.
 
 ### Gates do Nexus confirmados no caminho pré-worker
@@ -244,8 +244,8 @@ disparada missão paga ou geração externa para evitar custo e mutação. Ainda
 faltam:
 
 - Paywall real (quais tools somem no Boost vs Pro)
-- Fluxo Jarvis/ClockVoice end-to-end  
-- Squads Original rodando (telemetry de panes/gates)  
+- Fluxo Jarvis/ClockVoice end-to-end
+- Squads Original rodando (telemetry de panes/gates)
 - APIs autenticadas (`/api/v1/squad/decide`, license verify payloads)
 - Cron com sleep/restart/missed run/retry
 - Restore local, worktree e SSH/VPS após queda
@@ -257,7 +257,7 @@ Se quiser a segunda onda: logar no app 1.2.4 + uma missão Livre mínima + uma S
 
 ## 9. Artefatos locais desta destilação
 
-- Este arquivo  
-- [`_overclock-124-mcp-surface.txt`](./_overclock-124-mcp-surface.txt) — nomes extraídos do jsc  
-- DMG fonte: `~/Downloads/Overclock_1.2.4_aarch64.dmg`  
+- Este arquivo
+- [`_overclock-124-mcp-surface.txt`](./_overclock-124-mcp-surface.txt) — nomes extraídos do jsc
+- DMG fonte: `~/Downloads/Overclock_1.2.4_aarch64.dmg`
 - Auditorias anteriores no repo: `2026-07-13-overclock-harness-mcp-jarvis-senior-audit.md`, `2026-07-18-analise-senior-nexus-vs-overclock-orca-omp.md`
