@@ -34,6 +34,7 @@ import {
   type ProjectDomainStoreSuite,
 } from "./orch/project-domain-store-registry";
 import { requireRendererWorkspaceScope } from "./persistence/renderer-workspace-scope";
+import { replaceOrchSettings } from "./persistence/settings-store";
 import { grantWorkspacePathFromTrustedMain } from "./persistence/workspace-store";
 import {
   persistRealMissionE2ESquadFixture,
@@ -177,6 +178,18 @@ function scheduleProductWizardTrustedLaunchClicks(
 
 export function initRealMissionE2E(): void {
   if (!isCurrentProcessRealMissionE2E()) return;
+  // Release evidence still requires mission-driver-prevc completion receipts.
+  // Production fast path (risk=normal) completes via verified task-plan and
+  // would leave completion=null — pin the kill-switch for this harness only.
+  const orch = replaceOrchSettings({ fastPath: false });
+  if (orch.fastPath !== false) {
+    throw new Error(
+      "real-mission e2e requires orch.fastPath=false so PREVC driver completion is recorded",
+    );
+  }
+  console.log(
+    "[real-mission] orch.fastPath=false (PREVC driver required for release evidence)",
+  );
   const launchSurface: RealMissionE2ELaunchSurface =
     isCurrentProcessRealMissionProductWizardE2E()
       ? "product-wizard"
