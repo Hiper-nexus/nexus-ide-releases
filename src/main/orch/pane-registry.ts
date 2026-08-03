@@ -1164,6 +1164,9 @@ export function getPaneAuthzInfo(paneRef: string): PaneAuthzInfo | null {
 
 export type OwnedPaneAuthzInfo = Readonly<PaneAuthzInfo> & {
   readonly owner: WebContents;
+  /** Display identity for operator-facing diagnostics (watchdog handoffs). */
+  readonly title?: string;
+  readonly agentName?: string;
 };
 
 export type PaneRuntimeAuthority = Readonly<PaneAuthzInfo> & {
@@ -1209,6 +1212,10 @@ export function getOwnedPaneAuthzInfo(
     ...info,
     scope: info.scope ? Object.freeze({ ...info.scope }) : undefined,
     owner: registered.owner,
+    title: registered.entry.title,
+    agentName: orchMetaByPane.get(
+      paneMetaKey(registered.owner, registered.entry.paneId),
+    )?.agentName,
   });
 }
 
@@ -1227,6 +1234,10 @@ export function getOwnedPaneAuthzInfoBySession(
     ...info,
     scope: info.scope ? Object.freeze({ ...info.scope }) : undefined,
     owner: registered.owner,
+    title: registered.entry.title,
+    agentName: orchMetaByPane.get(
+      paneMetaKey(registered.owner, registered.entry.paneId),
+    )?.agentName,
   });
 }
 

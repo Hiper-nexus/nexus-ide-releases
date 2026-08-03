@@ -13,6 +13,58 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.23.0',
+  date: '2026-08-03',
+  codename: 'Missão nasce, anda e respira melhor',
+  summary:
+    'O fan-out de panes ganha roteamento read-only por topologia e ACK de ' +
+    'handoff por leitura física, o spawn falha rápido quando falta auth de ' +
+    'MCP, e a orquestração de panes fica mais leve: IPC coalescido, render ' +
+    'só do que está visível e pipes com flush adaptativo. A aprovação perde ' +
+    'o despejo de hashes e a interface ganha profundidade em camadas.',
+  highlights: [
+    {
+      title: 'Fan-out read-only sem deadlock',
+      detail:
+        'Missões de consulta abrem todos os especialistas em panes somente ' +
+        'leitura por topologia selada, e o ACK do handoff passa a ser prova ' +
+        'física por leitura — a fila deixa de morrer esperando um paste idle ' +
+        'que nunca vinha.',
+    },
+    {
+      title: 'Spawn honesto e frota maior',
+      detail:
+        'Auth de MCP ausente vira falha rápida no watchdog em vez de pane ' +
+        'preso no login, e o teto de workers sobe para 12 panes alinhado ao ' +
+        'orçamento aprovado.',
+    },
+    {
+      title: 'Orquestração de panes mais leve',
+      detail:
+        'O espelho renderer→main coalesce rajadas de sync em uma chamada por ' +
+        'frame, terminais só renderizam quando visíveis (com repaint na ' +
+        'volta), e pipes fluem a 50ms cheios e 300ms rasos.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Aprovação sem despejo de hashes',
+      detail:
+        'O modal de missão mostra os fatos que importam e uma única âncora ' +
+        'de review integral; a identidade do squad e o recibo auditável ' +
+        'seguem intactos.',
+    },
+    {
+      title: 'Profundidade visual em camadas',
+      detail:
+        'Sombras em duas camadas e filete de luz interno nas superfícies ' +
+        'elevadas (menus, modais, painéis, wizard) — hierarquia por ' +
+        'material, não por borda.',
+    },
+  ],
+};
+
+export const RELEASE_02201: AppRelease = {
   version: '0.22.1',
   date: '2026-08-02',
   codename: 'O piloto para de girar em falso',

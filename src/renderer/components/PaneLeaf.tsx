@@ -85,7 +85,9 @@ function TerminalPaneLeaf({ pane }: Props) {
 
   useLayoutEffect(() => {
     const slot = slotRef.current;
-    if (!slot) return;
+    // jsdom/testes não têm IntersectionObserver: sem ele o pane segue sempre
+    // visível (comportamento antigo), nunca quebra o mount.
+    if (!slot || typeof IntersectionObserver === 'undefined') return;
     observerRef.current = new IntersectionObserver(handleIntersection, {
       root: null,
       threshold: 0.1, // Consider visible when 10% is in viewport

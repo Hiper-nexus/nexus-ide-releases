@@ -1518,7 +1518,7 @@ describe("entrega física das skills concedidas ao Codex", () => {
     };
   }
 
-  it("materializa no perfil real do Codex APENAS a skill concedida (modo default)", () => {
+  it("materializa a skill concedida no CODEX_HOME privado também no operator-choice", () => {
     setSquadCliPolicyLookupForTests(() => "operator-choice");
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-codex-skills-"));
     const home = path.join(root, "home");
@@ -1537,16 +1537,21 @@ describe("entrega física das skills concedidas ao Codex", () => {
         workerWithSkills(["granted-skill"]),
       );
       const spec = h.specFor(worker.sessionId);
-      // O modo default NÃO prepara o CODEX_HOME privado: o worker lê o perfil
-      // real, então é lá que a concessão precisa aterrissar.
-      expect(spec.env.CODEX_HOME).toBeUndefined();
-      const realSkills = path.join(home, ".codex", "skills");
+      // Operator-choice isolado: o MCP ambient do ~/.codex real não vaza para
+      // o worker — CODEX_HOME privado recebe a concessão, o perfil real fica
+      // intocado (prepareCodexOperatorMissionHome).
+      expect(spec.env.CODEX_HOME).toBeTruthy();
       expect(
-        fs.existsSync(path.join(realSkills, "granted-skill", "SKILL.md")),
+        fs.existsSync(
+          path.join(spec.env.CODEX_HOME!, "skills", "granted-skill", "SKILL.md"),
+        ),
       ).toBe(true);
-      expect(fs.existsSync(path.join(realSkills, "ungranted-skill"))).toBe(
-        false,
-      );
+      expect(
+        fs.existsSync(path.join(spec.env.CODEX_HOME!, "skills", "ungranted-skill")),
+      ).toBe(false);
+      expect(
+        fs.existsSync(path.join(home, ".codex", "skills", "granted-skill")),
+      ).toBe(false);
       killSession(owner, worker.sessionId);
     } finally {
       cleanupHook();

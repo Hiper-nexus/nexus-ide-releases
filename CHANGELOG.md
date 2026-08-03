@@ -1,6 +1,10 @@
 # Changelog
 
-## Não lançado — missão deixa de girar em falso
+## 0.23.0 — Missão nasce, anda e respira melhor
+
+Data: 2026-08-03
+
+### Missão deixa de girar em falso
 
 - A aprovação sela uma cópia imutável do squad para a missão; sincronização de
   catálogo/builtins no boot não invalida mais o hash já aprovado.
@@ -24,6 +28,23 @@
 - O pane recém-lançado do orquestrador recebe foco depois que shells existentes
   são preservados. No Canvas, a missão volta a ocupar o topo correto do
   stacking e não fica escondida atrás de um terminal antigo.
+
+### Orquestração de panes (performance)
+
+- Fan-out de panes com roteamento read-only por topologia (`team-read-only-
+  fanout`) e ACK de handoff por leitura física (sem deadlock de paste idle).
+- MCP auth fail-fast no watchdog de login e `maxWorkers` alinhado a 12 panes.
+- IPC renderer↔main coalescido por frame (syncPanes em rajada vira 1 chamada),
+  memoização de contagens no Canvas e render de terminal somente para panes
+  visíveis (IntersectionObserver + repaint na volta).
+- Flush de pipes adaptativo por profundidade de fila: 50ms cheio, 300ms raso.
+
+### Interface
+
+- Modal de aprovação enxuto: hashes por linha removidos; âncora única no
+  `Review integral` e identidade do squad preservada.
+- Profundidade visual 2026: sombras em duas camadas e filete de luz interno em
+  superfícies elevadas (menus, modais, painéis, wizard).
 
 ## 0.22.0 — O piloto aprende a pilotar
 
