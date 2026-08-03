@@ -949,7 +949,7 @@ export function assertRealMissionPassEvidence(raw) {
       );
     });
   const chainHandoffIsExact =
-    handoffs.length === chain.length &&
+    chainHandoffs.length === chain.length &&
     exactDurableHandoffSet &&
     chain.every((member, index) =>
       handoffMatches(
