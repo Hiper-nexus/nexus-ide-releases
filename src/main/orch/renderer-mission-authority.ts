@@ -1786,7 +1786,10 @@ export class RendererMissionAuthority {
 
   promotePlanLaneFromRenderer(
     owner: WebContents,
-    input: { missionId: string },
+    input: {
+      missionId: string;
+      orchestrationMode?: "pack" | "guided";
+    },
     expectedFence: string,
     expectedPlan: PromotedPlanSnapshot,
     approvalReviewSha256?: string,
@@ -1862,8 +1865,12 @@ export class RendererMissionAuthority {
     const risk = classifyGoalRisk(contract.goal);
     const nextVersion = (current.intentVersion ?? 0) + 1;
     const now = Date.now();
+    const {
+      orchestrationMode: _priorOrchestrationMode,
+      ...contractWithoutMode
+    } = contract;
     const nextContract = {
-      ...contract,
+      ...contractWithoutMode,
       lane: "standard" as const,
       intentVersion: nextVersion,
       risk,
@@ -1885,6 +1892,9 @@ export class RendererMissionAuthority {
         : undefined,
       squadRevisionHash: squadSnapshot.hash,
       orchestratorRuntime: { ...orchestratorRuntime },
+      ...(input.orchestrationMode
+        ? { orchestrationMode: input.orchestrationMode }
+        : {}),
       promotedPlan: {
         ...promotedPlan,
         physicalReceipt: { ...promotedPlan.physicalReceipt },

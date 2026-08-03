@@ -1087,7 +1087,10 @@ const api: NexusApi = {
       ipcRenderer.invoke(ORCH_CHANNELS.missionResumeBootstrap, input),
     rearmMission: (input: { missionId: string }) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionRearm, input),
-    promotePlanLane: (input: { missionId: string }) =>
+    promotePlanLane: (input: {
+      missionId: string;
+      orchestrationMode?: 'pack' | 'guided';
+    }) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionPromotePlanLane, input),
     submitMissionKickoff: (input: {
       missionId: string;

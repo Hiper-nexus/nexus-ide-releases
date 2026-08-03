@@ -79,9 +79,9 @@ handoff, merge validation.
    kickoff Pack).
 2. **Wave 1:** optional `orchestrationMode` on the intent contract + plan seal
    (`forcedMode` → `resolveMissionOrchestrationMode`) so Pack can be forced or
-   suppressed without a wizard redesign. Full Livre/Pack/Guiado picker in the
-   MissionWizard remains an optional follow-up; builtin story-impl prompt polish
-   beyond kickoff override.
+   suppressed. Promote UI asks Pack vs Guiado when the physical plan has ≥2
+   BMAD stories (MissionRail ▶ and toast “Executar plano”); native review stays
+   the authority boundary. Full Livre picker in MissionWizard remains optional.
 3. **Wave 2:** structured story artifacts (stop relying on markdown parse);
    Pack templates (Landing / SaaS / Fix) with declared fan-out.
 

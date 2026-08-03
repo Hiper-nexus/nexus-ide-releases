@@ -2181,6 +2181,7 @@ export function registerOrchIpc(): void {
   const missionPromotePlanSchema = z
     .object({
       missionId: z.string().min(1).max(128),
+      orchestrationMode: z.enum(['pack', 'guided']).optional(),
     })
     .strict();
   ipcMain.handle(ORCH_CHANNELS.missionPromotePlanLane, async (event, raw) => {

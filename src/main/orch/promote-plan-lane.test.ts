@@ -408,7 +408,7 @@ describe('promotePlanLaneFromRenderer', () => {
 
     const promoted = auth.promotePlanLaneFromRenderer(
       owner,
-      { missionId: 'm-plan' },
+      { missionId: 'm-plan', orchestrationMode: 'pack' },
       detached.fence,
       detached.promotedPlan!,
     );
@@ -416,6 +416,7 @@ describe('promotePlanLaneFromRenderer', () => {
     expect(promoted.squadId).toBe(NEXUS_STORY_IMPLEMENTATION_SQUAD_ID);
     expect(promoted.intentContract).toMatchObject({
       lane: 'standard',
+      orchestrationMode: 'pack',
       squadRevisionHash: snapshotSquadAuthority(executionTarget).hash,
       orchestratorRuntime: candidate.orchestratorRuntime,
       promotedPlan: {

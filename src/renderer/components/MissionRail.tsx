@@ -389,8 +389,8 @@ export function MissionRail() {
     if (result.ok) {
       setNote(
         result.detail?.includes('Sem pane')
-          ? 'Plano promovido — PREVC ativo (sem pane para notificar).'
-          : 'Plano promovido — PREVC ativo e orquestrador notificado.',
+          ? 'Plano promovido — execução ativa (sem pane para notificar).'
+          : 'Plano promovido — execução iniciada e orquestrador notificado.',
       );
     } else if (result.error) {
       setNote(result.error);
@@ -1028,7 +1028,7 @@ export function MissionRail() {
                                   type="button"
                                   className="mission-rail__row-action mission-rail__row-action--promote"
                                   disabled={busy !== null}
-                                  title="Executar plano — promover lane plan → código PREVC"
+                                  title="Executar plano — Pack ou Guiado, depois revisão nativa"
                                   aria-label={`Executar plano da missão ${m.title}`}
                                   onClick={(e) => {
                                     e.stopPropagation();

@@ -621,8 +621,12 @@ export interface NexusApi {
     rearmMission(input: {
       missionId: string;
     }): Promise<{ ok: true } | { ok: false; error: string }>;
-    /** After plan.md is ready: plan lane → standard PREVC. */
-    promotePlanLane(input: { missionId: string }): Promise<Mission>;
+    /** After plan.md is ready: plan lane → standard execution. */
+    promotePlanLane(input: {
+      missionId: string;
+      /** Operator Pack/Guiado override stamped on the promoted contract. */
+      orchestrationMode?: 'pack' | 'guided';
+    }): Promise<Mission>;
     /** Submit an approved mission kickoff through main-owned PTY authority. */
     submitMissionKickoff(input: {
       missionId: string;
