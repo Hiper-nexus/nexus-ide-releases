@@ -138,9 +138,16 @@
   --radius-2xl: 18px;
   --radius-round: 999px;
 
-  --shadow-1: 0 4px 14px rgba(0, 0, 0, 0.35);
-  --shadow-2: 0 12px 32px rgba(0, 0, 0, 0.45);
-  --shadow-3: 0 24px 64px rgba(0, 0, 0, 0.5);
+  /* Sombras em DUAS camadas (contato curto + difusão larga): superfícies
+     elevadas leem como material flutuando, não como mancha escura — o padrão
+     de profundidade do design 2026. Mantidas neutras (sem tinta de cor). */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 14px rgba(0, 0, 0, 0.3);
+  --shadow-2: 0 2px 6px rgba(0, 0, 0, 0.4), 0 12px 32px rgba(0, 0, 0, 0.4);
+  --shadow-3: 0 4px 12px rgba(0, 0, 0, 0.45), 0 24px 64px rgba(0, 0, 0, 0.45);
+  /* Filete de luz interno na borda superior de superfícies elevadas: separa a
+     camada do fundo sem borda extra. Aplicado junto de --shadow-* em menus,
+     modais e painéis. Sutil (5% branco) — profundidade, não decoração. */
+  --shadow-inset-hi: inset 0 1px 0 rgb(255 255 255 / 0.05);
 
   /* Estados operacionais: ponto + verbo + tempo. */
   --ok: #7ee2a8;
@@ -577,7 +584,7 @@ body {
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
   background: var(--bg-elevated, var(--bg-bar));
-  box-shadow: var(--shadow-1, 0 8px 24px rgba(0, 0, 0, 0.35));
+  box-shadow: var(--shadow-inset-hi), var(--shadow-1, 0 8px 24px rgba(0, 0, 0, 0.35));
   display: flex;
   flex-direction: column;
   gap: 2px;

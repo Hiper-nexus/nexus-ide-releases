@@ -458,7 +458,7 @@
   /* Um dialeto de raio só: token (o pixel-mode zera a escala inteira). */
   border-radius: var(--radius-xl);
   padding: 22px;
-  box-shadow: var(--shadow-3);
+  box-shadow: var(--shadow-inset-hi), var(--shadow-3);
   z-index: 61;
 }
 
@@ -573,7 +573,7 @@
   background: var(--bg-elevated);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
-  box-shadow: var(--shadow-2);
+  box-shadow: var(--shadow-inset-hi), var(--shadow-2);
   z-index: 25;
 }
 

@@ -38,7 +38,7 @@
   border: 1px solid var(--border-strong);
   /* Um dialeto de raio só: token (o pixel-mode zera a escala inteira). */
   border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-3);
+  box-shadow: var(--shadow-inset-hi), var(--shadow-3);
   z-index: var(--z-soft-panel);
   overflow: hidden;
   isolation: isolate;

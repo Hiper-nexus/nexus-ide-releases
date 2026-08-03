@@ -67,7 +67,9 @@ tokens. Estado nunca viaja só em cor: sempre com glifo/palavra
 
 - Espaço: `--space-1..8` (4→64px). Tipo: `--text-2xs..hero` (10→34px).
 - Raio: `--radius-xs..2xl` (2→18px) + `--radius-round`. Cards ≤ `--radius-xl`.
-- Sombra: `--shadow-1..3`. z-index: ladder nomeada
+- Sombra: `--shadow-1..3` em duas camadas (contato curto + difusão larga) e
+  `--shadow-inset-hi` (filete de luz interno) aplicado com elas em superfícies
+  elevadas — menus, modais, painéis. z-index: ladder nomeada
   (`--z-soft-overlay:45 … --z-confirm:1300`) — nunca valor solto.
 - `--bar-height: 44px`, `--toolbar-height: 28px`.
 

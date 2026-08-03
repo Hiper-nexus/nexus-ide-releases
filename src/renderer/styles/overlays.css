@@ -234,7 +234,7 @@
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-lg, 10px);
   background: var(--bg-elevated);
-  box-shadow: var(--shadow-2);
+  box-shadow: var(--shadow-inset-hi), var(--shadow-2);
   padding: 12px 14px 14px;
   animation: voice-hud-in 160ms var(--ease-out-expo);
 }
