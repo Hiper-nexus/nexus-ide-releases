@@ -183,6 +183,7 @@ export function resolveProductWizardRealMissionE2ESquadBinding(
       snapshotSquadAuthority({
         ...intermediate,
         id: REAL_MISSION_E2E_SQUAD_ID,
+        orchestratorInstructions: source.orchestratorInstructions,
       }).hash === sourceRevisionHash
     );
   };

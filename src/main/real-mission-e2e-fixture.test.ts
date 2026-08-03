@@ -302,6 +302,44 @@ describe("main-owned real mission squad fixture", () => {
       squadRevisionHash: snapshotSquadAuthority(runtime).hash,
     });
 
+    // Cópia do operador com instruções retargeted também é aceita sem quebra de lineage.
+    const operatorCopyRetargeted: Squad = {
+      ...source,
+      id: "squad-retargeted-4efe96d6",
+      orchestratorInstructions: retargetSquadInstructions(
+        source.orchestratorInstructions,
+        REAL_MISSION_E2E_GOAL,
+      ),
+    };
+    const runtimeRetargeted: Squad = {
+      ...runtime,
+      id: "mission-runtime-22222222-2222-4222-8222-222222222222",
+      runtimeSourceSquadId: operatorCopyRetargeted.id,
+      runtimeSourceSquadRevisionHash: snapshotSquadAuthority(
+        operatorCopyRetargeted,
+      ).hash,
+    };
+    const lookupRetargeted = (id: string) =>
+      id === source.id
+        ? source
+        : id === operatorCopyRetargeted.id
+          ? operatorCopyRetargeted
+          : id === runtimeRetargeted.id
+            ? runtimeRetargeted
+            : null;
+
+    expect(
+      resolveProductWizardRealMissionE2ESquadBinding(
+        runtimeRetargeted.id,
+        lookupRetargeted,
+      ),
+    ).toMatchObject({
+      squadId: runtimeRetargeted.id,
+      sourceSquadId: source.id,
+      sourceSquadRevisionHash: snapshotSquadAuthority(source).hash,
+      squadRevisionHash: snapshotSquadAuthority(runtimeRetargeted).hash,
+    });
+
     // Cópia com conteúdo divergente (roster editado) continua rejeitada.
     const driftedCopy: Squad = {
       ...operatorCopy,
