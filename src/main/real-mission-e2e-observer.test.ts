@@ -253,6 +253,7 @@ it("fails closed when the runtime snapshot hash diverges from the approved inten
 function createObserver(options?: {
   advisorSkipClis?: readonly string[];
   startedAt?: number;
+  orchestratorCli?: "codex" | "claude";
 }): RealMissionObserver {
   return new RealMissionObserver({
     owner,
@@ -277,6 +278,9 @@ function createObserver(options?: {
       : {}),
     ...(options?.startedAt !== undefined
       ? { startedAt: options.startedAt }
+      : {}),
+    ...(options?.orchestratorCli
+      ? { orchestratorCli: options.orchestratorCli }
       : {}),
   });
 }
@@ -688,6 +692,70 @@ describe("real mission observer advisor participation", () => {
       .evidence(Date.now(), "fail", "timeout")
       .participation.find((row) => row.cli === "grok");
     expect(grok?.firstNexusToolAt).toBe(200);
+    observer.stop();
+  });
+
+  it("drops the retired Maestro PTY after Claude kickoff technical recovery", () => {
+    harness.mission = { id: MISSION_ID, status: "running" };
+    const orchAgent = (sessionId: string) => ({
+      sessionId,
+      missionId: MISSION_ID,
+      adapterId: "claude" as const,
+      role: "orchestrator" as const,
+      agentName: REAL_MISSION_E2E_ORCHESTRATOR_NAME,
+      squadId: REAL_MISSION_E2E_SQUAD_ID,
+      readOnly: false,
+      nativeReadOnly: false,
+    });
+    harness.agentInfos.set("session-orch-1", orchAgent("session-orch-1"));
+    harness.sessionStates.set("session-orch-1", "busy");
+    const observer = createObserver({ orchestratorCli: "claude" });
+    observer.start();
+    harness.stateTap?.("session-orch-1", "busy");
+
+    harness.sessionStates.delete("session-orch-1");
+    harness.agentInfos.set("session-orch-2", orchAgent("session-orch-2"));
+    harness.sessionStates.set("session-orch-2", "busy");
+    harness.stateTap?.("session-orch-2", "busy");
+
+    expect(harness.finishes).toEqual([]);
+    const evidence = observer.evidence(Date.now(), "fail", "timeout");
+    expect(evidence.physicalPty).toEqual({
+      count: 1,
+      ids: ["session-orch-2"],
+    });
+    observer.stop();
+  });
+
+  it("drops the retired Maestro PTY after Claude kickoff technical recovery", () => {
+    harness.mission = { id: MISSION_ID, status: "running" };
+    const orchAgent = (sessionId: string) => ({
+      sessionId,
+      missionId: MISSION_ID,
+      adapterId: "claude" as const,
+      role: "orchestrator" as const,
+      agentName: REAL_MISSION_E2E_ORCHESTRATOR_NAME,
+      squadId: REAL_MISSION_E2E_SQUAD_ID,
+      readOnly: false,
+      nativeReadOnly: false,
+    });
+    harness.agentInfos.set("session-orch-1", orchAgent("session-orch-1"));
+    harness.sessionStates.set("session-orch-1", "busy");
+    const observer = createObserver({ orchestratorCli: "claude" });
+    observer.start();
+    harness.stateTap?.("session-orch-1", "busy");
+
+    harness.sessionStates.delete("session-orch-1");
+    harness.agentInfos.set("session-orch-2", orchAgent("session-orch-2"));
+    harness.sessionStates.set("session-orch-2", "busy");
+    harness.stateTap?.("session-orch-2", "busy");
+
+    expect(harness.finishes).toEqual([]);
+    const evidence = observer.evidence(Date.now(), "fail", "timeout");
+    expect(evidence.physicalPty).toEqual({
+      count: 1,
+      ids: ["session-orch-2"],
+    });
     observer.stop();
   });
 
