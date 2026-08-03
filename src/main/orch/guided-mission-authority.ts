@@ -8,6 +8,7 @@ import {
   classifyStandardMissionTopology,
   type StandardMissionTopology,
 } from "../../shared/mission-topology";
+import { getOrchSettings } from "../persistence/settings-store";
 import { getSquad } from "./squad-store";
 
 type GuidedMissionAuthoritySubject = Pick<
@@ -71,21 +72,41 @@ export function hasMainOwnedGuidedDeliveryAuthority(
  *
  * This decision is intentionally mission-level. Task details are sealed work
  * instructions, not authority to opt a mission into or out of PREVC.
+ *
+ * Fast path (`docs/design/orch-fast-path.md`): `risk=normal` skips PREVC so
+ * feature work reaches a writable pane without freeze/Doctor ceremony.
+ * Sensitive/destructive keep the fence. Wave Pack / team fan-out never use it.
+ *
+ * Callers that honor `orch.fastPath=false` pass `enforcePrevcOnNormalRisk`.
  */
 export function missionRequiresGuidedPrevc(
   mission: GuidedMissionAuthoritySubject,
   sealedTopology?: StandardMissionTopology,
+  options: { readonly enforcePrevcOnNormalRisk?: boolean } = {},
 ): boolean {
   const contract = mission.intentContract;
   const topology =
     sealedTopology ??
     classifyStandardMissionTopology(contract?.goal ?? "");
-  return Boolean(
-    contract &&
-      (contract.lane ?? "standard") === "standard" &&
-      HUMAN_GUIDED_INTENT_SOURCES.has(contract.source) &&
-      !contract.requiredWorkerAgentRef &&
-      topology !== "team-read-only-fanout" &&
-      hasMainOwnedGuidedDeliveryAuthority(mission),
-  );
+  if (
+    !contract ||
+    (contract.lane ?? "standard") !== "standard" ||
+    !HUMAN_GUIDED_INTENT_SOURCES.has(contract.source) ||
+    contract.requiredWorkerAgentRef ||
+    topology === "team-read-only-fanout" ||
+    topology === "wave-pack" ||
+    !hasMainOwnedGuidedDeliveryAuthority(mission)
+  ) {
+    return false;
+  }
+  if (
+    contract.risk === "normal" &&
+    !(
+      options.enforcePrevcOnNormalRisk ??
+      getOrchSettings().fastPath === false
+    )
+  ) {
+    return false;
+  }
+  return true;
 }

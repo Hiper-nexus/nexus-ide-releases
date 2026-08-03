@@ -358,8 +358,8 @@ export function formatDelivery(
   const claimTrust = isSystem ? 'system' : 'untrusted';
   const evidenceLabel = isSystem ? 'nexus_system' : evidence;
   const acknowledgementAuthority =
-    schedulerTopology === 'delivery'
-      ? 'scheduler_owned=true topology=delivery no_manual_ack_required=true'
+    schedulerTopology === 'delivery' || schedulerTopology === 'wave-pack'
+      ? `scheduler_owned=true topology=${schedulerTopology} no_manual_ack_required=true`
       : schedulerTopology === 'team-read-only-fanout'
         ? 'scheduler_owned=true topology=team-read-only-fanout ' +
           'consume_with=nexus_handoff_ack'

@@ -52,6 +52,16 @@ export interface ApplyActionPorts {
     status: MissionStatus,
   ): void | Promise<void>;
   /**
+   * Human-side stop WITH a durable, operator-readable verdict in the mission
+   * description. Never a silent `{status:'blocked'}` — the rail must be able
+   * to name the cause.
+   */
+  blockHuman(
+    missionId: string,
+    scope: ProjectExecutionScope,
+    reason: string,
+  ): void | Promise<void>;
+  /**
    * Complete mission only when all steps are done via trusted evidence path.
    * Must reject otherwise (never flip status from text promise).
    */
@@ -101,7 +111,7 @@ export async function applyDriveAction(
       await ports.advanceStep(missionId, scope, action.stepId);
       return { applied: true, kind: 'advance' };
     case 'block-human':
-      await ports.setMissionStatus(missionId, scope, 'blocked');
+      await ports.blockHuman(missionId, scope, action.reason);
       await ports.appendLearning(
         missionId,
         scope,

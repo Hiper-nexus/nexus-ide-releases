@@ -112,6 +112,11 @@ export class StaleReadOnlyObservationError extends Error {
  * lane nova entra aqui por decisão consciente. Mas o teste de cobertura ao
  * lado garante que ninguém adicione lane read_only ao grafo e esqueça deste
  * arquivo — o esquecimento é o modo de falha real, não a discordância.
+ *
+ * `warmup` fica FORA por decisão: roda na onda 1, antes de existir qualquer
+ * integração, então a exigência de observar o HEAD integrado mais recente é
+ * mecanicamente inaplicável. O warm-up prepara o checklist da revisão; não
+ * julga o diff e não emite recibo sobre código integrado.
  */
 export const FENCED_READ_ONLY_LANE_KINDS: ReadonlySet<string> = new Set([
   "advisory",

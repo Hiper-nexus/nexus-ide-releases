@@ -1,3 +1,5 @@
+import { appendMissionVerdict } from '../../shared/mission-block-cause';
+import { missionBlockPatch } from '../../shared/mission-blocking';
 import {
   isRecoveryEligibleIntentState,
   resolveEffectiveIntentState,
@@ -530,6 +532,25 @@ export function createProductionApplyPorts(
       const updated = getStores(scope).missions.setStatus(missionId, status);
       if (!updated) {
         throw new Error(`setStatus failed for mission ${missionId}`);
+      }
+    },
+    blockHuman: (missionId, scope, reason) => {
+      const stores = getStores(scope);
+      const current = stores.missions.get(missionId);
+      if (!current) {
+        throw new Error(`blockHuman failed for mission ${missionId}: not found`);
+      }
+      const updated = stores.missions.update(missionId, {
+        ...missionBlockPatch('user'),
+        description: appendMissionVerdict(
+          current.description,
+          '<!-- nexus:driver-block-human -->',
+          '[NEXUS_DRIVER_BLOCK_HUMAN]',
+          reason,
+        ),
+      });
+      if (!updated) {
+        throw new Error(`blockHuman failed for mission ${missionId}`);
       }
     },
     completeMission: (missionId, scope) => {

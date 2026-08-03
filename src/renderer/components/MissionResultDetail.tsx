@@ -1,9 +1,15 @@
+import { useState } from 'react';
 import type { Mission } from '../../shared/orch-types';
 import {
   PRIOR_MISSION_MEMORY_MARKER,
 } from '../../shared/mission-result-format';
 import { presentMissionFailure } from '../../shared/mission-failure-presentation';
-import { hasAutomaticTechnicalRecovery } from '../../shared/mission-recovery-policy';
+import {
+  hasAutomaticTechnicalRecovery,
+  parseRecoveryAttemptBlock,
+} from '../../shared/mission-recovery-policy';
+import { askConfirm } from '../state/confirm-store';
+import { MissionWaveSchedule } from './MissionWaveSchedule';
 
 const MISSION_LEARNINGS_LIMIT = 65_536;
 
@@ -39,7 +45,12 @@ function missionResultSections(learnings: string): {
 }
 
 function missionResultStatus(mission: Mission): string {
-  if (hasAutomaticTechnicalRecovery(mission)) return 'Recuperando';
+  if (hasAutomaticTechnicalRecovery(mission)) {
+    const attempt = parseRecoveryAttemptBlock(mission.description ?? '');
+    return attempt
+      ? `Recuperando ${attempt.attempt}/${attempt.maxAttempts}`
+      : 'Recuperando';
+  }
   switch (mission.status) {
     case 'pending':
       return 'Planejada';
@@ -122,6 +133,109 @@ function MissionResultContent({ mission }: { mission: Mission }) {
   );
 }
 
+const RECOVERY_ESCALATION_MIN_ATTEMPT = 3;
+const RECOVERY_ESCALATION_AGE_MS = 10 * 60_000;
+
+function MissionRecoveryStatus({ mission }: { mission: Mission }) {
+  const [busy, setBusy] = useState<'resume' | 'close' | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  if (!hasAutomaticTechnicalRecovery(mission)) return null;
+  const attempt = parseRecoveryAttemptBlock(mission.description ?? '');
+  const ageMs = attempt ? Date.now() - Date.parse(attempt.at) : 0;
+  const stuck =
+    attempt !== null &&
+    (attempt.attempt >= RECOVERY_ESCALATION_MIN_ATTEMPT ||
+      ageMs > RECOVERY_ESCALATION_AGE_MS);
+
+  async function forceResume(): Promise<void> {
+    setBusy('resume');
+    setNotice(null);
+    try {
+      const result = await window.nexus.orch.resumeMissionBootstrap({
+        missionId: mission.id,
+      });
+      setNotice(
+        result.ok
+          ? 'Retomada forçada: o bootstrap revalidou as autoridades e seguiu.'
+          : `A retomada forçada parou: ${result.error}`,
+      );
+    } catch {
+      setNotice('Não foi possível forçar a retomada agora.');
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function closeRuntime(): Promise<void> {
+    const confirmed = await askConfirm({
+      title: 'Encerrar execução da missão',
+      body:
+        `Encerrar a execução de "${mission.title}" preserva histórico e ` +
+        'receipts, mas interrompe a recuperação automática desta revisão.',
+      confirmLabel: 'Encerrar execução',
+      danger: true,
+    });
+    if (!confirmed) return;
+    setBusy('close');
+    setNotice(null);
+    try {
+      const result = await window.nexus.orch.closeMissionRuntime(mission.id);
+      setNotice(
+        result.ok
+          ? 'Execução encerrada; histórico preservado.'
+          : `Não foi possível encerrar: ${result.error ?? 'falha sem detalhe'}.`,
+      );
+    } catch {
+      setNotice('Não foi possível encerrar a execução agora.');
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <section
+      className="mission-result__diagnostic"
+      aria-labelledby="mission-recovery-status-title"
+      data-testid="mission-recovery-status"
+    >
+      <h3 id="mission-recovery-status-title">Recuperação automática</h3>
+      {attempt ? (
+        <p data-testid="mission-recovery-attempt">
+          Tentativa {attempt.attempt} de {attempt.maxAttempts} ·{' '}
+          {attempt.reason}
+        </p>
+      ) : (
+        <p>Nenhuma tentativa registrada ainda — a primeira está em voo.</p>
+      )}
+      {stuck && (
+        <>
+          <p>
+            A recuperação não está cedendo. Você pode forçar uma retomada
+            imediata ou encerrar a execução e revisar o plano.
+          </p>
+          <button
+            type="button"
+            className="orch-panel__btn"
+            onClick={() => void forceResume()}
+            disabled={busy !== null}
+          >
+            {busy === 'resume' ? 'Retomando…' : 'Forçar retomada'}
+          </button>
+          <button
+            type="button"
+            className="orch-panel__btn"
+            onClick={() => void closeRuntime()}
+            disabled={busy !== null}
+          >
+            {busy === 'close' ? 'Encerrando…' : 'Encerrar execução'}
+          </button>
+        </>
+      )}
+      {notice && <p role="status">{notice}</p>}
+    </section>
+  );
+}
+
 export function MissionResultDetail({
   mission,
   onBack,
@@ -188,6 +302,8 @@ export function MissionResultDetail({
           )}
         </section>
       )}
+      <MissionWaveSchedule missionId={mission.id} />
+      <MissionRecoveryStatus mission={mission} />
       <MissionResultContent mission={mission} />
     </article>
   );

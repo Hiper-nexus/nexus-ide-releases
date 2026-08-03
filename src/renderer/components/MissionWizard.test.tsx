@@ -634,6 +634,7 @@ describe("MissionWizard guided approval handoff", () => {
       evidenceAttached: false,
       source: "typed",
       lane: "standard",
+      orchestrationMode: "guided",
     });
     expect(host.querySelector("textarea")).toBeNull();
     expect(host.textContent).not.toContain("Aguardando seu objetivo");

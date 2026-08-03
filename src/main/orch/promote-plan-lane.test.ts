@@ -368,15 +368,24 @@ describe('promotePlanLaneFromRenderer', () => {
       [runtimePlan, executionTarget],
     );
 
-    const candidate = auth.planPromotionCandidateFromRenderer(owner, {
+    const promoteChoice = {
       missionId: 'm-plan',
-    });
+      orchestrationMode: 'pack' as const,
+      wavePackTemplateId: 'fix' as const,
+    };
+    const candidate = auth.planPromotionCandidateFromRenderer(
+      owner,
+      promoteChoice,
+    );
 
     expect(candidate.squad).toMatchObject({
       id: NEXUS_STORY_IMPLEMENTATION_SQUAD_ID,
       name: executionTarget.name,
       hash: snapshotSquadAuthority(executionTarget).hash,
     });
+    expect(candidate.orchestrationMode).toBe('pack');
+    expect(candidate.wavePackTemplateId).toBe('fix');
+    expect(candidate.wavePackStoryCount).toBe(2);
     expect(
       candidate.squad.agents
         .filter((agent) => agent.category !== 'orchestrator')
@@ -398,17 +407,19 @@ describe('promotePlanLaneFromRenderer', () => {
     const detached =
       auth.planPromotionCandidateAfterTeardownFromMain(
         owner,
-        { missionId: 'm-plan' },
+        promoteChoice,
         candidate.promotedPlan!,
       );
     expect(detached.squad.hash).toBe(candidate.squad.hash);
     expect(detached.orchestratorRuntime).toEqual(
       candidate.orchestratorRuntime,
     );
+    expect(detached.orchestrationMode).toBe('pack');
+    expect(detached.wavePackStoryCount).toBe(2);
 
     const promoted = auth.promotePlanLaneFromRenderer(
       owner,
-      { missionId: 'm-plan' },
+      promoteChoice,
       detached.fence,
       detached.promotedPlan!,
     );
@@ -416,6 +427,8 @@ describe('promotePlanLaneFromRenderer', () => {
     expect(promoted.squadId).toBe(NEXUS_STORY_IMPLEMENTATION_SQUAD_ID);
     expect(promoted.intentContract).toMatchObject({
       lane: 'standard',
+      orchestrationMode: 'pack',
+      wavePackTemplateId: 'fix',
       squadRevisionHash: snapshotSquadAuthority(executionTarget).hash,
       orchestratorRuntime: candidate.orchestratorRuntime,
       promotedPlan: {
@@ -424,7 +437,13 @@ describe('promotePlanLaneFromRenderer', () => {
         artifacts: handoff.artifacts,
       },
     });
-    expect(missionRequiresGuidedPrevc(promoted)).toBe(true);
+    expect(promoted.intentContract?.wavePackStories).toHaveLength(2);
+    expect(missionRequiresGuidedPrevc(promoted)).toBe(false);
+    expect(
+      missionRequiresGuidedPrevc(promoted, undefined, {
+        enforcePrevcOnNormalRisk: true,
+      }),
+    ).toBe(true);
     expect(storeState.get('m-plan')?.squadId).toBe(
       NEXUS_STORY_IMPLEMENTATION_SQUAD_ID,
     );
@@ -434,7 +453,7 @@ describe('promotePlanLaneFromRenderer', () => {
           typeof missionRequiresGuidedPrevc
         >[0],
       ),
-    ).toBe(true);
+    ).toBe(false);
     expect(assertStandardSquadReadiness).toHaveBeenCalledTimes(4);
     expect(assertStandardSquadReadiness).toHaveBeenCalledWith(
       executionTarget,

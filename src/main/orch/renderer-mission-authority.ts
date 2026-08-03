@@ -18,6 +18,11 @@ import {
   type PromotedPlanSnapshot,
 } from "../../shared/mission-intent";
 import {
+  assertWavePackStoriesReady,
+  freezeWavePackStoriesForContract,
+  resolveWavePackStories,
+} from "../../shared/mission-wave-pack";
+import {
   missionGoalNeedsFutureEvidence,
   MISSION_EVIDENCE_WAIT_MESSAGE,
 } from "../../shared/mission-evidence";
@@ -148,6 +153,10 @@ export interface RendererMissionSubmitIntentInput {
    * default / omitted = standard PREVC code.
    */
   lane?: "standard" | "consult" | "plan" | "ops";
+  /** Operator override Livre / Pack / Guiado. */
+  orchestrationMode?: "livre" | "pack" | "guided";
+  /** Pack template (Landing / SaaS / Fix) when orchestrationMode is pack. */
+  wavePackTemplateId?: "landing" | "saas" | "fix";
   /** Set by the renderer only when current print/audio files are attached. */
   evidenceAttached?: boolean;
 }
@@ -167,6 +176,11 @@ export interface RendererMissionAuthorityCandidate {
   readonly lane: "standard" | "consult" | "plan" | "ops";
   readonly risk: "normal" | "sensitive" | "destructive";
   readonly executionMode: "manual" | "assisted" | "autopilot";
+  /** Operator Livre / Pack / Guiado — shown in native approval. */
+  readonly orchestrationMode?: "livre" | "pack" | "guided";
+  readonly wavePackTemplateId?: "landing" | "saas" | "fix";
+  /** Canonical Pack story count (structured or markdown preview). */
+  readonly wavePackStoryCount?: number;
   readonly contextPolicy: "none" | "minimal" | "on-demand" | "prepare-project";
   readonly acceptanceCriteria: readonly string[];
   readonly deniedTools: readonly string[];
@@ -216,6 +230,10 @@ interface MissionApprovalFenceInput {
   readonly orchestratorRuntime: MissionOrchestratorRuntimeSnapshot;
   readonly orchestratorEvidence: OrchestrationEvidence;
   readonly promotedPlan?: PromotedPlanSnapshot;
+  /** Bound into promote fence so reviewed Pack/Guiado cannot diverge on commit. */
+  readonly orchestrationMode?: "livre" | "pack" | "guided";
+  readonly wavePackTemplateId?: "landing" | "saas" | "fix";
+  readonly wavePackStoryCount?: number;
 }
 
 const MAX_NATIVE_MISSION_REVIEW_CHARS = 6_000;
@@ -958,6 +976,12 @@ export class RendererMissionAuthority {
         contextPolicy,
         acceptanceCriteria: input.acceptanceCriteria,
         lane,
+        ...(input.orchestrationMode
+          ? { orchestrationMode: input.orchestrationMode }
+          : {}),
+        ...(input.wavePackTemplateId
+          ? { wavePackTemplateId: input.wavePackTemplateId }
+          : {}),
       });
       const evidenceAttached = input.evidenceAttached === true;
       const needsFutureEvidence = missionGoalNeedsFutureEvidence(
@@ -1249,6 +1273,16 @@ export class RendererMissionAuthority {
       lane: contract.lane ?? "standard",
       risk: contract.risk,
       executionMode: contract.executionMode,
+      ...(contract.orchestrationMode
+        ? { orchestrationMode: contract.orchestrationMode }
+        : {}),
+      ...(contract.wavePackTemplateId
+        ? { wavePackTemplateId: contract.wavePackTemplateId }
+        : {}),
+      wavePackStoryCount: resolveWavePackStories({
+        wavePackStories: contract.wavePackStories,
+        promotedPlanSummary: contract.promotedPlan?.summary,
+      }).length,
       contextPolicy: contract.contextPolicy,
       acceptanceCriteria: Object.freeze(acceptanceCriteria),
       deniedTools: Object.freeze(deniedTools),
@@ -1661,7 +1695,11 @@ export class RendererMissionAuthority {
    */
   planPromotionCandidateFromRenderer(
     owner: WebContents,
-    input: { missionId: string },
+    input: {
+      missionId: string;
+      orchestrationMode?: "pack" | "guided";
+      wavePackTemplateId?: "landing" | "saas" | "fix";
+    },
   ): RendererMissionAuthorityCandidate {
     return this.#planPromotionCandidate(owner, input);
   }
@@ -1673,7 +1711,11 @@ export class RendererMissionAuthority {
    */
   planPromotionCandidateAfterTeardownFromMain(
     owner: WebContents,
-    input: { missionId: string },
+    input: {
+      missionId: string;
+      orchestrationMode?: "pack" | "guided";
+      wavePackTemplateId?: "landing" | "saas" | "fix";
+    },
     expectedPlan: PromotedPlanSnapshot,
   ): RendererMissionAuthorityCandidate {
     return this.#planPromotionCandidate(owner, input, expectedPlan);
@@ -1681,7 +1723,11 @@ export class RendererMissionAuthority {
 
   #planPromotionCandidate(
     owner: WebContents,
-    input: { missionId: string },
+    input: {
+      missionId: string;
+      orchestrationMode?: "pack" | "guided";
+      wavePackTemplateId?: "landing" | "saas" | "fix";
+    },
     expectedPlan?: PromotedPlanSnapshot,
   ): RendererMissionAuthorityCandidate {
     const scope = requireRendererWorkspaceScope(owner);
@@ -1751,6 +1797,19 @@ export class RendererMissionAuthority {
         orchestratorEvidence,
       ),
     ]);
+    const previewMode =
+      risk === "destructive"
+        ? "guided"
+        : (input.orchestrationMode ?? "guided");
+    const previewTemplateId =
+      previewMode === "pack" ? input.wavePackTemplateId : undefined;
+    const previewStories =
+      previewMode === "pack"
+        ? freezeWavePackStoriesForContract({
+            summary: promotedPlan.summary,
+            templateId: previewTemplateId,
+          })
+        : Object.freeze([]);
     return Object.freeze({
       missionId: current.id,
       title: current.title,
@@ -1758,6 +1817,9 @@ export class RendererMissionAuthority {
       lane: "plan",
       risk,
       executionMode: contract.executionMode,
+      orchestrationMode: previewMode,
+      ...(previewTemplateId ? { wavePackTemplateId: previewTemplateId } : {}),
+      wavePackStoryCount: previewStories.length,
       contextPolicy: contract.contextPolicy,
       acceptanceCriteria: Object.freeze(acceptanceCriteria),
       deniedTools: Object.freeze(deniedTools),
@@ -1780,13 +1842,20 @@ export class RendererMissionAuthority {
         orchestratorRuntime,
         orchestratorEvidence,
         promotedPlan,
+        orchestrationMode: previewMode,
+        ...(previewTemplateId ? { wavePackTemplateId: previewTemplateId } : {}),
+        wavePackStoryCount: previewStories.length,
       }),
     });
   }
 
   promotePlanLaneFromRenderer(
     owner: WebContents,
-    input: { missionId: string },
+    input: {
+      missionId: string;
+      orchestrationMode?: "pack" | "guided";
+      wavePackTemplateId?: "landing" | "saas" | "fix";
+    },
     expectedFence: string,
     expectedPlan: PromotedPlanSnapshot,
     approvalReviewSha256?: string,
@@ -1835,6 +1904,28 @@ export class RendererMissionAuthority {
     const reviewOrchestratorEvidence = missionOrchestratorEvidence(
       reviewOrchestratorRuntime.adapterId,
     );
+    const risk = classifyGoalRisk(contract.goal);
+    // Resolve reviewed orchestration before the fence check so Pack/Guiado
+    // (and template/story count) are bound to the same hash the operator saw.
+    const orchestrationMode: "pack" | "guided" =
+      risk === "destructive"
+        ? "guided"
+        : (input.orchestrationMode ?? "guided");
+    const wavePackTemplateId =
+      orchestrationMode === "pack" ? input.wavePackTemplateId : undefined;
+    const wavePackStories =
+      orchestrationMode === "pack"
+        ? freezeWavePackStoriesForContract({
+            summary: promotedPlan.summary,
+            templateId: wavePackTemplateId,
+          })
+        : undefined;
+    if (orchestrationMode === "pack") {
+      assertWavePackStoriesReady(
+        wavePackStories ?? [],
+        "promotePlanLane",
+      );
+    }
     if (
       missionAuthorityFence(loaded, {
         evidenceAttached: contract.evidenceAttached === true,
@@ -1844,6 +1935,9 @@ export class RendererMissionAuthority {
         orchestratorRuntime: reviewOrchestratorRuntime,
         orchestratorEvidence: reviewOrchestratorEvidence,
         promotedPlan,
+        orchestrationMode,
+        ...(wavePackTemplateId ? { wavePackTemplateId } : {}),
+        wavePackStoryCount: wavePackStories?.length ?? 0,
       }) !== expectedFence
     ) {
       throw new Error(
@@ -1859,11 +1953,16 @@ export class RendererMissionAuthority {
     const squad = sealed.squad;
     const squadSnapshot = snapshotSquadAuthority(squad);
     const orchestratorRuntime = this.#runtimeForSquad(squad, true, true);
-    const risk = classifyGoalRisk(contract.goal);
     const nextVersion = (current.intentVersion ?? 0) + 1;
     const now = Date.now();
+    const {
+      orchestrationMode: _priorOrchestrationMode,
+      wavePackStories: _priorWavePackStories,
+      wavePackTemplateId: _priorWavePackTemplateId,
+      ...contractWithoutMode
+    } = contract;
     const nextContract = {
-      ...contract,
+      ...contractWithoutMode,
       lane: "standard" as const,
       intentVersion: nextVersion,
       risk,
@@ -1885,6 +1984,11 @@ export class RendererMissionAuthority {
         : undefined,
       squadRevisionHash: squadSnapshot.hash,
       orchestratorRuntime: { ...orchestratorRuntime },
+      orchestrationMode,
+      ...(wavePackTemplateId ? { wavePackTemplateId } : {}),
+      ...(wavePackStories && wavePackStories.length > 0
+        ? { wavePackStories: [...wavePackStories] }
+        : {}),
       promotedPlan: {
         ...promotedPlan,
         physicalReceipt: { ...promotedPlan.physicalReceipt },

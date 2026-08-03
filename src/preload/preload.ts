@@ -1068,6 +1068,8 @@ const api: NexusApi = {
       acceptanceCriteria?: string[];
       /** standard | consult | plan (design-only) | ops (infra, sem PREVC). */
       lane?: 'standard' | 'consult' | 'plan' | 'ops';
+      orchestrationMode?: 'livre' | 'pack' | 'guided';
+      wavePackTemplateId?: 'landing' | 'saas' | 'fix';
       evidenceAttached?: boolean;
       /**
        * Wizard de produto apenas: ESTA submissão será exibida na revisão de
@@ -1087,7 +1089,11 @@ const api: NexusApi = {
       ipcRenderer.invoke(ORCH_CHANNELS.missionResumeBootstrap, input),
     rearmMission: (input: { missionId: string }) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionRearm, input),
-    promotePlanLane: (input: { missionId: string }) =>
+    promotePlanLane: (input: {
+      missionId: string;
+      orchestrationMode?: 'pack' | 'guided';
+      wavePackTemplateId?: 'landing' | 'saas' | 'fix';
+    }) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionPromotePlanLane, input),
     submitMissionKickoff: (input: {
       missionId: string;
@@ -1101,6 +1107,8 @@ const api: NexusApi = {
       ipcRenderer.invoke(ORCH_CHANNELS.missionPromptQueue, input),
     missionEventsRecent: (input) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionEventsRecent, input),
+    missionTaskSchedule: (input) =>
+      ipcRenderer.invoke(ORCH_CHANNELS.missionsTaskSchedule, input),
     missionEventsReplay: (input) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionEventsReplay, input),
     missionEventsAck: (input) =>

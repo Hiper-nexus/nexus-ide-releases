@@ -50,6 +50,11 @@ import { MissionWizardPlanReview } from "./MissionWizardPlanReview";
 import { MissionAttachmentPicker } from "./MissionAttachmentPicker";
 import { MissionModePicker } from "./MissionModePicker";
 import { PixelIcon } from "./PixelIcon";
+import type { MissionOrchestrationMode } from "../../shared/mission-wave-pack";
+import {
+  WAVE_PACK_TEMPLATES,
+  type WavePackTemplateId,
+} from "../../shared/wave-pack-templates";
 import type { Mission } from "../../shared/orch-types";
 import {
   missionGoalNeedsFutureEvidence,
@@ -60,6 +65,7 @@ import {
   type MissionIntentSource,
   type MissionLane,
 } from "../../shared/mission-intent";
+import { isUiMissionText } from "../../shared/mission-work-kind";
 import { NEXUS_PLAN_SQUAD_ID } from "../../shared/builtin-squad-ids";
 import {
   REAL_MISSION_E2E_GOAL,
@@ -88,6 +94,8 @@ type MissionGoalSubmission = {
   attachments: MissionAttachment[];
   source: MissionIntentSource;
   lane: MissionLane;
+  orchestrationMode?: MissionOrchestrationMode;
+  wavePackTemplateId?: WavePackTemplateId;
   /** Exact saved squad that armed this mission; avoids React/state re-resolution. */
   reviewedSquad?: Squad;
   /**
@@ -249,6 +257,11 @@ export function MissionWizard() {
   const [missionLane, setMissionLane] = useState<
     "standard" | "consult" | "plan" | "ops"
   >("standard");
+  /** Livre | Pack | Guiado — default Guiado (resolver / seal guided). */
+  const [orchestrationMode, setOrchestrationMode] =
+    useState<MissionOrchestrationMode>("guided");
+  const [wavePackTemplateId, setWavePackTemplateId] =
+    useState<WavePackTemplateId>("landing");
   /** Once the operator touches the lane radios, stop auto-suggest from goal text. */
   const laneTouchedByUserRef = useRef(false);
   /**
@@ -1427,6 +1440,10 @@ export function MissionWizard() {
             })),
             source: productWizardE2EActive ? "typed" : agenticSource,
             lane: missionLane,
+            orchestrationMode,
+            ...(orchestrationMode === "pack"
+              ? { wavePackTemplateId }
+              : {}),
             reviewedSquad: effectiveSquad,
             directToNativeApproval: true,
           });
@@ -1485,6 +1502,13 @@ export function MissionWizard() {
         evidenceAttached: submission.attachments.length > 0,
         source: submission.source,
         lane: submission.lane,
+        ...(submission.orchestrationMode
+          ? { orchestrationMode: submission.orchestrationMode }
+          : {}),
+        ...(submission.orchestrationMode === "pack" &&
+        submission.wavePackTemplateId
+          ? { wavePackTemplateId: submission.wavePackTemplateId }
+          : {}),
         // Somente a rota que REALMENTE exibe esta submissão na revisão de
         // plano in-app marca a superfície: o Start da revisão vale como a
         // aprovação (grant main-owned, single-use). As rotas que vão direto
@@ -1582,6 +1606,10 @@ export function MissionWizard() {
         // "digitado" — o contrato registra de onde a missão nasceu.
         source: mode === "agentic" ? agenticSource : "typed",
         lane: missionLane,
+        orchestrationMode,
+        ...(orchestrationMode === "pack"
+          ? { wavePackTemplateId }
+          : {}),
         reviewPlan: options?.reviewPlan,
       });
     } finally {
@@ -1756,6 +1784,9 @@ export function MissionWizard() {
           : null,
         lane: contract.lane ?? "standard",
         operatorChoice: squadCliPolicy === "operator-choice",
+        uiMissionObjective: isUiMissionText(
+          [contract.goal, ...contract.acceptanceCriteria].join("\n"),
+        ),
       }),
       buildMissionAttachmentsContext(attachments),
     ]
@@ -2353,6 +2384,21 @@ export function MissionWizard() {
                     · trocar
                   </button>
                 )}
+                {!advancedOpen && orchestrationMode !== "guided" && (
+                  <button
+                    type="button"
+                    className="wizard__btn wizard__btn--ghost"
+                    style={{ marginLeft: 8, color: "var(--accent)" }}
+                    title="Orquestração Livre ou Pack; clique para revisar"
+                    onClick={() => setAdvancedOpen(true)}
+                  >
+                    Orquestração:{" "}
+                    {orchestrationMode === "livre"
+                      ? "Livre"
+                      : `Pack · ${wavePackTemplateId}`}{" "}
+                    · trocar
+                  </button>
+                )}
                 {advancedOpen && (
                   <fieldset
                     className="wizard__mode-desc"
@@ -2465,6 +2511,102 @@ export function MissionWizard() {
                         <strong>Só infra (não edita código do projeto)</strong>
                       </span>
                     </label>
+                  </fieldset>
+                )}
+                {advancedOpen && (
+                  <fieldset
+                    className="wizard__mode-desc"
+                    style={{
+                      marginTop: 8,
+                      border: "1px solid var(--border)",
+                      borderRadius: 8,
+                      padding: "10px 12px",
+                    }}
+                  >
+                    <legend style={{ padding: "0 4px" }}>
+                      Orquestração (Livre · Pack · Guiado)
+                    </legend>
+                    <label
+                      style={{
+                        display: "flex",
+                        gap: 8,
+                        alignItems: "flex-start",
+                        marginBottom: 8,
+                      }}
+                    >
+                      <input
+                        type="radio"
+                        name="mission-orch-mode"
+                        checked={orchestrationMode === "guided"}
+                        onChange={() => setOrchestrationMode("guided")}
+                      />
+                      <span>
+                        <strong>Guiado</strong> — grafo selado, cerca PREVC
+                        quando sensível
+                      </span>
+                    </label>
+                    <label
+                      style={{
+                        display: "flex",
+                        gap: 8,
+                        alignItems: "flex-start",
+                        marginBottom: 8,
+                      }}
+                    >
+                      <input
+                        type="radio"
+                        name="mission-orch-mode"
+                        checked={orchestrationMode === "pack"}
+                        onChange={() => setOrchestrationMode("pack")}
+                      />
+                      <span>
+                        <strong>Wave Pack</strong> — N stories em panes
+                        paralelos (template obrigatório no lançamento)
+                      </span>
+                    </label>
+                    <label
+                      style={{
+                        display: "flex",
+                        gap: 8,
+                        alignItems: "flex-start",
+                      }}
+                    >
+                      <input
+                        type="radio"
+                        name="mission-orch-mode"
+                        checked={orchestrationMode === "livre"}
+                        onChange={() => setOrchestrationMode("livre")}
+                      />
+                      <span>
+                        <strong>Livre</strong> — sem seal Guided; orquestrador
+                        spawna ≤ maxWorkers
+                      </span>
+                    </label>
+                    {orchestrationMode === "pack" ? (
+                      <label style={{ display: "block", marginTop: 8 }}>
+                        Template Pack
+                        <select
+                          className="wizard__input"
+                          style={{
+                            display: "block",
+                            width: "100%",
+                            marginTop: 6,
+                          }}
+                          value={wavePackTemplateId}
+                          onChange={(e) =>
+                            setWavePackTemplateId(
+                              e.target.value as WavePackTemplateId,
+                            )
+                          }
+                        >
+                          {WAVE_PACK_TEMPLATES.map((template) => (
+                            <option key={template.id} value={template.id}>
+                              {template.label} — {template.hint}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : null}
                   </fieldset>
                 )}
               </div>

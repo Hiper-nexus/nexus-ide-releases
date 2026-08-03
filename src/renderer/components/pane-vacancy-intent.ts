@@ -4,6 +4,11 @@ import {
   isInFlightStatus,
   missionIsOperationallyActive,
 } from '../lib/mission-rail-groups';
+import {
+  bootstrapStepLabel,
+  progressAgeLabel,
+  type PaneVacancyProgress,
+} from './pane-vacancy-progress';
 
 /**
  * WHAT A SOLITARY VACANCY SHOULD SAY.
@@ -64,17 +69,33 @@ const PREPARING_HEADLINE =
 const PREPARING_NEXT_STEP =
   'Abra o diagnóstico se ela não abrir nenhum agente em instantes.';
 
+/**
+ * `progress` is the live bootstrap step polled from the mission journal. It
+ * only changes the headline of a NON-blocked mission and only when it belongs
+ * to that exact mission — a stale page from a previous poll must not leak a
+ * step onto another mission. Without it the copy is byte-for-byte the static
+ * one the card always had.
+ */
 export function paneVacancyIntent(
   missions: readonly Mission[],
+  progress: PaneVacancyProgress | null = null,
+  now: number = Date.now(),
 ): PaneVacancyIntent {
   const mission = paneVacancyMission(missions);
   if (!mission) return { kind: 'idle' };
   if (mission.status !== 'blocked') {
+    const headline =
+      progress && progress.missionId === mission.id
+        ? `${bootstrapStepLabel(progress.step)} · ${progressAgeLabel(
+            progress.occurredAt,
+            now,
+          )}`
+        : PREPARING_HEADLINE;
     return {
       kind: 'mission-unstaged',
       missionId: mission.id,
       missionTitle: mission.title,
-      headline: PREPARING_HEADLINE,
+      headline,
       nextStep: PREPARING_NEXT_STEP,
     };
   }

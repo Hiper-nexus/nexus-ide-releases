@@ -5,6 +5,7 @@ import {
   missionIntentContractSchema,
 } from "../../shared/mission-intent";
 import { hasTeamReadOnlyFanoutDomain } from "../../shared/mission-topology";
+import { hasWavePackDomain } from "../../shared/mission-wave-pack";
 import { PRIOR_MISSION_MEMORY_SEPARATOR } from "../../shared/mission-result-format";
 import { ScopedStoreBinding, ScopedStoreCorruptionError } from "./scoped-store";
 import {
@@ -337,6 +338,7 @@ function verifyCompletedTaskPlanAuthority(
     const physicalReceiptIds = new Set<string>();
     const physicalToolCallIds = new Set<string>();
     let teamReadOnlyFanoutDispatches = 0;
+    let wavePackDispatches = 0;
     const completedDeliveries: Array<{
       readonly handoffId: string;
       readonly deliveryAttemptId: string;
@@ -428,6 +430,9 @@ function verifyCompletedTaskPlanAuthority(
         hasTeamReadOnlyFanoutDomain(sealed.schedule.ownership.domains)
       ) {
         teamReadOnlyFanoutDispatches += 1;
+      }
+      if (hasWavePackDomain(sealed.schedule.ownership.domains)) {
+        wavePackDispatches += 1;
       }
       let physical: ReturnType<
         typeof assertPhysicalTaskHandoffAuthority
@@ -748,10 +753,21 @@ function verifyCompletedTaskPlanAuthority(
       // and must never fall through to a saved squad's legacy completion.
       return false;
     }
+    if (
+      wavePackDispatches > 0 &&
+      wavePackDispatches < dispatchRows.length
+    ) {
+      return false;
+    }
+    if (teamReadOnlyFanoutDispatches > 0 && wavePackDispatches > 0) {
+      return false;
+    }
     const sealedTopology =
       teamReadOnlyFanoutDispatches === dispatchRows.length
         ? "team-read-only-fanout"
-        : "delivery";
+        : wavePackDispatches === dispatchRows.length
+          ? "wave-pack"
+          : "delivery";
     const guided = missionRequiresGuidedPrevc(
       {
         squadId: mission.squad_id ?? undefined,

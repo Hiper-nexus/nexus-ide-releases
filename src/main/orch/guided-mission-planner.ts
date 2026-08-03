@@ -1,9 +1,17 @@
 import type { Mission, Squad } from "../../shared/orch-types";
+import { FEATURE_FLAG_IDS } from "../../shared/feature-flags";
+import { getFeatureFlagRegistry } from "../feature-flags/feature-flag-registry";
 import {
   classifyStandardMissionTopology,
   TEAM_READ_ONLY_FANOUT_DOMAIN,
   type StandardMissionTopology,
 } from "../../shared/mission-topology";
+import {
+  planWavePackTasks,
+  resolveMissionOrchestrationMode,
+  resolveWavePackStories,
+  topologyForOrchestrationMode,
+} from "../../shared/mission-wave-pack";
 import type { ProjectExecutionScope } from "../../shared/types";
 import {
   authReadyModelsForProvider,
@@ -20,6 +28,7 @@ import {
   assertGuidedPlanTaskDetailBudgets,
   assertRosterCompleteGuidedTeamFanoutReceipt,
   assertRosterCompleteGuidedV2Receipt,
+  assertRosterCompleteGuidedWavePackReceipt,
   chooseCorrectiveQualityGate,
   choosePrimaryExecutor,
   guidedPlanEligibility,
@@ -41,6 +50,7 @@ import {
   guidedRegressionDetail,
   guidedReproductionDetail,
   guidedTeamCoordinationDetail,
+  guidedWarmupDetail,
   type GuidedWorkKindContractOptions,
 } from "./guided-mission-prompt";
 import {
@@ -116,7 +126,10 @@ export type GuidedMissionPlanResult =
       applicable: false;
       sealed: false;
       reason:
-        "lane-not-standard" | "automation-owned" | "squad-not-engine-generated";
+        | "lane-not-standard"
+        | "automation-owned"
+        | "squad-not-engine-generated"
+        | "orchestration-livre";
     }>
   | Readonly<{
       applicable: true;
@@ -231,7 +244,7 @@ export function ensureGuidedMissionPlan(
   if (existingTopology === "invalid") {
     throw new Error(
       "guided_plan_mixed_topology_blocked: o receipt selado mistura " +
-        "delivery e team-read-only-fanout; replaneje e reaprove a missão " +
+        "delivery, team-read-only-fanout e wave-pack; replaneje e reaprove a missão " +
         "antes de iniciar qualquer provider",
     );
   }
@@ -280,16 +293,22 @@ export function ensureGuidedMissionPlan(
     // Recovery derives authority from the immutable receipt, never from a
     // fresh interpretation of goal text. This prevents a classifier update
     // from invalidating a delivery that was already approved and sealed.
-    if (topology === "delivery") deps.assertStandardSquadReadiness(squad);
+    if (topology === "delivery" || topology === "wave-pack") {
+      deps.assertStandardSquadReadiness(squad);
+    }
     // Never rewrite an immutable current receipt. Recovery may reuse only the
     // exact roster-complete Guided v2 graph; older valid receipts remain
     // blocked until the operator reapproves a fresh intent/plan.
     const recovered =
       topology === "team-read-only-fanout"
         ? assertRosterCompleteGuidedTeamFanoutReceipt(existing, squad)
-        : assertRosterCompleteGuidedV2Receipt(existing, squad);
+        : topology === "wave-pack"
+          ? assertRosterCompleteGuidedWavePackReceipt(existing, squad)
+          : assertRosterCompleteGuidedV2Receipt(existing, squad);
     const primary =
-      "primary" in recovered ? recovered.primary : recovered.implementation;
+      "implementation" in recovered
+        ? recovered.implementation
+        : recovered.primary;
     return Object.freeze({
       applicable: true,
       sealed: false,
@@ -299,13 +318,13 @@ export function ensureGuidedMissionPlan(
       taskId: primary.taskId,
     });
   }
-  const topology: StandardMissionTopology =
-    mission.intentContract.promotedPlan
-      ? "delivery"
-      : classifyStandardMissionTopology(mission.intentContract.goal);
-  // New plans may use the fast classifier as a proposal. Once sealed, the
-  // task receipt above is the sole topology authority across restarts.
-  if (topology === "delivery") deps.assertStandardSquadReadiness(squad);
+  const topology: StandardMissionTopology = resolveSealTopology(mission);
+  // New plans may use the fast classifier / Pack resolver as a proposal. Once
+  // sealed, the task receipt above is the sole topology authority across
+  // restarts.
+  if (topology === "delivery" || topology === "wave-pack") {
+    deps.assertStandardSquadReadiness(squad);
+  }
   const adapters = deps.listLiveAdapters();
   const rosterWorkers = squad.agents.filter(isGuidedWorkerAgent);
   const taskPlanRosterHash = snapshotTaskPlanRoster(squad.agents).hash;
@@ -390,6 +409,17 @@ export function ensureGuidedMissionPlan(
       topology,
       workerAgentRef: primary.agentRef,
       taskId: primary.taskId,
+    });
+  }
+  if (topology === "wave-pack") {
+    return sealWavePackMissionPlan({
+      mission,
+      missionId,
+      intentVersion,
+      squad,
+      rosterWorkers,
+      suite,
+      deps,
     });
   }
   const operatorChoice =
@@ -604,6 +634,29 @@ export function ensureGuidedMissionPlan(
           : [reviewPivot],
     };
   });
+  // Warm-ups put reviewer/QA panes on screen in wave 1: each prepares its
+  // checklist read-only while the executor implements. Roots with empty
+  // ownership (parallel surface, no exclusive slot), never consumers, never
+  // a second mutation surface. Kill-switch: feature.mission.warmupAdvisories.
+  const warmupTargets = getFeatureFlagRegistry().isEnabled(
+    FEATURE_FLAG_IDS.missionWarmupAdvisories,
+  )
+    ? [...independentReviewers, qualityGate]
+    : [];
+  const warmupTasks = warmupTargets.map((agent, index) => ({
+    id: guidedFanoutPlannerId("warmup", agent, index),
+    title: `Aquecer ${agent.agentName}: ${mission.title}`.slice(0, 1_024),
+    detail: guidedWarmupDetail(mission, agent),
+    agentRef: agent.id,
+    category: "reviewer" as const,
+    executionMode: "read_only" as const,
+    ownership: {
+      files: [],
+      symbols: [],
+      domains: [GUIDED_TASK_DOMAINS.warmup],
+    },
+    dependsOn: [],
+  }));
   // Implementation does not wait on advisories — tip/discovery is parallel.
   // The gate joins the whole delivery frontier: every concurrent review plus
   // the tail of the sequential chain, or the last delivery stage when the
@@ -622,6 +675,7 @@ export function ensureGuidedMissionPlan(
   const guidedTasks: GuidedPlanTaskDetailInput[] = [
     ...advisoryTasks,
     ...reproductionTasks,
+    ...warmupTasks,
     {
       id: GUIDED_MISSION_PLANNER_TASK_ID,
       title: `Entregar: ${mission.title}`.slice(0, 1_024),
@@ -699,6 +753,170 @@ export function ensureGuidedMissionPlan(
     topology,
     workerAgentRef: worker.id,
     taskId: taskIdFromPlan(plan),
+  });
+}
+
+function resolveSealTopology(mission: Mission): StandardMissionTopology {
+  const contract = mission.intentContract;
+  if (!contract) return "delivery";
+  const stories = resolveWavePackStories({
+    wavePackStories: contract.wavePackStories,
+    promotedPlanSummary: contract.promotedPlan?.summary,
+  });
+  const forced = contract.orchestrationMode ?? null;
+  // Without a promoted plan, keep the goal classifier (team fan-out / delivery)
+  // unless the operator forced Pack (structured stories) or Livre.
+  if (!contract.promotedPlan) {
+    if (forced === "pack" && stories.length >= 2) {
+      return "wave-pack";
+    }
+    if (forced === "livre") {
+      return topologyForOrchestrationMode(
+        "livre",
+        classifyStandardMissionTopology(contract.goal),
+      );
+    }
+    return classifyStandardMissionTopology(contract.goal);
+  }
+  const mode = resolveMissionOrchestrationMode({
+    lane: contract.lane,
+    risk: contract.risk,
+    hasPromotedPlan: true,
+    extractedStoryCount: stories.length,
+    forcedMode: forced,
+  });
+  return topologyForOrchestrationMode(mode, "delivery");
+}
+
+function sealWavePackMissionPlan(input: {
+  readonly mission: Mission;
+  readonly missionId: string;
+  readonly intentVersion: number;
+  readonly squad: Squad;
+  readonly rosterWorkers: ReadonlyArray<{
+    readonly id: string;
+    readonly agentName: string;
+    readonly category: "executor" | "reviewer" | "scout" | "architect";
+  }>;
+  readonly suite: Pick<ProjectDomainStoreSuite, "missions" | "tasks">;
+  readonly deps: GuidedMissionPlannerDeps;
+}): GuidedMissionPlanResult {
+  const { mission, missionId, intentVersion, squad, suite, deps } = input;
+  const contract = mission.intentContract!;
+  const stories = resolveWavePackStories({
+    wavePackStories: contract.wavePackStories,
+    promotedPlanSummary: contract.promotedPlan?.summary,
+  });
+  const allExecutors = input.rosterWorkers
+    .filter((agent) => agent.category === "executor")
+    .map((agent) =>
+      Object.freeze({
+        id: agent.id,
+        agentName: agent.agentName,
+        category: "executor" as const,
+      }),
+    );
+  // Prefer implementation-shaped executors (Dev / Builder). Story Manager and
+  // similar roster labels stay available only when no better match exists.
+  const preferredExecutors = allExecutors.filter((agent) =>
+    /\b(dev|impl|builder|coder|engineer)\b/i.test(
+      `${agent.id} ${agent.agentName}`,
+    ),
+  );
+  const executors =
+    preferredExecutors.length > 0 ? preferredExecutors : allExecutors;
+  const operatorChoice = deps.squadCliPolicy() === "operator-choice";
+  const primaryExecutor = choosePrimaryExecutor(squad, operatorChoice);
+  let qualityGate: {
+    id: string;
+    agentName: string;
+    category: "reviewer";
+  } | null = null;
+  try {
+    const gate = chooseCorrectiveQualityGate(
+      squad,
+      primaryExecutor,
+      operatorChoice,
+    );
+    if (gate.category === "reviewer") {
+      qualityGate = {
+        id: gate.id,
+        agentName: gate.agentName,
+        category: "reviewer",
+      };
+    }
+  } catch {
+    qualityGate = null;
+  }
+  const intentOwnership = resolveGuidedMutationOwnership(contract);
+  const baseOwnership =
+    intentOwnership.length > 0
+      ? intentOwnership
+      : resolveGuidedMutationOwnership(
+          contract,
+          deps.listRepositoryOwnership(suite.tasks.scope),
+        );
+  if (baseOwnership.length === 0) {
+    throw new Error(
+      "wave_pack_ownership_missing: o inventário seguro do projeto está vazio",
+    );
+  }
+  const ownershipCoverageDomains: readonly string[] =
+    intentOwnership.length > 0 ? [] : [OWNERSHIP_COVERAGE_DOMAIN];
+  const planned = planWavePackTasks({
+    missionTitle: mission.title,
+    goal: contract.goal,
+    acceptanceCriteria: contract.acceptanceCriteria,
+    stories,
+    executors,
+    qualityGate,
+    maxWorkers: contract.budgets.maxWorkers,
+    ownershipFiles: baseOwnership,
+    ownershipCoverageDomains,
+  });
+  const packTasks: GuidedPlanTaskDetailInput[] = planned.map((task) => ({
+    id: task.plannerId,
+    title: task.title,
+    detail: task.detail,
+    agentRef: task.agentRef,
+    category: task.category,
+    executionMode: task.executionMode,
+    ownership: {
+      files: [...task.ownership.files],
+      symbols: [...task.ownership.symbols],
+      domains: [...task.ownership.domains],
+    },
+    dependsOn: [...task.dependsOn],
+  }));
+  assertGuidedPlanTaskDetailBudgets({
+    missionId,
+    intentVersion,
+    tasks: packTasks,
+  });
+  const plan = sealMainOwnedMissionTaskPlan(
+    { missionId, tasks: packTasks },
+    suite.tasks.scope,
+    suite,
+    deps,
+    mission.status === "pending" &&
+      mission.intentState === "ready_to_start" &&
+      typeof contract.approvedAt === "number"
+      ? {
+          kind: "approved-preflight",
+          intentVersion,
+          approvedAt: contract.approvedAt,
+          approvalReviewSha256: contract.approvalReviewSha256,
+        }
+      : undefined,
+  );
+  const primary = plan.planned[0]!;
+  return Object.freeze({
+    applicable: true,
+    sealed: true,
+    reason: "sealed",
+    topology: "wave-pack" as const,
+    workerAgentRef: primary.agentRef,
+    taskId: primary.taskId,
   });
 }
 

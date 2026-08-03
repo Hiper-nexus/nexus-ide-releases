@@ -18,6 +18,8 @@ export const ORCH_CHANNELS = {
   browserOpenResult: 'orch:browser.openResult',
   missionsList: 'orch:missions.list',
   missionPanesList: 'orch:missions.panes',
+  /** Read-only wave schedule (identities/status only — never sealed detail). */
+  missionsTaskSchedule: 'orch:missions.taskSchedule',
   /** Main-owned proof that one restored layout pane still has live mission authority. */
   missionPaneRestoreAuthority: 'orch:missions.paneRestoreAuthority',
   missionCreate: 'orch:missions.create',

@@ -167,7 +167,9 @@ describe("plan promotion → guided task prompt", () => {
 
     expect(kickoff).toContain("PRD/plano físico aprovado na promoção");
     expect(kickoff).toContain(handoff.summary);
-    expect(kickoff).toContain(JSON.stringify(promotedPlan.artifacts));
+    expect(kickoff).toContain('### Artifacts (1)');
+    expect(kickoff).toContain('plan.md');
+    expect(kickoff).not.toContain(JSON.stringify(promotedPlan.artifacts));
     expect(kickoff).toContain(promotedPlan.digest);
     expect(kickoff).toContain(promotedPlan.summarySha256);
     expect(kickoff).toContain(promotedPlan.artifactsSha256);

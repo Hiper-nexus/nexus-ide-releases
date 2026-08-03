@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
 import { sharedAgentAuthFamily } from '../../shared/agent-auth-family';
+import { appendMissionVerdict } from '../../shared/mission-block-cause';
+import { missionBlockPatch } from '../../shared/mission-blocking';
 import type { ProjectExecutionScope } from '../../shared/types';
 import {
   listAgentSessions,
@@ -237,7 +239,15 @@ export async function applyExclusiveOrchestratorReplacement(
       const demoted =
         current.status === 'blocked' || current.status === 'failed'
           ? current
-          : suite.missions.block(entry.missionId, 'user');
+          : suite.missions.update(entry.missionId, {
+              ...missionBlockPatch('user'),
+              description: appendMissionVerdict(
+                current.description,
+                '<!-- nexus:exclusive-orchestrator-replacement -->',
+                '[NEXUS_EXCLUSIVE_ORCHESTRATOR_REPLACED]',
+                'O orquestrador exclusivo foi assumido por outra missão/instância; retome para reabrir o Maestro.',
+              ),
+            });
       if (!demoted) {
         throw new Error(
           `exclusive orchestrator mission ${entry.missionId} could not be blocked`,

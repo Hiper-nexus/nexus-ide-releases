@@ -200,6 +200,7 @@ export function buildIntentDispatchKickoffPrompt(input: {
   guidedPrevcRequired?: IntentDispatchKickoffInput['guidedPrevcRequired'];
   standardTopology?: IntentDispatchKickoffInput['standardTopology'];
   operatorChoice?: IntentDispatchKickoffInput['operatorChoice'];
+  uiMissionObjective?: IntentDispatchKickoffInput['uiMissionObjective'];
 }): string {
   return buildSharedIntentDispatchKickoffPrompt(input);
 }

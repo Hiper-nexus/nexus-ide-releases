@@ -13,6 +13,7 @@ import {
 import { buildIntentDispatchKickoffPrompt } from '../../shared/mission-dispatch-kickoff';
 import type { StandardMissionTopology } from '../../shared/mission-topology';
 import { isOperatorChoicePolicy } from '../../shared/squad-cli-policy';
+import { isUiMissionText } from '../../shared/mission-work-kind';
 import { getOrchSettings } from '../persistence/settings-store';
 import type { Mission, MissionPaneSpec, Squad } from '../../shared/orch-types';
 import { PET_STUDIO_SQUAD_ID } from '../../shared/pet-studio';
@@ -750,6 +751,9 @@ export function buildCanonicalMissionKickoffPrompt(
     // as the bootstrap path, or a resumed Maestro re-learns the ceremony.
     guidedPrevcRequired: missionRequiresGuidedPrevc(mission, standardTopology),
     operatorChoice: isOperatorChoicePolicy(getOrchSettings().squadCliPolicy),
+    uiMissionObjective: isUiMissionText(
+      [contract.goal, ...contract.acceptanceCriteria].join('\n'),
+    ),
     standardTopology,
   });
 }

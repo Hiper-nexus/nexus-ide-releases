@@ -1,5 +1,7 @@
 import { vi } from "vitest";
 import type { AdapterInfo } from "../../shared/adapter-types";
+import { FEATURE_FLAG_IDS } from "../../shared/feature-flags";
+import { getFeatureFlagRegistry } from "../feature-flags/feature-flag-registry";
 import type { Mission, Squad } from "../../shared/orch-types";
 import { compileIntentContract } from "../../shared/mission-intent";
 import { testProjectScope } from "./__tests__/scope-fixture";
@@ -239,8 +241,18 @@ export function harness(
       GuidedMissionPlannerDeps["listLiveAdapters"]
     >[number][];
     existing?: readonly Record<string, unknown>[];
+    /**
+     * Warm-up advisories are production-default ON, but the legacy planner
+     * suites assert the pre-warmup sealed graph byte-for-byte. The harness
+     * pins the flag deterministically; warm-up suites opt in explicitly.
+     */
+    warmupAdvisories?: boolean;
   } = {},
 ) {
+  getFeatureFlagRegistry().setOverride(
+    FEATURE_FLAG_IDS.missionWarmupAdvisories,
+    options.warmupAdvisories === true,
+  );
   const currentMission = options.currentMission ?? mission();
   const createPlanAtomically = vi.fn(
     (input: {
@@ -299,8 +311,10 @@ export function harness(
   };
 }
 
-export function sealedGuidedV2Receipt() {
-  const firstPass = harness();
+export function sealedGuidedV2Receipt(
+  options: { warmupAdvisories?: boolean } = {},
+) {
+  const firstPass = harness(options);
   ensureGuidedMissionPlan(firstPass.suite, "mission-guided", firstPass.deps);
   const rows = firstPass.createPlanAtomically.mock.calls[0]![0].rows;
   const rosterHash = snapshotTaskPlanRoster(squad.agents).hash;

@@ -220,6 +220,14 @@ export const orchSettingsSchema = z.object({
     .enum(['governed', 'operator-choice'])
     .default('operator-choice'),
   /**
+   * Fast path (default on): `risk=normal` standard missions skip Guided PREVC
+   * fence/freeze before the first writable pane — Overclock-order speed for
+   * vibe feature work. Sensitive/destructive keep PREVC. Set false to restore
+   * legacy PREVC-on-every-guided-delivery behavior.
+   * @see docs/design/orch-fast-path.md
+   */
+  fastPath: z.boolean().default(true),
+  /**
    * Physical agent transport for main-owned mission panes.
    * - `cli-pty` (default): legacy CLI adapters over PTY — unchanged path.
    * - `acp`: ACP stdio harness from the BYOH catalog. Never silently falls

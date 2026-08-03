@@ -260,7 +260,7 @@ export function ensureGuidedMissionPrevc(
   if (topology === "invalid") {
     throw new Error(
       "guided_prevc_contract_stale: o receipt selado mistura delivery e " +
-        "team-read-only-fanout; replaneje e reaprove a missão",
+        "team-read-only-fanout ou wave-pack; replaneje e reaprove a missão",
     );
   }
   if (!missionRequiresGuidedPrevc(mission, topology)) {

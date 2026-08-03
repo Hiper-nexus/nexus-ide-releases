@@ -1,6 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { testProjectScope } from './__tests__/scope-fixture';
 
+vi.mock('../persistence/settings-store', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../persistence/settings-store')>();
+  return {
+    ...actual,
+    getOrchSettings: () => ({
+      ...actual.getOrchSettings(),
+      fastPath: false,
+    }),
+  };
+});
+
 const mocks = vi.hoisted(() => ({
   mission: null as any,
   planReceipt: null as any,

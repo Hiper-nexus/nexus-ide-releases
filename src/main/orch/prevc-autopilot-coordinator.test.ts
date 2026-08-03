@@ -1,5 +1,19 @@
 import { describe, expect, it, vi } from "vitest";
 
+vi.mock("../persistence/settings-store", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../persistence/settings-store")>();
+  return {
+    ...actual,
+    // These tests exercise Main-owned PREVC ceremony — opt out of the
+    // production fast path that skips PREVC for risk=normal.
+    getOrchSettings: () => ({
+      ...actual.getOrchSettings(),
+      fastPath: false,
+    }),
+  };
+});
+
 import { compileIntentContract } from "../../shared/mission-intent";
 import type { Handoff, Mission, Squad } from "../../shared/orch-types";
 import {

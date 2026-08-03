@@ -69,6 +69,10 @@ export interface AcpDriverSpawnInput {
   readonly publishFrame?: (frame: ObserverFrameInput) => void;
 }
 
+/** A client that never answers shutdown must not block teardown forever. */
+const ACP_SHUTDOWN_TIMEOUT_MS = 10_000;
+const ACP_SHUTDOWN_TIMEOUT_MESSAGE = 'acp-shutdown-timeout';
+
 export interface AcpDriverSession {
   readonly sessionId: string;
   readonly acpSessionId: string;
@@ -364,8 +368,29 @@ export async function spawnAcpHarnessSession(
     },
     async shutdown(): Promise<void> {
       if (live.closed) return;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(ACP_SHUTDOWN_TIMEOUT_MESSAGE)),
+          ACP_SHUTDOWN_TIMEOUT_MS,
+        );
+      });
       try {
-        await live.client.shutdown();
+        try {
+          await Promise.race([live.client.shutdown(), timeout]);
+        } finally {
+          clearTimeout(timer);
+        }
+      } catch (error) {
+        // Hung shutdown: local state dies in the finally below, and callers
+        // that probe `getAcpDriverSession` see the session gone. Protocol
+        // errors keep propagating exactly as before.
+        if (
+          !(error instanceof Error) ||
+          error.message !== ACP_SHUTDOWN_TIMEOUT_MESSAGE
+        ) {
+          throw error;
+        }
       } finally {
         closeLive(sessionId, 'acp-shutdown');
       }

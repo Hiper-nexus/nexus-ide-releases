@@ -20,6 +20,12 @@ export const GUIDED_TASK_DOMAINS = Object.freeze({
    */
   reproduction: "guided-reproduction",
   regression: "guided-regression",
+  /**
+   * Read-only reviewer/QA warm-up: prepares its checklist while the executor
+   * implements wave 1. Roots by construction (dependsOn empty, no consumers,
+   * empty ownership), so they never open a second mutation surface.
+   */
+  warmup: "guided-warmup",
 } as const);
 
 export type GuidedTaskKind =
@@ -29,7 +35,8 @@ export type GuidedTaskKind =
   | "implementation"
   | "quality-gate"
   | "reproduction"
-  | "regression";
+  | "regression"
+  | "warmup";
 
 type GuidedWorkerCategory = Exclude<AgentCategory, "orchestrator">;
 
@@ -150,6 +157,18 @@ export function parseGuidedTaskKind(
       }
       kind = "regression";
       break;
+    case GUIDED_TASK_DOMAINS.warmup:
+      if (
+        input.executionMode !== "read_only" ||
+        input.agentCategory !== "reviewer"
+      ) {
+        invalidGuidedTask(
+          input,
+          "warm-up exige reviewer/QA em read_only",
+        );
+      }
+      kind = "warmup";
+      break;
     case GUIDED_TASK_DOMAINS.implementation:
       if (
         input.executionMode !== "isolated_worktree" ||
@@ -185,7 +204,14 @@ export function parseGuidedTaskKind(
     [GUIDED_MISSION_REPRODUCTION_TASK_ID, "reproduction"],
     [GUIDED_MISSION_REGRESSION_TASK_ID, "regression"],
   ];
+  // Wave Pack seals N implementation roots (`wave-pack-story-*`) plus an
+  // optional `wave-pack-quality-gate`. Those planner ids are Pack topology
+  // authority, not the single Guided v2 canonical pair.
+  const isWavePackPlannerId =
+    typeof input.plannerId === "string" &&
+    input.plannerId.startsWith("wave-pack-");
   if (
+    !isWavePackPlannerId &&
     canonicalIdentities.some(
       ([plannerId, canonicalKind]) =>
         (input.plannerId === plannerId && kind !== canonicalKind) ||

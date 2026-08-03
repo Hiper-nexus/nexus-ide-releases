@@ -7,7 +7,9 @@ import {
   MissionEventJournal,
   createMissionEventFixture,
 } from './mission-event-journal';
+import { emitMissionIntentEvent } from './mission-intent-events';
 import type { MissionEventAppendInput, MissionEventType } from '../../shared/mission-events';
+import type { BootstrapProgressStep } from '../../shared/mission-intent-projection';
 
 /**
  * Thin production emitter for mission driver / orch lifecycle.
@@ -92,6 +94,58 @@ export function emitDriverDecision(
       logicalTick: tick,
     },
   });
+}
+
+/**
+ * Emit a bootstrap progress step both to the in-process intent ring and to the
+ * durable journal (`custom`), which is the only mission-event surface the
+ * renderer already subscribes to. Never awaited by callers; never throws —
+ * telemetry must not become control flow. The per-(mission,step) counter keeps
+ * idempotency keys unique across recovery attempts instead of deduping them.
+ */
+const bootstrapStepCounters = new Map<string, number>();
+
+export function emitBootstrapProgress(
+  scope: ProjectExecutionScope,
+  missionId: string,
+  step: BootstrapProgressStep,
+  detail?: string,
+): void {
+  try {
+    emitMissionIntentEvent({
+      name: step === 'kickoff_accepted' ? 'kickoff_accepted' : 'bootstrap_progress',
+      missionId,
+      reason: 'main_orchestrator_bootstrap',
+      meta: {
+        step,
+        ...(detail ? { detail: detail.slice(0, 200) } : {}),
+      },
+    });
+  } catch (err) {
+    console.warn('[mission-events] intent progress failed:', err);
+  }
+  const counterKey = `${missionId}:${step}`;
+  const count = (bootstrapStepCounters.get(counterKey) ?? 0) + 1;
+  bootstrapStepCounters.set(counterKey, count);
+  emitMissionEvent(scope, {
+    missionId,
+    runId: `bootstrap-${missionId}`,
+    type: 'custom',
+    origin: 'main',
+    idempotencyKey: boundedIdempotencyKey(
+      `bootstrap:${missionId}:${step}:${count}`,
+    ),
+    payload: {
+      kind: 'bootstrap_progress',
+      step,
+      ...(detail ? { detail: detail.slice(0, 200) } : {}),
+    },
+  });
+}
+
+/** Test seam — counters must not leak idempotency uniqueness across cases. */
+export function resetBootstrapProgressCountersForTests(): void {
+  bootstrapStepCounters.clear();
 }
 
 /** Test helper re-export. */

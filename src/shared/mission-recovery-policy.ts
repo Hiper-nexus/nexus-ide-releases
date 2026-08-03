@@ -41,3 +41,89 @@ export function hasAutomaticTechnicalRecovery(
     !hasTerminalOperationalFailureMarker(mission.description ?? '')
   );
 }
+
+/**
+ * The durable proof that an automatic recovery attempt happened. The block is
+ * REPLACED attempt after attempt (never stacked), and its absence means either
+ * no attempt ran yet or an old build never persisted one — the UI must treat
+ * both as "unknown", never as "zero".
+ */
+export const RECOVERY_ATTEMPT_BLOCK_MARKER = '<!-- nexus:recovery-attempt -->';
+
+const RECOVERY_ATTEMPT_REASON_LIMIT = 240;
+
+export interface MissionRecoveryAttemptRecord {
+  readonly attempt: number;
+  readonly maxAttempts: number;
+  readonly reason: string;
+  readonly at: string;
+}
+
+export function formatRecoveryAttemptBlock(
+  attempt: number,
+  maxAttempts: number,
+  reason: string,
+  at: string,
+): string {
+  const cappedReason =
+    reason.trim().length > RECOVERY_ATTEMPT_REASON_LIMIT
+      ? `${reason.trim().slice(0, RECOVERY_ATTEMPT_REASON_LIMIT)}…`
+      : reason.trim();
+  return [
+    RECOVERY_ATTEMPT_BLOCK_MARKER,
+    '## Recuperação automática',
+    `Tentativa ${attempt} de ${maxAttempts} · ${cappedReason} · ${at}`,
+  ].join('\n');
+}
+
+const RECOVERY_ATTEMPT_LINE =
+  /^Tentativa (\d+) de (\d+) · ([\s\S]*) · (\d{4}-\d{2}-\d{2}T[\d:.Z+-]+)\s*$/;
+
+/**
+ * Reads back what `formatRecoveryAttemptBlock` wrote. Defensive on purpose:
+ * the description is operator-editable, so a torn block parses to null
+ * instead of throwing or inventing numbers.
+ */
+export function parseRecoveryAttemptBlock(
+  description: string,
+): MissionRecoveryAttemptRecord | null {
+  const markerIndex = description.lastIndexOf(RECOVERY_ATTEMPT_BLOCK_MARKER);
+  if (markerIndex < 0) return null;
+  for (const line of description
+    .slice(markerIndex + RECOVERY_ATTEMPT_BLOCK_MARKER.length)
+    .split('\n')) {
+    const match = RECOVERY_ATTEMPT_LINE.exec(line.trim());
+    if (!match) continue;
+    return {
+      attempt: Number(match[1]),
+      maxAttempts: Number(match[2]),
+      reason: match[3].trim(),
+      at: match[4],
+    };
+  }
+  return null;
+}
+
+/** Removes the recovery-attempt block (marker through its last line). */
+export function stripRecoveryAttemptBlock(description: string): string {
+  const markerIndex = description.lastIndexOf(RECOVERY_ATTEMPT_BLOCK_MARKER);
+  if (markerIndex < 0) return description;
+  const before = description.slice(0, markerIndex).trimEnd();
+  const headerIndex = description.indexOf('## ', markerIndex);
+  const nextSectionIndex = description.indexOf(
+    '\n## ',
+    headerIndex >= 0 ? headerIndex : markerIndex,
+  );
+  const after =
+    nextSectionIndex >= 0 ? description.slice(nextSectionIndex + 1) : '';
+  return [before, after].filter(Boolean).join('\n\n');
+}
+
+/** Replaces an existing recovery-attempt block, or appends the new one. */
+export function replaceRecoveryAttemptBlock(
+  description: string,
+  block: string,
+): string {
+  const stripped = stripRecoveryAttemptBlock(description).trimEnd();
+  return stripped ? `${stripped}\n\n${block}` : block;
+}

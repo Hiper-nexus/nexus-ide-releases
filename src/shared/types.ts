@@ -8,6 +8,7 @@
  */
 
 import type { AdapterInfo } from './adapter-types';
+import type { MissionTaskScheduleItem } from './mission-task-schedule';
 import type { OnboardingState, OnboardingPatch } from './onboarding-types';
 import type {
   PetGalleryImportResult,
@@ -586,6 +587,8 @@ export interface NexusApi {
       acceptanceCriteria?: string[];
       /** standard | consult | plan (design-only plan.md) | ops (infra, sem PREVC). */
       lane?: 'standard' | 'consult' | 'plan' | 'ops';
+      orchestrationMode?: 'livre' | 'pack' | 'guided';
+      wavePackTemplateId?: 'landing' | 'saas' | 'fix';
       /** Current print/audio evidence must be present before dispatch. */
       evidenceAttached?: boolean;
       /**
@@ -621,8 +624,13 @@ export interface NexusApi {
     rearmMission(input: {
       missionId: string;
     }): Promise<{ ok: true } | { ok: false; error: string }>;
-    /** After plan.md is ready: plan lane → standard PREVC. */
-    promotePlanLane(input: { missionId: string }): Promise<Mission>;
+    /** After plan.md is ready: plan lane → standard execution. */
+    promotePlanLane(input: {
+      missionId: string;
+      /** Operator Pack/Guiado override stamped on the promoted contract. */
+      orchestrationMode?: 'pack' | 'guided';
+      wavePackTemplateId?: 'landing' | 'saas' | 'fix';
+    }): Promise<Mission>;
     /** Submit an approved mission kickoff through main-owned PTY authority. */
     submitMissionKickoff(input: {
       missionId: string;
@@ -671,6 +679,10 @@ export interface NexusApi {
       missionId: string;
       limit?: number;
     }): Promise<{ events: unknown[]; enabled?: boolean; error?: string }>;
+    /** Read-only wave schedule — identities/status only, never sealed detail. */
+    missionTaskSchedule(input: {
+      missionId: string;
+    }): Promise<{ tasks: MissionTaskScheduleItem[] }>;
     missionEventsReplay(input: {
       missionId: string;
       afterSequence?: number;

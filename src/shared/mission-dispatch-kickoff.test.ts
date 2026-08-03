@@ -86,6 +86,43 @@ describe('guided Main-owned PREVC kickoff', () => {
     expect(prompt).toMatch(/Feche com status=done somente após/i);
   });
 
+  it('teaches Main-owned fast path for delivery without Guided PREVC', () => {
+    const prompt = buildIntentDispatchKickoffPrompt({
+      squad,
+      missionId: 'mission-fast',
+      goal: 'Entregar a feature vibe',
+      acceptanceCriteria: ['Feature validada'],
+      risk: 'normal',
+      maxWorkers: 4,
+      standardTopology: 'delivery',
+      guidedPrevcRequired: false,
+    });
+
+    expect(prompt).toMatch(/Fast path: PREVC Guided não aplica/i);
+    expect(prompt).not.toContain('nexus_handoff_ack');
+    expect(prompt).not.toMatch(/Feche com status=done/i);
+    expect(prompt).toMatch(/motor Nexus marca done sozinho/i);
+    expect(prompt).toMatch(/ACK manual não é exigido \(no_manual_ack_required\)/i);
+  });
+
+  it('keeps Pack kickoff free of PREVC ceremony and serial story doctrine', () => {
+    const prompt = buildIntentDispatchKickoffPrompt({
+      squad,
+      missionId: 'mission-pack',
+      goal: 'Executar o plano promovido em ondas',
+      acceptanceCriteria: ['Stories entregues'],
+      risk: 'normal',
+      maxWorkers: 6,
+      standardTopology: 'wave-pack',
+      guidedPrevcRequired: false,
+    });
+
+    expect(prompt).toMatch(/Wave Pack: PREVC Guided não aplica/i);
+    expect(prompt).toMatch(/uma task por story/i);
+    expect(prompt).not.toContain('nexus_handoff_ack');
+    expect(prompt).not.toMatch(/Feche com status=done/i);
+  });
+
   it('keeps ACKs and the ## Maestro consolidation mandatory for fan-out', () => {
     const prompt = buildIntentDispatchKickoffPrompt({
       squad,
@@ -105,7 +142,7 @@ describe('guided Main-owned PREVC kickoff', () => {
 
 describe('escada de fontes de design no kickoff', () => {
   it('ensina as quatro fontes em ordem, com as duas sem chave nomeadas', () => {
-    const prompt = guidedPrompt();
+    const prompt = guidedPrompt({ uiMissionObjective: true });
 
     expect(prompt).toMatch(
       /\(1\)[^\n]*DESIGN\.md[^\n]*\.context\/docs\/design-system\.md/i,
@@ -117,12 +154,77 @@ describe('escada de fontes de design no kickoff', () => {
   });
 
   it('mantém extract como tentativa única e não deixa o modelo cair no default', () => {
-    const prompt = guidedPrompt();
+    const prompt = guidedPrompt({ uiMissionObjective: true });
 
     expect(prompt).toContain('nexus_design_system_local_import');
     expect(prompt).toMatch(/nexus_design_system_extract[^\n]*uma vez/i);
     expect(prompt).toMatch(/NETWORK_GUARD_UNAVAILABLE[^\n]*não/i);
     expect(prompt).toMatch(/nunca comece[^\n]*sem contrato|default do modelo/i);
     expect(prompt).toMatch(/impeccable/i);
+  });
+
+  it('não carrega a escada de design em objetivo que não toca UI', () => {
+    const prompt = guidedPrompt();
+
+    expect(prompt).not.toContain('nexus_design_system_local_list');
+    expect(prompt).not.toContain('designmd.ai');
+  });
+});
+
+describe('teto do kickoff standard', () => {
+  it('fica abaixo de 2,4KB sem promoted plan e sem objetivo de UI', () => {
+    const prompt = buildIntentDispatchKickoffPrompt({
+      squad,
+      missionId: 'mission-lean',
+      goal: 'Corrigir o pipeline de cobrança',
+      acceptanceCriteria: ['Cobrança fecha sem erro'],
+      risk: 'medium',
+      maxWorkers: 2,
+    });
+
+    expect(Buffer.byteLength(prompt, 'utf8')).toBeLessThan(2_400);
+  });
+
+  it('substitui o JSON ilimitado de artifacts por um digest nomeado', () => {
+    const prompt = buildIntentDispatchKickoffPrompt({
+      squad,
+      missionId: 'mission-promoted',
+      goal: 'Executar o plano promovido',
+      acceptanceCriteria: ['Plano executado'],
+      risk: 'medium',
+      maxWorkers: 2,
+      promotedPlan: {
+        handoffId: 'handoff-1',
+        digest: 'd'.repeat(64),
+        summary: '# PRD aprovado',
+        summarySha256: 'a'.repeat(64),
+        artifactsSha256: 'b'.repeat(64),
+        artifacts: [
+          { path: 'docs/stories/um.md' },
+          { path: 'docs/stories/dois.md' },
+        ],
+      } as any,
+    });
+
+    expect(prompt).toContain('### Artifacts (2)');
+    expect(prompt).toContain('docs/stories/um.md');
+    expect(prompt).not.toContain('"docs/stories/um.md"');
+  });
+
+  it('mantém a base operacional do squad dentro de 2.048 caracteres', () => {
+    const prompt = buildIntentDispatchKickoffPrompt({
+      squad: {
+        ...squad,
+        orchestratorInstructions: 'x'.repeat(5_000),
+      },
+      missionId: 'mission-base',
+      goal: 'Corrigir o pipeline de cobrança',
+      acceptanceCriteria: ['Cobrança fecha sem erro'],
+      risk: 'medium',
+      maxWorkers: 2,
+    });
+
+    expect(prompt).toContain('(base operacional truncada em 2048 caracteres)');
+    expect(prompt).not.toContain('x'.repeat(2_049));
   });
 });

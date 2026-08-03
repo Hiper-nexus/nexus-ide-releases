@@ -97,9 +97,20 @@ export function ownershipsIntersect(
 ): boolean {
   const leftFiles = left.files.map(normalizeSchedulePath);
   const rightFiles = right.files.map(normalizeSchedulePath);
-  const fileOverlap = leftFiles.some((leftFile) =>
-    rightFiles.some((rightFile) => fileClaimsOverlap(leftFile, rightFile)),
-  );
+  const bothWavePack =
+    left.domains.some(
+      (domain) => domain.toLocaleLowerCase('en-US') === 'wave-pack',
+    ) &&
+    right.domains.some(
+      (domain) => domain.toLocaleLowerCase('en-US') === 'wave-pack',
+    );
+  // Pack stories share inventory files as merge permit; wave exclusivity is
+  // wave-pack-story:<id> (+ symbols). See docs/design/mission-wave-pack.md.
+  const fileOverlap = bothWavePack
+    ? false
+    : leftFiles.some((leftFile) =>
+        rightFiles.some((rightFile) => fileClaimsOverlap(leftFile, rightFile)),
+      );
   const exactOverlap = (a: readonly string[], b: readonly string[]) => {
     const rightValues = new Set(b);
     return a.some((value) => rightValues.has(value));

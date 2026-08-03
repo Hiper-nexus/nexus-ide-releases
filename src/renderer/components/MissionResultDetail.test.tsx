@@ -1,9 +1,15 @@
 /** @vitest-environment jsdom */
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Mission, MissionStatus } from '../../shared/orch-types';
+import { formatRecoveryAttemptBlock } from '../../shared/mission-recovery-policy';
 import { MissionResultDetail } from './MissionResultDetail';
+import { askConfirm } from '../state/confirm-store';
+
+vi.mock('../state/confirm-store', () => ({
+  askConfirm: vi.fn(async () => true),
+}));
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -97,6 +103,147 @@ describe('MissionResultDetail status presentation', () => {
     expect(host.textContent).not.toContain(
       'Esta missão foi encerrada sem relatório final persistido.',
     );
+    act(() => root.unmount());
+  });
+});
+
+describe('MissionResultDetail recovery escape hatch', () => {
+  function recoveringMission(attemptBlock: string): Mission {
+    return {
+      ...mission('blocked'),
+      intentState: 'blocked_technical',
+      intentVersion: 3,
+      intentContract: {
+        goal: 'Corrigir o projeto',
+        intentVersion: 3,
+        approvedAt: 100,
+      } as Mission['intentContract'],
+      description: `objetivo da missão\n\n${attemptBlock}`,
+    };
+  }
+
+  function renderRecovering(description: string): {
+    host: HTMLDivElement;
+    root: Root;
+  } {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    act(() =>
+      root.render(
+        <MissionResultDetail
+          mission={recoveringMission(description)}
+          onBack={() => {}}
+        />,
+      ),
+    );
+    return { host, root };
+  }
+
+  afterEach(() => {
+    document.body.innerHTML = '';
+    vi.restoreAllMocks();
+  });
+
+  it('shows the persisted attempt N/8 and its reason', () => {
+    const { host, root } = renderRecovering(
+      formatRecoveryAttemptBlock(
+        5,
+        8,
+        'timeout no resume',
+        new Date().toISOString(),
+      ),
+    );
+    expect(host.textContent).toContain('Recuperando 5/8');
+    expect(host.textContent).toContain(
+      'Tentativa 5 de 8 · timeout no resume',
+    );
+    act(() => root.unmount());
+  });
+
+  it('hides the manual exits while the first fresh attempts run', () => {
+    const { host, root } = renderRecovering(
+      formatRecoveryAttemptBlock(
+        1,
+        8,
+        'falha transitória',
+        new Date().toISOString(),
+      ),
+    );
+    expect(host.textContent).not.toContain('Forçar retomada');
+    expect(host.textContent).not.toContain('Encerrar execução');
+    act(() => root.unmount());
+  });
+
+  it('offers the manual exits once the recovery is proven stuck', () => {
+    const { host, root } = renderRecovering(
+      formatRecoveryAttemptBlock(
+        3,
+        8,
+        'falha persistente',
+        new Date().toISOString(),
+      ),
+    );
+    expect(host.textContent).toContain('Forçar retomada');
+    expect(host.textContent).toContain('Encerrar execução');
+    act(() => root.unmount());
+  });
+
+  it('forces a resume through the existing bootstrap IPC', async () => {
+    const resumeMissionBootstrap = vi.fn(async () => ({ ok: true as const }));
+    Object.defineProperty(window, 'nexus', {
+      value: { orch: { resumeMissionBootstrap } },
+      configurable: true,
+    });
+    const { host, root } = renderRecovering(
+      formatRecoveryAttemptBlock(
+        4,
+        8,
+        'falha persistente',
+        new Date().toISOString(),
+      ),
+    );
+    const button = [...host.querySelectorAll('button')].find((el) =>
+      el.textContent?.includes('Forçar retomada'),
+    );
+    expect(button).toBeTruthy();
+    await act(async () => {
+      button!.click();
+    });
+    expect(resumeMissionBootstrap).toHaveBeenCalledWith({
+      missionId: 'mission-blocked',
+    });
+    expect(host.textContent).toContain('Retomada forçada');
+    act(() => root.unmount());
+  });
+
+  it('closes the runtime only after confirmation', async () => {
+    const closeMissionRuntime = vi.fn(async () => ({
+      ok: true as const,
+      terminatedSessionIds: [],
+    }));
+    Object.defineProperty(window, 'nexus', {
+      value: { orch: { closeMissionRuntime } },
+      configurable: true,
+    });
+    const { host, root } = renderRecovering(
+      formatRecoveryAttemptBlock(
+        4,
+        8,
+        'falha persistente',
+        new Date().toISOString(),
+      ),
+    );
+    const button = [...host.querySelectorAll('button')].find((el) =>
+      el.textContent?.includes('Encerrar execução'),
+    );
+    expect(button).toBeTruthy();
+    await act(async () => {
+      button!.click();
+    });
+    expect(askConfirm).toHaveBeenCalled();
+    expect(closeMissionRuntime).toHaveBeenCalledWith('mission-blocked');
+    expect(host.textContent).toContain('Execução encerrada');
     act(() => root.unmount());
   });
 });

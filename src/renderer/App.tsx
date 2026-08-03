@@ -24,6 +24,7 @@ import {
 import { CommandPalette } from './components/CommandPalette';
 import { useCommandPaletteStore } from './state/command-palette-store';
 import { ConfirmDialog } from './components/ConfirmDialog';
+import { OrchestrationModeDialog } from './components/OrchestrationModeDialog';
 import { useConfirmStore } from './state/confirm-store';
 import { useToastStore } from './state/toast-store';
 import { missionBlockCauseText } from '../shared/mission-block-cause';
@@ -556,6 +557,7 @@ export function App() {
         <MissionWizard />
         <OperatorProfile />
         <ConfirmDialog />
+        <OrchestrationModeDialog />
         <Toasts />
       </div>
     );
@@ -639,6 +641,7 @@ export function App() {
       <CommandPalette />
       <KeyboardCheatsheet />
       <ConfirmDialog />
+      <OrchestrationModeDialog />
       <Toasts />
       {dropActive && (
         <div className="global-drop-overlay" role="status" aria-live="polite">

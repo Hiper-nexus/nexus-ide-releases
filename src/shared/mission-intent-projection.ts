@@ -40,7 +40,42 @@ export type MissionIntentEventName =
   | 'worker_started'
   | 'automatic_recovery'
   | 'intent_gate_denied'
-  | 'prepare_project';
+  | 'prepare_project'
+  | 'bootstrap_progress'
+  | 'kickoff_accepted';
+
+/**
+ * Passos visíveis do bootstrap main-owned (aprovação → primeiro pane → aceite
+ * do kickoff). O renderer mapeia cada passo para uma frase curta; a ausência
+ * de evento nunca é erro (journal desligado = card estático de sempre).
+ */
+export type BootstrapProgressStep =
+  | 'authority_checked'
+  | 'subscription_auth'
+  | 'plan_baseline'
+  | 'squad_sealed'
+  | 'prevc_freeze'
+  | 'runtime_checked'
+  | 'drift_retired'
+  | 'attachments_verified'
+  | 'pane_spawned'
+  | 'kickoff_submitted'
+  | 'kickoff_accepted';
+
+export const BOOTSTRAP_PROGRESS_STEPS: readonly BootstrapProgressStep[] =
+  Object.freeze([
+    'authority_checked',
+    'subscription_auth',
+    'plan_baseline',
+    'squad_sealed',
+    'prevc_freeze',
+    'runtime_checked',
+    'drift_retired',
+    'attachments_verified',
+    'pane_spawned',
+    'kickoff_submitted',
+    'kickoff_accepted',
+  ]);
 
 export interface MissionIntentEvent {
   readonly name: MissionIntentEventName;

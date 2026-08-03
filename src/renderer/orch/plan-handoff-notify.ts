@@ -74,7 +74,7 @@ export function notifyPlanHandoffsReady(
     if (!metrics.notePlanHandoffReady(item.handoffId)) continue;
     const missionId = item.missionId;
     useToastStore.getState().push('info', 'Plano pronto', {
-      detail: `"${item.title}" — promover para código PREVC.`,
+      detail: `"${item.title}" — promover para código (Pack ou Guiado).`,
       ttlMs: 25_000,
       action: {
         label: 'Executar plano',

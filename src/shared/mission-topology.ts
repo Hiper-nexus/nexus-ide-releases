@@ -1,6 +1,7 @@
 export type StandardMissionTopology =
   | "delivery"
-  | "team-read-only-fanout";
+  | "team-read-only-fanout"
+  | "wave-pack";
 
 export const TEAM_READ_ONLY_FANOUT_DOMAIN = "team-read-only-fanout";
 

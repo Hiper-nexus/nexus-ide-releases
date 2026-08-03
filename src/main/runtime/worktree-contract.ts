@@ -311,6 +311,9 @@ export const OWNERSHIP_NON_CLAIM_DOMAINS = Object.freeze(
     "guided-regression",
     "sequential-only",
     TEAM_READ_ONLY_FANOUT_DOMAIN,
+    // Topology marker for Mission Wave Pack — pairwise exclusivity uses
+    // wave-pack-story:<id>, not this shared label (docs/design/mission-wave-pack.md).
+    "wave-pack",
   ]),
 );
 
@@ -389,6 +392,25 @@ export function exclusiveOwnershipOverlap(
   context: OwnershipExclusivityContext,
 ): WorktreeOwnership {
   const full = ownershipOverlap(left, right);
+  const bothWavePack =
+    left.domains.some(
+      (domain) => domain.toLocaleLowerCase("en-US") === "wave-pack",
+    ) &&
+    right.domains.some(
+      (domain) => domain.toLocaleLowerCase("en-US") === "wave-pack",
+    );
+  if (bothWavePack && context.sameMission) {
+    // Same-mission Wave Pack: shared inventory files are the merge permit, not
+    // a wave veto. Pairwise exclusivity is wave-pack-story:<id> (+ symbols).
+    // Across missions, keep full file exclusivity — two Pack missions on the
+    // same checkout must not silently share active worktrees.
+    // See docs/design/mission-wave-pack.md.
+    return Object.freeze({
+      files: Object.freeze([]),
+      symbols: full.symbols,
+      domains: full.domains,
+    });
+  }
   if (context.sameMission) return full;
   if (!ownershipIsCoverage(left) && !ownershipIsCoverage(right)) return full;
   return Object.freeze({

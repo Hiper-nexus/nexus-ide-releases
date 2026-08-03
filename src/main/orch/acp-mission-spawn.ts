@@ -20,6 +20,9 @@ import { resolveCwdForScope } from './workspace-path';
 import { issueAgentIdentityRequired } from './agent-identity-spawn';
 import type { PaneOrchMeta, PaneSpawnOptions } from './main-owned-pane-runtime';
 
+/** A harness that never answers the spawn handshake is a hang, not a wait. */
+const ACP_SPAWN_TIMEOUT_MS = 60_000;
+
 export interface AcpMissionSpawnHooks {
   attachSessionScope(sessionId: string, scope: ProjectExecutionScope): void;
   panesChanged(): void;
@@ -138,7 +141,7 @@ export async function spawnMainOwnedAcpMissionPane(
     });
     mcpToken = gate.token;
     const { spawnAcpHarnessSession } = await import('../acp/acp-harness-driver');
-    const session = await spawnAcpHarnessSession({
+    const spawnPromise = spawnAcpHarnessSession({
       harness,
       cwd,
       paneId,
@@ -159,6 +162,32 @@ export async function spawnMainOwnedAcpMissionPane(
       allowedSkills: options.allowedSkills,
       authoritySeal: options.authoritySeal,
     });
+    // A harness that never answers must not strand the mission flight: the
+    // timeout converts the hang into a retryable spawn_failed, and a session
+    // that finally arrives late is shut down so no process leaks.
+    let spawnTimer: ReturnType<typeof setTimeout> | undefined;
+    const spawnTimeout = new Promise<never>((_, reject) => {
+      spawnTimer = setTimeout(
+        () =>
+          reject(
+            new Error(
+              'o harness ACP não respondeu ao spawn em 60s (spawn_failed)',
+            ),
+          ),
+        ACP_SPAWN_TIMEOUT_MS,
+      );
+    });
+    let session: Awaited<ReturnType<typeof spawnAcpHarnessSession>>;
+    try {
+      session = await Promise.race([spawnPromise, spawnTimeout]);
+    } catch (error) {
+      clearTimeout(spawnTimer);
+      void spawnPromise
+        .then((late) => late.shutdown())
+        .catch(() => undefined);
+      throw error;
+    }
+    clearTimeout(spawnTimer);
     if (options.initialPrompt && options.initialPrompt.trim().length > 0) {
       void session.prompt(options.initialPrompt).catch(() => {
         /* turn failure already framed by the driver */

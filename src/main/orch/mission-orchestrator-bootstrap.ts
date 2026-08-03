@@ -10,6 +10,7 @@ import {
 import { buildIntentDispatchKickoffPrompt } from "../../shared/mission-dispatch-kickoff";
 import type { StandardMissionTopology } from "../../shared/mission-topology";
 import { isOperatorChoicePolicy } from "../../shared/squad-cli-policy";
+import { isUiMissionText } from "../../shared/mission-work-kind";
 import { getOrchSettings } from "../persistence/settings-store";
 import {
   hasCurrentApprovedDispatchContract,
@@ -54,7 +55,9 @@ import {
   submitMissionKickoffFromMain,
   type MissionKickoffResult,
 } from "./mission-kickoff";
+import { emitBootstrapProgress } from "./mission-event-emit";
 import { emitMissionIntentEvent } from "./mission-intent-events";
+import type { BootstrapProgressStep } from "../../shared/mission-intent-projection";
 import {
   getPaneRuntimeAuthorityBySession,
   listPaneSnapshots,
@@ -69,7 +72,10 @@ import {
   getProjectDomainStores,
   requireProjectDomainStoreRegistry,
 } from "./project-domain-store-registry";
-import { withMissionLifecycleLock } from "./mission-lifecycle-lock";
+import {
+  MissionLifecycleLockBusyError,
+  withMissionLifecycleLock,
+} from "./mission-lifecycle-lock";
 import { suppressIntentionalMissionOrchestratorExit } from "./mission-orchestrator-exit-lifecycle";
 import { getSquad } from "./squad-store";
 import { snapshotSquadAuthority } from "./squad-authority-snapshot";
@@ -97,8 +103,11 @@ import {
 } from "../runtime/operational-failure-policy";
 import { hasRetiredRosterRouteMarker } from "../../shared/retired-adapter-policy";
 import {
+  formatRecoveryAttemptBlock,
   hasAutomaticTechnicalRecovery,
   hasTerminalOperationalFailureMarker,
+  replaceRecoveryAttemptBlock,
+  stripRecoveryAttemptBlock,
   TERMINAL_OPERATIONAL_FAILURE_MARKER,
 } from "../../shared/mission-recovery-policy";
 import type {
@@ -295,6 +304,16 @@ export interface MissionOrchestratorBootstrapDeps {
     input: { missionId: string; sessionId: string; prompt: string },
   ): Promise<MissionKickoffResult>;
   emitDispatched(mission: Mission): void;
+  /**
+   * Operator-visible bootstrap progress (telemetry only — never awaited,
+   * never a gate). Absent in fakes; the service must not depend on it.
+   */
+  emitProgress?(
+    scope: ProjectExecutionScope,
+    missionId: string,
+    step: BootstrapProgressStep,
+    detail?: string,
+  ): void;
   validateAttachmentPaths(
     paths: readonly string[] | undefined,
   ): string[] | undefined;
@@ -375,6 +394,16 @@ export interface MissionOrchestratorBootstrapRecoveryDeps {
     missionId: string,
     attempts: number,
   ): void;
+  /**
+   * Persist (or clear, with null) the durable "tentativa N de 8" block so the
+   * operator sees attempts counting instead of an eternal spinner. Optional
+   * in narrow tests; never a gate.
+   */
+  persistRecoveryAttempt?(
+    scope: ProjectExecutionScope,
+    missionId: string,
+    outcome: { readonly attempt: number; readonly reason: string } | null,
+  ): void;
   now?(): number;
   warn?(message: string, error: unknown): void;
 }
@@ -384,6 +413,52 @@ const TECHNICAL_RECOVERY_BASE_DELAY_MS = 5_000;
 const TECHNICAL_RECOVERY_MAX_DELAY_MS = 60_000;
 /** Hard cap for recoverable technical retries on one approved revision. */
 export const TECHNICAL_RECOVERY_MAX_ATTEMPTS = 8;
+/**
+ * A hung resume must consume an attempt instead of hanging the lane forever
+ * (H9). The physical singleflight + authority fence stay authoritative; this
+ * only stops the coordinator from waiting on a flight that never answers.
+ */
+export const RECOVERY_ATTEMPT_TIMEOUT_MS = 120_000;
+/** Automatic recovery gives up the lock wait (not the mission) after this. */
+export const RECOVERY_LOCK_ACQUIRE_TIMEOUT_MS = 30_000;
+/** A hung keychain warm cannot hold the boot; the gate fails closed later. */
+const SUBSCRIPTION_AUTH_WARM_TIMEOUT_MS = 10_000;
+
+class RecoveryAttemptTimeoutError extends Error {
+  constructor(missionId: string, timeoutMs: number) {
+    super(
+      `a retomada automática de ${missionId} não respondeu em ${timeoutMs}ms`,
+    );
+    this.name = "RecoveryAttemptTimeoutError";
+  }
+}
+
+function raceWithTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  onTimeout: () => Error,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(onTimeout()), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+function recoveryAttemptReason(resultOrError: unknown): string {
+  if (
+    resultOrError &&
+    typeof resultOrError === "object" &&
+    "error" in resultOrError
+  ) {
+    const error = (resultOrError as { error?: unknown }).error;
+    if (typeof error === "string" && error.trim()) return error.trim();
+  }
+  if (resultOrError instanceof Error && resultOrError.message.trim()) {
+    return resultOrError.message.trim();
+  }
+  return "falha sem detalhe registrado";
+}
 
 interface TechnicalRecoveryState {
   readonly attempts: number;
@@ -786,6 +861,8 @@ const productionDeps: MissionOrchestratorBootstrapDeps = {
       reason: "main_orchestrator_bootstrap",
     });
   },
+  emitProgress: (scope, missionId, step, detail) =>
+    emitBootstrapProgress(scope, missionId, step, detail),
   validateAttachmentPaths: (paths) => validateDroppedAttachmentPaths(paths),
   snapshotAttachmentPaths: (paths) => snapshotDroppedAttachmentPaths(paths),
   ensurePlanGitBaseline: (scope, missionId) => {
@@ -883,6 +960,7 @@ export class MissionOrchestratorBootstrapService {
       bootstrapFlightKey(scope, missionId),
       bootstrapMissionApprovalSnapshot(initial),
     );
+    this.#emitProgress(scope, missionId, "authority_checked");
     // Worker authority never depends on PREVC preparation. Main prepares only
     // project context in parallel; freeze and review happen after handoff at
     // the promotion boundary so their seal cannot invalidate live workers.
@@ -895,8 +973,28 @@ export class MissionOrchestratorBootstrapService {
     // IPC-level warm alone is not sufficient here. Conditional await: when no
     // warm is configured the bootstrap must keep its synchronous
     // run-up-to-spawn so concurrent same-tick retries singleflight.
+    this.#emitProgress(scope, missionId, "subscription_auth");
     const subscriptionAuthWarm = this.#deps.warmSubscriptionAuth?.();
-    if (subscriptionAuthWarm) await subscriptionAuthWarm;
+    if (subscriptionAuthWarm) {
+      try {
+        await raceWithTimeout(
+          subscriptionAuthWarm,
+          SUBSCRIPTION_AUTH_WARM_TIMEOUT_MS,
+          () =>
+            new Error(
+              "warm de autenticação da assinatura excedeu 10s; seguindo sem warm",
+            ),
+        );
+      } catch (warmError) {
+        // A hung keychain cannot hold the boot. Continue without warm; if
+        // auth is genuinely missing the squad-readiness gate fails closed
+        // with a cause instead of silently logging in nobody.
+        console.warn(
+          `[mission-bootstrap] subscription warm skipped for ${missionId}:`,
+          warmError,
+        );
+      }
+    }
     try {
       const requiresPrePlanGitBaseline =
         initial.intentContract?.lane === "plan" ||
@@ -911,13 +1009,15 @@ export class MissionOrchestratorBootstrapService {
         "applicable" in planResult &&
         planResult.applicable === true &&
         "topology" in planResult &&
-        planResult.topology === "team-read-only-fanout"
+        (planResult.topology === "team-read-only-fanout" ||
+          planResult.topology === "wave-pack")
       ) {
-        standardTopology = "team-read-only-fanout";
+        standardTopology = planResult.topology;
       }
       if (
         !requiresPrePlanGitBaseline &&
-        standardTopology !== "team-read-only-fanout"
+        standardTopology !== "team-read-only-fanout" &&
+        standardTopology !== "wave-pack"
       ) {
         this.#deps.ensurePlanGitBaseline?.(scope, missionId);
       }
@@ -932,8 +1032,7 @@ export class MissionOrchestratorBootstrapService {
         ),
       );
     }
-    const isTeamReadOnlyFanout =
-      standardTopology === "team-read-only-fanout";
+    this.#emitProgress(scope, missionId, "plan_baseline");
     const guidedPrevcRequired =
       missionRequiresGuidedPrevc(initial, standardTopology);
     // Guided delivery completion is driver-owned: with the driver disabled the
@@ -985,6 +1084,7 @@ export class MissionOrchestratorBootstrapService {
         "user",
       );
     }
+    this.#emitProgress(scope, missionId, "squad_sealed");
     // Only production call that persists mission_contracts for a guided
     // mission. It MUST fire before the authority seal is computed below:
     // freezing rotates the PREVC seal (contextRevision/contractHash), and a
@@ -997,7 +1097,11 @@ export class MissionOrchestratorBootstrapService {
     // ensureGuidedMissionPrevc is idempotent and refuses to (re)freeze once
     // a worker has materialized; when the context is not ready (greenfield)
     // nothing freezes and both sides keep the intent-hash fallback seal.
-    if (!isTeamReadOnlyFanout) {
+    // Fast path / Pack / fan-out: never freeze PREVC on the spawn critical path
+    // (docs/design/orch-fast-path.md). Only Guided-required missions pay this.
+    // Do not emit prevc_freeze when skipping — vacancy UI would lie.
+    if (guidedPrevcRequired) {
+      this.#emitProgress(scope, missionId, "prevc_freeze");
       try {
         void Promise.resolve(
           this.#deps.ensureMissionPrevc?.(scope, missionId),
@@ -1072,9 +1176,10 @@ export class MissionOrchestratorBootstrapService {
     // External effects consume the persisted approval, never a mutable
     // settings object. Equality above proves that it remains currently valid.
     const runtime = approvedRuntime;
+    this.#emitProgress(scope, missionId, "runtime_checked");
     let isPrevcPreparationStarted = false;
     const preparePrevcInBackground = (): void => {
-      if (isTeamReadOnlyFanout) return;
+      if (!guidedPrevcRequired) return;
       if ((initial.intentContract?.lane ?? "standard") !== "standard") return;
       if (isPrevcPreparationStarted) return;
       isPrevcPreparationStarted = true;
@@ -1196,6 +1301,7 @@ export class MissionOrchestratorBootstrapService {
       if (!retired.ok) return retired.result;
       persistedOrchestrator = undefined;
     }
+    this.#emitProgress(scope, missionId, "drift_retired");
 
     if (activeOrchestratorSessionId && persistedOrchestrator) {
       const sessionId = activeOrchestratorSessionId;
@@ -1305,6 +1411,7 @@ export class MissionOrchestratorBootstrapService {
         "user",
       );
     }
+    this.#emitProgress(scope, missionId, "attachments_verified");
 
     const title = `${squad.name} · orq`;
     preparePrevcInBackground();
@@ -1338,6 +1445,7 @@ export class MissionOrchestratorBootstrapService {
         }`,
       );
     }
+    this.#emitProgress(scope, missionId, "pane_spawned");
 
     let paneRow: MissionPaneSpec | null = null;
     let sessionBound = false;
@@ -1413,12 +1521,22 @@ export class MissionOrchestratorBootstrapService {
         operatorChoice: isOperatorChoicePolicy(
           getOrchSettings().squadCliPolicy,
         ),
+        uiMissionObjective: isUiMissionText(
+          [
+            current.intentContract!.goal,
+            ...current.intentContract!.acceptanceCriteria,
+          ].join("\n"),
+        ),
       });
+      this.#emitProgress(scope, missionId, "kickoff_submitted");
       const kickoffAttempt = await this.#deps.submitKickoff(scope, {
         missionId,
         sessionId: spawn.sessionId,
         prompt,
       });
+      if (kickoffAttempt.accepted) {
+        this.#emitProgress(scope, missionId, "kickoff_accepted");
+      }
       const kickoff =
         kickoffAttempt.accepted
           ? kickoffAttempt
@@ -1837,6 +1955,26 @@ export class MissionOrchestratorBootstrapService {
     });
   }
 
+  /**
+   * Telemetry only: never awaited, never a gate, never allowed to fail the
+   * bootstrap — a broken journal must keep the card static, not the mission.
+   */
+  #emitProgress(
+    scope: ProjectExecutionScope,
+    missionId: string,
+    step: BootstrapProgressStep,
+    detail?: string,
+  ): void {
+    try {
+      this.#deps.emitProgress?.(scope, missionId, step, detail);
+    } catch (error) {
+      console.warn(
+        `[mission-bootstrap] bootstrap progress emission failed for ${missionId}/${step}:`,
+        error,
+      );
+    }
+  }
+
   #failure(
     scope: ProjectExecutionScope,
     missionId: string,
@@ -1985,7 +2123,15 @@ export class MissionOrchestratorBootstrapRecovery {
           if (recovery && recovery.nextAttemptAt > now) continue;
           const attempt = (recovery?.attempts ?? 0) + 1;
           pending.push(
-            this.#deps.resumeBlocked(scope, mission.id).then(
+            raceWithTimeout(
+              this.#deps.resumeBlocked(scope, mission.id),
+              RECOVERY_ATTEMPT_TIMEOUT_MS,
+              () =>
+                new RecoveryAttemptTimeoutError(
+                  mission.id,
+                  RECOVERY_ATTEMPT_TIMEOUT_MS,
+                ),
+            ).then(
               (result) => {
                 if (result.ok && result.kickoff.accepted) {
                   // Keep only this exact blocked incident closed in case the
@@ -1999,6 +2145,7 @@ export class MissionOrchestratorBootstrapRecovery {
                     settled: true,
                     revisionClosed: false,
                   });
+                  this.#persistRecoveryAttempt(scope, mission.id, null);
                   return;
                 }
                 if (!isRetryableBootstrapResult(result)) {
@@ -2008,6 +2155,10 @@ export class MissionOrchestratorBootstrapRecovery {
                     observedBlockedUpdatedAt: mission.updatedAt,
                     settled: true,
                     revisionClosed: true,
+                  });
+                  this.#persistRecoveryAttempt(scope, mission.id, {
+                    attempt,
+                    reason: recoveryAttemptReason(result),
                   });
                   this.#warn(
                     `[mission-orchestrator-bootstrap] automatic recovery needs a ` +
@@ -2023,6 +2174,10 @@ export class MissionOrchestratorBootstrapRecovery {
                     observedBlockedUpdatedAt: mission.updatedAt,
                     settled: true,
                     revisionClosed: true,
+                  });
+                  this.#persistRecoveryAttempt(scope, mission.id, {
+                    attempt,
+                    reason: recoveryAttemptReason(result),
                   });
                   try {
                     this.#deps.exhaustTechnicalRecovery?.(
@@ -2059,6 +2214,10 @@ export class MissionOrchestratorBootstrapRecovery {
                     `did not start ${mission.id}; retry remains scheduled:`,
                   result,
                 );
+                this.#persistRecoveryAttempt(scope, mission.id, {
+                  attempt,
+                  reason: recoveryAttemptReason(result),
+                });
               },
               (error) => {
                 if (attempt >= TECHNICAL_RECOVERY_MAX_ATTEMPTS) {
@@ -2068,6 +2227,10 @@ export class MissionOrchestratorBootstrapRecovery {
                     observedBlockedUpdatedAt: mission.updatedAt,
                     settled: true,
                     revisionClosed: true,
+                  });
+                  this.#persistRecoveryAttempt(scope, mission.id, {
+                    attempt,
+                    reason: recoveryAttemptReason(error),
                   });
                   try {
                     this.#deps.exhaustTechnicalRecovery?.(
@@ -2104,6 +2267,10 @@ export class MissionOrchestratorBootstrapRecovery {
                     `failed for ${mission.id}; retry remains scheduled:`,
                   error,
                 );
+                this.#persistRecoveryAttempt(scope, mission.id, {
+                  attempt,
+                  reason: recoveryAttemptReason(error),
+                });
               },
             ),
           );
@@ -2133,6 +2300,23 @@ export class MissionOrchestratorBootstrapRecovery {
 
   #warn(message: string, error: unknown): void {
     (this.#deps.warn ?? console.warn)(message, error);
+  }
+
+  /** Telemetry-grade persistence: a broken store keeps the lane moving. */
+  #persistRecoveryAttempt(
+    scope: ProjectExecutionScope,
+    missionId: string,
+    outcome: { readonly attempt: number; readonly reason: string } | null,
+  ): void {
+    try {
+      this.#deps.persistRecoveryAttempt?.(scope, missionId, outcome);
+    } catch (error) {
+      this.#warn(
+        `[mission-orchestrator-bootstrap] could not persist recovery attempt ` +
+          `for ${missionId}:`,
+        error,
+      );
+    }
   }
 }
 
@@ -2185,6 +2369,32 @@ const productionRecovery = new MissionOrchestratorBootstrapRecovery({
     stores.missions.update(missionId, {
       ...missionBlockPatch("user"),
       description,
+    });
+  },
+  persistRecoveryAttempt: (scope, missionId, outcome) => {
+    const stores = getProjectDomainStores(scope);
+    const current = stores.missions.get(missionId);
+    if (
+      !current ||
+      current.status === "done" ||
+      current.status === "failed"
+    ) {
+      return;
+    }
+    const description = outcome
+      ? replaceRecoveryAttemptBlock(
+          current.description,
+          formatRecoveryAttemptBlock(
+            outcome.attempt,
+            TECHNICAL_RECOVERY_MAX_ATTEMPTS,
+            outcome.reason,
+            new Date().toISOString(),
+          ),
+        )
+      : stripRecoveryAttemptBlock(current.description);
+    if (description === current.description) return;
+    stores.missions.update(missionId, {
+      description: description.slice(0, 65_536),
     });
   },
 });
@@ -2933,12 +3143,19 @@ const productionDeadGraphReapprovalDeps: DeadGraphReapprovalDeps = {
 function deadGraphResumeFailure(
   missionId: string,
   detail: string,
+  options: { readonly terminal?: boolean } = {},
 ): MissionOrchestratorBootstrapResult {
+  // Structural identity conflicts never yield to retrying the same approved
+  // revision: mark them terminal so the recovery lane settles instead of
+  // burning all 8 attempts on a deterministic failure (H10).
+  const error = options.terminal
+    ? terminalOperationalFailureReason(detail)
+    : detail;
   return Object.freeze({
     ok: false,
     missionId,
     reason: "not_authorized",
-    error: detail.slice(0, 4_096),
+    error: error.slice(0, 4_096),
     cta: BOOTSTRAP_CTA,
   });
 }
@@ -3063,6 +3280,7 @@ export async function prepareDeadGraphReapprovalForScope(
       return deadGraphResumeFailure(
         missionId,
         "Mais de um dispatch reivindica o mesmo pane antigo; a missão permaneceu bloqueada.",
+        { terminal: true },
       );
     }
     const dispatch = matchingDispatches[0];
@@ -3081,6 +3299,7 @@ export async function prepareDeadGraphReapprovalForScope(
       return deadGraphResumeFailure(
         missionId,
         "A sessão física do pane antigo divergiu do vínculo durável; a missão permaneceu bloqueada.",
+        { terminal: true },
       );
     }
     if (
@@ -3096,6 +3315,7 @@ export async function prepareDeadGraphReapprovalForScope(
       return deadGraphResumeFailure(
         missionId,
         "As identidades do pane antigo são ambíguas; a missão permaneceu bloqueada.",
+        { terminal: true },
       );
     }
   }
@@ -3116,6 +3336,7 @@ export async function prepareDeadGraphReapprovalForScope(
       return deadGraphResumeFailure(
         missionId,
         "O worker antigo possui mais de uma identidade física; a missão permaneceu bloqueada.",
+        { terminal: true },
       );
     }
     const runtime = observed[0];
@@ -3129,6 +3350,7 @@ export async function prepareDeadGraphReapprovalForScope(
       return deadGraphResumeFailure(
         missionId,
         "O worker físico divergiu do dispatch terminal; a missão permaneceu bloqueada.",
+        { terminal: true },
       );
     }
     const paneId = dispatch.paneId ?? runtime?.paneId;
@@ -3166,6 +3388,7 @@ export async function prepareDeadGraphReapprovalForScope(
       return deadGraphResumeFailure(
         missionId,
         "A sessão do orquestrador antigo está vinculada a múltiplos panes.",
+        { terminal: true },
       );
     }
     if (
@@ -3180,6 +3403,7 @@ export async function prepareDeadGraphReapprovalForScope(
       return deadGraphResumeFailure(
         missionId,
         "A identidade do orquestrador antigo é ambígua; a missão permaneceu bloqueada.",
+        { terminal: true },
       );
     }
   }
@@ -3198,6 +3422,7 @@ export async function prepareDeadGraphReapprovalForScope(
       return deadGraphResumeFailure(
         missionId,
         "O inventário físico antigo não possui autoridade exata para encerramento.",
+        { terminal: true },
       );
     }
   }
@@ -3394,20 +3619,41 @@ export function resumeAutomaticallyBlockedMissionBootstrapForScope(
       resumeBlockedMissionBootstrapWithinLifecycleLock,
   },
 ): Promise<MissionOrchestratorBootstrapResult> {
-  return withMissionLifecycleLock(scope, missionId, () => {
-    const current = deps.getMission(scope, missionId);
-    if (!current || !hasAutomaticTechnicalRecovery(current)) {
+  return withMissionLifecycleLock(
+    scope,
+    missionId,
+    () => {
+      const current = deps.getMission(scope, missionId);
+      if (!current || !hasAutomaticTechnicalRecovery(current)) {
+        return {
+          ok: false as const,
+          missionId,
+          reason: "not_authorized" as const,
+          error:
+            "A recuperação automática foi cancelada porque a missão agora " +
+            "aguarda uma decisão do operador ou perdeu a aprovação vigente.",
+          cta: BOOTSTRAP_CTA,
+        };
+      }
+      return deps.resumeWithinLifecycleLock(scope, missionId);
+    },
+    { acquireTimeoutMs: RECOVERY_LOCK_ACQUIRE_TIMEOUT_MS },
+  ).catch((error): MissionOrchestratorBootstrapResult => {
+    if (error instanceof MissionLifecycleLockBusyError) {
+      // Another lifecycle transition holds the mission right now. This is
+      // contention, not failure: the bounded backoff retries it, and the
+      // attempt ceiling keeps even perpetual contention from looping forever.
       return {
         ok: false,
         missionId,
-        reason: "not_authorized",
+        reason: "preflight_failed",
         error:
-          "A recuperação automática foi cancelada porque a missão agora " +
-          "aguarda uma decisão do operador ou perdeu a aprovação vigente.",
+          "recovery_lock_busy: outra transição do ciclo de vida da missão " +
+          "segura o lock; a recuperação tenta novamente no próximo backoff.",
         cta: BOOTSTRAP_CTA,
       };
     }
-    return deps.resumeWithinLifecycleLock(scope, missionId);
+    throw error;
   });
 }
 

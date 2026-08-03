@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { compileIntentContract } from "../../shared/mission-intent";
+import type { Handoff, Mission } from "../../shared/orch-types";
 import {
   REAL_MISSION_E2E_GOAL,
   REAL_MISSION_E2E_PRODUCT_WIZARD_ACCEPTANCE_CRITERIA,
@@ -27,6 +28,83 @@ import {
   squad,
   squadWithAgentCli,
 } from "./guided-mission-planner-test-harness";
+import { selectPhysicalPlanHandoff } from "./plan-promotion-authority";
+
+const MULTI_STORY_PLAN = `
+# PRD
+
+### Story 1.1: Login
+
+As a user I want login.
+
+### Story 1.2: Logout
+
+As a user I want logout.
+`;
+
+function promotedMissionWithStories(
+  overrides: Partial<NonNullable<Mission["intentContract"]>> = {},
+): Mission {
+  const base = mission();
+  const planContract = compileIntentContract({
+    goal: base.intentContract!.goal,
+    acceptanceCriteria: [...base.intentContract!.acceptanceCriteria],
+    intentVersion: 2,
+    source: "typed",
+    lane: "plan",
+  });
+  const planMission: Mission = {
+    ...base,
+    intentVersion: 2,
+    orchestratorSessionId: "session-plan-wave",
+    intentContract: {
+      ...planContract,
+      approvedAt: 2,
+      dispatchedAt: 2,
+    },
+  };
+  const planHandoff: Handoff = {
+    id: "handoff-plan-wave",
+    missionId: planMission.id,
+    sessionId: "session-plan-wave",
+    fromAgent: "Maestro",
+    authorityOrigin: "agent",
+    mcpProvenance: {
+      receiptId: "receipt-plan-wave",
+      toolCallId: "tool-plan-wave",
+      toolName: "nexus_handoff_submit",
+      source: "http-mcp",
+      authoritySha256: "b".repeat(64),
+      missionId: planMission.id,
+      sessionId: "session-plan-wave",
+      issuedAt: 2,
+    },
+    status: "success",
+    summary: MULTI_STORY_PLAN,
+    artifacts: [],
+    evidenceIds: [],
+    evidenceTrust: "unverified",
+    claimTrust: "untrusted",
+    delivered: true,
+    deliveryState: "submitted",
+    submittedAt: 2,
+    createdAt: 2,
+  };
+  const promotedPlan = selectPhysicalPlanHandoff({
+    mission: planMission,
+    handoffs: {
+      list: () => [planHandoff],
+      get: () => planHandoff,
+    },
+  });
+  return mission({
+    intentContract: {
+      ...base.intentContract!,
+      promotedPlan,
+      ...overrides,
+    },
+  });
+}
 
 describe("Guided Planner v2", () => {
   it("names an unapproved intent as unbound instead of accusing an intact squad", () => {
@@ -641,5 +719,148 @@ describe("saved-team (mission-runtime) sealing", () => {
       reason: "squad-not-engine-generated",
     });
     expect(h.createPlanAtomically).not.toHaveBeenCalled();
+  });
+
+  it("honors forced orchestrationMode on promoted multi-story seal", () => {
+    const guided = promotedMissionWithStories({ orchestrationMode: "guided" });
+    const guidedHarness = harness({ currentMission: guided });
+    expect(
+      ensureGuidedMissionPlan(guidedHarness.suite, guided.id, guidedHarness.deps),
+    ).toMatchObject({
+      applicable: true,
+      sealed: true,
+      topology: "delivery",
+    });
+
+    const pack = promotedMissionWithStories({ orchestrationMode: "pack" });
+    const packHarness = harness({ currentMission: pack });
+    expect(
+      ensureGuidedMissionPlan(packHarness.suite, pack.id, packHarness.deps),
+    ).toMatchObject({
+      applicable: true,
+      sealed: true,
+      topology: "wave-pack",
+    });
+    const packRows = packHarness.createPlanAtomically.mock.calls[0]![0].rows;
+    expect(
+      packRows.every((row) =>
+        decodeTaskScheduleDetail(row.detail).meta?.ownership.domains.includes(
+          "wave-pack",
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it("smoke: Pack seals one parallel task per BMAD story plus QA gate", () => {
+    const pack = promotedMissionWithStories({ orchestrationMode: "pack" });
+    const h = harness({ currentMission: pack });
+    const result = ensureGuidedMissionPlan(h.suite, pack.id, h.deps);
+    expect(result).toMatchObject({
+      applicable: true,
+      sealed: true,
+      topology: "wave-pack",
+    });
+
+    const rows = h.createPlanAtomically.mock.calls[0]![0].rows;
+    const decoded = rows.map((row: { detail: string }) =>
+      decodeTaskScheduleDetail(row.detail),
+    );
+    const storyRows = decoded.filter((entry) =>
+      entry.meta?.ownership.domains.some((domain) =>
+        domain.startsWith("wave-pack-story:"),
+      ),
+    );
+    const qaRows = decoded.filter((entry) =>
+      entry.meta?.ownership.domains.includes("guided-quality-gate"),
+    );
+
+    // MULTI_STORY_PLAN has Story 1.1 + 1.2 → two writers, not one Guided primary.
+    expect(storyRows).toHaveLength(2);
+    expect(
+      new Set(
+        storyRows.map(
+          (entry) =>
+            entry.meta!.ownership.domains.find((domain) =>
+              domain.startsWith("wave-pack-story:"),
+            ),
+        ),
+      ).size,
+    ).toBe(2);
+    expect(
+      storyRows.every(
+        (entry) =>
+          entry.meta?.executionMode === "isolated_worktree" &&
+          entry.meta.parallelEligible === true &&
+          entry.meta.agentCategory === "executor",
+      ),
+    ).toBe(true);
+    expect(qaRows).toHaveLength(1);
+    // QA waits on every story wave — dependency cardinality is the Pack contract.
+    expect(qaRows[0]!.meta?.dependsOn).toHaveLength(2);
+    // Stories share inventory as merge permit; exclusivity is story domains.
+    expect(
+      storyRows.every((entry) => (entry.meta?.ownership.files.length ?? 0) > 0),
+    ).toBe(true);
+  });
+
+  it("Livre skips guided seal (orchestration-livre)", () => {
+    const contract = compileIntentContract({
+      goal: "spawn panes freely",
+      intentVersion: 3,
+      source: "typed",
+      lane: "standard",
+      orchestrationMode: "livre",
+    });
+    const currentMission = mission({
+      description: contract.goal,
+      intentContract: {
+        ...contract,
+        approvedAt: 10,
+        dispatchedAt: 10,
+        squadRevisionHash: snapshotSquadAuthority(squad).hash,
+      },
+    });
+    const h = harness({ currentMission });
+    expect(ensureGuidedMissionPlan(h.suite, currentMission.id, h.deps)).toMatchObject({
+      applicable: false,
+      reason: "orchestration-livre",
+    });
+    expect(h.createPlanAtomically).not.toHaveBeenCalled();
+  });
+
+  it("Pack seals from structured template stories without promotedPlan", () => {
+    const contract = compileIntentContract({
+      goal: "Ship a landing page with hero and sections",
+      intentVersion: 3,
+      source: "typed",
+      lane: "standard",
+      orchestrationMode: "pack",
+      wavePackTemplateId: "fix",
+    });
+    expect(contract.wavePackStories).toHaveLength(2);
+    const currentMission = mission({
+      description: contract.goal,
+      intentContract: {
+        ...contract,
+        approvedAt: 10,
+        dispatchedAt: 10,
+        squadRevisionHash: snapshotSquadAuthority(squad).hash,
+      },
+    });
+    const h = harness({ currentMission });
+    expect(ensureGuidedMissionPlan(h.suite, currentMission.id, h.deps)).toMatchObject({
+      applicable: true,
+      sealed: true,
+      topology: "wave-pack",
+    });
+    const rows = h.createPlanAtomically.mock.calls[0]![0].rows;
+    const storyRows = rows
+      .map((row: { detail: string }) => decodeTaskScheduleDetail(row.detail))
+      .filter((entry) =>
+        entry.meta?.ownership.domains.some((domain) =>
+          domain.startsWith("wave-pack-story:"),
+        ),
+      );
+    expect(storyRows).toHaveLength(2);
   });
 });

@@ -113,4 +113,23 @@ describe("GuidedTaskKind authority parser", () => {
       /guided_task_kind_invalid/i,
     );
   });
+
+  it("accepts Wave Pack story and quality-gate planner ids", () => {
+    expect(
+      parseGuidedTaskKind({
+        plannerId: "wave-pack-story-1-1",
+        agentCategory: "executor",
+        executionMode: "isolated_worktree",
+        domains: [GUIDED_TASK_DOMAINS.implementation, "wave-pack"],
+      }),
+    ).toBe("implementation");
+    expect(
+      parseGuidedTaskKind({
+        plannerId: "wave-pack-quality-gate",
+        agentCategory: "reviewer",
+        executionMode: "read_only",
+        domains: [GUIDED_TASK_DOMAINS.qualityGate, "wave-pack"],
+      }),
+    ).toBe("quality-gate");
+  });
 });

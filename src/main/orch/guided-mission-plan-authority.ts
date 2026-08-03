@@ -4,6 +4,7 @@ import {
   hasTeamReadOnlyFanoutDomain,
   type StandardMissionTopology,
 } from "../../shared/mission-topology";
+import { hasWavePackDomain } from "../../shared/mission-wave-pack";
 import { hasMainOwnedGuidedDeliveryAuthority } from "./guided-mission-authority";
 import {
   GUIDED_MISSION_PLANNER_TASK_ID,
@@ -54,6 +55,12 @@ export interface GuidedV2ReceiptAuthority {
 export interface GuidedTeamFanoutReceiptAuthority {
   readonly primary: PlannedTaskRecord;
   readonly ordered: readonly PlannedTaskRecord[];
+}
+
+export interface GuidedWavePackReceiptAuthority {
+  readonly primary: PlannedTaskRecord;
+  readonly stories: readonly PlannedTaskRecord[];
+  readonly qualityGate: PlannedTaskRecord | null;
 }
 
 export function isGuidedWorkerAgent(
@@ -121,7 +128,12 @@ export function guidedPlanEligibility(
   | "lane-not-standard"
   | "automation-owned"
   | "squad-not-engine-generated"
+  | "orchestration-livre"
   | null {
+  // Livre: operator opted out of Guided/Pack seal — Maestro/operator spawn.
+  if (mission.intentContract?.orchestrationMode === "livre") {
+    return "orchestration-livre";
+  }
   if ((mission.intentContract?.lane ?? "standard") !== "standard") {
     return "lane-not-standard";
   }
@@ -164,6 +176,7 @@ function legacyGuidedReceipt(detail: string, cause?: unknown): never {
 
 type GuidedRecoveredStage =
   | "advisory"
+  | "warmup"
   | "reproduction"
   | "implementation"
   | "regression"
@@ -261,15 +274,18 @@ function assertGuidedTeamFanoutEntry(
   }
 }
 
-export function assertRosterCompleteGuidedV2Receipt(
+/**
+ * Recovers a Wave Pack receipt: ≥2 story mutation roots (+ optional QA),
+ * every task marked with the wave-pack domain.
+ */
+export function assertRosterCompleteGuidedWavePackReceipt(
   planned: readonly PlannedTaskRecord[],
   squad: Squad,
-): GuidedV2ReceiptAuthority {
+): GuidedWavePackReceiptAuthority {
   try {
-    const workers = squad.agents.filter(isGuidedWorkerAgent);
-    if (planned.length !== workers.length || planned.length < 2) {
+    if (planned.length < 2) {
       legacyGuidedReceipt(
-        "o receipt não possui exatamente uma tarefa para cada worker aprovado",
+        "o Wave Pack precisa de pelo menos 2 tarefas seladas",
       );
     }
     const rosterHash = snapshotTaskPlanRoster(squad.agents).hash;
@@ -280,18 +296,100 @@ export function assertRosterCompleteGuidedV2Receipt(
       )
     ) {
       legacyGuidedReceipt(
-        "o receipt não pertence ao squad/roster atualmente aprovado",
+        "o Wave Pack diverge do squad/roster atualmente aprovado",
       );
     }
-    const expectedAgentRefs = new Set(workers.map((agent) => agent.id));
-    const actualAgentRefs = new Set(planned.map((entry) => entry.agentRef));
+
+    const stories: PlannedTaskRecord[] = [];
+    let qualityGate: PlannedTaskRecord | null = null;
+    for (const entry of planned) {
+      const meta = assertSealedTaskSchedule(
+        entry,
+        decodeTaskScheduleDetail(entry.task.detail).meta,
+      );
+      if (!hasWavePackDomain(meta.ownership.domains)) {
+        legacyGuidedReceipt(
+          `a tarefa ${entry.taskId} não carrega o marcador wave-pack`,
+        );
+      }
+      if (meta.guidedTaskKind === "quality-gate") {
+        if (qualityGate) {
+          legacyGuidedReceipt("o Wave Pack tem mais de um quality-gate");
+        }
+        if (meta.executionMode !== "read_only") {
+          legacyGuidedReceipt(
+            `o quality-gate ${entry.taskId} deve ser read_only`,
+          );
+        }
+        qualityGate = entry;
+        continue;
+      }
+      if (
+        meta.guidedTaskKind !== "implementation" ||
+        meta.executionMode !== "isolated_worktree" ||
+        meta.dependsOn.length !== 0 ||
+        meta.parallelEligible !== true
+      ) {
+        legacyGuidedReceipt(
+          `a tarefa ${entry.taskId} não é uma story raiz do Wave Pack`,
+        );
+      }
+      stories.push(entry);
+    }
+    if (stories.length < 2) {
+      legacyGuidedReceipt(
+        "o Wave Pack precisa de pelo menos 2 stories de mutação",
+      );
+    }
+    if (qualityGate) {
+      const meta = assertSealedTaskSchedule(
+        qualityGate,
+        decodeTaskScheduleDetail(qualityGate.task.detail).meta,
+      );
+      const storyIds = new Set(stories.map((story) => story.taskId));
+      if (
+        meta.dependsOn.length !== stories.length ||
+        meta.dependsOn.some((dep) => !storyIds.has(dep))
+      ) {
+        legacyGuidedReceipt(
+          "o quality-gate do Wave Pack deve depender de todas as stories",
+        );
+      }
+    }
+    return Object.freeze({
+      primary: stories[0]!,
+      stories: Object.freeze(stories),
+      qualityGate,
+    });
+  } catch (error) {
     if (
-      actualAgentRefs.size !== planned.length ||
-      actualAgentRefs.size !== expectedAgentRefs.size ||
-      [...expectedAgentRefs].some((agentRef) => !actualAgentRefs.has(agentRef))
+      error instanceof Error &&
+      error.message.startsWith("guided_plan_legacy_receipt_blocked:")
+    ) {
+      throw error;
+    }
+    legacyGuidedReceipt(
+      error instanceof Error ? error.message : String(error),
+      error,
+    );
+  }
+}
+
+export function assertRosterCompleteGuidedV2Receipt(
+  planned: readonly PlannedTaskRecord[],
+  squad: Squad,
+): GuidedV2ReceiptAuthority {
+  try {
+    const workers = squad.agents.filter(isGuidedWorkerAgent);
+    const rosterHash = snapshotTaskPlanRoster(squad.agents).hash;
+    if (
+      planned.some(
+        (entry) =>
+          entry.squadId !== squad.id || entry.rosterHash !== rosterHash,
+      )
     ) {
       legacyGuidedReceipt(
-        "o receipt não cobre o roster aprovado sem duplicação",
+        "o receipt não pertence ao squad/roster atualmente aprovado",
       );
     }
 
@@ -305,6 +403,7 @@ export function assertRosterCompleteGuidedV2Receipt(
     const byTaskId = new Map<string, ScheduleRow>();
     const dependents = new Map<string, string[]>();
     const singletons = new Map<GuidedRecoveredStage, string>();
+    const warmupByAgentRef = new Map<string, string>();
     for (const entry of planned) {
       const meta = assertSealedTaskSchedule(
         entry,
@@ -336,6 +435,27 @@ export function assertRosterCompleteGuidedV2Receipt(
         }
         singletons.set(stage, entry.taskId);
       }
+      if (stage === "warmup") {
+        // read_only + reviewer category were already proven by the sealed
+        // kind parse; the receipt still has to prove root, empty mutation
+        // surface and the one-warmup-per-agent ceiling.
+        if (meta.dependsOn.length !== 0) {
+          legacyGuidedReceipt(
+            `warm-up ${entry.taskId} deve ser raiz (dependsOn vazio)`,
+          );
+        }
+        if (meta.ownership.files.length !== 0) {
+          legacyGuidedReceipt(
+            `warm-up ${entry.taskId} não pode declarar superfície de mutação`,
+          );
+        }
+        if (warmupByAgentRef.has(entry.agentRef)) {
+          legacyGuidedReceipt(
+            `o receipt possui mais de um warm-up para o agente ${entry.agentRef}`,
+          );
+        }
+        warmupByAgentRef.set(entry.agentRef, entry.taskId);
+      }
       const row: ScheduleRow = Object.freeze({
         entry,
         stage,
@@ -348,6 +468,36 @@ export function assertRosterCompleteGuidedV2Receipt(
           ...(dependents.get(dependency) ?? []),
           entry.taskId,
         ]);
+      }
+    }
+
+    // Warm-ups are optional auxiliary roots: they never count toward the
+    // one-task-per-worker coverage, and a receipt without any warm-up stays
+    // byte-compatible with every pre-warmup plan.
+    const coreRows = rows.filter((row) => row.stage !== "warmup");
+    if (coreRows.length !== workers.length || coreRows.length < 2) {
+      legacyGuidedReceipt(
+        "o receipt não possui exatamente uma tarefa para cada worker aprovado",
+      );
+    }
+    const expectedAgentRefs = new Set(workers.map((agent) => agent.id));
+    const actualAgentRefs = new Set(
+      coreRows.map((row) => row.entry.agentRef),
+    );
+    if (
+      actualAgentRefs.size !== coreRows.length ||
+      actualAgentRefs.size !== expectedAgentRefs.size ||
+      [...expectedAgentRefs].some((agentRef) => !actualAgentRefs.has(agentRef))
+    ) {
+      legacyGuidedReceipt(
+        "o receipt não cobre o roster aprovado sem duplicação",
+      );
+    }
+    for (const warmupAgentRef of warmupByAgentRef.keys()) {
+      if (!expectedAgentRefs.has(warmupAgentRef)) {
+        legacyGuidedReceipt(
+          `warm-up referencia um agente fora do roster aprovado: ${warmupAgentRef}`,
+        );
       }
     }
 
@@ -388,6 +538,13 @@ export function assertRosterCompleteGuidedV2Receipt(
           if (row.dependsOn.length !== 0 || consumers.length !== 0) {
             legacyGuidedReceipt(
               `advisory ${taskId} deve ser raiz tip-only sem dependentes`,
+            );
+          }
+          break;
+        case "warmup":
+          if (row.dependsOn.length !== 0 || consumers.length !== 0) {
+            legacyGuidedReceipt(
+              `warm-up ${taskId} deve ser raiz read-only sem dependentes`,
             );
           }
           break;
@@ -455,6 +612,7 @@ export function assertRosterCompleteGuidedV2Receipt(
       .filter(
         (row) =>
           row.stage !== "advisory" &&
+          row.stage !== "warmup" &&
           row.entry.taskId !== qualityGateTaskId &&
           dependentsOf(row.entry.taskId).every(
             (consumer) => consumer === qualityGateTaskId,
@@ -473,6 +631,7 @@ export function assertRosterCompleteGuidedV2Receipt(
 
     const stageRank: Record<GuidedRecoveredStage, number> = {
       advisory: 0,
+      warmup: 0.5,
       reproduction: 1,
       implementation: 2,
       regression: 3,

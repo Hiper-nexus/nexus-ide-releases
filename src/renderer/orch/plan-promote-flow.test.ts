@@ -5,6 +5,8 @@ const mocks = vi.hoisted(() => ({
   promotePlanLane: vi.fn(),
   bump: vi.fn(),
   push: vi.fn(),
+  askMode: vi.fn(),
+  handoffs: [] as Array<{ missionId: string; status: string; summary: string }>,
 }));
 
 vi.mock('../state/plan-lane-metrics-store', () => ({
@@ -19,6 +21,17 @@ vi.mock('../state/toast-store', () => ({
   useToastStore: {
     getState: () => ({ push: mocks.push }),
   },
+}));
+vi.mock('../state/orch-store', () => ({
+  useOrchStore: {
+    getState: () => ({
+      missions: [],
+      handoffs: mocks.handoffs,
+    }),
+  },
+}));
+vi.mock('../state/orchestration-mode-store', () => ({
+  askPromoteOrchestrationMode: (...args: unknown[]) => mocks.askMode(...args),
 }));
 import { promotePlanMissionToExecution } from './plan-promote-flow';
 
@@ -56,6 +69,8 @@ function planMission(): Mission {
 describe('promotePlanMissionToExecution', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.handoffs.length = 0;
+    mocks.askMode.mockResolvedValue({ mode: 'pack', wavePackTemplateId: 'landing' });
     mocks.promotePlanLane.mockResolvedValue({
       ...planMission(),
       status: 'running',
@@ -71,16 +86,49 @@ describe('promotePlanMissionToExecution', () => {
     } as unknown as Window & typeof globalThis;
   });
 
-  it('uses only the main-owned native promotion review', async () => {
+  it('asks Pack vs Guiado even without BMAD stories (Wave 2 templates)', async () => {
     const result = await promotePlanMissionToExecution(planMission());
     expect(result.ok).toBe(true);
-    expect(mocks.promotePlanLane).toHaveBeenCalledTimes(1);
+    expect(mocks.askMode).toHaveBeenCalledOnce();
+    expect(mocks.promotePlanLane).toHaveBeenCalledWith({
+      missionId: 'm-plan',
+      orchestrationMode: 'pack',
+      wavePackTemplateId: 'landing',
+    });
     expect(mocks.bump).toHaveBeenCalled();
     expect(mocks.push).toHaveBeenCalledWith(
       'success',
       'Plano → código',
       expect.stringContaining('nova sessão'),
     );
+  });
+
+  it('asks Pack vs Guiado when the plan has ≥2 stories', async () => {
+    mocks.handoffs.push({
+      missionId: 'm-plan',
+      status: 'success',
+      summary: '### Story 1.1: A\n\n### Story 1.2: B\n',
+    });
+    mocks.askMode.mockResolvedValueOnce({ mode: 'guided' });
+    const result = await promotePlanMissionToExecution(planMission());
+    expect(result.ok).toBe(true);
+    expect(mocks.askMode).toHaveBeenCalledOnce();
+    expect(mocks.promotePlanLane).toHaveBeenCalledWith({
+      missionId: 'm-plan',
+      orchestrationMode: 'guided',
+    });
+  });
+
+  it('cancels when the operator dismisses the mode picker', async () => {
+    mocks.handoffs.push({
+      missionId: 'm-plan',
+      status: 'success',
+      summary: '### Story 1.1: A\n\n### Story 1.2: B\n',
+    });
+    mocks.askMode.mockResolvedValueOnce(null);
+    const result = await promotePlanMissionToExecution(planMission());
+    expect(result).toEqual({ ok: false, cancelled: true });
+    expect(mocks.promotePlanLane).not.toHaveBeenCalled();
   });
 
   it('rejects concurrent promote of the same mission', async () => {
@@ -105,6 +153,7 @@ describe('promotePlanMissionToExecution', () => {
   });
 
   it('promotes an already-dispatched plan through the main-owned runtime restart', async () => {
+    mocks.askMode.mockResolvedValueOnce({ mode: 'guided' });
     const mission = {
       ...planMission(),
       status: 'running' as const,
@@ -122,6 +171,7 @@ describe('promotePlanMissionToExecution', () => {
     expect(result.ok).toBe(true);
     expect(mocks.promotePlanLane).toHaveBeenCalledWith({
       missionId: mission.id,
+      orchestrationMode: 'guided',
     });
     expect(mocks.push).toHaveBeenCalledWith(
       'success',
@@ -131,6 +181,7 @@ describe('promotePlanMissionToExecution', () => {
   });
 
   it('surfaces denial from the single native authority boundary', async () => {
+    mocks.askMode.mockResolvedValueOnce({ mode: 'guided' });
     mocks.promotePlanLane.mockRejectedValueOnce(new Error('user_denied'));
     const result = await promotePlanMissionToExecution(planMission());
     expect(result).toEqual({ ok: false, error: 'user_denied' });

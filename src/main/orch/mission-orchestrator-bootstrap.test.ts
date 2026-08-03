@@ -26,6 +26,7 @@ import {
   runtimeAuthorityMismatches,
   stopMissionOrchestratorBeforePlanPromotionForScope,
   TECHNICAL_RECOVERY_MAX_ATTEMPTS,
+  RECOVERY_ATTEMPT_TIMEOUT_MS,
   type MissionOrchestratorBootstrapDeps,
   type DeadGraphReapprovalDeps,
   type PlanPromotionRestartDeps,
@@ -624,6 +625,7 @@ describe('initial main-owned orchestrator bootstrap', () => {
 
   it('keeps an already-sealed delivery receipt authoritative when its text resembles a roundtable', async () => {
     const h = harness();
+    const guided = armGuidedMission(h);
     const goal =
       'Todos os agentes devem responder o que fazem nesta missão';
     h.mission = {
@@ -634,6 +636,7 @@ describe('initial main-owned orchestrator bootstrap', () => {
         goal,
       },
     };
+    refreshHarnessOrchestratorSeal(h, guided);
     h.deps.ensurePlanGitBaseline = vi.fn();
     h.deps.ensureMissionPlan = vi.fn(() => ({
       applicable: true,
@@ -669,6 +672,7 @@ describe('initial main-owned orchestrator bootstrap', () => {
     // spawned worker) — so every standard-lane guided-PREVC "delivery"
     // mission stalls forever with zero worker panes ever dispatched.
     const h = harness();
+    const guided = armGuidedMission(h);
     const goal =
       'Todos os agentes devem responder o que fazem nesta missão';
     h.mission = {
@@ -679,6 +683,7 @@ describe('initial main-owned orchestrator bootstrap', () => {
         goal,
       },
     };
+    refreshHarnessOrchestratorSeal(h, guided);
     h.deps.ensurePlanGitBaseline = vi.fn();
     h.deps.ensureMissionPlan = vi.fn(() => ({
       applicable: true,
@@ -705,6 +710,7 @@ describe('initial main-owned orchestrator bootstrap', () => {
 
   it('keeps Git and PREVC prework for a team mission that mutates code', async () => {
     const h = harness();
+    const guided = armGuidedMission(h);
     const goal =
       'Todos os agentes devem revisar e corrigir o código desta missão';
     h.mission = {
@@ -715,6 +721,7 @@ describe('initial main-owned orchestrator bootstrap', () => {
         goal,
       },
     };
+    refreshHarnessOrchestratorSeal(h, guided);
     h.deps.ensurePlanGitBaseline = vi.fn();
     h.deps.ensureMissionPlan = vi.fn();
     h.deps.prepareOpportunisticPrevc = vi.fn();
@@ -727,6 +734,30 @@ describe('initial main-owned orchestrator bootstrap', () => {
     expect(h.deps.ensurePlanGitBaseline).toHaveBeenCalledOnce();
     expect(h.deps.ensureMissionPlan).toHaveBeenCalledOnce();
     expect(h.deps.prepareOpportunisticPrevc).toHaveBeenCalledOnce();
+  });
+
+  it('skips PREVC freeze on the fast path for normal-risk guided delivery', async () => {
+    const h = harness();
+    const guided = armGuidedMission(h);
+    h.mission = {
+      ...h.mission,
+      intentContract: {
+        ...h.mission.intentContract!,
+        risk: 'normal',
+      },
+    };
+    refreshHarnessOrchestratorSeal(h, guided);
+    h.deps.prepareOpportunisticPrevc = vi.fn();
+    h.deps.ensureMissionPrevc = vi.fn();
+
+    const result = await new MissionOrchestratorBootstrapService(
+      h.deps,
+    ).bootstrap(scope, h.mission.id);
+
+    expect(result).toMatchObject({ ok: true, missionId: h.mission.id });
+    expect(h.deps.prepareOpportunisticPrevc).not.toHaveBeenCalled();
+    expect(h.deps.ensureMissionPrevc).not.toHaveBeenCalled();
+    expect(h.spawned).toHaveLength(1);
   });
 
   it('blocks durably before any provider effect when the main-owned plan preflight fails', async () => {
@@ -886,6 +917,7 @@ describe('initial main-owned orchestrator bootstrap', () => {
 
   it('starts the orchestrator when opportunistic PREVC preparation throws synchronously', async () => {
     const h = harness();
+    armGuidedMission(h);
     h.deps.ensureMissionPlan = vi.fn();
     h.deps.prepareOpportunisticPrevc = vi.fn(() => {
       throw new Error('context bootstrap temporarily unavailable');
@@ -911,6 +943,7 @@ describe('initial main-owned orchestrator bootstrap', () => {
 
   it('starts PREVC preparation before provider launch without awaiting it', async () => {
     const h = harness();
+    armGuidedMission(h);
     const order: string[] = [];
     let finishPreparation!: () => void;
     h.deps.ensureMissionPlan = vi.fn(() => {
@@ -1217,6 +1250,70 @@ describe('initial main-owned orchestrator bootstrap', () => {
     expect(value.kickoffPrompts[0]).toContain('/validated/proof.png');
   });
 
+  it('emits operator-visible bootstrap steps in exact order', async () => {
+    const value = harness();
+    const steps: string[] = [];
+    value.deps.emitProgress = (_scope, missionId, step) => {
+      expect(missionId).toBe(value.mission.id);
+      steps.push(step);
+    };
+    const service = new MissionOrchestratorBootstrapService(value.deps);
+
+    await expect(
+      service.bootstrap(scope, value.mission.id),
+    ).resolves.toMatchObject({ ok: true, kickoff: { accepted: true } });
+
+    expect(steps).toEqual([
+      'authority_checked',
+      'subscription_auth',
+      'plan_baseline',
+      'squad_sealed',
+      'runtime_checked',
+      'drift_retired',
+      'attachments_verified',
+      'pane_spawned',
+      'kickoff_submitted',
+      'kickoff_accepted',
+    ]);
+  });
+
+  it('emits prevc_freeze only when Guided PREVC is required', async () => {
+    const value = harness();
+    armGuidedMission(value);
+    const steps: string[] = [];
+    value.deps.emitProgress = (_scope, missionId, step) => {
+      expect(missionId).toBe(value.mission.id);
+      steps.push(step);
+    };
+
+    await expect(
+      new MissionOrchestratorBootstrapService(value.deps).bootstrap(
+        scope,
+        value.mission.id,
+      ),
+    ).resolves.toMatchObject({ ok: true });
+
+    expect(steps).toContain('prevc_freeze');
+    expect(steps.indexOf('squad_sealed')).toBeLessThan(
+      steps.indexOf('prevc_freeze'),
+    );
+    expect(steps.indexOf('prevc_freeze')).toBeLessThan(
+      steps.indexOf('runtime_checked'),
+    );
+  });
+
+  it('keeps the bootstrap alive when progress emission throws', async () => {
+    const value = harness();
+    value.deps.emitProgress = () => {
+      throw new Error('journal indisponível');
+    };
+    const service = new MissionOrchestratorBootstrapService(value.deps);
+
+    await expect(
+      service.bootstrap(scope, value.mission.id),
+    ).resolves.toMatchObject({ ok: true, kickoff: { accepted: true } });
+  });
+
   it('injects the exact promoted PRD into the live v2 bootstrap kickoff', async () => {
     const value = harness();
     const deliverySquad: Squad = {
@@ -1285,6 +1382,7 @@ describe('initial main-owned orchestrator bootstrap', () => {
         ...value.mission.intentContract!,
         lane: 'standard',
         intentVersion: 2,
+        risk: 'sensitive',
         squadRevisionHash: snapshotSquadAuthority(deliverySquad).hash,
         promotedPlan,
       },
@@ -1328,7 +1426,9 @@ describe('initial main-owned orchestrator bootstrap', () => {
     expect(value.kickoffPrompts).toHaveLength(1);
     const prompt = value.kickoffPrompts[0]!;
     expect(prompt).toContain(handoff.summary);
-    expect(prompt).toContain(JSON.stringify(promotedPlan.artifacts));
+    expect(prompt).toContain('### Artifacts (1)');
+    expect(prompt).toContain('docs/stories/auth.md');
+    expect(prompt).not.toContain(JSON.stringify(promotedPlan.artifacts));
     expect(prompt).toContain(promotedPlan.digest);
     expect(prompt).toContain(promotedPlan.summarySha256);
     expect(prompt).toContain(promotedPlan.artifactsSha256);
@@ -1353,10 +1453,20 @@ describe('initial main-owned orchestrator bootstrap', () => {
       squadId: guidedSquad.id,
       intentContract: {
         ...value.mission.intentContract!,
+        // Fast path skips PREVC on risk=normal; guided PREVC tests need sensitive.
+        risk: 'sensitive',
         squadRevisionHash: snapshotSquadAuthority(guidedSquad).hash,
       },
     };
     value.deps.getSquad = (id) => (id === guidedSquad.id ? guidedSquad : null);
+    refreshHarnessOrchestratorSeal(value, guidedSquad);
+    return guidedSquad;
+  }
+
+  function refreshHarnessOrchestratorSeal(
+    value: Harness,
+    guidedSquad: Squad,
+  ): void {
     const targetSeal = createMissionPaneAuthoritySeal({
       mission: value.mission,
       squad: guidedSquad,
@@ -1385,7 +1495,6 @@ describe('initial main-owned orchestrator bootstrap', () => {
             authoritySeal: targetSeal,
           }
         : null;
-    return guidedSquad;
   }
 
   it('warns once at mission start when a guided delivery starts with the driver disabled', async () => {
@@ -1841,6 +1950,102 @@ describe('initial main-owned orchestrator bootstrap', () => {
     expect(resumeBlocked).toHaveBeenCalledTimes(TECHNICAL_RECOVERY_MAX_ATTEMPTS);
   });
 
+  it('counts a hung resume after the attempt timeout instead of waiting forever', async () => {
+    vi.useFakeTimers();
+    try {
+      const value = harness();
+      const blocked: Mission = {
+        ...value.mission,
+        status: 'blocked',
+        intentState: 'blocked_technical',
+        updatedAt: 10,
+      };
+      const resumeBlocked = vi.fn(() => new Promise<never>(() => {}));
+      const persistRecoveryAttempt = vi.fn();
+      const warn = vi.fn();
+      const recovery = new MissionOrchestratorBootstrapRecovery({
+        listScopes: () => [scope],
+        listBootstrapCandidates: () => [blocked],
+        bootstrap: vi.fn(),
+        resumeBlocked,
+        persistRecoveryAttempt,
+        now: () => 1_000,
+        warn,
+      });
+
+      const pass = recovery.reconcile();
+      await vi.advanceTimersByTimeAsync(RECOVERY_ATTEMPT_TIMEOUT_MS);
+      await pass;
+
+      expect(resumeBlocked).toHaveBeenCalledOnce();
+      expect(persistRecoveryAttempt).toHaveBeenCalledWith(scope, blocked.id, {
+        attempt: 1,
+        reason: expect.stringMatching(/não respondeu em 120000ms/),
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('exhausts the lane after eight hung attempts, persisting each one', async () => {
+    vi.useFakeTimers();
+    try {
+      const value = harness();
+      const blocked: Mission = {
+        ...value.mission,
+        status: 'blocked',
+        intentState: 'blocked_technical',
+        updatedAt: 10,
+      };
+      const resumeBlocked = vi.fn(() => new Promise<never>(() => {}));
+      const persistRecoveryAttempt = vi.fn();
+      const exhaustTechnicalRecovery = vi.fn();
+      let now = 1_000;
+      const recovery = new MissionOrchestratorBootstrapRecovery({
+        listScopes: () => [scope],
+        listBootstrapCandidates: () => [blocked],
+        bootstrap: vi.fn(),
+        resumeBlocked,
+        persistRecoveryAttempt,
+        exhaustTechnicalRecovery,
+        now: () => now,
+        warn: vi.fn(),
+      });
+
+      for (let i = 0; i < TECHNICAL_RECOVERY_MAX_ATTEMPTS; i += 1) {
+        const pass = recovery.reconcile();
+        await vi.advanceTimersByTimeAsync(RECOVERY_ATTEMPT_TIMEOUT_MS);
+        await pass;
+        now += 120_000; // clear the bounded-backoff window
+      }
+
+      expect(resumeBlocked).toHaveBeenCalledTimes(
+        TECHNICAL_RECOVERY_MAX_ATTEMPTS,
+      );
+      expect(persistRecoveryAttempt).toHaveBeenCalledTimes(
+        TECHNICAL_RECOVERY_MAX_ATTEMPTS,
+      );
+      expect(persistRecoveryAttempt).toHaveBeenLastCalledWith(
+        scope,
+        blocked.id,
+        {
+          attempt: TECHNICAL_RECOVERY_MAX_ATTEMPTS,
+          reason: expect.stringMatching(/não respondeu em 120000ms/),
+        },
+      );
+      expect(exhaustTechnicalRecovery).toHaveBeenCalledOnce();
+
+      const extra = recovery.reconcile();
+      await vi.advanceTimersByTimeAsync(RECOVERY_ATTEMPT_TIMEOUT_MS);
+      await extra;
+      expect(resumeBlocked).toHaveBeenCalledTimes(
+        TECHNICAL_RECOVERY_MAX_ATTEMPTS,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('reconciles only missing or torn durable bindings, not a complete legacy pane', () => {
     expect(
       needsMissionOrchestratorBootstrapRecovery(
@@ -1948,7 +2153,8 @@ describe('initial main-owned orchestrator bootstrap', () => {
     expect(unproven.closedPanes).toEqual(['pane-main-orch']);
     expect(unproven.removedPaneRows).toEqual(['mpane-live']);
     expect(unproven.spawned).toHaveLength(1);
-    expect(unproven.deps.prepareOpportunisticPrevc).toHaveBeenCalledOnce();
+    // Default harness is risk=normal / non-engine squad → fast path skips PREVC.
+    expect(unproven.deps.prepareOpportunisticPrevc).not.toHaveBeenCalled();
     expect(unproven.mission).toMatchObject({
       status: 'running',
       orchestratorSessionId: 'pty-main-orch-fresh',
@@ -3321,6 +3527,33 @@ describe('dead task graph reapproval', () => {
       orchestratorSessionId: undefined,
     });
     expect(h.sessionStates.get('session-worker-v2')).toBeNull();
+  });
+
+  it('marks structural identity conflicts terminal so recovery settles without burning attempts', async () => {
+    const h = deadGraphHarness();
+    h.runtimePanes.push({
+      paneId: 'pane-ghost',
+      sessionId: 'session-worker-v2',
+      title: 'Ghost worker',
+      kind: 'cli-agent',
+      state: 'idle',
+      missionId: h.mission.id,
+      role: 'worker',
+      scope,
+      executionScope: scope,
+    });
+
+    const result = await prepareDeadGraphReapprovalForScope(
+      scope,
+      h.mission.id,
+      h.deps,
+    );
+
+    expect(result).toMatchObject({ ok: false });
+    if (!result || result.ok) throw new Error('unreachable');
+    expect(result.error).toContain(TERMINAL_OPERATIONAL_FAILURE_MARKER);
+    expect(result.error).toContain('mais de uma identidade física');
+    expect(h.closed).toHaveLength(0);
   });
 
   it('keeps the mission blocked when one exact physical teardown fails', async () => {

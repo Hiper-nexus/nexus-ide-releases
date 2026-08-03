@@ -92,4 +92,52 @@ describe('paneVacancyIntent — what the vacancy says', () => {
     expect(intent.headline).toContain('preparando');
     expect(intent.nextStep.length).toBeGreaterThan(0);
   });
+
+  describe('with live bootstrap progress', () => {
+    const progress = {
+      missionId: 'm3',
+      step: 'squad_sealed' as const,
+      occurredAt: 1_000,
+    };
+
+    it('shows the live step and its age as the headline', () => {
+      const intent = paneVacancyIntent(
+        [mission({ id: 'm3', status: 'running' })],
+        progress,
+        13_000,
+      );
+      if (intent.kind !== 'mission-unstaged') throw new Error('unreachable');
+      expect(intent.headline).toBe('Squad selado · há 12s');
+      expect(intent.nextStep.length).toBeGreaterThan(0);
+    });
+
+    it('keeps the static copy when progress belongs to another mission', () => {
+      const intent = paneVacancyIntent(
+        [mission({ id: 'm3', status: 'running' })],
+        { ...progress, missionId: 'outra' },
+        13_000,
+      );
+      if (intent.kind !== 'mission-unstaged') throw new Error('unreachable');
+      expect(intent.headline).toBe(
+        'A missão está preparando os agentes — nenhum pane foi aberto ainda.',
+      );
+    });
+
+    it('never overrides the durable cause of a blocked mission', () => {
+      const intent = paneVacancyIntent(
+        [
+          mission({
+            id: 'm3',
+            status: 'blocked',
+            description: '[NEXUS_TASK_DISPATCH_BLOCKED]',
+          }),
+        ],
+        progress,
+        13_000,
+      );
+      if (intent.kind !== 'mission-unstaged') throw new Error('unreachable');
+      expect(intent.headline).toContain('despacho');
+      expect(intent.headline).not.toContain('Squad selado');
+    });
+  });
 });

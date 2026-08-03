@@ -3,7 +3,20 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('../persistence/settings-store', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../persistence/settings-store')>();
+  return {
+    ...actual,
+    getOrchSettings: () => ({
+      ...actual.getOrchSettings(),
+      fastPath: false,
+    }),
+  };
+});
+
 import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import { compileIntentContract, hasCurrentDispatchAuthority } from '../../shared/mission-intent';
 import { testProjectScope } from './__tests__/scope-fixture';

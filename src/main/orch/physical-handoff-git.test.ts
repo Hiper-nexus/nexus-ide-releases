@@ -383,13 +383,17 @@ describe('cobertura da cerca de observacao', () => {
       'quality-gate',
       'reproduction',
       'regression',
+      'warmup',
     ];
     const naoCercadas = readOnlyCapableLanes.filter(
       (kind) => !FENCED_READ_ONLY_LANE_KINDS.has(kind),
     );
     // `isolated-advisory` roda em worktree propria: a cerca nao se aplica e a
-    // ausencia dela aqui e decisao, nao esquecimento.
-    expect(naoCercadas).toEqual(['isolated-advisory']);
+    // ausencia dela aqui e decisao, nao esquecimento. `warmup` roda na onda 1,
+    // ANTES de existir integracao para observar — a cerca exige o HEAD
+    // integrado mais recente e seria mecanicamente inaplicável; o warm-up
+    // prepara checklist, nao julga o diff.
+    expect(naoCercadas).toEqual(['isolated-advisory', 'warmup']);
     expect(FENCED_READ_ONLY_LANE_KINDS.has('implementation')).toBe(false);
   });
 });

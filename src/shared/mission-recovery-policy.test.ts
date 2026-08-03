@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { MissionIntentContract } from './mission-intent';
 import {
+  formatRecoveryAttemptBlock,
   hasAutomaticTechnicalRecovery,
+  parseRecoveryAttemptBlock,
+  RECOVERY_ATTEMPT_BLOCK_MARKER,
+  replaceRecoveryAttemptBlock,
   TERMINAL_OPERATIONAL_FAILURE_MARKER,
 } from './mission-recovery-policy';
 
@@ -59,5 +63,71 @@ describe('hasAutomaticTechnicalRecovery', () => {
         intentState: 'blocked_user',
       }),
     ).toBe(false);
+  });
+});
+
+describe('bloco de tentativa de recuperação automática', () => {
+  const at = '2026-08-03T12:00:00.000Z';
+
+  it('format escreve e parse lê de volta os mesmos dados', () => {
+    const block = formatRecoveryAttemptBlock(3, 8, 'timeout no resume', at);
+    const parsed = parseRecoveryAttemptBlock(`histórico\n\n${block}`);
+    expect(parsed).toEqual({
+      attempt: 3,
+      maxAttempts: 8,
+      reason: 'timeout no resume',
+      at,
+    });
+  });
+
+  it('corta a razão em 240 caracteres', () => {
+    const block = formatRecoveryAttemptBlock(1, 8, 'x'.repeat(500), at);
+    const parsed = parseRecoveryAttemptBlock(block);
+    expect(parsed?.reason).toBe(`${'x'.repeat(240)}…`);
+  });
+
+  it('preserva " · " dentro da razão sem confundir com o timestamp', () => {
+    const block = formatRecoveryAttemptBlock(
+      2,
+      8,
+      'lock ocupado · fila cheia',
+      at,
+    );
+    const parsed = parseRecoveryAttemptBlock(block);
+    expect(parsed?.reason).toBe('lock ocupado · fila cheia');
+    expect(parsed?.at).toBe(at);
+  });
+
+  it('devolve null para descrição sem marcador ou bloco rasgado', () => {
+    expect(parseRecoveryAttemptBlock('sem nada aqui')).toBeNull();
+    expect(
+      parseRecoveryAttemptBlock(
+        `${RECOVERY_ATTEMPT_BLOCK_MARKER}\n## Recuperação automática\nlinha rasgada`,
+      ),
+    ).toBeNull();
+  });
+
+  it('substitui o bloco anterior em vez de empilhar', () => {
+    const first = formatRecoveryAttemptBlock(1, 8, 'primeira', at);
+    const withFirst = replaceRecoveryAttemptBlock('objetivo da missão', first);
+    const second = formatRecoveryAttemptBlock(2, 8, 'segunda', at);
+    const replaced = replaceRecoveryAttemptBlock(withFirst, second);
+
+    expect(replaced).toContain('Tentativa 2 de 8');
+    expect(replaced).not.toContain('Tentativa 1 de 8');
+    expect(replaced).toContain('objetivo da missão');
+    expect(
+      replaced.split(RECOVERY_ATTEMPT_BLOCK_MARKER).length - 1,
+    ).toBe(1);
+  });
+
+  it('preserva a seção seguinte ao bloco substituído', () => {
+    const first = formatRecoveryAttemptBlock(1, 8, 'primeira', at);
+    const description = `objetivo\n\n${first}\n\n## Learnings\n- algo`;
+    const second = formatRecoveryAttemptBlock(2, 8, 'segunda', at);
+    const replaced = replaceRecoveryAttemptBlock(description, second);
+
+    expect(replaced).toContain('## Learnings\n- algo');
+    expect(parseRecoveryAttemptBlock(replaced)?.attempt).toBe(2);
   });
 });

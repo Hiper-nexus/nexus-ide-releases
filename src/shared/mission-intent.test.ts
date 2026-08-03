@@ -98,6 +98,66 @@ describe('mission intent transitions', () => {
     ).toBe(false);
   });
 
+  it('keeps orchestrationMode optional and accepts Livre/Pack/Guiado overrides', () => {
+    const contract = compileIntentContract({
+      goal: 'Ship multi-story pack',
+      intentVersion: 1,
+    });
+    expect(missionIntentContractSchema.safeParse(contract).success).toBe(true);
+    expect(
+      missionIntentContractSchema.safeParse({
+        ...contract,
+        orchestrationMode: 'pack',
+      }).success,
+    ).toBe(true);
+    expect(
+      missionIntentContractSchema.safeParse({
+        ...contract,
+        orchestrationMode: 'guided',
+      }).success,
+    ).toBe(true);
+    expect(
+      missionIntentContractSchema.safeParse({
+        ...contract,
+        orchestrationMode: 'yolo',
+      }).success,
+    ).toBe(false);
+  });
+
+  it('materializes Pack template stories at compile when mode is pack', () => {
+    const contract = compileIntentContract({
+      goal: 'Ship a landing page',
+      intentVersion: 1,
+      orchestrationMode: 'pack',
+      wavePackTemplateId: 'landing',
+    });
+    expect(contract.orchestrationMode).toBe('pack');
+    expect(contract.wavePackTemplateId).toBe('landing');
+    expect(contract.wavePackStories).toHaveLength(3);
+  });
+
+  it('rejects Pack without a template at compile', () => {
+    expect(() =>
+      compileIntentContract({
+        goal: 'Ship a landing page',
+        intentVersion: 1,
+        orchestrationMode: 'pack',
+      }),
+    ).toThrow(/wave_pack_template_required/);
+  });
+
+  it('coerces Pack to Guiado when the goal is destructive', () => {
+    const contract = compileIntentContract({
+      goal: 'Apagar o banco de produção e wipe do cluster',
+      intentVersion: 1,
+      orchestrationMode: 'pack',
+      wavePackTemplateId: 'fix',
+    });
+    expect(contract.risk).toBe('destructive');
+    expect(contract.orchestrationMode).toBe('guided');
+    expect(contract.wavePackStories).toBeUndefined();
+  });
+
   it('walks the happy path select → goal → compile → start', () => {
     expect(transitionIntentState({ from: 'draft', event: 'select_squad' })).toEqual({
       ok: true,

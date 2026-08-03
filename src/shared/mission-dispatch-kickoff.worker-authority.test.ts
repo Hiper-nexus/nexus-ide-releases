@@ -158,6 +158,7 @@ describe('kickoff worker authority', () => {
       guidedPrevcRequired: true,
       guidedPrevcFrozen: false,
       operatorChoice: true,
+      uiMissionObjective: true,
     });
 
     expect(text).toMatch(/PREVC paralelo/i);
