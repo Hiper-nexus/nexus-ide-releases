@@ -494,10 +494,6 @@ function dialogDigest(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
 }
 
-function dialogTextDigest(value: string): string {
-  return createHash('sha256').update(value, 'utf8').digest('hex');
-}
-
 function missionAuthorityReviewDigest(
   candidate: RendererMissionAuthorityCandidate,
 ): string {
@@ -523,14 +519,6 @@ function missionAuthorityDialogDetail(
   const workers = roster.filter(
     (agent) => agent.category !== 'orchestrator',
   );
-  const permissionReview = {
-    deniedTools: candidate.deniedTools,
-    agents: roster.map((agent) => ({
-      id: agent.id,
-      allowedTools: agent.allowedTools,
-      allowedSkills: agent.allowedSkills,
-    })),
-  };
   const grantedToolCount = roster.reduce(
     (total, agent) => total + (agent.allowedTools?.length ?? 0),
     0,
@@ -573,18 +561,13 @@ function missionAuthorityDialogDetail(
     mainOwnedTerminalAndBackground: false,
   };
   const installNetworkReview = hasQualifiedCodexWorkspaceWriter
-    ? `Rede de shell: desativada · provider/MCP somente no binário Codex fixado · runtime empacotado via load_workspace_dependencies; instalação remota de pacotes indisponível · SHA-256=${dialogDigest(installNetworkAuthority)}`
-    : `Rede: desativada · sem executor Codex workspace-write; read-only/main terminal sem rede · SHA-256=${dialogDigest(installNetworkAuthority)}`;
+    ? 'Rede de shell: desativada · provider/MCP somente no binário Codex fixado · runtime empacotado via load_workspace_dependencies; instalação remota de pacotes indisponível'
+    : 'Rede: desativada · sem executor Codex workspace-write; read-only/main terminal sem rede';
   const promotedPlanReview = promotedPlan
-    ? `handoff=${compactDialogText(promotedPlan.handoffId, 36)} · digest=${promotedPlan.digest} · receipt=${compactDialogText(promotedPlan.physicalReceipt.receiptId, 36)}`
+    ? `promovido · digest=${promotedPlan.digest}`
     : 'direto (sem promoção)';
-  const evidenceReview = {
-    evidenceAttached: candidate.evidenceAttached,
-    attachmentPaths: candidate.attachmentPaths,
-    attachmentSnapshots: candidate.attachmentSnapshots,
-  };
   const replacementReview = replacement
-    ? `${replacement.entries.length} missão(ões)/${replacement.entries.reduce((total, entry) => total + entry.sessionIds.length, 0)} sessão(ões) · SHA=${dialogDigest(replacement)}`
+    ? `${replacement.entries.length} missão(ões)/${replacement.entries.reduce((total, entry) => total + entry.sessionIds.length, 0)} sessão(ões)`
     : 'nenhuma';
   const { fence: _runtimeFence, ...reviewedAuthority } = candidate;
   const fullReview = {
@@ -605,14 +588,18 @@ function missionAuthorityDialogDetail(
   const reviewSha256 = dialogDigest(fullReview);
   const laneReview =
     action === 'promote' ? `${candidate.lane}→standard` : candidate.lane;
+  // Digests por linha viraram fricção: o operador não confere hash de cada
+  // campo no modal. O vínculo criptográfico real é o `reviewSha256` (computado
+  // do fullReview acima) e ele permanece como única âncora na linha final.
+  // Mantidos: SHA do squad (identidade do runtime) e digest do plano promovido.
   const lines = [
     `Workspace: ${compactDialogText(scope.rootRealPath, 100)}`,
-    `Missão: ${compactDialogText(candidate.title, 64)} · ID=${compactDialogText(candidate.missionId, 48)} · intenção=v${candidate.intentVersion}`,
-    `Objetivo: ${compactDialogText(candidate.goal, 96)} · SHA-256=${dialogTextDigest(candidate.goal)}`,
+    `Missão: ${compactDialogText(candidate.title, 64)} · intenção=v${candidate.intentVersion} · ID=${compactDialogText(candidate.missionId, 48)}`,
+    `Objetivo: ${compactDialogText(candidate.goal, 96)}`,
     `Execução: risco=${candidate.risk} · lane=${laneReview} · modo=${candidate.executionMode} · orçamento P${budgets.planningTokens}/E${budgets.executionTokens}/W${budgets.maxWorkers}${budgets.maxSteps === undefined ? '' : `/S${budgets.maxSteps}`}`,
     `Maestro/workers: ${compactDialogText(maestro?.agentName ?? '(ausente)', 28)}/${compactDialogText(runtime.adapterId, 20)} · workers=${workers.length} · ${orchestratorEvidence} · model=${compactDialogText(runtime.model ?? 'default', 28)} · squad=${compactDialogText(candidate.squad.name, 32)} (${compactDialogText(candidate.squad.id, 64)}) SHA-256=${candidate.squad.hash} · trocas=${replacementReview}`,
-    `Critérios/permissões: critérios=${candidate.acceptanceCriteria.length} SHA=${dialogDigest(candidate.acceptanceCriteria)} · negadas=${candidate.deniedTools.length}, tools=${grantedToolCount}+${unrestrictedToolAgents} irrestrito(s), skills=${grantedSkillCount}+${unrestrictedSkillAgents} irrestrito(s) · SHA=${dialogDigest(permissionReview)}`,
-    `Evidências/plano: evidência=${candidate.evidenceAttached ? 'sim' : 'não'} · anexos=${candidate.attachmentPaths.length} SHA=${dialogDigest(evidenceReview)} · plano=${promotedPlanReview}`,
+    `Permissões: critérios=${candidate.acceptanceCriteria.length} · negadas=${candidate.deniedTools.length} · tools=${grantedToolCount}+${unrestrictedToolAgents} irrestrito(s) · skills=${grantedSkillCount}+${unrestrictedSkillAgents} irrestrito(s)`,
+    `Evidências/plano: evidência=${candidate.evidenceAttached ? 'sim' : 'não'} · anexos=${candidate.attachmentPaths.length} · plano=${promotedPlanReview}`,
     installNetworkReview,
     `Review integral: SHA-256=${reviewSha256} · qualquer mudança exige nova aprovação`,
   ];

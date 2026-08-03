@@ -2092,8 +2092,8 @@ describe('mission authority native confirmation', () => {
     expect(detail).toContain('lane=standard');
     expect(detail).toContain('modo=autopilot');
     expect(detail).toContain('orçamento P4000/E12000/W3/S12');
-    expect(detail).toContain('Critérios/permissões: critérios=2');
-    expect(detail).toContain('negadas=1, tools=1');
+    expect(detail).toContain('Permissões: critérios=2');
+    expect(detail).toContain('negadas=1 · tools=1');
     expect(detail).toContain('skills=1');
     expect(detail).toContain('Evidências/plano: evidência=sim · anexos=1');
     expect(detail).toContain('Maestro/workers');
@@ -2149,21 +2149,8 @@ describe('mission authority native confirmation', () => {
     expect(detail).toContain('instalação remota de pacotes indisponível');
     expect(detail).not.toContain('limited/MITM');
     expect(detail).not.toContain('registry.npmjs.org');
-    expect(detail).toContain(
-      createHash('sha256')
-        .update(JSON.stringify({
-          enabled: false,
-          reason: 'codex-shell-network-denied-use-main-owned-mcp',
-          providerNetwork: 'pinned-vendor-process-only',
-          workspaceWriteWorkersNetwork: false,
-          readOnlyWorkersNetwork: false,
-          remotePackageInstall: false,
-          dependencyCapability: 'bundled-runtime-paths-only',
-          dependencyTool: 'load_workspace_dependencies',
-          mainOwnedTerminalAndBackground: false,
-        }))
-        .digest('hex'),
-    );
+    // O digest do installNetworkAuthority segue coberto pelo Review integral;
+    // o modal não exibe mais hash por linha (fricção removida).
     expect(detail.split('\n')).toHaveLength(9);
   });
 
@@ -2235,7 +2222,7 @@ describe('mission authority native confirmation', () => {
     expect(detail.length).toBeLessThanOrEqual(1_800);
     expect(detail).toContain('workers=23');
     expect(detail).toContain('critérios=20');
-    expect(detail).toContain('negadas=40, tools=24');
+    expect(detail).toContain('negadas=40 · tools=24');
     expect(detail).toContain('skills=24');
     expect(detail).toMatch(/Review integral: SHA-256=[a-f0-9]{64}/);
     expect(detail).not.toContain('Agente 24');
@@ -2326,7 +2313,7 @@ describe('mission authority native confirmation', () => {
     )?.[1];
     expect(reviewSha256).toMatch(/^[a-f0-9]{64}$/);
     expect(detail).toContain('lane=plan→standard');
-    expect(detail).toContain(`plano=handoff=handoff-plan-v5`);
+    expect(detail).toContain(`plano=promovido · digest=${'f'.repeat(64)}`);
     expect(harness.promotePlan).toHaveBeenCalledWith(
       sender,
       { missionId: 'mission-plan' },
