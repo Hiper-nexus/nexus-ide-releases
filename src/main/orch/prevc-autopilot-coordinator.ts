@@ -29,6 +29,7 @@ import { snapshotSquadAuthority } from "./squad-authority-snapshot";
 import { getSquad } from "./squad-store";
 import type { TaskDispatchRecord } from "./task-dispatch-codec";
 import { snapshotTaskPlanRoster, type TaskPlanReceipt } from "./task-store";
+import { redeliverPendingHandoffs } from "./idle-delivery";
 
 const ACTIVE_DISPATCH_STATES = new Set([
   "claimed",
@@ -576,6 +577,33 @@ export function inspectGuidedPrevcPostMergeAuthority(
       intentVersion: contract.intentVersion,
     })
   ) {
+    const undeliveredSuccess = suite.handoffs
+      .list({ missionId, includeDelivered: false })
+      .filter(
+        (handoff) =>
+          handoff.status === "success" &&
+          handoff.authorityOrigin === "agent" &&
+          handoff.deliveryState === "queued",
+      );
+    if (undeliveredSuccess.length > 0) {
+      // Best-effort flush: Maestro pode ter sido rebound/recuperado desde a
+      // submissão. Sem isso a ponte fica eternamente em "physical authority"
+      // com o trabalho dos workers já concluído.
+      try {
+        redeliverPendingHandoffs(scope, missionId);
+      } catch (error) {
+        console.warn(
+          `[prevc-autopilot] reentrega de handoffs pendentes falhou para ${missionId}:`,
+          error,
+        );
+      }
+      return Object.freeze({
+        ready: false,
+        reason:
+          `current sealed task plan lacks complete physical authority: ` +
+          `${undeliveredSuccess.length} success handoff(s) still queued for Maestro delivery`,
+      });
+    }
     return Object.freeze({
       ready: false,
       reason: "current sealed task plan lacks complete physical authority",
@@ -1445,6 +1473,19 @@ export function runGuidedPrevcPostMergeBridge(
         guidedBridgeFlights.delete(key);
       }
     })
-    .catch(() => undefined);
+    .catch((error) => {
+      const detail =
+        error instanceof Error ? error.message : String(error ?? "unknown");
+      recordAutopilotStall(
+        dependencies,
+        scope,
+        missionId,
+        `guided post-merge bridge failed: ${detail}`.slice(0, 500),
+      );
+      console.warn(
+        `[prevc-autopilot] ponte pós-merge falhou para ${missionId}:`,
+        error,
+      );
+    });
   return flight;
 }

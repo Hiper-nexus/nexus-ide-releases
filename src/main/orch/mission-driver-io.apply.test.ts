@@ -812,7 +812,7 @@ describe('createProductionApplyPorts advance/complete', () => {
   });
 
   it('recovers only the orchestrator and records success after renderer ACK', async () => {
-    const mission = makeMission(
+    let mission = makeMission(
       [step({ id: 's1', label: 'API integrada', status: 'done' })],
       {
         orchestratorSessionId: 'session-orch',
@@ -832,6 +832,12 @@ describe('createProductionApplyPorts advance/complete', () => {
       },
     ];
     const appendLearning = vi.fn();
+    const rebindOrchestratorSession = vi.fn(
+      (_missionId: string, sessionId: string) => {
+        mission = { ...mission, orchestratorSessionId: sessionId };
+        return mission;
+      },
+    );
     const recoverPane = vi.fn(async () => ({
       requestId: 'recovery-a',
       ok: true as const,
@@ -841,7 +847,12 @@ describe('createProductionApplyPorts advance/complete', () => {
     const ports = createProductionApplyPorts(
       { advanceMissionStep: vi.fn(), isMissionComplete: () => false },
       () => ({
-        missions: { get: () => mission, appendLearning },
+        missions: {
+          get: () => mission,
+          appendLearning,
+          rebindOrchestratorSession,
+          hasCurrentKickoffAcceptance: () => true,
+        },
         missionPanes: { list: () => persisted },
         taskDispatches: { list: () => [] },
         handoffs: {
@@ -879,6 +890,10 @@ describe('createProductionApplyPorts advance/complete', () => {
       pane: expect.objectContaining({ title: 'Orchestrator' }),
       recap: expect.stringMatching(/Memória compacta[\s\S]*Codex[\s\S]*API integrada/),
     }));
+    expect(rebindOrchestratorSession).toHaveBeenCalledWith(
+      mission.id,
+      'session-orch-new',
+    );
     expect(appendLearning).toHaveBeenCalledWith(
       mission.id,
       expect.stringContaining('session-orch-new'),
@@ -916,6 +931,7 @@ describe('createProductionApplyPorts advance/complete', () => {
           get: () => mission,
           update,
           appendLearning: vi.fn(),
+          hasCurrentKickoffAcceptance: () => true,
         },
         missionPanes: { list: () => persisted },
         taskDispatches: { list: () => [] },
@@ -957,6 +973,99 @@ describe('createProductionApplyPorts advance/complete', () => {
       ),
     ).toHaveLength(1);
     expect(mission.description.match(/CTA: Retomar missão/g)).toHaveLength(1);
+  });
+
+  it('recovers a dead Maestro after scheduler-owned durable progress', async () => {
+    let mission = makeMission([], {
+      orchestratorSessionId: 'session-orch-dead',
+      intentVersion: 7,
+      description: 'Missão com workers em curso.',
+    });
+    const persisted: MissionPaneSpec[] = [
+      {
+        id: 'spec-orch',
+        missionId: mission.id,
+        paneId: 'pane-orch-dead',
+        adapterId: 'claude',
+        title: 'Orchestrator',
+        role: 'orchestrator',
+        createdAt: 1,
+      },
+    ];
+    const rebindOrchestratorSession = vi.fn(
+      (_missionId: string, sessionId: string) => {
+        mission = { ...mission, orchestratorSessionId: sessionId };
+        return mission;
+      },
+    );
+    const recoverPane = vi.fn(async () => ({
+      requestId: 'recovery-dead',
+      ok: true as const,
+      paneId: 'pane-orch-dead',
+      sessionId: 'session-orch-recovered',
+    }));
+    const ports = createProductionApplyPorts(
+      { advanceMissionStep: vi.fn(), isMissionComplete: () => false },
+      () => ({
+        missions: {
+          get: () => mission,
+          rebindOrchestratorSession,
+          appendLearning: vi.fn(),
+          hasCurrentKickoffAcceptance: () => true,
+          update: vi.fn(),
+        },
+        missionPanes: { list: () => persisted },
+        taskDispatches: {
+          list: () => [
+            {
+              missionId: mission.id,
+              intentVersion: 7,
+              state: 'running',
+            },
+          ],
+        },
+        handoffs: {
+          list: () => [
+            {
+              id: 'handoff-queued',
+              missionId: mission.id,
+              status: 'success',
+              authorityOrigin: 'agent',
+              deliveryState: 'queued',
+              delivered: false,
+              summary: 'revisão pronta',
+              artifacts: [],
+              evidenceIds: [],
+              evidenceTrust: 'unverified',
+              createdAt: 10,
+            },
+          ],
+        },
+      }) as never,
+      recoverPane,
+      () => [{
+        paneId: 'pane-orch-dead',
+        sessionId: 'session-orch-dead',
+        title: 'Orchestrator',
+        kind: 'cli-agent',
+        state: 'exited',
+        missionId: mission.id,
+        role: 'orchestrator',
+      }],
+    );
+
+    await ports.respawnFreshContext(
+      mission.id,
+      scope,
+      'provider exited mid-delivery',
+    );
+
+    expect(recoverPane).toHaveBeenCalled();
+    expect(rebindOrchestratorSession).toHaveBeenCalledWith(
+      mission.id,
+      'session-orch-recovered',
+    );
+    expect(mission.orchestratorSessionId).toBe('session-orch-recovered');
   });
 });
 

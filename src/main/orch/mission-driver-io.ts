@@ -17,7 +17,7 @@ import {
 import type { ProjectExecutionScope } from '../../shared/types';
 import { milestoneValidationEvidenceId } from '../context/context-workflow-service';
 import { getContextWorkflowService } from '../context/context-workflow-registry';
-import { onHandoffSubmitted } from './idle-delivery';
+import { onHandoffSubmitted, redeliverPendingHandoffs } from './idle-delivery';
 import {
   hasMirroredWorkspaceScope,
   listPaneSnapshots,
@@ -425,8 +425,18 @@ export function createProductionApplyPorts(
           : undefined);
       if (
         target.role === 'orchestrator' &&
-        (!snapshot || snapshot.state === 'exited')
+        (!snapshot || snapshot.state === 'exited') &&
+        !missionHasSchedulerProgress(
+          mission,
+          stores.missions.hasCurrentKickoffAcceptance(missionId),
+          stores.taskDispatches.list(missionId),
+        )
       ) {
+        // Antes do primeiro dispatch durável, sair do Maestro é falha
+        // operacional do kickoff — bloqueia com CTA. Depois que o scheduler
+        // já possui progresso, a recuperação física (abaixo) é obrigatória:
+        // bloquear aqui deixava handoffs de revisor/QA em `queued` para
+        // sempre e a ponte PREVC nunca selava autoridade física.
         const detail =
           `${DEAD_ORCHESTRATOR_RECOVERY_MARKER}\n` +
           '## Orquestrador encerrou\n' +
@@ -465,6 +475,9 @@ export function createProductionApplyPorts(
         `Recovered role: ${target.role}${target.agentName ? ` (${target.agentName})` : ''}`,
         `Recovery reason: ${reason}`,
         'Continue this mission from a fresh context. Inspect current repository and pane state before changing files.',
+        target.role === 'orchestrator'
+          ? 'Há handoffs duráveis pendentes de entrega ao Maestro; reconheça-os com nexus_handoff_ack após processar cada um.'
+          : '',
       ]
         .filter(Boolean)
         .join('\n\n')
@@ -482,6 +495,25 @@ export function createProductionApplyPorts(
         throw new Error(
           `fresh-context failed: ${result.error ?? 'renderer did not acknowledge'}`,
         );
+      }
+      if (target.role === 'orchestrator') {
+        const rebound = stores.missions.rebindOrchestratorSession(
+          missionId,
+          result.sessionId,
+        );
+        if (rebound?.orchestratorSessionId !== result.sessionId) {
+          throw new Error(
+            'fresh-context failed: orchestrator session rebind lost CAS',
+          );
+        }
+        try {
+          redeliverPendingHandoffs(scope, missionId);
+        } catch (error) {
+          console.warn(
+            `[mission-driver] reentrega pós-recovery falhou para ${missionId}:`,
+            error,
+          );
+        }
       }
       stores.missions.appendLearning(
         missionId,

@@ -1171,6 +1171,45 @@ describe("production guided PREVC post-merge bridge", () => {
     expect(world.requestDriverTick).not.toHaveBeenCalled();
   });
 
+  it("surfaces queued Maestro deliveries when physical authority is incomplete", async () => {
+    const world = createWorld();
+    world.physicalPlanAuthority = false;
+    world.handoffs.length = 0;
+    world.handoffs.push({
+      id: "handoff-queued-reviewer",
+      missionId: world.missionId,
+      status: "success",
+      authorityOrigin: "agent",
+      deliveryState: "queued",
+      delivered: false,
+      summary: "revisão pronta",
+      artifacts: [],
+      evidenceIds: [],
+      evidenceTrust: "unverified",
+      claimTrust: "untrusted",
+      createdAt: 20,
+    } as Handoff);
+
+    expect(
+      world.dependencies
+        .storesForScope(world.scope)
+        .handoffs.list({ missionId: world.missionId, includeDelivered: false }),
+    ).toHaveLength(1);
+
+    const inspection = inspectGuidedPrevcPostMergeAuthority(
+      world.scope,
+      world.missionId,
+      world.dependencies,
+    );
+
+    expect(inspection).toMatchObject({
+      ready: false,
+      reason: expect.stringMatching(
+        /physical authority: 1 success handoff\(s\) still queued/i,
+      ),
+    });
+  });
+
   it("coalesces concurrent scheduler/manual bridge attempts into one validation flight", async () => {
     let releaseReview!: () => void;
     const reviewGate = new Promise<void>((resolve) => {

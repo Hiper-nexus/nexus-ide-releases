@@ -859,6 +859,34 @@ export function initIdleDelivery(): void {
     }
   });
   untapExit = tapSessionExit((sessionId) => {
+    // Capture durable recovery targets BEFORE dropping the in-memory queue.
+    // SQLite keeps handoffs as `queued`; without this the Maestro exit would
+    // strand reviewer/QA deliveries with zero attempts until an operator CTA.
+    const recoveryTargets = new Map<
+      string,
+      DeliveryAuthority & { handoffId: string }
+    >();
+    for (const [, queue] of queues) {
+      const head = queue[0];
+      if (!head || head.authority.sessionId !== sessionId) continue;
+      const key = runtimeRecoveryKey(head.authority);
+      if (!recoveryTargets.has(key)) {
+        recoveryTargets.set(key, {
+          ...head.authority,
+          handoffId: head.handoff.id,
+        });
+      }
+    }
+    for (const pending of pendingDeliveryStarts) {
+      if (pending.authority.sessionId !== sessionId) continue;
+      const key = runtimeRecoveryKey(pending.authority);
+      if (!recoveryTargets.has(key)) {
+        recoveryTargets.set(key, {
+          ...pending.authority,
+          handoffId: pending.handoff.id,
+        });
+      }
+    }
     for (const [key, queue] of [...queues]) {
       if (queue[0]?.authority.sessionId === sessionId) queues.delete(key);
     }
@@ -870,10 +898,37 @@ export function initIdleDelivery(): void {
         failureCode: 'orchestrator_session_exited',
       });
       clearPendingEnter(pending);
+      const recoveryKey = runtimeRecoveryKey(pending.authority);
+      if (!recoveryTargets.has(recoveryKey)) {
+        recoveryTargets.set(recoveryKey, {
+          ...pending.authority,
+          handoffId: pending.handoffId,
+        });
+      }
     }
     for (const pending of [...pendingDeliveryStarts]) {
       if (pending.authority.sessionId !== sessionId) continue;
       clearPendingDeliveryStart(pending);
+    }
+    for (const target of recoveryTargets.values()) {
+      const recovery = recoverDefectiveRuntime;
+      if (!recovery) continue;
+      // Exit-triggered recovery must not depend on a second store proof of the
+      // in-memory head: the durable row is still `queued`, but the session that
+      // owned the queue is already gone. Invoke the recovery hook directly.
+      const request = Object.freeze({
+        sessionId: target.sessionId,
+        missionId: target.missionId,
+        paneId: target.paneId,
+        handoffId: target.handoffId,
+        scope: Object.freeze({ ...target.scope }),
+      });
+      void Promise.resolve(recovery(request)).catch((error) => {
+        console.warn(
+          '[idle-delivery] recovery after Maestro exit failed:',
+          error,
+        );
+      });
     }
   });
   unsubscribeScopeChanges = onRendererWorkspaceScopeChange(

@@ -557,6 +557,8 @@ describe('idle delivery authority and lifecycle', () => {
     authorizeTarget(scope);
     ptyMocks.state = 'idle';
     delivery.initIdleDelivery();
+    const recovery = vi.fn(async () => true);
+    delivery.configureHandoffDeliveryRuntimeRecovery(recovery);
 
     delivery.onHandoffSubmitted(handoff(), scope);
     ptyMocks.exitTaps[0]('orchestrator-session');
@@ -565,6 +567,13 @@ describe('idle delivery authority and lifecycle', () => {
     expect(ptyMocks.writes).not.toHaveBeenCalled();
     expect(storeMocks.deliveryAttempts.size).toBe(0);
     expect(storeMocks.delivered).toEqual([]);
+    expect(recovery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: 'orchestrator-session',
+        missionId: 'mission-a',
+        handoffId: expect.any(String),
+      }),
+    );
     delivery.shutdownIdleDelivery();
   });
 
