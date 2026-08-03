@@ -197,6 +197,7 @@ import {
 import { issueImmediateSquadSpawnGrant } from './spawn-authority';
 import { BoundedAsyncOperationPool } from './bounded-async-operation-pool';
 import { commitPromotedPlanToGit } from "./promoted-plan-git-authority";
+import { missionTaskScheduleForRenderer } from "./mission-task-schedule-ipc";
 
 /**
  * Renderer-facing IPC for the orchestration domain, plus the domain
@@ -1913,6 +1914,23 @@ export function registerOrchIpc(): void {
       event.sender,
       raw,
     );
+  });
+  ipcMain.handle(ORCH_CHANNELS.missionsTaskSchedule, (event, raw) => {
+    const parsed = z
+      .object({ missionId: z.string().min(1).max(128) })
+      .strict()
+      .safeParse(raw);
+    if (!parsed.success) return { tasks: [] };
+    // requireProjectStores resolves the renderer workspace scope and refuses
+    // foreign workspaces, so the projection can never cross projects.
+    const stores = requireProjectStores(event.sender);
+    const mission = stores.missions.get(parsed.data.missionId);
+    if (!mission) return { tasks: [] };
+    try {
+      return { tasks: missionTaskScheduleForRenderer(stores, mission) };
+    } catch {
+      return { tasks: [] };
+    }
   });
   ipcMain.handle(
     ORCH_CHANNELS.missionPaneRestoreAuthority,

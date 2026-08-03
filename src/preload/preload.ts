@@ -1104,6 +1104,8 @@ const api: NexusApi = {
       ipcRenderer.invoke(ORCH_CHANNELS.missionPromptQueue, input),
     missionEventsRecent: (input) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionEventsRecent, input),
+    missionTaskSchedule: (input) =>
+      ipcRenderer.invoke(ORCH_CHANNELS.missionsTaskSchedule, input),
     missionEventsReplay: (input) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionEventsReplay, input),
     missionEventsAck: (input) =>

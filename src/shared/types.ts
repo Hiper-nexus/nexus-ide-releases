@@ -8,6 +8,7 @@
  */
 
 import type { AdapterInfo } from './adapter-types';
+import type { MissionTaskScheduleItem } from './mission-task-schedule';
 import type { OnboardingState, OnboardingPatch } from './onboarding-types';
 import type {
   PetGalleryImportResult,
@@ -675,6 +676,10 @@ export interface NexusApi {
       missionId: string;
       limit?: number;
     }): Promise<{ events: unknown[]; enabled?: boolean; error?: string }>;
+    /** Read-only wave schedule — identities/status only, never sealed detail. */
+    missionTaskSchedule(input: {
+      missionId: string;
+    }): Promise<{ tasks: MissionTaskScheduleItem[] }>;
     missionEventsReplay(input: {
       missionId: string;
       afterSequence?: number;
