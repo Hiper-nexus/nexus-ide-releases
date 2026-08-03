@@ -67,6 +67,8 @@ export function OrchestrationModeDialog() {
         : {}),
     });
   };
+  const packBlocked =
+    pending.templateRequiredForPack && templateId === "";
 
   const choices: Array<{
     mode: PromoteOrchestrationChoice;
@@ -129,6 +131,12 @@ export function OrchestrationModeDialog() {
               className={`confirm__orch-choice${
                 choice.primary ? " confirm__orch-choice--recommended" : ""
               }`}
+              disabled={choice.mode === "pack" && packBlocked}
+              title={
+                choice.mode === "pack" && packBlocked
+                  ? "Escolha um template Pack antes de continuar"
+                  : undefined
+              }
               onClick={() => pick(choice.mode)}
             >
               <span className="confirm__orch-choice-label">

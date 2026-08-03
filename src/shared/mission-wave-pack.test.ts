@@ -80,13 +80,21 @@ describe("resolveWavePackStories", () => {
 });
 
 describe("freezeWavePackStoriesForContract", () => {
-  it("keeps markdown when it already has ≥2 stories", () => {
+  it("keeps markdown when no template is chosen", () => {
+    const frozen = freezeWavePackStoriesForContract({
+      summary: SAMPLE_PLAN,
+    });
+    expect(frozen).toHaveLength(3);
+    expect(frozen[0]!.title).toBe("Login form");
+  });
+
+  it("prefers explicit template over markdown stories", () => {
     const frozen = freezeWavePackStoriesForContract({
       summary: SAMPLE_PLAN,
       templateId: "landing",
     });
     expect(frozen).toHaveLength(3);
-    expect(frozen[0]!.title).toBe("Login form");
+    expect(frozen[0]!.title).toBe("Hero e estrutura da página");
   });
 
   it("fills from template when markdown is thin", () => {
@@ -154,13 +162,34 @@ describe("resolveMissionOrchestrationMode", () => {
 
   it("maps forced pack with ≥2 stories to wave-pack topology", () => {
     const mode = resolveMissionOrchestrationMode({
-      risk: "destructive",
+      risk: "normal",
       hasPromotedPlan: true,
       extractedStoryCount: 3,
       forcedMode: "pack",
     });
     expect(mode).toBe("pack");
     expect(topologyForOrchestrationMode(mode)).toBe("wave-pack");
+  });
+
+  it("keeps guided for destructive even when Pack is forced", () => {
+    expect(
+      resolveMissionOrchestrationMode({
+        risk: "destructive",
+        hasPromotedPlan: true,
+        extractedStoryCount: 3,
+        forcedMode: "pack",
+      }),
+    ).toBe("guided");
+  });
+
+  it("does not auto-pack structured stories without a promoted plan", () => {
+    expect(
+      resolveMissionOrchestrationMode({
+        risk: "normal",
+        hasPromotedPlan: false,
+        extractedStoryCount: 5,
+      }),
+    ).toBe("guided");
   });
 });
 

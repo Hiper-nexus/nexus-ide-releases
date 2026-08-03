@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { resolveMissionBlockingIntentState } from './mission-blocking';
 import { classifyStandardMissionTopology } from './mission-topology';
 import {
+  assertWavePackStoriesReady,
   freezeWavePackStoriesForContract,
   MISSION_ORCHESTRATION_MODES,
   wavePackStorySchema,
@@ -650,13 +651,28 @@ export function compileIntentContract(input: {
           // negada no intent gate, então workers nunca são esperados.
           { ...defaultBudgetsForRisk(risk), maxWorkers: 0 }
         : defaultBudgetsForRisk(risk);
-  const orchestrationMode = input.orchestrationMode;
+  // Destructive floor: never stamp Pack on a destructive goal.
+  let orchestrationMode = input.orchestrationMode;
+  if (risk === 'destructive' && orchestrationMode === 'pack') {
+    orchestrationMode = 'guided';
+  }
+  if (orchestrationMode === 'pack' && !input.wavePackTemplateId) {
+    throw new Error(
+      'wave_pack_template_required: Pack no lançamento exige template Landing/SaaS/Fix',
+    );
+  }
   const wavePackTemplateId =
     orchestrationMode === 'pack' ? input.wavePackTemplateId : undefined;
   const wavePackStories =
     orchestrationMode === 'pack' && wavePackTemplateId
       ? freezeWavePackStoriesForContract({ templateId: wavePackTemplateId })
       : undefined;
+  if (orchestrationMode === 'pack') {
+    assertWavePackStoriesReady(
+      wavePackStories ?? [],
+      'compileIntentContract',
+    );
+  }
   return missionIntentContractSchema.parse({
     version: 1,
     source: input.source ?? 'typed',

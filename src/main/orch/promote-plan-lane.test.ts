@@ -408,7 +408,11 @@ describe('promotePlanLaneFromRenderer', () => {
 
     const promoted = auth.promotePlanLaneFromRenderer(
       owner,
-      { missionId: 'm-plan', orchestrationMode: 'pack' },
+      {
+        missionId: 'm-plan',
+        orchestrationMode: 'pack',
+        wavePackTemplateId: 'fix',
+      },
       detached.fence,
       detached.promotedPlan!,
     );
@@ -417,6 +421,7 @@ describe('promotePlanLaneFromRenderer', () => {
     expect(promoted.intentContract).toMatchObject({
       lane: 'standard',
       orchestrationMode: 'pack',
+      wavePackTemplateId: 'fix',
       squadRevisionHash: snapshotSquadAuthority(executionTarget).hash,
       orchestratorRuntime: candidate.orchestratorRuntime,
       promotedPlan: {
@@ -425,6 +430,7 @@ describe('promotePlanLaneFromRenderer', () => {
         artifacts: handoff.artifacts,
       },
     });
+    expect(promoted.intentContract?.wavePackStories).toHaveLength(2);
     expect(missionRequiresGuidedPrevc(promoted)).toBe(false);
     expect(
       missionRequiresGuidedPrevc(promoted, undefined, {

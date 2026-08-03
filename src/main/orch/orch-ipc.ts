@@ -388,24 +388,34 @@ function rendererAsyncAuthorityFence(
   };
 }
 
-export const missionSubmitIntentSchema = z.object({
-  missionId: z.string().min(1).max(128),
-  goal: z.string().min(1).max(16_384),
-  source: z.enum(["typed", "voice", "imported-issue", "automation"]).optional(),
-  contextPolicy: z.enum(["none", "minimal", "on-demand"]).optional(),
-  acceptanceCriteria: z.array(z.string().min(1).max(2_048)).max(32).optional(),
-  lane: z.enum(["standard", "consult", "plan", "ops"]).optional(),
-  orchestrationMode: z.enum(["livre", "pack", "guided"]).optional(),
-  wavePackTemplateId: z.enum(["landing", "saas", "fix"]).optional(),
-  evidenceAttached: z.boolean().optional(),
-  /**
-   * Somente o wizard de produto marca isto, e apenas na submissão que ele
-   * mesmo exibirá na revisão de plano in-app: main emite um grant
-   * (sender+missão+intentVersion, single-use, TTL) e o Start dessa revisão
-   * vale como a aprovação. Qualquer outro caller cai no modal nativo.
-   */
-  planReviewSurface: z.enum(["product-wizard"]).optional(),
-});
+export const missionSubmitIntentSchema = z
+  .object({
+    missionId: z.string().min(1).max(128),
+    goal: z.string().min(1).max(16_384),
+    source: z.enum(["typed", "voice", "imported-issue", "automation"]).optional(),
+    contextPolicy: z.enum(["none", "minimal", "on-demand"]).optional(),
+    acceptanceCriteria: z.array(z.string().min(1).max(2_048)).max(32).optional(),
+    lane: z.enum(["standard", "consult", "plan", "ops"]).optional(),
+    orchestrationMode: z.enum(["livre", "pack", "guided"]).optional(),
+    wavePackTemplateId: z.enum(["landing", "saas", "fix"]).optional(),
+    evidenceAttached: z.boolean().optional(),
+    /**
+     * Somente o wizard de produto marca isto, e apenas na submissão que ele
+     * mesmo exibirá na revisão de plano in-app: main emite um grant
+     * (sender+missão+intentVersion, single-use, TTL) e o Start dessa revisão
+     * vale como a aprovação. Qualquer outro caller cai no modal nativo.
+     */
+    planReviewSurface: z.enum(["product-wizard"]).optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.orchestrationMode === "pack" && !value.wavePackTemplateId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "wave_pack_template_required",
+        path: ["wavePackTemplateId"],
+      });
+    }
+  });
 
 export const missionApproveIntentSchema = z
   .object({
@@ -599,7 +609,7 @@ function missionAuthorityDialogDetail(
     `Workspace: ${compactDialogText(scope.rootRealPath, 100)}`,
     `Missão: ${compactDialogText(candidate.title, 64)} · intenção=v${candidate.intentVersion} · ID=${compactDialogText(candidate.missionId, 48)}`,
     `Objetivo: ${compactDialogText(candidate.goal, 96)}`,
-    `Execução: risco=${candidate.risk} · lane=${laneReview} · modo=${candidate.executionMode} · orçamento P${budgets.planningTokens}/E${budgets.executionTokens}/W${budgets.maxWorkers}${budgets.maxSteps === undefined ? '' : `/S${budgets.maxSteps}`}`,
+    `Execução: risco=${candidate.risk} · lane=${laneReview} · modo=${candidate.executionMode} · orch=${candidate.orchestrationMode ?? 'auto'}${candidate.wavePackTemplateId ? `/${candidate.wavePackTemplateId}` : ''}${typeof candidate.wavePackStoryCount === 'number' ? `·stories=${candidate.wavePackStoryCount}` : ''} · orçamento P${budgets.planningTokens}/E${budgets.executionTokens}/W${budgets.maxWorkers}${budgets.maxSteps === undefined ? '' : `/S${budgets.maxSteps}`}`,
     `Maestro/workers: ${compactDialogText(maestro?.agentName ?? '(ausente)', 28)}/${compactDialogText(runtime.adapterId, 20)} · workers=${workers.length} · ${orchestratorEvidence} · model=${compactDialogText(runtime.model ?? 'default', 28)} · squad=${compactDialogText(candidate.squad.name, 32)} (${compactDialogText(candidate.squad.id, 64)}) SHA-256=${candidate.squad.hash} · trocas=${replacementReview}`,
     `Permissões: critérios=${candidate.acceptanceCriteria.length} · negadas=${candidate.deniedTools.length} · tools=${grantedToolCount}+${unrestrictedToolAgents} irrestrito(s) · skills=${grantedSkillCount}+${unrestrictedSkillAgents} irrestrito(s)`,
     `Evidências/plano: evidência=${candidate.evidenceAttached ? 'sim' : 'não'} · anexos=${candidate.attachmentPaths.length} · plano=${promotedPlanReview}`,

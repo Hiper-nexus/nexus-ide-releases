@@ -18,7 +18,9 @@ import {
   type PromotedPlanSnapshot,
 } from "../../shared/mission-intent";
 import {
+  assertWavePackStoriesReady,
   freezeWavePackStoriesForContract,
+  resolveWavePackStories,
 } from "../../shared/mission-wave-pack";
 import {
   missionGoalNeedsFutureEvidence,
@@ -174,6 +176,11 @@ export interface RendererMissionAuthorityCandidate {
   readonly lane: "standard" | "consult" | "plan" | "ops";
   readonly risk: "normal" | "sensitive" | "destructive";
   readonly executionMode: "manual" | "assisted" | "autopilot";
+  /** Operator Livre / Pack / Guiado — shown in native approval. */
+  readonly orchestrationMode?: "livre" | "pack" | "guided";
+  readonly wavePackTemplateId?: "landing" | "saas" | "fix";
+  /** Canonical Pack story count (structured or markdown preview). */
+  readonly wavePackStoryCount?: number;
   readonly contextPolicy: "none" | "minimal" | "on-demand" | "prepare-project";
   readonly acceptanceCriteria: readonly string[];
   readonly deniedTools: readonly string[];
@@ -1262,6 +1269,16 @@ export class RendererMissionAuthority {
       lane: contract.lane ?? "standard",
       risk: contract.risk,
       executionMode: contract.executionMode,
+      ...(contract.orchestrationMode
+        ? { orchestrationMode: contract.orchestrationMode }
+        : {}),
+      ...(contract.wavePackTemplateId
+        ? { wavePackTemplateId: contract.wavePackTemplateId }
+        : {}),
+      wavePackStoryCount: resolveWavePackStories({
+        wavePackStories: contract.wavePackStories,
+        promotedPlanSummary: contract.promotedPlan?.summary,
+      }).length,
       contextPolicy: contract.contextPolicy,
       acceptanceCriteria: Object.freeze(acceptanceCriteria),
       deniedTools: Object.freeze(deniedTools),
@@ -1674,7 +1691,11 @@ export class RendererMissionAuthority {
    */
   planPromotionCandidateFromRenderer(
     owner: WebContents,
-    input: { missionId: string },
+    input: {
+      missionId: string;
+      orchestrationMode?: "pack" | "guided";
+      wavePackTemplateId?: "landing" | "saas" | "fix";
+    },
   ): RendererMissionAuthorityCandidate {
     return this.#planPromotionCandidate(owner, input);
   }
@@ -1686,7 +1707,11 @@ export class RendererMissionAuthority {
    */
   planPromotionCandidateAfterTeardownFromMain(
     owner: WebContents,
-    input: { missionId: string },
+    input: {
+      missionId: string;
+      orchestrationMode?: "pack" | "guided";
+      wavePackTemplateId?: "landing" | "saas" | "fix";
+    },
     expectedPlan: PromotedPlanSnapshot,
   ): RendererMissionAuthorityCandidate {
     return this.#planPromotionCandidate(owner, input, expectedPlan);
@@ -1694,7 +1719,11 @@ export class RendererMissionAuthority {
 
   #planPromotionCandidate(
     owner: WebContents,
-    input: { missionId: string },
+    input: {
+      missionId: string;
+      orchestrationMode?: "pack" | "guided";
+      wavePackTemplateId?: "landing" | "saas" | "fix";
+    },
     expectedPlan?: PromotedPlanSnapshot,
   ): RendererMissionAuthorityCandidate {
     const scope = requireRendererWorkspaceScope(owner);
@@ -1764,6 +1793,19 @@ export class RendererMissionAuthority {
         orchestratorEvidence,
       ),
     ]);
+    const previewMode =
+      risk === "destructive"
+        ? "guided"
+        : (input.orchestrationMode ?? "guided");
+    const previewTemplateId =
+      previewMode === "pack" ? input.wavePackTemplateId : undefined;
+    const previewStories =
+      previewMode === "pack"
+        ? freezeWavePackStoriesForContract({
+            summary: promotedPlan.summary,
+            templateId: previewTemplateId,
+          })
+        : Object.freeze([]);
     return Object.freeze({
       missionId: current.id,
       title: current.title,
@@ -1771,6 +1813,9 @@ export class RendererMissionAuthority {
       lane: "plan",
       risk,
       executionMode: contract.executionMode,
+      orchestrationMode: previewMode,
+      ...(previewTemplateId ? { wavePackTemplateId: previewTemplateId } : {}),
+      wavePackStoryCount: previewStories.length,
       contextPolicy: contract.contextPolicy,
       acceptanceCriteria: Object.freeze(acceptanceCriteria),
       deniedTools: Object.freeze(deniedTools),
@@ -1885,7 +1930,14 @@ export class RendererMissionAuthority {
       wavePackTemplateId: _priorWavePackTemplateId,
       ...contractWithoutMode
     } = contract;
-    const orchestrationMode = input.orchestrationMode;
+    // No mode → guided. Never auto-freeze stories for surprise Pack.
+    let orchestrationMode =
+      risk === "destructive"
+        ? "guided"
+        : (input.orchestrationMode ?? "guided");
+    if (orchestrationMode === "pack" && risk === "destructive") {
+      orchestrationMode = "guided";
+    }
     const wavePackTemplateId =
       orchestrationMode === "pack" ? input.wavePackTemplateId : undefined;
     const wavePackStories =
@@ -1894,12 +1946,13 @@ export class RendererMissionAuthority {
             summary: promotedPlan.summary,
             templateId: wavePackTemplateId,
           })
-        : orchestrationMode === "guided"
-          ? undefined
-          : freezeWavePackStoriesForContract({
-              summary: promotedPlan.summary,
-              templateId: input.wavePackTemplateId,
-            });
+        : undefined;
+    if (orchestrationMode === "pack") {
+      assertWavePackStoriesReady(
+        wavePackStories ?? [],
+        "promotePlanLane",
+      );
+    }
     const nextContract = {
       ...contractWithoutMode,
       lane: "standard" as const,
@@ -1923,7 +1976,7 @@ export class RendererMissionAuthority {
         : undefined,
       squadRevisionHash: squadSnapshot.hash,
       orchestratorRuntime: { ...orchestratorRuntime },
-      ...(orchestrationMode ? { orchestrationMode } : {}),
+      orchestrationMode,
       ...(wavePackTemplateId ? { wavePackTemplateId } : {}),
       ...(wavePackStories && wavePackStories.length > 0
         ? { wavePackStories: [...wavePackStories] }

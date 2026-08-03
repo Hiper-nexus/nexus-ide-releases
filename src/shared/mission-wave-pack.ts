@@ -100,7 +100,8 @@ export function resolveWavePackStories(input: {
 
 /**
  * Freeze stories onto a contract at promote/compile time.
- * Markdown with ≥2 stories wins; otherwise a Pack template fills the fan-out.
+ * Explicit Pack template wins (operator chose declared fan-out); otherwise
+ * markdown with ≥2 stories; thin markdown without template yields few/no stories.
  */
 export function freezeWavePackStoriesForContract(input: {
   readonly summary?: string | null;
@@ -110,14 +111,29 @@ export function freezeWavePackStoriesForContract(input: {
   if (input.existingStories && input.existingStories.length > 0) {
     return resolveWavePackStories({ wavePackStories: input.existingStories });
   }
-  const fromMarkdown = input.summary?.trim()
-    ? extractStoriesFromPromotedPlanSummary(input.summary)
-    : Object.freeze([] as ExtractedWavePackStory[]);
-  if (fromMarkdown.length >= 2) return fromMarkdown;
   if (input.templateId && isWavePackTemplateId(input.templateId)) {
     return storiesForWavePackTemplate(input.templateId);
   }
+  const fromMarkdown = input.summary?.trim()
+    ? extractStoriesFromPromotedPlanSummary(input.summary)
+    : Object.freeze([] as ExtractedWavePackStory[]);
   return fromMarkdown;
+}
+
+/**
+ * Fail-closed: Pack requires ≥2 canonical stories before the contract is
+ * stamped or sealed.
+ */
+export function assertWavePackStoriesReady(
+  stories: readonly ExtractedWavePackStory[],
+  context: string,
+): void {
+  if (stories.length < 2) {
+    throw new Error(
+      `wave_pack_insufficient_stories: ${context} — Pack exige ≥2 stories ` +
+        "(BMAD no plano ou template Landing/SaaS/Fix)",
+    );
+  }
 }
 
 export function wavePackStoryDomain(storyId: string): string {
@@ -145,17 +161,18 @@ export type ResolveMissionOrchestrationModeInput = {
 };
 
 /**
- * Pure mode resolver. Pack requires ≥2 stories (structured or markdown) and
- * non-destructive risk. Destructive stays guided (single writer).
+ * Pure mode resolver. Destructive always stays guided (single writer) — even
+ * when the operator forced Pack. Pack auto-select only with a promoted plan
+ * and ≥2 stories; template/wizard Pack uses forcedMode.
  */
 export function resolveMissionOrchestrationMode(
   input: ResolveMissionOrchestrationModeInput,
 ): MissionOrchestrationMode {
+  // PREVC/single-writer floor for destructive work — never overridden by Pack.
+  if (input.risk === "destructive") return "guided";
   if (input.forcedMode) return input.forcedMode;
   if ((input.lane ?? "standard") !== "standard") return "livre";
-  if (input.risk === "destructive") return "guided";
-  // Wave 2: structured stories alone are enough — promoted plan is optional.
-  if (input.extractedStoryCount >= 2) return "pack";
+  if (input.hasPromotedPlan && input.extractedStoryCount >= 2) return "pack";
   return "guided";
 }
 

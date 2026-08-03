@@ -136,6 +136,28 @@ describe('mission intent transitions', () => {
     expect(contract.wavePackStories).toHaveLength(3);
   });
 
+  it('rejects Pack without a template at compile', () => {
+    expect(() =>
+      compileIntentContract({
+        goal: 'Ship a landing page',
+        intentVersion: 1,
+        orchestrationMode: 'pack',
+      }),
+    ).toThrow(/wave_pack_template_required/);
+  });
+
+  it('coerces Pack to Guiado when the goal is destructive', () => {
+    const contract = compileIntentContract({
+      goal: 'Apagar o banco de produção e wipe do cluster',
+      intentVersion: 1,
+      orchestrationMode: 'pack',
+      wavePackTemplateId: 'fix',
+    });
+    expect(contract.risk).toBe('destructive');
+    expect(contract.orchestrationMode).toBe('guided');
+    expect(contract.wavePackStories).toBeUndefined();
+  });
+
   it('walks the happy path select → goal → compile → start', () => {
     expect(transitionIntentState({ from: 'draft', event: 'select_squad' })).toEqual({
       ok: true,
