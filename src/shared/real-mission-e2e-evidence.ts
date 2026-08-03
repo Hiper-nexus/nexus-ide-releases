@@ -848,10 +848,14 @@ export const realMissionE2EEvidenceSchema = z
         "missionIdentity",
         evidence.mission !== null &&
           evidence.plan?.squadId === evidence.mission.squadId &&
+          evidence.mission.squadSourceId === REAL_MISSION_E2E_SQUAD_ID &&
           ((evidence.launchSurface === "private-runner" &&
-            evidence.mission.squadId === REAL_MISSION_E2E_SQUAD_ID &&
-            evidence.mission.squadSourceRevisionHash ===
-              evidence.mission.squadRevisionHash) ||
+            ((evidence.mission.squadId === REAL_MISSION_E2E_SQUAD_ID &&
+              evidence.mission.squadSourceRevisionHash ===
+                evidence.mission.squadRevisionHash) ||
+              (isMissionRuntimeSquadId(evidence.mission.squadId) &&
+                evidence.mission.squadSourceRevisionHash !==
+                  evidence.mission.squadRevisionHash))) ||
             (evidence.launchSurface === "product-wizard" &&
               isMissionRuntimeSquadId(evidence.mission.squadId) &&
               evidence.mission.squadSourceRevisionHash !==

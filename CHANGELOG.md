@@ -16,6 +16,9 @@
 - A evidência pós-`done` acompanha a linhagem selada do squad fonte até o
   snapshot `agentic-runtime-*`; uma missão concluída não é mais reprovada por o
   observador continuar preso ao ID mutável anterior à aprovação.
+- O schema compartilhado do recibo aplica a mesma regra ao runner privado,
+  mantendo `squadSourceId`, hash de origem, snapshot runtime e plano
+  causalmente vinculados.
 
 ## 0.22.0 — O piloto aprende a pilotar
 
