@@ -750,4 +750,56 @@ describe("saved-team (mission-runtime) sealing", () => {
       ),
     ).toBe(true);
   });
+
+  it("smoke: Pack seals one parallel task per BMAD story plus QA gate", () => {
+    const pack = promotedMissionWithStories({ orchestrationMode: "pack" });
+    const h = harness({ currentMission: pack });
+    const result = ensureGuidedMissionPlan(h.suite, pack.id, h.deps);
+    expect(result).toMatchObject({
+      applicable: true,
+      sealed: true,
+      topology: "wave-pack",
+    });
+
+    const rows = h.createPlanAtomically.mock.calls[0]![0].rows;
+    const decoded = rows.map((row: { detail: string }) =>
+      decodeTaskScheduleDetail(row.detail),
+    );
+    const storyRows = decoded.filter((entry) =>
+      entry.meta?.ownership.domains.some((domain) =>
+        domain.startsWith("wave-pack-story:"),
+      ),
+    );
+    const qaRows = decoded.filter((entry) =>
+      entry.meta?.ownership.domains.includes("guided-quality-gate"),
+    );
+
+    // MULTI_STORY_PLAN has Story 1.1 + 1.2 → two writers, not one Guided primary.
+    expect(storyRows).toHaveLength(2);
+    expect(
+      new Set(
+        storyRows.map(
+          (entry) =>
+            entry.meta!.ownership.domains.find((domain) =>
+              domain.startsWith("wave-pack-story:"),
+            ),
+        ),
+      ).size,
+    ).toBe(2);
+    expect(
+      storyRows.every(
+        (entry) =>
+          entry.meta?.executionMode === "isolated_worktree" &&
+          entry.meta.parallelEligible === true &&
+          entry.meta.agentCategory === "executor",
+      ),
+    ).toBe(true);
+    expect(qaRows).toHaveLength(1);
+    // QA waits on every story wave — dependency cardinality is the Pack contract.
+    expect(qaRows[0]!.meta?.dependsOn).toHaveLength(2);
+    // Stories share inventory as merge permit; exclusivity is story domains.
+    expect(
+      storyRows.every((entry) => (entry.meta?.ownership.files.length ?? 0) > 0),
+    ).toBe(true);
+  });
 });
