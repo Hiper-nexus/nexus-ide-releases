@@ -951,8 +951,6 @@ export class MissionOrchestratorBootstrapService {
       );
     }
     this.#emitProgress(scope, missionId, "plan_baseline");
-    const isTeamReadOnlyFanout =
-      standardTopology === "team-read-only-fanout";
     const guidedPrevcRequired =
       missionRequiresGuidedPrevc(initial, standardTopology);
     // Guided delivery completion is driver-owned: with the driver disabled the
@@ -1018,7 +1016,9 @@ export class MissionOrchestratorBootstrapService {
     // a worker has materialized; when the context is not ready (greenfield)
     // nothing freezes and both sides keep the intent-hash fallback seal.
     this.#emitProgress(scope, missionId, "prevc_freeze");
-    if (!isTeamReadOnlyFanout) {
+    // Fast path / Pack / fan-out: never freeze PREVC on the spawn critical path
+    // (docs/design/orch-fast-path.md). Only Guided-required missions pay this.
+    if (guidedPrevcRequired) {
       try {
         void Promise.resolve(
           this.#deps.ensureMissionPrevc?.(scope, missionId),
@@ -1096,7 +1096,7 @@ export class MissionOrchestratorBootstrapService {
     this.#emitProgress(scope, missionId, "runtime_checked");
     let isPrevcPreparationStarted = false;
     const preparePrevcInBackground = (): void => {
-      if (isTeamReadOnlyFanout) return;
+      if (!guidedPrevcRequired) return;
       if ((initial.intentContract?.lane ?? "standard") !== "standard") return;
       if (isPrevcPreparationStarted) return;
       isPrevcPreparationStarted = true;

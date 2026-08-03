@@ -595,7 +595,7 @@ describe("mission scheduler asynchronous authority fence", () => {
 
   it("routes a promoted builtin mission only through the post-merge PREVC bridge", async () => {
     const intent = compileIntentContract({
-      goal: "Executar o PRD promovido",
+      goal: "Executar o PRD promovido de auth",
       acceptanceCriteria: ["Entrega final validada"],
       intentVersion: 2,
       source: "typed",
@@ -613,6 +613,7 @@ describe("mission scheduler asynchronous authority fence", () => {
       intentVersion: 2,
       intentContract: {
         ...intent,
+        risk: "sensitive",
         approvedAt: 1,
         dispatchedAt: 2,
         promotedPlan: {} as never,

@@ -689,21 +689,23 @@ const RAW_SQUADS: Squad[] = [
       '# Implementação por Stories (ciclo BMAD)\n' +
       'Você é o orquestrador do ciclo disciplinado de implementação: consome ' +
       'as stories de docs/stories/ (geradas pelo squad Planejamento & PRD) ' +
-      'e as implementa UMA POR VEZ até acabarem ou o usuário mandar parar. ' +
-      'Spawne workers via nexus_pane_spawn, aguarde com nexus_pane_wait_many ' +
-      'e colete entregas com nexus_handoff_list.\n' +
+      'e as entrega com paralelismo quando o Main selar topology=wave-pack ' +
+      '(Pack: várias stories em ondas). Só serialize “uma por vez” se o ' +
+      'kickoff/plano selado for delivery Guiado (1 writer). ' +
+      'Acompanhe workers via nexus_task / handoffs — o Main despacha panes; ' +
+      'não recrie o grafo nem force SM→Dev serial contra um Pack selado.\n' +
       '\n' +
       '## Entrada física da promoção\n' +
       'Quando o kickoff trouxer “PRD/plano físico aprovado na promoção”, esse ' +
       'payload selado (summary, artifacts e digests) é a fonte de verdade da ' +
       'execução. Antes da primeira story, materialize dele os documentos finais ' +
       'em docs/prd/, docs/architecture/ e docs/stories/ e gere o diagrama ' +
-      'archify especificado; esta lane standard autoriza essa escrita. Depois ' +
-      'comece pela primeira story pronta. ' +
+      'archify especificado; esta lane standard autoriza essa escrita. ' +
       'NÃO repita discovery, entrevista, PRD, arquitetura nem o shard de ' +
       'stories; o planejamento já terminou na revisão plan anterior.\n' +
       '\n' +
-      '## Ciclo por story\n' +
+      '## Ciclo por story (Guiado delivery — 1 writer)\n' +
+      'Quando o plano selado for delivery (não wave-pack):\n' +
       '1. **Seleção**: liste docs/stories/ e escolha a próxima story aberta ' +
       'sem dependência pendente. Se o diretório estiver vazio mas houver o ' +
       'payload promovido, materialize-o primeiro — nunca repita planejamento. ' +
@@ -725,8 +727,9 @@ const RAW_SQUADS: Squad[] = [
       'em docs/stories/, registre no handoff e passe à próxima.\n' +
       '\n' +
       '## Regras\n' +
-      '- Uma story por vez por Dev; o segundo Dev entra apenas em stories ' +
-      'independentes entre si.\n' +
+      '- Em wave-pack: paralelismo até maxWorkers; não force serialização.\n' +
+      '- Em delivery Guiado: uma story mutável por vez; Dev B só em stories ' +
+      'independentes quando o plano permitir.\n' +
       '- NUNCA marque story concluída com teste falhando ou DoD incompleto.\n' +
       '- Ao final (ou ao parar), o handoff lista stories concluídas, ' +
       'reprovadas e restantes.',

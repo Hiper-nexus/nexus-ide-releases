@@ -624,6 +624,7 @@ describe('initial main-owned orchestrator bootstrap', () => {
 
   it('keeps an already-sealed delivery receipt authoritative when its text resembles a roundtable', async () => {
     const h = harness();
+    const guided = armGuidedMission(h);
     const goal =
       'Todos os agentes devem responder o que fazem nesta missão';
     h.mission = {
@@ -634,6 +635,7 @@ describe('initial main-owned orchestrator bootstrap', () => {
         goal,
       },
     };
+    refreshHarnessOrchestratorSeal(h, guided);
     h.deps.ensurePlanGitBaseline = vi.fn();
     h.deps.ensureMissionPlan = vi.fn(() => ({
       applicable: true,
@@ -669,6 +671,7 @@ describe('initial main-owned orchestrator bootstrap', () => {
     // spawned worker) — so every standard-lane guided-PREVC "delivery"
     // mission stalls forever with zero worker panes ever dispatched.
     const h = harness();
+    const guided = armGuidedMission(h);
     const goal =
       'Todos os agentes devem responder o que fazem nesta missão';
     h.mission = {
@@ -679,6 +682,7 @@ describe('initial main-owned orchestrator bootstrap', () => {
         goal,
       },
     };
+    refreshHarnessOrchestratorSeal(h, guided);
     h.deps.ensurePlanGitBaseline = vi.fn();
     h.deps.ensureMissionPlan = vi.fn(() => ({
       applicable: true,
@@ -705,6 +709,7 @@ describe('initial main-owned orchestrator bootstrap', () => {
 
   it('keeps Git and PREVC prework for a team mission that mutates code', async () => {
     const h = harness();
+    const guided = armGuidedMission(h);
     const goal =
       'Todos os agentes devem revisar e corrigir o código desta missão';
     h.mission = {
@@ -715,6 +720,7 @@ describe('initial main-owned orchestrator bootstrap', () => {
         goal,
       },
     };
+    refreshHarnessOrchestratorSeal(h, guided);
     h.deps.ensurePlanGitBaseline = vi.fn();
     h.deps.ensureMissionPlan = vi.fn();
     h.deps.prepareOpportunisticPrevc = vi.fn();
@@ -727,6 +733,30 @@ describe('initial main-owned orchestrator bootstrap', () => {
     expect(h.deps.ensurePlanGitBaseline).toHaveBeenCalledOnce();
     expect(h.deps.ensureMissionPlan).toHaveBeenCalledOnce();
     expect(h.deps.prepareOpportunisticPrevc).toHaveBeenCalledOnce();
+  });
+
+  it('skips PREVC freeze on the fast path for normal-risk guided delivery', async () => {
+    const h = harness();
+    const guided = armGuidedMission(h);
+    h.mission = {
+      ...h.mission,
+      intentContract: {
+        ...h.mission.intentContract!,
+        risk: 'normal',
+      },
+    };
+    refreshHarnessOrchestratorSeal(h, guided);
+    h.deps.prepareOpportunisticPrevc = vi.fn();
+    h.deps.ensureMissionPrevc = vi.fn();
+
+    const result = await new MissionOrchestratorBootstrapService(
+      h.deps,
+    ).bootstrap(scope, h.mission.id);
+
+    expect(result).toMatchObject({ ok: true, missionId: h.mission.id });
+    expect(h.deps.prepareOpportunisticPrevc).not.toHaveBeenCalled();
+    expect(h.deps.ensureMissionPrevc).not.toHaveBeenCalled();
+    expect(h.spawned).toHaveLength(1);
   });
 
   it('blocks durably before any provider effect when the main-owned plan preflight fails', async () => {
@@ -886,6 +916,7 @@ describe('initial main-owned orchestrator bootstrap', () => {
 
   it('starts the orchestrator when opportunistic PREVC preparation throws synchronously', async () => {
     const h = harness();
+    armGuidedMission(h);
     h.deps.ensureMissionPlan = vi.fn();
     h.deps.prepareOpportunisticPrevc = vi.fn(() => {
       throw new Error('context bootstrap temporarily unavailable');
@@ -911,6 +942,7 @@ describe('initial main-owned orchestrator bootstrap', () => {
 
   it('starts PREVC preparation before provider launch without awaiting it', async () => {
     const h = harness();
+    armGuidedMission(h);
     const order: string[] = [];
     let finishPreparation!: () => void;
     h.deps.ensureMissionPlan = vi.fn(() => {
@@ -1325,6 +1357,7 @@ describe('initial main-owned orchestrator bootstrap', () => {
         ...value.mission.intentContract!,
         lane: 'standard',
         intentVersion: 2,
+        risk: 'sensitive',
         squadRevisionHash: snapshotSquadAuthority(deliverySquad).hash,
         promotedPlan,
       },
@@ -1393,10 +1426,20 @@ describe('initial main-owned orchestrator bootstrap', () => {
       squadId: guidedSquad.id,
       intentContract: {
         ...value.mission.intentContract!,
+        // Fast path skips PREVC on risk=normal; guided PREVC tests need sensitive.
+        risk: 'sensitive',
         squadRevisionHash: snapshotSquadAuthority(guidedSquad).hash,
       },
     };
     value.deps.getSquad = (id) => (id === guidedSquad.id ? guidedSquad : null);
+    refreshHarnessOrchestratorSeal(value, guidedSquad);
+    return guidedSquad;
+  }
+
+  function refreshHarnessOrchestratorSeal(
+    value: Harness,
+    guidedSquad: Squad,
+  ): void {
     const targetSeal = createMissionPaneAuthoritySeal({
       mission: value.mission,
       squad: guidedSquad,
@@ -1425,7 +1468,6 @@ describe('initial main-owned orchestrator bootstrap', () => {
             authoritySeal: targetSeal,
           }
         : null;
-    return guidedSquad;
   }
 
   it('warns once at mission start when a guided delivery starts with the driver disabled', async () => {
@@ -1988,7 +2030,8 @@ describe('initial main-owned orchestrator bootstrap', () => {
     expect(unproven.closedPanes).toEqual(['pane-main-orch']);
     expect(unproven.removedPaneRows).toEqual(['mpane-live']);
     expect(unproven.spawned).toHaveLength(1);
-    expect(unproven.deps.prepareOpportunisticPrevc).toHaveBeenCalledOnce();
+    // Default harness is risk=normal / non-engine squad → fast path skips PREVC.
+    expect(unproven.deps.prepareOpportunisticPrevc).not.toHaveBeenCalled();
     expect(unproven.mission).toMatchObject({
       status: 'running',
       orchestratorSessionId: 'pty-main-orch-fresh',

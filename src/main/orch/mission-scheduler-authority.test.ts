@@ -100,7 +100,7 @@ describe("mission scheduler durable authority", () => {
     ).toBe(false);
   });
 
-  it("keeps an unmarked sealed delivery receipt PREVC-owned when wording resembles fan-out", async () => {
+  it("completes normal-risk delivery via legacy under fast path (no PREVC bridge)", async () => {
     const intent = compileIntentContract({
       goal: "todos os panes me falam o que fazem nesta missão",
       acceptanceCriteria: ["A entrega permanece validada"],
@@ -112,6 +112,49 @@ describe("mission scheduler durable authority", () => {
       squadId: "nexus-story-impl",
       intentContract: {
         ...intent,
+        approvedAt: 1,
+        dispatchedAt: 2,
+        promotedPlan: {} as never,
+      },
+      intentState: "executing",
+    });
+    const runGuidedBridge = vi.fn(async () => undefined);
+    const completeLegacy = vi.fn();
+
+    await expect(
+      reconcileMissionCompletionAfterSchedulerTick({
+        mission: currentMission,
+        dispatches: [
+          dispatch({
+            executionMode: "isolated_worktree",
+            ownership: {
+              files: ["src"],
+              symbols: [],
+              domains: ["guided-implementation"],
+            },
+          }),
+        ],
+        runGuidedBridge,
+        completeLegacy,
+      }),
+    ).resolves.toBe("legacy");
+    expect(completeLegacy).toHaveBeenCalledWith(7);
+    expect(runGuidedBridge).not.toHaveBeenCalled();
+  });
+
+  it("keeps sensitive-risk delivery on the PREVC completion bridge", async () => {
+    const intent = compileIntentContract({
+      goal: "corrija o login OAuth com cuidado",
+      acceptanceCriteria: ["Auth validado"],
+      intentVersion: 7,
+      source: "typed",
+      lane: "standard",
+    });
+    const currentMission = mission({
+      squadId: "nexus-story-impl",
+      intentContract: {
+        ...intent,
+        risk: "sensitive",
         approvedAt: 1,
         dispatchedAt: 2,
         promotedPlan: {} as never,

@@ -424,7 +424,12 @@ describe('promotePlanLaneFromRenderer', () => {
         artifacts: handoff.artifacts,
       },
     });
-    expect(missionRequiresGuidedPrevc(promoted)).toBe(true);
+    expect(missionRequiresGuidedPrevc(promoted)).toBe(false);
+    expect(
+      missionRequiresGuidedPrevc(promoted, undefined, {
+        enforcePrevcOnNormalRisk: true,
+      }),
+    ).toBe(true);
     expect(storeState.get('m-plan')?.squadId).toBe(
       NEXUS_STORY_IMPLEMENTATION_SQUAD_ID,
     );
@@ -434,7 +439,7 @@ describe('promotePlanLaneFromRenderer', () => {
           typeof missionRequiresGuidedPrevc
         >[0],
       ),
-    ).toBe(true);
+    ).toBe(false);
     expect(assertStandardSquadReadiness).toHaveBeenCalledTimes(4);
     expect(assertStandardSquadReadiness).toHaveBeenCalledWith(
       executionTarget,

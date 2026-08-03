@@ -30,7 +30,9 @@ function guidedDetail(): string {
   });
 }
 
-function approvedMission(): Mission {
+function approvedMission(
+  risk: "normal" | "sensitive" | "destructive" = "sensitive",
+): Mission {
   const intent = compileIntentContract({
     goal: "Entregar o fluxo guiado",
     acceptanceCriteria: ["Fluxo completo e testado"],
@@ -48,6 +50,7 @@ function approvedMission(): Mission {
     intentVersion: 1,
     intentContract: {
       ...intent,
+      risk,
       approvedAt: 1,
       dispatchedAt: 1,
     },
@@ -102,8 +105,14 @@ describe("main-owned guided PREVC preflight", () => {
   });
 
   it("classifies PREVC from the standard human engine-generated mission, never task domains", () => {
-    const guided = approvedMission();
-    expect(missionRequiresGuidedPrevc(guided)).toBe(true);
+    const guided = approvedMission("normal");
+    // Fast path: risk=normal skips PREVC (docs/design/orch-fast-path.md).
+    expect(missionRequiresGuidedPrevc(guided)).toBe(false);
+    expect(
+      missionRequiresGuidedPrevc(guided, undefined, {
+        enforcePrevcOnNormalRisk: true,
+      }),
+    ).toBe(true);
     expect(taskDetailsRequireGuidedPrevc([guidedDetail()])).toBe(true);
     expect(
       taskDetailsRequireGuidedPrevc([
@@ -164,7 +173,7 @@ describe("main-owned guided PREVC preflight", () => {
           },
         },
       }),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       missionRequiresGuidedPrevc({
         ...guided,
@@ -197,7 +206,7 @@ describe("main-owned guided PREVC preflight", () => {
   });
 
   it("skips guided PREVC only for an explicit read-only team fanout", () => {
-    const guided = approvedMission();
+    const guided = approvedMission("normal");
     const withGoal = (goal: string): Mission => ({
       ...guided,
       description: goal,
@@ -220,7 +229,28 @@ describe("main-owned guided PREVC preflight", () => {
           "Todos os agentes devem revisar e corrigir o código desta missão",
         ),
       ),
+    ).toBe(false);
+    expect(
+      missionRequiresGuidedPrevc(
+        {
+          ...withGoal(
+            "Todos os agentes devem revisar e corrigir o código desta missão",
+          ),
+          intentContract: {
+            ...guided.intentContract!,
+            goal: "Todos os agentes devem revisar e corrigir o código desta missão",
+            risk: "sensitive",
+          },
+        },
+        "delivery",
+      ),
     ).toBe(true);
+  });
+
+  it("keeps PREVC for sensitive risk under fast path", () => {
+    expect(missionRequiresGuidedPrevc(approvedMission("sensitive"))).toBe(
+      true,
+    );
   });
 
   it.each([
