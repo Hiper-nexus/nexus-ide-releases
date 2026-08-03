@@ -54,7 +54,9 @@ import {
   submitMissionKickoffFromMain,
   type MissionKickoffResult,
 } from "./mission-kickoff";
+import { emitBootstrapProgress } from "./mission-event-emit";
 import { emitMissionIntentEvent } from "./mission-intent-events";
+import type { BootstrapProgressStep } from "../../shared/mission-intent-projection";
 import {
   getPaneRuntimeAuthorityBySession,
   listPaneSnapshots,
@@ -295,6 +297,16 @@ export interface MissionOrchestratorBootstrapDeps {
     input: { missionId: string; sessionId: string; prompt: string },
   ): Promise<MissionKickoffResult>;
   emitDispatched(mission: Mission): void;
+  /**
+   * Operator-visible bootstrap progress (telemetry only — never awaited,
+   * never a gate). Absent in fakes; the service must not depend on it.
+   */
+  emitProgress?(
+    scope: ProjectExecutionScope,
+    missionId: string,
+    step: BootstrapProgressStep,
+    detail?: string,
+  ): void;
   validateAttachmentPaths(
     paths: readonly string[] | undefined,
   ): string[] | undefined;
@@ -786,6 +798,8 @@ const productionDeps: MissionOrchestratorBootstrapDeps = {
       reason: "main_orchestrator_bootstrap",
     });
   },
+  emitProgress: (scope, missionId, step, detail) =>
+    emitBootstrapProgress(scope, missionId, step, detail),
   validateAttachmentPaths: (paths) => validateDroppedAttachmentPaths(paths),
   snapshotAttachmentPaths: (paths) => snapshotDroppedAttachmentPaths(paths),
   ensurePlanGitBaseline: (scope, missionId) => {
