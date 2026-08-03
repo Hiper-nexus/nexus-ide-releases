@@ -66,6 +66,7 @@ export type FeatureFlagOverridesFile = z.infer<
 export const FEATURE_FLAG_IDS = {
   terminalCommandBlocks: 'feature.terminal.commandBlocks',
   missionEventJournal: 'feature.mission.eventJournal',
+  missionWarmupAdvisories: 'feature.mission.warmupAdvisories',
   searchMixer: 'feature.search.mixer',
   progressiveOnboarding: 'feature.ui.progressiveOnboarding',
   contextualPanel: 'feature.ui.contextualPanel',
@@ -118,6 +119,18 @@ export const BUILTIN_FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
     removeAfter: '2026-12-31',
     killSwitch: false,
     telemetry: true,
+    defaultEnabled: true,
+  },
+  {
+    id: FEATURE_FLAG_IDS.missionWarmupAdvisories,
+    owner: 'orch',
+    description:
+      'Warm-up read-only de reviewer/QA na onda 1 das missões Guided: checklist preparado enquanto o executor implementa.',
+    channel: 'dev',
+    createdAt: '2026-08-03',
+    removeAfter: '2027-03-31',
+    killSwitch: true,
+    telemetry: false,
     defaultEnabled: true,
   },
   {

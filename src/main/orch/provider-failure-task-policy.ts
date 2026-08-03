@@ -9,7 +9,7 @@ import type { TaskProviderWaiverHitKind } from "./task-dispatch-codec";
  * então a decisão permanece auditável e testável isoladamente.
  *
  * Regras do product owner:
- * 1. Somente kinds Guided `advisory`/`isolated-advisory` podem ser dispensados.
+ * 1. Somente kinds Guided `advisory`/`isolated-advisory`/`warmup` podem ser dispensados.
  * 2. Executor/implementation, independent-review, quality-gate e tasks não
  *    guiadas NUNCA recebem waiver.
  * 5. A task advisory precisa ser RAIZ (sem dependsOn) e sem consumidores no
@@ -50,7 +50,8 @@ export function decideProviderFailureTaskPolicy(
 ): ProviderFailureTaskDecision {
   const advisory =
     input.guidedTaskKind === "advisory" ||
-    input.guidedTaskKind === "isolated-advisory";
+    input.guidedTaskKind === "isolated-advisory" ||
+    input.guidedTaskKind === "warmup";
   if (!advisory) {
     return {
       decision: "retry-required",

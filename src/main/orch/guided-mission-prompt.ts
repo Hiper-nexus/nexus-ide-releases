@@ -354,7 +354,7 @@ export function guidedRegressionDetail(
 }
 
 export function guidedFanoutPlannerId(
-  kind: "advisory" | "review",
+  kind: "advisory" | "review" | "warmup",
   agent: SquadAgent,
   index: number,
 ): string {
@@ -392,6 +392,32 @@ export function guidedAdvisoryDetail(
     "Inspecione a stack, arquitetura, padrões, riscos e verificações relevantes. Não edite arquivos e não crie commit.",
     confinement,
     "Entregue no handoff achados concretos, caminhos afetados, riscos e uma proposta de validação que o executor principal possa conferir no workspace.",
+    "",
+    "Objetivo aprovado:",
+    contract.goal,
+    "",
+    "Critérios de aceite:",
+    ...contract.acceptanceCriteria.map(
+      (criterion, criterionIndex) => `${criterionIndex + 1}. ${criterion}`,
+    ),
+  ].join("\n");
+}
+
+export function guidedWarmupDetail(
+  mission: Mission,
+  agent: SquadAgent,
+): string {
+  const contract = mission.intentContract;
+  if (!contract) {
+    throw new Error(
+      "guided_plan_contract_missing: missão sem contrato aprovado",
+    );
+  }
+  return [
+    `Aquecimento de ${agent.agentName}: prepare desde já a revisão do diff que será integrado.`,
+    "Explore o codebase, mapeie os caminhos que o objetivo aprovado provavelmente tocará e prepare um checklist de revisão/validação (pontos de risco, testes a observar, invariantes a conferir).",
+    "Você está sob confinamento mecânico read-only do Nexus: não edite arquivos e não crie commit. O diff ainda não existe — seu trabalho é chegar à revisão com o critério pronto.",
+    "Entregue no handoff o checklist e os caminhos mapeados; a revisão formal acontece depois do merge do executor.",
     "",
     "Objetivo aprovado:",
     contract.goal,
