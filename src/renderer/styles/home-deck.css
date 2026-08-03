@@ -526,15 +526,17 @@
 
 .home-deck__squad-avatars {
   padding-left: 2px;
+  align-items: center;
 }
 
 .home-deck__squad-avatars .home-deck__squad-avatar {
-  --agent-size: 48px;
-  border-radius: var(--radius-lg);
+  --agent-size: 32px;
+  border-radius: 50% !important;
+  box-shadow: 0 0 0 2px var(--bg-elevated, #141416);
 }
 
 .home-deck__squad-avatars .agent-avatar + .agent-avatar {
-  margin-left: -11px;
+  margin-left: -8px;
 }
 .home-deck__squad:hover {
   background: var(--accent-soft);
@@ -592,10 +594,11 @@
     column-gap: 10px;
   }
   .home-deck__squad-avatars .home-deck__squad-avatar {
-    --agent-size: 38px;
+    --agent-size: 32px;
+    border-radius: 50% !important;
   }
   .home-deck__squad-avatars .agent-avatar + .agent-avatar {
-    margin-left: -9px;
+    margin-left: -8px;
   }
 }
 
