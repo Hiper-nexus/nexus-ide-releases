@@ -1,6 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { FEATURE_FLAG_IDS } from "../../shared/feature-flags";
-import { getFeatureFlagRegistry } from "../feature-flags/feature-flag-registry";
+import { describe, expect, it } from "vitest";
 import { assertRosterCompleteGuidedV2Receipt } from "./guided-mission-plan-authority";
 import { ensureGuidedMissionPlan } from "./guided-mission-planner";
 import {
@@ -15,8 +13,6 @@ import {
   type TaskScheduleMeta,
 } from "./mission-scheduler-meta";
 
-const FLAG = FEATURE_FLAG_IDS.missionWarmupAdvisories;
-
 function warmupMeta(detail: string): TaskScheduleMeta | null {
   const meta = decodeTaskScheduleDetail(detail).meta;
   if (!meta) return null;
@@ -26,21 +22,13 @@ function warmupMeta(detail: string): TaskScheduleMeta | null {
 }
 
 describe("warm-up read-only de reviewer/QA (feature.mission.warmupAdvisories)", () => {
-  beforeAll(() => {
-    getFeatureFlagRegistry().setOverride(FLAG, true);
-  });
-
-  afterAll(() => {
-    getFeatureFlagRegistry().clearOverride(FLAG);
-  });
-
   it("sela um warm-up raiz read-only por reviewer/QA na onda 1", () => {
-    const h = harness();
+    const h = harness({ warmupAdvisories: true });
 
     const result = ensureGuidedMissionPlan(h.suite, "mission-guided", h.deps);
 
     expect(result).toMatchObject({ applicable: true, sealed: true });
-    const input = h.createPlanAtomically.mock.calls[0]![0] as {
+    const input = h.createPlanAtomically.mock.calls[0]![0] as unknown as {
       rows: Array<{
         title: string;
         detail: string;
@@ -69,9 +57,9 @@ describe("warm-up read-only de reviewer/QA (feature.mission.warmupAdvisories)", 
   });
 
   it("o receipt v2 com warm-ups é aceito pela autoridade de roster", () => {
-    const planned = sealedGuidedV2Receipt() as Array<{
-      task: { detail: string };
-    }>;
+    const planned = sealedGuidedV2Receipt({
+      warmupAdvisories: true,
+    }) as Array<{ task: { detail: string } }>;
     expect(planned.filter((entry) => warmupMeta(entry.task.detail)).length)
       .toBeGreaterThan(0);
     expect(() =>
@@ -80,7 +68,9 @@ describe("warm-up read-only de reviewer/QA (feature.mission.warmupAdvisories)", 
   });
 
   it("rejeita warm-up com dependência (deixa de ser raiz auxiliar)", () => {
-    const planned = sealedGuidedV2Receipt() as Array<{
+    const planned = sealedGuidedV2Receipt({
+      warmupAdvisories: true,
+    }) as Array<{
       task: { detail: string };
       plannedDetail: string;
     }>;
@@ -106,30 +96,19 @@ describe("warm-up read-only de reviewer/QA (feature.mission.warmupAdvisories)", 
   });
 
   it("kill-switch desligado volta ao grafo exato de antes", () => {
-    getFeatureFlagRegistry().setOverride(FLAG, false);
-    try {
-      const h = harness();
-      const result = ensureGuidedMissionPlan(
-        h.suite,
-        "mission-guided",
-        h.deps,
-      );
-      expect(result).toMatchObject({ applicable: true, sealed: true });
-      const input = h.createPlanAtomically.mock.calls[0]![0] as {
-        rows: Array<{ detail: string }>;
-      };
-      expect(input.rows.filter((row) => warmupMeta(row.detail))).toHaveLength(
-        0,
-      );
-      // Receipts selados sem warm-up continuam válidos (compatibilidade).
-      expect(() =>
-        assertRosterCompleteGuidedV2Receipt(
-          sealedGuidedV2Receipt() as never,
-          squad,
-        ),
-      ).not.toThrow();
-    } finally {
-      getFeatureFlagRegistry().setOverride(FLAG, true);
-    }
+    const h = harness(); // flag pin off (default do harness)
+    const result = ensureGuidedMissionPlan(h.suite, "mission-guided", h.deps);
+    expect(result).toMatchObject({ applicable: true, sealed: true });
+    const input = h.createPlanAtomically.mock.calls[0]![0] as unknown as {
+      rows: Array<{ detail: string }>;
+    };
+    expect(input.rows.filter((row) => warmupMeta(row.detail))).toHaveLength(0);
+    // Receipts selados sem warm-up continuam válidos (compatibilidade).
+    expect(() =>
+      assertRosterCompleteGuidedV2Receipt(
+        sealedGuidedV2Receipt() as never,
+        squad,
+      ),
+    ).not.toThrow();
   });
 });

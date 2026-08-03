@@ -1,24 +1,11 @@
 import os from 'node:os';
 import path from 'node:path';
-import { FEATURE_FLAG_IDS } from '../shared/feature-flags';
-import { getFeatureFlagRegistry } from '../main/feature-flags/feature-flag-registry';
 
 const baseDir = path.join(os.tmpdir(), `nexus-ide-vitest-${process.pid}`);
 
 process.env.NEXUS_VOICE_LOG_FILE ??= path.join(baseDir, 'voice.log');
 process.env.NEXUS_VOICE_LOG_MAX_BYTES ??= '1048576';
 process.env.NEXUS_JARVIS_METRICS_FILE ??= path.join(baseDir, 'jarvis-metrics.log');
-
-/**
- * Warm-up advisories add one read-only root per reviewer/QA to the sealed
- * Guided graph. The legacy planner/receipt suites assert the pre-warmup
- * contract byte-for-byte, so the production default is pinned off HERE and
- * the dedicated warm-up suites re-enable it with their own override.
- */
-getFeatureFlagRegistry().setOverride(
-  FEATURE_FLAG_IDS.missionWarmupAdvisories,
-  false,
-);
 
 /**
  * `localStorage` sob jsdom.
