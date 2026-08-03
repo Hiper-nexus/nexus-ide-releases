@@ -16,6 +16,7 @@ import { MissionRail } from './components/MissionRail';
 import { SettingsDrawer } from './components/settings/SettingsDrawer';
 import { LaunchScreen } from './components/LaunchScreen';
 import { HomeDeck } from './components/HomeDeck';
+import { MissionKickoffBanner } from './components/MissionKickoffBanner';
 import { MissionWizard } from './components/MissionWizard';
 import {
   CloseWorkspaceDialog,
@@ -580,6 +581,7 @@ export function App() {
         Existing CSS (home-deck z-index, flex growth) targets those selectors.
         ContextualPanel is an extra flex sibling on the right.
       */}
+      <MissionKickoffBanner />
       <main className="app__body app__body--with-ctx">
         <MissionRail />
         <FilesPanel />
