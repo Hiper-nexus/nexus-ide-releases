@@ -79,7 +79,9 @@ function scheduleSyncPanes(): void {
   syncPanesScheduled = true;
   requestAnimationFrame(() => {
     syncPanesScheduled = false;
-    window.nexus.orch.syncPanes(snapshotPanes());
+    // The rAF can outlive the bridge (window torn down between schedule and
+    // frame, e.g. test teardown or window close); skip instead of throwing.
+    window.nexus?.orch?.syncPanes(snapshotPanes());
   });
 }
 
