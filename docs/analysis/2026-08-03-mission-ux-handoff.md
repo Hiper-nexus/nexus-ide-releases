@@ -15,18 +15,27 @@ dos reviewer/QA na onda do executor + cronograma de ondas visível**.
 
 ## FEITO (commits desta sessão)
 
-> Atualização 13:30: Incremento 2 (sintoma 1) completo e commitado
-> (`6bdb7ac0` esqueleto + `16bc034d` emissões/UI). Incremento 4 (sintoma 5)
-> completo: `0c69c6c6` (bloco tentativa N/8 + lock com timeout), `82150cba`
-> (races ACP spawn/shutdown), guardas do recovery (timeout por tentativa,
-> lock 30s → recovery_lock_busy, persistência por tentativa, warm keychain
-> 10s, dead-graph estrutural terminal) e UI de escape (`aef291b5`) — parte
-> landing nos commits próprios e parte incorporada nos commits fast-path da
-> sessão paralela (`87fbd433`, `4822d542`), tudo verificado verde em HEAD.
-> **Incremento 3 foi implementado por inteiro mas a sessão paralela restaurou
-> `mission-dispatch-kickoff.ts` para HEAD duas vezes durante a edição — o
-> trabalho foi descartado para não lutar contra o restore; reaplicar depois
-> que a sessão paralela commitar (detalhes abaixo em PENDENTE).**
+> Estado final 14:40: **os 6 incrementos estão fechados e commitados.**
+> - Sintoma 4 (veredito): commit da sessão anterior.
+> - Sintoma 1 (boot ao vivo): `6bdb7ac0` + `16bc034d`.
+> - Sintoma 2 (kickoff enxuto, <2,4KB): `506b170f`.
+> - Sintoma 5 (recovery "para sempre"): `0c69c6c6`, `82150cba`, `aef291b5`
+>   (+ guardas do recovery que landaram nos commits da sessão paralela).
+> - Sintoma 3 transparência (cronograma de ondas): `77a69fc7`.
+> - Sintoma 3 panes (warm-up read-only reviewer/QA): `41d9f5f7`, `7320e8ae`,
+>   `9cac26a9` (pin da flag no harness).
+>
+> Conflito com a sessão paralela: ela restaurou arquivos para HEAD algumas
+> vezes durante a edição (mission-dispatch-kickoff.ts, planner); o trabalho
+> foi reaplicado e commitado em fatias pequenas depois que ela commitou
+> (fast-path `87fbd433`/`4822d542`, Wave 2 `ddfa9508`/`3189c726`).
+>
+> **Falhas remanescentes na suíte completa (território da sessão paralela,
+> documentadas para ela):** fast-path residual (prevc-autopilot-coordinator,
+> tools-context-guided-prevc, task-dispatch-store, guided-result-consumption,
+> guided-greenfield-cycle) e semântica de orchestration-mode da Wave 2
+> (guided-mission-coordination, MissionWizard). Nenhuma dessas toca código
+> dos 6 incrementos.
 
 ### A. Veredito nos 4 caminhos silenciosos (sintoma 4) — completo e testado
 - `src/shared/mission-block-cause.ts`: helper puro `appendMissionVerdict`
@@ -62,11 +71,8 @@ dos reviewer/QA na onda do executor + cronograma de ondas visível**.
 
 ### Incremento 2 — ~~terminar o sintoma 1~~ FEITO (`16bc034d`)
 
-### Incremento 3 — enxugar kickoff standard (sintoma 2) — BLOQUEADO POR CONFLITO
-> Já foi implementado e testado uma vez, mas a sessão paralela restaurou
-> `src/shared/mission-dispatch-kickoff.ts` para HEAD no meio da edição
-> (duas vezes). Especificação completa para reaplicar quando o trabalho
-> paralelo estiver commitado:
+### Incremento 3 — ~~enxugar kickoff standard (sintoma 2)~~ FEITO (`506b170f`)
+> Especificação original, para referência:
 `src/shared/mission-dispatch-kickoff.ts`: colapsar `standardStateLines`+
 `standardSequenceLines`+`standardEscalationLines` (:124-207) num
 `standardConductLines` **preservando as frases-contrato assertadas** em
