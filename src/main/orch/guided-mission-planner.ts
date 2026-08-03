@@ -1,4 +1,6 @@
 import type { Mission, Squad } from "../../shared/orch-types";
+import { FEATURE_FLAG_IDS } from "../../shared/feature-flags";
+import { getFeatureFlagRegistry } from "../feature-flags/feature-flag-registry";
 import {
   classifyStandardMissionTopology,
   TEAM_READ_ONLY_FANOUT_DOMAIN,
@@ -48,6 +50,7 @@ import {
   guidedRegressionDetail,
   guidedReproductionDetail,
   guidedTeamCoordinationDetail,
+  guidedWarmupDetail,
   type GuidedWorkKindContractOptions,
 } from "./guided-mission-prompt";
 import {
@@ -631,6 +634,29 @@ export function ensureGuidedMissionPlan(
           : [reviewPivot],
     };
   });
+  // Warm-ups put reviewer/QA panes on screen in wave 1: each prepares its
+  // checklist read-only while the executor implements. Roots with empty
+  // ownership (parallel surface, no exclusive slot), never consumers, never
+  // a second mutation surface. Kill-switch: feature.mission.warmupAdvisories.
+  const warmupTargets = getFeatureFlagRegistry().isEnabled(
+    FEATURE_FLAG_IDS.missionWarmupAdvisories,
+  )
+    ? [...independentReviewers, qualityGate]
+    : [];
+  const warmupTasks = warmupTargets.map((agent, index) => ({
+    id: guidedFanoutPlannerId("warmup", agent, index),
+    title: `Aquecer ${agent.agentName}: ${mission.title}`.slice(0, 1_024),
+    detail: guidedWarmupDetail(mission, agent),
+    agentRef: agent.id,
+    category: "reviewer" as const,
+    executionMode: "read_only" as const,
+    ownership: {
+      files: [],
+      symbols: [],
+      domains: [GUIDED_TASK_DOMAINS.warmup],
+    },
+    dependsOn: [],
+  }));
   // Implementation does not wait on advisories — tip/discovery is parallel.
   // The gate joins the whole delivery frontier: every concurrent review plus
   // the tail of the sequential chain, or the last delivery stage when the
@@ -649,6 +675,7 @@ export function ensureGuidedMissionPlan(
   const guidedTasks: GuidedPlanTaskDetailInput[] = [
     ...advisoryTasks,
     ...reproductionTasks,
+    ...warmupTasks,
     {
       id: GUIDED_MISSION_PLANNER_TASK_ID,
       title: `Entregar: ${mission.title}`.slice(0, 1_024),

@@ -125,11 +125,11 @@ export const BUILTIN_FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
     id: FEATURE_FLAG_IDS.missionWarmupAdvisories,
     owner: 'orch',
     description:
-      'Warm-up read-only de reviewer/QA na onda 1 das missões Guided: checklist preparado enquanto o executor implementa.',
+      'Warm-up read-only de reviewer/QA na onda 1 das missões Guided: checklist preparado enquanto o executor implementa. Kill-switch imediato via override do operador.',
     channel: 'dev',
     createdAt: '2026-08-03',
     removeAfter: '2027-03-31',
-    killSwitch: true,
+    killSwitch: false,
     telemetry: false,
     defaultEnabled: true,
   },

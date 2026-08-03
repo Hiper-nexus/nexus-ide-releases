@@ -381,11 +381,6 @@ export function assertRosterCompleteGuidedV2Receipt(
 ): GuidedV2ReceiptAuthority {
   try {
     const workers = squad.agents.filter(isGuidedWorkerAgent);
-    if (planned.length !== workers.length || planned.length < 2) {
-      legacyGuidedReceipt(
-        "o receipt não possui exatamente uma tarefa para cada worker aprovado",
-      );
-    }
     const rosterHash = snapshotTaskPlanRoster(squad.agents).hash;
     if (
       planned.some(
@@ -395,17 +390,6 @@ export function assertRosterCompleteGuidedV2Receipt(
     ) {
       legacyGuidedReceipt(
         "o receipt não pertence ao squad/roster atualmente aprovado",
-      );
-    }
-    const expectedAgentRefs = new Set(workers.map((agent) => agent.id));
-    const actualAgentRefs = new Set(planned.map((entry) => entry.agentRef));
-    if (
-      actualAgentRefs.size !== planned.length ||
-      actualAgentRefs.size !== expectedAgentRefs.size ||
-      [...expectedAgentRefs].some((agentRef) => !actualAgentRefs.has(agentRef))
-    ) {
-      legacyGuidedReceipt(
-        "o receipt não cobre o roster aprovado sem duplicação",
       );
     }
 
@@ -419,6 +403,7 @@ export function assertRosterCompleteGuidedV2Receipt(
     const byTaskId = new Map<string, ScheduleRow>();
     const dependents = new Map<string, string[]>();
     const singletons = new Map<GuidedRecoveredStage, string>();
+    const warmupByAgentRef = new Map<string, string>();
     for (const entry of planned) {
       const meta = assertSealedTaskSchedule(
         entry,
@@ -450,6 +435,27 @@ export function assertRosterCompleteGuidedV2Receipt(
         }
         singletons.set(stage, entry.taskId);
       }
+      if (stage === "warmup") {
+        // read_only + reviewer category were already proven by the sealed
+        // kind parse; the receipt still has to prove root, empty mutation
+        // surface and the one-warmup-per-agent ceiling.
+        if (meta.dependsOn.length !== 0) {
+          legacyGuidedReceipt(
+            `warm-up ${entry.taskId} deve ser raiz (dependsOn vazio)`,
+          );
+        }
+        if (meta.ownership.files.length !== 0) {
+          legacyGuidedReceipt(
+            `warm-up ${entry.taskId} não pode declarar superfície de mutação`,
+          );
+        }
+        if (warmupByAgentRef.has(entry.agentRef)) {
+          legacyGuidedReceipt(
+            `o receipt possui mais de um warm-up para o agente ${entry.agentRef}`,
+          );
+        }
+        warmupByAgentRef.set(entry.agentRef, entry.taskId);
+      }
       const row: ScheduleRow = Object.freeze({
         entry,
         stage,
@@ -462,6 +468,36 @@ export function assertRosterCompleteGuidedV2Receipt(
           ...(dependents.get(dependency) ?? []),
           entry.taskId,
         ]);
+      }
+    }
+
+    // Warm-ups are optional auxiliary roots: they never count toward the
+    // one-task-per-worker coverage, and a receipt without any warm-up stays
+    // byte-compatible with every pre-warmup plan.
+    const coreRows = rows.filter((row) => row.stage !== "warmup");
+    if (coreRows.length !== workers.length || coreRows.length < 2) {
+      legacyGuidedReceipt(
+        "o receipt não possui exatamente uma tarefa para cada worker aprovado",
+      );
+    }
+    const expectedAgentRefs = new Set(workers.map((agent) => agent.id));
+    const actualAgentRefs = new Set(
+      coreRows.map((row) => row.entry.agentRef),
+    );
+    if (
+      actualAgentRefs.size !== coreRows.length ||
+      actualAgentRefs.size !== expectedAgentRefs.size ||
+      [...expectedAgentRefs].some((agentRef) => !actualAgentRefs.has(agentRef))
+    ) {
+      legacyGuidedReceipt(
+        "o receipt não cobre o roster aprovado sem duplicação",
+      );
+    }
+    for (const warmupAgentRef of warmupByAgentRef.keys()) {
+      if (!expectedAgentRefs.has(warmupAgentRef)) {
+        legacyGuidedReceipt(
+          `warm-up referencia um agente fora do roster aprovado: ${warmupAgentRef}`,
+        );
       }
     }
 
@@ -502,6 +538,13 @@ export function assertRosterCompleteGuidedV2Receipt(
           if (row.dependsOn.length !== 0 || consumers.length !== 0) {
             legacyGuidedReceipt(
               `advisory ${taskId} deve ser raiz tip-only sem dependentes`,
+            );
+          }
+          break;
+        case "warmup":
+          if (row.dependsOn.length !== 0 || consumers.length !== 0) {
+            legacyGuidedReceipt(
+              `warm-up ${taskId} deve ser raiz read-only sem dependentes`,
             );
           }
           break;
@@ -569,6 +612,7 @@ export function assertRosterCompleteGuidedV2Receipt(
       .filter(
         (row) =>
           row.stage !== "advisory" &&
+          row.stage !== "warmup" &&
           row.entry.taskId !== qualityGateTaskId &&
           dependentsOf(row.entry.taskId).every(
             (consumer) => consumer === qualityGateTaskId,
