@@ -166,6 +166,7 @@ export class RealMissionObserver {
   readonly #attestEvidence: RealMissionEvidenceAttester;
   readonly #onFinish: (code: FailureCode | null) => void;
   readonly #physicalPtyGate: ExactRealMissionPhysicalPtyGate;
+  readonly #orchestratorCli: RealMissionE2EOrchestratorCli;
   readonly #advisorExpectations: readonly RealMissionAdvisorExpectation[];
   readonly #advisorPty = new Map<string, RealMissionAdvisorPtyCapture[]>();
   readonly #kickoff: KickoffCapture = {
@@ -234,18 +235,19 @@ export class RealMissionObserver {
     this.#attestEvidence = input.attestEvidence;
     this.#onFinish = input.onFinish;
     this.#runStartedAt = input.startedAt ?? Date.now();
+    this.#orchestratorCli =
+      input.orchestratorCli ?? realMissionE2EOrchestratorCli();
     this.#advisorExpectations = expectedRealMissionAdvisors(
       input.advisorSkipClis ?? realMissionE2EAdvisorSkipClis(),
       {
-        orchestratorCli:
-          input.orchestratorCli ?? realMissionE2EOrchestratorCli(),
+        orchestratorCli: this.#orchestratorCli,
       },
     );
     this.#physicalPtyGate = new ExactRealMissionPhysicalPtyGate(
       input.missionId,
       realMissionAdvisorPtyExpectations(this.#advisorExpectations),
-      input.orchestratorCli ?? realMissionE2EOrchestratorCli(),
-      (replacement) => this.#authorizeAdvisorRetry(replacement),
+      this.#orchestratorCli,
+      (replacement) => this.#authorizePhysicalPtyReplacement(replacement),
     );
   }
 
@@ -1088,6 +1090,37 @@ export class RealMissionObserver {
     return inspected.kind === "accepted"
       ? { identity: inspected.identity, agent: inspected.agent }
       : null;
+  }
+
+  #authorizePhysicalPtyReplacement(
+    replacement: RealMissionPhysicalPtyReplacement,
+  ): RealMissionPhysicalPtyReplacementDecision {
+    if (replacement.identity === "orchestrator") {
+      return this.#authorizeOrchestratorRetry(replacement);
+    }
+    return this.#authorizeAdvisorRetry(replacement);
+  }
+
+  /**
+   * Technical recovery may spawn a second Maestro PTY after a rejected
+   * kickoff. Accept only when the prior physical session is proven gone and
+   * the next pane is still the exact E2E orchestrator for this variant.
+   */
+  #authorizeOrchestratorRetry(
+    replacement: RealMissionPhysicalPtyReplacement,
+  ): RealMissionPhysicalPtyReplacementDecision {
+    if (replacement.identity !== "orchestrator") return "reject";
+    if (getSessionState(replacement.priorSessionId) !== null) return "defer";
+    if (
+      replacement.nextAgent.role !== "orchestrator" ||
+      replacement.nextAgent.adapterId !== this.#orchestratorCli ||
+      replacement.nextAgent.agentName !== REAL_MISSION_E2E_ORCHESTRATOR_NAME ||
+      replacement.priorAgent.role !== "orchestrator" ||
+      replacement.priorAgent.adapterId !== replacement.nextAgent.adapterId
+    ) {
+      return "reject";
+    }
+    return "accept";
   }
 
   #authorizeAdvisorRetry(

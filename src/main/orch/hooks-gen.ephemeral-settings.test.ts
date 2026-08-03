@@ -22,11 +22,23 @@ describe('Claude-family zero-click settings (system default)', () => {
     const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8')) as {
       skipDangerousModePermissionPrompt?: boolean;
       skipWorkflowUsageWarning?: boolean;
+      enabledPlugins?: Record<string, boolean>;
       hooks?: Record<string, Array<{ hooks?: Array<{ command?: string }> }>>;
     };
     expect(settings.skipDangerousModePermissionPrompt).toBe(true);
     expect(settings.skipWorkflowUsageWarning).toBe(true);
+    expect(settings.enabledPlugins).toEqual({});
     expect(settings.hooks).toBeTruthy();
+    const profile = JSON.parse(
+      fs.readFileSync(path.join(home.dir, '.claude.json'), 'utf8'),
+    ) as {
+      officialMarketplaceAutoInstallFailReason?: string;
+      officialMarketplaceAutoInstallAttempted?: boolean;
+    };
+    expect(profile.officialMarketplaceAutoInstallAttempted).toBe(true);
+    expect(profile.officialMarketplaceAutoInstallFailReason).toBe(
+      'policy_blocked',
+    );
     // Skill-gate enforcement hooks untouched (fail-closed .mjs with exit 2)…
     const gateCommands = JSON.stringify(settings.hooks ?? {});
     expect(gateCommands).toContain('nexus-gate.mjs');

@@ -235,8 +235,11 @@ export function prepareEphemeralHome(
   // designed; mergeClaudeStatusHooks only APPENDS the additive semantic-status
   // hooks (emdash wave 1: UserPromptSubmit/Notification/Stop → /hook/status),
   // marker-separated and never touching the gate entries.
+  // enabledPlugins:{} is an empty override map — mission panes must not inherit
+  // the operator's plugin roster through the ephemeral overlay.
   const settings = {
     ...CLAUDE_FAMILY_ZERO_CLICK_SETTINGS,
+    enabledPlugins: Object.freeze({}),
     hooks: mergeClaudeStatusHooks({
       PreToolUse: [
         {
@@ -283,12 +286,21 @@ export function prepareEphemeralHome(
   const projectTrust = options.approvedMissionProjectTrust
     ? exactProjectTrust(options.cwd)
     : readNativeProjectTrust(os.homedir(), options.cwd);
+  // Fail-closed against official marketplace auto-install inside the disposable
+  // HOME. A cold Claude pane used to clone claude-plugins-official during the
+  // first idle→busy window; that busy/output edge looked like a turn start to
+  // PTY diagnostics while UserPromptSubmit never fired, so kickoff timed out
+  // and technical recovery spawned a second orchestrator PTY.
   fs.writeFileSync(
     path.join(dir, '.claude.json'),
     JSON.stringify({
       hasCompletedOnboarding: true,
       ...nativeAuth,
       ...projectTrust,
+      autoUpdates: false,
+      officialMarketplaceAutoInstallAttempted: true,
+      officialMarketplaceAutoInstalled: false,
+      officialMarketplaceAutoInstallFailReason: 'policy_blocked',
     }),
     { mode: 0o600 },
   );

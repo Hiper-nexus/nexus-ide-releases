@@ -1749,11 +1749,70 @@ describe("real mission advisor authentication staging", () => {
         run: vi.fn(() => ({
           status: 2,
           stdout: "",
-          stderr: "model service unavailable\n",
+          // Non-transient: must fail closed on the first attempt, never skip.
+          stderr: "fatal: native AGY probe rejected by local policy\n",
         })),
         agyBinary: "/trusted/agy",
       }),
     ).toThrow(/AGY authentication probe failed operationally/u);
+  });
+
+  it("retries a transient AGY eligibility 503 before proving auth", () => {
+    const operatorHome = makeTemp();
+    const sleep = vi.fn();
+    const run = vi.fn((binary, args) => {
+      const prompt = args.at(-1) ?? "";
+      const marker = prompt.match(/NEXUS_AGY_AUTH_OK_[a-f0-9]{32}/u)?.[0];
+      if (run.mock.calls.length < 2) {
+        return {
+          status: 1,
+          stdout: "",
+          stderr:
+            "Error: Eligibility check failed: UNAVAILABLE (code 503): The service is currently unavailable.\n",
+        };
+      }
+      return {
+        status: marker ? 0 : 1,
+        stdout: marker ? `${marker}\n` : "",
+        stderr: "",
+      };
+    });
+
+    expect(
+      preflightNativeAgyAuthentication(operatorHome, {
+        binary: "/trusted/agy",
+        environment: {},
+        run,
+        sleep,
+        retryDelayMs: 10,
+      }),
+    ).toEqual({ kind: "authenticated" });
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledWith(10);
+  });
+
+  it("fails closed after exhausting transient AGY probe retries", () => {
+    const operatorHome = makeTemp();
+    const sleep = vi.fn();
+    const run = vi.fn(() => ({
+      status: 1,
+      stdout: "",
+      stderr:
+        "Error: Eligibility check failed: UNAVAILABLE (code 503): The service is currently unavailable.\n",
+    }));
+
+    expect(() =>
+      preflightNativeAgyAuthentication(operatorHome, {
+        binary: "/trusted/agy",
+        environment: {},
+        run,
+        sleep,
+        maxAttempts: 3,
+        retryDelayMs: 5,
+      }),
+    ).toThrow(/AGY authentication probe failed operationally: exited with status 1/u);
+    expect(run).toHaveBeenCalledTimes(3);
+    expect(sleep).toHaveBeenCalledTimes(2);
   });
 
   it("admits keychain-only AGY even when legacy Gemini account files say inactive", () => {

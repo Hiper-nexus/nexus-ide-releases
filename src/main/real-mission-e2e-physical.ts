@@ -232,15 +232,23 @@ export class ExactRealMissionPhysicalPtyGate {
       // binding. It cannot regain authority or replace the current session.
       if (priorIdentity === identity) return { kind: "unrelated" };
       const priorAgent = this.#agentByIdentity.get(identity);
-      if (
-        !identity.startsWith("advisor:") ||
-        !priorAgent ||
-        !priorAgent.workerIncarnationId ||
-        !acceptedAgent.workerIncarnationId ||
-        priorAgent.workerIncarnationId ===
-          acceptedAgent.workerIncarnationId ||
-        !this.#authorizeReplacement
-      ) {
+      if (!priorAgent || !this.#authorizeReplacement) {
+        return { kind: "violation" };
+      }
+      // Advisors require a distinct worker incarnation. Orchestrator technical
+      // recovery has no incarnation — the authorize callback proves the prior
+      // PTY is gone and the next pane is still the exact E2E Maestro.
+      // Workers (executor/reviewer/QA) remain non-replaceable.
+      if (identity.startsWith("advisor:")) {
+        if (
+          !priorAgent.workerIncarnationId ||
+          !acceptedAgent.workerIncarnationId ||
+          priorAgent.workerIncarnationId ===
+            acceptedAgent.workerIncarnationId
+        ) {
+          return { kind: "violation" };
+        }
+      } else if (identity !== "orchestrator") {
         return { kind: "violation" };
       }
       const decision = this.#authorizeReplacement({

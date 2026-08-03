@@ -639,13 +639,35 @@ export function preflightStagedGrokAuthentication(
 
 const AGY_AUTH_PROBE_TIMEOUT_MS = 75_000;
 const AGY_AUTH_PROBE_MAX_BUFFER_BYTES = 256 * 1024;
+/** Bounded retries for transient AGY eligibility/backend blips (503/UNAVAILABLE). */
+const AGY_AUTH_PROBE_MAX_ATTEMPTS = 3;
+const AGY_AUTH_PROBE_RETRY_DELAY_MS = 2_000;
 const AGY_MISSING_CREDENTIAL_PATTERN =
   /(?:you are not authenticated|not authenticated|not logged in|not signed in|authentication required|login required|please (?:log|sign) in|run\s+\/login|complete (?:the )?(?:google )?(?:oauth|authentication)|no (?:oauth )?credentials?)/iu;
+const AGY_TRANSIENT_PROBE_PATTERN =
+  /(?:UNAVAILABLE|currently unavailable|Eligibility check failed|code\s*503|\b503\b|service unavailable|temporarily unavailable|ECONNRESET|ETIMEDOUT|socket hang up)/iu;
 
 function agyProbeOperationalFailure(reason, cause = undefined) {
   return new Error(`AGY authentication probe failed operationally: ${reason}`, {
     ...(cause === undefined ? {} : { cause }),
   });
+}
+
+function agyProbeIsTransientFailure(result) {
+  if (result?.error || result?.signal || result?.status === null) return true;
+  const output = `${result?.stdout ?? ""}\n${result?.stderr ?? ""}`;
+  return AGY_TRANSIENT_PROBE_PATTERN.test(output);
+}
+
+function sleepSyncMs(ms, sleep) {
+  if (typeof sleep === "function") {
+    sleep(ms);
+    return;
+  }
+  if (!(ms > 0)) return;
+  // Sync delay without spawning: Atomics.wait parks the thread for `ms`.
+  const view = new Int32Array(new SharedArrayBuffer(4));
+  Atomics.wait(view, 0, 0, ms);
 }
 
 /**
@@ -654,6 +676,10 @@ function agyProbeOperationalFailure(reason, cause = undefined) {
  * Prove the session through the already trust-checked binary while HOME still
  * points at the real operator profile. The nonce prevents a banner, cached
  * text or stale file from being mistaken for a live model response.
+ *
+ * Transient eligibility/backend failures (503/UNAVAILABLE) are retried a
+ * bounded number of times; persistent operational failures stay fail-closed
+ * and are never mislabeled as a missing login.
  */
 export function preflightNativeAgyAuthentication(
   operatorHome,
@@ -661,6 +687,9 @@ export function preflightNativeAgyAuthentication(
     binary = null,
     environment = process.env,
     run = spawnSync,
+    sleep = undefined,
+    maxAttempts = AGY_AUTH_PROBE_MAX_ATTEMPTS,
+    retryDelayMs = AGY_AUTH_PROBE_RETRY_DELAY_MS,
   } = {},
 ) {
   if (
@@ -687,77 +716,91 @@ export function preflightNativeAgyAuthentication(
     }
     throw agyProbeOperationalFailure("operator HOME is unavailable", error);
   }
-  const nonce = randomBytes(16).toString("hex");
-  const marker = `NEXUS_AGY_AUTH_OK_${nonce}`;
-  const prompt =
-    `Sem usar ferramentas, responda exatamente ${marker} e nada mais.`;
+  const attempts = Math.max(1, Math.min(Number(maxAttempts) || 1, 5));
+  const delayMs = Math.max(0, Number(retryDelayMs) || 0);
   const inherited = Object.fromEntries(
     Object.entries(environment).filter(
       ([key, value]) =>
         SAFE_CHILD_ENV_KEYS.has(key) && typeof value === "string",
     ),
   );
-  let result;
-  try {
-    result = run(
-      binary,
-      [
-        "--model",
-        "gemini-3.6-flash-low",
-        "--effort",
-        "low",
-        "--mode",
-        "plan",
-        "--sandbox",
-        "--output-format",
-        "text",
-        "--print-timeout",
-        "60s",
-        "--print",
-        prompt,
-      ],
-      {
-        cwd: home,
-        encoding: "utf8",
-        env: {
-          ...inherited,
-          HOME: home,
-          USERPROFILE: home,
-          PATH:
-            typeof environment.PATH === "string" && environment.PATH
-              ? environment.PATH
-              : "/usr/bin:/bin:/usr/sbin:/sbin",
-          LANG: inherited.LANG ?? "C",
-          LC_ALL: "C",
+  let lastFailure = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const nonce = randomBytes(16).toString("hex");
+    const marker = `NEXUS_AGY_AUTH_OK_${nonce}`;
+    const prompt =
+      `Sem usar ferramentas, responda exatamente ${marker} e nada mais.`;
+    let result;
+    try {
+      result = run(
+        binary,
+        [
+          "--model",
+          "gemini-3.6-flash-low",
+          "--effort",
+          "low",
+          "--mode",
+          "plan",
+          "--sandbox",
+          "--output-format",
+          "text",
+          "--print-timeout",
+          "60s",
+          "--print",
+          prompt,
+        ],
+        {
+          cwd: home,
+          encoding: "utf8",
+          env: {
+            ...inherited,
+            HOME: home,
+            USERPROFILE: home,
+            PATH:
+              typeof environment.PATH === "string" && environment.PATH
+                ? environment.PATH
+                : "/usr/bin:/bin:/usr/sbin:/sbin",
+            LANG: inherited.LANG ?? "C",
+            LC_ALL: "C",
+          },
+          shell: false,
+          timeout: AGY_AUTH_PROBE_TIMEOUT_MS,
+          maxBuffer: AGY_AUTH_PROBE_MAX_BUFFER_BYTES,
         },
-        shell: false,
-        timeout: AGY_AUTH_PROBE_TIMEOUT_MS,
-        maxBuffer: AGY_AUTH_PROBE_MAX_BUFFER_BYTES,
-      },
-    );
-  } catch (error) {
-    throw agyProbeOperationalFailure("trusted binary could not be executed", error);
+      );
+    } catch (error) {
+      throw agyProbeOperationalFailure("trusted binary could not be executed", error);
+    }
+    if (result?.error || result?.signal || result?.status === null) {
+      lastFailure = "process timeout, signal or spawn error";
+      if (attempt < attempts && agyProbeIsTransientFailure(result)) {
+        sleepSyncMs(delayMs, sleep);
+        continue;
+      }
+      throw agyProbeOperationalFailure(lastFailure);
+    }
+    const output = `${result?.stdout ?? ""}\n${result?.stderr ?? ""}`;
+    if (AGY_MISSING_CREDENTIAL_PATTERN.test(output)) {
+      return Object.freeze({ kind: "missing-credential" });
+    }
+    if (
+      result?.status === 0 &&
+      typeof result.stdout === "string" &&
+      result.stdout.trim() === marker
+    ) {
+      return Object.freeze({ kind: "authenticated" });
+    }
+    if (result?.status === 0) {
+      throw agyProbeOperationalFailure("returned an unverified response");
+    }
+    lastFailure = `exited with status ${String(result?.status ?? "unknown")}`;
+    if (attempt < attempts && agyProbeIsTransientFailure(result)) {
+      sleepSyncMs(delayMs, sleep);
+      continue;
+    }
+    throw agyProbeOperationalFailure(lastFailure);
   }
-  if (result?.error || result?.signal || result?.status === null) {
-    throw agyProbeOperationalFailure("process timeout, signal or spawn error");
-  }
-  const output = `${result?.stdout ?? ""}\n${result?.stderr ?? ""}`;
-  if (AGY_MISSING_CREDENTIAL_PATTERN.test(output)) {
-    return Object.freeze({ kind: "missing-credential" });
-  }
-  if (
-    result?.status === 0 &&
-    typeof result.stdout === "string" &&
-    result.stdout.trim() === marker
-  ) {
-    return Object.freeze({ kind: "authenticated" });
-  }
-  if (result?.status === 0) {
-    throw agyProbeOperationalFailure("returned an unverified response");
-  }
-  throw agyProbeOperationalFailure(
-    `exited with status ${String(result?.status ?? "unknown")}`,
-  );
+  throw agyProbeOperationalFailure(lastFailure ?? "exhausted retries");
 }
 
 /**

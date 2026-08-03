@@ -450,4 +450,45 @@ describe("real mission physical PTY gate with advisors", () => {
       ).kind,
     ).toBe("violation");
   });
+
+  it("defers then accepts orchestrator technical-recovery replacement", () => {
+    let replacementDecision: "accept" | "defer" | "reject" = "defer";
+    const authorizeReplacement = vi.fn(() => replacementDecision);
+    const fence = new ExactRealMissionPhysicalPtyGate(
+      "mission-e2e",
+      [],
+      "claude",
+      authorizeReplacement,
+    );
+    const orchestratorAgent = (sessionId: string) =>
+      ({
+        sessionId,
+        missionId: "mission-e2e",
+        adapterId: "claude",
+        role: "orchestrator",
+        agentName: "E2E Orquestrador",
+        squadId: "agentic-nexus-real-mission-e2e",
+        readOnly: false,
+        nativeReadOnly: false,
+      }) as unknown as PhysicalPtyAgent;
+    const first = orchestratorAgent("session-orch-1");
+    const recovery = orchestratorAgent("session-orch-2");
+
+    expect(fence.inspect(first.sessionId, first)).toMatchObject({
+      kind: "accepted",
+      identity: "orchestrator",
+    });
+    expect(fence.inspect(recovery.sessionId, recovery)).toEqual({
+      kind: "deferred",
+    });
+    expect(fence.acceptedSessionCount).toBe(1);
+
+    replacementDecision = "accept";
+    expect(fence.inspect(recovery.sessionId, recovery)).toMatchObject({
+      kind: "accepted",
+      identity: "orchestrator",
+    });
+    expect(fence.acceptedSessionCount).toBe(1);
+    expect(authorizeReplacement).toHaveBeenCalled();
+  });
 });

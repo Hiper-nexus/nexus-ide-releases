@@ -764,6 +764,11 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
         }
         env.HOME = home.dir;
         ephemeralHomeDir = home.dir;
+        // Mission-owned Claude must not auto-install the official marketplace
+        // or burn boot time on nonessential traffic: both produce a busy/output
+        // edge without UserPromptSubmit and break kickoff acceptance.
+        env.CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL = "1";
+        env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
         // A identidade OAuth carregada faz o CLI baixar os conectores MCP da
         // CONTA (Drive, Vercel, HF…): meia dúzia de OAuth remotos no boot de
         // um agente que só pode usar mcp__nexus. Isso atrasava/mutava o boot
