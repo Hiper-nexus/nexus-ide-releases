@@ -11,7 +11,8 @@ Data: 2026-08-03
 - Fast path: `risk=normal` pula a cerimônia PREVC antes do primeiro pane
   (opt-out via `orch.fastPath`).
 - Warm-up read-only de reviewer/QA na onda 1 (flag
-  `feature.mission.warmupAdvisories`) sem quebrar o single-writer.
+  `feature.mission.warmupAdvisories`, default OFF até reutilizar a PTY do
+  warm-up no review real) sem quebrar o single-writer.
 - Fence de promote amarra Pack/Guiado, template e contagem de stories ao que
   o operador revisou no diálogo nativo.
 

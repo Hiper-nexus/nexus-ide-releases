@@ -131,7 +131,10 @@ export const BUILTIN_FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
     removeAfter: '2027-03-31',
     killSwitch: false,
     telemetry: false,
-    defaultEnabled: true,
+    // Default OFF até o despacho reutilizar a PTY do warm-up no review/QA
+    // real: com default ON o E2E real-mission vê uma 2ª encarnação do
+    // revisor e aborta com physical PTY invariant violation.
+    defaultEnabled: false,
   },
   {
     id: FEATURE_FLAG_IDS.searchMixer,

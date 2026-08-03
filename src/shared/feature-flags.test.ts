@@ -50,6 +50,9 @@ describe('feature flags', () => {
     const DEFAULT_OFF = new Set([
       'feature.remote.relayTransport', // exige relay hospedado + URL explícita
       'feature.autonomy.profiles', // sem consumidor no produto ainda
+      // Warm-up abre reviewer/QA cedo; o review real ainda spawna outra PTY e
+      // o E2E real-mission aborta. Opt-in Labs até reutilizar a sessão.
+      'feature.mission.warmupAdvisories',
     ]);
     for (const flag of BUILTIN_FEATURE_FLAGS) {
       expect(

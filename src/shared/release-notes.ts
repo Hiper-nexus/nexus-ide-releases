@@ -32,9 +32,9 @@ export const CURRENT_RELEASE: AppRelease = {
     {
       title: 'Fast path e warm-ups na onda 1',
       detail:
-        'risk=normal pula PREVC antes do primeiro pane; reviewer/QA fazem ' +
-        'warm-up read-only na mesma onda do executor, com single-writer e ' +
-        'kill-switch por feature flag.',
+        'risk=normal pula PREVC antes do primeiro pane; warm-up read-only de ' +
+        'reviewer/QA está pronto atrás da flag Labs (default OFF até a PTY ' +
+        'do warm-up ser reutilizada no review real), com single-writer intacto.',
     },
     {
       title: 'Missão que mostra o que está fazendo',
