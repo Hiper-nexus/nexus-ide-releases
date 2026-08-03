@@ -897,6 +897,7 @@ export class MissionOrchestratorBootstrapService {
       bootstrapFlightKey(scope, missionId),
       bootstrapMissionApprovalSnapshot(initial),
     );
+    this.#emitProgress(scope, missionId, "authority_checked");
     // Worker authority never depends on PREVC preparation. Main prepares only
     // project context in parallel; freeze and review happen after handoff at
     // the promotion boundary so their seal cannot invalidate live workers.
@@ -909,6 +910,7 @@ export class MissionOrchestratorBootstrapService {
     // IPC-level warm alone is not sufficient here. Conditional await: when no
     // warm is configured the bootstrap must keep its synchronous
     // run-up-to-spawn so concurrent same-tick retries singleflight.
+    this.#emitProgress(scope, missionId, "subscription_auth");
     const subscriptionAuthWarm = this.#deps.warmSubscriptionAuth?.();
     if (subscriptionAuthWarm) await subscriptionAuthWarm;
     try {
@@ -948,6 +950,7 @@ export class MissionOrchestratorBootstrapService {
         ),
       );
     }
+    this.#emitProgress(scope, missionId, "plan_baseline");
     const isTeamReadOnlyFanout =
       standardTopology === "team-read-only-fanout";
     const guidedPrevcRequired =
@@ -1001,6 +1004,7 @@ export class MissionOrchestratorBootstrapService {
         "user",
       );
     }
+    this.#emitProgress(scope, missionId, "squad_sealed");
     // Only production call that persists mission_contracts for a guided
     // mission. It MUST fire before the authority seal is computed below:
     // freezing rotates the PREVC seal (contextRevision/contractHash), and a
@@ -1013,6 +1017,7 @@ export class MissionOrchestratorBootstrapService {
     // ensureGuidedMissionPrevc is idempotent and refuses to (re)freeze once
     // a worker has materialized; when the context is not ready (greenfield)
     // nothing freezes and both sides keep the intent-hash fallback seal.
+    this.#emitProgress(scope, missionId, "prevc_freeze");
     if (!isTeamReadOnlyFanout) {
       try {
         void Promise.resolve(
@@ -1088,6 +1093,7 @@ export class MissionOrchestratorBootstrapService {
     // External effects consume the persisted approval, never a mutable
     // settings object. Equality above proves that it remains currently valid.
     const runtime = approvedRuntime;
+    this.#emitProgress(scope, missionId, "runtime_checked");
     let isPrevcPreparationStarted = false;
     const preparePrevcInBackground = (): void => {
       if (isTeamReadOnlyFanout) return;
@@ -1212,6 +1218,7 @@ export class MissionOrchestratorBootstrapService {
       if (!retired.ok) return retired.result;
       persistedOrchestrator = undefined;
     }
+    this.#emitProgress(scope, missionId, "drift_retired");
 
     if (activeOrchestratorSessionId && persistedOrchestrator) {
       const sessionId = activeOrchestratorSessionId;
@@ -1321,6 +1328,7 @@ export class MissionOrchestratorBootstrapService {
         "user",
       );
     }
+    this.#emitProgress(scope, missionId, "attachments_verified");
 
     const title = `${squad.name} · orq`;
     preparePrevcInBackground();
@@ -1354,6 +1362,7 @@ export class MissionOrchestratorBootstrapService {
         }`,
       );
     }
+    this.#emitProgress(scope, missionId, "pane_spawned");
 
     let paneRow: MissionPaneSpec | null = null;
     let sessionBound = false;
@@ -1430,11 +1439,15 @@ export class MissionOrchestratorBootstrapService {
           getOrchSettings().squadCliPolicy,
         ),
       });
+      this.#emitProgress(scope, missionId, "kickoff_submitted");
       const kickoffAttempt = await this.#deps.submitKickoff(scope, {
         missionId,
         sessionId: spawn.sessionId,
         prompt,
       });
+      if (kickoffAttempt.accepted) {
+        this.#emitProgress(scope, missionId, "kickoff_accepted");
+      }
       const kickoff =
         kickoffAttempt.accepted
           ? kickoffAttempt
@@ -1851,6 +1864,26 @@ export class MissionOrchestratorBootstrapService {
       ...missionBlockPatch("technical"),
       description,
     });
+  }
+
+  /**
+   * Telemetry only: never awaited, never a gate, never allowed to fail the
+   * bootstrap — a broken journal must keep the card static, not the mission.
+   */
+  #emitProgress(
+    scope: ProjectExecutionScope,
+    missionId: string,
+    step: BootstrapProgressStep,
+    detail?: string,
+  ): void {
+    try {
+      this.#deps.emitProgress?.(scope, missionId, step, detail);
+    } catch (error) {
+      console.warn(
+        `[mission-bootstrap] bootstrap progress emission failed for ${missionId}/${step}:`,
+        error,
+      );
+    }
   }
 
   #failure(

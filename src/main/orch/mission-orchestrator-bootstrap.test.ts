@@ -1217,6 +1217,46 @@ describe('initial main-owned orchestrator bootstrap', () => {
     expect(value.kickoffPrompts[0]).toContain('/validated/proof.png');
   });
 
+  it('emits operator-visible bootstrap steps in exact order', async () => {
+    const value = harness();
+    const steps: string[] = [];
+    value.deps.emitProgress = (_scope, missionId, step) => {
+      expect(missionId).toBe(value.mission.id);
+      steps.push(step);
+    };
+    const service = new MissionOrchestratorBootstrapService(value.deps);
+
+    await expect(
+      service.bootstrap(scope, value.mission.id),
+    ).resolves.toMatchObject({ ok: true, kickoff: { accepted: true } });
+
+    expect(steps).toEqual([
+      'authority_checked',
+      'subscription_auth',
+      'plan_baseline',
+      'squad_sealed',
+      'prevc_freeze',
+      'runtime_checked',
+      'drift_retired',
+      'attachments_verified',
+      'pane_spawned',
+      'kickoff_submitted',
+      'kickoff_accepted',
+    ]);
+  });
+
+  it('keeps the bootstrap alive when progress emission throws', async () => {
+    const value = harness();
+    value.deps.emitProgress = () => {
+      throw new Error('journal indisponível');
+    };
+    const service = new MissionOrchestratorBootstrapService(value.deps);
+
+    await expect(
+      service.bootstrap(scope, value.mission.id),
+    ).resolves.toMatchObject({ ok: true, kickoff: { accepted: true } });
+  });
+
   it('injects the exact promoted PRD into the live v2 bootstrap kickoff', async () => {
     const value = harness();
     const deliverySquad: Squad = {

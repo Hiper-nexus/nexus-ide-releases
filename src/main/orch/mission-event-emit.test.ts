@@ -8,9 +8,12 @@ import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import { testProjectScope } from './__tests__/scope-fixture';
 import {
   configureMissionEventEmit,
+  emitBootstrapProgress,
   emitDriverDecision,
+  resetBootstrapProgressCountersForTests,
 } from './mission-event-emit';
 import { MissionEventJournal } from './mission-event-journal';
+import type { MissionEvent } from '../../shared/mission-events';
 
 let baseDir = '';
 let manager: ProjectRuntimeManager;
@@ -76,5 +79,41 @@ describe('mission event emit (production path)', () => {
     const events = journal.projectRecent('m1', 20);
     expect(events).toHaveLength(1);
     expect(events[0]?.idempotencyKey).not.toMatch(/\d{13}/); // no Date.now ms
+  });
+});
+
+describe('bootstrap progress telemetry', () => {
+  const progressOf = (events: readonly MissionEvent[]) =>
+    events.filter(
+      (event) =>
+        (event.payload as Record<string, unknown> | undefined)?.kind ===
+        'bootstrap_progress',
+    );
+
+  it('appends a bootstrap_progress custom event carrying the step', () => {
+    resetBootstrapProgressCountersForTests();
+    emitBootstrapProgress(testProjectScope(), 'm1', 'squad_sealed');
+    const journal = new MissionEventJournal(manager, testProjectScope());
+    const events = progressOf(journal.projectRecent('m1', 10));
+    expect(events).toHaveLength(1);
+    expect(events[0]?.type).toBe('custom');
+    expect(
+      (events[0]?.payload as Record<string, unknown>).step,
+    ).toBe('squad_sealed');
+  });
+
+  it('keeps repeated steps of successive recovery attempts visible', () => {
+    resetBootstrapProgressCountersForTests();
+    emitBootstrapProgress(testProjectScope(), 'm1', 'plan_baseline');
+    emitBootstrapProgress(testProjectScope(), 'm1', 'plan_baseline');
+    const journal = new MissionEventJournal(manager, testProjectScope());
+    expect(progressOf(journal.projectRecent('m1', 10))).toHaveLength(2);
+  });
+
+  it('never throws when the journal is unconfigured', () => {
+    configureMissionEventEmit(null);
+    expect(() =>
+      emitBootstrapProgress(testProjectScope(), 'm1', 'pane_spawned'),
+    ).not.toThrow();
   });
 });

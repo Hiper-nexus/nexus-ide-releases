@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { PaneModel } from '../../shared/types';
 import { useHomeStore } from '../state/home-store';
 import { useLayoutStore } from '../state/layout-store';
@@ -6,7 +6,14 @@ import { useOrchStore } from '../state/orch-store';
 import { ActionCard, EmptyState } from './ActionCard';
 import { PaneInteractionSurface } from './PaneInteractionSurface';
 import { PaneToolbar } from './PaneToolbar';
-import { paneVacancyIntent } from './pane-vacancy-intent';
+import {
+  paneVacancyIntent,
+  paneVacancyMission,
+} from './pane-vacancy-intent';
+import {
+  latestBootstrapProgress,
+  type PaneVacancyProgress,
+} from './pane-vacancy-progress';
 
 /**
  * A structural placeholder is a VACANCY — a slot the tree needs because it can
@@ -42,7 +49,55 @@ export function PaneVacancy({ pane }: { readonly pane: PaneModel }) {
  */
 export function PaneVacancyBody({ pane }: { readonly pane: PaneModel }) {
   const missions = useOrchStore((state) => state.missions);
-  const intent = useMemo(() => paneVacancyIntent(missions), [missions]);
+  const vacancyMission = useMemo(
+    () => paneVacancyMission(missions),
+    [missions],
+  );
+  // Só missão em voo e ainda não bloqueada tem boot para acompanhar; a
+  // bloqueada já tem veredito durável e não recebe etapa de progresso.
+  const pollingMissionId =
+    vacancyMission && vacancyMission.status !== 'blocked'
+      ? vacancyMission.id
+      : null;
+  const [progress, setProgress] = useState<PaneVacancyProgress | null>(null);
+
+  useEffect(() => {
+    if (!pollingMissionId) {
+      setProgress(null);
+      return;
+    }
+    let cancelled = false;
+    const poll = async (): Promise<void> => {
+      try {
+        const eventsRecent = window.nexus?.orch?.missionEventsRecent;
+        if (!eventsRecent) return;
+        const recent = await eventsRecent({
+          missionId: pollingMissionId,
+          limit: 30,
+        });
+        if (cancelled || !recent || recent.enabled === false) return;
+        setProgress(
+          latestBootstrapProgress(
+            (recent.events as unknown[]) ?? [],
+            pollingMissionId,
+          ),
+        );
+      } catch {
+        // Jornal indisponível: o card mantém a copy estática de sempre.
+      }
+    };
+    void poll();
+    const timer = setInterval(() => void poll(), 5_000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [pollingMissionId]);
+
+  const intent = useMemo(
+    () => paneVacancyIntent(missions, progress),
+    [missions, progress],
+  );
 
   function claim(): void {
     const layout = useLayoutStore.getState();
