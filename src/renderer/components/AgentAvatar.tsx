@@ -79,6 +79,47 @@ export function summarizeAgentStates(states: readonly AgentVisualState[]): strin
     .join(' · ');
 }
 
+function AgentCategoryIcon({ category }: { category: AgentCategory }) {
+  switch (category) {
+    case 'orchestrator':
+      return (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+        </svg>
+      );
+    case 'scout':
+      return (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="11" cy="11" r="8" />
+          <line x1="21" y1="21" x2="16.65" y2="16.65" />
+        </svg>
+      );
+    case 'architect':
+      return (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          <polygon points="12 2 2 7 12 12 22 7 12 2" />
+          <polyline points="2 17 12 22 22 17" />
+          <polyline points="2 12 12 17 22 12" />
+        </svg>
+      );
+    case 'reviewer':
+      return (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+          <path d="m9 12 2 2 4-4" />
+        </svg>
+      );
+    case 'executor':
+    default:
+      return (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="4 17 10 11 4 5" />
+          <line x1="12" y1="19" x2="20" y2="19" />
+        </svg>
+      );
+  }
+}
+
 export function AgentAvatar({
   category,
   state = 'offline',
@@ -114,10 +155,11 @@ export function AgentAvatar({
       title={`${label} · ${stateLabel}`}
       data-agent-state={state}
     >
-      <img src={CATEGORY_IMAGES[category]} alt="" aria-hidden="true" />
-      <span className="agent-avatar__core" aria-hidden="true" />
-      <span className="agent-avatar__sensor" aria-hidden="true" />
-      <span className="agent-avatar__scan" aria-hidden="true" />
+      <img src={CATEGORY_IMAGES[category]} alt="" aria-hidden="true" className="agent-avatar__legacy-img" />
+      <span className="agent-avatar__vector-glyph" aria-hidden="true">
+        <AgentCategoryIcon category={category} />
+      </span>
+      <span className="agent-avatar__status-dot" aria-hidden="true" />
     </span>
   );
 }

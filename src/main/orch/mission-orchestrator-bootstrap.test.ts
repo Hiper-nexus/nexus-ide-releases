@@ -1426,7 +1426,9 @@ describe('initial main-owned orchestrator bootstrap', () => {
     expect(value.kickoffPrompts).toHaveLength(1);
     const prompt = value.kickoffPrompts[0]!;
     expect(prompt).toContain(handoff.summary);
-    expect(prompt).toContain(JSON.stringify(promotedPlan.artifacts));
+    expect(prompt).toContain('### Artifacts (1)');
+    expect(prompt).toContain('docs/stories/auth.md');
+    expect(prompt).not.toContain(JSON.stringify(promotedPlan.artifacts));
     expect(prompt).toContain(promotedPlan.digest);
     expect(prompt).toContain(promotedPlan.summarySha256);
     expect(prompt).toContain(promotedPlan.artifactsSha256);

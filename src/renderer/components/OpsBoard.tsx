@@ -265,14 +265,39 @@ export function OpsBoard() {
                 <div className="ops-board__cards">
                   {col.missions.length === 0 ? (
                     <div className="ops-board__empty-col">
-                      <ChosenPetPortrait
-                        size={34}
-                        mood="sleeping"
-                        fallbackTier={snapshot.tier}
-                        fallbackBranch={snapshot.branch}
-                        fallbackSkin={snapshot.selectedSkin}
-                      />
-                      <span>Nenhuma missão</span>
+                      <div className="ops-board__empty-icon" aria-hidden="true">
+                        {col.status === 'pending' && (
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                            <circle cx="12" cy="12" r="10" />
+                            <polyline points="12 6 12 12 16 14" />
+                          </svg>
+                        )}
+                        {col.status === 'running' && (
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                            <polygon points="5 3 19 12 5 21 5 3" />
+                          </svg>
+                        )}
+                        {col.status === 'blocked' && (
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                            <circle cx="12" cy="12" r="10" />
+                            <line x1="4.93" y1="4.93" x2="19.07" y2="19.07" />
+                          </svg>
+                        )}
+                        {col.status === 'done' && (
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                            <polyline points="22 4 12 14.01 9 11.01" />
+                          </svg>
+                        )}
+                        {col.status === 'failed' && (
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                            <polygon points="7.86 2 16.14 2 22 7.86 22 16.14 16.14 22 7.86 22 2 16.14 2 7.86 7.86 2" />
+                            <line x1="12" y1="8" x2="12" y2="12" />
+                            <line x1="12" y1="16" x2="12.01" y2="16" />
+                          </svg>
+                        )}
+                      </div>
+                      <span className="ops-board__empty-label">Nenhuma missão</span>
                       <small>Arraste uma missão para esta etapa.</small>
                     </div>
                   ) : (
@@ -373,12 +398,17 @@ export function OpsBoard() {
                                 m.description ?? '',
                               ).headline;
                               return headline ? (
-                                <p
-                                  className="ops-board__card-failure"
+                                <div
+                                  className="ops-board__card-failure-box"
                                   title={headline}
                                 >
-                                  {headline}
-                                </p>
+                                  <svg className="ops-board__card-failure-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3z"/>
+                                    <line x1="12" y1="9" x2="12" y2="13"/>
+                                    <line x1="12" y1="17" x2="12.01" y2="17"/>
+                                  </svg>
+                                  <span className="ops-board__card-failure-text">{headline}</span>
+                                </div>
                               ) : null;
                             })()}
                           {crew.length > 0 && (
@@ -436,7 +466,7 @@ export function OpsBoard() {
                           <div className="ops-board__card-actions">
                             {!active && !recovering && (
                               <button
-                                className="ops-board__card-btn"
+                                className="ops-board__card-btn ops-board__card-btn--resume"
                                 disabled={busy !== null}
                                 onClick={() => retomar(m)}
                                 title="Restaura os panes desta missão (as CLIs voltam com --continue)"
@@ -445,24 +475,31 @@ export function OpsBoard() {
                                   'retomando…'
                                 ) : (
                                   <span className="ops-board__resume-label">
-                                    <PixelIcon name="mission" size={8} /> retomar
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                                      <polygon points="5 3 19 12 5 21 5 3" />
+                                    </svg>
+                                    retomar
                                   </span>
                                 )}
                               </button>
                             )}
                             {(m.status === 'pending' || m.status === 'running') && (
                               <button
-                                className="ops-board__card-btn ops-board__card-btn--danger"
+                                className="ops-board__card-btn ops-board__card-btn--block"
                                 disabled={busy !== null}
                                 onClick={() => void encerrarComoBloqueada(m)}
                                 title="Encerrar como bloqueada (com justificativa; não é done)"
                               >
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                  <circle cx="12" cy="12" r="10"/>
+                                  <line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>
+                                </svg>
                                 bloquear
                               </button>
                             )}
                             {missionListAction(m, active) !== 'none' && (
                               <button
-                                className="ops-board__card-btn ops-board__card-btn--danger"
+                                className="ops-board__card-btn ops-board__card-btn--dismiss"
                                 onClick={() => closeOrDiscard(m, active)}
                                 title={
                                   missionActionCopy(
@@ -470,6 +507,10 @@ export function OpsBoard() {
                                   ).title
                                 }
                               >
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                  <line x1="18" y1="6" x2="6" y2="18"/>
+                                  <line x1="6" y1="6" x2="18" y2="18"/>
+                                </svg>
                                 {missionActionCopy(
                                   missionListAction(m, active),
                                 ).verb.toLowerCase()}

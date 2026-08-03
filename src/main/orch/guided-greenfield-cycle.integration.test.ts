@@ -1,7 +1,20 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("../persistence/settings-store", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../persistence/settings-store")>();
+  return {
+    ...actual,
+    getOrchSettings: () => ({
+      ...actual.getOrchSettings(),
+      fastPath: false,
+    }),
+  };
+});
+
 import { compileIntentContract } from "../../shared/mission-intent";
 import type { AdapterInfo } from "../../shared/adapter-types";
 import type { Handoff, Mission, Squad } from "../../shared/orch-types";

@@ -454,9 +454,16 @@
 .palette__group {
   padding: 8px 10px 4px;
   color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+[data-theme-pixel='on'] .palette__group {
   font-family: var(--font-pixel);
   font-size: 13px;
-  text-transform: uppercase;
+  font-weight: 400;
   letter-spacing: 0.14em;
 }
 
@@ -556,9 +563,16 @@
 
 .cheatsheet__eyebrow {
   color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+[data-theme-pixel='on'] .cheatsheet__eyebrow {
   font-family: var(--font-pixel);
   font-size: 14px;
-  text-transform: uppercase;
+  font-weight: 400;
   letter-spacing: 0.14em;
 }
 

@@ -763,17 +763,29 @@ function resolveSealTopology(mission: Mission): StandardMissionTopology {
     wavePackStories: contract.wavePackStories,
     promotedPlanSummary: contract.promotedPlan?.summary,
   });
+  const forced = contract.orchestrationMode ?? null;
+  // Without a promoted plan, keep the goal classifier (team fan-out / delivery)
+  // unless the operator forced Pack (structured stories) or Livre.
+  if (!contract.promotedPlan) {
+    if (forced === "pack" && stories.length >= 2) {
+      return "wave-pack";
+    }
+    if (forced === "livre") {
+      return topologyForOrchestrationMode(
+        "livre",
+        classifyStandardMissionTopology(contract.goal),
+      );
+    }
+    return classifyStandardMissionTopology(contract.goal);
+  }
   const mode = resolveMissionOrchestrationMode({
     lane: contract.lane,
     risk: contract.risk,
-    hasPromotedPlan: Boolean(contract.promotedPlan),
+    hasPromotedPlan: true,
     extractedStoryCount: stories.length,
-    forcedMode: contract.orchestrationMode ?? null,
+    forcedMode: forced,
   });
-  const fallback = contract.promotedPlan
-    ? "delivery"
-    : classifyStandardMissionTopology(contract.goal);
-  return topologyForOrchestrationMode(mode, fallback);
+  return topologyForOrchestrationMode(mode, "delivery");
 }
 
 function sealWavePackMissionPlan(input: {
