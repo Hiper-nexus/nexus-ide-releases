@@ -1,8 +1,10 @@
-import { isOperatorChoicePolicy } from '../../shared/squad-cli-policy';
-import type { SquadCliPolicy } from '../../shared/settings-types';
+import {
+  isGovernedPolicy,
+  type SquadCliPolicyInput,
+} from '../../shared/squad-cli-policy';
 
 export interface MissionCliExecutionPolicyInput {
-  readonly squadCliPolicy: SquadCliPolicy | string | undefined;
+  readonly squadCliPolicy: SquadCliPolicyInput;
   readonly isMissionParticipant: boolean;
   readonly requestsNativeReadOnly: boolean;
   readonly requestsWorkspaceWriteSandbox: boolean;
@@ -11,7 +13,7 @@ export interface MissionCliExecutionPolicyInput {
 }
 
 export interface MissionCliExecutionPolicy {
-  /** Default vibe-coder mode: worktree + session bearer + Main-owned merge. */
+  /** Autopilot path: worktree + session bearer + Main-owned merge + YOLO. */
   readonly isFrictionless: boolean;
   /** Provider/outer read-only confinement is hardened-mode-only. */
   readonly enforceNativeReadOnly: boolean;
@@ -28,21 +30,24 @@ export interface MissionCliExecutionPolicy {
 /**
  * Compile the product mode once before provider-specific argv is assembled.
  *
- * Operator-choice is the default autopilot: the task runs in its dedicated
- * worktree with a per-session Nexus bearer and only Main can integrate it.
- * Provider and kernel sandboxes are deliberately reserved for the opt-in
- * governed mode because missing profiles, nested sandboxes and denied helper
- * subprocesses are availability failures rather than useful default safety.
+ * Default = Overclock-order autopilot: dedicated worktree, per-session bearer,
+ * Main-owned merge, provider YOLO/network on, **no** Seatbelt/bwrap/outer
+ * Codex profile. Kernel sandboxes exist only when the operator explicitly
+ * selected `governed` (or the special Pet Studio base-workspace writer).
+ * Missing/unknown policy must never re-arm confinement — that was the path
+ * that killed agy/kimi on /var/folders and gitdir denies.
  */
 export function resolveMissionCliExecutionPolicy(
   input: MissionCliExecutionPolicyInput,
 ): MissionCliExecutionPolicy {
-  const isOperatorChoice = isOperatorChoicePolicy(input.squadCliPolicy);
-  const isFrictionless =
-    isOperatorChoice &&
-    input.isMissionParticipant &&
-    !input.isPetStudioWorkspaceWriter;
-  const isHardened = !isOperatorChoice || input.isPetStudioWorkspaceWriter;
+  // Single source of truth: Hardened is opt-in (or Pet Studio special case).
+  const isHardened =
+    isGovernedPolicy(input.squadCliPolicy) ||
+    input.isPetStudioWorkspaceWriter;
+  // Autopilot applies to every non-Hardened spawn — mission participant or
+  // ad-hoc pane. Requiring isMissionParticipant here used to leave direct
+  // terminals without YOLO/operatorChoiceParticipation while missions ran free.
+  const isFrictionless = !isHardened;
 
   return Object.freeze({
     isFrictionless,

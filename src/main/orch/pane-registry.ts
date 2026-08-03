@@ -81,7 +81,7 @@ import {
 import { isAutomatedReviewerCompositionPane } from "./mission-pane-store";
 import { getOrchSettings } from "../persistence/settings-store";
 import { getAcpDriverSession } from "../acp/acp-harness-driver";
-import { issueAgentIdentityRequired } from "./agent-identity-spawn";
+import { issueAgentIdentityBestEffort } from "./agent-identity-spawn";
 
 /**
  * Main-process mirror of the renderer's pane grid plus per-session output ring
@@ -1675,25 +1675,13 @@ export function requestPaneSpawn(
       });
   }
   if (options.missionId && options.role) {
-    try {
-      // This is the common physical boundary for renderer-backed, transient,
-      // ACP and main-owned mission panes. The worker never receives the key or
-      // credential; Main issues the durable identity before the child exists.
-      issueAgentIdentityRequired({
-        missionId: options.missionId,
-        scope: options.scope,
-        agentId: options.agentName?.trim() || options.adapterId,
-      });
-    } catch (error) {
-      return Promise.resolve({
-        requestId: "",
-        ok: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : "mission agent identity could not be issued",
-      });
-    }
+    // Best-effort only: vault/keyring never blocks the first PTY. Hardened
+    // handoff still fails closed later when agentAttestationGate=required.
+    issueAgentIdentityBestEffort({
+      missionId: options.missionId,
+      scope: options.scope,
+      agentId: options.agentName?.trim() || options.adapterId,
+    });
   }
   if (getOrchSettings().agentTransport === "acp") {
     if (

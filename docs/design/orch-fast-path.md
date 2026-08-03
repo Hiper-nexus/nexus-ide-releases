@@ -27,9 +27,12 @@ before the first PTY. Sensitive/destructive work still does.
    operators who want PREVC on every standard mission again (`false` restores
    legacy: normal risk still requires PREVC when Guided authority applies).
 4. **Keep before first writable pane:** dispatch authority, plan seal,
-   mission-runtime squad pin, squadRevisionHash, orchestratorRuntime equality,
-   attachments, worktree, MCP bearer, OS sandbox, credential probe.
-5. **Do not copy Overclock:** no sandbox off, no yolo default.
+   mission-runtime squad pin, attachments, worktree, MCP bearer, credential
+   probe (login). OS process sandbox and agent attestation crypto are
+   **Hardened opt-in** (`squadCliPolicy=governed`, `agentAttestationGate=required`).
+5. **Autopilot (default) copies Overclock order:** no Seatbelt pre-requisite,
+   no attestation crypto on handoff, YOLO/network on; orchestratorRuntime
+   cosmetic drift warns instead of re-approving.
 
 ## Consequences
 

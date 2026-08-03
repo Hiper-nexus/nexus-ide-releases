@@ -54,7 +54,7 @@ import {
 } from '../memory/workspace-memory-context';
 import { getOrchSettings } from '../persistence/settings-store';
 import { isOperatorChoicePolicy } from '../../shared/squad-cli-policy';
-import { issueAgentIdentityRequired } from './agent-identity-spawn';
+import { issueAgentIdentityBestEffort } from './agent-identity-spawn';
 
 export { assertSafePtyPrompt } from './pty-prompt-safety';
 
@@ -809,7 +809,19 @@ function requireMissionPaneAuthoritySeal(options: SpawnToolOptions) {
     mission && squads.length === 1
       ? resolveMissionPaneAuthoritySeal(options.scope, mission, squads[0])
       : null;
+  const autopilot = isOperatorChoicePolicy(
+    getOrchSettings().squadCliPolicy,
+  );
   if (!seal) {
+    // Autopilot libre: continue without a seal so workers still spawn; Main
+    // merge remains the promotion boundary. Hardened stays fail-closed.
+    if (autopilot) {
+      console.warn(
+        `[spawn] Autopilot: mission pane authority seal unavailable for ` +
+          `${options.missionId}; continuing without seal`,
+      );
+      return options.authoritySeal;
+    }
     throw new Error(
       'mission pane authority seal is unavailable; replane and approve the current mission revision',
     );
@@ -818,6 +830,13 @@ function requireMissionPaneAuthoritySeal(options: SpawnToolOptions) {
     options.contextRevision !== undefined &&
     options.contextRevision !== seal.contextRevision
   ) {
+    if (autopilot) {
+      console.warn(
+        `[spawn] Autopilot: contextRevision drift for ${options.missionId}; ` +
+          `using live seal`,
+      );
+      return seal;
+    }
     throw new Error(
       'mission pane contextRevision is stale; replane and approve the current revision',
     );
@@ -832,6 +851,13 @@ function requireMissionPaneAuthoritySeal(options: SpawnToolOptions) {
       options.authoritySeal.squadRevisionHash !== seal.squadRevisionHash
     )
   ) {
+    if (autopilot) {
+      console.warn(
+        `[spawn] Autopilot: authority seal drift for ${options.missionId}; ` +
+          `using live seal`,
+      );
+      return seal;
+    }
     throw new Error(
       'stale mission pane authority; replane and approve the current revision',
     );
@@ -927,7 +953,8 @@ export async function spawnPaneAndMaybePrompt(
   });
   assertMcpInvocationCurrent(hooks.invocation);
   if (options.missionId && options.role) {
-    issueAgentIdentityRequired({
+    // Best-effort only: never block spawn on attestation vault (pre-PTY slim).
+    issueAgentIdentityBestEffort({
       missionId: options.missionId,
       scope: options.scope,
       agentId: options.agentName?.trim() || adapter.id,

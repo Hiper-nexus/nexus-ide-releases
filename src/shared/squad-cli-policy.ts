@@ -1,27 +1,56 @@
 /**
- * Dual-mode squad CLI policy.
+ * Dual-mode squad CLI policy (Overclock-order product floor).
  *
- * `operator-choice` (default): vibe-coder autopilot — any installed +
- * authenticated + handoff-capable CLI for Maestro/executor/reviewer. The
- * practical boundary is the task worktree, per-session Nexus authority and a
- * Main-owned validated merge. Provider auto-approve and network stay enabled.
+ * `operator-choice` (default / missing / unknown): vibe-coder autopilot —
+ * any installed + authenticated + handoff-capable CLI. Boundary = task
+ * worktree + per-session Nexus bearer + Main-owned merge. Provider
+ * auto-approve and network stay on. No OS Seatbelt/bwrap on panes.
  *
- * `governed`: release-qualified ladder — Codex for autonomous workspace write,
- * verified Maestro for coordination, advisory Seatbelt for everyone else on
- * read_only reviewer/scout lanes. Opt-in for operators who want the narrow gate.
+ * `governed` (explicit opt-in only): release-qualified ladder — Codex writers,
+ * verified Maestro, advisory Seatbelt on read_only lanes. Never the silent
+ * fallback when settings or call sites omit the policy.
  */
 
 export const SQUAD_CLI_POLICY_MODES = ['governed', 'operator-choice'] as const;
 export type SquadCliPolicyMode = (typeof SQUAD_CLI_POLICY_MODES)[number];
 
-export function isOperatorChoicePolicy(
-  mode: SquadCliPolicyMode | string | null | undefined,
-): boolean {
-  return mode === 'operator-choice';
+export type SquadCliPolicyInput =
+  | SquadCliPolicyMode
+  | string
+  | null
+  | undefined;
+
+/** Canonical form for comparisons; empty/unknown → empty string. */
+export function normalizeSquadCliPolicyInput(
+  mode: SquadCliPolicyInput,
+): string {
+  if (mode == null) return '';
+  return String(mode).trim().toLowerCase();
+}
+
+/**
+ * True only when the operator explicitly chose Hardened.
+ * Accepts case/whitespace variants (`Governed`, ` governed `) so opt-in is
+ * not lost to sloppy call sites; everything else is Autopilot.
+ */
+export function isGovernedPolicy(mode: SquadCliPolicyInput): boolean {
+  return normalizeSquadCliPolicyInput(mode) === 'governed';
+}
+
+/**
+ * Autopilot is the product default. Anything that is not the explicit
+ * `governed` opt-in (including undefined/null/typos) stays vibe-coder so a
+ * missing policy never re-introduces kernel sandbox or CLI ladder gates.
+ *
+ * Note: this is **not** `mode === 'operator-choice'`. It means
+ * "not Hardened" — the runtime Autopilot path.
+ */
+export function isOperatorChoicePolicy(mode: SquadCliPolicyInput): boolean {
+  return !isGovernedPolicy(mode);
 }
 
 export function squadCliPolicyLabel(mode: SquadCliPolicyMode): string {
   return mode === 'operator-choice'
     ? 'Autopiloto — qualquer CLI autenticada, com acesso de rede'
-    : 'Hardened — sandbox e CLIs qualificadas';
+    : 'Hardened — sandbox e CLIs qualificadas (opt-in)';
 }

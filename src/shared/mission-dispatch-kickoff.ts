@@ -466,7 +466,8 @@ export function buildIntentDispatchKickoffPrompt(
     ...standardConductLines(input),
     '',
     '## Limites que valem sempre',
-    ...workerAuthorityLines(input.operatorChoice === true),
+    // Default Autopilot (no sandbox ladder wording) unless Hardened is explicit.
+    ...workerAuthorityLines(input.operatorChoice !== false),
     ...standardLimitLines(input),
   ]
     .filter(Boolean)

@@ -76,6 +76,7 @@ vi.mock("./mission-pane-authority", () => ({
 }));
 
 vi.mock("./agent-identity-spawn", () => ({
+  issueAgentIdentityBestEffort: identity.issue,
   issueAgentIdentityRequired: identity.issue,
 }));
 

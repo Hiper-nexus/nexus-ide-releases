@@ -42,7 +42,7 @@ import { sameMissionPaneAuthoritySeal } from "./mission-pane-authority";
 import { getOrchSettings } from "../persistence/settings-store";
 import { isOperatorChoicePolicy } from "../../shared/squad-cli-policy";
 import { spawnMainOwnedAcpMissionPane } from "./acp-mission-spawn";
-import { issueAgentIdentityRequired } from "./agent-identity-spawn";
+import { issueAgentIdentityBestEffort } from "./agent-identity-spawn";
 
 export interface PaneOrchMeta {
   missionId?: string;
@@ -547,7 +547,8 @@ export function spawnMainOwnedMissionPane(
     cwd,
   });
   try {
-    issueAgentIdentityRequired({
+    // Best-effort only: vault/keyring must never block the first PTY.
+    issueAgentIdentityBestEffort({
       missionId: options.missionId,
       scope: options.scope,
       agentId: options.agentName ?? adapter.id,

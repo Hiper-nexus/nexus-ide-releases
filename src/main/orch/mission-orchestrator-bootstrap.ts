@@ -995,6 +995,9 @@ export class MissionOrchestratorBootstrapService {
         );
       }
     }
+    const autopilot = isOperatorChoicePolicy(
+      getOrchSettings().squadCliPolicy,
+    );
     try {
       const requiresPrePlanGitBaseline =
         initial.intentContract?.lane === "plan" ||
@@ -1022,14 +1025,22 @@ export class MissionOrchestratorBootstrapService {
         this.#deps.ensurePlanGitBaseline?.(scope, missionId);
       }
     } catch (error) {
-      return this.#failure(
-        scope,
-        missionId,
-        "preflight_failed",
-        failureDetail(
-          "O plano main-owned não pôde ser selado antes de iniciar qualquer provider.",
-          error,
-        ),
+      // Autopilot libre: plan seal is guidance, not a brake before Maestro.
+      // Hardened keeps fail-closed so guided delivery never starts half-sealed.
+      if (!autopilot) {
+        return this.#failure(
+          scope,
+          missionId,
+          "preflight_failed",
+          failureDetail(
+            "O plano main-owned não pôde ser selado antes de iniciar qualquer provider.",
+            error,
+          ),
+        );
+      }
+      console.warn(
+        `[mission-bootstrap] Autopilot: plan seal skipped for ${missionId}:`,
+        error,
       );
     }
     this.#emitProgress(scope, missionId, "plan_baseline");
@@ -1057,31 +1068,43 @@ export class MissionOrchestratorBootstrapService {
         "user",
       );
     }
-    // Overclock-order: in-flight missions never bind to a live builtin/catalog
-    // id that syncBuiltins can rewrite. Approval must have pinned a
-    // mission-runtime-* copy; anything else is a permanent reapprove.
+    // Hardened: in-flight missions never bind to a live builtin/catalog id
+    // that syncBuiltins can rewrite — reapprove to pin mission-runtime-*.
+    // Autopilot libre: catalog squads are allowed; drift is logged, not a brake.
     if (!isMissionRuntimeSquadId(squad.id)) {
-      return this.#failure(
-        scope,
-        missionId,
-        "preflight_failed",
-        "guided_plan_squad_stale: a missão ainda aponta para um squad de " +
-          "catálogo mutável. Reaprove para selar um mission-runtime imutável " +
-          "antes de iniciar qualquer provider.",
-        undefined,
-        "user",
+      if (!autopilot) {
+        return this.#failure(
+          scope,
+          missionId,
+          "preflight_failed",
+          "guided_plan_squad_stale: a missão ainda aponta para um squad de " +
+            "catálogo mutável. Reaprove para selar um mission-runtime imutável " +
+            "antes de iniciar qualquer provider.",
+          undefined,
+          "user",
+        );
+      }
+      console.warn(
+        `[mission-bootstrap] Autopilot: squad ${squad.id} is catalog-live; ` +
+          `continuing without mission-runtime pin for ${missionId}`,
       );
     }
     const squadSnapshot = snapshotSquadAuthority(squad);
     if (initial.intentContract?.squadRevisionHash !== squadSnapshot.hash) {
-      return this.#failure(
-        scope,
-        missionId,
-        "preflight_failed",
-        "guided_plan_squad_stale: o squad mudou depois da aprovação. Revise a " +
-          "intenção e aprove novamente antes de iniciar qualquer provider.",
-        undefined,
-        "user",
+      if (!autopilot) {
+        return this.#failure(
+          scope,
+          missionId,
+          "preflight_failed",
+          "guided_plan_squad_stale: o squad mudou depois da aprovação. Revise a " +
+            "intenção e aprove novamente antes de iniciar qualquer provider.",
+          undefined,
+          "user",
+        );
+      }
+      console.warn(
+        `[mission-bootstrap] Autopilot: squadRevisionHash drift for ` +
+          `${missionId}; continuing with live squad`,
       );
     }
     this.#emitProgress(scope, missionId, "squad_sealed");
@@ -1118,35 +1141,30 @@ export class MissionOrchestratorBootstrapService {
         );
       }
     }
-    const authoritySeal = resolveMissionPaneAuthoritySeal(
+    let authoritySeal = resolveMissionPaneAuthoritySeal(
       scope,
       initial,
       squad,
     );
     if (!authoritySeal) {
-      return this.#failure(
-        scope,
-        missionId,
-        "preflight_failed",
-        "A revisão aprovada não pôde ser selada para o pane. Replaneje e aprove novamente.",
-        undefined,
-        "user",
+      if (!autopilot) {
+        return this.#failure(
+          scope,
+          missionId,
+          "preflight_failed",
+          "A revisão aprovada não pôde ser selada para o pane. Replaneje e aprove novamente.",
+          undefined,
+          "user",
+        );
+      }
+      // Libre: spawn Maestro without a full seal rather than re-open approval.
+      console.warn(
+        `[mission-bootstrap] Autopilot: authority seal unavailable for ` +
+          `${missionId}; continuing without seal`,
       );
     }
 
-    const approvedRuntime = initial.intentContract?.orchestratorRuntime;
-    if (!approvedRuntime) {
-      return this.#failure(
-        scope,
-        missionId,
-        "preflight_failed",
-        "O contrato aprovado não contém o snapshot do runtime inicial. " +
-          "Revise a intenção e reaprove antes de iniciar qualquer provider.",
-        undefined,
-        "user",
-      );
-    }
-
+    let approvedRuntime = initial.intentContract?.orchestratorRuntime;
     let resolvedRuntime: MissionOrchestratorRuntimeSnapshot;
     try {
       resolvedRuntime = canonicalMissionOrchestratorRuntime(
@@ -1162,19 +1180,50 @@ export class MissionOrchestratorBootstrapService {
         "user",
       );
     }
+    if (!approvedRuntime) {
+      if (!autopilot) {
+        return this.#failure(
+          scope,
+          missionId,
+          "preflight_failed",
+          "O contrato aprovado não contém o snapshot do runtime inicial. " +
+            "Revise a intenção e reaprove antes de iniciar qualquer provider.",
+          undefined,
+          "user",
+        );
+      }
+      // Libre: synthesize from live squad so the first pane is not blocked by
+      // an incomplete intent snapshot from an older approval path.
+      console.warn(
+        `[mission-bootstrap] Autopilot: missing orchestratorRuntime for ` +
+          `${missionId}; using live resolved runtime`,
+      );
+      approvedRuntime = resolvedRuntime;
+    }
     if (!sameMissionOrchestratorRuntime(approvedRuntime, resolvedRuntime)) {
-      return this.#failure(
-        scope,
-        missionId,
-        "preflight_failed",
-        "O runtime do orquestrador mudou desde a aprovação (provider, modelo, " +
-          "conta, esforço ou confinamento). Revise e reaprove antes de iniciar.",
-        undefined,
-        "user",
+      // Autopilot (Overclock-order): cosmetic runtime drift (effort/account
+      // pin, confinement flags) must not re-open the approval ceremony before
+      // the first PTY. Hardened keeps the fail-closed reapprove gate.
+      if (!autopilot) {
+        return this.#failure(
+          scope,
+          missionId,
+          "preflight_failed",
+          "O runtime do orquestrador mudou desde a aprovação (provider, modelo, " +
+            "conta, esforço ou confinamento). Revise e reaprove antes de iniciar.",
+          undefined,
+          "user",
+        );
+      }
+      console.warn(
+        `[mission-bootstrap] Autopilot: runtime drift after approval for ` +
+          `${missionId}; continuing with approved snapshot ` +
+          `(${approvedRuntime.adapterId}/${approvedRuntime.model ?? "default"}).`,
       );
     }
     // External effects consume the persisted approval, never a mutable
-    // settings object. Equality above proves that it remains currently valid.
+    // settings object. On Autopilot we still honor the approved snapshot so
+    // the operator's review remains the authority of record.
     const runtime = approvedRuntime;
     this.#emitProgress(scope, missionId, "runtime_checked");
     let isPrevcPreparationStarted = false;
@@ -1489,10 +1538,16 @@ export class MissionOrchestratorBootstrapService {
         runtime,
       );
       if (mismatches.length > 0) {
-        throw new Error(
+        const detail =
           "spawned PTY did not retain exact mission authority — divergências: " +
-            mismatches.slice(0, 8).join("; "),
-        );
+          mismatches.slice(0, 8).join("; ");
+        // Autopilot: first pane already exists — log and continue rather than
+        // tearing down the mission over cosmetic authority-field drift.
+        if (isOperatorChoicePolicy(getOrchSettings().squadCliPolicy)) {
+          console.warn(`[mission-bootstrap] Autopilot: ${detail}`);
+        } else {
+          throw new Error(detail);
+        }
       }
 
       this.#deps.emitDispatched(current);

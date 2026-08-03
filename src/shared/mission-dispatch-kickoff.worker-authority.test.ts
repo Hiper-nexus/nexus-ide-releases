@@ -135,7 +135,7 @@ describe('kickoff worker authority', () => {
     expect(text).not.toMatch(/Use EXATAMENTE o roster aprovado/);
   });
 
-  it('defaults to the governed wording when the policy is not supplied', () => {
+  it('defaults to Autopilot roster wording when the policy is not supplied', () => {
     const text = buildIntentDispatchKickoffPrompt({
       squad,
       missionId: 'mission-a',
@@ -144,7 +144,8 @@ describe('kickoff worker authority', () => {
       risk: 'medium',
       maxWorkers: 2,
     });
-    expect(text).toMatch(/somente o Codex builtin/);
+    expect(text).toMatch(/Use EXATAMENTE o roster aprovado/);
+    expect(text).not.toMatch(/somente o Codex builtin/);
   });
 
   it('starts guided workers while Main prepares PREVC for final promotion', () => {

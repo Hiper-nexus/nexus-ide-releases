@@ -174,6 +174,7 @@ vi.mock("../persistence/settings-store", () => ({
 }));
 
 vi.mock("./agent-identity-spawn", () => ({
+  issueAgentIdentityBestEffort: identity.issue,
   issueAgentIdentityRequired: identity.issue,
 }));
 

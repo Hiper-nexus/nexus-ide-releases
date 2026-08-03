@@ -36,6 +36,10 @@ import {
 import { setRuntimeOutputDeviceId } from '../voice/audio-output-runtime';
 import { writeJsonFileAtomic } from './atomic-json-file';
 import { planRetiredOrchestratorSettingsMigration } from './settings-retired-adapter-migration';
+import {
+  applyVibeNoSandboxFloor,
+  type VibeProductMigrations,
+} from './vibe-product-floor';
 
 /**
  * Terminal settings store: ~/.nexus/settings.json (same user-dir convention
@@ -45,12 +49,15 @@ import { planRetiredOrchestratorSettingsMigration } from './settings-retired-ada
 
 const SETTINGS_FILE = path.join(os.homedir(), '.nexus', 'settings.json');
 
+type ProductMigrations = VibeProductMigrations;
+
 let current: TerminalSettings = DEFAULT_TERMINAL_SETTINGS;
 let orchSettings: OrchSettings = DEFAULT_ORCH_SETTINGS;
 let audioSettings: AudioSettings = DEFAULT_AUDIO_SETTINGS;
 let visionSettings: VisionSettings = DEFAULT_VISION_SETTINGS;
 let uiSettings: UiSettings = DEFAULT_UI_SETTINGS;
 let integrationsSettings: IntegrationsSettings = DEFAULT_INTEGRATIONS_SETTINGS;
+let productMigrations: ProductMigrations = {};
 const listeners = new Set<WebContents>();
 const audioListeners = new Set<WebContents>();
 const uiListeners = new Set<WebContents>();
@@ -88,6 +95,35 @@ function load(): void {
       raw?.integrations ?? {},
     );
     if (integrationsParsed.success) integrationsSettings = integrationsParsed.data;
+    if (
+      raw?.productMigrations &&
+      typeof raw.productMigrations === 'object' &&
+      !Array.isArray(raw.productMigrations)
+    ) {
+      productMigrations = {
+        ...productMigrations,
+        ...(raw.productMigrations as ProductMigrations),
+      };
+    }
+    // Product floor: no process sandbox + no handoff crypto for everyone
+    // unless they later opt into Hardened in Settings. One-shot stamp.
+    const floor = applyVibeNoSandboxFloor({
+      orch: orchSettings,
+      productMigrations,
+    });
+    if (floor.changed) {
+      orchSettings = floor.orch;
+      productMigrations = floor.productMigrations;
+      try {
+        persist();
+        console.info(
+          '[settings] Autopilot floor: sem sandbox de processo e sem ' +
+            'atestação crypto no handoff (Hardened só se o operador mudar).',
+        );
+      } catch {
+        // Keep in-memory floor even if disk is read-only this boot.
+      }
+    }
   } catch {
     // Missing/corrupt file — keep defaults.
   }
@@ -100,6 +136,7 @@ interface SettingsSnapshot {
   vision: VisionSettings;
   ui: UiSettings;
   integrations: IntegrationsSettings;
+  productMigrations: ProductMigrations;
 }
 
 function snapshot(overrides: Partial<SettingsSnapshot> = {}): SettingsSnapshot {
@@ -110,6 +147,7 @@ function snapshot(overrides: Partial<SettingsSnapshot> = {}): SettingsSnapshot {
     vision: visionSettings,
     ui: uiSettings,
     integrations: integrationsSettings,
+    productMigrations,
     ...overrides,
   };
 }
@@ -117,6 +155,9 @@ function snapshot(overrides: Partial<SettingsSnapshot> = {}): SettingsSnapshot {
 function persist(next = snapshot()): void {
   try {
     writeJsonFileAtomic(SETTINGS_FILE, next);
+    if (next.productMigrations) {
+      productMigrations = next.productMigrations;
+    }
   } catch (error) {
     console.error('[settings] failed to persist settings atomically:', error);
     throw new Error('Não foi possível salvar as configurações do Nexus.', {

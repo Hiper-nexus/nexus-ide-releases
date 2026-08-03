@@ -210,11 +210,13 @@ export const orchSettingsSchema = z.object({
   intentFirstMissionRuntimeV1: z.boolean().default(true),
   /**
    * Who may act as Maestro / autonomous writer inside a Squad mission:
-   * - `operator-choice` (default): vibe-coder mode — any installed +
-   *   authenticated + handoff-capable CLI. Tasks use an isolated worktree,
-   *   per-session bearer and Main-owned merge; auto-approve and web stay on.
-   * - `governed`: release-qualified ladder (Codex writers, verified Maestro).
-   *   Opt-in for operators who want the narrow release gate.
+   * - `operator-choice` (**default for everyone**): vibe-coder / Overclock
+   *   autopilot — any installed + authenticated + handoff-capable CLI. Tasks
+   *   use an isolated worktree, per-session bearer and Main-owned merge;
+   *   auto-approve and web stay on; **no OS process sandbox** on panes.
+   * - `governed`: explicit opt-in only — operator must open Settings and pick
+   *   Hardened (Codex writers, verified Maestro, advisory Seatbelt). Never
+   *   applied by omission, missing policy, or schema default.
    */
   squadCliPolicy: z
     .enum(['governed', 'operator-choice'])
@@ -242,12 +244,13 @@ export const orchSettingsSchema = z.object({
   acpHarnessId: z.string().max(64).default(''),
   /**
    * Cryptographic agent-identity gate on physical handoff submits.
-   * - `off`: legacy path (no attestation required) — for rollback only.
-   * - `required` (default): when a mission has issued identity material,
+   * - `off` (default): Overclock-order Autopilot — handoffs do not require
+   *   agent attestation crypto; first pane is not blocked by keyring/vault.
+   * - `required` (opt-in Hardened): when a mission has issued identity material,
    *   handoff fails closed unless the presented attestation verifies
    *   (signature, scope, expiry, revocation, issued-set membership).
    */
-  agentAttestationGate: z.enum(['off', 'required']).default('required'),
+  agentAttestationGate: z.enum(['off', 'required']).default('off'),
   /**
    * User-supplied BYOH definitions (tier custom). Validated via
    * `parseHarnessDefinition` before spawn; reserved ids rejected.
@@ -282,6 +285,13 @@ export const DEFAULT_ORCH_SETTINGS: OrchSettings = orchSettingsSchema.parse({});
 export type SquadCliPolicy = OrchSettings['squadCliPolicy'];
 export type AgentTransport = OrchSettings['agentTransport'];
 export type AgentAttestationGate = OrchSettings['agentAttestationGate'];
+
+/** Product floor: Autopilot never requires handoff crypto by default. */
+export function isAgentAttestationRequired(
+  gate: AgentAttestationGate | null | undefined = DEFAULT_ORCH_SETTINGS.agentAttestationGate,
+): boolean {
+  return gate === 'required';
+}
 
 /**
  * App-wide voice audio routing. `default` follows the current operating-system

@@ -17,7 +17,7 @@ import { getAcpHarness } from '../acp/harness-store';
 import { buildAcpMcpStdioServer } from '../acp/acp-mcp-stdio-bridge';
 import { makeId } from './store-util';
 import { resolveCwdForScope } from './workspace-path';
-import { issueAgentIdentityRequired } from './agent-identity-spawn';
+import { issueAgentIdentityBestEffort } from './agent-identity-spawn';
 import type { PaneOrchMeta, PaneSpawnOptions } from './main-owned-pane-runtime';
 
 /** A harness that never answers the spawn handshake is a hang, not a wait. */
@@ -120,7 +120,7 @@ export async function spawnMainOwnedAcpMissionPane(
   const identityAgentId = options.agentName?.trim() || harness.id;
   let mcpToken: string | undefined;
   try {
-    issueAgentIdentityRequired({
+    issueAgentIdentityBestEffort({
       missionId: options.missionId,
       scope: options.scope,
       agentId: identityAgentId,

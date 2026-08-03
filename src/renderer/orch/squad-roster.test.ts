@@ -35,38 +35,47 @@ function agent(
 }
 
 describe("workerCliPool", () => {
-  it("uses only enabled installed workers with a qualified workspace-write sandbox", () => {
+  it("uses only enabled installed workers with a qualified workspace-write sandbox in Hardened", () => {
     expect(
-      workerCliPool([
-        adapter("claude"),
-        adapter("kimi"),
-        adapter("codex"),
-        adapter("agy", true, false),
-        adapter("grok", false),
-      ]),
+      workerCliPool(
+        [
+          adapter("claude"),
+          adapter("kimi"),
+          adapter("codex"),
+          adapter("agy", true, false),
+          adapter("grok", false),
+        ],
+        "governed",
+      ),
     ).toEqual(["codex"]);
   });
 
-  it("never invents an uninstalled worker fallback", () => {
+  it("never invents an uninstalled worker fallback in Hardened", () => {
     expect(
-      workerCliPool([
-        adapter("claude"),
-        adapter("codex", false),
-        adapter("agy", false),
-      ]),
+      workerCliPool(
+        [
+          adapter("claude"),
+          adapter("codex", false),
+          adapter("agy", false),
+        ],
+        "governed",
+      ),
     ).toEqual([]);
   });
 
-  it("treats an absent qualification as unsafe across rolling renderer/main versions", () => {
+  it("treats an absent qualification as unsafe in Hardened across rolling versions", () => {
     expect(
-      workerCliPool([
-        {
-          id: "codex",
-          installed: true,
-          enabled: true,
-        },
-        adapter("agy", true, true, false),
-      ]),
+      workerCliPool(
+        [
+          {
+            id: "codex",
+            installed: true,
+            enabled: true,
+          },
+          adapter("agy", true, true, false),
+        ],
+        "governed",
+      ),
     ).toEqual([]);
   });
 
@@ -82,6 +91,16 @@ describe("workerCliPool", () => {
       ),
     ).toEqual(["kimi", "custom-cli"]);
   });
+
+  it("defaults the pool to Autopilot (handoff-capable), not Hardened writers", () => {
+    expect(
+      workerCliPool([
+        adapter("claude"),
+        adapter("kimi"),
+        adapter("codex"),
+      ]),
+    ).toEqual(["codex", "kimi", "claude"]);
+  });
 });
 
 describe("balanceSquadRosterCli", () => {
@@ -95,6 +114,8 @@ describe("balanceSquadRosterCli", () => {
         agent("qa", "reviewer"),
       ],
       [adapter("claude"), adapter("codex"), adapter("agy"), adapter("grok")],
+      "codex",
+      { squadCliPolicy: "governed" },
     );
 
     // Never rewrite a sealed/reviewed Maestro (e.g. release-gate codex) to the
@@ -194,6 +215,8 @@ describe("balanceSquadRosterCli", () => {
         agent("e2e-advisor-claude", "reviewer", "claude"),
       ],
       [adapter("claude"), adapter("codex")],
+      "claude",
+      { squadCliPolicy: "governed" },
     );
 
     // reserveClaude: com orquestrador Claude, nenhum worker Claude é preservado.
@@ -217,6 +240,7 @@ describe("balanceSquadRosterCli", () => {
       ],
       [adapter("claude"), adapter("codex"), adapter("agy")],
       "codex",
+      { squadCliPolicy: "governed" },
     );
 
     expect(balanced[0]).toMatchObject({

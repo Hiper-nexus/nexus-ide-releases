@@ -58,6 +58,29 @@ export const CURRENT_RELEASE: AppRelease = {
         'Quatro caminhos gravam motivo na description quando a missão ' +
         'fechava sem veredito; recovery deixa de parecer eterna.',
     },
+    {
+      title: 'Autopiloto nunca reativa Seatbelt por omissão',
+      detail:
+        'Policy ausente/desconhecida deixa de cair no Hardened: sandbox de ' +
+        'kernel e perfil privado do Codex só com governed explícito ' +
+        '(case/whitespace normalizados). Autopiloto vale para missão e pane ' +
+        'ad-hoc; default de roster/Maestro é operator-choice (vibe).',
+    },
+    {
+      title: 'Atestação crypto e gates pré-PTY no chão do vibe',
+      detail:
+        'agentAttestationGate default off (opt-in Hardened). Identity no ' +
+        'spawn é best-effort — vault não mata o primeiro pane. Drift de ' +
+        'runtime do orquestrador e mismatches pós-spawn avisam no Autopiloto ' +
+        'em vez de reabrir aprovação ou derrubar a missão.',
+    },
+    {
+      title: 'Sem sandbox por padrão — para todo mundo',
+      detail:
+        'Floor único no boot: squadCliPolicy=operator-choice e atestação off. ' +
+        'Seatbelt/bwrap e ladder Hardened só se o operador ir em Configurações ' +
+        'e mudar. Migração one-shot; quem reativar Hardened depois mantém.',
+    },
   ],
 };
 

@@ -94,6 +94,10 @@ describe('orchSettingsSchema', () => {
     expect(DEFAULT_ORCH_SETTINGS.missionDriverActiveMode).toBe(true);
     // Known boot dialogs are handled by default, with an explicit persisted kill switch.
     expect(DEFAULT_ORCH_SETTINGS.cliPromptAutoResponderEnabled).toBe(true);
+    // Autopilot floor: handoff crypto attestation is Hardened opt-in only.
+    expect(DEFAULT_ORCH_SETTINGS.agentAttestationGate).toBe('off');
+    expect(DEFAULT_ORCH_SETTINGS.squadCliPolicy).toBe('operator-choice');
+    expect(DEFAULT_ORCH_SETTINGS.fastPath).toBe(true);
   });
 
   it('persists an explicit CLI prompt autoresponder kill switch', () => {

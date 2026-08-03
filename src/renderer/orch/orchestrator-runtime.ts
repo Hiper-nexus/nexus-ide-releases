@@ -34,7 +34,7 @@ export function isVerifiedOrchestratorAdapter(adapter: AdapterInfo): boolean {
 export function automaticOrchestratorAdapterId(
   adapters: readonly (AdapterInfo & { enabled?: boolean })[],
   configuredAdapterId: string,
-  squadCliPolicy: SquadCliPolicy = 'governed',
+  squadCliPolicy: SquadCliPolicy = 'operator-choice',
   authenticatedAdapterIds?: ReadonlySet<string>,
 ): string | null {
   const operatorChoice = isOperatorChoicePolicy(squadCliPolicy);

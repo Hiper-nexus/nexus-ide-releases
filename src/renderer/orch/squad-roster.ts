@@ -48,7 +48,7 @@ function sortWorkerCliIds(ids: string[]): string[] {
 
 export function workerCliPool(
   adapters: RosterAdapter[],
-  squadCliPolicy: SquadCliPolicy = "governed",
+  squadCliPolicy: SquadCliPolicy = "operator-choice",
 ): string[] {
   const operatorChoice = isOperatorChoicePolicy(squadCliPolicy);
   const candidates = adapters.filter(
@@ -106,11 +106,11 @@ export function balanceSquadRosterCli(
   options?: BalanceSquadRosterCliOptions,
 ): SquadAgent[] {
   const operatorChoice = isOperatorChoicePolicy(
-    options?.squadCliPolicy ?? "governed",
+    options?.squadCliPolicy ?? "operator-choice",
   );
   const pool = workerCliPool(
     adapters,
-    options?.squadCliPolicy ?? "governed",
+    options?.squadCliPolicy ?? "operator-choice",
   );
   const rosterOrchestratorCli = agents.find(
     (agent) => agent.category === "orchestrator",

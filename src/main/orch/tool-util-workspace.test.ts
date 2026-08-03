@@ -53,9 +53,9 @@ const stubs = vi.hoisted(() => ({
     seniorMode: false,
     designPro: false,
     squadCliPolicy: 'operator-choice',
-    agentAttestationGate: undefined as 'required' | undefined,
+    agentAttestationGate: 'off' as 'off' | 'required',
   },
-  issueAgentIdentityRequired: vi.fn(),
+  issueAgentIdentityBestEffort: vi.fn(),
 }));
 
 vi.mock('./workspace-path', () => ({ resolveCwdForScope: stubs.resolveCwdForScope }));
@@ -174,7 +174,7 @@ vi.mock('./ponytail', () => ({ PONYTAIL_RULES: '' }));
 vi.mock('./engineering-charter', () => ({ ENGINEERING_CHARTER: '' }));
 vi.mock('./design-charter', () => ({ DESIGN_CHARTER: '' }));
 vi.mock('./agent-identity-spawn', () => ({
-  issueAgentIdentityRequired: stubs.issueAgentIdentityRequired,
+  issueAgentIdentityBestEffort: stubs.issueAgentIdentityBestEffort,
 }));
 vi.mock('../persistence/settings-store', () => ({
   getOrchSettings: vi.fn(() => stubs.orchSettings),
@@ -211,7 +211,7 @@ describe('agent pane workspace confinement', () => {
     stubs.requestPaneClose.mockResolvedValue(true);
     stubs.terminateSession.mockResolvedValue(true);
     stubs.taskDispatchesList.mockReturnValue([]);
-    stubs.orchSettings.agentAttestationGate = undefined;
+    stubs.orchSettings.agentAttestationGate = 'off';
   });
 
   it('pins every orchestration spawn to the canonical active workspace', async () => {
@@ -264,7 +264,7 @@ describe('agent pane workspace confinement', () => {
     );
   });
 
-  it('issues the Main-held identity before a renderer-backed mission spawn', async () => {
+  it('best-effort issues identity before a renderer-backed mission spawn', async () => {
     stubs.orchSettings.agentAttestationGate = 'required';
 
     await spawnPaneAndMaybePrompt({
@@ -276,7 +276,7 @@ describe('agent pane workspace confinement', () => {
       executionScope: taskExecutionScope,
     });
 
-    expect(stubs.issueAgentIdentityRequired).toHaveBeenCalledWith({
+    expect(stubs.issueAgentIdentityBestEffort).toHaveBeenCalledWith({
       missionId: 'm1',
       scope,
       agentId: 'Worker A',

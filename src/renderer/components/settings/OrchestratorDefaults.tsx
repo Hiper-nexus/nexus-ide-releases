@@ -38,7 +38,7 @@ function isGatewayUrlAcceptable(value: string): boolean {
 const SQUAD_CLI_POLICY_LABELS: Record<OrchSettings["squadCliPolicy"], string> =
   {
     "operator-choice": "Autopiloto — qualquer CLI autenticada + rede (padrão)",
-    governed: "Hardened — sandbox e CLIs qualificadas",
+    governed: "Hardened — sandbox e CLIs qualificadas (opt-in)",
   };
 
 function selectDefaults(settings: OrchSettings): OrchestratorDefaultsValue {
@@ -403,8 +403,9 @@ export function OrchestratorDefaults() {
       <p className="settings-field__note">
         Padrão: autopiloto — monta o squad com qualquer CLI autenticada, mantém
         autoaprovação e acesso de rede, trabalha em worktree isolado e só o
-        Nexus faz o merge validado. Hardened adiciona sandbox de processo e a
-        lista estreita de CLIs qualificadas.
+        Nexus faz o merge validado. Sem Seatbelt no pane e sem atestação crypto
+        no handoff. Hardened (opt-in) adiciona sandbox de processo, ladder
+        estreita de CLIs e atestação se você reativar o gate.
       </p>
 
       <div className="settings-orchestrator__grid">

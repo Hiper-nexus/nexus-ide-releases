@@ -1,10 +1,14 @@
 /**
- * Issue persistent agent attestation at spawn time (best-effort log on
- * failure — spawn itself must not die because the vault is briefly locked,
- * but the handoff gate will fail closed later if material is missing when
- * required).
+ * Issue persistent agent attestation at spawn time.
+ *
+ * Product floor (Autopilot / Overclock-order): `agentAttestationGate` defaults
+ * to `off`, so this is a no-op on the critical path. When Hardened enables
+ * `required`, prefer {@link issueAgentIdentityBestEffort} at spawn so a locked
+ * vault never blocks the first PTY — handoff still fails closed later if the
+ * material is missing.
  */
 import type { ProjectExecutionScope } from '../../shared/types';
+import { isAgentAttestationRequired } from '../../shared/settings-types';
 import { getOrchSettings } from '../persistence/settings-store';
 import { getMissionEventRuntimeManager } from './mission-event-emit';
 import {
@@ -31,10 +35,10 @@ export function issueAgentIdentityRequired(input: {
   readonly scope: Readonly<ProjectExecutionScope>;
   readonly agentId: string;
 }): void {
-  // Test/legacy callers that explicitly omit the gate retain the pre-identity
-  // spawn contract. Production defaults the setting to `required`, so a vault
-  // or migration failure blocks the spawn before a child can become orphaned.
-  if (getOrchSettings().agentAttestationGate !== 'required') return;
+  // Only when Hardened crypto handoffs are explicitly enabled.
+  if (!isAgentAttestationRequired(getOrchSettings().agentAttestationGate)) {
+    return;
+  }
   withMissionWriteDatabase(input.scope, (db) => {
     const window = defaultHandoffAttestationWindow(
       Math.floor(Date.now() / 1000),
@@ -50,6 +54,7 @@ export function issueAgentIdentityRequired(input: {
   });
 }
 
+/** Spawn path: never throw — PTY availability beats keyring readiness. */
 export function issueAgentIdentityBestEffort(input: {
   readonly missionId: string;
   readonly scope: Readonly<ProjectExecutionScope>;
