@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { Group, Panel, Separator } from 'react-resizable-panels';
 import type { LayoutNode } from '../../shared/types';
 import { useLayoutStore } from '../state/layout-store';
@@ -39,8 +39,13 @@ function renderNode(node: LayoutNode): React.ReactNode {
 export function PaneGrid() {
   const root = useLayoutStore((s) => s.root);
   const maximizedPaneId = useLayoutStore((s) => s.maximizedPaneId);
-  const maximizedPane =
-    maximizedPaneId ? listPanes(root).find((pane) => pane.id === maximizedPaneId) : null;
+  const maximizedPane = useMemo(
+    () =>
+      maximizedPaneId
+        ? listPanes(root).find((pane) => pane.id === maximizedPaneId) ?? null
+        : null,
+    [root, maximizedPaneId],
+  );
 
   // Dispose terminals for panes that have left the tree (after close).
   useEffect(() => {

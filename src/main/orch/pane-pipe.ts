@@ -39,7 +39,11 @@ import {
 
 const MAX_PIPES_PER_PARTITION = 64;
 const FLUSH_INTERVAL_MS = 150;
+const FLUSH_INTERVAL_FAST_MS = 50; // Used when queue is deep (high throughput)
+const FLUSH_INTERVAL_SLOW_MS = 300; // Used when queue is shallow (low activity)
+const FAST_FLUSH_THRESHOLD = 32; // Queue depth that triggers fast flush
 const MAX_LINES_PER_FLUSH = 8;
+const MAX_LINES_PER_FLUSH_FAST = 16; // Deliver more lines when queue is deep
 const MAX_QUEUED_LINES = 400;
 const IDLE_THROTTLE_MS = 3_000;
 const IDLE_TAIL_LINES = 60;
@@ -238,12 +242,22 @@ function resolveTargetSession(
 
 function scheduleFlush(partition: PipePartition, pipeId: string): void {
   if (partition.flushTimers.has(pipeId)) return;
+  // Adaptive flush interval: faster when queue is deep (high throughput),
+  // slower when shallow (low activity). This reduces CPU for idle pipes
+  // while keeping latency low for active streams.
+  const queueDepth = partition.outQueues.get(pipeId)?.length ?? 0;
+  const interval =
+    queueDepth >= FAST_FLUSH_THRESHOLD
+      ? FLUSH_INTERVAL_FAST_MS
+      : queueDepth <= 4
+        ? FLUSH_INTERVAL_SLOW_MS
+        : FLUSH_INTERVAL_MS;
   partition.flushTimers.set(
     pipeId,
     setTimeout(() => {
       partition.flushTimers.delete(pipeId);
       flushQueue(partition, pipeId);
-    }, FLUSH_INTERVAL_MS),
+    }, interval),
   );
 }
 
@@ -263,7 +277,13 @@ function flushQueue(partition: PipePartition, pipeId: string): void {
   }
   if (!isSessionInjectableIdle(targetSessionId)) return;
 
-  const batch = queue.splice(0, MAX_LINES_PER_FLUSH);
+  // Adaptive batch size: deliver more lines when queue is deep to drain
+  // faster, reducing latency for high-throughput streams.
+  const maxLines =
+    queue.length >= FAST_FLUSH_THRESHOLD
+      ? MAX_LINES_PER_FLUSH_FAST
+      : MAX_LINES_PER_FLUSH;
+  const batch = queue.splice(0, maxLines);
   let delivered = 0;
   for (const line of batch) {
     partition.guard.markInjected(targetSessionId, line);

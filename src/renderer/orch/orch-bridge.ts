@@ -68,6 +68,27 @@ function snapshotPanes(): PaneRegistryEntry[] {
   }));
 }
 
+/**
+ * Coalesced pane sync: multiple rapid state changes (layout + session + state)
+ * collapse into a single IPC call per animation frame. Prevents IPC storms
+ * when spawning/closing multiple panes simultaneously.
+ */
+let syncPanesScheduled = false;
+function scheduleSyncPanes(): void {
+  if (syncPanesScheduled) return;
+  syncPanesScheduled = true;
+  requestAnimationFrame(() => {
+    syncPanesScheduled = false;
+    window.nexus.orch.syncPanes(snapshotPanes());
+  });
+}
+
+/** Immediate sync for critical paths (cleanup, final mirror). */
+function syncPanesNow(): void {
+  syncPanesScheduled = false; // Cancel any pending rAF
+  window.nexus.orch.syncPanes(snapshotPanes());
+}
+
 function cleanupFailedOrchPane(
   request: { readonly requestId: string; readonly paneId: string },
   paneId: string | null,
@@ -88,7 +109,7 @@ function cleanupFailedOrchPane(
   }
   // Explicit final mirror: layout subscriptions also publish changes, but the
   // Main result must never overtake the cleanup snapshot.
-  window.nexus.orch.syncPanes(snapshotPanes());
+  syncPanesNow();
 }
 
 const recoveryInFlight = new Set<string>();
@@ -436,7 +457,7 @@ async function recoverMissionPane(
     }
 
     useOrchStore.getState().bindPaneMission(req.paneId, req.missionId);
-    window.nexus.orch.syncPanes(snapshotPanes());
+    syncPanesNow(); // Critical: main needs latest state before prompt injection
     if (
       !(await submitPromptToPaneConfirmed(
         req.paneId,
@@ -456,7 +477,7 @@ async function recoverMissionPane(
         throw new Error('fresh pane session was not rebound to mission');
       }
     }
-    window.nexus.orch.syncPanes(snapshotPanes());
+    scheduleSyncPanes(); // Final state update, can be coalesced
     return {
       requestId: req.requestId,
       ok: true,
@@ -466,7 +487,7 @@ async function recoverMissionPane(
   } catch (error) {
     if (recoveryOwned) {
       cancelPaneRecovery(req.paneId, replacementSessionId);
-      window.nexus.orch.syncPanes(snapshotPanes());
+      syncPanesNow(); // Critical cleanup path
     }
     return {
       requestId: req.requestId,
@@ -538,7 +559,7 @@ export function useOrchBridge(): void {
               });
               return;
             }
-            window.nexus.orch.syncPanes(snapshotPanes());
+            syncPanesNow(); // Critical: main needs state before result
             window.nexus.orch.sendPaneSpawnResult({
               requestId: req.requestId,
               ok: true,
@@ -582,7 +603,7 @@ export function useOrchBridge(): void {
               throw new Error('browser pane identity mismatch');
             }
             await waitForBrowserPaneCreated(paneId);
-            window.nexus.orch.syncPanes(snapshotPanes());
+            syncPanesNow(); // Critical: main needs state before result
             window.nexus.orch.sendBrowserOpenResult({
               requestId: req.requestId,
               ok: true,
@@ -591,7 +612,7 @@ export function useOrchBridge(): void {
           } catch (err) {
             if (paneId) {
               useLayoutStore.getState().close(paneId, 'browser-open-failed');
-              window.nexus.orch.syncPanes(snapshotPanes());
+              syncPanesNow(); // Critical cleanup
             }
             window.nexus.orch.sendBrowserOpenResult({
               requestId: req.requestId,
@@ -619,7 +640,7 @@ export function useOrchBridge(): void {
           }
         }
         useLayoutStore.getState().close(paneId, 'orch-close-request');
-        window.nexus.orch.syncPanes(snapshotPanes());
+        syncPanesNow(); // Critical: close request needs immediate sync
       }),
 
       window.nexus.orch.onMissionsChanged((missions) => {
@@ -690,6 +711,7 @@ export function useOrchBridge(): void {
     // Pane mirror, fully event-driven (no heartbeat): push on every layout
     // change AND when a pane's sessionId materializes after its async spawn —
     // the exact event the old 1s setInterval was polling for.
+    // Coalesced via rAF to batch rapid successive changes into one IPC call.
     const unsubLayout = useLayoutStore.subscribe(() => {
       // Bindings pane→missão de panes que saíram do layout morrem junto —
       // senão a missão deslocada fica "aberta" para sempre (não-clicável).
@@ -697,19 +719,19 @@ export function useOrchBridge(): void {
         listPanes(useLayoutStore.getState().root).map((p) => p.id),
       );
       useOrchStore.getState().pruneMissionBindings(live);
-      window.nexus.orch.syncPanes(snapshotPanes());
+      scheduleSyncPanes();
     });
     const unsubSession = onPaneSessionChange(() => {
-      window.nexus.orch.syncPanes(snapshotPanes());
+      scheduleSyncPanes();
     });
     const unsubState = useSessionStateStore.subscribe(() => {
-      window.nexus.orch.syncPanes(snapshotPanes());
+      scheduleSyncPanes();
     });
     // Inbox de notificações de agentes: transições busy→idle sustentado /
     // exited viram itens no sininho da workspace bar (fora do state-store).
     const stopNotifBridge = initAgentNotificationBridge();
     usePlanLaneMetricsStore.getState().hydrate();
-    window.nexus.orch.syncPanes(snapshotPanes());
+    syncPanesNow();
 
     return () => {
       un.forEach((fn) => fn());

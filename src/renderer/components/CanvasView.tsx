@@ -210,17 +210,33 @@ export function CanvasView() {
   );
   const flowRef = useRef<ReactFlowInstance<Node, Edge> | null>(null);
   const [pipeMotionNow, setPipeMotionNow] = useState(() => Date.now());
-  const busyCount = panes.filter((pane) => paneStates.get(pane.id) === 'busy').length;
-  const startingCount = panes.filter((pane) => {
-    if (pane.kind === 'browser') return false;
-    const state = paneStates.get(pane.id);
-    return state === undefined || state === 'spawning';
-  }).length;
-  const unavailableCount = panes.filter((pane) => {
-    const state = paneStates.get(pane.id);
-    return state === 'exited' || state === 'hibernated';
-  }).length;
-  const activeMissionCount = new Set(Object.values(paneMissions)).size;
+
+  // Memoize derived counts to avoid O(n) iteration on every render.
+  const busyCount = useMemo(
+    () => panes.filter((pane) => paneStates.get(pane.id) === 'busy').length,
+    [panes, paneStates],
+  );
+  const startingCount = useMemo(
+    () =>
+      panes.filter((pane) => {
+        if (pane.kind === 'browser') return false;
+        const state = paneStates.get(pane.id);
+        return state === undefined || state === 'spawning';
+      }).length,
+    [panes, paneStates],
+  );
+  const unavailableCount = useMemo(
+    () =>
+      panes.filter((pane) => {
+        const state = paneStates.get(pane.id);
+        return state === 'exited' || state === 'hibernated';
+      }).length,
+    [panes, paneStates],
+  );
+  const activeMissionCount = useMemo(
+    () => new Set(Object.values(paneMissions)).size,
+    [paneMissions],
+  );
 
   const centerPanes = useCallback(() => {
     const reduceMotion = window.matchMedia?.(

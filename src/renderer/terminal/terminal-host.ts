@@ -1312,6 +1312,20 @@ export function blurHost(paneId: string): void {
 }
 
 /**
+ * Force a repaint when a pane becomes visible again (e.g., after
+ * IntersectionObserver detects it re-entered the viewport). This ensures
+ * the terminal content is up-to-date after being hidden.
+ */
+export function refreshHost(paneId: string): void {
+  const host = hosts.get(paneId);
+  if (!host || host.disposed || !host.opened) return;
+  // Resume WebGL rendering if it was evicted while hidden.
+  resumeVisibleHost(paneId, host);
+  // Force a full repaint of the visible area.
+  host.term.refresh(0, host.term.rows - 1);
+}
+
+/**
  * Rola o pane até a última mensagem e devolve o foco.
  *
  * Dois níveis de scroll coexistem: o scrollback do xterm E o transcript

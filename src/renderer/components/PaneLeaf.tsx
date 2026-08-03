@@ -1,9 +1,9 @@
-import { useLayoutEffect, useRef } from 'react';
+import { useLayoutEffect, useRef, useState, useCallback } from 'react';
 import type { PaneModel } from '../../shared/types';
 import { useLayoutStore } from '../state/layout-store';
 import { useSessionStateStore } from '../state/session-state-store';
 import { isStructuralPlaceholderPane } from '../lib/split-tree';
-import { attachHost, blurHost, focusHost } from '../terminal/terminal-host';
+import { attachHost, blurHost, focusHost, refreshHost } from '../terminal/terminal-host';
 import { BrowserPane } from './BrowserPane';
 import { PaneActivityStrip } from './PaneActivityStrip';
 import { PaneBirthOverlay } from './PaneBirthOverlay';
@@ -60,6 +60,42 @@ function TerminalPaneLeaf({ pane }: Props) {
   // here restarts border animations and reads as terminal flicker.
   const sessionState = useSessionStateStore((s) => s.displayStates.get(pane.id));
 
+  // Visible-only rendering: pause terminal rendering when off-screen.
+  // The browser skips painting hidden elements, and we force a repaint
+  // when the pane re-enters the viewport.
+  const [isVisible, setIsVisible] = useState(true);
+  const observerRef = useRef<IntersectionObserver | null>(null);
+
+  const handleIntersection = useCallback(
+    (entries: IntersectionObserverEntry[]) => {
+      for (const entry of entries) {
+        const nowVisible = entry.isIntersecting;
+        setIsVisible((prev) => {
+          if (prev === nowVisible) return prev;
+          // Force repaint when becoming visible again
+          if (nowVisible) {
+            requestAnimationFrame(() => refreshHost(pane.id));
+          }
+          return nowVisible;
+        });
+      }
+    },
+    [pane.id],
+  );
+
+  useLayoutEffect(() => {
+    const slot = slotRef.current;
+    if (!slot) return;
+    observerRef.current = new IntersectionObserver(handleIntersection, {
+      root: null,
+      threshold: 0.1, // Consider visible when 10% is in viewport
+    });
+    observerRef.current.observe(slot);
+    return () => {
+      observerRef.current?.disconnect();
+    };
+  }, [handleIntersection]);
+
   useLayoutEffect(() => {
     const slot = slotRef.current;
     if (slot) attachHost(pane, slot);
@@ -85,7 +121,11 @@ function TerminalPaneLeaf({ pane }: Props) {
       {/* Irmão do slot, nunca filho: o nó do terminal é re-parentado para
           dentro de `pane__terminal` por fora do React. */}
       {pane.kind === 'cli-agent' && <PaneBirthOverlay pane={pane} />}
-      <div className="pane__terminal" ref={slotRef} />
+      <div
+        className="pane__terminal"
+        ref={slotRef}
+        style={isVisible ? undefined : { visibility: 'hidden' }}
+      />
     </PaneInteractionSurface>
   );
 }

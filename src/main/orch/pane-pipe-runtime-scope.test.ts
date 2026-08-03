@@ -193,7 +193,8 @@ describe('pane pipe runtime project partitions', () => {
     expect(listPipes(ownerB, scopeB)).toHaveLength(1);
 
     ptyMocks.dataTaps[0]('source-a', 'hello A\n');
-    await vi.advanceTimersByTimeAsync(200);
+    // Adaptive flush: shallow queues (≤4 lines) use 300ms interval
+    await vi.advanceTimersByTimeAsync(350);
 
     expect(ptyMocks.writes).toHaveBeenCalledWith('target-a', 'hello A\r');
     expect(ptyMocks.writes).not.toHaveBeenCalledWith('target-b', 'hello A\r');
