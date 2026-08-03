@@ -57,7 +57,7 @@ export async function promotePlanMissionToExecution(
     usePlanLaneMetricsStore.getState().notePlanPromoted();
     const detail =
       updated.status === 'running'
-        ? 'PREVC ativo; plano selado e nova sessão de execução iniciada.'
+        ? 'Execução iniciada; plano selado e nova sessão materializada.'
         : 'Promoção registrada; o Nexus está materializando a execução.';
     useToastStore.getState().push('success', 'Plano → código', detail);
     return { ok: true, detail };

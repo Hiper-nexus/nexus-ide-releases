@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { compileIntentContract } from "../../shared/mission-intent";
+import type { Handoff, Mission } from "../../shared/orch-types";
 import {
   REAL_MISSION_E2E_GOAL,
   REAL_MISSION_E2E_PRODUCT_WIZARD_ACCEPTANCE_CRITERIA,
@@ -27,6 +28,83 @@ import {
   squad,
   squadWithAgentCli,
 } from "./guided-mission-planner-test-harness";
+import { selectPhysicalPlanHandoff } from "./plan-promotion-authority";
+
+const MULTI_STORY_PLAN = `
+# PRD
+
+### Story 1.1: Login
+
+As a user I want login.
+
+### Story 1.2: Logout
+
+As a user I want logout.
+`;
+
+function promotedMissionWithStories(
+  overrides: Partial<NonNullable<Mission["intentContract"]>> = {},
+): Mission {
+  const base = mission();
+  const planContract = compileIntentContract({
+    goal: base.intentContract!.goal,
+    acceptanceCriteria: [...base.intentContract!.acceptanceCriteria],
+    intentVersion: 2,
+    source: "typed",
+    lane: "plan",
+  });
+  const planMission: Mission = {
+    ...base,
+    intentVersion: 2,
+    orchestratorSessionId: "session-plan-wave",
+    intentContract: {
+      ...planContract,
+      approvedAt: 2,
+      dispatchedAt: 2,
+    },
+  };
+  const planHandoff: Handoff = {
+    id: "handoff-plan-wave",
+    missionId: planMission.id,
+    sessionId: "session-plan-wave",
+    fromAgent: "Maestro",
+    authorityOrigin: "agent",
+    mcpProvenance: {
+      receiptId: "receipt-plan-wave",
+      toolCallId: "tool-plan-wave",
+      toolName: "nexus_handoff_submit",
+      source: "http-mcp",
+      authoritySha256: "b".repeat(64),
+      missionId: planMission.id,
+      sessionId: "session-plan-wave",
+      issuedAt: 2,
+    },
+    status: "success",
+    summary: MULTI_STORY_PLAN,
+    artifacts: [],
+    evidenceIds: [],
+    evidenceTrust: "unverified",
+    claimTrust: "untrusted",
+    delivered: true,
+    deliveryState: "submitted",
+    submittedAt: 2,
+    createdAt: 2,
+  };
+  const promotedPlan = selectPhysicalPlanHandoff({
+    mission: planMission,
+    handoffs: {
+      list: () => [planHandoff],
+      get: () => planHandoff,
+    },
+  });
+  return mission({
+    intentContract: {
+      ...base.intentContract!,
+      promotedPlan,
+      ...overrides,
+    },
+  });
+}
 
 describe("Guided Planner v2", () => {
   it("names an unapproved intent as unbound instead of accusing an intact squad", () => {
@@ -641,5 +719,35 @@ describe("saved-team (mission-runtime) sealing", () => {
       reason: "squad-not-engine-generated",
     });
     expect(h.createPlanAtomically).not.toHaveBeenCalled();
+  });
+
+  it("honors forced orchestrationMode on promoted multi-story seal", () => {
+    const guided = promotedMissionWithStories({ orchestrationMode: "guided" });
+    const guidedHarness = harness({ currentMission: guided });
+    expect(
+      ensureGuidedMissionPlan(guidedHarness.suite, guided.id, guidedHarness.deps),
+    ).toMatchObject({
+      applicable: true,
+      sealed: true,
+      topology: "delivery",
+    });
+
+    const pack = promotedMissionWithStories({ orchestrationMode: "pack" });
+    const packHarness = harness({ currentMission: pack });
+    expect(
+      ensureGuidedMissionPlan(packHarness.suite, pack.id, packHarness.deps),
+    ).toMatchObject({
+      applicable: true,
+      sealed: true,
+      topology: "wave-pack",
+    });
+    const packRows = packHarness.createPlanAtomically.mock.calls[0]![0].rows;
+    expect(
+      packRows.every((row) =>
+        decodeTaskScheduleDetail(row.detail).meta?.ownership.domains.includes(
+          "wave-pack",
+        ),
+      ),
+    ).toBe(true);
   });
 });

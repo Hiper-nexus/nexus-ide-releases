@@ -104,16 +104,10 @@ export function parseRecoveryAttemptBlock(
   return null;
 }
 
-/** Replaces an existing recovery-attempt block, or appends the new one. */
-export function replaceRecoveryAttemptBlock(
-  description: string,
-  block: string,
-): string {
+/** Removes the recovery-attempt block (marker through its last line). */
+export function stripRecoveryAttemptBlock(description: string): string {
   const markerIndex = description.lastIndexOf(RECOVERY_ATTEMPT_BLOCK_MARKER);
-  if (markerIndex < 0) {
-    const trimmed = description.trimEnd();
-    return trimmed ? `${trimmed}\n\n${block}` : block;
-  }
+  if (markerIndex < 0) return description;
   const before = description.slice(0, markerIndex).trimEnd();
   const headerIndex = description.indexOf('## ', markerIndex);
   const nextSectionIndex = description.indexOf(
@@ -122,5 +116,14 @@ export function replaceRecoveryAttemptBlock(
   );
   const after =
     nextSectionIndex >= 0 ? description.slice(nextSectionIndex + 1) : '';
-  return [before, block, after].filter(Boolean).join('\n\n');
+  return [before, after].filter(Boolean).join('\n\n');
+}
+
+/** Replaces an existing recovery-attempt block, or appends the new one. */
+export function replaceRecoveryAttemptBlock(
+  description: string,
+  block: string,
+): string {
+  const stripped = stripRecoveryAttemptBlock(description).trimEnd();
+  return stripped ? `${stripped}\n\n${block}` : block;
 }

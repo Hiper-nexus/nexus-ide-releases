@@ -99,6 +99,28 @@ describe("resolveMissionOrchestrationMode", () => {
       }),
     ).toBe("guided");
   });
+
+  it("maps forced guided with ≥2 stories to delivery topology", () => {
+    const mode = resolveMissionOrchestrationMode({
+      risk: "normal",
+      hasPromotedPlan: true,
+      extractedStoryCount: 3,
+      forcedMode: "guided",
+    });
+    expect(mode).toBe("guided");
+    expect(topologyForOrchestrationMode(mode)).toBe("delivery");
+  });
+
+  it("maps forced pack with ≥2 stories to wave-pack topology", () => {
+    const mode = resolveMissionOrchestrationMode({
+      risk: "destructive",
+      hasPromotedPlan: true,
+      extractedStoryCount: 3,
+      forcedMode: "pack",
+    });
+    expect(mode).toBe("pack");
+    expect(topologyForOrchestrationMode(mode)).toBe("wave-pack");
+  });
 });
 
 describe("planWavePackTasks", () => {

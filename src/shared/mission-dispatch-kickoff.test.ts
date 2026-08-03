@@ -86,6 +86,43 @@ describe('guided Main-owned PREVC kickoff', () => {
     expect(prompt).toMatch(/Feche com status=done somente após/i);
   });
 
+  it('teaches Main-owned fast path for delivery without Guided PREVC', () => {
+    const prompt = buildIntentDispatchKickoffPrompt({
+      squad,
+      missionId: 'mission-fast',
+      goal: 'Entregar a feature vibe',
+      acceptanceCriteria: ['Feature validada'],
+      risk: 'normal',
+      maxWorkers: 4,
+      standardTopology: 'delivery',
+      guidedPrevcRequired: false,
+    });
+
+    expect(prompt).toMatch(/Fast path: PREVC Guided não aplica/i);
+    expect(prompt).not.toContain('nexus_handoff_ack');
+    expect(prompt).not.toMatch(/Feche com status=done/i);
+    expect(prompt).toMatch(/motor Nexus marca done sozinho/i);
+    expect(prompt).toMatch(/ACK manual não é exigido \(no_manual_ack_required\)/i);
+  });
+
+  it('keeps Pack kickoff free of PREVC ceremony and serial story doctrine', () => {
+    const prompt = buildIntentDispatchKickoffPrompt({
+      squad,
+      missionId: 'mission-pack',
+      goal: 'Executar o plano promovido em ondas',
+      acceptanceCriteria: ['Stories entregues'],
+      risk: 'normal',
+      maxWorkers: 6,
+      standardTopology: 'wave-pack',
+      guidedPrevcRequired: false,
+    });
+
+    expect(prompt).toMatch(/Wave Pack: PREVC Guided não aplica/i);
+    expect(prompt).toMatch(/uma task por story/i);
+    expect(prompt).not.toContain('nexus_handoff_ack');
+    expect(prompt).not.toMatch(/Feche com status=done/i);
+  });
+
   it('keeps ACKs and the ## Maestro consolidation mandatory for fan-out', () => {
     const prompt = buildIntentDispatchKickoffPrompt({
       squad,

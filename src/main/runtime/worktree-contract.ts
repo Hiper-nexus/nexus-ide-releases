@@ -399,10 +399,12 @@ export function exclusiveOwnershipOverlap(
     right.domains.some(
       (domain) => domain.toLocaleLowerCase("en-US") === "wave-pack",
     );
-  if (bothWavePack) {
-    // Mission Wave Pack: shared inventory files are the merge permit, not a
-    // same-mission wave veto. Pairwise exclusivity is wave-pack-story:<id>
-    // (+ symbols). See docs/design/mission-wave-pack.md.
+  if (bothWavePack && context.sameMission) {
+    // Same-mission Wave Pack: shared inventory files are the merge permit, not
+    // a wave veto. Pairwise exclusivity is wave-pack-story:<id> (+ symbols).
+    // Across missions, keep full file exclusivity — two Pack missions on the
+    // same checkout must not silently share active worktrees.
+    // See docs/design/mission-wave-pack.md.
     return Object.freeze({
       files: Object.freeze([]),
       symbols: full.symbols,

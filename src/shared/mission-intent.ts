@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { resolveMissionBlockingIntentState } from './mission-blocking';
 import { classifyStandardMissionTopology } from './mission-topology';
+import { MISSION_ORCHESTRATION_MODES } from './mission-wave-pack';
 
 export {
   missionBlockKindSchema,
@@ -194,6 +195,11 @@ export const missionIntentContractSchema = z.object({
   executionMode: missionExecutionModeSchema,
   /** Optional; missing/legacy contracts default to standard. */
   lane: missionLaneSchema.optional(),
+  /**
+   * Optional operator override for Livre / Pack / Guiado (Wave Pack).
+   * Missing/legacy contracts leave mode selection to the pure resolver.
+   */
+  orchestrationMode: z.enum(MISSION_ORCHESTRATION_MODES).optional(),
   contextPolicy: missionContextPolicySchema,
   approvedAt: z.number().int().nonnegative().optional(),
   /**

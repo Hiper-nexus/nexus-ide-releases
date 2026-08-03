@@ -45,3 +45,11 @@ before the first PTY. Sensitive/destructive work still does.
 - Hibernation
 - Wizard mode toggle UI (resolver already supports `forcedMode`)
 - Cutting squadRevisionHash / runtime equality (still protect in-flight missions)
+
+## Review fix log (2026-08-03)
+
+| Gap | Fix |
+|-----|-----|
+| Kickoff taught PREVC/ACK/done on fast-path delivery | `standardStateLines` / `standardSequenceLines` treat `topology=delivery` + `guidedPrevcRequired=false` as Main-owned motor (no ceremony) |
+| Vacancy showed `prevc_freeze` when skipped | Bootstrap emits `prevc_freeze` only when `guidedPrevcRequired` |
+| Pack peers ignored files across missions | `exclusiveOwnershipOverlap` relaxes Pack inventory only when `sameMission` |

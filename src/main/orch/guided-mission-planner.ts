@@ -740,6 +740,7 @@ function resolveSealTopology(mission: Mission): StandardMissionTopology {
     risk: contract.risk,
     hasPromotedPlan: true,
     extractedStoryCount: stories.length,
+    forcedMode: contract.orchestrationMode ?? null,
   });
   return topologyForOrchestrationMode(mode, "delivery");
 }

@@ -26,6 +26,7 @@ import {
   runtimeAuthorityMismatches,
   stopMissionOrchestratorBeforePlanPromotionForScope,
   TECHNICAL_RECOVERY_MAX_ATTEMPTS,
+  RECOVERY_ATTEMPT_TIMEOUT_MS,
   type MissionOrchestratorBootstrapDeps,
   type DeadGraphReapprovalDeps,
   type PlanPromotionRestartDeps,
@@ -1267,7 +1268,6 @@ describe('initial main-owned orchestrator bootstrap', () => {
       'subscription_auth',
       'plan_baseline',
       'squad_sealed',
-      'prevc_freeze',
       'runtime_checked',
       'drift_retired',
       'attachments_verified',
@@ -1275,6 +1275,31 @@ describe('initial main-owned orchestrator bootstrap', () => {
       'kickoff_submitted',
       'kickoff_accepted',
     ]);
+  });
+
+  it('emits prevc_freeze only when Guided PREVC is required', async () => {
+    const value = harness();
+    armGuidedMission(value);
+    const steps: string[] = [];
+    value.deps.emitProgress = (_scope, missionId, step) => {
+      expect(missionId).toBe(value.mission.id);
+      steps.push(step);
+    };
+
+    await expect(
+      new MissionOrchestratorBootstrapService(value.deps).bootstrap(
+        scope,
+        value.mission.id,
+      ),
+    ).resolves.toMatchObject({ ok: true });
+
+    expect(steps).toContain('prevc_freeze');
+    expect(steps.indexOf('squad_sealed')).toBeLessThan(
+      steps.indexOf('prevc_freeze'),
+    );
+    expect(steps.indexOf('prevc_freeze')).toBeLessThan(
+      steps.indexOf('runtime_checked'),
+    );
   });
 
   it('keeps the bootstrap alive when progress emission throws', async () => {
@@ -1921,6 +1946,102 @@ describe('initial main-owned orchestrator bootstrap', () => {
 
     await recovery.reconcile();
     expect(resumeBlocked).toHaveBeenCalledTimes(TECHNICAL_RECOVERY_MAX_ATTEMPTS);
+  });
+
+  it('counts a hung resume after the attempt timeout instead of waiting forever', async () => {
+    vi.useFakeTimers();
+    try {
+      const value = harness();
+      const blocked: Mission = {
+        ...value.mission,
+        status: 'blocked',
+        intentState: 'blocked_technical',
+        updatedAt: 10,
+      };
+      const resumeBlocked = vi.fn(() => new Promise<never>(() => {}));
+      const persistRecoveryAttempt = vi.fn();
+      const warn = vi.fn();
+      const recovery = new MissionOrchestratorBootstrapRecovery({
+        listScopes: () => [scope],
+        listBootstrapCandidates: () => [blocked],
+        bootstrap: vi.fn(),
+        resumeBlocked,
+        persistRecoveryAttempt,
+        now: () => 1_000,
+        warn,
+      });
+
+      const pass = recovery.reconcile();
+      await vi.advanceTimersByTimeAsync(RECOVERY_ATTEMPT_TIMEOUT_MS);
+      await pass;
+
+      expect(resumeBlocked).toHaveBeenCalledOnce();
+      expect(persistRecoveryAttempt).toHaveBeenCalledWith(scope, blocked.id, {
+        attempt: 1,
+        reason: expect.stringMatching(/não respondeu em 120000ms/),
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('exhausts the lane after eight hung attempts, persisting each one', async () => {
+    vi.useFakeTimers();
+    try {
+      const value = harness();
+      const blocked: Mission = {
+        ...value.mission,
+        status: 'blocked',
+        intentState: 'blocked_technical',
+        updatedAt: 10,
+      };
+      const resumeBlocked = vi.fn(() => new Promise<never>(() => {}));
+      const persistRecoveryAttempt = vi.fn();
+      const exhaustTechnicalRecovery = vi.fn();
+      let now = 1_000;
+      const recovery = new MissionOrchestratorBootstrapRecovery({
+        listScopes: () => [scope],
+        listBootstrapCandidates: () => [blocked],
+        bootstrap: vi.fn(),
+        resumeBlocked,
+        persistRecoveryAttempt,
+        exhaustTechnicalRecovery,
+        now: () => now,
+        warn: vi.fn(),
+      });
+
+      for (let i = 0; i < TECHNICAL_RECOVERY_MAX_ATTEMPTS; i += 1) {
+        const pass = recovery.reconcile();
+        await vi.advanceTimersByTimeAsync(RECOVERY_ATTEMPT_TIMEOUT_MS);
+        await pass;
+        now += 120_000; // clear the bounded-backoff window
+      }
+
+      expect(resumeBlocked).toHaveBeenCalledTimes(
+        TECHNICAL_RECOVERY_MAX_ATTEMPTS,
+      );
+      expect(persistRecoveryAttempt).toHaveBeenCalledTimes(
+        TECHNICAL_RECOVERY_MAX_ATTEMPTS,
+      );
+      expect(persistRecoveryAttempt).toHaveBeenLastCalledWith(
+        scope,
+        blocked.id,
+        {
+          attempt: TECHNICAL_RECOVERY_MAX_ATTEMPTS,
+          reason: expect.stringMatching(/não respondeu em 120000ms/),
+        },
+      );
+      expect(exhaustTechnicalRecovery).toHaveBeenCalledOnce();
+
+      const extra = recovery.reconcile();
+      await vi.advanceTimersByTimeAsync(RECOVERY_ATTEMPT_TIMEOUT_MS);
+      await extra;
+      expect(resumeBlocked).toHaveBeenCalledTimes(
+        TECHNICAL_RECOVERY_MAX_ATTEMPTS,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('reconciles only missing or torn durable bindings, not a complete legacy pane', () => {
@@ -3404,6 +3525,33 @@ describe('dead task graph reapproval', () => {
       orchestratorSessionId: undefined,
     });
     expect(h.sessionStates.get('session-worker-v2')).toBeNull();
+  });
+
+  it('marks structural identity conflicts terminal so recovery settles without burning attempts', async () => {
+    const h = deadGraphHarness();
+    h.runtimePanes.push({
+      paneId: 'pane-ghost',
+      sessionId: 'session-worker-v2',
+      title: 'Ghost worker',
+      kind: 'cli-agent',
+      state: 'idle',
+      missionId: h.mission.id,
+      role: 'worker',
+      scope,
+      executionScope: scope,
+    });
+
+    const result = await prepareDeadGraphReapprovalForScope(
+      scope,
+      h.mission.id,
+      h.deps,
+    );
+
+    expect(result).toMatchObject({ ok: false });
+    if (!result || result.ok) throw new Error('unreachable');
+    expect(result.error).toContain(TERMINAL_OPERATIONAL_FAILURE_MARKER);
+    expect(result.error).toContain('mais de uma identidade física');
+    expect(h.closed).toHaveLength(0);
   });
 
   it('keeps the mission blocked when one exact physical teardown fails', async () => {

@@ -149,6 +149,12 @@ function standardStateLines(input: IntentDispatchKickoffInput): string[] {
     lines.push(
       '- Wave Pack: PREVC Guided não aplica. O Main despacha stories em paralelo, integra via merge queue e conclui a missão pelo motor.',
     );
+  } else if (input.standardTopology === 'delivery') {
+    // Fast path (docs/design/orch-fast-path.md): risk=normal skips the PREVC
+    // fence, but delivery remains Main-owned — never teach the legacy ceremony.
+    lines.push(
+      '- Fast path: PREVC Guided não aplica nesta missão. O Main despacha o plano selado, integra via merge e conclui pelo motor — sem freeze/Doctor no caminho crítico.',
+    );
   } else {
     lines.push(
       '- PREVC paralelo: o main prepara o contexto sem bloquear os workers e exige as garantias completas somente na promoção final.',
@@ -191,6 +197,18 @@ function standardSequenceLines(input: IntentDispatchKickoffInput): string[] {
       '3. Conduza: acompanhe os especialistas, destrave dependências e mantenha paralelismo dentro do limite. Comandos longos de implementação rodam no worktree da task; acompanhe-os por task, heartbeat e handoff. O Maestro não assume a implementação no checkout de coordenação.',
       '4. A cada entrega: processe o handoff do especialista. Nesta topologia o ACK manual não é exigido (no_manual_ack_required): o Main reconhece cada entrega, integra o resultado e avança o PREVC.',
       '5. Não feche a missão: o motor Nexus conclui o PREVC e marca a missão como done sozinho; nexus_mission_set_status com done é rejeitado nesta topologia. Vigie handoffs e trate bloqueios e escalonamentos dos workers — não faça polling esperando uma chamada proibida.',
+    ];
+  }
+  // Delivery without Guided PREVC = orch fast path. Same Main-owned motor as
+  // above; do not fall through to the legacy ACK/done ceremony (that path
+  // contradicts idle-delivery + tools-domain for topology=delivery).
+  if (input.standardTopology === 'delivery') {
+    return [
+      '1. Comece a execução: o Main já selou o plano desta missão. Não chame freeze, Doctor ou prepare_execution — PREVC Guided não aplica neste fast path.',
+      '2. Consulte nexus_task list. O plano desta intenção já é selado pelo Main: acompanhe e delegue a partir dele. Lista vazia é recuperação transitória do Main; consulte novamente sem criar um plano paralelo.',
+      '3. Conduza: acompanhe os especialistas, destrave dependências e mantenha paralelismo dentro do limite. Comandos longos de implementação rodam no worktree da task; acompanhe-os por task, heartbeat e handoff. O Maestro não assume a implementação no checkout de coordenação.',
+      '4. A cada entrega: processe o handoff do especialista. Nesta topologia o ACK manual não é exigido (no_manual_ack_required): o Main reconhece cada entrega, integra o resultado e avança.',
+      '5. Não feche a missão: o motor Nexus marca done sozinho; nexus_mission_set_status com done é rejeitado nesta topologia. Vigie handoffs e trate bloqueios e escalonamentos dos workers — não faça polling esperando uma chamada proibida.',
     ];
   }
   const lines = [

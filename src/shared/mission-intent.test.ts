@@ -98,6 +98,32 @@ describe('mission intent transitions', () => {
     ).toBe(false);
   });
 
+  it('keeps orchestrationMode optional and accepts Livre/Pack/Guiado overrides', () => {
+    const contract = compileIntentContract({
+      goal: 'Ship multi-story pack',
+      intentVersion: 1,
+    });
+    expect(missionIntentContractSchema.safeParse(contract).success).toBe(true);
+    expect(
+      missionIntentContractSchema.safeParse({
+        ...contract,
+        orchestrationMode: 'pack',
+      }).success,
+    ).toBe(true);
+    expect(
+      missionIntentContractSchema.safeParse({
+        ...contract,
+        orchestrationMode: 'guided',
+      }).success,
+    ).toBe(true);
+    expect(
+      missionIntentContractSchema.safeParse({
+        ...contract,
+        orchestrationMode: 'yolo',
+      }).success,
+    ).toBe(false);
+  });
+
   it('walks the happy path select → goal → compile → start', () => {
     expect(transitionIntentState({ from: 'draft', event: 'select_squad' })).toEqual({
       ok: true,

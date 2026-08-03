@@ -1,6 +1,6 @@
 # ADR — Mission Wave Pack (Livre · Pack · Guiado)
 
-**Status:** Accepted (Wave 0 in progress)  
+**Status:** Accepted (Wave 1 authority field landed; wizard picker optional)  
 **Date:** 2026-08-03  
 **Branch:** `feat/mission-wave-pack`  
 **Owner:** orchestration  
@@ -77,8 +77,11 @@ handoff, merge validation.
    stories parse; happy-path wiring (canonical planner ids, ownership files,
    non-claim `wave-pack`, bootstrap topology, scheduler completion, idle ACK,
    kickoff Pack).
-2. **Wave 1:** operator toggle Livre vs Pack vs Guiado in wizard; builtin
-   story-impl prompt polish beyond kickoff override.
+2. **Wave 1:** optional `orchestrationMode` on the intent contract + plan seal
+   (`forcedMode` → `resolveMissionOrchestrationMode`) so Pack can be forced or
+   suppressed without a wizard redesign. Full Livre/Pack/Guiado picker in the
+   MissionWizard remains an optional follow-up; builtin story-impl prompt polish
+   beyond kickoff override.
 3. **Wave 2:** structured story artifacts (stop relying on markdown parse);
    Pack templates (Landing / SaaS / Fix) with declared fan-out.
 
@@ -92,3 +95,5 @@ handoff, merge validation.
 | Bootstrap PREVC | Promotes `wave-pack` topology from plan result |
 | Completion topology | `missionSchedulerCompletionTopology` detects Pack → legacy complete |
 | Kickoff “uma story” | Pack-specific sequence + promotedPlanBlock |
+| Fast-path kickoff contradicted motor | Delivery without PREVC uses Main-owned sequence (no ACK/done ceremony) |
+| Cross-mission Pack file fence | `exclusiveOwnershipOverlap` requires `sameMission` to ignore inventory |
