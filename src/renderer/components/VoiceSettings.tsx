@@ -7,6 +7,7 @@ import {
 } from '../state/ephemeral-draft-store';
 import {
   accelFromCode,
+  dictationEnPresetPatch,
   normalizeKeyCode,
   GEMINI_LIVE_VOICE_OPTIONS,
   OPENAI_REALTIME_VOICE_OPTIONS,
@@ -111,7 +112,7 @@ function codeFromKeyboardEvent(e: KeyboardEvent): string | null {
 
 /**
  * Turn the EXACT pressed combo into an Electron accelerator. Safety rails:
- * F-keys may be bare (F6 alone can't collide with typing); any other key
+ * F-keys and bare Space may be window-scoped (ClockVoice-style); any other key
  * needs ⌘/⌃/⌥ — otherwise pressing it in a terminal would both type AND
  * trigger voice. Returns null (with a hint) while the combo is unsafe.
  */
@@ -126,11 +127,15 @@ function comboFromKeyboardEvent(
   if (e.shiftKey) mods.push('Shift');
   const isFKey = /^F\d{1,2}$/.test(key);
   const hasStrongMod = e.metaKey || e.ctrlKey || e.altKey;
+  // Bare Space = window-scoped PTT (Overclock ClockVoice). Never OS-global.
+  if (key === 'Space' && !hasStrongMod && !e.shiftKey) {
+    return { accel: 'Space', key: 'Space' };
+  }
   if (!isFKey && !hasStrongMod) {
     return {
       hint: isMac()
-        ? 'Combine com ⌘, ⌃ ou ⌥ (ex.: ⌘⇧Space) — ou use uma tecla F sozinha (ex.: F6).'
-        : 'Combine com Ctrl ou Alt (ex.: Ctrl+Shift+Space) — ou use uma tecla F sozinha (ex.: F6).',
+        ? 'Combine com ⌘, ⌃ ou ⌥ (ex.: ⌘⇧Space), use Space sozinha (ditado na janela), ou uma tecla F (ex.: F6).'
+        : 'Combine com Ctrl ou Alt (ex.: Ctrl+Shift+Space), use Space sozinha (ditado na janela), ou uma tecla F (ex.: F6).',
     };
   }
   return { accel: [...mods, key].join('+'), key };
@@ -937,6 +942,52 @@ return (
                     </label>
                   </div>
 
+                  <div className="voice-settings__dictation-preset">
+                    <button
+                      type="button"
+                      className="agent-picker__btn"
+                      disabled={saving}
+                      title="Segure Space, fale em português, o texto em inglês vai para o terminal focado (Groq)."
+                      onClick={() => {
+                        const preset = dictationEnPresetPatch();
+                        setRouting(preset.routing);
+                        setSpeakMode(preset.speakMode);
+                        setTriggerAccel(preset.shortcut);
+                        setTriggerKey(preset.pushToTalkKeyCode);
+                        setWakeWordOn(preset.wakeWordEnabled);
+                        setJarvisLiveOn(preset.jarvisLiveEnabled);
+                        setLiveRealtime(false);
+                        setSttProvider(preset.sttProvider);
+                        setError(null);
+                        setSaving(true);
+                        void window.nexus.voice
+                          .setConfig({
+                            ...preset,
+                            jarvisLiveTransport: 'classic',
+                          })
+                          .then((next) => {
+                            setInfo(next);
+                            setTestResult(
+                              'Ditado EN ativo: segure Space → fale → solte. Texto em inglês no pane focado.',
+                            );
+                          })
+                          .catch((err) => {
+                            setError(
+                              err instanceof Error ? err.message : String(err),
+                            );
+                          })
+                          .finally(() => setSaving(false));
+                      }}
+                    >
+                      Ditado EN (Space + Groq)
+                    </button>
+                    <p className="voice-settings__hint">
+                      Paridade ClockVoice: segura Espaço no terminal, fala, solta —
+                      prompt em inglês no pane ativo. Requer <code>GROQ_API_KEY</code>.
+                      Com este modo, Space não digita espaço no terminal.
+                    </p>
+                  </div>
+
                   <div className="voice-settings__shortcut-row">
                     <label className="agent-picker__label">
                       Atalho
@@ -957,7 +1008,11 @@ return (
                       </button>
                     </label>
                     <span className="voice-settings__shortcut-preview">
-                      {info.hotkeyArmed === false ? (
+                      {info.hotkeyScope === 'window' ? (
+                        <span title="Atalho só nesta janela (estilo ClockVoice).">
+                          na janela
+                        </span>
+                      ) : info.hotkeyArmed === false ? (
                         <span
                           className="voice-settings__shortcut-warn"
                           title="Atalho global não registrou: provável conflito. Escolha outro combo."

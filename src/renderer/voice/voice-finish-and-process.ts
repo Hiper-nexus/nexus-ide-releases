@@ -1017,6 +1017,13 @@ export async function finishAndProcess(
       return;
     }
 
+    // Ditado (speakMode off): inject and done — Overclock ClockVoice does not
+    // wait for the agent reply or speak a summary back.
+    if (store.info?.speakMode === 'off') {
+      store.setStatus('idle');
+      return;
+    }
+
     const reply = await captureResponse(paneId, transcript);
     if (reply.trim()) {
       store.setSpoken(reply);

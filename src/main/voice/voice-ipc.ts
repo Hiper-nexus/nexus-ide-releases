@@ -6,6 +6,7 @@ import {
   type WebContents,
 } from "electron";
 import { VOICE_CHANNELS } from "../../shared/voice-channels";
+import { isWindowScopedShortcut } from "../../shared/voice-config";
 import {
   transcribeRequestSchema,
   speakRequestSchema,
@@ -605,6 +606,13 @@ function wireHotkey(): void {
   }
   const config = getVoiceConfig();
   const mainKeyCode = config.input.pushToTalkKey?.code ?? "Space";
+  // Bare Space (ClockVoice-style) is owned by the focused renderer — never
+  // register it as an OS-global accelerator.
+  if (isWindowScopedShortcut(config.input.shortcut)) {
+    disposeVoiceHotkey();
+    setHotkeyMode("hold");
+    return;
+  }
   const mode = registerVoiceHotkey(config.input.shortcut, mainKeyCode, {
     onStart: () => sendPttAction(VOICE_CHANNELS.pttStart),
     onStop: () => sendPttAction(VOICE_CHANNELS.pttStop),
@@ -625,10 +633,17 @@ function voiceCaptureAllowed(): boolean {
 /** Runtime snapshot + whether the OS actually accepted the accelerator. */
 function fullInfo(): VoiceRuntimeInfo {
   const aec = getAecRuntimeStatus(app.isPackaged ? process.resourcesPath : undefined);
+  const info = buildRuntimeInfo();
+  const captureAllowed = voiceCaptureAllowed();
+  // Window-scoped PTT (bare Space) never registers with the OS — the renderer
+  // owns the key while Nexus is focused. Report armed whenever capture is on.
+  const hotkeyArmed =
+    captureAllowed &&
+    (info.hotkeyScope === 'window' || isVoiceHotkeyArmed());
   return {
-    ...buildRuntimeInfo(),
-    captureAllowed: voiceCaptureAllowed(),
-    hotkeyArmed: voiceCaptureAllowed() && isVoiceHotkeyArmed(),
+    ...info,
+    captureAllowed,
+    hotkeyArmed,
     wakeLockHolderPid: wakeLockHolder(),
     aec: {
       backend: aec.backend,

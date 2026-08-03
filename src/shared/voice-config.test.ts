@@ -9,6 +9,8 @@ import {
   migrateLegacyVoiceConfig,
   promoteJarvisBrainProvider,
   accelFromCode,
+  dictationEnPresetPatch,
+  isWindowScopedShortcut,
   keyCodeFromAccelerator,
   normalizeKeyCode,
   legacyVoiceConfigSchema,
@@ -178,9 +180,11 @@ describe('migrateLegacyVoiceConfig', () => {
     expect(config.stt.translate).toBe(false);
   });
 
-  it('builds an accelerator from the push-to-talk key code', () => {
+  it('builds a window-scoped Space accelerator from Overclock push-to-talk', () => {
     const config = migrateLegacyVoiceConfig(legacyVoice);
-    expect(config.input.shortcut).toBe('CommandOrControl+Shift+Space');
+    expect(config.input.shortcut).toBe('Space');
+    expect(config.routing).toBe('focused-pane');
+    expect(config.speakMode).toBe('off');
   });
 });
 
@@ -188,6 +192,29 @@ describe('accelFromCode', () => {
   it('prefixes a modifier so the hotkey does not collide with typing', () => {
     expect(accelFromCode('Space')).toBe('CommandOrControl+Shift+Space');
     expect(accelFromCode('F5')).toBe('CommandOrControl+Shift+F5');
+  });
+});
+
+describe('isWindowScopedShortcut', () => {
+  it('treats bare Space as window-scoped and combos as global', () => {
+    expect(isWindowScopedShortcut('Space')).toBe(true);
+    expect(isWindowScopedShortcut('F8')).toBe(true);
+    expect(isWindowScopedShortcut('CommandOrControl+Shift+Space')).toBe(false);
+  });
+});
+
+describe('dictationEnPresetPatch', () => {
+  it('configures ClockVoice-style EN dictation', () => {
+    const patch = dictationEnPresetPatch();
+    expect(patch).toEqual({
+      routing: 'focused-pane',
+      speakMode: 'off',
+      shortcut: 'Space',
+      pushToTalkKeyCode: 'Space',
+      wakeWordEnabled: false,
+      jarvisLiveEnabled: false,
+      sttProvider: 'groq',
+    });
   });
 });
 

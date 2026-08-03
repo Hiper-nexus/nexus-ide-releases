@@ -159,9 +159,15 @@ export interface VoiceRuntimeInfo {
   pushToTalkKeyCode: string;
   hotkeyMode: HotkeyMode;
   /**
+   * `window` = bare key (e.g. Space) handled in the focused renderer.
+   * `global` = Electron `globalShortcut` (⌘⇧Space etc.).
+   */
+  hotkeyScope?: 'global' | 'window';
+  /**
    * Whether the global accelerator actually registered with the OS (false =
    * conflict with another app or invalid combo). Optional: composed at the
-   * IPC layer; pure builders may omit it.
+   * IPC layer; pure builders may omit it. Window-scoped keys report armed
+   * whenever capture is allowed (no OS registration needed).
    */
   hotkeyArmed?: boolean;
   /** Wake word ("Jarvis") toggle + whether its Picovoice key is present. */

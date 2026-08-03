@@ -561,12 +561,20 @@ export function migrateLegacyVoiceConfig(raw: LegacyVoiceConfig): VoiceConfig {
     fallback: DEFAULT_VOICE_CONFIG.stt.fallback,
   };
 
-  const shortcut = raw.pushToTalkKey?.code
-    ? accelFromCode(raw.pushToTalkKey.code)
+  // Overclock ClockVoice used bare Space as an in-app hold key. Keep that
+  // window-scoped semantics instead of rewriting it to ⌘⇧Space.
+  const rawKey = raw.pushToTalkKey?.code;
+  const shortcut = rawKey
+    ? rawKey === 'Space' || isWindowScopedShortcut(rawKey)
+      ? normalizeKeyCode(rawKey)
+      : accelFromCode(rawKey)
     : DEFAULT_VOICE_CONFIG.input.shortcut;
 
   return {
     ...DEFAULT_VOICE_CONFIG,
+    // Dictation into the focused pane (Overclock interactionMode: coding).
+    routing: 'focused-pane',
+    speakMode: 'off',
     input: {
       mode: 'push-to-talk',
       shortcut,
@@ -583,6 +591,58 @@ export function migrateLegacyVoiceConfig(raw: LegacyVoiceConfig): VoiceConfig {
 export function accelFromCode(code: string): string {
   const key = code === 'Space' ? 'Space' : code;
   return `CommandOrControl+Shift+${key}`;
+}
+
+const ACCEL_MODIFIERS = new Set([
+  'CommandOrControl',
+  'Command',
+  'Cmd',
+  'Control',
+  'Ctrl',
+  'Alt',
+  'Option',
+  'Shift',
+  'Super',
+  'Meta',
+]);
+
+/**
+ * Accelerators without modifiers (e.g. bare `Space`) are window-scoped — the
+ * renderer owns keydown/keyup while Nexus is focused. Global `globalShortcut`
+ * must never register bare Space: it would steal typing from every OS app.
+ * Mirrors Overclock ClockVoice (hold Space → STT → pane ativo).
+ */
+export function isWindowScopedShortcut(shortcut: string): boolean {
+  const parts = shortcut
+    .split('+')
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (parts.length === 0) return false;
+  return parts.every((part) => !ACCEL_MODIFIERS.has(part));
+}
+
+/**
+ * ClockVoice-style dictation: hold Space, speak PT, inject English into the
+ * focused pane, no spoken reply. Caller persists via `voice.setConfig`.
+ */
+export function dictationEnPresetPatch(): {
+  routing: 'focused-pane';
+  speakMode: 'off';
+  shortcut: 'Space';
+  pushToTalkKeyCode: 'Space';
+  wakeWordEnabled: false;
+  jarvisLiveEnabled: false;
+  sttProvider: 'groq';
+} {
+  return {
+    routing: 'focused-pane',
+    speakMode: 'off',
+    shortcut: 'Space',
+    pushToTalkKeyCode: 'Space',
+    wakeWordEnabled: false,
+    jarvisLiveEnabled: false,
+    sttProvider: 'groq',
+  };
 }
 
 export function keyCodeFromAccelerator(accelerator: string): string {

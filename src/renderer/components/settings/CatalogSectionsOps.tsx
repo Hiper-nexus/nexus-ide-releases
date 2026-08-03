@@ -252,7 +252,8 @@ const SHORTCUTS: Array<{ keys: string; action: string }> = [
   { keys: 'clique', action: 'Focar pane' },
   { keys: '⬡ Canvas', action: 'Alternar grid ↔ canvas (barra)' },
   { keys: '☾ / ☀', action: 'Dormir/acordar pane' },
-  { keys: 'Space (segurar)', action: 'Push-to-talk de voz (configurável)' },
+  { keys: 'Space (segurar)', action: 'Ditado EN no pane focado (preset ClockVoice)' },
+  { keys: formatShortcut('mod', 'shift', 'Space'), action: 'Push-to-talk Jarvis (padrão global)' },
 ];
 
 export function ShortcutsSection() {

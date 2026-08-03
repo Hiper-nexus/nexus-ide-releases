@@ -121,6 +121,7 @@ import {
 import { PassiveWakeDeadline } from './passive-wake-deadline';
 import { PassiveWakeAdmission } from './passive-wake-admission';
 import { pttStartAction } from './ptt-barge-in';
+import { attachWindowPtt } from './voice-window-ptt';
 import { shouldOfferLiveMicFrame } from './live-mic-offer-gate';
 import {
   HOT_COMMAND_MIN_PEAK_RMS,
@@ -1365,6 +1366,19 @@ export function useVoiceController(active = true): void {
     const unsubStart = window.nexus.voice.onPttStart(onStart);
     const unsubStop = window.nexus.voice.onPttStop(onStop);
     const unsubToggle = window.nexus.voice.onPttToggle(onToggle);
+    // ClockVoice-style bare Space: renderer-owned while Nexus is focused.
+    const disposeWindowPtt = attachWindowPtt(
+      { onStart, onStop },
+      {
+        getKeyCode: () =>
+          useVoiceStore.getState().info?.pushToTalkKeyCode ?? 'Space',
+        isEnabled: () => {
+          const info = useVoiceStore.getState().info;
+          if (!info || info.captureAllowed === false) return false;
+          return info.hotkeyScope === 'window';
+        },
+      },
+    );
     const unsubWake = window.nexus.voice.onWakeDetected(() => onWake('voice'));
     const unsubClickWake = onJarvisWakeRequest(() => {
       const reactivated = reactivateJarvisInput();
@@ -1406,6 +1420,7 @@ export function useVoiceController(active = true): void {
       unsubStart();
       unsubStop();
       unsubToggle();
+      disposeWindowPtt();
       unsubWake();
       unsubClickWake();
       unsubNarrate();

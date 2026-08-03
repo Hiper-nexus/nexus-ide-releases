@@ -9,6 +9,7 @@ import {
   LEGACY_GEMINI_LIVE_MODEL,
   LEGACY_GEMINI_LIVE_VOICE,
   flattenJarvisBrainProviders,
+  isWindowScopedShortcut,
   keyCodeFromAccelerator,
   normalizeKeyCode,
   promoteJarvisBrainProvider,
@@ -218,12 +219,8 @@ export function loadVoiceConfig(): VoiceConfig {
       migrated = true;
       console.log('[voice] voz Gemini Live migrada para Charon (masculina)');
     }
-    // A JARVIS conversacional virou o modo padrão do produto.
-    if (userConfig.routing === 'focused-pane') {
-      userConfig.routing = 'jarvis';
-      migrated = true;
-      console.log('[voice] routing migrado para o modo JARVIS (assistente)');
-    }
+    // Keep focused-pane when the user (or Overclock migration) chose dictation
+    // into the active terminal — do not force Jarvis over ClockVoice-style PTT.
     if (migrated) persist(userConfig);
     current = userConfig;
     return current;
@@ -435,13 +432,15 @@ export function buildRuntimeInfo(): VoiceRuntimeInfo {
   const probes = currentProbes();
   const pushToTalkKeyCode =
     current.input.pushToTalkKey?.code ?? keyCodeFromAccelerator(current.input.shortcut);
+  const shortcut = current.input.shortcut;
   return {
     enabled: current.enabled,
     routing: current.routing,
     speakMode: current.speakMode,
-    shortcut: current.input.shortcut,
+    shortcut,
     pushToTalkKeyCode,
     hotkeyMode,
+    hotkeyScope: isWindowScopedShortcut(shortcut) ? 'window' : 'global',
     wakeWordEnabled: current.wakeWord.enabled,
     jarvisLive: {
       enabled: current.jarvisLive.enabled,
