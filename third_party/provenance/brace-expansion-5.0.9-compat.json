@@ -1,0 +1,73 @@
+{
+  "source": "juliangruber/brace-expansion",
+  "upstreamVersion": "5.0.9",
+  "upstreamCommit": "fbcf8ec75b88c79374b4aac06559b1a5288a1223",
+  "upstreamTag": "v5.0.9",
+  "upstreamTagObject": null,
+  "upstreamRepository": "https://github.com/juliangruber/brace-expansion",
+  "npmPackage": "brace-expansion@5.0.9",
+  "npmIntegrity": "sha512-ScQ4IuvIEF1TMlP7Zt+vjJ//9zlPb2SDcxWxM3bk8s6t6GGdJ7KO1dCcTidOPJKePW30LE/2cT7wCyPho9/Wxg==",
+  "npmTarballSha256": "5d06001fddd25cbee90c96db4dc5b7b57711b984c3141e28d10f143deb52dbaf",
+  "license": "MIT",
+  "copyright": [
+    "Copyright Julian Gruber <julian@juliangruber.com>",
+    "TypeScript port Copyright Isaac Z. Schlueter <i@izs.me>"
+  ],
+  "licenseFile": "third_party/licenses/brace-expansion-MIT.txt",
+  "importedAt": "2026-08-03",
+  "rationale": "Temporary compatibility packaging for GHSA-rgw5-rvv9-x895 (DoS bypass of CVE-2026-14257 mitigation). The patched 5.0.9 algorithm is used unchanged while a narrow export adapter supports legacy callable CommonJS consumers and modern named-export consumers.",
+  "removalCriteria": "Remove after patched compatible maintenance releases are published and consumed throughout Electron Forge's complete maker tree, with npm audit remaining at zero.",
+  "upstreamTracking": [
+    "https://github.com/advisories/GHSA-rgw5-rvv9-x895"
+  ],
+  "files": [
+    {
+      "upstreamUrl": "https://github.com/juliangruber/brace-expansion/blob/fbcf8ec75b88c79374b4aac06559b1a5288a1223/dist/commonjs/index.js",
+      "originalPath": "dist/commonjs/index.js",
+      "nexusPath": "third_party/brace-expansion-compat/upstream/dist/commonjs/index.js",
+      "originalSha256": "8d1ea713e1dd03f52783bbceea9d85815a3587134d1936ea16257dea83884f15",
+      "type": "copied",
+      "changeSummary": "Exact byte-for-byte copy from the brace-expansion 5.0.9 npm tarball."
+    },
+    {
+      "upstreamUrl": "https://github.com/juliangruber/brace-expansion/blob/fbcf8ec75b88c79374b4aac06559b1a5288a1223/dist/commonjs/index.js.map",
+      "originalPath": "dist/commonjs/index.js.map",
+      "nexusPath": "third_party/brace-expansion-compat/upstream/dist/commonjs/index.js.map",
+      "originalSha256": "8c37d1ed63deea88fe6dd44dafd68cf1dc3eb007d60108edc5db68958ca9ecdc",
+      "type": "copied",
+      "changeSummary": "Exact byte-for-byte copy from the brace-expansion 5.0.9 npm tarball."
+    },
+    {
+      "upstreamUrl": "https://github.com/juliangruber/brace-expansion/blob/fbcf8ec75b88c79374b4aac06559b1a5288a1223/dist/commonjs/index.d.ts",
+      "originalPath": "dist/commonjs/index.d.ts",
+      "nexusPath": "third_party/brace-expansion-compat/upstream/dist/commonjs/index.d.ts",
+      "originalSha256": "0b4d0e7e8998ac3219939db9646bbcb4757f134d62a3226e5686b1e19a1fec3e",
+      "type": "copied",
+      "changeSummary": "Exact byte-for-byte copy from the brace-expansion 5.0.9 npm tarball."
+    },
+    {
+      "upstreamUrl": "https://github.com/juliangruber/brace-expansion/blob/fbcf8ec75b88c79374b4aac06559b1a5288a1223/dist/commonjs/index.d.ts.map",
+      "originalPath": "dist/commonjs/index.d.ts.map",
+      "nexusPath": "third_party/brace-expansion-compat/upstream/dist/commonjs/index.d.ts.map",
+      "originalSha256": "b3be0847ad40bba64997b91b4d4542d7a2d8365cfb4e74eaa572b90c1276c342",
+      "type": "copied",
+      "changeSummary": "Exact byte-for-byte copy from the brace-expansion 5.0.9 npm tarball."
+    },
+    {
+      "upstreamUrl": "https://github.com/juliangruber/brace-expansion/blob/fbcf8ec75b88c79374b4aac06559b1a5288a1223/dist/commonjs/package.json",
+      "originalPath": "dist/commonjs/package.json",
+      "nexusPath": "third_party/brace-expansion-compat/upstream/dist/commonjs/package.json",
+      "originalSha256": "8005a3491db7d92f36ac66369861589f9c47123d3a7c71e643fc2c06168cd45a",
+      "type": "copied",
+      "changeSummary": "Exact byte-for-byte copy from the brace-expansion 5.0.9 npm tarball."
+    },
+    {
+      "upstreamUrl": "https://github.com/juliangruber/brace-expansion/blob/fbcf8ec75b88c79374b4aac06559b1a5288a1223/LICENSE",
+      "originalPath": "LICENSE",
+      "nexusPath": "third_party/brace-expansion-compat/LICENSE",
+      "originalSha256": "9c63a23124d68cd30cd316a94a1a0bca34f032786df6df69fc4b5f136bac8d2e",
+      "type": "copied",
+      "changeSummary": "Exact byte-for-byte copy from the brace-expansion 5.0.9 npm tarball."
+    }
+  ]
+}

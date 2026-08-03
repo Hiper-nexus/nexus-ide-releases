@@ -1,7 +1,7 @@
 'use strict';
 
 // Keep legacy minimatch 3/5 consumers callable while delegating every
-// expansion to the unmodified upstream 5.0.8 implementation.
+// expansion to the unmodified upstream 5.0.9 implementation.
 const upstream = require('./upstream/dist/commonjs/index.js');
 
 module.exports = upstream.expand;
