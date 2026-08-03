@@ -17,7 +17,7 @@ import {
 } from './pane-registry';
 
 /**
- * Zero-LLM pane activity summary (Overclock v1.2 harvest): given a persisted
+ * Zero-LLM pane activity summary (peer ADE v1.2 harvest): given a persisted
  * pane, resolve "what it was doing" from local artifacts only —
  *   1. title:    first real user message of the CLI's native transcript;
  *   2. lastLine: last significant output line (live PTY tail preferred, last

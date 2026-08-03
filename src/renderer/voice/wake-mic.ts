@@ -48,7 +48,7 @@ const STRONG_SPEECH_RMS = 0.055;
 const STRONG_SPEECH_PEAK = 0.12;
 const MIN_SPEECH_MS = 320;
 const MAX_PREROLL_MS = 3_000;
-// Overclock parity (C-071.1c / pre-roll→pendingMic bridge): the wake seed is
+// ADE parity (C-071.1c / pre-roll→pendingMic bridge): the wake seed is
 // the audio captured BEFORE wake fired — it holds the wake word AND any command
 // glued to it ("Ei Jarvis, cria uma missão"). When wake fires late (user has to
 // shout), that command onset sits >750ms before detection; clipping the seed to
@@ -610,7 +610,7 @@ export class WakeMic {
         this.trackUtterance(frame, speechRms);
         return;
       }
-      // Passa speechRms ao VAD (não raw) — Overclock-style: capturar a frase inteira.
+      // Passa speechRms ao VAD (não raw) — ADE libre: capturar a frase inteira.
       const vadRms = isPassiveSpeech ? Math.max(speechRms, PASSIVE_WAKE_RAW_SPEECH_RMS) : rawRms;
       if (Date.now() < this.wakeSuppressedUntil) {
         // Keep only the STT-verified direct-address path alive while the app is

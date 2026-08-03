@@ -437,7 +437,7 @@ export class GeminiLiveTransport {
       this.audioStreamOpen = true;
       return;
     }
-    // Overclock parity (C-071.1c / F-138): buffer as a DROP-OLDEST ring, never
+    // ADE parity (C-071.1c / F-138): buffer as a DROP-OLDEST ring, never
     // drop-newest. A slow setupComplete used to discard the END of the command
     // once the buffer filled ("só entendeu 'gritar'"). Keeping the most recent
     // audio preserves the actual spoken command; the 160 KB cap (~5s) holds a

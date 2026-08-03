@@ -112,7 +112,7 @@ function codeFromKeyboardEvent(e: KeyboardEvent): string | null {
 
 /**
  * Turn the EXACT pressed combo into an Electron accelerator. Safety rails:
- * F-keys and bare Space may be window-scoped (ClockVoice-style); any other key
+ * F-keys and bare Space may be window-scoped (NexusVoice-style); any other key
  * needs ⌘/⌃/⌥ — otherwise pressing it in a terminal would both type AND
  * trigger voice. Returns null (with a hint) while the combo is unsafe.
  */
@@ -127,7 +127,7 @@ function comboFromKeyboardEvent(
   if (e.shiftKey) mods.push('Shift');
   const isFKey = /^F\d{1,2}$/.test(key);
   const hasStrongMod = e.metaKey || e.ctrlKey || e.altKey;
-  // Bare Space = window-scoped PTT (Overclock ClockVoice). Never OS-global.
+  // Bare Space = window-scoped PTT (peer ADE NexusVoice). Never OS-global.
   if (key === 'Space' && !hasStrongMod && !e.shiftKey) {
     return { accel: 'Space', key: 'Space' };
   }
@@ -982,7 +982,7 @@ return (
                       Ditado EN (Space + Groq)
                     </button>
                     <p className="voice-settings__hint">
-                      Paridade ClockVoice: segura Espaço no terminal, fala, solta —
+                      Paridade NexusVoice: segura Espaço no terminal, fala, solta —
                       prompt em inglês no pane ativo. Requer <code>GROQ_API_KEY</code>.
                       Com este modo, Space não digita espaço no terminal.
                     </p>
@@ -1009,7 +1009,7 @@ return (
                     </label>
                     <span className="voice-settings__shortcut-preview">
                       {info.hotkeyScope === 'window' ? (
-                        <span title="Atalho só nesta janela (estilo ClockVoice).">
+                        <span title="Atalho só nesta janela (estilo NexusVoice).">
                           na janela
                         </span>
                       ) : info.hotkeyArmed === false ? (

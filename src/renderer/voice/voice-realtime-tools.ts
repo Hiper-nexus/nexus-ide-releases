@@ -296,7 +296,7 @@ export async function executeRealtimeToolCall(event: JarvisLiveToolEvent): Promi
         summary: toolResult.summary,
         tool: toolResult.tool,
         ...(toolResult.output !== undefined ? { result: toolResult.output } : {}),
-        // Overclock: tool response carries what to narrate (confirmation ask, etc.).
+        // peer ADE: tool response carries what to narrate (confirmation ask, etc.).
         ...(exec.sayText.trim() ? { say: exec.sayText.trim() } : {}),
       },
     });

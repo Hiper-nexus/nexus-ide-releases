@@ -1,9 +1,9 @@
 /**
- * Wake textual = Overclock matchWakeWord (port autorizado).
- * Interface Nexus: { command } ≡ Overclock { rest }.
+ * Wake textual = peer ADE matchWakeWord (port autorizado).
+ * Interface Nexus: { command } ≡ peer ADE { rest }.
  */
 
-import { matchWakeWord } from '../../shared/overclock-voice-nlu';
+import { matchWakeWord } from '../../shared/jarvis-passive-nlu';
 
 export interface PassiveWakeMatch {
   /** Texto após o nome (comando embutido no mesmo utterance). */
@@ -58,7 +58,7 @@ export function isTrustedPassiveWakeOnly(
 
 /**
  * Detecta chamada à assistente no transcript do STT passivo.
- * Delega 100% ao matchWakeWord do Overclock (+ truncamentos no mesmo módulo).
+ * Delega 100% ao matchWakeWord do peer ADE (+ truncamentos no mesmo módulo).
  */
 export function matchPassiveWakeWord(
   transcript: string,

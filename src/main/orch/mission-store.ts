@@ -707,21 +707,23 @@ export class ScopedMissionStore {
   retireOrchestratorSessionForReplacement(
     rawId: string,
     rawExpectedSessionId: string,
-    rawExpectedAuthoritySeal: MissionPaneAuthoritySeal,
+    rawExpectedAuthoritySeal?: MissionPaneAuthoritySeal,
   ): ScopedMission | null {
     const id = entityIdSchema.parse(rawId);
     const expectedSessionId = sessionIdSchema.parse(rawExpectedSessionId);
-    const expectedAuthoritySeal = {
-      intentVersion: z.number().int().positive().max(1_000_000).parse(
-        rawExpectedAuthoritySeal.intentVersion,
-      ),
-      intentContractHash: hashSchema.parse(
-        rawExpectedAuthoritySeal.intentContractHash,
-      ),
-      squadRevisionHash: hashSchema.parse(
-        rawExpectedAuthoritySeal.squadRevisionHash,
-      ),
-    };
+    const expectedAuthoritySeal = rawExpectedAuthoritySeal
+      ? {
+          intentVersion: z.number().int().positive().max(1_000_000).parse(
+            rawExpectedAuthoritySeal.intentVersion,
+          ),
+          intentContractHash: hashSchema.parse(
+            rawExpectedAuthoritySeal.intentContractHash,
+          ),
+          squadRevisionHash: hashSchema.parse(
+            rawExpectedAuthoritySeal.squadRevisionHash,
+          ),
+        }
+      : undefined;
     const db = this.#binding.writeDatabase();
     const updated = db.transaction(() => {
       const current = this.#getFromDatabase(db, id);
@@ -738,7 +740,8 @@ export class ScopedMissionStore {
         ).get(id, current.intentVersion ?? 0),
       );
       const hasExpectedAuthority =
-        (current.intentVersion ?? 0) ===
+        !expectedAuthoritySeal ||
+        ((current.intentVersion ?? 0) ===
           expectedAuthoritySeal.intentVersion &&
         Boolean(
           current.intentContract &&
@@ -746,7 +749,7 @@ export class ScopedMissionStore {
               expectedAuthoritySeal.intentContractHash &&
             current.intentContract.squadRevisionHash ===
               expectedAuthoritySeal.squadRevisionHash,
-        );
+        ));
       const exitIdentityHash = createHash('sha256')
         .update(
           `${id}\0${current.intentVersion ?? 0}\0${expectedSessionId}`,

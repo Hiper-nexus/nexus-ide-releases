@@ -51,7 +51,7 @@ import { spawn } from "node:child_process";
 import { transcribe } from "./stt-service";
 import { speak, stopSystemSpeech } from "./tts-service";
 import { echoSuppressor } from "./echo-suppress";
-import { matchWakeWord } from "../../shared/overclock-voice-nlu";
+import { matchWakeWord } from "../../shared/jarvis-passive-nlu";
 import {
   appBundlePathFromExecPath,
   readBundleId,
@@ -606,7 +606,7 @@ function wireHotkey(): void {
   }
   const config = getVoiceConfig();
   const mainKeyCode = config.input.pushToTalkKey?.code ?? "Space";
-  // Bare Space (ClockVoice-style) is owned by the focused renderer — never
+  // Bare Space (NexusVoice-style) is owned by the focused renderer — never
   // register it as an OS-global accelerator.
   if (isWindowScopedShortcut(config.input.shortcut)) {
     disposeVoiceHotkey();
@@ -657,7 +657,7 @@ function fullInfo(): VoiceRuntimeInfo {
 export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
   voiceRuntimeManager = runtimeManager;
   // Atribuição de "duas vozes": identifica ESTA instância no voice.log para
-  // distinguir colisão interna de colisão cross-app (sidecar do Overclock).
+  // distinguir colisão interna de colisão cross-app (sidecar do peer ADE).
   logVoice("info", "voice.instanceBoot", "instância de voz iniciada", {
     pid: process.pid,
     execPath: process.execPath,

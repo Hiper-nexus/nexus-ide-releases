@@ -1,5 +1,5 @@
 /**
- * Serialized narration turn queue for the Jarvis Live transport (Overclock
+ * Serialized narration turn queue for the Jarvis Live transport (peer ADE
  * F-113). Each injected context/narration/screen-update becomes a spoken turn;
  * without serialization, concurrent narrations (delegated result + pane progress
  * + screen update) hit the socket at once and the voice talks over itself — the

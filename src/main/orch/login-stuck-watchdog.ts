@@ -18,7 +18,7 @@ import { onHandoffSubmitted } from './idle-delivery';
 import { sameProjectScope } from './project-scoped-broadcast';
 
 /**
- * Login-stuck watchdog (Overclock v1.2 harvest, fix F-256): marker + recheck
+ * Login-stuck watchdog (peer ADE v1.2 harvest, fix F-256): marker + recheck
  * over the pane output tail. A CLI that falls onto its login screen after
  * spawn ("Select login method", a "Signing in…" spinner that never resolves)
  * otherwise reads as a pane that is busy forever — the mission waits on an

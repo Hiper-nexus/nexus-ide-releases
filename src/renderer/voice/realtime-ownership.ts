@@ -11,7 +11,7 @@
  * NENHUM captureReason produz classicTranscript/brainReply; o Classic só
  * assume quando o realtime NÃO está vivo (sem key / socket em erro / não pronto).
  *
- * Paridade Overclock (P1): wake/click/reply/manual/ptt — todos suprimidos
+ * Paridade peer ADE (P1): wake/click/reply/manual/ptt — todos suprimidos
  * enquanto Live está dono. Puro/testável.
  */
 import type { JarvisCaptureReason } from './jarvis-reply-loop';

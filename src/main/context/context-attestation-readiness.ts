@@ -5,7 +5,7 @@ import type { ContextFact } from './context-types';
 /**
  * Parse/entry failures cannot name a targetPath, so they must not hard-block
  * Guided readiness. Field trap (28/07): a hand-written attestation with an
- * illegal id (`att-overclock-…` instead of `att-[40 hex]`) poisoned every
+ * illegal id (`att-peer-ade-…` instead of `att-[40 hex]`) poisoned every
  * approveIntent with invalid-context-attestation.
  */
 const ATTESTATION_PARSE_QUARANTINE_CODES: ReadonlySet<string> = new Set([

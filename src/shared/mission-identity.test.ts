@@ -22,8 +22,8 @@ describe('missionTitleFromGoal', () => {
   });
 
   it('cai no fallback só com objetivo vazio', () => {
-    expect(missionTitleFromGoal('   \n  ', 'Clone Overclock')).toBe(
-      'Clone Overclock',
+    expect(missionTitleFromGoal('   \n  ', 'Clone Reference ADE')).toBe(
+      'Clone Reference ADE',
     );
   });
 });
@@ -32,7 +32,7 @@ describe('retargetSquadInstructions', () => {
   it('remove a seção "# Missão" antiga e declara o objetivo vigente', () => {
     const stale = [
       '# Missão',
-      'Clone Overclock — Terminal IDE Multi-CLI (macOS)',
+      'Clone Reference ADE — Terminal IDE Multi-CLI (macOS)',
       'Construir paridade de features.',
       '',
       '## Processo',
@@ -40,7 +40,7 @@ describe('retargetSquadInstructions', () => {
     ].join('\n');
     const result = retargetSquadInstructions(stale, 'Refatorar dashboards');
     expect(result).toContain('# Missão\nRefatorar dashboards');
-    expect(result).not.toContain('Clone Overclock');
+    expect(result).not.toContain('Clone Reference ADE');
     expect(result).toContain('## Processo');
     expect(result).toContain('Use PREVC e delegue em paralelo.');
   });

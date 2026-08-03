@@ -81,6 +81,20 @@ export const CURRENT_RELEASE: AppRelease = {
         'Seatbelt/bwrap e ladder Hardened só se o operador ir em Configurações ' +
         'e mudar. Migração one-shot; quem reativar Hardened depois mantém.',
     },
+    {
+      title: 'Autopiloto livre: menos reaprovação e menos freio pré-PTY',
+      detail:
+        'No Autopiloto, squad de catálogo, hash drift, plan seal, seal/runtime ' +
+        'drift e identity vault avisam e seguem — não matam o Maestro. Hardened ' +
+        'continua fail-closed. Worktree + login CLI + merge Main ficam.',
+    },
+    {
+      title: 'Kickoff curto no Autopiloto (estilo ADE libre)',
+      detail:
+        'Missão por squad não cola mais manifesto gigante: objetivo, roster e ' +
+        'condução enxuta (~1,7KB). Base longa do squad some no Autopiloto; ' +
+        'Hardened mantém o texto completo.',
+    },
   ],
 };
 

@@ -121,16 +121,17 @@ export function suppressIntentionalMissionOrchestratorExit(input: {
   readonly scope: OwnedAgentSessionInfo['scope'];
   readonly missionId: string;
   readonly orchestratorSessionId: string;
-  readonly authoritySeal: MissionPaneAuthoritySeal;
+  readonly authoritySeal?: MissionPaneAuthoritySeal;
 }): () => void {
   const key = exitKey(input.scope, {
     missionId: input.missionId,
     orchestratorSessionId: input.orchestratorSessionId,
-    intentVersion: input.authoritySeal.intentVersion,
+    intentVersion: input.authoritySeal?.intentVersion ?? 0,
   });
   const existing = intentionalExitSuppressions.get(key);
   if (
     existing &&
+    input.authoritySeal &&
     (existing.intentContractHash !== input.authoritySeal.intentContractHash ||
       existing.squadRevisionHash !== input.authoritySeal.squadRevisionHash)
   ) {
@@ -139,8 +140,8 @@ export function suppressIntentionalMissionOrchestratorExit(input: {
     );
   }
   intentionalExitSuppressions.set(key, {
-    intentContractHash: input.authoritySeal.intentContractHash,
-    squadRevisionHash: input.authoritySeal.squadRevisionHash,
+    intentContractHash: input.authoritySeal?.intentContractHash ?? '',
+    squadRevisionHash: input.authoritySeal?.squadRevisionHash ?? '',
     references: (existing?.references ?? 0) + 1,
   });
   let released = false;

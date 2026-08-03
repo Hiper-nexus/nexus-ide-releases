@@ -402,7 +402,7 @@ describe("production guided PREVC MCP fence snapshot", () => {
   });
 });
 
-describe("assertGuidedPrevcMcpFence Overclock-order delegation", () => {
+describe("assertGuidedPrevcMcpFence Autopilot libre delegation", () => {
   const activeFence: GuidedPrevcMcpFenceSnapshot = Object.freeze({
     required: true,
     active: true,

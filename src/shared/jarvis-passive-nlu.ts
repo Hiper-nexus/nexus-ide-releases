@@ -1,16 +1,16 @@
 /**
  * Port limpo (autorizado pelo produto) de:
- *   Overclock @overclock-app/core voiceNlu.ts
+ *   peer ADE @peer-ade/core voiceNlu.ts
  *
- * matchWakeWord: detecção textual pós-STT — path principal de wake do Overclock.
+ * matchWakeWord: detecção textual pós-STT — path principal de wake do peer ADE.
  * Não é openWakeWord acústico; é VAD → STT → este matcher.
  */
 
-/** Fase da escuta passiva (Overclock JARVIS_PASSIVE_PHASES). */
+/** Fase da escuta passiva (peer ADE JARVIS_PASSIVE_PHASES). */
 export const JARVIS_PASSIVE_PHASES = ['off', 'standby', 'capturing', 'checking'] as const;
 export type JarvisPassivePhase = (typeof JARVIS_PASSIVE_PHASES)[number];
 
-/** STT aliases Whisper/Groq para "Jarvis" (Overclock + truncamentos reais). */
+/** STT aliases Whisper/Groq para "Jarvis" (peer ADE + truncamentos reais). */
 const WAKE_ALIASES = new Set([
   'jarbas',
   'jarbis',
@@ -223,7 +223,7 @@ const NEG_PREFIX = ['nega', 'cancel'];
 const AFF_EXACT = ['sim', 'pode', 'vai', 'manda'];
 const AFF_PREFIX = ['aprov', 'confirm'];
 
-/** Classifica confirmação de tool (Overclock). */
+/** Classifica confirmação de tool (peer ADE). */
 export function matchVoiceConfirmation(
   text: string,
 ): { approved: boolean; always?: boolean } | null {

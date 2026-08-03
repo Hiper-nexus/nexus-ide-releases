@@ -3,7 +3,7 @@
  *
  * Caso de campo (17/07): o agêntico reusa o squad salvo mais recente para
  * honrar o roster do usuário — mas a missão nova herdava o NOME do squad
- * antigo como título ("Clone Overclock" numa missão de dashboards) e as
+ * antigo como título ("Clone Reference ADE" numa missão de dashboards) e as
  * orchestratorInstructions salvas ainda abriam com "# Missão <objetivo
  * antigo>", competindo com o objetivo vigente no kickoff.
  */

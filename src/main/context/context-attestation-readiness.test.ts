@@ -46,9 +46,9 @@ describe('partitionAttestationDiagnostics', () => {
     const partitioned = partitionAttestationDiagnostics([
       diag({
         code: 'invalid-attestation',
-        message: 'invalid context attestation .context/nexus/attestations/att-overclock.json',
+        message: 'invalid context attestation .context/nexus/attestations/att-peer-ade.json',
         attestationPath:
-          '.context/nexus/attestations/att-overclock-jarvis-voz-arquitetura.json',
+          '.context/nexus/attestations/att-peer-ade-jarvis-voz-arquitetura.json',
       }),
       diag({
         code: 'source-hash-mismatch',

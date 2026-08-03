@@ -45,7 +45,7 @@ export function shouldUseClassicActionBridge(transcript: string): boolean {
 }
 
 /**
- * When Gemini/OpenAI Live is hot, Overclock keeps the provider as the sole
+ * When Gemini/OpenAI Live is hot, peer ADE keeps the provider as the sole
  * owner of the turn (tools + audio). Classic action-bridge must NOT interrupt
  * mid-speech — that was cutting "iniciar squad" before confirmation.
  *

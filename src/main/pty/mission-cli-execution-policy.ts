@@ -30,7 +30,7 @@ export interface MissionCliExecutionPolicy {
 /**
  * Compile the product mode once before provider-specific argv is assembled.
  *
- * Default = Overclock-order autopilot: dedicated worktree, per-session bearer,
+ * Default = Autopilot libre autopilot: dedicated worktree, per-session bearer,
  * Main-owned merge, provider YOLO/network on, **no** Seatbelt/bwrap/outer
  * Codex profile. Kernel sandboxes exist only when the operator explicitly
  * selected `governed` (or the special Pet Studio base-workspace writer).

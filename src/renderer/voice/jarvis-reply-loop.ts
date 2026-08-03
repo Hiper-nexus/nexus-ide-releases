@@ -1,7 +1,7 @@
 /**
  * Controle da reabertura automática do mic após a JARVIS falar (modo classic).
  *
- * CONTINUIDADE (paridade Overclock): a escuta fica QUENTE entre turnos — o
+ * CONTINUIDADE (paridade ADE): a escuta fica QUENTE entre turnos — o
  * usuário conversa sem repetir "Hey Jarvis" a cada frase, até um teto de
  * MAX_AUTO_REPLY_LOOPS turnos ou até ficar em silêncio. Isso só é seguro por
  * causa das travas que já existem: o echo-guard (voice-echo-guard) descarta o
@@ -70,7 +70,7 @@ export function shouldReopenJarvisListening(opts: {
 
   // Teto de continuidade: após MAX_AUTO_REPLY_LOOPS reaberturas automáticas sem
   // um novo "Hey Jarvis", exige re-wake (equivale à dormência de ~5min do
-  // Overclock). O contador zera a cada wake/click/manual/ptt.
+  // peer ADE). O contador zera a cada wake/click/manual/ptt.
   if (autoReplyLoopCount >= MAX_AUTO_REPLY_LOOPS) {
     console.log('[voice] trava anti-loop: limite de reaberturas automáticas');
     return false;

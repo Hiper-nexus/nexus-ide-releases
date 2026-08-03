@@ -669,7 +669,7 @@ export function useVoiceController(active = true): void {
           peakRms: Number(utterance.rawMaxRms.toFixed(4)),
         });
       }
-      // Overclock parity: a Live reply capture owns its full mic lifetime,
+      // ADE parity: a Live reply capture owns its full mic lifetime,
       // not only the short no-wake bridge. The bridge intentionally expires
       // before REPLY_FOLLOWUP_MAX_MS, so tying ownership to authority made
       // passive STT compete halfway through a legitimate answer and discard it
@@ -768,7 +768,7 @@ export function useVoiceController(active = true): void {
           return;
         }
 
-        // ── Sessão Live QUENTE: follow-up SEM re-dizer o nome (Overclock) ──
+        // ── Sessão Live QUENTE: follow-up SEM re-dizer o nome (peer ADE) ──
         // NÃO injetar TV/ambiente (logs: "camelo vindo", "aplaus" → alucinação).
         if (!match && stillHot) {
           if (isPendingDelegationConfirmation(text, Date.now())) {
@@ -1366,7 +1366,7 @@ export function useVoiceController(active = true): void {
     const unsubStart = window.nexus.voice.onPttStart(onStart);
     const unsubStop = window.nexus.voice.onPttStop(onStop);
     const unsubToggle = window.nexus.voice.onPttToggle(onToggle);
-    // ClockVoice-style bare Space: renderer-owned while Nexus is focused.
+    // NexusVoice-style bare Space: renderer-owned while Nexus is focused.
     const disposeWindowPtt = attachWindowPtt(
       { onStart, onStop },
       {

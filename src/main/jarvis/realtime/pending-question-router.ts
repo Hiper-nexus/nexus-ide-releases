@@ -1,5 +1,5 @@
 /**
- * Deterministic pending-question answer routing (Overclock C-085 r3 / C-092.11).
+ * Deterministic pending-question answer routing (peer ADE C-085 r3 / C-092.11).
  *
  * When a working pane narrates a question, the user's next FINAL non-UI
  * utterance is — by construction — the answer to that dialog. It is routed

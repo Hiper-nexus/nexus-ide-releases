@@ -1,5 +1,5 @@
 /**
- * Clarify contract (inspired by Overclock's overclock_clarify): a structured
+ * Clarify contract (inspired by peer ADE's nexus_clarify): a structured
  * question with suggestion chips. `buildClarify` is what the `nexus_clarify`
  * MCP tool persists. `resolveClarifyAnswer` is the canonical routing spec for
  * the reply — it maps a raw answer (chip id, exact label, or 1-based number)

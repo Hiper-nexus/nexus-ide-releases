@@ -560,7 +560,7 @@ export async function generateImage(
 /**
  * Image-to-video input FIELD NAME differs by Replicate model family. Passing
  * the wrong one drops the first frame silently. Verified against live OpenAPI
- * schemas (2026-07) and the Overclock mediaGeneration adapter.
+ * schemas (2026-07) and the peer ADE mediaGeneration adapter.
  */
 export function replicateImageField(model: string): string {
   if (model.startsWith('kwaivgi/kling')) return 'start_image';

@@ -75,7 +75,7 @@ interface MissionWizardStore {
   visibleStep: MissionWizardStep | null;
   /**
    * Voice / Live "wizard-fire": bump to ask MissionWizard to launch the
-   * squad currently on the review step (Overclock navegar wizard-fire).
+   * squad currently on the review step (wizard-fire wizard-fire).
    */
   voiceLaunchNonce: number;
   /**

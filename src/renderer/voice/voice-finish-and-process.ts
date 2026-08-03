@@ -438,7 +438,7 @@ export async function finishAndProcess(
           reason: activeCaptureReason,
         });
 
-        // Overclock parity: while Live is hot, NEVER Classic-bridge / interrupt.
+        // ADE parity: while Live is hot, NEVER Classic-bridge / interrupt.
         // App actions (squad, terminal, …) go through Live tools; Classic only
         // when Live is down. Interrupting here cut TTS mid-sentence and killed
         // the confirmation step after design_squad.
@@ -1017,7 +1017,7 @@ export async function finishAndProcess(
       return;
     }
 
-    // Ditado (speakMode off): inject and done — Overclock ClockVoice does not
+    // Ditado (speakMode off): inject and done — peer ADE NexusVoice does not
     // wait for the agent reply or speak a summary back.
     if (store.info?.speakMode === 'off') {
       store.setStatus('idle');

@@ -948,7 +948,7 @@ export function MissionWizard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step]);
 
-  // Overclock wizard-fire: Live/Classic confirm_squad bumps voiceLaunchNonce.
+  // peer ADE wizard-fire: Live/Classic confirm_squad bumps voiceLaunchNonce.
   // MUST live before any early return so the hook count is stable every render.
   useEffect(() => {
     if (!open || voiceLaunchNonce <= 0) return;
@@ -1740,7 +1740,7 @@ export function MissionWizard() {
         }
       : { ...squadSnapshot, agents: roster };
     // Squad reusado no agêntico: as instruções salvas ainda abrem com a
-    // missão ANTIGA ("# Missão Clone Overclock…") — retarget para o objetivo
+    // missão ANTIGA ("# Missão Clone Reference ADE…") — retarget para o objetivo
     // do contrato antes do kickoff, senão o orquestrador recebe duas missões.
     // Sempre o squad PERSISTIDO: se o built-in virou cópia, é o id da cópia
     // que o bootstrap main-owned vai encontrar no catálogo.

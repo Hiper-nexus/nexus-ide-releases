@@ -1,5 +1,5 @@
 /**
- * P4 — softStop / grace / warm-reuse lifecycle (Overclock F-107 / F-139).
+ * P4 — softStop / grace / warm-reuse lifecycle (peer ADE F-107 / F-139).
  * Kept in a dedicated file so live-transport-controller.test.ts stays under
  * the 800-line module cap.
  */

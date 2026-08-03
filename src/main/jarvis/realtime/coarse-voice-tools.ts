@@ -1,6 +1,6 @@
 /**
  * The 4 coarse voice tools (delegar/consultar/ler/navegar pattern) for the
- * Jarvis Live realtime session, ported from the Overclock sidecar reference
+ * Jarvis Live realtime session, ported from the peer ADE sidecar reference
  * (`GeminiLiveSession.js` functionDeclarations). The Live session exposes these
  * COARSE tools — not the full action catalog — so the voice loop never blocks on
  * the slower brain: 'delegar' hands real work to a pane; consultar/ler are
@@ -127,7 +127,7 @@ export const COARSE_VOICE_TOOLS: GeminiFunctionDeclaration[] = [
   },
   {
     name: 'comandar',
-    // Overclock GeminiLiveSession.js — literal pane_write; never invent text.
+    // peer ADE GeminiLiveSession.js — literal pane_write; never invent text.
     description:
       'Digita e envia (Enter) um comando/prompt literal no terminal de um pane já aberto — ex. "/model opus", "/effort high", ou uma pergunta rápida. Use quando o usuário pedir EXPLICITAMENTE para mandar/digitar algo NUM PANE JÁ ABERTO. NÃO use para abrir pane novo (isso é "delegar") nem para trabalho substancial (isso também é "delegar"). NUNCA invente o texto — use exatamente o que o usuário pediu para mandar.',
     parameters: {
@@ -149,7 +149,7 @@ export const COARSE_VOICE_TOOLS: GeminiFunctionDeclaration[] = [
   },
   {
     name: 'restaurar',
-    // Overclock C-091 — same route as "Restaurar todos"; never re-implements spawn.
+    // peer ADE C-091 — same route as "Restaurar todos"; never re-implements spawn.
     description:
       'Restaura pane(s) SALVOS (fechados) da missão na tela — mesma ação do botão "Restaurar todos". Use quando o usuário pedir pra restaurar/reabrir panes salvos. Sem alvo = restaura todos.',
     parameters: {
@@ -166,7 +166,7 @@ export const COARSE_VOICE_TOOLS: GeminiFunctionDeclaration[] = [
   },
   {
     name: 'perguntar',
-    // Overclock — work/domain question to a pane; narrate the pane's answer.
+    // peer ADE — work/domain question to a pane; narrate the pane's answer.
     description:
       'Repassa uma pergunta de TRABALHO/domínio ao pane que o usuário está usando e narra a RESPOSTA do pane (nunca invente a resposta você mesmo). Use quando o usuário, com uma missão/pane ativo, perguntar sobre o TRABALHO em si. NÃO use para perguntas de UI/estado do app — isso é "consultar"/"navegar". NÃO use para mandar um comando literal (isso é "comandar").',
     parameters: {

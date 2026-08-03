@@ -580,7 +580,7 @@ export function defaultBudgetsForRisk(
   return {
     planningTokens: 1_200,
     executionTokens: 800_000,
-    // Overclock sobe ~12 panes do mesmo LLM em fan-out; o spawn já aceita o
+    // ADEs sobem ~12 panes do mesmo LLM em fan-out; o spawn já aceita o
     // mesmo adapterId N vezes — o teto útil era 8 e engessava a paridade
     // visual/operacional. Schema permite até 64.
     maxWorkers: 12,

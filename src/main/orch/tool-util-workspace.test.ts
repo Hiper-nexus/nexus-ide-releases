@@ -833,18 +833,36 @@ describe('agent pane workspace confinement', () => {
     });
   });
 
-  it('rejects a stale caller contextRevision before any pane process exists', async () => {
-    await expect(
-      spawnPaneAndMaybePrompt({
-        adapterId: 'codex',
-        missionId: 'm1',
-        role: 'worker',
-        contextRevision: 'stale-context-revision',
-        scope,
-      }),
-    ).rejects.toThrow(/contextRevision is stale/i);
+  it('rejects a stale caller contextRevision before any pane process exists in Hardened', async () => {
+    stubs.orchSettings.squadCliPolicy = 'governed';
+    try {
+      await expect(
+        spawnPaneAndMaybePrompt({
+          adapterId: 'codex',
+          missionId: 'm1',
+          role: 'worker',
+          contextRevision: 'stale-context-revision',
+          scope,
+        }),
+      ).rejects.toThrow(/contextRevision is stale/i);
 
-    expect(stubs.requestPaneSpawn).not.toHaveBeenCalled();
+      expect(stubs.requestPaneSpawn).not.toHaveBeenCalled();
+    } finally {
+      stubs.orchSettings.squadCliPolicy = 'operator-choice';
+    }
+  });
+
+  it('Autopilot soft-accepts a drifted contextRevision and keeps spawning', async () => {
+    await spawnPaneAndMaybePrompt({
+      adapterId: 'codex',
+      missionId: 'm1',
+      role: 'worker',
+      contextRevision: 'stale-context-revision',
+      scope,
+      executionScope: taskExecutionScope,
+    });
+
+    expect(stubs.requestPaneSpawn).toHaveBeenCalled();
   });
 
   it('does not request a pane when no safe workspace can be resolved', async () => {

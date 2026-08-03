@@ -162,7 +162,7 @@ export const SKIP_DIRECTORIES = Object.freeze(
     '.codex',
     '.context',
     '.gemini',
-    '.overclock-app',
+    '.peer-ade-app',
     '.worktrees',
     '.nexus-memory',
     'worktrees',

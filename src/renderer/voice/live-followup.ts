@@ -1,6 +1,6 @@
 /**
  * Keep Live hot after the provider answers — reopen mic for the follow-up
- * without requiring another "Hey Jarvis" (Overclock continuity).
+ * without requiring another "Hey Jarvis" (session continuity).
  */
 import type React from 'react';
 import type { JarvisLiveToolTurnCompleteEvent } from '../../shared/voice-ipc';
@@ -50,7 +50,7 @@ const toolFollowUpGate = new LiveToolFollowUpGate<ToolFollowUpRequest>();
  * alinhar ao piso de wake (~0.004–0.01) para continuidade real.
  */
 export const REPLY_RAW_SPEECH_RMS = 0.008;
-/** Continuidade: silêncio um pouco mais curto — Overclock fecha e reabre fluído. */
+/** Continuidade: silêncio um pouco mais curto — peer ADE fecha e reabre fluído. */
 export const REPLY_FOLLOWUP_SILENCE_MS = 1_200;
 export const REPLY_FOLLOWUP_MIN_LISTEN_MS = 1_400;
 export const REPLY_FOLLOWUP_MAX_MS = 28_000;

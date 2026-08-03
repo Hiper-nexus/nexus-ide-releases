@@ -547,7 +547,7 @@ describe('budget and parent/child ceilings', () => {
       goal: 'small task',
       intentVersion: 1,
     });
-    // default maxWorkers for normal is 12 (Overclock-scale fan-out)
+    // default maxWorkers for normal is 12 (multi-pane-scale fan-out)
     expect(assertWorkerBudget(contract, 11).ok).toBe(true);
     expect(assertWorkerBudget(contract, 12).ok).toBe(false);
     // No contract = no ceiling (legacy mid-migration).

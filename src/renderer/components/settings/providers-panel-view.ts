@@ -1,6 +1,6 @@
 import type { ProviderSettingsInfo } from '../../../shared/provider-settings-types';
 
-/** Top-level Providers hub tabs (Overclock-style hierarchy). */
+/** Top-level Providers hub tabs (ADE libre hierarchy). */
 export type ProvidersHubTab = 'clis' | 'login' | 'remote';
 
 export const PROVIDERS_HUB_TABS: readonly ProvidersHubTab[] = [

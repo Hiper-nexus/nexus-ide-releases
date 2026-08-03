@@ -561,7 +561,7 @@ export function migrateLegacyVoiceConfig(raw: LegacyVoiceConfig): VoiceConfig {
     fallback: DEFAULT_VOICE_CONFIG.stt.fallback,
   };
 
-  // Overclock ClockVoice used bare Space as an in-app hold key. Keep that
+  // peer ADE NexusVoice used bare Space as an in-app hold key. Keep that
   // window-scoped semantics instead of rewriting it to ⌘⇧Space.
   const rawKey = raw.pushToTalkKey?.code;
   const shortcut = rawKey
@@ -572,7 +572,7 @@ export function migrateLegacyVoiceConfig(raw: LegacyVoiceConfig): VoiceConfig {
 
   return {
     ...DEFAULT_VOICE_CONFIG,
-    // Dictation into the focused pane (Overclock interactionMode: coding).
+    // Dictation into the focused pane (peer ADE interactionMode: coding).
     routing: 'focused-pane',
     speakMode: 'off',
     input: {
@@ -610,7 +610,7 @@ const ACCEL_MODIFIERS = new Set([
  * Accelerators without modifiers (e.g. bare `Space`) are window-scoped — the
  * renderer owns keydown/keyup while Nexus is focused. Global `globalShortcut`
  * must never register bare Space: it would steal typing from every OS app.
- * Mirrors Overclock ClockVoice (hold Space → STT → pane ativo).
+ * Mirrors ADE NexusVoice (hold Space → STT → pane ativo).
  */
 export function isWindowScopedShortcut(shortcut: string): boolean {
   const parts = shortcut
@@ -622,7 +622,7 @@ export function isWindowScopedShortcut(shortcut: string): boolean {
 }
 
 /**
- * ClockVoice-style dictation: hold Space, speak PT, inject English into the
+ * NexusVoice-style dictation: hold Space, speak PT, inject English into the
  * focused pane, no spoken reply. Caller persists via `voice.setConfig`.
  */
 export function dictationEnPresetPatch(): {

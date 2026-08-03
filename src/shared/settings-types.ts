@@ -210,7 +210,7 @@ export const orchSettingsSchema = z.object({
   intentFirstMissionRuntimeV1: z.boolean().default(true),
   /**
    * Who may act as Maestro / autonomous writer inside a Squad mission:
-   * - `operator-choice` (**default for everyone**): vibe-coder / Overclock
+   * - `operator-choice` (**default for everyone**): vibe-coder / peer ADE
    *   autopilot — any installed + authenticated + handoff-capable CLI. Tasks
    *   use an isolated worktree, per-session bearer and Main-owned merge;
    *   auto-approve and web stay on; **no OS process sandbox** on panes.
@@ -223,7 +223,7 @@ export const orchSettingsSchema = z.object({
     .default('operator-choice'),
   /**
    * Fast path (default on): `risk=normal` standard missions skip Guided PREVC
-   * fence/freeze before the first writable pane — Overclock-order speed for
+   * fence/freeze before the first writable pane — Autopilot libre speed for
    * vibe feature work. Sensitive/destructive keep PREVC. Set false to restore
    * legacy PREVC-on-every-guided-delivery behavior.
    * @see docs/design/orch-fast-path.md
@@ -244,7 +244,7 @@ export const orchSettingsSchema = z.object({
   acpHarnessId: z.string().max(64).default(''),
   /**
    * Cryptographic agent-identity gate on physical handoff submits.
-   * - `off` (default): Overclock-order Autopilot — handoffs do not require
+   * - `off` (default): Autopilot libre Autopilot — handoffs do not require
    *   agent attestation crypto; first pane is not blocked by keyring/vault.
    * - `required` (opt-in Hardened): when a mission has issued identity material,
    *   handoff fails closed unless the presented attestation verifies

@@ -93,7 +93,7 @@ export const TOOL_FOLLOW_UP_COMPLETION_DEADLINE_MS = 3_000;
 
 interface RealtimeStartOptions {
   greeting?: string;
-  /** ClockVoice parity: connect without creating audible/user activity. */
+  /** NexusVoice parity: connect without creating audible/user activity. */
   prewarm?: boolean;
   /** A renderer-proven new wake/PTT turn must not reuse a stale Live socket. */
   freshTurn?: boolean;
@@ -156,7 +156,7 @@ export class LiveTransportController {
   private graceTimer: ReturnType<typeof setTimeout> | null = null;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private _inGrace = false;
-  /** Passive wake owns a silent, permanently warm socket (ClockVoice model). */
+  /** Passive wake owns a silent, permanently warm socket (NexusVoice model). */
   private keepWarmForWake = false;
   private readonly now: () => number;
   private micFramesCounter = new ThrottledCounter(25, 2_000);
@@ -718,7 +718,7 @@ export class LiveTransportController {
   }
 
   /**
-   * Soft-stop (Overclock F-107): keep the WS warm for graceReuseMs so a quick
+   * Soft-stop (peer ADE F-107): keep the WS warm for graceReuseMs so a quick
    * re-wake reuses the same connection. Product logic sees voice as off
    * (realtimeReady=false); the socket stays alive until grace expires → dormant.
    * Farewell / hard teardown uses hardStop().
@@ -969,7 +969,7 @@ export class LiveTransportController {
     ) {
       this.toolTurnOrigins.delete(this.toolTurnKey(event.sessionId, event.callId));
       // Session still hot but turn id drifted (wake/reopen race). Keep follow-up
-      // arm so the user can continue without re-saying Jarvis (Overclock).
+      // arm so the user can continue without re-saying Jarvis (peer ADE).
       if (sessionId && sessionId === event.sessionId && event.callId) {
         this.armPendingToolFollowUp({
           sessionId,

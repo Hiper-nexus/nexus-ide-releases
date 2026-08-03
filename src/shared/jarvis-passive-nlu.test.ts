@@ -1,12 +1,12 @@
 /**
- * Suite portada dos testes Overclock voiceNlu.test.js (+ truncamentos Nexus).
+ * Suite portada dos testes peer ADE voiceNlu.test.js (+ truncamentos Nexus).
  */
 import { describe, expect, it } from 'vitest';
 import {
   JARVIS_PASSIVE_PHASES,
   matchVoiceConfirmation,
   matchWakeWord,
-} from './overclock-voice-nlu';
+} from './jarvis-passive-nlu';
 
 describe('matchWakeWord — distance 0 (exact)', () => {
   it('matches lowercase "jarvis"', () => {
@@ -31,7 +31,7 @@ describe('matchWakeWord — distance 1 (fuzzy)', () => {
     expect(matchWakeWord('jarviss faz isso')).not.toBeNull();
   });
   it('does NOT match distance 2 "javes" at start without alias path', () => {
-    // "javes" is now in our extended aliases for PT STT — Overclock pure would null;
+    // "javes" is now in our extended aliases for PT STT — peer ADE pure would null;
     // we intentionally accept as alias.
     expect(matchWakeWord('javes faz isso')).not.toBeNull();
   });
@@ -93,7 +93,7 @@ describe('matchVoiceConfirmation', () => {
 });
 
 describe('JARVIS_PASSIVE_PHASES', () => {
-  it('exposes Overclock phases', () => {
+  it('exposes peer ADE phases', () => {
     expect(JARVIS_PASSIVE_PHASES).toEqual(['off', 'standby', 'capturing', 'checking']);
   });
 });

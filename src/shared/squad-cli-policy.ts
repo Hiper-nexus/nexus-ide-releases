@@ -1,5 +1,5 @@
 /**
- * Dual-mode squad CLI policy (Overclock-order product floor).
+ * Dual-mode squad CLI policy (Autopilot libre product floor).
  *
  * `operator-choice` (default / missing / unknown): vibe-coder autopilot —
  * any installed + authenticated + handoff-capable CLI. Boundary = task

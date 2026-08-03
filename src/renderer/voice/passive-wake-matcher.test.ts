@@ -5,7 +5,7 @@ import {
   matchPassiveWakeWord,
 } from './passive-wake-matcher';
 
-describe('matchPassiveWakeWord (= Overclock matchWakeWord)', () => {
+describe('matchPassiveWakeWord (= peer ADE matchWakeWord)', () => {
   it('gives wake-only authority only to the exact configured name', () => {
     expect(isTrustedPassiveWakeOnly('Jarvis')).toBe(true);
     expect(isTrustedPassiveWakeOnly('Ei, Jarvis!')).toBe(true);
@@ -37,7 +37,7 @@ describe('matchPassiveWakeWord (= Overclock matchWakeWord)', () => {
     expect(matchPassiveWakeWord('eijarbas mostre')).not.toBeNull();
   });
 
-  it('matches any-position exact (Overclock F-057)', () => {
+  it('matches any-position exact (peer ADE F-057)', () => {
     expect(matchPassiveWakeWord('obrigado jarvis')).toEqual({ command: '' });
     expect(matchPassiveWakeWord('Obrigado. Jarvis.')).toEqual({ command: '' });
     expect(matchPassiveWakeWord('obrigado jarvis abre o log')?.command).toBe(

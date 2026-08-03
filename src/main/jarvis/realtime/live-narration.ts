@@ -1,7 +1,7 @@
 /**
  * Pure narration primitives for the Jarvis Live (realtime) transport.
  *
- * Ported behavior-faithfully from the Overclock sidecar reference
+ * Ported behavior-faithfully from the peer ADE sidecar reference
  * (`GeminiLiveSession.js` + `JarvisService.js`) — exact constants and regex are
  * copied literally; the logic is re-expressed in nexus's idiomatic TS. These are
  * side-effect-free so they can be unit-tested without a socket.
@@ -9,15 +9,15 @@
  * Covered behaviors:
  * - NARRATION_ENVELOPE + wrapNarration: separate DIRECTIVE (constant) from EVENT
  *   (payload marked as data) so the native-audio model never reads a raw
- *   instruction aloud (Overclock F-113).
+ *   instruction aloud (peer ADE F-113).
  * - speakPayload (FALE composer): the final spoken sentence is composed
  *   host-side; only short law-marks travel with it instead of re-explaining
- *   doctrine per narration (Overclock C-092.8).
+ *   doctrine per narration (peer ADE C-092.8).
  * - compressMenuForNarration / menuOptionLabel: structure-aware compression of a
  *   choice menu BEFORE the blind narration char caps, so every option and the
- *   closing question survive (Overclock F-132).
+ *   closing question survive (peer ADE F-132).
  * - normalizeForCompare (normEcho): accent/punctuation-insensitive normalizer
- *   used for dedup comparisons (Overclock F-126).
+ *   used for dedup comparisons (peer ADE F-126).
  */
 
 // ── NARRATION_ENVELOPE (GeminiLiveSession.js:30-32) ──────────────────────────

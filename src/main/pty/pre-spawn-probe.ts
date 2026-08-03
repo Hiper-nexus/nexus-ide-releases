@@ -23,7 +23,7 @@ import {
 } from '../persistence/provider-config-store';
 
 /**
- * Pre-spawn credential probe (Overclock v1.2 harvest, fix F-256): a spawn
+ * Pre-spawn credential probe (peer ADE v1.2 harvest, fix F-256): a spawn
  * issued with a missing credential used to surface as a dead pane or a mute
  * login TUI. This probe runs BEFORE the pane exists — cheap (<50ms warm, no
  * network; every check is a stat/keychain read or a cached binary lookup) —

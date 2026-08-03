@@ -181,8 +181,9 @@ function bootstrapMissionSnapshot(mission: Mission): string {
 
 function missionMatchesExpectedAuthoritySeal(
   mission: Mission,
-  expected: MissionPaneAuthoritySeal,
+  expected?: MissionPaneAuthoritySeal,
 ): boolean {
+  if (!expected) return true;
   return Boolean(
     mission.intentVersion === expected.intentVersion &&
       mission.intentContract &&
@@ -255,7 +256,7 @@ export interface MissionOrchestratorBootstrapDeps {
     scope: ProjectExecutionScope,
     missionId: string,
     expectedSessionId: string,
-    expectedAuthoritySeal: MissionPaneAuthoritySeal,
+    expectedAuthoritySeal?: MissionPaneAuthoritySeal,
   ): Mission | null;
   hasCurrentKickoffAcceptance(
     scope: ProjectExecutionScope,
@@ -292,7 +293,7 @@ export interface MissionOrchestratorBootstrapDeps {
     readonly scope: ProjectExecutionScope;
     readonly missionId: string;
     readonly orchestratorSessionId: string;
-    readonly authoritySeal: MissionPaneAuthoritySeal;
+    readonly authoritySeal?: MissionPaneAuthoritySeal;
   }): () => void;
   /** Trusted physical inventory used to distinguish a dead row from a live orphan. */
   listRuntimePanes(): PaneSnapshot[];
@@ -700,7 +701,7 @@ function resolveRetirementPhysicalIdentity(input: {
   readonly missionId: string;
   readonly sessionId: string;
   readonly pane?: MissionPaneSpec;
-  readonly expectedAuthoritySeal: MissionPaneAuthoritySeal;
+  readonly expectedAuthoritySeal?: MissionPaneAuthoritySeal;
   readonly agent: OwnedAgentSessionInfo | null;
   readonly authority: PaneRuntimeAuthority | null;
 }): RetirementPhysicalIdentity {
@@ -1141,11 +1142,8 @@ export class MissionOrchestratorBootstrapService {
         );
       }
     }
-    let authoritySeal = resolveMissionPaneAuthoritySeal(
-      scope,
-      initial,
-      squad,
-    );
+    const authoritySeal =
+      resolveMissionPaneAuthoritySeal(scope, initial, squad) ?? undefined;
     if (!authoritySeal) {
       if (!autopilot) {
         return this.#failure(
@@ -1201,7 +1199,7 @@ export class MissionOrchestratorBootstrapService {
       approvedRuntime = resolvedRuntime;
     }
     if (!sameMissionOrchestratorRuntime(approvedRuntime, resolvedRuntime)) {
-      // Autopilot (Overclock-order): cosmetic runtime drift (effort/account
+      // Autopilot (Autopilot libre): cosmetic runtime drift (effort/account
       // pin, confinement flags) must not re-open the approval ceremony before
       // the first PTY. Hardened keeps the fail-closed reapprove gate.
       if (!autopilot) {
@@ -1264,6 +1262,7 @@ export class MissionOrchestratorBootstrapService {
       )
     ) {
       if (
+        authoritySeal &&
         persistedOrchestrator.paneId &&
         persistedOrchestrator.authoritySeal &&
         sameMissionPaneApprovalSeal(
@@ -1656,7 +1655,7 @@ export class MissionOrchestratorBootstrapService {
     missionId: string,
     pane: MissionPaneSpec | undefined,
     sessionId: string,
-    expectedAuthoritySeal: MissionPaneAuthoritySeal,
+    expectedAuthoritySeal?: MissionPaneAuthoritySeal,
   ): Promise<KickoffSessionRetirementResult> {
     const detail =
       "A sessão existe sem receipt durável nem kickoff em voo. O Nexus precisa " +
@@ -1736,7 +1735,7 @@ export class MissionOrchestratorBootstrapService {
     scope: ProjectExecutionScope,
     missionId: string,
     pane: MissionPaneSpec,
-    expectedAuthoritySeal: MissionPaneAuthoritySeal,
+    expectedAuthoritySeal?: MissionPaneAuthoritySeal,
   ): Promise<KickoffSessionRetirementResult> {
     const paneId = pane.paneId;
     if (!paneId) {
@@ -1851,7 +1850,7 @@ export class MissionOrchestratorBootstrapService {
     missionId: string,
     pane: MissionPaneSpec | undefined,
     sessionId: string,
-    expectedAuthoritySeal: MissionPaneAuthoritySeal,
+    expectedAuthoritySeal?: MissionPaneAuthoritySeal,
   ): KickoffSessionRetirementResult {
     const current = this.#deps.getMission(scope, missionId);
     if (!current || current.orchestratorSessionId !== sessionId) {

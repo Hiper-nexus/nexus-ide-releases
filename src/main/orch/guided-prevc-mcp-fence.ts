@@ -205,7 +205,7 @@ function assertPhysicalMaestro(ctx: AgentGateContext): void {
  * mcp-dispatch. This fence owns only the exact PREVC bootstrap/reviewer phase
  * and a narrow pre-execution policy boundary.
  *
- * Overclock-order copy: Maestro may route work and spawn native read-only
+ * Autopilot libre copy: Maestro may route work and spawn native read-only
  * scouts/reviewers while the fence is still active. Writable panes remain
  * execution-stage only because provider-native tools do not pass through MCP.
  */

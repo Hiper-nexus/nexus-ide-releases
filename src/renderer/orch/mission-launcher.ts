@@ -158,7 +158,7 @@ export interface SquadLaunchOptions {
   /**
    * Título da missão quando o objetivo do usuário é conhecido (modo agêntico).
    * Sem ele, a missão herda o nome do squad — errado quando o squad é reusado
-   * de outra missão ("Clone Overclock" numa missão de dashboards).
+   * de outra missão ("Clone Reference ADE" numa missão de dashboards).
    */
   missionTitle?: string;
   /** Full immediate goal/briefing; native-confirmed and contract-bound. */

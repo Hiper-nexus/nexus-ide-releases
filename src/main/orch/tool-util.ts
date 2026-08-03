@@ -938,7 +938,7 @@ export async function spawnPaneAndMaybePrompt(
         `usando a variante real ${modelResolution.model ?? '(default)'}.`,
     );
   }
-  // Pre-spawn credential probe (Overclock F-256 harvest): judge the exact
+  // Pre-spawn credential probe (peer ADE F-256 harvest): judge the exact
   // effective model before a pane exists. This matters for OpenCode: its
   // pinned first-party free models need no credential, while external models
   // on the same installed CLI still return a typed credential error. Probe

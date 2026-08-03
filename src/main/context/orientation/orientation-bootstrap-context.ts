@@ -55,7 +55,7 @@ const INTERNAL_SOURCE_SEGMENTS = new Set([
   '.codex',
   '.context',
   '.gemini',
-  '.overclock-app',
+  '.peer-ade-app',
   '.worktrees',
   '.vite',
   'graphify-out',

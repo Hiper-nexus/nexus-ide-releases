@@ -1,6 +1,6 @@
 /**
  * Gate for hot-session text inject (Live already engaged).
- * Overclock parity: follow-ups without re-saying the name — NOT ambient TV.
+ * ADE parity: follow-ups without re-saying the name — NOT ambient TV.
  *
  * Logs 2026-07-11: "camelo vindo", "aplaus", "musica de abertu" were injected
  * as commands → Jarvis hallucinated tools and narration.

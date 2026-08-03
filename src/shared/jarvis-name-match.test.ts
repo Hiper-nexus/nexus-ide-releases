@@ -67,8 +67,8 @@ describe('isJarvisWakeAddress', () => {
     expect(isJarvisWakeAddress('jarvis abre')).toBe(true);
   });
 
-  it('wakes on exact Jarvis mid-sentence (Overclock F-057 parity)', () => {
-    // Overclock: exact "jarvis" em qualquer posição acorda.
+  it('wakes on exact Jarvis mid-sentence (peer ADE F-057 parity)', () => {
+    // peer ADE: exact "jarvis" em qualquer posição acorda.
     expect(isJarvisWakeAddress('hoje o jarvis falou comigo sobre o projeto')).toBe(
       true,
     );

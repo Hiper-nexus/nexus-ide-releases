@@ -1072,6 +1072,7 @@ describe("main-owned mission pane spawn", () => {
   });
 
   it("rejects authority drift that occurs while an unclaimed renderer spawn is pending", async () => {
+    orchSettings.squadCliPolicy = "governed";
     const owner = {
       id: 917,
       isDestroyed: () => false,
@@ -1080,28 +1081,32 @@ describe("main-owned mission pane spawn", () => {
     } as unknown as WebContents & { send: ReturnType<typeof vi.fn> };
     bindResolvedRendererWorkspaceScope(owner, scope);
     registerOrchRenderer(owner);
-    const resultPromise = requestPaneSpawn({
-      adapterId: "codex",
-      missionId: "mission-headless",
-      agentName: "Worker Headless",
-      workerIncarnationId: "worker-incarnation-main",
-      role: "worker",
-      scope,
-    });
-    expect(owner.send).toHaveBeenCalledOnce();
-    missionAuthority.currentSeal = {
-      ...missionAuthority.seal,
-      contractHash: "drifted-contract-hash",
-    };
+    try {
+      const resultPromise = requestPaneSpawn({
+        adapterId: "codex",
+        missionId: "mission-headless",
+        agentName: "Worker Headless",
+        workerIncarnationId: "worker-incarnation-main",
+        role: "worker",
+        scope,
+      });
+      expect(owner.send).toHaveBeenCalledOnce();
+      missionAuthority.currentSeal = {
+        ...missionAuthority.seal,
+        contractHash: "drifted-contract-hash",
+      };
 
-    unregisterOrchRenderer(owner);
+      unregisterOrchRenderer(owner);
 
-    await expect(resultPromise).resolves.toMatchObject({
-      ok: false,
-      error: expect.stringMatching(/stale mission pane authority/i),
-    });
-    expect(pty.spawn).not.toHaveBeenCalled();
-    clearRendererWorkspaceScope(owner);
+      await expect(resultPromise).resolves.toMatchObject({
+        ok: false,
+        error: expect.stringMatching(/stale mission pane authority/i),
+      });
+      expect(pty.spawn).not.toHaveBeenCalled();
+    } finally {
+      orchSettings.squadCliPolicy = "operator-choice";
+      clearRendererWorkspaceScope(owner);
+    }
   });
 
   it("retains an already-created claimed PTY when the renderer dies before ACK", async () => {

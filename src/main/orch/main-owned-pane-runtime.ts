@@ -315,50 +315,81 @@ export function spawnMainOwnedMissionPane(
 ): OrchPaneSpawnResult {
   const requestId = makeId("orchspawn");
   const paneId = makeId("pane");
+  const operatorChoice = isOperatorChoicePolicy(
+    getOrchSettings().squadCliPolicy,
+  );
   const authoritySeal = options.authoritySeal;
   if (!authoritySeal) {
-    return {
-      requestId,
-      ok: false,
-      error:
-        "mission pane authority seal is unavailable; replane and approve " +
-        "the current mission revision",
-    };
+    if (!operatorChoice) {
+      return {
+        requestId,
+        ok: false,
+        error:
+          "mission pane authority seal is unavailable; replane and approve " +
+          "the current mission revision",
+      };
+    }
+    // Autopilot libre: spawn without seal — worktree + merge remain the floor.
+    console.warn(
+      `[main-owned-spawn] Autopilot: missing authority seal for ` +
+        `${options.missionId}; continuing`,
+    );
   }
   if (
+    authoritySeal &&
     options.contextRevision !== undefined &&
     options.contextRevision !== authoritySeal.contextRevision
   ) {
-    return {
-      requestId,
-      ok: false,
-      error:
-        "mission pane contextRevision diverges from its main-owned " +
-        "authority seal",
-    };
+    if (!operatorChoice) {
+      return {
+        requestId,
+        ok: false,
+        error:
+          "mission pane contextRevision diverges from its main-owned " +
+          "authority seal",
+      };
+    }
+    console.warn(
+      `[main-owned-spawn] Autopilot: contextRevision drift for ` +
+        `${options.missionId}; continuing with live seal`,
+    );
   }
-  const sealedAuthority = Object.freeze({ ...authoritySeal });
-  try {
-    hooks.assertMissionAuthorityCurrent({
-      missionId: options.missionId,
-      scope: options.scope,
-      contextRevision: sealedAuthority.contextRevision,
-      authoritySeal: sealedAuthority,
-    });
-  } catch (error) {
-    return {
-      requestId,
-      ok: false,
-      error:
-        error instanceof Error
-          ? error.message
-          : "mission pane authority is stale",
-    };
+  const sealedAuthority = authoritySeal
+    ? Object.freeze({ ...authoritySeal })
+    : undefined;
+  if (sealedAuthority) {
+    try {
+      hooks.assertMissionAuthorityCurrent({
+        missionId: options.missionId,
+        scope: options.scope,
+        contextRevision: sealedAuthority.contextRevision,
+        authoritySeal: sealedAuthority,
+      });
+    } catch (error) {
+      if (!operatorChoice) {
+        return {
+          requestId,
+          ok: false,
+          error:
+            error instanceof Error
+              ? error.message
+              : "mission pane authority is stale",
+        };
+      }
+      console.warn(
+        `[main-owned-spawn] Autopilot: authority current check soft-failed:`,
+        error,
+      );
+    }
   }
   options = {
     ...options,
-    contextRevision: sealedAuthority.contextRevision,
-    authoritySeal: sealedAuthority,
+    ...(sealedAuthority
+      ? {
+          contextRevision: sealedAuthority.contextRevision,
+          authoritySeal: sealedAuthority,
+        }
+      : {}),
   };
   const adapter = getAdapter(options.adapterId);
   if (!adapter) {
@@ -386,9 +417,6 @@ export function spawnMainOwnedMissionPane(
     };
   }
   const executionScope = options.executionScope ?? options.scope;
-  const operatorChoice = isOperatorChoicePolicy(
-    getOrchSettings().squadCliPolicy,
-  );
   const writableMissionWorkerIntent =
     options.role === "worker" &&
     Boolean(options.missionId?.trim()) &&

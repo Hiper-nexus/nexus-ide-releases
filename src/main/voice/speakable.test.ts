@@ -19,7 +19,7 @@ describe('cleanText', () => {
   });
 
   it('strips a bare mcp__ tool call with args', () => {
-    const out = cleanText('Feito. mcp__overclock__handoff_list({ids:["h-5t"]}) pronto.');
+    const out = cleanText('Feito. mcp__agent__handoff_list({ids:["h-5t"]}) pronto.');
     expect(out).not.toMatch(/mcp__|handoff_list|\{|\}/);
     expect(out).toContain('Feito.');
     expect(out).toContain('pronto.');
@@ -40,7 +40,7 @@ describe('cleanText', () => {
 
   it('strips an orphaned "Mais detalhes:" pointer left after the mcp call is removed', () => {
     const out = cleanText(
-      'Handoff entregue. Mais detalhes: mcp__overclock__handoff_list({ids:["h-5t"]})',
+      'Handoff entregue. Mais detalhes: mcp__agent__handoff_list({ids:["h-5t"]})',
     );
     expect(out).not.toMatch(/Mais detalhes|mcp__|\{/);
     expect(out).toContain('Handoff entregue.');

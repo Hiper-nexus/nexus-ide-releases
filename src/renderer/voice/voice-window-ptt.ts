@@ -1,13 +1,13 @@
 /**
- * Window-scoped push-to-talk (Overclock ClockVoice parity).
+ * Window-scoped push-to-talk (ADE NexusVoice parity).
  *
  * Bare `Space` must never be registered with Electron `globalShortcut` — that
  * would steal typing from every OS app. Instead the focused renderer listens
  * for keydown/keyup while Nexus is frontmost, holds to talk, and on release
  * the existing PTT pipeline transcribes (Groq PT→EN) into the focused pane.
  *
- * While this listener is enabled, Space is reserved for PTT (same as Overclock
- * ClockVoice). Forms/settings keep normal Space; switch routing back to Jarvis
+ * While this listener is enabled, Space is reserved for PTT (same as typical ADE
+ * NexusVoice). Forms/settings keep normal Space; switch routing back to Jarvis
  * + ⌘⇧Space to type spaces freely in the terminal.
  */
 
@@ -26,7 +26,7 @@ export interface WindowPttOptions {
 /** Elements where Space must keep its normal meaning (forms, settings). */
 export function shouldIgnoreWindowPttTarget(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
-  // xterm owns the terminal; ClockVoice intercepts Space there on purpose.
+  // xterm owns the terminal; NexusVoice intercepts Space there on purpose.
   if (target.closest('.xterm')) return false;
   if (target.closest('[data-voice-window-ptt="allow"]')) return false;
   if (
@@ -59,7 +59,7 @@ export function codeMatchesPttKey(eventCode: string, keyCode: string): boolean {
 
 /**
  * Attach document-level hold-to-talk. Returns a disposer.
- * keydown starts capture; keyup (or blur) stops — mirrors Overclock hold mode.
+ * keydown starts capture; keyup (or blur) stops — mirrors ADE hold hold mode.
  */
 export function attachWindowPtt(
   callbacks: WindowPttCallbacks,

@@ -1,7 +1,7 @@
 /**
  * Issue persistent agent attestation at spawn time.
  *
- * Product floor (Autopilot / Overclock-order): `agentAttestationGate` defaults
+ * Product floor (Autopilot / Autopilot libre): `agentAttestationGate` defaults
  * to `off`, so this is a no-op on the critical path. When Hardened enables
  * `required`, prefer {@link issueAgentIdentityBestEffort} at spawn so a locked
  * vault never blocks the first PTY — handoff still fails closed later if the

@@ -22,7 +22,7 @@ export function isIgnorableRealtimeError(message: string): boolean {
 
 /** P5: heuristic — text that looks like a periodic screen snapshot vs tool result. */
 export function isScreenContext(text: string): boolean {
-  // Overclock: [wake]/[reconexão] are speakable injectContext turns, not silent updates.
+  // peer ADE: [wake]/[reconexão] are speakable injectContext turns, not silent updates.
   if (text.startsWith('[wake]') || text.startsWith('[reconexão]')) return false;
   // Tool-result breadcrumbs look like "- tool: ok (...)" / "- tool: failed (...)".
   if (text.startsWith('- ') && (text.includes(': ok') || text.includes(': failed'))) {

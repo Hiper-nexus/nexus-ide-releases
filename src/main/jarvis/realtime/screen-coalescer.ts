@@ -1,5 +1,5 @@
 /**
- * Screen-update coalescing for the Jarvis Live transport (Overclock C-092.7 b).
+ * Screen-update coalescing for the Jarvis Live transport (peer ADE C-092.7 b).
  *
  * A wizard / navigation burst emits N near-identical screen turns; each one is a
  * generation that rebills the whole context. Debounce: only the LAST state within

@@ -505,7 +505,7 @@ export interface TaskRecord {
 }
 
 /**
- * Zero-LLM activity summary of one pane (Overclock harvest): the first user
+ * Zero-LLM activity summary of one pane (ADE harvest): the first user
  * message of the CLI's native transcript, the last significant output line
  * and when the session stopped. `source` says where `lastLine` came from —
  * the live/recent PTY tail buffer, the on-disk transcript, or nothing found.

@@ -219,8 +219,8 @@ export function loadVoiceConfig(): VoiceConfig {
       migrated = true;
       console.log('[voice] voz Gemini Live migrada para Charon (masculina)');
     }
-    // Keep focused-pane when the user (or Overclock migration) chose dictation
-    // into the active terminal — do not force Jarvis over ClockVoice-style PTT.
+    // Keep focused-pane when the user (or peer ADE migration) chose dictation
+    // into the active terminal — do not force Jarvis over NexusVoice-style PTT.
     if (migrated) persist(userConfig);
     current = userConfig;
     return current;

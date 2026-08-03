@@ -4,11 +4,11 @@
 **Date:** 2026-08-03  
 **Branch:** `feat/mission-wave-pack`  
 **Owner:** orchestration  
-**Cross-ref:** `docs/analysis/2026-08-02-overclock-124-distill.md`, `docs/design/parallel-task-scheduler.md`
+**Cross-ref:** `docs/analysis/2026-08-02-peer-ade-124-distill.md`, `docs/design/parallel-task-scheduler.md`
 
 ## Context
 
-Overclock’s happy path is brief → Maestro spawns N panes → handoff. Nexus already
+peer ADE’s happy path is brief → Maestro spawns N panes → handoff. Nexus already
 has `maxWorkers=12` and an ownership-disjoint scheduler, but **promoted BMAD
 plans always seal Guided delivery** (`choosePrimaryExecutor` → 1 writer). Squad
 prompts still say “one story at a time”, so a mission with 7 stories never
@@ -35,12 +35,12 @@ Introduce three **orchestration modes** (orthogonal to `lane` / `executionMode`)
    - `wave-pack` (topology marker)
    - `wave-pack-story:<id>` (disjointness key)
 3. Round-robin **executor** agents from the approved roster (same agent may own
-   multiple stories → N panes of the same CLI — Overclock parity).
+   multiple stories → N panes of the same CLI — ADE parity).
 4. Optional quality-gate reviewer depends on all story tasks.
 5. Optimistic parallel waves; merge queue serial; ownership-violation fail-closed
    on merge (existing scheduler contract).
 
-### What we refuse to copy from Overclock
+### What we refuse to copy from peer ADE
 
 - No OS-sandbox bypass for speed.
 - No boot-time builtin rewrite that invalidates an already-approved mission

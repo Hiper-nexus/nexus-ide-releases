@@ -58,7 +58,7 @@ describe('guided Main-owned PREVC kickoff', () => {
 
     expect(prompt).toMatch(/Vigie handoffs e trate bloqueios e escalonamentos/i);
     expect(prompt).toMatch(/status=blocked exige a causa/i);
-    expect(prompt).toMatch(/status=failed quando a execução começou/i);
+    expect(prompt).toMatch(/status=failed se a execução começou|status=failed quando a execução começou/i);
     expect(prompt).toMatch(/Volte ao operador só para decisão de produto ambígua/i);
   });
 
@@ -211,7 +211,7 @@ describe('teto do kickoff standard', () => {
     expect(prompt).not.toContain('"docs/stories/um.md"');
   });
 
-  it('mantém a base operacional do squad dentro de 2.048 caracteres', () => {
+  it('no Autopiloto omite manifesto longo do squad (brief Autopilot libre)', () => {
     const prompt = buildIntentDispatchKickoffPrompt({
       squad: {
         ...squad,
@@ -222,6 +222,28 @@ describe('teto do kickoff standard', () => {
       acceptanceCriteria: ['Cobrança fecha sem erro'],
       risk: 'medium',
       maxWorkers: 2,
+      standardTopology: 'delivery',
+      guidedPrevcRequired: false,
+    });
+
+    expect(prompt).not.toContain('x'.repeat(50));
+    expect(prompt).not.toMatch(/Base do squad|Base operacional/i);
+    expect(Buffer.byteLength(prompt, 'utf8')).toBeLessThan(1_800);
+  });
+
+  it('no Hardened ainda permite base do squad até 2.048 caracteres', () => {
+    const prompt = buildIntentDispatchKickoffPrompt({
+      squad: {
+        ...squad,
+        orchestratorInstructions: 'x'.repeat(5_000),
+      },
+      missionId: 'mission-base-hard',
+      goal: 'Corrigir o pipeline de cobrança',
+      acceptanceCriteria: ['Cobrança fecha sem erro'],
+      risk: 'medium',
+      maxWorkers: 2,
+      operatorChoice: false,
+      standardTopology: 'delivery',
     });
 
     expect(prompt).toContain('(base operacional truncada em 2048 caracteres)');

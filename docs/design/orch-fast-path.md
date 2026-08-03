@@ -1,14 +1,14 @@
-# ADR — Orch Fast Path (velocidade real vs Overclock)
+# ADR — Orch Fast Path (velocidade real vs peer ADE)
 
 **Status:** Accepted  
 **Date:** 2026-08-03  
 **Branch:** `feat/mission-wave-pack`  
 **Owner:** orchestration  
-**Cross-ref:** `docs/design/mission-wave-pack.md`, `docs/analysis/2026-08-02-overclock-124-distill.md`
+**Cross-ref:** `docs/design/mission-wave-pack.md`, `docs/analysis/2026-08-02-peer-ade-124-distill.md`
 
 ## Context
 
-Overclock feels faster because **brief → first writable pane** is short.
+peer ADE feels faster because **brief → first writable pane** is short.
 Nexus kept Guided PREVC (freeze, Doctor, fence) on the critical path even when
 Wave Pack already opted out at the authority layer — bootstrap still called
 `ensureMissionPrevc` for every non-fanout topology, including `wave-pack`.
@@ -30,7 +30,7 @@ before the first PTY. Sensitive/destructive work still does.
    mission-runtime squad pin, attachments, worktree, MCP bearer, credential
    probe (login). OS process sandbox and agent attestation crypto are
    **Hardened opt-in** (`squadCliPolicy=governed`, `agentAttestationGate=required`).
-5. **Autopilot (default) copies Overclock order:** no Seatbelt pre-requisite,
+5. **Autopilot (default) copies peer ADE order:** no Seatbelt pre-requisite,
    no attestation crypto on handoff, YOLO/network on; orchestratorRuntime
    cosmetic drift warns instead of re-approving.
 

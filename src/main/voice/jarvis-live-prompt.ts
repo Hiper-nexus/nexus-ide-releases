@@ -6,7 +6,7 @@ import { withNexusVoicePolicy } from './jarvis-voice-policy';
  * English for better model/tool adherence, while requiring pt-BR speech.
  */
 
-const LAWS = `Non-negotiable operating rules (Overclock-aligned):
+const LAWS = `Non-negotiable operating rules (Nexus-aligned):
 1. You are the voice interface for NexusIDE. Talk naturally, but ANY explicit
    app operation MUST go through a tool. Never pretend you did something.
 2. TOOLS ONLY ON CLEAR INTENT: open/close/create/focus/switch/run/send/edit/

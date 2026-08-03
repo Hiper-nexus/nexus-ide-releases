@@ -106,7 +106,7 @@ export function Onboarding() {
   }, [installed.length, markVictory]);
 
   /**
-   * Activation-first (Overclock lesson): once a real mission + handoff already
+   * Activation-first (activation lesson): once a real mission + handoff already
    * happened, the welcome modal must not keep covering the mission field.
    * Victories alone used to leave the user stuck on "Começar a operar" while
    * toasts said the fleet was already in the field.

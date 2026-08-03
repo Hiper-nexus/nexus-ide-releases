@@ -607,7 +607,7 @@ export async function executeJarvisAction(
       toolResult = { tool: action.type, ok: false, summary: 'sem workspace aberto' };
     } else {
       // Await design so Live gets a real tool result + confirmation prompt
-      // (Overclock: open review → ask "Disparo?" before wizard-fire).
+      // (peer ADE: open review → ask "Disparo?" before wizard-fire).
       try {
         const res = await window.nexus.orch.designSquad(ws.path);
         if (res.ok) markEffect(control);

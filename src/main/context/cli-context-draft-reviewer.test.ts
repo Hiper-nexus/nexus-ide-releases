@@ -205,7 +205,7 @@ beforeEach(() => {
 });
 
 describe('CLI context draft reviewer', () => {
-  it('bounds a production review to the same two-minute recovery window as Overclock', () => {
+  it('bounds a production review to the same two-minute recovery window as typical ADE', () => {
     expect(DEFAULT_CONTEXT_DRAFT_REVIEW_TIMEOUT_MS).toBe(120_000);
   });
 

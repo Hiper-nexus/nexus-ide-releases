@@ -26,7 +26,7 @@ import {
 } from './providers-panel-view';
 
 /**
- * Providers hub — Overclock-style scan (tiles + detected count + tabs),
+ * Providers hub — ADE libre scan (tiles + detected count + tabs),
  * Nexus-depth underneath (vault multi-conta, Keychain, permissões, routing).
  */
 

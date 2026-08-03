@@ -408,7 +408,7 @@ export function jarvisActionFastPath(
     }
   }
 
-  // Overclock wizard-fire: user chooses the squad open in review.
+  // peer ADE wizard-fire: user chooses the squad open in review.
   if (
     /\brevis[aã]o de squad|squad pronto|iniciar squad\b/i.test(ctx.screen ?? '') &&
     /^(sim|confirma|confirmar|pode|pode iniciar|inicia|inicie|iniciar|dispara|dispare|vai|manda ver|ok|yes|go)\b/.test(

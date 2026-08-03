@@ -3,7 +3,7 @@ import path from 'node:path';
 
 /**
  * Persist long-running video predictions so a timed-out call can resume
- * without paying twice (Overclock parity: recoverJobId).
+ * without paying twice (ADE parity: recoverJobId).
  *
  * Jobs live under the open workspace: `.nexus/media/video-jobs.json`.
  */

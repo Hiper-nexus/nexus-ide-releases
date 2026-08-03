@@ -23,8 +23,8 @@ const BOX_GLYPH_RE = /[─-╿▀-▟⠀-⣿■-◿]/g;
 
 // Defesa em profundidade além do strip de code-fence: a voz NUNCA deve soletrar
 // sintaxe de tool-call / JSON que vaze FORA de crases (ex.: uma wake de handoff
-// com `Mais detalhes: mcp__overclock__handoff_list({ids:["h-5t"]})` na tela).
-// Espelha os regexes do voiceSafeText do Overclock (:14,:16,:18,:30).
+// com `Mais detalhes: mcp__agent__handoff_list({ids:["h-5t"]})` na tela).
+// Espelha os regexes do voiceSafeText do peer ADE (:14,:16,:18,:30).
 /** Chamada mcp__ com args — tolera 1 nível de parênteses aninhados. */
 const MCP_CALL_RE = /\bmcp__[\w.-]+\s*\((?:[^()]|\([^()]*\))*\)/g;
 /** Nome de tool mcp__ solto (sem args). */

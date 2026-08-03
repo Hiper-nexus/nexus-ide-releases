@@ -8,9 +8,13 @@ import { isOperatorChoicePolicy } from "../../shared/squad-cli-policy";
 export interface MissionRuntimeReadiness {
   readonly detectedAdapters: readonly AdapterInfo[];
   readonly authenticatedAdapters: readonly AdapterInfo[];
+  /** All installed+authenticated providers (every CLI, not a top-N sample). */
+  readonly readyProviders: readonly AdapterInfo[];
   readonly verifiedMaestros: readonly AdapterInfo[];
   readonly qualifiedWorkers: readonly AdapterInfo[];
   readonly hasOperationalRoute: boolean;
+  /** True when 2+ providers are ready — multi-LLM economics in play. */
+  readonly multiProviderReady: boolean;
 }
 
 function providerFor(
@@ -106,12 +110,22 @@ export function missionRuntimeReadiness(
         adapter.kind === "cli-pty" &&
         adapter.autonomousWorkspaceWriteCapable === true,
   );
+  const readyProviders = authenticatedAdapters;
   return Object.freeze({
     detectedAdapters: Object.freeze(detectedAdapters),
     authenticatedAdapters: Object.freeze(authenticatedAdapters),
+    readyProviders: Object.freeze(readyProviders),
     verifiedMaestros: Object.freeze(verifiedMaestros),
     qualifiedWorkers: Object.freeze(qualifiedWorkers),
     hasOperationalRoute:
       verifiedMaestros.length > 0 && qualifiedWorkers.length > 0,
+    multiProviderReady: readyProviders.length >= 2,
   });
+}
+
+/** Compact label list for UI: "claude, codex, grok" (all, not capped). */
+export function formatReadyProviderIds(
+  readiness: Pick<MissionRuntimeReadiness, "readyProviders">,
+): string {
+  return readiness.readyProviders.map((adapter) => adapter.id).join(", ");
 }

@@ -10,6 +10,8 @@ import {
   missionIntentAuthoritySnapshot,
   type MissionIntentContract,
 } from "../../shared/mission-intent";
+import { isOperatorChoicePolicy } from "../../shared/squad-cli-policy";
+import { getOrchSettings } from "../persistence/settings-store";
 import { getContextWorkflowService } from "../context/context-workflow-registry";
 import { snapshotSquadAuthority } from "./squad-authority-snapshot";
 
@@ -61,10 +63,15 @@ export function createMissionPaneAuthoritySeal(input: {
     return null;
   }
   const squadRevisionHash = snapshotSquadAuthority(squad).hash;
+  if (!mission.squadId || squad.id !== mission.squadId) {
+    return null;
+  }
+  // Hardened: seal dies if the approved squad hash drifted (reapprove).
+  // Autopilot libre: bind to the live squad hash so the first pane is not
+  // blocked by catalog churn after the operator already approved the mission.
   if (
-    !mission.squadId ||
-    squad.id !== mission.squadId ||
-    intentContract.squadRevisionHash !== squadRevisionHash
+    intentContract.squadRevisionHash !== squadRevisionHash &&
+    !isOperatorChoicePolicy(getOrchSettings().squadCliPolicy)
   ) {
     return null;
   }

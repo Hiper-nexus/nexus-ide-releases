@@ -180,7 +180,7 @@ describe('migrateLegacyVoiceConfig', () => {
     expect(config.stt.translate).toBe(false);
   });
 
-  it('builds a window-scoped Space accelerator from Overclock push-to-talk', () => {
+  it('builds a window-scoped Space accelerator from peer ADE push-to-talk', () => {
     const config = migrateLegacyVoiceConfig(legacyVoice);
     expect(config.input.shortcut).toBe('Space');
     expect(config.routing).toBe('focused-pane');
@@ -204,7 +204,7 @@ describe('isWindowScopedShortcut', () => {
 });
 
 describe('dictationEnPresetPatch', () => {
-  it('configures ClockVoice-style EN dictation', () => {
+  it('configures NexusVoice-style EN dictation', () => {
     const patch = dictationEnPresetPatch();
     expect(patch).toEqual({
       routing: 'focused-pane',

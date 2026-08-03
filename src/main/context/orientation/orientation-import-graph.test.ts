@@ -105,7 +105,7 @@ describe('orientation import graph + blast radius + bootstrap (P1–P4)', () => 
     write(root, '.codex/cache/generated.ts', 'export const noise = 1;\n');
     write(root, '.context/docs/generated.ts', 'export const noise = 1;\n');
     write(root, '.gemini/cache/generated.ts', 'export const noise = 1;\n');
-    write(root, '.overclock-app/panes.json', '{}\n');
+    write(root, '.peer-ade-app/panes.json', '{}\n');
     write(root, '.worktrees/old/package.json', '{"name":"old"}\n');
     write(root, 'worktrees/old/package.json', '{"name":"old"}\n');
     write(root, '.vite/cache/generated.js', 'module.exports = {};\n');
@@ -127,7 +127,7 @@ describe('orientation import graph + blast radius + bootstrap (P1–P4)', () => 
       '.codex/',
       '.context/',
       '.gemini/',
-      '.overclock-app/',
+      '.peer-ade-app/',
       '.worktrees/',
       'worktrees/',
       '.vite/',

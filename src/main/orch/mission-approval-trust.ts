@@ -1,5 +1,5 @@
 /**
- * Pré-autorização de missão por squad+projeto (atrito Overclock/Orca).
+ * Pré-autorização de missão por squad+projeto (atrito peer ADE/Orca).
  *
  * O operador aprova uma vez; enquanto o roster (squadRevisionHash) e o projeto
  * não mudarem, o próximo approve reusa a confiança e pula o modal nativo —

@@ -1,9 +1,9 @@
 /**
  * Matching permissivo do nome "Jarvis" para wake / engajamento.
- * isJarvisWakeAddress → matchWakeWord do Overclock (port em overclock-voice-nlu).
+ * isJarvisWakeAddress → matchWakeWord do peer ADE (port em jarvis-passive-nlu).
  */
 
-import { matchWakeWord } from './overclock-voice-nlu';
+import { matchWakeWord } from './jarvis-passive-nlu';
 
 /** Aliases observados em STT PT-BR (Groq/Whisper) + sotaque. */
 export const JARVIS_STT_ALIASES = new Set([
@@ -193,7 +193,7 @@ export function stripJoinedGreeting(token: string): string | null {
 }
 
 /**
- * Transcript é chamada à Jarvis? Mesma regra do Overclock matchWakeWord.
+ * Transcript é chamada à Jarvis? Mesma regra do peer ADE matchWakeWord.
  */
 export function isJarvisWakeAddress(
   text: string,

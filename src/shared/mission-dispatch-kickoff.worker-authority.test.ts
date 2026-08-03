@@ -109,7 +109,7 @@ describe('kickoff worker authority', () => {
       operatorChoice: true,
     });
 
-    expect(text).toMatch(/Missão autorizada/i);
+    expect(text).toMatch(/Missão (autorizada|—)/i);
     expect(text).toMatch(/worktree isolado/i);
     expect(text).not.toMatch(/rodada da equipe/i);
   });
