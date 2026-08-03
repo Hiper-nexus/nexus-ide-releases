@@ -21,6 +21,12 @@ const harness = vi.hoisted(() => ({
   dispatches: [] as unknown[],
   handoffs: new Map<string, unknown>(),
   deliveryAttempts: new Map<string, unknown[]>(),
+  runtimeSquadBinding: null as {
+    readonly squadId: string;
+    readonly sourceSquadId: string;
+    readonly sourceSquadRevisionHash: string;
+    readonly squadRevisionHash: string;
+  } | null,
 }));
 
 vi.mock("electron", () => ({
@@ -72,7 +78,14 @@ vi.mock("./real-mission-e2e-workspace", () => ({
 }));
 
 vi.mock("./real-mission-e2e-fixture", () => ({
-  resolvePrivateRealMissionE2ESquadBinding: () => null,
+  resolvePrivateRealMissionE2ESquadBinding: () => ({
+    squadId: REAL_MISSION_E2E_SQUAD_ID,
+    sourceSquadId: REAL_MISSION_E2E_SQUAD_ID,
+    sourceSquadRevisionHash: "a".repeat(64),
+    squadRevisionHash: "a".repeat(64),
+  }),
+  resolveProductWizardRealMissionE2ESquadBinding: () =>
+    harness.runtimeSquadBinding,
 }));
 
 vi.mock("./real-mission-e2e-authority", () => ({
@@ -185,6 +198,57 @@ function doneMission() {
     },
   };
 }
+
+it("follows only the exact main-owned runtime snapshot after private approval", () => {
+  const runtimeSquadId =
+    "agentic-runtime-11111111-1111-4111-8111-111111111111";
+  harness.runtimeSquadBinding = {
+    squadId: runtimeSquadId,
+    sourceSquadId: REAL_MISSION_E2E_SQUAD_ID,
+    sourceSquadRevisionHash: squadBinding.sourceSquadRevisionHash,
+    squadRevisionHash: "b".repeat(64),
+  };
+  harness.mission = {
+    ...doneMission(),
+    squadId: runtimeSquadId,
+    intentContract: {
+      squadRevisionHash: harness.runtimeSquadBinding.squadRevisionHash,
+    },
+  };
+
+  const observer = createObserver();
+  const evidence = observer.evidence(100, "fail", "invariant-failed");
+
+  expect(evidence.mission).toMatchObject({
+    squadId: runtimeSquadId,
+    squadSourceId: REAL_MISSION_E2E_SQUAD_ID,
+    squadSourceRevisionHash: squadBinding.sourceSquadRevisionHash,
+    squadRevisionHash: "b".repeat(64),
+  });
+  observer.stop();
+});
+
+it("fails closed when the runtime snapshot hash diverges from the approved intent", () => {
+  const runtimeSquadId =
+    "agentic-runtime-22222222-2222-4222-8222-222222222222";
+  harness.runtimeSquadBinding = {
+    squadId: runtimeSquadId,
+    sourceSquadId: REAL_MISSION_E2E_SQUAD_ID,
+    sourceSquadRevisionHash: squadBinding.sourceSquadRevisionHash,
+    squadRevisionHash: "b".repeat(64),
+  };
+  harness.mission = {
+    ...doneMission(),
+    squadId: runtimeSquadId,
+    intentContract: { squadRevisionHash: "c".repeat(64) },
+  };
+
+  const observer = createObserver();
+  expect(
+    observer.evidence(100, "fail", "invariant-failed").mission,
+  ).toBeNull();
+  observer.stop();
+});
 
 function createObserver(options?: {
   advisorSkipClis?: readonly string[];

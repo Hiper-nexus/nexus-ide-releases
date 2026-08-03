@@ -38,6 +38,7 @@ import { getContextWorkflowService } from "./context/context-workflow-registry";
 import { readAuditLog, type AuditEntry } from "./jarvis/audit-log";
 import {
   resolvePrivateRealMissionE2ESquadBinding,
+  resolveProductWizardRealMissionE2ESquadBinding,
   type RealMissionE2ESquadBinding,
 } from "./real-mission-e2e-fixture";
 import {
@@ -410,18 +411,36 @@ export class RealMissionObserver {
       this.#launchSurface === "product-wizard"
         ? this.#wizardReceiptForMission(this.#missionId)
         : null;
-    const currentSquadBinding =
-      this.#launchSurface === "product-wizard" && mission
-        ? productWizardSquadBinding(mission)
-        : resolvePrivateRealMissionE2ESquadBinding();
+    const currentSquadBinding = (() => {
+      if (!mission) return null;
+      if (this.#launchSurface === "product-wizard") {
+        return productWizardSquadBinding(mission);
+      }
+      // Private runs are armed against the exact source fixture, but approval
+      // now seals a main-owned immutable `agentic-runtime-*` snapshot before
+      // execution. Follow only that validated source → runtime lineage. This
+      // is deliberately not a prefix/hash heuristic: the resolver rechecks
+      // the source bytes, runtime metadata and exact executable roster.
+      const missionSquadId = mission.squadId;
+      if (typeof missionSquadId !== "string") return null;
+      if (missionSquadId !== this.#squadBinding.squadId) {
+        return resolveProductWizardRealMissionE2ESquadBinding(
+          missionSquadId,
+        );
+      }
+      return resolvePrivateRealMissionE2ESquadBinding();
+    })();
     const squadBindingStillExact =
-      currentSquadBinding?.squadId === this.#squadBinding.squadId &&
+      currentSquadBinding !== null &&
+      currentSquadBinding.sourceSquadId ===
+        this.#squadBinding.sourceSquadId &&
       currentSquadBinding.sourceSquadRevisionHash ===
         this.#squadBinding.sourceSquadRevisionHash &&
-      currentSquadBinding.squadRevisionHash ===
-        this.#squadBinding.squadRevisionHash &&
       mission?.intentContract?.squadRevisionHash ===
-        this.#squadBinding.squadRevisionHash;
+        currentSquadBinding.squadRevisionHash;
+    const effectiveSquadBinding = squadBindingStillExact
+      ? currentSquadBinding
+      : null;
     const dispatches = this.#suite.taskDispatches.list(this.#missionId);
     const durableAuthority = readDurableAuthoritySnapshot(
       this.#suite.scope,
@@ -590,7 +609,8 @@ export class RealMissionObserver {
     // exato do harness derruba a prova inteira (fail closed).
     const plan =
       planReceipt &&
-      planReceipt.squadId === this.#squadBinding.squadId &&
+      effectiveSquadBinding !== null &&
+      planReceipt.squadId === effectiveSquadBinding.squadId &&
       plannedTasks.length > 0
         ? {
             version: 1 as const,
@@ -884,6 +904,24 @@ export class RealMissionObserver {
         return null;
       }
     })();
+    const missionProof: RealMissionE2EEvidence["mission"] =
+      mission !== null &&
+      effectiveSquadBinding !== null &&
+      mission.squadId === effectiveSquadBinding.squadId
+        ? {
+            id: mission.id,
+            status: mission.status,
+            intentState: mission.intentState ?? null,
+            intentVersion: mission.intentVersion ?? 0,
+            squadId: effectiveSquadBinding.squadId,
+            squadSourceId: effectiveSquadBinding.sourceSquadId,
+            squadSourceRevisionHash:
+              effectiveSquadBinding.sourceSquadRevisionHash,
+            squadRevisionHash: effectiveSquadBinding.squadRevisionHash,
+            approvedAt: mission.intentContract?.approvedAt ?? null,
+            dispatchedAt: mission.intentContract?.dispatchedAt ?? null,
+          }
+        : null;
     return this.#attestEvidence({
       schemaVersion: REAL_MISSION_E2E_EVIDENCE_SCHEMA_VERSION,
       runId: this.#runId,
@@ -911,23 +949,7 @@ export class RealMissionObserver {
         ...realMissionInteractionCapture,
         codexMcpPromptCount: this.#codexMcpPromptSessions.size,
       },
-      mission:
-        mission?.squadId === this.#squadBinding.squadId &&
-        squadBindingStillExact
-          ? {
-              id: mission.id,
-              status: mission.status,
-              intentState: mission.intentState ?? null,
-              intentVersion: mission.intentVersion ?? 0,
-              squadId: this.#squadBinding.squadId,
-              squadSourceId: this.#squadBinding.sourceSquadId,
-              squadSourceRevisionHash:
-                this.#squadBinding.sourceSquadRevisionHash,
-              squadRevisionHash: this.#squadBinding.squadRevisionHash,
-              approvedAt: mission.intentContract?.approvedAt ?? null,
-              dispatchedAt: mission.intentContract?.dispatchedAt ?? null,
-            }
-          : null,
+      mission: missionProof,
       missionInventory: this.#missionInventoryFence.proof(
         this.#suite.missions.list(),
       ),

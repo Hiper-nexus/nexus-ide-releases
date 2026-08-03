@@ -1188,8 +1188,13 @@ export function assertRealMissionPassEvidence(raw) {
     SHA256_PATTERN.test(mission?.squadSourceRevisionHash ?? "") &&
     SHA256_PATTERN.test(mission?.squadRevisionHash ?? "") &&
     ((evidence?.launchSurface === "private-runner" &&
-      mission?.squadId === "agentic-nexus-real-mission-e2e" &&
-      mission?.squadSourceRevisionHash === mission?.squadRevisionHash) ||
+      ((mission?.squadId === "agentic-nexus-real-mission-e2e" &&
+        mission?.squadSourceRevisionHash === mission?.squadRevisionHash) ||
+        (/^agentic-runtime-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
+          mission?.squadId ?? "",
+        ) &&
+          mission?.squadSourceRevisionHash !==
+            mission?.squadRevisionHash))) ||
       (evidence?.launchSurface === "product-wizard" &&
         /^agentic-runtime-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
           mission?.squadId ?? "",

@@ -13,6 +13,9 @@
   hook nativo não chega, sem confundir repaint de um frame com execução real.
 - O Maestro pode delegar scouts/revisores read-only antes da execução PREVC,
   mantendo escrita e shell presos ao estágio autorizado.
+- A evidência pós-`done` acompanha a linhagem selada do squad fonte até o
+  snapshot `agentic-runtime-*`; uma missão concluída não é mais reprovada por o
+  observador continuar preso ao ID mutável anterior à aprovação.
 
 ## 0.22.0 — O piloto aprende a pilotar
 
