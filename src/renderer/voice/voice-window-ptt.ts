@@ -29,7 +29,15 @@ export interface WindowPttOptions {
 export function shouldIgnoreWindowPttTarget(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
   // xterm owns the terminal; NexusVoice intercepts Space there on purpose.
-  if (target.closest('.xterm')) return false;
+  // Helper textarea is the focused node — match it even if the .xterm wrapper
+  // is missing from the ancestry in some host trees.
+  if (
+    target.closest('.xterm') ||
+    target.classList.contains('xterm-helper-textarea') ||
+    target.closest('textarea.xterm-helper-textarea')
+  ) {
+    return false;
+  }
   if (target.closest('[data-voice-window-ptt="allow"]')) return false;
   if (
     target.closest(

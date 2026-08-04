@@ -36,6 +36,14 @@ describe('shouldIgnoreWindowPttTarget', () => {
     term.remove();
     input.remove();
   });
+
+  it('allows xterm helper textarea even without a .xterm ancestor', () => {
+    const helper = document.createElement('textarea');
+    helper.className = 'xterm-helper-textarea';
+    document.body.appendChild(helper);
+    expect(shouldIgnoreWindowPttTarget(helper)).toBe(false);
+    helper.remove();
+  });
 });
 
 describe('attachWindowPtt', () => {

@@ -122,6 +122,7 @@ import { PassiveWakeDeadline } from './passive-wake-deadline';
 import { PassiveWakeAdmission } from './passive-wake-admission';
 import { pttStartAction } from './ptt-barge-in';
 import { attachWindowPtt } from './voice-window-ptt';
+import { isWindowScopedShortcut } from '../../shared/voice-config';
 import { shouldOfferLiveMicFrame } from './live-mic-offer-gate';
 import {
   HOT_COMMAND_MIN_PEAK_RMS,
@@ -1423,7 +1424,11 @@ export function useVoiceController(active = true): void {
         isEnabled: () => {
           const info = useVoiceStore.getState().info;
           if (!info || info.captureAllowed === false) return false;
-          return info.hotkeyScope === 'window';
+          // Prefer main-computed scope; bare Space still arms if scope is stale.
+          return (
+            info.hotkeyScope === 'window' ||
+            isWindowScopedShortcut(info.shortcut ?? '')
+          );
         },
       },
     );

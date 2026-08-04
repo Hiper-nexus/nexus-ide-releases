@@ -495,9 +495,9 @@ describe("operational Home and Launch surfaces", () => {
       button.textContent?.includes("Descrever objetivo"),
     );
     await act(async () => startMission?.click());
-    expect(openForAgentic).toHaveBeenCalledOnce();
-    expect(openForAgentic).toHaveBeenCalledWith();
-    expect(openForMission).not.toHaveBeenCalled();
+    // Sem objetivo digitado: abre o seletor de modo (não o REVISAR default).
+    expect(openForMission).toHaveBeenCalledOnce();
+    expect(openForAgentic).not.toHaveBeenCalled();
 
     act(() => root.unmount());
     mountedRoots.delete(root);
@@ -511,9 +511,10 @@ describe("operational Home and Launch surfaces", () => {
     }));
     const inventory = setReactiveNexusApi(ADAPTERS, blockedProviders);
     const openForAgentic = vi.fn();
+    const openForMission = vi.fn();
     const pane = { id: "shell-1", kind: "shell" as const, title: "shell" };
     useHomeStore.setState({ visible: true });
-    useMissionWizardStore.setState({ openForAgentic });
+    useMissionWizardStore.setState({ openForAgentic, openForMission });
     useWorkspaceStore.setState({
       current: {
         name: "nexus-ide",
@@ -543,7 +544,9 @@ describe("operational Home and Launch surfaces", () => {
       button.textContent?.includes("Descrever objetivo"),
     );
     act(() => startMission?.click());
-    expect(openForAgentic).toHaveBeenCalledOnce();
+    // CTA vazio → seletor de modo (não REVISAR default).
+    expect(openForMission).toHaveBeenCalledOnce();
+    expect(openForAgentic).not.toHaveBeenCalled();
     expect(inventory.adapterList).toHaveBeenCalledOnce();
     expect(inventory.providerList).toHaveBeenCalledOnce();
 

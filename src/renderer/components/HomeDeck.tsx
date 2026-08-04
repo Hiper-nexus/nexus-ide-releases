@@ -55,6 +55,7 @@ export function HomeDeck() {
   const mcpInfo = useOrchStore((s) => s.mcpInfo);
   const workspace = useWorkspaceStore((s) => s.current);
   const openAgentic = useMissionWizardStore((s) => s.openForAgentic);
+  const openMission = useMissionWizardStore((s) => s.openForMission);
   const openForSquad = useMissionWizardStore((s) => s.openForSquad);
   const openSettings = useSettingsStore((s) => s.toggleDrawer);
   const addShellPane = useLayoutStore((s) => s.addShellPane);
@@ -214,11 +215,14 @@ export function HomeDeck() {
       openSettings();
       return;
     }
+    // Com texto: piloto automático (objetivo-first). Sem texto: seletor de
+    // modo (Livre / Squad / Agêntico) — o operador escolhe o formato, não
+    // cai direto no REVISAR de um time default.
     if (intent.trim()) {
       openAgentic(intent.trim());
       return;
     }
-    openAgentic();
+    openMission();
   }
 
   function openTerminalFromHome(): void {

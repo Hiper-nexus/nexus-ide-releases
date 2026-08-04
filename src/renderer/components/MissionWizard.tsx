@@ -44,6 +44,11 @@ import { applySquadEdit } from "../../shared/squad-edit";
 import { balanceSquadRosterCli } from "../orch/squad-roster";
 import { automaticOrchestratorAdapterId } from "../orch/orchestrator-runtime";
 import { isAdapterModelAuthenticated } from "../orch/mission-runtime-readiness";
+import {
+  buildCustomRosterAgent,
+  planRemoveRosterAgent,
+  type CustomizableWorkerCategory,
+} from "../orch/mission-roster-customize";
 import { CloseButton } from "./CloseButton";
 import { MissionWizardReview } from "./MissionWizardReview";
 import { MissionWizardPlanReview } from "./MissionWizardPlanReview";
@@ -972,6 +977,37 @@ export function MissionWizard() {
       "allowedTools" in patch &&
       patch.allowedTools != null
     ) {
+      setHighlightedAgentId(null);
+      setError(null);
+    }
+  }
+
+  function addAgent(category: CustomizableWorkerCategory): void {
+    const built = buildCustomRosterAgent({
+      category,
+      roster,
+      adapters,
+      providers,
+    });
+    if (!built.ok) {
+      setError(built.error);
+      return;
+    }
+    setRoster((prev) => [...prev, built.agent]);
+    setRosterSaved(false);
+    setError(null);
+    setHighlightedAgentId(null);
+  }
+
+  function removeAgent(id: string): void {
+    const planned = planRemoveRosterAgent(roster, id);
+    if (!planned.ok) {
+      setError(planned.error);
+      return;
+    }
+    setRoster(planned.next);
+    setRosterSaved(false);
+    if (highlightedAgentId === id) {
       setHighlightedAgentId(null);
       setError(null);
     }
@@ -2293,6 +2329,8 @@ export function MissionWizard() {
               rosterInvalidAgent={rosterInvalidAgent}
               onSaveRoster={() => saveRoster()}
               onUpdateAgent={updateAgent}
+              onAddAgent={addAgent}
+              onRemoveAgent={removeAgent}
               onSelectOrchestratorAdapter={(adapterId) => {
                 if (!rosterOrchestrator) return;
                 const selectedAdapter = adapters.find(

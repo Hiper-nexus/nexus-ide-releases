@@ -1750,6 +1750,18 @@
 .wizard__route-ack input {
   accent-color: var(--warn);
 }
+.wizard__roster-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 4px 0 10px;
+}
+.wizard__roster-remove {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 2px 8px;
+}
 .wizard__roster--edit {
   max-height: min(50vh, 470px);
   overflow-y: auto;

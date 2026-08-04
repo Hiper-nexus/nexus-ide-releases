@@ -164,6 +164,85 @@ function account(id: string, adapterId: string): AccountInfo {
   };
 }
 
+describe("MissionWizardReview roster personalization", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("offers add/remove controls so the squad is not locked to the design default", () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const onAddAgent = vi.fn();
+    const onRemoveAgent = vi.fn();
+    const executor: SquadAgent = {
+      id: "exec-1",
+      agentName: "Executor principal",
+      category: "executor",
+      cli: "codex",
+      model: "gpt-5.4",
+      effort: "medium",
+      allowedTools: ["Bash", "Read", "Edit"],
+    };
+    const reviewer: SquadAgent = {
+      id: "rev-1",
+      agentName: "QA de execução",
+      category: "reviewer",
+      cli: "kimi",
+      model: "kimi-code/kimi-for-coding",
+      effort: "medium",
+      allowedTools: ["Bash", "Read"],
+    };
+    act(() => {
+      root.render(
+        <MissionWizardReview
+          squadCliPolicy="operator-choice"
+          squad={{ ...squad, agents: [orchestrator, executor, reviewer] }}
+          roster={[orchestrator, executor, reviewer]}
+          adapters={[codex, kimi]}
+          providers={[provider(codex), provider(kimi)]}
+          accounts={[account("a-codex", "codex"), account("a-kimi", "kimi")]}
+          guided
+          highlightedAgentId={null}
+          error={null}
+          spawning={false}
+          rosterSaved={false}
+          rosterInvalidAgent={null}
+          onSaveRoster={vi.fn()}
+          onUpdateAgent={vi.fn()}
+          onAddAgent={onAddAgent}
+          onRemoveAgent={onRemoveAgent}
+          onError={vi.fn()}
+          onBack={vi.fn()}
+          onCancel={vi.fn()}
+          onLaunch={vi.fn()}
+        />,
+      );
+    });
+
+    expect(host.textContent).toMatch(/Personalizar equipe/);
+    const addExecutor = [...host.querySelectorAll("button")].find((b) =>
+      b.textContent?.includes("+ Executor"),
+    );
+    const addReviewer = [...host.querySelectorAll("button")].find((b) =>
+      b.textContent?.includes("+ Revisor"),
+    );
+    expect(addExecutor).toBeTruthy();
+    expect(addReviewer).toBeTruthy();
+    act(() => addExecutor?.click());
+    expect(onAddAgent).toHaveBeenCalledWith("executor");
+
+    const remove = [...host.querySelectorAll("button")].find((b) =>
+      b.getAttribute("aria-label")?.includes("Remover QA"),
+    );
+    expect(remove).toBeTruthy();
+    act(() => remove?.click());
+    expect(onRemoveAgent).toHaveBeenCalledWith("rev-1");
+
+    act(() => root.unmount());
+  });
+});
+
 describe("MissionWizardReview orchestrator provider", () => {
   afterEach(() => {
     document.body.innerHTML = "";
@@ -293,7 +372,9 @@ describe("MissionWizardReview orchestrator provider", () => {
     );
     expect(host.textContent).toContain("Equipe preparada");
     expect(host.textContent).toContain("Coordenação verificada");
-    expect(technicalDetails?.hasAttribute("open")).toBe(false);
+    // Personalização fica aberta: o operador precisa ver e editar CLIs de cara.
+    expect(technicalDetails?.hasAttribute("open")).toBe(true);
+    expect(host.textContent).toMatch(/Personalizar equipe/);
 
     act(() => continueButton?.click());
     expect(onLaunch).toHaveBeenCalledOnce();

@@ -43,6 +43,15 @@ interface MissionWizardReviewProps {
   rosterInvalidAgent: SquadAgent | null;
   onSaveRoster(): void | Promise<void>;
   onUpdateAgent(id: string, patch: Partial<SquadAgent>): void;
+  /** Add a worker/reviewer/scout with a free CLI pick — not locked to the design default. */
+  onAddAgent?(
+    category: Extract<
+      SquadAgent["category"],
+      "executor" | "reviewer" | "scout"
+    >,
+  ): void;
+  /** Remove a non-orchestrator agent from the mission roster. */
+  onRemoveAgent?(id: string): void;
   onSelectOrchestratorAdapter?(adapterId: string): void;
   onError(message: string): void;
   onBack(): void;
@@ -132,6 +141,8 @@ export function MissionWizardReview({
   rosterInvalidAgent,
   onSaveRoster,
   onUpdateAgent,
+  onAddAgent,
+  onRemoveAgent,
   onSelectOrchestratorAdapter,
   onError,
   onBack,
@@ -141,6 +152,9 @@ export function MissionWizardReview({
 }: MissionWizardReviewProps) {
   const [squadCliPolicyState, setSquadCliPolicyState] =
     useState<SquadCliPolicy>("operator-choice");
+  // Personalização começa aberta (operador precisa ver CLIs), mas permanece
+  // colapsável — `open` fixo impedia fechar o painel.
+  const [rosterPanelOpen, setRosterPanelOpen] = useState(true);
   useEffect(() => {
     if (squadCliPolicyProp) return;
     let cancelled = false;
@@ -417,27 +431,27 @@ export function MissionWizardReview({
       )}
       <details
         className="wizard__advanced-roster"
-        open={
-          !guided ||
-          Boolean(rosterInvalidAgent) ||
-          Boolean(workerBlockedReason) ||
-          Boolean(orchestratorBlockedReason)
-            ? true
-            : undefined
-        }
+        open={rosterPanelOpen}
+        onToggle={(event) => {
+          setRosterPanelOpen(
+            (event.currentTarget as HTMLDetailsElement).open,
+          );
+        }}
       >
         <summary>
           <span>
-            {guided ? "Ver e ajustar equipe" : "Configuração da equipe"}
+            {guided
+              ? "Personalizar equipe (CLIs e papéis)"
+              : "Configuração da equipe"}
           </span>
           <span className="wizard__advanced-roster-meta">
-            {roster.length} {roster.length === 1 ? "função" : "funções"} · CLIs
-            e permissões
+            {roster.length} {roster.length === 1 ? "função" : "funções"} ·
+            quantos e quais CLIs você quiser
           </span>
         </summary>
         <div className="wizard__advanced-roster-body">
           <div className="wizard__review-head">
-            <p className="wizard__label">Configuração técnica</p>
+            <p className="wizard__label">Equipe editável</p>
             <button
               className="wizard__btn"
               onClick={() => void handleSaveRoster()}
@@ -455,17 +469,61 @@ export function MissionWizardReview({
             </span>
           </div>
           <p className="wizard__hint-sm">
-            {roundtable.configurationHint(operatorChoice)}
+            {roundtable.configurationHint(operatorChoice)} O desenho inicial é
+            só um ponto de partida: troque CLI/modelo, adicione ou remova
+            integrantes — o Maestro permanece um; workers e revisores são
+            livres.
           </p>
           <p className="wizard__hint-sm">
             Use * só no orquestrador; workers precisam de tools explícitas ou
             vazio. Gaps explícitos: gap:nome: motivo.
           </p>
+          {(onAddAgent || onRemoveAgent) && (
+            <div
+              className="wizard__roster-add"
+              role="group"
+              aria-label="Adicionar integrantes à equipe"
+            >
+              {onAddAgent && (
+                <>
+                  <button
+                    type="button"
+                    className="wizard__btn wizard__btn--ghost"
+                    disabled={spawning || roster.length >= 12}
+                    onClick={() => onAddAgent("executor")}
+                  >
+                    + Executor
+                  </button>
+                  <button
+                    type="button"
+                    className="wizard__btn wizard__btn--ghost"
+                    disabled={spawning || roster.length >= 12}
+                    onClick={() => onAddAgent("reviewer")}
+                  >
+                    + Revisor / QA
+                  </button>
+                  <button
+                    type="button"
+                    className="wizard__btn wizard__btn--ghost"
+                    disabled={spawning || roster.length >= 12}
+                    onClick={() => onAddAgent("scout")}
+                  >
+                    + Scout / advisor
+                  </button>
+                </>
+              )}
+            </div>
+          )}
           <ul className="wizard__roster wizard__roster--edit">
             {roster.map((a) => {
               const isOrchestrator = a.category === "orchestrator";
               const cliAdapter = adapters.find((x) => x.id === a.cli);
               const models = cliAdapter?.models.list ?? [];
+              const canRemove =
+                !isOrchestrator &&
+                Boolean(onRemoveAgent) &&
+                roster.filter((row) => row.category !== "orchestrator").length >
+                  1;
               return (
                 <li
                   key={a.id}
@@ -484,6 +542,18 @@ export function MissionWizardReview({
                       <span className="wizard__roster-name" title={a.agentName}>
                         {a.agentName}
                       </span>
+                      {canRemove && (
+                        <button
+                          type="button"
+                          className="wizard__btn wizard__btn--ghost wizard__roster-remove"
+                          aria-label={`Remover ${a.agentName}`}
+                          title="Remover desta missão"
+                          disabled={spawning}
+                          onClick={() => onRemoveAgent?.(a.id)}
+                        >
+                          Remover
+                        </button>
+                      )}
                     </div>
                     <div className="wizard__agent-controls">
                       <span className="wizard__provider-select">
