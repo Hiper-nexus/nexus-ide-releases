@@ -631,6 +631,7 @@ describe('manual GitHub release publication', () => {
       materializeCandidate: () => fixture.release,
     });
     expect(result.resumedFromPublishedCanonical).toBe(false);
+    expect(result.resumedFromLocalGreenCandidate).toBe(false);
     expect(events).toEqual([
       'candidate-gate',
       `push:${'a'.repeat(40)}:v1.2.3:${'e'.repeat(40)}`,
@@ -760,6 +761,7 @@ describe('manual GitHub release publication', () => {
       materializeCandidate: () => fixture.release,
     });
     expect(result.resumedFromPublishedCanonical).toBe(true);
+    expect(result.resumedFromLocalGreenCandidate).toBe(false);
     expect(events).toEqual([
       'load-sealed-candidate',
       `verify-refs:${'a'.repeat(40)}:v1.2.3:${'e'.repeat(40)}`,
@@ -769,6 +771,96 @@ describe('manual GitHub release publication', () => {
       `publish:${PUBLIC_RELEASE_REPO}`,
       `verify-refs:${'a'.repeat(40)}:v1.2.3:${'e'.repeat(40)}`,
     ]);
+  });
+
+  it('reuses a durable local green candidate without rerunning E2E on first publish', async () => {
+    const fixture = publicationFixture();
+    const events = [];
+    const result = await publishManualReleaseTestCore({
+      root: '/unused',
+      environment: publishEnvironment(),
+      version: '1.2.3',
+      authority: releaseAuthority(),
+      nodeVersion: releaseNodeVersion(),
+      stageReleaseAssets: passthroughStage,
+      github: fakeGitHub({
+        states: new Map(),
+        fixture,
+        events,
+      }),
+      repositoryPublisher: {
+        async push({ commitSha, tag, tagObjectSha }) {
+          events.push(`push:${commitSha}:${tag}:${tagObjectSha}`);
+        },
+        async verify() {
+          events.push('verify-refs');
+        },
+      },
+      async runCandidateGate() {
+        throw new Error('local green reuse must not rerun packaged E2E');
+      },
+      async loadReusableCandidate() {
+        events.push('load-local-green-candidate');
+        return fixture.candidate;
+      },
+      materializeCandidate: () => fixture.release,
+    });
+    expect(result.resumedFromPublishedCanonical).toBe(false);
+    expect(result.resumedFromLocalGreenCandidate).toBe(true);
+    expect(events).toEqual([
+      'load-local-green-candidate',
+      `push:${'a'.repeat(40)}:v1.2.3:${'e'.repeat(40)}`,
+      'verify-refs',
+      `create:${CANONICAL_RELEASE_REPO}:verify`,
+      `upload:${CANONICAL_RELEASE_REPO}:dmg,security,zip`,
+      `create:${PUBLIC_RELEASE_REPO}:no-verify`,
+      `upload:${PUBLIC_RELEASE_REPO}:dmg,zip`,
+      'verify-refs',
+      `publish:${CANONICAL_RELEASE_REPO}`,
+      'verify-refs',
+      `publish:${PUBLIC_RELEASE_REPO}`,
+      'verify-refs',
+    ]);
+  });
+
+  it('falls back to the candidate gate when local durable receipt is unavailable', async () => {
+    const fixture = publicationFixture();
+    const events = [];
+    const result = await publishManualReleaseTestCore({
+      root: '/unused',
+      environment: publishEnvironment(),
+      version: '1.2.3',
+      authority: releaseAuthority(),
+      nodeVersion: releaseNodeVersion(),
+      stageReleaseAssets: passthroughStage,
+      github: fakeGitHub({
+        states: new Map(),
+        fixture,
+        events,
+      }),
+      repositoryPublisher: {
+        async push() {
+          events.push('push');
+        },
+        async verify() {
+          events.push('verify-refs');
+        },
+      },
+      async runCandidateGate() {
+        events.push('candidate-gate');
+        return fixture.candidate;
+      },
+      async loadReusableCandidate() {
+        events.push('load-local-green-miss');
+        throw new Error('receipt missing');
+      },
+      materializeCandidate: () => fixture.release,
+    });
+    expect(result.resumedFromPublishedCanonical).toBe(false);
+    expect(result.resumedFromLocalGreenCandidate).toBe(false);
+    expect(events[0]).toBe('load-local-green-miss');
+    expect(events[1]).toBe('candidate-gate');
+    expect(events).toContain('push');
   });
 
   it('is a write-free success when both published snapshots are exact', async () => {

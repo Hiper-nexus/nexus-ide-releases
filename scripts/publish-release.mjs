@@ -832,10 +832,15 @@ export function assertPublishPhysicalCandidate(candidate) {
 }
 
 /**
- * A published canonical release is the only state allowed to bypass the
- * expensive packaged E2E gate. The bypass is not trust-on-first-use: local
- * HEAD/tag, the durable receipt, both packages, the security manifest and
- * every declared evidence file are re-bound and re-hashed first.
+ * Load a durable local release candidate receipt and re-bind it to the current
+ * HEAD/tag, DMG/ZIP digests, security assets and E2E evidence files.
+ *
+ * Used in two cases:
+ * 1. Canonical release already published — resume mirror without re-running E2E
+ * 2. Fresh / draft publication — reuse a green local candidate so publish does
+ *    not re-run the expensive packaged real-mission gate
+ *
+ * Neither path is trust-on-first-use: every declared byte is re-hashed first.
  */
 export function loadReusableReleaseCandidate(options = {}) {
   const root = path.resolve(options.root ?? process.cwd());
@@ -1286,16 +1291,36 @@ async function publishManualReleaseCore(
   assertCanonicalPublicationOrder(canonical, mirror);
 
   const reusePublishedCandidate = canonical.kind === 'published';
-  const candidate = reusePublishedCandidate
-    ? await reusableLoader({ root, environment })
-    : await gate({ root, environment });
+  let reuseLocalGreenCandidate = false;
+  let candidate;
+  if (reusePublishedCandidate) {
+    candidate = await reusableLoader({ root, environment });
+  } else {
+    // Prefer a durable green local receipt bound to HEAD + packages over a
+    // second packaged real-mission run. Fall back to the full gate when the
+    // receipt is missing, stale, or fails revalidation.
+    try {
+      candidate = await reusableLoader({ root, environment });
+      reuseLocalGreenCandidate = true;
+    } catch (error) {
+      const reason =
+        error instanceof Error ? error.message : String(error);
+      process.stderr.write(
+        `[release-publish] durable local candidate unavailable ` +
+          `(${reason}); running full candidate gate\n`,
+      );
+      candidate = await gate({ root, environment });
+    }
+  }
+  const reuseDurableCandidate =
+    reusePublishedCandidate || reuseLocalGreenCandidate;
   if (
     candidate?.receipt?.version !== version ||
     candidate?.receipt?.tag !== tag
   ) {
     throw new Error('release candidate does not match the requested version');
   }
-  if (authoritative && !reusePublishedCandidate) {
+  if (authoritative && !reuseDurableCandidate) {
     assertPublishPhysicalCandidate(candidate);
   } else if (authoritative) {
     assertReusableReleaseCandidate(root, candidate);
@@ -1304,7 +1329,7 @@ async function publishManualReleaseCore(
     assertPublishPhysicalCandidateCore(candidate, false);
   }
   const materialized = await (
-    reusePublishedCandidate
+    reuseDurableCandidate
       ? materializeReusable
       : materializeFresh
   )(root, candidate);
@@ -1318,6 +1343,8 @@ async function publishManualReleaseCore(
     });
   }
 
+  // Local green reuse still needs the annotated tag on the remotes; only a
+  // published canonical already implies refs were pushed.
   if (!reusePublishedCandidate) {
     await repositoryPublisher.push({
       commitSha: candidate.receipt.commitSha,
@@ -1432,6 +1459,7 @@ async function publishManualReleaseCore(
     canonicalRepo,
     publicRepo,
     resumedFromPublishedCanonical: reusePublishedCandidate,
+    resumedFromLocalGreenCandidate: reuseLocalGreenCandidate,
   };
   } finally {
     stagedCandidate.cleanup();

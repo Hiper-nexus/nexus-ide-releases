@@ -43,15 +43,17 @@ canônica é publicada e relida primeiro; só então o espelho público pode ser
 publicado. No estado publicado, o SHA-256 retornado pelo GitHub é obrigatório
 para cada asset. Inventário extra, ausente ou divergente interrompe o fluxo.
 
-Uma tentativa interrompida enquanto ainda há drafts executa novamente o gate
-completo e substitui apenas os assets declarados. Se a release canônica já
-estiver publicada e exata, a retomada não recompila nem repete a missão E2E:
-ela revalida HEAD, tag local e remota, recibo durável, hashes de DMG/ZIP,
-manifesto e todos os arquivos de segurança contra a release canônica
-publicada, e então conclui o espelho. Se o espelho aparecer publicado antes da
-canônica, o comando falha sem tentar “consertar” silenciosamente. Executar o
-comando novamente com ambas as releases publicadas só é aceito quando os dois
-snapshots são exatamente os esperados.
+Uma tentativa interrompida enquanto ainda há drafts **reutiliza** o recibo
+local verde (`release-candidate-receipt.json`) quando HEAD, tag, DMG/ZIP e
+evidências E2E ainda batem — sem repetir a missão empacotada. Só roda o gate
+completo de novo se o recibo estiver ausente, inválido ou desalinhado. Se a
+release canônica já estiver publicada e exata, a retomada também não recompila
+nem repete a missão E2E: ela revalida HEAD, tag local e remota, recibo
+durável, hashes de DMG/ZIP, manifesto e todos os arquivos de segurança contra a
+release canônica publicada, e então conclui o espelho. Se o espelho aparecer
+publicado antes da canônica, o comando falha sem tentar “consertar”
+silenciosamente. Executar o comando novamente com ambas as releases publicadas
+só é aceito quando os dois snapshots são exatamente os esperados.
 
 O release oficial atual é single-architecture `arm64`, gerado no Mac Apple
 Silicon. Não há promessa de universal ou `x86_64` sem build/prova separados.
