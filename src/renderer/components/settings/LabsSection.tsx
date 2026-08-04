@@ -62,6 +62,10 @@ export const LABS_FLAG_COPY: Record<string, { title: string; hint?: string }> = 
     title: 'Scheduler paralelo de missões',
     hint: 'Fan-out por worktrees com MergeQueue serial; só age com missão aprovada e plano selado.',
   },
+  'feature.mission.workerHandoffTtl': {
+    title: 'Worker TTL pós-handoff',
+    hint: 'Paridade Overclock (opt-in): worker idle com todos os handoffs consumidos fecha sozinho ~30s depois, liberando o pane. Qualquer trabalho novo cancela.',
+  },
 };
 
 export function describeFlagReason(reason: string): string {

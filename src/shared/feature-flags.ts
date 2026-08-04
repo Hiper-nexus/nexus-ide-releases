@@ -67,6 +67,7 @@ export const FEATURE_FLAG_IDS = {
   terminalCommandBlocks: 'feature.terminal.commandBlocks',
   missionEventJournal: 'feature.mission.eventJournal',
   missionWarmupAdvisories: 'feature.mission.warmupAdvisories',
+  missionWorkerHandoffTtl: 'feature.mission.workerHandoffTtl',
   searchMixer: 'feature.search.mixer',
   progressiveOnboarding: 'feature.ui.progressiveOnboarding',
   contextualPanel: 'feature.ui.contextualPanel',
@@ -134,6 +135,18 @@ export const BUILTIN_FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
     // Default OFF até o despacho reutilizar a PTY do warm-up no review/QA
     // real: com default ON o E2E real-mission vê uma 2ª encarnação do
     // revisor e aborta com physical PTY invariant violation.
+    defaultEnabled: false,
+  },
+  {
+    id: FEATURE_FLAG_IDS.missionWorkerHandoffTtl,
+    owner: 'orch',
+    description:
+      'Worker TTL pós-handoff (paridade Overclock, opt-in): worker idle com todos os handoffs consumidos é encerrado ~30s depois, liberando o pane. Default OFF para proteger as invariantes físicas do e2e real-mission (mesmo critério do warmupAdvisories).',
+    channel: 'dev',
+    createdAt: '2026-08-04',
+    removeAfter: '2027-03-31',
+    killSwitch: false,
+    telemetry: false,
     defaultEnabled: false,
   },
   {

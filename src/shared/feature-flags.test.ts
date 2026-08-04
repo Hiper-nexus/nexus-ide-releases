@@ -53,6 +53,9 @@ describe('feature flags', () => {
       // Warm-up abre reviewer/QA cedo; o review real ainda spawna outra PTY e
       // o E2E real-mission aborta. Opt-in Labs até reutilizar a sessão.
       'feature.mission.warmupAdvisories',
+      // Worker TTL fecha panes físicos mid-mission; o E2E ancora workers a
+      // PTYs vivos e abortaria. Opt-in Labs (paridade Overclock: lá é opt-in).
+      'feature.mission.workerHandoffTtl',
     ]);
     for (const flag of BUILTIN_FEATURE_FLAGS) {
       expect(

@@ -105,6 +105,10 @@ import {
   shutdownIdleDelivery,
 } from "./idle-delivery";
 import {
+  initWorkerHandoffTtl,
+  shutdownWorkerHandoffTtl,
+} from "./worker-handoff-ttl";
+import {
   requestMissionRuntimeAuthorityReconciliation,
   startOrchestrationCoordinator,
   stopOrchestrationCoordinator,
@@ -1720,6 +1724,7 @@ export async function initOrchestration(): Promise<void> {
     initSquadStore(db);
     initPaneRegistry();
     initIdleDelivery();
+    initWorkerHandoffTtl();
     const startSupervisor =
       orchestrationStartSupervisor ??
       new OrchestrationStartSupervisor({
@@ -1812,6 +1817,7 @@ export async function closeOrchestration(): Promise<void> {
     disposeSquadBroadcast?.();
     disposeSquadBroadcast = null;
     shutdownIdleDelivery();
+    shutdownWorkerHandoffTtl();
     stopAllPreviews();
     stopRemoteBridge();
     stopMcpServer();
