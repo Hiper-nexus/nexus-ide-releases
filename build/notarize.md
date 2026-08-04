@@ -57,7 +57,7 @@ Esta release é construída, verificada e publicada **localmente**. Não execute
 `gh workflow run`, não dispare o workflow de release e não dependa de GitHub
 Actions.
 
-Use exatamente Node `22.23.1`, fixado em `package.json > nexusRelease.node`.
+Use exatamente Node `22.22.3`, fixado em `package.json > nexusRelease.node`.
 `make:release` e o gate de segurança baixam o pacote npm na versão declarada por
 `packageManager`, conferem o SHA-512 fixado em
 `build/release-npm-integrity.json` e o executam em cache temporário privado. O
@@ -139,6 +139,12 @@ entitlements por tipo de processo, fuses e o smoke isolado com userData
 temporário. Também exige que todos os Mach-O sejam da única arquitetura
 declarada e que os apps extraídos do DMG e do ZIP sejam coerentes. Só depois
 disso os artefatos podem ser publicados.
+
+`make:release` valida o perfil `nexus-notary`, a disponibilidade do
+`notarytool`/`stapler` e a identidade Developer ID **antes** de criar o
+worktree temporário ou baixar dependências. Credencial removida/revogada e
+certificado sem chave privada falham rápido, em vez de desperdiçar o build
+inteiro para só então descobrir que a Apple não pode receber o artefato.
 
 Os perfis de entitlement são deliberadamente separados:
 

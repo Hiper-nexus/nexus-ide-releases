@@ -5,10 +5,13 @@ import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  assertDeveloperIdIdentity,
+  assertNotaryProfileHistory,
   assertReleaseBuildPreconditions,
   bootstrapPinnedNpm,
   cleanReleaseMakeOutput,
   runCleanReleaseBuild,
+  verifyMacReleaseCredentials,
 } from './make-release.mjs';
 
 describe('publishable macOS build target', () => {
@@ -76,6 +79,82 @@ describe('publishable macOS build target', () => {
       tagSignerFingerprint: null,
       tagSignatureVerified: false,
     });
+  });
+
+  it('authenticates the exact notary profile and usable Developer ID identity before build', () => {
+    const calls = [];
+    const execute = vi.fn((command, args, options) => {
+      calls.push([command, [...args], options]);
+      if (args[0] === 'notarytool') {
+        return {
+          stdout: JSON.stringify({ history: [] }),
+          stderr: '',
+        };
+      }
+      if (command === '/usr/bin/security') {
+        return {
+          stdout:
+            '1) ABC "Developer ID Application: Cleofas Pereira rocha (35P5XL3JN6)"\n' +
+            '1 valid identities found\n',
+          stderr: '',
+        };
+      }
+      return { stdout: '', stderr: '' };
+    });
+
+    expect(
+      verifyMacReleaseCredentials({
+        execute,
+        environment: {},
+        root: '/release',
+      }),
+    ).toBeUndefined();
+    expect(calls.map(([command, args]) => [command, args])).toEqual([
+      ['/usr/bin/xcrun', ['--find', 'notarytool']],
+      ['/usr/bin/xcrun', ['--find', 'stapler']],
+      [
+        '/usr/bin/xcrun',
+        [
+          'notarytool',
+          'history',
+          '--keychain-profile',
+          'nexus-notary',
+          '--output-format',
+          'json',
+        ],
+      ],
+      [
+        '/usr/bin/security',
+        ['find-identity', '-v', '-p', 'codesigning'],
+      ],
+    ]);
+    expect(calls.every(([, , options]) => options.timeout === 30_000)).toBe(
+      true,
+    );
+    expect(calls[2]?.[2]).toMatchObject({
+      maxBuffer: 64 * 1024 * 1024,
+    });
+  });
+
+  it('fails fast on a missing profile, malformed history or wrong signing identity', () => {
+    expect(() => assertNotaryProfileHistory('not-json')).toThrow(
+      /invalid JSON/i,
+    );
+    expect(() => assertNotaryProfileHistory({ message: 'ok' })).toThrow(
+      /submission history/i,
+    );
+    expect(() => assertDeveloperIdIdentity('0 valid identities found')).toThrow(
+      /usable code-signing identity/i,
+    );
+    expect(() =>
+      verifyMacReleaseCredentials({
+        root: '/release',
+        environment: {},
+        execute() {
+          throw new Error('No Keychain password item found');
+        },
+      }),
+    ).toThrow(/nexus-notary.*unavailable/i);
   });
 
   it('builds only after npm ci in a disposable detached worktree and seals provenance', () => {
@@ -148,6 +227,7 @@ describe('publishable macOS build target', () => {
         repository,
         nodeVersion: 'v22.23.1',
         runCommand,
+        verifyReleaseCredentials: vi.fn(),
       });
       expect(calls.some(([, args]) =>
         args.slice(0, 3).join(' ') === 'worktree add --detach',
@@ -184,6 +264,34 @@ describe('publishable macOS build target', () => {
     }
   });
 
+  it('stops before creating a worktree when Apple credential preflight fails', () => {
+    const runCommand = vi.fn(() => {
+      throw new Error('worktree must not be created');
+    });
+    const verifyReleaseCredentials = vi.fn(() => {
+      throw new Error('nexus-notary unavailable');
+    });
+
+    expect(() =>
+      runCleanReleaseBuild({
+        root: '/unused',
+        platform: 'darwin',
+        environment: {
+          NEXUS_MAC_PUBLISH_RELEASE: '1',
+          APPLE_TEAM_ID: '35P5XL3JN6',
+          APPLE_KEYCHAIN_PROFILE: 'nexus-notary',
+        },
+        authority,
+        repository,
+        nodeVersion: 'v22.23.1',
+        runCommand,
+        verifyReleaseCredentials,
+      }),
+    ).toThrow(/nexus-notary unavailable/i);
+    expect(verifyReleaseCredentials).toHaveBeenCalledOnce();
+    expect(runCommand).not.toHaveBeenCalled();
+  });
+
   it('fails closed on a different Node 22 patch', () => {
     expect(() =>
       runCleanReleaseBuild({
@@ -191,6 +299,7 @@ describe('publishable macOS build target', () => {
         platform: 'darwin',
         authority,
         nodeVersion: 'v22.23.0',
+        verifyReleaseCredentials: vi.fn(),
       }),
     ).toThrow(/requires Node 22\.23\.1/);
   });

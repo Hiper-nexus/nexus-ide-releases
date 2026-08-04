@@ -13,6 +13,8 @@ import {
 
 const TEAM_ID = '35P5XL3JN6';
 const NOTARY_PROFILE = 'nexus-notary';
+const SIGNING_IDENTITY =
+  `Developer ID Application: Cleofas Pereira rocha (${TEAM_ID})`;
 
 export function assertReleaseBuildPreconditions({
   environment,
@@ -42,6 +44,106 @@ export function assertReleaseBuildPreconditions({
   });
 }
 
+export function assertNotaryProfileHistory(raw) {
+  let parsed;
+  try {
+    parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+  } catch {
+    throw new Error(
+      `Apple notary profile "${NOTARY_PROFILE}" returned invalid JSON`,
+    );
+  }
+  if (!parsed || !Array.isArray(parsed.history)) {
+    throw new Error(
+      `Apple notary profile "${NOTARY_PROFILE}" did not return submission history`,
+    );
+  }
+  return Object.freeze({
+    profile: NOTARY_PROFILE,
+    submissions: parsed.history.length,
+  });
+}
+
+export function assertDeveloperIdIdentity(raw) {
+  const text = String(raw ?? '');
+  if (!text.includes(`"${SIGNING_IDENTITY}"`)) {
+    throw new Error(
+      `usable code-signing identity "${SIGNING_IDENTITY}" is unavailable`,
+    );
+  }
+  return SIGNING_IDENTITY;
+}
+
+/**
+ * Fail before the disposable npm install/build when the local Apple authority
+ * is unavailable. `notarytool history` authenticates the exact Keychain
+ * profile without exposing its password; `security find-identity` proves that
+ * the certificate and private key are usable for Developer ID signing.
+ */
+export function verifyMacReleaseCredentials({
+  execute,
+  environment,
+  root,
+}) {
+  try {
+    execute('/usr/bin/xcrun', ['--find', 'notarytool'], {
+      cwd: root,
+      env: environment,
+      timeout: 30_000,
+    });
+    execute('/usr/bin/xcrun', ['--find', 'stapler'], {
+      cwd: root,
+      env: environment,
+      timeout: 30_000,
+    });
+    const history = execute(
+      '/usr/bin/xcrun',
+      [
+        'notarytool',
+        'history',
+        '--keychain-profile',
+        NOTARY_PROFILE,
+        '--output-format',
+        'json',
+      ],
+      {
+        cwd: root,
+        env: environment,
+        timeout: 30_000,
+        maxBuffer: 64 * 1024 * 1024,
+      },
+    );
+    assertNotaryProfileHistory(history.stdout);
+  } catch (error) {
+    throw new Error(
+      `Apple notary profile "${NOTARY_PROFILE}" is unavailable or invalid`,
+      { cause: error },
+    );
+  }
+
+  try {
+    const identities = execute(
+      '/usr/bin/security',
+      ['find-identity', '-v', '-p', 'codesigning'],
+      { cwd: root, env: environment, timeout: 30_000 },
+    );
+    assertDeveloperIdIdentity(
+      `${identities.stdout}\n${identities.stderr}`,
+    );
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message.includes('usable code-signing identity')
+    ) {
+      throw error;
+    }
+    throw new Error(
+      `Developer ID signing identity for Team ${TEAM_ID} is unavailable`,
+      { cause: error },
+    );
+  }
+}
+
 export function cleanReleaseMakeOutput(root) {
   const resolvedRoot = path.resolve(root);
   const makeDir = path.join(resolvedRoot, 'out', 'make');
@@ -62,6 +164,7 @@ function runCommand(command, args, options = {}) {
     env: options.env,
     shell: false,
     timeout: options.timeout ?? 30 * 60_000,
+    maxBuffer: options.maxBuffer ?? 64 * 1024 * 1024,
     stdio: options.inherit ? 'inherit' : undefined,
   });
   if (result.error) throw result.error;
@@ -274,6 +377,13 @@ export function runCleanReleaseBuild(options = {}) {
     version,
     allowedTagSignerFingerprints:
       authority.allowedTagSignerFingerprints,
+  });
+  const verifyCredentials =
+    options.verifyReleaseCredentials ?? verifyMacReleaseCredentials;
+  verifyCredentials({
+    execute,
+    environment,
+    root,
   });
   const buildBase = fs.mkdtempSync(
     path.join(os.tmpdir(), 'nexus-release-build-'),
