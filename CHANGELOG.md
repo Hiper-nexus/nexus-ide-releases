@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.25.1 — Missão fluida, entrega sem sumir
+
+Data: 2026-08-04
+
+### Fluxo de missão
+
+- Encerramento, launcher e kickoff compacto têm contratos atualizados para o
+  Autopiloto, sem enfraquecer o fail-closed do modo Hardened.
+- Handoff PTY fica sem atestação no Autopiloto e continua exigindo credencial
+  criptográfica válida no Hardened.
+- Rebind de uma mesma sessão entre missões não descarta mais filas: cada
+  entrega ambígua aciona recuperação física Main-owned.
+- Timeout do lifecycle lock preserva a exclusão mútua sem deixar cauda órfã.
+
+### Fluidez e diagnóstico
+
+- Telemetria de uso/cota usa a identidade física completa do checkout,
+  eliminando colisões entre raízes.
+- Readiness/Home/Launch limpam roots e listeners de teste corretamente e
+  refletem o copy multi-LLM atual.
+- Vitest ignora workspaces QA persistidos; benchmark multipane 4/8/10 preserva
+  ordem, ANSI, backlog limitado e input responsivo.
+
+### Release
+
+- Suíte integral: 1.072 arquivos e 10.061 testes verdes.
+- Package smoke: 20 probes, 142 tools, 9 adapters, PTYs encerrados sem órfãos.
+
 ## 0.25.0 — Autopiloto no chão — vibe first, multi-LLM
 
 Data: 2026-08-03

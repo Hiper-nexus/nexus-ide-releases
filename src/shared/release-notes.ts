@@ -13,6 +13,60 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.25.1',
+  date: '2026-08-04',
+  codename: 'Missão fluida — entrega sem sumir',
+  summary:
+    'Patch de confiabilidade do ciclo completo de missão: filas de handoff ' +
+    'sobrevivem a rebind, lifecycle locks não deixam caudas órfãs, quota usa ' +
+    'o escopo físico completo e os contratos Autopiloto/Hardened ficam ' +
+    'explicitamente provados. Panes seguem responsivos em 4/8/10.',
+  highlights: [
+    {
+      title: 'Entrega não desaparece em rebind',
+      detail:
+        'Quando uma sessão aparece ligada a mais de uma fila de missão, o ' +
+        'Nexus não apaga mais o estado em memória: aposenta as filas ambíguas ' +
+        'e solicita recuperação física Main-owned para cada handoff.',
+    },
+    {
+      title: 'Autopiloto rápido, Hardened íntegro',
+      detail:
+        'Autopiloto segue sem atestação obrigatória e tolera drift operacional; ' +
+        'Hardened continua fail-closed para plan seal, squad, runtime, ' +
+        'confinamento, autoridade física e credencial de agente.',
+    },
+    {
+      title: 'Cota e panes mais estáveis',
+      detail:
+        'Telemetria identifica instalação, projeto, checkout e raiz física; ' +
+        'benchmark multipane preserva ordem/ANSI, backlog limitado e input ' +
+        'responsivo em grades de 4, 8 e 10 panes.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Lifecycle lock sem cauda órfã',
+      detail:
+        'Waiters que expiram restauram a cauda predecessora no registry, ' +
+        'mantendo exclusão mútua e permitindo limpeza quando o holder termina.',
+    },
+    {
+      title: 'Readiness sem listeners duplicados',
+      detail:
+        'Roots React são desmontados no cleanup e fixtures declaram a matriz ' +
+        'Main-owned completa, eliminando contagens duplicadas e falsos bloqueios.',
+    },
+    {
+      title: 'Gates e smoke completos',
+      detail:
+        '10.061 testes, typecheck, auditoria de sinks, sensor de design e ' +
+        'package smoke com 20 probes e inventário físico de PTYs passam.',
+    },
+  ],
+};
+
+export const RELEASE_02500: AppRelease = {
   version: '0.25.0',
   date: '2026-08-03',
   codename: 'Autopiloto no chão — vibe first, multi-LLM',
