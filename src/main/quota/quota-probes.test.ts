@@ -19,6 +19,7 @@ describe('quota-probes', () => {
     const w = probeProviderWindows({
       adapterId: 'claude',
       onCooldown: true,
+      cooldownKind: 'rate-limit',
       cooldownUntil: now + 3_600_000,
       now,
     });

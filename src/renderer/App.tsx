@@ -322,11 +322,11 @@ export function App() {
         useMissionWizardStore.getState().openForAgentic();
         return;
       }
-      // ⌘N — nova missão guiada (objetivo primeiro, sem expor o seletor técnico).
+      // ⌘N — nova missão: começa no seletor de modos.
       if (e.key.toLowerCase() === 'n' && !e.shiftKey && !e.altKey) {
         if (!useWorkspaceStore.getState().current) return;
         e.preventDefault();
-        useMissionWizardStore.getState().openForAgentic();
+        useMissionWizardStore.getState().openForMission();
         return;
       }
       // ⌘1-9 — foca o N-ésimo pane (ordem do grid). Frota sem mouse.

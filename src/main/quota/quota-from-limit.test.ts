@@ -47,6 +47,13 @@ describe('quota-from-limit', () => {
     expect(windowsFromCooldown(100, 'codex', 200)).toEqual([]);
   });
 
+  it('auth cooldown does not masquerade as 100% quota', () => {
+    const now = 10_000;
+    expect(
+      windowsFromCooldown(now + 60_000, 'claude', now, 'auth'),
+    ).toEqual([]);
+  });
+
   it('transient hits paint no usage window (blip, not quota)', () => {
     const now = 10_000;
     const w = windowsFromLimitHit(

@@ -5,6 +5,7 @@
  */
 
 import type { QuotaWindow } from '../../shared/quota-types';
+import type { FailoverReasonKind } from '../../shared/account-types';
 import type { LimitHit } from '../orch/limit-detector';
 import {
   defaultUnknownWindows,
@@ -20,6 +21,7 @@ export interface ProbeInput {
   adapterId: string;
   accountId?: string;
   onCooldown?: boolean;
+  cooldownKind?: FailoverReasonKind;
   cooldownUntil?: number;
   /** Project-local token spend for this adapter (optional). */
   localTokens?: {
@@ -44,7 +46,12 @@ export function probeProviderWindows(input: ProbeInput): QuotaWindow[] {
   if (input.onCooldown && input.cooldownUntil && input.cooldownUntil > now) {
     windows = mergeWindows(
       windows,
-      windowsFromCooldown(input.cooldownUntil, input.adapterId, now),
+      windowsFromCooldown(
+        input.cooldownUntil,
+        input.adapterId,
+        now,
+        input.cooldownKind,
+      ),
     );
   }
 

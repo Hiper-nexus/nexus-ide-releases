@@ -3,7 +3,12 @@ import type { PaneModel } from '../../shared/types';
 import { useLayoutStore } from '../state/layout-store';
 import { useSessionStateStore } from '../state/session-state-store';
 import { isStructuralPlaceholderPane } from '../lib/split-tree';
-import { attachHost, blurHost, focusHost, refreshHost } from '../terminal/terminal-host';
+import {
+  attachHost,
+  blurHost,
+  focusHost,
+  setHostVisibility,
+} from '../terminal/terminal-host';
 import { BrowserPane } from './BrowserPane';
 import { PaneActivityStrip } from './PaneActivityStrip';
 import { PaneBirthOverlay } from './PaneBirthOverlay';
@@ -72,10 +77,7 @@ function TerminalPaneLeaf({ pane }: Props) {
         const nowVisible = entry.isIntersecting;
         setIsVisible((prev) => {
           if (prev === nowVisible) return prev;
-          // Force repaint when becoming visible again
-          if (nowVisible) {
-            requestAnimationFrame(() => refreshHost(pane.id));
-          }
+          setHostVisibility(pane.id, nowVisible);
           return nowVisible;
         });
       }
@@ -94,13 +96,17 @@ function TerminalPaneLeaf({ pane }: Props) {
     });
     observerRef.current.observe(slot);
     return () => {
+      setHostVisibility(pane.id, false);
       observerRef.current?.disconnect();
     };
   }, [handleIntersection]);
 
   useLayoutEffect(() => {
     const slot = slotRef.current;
-    if (slot) attachHost(pane, slot);
+    if (slot) {
+      attachHost(pane, slot);
+      setHostVisibility(pane.id, true);
+    }
     // No teardown here: the host lives beyond this wrapper. Reconciliation in
     // PaneGrid disposes it only when the pane leaves the tree entirely.
     // eslint-disable-next-line react-hooks/exhaustive-deps

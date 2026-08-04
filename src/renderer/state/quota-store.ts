@@ -149,7 +149,6 @@ export function isEntryHighUsage(
   entry: ProviderQuotaEntry,
   threshold = QUOTA_HIGH_USAGE_THRESHOLD,
 ): boolean {
-  if (entry.onCooldown) return true;
   let worst: number | null = null;
   for (const w of entry.windows) {
     if (w.usedRatio === null) continue;

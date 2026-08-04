@@ -132,6 +132,22 @@ describe('WebglLeasePool', () => {
     expect(pool.isActive('b')).toBe(true);
   });
 
+  it('suspends a hidden holder and reacquires it on touch', () => {
+    const { pool, tick } = makePool(1);
+    const a = makeEntry();
+    pool.register('a', a);
+
+    pool.suspend('a');
+    expect(a.deactivate).toHaveBeenCalledTimes(1);
+    expect(pool.isActive('a')).toBe(false);
+    expect(pool.activeLeases).toBe(0);
+
+    tick();
+    pool.touch('a');
+    expect(a.activate).toHaveBeenCalledTimes(2);
+    expect(pool.isActive('a')).toBe(true);
+  });
+
   it('a failed activate consumes no slot and is retried on the next touch', () => {
     const { pool, tick } = makePool(1);
     const flaky = makeEntry(false);

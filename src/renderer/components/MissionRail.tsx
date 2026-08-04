@@ -87,6 +87,7 @@ export function MissionRail() {
   const paneMissions = useOrchStore((s) => s.paneMissions);
   const handoffs = useOrchStore((s) => s.handoffs);
   const openAgentic = useMissionWizardStore((s) => s.openForAgentic);
+  const openMission = useMissionWizardStore((s) => s.openForMission);
   const openBoard = useOrchStore((s) => s.openBoard);
   const paneStates = useSessionStateStore((s) => s.paneStates);
   const planMetricsLabel = usePlanLaneMetricsStore((s) => {
@@ -103,6 +104,7 @@ export function MissionRail() {
     (s) => s.staged.length + s.unstaged.length + s.untracked.length,
   );
   const [busy, setBusy] = useState<string | null>(null);
+  const [busyActivity, setBusyActivity] = useState('Retomando…');
   const [note, setNote] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   // Re-render the elapsed mission label even when no store event arrives.
@@ -306,6 +308,7 @@ export function MissionRail() {
     const action = missionListAction(m, active);
     if (action === 'none') return;
     if (action === 'close-runtime' || action === 'stop-recovery') {
+      setBusyActivity('Encerrando…');
       setBusy(m.id);
       try {
         const result = await closeMissionRuntimeAndPanes(
@@ -350,6 +353,7 @@ export function MissionRail() {
   async function purgeMission(m: Mission) {
     const ok = await askConfirm({ ...removeMissionPrompt(m), danger: true });
     if (!ok) return;
+    setBusyActivity('Removendo…');
     setBusy(m.id);
     setNote(null);
     try {
@@ -369,6 +373,7 @@ export function MissionRail() {
   }
 
   async function blockMission(m: Mission) {
+    setBusyActivity('Encerrando…');
     setBusy(m.id);
     setNote(null);
     const result = await confirmAndBlockMission(m);
@@ -379,6 +384,7 @@ export function MissionRail() {
 
   /** Plan mode → standard PREVC (operator approved the design). */
   async function promotePlan(m: Mission) {
+    setBusyActivity('Preparando execução…');
     setBusy(m.id);
     setNote(null);
     const result = await promotePlanMissionToExecution(m);
@@ -510,6 +516,7 @@ export function MissionRail() {
   }
 
   function selectMission(m: Mission) {
+    setBusyActivity('Retomando…');
     setBusy(m.id);
     setNote(null);
     // Terminal rows are durable reports, not dormant runtimes. Opening one
@@ -786,7 +793,7 @@ export function MissionRail() {
                 subtitle="neste workspace"
                 variant="primary"
                 size="sm"
-                onClick={() => openAgentic()}
+                onClick={() => openMission()}
               />
             }
           />
@@ -939,7 +946,7 @@ export function MissionRail() {
                                   </span>
                                   <span className="mission-rail__item-meta-text">
                                     {busy === m.id
-                                      ? 'Retomando…'
+                                      ? busyActivity
                                       : missionMeta(m, liveInGrid)}
                                   </span>
                                 </span>

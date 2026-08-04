@@ -3,6 +3,7 @@
  */
 
 import type { LimitHit } from '../orch/limit-detector';
+import type { FailoverReasonKind } from '../../shared/account-types';
 import type { QuotaWindow } from '../../shared/quota-types';
 import { exhaustedWindow, mergeWindows, unknownWindow } from './quota-normalize';
 
@@ -92,8 +93,12 @@ export function windowsFromCooldown(
   cooldownUntil: number,
   _adapterId: string,
   now = Date.now(),
+  kind?: FailoverReasonKind,
 ): QuotaWindow[] {
   if (cooldownUntil <= now) {
+    return [];
+  }
+  if (kind !== 'quota' && kind !== 'rate-limit') {
     return [];
   }
   // Fleet-wide: cooldown paints the shared 5h window (not session).

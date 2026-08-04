@@ -11,8 +11,11 @@ import {
   flushTerminalOutput,
   getPendingParseChars,
   getQueuedChars,
+  getTerminalOutputRuntimeSnapshot,
+  pauseTerminalOutput,
   getTerminalOutputSchedulerDebugSnapshot,
   removeTransientCursorShowSequences,
+  resumeTerminalOutput,
   resetTerminalOutputSchedulerForTests,
   safeOutputSplitIndex,
   setTerminalOutputSchedulerDebug,
@@ -207,6 +210,97 @@ describe('terminal output scheduler', () => {
     expect(terminal.write).not.toHaveBeenCalled();
     vi.advanceTimersByTime(0);
     expect(terminal.written.join('')).toBe('flood');
+  });
+
+  it('coalesces focused agent fragments into one short render batch', () => {
+    vi.useFakeTimers();
+    const terminal = createTerminal();
+
+    writeTerminalOutput(terminal, 'frame-a', {
+      foreground: true,
+      latencySensitive: true,
+      coalesceForeground: true,
+    });
+    writeTerminalOutput(terminal, 'frame-b', {
+      foreground: true,
+      latencySensitive: true,
+      coalesceForeground: true,
+    });
+
+    expect(terminal.write).not.toHaveBeenCalled();
+    vi.runAllTimers();
+    expect(terminal.written.join('')).toBe('frame-aframe-b');
+    expect(terminal.write).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not postpone a focused render batch under continuous fragments', () => {
+    vi.useFakeTimers();
+    const terminal = createTerminal();
+
+    writeTerminalOutput(terminal, 'a', {
+      foreground: true,
+      latencySensitive: true,
+      coalesceForeground: true,
+    });
+    vi.advanceTimersByTime(4);
+    writeTerminalOutput(terminal, 'b', {
+      foreground: true,
+      latencySensitive: true,
+      coalesceForeground: true,
+    });
+    vi.advanceTimersByTime(4);
+    vi.runOnlyPendingTimers();
+
+    expect(terminal.written.join('')).toBe('ab');
+  });
+
+  it('parks hidden adaptive output until the pane becomes visible', () => {
+    vi.useFakeTimers();
+    const terminal = createTerminal();
+
+    writeTerminalOutput(terminal, 'hidden', {
+      foreground: false,
+      holdBackground: true,
+    });
+    vi.runAllTimers();
+    expect(terminal.write).not.toHaveBeenCalled();
+    expect(getQueuedChars(terminal)).toBe(6);
+
+    resumeTerminalOutput(terminal);
+    vi.runAllTimers();
+    expect(terminal.written.join('')).toBe('hidden');
+  });
+
+  it('parks a queue that was already scheduled before the pane went hidden', () => {
+    vi.useFakeTimers();
+    const terminal = createTerminal();
+
+    writeTerminalOutput(terminal, 'already-queued', { foreground: false });
+    pauseTerminalOutput(terminal);
+    vi.runAllTimers();
+    expect(terminal.write).not.toHaveBeenCalled();
+
+    resumeTerminalOutput(terminal);
+    vi.runAllTimers();
+    expect(terminal.written.join('')).toBe('already-queued');
+  });
+
+  it('keeps parked hidden output bounded and reports runtime pressure', () => {
+    vi.useFakeTimers();
+    const terminal = createTerminal();
+    const chunk = 'x'.repeat(256 * 1024);
+
+    for (let i = 0; i < 9; i++) {
+      writeTerminalOutput(terminal, chunk, {
+        foreground: false,
+        holdBackground: true,
+      });
+    }
+
+    const snapshot = getTerminalOutputRuntimeSnapshot();
+    expect(snapshot.queuedTerminalCount).toBe(1);
+    expect(snapshot.queuedChars).toBeLessThan(512 * 1024);
+    expect(terminal.write).not.toHaveBeenCalled();
   });
 
   it('flushTerminalOutput drains remaining backlog for a sink', () => {

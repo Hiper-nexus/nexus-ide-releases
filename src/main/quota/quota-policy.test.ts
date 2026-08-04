@@ -107,11 +107,36 @@ describe('quota-policy', () => {
       id: 'c',
       adapterId: 'codex',
       onCooldown: true,
+      cooldownKind: 'rate-limit',
       cooldownUntil: Date.now() + 60_000,
       windows: [],
     });
     expect(isHighUsage(e)).toBe(true);
     expect(quotaAvailabilityScore(e)).toBe(0);
     expect(spawnWarningForAccount(e)).toMatch(/cooldown/i);
+  });
+
+  it('auth cooldown blocks spawning without inventing quota usage', () => {
+    const e = entry({
+      id: 'claude:expired',
+      adapterId: 'claude',
+      onCooldown: true,
+      cooldownKind: 'auth',
+      cooldownUntil: Date.now() + 60_000,
+      windows: [
+        {
+          kind: 'hours',
+          label: '5 Horas',
+          usedRatio: null,
+          source: 'unknown',
+          confidence: 'low',
+        },
+      ],
+    });
+
+    expect(entryWorstRatio(e)).toBeNull();
+    expect(isHighUsage(e)).toBe(false);
+    expect(buildFleetSnapshot([e]).worstUsedRatio).toBeNull();
+    expect(quotaAvailabilityScore(e)).toBe(0);
   });
 });

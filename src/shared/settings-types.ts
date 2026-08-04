@@ -50,6 +50,12 @@ export const terminalSettingsSchema = z.object({
       message: 'shell must be an absolute path',
     })
     .default(''),
+  /**
+   * adaptive: batches agent output, parks fully hidden panes and trims their
+   * in-memory scrollback under pressure. quality: keeps every mounted pane
+   * rendering immediately with the larger scrollback budget.
+   */
+  performanceMode: z.enum(['adaptive', 'quality']).default('adaptive'),
 });
 
 export type TerminalSettings = z.infer<typeof terminalSettingsSchema>;
@@ -74,6 +80,7 @@ export const terminalSettingsPatchSchema = z.object({
       message: 'shell must be an absolute path',
     })
     .optional(),
+  performanceMode: z.enum(['adaptive', 'quality']).optional(),
 });
 export type TerminalSettingsPatch = z.infer<typeof terminalSettingsPatchSchema>;
 

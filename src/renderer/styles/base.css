@@ -1007,9 +1007,8 @@ body {
      não projeta nada, só embaça a borda — e aqui ainda repintava o canvas do
      xterm. A escada de claridade faz o mesmo trabalho de graça. */
   overflow: hidden;
-  transition:
-    border-color 150ms var(--ease-out-quart),
-    box-shadow 150ms var(--ease-out-quart);
+  /* Chrome estático: transicionar borda/sombra repinta o canvas do xterm e
+     deixa a troca de foco pegajosa quando vários panes recebem output. */
 }
 
 /* Foco = anel nítido de 1px + superfície um degrau mais clara. O halo ciano
@@ -1693,6 +1692,7 @@ body {
   min-height: 0;
   position: relative;
   padding: 4px 6px 2px;
+  contain: layout paint;
 }
 
 .acp-pane {

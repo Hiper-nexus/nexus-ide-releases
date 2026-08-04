@@ -118,7 +118,7 @@ export function WorkspaceBar({
   const toggleSettings = useSettingsStore((s) => s.toggleDrawer);
   const closeSettingsDrawer = useSettingsStore((s) => s.closeDrawer);
   const workspace = useWorkspaceStore((s) => s.current);
-  const openAgentic = useMissionWizardStore((s) => s.openForAgentic);
+  const openMission = useMissionWizardStore((s) => s.openForMission);
   const openNewWorkspace = useMissionWizardStore((s) => s.openForNewWorkspace);
   const askCloseWorkspace = useCloseWorkspaceStore((s) => s.ask);
   const filesOpen = useFilesStore((s) => s.open);
@@ -710,7 +710,7 @@ export function WorkspaceBar({
         <div className="workspace-bar__zone workspace-bar__zone--primary">
           <button
             className="workspace-bar__btn workspace-bar__btn--primary"
-            onClick={() => openAgentic()}
+            onClick={() => openMission()}
             title={`Nova missão neste workspace (${formatShortcut('mod', 'N')})`}
             aria-label="Nova missão neste workspace"
           >
@@ -757,7 +757,7 @@ export function WorkspaceBar({
                   className="workspace-bar__menu-item workspace-bar__menu-item--accent"
                   role="menuitem"
                   onClick={() => {
-                    openAgentic();
+                    openMission();
                     setMissionMenuOpen(false);
                   }}
                 >

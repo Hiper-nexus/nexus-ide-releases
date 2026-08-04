@@ -3,6 +3,8 @@
  * project token spend in usage-types. Never invent usedRatio without a source.
  */
 
+import type { FailoverReasonKind } from './account-types';
+
 export const QUOTA_CHANNELS = {
   snapshot: 'quota:snapshot',
   changed: 'quota:changed',
@@ -53,6 +55,8 @@ export interface ProviderQuotaEntry {
   installed: boolean;
   /** Account on cooldown after limit hit. */
   onCooldown: boolean;
+  /** Why spawning is paused. Auth/transient cooldowns are not quota usage. */
+  cooldownKind?: FailoverReasonKind;
   cooldownUntil?: number;
   windows: QuotaWindow[];
   updatedAt: number;

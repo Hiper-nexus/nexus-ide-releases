@@ -4,7 +4,10 @@ import type {
   MissionStatus,
 } from '../../shared/orch-types';
 import type { MissionLane } from '../../shared/mission-intent';
-import { hasAutomaticTechnicalRecovery } from '../../shared/mission-recovery-policy';
+import {
+  hasAutomaticTechnicalRecovery,
+  wasMissionRuntimeClosedByOperator,
+} from '../../shared/mission-recovery-policy';
 import type { RailSectionId } from './mission-rail-prefs';
 
 export interface RailSection {
@@ -28,6 +31,10 @@ export function missionHasLiveRuntime(
   mission: Mission,
   hasVisiblePanes: boolean,
 ): boolean {
+  // Main persists the operator stop before awaiting physical exit. From that
+  // instant the mission is no longer active work, even if the retired session
+  // pointer and transcript panes remain visible during teardown.
+  if (wasMissionRuntimeClosedByOperator(mission)) return false;
   // Physical evidence first.
   if (hasVisiblePanes) return true;
   if (mission.orchestratorSessionId !== undefined) return true;

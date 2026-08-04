@@ -41,6 +41,7 @@ const terminal = vi.hoisted(() => ({
   attachHost: vi.fn(),
   blurHost: vi.fn(),
   focusHost: vi.fn(),
+  setHostVisibility: vi.fn(),
   reconcileHosts: vi.fn(),
   getPaneSessionId: vi.fn(() => null as string | null),
   getScrollbackExcerpt: vi.fn(() => ''),

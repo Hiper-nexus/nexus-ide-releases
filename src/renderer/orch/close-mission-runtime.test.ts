@@ -94,6 +94,42 @@ describe('closeMissionRuntimeAndPanes', () => {
     expect(harness.close).not.toHaveBeenCalled();
   });
 
+  it('releases the UI when physical proof continues in the background', async () => {
+    vi.useFakeTimers();
+    let resolveClose:
+      | ((result: {
+          ok: true;
+          terminatedSessionIds: string[];
+        }) => void)
+      | undefined;
+    harness.closeRuntime.mockReturnValue(
+      new Promise((resolve) => {
+        resolveClose = resolve;
+      }),
+    );
+
+    const resultPromise = closeMissionRuntimeAndPanes('mission-a');
+    await vi.advanceTimersByTimeAsync(15_000);
+
+    await expect(resultPromise).resolves.toMatchObject({
+      ok: false,
+      terminatedSessionIds: [],
+      error: expect.stringMatching(/continua comprovando.*segundo plano/i),
+    });
+    expect(harness.close).not.toHaveBeenCalled();
+
+    resolveClose?.({
+      ok: true,
+      terminatedSessionIds: ['pty-a'],
+    });
+    await Promise.resolve();
+    expect(harness.close).toHaveBeenCalledWith(
+      'pane-a',
+      'mission-runtime-close',
+    );
+    vi.useRealTimers();
+  });
+
   it('sweeps orphan renderer panes when the mission row is already gone', async () => {
     harness.closeRuntime.mockResolvedValue({
       ok: false,

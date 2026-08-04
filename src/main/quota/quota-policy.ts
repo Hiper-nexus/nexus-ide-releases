@@ -20,7 +20,13 @@ export function entryWorstRatio(entry: ProviderQuotaEntry): number | null {
     if (w.usedRatio === null) continue;
     if (worst === null || w.usedRatio > worst) worst = w.usedRatio;
   }
-  if (entry.onCooldown) return 1;
+  if (
+    entry.onCooldown &&
+    (entry.cooldownKind === 'quota' ||
+      entry.cooldownKind === 'rate-limit')
+  ) {
+    return 1;
+  }
   return worst;
 }
 
@@ -28,7 +34,6 @@ export function isHighUsage(
   entry: ProviderQuotaEntry,
   threshold = QUOTA_HIGH_USAGE_THRESHOLD,
 ): boolean {
-  if (entry.onCooldown) return true;
   const worst = entryWorstRatio(entry);
   return worst !== null && worst >= threshold;
 }

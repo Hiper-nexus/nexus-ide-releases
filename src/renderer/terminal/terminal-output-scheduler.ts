@@ -28,6 +28,7 @@ export type WriteTerminalOutputOptions = {
   latencySensitive?: boolean;
   coalesceForeground?: boolean;
   holdForeground?: boolean;
+  holdBackground?: boolean;
 };
 
 type QueueChunk = {
@@ -81,7 +82,7 @@ export const MAX_UNPARSED_WRITE_CHARS = 2 * 1024 * 1024;
 const MAX_BACKGROUND_QUEUE_CHUNKS = 4096;
 const FOREGROUND_COALESCE_DELAY_MS = 1000;
 const FOREGROUND_HOLD_SAFETY_DELAY_MS = 250;
-const LATENCY_SENSITIVE_FOREGROUND_COALESCE_DELAY_MS = 16;
+const LATENCY_SENSITIVE_FOREGROUND_COALESCE_DELAY_MS = 8;
 const LATENCY_SENSITIVE_FOREGROUND_HOLD_SAFETY_DELAY_MS = 32;
 const CURSOR_SHOW_SEQUENCE = '\x1b[?25h';
 const CURSOR_HIDE_SEQUENCE = '\x1b[?25l';
@@ -100,6 +101,7 @@ const queuedByTerminal = new Map<TerminalOutputSink, QueueEntry>();
 const pendingParseByTerminal = new Map<TerminalOutputSink, number>();
 let drainTimer: ReturnType<typeof setTimeout> | null = null;
 let drainTimerDelayMs: number | null = null;
+let runtimeDroppedBacklogCount = 0;
 
 export type TerminalOutputSchedulerDebugSnapshot = {
   backgroundEnqueueCount: number;
@@ -550,6 +552,7 @@ function replaceBacklogWithWarning(entry: QueueEntry): void {
   entry.backgroundBacklogDropped = true;
   entry.highPriority = true;
   entry.foregroundHold = false;
+  if (shouldNotify) runtimeDroppedBacklogCount += 1;
   if (debugEnabled && shouldNotify) {
     debugState.droppedBacklogCount++;
   }
@@ -767,19 +770,22 @@ export function writeTerminalOutput(
         queued.foregroundHold = false;
         clearForegroundHoldSafety(queued);
         const latencySensitive = options.latencySensitive === true;
+        const previousCoalesceDelayMs = queued.foregroundCoalesceDelayMs;
         if (latencySensitive) {
           queued.foregroundCoalesceDelayMs = Math.min(
             queued.foregroundCoalesceDelayMs,
             LATENCY_SENSITIVE_FOREGROUND_COALESCE_DELAY_MS,
           );
         }
-        if (containsDrainableCursorRestore(data) || latencySensitive) {
+        if (containsDrainableCursorRestore(data)) {
           clearForegroundCoalesce(queued);
           scheduleDrain(0);
           return;
         }
         scheduleForegroundCoalesceRelease(queued, {
-          rescheduleEarlier: latencySensitive,
+          rescheduleEarlier:
+            latencySensitive &&
+            queued.foregroundCoalesceDelayMs < previousCoalesceDelayMs,
         });
         return;
       }
@@ -869,6 +875,17 @@ export function writeTerminalOutput(
   ) {
     replaceBacklogWithWarning(bgEntry);
   }
+  if (options.holdBackground) {
+    bgEntry.foregroundHold = true;
+    bgEntry.foregroundHoldSafetyDelayMs =
+      LATENCY_SENSITIVE_FOREGROUND_HOLD_SAFETY_DELAY_MS;
+    clearForegroundCoalesce(bgEntry);
+    return;
+  }
+  if (bgEntry.foregroundHold) {
+    bgEntry.foregroundHold = false;
+    clearForegroundHoldSafety(bgEntry);
+  }
   if (debugEnabled) {
     debugState.backgroundEnqueueCount++;
   }
@@ -877,6 +894,48 @@ export function writeTerminalOutput(
       ? 0
       : BACKGROUND_FLUSH_DELAY_MS,
   );
+}
+
+/** Resume a background terminal parked by adaptive visibility policy. */
+export function resumeTerminalOutput(terminal: TerminalOutputSink): void {
+  const entry = queuedByTerminal.get(terminal);
+  if (!entry) return;
+  entry.foregroundHold = false;
+  clearForegroundHoldSafety(entry);
+  clearForegroundCoalesce(entry);
+  scheduleDrain(0);
+}
+
+/** Park an already-queued terminal before it paints off-screen. */
+export function pauseTerminalOutput(terminal: TerminalOutputSink): void {
+  const entry = queuedByTerminal.get(terminal);
+  if (!entry) return;
+  entry.foregroundHold = true;
+  clearForegroundCoalesce(entry);
+  clearForegroundHoldSafety(entry);
+}
+
+export interface TerminalOutputRuntimeSnapshot {
+  readonly queuedTerminalCount: number;
+  readonly queuedChars: number;
+  readonly peakQueuedCharsByTerminal: number;
+  readonly pendingParseChars: number;
+  readonly droppedBacklogCount: number;
+}
+
+export function getTerminalOutputRuntimeSnapshot(): TerminalOutputRuntimeSnapshot {
+  const queue = readQueueDebugSnapshot();
+  let pendingParseChars = 0;
+  for (const chars of pendingParseByTerminal.values()) {
+    pendingParseChars += chars;
+  }
+  return {
+    queuedTerminalCount: queue.queuedTerminalCount,
+    queuedChars: queue.queuedChars,
+    peakQueuedCharsByTerminal: queue.queuedCharsByTerminal,
+    pendingParseChars,
+    droppedBacklogCount: runtimeDroppedBacklogCount,
+  };
 }
 
 /** Drain all queued output for a terminal (or up to maxChars). */
@@ -960,5 +1019,6 @@ export function resetTerminalOutputSchedulerForTests(): void {
   }
   queuedByTerminal.clear();
   pendingParseByTerminal.clear();
+  runtimeDroppedBacklogCount = 0;
   resetTerminalOutputSchedulerDebug();
 }

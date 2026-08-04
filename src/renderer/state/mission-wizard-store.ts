@@ -145,6 +145,13 @@ export const useMissionWizardStore = create<MissionWizardStore>((set) => ({
       agenticIntent: null,
       voiceLaunchNonce: 0,
       visibleStep: 'mode',
+      // Generic "Nova missão" always means choose a mode. Keep authored
+      // fields parked in the draft, but never let an old Agentic composer
+      // bypass the picker on the next open.
+      draft:
+        state.draft?.variant === 'mission'
+          ? { ...state.draft, step: 'mode', mode: null }
+          : state.draft,
     })),
   openForAgentic: (intent, source) =>
     set((state) => {

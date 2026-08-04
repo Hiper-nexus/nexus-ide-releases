@@ -528,7 +528,7 @@ export function OrchestrationPanel() {
                     subtitle="Descrever objetivo e revisar equipe"
                     variant="primary"
                     onClick={() =>
-                      useMissionWizardStore.getState().openForAgentic()
+                      useMissionWizardStore.getState().openForMission()
                     }
                   />
                 }

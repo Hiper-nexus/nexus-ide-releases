@@ -63,15 +63,20 @@ export class WebglLeasePool {
     this.activeCount -= 1;
   }
 
+  /** Park one renderer without forgetting its lease entry. */
+  suspend(id: string): void {
+    const state = this.leases.get(id);
+    if (!state?.active) return;
+    state.active = false;
+    this.activeCount -= 1;
+    state.entry.deactivate();
+  }
+
   /** Remove a terminal, releasing its lease. */
   unregister(id: string): void {
     const state = this.leases.get(id);
     if (!state) return;
-    if (state.active) {
-      state.active = false;
-      this.activeCount -= 1;
-      state.entry.deactivate();
-    }
+    if (state.active) this.suspend(id);
     this.leases.delete(id);
   }
 

@@ -89,9 +89,9 @@ export function CommandPalette() {
       'mission-new',
       'Nova missão',
       'mission',
-      () => useMissionWizardStore.getState().openForAgentic(),
+      () => useMissionWizardStore.getState().openForMission(),
       formatShortcut('mod', 'N'),
-      'wizard guiada objetivo agente squad',
+      'wizard modo livre agente squad',
     );
     tool('terminal', 'Abrir terminal', 'terminal', () => layout.addShellPane(), '', 'shell novo');
     tool('browser', 'Abrir navegador', 'browser', () => layout.addBrowserPane(), '', 'web browser');
@@ -280,7 +280,7 @@ export function CommandPalette() {
                       size="sm"
                       onClick={() => {
                         close();
-                        useMissionWizardStore.getState().openForAgentic();
+                        useMissionWizardStore.getState().openForMission();
                       }}
                     />
                     <ActionCard

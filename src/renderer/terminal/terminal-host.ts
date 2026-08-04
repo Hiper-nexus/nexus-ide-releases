@@ -21,6 +21,9 @@ import { TERMINAL_THEMES } from '../styles/terminal-theme';
 import {
   discardTerminalOutput,
   flushTerminalOutput,
+  getTerminalOutputRuntimeSnapshot,
+  pauseTerminalOutput,
+  resumeTerminalOutput,
   writeTerminalOutput,
 } from './terminal-output-scheduler';
 import { TerminalInputVisibilityController } from './terminal-input-visibility';
@@ -35,6 +38,11 @@ import {
   SESSION_BOUNDARY_NOTICE,
   terminalBufferHasContent,
 } from './session-boundary-notice';
+import {
+  terminalGridChanged,
+  terminalOutputPolicy,
+  terminalScrollbackLines,
+} from './terminal-render-policy';
 
 /**
  * Persistent terminal manager.
@@ -56,6 +64,9 @@ interface Host {
   serialize: SerializeAddon;
   ro: ResizeObserver;
   sessionId: string | null;
+  /** Last grid already propagated to the PTY; avoids duplicate SIGWINCH. */
+  reportedGrid: { cols: number; rows: number } | null;
+  isVisible: boolean;
   /** One-shot notice when agent is held pending user approval. */
   holdNoticeWritten?: boolean;
   /** Invalidates a late async spawn after recovery timeout/replacement. */
@@ -215,15 +226,7 @@ function resumeVisibleHost(paneId: string, host: Host): boolean {
   return resumeTerminalVisibilityBeforePaint({
     resumeRenderer: () => webglPool.touch(paneId),
     fitVisibleGrid: () => host.fit.fit(),
-    propagateSize: () => {
-      if (host.sessionId) {
-        window.nexus.pty.resize(
-          host.sessionId,
-          host.term.cols,
-          host.term.rows,
-        );
-      }
-    },
+    propagateSize: () => propagateHostSize(host),
     flushOutput: () => {
       flushPendingScrollback(host);
       flushTerminalOutput(host.term);
@@ -265,6 +268,9 @@ function setHostSession(
   sessionId: string | null,
 ): void {
   host.sessionId = sessionId;
+  host.reportedGrid = sessionId
+    ? { cols: host.term.cols, rows: host.term.rows }
+    : null;
   for (const cb of [...paneSessionListeners]) {
     try {
       cb(paneId, sessionId);
@@ -272,6 +278,15 @@ function setHostSession(
       // A listener must never break the spawn/session path.
     }
   }
+}
+
+function propagateHostSize(host: Host): boolean {
+  if (!host.sessionId) return false;
+  const next = { cols: host.term.cols, rows: host.term.rows };
+  if (!terminalGridChanged(host.reportedGrid, next)) return false;
+  window.nexus.pty.resize(host.sessionId, next.cols, next.rows);
+  host.reportedGrid = next;
+  return true;
 }
 
 const DEFAULT_FONT_STACK =
@@ -296,11 +311,23 @@ function themeOf(settings: TerminalSettings) {
 /** Apply user settings: restyle every live terminal, remember for new ones. */
 export function applyTerminalSettings(settings: TerminalSettings): void {
   currentSettings = settings;
-  for (const host of hosts.values()) {
+  for (const [paneId, host] of hosts) {
     if (host.disposed) continue;
     host.term.options.theme = themeOf(settings);
     host.term.options.fontFamily = fontFamilyOf(settings);
     host.term.options.fontSize = settings.fontSize;
+    host.term.options.scrollback = terminalScrollbackLines(
+      host.element.classList.contains('term-host--agent')
+        ? 'cli-agent'
+        : 'shell',
+      settings.performanceMode,
+    );
+    if (settings.performanceMode === 'quality') {
+      resumeTerminalOutput(host.term);
+    } else if (!host.isVisible || document.visibilityState === 'hidden') {
+      pauseTerminalOutput(host.term);
+      webglPool.suspend(paneId);
+    }
     try {
       // Force an immediate repaint — the WebGL renderer can otherwise defer
       // recoloring until the next data write.
@@ -310,9 +337,7 @@ export function applyTerminalSettings(settings: TerminalSettings): void {
     }
     try {
       host.fit.fit();
-      if (host.sessionId) {
-        window.nexus.pty.resize(host.sessionId, host.term.cols, host.term.rows);
-      }
+      propagateHostSize(host);
     } catch {
       // Not measurable yet — the ResizeObserver will settle it.
     }
@@ -322,9 +347,6 @@ export function applyTerminalSettings(settings: TerminalSettings): void {
 // Agentes produzem o grosso do output e dominam custo de memória/pintura
 // (pior ainda quando evictados para o renderer DOM), então recebem um buffer
 // mais enxuto. O snapshot persistido de 256 KB não é afetado.
-const SCROLLBACK_SHELL = 10_000;
-const SCROLLBACK_AGENT = 5_000;
-
 function buildTerminal(kind: 'shell' | 'cli-agent'): {
   term: Terminal;
   fit: FitAddon;
@@ -338,7 +360,10 @@ function buildTerminal(kind: 'shell' | 'cli-agent'): {
     cursorBlink: false,
     allowProposedApi: true,
     theme: themeOf(currentSettings),
-    scrollback: kind === 'cli-agent' ? SCROLLBACK_AGENT : SCROLLBACK_SHELL,
+    scrollback: terminalScrollbackLines(
+      kind,
+      currentSettings.performanceMode,
+    ),
     // Alt+roda (modificador fixo do xterm 6) rola 5x mais rápido.
     fastScrollSensitivity: 5,
   });
@@ -580,10 +605,16 @@ function startSpawn(
       // floods cannot pin the renderer. See terminal-output-scheduler.ts.
       host.cleanups.push(
         window.nexus.pty.onData(res.sessionId, (data) => {
-          const focused = useLayoutStore.getState().focusedPaneId === pane.id;
+          const policy = terminalOutputPolicy({
+            kind: pane.kind,
+            isFocused:
+              useLayoutStore.getState().focusedPaneId === pane.id,
+            isPaneVisible: host.isVisible,
+            isDocumentVisible: document.visibilityState !== 'hidden',
+            performanceMode: currentSettings.performanceMode,
+          });
           writeTerminalOutput(host.term, data, {
-            foreground: focused,
-            latencySensitive: focused,
+            ...policy,
             onParsed: () => {
               if (!host.disposed) host.inputVisibility.onOutputParsed();
             },
@@ -682,6 +713,7 @@ function startSpawn(
             const rows = host.term.rows;
             window.nexus.pty.resize(adoptedSessionId, cols, Math.max(2, rows - 1));
             window.nexus.pty.resize(adoptedSessionId, cols, rows);
+            host.reportedGrid = { cols, rows };
           } catch {
             // Repintura é cosmética; a sessão continua íntegra sem ela.
           }
@@ -784,9 +816,7 @@ function makeResizeObserver(paneId: string, host: Host): ResizeObserver {
       // Primeira medição real do slot: é aqui que o replay pendente entra, já
       // na largura certa.
       flushPendingScrollback(host);
-      if (host.sessionId) {
-        window.nexus.pty.resize(host.sessionId, host.term.cols, host.term.rows);
-      }
+      propagateHostSize(host);
     }, RESIZE_DEBOUNCE_MS);
   });
 }
@@ -801,9 +831,7 @@ function refitAllHosts(): void {
       continue; // Not measurable right now; the ResizeObserver will settle it.
     }
     flushPendingScrollback(host);
-    if (host.sessionId) {
-      window.nexus.pty.resize(host.sessionId, host.term.cols, host.term.rows);
-    }
+    propagateHostSize(host);
     try {
       host.term.refresh(0, Math.max(0, host.term.rows - 1));
     } catch {
@@ -864,6 +892,8 @@ function createShellHost(pane: PaneModel): Host {
     serialize,
     ro: null as unknown as ResizeObserver,
     sessionId: null,
+    reportedGrid: null,
+    isVisible: true,
     spawnGeneration: 0,
     opened: false,
     spawnStarted: false,
@@ -916,6 +946,8 @@ function createCliAgentHost(pane: PaneModel): Host {
     serialize,
     ro: null as unknown as ResizeObserver,
     sessionId: null,
+    reportedGrid: null,
+    isVisible: true,
     spawnGeneration: 0,
     opened: false,
     spawnStarted: false,
@@ -1111,9 +1143,7 @@ export function attachHost(pane: PaneModel, slot: HTMLElement): void {
     try {
       host.fit.fit();
       flushPendingScrollback(host);
-      if (host.sessionId) {
-        window.nexus.pty.resize(host.sessionId, host.term.cols, host.term.rows);
-      }
+      propagateHostSize(host);
     } catch {
       // Slot not measurable yet; the ResizeObserver will retry.
     }
@@ -1304,6 +1334,51 @@ export function focusHost(paneId: string): void {
   host.term.focus();
 }
 
+export function setHostVisibility(paneId: string, isVisible: boolean): void {
+  const host = hosts.get(paneId);
+  if (!host || host.disposed || host.isVisible === isVisible) return;
+  host.isVisible = isVisible;
+  if (!isVisible) {
+    if (currentSettings.performanceMode === 'adaptive') {
+      pauseTerminalOutput(host.term);
+      webglPool.suspend(paneId);
+    }
+    host.term.options.cursorBlink = false;
+    return;
+  }
+  if (!host.opened) return;
+  resumeTerminalOutput(host.term);
+  requestAnimationFrame(() => {
+    if (host.disposed || !host.opened || !host.isVisible) return;
+    refreshHost(paneId);
+  });
+}
+
+function handleDocumentVisibilityChange(): void {
+  if (document.visibilityState === 'hidden') {
+    if (currentSettings.performanceMode !== 'adaptive') return;
+    for (const [paneId, host] of hosts) {
+      if (host.disposed) continue;
+      pauseTerminalOutput(host.term);
+      webglPool.suspend(paneId);
+      host.term.options.cursorBlink = false;
+    }
+    return;
+  }
+  const focusedPaneId = useLayoutStore.getState().focusedPaneId;
+  for (const [paneId, host] of hosts) {
+    if (host.disposed || !host.isVisible) continue;
+    resumeTerminalOutput(host.term);
+    if (paneId === focusedPaneId) {
+      requestAnimationFrame(() => focusHost(paneId));
+    }
+  }
+}
+
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', handleDocumentVisibilityChange);
+}
+
 /** Stop compositor work for a terminal that lost focus or left live view. */
 export function blurHost(paneId: string): void {
   const host = hosts.get(paneId);
@@ -1323,6 +1398,35 @@ export function refreshHost(paneId: string): void {
   resumeVisibleHost(paneId, host);
   // Force a full repaint of the visible area.
   host.term.refresh(0, host.term.rows - 1);
+}
+
+export interface TerminalRendererPerformanceSnapshot {
+  readonly performanceMode: TerminalSettings['performanceMode'];
+  readonly hosts: number;
+  readonly visibleHosts: number;
+  readonly activeWebglLeases: number;
+  readonly queuedTerminals: number;
+  readonly queuedChars: number;
+  readonly pendingParseChars: number;
+  readonly droppedBacklogs: number;
+}
+
+export function terminalRendererPerformanceSnapshot(): TerminalRendererPerformanceSnapshot {
+  const output = getTerminalOutputRuntimeSnapshot();
+  let visibleHosts = 0;
+  for (const host of hosts.values()) {
+    if (!host.disposed && host.isVisible) visibleHosts += 1;
+  }
+  return {
+    performanceMode: currentSettings.performanceMode,
+    hosts: [...hosts.values()].filter((host) => !host.disposed).length,
+    visibleHosts,
+    activeWebglLeases: webglPool.activeLeases,
+    queuedTerminals: output.queuedTerminalCount,
+    queuedChars: output.queuedChars,
+    pendingParseChars: output.pendingParseChars,
+    droppedBacklogs: output.droppedBacklogCount,
+  };
 }
 
 /**

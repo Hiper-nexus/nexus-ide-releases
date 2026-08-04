@@ -170,6 +170,38 @@ describe('QuotaService limit-hit expiry', () => {
     expect(b?.windows.every((w) => w.usedRatio === null)).toBe(true);
     svc.stop();
   });
+
+  it('shows OAuth 401 cooldown as auth trouble, not 100% quota', async () => {
+    const accounts: AccountInfo[] = [
+      {
+        id: 'acc-expired',
+        adapterId: 'claude',
+        label: 'Conta limpa',
+        mode: 'subscription',
+        active: true,
+        hasCredential: true,
+        onCooldown: true,
+        cooldownUntil: HIT_AT + COOLDOWN_MS,
+        lastError: 'Error: 401 OAuth access token has expired',
+      } as AccountInfo,
+    ];
+    const svc = new QuotaService({
+      listProviders: () => [provider('claude', 'Claude')],
+      listAccounts: () => accounts,
+    });
+
+    const snap = await svc.snapshot(HIT_AT + 1);
+    const account = snap.entries.find((e) => e.accountId === 'acc-expired');
+
+    expect(account).toMatchObject({
+      onCooldown: true,
+      cooldownKind: 'auth',
+    });
+    expect(account?.windows.every((w) => w.usedRatio === null)).toBe(true);
+    expect(snap.worstUsedRatio).toBeNull();
+    expect(snap.highUsageCount).toBe(0);
+    svc.stop();
+  });
 });
 
 describe('QuotaService live Claude OAuth usage', () => {

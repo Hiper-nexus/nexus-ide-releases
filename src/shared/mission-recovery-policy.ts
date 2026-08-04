@@ -5,6 +5,18 @@ import {
 
 export const TERMINAL_OPERATIONAL_FAILURE_MARKER =
   '[NEXUS_FAILURE:terminal]';
+export const MISSION_RUNTIME_CLOSED_MARKER =
+  '<!-- nexus:runtime-closed -->';
+
+export function wasMissionRuntimeClosedByOperator(
+  mission: Pick<RecoverableMission, 'status' | 'intentState' | 'description'>,
+): boolean {
+  return (
+    mission.status === 'blocked' &&
+    mission.intentState === 'blocked_user' &&
+    (mission.description ?? '').includes(MISSION_RUNTIME_CLOSED_MARKER)
+  );
+}
 
 export function hasTerminalOperationalFailureMarker(value: string): boolean {
   return value.includes(TERMINAL_OPERATIONAL_FAILURE_MARKER);

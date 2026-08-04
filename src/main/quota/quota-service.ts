@@ -13,6 +13,8 @@ import {
   type QuotaWindow,
 } from '../../shared/quota-types';
 import type { LimitHit } from '../orch/limit-detector';
+import { detectLimit } from '../orch/limit-detector';
+import type { FailoverReasonKind } from '../../shared/account-types';
 import { providerApiRefutesCooldown } from '../orch/limit-refutation';
 import type { AccountInfo } from '../../shared/account-types';
 import type { ProviderSettingsInfo } from '../../shared/provider-settings-types';
@@ -242,6 +244,7 @@ export class QuotaService {
       label: string;
       installed: boolean;
       onCooldown: boolean;
+      cooldownKind?: FailoverReasonKind;
       cooldownUntil?: number;
       tokens?: { inputTokens: number; outputTokens: number; costUsd: number };
     }> = [];
@@ -290,6 +293,9 @@ export class QuotaService {
           label: `${p.label} · ${a.label}`,
           installed: p.installed,
           onCooldown: a.onCooldown,
+          cooldownKind: a.lastError
+            ? detectLimit(a.lastError)?.kind
+            : undefined,
           cooldownUntil: a.cooldownUntil,
           tokens: tokens[p.adapterId],
         });
@@ -305,6 +311,9 @@ export class QuotaService {
         label: `${p?.label ?? a.adapterId} · ${a.label}`,
         installed: p?.installed ?? false,
         onCooldown: a.onCooldown,
+        cooldownKind: a.lastError
+          ? detectLimit(a.lastError)?.kind
+          : undefined,
         cooldownUntil: a.cooldownUntil,
         tokens: tokens[a.adapterId],
       });
@@ -398,6 +407,7 @@ export class QuotaService {
     label: string;
     installed: boolean;
     onCooldown: boolean;
+    cooldownKind?: FailoverReasonKind;
     cooldownUntil?: number;
     tokens?: { inputTokens: number; outputTokens: number; costUsd: number };
     now: number;
@@ -415,6 +425,7 @@ export class QuotaService {
       adapterId: input.adapterId,
       accountId: input.accountId,
       onCooldown: input.onCooldown,
+      cooldownKind: input.cooldownKind,
       cooldownUntil: input.cooldownUntil,
       localTokens: input.tokens,
       lastLimitHit: recorded?.hit ?? null,
@@ -452,6 +463,9 @@ export class QuotaService {
       label: input.label,
       installed: input.installed,
       onCooldown,
+      ...(onCooldown && input.cooldownKind
+        ? { cooldownKind: input.cooldownKind }
+        : {}),
       cooldownUntil,
       windows: mergeWindows(defaultUnknownWindows(input.adapterId), windows),
       updatedAt: input.now,

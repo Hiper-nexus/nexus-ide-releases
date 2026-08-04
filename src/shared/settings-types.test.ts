@@ -17,6 +17,7 @@ describe('terminalSettingsSchema', () => {
     );
     expect(DEFAULT_TERMINAL_SETTINGS.themeId).toBe('nexus-dark');
     expect(DEFAULT_TERMINAL_SETTINGS.fontSize).toBe(13);
+    expect(DEFAULT_TERMINAL_SETTINGS.performanceMode).toBe('adaptive');
   });
 
   it('rejects unknown theme ids', () => {
@@ -48,6 +49,18 @@ describe('terminalSettingsSchema', () => {
   it('patch schema accepts partial updates without defaults bleeding in', () => {
     const patch = terminalSettingsPatchSchema.parse({ fontSize: 16 });
     expect(patch).toEqual({ fontSize: 16 });
+  });
+
+  it('accepts only supported terminal performance modes', () => {
+    expect(
+      terminalSettingsSchema.safeParse({ performanceMode: 'adaptive' }).success,
+    ).toBe(true);
+    expect(
+      terminalSettingsSchema.safeParse({ performanceMode: 'quality' }).success,
+    ).toBe(true);
+    expect(
+      terminalSettingsSchema.safeParse({ performanceMode: 'turbo' }).success,
+    ).toBe(false);
   });
 });
 

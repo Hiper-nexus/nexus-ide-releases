@@ -6,7 +6,10 @@ import {
   hasCurrentDispatchAuthority,
   missionBlockPatch,
 } from '../../shared/mission-intent';
-import { hasAutomaticTechnicalRecovery } from '../../shared/mission-recovery-policy';
+import {
+  hasAutomaticTechnicalRecovery,
+  MISSION_RUNTIME_CLOSED_MARKER,
+} from '../../shared/mission-recovery-policy';
 import type {
   Mission,
   MissionPaneSpec,
@@ -740,7 +743,7 @@ export async function closeMissionRuntimePreservingHistory(input: {
           ...missionBlockPatch('user'),
           description: appendMissionVerdict(
             current.description,
-            '<!-- nexus:runtime-closed -->',
+            MISSION_RUNTIME_CLOSED_MARKER,
             '[NEXUS_RUNTIME_CLOSED]',
             'Execução encerrada pelo operador; histórico e receipts preservados.',
           ),

@@ -66,7 +66,7 @@ export function OpsBoard() {
   const layoutRoot = useLayoutStore((s) => s.root);
   const focusPane = useLayoutStore((s) => s.focus);
   const paneStates = useSessionStateStore((s) => s.paneStates);
-  const openWizard = useMissionWizardStore((s) => s.openForAgentic);
+  const openWizard = useMissionWizardStore((s) => s.openForMission);
   const snapshot = useGamificationStore((s) => s.snapshot);
 
   const workspacePath = useWorkspaceStore((s) => s.current?.path ?? null);
@@ -186,7 +186,7 @@ export function OpsBoard() {
         <button
           className="ops-board__new"
           onClick={() => openWizard()}
-          title="Nova missão guiada por objetivo"
+          title="Nova missão — escolher modo"
         >
           <PixelIcon name="mission" />
           Missão

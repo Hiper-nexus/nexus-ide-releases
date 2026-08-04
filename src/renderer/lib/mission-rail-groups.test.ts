@@ -122,6 +122,31 @@ describe('groupMissionsForRail', () => {
     expect(map.done).not.toContain('blk');
   });
 
+  it('treats an operator-closed mission as stopped while its retired session pointer is clearing', () => {
+    const closing = mission({
+      id: 'closing',
+      title: 'Encerrando agora',
+      status: 'blocked',
+      intentState: 'blocked_user',
+      orchestratorSessionId: 'pty-retiring',
+      description:
+        '<!-- nexus:runtime-closed -->\n[NEXUS_RUNTIME_CLOSED] Execução encerrada pelo operador.',
+      updatedAt: 41,
+    });
+    const sections = groupMissionsForRail({
+      missions: [...missions, closing],
+      openMissionIds: new Set(),
+      pinnedIds: [],
+      query: '',
+    });
+    const map = Object.fromEntries(
+      sections.map((s) => [s.id, s.missions.map((m) => m.id)]),
+    );
+
+    expect(map.stopped).toContain('closing');
+    expect(map.active).not.toContain('closing');
+  });
+
   it('keeps a technical retry in progress even while its replacement PTY is pending', () => {
     const recovering = mission({
       id: 'retry',

@@ -16,6 +16,7 @@ import {
 } from './ops-format';
 import { DoctorEngineSettings } from './DoctorEngineSettings';
 import { ContextDraftsSection } from './ContextDraftsSection';
+import { TerminalPerformanceStatus } from './TerminalPerformanceStatus';
 
 function useDiagnosticsSnapshot() {
   const [micPermission, setMicPermission] =
@@ -138,6 +139,9 @@ export function DiagnosticsSection() {
       <DoctorEngineSettings />
 
       <ContextDraftsSection />
+
+      <h4 className="release-section-title">Renderer e panes</h4>
+      <TerminalPerformanceStatus />
 
       <div className="ops-metric-grid">
         <MetricTile

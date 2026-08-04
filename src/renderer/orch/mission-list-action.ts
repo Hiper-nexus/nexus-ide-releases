@@ -3,7 +3,10 @@ import {
   missionHasLiveRuntime,
   missionIsOperationallyActive,
 } from '../lib/mission-rail-groups';
-import { hasAutomaticTechnicalRecovery } from '../../shared/mission-recovery-policy';
+import {
+  hasAutomaticTechnicalRecovery,
+  wasMissionRuntimeClosedByOperator,
+} from '../../shared/mission-recovery-policy';
 
 export function canDiscardMission(mission: Mission): boolean {
   if (mission.orchestratorSessionId !== undefined) return false;
@@ -31,6 +34,12 @@ export function missionListAction(
   hasVisiblePanes: boolean,
 ): MissionListAction {
   if (hasAutomaticTechnicalRecovery(mission)) return 'stop-recovery';
+  if (
+    wasMissionRuntimeClosedByOperator(mission) &&
+    mission.orchestratorSessionId !== undefined
+  ) {
+    return 'close-runtime';
+  }
   if (missionHasLiveRuntime(mission, hasVisiblePanes)) return 'close-runtime';
   if (missionIsOperationallyActive(mission, hasVisiblePanes)) return 'none';
   if (canDiscardMission(mission)) return 'discard';

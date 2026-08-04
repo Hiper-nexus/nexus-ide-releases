@@ -10,7 +10,7 @@ function source(relativePath: string): string {
 }
 
 describe("guided mission entrypoints", () => {
-  it("routes the primary new-mission actions through the agentic objective flow", () => {
+  it("opens the mode picker from generic new-mission actions", () => {
     const app = source("App.tsx");
     const home = source("components/HomeDeck.tsx");
     const workspaceBar = source("components/WorkspaceBar.tsx");
@@ -19,13 +19,13 @@ describe("guided mission entrypoints", () => {
     const canvas = source("components/CanvasView.tsx");
     const opsBoard = source("components/OpsBoard.tsx");
     const cmdN = app.slice(
-      app.indexOf("// ⌘N — nova missão guiada"),
+      app.indexOf("// ⌘N — nova missão:"),
       app.indexOf("// ⌘1-9"),
     );
 
     expect(cmdN).toContain("e.key.toLowerCase() === 'n' && !e.shiftKey");
-    expect(cmdN).toContain("openForAgentic()");
-    expect(cmdN).not.toContain("openForMission()");
+    expect(cmdN).toContain("openForMission()");
+    expect(cmdN).not.toContain("openForAgentic()");
     expect(home).toContain("<MissionComposer");
     expect(home).toContain("onSubmit={submitObjective}");
     expect(home).toContain("openAgentic(intent.trim())");
@@ -33,30 +33,30 @@ describe("guided mission entrypoints", () => {
     expect(home).not.toContain('className="home-deck__btn"');
     expect(home).not.toContain("openForMission");
     expect(workspaceBar).toMatch(
-      /workspace-bar__btn--primary[\s\S]*?onClick=\{\(\) => openAgentic\(\)\}/,
+      /workspace-bar__btn--primary[\s\S]*?onClick=\{\(\) => openMission\(\)\}/,
     );
     expect(
-      missionRail.match(/onClick=\{\(\) => openAgentic\(\)\}/g),
+      missionRail.match(/onClick=\{\(\) => openMission\(\)\}/g),
     ).toHaveLength(1);
     expect(
       commandPalette.match(
-        /useMissionWizardStore\.getState\(\)\.openForAgentic\(\)/g,
+        /useMissionWizardStore\.getState\(\)\.openForMission\(\)/g,
       ),
     ).toHaveLength(2);
     expect(canvas).not.toContain("Nova missão");
     expect(canvas).not.toContain("useMissionWizardStore");
     expect(opsBoard).toContain(
-      "const openWizard = useMissionWizardStore((s) => s.openForAgentic);",
+      "const openWizard = useMissionWizardStore((s) => s.openForMission);",
     );
   });
 
-  it("keeps only the explicitly technical squad editor on the generic picker", () => {
+  it("keeps explicit objective submissions on the agentic path", () => {
     const workspaceBar = source("components/WorkspaceBar.tsx");
     const opsBoard = source("components/OpsBoard.tsx");
     const orchestrationPanel = source("components/OrchestrationPanel.tsx");
 
-    expect(workspaceBar).not.toContain("openForMission");
-    expect(opsBoard).not.toContain("openForMission");
+    expect(workspaceBar).toContain("openForMission");
+    expect(opsBoard).toContain("openForMission");
     expect(orchestrationPanel).toContain('title="Configurar squad"');
     expect(orchestrationPanel).toContain(
       "useMissionWizardStore.getState().openForMission()",

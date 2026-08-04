@@ -9,6 +9,7 @@ import { UpdateReadinessPanel } from './ObservabilitySections';
 import { AudioDeviceControls } from './AudioDeviceControls';
 import { OrchestratorDefaults } from './OrchestratorDefaults';
 import { MissionDriverSettings } from './MissionDriverSettings';
+import { TerminalPerformanceStatus } from './TerminalPerformanceStatus';
 
 /** MÓDULOS sections: Terminal, Voice, Providers, Squads, Marketplace. */
 
@@ -60,6 +61,30 @@ export function TerminalSection() {
       <p className="settings-detail__hint">
         Fonte e shell dos panes xterm. Paleta e modo pixel ficam em Aparência.
       </p>
+
+      <label className="settings-field">
+        Desempenho dos panes
+        <select
+          className="settings-input"
+          value={terminal.performanceMode}
+          onChange={(event) =>
+            void update({
+              performanceMode: event.target.value as
+                | 'adaptive'
+                | 'quality',
+            })
+          }
+        >
+          <option value="adaptive">Adaptativo — recomendado</option>
+          <option value="quality">Qualidade — pintar todos os panes</option>
+        </select>
+        <span className="settings-field__note">
+          Adaptativo agrupa frames de agentes, estaciona panes fora de vista e
+          usa scrollback menor. Qualidade mantém todos os panes atualizando.
+        </span>
+      </label>
+
+      <TerminalPerformanceStatus />
 
       <label className="settings-field">
         Fonte (vazio = padrão do sistema)

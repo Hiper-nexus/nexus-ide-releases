@@ -3,6 +3,8 @@ import { listPanes } from '../lib/split-tree';
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
 
+const MISSION_CLOSE_UI_TIMEOUT_MS = 15_000;
+
 /**
  * Truthful operator feedback: "encerrada" must not imply processes were killed
  * when none were left, otherwise a no-op reads exactly like a real shutdown.
@@ -60,7 +62,38 @@ export async function closeMissionRuntimeAndPanes(
 ): Promise<MissionRuntimeCloseResult> {
   let result: MissionRuntimeCloseResult;
   try {
-    result = await window.nexus.orch.closeMissionRuntime(missionId);
+    const close = window.nexus.orch.closeMissionRuntime(missionId);
+    let didTimeOut = false;
+    void close.then(
+      (lateResult) => {
+        if (
+          didTimeOut &&
+          (lateResult.ok || isOrphanMissionPaneSweep(lateResult))
+        ) {
+          sweepMissionPanes(missionId, reason);
+        }
+      },
+      () => undefined,
+    );
+    result = await Promise.race([
+      close,
+      new Promise<MissionRuntimeCloseResult>((resolve) => {
+        const timer = setTimeout(() => {
+          didTimeOut = true;
+          resolve({
+            ok: false,
+            terminatedSessionIds: [],
+            error:
+              'Encerramento iniciado. O Nexus continua comprovando a saída ' +
+              'dos processos em segundo plano.',
+          });
+        }, MISSION_CLOSE_UI_TIMEOUT_MS);
+        void close.then(
+          () => clearTimeout(timer),
+          () => clearTimeout(timer),
+        );
+      }),
+    ]);
   } catch (error) {
     // Authority fences (scope change, runtime changed under the modal) reject
     // the IPC. Surfacing them as a result keeps the caller's busy state

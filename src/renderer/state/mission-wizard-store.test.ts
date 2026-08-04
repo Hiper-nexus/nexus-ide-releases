@@ -106,6 +106,29 @@ describe('mission-wizard-store voice launches', () => {
     });
   });
 
+  it('opens the mode picker even when an old agentic draft has authored text', () => {
+    useMissionWizardStore.setState({
+      draft: {
+        ...emptyDraft(),
+        step: 'agentic-intent',
+        mode: 'agentic',
+        intent: 'objetivo que deve continuar preservado',
+      },
+    });
+
+    useMissionWizardStore.getState().openForMission();
+
+    expect(useMissionWizardStore.getState()).toMatchObject({
+      open: true,
+      visibleStep: 'mode',
+      draft: {
+        step: 'mode',
+        mode: null,
+        intent: 'objetivo que deve continuar preservado',
+      },
+    });
+  });
+
   it('tracks the exact wizard step visible to Jarvis', () => {
     const store = useMissionWizardStore.getState();
     store.openForMission();
