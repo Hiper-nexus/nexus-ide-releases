@@ -2439,6 +2439,139 @@ describe('durable task dispatcher authority', () => {
     ).toThrow(/já (?:foi )?reservad|dispatch ativo/i);
   });
 
+  it('allows exclusive QA claim while a parallel-eligible advisor dispatch is still active', () => {
+    const runtime = manager();
+    const scope = testProjectScope();
+    const missions = createScopedMissionStore(runtime, scope, {
+      now: () => 1_000,
+    });
+    const tasks = createScopedTaskStore(runtime, scope, { now: () => 1_000 });
+    let id = 0;
+    const dispatches = createTaskDispatchStore(runtime, scope, {
+      now: () => 1_000,
+      idFactory: (prefix) => `${prefix}-${++id}`,
+    });
+    const contract = approvedIntentContract({
+      goal: 'Release gate QA after advisory scout',
+      intentVersion: 1,
+    });
+    const mission = missions.create({
+      title: 'Release E2E ownership fence',
+      squadId: 'agentic-e2e-squad',
+      intentVersion: 1,
+      intentState: 'executing',
+      intentContract: contract,
+    });
+    missions.setStatus(mission.id, 'running');
+    const advisorOwnership = {
+      files: [] as string[],
+      symbols: [] as string[],
+      domains: ['guided-advisory'],
+    };
+    const qaOwnership = {
+      files: ['resultado.txt'],
+      symbols: [] as string[],
+      domains: ['guided-quality-gate', 'sequential-only'],
+    };
+    const [advisorTask, qaTask] = tasks.createPlanAtomically({
+      missionId: mission.id,
+      intentVersion: 1,
+      squad: {
+        id: 'agentic-e2e-squad',
+        agents: [
+          {
+            id: 'scout',
+            agentName: 'Advisor Grok',
+            category: 'scout',
+            cli: 'grok',
+            effort: 'medium',
+          },
+          {
+            id: 'qa',
+            agentName: 'E2E QA',
+            category: 'reviewer',
+            cli: 'codex',
+            effort: 'high',
+          },
+        ],
+      },
+      rows: [
+        {
+          plannerId: 'guided-advisory-scout',
+          title: 'Scout advisory',
+          detail: encodeTaskScheduleDetail('Advise only.', {
+            dependsOn: [],
+            ownership: advisorOwnership,
+            merged: false,
+            agentRef: 'scout',
+            agentCategory: 'scout',
+            executionMode: 'read_only',
+          }),
+          agentRef: 'scout',
+          agentCategory: 'scout',
+        },
+        {
+          plannerId: 'guided-quality-gate',
+          title: 'QA final',
+          detail: encodeTaskScheduleDetail('Validate resultado.txt.', {
+            dependsOn: [],
+            ownership: qaOwnership,
+            merged: false,
+            agentRef: 'qa',
+            agentCategory: 'reviewer',
+            executionMode: 'read_only',
+          }),
+          agentRef: 'qa',
+          agentCategory: 'reviewer',
+        },
+      ],
+    });
+    const planReceipt = tasks.getPlanReceipt(mission.id, 1)!;
+    const advisorClaim = dispatches.claim({
+      missionId: mission.id,
+      taskId: advisorTask!.id,
+      intentVersion: 1,
+      workerId: 'Advisor Grok',
+      leaseOwner: 'main',
+      leaseMs: 30_000,
+      ownership: advisorOwnership,
+      executionMode: 'read_only',
+      agentRef: 'scout',
+      agentCategory: 'scout',
+      rosterHash: planReceipt.rosterHash,
+      routeContract: {
+        adapterId: 'grok',
+        model: 'grok-4.5',
+        effort: 'medium',
+      },
+    });
+    expect(advisorClaim.state).toBe('claimed');
+
+    // Parallel scout still active must not fence exclusive QA claim.
+    const qaClaim = dispatches.claim({
+      missionId: mission.id,
+      taskId: qaTask!.id,
+      intentVersion: 1,
+      workerId: 'E2E QA',
+      leaseOwner: 'main',
+      leaseMs: 30_000,
+      ownership: qaOwnership,
+      executionMode: 'read_only',
+      agentRef: 'qa',
+      agentCategory: 'reviewer',
+      rosterHash: planReceipt.rosterHash,
+      routeContract: {
+        adapterId: 'codex',
+        model: 'gpt-5.6-sol',
+        effort: 'high',
+      },
+    });
+    expect(qaClaim).toMatchObject({
+      taskId: qaTask!.id,
+      state: 'claimed',
+    });
+  });
+
   it('persists route/spawn identity and rejects a stale fencing token', () => {
     const runtime = manager();
     const scope = testProjectScope();

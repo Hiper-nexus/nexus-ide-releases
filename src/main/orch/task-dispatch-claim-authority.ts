@@ -396,8 +396,15 @@ export function claimTaskDispatch(
             cause: error,
           });
         }
+        // Match selectDisjointWave: exclusive quality-gate / sequential-only
+        // tasks must not be fenced by parallel-eligible advisors still active
+        // (guided-advisory scouts, etc.). Block only when an exclusive peer is
+        // already active or expanded ownership actually intersects — otherwise
+        // a stuck Grok scout permanently blocks QA claim after reviewer merge
+        // (release E2E: "ownership da task conflita com dispatch ativo").
+        // Do NOT treat `requiresExclusiveSlot(claim)` alone as conflict with
+        // every active row.
         if (
-          requiresExclusiveSlot(ownership) ||
           requiresExclusiveSlot(activeOwnership) ||
           ownershipsIntersect(ownership, activeOwnership)
         ) {
