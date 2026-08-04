@@ -805,6 +805,71 @@ describe('idle delivery authority and lifecycle', () => {
     delivery.shutdownIdleDelivery();
   });
 
+  it('recupera todas as filas quando a mesma sessão é rebindada entre missões', async () => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    const owner = { id: 101 };
+    authorizeTarget(scope, owner);
+    const first = handoff({
+      id: 'handoff-old-mission',
+      missionId: 'mission-a',
+    });
+    storeMocks.handoffs.set(first.id, first);
+    const recover = vi.fn(async () => true);
+    delivery.configureHandoffDeliveryRuntimeRecovery(recover);
+    delivery.initIdleDelivery();
+
+    delivery.onHandoffSubmitted(first, scope);
+
+    storeMocks.missions.set(
+      `${scope.projectId}:${scope.checkoutId}:mission-b`,
+      {
+        id: 'mission-b',
+        orchestratorSessionId: 'orchestrator-session',
+        status: 'running',
+        description: 'Nova missão após rebind',
+      },
+    );
+    paneMocks.authorities.set('orchestrator-session', {
+      owner,
+      paneId: 'orchestrator-pane',
+      sessionId: 'orchestrator-session',
+      kind: 'cli-agent',
+      missionId: 'mission-b',
+      role: 'orchestrator',
+      scope,
+    });
+    const second = handoff({
+      id: 'handoff-new-mission',
+      missionId: 'mission-b',
+    });
+    storeMocks.handoffs.set(second.id, second);
+    delivery.onHandoffSubmitted(second, scope);
+
+    ptyMocks.state = 'idle';
+    ptyMocks.stateTaps[0]('orchestrator-session', 'idle');
+    await Promise.resolve();
+
+    expect(ptyMocks.writes).not.toHaveBeenCalled();
+    expect(storeMocks.deliveryAttempts.size).toBe(0);
+    expect(recover).toHaveBeenCalledTimes(2);
+    expect(recover).toHaveBeenCalledWith({
+      scope,
+      missionId: 'mission-a',
+      sessionId: 'orchestrator-session',
+      paneId: 'orchestrator-pane',
+      handoffId: first.id,
+    });
+    expect(recover).toHaveBeenCalledWith({
+      scope,
+      missionId: 'mission-b',
+      sessionId: 'orchestrator-session',
+      paneId: 'orchestrator-pane',
+      handoffId: second.id,
+    });
+    delivery.shutdownIdleDelivery();
+  });
+
   it('requeues once a handoff swallowed without acceptance instead of losing it', async () => {
     const delivery = await import('./idle-delivery');
     const scope = testProjectScope();

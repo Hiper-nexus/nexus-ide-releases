@@ -822,6 +822,26 @@ function scheduleStableDelivery(
   return true;
 }
 
+function recoverQueuedAuthorities(
+  reason: string,
+  targets: Iterable<DeliveryAuthority & { readonly handoffId: string }>,
+): void {
+  const recovery = recoverDefectiveRuntime;
+  if (!recovery) return;
+  for (const target of targets) {
+    const request = Object.freeze({
+      sessionId: target.sessionId,
+      missionId: target.missionId,
+      paneId: target.paneId,
+      handoffId: target.handoffId,
+      scope: Object.freeze({ ...target.scope }),
+    });
+    void Promise.resolve(recovery(request)).catch((error) => {
+      console.warn(`[idle-delivery] recovery after ${reason} failed:`, error);
+    });
+  }
+}
+
 function flushQueue(sessionId: string): void {
   if (!isSessionInjectableIdle(sessionId)) return;
   const matches = [...queues.entries()].filter(
@@ -829,7 +849,27 @@ function flushQueue(sessionId: string): void {
   );
   if (matches.length === 0) return;
   if (matches.length !== 1) {
+    const recoveryTargets = new Map<
+      string,
+      DeliveryAuthority & { handoffId: string }
+    >();
+    for (const [, queue] of matches) {
+      const head = queue[0];
+      if (!head) continue;
+      const key = runtimeRecoveryKey(head.authority);
+      if (!recoveryTargets.has(key)) {
+        recoveryTargets.set(key, {
+          ...head.authority,
+          handoffId: head.handoff.id,
+        });
+      }
+    }
     for (const [key] of matches) queues.delete(key);
+    console.warn(
+      `[idle-delivery] ambiguous queue ownership for session ${sessionId}; ` +
+        `retiring ${matches.length} in-memory queues and scheduling recovery`,
+    );
+    recoverQueuedAuthorities('ambiguous session rebind', recoveryTargets.values());
     return;
   }
   const [key, queue] = matches[0];
@@ -913,26 +953,10 @@ export function initIdleDelivery(): void {
       if (pending.authority.sessionId !== sessionId) continue;
       clearPendingDeliveryStart(pending);
     }
-    for (const target of recoveryTargets.values()) {
-      const recovery = recoverDefectiveRuntime;
-      if (!recovery) continue;
-      // Exit-triggered recovery must not depend on a second store proof of the
-      // in-memory head: the durable row is still `queued`, but the session that
-      // owned the queue is already gone. Invoke the recovery hook directly.
-      const request = Object.freeze({
-        sessionId: target.sessionId,
-        missionId: target.missionId,
-        paneId: target.paneId,
-        handoffId: target.handoffId,
-        scope: Object.freeze({ ...target.scope }),
-      });
-      void Promise.resolve(recovery(request)).catch((error) => {
-        console.warn(
-          '[idle-delivery] recovery after Maestro exit failed:',
-          error,
-        );
-      });
-    }
+    // Exit-triggered recovery must not depend on a second store proof of the
+    // in-memory head: the durable row is still `queued`, but the session that
+    // owned the queue is already gone. Invoke the recovery hook directly.
+    recoverQueuedAuthorities('Maestro exit', recoveryTargets.values());
   });
   unsubscribeScopeChanges = onRendererWorkspaceScopeChange(
     (owner, previous) => {

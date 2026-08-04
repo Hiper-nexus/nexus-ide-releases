@@ -236,6 +236,11 @@ export const missionOrchestratorBootstrapRequestSchema = z
   .strict();
 
 export interface MissionOrchestratorBootstrapDeps {
+  /**
+   * Effective bootstrap policy. Tests and isolated runtimes inject this so
+   * proving Autopilot/Hardened never mutates the operator's settings file.
+   */
+  squadCliPolicy?(): "operator-choice" | "governed";
   getMission(scope: ProjectExecutionScope, missionId: string): Mission | null;
   updateMission(
     scope: ProjectExecutionScope,
@@ -997,7 +1002,7 @@ export class MissionOrchestratorBootstrapService {
       }
     }
     const autopilot = isOperatorChoicePolicy(
-      getOrchSettings().squadCliPolicy,
+      this.#deps.squadCliPolicy?.() ?? getOrchSettings().squadCliPolicy,
     );
     try {
       const requiresPrePlanGitBaseline =
@@ -1542,7 +1547,7 @@ export class MissionOrchestratorBootstrapService {
           mismatches.slice(0, 8).join("; ");
         // Autopilot: first pane already exists — log and continue rather than
         // tearing down the mission over cosmetic authority-field drift.
-        if (isOperatorChoicePolicy(getOrchSettings().squadCliPolicy)) {
+        if (autopilot) {
           console.warn(`[mission-bootstrap] Autopilot: ${detail}`);
         } else {
           throw new Error(detail);
@@ -1572,9 +1577,7 @@ export class MissionOrchestratorBootstrapService {
         standardTopology,
         // The prompt must state the policy actually in force; otherwise the
         // Maestro substitutes Codex for the operator's chosen executor.
-        operatorChoice: isOperatorChoicePolicy(
-          getOrchSettings().squadCliPolicy,
-        ),
+        operatorChoice: autopilot,
         uiMissionObjective: isUiMissionText(
           [
             current.intentContract!.goal,

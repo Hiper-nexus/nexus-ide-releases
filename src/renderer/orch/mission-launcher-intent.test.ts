@@ -48,7 +48,17 @@ const verifiedClaudeAdapter = {
   installCommand: '',
   idleTimeoutMs: 800,
   orchestratorCapable: true,
+  missionControlCapable: true,
   orchestrationEvidence: 'verified' as const,
+  capabilities: {
+    launchable: true,
+    promptInjectable: true,
+    statusObservable: true,
+    resumable: true,
+    autonomousReadOnly: true,
+    governedWriter: false,
+    verifiedMaestro: true,
+  },
 };
 
 describe('intent-first kickoff packing', () => {
@@ -62,21 +72,17 @@ describe('intent-first kickoff packing', () => {
       maxWorkers: 2,
     });
     expect(prompt).toContain('Corrigir o formulário de login');
-    expect(prompt).toContain('missionId=mission-1');
+    expect(prompt).toContain('id=mission-1');
     expect(prompt).toContain('Aplique o padrão de engenharia do NavalhaGO.');
     expect(prompt).toContain('QA sênior (reviewer');
-    // A seção virou "Como conduzir": sequência numerada em vez de lista de proibições.
-    expect(prompt).toContain('Como conduzir');
+    expect(prompt).toContain('## Condução');
     expect(prompt).toMatch(/PREVC paralelo/i);
     expect(prompt).toMatch(/n[aã]o pare a miss[aã]o para rodar Doctor\/freeze/i);
     expect(prompt).toMatch(/plano desta inten[cç][aã]o j[aá] [ée] selado pelo Main/i);
     expect(prompt).toMatch(/lista vazia [ée] recupera[cç][aã]o transit[oó]ria do Main/i);
     expect(prompt).not.toContain('nexus_task plan');
-    expect(prompt).toContain('agentRef');
-    expect(prompt).toContain('executionMode');
-    // O papel do main agora é declarado uma vez, como fato, na seção de estado.
     expect(prompt).toMatch(/main [ée] o dispatcher f[ií]sico/i);
-    expect(prompt).toMatch(/merge manual .* s[aã]o do main/i);
+    expect(prompt).toMatch(/Merge\/refreeze s[aã]o do Main/i);
     expect(prompt).not.toContain('nexus_merge_task');
     expect(prompt).toContain('PREVC');
     // PREVC trabalha em paralelo e só barra a promoção final.
@@ -84,9 +90,9 @@ describe('intent-first kickoff packing', () => {
     expect(prompt).toMatch(/status=done somente após o main produzir PREVC completo/i);
     // Escalonamento novo: bloquear exige causa E tentativa registrada.
     expect(prompt).toMatch(/status=blocked exige a causa E o que você já tentou/);
-    expect(prompt).toMatch(/status=failed quando a execução começou e terminou em erro/);
+    expect(prompt).toMatch(/status=failed se a execução começou e falhou/);
     expect(prompt).toMatch(/revis[aã]o independente/i);
-    expect(prompt).toMatch(/mem[oó]ria dur[aá]vel/i);
+    expect(prompt).toMatch(/nexus_mission_get.*handoffs.*learnings/i);
     expect(prompt).not.toContain('nexus_mission_freeze_contract');
   });
   it('keeps short-mission kickoffs lean without asking the Maestro to replan', () => {
@@ -121,8 +127,8 @@ describe('intent-first kickoff packing', () => {
 
     expect(prompt).toMatch(/PREVC já congelado/i);
     expect(prompt).toMatch(/sem bloquear o início dos workers/i);
-    expect(prompt).toMatch(/continue a execução/i);
-    expect(prompt).toMatch(/antes de promover/i);
+    expect(prompt).toMatch(/Comece a execução/i);
+    expect(prompt).toMatch(/fronteira de promoção/i);
     expect(prompt).not.toContain('nexus_workflow_prepare_execution');
     expect(prompt).not.toMatch(/n[aã]o inicie worker/i);
   });
@@ -221,7 +227,7 @@ describe('orientationForKickoff', () => {
       lane: 'standard',
     });
     expect(prompt).toContain('O main é o dispatcher físico');
-    expect(prompt).toMatch(/comandos longos de implementa[cç][aã]o rodam no worktree da task/i);
+    expect(prompt).toMatch(/Implementa[cç][aã]o no worktree da task/i);
     expect(prompt).not.toContain('nexus_bg_run');
   });
 });
@@ -595,6 +601,7 @@ describe('intent-first arming dependencies', () => {
           orchGet: vi.fn(async () => ({
             intentFirstMissionRuntimeV1: true,
             defaultAdapterId: 'claude',
+            squadCliPolicy: 'governed',
           })),
         },
         accounts: { list: vi.fn(async () => []) },
@@ -617,7 +624,17 @@ describe('intent-first arming dependencies', () => {
             installCommand: '',
             idleTimeoutMs: 800,
             orchestratorCapable: true,
+            missionControlCapable: true,
             orchestrationEvidence: 'experimental',
+            capabilities: {
+              launchable: true,
+              promptInjectable: true,
+              statusObservable: true,
+              resumable: true,
+              autonomousReadOnly: true,
+              governedWriter: false,
+              verifiedMaestro: false,
+            },
           },
         ],
         {

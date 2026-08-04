@@ -26,7 +26,12 @@ function sameScope(
 }
 
 function scopeKey(scope: ProjectExecutionScope): string {
-  return `${scope.projectId}\0${scope.checkoutId}`;
+  return [
+    scope.installationId,
+    scope.projectId,
+    scope.checkoutId,
+    scope.rootRealPath,
+  ].join('\0');
 }
 
 /** Caches scope-bound facades only; every usage/media row remains in SQLite. */

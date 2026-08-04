@@ -90,7 +90,12 @@ const CODEX_ROLLOUT_SPAWN_SKEW_MS = 30_000;
 const CODEX_ROLLOUT_START_WINDOW_MS = 5 * 60_000;
 
 function scopeKey(scope: ProjectExecutionScope): string {
-  return `${scope.projectId}\0${scope.checkoutId}`;
+  return [
+    scope.installationId,
+    scope.projectId,
+    scope.checkoutId,
+    scope.rootRealPath,
+  ].join('\0');
 }
 
 function isInside(root: string, candidate: string): boolean {

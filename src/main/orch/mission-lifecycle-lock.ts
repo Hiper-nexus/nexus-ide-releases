@@ -82,6 +82,13 @@ export async function withMissionLifecycleLock<T>(
       // A dead waiter must not strand its successors behind an unresolved
       // gate; resolving it keeps the chain exactly as sound as before.
       release();
+      // If this waiter is still the tail, restore the predecessor as the
+      // tracked owner. Deleting the key here would let a fresh caller enter
+      // concurrently while the predecessor is still running; leaving our
+      // resolved gate as the tail would leak the map entry forever.
+      if (missionLifecycleTails.get(key) === tail) {
+        missionLifecycleTails.set(key, predecessor);
+      }
       throw error;
     }
     clearTimeout(timer);
@@ -96,4 +103,8 @@ export async function withMissionLifecycleLock<T>(
       missionLifecycleTails.delete(key);
     }
   }
+}
+
+export function missionLifecycleLockEntryCountForTests(): number {
+  return missionLifecycleTails.size;
 }

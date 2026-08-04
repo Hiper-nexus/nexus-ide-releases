@@ -128,6 +128,42 @@ describe.skipIf(!sqliteAvailable)('UsageTelemetryService snapshots', () => {
     expect(() => service.snapshot(conflicting)).toThrow(/multiple project scopes/i);
     service.stop();
   });
+
+  it('keeps equal project/checkout ids isolated across physical roots', () => {
+    const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'usage-scope-key-'));
+    roots.push(parent);
+    const rootA = path.join(parent, 'root-a');
+    const rootB = path.join(parent, 'root-b');
+    fs.mkdirSync(rootA);
+    fs.mkdirSync(rootB);
+    const scopeA: ProjectExecutionScope = Object.freeze({
+      version: 1,
+      installationId: 'install-a',
+      projectId: 'project-shared',
+      checkoutId: 'checkout-shared',
+      rootRealPath: fs.realpathSync(rootA),
+      identitySource: 'manifest',
+    });
+    const scopeB: ProjectExecutionScope = Object.freeze({
+      ...scopeA,
+      rootRealPath: fs.realpathSync(rootB),
+    });
+    const runtimeManager = new ProjectRuntimeManager({
+      baseDir: path.join(parent, 'runtime'),
+      appVersion: 'usage-service-test',
+    });
+    managers.push(runtimeManager);
+    const registry = new ProjectUsageStoreRegistry(runtimeManager);
+    const service = new UsageTelemetryService(registry);
+
+    expect(() => service.snapshot(scopeA)).not.toThrow();
+    expect(() => service.snapshot(scopeB)).not.toThrow();
+    expect(service.snapshot(scopeA).global.inputTokens).toBe(0);
+    expect(service.snapshot(scopeB).global.inputTokens).toBe(0);
+    expect(service.snapshot(scopeA).byPane).not.toHaveProperty('pane-b');
+    expect(service.snapshot(scopeB).byPane).not.toHaveProperty('pane-a');
+    service.stop();
+  });
 });
 
 describe('usage cwd authority', () => {

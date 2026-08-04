@@ -75,6 +75,10 @@ describe("guided result consumption chain", () => {
         goal: "Entregar o fluxo guiado completo com revisão independente",
         intentVersion,
       }),
+      // This scenario proves PREVC-owned completion, not the normal-risk fast
+      // path. Keep the approval explicitly sensitive so the Driver remains
+      // the only authority allowed to flip the final mission state.
+      risk: "sensitive" as const,
       approvedAt: 1,
       dispatchedAt: 1,
     };

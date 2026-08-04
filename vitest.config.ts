@@ -9,6 +9,7 @@ export default defineConfig({
       // Collecting them runs stale suites multiple times and may load native
       // modules built for another Node/Electron ABI.
       '.dev-user-data/**',
+      '.dev-user-data-qa/**',
       // Vendored skill suites (archify) run under their own `node --test`
       // runner (see assets/skills/archify/package.json), not under vitest.
       'assets/**',

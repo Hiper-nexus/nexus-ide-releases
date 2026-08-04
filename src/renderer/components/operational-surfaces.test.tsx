@@ -280,8 +280,11 @@ function mount(element: React.ReactElement): {
   document.body.appendChild(host);
   const root = createRoot(host);
   act(() => root.render(element));
+  mountedRoots.add(root);
   return { host, root };
 }
+
+const mountedRoots = new Set<Root>();
 
 describe("operational Home and Launch surfaces", () => {
   beforeEach(() => {
@@ -296,6 +299,10 @@ describe("operational Home and Launch surfaces", () => {
   });
 
   afterEach(() => {
+    act(() => {
+      for (const root of mountedRoots) root.unmount();
+      mountedRoots.clear();
+    });
     sessionStorage.clear();
     useHomeStore.setState(initialHome);
     useLayoutStore.setState(initialLayout);
@@ -331,9 +338,7 @@ describe("operational Home and Launch surfaces", () => {
     expect(host.textContent).toContain("Próxima ação");
     expect(host.textContent).toContain("Continuar nexus-ide");
     expect(host.textContent).toContain("7 CLIs detectadas");
-    expect(host.textContent).toContain(
-      "Rota de missão autenticada e pronta",
-    );
+    expect(host.textContent).toContain("Multi-LLM pronto · 7 CLIs");
     expect(host.textContent).toContain("MCP online · 71 ferramentas");
     const topbarActions = host.querySelector(".launch__topbar-actions");
     expect(topbarActions?.textContent).toContain("Configurações");
@@ -350,6 +355,7 @@ describe("operational Home and Launch surfaces", () => {
     expect(open).toHaveBeenCalledWith("/Users/test/nexus-ide");
 
     act(() => root.unmount());
+    mountedRoots.delete(root);
   });
 
   it("opens the new-workspace flow with the standard command shortcut", async () => {
@@ -367,6 +373,7 @@ describe("operational Home and Launch surfaces", () => {
 
     expect(openForNewWorkspace).toHaveBeenCalledOnce();
     act(() => root.unmount());
+    mountedRoots.delete(root);
   });
 
   it("opens arbitrary folders only through the native authorized picker", async () => {
@@ -389,6 +396,7 @@ describe("operational Home and Launch surfaces", () => {
 
     expect(pick).toHaveBeenCalledOnce();
     act(() => root.unmount());
+    mountedRoots.delete(root);
   });
 
   it("refreshes Launch readiness after provider setup without remounting", async () => {
@@ -413,13 +421,12 @@ describe("operational Home and Launch surfaces", () => {
       await Promise.resolve();
     });
 
-    expect(host.textContent).toContain(
-      "Rota de missão autenticada e pronta",
-    );
+    expect(host.textContent).toContain("Multi-LLM pronto · 7 CLIs");
     expect(inventory.adapterList).toHaveBeenCalledTimes(2);
     expect(inventory.providerList).toHaveBeenCalledTimes(2);
 
     act(() => root.unmount());
+    mountedRoots.delete(root);
     expect(inventory.adapterSubscriberCount()).toBe(0);
     expect(inventory.providerSubscriberCount()).toBe(0);
     expect(inventory.accountSubscriberCount()).toBe(0);
@@ -445,12 +452,11 @@ describe("operational Home and Launch surfaces", () => {
       await Promise.resolve();
     });
 
-    expect(host.textContent).toContain(
-      "Rota de missão autenticada e pronta",
-    );
+    expect(host.textContent).toContain("Multi-LLM pronto · 7 CLIs");
     expect(inventory.accountList).toHaveBeenCalledTimes(2);
 
     act(() => root.unmount());
+    mountedRoots.delete(root);
     expect(inventory.accountSubscriberCount()).toBe(0);
   });
 
@@ -474,7 +480,7 @@ describe("operational Home and Launch surfaces", () => {
 
     expect(host.textContent).toContain("Pronto para planejar");
     expect(host.textContent).toContain("7 CLIs detectadas");
-    expect(host.textContent).toContain("7 CLIs autenticadas com handoff");
+    expect(host.textContent).toContain("7 providers prontos");
     expect(host.textContent).toContain("7 workers com handoff");
     expect(host.textContent).toContain("MCP online · 71 ferramentas");
     expect(host.textContent).toContain("Próxima ação");
@@ -494,6 +500,7 @@ describe("operational Home and Launch surfaces", () => {
     expect(openForMission).not.toHaveBeenCalled();
 
     act(() => root.unmount());
+    mountedRoots.delete(root);
   });
 
   it("refreshes Home readiness after provider setup without remounting", async () => {
@@ -541,6 +548,7 @@ describe("operational Home and Launch surfaces", () => {
     expect(inventory.providerList).toHaveBeenCalledOnce();
 
     act(() => root.unmount());
+    mountedRoots.delete(root);
     expect(inventory.adapterSubscriberCount()).toBe(0);
     expect(inventory.providerSubscriberCount()).toBe(0);
     expect(inventory.accountSubscriberCount()).toBe(0);
@@ -643,7 +651,7 @@ describe("operational Home and Launch surfaces", () => {
     expect(host.textContent).toContain("Conclua a rota de execução");
     expect(host.textContent).toContain("7 CLIs detectadas");
     expect(host.textContent).toContain(
-      "Nenhuma CLI autenticada com handoff",
+      "Nenhum worker autenticado com handoff",
     );
     const configure = [...host.querySelectorAll("button")].find((button) =>
       button.textContent?.includes("Configurar execução"),

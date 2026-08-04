@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { testProjectScope } from "./__tests__/scope-fixture";
 import {
+  missionLifecycleLockEntryCountForTests,
   MissionLifecycleLockBusyError,
   withMissionLifecycleLock,
 } from "./mission-lifecycle-lock";
@@ -118,6 +119,7 @@ describe("mission lifecycle lock", () => {
       await vi.advanceTimersByTimeAsync(30_000);
       await waiterExpectation;
       expect(order).toEqual(["holder:start"]);
+      expect(missionLifecycleLockEntryCountForTests()).toBe(1);
 
       const next = withMissionLifecycleLock(scope, "mission-t", async () => {
         order.push("next");
@@ -126,6 +128,7 @@ describe("mission lifecycle lock", () => {
       await holder;
       await next;
       expect(order).toEqual(["holder:start", "holder:end", "next"]);
+      expect(missionLifecycleLockEntryCountForTests()).toBe(0);
     });
 
     it("adquire normalmente quando o lock está livre", async () => {

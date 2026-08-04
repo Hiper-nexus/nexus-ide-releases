@@ -110,7 +110,17 @@ describe('NavalhaGO arm path (intent-first)', () => {
           installCommand: '',
           idleTimeoutMs: 800,
           orchestratorCapable: true,
+          missionControlCapable: true,
           orchestrationEvidence: 'verified',
+          capabilities: {
+            launchable: true,
+            promptInjectable: true,
+            statusObservable: true,
+            resumable: true,
+            autonomousReadOnly: true,
+            governedWriter: false,
+            verifiedMaestro: true,
+          },
         },
       ] as never,
     );

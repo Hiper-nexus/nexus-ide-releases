@@ -379,6 +379,12 @@ function harness(): Harness {
   return value;
 }
 
+function hardenedHarness(): Harness {
+  const value = harness();
+  value.deps.squadCliPolicy = () => 'governed';
+  return value;
+}
+
 function installLiveUnboundOrchestrator(
   value: Harness,
   closeResult: boolean,
@@ -761,7 +767,7 @@ describe('initial main-owned orchestrator bootstrap', () => {
   });
 
   it('blocks durably before any provider effect when the main-owned plan preflight fails', async () => {
-    const h = harness();
+    const h = hardenedHarness();
     h.deps.ensureMissionPlan = vi.fn(() => {
       throw new Error('guided_plan_route_unavailable');
     });
@@ -787,7 +793,7 @@ describe('initial main-owned orchestrator bootstrap', () => {
   });
 
   it('stops automatic recovery when plan seal fails with a permanent squad drift', async () => {
-    const h = harness();
+    const h = hardenedHarness();
     h.deps.ensureMissionPlan = vi.fn(() => {
       throw new Error(
         'guided_plan_squad_stale: o squad mudou depois da aprovação',
@@ -820,7 +826,7 @@ describe('initial main-owned orchestrator bootstrap', () => {
   });
 
   it('refuses bootstrap when the mission still points at a mutable catalog squad', async () => {
-    const h = harness();
+    const h = hardenedHarness();
     const catalogSquad: Squad = {
       ...squad,
       id: 'nexus-story-impl',
@@ -852,7 +858,7 @@ describe('initial main-owned orchestrator bootstrap', () => {
   });
 
   it('blocks a saved squad with mixed sealed topology before any provider effect', async () => {
-    const h = harness();
+    const h = hardenedHarness();
     const current = guidedMission({
       squadId: squad.id,
       intentContract: {
@@ -976,7 +982,7 @@ describe('initial main-owned orchestrator bootstrap', () => {
   });
 
   it('revalidates the plan after the Retomar missão rearm instead of escaping through bootstrap', async () => {
-    const h = harness();
+    const h = hardenedHarness();
     h.mission = {
       ...h.mission,
       status: 'blocked',
@@ -1031,7 +1037,7 @@ describe('initial main-owned orchestrator bootstrap', () => {
   });
 
   it('turns a deterministic physical authority divergence into a human wait', async () => {
-    const value = harness();
+    const value = hardenedHarness();
     const getAgentSessionInfo = value.deps.getAgentSessionInfo;
     value.deps.getAgentSessionInfo = (sessionId) => {
       const agent = getAgentSessionInfo(sessionId);
@@ -1243,7 +1249,7 @@ describe('initial main-owned orchestrator bootstrap', () => {
       'Fechar bootstrap main-owned sem renderer',
     );
     expect(value.kickoffPrompts[0]?.split('\n')[0]).toBe(
-      '# Missão autorizada — Fechar bootstrap main-owned',
+      '# Missão — Fechar bootstrap main-owned',
     );
     expect(value.kickoffPrompts[0]).not.toContain('# Missão antiga');
     expect(value.kickoffPrompts[0]).toContain('## Anexos validados pelo Nexus');
@@ -2577,7 +2583,7 @@ describe('initial main-owned orchestrator bootstrap', () => {
   });
 
   it('fails closed before spawn when the approved contract has no runtime snapshot', async () => {
-    const value = harness();
+    const value = hardenedHarness();
     const contract = { ...value.mission.intentContract! };
     delete (contract as Record<string, unknown>).orchestratorRuntime;
     value.mission = { ...value.mission, intentContract: contract };
@@ -2592,7 +2598,7 @@ describe('initial main-owned orchestrator bootstrap', () => {
   });
 
   it('fails closed before spawn when the current runtime drifts from approval', async () => {
-    const value = harness();
+    const value = hardenedHarness();
     value.mission = {
       ...value.mission,
       intentContract: {
@@ -2641,7 +2647,7 @@ describe('initial main-owned orchestrator bootstrap', () => {
   });
 
   it('fails closed when the provider cannot confine native orchestrator writes', async () => {
-    const value = harness();
+    const value = hardenedHarness();
     value.deps.resolveRuntime = () => ({
       adapterId: 'opencode',
       readOnly: false,
@@ -2739,7 +2745,7 @@ describe('initial main-owned orchestrator bootstrap', () => {
   });
 
   it('não spawna quando o squad salvo diverge do hash aprovado', async () => {
-    const value = harness();
+    const value = hardenedHarness();
     value.deps.getSquad = () => ({
       ...squad,
       orchestratorInstructions:

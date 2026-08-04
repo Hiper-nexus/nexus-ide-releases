@@ -96,6 +96,29 @@ const squad = {
   ],
 };
 
+const codexMainRoute = {
+  id: 'codex',
+  kind: 'cli-pty' as const,
+  label: 'Codex',
+  icon: 'C',
+  models: { list: ['gpt-5.6-sol'], default: 'gpt-5.6-sol' },
+  installed: true,
+  installCommand: 'npm i -g codex',
+  idleTimeoutMs: 800,
+  orchestratorCapable: true,
+  missionControlCapable: true,
+  orchestrationEvidence: 'verified' as const,
+  capabilities: {
+    launchable: true,
+    promptInjectable: true,
+    statusObservable: true,
+    resumable: true,
+    autonomousReadOnly: true,
+    governedWriter: true,
+    verifiedMaestro: true,
+  },
+};
+
 describe('approved mission main-owned presentation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -175,20 +198,7 @@ describe('approved mission main-owned presentation', () => {
     const authorizeDispatch = vi.fn(async () => undefined);
     const result = await launchSquadMission(
       squad,
-      [
-        {
-          id: 'codex',
-          kind: 'cli-pty',
-          label: 'Codex',
-          icon: 'C',
-          models: { list: ['gpt-5.6-sol'], default: 'gpt-5.6-sol' },
-          installed: true,
-          installCommand: 'npm i -g codex',
-          idleTimeoutMs: 800,
-          orchestratorCapable: true,
-          orchestrationEvidence: 'experimental',
-        },
-      ],
+      [{ ...codexMainRoute, orchestrationEvidence: 'experimental' }],
       {
         existingMissionId: 'mission-approved',
         goalPrompt: 'renderer copy must not become authority',
@@ -240,20 +250,7 @@ describe('approved mission main-owned presentation', () => {
 
     const result = await launchSquadMission(
       squad,
-      [
-        {
-          id: 'codex',
-          kind: 'cli-pty',
-          label: 'Codex',
-          icon: 'C',
-          models: { list: ['gpt-5.6-sol'], default: 'gpt-5.6-sol' },
-          installed: true,
-          installCommand: 'npm i -g codex',
-          idleTimeoutMs: 800,
-          orchestratorCapable: true,
-          orchestrationEvidence: 'verified',
-        },
-      ],
+      [codexMainRoute],
       {
         existingMissionId: 'mission-approved',
         goalPrompt: 'approved goal',
@@ -293,20 +290,7 @@ describe('approved mission main-owned presentation', () => {
 
     const result = await launchSquadMission(
       squad,
-      [
-        {
-          id: 'codex',
-          kind: 'cli-pty',
-          label: 'Codex',
-          icon: 'C',
-          models: { list: ['gpt-5.6-sol'], default: 'gpt-5.6-sol' },
-          installed: true,
-          installCommand: 'npm i -g codex',
-          idleTimeoutMs: 800,
-          orchestratorCapable: true,
-          orchestrationEvidence: 'verified',
-        },
-      ],
+      [codexMainRoute],
       {
         existingMissionId: 'mission-approved',
         goalPrompt: 'approved goal',
@@ -337,20 +321,7 @@ describe('approved mission main-owned presentation', () => {
 
     const result = await launchSquadMission(
       squad,
-      [
-        {
-          id: 'codex',
-          kind: 'cli-pty',
-          label: 'Codex',
-          icon: 'C',
-          models: { list: ['gpt-5.6-sol'], default: 'gpt-5.6-sol' },
-          installed: true,
-          installCommand: 'npm i -g codex',
-          idleTimeoutMs: 800,
-          orchestratorCapable: true,
-          orchestrationEvidence: 'verified',
-        },
-      ],
+      [codexMainRoute],
       { forceLegacyLaunch: true },
     );
 

@@ -27,6 +27,22 @@ import { setAgentKeyringVaultForTests } from "./agent-keyring-persistence";
 import { configureMissionEventEmit } from "./mission-event-emit";
 import { StaleReadOnlyObservationError } from "./physical-handoff-git";
 
+const settingsHarness = vi.hoisted(() => ({
+  agentAttestationGate: "off" as "off" | "required",
+}));
+
+vi.mock("../persistence/settings-store", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../persistence/settings-store")>();
+  return {
+    ...actual,
+    getOrchSettings: () => ({
+      ...actual.getOrchSettings(),
+      agentAttestationGate: settingsHarness.agentAttestationGate,
+    }),
+  };
+});
+
 vi.mock("./idle-delivery", () => ({
   onHandoffSubmitted: vi.fn(() => null),
 }));
@@ -62,6 +78,7 @@ describe("PTY stream physical handoff", () => {
   const vault = new Map<string, string>();
 
   beforeEach(() => {
+    settingsHarness.agentAttestationGate = "off";
     baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-pty-handoff-"));
     worktree = path.join(baseDir, "worktree");
     fs.mkdirSync(worktree);
@@ -93,6 +110,7 @@ describe("PTY stream physical handoff", () => {
   });
 
   afterEach(() => {
+    settingsHarness.agentAttestationGate = "off";
     resetGateForTests();
     disposeProjectDomainStoreRegistry();
     disposeAuditLogRuntime();
@@ -178,7 +196,7 @@ describe("PTY stream physical handoff", () => {
     return { scope, suite, mission, task, claim };
   }
 
-  it("persists pty-stream provenance and atomically advances the exact dispatch", async () => {
+  async function submitAndReadReceipt() {
     const { scope, suite, mission, task, claim } = fixture();
     const head = git(worktree, "rev-parse", "HEAD");
 
@@ -215,15 +233,22 @@ describe("PTY stream physical handoff", () => {
          FROM handoff_mcp_receipts WHERE handoff_id = ?`,
       )
       .get(result.handoffId);
+    return { claim, head, mission, receipt, result, scope, suite, task };
+  }
+
+  it("persists pty-stream provenance without crypto in Autopilot and atomically advances the exact dispatch", async () => {
+    const { claim, head, mission, receipt, result, scope } =
+      await submitAndReadReceipt();
+
     expect(receipt).toEqual({
       source: "pty-stream",
       mission_id: mission.id,
       session_id: SESSION_ID,
       worker_incarnation_id: claim.workerIncarnationId,
       worktree_head_sha: head,
-      agent_pubkey: expect.stringMatching(/^[a-f0-9]{64}$/),
-      owner_pubkey: expect.stringMatching(/^[a-f0-9]{64}$/),
-      attestation_json: expect.stringContaining('["auth"'),
+      agent_pubkey: null,
+      owner_pubkey: null,
+      attestation_json: null,
     });
     expect(
       readAuditLog({ scope, missionId: mission.id }, 20).filter(
@@ -250,6 +275,23 @@ describe("PTY stream physical handoff", () => {
         )
         .get(),
     ).toEqual({ count: 1 });
+  });
+
+  it("persists the required agent attestation in Hardened", async () => {
+    settingsHarness.agentAttestationGate = "required";
+
+    const { claim, head, mission, receipt } = await submitAndReadReceipt();
+
+    expect(receipt).toEqual({
+      source: "pty-stream",
+      mission_id: mission.id,
+      session_id: SESSION_ID,
+      worker_incarnation_id: claim.workerIncarnationId,
+      worktree_head_sha: head,
+      agent_pubkey: expect.stringMatching(/^[a-f0-9]{64}$/),
+      owner_pubkey: expect.stringMatching(/^[a-f0-9]{64}$/),
+      attestation_json: expect.stringContaining('["auth"'),
+    });
   });
 
   it("accepts a terminal repaint whose summary differs only in horizontal spacing", async () => {
