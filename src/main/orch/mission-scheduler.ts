@@ -357,8 +357,11 @@ export function validateScheduleDependencies(
  *  - touch reserved glue / sequential-only / empty ownership (exclusive slot)
  *  - intersect any already-admitted expanded ownership
  *  - intersect any running worker expanded ownership
- * Exclusive exclusivity is bidirectional: an exclusive *running* worker also
- * blocks all peer admits this tick (ownership intersection alone is insufficient).
+ * Exclusive exclusivity is bidirectional among exclusive peers: an exclusive
+ * *running* worker blocks all peer admits this tick (ownership intersection
+ * alone is insufficient). Parallel-eligible advisors (no sequential-only, no
+ * claim intersection) must NOT fence exclusive quality-gate / sequential
+ * delivery tasks — otherwise a stuck scout blocks QA forever after reviewer.
  */
 export function selectDisjointWave(
   ready: readonly ScheduleTask[],
@@ -402,7 +405,16 @@ export function selectDisjointWave(
     const exclusive = requiresExclusiveSlot(ownership);
 
     if (exclusive) {
-      if (running.length > 0 || admitted.length > 0) {
+      // Alone among this wave and exclusive peers; do not wait for every
+      // parallel-eligible worker still alive (release E2E hang: stuck Grok
+      // scout deferred QA for 10+ min after reviewer completed).
+      if (admitted.length > 0) {
+        deferred.push(task);
+        continue;
+      }
+      if (
+        expandedRunning.some((o) => ownershipsIntersect(ownership, o))
+      ) {
         deferred.push(task);
         continue;
       }

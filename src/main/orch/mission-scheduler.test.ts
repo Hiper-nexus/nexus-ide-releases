@@ -431,6 +431,53 @@ describe('mission-scheduler P1 ownership + reserved glue', () => {
     expect(viaDecide.admittedIds).toEqual([]);
   });
 
+  it('admits sequential-only QA while a parallel advisor scout is still running', () => {
+    // Release hang (0.25.1 E2E): stuck e2e-advisor-grok kept running.length>0
+    // and deferred exclusive quality-gate forever after reviewer completed.
+    const qa = task('qa', {
+      ownership: {
+        files: [],
+        symbols: [],
+        domains: ['guided-quality-gate', 'sequential-only'],
+      },
+    });
+    const advisorRunning: ActiveWorker[] = [
+      {
+        taskId: 'advisor-grok',
+        ownership: {
+          files: [],
+          symbols: [],
+          domains: ['guided-advisory'],
+        },
+      },
+    ];
+    expect(
+      ownershipsIntersect(qa.ownership, advisorRunning[0]!.ownership),
+    ).toBe(false);
+    const wave = selectDisjointWave([qa], advisorRunning, 4);
+    expect(wave.admitted.map((t) => t.id)).toEqual(['qa']);
+    expect(wave.deferred).toEqual([]);
+
+    const viaDecide = decideSchedule(
+      [
+        task('advisor-grok', {
+          status: 'running',
+          ownership: {
+            files: [],
+            symbols: [],
+            domains: ['guided-advisory'],
+          },
+        }),
+        qa,
+      ],
+      advisorRunning,
+      CAP,
+      NOW,
+    );
+    expect(viaDecide.plan.kind).toBe('dispatch');
+    expect(viaDecide.admittedIds).toEqual(['qa']);
+  });
+
   it('blast-radius expansion makes disjointness honest', () => {
     const expand = (files: readonly string[]) =>
       files.flatMap((f) =>
