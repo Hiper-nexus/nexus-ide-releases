@@ -1,14 +1,16 @@
 /**
- * Window-scoped push-to-talk (ADE NexusVoice parity).
+ * Window-scoped dictation push-to-talk (ADE NexusVoice parity).
  *
  * Bare `Space` must never be registered with Electron `globalShortcut` — that
  * would steal typing from every OS app. Instead the focused renderer listens
  * for keydown/keyup while Nexus is frontmost, holds to talk, and on release
- * the existing PTT pipeline transcribes (Groq PT→EN) into the focused pane.
+ * the dictation pipeline transcribes (Groq PT→EN) into the focused pane.
  *
- * While this listener is enabled, Space is reserved for PTT (same as typical ADE
- * NexusVoice). Forms/settings keep normal Space; switch routing back to Jarvis
- * + ⌘⇧Space to type spaces freely in the terminal.
+ * Space is ALWAYS dictation — never a Jarvis turn. Jarvis stays on her own
+ * triggers: global ⌘⇧Space, wake word and click. While this listener is
+ * enabled, Space is reserved for dictation (same as typical ADE NexusVoice).
+ * Forms/settings keep normal Space; switch the shortcut to a modified combo
+ * (e.g. ⌘⇧Space, hotkeyScope global) to type spaces freely in the terminal.
  */
 
 export interface WindowPttCallbacks {

@@ -16,7 +16,23 @@ export const MAX_CONFUSION_REPLY_REOPENS = 1;
 
 let autoReplyLoopCount = 0;
 let consecutiveConfusionReplyCount = 0;
-export type JarvisCaptureReason = 'manual' | 'wake' | 'click' | 'ptt' | 'reply';
+export type JarvisCaptureReason =
+  | 'manual'
+  | 'wake'
+  | 'click'
+  | 'ptt'
+  | 'reply'
+  | 'dictation';
+
+/**
+ * Ditado (Space na janela, estilo NexusVoice) NÃO é um turno Jarvis: só
+ * transcreve PT→EN (Groq) e injeta no pane focado. Vive no mesmo tipo porque
+ * compartilha a máquina de captura, mas nenhum caminho Jarvis (Live, cérebro,
+ * TTS, reply loop) pode ser acionado por ele.
+ */
+export function isDictationCapture(reason: JarvisCaptureReason): boolean {
+  return reason === 'dictation';
+}
 
 export function resetAutoReplyLoop(): void {
   autoReplyLoopCount = 0;

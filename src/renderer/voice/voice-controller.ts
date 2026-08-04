@@ -1363,12 +1363,60 @@ export function useVoiceController(active = true): void {
       }
     };
 
+    // Ditado (Space na janela, estilo NexusVoice): NÃO é gesto Jarvis — sem
+    // reactivateJarvisInput, sem resumeJarvisNarration, sem sessão Live. Só
+    // transcreve PT→EN (Groq) e injeta no pane focado. A Jarvis fica nos
+    // gatilhos dela: ⌘⇧Space global, wake word e clique.
+    const onDictationStart = () => {
+      if (useVoiceStore.getState().info?.captureAllowed === false) return;
+      const action = pttStartAction({
+        isListening: isListening(capture.current),
+        isBusy: busy.current,
+        status: useVoiceStore.getState().status,
+      });
+      if (action === 'ignore') return;
+      if (action === 'barge-in') {
+        // Corta a saída da Jarvis para o ditado começar limpo (mesma trava do
+        // PTT), mas sem reativar input/narração — ditado não liga a Jarvis.
+        cancelLiveFollowUp();
+        wakeMic.cancelPassiveWake();
+        realtimeTranscriptWaiter.supersede();
+        setPendingLiveStartSettle(null);
+        setRealtimeTurnActive(false);
+        setSuppressRealtimeAudioOut(true);
+        resetPendingRealtimeAudioOut();
+        clearLocalAudioGate();
+        livePlayer?.stop();
+        stopAllPlayback('dictation-barge-in');
+        busy.current = false;
+        useVoiceStore.getState().setStatus('idle');
+        logVoiceEvent(
+          'info',
+          'stt.dictationBargeIn',
+          'Ditado interrompeu a fala da Jarvis',
+        );
+      }
+      const holdGuard: AutoStopOptions = {
+        silenceMs: PTT_HOLD_MAX_MS,
+        maxMs: PTT_HOLD_MAX_MS,
+        onAutoStop: () => {
+          if (isListening(capture.current)) void finishAndProcessFacade(capture.current!, busy);
+        },
+      };
+      void beginListening(capture.current!, holdGuard, 'dictation', undefined, busy);
+    };
+    const onDictationStop = () => {
+      if (!isListening(capture.current)) return;
+      void finishAndProcessFacade(capture.current!, busy);
+    };
+
     const unsubStart = window.nexus.voice.onPttStart(onStart);
     const unsubStop = window.nexus.voice.onPttStop(onStop);
     const unsubToggle = window.nexus.voice.onPttToggle(onToggle);
     // NexusVoice-style bare Space: renderer-owned while Nexus is focused.
+    // Sempre ditado — nunca turno Jarvis.
     const disposeWindowPtt = attachWindowPtt(
-      { onStart, onStop },
+      { onStart: onDictationStart, onStop: onDictationStop },
       {
         getKeyCode: () =>
           useVoiceStore.getState().info?.pushToTalkKeyCode ?? 'Space',
@@ -1461,7 +1509,11 @@ async function beginListening(
   busy?: React.MutableRefObject<boolean>,
 ): Promise<void> {
   const store = useVoiceStore.getState();
-  if (isJarvisPoweredOff() || store.info?.captureAllowed === false) {
+  // Ditado (Space na janela) não é função Jarvis: o power-off da Jarvis não o
+  // bloqueia e nenhuma sessão Live/realtime é aberta para ele. O gate de
+  // captura (permissão/privacidade do mic) continua valendo para ambos.
+  const dictation = reason === 'dictation';
+  if ((!dictation && isJarvisPoweredOff()) || store.info?.captureAllowed === false) {
     if (busy) busy.current = false;
     return;
   }
@@ -1476,7 +1528,8 @@ async function beginListening(
     setLastRealtimeNativeToolCallId(null);
     const turnId = String(turnExecution.beginTurn());
     realtimeTranscriptWaiter.beginTurn(turnId);
-    window.nexus.voice.liveTurnBegin(turnId);
+    // Ditado não tem turno Live — não notifica o transporte realtime.
+    if (!dictation) window.nexus.voice.liveTurnBegin(turnId);
     setActiveCaptureReason(reason);
     logVoiceTurnMilestone(turnId, 'wake', { reason });
     // C3 (follow-up 4a): a pendência de missão NÃO é mais limpa aqui — "Hey
@@ -1513,9 +1566,11 @@ async function beginListening(
     }
 
     // FIX E: include 'reply' in allowRealtimeBridge so follow-up streams live.
+    // Ditado nunca abre bridge realtime — ele é STT→pane, separado da Jarvis.
     const allowRealtimeBridge =
       REALTIME_PROVIDER_AUDIO_ENABLED &&
       REALTIME_ACTION_BRIDGE_ENABLED &&
+      !dictation &&
       isJarvisLiveEnabled();
     setPendingLiveStartSettle(null);
     if (
@@ -1569,7 +1624,7 @@ async function beginListening(
         ? { ...autoStop, maxMs: Math.min(autoStop.maxMs, REPLY_MAX_LISTEN_MS) }
         : autoStop;
     if (
-      isJarvisPoweredOff() ||
+      (!dictation && isJarvisPoweredOff()) ||
       useVoiceStore.getState().info?.captureAllowed === false
     ) {
       if (busy) busy.current = false;
@@ -1585,7 +1640,7 @@ async function beginListening(
       await capture.start(captureAutoStop);
     }
     if (
-      isJarvisPoweredOff() ||
+      (!dictation && isJarvisPoweredOff()) ||
       useVoiceStore.getState().info?.captureAllowed === false
     ) {
       wakeMic.cancelUtterance();
@@ -1597,7 +1652,7 @@ async function beginListening(
     store.setStatus('listening');
     liveStatus('listening');
   } catch (err) {
-    if (isJarvisPoweredOff()) {
+    if (!dictation && isJarvisPoweredOff()) {
       if (busy) busy.current = false;
       return;
     }

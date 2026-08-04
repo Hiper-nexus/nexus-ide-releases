@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
   isConfusionReply,
+  isDictationCapture,
   MAX_AUTO_REPLY_LOOPS,
   noteAutoReplyOpened,
   resetAutoReplyLoop,
   resetAutoReplyLoopForCapture,
   shouldReopenJarvisListening,
+  type JarvisCaptureReason,
 } from './jarvis-reply-loop';
 
 describe('jarvis-reply-loop (continuidade)', () => {
@@ -179,6 +181,52 @@ describe('jarvis-reply-loop (continuidade)', () => {
         realtimeTurnActive: false,
         isRealtimeLive: false,
         captureReason: 'wake',
+      }),
+    ).toBe(true);
+  });
+});
+
+describe('isDictationCapture', () => {
+  it('identifica apenas o motivo dictation', () => {
+    const reasons: JarvisCaptureReason[] = [
+      'manual',
+      'wake',
+      'click',
+      'ptt',
+      'reply',
+      'dictation',
+    ];
+    for (const reason of reasons) {
+      expect(isDictationCapture(reason)).toBe(reason === 'dictation');
+    }
+  });
+});
+
+describe('ditado (Space na janela) e o reply loop', () => {
+  it('ditado zera o loop de reply automático (gesto explícito, não é reply)', () => {
+    resetAutoReplyLoop();
+    for (let i = 0; i < MAX_AUTO_REPLY_LOOPS; i += 1) {
+      noteAutoReplyOpened({ sayText: 'Feito.' });
+    }
+    // No teto, não reabre…
+    expect(
+      shouldReopenJarvisListening({
+        expectReply: true,
+        sayText: 'Me conta mais.',
+        realtimeTurnActive: false,
+        isRealtimeLive: false,
+        captureReason: 'reply',
+      }),
+    ).toBe(false);
+    // …até que uma captura de ditado zere o contador, como wake/click/ptt.
+    resetAutoReplyLoopForCapture('dictation');
+    expect(
+      shouldReopenJarvisListening({
+        expectReply: false,
+        sayText: 'Feito.',
+        realtimeTurnActive: false,
+        isRealtimeLive: false,
+        captureReason: 'dictation',
       }),
     ).toBe(true);
   });

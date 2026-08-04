@@ -18,7 +18,10 @@ import {
   discardSpokenEchoIfNeeded,
   transcriptInConversation,
 } from './voice-echo-guard';
-import { resetAutoReplyLoopForCapture } from './jarvis-reply-loop';
+import {
+  isDictationCapture,
+  resetAutoReplyLoopForCapture,
+} from './jarvis-reply-loop';
 import {
   classicSuppressedByRealtimeOwner,
   shouldFallbackClassicAfterRealtimeMute,
@@ -99,7 +102,7 @@ const MAX_REPLY_MUTE_REOPENS = 0;
 let replyMuteReopenCount = 0;
 import { personaUserName } from './jarvis-screen-context';
 import { withTimeout } from './voice-speak-pipeline';
-import { runJarvisTurn, routePrompt, captureResponse, type RunJarvisTurnDeps } from './voice-run-jarvis-turn';
+import { runJarvisTurn, routePrompt, routeDictation, captureResponse, type RunJarvisTurnDeps } from './voice-run-jarvis-turn';
 import { MIN_WAKE_SUPPRESSION_MS } from './voice-suppression-window';
 import type { VoiceCapture, AutoStopOptions } from './voice-capture';
 import type { TranscribeResult } from '../../shared/voice-ipc';
@@ -218,8 +221,12 @@ export async function finishAndProcess(
       durationSec: result.durationSec,
     });
     const routing = store.info?.routing ?? 'focused-pane';
+    // Ditado (Space na janela) nunca abre sessão realtime nem usa o override
+    // STT da Jarvis: ele segue a config STT (Groq, tradução PT→EN) e injeta
+    // o texto no pane focado.
+    const dictationTurn = isDictationCapture(activeCaptureReason);
     const shouldTryRealtimeTranscript =
-      routing === 'jarvis' && shouldStreamToRealtime();
+      routing === 'jarvis' && !dictationTurn && shouldStreamToRealtime();
     // A paused stream must emit audioStreamEnd promptly; otherwise Gemini can
     // retain cached PCM while this pipeline waits for its transcript.
     if (shouldTryRealtimeTranscript) liveEndUserAudio();
@@ -237,7 +244,9 @@ export async function finishAndProcess(
           audioBase64: result.wavBase64,
           mime: 'audio/wav',
           sampleRate: result.sampleRate,
-          ...(routing === 'jarvis' ? { translate: false, language: 'pt' } : {}),
+          ...(routing === 'jarvis' && !dictationTurn
+            ? { translate: false, language: 'pt' }
+            : {}),
           ...(isAckGatedCapture() ? { budgetMs: WAKE_STT_BUDGET_MS } : {}),
         }),
         TRANSCRIBE_DEADLINE_MS_LOCAL,
@@ -290,6 +299,50 @@ export async function finishAndProcess(
           maxPeak: Number((result.maxPeak ?? 0).toFixed(5)),
         },
       );
+    }
+
+    // ── Ditado (Space na janela) ───────────────────────────────────────────
+    // Fast-path dedicado: transcreve com a config STT (Groq PT→EN), injeta no
+    // pane focado e encerra. NUNCA abre sessão Live, cérebro Jarvis, captura
+    // de reply ou TTS — a Jarvis é um produto separado com gatilhos próprios.
+    if (dictationTurn) {
+      store.setStatus('transcribing');
+      const stt = await transcribeCapture();
+      if (!stt.ok) {
+        store.setError(stt.error);
+        return;
+      }
+      if (stt.discarded === 'echo') {
+        console.log(`[voice] eco do TTS descartado no ditado: "${stt.text}"`);
+        store.setStatus('idle');
+        return;
+      }
+      const transcript = stt.text.trim();
+      if (
+        !transcript ||
+        isDiscardableTranscript(transcript, { inConversation: false })
+      ) {
+        console.log(`[voice] ditado vazio/lixo descartado: "${stt.text}"`);
+        store.setStatus('idle');
+        return;
+      }
+      resetAutoReplyLoopForCapture(activeCaptureReason);
+      store.setNote(stt.fallbackNote ?? null);
+      store.setTranscript(transcript);
+      console.log(
+        `[voice] ditado transcrito (${cachedSttLatencyMs}ms): "${transcript}"`,
+      );
+      logVoiceEvent('info', 'stt.dictationTranscript', transcript, {
+        latencyMs: cachedSttLatencyMs,
+      });
+      store.setStatus('routing');
+      const paneId = routeDictation(transcript);
+      if (!paneId) {
+        store.setError('No focused pane to route the dictation into.');
+        return;
+      }
+      store.setStatus('idle');
+      return;
     }
 
     if (shouldTryRealtimeTranscript) {

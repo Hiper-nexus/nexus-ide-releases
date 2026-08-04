@@ -347,6 +347,17 @@ export function routePrompt(text: string): string | null {
   return ok ? targetPaneId : null;
 }
 
+/**
+ * Ditado (Space na janela): sempre injeta no pane focado, ignorando o routing
+ * global (que pode estar em 'jarvis'/'orchestrator' para os gatilhos Jarvis).
+ */
+export function routeDictation(text: string): string | null {
+  const { focusedPaneId } = useLayoutStore.getState();
+  if (!focusedPaneId) return null;
+  const ok = submitPromptToPane(focusedPaneId, text);
+  return ok ? focusedPaneId : null;
+}
+
 /** Accumulate PTY output after prompt injection and resolve with agent reply. */
 export function captureResponse(paneId: string, promptEcho: string): Promise<string> {
   return new Promise((resolve) => {
