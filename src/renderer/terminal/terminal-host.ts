@@ -36,6 +36,10 @@ import { WebglLeasePool } from './webgl-lease';
 import { resumeTerminalVisibilityBeforePaint } from './terminal-visibility-resume';
 import { shouldAutoPinPaneAccount } from './pane-account-authority';
 import {
+  createAdoptionRepaintTape,
+  repaintAdoptedFrame,
+} from './adoption-repaint';
+import {
   SESSION_BOUNDARY_NOTICE,
   terminalBufferHasContent,
 } from './session-boundary-notice';
@@ -601,11 +605,17 @@ function startSpawn(
         }),
       );
 
+      // Adoption keeps a bounded copy of what it paints: the reset below
+      // erases the frame and main cannot re-serve it (its replay window is
+      // unacked-only). See adoption-repaint.ts.
+      let adoptionTape = res.adopted ? createAdoptionRepaintTape() : null;
+
       // Shared output scheduler: focused pane is latency-sensitive (immediate
       // write); hidden panes queue with a bounded backlog so concurrent agent
       // floods cannot pin the renderer. See terminal-output-scheduler.ts.
       host.cleanups.push(
         window.nexus.pty.onData(res.sessionId, (data) => {
+          adoptionTape?.retain(data);
           const policy = terminalOutputPolicy({
             kind: pane.kind,
             isFocused:
@@ -722,15 +732,25 @@ function startSpawn(
           // frame e confia no SIGWINCH duplo para o TUI repintar. Quando o
           // provider ignora o par de resizes (debounce/tamanho final idêntico),
           // o pane orq fica permanentemente vazio com a sessão viva. Se nada
-          // pintou após a janela de graça, re-replay do retido — duplicação é
-          // invisível num buffer vazio; pane preto não é cosmético.
+          // pintou após a janela de graça, reescrevemos a fita LOCAL do que já
+          // foi pintado — pedir replay ao main de novo é no-op provado (a
+          // janela dele só guarda o não-confirmado, já esgotado no 1º replay).
           setTimeout(() => {
+            const tape = adoptionTape;
+            adoptionTape = null;
             if (host.disposed || host.sessionId !== adoptedSessionId) return;
-            if (terminalBufferHasContent(host.term.buffer.active)) return;
-            console.warn(
-              `[nexus] adopted pane ${pane.id} vazio pós-reset — replay backstop`,
-            );
-            void window.nexus.pty.replay(adoptedSessionId);
+            if (!tape) return;
+            const outcome = repaintAdoptedFrame({
+              hasContent: terminalBufferHasContent(host.term.buffer.active),
+              tape: tape.read(),
+              write: (data) => host.term.write(data),
+            });
+            tape.clear();
+            if (outcome !== 'already-painted') {
+              console.warn(
+                `[nexus] adopted pane ${pane.id} vazio pós-reset — repaint ${outcome}`,
+              );
+            }
           }, 1_200);
         }, 350);
       }
