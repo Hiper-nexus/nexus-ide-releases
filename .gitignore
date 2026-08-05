@@ -143,3 +143,6 @@ scripts/codesign-retry-bin/
 /.tsb-verify-skeptic
 # Helpers de depuração via CDP, criados por sessão e descartáveis
 /.cdp-*.mjs
+
+# Maquinário do IDE host (Overclock) gravado na raiz do workspace — não é fonte do Nexus
+/.agents/
