@@ -11,7 +11,7 @@ import { useWorkspaceStore } from './workspace-store';
  */
 
 interface UsageApi {
-  snapshot(): Promise<UsageSnapshot>;
+  snapshot(): Promise<UsageSnapshot | null>;
   onChanged(cb: (snapshot: UsageSnapshot) => void): () => void;
 }
 
@@ -42,6 +42,7 @@ export const useUsageStore = create<UsageStore>((set) => ({
     if (!api) return;
     try {
       const snapshot = await api.snapshot();
+      if (snapshot === null) return;
       if (getActiveWorkspacePath() === workspacePath) set({ snapshot });
     } catch (err) {
       if (getActiveWorkspacePath() === workspacePath) {

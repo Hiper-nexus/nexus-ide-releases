@@ -960,7 +960,7 @@ export interface NexusApi {
   };
   /** Telemetria REAL de tokens (transcript watchers → SQLite). */
   usage: {
-    snapshot(): Promise<UsageSnapshot>;
+    snapshot(): Promise<UsageSnapshot | null>;
     onChanged(cb: (snapshot: UsageSnapshot) => void): Unsubscribe;
   };
   /**
