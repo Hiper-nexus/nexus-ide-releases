@@ -60,6 +60,36 @@ const STORY_HEADING_RE =
   /^(#{1,3})\s*Story\s+(\d+)\.(\d+)\s*:\s*(.+?)\s*$/gim;
 
 /**
+ * A path token: one or more directory segments (so a version like `3.2` or a
+ * bare word like `node.js` never qualifies) followed by a `name.ext` file.
+ * Accepts `/` and `\` separators and an optional `./` prefix; normalization
+ * unifies them afterwards. The extension charset excludes `.` so a trailing
+ * sentence period is left outside the match.
+ */
+const STORY_FILE_PATH_RE = /(?:[\w.-]+[\\/])+[\w.-]+\.[a-z0-9]{1,8}/gi;
+
+/**
+ * Producer half of the P0-3 fan-out: read a single story's own file footprint
+ * out of its body text. Paths are normalized (`\`→`/`, leading `./` stripped)
+ * and de-duplicated, preserving first-mention order. A story that names no path
+ * yields `[]` — the caller then keeps the shared-inventory merge-permit path.
+ */
+export function extractStoryOwnershipFiles(text: string): readonly string[] {
+  const matches = String(text ?? "").match(STORY_FILE_PATH_RE);
+  if (!matches) return Object.freeze([] as string[]);
+  const files: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of matches) {
+    const file = normalizeWavePackFile(raw);
+    if (!file || file.length > 400 || seen.has(file)) continue;
+    seen.add(file);
+    files.push(file);
+    if (files.length >= 256) break;
+  }
+  return Object.freeze(files);
+}
+
+/**
  * BMAD epics template uses `### Story N.M: title`. Standalone story files use
  * `# Story N.M: title`. Both are accepted; body runs until the next story
  * heading or end of document.
@@ -74,6 +104,10 @@ export function extractStoriesFromPromotedPlanSummary(
   if (matches.length === 0) return Object.freeze([]);
 
   const stories: ExtractedWavePackStory[] = [];
+  // First-owner-wins across stories guarantees the emitted partition is
+  // pairwise-disjoint by construction: a file named by two stories is owned by
+  // the first that declared it, so the fan-out never puts two writers on it.
+  const claimedFiles = new Set<string>();
   for (let i = 0; i < matches.length; i += 1) {
     const match = matches[i]!;
     const epic = match[2]!;
@@ -83,12 +117,22 @@ export function extractStoriesFromPromotedPlanSummary(
     const end = i + 1 < matches.length ? (matches[i + 1]!.index ?? text.length) : text.length;
     const body = text.slice(start, end).trim().slice(0, 8_192);
     const epicStoryId = `${epic}.${story}`;
+    const ownershipFiles = extractStoryOwnershipFiles(body).filter((file) => {
+      if (claimedFiles.has(file)) return false;
+      claimedFiles.add(file);
+      return true;
+    });
     stories.push(
       Object.freeze({
         id: `story-${epic}-${story}`,
         epicStoryId,
         title: title || `Story ${epicStoryId}`,
         body,
+        // Omit the key entirely when empty so schema/consumer see "no per-story
+        // footprint" and keep the shared-inventory merge-permit path.
+        ...(ownershipFiles.length > 0
+          ? { ownershipFiles: Object.freeze([...ownershipFiles]) }
+          : {}),
       }),
     );
   }

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   assertWavePackStoryFilesDisjoint,
   extractStoriesFromPromotedPlanSummary,
+  extractStoryOwnershipFiles,
   freezeWavePackStoriesForContract,
   hasWavePackDisjointFilesDomain,
   hasWavePackDomain,
@@ -383,5 +384,105 @@ describe("wave-pack disjoint-file ownership (P0-3 fan-out)", () => {
     expect(() => assertWavePackStoryFilesDisjoint(overlapping)).toThrow(
       /wave_pack_story_files_overlap/,
     );
+  });
+});
+
+describe("disjoint file producer (P0-3 seam A)", () => {
+  const FILE_NAMING_PLAN = `
+# Plano
+
+## Epic 1: Utils
+
+### Story 1.1: slugify
+
+Implemente \`src/util/slugify.ts\` com teste em \`src/util/slugify.test.ts\`.
+
+### Story 1.2: debounce
+
+Crie src/util/debounce.ts e src/util/debounce.test.ts.
+
+### Story 1.3: clamp
+
+Adicione src/util/clamp.ts.
+`;
+
+  it("extracts a story's own file footprint from its body text", () => {
+    expect(
+      extractStoryOwnershipFiles(
+        "Edite `src/util/slugify.ts` e src/util/slugify.test.ts.",
+      ),
+    ).toEqual(["src/util/slugify.ts", "src/util/slugify.test.ts"]);
+    // Version-like tokens and bare words (no directory separator) are not files.
+    expect(
+      extractStoryOwnershipFiles("Story 1.1 usa node.js versão 3.2 sem arquivo."),
+    ).toEqual([]);
+    // Path-spelling is normalized (backslash → /, leading ./ stripped) + deduped.
+    expect(
+      extractStoryOwnershipFiles("toca .\\src\\a.ts, ./src/a.ts e src/a.ts"),
+    ).toEqual(["src/a.ts"]);
+  });
+
+  it("emits per-story ownershipFiles parsed from each story body", () => {
+    const stories = extractStoriesFromPromotedPlanSummary(FILE_NAMING_PLAN);
+    expect(stories).toHaveLength(3);
+    expect(stories[0]!.ownershipFiles).toEqual([
+      "src/util/slugify.ts",
+      "src/util/slugify.test.ts",
+    ]);
+    expect(stories[1]!.ownershipFiles).toEqual([
+      "src/util/debounce.ts",
+      "src/util/debounce.test.ts",
+    ]);
+    expect(stories[2]!.ownershipFiles).toEqual(["src/util/clamp.ts"]);
+  });
+
+  it("keeps the partition disjoint (first-owner-wins) when a file is named twice", () => {
+    const plan = `
+# P
+
+### Story 1.1: A
+
+Toca src/shared/util.ts e src/a.ts.
+
+### Story 1.2: B
+
+Também cita src/shared/util.ts, mas edita src/b.ts.
+`;
+    const stories = extractStoriesFromPromotedPlanSummary(plan);
+    expect(stories[0]!.ownershipFiles).toEqual([
+      "src/shared/util.ts",
+      "src/a.ts",
+    ]);
+    // src/shared/util.ts already owned by story 1.1 → excluded from 1.2.
+    expect(stories[1]!.ownershipFiles).toEqual(["src/b.ts"]);
+  });
+
+  it("omits ownershipFiles when a story names no files (shared-inventory fallback)", () => {
+    const stories = extractStoriesFromPromotedPlanSummary(SAMPLE_PLAN);
+    for (const story of stories) {
+      expect(story.ownershipFiles).toBeUndefined();
+    }
+  });
+
+  it("feeds the consumer: a file-naming plan fans out N disjoint writers with the marker", () => {
+    const stories = extractStoriesFromPromotedPlanSummary(FILE_NAMING_PLAN);
+    const planned = planWavePackTasks({
+      missionTitle: "Utils",
+      goal: "utils independentes",
+      acceptanceCriteria: ["cada util com teste"],
+      stories,
+      executors: [{ id: "dev", agentName: "Dev", category: "executor" }],
+      maxWorkers: 3,
+      ownershipFiles: ["src/", "docs/"],
+    });
+    expect(planned).toHaveLength(3);
+    expect(planned[0]!.ownership.files).toEqual([
+      "src/util/slugify.ts",
+      "src/util/slugify.test.ts",
+    ]);
+    expect(planned[2]!.ownership.files).toEqual(["src/util/clamp.ts"]);
+    for (const task of planned) {
+      expect(hasWavePackDisjointFilesDomain(task.ownership.domains)).toBe(true);
+    }
   });
 });
