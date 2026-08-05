@@ -214,6 +214,63 @@ describe('diagnoseWaveConcurrency — silent throttling is itself a bug (P0-9)',
     expect(diagnosis.deferredByCap).toBe(9);
   });
 
+  it('blames the adaptive ladder — not the contract — when the ladder narrowed the wave', () => {
+    // Hardened policy clamps the wave to DEFAULT_ADAPTIVE_CAP.currentCap = 2
+    // while the approved contract says 12. Telling the operator to "raise
+    // maxWorkers" here is a dead end: the contract is already 12. The
+    // actionable fix is the policy, and the verdict must say so.
+    const diagnosis = diagnoseWaveConcurrency(
+      { configuredCap: 2, cores: 10, paneBudget: 14 },
+      decideSchedule(
+        disjointStories(11),
+        [],
+        { configuredCap: 2, cores: 10, paneBudget: 14 },
+        NOW,
+      ),
+      { contractCap: 12 },
+    );
+
+    expect(diagnosis.effectiveCap).toBe(2);
+    expect(diagnosis.binding).toBe('adaptive');
+    expect(diagnosis.operatorRaisable).toBe(false);
+    expect(diagnosis.summary).toMatch(/adaptativa/i);
+    expect(diagnosis.summary).not.toMatch(/ajustável no contrato/i);
+  });
+
+  it('still blames the contract when the contract IS the narrowest ceiling', () => {
+    const diagnosis = diagnoseWaveConcurrency(
+      { configuredCap: 2, cores: 10, paneBudget: 14 },
+      decideSchedule(
+        disjointStories(11),
+        [],
+        { configuredCap: 2, cores: 10, paneBudget: 14 },
+        NOW,
+      ),
+      { contractCap: 2 },
+    );
+
+    expect(diagnosis.binding).toBe('configured');
+    expect(diagnosis.operatorRaisable).toBe(true);
+  });
+
+  it('never blames the ladder for a ceiling the machine imposed', () => {
+    // Ladder at 12, contract at 12, but the host only affords 8. The ladder is
+    // not narrowing anything here — cores are.
+    const diagnosis = diagnoseWaveConcurrency(
+      { configuredCap: 12, cores: 10, paneBudget: 14 },
+      decideSchedule(
+        disjointStories(11),
+        [],
+        { configuredCap: 12, cores: 10, paneBudget: 14 },
+        NOW,
+      ),
+      { contractCap: 12 },
+    );
+
+    expect(diagnosis.effectiveCap).toBe(8);
+    expect(diagnosis.binding).toBe('cores');
+  });
+
   it('surfaces a zero cap as a throttle, never as a quiet stall', () => {
     const diagnosis = diagnose(disjointStories(11), {
       configuredCap: 0,

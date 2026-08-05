@@ -118,8 +118,18 @@ export function effectiveConcurrencyCap(config: ScheduleConfig): number {
 
 // ── Wave concurrency visibility (P0-9: silent throttling is itself a bug) ────
 
-/** Which ceiling actually pinned this wave. `none` = nothing was throttled. */
-export type WaveConcurrencyBinding = 'configured' | 'cores' | 'panes' | 'none';
+/**
+ * Which ceiling actually pinned this wave. `none` = nothing was throttled.
+ * `adaptive` is distinct from `configured` on purpose: when the governed
+ * adaptive ladder narrows the wave below the APPROVED contract cap, telling the
+ * operator to raise `maxWorkers` is a dead end — the contract is already wider.
+ */
+export type WaveConcurrencyBinding =
+  | 'configured'
+  | 'adaptive'
+  | 'cores'
+  | 'panes'
+  | 'none';
 
 /**
  * `sequential` — the PLAN offered ≤1 eligible unit (legitimately serial phase).
@@ -145,6 +155,7 @@ export interface WaveConcurrencyDiagnosis {
 function describeWaveConcurrency(
   input: Omit<WaveConcurrencyDiagnosis, 'summary'> & {
     readonly cores: number;
+    readonly contractCap: number;
   },
 ): string {
   const units = (count: number): string =>
@@ -168,6 +179,13 @@ function describeWaveConcurrency(
   }
   if (input.binding === 'panes') {
     return `${head} — teto de panes do layout (${input.effectiveCap}).`;
+  }
+  if (input.binding === 'adaptive') {
+    return (
+      `${head} — escada adaptativa da política Hardened ` +
+      `(contrato aprova ${input.contractCap}, a onda abre ${input.effectiveCap} ` +
+      'e só alarga após ondas limpas consecutivas).'
+    );
   }
   return (
     `${head} — teto maxWorkers=${input.effectiveCap} da missão ` +
@@ -193,20 +211,37 @@ function describeWaveConcurrency(
 export function diagnoseWaveConcurrency(
   config: ScheduleConfig,
   decision: ScheduleDecision,
+  options?: {
+    /**
+     * The mission's APPROVED `maxWorkers`, before any adaptive clamp. Supplying
+     * it lets the verdict tell a contract ceiling apart from a ladder clamp;
+     * omitted, a narrowed wave is reported as `configured` (today's behaviour).
+     */
+    readonly contractCap?: number;
+  },
 ): WaveConcurrencyDiagnosis {
   const effectiveCap = effectiveConcurrencyCap(config);
   const configured = Math.max(0, Math.floor(config.configuredCap));
   const coreBudget = Math.max(1, Math.floor(config.cores) - 2);
+  const contractCap =
+    options?.contractCap === undefined
+      ? configured
+      : Math.max(0, Math.floor(options.contractCap));
   const readyCount = decision.readyIds.length;
   const admittedCount = decision.admittedIds.length;
   const deferredByCap = Math.max(0, readyCount - effectiveCap);
   const phase: WaveConcurrencyPhase =
     deferredByCap > 0 ? 'throttled' : readyCount <= 1 ? 'sequential' : 'parallel';
+  const pinnedByConfigured = configured === effectiveCap;
   const binding: WaveConcurrencyBinding =
     phase !== 'throttled'
       ? 'none'
-      : configured === effectiveCap
-        ? 'configured'
+      : pinnedByConfigured
+        ? // A wave narrower than the approved contract was clamped by the
+          // adaptive ladder, not by the contract the operator can edit.
+          configured < contractCap
+          ? 'adaptive'
+          : 'configured'
         : coreBudget === effectiveCap
           ? 'cores'
           : 'panes';
@@ -221,7 +256,11 @@ export function diagnoseWaveConcurrency(
   };
   return Object.freeze({
     ...base,
-    summary: describeWaveConcurrency({ ...base, cores: config.cores }),
+    summary: describeWaveConcurrency({
+      ...base,
+      cores: config.cores,
+      contractCap,
+    }),
   });
 }
 

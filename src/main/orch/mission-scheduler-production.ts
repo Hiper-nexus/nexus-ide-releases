@@ -1573,7 +1573,14 @@ async function tickMission(
             reportWaveConcurrency(
               scope,
               missionId,
-              diagnoseWaveConcurrency(waveConfig, decision),
+              diagnoseWaveConcurrency(waveConfig, decision, {
+                // The APPROVED ceiling, so a wave narrowed by the governed
+                // adaptive ladder is not misreported as a contract limit the
+                // operator should raise (the contract is already wider).
+                contractCap: mission?.intentContract
+                  ? missionSchedulerConfiguredWorkerCap(mission.intentContract)
+                  : 0,
+              }),
             );
           },
           now: () => configured?.now?.() ?? Date.now(),
