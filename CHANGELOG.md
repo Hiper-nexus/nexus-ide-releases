@@ -1,5 +1,100 @@
 # Changelog
 
+## 0.26.1 — Hotfix do primeiro voo: voz, aprovação e missões que falam
+
+Data: 2026-08-05
+
+### Voz — o ditado chega de verdade
+
+- **Ditado aterrissa no pane da missão.** Falar num pane governado (orq/worker)
+  agora entrega o texto pela lane do operador, com recibo real — antes a escrita
+  era recusada silenciosamente pelo processo principal e o texto sumia depois de
+  transcrito.
+- **Espaço só arma segurando (hold).** Um toque simples no Espaço volta a
+  digitar espaço; o ditado arma apenas no push-to-talk sustentado.
+- **Acentos intactos.** O app empacotado passava locale C aos CLIs e todo
+  prompt pt-BR virava mojibake ("miss√£o"); o PTY agora garante locale UTF-8
+  sem sobrescrever escolha legítima do usuário.
+- **Voz nunca mais shipa na fé.** O smoke do empacotado ganhou probes
+  OBRIGATÓRIAS de ditado: entrega ponta a ponta num PTY real, recusas de
+  autoridade vivas e o contrato do Espaço hold-to-talk (toque digita o
+  caractere exato; hold arma). Falhou, o make falha.
+
+### Aprovação que fecha
+
+- **Fim do loop infinito de aprovação.** Aprovar a missão consumava, o
+  bootstrap partia — e o diálogo voltava para sempre, porque o selo do squad
+  (mutação do sistema) invalidava o hash da revisão. Mutações derivadas do
+  intent aprovado agora dobram no escopo da aprovação; só mudança material do
+  usuário (objetivo divergente) re-pergunta. O "não perguntar de novo para esta
+  equipe" segue durável.
+- **Missão viva não re-pergunta.** Reabrir fluxos sobre uma missão já em
+  execução não dispara nova aprovação.
+
+### Missão que fala com você
+
+- **Missão parada diz POR QUÊ.** O card de missão parada mostra a causa real
+  (evidência durável, não estado de layout) e "Retomar" continua de onde parou
+  sem perder trabalho.
+- **Worker mudo não mata a missão em silêncio.** Garantia de handoff: cobrança
+  independe do estado da missão, com sonda de stall antes de qualquer decisão.
+- **Você nunca é ejetado dos panes.** Plano selado impede a ejeção para o
+  assistente; retomar volta aos panes; e quando o assistente abre sobre uma
+  missão, existe a saída "Voltar aos panes".
+- **Pane do orquestrador mostra o conteúdo.** O pane orq adotado não fica mais
+  preto: a repintura usa a fita local de saída, com backstop se nada pintou.
+
+### Paralelismo de verdade
+
+- **A frota acelera sozinha.** Escada adaptativa de workers configurável,
+  honesta e coerente com o hardware — a missão não fica mais silenciosamente
+  presa em 2 workers quando há tarefas elegíveis; o veredito distingue escada
+  adaptativa de teto do contrato.
+- **Plano de controle do piloto (fatias 1 e 2).** `nexus_mission_control` (API
+  do agente) e espelho humano na UI: panes vivos com item corrente, fila com
+  ondas, mapa de ownership e bloqueios nomeados — numa leitura só.
+
+### Infra e release
+
+- **CI verde.** Instala bubblewrap e confina testes só-macOS/arm64 ao runIf.
+- **Fast lane de hotfix.** Classificador por diff + waiver durável + selo de
+  segurança que aprende o waiver — hotfix cirúrgico reusa o gate verde anterior
+  com registro explícito.
+- **Kickoff sem parede de proibições.** O fast path do kickoff declara de quem
+  é cada cerimônia, sem a parede de negativos.
+
+### Verifique você mesmo (mapa de aceitação)
+
+Com a 0.26.1 instalada (abra o `.app` pelo Finder — é o cenário de locale/voz):
+
+1. **Ditado entrega:** foque um pane de missão, **segure Espaço ≥ ~250ms**,
+   fale, solte → o texto aterrissa no pane; o HUD só celebra com entrega
+   confirmada (`voice.log` pode mostrar `lane=operator`).
+2. **Toque simples de Espaço** no mesmo pane → um espaço digitado, **sem**
+   flash de ditado. *(Nota: o limiar de 250ms pode dar sensação de "prender" —
+   é o discriminador de hold.)*
+3. **Aprovação:** aprove uma missão; clique Start/Aprovar de novo com ela já
+   rodando → **sem** loop do diálogo nativo; o checkbox "não perguntar de novo"
+   sobrevive ao selo do squad.
+4. **Acentos:** app aberto pelo Finder, objetivo com `missão`/`não` → glifos
+   corretos no CLI filho, sem mojibake.
+5. **Pane orq:** abra/adote uma missão cujo pane orq ficava preto → conteúdo
+   aparece em ~1–2s (fita local).
+6. **Worker mudo:** worker termina e fica idle sem handoff → cobrança
+   `[NEXUS_HANDOFF_REQUIRED]` em ~20s; handoff sintético se seguir calado.
+7. **Missão que se auto-para com worker calado** → o handoff ainda aparece (o
+   estado da missão é diagnóstico, não botão de mudo).
+8. **Parada no meio com plano selado** → o rail diz **por quê** (texto do
+   handoff ou "nenhum relatório") e a pílula "Parou — aguarda você".
+9. **Retomar** nessa missão → volta aos **panes** (nunca ao wizard de objetivo
+   em branco).
+10. **Assistente sobre missão armada** → "**‹ Voltar aos panes**" retorna ao
+    trabalho.
+11. **Detalhe da missão multi-worker** → o quadro de controle mostra pulso e
+    fase (adaptativa/serial) — sem "mistério dos 2 panes".
+12. **Plano multi-unidade em host capaz** → o teto sobe além de 2 quando as
+    ondas admitem todo o trabalho elegível.
+
 ## 0.26.0 — O loop que fecha: da largura ao encerramento
 
 Data: 2026-08-05
