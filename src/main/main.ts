@@ -308,6 +308,10 @@ import {
   defaultDriveConfig,
   disposeMissionDriverIo,
 } from "./orch/mission-driver-io";
+import {
+  configureGoalDriver,
+  stopGoalDriverLoop,
+} from "./orch/goal-driver-io";
 import { createHttpCronBackendFromEnvironment } from "./orch/http-cron-backend";
 import {
   configureSyncRuntime,
@@ -635,8 +639,15 @@ function bootstrap(): void {
       console.warn("[nexus] orchestration failed to start:", err);
       gamificationService.start();
     });
-  // Cron: squads/agentes agendados (tick 60s, skip-if-stale).
+  // Cron: squads/agentes agendados (tick 60s, skip-if-stale) — time-driven.
   startCronLoop();
+  // Goal Driver: análogo GOAL-driven do cron. Coexiste com ele (loop/timer
+  // próprios). Dispara missão por PREDICADO sobre estado vivo (profundidade de
+  // fila, disponibilidade de provider, contagem de missões) em vez de por
+  // horário. Default SHADOW/observe: sem triggers persistidos e sem efeito
+  // autônomo — a autoridade de consentimento + store de triggers é a próxima
+  // fatia. Único gap real vs Ralph (spec 2026-07-13). Nunca um shell loop.
+  configureGoalDriver({ listScopes: knownCronScopes });
   // Deep link nexus:// vindo no lançamento a frio (após a janela existir) +
   // auto-updater (opt-in por ambiente; no-op sem servidor configurado).
   consumeLaunchDeepLink();
@@ -932,6 +943,7 @@ function shutdown(): Promise<void> {
     // exact exit observer and stores until PTY proof and reconciliation are
     // complete. A failed proof must leave the next retry operational.
     await stopCronLoop();
+    await stopGoalDriverLoop();
     await closeAllDesignWritebacks();
     // ACP children are not part of the PTY host inventory. Close them before
     // proving the PTY half, otherwise quitting could leave a harness orphaned
