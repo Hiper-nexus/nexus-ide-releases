@@ -279,7 +279,38 @@ describe('macOS activate lifecycle', () => {
     expect(physicalFence).toBeGreaterThan(shutdownStart);
     expect(completion).toBeGreaterThan(physicalFence);
     expect(source).not.toContain('killAllSessions();');
-    expect(source).not.toContain('app.exit(');
+    // The graceful shutdown lane never force-exits — it proves every PTY tree
+    // and then app.quit()s. app.exit is reserved for the hard-ceiling backstop
+    // below, never reachable on the provable success path.
+    const shutdownBody = source.slice(shutdownStart, completion);
+    expect(shutdownBody).not.toContain('app.exit(');
+  });
+
+  it('bounds quit with a hard-ceiling force-exit backstop so it can never hang', () => {
+    const source = fs.readFileSync(path.join(__dirname, 'main.ts'), 'utf-8');
+    const beforeQuit = source.indexOf('app.on("before-quit"');
+    const ceilingStart = source.indexOf(
+      'const forceQuitDeadline = setTimeout(',
+      beforeQuit,
+    );
+    const ceilingEnd = source.indexOf('}, QUIT_HARD_CEILING_MS);', ceilingStart);
+    const shutdownCall = source.indexOf('void shutdown()', beforeQuit);
+
+    expect(beforeQuit).toBeGreaterThanOrEqual(0);
+    expect(ceilingStart).toBeGreaterThan(beforeQuit);
+    expect(ceilingEnd).toBeGreaterThan(ceilingStart);
+    // The force-exit is armed BEFORE shutdown is awaited, so a wedge inside
+    // shutdown itself cannot outrun the ceiling.
+    expect(ceilingStart).toBeLessThan(shutdownCall);
+    // app.exit lives ONLY inside the ceiling callback — the last resort.
+    const ceilingBody = source.slice(ceilingStart, ceilingEnd);
+    expect(ceilingBody).toContain('app.exit(0);');
+    // Both the success and failure lanes release the ceiling: a normal quit and
+    // an actionable retry are not hangs and must not be force-killed.
+    const afterShutdown = source.slice(shutdownCall);
+    expect(
+      afterShutdown.split('clearTimeout(forceQuitDeadline);').length - 1,
+    ).toBeGreaterThanOrEqual(2);
   });
 
   it('keeps the app open with an actionable retry when safe shutdown fails', () => {

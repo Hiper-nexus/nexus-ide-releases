@@ -854,6 +854,15 @@ if (!wireDeepLinks()) {
 let quitPromptOpen = false;
 let shutdownComplete = false;
 let shutdownPromise: Promise<void> | null = null;
+/**
+ * Hard-ceiling backstop for the whole quit. The PTY layer already bounds its own
+ * per-child SIGTERM→SIGKILL escalation (pty-host-core/entry), so graceful quit
+ * settles well under this. This ceiling only fires if shutdown wedges ANYWHERE —
+ * PTY or otherwise — and guarantees quit can NEVER hang indefinitely (v0.25.0
+ * regression: packaged app hung forever on quit). It sits comfortably above the
+ * PTY termination budget (term 10s + kill 20s + transport margin).
+ */
+const QUIT_HARD_CEILING_MS = 45_000;
 const shutdownNotices = createShutdownNoticeController({
   isShutdownComplete: () => shutdownComplete,
   focusApp: () => app.focus({ steal: true }),
@@ -1044,6 +1053,18 @@ app.on("before-quit", (event) => {
     // zero-inventory snapshot stable against queued IPC/scheduler spawns.
     sealRuntimeProcessAdmissionForShutdown();
     if (shutdownPromise) return;
+    // Hard-ceiling force-exit backstop. app.exit terminates immediately without
+    // re-running before-quit, so no wedge — a stuck-but-alive PTY child, a
+    // pinned runloop, a hung disposer — can pin quit forever (v0.25.0 hang). The
+    // graceful path below cancels it; it is purely the last resort. Cross-
+    // platform by construction: the timer fires on macOS/Windows/Linux alike.
+    const forceQuitDeadline = setTimeout(() => {
+      console.error(
+        "[main] quit exceeded the hard ceiling; forcing exit to avoid a permanent hang",
+      );
+      app.exit(0);
+    }, QUIT_HARD_CEILING_MS);
+    forceQuitDeadline.unref?.();
     // A demora vira feedback nativo, nunca licença para matar o PTY host sem
     // prova. O fluxo permanece aberto e seguro até concluir ou falhar.
     const slowNotice = setTimeout(() => {
@@ -1053,11 +1074,15 @@ app.on("before-quit", (event) => {
     void shutdown()
       .then(() => {
         clearTimeout(slowNotice);
+        clearTimeout(forceQuitDeadline);
         authorizeAppQuit();
         app.quit();
       })
       .catch((error) => {
         clearTimeout(slowNotice);
+        // A rejected shutdown is a bounded, actionable failure — not a hang —
+        // so release the force-exit ceiling and keep the app open for retry.
+        clearTimeout(forceQuitDeadline);
         // A rejected promise must not poison retries. PTY failures leave the
         // exact sessions registered/inert, so a second attempt can prove them.
         shutdownPromise = null;
