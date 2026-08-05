@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { WebContents } from "electron";
+import { ensureUtf8Locale } from "./pty-env-locale";
 import { PTY_CHANNELS } from "../../shared/channels";
 import type { SpawnRequest, PaneSessionState } from "../../shared/types";
 import type { ProjectExecutionScope } from "../../shared/types";
@@ -506,6 +507,9 @@ function baseChildEnv(): NodeJS.ProcessEnv {
   }
   env.TERM = "xterm-256color";
   env.COLORTERM = "truecolor";
+  // App GUI (Finder) não herda locale do shell: sem isto o CLI filho roda em
+  // locale C e prompts pt-BR viram mojibake no empacotado (bug F, 05/08).
+  ensureUtf8Locale(env);
   return env;
 }
 
