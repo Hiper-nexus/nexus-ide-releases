@@ -556,7 +556,12 @@ describe("MissionWizard guided approval handoff", () => {
       createdAt: 1,
       updatedAt: 1,
     };
-    const approveMissionIntent = vi.fn(async () => planned);
+    // O approve real devolve o contrato SELADO (approvedAt gravado pelo main);
+    // o guard wizard-approval-outcome (cd621293) exige essa prova de consumo.
+    const approveMissionIntent = vi.fn(async () => ({
+      ...planned,
+      intentContract: { ...planned.intentContract!, approvedAt: 10 },
+    }));
     const pushToast = vi
       .spyOn(useToastStore.getState(), "push")
       .mockImplementation(() => undefined);
