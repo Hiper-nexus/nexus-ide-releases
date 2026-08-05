@@ -96,6 +96,39 @@ export function buildCustomRosterAgent(input: {
   };
 }
 
+/**
+ * How the roster should react when the mission context (selected squad or
+ * squad-CLI policy/mode) changes on REVISAR.
+ *
+ * Part (c): a mode/policy switch must NEVER silently rebuild the roster and
+ * discard the operator's unsaved edits. Only a genuine SQUAD change rebuilds
+ * (those edits belonged to the previous squad); a policy/mode switch of the
+ * SAME squad preserves unsaved edits. `idle` means neither changed, so the
+ * caller only runs its incidental fill (e.g. an initially-empty Maestro).
+ */
+export type RosterContextChangeAction = 'idle' | 'rebuild' | 'preserve';
+
+export function decideRosterContextChange(input: {
+  readonly previousSquadId: string | null;
+  readonly previousPolicyKey: string | null;
+  readonly nextSquadId: string;
+  readonly nextPolicyKey: string;
+  readonly userEdited: boolean;
+}): { readonly action: RosterContextChangeAction } {
+  if (input.previousPolicyKey === input.nextPolicyKey) {
+    return { action: 'idle' };
+  }
+  const squadChanged = input.previousSquadId !== input.nextSquadId;
+  if (squadChanged) {
+    // New squad ⇒ a fresh roster is expected; old edits do not apply.
+    return { action: 'rebuild' };
+  }
+  // Same squad, only the mode/policy flipped. Preserve unsaved edits instead of
+  // clobbering them; with nothing edited there is nothing to lose, so rebuild
+  // to rebalance for the new policy.
+  return { action: input.userEdited ? 'preserve' : 'rebuild' };
+}
+
 export function planRemoveRosterAgent(
   roster: readonly SquadAgent[],
   id: string,

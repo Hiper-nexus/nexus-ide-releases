@@ -46,6 +46,7 @@ import { automaticOrchestratorAdapterId } from "../orch/orchestrator-runtime";
 import { isAdapterModelAuthenticated } from "../orch/mission-runtime-readiness";
 import {
   buildCustomRosterAgent,
+  decideRosterContextChange,
   planRemoveRosterAgent,
   type CustomizableWorkerCategory,
 } from "../orch/mission-roster-customize";
@@ -869,16 +870,30 @@ export function MissionWizard() {
   // eventos descartava a edição do usuário — o modelo escolhido na revisão
   // (ex.: Fable no orquestrador) voltava silenciosamente ao salvo no squad.
   const rosterSquadRef = useRef<string | null>(null);
+  // Part (c): the previous squad IDENTITY and whether the operator has unsaved
+  // roster edits. Together they let a mode/policy switch PRESERVE edits instead
+  // of silently rebuilding — only a genuine squad change rebuilds.
+  const rosterSquadIdRef = useRef<string | null>(null);
+  const rosterUserEditedRef = useRef<boolean>(false);
   useEffect(() => {
     const sq = selectedSquad;
     if (!sq) {
       rosterSquadRef.current = null;
+      rosterSquadIdRef.current = null;
+      rosterUserEditedRef.current = false;
       setRoster([]);
       setRosterSaved(false);
       return;
     }
     const rosterPolicyKey = `${sq.id}\u0000${squadCliPolicy}`;
-    if (rosterSquadRef.current === rosterPolicyKey) {
+    const decision = decideRosterContextChange({
+      previousSquadId: rosterSquadIdRef.current,
+      previousPolicyKey: rosterSquadRef.current,
+      nextSquadId: sq.id,
+      nextPolicyKey: rosterPolicyKey,
+      userEdited: rosterUserEditedRef.current,
+    });
+    if (decision.action === "idle") {
       // Adapters/settings load independently when the wizard opens. Fill an
       // initially empty Maestro once verified evidence arrives, without
       // rebalancing workers or discarding later operator edits.
@@ -900,7 +915,15 @@ export function MissionWizard() {
       }
       return;
     }
+    // Adopt the new context on both refs so this branch does not re-fire.
     rosterSquadRef.current = rosterPolicyKey;
+    rosterSquadIdRef.current = sq.id;
+    if (decision.action === "preserve") {
+      // A mode/policy switch of the SAME squad must never clobber the
+      // operator's unsaved edits. Keep the current roster exactly as edited;
+      // the operator can still tune it or pick another squad to rebuild.
+      return;
+    }
     setRoster(
       balanceSquadRosterCli(
         sq.agents,
@@ -914,6 +937,8 @@ export function MissionWizard() {
       ),
     );
     setRosterSaved(false);
+    // A fresh rebuild starts from the squad default — not an operator edit.
+    rosterUserEditedRef.current = false;
   }, [
     squadId,
     selectedSquad,
@@ -971,6 +996,9 @@ export function MissionWizard() {
       prev.map((a) => (a.id === id ? { ...a, ...patch } : a)),
     );
     setRosterSaved(false);
+    // Part (c): mark the roster as operator-edited so a later mode/policy switch
+    // preserves it instead of silently rebuilding.
+    rosterUserEditedRef.current = true;
     // Clear the preflight highlight once the user fixes this agent's tool list.
     if (
       id === highlightedAgentId &&
@@ -995,6 +1023,7 @@ export function MissionWizard() {
     }
     setRoster((prev) => [...prev, built.agent]);
     setRosterSaved(false);
+    rosterUserEditedRef.current = true;
     setError(null);
     setHighlightedAgentId(null);
   }
@@ -1007,6 +1036,7 @@ export function MissionWizard() {
     }
     setRoster(planned.next);
     setRosterSaved(false);
+    rosterUserEditedRef.current = true;
     if (highlightedAgentId === id) {
       setHighlightedAgentId(null);
       setError(null);
@@ -1134,6 +1164,9 @@ export function MissionWizard() {
     setDesignedSquad(null);
     setDesignDraftToken(null);
     setRosterSaved(true);
+    // Saved edits are no longer "unsaved" — a later mode/policy switch may
+    // rebalance freely (part c).
+    rosterUserEditedRef.current = false;
     setSquadId(saved.id);
     return saved;
   }
