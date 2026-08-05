@@ -494,6 +494,21 @@ export async function runSchedulerTick(
       ownershipWaits: Object.freeze(Object.fromEntries(ownershipWaits)),
     };
     deps.onTelemetry?.(telemetry, decision.plan);
+  } else if (decision.plan.kind === 'idle-failed') {
+    // P0-10: the plan can never advance past a terminally failed dependency, so
+    // its dependents would sit pending forever (mission stuck in EXECUÇÃO+QA on
+    // a dead executor). Cascade each STILL-PENDING dead dependent to a terminal,
+    // visible failure through the SAME markFailed -> blockBeforeClaim surfacing
+    // the dispatch path uses (no second surfacing path). Already-terminal rows
+    // (the all-tasks-failed variant of idle-failed) are skipped, so this is
+    // idempotent and converges: once cascaded they are `failed`, not `pending`.
+    const idlePlan = decision.plan;
+    const byId = new Map(runtimeTasks.map((entry) => [entry.id, entry]));
+    for (const taskId of idlePlan.failedTaskIds) {
+      if (byId.get(taskId)?.status !== 'pending') continue;
+      throwIfMissionSchedulerAborted(signal);
+      await deps.markFailed(taskId, `dependência morta: ${idlePlan.reason}`);
+    }
   }
 
   throwIfMissionSchedulerAborted(signal);

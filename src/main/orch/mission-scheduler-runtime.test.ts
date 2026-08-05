@@ -183,6 +183,37 @@ function makeDeps(opts: {
   return { deps, dispatched, merged, failed, reRuns };
 }
 
+describe('mission-scheduler-runtime P0-10 dead-dependent cascade', () => {
+  it('cascades a still-pending dead dependent to failed on idle-failed', async () => {
+    // Executor failed terminally; QA depends on it. Without the cascade QA sits
+    // pending forever (mission stuck in EXECUÇÃO+QA on a dead dependency).
+    const { deps, failed } = makeDeps({
+      tasks: [
+        baseTask('exec', { status: 'failed' }),
+        baseTask('qa', { status: 'pending', dependsOn: ['exec'] }),
+      ],
+    });
+    const result = await runSchedulerTick(deps, createSchedulerRuntimeState());
+    expect(result.decision.plan.kind).toBe('idle-failed');
+    // Only the live pending dead dependent cascades (exec is already terminal).
+    expect(failed.map((f) => f.id)).toEqual(['qa']);
+    expect(failed[0]!.reason).toContain('dependência morta');
+  });
+
+  it('does not re-cascade already-terminal tasks (all-failed idle-failed)', async () => {
+    const { deps, failed } = makeDeps({
+      tasks: [
+        baseTask('exec', { status: 'failed' }),
+        baseTask('qa', { status: 'failed', dependsOn: ['exec'] }),
+      ],
+    });
+    const result = await runSchedulerTick(deps, createSchedulerRuntimeState());
+    expect(result.decision.plan.kind).toBe('idle-failed');
+    // Both already failed: nothing pending to cascade — idempotent, converges.
+    expect(failed).toEqual([]);
+  });
+});
+
 describe('mission-scheduler-runtime P2 flag + driver', () => {
   it('flag off → sequential (cap 1), no fan-out of 3', async () => {
     const tasks = [baseTask('a'), baseTask('b'), baseTask('c')];

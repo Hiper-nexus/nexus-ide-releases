@@ -282,6 +282,52 @@ export function computeReadySet(
   );
 }
 
+/**
+ * P0-10: pending tasks that can NEVER become ready because a dependency failed
+ * terminally (a `failed` task is never done+merged, so `computeReadySet` blocks
+ * its dependents forever). Transitive: a dependent of a dead dependent is also
+ * dead. Only `pending` tasks are reported — running/done/failed are already
+ * in-flight or terminal. This is the detector that stops a mission sitting in
+ * EXECUÇÃO+QA eternally on a dead executor: the caller cascades these to a
+ * terminal, visible state instead of waiting on a dependency that will never
+ * resolve. Unknown dependency ids are NOT treated as dead here (they are a
+ * fail-closed *validation* error surfaced by validateScheduleDependencies).
+ */
+export function computeDeadDependents(
+  tasks: readonly ScheduleTask[],
+): readonly string[] {
+  const byId = taskById(tasks);
+  const memo = new Map<string, boolean>();
+  const dependsOnFailed = (id: string, stack: Set<string>): boolean => {
+    const cached = memo.get(id);
+    if (cached !== undefined) return cached;
+    // Cycle guard: an invalid graph is handled by validateScheduleDependencies,
+    // not here — never recurse into a back-edge.
+    if (stack.has(id)) return false;
+    const task = byId.get(id);
+    if (!task) return false;
+    stack.add(id);
+    let dead = false;
+    for (const depId of task.dependsOn) {
+      const dep = byId.get(depId);
+      if (dep === undefined) continue;
+      if (dep.status === 'failed' || dependsOnFailed(depId, stack)) {
+        dead = true;
+        break;
+      }
+    }
+    stack.delete(id);
+    memo.set(id, dead);
+    return dead;
+  };
+  const dead = tasks
+    .filter(
+      (task) => task.status === 'pending' && dependsOnFailed(task.id, new Set()),
+    )
+    .map((task) => task.id);
+  return Object.freeze([...dead].sort((a, b) => a.localeCompare(b)));
+}
+
 export interface DependencyValidationResult {
   readonly valid: boolean;
   readonly invalidTaskIds: readonly string[];
@@ -553,6 +599,32 @@ export function decideSchedule(
 
   if (ready.length === 0) {
     const pending = tasks.filter((t) => t.status === 'pending');
+    // P0-10: nothing is ready. If nothing is running to rescue them AND every
+    // remaining pending task is a dead dependent (a dependency failed
+    // terminally), the plan can never advance — a QA/review lane would otherwise
+    // wait on a dead executor forever. Convert the eternal wait into a terminal,
+    // visible failure the runtime cascades, instead of an endless EXECUÇÃO+QA.
+    const deadDependents = computeDeadDependents(tasks);
+    const deadSet = new Set(deadDependents);
+    if (
+      activeWorkers.length === 0 &&
+      pending.length > 0 &&
+      pending.every((t) => deadSet.has(t.id))
+    ) {
+      return {
+        plan: {
+          kind: 'idle-failed',
+          reason:
+            `dependency dead: ${deadDependents.length} pending task(s) depend ` +
+            'on a terminally failed task and can never run',
+          failedTaskIds: deadDependents,
+        },
+        readyIds: Object.freeze([]),
+        admittedIds: Object.freeze([]),
+        deferredIds: Object.freeze(pending.map((t) => t.id)),
+        at: now,
+      };
+    }
     return {
       plan: {
         kind: 'wait',

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  computeDeadDependents,
   computeReadySet,
   decideAdaptiveCap,
   decideSchedule,
@@ -144,6 +145,56 @@ describe('mission-scheduler P0 pure core', () => {
     // All 85 drained (nothing dropped), and it genuinely refilled (>1 wave).
     expect(dispatched.size).toBe(85);
     expect(waves).toBeGreaterThanOrEqual(11);
+  });
+
+  it('P0-10: flags transitive dependents of a terminally failed task as dead', () => {
+    const tasks = [
+      task('exec', { status: 'failed' }),
+      task('qa', { status: 'pending', dependsOn: ['exec'] }),
+      task('review', { status: 'pending', dependsOn: ['qa'] }),
+      task('doneDep', { status: 'done', merged: true }),
+      task('healthy', { status: 'pending', dependsOn: ['doneDep'] }),
+      task('independent', { status: 'pending', dependsOn: [] }),
+    ];
+    // qa (dep failed) and review (dep qa, transitively dead) can never run;
+    // healthy (dep done+merged) and independent are alive.
+    expect(computeDeadDependents(tasks)).toEqual(['qa', 'review']);
+  });
+
+  it('P0-10: a running dependency is not dead (still recoverable)', () => {
+    const tasks = [
+      task('exec', { status: 'running' }),
+      task('qa', { status: 'pending', dependsOn: ['exec'] }),
+    ];
+    expect(computeDeadDependents(tasks)).toEqual([]);
+  });
+
+  it('P0-10: eternal QA wait on a dead executor becomes terminal idle-failed', () => {
+    const tasks = [
+      task('exec', { status: 'failed' }),
+      task('qa', { status: 'pending', dependsOn: ['exec'] }),
+    ];
+    const decision = decideSchedule(tasks, [], CAP, NOW);
+    // Before P0-10 this was an eternal `wait` — the mission sat in EXECUÇÃO+QA
+    // forever on a dead dependency.
+    expect(decision.plan.kind).toBe('idle-failed');
+    if (decision.plan.kind !== 'idle-failed') return;
+    expect(decision.plan.failedTaskIds).toEqual(['qa']);
+  });
+
+  it('P0-10: still waits while a running worker could yet rescue the plan', () => {
+    const tasks = [
+      task('exec', { status: 'failed' }),
+      task('qa', { status: 'pending', dependsOn: ['exec'] }),
+    ];
+    const running: ActiveWorker = {
+      taskId: 'independent-advisory',
+      ownership: { files: ['src/other.ts'], symbols: [], domains: [] },
+    };
+    const decision = decideSchedule(tasks, [running], CAP, NOW);
+    // A live worker is present: do not declare terminal yet. Once it drains and
+    // only the dead dependent remains, the next tick converts to idle-failed.
+    expect(decision.plan.kind).toBe('wait');
   });
 
   it('prioritizes guided implementation over advisory roots without reducing the wave', () => {
