@@ -109,6 +109,10 @@ import {
   shutdownWorkerHandoffTtl,
 } from "./worker-handoff-ttl";
 import {
+  initWorkerHandoffEnforcement,
+  shutdownWorkerHandoffEnforcement,
+} from "./worker-handoff-enforcement";
+import {
   requestMissionRuntimeAuthorityReconciliation,
   startOrchestrationCoordinator,
   stopOrchestrationCoordinator,
@@ -1726,6 +1730,9 @@ export async function initOrchestration(): Promise<void> {
     initPaneRegistry();
     initIdleDelivery();
     initWorkerHandoffTtl();
+    // Garantia de handoff (Stop-hook do Overclock): worker que trabalha e fica
+    // mudo não pode matar a missão em silêncio.
+    initWorkerHandoffEnforcement();
     const startSupervisor =
       orchestrationStartSupervisor ??
       new OrchestrationStartSupervisor({
@@ -1819,6 +1826,7 @@ export async function closeOrchestration(): Promise<void> {
     disposeSquadBroadcast = null;
     shutdownIdleDelivery();
     shutdownWorkerHandoffTtl();
+    shutdownWorkerHandoffEnforcement();
     stopAllPreviews();
     stopRemoteBridge();
     stopMcpServer();
