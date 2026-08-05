@@ -229,6 +229,27 @@ export const orchSettingsSchema = z.object({
     .enum(['governed', 'operator-choice'])
     .default('operator-choice'),
   /**
+   * Escada adaptativa de concorrência da política Hardened (governed). Só tem
+   * efeito quando `squadCliPolicy === 'governed'`; no Autopiloto o teto da onda
+   * é o `maxWorkers` aprovado, sem escada.
+   *
+   * O padrão antigo era fixo (começa em 2, para em 6) e engessava projetos
+   * grandes numa máquina capaz de mais — sem o operador poder mudar nada sem
+   * editar código. Agora é ajustável, e `maxCap: null` significa "alinhe ao
+   * teto real da máquina" (cores-2 / orçamento de panes), para o usuário nunca
+   * ficar calado abaixo do que o hardware aguenta.
+   */
+  adaptiveWaveLadder: z
+    .object({
+      /** Largura da primeira onda sob Hardened. */
+      startCap: z.number().int().min(1).max(64).default(2),
+      /** Teto da escada; null = alinhar ao teto de hardware calculado. */
+      maxCap: z.number().int().min(1).max(64).nullable().default(null),
+      /** Ondas limpas consecutivas exigidas para alargar +1. */
+      rampAfterCleanWaves: z.number().int().min(1).max(10).default(2),
+    })
+    .default({ startCap: 2, maxCap: null, rampAfterCleanWaves: 2 }),
+  /**
    * Fast path (default on): `risk=normal` standard missions skip Guided PREVC
    * fence/freeze before the first writable pane — Autopilot libre speed for
    * vibe feature work. Sensitive/destructive keep PREVC. Set false to restore

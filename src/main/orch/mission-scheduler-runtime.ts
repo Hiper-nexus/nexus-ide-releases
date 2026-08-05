@@ -483,6 +483,9 @@ export async function runSchedulerTick(
       : decideAdaptiveCap(nextState.adaptiveCap, {
           kind: 'wave',
           waveSize: decision.plan.waveSize,
+          // Without the eligible count the ladder cannot tell a narrow PLAN
+          // from refused work, and punishes every serial phase as contention.
+          readyCount: decision.readyIds.length,
         });
     if (waiterMissionId !== null) {
       // Ghost edges forge deadlocks. Every tick this mission runs, its own

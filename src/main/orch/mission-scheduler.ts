@@ -264,6 +264,12 @@ export function diagnoseWaveConcurrency(
   });
 }
 
+/**
+ * Clean waves required before the ladder widens. Two, not three: the ladder
+ * starts at 2 on a host that affords 8, so a slow ramp is itself a throttle.
+ */
+export const DEFAULT_RAMP_AFTER_CLEAN_WAVES = 2;
+
 /** Adaptive cap (P4): start 2–3, widen only with evidence of low conflict. */
 export interface AdaptiveCapState {
   readonly currentCap: number;
@@ -273,6 +279,8 @@ export interface AdaptiveCapState {
   readonly conflictCount: number;
   readonly violationCount: number;
   readonly maxCap: number;
+  /** Operator-tunable ramp threshold; absent → DEFAULT_RAMP_AFTER_CLEAN_WAVES. */
+  readonly rampAfterCleanWaves?: number;
 }
 
 export const DEFAULT_ADAPTIVE_CAP: AdaptiveCapState = Object.freeze({
@@ -282,11 +290,75 @@ export const DEFAULT_ADAPTIVE_CAP: AdaptiveCapState = Object.freeze({
   conflictCount: 0,
   violationCount: 0,
   maxCap: 6,
+  rampAfterCleanWaves: DEFAULT_RAMP_AFTER_CLEAN_WAVES,
 });
+
+export interface AdaptiveLadderPolicy {
+  readonly startCap: number;
+  readonly maxCap: number;
+  readonly rampAfterCleanWaves: number;
+}
+
+/**
+ * Resolve the operator-configurable ladder against what the machine can
+ * actually run.
+ *
+ * `maxCap` omitted/null means "align with the hardware ceiling" — the old
+ * hardcoded 6 silently under-used a host that affords 8, which is exactly the
+ * kind of invisible ceiling this lane exists to kill. An explicit operator
+ * ceiling always wins, and the start is never allowed above the ceiling.
+ */
+export function resolveAdaptiveLadderPolicy(input: {
+  readonly startCap?: number | null;
+  readonly maxCap?: number | null;
+  readonly rampAfterCleanWaves?: number | null;
+  readonly hardwareCeiling: number;
+}): AdaptiveLadderPolicy {
+  const hardware = Math.max(1, Math.floor(input.hardwareCeiling) || 0);
+  const maxCap = Math.max(
+    1,
+    input.maxCap === undefined || input.maxCap === null
+      ? hardware
+      : Math.floor(input.maxCap),
+  );
+  const requestedStart =
+    input.startCap === undefined || input.startCap === null
+      ? DEFAULT_ADAPTIVE_CAP.currentCap
+      : Math.floor(input.startCap);
+  const rampAfterCleanWaves = Math.max(
+    1,
+    input.rampAfterCleanWaves === undefined || input.rampAfterCleanWaves === null
+      ? DEFAULT_RAMP_AFTER_CLEAN_WAVES
+      : Math.floor(input.rampAfterCleanWaves),
+  );
+  return Object.freeze({
+    startCap: Math.min(Math.max(1, requestedStart), maxCap),
+    maxCap,
+    rampAfterCleanWaves,
+  });
+}
+
+export function createAdaptiveCapState(
+  policy: AdaptiveLadderPolicy,
+): AdaptiveCapState {
+  return Object.freeze({
+    ...DEFAULT_ADAPTIVE_CAP,
+    currentCap: policy.startCap,
+    maxCap: policy.maxCap,
+    rampAfterCleanWaves: policy.rampAfterCleanWaves,
+  });
+}
 
 export interface AdaptiveCapEvent {
   readonly kind: 'wave' | 'conflict' | 'violation';
   readonly waveSize?: number;
+  /**
+   * Units that were ELIGIBLE this wave. Lets the ladder tell a wave that was
+   * narrow because the plan was narrow (no evidence about conflict) from one
+   * that was narrow because work was refused (real contention). Omitted → the
+   * wave is assumed to have admitted everything ready.
+   */
+  readonly readyCount?: number;
 }
 
 /**
@@ -316,9 +388,23 @@ export function decideAdaptiveCap(
   }
   const wavesObserved = state.wavesObserved + 1;
   const waveSize = event.waveSize ?? 0;
+  const readyCount = event.readyCount ?? waveSize;
+  // A wave that admitted everything eligible says NOTHING about contention —
+  // it was narrow because the plan was narrow (a lone quality gate, the last
+  // story, a sequential-only task). Resetting the streak there was the ramp
+  // bug: a real mission interleaves serial phases constantly, so the ladder
+  // restarted forever and never left its floor. Neutral, not punished.
+  const refusedWork = readyCount > waveSize;
+  if (waveSize < 2 && !refusedWork) {
+    return Object.freeze({ ...state, wavesObserved });
+  }
   const consecutiveCleanWaves =
     waveSize >= 2 ? state.consecutiveCleanWaves + 1 : 0;
-  const cleanEnough = consecutiveCleanWaves >= 3;
+  const rampAfter = Math.max(
+    1,
+    state.rampAfterCleanWaves ?? DEFAULT_RAMP_AFTER_CLEAN_WAVES,
+  );
+  const cleanEnough = consecutiveCleanWaves >= rampAfter;
   const nextCap = cleanEnough
     ? Math.min(maxCap, state.currentCap + 1)
     : state.currentCap;

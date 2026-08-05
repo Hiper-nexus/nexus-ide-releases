@@ -25,7 +25,12 @@ import {
   type SchedulerRuntimeTask,
 } from "./mission-scheduler-runtime";
 import { taskRecordToSchedulerTask } from "./mission-scheduler-io";
-import { diagnoseWaveConcurrency } from "./mission-scheduler";
+import {
+  createAdaptiveCapState,
+  diagnoseWaveConcurrency,
+  resolveAdaptiveLadderPolicy,
+  type AdaptiveCapState,
+} from "./mission-scheduler";
 import { reportWaveConcurrency } from "./wave-concurrency-verdict";
 import {
   MISSION_SCHEDULER_CONCURRENCY_LIMITS,
@@ -130,6 +135,43 @@ export function missionSchedulerConfiguredWorkerCap(
   contract: Pick<MissionIntentContract, "budgets">,
 ): number {
   return contract.budgets.maxWorkers;
+}
+
+/**
+ * Seed the Hardened adaptive ladder from operator settings and the REAL machine
+ * ceiling. The old hardcoded `maxCap: 6` capped a host that affords `cores - 2`
+ * (8 here) below its own hardware, invisibly and with no way for the operator to
+ * raise it. `adaptiveWaveLadder.maxCap: null` (default) now means "align with
+ * what this machine can actually run"; an explicit setting always wins.
+ *
+ * Only the governed policy consults this ladder — Autopilot uses the approved
+ * `maxWorkers` directly (see `isAdaptiveCapEnabled` in the tick deps).
+ */
+export function productionAdaptiveCapSeed(
+  contract?: Pick<MissionIntentContract, "budgets"> | null,
+  settings: {
+    readonly adaptiveWaveLadder?: {
+      readonly startCap?: number | null;
+      readonly maxCap?: number | null;
+      readonly rampAfterCleanWaves?: number | null;
+    };
+  } = getOrchSettings(),
+  limits = missionSchedulerMachineLimits(),
+): AdaptiveCapState {
+  const contractCap = contract
+    ? missionSchedulerConfiguredWorkerCap(contract)
+    : Number.POSITIVE_INFINITY;
+  const ladder = settings.adaptiveWaveLadder ?? {};
+  return createAdaptiveCapState(
+    resolveAdaptiveLadderPolicy({
+      startCap: ladder.startCap ?? null,
+      maxCap: ladder.maxCap ?? null,
+      rampAfterCleanWaves: ladder.rampAfterCleanWaves ?? null,
+      // Never promise a wave the approved contract or the host cannot honour;
+      // effectiveConcurrencyCap would clamp it anyway, silently.
+      hardwareCeiling: Math.min(contractCap, limits.cores - 2, limits.paneBudget),
+    }),
+  );
 }
 
 /**
@@ -1422,7 +1464,11 @@ async function tickMission(
   }
   const mission = stores.missions.get(missionId);
   const key = missionKey(scope, missionId);
-  const state = states.get(key) ?? createSchedulerRuntimeState();
+  const state =
+    states.get(key) ??
+    createSchedulerRuntimeState({
+      adaptiveCap: productionAdaptiveCapSeed(mission?.intentContract),
+    });
   // Heal superseded plan generations before admission: a PREVC refreeze or
   // reapproval seals a fresh generation, and older generations' orphan
   // pending tasks (plus their reusable worktrees) otherwise hold ownership
