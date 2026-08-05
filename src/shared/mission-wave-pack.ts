@@ -17,6 +17,14 @@ import {
 
 export const WAVE_PACK_DOMAIN = "wave-pack";
 
+/**
+ * Marker domain stamped on a story whose writer owns a real, disjoint file
+ * subset (not the shared inventory merge-permit). Its presence flips the
+ * scheduler from the shared-inventory shortcut to honest file-overlap checking,
+ * so two disjoint writers fan out while a genuine same-file collision defers.
+ */
+export const WAVE_PACK_DISJOINT_FILES_DOMAIN = "wave-pack-disjoint-files";
+
 export const MISSION_ORCHESTRATION_MODES = [
   "livre",
   "pack",
@@ -31,6 +39,15 @@ export const wavePackStorySchema = z
     epicStoryId: z.string().trim().min(1).max(32),
     title: z.string().trim().min(1).max(256),
     body: z.string().max(8_192),
+    /**
+     * Optional disjoint file footprint for this story's writer. When present on
+     * every story, Pack fans out with real file-level disjointness instead of
+     * the shared-inventory merge permit. Omitted → legacy shared-inventory path.
+     */
+    ownershipFiles: z
+      .array(z.string().trim().min(1).max(400))
+      .max(256)
+      .optional(),
   })
   .strict();
 
@@ -151,6 +168,51 @@ export function hasWavePackDomain(domains: readonly string[]): boolean {
   );
 }
 
+export function hasWavePackDisjointFilesDomain(
+  domains: readonly string[],
+): boolean {
+  return domains.some(
+    (domain) =>
+      domain.toLocaleLowerCase("en-US") === WAVE_PACK_DISJOINT_FILES_DOMAIN,
+  );
+}
+
+/**
+ * Normalize a path for disjointness comparison: unify separators and strip a
+ * leading `./`. Files stay case-sensitive (unlike domains) — a path collision
+ * is what merges lose, and casing is significant on case-sensitive volumes.
+ */
+export function normalizeWavePackFile(file: string): string {
+  return file.replaceAll("\\", "/").replace(/^\.\//, "");
+}
+
+/**
+ * Fail-closed core invariant of the fan-out: no two disjoint-file story writers
+ * may claim the same file. A shared file means two parallel worktrees mutate it
+ * and the serial merge of the second one conflicts or silently loses a write.
+ */
+export function assertWavePackStoryFilesDisjoint(
+  tasks: readonly {
+    readonly plannerId: string;
+    readonly ownership: { readonly files: readonly string[] };
+  }[],
+): void {
+  const owners = new Map<string, string>();
+  for (const task of tasks) {
+    for (const raw of task.ownership.files) {
+      const file = normalizeWavePackFile(raw);
+      const previous = owners.get(file);
+      if (previous !== undefined && previous !== task.plannerId) {
+        throw new Error(
+          `wave_pack_story_files_overlap: ${previous} e ${task.plannerId} ` +
+            `disputam ${file} — stories paralelas exigem arquivos disjuntos`,
+        );
+      }
+      owners.set(file, task.plannerId);
+    }
+  }
+}
+
 export type ResolveMissionOrchestrationModeInput = {
   readonly lane?: string | null;
   readonly risk: MissionIntentRisk;
@@ -258,9 +320,22 @@ export function planWavePackTasks(input: {
   }
 
   const coverage = input.ownershipCoverageDomains ?? [];
+  // Disjoint mode engages only when every story carves its own file footprint;
+  // a partial declaration would fake disjointness against the shared inventory.
+  const allStoriesDeclareFiles = input.stories.every(
+    (story) => (story.ownershipFiles?.length ?? 0) > 0,
+  );
   const storyTasks: WavePackPlannedTask[] = input.stories.map((story, index) => {
     const executor = input.executors[index % input.executors.length]!;
     const plannerId = `wave-pack-${story.id}`.slice(0, 128);
+    const storyFiles =
+      allStoriesDeclareFiles && story.ownershipFiles?.length
+        ? story.ownershipFiles
+        : input.ownershipFiles;
+    const storyDomains =
+      allStoriesDeclareFiles && story.ownershipFiles?.length
+        ? [WAVE_PACK_DISJOINT_FILES_DOMAIN]
+        : [];
     const detail = [
       `Implemente a story ${story.epicStoryId}: ${story.title}.`,
       "Você é um worker de mutação do Wave Pack: edite somente o necessário para esta story.",
@@ -285,18 +360,25 @@ export function planWavePackTasks(input: {
       category: "executor" as const,
       executionMode: "isolated_worktree" as const,
       ownership: Object.freeze({
-        files: Object.freeze([...input.ownershipFiles]),
+        files: Object.freeze([...storyFiles]),
         symbols: Object.freeze([] as string[]),
         domains: Object.freeze([
           "guided-implementation",
           WAVE_PACK_DOMAIN,
           wavePackStoryDomain(story.id),
+          ...storyDomains,
           ...coverage,
         ]),
       }),
       dependsOn: Object.freeze([] as string[]),
     });
   });
+
+  // Disjoint mode fans out real writers, so prove the core invariant before the
+  // plan is sealed: no two story worktrees may claim the same file.
+  if (allStoriesDeclareFiles) {
+    assertWavePackStoryFilesDisjoint(storyTasks);
+  }
 
   const tasks: WavePackPlannedTask[] = [...storyTasks];
   if (input.qualityGate) {

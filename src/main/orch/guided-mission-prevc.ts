@@ -25,6 +25,10 @@ import {
   hasGuidedTaskDomain,
   parseGuidedTaskKind,
 } from "./guided-task-kind";
+import {
+  assertWavePackStoryFilesDisjoint,
+  hasWavePackDisjointFilesDomain,
+} from "../../shared/mission-wave-pack";
 
 export function ownershipRequiresGuidedPrevc(
   domains: readonly string[],
@@ -131,6 +135,33 @@ export function taskDetailsRequireGuidedPrevc(
       meta && ownershipRequiresGuidedPrevc(meta.ownership.domains),
     );
   });
+}
+
+/**
+ * Fail-closed disjointness gate for a fanned-out plan: any two sealed stories
+ * that declare a real disjoint file footprint (`wave-pack-disjoint-files`) must
+ * not share a file. This runs for every mission — including the wave-pack
+ * topology that skips the rest of guided PREVC — so a decomposition that would
+ * put two writers on the same file is rejected before any worktree is claimed.
+ */
+export function assertSealedWavePackStoriesDisjoint(
+  taskDetails: readonly string[],
+): void {
+  const stories: {
+    readonly plannerId: string;
+    readonly ownership: { readonly files: readonly string[] };
+  }[] = [];
+  taskDetails.forEach((detail, index) => {
+    const meta = decodeTaskScheduleDetail(detail).meta;
+    if (!meta || !hasWavePackDisjointFilesDomain(meta.ownership.domains)) {
+      return;
+    }
+    stories.push({
+      plannerId: `sealed-story-${index + 1}`,
+      ownership: { files: meta.ownership.files },
+    });
+  });
+  if (stories.length >= 2) assertWavePackStoryFilesDisjoint(stories);
 }
 
 function assertGuidedPrevcTaskDetailsV2(
@@ -256,6 +287,9 @@ export function ensureGuidedMissionPrevc(
     missionId,
     mission.intentContract.intentVersion,
   );
+  // Disjoint fan-out is proven before any topology decision or provider work:
+  // two writers may never share a file. No-op for shared-inventory plans.
+  assertSealedWavePackStoriesDisjoint(taskDetails);
   const topology = standardTopologyFromSealedTaskDetails(taskDetails);
   if (topology === "invalid") {
     throw new Error(

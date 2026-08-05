@@ -314,6 +314,9 @@ export const OWNERSHIP_NON_CLAIM_DOMAINS = Object.freeze(
     // Topology marker for Mission Wave Pack — pairwise exclusivity uses
     // wave-pack-story:<id>, not this shared label (docs/design/mission-wave-pack.md).
     "wave-pack",
+    // Marker that a story owns a real disjoint file subset; exclusivity is then
+    // the per-story files themselves, so this label is not a claim of its own.
+    "wave-pack-disjoint-files",
   ]),
 );
 
@@ -399,7 +402,19 @@ export function exclusiveOwnershipOverlap(
     right.domains.some(
       (domain) => domain.toLocaleLowerCase("en-US") === "wave-pack",
     );
-  if (bothWavePack && context.sameMission) {
+  // Disjoint-file stories own a real file subset, so file exclusivity is
+  // authoritative even within the same mission: two simultaneous writers may
+  // claim only if their files truly do not intersect (fail-closed collision).
+  const bothDisjointFiles =
+    left.domains.some(
+      (domain) =>
+        domain.toLocaleLowerCase("en-US") === "wave-pack-disjoint-files",
+    ) &&
+    right.domains.some(
+      (domain) =>
+        domain.toLocaleLowerCase("en-US") === "wave-pack-disjoint-files",
+    );
+  if (bothWavePack && context.sameMission && !bothDisjointFiles) {
     // Same-mission Wave Pack: shared inventory files are the merge permit, not
     // a wave veto. Pairwise exclusivity is wave-pack-story:<id> (+ symbols).
     // Across missions, keep full file exclusivity — two Pack missions on the

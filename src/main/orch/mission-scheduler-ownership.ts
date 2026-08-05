@@ -7,6 +7,7 @@ import {
   claimOwnershipDomains,
   type WorktreeOwnership,
 } from '../runtime/worktree-contract';
+import { WAVE_PACK_DISJOINT_FILES_DOMAIN } from '../../shared/mission-wave-pack';
 
 export interface ScheduleOwnership {
   readonly files: readonly string[];
@@ -104,13 +105,29 @@ export function ownershipsIntersect(
     right.domains.some(
       (domain) => domain.toLocaleLowerCase('en-US') === 'wave-pack',
     );
+  // A disjoint-file story owns a real file subset, so its file overlap is
+  // authoritative — two such stories fan out only when their files truly do
+  // not intersect. Legacy shared-inventory stories still fall back to the
+  // merge-permit shortcut (exclusivity via wave-pack-story:<id> + symbols).
+  const bothDisjointFiles =
+    left.domains.some(
+      (domain) =>
+        domain.toLocaleLowerCase('en-US') === WAVE_PACK_DISJOINT_FILES_DOMAIN,
+    ) &&
+    right.domains.some(
+      (domain) =>
+        domain.toLocaleLowerCase('en-US') === WAVE_PACK_DISJOINT_FILES_DOMAIN,
+    );
   // Pack stories share inventory files as merge permit; wave exclusivity is
   // wave-pack-story:<id> (+ symbols). See docs/design/mission-wave-pack.md.
-  const fileOverlap = bothWavePack
-    ? false
-    : leftFiles.some((leftFile) =>
-        rightFiles.some((rightFile) => fileClaimsOverlap(leftFile, rightFile)),
-      );
+  const fileOverlap =
+    bothWavePack && !bothDisjointFiles
+      ? false
+      : leftFiles.some((leftFile) =>
+          rightFiles.some((rightFile) =>
+            fileClaimsOverlap(leftFile, rightFile),
+          ),
+        );
   const exactOverlap = (a: readonly string[], b: readonly string[]) => {
     const rightValues = new Set(b);
     return a.some((value) => rightValues.has(value));

@@ -6,6 +6,7 @@ import { ContextReadinessError } from "../context/context-workflow-service";
 import { testProjectScope } from "./__tests__/scope-fixture";
 import {
   assertGuidedPrevcExecutionReady,
+  assertSealedWavePackStoriesDisjoint,
   ensureGuidedMissionPrevc,
   ensureGuidedMissionPrevcAtBootstrapBoundary,
   taskDetailsRequireGuidedPrevc,
@@ -609,6 +610,85 @@ describe("main-owned guided PREVC preflight", () => {
     ).toThrow(/brief_intent_mismatch.*outra intenção aprovada/i);
     expect(freezeContract).toHaveBeenCalledOnce();
     expect(ensureGreenfieldBaseline).toHaveBeenCalledOnce();
+  });
+
+  it("accepts and rejects sealed disjoint-story receipts by file disjointness", () => {
+    const story = (files: readonly string[], id: string): string =>
+      encodeTaskScheduleDetail(`Story ${id}`, {
+        dependsOn: [],
+        ownership: {
+          files: [...files],
+          symbols: [],
+          domains: [
+            "guided-implementation",
+            "wave-pack",
+            "wave-pack-disjoint-files",
+            `wave-pack-story:${id}`,
+          ],
+        },
+        merged: false,
+        parallelEligible: true,
+        agentRef: "executor",
+        agentCategory: "executor",
+        executionMode: "isolated_worktree",
+      });
+
+    expect(() =>
+      assertSealedWavePackStoriesDisjoint([
+        story(["src/auth/login.ts"], "a"),
+        story(["src/billing/checkout.ts"], "b"),
+      ]),
+    ).not.toThrow();
+
+    expect(() =>
+      assertSealedWavePackStoriesDisjoint([
+        story(["src/shared/util.ts"], "a"),
+        story(["src/shared/util.ts"], "b"),
+      ]),
+    ).toThrow(/wave_pack_story_files_overlap/);
+
+    // Non-disjoint (shared-inventory) sealed details are never asserted disjoint.
+    expect(() =>
+      assertSealedWavePackStoriesDisjoint([guidedDetail(), guidedDetail()]),
+    ).not.toThrow();
+  });
+
+  it("blocks a mission whose sealed disjoint stories collide before workflow materialization", () => {
+    const story = (files: readonly string[], id: string): string =>
+      encodeTaskScheduleDetail(`Story ${id}`, {
+        dependsOn: [],
+        ownership: {
+          files: [...files],
+          symbols: [],
+          domains: [
+            "guided-implementation",
+            "wave-pack",
+            "wave-pack-disjoint-files",
+            `wave-pack-story:${id}`,
+          ],
+        },
+        merged: false,
+        parallelEligible: true,
+        agentRef: "executor",
+        agentCategory: "executor",
+        executionMode: "isolated_worktree",
+      });
+    const workflowForScope = vi.fn();
+    const deps = {
+      getMission: () => approvedMission(),
+      listPlannedTaskDetails: () => [
+        story(["src/dup.ts"], "a"),
+        story(["src/dup.ts"], "b"),
+      ],
+      hasMaterializedWorkerAuthority: vi.fn(),
+      ensureGreenfieldBaseline: vi.fn(),
+      workflowForScope,
+    } as unknown as GuidedMissionPrevcDeps;
+
+    expect(() =>
+      ensureGuidedMissionPrevc(testProjectScope(), "mission-guided", deps),
+    ).toThrow(/wave_pack_story_files_overlap/);
+    expect(workflowForScope).not.toHaveBeenCalled();
   });
 
   it("fails closed when a guided scheduler reaches claim time without the frozen execution stage", () => {

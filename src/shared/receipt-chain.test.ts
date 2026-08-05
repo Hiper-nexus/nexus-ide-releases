@@ -47,6 +47,36 @@ function buildChain(count: number): ChainedReceiptEntry[] {
   return out;
 }
 
+describe("parallel disjoint-story receipts (P0-3 fan-out)", () => {
+  it("verifies a mission chain whose links carry distinct per-story worktreeHeadSha", () => {
+    // Each disjoint story merges from its own worktree, so consecutive links
+    // carry different worktreeHeadSha values. The chain binds them by seq +
+    // prevHash, never by a shared HEAD, so distinct per-story HEADs coexist.
+    const heads = ["a".repeat(40), "c".repeat(40), "e".repeat(40)];
+    const out: ChainedReceiptEntry[] = [];
+    let prev: string | null = null;
+    heads.forEach((head, index) => {
+      const seq = index + 1;
+      const entry = baseEntry({
+        seq,
+        receiptId: `receipt-story-${seq}`,
+        issuedAt: BASE_ISSUED_AT + seq * 1_000,
+        worktreeHeadSha: head,
+        detail: { handoffId: `story-${seq}`, source: "pty-stream" },
+      });
+      const chainHash = computeChainHash(entry, prev);
+      out.push({ ...entry, chainHash, prevReceiptHash: prev });
+      prev = chainHash;
+    });
+
+    expect(new Set(out.map((e) => e.worktreeHeadSha)).size).toBe(3);
+    expect(verifyChain(out, { requireGenesis: true })).toEqual({
+      status: "valid",
+      length: 3,
+    });
+  });
+});
+
 describe("computeChainHash", () => {
   it("é determinístico e produz 64 hex minúsculos", () => {
     const entry = baseEntry();

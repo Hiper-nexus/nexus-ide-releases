@@ -525,6 +525,86 @@ describe('mission-scheduler P1 ownership + reserved glue', () => {
     ).toBe(false);
   });
 
+  it('wave-pack disjoint-file stories fan out; a shared file collides', () => {
+    const storyOwnership = (file: string, storyId: string) => ({
+      files: [file],
+      symbols: [],
+      domains: [
+        'guided-implementation',
+        'wave-pack',
+        'wave-pack-disjoint-files',
+        `wave-pack-story:${storyId}`,
+      ],
+    });
+    // Distinct files → real disjointness, no intersection, they parallelize.
+    expect(
+      ownershipsIntersect(
+        storyOwnership('src/auth/login.ts', 'a'),
+        storyOwnership('src/billing/checkout.ts', 'b'),
+      ),
+    ).toBe(false);
+    // Same file → the disjoint marker makes the file overlap authoritative.
+    expect(
+      ownershipsIntersect(
+        storyOwnership('src/shared/util.ts', 'a'),
+        storyOwnership('src/shared/util.ts', 'b'),
+      ),
+    ).toBe(true);
+  });
+
+  it('legacy shared-inventory wave-pack keeps the merge-permit shortcut', () => {
+    // No disjoint marker: identical inventory files must NOT intersect, so the
+    // existing shared-inventory fan-out (exclusivity via story domain) survives.
+    const shared = (storyId: string) => ({
+      files: ['src/', 'docs/'],
+      symbols: [],
+      domains: [
+        'guided-implementation',
+        'wave-pack',
+        `wave-pack-story:${storyId}`,
+      ],
+    });
+    expect(ownershipsIntersect(shared('a'), shared('b'))).toBe(false);
+  });
+
+  it('dispatches a disjoint wave of 3 wave-pack story writers', () => {
+    const story = (id: string, file: string): ScheduleTask =>
+      task(id, {
+        ownership: {
+          files: [file],
+          symbols: [],
+          domains: [
+            'guided-implementation',
+            'wave-pack',
+            'wave-pack-disjoint-files',
+            `wave-pack-story:${id}`,
+          ],
+        },
+      });
+    const tasks = [
+      story('s1', 'src/auth/login.ts'),
+      story('s2', 'src/auth/session.ts'),
+      story('s3', 'src/billing/checkout.ts'),
+    ];
+    const decision = decideSchedule(tasks, [], CAP, NOW);
+    expect(decision.plan.kind).toBe('dispatch');
+    if (decision.plan.kind !== 'dispatch') return;
+    expect(decision.plan.taskIds).toEqual(['s1', 's2', 's3']);
+    expect(decision.plan.waveSize).toBe(3);
+
+    // Two writers colliding on one file: only the first admits, the other waits.
+    const collide = [
+      story('s1', 'src/shared/util.ts'),
+      story('s2', 'src/shared/util.ts'),
+      story('s3', 'src/billing/checkout.ts'),
+    ];
+    const collideDecision = decideSchedule(collide, [], CAP, NOW);
+    expect(collideDecision.plan.kind).toBe('dispatch');
+    if (collideDecision.plan.kind !== 'dispatch') return;
+    expect(collideDecision.plan.taskIds).toEqual(['s1', 's3']);
+    expect(collideDecision.deferredIds).toEqual(['s2']);
+  });
+
   it('ownershipTouchesReservedGlue is true for any glue file in set', () => {
     expect(
       ownershipTouchesReservedGlue({

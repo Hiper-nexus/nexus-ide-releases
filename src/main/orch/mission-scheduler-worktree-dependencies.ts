@@ -1,3 +1,53 @@
+import { normalizeWavePackFile } from "../../shared/mission-wave-pack";
+
+/**
+ * A fan-out story as the plan graph sees it: its own task id, the tasks it
+ * declares a dependency on, and the files its writer owns.
+ */
+export interface DisjointStoryNode {
+  readonly taskId: string;
+  readonly dependsOn: readonly string[];
+  readonly ownership: { readonly files: readonly string[] };
+}
+
+/**
+ * Teach the dependency graph the fan-out invariant: two stories whose file
+ * footprints are disjoint have NO reason to serialize, so they must not declare
+ * a dependency on each other — a disjoint pair chained together would silently
+ * collapse the parallel wave back to a single writer. Stories that share a file
+ * are exempt: their overlap is a legitimate reason to run in sequence.
+ */
+export function assertDisjointStoriesIndependent(
+  stories: readonly DisjointStoryNode[],
+): void {
+  const filesById = new Map<string, ReadonlySet<string>>();
+  for (const story of stories) {
+    filesById.set(
+      story.taskId,
+      new Set(story.ownership.files.map(normalizeWavePackFile)),
+    );
+  }
+  const filesOverlap = (a: string, b: string): boolean => {
+    const left = filesById.get(a);
+    const right = filesById.get(b);
+    if (!left || !right) return false;
+    for (const file of left) if (right.has(file)) return true;
+    return false;
+  };
+  for (const story of stories) {
+    for (const dependencyId of story.dependsOn) {
+      if (!filesById.has(dependencyId)) continue;
+      if (!filesOverlap(story.taskId, dependencyId)) {
+        throw new Error(
+          `wave_pack_disjoint_serialized: ${story.taskId} depende de ` +
+            `${dependencyId} mas seus arquivos são disjuntos — stories ` +
+            "disjuntas devem rodar em paralelo, não em série",
+        );
+      }
+    }
+  }
+}
+
 export interface MissionSchedulerDependencyDispatch {
   readonly taskId: string;
   readonly missionId: string;

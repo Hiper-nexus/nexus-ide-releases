@@ -23,6 +23,7 @@ import { testProjectScope } from './__tests__/scope-fixture';
 import { createScopedMissionStore } from './mission-store';
 import { createScopedTaskStore, plannedTaskId } from './task-store';
 import {
+  assertConcurrentIsolatedWorktreeDisjoint,
   createTaskDispatchStore,
   LEGACY_GUIDED_DIRTY_CHECKOUT_BOOTSTRAP_CAUSE,
   LEGACY_GUIDED_DIRTY_CHECKOUT_TERMINAL_REASON,
@@ -6703,5 +6704,63 @@ describe('reroute de provider esgotado dentro do roster selado', () => {
     });
 
     expect(rerouted.providerReroute?.emittedBy).toBe('exhaustion-sweep');
+  });
+});
+
+describe('assertConcurrentIsolatedWorktreeDisjoint (P0-3 parallel writers)', () => {
+  it('accepts multiple simultaneous isolated_worktree tasks with disjoint files', () => {
+    expect(() =>
+      assertConcurrentIsolatedWorktreeDisjoint([
+        {
+          taskId: 's1',
+          executionMode: 'isolated_worktree',
+          ownership: { files: ['src/auth/login.ts'] },
+        },
+        {
+          taskId: 's2',
+          executionMode: 'isolated_worktree',
+          ownership: { files: ['src/billing/checkout.ts'] },
+        },
+        {
+          taskId: 's3',
+          executionMode: 'isolated_worktree',
+          ownership: { files: ['src/ui/nav.ts'] },
+        },
+      ]),
+    ).not.toThrow();
+  });
+
+  it('ignores read_only peers — only worktree writers can collide on files', () => {
+    expect(() =>
+      assertConcurrentIsolatedWorktreeDisjoint([
+        {
+          taskId: 'writer',
+          executionMode: 'isolated_worktree',
+          ownership: { files: ['src/a.ts'] },
+        },
+        {
+          taskId: 'reviewer',
+          executionMode: 'read_only',
+          ownership: { files: ['src/a.ts'] },
+        },
+      ]),
+    ).not.toThrow();
+  });
+
+  it('fails closed when two simultaneous worktree writers share a file', () => {
+    expect(() =>
+      assertConcurrentIsolatedWorktreeDisjoint([
+        {
+          taskId: 's1',
+          executionMode: 'isolated_worktree',
+          ownership: { files: ['src/shared/util.ts', 'src/a.ts'] },
+        },
+        {
+          taskId: 's2',
+          executionMode: 'isolated_worktree',
+          ownership: { files: ['./src/shared/util.ts'] },
+        },
+      ]),
+    ).toThrow(/concurrent_isolated_worktree_files_overlap/);
   });
 });

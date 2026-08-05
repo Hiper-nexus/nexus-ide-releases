@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  assertWavePackStoryFilesDisjoint,
   extractStoriesFromPromotedPlanSummary,
   freezeWavePackStoriesForContract,
+  hasWavePackDisjointFilesDomain,
   hasWavePackDomain,
   planWavePackTasks,
   resolveMissionOrchestrationMode,
   resolveWavePackStories,
   topologyForOrchestrationMode,
+  WAVE_PACK_DISJOINT_FILES_DOMAIN,
   WAVE_PACK_DOMAIN,
   wavePackStoryDomain,
 } from "./mission-wave-pack";
@@ -261,5 +264,124 @@ describe("planWavePackTasks", () => {
       topologyForOrchestrationMode("livre", "team-read-only-fanout"),
     ).toBe("team-read-only-fanout");
     expect(wavePackStoryDomain("story-1-2")).toBe("wave-pack-story:story-1-2");
+  });
+});
+
+describe("wave-pack disjoint-file ownership (P0-3 fan-out)", () => {
+  const disjointStories = [
+    {
+      id: "story-1-1",
+      epicStoryId: "1.1",
+      title: "Login form",
+      body: "As a user",
+      ownershipFiles: ["src/auth/login.ts", "src/auth/login.css"],
+    },
+    {
+      id: "story-1-2",
+      epicStoryId: "1.2",
+      title: "Session refresh",
+      body: "As a user",
+      ownershipFiles: ["src/auth/session.ts"],
+    },
+    {
+      id: "story-2-1",
+      epicStoryId: "2.1",
+      title: "Checkout PIX",
+      body: "As a buyer",
+      ownershipFiles: ["src/billing/checkout.ts"],
+    },
+  ] as const;
+
+  it("gives each declaring story its own disjoint files + disjoint marker", () => {
+    const planned = planWavePackTasks({
+      missionTitle: "Auth + Billing",
+      goal: "Entregar auth e checkout",
+      acceptanceCriteria: ["Login funciona", "PIX funciona"],
+      stories: disjointStories,
+      executors: [{ id: "dev", agentName: "Dev", category: "executor" }],
+      maxWorkers: 3,
+      // Shared inventory is the merge permit; per-story files carve the writer.
+      ownershipFiles: ["src/", "docs/"],
+    });
+
+    expect(planned).toHaveLength(3);
+    expect(planned[0]!.ownership.files).toEqual([
+      "src/auth/login.ts",
+      "src/auth/login.css",
+    ]);
+    expect(planned[1]!.ownership.files).toEqual(["src/auth/session.ts"]);
+    expect(planned[2]!.ownership.files).toEqual(["src/billing/checkout.ts"]);
+    for (const task of planned) {
+      expect(hasWavePackDomain(task.ownership.domains)).toBe(true);
+      expect(hasWavePackDisjointFilesDomain(task.ownership.domains)).toBe(true);
+      expect(task.ownership.domains).toContain(
+        WAVE_PACK_DISJOINT_FILES_DOMAIN,
+      );
+    }
+  });
+
+  it("throws when two declaring stories claim the same file", () => {
+    expect(() =>
+      planWavePackTasks({
+        missionTitle: "Collide",
+        goal: "collide",
+        acceptanceCriteria: ["ok"],
+        stories: [
+          {
+            id: "story-a",
+            epicStoryId: "1.1",
+            title: "A",
+            body: "a",
+            ownershipFiles: ["src/shared/util.ts"],
+          },
+          {
+            id: "story-b",
+            epicStoryId: "1.2",
+            title: "B",
+            body: "b",
+            // Same file, different path spelling — normalization must catch it.
+            ownershipFiles: ["./src/shared/util.ts"],
+          },
+        ],
+        executors: [{ id: "dev", agentName: "Dev", category: "executor" }],
+        maxWorkers: 2,
+        ownershipFiles: ["src/"],
+      }),
+    ).toThrow(/wave_pack_story_files_overlap/);
+  });
+
+  it("keeps the shared-inventory merge-permit path (no marker) when stories omit files", () => {
+    const stories = extractStoriesFromPromotedPlanSummary(SAMPLE_PLAN);
+    const planned = planWavePackTasks({
+      missionTitle: "Shared",
+      goal: "shared",
+      acceptanceCriteria: ["ok"],
+      stories,
+      executors: [{ id: "dev", agentName: "Dev", category: "executor" }],
+      maxWorkers: 3,
+      ownershipFiles: ["src/", "docs/"],
+    });
+    for (const task of planned) {
+      expect(task.ownership.files).toEqual(["src/", "docs/"]);
+      expect(hasWavePackDisjointFilesDomain(task.ownership.domains)).toBe(
+        false,
+      );
+    }
+  });
+
+  it("assertWavePackStoryFilesDisjoint is the fail-closed invariant", () => {
+    const disjoint = [
+      { plannerId: "wp-a", ownership: { files: ["src/a.ts"] } },
+      { plannerId: "wp-b", ownership: { files: ["src/b.ts"] } },
+    ];
+    expect(() => assertWavePackStoryFilesDisjoint(disjoint)).not.toThrow();
+
+    const overlapping = [
+      { plannerId: "wp-a", ownership: { files: ["src/a.ts", "src/x.ts"] } },
+      { plannerId: "wp-b", ownership: { files: ["src\\x.ts"] } },
+    ];
+    expect(() => assertWavePackStoryFilesDisjoint(overlapping)).toThrow(
+      /wave_pack_story_files_overlap/,
+    );
   });
 });
