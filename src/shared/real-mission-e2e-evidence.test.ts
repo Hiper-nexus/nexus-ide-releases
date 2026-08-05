@@ -14,6 +14,44 @@ describe("real mission E2E PASS graph", () => {
     );
   });
 
+  it("accepts scheduler-owned delivery, which stamps no acceptance deadline", () => {
+    // Entrega scheduler-owned (topologias `delivery` e `wave-pack`, que
+    // anunciam `no_manual_ack_required=true` desde 67a7e8a7) não abre janela de
+    // ack manual: o ack físico É a aceitação, então o produto insere a
+    // tentativa já em `accepted` sem carimbar `acceptDeadlineAt`
+    // (handoff-physical-ack-authority.ts). O prazo é uma extensão Nexus do
+    // caminho de paste manual, não parte do contrato de handoff.
+    const schedulerOwned = validPassEvidence();
+    for (const handoff of schedulerOwned.handoffs as Array<
+      Record<string, unknown>
+    >) {
+      for (const attempt of handoff.deliveryAttempts as Array<
+        Record<string, unknown>
+      >) {
+        if (attempt.state !== "accepted") continue;
+        attempt.acceptDeadlineAt = null;
+        attempt.acceptedAt = attempt.startedAt;
+      }
+    }
+
+    expect(parseRealMissionE2EEvidence(schedulerOwned).status).toBe("pass");
+  });
+
+  it("still enforces the acceptance deadline whenever the product stamps one", () => {
+    const lateAccept = validPassEvidence();
+    const handoff = (
+      lateAccept.handoffs as Array<Record<string, unknown>>
+    )[0]!;
+    const accepted = (
+      handoff.deliveryAttempts as Array<Record<string, unknown>>
+    ).find((attempt) => attempt.state === "accepted")!;
+    accepted.acceptDeadlineAt = (accepted.acceptedAt as number) - 1;
+
+    expect(() => parseRealMissionE2EEvidence(lateAccept)).toThrow(
+      /real-mission invariants/,
+    );
+  });
+
   it("requires the AGY advisor handoff to use its physical PTY stream", () => {
     const physicalAgy = validPassEvidence();
     const dispatch = (

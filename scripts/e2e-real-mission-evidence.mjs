@@ -551,11 +551,14 @@ export function assertRealMissionPassEvidence(raw) {
     const attempt = accepted[0];
     if (
       !Number.isInteger(attempt?.acceptedAt) ||
-      !Number.isInteger(attempt?.acceptDeadlineAt) ||
       attempt?.failedAt !== null ||
       attempt?.failureCode !== null ||
       attempt.startedAt > attempt.acceptedAt ||
-      attempt.acceptedAt > attempt.acceptDeadlineAt
+      // Espelha real-mission-e2e-evidence.ts: entrega scheduler-owned não abre
+      // janela de ack manual, então acceptDeadlineAt vem ausente. Quando o
+      // produto carimba o prazo, ele continua sendo exigido.
+      (Number.isInteger(attempt.acceptDeadlineAt) &&
+        attempt.acceptedAt > attempt.acceptDeadlineAt)
     ) {
       return null;
     }

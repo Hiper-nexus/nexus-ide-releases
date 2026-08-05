@@ -593,9 +593,16 @@ export const realMissionE2EEvidenceSchema = z
           accepted.acceptedAt !== null &&
           accepted.failedAt === null &&
           accepted.failureCode === null &&
-          accepted.acceptDeadlineAt !== null &&
           accepted.startedAt <= accepted.acceptedAt &&
-          accepted.acceptedAt <= accepted.acceptDeadlineAt &&
+          // `acceptDeadlineAt` é a janela de ack MANUAL (paste no pane):
+          // carimbada só por markDeliveryAttemptPasted. Na entrega
+          // scheduler-owned (topologias `delivery`/`wave-pack`, que anunciam
+          // `no_manual_ack_required=true` desde 67a7e8a7) não existe passo de
+          // aceitação: o ack físico É a aceitação e a tentativa nasce
+          // `accepted` sem prazo. Exigir prazo aqui reprovava missão correta.
+          // Quando o produto carimba o prazo, ele continua sendo exigido.
+          (accepted.acceptDeadlineAt === null ||
+            accepted.acceptedAt <= accepted.acceptDeadlineAt) &&
           deliveryAuthorityMatches(handoff, accepted),
       );
     };
