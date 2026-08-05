@@ -20,8 +20,25 @@
  * classifica como `gate-critical` e derruba a fast lane.
  */
 
+import { createHash } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+
 /** Teto de módulos de produção que ainda contam como "patch cirúrgico". */
 export const SURGICAL_PRODUCTION_MODULE_LIMIT = 1;
+
+/** A fast lane é sempre OPT-IN explícito do operador. */
+export const RELEASE_FAST_LANE_ENV = 'NEXUS_RELEASE_FAST_LANE';
+
+/** Nome do documento durável de waiver dentro do securityDir. */
+export const FAST_LANE_WAIVER_ASSET = 'release-fast-lane-waiver.json';
+
+/** O que a fast lane roda DE VERDADE no lugar da missão real empacotada. */
+const FAST_LANE_PROOFS = Object.freeze([
+  'verify-macos-release',
+  'candidate-artifact-seal',
+  'packaged-smoke',
+]);
 
 /**
  * Módulos que DEFINEM o próprio gate ou o contrato que ele observa. Mudou um
@@ -238,4 +255,203 @@ export function qualifyReleaseFastLane({ changedPaths, baseline } = {}) {
       productionModules: Object.freeze([...productionModules]),
     }),
   });
+}
+
+function sha256Buffer(buffer) {
+  return createHash('sha256').update(buffer).digest('hex');
+}
+
+/**
+ * Nomes de evidência E2E declarados pelo recibo baseline. A fast lane preserva
+ * exatamente esses bytes: eles são a prova que está sendo REUSADA, então
+ * precisam sobreviver ao wipe do securityDir e ser re-hashados no publish.
+ */
+function baselineEvidenceNames(receipt) {
+  return [
+    receipt?.artifacts?.e2eEvidence,
+    receipt?.artifacts?.e2eEvidenceClaudeOrchestrator,
+  ]
+    .filter((entry) => entry && typeof entry.name === 'string')
+    .map((entry) => ({ name: entry.name, sha256: entry.sha256 }));
+}
+
+function readBaselineEvidence(securityDir, receipt) {
+  return baselineEvidenceNames(receipt).map((declared) => {
+    if (path.basename(declared.name) !== declared.name) {
+      throw new Error(`baseline evidence name escapes the security dir: ${declared.name}`);
+    }
+    const bytes = fs.readFileSync(path.join(securityDir, declared.name));
+    const observed = sha256Buffer(bytes);
+    if (observed !== declared.sha256) {
+      throw new Error(
+        `baseline E2E evidence bytes diverge from the green receipt: ${declared.name}`,
+      );
+    }
+    return Object.freeze({ name: declared.name, sha256: observed, bytes });
+  });
+}
+
+function planFullGate(reason) {
+  return Object.freeze({
+    lane: 'full',
+    reason,
+    changedPaths: [],
+    productionModules: [],
+    disqualifiers: [],
+    waiver: null,
+    baselineReceipt: null,
+    baselineEvidence: [],
+  });
+}
+
+/**
+ * Resolve a faixa do ciclo ATUAL lendo o recibo verde que ainda está no
+ * securityDir — o gate apaga esse diretório logo em seguida, então o plano
+ * (incluindo os BYTES da evidência reusada) tem que ser tirado antes.
+ *
+ * Nunca lança: qualquer defeito vira `full`, que é o comportamento de hoje.
+ */
+export function planReleaseFastLane({
+  securityDir,
+  environment = process.env,
+  gitCapture,
+} = {}) {
+  if (environment?.[RELEASE_FAST_LANE_ENV] !== '1') {
+    return planFullGate(
+      `fast lane not requested (${RELEASE_FAST_LANE_ENV} is not "1")`,
+    );
+  }
+  let baselineReceipt = null;
+  let baselineEvidence = [];
+  let changedPaths = [];
+  try {
+    baselineReceipt = JSON.parse(
+      fs.readFileSync(
+        path.join(securityDir, 'release-candidate-receipt.json'),
+        'utf8',
+      ),
+    );
+    baselineEvidence = readBaselineEvidence(securityDir, baselineReceipt);
+    changedPaths = collectReleaseChangedPaths({
+      baselineCommitSha: baselineReceipt?.commitSha,
+      gitCapture,
+    });
+  } catch (error) {
+    return planFullGate(
+      `fast lane baseline unusable: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  const decision = qualifyReleaseFastLane({
+    changedPaths,
+    baseline: baselineReceipt,
+  });
+  if (decision.lane === 'full') return planFullGate(decision.reason);
+  return Object.freeze({
+    ...decision,
+    baselineReceipt,
+    baselineEvidence: Object.freeze(baselineEvidence),
+  });
+}
+
+/**
+ * Documento durável do waiver. Ele é o registro honesto: diz o que NÃO rodou,
+ * contra qual baseline verde, com que delta classificado, e o que rodou no
+ * lugar. Vira asset de segurança e o publish o re-verifica antes de aceitar.
+ */
+export function buildFastLaneWaiverDocument({ plan, candidate, now } = {}) {
+  if (!plan || plan.lane === 'full' || !plan.baselineReceipt) {
+    throw new Error('cannot build a fast lane waiver for the full gate');
+  }
+  const clock = now ?? (() => new Date());
+  return Object.freeze({
+    schemaVersion: 1,
+    lane: plan.lane,
+    reason: plan.reason,
+    qualifiedAt: clock().toISOString(),
+    candidate: Object.freeze({
+      version: candidate.version,
+      commitSha: candidate.commitSha,
+      zipSha256: candidate.zipSha256,
+      dmgSha256: candidate.dmgSha256,
+    }),
+    baseline: Object.freeze({
+      version: plan.baselineReceipt.version,
+      commitSha: plan.baselineReceipt.commitSha,
+      zipSha256: plan.baselineReceipt.artifacts.zip.sha256,
+      evidence: Object.freeze(
+        plan.baselineEvidence.map((entry) =>
+          Object.freeze({ name: entry.name, sha256: entry.sha256 }),
+        ),
+      ),
+    }),
+    changedPaths: Object.freeze([...plan.changedPaths]),
+    productionModules: Object.freeze([...plan.productionModules]),
+    waivedProofs: Object.freeze(['physical-real-mission-product-wizard']),
+    provedInstead: FAST_LANE_PROOFS,
+  });
+}
+
+/**
+ * Re-verifica um waiver contra o candidate atual e contra os BYTES da
+ * evidência reusada que estão no securityDir. Fail-closed: qualquer divergência
+ * lança, e o chamador (gate ou publish) reprova a release.
+ */
+export function assertFastLaneWaiverDocument(document, { securityDir, candidate } = {}) {
+  if (
+    document?.schemaVersion !== 1 ||
+    (document.lane !== 'surgical' && document.lane !== 'reuse-green')
+  ) {
+    throw new Error('fast lane waiver has an unsupported shape');
+  }
+  if (
+    document.candidate?.version !== candidate?.version ||
+    document.candidate?.commitSha !== candidate?.commitSha ||
+    document.candidate?.zipSha256 !== candidate?.zipSha256 ||
+    document.candidate?.dmgSha256 !== candidate?.dmgSha256
+  ) {
+    throw new Error('fast lane waiver is not bound to this candidate');
+  }
+  if (
+    !/^[0-9a-f]{40}$/u.test(document.baseline?.commitSha ?? '') ||
+    document.baseline?.commitSha === candidate.commitSha ||
+    !Array.isArray(document.baseline?.evidence) ||
+    document.baseline.evidence.length === 0
+  ) {
+    throw new Error('fast lane waiver does not name a distinct green baseline');
+  }
+  for (const declared of document.baseline.evidence) {
+    if (
+      typeof declared?.name !== 'string' ||
+      path.basename(declared.name) !== declared.name
+    ) {
+      throw new Error('fast lane waiver names an unsafe evidence asset');
+    }
+    const observed = sha256Buffer(
+      fs.readFileSync(path.join(securityDir, declared.name)),
+    );
+    if (observed !== declared.sha256) {
+      throw new Error(
+        `reused E2E evidence bytes changed after the waiver: ${declared.name}`,
+      );
+    }
+  }
+  const reclassified = qualifyReleaseFastLane({
+    changedPaths: document.changedPaths,
+    baseline: {
+      schemaVersion: 4,
+      version: document.baseline.version,
+      commitSha: document.baseline.commitSha,
+      artifacts: {
+        zip: { sha256: document.baseline.zipSha256 },
+        e2eEvidence: { sha256: document.baseline.evidence[0].sha256 },
+      },
+      verification: { realMissionE2E: true, physicalProductWizard: true },
+    },
+  });
+  if (reclassified.lane !== document.lane) {
+    throw new Error(
+      `fast lane waiver claims lane ${document.lane} but its own diff classifies as ${reclassified.lane}`,
+    );
+  }
+  return document;
 }

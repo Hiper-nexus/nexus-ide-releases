@@ -1,10 +1,18 @@
-import { describe, expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import {
+  assertFastLaneWaiverDocument,
+  buildFastLaneWaiverDocument,
   classifyReleaseChangedPath,
   collectReleaseChangedPaths,
   parseReleaseChangedPaths,
+  planReleaseFastLane,
   qualifyReleaseFastLane,
+  RELEASE_FAST_LANE_ENV,
 } from './release-fast-lane.mjs';
 
 const GREEN_BASELINE = Object.freeze({
@@ -230,5 +238,190 @@ describe('collectReleaseChangedPaths', () => {
         gitCapture: () => ({ stdout: '' }),
       }),
     ).toThrow(/commit sha/iu);
+  });
+});
+
+const roots = [];
+
+afterEach(() => {
+  while (roots.length) {
+    fs.rmSync(roots.pop(), { recursive: true, force: true });
+  }
+});
+
+function sha256(value) {
+  return createHash('sha256').update(value).digest('hex');
+}
+
+/** securityDir de um gate verde anterior, com recibo + evidência coerentes. */
+function greenSecurityDirFixture(overrides = {}) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-fast-lane-'));
+  roots.push(root);
+  const securityDir = path.join(root, 'release-artifacts', 'security');
+  fs.mkdirSync(securityDir, { recursive: true });
+  const evidenceBody = JSON.stringify({ status: 'pass', release: { commitSha: GREEN_BASELINE.commitSha } });
+  fs.writeFileSync(path.join(securityDir, 'real-mission-evidence.json'), evidenceBody);
+  const receipt = {
+    ...GREEN_BASELINE,
+    tag: `v${GREEN_BASELINE.version}`,
+    artifacts: {
+      ...GREEN_BASELINE.artifacts,
+      e2eEvidence: {
+        name: 'real-mission-evidence.json',
+        sha256: sha256(evidenceBody),
+      },
+    },
+    ...overrides,
+  };
+  fs.writeFileSync(
+    path.join(securityDir, 'release-candidate-receipt.json'),
+    JSON.stringify(receipt),
+  );
+  return { root, securityDir, receipt, evidenceBody };
+}
+
+describe('planReleaseFastLane', () => {
+  it('stays on the full gate unless the operator declares the fast lane', () => {
+    const { securityDir } = greenSecurityDirFixture();
+    const plan = planReleaseFastLane({
+      securityDir,
+      environment: {},
+      gitCapture: () => ({ stdout: 'docs/a.md\n' }),
+    });
+    expect(plan.lane).toBe('full');
+    expect(plan.reason).toMatch(/not requested/iu);
+  });
+
+  it('plans the surgical lane and snapshots the baseline evidence bytes', () => {
+    const { securityDir, evidenceBody } = greenSecurityDirFixture();
+    const plan = planReleaseFastLane({
+      securityDir,
+      environment: { [RELEASE_FAST_LANE_ENV]: '1' },
+      gitCapture: () => ({
+        stdout: 'src/main/orch/failover.ts\npackage.json\nCHANGELOG.md\n',
+      }),
+    });
+    expect(plan.lane).toBe('surgical');
+    expect(plan.waiver.productionModules).toEqual(['src/main/orch/failover.ts']);
+    expect(plan.baselineEvidence).toHaveLength(1);
+    expect(plan.baselineEvidence[0].name).toBe('real-mission-evidence.json');
+    expect(plan.baselineEvidence[0].bytes.toString('utf8')).toBe(evidenceBody);
+    expect(plan.baselineEvidence[0].sha256).toBe(sha256(evidenceBody));
+  });
+
+  it('falls back to the full gate when the baseline evidence bytes drifted', () => {
+    const { securityDir } = greenSecurityDirFixture();
+    fs.writeFileSync(
+      path.join(securityDir, 'real-mission-evidence.json'),
+      '{"status":"tampered"}',
+    );
+    const plan = planReleaseFastLane({
+      securityDir,
+      environment: { [RELEASE_FAST_LANE_ENV]: '1' },
+      gitCapture: () => ({ stdout: 'docs/a.md\n' }),
+    });
+    expect(plan.lane).toBe('full');
+    expect(plan.reason).toMatch(/evidence/iu);
+  });
+
+  it('falls back to the full gate when there is no previous receipt', () => {
+    const { securityDir } = greenSecurityDirFixture();
+    fs.rmSync(path.join(securityDir, 'release-candidate-receipt.json'));
+    const plan = planReleaseFastLane({
+      securityDir,
+      environment: { [RELEASE_FAST_LANE_ENV]: '1' },
+      gitCapture: () => ({ stdout: '' }),
+    });
+    expect(plan.lane).toBe('full');
+  });
+
+  it('falls back to the full gate when git cannot answer the diff', () => {
+    const { securityDir } = greenSecurityDirFixture();
+    const plan = planReleaseFastLane({
+      securityDir,
+      environment: { [RELEASE_FAST_LANE_ENV]: '1' },
+      gitCapture: () => {
+        throw new Error('fatal: bad object');
+      },
+    });
+    expect(plan.lane).toBe('full');
+    expect(plan.reason).toMatch(/bad object/iu);
+  });
+});
+
+describe('fast lane waiver document', () => {
+  const CANDIDATE = Object.freeze({
+    version: '0.26.1',
+    commitSha: 'f'.repeat(40),
+    zipSha256: '1'.repeat(64),
+    dmgSha256: '2'.repeat(64),
+  });
+
+  function documentFor(securityDir) {
+    const plan = planReleaseFastLane({
+      securityDir,
+      environment: { [RELEASE_FAST_LANE_ENV]: '1' },
+      gitCapture: () => ({ stdout: 'src/main/orch/failover.ts\npackage.json\n' }),
+    });
+    return buildFastLaneWaiverDocument({
+      plan,
+      candidate: CANDIDATE,
+      now: () => new Date('2026-08-05T23:00:00.000Z'),
+    });
+  }
+
+  it('binds both the new candidate and the reused baseline', () => {
+    const { securityDir } = greenSecurityDirFixture();
+    const document = documentFor(securityDir);
+    expect(document.schemaVersion).toBe(1);
+    expect(document.lane).toBe('surgical');
+    expect(document.candidate).toEqual(CANDIDATE);
+    expect(document.baseline.commitSha).toBe(GREEN_BASELINE.commitSha);
+    expect(document.baseline.zipSha256).toBe(GREEN_BASELINE.artifacts.zip.sha256);
+    expect(document.provedInstead).toContain('packaged-smoke');
+    expect(document.qualifiedAt).toBe('2026-08-05T23:00:00.000Z');
+  });
+
+  it('re-verifies against the security dir it was written into', () => {
+    const { securityDir } = greenSecurityDirFixture();
+    const document = documentFor(securityDir);
+    expect(
+      assertFastLaneWaiverDocument(document, { securityDir, candidate: CANDIDATE }),
+    ).toBe(document);
+  });
+
+  it('rejects a waiver whose candidate binding drifted', () => {
+    const { securityDir } = greenSecurityDirFixture();
+    const document = documentFor(securityDir);
+    expect(() =>
+      assertFastLaneWaiverDocument(document, {
+        securityDir,
+        candidate: { ...CANDIDATE, zipSha256: '9'.repeat(64) },
+      }),
+    ).toThrow(/candidate/iu);
+  });
+
+  it('rejects a waiver whose reused evidence file changed on disk', () => {
+    const { securityDir } = greenSecurityDirFixture();
+    const document = documentFor(securityDir);
+    fs.writeFileSync(
+      path.join(securityDir, 'real-mission-evidence.json'),
+      '{"status":"tampered"}',
+    );
+    expect(() =>
+      assertFastLaneWaiverDocument(document, { securityDir, candidate: CANDIDATE }),
+    ).toThrow(/evidence/iu);
+  });
+
+  it('refuses to build a waiver for the full gate', () => {
+    const { securityDir } = greenSecurityDirFixture();
+    const plan = planReleaseFastLane({
+      securityDir,
+      environment: {},
+      gitCapture: () => ({ stdout: 'docs/a.md\n' }),
+    });
+    expect(() =>
+      buildFastLaneWaiverDocument({ plan, candidate: CANDIDATE }),
+    ).toThrow(/full gate/iu);
   });
 });
