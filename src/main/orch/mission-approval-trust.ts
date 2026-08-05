@@ -93,6 +93,24 @@ export function missionApprovalTrustKeyFrom(
   });
 }
 
+/**
+ * Identidade de confiança do roster revisado.
+ *
+ * O approve sela o squad numa cópia imutável `mission-runtime-*` e rebinda a
+ * missão nela (renderer-mission-authority: sealMissionSquadForApproval). O hash
+ * do snapshot inclui o id, então a cópia tem hash diferente da origem — e o
+ * próximo candidato da MESMA missão perderia a confiança que o operador acabou
+ * de conceder. A cópia é byte a byte o roster revisado, logo a identidade
+ * durável é a revisão de ORIGEM que a selagem registra.
+ */
+export function missionApprovalTrustRevisionHash(squad: {
+  readonly hash: string;
+  readonly runtimeSourceSquadId?: string | null;
+  readonly runtimeSourceSquadRevisionHash?: string | null;
+}): string {
+  return squad.runtimeSourceSquadRevisionHash ?? squad.hash;
+}
+
 /** True when this project+roster was previously delegated by the operator. */
 export function hasMissionApprovalTrust(key: MissionApprovalTrustKey): boolean {
   if (isCurrentProcessRealMissionE2E()) return false;

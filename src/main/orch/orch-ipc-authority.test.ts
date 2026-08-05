@@ -1876,6 +1876,52 @@ describe('mission authority native confirmation', () => {
     expect(harness.dialog.showMessageBox).toHaveBeenCalledOnce();
   });
 
+  it('não repergunta aprovação de missão já aprovada e em execução', async () => {
+    // Voo real 05/08: com a missão viva em fundo, cada re-clique reabria
+    // "Aprovar esta missão e liberar sua execução?" — a lane idempotente do
+    // approve (continuar bootstrap) só era alcançada DEPOIS do modal.
+    const sender = owner();
+    harness.scopes.set(sender.id, SCOPE_A);
+    harness.windows.set(sender.id, { isDestroyed: () => false });
+    const base = harness.missionApprovalCandidate();
+    harness.missionApprovalCandidate.mockReturnValue({
+      ...base,
+      approvalAlreadyCurrent: true,
+    });
+    const handler = missionHandler(ORCH_CHANNELS.missionApproveIntent);
+
+    await expect(
+      handler({ sender }, { missionId: 'mission-1' }),
+    ).resolves.toMatchObject({ id: 'mission-1', status: 'running' });
+
+    expect(harness.dialog.showMessageBox).not.toHaveBeenCalled();
+    const reviewSha256 = harness.approveMission.mock.calls.at(-1)?.[3];
+    expect(reviewSha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(harness.approveMission).toHaveBeenCalledWith(
+      sender,
+      { missionId: 'mission-1' },
+      'approval-fence-3',
+      reviewSha256,
+    );
+  });
+
+  it('volta ao modal quando a aprovação vigente é de risco destrutivo revisado de novo', async () => {
+    // O atalho vale só enquanto a autoridade já é vigente: sem a marca, o
+    // modal nativo é obrigatório mesmo em re-clique.
+    const sender = owner();
+    harness.scopes.set(sender.id, SCOPE_A);
+    harness.windows.set(sender.id, { isDestroyed: () => false });
+    const base = harness.missionApprovalCandidate();
+    harness.missionApprovalCandidate.mockReturnValue({
+      ...base,
+      approvalAlreadyCurrent: false,
+    });
+    const handler = missionHandler(ORCH_CHANNELS.missionApproveIntent);
+
+    await handler({ sender }, { missionId: 'mission-1' });
+    expect(harness.dialog.showMessageBox).toHaveBeenCalledOnce();
+  });
+
   it('mantém o modal nativo quando a submissão não veio da revisão do wizard', async () => {
     const sender = owner();
     harness.scopes.set(sender.id, SCOPE_A);

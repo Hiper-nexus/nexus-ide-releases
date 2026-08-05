@@ -82,6 +82,7 @@ import {
 import {
   hasMissionApprovalTrust,
   missionApprovalTrustKeyFrom,
+  missionApprovalTrustRevisionHash,
   rememberMissionApprovalTrust,
 } from "./mission-approval-trust";
 import {
@@ -859,10 +860,31 @@ async function confirmMissionAuthorityChange(
       action,
       replacement,
     );
+    // Aprovação já consumada (approve only): a missão está viva com autoridade
+    // de dispatch vigente para este mesmo runtime, então `approveIntent` cai na
+    // lane de continuar bootstrap e NÃO concede autoridade nova — perguntar de
+    // novo é o loop infinito do voo real 05/08 (o operador reaprovava para
+    // sempre uma missão que já estava rodando). Qualquer mudança material
+    // (revisão de intent nova, aprovação revogada, runtime diferente, missão
+    // fora de execução) derruba a marca e o modal nativo volta.
+    if (!isPromotion && candidate.approvalAlreadyCurrent === true) {
+      console.log(
+        `[orch] mission approval already current; no re-prompt ` +
+          `project=${scope.projectId} mission=${candidate.missionId}`,
+      );
+      return review.reviewSha256;
+    }
     // Pré-autorização (approve only): mesmo projeto + mesmo roster hash →
     // pula o modal e ainda emite o reviewSha256 do review integral. Promote
     // e experimental sempre pedem olhos humanos. Gate E2E real desliga trust.
-    const trustKey = missionApprovalTrustKeyFrom(scope, candidate.squad.hash);
+    // A identidade do roster é a revisão de ORIGEM: o selo do approve cria uma
+    // cópia `mission-runtime-*` com outro hash, e sem essa dobra o "não
+    // perguntar de novo" que o operador acabou de marcar seria ignorado já no
+    // clique seguinte da mesma missão.
+    const trustKey = missionApprovalTrustKeyFrom(
+      scope,
+      missionApprovalTrustRevisionHash(candidate.squad),
+    );
     if (
       !isPromotion &&
       !isExperimental &&

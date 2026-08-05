@@ -107,6 +107,7 @@ import {
   sameMissionOrchestratorRuntime,
   type ResolvedMissionOrchestratorRuntime,
 } from "./mission-orchestrator-runtime";
+import { missionApprovalAlreadyCurrent } from "./mission-approval-already-current";
 import {
   resolveMissionPaneAuthoritySeal,
   sameMissionPaneAuthoritySeal,
@@ -203,6 +204,13 @@ export interface RendererMissionAuthorityCandidate {
     readonly maxWorkers: number;
     readonly maxSteps?: number;
   };
+  /**
+   * Main-computed: a missão já está viva com autoridade de dispatch vigente
+   * para este mesmo runtime, então o approve cai na lane de continuar bootstrap
+   * e não concede autoridade nova. O diálogo nativo não repergunta nesse caso
+   * (fix do re-prompt infinito, 05/08). Nunca aceito do renderer.
+   */
+  readonly approvalAlreadyCurrent: boolean;
   /** Hash of the exact durable intent/status snapshot shown to the operator. */
   readonly fence: string;
 }
@@ -1298,6 +1306,13 @@ export class RendererMissionAuthority {
       orchestratorEvidence,
       intentVersion: current.intentVersion ?? contract.intentVersion,
       budgets: Object.freeze({ ...contract.budgets }),
+      // Mesmo veredito que approveIntentFromRenderer usa para cair na lane de
+      // continuar bootstrap sem reaprovar nada — computado ANTES do diálogo
+      // para que a missão já viva não seja reperguntada em loop.
+      approvalAlreadyCurrent: missionApprovalAlreadyCurrent(
+        current,
+        orchestratorRuntime,
+      ),
       fence: missionAuthorityFence(current, approvalSnapshot),
     });
   }
@@ -1834,6 +1849,9 @@ export class RendererMissionAuthority {
       promotedPlan,
       intentVersion: current.intentVersion ?? contract.intentVersion,
       budgets: Object.freeze({ ...defaultBudgetsForRisk(risk) }),
+      // Promoção sempre exige olhos humanos: nenhuma autoridade vigente cobre
+      // a passagem de plano para execução.
+      approvalAlreadyCurrent: false,
       fence: missionAuthorityFence(current, {
         evidenceAttached: contract.evidenceAttached === true,
         attachmentPaths,

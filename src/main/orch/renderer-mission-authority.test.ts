@@ -964,6 +964,43 @@ describe("renderer mission authority", () => {
     ).toBe(false);
   });
 
+  it("marca aprovação vigente no candidato de missão já em execução", () => {
+    // A lane idempotente do approve (continuar bootstrap) precisa ser visível
+    // ANTES do diálogo nativo — senão o operador reaprova em loop uma missão
+    // que a própria autoridade já considera aprovada (voo real 05/08).
+    deps.getMission.mockReturnValue({
+      ...approvedMission,
+      intentContract: {
+        ...approvedMission.intentContract,
+        orchestratorRuntime: approvedRuntime,
+      },
+    });
+    expect(
+      authority.missionApprovalCandidateFromRenderer(owner, {
+        missionId: mission.id,
+      }).approvalAlreadyCurrent,
+    ).toBe(true);
+  });
+
+  it("não marca aprovação vigente enquanto o operador ainda precisa decidir", () => {
+    deps.getMission.mockReturnValue({
+      ...approvedMission,
+      status: "pending" as const,
+      intentState: "awaiting_approval" as const,
+      intentContract: {
+        ...approvedMission.intentContract,
+        approvedAt: undefined,
+        dispatchedAt: undefined,
+        orchestratorRuntime: approvedRuntime,
+      },
+    });
+    expect(
+      authority.missionApprovalCandidateFromRenderer(owner, {
+        missionId: mission.id,
+      }).approvalAlreadyCurrent,
+    ).toBe(false);
+  });
+
   it("fence de aprovação invalida mudança de intent durante confirmação nativa", () => {
     const awaitingApproval = {
       ...approvedMission,
