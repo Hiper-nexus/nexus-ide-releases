@@ -718,6 +718,20 @@ function startSpawn(
           } catch {
             // Repintura é cosmética; a sessão continua íntegra sem ela.
           }
+          // Backstop (viewport preto, voo real 05/08): o reset acima APAGA o
+          // frame e confia no SIGWINCH duplo para o TUI repintar. Quando o
+          // provider ignora o par de resizes (debounce/tamanho final idêntico),
+          // o pane orq fica permanentemente vazio com a sessão viva. Se nada
+          // pintou após a janela de graça, re-replay do retido — duplicação é
+          // invisível num buffer vazio; pane preto não é cosmético.
+          setTimeout(() => {
+            if (host.disposed || host.sessionId !== adoptedSessionId) return;
+            if (terminalBufferHasContent(host.term.buffer.active)) return;
+            console.warn(
+              `[nexus] adopted pane ${pane.id} vazio pós-reset — replay backstop`,
+            );
+            void window.nexus.pty.replay(adoptedSessionId);
+          }, 1_200);
         }, 350);
       }
 
