@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { activeWorkspaceOrNull } from '../persistence/workspace-store';
 import type { ProjectExecutionScope } from '../../shared/types';
+import type { WorkspacePolicy } from '../../shared/workspace-types';
 
 function realpathOrThrow(targetPath: string, label: string): string {
   try {
@@ -110,4 +111,42 @@ export function resolveCwdForScope(
 
 export function resolveWorkspaceCwd(cwdOverride?: string): string {
   return resolveCwdInsideRoot(activeWorkspaceRoot(), cwdOverride);
+}
+
+/**
+ * Resolves a write-target path according to the active workspace policy.
+ *
+ * - `read_only`:      always throws; no writes are permitted
+ * - `write_external`: resolves the path without workspace-containment checks
+ * - `default`:        enforces the existing inside-workspace-only constraint
+ *
+ * On denial the message instructs the user to update workspace settings.
+ */
+export function resolveWritePathWithPolicy(
+  policy: WorkspacePolicy,
+  workspaceRoot: string,
+  inputPath: string,
+): string {
+  if (policy === 'read_only') {
+    throw new Error(
+      `workspace policy 'read_only' denies writes. ` +
+        `Update workspace settings to allow writes.`,
+    );
+  }
+  if (policy === 'write_external') {
+    return path.isAbsolute(inputPath)
+      ? path.resolve(inputPath)
+      : path.resolve(workspaceRoot, inputPath);
+  }
+  // default: existing inside-workspace-only behaviour
+  const candidate = path.isAbsolute(inputPath)
+    ? path.resolve(inputPath)
+    : path.resolve(workspaceRoot, inputPath);
+  if (!isInsidePath(workspaceRoot, candidate)) {
+    throw new Error(
+      `workspace policy 'default' denies writes outside the workspace. ` +
+        `Update workspace settings to 'write_external'.`,
+    );
+  }
+  return resolvePathInsideRoot(workspaceRoot, inputPath);
 }

@@ -30,3 +30,18 @@ export const WORKSPACE_CHANNELS = {
   remove: 'workspace:remove',
   changed: 'workspace:changed',
 } as const;
+
+/**
+ * Explicit write-access policy for the workspace.
+ *
+ * - `default`        read + write inside the workspace root only (current behaviour)
+ * - `write_external` read + write inside AND outside the workspace root
+ * - `read_only`      reads only — no writes permitted anywhere
+ */
+export type WorkspacePolicy = 'default' | 'write_external' | 'read_only';
+
+export const WORKSPACE_POLICY_CHANNELS = {
+  get: 'workspace:policy:get',
+  set: 'workspace:policy:set',
+  changed: 'workspace:policy:changed',
+} as const;

@@ -1,4 +1,6 @@
 import type { AgentGateContext } from './gate';
+import type { WorkspacePolicy } from '../../shared/workspace-types';
+import { isInsidePath } from './workspace-path';
 
 const CONTROL_SEGMENTS = new Set(['.agents', '.codex']);
 
@@ -48,6 +50,42 @@ export function pathTargetsCodexControlRoot(candidate: string): boolean {
     .replaceAll('\\', '/')
     .split('/')
     .some((segment) => CONTROL_SEGMENTS.has(segment.toLowerCase()));
+}
+
+/**
+ * Throws when the workspace policy does not permit a write/mutation.
+ * Call before any MCP tool or dispatch that mutates state.
+ * On denial the message instructs the user to update workspace settings.
+ */
+export function assertWorkspacePolicyAllowsWrite(policy: WorkspacePolicy): void {
+  if (policy === 'read_only') {
+    throw new Error(
+      `workspace policy 'read_only' denies writes. ` +
+        `Update workspace settings to allow writes.`,
+    );
+  }
+}
+
+/**
+ * Throws when the workspace policy does not permit writing to targetPath.
+ * Validates both directions: inside the policy → permits; outside → denies.
+ *
+ * - read_only:      always denies (no writes anywhere)
+ * - write_external: always permits (inside + outside workspace root)
+ * - default:        permits inside workspace root only (current behaviour)
+ */
+export function assertWorkspacePolicyAllowsPathWrite(
+  policy: WorkspacePolicy,
+  workspaceRoot: string,
+  targetPath: string,
+): void {
+  assertWorkspacePolicyAllowsWrite(policy);
+  if (policy === 'default' && !isInsidePath(workspaceRoot, targetPath)) {
+    throw new Error(
+      `workspace policy 'default' denies writes outside the workspace. ` +
+        `Update workspace settings to 'write_external'.`,
+    );
+  }
 }
 
 /**
