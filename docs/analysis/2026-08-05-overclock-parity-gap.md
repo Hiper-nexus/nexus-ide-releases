@@ -187,20 +187,36 @@ The STATUS column carries the campaign's landed/pending hashes. **Landed** = ver
 
 ### P1 — instruments + policy/persona surface
 
-| ID | What | Why | Effort | Target Nexus files |
-|----|------|-----|--------|--------------------|
-| **P1-1** | **Finish mission instruments** (increments 2–6) — chef-idle-awaiting-workers marker, blocked-reason surfacing, boot telemetry | Makes stalls visible so recovery/autopilot can fire (§a#8) | **M** | per `docs/analysis/2026-08-03-mission-ux-handoff.md`; extend `260eb2e6`/`6bdb7ac0` |
+Rebuilt concretely after the overwrite thinned this section. The three **evidence-born** rows (P1-5/P1-6/P1-7) come from live campaign observations, not spec invention; the rest are the leftover PARTIAL/MISSING rows already present in §(b)/§(c).
+
+| ID | What | Why | Effort | Target Nexus file(s) |
+|----|------|-----|--------|----------------------|
+| **P1-1** | **Finish mission instruments** (increments 2–6) — chef-idle-awaiting-workers marker (partially landed `d15c8a37`), blocked-reason surfacing, boot telemetry | Makes stalls visible so recovery/autopilot can fire (§a#8) | **M** | per `docs/analysis/2026-08-03-mission-ux-handoff.md`; extend `260eb2e6`/`6bdb7ac0`/`d15c8a37` |
 | **P1-2** | **Workspace policy modes** (`write_external` / `read_only`) as a first-class `WorkspacePolicy` type | Parity with Overclock `105.txt:25-28`; make the implicit dispatch policy explicit & user-settable | **M** | new type in `workspace-types.ts:1`, enforce in `governed-workspace-control-boundary.ts:1`, `workspace-path.ts` |
 | **P1-3** | **Agent-level personas** independent of voice — a Persona entity (system-prompt identity per leaf agent) | Parity with Overclock named leaf mecânicos; decouple from `voice-ipc.ts:97-99` | **M** | new persona store next to `squad-store.ts`; wire into `spawn-authority.ts` |
 | **P1-4** | **General pane autoClose for non-worker panes** | Parity with Overclock green-means-close beyond the worker-TTL path | **S–M** | extend `worker-handoff-ttl.ts` / `pane-registry.ts` |
+| **P1-5** | **Toolchain preflight at mission kickoff** — fail-fast, actionable error BEFORE dispatching stories when the executor's toolchain is wrong (born from an executor blocked on Node 24 vs the required Node 22). No preflight exists at kickoff today (`grep` for a node-version gate in `src/main` returns none). | Turns a silent mid-story stall into an actionable pre-dispatch failure the operator can fix immediately | **M** | kickoff path (`mission-dispatch-kickoff.ts`), before dispatch in the mission-store/scheduler; surface via the blocked-reason presenter |
+| **P1-6** | **Squad-editor slices 2+** — the rest of the L spec after slice 1. Per the scout the roots are: dead-option pickers (a picker offers CLIs/agents the squad can't actually use), a governed lock (edits silently reverted by policy), and a **silent roster rebuild** at `MissionWizard.tsx:904` (`balanceSquadRosterCli` re-derives the roster without telling the user). | Squad edits currently don't durably survive the roster rebuild; the editor must show, not silently override | **L** | `src/renderer/components/MissionWizard.tsx:904` (`balanceSquadRosterCli`); squad-store roster policy |
+| **P1-7** | **Mission-UX increments 2–6 reconcile** — produce a reconcile/overlap verdict of the 2–6 increments against what already landed (silent-verdict fixes `260eb2e6`, boot-telemetry skeleton `6bdb7ac0`, chef-idle marker `d15c8a37`) before building more, so increments don't re-implement shipped work. | Prevents duplicate/overlapping work; scopes the true remainder of the UX pack | **M** | `docs/analysis/2026-08-03-mission-ux-handoff.md` (reconcile against `260eb2e6`/`6bdb7ac0`/`d15c8a37`) |
 
 ### P2 — remaining behavioral parity & long-horizon
 
-| ID | What | Why | Effort | Target Nexus files |
-|----|------|-----|--------|--------------------|
-| **P2-1** | **Jarvis cold-start P0-2** (8–18s) — instrument cold-start in the app, then add warm-path reuse | Voice parity; currently blocked because reuse is untested in-app (`jarvis-transplante-overclock-incompleto`) | **L** | `src/main/jarvis/`, `factory.ts:1`; needs in-app instrumentation first |
-| **P2-2** | **Goal-driven mission-driver** (Ralph gap) — cron is time-driven; add a goal-driven driver (spec exists, not solution) | The one real gap vs Ralph (`ralph-cross-ref-mission-driver`); `ralph.sh` itself is a security regression, do not port it | **L** | per `docs/superpowers/specs/2026-07-13-mission-driver-design.md` |
-| **P2-3** | **Media degrade-by-tier UX** (never-error tiering) *as UX*, keeping the whitelist | Match Overclock's graceful degrade without adopting silent fallback | **S** | `media-providers.ts:200-227`, `tools-media.ts` |
+| ID | What | Why | Effort | Status / Target Nexus file(s) |
+|----|------|-----|--------|-------------------------------|
+| **P2-1** | **Jarvis cold-start P0-2** (8–18s) — instrument cold-start in the app, then add warm-path reuse | Voice parity; currently blocked because reuse is untested in-app (`jarvis-transplante-overclock-incompleto`) | **L** | open — `src/main/jarvis/`, `factory.ts:1`; needs in-app instrumentation first |
+| **P2-2** | **Goal-driven mission-driver** (Ralph gap) — cron is time-driven; add a goal-driven driver (spec exists, not solution) | The one real gap vs Ralph (`ralph-cross-ref-mission-driver`); `ralph.sh` itself is a security regression, do not port it | **L** | open — per `docs/superpowers/specs/2026-07-13-mission-driver-design.md` |
+| **P2-3** | **Media degrade-by-tier UX** (never-error tiering) *as UX*, keeping the whitelist | Match Overclock's graceful degrade without adopting silent fallback | **S** | **landed** `62f426ab` (UX de degrade por tier sem fallback silencioso) — `media-providers.ts:200-227`, `tools-media.ts` |
+
+### Leftover PARTIAL / MISSING inventory (already in §(b)/§(c) — kept concrete, not inflated)
+
+The rows below are the still-open PARTIAL/MISSING mechanisms carried from the §(b) inventory table and the §(c) pending list; they map 1:1 onto the P1/P2 IDs above and are listed here so the ranked list has a single source of truth:
+
+- **Workspace policy modes** (§b row 8, MISSING as an explicit type) → **P1-2**. Policy is implicit at dispatch + MCP allowlists; no `write_external`/`read_only` `WorkspacePolicy` type.
+- **Agent-level personas** (§b row 5, MISSING) → **P1-3**. Persona lives only in voice config (`voice-ipc.ts:97-99`); no per-leaf-agent identity.
+- **General pane autoClose for non-worker panes** (§c pending) → **P1-4**. Only the worker-TTL path auto-closes; other panes linger.
+- **Jarvis cold-start latency P0-2, 8–18s** (§b row 6, PARTIAL) → **P2-1**. Mechanisms HAS; warm-path reuse untested in-app.
+- **Parallel real-task ownership** (§c pending) → covered by **P0-3** (landed `007888ae`/`17096105`/`1c495e85`); no longer a standalone P1/P2 gap, but the NL-fan-out (P0-8) and drain-cap (P0-9) preconditions must land for it to reach full width.
+- **Router advisory in agêntico path** (§b rows 1/10, PARTIAL) → covered by **P0-2** (landed `492920e0`); listed here only to mark it resolved, not open.
 
 ---
 
