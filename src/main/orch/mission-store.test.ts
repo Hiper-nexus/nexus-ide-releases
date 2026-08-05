@@ -842,6 +842,60 @@ describe('scoped mission store', () => {
     ).toThrow(/intenção.*mudou/i);
   });
 
+  it('vincula o squad selado da missão à reserva e recusa consumir após rebind (RC4)', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope({ checkoutId: 'route-reservation-squad-binding' });
+    let now = 1_000;
+    let sequence = 0;
+    const store = createScopedMissionStore(runtimeManager, scope, {
+      now: () => now,
+      idFactory: (prefix) => `${prefix}-${++sequence}`,
+    });
+    const mission = store.create({
+      title: 'Missão agêntica vinculada a squad',
+      intentState: 'dispatched',
+      intentVersion: 1,
+      squadId: 'agentic-runtime-squad-a',
+    });
+    store.setStatus(mission.id, 'running');
+    const decision = {
+      tier: 'medium' as const,
+      adapterId: 'codex',
+      model: 'gpt-5.6-sol',
+      effort: 'medium',
+      reason: 'rota do membro do squad',
+      alternatives: [],
+    };
+
+    // A reserva CARIMBA o squad selado da missão no instante da criação.
+    const reservation = store.reserveRouteDecision(mission.id, 'implementar RC4', decision);
+    expect(reservation.squadId).toBe('agentic-runtime-squad-a');
+
+    const expectation = {
+      reservationId: reservation.id,
+      missionId: mission.id,
+      adapterId: 'codex',
+      model: 'gpt-5.6-sol',
+      effort: 'medium',
+      at: now + 1,
+    };
+    // Enquanto o squad da missão não muda, o gate aceita a reserva.
+    expect(store.assertRouteReservation(expectation).squadId).toBe(
+      'agentic-runtime-squad-a',
+    );
+
+    // Rebind da missão para OUTRO squad invalida a reserva antiga: o gate do
+    // pane_spawn (que chama assertRouteReservation) não pode consumir uma rota
+    // que não pertence ao squad atual da missão.
+    runtimeManager
+      .open(scope)
+      .db.prepare('UPDATE missions SET squad_id = ? WHERE id = ?')
+      .run('agentic-runtime-squad-b', mission.id);
+    expect(() => store.assertRouteReservation(expectation)).toThrow(
+      /route_reservation_squad_mismatch/,
+    );
+  });
+
   it('persiste aceite do kickoff e invalida sessão/revisão antigas após restart', () => {
     const runtimeManager = manager();
     const scope = testProjectScope({ checkoutId: 'kickoff-proof' });

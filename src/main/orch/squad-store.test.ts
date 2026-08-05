@@ -23,6 +23,7 @@ import {
   prepareSquadSave,
   prepareSquadsImport,
   saveSquad,
+  squadRoutableCliIds,
 } from './squad-store';
 import { snapshotSquadAuthority } from './squad-authority-snapshot';
 
@@ -134,6 +135,38 @@ afterEach(() => {
     // ignore
   }
   openDb = null;
+});
+
+describe('squadRoutableCliIds — CLIs do roster para vincular route/spawn (RC4)', () => {
+  it('retorna o conjunto exato de CLIs dos agentes do squad', () => {
+    const db = makeDb();
+    openDb = db;
+    insertRawSquad(db, {
+      id: 'rc4-squad',
+      name: 'RC4 Squad',
+      agents: [
+        { id: 'orch', agentName: 'Maestro', category: 'orchestrator', cli: 'claude' },
+        { id: 'dev', agentName: 'Dev', category: 'executor', cli: 'codex' },
+        { id: 'dev2', agentName: 'Dev2', category: 'executor', cli: 'codex' },
+        { id: 'rev', agentName: 'Rev', category: 'reviewer', cli: 'kimi' },
+      ],
+    });
+    initSquadStore(db);
+
+    expect([...squadRoutableCliIds('rc4-squad')].sort()).toEqual([
+      'claude',
+      'codex',
+      'kimi',
+    ]);
+  });
+
+  it('retorna conjunto vazio para um squad desconhecido (fail-open no gate)', () => {
+    const db = makeDb();
+    openDb = db;
+    initSquadStore(db);
+
+    expect(squadRoutableCliIds('inexistente').size).toBe(0);
+  });
 });
 
 describe('squad-store load path self-heals existing squads', () => {

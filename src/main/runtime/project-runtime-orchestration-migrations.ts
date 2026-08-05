@@ -806,6 +806,23 @@ BEGIN
 END;
 `;
 
+/**
+ * Vincula cada reserva de rota ao squad selado da missão no instante da reserva.
+ * Espelha a coluna de contrato de roster do plano guiado (mission_task_plans),
+ * mas para o caminho AGÊNTICO (route→spawn), onde não existe plano selado: a
+ * store carimba `missions.squad_id` na criação da reserva e o gate recusa
+ * consumir uma reserva cujo squad não seja o squad ATUAL da missão. É o vínculo
+ * durável que fecha "agêntico ignora squad salvo" — o roteador passa a VINCULAR
+ * o squad selecionado, não apenas a sugerir a rota.
+ *
+ * Coluna nullable por compatibilidade de migração: reservas pré-034 e missões
+ * sem squad ficam NULL; a leitura fail-open trata NULL == "sem squad", então
+ * missões livres (sem squad selado) seguem roteando/spawnando como antes.
+ */
+const MISSION_ROUTE_RESERVATION_SQUAD_BINDING_SCHEMA = `
+ALTER TABLE mission_route_reservations ADD COLUMN squad_id TEXT;
+`;
+
 export const ORCHESTRATION_PROJECT_MIGRATION_SPECS: readonly ProjectMigrationSpec[] =
   [
     {
@@ -930,5 +947,11 @@ export const ORCHESTRATION_PROJECT_MIGRATION_SPECS: readonly ProjectMigrationSpe
       schemaVersion: 33,
       appVersion: '0.21.0',
       sql: HANDOFF_RECEIPT_CHAIN_LINK_GUARD_SCHEMA,
+    },
+    {
+      id: '034-mission-route-reservation-squad-binding',
+      schemaVersion: 34,
+      appVersion: '0.25.1',
+      sql: MISSION_ROUTE_RESERVATION_SQUAD_BINDING_SCHEMA,
     },
   ];

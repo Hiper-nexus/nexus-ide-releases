@@ -14,7 +14,7 @@ import { orchWriteSession } from '../pty/pty-manager';
 import {
   listAdapterInfos,
 } from '../adapters/adapter-registry';
-import { findAgentInSquad } from './squad-store';
+import { findAgentInSquad, squadRoutableCliIds } from './squad-store';
 import { adHocSpawnGateError } from './route-provenance';
 import { countLiveMissionWorkerSlots } from './mission-driver-io';
 import { loadModelCatalog, modelCatalogInfo } from '../adapters/model-catalog';
@@ -384,6 +384,26 @@ const paneSpawn: McpToolDef = {
             'task_dispatcher_authority: workers de uma missão planejada só podem ser ' +
               'criados pelo dispatcher durável do main; aguarde o Nexus despachar a task',
           );
+        }
+        // Vínculo do squad no caminho agêntico: um worker ad-hoc (sem agentName)
+        // só pode rodar numa CLI que o roster do squad selado da missão contém.
+        // O conjunto é o roster INTEIRO (multi-CLI) — o gate admite QUALQUER
+        // membro (claude/codex/gemini/...), nunca força um provider só, e recusa
+        // uma CLI de fora do squad. Membros nomeados já são vinculados pelo
+        // branch de agentName acima (findAgentInSquad + agent.cli). Fail-open
+        // quando o roster é irresolúvel (conjunto vazio): sem membros para
+        // julgar, não há colapso a impedir.
+        if (!agentRef && missionRow.squadId) {
+          const rosterClis = squadRoutableCliIds(missionRow.squadId);
+          if (rosterClis.size > 0 && !rosterClis.has(options.adapterId)) {
+            throw new Error(
+              `squad_binding_violation: a missão está vinculada ao squad ` +
+                `${missionRow.squadId}; um worker ad-hoc só pode usar uma CLI do ` +
+                `roster (${[...rosterClis].join(', ')}), não ${options.adapterId}. ` +
+                `Spawne um agente nomeado do squad (agentName) ou roteie para um ` +
+                `membro do roster.`,
+            );
+          }
         }
         if (missionRow.status === 'running' && !rosterRouteAuthorized) {
           if (!routeReservationId) {

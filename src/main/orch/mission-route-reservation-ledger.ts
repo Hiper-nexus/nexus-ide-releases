@@ -46,6 +46,7 @@ const routeReservationRowSchema = z
     adapter_id: z.string().min(1).max(128),
     model: z.string().min(1).max(256).nullable(),
     effort: z.string().min(1).max(64).nullable(),
+    squad_id: z.string().min(1).max(128).nullable(),
     created_at: timestampSchema,
     expires_at: timestampSchema,
     consumed_at: timestampSchema.nullable(),
@@ -68,6 +69,7 @@ const routeReservationMissionSchema = z
   .object({
     status: missionStatusSchema,
     intent_version: z.number().int().nonnegative(),
+    squad_id: z.string().min(1).max(128).nullable(),
   })
   .strict();
 
@@ -79,6 +81,8 @@ export interface MissionRouteReservation {
   readonly intentVersion: number;
   readonly taskPreview: string;
   readonly decision: RouteDecision;
+  /** Sealed squad the mission was bound to when the route was reserved. */
+  readonly squadId?: string;
   readonly createdAt: number;
   readonly expiresAt: number;
   readonly consumedAt?: number;
@@ -135,6 +139,7 @@ function routeReservationFromRow(raw: unknown): MissionRouteReservation {
     intentVersion: row.intent_version,
     taskPreview: row.task_preview,
     decision: cloneRouteDecision(decision),
+    ...(row.squad_id === null ? {} : { squadId: row.squad_id }),
     createdAt: row.created_at,
     expiresAt: row.expires_at,
     ...(row.consumed_at === null ? {} : { consumedAt: row.consumed_at }),
@@ -147,7 +152,11 @@ function routeReservationFromRow(raw: unknown): MissionRouteReservation {
 function assertExpectedRoute(
   reservation: MissionRouteReservation,
   expected: RouteReservationExpectation,
-  mission: { readonly status: MissionStatus; readonly intent_version: number },
+  mission: {
+    readonly status: MissionStatus;
+    readonly intent_version: number;
+    readonly squad_id: string | null;
+  },
   at: number,
 ): void {
   // One message for two causes sent the agent in circles: when the mission had
@@ -168,6 +177,17 @@ function assertExpectedRoute(
   if (reservation.intentVersion !== mission.intent_version) {
     throw new Error(
       'route_reservation_stale: a intenção da missão mudou; chame nexus_route_task novamente',
+    );
+  }
+  // Vínculo durável do squad: uma reserva só pode ser consumida enquanto a
+  // missão continuar vinculada ao MESMO squad selado com que a rota foi
+  // reservada. Um rebind de squad (ou uma reserva de outro squad) invalida a
+  // rota — é o gate que faz o pane_spawn respeitar o squad salvo no caminho
+  // agêntico, sem nunca colapsar o roster heterogêneo.
+  if ((reservation.squadId ?? null) !== (mission.squad_id ?? null)) {
+    throw new Error(
+      'route_reservation_squad_mismatch: a reserva não pertence ao squad vinculado ' +
+        'da missão; chame nexus_route_task novamente',
     );
   }
   if (reservation.consumedAt !== undefined) {
@@ -223,7 +243,7 @@ export class MissionRouteReservationLedger {
     const db = this.#binding.writeDatabase();
     db.transaction(() => {
       const missionRaw = db
-        .prepare('SELECT status, intent_version FROM missions WHERE id = ?')
+        .prepare('SELECT status, intent_version, squad_id FROM missions WHERE id = ?')
         .get(missionId);
       if (!missionRaw) {
         throw new Error(`route_reservation_invalid: missão não encontrada: ${missionId}`);
@@ -234,12 +254,16 @@ export class MissionRouteReservationLedger {
           'route_reservation_invalid: nexus_route_task só reserva rota para missão running',
         );
       }
+      // Vincula a reserva ao squad selado ATUAL da missão. O squad selado é uma
+      // cópia imutável (mission-runtime-*/agentic-runtime-*) que carrega o roster
+      // COMPLETO com o cli/provider de cada membro — o binding preserva a
+      // composição heterogênea, nunca colapsa num provider só.
       db.prepare(
         `INSERT INTO mission_route_reservations
            (id, mission_id, intent_version, task_preview, decision_json,
-            adapter_id, model, effort, created_at, expires_at,
+            adapter_id, model, effort, squad_id, created_at, expires_at,
             consumed_at, consumed_by_session)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`,
       ).run(
         reservationId,
         missionId,
@@ -249,6 +273,7 @@ export class MissionRouteReservationLedger {
         decision.adapterId,
         decision.model ?? null,
         decision.effort ?? null,
+        mission.squad_id,
         createdAt,
         expiresAt,
       );
@@ -320,7 +345,7 @@ export class MissionRouteReservationLedger {
     const raw = db
       .prepare(
         `SELECT id, mission_id, intent_version, task_preview, decision_json,
-                adapter_id, model, effort, created_at, expires_at,
+                adapter_id, model, effort, squad_id, created_at, expires_at,
                 consumed_at, consumed_by_session
          FROM mission_route_reservations
          WHERE mission_id = ?
@@ -359,7 +384,7 @@ export class MissionRouteReservationLedger {
     const raw = db
       .prepare(
         `SELECT id, mission_id, intent_version, task_preview, decision_json,
-                adapter_id, model, effort, created_at, expires_at,
+                adapter_id, model, effort, squad_id, created_at, expires_at,
                 consumed_at, consumed_by_session
          FROM mission_route_reservations WHERE id = ?`,
       )
@@ -377,7 +402,7 @@ export class MissionRouteReservationLedger {
       expected.reservationId,
     );
     const missionRaw = db
-      .prepare('SELECT status, intent_version FROM missions WHERE id = ?')
+      .prepare('SELECT status, intent_version, squad_id FROM missions WHERE id = ?')
       .get(expected.missionId);
     if (!reservation || !missionRaw) {
       throw new Error(

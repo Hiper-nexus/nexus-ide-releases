@@ -25,6 +25,9 @@ const squadMocks = vi.hoisted(() => {
     createdAt: '1',
     builtin: false,
     orchestratorInstructions: '',
+    // Roster HETEROGÊNEO de propósito (codex + claude): o vínculo do squad tem
+    // que preservar o provider de cada membro e NUNCA colapsar num só (a raiz
+    // da antiga "roteamento monocultura").
     agents: [
       {
         id: 'maestro',
@@ -42,6 +45,14 @@ const squadMocks = vi.hoisted(() => {
         model: 'gpt-5.6-sol',
         effort: 'high',
       },
+      {
+        id: 'sentinel',
+        agentName: 'Sentinel',
+        category: 'reviewer',
+        cli: 'claude',
+        model: 'claude-opus-4-8',
+        effort: 'high',
+      },
     ],
   };
   return {
@@ -52,6 +63,11 @@ const squadMocks = vi.hoisted(() => {
       );
       return matches.length === 1 ? { squad, agent: matches[0] } : null;
     }),
+    squadRoutableCliIds: vi.fn((squadId: string) =>
+      squadId === squad.id
+        ? new Set(squad.agents.map((agent) => agent.cli))
+        : new Set<string>(),
+    ),
   };
 });
 
@@ -59,7 +75,11 @@ vi.mock('./squad-store', async () => {
   const actual = await vi.importActual<typeof import('./squad-store')>(
     './squad-store',
   );
-  return { ...actual, findAgentInSquad: squadMocks.findAgentInSquad };
+  return {
+    ...actual,
+    findAgentInSquad: squadMocks.findAgentInSquad,
+    squadRoutableCliIds: squadMocks.squadRoutableCliIds,
+  };
 });
 
 const testDir = fs.mkdtempSync(
@@ -235,6 +255,38 @@ describe('RouteReservation enforced no nexus_pane_spawn (RC3)', () => {
 
     expect(message).toContain('route_reservation_required');
     expect(message).toContain('nexus_route_task');
+  });
+
+  it('recusa spawn ad-hoc com CLI fora do squad vinculado e oferece o roster INTEIRO, sem monocultura (RC4 + roteamento monocultura)', async () => {
+    recordRouteDecision({ adapterId: 'grok', model: 'grok-4.1' });
+    const message = await spawnError({
+      adapterId: 'grok',
+      model: 'grok-4.1',
+      effort: 'medium',
+    });
+
+    // grok não é CLI de nenhum agente do squad vinculado → o gate recusa antes
+    // de qualquer efeito, matando "agêntico ignora squad salvo".
+    expect(message).toContain('squad_binding_violation');
+    expect(message).toMatch(/route-test-squad|squad/i);
+    // O gate apresenta o roster HETEROGÊNEO por inteiro (codex E claude), nunca
+    // colapsa num provider só — a morte da "roteamento monocultura".
+    expect(message).toContain('codex');
+    expect(message).toContain('claude');
+  });
+
+  it('permite spawn ad-hoc com CLI do squad vinculado (não é agente fora do squad)', async () => {
+    recordRouteDecision({ adapterId: 'codex', model: 'gpt-5.6-sol' });
+    const message = await spawnError({
+      adapterId: 'codex',
+      model: 'gpt-5.6-sol',
+      effort: 'medium',
+    });
+
+    // codex É CLI de um agente do squad → o gate de squad não barra; segue para
+    // o gate de reserva (comportamento pré-existente preservado).
+    expect(message).not.toContain('squad_binding_violation');
+    expect(message).toContain('route_reservation_required');
   });
 
   it('aceita a tuple exata da reserva e só então alcança o próximo gate', async () => {

@@ -657,6 +657,20 @@ export function deleteSquad(id: string): boolean {
   return true;
 }
 
+/**
+ * The exact set of provider CLIs a squad's roster authorizes. Empty when the
+ * squad id is unknown to the store. This binds the agentic route/spawn path to
+ * the mission's sealed squad: a route is only reserved for — and an ad-hoc
+ * worker (no agentName) may only run on — a CLI the squad roster contains, so
+ * the agentic path can no longer ignore the saved squad. An empty set means the
+ * squad is unresolvable and the gate stays fail-open (no membership to judge).
+ */
+export function squadRoutableCliIds(squadId: string): ReadonlySet<string> {
+  const squad = squads.get(squadId);
+  if (!squad) return new Set();
+  return new Set(squad.agents.map((agent) => agent.cli));
+}
+
 /** Find an agent across all squads by id or agentName. */
 export function findAgent(
   ref: string,
