@@ -104,6 +104,12 @@ export const squadAgentSchema = z.preprocess(
       .max(128)
       .nullable()
       .optional(),
+    /**
+     * Nome da persona associada a este agente-folha. O persona-store resolve
+     * o name → system-prompt no momento do spawn. Ausente = sem injeção de
+     * persona. Completamente independente da persona de voz (voice-ipc.ts).
+     */
+    persona: authorityString(128, 'agent persona').optional(),
   }),
 );
 export type SquadAgent = z.infer<typeof squadAgentSchema>;

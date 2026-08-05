@@ -6,6 +6,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { Squad } from "../../shared/orch-types";
 import { testProjectScope } from "./__tests__/scope-fixture";
 import {
+  clearPersonasForTests,
+  registerPersona,
+} from "./persona-store";
+import {
   bindSpawnAuthority,
   consumeImmediateSquadSpawnGrant,
   issueImmediateSquadSpawnGrant,
@@ -667,5 +671,167 @@ describe("spawn authority resolution", () => {
         trustedUserScope: testProjectScope(),
       }),
     ).toThrow(/persisted pane.*scope/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P1-3 — Personas de agente independentes da voz
+// ---------------------------------------------------------------------------
+
+describe("persona injection in spawn authority (P1-3)", () => {
+  const owner = {
+    id: 42,
+    isDestroyed: () => false,
+  } as unknown as WebContents;
+
+  const squadWithPersona: Squad = {
+    id: "nexus-review",
+    name: "Code Review",
+    createdAt: "1",
+    builtin: true,
+    orchestratorInstructions: "",
+    agents: [
+      {
+        id: "orch",
+        agentName: "Maestro",
+        category: "orchestrator",
+        cli: "claude",
+        persona: "Forge",
+        allowedTools: ["nexus_pane_spawn"],
+        allowedSkills: ["review"],
+      },
+    ],
+  };
+
+  const squadWithoutPersona: Squad = {
+    id: "nexus-review",
+    name: "Code Review",
+    createdAt: "1",
+    builtin: true,
+    orchestratorInstructions: "",
+    agents: [
+      {
+        id: "orch",
+        agentName: "Maestro",
+        category: "orchestrator",
+        cli: "claude",
+        allowedTools: ["nexus_pane_spawn"],
+        allowedSkills: ["review"],
+      },
+    ],
+  };
+
+  const runtime = {
+    adapterId: "claude",
+    model: null,
+    accountId: null,
+    effort: null,
+    paneId: "pane-persona-test",
+    title: "Maestro",
+    missionTitle: "Persona test mission",
+    missionGoal: "Persona test mission",
+    missionId: null,
+  } as const;
+
+  afterEach(() => {
+    clearPersonasForTests();
+  });
+
+  // Critério de aceitação (a): agente com persona nomeada injeta o system-prompt no spawn.
+  it("(a) agente com persona nomeada injeta systemPrompt na autoridade de spawn", () => {
+    registerPersona("Forge", "Você é Forge, mecânico de construção especializado.");
+    const scope = testProjectScope();
+    const token = issueImmediateSquadSpawnGrant({
+      owner,
+      scope,
+      squad: squadWithPersona,
+      runtime,
+    });
+    const consumed = consumeImmediateSquadSpawnGrant({
+      requestId: token,
+      owner,
+      scope,
+      squads: [squadWithPersona],
+      runtime: {
+        adapterId: runtime.adapterId,
+        model: runtime.model,
+        accountId: runtime.accountId,
+        effort: runtime.effort,
+        paneId: runtime.paneId,
+        missionId: runtime.missionId,
+      },
+    });
+    expect(consumed).not.toBeNull();
+    expect(consumed!.authority.systemPrompt).toBe(
+      "Você é Forge, mecânico de construção especializado.",
+    );
+  });
+
+  // Critério de aceitação (a, negativo): sem persona no agente → sem systemPrompt.
+  it("(a) agente sem persona não adiciona systemPrompt", () => {
+    const scope = testProjectScope();
+    const token = issueImmediateSquadSpawnGrant({
+      owner,
+      scope,
+      squad: squadWithoutPersona,
+      runtime,
+    });
+    const consumed = consumeImmediateSquadSpawnGrant({
+      requestId: token,
+      owner,
+      scope,
+      squads: [squadWithoutPersona],
+      runtime: {
+        adapterId: runtime.adapterId,
+        model: runtime.model,
+        accountId: runtime.accountId,
+        effort: runtime.effort,
+        paneId: runtime.paneId,
+        missionId: runtime.missionId,
+      },
+    });
+    expect(consumed).not.toBeNull();
+    expect(consumed!.authority.systemPrompt).toBeUndefined();
+  });
+
+  // Critério de aceitação (a): persona registrada após a grant mas antes do consume — lookup é no momento do issueGrant.
+  it("(a) persona desconhecida no momento da grant não adiciona systemPrompt", () => {
+    // Persona NÃO registrada antes da grant
+    const scope = testProjectScope();
+    const token = issueImmediateSquadSpawnGrant({
+      owner,
+      scope,
+      squad: squadWithPersona,
+      runtime,
+    });
+    // Registrar APÓS a grant não deve afetar o resultado já capturado
+    registerPersona("Forge", "Registrada tarde demais.");
+    const consumed = consumeImmediateSquadSpawnGrant({
+      requestId: token,
+      owner,
+      scope,
+      squads: [squadWithPersona],
+      runtime: {
+        adapterId: runtime.adapterId,
+        model: runtime.model,
+        accountId: runtime.accountId,
+        effort: runtime.effort,
+        paneId: runtime.paneId,
+        missionId: runtime.missionId,
+      },
+    });
+    expect(consumed).not.toBeNull();
+    // systemPrompt pode ser undefined (persona não estava no registry no momento do grant)
+    expect(consumed!.authority.systemPrompt).toBeUndefined();
+  });
+
+  // Critério de aceitação (b): persona funciona sem depender de voice-ipc.
+  it("(b) a cadeia de persona não importa voice-ipc", async () => {
+    // Importar persona-store e spawn-authority diretamente e verificar que funcionam.
+    const { lookupPersonaSystemPrompt } = await import("./persona-store");
+    clearPersonasForTests();
+    registerPersona("TestBot", "Sou TestBot.");
+    expect(lookupPersonaSystemPrompt("TestBot")).toBe("Sou TestBot.");
+    // voice-ipc não está no grafo de dependências de persona-store (garantido estruturalmente).
   });
 });

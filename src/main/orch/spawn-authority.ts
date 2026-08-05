@@ -7,6 +7,7 @@ import type {
 } from "../../shared/orch-types";
 import type { ProjectExecutionScope } from "../../shared/types";
 import type { PendingSpawnMeta } from "./pane-registry";
+import { lookupPersonaSystemPrompt } from "./persona-store";
 import { snapshotSquadAuthority } from "./squad-authority-snapshot";
 import { resolveCwdForScope } from "./workspace-path";
 
@@ -16,6 +17,12 @@ export type SpawnAuthority = Omit<PendingSpawnMeta, "scope"> & {
   authoritySeal?: MissionPaneAuthoritySeal;
   immediateMissionTitle?: string;
   immediateMissionGoal?: string;
+  /**
+   * System-prompt injetado pela persona do agente no momento do spawn.
+   * Resolvido pelo persona-store a partir do campo `persona` do SquadAgent.
+   * Completamente independente da persona de voz (voice-ipc.ts).
+   */
+  systemPrompt?: string;
 };
 
 export type SpawnAuthoritySource =
@@ -56,12 +63,18 @@ function immediateSquadAuthority(
     squad.agents.find((candidate) => candidate.category === "orchestrator") ??
     null;
   if (!agent) return null;
+  const resolvedSystemPrompt = agent.persona
+    ? (lookupPersonaSystemPrompt(agent.persona) ?? undefined)
+    : undefined;
   return {
     squadId: squad.id,
     agentName: agent.agentName,
     allowedTools: agent.allowedTools ?? null,
     allowedSkills: agent.allowedSkills ?? null,
     role: "orchestrator",
+    ...(resolvedSystemPrompt !== undefined
+      ? { systemPrompt: resolvedSystemPrompt }
+      : {}),
     ...(scope
       ? {
           scope: Object.freeze({ ...scope }),
