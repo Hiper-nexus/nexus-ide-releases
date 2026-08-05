@@ -80,7 +80,7 @@ export function assertWorkspacePolicyAllowsPathWrite(
   targetPath: string,
 ): void {
   assertWorkspacePolicyAllowsWrite(policy);
-  if (policy === 'default' && !isInsidePath(workspaceRoot, targetPath)) {
+  if ((policy === 'default' || policy === 'same_checkout') && !isInsidePath(workspaceRoot, targetPath)) {
     throw new Error(
       `workspace policy 'default' denies writes outside the workspace. ` +
         `Update workspace settings to 'write_external'.`,

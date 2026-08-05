@@ -38,7 +38,7 @@ export const WORKSPACE_CHANNELS = {
  * - `write_external` read + write inside AND outside the workspace root
  * - `read_only`      reads only — no writes permitted anywhere
  */
-export type WorkspacePolicy = 'default' | 'write_external' | 'read_only';
+export type WorkspacePolicy = 'default' | 'same_checkout' | 'write_external' | 'read_only';
 
 export const WORKSPACE_POLICY_CHANNELS = {
   get: 'workspace:policy:get',

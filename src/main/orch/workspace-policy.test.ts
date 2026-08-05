@@ -76,6 +76,32 @@ describe('assertWorkspacePolicyAllowsPathWrite', () => {
   });
 });
 
+// ── same_checkout (mirrors default: write inside workspace only) ──────────────
+
+describe('assertWorkspacePolicyAllowsWrite — same_checkout', () => {
+  it('permits writes (path check deferred to path-level assertion)', () => {
+    expect(() => assertWorkspacePolicyAllowsWrite('same_checkout')).not.toThrow();
+  });
+});
+
+describe('assertWorkspacePolicyAllowsPathWrite — same_checkout', () => {
+  it('permits write inside workspace', () => {
+    expect(() =>
+      assertWorkspacePolicyAllowsPathWrite('same_checkout', WORKSPACE_ROOT, INSIDE_PATH),
+    ).not.toThrow();
+  });
+
+  it('denies write outside workspace and signals settings update', () => {
+    expect(() =>
+      assertWorkspacePolicyAllowsPathWrite(
+        'same_checkout',
+        WORKSPACE_ROOT,
+        OUTSIDE_PATH,
+      ),
+    ).toThrow(/update.*settings/i);
+  });
+});
+
 // ── resolveWritePathWithPolicy (workspace-path) ───────────────────────────────
 
 describe('resolveWritePathWithPolicy', () => {
@@ -113,5 +139,19 @@ describe('resolveWritePathWithPolicy', () => {
     expect(() =>
       resolveWritePathWithPolicy('default', WORKSPACE_ROOT, OUTSIDE_PATH),
     ).toThrow(/update.*settings/i);
+  });
+
+  it('same_checkout — denies path outside workspace and signals settings update', () => {
+    expect(() =>
+      resolveWritePathWithPolicy('same_checkout', WORKSPACE_ROOT, OUTSIDE_PATH),
+    ).toThrow(/update.*settings/i);
+  });
+
+  it('same_checkout — does not throw a policy denial for a path inside the workspace', () => {
+    // resolvePathInsideRoot calls realpathSync which fails on fake paths in unit tests,
+    // but the policy check itself must not throw the "update settings" error.
+    expect(() =>
+      resolveWritePathWithPolicy('same_checkout', WORKSPACE_ROOT, INSIDE_PATH),
+    ).not.toThrow(/update.*settings/i);
   });
 });
