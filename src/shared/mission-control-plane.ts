@@ -131,7 +131,7 @@ export interface MissionControlSnapshot {
 }
 
 /** Dispatch que representa trabalho corrente de um pane (espelha o schedule). */
-const ACTIVE_DISPATCH_STATES: ReadonlySet<string> = new Set([
+export const ACTIVE_DISPATCH_STATES: ReadonlySet<string> = new Set([
   'claimed',
   'routed',
   'spawning',

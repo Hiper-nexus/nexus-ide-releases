@@ -10,6 +10,7 @@ import {
 } from '../../shared/mission-recovery-policy';
 import { askConfirm } from '../state/confirm-store';
 import { MissionWaveSchedule } from './MissionWaveSchedule';
+import { MissionControlBoard } from './MissionControlBoard';
 
 const MISSION_LEARNINGS_LIMIT = 65_536;
 
@@ -302,6 +303,7 @@ export function MissionResultDetail({
           )}
         </section>
       )}
+      <MissionControlBoard missionId={mission.id} />
       <MissionWaveSchedule missionId={mission.id} />
       <MissionRecoveryStatus mission={mission} />
       <MissionResultContent mission={mission} />

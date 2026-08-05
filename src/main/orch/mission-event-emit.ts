@@ -230,5 +230,64 @@ export function emitGuidedFanoutSerialized(
   });
 }
 
+/**
+ * P0-9 visibility: the scheduler's wave width, named. Silent throttling is
+ * itself a bug — a mission running 2 panes on an 11-story plan must say whether
+ * that is the approved `maxWorkers`, the host cores, the layout pane budget, or
+ * a legitimately sequential phase. Callers are edge-triggered (see
+ * `reportWaveConcurrency`), so this never floods the 5s tick. Never throws.
+ */
+export function emitWaveConcurrencyVerdictEvent(
+  scope: ProjectExecutionScope,
+  missionId: string,
+  diagnosis: {
+    readonly phase: string;
+    readonly binding: string;
+    readonly effectiveCap: number;
+    readonly readyCount: number;
+    readonly deferredByCap: number;
+    readonly operatorRaisable: boolean;
+    readonly summary: string;
+  },
+): void {
+  try {
+    emitMissionIntentEvent({
+      name: 'wave_concurrency_verdict',
+      missionId,
+      reason: diagnosis.summary.slice(0, 200),
+      meta: {
+        phase: diagnosis.phase,
+        binding: diagnosis.binding,
+        effectiveCap: diagnosis.effectiveCap,
+        readyCount: diagnosis.readyCount,
+        deferredByCap: diagnosis.deferredByCap,
+        operatorRaisable: diagnosis.operatorRaisable,
+      },
+    });
+  } catch (err) {
+    console.warn('[mission-events] wave_concurrency_verdict intent failed:', err);
+  }
+  emitMissionEvent(scope, {
+    missionId,
+    runId: `wave-concurrency-${missionId}`,
+    type: 'custom',
+    origin: 'main',
+    idempotencyKey: boundedIdempotencyKey(
+      `wave_concurrency:${missionId}:${diagnosis.phase}:${diagnosis.binding}:` +
+        `${diagnosis.effectiveCap}:${diagnosis.readyCount}:${diagnosis.deferredByCap}`,
+    ),
+    payload: {
+      kind: 'wave_concurrency_verdict',
+      phase: diagnosis.phase,
+      binding: diagnosis.binding,
+      effectiveCap: diagnosis.effectiveCap,
+      readyCount: diagnosis.readyCount,
+      deferredByCap: diagnosis.deferredByCap,
+      operatorRaisable: diagnosis.operatorRaisable,
+      summary: diagnosis.summary.slice(0, 200),
+    },
+  });
+}
+
 /** Test helper re-export. */
 export { createMissionEventFixture };

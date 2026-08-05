@@ -171,7 +171,14 @@ export interface SchedulerRuntimeDeps {
    */
   reRunSequentially(taskId: string, reason: string): Promise<void>;
   onTelemetry?(telemetry: SchedulerTelemetry, plan: SchedulePlan): void;
-  onDecision?(decision: ScheduleDecision): void;
+  /**
+   * Observability hook for the wave decision. Receives the RESOLVED config the
+   * tick actually scheduled against (post parallel-flag / adaptive-ladder /
+   * operator-choice resolution), never the raw `scheduleConfig()` — diagnosing
+   * the raw ceiling would name a constraint that is not the one binding the
+   * wave. Production wires the operator-facing concurrency verdict here.
+   */
+  onDecision?(decision: ScheduleDecision, config: ScheduleConfig): void;
 }
 
 /**
@@ -305,7 +312,7 @@ export async function runSchedulerTick(
     deps.now(),
     deps.expandFiles,
   );
-  deps.onDecision?.(decision);
+  deps.onDecision?.(decision, config);
 
   let nextState = state;
   const dispatched: string[] = [];

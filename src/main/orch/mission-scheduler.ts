@@ -116,6 +116,115 @@ export function effectiveConcurrencyCap(config: ScheduleConfig): number {
   return Math.max(0, Math.min(configured, coreBudget, panes));
 }
 
+// ── Wave concurrency visibility (P0-9: silent throttling is itself a bug) ────
+
+/** Which ceiling actually pinned this wave. `none` = nothing was throttled. */
+export type WaveConcurrencyBinding = 'configured' | 'cores' | 'panes' | 'none';
+
+/**
+ * `sequential` — the PLAN offered ≤1 eligible unit (legitimately serial phase).
+ * `throttled`  — eligible units existed that the ceiling refused to admit.
+ * `parallel`   — the whole ready set fit inside the wave.
+ */
+export type WaveConcurrencyPhase = 'sequential' | 'parallel' | 'throttled';
+
+export interface WaveConcurrencyDiagnosis {
+  readonly effectiveCap: number;
+  readonly binding: WaveConcurrencyBinding;
+  readonly readyCount: number;
+  readonly admittedCount: number;
+  /** Eligible units the ceiling ALONE excluded (overlap deferrals not counted). */
+  readonly deferredByCap: number;
+  readonly phase: WaveConcurrencyPhase;
+  /** True only when raising the mission's own maxWorkers would widen the wave. */
+  readonly operatorRaisable: boolean;
+  /** Operator-facing pt-BR line; the mission surface shows this verbatim. */
+  readonly summary: string;
+}
+
+function describeWaveConcurrency(
+  input: Omit<WaveConcurrencyDiagnosis, 'summary'> & {
+    readonly cores: number;
+  },
+): string {
+  const units = (count: number): string =>
+    count === 1 ? '1 unidade elegível' : `${count} unidades elegíveis`;
+  if (input.phase === 'sequential') {
+    return (
+      `fase sequencial: ${units(input.readyCount)} — ` +
+      'o plano, não o teto de concorrência, define a largura desta onda.'
+    );
+  }
+  if (input.phase === 'parallel') {
+    return `onda paralela: ${units(input.readyCount)}, todas admitidas.`;
+  }
+  const head = `onda limitada a ${input.effectiveCap} de ${units(input.readyCount)}`;
+  if (input.binding === 'cores') {
+    const coreBudget = Math.max(1, Math.floor(input.cores) - 2);
+    return (
+      `${head} — teto de núcleos do host ` +
+      `(${Math.floor(input.cores)} núcleos - 2 = ${coreBudget}).`
+    );
+  }
+  if (input.binding === 'panes') {
+    return `${head} — teto de panes do layout (${input.effectiveCap}).`;
+  }
+  return (
+    `${head} — teto maxWorkers=${input.effectiveCap} da missão ` +
+    '(ajustável no contrato aprovado).'
+  );
+}
+
+/**
+ * Explain, in operator terms, why a wave is as wide as it is.
+ *
+ * The scheduler already computes every number needed to answer "why are only N
+ * panes alive?" — and then drops them on the floor, which is exactly how a
+ * legitimate ceiling becomes indistinguishable from a broken fan-out. This
+ * turns the decision into a named, visible verdict:
+ *  - a genuinely serial phase says so instead of looking like a stall;
+ *  - a real throttle names the BINDING ceiling and whether the operator can
+ *    raise it (only the mission's own maxWorkers is operator-raisable; host
+ *    cores and the layout pane budget are not);
+ *  - an overlap deferral is never mislabelled as a capacity problem.
+ * On a tie the operator-raisable ceiling wins, so the reported fix is the one
+ * that would actually widen the wave.
+ */
+export function diagnoseWaveConcurrency(
+  config: ScheduleConfig,
+  decision: ScheduleDecision,
+): WaveConcurrencyDiagnosis {
+  const effectiveCap = effectiveConcurrencyCap(config);
+  const configured = Math.max(0, Math.floor(config.configuredCap));
+  const coreBudget = Math.max(1, Math.floor(config.cores) - 2);
+  const readyCount = decision.readyIds.length;
+  const admittedCount = decision.admittedIds.length;
+  const deferredByCap = Math.max(0, readyCount - effectiveCap);
+  const phase: WaveConcurrencyPhase =
+    deferredByCap > 0 ? 'throttled' : readyCount <= 1 ? 'sequential' : 'parallel';
+  const binding: WaveConcurrencyBinding =
+    phase !== 'throttled'
+      ? 'none'
+      : configured === effectiveCap
+        ? 'configured'
+        : coreBudget === effectiveCap
+          ? 'cores'
+          : 'panes';
+  const base = {
+    effectiveCap,
+    binding,
+    readyCount,
+    admittedCount,
+    deferredByCap,
+    phase,
+    operatorRaisable: binding === 'configured',
+  };
+  return Object.freeze({
+    ...base,
+    summary: describeWaveConcurrency({ ...base, cores: config.cores }),
+  });
+}
+
 /** Adaptive cap (P4): start 2–3, widen only with evidence of low conflict. */
 export interface AdaptiveCapState {
   readonly currentCap: number;

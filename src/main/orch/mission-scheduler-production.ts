@@ -25,6 +25,8 @@ import {
   type SchedulerRuntimeTask,
 } from "./mission-scheduler-runtime";
 import { taskRecordToSchedulerTask } from "./mission-scheduler-io";
+import { diagnoseWaveConcurrency } from "./mission-scheduler";
+import { reportWaveConcurrency } from "./wave-concurrency-verdict";
 import {
   MISSION_SCHEDULER_CONCURRENCY_LIMITS,
   runBoundedMissionSchedulerPass,
@@ -1561,6 +1563,19 @@ async function tickMission(
             !isOperatorChoicePolicy(getOrchSettings().squadCliPolicy),
           useConfiguredCapForCurrentWave: () =>
             isTeamReadOnlyFanoutSchedulerWave(currentSchedulerTasks),
+          // P0-9: every number needed to answer "why are only N panes alive?"
+          // is computed here and was previously dropped on the floor, which is
+          // exactly how a legitimate ceiling becomes indistinguishable from a
+          // broken fan-out. Diagnose against the SAME config the wave used —
+          // the adaptive/operator-choice resolution the tick applied — so the
+          // reported ceiling is the one that actually bound it.
+          onDecision: (decision, waveConfig) => {
+            reportWaveConcurrency(
+              scope,
+              missionId,
+              diagnoseWaveConcurrency(waveConfig, decision),
+            );
+          },
           now: () => configured?.now?.() ?? Date.now(),
           dispatchTask: (request, dispatchSignal) =>
             dispatchMissionSchedulerTask(
