@@ -6,7 +6,9 @@ export type JarvisRealtimeMetric =
   | 'audio_in_to_transcript_delta_ms'
   | 'transcript_final_to_action_ms'
   | 'transcript_final_to_audio_out_ms'
-  | 'roundtrip_ms';
+  | 'roundtrip_ms'
+  /** Tempo entre a criação do provider (boot) e o primeiro chunk de áudio emitido. */
+  | 'cold_start_ms';
 
 export interface JarvisMetricRecord {
   ts: string;
@@ -31,6 +33,11 @@ interface TurnTiming {
   firstAudioOutAt: number | null;
   transcriptToActionLogged: boolean;
   transcriptToAudioLogged: boolean;
+}
+
+interface SessionTiming {
+  bootAt: number;
+  firstChunkLogged: boolean;
 }
 
 const DEFAULT_METRICS_FILE = path.join(
@@ -75,11 +82,37 @@ export class JarvisMetricsLogger {
 
 export class JarvisLatencyTracker {
   private readonly turns = new Map<string, TurnTiming>();
+  private readonly sessions = new Map<string, SessionTiming>();
 
   constructor(
     private readonly logger: JarvisMetricsLogger,
     private readonly nowMs: () => number = Date.now,
   ) {}
+
+  /**
+   * Chamado imediatamente quando o provider é criado (boot da sessão).
+   * Inicia a medição de cold-start para esta sessão.
+   */
+  markSessionBoot(sessionId: string): void {
+    if (this.sessions.has(sessionId)) return;
+    this.sessions.set(sessionId, { bootAt: this.nowMs(), firstChunkLogged: false });
+  }
+
+  /**
+   * Chamado quando o primeiro chunk de áudio chega do provider.
+   * Fecha a medição de cold-start e registra `cold_start_ms`.
+   */
+  markFirstAudioChunk(sessionId: string): void {
+    const session = this.sessions.get(sessionId);
+    if (!session || session.firstChunkLogged) return;
+    session.firstChunkLogged = true;
+    this.logger.log('cold_start_ms', this.nowMs() - session.bootAt, sessionId);
+  }
+
+  /** Remove o estado de cold-start de uma sessão encerrada. */
+  discardSession(sessionId: string): void {
+    this.sessions.delete(sessionId);
+  }
 
   markAudioIn(sessionId: string, turnId?: string): void {
     const key = this.turnKey(sessionId, turnId);

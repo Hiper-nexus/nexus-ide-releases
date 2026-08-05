@@ -157,6 +157,53 @@ export function createRealtimeProvider(
   return createRealtimeProviderCandidates(options)[0]?.provider ?? null;
 }
 
+/**
+ * Cache de uma sessão pré-aquecida (warm-path).
+ *
+ * `prime` cria um provider em avanço para que a próxima ativação por wake-word
+ * possa chamá-lo com zero latência de construção. `consume` devolve o provider
+ * pré-aquecido e limpa o cache (uso único).
+ *
+ * Observação: o reuso de socket/sessão ao vivo está deliberadamente FORA deste
+ * escopo — ver `live-grace-lifecycle.test.ts` (guard contra zombie server-side).
+ * Este cache cobre apenas a fase de *construção do objeto provider*, não a
+ * reconexão de transporte.
+ */
+export class RealtimeProviderCache {
+  private cached: RealtimeProviderCandidate | null = null;
+
+  /**
+   * Pré-aquece o cache criando um candidato de provider.
+   * Retorna `false` se não houver nenhum provider disponível para as opções dadas.
+   */
+  prime(options: RealtimeProviderFactoryOptions): boolean {
+    const candidate = createRealtimeProviderCandidates(options)[0];
+    if (!candidate) return false;
+    this.cached = candidate;
+    return true;
+  }
+
+  /**
+   * Devolve o provider pré-aquecido e limpa o cache.
+   * Retorna `null` se o cache estiver vazio (nenhum `prime` anterior com sucesso).
+   */
+  consume(): RealtimeProviderCandidate | null {
+    const entry = this.cached;
+    this.cached = null;
+    return entry;
+  }
+
+  /** `true` quando há um provider pré-aquecido aguardando consumo. */
+  get isWarm(): boolean {
+    return this.cached !== null;
+  }
+
+  /** Descarta o provider pré-aquecido sem consumir. */
+  clear(): void {
+    this.cached = null;
+  }
+}
+
 export function createRealtimeProviderCandidates(
   options: RealtimeProviderFactoryOptions,
 ): RealtimeProviderCandidate[] {
