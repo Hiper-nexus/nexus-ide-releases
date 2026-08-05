@@ -589,7 +589,14 @@ export function MissionWizardReview({
                               !selectableOrchestratorAdapters.some(
                                 (adapter) => adapter.id === a.cli,
                               ) && (
-                                <option value={a.cli} disabled>
+                                // Part (a): the CURRENT Maestro must stay a
+                                // selectable value even when it is not in the
+                                // credentialed set — a disabled current option
+                                // renders a dead picker the operator cannot
+                                // operate. Availability is surfaced by the
+                                // label + blocked reason, not by killing the
+                                // control.
+                                <option value={a.cli}>
                                   {cliAdapter?.label ?? a.cli} ·{" "}
                                   {operatorChoice
                                     ? orchestratorModelAuthenticated
@@ -635,7 +642,11 @@ export function MissionWizardReview({
                                 <option
                                   key={x.id}
                                   value={x.id}
-                                  disabled={!qualified}
+                                  // Part (a): never disable the option that is
+                                  // already selected — the operator must always
+                                  // be able to keep/re-affirm the current CLI,
+                                  // even if it is not currently qualified.
+                                  disabled={!qualified && x.id !== a.cli}
                                 >
                                   {x.label} ·{" "}
                                   {workerCapabilityLabel(
@@ -680,14 +691,18 @@ export function MissionWizardReview({
                             <option
                               key={m}
                               value={m}
+                              // Part (a): the currently selected model stays
+                              // selectable so the picker is never dead; only
+                              // OTHER unauthenticated models are disabled.
                               disabled={
-                                !cliAdapter ||
-                                !isAdapterModelAuthenticated(
-                                  cliAdapter,
-                                  providers,
-                                  m,
-                                  accounts,
-                                )
+                                m !== (a.model ?? cliAdapter?.models.default) &&
+                                (!cliAdapter ||
+                                  !isAdapterModelAuthenticated(
+                                    cliAdapter,
+                                    providers,
+                                    m,
+                                    accounts,
+                                  ))
                               }
                             >
                               {modelLabel(a.cli, m)}

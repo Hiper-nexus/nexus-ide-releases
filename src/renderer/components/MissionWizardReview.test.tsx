@@ -1009,3 +1009,76 @@ describe("MissionWizardReview advisory worker lane", () => {
     act(() => root.unmount());
   });
 });
+
+describe("MissionWizardReview picker liveness (part a)", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  // Regression: an accidental gate could disable EVERY option — including the
+  // one already selected — leaving a dead picker the operator cannot operate.
+  // The current CLI/model must always remain a selectable value.
+  it("keeps the current CLI and model selectable even when logged out", () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const worker: SquadAgent = {
+      id: "worker-loggedout",
+      agentName: "Executor Kimi",
+      category: "executor",
+      cli: "kimi",
+      model: "kimi-code/kimi-for-coding",
+      effort: "medium",
+      allowedTools: ["Bash"],
+    };
+    act(() => {
+      root.render(
+        <MissionWizardReview
+          squadCliPolicy="governed"
+          squad={{ ...squad, agents: [orchestrator, worker] }}
+          roster={[orchestrator, worker]}
+          adapters={[codex, kimi]}
+          providers={[
+            provider(codex),
+            // Kimi is present but logged out: without the part (a) fix its
+            // options are all disabled and the picker is dead.
+            provider(kimi, { authStrategy: "login-needed", authReadyModels: [] }),
+          ]}
+          highlightedAgentId={null}
+          error={null}
+          spawning={false}
+          rosterSaved={false}
+          rosterInvalidAgent={null}
+          onSaveRoster={vi.fn()}
+          onUpdateAgent={vi.fn()}
+          onError={vi.fn()}
+          onBack={vi.fn()}
+          onCancel={vi.fn()}
+          onLaunch={vi.fn()}
+        />,
+      );
+    });
+
+    const cliSelect = host.querySelector<HTMLSelectElement>(
+      'select[aria-label="Provider de Executor Kimi"]',
+    );
+    const currentCliOption = [...(cliSelect?.options ?? [])].find(
+      (option) => option.value === "kimi",
+    );
+    expect(currentCliOption).toBeTruthy();
+    expect(currentCliOption?.disabled).toBe(false);
+    expect(cliSelect?.value).toBe("kimi");
+
+    const modelSelect = host.querySelector<HTMLSelectElement>(
+      'select[aria-label="Modelo de Executor Kimi"]',
+    );
+    const currentModelOption = [...(modelSelect?.options ?? [])].find(
+      (option) => option.value === "kimi-code/kimi-for-coding",
+    );
+    expect(currentModelOption).toBeTruthy();
+    expect(currentModelOption?.disabled).toBe(false);
+    expect(modelSelect?.value).toBe("kimi-code/kimi-for-coding");
+
+    act(() => root.unmount());
+  });
+});
