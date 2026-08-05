@@ -13,6 +13,66 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.26.0',
+  date: '2026-08-05',
+  codename: 'O loop que fecha — da largura ao encerramento',
+  summary:
+    'A missão passa a fechar sozinha: worker que entrega encerra por padrão, a ' +
+    'rota resolvida vincula o dispatch, o plano guiado abre em escritores ' +
+    'paralelos com propriedade disjunta e o fan-out largo drena até o fim. ' +
+    'Sair do app não pendura mais, o ditado chega no pane certo e o editor de ' +
+    'squad para de reescrever o roster do operador em silêncio.',
+  highlights: [
+    {
+      title: 'Fan-out real, não um escritor por construção',
+      detail:
+        'A decomposição emite propriedade disjunta por story, então dois ou ' +
+        'mais workers escrevem em paralelo sem colidir. Metas em linguagem ' +
+        'natural também ficam elegíveis à topologia de fan-out, e o dreno de ' +
+        'ondas fecha frentes de até 85 stories sem deixar cauda presa.',
+    },
+    {
+      title: 'O loop encerra sozinho',
+      detail:
+        'O TTL pós-handoff vem ligado por padrão em missões guiadas e ' +
+        'autopiloto: o worker que entregou é encerrado e acorda o ' +
+        'orquestrador. Boot de worker que não executa é reapado pelo ' +
+        'watchdog, e revisor bloqueado por dependência tem desfecho terminal.',
+    },
+    {
+      title: 'A rota resolvida vira lei',
+      detail:
+        'No caminho agêntico o squad e a rota vinculam o dispatch: o loop não ' +
+        'ignora mais o roster salvo nem cai em monocultura, e o pane_spawn ' +
+        'respeita o roster da missão.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Sair do app sem travar',
+      detail:
+        'O comando de sair ganhou prazo global e backstop de app.exit, e o ' +
+        'término dos processos de terminal escala de forma limitada de ' +
+        'SIGTERM para SIGKILL.',
+    },
+    {
+      title: 'Ditado entregue no pane certo',
+      detail:
+        'A entrega do ditado ao pane foi corrigida com instrumentação de ' +
+        'confirmação: o texto chega ao destino e sinaliza que a entrega ocorreu.',
+    },
+    {
+      title: 'Editor de squad não descarta edição',
+      detail:
+        'Trocar modo ou política preserva as edições não salvas do roster; a ' +
+        'opção já selecionada nunca é desabilitada; e em modo governado ' +
+        'qualquer provider credenciado é override selecionável, com o não ' +
+        'credenciado ainda bloqueado por login necessário.',
+    },
+  ],
+};
+
+export const RELEASE_02501: AppRelease = {
   version: '0.25.1',
   date: '2026-08-04',
   codename: 'Missão fluida — entrega sem sumir',
