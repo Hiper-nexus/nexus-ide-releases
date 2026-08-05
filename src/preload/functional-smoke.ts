@@ -81,6 +81,22 @@ export interface FunctionalSmokeApi {
       title: string;
       squadId: string;
     }): Promise<unknown>;
+    /** Lane do operador — deve RECUSAR sessões sem vínculo de missão. */
+    sendPaneOperatorInput(input: {
+      sessionId: string;
+      data: string;
+    }): Promise<boolean>;
+  };
+  pty: {
+    spawn(req: {
+      cwd?: string;
+      cols: number;
+      rows: number;
+      kind: 'shell';
+    }): Promise<unknown>;
+    writeConfirmed(sessionId: string, data: string): Promise<boolean>;
+    kill(sessionId: string): void;
+    onData(sessionId: string, cb: (data: string) => void): () => void;
   };
   mcp: {
     invoke(tool: string, args?: Record<string, unknown>): Promise<McpResult>;
@@ -421,6 +437,88 @@ export async function runFunctionalSmokeProbes(
     if (!(await probe(name, () => api.mcp.invoke(tool, args), validate))) {
       return { ok: false, probes, failedProbe: name };
     }
+  }
+
+  // Ditado (regressão v0.25.1/v0.26.0): prova as DUAS lanes de entrega com
+  // recibo real no binário empacotado — voz nunca mais shipada na fé.
+  // Lane terminal: PTY real recebe e ECOA o texto (recibo ponta a ponta).
+  // Lane do operador + sessão fantasma: as recusas de autoridade continuam
+  // vivas (sem false-green) — é a fronteira que o fix 61f91fb1 contorna
+  // legitimamente via missão governada.
+  const DICTATION_MARKER = 'nexus-dictation-smoke-marker';
+  let dictationEcho = '';
+  const dictationCleanup: {
+    sessionId: string | null;
+    unsubscribe: (() => void) | null;
+  } = { sessionId: null, unsubscribe: null };
+  try {
+    if (
+      !(await probe(
+        'dictation-delivery',
+        async () => {
+          const spawned = await api.pty.spawn({
+            cwd: workspacePath,
+            cols: 80,
+            rows: 24,
+            kind: 'shell',
+          });
+          if (
+            !isRecord(spawned) ||
+            spawned.ok !== true ||
+            typeof spawned.sessionId !== 'string'
+          ) {
+            return false;
+          }
+          dictationCleanup.sessionId = spawned.sessionId;
+          dictationCleanup.unsubscribe = api.pty.onData(
+            spawned.sessionId,
+            (data) => {
+              dictationEcho += data;
+            },
+          );
+          const accepted = await api.pty.writeConfirmed(
+            spawned.sessionId,
+            DICTATION_MARKER,
+          );
+          if (!accepted) return false;
+          for (
+            let attempt = 0;
+            attempt < 50 && !dictationEcho.includes(DICTATION_MARKER);
+            attempt += 1
+          ) {
+            await delay(100);
+          }
+          return dictationEcho.includes(DICTATION_MARKER);
+        },
+        (value) => value === true,
+      ))
+    ) {
+      return { ok: false, probes, failedProbe: 'dictation-delivery' };
+    }
+
+    if (
+      !(await probe(
+        'dictation-governed-lane',
+        async () => {
+          if (!dictationCleanup.sessionId) return false;
+          const operatorDenied = await api.orch.sendPaneOperatorInput({
+            sessionId: dictationCleanup.sessionId,
+            data: 'nexus-smoke',
+          });
+          const ghostDenied = await api.pty.writeConfirmed(
+            'pty-ghost-nexus-smoke',
+            'x',
+          );
+          return operatorDenied === false && ghostDenied === false;
+        },
+        (value) => value === true,
+      ))
+    ) {
+      return { ok: false, probes, failedProbe: 'dictation-governed-lane' };
+    }
+  } finally {
+    if (dictationCleanup.unsubscribe) dictationCleanup.unsubscribe();
+    if (dictationCleanup.sessionId) api.pty.kill(dictationCleanup.sessionId);
   }
 
   return { ok: true, probes, toolCount, adapterCount };

@@ -47,7 +47,26 @@ function successfulApi(): FunctionalSmokeApi {
         intentVersion: 0,
         orchestratorSessionId: undefined,
       })),
+      // Sessão de shell plana NÃO tem missão: a lane do operador recusa.
+      sendPaneOperatorInput: vi.fn(async () => false),
     },
+    pty: (() => {
+      const listeners = new Map<string, (data: string) => void>();
+      return {
+        spawn: vi.fn(async () => ({ ok: true, sessionId: 'pty-smoke-1' })),
+        writeConfirmed: vi.fn(async (sessionId: string, data: string) => {
+          if (sessionId !== 'pty-smoke-1') return false;
+          // Eco do TTY: o texto digitado volta pelo stream de dados.
+          queueMicrotask(() => listeners.get(sessionId)?.(data));
+          return true;
+        }),
+        kill: vi.fn(),
+        onData: vi.fn((sessionId: string, cb: (data: string) => void) => {
+          listeners.set(sessionId, cb);
+          return () => listeners.delete(sessionId);
+        }),
+      };
+    })(),
     mcp: {
       invoke: vi.fn(async (tool: string) => {
         if (tool === 'nexus_file_read') {
@@ -286,5 +305,59 @@ describe('runFunctionalSmokeProbes', () => {
     if (result.ok) throw new Error('expected the voice runtime probe to fail');
     expect(result.failedProbe).toBe('voice-runtime');
     expect(JSON.stringify(result)).not.toContain('secret provider output');
+  });
+});
+
+describe('runFunctionalSmokeProbes — ditado obrigatório no smoke empacotado', () => {
+  it('prova entrega real no PTY e recusas de autoridade das duas lanes', async () => {
+    const api = successfulApi();
+
+    const result = await runFunctionalSmokeProbes(api, '/tmp/nexus-smoke-workspace', {
+      delay: async () => {},
+      probeTimeoutMs: 100,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.probes).toContain('dictation-delivery');
+    expect(result.probes).toContain('dictation-governed-lane');
+    expect(api.pty.writeConfirmed).toHaveBeenCalledWith(
+      'pty-smoke-1',
+      'nexus-dictation-smoke-marker',
+    );
+    expect(api.orch.sendPaneOperatorInput).toHaveBeenCalledWith({
+      sessionId: 'pty-smoke-1',
+      data: 'nexus-smoke',
+    });
+    expect(api.pty.kill).toHaveBeenCalledWith('pty-smoke-1');
+  });
+
+  it('falha quando o PTY aceita a escrita mas o texto nunca ecoa (entrega morta)', async () => {
+    const api = successfulApi();
+    api.pty.writeConfirmed = vi.fn(async (sessionId: string) =>
+      sessionId === 'pty-smoke-1',
+    );
+
+    const result = await runFunctionalSmokeProbes(api, '/tmp/nexus-smoke-workspace', {
+      delay: async () => {},
+      probeTimeoutMs: 100,
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('esperava falha');
+    expect(result.failedProbe).toBe('dictation-delivery');
+  });
+
+  it('falha quando a lane do operador aceita sessão sem missão (gate morto)', async () => {
+    const api = successfulApi();
+    api.orch.sendPaneOperatorInput = vi.fn(async () => true);
+
+    const result = await runFunctionalSmokeProbes(api, '/tmp/nexus-smoke-workspace', {
+      delay: async () => {},
+      probeTimeoutMs: 100,
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('esperava falha');
+    expect(result.failedProbe).toBe('dictation-governed-lane');
   });
 });

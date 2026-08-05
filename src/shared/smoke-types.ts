@@ -23,6 +23,8 @@ export const FUNCTIONAL_SMOKE_REQUIRED_PROBES = [
   'mcp-ui-read',
   'mcp-file-read',
   'mcp-write-guard',
+  'dictation-delivery',
+  'dictation-governed-lane',
 ] as const;
 
 /** Squad id used only by packaged functional smoke intent-arm probe. */
