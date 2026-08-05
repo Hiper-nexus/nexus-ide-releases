@@ -360,6 +360,10 @@ vi.mock('../pty/pty-manager', () => ({
     harness.operatorInput.writes.push({ sessionId, data });
     return true;
   }),
+  // initOrchestration → initWorkerHandoffTtl (worker-handoff-ttl.ts) taps
+  // session exits desde 869c08f7; espelha o contrato real
+  // tapSessionExit(cb) => unsubscribe (pty-manager.ts:257).
+  tapSessionExit: vi.fn((_cb: (sessionId: string) => void) => () => {}),
 }));
 vi.mock('./renderer-mission-authority', () => ({
   RendererMissionAuthority: class {

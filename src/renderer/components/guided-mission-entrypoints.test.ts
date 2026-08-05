@@ -28,10 +28,20 @@ describe("guided mission entrypoints", () => {
     expect(cmdN).not.toContain("openForAgentic()");
     expect(home).toContain("<MissionComposer");
     expect(home).toContain("onSubmit={submitObjective}");
+    // Contrato atual do HomeDeck, deliberado em 8e0e78fc e documentado em
+    // HomeDeck.submitObjective: "Com texto: piloto automático (objetivo-first).
+    // Sem texto: seletor de modo (Livre / Squad / Agêntico) — o operador
+    // escolhe o formato, não cai direto no REVISAR de um time default."
+    // Antes desse commit o caminho sem texto chamava openAgentic() e o
+    // HomeDeck não podia sequer referenciar openForMission; hoje o seletor de
+    // modo É openForMission (mesma autoridade exigida do ⌘N na linha acima),
+    // então a guarda passa a exigir o binding em vez de proibi-lo.
     expect(home).toContain("openAgentic(intent.trim())");
-    expect(home).toContain("openAgentic();");
+    expect(home).toContain("openMission();");
     expect(home).not.toContain('className="home-deck__btn"');
-    expect(home).not.toContain("openForMission");
+    expect(home).toContain(
+      "const openMission = useMissionWizardStore((s) => s.openForMission);",
+    );
     expect(workspaceBar).toMatch(
       /workspace-bar__btn--primary[\s\S]*?onClick=\{\(\) => openMission\(\)\}/,
     );
