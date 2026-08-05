@@ -10,7 +10,9 @@ import {
 } from '../persistence/renderer-workspace-scope';
 import {
   getOwnedPaneAuthzInfoBySession,
+  getPaneRuntimeAuthorityBySession,
   listPaneSnapshots,
+  requestMissionPaneClose,
   type OwnedPaneAuthzInfo,
 } from './pane-registry';
 import { getProjectDomainStores } from './project-domain-store-registry';
@@ -32,10 +34,28 @@ import { publishObserverFrame, snapshotObserverFrames } from './observer-bus';
  * injetar "Continue" pode repetir efeitos que a sessão anterior já executou.
  * Um flag por sessão evita spam: só re-alerta se o worker voltar a produzir
  * output/atividade e travar DE NOVO.
+ *
+ * Falha DISTINTA — boot não-executante (paridade Overclock, P0-6): um worker
+ * nasce com a tarefa no argv (birth-executing) e deve começar a executar em
+ * segundos. Se ele boota mas NUNCA engaja a tarefa — prompt vazio, login preso
+ * que não bate padrão conhecido, sessão que fica idle além da janela de boot
+ * (~15s) — é o "pane vazio" que jamais entrega handoff e trava a missão para
+ * sempre. Ao contrário do silêncio-BUSY (silêncio legítimo de um build longo),
+ * um boot não-executante é uma FALHA: o watchdog o reapa (fecha o pane com a
+ * mesma autoridade física do teardown) e acorda o orquestrador via handoff
+ * sintético `failed`, para re-despachar/respawnar. A rede de segurança do
+ * everExecuted garante ZERO falso-positivo: um worker que entrou em busy/
+ * waiting (executou) nunca é reapeado por este caminho.
  */
 
 export const STALL_SCAN_MS = 30_000;
 export const STALL_MS = 10 * 60_000;
+/**
+ * Janela de boot: um worker que nunca executou dentro deste intervalo desde que
+ * o watchdog o observou é tratado como boot não-executante. ~15s espelha o
+ * `pane_wait_idle` do Overclock (confirmação de boot ≤15s).
+ */
+export const BOOT_STALL_MS = 15_000;
 
 export interface StallCandidate {
   role?: 'orchestrator' | 'worker';
@@ -56,6 +76,36 @@ export function shouldFlagStall(
   return now - c.lastActivityAt >= stallMs;
 }
 
+export interface BootStallCandidate {
+  role?: 'orchestrator' | 'worker';
+  state: string;
+  /** Já foi observado em qualquer estado engajado (busy/waiting) desde o boot? */
+  everExecuted: boolean;
+  /** Quando o watchdog começou a observar este worker. */
+  bootAt: number;
+  alreadyReaped: boolean;
+}
+
+/**
+ * Decisão pura (unit-testável): este worker é um boot não-executante que deve
+ * ser reapeado agora? Só workers; nunca quem já executou (everExecuted) ou já
+ * saiu do idle; idle > janela de boot; idempotente.
+ */
+export function shouldReapNonExecutingBoot(
+  c: BootStallCandidate,
+  now: number,
+  bootWindowMs: number = BOOT_STALL_MS,
+): boolean {
+  if (c.role !== 'worker') return false;
+  if (c.everExecuted) return false;
+  if (c.state === 'exited') return false;
+  // Qualquer estado não-idle significa que o CLI engajou a tarefa (executando
+  // ou esperando permissão) — não é um pane vazio.
+  if (c.state !== 'idle') return false;
+  if (c.alreadyReaped) return false;
+  return now - c.bootAt >= bootWindowMs;
+}
+
 interface WatchAuthority {
   readonly owner: OwnedPaneAuthzInfo['owner'];
   readonly paneId: string;
@@ -66,8 +116,13 @@ interface WatchAuthority {
 
 interface WatchState {
   readonly authority: WatchAuthority;
+  /** Quando o watchdog começou a observar (nunca resetado por atividade). */
+  readonly bootAt: number;
   lastActivityAt: number;
   isFlagged: boolean;
+  /** Já observado em estado engajado (busy/waiting) — desarma o boot-reap. */
+  everExecuted: boolean;
+  isReaped: boolean;
 }
 
 const watches = new Map<string, WatchState>();
@@ -124,7 +179,16 @@ function resolveAuthority(sessionId: string): WatchAuthority | null {
   });
 }
 
-function scan(now: number = Date.now(), stallMs: number = STALL_MS): void {
+/** Estados que provam que o CLI engajou a tarefa (executando ou aguardando). */
+function isEngagedState(state: string): boolean {
+  return state !== 'idle' && state !== 'exited';
+}
+
+function scan(
+  now: number = Date.now(),
+  stallMs: number = STALL_MS,
+  bootWindowMs: number = BOOT_STALL_MS,
+): void {
   const liveKeys = new Set<string>();
   for (const pane of listPaneSnapshots()) {
     if (!pane.sessionId) continue;
@@ -134,9 +198,34 @@ function scan(now: number = Date.now(), stallMs: number = STALL_MS): void {
     liveKeys.add(key);
     let watch = watches.get(key);
     if (!watch) {
-      watch = { authority, lastActivityAt: now, isFlagged: false };
+      watch = {
+        authority,
+        bootAt: now,
+        lastActivityAt: now,
+        isFlagged: false,
+        everExecuted: isEngagedState(pane.state),
+        isReaped: false,
+      };
       watches.set(key, watch);
     }
+    // Um scan que flagra o worker em estado engajado prova que ele executou —
+    // captura transições que o tap de estado possa ter perdido.
+    if (isEngagedState(pane.state)) watch.everExecuted = true;
+
+    // Boot não-executante (P0-6): nasceu, nunca executou, idle além da janela.
+    const bootCandidate: BootStallCandidate = {
+      role: 'worker',
+      state: pane.state,
+      everExecuted: watch.everExecuted,
+      bootAt: watch.bootAt,
+      alreadyReaped: watch.isReaped,
+    };
+    if (shouldReapNonExecutingBoot(bootCandidate, now, bootWindowMs)) {
+      watch.isReaped = true;
+      reapNonExecutingBoot(authority, pane, now);
+      continue;
+    }
+
     const candidate: StallCandidate = {
       role: 'worker',
       state: pane.state,
@@ -181,13 +270,99 @@ function scan(now: number = Date.now(), stallMs: number = STALL_MS): void {
   }
 }
 
-function recordActivity(sessionId: string, now: number = Date.now()): void {
+/**
+ * Reapa um boot não-executante: fecha o pane com a identidade física exata (a
+ * mesma autoridade do teardown da missão) e acorda o orquestrador com um
+ * handoff sintético `failed`, pela mesma via dos handoffs reais — para que a
+ * missão re-despache/respawne em vez de esperar para sempre por um pane vazio.
+ */
+function reapNonExecutingBoot(
+  authority: WatchAuthority,
+  pane: ReturnType<typeof listPaneSnapshots>[number],
+  now: number,
+): void {
+  const previousFrames = snapshotObserverFrames(authority.sessionId);
+  publishObserverFrame({
+    sessionId: authority.sessionId,
+    paneId: authority.paneId,
+    missionId: authority.missionId,
+    at: now,
+    kind: 'stall_suspected',
+    payload: {
+      silentForMs: BOOT_STALL_MS,
+      lastSeq: previousFrames.at(-1)?.seq ?? null,
+      detector: 'boot-stall-watchdog',
+    },
+  });
+
+  const handoff = getProjectDomainStores(authority.scope).handoffs.submit({
+    status: 'failed',
+    summary:
+      `watchdog: o worker "${pane.agentName ?? pane.title}" (${pane.paneId}) ` +
+      `nasceu mas nunca começou a executar (idle há mais de ` +
+      `${Math.round(BOOT_STALL_MS / 1000)}s sem entrar em execução). ` +
+      `Boot não-executante ("pane vazio"): prompt vazio, login preso ou boot ` +
+      `que travou. O pane foi reapeado; re-despache/respawne a tarefa.`,
+    missionId: authority.missionId,
+    sessionId: authority.sessionId,
+    fromAgent: 'nexus-watchdog',
+  });
+  onHandoffSubmitted(handoff, authority.scope);
+
+  const runtime = getPaneRuntimeAuthorityBySession(authority.sessionId);
+  if (
+    runtime &&
+    runtime.role === 'worker' &&
+    runtime.missionId &&
+    runtime.scope &&
+    runtime.paneId === authority.paneId
+  ) {
+    void Promise.resolve(
+      requestMissionPaneClose({
+        paneId: runtime.paneId,
+        missionId: runtime.missionId,
+        scope: runtime.scope,
+        ...(runtime.sessionId ? { sessionId: runtime.sessionId } : {}),
+        role: 'worker',
+        ...(runtime.workerIncarnationId
+          ? { workerIncarnationId: runtime.workerIncarnationId }
+          : {}),
+      }),
+    ).catch((error) => {
+      console.warn('[watchdog] boot reap close failed:', error);
+    });
+  }
+  console.warn(
+    `[watchdog] non-executing boot reaped: ${pane.paneId} (idle boot > ${Math.round(
+      BOOT_STALL_MS / 1000,
+    )}s)`,
+  );
+}
+
+function recordActivity(
+  sessionId: string,
+  now: number = Date.now(),
+  executed = false,
+): void {
   const authority = resolveAuthority(sessionId);
   if (!authority) return;
-  watches.set(watchKey(authority), {
+  const key = watchKey(authority);
+  const existing = watches.get(key);
+  if (existing) {
+    // Preserva bootAt/everExecuted/isReaped — só atividade nova re-arma o
+    // silêncio-BUSY; o boot-reap depende do histórico de execução.
+    existing.lastActivityAt = now;
+    existing.isFlagged = false;
+    if (executed) existing.everExecuted = true;
+    return;
+  }
+  watches.set(key, {
     authority,
+    bootAt: now,
     lastActivityAt: now,
     isFlagged: false,
+    everExecuted: executed,
+    isReaped: false,
   });
 }
 
@@ -209,7 +384,9 @@ export function prepareStallWatchdog(): void {
   // even when its TUI emits no new printable bytes. Ignoring those heartbeats
   // made the Doctor call a visibly coding agent "travado".
   untapState = tapSessionState((sessionId, state) => {
-    if (state !== 'exited') recordActivity(sessionId);
+    // Um estado engajado (busy/waiting) prova que o worker executou — marca
+    // everExecuted para desarmar o boot-reap definitivamente.
+    if (state !== 'exited') recordActivity(sessionId, Date.now(), isEngagedState(state));
   });
   untapExit = tapSessionExit((sessionId) => {
     for (const [key, watch] of [...watches]) {

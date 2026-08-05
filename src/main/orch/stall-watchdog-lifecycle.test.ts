@@ -11,6 +11,7 @@ const ptyMocks = vi.hoisted(() => ({
 const paneMocks = vi.hoisted(() => ({
   panes: [] as Array<Record<string, unknown>>,
   authorities: new Map<string, unknown>(),
+  closed: [] as Array<Record<string, unknown>>,
 }));
 
 const scopeMocks = vi.hoisted(() => ({
@@ -57,6 +58,13 @@ vi.mock('./pane-registry', () => ({
   getOwnedPaneAuthzInfoBySession: vi.fn(
     (ref: string) => paneMocks.authorities.get(ref) ?? null,
   ),
+  getPaneRuntimeAuthorityBySession: vi.fn(
+    (ref: string) => paneMocks.authorities.get(ref) ?? null,
+  ),
+  requestMissionPaneClose: vi.fn((input: Record<string, unknown>) => {
+    paneMocks.closed.push(input);
+    return Promise.resolve(true);
+  }),
 }));
 
 vi.mock('../persistence/renderer-workspace-scope', () => ({
@@ -107,6 +115,7 @@ function addWorker(options: {
   sessionId: string;
   missionId: string;
   scope: ProjectExecutionScope;
+  state?: string;
 }): void {
   const owner = { id: options.ownerId };
   paneMocks.panes.push({
@@ -114,7 +123,7 @@ function addWorker(options: {
     sessionId: options.sessionId,
     title: options.paneId,
     kind: 'cli-agent',
-    state: 'busy',
+    state: options.state ?? 'busy',
   });
   paneMocks.authorities.set(options.sessionId, {
     owner,
@@ -139,6 +148,7 @@ beforeEach(() => {
   paneMocks.authorities.clear();
   scopeMocks.scopesByOwner.clear();
   scopeMocks.listeners.length = 0;
+  paneMocks.closed.length = 0;
   handoffMocks.submitted.length = 0;
   handoffMocks.delivered.mockClear();
 });
@@ -285,6 +295,67 @@ describe('stall watchdog scoped lifecycle', () => {
     ptyMocks.exitTaps[0]('session-a');
     await vi.advanceTimersByTimeAsync(watchdog.STALL_MS);
 
+    expect(handoffMocks.submitted).toEqual([]);
+    watchdog.shutdownStallWatchdog();
+  });
+
+  it('reapa boot não-executante e acorda o orquestrador para respawn', async () => {
+    const watchdog = await import('./stall-watchdog');
+    const scope = testProjectScope();
+    addWorker({
+      ownerId: 606,
+      paneId: 'empty-pane',
+      sessionId: 'empty-session',
+      missionId: 'mission-e',
+      scope,
+      state: 'idle',
+    });
+    watchdog.initStallWatchdog();
+    // O PTY emite o estado idle no boot; o watchdog passa a observar em t=0.
+    ptyMocks.stateTaps[0]?.('empty-session', 'idle');
+
+    // Uma varredura além da janela de boot (~15s < STALL_SCAN_MS=30s).
+    await vi.advanceTimersByTimeAsync(watchdog.STALL_SCAN_MS);
+
+    expect(paneMocks.closed).toEqual([
+      expect.objectContaining({
+        paneId: 'empty-pane',
+        missionId: 'mission-e',
+        role: 'worker',
+        sessionId: 'empty-session',
+      }),
+    ]);
+    expect(handoffMocks.submitted).toEqual([
+      expect.objectContaining({
+        input: expect.objectContaining({
+          status: 'failed',
+          missionId: 'mission-e',
+          sessionId: 'empty-session',
+        }),
+      }),
+    ]);
+    expect(handoffMocks.delivered).toHaveBeenCalledTimes(1);
+    watchdog.shutdownStallWatchdog();
+  });
+
+  it('NUNCA reapa worker que executa normalmente (sem falso-positivo)', async () => {
+    const watchdog = await import('./stall-watchdog');
+    const scope = testProjectScope();
+    addWorker({
+      ownerId: 707,
+      paneId: 'busy-pane',
+      sessionId: 'busy-session',
+      missionId: 'mission-b',
+      scope,
+      state: 'busy',
+    });
+    watchdog.initStallWatchdog();
+    ptyMocks.stateTaps[0]?.('busy-session', 'busy');
+
+    // Muitas janelas de boot passam, mas ainda dentro do silêncio-BUSY (10min).
+    await vi.advanceTimersByTimeAsync(watchdog.STALL_SCAN_MS * 5);
+
+    expect(paneMocks.closed).toEqual([]);
     expect(handoffMocks.submitted).toEqual([]);
     watchdog.shutdownStallWatchdog();
   });
