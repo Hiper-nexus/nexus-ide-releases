@@ -10,8 +10,14 @@ import { useGamificationStore } from '../state/gamification-store';
 import {
   getPaneSessionId,
   submitPromptToPane,
+  submitPromptToPaneConfirmed,
 } from '../terminal/terminal-host';
 import { useLayoutStore } from '../state/layout-store';
+import { listPanes } from '../lib/split-tree';
+import {
+  deliverDictation,
+  type DictationRouteResult,
+} from './dictation-delivery';
 import { useSessionStateStore } from '../state/session-state-store';
 import { buildJarvisContext, findOrchestratorPane } from './jarvis-screen-context';
 import {
@@ -348,14 +354,25 @@ export function routePrompt(text: string): string | null {
 }
 
 /**
- * Ditado (Space na janela): sempre injeta no pane focado, ignorando o routing
- * global (que pode estar em 'jarvis'/'orchestrator' para os gatilhos Jarvis).
+ * Ditado (Space na janela): injeta no pane focado (ou num fallback vivo),
+ * ignorando o routing global (que pode estar em 'jarvis'/'orchestrator' para os
+ * gatilhos Jarvis). Entrega CONFIRMADA — reporta a verdade ao HUD em vez do
+ * false-green do fire-and-forget: o resultado só é `ok` quando o PTY confirma a
+ * injeção. Cada salto (emit → resolução → IPC → escrita) vai pro voice.log via
+ * logVoiceEvent, então uma morte silenciosa futura fica rastreável.
  */
-export function routeDictation(text: string): string | null {
-  const { focusedPaneId } = useLayoutStore.getState();
-  if (!focusedPaneId) return null;
-  const ok = submitPromptToPane(focusedPaneId, text);
-  return ok ? focusedPaneId : null;
+export function routeDictation(text: string): Promise<DictationRouteResult> {
+  return deliverDictation(text, {
+    getFocusedPaneId: () => useLayoutStore.getState().focusedPaneId,
+    listLivePaneIds: () =>
+      listPanes(useLayoutStore.getState().root)
+        .map((pane) => pane.id)
+        .filter((id) => getPaneSessionId(id) != null),
+    getSessionId: (paneId) => getPaneSessionId(paneId),
+    deliverConfirmed: (paneId, promptText, sessionId) =>
+      submitPromptToPaneConfirmed(paneId, promptText, sessionId),
+    log: logVoiceEvent,
+  });
 }
 
 /** Accumulate PTY output after prompt injection and resolve with agent reply. */

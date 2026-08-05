@@ -336,9 +336,13 @@ export async function finishAndProcess(
         latencyMs: cachedSttLatencyMs,
       });
       store.setStatus('routing');
-      const paneId = routeDictation(transcript);
-      if (!paneId) {
-        store.setError('No focused pane to route the dictation into.');
+      const routed = await routeDictation(transcript);
+      if (!routed.ok) {
+        store.setError(
+          routed.reason === 'delivery-failed'
+            ? 'O ditado chegou ao pane mas a injeção não foi confirmada — nada foi escrito.'
+            : 'Nenhum pane ativo para receber o ditado.',
+        );
         return;
       }
       store.setStatus('idle');
