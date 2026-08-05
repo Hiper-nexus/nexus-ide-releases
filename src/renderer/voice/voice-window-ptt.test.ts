@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   attachWindowPtt,
   codeMatchesPttKey,
@@ -47,52 +47,165 @@ describe('shouldIgnoreWindowPttTarget', () => {
 });
 
 describe('attachWindowPtt', () => {
-  it('starts on Space keydown and stops on keyup when enabled', () => {
-    const onStart = vi.fn();
-    const onStop = vi.fn();
+  const HOLD_MS = 250;
+
+  function attach(overrides: {
+    onStart?: () => void;
+    onStop?: () => void;
+    emitSpace?: (target: EventTarget | null, count: number) => void;
+    isEnabled?: () => boolean;
+  } = {}) {
+    const onStart = vi.fn(overrides.onStart);
+    const onStop = vi.fn(overrides.onStop);
+    const emitSpace = vi.fn(overrides.emitSpace);
     const dispose = attachWindowPtt(
-      { onStart, onStop },
+      { onStart, onStop, emitSpace },
       {
         getKeyCode: () => 'Space',
-        isEnabled: () => true,
+        isEnabled: overrides.isEnabled ?? (() => true),
+        getHoldMs: () => HOLD_MS,
       },
     );
+    return { onStart, onStop, emitSpace, dispose };
+  }
 
-    const term = document.createElement('div');
-    term.className = 'xterm';
-    document.body.appendChild(term);
+  function keydown(repeat = false): KeyboardEvent {
+    const event = new KeyboardEvent('keydown', {
+      code: 'Space',
+      bubbles: true,
+      cancelable: true,
+      repeat,
+    });
+    window.dispatchEvent(event);
+    return event;
+  }
 
-    term.dispatchEvent(
-      new KeyboardEvent('keydown', { code: 'Space', bubbles: true }),
-    );
-    // Listener is on window capture — dispatch on window.
-    window.dispatchEvent(
-      new KeyboardEvent('keydown', { code: 'Space', bubbles: true }),
-    );
+  function keyup(): KeyboardEvent {
+    const event = new KeyboardEvent('keyup', {
+      code: 'Space',
+      bubbles: true,
+      cancelable: true,
+    });
+    window.dispatchEvent(event);
+    return event;
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('um toque em Space NÃO arma ditado e entrega o espaço ao pane', () => {
+    const { onStart, onStop, emitSpace, dispose } = attach();
+
+    keydown();
+    vi.advanceTimersByTime(HOLD_MS - 50);
+    keyup();
+
+    expect(onStart).not.toHaveBeenCalled();
+    expect(onStop).not.toHaveBeenCalled();
+    expect(emitSpace).toHaveBeenCalledTimes(1);
+    expect(emitSpace.mock.calls[0]![1]).toBe(1);
+
+    // O limiar antigo não pode armar nada depois do toque.
+    vi.advanceTimersByTime(HOLD_MS * 4);
+    expect(onStart).not.toHaveBeenCalled();
+    dispose();
+  });
+
+  it('digitar uma frase com espaços normais nunca arma ditado', () => {
+    const { onStart, onStop, emitSpace, dispose } = attach();
+
+    for (let i = 0; i < 5; i += 1) {
+      keydown();
+      vi.advanceTimersByTime(60);
+      keyup();
+      vi.advanceTimersByTime(120);
+    }
+
+    expect(onStart).not.toHaveBeenCalled();
+    expect(onStop).not.toHaveBeenCalled();
+    expect(emitSpace).toHaveBeenCalledTimes(5);
+    dispose();
+  });
+
+  it('segurar Space além do limiar arma o ditado e soltar encerra', () => {
+    const { onStart, onStop, emitSpace, dispose } = attach();
+
+    keydown();
+    vi.advanceTimersByTime(HOLD_MS);
     expect(onStart).toHaveBeenCalledTimes(1);
 
-    window.dispatchEvent(
-      new KeyboardEvent('keyup', { code: 'Space', bubbles: true }),
-    );
+    keyup();
     expect(onStop).toHaveBeenCalledTimes(1);
-
+    expect(emitSpace).not.toHaveBeenCalled();
     dispose();
-    term.remove();
+  });
+
+  it('auto-repeat antes do limiar é digitação: libera a tecla e não arma', () => {
+    const { onStart, emitSpace, dispose } = attach();
+
+    keydown();
+    vi.advanceTimersByTime(HOLD_MS - 100);
+    const repeat = keydown(true);
+
+    expect(repeat.defaultPrevented).toBe(false);
+    expect(emitSpace).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(HOLD_MS * 4);
+    expect(onStart).not.toHaveBeenCalled();
+    dispose();
+  });
+
+  it('retém a tecla no keydown para que o espaço não vaze antes da decisão', () => {
+    const { dispose } = attach();
+    const down = keydown();
+    expect(down.defaultPrevented).toBe(true);
+    keyup();
+    dispose();
+  });
+
+  it('perder o foco durante o hold encerra o ditado', () => {
+    const { onStart, onStop, dispose } = attach();
+    keydown();
+    vi.advanceTimersByTime(HOLD_MS);
+    expect(onStart).toHaveBeenCalledTimes(1);
+
+    window.dispatchEvent(new Event('blur'));
+    expect(onStop).toHaveBeenCalledTimes(1);
+    dispose();
   });
 
   it('ignores Space while disabled', () => {
-    const onStart = vi.fn();
-    const dispose = attachWindowPtt(
-      { onStart, onStop: vi.fn() },
-      {
-        getKeyCode: () => 'Space',
-        isEnabled: () => false,
-      },
-    );
-    window.dispatchEvent(
-      new KeyboardEvent('keydown', { code: 'Space', bubbles: true }),
-    );
+    const { onStart, emitSpace, dispose } = attach({ isEnabled: () => false });
+    keydown();
+    vi.advanceTimersByTime(HOLD_MS * 2);
+    keyup();
     expect(onStart).not.toHaveBeenCalled();
+    expect(emitSpace).not.toHaveBeenCalled();
+    dispose();
+  });
+
+  it('não intercepta Space em campos de formulário', () => {
+    const { onStart, emitSpace, dispose } = attach();
+    const input = document.createElement('input');
+    document.body.appendChild(input);
+
+    const event = new KeyboardEvent('keydown', {
+      code: 'Space',
+      bubbles: true,
+      cancelable: true,
+    });
+    input.dispatchEvent(event);
+    vi.advanceTimersByTime(HOLD_MS * 2);
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(onStart).not.toHaveBeenCalled();
+    expect(emitSpace).not.toHaveBeenCalled();
+    input.remove();
     dispose();
   });
 });

@@ -6,16 +6,26 @@
  * for keydown/keyup while Nexus is frontmost, holds to talk, and on release
  * the dictation pipeline transcribes (Groq PT→EN) into the focused pane.
  *
- * Space is ALWAYS dictation — never a Jarvis turn. Jarvis stays on her own
- * triggers: global ⌘⇧Space, wake word and click. While this listener is
- * enabled, Space is reserved for dictation (same as typical ADE NexusVoice).
- * Forms/settings keep normal Space; switch the shortcut to a modified combo
- * (e.g. ⌘⇧Space, hotkeyScope global) to type spaces freely in the terminal.
+ * Space é ditado APENAS EM HOLD. Um toque é um espaço normal e chega ao pane:
+ * o keydown é retido até o limiar (`HoldToTalkDiscriminator`) e, se a tecla
+ * subir antes dele, o caractere é entregue e nenhum ditado é armado — sem
+ * start/stop e portanto sem o HUD piscando. Jarvis segue nos gatilhos dela:
+ * ⌘⇧Space global, wake word e clique. Forms/settings nunca são interceptados.
  */
+
+import {
+  HOLD_TO_TALK_THRESHOLD_MS,
+  HoldToTalkDiscriminator,
+} from './hold-to-talk';
 
 export interface WindowPttCallbacks {
   onStart: () => void;
   onStop: () => void;
+  /**
+   * Entrega os espaços retidos ao destino que tinha foco quando a tecla desceu
+   * (toque rápido, ou auto-repeat que provou ser digitação).
+   */
+  emitSpace?: (target: EventTarget | null, count: number) => void;
 }
 
 export interface WindowPttOptions {
@@ -23,6 +33,8 @@ export interface WindowPttOptions {
   getKeyCode: () => string;
   /** False when capture is disabled or hotkeyScope is global. */
   isEnabled: () => boolean;
+  /** Limiar de hold em ms; default `HOLD_TO_TALK_THRESHOLD_MS`. */
+  getHoldMs?: () => number;
 }
 
 /** Elements where Space must keep its normal meaning (forms, settings). */
@@ -69,13 +81,47 @@ export function codeMatchesPttKey(eventCode: string, keyCode: string): boolean {
 
 /**
  * Attach document-level hold-to-talk. Returns a disposer.
- * keydown starts capture; keyup (or blur) stops — mirrors ADE hold hold mode.
+ *
+ * O keydown NÃO arma nada: ele retém a tecla e agenda o limiar. Só quando o
+ * limiar vence com a tecla ainda pressionada o ditado começa. Toque rápido
+ * devolve o espaço ao destino original via `emitSpace`.
  */
 export function attachWindowPtt(
   callbacks: WindowPttCallbacks,
   options: WindowPttOptions,
 ): () => void {
-  let capturing = false;
+  const discriminator = new HoldToTalkDiscriminator();
+  let thresholdTimer: ReturnType<typeof setTimeout> | null = null;
+  let heldTarget: EventTarget | null = null;
+
+  const clearThreshold = (): void => {
+    if (thresholdTimer !== null) clearTimeout(thresholdTimer);
+    thresholdTimer = null;
+  };
+
+  const apply = (
+    result: ReturnType<HoldToTalkDiscriminator['keyDown']>,
+    e: KeyboardEvent | null,
+  ): void => {
+    if (e && result.suppressKey) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    if (result.emitSpaces > 0) {
+      callbacks.emitSpace?.(heldTarget, result.emitSpaces);
+    }
+    if (result.startDictation) callbacks.onStart();
+    if (result.stopDictation) callbacks.onStop();
+    if (result.armThreshold) {
+      clearThreshold();
+      thresholdTimer = setTimeout(() => {
+        thresholdTimer = null;
+        apply(discriminator.thresholdElapsed(), null);
+      }, options.getHoldMs?.() ?? HOLD_TO_TALK_THRESHOLD_MS);
+    }
+    // Fora de 'pending' nenhum limiar pode mais armar ditado.
+    if (discriminator.state !== 'pending') clearThreshold();
+  };
 
   const onKeyDown = (e: KeyboardEvent) => {
     if (!options.isEnabled()) return;
@@ -83,27 +129,19 @@ export function attachWindowPtt(
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     if (!codeMatchesPttKey(e.code, options.getKeyCode())) return;
     if (shouldIgnoreWindowPttTarget(e.target)) return;
-
-    e.preventDefault();
-    e.stopPropagation();
-    if (e.repeat || capturing) return;
-    capturing = true;
-    callbacks.onStart();
+    if (!e.repeat) heldTarget = e.target;
+    apply(discriminator.keyDown({ repeat: e.repeat }), e);
   };
 
   const onKeyUp = (e: KeyboardEvent) => {
     if (!codeMatchesPttKey(e.code, options.getKeyCode())) return;
-    if (!capturing) return;
-    e.preventDefault();
-    e.stopPropagation();
-    capturing = false;
-    callbacks.onStop();
+    apply(discriminator.keyUp(), e);
+    heldTarget = null;
   };
 
   const onBlur = () => {
-    if (!capturing) return;
-    capturing = false;
-    callbacks.onStop();
+    apply(discriminator.cancel(), null);
+    heldTarget = null;
   };
 
   window.addEventListener('keydown', onKeyDown, true);
@@ -114,9 +152,7 @@ export function attachWindowPtt(
     window.removeEventListener('keydown', onKeyDown, true);
     window.removeEventListener('keyup', onKeyUp, true);
     window.removeEventListener('blur', onBlur);
-    if (capturing) {
-      capturing = false;
-      callbacks.onStop();
-    }
+    clearThreshold();
+    apply(discriminator.cancel(), null);
   };
 }

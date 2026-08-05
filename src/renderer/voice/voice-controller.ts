@@ -122,6 +122,7 @@ import { PassiveWakeDeadline } from './passive-wake-deadline';
 import { PassiveWakeAdmission } from './passive-wake-admission';
 import { pttStartAction } from './ptt-barge-in';
 import { attachWindowPtt } from './voice-window-ptt';
+import { writeToPane } from '../terminal/terminal-host';
 import { isWindowScopedShortcut } from '../../shared/voice-config';
 import { shouldOfferLiveMicFrame } from './live-mic-offer-gate';
 import {
@@ -1417,7 +1418,18 @@ export function useVoiceController(active = true): void {
     // NexusVoice-style bare Space: renderer-owned while Nexus is focused.
     // Sempre ditado — nunca turno Jarvis.
     const disposeWindowPtt = attachWindowPtt(
-      { onStart: onDictationStart, onStop: onDictationStop },
+      {
+        onStart: onDictationStart,
+        onStop: onDictationStop,
+        // Toque rápido: o keydown foi retido para decidir hold × tecla, então
+        // o espaço só existe se for entregue agora — no MESMO caminho do
+        // teclado (writeToPane escreve no PTY do pane focado).
+        emitSpace: (_target, count) => {
+          const paneId = useLayoutStore.getState().focusedPaneId;
+          if (!paneId || count <= 0) return;
+          writeToPane(paneId, ' '.repeat(count));
+        },
+      },
       {
         getKeyCode: () =>
           useVoiceStore.getState().info?.pushToTalkKeyCode ?? 'Space',

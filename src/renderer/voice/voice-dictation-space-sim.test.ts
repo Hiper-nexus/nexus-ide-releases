@@ -29,6 +29,9 @@ function windowPttEnabled(info: SimInfo | null | undefined): boolean {
   );
 }
 
+/** Limiar de hold usado nas simulações (o real vem de hold-to-talk.ts). */
+const HOLD_MS = 250;
+
 /** Operator config after Ditado EN preset (matches ~/.nexus/plugins/voice). */
 const DICTATION_EN_INFO: SimInfo = {
   captureAllowed: true,
@@ -75,15 +78,18 @@ describe('simulação Space → ditado (sem mic)', () => {
   });
 
   it('hold Space no xterm: onStart(dictation) + onStop; não digita espaço', () => {
+    vi.useFakeTimers();
     const onStart = vi.fn();
     const onStop = vi.fn();
+    const emitSpace = vi.fn();
     let info: SimInfo = { ...DICTATION_EN_INFO };
 
     const dispose = attachWindowPtt(
-      { onStart, onStop },
+      { onStart, onStop, emitSpace },
       {
         getKeyCode: () => info.pushToTalkKeyCode,
         isEnabled: () => windowPttEnabled(info),
+        getHoldMs: () => HOLD_MS,
       },
     );
 
@@ -106,6 +112,10 @@ describe('simulação Space → ditado (sem mic)', () => {
     const prevented = !window.dispatchEvent(down);
     // In jsdom, preventDefault on window-dispatched events still sets defaultPrevented
     expect(down.defaultPrevented || prevented).toBe(true);
+    // Contrato hold-to-talk: o keydown apenas RETÉM a tecla; o ditado só arma
+    // quando o limiar vence com a tecla ainda pressionada.
+    expect(onStart).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(HOLD_MS);
     expect(onStart).toHaveBeenCalledTimes(1);
 
     // capture reason for the controller path
@@ -113,8 +123,48 @@ describe('simulação Space → ditado (sem mic)', () => {
 
     releaseSpace();
     expect(onStop).toHaveBeenCalledTimes(1);
+    // Hold nunca digita espaço no pane.
+    expect(emitSpace).not.toHaveBeenCalled();
 
     dispose();
+    vi.useRealTimers();
+  });
+
+  it('toque em Space no xterm digita o espaço e NÃO arma ditado', () => {
+    vi.useFakeTimers();
+    const onStart = vi.fn();
+    const emitSpace = vi.fn();
+    const info: SimInfo = { ...DICTATION_EN_INFO };
+    const dispose = attachWindowPtt(
+      { onStart, onStop: vi.fn(), emitSpace },
+      {
+        getKeyCode: () => info.pushToTalkKeyCode,
+        isEnabled: () => windowPttEnabled(info),
+        getHoldMs: () => HOLD_MS,
+      },
+    );
+
+    const term = document.createElement('div');
+    term.className = 'xterm';
+    document.body.appendChild(term);
+
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        code: 'Space',
+        key: ' ',
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    vi.advanceTimersByTime(HOLD_MS - 80);
+    releaseSpace();
+
+    expect(onStart).not.toHaveBeenCalled();
+    expect(emitSpace).toHaveBeenCalledTimes(1);
+
+    term.remove();
+    dispose();
+    vi.useRealTimers();
   });
 
   it('helper textarea sem .xterm ancestral ainda permite ditado', () => {
