@@ -187,7 +187,37 @@ The STATUS column carries the campaign's landed/pending hashes. **Landed** = ver
 
 ### P1 — instruments + policy/persona surface
 
-Rebuilt concretely after the overwrite thinned this section. The three **evidence-born** rows (P1-5/P1-6/P1-7) come from live campaign observations, not spec invention; the rest are the leftover PARTIAL/MISSING rows already present in §(b)/§(c).
+Rebuilt concretely after the overwrite thinned this section. The three **evidence-born** rows (P1-5/P1-6/P1-7) come from live campaign observations, not spec invention; the rest are the leftover PARTIAL/MISSING rows already present in §(b)/§(c). **P1-0 below is the operator's stated TOP priority for next cycle and heads this whole section** — it is ranked ahead of P1-1..P1-8 (labelled `P1-0 · TOPO` to sit at the head without renumbering the heavily cross-referenced P1-1..P1-8 rows).
+
+#### P1-0 · TOPO — Orchestrator control plane (pilot-facing: agent API + human UI mirror)
+
+**Operator's words:** *"esta visão que você tem de todos os panes, este controle de ver toda missão, corrigir, controlar qualquer pane — isto é fundamental."* The reference is **this session itself** — the pilot behaviours that made the 85-story campaign work (see and correct any pane, revive reaped workers, probe before reaping, keep the operator informed). This item promotes those ad-hoc behaviours into a **first-class control plane** with a symmetric **agent API + human UI mirror**. Likely **L**; sliced below.
+
+**Existing PARTIALS in Nexus (map first — cite file:line):**
+
+- **OBSERVABILITY — HAS (agent) / PARTIAL (aggregate).** Agent API already exists: `nexus_pane_list` (`src/main/orch/tools-panes.ts:571-578`) lists every pane with live state (`spawning|busy|idle|exited`), adapter, model, mission binding; `nexus_pane_whoami` (`:580-606`) describes the calling pane's authority. Mission-scoped pane list IPC `orch:missions.panes` (`src/shared/orch-channels.ts:20`, handler `src/main/orch/orch-ipc.ts:1908`, preload `missionPanesList` `src/preload/preload.ts:1026`). Verdict surfacing `src/shared/mission-block-cause.ts` (`260eb2e6`); boot telemetry `emitBootstrapProgress` (`src/main/orch/mission-event-emit.ts`, `6bdb7ac0`). UI board present: `OpsBoard.tsx`, `MissionRail.tsx`, `OrchestrationPanel.tsx`. **Gap:** no single mission-wide *control-plane snapshot* fusing per-pane state+current-item+last-activity WITH queue, ownership map and blocks — the pieces are scattered across per-pane list, task-dispatch queue and the block-cause presenter.
+  - **DELIBERATE-DIVERGENCE PLUS (must EXCEED, never copy the gap):** Overclock gives its pilot **no `pane_list`** — proven live this session, the pilot had to ask the human for pane IDs **twice**. Nexus's `nexus_pane_list` already exceeds that; the aggregate snapshot (slice 1) extends it and must never regress toward Overclock's blind-pilot gap. Formalize alongside §(f).
+- **STEERING — PARTIAL.** `nexus_pane_write` (`tools-panes.ts:693-722`) and `nexus_pane_write_many` (`:724-745`) type/submit text into any pane mid-flight — but the handler returns `{ ok: true }` on *write-accepted*, **not delivery-confirmed**. **Gap:** confirmed delivery (landed in the worker's input AND consumed), aligned with the dictation confirmed-delivery pattern; plus structured amendment / rework-order / control-check verbs over raw text.
+- **REVIVAL — PARTIAL (workaround, not an operation).** `respawnWithResume` (`src/renderer/terminal/terminal-host.ts:1493`), `pane_resume` action (`:132`), `resumeMissionBootstrap` (`src/preload/preload.ts:1088`), and the callers `failover-controller.ts:53,75` / `account-restart-controller.ts:75` / `mission-reopen.ts:190`. **Gap:** the purge+resume recipe is scattered, not ONE pilot op; and revival is **not spawn-cap-exempt** — today's `width_cap` lesson: recovery counted DEAD panes against the live budget until the platform refused recovery itself (live-count helper `countLiveMissionWorkerSlots` in `src/main/orch/mission-driver-io.ts`; caps in `src/shared/pane-limits.ts`).
+- **STALL PROTOCOL — PARTIAL.** `src/main/orch/stall-watchdog.ts`, `delegation-supervisor.ts`, `login-stuck-watchdog.ts` exist. **Gap:** the built-in **detect → probe → verdict** sequence ("no output 600s → PROBE the worker before acting") — today the watchdog reaps without a probe step or a pilot-visible verdict.
+- **MILESTONE STREAM — MISSING (nearest partial `plan-handoff-notify.ts`).** **Gap:** user-facing on-demand alerts ("me avisa quando X") bound to mission milestones — no subscription/predicate mechanism today.
+
+**Overlap verdict vs `docs/analysis/2026-08-03-mission-ux-handoff.md`:** the observability pillar **overlaps** the UX pack's landed increments — boot telemetry (`6bdb7ac0`), verdict (`260eb2e6`), wave schedule (`77a69fc7`) — so **slice 1 must RECONCILE against those and not re-implement** (same discipline as P1-7). STEERING (confirmed delivery), REVIVAL-as-operation, STALL probe→verdict, and MILESTONE subscription are **net-new — no overlap** with the UX pack.
+
+**Slices (S/M/L):**
+
+| Slice | What | Agent API + UI mirror | Size | Target files |
+|-------|------|-----------------------|------|--------------|
+| **1 · Control-plane snapshot** | Mission-wide aggregate fusing per-pane live-state (alive/working/stalled/dead + current item + last activity) with queue, ownership map, blocks — one read | new `nexus_mission_control` MCP + `orch:missions.controlPlane` IPC | **M** | extend `tools-panes.ts:571` (`listVisiblePaneSnapshots`), `orch-ipc.ts:1908`, `task-dispatch-store.ts` (queue/ownership), `mission-block-cause.ts`; **reconcile** vs `6bdb7ac0`/`260eb2e6`/`77a69fc7` |
+| **2 · UI mirror** | Human control plane: live per-pane grid + queue/ownership/blocks, with steer/revive as buttons | renderer board | **M** | `OpsBoard.tsx`, `MissionRail.tsx`, `OrchestrationPanel.tsx`, `ops-board.css` |
+| **3 · Steering w/ confirmed delivery** | Correction/rework-order/control-check to ANY worker mid-flight, returning **delivered+consumed**, not write-accepted | upgrade `nexus_pane_write`/`_write_many` + structured verbs; UI "send correction" | **M** | `tools-panes.ts:693-745` (`injectPrompt`, drop bare `{ok:true}`), dictation confirmed-delivery module |
+| **4 · Revival as a first-class op, spawn-cap-exempt** | One pilot op: revive a dead/reaped worker with context intact; **never counts against spawn caps** | new `nexus_pane_revive` (mission-scoped) + UI "revive" | **L** | consolidate `respawnWithResume` (`terminal-host.ts:1493`)/`pane_resume`(`:132`)/`resumeMissionBootstrap`; exempt in `pane-limits.ts` + `countLiveMissionWorkerSlots` (`mission-driver-io.ts`); `failover-controller.ts`, `account-restart-controller.ts`, claim authority |
+| **5 · Stall detect→probe→verdict** | Built-in: no-output-600s → PROBE the worker → VERDICT before reaping; verdict surfaced to pilot + UI | watchdog + snapshot field | **M** | `stall-watchdog.ts`, `delegation-supervisor.ts`; feed verdict into slice-1 snapshot + slice-2 UI |
+| **6 · Milestone alert stream** | On-demand user alerts ("me avisa quando X") bound to mission milestones, delivered to human (and pilot) | subscription API + delivery | **M** | build on `plan-handoff-notify.ts` + `mission-event-emit.ts` intent projection |
+
+**Divergence to KEEP:** slices 1–6 sit ON TOP of Nexus's existing spawn authority, receipt chain and roster binding (§b rows 2/3, §f) — the control plane observes and steers; it does not replace those enforcement layers.
+
+
 
 | ID | What | Why | Effort | Target Nexus file(s) |
 |----|------|-----|--------|----------------------|
