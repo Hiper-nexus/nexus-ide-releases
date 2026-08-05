@@ -105,6 +105,35 @@ describe('guided Main-owned PREVC kickoff', () => {
     expect(prompt).toMatch(/ACK manual não é exigido \(no_manual_ack_required\)/i);
   });
 
+  it('diz de quem é a cerimônia em vez de listar proibições', () => {
+    // A parede de "não chame X / não recrie Y" era o que o operador via no voo
+    // real. O contrato é o mesmo — quem é dono do freeze/Doctor/prepare e que
+    // o plano já está selado — só que dito na forma afirmativa.
+    const prompt = buildIntentDispatchKickoffPrompt({
+      squad,
+      missionId: 'mission-fast',
+      goal: 'Entregar a feature vibe',
+      acceptanceCriteria: ['Feature validada'],
+      risk: 'normal',
+      maxWorkers: 4,
+      standardTopology: 'delivery',
+      guidedPrevcRequired: false,
+    });
+
+    expect(prompt).toMatch(
+      /Freeze, Doctor e prepare_execution são do Main/i,
+    );
+    expect(prompt).toMatch(/plano desta intenção já é selado pelo Main/i);
+    expect(prompt).toMatch(/comece por nexus_task list/i);
+    expect(prompt).not.toMatch(/Não chame freeze/i);
+    expect(prompt).not.toMatch(/não recrie o plano/i);
+    // Contratos que continuam obrigatórios nesta topologia.
+    expect(prompt).toMatch(/Implementação no worktree da task/i);
+    expect(prompt).toMatch(/não faça polling esperando uma chamada proibida/i);
+    expect(prompt).toMatch(/Vigie handoffs e trate bloqueios e escalonamentos/i);
+    expect(prompt).toMatch(/status=blocked exige a causa/i);
+  });
+
   it('keeps Pack kickoff free of PREVC ceremony and serial story doctrine', () => {
     const prompt = buildIntentDispatchKickoffPrompt({
       squad,

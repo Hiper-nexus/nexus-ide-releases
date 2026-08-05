@@ -237,12 +237,15 @@ function standardConductLines(input: IntentDispatchKickoffInput): string[] {
   if (input.standardTopology === 'delivery') {
     // Fast path / Autopilot libre: short Autopilot libre brief — open work, not
     // a wall of policy. Contract phrases the suites pin stay intact.
+    // Forma afirmativa: quem é dono de cada cerimônia, em vez da parede de
+    // "não chame X / não recrie Y" que o operador leu no voo real (05/08).
+    // Todo contrato que as suítes prendem continua verbatim.
     return lean
       ? [
           'Fast path: PREVC Guided não aplica nesta missão — o Main despacha, integra via merge e conclui pelo motor.',
-          'Não chame freeze, Doctor ou prepare_execution. Use nexus_task list; não recrie o plano.',
+          'O plano desta intenção já é selado pelo Main: comece por nexus_task list. Freeze, Doctor e prepare_execution são do Main.',
           conductLine,
-          'A cada entrega: processe o handoff. O ACK manual não é exigido (no_manual_ack_required). O motor Nexus marca done sozinho; nexus_mission_set_status com done é rejeitado nesta topologia — não faça polling esperando uma chamada proibida. Vigie handoffs e trate bloqueios e escalonamentos dos workers.',
+          'A cada entrega: processe o handoff — o ACK manual não é exigido (no_manual_ack_required) e o motor Nexus marca done sozinho (nexus_mission_set_status com done é rejeitado nesta topologia; não faça polling esperando uma chamada proibida). Vigie handoffs e trate bloqueios e escalonamentos dos workers.',
           obstacleLine,
         ]
       : [
