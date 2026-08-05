@@ -866,6 +866,7 @@ export function MissionRail() {
                           lane,
                           {
                             hasActiveRuntime,
+                            hasObservedRuntime,
                             latestHandoffStatus:
                               latestHandoffByMission.get(m.id)?.status,
                             technicalRecovery,
@@ -879,6 +880,12 @@ export function MissionRail() {
                             : displayIntentState,
                           lane,
                           technicalRecovery,
+                          {
+                            hasActiveRuntime,
+                            hasObservedRuntime,
+                            latestHandoffStatus:
+                              latestHandoffByMission.get(m.id)?.status,
+                          },
                         );
                         const openTitle =
                           m.status === 'done' || m.status === 'failed'

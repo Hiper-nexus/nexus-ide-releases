@@ -196,6 +196,14 @@ export interface MissionRuntimeEvidence {
    * be visible as preserved transcripts, but no agent can currently act.
    */
   readonly hasActiveRuntime?: boolean;
+  /**
+   * Whether this mission EVER materialized runtime (panes, workers, worktrees)
+   * — independent of whether any of it is alive now. It is what separates a
+   * mission parked before it ever started from one that ran, delivered work
+   * and then stopped. Both can sit in `awaiting_approval`; only the second has
+   * a plan and commits to lose.
+   */
+  readonly hasObservedRuntime?: boolean;
   /** Most recent worker report; informative, never enough to claim success. */
   readonly latestHandoffStatus?: HandoffStatus | null;
   /** Whether Main still owns a retry or already exhausted it. */
@@ -239,7 +247,14 @@ export function railStatusDisplay(
     case 'ready_to_start':
       return { label: 'Pronta', tone: 'pending' };
     case 'awaiting_approval':
-      return { label: 'Aguarda você', tone: 'blocked' };
+      // Uma missão que JÁ rodou e voltou para awaiting_approval não está
+      // esperando aprovação inicial: ela PAROU no meio (voo real 05/08,
+      // mission-3be48989 — worker mandou handoff `blocked`, dispatch ficou
+      // terminal, panes fecharam). Dar a ela o mesmo rótulo de uma missão
+      // nova esconde que existe plano selado e trabalho commitado atrás.
+      return evidence.hasObservedRuntime
+        ? { label: 'Parou — aguarda você', tone: 'blocked' }
+        : { label: 'Aguarda você', tone: 'blocked' };
     case 'blocked_user':
       return { label: 'Aguarda você', tone: 'blocked' };
     case 'blocked_technical':
@@ -301,6 +316,7 @@ export function missionRailResumeCopy(
   intentState?: Mission['intentState'],
   lane?: MissionLane | null,
   technicalRecovery: 'recovering' | 'exhausted' = 'recovering',
+  evidence: MissionRuntimeEvidence = {},
 ): { meta: string | null; title: string } {
   if (status === 'blocked' && intentState === 'blocked_technical') {
     if (technicalRecovery === 'exhausted') {
@@ -334,6 +350,19 @@ export function missionRailResumeCopy(
       meta: '▶ Executar plano',
       title:
         'Lane plan (só plan.md) — clique ▶ para promover a código PREVC',
+    };
+  }
+  // Perda-de-trabalho-por-UI (voo real 05/08, mission-3be48989): a premissa
+  // "no panes yet" do bloco abaixo é FALSA para uma missão que já rodou e
+  // parou. Ela tem plano selado, worktree e commits; convidá-la ao wizard de
+  // objetivo — a tela de quem nunca planejou — é oferecer recomeço do zero
+  // como se fosse retomada. O convite tem que dizer que ela parou e que o
+  // trabalho continua lá.
+  if (intentState === 'awaiting_approval' && evidence.hasObservedRuntime) {
+    return {
+      meta: 'Ver por que parou',
+      title:
+        'A missão parou no meio — clique para ver o motivo; plano e trabalho já feito continuam preservados',
     };
   }
   // Intent-first / agêntico: no panes yet — click reopens the goal wizard.

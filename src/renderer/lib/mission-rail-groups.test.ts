@@ -311,6 +311,28 @@ describe('railStatusDisplay', () => {
     );
   });
 
+  // Voo real 05/08, mission-3be48989: o worker submeteu um handoff `blocked`,
+  // o dispatch ficou terminal, os panes fecharam e a missão voltou para
+  // awaiting_approval. O rail mostrava o MESMO "Aguarda você" de uma missão
+  // que nunca rodou — o operador não tinha como saber que ela parou no meio.
+  it('distingue uma missão que PAROU no meio de uma que nunca começou', () => {
+    expect(
+      railStatusDisplay('pending', false, 'awaiting_approval', null, {
+        hasObservedRuntime: true,
+        hasActiveRuntime: false,
+        latestHandoffStatus: 'blocked',
+      }),
+    ).toEqual({ label: 'Parou — aguarda você', tone: 'blocked' });
+  });
+
+  it('mantém "Aguarda você" para a missão que nunca materializou runtime', () => {
+    expect(
+      railStatusDisplay('pending', false, 'awaiting_approval', null, {
+        hasObservedRuntime: false,
+      }),
+    ).toEqual({ label: 'Aguarda você', tone: 'blocked' });
+  });
+
   it('never lets preserved grid panes hide a human or machine block', () => {
     expect(
       railStatusDisplay('pending', true, 'awaiting_approval').label,
@@ -460,6 +482,38 @@ describe('missionRailResumeCopy', () => {
     expect(missionRailResumeCopy('done', false)).toEqual({
       meta: null,
       title: 'Retomar esta missão',
+    });
+  });
+
+  // Perda-de-trabalho-por-UI (voo real 05/08, mission-3be48989): a missão
+  // tinha plano selado de 8 tasks, worktree e commit, e o único caminho
+  // oferecido era "Continuar plano" — que abre o wizard de objetivo, a tela de
+  // uma missão que nunca foi planejada. O convite não pode ser esse.
+  it('nunca convida ao wizard de objetivo uma missão que já materializou runtime', () => {
+    const copy = missionRailResumeCopy(
+      'pending',
+      false,
+      'awaiting_approval',
+      null,
+      'recovering',
+      { hasObservedRuntime: true, latestHandoffStatus: 'blocked' },
+    );
+    expect(copy.meta).toBe('Ver por que parou');
+    expect(copy.title).toContain('parou');
+    // O plano e o trabalho já feito continuam no banco: dizer isso é o que
+    // impede o operador de achar que precisa recomeçar do zero.
+    expect(copy.title).toContain('preservado');
+    expect(copy.meta).not.toBe('Continuar plano');
+  });
+
+  it('mantém o convite ao plano quando a missão nunca materializou runtime', () => {
+    expect(
+      missionRailResumeCopy('pending', false, 'awaiting_approval', null, 'recovering', {
+        hasObservedRuntime: false,
+      }),
+    ).toEqual({
+      meta: 'Continuar plano',
+      title: 'Plano armado — clique para revisar e começar',
     });
   });
 
