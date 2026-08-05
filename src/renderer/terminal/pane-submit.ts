@@ -51,6 +51,51 @@ export function submitPromptToPane(
   return true;
 }
 
+export interface PaneOperatorSubmitPorts {
+  getSessionId(paneId: string): string | null;
+  /** Escrita pela lane do operador (orch:panes.operatorInput) com recibo real. */
+  operatorWrite(sessionId: string, data: string): Promise<boolean>;
+  schedule(callback: () => void, delayMs: number): unknown;
+}
+
+/**
+ * Digitação confirmada pela LANE DO OPERADOR — o caminho autorizado para panes
+ * governados: writeSession (IPC cru do terminal) recusa sessões de agentes
+ * orquestrados por design (pty-manager: presentation authority only), e a lane
+ * do operador rejeita bracketed paste. Logo: texto plano (quebras de linha
+ * viram espaço) seguido de Enter após o settle, cada escrita com recibo.
+ */
+export function submitPromptToPaneOperator(
+  paneId: string,
+  text: string,
+  expectedSessionId: string,
+  ports: PaneOperatorSubmitPorts,
+): Promise<boolean> {
+  const line = text.replace(/\r?\n/gu, ' ');
+  if (!isSafePrompt(line)) return Promise.resolve(false);
+  if (ports.getSessionId(paneId) !== expectedSessionId) {
+    return Promise.resolve(false);
+  }
+  return ports.operatorWrite(expectedSessionId, line).then(
+    (accepted) => {
+      if (!accepted || ports.getSessionId(paneId) !== expectedSessionId) {
+        return false;
+      }
+      return new Promise<boolean>((resolve) => {
+        ports.schedule(() => {
+          if (ports.getSessionId(paneId) !== expectedSessionId) {
+            resolve(false);
+            return;
+          }
+          void ports.operatorWrite(expectedSessionId, '\r')
+            .then(resolve, () => resolve(false));
+        }, pasteSettleMs(line));
+      });
+    },
+    () => false,
+  );
+}
+
 /** Confirm paste and Enter against the exact recovered PTY identity. */
 export function submitPromptToPaneConfirmed(
   paneId: string,

@@ -27,6 +27,16 @@ export interface DictationDeliveryPorts {
     text: string,
     sessionId: string,
   ): Promise<boolean>;
+  /**
+   * Lane do operador (orch:panes.operatorInput) — o caminho autorizado quando o
+   * pane é um agente governado: o IPC cru do terminal recusa essas sessões por
+   * design (pty-manager, presentation-only authority).
+   */
+  deliverOperator(
+    paneId: string,
+    text: string,
+    sessionId: string,
+  ): Promise<boolean>;
   /** Espelha no voice.log cada salto do trajeto. */
   log(
     level: DictationLogLevel,
@@ -97,7 +107,22 @@ export async function deliverDictation(
     sessionId,
     chars: text.length,
   });
-  const delivered = await ports.deliverConfirmed(targetPaneId, text, sessionId);
+  let delivered = await ports.deliverConfirmed(targetPaneId, text, sessionId);
+  let lane: 'terminal' | 'operator' = 'terminal';
+
+  // Salto 3b — pane governado: o IPC cru do terminal recusa sessões de agentes
+  // orquestrados por design (pty-manager, presentation-only). A recusa cai na
+  // lane do operador, que valida posse+missão no main e devolve recibo real.
+  if (!delivered) {
+    ports.log(
+      'info',
+      'dictation.laneFallback',
+      'lane terminal recusou — tentando a lane do operador (pane governado)',
+      { targetPaneId, sessionId },
+    );
+    delivered = await ports.deliverOperator(targetPaneId, text, sessionId);
+    lane = 'operator';
+  }
 
   // Salto 4 — escrita no PTY: recibo real da injeção (ou a falha, sem false-green).
   ports.log(
@@ -106,7 +131,7 @@ export async function deliverDictation(
     delivered
       ? 'PTY confirmou a injeção do ditado'
       : 'PTY não confirmou a injeção do ditado — nada foi escrito',
-    { targetPaneId, sessionId, chars: text.length },
+    { targetPaneId, sessionId, chars: text.length, lane },
   );
 
   return delivered

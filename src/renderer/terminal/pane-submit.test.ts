@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   submitPromptToPane,
   submitPromptToPaneConfirmed,
+  submitPromptToPaneOperator,
   type PaneSubmitPorts,
 } from './pane-submit';
 
@@ -155,6 +156,105 @@ describe('pane prompt submission', () => {
       expect(write).toHaveBeenCalledOnce();
       vi.advanceTimersByTime(1);
       expect(write).toHaveBeenLastCalledWith('session-1', '\r');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('submitPromptToPaneOperator — lane do operador (pane governado)', () => {
+  function createOperatorPorts(sessionId: string | null = 'session-1') {
+    let currentSessionId = sessionId;
+    const operatorWrite = vi.fn(async () => true);
+    const ports = {
+      getSessionId: () => currentSessionId,
+      operatorWrite,
+      schedule: (callback: () => void, delayMs: number) =>
+        setTimeout(callback, delayMs),
+    };
+    return {
+      ports,
+      operatorWrite,
+      setSessionId: (next: string | null) => {
+        currentSessionId = next;
+      },
+    };
+  }
+
+  it('digita o texto e envia Enter depois do settle, ambos com recibo', async () => {
+    vi.useFakeTimers();
+    try {
+      const { ports, operatorWrite } = createOperatorPorts();
+      const submitted = submitPromptToPaneOperator(
+        'pane-1',
+        'corrige o parser',
+        'session-1',
+        ports,
+      );
+      await Promise.resolve();
+      expect(operatorWrite).toHaveBeenCalledWith('session-1', 'corrige o parser');
+      await vi.advanceTimersByTimeAsync(2_500);
+      await expect(submitted).resolves.toBe(true);
+      expect(operatorWrite).toHaveBeenLastCalledWith('session-1', '\r');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('normaliza quebras de linha em espaço (a lane rejeita colagem bracketed)', async () => {
+    vi.useFakeTimers();
+    try {
+      const { ports, operatorWrite } = createOperatorPorts();
+      const submitted = submitPromptToPaneOperator(
+        'pane-1',
+        'linha um\nlinha dois',
+        'session-1',
+        ports,
+      );
+      await Promise.resolve();
+      expect(operatorWrite).toHaveBeenCalledWith('session-1', 'linha um linha dois');
+      await vi.advanceTimersByTimeAsync(2_500);
+      await expect(submitted).resolves.toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('recusa quando a escrita do texto não confirma — e não envia Enter', async () => {
+    vi.useFakeTimers();
+    try {
+      const { ports, operatorWrite } = createOperatorPorts();
+      operatorWrite.mockResolvedValueOnce(false);
+      const submitted = submitPromptToPaneOperator(
+        'pane-1',
+        'texto',
+        'session-1',
+        ports,
+      );
+      await vi.advanceTimersByTimeAsync(2_500);
+      await expect(submitted).resolves.toBe(false);
+      expect(operatorWrite).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('recusa quando a sessão troca antes do Enter', async () => {
+    vi.useFakeTimers();
+    try {
+      const { ports, operatorWrite, setSessionId } = createOperatorPorts();
+      const submitted = submitPromptToPaneOperator(
+        'pane-1',
+        'texto',
+        'session-1',
+        ports,
+      );
+      await Promise.resolve();
+      setSessionId('session-2');
+      await vi.advanceTimersByTimeAsync(2_500);
+      await expect(submitted).resolves.toBe(false);
+      expect(operatorWrite).toHaveBeenCalledOnce();
+      expect(operatorWrite).not.toHaveBeenCalledWith('session-1', '\r');
     } finally {
       vi.useRealTimers();
     }

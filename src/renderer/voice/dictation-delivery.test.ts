@@ -19,6 +19,7 @@ function makePorts(
     listLivePaneIds: () => ['pane-focused', 'pane-other'],
     getSessionId: (paneId) => `sess-${paneId}`,
     deliverConfirmed: vi.fn(async () => true),
+    deliverOperator: vi.fn(async () => false),
     log: (level, event) => logs.push({ level, event }),
     ...overrides,
   };
@@ -116,5 +117,62 @@ describe('deliverDictation — entrega confirmada', () => {
 
     expect(result).toEqual({ ok: false, reason: 'no-live-pane' });
     expect(deliverConfirmed).not.toHaveBeenCalled();
+  });
+});
+
+describe('deliverDictation — lane do operador para panes governados', () => {
+  function makeLanePorts(overrides: Partial<DictationDeliveryPorts> = {}) {
+    const logs: LogLine[] = [];
+    const ports: DictationDeliveryPorts = {
+      getFocusedPaneId: () => 'pane-orq',
+      listLivePaneIds: () => ['pane-orq'],
+      getSessionId: () => 'sess-orq',
+      deliverConfirmed: vi.fn(async () => false),
+      deliverOperator: vi.fn(async () => true),
+      log: (level, event) => logs.push({ level, event }),
+      ...overrides,
+    };
+    return { ports, logs };
+  }
+
+  it('lane terminal recusa (pane governado) → lane do operador entrega', async () => {
+    const deliverOperator = vi.fn(async () => true);
+    const { ports, logs } = makeLanePorts({ deliverOperator });
+
+    const result = await deliverDictation('sobe a cobertura', ports);
+
+    expect(result).toEqual({ ok: true, paneId: 'pane-orq' });
+    expect(deliverOperator).toHaveBeenCalledWith(
+      'pane-orq',
+      'sobe a cobertura',
+      'sess-orq',
+    );
+    expect(logs.some((l) => l.event === 'dictation.laneFallback')).toBe(true);
+    expect(logs.some((l) => l.event === 'dictation.ptyConfirmed')).toBe(true);
+  });
+
+  it('não tenta a lane do operador quando a terminal confirma', async () => {
+    const deliverOperator = vi.fn(async () => true);
+    const { ports } = makeLanePorts({
+      deliverConfirmed: vi.fn(async () => true),
+      deliverOperator,
+    });
+
+    await deliverDictation('oi', ports);
+
+    expect(deliverOperator).not.toHaveBeenCalled();
+  });
+
+  it('ambas as lanes recusam → delivery-failed verdadeiro', async () => {
+    const { ports, logs } = makeLanePorts({
+      deliverOperator: vi.fn(async () => false),
+    });
+
+    const result = await deliverDictation('texto perdido', ports);
+
+    expect(result).toEqual({ ok: false, reason: 'delivery-failed' });
+    expect(
+      logs.some((l) => l.event === 'dictation.ptyFailed' && l.level === 'error'),
+    ).toBe(true);
   });
 });

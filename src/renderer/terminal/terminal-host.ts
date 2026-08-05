@@ -30,6 +30,7 @@ import { TerminalInputVisibilityController } from './terminal-input-visibility';
 import {
   submitPromptToPane as submitPanePrompt,
   submitPromptToPaneConfirmed as submitPanePromptConfirmed,
+  submitPromptToPaneOperator as submitPanePromptOperator,
 } from './pane-submit';
 import { WebglLeasePool } from './webgl-lease';
 import { resumeTerminalVisibilityBeforePaint } from './terminal-visibility-resume';
@@ -1827,6 +1828,25 @@ export function submitPromptToPaneConfirmed(
     write: (sessionId, data) => window.nexus.pty.write(sessionId, data),
     writeConfirmed: (sessionId, data) =>
       window.nexus.pty.writeConfirmed(sessionId, data),
+    schedule: (callback, delayMs) => setTimeout(callback, delayMs),
+  });
+}
+
+/**
+ * Digitação confirmada pela lane do operador — caminho autorizado do ditado
+ * para panes governados (o writeConfirmed cru é recusado pelo main por design).
+ */
+export function submitPromptToPaneOperatorInput(
+  paneId: string,
+  text: string,
+  expectedSessionId: string,
+): Promise<boolean> {
+  const host = hosts.get(paneId);
+  if (host && !host.disposed) host.inputVisibility.onUserInput();
+  return submitPanePromptOperator(paneId, text, expectedSessionId, {
+    getSessionId: getPaneSessionId,
+    operatorWrite: (sessionId, data) =>
+      window.nexus.orch.sendPaneOperatorInput({ sessionId, data }),
     schedule: (callback, delayMs) => setTimeout(callback, delayMs),
   });
 }

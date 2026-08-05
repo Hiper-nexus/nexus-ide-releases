@@ -11,6 +11,7 @@ import {
   getPaneSessionId,
   submitPromptToPane,
   submitPromptToPaneConfirmed,
+  submitPromptToPaneOperatorInput,
 } from '../terminal/terminal-host';
 import { useLayoutStore } from '../state/layout-store';
 import { listPanes } from '../lib/split-tree';
@@ -371,6 +372,8 @@ export function routeDictation(text: string): Promise<DictationRouteResult> {
     getSessionId: (paneId) => getPaneSessionId(paneId),
     deliverConfirmed: (paneId, promptText, sessionId) =>
       submitPromptToPaneConfirmed(paneId, promptText, sessionId),
+    deliverOperator: (paneId, promptText, sessionId) =>
+      submitPromptToPaneOperatorInput(paneId, promptText, sessionId),
     log: logVoiceEvent,
   });
 }
