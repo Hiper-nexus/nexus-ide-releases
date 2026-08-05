@@ -351,7 +351,16 @@ export class TaskDispatchStore {
     return physical.worktreeHeadSha;
   }
 
-  /** Persist the main-owned merge intent before the external Git effect. */
+  /**
+   * Persist the main-owned merge intent before the external Git effect.
+   *
+   * P0-3 seam D: merges stay SERIAL by design, even for a disjoint-file
+   * fan-out. Because concurrent isolated writers are proven pairwise-disjoint
+   * (assertConcurrentIsolatedWorktreeDisjoint at claim time), their serial
+   * integration never conflicts — the parallelism prize is in EXECUTION, not
+   * merge. Keeping one durable merge lane avoids the fragile concurrent-merge
+   * machinery for zero throughput gain.
+   */
   beginMerge(input: {
     readonly taskId: string;
     readonly revision: number;
