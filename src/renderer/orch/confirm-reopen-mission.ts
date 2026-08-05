@@ -5,9 +5,11 @@ import {
   hardReopenWouldDisplaceLayout,
   hardReopenWouldKillAgents,
   isIntentFirstMissionShell,
+  livePaneIdsForMission,
   reopenMission,
   type MissionReopenResult,
 } from './mission-reopen';
+import { missionResumeRoute } from './mission-resume-route';
 
 /**
  * Resume an intent-first (agentic) shell: reopen Nova Missão on the goal
@@ -67,11 +69,6 @@ export function resumeIntentFirstMissionShell(mission: Mission): MissionReopenRe
 export async function confirmAndReopenMission(
   mission: Mission,
 ): Promise<MissionReopenResult> {
-  // Fast path: armed shells never had panes — skip listMissionPanes entirely.
-  if (isIntentFirstMissionShell(mission)) {
-    return resumeIntentFirstMissionShell(mission);
-  }
-
   // Blocked missions are owned by Main's bootstrap recovery. Renderer pane
   // inspection is both stale and misleading here: between retry attempts no
   // PTY may exist, and a persisted exclusive-login pane must not trigger an
@@ -82,6 +79,34 @@ export async function confirmAndReopenMission(
       ? resumeIntentFirstMissionShell(mission)
       : result;
   }
+
+  // CONTRATO DE NAVEGAÇÃO: o destino sai da EVIDÊNCIA (panes gravados), nunca
+  // da classificação de estado. A rota anterior era um atalho cego — shell
+  // "armado" ia direto ao assistente sem jamais perguntar se a missão tinha
+  // panes —, e foi assim que o operador acabou ejetado da página dos panes,
+  // com o trabalho fora de vista e sem volta.
+  let recordedPanes: number;
+  try {
+    recordedPanes = (await window.nexus.orch.listMissionPanes(mission.id))
+      .length;
+  } catch (err) {
+    return {
+      ok: false,
+      error:
+        err instanceof Error
+          ? err.message
+          : 'falha ao ler os panes da missão',
+    };
+  }
+  const route = missionResumeRoute({
+    livePanes: livePaneIdsForMission(mission.id).length,
+    recordedPanes,
+    isArmedShell: isIntentFirstMissionShell(mission),
+  });
+  // Assistente SÓ com prova de zero panes; estado não reconhecido permanece
+  // na página com aviso, nunca cai no assistente por fallback.
+  if (route.kind === 'wizard') return resumeIntentFirstMissionShell(mission);
+  if (route.kind === 'stay') return { ok: false, error: route.notice };
 
   if (hardReopenWouldDisplaceLayout(mission.id)) {
     // Peek orchestrator adapter from a lightweight hard path only when kill needed.
