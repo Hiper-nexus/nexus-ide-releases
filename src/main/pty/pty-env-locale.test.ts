@@ -32,6 +32,30 @@ describe('ensureUtf8Locale', () => {
     expect(env.LC_ALL).toBe('pt_BR.UTF-8');
   });
 
+  it('LC_ALL=C derruba o LANG UTF-8 — precedência POSIX exige limpar', () => {
+    // LC_ALL > LC_CTYPE > LANG: com LC_ALL=C herdado, injetar LANG UTF-8 não
+    // salva ninguém — o filho continua decodificando byte a byte e o prompt
+    // pt-BR volta como "n√£o".
+    const env: NodeJS.ProcessEnv = { LC_ALL: 'C' };
+    ensureUtf8Locale(env, 'darwin');
+    expect(env.LC_ALL).toBeUndefined();
+    expect(env.LANG).toBe('en_US.UTF-8');
+  });
+
+  it('LC_CTYPE=C não pode vencer um LANG UTF-8 legítimo do usuário', () => {
+    const env: NodeJS.ProcessEnv = { LANG: 'pt_BR.UTF-8', LC_CTYPE: 'POSIX' };
+    ensureUtf8Locale(env, 'linux');
+    expect(env.LC_CTYPE).toBeUndefined();
+    expect(env.LANG).toBe('pt_BR.UTF-8');
+  });
+
+  it('respeita LC_CTYPE UTF-8 explícito do usuário', () => {
+    const env: NodeJS.ProcessEnv = { LC_CTYPE: 'pt_BR.UTF-8' };
+    ensureUtf8Locale(env, 'darwin');
+    expect(env.LC_CTYPE).toBe('pt_BR.UTF-8');
+    expect(env.LANG).toBeUndefined();
+  });
+
   it('não toca em Windows (LANG não rege codepage lá)', () => {
     const env: NodeJS.ProcessEnv = {};
     ensureUtf8Locale(env, 'win32');
