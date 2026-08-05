@@ -5,7 +5,11 @@ import {
   generateVideo,
   MediaJobTimeoutError,
 } from '../media/media-generation';
-import { listMediaProviders } from '../media/media-providers';
+import {
+  computeMediaTierAlternatives,
+  listMediaProviders,
+  MediaProviderUnavailableError,
+} from '../media/media-providers';
 import { listMediaModelAliases } from '../media/media-model-aliases';
 import { hasMediaKey, maskedMediaKey } from '../media/media-keys';
 import { recordMediaUsage } from '../usage/media-usage-recorder';
@@ -81,23 +85,38 @@ const imageGenerateTool: McpToolDef = {
   requiresConfirm: true,
   handler: async (args, ctx, invocation) => {
     assertMcpInvocationCurrent(invocation);
-    const result = await generateImage({
-      prompt: requireStr(args, 'prompt'),
-      provider: str(args, 'provider'),
-      model: str(args, 'model'),
-      outPath: str(args, 'outPath'),
-      imagePath: str(args, 'imagePath'),
-      referenceImagePaths: strArray(args, 'referenceImagePaths'),
-      aspectRatio: str(args, 'aspectRatio'),
-      size: str(args, 'size'),
-      baseDir: baseDirFor(ctx),
-      signal: invocation?.signal,
-      assertCurrentAuthority: invocation?.assertCurrentAuthority,
-    });
-    assertMcpInvocationCurrent(invocation);
-    await recordMediaUsage(result, ctx, invocation);
-    assertMcpInvocationCurrent(invocation);
-    return result;
+    try {
+      const result = await generateImage({
+        prompt: requireStr(args, 'prompt'),
+        provider: str(args, 'provider'),
+        model: str(args, 'model'),
+        outPath: str(args, 'outPath'),
+        imagePath: str(args, 'imagePath'),
+        referenceImagePaths: strArray(args, 'referenceImagePaths'),
+        aspectRatio: str(args, 'aspectRatio'),
+        size: str(args, 'size'),
+        baseDir: baseDirFor(ctx),
+        signal: invocation?.signal,
+        assertCurrentAuthority: invocation?.assertCurrentAuthority,
+      });
+      assertMcpInvocationCurrent(invocation);
+      await recordMediaUsage(result, ctx, invocation);
+      assertMcpInvocationCurrent(invocation);
+      return result;
+    } catch (err) {
+      if (err instanceof MediaProviderUnavailableError) {
+        return {
+          ok: false,
+          error: err.message,
+          tierAlternatives: computeMediaTierAlternatives(
+            err.requestedKind,
+            err.message,
+            hasMediaKey,
+          ),
+        };
+      }
+      throw err;
+    }
   },
 };
 
@@ -177,6 +196,17 @@ const videoGenerateTool: McpToolDef = {
           provider: err.provider,
         };
       }
+      if (err instanceof MediaProviderUnavailableError) {
+        return {
+          ok: false,
+          error: err.message,
+          tierAlternatives: computeMediaTierAlternatives(
+            err.requestedKind,
+            err.message,
+            hasMediaKey,
+          ),
+        };
+      }
       throw err;
     }
   },
@@ -203,20 +233,35 @@ const audioGenerateTool: McpToolDef = {
   requiresConfirm: true,
   handler: async (args, ctx, invocation) => {
     assertMcpInvocationCurrent(invocation);
-    const result = await generateAudio({
-      text: requireStr(args, 'text'),
-      provider: str(args, 'provider'),
-      model: str(args, 'model'),
-      voiceId: str(args, 'voiceId'),
-      outPath: str(args, 'outPath'),
-      baseDir: baseDirFor(ctx),
-      signal: invocation?.signal,
-      assertCurrentAuthority: invocation?.assertCurrentAuthority,
-    });
-    assertMcpInvocationCurrent(invocation);
-    await recordMediaUsage(result, ctx, invocation);
-    assertMcpInvocationCurrent(invocation);
-    return result;
+    try {
+      const result = await generateAudio({
+        text: requireStr(args, 'text'),
+        provider: str(args, 'provider'),
+        model: str(args, 'model'),
+        voiceId: str(args, 'voiceId'),
+        outPath: str(args, 'outPath'),
+        baseDir: baseDirFor(ctx),
+        signal: invocation?.signal,
+        assertCurrentAuthority: invocation?.assertCurrentAuthority,
+      });
+      assertMcpInvocationCurrent(invocation);
+      await recordMediaUsage(result, ctx, invocation);
+      assertMcpInvocationCurrent(invocation);
+      return result;
+    } catch (err) {
+      if (err instanceof MediaProviderUnavailableError) {
+        return {
+          ok: false,
+          error: err.message,
+          tierAlternatives: computeMediaTierAlternatives(
+            err.requestedKind,
+            err.message,
+            hasMediaKey,
+          ),
+        };
+      }
+      throw err;
+    }
   },
 };
 

@@ -2,13 +2,24 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildMediaTools } from '../tools-media';
 import { testProjectScope } from './scope-fixture';
 
-const mocks = vi.hoisted(() => ({
-  workspaceRoot: vi.fn(() => '/authorized/workspace'),
-  generateImage: vi.fn(),
-  generateVideo: vi.fn(),
-  generateAudio: vi.fn(),
-  recordUsage: vi.fn(),
-}));
+const mocks = vi.hoisted(() => {
+  class MediaProviderUnavailableError extends Error {
+    requestedKind: string;
+    constructor(requestedKind: string, message: string) {
+      super(message);
+      this.name = 'MediaProviderUnavailableError';
+      this.requestedKind = requestedKind;
+    }
+  }
+  return {
+    workspaceRoot: vi.fn(() => '/authorized/workspace'),
+    generateImage: vi.fn(),
+    generateVideo: vi.fn(),
+    generateAudio: vi.fn(),
+    recordUsage: vi.fn(),
+    MediaProviderUnavailableError,
+  };
+});
 
 vi.mock('../workspace-path', () => ({
   resolveCwdForScope: mocks.workspaceRoot,
@@ -29,6 +40,8 @@ vi.mock('../../media/media-generation', () => ({
 }));
 vi.mock('../../media/media-providers', () => ({
   listMediaProviders: () => [],
+  MediaProviderUnavailableError: mocks.MediaProviderUnavailableError,
+  computeMediaTierAlternatives: () => [],
 }));
 vi.mock('../../media/media-model-aliases', () => ({
   listMediaModelAliases: () => ({
@@ -133,6 +146,65 @@ describe('media MCP tools', () => {
       }),
     ).rejects.toThrow('session_authority_revoked');
     expect(mocks.recordUsage).not.toHaveBeenCalled();
+  });
+});
+
+describe('tier degrade UX — P2-3', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('nexus_video_generate retorna ok:false + tierAlternatives quando provider indisponível', async () => {
+    mocks.generateVideo.mockRejectedValueOnce(
+      new mocks.MediaProviderUnavailableError(
+        'video',
+        'nenhum provider de video com key configurada — configure em Settings → Mídia',
+      ),
+    );
+    const video = buildMediaTools().find(
+      (t) => t.name === 'nexus_video_generate',
+    )!;
+    const response = await video.handler({ prompt: 'test' }, fakeCtx());
+    expect(response).toMatchObject({ ok: false, tierAlternatives: expect.any(Array) });
+    expect(response.error).toBeTruthy();
+  });
+
+  it('nexus_video_generate NÃO chama generateImage — sem fallback silencioso', async () => {
+    mocks.generateVideo.mockRejectedValueOnce(
+      new mocks.MediaProviderUnavailableError(
+        'video',
+        'nenhum provider de video com key configurada — configure em Settings → Mídia',
+      ),
+    );
+    const video = buildMediaTools().find(
+      (t) => t.name === 'nexus_video_generate',
+    )!;
+    await video.handler({ prompt: 'test' }, fakeCtx());
+    expect(mocks.generateImage).not.toHaveBeenCalled();
+  });
+
+  it('nexus_image_generate retorna ok:false + tierAlternatives quando provider indisponível', async () => {
+    mocks.generateImage.mockRejectedValueOnce(
+      new mocks.MediaProviderUnavailableError(
+        'image',
+        'nenhum provider de image com key configurada — configure em Settings → Mídia',
+      ),
+    );
+    const image = buildMediaTools().find(
+      (t) => t.name === 'nexus_image_generate',
+    )!;
+    const response = await image.handler({ prompt: 'test' }, fakeCtx());
+    expect(response).toMatchObject({ ok: false, tierAlternatives: expect.any(Array) });
+  });
+
+  it('erros não relacionados a provider ainda são relançados', async () => {
+    mocks.generateVideo.mockRejectedValueOnce(new Error('network timeout'));
+    const video = buildMediaTools().find(
+      (t) => t.name === 'nexus_video_generate',
+    )!;
+    await expect(video.handler({ prompt: 'test' }, fakeCtx())).rejects.toThrow(
+      'network timeout',
+    );
   });
 });
 

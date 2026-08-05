@@ -189,6 +189,74 @@ export function findMediaProvider(id: string): MediaProviderDef | null {
 }
 
 /**
+ * Thrown (not a plain Error) when a provider or kind has no key configured.
+ * Handlers catch this to return structured tier alternatives instead of a
+ * bare error — ensuring the UX surfaces next steps without silent fallback.
+ */
+export class MediaProviderUnavailableError extends Error {
+  constructor(
+    public readonly requestedKind: MediaKind,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'MediaProviderUnavailableError';
+  }
+}
+
+/** A lower-quality media tier the user may explicitly accept. */
+export interface MediaTierAlternative {
+  kind: MediaKind;
+  /** Human-readable explanation shown to the user/agent. */
+  reason: string;
+  providers: Array<{
+    id: string;
+    label: string;
+    defaultModel: string;
+    models: string[];
+  }>;
+}
+
+/**
+ * Tier downgrade order: video → image. Audio has no natural lower tier.
+ * Returns available alternatives the user may explicitly accept — never
+ * substitutes automatically (whitelist and key requirements still apply).
+ */
+const TIER_DOWNGRADE_ORDER: MediaKind[] = ['video', 'image'];
+
+export function computeMediaTierAlternatives(
+  requestedKind: MediaKind,
+  unavailableReason: string,
+  hasKeyFn: (def: MediaProviderDef) => boolean,
+): MediaTierAlternative[] {
+  const startIndex = TIER_DOWNGRADE_ORDER.indexOf(requestedKind);
+  if (startIndex === -1) return [];
+
+  return TIER_DOWNGRADE_ORDER.slice(startIndex + 1).reduce<MediaTierAlternative[]>(
+    (acc, kind) => {
+      const providers = MEDIA_PROVIDERS.filter(
+        (p) => p.kind === kind && hasKeyFn(p),
+      ).map((p) => ({
+        id: p.id,
+        label: p.label,
+        defaultModel: p.defaultModel,
+        models: p.models,
+      }));
+      if (providers.length > 0) {
+        acc.push({
+          kind,
+          reason:
+            `${requestedKind} indisponível (${unavailableReason}); ` +
+            `${kind} disponível como alternativa — aceite explicitamente`,
+          providers,
+        });
+      }
+      return acc;
+    },
+    [],
+  );
+}
+
+/**
  * Pick the provider for a request. Explicit provider: must exist, match the
  * kind and have a key — otherwise error (never silently substitute).
  * No provider: if preferredModel is set, prefer a keyed provider that lists it;
@@ -207,7 +275,8 @@ export function resolveMediaProvider(
       throw new Error(`provider ${requested} é de ${def.kind}, não de ${kind}`);
     }
     if (!hasKeyFn(def)) {
-      throw new Error(
+      throw new MediaProviderUnavailableError(
+        kind,
         `provider ${requested} sem key — configure em Settings → Mídia`,
       );
     }
@@ -227,9 +296,9 @@ export function resolveMediaProvider(
     (p) => p.kind === kind && hasKeyFn(p),
   );
   if (available.length === 0) {
-    throw new Error(
-      `nenhum provider de ${kind} com key configurada — configure em ` +
-        'Settings → Mídia',
+    throw new MediaProviderUnavailableError(
+      kind,
+      `nenhum provider de ${kind} com key configurada — configure em Settings → Mídia`,
     );
   }
   return available[0];
