@@ -254,7 +254,7 @@ describe('worker-handoff-ttl (paridade Overclock: worker fecha ~30s pós-handoff
     // apenas role='worker', missionId, scope e deliveryState dos handoffs.
     const sessions = ['claude-worker-s1', 'codex-worker-s2', 'gemini-worker-s3'] as const;
 
-    const authorities = new Map(
+    const authorities = new Map<string, PaneRuntimeAuthority>(
       sessions.map((sid) => [sid, authorityFor(sid)]),
     );
     // Cada worker tem um handoff próprio (filtrado por sessionId em workerHandoffs).

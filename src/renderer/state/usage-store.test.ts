@@ -1,5 +1,6 @@
 /** @vitest-environment jsdom */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { UsageSnapshot } from '../../shared/usage-types';
 import { setActiveWorkspacePath } from './active-workspace';
 import { EMPTY_USAGE_SNAPSHOT, useUsageStore } from './usage-store';
 
@@ -33,8 +34,18 @@ describe('useUsageStore', () => {
   });
 
   it('atualiza o snapshot quando a API retorna dados válidos', async () => {
-    const snap = {
-      byPane: { p1: { costUsd: 1.5, inputTokens: 100, outputTokens: 200, turns: 3 } },
+    const snap: UsageSnapshot = {
+      byPane: {
+        p1: {
+          paneId: 'p1',
+          costUsd: 1.5,
+          inputTokens: 100,
+          outputTokens: 200,
+          cacheReadTokens: 0,
+          turns: 3,
+          source: 'real',
+        },
+      },
       byAccount: {},
       global: { costUsd: 1.5, inputTokens: 100, outputTokens: 200, turns: 3 },
       media: { generations: 0, costUsd: 0 },

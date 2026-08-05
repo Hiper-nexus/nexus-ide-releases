@@ -166,7 +166,7 @@ describe('tier degrade UX — P2-3', () => {
     )!;
     const response = await video.handler({ prompt: 'test' }, fakeCtx());
     expect(response).toMatchObject({ ok: false, tierAlternatives: expect.any(Array) });
-    expect(response.error).toBeTruthy();
+    expect((response as { error?: unknown }).error).toBeTruthy();
   });
 
   it('nexus_video_generate NÃO chama generateImage — sem fallback silencioso', async () => {

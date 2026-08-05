@@ -212,7 +212,9 @@ describe('pane-non-worker-auto-close (P1-4: auto-fechar panes não-worker idle)'
 
   it('múltiplos panes não-worker encerrados independentemente', () => {
     const sessions = ['pty-u1', 'pty-u2', 'pty-u3'] as const;
-    const refs = new Map(sessions.map((sid) => [sid, refFor(sid)]));
+    const refs = new Map<string, NonWorkerPaneRef>(
+      sessions.map((sid) => [sid, refFor(sid)]),
+    );
     const closed: string[] = [];
     const deps: NonWorkerAutoCloseDeps = {
       isEnabled: () => true,
