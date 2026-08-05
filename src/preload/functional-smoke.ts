@@ -464,6 +464,9 @@ export async function runFunctionalSmokeProbes(
   // vivas (sem false-green) — é a fronteira que o fix 61f91fb1 contorna
   // legitimamente via missão governada.
   const DICTATION_MARKER = 'nexus-dictation-smoke-marker';
+  /** O espaço do toque viaja entre estes dois tokens — nada de ' ' solto. */
+  const TAP_SPACE_LEFT = 'nexus-tap';
+  const TAP_SPACE_RIGHT = 'space-marker';
   let dictationEcho = '';
   const dictationCleanup: {
     sessionId: string | null;
@@ -570,21 +573,23 @@ export async function runFunctionalSmokeProbes(
 
           if (!tapTypesSpace || !holdArms || !repeatIsTyping) return false;
 
-          // O espaço retido tem de CHEGAR ao pane, com recibo e eco.
+          // O espaço retido tem de CHEGAR ao pane, com recibo e eco. O espaço
+          // viaja ENTRE dois tokens únicos: procurar por um ' ' solto no
+          // scrollback daria falso-verde no primeiro repaint de prompt do
+          // shell — a probe tem de provar que ESTE caractere sobreviveu.
           const before = dictationEcho.length;
+          const typed = `${TAP_SPACE_LEFT} ${TAP_SPACE_RIGHT}`;
           const spaceDelivered = await api.pty.writeConfirmed(
             dictationCleanup.sessionId,
-            ' ',
+            typed,
           );
           if (!spaceDelivered) return false;
-          for (
-            let attempt = 0;
-            attempt < 50 && !dictationEcho.slice(before).includes(' ');
-            attempt += 1
-          ) {
+          const echoed = (): boolean =>
+            dictationEcho.slice(before).replace(/\s+/gu, ' ').includes(typed);
+          for (let attempt = 0; attempt < 50 && !echoed(); attempt += 1) {
             await delay(100);
           }
-          return dictationEcho.slice(before).includes(' ');
+          return echoed();
         },
         (value) => value === true,
       ))

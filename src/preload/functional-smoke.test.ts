@@ -374,7 +374,12 @@ describe('runFunctionalSmokeProbes — Space hold-to-talk no smoke empacotado', 
     expect(result.ok).toBe(true);
     expect(result.probes).toContain('dictation-hold-to-talk');
     // O espaço retido pelo toque é ENTREGUE de verdade no PTY empacotado.
-    expect(api.pty.writeConfirmed).toHaveBeenCalledWith('pty-smoke-1', ' ');
+    // O espaço viaja entre dois tokens únicos: um ' ' solto no scrollback
+    // daria falso-verde no primeiro repaint de prompt do shell.
+    expect(api.pty.writeConfirmed).toHaveBeenCalledWith(
+      'pty-smoke-1',
+      'nexus-tap space-marker',
+    );
   });
 
   it('falha se o toque armar ditado (a regressão exata da v0.26.0)', async () => {
@@ -419,7 +424,7 @@ describe('runFunctionalSmokeProbes — Space hold-to-talk no smoke empacotado', 
     const realWrite = api.pty.writeConfirmed;
     api.pty.writeConfirmed = vi.fn(async (sessionId: string, data: string) => {
       // Aceita tudo menos o espaço — exatamente o sintoma do usuário.
-      if (data === ' ') return false;
+      if (data.includes('nexus-tap')) return false;
       return realWrite(sessionId, data);
     });
 
