@@ -14,6 +14,7 @@ import {
   railStatusDisplay,
   statusLabel,
 } from '../lib/mission-rail-groups';
+import { missionStopReason } from '../lib/mission-stop-reason';
 import {
   loadArchivedMissionIds,
   loadCollapsedSections,
@@ -427,6 +428,20 @@ export function MissionRail() {
     // O status já vai na pill. A segunda linha só responde ao que o operador
     // precisa decidir agora; rota, orçamento e hashes ficam no diagnóstico.
     if (mission.status === 'pending' && !liveInGrid) {
+      // Parada silenciosa (voo real 05/08, mission-3be48989): esta linha
+      // devolvia "Retomar · <data>" para uma missão que RODOU, entregou um
+      // commit e parou com o motivo escrito no handoff do worker. O card
+      // engolia a razão e o operador ficava sem saber o que fazer.
+      const recordedPanes = Object.values(paneMissions).filter(
+        (missionId) => missionId === mission.id,
+      ).length;
+      const stop = missionStopReason({
+        status: mission.status,
+        hasActiveRuntime: false,
+        hasObservedRuntime: recordedPanes > 0,
+        latestHandoff: latestHandoffByMission.get(mission.id) ?? null,
+      });
+      if (stop) return `${clipRailCause(stop.reason)}${laneBit}${handBit}`;
       return `Retomar · ${started}${laneBit}${handBit}`;
     }
 
