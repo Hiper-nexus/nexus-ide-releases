@@ -1,5 +1,87 @@
 # Changelog
 
+## 0.26.0 — O loop que fecha: da largura ao encerramento
+
+Data: 2026-08-05
+
+### Missão que fecha sozinha (integridade do loop)
+
+- **Worker que entrega, encerra.** O TTL pós-handoff passa a vir ligado por
+  padrão em missões guiadas/autopiloto, com opt-out preservado para os E2E: um
+  worker que terminou e entregou o resultado é encerrado e acorda o
+  orquestrador, sem depender de flag.
+- **A rota vira lei, não conselho.** No caminho agêntico, o squad e a rota
+  resolvidos vinculam o dispatch: o loop não consegue mais ignorar o roster
+  salvo e cair em monocultura ou no tier errado. `pane_spawn` respeita o roster
+  da missão.
+- **Fan-out de verdade.** O plano guiado deixa de ser "um escritor por
+  construção": a decomposição emite propriedade disjunta por story, então dois
+  ou mais workers escrevem em paralelo sem colidir, e o merge serial passa a ser
+  escolha explícita — não gargalo acidental.
+- **Objetivo em linguagem natural também paraleliza.** Uma meta escrita em texto
+  livre não é mais forçada ao executor único: fica elegível para a topologia de
+  fan-out, alcançando a mesma cadência de ≥2 escritores.
+- **Fan-out largo drena até o fim.** O dreno de ondas deixa de parar em 64 e
+  fecha frentes mais largas — até as 85 stories da campanha — sem deixar cauda
+  de tarefas presas depois do handoff.
+- **Revisor travado não prende mais o plano.** Uma tarefa de QA/revisão
+  bloqueada por dependência agora tem desfecho terminal, em vez de ficar
+  `blocked` para sempre segurando uma missão inteira aberta.
+- **Boot de worker que não executa é reapado.** Um pane que nasce sem levar a
+  tarefa à execução vira falha tratada pelo watchdog, em vez de pane vazio que
+  nunca entrega handoff.
+
+### Sair do app sem travar
+
+- **Encerramento confiável.** O comando de sair passou a ter prazo global e
+  backstop de `app.exit`, e a finalização dos processos de terminal escala de
+  forma limitada de SIGTERM para SIGKILL. Sair do app deixa de pendurar quando
+  um processo filho demora a morrer.
+
+### Voz
+
+- **Ditado que chega no pane.** A entrega do ditado ao pane foi corrigida com
+  instrumentação de confirmação: o texto ditado chega ao destino certo, com
+  sinalização de que a entrega ocorreu.
+
+### Equipe da missão — editor de squad, fatia 1
+
+- **Seletor sempre operável.** A opção correspondente ao CLI/modelo já
+  selecionado nunca é desabilitada, eliminando o picker morto; disponibilidade
+  continua sinalizada por rótulo e motivo de bloqueio.
+- **Trava governada vira sugestão preenchida.** Em modo governado, qualquer
+  provider credenciado (instalado e autenticado) é override selecionável e
+  lançável, e os flags da ladder degradam para rótulos consultivos. Provider sem
+  credencial segue desabilitado com "login necessário" — nunca o catálogo
+  inteiro.
+- **Edição de roster não é mais descartada em silêncio.** Trocar modo ou
+  política preserva as edições não salvas do operador; só uma troca real de
+  squad reconstrói o roster. O roster editado fica travado à reserva de rota do
+  dispatch.
+
+### Workspace, personas e panes
+
+- **Política de acesso explícita.** `WorkspacePolicy` passa a ser tipo de
+  primeira classe, incluindo `same_checkout`, tornando a política de dispatch
+  visível e ajustável em vez de implícita.
+- **Personas independentes da voz.** A identidade de um agente-folha deixa de
+  ser derivada da voz e passa a ser persona própria.
+- **Pane não-worker ocioso fecha sozinho.** O auto-close deixa de valer apenas
+  para o caminho de worker TTL.
+
+### Instrumentos, missão e mídia
+
+- **Chef ocioso esperando workers fica visível.** Marcador dedicado para o
+  estado em que o orquestrador está parado aguardando entregas.
+- **Driver de missão orientado a objetivo.** Um driver goal-driven passa a
+  coexistir com o cron time-driven.
+- **Cold-start instrumentado.** O caminho de voz ganha medição de cold-start e o
+  scaffolding do caminho quente.
+- **Degrade de mídia por tier, sem fallback silencioso.** Quando um tier não
+  está disponível, a degradação é comunicada em vez de trocar de rota calada.
+- **Telemetria de uso tolerante.** Erros de identidade de escopo são absorvidos
+  no telemetry e o renderer tolera escopo nulo pós-absorção.
+
 ## 0.25.1 — Missão fluida, entrega sem sumir
 
 Data: 2026-08-04
