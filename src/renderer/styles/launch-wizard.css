@@ -132,6 +132,27 @@
   font-size: 14px;
 }
 
+/* Saída de volta ao trabalho: o assistente sobre uma missão existente nunca
+   pode ser beco sem saída. Fica ao lado do fechar, antes dele na leitura. */
+.wizard__back-to-panes {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 4px 10px;
+  transition: color 120ms var(--ease-out-quart, ease),
+    border-color 120ms var(--ease-out-quart, ease);
+}
+
+.wizard__back-to-panes:hover,
+.wizard__back-to-panes:focus-visible {
+  color: var(--text);
+  border-color: var(--border-strong, var(--border));
+}
+
 .wizard__body {
   flex: 1 1 auto;
   min-height: 0;

@@ -14,6 +14,7 @@ import {
   retargetSquadInstructions,
 } from "../../shared/mission-identity";
 import { useOrchStore } from "../state/orch-store";
+import { confirmAndReopenMission } from "../orch/confirm-reopen-mission";
 import { useWorkspaceStore } from "../state/workspace-store";
 import {
   isMissionWizardDraftDirty,
@@ -1955,6 +1956,18 @@ export function MissionWizard() {
     }
   }
 
+  /**
+   * Saída do assistente de volta ao trabalho: fecha em soft-close (mantém o
+   * rascunho) e reabre os panes daquela missão pela MESMA rota por evidência
+   * do quadro e do rail. Se a missão não tiver panes, a rota devolve o aviso
+   * — nunca outra ejeção.
+   */
+  function backToPanes(): void {
+    const mission = armedMissionSnapshot;
+    softClose();
+    if (mission) void confirmAndReopenMission(mission);
+  }
+
   return (
     <div
       ref={dialogRef}
@@ -1973,6 +1986,23 @@ export function MissionWizard() {
           <span className="wizard__title">
             {hasNewWsStep ? "Novo workspace" : "Nova Missão"}
           </span>
+          {/*
+            CONTRATO DE NAVEGAÇÃO: quando o assistente abre SOBRE uma missão
+            que já existe, ele não pode ser um beco sem saída. Fechar não
+            bastava — o operador ficava sem caminho de volta aos panes e
+            perdia o trabalho de vista. Só aparece com missão armada real;
+            "Nova missão" de verdade continua sem essa saída.
+          */}
+          {armedMissionSnapshot && (
+            <button
+              type="button"
+              className="wizard__back-to-panes"
+              onClick={backToPanes}
+              title={`Fecha o assistente e volta aos panes de "${armedMissionSnapshot.title}"`}
+            >
+              ‹ Voltar aos panes
+            </button>
+          )}
           <CloseButton
             className="wizard__close"
             onClick={softClose}
