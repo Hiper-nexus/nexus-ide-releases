@@ -435,6 +435,9 @@ export function MissionRail() {
       const recordedPanes = Object.values(paneMissions).filter(
         (missionId) => missionId === mission.id,
       ).length;
+      // `recordedPanes` vem do layout VIVO e zera assim que o reaper colhe os
+      // panes; sozinho ele apagava a razão de toda missão já colhida. O handoff
+      // durável entra como prova própria dentro de missionStopReason.
       const stop = missionStopReason({
         status: mission.status,
         hasActiveRuntime: false,

@@ -87,3 +87,62 @@ describe('missionStopReason', () => {
     expect(stop?.reason).toContain('…');
   });
 });
+
+describe('B-254 residual — evidência durável, não layout vivo', () => {
+  // Voo real 05/08 (HiperGO): o worker deixou um handoff `blocked` com o motivo
+  // inteiro escrito, o reaper fechou os panes, e o card voltou a "Retomar ·
+  // data". O chamador derivava runtime de `paneMissions` VIVO, que é 0 depois
+  // da colheita — então a razão existia no banco e o produto calava de novo.
+  it('um handoff durável PROVA que a missão materializou runtime', () => {
+    const stop = missionStopReason({
+      status: 'pending',
+      hasActiveRuntime: false,
+      // Panes já colhidos: o layout não sabe mais de nada.
+      hasObservedRuntime: false,
+      latestHandoff: {
+        status: 'blocked',
+        summary: 'Faltou a credencial do banco de homologação.',
+      },
+    });
+
+    expect(stop).not.toBeNull();
+    expect(stop?.reason).toContain('Faltou a credencial');
+  });
+
+  it('trabalho planejado também prova runtime quando não há relatório', () => {
+    const stop = missionStopReason({
+      status: 'pending',
+      hasActiveRuntime: false,
+      hasObservedRuntime: false,
+      latestHandoff: null,
+      plannedWork: 8,
+    });
+
+    expect(stop).not.toBeNull();
+    expect(stop?.nextAction).toBeTruthy();
+  });
+
+  it('missão sem plano, sem handoff e sem pane segue sem parada a explicar', () => {
+    expect(
+      missionStopReason({
+        status: 'pending',
+        hasActiveRuntime: false,
+        hasObservedRuntime: false,
+        latestHandoff: null,
+        plannedWork: 0,
+      }),
+    ).toBeNull();
+  });
+
+  it('runtime vivo continua vencendo qualquer evidência durável', () => {
+    expect(
+      missionStopReason({
+        status: 'pending',
+        hasActiveRuntime: true,
+        hasObservedRuntime: false,
+        latestHandoff: { status: 'blocked', summary: 'x' },
+        plannedWork: 8,
+      }),
+    ).toBeNull();
+  });
+});

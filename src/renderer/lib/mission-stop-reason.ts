@@ -23,12 +23,20 @@ export interface MissionStopReasonInput {
   readonly status: MissionStatus;
   /** Algum agente pode agir agora? */
   readonly hasActiveRuntime?: boolean;
-  /** A missão já materializou runtime alguma vez (panes/workers/worktrees)? */
+  /**
+   * A missão já materializou runtime alguma vez (panes/workers/worktrees)?
+   *
+   * Só um SINAL entre outros — nunca a única prova. O chamador costuma derivar
+   * isto do layout VIVO, que zera assim que o reaper colhe os panes; um handoff
+   * durável ou um plano selado provam runtime muito depois disso.
+   */
   readonly hasObservedRuntime?: boolean;
   readonly latestHandoff?: {
     readonly status: HandoffStatus;
     readonly summary: string;
   } | null;
+  /** Tarefas seladas no plano — prova durável de que houve trabalho a fazer. */
+  readonly plannedWork?: number;
 }
 
 export interface MissionStopReason {
@@ -54,7 +62,17 @@ export function missionStopReason(
 ): MissionStopReason | null {
   if (input.status === 'done' || input.status === 'failed') return null;
   if (input.hasActiveRuntime) return null;
-  if (!input.hasObservedRuntime) return null;
+  // Evidência DURÁVEL vence o layout vivo. O caso HiperGO parou aqui: os panes
+  // já tinham sido colhidos, `hasObservedRuntime` chegava false, e a função
+  // devolvia null MESMO com um handoff `blocked` trazendo o motivo inteiro —
+  // a razão estava no banco e o card voltava a "Retomar · data". Um relatório
+  // de agente, ou um plano com tarefas seladas, provam runtime muito depois de
+  // o último pane morrer.
+  const observedRuntime =
+    input.hasObservedRuntime === true ||
+    input.latestHandoff != null ||
+    (input.plannedWork ?? 0) > 0;
+  if (!observedRuntime) return null;
 
   const handoff = input.latestHandoff;
   const nextAction =
