@@ -172,12 +172,20 @@ describe('worker-handoff-ttl (paridade Overclock: worker fecha ~30s pós-handoff
     expect(h.closed).toHaveLength(0);
   });
 
-  it('não arma com a flag desligada (opt-in, default OFF)', () => {
+  it('não arma com a flag desligada (opt-out explícito — default ON)', () => {
     const h = harness({ enabled: false });
     initWorkerHandoffTtl(h.deps);
     emitStatus('pty-w1', 'idle');
     vi.advanceTimersByTime(WORKER_POST_HANDOFF_TTL_MS * 2);
     expect(h.closed).toHaveLength(0);
+  });
+
+  it('arma com a flag no estado default (ON por padrão)', () => {
+    const h = harness({ enabled: true });
+    initWorkerHandoffTtl(h.deps);
+    emitStatus('pty-w1', 'idle');
+    vi.advanceTimersByTime(WORKER_POST_HANDOFF_TTL_MS + 1);
+    expect(h.closed).toHaveLength(1);
   });
 
   it('não arma enquanto houver handoff não consumido', () => {

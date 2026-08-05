@@ -141,13 +141,13 @@ export const BUILTIN_FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
     id: FEATURE_FLAG_IDS.missionWorkerHandoffTtl,
     owner: 'orch',
     description:
-      'Worker TTL pós-handoff (paridade Overclock, opt-in): worker idle com todos os handoffs consumidos é encerrado ~30s depois, liberando o pane. Default OFF para proteger as invariantes físicas do e2e real-mission (mesmo critério do warmupAdvisories).',
+      'Worker TTL pós-handoff (paridade Overclock §a#1): worker idle com todos os handoffs consumidos é encerrado ~30s depois, liberando o pane. DEFAULT-ON — restaura a aresta close→wake incondicional. Opt-out via override de flag para E2E real-mission (ancora workers a PTYs vivos).',
     channel: 'dev',
     createdAt: '2026-08-04',
     removeAfter: '2027-03-31',
     killSwitch: false,
     telemetry: false,
-    defaultEnabled: false,
+    defaultEnabled: true,
   },
   {
     id: FEATURE_FLAG_IDS.searchMixer,
