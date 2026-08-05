@@ -15,6 +15,10 @@ import {
   assertVerifiedRealMissionRuntimeProof,
 } from './e2e-real-mission.mjs';
 import { bootstrapPinnedNpm } from './make-release.mjs';
+import {
+  assertFastLaneWaiverDocument,
+  FAST_LANE_WAIVER_ASSET,
+} from './release-fast-lane.mjs';
 
 const MAX_COMMAND_OUTPUT_BYTES = 64 * 1024 * 1024;
 
@@ -511,6 +515,21 @@ export function buildFinalizedReleaseSecurityFields(options) {
   ) {
     throw new Error('invalid skipped release orchestrator declaration');
   }
+  // Fast lane: a missão real empacotada NÃO rodou neste ciclo. O manifesto diz
+  // isso na cara — `physicalProductWizard: false` — e carrega o waiver que
+  // nomeia o baseline verde reusado. Fingir `true` aqui seria o único jeito de
+  // a fast lane virar mentira, então é exatamente o que não se faz.
+  const fastLane = options.fastLaneWaiver
+    ? {
+        physicalProductWizard: false,
+        fastLaneWaiver: {
+          lane: options.fastLaneWaiver.lane,
+          baselineCommitSha: options.fastLaneWaiver.baseline.commitSha,
+          baselineVersion: options.fastLaneWaiver.baseline.version,
+          asset: options.fastLaneWaiverAsset,
+        },
+      }
+    : { physicalProductWizard: true };
   if (isClaudeSkipped) {
     if (options.e2eEvidenceClaudeOrchestrator !== undefined) {
       throw new Error(
@@ -519,7 +538,7 @@ export function buildFinalizedReleaseSecurityFields(options) {
     }
     return {
       verification: {
-        physicalProductWizard: true,
+        ...fastLane,
         skippedOrchestrators: ['claude'],
       },
       releaseArtifacts: {
@@ -537,8 +556,8 @@ export function buildFinalizedReleaseSecurityFields(options) {
   }
   return {
     verification: {
-      physicalProductWizard: true,
-      physicalClaudeOrchestrator: true,
+      ...fastLane,
+      physicalClaudeOrchestrator: !options.fastLaneWaiver,
     },
     releaseArtifacts: {
       signingIdentity: options.signingIdentity,
@@ -569,6 +588,31 @@ export function finalizeReleaseSecurityArtifacts(options) {
     tagSignerFingerprint: options.tagSignerFingerprint,
     tagSignatureVerified: options.tagSignatureVerified,
   });
+  const dmg = hashFile(options.dmgPath);
+  const zip = hashFile(options.zipPath);
+  // Fast lane: a evidência reusada pertence, por construção, ao commit/ZIP do
+  // BASELINE verde — não a este. O waiver é a única autoridade que autoriza
+  // essa divergência, e ele é re-verificado aqui (binding do candidate novo,
+  // bytes da evidência no disco e reclassificação do próprio diff).
+  const waiver = options.fastLaneWaiver ?? null;
+  if (waiver) {
+    assertFastLaneWaiverDocument(waiver, {
+      securityDir,
+      candidate: {
+        version: options.version,
+        commitSha,
+        zipSha256: zip.sha256,
+        dmgSha256: dmg.sha256,
+      },
+    });
+  }
+  const evidenceBinding = waiver
+    ? {
+        commitSha: waiver.baseline.commitSha,
+        appVersion: waiver.baseline.version,
+        zipSha256: waiver.baseline.zipSha256,
+      }
+    : { commitSha, appVersion: options.version, zipSha256: zip.sha256 };
   let evidence;
   try {
     evidence = assertRealMissionReleaseEvidence(
@@ -588,30 +632,34 @@ export function finalizeReleaseSecurityArtifacts(options) {
     evidence?.status !== 'pass' ||
     evidence?.launchSurface !== 'product-wizard' ||
     evidence?.wizardCoverage !== 'main-owned-product-sequence' ||
-    evidence?.release?.commitSha !== commitSha ||
-    evidence?.release?.appVersion !== options.version ||
+    evidence?.release?.commitSha !== evidenceBinding.commitSha ||
+    evidence?.release?.appVersion !== evidenceBinding.appVersion ||
     evidence?.release?.artifact?.identity !== options.expectedSigningIdentity
   ) {
     throw new Error(
       'evidência E2E não pertence ao mesmo commit/versão/identidade',
     );
   }
-  assertVerifiedRealMissionRuntimeProof(options.runtimeProof, {
-    evidence,
-    releaseBinding: {
-      appVersion: options.version,
-      commitSha,
-      artifact: {
-        sha256: options.expectedE2EArtifactSha256,
-        identity: options.expectedSigningIdentity,
+  if (!waiver) {
+    assertVerifiedRealMissionRuntimeProof(options.runtimeProof, {
+      evidence,
+      releaseBinding: {
+        appVersion: options.version,
+        commitSha,
+        artifact: {
+          sha256: options.expectedE2EArtifactSha256,
+          identity: options.expectedSigningIdentity,
+        },
       },
-    },
-  });
-  const dmg = hashFile(options.dmgPath);
-  const zip = hashFile(options.zipPath);
+    });
+  } else if (options.runtimeProof !== undefined) {
+    throw new Error(
+      'fast lane waiver cannot carry a live runtime proof it did not produce',
+    );
+  }
   if (
     zip.sha256 !== options.expectedE2EArtifactSha256 ||
-    evidence?.release?.artifact?.sha256 !== zip.sha256
+    evidence?.release?.artifact?.sha256 !== evidenceBinding.zipSha256
   ) {
     throw new Error('digest do ZIP executado diverge da evidência E2E');
   }
@@ -650,6 +698,14 @@ export function finalizeReleaseSecurityArtifacts(options) {
   } else {
     // The Claude-orchestrator variant evidence is bound to the same commit,
     // version, identity and ZIP, and carries its own live runtime proof.
+    // A fast lane never reuses it: that variant's live runtime proof is
+    // unreproducible from a receipt, so a waived cycle must decline the lane
+    // instead of pretending the second orchestrator was exercised.
+    if (waiver) {
+      throw new Error(
+        'fast lane requires a baseline with the explicit Claude orchestrator skip',
+      );
+    }
     if (
       typeof options.claudeOrchestratorEvidencePath !== 'string' ||
       options.claudeOrchestratorRuntimeProof === undefined
@@ -720,6 +776,9 @@ export function finalizeReleaseSecurityArtifacts(options) {
           e2eEvidenceClaudeOrchestrator:
             claudeOrchestratorEvidence,
         }),
+    ...(waiver
+      ? { fastLaneWaiver: waiver, fastLaneWaiverAsset: FAST_LANE_WAIVER_ASSET }
+      : {}),
   });
   const finalized = {
     ...manifest,
