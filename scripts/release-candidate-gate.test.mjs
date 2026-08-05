@@ -266,7 +266,7 @@ describe('manual release candidate gate', () => {
     })).toThrow(/provenance/i);
   });
 
-  it('runs signed verifier and one product-wizard E2E before producing a commit/artifact-bound receipt', async () => {
+  it.runIf(process.platform === 'darwin' && process.arch === 'arm64')('runs signed verifier and one product-wizard E2E before producing a commit/artifact-bound receipt', async () => {
     const root = tempRoot();
     const dmg = path.join(root, 'out', 'make', 'nested', 'NexusIDE-arm64.dmg');
     const zip = path.join(root, 'out', 'make', 'nested', 'NexusIDE-arm64.zip');
@@ -423,7 +423,7 @@ describe('manual release candidate gate', () => {
     ).toBe(false);
   });
 
-  it('fails closed when the exact-ZIP product run produces only private-runner evidence', async () => {
+  it.runIf(process.platform === 'darwin' && process.arch === 'arm64')('fails closed when the exact-ZIP product run produces only private-runner evidence', async () => {
     const root = tempRoot();
     const dmg = path.join(root, 'out', 'make', 'nested', 'NexusIDE-arm64.dmg');
     const zip = path.join(root, 'out', 'make', 'nested', 'NexusIDE-arm64.zip');
@@ -469,7 +469,7 @@ describe('manual release candidate gate', () => {
     expect(runUiE2E).toHaveBeenCalledOnce();
   });
 
-  it('fails closed when the claude-orchestrator variant evidence is missing', async () => {
+  it.runIf(process.platform === 'darwin' && process.arch === 'arm64')('fails closed when the claude-orchestrator variant evidence is missing', async () => {
     const root = tempRoot();
     const dmg = path.join(root, 'out', 'make', 'nested', 'NexusIDE-arm64.dmg');
     const zip = path.join(root, 'out', 'make', 'nested', 'NexusIDE-arm64.zip');
@@ -515,7 +515,7 @@ describe('manual release candidate gate', () => {
     expect(runUiE2E).toHaveBeenCalledOnce();
   });
 
-  it('accepts one physical Codex variant when Claude is explicitly skipped', async () => {
+  it.runIf(process.platform === 'darwin' && process.arch === 'arm64')('accepts one physical Codex variant when Claude is explicitly skipped', async () => {
     const root = tempRoot();
     const dmg = path.join(root, 'out', 'make', 'nested', 'NexusIDE-arm64.dmg');
     const zip = path.join(root, 'out', 'make', 'nested', 'NexusIDE-arm64.zip');

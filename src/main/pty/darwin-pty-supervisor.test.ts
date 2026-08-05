@@ -525,7 +525,7 @@ describe("Darwin PTY responsibility supervisor resolution", () => {
     ).toBe(DARWIN_PTY_PACKAGED_SMOKE_TRUST_PROFILE);
   });
 
-  it("wraps an absolute command with the fixed development helper protocol", () => {
+  it.runIf(process.platform === "darwin")("wraps an absolute command with the fixed development helper protocol", () => {
     const { helper, runtime } = temporaryRuntime();
     const signedHelper = installSignedDevelopmentHelper(helper);
 
@@ -540,7 +540,7 @@ describe("Darwin PTY responsibility supervisor resolution", () => {
     });
   });
 
-  it("places the authenticated supervisor inside the existing Seatbelt plan", () => {
+  it.runIf(process.platform === "darwin")("places the authenticated supervisor inside the existing Seatbelt plan", () => {
     const { helper, runtime } = temporaryRuntime();
     const signedHelper = installSignedDevelopmentHelper(helper);
     const profile =
@@ -576,7 +576,7 @@ describe("Darwin PTY responsibility supervisor resolution", () => {
     });
   });
 
-  it("builds qualification probes through the live authenticated barrier", () => {
+  it.runIf(process.platform === "darwin")("builds qualification probes through the live authenticated barrier", () => {
     const { helper, runtime } = temporaryRuntime();
     const signedHelper = installSignedDevelopmentHelper(helper);
 
@@ -608,7 +608,7 @@ describe("Darwin PTY responsibility supervisor resolution", () => {
     });
   });
 
-  it("seals a direct Darwin provider launch before node-pty", () => {
+  it.runIf(process.platform === "darwin")("seals a direct Darwin provider launch before node-pty", () => {
     const { helper, runtime } = temporaryRuntime();
     const signedHelper = installSignedDevelopmentHelper(helper);
 
@@ -636,7 +636,7 @@ describe("Darwin PTY responsibility supervisor resolution", () => {
     });
   });
 
-  it("rejects a target mismatch or malformed live-code seal before node-pty", () => {
+  it.runIf(process.platform === "darwin")("rejects a target mismatch or malformed live-code seal before node-pty", () => {
     const { helper, runtime } = temporaryRuntime();
     installSignedDevelopmentHelper(helper);
 
@@ -656,7 +656,7 @@ describe("Darwin PTY responsibility supervisor resolution", () => {
     ).toThrow(/seal is malformed/i);
   });
 
-  it("fails closed when the Darwin helper is absent or not executable", () => {
+  it.runIf(process.platform === "darwin")("fails closed when the Darwin helper is absent or not executable", () => {
     const { helper, runtime } = temporaryRuntime();
     expect(() => resolveDarwinPtySupervisor(runtime)).toThrow(
       /missing, non-executable/i,
@@ -668,7 +668,7 @@ describe("Darwin PTY responsibility supervisor resolution", () => {
     );
   });
 
-  it("never mints a packaged smoke provider seal from a development helper", () => {
+  it.runIf(process.platform === "darwin")("never mints a packaged smoke provider seal from a development helper", () => {
     const { helper, runtime } = temporaryRuntime();
     installSignedDevelopmentHelper(helper);
     expect(() => resolvePackagedDarwinPtySmokeProviderSeal(runtime)).toThrow(
@@ -722,7 +722,7 @@ describe("Darwin PTY responsibility supervisor resolution", () => {
     ).toThrow(/cannot enter the general authenticated CLI launcher/i);
   });
 
-  it("rejects symlinks and never accepts an environment-selected helper", () => {
+  it.runIf(process.platform === "darwin")("rejects symlinks and never accepts an environment-selected helper", () => {
     const { root, helper, runtime } = temporaryRuntime();
     const outside = path.join(root, "outside-helper");
     fs.writeFileSync(outside, "fixture", { mode: 0o755 });
@@ -966,7 +966,7 @@ describe("Darwin PTY responsibility supervisor resolution", () => {
     ).toBe(false);
   });
 
-  it("never falls back to a development helper in packaged mode", () => {
+  it.runIf(process.platform === "darwin")("never falls back to a development helper in packaged mode", () => {
     const { helper, runtime } = temporaryRuntime();
     fs.writeFileSync(helper, "fixture", { mode: 0o755 });
     expect(() =>
