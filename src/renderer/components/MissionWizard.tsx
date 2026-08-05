@@ -42,6 +42,7 @@ import {
 } from "../orch/mission-launcher";
 import { applySquadEdit } from "../../shared/squad-edit";
 import { balanceSquadRosterCli } from "../orch/squad-roster";
+import { wizardApprovalOutcome } from "../orch/wizard-approval-outcome";
 import { automaticOrchestratorAdapterId } from "../orch/orchestrator-runtime";
 import { isAdapterModelAuthenticated } from "../orch/mission-runtime-readiness";
 import {
@@ -1877,12 +1878,20 @@ export function MissionWizard() {
               ? attachments.map((attachment) => attachment.path)
               : undefined,
         });
-        if (
-          approved.intentVersion !== planned.intentVersion ||
-          approved.intentContract?.goal !== contract.goal
-        ) {
+        // Drift de intentVersion pós-approve é do SISTEMA (o selo do squad
+        // dentro do approve bumpa a versão) e dobra no escopo aprovado — o
+        // guard antigo comparava versões e descartava aprovações consumadas
+        // em loop infinito (05/08). Só goal divergente re-prompta.
+        const outcome = wizardApprovalOutcome({
+          plannedGoal: contract.goal,
+          plannedIntentVersion: planned.intentVersion,
+          approved,
+        });
+        if (!outcome.ok) {
           throw new Error(
-            "O objetivo mudou durante o preflight; revise o plano novamente.",
+            outcome.reason === 'goal-changed'
+              ? "O objetivo mudou durante o preflight; revise o plano novamente."
+              : "A aprovação não foi consumada pelo processo principal; tente novamente.",
           );
         }
         await recordRealMissionProductWizardStep(
