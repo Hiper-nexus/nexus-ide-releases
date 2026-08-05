@@ -18,6 +18,17 @@ import {
 export const WAVE_PACK_DOMAIN = "wave-pack";
 
 /**
+ * Hard ceiling on sealed Pack / NL-fan-out stories (P0-9). Raised from the old
+ * 64 so a real decomposition (the field 85-story vibe-code plan) seals in full
+ * and the scheduler drains it to exhaustion across refilling waves. This is a
+ * runaway backstop, NOT a wave-width cap: wave concurrency stays governed by
+ * `maxWorkers`; stories beyond that seal and wait for free slots. A plan that
+ * genuinely exceeds this ceiling fails CLOSED with a named error the seal
+ * surfaces in mission state — never a silent truncation of the story set.
+ */
+export const MAX_WAVE_PACK_STORIES = 500;
+
+/**
  * Marker domain stamped on a story whose writer owns a real, disjoint file
  * subset (not the shared inventory merge-permit). Its presence flips the
  * scheduler from the shared-inventory shortcut to honest file-overlap checking,
@@ -87,6 +98,46 @@ export function extractStoryOwnershipFiles(text: string): readonly string[] {
     if (files.length >= 256) break;
   }
   return Object.freeze(files);
+}
+
+/**
+ * P0-8 producer: decompose a natural-language guided goal into a disjoint
+ * per-file story set so an NL mission fans out onto the same wave-pack
+ * machinery as a promoted/Pack plan, instead of collapsing to one whole-repo
+ * executor. Each distinct file the goal names becomes one story that owns
+ * exactly that file; `extractStoryOwnershipFiles` already de-duplicates in
+ * first-mention order, so the emitted partition is pairwise-disjoint by
+ * construction. Fewer than 2 named files → `[]` (not decomposable; the caller
+ * keeps the single-writer delivery graph).
+ */
+export function decomposeGuidedGoalIntoStories(input: {
+  readonly goal: string;
+  readonly acceptanceCriteria?: readonly string[];
+}): readonly ExtractedWavePackStory[] {
+  const files = extractStoryOwnershipFiles(input.goal);
+  if (files.length < 2) return Object.freeze([] as ExtractedWavePackStory[]);
+  const capped = files.slice(0, MAX_WAVE_PACK_STORIES);
+  const goalExcerpt = input.goal.trim().slice(0, 2_000);
+  return Object.freeze(
+    capped.map((file, index) =>
+      Object.freeze({
+        id: `story-nl-${index + 1}`,
+        epicStoryId: `1.${index + 1}`,
+        title: file.slice(0, 256),
+        body: [
+          `Implemente a parte da entrega correspondente a ${file}.`,
+          `Toque somente ${file} — nada é compartilhado com as outras partes.`,
+          "Não implemente outros arquivos. Entregue handoff com o que validou.",
+          "",
+          "Objetivo da missão:",
+          goalExcerpt,
+        ]
+          .join("\n")
+          .slice(0, 8_192),
+        ownershipFiles: [file],
+      }),
+    ),
+  );
 }
 
 /**

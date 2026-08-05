@@ -15,6 +15,7 @@ import { snapshotSquadAuthority } from "./squad-authority-snapshot";
 import {
   ensureGuidedMissionPlan,
   guidedLiveRosterAdapter,
+  resolveGuidedSealTopology,
   GUIDED_MISSION_PLANNER_TASK_ID,
   GUIDED_MISSION_QA_TASK_ID,
 } from "./guided-mission-planner";
@@ -826,6 +827,90 @@ describe("saved-team (mission-runtime) sealing", () => {
       reason: "orchestration-livre",
     });
     expect(h.createPlanAtomically).not.toHaveBeenCalled();
+  });
+
+  function nlMission(goal: string): Mission {
+    const contract = compileIntentContract({
+      goal,
+      intentVersion: 3,
+      source: "typed",
+      lane: "standard",
+    });
+    return mission({
+      description: contract.goal,
+      intentContract: {
+        ...contract,
+        approvedAt: 10,
+        dispatchedAt: 10,
+        squadRevisionHash: snapshotSquadAuthority(squad).hash,
+      },
+    });
+  }
+
+  it("P0-8: an NL goal naming ≥2 files fans out (wave-pack), not a single executor", () => {
+    const currentMission = nlMission(
+      "Implemente utilitários independentes em src/util/slugify.ts, " +
+        "src/util/debounce.ts e src/util/clamp.ts, cada um isolado no seu arquivo.",
+    );
+    // The pure routing decision: decomposable NL goal → wave-pack, no valve.
+    expect(resolveGuidedSealTopology(currentMission)).toEqual({
+      topology: "wave-pack",
+      nlFanoutStoryCount: 3,
+      nlFanoutSuppressed: null,
+    });
+
+    const h = harness({ currentMission });
+    expect(
+      ensureGuidedMissionPlan(h.suite, currentMission.id, h.deps),
+    ).toMatchObject({ applicable: true, sealed: true, topology: "wave-pack" });
+
+    const rows = h.createPlanAtomically.mock.calls[0]![0].rows;
+    const storyRows = rows
+      .map((row: { detail: string }) => decodeTaskScheduleDetail(row.detail))
+      .filter((entry) =>
+        entry.meta?.ownership.domains.some((domain) =>
+          domain.startsWith("wave-pack-story:"),
+        ),
+      );
+    // Three disjoint story writers — a real multi-writer wave, one file each.
+    expect(storyRows).toHaveLength(3);
+    expect(
+      storyRows.every(
+        (entry) =>
+          entry.meta?.executionMode === "isolated_worktree" &&
+          entry.meta.parallelEligible === true &&
+          entry.meta.ownership.files.length === 1,
+      ),
+    ).toBe(true);
+    const claimedFiles = storyRows.flatMap(
+      (entry) => entry.meta!.ownership.files,
+    );
+    expect(new Set(claimedFiles).size).toBe(claimedFiles.length);
+  });
+
+  it("P0-8: a destructive decomposable goal stays single-writer, VISIBLY", () => {
+    const currentMission = nlMission(
+      "Preciso deletar src/legacy-a.ts e deletar src/legacy-b.ts com wipe " +
+        "total do módulo antigo.",
+    );
+    // Narrow valve: risk classified destructive → serialized, but REPORTED so
+    // the collapse is never silent (mission-state surface).
+    expect(currentMission.intentContract!.risk).toBe("destructive");
+    expect(resolveGuidedSealTopology(currentMission)).toEqual({
+      topology: "delivery",
+      nlFanoutStoryCount: 2,
+      nlFanoutSuppressed: "destructive",
+    });
+  });
+
+  it("P0-8: an NL goal naming <2 files keeps the delivery graph", () => {
+    expect(
+      resolveGuidedSealTopology(nlMission("corrija o bug em src/app.ts")),
+    ).toEqual({
+      topology: "delivery",
+      nlFanoutStoryCount: 0,
+      nlFanoutSuppressed: null,
+    });
   });
 
   it("Pack seals from structured template stories without promotedPlan", () => {

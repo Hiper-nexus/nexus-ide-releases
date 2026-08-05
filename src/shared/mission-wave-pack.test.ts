@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   assertWavePackStoryFilesDisjoint,
+  decomposeGuidedGoalIntoStories,
   extractStoriesFromPromotedPlanSummary,
   extractStoryOwnershipFiles,
   freezeWavePackStoriesForContract,
   hasWavePackDisjointFilesDomain,
   hasWavePackDomain,
+  MAX_WAVE_PACK_STORIES,
   planWavePackTasks,
   resolveMissionOrchestrationMode,
   resolveWavePackStories,
@@ -484,5 +486,76 @@ Também cita src/shared/util.ts, mas edita src/b.ts.
     for (const task of planned) {
       expect(hasWavePackDisjointFilesDomain(task.ownership.domains)).toBe(true);
     }
+  });
+});
+
+describe("decomposeGuidedGoalIntoStories (P0-8 NL fan-out)", () => {
+  it("splits a file-naming NL goal into one disjoint story per file", () => {
+    const stories = decomposeGuidedGoalIntoStories({
+      goal:
+        "Implemente uma biblioteca de utilitários: src/util/slugify.ts, " +
+        "src/util/debounce.ts, src/util/clamp.ts. Cada história é isolada.",
+    });
+    expect(stories).toHaveLength(3);
+    expect(stories.map((story) => story.ownershipFiles)).toEqual([
+      ["src/util/slugify.ts"],
+      ["src/util/debounce.ts"],
+      ["src/util/clamp.ts"],
+    ]);
+    // Disjoint by construction — the core fan-out invariant must hold.
+    expect(() =>
+      assertWavePackStoryFilesDisjoint(
+        stories.map((story) => ({
+          plannerId: story.id,
+          ownership: { files: story.ownershipFiles ?? [] },
+        })),
+      ),
+    ).not.toThrow();
+  });
+
+  it("feeds planWavePackTasks a real disjoint wave (>1 concurrent writer)", () => {
+    const stories = decomposeGuidedGoalIntoStories({
+      goal:
+        "Crie src/a.ts, src/b.ts e src/c.ts, cada um independente do outro.",
+    });
+    const planned = planWavePackTasks({
+      missionTitle: "NL fan-out",
+      goal: "três arquivos independentes",
+      acceptanceCriteria: ["cada arquivo entregue"],
+      stories,
+      executors: [{ id: "dev", agentName: "Dev", category: "executor" }],
+      maxWorkers: 4,
+      ownershipFiles: ["src/"],
+    });
+    const storyTasks = planned.filter((task) =>
+      hasWavePackDisjointFilesDomain(task.ownership.domains),
+    );
+    expect(storyTasks).toHaveLength(3);
+    expect(storyTasks.every((task) => task.ownership.files.length === 1)).toBe(
+      true,
+    );
+    expect(
+      new Set(storyTasks.map((task) => task.ownership.files[0])).size,
+    ).toBe(3);
+  });
+
+  it("keeps a goal that names fewer than 2 files single-writer (delivery)", () => {
+    expect(
+      decomposeGuidedGoalIntoStories({ goal: "corrija o bug no src/app.ts" }),
+    ).toEqual([]);
+    expect(
+      decomposeGuidedGoalIntoStories({ goal: "melhore a performance geral" }),
+    ).toEqual([]);
+  });
+
+  it("decomposes an 85+ file goal in full (well past the old 64 throttle)", () => {
+    const files = Array.from(
+      { length: 85 },
+      (_v, index) => `src/gen/mod-${index}.ts`,
+    ).join(", ");
+    const stories = decomposeGuidedGoalIntoStories({ goal: `Crie ${files}` });
+    expect(stories).toHaveLength(85);
+    expect(stories.length).toBeGreaterThan(64);
+    expect(stories.length).toBeLessThanOrEqual(MAX_WAVE_PACK_STORIES);
   });
 });

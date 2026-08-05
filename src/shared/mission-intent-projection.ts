@@ -43,7 +43,8 @@ export type MissionIntentEventName =
   | 'prepare_project'
   | 'bootstrap_progress'
   | 'kickoff_accepted'
-  | 'chef_idle_awaiting_workers';
+  | 'chef_idle_awaiting_workers'
+  | 'guided_fanout_serialized';
 
 /**
  * Passos visíveis do bootstrap main-owned (aprovação → primeiro pane → aceite

@@ -1,4 +1,5 @@
 import type { Mission, Squad } from "../../shared/orch-types";
+import type { MissionIntentContract } from "../../shared/mission-intent";
 import { FEATURE_FLAG_IDS } from "../../shared/feature-flags";
 import { getFeatureFlagRegistry } from "../feature-flags/feature-flag-registry";
 import {
@@ -7,11 +8,14 @@ import {
   type StandardMissionTopology,
 } from "../../shared/mission-topology";
 import {
+  decomposeGuidedGoalIntoStories,
   planWavePackTasks,
   resolveMissionOrchestrationMode,
   resolveWavePackStories,
   topologyForOrchestrationMode,
+  type ExtractedWavePackStory,
 } from "../../shared/mission-wave-pack";
+import { emitGuidedFanoutSerialized } from "./mission-event-emit";
 import type { ProjectExecutionScope } from "../../shared/types";
 import {
   authReadyModelsForProvider,
@@ -318,7 +322,16 @@ export function ensureGuidedMissionPlan(
       taskId: primary.taskId,
     });
   }
-  const topology: StandardMissionTopology = resolveSealTopology(mission);
+  const sealDecision = resolveGuidedSealTopology(mission);
+  const topology: StandardMissionTopology = sealDecision.topology;
+  // P0-8 visibility: a decomposable NL goal kept single-writer by the narrow
+  // destructive valve must surface — never a silent collapse to one executor.
+  if (sealDecision.nlFanoutSuppressed === "destructive") {
+    emitGuidedFanoutSerialized(suite.tasks.scope, missionId, {
+      storyCount: sealDecision.nlFanoutStoryCount,
+      reason: "destructive-goal safety valve (single-writer)",
+    });
+  }
   // New plans may use the fast classifier / Pack resolver as a proposal. Once
   // sealed, the task receipt above is the sole topology authority across
   // restarts.
@@ -756,9 +769,62 @@ export function ensureGuidedMissionPlan(
   });
 }
 
-function resolveSealTopology(mission: Mission): StandardMissionTopology {
+/**
+ * Structured seal-topology decision. `nlFanoutStoryCount` records how many
+ * disjoint stories an NL goal decomposed into (0 when not an NL fan-out path);
+ * `nlFanoutSuppressed` names the narrow reason the fan-out was kept serial so
+ * the caller can surface it — never silently collapse a decomposable plan.
+ */
+export interface GuidedSealTopologyDecision {
+  readonly topology: StandardMissionTopology;
+  readonly nlFanoutStoryCount: number;
+  readonly nlFanoutSuppressed: null | "destructive";
+}
+
+/**
+ * Canonical stories for a wave-pack seal: the structured contract stories
+ * (Pack template / promoted BMAD) win; otherwise, for a plain NL guided goal
+ * with no promoted plan, fall back to the P0-8 per-file decomposition. Both
+ * `resolveGuidedSealTopology` and `sealWavePackMissionPlan` route through this
+ * one resolver so the routing decision and the sealed unit count never diverge.
+ */
+function guidedWavePackStories(
+  contract: MissionIntentContract,
+): readonly ExtractedWavePackStory[] {
+  const structured = resolveWavePackStories({
+    wavePackStories: contract.wavePackStories,
+    promotedPlanSummary: contract.promotedPlan?.summary,
+  });
+  if (structured.length >= 2) return structured;
+  // Promoted-plan missions never fall back to NL text decomposition: their
+  // authority is the physical plan handoff, not the raw goal.
+  if (contract.promotedPlan) return structured;
+  return decomposeGuidedGoalIntoStories({
+    goal: contract.goal,
+    acceptanceCriteria: contract.acceptanceCriteria,
+  });
+}
+
+/**
+ * P0-8: an NL guided goal whose plan decomposes into N disjoint stories must NOT
+ * collapse to a single whole-repo executor. It routes onto the same wave-pack
+ * machinery as a promoted/Pack plan. The ONLY thing that keeps such a goal
+ * single-writer is the narrow destructive-goal safety valve (risk classified
+ * `destructive` by `classifyGoalRisk`) — and that serialization is reported to
+ * the caller so it is visible in mission state, never silent.
+ */
+export function resolveGuidedSealTopology(
+  mission: Mission,
+): GuidedSealTopologyDecision {
   const contract = mission.intentContract;
-  if (!contract) return "delivery";
+  const serialized = (
+    topology: StandardMissionTopology,
+  ): GuidedSealTopologyDecision => ({
+    topology,
+    nlFanoutStoryCount: 0,
+    nlFanoutSuppressed: null,
+  });
+  if (!contract) return serialized("delivery");
   const stories = resolveWavePackStories({
     wavePackStories: contract.wavePackStories,
     promotedPlanSummary: contract.promotedPlan?.summary,
@@ -768,15 +834,41 @@ function resolveSealTopology(mission: Mission): StandardMissionTopology {
   // unless the operator forced Pack (structured stories) or Livre.
   if (!contract.promotedPlan) {
     if (forced === "pack" && stories.length >= 2) {
-      return "wave-pack";
+      return serialized("wave-pack");
     }
     if (forced === "livre") {
-      return topologyForOrchestrationMode(
-        "livre",
-        classifyStandardMissionTopology(contract.goal),
+      return serialized(
+        topologyForOrchestrationMode(
+          "livre",
+          classifyStandardMissionTopology(contract.goal),
+        ),
       );
     }
-    return classifyStandardMissionTopology(contract.goal);
+    // P0-8 NL fan-out: no promoted plan, no operator override. A goal that
+    // names ≥2 disjoint files decomposes into that many parallel writers.
+    if (forced === null) {
+      const nlStories = decomposeGuidedGoalIntoStories({
+        goal: contract.goal,
+        acceptanceCriteria: contract.acceptanceCriteria,
+      });
+      if (nlStories.length >= 2) {
+        // Narrow safety valve: a truly destructive goal stays single-writer,
+        // and the suppression is reported so it surfaces in mission state.
+        if (contract.risk === "destructive") {
+          return {
+            topology: "delivery",
+            nlFanoutStoryCount: nlStories.length,
+            nlFanoutSuppressed: "destructive",
+          };
+        }
+        return {
+          topology: "wave-pack",
+          nlFanoutStoryCount: nlStories.length,
+          nlFanoutSuppressed: null,
+        };
+      }
+    }
+    return serialized(classifyStandardMissionTopology(contract.goal));
   }
   const mode = resolveMissionOrchestrationMode({
     lane: contract.lane,
@@ -785,7 +877,7 @@ function resolveSealTopology(mission: Mission): StandardMissionTopology {
     extractedStoryCount: stories.length,
     forcedMode: forced,
   });
-  return topologyForOrchestrationMode(mode, "delivery");
+  return serialized(topologyForOrchestrationMode(mode, "delivery"));
 }
 
 function sealWavePackMissionPlan(input: {
@@ -803,10 +895,9 @@ function sealWavePackMissionPlan(input: {
 }): GuidedMissionPlanResult {
   const { mission, missionId, intentVersion, squad, suite, deps } = input;
   const contract = mission.intentContract!;
-  const stories = resolveWavePackStories({
-    wavePackStories: contract.wavePackStories,
-    promotedPlanSummary: contract.promotedPlan?.summary,
-  });
+  // Same resolver the topology decision used: structured stories win, else the
+  // P0-8 NL per-file decomposition — so the sealed N units match the routing.
+  const stories = guidedWavePackStories(contract);
   const allExecutors = input.rosterWorkers
     .filter((agent) => agent.category === "executor")
     .map((agent) =>

@@ -192,5 +192,43 @@ export function resetChefIdleThrottleForTests(): void {
   chefIdleLastEmit.clear();
 }
 
+/**
+ * P0-8 visibility: an NL guided goal that WAS decomposable into a parallel
+ * fan-out but was deliberately kept single-writer by the narrow destructive-goal
+ * safety valve. Surfaced (intent ring + durable journal) so the serialization
+ * is never silent — the operator can see the mission ran serial ON PURPOSE, not
+ * because the fan-out silently failed. Fail-closed; never throws.
+ */
+export function emitGuidedFanoutSerialized(
+  scope: ProjectExecutionScope,
+  missionId: string,
+  input: { readonly storyCount: number; readonly reason: string },
+): void {
+  try {
+    emitMissionIntentEvent({
+      name: 'guided_fanout_serialized',
+      missionId,
+      reason: input.reason.slice(0, 200),
+      meta: { storyCount: input.storyCount, reason: input.reason.slice(0, 120) },
+    });
+  } catch (err) {
+    console.warn('[mission-events] guided_fanout_serialized intent failed:', err);
+  }
+  emitMissionEvent(scope, {
+    missionId,
+    runId: `fanout-serialized-${missionId}`,
+    type: 'custom',
+    origin: 'main',
+    idempotencyKey: boundedIdempotencyKey(
+      `fanout_serialized:${missionId}:${input.reason}`,
+    ),
+    payload: {
+      kind: 'guided_fanout_serialized',
+      storyCount: input.storyCount,
+      reason: input.reason.slice(0, 200),
+    },
+  });
+}
+
 /** Test helper re-export. */
 export { createMissionEventFixture };
