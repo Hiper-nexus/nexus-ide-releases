@@ -64,7 +64,6 @@ export type QuietWorkerAction = 'ignore' | 'nudge' | 'enforce';
 
 export interface QuietWorkerState {
   readonly role?: string;
-  readonly missionRunning: boolean;
   /** Handoff REAL (não sintético) ligado a esta sessão exata. */
   readonly hasHandoff: boolean;
   readonly nudged: boolean;
@@ -72,14 +71,22 @@ export interface QuietWorkerState {
   readonly exited: boolean;
 }
 
-/** Decisão pura (unit-testável) da escada de cobrança. */
+/**
+ * Decisão pura (unit-testável) da escada de cobrança.
+ *
+ * O estado da MISSÃO deliberadamente não entra aqui. Um gate de
+ * `mission.status === 'running'` reabriria exatamente o buraco que este módulo
+ * existe para fechar: a missão que se auto-encerra ENQUANTO um worker ainda
+ * codifica é o caso originador do hotfix — se o encerramento silenciasse a
+ * cobrança, o relatório daquele worker se perderia justamente quando é mais
+ * necessário (por que a missão morreu?). Overclock: o resultado permanece
+ * coletável depois do fato; aqui a submissão é durável e o `handoff_list`
+ * continua servindo mesmo sem orquestrador vivo.
+ */
 export function decideQuietWorker(state: QuietWorkerState): QuietWorkerAction {
   if (state.role !== 'worker') return 'ignore';
   if (state.enforced) return 'ignore';
   if (state.hasHandoff) return 'ignore';
-  // Missão fora de 'running' pertence à máquina de encerramento: um teardown
-  // fecha todos os panes de uma vez e não é morte silenciosa.
-  if (!state.missionRunning) return 'ignore';
   // Processo morto não tem como ser cutucado — cobra direto.
   if (state.exited) return 'enforce';
   return state.nudged ? 'enforce' : 'nudge';
@@ -253,11 +260,8 @@ function evaluate(
   ) {
     return;
   }
-  const missionRunning =
-    deps.missionStatus(authority.scope, authority.missionId) === 'running';
   const action = decideQuietWorker({
     role: authority.role,
-    missionRunning,
     hasHandoff: hasRealHandoff(deps, authority),
     nudged: watch.nudged,
     enforced: watch.enforced,
@@ -310,11 +314,29 @@ function enforce(
       ? 'a sessão do worker terminou sem entregar um handoff'
       : 'o worker ficou ocioso sem entregar um handoff e não respondeu à ' +
         'cobrança final';
+  // Missão já fora de 'running' é DIAGNÓSTICO, nunca motivo para silenciar:
+  // worker mudo numa missão que se encerrou é justamente a pista de por que
+  // ela se encerrou.
+  let missionState: string | null = null;
+  try {
+    missionState =
+      authority.scope && authority.missionId
+        ? deps.missionStatus(authority.scope, authority.missionId)
+        : null;
+  } catch {
+    missionState = null;
+  }
+  const missionNote =
+    missionState && missionState !== 'running'
+      ? ` A missão já estava em "${missionState}" quando isso foi detectado — ` +
+        'este relatório é a evidência do que o worker estava fazendo no ' +
+        'encerramento.'
+      : '';
   const summary =
     `${WORKER_HANDOFF_REQUIRED_MARKER} Handoff submetido pelo Nexus no lugar ` +
     `do worker "${authority.paneId}": ${reason}. Nenhum resultado foi ` +
     'declarado por ele, então o resultado real é desconhecido — leia o pane ' +
-    '(nexus_pane_read) antes de aceitar ou re-despachar a tarefa.' +
+    `(nexus_pane_read) antes de aceitar ou re-despachar a tarefa.${missionNote}` +
     (tail ? `\n\nÚltimo estado observado do pane:\n${tail}` : '');
   try {
     deps.submitSynthetic(authority, { status, summary });

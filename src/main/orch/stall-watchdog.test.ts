@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   BOOT_STALL_MS,
+  shouldEscalateStall,
   shouldFlagStall,
   shouldReapNonExecutingBoot,
   STALL_MS,
+  STALL_PROBE_GRACE_MS,
 } from './stall-watchdog';
 
 const NOW = 10_000_000;
@@ -41,6 +43,65 @@ describe('shouldFlagStall', () => {
 
   it('não re-alerta sessão já sinalizada (anti-spam)', () => {
     expect(shouldFlagStall(candidate({ alreadyFlagged: true }), NOW)).toBe(false);
+  });
+});
+
+function probed(
+  overrides: Partial<Parameters<typeof shouldEscalateStall>[0]> = {},
+) {
+  return {
+    role: 'worker' as const,
+    state: 'busy',
+    probedAt: NOW - STALL_PROBE_GRACE_MS - 1,
+    lastActivityAt: NOW - STALL_MS - STALL_PROBE_GRACE_MS,
+    alreadyEscalated: false,
+    ...overrides,
+  };
+}
+
+describe('shouldEscalateStall', () => {
+  it('escala quando a probe não foi respondida dentro da carência', () => {
+    expect(shouldEscalateStall(probed(), NOW)).toBe(true);
+  });
+
+  it('não escala antes da carência da probe vencer', () => {
+    expect(
+      shouldEscalateStall(
+        probed({ probedAt: NOW - STALL_PROBE_GRACE_MS + 5_000 }),
+        NOW,
+      ),
+    ).toBe(false);
+  });
+
+  it('probe RESPONDIDA (atividade após a probe) nunca escala', () => {
+    expect(
+      shouldEscalateStall(probed({ lastActivityAt: NOW - 1_000 }), NOW),
+    ).toBe(false);
+  });
+
+  it('sem probe enviada não há o que escalar', () => {
+    expect(shouldEscalateStall(probed({ probedAt: null }), NOW)).toBe(false);
+  });
+
+  it('é idempotente — escala uma vez só', () => {
+    expect(shouldEscalateStall(probed({ alreadyEscalated: true }), NOW)).toBe(
+      false,
+    );
+  });
+
+  it('nunca escala não-worker', () => {
+    expect(shouldEscalateStall(probed({ role: 'orchestrator' }), NOW)).toBe(
+      false,
+    );
+  });
+
+  it('worker que saiu não escala por esta via (o exit tem dono próprio)', () => {
+    expect(shouldEscalateStall(probed({ state: 'exited' }), NOW)).toBe(false);
+  });
+
+  it('a carência da probe é menor que o próprio limite de stall', () => {
+    expect(STALL_PROBE_GRACE_MS).toBeLessThan(STALL_MS);
+    expect(STALL_PROBE_GRACE_MS).toBeGreaterThanOrEqual(60_000);
   });
 });
 

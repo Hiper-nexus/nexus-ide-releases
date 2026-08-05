@@ -1,5 +1,6 @@
 import type { ProjectExecutionScope } from '../../shared/types';
 import {
+  orchWriteSession,
   tapSessionData,
   tapSessionExit,
   tapSessionState,
@@ -51,6 +52,14 @@ import { publishObserverFrame, snapshotObserverFrames } from './observer-bus';
 export const STALL_SCAN_MS = 30_000;
 export const STALL_MS = 10 * 60_000;
 /**
+ * Carência da PROBE (paridade Overclock): sinalizar não basta — o worker mudo
+ * é CUTUCADO e, se a cutucada não produzir NENHUM sinal de vida dentro desta
+ * janela, o silêncio deixa de ser suspeita e vira falha visível na missão.
+ * Sem esta escada o alerta acontecia uma vez e morria ali: se ninguém agisse
+ * sobre ele, o worker mudo continuava mudo para sempre.
+ */
+export const STALL_PROBE_GRACE_MS = 2 * 60_000;
+/**
  * Janela de boot: um worker que nunca executou dentro deste intervalo desde que
  * o watchdog o observou é tratado como boot não-executante. ~15s espelha o
  * `pane_wait_idle` do Overclock (confirmação de boot ≤15s).
@@ -74,6 +83,37 @@ export function shouldFlagStall(
   if (c.state !== 'busy') return false;
   if (c.alreadyFlagged) return false;
   return now - c.lastActivityAt >= stallMs;
+}
+
+export interface StallEscalationCandidate {
+  role?: 'orchestrator' | 'worker';
+  state: string;
+  /** Quando a probe foi escrita no pane; null = nenhuma probe enviada. */
+  probedAt: number | null;
+  lastActivityAt: number;
+  alreadyEscalated: boolean;
+}
+
+/**
+ * Decisão pura: a probe ficou sem resposta e o silêncio deve virar sinal
+ * visível de missão? Qualquer atividade DEPOIS da probe conta como resposta —
+ * é exatamente o caso que se quer preservar (probar recupera worker mudo).
+ */
+export function shouldEscalateStall(
+  c: StallEscalationCandidate,
+  now: number,
+  graceMs: number = STALL_PROBE_GRACE_MS,
+): boolean {
+  if (c.role !== 'worker') return false;
+  if (c.state === 'exited') return false;
+  if (c.probedAt === null) return false;
+  if (c.alreadyEscalated) return false;
+  // Respondeu: houve atividade a partir da probe. `>=` e não `>` porque no
+  // instante da sondagem `lastActivityAt` é, por construção, mais velho que o
+  // limite de stall — empate só acontece quando a resposta chega no mesmo
+  // milissegundo, e isso é uma resposta.
+  if (c.lastActivityAt >= c.probedAt) return false;
+  return now - c.probedAt >= graceMs;
 }
 
 export interface BootStallCandidate {
@@ -123,6 +163,38 @@ interface WatchState {
   /** Já observado em estado engajado (busy/waiting) — desarma o boot-reap. */
   everExecuted: boolean;
   isReaped: boolean;
+  /** Quando a probe foi escrita no pane deste worker mudo. */
+  probedAt: number | null;
+  isEscalated: boolean;
+}
+
+const PROBE_TEXT =
+  '[NEXUS_STALL_PROBE] Você está sem produzir saída há muito tempo e o ' +
+  'orquestrador está bloqueado esperando seu handoff. Responda AGORA em uma ' +
+  'linha: o que está executando neste momento? Se estiver travado (prompt de ' +
+  'permissão pendente, rede, tool sem resposta), entregue o handoff com ' +
+  'status "blocked" e diga o motivo.';
+
+/**
+ * Cutuca o worker mudo. Escrever num pane BUSY normalmente é proibido (corrompe
+ * o turno vivo), mas aqui o silêncio é a prova de que não há turno vivo:
+ * `recordActivity` é re-armado por QUALQUER byte de PTY *e* por qualquer
+ * heartbeat de estado do provider, então dez minutos sem nenhum dos dois
+ * significam que o turno morreu. Falha de escrita é informação, não exceção.
+ */
+function probeMuteWorker(sessionId: string): boolean {
+  try {
+    if (
+      !orchWriteSession(sessionId, `\x1b[200~${PROBE_TEXT}\x1b[201~`, {
+        markInputBusy: false,
+      })
+    ) {
+      return false;
+    }
+    return orchWriteSession(sessionId, '\r', { markInputBusy: false });
+  } catch {
+    return false;
+  }
 }
 
 const watches = new Map<string, WatchState>();
@@ -205,6 +277,8 @@ function scan(
         isFlagged: false,
         everExecuted: isEngagedState(pane.state),
         isReaped: false,
+        probedAt: null,
+        isEscalated: false,
       };
       watches.set(key, watch);
     }
@@ -234,6 +308,24 @@ function scan(
       lastActivityAt: watch.lastActivityAt,
       alreadyFlagged: watch.isFlagged,
     };
+    // Probe sem resposta: a suspeita vira falha visível da missão.
+    if (
+      shouldEscalateStall(
+        {
+          role: 'worker',
+          state: pane.state,
+          probedAt: watch.probedAt,
+          lastActivityAt: watch.lastActivityAt,
+          alreadyEscalated: watch.isEscalated,
+        },
+        now,
+      )
+    ) {
+      watch.isEscalated = true;
+      escalateUnansweredProbe(authority, pane, now, watch.probedAt ?? now);
+      continue;
+    }
+
     if (!shouldFlagStall(candidate, now, stallMs)) continue;
 
     watch.isFlagged = true;
@@ -263,11 +355,61 @@ function scan(
       fromAgent: 'nexus-watchdog',
     });
     onHandoffSubmitted(handoff, authority.scope);
-    console.warn(`[watchdog] worker stalled: ${pane.paneId} (${minutes} min)`);
+    // Sinalizar não basta: cutuca o worker mudo na mesma passada. Probar
+    // recupera a maioria dos mudos; e se não recuperar, a probe sem resposta
+    // é o que autoriza a escalada acima na varredura seguinte.
+    watch.probedAt = probeMuteWorker(authority.sessionId) ? now : null;
+    console.warn(
+      `[watchdog] worker stalled: ${pane.paneId} (${minutes} min)` +
+        (watch.probedAt === null ? ' — probe não pôde ser escrita' : ' — probe enviada'),
+    );
   }
   for (const key of [...watches.keys()]) {
     if (!liveKeys.has(key)) watches.delete(key);
   }
+}
+
+/**
+ * A probe ficou sem resposta: o worker não é "talvez travado", ele está mudo
+ * de verdade. Emite o frame de observação distinto e um handoff `failed` — que
+ * é o estado VISÍVEL na missão (o `stalled` anterior é suspeita, não veredito)
+ * para o orquestrador re-despachar em vez de esperar mais.
+ */
+function escalateUnansweredProbe(
+  authority: WatchAuthority,
+  pane: ReturnType<typeof listPaneSnapshots>[number],
+  now: number,
+  probedAt: number,
+): void {
+  const previousFrames = snapshotObserverFrames(authority.sessionId);
+  publishObserverFrame({
+    sessionId: authority.sessionId,
+    paneId: authority.paneId,
+    missionId: authority.missionId,
+    at: now,
+    kind: 'stall_suspected',
+    payload: {
+      silentForMs: Math.max(0, now - probedAt),
+      lastSeq: previousFrames.at(-1)?.seq ?? null,
+      detector: 'stall-probe-unanswered',
+    },
+  });
+  const minutes = Math.round((now - probedAt) / 60_000);
+  const handoff = getProjectDomainStores(authority.scope).handoffs.submit({
+    status: 'failed',
+    summary:
+      `watchdog: o worker "${pane.agentName ?? pane.title}" (${pane.paneId}) ` +
+      `não respondeu à sondagem por ${minutes} min — silêncio confirmado, ` +
+      `não é tarefa longa. Ele não vai entregar handoff sozinho: leia o pane ` +
+      `(nexus_pane_read) e re-despache ou respawne a tarefa.`,
+    missionId: authority.missionId,
+    sessionId: authority.sessionId,
+    fromAgent: 'nexus-watchdog',
+  });
+  onHandoffSubmitted(handoff, authority.scope);
+  console.warn(
+    `[watchdog] stall probe unanswered: ${pane.paneId} (${minutes} min)`,
+  );
 }
 
 /**
@@ -363,6 +505,8 @@ function recordActivity(
     isFlagged: false,
     everExecuted: executed,
     isReaped: false,
+    probedAt: null,
+    isEscalated: false,
   });
 }
 

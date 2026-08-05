@@ -96,7 +96,6 @@ function emitExit(sessionId: string): void {
 function baseState(overrides: Partial<QuietWorkerState> = {}): QuietWorkerState {
   return {
     role: 'worker',
-    missionRunning: true,
     hasHandoff: false,
     nudged: false,
     enforced: false,
@@ -166,8 +165,12 @@ describe('decideQuietWorker', () => {
     expect(decideQuietWorker(baseState({ hasHandoff: true }))).toBe('ignore');
   });
 
-  it('ignora quando a missão não está mais em curso', () => {
-    expect(decideQuietWorker(baseState({ missionRunning: false }))).toBe('ignore');
+  it('o estado da missão NUNCA silencia a cobrança (losslessness)', () => {
+    // Missão que se auto-encerra enquanto o worker ainda codifica é o caso
+    // originador do hotfix: silenciar aqui perderia o relatório justamente
+    // quando ele explica por que a missão morreu.
+    expect(decideQuietWorker(baseState({ exited: true }))).toBe('enforce');
+    expect(decideQuietWorker(baseState({ nudged: true }))).toBe('enforce');
   });
 
   it('é idempotente após já ter forçado a entrega', () => {
@@ -288,13 +291,29 @@ describe('worker-handoff-enforcement runtime', () => {
     expect(harness.submitted[0]!.summary).toContain('sem entregar um handoff');
   });
 
-  it('não inventa handoff quando a sessão morre com a missão encerrada', () => {
+  it('cobra o handoff MESMO com a missão já encerrada (cenário originador)', () => {
+    // A missão se auto-encerrou enquanto o worker ainda trabalhava: o
+    // relatório dele é a evidência do porquê e não pode sumir.
     const harness = makeHarness();
     harness.missionStatus = 'done';
     initWorkerHandoffEnforcement(harness.deps);
 
     emitExit('s1');
-    expect(harness.submitted).toHaveLength(0);
+    expect(harness.submitted).toHaveLength(1);
+    expect(harness.submitted[0]!.status).toBe('failed');
+    expect(harness.submitted[0]!.summary).toContain('sem entregar um handoff');
+    expect(harness.submitted[0]!.summary).toContain('"done"');
+  });
+
+  it('cobra o worker ocioso mesmo com a missão parando', () => {
+    const harness = makeHarness();
+    harness.missionStatus = 'stopping';
+    initWorkerHandoffEnforcement(harness.deps);
+
+    emitStatus('s1', 'idle');
+    vi.advanceTimersByTime(WORKER_QUIET_GRACE_MS + WORKER_ENFORCE_GRACE_MS);
+    expect(harness.submitted).toHaveLength(1);
+    expect(harness.submitted[0]!.status).toBe('blocked');
   });
 
   it('não cobra pane que não é worker', () => {

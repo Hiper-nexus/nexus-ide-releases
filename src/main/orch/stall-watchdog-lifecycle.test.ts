@@ -29,6 +29,11 @@ const handoffMocks = vi.hoisted(() => ({
   submitted: [] as Array<{ scope: ProjectExecutionScope; input: unknown }>,
   delivered: vi.fn(),
 }));
+
+const writeMocks = vi.hoisted(() => ({
+  writes: [] as Array<{ sessionId: string; data: string }>,
+  accept: true,
+}));
 vi.mock('../pty/pty-manager', () => ({
   tapSessionData: vi.fn((tap: (sessionId: string, data: string) => void) => {
     ptyMocks.dataTaps.push(tap);
@@ -50,6 +55,11 @@ vi.mock('../pty/pty-manager', () => ({
       const index = ptyMocks.exitTaps.indexOf(tap);
       if (index >= 0) ptyMocks.exitTaps.splice(index, 1);
     };
+  }),
+  orchWriteSession: vi.fn((sessionId: string, data: string) => {
+    if (!writeMocks.accept) return false;
+    writeMocks.writes.push({ sessionId, data });
+    return true;
   }),
 }));
 
@@ -151,6 +161,8 @@ beforeEach(() => {
   paneMocks.closed.length = 0;
   handoffMocks.submitted.length = 0;
   handoffMocks.delivered.mockClear();
+  writeMocks.writes.length = 0;
+  writeMocks.accept = true;
 });
 
 afterEach(() => {
@@ -169,10 +181,11 @@ describe('stall watchdog scoped lifecycle', () => {
       watchdog.STALL_SCAN_MS + watchdog.STALL_MS * 3,
     );
 
-    expect(handoffMocks.submitted).toHaveLength(1);
-    expect(handoffMocks.submitted[0]?.input).toEqual(
-      expect.objectContaining({ status: 'stalled' }),
-    );
+    // A escada informa (stalled → failed) e NUNCA reinicia nem reenvia
+    // trabalho: nenhum pane fechado, nenhum respawn.
+    expect(handoffMocks.submitted.map((entry) => (entry.input as { status: string }).status))
+      .toEqual(['stalled', 'failed']);
+    expect(paneMocks.closed).toEqual([]);
     watchdog.shutdownStallWatchdog();
   });
 
@@ -335,6 +348,80 @@ describe('stall watchdog scoped lifecycle', () => {
       }),
     ]);
     expect(handoffMocks.delivered).toHaveBeenCalledTimes(1);
+    watchdog.shutdownStallWatchdog();
+  });
+
+  it('cutuca o worker mudo e escala quando a sondagem fica sem resposta', async () => {
+    const watchdog = await import('./stall-watchdog');
+    const scope = testProjectScope();
+    addWorker({
+      ownerId: 808,
+      paneId: 'mute-pane',
+      sessionId: 'mute-session',
+      missionId: 'mission-m',
+      scope,
+    });
+    watchdog.initStallWatchdog();
+
+    await vi.advanceTimersByTimeAsync(
+      watchdog.STALL_SCAN_MS + watchdog.STALL_MS,
+    );
+
+    // A probe foi FISICAMENTE escrita no pane do worker mudo.
+    expect(
+      writeMocks.writes.some(
+        (w) =>
+          w.sessionId === 'mute-session' &&
+          w.data.includes('[NEXUS_STALL_PROBE]'),
+      ),
+    ).toBe(true);
+    expect(handoffMocks.submitted).toHaveLength(1);
+    expect(handoffMocks.submitted[0]?.input).toEqual(
+      expect.objectContaining({ status: 'stalled' }),
+    );
+
+    // Sem nenhuma resposta dentro da carência, a suspeita vira falha visível.
+    await vi.advanceTimersByTimeAsync(
+      watchdog.STALL_PROBE_GRACE_MS + watchdog.STALL_SCAN_MS,
+    );
+
+    expect(handoffMocks.submitted).toHaveLength(2);
+    expect(handoffMocks.submitted[1]?.input).toEqual(
+      expect.objectContaining({
+        status: 'failed',
+        sessionId: 'mute-session',
+        missionId: 'mission-m',
+      }),
+    );
+    watchdog.shutdownStallWatchdog();
+  });
+
+  it('probe RESPONDIDA nunca escala — a recuperação é o caso feliz', async () => {
+    const watchdog = await import('./stall-watchdog');
+    const scope = testProjectScope();
+    addWorker({
+      ownerId: 909,
+      paneId: 'revived-pane',
+      sessionId: 'revived-session',
+      missionId: 'mission-v',
+      scope,
+    });
+    watchdog.initStallWatchdog();
+
+    await vi.advanceTimersByTimeAsync(
+      watchdog.STALL_SCAN_MS + watchdog.STALL_MS,
+    );
+    expect(handoffMocks.submitted).toHaveLength(1);
+
+    // O worker responde à sondagem (bytes de PTY).
+    await vi.advanceTimersByTimeAsync(1_000);
+    ptyMocks.dataTaps[0]?.('revived-session', 'voltei, rodando os testes');
+
+    await vi.advanceTimersByTimeAsync(
+      watchdog.STALL_PROBE_GRACE_MS + watchdog.STALL_SCAN_MS,
+    );
+
+    expect(handoffMocks.submitted).toHaveLength(1);
     watchdog.shutdownStallWatchdog();
   });
 
