@@ -106,15 +106,6 @@ export interface PtyHostBridge {
   sessionCount(): number;
 }
 
-export interface PtyHostBridgeOptions {
-  /**
-   * Darwin's signed responsibility supervisor is the proof authority for its
-   * whole cohort. It deliberately has no "give up" deadline once termination
-   * begins. This removes only the transport timer; handleHostDown still fails
-   * every pending proof closed if the owning utility process exits.
-   */
-  readonly awaitNativeTerminationProof?: boolean;
-}
 
 const TERMINATION_PROCESS_SCAN_BUDGET_MS = 4_000;
 const TERMINATION_TRANSPORT_MARGIN_MS = 500;
@@ -277,6 +268,111 @@ export class PhysicalExitReceipts {
   }
 }
 
+/** A node-pty exit as observed by the host. */
+export interface PtyExitObservation {
+  readonly exitCode: number;
+  readonly signal?: number;
+}
+
+export interface DarwinSupervisorEscalationOptions {
+  /** Grace after SIGTERM before the root is force-killed. */
+  readonly termGraceMs: number;
+  /** Grace after SIGKILL before the wait is abandoned (never hangs). */
+  readonly killGraceMs: number;
+  /** Post a signal to the node-pty root (host: `entry.proc.kill`). */
+  readonly sendSignal: (signal: PtyKillSignal) => void;
+  /** Resolves once node-pty reports the root's exit. */
+  readonly exitObservation: Promise<PtyExitObservation>;
+  /** Canonical Darwin responsibility-supervisor receipt predicate. */
+  readonly isProvenExit: (observation: PtyExitObservation) => boolean;
+  /** Injected timer so the state machine is unit-testable under fake timers. */
+  readonly delay: (ms: number) => Promise<void>;
+}
+
+function proofFromDarwinObservation(
+  observation: PtyExitObservation,
+  isProvenExit: (observation: PtyExitObservation) => boolean,
+): PtyProcessTreeTerminationProof {
+  if (isProvenExit(observation)) {
+    return { ok: true, rootExited: true, descendantsExited: true };
+  }
+  // Root is gone (observation resolved) but the receipt is non-canonical:
+  // surface rootExited so Main can finish its quit inventory, never claim
+  // descendantsExited without the signed cohort receipt.
+  return {
+    ok: false,
+    rootExited: true,
+    descendantsExited: false,
+    error:
+      `O supervisor Darwin saiu sem recibo canônico ` +
+      `(exitCode=${String(observation.exitCode)}, ` +
+      `signal=${String(observation.signal ?? 'none')}).`,
+  };
+}
+
+/**
+ * Bounded SIGTERM→SIGKILL escalation over the signed Darwin responsibility
+ * supervisor's clean-exit receipt. Historically this waited on the supervisor's
+ * exit UNBOUNDED (docs: v0.25.0 quit-hang) — a single stuck-but-alive child PTY
+ * that never posted its exit pinned app quit forever. It now escalates and
+ * ALWAYS resolves: the exact receipt still wins whenever it arrives inside the
+ * grace windows (preserving "elapsed time is not proof"), but an unresponsive
+ * root is force-killed and, past the final grace, settled fail-closed so quit
+ * can proceed instead of hanging. Pure/injectable so the machine unit-tests.
+ */
+export async function escalateDarwinSupervisorTermination(
+  options: DarwinSupervisorEscalationOptions,
+): Promise<PtyProcessTreeTerminationProof> {
+  const { termGraceMs, killGraceMs, sendSignal, exitObservation, isProvenExit, delay } =
+    options;
+  const TIMED_OUT = Symbol('darwin-termination-grace');
+  const observedWithin = (
+    ms: number,
+  ): Promise<PtyExitObservation | typeof TIMED_OUT> =>
+    Promise.race([
+      exitObservation,
+      delay(ms).then((): typeof TIMED_OUT => TIMED_OUT),
+    ]);
+
+  try {
+    sendSignal('SIGTERM');
+  } catch (error) {
+    return {
+      ok: false,
+      rootExited: false,
+      descendantsExited: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  const afterTerm = await observedWithin(termGraceMs);
+  if (afterTerm !== TIMED_OUT) {
+    return proofFromDarwinObservation(afterTerm, isProvenExit);
+  }
+
+  // The supervisor did not exit within the grace: force-kill the root. At quit
+  // the host is about to be destroyed anyway, so bounding here beats hanging.
+  try {
+    sendSignal('SIGKILL');
+  } catch {
+    // Root may already be gone; fall through to the final observation wait.
+  }
+
+  const afterKill = await observedWithin(killGraceMs);
+  if (afterKill !== TIMED_OUT) {
+    return proofFromDarwinObservation(afterKill, isProvenExit);
+  }
+
+  return {
+    ok: false,
+    rootExited: false,
+    descendantsExited: false,
+    error:
+      'O supervisor Darwin não confirmou término dentro do prazo de quit; ' +
+      'SIGKILL foi emitido e a espera foi abandonada para não travar a saída.',
+  };
+}
+
 /**
  * Build the main-side bridge. `dispatchEvent`/`handleHostDown` are driven by the
  * client from the utilityProcess's message/exit events; `host.spawn` is called
@@ -286,7 +382,6 @@ export class PhysicalExitReceipts {
  */
 export function createPtyHostBridge(
   transport: HostTransport,
-  options: PtyHostBridgeOptions = {},
 ): PtyHostBridge {
   const handlers = new Map<string, PtySessionHandlers>();
   const pendingTerminations = new Map<
@@ -319,26 +414,30 @@ export function createPtyHostBridge(
           const requestId =
             `pty-termination-${Date.now().toString(36)}-${++terminationCounter}`;
           return new Promise<PtyProcessTreeTerminationProof>((resolve) => {
+            // Bounded on EVERY platform. The transport deadline is strictly
+            // larger than the host's own SIGTERM→SIGKILL escalation window
+            // (termTimeoutMs + killTimeoutMs), so the exact host receipt still
+            // wins the normal race; this timer only fires if the host PROCESS
+            // itself is wedged and never posts. It used to be null on Darwin —
+            // a stuck host then hung app quit forever (v0.25.0 blocker).
             const deadlineMs =
               termTimeoutMs +
               killTimeoutMs +
               TERMINATION_PROCESS_SCAN_BUDGET_MS +
               TERMINATION_TRANSPORT_MARGIN_MS;
-            const timer = options.awaitNativeTerminationProof
-              ? null
-              : setTimeout(() => {
-                  const pending = pendingTerminations.get(requestId);
-                  if (!pending || pending.sessionId !== spec.sessionId) return;
-                  pendingTerminations.delete(requestId);
-                  resolve({
-                    ok: false,
-                    rootExited: false,
-                    descendantsExited: false,
-                    error:
-                      'O PTY host não respondeu dentro da janela física de término.',
-                  });
-                }, deadlineMs);
-            timer?.unref?.();
+            const timer = setTimeout(() => {
+              const pending = pendingTerminations.get(requestId);
+              if (!pending || pending.sessionId !== spec.sessionId) return;
+              pendingTerminations.delete(requestId);
+              resolve({
+                ok: false,
+                rootExited: false,
+                descendantsExited: false,
+                error:
+                  'O PTY host não respondeu dentro da janela física de término.',
+              });
+            }, deadlineMs);
+            timer.unref?.();
             pendingTerminations.set(requestId, {
               sessionId: spec.sessionId,
               resolve,

@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   createPtyHostBridge,
+  escalateDarwinSupervisorTermination,
   PhysicalExitReceipts,
   PreSpawnFailureTombstones,
   type HostControlMsg,
+  type PtyKillSignal,
   type PtySpawnSpec,
 } from './pty-host-core';
 
@@ -33,6 +35,140 @@ const spec: PtySpawnSpec = {
   rows: 24,
   env: { PATH: '/usr/bin' },
 };
+
+describe('escalateDarwinSupervisorTermination', () => {
+  const realDelay = (ms: number) =>
+    new Promise<void>((resolve) => {
+      setTimeout(resolve, ms);
+    });
+
+  it('settles on the canonical receipt after only SIGTERM', async () => {
+    const signals: PtyKillSignal[] = [];
+    const proof = await escalateDarwinSupervisorTermination({
+      termGraceMs: 10_000,
+      killGraceMs: 20_000,
+      sendSignal: (signal) => signals.push(signal),
+      exitObservation: Promise.resolve({ exitCode: 0 }),
+      isProvenExit: () => true,
+      delay: realDelay,
+    });
+    expect(signals).toEqual(['SIGTERM']);
+    expect(proof).toEqual({
+      ok: true,
+      rootExited: true,
+      descendantsExited: true,
+    });
+  });
+
+  it('reports rootExited but not descendantsExited on a non-canonical exit', async () => {
+    const signals: PtyKillSignal[] = [];
+    const proof = await escalateDarwinSupervisorTermination({
+      termGraceMs: 10_000,
+      killGraceMs: 20_000,
+      sendSignal: (signal) => signals.push(signal),
+      exitObservation: Promise.resolve({ exitCode: 137, signal: 9 }),
+      isProvenExit: () => false,
+      delay: realDelay,
+    });
+    expect(signals).toEqual(['SIGTERM']);
+    expect(proof).toMatchObject({
+      ok: false,
+      rootExited: true,
+      descendantsExited: false,
+      error: expect.stringMatching(/canônico/i),
+    });
+  });
+
+  it('escalates to SIGKILL and settles fail-closed when the root never exits', async () => {
+    vi.useFakeTimers();
+    try {
+      const signals: PtyKillSignal[] = [];
+      const proof = escalateDarwinSupervisorTermination({
+        termGraceMs: 10_000,
+        killGraceMs: 20_000,
+        sendSignal: (signal) => signals.push(signal),
+        // Never resolves: the confirmed v0.25.0 stuck-but-alive child.
+        exitObservation: new Promise<never>(() => {}),
+        isProvenExit: () => true,
+        delay: (ms) =>
+          new Promise<void>((resolve) => {
+            setTimeout(resolve, ms);
+          }),
+      });
+      const settled = vi.fn();
+      void proof.then(settled);
+
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(signals).toEqual(['SIGTERM', 'SIGKILL']);
+      expect(settled).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(20_000);
+      await expect(proof).resolves.toMatchObject({
+        ok: false,
+        rootExited: false,
+        descendantsExited: false,
+        error: expect.stringMatching(/SIGKILL|prazo/i),
+      });
+      expect(settled).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('accepts a late exit that arrives after SIGKILL, within the kill grace', async () => {
+    vi.useFakeTimers();
+    try {
+      const signals: PtyKillSignal[] = [];
+      let resolveExit!: (observation: { exitCode: number }) => void;
+      const proof = escalateDarwinSupervisorTermination({
+        termGraceMs: 10_000,
+        killGraceMs: 20_000,
+        sendSignal: (signal) => signals.push(signal),
+        exitObservation: new Promise((resolve) => {
+          resolveExit = resolve;
+        }),
+        isProvenExit: () => true,
+        delay: (ms) =>
+          new Promise<void>((resolve) => {
+            setTimeout(resolve, ms);
+          }),
+      });
+
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(signals).toEqual(['SIGTERM', 'SIGKILL']);
+      resolveExit({ exitCode: 0 });
+      await expect(proof).resolves.toMatchObject({
+        ok: true,
+        rootExited: true,
+        descendantsExited: true,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('fails closed without escalating when SIGTERM delivery throws', async () => {
+    const signals: PtyKillSignal[] = [];
+    const proof = await escalateDarwinSupervisorTermination({
+      termGraceMs: 10_000,
+      killGraceMs: 20_000,
+      sendSignal: (signal) => {
+        signals.push(signal);
+        throw new Error('root pid is gone');
+      },
+      exitObservation: new Promise<never>(() => {}),
+      isProvenExit: () => true,
+      delay: realDelay,
+    });
+    expect(signals).toEqual(['SIGTERM']);
+    expect(proof).toMatchObject({
+      ok: false,
+      rootExited: false,
+      descendantsExited: false,
+      error: expect.stringMatching(/root pid is gone/),
+    });
+  });
+});
 
 describe('PreSpawnFailureTombstones', () => {
   it('proves only the exact recorded session and consumes the evidence once', () => {
@@ -265,18 +401,17 @@ describe('createPtyHostBridge', () => {
     }
   });
 
-  it('waits past the generic deadline for the exact native Darwin proof', async () => {
+  it('lets the exact host receipt win before the bounded transport deadline', async () => {
     vi.useFakeTimers();
     try {
       const t = fakeTransport();
-      const bridge = createPtyHostBridge(t.transport, {
-        awaitNativeTerminationProof: true,
-      });
+      const bridge = createPtyHostBridge(t.transport);
       const proc = bridge.host.spawn(spec, {
         onData: () => {},
         onExit: () => {},
       });
       const resolved = vi.fn();
+      // Transport deadline = term + kill + scan(4000) + margin(500) = 4800ms.
       const proof = proc.terminate({
         termTimeoutMs: 100,
         killTimeoutMs: 200,
@@ -287,11 +422,12 @@ describe('createPtyHostBridge', () => {
         throw new Error('terminate request missing');
       }
 
-      await vi.advanceTimersByTimeAsync(60_000);
+      // The host's own SIGTERM→SIGKILL escalation resolves within
+      // term+kill (300ms), comfortably inside the transport deadline, so the
+      // exact receipt still owns settlement — elapsed time is not proof.
+      await vi.advanceTimersByTimeAsync(3_000);
       expect(resolved).not.toHaveBeenCalled();
 
-      // Elapsed time is not proof. The exact host receipt still owns
-      // settlement after the generic cross-platform deadline has passed.
       bridge.dispatchEvent({
         type: 'exit',
         sessionId: 's1',
@@ -309,25 +445,64 @@ describe('createPtyHostBridge', () => {
       });
       await expect(proof).resolves.toMatchObject({ ok: true });
       expect(resolved).toHaveBeenCalledOnce();
-
-      const second = bridge.host.spawn(
-        { ...spec, sessionId: 's2' },
-        { onData: () => {}, onExit: () => {} },
-      );
-      const hostLoss = second.terminate({
-        termTimeoutMs: 100,
-        killTimeoutMs: 200,
-      });
-      bridge.handleHostDown();
-      await expect(hostLoss).resolves.toMatchObject({
-        ok: false,
-        rootExited: false,
-        descendantsExited: false,
-        error: expect.stringMatching(/host/i),
-      });
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('bounds the transport wait so a wedged host can never hang app quit', async () => {
+    vi.useFakeTimers();
+    try {
+      const t = fakeTransport();
+      const bridge = createPtyHostBridge(t.transport);
+      const proc = bridge.host.spawn(spec, {
+        onData: () => {},
+        onExit: () => {},
+      });
+      const resolved = vi.fn();
+      // The host process itself is wedged: it never posts a termination-result.
+      const proof = proc.terminate({
+        termTimeoutMs: 100,
+        killTimeoutMs: 200,
+      });
+      void proof.then(resolved);
+
+      await vi.advanceTimersByTimeAsync(4_700);
+      expect(resolved).not.toHaveBeenCalled();
+
+      // Past the deadline (4800ms) the wait settles fail-closed instead of
+      // hanging forever, as it did on Darwin before v0.25.0.
+      await vi.advanceTimersByTimeAsync(200);
+      await expect(proof).resolves.toMatchObject({
+        ok: false,
+        rootExited: false,
+        descendantsExited: false,
+        error: expect.stringMatching(/não respondeu|janela/i),
+      });
+      expect(resolved).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('fails pending Darwin terminations closed when the host process is lost', async () => {
+    const t = fakeTransport();
+    const bridge = createPtyHostBridge(t.transport);
+    const proc = bridge.host.spawn(spec, {
+      onData: () => {},
+      onExit: () => {},
+    });
+    const hostLoss = proc.terminate({
+      termTimeoutMs: 100,
+      killTimeoutMs: 200,
+    });
+    bridge.handleHostDown();
+    await expect(hostLoss).resolves.toMatchObject({
+      ok: false,
+      rootExited: false,
+      descendantsExited: false,
+      error: expect.stringMatching(/host/i),
+    });
   });
 
   it('routes data events to the owning session only', () => {

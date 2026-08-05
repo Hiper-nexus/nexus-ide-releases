@@ -12,6 +12,7 @@
  */
 import * as nodePty from '@lydell/node-pty';
 import {
+  escalateDarwinSupervisorTermination,
   PhysicalExitReceipts,
   PreSpawnFailureTombstones,
   type HostControlMsg,
@@ -190,38 +191,33 @@ function failedTerminationProof(error: unknown): PtyProcessTreeTerminationProof 
 /**
  * The signed Darwin helper keeps the node-pty root PID alive until its
  * responsibility cohort has reached a SIGSTOP fixed point, received
- * audit-token-fenced SIGKILL, and passed two empty scans.  Killing that root
- * from the generic PPID scanner would destroy the proof authority itself.
- * Therefore its clean exit callback is the native proof receipt.
+ * audit-token-fenced SIGKILL, and passed two empty scans; its clean exit
+ * callback is the native proof receipt. Historically main waited on that exit
+ * UNBOUNDED — one stuck-but-alive child that never posted its exit pinned app
+ * quit forever (v0.25.0 release blocker). The escalation state machine now
+ * bounds the wait: the exact receipt still wins whenever it arrives inside the
+ * grace windows, but an unresponsive root is force-killed and settled
+ * fail-closed past the final grace so quit proceeds instead of hanging. The
+ * grace windows come from Main's terminate request (termTimeoutMs/killTimeoutMs)
+ * so the transport deadline in pty-host-core stays strictly larger.
  */
-async function terminateDarwinResponsibilitySupervisor(
+function terminateDarwinResponsibilitySupervisor(
   entry: HostPtyEntry,
+  termTimeoutMs: number,
+  killTimeoutMs: number,
 ): Promise<PtyProcessTreeTerminationProof> {
-  try {
-    entry.proc.kill('SIGTERM');
-  } catch (error) {
-    return failedTerminationProof(error);
-  }
-  const observation = await entry.exitObservation;
-  if (isProvenDarwinPtySupervisorExit(observation)) {
-    return {
-      ok: true,
-      rootExited: true,
-      descendantsExited: true,
-    };
-  }
-  // Root is gone (exitObservation resolved). Surface rootExited so main can
-  // finish quit inventory even when the observation is non-canonical; do not
-  // claim descendantsExited without a proven receipt.
-  return {
-    ok: false,
-    rootExited: true,
-    descendantsExited: false,
-    error:
-      `O supervisor Darwin saiu sem recibo canônico ` +
-      `(exitCode=${String(observation.exitCode)}, ` +
-      `signal=${String(observation.signal ?? 'none')}).`,
-  };
+  return escalateDarwinSupervisorTermination({
+    termGraceMs: termTimeoutMs,
+    killGraceMs: killTimeoutMs,
+    sendSignal: (signal) => entry.proc.kill(signal),
+    exitObservation: entry.exitObservation,
+    isProvenExit: isProvenDarwinPtySupervisorExit,
+    delay: (ms) =>
+      new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, ms);
+        timer.unref?.();
+      }),
+  });
 }
 
 function handleTerminate(
@@ -268,7 +264,11 @@ function handleTerminate(
   const operation =
     entry.termination ??
     (entry.darwinResponsibilitySupervisor
-      ? terminateDarwinResponsibilitySupervisor(entry)
+      ? terminateDarwinResponsibilitySupervisor(
+          entry,
+          msg.termTimeoutMs,
+          msg.killTimeoutMs,
+        )
       : terminatePtyProcessTree(
           {
             rootPid: entry.proc.pid,
