@@ -13,6 +13,52 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.26.1',
+  date: '2026-08-05',
+  codename: 'Hotfix do primeiro voo — voz, aprovação e missões que falam',
+  summary:
+    'Correções do primeiro voo real da 0.26.0: o ditado aterrissa no pane da ' +
+    'missão com recibo (Espaço só arma segurando), a aprovação fecha em vez ' +
+    'de reperguntar para sempre, a missão parada diz por que parou e Retomar ' +
+    'volta aos panes, o pane do orquestrador pinta o conteúdo, acentos deixam ' +
+    'de virar mojibake e a frota acelera além de 2 workers quando há trabalho ' +
+    'elegível.',
+  highlights: [
+    {
+      title: 'Ditado que chega — e provado no gate',
+      detail:
+        'Falar num pane governado entrega pela lane do operador com recibo ' +
+        'real; toque simples de Espaço digita espaço e só o hold arma. O ' +
+        'smoke empacotado ganhou probes obrigatórias de entrega, autoridade ' +
+        'e do contrato do Espaço — voz não shipa mais na fé.',
+    },
+    {
+      title: 'Aprovação que fecha',
+      detail:
+        'O selo do squad derivado do intent aprovado não invalida mais a ' +
+        'própria aprovação: o diálogo fecha, missão viva não repergunta e o ' +
+        '"não perguntar de novo" segue durável.',
+    },
+    {
+      title: 'Missão que fala com você',
+      detail:
+        'Card parado mostra o porquê a partir de evidência durável, worker ' +
+        'mudo é cobrado com sonda de stall e handoff sintético, e você nunca ' +
+        'é ejetado dos panes — Retomar e "Voltar aos panes" preservam o ' +
+        'trabalho.',
+    },
+    {
+      title: 'Paralelismo e locale honestos',
+      detail:
+        'Escada adaptativa coerente com o hardware substitui o teto ' +
+        'silencioso de 2 workers; o plano de controle expõe panes, fila, ' +
+        'ownership e bloqueios numa leitura; e o PTY garante locale UTF-8 — ' +
+        'fim do "miss√£o" no app aberto pelo Finder.',
+    },
+  ],
+};
+
+export const RELEASE_02600: AppRelease = {
   version: '0.26.0',
   date: '2026-08-05',
   codename: 'O loop que fecha — da largura ao encerramento',
