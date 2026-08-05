@@ -98,10 +98,24 @@ export async function confirmAndReopenMission(
           : 'falha ao ler os panes da missão',
     };
   }
+  // Prova de trabalho que sobrevive à morte de todo sinal de pane (B-246): a
+  // fila do plano de controle. Falha de leitura não pode reabilitar o
+  // assistente, então o desconhecido conta como zero e as demais provas
+  // decidem.
+  let plannedWork = 0;
+  try {
+    const controlPlane = await window.nexus.orch.missionControlPlane(
+      mission.id,
+    );
+    plannedWork = controlPlane?.queue.length ?? 0;
+  } catch {
+    plannedWork = 0;
+  }
   const route = missionResumeRoute({
     livePanes: livePaneIdsForMission(mission.id).length,
     recordedPanes,
     isArmedShell: isIntentFirstMissionShell(mission),
+    plannedWork,
   });
   // Assistente SÓ com prova de zero panes; estado não reconhecido permanece
   // na página com aviso, nunca cai no assistente por fallback.

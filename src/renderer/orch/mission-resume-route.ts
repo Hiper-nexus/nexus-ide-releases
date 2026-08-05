@@ -25,6 +25,15 @@ export interface MissionResumeRouteInput {
   readonly recordedPanes: number;
   /** Rascunho armado de modo agêntico — nasceu sem panes de propósito. */
   readonly isArmedShell: boolean;
+  /**
+   * Itens de plano/fila que a missão já selou. É a prova de trabalho que
+   * SOBREVIVE quando todo sinal de pane morre: no voo de 05/08
+   * (mission-3be48989) `mission_panes` ficou vazio, `orch_session_id` NULL e
+   * `intentContract.dispatchedAt` sumiu na recompilação do intent — e mesmo
+   * assim havia 8 tasks e um plano selado no banco. Sem isto, "sem panes"
+   * é lido como "nunca começou".
+   */
+  readonly plannedWork?: number;
 }
 
 /** Destino de "Retomar", decidido por evidência e não por classificação. */
@@ -39,6 +48,19 @@ export function missionResumeRoute(
   // operador do trabalho dele.
   if (input.recordedPanes > 0) {
     return { kind: 'panes', recordedPanes: input.recordedPanes, live: false };
+  }
+  // Plano selado é trabalho, e trabalho nunca autoriza o assistente. Sem panes
+  // não há o que reabrir, mas a resposta certa é ficar na página dizendo o que
+  // existe — jamais oferecer a tela de quem nunca planejou.
+  const planned = input.plannedWork ?? 0;
+  if (planned > 0) {
+    return {
+      kind: 'stay',
+      notice:
+        `Esta missão parou sem panes gravados, mas o plano com ${planned} ` +
+        'tarefa(s) e o trabalho já feito continuam preservados. Abra o ' +
+        'diagnóstico da missão para ver por que ela parou antes de recomeçar.',
+    };
   }
   if (input.isArmedShell) return { kind: 'wizard' };
   return {
