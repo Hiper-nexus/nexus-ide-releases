@@ -82,6 +82,8 @@ export const FEATURE_FLAG_IDS = {
   remoteRelayTransport: 'feature.remote.relayTransport',
   /** Deterministic parallel mission task scheduler (worktree fan-out). */
   parallelScheduler: 'orch.parallelScheduler',
+  /** Auto-fechar panes não-worker (spawn manual / agentes de ferramenta) após idle > N s. */
+  paneNonWorkerAutoClose: 'feature.pane.nonWorkerAutoClose',
 } as const;
 
 export type FeatureFlagId =
@@ -144,6 +146,18 @@ export const BUILTIN_FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
       'Worker TTL pós-handoff (paridade Overclock §a#1): worker idle com todos os handoffs consumidos é encerrado ~30s depois, liberando o pane. DEFAULT-ON — restaura a aresta close→wake incondicional. Opt-out via override de flag para E2E real-mission (ancora workers a PTYs vivos).',
     channel: 'dev',
     createdAt: '2026-08-04',
+    removeAfter: '2027-03-31',
+    killSwitch: false,
+    telemetry: false,
+    defaultEnabled: true,
+  },
+  {
+    id: FEATURE_FLAG_IDS.paneNonWorkerAutoClose,
+    owner: 'orch',
+    description:
+      'Auto-fechar panes não-worker (spawn manual / agentes de ferramenta) idle além do TTL configurável (default 300s). Paridade Overclock commit 869c08f7.',
+    channel: 'dev',
+    createdAt: '2026-08-05',
     removeAfter: '2027-03-31',
     killSwitch: false,
     telemetry: false,
