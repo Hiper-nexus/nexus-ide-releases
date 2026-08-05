@@ -527,7 +527,7 @@ describe("MissionWizardReview orchestrator provider", () => {
     act(() => root.unmount());
   });
 
-  it("distingue worker governado de CLI disponível somente no Terminal", () => {
+  it("oferece um worker credenciado como sugestão selecionável (override, part b)", () => {
     const host = document.createElement("div");
     document.body.appendChild(host);
     const root = createRoot(host);
@@ -566,23 +566,22 @@ describe("MissionWizardReview orchestrator provider", () => {
     const workerProvider = host.querySelector<HTMLSelectElement>(
       'select[aria-label="Provider de Executor"]',
     );
+    // Part (b): governed CLI is a PRE-FILLED SUGGESTION, not a lock. Codex keeps
+    // its confined-writer label; a credentialed Kimi is now offered as a
+    // selectable "sugerida" override instead of a dead "somente manual" option.
     expect([...workerProvider!.options].map((option) => option.text)).toEqual([
       "Codex · escrita confinada",
-      "Kimi · somente manual",
+      "Kimi · sugerida",
     ]);
     expect(
       [...workerProvider!.options].find((option) =>
         option.text.includes("Kimi"),
       )?.disabled,
-    ).toBe(true);
-    expect(host.textContent).toContain(
-      "Executores e arquitetos exigem escrita confinada",
-    );
-    expect(host.textContent).toContain("uso manual no Terminal");
+    ).toBe(false);
     act(() => root.unmount());
   });
 
-  it("bloqueia um worker salvo que não possui escrita autônoma confinada", () => {
+  it("permite lançar um worker credenciado sem escrita confinada (override advisory, part b)", () => {
     const host = document.createElement("div");
     document.body.appendChild(host);
     const root = createRoot(host);
@@ -623,22 +622,19 @@ describe("MissionWizardReview orchestrator provider", () => {
     const workerProvider = host.querySelector<HTMLSelectElement>(
       'select[aria-label="Provider de Executor Kimi"]',
     );
-    expect(workerProvider?.selectedOptions[0]?.text).toBe(
-      "Kimi · somente manual",
-    );
-    expect(host.textContent).toContain(
-      "disponível para uso manual no Terminal",
-    );
+    // Part (b): the credentialed Kimi worker is now a launchable suggestion,
+    // not a blocked "somente manual" pick.
+    expect(workerProvider?.selectedOptions[0]?.text).toBe("Kimi · sugerida");
     const launch = [...host.querySelectorAll("button")].find(
       (button) => button.textContent === "Usar este squad",
     );
-    expect(launch?.disabled).toBe(true);
+    expect(launch?.disabled).toBe(false);
     act(() => launch?.click());
-    expect(onLaunch).not.toHaveBeenCalled();
+    expect(onLaunch).toHaveBeenCalledOnce();
     act(() => root.unmount());
   });
 
-  it("aceita CLI read-only somente para reviewer/scout", () => {
+  it("aceita CLI read-only credenciada em qualquer papel (advisory override, part b)", () => {
     const renderRole = (category: SquadAgent["category"]) => {
       const host = document.createElement("div");
       document.body.appendChild(host);
@@ -691,20 +687,22 @@ describe("MissionWizardReview orchestrator provider", () => {
     act(() => reviewer.root.unmount());
     reviewer.host.remove();
 
+    // Part (b): a credentialed read-only CLI is a launchable SUGGESTION for an
+    // executor too — the release-ladder classification is advisory, not a lock.
     const executor = renderRole("executor");
     expect(
       executor.host.querySelector<HTMLSelectElement>(
         'select[aria-label="Provider de Executor"]',
       )?.selectedOptions[0]?.text,
     ).toBe("Review CLI · leitura supervisionada");
-    expect(executor.host.textContent).toContain(
+    expect(executor.host.textContent).not.toContain(
       "Esta função exige escrita autônoma confinada",
     );
     expect(
       [...executor.host.querySelectorAll("button")].find(
         (button) => button.textContent === "Usar este squad",
       )?.disabled,
-    ).toBe(true);
+    ).toBe(false);
     act(() => executor.root.unmount());
   });
 
@@ -1078,6 +1076,67 @@ describe("MissionWizardReview picker liveness (part a)", () => {
     expect(currentModelOption).toBeTruthy();
     expect(currentModelOption?.disabled).toBe(false);
     expect(modelSelect?.value).toBe("kimi-code/kimi-for-coding");
+
+    act(() => root.unmount());
+  });
+
+  // Part (b): the override only offers CREDENTIALED providers — a logged-out
+  // provider stays a disabled option, never a launchable suggestion.
+  it("does not offer a logged-out provider as a selectable suggestion", () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const worker: SquadAgent = {
+      id: "worker-codex",
+      agentName: "Executor Codex",
+      category: "executor",
+      cli: "codex",
+      model: "gpt-5.4",
+      effort: "medium",
+      allowedTools: ["Bash"],
+    };
+    act(() => {
+      root.render(
+        <MissionWizardReview
+          squadCliPolicy="governed"
+          squad={{ ...squad, agents: [orchestrator, worker] }}
+          roster={[orchestrator, worker]}
+          adapters={[codex, kimi]}
+          providers={[
+            provider(codex),
+            provider(kimi, { authStrategy: "login-needed", authReadyModels: [] }),
+          ]}
+          highlightedAgentId={null}
+          error={null}
+          spawning={false}
+          rosterSaved={false}
+          rosterInvalidAgent={null}
+          onSaveRoster={vi.fn()}
+          onUpdateAgent={vi.fn()}
+          onError={vi.fn()}
+          onBack={vi.fn()}
+          onCancel={vi.fn()}
+          onLaunch={vi.fn()}
+        />,
+      );
+    });
+
+    const cliSelect = host.querySelector<HTMLSelectElement>(
+      'select[aria-label="Provider de Executor Codex"]',
+    );
+    const kimiOption = [...(cliSelect?.options ?? [])].find(
+      (option) => option.value === "kimi",
+    );
+    // Present in the catalog but NOT credentialed -> offered disabled, not a
+    // launchable suggestion; its label makes the reason explicit.
+    expect(kimiOption).toBeTruthy();
+    expect(kimiOption?.disabled).toBe(true);
+    expect(kimiOption?.text).toContain("login necessário");
+    // The credentialed codex stays the launchable suggestion.
+    const codexOption = [...(cliSelect?.options ?? [])].find(
+      (option) => option.value === "codex",
+    );
+    expect(codexOption?.disabled).toBe(false);
 
     act(() => root.unmount());
   });

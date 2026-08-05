@@ -112,6 +112,7 @@ function workerCapabilityLabel(
     if (!capabilities.launchable || !options.selectable) return "indisponível";
     return "pronta · web";
   }
+  if (!options.authenticated) return "login necessário";
   if (capabilities.governedWriter) return "escrita confinada";
   if (capabilities.autonomousReadOnly) return "leitura supervisionada";
   if (
@@ -121,7 +122,11 @@ function workerCapabilityLabel(
   ) {
     return "leitura advisory MCP";
   }
-  if (capabilities.launchable) return "somente manual";
+  // Part (b): a credentialed, selectable CLI without a release-ladder
+  // classification is still an available SUGGESTION in governed mode.
+  if (capabilities.launchable) {
+    return options.selectable ? "sugerida" : "somente manual";
+  }
   return "indisponível";
 }
 
@@ -233,24 +238,16 @@ export function MissionWizardReview({
   ): boolean => {
     if (!adapter) return false;
     const capabilities = adapterCapabilityMatrixOf(adapter);
-    const isAdvisorRole = roundtable.isAdvisorRole(agent.category);
-    const advisoryLane =
-      isAdvisorRole &&
-      supportsAdvisoryParticipationCli(adapter.id) &&
-      (adapter.id !== "claude" || orchestratorAgent?.cli !== "claude");
     // Autopilot: any installed + authenticated cli-pty may take any worker
-    // role. Governed keeps the hardened release ladder.
+    // role. Part (b): governed also treats a CREDENTIALED provider as
+    // qualified — governedWriter / autonomousReadOnly degrade to advisory
+    // labels, so the pre-filled suggestion can be overridden AND launched.
+    // Authentication (checked below) is what stays enforced.
     const roleQualified = operatorChoice
       ? adapter.installed &&
         capabilities.launchable &&
         adapter.taskHandoffCapable === true
-      : isAdvisorRole
-        ? Boolean(
-            capabilities.governedWriter ||
-              capabilities.autonomousReadOnly ||
-              advisoryLane,
-          )
-        : Boolean(capabilities.governedWriter);
+      : adapter.installed && capabilities.launchable;
     const routeReady = operatorChoice
       ? capabilities.launchable
       : capabilities.launchable &&
@@ -288,21 +285,12 @@ export function MissionWizardReview({
         );
         const label = adapter?.label ?? unqualifiedWorker.cli;
         const capabilities = adapterCapabilityMatrixOf(adapter);
-        const isAdvisorRole = roundtable.isAdvisorRole(unqualifiedWorker.category);
-        const advisoryLane =
-          isAdvisorRole &&
-          supportsAdvisoryParticipationCli(unqualifiedWorker.cli) &&
-          (unqualifiedWorker.cli !== "claude" ||
-            orchestratorAgent?.cli !== "claude");
+        // Part (b): governed is now credentialed-gated (installed + launchable)
+        // — the release-ladder capability flags are advisory, so the only real
+        // blocks left are auth and technical integrability.
         const roleCapable = operatorChoice
           ? Boolean(adapter?.installed)
-          : isAdvisorRole
-            ? Boolean(
-                capabilities.governedWriter ||
-                  capabilities.autonomousReadOnly ||
-                  advisoryLane,
-              )
-            : Boolean(capabilities.governedWriter);
+          : Boolean(adapter?.installed && capabilities.launchable);
         const authenticated = adapter
           ? isAdapterModelAuthenticated(
               adapter,
@@ -320,25 +308,15 @@ export function MissionWizardReview({
           roleCapable &&
           !authenticated
         ) {
-          return isAdvisorRole
-            ? `${label} precisa de autenticação válida para executar o worker ${unqualifiedWorker.agentName} como advisor read_only nesta release.`
-            : `${label} precisa de autenticação válida para executar o worker ${unqualifiedWorker.agentName} automaticamente nesta release.`;
+          return `${label} precisa de autenticação válida para executar o worker ${unqualifiedWorker.agentName}.`;
         }
         if (operatorChoice) {
           return `${label} precisa estar instalada, autenticada e pronta para lançar o worker ${unqualifiedWorker.agentName}. ${roundtable.workerLaunchContext}`;
         }
-        if (
-          capabilities.launchable &&
-          !capabilities.autonomousReadOnly &&
-          !capabilities.governedWriter &&
-          !advisoryLane
-        ) {
-          return `${label} está disponível para uso manual no Terminal, mas não pode executar o worker ${unqualifiedWorker.agentName} automaticamente nesta release.`;
-        }
-        if (isAdvisorRole) {
-          return `O worker ${unqualifiedWorker.agentName} precisa de leitura autônoma confinada e autenticada. ${label} não possui essa qualificação nesta release.`;
-        }
-        return `O worker ${unqualifiedWorker.agentName} precisa de escrita autônoma confinada e autenticada. ${label} não possui essa qualificação nesta release.`;
+        // Governed advisory: a credentialed provider launches. What remains is
+        // a CLI that cannot be driven automatically (no prompt injection /
+        // status observation) or is not installed/launchable.
+        return `${label} não pode executar o worker ${unqualifiedWorker.agentName} automaticamente: precisa estar instalada, autenticada e integrável (injeção de prompt e status observável).`;
       })()
     : null;
   const orchestratorRouteDeclared = Boolean(
@@ -349,6 +327,9 @@ export function MissionWizardReview({
   const orchestratorProofEvidence = orchestratorRouteDeclared
     ? "verified"
     : "unsupported";
+  // Part (b) is scoped to the WORKER roster pickers; the Maestro keeps its
+  // honest verified-credentialed suggestion list so "Coordenação verificada"
+  // never lies about an unverified provider.
   const orchestratorManualOnly = Boolean(
     orchestratorAdapter &&
       adapterCapabilityMatrixOf(orchestratorAdapter).launchable &&
