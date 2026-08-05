@@ -21,6 +21,11 @@ import {
   DEFAULT_ADAPTIVE_CAP,
   EMPTY_SCHEDULER_TELEMETRY,
 } from './mission-scheduler';
+import {
+  planWavePackTasks,
+  type ExtractedWavePackStory,
+  type WavePackExecutorRef,
+} from '../../shared/mission-wave-pack';
 
 const NOW = new Date('2026-07-14T12:00:00Z').getTime();
 
@@ -603,6 +608,85 @@ describe('mission-scheduler P1 ownership + reserved glue', () => {
     if (collideDecision.plan.kind !== 'dispatch') return;
     expect(collideDecision.plan.taskIds).toEqual(['s1', 's3']);
     expect(collideDecision.deferredIds).toEqual(['s2']);
+  });
+
+  it('fans out a MIXED-provider roster of disjoint writers exactly like all-claude', () => {
+    // The Nexus fleet is heterogeneous. Disjointness keys only on ownership
+    // (files/symbols/domains) — never on the writer's provider — so a wave of
+    // disjoint stories dispatched to a claude+codex+gemini roster must schedule
+    // identically to the same wave dispatched to an all-claude roster.
+    const stories: readonly ExtractedWavePackStory[] = [
+      {
+        id: 'story-1-1',
+        epicStoryId: '1.1',
+        title: 'Login',
+        body: 'x',
+        ownershipFiles: ['src/auth/login.ts'],
+      },
+      {
+        id: 'story-1-2',
+        epicStoryId: '1.2',
+        title: 'Session',
+        body: 'x',
+        ownershipFiles: ['src/auth/session.ts'],
+      },
+      {
+        id: 'story-2-1',
+        epicStoryId: '2.1',
+        title: 'Checkout',
+        body: 'x',
+        ownershipFiles: ['src/billing/checkout.ts'],
+      },
+    ];
+    const plan = (executors: readonly WavePackExecutorRef[]) =>
+      planWavePackTasks({
+        missionTitle: 'Het',
+        goal: 'entregar',
+        acceptanceCriteria: ['ok'],
+        stories,
+        executors,
+        maxWorkers: 3,
+        ownershipFiles: ['src/'],
+      }).map((planned) =>
+        task(planned.plannerId, { ownership: planned.ownership }),
+      );
+
+    const mixedExecutors: readonly WavePackExecutorRef[] = [
+      { id: 'claude-writer', agentName: 'Claude', category: 'executor' },
+      { id: 'codex-writer', agentName: 'Codex', category: 'executor' },
+      { id: 'gemini-writer', agentName: 'Gemini', category: 'executor' },
+    ];
+    const allClaudeExecutors: readonly WavePackExecutorRef[] = [
+      { id: 'claude-writer', agentName: 'Claude', category: 'executor' },
+    ];
+
+    // The roster really is heterogeneous: each story lands on a distinct CLI.
+    const mixedPlanned = planWavePackTasks({
+      missionTitle: 'Het',
+      goal: 'entregar',
+      acceptanceCriteria: ['ok'],
+      stories,
+      executors: mixedExecutors,
+      maxWorkers: 3,
+      ownershipFiles: ['src/'],
+    });
+    expect(mixedPlanned.map((t) => t.agentRef)).toEqual([
+      'claude-writer',
+      'codex-writer',
+      'gemini-writer',
+    ]);
+
+    const mixed = decideSchedule(plan(mixedExecutors), [], CAP, NOW);
+    const allClaude = decideSchedule(plan(allClaudeExecutors), [], CAP, NOW);
+    expect(mixed.plan.kind).toBe('dispatch');
+    expect(allClaude.plan.kind).toBe('dispatch');
+    if (mixed.plan.kind !== 'dispatch') return;
+    if (allClaude.plan.kind !== 'dispatch') return;
+    // Same wave, same size, same order — provider identity changes nothing.
+    expect(mixed.plan.waveSize).toBe(3);
+    expect(mixed.plan.waveSize).toBe(allClaude.plan.waveSize);
+    expect(mixed.plan.taskIds).toEqual(allClaude.plan.taskIds);
+    expect(mixed.deferredIds).toEqual(allClaude.deferredIds);
   });
 
   it('ownershipTouchesReservedGlue is true for any glue file in set', () => {

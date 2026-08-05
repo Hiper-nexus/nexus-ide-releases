@@ -6763,4 +6763,39 @@ describe('assertConcurrentIsolatedWorktreeDisjoint (P0-3 parallel writers)', () 
       ]),
     ).toThrow(/concurrent_isolated_worktree_files_overlap/);
   });
+
+  it('is provider-agnostic: a claude+codex+gemini disjoint wave is accepted', () => {
+    // Heterogeneous fleet: disjointness keys only on ownership files, never on
+    // the writer's CLI/provider, so mixed-roster writers admit like all-claude.
+    const mixed = [
+      {
+        taskId: 'writer-claude',
+        executionMode: 'isolated_worktree',
+        ownership: { files: ['src/auth/login.ts'] },
+      },
+      {
+        taskId: 'writer-codex',
+        executionMode: 'isolated_worktree',
+        ownership: { files: ['src/billing/checkout.ts'] },
+      },
+      {
+        taskId: 'writer-gemini',
+        executionMode: 'isolated_worktree',
+        ownership: { files: ['src/ui/nav.ts'] },
+      },
+    ];
+    expect(() => assertConcurrentIsolatedWorktreeDisjoint(mixed)).not.toThrow();
+
+    // And a mixed roster colliding on a file still fails closed, provider-blind.
+    expect(() =>
+      assertConcurrentIsolatedWorktreeDisjoint([
+        mixed[0]!,
+        {
+          taskId: 'writer-gemini',
+          executionMode: 'isolated_worktree',
+          ownership: { files: ['src/auth/login.ts'] },
+        },
+      ]),
+    ).toThrow(/concurrent_isolated_worktree_files_overlap/);
+  });
 });
