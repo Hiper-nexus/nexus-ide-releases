@@ -6,6 +6,7 @@ import {
 import {
   bootstrapStepLabel,
   latestBootstrapProgress,
+  latestChefIdleProgress,
   progressAgeLabel,
 } from './pane-vacancy-progress';
 
@@ -109,5 +110,80 @@ describe('latestBootstrapProgress — defensive journal parsing', () => {
       'mission-1',
     );
     expect(latest?.step).toBe('plan_baseline' satisfies BootstrapProgressStep);
+  });
+});
+
+function chefIdleEvent(
+  patch: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    sequence: 1,
+    id: 'evt-ci-1',
+    missionId: 'mission-1',
+    runId: 'chef-idle-mission-1',
+    type: 'custom',
+    payload: { kind: 'chef_idle_awaiting_workers', workerCount: 2 },
+    idempotencyKey: 'chef_idle:mission-1:1000',
+    occurredAt: 1_000,
+    origin: 'main',
+    deliveryStatus: 'pending',
+    ...patch,
+  };
+}
+
+describe('latestChefIdleProgress — defensive journal parsing', () => {
+  it('returns null for an empty page', () => {
+    expect(latestChefIdleProgress([], 'mission-1')).toBeNull();
+  });
+
+  it('parses a single chef-idle event', () => {
+    expect(latestChefIdleProgress([chefIdleEvent()], 'mission-1')).toEqual({
+      missionId: 'mission-1',
+      workerCount: 2,
+      occurredAt: 1_000,
+    });
+  });
+
+  it('picks the highest-sequence event', () => {
+    const result = latestChefIdleProgress(
+      [
+        chefIdleEvent({ sequence: 1, occurredAt: 1_000, payload: { kind: 'chef_idle_awaiting_workers', workerCount: 1 } }),
+        chefIdleEvent({ sequence: 5, occurredAt: 5_000, payload: { kind: 'chef_idle_awaiting_workers', workerCount: 3 } }),
+        chefIdleEvent({ sequence: 3, occurredAt: 3_000, payload: { kind: 'chef_idle_awaiting_workers', workerCount: 2 } }),
+      ],
+      'mission-1',
+    );
+    expect(result).toEqual({ missionId: 'mission-1', workerCount: 3, occurredAt: 5_000 });
+  });
+
+  it('ignores events of another mission', () => {
+    expect(
+      latestChefIdleProgress([chefIdleEvent({ missionId: 'mission-2' })], 'mission-1'),
+    ).toBeNull();
+  });
+
+  it('ignores non-chef-idle journal events', () => {
+    expect(
+      latestChefIdleProgress(
+        [chefIdleEvent({ payload: { kind: 'bootstrap_progress', step: 'plan_baseline' } })],
+        'mission-1',
+      ),
+    ).toBeNull();
+  });
+
+  it('defaults workerCount to 0 when payload omits it', () => {
+    const result = latestChefIdleProgress(
+      [chefIdleEvent({ payload: { kind: 'chef_idle_awaiting_workers' } })],
+      'mission-1',
+    );
+    expect(result?.workerCount).toBe(0);
+  });
+
+  it('survives garbage entries in the page', () => {
+    const result = latestChefIdleProgress(
+      [null, 42, 'junk', chefIdleEvent({ payload: null }), chefIdleEvent()],
+      'mission-1',
+    );
+    expect(result?.workerCount).toBe(2);
   });
 });

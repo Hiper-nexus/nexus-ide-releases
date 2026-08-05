@@ -140,4 +140,68 @@ describe('paneVacancyIntent — what the vacancy says', () => {
       expect(intent.headline).not.toContain('Squad selado');
     });
   });
+
+  describe('with chef-idle progress', () => {
+    const chefIdle = {
+      missionId: 'm3',
+      workerCount: 2,
+      occurredAt: 1_000,
+    };
+
+    it('shows the chef-idle headline with worker count and age', () => {
+      const intent = paneVacancyIntent(
+        [mission({ id: 'm3', status: 'running' })],
+        null,
+        13_000,
+        chefIdle,
+      );
+      if (intent.kind !== 'mission-unstaged') throw new Error('unreachable');
+      expect(intent.headline).toBe('Orquestrador aguardando 2 workers · há 12s');
+    });
+
+    it('uses singular form for 1 worker', () => {
+      const intent = paneVacancyIntent(
+        [mission({ id: 'm3', status: 'running' })],
+        null,
+        13_000,
+        { ...chefIdle, workerCount: 1 },
+      );
+      if (intent.kind !== 'mission-unstaged') throw new Error('unreachable');
+      expect(intent.headline).toBe('Orquestrador aguardando 1 worker · há 12s');
+    });
+
+    it('bootstrap progress takes priority over chef-idle', () => {
+      const intent = paneVacancyIntent(
+        [mission({ id: 'm3', status: 'running' })],
+        { missionId: 'm3', step: 'squad_sealed' as const, occurredAt: 1_000 },
+        13_000,
+        chefIdle,
+      );
+      if (intent.kind !== 'mission-unstaged') throw new Error('unreachable');
+      expect(intent.headline).toBe('Squad selado · há 12s');
+    });
+
+    it('ignores chef-idle from another mission', () => {
+      const intent = paneVacancyIntent(
+        [mission({ id: 'm3', status: 'running' })],
+        null,
+        13_000,
+        { ...chefIdle, missionId: 'outra' },
+      );
+      if (intent.kind !== 'mission-unstaged') throw new Error('unreachable');
+      expect(intent.headline).toContain('preparando');
+    });
+
+    it('never overrides the durable cause of a blocked mission', () => {
+      const intent = paneVacancyIntent(
+        [mission({ id: 'm3', status: 'blocked', description: '[NEXUS_TASK_DISPATCH_BLOCKED]' })],
+        null,
+        13_000,
+        chefIdle,
+      );
+      if (intent.kind !== 'mission-unstaged') throw new Error('unreachable');
+      expect(intent.headline).toContain('despacho');
+      expect(intent.headline).not.toContain('Orquestrador');
+    });
+  });
 });

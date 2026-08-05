@@ -7,6 +7,7 @@ import {
 import {
   bootstrapStepLabel,
   progressAgeLabel,
+  type ChefIdleProgress,
   type PaneVacancyProgress,
 } from './pane-vacancy-progress';
 
@@ -70,27 +71,33 @@ const PREPARING_NEXT_STEP =
   'Abra o diagnóstico se ela não abrir nenhum agente em instantes.';
 
 /**
- * `progress` is the live bootstrap step polled from the mission journal. It
- * only changes the headline of a NON-blocked mission and only when it belongs
- * to that exact mission — a stale page from a previous poll must not leak a
- * step onto another mission. Without it the copy is byte-for-byte the static
- * one the card always had.
+ * `progress` is the live bootstrap step polled from the mission journal.
+ * `chefIdle` is the latest chef-idle-awaiting-workers event for the mission.
+ * Both only change the headline of a NON-blocked mission and only when they
+ * belong to that exact mission — a stale page from a previous poll must not
+ * leak onto another mission. Without them the copy is byte-for-byte static.
  */
 export function paneVacancyIntent(
   missions: readonly Mission[],
   progress: PaneVacancyProgress | null = null,
   now: number = Date.now(),
+  chefIdle: ChefIdleProgress | null = null,
 ): PaneVacancyIntent {
   const mission = paneVacancyMission(missions);
   if (!mission) return { kind: 'idle' };
   if (mission.status !== 'blocked') {
-    const headline =
-      progress && progress.missionId === mission.id
-        ? `${bootstrapStepLabel(progress.step)} · ${progressAgeLabel(
-            progress.occurredAt,
-            now,
-          )}`
-        : PREPARING_HEADLINE;
+    let headline: string;
+    if (progress && progress.missionId === mission.id) {
+      headline = `${bootstrapStepLabel(progress.step)} · ${progressAgeLabel(
+        progress.occurredAt,
+        now,
+      )}`;
+    } else if (chefIdle && chefIdle.missionId === mission.id) {
+      const n = chefIdle.workerCount;
+      headline = `Orquestrador aguardando ${n} worker${n !== 1 ? 's' : ''} · ${progressAgeLabel(chefIdle.occurredAt, now)}`;
+    } else {
+      headline = PREPARING_HEADLINE;
+    }
     return {
       kind: 'mission-unstaged',
       missionId: mission.id,

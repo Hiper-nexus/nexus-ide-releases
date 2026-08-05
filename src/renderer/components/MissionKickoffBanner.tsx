@@ -6,6 +6,8 @@ import { missionKickoffBannerMission } from './mission-kickoff-banner-intent';
 import { paneVacancyIntent } from './pane-vacancy-intent';
 import {
   latestBootstrapProgress,
+  latestChefIdleProgress,
+  type ChefIdleProgress,
   type PaneVacancyProgress,
 } from './pane-vacancy-progress';
 
@@ -46,11 +48,13 @@ export function MissionKickoffBanner() {
   const pollingMissionId =
     mission && mission.status !== 'blocked' ? mission.id : null;
   const [progress, setProgress] = useState<PaneVacancyProgress | null>(null);
+  const [chefIdle, setChefIdle] = useState<ChefIdleProgress | null>(null);
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
     if (!pollingMissionId) {
       setProgress(null);
+      setChefIdle(null);
       return;
     }
     let cancelled = false;
@@ -63,12 +67,9 @@ export function MissionKickoffBanner() {
           limit: 30,
         });
         if (cancelled || !recent || recent.enabled === false) return;
-        setProgress(
-          latestBootstrapProgress(
-            (recent.events as unknown[]) ?? [],
-            pollingMissionId,
-          ),
-        );
+        const events = (recent.events as unknown[]) ?? [];
+        setProgress(latestBootstrapProgress(events, pollingMissionId));
+        setChefIdle(latestChefIdleProgress(events, pollingMissionId));
       } catch {
         // Jornal indisponível: o banner mantém a copy estática de sempre.
       }
@@ -90,7 +91,7 @@ export function MissionKickoffBanner() {
   }, [mission]);
 
   if (!mission) return null;
-  const intent = paneVacancyIntent(unboundMissions, progress, now);
+  const intent = paneVacancyIntent(unboundMissions, progress, now, chefIdle);
   if (intent.kind !== 'mission-unstaged' || intent.missionId !== mission.id) {
     return null;
   }

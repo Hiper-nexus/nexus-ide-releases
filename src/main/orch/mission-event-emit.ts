@@ -148,5 +148,49 @@ export function resetBootstrapProgressCountersForTests(): void {
   bootstrapStepCounters.clear();
 }
 
+/**
+ * Emit a `chef_idle_awaiting_workers` marker when the orchestrator is idle
+ * while workers are present — distinguishes "chef waiting" from a stall.
+ * Throttled to one journal write per mission per 60s to avoid scan-tick spam.
+ */
+const chefIdleThrottleMs = 60_000;
+const chefIdleLastEmit = new Map<string, number>();
+
+export function emitChefIdleAwaitingWorkers(
+  scope: ProjectExecutionScope,
+  missionId: string,
+  workerCount: number,
+): void {
+  const now = Date.now();
+  const last = chefIdleLastEmit.get(missionId) ?? 0;
+  if (now - last < chefIdleThrottleMs) return;
+  chefIdleLastEmit.set(missionId, now);
+  try {
+    emitMissionIntentEvent({
+      name: 'chef_idle_awaiting_workers',
+      missionId,
+      meta: { workerCount },
+    });
+  } catch (err) {
+    console.warn('[mission-events] chef_idle intent failed:', err);
+  }
+  emitMissionEvent(scope, {
+    missionId,
+    runId: `chef-idle-${missionId}`,
+    type: 'custom',
+    origin: 'main',
+    idempotencyKey: boundedIdempotencyKey(`chef_idle:${missionId}:${now}`),
+    payload: {
+      kind: 'chef_idle_awaiting_workers',
+      workerCount,
+    },
+  });
+}
+
+/** Test seam — reset throttle state between test cases. */
+export function resetChefIdleThrottleForTests(): void {
+  chefIdleLastEmit.clear();
+}
+
 /** Test helper re-export. */
 export { createMissionEventFixture };

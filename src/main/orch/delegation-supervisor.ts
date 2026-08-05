@@ -12,6 +12,7 @@ import { onHandoffSubmitted } from './idle-delivery';
 import { getSquad } from './squad-store';
 import { listPaneSnapshots } from './pane-registry';
 import { emitMissionIntentEvent } from './mission-intent-events';
+import { emitChefIdleAwaitingWorkers } from './mission-event-emit';
 
 /**
  * The worker stall watchdog cannot see the more fundamental failure where an
@@ -170,13 +171,29 @@ function scanSuite(suite: ProjectDomainStoreSuite, now: number): void {
       mission.orchestratorSessionId ||
         panes.some((pane) => pane.role === 'orchestrator'),
     );
+    const workerPaneCount = panes.filter((pane) => pane.role === 'worker').length;
+    const orchestratorPaneState = panes.find(
+      (pane) => pane.role === 'orchestrator',
+    )?.state;
+
+    // Chef-idle: orchestrator is idle while workers are present. This state is
+    // indistinguishable from a stall without an explicit marker — emit one so
+    // the presenter and telemetry can surface it instead of showing silence.
+    if (
+      workerPaneCount > 0 &&
+      orchestratorPaneState === 'idle' &&
+      (mission.status === 'pending' || mission.status === 'running')
+    ) {
+      emitChefIdleAwaitingWorkers(suite.scope, mission.id, workerPaneCount);
+    }
+
     const stage = delegationRecoveryStage({
       mission,
       expectedWorkers,
-      workerPanes: panes.filter((pane) => pane.role === 'worker').length,
+      workerPanes: workerPaneCount,
       tasks: suite.tasks.list(mission.id).length,
       recoveries,
-      orchestratorState: panes.find((pane) => pane.role === 'orchestrator')?.state,
+      orchestratorState: orchestratorPaneState,
       hasBoundOrchestrator,
     }, now);
     if (stage === 0) continue;

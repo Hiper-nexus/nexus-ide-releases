@@ -44,6 +44,45 @@ export function progressAgeLabel(occurredAt: number, now: number): string {
 
 const KNOWN_STEPS: ReadonlySet<string> = new Set(BOOTSTRAP_PROGRESS_STEPS);
 
+/** Live chef-idle state: orchestrator idle while workers are present. */
+export interface ChefIdleProgress {
+  readonly missionId: string;
+  readonly workerCount: number;
+  readonly occurredAt: number;
+}
+
+/**
+ * Latest `chef_idle_awaiting_workers` journal event for the mission, or null.
+ * Out-of-order pages are handled by picking the highest sequence.
+ */
+export function latestChefIdleProgress(
+  events: readonly unknown[],
+  missionId: string,
+): ChefIdleProgress | null {
+  let best: ChefIdleProgress | null = null;
+  let bestSequence = -1;
+  for (const raw of events) {
+    if (!raw || typeof raw !== 'object') continue;
+    const event = raw as Record<string, unknown>;
+    if (event.missionId !== missionId) continue;
+    const payload = event.payload;
+    if (!payload || typeof payload !== 'object') continue;
+    const record = payload as Record<string, unknown>;
+    if (record.kind !== 'chef_idle_awaiting_workers') continue;
+    const sequence = typeof event.sequence === 'number' ? event.sequence : 0;
+    if (sequence < bestSequence) continue;
+    bestSequence = sequence;
+    best = {
+      missionId,
+      workerCount:
+        typeof record.workerCount === 'number' ? record.workerCount : 0,
+      occurredAt:
+        typeof event.occurredAt === 'number' ? event.occurredAt : 0,
+    };
+  }
+  return best;
+}
+
 /**
  * Latest `bootstrap_progress` journal event for the mission, or null. The
  * renderer polls `missionEventsRecent`; picking the highest sequence makes

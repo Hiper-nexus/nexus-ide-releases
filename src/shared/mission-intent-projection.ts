@@ -42,7 +42,8 @@ export type MissionIntentEventName =
   | 'intent_gate_denied'
   | 'prepare_project'
   | 'bootstrap_progress'
-  | 'kickoff_accepted';
+  | 'kickoff_accepted'
+  | 'chef_idle_awaiting_workers';
 
 /**
  * Passos visíveis do bootstrap main-owned (aprovação → primeiro pane → aceite
