@@ -291,7 +291,7 @@ describe("wave-pack disjoint-file ownership (P0-3 fan-out)", () => {
       body: "As a buyer",
       ownershipFiles: ["src/billing/checkout.ts"],
     },
-  ] as const;
+  ];
 
   it("gives each declaring story its own disjoint files + disjoint marker", () => {
     const planned = planWavePackTasks({

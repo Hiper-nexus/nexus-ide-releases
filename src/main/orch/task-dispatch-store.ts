@@ -1,6 +1,11 @@
 import { z } from "zod";
 import type { ProjectExecutionScope } from "../../shared/types";
-import { normalizeWavePackFile } from "../../shared/mission-wave-pack";
+// Pure disjointness guard lives in the shared leaf (no store→claim-authority
+// import cycle); re-exported here so existing consumers/tests keep their path.
+export {
+  assertConcurrentIsolatedWorktreeDisjoint,
+  type ConcurrentIsolatedWorktreeTask,
+} from "../../shared/mission-wave-pack";
 import type { ProjectRuntimeManager } from "../runtime/project-runtime-manager";
 import {
   ScopedStoreBinding,
@@ -147,43 +152,6 @@ export const LEGACY_GUIDED_DIRTY_CHECKOUT_TERMINAL_REASON =
   terminalWorkerRecoveryReason(
     LEGACY_GUIDED_DIRTY_CHECKOUT_BOOTSTRAP_CAUSE,
   );
-
-/** One concurrently-active dispatch as the disjointness guard sees it. */
-export interface ConcurrentIsolatedWorktreeTask {
-  readonly taskId: string;
-  readonly executionMode: string;
-  readonly ownership: { readonly files: readonly string[] };
-}
-
-/**
- * Admit multiple simultaneous `isolated_worktree` writers as valid exactly when
- * their file ownership is pairwise-disjoint. This is the store-side seam for
- * real fan-out: two parallel worktrees may run only if no file is claimed by
- * both, so their serial merges never conflict. Read-only peers hold no writer
- * surface and are ignored. Fail-closed on any shared file.
- */
-export function assertConcurrentIsolatedWorktreeDisjoint(
-  active: readonly ConcurrentIsolatedWorktreeTask[],
-): void {
-  const writers = active.filter(
-    (task) => task.executionMode === "isolated_worktree",
-  );
-  const owners = new Map<string, string>();
-  for (const writer of writers) {
-    for (const raw of writer.ownership.files) {
-      const file = normalizeWavePackFile(raw);
-      const previous = owners.get(file);
-      if (previous !== undefined && previous !== writer.taskId) {
-        throw new Error(
-          `concurrent_isolated_worktree_files_overlap: ${previous} e ` +
-            `${writer.taskId} disputam ${file} — writers simultâneos exigem ` +
-            "ownership disjunto",
-        );
-      }
-      owners.set(file, writer.taskId);
-    }
-  }
-}
 
 export class TaskDispatchStore {
   readonly #binding: ScopedStoreBinding;

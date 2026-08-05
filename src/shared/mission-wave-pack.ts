@@ -130,9 +130,7 @@ export function extractStoriesFromPromotedPlanSummary(
         body,
         // Omit the key entirely when empty so schema/consumer see "no per-story
         // footprint" and keep the shared-inventory merge-permit path.
-        ...(ownershipFiles.length > 0
-          ? { ownershipFiles: Object.freeze([...ownershipFiles]) }
-          : {}),
+        ...(ownershipFiles.length > 0 ? { ownershipFiles } : {}),
       }),
     );
   }
@@ -253,6 +251,48 @@ export function assertWavePackStoryFilesDisjoint(
         );
       }
       owners.set(file, task.plannerId);
+    }
+  }
+}
+
+/** One concurrently-active dispatch as the disjointness guard sees it. */
+export interface ConcurrentIsolatedWorktreeTask {
+  readonly taskId: string;
+  readonly executionMode: string;
+  readonly ownership: { readonly files: readonly string[] };
+}
+
+/**
+ * Admit multiple simultaneous `isolated_worktree` writers as valid exactly when
+ * their file ownership is pairwise-disjoint. This is the store-side seam for
+ * real fan-out: two parallel worktrees may run only if no file is claimed by
+ * both, so their serial merges never conflict. Read-only peers hold no writer
+ * surface and are ignored. Fail-closed on any shared file.
+ *
+ * The caller decides WHICH writers to feed it: at dispatch claim time only the
+ * disjoint-marked (`wave-pack-disjoint-files`) writers are passed, because a
+ * shared-inventory wave-pack writer's file set is a merge permit, not an
+ * exclusive claim, and overlapping there is by design.
+ */
+export function assertConcurrentIsolatedWorktreeDisjoint(
+  active: readonly ConcurrentIsolatedWorktreeTask[],
+): void {
+  const writers = active.filter(
+    (task) => task.executionMode === "isolated_worktree",
+  );
+  const owners = new Map<string, string>();
+  for (const writer of writers) {
+    for (const raw of writer.ownership.files) {
+      const file = normalizeWavePackFile(raw);
+      const previous = owners.get(file);
+      if (previous !== undefined && previous !== writer.taskId) {
+        throw new Error(
+          `concurrent_isolated_worktree_files_overlap: ${previous} e ` +
+            `${writer.taskId} disputam ${file} — writers simultâneos exigem ` +
+            "ownership disjunto",
+        );
+      }
+      owners.set(file, writer.taskId);
     }
   }
 }

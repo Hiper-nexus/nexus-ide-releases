@@ -5,6 +5,10 @@ import {
   requiresExclusiveSlot,
   type ScheduleOwnership,
 } from "./mission-scheduler";
+import {
+  assertConcurrentIsolatedWorktreeDisjoint,
+  hasWavePackDisjointFilesDomain,
+} from "../../shared/mission-wave-pack";
 import { decodeTaskScheduleDetail } from "./mission-scheduler-meta";
 import {
   supportsAdvisoryParticipationCli,
@@ -374,18 +378,22 @@ export function claimTaskDispatch(
       }
       const activeRows = db
         .prepare(
-          `SELECT ownership_json FROM task_dispatch_queue
+          `SELECT task_id, ownership_json, execution_mode FROM task_dispatch_queue
          WHERE mission_id = ? AND state IN (
            'claimed', 'routed', 'spawning', 'running', 'handoff_ready', 'merging'
          )`,
         )
-        .all(missionId) as Array<{ ownership_json: string }>;
+        .all(missionId) as Array<{
+          task_id: string;
+          ownership_json: string;
+          execution_mode: string;
+        }>;
       if (maxWorkers !== undefined && activeRows.length >= maxWorkers) {
         throw new Error(
           `maxWorkers=${maxWorkers} já está reservado por dispatches duráveis`,
         );
       }
-      for (const active of activeRows) {
+      const activeParsed = activeRows.map((active) => {
         let activeOwnership: ScheduleOwnership;
         try {
           activeOwnership = taskDispatchOwnershipSchema.parse(
@@ -396,6 +404,39 @@ export function claimTaskDispatch(
             cause: error,
           });
         }
+        return {
+          taskId: active.task_id,
+          executionMode: active.execution_mode,
+          ownership: activeOwnership,
+        };
+      });
+      // P0-3 seam B: durable file-disjointness backstop for the real fan-out.
+      // A claim that carries the disjoint-files marker must not share a file
+      // with any already-active isolated_worktree writer that also carries the
+      // marker — proved at the dispatch ledger before a second worktree is
+      // physically reserved, independent of the domain heuristic below.
+      // Shared-inventory wave-pack writers (files = merge permit, no marker)
+      // overlap by design and are deliberately excluded from this guard.
+      if (
+        executionMode === "isolated_worktree" &&
+        hasWavePackDisjointFilesDomain(ownership.domains)
+      ) {
+        assertConcurrentIsolatedWorktreeDisjoint([
+          { taskId, executionMode, ownership: { files: ownership.files } },
+          ...activeParsed
+            .filter(
+              (active) =>
+                active.executionMode === "isolated_worktree" &&
+                hasWavePackDisjointFilesDomain(active.ownership.domains),
+            )
+            .map((active) => ({
+              taskId: active.taskId,
+              executionMode: active.executionMode,
+              ownership: { files: active.ownership.files },
+            })),
+        ]);
+      }
+      for (const active of activeParsed) {
         // Match selectDisjointWave: exclusive quality-gate / sequential-only
         // tasks must not be fenced by parallel-eligible advisors still active
         // (guided-advisory scouts, etc.). Block only when an exclusive peer is
@@ -405,8 +446,8 @@ export function claimTaskDispatch(
         // Do NOT treat `requiresExclusiveSlot(claim)` alone as conflict with
         // every active row.
         if (
-          requiresExclusiveSlot(activeOwnership) ||
-          ownershipsIntersect(ownership, activeOwnership)
+          requiresExclusiveSlot(active.ownership) ||
+          ownershipsIntersect(ownership, active.ownership)
         ) {
           throw new Error("ownership da task conflita com dispatch ativo");
         }

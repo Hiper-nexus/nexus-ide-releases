@@ -6799,3 +6799,178 @@ describe('assertConcurrentIsolatedWorktreeDisjoint (P0-3 parallel writers)', () 
     ).toThrow(/concurrent_isolated_worktree_files_overlap/);
   });
 });
+
+describe('concurrent-writer disjointness wired at dispatch claim (P0-3 seam B)', () => {
+  // Two codex executors (codex is the mechanically workspace-write CLI) sealed
+  // as a wave-pack plan; each claim carries the exact sealed ownership so the
+  // claim transaction is exercised end to end — the REAL caller of the guard.
+  function sealTwoWriterWave(
+    ownership1: { files: string[]; symbols: string[]; domains: string[] },
+    ownership2: { files: string[]; symbols: string[]; domains: string[] },
+  ) {
+    const runtime = manager();
+    const scope = testProjectScope();
+    let id = 0;
+    const missions = createScopedMissionStore(runtime, scope, {
+      now: () => 1_000,
+    });
+    const tasks = createScopedTaskStore(runtime, scope, { now: () => 1_000 });
+    const dispatches = createTaskDispatchStore(runtime, scope, {
+      now: () => 1_000,
+      idFactory: (prefix) => `${prefix}-${++id}`,
+    });
+    const contract = approvedIntentContract({
+      goal: 'Fan-out N utilitários disjuntos',
+      intentVersion: 1,
+    });
+    const mission = missions.create({
+      title: 'P0-3 disjoint wave',
+      squadId: 'wave-pack-squad',
+      intentVersion: 1,
+      intentState: 'executing',
+      intentContract: contract,
+    });
+    missions.setStatus(mission.id, 'running');
+    const [taskA, taskB] = tasks.createPlanAtomically({
+      missionId: mission.id,
+      intentVersion: 1,
+      squad: {
+        id: 'wave-pack-squad',
+        agents: [
+          {
+            id: 'dev-a',
+            agentName: 'Dev A',
+            category: 'executor',
+            cli: 'codex',
+            effort: 'medium',
+          },
+          {
+            id: 'dev-b',
+            agentName: 'Dev B',
+            category: 'executor',
+            cli: 'codex',
+            effort: 'medium',
+          },
+        ],
+      },
+      rows: [
+        {
+          plannerId: 'wave-pack-story-a',
+          title: 'Story A',
+          detail: encodeTaskScheduleDetail('Implement story A.', {
+            dependsOn: [],
+            ownership: ownership1,
+            merged: false,
+            agentRef: 'dev-a',
+            agentCategory: 'executor',
+            executionMode: 'isolated_worktree',
+          }),
+          agentRef: 'dev-a',
+          agentCategory: 'executor',
+        },
+        {
+          plannerId: 'wave-pack-story-b',
+          title: 'Story B',
+          detail: encodeTaskScheduleDetail('Implement story B.', {
+            dependsOn: [],
+            ownership: ownership2,
+            merged: false,
+            agentRef: 'dev-b',
+            agentCategory: 'executor',
+            executionMode: 'isolated_worktree',
+          }),
+          agentRef: 'dev-b',
+          agentCategory: 'executor',
+        },
+      ],
+    });
+    const rosterHash = tasks.getPlanReceipt(mission.id, 1)!.rosterHash;
+    const claimA = () =>
+      dispatches.claim({
+        missionId: mission.id,
+        taskId: taskA!.id,
+        intentVersion: 1,
+        workerId: 'Dev A',
+        leaseOwner: 'main',
+        leaseMs: 30_000,
+        ownership: ownership1,
+        executionMode: 'isolated_worktree',
+        agentRef: 'dev-a',
+        agentCategory: 'executor',
+        rosterHash,
+        routeContract: { adapterId: 'codex', effort: 'medium' },
+      });
+    const claimB = () =>
+      dispatches.claim({
+        missionId: mission.id,
+        taskId: taskB!.id,
+        intentVersion: 1,
+        workerId: 'Dev B',
+        leaseOwner: 'main',
+        leaseMs: 30_000,
+        ownership: ownership2,
+        executionMode: 'isolated_worktree',
+        agentRef: 'dev-b',
+        agentCategory: 'executor',
+        rosterHash,
+        routeContract: { adapterId: 'codex', effort: 'medium' },
+      });
+    return { claimA, claimB };
+  }
+
+  const marker = 'wave-pack-disjoint-files';
+
+  it('admits two concurrent disjoint-marked isolated writers through the real claim', () => {
+    const { claimA, claimB } = sealTwoWriterWave(
+      {
+        files: ['src/util/slugify.ts'],
+        symbols: [],
+        domains: ['guided-implementation', 'wave-pack', 'wave-pack-story:a', marker],
+      },
+      {
+        files: ['src/util/debounce.ts'],
+        symbols: [],
+        domains: ['guided-implementation', 'wave-pack', 'wave-pack-story:b', marker],
+      },
+    );
+    expect(claimA().state).toBe('claimed');
+    expect(claimB().state).toBe('claimed');
+  });
+
+  it('rejects a second disjoint-marked writer that shares a file, at claim time', () => {
+    const { claimA, claimB } = sealTwoWriterWave(
+      {
+        files: ['src/shared/util.ts'],
+        symbols: [],
+        domains: ['guided-implementation', 'wave-pack', 'wave-pack-story:a', marker],
+      },
+      {
+        files: ['src/shared/util.ts'],
+        symbols: [],
+        domains: ['guided-implementation', 'wave-pack', 'wave-pack-story:b', marker],
+      },
+    );
+    expect(claimA().state).toBe('claimed');
+    expect(() => claimB()).toThrow(/concurrent_isolated_worktree_files_overlap/);
+  });
+
+  it('does NOT fence shared-inventory wave-pack writers (no disjoint marker)', () => {
+    // Shared inventory is a merge permit, not an exclusive file claim: two such
+    // writers overlap by design and must still admit — the guard is scoped to
+    // the disjoint marker only.
+    const { claimA, claimB } = sealTwoWriterWave(
+      {
+        files: ['src/'],
+        symbols: [],
+        domains: ['guided-implementation', 'wave-pack', 'wave-pack-story:a'],
+      },
+      {
+        files: ['src/'],
+        symbols: [],
+        domains: ['guided-implementation', 'wave-pack', 'wave-pack-story:b'],
+      },
+    );
+    expect(claimA().state).toBe('claimed');
+    expect(claimB().state).toBe('claimed');
+  });
+});
