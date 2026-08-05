@@ -56,6 +56,38 @@ export const CURRENT_RELEASE: AppRelease = {
         'fim do "miss√£o" no app aberto pelo Finder.',
     },
   ],
+  fixes: [
+    {
+      title: 'Ditado recusado em pane governado',
+      detail:
+        'A escrita crua do terminal é negada por design para agentes ' +
+        'orquestrados; o ditado agora cai na lane do operador com recibo.',
+    },
+    {
+      title: 'Loop infinito do diálogo de aprovação',
+      detail:
+        'Mutação derivada do próprio approve (selo do squad) não invalida ' +
+        'mais a aprovação consumada; só objetivo divergente repergunta.',
+    },
+    {
+      title: 'Pane do orquestrador preto',
+      detail:
+        'A repintura da adoção usa fita local de saída com backstop — o pane ' +
+        'não fica mais vazio com a sessão viva.',
+    },
+    {
+      title: 'Mojibake de acentos no empacotado',
+      detail:
+        'App aberto pelo Finder não herdava locale; o PTY injeta LANG UTF-8 ' +
+        'quando falta ou é C/POSIX, sem sobrescrever escolha do usuário.',
+    },
+    {
+      title: 'Card de missão parada mudo',
+      detail:
+        'O motivo vem de evidência durável (handoff), não do layout vivo que ' +
+        'zera quando o reaper colhe os panes.',
+    },
+  ],
 };
 
 export const RELEASE_02600: AppRelease = {
