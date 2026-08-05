@@ -448,9 +448,17 @@ export function planWavePackTasks(input: {
       "wave_pack_ownership_missing: o inventário seguro do projeto está vazio",
     );
   }
-  if (input.stories.length > 64) {
+  // P0-9: the seal must not throttle a real decomposition. The old ceiling of
+  // 64 rejected an 85-story plan before it could seal, so the mission blocked
+  // with story 1.1 as the only unit. The cap is now MAX_WAVE_PACK_STORIES (a
+  // runaway backstop, NOT a wave-width cap): all stories seal and the scheduler
+  // drains them to exhaustion across refilling waves, bounded per-wave by
+  // maxWorkers. Only a plan past the backstop fails — and it fails CLOSED with a
+  // named error the seal surfaces in mission state, never a silent truncation.
+  if (input.stories.length > MAX_WAVE_PACK_STORIES) {
     throw new Error(
-      "wave_pack_too_many_stories: o Pack suporta no máximo 64 stories seladas",
+      `wave_pack_too_many_stories: o Pack suporta no máximo ${MAX_WAVE_PACK_STORIES} ` +
+        `stories seladas (recebeu ${input.stories.length})`,
     );
   }
 

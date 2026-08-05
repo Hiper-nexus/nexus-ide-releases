@@ -15,6 +15,7 @@ import {
   WAVE_PACK_DISJOINT_FILES_DOMAIN,
   WAVE_PACK_DOMAIN,
   wavePackStoryDomain,
+  type ExtractedWavePackStory,
 } from "./mission-wave-pack";
 import { storiesForWavePackTemplate } from "./wave-pack-templates";
 
@@ -258,6 +259,70 @@ describe("planWavePackTasks", () => {
         ownershipFiles: [],
       }),
     ).toThrow(/wave_pack_ownership_missing/);
+  });
+
+  it("P0-9: seals 85 disjoint stories past the old 64 ceiling (drain-to-exhaustion)", () => {
+    const stories: ExtractedWavePackStory[] = Array.from(
+      { length: 85 },
+      (_unused, index) => ({
+        id: `story-1-${index + 1}`,
+        epicStoryId: `1.${index + 1}`,
+        title: `Story ${index + 1}`,
+        body: `Toque somente src/gen/mod-${index + 1}.ts`,
+        ownershipFiles: [`src/gen/mod-${index + 1}.ts`],
+      }),
+    );
+    const planned = planWavePackTasks({
+      missionTitle: "85 utils",
+      goal: "Implemente 85 utilitários independentes",
+      acceptanceCriteria: ["Todos os 85 entregues"],
+      stories,
+      executors: [
+        { id: "dev-a", agentName: "Dev A", category: "executor" },
+        { id: "dev-b", agentName: "Dev B", category: "executor" },
+      ],
+      qualityGate: { id: "qa-1", agentName: "QA", category: "reviewer" },
+      // maxWorkers is a wave-concurrency hint, NOT a story cap: all 85 seal and
+      // wait for slots. The old 64 ceiling would have thrown before this point.
+      maxWorkers: 8,
+      ownershipFiles: ["src/gen/"],
+    });
+    // 85 story writers + 1 QA gate — nothing dropped, nothing truncated.
+    const storyTasks = planned.filter((entry) =>
+      hasWavePackDisjointFilesDomain(entry.ownership.domains),
+    );
+    expect(storyTasks).toHaveLength(85);
+    expect(planned).toHaveLength(86);
+    expect(planned[85]!.plannerId).toBe("wave-pack-quality-gate");
+    expect(planned[85]!.dependsOn).toHaveLength(85);
+  });
+
+  it("P0-9: fails CLOSED and visibly past MAX_WAVE_PACK_STORIES", () => {
+    const stories: ExtractedWavePackStory[] = Array.from(
+      { length: MAX_WAVE_PACK_STORIES + 1 },
+      (_unused, index) => ({
+        id: `story-1-${index + 1}`,
+        epicStoryId: `1.${index + 1}`,
+        title: `Story ${index + 1}`,
+        body: `src/gen/mod-${index + 1}.ts`,
+        ownershipFiles: [`src/gen/mod-${index + 1}.ts`],
+      }),
+    );
+    expect(() =>
+      planWavePackTasks({
+        missionTitle: "too many",
+        goal: "over the backstop",
+        acceptanceCriteria: ["ok"],
+        stories,
+        executors: [{ id: "dev", agentName: "Dev", category: "executor" }],
+        maxWorkers: 8,
+        ownershipFiles: ["src/gen/"],
+      }),
+    ).toThrow(
+      new RegExp(
+        `wave_pack_too_many_stories.*${MAX_WAVE_PACK_STORIES}.*${MAX_WAVE_PACK_STORIES + 1}`,
+      ),
+    );
   });
 
   it("maps mode to topology", () => {

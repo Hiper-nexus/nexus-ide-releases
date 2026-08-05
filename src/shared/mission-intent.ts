@@ -4,6 +4,7 @@ import { classifyStandardMissionTopology } from './mission-topology';
 import {
   assertWavePackStoriesReady,
   freezeWavePackStoriesForContract,
+  MAX_WAVE_PACK_STORIES,
   MISSION_ORCHESTRATION_MODES,
   wavePackStorySchema,
   wavePackTemplateIdSchema,
@@ -210,8 +211,14 @@ export const missionIntentContractSchema = z.object({
   orchestrationMode: z.enum(MISSION_ORCHESTRATION_MODES).optional(),
   /**
    * Canonical Pack stories (Wave 2). Prefer over markdown parse of promotedPlan.
+   * Capped at MAX_WAVE_PACK_STORIES (P0-9) so a real >64-story decomposition can
+   * be carried on the contract and drained to exhaustion, not truncated at seal.
    */
-  wavePackStories: z.array(wavePackStorySchema).min(1).max(64).optional(),
+  wavePackStories: z
+    .array(wavePackStorySchema)
+    .min(1)
+    .max(MAX_WAVE_PACK_STORIES)
+    .optional(),
   /** Declared fan-out template that seeded wavePackStories (Landing / SaaS / Fix). */
   wavePackTemplateId: wavePackTemplateIdSchema.optional(),
   contextPolicy: missionContextPolicySchema,

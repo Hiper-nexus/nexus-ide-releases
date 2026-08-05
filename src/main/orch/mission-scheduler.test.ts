@@ -104,6 +104,48 @@ describe('mission-scheduler P0 pure core', () => {
     expect(decision.plan.waveSize).toBe(1);
   });
 
+  it('P0-9: drains 85 disjoint tasks to exhaustion across refilling waves', () => {
+    // Story count far past the old 64 seal ceiling. The scheduler must dispatch
+    // them in maxWorkers-bounded waves that REFILL as slots free, until every
+    // task is done+merged — plan exhaustion, never a throttle to a subset.
+    let tasks: ScheduleTask[] = Array.from({ length: 85 }, (_unused, index) =>
+      task(`t${index}`),
+    );
+    const config: ScheduleConfig = {
+      configuredCap: 8,
+      cores: 32,
+      paneBudget: 32,
+    };
+    const dispatched = new Set<string>();
+    let waves = 0;
+    let complete = false;
+    // Bounded well above ceil(85/8)=11 so a real stall fails the test instead
+    // of looping forever.
+    for (let tick = 0; tick < 500; tick += 1) {
+      const decision = decideSchedule(tasks, [], config, NOW + tick);
+      if (decision.plan.kind === 'complete') {
+        complete = true;
+        break;
+      }
+      expect(decision.plan.kind).toBe('dispatch');
+      if (decision.plan.kind !== 'dispatch') break;
+      waves += 1;
+      // A single snapshot's wave is simultaneous; each admitted task is a
+      // disjoint writer. Simulate completion+merge so the next tick refills.
+      const wave = new Set(decision.plan.taskIds);
+      for (const id of wave) dispatched.add(id);
+      tasks = tasks.map((entry) =>
+        wave.has(entry.id)
+          ? { ...entry, status: 'done', merged: true }
+          : entry,
+      );
+    }
+    expect(complete).toBe(true);
+    // All 85 drained (nothing dropped), and it genuinely refilled (>1 wave).
+    expect(dispatched.size).toBe(85);
+    expect(waves).toBeGreaterThanOrEqual(11);
+  });
+
   it('prioritizes guided implementation over advisory roots without reducing the wave', () => {
     const advisory = task('guided-advisory-1', {
       ownership: {
