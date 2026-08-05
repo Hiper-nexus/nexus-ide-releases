@@ -17,6 +17,19 @@ import {
   type FunctionalSmokeResult,
 } from '../shared/smoke-types';
 import { FEATURE_FLAG_IDS } from '../shared/feature-flags';
+// Máquina de estados PURA (sem DOM, sem timers, sem imports) — é justamente
+// por isso que o binário empacotado consegue exercitá-la de dentro do preload
+// e provar o contrato do Space no mesmo build que vai para o usuário.
+import {
+  HoldToTalkDiscriminator,
+  type HoldToTalkOutcome,
+} from '../renderer/voice/hold-to-talk';
+
+interface HoldToTalkLike {
+  keyDown(event: { readonly repeat: boolean }): HoldToTalkOutcome;
+  thresholdElapsed(): HoldToTalkOutcome;
+  keyUp(): HoldToTalkOutcome;
+}
 
 export {
   FUNCTIONAL_SMOKE_ARM_SQUAD_ID,
@@ -129,6 +142,11 @@ export interface FunctionalSmokeApi {
 interface FunctionalSmokeDeps {
   delay?: (ms: number) => Promise<void>;
   probeTimeoutMs?: number;
+  /**
+   * Test-only seam: injeta um discriminador quebrado para provar que a probe
+   * REPROVA a regressão (uma probe que só passa não prova nada).
+   */
+  holdToTalkFactory?: () => HoldToTalkLike;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -515,6 +533,63 @@ export async function runFunctionalSmokeProbes(
       ))
     ) {
       return { ok: false, probes, failedProbe: 'dictation-governed-lane' };
+    }
+
+    // Space hold-to-talk (regressão v0.26.0): o ditado armava no próprio
+    // keydown, então TODO espaço de digitação normal era roubado e o HUD
+    // piscava. Esta probe fecha as duas metades no binário empacotado:
+    // (a) o CONTRATO do discriminador — toque nunca arma e devolve o espaço,
+    //     hold arma, e um toque jamais emite start+stop (o "pisca");
+    // (b) a ENTREGA física — o espaço que o toque devolve é escrito num PTY
+    //     real e ECOA de volta. Sem (b), a correção poderia "passar" enquanto
+    //     engole a tecla, que é um sintoma pior que o bug original.
+    if (
+      !(await probe(
+        'dictation-hold-to-talk',
+        async () => {
+          if (!dictationCleanup.sessionId) return false;
+          const make =
+            deps.holdToTalkFactory ?? (() => new HoldToTalkDiscriminator());
+
+          const tap = make();
+          const tapDown = tap.keyDown({ repeat: false });
+          const tapUp = tap.keyUp();
+          const tapTypesSpace =
+            tapDown.startDictation === false &&
+            tapUp.startDictation === false &&
+            tapUp.stopDictation === false &&
+            tapDown.emitSpaces + tapUp.emitSpaces === 1;
+
+          const hold = make();
+          hold.keyDown({ repeat: false });
+          const holdArms = hold.thresholdElapsed().startDictation === true;
+
+          const typing = make();
+          typing.keyDown({ repeat: false });
+          const repeatIsTyping = typing.keyDown({ repeat: true }).emitSpaces === 1;
+
+          if (!tapTypesSpace || !holdArms || !repeatIsTyping) return false;
+
+          // O espaço retido tem de CHEGAR ao pane, com recibo e eco.
+          const before = dictationEcho.length;
+          const spaceDelivered = await api.pty.writeConfirmed(
+            dictationCleanup.sessionId,
+            ' ',
+          );
+          if (!spaceDelivered) return false;
+          for (
+            let attempt = 0;
+            attempt < 50 && !dictationEcho.slice(before).includes(' ');
+            attempt += 1
+          ) {
+            await delay(100);
+          }
+          return dictationEcho.slice(before).includes(' ');
+        },
+        (value) => value === true,
+      ))
+    ) {
+      return { ok: false, probes, failedProbe: 'dictation-hold-to-talk' };
     }
   } finally {
     if (dictationCleanup.unsubscribe) dictationCleanup.unsubscribe();

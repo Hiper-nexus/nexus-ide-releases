@@ -361,3 +361,75 @@ describe('runFunctionalSmokeProbes — ditado obrigatório no smoke empacotado',
     expect(result.failedProbe).toBe('dictation-governed-lane');
   });
 });
+
+describe('runFunctionalSmokeProbes — Space hold-to-talk no smoke empacotado', () => {
+  it('prova o contrato do discriminador e a entrega física do espaço do toque', async () => {
+    const api = successfulApi();
+
+    const result = await runFunctionalSmokeProbes(api, '/tmp/nexus-smoke-workspace', {
+      delay: async () => {},
+      probeTimeoutMs: 100,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.probes).toContain('dictation-hold-to-talk');
+    // O espaço retido pelo toque é ENTREGUE de verdade no PTY empacotado.
+    expect(api.pty.writeConfirmed).toHaveBeenCalledWith('pty-smoke-1', ' ');
+  });
+
+  it('falha se o toque armar ditado (a regressão exata da v0.26.0)', async () => {
+    const api = successfulApi();
+
+    const result = await runFunctionalSmokeProbes(api, '/tmp/nexus-smoke-workspace', {
+      delay: async () => {},
+      probeTimeoutMs: 100,
+      // Simula o discriminador quebrado: keydown arma na hora, sem limiar.
+      holdToTalkFactory: () => ({
+        keyDown: () => ({
+          suppressKey: true,
+          startDictation: true,
+          stopDictation: false,
+          emitSpaces: 0,
+          armThreshold: false,
+        }),
+        thresholdElapsed: () => ({
+          suppressKey: false,
+          startDictation: false,
+          stopDictation: false,
+          emitSpaces: 0,
+          armThreshold: false,
+        }),
+        keyUp: () => ({
+          suppressKey: true,
+          startDictation: false,
+          stopDictation: true,
+          emitSpaces: 0,
+          armThreshold: false,
+        }),
+      }),
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('esperava falha');
+    expect(result.failedProbe).toBe('dictation-hold-to-talk');
+  });
+
+  it('falha se o espaço do toque não chegar ao pane (tecla engolida)', async () => {
+    const api = successfulApi();
+    const realWrite = api.pty.writeConfirmed;
+    api.pty.writeConfirmed = vi.fn(async (sessionId: string, data: string) => {
+      // Aceita tudo menos o espaço — exatamente o sintoma do usuário.
+      if (data === ' ') return false;
+      return realWrite(sessionId, data);
+    });
+
+    const result = await runFunctionalSmokeProbes(api, '/tmp/nexus-smoke-workspace', {
+      delay: async () => {},
+      probeTimeoutMs: 100,
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('esperava falha');
+    expect(result.failedProbe).toBe('dictation-hold-to-talk');
+  });
+});
