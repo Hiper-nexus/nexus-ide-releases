@@ -247,4 +247,46 @@ describe('worker-handoff-ttl (paridade Overclock: worker fecha ~30s pós-handoff
     vi.advanceTimersByTime(WORKER_POST_HANDOFF_TTL_MS * 2);
     expect(h.closed).toHaveLength(0);
   });
+
+  it('reaping é provider-agnostic: claude, codex e gemini são encerrados com o mesmo TTL', () => {
+    // Roster heterogêneo: cada sessionId representa um provider diferente.
+    // O caminho de reaping não inspeciona nenhum campo de provider — verifica
+    // apenas role='worker', missionId, scope e deliveryState dos handoffs.
+    const sessions = ['claude-worker-s1', 'codex-worker-s2', 'gemini-worker-s3'] as const;
+
+    const authorities = new Map(
+      sessions.map((sid) => [sid, authorityFor(sid)]),
+    );
+    // Cada worker tem um handoff próprio (filtrado por sessionId em workerHandoffs).
+    const allHandoffs = sessions.map((sid) => handoffFor(sid, 'consumed'));
+    const closed: PaneRuntimeAuthority[] = [];
+
+    const deps: WorkerHandoffTtlDeps = {
+      isEnabled: () => true,
+      getAuthority: (sid) => authorities.get(sid) ?? null,
+      // listHandoffs devolve todos; workerHandoffs filtra por authority.sessionId.
+      listHandoffs: () => allHandoffs,
+      missionStatus: () => 'running',
+      isIdle: () => true,
+      closePane: (authority) => {
+        closed.push(authority);
+        return true;
+      },
+      ttlMs: WORKER_POST_HANDOFF_TTL_MS,
+      log: () => {},
+    };
+
+    initWorkerHandoffTtl(deps);
+
+    for (const sid of sessions) emitStatus(sid, 'idle');
+
+    vi.advanceTimersByTime(WORKER_POST_HANDOFF_TTL_MS - 1);
+    expect(closed).toHaveLength(0);
+
+    vi.advanceTimersByTime(1);
+    expect(closed).toHaveLength(sessions.length);
+    expect(closed.map((a) => a.sessionId).sort()).toEqual(
+      [...sessions].sort(),
+    );
+  });
 });
