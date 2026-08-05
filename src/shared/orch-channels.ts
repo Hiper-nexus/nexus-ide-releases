@@ -20,6 +20,8 @@ export const ORCH_CHANNELS = {
   missionPanesList: 'orch:missions.panes',
   /** Read-only wave schedule (identities/status only — never sealed detail). */
   missionsTaskSchedule: 'orch:missions.taskSchedule',
+  /** P1-0 slice 1: snapshot único do plano de controle (panes+fila+ownership+blocks). */
+  missionControlPlane: 'orch:missions.controlPlane',
   /** Main-owned proof that one restored layout pane still has live mission authority. */
   missionPaneRestoreAuthority: 'orch:missions.paneRestoreAuthority',
   missionCreate: 'orch:missions.create',

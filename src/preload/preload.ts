@@ -1024,6 +1024,8 @@ const api: NexusApi = {
     listMissions: () => ipcRenderer.invoke(ORCH_CHANNELS.missionsList),
     listMissionPanes: (missionId: string) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionPanesList, missionId),
+    missionControlPlane: (missionId: string) =>
+      ipcRenderer.invoke(ORCH_CHANNELS.missionControlPlane, { missionId }),
     canRestoreMissionPane: (input: {
       missionId: string;
       paneId: string;

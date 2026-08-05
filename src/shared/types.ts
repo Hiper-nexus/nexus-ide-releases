@@ -537,6 +537,10 @@ export interface NexusApi {
     listMissions(): Promise<Mission[]>;
     /** Recorded pane composition of a mission (for 1-click reopen). */
     listMissionPanes(missionId: string): Promise<MissionPaneSpec[]>;
+    /** P1-0 slice 1: snapshot único do plano de controle da missão. */
+    missionControlPlane(
+      missionId: string,
+    ): Promise<import('./mission-control-plane').MissionControlSnapshot | null>;
     /**
      * Fail-closed restore proof. A renderer layout role/missionId is metadata,
      * never authority; Main confirms the exact persisted pane against the

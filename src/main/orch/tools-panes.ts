@@ -45,6 +45,7 @@ import { getContextWorkflowService } from '../context/context-workflow-registry'
 import { isTaskQueueManagedMission } from './task-dispatch-authority';
 import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
 import { getProjectDomainStores } from './project-domain-store-registry';
+import { missionControlPlaneSnapshot } from './mission-control-plane-ipc';
 import { getOrchSettings } from '../persistence/settings-store';
 
 /** The 11 pane tools of the embedded MCP server (tool group 1). */
@@ -577,6 +578,55 @@ const paneList: McpToolDef = {
   handler: async (_args, ctx) => listVisiblePaneSnapshots(ctx),
 };
 
+const missionControl: McpToolDef = {
+  name: 'nexus_mission_control',
+  description:
+    'Mission-wide control-plane snapshot in ONE read: every pane with live ' +
+    'activity (working|idle|dead) and current task, the task queue with wave ' +
+    'order and dispatch state, the per-task ownership map, and named blocks ' +
+    '(mission-level cause + per-task sanitized errors). Defaults to the ' +
+    "calling pane's mission.",
+  inputSchema: {
+    type: 'object',
+    properties: {
+      missionId: {
+        type: 'string',
+        description: 'Mission to inspect; defaults to the caller mission.',
+      },
+    },
+  },
+  handler: async (args, ctx) => {
+    const requested =
+      typeof args.missionId === 'string' && args.missionId.length > 0
+        ? args.missionId
+        : ctx.missionId;
+    if (!requested) {
+      throw new Error(
+        'nexus_mission_control: informe missionId (o pane chamador não está ' +
+          'vinculado a uma missão).',
+      );
+    }
+    // Workers enxergam apenas a própria missão — mesma fronteira de
+    // visibilidade do nexus_pane_list (SEC#5 info disclosure).
+    if (ctx.role === 'worker' && ctx.missionId && requested !== ctx.missionId) {
+      throw new Error(
+        'nexus_mission_control: um worker só inspeciona a própria missão.',
+      );
+    }
+    const stores = getProjectDomainStores(ctx.scope);
+    const mission = stores.missions.get(requested);
+    if (!mission) {
+      throw new Error(`nexus_mission_control: missão ${requested} não existe.`);
+    }
+    return missionControlPlaneSnapshot(
+      stores,
+      mission,
+      listVisiblePaneSnapshots(ctx),
+      Date.now(),
+    );
+  },
+};
+
 const paneWhoami: McpToolDef = {
   name: 'nexus_pane_whoami',
   description:
@@ -876,6 +926,7 @@ export function buildPaneTools(): McpToolDef[] {
   return [
     paneSpawn,
     paneList,
+    missionControl,
     paneWhoami,
     paneListProviders,
     paneRead,

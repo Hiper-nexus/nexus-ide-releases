@@ -202,6 +202,7 @@ import { issueImmediateSquadSpawnGrant } from './spawn-authority';
 import { BoundedAsyncOperationPool } from './bounded-async-operation-pool';
 import { commitPromotedPlanToGit } from "./promoted-plan-git-authority";
 import { missionTaskScheduleForRenderer } from "./mission-task-schedule-ipc";
+import { missionControlPlaneSnapshot } from "./mission-control-plane-ipc";
 
 /**
  * Renderer-facing IPC for the orchestration domain, plus the domain
@@ -1948,6 +1949,28 @@ export function registerOrchIpc(): void {
       return { tasks: missionTaskScheduleForRenderer(stores, mission) };
     } catch {
       return { tasks: [] };
+    }
+  });
+  ipcMain.handle(ORCH_CHANNELS.missionControlPlane, (event, raw) => {
+    const parsed = z
+      .object({ missionId: z.string().min(1).max(128) })
+      .strict()
+      .safeParse(raw);
+    if (!parsed.success) return null;
+    // Mesmo contrato do missionsTaskSchedule: requireProjectStores confina o
+    // renderer ao próprio workspace; panes filtrados por missão na fusão.
+    const stores = requireProjectStores(event.sender);
+    const mission = stores.missions.get(parsed.data.missionId);
+    if (!mission) return null;
+    try {
+      return missionControlPlaneSnapshot(
+        stores,
+        mission,
+        listPaneSnapshots(),
+        Date.now(),
+      );
+    } catch {
+      return null;
     }
   });
   ipcMain.handle(
