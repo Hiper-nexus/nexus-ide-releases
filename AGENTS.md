@@ -62,6 +62,17 @@ npm run rebuild:node           # rebuild native modules for Node (CI/tests)
 - **Co-located tests**: every source file has a `.test.ts` sibling — run it
   after editing the source.
 
+## Resolução de Travamentos e Paridade Overclock
+
+- `src/main/usage/usage-service.ts`: telemetry agora absorve erros de scope
+  identity collision (`snapshot`, `notifyMediaGenerated`, `#onSessionDictated`)
+  em vez de propagar exceções que travam a UI de quota/custo.
+- `worker-handoff-ttl.ts` (opt-in) espelha Overclock 1.2.4: workers idle com
+  handoffs consumidos são encerrados após ~30s, liberando panes e contexto.
+- Para diagnóstico no app Overclock empacotado, use o script local
+  `~/.overclock-app/overclock-doctor.mjs` (report/limpeza de marcadores órfãos
+  e missões travadas).
+
 ## Conventions
 
 - Co-located tests: `foo.ts` → `foo.test.ts` in the same directory.

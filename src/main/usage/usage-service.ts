@@ -194,34 +194,49 @@ export class UsageTelemetryService {
     });
   }
 
-  snapshot(scope: ProjectExecutionScope): UsageSnapshot {
-    const state = this.#ensureScope(scope);
-    const global = state.stores.usage.totals();
-    const byPane = Object.fromEntries(
-      state.stores.usage
-        .totalsByPane()
-        .map((row) => [row.paneId, paneUsage(row)]),
-    );
-    const byAccount = Object.fromEntries(
-      state.stores.usage
-        .totalsByAccount()
-        .map((row) => [row.accountId, accountUsage(row)]),
-    );
-    return {
-      byPane,
-      byAccount,
-      global: {
-        costUsd: global.costUsd,
-        inputTokens: global.inputTokens,
-        outputTokens: global.outputTokens,
-        turns: global.turns,
-      },
-      media: state.stores.media.totals(),
-    };
+  snapshot(scope: ProjectExecutionScope): UsageSnapshot | null {
+    try {
+      const state = this.#ensureScope(scope);
+      const global = state.stores.usage.totals();
+      const byPane = Object.fromEntries(
+        state.stores.usage
+          .totalsByPane()
+          .map((row) => [row.paneId, paneUsage(row)]),
+      );
+      const byAccount = Object.fromEntries(
+        state.stores.usage
+          .totalsByAccount()
+          .map((row) => [row.accountId, accountUsage(row)]),
+      );
+      return {
+        byPane,
+        byAccount,
+        global: {
+          costUsd: global.costUsd,
+          inputTokens: global.inputTokens,
+          outputTokens: global.outputTokens,
+          turns: global.turns,
+        },
+        media: state.stores.media.totals(),
+      };
+    } catch (error) {
+      console.warn(
+        '[usage] snapshot failed; skipping telemetry broadcast',
+        error instanceof Error ? error.message : String(error),
+      );
+      return null;
+    }
   }
 
   notifyMediaGenerated(scope: ProjectExecutionScope): void {
-    this.#scheduleBroadcast(this.#ensureScope(scope));
+    try {
+      this.#scheduleBroadcast(this.#ensureScope(scope));
+    } catch (error) {
+      console.warn(
+        '[usage] notifyMediaGenerated failed; skipping telemetry broadcast',
+        error instanceof Error ? error.message : String(error),
+      );
+    }
   }
 
   #watchProvider(
@@ -320,7 +335,16 @@ export class UsageTelemetryService {
       console.warn('[usage] agent session has no bound project authority');
       return;
     }
-    const state = this.#ensureScope(ctx.scope);
+    let state: ScopeTelemetryState;
+    try {
+      state = this.#ensureScope(ctx.scope);
+    } catch (error) {
+      console.warn(
+        '[usage] dictated session scope rejected; skipping telemetry attribution',
+        error instanceof Error ? error.message : String(error),
+      );
+      return;
+    }
     const cwd = fs.realpathSync(info.cwd);
     const executionRoot = fs.realpathSync(
       executionScopeFor(ctx).rootRealPath,
@@ -769,6 +793,7 @@ export class UsageTelemetryService {
     state.broadcastTimer = setTimeout(() => {
       state.broadcastTimer = null;
       const snapshot = this.snapshot(state.scope);
+      if (!snapshot) return;
       broadcastToProject(
         BrowserWindow.getAllWindows().map((window) => window.webContents),
         state.scope,
@@ -790,7 +815,7 @@ export function initUsageTelemetry(
   configuredService = new UsageTelemetryService(registry);
   configuredService.start();
   ipcMain.removeHandler(USAGE_CHANNELS.snapshot);
-  ipcMain.handle(USAGE_CHANNELS.snapshot, (event): UsageSnapshot => {
+  ipcMain.handle(USAGE_CHANNELS.snapshot, (event): UsageSnapshot | null => {
     return configuredService!.snapshot(
       requireRendererWorkspaceScope(event.sender),
     );

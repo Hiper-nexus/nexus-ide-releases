@@ -103,7 +103,7 @@ describe.skipIf(!sqliteAvailable)('UsageTelemetryService snapshots', () => {
       byPane: { 'pane-b': { inputTokens: 99, turns: 1 } },
       global: { inputTokens: 99, outputTokens: 7, turns: 1 },
     });
-    expect(service.snapshot(scopeA).byPane).not.toHaveProperty('pane-b');
+    expect(service.snapshot(scopeA)?.byPane).not.toHaveProperty('pane-b');
     service.stop();
   });
 
@@ -125,7 +125,7 @@ describe.skipIf(!sqliteAvailable)('UsageTelemetryService snapshots', () => {
       new ProjectUsageStoreRegistry(runtimeManager),
     );
     service.snapshot(scopeA);
-    expect(() => service.snapshot(conflicting)).toThrow(/multiple project scopes/i);
+    expect(service.snapshot(conflicting)).toBeNull();
     service.stop();
   });
 
@@ -158,10 +158,10 @@ describe.skipIf(!sqliteAvailable)('UsageTelemetryService snapshots', () => {
 
     expect(() => service.snapshot(scopeA)).not.toThrow();
     expect(() => service.snapshot(scopeB)).not.toThrow();
-    expect(service.snapshot(scopeA).global.inputTokens).toBe(0);
-    expect(service.snapshot(scopeB).global.inputTokens).toBe(0);
-    expect(service.snapshot(scopeA).byPane).not.toHaveProperty('pane-b');
-    expect(service.snapshot(scopeB).byPane).not.toHaveProperty('pane-a');
+    expect(service.snapshot(scopeA)?.global.inputTokens).toBe(0);
+    expect(service.snapshot(scopeB)?.global.inputTokens).toBe(0);
+    expect(service.snapshot(scopeA)?.byPane).not.toHaveProperty('pane-b');
+    expect(service.snapshot(scopeB)?.byPane).not.toHaveProperty('pane-a');
     service.stop();
   });
 });
