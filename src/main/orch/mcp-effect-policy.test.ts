@@ -1,3 +1,7 @@
+import {
+  isDestructiveEffect,
+  requiresPerActionConsent,
+} from './mcp-consent-policy';
 import { describe, expect, it } from 'vitest';
 import {
   effectPolicyForTool,
@@ -186,5 +190,42 @@ describe('MCP effect policy', () => {
     ).toBe(false);
     // Native CLI authority is enforced separately from the Nexus MCP boundary.
     expect(isHookMcpToolAllowedForReadOnlyContext('Bash')).toBe(true);
+  });
+});
+
+describe('zero fricção (0.27.0) — o que ainda pergunta, e por quê', () => {
+  // O gate de aprovação saiu (2e24cee3) e a entrega roda no próprio checkout
+  // (5c0208b9). Este bloco fixa o que SOBRA de consentimento por ação, para
+  // ninguém remover por engano — nem reintroduzir fricção sem perceber.
+  it('efeito destrutivo de shell mantém o piso de consentimento', () => {
+    // rm -rf / push --force / reset --hard não têm como ser "reversíveis":
+    // é o único caso em que perguntar é mais barato que desfazer.
+    expect(isDestructiveEffect('nexus_terminal_run', { command: 'rm -rf /tmp/x' })).toBe(
+      true,
+    );
+    expect(
+      isDestructiveEffect('nexus_terminal_run', { command: 'git push --force' }),
+    ).toBe(true);
+    expect(
+      isDestructiveEffect('nexus_terminal_run', { command: 'npm test' }),
+    ).toBe(false);
+  });
+
+  it('mudança global persistente sobrevive à missão e mantém consentimento', () => {
+    // Instalar catálogo / reescrever spec de agente / salvar squad valem
+    // DEPOIS da missão terminar: a aprovação da missão não as cobre.
+    for (const tool of ['catalog_install', 'agent_spec_write', 'squad_save']) {
+      expect(requiresPerActionConsent(tool, {})).toBe(true);
+    }
+  });
+
+  it('trabalho ordinário de missão NÃO é consentimento por ação', () => {
+    // O caminho quente: rodar teste, escrever arquivo, despachar tarefa.
+    // Se algum destes virar true, a fricção voltou pela porta dos fundos.
+    expect(requiresPerActionConsent('nexus_terminal_run', { command: 'npm test' })).toBe(
+      false,
+    );
+    expect(requiresPerActionConsent('nexus_task', {})).toBe(false);
+    expect(requiresPerActionConsent('nexus_handoff_submit', {})).toBe(false);
   });
 });
