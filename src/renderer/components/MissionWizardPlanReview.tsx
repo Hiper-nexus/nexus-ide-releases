@@ -293,9 +293,7 @@ export function MissionWizardPlanReview({
             disabled={spawning}
             onClick={onStart}
           >
-            {spawning
-              ? 'Abrindo aprovação…'
-              : 'Enviar para aprovação'}
+            {spawning ? 'Iniciando missão…' : 'Iniciar missão'}
           </button>
         </div>
       </div>

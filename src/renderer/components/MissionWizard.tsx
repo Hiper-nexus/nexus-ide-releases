@@ -2799,9 +2799,7 @@ export function MissionWizard() {
                     disabled={spawning || !missionGoal.trim()}
                     onClick={() => void handleSubmitMissionGoal()}
                   >
-                    {spawning
-                      ? "Preparando aprovação…"
-                      : "Continuar para aprovação"}
+                    {spawning ? "Iniciando missão…" : "Iniciar missão"}
                   </button>
                 </div>
               </div>

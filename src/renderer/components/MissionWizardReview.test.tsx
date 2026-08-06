@@ -368,7 +368,7 @@ describe("MissionWizardReview orchestrator provider", () => {
 
     const technicalDetails = host.querySelector("details");
     const continueButton = [...host.querySelectorAll("button")].find(
-      (button) => button.textContent === "Continuar para aprovação",
+      (button) => button.textContent === "Iniciar missão",
     );
     expect(host.textContent).toContain("Equipe preparada");
     expect(host.textContent).toContain("Coordenação verificada");
@@ -465,7 +465,7 @@ describe("MissionWizardReview orchestrator provider", () => {
     expect(host.textContent).toContain("O squad não tem Maestro.");
     expect(
       [...host.querySelectorAll("button")].find(
-        (button) => button.textContent === "Continuar para aprovação",
+        (button) => button.textContent === "Iniciar missão",
       )?.disabled,
     ).toBe(true);
     expect(
@@ -519,7 +519,7 @@ describe("MissionWizardReview orchestrator provider", () => {
       )?.selectedOptions[0]?.text,
     ).toBe("Kimi · somente manual");
     const launch = [...host.querySelectorAll("button")].find(
-      (button) => button.textContent === "Continuar para aprovação",
+      (button) => button.textContent === "Iniciar missão",
     );
     expect(launch?.disabled).toBe(true);
     act(() => launch?.click());
@@ -744,7 +744,7 @@ describe("MissionWizardReview orchestrator provider", () => {
     expect(host.textContent).not.toContain("precisa de autenticação válida");
     expect(
       [...host.querySelectorAll("button")].find(
-        (button) => button.textContent === "Continuar para aprovação",
+        (button) => button.textContent === "Iniciar missão",
       )?.disabled,
     ).toBe(false);
     act(() => root.unmount());

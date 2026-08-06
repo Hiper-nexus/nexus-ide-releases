@@ -297,7 +297,7 @@ async function clickButtonAndFlush(
 }
 
 async function submitAndFlush(host: HTMLElement): Promise<void> {
-  clickButton(host, "Continuar para aprovação");
+  clickButton(host, "Iniciar missão");
   await act(async () => {});
 }
 
@@ -621,7 +621,7 @@ describe("MissionWizard guided approval handoff", () => {
     await act(async () => {});
     const continueButton = [...host.querySelectorAll("button")].find(
       (candidate) =>
-        candidate.textContent?.includes("Continuar para aprovação"),
+        candidate.textContent?.includes("Iniciar missão"),
     );
     if (!continueButton) throw new Error("guided approval button not found");
     await act(async () => {
@@ -985,7 +985,7 @@ describe("MissionWizard ephemeral architect handoff", () => {
     expect(saveSquad).not.toHaveBeenCalled();
     expect(host.textContent).toContain("Equipe preparada");
 
-    await clickButtonAndFlush(host, "Continuar para aprovação");
+    await clickButtonAndFlush(host, "Iniciar missão");
 
     expect(saveSquad).toHaveBeenCalledOnce();
     expect(saveSquad).toHaveBeenCalledWith(

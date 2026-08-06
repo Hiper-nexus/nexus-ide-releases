@@ -851,9 +851,8 @@ export function MissionWizardReview({
             }
           >
             {spawning
-              ? "Preparando aprovação…"
-              : (launchLabel ??
-                (guided ? "Continuar para aprovação" : "Usar este squad"))}
+              ? "Iniciando missão…"
+              : (launchLabel ?? (guided ? "Iniciar missão" : "Usar este squad"))}
           </button>
         </div>
       </div>
