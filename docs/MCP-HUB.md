@@ -54,7 +54,18 @@ Timestamped `.bak` next to config file; `rollbackFromBackup`.
 
 ## Security
 
-Secrets masked; OAuth/PKCE transport wiring deferred (PARCIAL) — no cloud tokens without need.
+- UI projection masks secret-shaped env/headers (`maskServerForUi`).
+- **Disk vault (2026-08-06):** secret env/header values are moved into the
+  OS-backed secrets store (`safeStorage` / Keychain) as
+  `__nexus_vault__:<key>` refs inside `.nexus/mcp-hub.json`. Load hydrates for
+  runtime; save seals before write. Migration of legacy plaintext happens on
+  first load when secure storage is available.
+- **Mask / vault fail-closed:** UI `[REDACTED]` placeholders are never sealed
+  into the vault (would destroy the real token). Vault refs shown to the UI
+  are fully redacted (never partial `__…[REDACTED]`). Load migration write
+  failures keep the in-memory hub (never empty-out on flag-off / disk error).
+- Agent tools cannot read `.nexus/mcp-hub.json` (`agent-path-policy`).
+- OAuth/PKCE transport wiring deferred (PARCIAL) — no cloud tokens without need.
 
 ## Metrics
 

@@ -82,6 +82,10 @@ out/
 /main.js
 /resources/native/darwin/nexus-pty-supervisor
 /.nexus/wake-candidates/
+# Generated human-readable projection of the canonical SQLite memory. It mirrors
+# durable state (and can mirror secrets); it is a view, never a source, so it
+# must never be committed.
+/.nexus-memory/
 /training/wake-ptbr/artifacts/
 /training/ei-jarvis/work/
 /training/ei-jarvis/.venv/

@@ -21,7 +21,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import type Database from 'better-sqlite3';
 import type { ProjectExecutionScope } from '../../shared/types';
-import { redactCommandLine } from '../terminal/command-redaction';
+import { redactSecretText } from '../terminal/command-redaction';
 import {
   removeCanonicalMemoryProjection,
   resolveMemoryRoot,
@@ -308,16 +308,19 @@ function redactMemoryContent(content: string): {
   readonly content: string;
   readonly redacted: boolean;
 } {
-  let redacted = false;
-  const lines = content.replaceAll('\r\n', '\n').split('\n').map((line) => {
-    const result = redactCommandLine(line, {
-      denylist: [],
-      maxLength: MAX_MEMORY_CONTENT_BYTES,
-    });
-    redacted ||= result.redacted;
-    return result.command;
-  });
-  return { content: lines.join('\n'), redacted };
+  const result = redactSecretText(content.slice(0, MAX_MEMORY_CONTENT_BYTES));
+  return { content: result.text, redacted: result.redacted };
+}
+
+/**
+ * `source` is projected verbatim into the readable frontmatter, so it needs the
+ * same scrubbing as the body — a provenance string can carry a token
+ * (`curl:https://u:ghp_…@api`) just as easily as the content can.
+ */
+function redactMemorySource(source: string | null | undefined): string | null {
+  if (!source) return null;
+  const scrubbed = redactSecretText(source).text.replaceAll('\n', ' ').trim();
+  return scrubbed.length > 0 ? scrubbed : null;
 }
 
 /**
@@ -585,7 +588,7 @@ export class WorkspaceMemoryStore {
           input.kind,
           input.scope,
           input.importance,
-          input.source ?? null,
+          redactMemorySource(input.source),
           now,
           now,
         );
@@ -813,7 +816,8 @@ export class WorkspaceMemoryStore {
         this.#now(),
         input.id,
         input.scope,
-        input.source,
+        // Must match the scrubbed value persisted by retain(), not the raw one.
+        redactMemorySource(input.source),
       );
     const forgotten = result.changes > 0;
     if (forgotten && input.scope === 'workspace') {

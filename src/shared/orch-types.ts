@@ -356,6 +356,8 @@ export const missionPatchSchema = z.object({
   title: z.string().min(1).max(512).optional(),
   description: z.string().max(65_536).optional(),
   status: missionStatusSchema.optional(),
+  /** Main-owned rebind (D1 default roster). Not a free-form renderer control. */
+  squadId: z.string().min(1).max(128).optional(),
   milestones: z.array(missionMilestoneInputSchema).max(256).optional(),
   intentState: missionIntentStateSchema.optional(),
   intentContract: missionIntentContractSchema.nullable().optional(),

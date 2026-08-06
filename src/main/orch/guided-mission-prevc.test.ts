@@ -520,7 +520,7 @@ describe("main-owned guided PREVC preflight", () => {
     );
   });
 
-  it("fails closed before scheduler when Main cannot make context freeze-ready", async () => {
+  it("D1-degrades to simple path when Main cannot make context freeze-ready", async () => {
     const ensurePrevc = vi.fn(() => ({
       required: true,
       frozen: false,
@@ -535,6 +535,7 @@ describe("main-owned guided PREVC preflight", () => {
       blockingError: null,
       autopilotHint: "Product authority is still missing.",
     }));
+    const surfaceDegradation = vi.fn();
 
     await expect(
       ensureGuidedMissionPrevcAtBootstrapBoundary(
@@ -543,15 +544,27 @@ describe("main-owned guided PREVC preflight", () => {
         {
           ensurePrevc,
           bootstrapContext,
+          surfaceDegradation,
         } as unknown as GuidedMissionPrevcBootstrapDeps,
       ),
-    ).rejects.toThrow(
-      /guided_prevc_context_bootstrap_blocked.*missing-product-context/i,
-    );
+    ).resolves.toMatchObject({
+      required: false,
+      frozen: false,
+      readyForWorkerDispatch: true,
+      degraded: true,
+      degradationReason: expect.stringMatching(
+        /sem selo de PREVC|missing-product-context/i,
+      ),
+    });
     expect(ensurePrevc).toHaveBeenCalledOnce();
+    expect(surfaceDegradation).toHaveBeenCalledOnce();
+    expect(surfaceDegradation.mock.calls[0]?.[1]).toBe("mission-guided");
+    expect(String(surfaceDegradation.mock.calls[0]?.[2])).toMatch(
+      /sem selo de PREVC/i,
+    );
   });
 
-  it("rejects a ready-context false positive when mission_contracts is still absent", async () => {
+  it("D1-degrades when context is ready but mission_contracts still does not persist", async () => {
     const pending = {
       required: true,
       frozen: false,
@@ -559,6 +572,7 @@ describe("main-owned guided PREVC preflight", () => {
       readyForWorkerDispatch: false,
     } as const;
     const ensurePrevc = vi.fn(() => pending);
+    const surfaceDegradation = vi.fn();
 
     await expect(
       ensureGuidedMissionPrevcAtBootstrapBoundary(
@@ -571,12 +585,18 @@ describe("main-owned guided PREVC preflight", () => {
             blockingError: null,
             autopilotHint: "Context ready.",
           })),
+          surfaceDegradation,
         } as unknown as GuidedMissionPrevcBootstrapDeps,
       ),
-    ).rejects.toThrow(
-      /guided_prevc_freeze_incomplete.*mission_contracts.*scheduler/i,
-    );
+    ).resolves.toMatchObject({
+      required: false,
+      frozen: false,
+      readyForWorkerDispatch: true,
+      degraded: true,
+      degradationReason: expect.stringMatching(/sem selo de PREVC/i),
+    });
     expect(ensurePrevc).toHaveBeenCalledTimes(2);
+    expect(surfaceDegradation).toHaveBeenCalledOnce();
   });
 
   it("fails before Maestro/Doctor when the canonical greenfield brief belongs to another approved intent", () => {

@@ -1,5 +1,6 @@
 import type { Mission } from "../../shared/orch-types";
 import type { ProjectExecutionScope } from "../../shared/types";
+import { appendMissionVerdict } from "../../shared/mission-block-cause";
 import {
   ContextReadinessError,
   type ContextWorkflowService,
@@ -29,6 +30,10 @@ import {
   assertWavePackStoryFilesDisjoint,
   hasWavePackDisjointFilesDomain,
 } from "../../shared/mission-wave-pack";
+import {
+  describeMissionDegradation,
+  type MissionDegradation,
+} from "./mission-degradation";
 
 export function ownershipRequiresGuidedPrevc(
   domains: readonly string[],
@@ -49,6 +54,13 @@ export interface GuidedMissionPrevcResult {
   readonly frozen: boolean;
   readonly stage: WorkflowStage | null;
   readonly readyForWorkerDispatch: boolean;
+  /**
+   * D1: when PREVC cannot freeze but a smaller working path exists, Main
+   * continues without a PREVC seal. Callers must surface `degradationReason`
+   * — silent skip is forbidden.
+   */
+  readonly degraded?: boolean;
+  readonly degradationReason?: string;
 }
 
 export interface GuidedMissionPrevcDeps {
@@ -86,6 +98,46 @@ export interface GuidedMissionPrevcBootstrapDeps {
       "readiness" | "blockingError" | "autopilotHint"
     >
   >;
+  /**
+   * D1: persist a visible [NEXUS_DEGRADED] note on the mission card when PREVC
+   * cannot freeze. Optional in unit tests; production always supplies it.
+   */
+  surfaceDegradation?(
+    scope: ProjectExecutionScope,
+    missionId: string,
+    reason: string,
+  ): void;
+}
+
+/** Persist D1 PREVC degrade onto the mission description (operator-visible). */
+export function surfaceGuidedPrevcDegradation(
+  scope: ProjectExecutionScope,
+  missionId: string,
+  reason: string,
+): void {
+  try {
+    const stores = getProjectDomainStores(scope);
+    const mission = stores.missions.get(missionId);
+    if (!mission) return;
+    const degradation: MissionDegradation = {
+      what: "selo PREVC",
+      reducedTo: "caminho simples sem mission_contracts",
+      why: reason,
+      recoverable: true,
+    };
+    const description = appendMissionVerdict(
+      mission.description ?? "",
+      "<!-- nexus:mission-degradation -->",
+      "[NEXUS_DEGRADED]",
+      describeMissionDegradation(degradation),
+    );
+    stores.missions.update(missionId, { description });
+  } catch (error) {
+    console.warn(
+      `[guided-prevc] failed to surface D1 degradation for ${missionId}:`,
+      error instanceof Error ? error.message : error,
+    );
+  }
 }
 
 const PRODUCTION_DEPS: GuidedMissionPrevcDeps = {
@@ -110,6 +162,7 @@ const PRODUCTION_DEPS: GuidedMissionPrevcDeps = {
 };
 
 const PRODUCTION_BOOTSTRAP_DEPS: GuidedMissionPrevcBootstrapDeps = {
+  surfaceDegradation: surfaceGuidedPrevcDegradation,
   ensurePrevc: (scope, missionId) =>
     ensureGuidedMissionPrevc(scope, missionId, PRODUCTION_DEPS),
   bootstrapContext: (scope, missionId) =>
@@ -396,18 +449,42 @@ export async function ensureGuidedMissionPrevcAtBootstrapBoundary(
       .filter((value): value is string => Boolean(value?.trim()))
       .join("; ")
       .slice(0, 2_048);
-    throw new Error(
-      "guided_prevc_context_bootstrap_blocked: o contexto governado não " +
-        `ficou pronto antes do scheduler${detail ? `; ${detail}` : ""}`,
+    // D1: context bootstrap failure is a capacity gap, not false authority.
+    // Continue on the simple path without a PREVC seal — never a silent wall.
+    const reason =
+      "contexto não congelado; entrega segue sem selo de PREVC" +
+      (detail ? ` (${detail})` : "");
+    console.warn(
+      `[guided-prevc] D1 degrade mission=${missionId}: ${reason}`,
     );
+    deps.surfaceDegradation?.(scope, missionId, reason);
+    return Object.freeze({
+      required: false,
+      frozen: false,
+      stage: null,
+      readyForWorkerDispatch: true,
+      degraded: true,
+      degradationReason: reason,
+    });
   }
 
   const frozen = deps.ensurePrevc(scope, missionId);
   if (frozen.required && !frozen.frozen) {
-    throw new Error(
-      "guided_prevc_freeze_incomplete: contexto pronto, mas mission_contracts " +
-        "não foi persistido antes do scheduler",
+    const reason =
+      "contexto pronto, mas mission_contracts não persistiu; " +
+      "entrega segue sem selo de PREVC";
+    console.warn(
+      `[guided-prevc] D1 degrade mission=${missionId}: ${reason}`,
     );
+    deps.surfaceDegradation?.(scope, missionId, reason);
+    return Object.freeze({
+      required: false,
+      frozen: false,
+      stage: null,
+      readyForWorkerDispatch: true,
+      degraded: true,
+      degradationReason: reason,
+    });
   }
   return frozen;
 }

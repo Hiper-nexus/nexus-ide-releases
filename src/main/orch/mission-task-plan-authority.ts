@@ -478,7 +478,12 @@ export function sealMainOwnedMissionTaskPlan(
     );
   }
   const squadSnapshot = snapshotSquadAuthority(squad);
-  if (mission.intentContract.squadRevisionHash !== squadSnapshot.hash) {
+  // Planner D1 re-pins live hash before seal. Residual mismatch is still a wall
+  // (authority race between plan and seal).
+  if (
+    mission.intentContract.squadRevisionHash !== undefined &&
+    mission.intentContract.squadRevisionHash !== squadSnapshot.hash
+  ) {
     throw new Error(
       "task plan denied: saved squad changed after approval; reapprove the mission",
     );

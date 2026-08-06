@@ -57,12 +57,29 @@ export function maskSecretsInValue(value: string): string {
   return `${value.slice(0, 2)}…[REDACTED]`;
 }
 
+/** True when a value looks like maskSecretsInValue output, not a real secret. */
+export function isMaskedSecretValue(value: string): boolean {
+  return value === '[REDACTED]' || /^.{2}…\[REDACTED\]$/.test(value);
+}
+
+/**
+ * Vault refs must never be partially-masked (e.g. `__…[REDACTED]`): that both
+ * leaks the vault prefix and breaks round-trip restore. Treat refs and
+ * existing redaction placeholders as a full redaction.
+ */
+function maskSecretFieldForUi(value: string): string {
+  if (value.startsWith('__nexus_vault__:') || isMaskedSecretValue(value)) {
+    return '[REDACTED]';
+  }
+  return maskSecretsInValue(value);
+}
+
 export function maskServerForUi(server: McpHubServer): McpHubServer {
   const env = server.env
     ? Object.fromEntries(
         Object.entries(server.env).map(([k, v]) => [
           k,
-          SECRET_KEY.test(k) ? maskSecretsInValue(v) : v,
+          SECRET_KEY.test(k) ? maskSecretFieldForUi(v) : v,
         ]),
       )
     : undefined;
@@ -70,16 +87,11 @@ export function maskServerForUi(server: McpHubServer): McpHubServer {
     ? Object.fromEntries(
         Object.entries(server.headers).map(([k, v]) => [
           k,
-          SECRET_KEY.test(k) ? maskSecretsInValue(v) : v,
+          SECRET_KEY.test(k) ? maskSecretFieldForUi(v) : v,
         ]),
       )
     : undefined;
   return { ...server, env, headers };
-}
-
-/** True when a value looks like maskSecretsInValue output, not a real secret. */
-export function isMaskedSecretValue(value: string): boolean {
-  return value === '[REDACTED]' || /^.{2}…\[REDACTED\]$/.test(value);
 }
 
 /**

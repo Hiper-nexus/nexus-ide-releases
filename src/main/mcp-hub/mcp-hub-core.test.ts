@@ -73,6 +73,28 @@ describe('mcp hub core', () => {
     expect(masked.headers?.Authorization).toContain('REDACTED');
   });
 
+  it('masks vault refs as full redaction (never partial prefix leak)', () => {
+    const masked = maskServerForUi({
+      id: 's1',
+      name: 'S',
+      transport: 'stdio',
+      tools: ['t'],
+      source: 'nexus',
+      env: {
+        API_TOKEN: '__nexus_vault__:mcphub:scope:s1:env:API_TOKEN',
+        PATH: '/usr/bin',
+      },
+      headers: {
+        Authorization: '__nexus_vault__:mcphub:scope:s1:headers:Authorization',
+      },
+    });
+    expect(masked.env?.API_TOKEN).toBe('[REDACTED]');
+    expect(masked.env?.PATH).toBe('/usr/bin');
+    expect(masked.headers?.Authorization).toBe('[REDACTED]');
+    // Partial mask would leak the vault prefix and break restore.
+    expect(masked.env?.API_TOKEN).not.toMatch(/^__/);
+  });
+
   it('detects drift and builds tool matrix', () => {
     const a: McpHubConfig = {
       schemaVersion: 1,

@@ -79,6 +79,22 @@ export function resolveMemoryRoot(
   }
 }
 
+/**
+ * Create the projection root and re-prove containment *after* the mkdir.
+ *
+ * `resolveMemoryRoot` validates a path, but the write happens later: in that
+ * window the directory can be swapped for a symlink, and `mkdirSync` with
+ * `recursive: true` succeeds silently on a symlink-to-directory, redirecting
+ * every subsequent write out of the project. Re-resolving here closes it.
+ */
+function ensureProjectionRoot(root: string): void {
+  fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+  const real = fs.realpathSync(root);
+  if (real !== root) {
+    throw new Error(`memory root escaped project: ${root}`);
+  }
+}
+
 function projectionKind(
   input: CanonicalMemoryProjectionInput,
 ): MemoryNote['kind'] {
@@ -149,7 +165,7 @@ export function writeCanonicalMemoryProjection(
 ): MemoryNote {
   const input = canonicalProjectionInputSchema.parse(rawInput);
   const root = resolveMemoryRoot(projectRoot, dirname);
-  fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+  ensureProjectionRoot(root);
   const filePath = canonicalProjectionPath(root, input.id);
   const kind = projectionKind(input);
   const missionId = projectionMissionId(input.source);
@@ -216,6 +232,21 @@ function isCanonicalProjection(raw: string, expectedId?: string): boolean {
   );
 }
 
+/**
+ * A projection is only itself when the declared id matches the filename the
+ * writer derives from that same id. Without this the frontmatter alone decides
+ * identity, so any planted file can claim a live memory's id — impersonating it
+ * on read and slipping past the reaper (which only removes *inactive* ids).
+ */
+function projectionIdForFile(name: string, raw: string): string | null {
+  if (!name.endsWith('.md')) return null;
+  const fromName = name.slice(0, -'.md'.length);
+  const frontmatter = parseFrontmatter(raw);
+  if (frontmatter.canonical !== CANONICAL_MEMORY_PROJECTION) return null;
+  if (frontmatter.idFromFm !== fromName) return null;
+  return fromName;
+}
+
 export function removeCanonicalMemoryProjection(
   projectRoot: string,
   id: string,
@@ -242,24 +273,30 @@ export function syncCanonicalMemoryProjections(
   );
   const activeIds = new Set(inputs.map((input) => input.id));
   const root = resolveMemoryRoot(projectRoot, dirname);
-  fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+  ensureProjectionRoot(root);
 
   for (const input of inputs) {
     writeCanonicalMemoryProjection(projectRoot, input, dirname);
   }
 
   for (const name of fs.readdirSync(root)) {
-    if (!name.endsWith('.md')) continue;
     const filePath = path.join(root, name);
     const stat = fs.lstatSync(filePath);
     if (!stat.isFile()) continue;
+    // Sweep temp files orphaned by a crash between open() and rename();
+    // nothing else ever reaps them and they accumulate without bound.
+    if (/\.[0-9a-f]{16}\.tmp$/.test(name)) {
+      fs.unlinkSync(filePath);
+      continue;
+    }
+    if (!name.endsWith('.md')) continue;
     const raw = fs.readFileSync(filePath, 'utf8');
     const frontmatter = parseFrontmatter(raw);
-    if (
-      frontmatter.canonical === CANONICAL_MEMORY_PROJECTION &&
-      frontmatter.idFromFm &&
-      !activeIds.has(frontmatter.idFromFm)
-    ) {
+    if (frontmatter.canonical !== CANONICAL_MEMORY_PROJECTION) continue;
+    const id = projectionIdForFile(name, raw);
+    // `id === null` here means the file carries our marker but its declared id
+    // disagrees with its name — an impostor, removed regardless of activeIds.
+    if (id === null || !activeIds.has(id)) {
       fs.unlinkSync(filePath);
     }
   }
@@ -281,9 +318,12 @@ export function listMemoryNotes(
       const raw = fs.readFileSync(filePath, 'utf8');
       const fm = parseFrontmatter(raw);
       if (fm.canonical !== CANONICAL_MEMORY_PROJECTION) continue;
+      // Identity must be self-consistent: a file whose declared id disagrees
+      // with its name is an impostor, never a memory.
+      const id = projectionIdForFile(name, raw);
+      if (id === null) continue;
       const title =
         /^#\s+(.+)$/m.exec(raw)?.[1]?.trim() ?? name.replace(/\.md$/, '');
-      const id = fm.idFromFm ?? name.replace(/\.md$/, '');
       const body = raw.replace(/^---[\s\S]*?---\s*/, '');
       notes.push(
         memoryNoteSchema.parse({

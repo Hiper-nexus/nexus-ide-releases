@@ -1436,6 +1436,7 @@ export class ScopedMissionStore {
           ? { description: patch.description }
           : {}),
         ...(patch.status !== undefined ? { status: patch.status } : {}),
+        ...(patch.squadId !== undefined ? { squadId: patch.squadId } : {}),
         ...(patch.intentState !== undefined
           ? { intentState: patch.intentState }
           : {}),

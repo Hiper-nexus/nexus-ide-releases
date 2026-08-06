@@ -42,9 +42,20 @@ import {
   healthForServer,
   type McpHubConfig,
 } from './mcp-hub/mcp-hub-core';
+import {
+  hydrateMcpHubSecrets,
+  mcpHubConfigHasPlaintextSecrets,
+  mcpHubVaultScope,
+  sealMcpHubSecrets,
+} from './mcp-hub/mcp-hub-secrets';
 import { observeAcrossTools } from './mcp-hub/mcp-hub-observers';
 import { applyMcpSync, planMcpSync } from './mcp-hub/mcp-hub-sync';
 import { isInsidePath } from './orch/workspace-path';
+import {
+  getSecret,
+  isSecureStorageAvailable,
+  setSecret,
+} from './persistence/secrets-store';
 import {
   openEditorDocument,
   applyEdit,
@@ -144,6 +155,11 @@ function requireFlag(id: string, label: string): void {
   }
 }
 
+/**
+ * Load hub config and migrate plaintext secrets into the OS vault when
+ * encryption is available. Disk is rewritten sealed; callers receive a
+ * hydrated (plaintext) config for runtime use. UI paths must re-mask.
+ */
 function loadMcpHub(root: string): McpHubConfig {
   const file = mcpHubPath(root);
   if (!fs.existsSync(file)) {
@@ -153,13 +169,70 @@ function loadMcpHub(root: string): McpHubConfig {
     if (!fs.lstatSync(file).isFile()) {
       return mcpHubConfigSchema.parse({ schemaVersion: 1, servers: [] });
     }
-    return mcpHubConfigSchema.parse(
+    let config = mcpHubConfigSchema.parse(
       JSON.parse(fs.readFileSync(file, 'utf8') as string),
     );
+    const scope = mcpHubVaultScope(root);
+    if (
+      mcpHubConfigHasPlaintextSecrets(config) &&
+      isSecureStorageAvailable()
+    ) {
+      try {
+        const sealed = sealMcpHubSecrets(config, scope, (key, value) =>
+          setSecret(key, value),
+        );
+        // Persist sealed form so a second load does not re-encrypt duplicates.
+        // Flag-off / write failures must not wipe the in-memory hub to empty.
+        try {
+          writeConfigWithBackup(file, sealed);
+        } catch (error) {
+          console.warn(
+            '[mcp-hub] sealed migration not persisted (runtime still hydrated):',
+            error instanceof Error ? error.message : error,
+          );
+        }
+        config = sealed;
+      } catch (error) {
+        // e.g. masked placeholder on disk, vault put failed — keep raw config
+        // rather than empty-out the hub for the operator.
+        console.warn(
+          '[mcp-hub] plaintext→vault migration skipped:',
+          error instanceof Error ? error.message : error,
+        );
+      }
+    }
+    if (isSecureStorageAvailable()) {
+      try {
+        return hydrateMcpHubSecrets(config, getSecret);
+      } catch (error) {
+        // Vault miss / locked keychain: keep sealed shape so UI still loads
+        // structure without inventing secrets.
+        console.warn(
+          '[mcp-hub] hydrate skipped:',
+          error instanceof Error ? error.message : error,
+        );
+        return config;
+      }
+    }
+    return config;
   } catch {
     // Fail-closed: corrupt config does not take down IPC.
     return mcpHubConfigSchema.parse({ schemaVersion: 1, servers: [] });
   }
+}
+
+function sealMcpHubForDisk(root: string, config: McpHubConfig): McpHubConfig {
+  if (!isSecureStorageAvailable()) {
+    // Dev/unsigned builds without Keychain: keep plaintext with warning rather
+    // than refuse the hub entirely (same posture as provider keys session-only).
+    console.warn(
+      '[mcp-hub] secure storage unavailable — secrets remain on disk plaintext',
+    );
+    return config;
+  }
+  return sealMcpHubSecrets(config, mcpHubVaultScope(root), (key, value) =>
+    setSecret(key, value),
+  );
 }
 
 function listFlagResolutions(): Array<{
@@ -402,8 +475,12 @@ export function registerProductWaveIpc(): void {
       })
       .parse(raw);
     // mcpHubLoad masks secrets for the UI; saving that shape back verbatim
-    // would replace real tokens with placeholders. Restore from stored config.
-    const config = restoreMaskedSecrets(input.config, loadMcpHub(root));
+    // would replace real tokens with placeholders. Restore from stored config
+    // (hydrated when vault available), then seal to vault before disk write.
+    const config = sealMcpHubForDisk(
+      root,
+      restoreMaskedSecrets(input.config, loadMcpHub(root)),
+    );
     return writeConfigWithBackup(mcpHubPath(root), config, {
       dryRun: input.dryRun,
     });

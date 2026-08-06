@@ -26,6 +26,7 @@ import {
   mission,
   missionForSquad,
   providerBackedLiveAdapter,
+  sealedGuidedV2Receipt,
   squad,
   squadWithAgentCli,
 } from "./guided-mission-planner-test-harness";
@@ -108,7 +109,7 @@ function promotedMissionWithStories(
 }
 
 describe("Guided Planner v2", () => {
-  it("names an unapproved intent as unbound instead of accusing an intact squad", () => {
+  it("D1-degrades an intent without squadRevisionHash instead of walling unbound", () => {
     const approved = mission();
     const unboundContract = { ...approved.intentContract! };
     delete (unboundContract as { squadRevisionHash?: string })
@@ -116,35 +117,66 @@ describe("Guided Planner v2", () => {
     const h = harness({
       currentMission: {
         ...approved,
-        intentState: "awaiting_approval",
+        // Keep dispatched/running so seal authority still holds; only the
+        // revision pin is missing (the old unbound wall).
         intentContract: unboundContract,
       },
     });
-    // `squadRevisionHash` é opcional no contrato, então `undefined !== hash`
-    // era sempre verdadeiro e o planner acusava "o squad mudou depois da
-    // aprovação" para uma equipe que ninguém tocou. A causa real — missão não
-    // aprovada — precisa de nome próprio, senão a única ação que destrava
-    // (aprovar) fica escondida atrás de uma auditoria inútil da equipe.
-    expect(() =>
-      ensureGuidedMissionPlan(h.suite, "mission-guided", h.deps),
-    ).toThrow(/guided_plan_squad_unbound/i);
-    expect(() =>
-      ensureGuidedMissionPlan(h.suite, "mission-guided", h.deps),
-    ).not.toThrow(/guided_plan_squad_stale/i);
+    // D1: missing revision pin is a capacity/ceremony gap — use the live roster
+    // and surface [NEXUS_DEGRADED], never a silent or hostile wall.
+    const result = ensureGuidedMissionPlan(
+      h.suite,
+      "mission-guided",
+      h.deps,
+    );
+    expect(result.applicable).toBe(true);
+    expect(h.suite.missions.get("mission-guided")?.description).toMatch(
+      /NEXUS_DEGRADED|revisão do squad|roster vivo/i,
+    );
   });
 
-  it("still reports a genuinely changed squad as stale", () => {
+  it("D1-accepts a genuinely changed squad with degradation instead of stale wall", () => {
     const h = harness();
+    // Drift the squad hash without breaking live CLI model routes.
     const tampered = {
       ...squad,
-      agents: squad.agents.map((agent) => ({ ...agent, model: "tampered" })),
+      orchestratorInstructions:
+        `${squad.orchestratorInstructions}\n# drift-marker`,
     };
-    expect(() =>
-      ensureGuidedMissionPlan(h.suite, "mission-guided", {
-        ...h.deps,
-        getSquad: () => tampered,
-      }),
-    ).toThrow(/guided_plan_squad_stale/i);
+    const result = ensureGuidedMissionPlan(h.suite, "mission-guided", {
+      ...h.deps,
+      getSquad: () => tampered,
+    });
+    expect(result.applicable).toBe(true);
+    expect(h.suite.missions.get("mission-guided")?.description).toMatch(
+      /NEXUS_DEGRADED|squad mudou|roster vivo/i,
+    );
+  });
+
+  it("D1 already-sealed keeps receipt when live roster drifts (no re-assert wall)", () => {
+    const existing = sealedGuidedV2Receipt();
+    const h = harness({ existing });
+    const tampered = {
+      ...squad,
+      orchestratorInstructions:
+        `${squad.orchestratorInstructions}\n# post-seal-drift`,
+    };
+    const result = ensureGuidedMissionPlan(h.suite, "mission-guided", {
+      ...h.deps,
+      getSquad: () => tampered,
+    });
+    expect(result).toMatchObject({
+      applicable: true,
+      sealed: false,
+      reason: "already-sealed",
+      workerAgentRef: expect.any(String),
+      taskId: expect.any(String),
+    });
+    // Must not reseal: receipt is immutable after the first pass.
+    expect(h.createPlanAtomically).not.toHaveBeenCalled();
+    expect(h.suite.missions.get("mission-guided")?.description).toMatch(
+      /NEXUS_DEGRADED|squad mudou|roster vivo/i,
+    );
   });
 
   // FLIP DO PADRÃO (06/08): a entrega comum de uma missão guiada é UM escritor

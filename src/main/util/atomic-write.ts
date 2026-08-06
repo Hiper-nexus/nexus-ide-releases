@@ -5,6 +5,31 @@ import path from 'node:path';
 const NOFOLLOW_FLAG = fs.constants.O_NOFOLLOW ?? 0;
 
 /**
+ * Flush the *directory entry* after a rename. Without this the file bytes are
+ * durable but the rename that publishes them is not: a power loss can leave the
+ * old contents in place while the authoritative store has already committed —
+ * a silent divergence rather than a visible corruption. Best effort: Windows
+ * cannot open a directory as a file descriptor.
+ */
+function fsyncDirectory(dir: string): void {
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(dir, fs.constants.O_RDONLY);
+    fs.fsyncSync(fd);
+  } catch {
+    // Platform does not support directory fsync (notably Windows).
+  } finally {
+    if (fd !== undefined) {
+      try {
+        fs.closeSync(fd);
+      } catch {
+        // Already closed.
+      }
+    }
+  }
+}
+
+/**
  * Crash-safe JSON persistence: write to a sibling temp file then atomically
  * rename over the target, so a crash mid-write can never truncate the real
  * file into an unparseable state (which the readers here treat as "empty" and
@@ -50,6 +75,7 @@ export function writeFileAtomic(
       fs.closeSync(fd);
     }
     fs.renameSync(tmp, file);
+    fsyncDirectory(dir);
   } catch (err) {
     try {
       fs.unlinkSync(tmp);

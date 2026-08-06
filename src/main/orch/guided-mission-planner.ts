@@ -45,8 +45,16 @@ import {
 } from "./guided-mission-plan-authority";
 import {
   listRepositoryOwnershipClaims,
+  repositoryOwnershipClaimsFromGitTree,
   resolveGuidedMutationOwnership,
 } from "./guided-mission-ownership";
+import {
+  describeMissionDegradation,
+  type MissionDegradation,
+} from "./mission-degradation";
+import { appendMissionVerdict } from "../../shared/mission-block-cause";
+import { NEXUS_STORY_IMPLEMENTATION_SQUAD_ID } from "../../shared/builtin-squad-ids";
+import { BUILTIN_SQUADS } from "./builtin-squads";
 import {
   buildGuidedMissionTaskDetail,
   guidedAdvisoryDetail,
@@ -232,12 +240,26 @@ export function ensureGuidedMissionPlan(
   missionId: string,
   deps: GuidedMissionPlannerDeps = DEFAULT_DEPS,
 ): GuidedMissionPlanResult {
-  const mission = suite.missions.get(missionId);
-  if (!mission?.intentContract) {
+  type MissionWithIntent = Mission & {
+    intentContract: NonNullable<Mission["intentContract"]>;
+  };
+  const asMissionWithIntent = (value: Mission | null | undefined): MissionWithIntent => {
+    if (!value?.intentContract) {
+      throw new Error(
+        "guided_plan_contract_missing: missão sumiu após rebind D1",
+      );
+    }
+    return value as MissionWithIntent;
+  };
+  const loadedMission = suite.missions.get(missionId);
+  if (!loadedMission?.intentContract) {
     throw new Error(
       "guided_plan_contract_missing: missão aprovada não encontrada",
     );
   }
+  // Keep a mutable Mission view; after re-pin we re-read from the store so
+  // ScopedMission coordinates stay consistent with the suite.
+  let mission: MissionWithIntent = loadedMission as MissionWithIntent;
   const intentVersion = mission.intentContract.intentVersion;
   const existing = suite.tasks.listPlannedTasks(missionId, intentVersion);
   const existingTopology =
@@ -267,39 +289,177 @@ export function ensureGuidedMissionPlan(
       reason: ineligible,
     });
   }
+  // D1: squad missing/stale/unbound → live default roster, never a silent wall.
+  const planDegradations: MissionDegradation[] = [];
+  /** Structured signal — never string-match degradation.what for control flow. */
+  let squadAuthorityDegraded = false;
+  const recordSquadDegradation = (degradation: MissionDegradation): void => {
+    squadAuthorityDegraded = true;
+    planDegradations.push(degradation);
+  };
+
+  const patchMission = (
+    patch: {
+      readonly squadId?: string;
+      readonly description?: string;
+      readonly intentContract?: Mission["intentContract"];
+    },
+  ): NonNullable<ReturnType<typeof suite.missions.get>> | null => {
+    const current = suite.missions.get(missionId);
+    if (!current) return null;
+    const updater = (
+      suite.missions as {
+        update?: (
+          id: string,
+          next: Record<string, unknown>,
+        ) => NonNullable<ReturnType<typeof suite.missions.get>> | null;
+      }
+    ).update;
+    if (typeof updater === "function") {
+      return updater.call(suite.missions, missionId, patch) ?? null;
+    }
+    // Test harnesses expose only get() — mutate the live object in place.
+    if (patch.squadId !== undefined) {
+      (current as { squadId?: string }).squadId = patch.squadId;
+    }
+    if (patch.description !== undefined) {
+      (current as { description: string }).description = patch.description;
+    }
+    if (patch.intentContract !== undefined) {
+      (current as { intentContract?: Mission["intentContract"] }).intentContract =
+        patch.intentContract;
+    }
+    return current;
+  };
+  const resolveDefaultSquad = (): Squad | null => {
+    return (
+      deps.getSquad(NEXUS_STORY_IMPLEMENTATION_SQUAD_ID) ??
+      BUILTIN_SQUADS.find(
+        (entry) => entry.id === NEXUS_STORY_IMPLEMENTATION_SQUAD_ID,
+      ) ??
+      null
+    );
+  };
+  let squad: Squad;
   if (!mission.squadId) {
-    throw new Error("guided_plan_squad_missing: missão sem squad aprovado");
+    const fallback = resolveDefaultSquad();
+    if (!fallback) {
+      throw new Error(
+        "guided_plan_squad_missing: missão sem squad e roster padrão indisponível",
+      );
+    }
+    squad = fallback;
+    patchMission({ squadId: fallback.id });
+    recordSquadDegradation({
+      what: "squad da missão",
+      reducedTo: `${fallback.id} (roster padrão)`,
+      why: "missão sem squad aprovado",
+      recoverable: true,
+    });
+  } else {
+    const found = deps.getSquad(mission.squadId);
+    if (!found) {
+      const fallback = resolveDefaultSquad();
+      if (!fallback) {
+        throw new Error(
+          "guided_plan_squad_missing: squad aprovado indisponível e roster padrão ausente",
+        );
+      }
+      squad = fallback;
+      patchMission({ squadId: fallback.id });
+      recordSquadDegradation({
+        what: "squad da missão",
+        reducedTo: `${fallback.id} (roster padrão)`,
+        why: "squad aprovado indisponível no catálogo",
+        recoverable: true,
+      });
+    } else {
+      squad = found;
+    }
   }
-  const squad = deps.getSquad(mission.squadId);
-  if (!squad) {
-    throw new Error("guided_plan_squad_missing: squad aprovado indisponível");
-  }
-  const squadSnapshot = snapshotSquadAuthority(squad);
+  let squadSnapshot = snapshotSquadAuthority(squad);
   const boundSquadRevision = mission.intentContract.squadRevisionHash;
   if (boundSquadRevision === undefined) {
-    // `squadRevisionHash` é opcional no contrato de intenção: uma intenção que
-    // ainda não foi aprovada — ou que foi re-versionada e aguarda nova
-    // aprovação — não carrega vínculo com revisão de equipe nenhuma. Comparar
-    // `undefined` contra o hash corrente é SEMPRE desigual, então o caminho
-    // herdado acusava "o squad mudou depois da aprovação" para uma missão cuja
-    // equipe está intacta e que apenas nunca foi aprovada. Diagnóstico errado
-    // manda o operador auditar uma equipe que não mudou, e esconde a única
-    // ação que destrava: aprovar. Ausência de vínculo é falha própria.
-    throw new Error(
-      "guided_plan_squad_unbound: a intenção não foi aprovada com uma revisão " +
-        "de equipe; aprove a missão para selar o plano",
-    );
+    recordSquadDegradation({
+      what: "vínculo de revisão do squad",
+      reducedTo: "roster vivo atual",
+      why: "intenção sem squadRevisionHash selado",
+      recoverable: true,
+    });
+  } else if (boundSquadRevision !== squadSnapshot.hash) {
+    recordSquadDegradation({
+      what: "revisão do squad",
+      reducedTo: "roster vivo atual",
+      why: "o squad mudou depois da aprovação",
+      recoverable: true,
+    });
   }
-  if (boundSquadRevision !== squadSnapshot.hash) {
-    throw new Error(
-      "guided_plan_squad_stale: o squad mudou depois da aprovação",
-    );
+  // Re-pin live squad revision so seal authority accepts the D1 roster
+  // without inventing a second approval ceremony.
+  if (
+    mission.intentContract.squadRevisionHash !== squadSnapshot.hash ||
+    mission.squadId !== squad.id
+  ) {
+    const pinned = patchMission({
+      squadId: squad.id,
+      intentContract: {
+        ...mission.intentContract,
+        squadRevisionHash: squadSnapshot.hash,
+      },
+    });
+    if (pinned) {
+      // Prefer a fresh store read so scope coordinates stay coherent.
+      mission = asMissionWithIntent(suite.missions.get(missionId) ?? pinned);
+      squadSnapshot = snapshotSquadAuthority(squad);
+    } else {
+      mission = asMissionWithIntent(suite.missions.get(missionId) ?? mission);
+    }
   }
+  const publishPlanDegradations = (): void => {
+    if (planDegradations.length === 0) return;
+    const current = suite.missions.get(missionId);
+    if (!current) return;
+    let description = current.description ?? "";
+    for (const degradation of planDegradations) {
+      description = appendMissionVerdict(
+        description,
+        "<!-- nexus:mission-degradation -->",
+        "[NEXUS_DEGRADED]",
+        describeMissionDegradation(degradation),
+      );
+    }
+    patchMission({ description });
+  };
   if (existing.length > 0) {
     const topology = existingTopology ?? "delivery";
     // Recovery derives authority from the immutable receipt, never from a
     // fresh interpretation of goal text. This prevents a classifier update
     // from invalidating a delivery that was already approved and sealed.
+    const liveRosterHash = snapshotTaskPlanRoster(squad.agents).hash;
+    const receiptMatchesLive = existing.every(
+      (entry) =>
+        entry.squadId === squad.id && entry.rosterHash === liveRosterHash,
+    );
+    // D1 only when THIS call already degraded for live squad drift
+    // (missing/stale/unbound/re-pin). A corrupt receipt against a stable live
+    // roster still falls through to assertRosterComplete* (legacy wall).
+    if (!receiptMatchesLive && squadAuthorityDegraded) {
+      const primary =
+        existing.find(
+          (entry) => entry.plannerId === GUIDED_MISSION_PLANNER_TASK_ID,
+        ) ??
+        existing.find((entry) => entry.agentCategory === "executor") ??
+        existing[0]!;
+      publishPlanDegradations();
+      return Object.freeze({
+        applicable: true,
+        sealed: false,
+        reason: "already-sealed" as const,
+        topology,
+        workerAgentRef: primary.agentRef,
+        taskId: primary.taskId,
+      });
+    }
     if (topology === "delivery" || topology === "wave-pack") {
       deps.assertStandardSquadReadiness(squad);
     }
@@ -316,6 +476,7 @@ export function ensureGuidedMissionPlan(
       "implementation" in recovered
         ? recovered.implementation
         : recovered.primary;
+    publishPlanDegradations();
     return Object.freeze({
       applicable: true,
       sealed: false,
@@ -338,7 +499,13 @@ export function ensureGuidedMissionPlan(
     try {
       inventoryCache = deps.listRepositoryOwnership(suite.tasks.scope);
     } catch {
-      inventoryCache = [];
+      inventoryCache = repositoryOwnershipClaimsFromGitTree([]);
+      planDegradations.push({
+        what: "inventário do projeto",
+        reducedTo: "superfície greenfield padrão (escritor único)",
+        why: "não consegui mapear o repositório ao vivo",
+        recoverable: true,
+      });
     }
     return inventoryCache;
   };
@@ -365,12 +532,17 @@ export function ensureGuidedMissionPlan(
     deps.assertStandardSquadReadiness(squad);
   }
   const adapters = deps.listLiveAdapters();
-  const rosterWorkers = squad.agents.filter(isGuidedWorkerAgent);
+  let rosterWorkers = squad.agents.filter(isGuidedWorkerAgent);
   const taskPlanRosterHash = snapshotTaskPlanRoster(squad.agents).hash;
   if (rosterWorkers.length > 64) {
-    throw new Error(
-      "guided_plan_roster_too_large: o plano suporta no máximo 64 workers aprovados",
-    );
+    const dropped = rosterWorkers.length - 64;
+    rosterWorkers = rosterWorkers.slice(0, 64);
+    planDegradations.push({
+      what: "roster aprovado",
+      reducedTo: "64 workers (teto do plano)",
+      why: `${dropped} assento(s) ficaram de fora do selamento`,
+      recoverable: true,
+    });
   }
   if (
     topology === "team-read-only-fanout" &&
@@ -441,6 +613,7 @@ export function ensureGuidedMissionPlan(
         : undefined,
     );
     const primary = plan.planned[0]!;
+    publishPlanDegradations();
     return Object.freeze({
       applicable: true,
       sealed: true,
@@ -451,6 +624,7 @@ export function ensureGuidedMissionPlan(
     });
   }
   if (topology === "wave-pack") {
+    publishPlanDegradations();
     return sealWavePackMissionPlan({
       mission,
       missionId,
@@ -505,13 +679,27 @@ export function ensureGuidedMissionPlan(
   // A filename-aware goal keeps the narrow intent surface. Natural goals do
   // not force a vibe coder to guess the repository layout: Main derives a
   // bounded, path-by-path inventory for the isolated worktree instead.
-  const baseOwnership =
+  let baseOwnership =
     intentOwnership.length > 0
       ? intentOwnership
       : resolveGuidedMutationOwnership(
           mission.intentContract,
           repositoryInventory(),
         );
+  if (baseOwnership.length === 0) {
+    baseOwnership = resolveGuidedMutationOwnership(
+      mission.intentContract,
+      repositoryOwnershipClaimsFromGitTree([]),
+    );
+    if (baseOwnership.length > 0) {
+      planDegradations.push({
+        what: "ownership do plano",
+        reducedTo: "superfície greenfield padrão (escritor único)",
+        why: "não consegui mapear áreas do projeto",
+        recoverable: true,
+      });
+    }
+  }
   if (baseOwnership.length === 0) {
     throw new Error(
       "guided_plan_ownership_missing: o inventário seguro do projeto está vazio",
@@ -791,6 +979,7 @@ export function ensureGuidedMissionPlan(
         }
       : undefined,
   );
+  publishPlanDegradations();
   return Object.freeze({
     applicable: true,
     sealed: true,

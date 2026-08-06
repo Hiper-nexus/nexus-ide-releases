@@ -60,28 +60,22 @@ export const LEGITIMATE_MISSION_BLOCKS: ReadonlySet<string> = new Set([
   'guided_plan_legacy_receipt_blocked',
   'guided_plan_receipt_missing',
   'guided_plan_contract_missing',
-  // Autoridade do squad: sem roster aprovado não existe "versão menor" do
-  // trabalho — existe trabalho de ninguém.
+  // Squad: D1 uses nexus-story-impl / live roster for missing/stale/unbound.
+  // Only the residual throw (default roster also gone) stays legitimate.
   'guided_plan_squad_missing',
-  'guided_plan_squad_stale',
-  'guided_plan_squad_unbound',
-  'guided_plan_roster_too_large',
-  // Ownership vazia: sem superfície declarada, degradar significaria escrever
-  // em lugar nenhum ou em todo lugar.
+  // roster_too_large: D1 truncates to 64 (no throw).
+  // Ownership vazia *após* fallback greenfield: sem superfície ainda é parede.
   'guided_plan_ownership_missing',
   'guided_plan_ownership_invalid',
-  // Idem para o Pack: story sem superfície declarada não tem onde escrever.
   'wave_pack_ownership_missing',
   'guided_team_fanout_empty',
-  // PREVC: congelamento de contexto é autoridade de contrato, não capacidade
-  // opcional. Um freeze pela metade valida contra contexto que não existe.
+  // PREVC: contract/route/late-freeze and sync freeze_failed remain walls.
+  // Bootstrap/incomplete: D1 async boundary degrades (no throw).
   'guided_prevc_contract_missing',
   'guided_prevc_contract_stale',
   'guided_prevc_freeze_failed',
-  'guided_prevc_freeze_incomplete',
   'guided_prevc_invalid_route',
   'guided_prevc_late_freeze_blocked',
-  'guided_prevc_context_bootstrap_blocked',
   // Concorrência: recuperação em curso não é falta de capacidade, é espera.
   'recovery_lock_busy',
 ]);

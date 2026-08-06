@@ -334,12 +334,15 @@ describe("guided physically empty workspace cycle", () => {
           : { ...agent },
       ),
     };
-    expect(() =>
-      ensureGuidedMissionPlan(suite, mission.id, {
-        ...plannerDeps,
-        getSquad: () => tamperedSquad,
-      }),
-    ).toThrow(/guided_plan_squad_stale/i);
+    // D1: live roster drift is accepted with degradation, not a hard wall.
+    const drifted = ensureGuidedMissionPlan(suite, mission.id, {
+      ...plannerDeps,
+      getSquad: () => tamperedSquad,
+    });
+    expect(drifted.applicable).toBe(true);
+    expect(suite.missions.get(mission.id)?.description).toMatch(
+      /NEXUS_DEGRADED|squad mudou|roster vivo/i,
+    );
     const approvedPreflight = suite.missions.get(mission.id);
     if (!approvedPreflight?.intentContract) {
       throw new Error("approved preflight disappeared");
