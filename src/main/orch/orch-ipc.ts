@@ -82,7 +82,7 @@ import {
 import {
   hasMissionApprovalTrust,
   missionApprovalTrustKeyFrom,
-  missionApprovalTrustRevisionHash,
+  missionApprovalTrustIdentityHash,
   rememberMissionApprovalTrust,
 } from "./mission-approval-trust";
 import {
@@ -877,13 +877,19 @@ async function confirmMissionAuthorityChange(
     // Pré-autorização (approve only): mesmo projeto + mesmo roster hash →
     // pula o modal e ainda emite o reviewSha256 do review integral. Promote
     // e experimental sempre pedem olhos humanos. Gate E2E real desliga trust.
-    // A identidade do roster é a revisão de ORIGEM: o selo do approve cria uma
-    // cópia `mission-runtime-*` com outro hash, e sem essa dobra o "não
-    // perguntar de novo" que o operador acabou de marcar seria ignorado já no
-    // clique seguinte da mesma missão.
+    // A identidade do roster precisa sobreviver ao selo E à re-decomposição:
+    // squads salvos usam a revisão de ORIGEM (o selo cria cópia com outro
+    // hash); squads GERADOS PELO ENGINE re-geram id/hash a cada decomposição,
+    // então a identidade durável é a autoridade aprovada (forma do time +
+    // permissões + adapter/modelo/confinamento do orquestrador) — provado em
+    // campo 06/08: o operador marcou "não perguntar de novo" às 09:33:50 e o
+    // modal voltou às 09:34:57 porque o hash re-gerado nunca mais batia.
     const trustKey = missionApprovalTrustKeyFrom(
       scope,
-      missionApprovalTrustRevisionHash(candidate.squad),
+      missionApprovalTrustIdentityHash(
+        candidate.squad,
+        candidate.orchestratorRuntime,
+      ),
     );
     if (
       !isPromotion &&

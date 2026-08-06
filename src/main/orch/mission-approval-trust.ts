@@ -8,11 +8,13 @@
  * Desligado no gate E2E real: a causalidade exige exatamente um diálogo nativo.
  */
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { app } from "electron";
 
 import type { ProjectExecutionScope } from "../../shared/types";
+import { isEngineGeneratedSquadId } from "../../shared/orch-types";
 import { isCurrentProcessRealMissionE2E } from "../../shared/real-mission-e2e";
 
 const TRUST_FILE = "mission-approval-trust.json";
@@ -109,6 +111,72 @@ export function missionApprovalTrustRevisionHash(squad: {
   readonly runtimeSourceSquadRevisionHash?: string | null;
 }): string {
   return squad.runtimeSourceSquadRevisionHash ?? squad.hash;
+}
+
+/**
+ * Identidade de confiança ESTÁVEL entre decomposições (fix 06/08).
+ *
+ * Squads gerados pelo engine (`agentic-*`/`custom-*`) re-geram id e hash a
+ * cada decomposição — o "não perguntar de novo" gravado nunca voltava a bater
+ * (provado em campo: registro às 09:33:50 e o modal de volta às 09:34:57).
+ * Para esses squads a identidade durável é o QUE o operador aprovou, não a
+ * geração: forma do time (categoria+cli, ordenada), permissões por agente e a
+ * autoridade do orquestrador (adapter/modelo/confinamento — nunca conta/effort,
+ * que são política main-owned volátil). Squads salvos continuam na revisão de
+ * ORIGEM (comportamento 664b534f), que já é estável.
+ */
+export function missionApprovalTrustIdentityHash(
+  squad: {
+    readonly id: string;
+    readonly hash: string;
+    readonly runtimeSourceSquadId?: string | null;
+    readonly runtimeSourceSquadRevisionHash?: string | null;
+    readonly agents?: readonly {
+      readonly category: string;
+      readonly cli: string;
+      readonly allowedTools: readonly string[] | null;
+      readonly allowedSkills: readonly string[] | null;
+    }[];
+  },
+  grantRuntime: {
+    readonly adapterId: string;
+    readonly model?: string | null;
+    readonly readOnly?: boolean;
+    readonly nativeReadOnly?: boolean;
+    /** Ignorado por design: rotação de conta é política main-owned volátil. */
+    readonly accountId?: string | null;
+    /** Ignorado por design: tuning de effort não muda a autoridade. */
+    readonly effort?: string | null;
+  },
+): string {
+  const originId = squad.runtimeSourceSquadId ?? squad.id;
+  if (!isEngineGeneratedSquadId(originId)) {
+    return missionApprovalTrustRevisionHash(squad);
+  }
+  const team = [...(squad.agents ?? [])]
+    .map((agent) => ({
+      category: agent.category,
+      cli: agent.cli,
+      allowedTools: agent.allowedTools ? [...agent.allowedTools].sort() : null,
+      allowedSkills: agent.allowedSkills
+        ? [...agent.allowedSkills].sort()
+        : null,
+    }))
+    .sort(
+      (a, b) =>
+        a.category.localeCompare(b.category) || a.cli.localeCompare(b.cli),
+    );
+  const canonical = JSON.stringify({
+    kind: "engine-authority",
+    team,
+    grant: {
+      adapterId: grantRuntime.adapterId,
+      model: grantRuntime.model ?? null,
+      readOnly: grantRuntime.readOnly === true,
+      nativeReadOnly: grantRuntime.nativeReadOnly === true,
+    },
+  });
+  return `engine-authority:${createHash("sha256").update(canonical).digest("hex")}`;
 }
 
 /** True when this project+roster was previously delegated by the operator. */
