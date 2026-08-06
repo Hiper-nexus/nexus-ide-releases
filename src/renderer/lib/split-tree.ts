@@ -187,6 +187,17 @@ export function findPane(root: LayoutNode, paneId: string): PaneModel | null {
   return listPanes(root).find((p) => p.id === paneId) ?? null;
 }
 
+/**
+ * Posição 1-based do pane no layout visível — o alvo do ⌘1-9. É SLOT, não
+ * nome: muda quando o layout muda, e por isso nunca divide namespace com o
+ * número durável do pane. Null fora do alcance do atalho (>9) ou desconhecido.
+ */
+export function paneSlotOf(root: LayoutNode, paneId: string): number | null {
+  const index = listPanes(root).findIndex((pane) => pane.id === paneId);
+  if (index < 0 || index > 8) return null;
+  return index + 1;
+}
+
 /** Update a pane's fields in place (immutably) — used for live titles. */
 export function updatePane(
   root: LayoutNode,

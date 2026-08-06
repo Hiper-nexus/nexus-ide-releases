@@ -25,7 +25,11 @@ import { ProviderLogo } from './ProviderLogo';
 import { CommandBlockMenu } from './CommandBlockMenu';
 import { paneSessionView } from '../../shared/pane-session-view';
 import { formatShortcut } from '../lib/platform';
-import { isStructuralPlaceholderPane } from '../lib/split-tree';
+import {
+  isStructuralPlaceholderPane,
+  listPanes,
+  paneSlotOf,
+} from '../lib/split-tree';
 
 interface Props {
   pane: PaneModel;
@@ -142,6 +146,14 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
   const maximizedPaneId = useLayoutStore((s) => s.maximizedPaneId);
   const toggleMaximizePane = useLayoutStore((s) => s.toggleMaximizePane);
   const renameTitle = useLayoutStore((s) => s.renameTitle);
+  // Slot posicional ⌘1-9: derivado do layout AO VIVO — recalcula quando panes
+  // abrem/fecham, exatamente como o atalho resolve o alvo.
+  const paneSlot = useLayoutStore((s) =>
+    s.root ? paneSlotOf(s.root, pane.id) : null,
+  );
+  const paneCount = useLayoutStore((s) =>
+    s.root ? listPanes(s.root).length : 0,
+  );
   // True state for actions (dormir/reiniciar guards); display for avatar chrome.
   const paneState = useSessionStateStore((s) => s.paneStates.get(pane.id));
   const displayState = useSessionStateStore((s) => s.displayStates.get(pane.id));
@@ -381,6 +393,20 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
             data-tip={`Pane ${pane.paneNumber} — nome fixo deste pane, use para se referir a ele`}
           >
             {pane.paneNumber}
+          </span>
+        )}
+        {/*
+          Slot posicional (⌘1-9): POSIÇÃO no grid visível, não identidade —
+          muda quando o layout muda. Namespace separado do nome durável de
+          propósito; o chip só aparece quando há mais de um pane (com um só,
+          o atalho não disputa nada).
+        */}
+        {paneSlot !== null && paneCount > 1 && (
+          <span
+            className="toolbar__pane-slot"
+            data-tip={`⌘${paneSlot} foca este pane — posição no grid, muda quando o layout muda`}
+          >
+            ⌘{paneSlot}
           </span>
         )}
         {pane.kind === 'cli-agent' && (

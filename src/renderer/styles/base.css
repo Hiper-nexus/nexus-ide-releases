@@ -1364,6 +1364,21 @@ body {
   user-select: text;
 }
 
+/* Slot posicional ⌘1-9: ainda mais discreto que o nome — é dica de atalho,
+   não identidade. Sem borda e sem fundo de propósito: o olho encontra o NOME
+   primeiro; o slot só responde "qual tecla foca este pane". */
+.toolbar__pane-slot {
+  flex: 0 0 auto;
+  padding: 0 2px;
+  color: var(--text-dim);
+  opacity: 0.55;
+  font-size: 9px;
+  line-height: 15px;
+  font-variant-numeric: tabular-nums;
+  cursor: default;
+  user-select: none;
+}
+
 /* Estado do agente no toolbar: cor + borda comunicam; motion leve só no
    glifo (opacity). Evitar scale pop e opacity 0.35 — reiniciavam a cada
    busy↔idle e faziam a barra inteira “piscar”. */

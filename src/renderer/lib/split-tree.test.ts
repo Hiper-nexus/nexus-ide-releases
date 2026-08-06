@@ -5,6 +5,7 @@ import {
   createLeaf,
   createPane,
   listPanes,
+  paneSlotOf,
   splitPane,
   updatePane,
 } from './split-tree';
@@ -89,6 +90,37 @@ describe('split-tree', () => {
     expect(next).not.toBe(leaf); // fresh node
     expect(next.kind === 'leaf' && next.pane.title).toBe('renamed');
     expect(leaf.kind === 'leaf' && leaf.pane.title).toBe(originalTitle); // original untouched
+  });
+});
+
+// SLOT ≠ NOME: o slot é a POSIÇÃO no layout visível (o que o ⌘1-9 foca) e
+// muda quando o layout muda; o nome durável do pane nunca. Os dois nunca
+// dividem namespace — o indicador de slot existe para o operador saber qual
+// tecla foca o pane SEM confundir com o nome que ele dita.
+describe('paneSlotOf (posição ⌘1-9)', () => {
+  it('segue exatamente a ordem do listPanes, 1-based', () => {
+    const panes = [createPane('shell'), createPane('shell'), createPane('shell')];
+    const tree = buildGridTree(panes);
+    const ordered = listPanes(tree);
+    expect(paneSlotOf(tree, ordered[0]!.id)).toBe(1);
+    expect(paneSlotOf(tree, ordered[2]!.id)).toBe(3);
+  });
+
+  it('reflete o layout novo quando um pane fecha (posição, não identidade)', () => {
+    const panes = [createPane('shell'), createPane('shell'), createPane('shell')];
+    const tree = buildGridTree(panes);
+    const ordered = listPanes(tree);
+    const closed = closePane(tree, ordered[0]!.id)!;
+    expect(paneSlotOf(closed, ordered[1]!.id)).toBe(1);
+  });
+
+  it('null para pane desconhecido e para posições fora do alcance 1-9', () => {
+    const many = Array.from({ length: 11 }, () => createPane('shell'));
+    const tree = buildGridTree(many);
+    const ordered = listPanes(tree);
+    expect(paneSlotOf(tree, 'pane-fantasma')).toBeNull();
+    expect(paneSlotOf(tree, ordered[9]!.id)).toBeNull();
+    expect(paneSlotOf(tree, ordered[8]!.id)).toBe(9);
   });
 });
 
