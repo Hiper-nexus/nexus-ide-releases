@@ -1,5 +1,5 @@
 /**
- * Garantia de handoff do worker (paridade Overclock — Stop-hook).
+ * Garantia de handoff do worker (paridade Overclock — Stop-hook / H3).
  *
  * No Overclock um worker NÃO consegue encerrar sua sessão sem submeter um
  * handoff: um Stop-hook bloqueia a saída. No Nexus a detecção era inteiramente
@@ -16,6 +16,25 @@
  * visto por nenhum dos três. O orquestrador espera para sempre um resultado que
  * nunca chega e a missão morre em silêncio — trabalho acontecendo com zero
  * prova de entrega. Este módulo fecha exatamente esse buraco.
+ *
+ * ## Doutrina H3 (Overclock / Bridge) — DEGRADAR, nunca congelar
+ *
+ * Ordem de escrita deliberada (sobrevive kill no meio e corrida
+ * "consume antes do poll"):
+ *   1. **transcript / evidência** — tail do pane no summary sintético;
+ *   2. **inbox durável** — `handoffs.submit` (SQLite outbox) ANTES de
+ *      confiar em notificação in-memory;
+ *   3. **nudge** — cutucada no PTY (melhor esforço; se falha, não para).
+ *
+ * Se o notify/cutucada falha, o Overclock diz: *"swarm monitor will fall
+ * back to inactivity detection"* — DEGRADA. Equivalente aqui:
+ *   - cutucada não escreve → enforce sintético na hora (sem esperar grace);
+ *   - submit sintético falha → **não** marca `enforced` (senão a missão
+ *     congela para sempre); re-arma o timer de inatividade e tenta de novo.
+ *
+ * Congelar (merge abandonado 22 min sem watchdog; PREVC que nunca congela
+ * com fence eterno) é o anti-padrão que este módulo e o merge-stall-watchdog
+ * existem para matar.
  *
  * Escada de cobrança (não destrutiva, idempotente por sessão):
  *  1. worker fica idle sem handoff → carência (`WORKER_QUIET_GRACE_MS`) para
@@ -193,9 +212,16 @@ function hasRealHandoff(
           handoff.sessionId === authority.sessionId &&
           !(handoff.fromAgent ?? '').startsWith(SYNTHETIC_HANDOFF_AUTHOR_PREFIX),
       );
-  } catch {
-    // Falha de leitura nunca fabrica cobrança: fail-closed para "já entregou".
-    return true;
+  } catch (error) {
+    // H3 fail-open on read: "eco a mais é ruído; resultado perdido é o bug".
+    // Assume missing so the inactivity ladder still runs (synthetic may
+    // still land when the store recovers). Idempotency lives on submit.
+    deps.log(
+      `listHandoffs falhou — assumindo sem handoff real (session=${authority.sessionId}): ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return false;
   }
 }
 
@@ -301,7 +327,9 @@ function enforce(
   status: 'blocked' | 'failed',
   sessionId: string,
 ): void {
-  watch.enforced = true;
+  // Do NOT mark enforced until inbox write succeeds. Marking first was the
+  // freeze: submit fails → enforced=true → decideQuietWorker always ignore →
+  // mission waits forever with zero handoff (H3 anti-pattern).
   clearTimer(watch);
   let tail = '';
   try {
@@ -332,6 +360,8 @@ function enforce(
         'este relatório é a evidência do que o worker estava fazendo no ' +
         'encerramento.'
       : '';
+  // H3 write order: evidence (tail) → durable inbox (submit) → done.
+  // Nudge already ran (or failed) earlier; we never re-nudge here.
   const summary =
     `${WORKER_HANDOFF_REQUIRED_MARKER} Handoff submetido pelo Nexus no lugar ` +
     `do worker "${authority.paneId}": ${reason}. Nenhum resultado foi ` +
@@ -344,10 +374,17 @@ function enforce(
     deps.log(
       `falha ao submeter handoff de cobrança (session=${sessionId}): ${
         error instanceof Error ? error.message : String(error)
-      }`,
+      } — rearmando detecção de inatividade (H3 degrade)`,
+    );
+    // Inactivity fallback: store may recover; do not freeze the ladder.
+    // Session already exited has no PTY — still re-arm once so a transient
+    // store blip can land the synthetic before the watch is dropped on exit.
+    armTimer(watch, deps.enforceGraceMs, () =>
+      evaluate(deps, sessionId, status === 'failed'),
     );
     return;
   }
+  watch.enforced = true;
   deps.log(
     `handoff ${status} submetido no lugar do worker ` +
       `(pane=${authority.paneId}, session=${sessionId}, ` +
@@ -378,7 +415,13 @@ export function initWorkerHandoffEnforcement(
     const watch = watches.get(sessionId);
     if (watch) clearTimer(watch);
     evaluate(deps, sessionId, true);
-    watches.delete(sessionId);
+    // H3: only drop the watch after durable inbox write (enforced). If
+    // submit failed, the re-armed inactivity timer still owns this entry.
+    const after = watches.get(sessionId);
+    if (after?.enforced || !after?.timer) {
+      if (after) clearTimer(after);
+      watches.delete(sessionId);
+    }
   });
 }
 

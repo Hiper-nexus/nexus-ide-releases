@@ -349,4 +349,54 @@ describe('worker-handoff-enforcement runtime', () => {
     expect(harness.submitted).toHaveLength(1);
     expect(harness.submitted[0]!.status).toBe('blocked');
   });
+
+  it('H3: submit sintético falhando NÃO congela — re-arma inatividade e tenta de novo', () => {
+    const harness = makeHarness();
+    let blows = 0;
+    harness.deps = {
+      ...harness.deps,
+      submitSynthetic: (authority, input) => {
+        blows += 1;
+        if (blows === 1) {
+          throw new Error('sqlite locked');
+        }
+        harness.submitted.push({
+          sessionId: authority.sessionId!,
+          status: input.status,
+          summary: input.summary,
+        });
+      },
+    };
+    // Re-bind submit after makeHarness; re-init with mutated deps.
+    shutdownWorkerHandoffEnforcement();
+    initWorkerHandoffEnforcement(harness.deps);
+
+    emitStatus('s1', 'idle');
+    vi.advanceTimersByTime(WORKER_QUIET_GRACE_MS);
+    // First path: nudge, not enforce yet.
+    expect(harness.nudges).toHaveLength(1);
+    expect(harness.submitted).toHaveLength(0);
+
+    vi.advanceTimersByTime(WORKER_ENFORCE_GRACE_MS);
+    // First enforce fails (sqlite locked) — no durable row, not frozen.
+    expect(harness.submitted).toHaveLength(0);
+
+    vi.advanceTimersByTime(WORKER_ENFORCE_GRACE_MS);
+    // Inactivity fallback succeeds.
+    expect(harness.submitted).toHaveLength(1);
+    expect(harness.submitted[0]!.status).toBe('blocked');
+  });
+
+  it('H3: listHandoffs falhando é fail-open — ainda cobra (resultado perdido é pior)', () => {
+    const harness = makeHarness({
+      listHandoffs: () => {
+        throw new Error('store down');
+      },
+    });
+    initWorkerHandoffEnforcement(harness.deps);
+
+    emitStatus('s1', 'idle');
+    vi.advanceTimersByTime(WORKER_QUIET_GRACE_MS);
+    expect(harness.nudges).toHaveLength(1);
+  });
 });
