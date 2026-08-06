@@ -1474,13 +1474,22 @@ export function spawnAgentSession(
         "mission-bound worker requires a main-owned coordination scope",
       );
     }
+    // O isolamento por worktree é do modo CONCORRENTE (opt-in), não de toda
+    // missão. No caminho simples — o padrão desde 06/08 — o worker roda no
+    // próprio workspace, e este guard não se aplica. A mensagem agora nomeia o
+    // caminho em conflito e o que fazer, em vez de só declarar a exigência.
     if (
+      authority.context?.isolatedWriter === true &&
       (writableWorkerIntent || frictionlessMissionWorker) &&
       authority.scope.rootRealPath ===
         authority.coordinationScope?.rootRealPath
     ) {
       throw new Error(
-        "autopilot mission worker requires a physically distinct execution worktree",
+        "autopilot mission worker requires a physically distinct execution worktree: " +
+          `execução e coordenação apontam para o mesmo caminho (${authority.scope.rootRealPath}). ` +
+          "Este worker foi marcado como escritor concorrente (isolatedWriter), que exige " +
+          "worktree própria. Rode a missão no modo simples (sem isolatedWriter) ou " +
+          "verifique o provisionamento da worktree desta tarefa.",
       );
     }
     if (

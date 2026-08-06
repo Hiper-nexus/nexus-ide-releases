@@ -60,6 +60,17 @@ export interface PaneOrchMeta {
   readOnly?: boolean;
   /** Provider-native confinement, separate from Nexus MCP authority. */
   nativeReadOnly?: boolean;
+  /**
+   * Modo concorrente OPT-IN: este worker exige worktree fisicamente distinta.
+   *
+   * Ausente (padrão) = caminho SIMPLES: o worker roda no próprio workspace com
+   * cwd herdado, como no Overclock. O isolamento existe para proteger
+   * ESCRITORES CONCORRENTES entre si; cobrá-lo de toda missão transformava um
+   * requisito de fan-out largo em porta trancada — inclusive para revisores
+   * read-only, que não escrevem nada. Ver
+   * docs/analysis/2026-08-06-refatoracao-execucao-simples.md.
+   */
+  isolatedWriter?: boolean;
   /** Exact approved revision seal retained with the physical process. */
   authoritySeal?: MissionPaneAuthoritySeal;
 }

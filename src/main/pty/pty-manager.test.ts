@@ -2211,7 +2211,13 @@ describe("cli-agent spawn argv hardening", () => {
           {},
           authority,
         ),
-      ).toThrow(/coordination scope|physically distinct/i);
+        // Desde a inversão de 06/08 o guard de worktree só vale no modo
+        // concorrente opt-in, então o caso same-root passa a ser barrado pela
+        // camada de confinamento governado do Codex. Continua FECHADO — só
+        // muda quem fecha.
+      ).toThrow(
+        /coordination scope|physically distinct|workspace-write requires/i,
+      );
       expect(spawn).not.toHaveBeenCalled();
     }
   });
@@ -2570,6 +2576,53 @@ describe("cli-agent spawn argv hardening", () => {
     orchKillSession(spawned.sessionId);
   });
 
+  it("deixa o worker do caminho SIMPLES rodar no próprio workspace", () => {
+    // Inversão 06/08: o caminho padrão não exige worktree distinta. O worker
+    // roda no workspace com cwd herdado, como no Overclock. Era este guard que
+    // devolvia "autopilot mission worker requires a physically distinct
+    // execution worktree" e impedia a missão de começar — inclusive para um
+    // REVISOR read-only, que não escreve nada e nunca precisou de isolamento.
+    setSquadCliPolicyLookupForTests(() => "operator-choice");
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-pty-simple-"));
+    try {
+      const coordination = trustedSpawn(fs.realpathSync(root)).scope;
+      const adapter = builtinCliPtyAdapter("kimi");
+      const h = fakeHost();
+      setPtyHost(h.host);
+
+      const spawned = spawnAgentSession(
+        fakeWc(),
+        { kind: "cli-agent", cols: 80, rows: 24 },
+        adapter,
+        {},
+        {
+          source: "pending",
+          cwd: coordination.rootRealPath,
+          scope: coordination,
+          coordinationScope: coordination,
+          context: {
+            missionId: "mission-simples",
+            contextRevision: "revision-simples",
+            role: "worker",
+            workerIncarnationId: "worker-simples",
+            readOnly: true,
+            nativeReadOnly: true,
+            allowedTools: [],
+            allowedSkills: null,
+            scope: coordination,
+            executionScope: coordination,
+            // sem isolatedWriter => caminho simples
+          },
+        },
+      );
+
+      expect(spawned.sessionId).toBeTruthy();
+      orchKillSession(spawned.sessionId);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("refuses an autopilot read-only worker in the real checkout", () => {
     setSquadCliPolicyLookupForTests(() => "operator-choice");
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-pty-review-"));
@@ -2602,6 +2655,8 @@ describe("cli-agent spawn argv hardening", () => {
               allowedSkills: null,
               scope: coordination,
               executionScope: coordination,
+              // Modo concorrente OPT-IN: aqui o isolamento é exigido.
+              isolatedWriter: true,
             },
           },
         ),
@@ -3112,7 +3167,11 @@ describe("cli-agent spawn argv hardening", () => {
           { kind: "cli-agent", cols: 80, rows: 24 },
           makeCodexAdapter(),
           {},
-          { ...authority, coordinationScope: authority.scope },
+          {
+            ...authority,
+            coordinationScope: authority.scope,
+            context: { ...authority.context!, isolatedWriter: true },
+          },
         ),
       ).toThrow(/physically distinct execution worktree/i);
       expect(spawn).not.toHaveBeenCalled();
