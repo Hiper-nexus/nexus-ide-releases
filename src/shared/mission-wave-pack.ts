@@ -161,7 +161,21 @@ export function decomposeGoalByRepositoryAreas(input: {
     readonly files: readonly string[];
   }[];
 }): readonly ExtractedWavePackStory[] {
-  const usable = input.areas.filter((area) => area.files.length > 0);
+  // O objetivo tem de TOCAR a área — ter áreas no repo não é razão para abrir
+  // leque. Sem esta prova, qualquer goal genérico num monorepo viraria fan-out
+  // do repositório inteiro (pego pela regressão: greenfield e inventário
+  // quebraram na primeira versão). Casamento por menção explícita: o nome da
+  // área, ou seu último segmento, aparece no texto do objetivo.
+  const haystack = input.goal.toLocaleLowerCase('en-US');
+  const mentions = (areaId: string): boolean => {
+    const id = areaId.toLocaleLowerCase('en-US');
+    if (haystack.includes(id)) return true;
+    const leaf = id.split('/').pop() ?? id;
+    return leaf.length >= 3 && new RegExp(`\\b${leaf}\\b`).test(haystack);
+  };
+  const usable = input.areas.filter(
+    (area) => area.files.length > 0 && mentions(area.id),
+  );
   if (usable.length < 2) return Object.freeze([] as ExtractedWavePackStory[]);
   const capped = usable.slice(0, MAX_WAVE_PACK_STORIES);
   const goalExcerpt = input.goal.trim().slice(0, 2_000);

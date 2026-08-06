@@ -635,7 +635,7 @@ describe("decomposeGoalByRepositoryAreas (prong b)", () => {
 
   it("emite uma story por área, com ownership da própria área", () => {
     const stories = decomposeGoalByRepositoryAreas({
-      goal: "continua codando o sistema",
+      goal: "mexe no apps/web, no services/api e no packages/contracts",
       areas: HIPERGO,
     });
 
@@ -649,7 +649,7 @@ describe("decomposeGoalByRepositoryAreas (prong b)", () => {
 
   it("stories são pairwise-disjuntas por construção", () => {
     const stories = decomposeGoalByRepositoryAreas({
-      goal: "x",
+      goal: "apps/web services/api packages/contracts",
       areas: HIPERGO,
     });
     const todos = stories.flatMap((s) => [...(s.ownershipFiles ?? [])]);
@@ -674,7 +674,7 @@ describe("decomposeGoalByRepositoryAreas (prong b)", () => {
       files: [`packages/p${i}/src/a.ts`],
     }));
     expect(
-      decomposeGoalByRepositoryAreas({ goal: "x", areas: muitas }).length,
+      decomposeGoalByRepositoryAreas({ goal: muitas.map((a) => a.id).join(" "), areas: muitas }).length,
     ).toBeLessThanOrEqual(MAX_WAVE_PACK_STORIES);
   });
 });
