@@ -65,3 +65,26 @@ Size total Frente 3: **S/M**. Prioridade: S1 (foi o furo real shipado) → S2 (f
 | 1d CI runner | runbook + workflow self-hosted | L | P2 |
 | 2 Invariantes | meta-teste de mapeamento + checklist | S/M | P1 (junto do próximo touch de contrato) |
 | 3 User-facing | S1 ditado, S2 quit+sweep, S3 terminal | S/M | P1 — S2 fecha a regressão dos zumbis |
+
+## Evidência acumulada do lever 1f (release 0.27.0, 06/08)
+
+A campanha da 0.27.0 produziu a prova definitiva das DUAS metades do 1f:
+
+1. **Colisões de árvore (3 ocorrências, ~1h de gate perdida).** Além do caso
+   de 05/08 (4 specs untracked), o gate run 3 da 0.27.0 morreu porque um doc
+   alheio (nexusclock-master-plan.md) pousou em `docs/analysis/` NO MEIO do
+   run; e a liberação do HEAD para a frota da varredura precisou esperar a
+   captura-única do estado do repo pelo gate (release-candidate-gate.mjs
+   captura `assertReleaseRepositoryState` UMA vez no início — commits novos
+   não afetam um run já em missão, mas qualquer run FUTURO exige árvore limpa
+   e tag==HEAD de novo). Com checkout isolado, dev∥release ficam livres por
+   construção.
+
+2. **Acoplamento ao ciclo de vida da sessão interativa (2 kills externos).**
+   Os runs 2 e 4-encadeado morreram por stop da camada de tasks de background
+   do harness da pane que os lançou — memória saudável (49% livre), zero
+   jetsam no log do kernel, sem sleep; a cadeia idêntica relançada com
+   nohup+disown sobreviveu ao ponto exato das mortes e completou make+verify.
+   Release não pode compartilhar ciclo de vida com sessão interativa: o
+   runner do 1f deve nascer desacoplado (setsid/nohup ou runner dedicado),
+   não como task filha de uma pane.
