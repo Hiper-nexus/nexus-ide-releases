@@ -80,12 +80,6 @@ import {
   type RendererMissionLifecycleCandidate,
 } from "./renderer-mission-authority";
 import {
-  hasMissionApprovalTrust,
-  missionApprovalTrustKeyFrom,
-  missionApprovalTrustIdentityHash,
-  rememberMissionApprovalTrust,
-} from "./mission-approval-trust";
-import {
   consumeWizardPlanReviewGrant,
   recordWizardPlanReviewGrant,
 } from "./mission-wizard-plan-review-grant";
@@ -852,150 +846,29 @@ async function confirmMissionAuthorityChange(
   candidate: RendererMissionAuthorityCandidate,
   action: "approve" | "promote",
   replacement?: ExclusiveOrchestratorReplacementCandidate,
-  delegation?: { wizardPlanReviewVerified?: boolean },
+  _delegation?: { wizardPlanReviewVerified?: boolean },
 ): Promise<string | null> {
-  const window = BrowserWindow.fromWebContents(owner);
-  if (!window || window.isDestroyed()) {
-    throw new Error("renderer window is unavailable");
-  }
-  if (missionAuthorityConfirmations.has(owner)) {
-    throw new Error("mission authority confirmation is already pending");
-  }
-  missionAuthorityConfirmations.add(owner);
-  try {
-    const isPromotion = action === "promote";
-    const isExperimental =
-      !isPromotion && candidate.orchestratorEvidence === "experimental";
-    const review = missionAuthorityDialogDetail(
-      scope,
-      candidate,
-      action,
-      replacement,
-    );
-    // Aprovação já consumada (approve only): a missão está viva com autoridade
-    // de dispatch vigente para este mesmo runtime, então `approveIntent` cai na
-    // lane de continuar bootstrap e NÃO concede autoridade nova — perguntar de
-    // novo é o loop infinito do voo real 05/08 (o operador reaprovava para
-    // sempre uma missão que já estava rodando). Qualquer mudança material
-    // (revisão de intent nova, aprovação revogada, runtime diferente, missão
-    // fora de execução) derruba a marca e o modal nativo volta.
-    if (!isPromotion && candidate.approvalAlreadyCurrent === true) {
-      console.log(
-        `[orch] mission approval already current; no re-prompt ` +
-          `project=${scope.projectId} mission=${candidate.missionId}`,
-      );
-      return review.reviewSha256;
-    }
-    // Pré-autorização (approve only): mesmo projeto + mesmo roster hash →
-    // pula o modal e ainda emite o reviewSha256 do review integral. Promote
-    // e experimental sempre pedem olhos humanos. Gate E2E real desliga trust.
-    // A identidade do roster precisa sobreviver ao selo E à re-decomposição:
-    // squads salvos usam a revisão de ORIGEM (o selo cria cópia com outro
-    // hash); squads GERADOS PELO ENGINE re-geram id/hash a cada decomposição,
-    // então a identidade durável é a autoridade aprovada (forma do time +
-    // permissões + adapter/modelo/confinamento do orquestrador) — provado em
-    // campo 06/08: o operador marcou "não perguntar de novo" às 09:33:50 e o
-    // modal voltou às 09:34:57 porque o hash re-gerado nunca mais batia.
-    const trustKey = missionApprovalTrustKeyFrom(
-      scope,
-      missionApprovalTrustIdentityHash(
-        candidate.squad,
-        candidate.orchestratorRuntime,
-      ),
-    );
-    if (
-      !isPromotion &&
-      !isExperimental &&
-      hasMissionApprovalTrust(trustKey)
-    ) {
-      console.log(
-        `[orch] mission approval delegated project=${scope.projectId} ` +
-          `squadHash=${candidate.squad.hash.slice(0, 12)}`,
-      );
-      return review.reviewSha256;
-    }
-    // Delegação frictionless (approve only): o wizard de produto exibiu a
-    // revisão do plano DESTA submissão (grant main-owned, single-use, ligado
-    // a sender+missão+intentVersion) — o clique em Start já é a aprovação, e
-    // o contrato recebe o mesmo reviewSha256 do review integral. Risco
-    // destrutivo, rota experimental e promoção continuam no modal nativo; o
-    // gate E2E real desliga a delegação na emissão do grant.
-    if (
-      !isPromotion &&
-      !isExperimental &&
-      delegation?.wizardPlanReviewVerified === true &&
-      candidate.risk !== "destructive"
-    ) {
-      console.log(
-        `[orch] mission approval delegated to wizard plan review ` +
-          `project=${scope.projectId} mission=${candidate.missionId}`,
-      );
-      return review.reviewSha256;
-    }
-    // Disclosure progressiva (06/08, atrito reportado em voo real): o modal
-    // padrão abre com o RESUMO e o botão "Detalhes" (índice 2 — Negar=0 e
-    // Aprovar=1 preservados) revela o review integral num segundo estágio.
-    // Promoção, rota experimental e risco destrutivo mantêm o paredão direto.
-    const useSummaryFirst =
-      !isPromotion && !isExperimental && candidate.risk !== "destructive";
-    const baseDialog = {
-      type: (candidate.risk === "destructive" || isExperimental
-        ? "warning"
-        : "question") as "warning" | "question",
-      title: isPromotion
-        ? "Nexus IDE — promover plano"
-        : "Nexus IDE — iniciar missão",
-      defaultId: 0,
-      cancelId: 0,
-      noLink: true,
-      message: isPromotion
-        ? "Permitir que este plano passe a executar mudanças?"
-        : isExperimental
-          ? "Aprovar esta rota experimental e liberar a execução?"
-          : "Aprovar esta missão e liberar sua execução?",
-    };
-    const approveLabel = isPromotion
-      ? "Promover e executar"
-      : isExperimental
-        ? "Aprovar experimental e iniciar"
-        : "Aprovar e iniciar";
-    const checkbox = isPromotion
-      ? {}
-      : {
-          checkboxLabel:
-            "Não perguntar de novo para esta equipe neste projeto",
-        };
-    let result = await dialog.showMessageBox(window, {
-      ...baseDialog,
-      buttons: useSummaryFirst
-        ? ["Negar", approveLabel, "Detalhes"]
-        : ["Negar", approveLabel],
-      ...checkbox,
-      ...(isPromotion ? {} : { checkboxChecked: false }),
-      detail: useSummaryFirst ? review.summary : review.detail,
-    });
-    if (useSummaryFirst && result.response === 2) {
-      result = await dialog.showMessageBox(window, {
-        ...baseDialog,
-        buttons: ["Negar", approveLabel],
-        ...checkbox,
-        ...(isPromotion
-          ? {}
-          : { checkboxChecked: result.checkboxChecked === true }),
-        detail: review.detail,
-      });
-    }
-    if (result.response !== 1) return null;
-    if (!isPromotion && result.checkboxChecked) {
-      rememberMissionApprovalTrust(
-        trustKey,
-        candidate.squad.runtimeSourceSquadId ?? candidate.squad.id,
-      );
-    }
-    return review.reviewSha256;
-  } finally {
-    missionAuthorityConfirmations.delete(owner);
-  }
+  // ZERO FRICÇÃO (decisão do dono, 06/08): nenhum prompt no caminho da
+  // missão — nem upfront, nem destrutivo, nem promoção. A segurança migrou de
+  // CONFIRMAÇÃO para REVERSIBILIDADE + REGISTRO: o recibo criptográfico
+  // permanece (reviewSha256 do review integral entra no contrato e amarra o
+  // fence), histórico/receipts são preservados no encerramento, e a
+  // autorização vira registro auditável — o sistema conta o que fez em vez de
+  // interrogar antes de fazer. O parâmetro owner permanece na assinatura para
+  // callers/escopo; nenhuma janela é tocada.
+  void owner;
+  const review = missionAuthorityDialogDetail(
+    scope,
+    candidate,
+    action,
+    replacement,
+  );
+  console.log(
+    `[orch] mission ${action} auto-authorized risk=${candidate.risk} ` +
+      `project=${scope.projectId} mission=${candidate.missionId} ` +
+      `reviewSha256=${review.reviewSha256}`,
+  );
+  return review.reviewSha256;
 }
 
 async function confirmMissionLifecycleDemotion(
@@ -1003,40 +876,18 @@ async function confirmMissionLifecycleDemotion(
   scope: ProjectExecutionScope,
   candidate: RendererMissionLifecycleCandidate,
 ): Promise<boolean> {
-  const window = BrowserWindow.fromWebContents(owner);
-  if (!window || window.isDestroyed()) {
-    throw new Error("renderer window is unavailable");
-  }
-  if (missionAuthorityConfirmations.has(owner)) {
-    throw new Error("mission authority confirmation is already pending");
-  }
-  missionAuthorityConfirmations.add(owner);
-  try {
-    const result = await dialog.showMessageBox(window, {
-      type: "warning",
-      title: "Nexus IDE — encerrar execução",
-      buttons: ["Cancelar", candidate.toStatus === "blocked" ? "Bloquear missão" : "Marcar falha"],
-      defaultId: 0,
-      cancelId: 0,
-      noLink: true,
-      message:
-        candidate.toStatus === "blocked"
-          ? "Bloquear esta missão e revogar todos os workers ativos?"
-          : "Marcar esta missão como falha e revogar todos os workers ativos?",
-      detail:
-        `Workspace: ${safeDialogLabel(scope.rootRealPath, 4_096)}\n` +
-        `Missão: ${safeDialogLabel(candidate.title, 512)}\n` +
-        `ID: ${safeDialogLabel(candidate.missionId, 128)}\n` +
-        `Transição: ${candidate.fromStatus} → ${candidate.toStatus}\n` +
-        `Registro integral: ${safeDialogLabel(candidate.description, 6_000)}\n\n` +
-        "Esta ação revoga imediatamente dispatch, merge e efeitos dos workers atuais.",
-    });
-    return result.response === 1;
-  } finally {
-    missionAuthorityConfirmations.delete(owner);
-  }
+  // ZERO FRICÇÃO (06/08): parar/encerrar é ação explícita do operador — vale
+  // na hora, sem confirmação. O encerramento preserva panes, scrollback e
+  // receipts (mission-runtime-termination), então a operação é reversível via
+  // Retomar; o registro fica no card da missão e no log abaixo.
+  void owner;
+  console.log(
+    `[orch] mission lifecycle demotion auto-confirmed ` +
+      `project=${scope.projectId} mission=${candidate.missionId} ` +
+      `to=${candidate.toStatus}`,
+  );
+  return true;
 }
-
 async function confirmMissionRuntimeClose(
   owner: WebContents,
   scope: ProjectExecutionScope,
