@@ -89,7 +89,9 @@ function knownMissionRecovery(raw: string): string | null {
     return "Falta um reviewer/QA com CLI autenticada e rota ativa (não-Claude). Troque o reviewer ou autentique a CLI.";
   }
   if (/squad_runtime_unavailable:maestro-unverified/i.test(raw)) {
-    return "O Maestro escolhido não está verificado nesta release. Ative Escolha livre em Configurações › Orquestração ou use Claude/Codex.";
+    // "Configurações › Orquestração" não existe na nav: o controle
+    // (squadCliPolicy) vive em OrchestratorDefaults, dentro de Squads.
+    return "O Maestro escolhido não está verificado nesta release. Ative Escolha livre em Configurações › Squads ou use Claude/Codex.";
   }
   if (/squad_runtime_unavailable:maestro-unavailable/i.test(raw)) {
     return "O Maestro não tem rota ativa. Autentique a CLI do Maestro e tente novamente.";

@@ -66,7 +66,9 @@ export function assertReleaseQualifiedMissionWorkerSpawn(
   throw new Error(
     `governed_worker_spawn_unsupported: ${options.adapterId} não pode executar ` +
       'como worker autônomo de missão nesta release; use o adapter Codex builtin ' +
-      'qualificado, ative Configurações › Orquestração › Escolha livre, ou abra ' +
+      // Nav real: Configurações › Squads (OrchestratorDefaults). Não existe
+      // seção "Orquestração" — mandar o operador para lá custava a busca toda.
+      'qualificado, ative Configurações › Squads › Escolha livre, ou abra ' +
       'esse CLI manualmente no Terminal fora da missão',
   );
 }
