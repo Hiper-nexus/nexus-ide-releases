@@ -36,6 +36,18 @@ const UNTRASHABLE_TARGET = /^(\/|~|\/Volumes\/|\/mnt\/|\/media\/|[A-Za-z]:\\?$)/
 
 const RM_RF = /\brm\s+(?:-[a-zA-Z]*\s+)*-?[a-zA-Z]*r[a-zA-Z]*f?[a-zA-Z]*\s+(.+)$/;
 
+/**
+ * Operadores de shell. Importa porque `trash` NÃO é um preparo: é uma
+ * SUBSTITUIÇÃO — mandamos os caminhos para a lixeira e o `rm` deixa de rodar.
+ * Isso só é honesto se o `rm` for o comando inteiro. Em `rm -rf x && npm i` a
+ * substituição engoliria o `npm i`, então esse caso é declarado irreversível e
+ * segue o caminho normal, sem desfazer e sem pergunta.
+ *
+ * `backup-ref` não tem esse problema: cria a ref ANTES e deixa o comando rodar
+ * inteiro, então continua válido em comando composto.
+ */
+const SHELL_COMPOSITION = /(\|\||&&|[;|]|\$\(|`|\n)/;
+
 function parseRemovalTargets(command: string): readonly string[] {
   const match = RM_RF.exec(command);
   if (!match?.[1]) return [];
@@ -52,6 +64,11 @@ export function planDestructiveReversibility(
   if (!isDestructive(trimmed)) {
     return { kind: 'not-destructive', command: trimmed };
   }
+  // INVARIANTE que sustenta a substituição por lixeira: todo `rm` que chega aqui
+  // carrega `-rf`, porque são as ÚNICAS formas de rm que `isDestructive` marca.
+  // Isso é o que faz o comando virar no-op de exit 0 depois do preparo — sem o
+  // `-f`, o rm falharia com "No such file" e nós teríamos criado o erro.
+  // Travado por teste em destructive-reversibility.test.ts.
   if (/\brm\s+/.test(trimmed)) {
     const paths = parseRemovalTargets(trimmed);
     if (paths.length === 0) {
@@ -59,6 +76,14 @@ export function planDestructiveReversibility(
         kind: 'record-irreversible',
         command: trimmed,
         reason: 'remoção sem alvo legível — não dá para mandar para a lixeira',
+      };
+    }
+    if (SHELL_COMPOSITION.test(trimmed)) {
+      return {
+        kind: 'record-irreversible',
+        command: trimmed,
+        reason:
+          'remoção dentro de comando composto: trocar por lixeira engoliria o resto da linha',
       };
     }
     if (paths.some((path) => UNTRASHABLE_TARGET.test(path))) {

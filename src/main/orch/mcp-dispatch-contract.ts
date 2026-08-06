@@ -112,6 +112,16 @@ export type WorkflowAuthorityResolver = (
   missionId: string,
 ) => WorkflowEffectAuthority;
 
+/**
+ * Prepara a reversibilidade e devolve a frase de desfazer que vai para a
+ * auditoria. Lançar aqui ABORTA o comando: preparo quebrado não pode virar
+ * ação sem volta.
+ */
+export type DestructiveReversibilityPreparer = (input: {
+  readonly command: string;
+  readonly cwd: string;
+}) => Promise<{ readonly revertPath: string; readonly reversible: boolean }>;
+
 export interface McpDispatchOptions {
   /** Physical source override for the authenticated ACP bridge boundary. */
   source?: McpDispatchSource;
@@ -126,6 +136,12 @@ export interface McpDispatchOptions {
   assertCurrentCaller?: () => boolean;
   /** Aborted when the native caller disappears while a handler is running. */
   callerSignal?: AbortSignal;
+  /**
+   * Constrói o caminho de volta de um comando destrutivo ANTES de ele rodar.
+   * Seam de teste: produção usa lixeira do SO + refs do git. Ausente = sem
+   * preparo, e nesse caso o piso de consentimento destrutivo permanece.
+   */
+  prepareDestructiveReversibility?: DestructiveReversibilityPreparer;
   /** Internal seam for isolated dispatch tests; production uses PREVC. */
   resolveWorkflowAuthority?: WorkflowAuthorityResolver;
   /** Internal seam for intent-gate tests; production resolves scoped stores. */

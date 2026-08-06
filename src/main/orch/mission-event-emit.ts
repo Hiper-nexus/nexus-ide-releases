@@ -237,6 +237,42 @@ export function emitGuidedFanoutSerialized(
  * a legitimately sequential phase. Callers are edge-triggered (see
  * `reportWaveConcurrency`), so this never floods the 5s tick. Never throws.
  */
+/**
+ * N1: a ação destrutiva rodou sem perguntar — e o operador lê AQUI como desfazer.
+ *
+ * Mesma superfície do veredito de teto de propósito: foi ela que transformou
+ * "está travado" em "está trabalhando", e o problema aqui é da mesma família —
+ * "aconteceu sem me perguntar" precisa virar "aconteceu e eu sei desfazer".
+ *
+ * `reversible: false` NÃO é um erro a suprimir: é o único aviso que o operador
+ * vai ter de que aquele efeito não tem volta. Nunca throws.
+ */
+export function emitDestructiveReversalEvent(
+  missionId: string,
+  input: {
+    readonly toolName: string;
+    readonly revertPath: string;
+    readonly reversible: boolean;
+  },
+): void {
+  try {
+    emitMissionIntentEvent({
+      name: 'destructive_reversal_prepared',
+      missionId,
+      reason: input.revertPath.slice(0, 200),
+      meta: {
+        toolName: input.toolName,
+        reversible: input.reversible,
+      },
+    });
+  } catch (err) {
+    console.warn(
+      '[mission-events] destructive_reversal_prepared intent failed:',
+      err,
+    );
+  }
+}
+
 export function emitWaveConcurrencyVerdictEvent(
   scope: ProjectExecutionScope,
   missionId: string,

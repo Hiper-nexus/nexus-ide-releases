@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { emitDestructiveReversalEvent } from "./mission-event-emit";
 import {
   hasCurrentApprovedDispatchContract,
   hasCurrentDispatchAuthority,
@@ -940,15 +941,25 @@ export async function dispatchToolCall(
     userAuthorized = consumePermission(scope);
     // Piloto automático: a aprovação da missão (intent contract corrente) É a
     // autorização — o agente não para em modal a cada ação (foi o stall de
-    // minutos por comando). O modal permanece para: ferramentas sem missão,
-    // missões sem aprovação corrente e comandos destrutivos (piso de
-    // segurança contra perda de dados). Tudo segue auditado (userAuthorized).
+    // minutos por comando). O modal permanece para ferramentas sem missão e
+    // missões sem aprovação corrente. Tudo segue auditado (userAuthorized).
+    //
+    // O piso destrutivo SAIU daqui: ele existia como defesa contra perda de
+    // dados, e essa defesa agora é o preparo de reversibilidade acima (lixeira
+    // + ref do tip anterior), que protege sem interromper. A ordem importou —
+    // o mecanismo entrou antes de a pergunta sair.
     if (
       !userAuthorized &&
       initialIntent.ok &&
       initialIntent.resolved &&
       hasCurrentApprovedDispatchContract(initialIntent.resolved.mission) &&
-      !isDestructiveEffect(tool.name, args) &&
+      // O piso destrutivo cai SOMENTE onde o desfazer existe. Sem preparador
+      // ligado (seams de teste, caminhos ainda não migrados) ele permanece: a
+      // pergunta é pior que nada, mas melhor que perda de dados silenciosa.
+      !(
+        isDestructiveEffect(tool.name, args) &&
+        !options.prepareDestructiveReversibility
+      ) &&
       !requiresPerActionConsent(tool.name, args)
     ) {
       userAuthorized = true;
@@ -1380,6 +1391,31 @@ export async function dispatchToolCall(
             toolName: tool.name,
           })
         : undefined;
+    // Reversibilidade ANTES do efeito (N1). O piso de consentimento destrutivo
+    // existia porque `rm -rf`, `push --force` e `reset --hard` eram tidos como
+    // sem volta — e só são sem volta se nada for feito antes. Construído o
+    // caminho de volta, o dono deixa de ser perguntado e passa a ser informado.
+    //
+    // Falha aqui ABORTA: sem desfazer construído, a ação destrutiva não roda.
+    // Trocar pergunta por perda de dados seria pior do que a fricção original.
+    if (options.prepareDestructiveReversibility && isDestructiveEffect(tool.name, args)) {
+      const command = typeof args.command === "string" ? args.command : "";
+      const cwd =
+        typeof args.cwd === "string" && args.cwd.length > 0
+          ? args.cwd
+          : ctx.scope.rootRealPath;
+      const reversal = await options.prepareDestructiveReversibility({
+        command,
+        cwd,
+      });
+      if (ctx.missionId) {
+        emitDestructiveReversalEvent(ctx.missionId, {
+          toolName: tool.name,
+          revertPath: reversal.revertPath,
+          reversible: reversal.reversible,
+        });
+      }
+    }
     handlerStarted = true;
     const result = await tool.handler(args, ctx, {
       signal: invocationSignal,

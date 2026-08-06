@@ -1,4 +1,6 @@
 import http from "node:http";
+import { createDestructiveReversibilityPreparer } from "./destructive-reversibility-production";
+import { createSystemReversibilityIo } from "./destructive-reversibility-system-io";
 import fs from "node:fs";
 import path from "node:path";
 import { app, dialog } from "electron";
@@ -209,6 +211,14 @@ const SHA256_HEX = /^[a-f0-9]{64}$/u;
  * mission stores. We repeat its structural invariants here before projecting a
  * single cwd into the disposable HOME; no trust ever reaches ~/.claude.json.
  */
+/**
+ * Um preparador por processo. O adaptador de sistema não tem estado — o que
+ * importa é existir UM, para que ligar o dispatch seja impossível de esquecer.
+ */
+const destructiveReversibilityPreparer = createDestructiveReversibilityPreparer(
+  createSystemReversibilityIo(),
+);
+
 export function hasApprovedMissionProjectTrust(
   authority: Readonly<BoundSpawnAuthority>,
 ): boolean {
@@ -320,6 +330,7 @@ async function handleMcpRequest(
       }
       const response = await handleMcpMessage(registry!, ctx, message, {
         confirm: confirmHttpMcpTool,
+        prepareDestructiveReversibility: destructiveReversibilityPreparer,
         source:
           req.headers['x-nexus-transport'] === 'acp-stdio'
             ? 'acp-stdio'
@@ -992,7 +1003,10 @@ function createPtyMissionControl(): PtyStreamMissionControl {
           request.tool,
           request.args,
           ctx,
-          { confirm: confirmHttpMcpTool },
+          {
+            confirm: confirmHttpMcpTool,
+            prepareDestructiveReversibility: destructiveReversibilityPreparer,
+          },
         ),
       );
     },

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { isDestructive } from '../jarvis/guardrails';
 import { planDestructiveReversibility } from './destructive-reversibility';
 
 /**
@@ -55,5 +56,62 @@ describe('planDestructiveReversibility', () => {
 
   it('todo plano nomeia o comando, para a auditoria não ser vaga', () => {
     expect(planDestructiveReversibility('rm -rf tmp').command).toBe('rm -rf tmp');
+  });
+});
+
+describe('substituição por lixeira só em comando simples', () => {
+  it('rm sozinho vira lixeira', () => {
+    const plan = planDestructiveReversibility('rm -rf build/cache');
+    expect(plan.kind).toBe('trash');
+  });
+
+  it.each([
+    'rm -rf build && npm install',
+    'rm -rf build; npm install',
+    'rm -rf build || echo falhou',
+    'rm -rf $(cat alvos.txt)',
+    'rm -rf build | tee log',
+  ])('comando composto não vira lixeira: %s', (command) => {
+    const plan = planDestructiveReversibility(command);
+    expect(plan.kind).toBe('record-irreversible');
+    if (plan.kind === 'record-irreversible') {
+      expect(plan.reason).toMatch(/composto|lixeira/);
+    }
+  });
+
+  it('backup-ref continua válido em comando composto — cria a ref e deixa rodar', () => {
+    const plan = planDestructiveReversibility(
+      'git reset --hard HEAD~1 && npm test',
+    );
+    expect(plan.kind).toBe('backup-ref');
+  });
+});
+
+/**
+ * Invariante de acoplagem, não teste de regex.
+ *
+ * A substituição por lixeira só é segura porque o `rm -rf` que roda depois vira
+ * no-op de exit 0. Isso depende de `isDestructive` nunca marcar um `rm` SEM
+ * `-f` — se alguém alargar aquele guardrail para `rm -r`, o preparo passaria a
+ * fabricar "No such file" em cima do agente. Este teste quebra nesse dia.
+ */
+describe('invariante: todo rm destrutivo carrega -f', () => {
+  it.each([
+    'rm -rf build',
+    'sudo rm -rf /tmp/x',
+    'rm   -rf   node_modules',
+  ])('%s', (command) => {
+    expect(isDestructive(command)).toBe(true);
+    expect(planDestructiveReversibility(command).kind).not.toBe(
+      'not-destructive',
+    );
+    expect(/\brm\s+(?:-[a-zA-Z]*\s+)*-[a-zA-Z]*f/.test(command)).toBe(true);
+  });
+
+  it('rm sem -f não é destrutivo hoje — logo nunca chega ao preparo', () => {
+    expect(isDestructive('rm -r build')).toBe(false);
+    expect(planDestructiveReversibility('rm -r build').kind).toBe(
+      'not-destructive',
+    );
   });
 });

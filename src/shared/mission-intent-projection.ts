@@ -45,7 +45,9 @@ export type MissionIntentEventName =
   | 'kickoff_accepted'
   | 'chef_idle_awaiting_workers'
   | 'guided_fanout_serialized'
-  | 'wave_concurrency_verdict';
+  | 'wave_concurrency_verdict'
+  // Ação destrutiva rodou sem perguntar: leva o caminho de volta ao operador.
+  | 'destructive_reversal_prepared';
 
 /**
  * Passos visíveis do bootstrap main-owned (aprovação → primeiro pane → aceite

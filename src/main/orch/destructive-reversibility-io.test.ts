@@ -1,0 +1,104 @@
+import { describe, expect, it, vi } from 'vitest';
+import { planDestructiveReversibility } from './destructive-reversibility';
+import {
+  prepareDestructiveReversibility,
+  type ReversibilityIo,
+} from './destructive-reversibility-io';
+
+function fakeIo(overrides: Partial<ReversibilityIo> = {}): ReversibilityIo {
+  return {
+    trash: vi.fn(async () => {}),
+    revParse: vi.fn(async () => 'a'.repeat(40)),
+    updateRef: vi.fn(async () => {}),
+    resolvePath: (cwd, target) =>
+      target.startsWith('/') ? target : `${cwd}/${target}`,
+    ...overrides,
+  };
+}
+
+const CWD = '/repo';
+const NOW = 1_754_000_000_000;
+
+async function prepare(command: string, io: ReversibilityIo) {
+  return prepareDestructiveReversibility(planDestructiveReversibility(command), {
+    cwd: CWD,
+    io,
+    now: NOW,
+  });
+}
+
+describe('preparo de reversibilidade destrutiva', () => {
+  it('rm -rf simples vai para a lixeira antes de rodar', async () => {
+    const io = fakeIo();
+    const receipt = await prepare('rm -rf build/cache', io);
+
+    expect(io.trash).toHaveBeenCalledWith('/repo/build/cache');
+    expect(receipt.reversible).toBe(true);
+    expect(receipt.revertPath).toContain('Lixeira');
+  });
+
+  it('lixeira que falha propaga — não se remove pergunta em cima de desfazer quebrado', async () => {
+    const io = fakeIo({
+      trash: vi.fn(async () => {
+        throw new Error('EPERM');
+      }),
+    });
+    await expect(prepare('rm -rf build', io)).rejects.toThrow('EPERM');
+  });
+
+  it('force-push guarda o tip REMOTO, não o HEAD local', async () => {
+    const revParse = vi.fn(async () => 'b'.repeat(40));
+    const io = fakeIo({ revParse });
+    const receipt = await prepare('git push --force origin main', io);
+
+    expect(revParse).toHaveBeenCalledWith(CWD, '@{upstream}');
+    expect(io.updateRef).toHaveBeenCalledWith(
+      CWD,
+      `refs/nexus-undo/remote-tip-${NOW}`,
+      'b'.repeat(40),
+    );
+    expect(receipt.revertPath).toContain('git reset --hard refs/nexus-undo/');
+  });
+
+  it('reset --hard guarda o HEAD anterior', async () => {
+    const io = fakeIo();
+    const receipt = await prepare('git reset --hard HEAD~1', io);
+
+    expect(io.revParse).toHaveBeenCalledWith(CWD, 'HEAD');
+    expect(receipt.reversible).toBe(true);
+  });
+
+  it('sem upstream degrada para registro, nunca para pergunta', async () => {
+    const io = fakeIo({ revParse: vi.fn(async () => null) });
+    const receipt = await prepare('git push --force origin nova-branch', io);
+
+    expect(io.updateRef).not.toHaveBeenCalled();
+    expect(receipt.reversible).toBe(true);
+    expect(receipt.revertPath).toContain('nada anterior a perder');
+  });
+
+  it('irreversível é declarado, com o motivo legível', async () => {
+    const io = fakeIo();
+    const receipt = await prepare('mkfs.ext4 /dev/sda1', io);
+
+    expect(receipt.reversible).toBe(false);
+    expect(receipt.revertPath).toContain('Sem desfazer');
+  });
+
+  it('comando inofensivo não toca em IO nenhum', async () => {
+    const io = fakeIo();
+    const receipt = await prepare('npm test', io);
+
+    expect(io.trash).not.toHaveBeenCalled();
+    expect(io.revParse).not.toHaveBeenCalled();
+    expect(receipt.revertPath).toBe('');
+  });
+
+  it('rm composto não vira lixeira — seria engolir o resto da linha', async () => {
+    const io = fakeIo();
+    const receipt = await prepare('rm -rf build && npm install', io);
+
+    expect(io.trash).not.toHaveBeenCalled();
+    expect(receipt.reversible).toBe(false);
+  });
+});
