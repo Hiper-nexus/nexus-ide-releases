@@ -181,6 +181,10 @@ import {
 import { createCommandBlockPersister } from "./terminal/command-block-persist";
 import { configureMissionEventEmit } from "./orch/mission-event-emit";
 import { installObserverMissionEventProjector } from "./orch/observer-mission-event-projector";
+import {
+  installMissionDiskProjection,
+  uninstallMissionDiskProjection,
+} from "./orch/mission-disk-projection";
 import { registerTerminalBlockActionsIpc } from "./terminal/terminal-block-actions-ipc";
 import { registerSearchMixerIpc } from "./search/search-mixer-ipc";
 import { getSearchMixer } from "./search/search-mixer-bootstrap";
@@ -519,6 +523,7 @@ function bootstrap(): void {
   ensureCommandBlockTracking();
   configureMissionEventEmit(projectRuntimeManager);
   installObserverMissionEventProjector();
+  installMissionDiskProjection();
   registerMissionEventIpc();
   // Product paths: CommandBlock actions, SearchMixer, full product-wave IPC.
   registerTerminalBlockActionsIpc();
@@ -1002,6 +1007,9 @@ function shutdown(): Promise<void> {
     // complete. A failed proof must leave the next retry operational.
     await stopCronLoop();
     await stopGoalDriverLoop();
+    // Cancela refreshes de projecao pendentes ANTES do teardown fisico: um
+    // timer de debounce disparando apos closeAll reabriria o runtime SQLite.
+    uninstallMissionDiskProjection();
     await closeAllDesignWritebacks();
     // ACP children are not part of the PTY host inventory. Close them before
     // proving the PTY half, otherwise quitting could leave a harness orphaned

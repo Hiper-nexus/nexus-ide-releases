@@ -35,6 +35,23 @@ export function getMissionEventRuntimeManager(): ProjectRuntimeManager | null {
   return runtimeManager;
 }
 
+/**
+ * Post-append observer (e.g. the mission disk projection). Fire-and-forget:
+ * a tap failure never changes the append outcome.
+ */
+export type MissionEventAppendTap = (
+  scope: ProjectExecutionScope,
+  missionId: string,
+) => void;
+
+let appendTap: MissionEventAppendTap | null = null;
+
+export function setMissionEventAppendTap(
+  tap: MissionEventAppendTap | null,
+): void {
+  appendTap = tap;
+}
+
 export function emitMissionEvent(
   scope: ProjectExecutionScope,
   input: MissionEventAppendInput,
@@ -48,11 +65,16 @@ export function emitMissionEvent(
   try {
     const journal = new MissionEventJournal(runtimeManager, scope);
     journal.append(input);
-    return true;
   } catch (err) {
     console.warn('[mission-events] append failed:', err);
     return false;
   }
+  try {
+    appendTap?.(scope, input.missionId);
+  } catch (err) {
+    console.warn('[mission-events] append tap failed:', err);
+  }
+  return true;
 }
 
 /**

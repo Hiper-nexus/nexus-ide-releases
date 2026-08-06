@@ -20,6 +20,22 @@ Migration failure → transactional rollback + fault code.
 
 WAL busy_timeout 5s; LRU open runtimes; flag overrides file 0600.
 
+## Espelho legível de missão
+
+O SQLite continua sendo a fonte canônica. Para diagnóstico sem consulta ao
+banco, cada missão aberta é projetada em
+`<project-runtime>/missions/<mission-id>/`:
+
+- `BOARD.md`: estado humano de milestones, workers, handoffs e eventos recentes;
+- `status.json`: resumo estável para automação local;
+- `events.jsonl`: últimos 100 eventos, somente com campos permitidos.
+
+A projeção é derivada, nunca ingerida de volta. Escritas são atômicas, os
+arquivos usam modo `0600`, diretórios usam `0700`, symlinks/escape são recusados
+e texto autorado por agentes passa por redação antes de sair do SQLite. Ao
+reabrir um scope após restart, arquivos ausentes são reconstruídos. Falha no
+espelho é registrada, mas não invalida a mutação canônica da missão.
+
 ## Migration
 
 See `INITIAL_PROJECT_MIGRATIONS` through `014-mission-events-command-blocks`.
