@@ -23,7 +23,10 @@ export function buildMissionSchedulerTaskPrompt(
   worker: {
     readonly agentName: string;
     readonly category: string;
-    readonly executionMode: "isolated_worktree" | "read_only";
+    readonly executionMode:
+      | "isolated_worktree"
+      | "read_only"
+      | "same_checkout";
     readonly qualityRepairReason?: string;
   },
   dependencyHandoffs: readonly MissionSchedulerDependencyHandoff[] = [],
@@ -46,9 +49,14 @@ export function buildMissionSchedulerTaskPrompt(
     // boundary rejects it before provider discovery.
   }
   const isGuidedQualityGate = guidedTaskKind === "quality-gate";
+  const isSimpleImplementation = guidedTaskKind === "simple-implementation";
   const isGuidedIsolatedAdvisory = guidedTaskKind === "isolated-advisory";
-  const completionContract =
-    worker.executionMode === "read_only"
+  const completionContract = isSimpleImplementation
+    ? "Você edita DIRETAMENTE o checkout do projeto — não há worktree isolada e " +
+      "não haverá merge depois: o que você escrever já está no lugar final. " +
+      "Toque somente os arquivos da sua ownership; commitar é opcional e o " +
+      "handoff é o que conclui a tarefa. Chame nexus_handoff_submit ao terminar."
+    : worker.executionMode === "read_only"
       ? "Esta tarefa é SOMENTE LEITURA: não edite arquivos, não execute comandos mutantes, " +
         "não faça commit. Inspecione, reúna evidências Nexus confiáveis e chame " +
         "nexus_handoff_submit. O dispatcher Nexus valida e conclui."

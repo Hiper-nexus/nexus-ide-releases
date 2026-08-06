@@ -480,7 +480,9 @@ describe("guided result consumption chain", () => {
         {
           agentName: started.agent.agentName,
           category: started.agent.category,
-          executionMode: started.schedule.executionMode!,
+          executionMode: started.schedule.executionMode! as
+            | 'read_only'
+            | 'isolated_worktree',
         },
         dependencyHandoffs,
       );

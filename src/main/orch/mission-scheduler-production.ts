@@ -1495,13 +1495,29 @@ async function tickMission(
           dispatch.executionMode === "same_checkout" &&
           dispatch.state === "handoff_ready"
         ) {
-          stores.taskDispatches.blockUnvalidatedByCoordinator({
-            taskId: dispatch.taskId,
-            revision: dispatch.revision,
-            reason:
-              "same_checkout legado não possui baseline/diff atribuível; " +
-              "replaneje com ownership e worktree isolado.",
-          });
+          // 06/08: era aqui que TODA missão do caminho simples morria na
+          // ENTREGA — bloqueada com "replaneje com ownership e worktree
+          // isolado", mandando o operador refazer a cerimônia que acabáramos
+          // de remover. `same_checkout` agora tem forma de conclusão própria
+          // (kind `simple-implementation`, receipt `same_checkout_validated`),
+          // então o handoff conclui em vez de estacionar.
+          try {
+            stores.taskDispatches.completeSameCheckoutFromTrustedHandoff({
+              taskId: dispatch.taskId,
+              revision: dispatch.revision,
+            });
+          } catch (error) {
+            const terminal = projectTerminalFinalizationFailure(
+              { missionId, taskId: dispatch.taskId, error },
+              stores.taskDispatches,
+            );
+            console.warn(
+              `[mission-scheduler] same_checkout ${
+                terminal ? "blocked" : "finalization deferred"
+              } for ${missionId}/${dispatch.taskId}:`,
+              error,
+            );
+          }
           continue;
         }
         if (

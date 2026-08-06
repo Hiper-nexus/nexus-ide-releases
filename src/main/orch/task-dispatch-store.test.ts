@@ -1290,7 +1290,7 @@ function guidedImplementationChainFixture() {
 
 function readOnlyPhysicalHandoffFixture(
   options: {
-    executionMode?: 'read_only' | 'isolated_worktree';
+    executionMode?: 'read_only' | 'isolated_worktree' | 'same_checkout';
     worktreeHeadSha?: string;
     teamReadOnlyFanout?: boolean;
     priorLearnings?: string;
@@ -1311,7 +1311,9 @@ function readOnlyPhysicalHandoffFixture(
       : [
           executionMode === 'read_only'
             ? 'guided-advisory'
-            : 'guided-isolated-advisory',
+            : executionMode === 'same_checkout'
+              ? 'guided-simple-implementation'
+              : 'guided-isolated-advisory',
           'sequential-only',
         ],
   };
@@ -1340,7 +1342,8 @@ function readOnlyPhysicalHandoffFixture(
         {
           id: 'advisor',
           agentName: 'Advisor independente',
-          category: 'architect',
+          category:
+            executionMode === 'same_checkout' ? 'executor' : 'architect',
           cli: 'codex',
           effort: 'high',
         },
@@ -1358,11 +1361,12 @@ function readOnlyPhysicalHandoffFixture(
             ? { parallelEligible: true }
             : {}),
           agentRef: 'advisor',
-          agentCategory: 'architect',
+          agentCategory:
+            executionMode === 'same_checkout' ? 'executor' : 'architect',
           executionMode,
         }),
         agentRef: 'advisor',
-        agentCategory: 'architect',
+        agentCategory: executionMode === 'same_checkout' ? 'executor' : 'architect',
       },
     ],
   });
@@ -1385,7 +1389,8 @@ function readOnlyPhysicalHandoffFixture(
     ownership,
     executionMode,
     agentRef: 'advisor',
-    agentCategory: 'architect',
+    agentCategory:
+      executionMode === 'same_checkout' ? 'executor' : 'architect',
     rosterHash: planReceipt.rosterHash,
     routeContract: {
       adapterId: 'codex',
@@ -1503,6 +1508,46 @@ describe('durable task dispatcher authority', () => {
         evidenceIds: [fixture.physicalReceiptId],
       },
     });
+  });
+
+  // LÁPIDE DA MINA (06/08): um dispatch `same_checkout` em `handoff_ready` era
+  // BLOQUEADO — "replaneje com ownership e worktree isolado" — mandando o
+  // operador refazer a cerimônia que acabáramos de remover. Com o caminho
+  // simples usando same_checkout, isso mataria TODA missão na entrega. Se a
+  // suposição voltar, este teste morre antes do usuário.
+  it('conclui um dispatch same_checkout a partir do handoff, em vez de rejeitá-lo', () => {
+    const fixture = readOnlyPhysicalHandoffFixture({
+      executionMode: 'same_checkout',
+    });
+
+    const completed = fixture.dispatches.completeSameCheckoutFromTrustedHandoff(
+      { taskId: fixture.task.id, revision: fixture.ready.revision },
+    );
+
+    expect(completed).toMatchObject({
+      state: 'completed',
+      integrationReceipt: { kind: 'same_checkout_validated' },
+    });
+    // A proveniência tem de dizer QUAL forma provou a não-interferência.
+    expect(completed.integrationReceipt?.reference).toBeTruthy();
+  });
+
+  it('recusa concluir same_checkout sem o recibo físico exato', () => {
+    const missing = readOnlyPhysicalHandoffFixture({
+      executionMode: 'same_checkout',
+    });
+    missing.runtime
+      .open(missing.scope)
+      .db.prepare(`DELETE FROM handoff_mcp_receipts WHERE handoff_id = ?`)
+      .run(missing.handoff.id);
+
+    expect(() =>
+      missing.dispatches.completeSameCheckoutFromTrustedHandoff({
+        taskId: missing.task.id,
+        revision: missing.ready.revision,
+      }),
+    ).toThrow(/physical|receipt|recibo/i);
+    expect(missing.dispatches.get(missing.task.id)?.state).toBe('handoff_ready');
   });
 
   it('keeps fan-out running after the last ACK and completes after durable Maestro consolidation recovery', () => {

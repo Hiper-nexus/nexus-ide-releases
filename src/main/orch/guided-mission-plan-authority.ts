@@ -179,6 +179,10 @@ type GuidedRecoveredStage =
   | "warmup"
   | "reproduction"
   | "implementation"
+  // Identidade de estágio PRÓPRIA, e não um alias de "implementation": um
+  // plano misto é legítimo (fase larga isolada + fase comum simples), e
+  // colapsar os dois violaria a regra de singleton por estágio.
+  | "simple-implementation"
   | "regression"
   | "independent-review"
   | "quality-gate";
@@ -634,6 +638,9 @@ export function assertRosterCompleteGuidedV2Receipt(
       warmup: 0.5,
       reproduction: 1,
       implementation: 2,
+      // Mesmo momento do fluxo que `implementation` — muda a FORMA de execução,
+      // não a posição do estágio na ordem de entrega.
+      "simple-implementation": 2,
       regression: 3,
       "independent-review": 4,
       "quality-gate": 5,

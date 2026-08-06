@@ -544,13 +544,21 @@ function verifyCompletedTaskPlanAuthority(
         (receipt.kind === "advisory_provider_unavailable" &&
           (sealed.schedule.guidedTaskKind === "advisory" ||
             sealed.schedule.guidedTaskKind === "isolated-advisory"));
+      // `same_checkout` deixou de ser rejeição incondicional (06/08): passa a
+      // ter forma de conclusão própria, com receipt próprio. A aceitação é
+      // ALARGADA, nunca reescrita — `isolated_worktree` segue validando
+      // exatamente como antes, e receipts antigos continuam significando o que
+      // sempre significaram (isolamento por worktree).
       if (
         (row.execution_mode === "isolated_worktree" &&
           !isolatedReceiptIsValid) ||
         (row.execution_mode === "read_only" &&
           receipt.kind !== "read_only_validated" &&
+          receipt.kind !== "same_checkout_validated" &&
           receipt.kind !== "advisory_provider_unavailable") ||
-        row.execution_mode === "same_checkout"
+        (row.execution_mode === "same_checkout" &&
+          receipt.kind !== "same_checkout_validated" &&
+          receipt.kind !== "advisory_provider_unavailable")
       ) {
         return false;
       }
@@ -609,6 +617,9 @@ function verifyCompletedTaskPlanAuthority(
               expectedHeadSha: advisoryMatch[1]!,
               checkoutMayHaveAdvanced: true,
             });
+          } else if (receipt.kind === "same_checkout_validated") {
+            // Nenhuma asserção de HEAD: o worker escreveu no próprio checkout
+            // por construção. A não-interferência foi provada na admissão.
           } else if (receipt.kind === "read_only_validated") {
             assertReadOnlyPhysicalGitAuthority({
               rootRealPath: binding.scope.rootRealPath,

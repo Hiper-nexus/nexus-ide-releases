@@ -852,6 +852,195 @@ export class TaskDispatchStore {
   }
 
   /**
+   * Conclusão de `same_checkout` a partir do handoff confiável.
+   *
+   * Espelha `completeReadOnlyFromTrustedHandoff` — mesmas travas de CAS,
+   * autoridade física do handoff, cronologia e intent selado — com UMA
+   * diferença deliberada: nenhuma asserção de HEAD imóvel, porque aqui o worker
+   * escreveu no próprio checkout.
+   *
+   * Worktree isolada é UMA forma de provar não-interferência, não a definição
+   * dela; a outra é serialização do escritor, aplicada na admissão. O receipt
+   * grava QUAL forma foi usada (`nonInterference`), para um auditor distinguir
+   * "worktree isolada, diff contra o próprio branch" de "mesmo checkout,
+   * atribuído por ownership" sem adivinhar.
+   */
+  completeSameCheckoutFromTrustedHandoff(input: {
+    readonly taskId: string;
+    readonly revision: number;
+  }): TaskDispatchRecord {
+    const taskId = idSchema.parse(input.taskId);
+    const revision = z.number().int().positive().parse(input.revision);
+    const now = this.#binding.now();
+    const db = this.#binding.writeDatabase();
+    const record = db
+      .transaction(() => {
+        const current = this.#getRow(db, taskId);
+        if (
+          !current ||
+          current.execution_mode !== "same_checkout" ||
+          current.state !== "handoff_ready" ||
+          current.revision !== revision ||
+          !current.handoff_id ||
+          !current.session_id ||
+          !current.worker_incarnation_id ||
+          current.handoff_accepted_at === null
+        ) {
+          throw new Error("same_checkout complete exige handoff_ready exato");
+        }
+        this.#assertCurrentIntent(db, current);
+        const sealed = assertSealedTaskDispatchPlanAuthority(db, current);
+        if (sealed.schedule.executionMode !== "same_checkout") {
+          throw new Error(
+            "same_checkout completion requires the exact sealed same_checkout schedule",
+          );
+        }
+        const physical = assertPhysicalTaskHandoffAuthority(
+          db,
+          this.#binding.coordinates,
+          {
+            missionId: current.mission_id,
+            handoffId: current.handoff_id,
+            sessionId: current.session_id,
+            workerIncarnationId: current.worker_incarnation_id,
+            workerId: current.worker_id,
+            noLaterThan: current.handoff_accepted_at,
+            requireCorrelatedAuditIntent: true,
+            expectedStatus: "success",
+          },
+        );
+        if (
+          sealed.task.status !== "running" ||
+          sealed.routeConsumedAt > current.handoff_accepted_at ||
+          physical.issuedAt > current.handoff_accepted_at ||
+          current.handoff_accepted_at > now
+        ) {
+          throw new Error(
+            "same_checkout physical completion chronology is invalid",
+          );
+        }
+        // SEM assertReadOnlyPhysicalGitAuthority: aqui o worker ESCREVEU, de
+        // propósito, no próprio checkout. A não-interferência não é provada por
+        // HEAD imóvel — é provada na ADMISSÃO (serialização do escritor /
+        // ownership disjunta), e o baseline atribuível é o estado do checkout
+        // no momento do claim, carregado no recibo físico do worker.
+        const integrationHeadSha = physical.worktreeHeadSha;
+        const evidence = db
+          .prepare(
+            `SELECT h.id, h.evidence_ids_json, h.context_revision,
+                h.contract_hash, h.workflow_revision
+         FROM handoffs AS h
+         JOIN mission_contracts AS c ON c.mission_id = h.mission_id
+         JOIN workflow_states AS w ON w.mission_id = h.mission_id
+         WHERE h.id = ? AND h.mission_id = ? AND h.session_id = ?
+           AND h.worker_incarnation_id = ?
+           AND h.status = 'success' AND h.evidence_trusted = 1
+           AND h.context_revision = c.context_revision
+           AND h.contract_hash = c.contract_hash
+           AND h.workflow_revision = w.revision`,
+          )
+          .get(
+            current.handoff_id,
+            current.mission_id,
+            current.session_id,
+            current.worker_incarnation_id,
+          ) as
+          | {
+              id: string;
+              evidence_ids_json: string;
+              context_revision: string;
+              contract_hash: string;
+              workflow_revision: number;
+            }
+          | undefined;
+        let evidenceIds: string[];
+        let referenceBinding: Readonly<Record<string, unknown>>;
+        if (evidence) {
+          try {
+            evidenceIds = z
+              .array(idSchema)
+              .min(1)
+              .max(256)
+              .parse(JSON.parse(evidence.evidence_ids_json));
+          } catch (error) {
+            throw new ScopedStoreCorruptionError("same_checkout handoff evidence", {
+              cause: error,
+            });
+          }
+          referenceBinding = {
+            origin: "prevc-evidence",
+            nonInterference: "serialized-writer",
+            handoffId: evidence.id,
+            contextRevision: evidence.context_revision,
+            contractHash: evidence.contract_hash,
+            workflowRevision: evidence.workflow_revision,
+            physicalReceiptId: physical.receiptId,
+            physicalHeadSha: physical.worktreeHeadSha,
+            integrationHeadSha,
+          };
+        } else {
+          // Guided advisory/review workers may run before an optional PREVC
+          // freeze. In that case the immutable transport receipt proves that
+          // the exact physical worker/session submitted the success handoff;
+          // it does not pretend the worker produced a code diff. The final
+          // corrective QA + main-owned validation still gate mission success.
+          evidenceIds = [physical.receiptId];
+          referenceBinding = {
+            origin: "physical-agent-transport",
+            nonInterference: "serialized-writer",
+            handoffId: current.handoff_id,
+            receiptId: physical.receiptId,
+            source: physical.source,
+            authoritySha256: physical.authoritySha256,
+            issuedAt: physical.issuedAt,
+            physicalHeadSha: physical.worktreeHeadSha,
+            integrationHeadSha,
+          };
+        }
+        const reference = tokenHash(
+          JSON.stringify({
+            missionId: current.mission_id,
+            taskId: current.task_id,
+            ...referenceBinding,
+            evidenceIds: [...evidenceIds].sort(),
+          }),
+        );
+        const receipt: TaskIntegrationReceipt = {
+          kind: "same_checkout_validated",
+          reference,
+          completedAt: now,
+          evidenceIds,
+        };
+        const updated = db
+          .prepare(
+            `UPDATE task_dispatch_queue
+         SET state = 'completed', revision = revision + 1,
+             integration_receipt_json = ?, completed_at = ?, updated_at = ?
+         WHERE task_id = ? AND revision = ? AND state = 'handoff_ready'
+           AND execution_mode = 'same_checkout'`,
+          )
+          .run(JSON.stringify(receipt), now, now, taskId, revision);
+        if (updated.changes !== 1)
+          throw new Error("same_checkout complete perdeu CAS");
+        const taskUpdate = db
+          .prepare(
+            `UPDATE tasks SET status = 'done', updated_at = ?
+         WHERE id = ? AND status = 'running'`,
+          )
+          .run(now, taskId);
+        if (taskUpdate.changes !== 1) {
+          throw new Error("same_checkout task não estava running");
+        }
+        return this.#getFromDatabase(db, taskId);
+      })
+      .immediate();
+    if (!record)
+      throw new Error("dispatch desapareceu após read-only complete");
+    this.#binding.emitChange();
+    return record;
+  }
+
+  /**
    * Read-only eligibility projection for the provider-failure waiver policy.
    * Corruption still throws; an unprovable sealed authority returns null so the
    * caller follows the limited retry/failover path instead of waiving.

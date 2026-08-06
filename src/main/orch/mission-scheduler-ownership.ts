@@ -323,11 +323,17 @@ export function emitPlannedTasksWithContract(
       // Leitor sem arquivos: carimba a marca POSITIVA de leitor. Ownership
       // deixa de ser vazia (portanto não exclusiva) sem virar reivindicação,
       // então dois leitores dividem a mesma onda.
+      // Carimba SOMENTE quando a ownership é totalmente vazia — nenhum domínio.
+      // Uma unidade que já traz rótulo (`guided-advisory`, `guided-quality-gate`,
+      // `sequential-only`…) já tinha seu comportamento decidido por ele, então o
+      // marcador seria redundante — e mexer na lista de domínios de um plano
+      // selado é caro: o selo compara ownership byte a byte (foi assim que dois
+      // testes de guided-planner quebraram na primeira versão desta correção).
       if (
         input.executionMode === 'read_only' &&
         baseOwnership.files.length === 0 &&
         baseOwnership.symbols.length === 0 &&
-        !domains.some((d) => d.toLowerCase() === READ_ONLY_SURFACE_DOMAIN)
+        domains.length === 0
       ) {
         domains = [...domains, READ_ONLY_SURFACE_DOMAIN];
       }

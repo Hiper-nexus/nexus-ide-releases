@@ -16,7 +16,17 @@ export interface TaskScheduleMeta {
   /** Canonical squad agent id frozen by the plan receipt. */
   readonly agentRef?: string;
   readonly agentCategory?: 'executor' | 'reviewer' | 'scout' | 'architect';
-  readonly executionMode?: 'isolated_worktree' | 'read_only';
+  /**
+   * `same_checkout` entrou em 06/08. Sem ele o caminho simples não era sequer
+   * EXPRESSÁVEL num plano selado: o decodificador o descartava em silêncio e a
+   * coerência do claim reprovava o dispatch ("dispatch execução/ownership
+   * diverge do contrato selado"). Era a raiz de o modo ser tratado como
+   * "legado" em toda a camada durável — o planner não conseguia emiti-lo.
+   */
+  readonly executionMode?:
+    | 'isolated_worktree'
+    | 'read_only'
+    | 'same_checkout';
 }
 
 export function encodeTaskScheduleDetail(
@@ -111,7 +121,8 @@ export function decodeTaskScheduleDetail(detail: string): {
             : undefined,
         executionMode:
           parsed.executionMode === 'isolated_worktree' ||
-          parsed.executionMode === 'read_only'
+          parsed.executionMode === 'read_only' ||
+          parsed.executionMode === 'same_checkout'
             ? parsed.executionMode
             : undefined,
       },

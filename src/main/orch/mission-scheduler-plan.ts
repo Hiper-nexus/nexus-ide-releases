@@ -23,7 +23,12 @@ export {
   supportsMechanicallyReadOnlyCli,
 } from '../../shared/mission-advisory';
 
-export type PlannedExecutionMode = 'isolated_worktree' | 'read_only';
+export type PlannedExecutionMode =
+  | 'isolated_worktree'
+  | 'read_only'
+  // Caminho simples (06/08): escreve no próprio checkout. Ver
+  // docs/analysis/2026-08-06-refatoracao-execucao-simples.md.
+  | 'same_checkout';
 
 const MECHANICALLY_WORKSPACE_WRITE_CLIS = new Set(['codex']);
 

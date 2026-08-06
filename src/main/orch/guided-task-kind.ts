@@ -11,6 +11,18 @@ export const GUIDED_TASK_DOMAINS = Object.freeze({
   independentReview: "guided-independent-review",
   isolatedAdvisory: "guided-isolated-advisory",
   implementation: "guided-implementation",
+  /**
+   * Implementação do CAMINHO SIMPLES: escreve no próprio checkout
+   * (`same_checkout`), sem worktree isolada.
+   *
+   * Kind PRÓPRIO de propósito, e não um `implementation` com condicional. Um
+   * receipt `implementation` afirma isolamento por worktree; reusá-lo para
+   * same_checkout mudaria retroativamente o que os receipts ANTIGOS
+   * significam — corromperia proveniência. Aqui a taxonomia diz a verdade: um
+   * auditor distingue "worktree isolada, diff contra o próprio branch" de
+   * "mesmo checkout, atribuído por ownership" sem adivinhar.
+   */
+  simpleImplementation: "guided-simple-implementation",
   qualityGate: "guided-quality-gate",
   /**
    * Work-kind shaped stages (see guided-mission-work-graph). They exist only
@@ -33,6 +45,7 @@ export type GuidedTaskKind =
   | "independent-review"
   | "isolated-advisory"
   | "implementation"
+  | "simple-implementation"
   | "quality-gate"
   | "reproduction"
   | "regression"
@@ -48,7 +61,10 @@ export interface GuidedTaskKindInput {
    */
   readonly plannerId?: string;
   readonly agentCategory?: GuidedWorkerCategory;
-  readonly executionMode?: "isolated_worktree" | "read_only";
+  readonly executionMode?:
+    | "isolated_worktree"
+    | "read_only"
+    | "same_checkout";
   readonly domains: readonly string[];
   readonly label?: string;
 }
@@ -168,6 +184,18 @@ export function parseGuidedTaskKind(
         );
       }
       kind = "warmup";
+      break;
+    case GUIDED_TASK_DOMAINS.simpleImplementation:
+      if (
+        input.executionMode !== "same_checkout" ||
+        input.agentCategory !== "executor"
+      ) {
+        invalidGuidedTask(
+          input,
+          "implementação simples exige executor em same_checkout",
+        );
+      }
+      kind = "simple-implementation";
       break;
     case GUIDED_TASK_DOMAINS.implementation:
       if (
