@@ -10,6 +10,8 @@ export interface GovernedCliProfileOptions {
   governed?: boolean;
   /** Same authority semantics as AgentGateContext.allowedSkills. */
   allowedSkills?: readonly string[] | null;
+  /** Same authority semantics as AgentGateContext.allowedTools. */
+  allowedTools?: readonly string[] | null;
 }
 
 export interface ResolvedGovernedCliProfile {
@@ -20,6 +22,7 @@ export interface ResolvedGovernedCliProfile {
    * "inherit every executable extension from the user's real profile".
    */
   readonly allowedSkills: readonly string[];
+  readonly allowedTools: readonly string[] | null;
 }
 
 const EXECUTABLE_PROFILE_KEYS = new Set([
@@ -71,6 +74,12 @@ function contextPolicy(
       governed && Array.isArray(ctx?.allowedSkills)
         ? [...ctx.allowedSkills]
         : [],
+    allowedTools:
+      governed && ctx
+        ? ctx.allowedTools === null
+          ? null
+          : [...ctx.allowedTools]
+        : [],
   };
 }
 
@@ -91,5 +100,11 @@ export function resolveGovernedCliProfile(
       options.governed && Array.isArray(options.allowedSkills)
         ? [...options.allowedSkills]
         : [],
+    allowedTools:
+      options.governed && options.allowedTools === null
+        ? null
+        : options.governed && Array.isArray(options.allowedTools)
+          ? [...options.allowedTools]
+          : [],
   };
 }

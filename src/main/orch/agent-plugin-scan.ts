@@ -19,6 +19,7 @@ import {
   type AgentPluginToolReduction,
 } from './agent-plugin-skill';
 import { scanComponentFiles } from './skill-threat-scan';
+import { inspectAgentPluginSkillTree } from './agent-plugin-skill-tree';
 
 const PLUGIN_ROOTS = ['.nexus/plugins', '.claude/plugins'] as const;
 const MAX_PLUGINS = 200;
@@ -312,7 +313,26 @@ function scanSkills(
       });
       continue;
     }
-    const threat = scanComponentFiles([{ name: `skills/${child.name}/SKILL.md`, buffer: read.buffer }]);
+    const tree = inspectAgentPluginSkillTree(pluginRoot, realChild);
+    if (!tree.ok) {
+      if (tree.kind === 'unsafe') {
+        return { skills: [], notices: [], skipped, unsafeReason: tree.reason };
+      }
+      skipped += 1;
+      notices.push({
+        component: 'skills',
+        entry: child.name,
+        disposition: 'skipped',
+        why: tree.reason,
+      });
+      continue;
+    }
+    const threat = scanComponentFiles(
+      tree.files.map((file) => ({
+        name: `skills/${child.name}/${file.name}`,
+        buffer: file.buffer,
+      })),
+    );
     if (threat.blocked) {
       return {
         skills: [],

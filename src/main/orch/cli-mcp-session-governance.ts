@@ -8,11 +8,13 @@ export function mirrorGovernedSkills(
   home: string,
   targetDirs: readonly string[],
   allowedSkills: readonly string[],
+  allowedTools: readonly string[] | null = [],
 ): void {
   for (const targetDir of targetDirs) ensurePrivateDirectory(targetDir);
   ensureSkillsForCli(adapterId, {
     home,
     allowedSkills: [...allowedSkills],
+    allowedTools: allowedTools === null ? null : [...allowedTools],
     targetDirs: [...targetDirs],
     includeCliTarget: false,
   });
@@ -41,13 +43,21 @@ export function deliverGrantedSkillsToProviderHome(
   home: string,
   providerSkillsDir: string,
   allowedSkills: readonly string[],
+  allowedTools: readonly string[] | null = [],
 ): SkillMirrorResult {
   if (allowedSkills.length === 0) {
-    return { mirrored: 0, targetDirs: [], copied: [] };
+    return {
+      mirrored: 0,
+      targetDirs: [],
+      copied: [],
+      pluginReductions: [],
+      pluginFailures: [],
+    };
   }
   const result = ensureSkillsForCli(adapterId, {
     home,
     allowedSkills: [...allowedSkills],
+    allowedTools: allowedTools === null ? null : [...allowedTools],
     targetDirs: [providerSkillsDir],
     includeCliTarget: false,
   });

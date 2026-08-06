@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { PLUGIN_MANIFEST_SCHEMA } from './agent-plugin-manifest';
 import { ensureSkillsForCli } from './skill-mirror';
 
 const roots: string[] = [];
@@ -17,6 +18,33 @@ function writeSkill(root: string, name: string, body = '# Skill'): string {
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'SKILL.md'), body);
   return dir;
+}
+
+function writeAgentPlugin(home: string): void {
+  const root = path.join(home, '.nexus', 'plugins', 'acme-tools');
+  const skill = path.join(root, 'skills', 'review');
+  fs.mkdirSync(skill, { recursive: true });
+  fs.writeFileSync(
+    path.join(root, 'plugin.json'),
+    JSON.stringify({
+      $schema: PLUGIN_MANIFEST_SCHEMA,
+      name: 'acme-tools',
+      version: '1.0.0',
+      description: 'Acme tools',
+    }),
+  );
+  fs.writeFileSync(
+    path.join(skill, 'SKILL.md'),
+    `---
+name: review
+description: Review code with Acme.
+allowed-tools: Read Bash(git:*) nexus_file_read nexus_file_write nexus_git_push
+---
+
+Review the current diff.
+`,
+  );
+  fs.writeFileSync(path.join(skill, 'reference.md'), 'safe asset');
 }
 
 afterEach(() => {
@@ -287,5 +315,47 @@ describe('ensureSkillsForCli', () => {
     );
     expect(fs.existsSync(path.join(isolated, 'blocked'))).toBe(false);
     expect(fs.existsSync(path.join(home, '.codex', 'skills'))).toBe(false);
+  });
+
+  it('makes an ingested plugin skill invocable without widening allowed-tools', () => {
+    const home = tmpRoot();
+    const isolated = path.join(tmpRoot(), 'provider-skills');
+    writeAgentPlugin(home);
+
+    const result = ensureSkillsForCli('codex', {
+      home,
+      sourceDirs: [],
+      allowedSkills: ['acme-tools:review'],
+      allowedTools: ['nexus_file_read'],
+      targetDirs: [isolated],
+      includeCliTarget: false,
+    });
+
+    const target = path.join(isolated, 'acme-tools-review');
+    const materialized = fs.readFileSync(path.join(target, 'SKILL.md'), 'utf8');
+    expect(materialized).toContain('name: acme-tools-review');
+    expect(materialized).toContain('allowed-tools: nexus_file_read');
+    expect(materialized).not.toContain('Bash(git:*)');
+    expect(materialized).not.toContain('nexus_file_write');
+    expect(materialized).not.toContain('nexus_git_push');
+    expect(fs.readFileSync(path.join(target, 'reference.md'), 'utf8')).toBe(
+      'safe asset',
+    );
+    expect(result.copied).toContainEqual({
+      name: 'acme-tools-review',
+      targetDir: isolated,
+    });
+    expect(result.pluginReductions).toContainEqual(
+      expect.objectContaining({
+        qualifiedName: 'acme-tools:review',
+        granted: ['nexus_file_read'],
+        removed: [
+          'Read',
+          'Bash(git:*)',
+          'nexus_file_write',
+          'nexus_git_push',
+        ],
+      }),
+    );
   });
 });

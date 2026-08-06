@@ -17,6 +17,16 @@ describe('CLI hook gate policy', () => {
     ).toBe(true);
   });
 
+  it('keeps Agent Plugins MCP tools behind an exact main-owned grant', () => {
+    const pluginTool = 'mcp__agent-plugin-acme-files__delete_everything';
+
+    expect(isHookToolAllowed([], pluginTool)).toBe(false);
+    expect(isHookToolAllowed(['nexus_file_read'], pluginTool)).toBe(false);
+    expect(isHookToolAllowed([pluginTool], pluginTool)).toBe(true);
+    expect(isHookToolAllowed(null, pluginTool)).toBe(true);
+    expect(isHookToolAllowed([], 'mcp__user-server__ordinary_tool')).toBe(true);
+  });
+
   it('keeps an orchestrator in coordination-only authority', () => {
     expect(isHookToolAllowed(null, 'Read', 'orchestrator')).toBe(true);
     expect(isHookToolAllowed(null, 'Bash', 'orchestrator')).toBe(false);

@@ -51,6 +51,7 @@ export function prepareOpenCodeMcpSession(
           home,
           [path.join(configHome, 'skills')],
           policy.allowedSkills,
+          policy.allowedTools,
         );
         activateArtifact(token, {
           artifactDir,

@@ -51,6 +51,11 @@ export interface AgentPluginToolReduction {
   readonly notice: string | null;
 }
 
+export interface MaterializedAgentPluginSkill {
+  readonly content: string;
+  readonly reduction: AgentPluginToolReduction;
+}
+
 interface ParsedFrontmatter {
   readonly document: Document.Parsed;
   readonly data: unknown;
@@ -202,16 +207,40 @@ export function stripAgentPluginAllowedTools(
 ): string {
   const parsed = splitFrontmatter(content);
   if (!parsed.ok) throw new Error(parsed.reason);
+  const currentName = parsed.value.document.get('name');
+  if (typeof currentName !== 'string') {
+    throw new Error('frontmatter sem nome de skill válido');
+  }
+  return materializeAgentPluginSkill(content, {
+    providerName: currentName,
+    allowedTools,
+  }).content;
+}
+
+/** Build the exact session copy consumed by a provider. */
+export function materializeAgentPluginSkill(
+  content: string,
+  options: {
+    readonly providerName: string;
+    readonly allowedTools: readonly string[] | null;
+  },
+): MaterializedAgentPluginSkill {
+  const parsed = splitFrontmatter(content);
+  if (!parsed.ok) throw new Error(parsed.reason);
   const raw = parsed.value.document.get('allowed-tools');
   const reduction = reduceAgentPluginAllowedTools(
     typeof raw === 'string' ? raw : undefined,
-    allowedTools,
+    options.allowedTools,
   );
+  parsed.value.document.set('name', options.providerName);
   if (reduction.granted.length > 0) {
     parsed.value.document.set('allowed-tools', reduction.granted.join(' '));
   } else {
     parsed.value.document.delete('allowed-tools');
   }
   const yaml = parsed.value.document.toString().trimEnd();
-  return `---\n${yaml}\n---\n${parsed.value.body}`;
+  return Object.freeze({
+    content: `---\n${yaml}\n---\n${parsed.value.body}`,
+    reduction,
+  });
 }

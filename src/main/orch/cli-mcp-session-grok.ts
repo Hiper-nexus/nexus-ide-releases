@@ -226,6 +226,7 @@ export function prepareGrokMcpSession(
           home,
           [path.join(artifactDir, 'skills')],
           policy.allowedSkills,
+          policy.allowedTools,
         );
       }
       activateArtifact(token, {

@@ -837,6 +837,7 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           if (!gated) {
             ensureSkillsForCli(adapter.id, {
               allowedSkills: meta?.allowedSkills ?? null,
+              allowedTools: meta?.allowedTools ?? null,
             });
           }
           skillsPrepared = true;
@@ -901,6 +902,7 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           allowedSkills: deliversToRealProfile
             ? [...(meta?.allowedSkills ?? [])]
             : (meta?.allowedSkills ?? null),
+          allowedTools: meta?.allowedTools ?? null,
           ephemeralHomeDir,
           includeCliTarget: !gated || deliversToRealProfile,
         });

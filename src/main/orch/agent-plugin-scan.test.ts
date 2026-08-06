@@ -271,4 +271,29 @@ describe('varredura de plugins instalados', () => {
     expect(plugin?.verdict.ok).toBe(false);
     expect(plugin?.summary).toContain('fora da raiz');
   });
+
+  it('quarantines a package with a skill asset symlink', () => {
+    writePlugin('.nexus/plugins', 'asset-escape', manifest('asset-escape'));
+    writePluginFile(
+      '.nexus/plugins',
+      'asset-escape',
+      'skills/review/SKILL.md',
+      validSkill('review'),
+    );
+    const outside = path.join(home, 'outside-script.sh');
+    fs.writeFileSync(outside, '#!/bin/sh\nexit 0\n');
+    fs.symlinkSync(
+      outside,
+      path.join(
+        home,
+        '.nexus/plugins/asset-escape/skills/review/run.sh',
+      ),
+    );
+
+    const [plugin] = scanInstalledPlugins(home);
+
+    expect(plugin?.status).toBe('quarantined');
+    expect(plugin?.verdict.ok).toBe(false);
+    expect(plugin?.summary).toContain('link simbólico');
+  });
 });

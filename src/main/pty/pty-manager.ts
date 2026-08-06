@@ -1427,11 +1427,13 @@ export function spawnAgentSession(
         providerHome: env.CODEX_HOME,
       });
       Object.assign(env, operatorHome.env);
+      const governedProfile = resolveGovernedCliProfile(token);
       deliverGrantedSkillsToProviderHome(
         "codex",
         os.homedir(),
         path.join(operatorHome.env.CODEX_HOME, "skills"),
-        resolveGovernedCliProfile(token).allowedSkills,
+        governedProfile.allowedSkills,
+        governedProfile.allowedTools,
       );
     } catch (error) {
       // Isolamento de MCP ambient é disponibilidade do worker, não

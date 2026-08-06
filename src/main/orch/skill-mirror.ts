@@ -8,6 +8,13 @@ import { ARCHIFY_MANIFEST } from './archify-manifest';
 import { BMAD_TEMPLATES_MANIFEST } from './bmad-templates-manifest';
 import { DEMBRANDT_MANIFEST } from './dembrandt-manifest';
 import type { SkillAsset } from './impeccable-manifest';
+import {
+  copyAgentPluginSkill,
+  discoverAgentPluginSkillSources,
+  visibleAgentPluginReduction,
+  type AgentPluginMirrorReduction,
+  type AgentPluginMirrorSource,
+} from './agent-plugin-skill-mirror';
 
 const GENERATED_PONYTAIL_SKILL = `---
 name: ponytail
@@ -140,6 +147,8 @@ visual pipeline in this session. Do not delegate.
 interface SkillSource {
   name: string;
   dir: string;
+  grantNames: readonly string[];
+  plugin?: AgentPluginMirrorSource;
 }
 
 export interface MirroredSkill {
@@ -158,6 +167,10 @@ export interface SkillMirrorResult {
    * mark their own copies, so the delivery stays reversible.
    */
   copied: MirroredSkill[];
+  /** Visible proof that package requests were reduced by main-owned policy. */
+  pluginReductions: AgentPluginMirrorReduction[];
+  /** Component-level degradation; other valid skills still materialize. */
+  pluginFailures: Array<{ qualifiedName: string; reason: string }>;
 }
 
 export interface SkillMirrorOptions {
@@ -165,6 +178,8 @@ export interface SkillMirrorOptions {
   sourceDirs?: string[];
   generatedRoot?: string;
   allowedSkills?: string[] | null;
+  /** Main-owned PreToolUse policy; package metadata can only intersect it. */
+  allowedTools?: string[] | null;
   ephemeralHomeDir?: string | null;
   /**
    * Extra provider-native destinations. Governed sessions use this to copy
@@ -273,7 +288,9 @@ function readSkillSources(sourceDirs: string[]): Map<string, SkillSource> {
       const dir = path.join(sourceDir, entry.name);
       if (!fs.existsSync(path.join(dir, 'SKILL.md'))) continue;
       const name = skillName(entry.name);
-      if (!sources.has(name)) sources.set(name, { name, dir });
+      if (!sources.has(name)) {
+        sources.set(name, { name, dir, grantNames: Object.freeze([name]) });
+      }
     }
   }
   return sources;
@@ -293,7 +310,8 @@ function selectSources(
   const allowed = allowedSet(allowedSkills);
   if (allowed && allowed.size === 0) return [];
   return [...sources.values()].filter(
-    (source) => !allowed || allowed.has(source.name),
+    (source) =>
+      !allowed || source.grantNames.some((name) => allowed.has(skillName(name))),
   );
 }
 
@@ -335,6 +353,22 @@ function copySkill(source: SkillSource, targetRoot: string): boolean {
   return true;
 }
 
+function addAgentPluginSources(
+  sources: Map<string, SkillSource>,
+  home: string,
+  allowedTools: readonly string[] | null,
+): void {
+  for (const plugin of discoverAgentPluginSkillSources(home, allowedTools)) {
+    if (sources.has(plugin.name)) continue;
+    sources.set(plugin.name, {
+      name: plugin.name,
+      dir: plugin.dir,
+      grantNames: plugin.grantNames,
+      plugin,
+    });
+  }
+}
+
 /**
  * Mirror installed skills into the namespace used by the target CLI. This is
  * intentionally best-effort and non-destructive: existing target skills win.
@@ -350,10 +384,10 @@ export function ensureSkillsForCli(
     writeGeneratedSkills(generatedRoot),
     ...(options.sourceDirs ?? defaultSourceDirs(home)),
   ];
-  const sources = selectSources(
-    readSkillSources(sourceDirs),
-    options.allowedSkills,
-  );
+  const available = readSkillSources(sourceDirs);
+  const allowedTools = options.allowedTools === undefined ? null : options.allowedTools;
+  addAgentPluginSources(available, home, allowedTools);
+  const sources = selectSources(available, options.allowedSkills);
   const targetDirs = [
     ...new Set([
       ...(options.includeCliTarget === false
@@ -368,13 +402,31 @@ export function ensureSkillsForCli(
 
   let mirrored = 0;
   const copied: MirroredSkill[] = [];
+  const pluginFailures: Array<{ qualifiedName: string; reason: string }> = [];
+  const pluginReductions = sources
+    .filter((source): source is SkillSource & { plugin: AgentPluginMirrorSource } =>
+      source.plugin !== undefined)
+    .map((source) => visibleAgentPluginReduction(source.plugin));
   for (const targetDir of targetDirs) {
     for (const source of sources) {
-      if (!copySkill(source, targetDir)) continue;
+      let didCopy = false;
+      try {
+        didCopy = source.plugin
+          ? copyAgentPluginSkill(source.plugin, targetDir, allowedTools)
+          : copySkill(source, targetDir);
+      } catch (error) {
+        if (!source.plugin) throw error;
+        pluginFailures.push({
+          qualifiedName: source.plugin.qualifiedName,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+        continue;
+      }
+      if (!didCopy) continue;
       mirrored += 1;
       copied.push({ name: source.name, targetDir });
     }
   }
 
-  return { mirrored, targetDirs, copied };
+  return { mirrored, targetDirs, copied, pluginReductions, pluginFailures };
 }

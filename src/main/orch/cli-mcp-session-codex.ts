@@ -645,6 +645,7 @@ export function prepareCodexGovernedSession(
         home,
         [path.join(artifactDir, 'skills')],
         policy.allowedSkills,
+        policy.allowedTools,
       );
       // Preferências de TUI que o Codex tenta gravar em config.toml no boot.
       // O arquivo é immutable (protectedWritePaths); se já estiverem aqui, o

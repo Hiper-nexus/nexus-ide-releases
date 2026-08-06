@@ -174,6 +174,12 @@ export function isHookToolAllowed(
   if (lower.startsWith(mcpPrefix)) {
     return isToolAllowedForRole(role, allowedTools, lower.slice(mcpPrefix.length));
   }
+  if (lower.startsWith("mcp__agent-plugin-")) {
+    if (allowedTools === null) return true;
+    return allowedTools.some(
+      (allowed) => allowed.trim().toLowerCase() === lower,
+    );
+  }
   if (lower.startsWith("nexus_")) return isToolAllowedForRole(role, allowedTools, lower);
   if (role === "orchestrator" && ORCHESTRATOR_DENIED_NATIVE_TOOLS.has(lower)) {
     return false;

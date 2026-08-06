@@ -137,6 +137,7 @@ export function prepareKimiMcpSession(
           home,
           [governedSkillsDir],
           policy.allowedSkills,
+          policy.allowedTools,
         );
       }
       activateArtifact(token, {

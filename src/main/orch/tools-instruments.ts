@@ -843,8 +843,10 @@ const pluginInventoryTool: McpToolDef = {
     'plugin existe. Read-only: instalar é outra superfície, explicitamente ' +
     'consentida. Caminhos absolutos nunca são retornados.',
   inputSchema: { type: 'object', properties: {} },
-  handler: async () => {
-    const plugins = scanInstalledPlugins();
+  handler: async (_input, ctx) => {
+    const plugins = scanInstalledPlugins(undefined, {
+      allowedTools: ctx.allowedTools,
+    });
     return Object.freeze({
       counts: {
         total: plugins.length,
@@ -853,7 +855,24 @@ const pluginInventoryTool: McpToolDef = {
       plugins: plugins.map((plugin) => ({
         source: plugin.source,
         summary: plugin.summary,
+        status: plugin.status,
         usable: plugin.verdict.ok,
+        mappings: plugin.mappings,
+        notices: plugin.notices,
+        limitations: plugin.limitations,
+        skills: plugin.skills.map((skill) => ({
+          name: skill.name,
+          qualifiedName: skill.qualifiedName,
+          providerName: skill.providerName,
+          permissionGate: skill.metadata.permissionGate,
+          allowedTools: skill.toolReduction,
+        })),
+        mcpServers: plugin.mcpServers.map((server) => ({
+          name: server.name,
+          transport: server.transport,
+          activation: server.activation,
+          permissionGate: server.permissionGate,
+        })),
         ...(plugin.verdict.ok
           ? {
               name: plugin.verdict.name,

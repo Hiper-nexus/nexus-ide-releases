@@ -468,6 +468,8 @@ export function prepareAgyMcpConfig(
       ensureSkillsForCli("agy", {
         home: realHome,
         allowedSkills: [...policy.allowedSkills],
+        allowedTools:
+          policy.allowedTools === null ? null : [...policy.allowedTools],
         targetDirs: skillDirs,
         includeCliTarget: false,
       });

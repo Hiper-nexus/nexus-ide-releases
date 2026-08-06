@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  materializeAgentPluginSkill,
   readAgentPluginSkill,
   reduceAgentPluginAllowedTools,
   stripAgentPluginAllowedTools,
@@ -157,5 +158,33 @@ Read the diff first.
     expect(sanitized).toContain('author: acme');
     expect(sanitized).toContain('# Workflow');
     expect(sanitized).toContain('Read the diff first.');
+  });
+
+  it('materializes a provider-safe name and only the gate intersection', () => {
+    const materialized = materializeAgentPluginSkill(
+      `---
+name: review
+description: Review code.
+allowed-tools: Read Bash(git:*) nexus_file_read nexus_file_write
+---
+
+Review the diff.
+`,
+      {
+        providerName: 'acme-review',
+        allowedTools: ['nexus_file_read'],
+      },
+    );
+
+    expect(materialized.content).toContain('name: acme-review');
+    expect(materialized.content).toContain('allowed-tools: nexus_file_read');
+    expect(materialized.content).not.toContain('Bash(git:*)');
+    expect(materialized.content).not.toContain('nexus_file_write');
+    expect(materialized.reduction.granted).toEqual(['nexus_file_read']);
+    expect(materialized.reduction.removed).toEqual([
+      'Read',
+      'Bash(git:*)',
+      'nexus_file_write',
+    ]);
   });
 });
