@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { rankCapabilitiesByNeed } from './capability-need-ranking';
 import path from 'node:path';
 import { z } from 'zod';
 import type { McpToolDef } from './mcp-protocol';
@@ -557,6 +558,8 @@ const mcpServersTool: McpToolDef = {
 const skillsInputSchema = z
   .object({
     kind: z.enum(['skill', 'agent', 'all']).default('skill'),
+    /** Necessidade em uma frase: ranqueia em vez de despejar o catálogo. */
+    need: z.string().max(512).optional(),
     limit: z
       .number()
       .int()
@@ -584,6 +587,13 @@ const skillsInventoryTool: McpToolDef = {
         type: 'string',
         enum: ['skill', 'agent', 'all'],
         description: 'Which catalog kind to list (default skill).',
+      },
+      need: {
+        type: 'string',
+        description:
+          'Necessidade em uma frase ("gerar diagrama", "revisar acessibilidade"). ' +
+          'Ranqueia e encurta a resposta, com os termos que casaram. Sem isto o ' +
+          'catálogo inteiro volta e o orquestrador gasta contexto escolhendo.',
       },
       limit: { type: 'number', description: 'Max items (default 100).' },
     },
@@ -638,18 +648,46 @@ const skillsInventoryTool: McpToolDef = {
       });
     }
 
-    const capped = matching.slice(0, Math.min(input.limit, MAX_SKILL_ITEMS));
+    // Ranquear ANTES de cortar: cortar primeiro entregaria os 100 primeiros
+    // alfabéticos e chamaria isso de busca — o candidato certo pode ser o 137º.
+    const ranking = input.need
+      ? rankCapabilitiesByNeed(
+          matching.map((item) => ({
+            name: item.name,
+            labels: [item.kind],
+            item,
+          })),
+          input.need,
+          Math.min(input.limit, MAX_SKILL_ITEMS),
+        )
+      : null;
+    const selected = ranking?.matched
+      ? ranking.ranked.map((entry) => entry.item.item)
+      : matching;
+    const capped = selected.slice(0, Math.min(input.limit, MAX_SKILL_ITEMS));
+    const matchedTermsByName = new Map(
+      (ranking?.matched ? ranking.ranked : []).map((entry) => [
+        entry.item.name,
+        entry.matchedTerms,
+      ]),
+    );
     return Object.freeze({
       available: true,
       gate,
-      truncated: matching.length > capped.length,
+      truncated: selected.length > capped.length,
       counts,
+      // D1: necessidade que não casou com nada devolve o catálogo com
+      // matched:false. Busca sem resultado não pode ser pior que não buscar.
+      ...(input.need ? { need: input.need, matched: ranking?.matched === true } : {}),
       items: capped.map((item) => ({
         name: item.name,
         kind: item.kind,
         source: homeRelativeSource(item.file),
         sizeBytes: item.size,
         modifiedAt: item.modifiedAt,
+        ...(matchedTermsByName.has(item.name)
+          ? { matchedTerms: matchedTermsByName.get(item.name) }
+          : {}),
       })),
     });
   },

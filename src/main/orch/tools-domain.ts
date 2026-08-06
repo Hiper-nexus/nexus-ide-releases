@@ -4,6 +4,7 @@ import {
   type CronJobSnapshot,
 } from './cron-reversibility';
 import { emitPersistentChangeReversalEvent } from './mission-event-emit';
+import { rankCapabilitiesByNeed } from './capability-need-ranking';
 import type { ProjectExecutionScope } from '../../shared/project-identity-types';
 import {
   assertCurrentMissionOrchestratorSession,
@@ -79,9 +80,58 @@ import { standardTopologyFromSealedTaskDetails } from './guided-mission-topology
 
 const agentListTool: McpToolDef = {
   name: 'nexus_agent_list',
-  description: 'List every agent defined across saved squads.',
-  inputSchema: { type: 'object', properties: {} },
-  handler: async () => listAgents(),
+  description:
+    'List agents defined across saved squads. Prefira passar `need` com a ' +
+    'necessidade em uma frase ("revisar hooks de React", "auditar OWASP"): a ' +
+    'resposta vem ranqueada e curta, com os termos que casaram. Sem `need` ' +
+    'devolve o catálogo inteiro.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      need: {
+        type: 'string',
+        description: 'Necessidade em uma frase; ranqueia em vez de despejar.',
+      },
+      limit: { type: 'number', description: 'Máximo de candidatos (padrão 5).' },
+    },
+  },
+  handler: async (args) => {
+    const agents = listAgents();
+    const need = str(args, 'need');
+    if (!need) return agents;
+    const limit = typeof args.limit === 'number' ? args.limit : 5;
+    const ranking = rankCapabilitiesByNeed(
+      agents.map((agent) => ({
+        name: agent.agentName,
+        // Persona e CLI são o vocabulário que o operador usa ao descrever a
+        // necessidade; o schema do agente não tem prosa livre além disso.
+        description: [agent.persona, agent.cli, agent.model]
+          .filter((part): part is string => typeof part === 'string')
+          .join(' '),
+        labels: [
+          agent.category,
+          ...(agent.allowedSkills ?? []),
+          ...(agent.allowedTools ?? []),
+        ].filter((label): label is string => typeof label === 'string'),
+        agent,
+      })),
+      need,
+      limit,
+    );
+    // D1: busca sem resultado não pode ser pior que não ter buscado — devolve o
+    // catálogo em vez de deixar o orquestrador achar que não há agente nenhum.
+    if (!ranking.matched) {
+      return { matched: false, need, agents };
+    }
+    return {
+      matched: true,
+      need,
+      agents: ranking.ranked.map((entry) => ({
+        ...entry.item.agent,
+        matchedTerms: entry.matchedTerms,
+      })),
+    };
+  },
 };
 
 const agentGetTool: McpToolDef = {
