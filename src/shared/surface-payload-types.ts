@@ -350,6 +350,15 @@ export interface PaneModel {
   kind: PaneKind;
   title: string;
   /**
+   * NOME humano durável do pane: inteiro curto, monotônico por workspace, nunca
+   * reusado. É o que o operador fala, dita e escreve ("pane 248 travou") — o
+   * `id` continua sendo a identidade interna e a chave durável.
+   *
+   * NÃO confundir com o slot de ⌘1-9: aquele é POSIÇÃO no layout visível e muda
+   * quando panes abrem e fecham. Nome é identidade; slot é reflexo espacial.
+   */
+  paneNumber?: number;
+  /**
    * Renderer-owned empty-state shell. Automated presentation may replace this
    * pane only while the marker is present; opening the terminal claims it for
    * the operator and clears the marker.

@@ -1,3 +1,4 @@
+import { claimPaneNumber } from './pane-numbers';
 import type {
   LayoutNode,
   PaneKind,
@@ -33,7 +34,17 @@ export function createPane(
       : kind === 'browser'
         ? 'browser'
         : 'shell';
-  return { id: id('pane'), kind, title, cwd, adapterId, model };
+  const paneId = id('pane');
+  // Nome durável atribuído no nascimento — é o que o operador vai falar.
+  return {
+    id: paneId,
+    kind,
+    title,
+    paneNumber: claimPaneNumber(paneId),
+    cwd,
+    adapterId,
+    model,
+  };
 }
 
 export function createLeaf(pane: PaneModel): LayoutNode {

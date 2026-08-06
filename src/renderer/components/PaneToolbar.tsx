@@ -370,6 +370,19 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
       {/* Meta shrinks first — never steal space from the close pin. */}
       <div className="toolbar__meta">
         <span className={`toolbar__dot ${isFocused ? 'toolbar__dot--on' : ''}`} />
+        {/*
+          Nome humano do pane. Existe para ser LIDO e repetido: "o pane 7
+          travou" só aponta para algo exato se o 7 estiver na tela. É nome, não
+          posição — não muda quando outro pane fecha.
+        */}
+        {pane.paneNumber !== undefined && (
+          <span
+            className="toolbar__pane-number"
+            data-tip={`Pane ${pane.paneNumber} — nome fixo deste pane, use para se referir a ele`}
+          >
+            {pane.paneNumber}
+          </span>
+        )}
         {pane.kind === 'cli-agent' && (
           <AgentAvatar
             category={agentCategory}

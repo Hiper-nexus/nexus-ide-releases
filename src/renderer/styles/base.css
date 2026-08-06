@@ -1344,6 +1344,26 @@ body {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
+/* Nome do pane: tabular-nums e largura mínima para os dígitos não dançarem
+   quando o número passa de uma casa — o operador varre a coluna com o olho
+   para achar o pane que quer citar. Peso baixo de propósito: é etiqueta, não
+   compete com o título. */
+.toolbar__pane-number {
+  flex: 0 0 auto;
+  min-width: 1.35em;
+  padding: 0 4px;
+  border-radius: 4px;
+  border: 1px solid var(--border-strong);
+  background: var(--card-hi);
+  color: var(--text-dim);
+  font-size: 10px;
+  line-height: 15px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  cursor: default;
+  user-select: text;
+}
+
 /* Estado do agente no toolbar: cor + borda comunicam; motion leve só no
    glifo (opacity). Evitar scale pop e opacity 0.35 — reiniciavam a cada
    busy↔idle e faziam a barra inteira “piscar”. */

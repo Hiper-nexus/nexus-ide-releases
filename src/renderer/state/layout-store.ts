@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { claimPaneNumber, releasePaneNumber } from '../lib/pane-numbers';
 import type {
   CanvasNodeLayout,
   LayoutNode,
@@ -760,6 +761,9 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
     const newPane: PaneModel = {
       ...base,
       id: req.paneId,
+      // Pane de posse do Main chega com id próprio: o nome é atribuído aqui,
+      // pelo MESMO registro, para não existirem dois numeradores.
+      paneNumber: claimPaneNumber(req.paneId),
       title: req.title ?? base.title,
       accountId: req.accountId,
       effort: req.effort,
@@ -972,6 +976,9 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
     if (closedPane) {
       notifyIfLastMissionPaneClosed(closedPane, reason, listPanes(root));
     }
+    // Libera DEPOIS do aviso — a notificação ainda cita o pane que morreu.
+    // O número não volta para a fila: "pane 7" nunca vira outro pane.
+    releasePaneNumber(paneId);
   },
 
   toggleMaximizePane: (paneId) => {
