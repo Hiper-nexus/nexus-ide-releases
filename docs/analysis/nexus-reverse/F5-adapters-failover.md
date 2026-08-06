@@ -233,7 +233,7 @@ Se o pane é worker de missão, antes de agendar retry a política Main-owned é
 - lacuna: cobertura real da refutação por API do provider (`limit-refutation.ts`) — quais providers têm janela fresca de cota e quais caem sempre no caminho de texto.
 - lacuna: `agy` declara `nexusMcp: "none"` no JSON; a auditoria `2026-08-05-mcp-hooks-propagation-audit.md:39` atribui isso a `cli-mcp-inject.ts:62`. Não verifiquei se o adapter é a causa ou o efeito.
 - lacuna: `api-provider` (`adapter-types.ts:163-185`) tem `auth.keychainKey`, mas nenhum builtin usa esse kind (todos os 9 são `cli-pty`). Consumidor real do campo não confirmado.
-- lacuna: `spawn.ptyRequired` é declarado por todos os adapters e validado pelo schema, mas não localizei o call site que o consome.
+- ~~lacuna: `spawn.ptyRequired` sem call site~~ — **RESOLVIDA no F6**: o consumidor é `src/main/real-mission-e2e-workspace.ts:333` e `:389` (harness de missão real E2E). O caminho de spawn normal (`pty-manager.ts`) **não** o consulta, então no fluxo comum o campo é declarativo. Ver [`./F6-pty-grid-canvas.md`](./F6-pty-grid-canvas.md) §3.11.
 - lacuna: caminho Windows/Linux da troca de conta do Claude — `claude-credential.ts:31,240` retorna `false` fora do macOS; qual é o comportamento equivalente nos outros SOs não está coberto aqui (cross-referência: memória "Multi-plataforma obrigatório").
 - lacuna: quantas contas o `pickAvailableForFailover` considera e como `allowProbe` interage com cooldown escopo-ciente — li a chamada (`failover.ts:421-430`), não a implementação em `account-store.ts`.
 

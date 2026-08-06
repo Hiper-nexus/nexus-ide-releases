@@ -202,7 +202,11 @@
 
 ## 3. Não-óbvio / armadilhas
 
-1. **`main.js` na raiz do repositório é uma armadilha.** Tem 274 bytes numa única linha sem newline final (por isso `wc -l` reporta `0` e parece vazio). É um bundle rolldown **minificado** — `require('./rolldown-runtime-D_FWMvbo.js')`, `require('./main-B-7tm2vZ.js')`. Não é fonte, **não é o entry** e **não é rastreado pelo git** (`git ls-files --error-unmatch main.js` falha). É uma cópia obsoleta de `.vite/build/main.js` (mesmo tamanho, datada 15/jul contra 04/ago) largada na raiz. O entry real é `.vite/build/main.js` (`package.json:6`), gerado de `src/main/main-bootstrap.ts` (`forge.config.ts:395`). `.vite/` é ignorado (`.gitignore:77`).
+1. **`main.js` na raiz do repositório é uma armadilha.** Tem 274 bytes numa única linha sem newline final (por isso `wc -l` reporta `0` e parece vazio). É um bundle rolldown **minificado** — `require('./rolldown-runtime-D_FWMvbo.js')`, `require('./main-B-7tm2vZ.js')`. Não é fonte e **não é o entry**. O entry real é `.vite/build/main.js` (`package.json:6`), gerado de `src/main/main-bootstrap.ts` (`forge.config.ts:395`).
+
+   Os dois arquivos **não são idênticos**: `cmp main.js .vite/build/main.js` diverge no **char 86** — o da raiz referencia o chunk `main-B-7tm2vZ.js`, o de build referencia `main-DU3Ubku5.js`. Mesmo tamanho (274 B), datas diferentes (raiz 15/jul 12:54; build 04/ago 12:43). É **sobra de um build anterior**, não uma cópia do atual.
+
+   Ambos são ignorados **por design**, em duas regras distintas: `.gitignore:77` (`.vite/`) e `.gitignore:82` (`/main.js` — a saída na raiz é esperada). Ou seja, o arquivo na raiz não é descuido de alguém: o build já produziu ali antes, e a regra continua. Mas hoje ele é lixo, e é o primeiro lugar onde quem procura o entry vai olhar.
 
 2. **A ordem de `main-bootstrap.ts` é um bugfix, não estilo.** O comentário em `main-bootstrap.ts:4-6` diz explicitamente: carregar o runtime (que importa módulos nativos e um grafo grande do Electron) antes da chamada síncrona de `ensureRegularMacOSActivation()` é o que fazia o macOS classificar o app como `UIElement` — sem ícone no Dock. Mover aquele import para cima quebra o app de forma difícil de diagnosticar.
 
@@ -268,7 +272,7 @@
 
 ## 5. Lacunas
 
-- **lacuna:** não verifiquei o conteúdo de `.vite/build/main.js` contra o `main.js` da raiz byte a byte — comparei só tamanho (274 = 274) e data (04/ago vs 15/jul). Podem divergir no conteúdo apesar do tamanho igual.
+- ~~lacuna: comparação byte a byte de `main.js` vs `.vite/build/main.js`~~ — **FECHADA**: `cmp` diverge no char 86; chunks distintos (`main-B-7tm2vZ.js` vs `main-DU3Ubku5.js`). Ver §3 item 1.
 - **lacuna:** o corpo de `src/preload/preload.ts` entre as linhas 60 e 757 (tipos, helpers, `addListener`, `PtyGapBuffer`) não foi lido — só o objeto `api` (`:758-1586`) e o cabeçalho de imports. A **forma** de validação de payload no preload (se há zod no receptor, como diz `ARCHITECTURE.md §B.3`) não foi confirmada.
 - **lacuna:** `isLiveTrustedMainWindowSender` foi lido só até `trusted-ipc.ts:80`; o restante da função (checagem de `senderFrame`, comparação com `mainFrame`) não foi verificado até o fim.
 - **lacuna:** não confirmei onde `MAIN_WINDOW_VITE_NAME` recebe valor em runtime — só que é declarado como magic global do plugin (`src/main/forge-env.d.ts:5-6`) e consumido em `main.ts:716`.
