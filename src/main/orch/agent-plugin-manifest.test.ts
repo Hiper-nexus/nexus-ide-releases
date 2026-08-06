@@ -1,126 +1,182 @@
 import { describe, expect, it } from 'vitest';
 import {
   describePluginIngestion,
+  PLUGIN_MANIFEST_SCHEMA,
   readPluginManifest,
   SUPPORTED_PLUGIN_SPEC,
 } from './agent-plugin-manifest';
 
-const VALIDO = {
+const VALID_MANIFEST = {
+  $schema: PLUGIN_MANIFEST_SCHEMA,
   name: 'design-kit',
   version: '2.1.0',
-  description: 'Agentes e skills de design',
-  agents: ['ui-designer', 'a11y-architect'],
-  skills: ['hallmark'],
+  description: 'Portable design skills',
 };
 
-describe('leitura de manifesto de plugin', () => {
-  it('aceita um manifesto bem formado e enumera os componentes', () => {
-    const verdict = readPluginManifest(VALIDO);
+describe('Agent Plugins v1.0.0 manifest validation', () => {
+  it('accepts the closed manifest with only its two required fields', () => {
+    const verdict = readPluginManifest({
+      $schema: PLUGIN_MANIFEST_SCHEMA,
+      name: 'design-kit',
+    });
 
-    expect(verdict.ok).toBe(true);
-    if (!verdict.ok) return;
-    expect(verdict.name).toBe('design-kit');
-    expect(verdict.entries).toHaveLength(3);
-    expect(verdict.degraded).toEqual([]);
+    expect(verdict).toMatchObject({
+      ok: true,
+      name: 'design-kit',
+      specVersion: '1.0.0',
+      entries: [],
+    });
   });
 
-  /**
-   * A regra mais importante deste arquivo: é aqui que conteúdo escrito por
-   * outra pessoa entra. Um throw derrubaria a varredura de catálogo inteira por
-   * causa de um diretório de terceiro ruim.
-   */
+  it('preserves schema-valid metadata without requiring semantic URL formats', () => {
+    const verdict = readPluginManifest({
+      ...VALID_MANIFEST,
+      author: { name: 'Acme', email: 'not necessarily an email', url: 'docs' },
+      homepage: 'docs',
+      repository: 'git-ish',
+      license: 'CUSTOM',
+      keywords: ['design', 'review'],
+    });
+
+    expect(verdict).toMatchObject({
+      ok: true,
+      author: { name: 'Acme', email: 'not necessarily an email', url: 'docs' },
+      homepage: 'docs',
+      repository: 'git-ish',
+      license: 'CUSTOM',
+      keywords: ['design', 'review'],
+    });
+  });
+
+  it('rejects a manifest that omits the canonical schema identifier', () => {
+    const verdict = readPluginManifest({
+      name: 'design-kit',
+      skills: ['legacy-inline-component'],
+    });
+
+    expect(verdict.ok).toBe(false);
+    if (verdict.ok) return;
+    expect(verdict.reason).toContain('$schema');
+  });
+
+  it('pins support to exactly v1.0.0 instead of accepting a newer minor', () => {
+    const verdict = readPluginManifest({
+      $schema: 'https://agent-plugins.org/schemas/1.1.0/plugin.schema.json',
+      name: 'design-kit',
+    });
+
+    expect(verdict.ok).toBe(false);
+    if (verdict.ok) return;
+    expect(verdict.reason).toContain(SUPPORTED_PLUGIN_SPEC);
+    expect(verdict.reason).toContain('1.1.0');
+  });
+
+  it('rejects ordinary schema violations such as an unknown author field', () => {
+    const verdict = readPluginManifest({
+      ...VALID_MANIFEST,
+      author: { name: 'Acme', handle: '@acme' },
+    });
+
+    expect(verdict.ok).toBe(false);
+    if (verdict.ok) return;
+    expect(verdict.reason).toContain('author');
+  });
+
+  it.each([
+    '../../etc/passwd',
+    '/absolute',
+    'Uppercase',
+    '-leading',
+    'double--hyphen',
+    'double..dot',
+  ])('rejects an invalid plugin name: %s', (name) => {
+    expect(readPluginManifest({ ...VALID_MANIFEST, name }).ok).toBe(false);
+  });
+
   it.each([
     ['null', null],
-    ['string', 'nem json'],
+    ['string', 'not json'],
     ['array', [1, 2, 3]],
-    ['objeto vazio', {}],
-    ['name numérico', { name: 42, agents: ['x'] }],
-  ])('nunca lança — %s vira recusa legível', (_rotulo, entrada) => {
-    const verdict = readPluginManifest(entrada);
+    ['empty object', {}],
+    ['numeric name', { ...VALID_MANIFEST, name: 42 }],
+  ])('never throws for %s and returns a readable rejection', (_label, raw) => {
+    const verdict = readPluginManifest(raw);
     expect(verdict.ok).toBe(false);
     if (verdict.ok) return;
     expect(verdict.reason.length).toBeGreaterThan(0);
   });
 
-  it.each([
-    '../../etc/passwd',
-    '/absoluto',
-    'sub/dir',
-    '..',
-  ])('recusa nome que é caminho: %s', (nome) => {
-    const verdict = readPluginManifest({ ...VALIDO, name: nome });
-    expect(verdict.ok).toBe(false);
-  });
-
-  it('nome de ITEM que é caminho é descartado, e a perda é declarada', () => {
+  it('reports and ignores an unknown top-level field without rejecting v1', () => {
     const verdict = readPluginManifest({
-      ...VALIDO,
-      agents: ['bom', '../fora', '/raiz'],
+      ...VALID_MANIFEST,
+      hooks: ['./hooks.json'],
     });
 
     expect(verdict.ok).toBe(true);
     if (!verdict.ok) return;
-    expect(verdict.entries.map((e) => e.name)).toEqual(['bom', 'hallmark']);
-    // Descartar em silêncio seria dizer "instalei tudo" mentindo.
-    expect(verdict.degraded.some((d) => d.component === 'agents')).toBe(true);
-  });
-
-  /**
-   * D1 aplicado à spec: um componente que este Nexus não conhece não invalida o
-   * plugin — instala o que entende e DECLARA o que ignorou.
-   */
-  it('componente desconhecido degrada em vez de invalidar', () => {
-    const verdict = readPluginManifest({
-      ...VALIDO,
-      mcpServers: ['algum-servidor'],
-      hooks: ['pretool'],
-    });
-
-    expect(verdict.ok).toBe(true);
-    if (!verdict.ok) return;
-    expect(verdict.entries).toHaveLength(3);
-    expect(verdict.degraded.map((d) => d.component).sort()).toEqual([
-      'hooks',
-      'mcpServers',
+    expect(verdict.degraded).toEqual([
+      expect.objectContaining({ component: 'hooks' }),
     ]);
   });
 
-  it('metadado solto de uma spec futura não vira alarme', () => {
-    const verdict = readPluginManifest({ ...VALIDO, homepage: 'https://x.dev' });
+  it('does not interpret inline skills or agents as v1 components', () => {
+    const verdict = readPluginManifest({
+      ...VALID_MANIFEST,
+      skills: ['inline-is-not-portable'],
+      agents: ['v1-has-no-agent-component'],
+    });
+
     expect(verdict.ok).toBe(true);
     if (!verdict.ok) return;
-    expect(verdict.degraded).toEqual([]);
+    expect(verdict.entries).toEqual([]);
+    expect(verdict.degraded.map((notice) => notice.component).sort()).toEqual([
+      'agents',
+      'skills',
+    ]);
   });
 
-  it('major diferente é RECUSADA, não adivinhada', () => {
-    const verdict = readPluginManifest({ ...VALIDO, specVersion: '2.0.0' });
-    expect(verdict.ok).toBe(false);
-    if (verdict.ok) return;
-    expect(verdict.reason).toContain(SUPPORTED_PLUGIN_SPEC);
+  it('reports and ignores a non-object extensions field', () => {
+    const verdict = readPluginManifest({
+      ...VALID_MANIFEST,
+      extensions: 'not-an-object',
+    });
+
+    expect(verdict.ok).toBe(true);
+    if (!verdict.ok) return;
+    expect(verdict.degraded).toEqual([
+      expect.objectContaining({ component: 'extensions' }),
+    ]);
   });
 
-  it('minor mais nova da mesma major é aceita', () => {
-    expect(readPluginManifest({ ...VALIDO, specVersion: '1.7.3' }).ok).toBe(true);
-  });
+  it('records unimplemented extension namespaces without validating their values', () => {
+    const verdict = readPluginManifest({
+      ...VALID_MANIFEST,
+      extensions: {
+        'com.example.client': 'client-owned invalid-for-core value',
+      },
+    });
 
-  it('plugin sem nenhum componente ingerível é recusado, não aceito vazio', () => {
-    const verdict = readPluginManifest({ name: 'vazio', hooks: ['x'] });
-    expect(verdict.ok).toBe(false);
+    expect(verdict.ok).toBe(true);
+    if (!verdict.ok) return;
+    expect(verdict.extensionNamespaces).toEqual(['com.example.client']);
+    expect(verdict.degraded[0]?.component).toBe(
+      'extensions.com.example.client',
+    );
   });
 });
 
-describe('frase de ingestão', () => {
-  it('conta o que entra e nomeia o que ficou de fora', () => {
-    const texto = describePluginIngestion(
-      readPluginManifest({ ...VALIDO, mcpServers: ['s'] }),
+describe('manifest ingestion summary', () => {
+  it('names the pinned version and every ignored field', () => {
+    const text = describePluginIngestion(
+      readPluginManifest({ ...VALID_MANIFEST, hooks: ['./hooks.json'] }),
     );
 
-    expect(texto).toContain('design-kit 2.1.0');
-    expect(texto).toContain('2 agents');
-    expect(texto).toContain('ignorado: mcpServers');
+    expect(text).toContain('design-kit 2.1.0');
+    expect(text).toContain('Agent Plugins 1.0.0');
+    expect(text).toContain('ignorado: hooks');
   });
 
-  it('recusa vira frase de recusa', () => {
+  it('turns a rejection into user-facing copy', () => {
     expect(describePluginIngestion(readPluginManifest(null))).toContain(
       'Plugin recusado',
     );
