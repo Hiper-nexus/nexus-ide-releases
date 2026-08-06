@@ -1626,6 +1626,10 @@ async function tickMission(
                 contractCap: mission?.intentContract
                   ? missionSchedulerConfiguredWorkerCap(mission.intentContract)
                   : 0,
+                // Total do plano selado: sem ele o veredito diz "1 unidade
+                // elegível" e o operador lê "a máquina se segurou". Dizendo
+                // "1 de 6", ele lê o GRAFO — as outras 5 aguardam dependências.
+                plannedTotal: currentSchedulerTasks.length,
               }),
             );
           },

@@ -284,3 +284,47 @@ describe('diagnoseWaveConcurrency — silent throttling is itself a bug (P0-9)',
     expect(diagnosis.deferredByCap).toBe(11);
   });
 });
+
+describe('caso HiperGO 06/08 — elegíveis vs teto, não só a fase', () => {
+  // Voo real: plano de 6 unidades, DAG em diamante (t1 -> {t2,t3} -> {t4,t5} -> t6).
+  // Só a raiz está elegível, então UM worker é o número CERTO. O usuário viu
+  // "só 2 panes" e concluiu que a máquina estava se segurando. O veredito dizia
+  // "fase sequencial: 1 unidade elegível" — verdadeiro, mas mudo sobre as duas
+  // coisas que ele precisava: quantas unidades existem ao todo, e quanto teto
+  // está sobrando. Sem isso, decisão deliberada é indistinguível de freio.
+  it('diz elegíveis DE quantas e o teto disponível numa fase sequencial', () => {
+    const diagnosis = diagnoseWaveConcurrency(
+      { configuredCap: 12, cores: 10, paneBudget: 14 },
+      decideSchedule(disjointStories(1), [], { configuredCap: 12, cores: 10, paneBudget: 14 }, NOW),
+      { plannedTotal: 6 },
+    );
+
+    expect(diagnosis.phase).toBe('sequential');
+    expect(diagnosis.summary).toContain('1 de 6');
+    expect(diagnosis.summary).toContain('8');
+  });
+
+  it('numa onda paralela diz que TODAS as elegíveis estão rodando e sobra teto', () => {
+    const diagnosis = diagnoseWaveConcurrency(
+      { configuredCap: 12, cores: 10, paneBudget: 14 },
+      decideSchedule(disjointStories(2), [], { configuredCap: 12, cores: 10, paneBudget: 14 }, NOW),
+      { plannedTotal: 6 },
+    );
+
+    expect(diagnosis.phase).toBe('parallel');
+    expect(diagnosis.summary).toContain('2 de 6');
+    expect(diagnosis.summary).toContain('8');
+  });
+
+  it('sem plannedTotal continua falando só das elegíveis (compatível)', () => {
+    const diagnosis = diagnoseWaveConcurrency(
+      { configuredCap: 12, cores: 10, paneBudget: 14 },
+      decideSchedule(disjointStories(1), [], { configuredCap: 12, cores: 10, paneBudget: 14 }, NOW),
+    );
+
+    expect(diagnosis.summary).toContain('1 unidade elegível');
+    // Sem total do plano não se inventa "de N", nem se promete teto que não foi medido.
+    expect(diagnosis.summary).not.toMatch(/\d+ de \d+/);
+    expect(diagnosis.summary).not.toContain('teto disponível');
+  });
+})

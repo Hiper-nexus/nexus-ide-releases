@@ -156,18 +156,32 @@ function describeWaveConcurrency(
   input: Omit<WaveConcurrencyDiagnosis, 'summary'> & {
     readonly cores: number;
     readonly contractCap: number;
+    readonly plannedTotal?: number;
   },
 ): string {
-  const units = (count: number): string =>
-    count === 1 ? '1 unidade elegível' : `${count} unidades elegíveis`;
+  // Sem o total do plano só dá para falar das elegíveis; com ele, o operador vê
+  // que 1 de 6 é uma DECISÃO do grafo (as outras 5 aguardam dependências) e não
+  // a máquina se segurando — e o teto sobrando prova que ninguém foi barrado.
+  const units = (count: number): string => {
+    const total = input.plannedTotal ?? 0;
+    if (total > 0) {
+      return `${count} de ${total} unidades elegíveis`;
+    }
+    return count === 1 ? '1 unidade elegível' : `${count} unidades elegíveis`;
+  };
+  const ceilingNote = ` — teto disponível: ${input.effectiveCap}.`;
   if (input.phase === 'sequential') {
     return (
       `fase sequencial: ${units(input.readyCount)} — ` +
-      'o plano, não o teto de concorrência, define a largura desta onda.'
+      'o plano, não o teto de concorrência, define a largura desta onda' +
+      (input.plannedTotal ? ceilingNote : '.')
     );
   }
   if (input.phase === 'parallel') {
-    return `onda paralela: ${units(input.readyCount)}, todas admitidas.`;
+    return (
+      `onda paralela: ${units(input.readyCount)}, todas admitidas` +
+      (input.plannedTotal ? ceilingNote : '.')
+    );
   }
   const head = `onda limitada a ${input.effectiveCap} de ${units(input.readyCount)}`;
   if (input.binding === 'cores') {
@@ -218,6 +232,11 @@ export function diagnoseWaveConcurrency(
      * omitted, a narrowed wave is reported as `configured` (today's behaviour).
      */
     readonly contractCap?: number;
+    /**
+     * Total de unidades do plano selado. Com ele o veredito diz "1 de 6" em vez
+     * de "1", que é a diferença entre uma decisão legível e uma máquina muda.
+     */
+    readonly plannedTotal?: number;
   },
 ): WaveConcurrencyDiagnosis {
   const effectiveCap = effectiveConcurrencyCap(config);
@@ -260,6 +279,9 @@ export function diagnoseWaveConcurrency(
       ...base,
       cores: config.cores,
       contractCap,
+      ...(options?.plannedTotal === undefined
+        ? {}
+        : { plannedTotal: Math.max(0, Math.floor(options.plannedTotal)) }),
     }),
   });
 }
