@@ -342,3 +342,60 @@ e é inofensivo sozinho.
 Regressão obrigatória: **um dispatch `same_checkout` que chega em
 `handoff_ready` CONCLUI, em vez de ser rejeitado.** Se algum dia essa suposição
 voltar, esse teste morre primeiro — antes de o usuário morrer.
+
+---
+
+## 10. Resultado da cirurgia exploratória: são OITO sites, e dois são taxonomia
+
+Executei a cirurgia até encontrar o formato real do problema, e então parei —
+como combinado. **O que eu achei muda a estimativa**, e é melhor saber agora.
+
+### 10.1 O mapa completo (auditado, não estimado)
+
+| # | Site | O que faz | Natureza |
+|---|---|---|---|
+| 1 | `pty-manager.ts:1483` | recusava o spawn sem worktree — atingia até revisor `read_only` | **CORRIGIDO** `84110780` |
+| 2 | `mission-scheduler-meta.ts:19,112-115` | `executionMode` do schedule aceita só `isolated_worktree\|read_only`; **`same_checkout` é descartado em silêncio no decode** | alargamento aditivo |
+| 3 | `guided-task-kind.ts:99-165` | cada domínio Guided amarra um executionMode; **`same_checkout` não existe na taxonomia** | **DECISÃO DE DESIGN** |
+| 4 | `task-dispatch-sealed-plan-authority.ts:215-231` | `assertSealedTaskSchedule` rejeita o registro selado (via #3) | consequência de #3 |
+| 5 | `task-dispatch-claim-authority.ts:346-354` | claim exige coerência dispatch↔selo (via #2) | consequência de #2 |
+| 6 | `task-dispatch-store.ts` | não há método que cunhe `same_checkout_validated` | espelhável do `read_only` |
+| 7 | `task-dispatch-mission-completion-authority.ts:552-555` | `execution_mode === "same_checkout"` → `false` **incondicional** | alargamento |
+| 8 | `mission-scheduler-production.ts:1494-1504` | bloqueia em `handoff_ready` | troca por conclusão |
+
+### 10.2 Por que parei em #3 — e não é falta de fôlego
+
+Sites 2, 5, 6, 7 e 8 são **alargamentos mecânicos**: aditivos, retrocompatíveis,
+testáveis. Cheguei a implementá-los (meta + cunhagem do
+`completeSameCheckoutFromTrustedHandoff`) e a suíte andou até o site 3.
+
+**O site 3 é diferente.** `parseGuidedTaskKind` mapeia
+(domínio, categoria, executionMode) → kind guiado, e **cada domínio amarra um
+executionMode específico**: `implementation` exige `isolated_worktree`,
+`advisory`/`independent-review` exigem `read_only`. Não há kind para
+`same_checkout`. Dar um a ele é decidir **quais finalizadores e quais gates de
+QA passam a valer** para essas tarefas — `mission-scheduler-guided-finalization.ts`
+tem pelo menos três caminhos que assumem "implementation ⇒ worktree" e derivam
+diff/baseline a partir disso.
+
+Ou seja: não é "alargar um enum". É definir o contrato de validação de uma
+forma de execução nova. **Chutar isso na camada que decide se o trabalho do
+usuário CONTA é exatamente como se perde trabalho ou proveniência.**
+
+Revertido o que estava pela metade; árvore limpa, 92/92 verdes em
+`task-dispatch-store.test.ts`. Nada meio-implementado ficou no caminho da frota.
+
+### 10.3 A decisão que destrava o resto (uma pergunta, não um projeto)
+
+> Uma tarefa de implementação em `same_checkout` é um `implementation` guiado
+> que prova não-interferência por **serialização** em vez de por worktree — ou é
+> um kind NOVO (`simple-implementation`) com finalizador próprio?
+
+- **Reusar `implementation`**: menos código, mas herda finalizadores que derivam
+  baseline/diff de worktree e precisam de um caminho alternativo cada um.
+- **Kind novo**: isola o risco (nada existente muda de comportamento), ao custo
+  de escrever o finalizador dele. **É o que eu recomendo** — combina com "alargar
+  a aceitação, não reescrever história": missões antigas seguem no caminho
+  isolado, intocadas, e o novo kind nasce com o contrato explícito.
+
+Com essa decisão tomada, os outros sete sites são trabalho mecânico e testável.
