@@ -678,3 +678,53 @@ describe("decomposeGoalByRepositoryAreas (prong b)", () => {
     ).toBeLessThanOrEqual(MAX_WAVE_PACK_STORIES);
   });
 });
+
+describe("leque PARCIAL — uma incógnita não afunda o plano (06/08)", () => {
+  const base = {
+    missionTitle: "m",
+    goal: "g",
+    acceptanceCriteria: ["a"],
+    executors: [{ id: "exec", agentName: "Exec", category: "executor" as const }],
+    maxWorkers: 8,
+    ownershipFiles: ["src/**"],
+  };
+
+  it("declaradas abrem em leque; a não-declarada serializa ATRÁS", () => {
+    const tasks = planWavePackTasks({
+      ...base,
+      stories: [
+        { id: "a", epicStoryId: "1.1", title: "A", body: "", ownershipFiles: ["src/a.ts"] },
+        { id: "b", epicStoryId: "1.2", title: "B", body: "", ownershipFiles: ["src/b.ts"] },
+        // sem ownership: incógnita
+        { id: "c", epicStoryId: "1.3", title: "C", body: "" },
+      ],
+    });
+
+    const disjuntas = tasks.filter((t) =>
+      t.ownership.domains.includes(WAVE_PACK_DISJOINT_FILES_DOMAIN),
+    );
+    expect(disjuntas).toHaveLength(2);
+
+    const incognita = tasks.find((t) => t.plannerId.includes("-c"));
+    expect(incognita!.ownership.domains).toContain("sequential-only");
+    // Ela recebe o inventário compartilhado: pode tocar qualquer coisa, então
+    // toma slot exclusivo em vez de dividir onda com escritor declarado.
+    expect(incognita!.ownership.files).toEqual(["src/**"]);
+  });
+
+  it("nenhuma declarada mantém o caminho legado (inventário compartilhado)", () => {
+    const tasks = planWavePackTasks({
+      ...base,
+      stories: [
+        { id: "a", epicStoryId: "1.1", title: "A", body: "" },
+        { id: "b", epicStoryId: "1.2", title: "B", body: "" },
+      ],
+    });
+
+    for (const task of tasks) {
+      expect(task.ownership.domains).not.toContain(
+        WAVE_PACK_DISJOINT_FILES_DOMAIN,
+      );
+    }
+  });
+});

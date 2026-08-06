@@ -524,22 +524,34 @@ export function planWavePackTasks(input: {
   }
 
   const coverage = input.ownershipCoverageDomains ?? [];
-  // Disjoint mode engages only when every story carves its own file footprint;
-  // a partial declaration would fake disjointness against the shared inventory.
-  const allStoriesDeclareFiles = input.stories.every(
+  // AMOLECIMENTO POR STORY (06/08): antes isto era `every(...)` — UMA story sem
+  // ownership derrubava TODAS para o inventário compartilhado e o leque inteiro
+  // colapsava em serial. Uma incógnita afundava o plano todo.
+  //
+  // Agora a decisão é por story: quem DECLARA entra no leque com a própria
+  // fatia; quem não declara recebe o inventário compartilhado mais
+  // `sequential-only` e serializa ATRÁS, sem arrastar ninguém junto. A
+  // segurança não afrouxa — quem não prova disjunção segue tratado como tal;
+  // muda só o ESCOPO do castigo, dela e não de todas.
+  const anyStoryDeclaresFiles = input.stories.some(
     (story) => (story.ownershipFiles?.length ?? 0) > 0,
   );
   const storyTasks: WavePackPlannedTask[] = input.stories.map((story, index) => {
     const executor = input.executors[index % input.executors.length]!;
     const plannerId = `wave-pack-${story.id}`.slice(0, 128);
     const storyFiles =
-      allStoriesDeclareFiles && story.ownershipFiles?.length
+      anyStoryDeclaresFiles && story.ownershipFiles?.length
         ? story.ownershipFiles
         : input.ownershipFiles;
     const storyDomains =
-      allStoriesDeclareFiles && story.ownershipFiles?.length
+      anyStoryDeclaresFiles && story.ownershipFiles?.length
         ? [WAVE_PACK_DISJOINT_FILES_DOMAIN]
-        : [];
+        : anyStoryDeclaresFiles
+          ? // Story sem declaração num plano MISTO: inventário compartilhado +
+            // slot exclusivo. Ela pode tocar qualquer coisa, então não divide
+            // onda com escritor declarado — serializa atrás dele.
+            ['sequential-only']
+          : [];
     const detail = [
       `Implemente a story ${story.epicStoryId}: ${story.title}.`,
       "Você é um worker de mutação do Wave Pack: edite somente o necessário para esta story.",
@@ -580,8 +592,15 @@ export function planWavePackTasks(input: {
 
   // Disjoint mode fans out real writers, so prove the core invariant before the
   // plan is sealed: no two story worktrees may claim the same file.
-  if (allStoriesDeclareFiles) {
-    assertWavePackStoryFilesDisjoint(storyTasks);
+  if (anyStoryDeclaresFiles) {
+    // Invariante provado sobre as stories que REALMENTE entram no leque. As
+    // não-declaradas ficam de fora por definição: elas não reivindicam fatia,
+    // recebem o inventário compartilhado e slot exclusivo.
+    assertWavePackStoryFilesDisjoint(
+      storyTasks.filter((task) =>
+        task.ownership.domains.includes(WAVE_PACK_DISJOINT_FILES_DOMAIN),
+      ),
+    );
   }
 
   const tasks: WavePackPlannedTask[] = [...storyTasks];

@@ -13,6 +13,16 @@ export type WavePackTemplateStory = {
   readonly epicStoryId: string;
   readonly title: string;
   readonly body: string;
+  /**
+   * Fatia disjunta desta story. Sem isto o template NÃO abre em leque: o modo
+   * disjunto só engata quando toda story declara a sua superfície, e o socket
+   * ficou construído e vazio desde que existe.
+   *
+   * Declarar caminho aqui só é legítimo porque estes templates CRIAM a
+   * estrutura que declaram (greenfield). Template de conserto não declara —
+   * e não deve, porque conserto é single-writer por natureza.
+   */
+  readonly ownershipFiles?: string[];
 };
 
 export type WavePackTemplate = {
@@ -27,6 +37,7 @@ function story(
   index: number,
   title: string,
   body: string,
+  ownershipFiles?: readonly string[],
 ): WavePackTemplateStory {
   const epicStoryId = `${epic}.${index}`;
   return Object.freeze({
@@ -34,6 +45,7 @@ function story(
     epicStoryId,
     title,
     body,
+    ...(ownershipFiles?.length ? { ownershipFiles: [...ownershipFiles] } : {}),
   });
 }
 
@@ -48,18 +60,21 @@ export const WAVE_PACK_TEMPLATES: readonly WavePackTemplate[] = Object.freeze([
         1,
         "Hero e estrutura da página",
         "Monte a estrutura da landing (layout, tipografia base, hero com headline, subcopy e CTA primário). Sem seções secundárias ainda.",
+        ["src/components/hero/**", "src/app/page.tsx"],
       ),
       story(
         1,
         2,
         "Seções de conteúdo",
         "Implemente as seções principais (benefícios, prova social ou features, CTA intermediário). Reuse tokens do hero; não refatore o hero.",
+        ["src/components/sections/**"],
       ),
       story(
         1,
         3,
         "Polish responsivo e acessibilidade",
         "Ajuste breakpoints, foco/teclado, contraste e microinterações. Não redesenhe o conteúdo; valide CTA e leitura em mobile.",
+        ["src/styles/**"],
       ),
     ]),
   }),
@@ -73,30 +88,35 @@ export const WAVE_PACK_TEMPLATES: readonly WavePackTemplate[] = Object.freeze([
         1,
         "Auth mínima",
         "Fluxo de autenticação mínimo (login/sessão) suficiente para o restante do produto. Sem billing ainda.",
+        ["src/auth/**", "src/middleware/auth.ts"],
       ),
       story(
         1,
         2,
         "CRUD do domínio core",
         "CRUD da entidade principal do produto. Reuse auth; não mexa em billing.",
+        ["src/domain/**", "src/db/schema/**"],
       ),
       story(
         1,
         3,
         "Billing stub",
         "Stub de cobrança/planos (UI + contrato) sem gateway real se não houver chave. Não reescreva auth/CRUD.",
+        ["src/billing/**"],
       ),
       story(
         1,
         4,
         "Settings da conta",
         "Tela de settings (perfil, preferências). Isolado de billing e CRUD core.",
+        ["src/settings/**"],
       ),
       story(
         1,
         5,
         "Smoke de ponta a ponta",
         "Roteiro smoke: login → criar item → ver settings. Documente falhas; não reimplemente features.",
+        ["tests/e2e/**"],
       ),
     ]),
   }),
