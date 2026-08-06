@@ -54,8 +54,10 @@ export function buildMissionSchedulerTaskPrompt(
   const completionContract = isSimpleImplementation
     ? "Você edita DIRETAMENTE o checkout do projeto — não há worktree isolada e " +
       "não haverá merge depois: o que você escrever já está no lugar final. " +
-      "Toque somente os arquivos da sua ownership; commitar é opcional e o " +
-      "handoff é o que conclui a tarefa. Chame nexus_handoff_submit ao terminar."
+      "Toque somente os arquivos da sua ownership. Ao finalizar, execute os " +
+      "checks e faça EXATAMENTE UM commit local com a mudança — o commit é o " +
+      "registro durável e o ponto de desfazer da entrega — e então chame " +
+      "nexus_handoff_submit. Nunca faça push nem merge."
     : worker.executionMode === "read_only"
       ? "Esta tarefa é SOMENTE LEITURA: não edite arquivos, não execute comandos mutantes, " +
         "não faça commit. Inspecione, reúna evidências Nexus confiáveis e chame " +

@@ -38,7 +38,10 @@ export interface IntegrationHost {
   ): WorktreeRecord;
   timestamp(): number;
   scopeKey(scope: ProjectExecutionScope): string;
-  integrationSnapshot(record: WorktreeRecord): IntegrationCheckoutSnapshot;
+  integrationSnapshot(
+    record: WorktreeRecord,
+    options?: { readonly requireClean?: boolean },
+  ): IntegrationCheckoutSnapshot;
   prepareRecoveryIntegration(
     scope: ProjectExecutionScope,
     missionId: string,
@@ -107,7 +110,11 @@ function prepareNoChangeValidationInternal(
         "validation-only task created an empty commit instead of preserving HEAD",
       );
     }
-    const integration = host.integrationSnapshot(record);
+    // Validação no-change é LEITURA do checkout primário: o escritor
+    // same_checkout pode estar com trabalho não commitado em paralelo.
+    const integration = host.integrationSnapshot(record, {
+      requireClean: false,
+    });
     const integrationDescendsFrom = (ancestorSha: string): boolean =>
       host.git.run(
         record.rootRealPath,

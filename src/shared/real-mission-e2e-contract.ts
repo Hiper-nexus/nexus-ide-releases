@@ -192,7 +192,8 @@ export function realMissionE2EOrchestratorCli(
 }
 export const REAL_MISSION_E2E_GOAL =
   'Entregue resultado.txt com o conteúdo exato "nexus-real-mission-e2e-ok\\n". ' +
-  "Na cadeia de entrega executor → revisor → QA, o executor deve implementar e " +
+  "Na cadeia de entrega executor → revisor → QA, o executor deve implementar, " +
+  "fazer exatamente um commit local com a mudança e " +
   "enviar seu handoff; depois o revisor independente valida o HEAD integrado e " +
   "envia seu próprio handoff; por fim o QA consome essa revisão, valida o HEAD e " +
   "envia seu próprio handoff. Handoffs da lane advisor são independentes dessa " +

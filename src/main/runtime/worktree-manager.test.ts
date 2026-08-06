@@ -731,6 +731,50 @@ describe("WorktreeManager", () => {
     });
   });
 
+  // REGRESSÃO (gate run 6 da 0.27.0): a validação no-change do advisor reusa o
+  // snapshot de integração, que exigia checkout primário LIMPO — mas no caminho
+  // simples o escritor same_checkout suja o checkout DURANTE a missão, em
+  // paralelo com os scouts. A validação é uma leitura: não pode exigir limpeza.
+  it("valida no-change do advisor com o checkout primário sujo (escritor same_checkout ativo)", async () => {
+    const assignment = await manager.create({
+      scope: projectScope(),
+      missionId: "mission-simple",
+      taskId: "advisor-read-only",
+      workerId: "advisor",
+      ownership: {
+        files: [],
+        symbols: [],
+        domains: ["review"],
+      },
+    });
+    // Escrita legítima do serialized-writer no checkout primário, sem commit.
+    write("resultado.txt", "trabalho em progresso\n");
+
+    const prepared = manager.prepareDiscardedNoChangeValidation(
+      projectScope(),
+      "mission-simple",
+      "advisor-read-only",
+    );
+    expect(prepared).toMatchObject({
+      taskHeadSha: assignment.baseSha,
+      integrationHeadSha: assignment.baseSha,
+      changedFiles: [],
+    });
+    expect(
+      manager.markDiscardedNoChange(
+        projectScope(),
+        "mission-simple",
+        "advisor-read-only",
+        prepared!.taskHeadSha,
+        prepared!.integrationHeadSha,
+      ),
+    ).toMatchObject({
+      status: "integrated",
+      taskHeadSha: assignment.baseSha,
+      integratedSha: assignment.baseSha,
+    });
+  });
+
   it("never reclassifies an isolated advisory commit as no-change", async () => {
     const assignment = await manager.create({
       scope: projectScope(),

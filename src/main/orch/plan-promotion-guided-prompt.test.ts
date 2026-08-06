@@ -129,6 +129,36 @@ describe("plan promotion → guided task prompt", () => {
     expect(prompt).toContain(promotedPlan.artifactsSha256);
   });
 
+  // REGRESSÃO (gate run 6 da 0.27.0): o prompt dizia "commitar é opcional" e o
+  // executor entregou sem commit — sem registro durável nem ponto de desfazer,
+  // e contradizendo o contrato E2E ("o próprio executor faz o commit local").
+  // Reversibilidade-e-registro: o commit local único É o registro da entrega.
+  it("instrui o executor same_checkout a fazer exatamente um commit local", () => {
+    const prompt = buildMissionSchedulerTaskPrompt(
+      {
+        id: "guided-execution",
+        title: "Entregar resultado",
+        detail: "Implemente o objetivo aprovado.",
+        status: "pending",
+        dependsOn: [],
+        ownership: {
+          files: ["resultado.txt"],
+          symbols: [],
+          domains: ["guided-simple-implementation"],
+        },
+        merged: false,
+      },
+      {
+        agentName: "Executor",
+        category: "executor",
+        executionMode: "same_checkout",
+      },
+    );
+
+    expect(prompt).toContain("EXATAMENTE UM commit local");
+    expect(prompt).not.toContain("commitar é opcional");
+  });
+
   it("feeds the promoted physical package to the real story delivery squad without replanning", () => {
     const plan = planMission();
     const handoff = physicalHandoff();

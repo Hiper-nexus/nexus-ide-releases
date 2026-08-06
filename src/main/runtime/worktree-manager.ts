@@ -695,7 +695,8 @@ export class WorktreeManager {
         this.#transition(scopeKey, taskKey, update),
       timestamp: () => this.#timestamp(),
       scopeKey: (scope) => this.scopeKey(scope),
-      integrationSnapshot: (record) => this.integrationSnapshot(record),
+      integrationSnapshot: (record, options) =>
+        this.integrationSnapshot(record, options),
       prepareRecoveryIntegration: (scope, missionId, taskId) =>
         this.prepareRecoveryIntegration(scope, missionId, taskId),
     };
@@ -765,9 +766,15 @@ export class WorktreeManager {
     });
   }
 
-  integrationSnapshot(record: WorktreeRecord): IntegrationCheckoutSnapshot {
+  integrationSnapshot(
+    record: WorktreeRecord,
+    options?: { readonly requireClean?: boolean },
+  ): IntegrationCheckoutSnapshot {
     const snapshot = this.inspectIntegration(record);
-    if (!snapshot.clean) {
+    // Limpeza é pré-condição de MERGE (escrever no checkout primário), não de
+    // leitura do HEAD: validações no-change consultam este snapshot enquanto o
+    // escritor same_checkout legitimamente suja o checkout (caminho simples).
+    if (!snapshot.clean && options?.requireClean !== false) {
       throw new WorktreeStateConflictError("primary checkout must be clean");
     }
     const { rootRealPath, integrationRef, headSha } = snapshot;
