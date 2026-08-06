@@ -1392,6 +1392,88 @@ describe("AGY advisory native profile", () => {
     },
   );
 
+  it("entrega a tarefa no argv do claude — o pane nasce executando", async () => {
+    // Paridade Overclock: a tarefa viaja no spawn. agy/codex/opencode já faziam
+    // isso; claude — o CLI mais usado — ficava de fora e nascia ocioso,
+    // esperando injeção pós-boot (espera de TUI + round trip). No caminho
+    // simples isso não é otimização, é o modelo.
+    //
+    // MEDIÇÃO NÃO VERIFICADA: o ganho em segundos NÃO foi medido com pane vivo
+    // (o app empacotado hospeda a frota e não expõe CDP). Este teste prova o
+    // ARGV, não a economia. Ver docs/analysis/2026-08-06-refatoracao-execucao-simples.md §8.
+    setSquadCliPolicyLookupForTests(() => "operator-choice");
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-claude-argv-"));
+    const worktree = path.join(root, "worktree");
+    fs.mkdirSync(worktree);
+    const host = fakeHost();
+    setPtyHost(host.host);
+    const baseAuthority = revisionBoundWorker(fs.realpathSync.native(worktree));
+    const initialPrompt = "Implemente a story 1.2 e chame nexus_handoff_submit.";
+    const authority: BoundSpawnAuthority = {
+      ...baseAuthority,
+      context: { ...baseAuthority.context!, initialPrompt },
+    };
+    let sessionId: string | null = null;
+    try {
+      ({ sessionId } = spawnMainOwnedAgentSession(
+        { kind: "cli-agent", paneId: "claude-argv-birth", cols: 100, rows: 30 },
+        builtinCliPtyAdapter("claude"),
+        {},
+        authority,
+      ));
+      const spec = host.specFor(sessionId);
+      expect(spec.args.filter((a) => a === initialPrompt)).toHaveLength(1);
+      // Posicional ÚNICO — mas não necessariamente o último: flags governadas
+      // (ex.: --dangerously-skip-permissions) ainda são anexadas depois, e o
+      // parser da CLI aceita flag após posicional. Exigir "último" seria fixar
+      // uma restrição que a CLI não tem.
+      expect(
+        spec.args.filter((a) => a === initialPrompt),
+      ).toHaveLength(1);
+      // Nunca headless: o worker precisa do turno interativo.
+      expect(spec.args).not.toContain("--print");
+      expect(spec.args).not.toContain("-p");
+    } finally {
+      if (sessionId) await orchTerminateSession(sessionId);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("não injeta prompt no argv do claude ao RETOMAR uma sessão", async () => {
+    setSquadCliPolicyLookupForTests(() => "operator-choice");
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-claude-resume-"));
+    const worktree = path.join(root, "worktree");
+    fs.mkdirSync(worktree);
+    const host = fakeHost();
+    setPtyHost(host.host);
+    const baseAuthority = revisionBoundWorker(fs.realpathSync.native(worktree));
+    const initialPrompt = "não pode reaparecer numa retomada";
+    const authority: BoundSpawnAuthority = {
+      ...baseAuthority,
+      context: { ...baseAuthority.context!, initialPrompt },
+    };
+    let sessionId: string | null = null;
+    try {
+      ({ sessionId } = spawnMainOwnedAgentSession(
+        {
+          kind: "cli-agent",
+          paneId: "claude-argv-resume",
+          cols: 100,
+          rows: 30,
+          resume: true,
+        },
+        builtinCliPtyAdapter("claude"),
+        {},
+        authority,
+      ));
+      const spec = host.specFor(sessionId);
+      expect(spec.args).not.toContain(initialPrompt);
+    } finally {
+      if (sessionId) await orchTerminateSession(sessionId);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("does not pass a worker initial prompt to an AGY orchestrator", async () => {
     setSquadCliPolicyLookupForTests(() => "operator-choice");
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-agy-maestro-"));

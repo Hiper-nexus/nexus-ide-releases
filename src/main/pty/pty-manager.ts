@@ -1158,6 +1158,7 @@ export function spawnAgentSession(
   const nativeInitialPrompt =
     (adapter.id === "agy" ||
       adapter.id === "codex" ||
+      adapter.id === "claude" ||
       adapter.id === "opencode") &&
     authority.source === "pending" &&
     authority.context?.role === "worker" &&
@@ -1192,6 +1193,17 @@ export function spawnAgentSession(
         );
       }
       args.push("--prompt-interactive", safeInitialPrompt);
+    } else if (adapter.id === "claude") {
+      // `claude [PROMPT]` abre o primeiro turno interativo já executando, sem
+      // corrida com o editor da TUI fria — mesma forma do codex (linha ~1545).
+      //
+      // Sem varredura de "posicional já existente": o argv interativo do claude
+      // é `--model <valor>` + extraArgs `--disallowedTools Task`, e VALORES de
+      // flag são indistinguíveis de posicionais por inspeção ingênua — o
+      // primeiro rascunho deste guard reprovou o próprio caminho feliz. O
+      // prompt vem da autoridade selada do Main, que é a única fonte, e por
+      // isso é anexado por último, como no codex.
+      args.push(safeInitialPrompt);
     } else if (adapter.id === "opencode") {
       if (args.includes("run")) {
         throw new Error(
