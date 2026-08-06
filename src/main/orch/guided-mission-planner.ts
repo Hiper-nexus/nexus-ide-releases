@@ -1,4 +1,5 @@
 import type { Mission, Squad } from "../../shared/orch-types";
+import { partitionOwnershipIntoAreas } from "./repository-area-partition";
 import type { MissionIntentContract } from "../../shared/mission-intent";
 import { FEATURE_FLAG_IDS } from "../../shared/feature-flags";
 import { getFeatureFlagRegistry } from "../feature-flags/feature-flag-registry";
@@ -8,6 +9,8 @@ import {
   type StandardMissionTopology,
 } from "../../shared/mission-topology";
 import {
+  decomposeGoalByRepositoryAreas,
+  extractStoryOwnershipFiles,
   decomposeGuidedGoalIntoStories,
   planWavePackTasks,
   resolveMissionOrchestrationMode,
@@ -322,7 +325,30 @@ export function ensureGuidedMissionPlan(
       taskId: primary.taskId,
     });
   }
-  const sealDecision = resolveGuidedSealTopology(mission);
+  // prong (b) na ponta viva: o inventário do repositório, particionado em áreas
+  // disjuntas, é o que permite um objetivo livre nascer com N raízes em vez de
+  // 1. Falha de leitura nunca inventa leque — cai no comportamento anterior.
+  // Leitura do inventário PREGUIÇOSA e memoizada: uma varredura por plano, e
+  // NENHUMA quando o objetivo já declara os próprios alvos (aí nem áreas nem
+  // baseOwnership derivado são necessários). Ambos os desperdícios — ler duas
+  // vezes e ler à toa — foram pegos pela regressão.
+  let inventoryCache: readonly string[] | null = null;
+  const repositoryInventory = (): readonly string[] => {
+    if (inventoryCache !== null) return inventoryCache;
+    try {
+      inventoryCache = deps.listRepositoryOwnership(suite.tasks.scope);
+    } catch {
+      inventoryCache = [];
+    }
+    return inventoryCache;
+  };
+  const repositoryAreas = () => partitionOwnershipIntoAreas(repositoryInventory());
+  const sealDecision = resolveGuidedSealTopology(mission, {
+    // Só particiona quando o goal NÃO nomeia alvos — resolveGuidedSealTopology
+    // dá prioridade aos arquivos citados, então áreas seriam trabalho jogado
+    // fora nesse caso.
+    lazyAreas: repositoryAreas,
+  });
   const topology: StandardMissionTopology = sealDecision.topology;
   // P0-8 visibility: a decomposable NL goal kept single-writer by the narrow
   // destructive valve must surface — never a silent collapse to one executor.
@@ -484,7 +510,7 @@ export function ensureGuidedMissionPlan(
       ? intentOwnership
       : resolveGuidedMutationOwnership(
           mission.intentContract,
-          deps.listRepositoryOwnership(suite.tasks.scope),
+          repositoryInventory(),
         );
   if (baseOwnership.length === 0) {
     throw new Error(
@@ -821,6 +847,17 @@ function guidedWavePackStories(
  */
 export function resolveGuidedSealTopology(
   mission: Mission,
+  options?: {
+    /**
+     * Áreas disjuntas do repositório vivo (prong b). Quando o objetivo NÃO cita
+     * arquivos — o caso do dia a dia — quem conhece as frentes é o repositório,
+     * não o texto do pedido. Ausente = comportamento anterior, intacto.
+     */
+    readonly lazyAreas?: () => readonly {
+      readonly id: string;
+      readonly files: readonly string[];
+    }[];
+  },
 ): GuidedSealTopologyDecision {
   const contract = mission.intentContract;
   const serialized = (
@@ -853,10 +890,32 @@ export function resolveGuidedSealTopology(
     // P0-8 NL fan-out: no promoted plan, no operator override. A goal that
     // names ≥2 disjoint files decomposes into that many parallel writers.
     if (forced === null) {
-      const nlStories = decomposeGuidedGoalIntoStories({
+      // Primeiro o goal que CITA arquivos (P0-8); se ele não decompõe, tenta as
+      // ÁREAS do repositório vivo (prong b) — nesta ordem, porque um alvo
+      // declarado pelo operador é mais preciso que a forma do repo.
+      const namedStories = decomposeGuidedGoalIntoStories({
         goal: contract.goal,
         acceptanceCriteria: contract.acceptanceCriteria,
       });
+      // Se o objetivo declara QUALQUER alvo, o operador já estreitou a
+      // superfície: não varremos o repositório nem inferimos áreas. Áreas são
+      // só para o objetivo que não cita nada — o caso do dia a dia.
+      const goalNamesFiles =
+        extractStoryOwnershipFiles(contract.goal).length > 0;
+      // Áreas só interessam quando o classificador cairia em `delivery` (um
+      // escritor). Fan-out de time já abre raízes read-only por agente e não
+      // tem o que particionar — varrer o repo ali seria trabalho jogado fora.
+      const classifierWouldDeliver =
+        classifyStandardMissionTopology(contract.goal) === "delivery";
+      const nlStories =
+        namedStories.length >= 2
+          ? namedStories
+          : goalNamesFiles || !classifierWouldDeliver
+            ? namedStories
+            : decomposeGoalByRepositoryAreas({
+                goal: contract.goal,
+                areas: options?.lazyAreas?.() ?? [],
+              });
       if (nlStories.length >= 2) {
         // Narrow safety valve: a truly destructive goal stays single-writer,
         // and the suppression is reported so it surfaces in mission state.

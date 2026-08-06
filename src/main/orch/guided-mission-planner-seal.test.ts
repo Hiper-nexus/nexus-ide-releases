@@ -951,6 +951,28 @@ describe("saved-team (mission-runtime) sealing", () => {
   });
 
   it("P0-8: an NL goal naming <2 files keeps the delivery graph", () => {
+    // prong (b): objetivo livre, sem citar arquivo, mas o REPO tem 3 frentes
+    // -> vira wave-pack. É o caso do dia a dia dele.
+    expect(
+      resolveGuidedSealTopology(
+        nlMission("mexe em apps/web e em services/api e em packages/contracts"),
+        {
+          lazyAreas: () => [
+            { id: "apps/web", files: ["apps/web/src/a.tsx"] },
+            { id: "services/api", files: ["services/api/src/b.ts"] },
+            { id: "packages/contracts", files: ["packages/contracts/src/c.ts"] },
+          ],
+        },
+      ).topology,
+    ).toBe("wave-pack");
+
+    // UMA área: não vira leque fingido.
+    expect(
+      resolveGuidedSealTopology(nlMission("corrige o login"), {
+        lazyAreas: () => [{ id: "apps/web", files: ["apps/web/src/a.tsx"] }],
+      }).topology,
+    ).toBe("delivery");
+
     expect(
       resolveGuidedSealTopology(nlMission("corrija o bug em src/app.ts")),
     ).toEqual({
