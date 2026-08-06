@@ -603,7 +603,26 @@ export class RealMissionObserver {
                     completedAt: dispatch.integrationReceipt.completedAt,
                     evidenceIds: [...dispatch.integrationReceipt.evidenceIds!],
                   }
-                : null,
+                : // Conclusão do escritor same_checkout (caminho simples):
+                  // reference é o tokenHash sha256 do binding
+                  // serialized-writer. Derrubar este kind aqui apagava o
+                  // receipt do executor da evidência e reprovava o PASS do
+                  // gate 0.28.0 com a missão 100% completa.
+                  dispatch.integrationReceipt?.kind ===
+                      "same_checkout_validated" &&
+                    /^[a-f0-9]{64}$/u.test(
+                      dispatch.integrationReceipt.reference,
+                    ) &&
+                    (dispatch.integrationReceipt.evidenceIds?.length ?? 0) > 0
+                  ? {
+                      kind: "same_checkout_validated" as const,
+                      reference: dispatch.integrationReceipt.reference,
+                      completedAt: dispatch.integrationReceipt.completedAt,
+                      evidenceIds: [
+                        ...dispatch.integrationReceipt.evidenceIds!,
+                      ],
+                    }
+                  : null,
       };
     });
     // O plano selado agora é roster-complete: scouts advisor → executor →
@@ -629,8 +648,12 @@ export class RealMissionObserver {
                 !roster ||
                 plannerId === null ||
                 planned.agentCategory !== roster.agentCategory ||
+                // same_checkout é o modo selado da ENTREGA no caminho
+                // simples; filtrá-lo apagava a task guided-execution do
+                // proof do plano e derrubava toda a cadeia de invariantes.
                 (schedule?.executionMode !== "isolated_worktree" &&
-                  schedule?.executionMode !== "read_only")
+                  schedule?.executionMode !== "read_only" &&
+                  schedule?.executionMode !== "same_checkout")
               ) {
                 return [];
               }

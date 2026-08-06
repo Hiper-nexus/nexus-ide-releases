@@ -686,11 +686,14 @@ export const realMissionE2EEvidenceSchema = z
       const noChangeHead = chainNoChangeReferences[index]?.[1];
       if (member.kind === "advisory") {
         const executorIntegratedAt = executorReceipt?.completedAt;
+        // Cronologia advisory no mundo same_checkout: o head capturado prova
+        // O QUE o leitor observou, não QUANDO submeteu. Um advisor paralelo
+        // observa a árvore PRÉ-entrega e legitimamente entrega DEPOIS do
+        // receipt do executor — head inicial é sempre plausível. Ver o head
+        // FINAL antes de o executor concluir continua impossível (fail).
         const headMatchesIntegrationChronology =
           executorIntegratedAt !== undefined &&
-          ((head === evidence.repository.initialHeadSha &&
-            (physicalReceipt?.issuedAt ?? Number.MAX_SAFE_INTEGER) <=
-              executorIntegratedAt) ||
+          (head === evidence.repository.initialHeadSha ||
             (head === evidence.repository.finalHeadSha &&
               (physicalReceipt?.issuedAt ?? -1) >= executorIntegratedAt));
         if (receipt?.kind === "read_only_validated") {

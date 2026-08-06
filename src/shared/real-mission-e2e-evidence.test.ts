@@ -227,15 +227,20 @@ describe("real mission E2E PASS graph", () => {
         withAdvisorHead(finalHead, finalHead, executorCompletedAt),
       ).status,
     ).toBe("pass");
-    expect(() =>
+    // Mundo same_checkout (gate 0.28.0): o head capturado prova O QUE o
+    // leitor observou, não QUANDO submeteu — um advisor paralelo observa a
+    // árvore PRÉ-entrega e legitimamente entrega DEPOIS do receipt do
+    // executor. Head inicial é sempre plausível; só ver o head FINAL antes
+    // de o executor concluir continua impossível (asserção acima).
+    expect(
       parseRealMissionE2EEvidence(
         withAdvisorHead(
           initialHead,
           initialHead,
           executorCompletedAt + 1,
         ),
-      ),
-    ).toThrow(/real-mission invariants/);
+      ).status,
+    ).toBe("pass");
 
     const unknownHead = "c".repeat(40);
     expect(() =>

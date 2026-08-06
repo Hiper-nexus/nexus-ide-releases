@@ -1010,12 +1010,13 @@ export function assertRealMissionPassEvidence(raw) {
     const receipt = chainReceipts[index];
     const noChangeHead = chainNoChangeMatches[index]?.[1];
     if (member.kind === "advisory") {
+      // Espelho do TS: head inicial é sempre plausível para advisory (leitor
+      // paralelo observa pré-entrega e submete depois); head final exige
+      // issuedAt >= integração do executor.
       const executorIntegratedAt = executorReceipt?.completedAt;
       const headMatchesIntegrationChronology =
         Number.isInteger(executorIntegratedAt) &&
-        ((head === repository?.initialHeadSha &&
-          Number.isInteger(physicalReceipt?.issuedAt) &&
-          physicalReceipt.issuedAt <= executorIntegratedAt) ||
+        (head === repository?.initialHeadSha ||
           (head === repository?.finalHeadSha &&
             Number.isInteger(physicalReceipt?.issuedAt) &&
             physicalReceipt.issuedAt >= executorIntegratedAt));
