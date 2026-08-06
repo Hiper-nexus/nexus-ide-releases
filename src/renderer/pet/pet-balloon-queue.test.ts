@@ -99,7 +99,10 @@ describe('enqueueBalloon / dismissBalloon', () => {
     const s = enqueueBalloon(EMPTY_BALLOON_QUEUE, ev('mission-done'));
     expect(s.current?.text).toContain('Deploy');
     expect(s.current?.action).toBe('open-ops');
-    expect(s.current?.cta).toContain('Ops');
+    // O destino tem UM nome em toda a interface: "Painel de operações".
+    // Antes convivia como "Ops Board" (título), "Painel" (barra) e
+    // "Painel de operações" (⌘K) — três nomes para a mesma superfície.
+    expect(s.current?.cta).toContain('painel');
     expect(s.queued).toEqual([]);
   });
 

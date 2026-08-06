@@ -66,13 +66,13 @@ export function balloonContentFor(
       return {
         title: 'Missão concluída',
         text: event.title,
-        cta: 'Abrir Ops Board',
+        cta: 'Abrir o painel',
       };
     case 'mission-failed':
       return {
         title: 'Missão falhou',
         text: event.title,
-        cta: 'Ver no Ops Board',
+        cta: 'Ver no painel',
       };
     case 'mission-technical-failure': {
       const why =
@@ -111,7 +111,7 @@ export function balloonContentFor(
         text: event.title.trim()
           ? `${event.title.trim()} encerrou — confira o grid e o pipeline.`
           : 'Um pane encerrou — confira o grid e o pipeline.',
-        cta: 'Abrir Ops Board',
+        cta: 'Abrir o painel',
       };
     case 'agent-idle':
       return null;

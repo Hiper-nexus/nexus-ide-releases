@@ -12,6 +12,11 @@ import { askConfirm } from '../../state/confirm-store';
 import { QrCode } from '../QrCode';
 import { waitForSession } from '../../terminal/terminal-host';
 import { formatShortcut } from '../../lib/platform';
+import {
+  SHORTCUT_GROUP_LABELS,
+  shortcutsInGroup,
+  type ShortcutGroupId,
+} from '../../lib/shortcuts';
 
 /**
  * Seções "operacionais" do catálogo — Recipes (lint/overlay), Atalhos e
@@ -245,30 +250,65 @@ export function RecipesSection() {
   );
 }
 
-const SHORTCUTS: Array<{ keys: string; action: string }> = [
-  { keys: formatShortcut('mod', 'D'), action: 'Split à direita' },
-  { keys: formatShortcut('mod', 'shift', 'D'), action: 'Split abaixo' },
-  { keys: formatShortcut('mod', 'W'), action: 'Fechar pane focado' },
+/**
+ * Gestos de mouse: não são atalhos de teclado e por isso não moram no
+ * catálogo compartilhado — mas o operador procura os dois no mesmo lugar.
+ */
+const GESTURES: Array<{ keys: string; action: string }> = [
   { keys: 'clique', action: 'Focar pane' },
-  { keys: '⬡ Canvas', action: 'Alternar grid ↔ canvas (barra)' },
-  { keys: '☾ / ☀', action: 'Dormir/acordar pane' },
-  { keys: 'Space (segurar)', action: 'Ditado EN no pane focado (preset NexusVoice)' },
-  { keys: formatShortcut('mod', 'shift', 'Space'), action: 'Push-to-talk Jarvis (padrão global)' },
+  // Controles da barra, não teclas — mas o operador procura os dois aqui.
+  // Antes vinham como glifos Unicode soltos (⬡ ☾ ☀), dívida pelo DESIGN.md §5.
+  { keys: 'botão Canvas', action: 'Alternar entre grade e canvas (barra)' },
+  {
+    keys: 'botão do pane',
+    action: 'Hibernar ou acordar o pane (barra do pane)',
+  },
+];
+
+const SHORTCUT_GROUP_ORDER: ShortcutGroupId[] = [
+  'command',
+  'fleet',
+  'surfaces',
 ];
 
 export function ShortcutsSection() {
   return (
     <section>
       <h3 className="settings-detail__title">Atalhos</h3>
-      <p className="settings-detail__hint">Teclado e gestos do workspace.</p>
+      <p className="settings-detail__hint">
+        Teclado e gestos do workspace — a mesma lista do cheatsheet (
+        {formatShortcut('mod', '/')}).
+      </p>
+      {SHORTCUT_GROUP_ORDER.map((groupId) => (
+        <div key={groupId}>
+          <p className="settings-detail__hint">
+            {SHORTCUT_GROUP_LABELS[groupId]}
+          </p>
+          <ul className="settings-list">
+            {shortcutsInGroup(groupId).map((shortcut) => (
+              <li key={shortcut.id} className="settings-list__item">
+                <div className="settings-list__head">
+                  <span className="settings-list__title settings-list__title--mono">
+                    {shortcut.keys}
+                  </span>
+                  <span className="settings-list__detail">
+                    {shortcut.action}
+                  </span>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+      <p className="settings-detail__hint">Mouse</p>
       <ul className="settings-list">
-        {SHORTCUTS.map((shortcut) => (
-          <li key={shortcut.keys} className="settings-list__item">
+        {GESTURES.map((gesture) => (
+          <li key={gesture.keys} className="settings-list__item">
             <div className="settings-list__head">
               <span className="settings-list__title settings-list__title--mono">
-                {shortcut.keys}
+                {gesture.keys}
               </span>
-              <span className="settings-list__detail">{shortcut.action}</span>
+              <span className="settings-list__detail">{gesture.action}</span>
             </div>
           </li>
         ))}

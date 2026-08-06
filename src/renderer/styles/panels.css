@@ -392,6 +392,31 @@
   margin: 0;
 }
 
+/* Saída inline de uma mensagem de bloqueio. Fica DENTRO do parágrafo de erro
+   (herda cor e métrica) mas é alvo de verdade: o operador resolve a causa sem
+   abandonar a revisão. */
+.wizard__inline-action {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 650;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.wizard__inline-action:hover {
+  color: var(--text);
+}
+
+.wizard__inline-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-xs);
+}
+
 /* ---- Marketplace ---- */
 .mkt__tabs {
   display: flex;
@@ -1925,4 +1950,109 @@
   .wizard__advanced-roster > summary::before {
     transition: none;
   }
+}
+
+/* ---- Mission wizard: opções avançadas ----
+   Estes blocos eram ~27 `style={{}}` inline com px cru e `color: var(--accent)`
+   como decoração — DESIGN.md §2 (espaço/raio vêm de token) e §9 (acento é
+   ESTADO, não enfeite). As classes abaixo carregam a mesma composição usando
+   a escala da casa. */
+.wizard__fieldset {
+  margin-top: var(--space-2);
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.wizard__fieldset > legend {
+  padding: 0 var(--space-1);
+}
+
+/* Linha de rádio: alvo confortável, rótulo alinhado ao topo quando quebra. */
+.wizard__radio {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.wizard__radio:last-of-type {
+  margin-bottom: 0;
+}
+
+/* Atalho para uma escolha já feita ("Modo: … · trocar"). É estado da missão,
+   por isso o acento aqui é legítimo. */
+.wizard__chip-shortcut {
+  margin-left: var(--space-2);
+  color: var(--accent);
+}
+
+.wizard__chip-shortcut--stacked {
+  margin-top: var(--space-2);
+  margin-left: 0;
+}
+
+.wizard__goal-input {
+  min-height: 120px;
+  resize: vertical;
+}
+
+.wizard__prepare {
+  margin-top: var(--space-3);
+  margin-bottom: var(--space-2);
+}
+
+.wizard__prepare-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.wizard__pack-field {
+  display: block;
+  margin-top: var(--space-2);
+}
+
+.wizard__pack-select {
+  display: block;
+  width: 100%;
+  margin-top: var(--space-2);
+}
+
+.wizard__note--suggested {
+  margin-bottom: var(--space-2);
+  color: var(--accent);
+}
+
+.wizard__note--queue {
+  margin-bottom: 10px;
+  opacity: 0.85;
+}
+
+/* Restantes do wizard: espaçamentos pontuais, agora na escala da casa. */
+.wizard__mode-desc--tight {
+  margin-top: -6px;
+  margin-bottom: var(--space-1);
+}
+
+.wizard__mode-desc--spaced {
+  margin-bottom: var(--space-3);
+}
+
+.wizard__note--evidence {
+  margin-top: var(--space-2);
+  color: var(--accent);
+}
+
+.wizard__advanced-row {
+  margin-top: var(--space-3);
+  margin-bottom: var(--space-1);
+}
+
+.wizard__prepare-lead {
+  margin-bottom: 6px;
+}
+
+.wizard__prepare-detail {
+  margin-top: var(--space-2);
 }

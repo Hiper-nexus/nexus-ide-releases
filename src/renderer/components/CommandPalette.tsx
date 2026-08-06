@@ -13,6 +13,7 @@ import { useContextualPanelNavStore } from '../state/contextual-panel-nav-store'
 import { listPanes } from '../lib/split-tree';
 import { filterPaletteActions } from '../lib/command-palette-filter';
 import { formatShortcut } from '../lib/platform';
+import { shortcutKeys } from '../lib/shortcuts';
 import { confirmAndReopenMission } from '../orch/confirm-reopen-mission';
 import { PixelIcon, type PixelIconName } from './PixelIcon';
 import { ActionCard, EmptyState } from './ActionCard';
@@ -85,13 +86,23 @@ export function CommandPalette() {
       keywords?: string,
     ) => out.push({ id: `tool:${id}`, group: 'Ações', label, icon, run, hint, keywords });
 
+    // Hints de atalho vêm do catálogo único (`lib/shortcuts`) — não recriar
+    // formatShortcut aqui, senão o cheatsheet e o palette divergem de novo.
     tool(
       'mission-new',
       'Nova missão',
       'mission',
       () => useMissionWizardStore.getState().openForMission(),
-      formatShortcut('mod', 'N'),
+      shortcutKeys('mission-new'),
       'wizard modo livre agente squad',
+    );
+    tool(
+      'mission-quick',
+      'Missão rápida',
+      'mission',
+      () => useMissionWizardStore.getState().openForAgentic(),
+      shortcutKeys('mission-quick'),
+      'rapida agentic objetivo sem modo',
     );
     tool('terminal', 'Abrir terminal', 'terminal', () => layout.addShellPane(), '', 'shell novo');
     tool('browser', 'Abrir navegador', 'browser', () => layout.addBrowserPane(), '', 'web browser');
@@ -148,7 +159,7 @@ export function CommandPalette() {
       'Painel de operações',
       'board',
       () => useOrchStore.getState().toggleBoard(),
-      formatShortcut('mod', 'B'),
+      shortcutKeys('ops-board'),
       'ops pipeline kanban',
     );
     tool(
@@ -180,16 +191,19 @@ export function CommandPalette() {
       'Configurações',
       'config',
       () => useSettingsStore.getState().openDrawer(),
-      formatShortcut('mod', ','),
+      shortcutKeys('settings'),
       'settings preferencias',
     );
+    // "ajuda" e "help" precisam CASAR com algo: o cheatsheet era a única
+    // superfície de ajuda do app e só era alcançável por quem já sabia o
+    // atalho. Sem estas keywords, buscar "ajuda" no ⌘K não devolvia nada.
     tool(
       'cheatsheet',
-      'Atalhos do teclado',
+      'Ajuda e atalhos do teclado',
       'key',
       () => useCheatsheetStore.getState().toggle(),
-      formatShortcut('mod', '/'),
-      'ajuda help teclas shortcuts',
+      shortcutKeys('cheatsheet'),
+      'ajuda help teclas shortcuts atalhos comandos duvida como',
     );
 
     return out;
@@ -293,12 +307,12 @@ export function CommandPalette() {
                       }}
                     />
                     <ActionCard
-                      icon="star"
-                      title="Ranking LLMs"
+                      icon="key"
+                      title="Ajuda e atalhos"
                       size="sm"
                       onClick={() => {
                         close();
-                        useSettingsStore.getState().openDrawer('ranking');
+                        useCheatsheetStore.getState().toggle();
                       }}
                     />
                   </>

@@ -109,6 +109,22 @@
   text-transform: uppercase;
 }
 
+/* O título da missão divide o eyebrow com "Decisão necessária": herda a
+   métrica, mas em texto normal (não caixa-alta) — é dado, não rótulo. O rail
+   é estreito, então corta com reticências em vez de quebrar a linha. */
+.mission-clarify__mission {
+  display: inline-block;
+  max-width: 60%;
+  overflow: hidden;
+  color: var(--text-dim);
+  font-weight: 650;
+  letter-spacing: normal;
+  text-transform: none;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+  white-space: nowrap;
+}
+
 .mission-clarify__question {
   margin-top: 5px;
   color: var(--text);

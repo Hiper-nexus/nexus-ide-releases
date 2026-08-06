@@ -21,6 +21,7 @@ function mount(
   onSubmit: (intent: string) => void,
   inputDisabled = false,
   submitDisabled = false,
+  disabledReason?: string,
 ): HTMLElement {
   const host = document.createElement("div");
   document.body.appendChild(host);
@@ -33,6 +34,7 @@ function mount(
         submitDisabled={submitDisabled}
         submitLabel="Descrever objetivo"
         submitIcon="mission"
+        disabledReason={disabledReason}
         onSubmit={onSubmit}
         onOpenTerminal={vi.fn()}
       />,
@@ -69,5 +71,19 @@ describe("MissionComposer", () => {
     );
     expect(chips.length).toBeGreaterThan(0);
     expect(chips.every((button) => button.disabled)).toBe(true);
+  });
+
+  it("surfaces disabledReason on the field hint instead of the Enter shortcut", () => {
+    const host = mount(
+      vi.fn(),
+      true,
+      true,
+      "Abra um workspace antes de descrever o objetivo.",
+    );
+    const hint = host.querySelector("#mission-intent-hint");
+    expect(hint?.textContent).toBe(
+      "Abra um workspace antes de descrever o objetivo.",
+    );
+    expect(hint?.textContent).not.toMatch(/Enter começa/);
   });
 });

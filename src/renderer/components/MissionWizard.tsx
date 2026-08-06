@@ -139,8 +139,19 @@ const STEP_LABELS: Record<Step, string> = {
   "intent-plan": "Plano",
 };
 
+/**
+ * Cinto de segurança da trilha: um step fora da lista devolvia -1 e apagava a
+ * barra inteira (nenhum chip ativo, nenhum completo) exatamente nos caminhos
+ * de erro. Quem monta `steps` deve incluir o step corrente — mas se escapar,
+ * a barra degrada para "tudo pendente" em vez de sumir.
+ */
+export function missionWizardStepIndex(steps: Step[], current: Step): number {
+  const index = steps.indexOf(current);
+  return index === -1 ? 0 : index;
+}
+
 function StepsBar({ steps, current }: { steps: Step[]; current: Step }) {
-  const currentIndex = steps.indexOf(current);
+  const currentIndex = missionWizardStepIndex(steps, current);
   return (
     <div className="wizard__steps" aria-label="Etapas">
       {steps.map((s, i) => (
@@ -788,8 +799,22 @@ export function MissionWizard() {
       }
       return base;
     }
-    if (mode === "agentic")
-      return [...prefix, "mode", "agentic-intent", "squad-review"];
+    if (mode === "agentic") {
+      const base: Step[] = [
+        ...prefix,
+        "mode",
+        "agentic-intent",
+        "squad-review",
+      ];
+      // O caminho feliz do agêntico termina em REVISAR e vai direto para a
+      // aprovação nativa. Mas falta de evidência e erro de compilação caem em
+      // intent-compose / intent-plan (compileAndRouteMissionGoal): sem estes
+      // steps na trilha, a barra ficava sem etapa ativa bem na hora do erro.
+      if (step === "intent-compose" || step === "intent-plan") {
+        return [...base, "intent-compose", "intent-plan"];
+      }
+      return base;
+    }
     if (mode === "libre")
       return [...prefix, "mode", "libre-count", "libre-slots"];
     return [...prefix, "mode"];
@@ -2089,8 +2114,7 @@ export function MissionWizard() {
             <div className="wizard__section">
               <p className="wizard__label">COMO QUER TRABALHAR</p>
               <p
-                className="wizard__mode-desc"
-                style={{ marginTop: -6, marginBottom: 4 }}
+                className="wizard__mode-desc wizard__mode-desc--tight"
               >
                 Escolha o caminho. Pode mudar depois — o Nexus guarda o contexto
                 da pasta.
@@ -2146,8 +2170,7 @@ export function MissionWizard() {
               {missionLane !== "standard" && (
                 <button
                   type="button"
-                  className="wizard__btn wizard__btn--ghost"
-                  style={{ marginTop: 6, color: "var(--accent)" }}
+                  className="wizard__btn wizard__btn--ghost wizard__chip-shortcut--stacked"
                   title="O objetivo sugere este modo; clique para executar sem restrições"
                   onClick={() => {
                     laneTouchedByUserRef.current = true;
@@ -2427,14 +2450,13 @@ export function MissionWizard() {
               <label className="wizard__label" htmlFor="wizard-mission-goal">
                 {selectedSquad.name.toUpperCase()} PRONTO
               </label>
-              <p className="wizard__mode-desc" style={{ marginBottom: 12 }}>
+              <p className="wizard__mode-desc wizard__mode-desc--spaced">
                 Aguardando seu objetivo. Nenhum especialista iniciado.{" "}
                 <strong>0 tokens de modelo usados.</strong>
               </p>
               {promptQueueHint && (
                 <p
-                  className="wizard__mode-desc"
-                  style={{ marginBottom: 10, opacity: 0.85 }}
+                  className="wizard__mode-desc wizard__note--queue"
                   aria-live="polite"
                 >
                   {promptQueueHint}
@@ -2442,8 +2464,7 @@ export function MissionWizard() {
               )}
               <textarea
                 id="wizard-mission-goal"
-                className="wizard__input"
-                style={{ minHeight: 120, resize: "vertical" }}
+                className="wizard__input wizard__goal-input"
                 value={missionGoal}
                 placeholder="Descreva o objetivo da missão…"
                 onChange={(e) => setMissionGoal(e.target.value)}
@@ -2459,8 +2480,7 @@ export function MissionWizard() {
                 missionAttachments.length > 0,
               ) && (
                 <p
-                  className="wizard__mode-desc"
-                  style={{ marginTop: 8, color: "var(--accent)" }}
+                  className="wizard__mode-desc wizard__note--evidence"
                   role="status"
                 >
                   A missão ficará aguardando os anexos. O Nexus não vai
@@ -2468,7 +2488,7 @@ export function MissionWizard() {
                   chegarem.
                 </p>
               )}
-              <div style={{ marginTop: 12, marginBottom: 4 }}>
+              <div className="wizard__advanced-row">
                 <button
                   type="button"
                   className="wizard__btn wizard__btn--ghost"
@@ -2480,8 +2500,7 @@ export function MissionWizard() {
                 {!advancedOpen && missionLane !== "standard" && (
                   <button
                     type="button"
-                    className="wizard__btn wizard__btn--ghost"
-                    style={{ marginLeft: 8, color: "var(--accent)" }}
+                    className="wizard__btn wizard__btn--ghost wizard__chip-shortcut"
                     title="O objetivo sugere este modo; clique para revisar ou trocar"
                     onClick={() => setAdvancedOpen(true)}
                   >
@@ -2497,35 +2516,25 @@ export function MissionWizard() {
                 {!advancedOpen && orchestrationMode !== "guided" && (
                   <button
                     type="button"
-                    className="wizard__btn wizard__btn--ghost"
-                    style={{ marginLeft: 8, color: "var(--accent)" }}
-                    title="Orquestração Livre ou Pack; clique para revisar"
+                    className="wizard__btn wizard__btn--ghost wizard__chip-shortcut"
+                    title="A missão não vai usar o modo Guiado; clique para revisar"
                     onClick={() => setAdvancedOpen(true)}
                   >
-                    Orquestração:{" "}
-                    {orchestrationMode === "livre"
-                      ? "Livre"
-                      : `Pack · ${wavePackTemplateId}`}{" "}
-                    · trocar
+                    Condução:{" "}
+                    {orchestrationMode === "livre" ? "Livre" : "Em lote"} ·
+                    trocar
                   </button>
                 )}
                 {advancedOpen && (
                   <fieldset
-                    className="wizard__mode-desc"
-                    style={{
-                      marginTop: 8,
-                      border: "1px solid var(--border)",
-                      borderRadius: 8,
-                      padding: "10px 12px",
-                    }}
+                    className="wizard__mode-desc wizard__fieldset"
                   >
-                    <legend style={{ padding: "0 4px" }}>
+                    <legend>
                       Restringir o que o Nexus pode fazer
                     </legend>
                     {!laneTouchedByUserRef.current && suggestedLane && (
                       <p
-                        className="wizard__mode-desc"
-                        style={{ marginBottom: 8, color: "var(--accent)" }}
+                        className="wizard__mode-desc wizard__note--suggested"
                         role="status"
                       >
                         Sugerido pelo objetivo:{" "}
@@ -2538,12 +2547,7 @@ export function MissionWizard() {
                       </p>
                     )}
                     <label
-                      style={{
-                        display: "flex",
-                        gap: 8,
-                        alignItems: "flex-start",
-                        marginBottom: 8,
-                      }}
+                      className="wizard__radio"
                     >
                       <input
                         type="radio"
@@ -2560,12 +2564,7 @@ export function MissionWizard() {
                       </span>
                     </label>
                     <label
-                      style={{
-                        display: "flex",
-                        gap: 8,
-                        alignItems: "flex-start",
-                        marginBottom: 8,
-                      }}
+                      className="wizard__radio"
                     >
                       <input
                         type="radio"
@@ -2581,12 +2580,7 @@ export function MissionWizard() {
                       </span>
                     </label>
                     <label
-                      style={{
-                        display: "flex",
-                        gap: 8,
-                        alignItems: "flex-start",
-                        marginBottom: 8,
-                      }}
+                      className="wizard__radio"
                     >
                       <input
                         type="radio"
@@ -2602,11 +2596,7 @@ export function MissionWizard() {
                       </span>
                     </label>
                     <label
-                      style={{
-                        display: "flex",
-                        gap: 8,
-                        alignItems: "flex-start",
-                      }}
+                      className="wizard__radio"
                     >
                       <input
                         type="radio"
@@ -2625,24 +2615,13 @@ export function MissionWizard() {
                 )}
                 {advancedOpen && (
                   <fieldset
-                    className="wizard__mode-desc"
-                    style={{
-                      marginTop: 8,
-                      border: "1px solid var(--border)",
-                      borderRadius: 8,
-                      padding: "10px 12px",
-                    }}
+                    className="wizard__mode-desc wizard__fieldset"
                   >
-                    <legend style={{ padding: "0 4px" }}>
-                      Orquestração (Livre · Pack · Guiado)
+                    <legend>
+                      Como o Nexus vai conduzir
                     </legend>
                     <label
-                      style={{
-                        display: "flex",
-                        gap: 8,
-                        alignItems: "flex-start",
-                        marginBottom: 8,
-                      }}
+                      className="wizard__radio"
                     >
                       <input
                         type="radio"
@@ -2651,17 +2630,13 @@ export function MissionWizard() {
                         onChange={() => setOrchestrationMode("guided")}
                       />
                       <span>
-                        <strong>Guiado</strong> — grafo selado, cerca PREVC
-                        quando sensível
+                        <strong>Guiado (recomendado)</strong> — o Nexus fecha o
+                        plano antes de começar e pede sua aprovação quando a
+                        tarefa for sensível
                       </span>
                     </label>
                     <label
-                      style={{
-                        display: "flex",
-                        gap: 8,
-                        alignItems: "flex-start",
-                        marginBottom: 8,
-                      }}
+                      className="wizard__radio"
                     >
                       <input
                         type="radio"
@@ -2670,16 +2645,13 @@ export function MissionWizard() {
                         onChange={() => setOrchestrationMode("pack")}
                       />
                       <span>
-                        <strong>Wave Pack</strong> — N stories em panes
-                        paralelos (template obrigatório no lançamento)
+                        <strong>Em lote</strong> — divide o objetivo em várias
+                        tarefas e roda uma por painel, em paralelo. Escolha um
+                        modelo de divisão abaixo.
                       </span>
                     </label>
                     <label
-                      style={{
-                        display: "flex",
-                        gap: 8,
-                        alignItems: "flex-start",
-                      }}
+                      className="wizard__radio"
                     >
                       <input
                         type="radio"
@@ -2688,20 +2660,16 @@ export function MissionWizard() {
                         onChange={() => setOrchestrationMode("livre")}
                       />
                       <span>
-                        <strong>Livre</strong> — sem seal Guided; orquestrador
-                        spawna ≤ maxWorkers
+                        <strong>Livre</strong> — sem plano fechado: o
+                        orquestrador decide na hora quantos agentes abrir, até o
+                        limite da missão
                       </span>
                     </label>
                     {orchestrationMode === "pack" ? (
-                      <label style={{ display: "block", marginTop: 8 }}>
-                        Template Pack
+                      <label className="wizard__pack-field">
+                        Como dividir o trabalho
                         <select
-                          className="wizard__input"
-                          style={{
-                            display: "block",
-                            width: "100%",
-                            marginTop: 6,
-                          }}
+                          className="wizard__input wizard__pack-select"
                           value={wavePackTemplateId}
                           onChange={(e) =>
                             setWavePackTemplateId(
@@ -2721,16 +2689,15 @@ export function MissionWizard() {
                 )}
               </div>
               <div
-                className="wizard__mode-desc"
-                style={{ marginTop: 12, marginBottom: 8 }}
+                className="wizard__mode-desc wizard__prepare"
               >
-                <p style={{ marginBottom: 6 }}>
+                <p className="wizard__prepare-lead">
                   <strong>Preparar projeto</strong> (opcional): aquece o mapa
                   local do repositório. Não abre agentes nem inventa tarefas.
                   Você pode ocultar o andamento; o aquecimento local pode
                   terminar em segundo plano.
                 </p>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <div className="wizard__prepare-actions">
                   <button
                     type="button"
                     className="wizard__btn wizard__btn--ghost"
@@ -2761,7 +2728,7 @@ export function MissionWizard() {
                   </button>
                 </div>
                 {prepareDetail && (
-                  <p style={{ marginTop: 8 }} aria-live="polite">
+                  <p className="wizard__prepare-detail" aria-live="polite">
                     {prepareDetail}
                   </p>
                 )}

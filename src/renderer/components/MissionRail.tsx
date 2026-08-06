@@ -65,6 +65,7 @@ import { paneSessionView } from '../../shared/pane-session-view';
 import { hasAutomaticTechnicalRecovery } from '../../shared/mission-recovery-policy';
 import { hasMissionFailureNotes } from '../../shared/mission-failure-presentation';
 import { missionBlockCause } from '../../shared/mission-block-cause';
+import { missionIdsAwaitingAnswer } from '../orch/mission-pending-question';
 
 /** A segunda linha do card é estreita: corta o porquê, nunca a ação do card. */
 const RAIL_CAUSE_LIMIT = 64;
@@ -218,6 +219,14 @@ export function MissionRail() {
     }
     return grouped;
   }, [layoutRoot, paneMissions]);
+
+  // Sem isto, `missionBlockCause` nunca recebia `pendingQuestion` e a causa
+  // 'human-decision' era código morto: uma missão parada esperando o operador
+  // dizia "Motivo não registrado · ver diagnóstico".
+  const missionsAwaitingAnswer = useMemo(
+    () => missionIdsAwaitingAnswer(missions, handoffs),
+    [missions, handoffs],
+  );
 
   const handoffCountByMission = useMemo(() => {
     const map = new Map<string, number>();
@@ -518,6 +527,7 @@ export function MissionRail() {
         status: mission.status,
         intentState: mission.intentState ?? null,
         description: mission.description ?? '',
+        pendingQuestion: missionsAwaitingAnswer.has(mission.id),
       });
       // Causa desconhecida ADMITE que é desconhecida: "Clique para retomar"
       // escondia que o Nexus também não sabia por que a missão parou.
@@ -714,7 +724,13 @@ export function MissionRail() {
         </div>
       </details>
 
-      {(localMissions.length >= 4 || extIssues.length > 0) && (
+      {/* Limiar em 4 fazia o campo aparecer e sumir conforme se arquivava —
+          um controle que se move. Uma vez que a lista justificou busca, ela
+          permanece: `query` preenchida também segura o campo, senão o filtro
+          se apagava sozinho ao restringir a lista abaixo do limiar. */}
+      {(localMissions.length >= 4 ||
+        extIssues.length > 0 ||
+        query.trim().length > 0) && (
         <div className="mission-rail__tools">
           <label className="activity-rail__search">
             <span className="settings-visually-hidden">

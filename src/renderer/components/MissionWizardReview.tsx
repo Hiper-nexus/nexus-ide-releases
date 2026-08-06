@@ -12,6 +12,7 @@ import { isOperatorChoicePolicy } from "../../shared/squad-cli-policy";
 import { defaultSquadModelForAdapter } from "../../shared/squad-model-defaults";
 import type { SquadCliPolicy } from "../../shared/settings-types";
 import { isAdapterModelAuthenticated } from "../orch/mission-runtime-readiness";
+import { useSettingsStore } from "../state/settings-store";
 import { AgentAvatar } from "./AgentAvatar";
 import { deriveMissionWizardRoundtableState } from "./mission-wizard-roundtable";
 import { ProviderLogo } from "./ProviderLogo";
@@ -59,6 +60,28 @@ interface MissionWizardReviewProps {
   onLaunch(): void;
   /** Test/override seam; production loads from orch.squadCliPolicy. */
   squadCliPolicy?: SquadCliPolicy;
+}
+
+/**
+ * Toda mensagem de bloqueio nomeava um destino ("Configurações › Squads") em
+ * texto morto: o operador tinha de fechar o assistente, achar a seção à mão e
+ * voltar — perdendo a revisão no caminho. O drawer abre POR CIMA do wizard, e
+ * `openDrawer(section)` leva direto ao painel certo.
+ */
+function BlockedReasonAction({
+  section,
+}: {
+  section: 'providers' | 'squads';
+}) {
+  return (
+    <button
+      type="button"
+      className="wizard__inline-action"
+      onClick={() => useSettingsStore.getState().openDrawer(section)}
+    >
+      {section === 'providers' ? 'Abrir Providers' : 'Abrir Squads'} ›
+    </button>
+  );
 }
 
 function specValue(
@@ -346,7 +369,10 @@ export function MissionWizardReview({
         ? `O provider ${orchestratorAgent.cli} não foi carregado. Escolha outro em Configurações › Squads.`
         : !operatorChoice &&
             !adapterCapabilityMatrixOf(orchestratorAdapter).verifiedMaestro
-          ? `${orchestratorAdapter.label} está disponível no Terminal, mas não concluiu o gate de Maestro desta release. Escolha um Maestro verificado ou ative Escolha livre em Configurações › Orquestração.`
+          ? // "Configurações › Orquestração" não existe na nav: o controle
+            // (squadCliPolicy) mora em OrchestratorDefaults, dentro de Squads.
+            // Mandar o operador para uma seção inventada custava a busca inteira.
+            `${orchestratorAdapter.label} está disponível no Terminal, mas não concluiu o gate de Maestro desta release. Escolha um Maestro verificado ou ative Escolha livre em Configurações › Squads.`
           : !orchestratorModelAuthenticated
             ? `${orchestratorAdapter.label} precisa de autenticação válida para o modelo selecionado.`
             : !orchestratorRouteDeclared
@@ -407,7 +433,14 @@ export function MissionWizardReview({
       )}
       {orchestratorBlockedReason && !orchestratorManualOnly && (
         <p className="wizard__error" role="alert">
-          {orchestratorBlockedReason}
+          {orchestratorBlockedReason}{' '}
+          <BlockedReasonAction
+            section={
+              orchestratorBlockedReason.includes('autenticação')
+                ? 'providers'
+                : 'squads'
+            }
+          />
         </p>
       )}
       <details
@@ -816,7 +849,7 @@ export function MissionWizardReview({
       )}
       {workerBlockedReason && (
         <p className="wizard__error" role="alert">
-          {workerBlockedReason}
+          {workerBlockedReason} <BlockedReasonAction section="providers" />
         </p>
       )}
       {guided && (

@@ -45,10 +45,11 @@ import {
 import { toUserFacingMissionError } from '../lib/user-facing-mission-error';
 
 /**
- * Ops Board — o pipeline de missões como superfície espacial (war-room).
- * Mesmo domínio do MissionRail/OrchestrationPanel, outra projeção: colunas
- * por status com trilho semântico, arrastar = planejar (override de status),
- * "rodando" só via Retomar (agentes reais no grid). ⌘B abre/fecha.
+ * Painel de operações — o pipeline de missões como superfície espacial
+ * (war-room). Mesmo domínio do MissionRail/OrchestrationPanel, outra
+ * projeção: colunas por status com trilho semântico, arrastar = planejar
+ * (override de status), "rodando" só via Retomar (agentes reais no grid).
+ * ⌘B abre/fecha. Nome de UI único: "Painel de operações" (nunca "Ops Board").
  */
 
 interface DragState {
@@ -89,9 +90,11 @@ export function OpsBoard() {
   // Arquivadas saem do board pelo mesmo motivo que saem do rail: o operador
   // já tirou da mesa. Nada é apagado — reaparecem ao desarquivar no rail.
   const archivedSet = new Set(loadArchivedMissionIds(workspacePath));
-  const columns = groupMissionsIntoColumns(
-    missions.filter((m) => !archivedSet.has(m.id)),
-  );
+  // Uma lista só para contagem, empty state e colunas. Ler `missions` cru no
+  // cabeçalho anunciava "3 missões" sobre cinco colunas vazias e impedia o
+  // empty state (com o CTA de primeira missão) de aparecer.
+  const visibleMissions = missions.filter((m) => !archivedSet.has(m.id));
+  const columns = groupMissionsIntoColumns(visibleMissions);
   const openMissionIds = new Set(Object.values(paneMissions));
   const squadNames = new Map(squads.map((s) => [s.id, s.name]));
   const panes = listPanes(layoutRoot);
@@ -167,7 +170,7 @@ export function OpsBoard() {
   return (
     <section
       className="ops-board"
-      aria-label="Ops Board — pipeline de missões"
+      aria-label="Painel de operações — pipeline de missões"
       style={{ zIndex: stackZ }}
       onMouseDownCapture={bringToFront}
     >
@@ -176,10 +179,11 @@ export function OpsBoard() {
           <NexusMark size={13} />
         </span>
         <div className="ops-board__head-text">
-          <h2 className="ops-board__title">Ops Board</h2>
+          <h2 className="ops-board__title">Painel de operações</h2>
           <span className="ops-board__sub">
-            {missions.length} miss{missions.length === 1 ? 'ão' : 'ões'} · arraste para planejar
-            · {formatShortcut('mod', 'B')} fecha
+            {visibleMissions.length} miss
+            {visibleMissions.length === 1 ? 'ão' : 'ões'} · arraste para
+            planejar · {formatShortcut('mod', 'B')} fecha
           </span>
         </div>
         <span className="ops-board__spacer" />
@@ -195,13 +199,13 @@ export function OpsBoard() {
           className="ops-board__close"
           onClick={closeBoard}
           title="Fechar o board (Esc)"
-          aria-label="Fechar Ops Board"
+          aria-label="Fechar o painel de operações"
         >
           <PixelIcon name="close" size={10} />
         </button>
       </header>
 
-      {missions.length === 0 ? (
+      {visibleMissions.length === 0 ? (
         <div className="ops-board__empty">
           <ChosenPetPortrait
             size={48}
@@ -210,9 +214,18 @@ export function OpsBoard() {
             fallbackBranch={snapshot.branch}
             fallbackSkin={snapshot.selectedSkin}
           />
-          <p className="ops-board__empty-title">Nenhuma missão no pipeline</p>
+          {/* Tudo arquivado NÃO é o mesmo que nunca ter havido missão: dizer
+              "nenhuma missão" para quem arquivou 12 apaga o próprio histórico
+              e esconde onde ele foi parar. */}
+          <p className="ops-board__empty-title">
+            {missions.length === 0
+              ? 'Nenhuma missão no pipeline'
+              : 'Todas as missões estão arquivadas'}
+          </p>
           <p className="ops-board__empty-sub">
-            Toda missão criada aparece aqui — na fila, rodando, travada, concluída.
+            {missions.length === 0
+              ? 'Toda missão criada aparece aqui — na fila, rodando, travada, concluída.'
+              : `${missions.length} miss${missions.length === 1 ? 'ão' : 'ões'} fora da mesa. Desarquive na lista de missões para trazer de volta.`}
           </p>
           <button
             type="button"
@@ -224,7 +237,9 @@ export function OpsBoard() {
             </span>
             <span className="action-card__copy">
               <strong className="action-card__title">
-                Iniciar a primeira missão
+                {missions.length === 0
+                  ? 'Iniciar a primeira missão'
+                  : 'Nova missão'}
               </strong>
               <small className="action-card__sub">
                 Descrever objetivo e revisar equipe

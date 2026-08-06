@@ -13,6 +13,13 @@ export interface MissionComposerProps {
   readonly submitLabel: string;
   readonly submitIcon: PixelIconName;
   readonly submitButtonRef?: RefObject<HTMLButtonElement | null>;
+  /**
+   * POR QUE o campo está desabilitado, em uma frase. Sem isto o leitor de tela
+   * anunciava "Enter começa · Shift+Enter quebra a linha" num textarea que não
+   * aceita nada — a razão real morava num heading fora do composer, sem
+   * vínculo com o campo.
+   */
+  readonly disabledReason?: string;
   readonly onSubmit: (intent: string) => void;
   readonly onOpenTerminal: () => void;
 }
@@ -28,6 +35,7 @@ export function MissionComposer({
   submitLabel,
   submitIcon,
   submitButtonRef,
+  disabledReason,
   onSubmit,
   onOpenTerminal,
 }: MissionComposerProps) {
@@ -82,7 +90,9 @@ export function MissionComposer({
       </div>
       <div className="home-deck__composer-footer">
         <span id="mission-intent-hint" className="home-deck__composer-hint">
-          Enter começa · Shift+Enter quebra a linha
+          {inputDisabled && disabledReason
+            ? disabledReason
+            : "Enter começa · Shift+Enter quebra a linha"}
         </span>
         <button
           ref={submitButtonRef}

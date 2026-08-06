@@ -135,11 +135,15 @@ describe('MissionWizardPlanReview', () => {
     expect(host.textContent).toContain(
       'Este envio aprova a missão exatamente como revisada acima.',
     );
+    // O clique aprova E despacha na mesma ação (o grant do wizard suprime o
+    // modal nativo), então o CTA nomeia o efeito real — não "enviar para
+    // aprovação", que prometia uma segunda tela que não existe mais.
     expect(
       Array.from(host.querySelectorAll('button')).some(
-        (button) => button.textContent === 'Enviar para aprovação',
+        (button) => button.textContent === 'Iniciar missão',
       ),
     ).toBe(true);
+    expect(host.textContent).not.toContain('Enviar para aprovação');
     expect(host.textContent).not.toContain('Confirmar e começar');
 
     act(() => root.unmount());

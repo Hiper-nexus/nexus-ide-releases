@@ -10,7 +10,7 @@ import { useWorkspaceStore } from "../state/workspace-store";
 import { useMissionWizardStore } from "../state/mission-wizard-store";
 import { useSettingsStore } from "../state/settings-store";
 import { listPanes } from "../lib/split-tree";
-import { formatShortcut } from "../lib/platform";
+import { primaryShortcuts } from "../lib/shortcuts";
 import { PixelIcon } from "./PixelIcon";
 import { AgentAvatar } from "./AgentAvatar";
 import { EndorphinPresence } from "./EndorphinPresence";
@@ -57,7 +57,10 @@ export function HomeDeck() {
   const openAgentic = useMissionWizardStore((s) => s.openForAgentic);
   const openMission = useMissionWizardStore((s) => s.openForMission);
   const openForSquad = useMissionWizardStore((s) => s.openForSquad);
-  const openSettings = useSettingsStore((s) => s.toggleDrawer);
+  // Um CTA de correção NUNCA pode ser toggle: com o drawer já aberto o clique
+  // o fechava. E sem seção explícita o destino era "Minha conta" — o botão
+  // dizia "Conectar uma IA" e entregava a tela de assinatura.
+  const openSettings = useSettingsStore((s) => s.openDrawer);
   const addShellPane = useLayoutStore((s) => s.addShellPane);
   const claimStructuralPlaceholder = useLayoutStore(
     (s) => s.claimStructuralPlaceholder,
@@ -212,7 +215,7 @@ export function HomeDeck() {
       return;
     }
     if (needsCli || needsExecutionSetup) {
-      openSettings();
+      openSettings("providers");
       return;
     }
     // Com texto: piloto automático (objetivo-first). Sem texto: seletor de
@@ -329,6 +332,17 @@ export function HomeDeck() {
               inputDisabled={composerInputDisabled}
               submitDisabled={adaptersLoading}
               submitButtonRef={primaryActionRef}
+              disabledReason={
+                adaptersLoading
+                  ? "Lendo os providers locais antes de liberar a missão."
+                  : adapterLoadFailed
+                    ? "O inventário de providers falhou — tente de novo para reler."
+                    : needsCli
+                      ? "Conecte uma IA para escrever o objetivo."
+                      : needsExecutionSetup
+                        ? "Conclua a configuração de execução para escrever o objetivo."
+                        : undefined
+              }
               submitIcon={
                 adaptersLoading
                   ? "agent"
@@ -355,8 +369,10 @@ export function HomeDeck() {
           </div>
         </section>
 
-        <details className="home-deck__advanced">
-          <summary>Detalhes do ambiente e equipes salvas</summary>
+        {/* Aberto por padrão quando há o que corrigir: fechado, o
+            diagnóstico só era visto por quem já suspeitava dele. */}
+        <details className="home-deck__advanced" open={!isReady}>
+          <summary>Detalhes do ambiente</summary>
           <div
             className="home-deck__status"
             aria-label="Estado técnico do ambiente"
@@ -393,7 +409,7 @@ export function HomeDeck() {
                 : readiness.readyProviders.length === 1
                   ? "Uma CLI só — autenticar mais providers multiplica economia e paralelismo"
                   : squadCliPolicy === "operator-choice"
-                    ? "Autentique CLIs em Configurações › Providers"
+                    ? "Nenhuma CLI autenticada"
                     : "Nenhum Maestro autenticado e verificado"}
             </span>
             <span
@@ -420,45 +436,58 @@ export function HomeDeck() {
             </span>
           </div>
 
-          {featured.length > 0 && (
-            <section className="home-deck__squads" aria-label="Equipes salvas">
-              <h2 className="home-deck__section-title">Equipes salvas</h2>
-              <ul className="home-deck__squad-list">
-                {featured.map((s) => (
-                  <li key={s.id}>
-                    <button
-                      className="home-deck__squad"
-                      onClick={() => openForSquad(s.id)}
-                    >
-                      <span
-                        className="agent-avatar-group home-deck__squad-avatars"
-                        aria-label="Pessoas da equipe"
-                      >
-                        {s.agents.slice(0, 5).map((agent) => (
-                          <AgentAvatar
-                            key={agent.id}
-                            category={agent.category}
-                            state="offline"
-                            size="card"
-                            label={agent.agentName}
-                            className="home-deck__squad-avatar"
-                          />
-                        ))}
-                      </span>
-                      <span className="home-deck__squad-name">{s.name}</span>
-                      <span className="home-deck__squad-meta">
-                        {workerCount(s)}
-                      </span>
-                      <span className="home-deck__squad-go" aria-hidden="true">
-                        <PixelIcon name="chevron" size={10} />
-                      </span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          )}
+          {/* Diagnóstico sem porta de saída é diagnóstico morto: a linha que
+              nomeava "Configurações › Providers" era texto, e o operador tinha
+              de garimpar a seção à mão. */}
+          <button
+            type="button"
+            className="home-deck__stat-action"
+            onClick={() => openSettings("providers")}
+          >
+            <PixelIcon name="key" size={11} />
+            Abrir Providers
+          </button>
+
         </details>
+
+        {featured.length > 0 && (
+          <section className="home-deck__squads" aria-label="Equipes salvas">
+            <h2 className="home-deck__section-title">Equipes salvas</h2>
+            <ul className="home-deck__squad-list">
+              {featured.map((s) => (
+                <li key={s.id}>
+                  <button
+                    className="home-deck__squad"
+                    onClick={() => openForSquad(s.id)}
+                  >
+                    <span
+                      className="agent-avatar-group home-deck__squad-avatars"
+                      aria-label="Pessoas da equipe"
+                    >
+                      {s.agents.slice(0, 5).map((agent) => (
+                        <AgentAvatar
+                          key={agent.id}
+                          category={agent.category}
+                          state="offline"
+                          size="card"
+                          label={agent.agentName}
+                          className="home-deck__squad-avatar"
+                        />
+                      ))}
+                    </span>
+                    <span className="home-deck__squad-name">{s.name}</span>
+                    <span className="home-deck__squad-meta">
+                      {workerCount(s)}
+                    </span>
+                    <span className="home-deck__squad-go" aria-hidden="true">
+                      <PixelIcon name="chevron" size={10} />
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
 
         <footer className="home-deck__foot">
           <div className="home-deck__instrument" aria-label="Instrumentos operacionais">
@@ -479,20 +508,18 @@ export function HomeDeck() {
                 {readiness.detectedAdapters.length === 1 ? "" : "s"} local
               </span>
             </div>
+            {/* Mesma fonte do cheatsheet e de Configurações › Atalhos: três
+                listas escritas à mão divergiram e ⌘⇧N não estava em nenhuma. */}
             <span className="home-deck__keys">
-              {viewKind === "canvas" ? (
-                <>
-                  <kbd>{formatShortcut("mod", "K")}</kbd> comandos · <kbd>F</kbd>{" "}
-                  centralizar · arraste panes
-                </>
-              ) : (
-                <>
-                  <kbd>{formatShortcut("mod", "K")}</kbd> comandos ·{" "}
-                  <kbd>{formatShortcut("mod", "N")}</kbd> missão ·{" "}
-                  <kbd>{formatShortcut("mod", "D")}</kbd> dividir ·{" "}
-                  <kbd>{formatShortcut("mod", "1-9")}</kbd> focar
-                </>
+              {primaryShortcuts(viewKind === "canvas" ? "canvas" : "grid").map(
+                (entry, index) => (
+                  <span key={entry.id}>
+                    {index > 0 ? " · " : null}
+                    <kbd>{entry.keys}</kbd> {entry.short ?? entry.action}
+                  </span>
+                ),
               )}
+              {viewKind === "canvas" ? " · arraste panes" : null}
             </span>
           </div>
           <button className="home-deck__dismiss" onClick={openTerminalFromHome}>

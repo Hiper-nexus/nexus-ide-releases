@@ -505,7 +505,7 @@ export function App() {
           }
           const multi = /·|\d+\s+(missões|agentes)/i.test(event.title);
           const detail = multi
-            ? `${event.title}. Abra o Ops Board ou o pet.`
+            ? `${event.title}. Abra o painel de operações ou o pet.`
             : isBlock
               ? `${event.title} — ${
                   why ??

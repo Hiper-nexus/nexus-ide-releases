@@ -3,6 +3,7 @@ import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
 import { useMemoryStore } from '../state/memory-store';
 import { useConfigInventoryStore } from '../state/config-inventory-store';
+import { useCheatsheetStore } from '../state/cheatsheet-store';
 import { useSettingsStore } from '../state/settings-store';
 import { useWorkspaceStore } from '../state/workspace-store';
 import { useMissionWizardStore } from '../state/mission-wizard-store';
@@ -541,6 +542,15 @@ export function WorkspaceBar({
       title: 'O que cada CLI enxerga neste workspace (MCP, rules, skills, comandos)',
       active: configInventoryOpen,
       onClick: toggleConfigInventory,
+    },
+    // Única superfície de ajuda do app. Antes só existia para quem já sabia o
+    // atalho — quem não sabia não tinha como descobrir que ela existe.
+    {
+      id: 'help',
+      label: 'Ajuda',
+      icon: 'key',
+      title: `Ajuda e atalhos do teclado (${formatShortcut('mod', '/')})`,
+      onClick: () => useCheatsheetStore.getState().toggle(),
     },
   ];
 

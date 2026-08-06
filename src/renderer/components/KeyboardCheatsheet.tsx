@@ -1,43 +1,22 @@
 import { useEffect } from 'react';
 import { useCheatsheetStore } from '../state/cheatsheet-store';
 import { PixelIcon } from './PixelIcon';
-import { formatShortcut } from '../lib/platform';
+import {
+  SHORTCUT_GROUP_LABELS,
+  shortcutsInGroup,
+  type ShortcutGroupId,
+} from '../lib/shortcuts';
 
 /**
  * Cheatsheet de atalhos (⌘/): a resposta da heurística "ajuda no contexto" —
  * todos os aceleradores num overlay, sem sair do fluxo nem abrir docs.
+ *
+ * A lista vem de `lib/shortcuts.ts`, fonte única compartilhada com
+ * Configurações › Atalhos e o rodapé do Home. Três listas escritas à mão
+ * divergiram, e ⌘⇧N não estava em nenhuma delas.
  */
 
-const GROUPS: Array<{ title: string; keys: Array<[string, string]> }> = [
-  {
-    title: 'Comando',
-    keys: [
-      [formatShortcut('mod', 'K'), 'Command palette: panes, missões e ações'],
-      [formatShortcut('mod', 'N'), 'Nova missão'],
-      [formatShortcut('mod', 'B'), 'Painel de operações (pipeline)'],
-      [formatShortcut('mod', ','), 'Configurações'],
-      [formatShortcut('mod', '/'), 'Este cheatsheet'],
-    ],
-  },
-  {
-    title: 'Frota',
-    keys: [
-      [formatShortcut('mod', '1-9'), 'Focar o N-ésimo pane'],
-      [formatShortcut('mod', 'D'), 'Dividir o pane à direita'],
-      [formatShortcut('mod', 'shift', 'D'), 'Dividir o pane abaixo'],
-      [formatShortcut('mod', 'W'), 'Fechar o pane focado'],
-      ['duplo-clique', 'Renomear o pane (no título)'],
-    ],
-  },
-  {
-    title: 'Superfícies',
-    keys: [
-      ['Esc', 'Fechar overlay/dialog em foco'],
-      ['F', 'Centralizar o canvas (modo canvas)'],
-      [formatShortcut('mod', 'shift', 'O'), 'Perfil do Operador'],
-    ],
-  },
-];
+const GROUP_ORDER: ShortcutGroupId[] = ['command', 'fleet', 'surfaces'];
 
 export function KeyboardCheatsheet() {
   const open = useCheatsheetStore((s) => s.open);
@@ -75,16 +54,18 @@ export function KeyboardCheatsheet() {
           </button>
         </header>
         <div className="cheatsheet__groups">
-          {GROUPS.map((group) => (
-            <section key={group.title} className="cheatsheet__group">
-              <h3 className="cheatsheet__group-title">{group.title}</h3>
+          {GROUP_ORDER.map((groupId) => (
+            <section key={groupId} className="cheatsheet__group">
+              <h3 className="cheatsheet__group-title">
+                {SHORTCUT_GROUP_LABELS[groupId]}
+              </h3>
               <dl className="cheatsheet__list">
-                {group.keys.map(([keys, label]) => (
-                  <div key={keys} className="cheatsheet__row">
+                {shortcutsInGroup(groupId).map((entry) => (
+                  <div key={entry.id} className="cheatsheet__row">
                     <dt>
-                      <kbd>{keys}</kbd>
+                      <kbd>{entry.keys}</kbd>
                     </dt>
-                    <dd>{label}</dd>
+                    <dd>{entry.action}</dd>
                   </div>
                 ))}
               </dl>

@@ -97,6 +97,7 @@ describe('MissionClarifyCards', () => {
     );
 
     expect(host.textContent).toContain('Decisão necessária');
+    expect(host.textContent).toContain('Missão mission-a');
     expect(host.textContent).toContain('Qual banco devemos usar?');
     expect(host.textContent).toContain(
       'Escolha uma opção para a missão continuar.',
@@ -148,6 +149,24 @@ describe('MissionClarifyCards', () => {
     );
 
     expect(host.textContent).toBe('');
+    act(() => root.unmount());
+  });
+
+  it('still surfaces questions when the mission is blocked awaiting an answer', () => {
+    const { host, root } = mount(
+      <MissionClarifyCards
+        missions={[mission('mission-blocked', 'blocked')]}
+        handoffs={[question('question-blocked', 'mission-blocked')]}
+      />,
+    );
+
+    expect(host.textContent).toContain('Missão mission-blocked');
+    expect(host.textContent).toContain('Qual banco devemos usar?');
+    expect(
+      [...host.querySelectorAll('button')].some(
+        (button) => button.textContent === 'Postgres',
+      ),
+    ).toBe(true);
     act(() => root.unmount());
   });
 

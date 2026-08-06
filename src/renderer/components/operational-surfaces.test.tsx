@@ -465,6 +465,25 @@ describe("operational Home and Launch surfaces", () => {
     const openForMission = vi.fn();
     const pane = { id: "shell-1", kind: "shell" as const, title: "shell" };
     useHomeStore.setState({ visible: true });
+    useOrchStore.setState({
+      squads: [
+        {
+          id: "squad-1",
+          name: "Execução + QA",
+          createdAt: "1",
+          builtin: false,
+          orchestratorInstructions: "",
+          agents: [
+            {
+              id: "orch",
+              agentName: "Maestro",
+              category: "orchestrator",
+              cli: "claude",
+            },
+          ],
+        },
+      ],
+    });
     useMissionWizardStore.setState({ openForAgentic, openForMission });
     useWorkspaceStore.setState({
       current: {
@@ -485,11 +504,17 @@ describe("operational Home and Launch surfaces", () => {
     expect(host.textContent).toContain("MCP online · 71 ferramentas");
     expect(host.textContent).toContain("Próxima ação");
     expect(host.textContent).toContain("O que você quer criar?");
-    expect(host.textContent).toContain("Detalhes do ambiente e equipes salvas");
+    expect(host.textContent).toContain("Detalhes do ambiente");
     const advanced = host.querySelector<HTMLDetailsElement>(
       ".home-deck__advanced",
     );
+    // Ambiente pronto: nada a corrigir, o diagnóstico fica recolhido.
     expect(advanced?.open).toBe(false);
+    // Equipes salvas são caminho de reuso, não detalhe técnico: reaproveitar
+    // um time não pode custar uma revelação que ninguém tem motivo de abrir.
+    const squads = host.querySelector(".home-deck__squads");
+    expect(squads).not.toBeNull();
+    expect(advanced?.contains(squads!)).toBe(false);
 
     const startMission = [...host.querySelectorAll("button")].find((button) =>
       button.textContent?.includes("Descrever objetivo"),
@@ -598,9 +623,9 @@ describe("operational Home and Launch surfaces", () => {
 
   it("recommends provider setup instead of an impossible mission when no CLI exists", async () => {
     setNexusApi([]);
-    const toggleDrawer = vi.fn();
+    const openDrawer = vi.fn();
     const pane = { id: "shell-1", kind: "shell" as const, title: "shell" };
-    useSettingsStore.setState({ toggleDrawer });
+    useSettingsStore.setState({ openDrawer });
     useHomeStore.setState({ visible: true });
     useWorkspaceStore.setState({
       current: {
@@ -619,9 +644,43 @@ describe("operational Home and Launch surfaces", () => {
       button.textContent?.includes("Conectar uma IA"),
     );
     await act(async () => configure?.click());
-    expect(toggleDrawer).toHaveBeenCalledOnce();
+    // O destino é o contrato: abrir em 'account' era o bug — o botão dizia
+    // "Conectar uma IA" e entregava a tela de assinatura.
+    expect(openDrawer).toHaveBeenCalledWith("providers");
 
     act(() => root.unmount());
+  });
+
+  it("opens the environment diagnosis on its own when there is something to fix", async () => {
+    setNexusApi([]);
+    const pane = { id: "shell-1", kind: "shell" as const, title: "shell" };
+    useHomeStore.setState({ visible: true });
+    useWorkspaceStore.setState({
+      current: {
+        name: "nexus-ide",
+        path: "/Users/test/nexus-ide",
+        lastOpenedAt: Date.now(),
+      },
+    });
+    useLayoutStore.setState({ root: buildGridTree([pane]) });
+
+    const { host, root } = mount(<HomeDeck />);
+    await act(async () => {});
+
+    // Fechado, o diagnóstico só era visto por quem já suspeitava dele.
+    const advanced = host.querySelector<HTMLDetailsElement>(
+      ".home-deck__advanced",
+    );
+    expect(advanced?.open).toBe(true);
+
+    // E a razão do campo travado acompanha o próprio campo, não um heading
+    // solto: o aria-describedby dizia "Enter começa" num textarea desabilitado.
+    const hint = host.querySelector("#mission-intent-hint");
+    expect(hint?.textContent).toContain("Conecte uma IA");
+    expect(hint?.textContent).not.toContain("Enter começa");
+
+    act(() => root.unmount());
+    mountedRoots.delete(root);
   });
 
   it("does not release the mission CTA for detected but unauthenticated binaries", async () => {
@@ -633,10 +692,10 @@ describe("operational Home and Launch surfaces", () => {
         authReadyModels: [],
       })),
     );
-    const toggleDrawer = vi.fn();
+    const openDrawer = vi.fn();
     const openForAgentic = vi.fn();
     const pane = { id: "shell-1", kind: "shell" as const, title: "shell" };
-    useSettingsStore.setState({ toggleDrawer });
+    useSettingsStore.setState({ openDrawer });
     useMissionWizardStore.setState({ openForAgentic });
     useHomeStore.setState({ visible: true });
     useWorkspaceStore.setState({
@@ -660,7 +719,9 @@ describe("operational Home and Launch surfaces", () => {
       button.textContent?.includes("Configurar execução"),
     );
     await act(async () => configure?.click());
-    expect(toggleDrawer).toHaveBeenCalledOnce();
+    // O destino é o contrato: abrir em 'account' era o bug — o botão dizia
+    // "Conectar uma IA" e entregava a tela de assinatura.
+    expect(openDrawer).toHaveBeenCalledWith("providers");
     expect(openForAgentic).not.toHaveBeenCalled();
 
     act(() => root.unmount());
