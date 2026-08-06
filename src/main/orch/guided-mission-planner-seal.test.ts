@@ -326,8 +326,8 @@ describe("Guided Planner v2", () => {
 
     // Fan-out consultivo: advisors read_only independentes + executor codex;
     // depois a cadeia codex revisor → QA.
+    // Fixture 0.28.0: grok removed from REAL_MISSION_E2E_ADVISORS (stall undiagnosable).
     const advisoryIds = [
-      "e2e-advisor-grok",
       "e2e-advisor-kimi",
       "e2e-advisor-agy",
       "e2e-advisor-opencode",
@@ -443,8 +443,8 @@ describe("Guided Planner v2", () => {
 
     // Variante claude: advisor claude reservada (orquestrador) e todos os
     // outros advisors permanecem no fan-out independente.
+    // Fixture 0.28.0: grok removed from REAL_MISSION_E2E_ADVISORS (stall undiagnosable).
     const advisoryIds = [
-      "e2e-advisor-grok",
       "e2e-advisor-kimi",
       "e2e-advisor-agy",
       "e2e-advisor-opencode",

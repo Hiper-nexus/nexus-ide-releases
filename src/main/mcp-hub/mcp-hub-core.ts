@@ -193,7 +193,15 @@ export function detectDrift(
 export function writeConfigWithBackup(
   filePath: string,
   next: McpHubConfig,
-  options: { dryRun?: boolean } = {},
+  options: {
+    dryRun?: boolean;
+    /**
+     * When false, skip the sibling .bak of the previous file. Required for
+     * plaintext→vault migration: a backup of the pre-seal body would re-persist
+     * the secrets we just moved into the OS vault.
+     */
+    backup?: boolean;
+  } = {},
 ): { backupPath: string | null; wrote: boolean; diff: string } {
   if (!getFeatureFlagRegistry().isEnabled(FEATURE_FLAG_IDS.mcpHub)) {
     throw new Error('feature.mcp.hub is disabled');
@@ -214,7 +222,7 @@ export function writeConfigWithBackup(
     return { backupPath: null, wrote: false, diff };
   }
   let backupPath: string | null = null;
-  if (previous) {
+  if (previous && options.backup !== false) {
     backupPath = writeTimestampedBackup(filePath, previous);
   }
   writeFileAtomic(filePath, body);

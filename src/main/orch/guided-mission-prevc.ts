@@ -1,6 +1,5 @@
 import type { Mission } from "../../shared/orch-types";
 import type { ProjectExecutionScope } from "../../shared/types";
-import { appendMissionVerdict } from "../../shared/mission-block-cause";
 import {
   ContextReadinessError,
   type ContextWorkflowService,
@@ -31,6 +30,7 @@ import {
   hasWavePackDisjointFilesDomain,
 } from "../../shared/mission-wave-pack";
 import {
+  appendMissionDegradationNote,
   describeMissionDegradation,
   type MissionDegradation,
 } from "./mission-degradation";
@@ -125,10 +125,9 @@ export function surfaceGuidedPrevcDegradation(
       why: reason,
       recoverable: true,
     };
-    const description = appendMissionVerdict(
+    // Extend if planner already wrote the shared marker — never drop PREVC why.
+    const description = appendMissionDegradationNote(
       mission.description ?? "",
-      "<!-- nexus:mission-degradation -->",
-      "[NEXUS_DEGRADED]",
       describeMissionDegradation(degradation),
     );
     stores.missions.update(missionId, { description });

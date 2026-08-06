@@ -167,6 +167,49 @@ describe('mcp hub core', () => {
     expect(restored.servers[0]?.name).toBe('N');
   });
 
+  it('can skip .bak when rewriting sealed vault migration (no plaintext re-persist)', () => {
+    enableHub();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-mcp-hub-nobak-'));
+    dirs.push(dir);
+    const file = path.join(dir, 'mcp.json');
+    const plaintext: McpHubConfig = {
+      schemaVersion: 1,
+      servers: [
+        {
+          id: 'n',
+          name: 'N',
+          transport: 'stdio',
+          command: 'echo',
+          tools: [],
+          source: 'nexus',
+          env: { API_KEY: 'sk-live-must-not-land-in-bak' },
+        },
+      ],
+    };
+    writeConfigWithBackup(file, plaintext);
+    const sealed: McpHubConfig = {
+      ...plaintext,
+      servers: [
+        {
+          ...plaintext.servers[0]!,
+          env: {
+            API_KEY: '__nexus_vault__:mcphub:scope:n:env:API_KEY',
+          },
+        },
+      ],
+    };
+    const { backupPath, wrote } = writeConfigWithBackup(file, sealed, {
+      backup: false,
+    });
+    expect(wrote).toBe(true);
+    expect(backupPath).toBeNull();
+    const siblings = fs.readdirSync(dir);
+    expect(siblings.filter((name) => name.endsWith('.bak'))).toEqual([]);
+    expect(fs.readFileSync(file, 'utf8')).not.toContain(
+      'sk-live-must-not-land-in-bak',
+    );
+  });
+
   it('does not follow a destination symlink during rollback', () => {
     enableHub();
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-mcp-rb-link-'));

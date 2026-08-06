@@ -102,11 +102,13 @@ describe('redactSecretText', () => {
 
   it('stays linear on long benign text (no catastrophic backtracking)', () => {
     // Mission narrative is unbounded prose. An unbounded scheme repetition in
-    // the URL-credential pattern made this ~780ms; the bounded form is ~1ms.
+    // the URL-credential pattern made this ~780ms on 40k; the bounded form is
+    // ~1ms. Bound is load-tolerant (parallel vitest) but still fails the old
+    // quadratic path (multi-second on 80k).
     const long = `nota ${'a'.repeat(80_000)}`;
     const started = performance.now();
     redactSecretText(long);
-    expect(performance.now() - started).toBeLessThan(250);
+    expect(performance.now() - started).toBeLessThan(1_000);
   });
 
   it('leaves ordinary prose byte-identical', () => {

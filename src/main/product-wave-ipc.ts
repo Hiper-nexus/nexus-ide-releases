@@ -182,9 +182,11 @@ function loadMcpHub(root: string): McpHubConfig {
           setSecret(key, value),
         );
         // Persist sealed form so a second load does not re-encrypt duplicates.
+        // Never snapshot the plaintext predecessor into a .bak — that would
+        // re-persist the secrets this migration is removing from disk.
         // Flag-off / write failures must not wipe the in-memory hub to empty.
         try {
-          writeConfigWithBackup(file, sealed);
+          writeConfigWithBackup(file, sealed, { backup: false });
         } catch (error) {
           console.warn(
             '[mcp-hub] sealed migration not persisted (runtime still hydrated):',

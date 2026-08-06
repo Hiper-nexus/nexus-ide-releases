@@ -16,6 +16,8 @@
  * Ver docs/analysis/2026-08-06-degradar-nunca-errar.md.
  */
 
+import { appendMissionVerdict } from '../../shared/mission-block-cause';
+
 export interface MissionDegradation {
   /** Capacidade que faltou. */
   readonly what: string;
@@ -26,6 +28,9 @@ export interface MissionDegradation {
   /** Dá para recuperar depois (configurar algo, reaprovar)? */
   readonly recoverable: boolean;
 }
+
+export const MISSION_DEGRADATION_MARKER = '<!-- nexus:mission-degradation -->';
+export const MISSION_DEGRADATION_TOKEN = '[NEXUS_DEGRADED]';
 
 /**
  * Linha visível no card da missão — mesma superfície do veredito de teto, que
@@ -40,6 +45,45 @@ export function describeMissionDegradation(
   return (
     `${degradation.what} reduzido para ${degradation.reducedTo} — ` +
     `${degradation.why}. ${tail}`
+  );
+}
+
+/**
+ * Surface one or more D1 reasons on the mission card.
+ *
+ * `appendMissionVerdict` is intentionally idempotent on its HTML marker, so a
+ * naive loop over degradations would keep only the first reason and silently
+ * drop the rest (and a later PREVC degrade would no-op after a planner note).
+ * Join first write via the marker; further distinct reasons extend the line.
+ */
+export function appendMissionDegradationNote(
+  description: string,
+  reason: string,
+): string {
+  const trimmed = reason.trim();
+  if (!trimmed) return description;
+  if (!description.includes(MISSION_DEGRADATION_MARKER)) {
+    return appendMissionVerdict(
+      description,
+      MISSION_DEGRADATION_MARKER,
+      MISSION_DEGRADATION_TOKEN,
+      trimmed,
+    );
+  }
+  if (description.includes(trimmed)) return description;
+  const tokenAt = description.indexOf(MISSION_DEGRADATION_TOKEN);
+  if (tokenAt < 0) {
+    return appendMissionVerdict(
+      description,
+      MISSION_DEGRADATION_MARKER,
+      MISSION_DEGRADATION_TOKEN,
+      trimmed,
+    );
+  }
+  const lineEnd = description.indexOf('\n', tokenAt);
+  const end = lineEnd === -1 ? description.length : lineEnd;
+  return (
+    `${description.slice(0, end).trimEnd()} | ${trimmed}${description.slice(end)}`
   );
 }
 

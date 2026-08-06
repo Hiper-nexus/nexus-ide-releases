@@ -3,6 +3,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   LEGITIMATE_MISSION_BLOCKS,
+  MISSION_DEGRADATION_MARKER,
+  MISSION_DEGRADATION_TOKEN,
+  appendMissionDegradationNote,
   describeMissionDegradation,
 } from './mission-degradation';
 
@@ -36,6 +39,44 @@ describe('describeMissionDegradation', () => {
     });
 
     expect(aviso).toMatch(/não reversível|irrevers/i);
+  });
+});
+
+describe('appendMissionDegradationNote', () => {
+  it('keeps every distinct reason when multiple degradations land', () => {
+    const first = describeMissionDegradation({
+      what: 'revisão do squad',
+      reducedTo: 'roster vivo atual',
+      why: 'o squad mudou depois da aprovação',
+      recoverable: true,
+    });
+    const second = describeMissionDegradation({
+      what: 'selo PREVC',
+      reducedTo: 'caminho simples sem mission_contracts',
+      why: 'contexto não congelado',
+      recoverable: true,
+    });
+
+    const once = appendMissionDegradationNote('objetivo', first);
+    const twice = appendMissionDegradationNote(once, second);
+
+    expect(twice).toContain(MISSION_DEGRADATION_MARKER);
+    expect(twice).toContain(MISSION_DEGRADATION_TOKEN);
+    expect(twice).toContain('revisão do squad');
+    expect(twice).toContain('selo PREVC');
+    // Idempotent marker: only one HTML block, reasons joined on the line.
+    expect(twice.split(MISSION_DEGRADATION_MARKER)).toHaveLength(2);
+  });
+
+  it('does not duplicate an already-surfaced reason', () => {
+    const reason = describeMissionDegradation({
+      what: 'roster aprovado',
+      reducedTo: '64 workers',
+      why: '2 assento(s) ficaram de fora',
+      recoverable: true,
+    });
+    const once = appendMissionDegradationNote('objetivo', reason);
+    expect(appendMissionDegradationNote(once, reason)).toBe(once);
   });
 });
 

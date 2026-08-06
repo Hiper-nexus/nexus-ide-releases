@@ -49,10 +49,10 @@ import {
   resolveGuidedMutationOwnership,
 } from "./guided-mission-ownership";
 import {
+  appendMissionDegradationNote,
   describeMissionDegradation,
   type MissionDegradation,
 } from "./mission-degradation";
-import { appendMissionVerdict } from "../../shared/mission-block-cause";
 import { NEXUS_STORY_IMPLEMENTATION_SQUAD_ID } from "../../shared/builtin-squad-ids";
 import { BUILTIN_SQUADS } from "./builtin-squads";
 import {
@@ -419,16 +419,16 @@ export function ensureGuidedMissionPlan(
     if (planDegradations.length === 0) return;
     const current = suite.missions.get(missionId);
     if (!current) return;
-    let description = current.description ?? "";
-    for (const degradation of planDegradations) {
-      description = appendMissionVerdict(
-        description,
-        "<!-- nexus:mission-degradation -->",
-        "[NEXUS_DEGRADED]",
-        describeMissionDegradation(degradation),
-      );
-    }
-    patchMission({ description });
+    // One marker, all reasons — appendMissionVerdict alone would keep only the first.
+    const reason = planDegradations
+      .map((degradation) => describeMissionDegradation(degradation))
+      .join(" | ");
+    patchMission({
+      description: appendMissionDegradationNote(
+        current.description ?? "",
+        reason,
+      ),
+    });
   };
   if (existing.length > 0) {
     const topology = existingTopology ?? "delivery";
