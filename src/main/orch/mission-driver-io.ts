@@ -28,6 +28,7 @@ import {
   unusedTrustedEvidenceIds,
   type DriveState,
 } from './mission-drive';
+import { getAgentSemanticStatus } from './agent-status';
 import { type ApplyActionPorts } from './mission-driver-apply';
 import {
   createProductionPrevcPort,
@@ -260,7 +261,26 @@ export function loadDriveState(
       contextRot = true;
     }
   }
+  // Vivacidade REAL: o instante mais recente em que qualquer pane desta missão
+  // produziu atividade observável (tool call, resultado, mudança de status).
+  // Sem isto, `mission.updatedAt` + cadência de handoff declaram parada uma
+  // unidade que trabalha há 26 minutos sem entregar handoff — o falso positivo
+  // gravado no voo HiperGO 06/08 às 10:00:59.
+  let lastWorkerActivityAt = 0;
+  try {
+    for (const pane of listPaneSnapshots()) {
+      if (pane.missionId !== mission.id) continue;
+      const at = getAgentSemanticStatus(pane.paneId)?.updatedAt;
+      if (typeof at === 'number' && at > lastWorkerActivityAt) {
+        lastWorkerActivityAt = at;
+      }
+    }
+  } catch {
+    // Registro indisponível nunca fabrica vivacidade: segue sem o sinal.
+    lastWorkerActivityAt = 0;
+  }
   return deriveDriveState({
+    ...(lastWorkerActivityAt > 0 ? { lastWorkerActivityAt } : {}),
     mission: {
       id: mission.id,
       status: mission.status,

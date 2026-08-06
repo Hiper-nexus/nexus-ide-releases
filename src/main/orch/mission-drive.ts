@@ -74,6 +74,12 @@ export interface DriveState {
   readonly missionStatus: MissionStatus;
   /** ms desde epoch do último progresso observado (handoff/output/evidence). */
   readonly lastProgressAt: number;
+  /**
+   * `true` quando houve progresso DEPOIS do último sinal de stall — o registro
+   * não pode carregar um `stalled` obsoleto para sempre, nem política alguma
+   * pode seguir agindo sobre ele.
+   */
+  readonly stallResolved?: boolean;
   /** ms desde epoch do último signal-stall emitido (debounce); indefinido se nunca. */
   readonly lastStallSignalAt?: number;
   /** Structured step checkpoints (Fase B). */
@@ -319,6 +325,15 @@ export interface DriveStateInputs {
     Pick<Handoff, 'status' | 'createdAt' | 'evidenceTrust' | 'evidenceIds'>
   >;
   readonly signals?: DriveStateSignals;
+  /**
+   * Instante da última ATIVIDADE observável do worker (tool call, resultado,
+   * início de turno). Vivacidade não pode ser medida só por `mission.updatedAt`
+   * e cadência de handoff: uma unidade legítima de 26 minutos não produz
+   * handoff nenhum e não toca a linha da missão, e o detector a declarava
+   * parada com o processo trabalhando (falso positivo HiperGO 06/08).
+   * Ausente = não instrumentado; nunca fabrica vivacidade.
+   */
+  readonly lastWorkerActivityAt?: number;
   /** Optional explicit trusted evidence ids (overrides derivation from handoffs). */
   readonly trustedEvidenceIds?: ReadonlySet<string>;
 }
@@ -425,6 +440,16 @@ export function deriveDriveState(input: DriveStateInputs): DriveState {
     }
   }
 
+  // Atividade real do worker é progresso, tanto quanto um handoff.
+  const activityAt = input.lastWorkerActivityAt;
+  if (
+    typeof activityAt === 'number' &&
+    Number.isFinite(activityAt) &&
+    activityAt > lastProgressAt
+  ) {
+    lastProgressAt = activityAt;
+  }
+
   const unusedTrusted = unusedTrustedEvidenceIds(mission.milestones, trusted);
   const currentIndex = mission.milestones.findIndex(
     (milestone) => milestone.status !== 'done',
@@ -443,6 +468,8 @@ export function deriveDriveState(input: DriveStateInputs): DriveState {
     missionId: mission.id,
     missionStatus: mission.status,
     lastProgressAt,
+    stallResolved:
+      lastStallSignalAt !== undefined && lastProgressAt > lastStallSignalAt,
     ...(lastStallSignalAt !== undefined ? { lastStallSignalAt } : {}),
     steps,
     ...(current ? { currentStepId: current.id } : {}),
