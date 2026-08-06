@@ -194,12 +194,6 @@ describe("real mission E2E closed receipts", () => {
           allowedTools: [],
         },
         {
-          id: "e2e-advisor-grok",
-          category: "scout",
-          cli: "grok",
-          allowedTools: [],
-        },
-        {
           id: "e2e-advisor-kimi",
           category: "scout",
           cli: "kimi",
@@ -233,13 +227,12 @@ describe("real mission E2E closed receipts", () => {
     });
     // Advisors sem credencial (env NEXUS_REAL_MISSION_ADVISOR_SKIP) ficam
     // fora do roster; o pipeline codex nunca muda.
-    const skipped = createRealMissionE2ESquadFixture(["grok"]);
+    const skipped = createRealMissionE2ESquadFixture(["kimi"]);
     expect(skipped.agents.map((agent) => agent.id)).toEqual([
       REAL_MISSION_E2E_ORCHESTRATOR_ID,
       REAL_MISSION_E2E_EXECUTOR_ID,
       REAL_MISSION_E2E_REVIEWER_ID,
       REAL_MISSION_E2E_QA_ID,
-      "e2e-advisor-kimi",
       "e2e-advisor-agy",
       "e2e-advisor-opencode",
       "e2e-advisor-claude",
@@ -341,7 +334,6 @@ describe("real mission E2E claude orchestrator variant", () => {
       "e2e-executor",
       "e2e-reviewer",
       "e2e-qa",
-      "e2e-advisor-grok",
       "e2e-advisor-kimi",
       "e2e-advisor-agy",
       "e2e-advisor-opencode",
@@ -358,11 +350,10 @@ describe("real mission E2E claude orchestrator variant", () => {
   });
 
   it("derives the exact fan-out and review DAG without the reserved claude advisor", () => {
-    const presentClis = ["grok", "kimi", "agy", "opencode", "glm"];
+    const presentClis = ["kimi", "agy", "opencode", "glm"];
     const chain = realMissionE2EExpectedTaskChain(presentClis);
 
     expect(chain.map((member) => member.agentRef)).toEqual([
-      "e2e-advisor-grok",
       "e2e-advisor-kimi",
       "e2e-advisor-agy",
       "e2e-advisor-opencode",
@@ -372,17 +363,16 @@ describe("real mission E2E claude orchestrator variant", () => {
       "e2e-qa",
     ]);
     expect(chain.map((member) => member.plannerId)).toEqual([
-      "guided-advisory-1-e2e-advisor-grok",
-      "guided-advisory-2-e2e-advisor-kimi",
-      "guided-advisory-3-e2e-advisor-agy",
-      "guided-advisory-4-e2e-advisor-opencode",
-      "guided-advisory-5-e2e-advisor-glm",
+      "guided-advisory-1-e2e-advisor-kimi",
+      "guided-advisory-2-e2e-advisor-agy",
+      "guided-advisory-3-e2e-advisor-opencode",
+      "guided-advisory-4-e2e-advisor-glm",
       "guided-execution",
       "guided-review-1-e2e-reviewer",
       "guided-quality-gate",
     ]);
+    // Uma raiz a menos desde a saída do grok da fixture (0.28.0).
     expect(chain.map((member) => member.dependsOnPlannerIds)).toEqual([
-      [],
       [],
       [],
       [],

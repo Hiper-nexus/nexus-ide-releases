@@ -177,7 +177,7 @@ describe("real mission E2E PASS graph", () => {
         evidence.dispatches as Array<Record<string, unknown>>
       ).find(
         (candidate) =>
-          candidate.plannerId === "guided-advisory-2-e2e-advisor-kimi",
+          candidate.plannerId === "guided-advisory-1-e2e-advisor-kimi",
       )!;
       const handoff = (
         evidence.handoffs as Array<Record<string, unknown>>
@@ -527,7 +527,6 @@ describe("real mission E2E v9 advisor participation", () => {
     // Sem nenhuma advisor credenciada a cadeia codex v8 continua exata.
     const codexOnly = validPassEvidence("private-runner", {
       skipAdvisorClis: [
-        "grok",
         "kimi",
         "agy",
         "opencode",
@@ -549,7 +548,6 @@ describe("real mission E2E v9 advisor participation", () => {
   it("accepts the immutable runtime squad lineage in a private diagnostic", () => {
     const evidence = validPassEvidence("private-runner", {
       skipAdvisorClis: [
-        "grok",
         "kimi",
         "agy",
         "opencode",
@@ -660,9 +658,11 @@ describe("real mission E2E v9 claude orchestrator variant", () => {
 
     expect(parsed.status).toBe("pass");
     // Sem advisor Claude: 5 advisors + executor + revisor + QA.
-    expect(parsed.plan?.tasks).toHaveLength(8);
-    expect(parsed.dispatches).toHaveLength(8);
-    expect(parsed.handoffs).toHaveLength(8);
+    // 7, não 8: o grok saiu da fixture na 0.28.0 (worker vivo que nunca
+    // completa o turno, indiagnosticável sem retenção de scrollback).
+    expect(parsed.plan?.tasks).toHaveLength(7);
+    expect(parsed.dispatches).toHaveLength(7);
+    expect(parsed.handoffs).toHaveLength(7);
     expect(parsed.dependencyConsumptions).toHaveLength(2);
     expect(
       parsed.participation.find((row) => row.cli === "claude")?.skipped,

@@ -5,6 +5,30 @@
 O modelo de execução mudou de dono: o caminho simples virou o padrão. Cada
 item abaixo diz como VERIFICAR com as próprias mãos.
 
+### Limitação conhecida — worker parado ainda derruba a missão
+
+Um worker que fica **vivo mas nunca completa o turno** (processo de pé, batendo
+heartbeat, sem entregar) ainda pode travar a missão até o detector de parada
+bloqueá-la. Três lacunas, todas abertas e todas na 0.28.1:
+
+- O **reroute do roster cobre falha de spawn, não parada**: um worker que sobe e
+  emudece nunca é re-roteado para outro agente do mesmo roster.
+- **A saída do worker não é retida** em lugar nenhum — quando ele emudece, nem
+  você nem nós conseguimos ver o que o terminal dele mostrava. É por isso que
+  este defeito é difícil de diagnosticar.
+- O **gate trata missão degradada como falha**, então ainda não existe o
+  caminho "degradou, registrou e seguiu".
+
+Por causa disso o advisor **grok saiu da fixture do gate** nesta versão: ele
+exibiu exatamente esse comportamento (17 minutos vivo sem entregar) e sem
+retenção de saída não há como provar a causa. Não é falha escondida — é defeito
+declarado, com correção datada.
+
+**O que já melhorou nesta versão:** uma missão que faz **todo** o trabalho não
+fica mais presa para sempre em silêncio. A conclusão passou a derivar do
+trabalho concluído com recibo, e quando o sistema não consegue prosseguir ele
+**para dizendo o motivo** em vez de emudecer.
+
 - **Missão nova começa NA HORA.** Sem diálogo de aprovação, sem confirmação
   destrutiva, sem "aguarde" — você descreve, ela roda; autorização virou
   registro auditável (recibo sha256 no journal da missão). Missões que

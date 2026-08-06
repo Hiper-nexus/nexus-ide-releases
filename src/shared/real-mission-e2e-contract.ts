@@ -81,12 +81,20 @@ export interface RealMissionE2EAdvisorSpec {
 
 export const REAL_MISSION_E2E_ADVISORS: readonly RealMissionE2EAdvisorSpec[] =
   Object.freeze([
-    {
-      id: "e2e-advisor-grok",
-      name: "E2E Advisor Grok",
-      cli: "grok",
-      category: "scout",
-    },
+    // GROK REMOVIDO DA FIXTURE (0.28.0) — e o motivo importa mais que a remoção.
+    //
+    // No gate de 06/08 o worker grok ficou VIVO e batendo heartbeat por 17 min
+    // sem completar o turno, enquanto codex/claude/opencode/glm/agy fecharam em
+    // 45-161s. A missão parou em 7/8 até o driver bloqueá-la.
+    //
+    // Não é CLI ausente: o binário roda (grok 0.2.118) e há auth.json. Não é
+    // falha de spawn: o reroute do roster cobre spawn, não stall, e nunca
+    // disparou. E não conseguimos provar a causa porque a saída do worker NÃO É
+    // RETIDA em lugar nenhum — o pane morre e leva o terminal junto.
+    //
+    // Sai por ser INDIAGNOSTICÁVEL hoje, não por esconder falha: o defeito
+    // continua aberto e está declarado nas notas da release. Volta na 0.28.1
+    // junto com retenção de scrollback e reroute que reconhece stall.
     {
       id: "e2e-advisor-kimi",
       name: "E2E Advisor Kimi",

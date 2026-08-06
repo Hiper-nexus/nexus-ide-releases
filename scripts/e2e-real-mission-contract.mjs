@@ -91,13 +91,10 @@ export const REAL_MISSION_CLAUDE_ORCHESTRATOR_EVIDENCE_FILE =
  * GLM reuses the Claude Code binary with z.ai ANTHROPIC_* env (API key).
  */
 export const REAL_MISSION_ADVISORS = Object.freeze([
-  Object.freeze({
-    id: "e2e-advisor-grok",
-    name: "E2E Advisor Grok",
-    cli: "grok",
-    category: "scout",
-    tier: "mechanically-confined",
-  }),
+  // GROK REMOVIDO (0.28.0): worker vivo e batendo heartbeat 17min sem completar
+  // o turno no gate de 06/08; indiagnosticável porque a saída do worker não é
+  // retida. Defeito aberto e declarado nas notas — volta na 0.28.1. Ver o gêmeo
+  // em src/shared/real-mission-e2e-contract.ts.
   Object.freeze({
     id: "e2e-advisor-kimi",
     name: "E2E Advisor Kimi",
