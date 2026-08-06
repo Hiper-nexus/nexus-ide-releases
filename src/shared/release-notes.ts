@@ -13,16 +13,18 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.27.0',
+  version: '0.28.0',
   date: '2026-08-06',
-  codename: 'O caminho simples — a missão começa quando você pede',
+  codename: 'A missão anda sozinha — e o app sempre fecha',
   summary:
-    'Refatoração do modelo de execução por decisão do dono: o gate de ' +
-    'aprovação saiu do caminho da missão (a autorização virou registro ' +
-    'auditável com recibo), nada mais estaciona esperando humano, o worker ' +
-    'comum roda direto no workspace sem worktree e a entrega conclui pelo ' +
-    'caminho simples com recibo próprio. Encerrar preserva panes e histórico; ' +
-    'Retomar desfaz.',
+    'O caminho simples virou o padrão de verdade: missão começa na hora sem ' +
+    'nenhuma pergunta, o worker entrega direto no seu workspace com um commit ' +
+    'local como registro, planos abrem em leque por área real do repositório ' +
+    'e bloqueio degrada declarando em vez de errar. Ação destrutiva ganhou ' +
+    'volta (lixeira, refs de undo) no lugar da confirmação; plugins de ' +
+    'terceiros são ingeridos com validação e quarentena; panes têm número ' +
+    'curto durável e ⌘1-9 posicional; e o encerramento é garantido — teto ' +
+    'inarredável, incidentes registrados, órfãos varridos no boot.',
   highlights: [
     {
       title: 'Missão começa na hora, sem perguntas',

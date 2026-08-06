@@ -1,5 +1,67 @@
 # Changelog
 
+## 0.28.0 — A missão anda sozinha, e o app sempre fecha
+
+O modelo de execução mudou de dono: o caminho simples virou o padrão. Cada
+item abaixo diz como VERIFICAR com as próprias mãos.
+
+- **Missão nova começa NA HORA.** Sem diálogo de aprovação, sem confirmação
+  destrutiva, sem "aguarde" — você descreve, ela roda; autorização virou
+  registro auditável (recibo sha256 no journal da missão). Missões que
+  estavam estacionadas esperando aprovação destravam sozinhas no primeiro
+  boot. *Verifique:* crie uma missão "corrija X" — nenhum modal aparece e o
+  card já mostra execução.
+- **O worker trabalha NO SEU workspace.** Entrega direta no checkout, sem
+  provisionar worktree e sem merge ao final (worktree ficou opt-in para
+  fan-out largo); o executor faz exatamente um commit local — registro
+  durável e ponto de desfazer da entrega. *Verifique:* o detalhe da missão
+  mostra a forma da entrega (`simple-implementation`) e o commit aparece no
+  seu `git log`.
+- **Planos abrem em leque por ÁREA REAL do repositório** — tipicamente 3
+  frentes num projeto como o HiperGO, não 1 — e o que antes ERRAVA agora
+  DEGRADA declarando o que foi reduzido (uma incógnita não afunda o plano;
+  guarda de build impede bloqueio duro novo sem tier degradado).
+  *Verifique:* peça uma missão ampla e conte as frentes no plano; provoque um
+  bloqueio e leia a degradação nomeada no card.
+- **Panes têm número curto que você fala em voz alta.** O número no header é
+  NOME durável ("o pane 7 travou" aponta sempre pro mesmo pane) e ⌘1-9 foca
+  por POSIÇÃO no grid, com indicador sutil ⌘N — dois conceitos, dois
+  namespaces. *Verifique:* feche um pane — os nomes dos outros não mudam; o
+  ⌘N muda.
+- **Ação destrutiva tem VOLTA em vez de pergunta.** `rm -rf` vai para a
+  Lixeira do SO; `push --force`/`reset --hard` guardam o tip anterior em
+  `refs/nexus-undo/*`; mudar agenda (cron) registra o caminho de reversão; a
+  frase de desfazer aparece no journal. Operação IRREVERSÍVEL de verdade
+  (ex.: DROP TABLE) continua exigindo consentimento — dois CRÍTICOS achados
+  e corrigidos na revisão final, verificados contra Electron, git e Lixeira
+  reais. *Verifique:* mande remover um arquivo e recupere-o da Lixeira.
+- **Plugins de terceiros entram com defesa, nunca com escalada.** Manifesto
+  validado (spec pinada), componente desconhecido degrada DECLARANDO o que
+  foi ignorado, pacote inseguro vai para QUARENTENA, e skill de plugin nunca
+  alarga as próprias permissões (`allowed-tools` blindado contra escalada);
+  instalar continua atrás da superfície nativa de consentimento.
+  *Verifique:* `nexus_plugin_inventory` lista cada plugin com o veredito.
+- **O app SEMPRE fecha.** O teto de encerramento não pode ser cancelado por
+  nenhum caminho de erro; sessão que não prova a morte vira incidente
+  registrado (não veto); o aviso mostra prazo e botão "Forçar encerramento
+  agora"; supervisores órfãos de execuções antigas morrem no boot; diário em
+  `shutdown-incidents.jsonl`. *Verifique:* feche com panes abertos — fecha; o
+  aviso, se aparecer, tem countdown e saída.
+- **Ditado cai no pane certo.** Segurar Espaço dita para o pane de missão
+  pela lane do operador; TOCAR Espaço digita espaço; "Saída do ditado" em
+  Configurações › Voz alterna inglês-execução/português-literal.
+  *Verifique:* toque Espaço num pane — espaço; segure e fale — texto no pane.
+- **Delegação mais barata:** briefing por ponteiro (`brief`), pane de worker
+  fecha sozinho no handoff success quando declarado no spawn
+  (`autoCloseOnHandoff`), fechamento por escopo explícito
+  (caller_mission/caller_workspace) e busca de agente/skill por NECESSIDADE
+  ranqueada em vez de despejo de catálogo.
+
+Nota honesta: a revisão automatizada do council e o grant nativo de squad
+imediato seguem como as duas últimas superfícies com pergunta fora do caminho
+feliz — próxima onda da doutrina registro+reversibilidade. Os 31 fails
+pré-existentes de release-script são dívida documentada, não regressão.
+
 ## 0.27.0 — O caminho simples: a missão começa quando você pede
 
 Data: 2026-08-06
