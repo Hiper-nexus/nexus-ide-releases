@@ -299,6 +299,12 @@ export const OWNERSHIP_COVERAGE_DOMAIN = "repository-coverage";
  * Kind/fence labels carried on ownership.domains for scheduler identity — they
  * are not mutual-exclusion claims. File/symbol disjointness decides overlap.
  */
+/**
+ * Rótulo de superfície de LEITOR (execução `read_only` sem arquivos). Torna a
+ * ownership não-vazia — logo, não exclusiva — sem virar reivindicação.
+ */
+export const READ_ONLY_SURFACE_DOMAIN = "read-only-surface";
+
 export const OWNERSHIP_NON_CLAIM_DOMAINS = Object.freeze(
   new Set([
     OWNERSHIP_COVERAGE_DOMAIN,
@@ -310,6 +316,11 @@ export const OWNERSHIP_NON_CLAIM_DOMAINS = Object.freeze(
     "guided-reproduction",
     "guided-regression",
     "sequential-only",
+    // Marca positiva de LEITOR: unidade read_only sem arquivos. Existe para
+    // provar "não toca em nada" (o oposto de ownership vazio de escritor, que
+    // significa "não dá para provar disjunção"). Non-claim de propósito: dois
+    // leitores não podem colidir entre si nesse rótulo.
+    READ_ONLY_SURFACE_DOMAIN,
     TEAM_READ_ONLY_FANOUT_DOMAIN,
     // Topology marker for Mission Wave Pack — pairwise exclusivity uses
     // wave-pack-story:<id>, not this shared label (docs/design/mission-wave-pack.md).

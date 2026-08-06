@@ -4,6 +4,7 @@
  */
 
 import {
+  READ_ONLY_SURFACE_DOMAIN,
   claimOwnershipDomains,
   type WorktreeOwnership,
 } from '../runtime/worktree-contract';
@@ -243,6 +244,12 @@ export interface PlannerTaskInput {
   readonly detail?: string;
   readonly ownership?: ScheduleOwnership;
   readonly dependsOn?: readonly string[];
+  /**
+   * `read_only` marks a READER (QA, review, advisory): it writes nothing, so
+   * empty ownership means "touches nothing" and must not claim an exclusive
+   * slot. Omitted → treated as a writer, which stays fail-closed.
+   */
+  readonly executionMode?: string;
 }
 
 export interface PlannedScheduleTask {
@@ -259,16 +266,29 @@ export interface PlannedScheduleTask {
  * Empty-file tasks are parallel-safe when they carry a non-sequential domain
  * label (read-only guided advisors). Mutating empty ownership still forces the
  * sequential chain — disjointness cannot be proven.
+ *
+ * `executionMode` closes the inversion this rule used to carry: for a READER,
+ * empty ownership means "touches nothing", not "touches everything". Using a
+ * domain label as a proxy for read-only made every unlabelled verification unit
+ * (QA, senior review) take an EXCLUSIVE slot and serialize against its peers —
+ * the HiperGO 06/08 case, where two non-writing units cost two waves instead of
+ * one. A writer with empty ownership stays fail-closed: nothing to prove
+ * disjointness against.
  */
 export function ownershipDeclaresParallelSurface(
   ownership: ScheduleOwnership | undefined,
+  executionMode?: string,
 ): boolean {
   if (!ownership) return false;
+  // An EXPLICIT sequential-only is honoured even for a reader: a gate that
+  // wants a quiescent tree is a legitimate request, not an accident.
   if (ownership.domains.some((d) => d.toLowerCase() === 'sequential-only')) {
     return false;
   }
   if (ownershipTouchesReservedGlue(ownership)) return false;
   if (ownership.files.length > 0) return true;
+  // A reader writes nothing, so it can never collide — label or no label.
+  if (executionMode === 'read_only') return true;
   // Empty files: parallel-safe when a non-sequential domain label is present
   // (read-only guided advisors / reviewers).
   return ownership.domains.length > 0;
@@ -296,9 +316,24 @@ export function emitPlannedTasksWithContract(
       };
 
       let domains = [...(baseOwnership.domains ?? [])];
-      const parallelEligible = ownershipDeclaresParallelSurface(baseOwnership);
+      const parallelEligible = ownershipDeclaresParallelSurface(
+        baseOwnership,
+        input.executionMode,
+      );
+      // Leitor sem arquivos: carimba a marca POSITIVA de leitor. Ownership
+      // deixa de ser vazia (portanto não exclusiva) sem virar reivindicação,
+      // então dois leitores dividem a mesma onda.
+      if (
+        input.executionMode === 'read_only' &&
+        baseOwnership.files.length === 0 &&
+        baseOwnership.symbols.length === 0 &&
+        !domains.some((d) => d.toLowerCase() === READ_ONLY_SURFACE_DOMAIN)
+      ) {
+        domains = [...domains, READ_ONLY_SURFACE_DOMAIN];
+      }
       if (
         !parallelEligible &&
+        input.executionMode !== 'read_only' &&
         baseOwnership.files.length === 0 &&
         baseOwnership.symbols.length === 0 &&
         !domains.some((d) => d.toLowerCase() === 'sequential-only')
@@ -315,7 +350,10 @@ export function emitPlannedTasksWithContract(
       let dependsOn: readonly string[];
       if (input.dependsOn !== undefined) {
         dependsOn = input.dependsOn;
-      } else if (!ownershipDeclaresParallelSurface(ownership) && index > 0) {
+      } else if (
+        !ownershipDeclaresParallelSurface(ownership, input.executionMode) &&
+        index > 0
+      ) {
         dependsOn = Object.freeze([inputs[index - 1]!.id]);
       } else {
         dependsOn = Object.freeze([]);
