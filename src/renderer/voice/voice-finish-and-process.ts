@@ -7,6 +7,7 @@
  */
 import type React from 'react';
 import { useVoiceStore } from './voice-store';
+import { dictationSttRequestParams } from './dictation-output-mode';
 import { hasUsableLocalSpeech, shouldDiscardBeforeRealtime } from './capture-gate';
 import {
   isDiscardableTranscript,
@@ -246,6 +247,13 @@ export async function finishAndProcess(
           sampleRate: result.sampleRate,
           ...(routing === 'jarvis' && !dictationTurn
             ? { translate: false, language: 'pt' }
+            : {}),
+          // Ditado: o modo configurado viaja EXPLÍCITO por turno — o default
+          // por plugin varia entre engines (fallback caía em PT literal).
+          ...(dictationTurn
+            ? dictationSttRequestParams(
+                useVoiceStore.getState().info?.dictationOutputMode,
+              )
             : {}),
           ...(isAckGatedCapture() ? { budgetMs: WAKE_STT_BUDGET_MS } : {}),
         }),

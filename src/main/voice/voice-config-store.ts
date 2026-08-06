@@ -250,6 +250,15 @@ export function setHotkeyMode(mode: HotkeyMode): void {
 /** Apply a settings patch, persist, and return the updated config. */
 export function applyConfigPatch(patch: SetConfigRequest): VoiceConfig {
   let stt = current.stt;
+  if (patch.dictationOutputMode) {
+    // O modo é autoridade da CONFIG; o request de ditado também o envia
+    // explícito por turno, para valer em qualquer engine da cadeia/fallback.
+    stt = {
+      ...stt,
+      outputMode: patch.dictationOutputMode,
+      translate: patch.dictationOutputMode === 'english',
+    };
+  }
   let tts = current.tts;
   let jarvisBrain = current.jarvisBrain;
   if (patch.sttProvider) stt = promoteProvider(stt, patch.sttProvider);
@@ -442,6 +451,8 @@ export function buildRuntimeInfo(): VoiceRuntimeInfo {
     hotkeyMode,
     hotkeyScope: isWindowScopedShortcut(shortcut) ? 'window' : 'global',
     wakeWordEnabled: current.wakeWord.enabled,
+    dictationOutputMode:
+      current.stt.outputMode === 'portuguese' ? 'portuguese' : 'english',
     jarvisLive: {
       enabled: current.jarvisLive.enabled,
       transport: current.jarvisLive.transport,

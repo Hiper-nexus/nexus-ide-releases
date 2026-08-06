@@ -97,6 +97,8 @@ export const setConfigRequestSchema = z.object({
   personaAssistantName: z.string().min(1).max(48).optional(),
   personaUserName: z.string().max(48).optional(),
   personaCustomInstructions: z.string().max(2_000).optional(),
+  /** Modo de saída do ditado: tradução EN otimizada p/ execução ou PT literal. */
+  dictationOutputMode: z.enum(['english', 'portuguese']).optional(),
 });
 
 export type SetConfigRequest = z.infer<typeof setConfigRequestSchema>;
@@ -170,6 +172,8 @@ export interface VoiceRuntimeInfo {
    * whenever capture is allowed (no OS registration needed).
    */
   hotkeyArmed?: boolean;
+  /** Modo de saída do ditado (paridade ClockVoice): EN execução ou PT literal. */
+  dictationOutputMode?: 'english' | 'portuguese';
   /** Wake word ("Jarvis") toggle + whether its Picovoice key is present. */
   wakeWordEnabled: boolean;
   /**

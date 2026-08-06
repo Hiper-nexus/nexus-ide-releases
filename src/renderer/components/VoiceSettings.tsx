@@ -156,6 +156,7 @@ export function VoiceSettings() {
   const [ttsProvider, setTtsProvider] = useState('');
   const [jarvisBrainProvider, setJarvisBrainProvider] = useState('');
   const [speakMode, setSpeakMode] = useState('summary');
+  const [dictationMode, setDictationMode] = useState<'english' | 'portuguese'>('english');
   const [routing, setRouting] = useState('focused-pane');
   const [triggerKey, setTriggerKey] = useState('Space');
   const [wakeWordOn, setWakeWordOn] = useState(false);
@@ -258,6 +259,7 @@ export function VoiceSettings() {
       info.jarvisBrain.active?.provider ?? info.jarvisBrain.chain[0]?.provider ?? '',
     );
     setSpeakMode(info.speakMode);
+    setDictationMode(info.dictationOutputMode ?? 'english');
     setRouting(info.routing);
     setTriggerKey(info.pushToTalkKeyCode);
     setTriggerAccel(info.shortcut);
@@ -375,6 +377,7 @@ export function VoiceSettings() {
             }
           : {}),
         speakMode: speakMode as 'summary' | 'full' | 'off',
+        dictationOutputMode: dictationMode,
         routing: (jarvisLiveOn ? 'jarvis' : routing) as
           | 'jarvis'
           | 'focused-pane'
@@ -938,6 +941,23 @@ return (
                         <option value="focused-pane">pane focado</option>
                         <option value="orchestrator">orquestrador</option>
                         <option value="ask">perguntar</option>
+                      </select>
+                    </label>
+                    <label className="agent-picker__label">
+                      Saída do ditado
+                      <select
+                        className="agent-picker__select"
+                        value={dictationMode}
+                        onChange={(e) =>
+                          setDictationMode(
+                            e.target.value as 'english' | 'portuguese',
+                          )
+                        }
+                      >
+                        <option value="english">
+                          inglês otimizado p/ execução (paridade ClockVoice)
+                        </option>
+                        <option value="portuguese">português literal</option>
                       </select>
                     </label>
                   </div>
