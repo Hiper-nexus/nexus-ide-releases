@@ -88,6 +88,11 @@ export function selectMissionSchedulerWorktreeDependencies(input: {
       );
     }
     if (dispatch.executionMode === "read_only") continue;
+    // O escritor same_checkout entregou DIRETO no checkout primário e
+    // concluiu com receipt same_checkout_validated: como o read_only, ele não
+    // possui WorktreeRecord — o receipt de conclusão (já exigido acima) é a
+    // dependência satisfeita; não há worktree a integrar antes do dependente.
+    if (dispatch.executionMode === "same_checkout") continue;
     if (dispatch.executionMode !== "isolated_worktree") {
       throw new Error(
         `worktree_dependency_invalid: ${taskId} usa modo ${dispatch.executionMode}`,

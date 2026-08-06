@@ -31,6 +31,37 @@ describe("mission scheduler logical versus Git dependencies", () => {
     ]);
   });
 
+  // REGRESSÃO (gate run 7 da 0.27.0): o revisor read_only dependia do executor
+  // same_checkout e o pre-claim estourava worktree_dependency_invalid — 6
+  // tentativas, task failed, missão parada para sempre. O escritor
+  // same_checkout entregou DIRETO no checkout: como o read_only, ele não possui
+  // WorktreeRecord e não pertence ao grafo de worktrees.
+  it("aceita predecessor same_checkout concluído sem inseri-lo no grafo de worktrees", () => {
+    const modes = new Map([
+      ["delivery", "same_checkout"],
+      ["implementation", "isolated_worktree"],
+    ]);
+    expect(
+      selectMissionSchedulerWorktreeDependencies({
+        missionId: "mission-a",
+        dependsOn: ["delivery", "implementation"],
+        getDispatch: (taskId) => ({
+          taskId,
+          missionId: "mission-a",
+          state: "completed",
+          executionMode: modes.get(taskId)!,
+          integrationReceipt: { kind: "test" },
+          completedAt: 10,
+        }),
+      }),
+    ).toEqual([
+      {
+        missionId: "mission-a",
+        taskId: "implementation",
+      },
+    ]);
+  });
+
   it("fails closed before worktree creation when any logical predecessor lacks its completion receipt", () => {
     expect(() =>
       selectMissionSchedulerWorktreeDependencies({
