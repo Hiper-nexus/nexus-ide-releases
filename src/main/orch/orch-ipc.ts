@@ -526,6 +526,8 @@ function missionAuthorityReviewDigest(
 
 interface MissionAuthorityDialogReview {
   readonly detail: string;
+  /** Resumo de 3 linhas do modal padrão; o paredão fica atrás de "Detalhes". */
+  readonly summary: string;
   readonly reviewSha256: string;
 }
 
@@ -633,7 +635,17 @@ function missionAuthorityDialogDetail(
   if (detail.length > MAX_MISSION_APPROVAL_DIALOG_CHARS) {
     throw new Error('mission approval dialog exceeds the compact size budget');
   }
-  return Object.freeze({ detail, reviewSha256 });
+  // Disclosure progressiva (06/08): o modal padrão mostra este RESUMO; o
+  // paredão integral fica atrás do botão "Detalhes". O vínculo criptográfico
+  // não muda — reviewSha256 continua computado do fullReview completo.
+  const summary = assertExactOperatorDialog(
+    [
+      `Objetivo: ${compactDialogText(candidate.goal, 96)}`,
+      `Execução: modo=${candidate.executionMode} · risco=${candidate.risk} · Maestro=${compactDialogText(runtime.adapterId, 20)}/${compactDialogText(runtime.model ?? 'default', 28)} · workers=${workers.length} · orçamento P${budgets.planningTokens}/E${budgets.executionTokens}/W${budgets.maxWorkers}`,
+      `Review integral: SHA-256=${reviewSha256} · "Detalhes" mostra squad, permissões e rede`,
+    ].join('\n'),
+  );
+  return Object.freeze({ detail, summary, reviewSha256 });
 }
 
 async function confirmClarifyAnswer(
@@ -920,39 +932,59 @@ async function confirmMissionAuthorityChange(
       );
       return review.reviewSha256;
     }
-    const result = await dialog.showMessageBox(window, {
-      type:
-        candidate.risk === "destructive" || isExperimental
-          ? "warning"
-          : "question",
+    // Disclosure progressiva (06/08, atrito reportado em voo real): o modal
+    // padrão abre com o RESUMO e o botão "Detalhes" (índice 2 — Negar=0 e
+    // Aprovar=1 preservados) revela o review integral num segundo estágio.
+    // Promoção, rota experimental e risco destrutivo mantêm o paredão direto.
+    const useSummaryFirst =
+      !isPromotion && !isExperimental && candidate.risk !== "destructive";
+    const baseDialog = {
+      type: (candidate.risk === "destructive" || isExperimental
+        ? "warning"
+        : "question") as "warning" | "question",
       title: isPromotion
         ? "Nexus IDE — promover plano"
         : "Nexus IDE — iniciar missão",
-      buttons: [
-        "Negar",
-        isPromotion
-          ? "Promover e executar"
-          : isExperimental
-            ? "Aprovar experimental e iniciar"
-            : "Aprovar e iniciar",
-      ],
       defaultId: 0,
       cancelId: 0,
       noLink: true,
-      ...(isPromotion
-        ? {}
-        : {
-            checkboxLabel:
-              "Não perguntar de novo para esta equipe neste projeto",
-            checkboxChecked: false,
-          }),
       message: isPromotion
         ? "Permitir que este plano passe a executar mudanças?"
         : isExperimental
           ? "Aprovar esta rota experimental e liberar a execução?"
-        : "Aprovar esta missão e liberar sua execução?",
-      detail: review.detail,
+          : "Aprovar esta missão e liberar sua execução?",
+    };
+    const approveLabel = isPromotion
+      ? "Promover e executar"
+      : isExperimental
+        ? "Aprovar experimental e iniciar"
+        : "Aprovar e iniciar";
+    const checkbox = isPromotion
+      ? {}
+      : {
+          checkboxLabel:
+            "Não perguntar de novo para esta equipe neste projeto",
+        };
+    let result = await dialog.showMessageBox(window, {
+      ...baseDialog,
+      buttons: useSummaryFirst
+        ? ["Negar", approveLabel, "Detalhes"]
+        : ["Negar", approveLabel],
+      ...checkbox,
+      ...(isPromotion ? {} : { checkboxChecked: false }),
+      detail: useSummaryFirst ? review.summary : review.detail,
     });
+    if (useSummaryFirst && result.response === 2) {
+      result = await dialog.showMessageBox(window, {
+        ...baseDialog,
+        buttons: ["Negar", approveLabel],
+        ...checkbox,
+        ...(isPromotion
+          ? {}
+          : { checkboxChecked: result.checkboxChecked === true }),
+        detail: review.detail,
+      });
+    }
     if (result.response !== 1) return null;
     if (!isPromotion && result.checkboxChecked) {
       rememberMissionApprovalTrust(

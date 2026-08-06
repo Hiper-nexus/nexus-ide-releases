@@ -50,7 +50,12 @@ const harness = vi.hoisted(() => {
     scopeChangeListeners,
     dialog: {
       showMessageBox: vi.fn(
-        async (_window: unknown, _options: Record<string, unknown>) => ({ response: 1 }),
+        async (
+          _window: unknown,
+          _options: Record<string, unknown>,
+        ): Promise<{ response: number; checkboxChecked?: boolean }> => ({
+          response: 1,
+        }),
       ),
       showOpenDialog: vi.fn(),
       showSaveDialog: vi.fn(),
@@ -2118,6 +2123,10 @@ describe('mission authority native confirmation', () => {
     harness.scopes.set(sender.id, SCOPE_A);
     harness.windows.set(sender.id, { isDestroyed: () => false });
     const handler = missionHandler(ORCH_CHANNELS.missionApproveIntent);
+    // Disclosure progressiva: o review INTEGRAL vive no estágio "Detalhes".
+    harness.dialog.showMessageBox
+      .mockResolvedValueOnce({ response: 2 })
+      .mockResolvedValueOnce({ response: 1 });
 
     await expect(
       handler({ sender }, { missionId: 'mission-1' }),
@@ -2183,6 +2192,10 @@ describe('mission authority native confirmation', () => {
       },
     });
     const handler = missionHandler(ORCH_CHANNELS.missionApproveIntent);
+    // Disclosure progressiva: as garantias de rede vivem no estágio "Detalhes".
+    harness.dialog.showMessageBox
+      .mockResolvedValueOnce({ response: 2 })
+      .mockResolvedValueOnce({ response: 1 });
 
     await handler({ sender }, { missionId: 'mission-1' });
 
@@ -2262,9 +2275,19 @@ describe('mission authority native confirmation', () => {
       },
     });
     const handler = missionHandler(ORCH_CHANNELS.missionApproveIntent);
+    // Disclosure progressiva: o limite do paredão vale no estágio "Detalhes";
+    // o resumo do 1º estágio tem teto próprio, também assertado abaixo.
+    harness.dialog.showMessageBox
+      .mockResolvedValueOnce({ response: 2 })
+      .mockResolvedValueOnce({ response: 1 });
 
     await handler({ sender }, { missionId: 'mission-1' });
 
+    const summary = String(
+      harness.dialog.showMessageBox.mock.calls.at(-2)?.[1]?.detail ?? '',
+    );
+    expect(summary.split('\n')).toHaveLength(3);
+    expect(summary.length).toBeLessThanOrEqual(600);
     const options = harness.dialog.showMessageBox.mock.calls.at(-1)?.[1];
     if (!options) throw new Error('missing native confirmation options');
     const detail = String(options.detail ?? '');
@@ -3369,17 +3392,56 @@ describe('saved squad mutation authority', () => {
 
     expect(harness.dialog.showMessageBox).toHaveBeenCalledTimes(1);
     const options = harness.dialog.showMessageBox.mock.calls[0]?.[1];
+    // Disclosure progressiva (06/08): o primeiro estágio é o RESUMO com o
+    // botão "Detalhes" no índice 2 — Negar=0 e Aprovar=1 preservados.
     expect(options).toMatchObject({
       title: 'Nexus IDE — iniciar missão',
-      buttons: ['Negar', 'Aprovar e iniciar'],
+      buttons: ['Negar', 'Aprovar e iniciar', 'Detalhes'],
     });
     const detail = String(options?.detail ?? '');
-    expect(detail).toContain(saved.squad.id);
-    expect(detail).toContain('Maestro/workers');
-    expect(detail).toContain(`SHA-256=${runtimeSnapshot.hash}`);
-    expect(detail).toContain('tools=1+0 irrestrito(s)');
-    expect(detail).toContain('skills=1+0 irrestrito(s)');
+    expect(detail).toContain('Objetivo:');
     expect(detail).toMatch(/Review integral: SHA-256=[a-f0-9]{64}/);
+    expect(detail).toContain('Detalhes');
+  });
+
+  it('botão Detalhes abre o review integral e a decisão vale no 2º estágio', async () => {
+    const { handler, sender } = setup(ORCH_CHANNELS.squadSave);
+    await handler({ sender }, SAVED_SQUAD);
+    const saved = (await handler(
+      { sender },
+      {
+        squad: SAVED_SQUAD,
+        purpose: 'mission-runtime',
+        guided: false,
+        sourceSquadId: SAVED_SQUAD.id,
+      },
+    )) as { ok: boolean; squad?: Squad };
+    if (!saved.squad) throw new Error('missing runtime squad');
+    const base = harness.missionApprovalCandidate();
+    const runtimeSnapshot = harness.prepareSquadSave(saved.squad).snapshot;
+    harness.missionApprovalCandidate.mockReturnValue({
+      ...base,
+      squad: runtimeSnapshot,
+    });
+    harness.dialog.showMessageBox
+      .mockResolvedValueOnce({ response: 2, checkboxChecked: false })
+      .mockResolvedValueOnce({ response: 1, checkboxChecked: false });
+    const approve = harness.handlers.get(ORCH_CHANNELS.missionApproveIntent);
+    if (!approve) throw new Error('missing mission approval handler');
+
+    await approve({ sender }, { missionId: 'mission-1' });
+
+    expect(harness.dialog.showMessageBox).toHaveBeenCalledTimes(2);
+    const full = String(
+      harness.dialog.showMessageBox.mock.calls[1]?.[1]?.detail ?? '',
+    );
+    expect(full).toContain('Maestro/workers');
+    expect(full).toContain(`SHA-256=${runtimeSnapshot.hash}`);
+    expect(full).toContain('tools=1+0 irrestrito(s)');
+    expect(full).toContain('skills=1+0 irrestrito(s)');
+    expect(
+      harness.dialog.showMessageBox.mock.calls[1]?.[1]?.buttons,
+    ).toEqual(['Negar', 'Aprovar e iniciar']);
   });
 
   it('runtime é imutável e worker com wildcard não ganha save silencioso', async () => {
