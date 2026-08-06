@@ -1,4 +1,11 @@
 import {
+  describeCronReversal,
+  type CronChange,
+  type CronJobSnapshot,
+} from './cron-reversibility';
+import { emitPersistentChangeReversalEvent } from './mission-event-emit';
+import type { ProjectExecutionScope } from '../../shared/project-identity-types';
+import {
   assertCurrentMissionOrchestratorSession,
   assertOrchestratorMission,
 } from './gate';
@@ -525,6 +532,54 @@ const squadSaveTool: McpToolDef = {
     return { ok: true, squadId: squad.id };
   },
 };
+
+
+/**
+ * Reversibilidade de agenda (N1): a mudança persistente vira registro visível
+ * com o caminho de volta, em vez de um modal que interrompe uma missão já
+ * aprovada. Nunca lança — visibilidade não pode derrubar a mutação que já
+ * aconteceu; um caminho de volta perdido é ruim, uma agenda meio-aplicada é pior.
+ */
+function cronSnapshot(job: {
+  id: string;
+  name: string;
+  schedule: string;
+  status?: string;
+}): CronJobSnapshot {
+  return {
+    id: job.id,
+    name: job.name,
+    schedule: job.schedule,
+    ...(job.status === undefined ? {} : { status: job.status }),
+  };
+}
+
+function findCronJob(
+  scope: ProjectExecutionScope,
+  id: string,
+): CronJobSnapshot | undefined {
+  try {
+    const found = listCronJobs(scope).find((job) => job.id === id);
+    return found ? cronSnapshot(found) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function reportCronReversal(
+  ctx: { missionId?: string },
+  change: CronChange,
+): void {
+  if (!ctx.missionId) return;
+  try {
+    emitPersistentChangeReversalEvent(ctx.missionId, {
+      surface: 'cron',
+      revertPath: describeCronReversal(change),
+    });
+  } catch (err) {
+    console.warn('[cron] registro de reversibilidade falhou:', err);
+  }
+}
 
 // Schema for the catalog-install tool.
 const catalogInstallTool: McpToolDef = {
@@ -1420,11 +1475,15 @@ const cronTool: McpToolDef = {
           squadId,
         }, ctx.scope, invocation);
         assertMcpInvocationCurrent(invocation);
+        reportCronReversal(ctx, { action: 'create', created: cronSnapshot(created) });
         return created;
       }
       case 'list':
         return listCronJobs(ctx.scope);
       case 'update': {
+        // Anterior capturado ANTES da mutação: depois dela ele não existe mais,
+        // e sem ele a frase de desfazer não tem para onde voltar.
+        const beforeUpdate = findCronJob(ctx.scope, requireStr(args, 'id'));
         const status = str(args, 'status');
         if (
           status !== undefined &&
@@ -1448,15 +1507,26 @@ const cronTool: McpToolDef = {
           invocation,
         );
         assertMcpInvocationCurrent(invocation);
+        if (beforeUpdate) {
+          reportCronReversal(ctx, {
+            action: 'update',
+            before: beforeUpdate,
+            after: cronSnapshot(updated),
+          });
+        }
         return updated;
       }
       case 'delete': {
+        const beforeDelete = findCronJob(ctx.scope, requireStr(args, 'id'));
         const deleted = await deleteCronJob(
           requireStr(args, 'id'),
           ctx.scope,
           invocation,
         );
         assertMcpInvocationCurrent(invocation);
+        if (beforeDelete) {
+          reportCronReversal(ctx, { action: 'delete', before: beforeDelete });
+        }
         return { deleted };
       }
       default:

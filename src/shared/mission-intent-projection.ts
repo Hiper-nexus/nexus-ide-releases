@@ -47,7 +47,9 @@ export type MissionIntentEventName =
   | 'guided_fanout_serialized'
   | 'wave_concurrency_verdict'
   // Ação destrutiva rodou sem perguntar: leva o caminho de volta ao operador.
-  | 'destructive_reversal_prepared';
+  | 'destructive_reversal_prepared'
+  // Mudança que sobrevive à missão (agenda): leva o caminho de volta.
+  | 'persistent_change_reversal';
 
 /**
  * Passos visíveis do bootstrap main-owned (aprovação → primeiro pane → aceite

@@ -247,6 +247,33 @@ export function emitGuidedFanoutSerialized(
  * `reversible: false` NÃO é um erro a suprimir: é o único aviso que o operador
  * vai ter de que aquele efeito não tem volta. Nunca throws.
  */
+/**
+ * Mudança PERSISTENTE feita durante uma missão — agenda, hoje.
+ *
+ * Separado de `destructive_reversal_prepared` de propósito: criar um cron não
+ * destrói nada, mas sobrevive à missão que o criou e continua disparando depois.
+ * Chamar isso de "destrutivo" ensinaria o operador a ignorar a palavra no dia em
+ * que ela for literal. Nunca throws.
+ */
+export function emitPersistentChangeReversalEvent(
+  missionId: string,
+  input: { readonly surface: string; readonly revertPath: string },
+): void {
+  try {
+    emitMissionIntentEvent({
+      name: 'persistent_change_reversal',
+      missionId,
+      reason: input.revertPath.slice(0, 200),
+      meta: { surface: input.surface },
+    });
+  } catch (err) {
+    console.warn(
+      '[mission-events] persistent_change_reversal intent failed:',
+      err,
+    );
+  }
+}
+
 export function emitDestructiveReversalEvent(
   missionId: string,
   input: {
