@@ -3,6 +3,7 @@ import { hasCurrentDispatchAuthority } from "../../shared/mission-intent";
 import type { ProjectExecutionScope } from "../../shared/types";
 import { CliAutomatedReviewer } from "../context/cli-automated-reviewer";
 import type { ContextWorkflowService } from "../context/context-workflow-service";
+import { normalizeWorkflowIdentity } from "../context/context-workflow-service";
 import { getContextWorkflowService } from "../context/context-workflow-registry";
 import { bindingMatchesGit, inspectGitBinding } from "../context/git-binding";
 import type { MergeValidationCoordinatorDependencies } from "../context/merge-validation-coordinator";
@@ -801,18 +802,29 @@ export function shouldAdvanceAfterPreExecutionReview(input: {
   return input.ready || input.reason === "blocking-findings";
 }
 
-function resolveCodeAuthors(input: {
+/**
+ * Autores REAIS do código integrado, nas duas formas de entrega:
+ * - mundo isolado: worktrees integradas COM diff (no-change de leitor/QA tem
+ *   status integrated mas não autorou nada — proveniência, não autoria);
+ * - caminho simples: o dispatch same_checkout concluído É o autor (não existe
+ *   worktree; a entrega aconteceu direto no checkout).
+ * Toda identidade sai normalizada: nomes humanos ("E2E Executor") viram
+ * identificador estável em vez de estourar o IDENTIFIER na submissão do
+ * council (gate run 8: authorId inválido derrubou a review por timeout).
+ */
+export function resolveCodeAuthors(input: {
   readonly suite: ProjectDomainStoreSuite;
+  readonly missionId: string;
   readonly worktrees: readonly WorktreeRecord[];
   readonly taskIds: ReadonlySet<string>;
 }) {
-  const panes = input.suite.missionPanes.list(
-    input.worktrees[0]?.missionId ?? "",
-  );
-  return input.worktrees
+  const panes = input.suite.missionPanes.list(input.missionId);
+  const worktreeAuthors = input.worktrees
     .filter(
       (worktree) =>
-        worktree.status === "integrated" && input.taskIds.has(worktree.taskId),
+        worktree.status === "integrated" &&
+        input.taskIds.has(worktree.taskId) &&
+        worktree.taskHeadSha !== worktree.baseSha,
     )
     .map((worktree) => {
       const pane = panes.find(
@@ -832,6 +844,26 @@ function resolveCodeAuthors(input: {
         provider: pane.adapterId,
       };
     });
+  const sameCheckoutAuthors = input.suite.taskDispatches
+    .list(input.missionId)
+    .filter(
+      (dispatch) =>
+        dispatch.executionMode === "same_checkout" &&
+        dispatch.state === "completed" &&
+        input.taskIds.has(dispatch.taskId) &&
+        Boolean(dispatch.sessionId),
+    )
+    .map((dispatch) => ({
+      id: dispatch.workerId,
+      sessionId: dispatch.sessionId!,
+      provider:
+        dispatch.adapterId ??
+        dispatch.routeContract?.adapterId ??
+        "provider-desconhecido",
+    }));
+  return [...worktreeAuthors, ...sameCheckoutAuthors].map((author) =>
+    normalizeWorkflowIdentity(author),
+  );
 }
 
 async function runCouncilReviewUnlocked(input: {
@@ -969,6 +1001,7 @@ async function runFinalValidationUnlocked(input: {
   }
   const authors = resolveCodeAuthors({
     suite,
+    missionId: input.missionId,
     worktrees: input.dependencies.listMissionWorktrees(
       input.scope,
       input.missionId,
