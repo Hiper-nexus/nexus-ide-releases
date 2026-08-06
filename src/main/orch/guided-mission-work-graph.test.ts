@@ -188,10 +188,12 @@ describe("work kind decides the sealed graph shape", () => {
     expect(regression.executionMode).toBe("read_only");
     expect(reproduction.files).toEqual([]);
     expect(regression.files).toEqual([]);
+    // Padrão desde 06/08: a entrega nasce no caminho simples (same_checkout),
+    // então o único isolado que sobra é o quality gate corretivo.
     expect(
       nodes.filter((node) => node.executionMode === "isolated_worktree"),
-    ).toHaveLength(2); // implementation + corrective quality gate only
-    expect(implementation.executionMode).toBe("isolated_worktree");
+    ).toHaveLength(1); // corrective quality gate only
+    expect(implementation.executionMode).toBe("same_checkout");
 
     // The acceptance criterion the owner asked for, verbatim in the contract.
     expect(implementation.detail).toContain("FALHAR no HEAD atual");
@@ -209,7 +211,7 @@ describe("work kind decides the sealed graph shape", () => {
     const implementation = byPlannerId.get(GUIDED_MISSION_PLANNER_TASK_ID)!;
     // Implementation is still a root: tip discovery never gates delivery.
     expect(implementation.dependsOn).toEqual([]);
-    expect(implementation.domains).toContain("guided-implementation");
+    expect(implementation.domains).toContain("guided-simple-implementation");
     // Advisory + implementation + independent review + quality gate.
     expect(nodes).toHaveLength(4);
     expect(

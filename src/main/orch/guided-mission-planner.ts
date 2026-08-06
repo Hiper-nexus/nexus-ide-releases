@@ -695,12 +695,18 @@ export function ensureGuidedMissionPlan(
       detail: buildGuidedMissionTaskDetail(mission, workKindContract),
       agentRef: worker.id,
       category: "executor",
-      executionMode: "isolated_worktree",
+      // FLIP DO PADRÃO (06/08): a entrega comum é UM escritor por construção —
+      // não há com quem colidir, logo não há o que isolar. Nasce no caminho
+      // simples: escreve no próprio checkout, sem provisionar worktree e sem
+      // cerimônia de merge depois. O fan-out largo (wave-pack, N escritores
+      // disjuntos) continua isolado, por escolha e não por padrão.
+      // Ver docs/analysis/2026-08-06-refatoracao-execucao-simples.md.
+      executionMode: "same_checkout",
       ownership: {
         files: [...ownershipFiles],
         symbols: [],
         domains: [
-          GUIDED_TASK_DOMAINS.implementation,
+          GUIDED_TASK_DOMAINS.simpleImplementation,
           ...ownershipCoverageDomains,
         ],
       },

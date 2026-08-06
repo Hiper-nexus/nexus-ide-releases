@@ -1351,7 +1351,13 @@ function readOnlyPhysicalHandoffFixture(
     },
     rows: [
       {
-        plannerId: 'guided-advisory-1-advisor',
+        // A entrega (`simple-implementation`) só pode ser reivindicada pela
+        // identidade canônica `guided-execution` — o invariante rejeita
+        // qualquer outro plannerId, e é isso que queremos.
+        plannerId:
+          executionMode === 'same_checkout'
+            ? 'guided-execution'
+            : 'guided-advisory-1-advisor',
         title: 'Mapear riscos',
         detail: encodeTaskScheduleDetail('Inspecione sem editar.', {
           dependsOn: [],

@@ -147,6 +147,49 @@ describe("Guided Planner v2", () => {
     ).toThrow(/guided_plan_squad_stale/i);
   });
 
+  // FLIP DO PADRÃO (06/08): a entrega comum de uma missão guiada é UM escritor
+  // por construção, então nasce no caminho simples — sem worktree isolada, sem
+  // cerimônia de merge. O fan-out largo continua isolado por escolha.
+  it("sela a entrega comum como simple-implementation em same_checkout", () => {
+    const contract = compileIntentContract({
+      goal: REAL_MISSION_E2E_GOAL,
+      acceptanceCriteria: [
+        ...REAL_MISSION_E2E_PRODUCT_WIZARD_ACCEPTANCE_CRITERIA,
+      ],
+      intentVersion: 3,
+      source: "typed",
+      lane: "standard",
+    });
+    const currentMission = mission({
+      description: contract.goal,
+      intentContract: {
+        ...contract,
+        approvedAt: 10,
+        dispatchedAt: 10,
+        squadRevisionHash: snapshotSquadAuthority(squad).hash,
+      },
+    });
+    const h = harness({ currentMission });
+
+    expect(
+      ensureGuidedMissionPlan(h.suite, currentMission.id, h.deps),
+    ).toMatchObject({ applicable: true, sealed: true });
+
+    const delivery = h.createPlanAtomically.mock.calls[0]![0].rows.find(
+      (row) => row.plannerId === GUIDED_MISSION_PLANNER_TASK_ID,
+    );
+    if (!delivery) throw new Error("missing guided delivery task");
+    const meta = decodeTaskScheduleDetail(delivery.detail).meta;
+
+    expect(meta?.executionMode).toBe("same_checkout");
+    expect(meta?.ownership?.domains).toContain(
+      "guided-simple-implementation",
+    );
+    // A ownership real continua declarada: atribuição por ownership é o que
+    // substitui a worktree como prova de não-interferência.
+    expect((meta?.ownership?.files ?? []).length).toBeGreaterThan(0);
+  });
+
   it("adds the exact approved greenfield artifact without opening unrelated files", () => {
     const contract = compileIntentContract({
       goal: REAL_MISSION_E2E_GOAL,
@@ -274,7 +317,8 @@ describe("Guided Planner v2", () => {
         plannerId: GUIDED_MISSION_PLANNER_TASK_ID,
         agentRef: "e2e-executor",
         agentCategory: "executor",
-        executionMode: "isolated_worktree",
+        // Padrão desde 06/08: entrega comum é 1 escritor, logo caminho simples.
+        executionMode: "same_checkout",
         dependsOn: [],
       }),
       ...reviewIds.map((agentRef, index) =>
@@ -389,7 +433,8 @@ describe("Guided Planner v2", () => {
         plannerId: GUIDED_MISSION_PLANNER_TASK_ID,
         agentRef: "e2e-executor",
         agentCategory: "executor",
-        executionMode: "isolated_worktree",
+        // Padrão desde 06/08: entrega comum é 1 escritor, logo caminho simples.
+        executionMode: "same_checkout",
         dependsOn: [],
       }),
       ...reviewIds.map((agentRef, index) =>
@@ -605,11 +650,13 @@ describe("Guided Planner v2", () => {
       dependsOn: [],
       ownership: {
         files: ["package.json", "src/app.ts", "tests/app.test.ts"],
-        domains: ["guided-implementation"],
+        // A ownership REAL continua declarada: é ela que substitui a worktree
+        // como prova de não-interferência no caminho simples.
+        domains: ["guided-simple-implementation"],
       },
       agentRef: "generalist",
       agentCategory: "executor",
-      executionMode: "isolated_worktree",
+      executionMode: "same_checkout",
     });
     expect(execution.body).toContain("Objetivo aprovado:");
     expect(execution.body).toContain("Testes relevantes verdes");

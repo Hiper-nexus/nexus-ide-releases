@@ -262,9 +262,8 @@ describe("Guided Planner v2", () => {
     }
     const decodedImplementation = decodeTaskScheduleDetail(implementation.detail);
     expect(decodedImplementation.meta).not.toBeNull();
-    expect(decodedImplementation.meta!.executionMode).toBe(
-      "isolated_worktree",
-    );
+    // Padrão desde 06/08: a entrega comum nasce no caminho simples.
+    expect(decodedImplementation.meta!.executionMode).toBe("same_checkout");
   });
 
   it.each([

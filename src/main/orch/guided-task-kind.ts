@@ -226,11 +226,19 @@ export function parseGuidedTaskKind(
       return invalidGuidedTask(input, `domínio Guided desconhecido: ${domain}`);
   }
 
-  const canonicalIdentities: readonly (readonly [string, GuidedTaskKind])[] = [
-    [GUIDED_MISSION_PLANNER_TASK_ID, "implementation"],
-    [GUIDED_MISSION_QA_TASK_ID, "quality-gate"],
-    [GUIDED_MISSION_REPRODUCTION_TASK_ID, "reproduction"],
-    [GUIDED_MISSION_REGRESSION_TASK_ID, "regression"],
+  // A identidade canônica é do ESTÁGIO, não da forma de execução: a entrega
+  // (`guided-execution`) é `implementation` quando isolada e
+  // `simple-implementation` quando roda no próprio checkout. Ambas são a MESMA
+  // posição do plano, então o par canônico aceita as duas — o que continua
+  // proibido é qualquer OUTRO plannerId reivindicar essas identidades.
+  const canonicalIdentities: readonly (readonly [
+    string,
+    readonly GuidedTaskKind[],
+  ])[] = [
+    [GUIDED_MISSION_PLANNER_TASK_ID, ["implementation", "simple-implementation"]],
+    [GUIDED_MISSION_QA_TASK_ID, ["quality-gate"]],
+    [GUIDED_MISSION_REPRODUCTION_TASK_ID, ["reproduction"]],
+    [GUIDED_MISSION_REGRESSION_TASK_ID, ["regression"]],
   ];
   // Wave Pack seals N implementation roots (`wave-pack-story-*`) plus an
   // optional `wave-pack-quality-gate`. Those planner ids are Pack topology
@@ -241,9 +249,9 @@ export function parseGuidedTaskKind(
   if (
     !isWavePackPlannerId &&
     canonicalIdentities.some(
-      ([plannerId, canonicalKind]) =>
-        (input.plannerId === plannerId && kind !== canonicalKind) ||
-        (kind === canonicalKind &&
+      ([plannerId, canonicalKinds]) =>
+        (input.plannerId === plannerId && !canonicalKinds.includes(kind)) ||
+        (canonicalKinds.includes(kind) &&
           input.plannerId !== undefined &&
           input.plannerId !== plannerId),
     )

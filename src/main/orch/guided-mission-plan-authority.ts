@@ -43,7 +43,11 @@ export interface GuidedPlanTaskDetailInput extends PlannerTaskInput {
   readonly ownership: NonNullable<PlannerTaskInput["ownership"]>;
   readonly agentRef: string;
   readonly category: GuidedWorkerAgent["category"];
-  readonly executionMode: "isolated_worktree" | "read_only";
+  readonly executionMode:
+    | "isolated_worktree"
+    | "read_only"
+    // Entrega comum desde 06/08 (caminho simples).
+    | "same_checkout";
 }
 
 export interface GuidedV2ReceiptAuthority {
@@ -430,6 +434,7 @@ export function assertRosterCompleteGuidedV2Receipt(
       }
       if (
         stage === "implementation" ||
+        stage === "simple-implementation" ||
         stage === "quality-gate" ||
         stage === "reproduction" ||
         stage === "regression"
@@ -505,7 +510,11 @@ export function assertRosterCompleteGuidedV2Receipt(
       }
     }
 
-    const implementationTaskId = singletons.get("implementation");
+    // A entrega canônica existe nas duas formas: isolada ou no próprio
+    // checkout. O receipt precisa ter UMA delas, nunca as duas.
+    const implementationTaskId =
+      singletons.get("implementation") ??
+      singletons.get("simple-implementation");
     const qualityGateTaskId = singletons.get("quality-gate");
     if (!implementationTaskId || !qualityGateTaskId) {
       legacyGuidedReceipt(
@@ -562,6 +571,7 @@ export function assertRosterCompleteGuidedV2Receipt(
             );
           }
           break;
+        case "simple-implementation":
         case "implementation":
           if (
             !sameSet(
@@ -589,6 +599,7 @@ export function assertRosterCompleteGuidedV2Receipt(
           if (
             row.dependsOn.length !== 1 ||
             (predecessorStage !== "implementation" &&
+              predecessorStage !== "simple-implementation" &&
               predecessorStage !== "regression" &&
               predecessorStage !== "independent-review")
           ) {

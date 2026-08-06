@@ -124,9 +124,13 @@ function workerCategory(taskId: string, value: unknown): WorkerCategory {
 }
 
 function executionMode(taskId: string, value: unknown): PlannedExecutionMode {
-  if (value !== "isolated_worktree" && value !== "read_only") {
+  if (
+    value !== "isolated_worktree" &&
+    value !== "read_only" &&
+    value !== "same_checkout"
+  ) {
     throw new Error(
-      `task ${taskId} requires executionMode isolated_worktree or read_only`,
+      `task ${taskId} requires executionMode isolated_worktree, read_only or same_checkout`,
     );
   }
   return value;
