@@ -188,3 +188,85 @@ o dia consertando deadlocks um a um — cada correção real, testada e defensá
 enquanto a pergunta dele desde o começo era por que existem tantos lugares para
 travar. Corrigir o enésimo deadlock e reduzir o número de estágios são trabalhos
 diferentes, e só o segundo responde "a missão simplesmente morre".
+
+---
+
+## 6. RE-SEQUÊNCIA: o simples vira o PADRÃO (decisão do dono, 06/08)
+
+> "tira essa aprovação de vez, vai direto pro caminho simples"
+
+A inversão muda a pergunta de *"o que podemos pular?"* para *"o que ainda se
+justifica cobrar de todo mundo?"*. Classificação dos 10 estágios:
+
+### A REMOVER do caminho padrão (a morte que cada remoção evita)
+
+| Ordem | Estágio | Morte real que some | Status |
+|---|---|---|---|
+| 1 | **#5 worktree distinta** | `autopilot mission worker requires a physically distinct execution worktree` — e o revisor read-only que não subia | **LANDADO** `84110780` |
+| 2 | **#1 aprovação** | modal em loop; selo invalidando a própria aprovação; missão parada em `awaiting_approval` parecendo morta | **231** (não duplicar) |
+| 3 | **#9 ack / `handoff_ready`** | missão parada esperando reviewer que nunca sobe | a fazer |
+| 4 | **#2 PREVC/freeze** | 30/07: fence exigindo contrato que ninguém criava → travada para sempre | a fazer |
+| 5 | **#3 selagem de plano** | nada despacha antes do turno 1 (6m55s medidos) | a fazer |
+| 6 | **#4 reserva de rota** | reservas expirando em 5min | a fazer |
+
+### A TORNAR OPT-IN (para quem realmente precisa)
+
+| Estágio | Quando ligar |
+|---|---|
+| #5 worktree isolada (`isolatedWriter`) | **vários escritores em paralelo no mesmo repo** — o caso honesto |
+| #7 ownership / slot exclusivo | idem: só faz sentido havendo concorrência de escrita |
+| #8 escada adaptativa | política Hardened, já configurável (`5ebcd127`) |
+| #10 unidades de QA/revisão | escolha de qualidade, não estágio obrigatório |
+
+### A MANTER SEMPRE (carregam peso de verdade)
+
+| Estágio | Por quê |
+|---|---|
+| #6 claim de dispatch | garante 1 worker por tarefa; **custou 0s** no voo de hoje — não é fonte de atraso |
+| Handoff forçado | é o que torna perda impossível (`b9739896`) |
+| Vivacidade por atividade | `827273b5` |
+| Sandbox do adapter | segurança de execução ≠ isolamento entre escritores |
+| Auditoria (`mission_events`, custo) | observabilidade não bloqueia |
+
+---
+
+## 7. O QUE ELE PERDE — o custo do que acabou de escolher
+
+Ele tem direito a saber o preço. Com workers compartilhando o workspace:
+
+1. **Escritores concorrentes podem se atropelar.** Dois workers editando o mesmo
+   arquivo no mesmo checkout não têm árbitro físico. No modelo antigo a worktree
+   impedia isso por construção.
+2. **Edições de um worker que falha não ficam em quarentena.** Antes, um worker
+   que morria levava junto a própria worktree e o `main` seguia limpo. Agora as
+   edições parciais dele ficam no workspace — visíveis, e do jeito que ficaram.
+3. **`git status` deixa de ser só dele.** O workspace passa a ter trabalho de
+   agente misturado ao dele enquanto a missão roda.
+
+**Mitigações reais (não promessas):**
+- **Menos escritores simultâneos no padrão.** O caminho simples é 1 escritor +
+  N leitores. Leitores não colidem — e agora não tomam mais slot exclusivo
+  (`347f0b7b`).
+- **Modo isolado opt-in continua inteiro** para fan-out largo: `isolatedWriter`
+  liga a worktree e toda a maquinaria de ownership que já existe e foi corrigida
+  hoje.
+- **A maquinaria de ownership não foi jogada fora** — está ali, testada,
+  esperando o modo que precisa dela.
+
+**Regra prática:** um pedido comum ("corrija isto", "implemente a story 1.2") →
+simples. Um fan-out declarado de N escritores no mesmo repo → `isolatedWriter`.
+
+---
+
+## 8. argv-at-birth do claude volta ao escopo
+
+No caminho simples isso deixa de ser otimização e vira **parte do modelo**: a
+tarefa viaja no spawn e o pane acorda executando. Deixar `claude` — o CLI mais
+usado dele — num caminho mais lento que `codex`/`agy` indefinidamente não se
+sustenta.
+
+`pty-manager.ts:1158-1167` hoje cobre `agy | codex | opencode`. A objeção que eu
+levantei era a falta de medição ao vivo; ela continua válida como *medição*, mas
+não como bloqueio: a forma correta é **landar com prova unitária do argv e
+registrar explicitamente que os segundos não foram verificados**. Isso é honesto;
+adiar indefinidamente não era.
