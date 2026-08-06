@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   assertWavePackStoryFilesDisjoint,
+  decomposeGoalByRepositoryAreas,
   decomposeGuidedGoalIntoStories,
   extractStoriesFromPromotedPlanSummary,
   extractStoryOwnershipFiles,
@@ -622,5 +623,58 @@ describe("decomposeGuidedGoalIntoStories (P0-8 NL fan-out)", () => {
     expect(stories).toHaveLength(85);
     expect(stories.length).toBeGreaterThan(64);
     expect(stories.length).toBeLessThanOrEqual(MAX_WAVE_PACK_STORIES);
+  });
+});
+
+describe("decomposeGoalByRepositoryAreas (prong b)", () => {
+  const HIPERGO = [
+    { id: "apps/web", files: ["apps/web/src/app.tsx"] },
+    { id: "services/api", files: ["services/api/src/tenant.ts"] },
+    { id: "packages/contracts", files: ["packages/contracts/src/t.ts"] },
+  ];
+
+  it("emite uma story por área, com ownership da própria área", () => {
+    const stories = decomposeGoalByRepositoryAreas({
+      goal: "continua codando o sistema",
+      areas: HIPERGO,
+    });
+
+    expect(stories).toHaveLength(3);
+    expect(stories.map((s) => s.ownershipFiles?.[0])).toEqual([
+      "apps/web/src/app.tsx",
+      "services/api/src/tenant.ts",
+      "packages/contracts/src/t.ts",
+    ]);
+  });
+
+  it("stories são pairwise-disjuntas por construção", () => {
+    const stories = decomposeGoalByRepositoryAreas({
+      goal: "x",
+      areas: HIPERGO,
+    });
+    const todos = stories.flatMap((s) => [...(s.ownershipFiles ?? [])]);
+
+    expect(new Set(todos).size).toBe(todos.length);
+  });
+
+  it("UMA área não decompõe — devolve vazio e o caminho segue single-writer", () => {
+    // Honestidade: objetivo que toca uma frente não vira leque fingido.
+    expect(
+      decomposeGoalByRepositoryAreas({ goal: "corrige o login", areas: [HIPERGO[0]!] }),
+    ).toHaveLength(0);
+  });
+
+  it("sem áreas devolve vazio, sem inventar", () => {
+    expect(decomposeGoalByRepositoryAreas({ goal: "x", areas: [] })).toHaveLength(0);
+  });
+
+  it("respeita o teto de stories seladas", () => {
+    const muitas = Array.from({ length: MAX_WAVE_PACK_STORIES + 10 }, (_, i) => ({
+      id: `packages/p${i}`,
+      files: [`packages/p${i}/src/a.ts`],
+    }));
+    expect(
+      decomposeGoalByRepositoryAreas({ goal: "x", areas: muitas }).length,
+    ).toBeLessThanOrEqual(MAX_WAVE_PACK_STORIES);
   });
 });

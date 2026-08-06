@@ -141,6 +141,53 @@ export function decomposeGuidedGoalIntoStories(input: {
 }
 
 /**
+ * P-b produtor: decompõe um objetivo em UMA story por ÁREA do repositório.
+ *
+ * Complementa `decomposeGuidedGoalIntoStories`, que só abre quando o goal
+ * NOMEIA ≥2 arquivos — o caso raro. O caso do dia a dia é trabalho livre num
+ * repo existente ("continua codando o sistema"), e ali quem conhece as frentes
+ * é o REPOSITÓRIO, não o texto do pedido. As áreas vêm de
+ * `partitionOwnershipIntoAreas` sobre o inventário vivo que o planner já lê.
+ *
+ * Conservador: menos de 2 áreas devolve `[]` — objetivo que toca uma frente
+ * NÃO vira leque fingido, e o caminho single-writer segue com o veredito de
+ * fase sequencial dizendo o porquê. Disjunção é por construção: cada story
+ * recebe exatamente a fatia da sua área, e as áreas já são disjuntas.
+ */
+export function decomposeGoalByRepositoryAreas(input: {
+  readonly goal: string;
+  readonly areas: readonly {
+    readonly id: string;
+    readonly files: readonly string[];
+  }[];
+}): readonly ExtractedWavePackStory[] {
+  const usable = input.areas.filter((area) => area.files.length > 0);
+  if (usable.length < 2) return Object.freeze([] as ExtractedWavePackStory[]);
+  const capped = usable.slice(0, MAX_WAVE_PACK_STORIES);
+  const goalExcerpt = input.goal.trim().slice(0, 2_000);
+  return Object.freeze(
+    capped.map((area, index) =>
+      Object.freeze({
+        id: `story-area-${index + 1}`,
+        epicStoryId: `1.${index + 1}`,
+        title: area.id.slice(0, 256),
+        body: [
+          `Implemente a parte da entrega que vive em ${area.id}.`,
+          `Toque somente ${area.id} — as outras frentes têm dono próprio.`,
+          "Não implemente outras áreas. Entregue handoff com o que validou.",
+          "",
+          "Objetivo da missão:",
+          goalExcerpt,
+        ]
+          .join("\n")
+          .slice(0, 8_192),
+        ownershipFiles: [...area.files],
+      }),
+    ),
+  );
+}
+
+/**
  * BMAD epics template uses `### Story N.M: title`. Standalone story files use
  * `# Story N.M: title`. Both are accepted; body runs until the next story
  * heading or end of document.
