@@ -9,7 +9,11 @@ Data: 2026-08-06
 - **Missão começa NA HORA.** O gate de aprovação saiu do caminho da missão:
   sem modal, sem "Enviar para aprovação", sem paredão de SHA. A autorização
   virou REGISTRO auditável — o recibo criptográfico do review integral continua
-  amarrando o contrato, mas ninguém mais pergunta.
+  amarrando o contrato, mas ninguém mais pergunta. Honestidade de escopo:
+  restam DUAS confirmações que só disparam em ação genuinamente destrutiva
+  (shell destrutivo e mudança global persistente); na 0.27.1 elas também saem,
+  convertidas em reversível-e-registrado (lixeira para deletes, backup refs
+  antes de force-push/reset, snapshot antes de escrita global).
 - **Nada estaciona esperando humano.** O estado `awaiting_approval` ficou
   inalcançável (o evento que levava até ele foi removido da máquina de
   estados); missões antigas estacionadas SOLTAM sozinhas na primeira abertura.
