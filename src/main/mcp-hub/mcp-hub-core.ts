@@ -28,6 +28,7 @@ export const mcpHubServerSchema = z
     transport: z.enum(MCP_HUB_TRANSPORTS),
     command: z.string().max(4096).optional(),
     args: z.array(z.string().max(1024)).max(64).optional(),
+    cwd: z.string().max(4096).optional(),
     url: z.string().max(4096).optional(),
     headers: z.record(z.string().max(128), z.string().max(4096)).optional(),
     env: z.record(z.string().max(128), z.string().max(4096)).optional(),

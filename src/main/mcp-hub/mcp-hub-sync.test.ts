@@ -11,6 +11,10 @@ import {
   __testOnly_hubFromStdioLike,
 } from './mcp-hub-sync';
 import type { McpHubConfig } from './mcp-hub-core';
+import {
+  MCP_MANIFEST_SCHEMA,
+  PLUGIN_MANIFEST_SCHEMA,
+} from '../orch/agent-plugin-manifest';
 
 const tempDirs: string[] = [];
 
@@ -115,6 +119,92 @@ describe('plan + apply fill-gaps', () => {
     ) as { mcpServers: Record<string, unknown> };
     expect(cursor.mcpServers.onlyclaude).toBeTruthy();
     expect(cursor.mcpServers.supabase).toBeTruthy();
+  });
+
+  it('imports a validated plugin MCP only on explicit sync and never auto-approves it', () => {
+    const home = tmpHome();
+    const pluginRoot = path.join(home, '.nexus', 'plugins', 'acme-tools');
+    const sentinel = path.join(home, 'server-executed');
+    fs.mkdirSync(pluginRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(pluginRoot, 'plugin.json'),
+      JSON.stringify({
+        $schema: PLUGIN_MANIFEST_SCHEMA,
+        name: 'acme-tools',
+        version: '1.0.0',
+        description: 'Acme tools',
+      }),
+    );
+    fs.writeFileSync(
+      path.join(pluginRoot, 'mcp.json'),
+      JSON.stringify({
+        $schema: MCP_MANIFEST_SCHEMA,
+        mcpServers: {
+          files: {
+            type: 'stdio',
+            command: './server.sh',
+            args: ['--safe'],
+          },
+        },
+      }),
+    );
+    fs.writeFileSync(
+      path.join(pluginRoot, 'server.sh'),
+      `#!/bin/sh\ntouch ${JSON.stringify(sentinel)}\n`,
+      { mode: 0o700 },
+    );
+    const clineDir = path.join(
+      home,
+      'Library',
+      'Application Support',
+      'Code',
+      'User',
+      'globalStorage',
+      'saoudrizwan.claude-dev',
+      'settings',
+    );
+    fs.mkdirSync(clineDir, { recursive: true });
+    const clinePath = path.join(clineDir, 'cline_mcp_settings.json');
+    fs.writeFileSync(clinePath, JSON.stringify({ mcpServers: {} }));
+
+    const observed = collectObservedHubServers(home);
+    const plan = planMcpSync({ hub: emptyHub, home });
+
+    expect(observed).toContainEqual(
+      expect.objectContaining({
+        id: 'agent-plugin-acme-tools-files',
+        source: 'other',
+        transport: 'stdio',
+      }),
+    );
+    expect(plan.importIds).toContain('agent-plugin-acme-tools-files');
+    expect(fs.existsSync(sentinel)).toBe(false);
+
+    const hubPath = path.join(home, 'mcp-hub.json');
+    const result = applyMcpSync({
+      hub: emptyHub,
+      hubPath,
+      home,
+      mode: 'both',
+      exportTools: ['cline'],
+    });
+    const hub = JSON.parse(fs.readFileSync(hubPath, 'utf8')) as McpHubConfig;
+    const cline = JSON.parse(fs.readFileSync(clinePath, 'utf8')) as {
+      mcpServers: Record<string, Record<string, unknown>>;
+    };
+
+    expect(result.hubWrote).toBe(true);
+    expect(hub.servers).toContainEqual(
+      expect.objectContaining({
+        id: 'agent-plugin-acme-tools-files',
+        cwd: fs.realpathSync(pluginRoot),
+      }),
+    );
+    expect(cline.mcpServers['agent-plugin-acme-tools-files']).toMatchObject({
+      disabled: false,
+      autoApprove: [],
+    });
+    expect(fs.existsSync(sentinel)).toBe(false);
   });
 
   it('exportTools opt-in só escreve nas tools escolhidas', () => {

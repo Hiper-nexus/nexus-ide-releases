@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -24,6 +25,7 @@ import {
   writeFileAtomic,
   writeTimestampedBackup,
 } from '../util/atomic-write';
+import { scanInstalledPlugins } from '../orch/agent-plugin-scan';
 
 /**
  * Fill-gaps sync between Nexus hub and on-disk coding-tool MCP configs.
@@ -110,17 +112,69 @@ function hubFromStdioLike(
     stringMap(entry.env) ??
     stringMap(entry.environment) ??
     undefined;
+  const cwd = typeof entry.cwd === 'string' ? entry.cwd.slice(0, 4096) : undefined;
+  const headers = stringMap(entry.headers);
   return {
     id,
     name: rawName.slice(0, 256),
     transport: url && !command ? 'streamable-http' : 'stdio',
     ...(command ? { command: command.slice(0, 4096) } : {}),
     ...(stringList(entry.args) ? { args: stringList(entry.args) } : {}),
+    ...(cwd ? { cwd } : {}),
     ...(url ? { url: url.slice(0, 4096) } : {}),
+    ...(headers ? { headers } : {}),
     ...(env ? { env } : {}),
     tools: [],
     source,
   };
+}
+
+function agentPluginMcpId(pluginName: string, serverName: string): string {
+  const base = normalizeMcpServerKey(
+    `agent-plugin-${pluginName}-${serverName}`,
+  );
+  if (base.length <= 128) return base;
+  const digest = createHash('sha256')
+    .update(`${pluginName}:${serverName}`)
+    .digest('hex')
+    .slice(0, 8);
+  return `${base.slice(0, 119).replace(/-+$/g, '')}-${digest}`;
+}
+
+function collectFromAgentPlugins(home: string): McpHubServer[] {
+  const servers: McpHubServer[] = [];
+  for (const plugin of scanInstalledPlugins(home)) {
+    if (!plugin.verdict.ok) continue;
+    for (const server of plugin.mcpServers) {
+      const common = {
+        id: agentPluginMcpId(plugin.verdict.name, server.name),
+        name: `${plugin.verdict.name}:${server.name}`.slice(0, 256),
+        tools: [],
+        source: 'other' as const,
+      };
+      servers.push(
+        server.transport === 'stdio'
+          ? {
+              ...common,
+              transport: 'stdio',
+              command: server.command,
+              ...(server.args ? { args: [...server.args] } : {}),
+              cwd: server.cwd,
+              env: { ...server.env },
+            }
+          : {
+              ...common,
+              transport:
+                server.transport === 'sse'
+                  ? 'sse-legacy'
+                  : 'streamable-http',
+              url: server.url,
+              ...(server.headers ? { headers: { ...server.headers } } : {}),
+            },
+      );
+    }
+  }
+  return servers;
 }
 
 function collectFromMcpServersJson(
@@ -194,6 +248,7 @@ export function collectObservedHubServers(home = os.homedir()): McpHubServer[] {
   const clinePath = resolveClineMcpSettingsPath(home);
   const claudeDesktop = resolveClaudeDesktopConfigPath(home);
   const buckets: McpHubServer[][] = [
+    collectFromAgentPlugins(home),
     collectFromMcpServersJson(path.join(home, '.cursor', 'mcp.json'), 'cursor'),
     collectFromMcpServersJson(path.join(home, '.claude.json'), 'claude-code'),
     ...(claudeDesktop
@@ -306,7 +361,9 @@ function toCursorEntry(server: McpHubServer): Record<string, unknown> {
   const entry: Record<string, unknown> = {};
   if (server.command) entry.command = server.command;
   if (server.args?.length) entry.args = server.args;
+  if (server.cwd) entry.cwd = server.cwd;
   if (server.url) entry.url = server.url;
+  if (server.headers) entry.headers = server.headers;
   if (server.env) entry.env = server.env;
   return entry;
 }
@@ -318,7 +375,9 @@ function toOpenCodeEntry(server: McpHubServer): Record<string, unknown> {
   };
   if (server.command) entry.command = server.command;
   if (server.args?.length) entry.args = server.args;
+  if (server.cwd) entry.cwd = server.cwd;
   if (server.url) entry.url = server.url;
+  if (server.headers) entry.headers = server.headers;
   if (server.env) entry.environment = server.env;
   return entry;
 }
@@ -384,7 +443,9 @@ function mergeCodexToml(
     const entry: Record<string, unknown> = {};
     if (server.command) entry.command = server.command;
     if (server.args?.length) entry.args = server.args;
+    if (server.cwd) entry.cwd = server.cwd;
     if (server.url) entry.url = server.url;
+    if (server.headers) entry.headers = server.headers;
     if (server.env) entry.env = server.env;
     block[server.id] = entry;
     added.push(server.id);
