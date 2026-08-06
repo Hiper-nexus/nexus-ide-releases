@@ -764,6 +764,8 @@ export interface SpawnToolOptions {
   allowedTools?: string[] | null;
   allowedSkills?: string[] | null;
   role?: 'orchestrator' | 'worker';
+  /** Forma de execução selada do dispatch; decide o escopo de escrita válido. */
+  executionMode?: 'same_checkout' | 'isolated_worktree' | 'read_only';
   prompt?: string;
   scope: AgentGateContext['scope'];
   executionScope?: AgentGateContext['executionScope'];
@@ -894,8 +896,15 @@ export async function spawnPaneAndMaybePrompt(
     options.role === 'worker' &&
     Boolean(contextRevision) &&
     options.readOnly !== true;
+  // Caminho simples (06/08): a entrega same_checkout escreve NO workspace por
+  // contrato selado — exigir worktree distinta aqui era o 6º site da era do
+  // isolamento e matou a entrega em loop de 60 retries no gate 0.27.0. A
+  // não-interferência dela é provada na ADMISSÃO (escritor serializado por
+  // ownership) e no recibo, não pela separação física.
+  const sameCheckoutWriter = options.executionMode === 'same_checkout';
   if (
     revisionBoundWritableWorker &&
+    !sameCheckoutWriter &&
     (!options.executionScope ||
       options.executionScope.rootRealPath === options.scope.rootRealPath)
   ) {
@@ -906,6 +915,7 @@ export async function spawnPaneAndMaybePrompt(
   }
   if (
     revisionBoundWritableWorker &&
+    !sameCheckoutWriter &&
     !isRevisionBoundWritableWorkerAdapterAllowed(adapter.id)
   ) {
     throw new Error(

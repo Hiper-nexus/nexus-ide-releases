@@ -998,6 +998,7 @@ export async function dispatchMissionSchedulerTask(
         workerIncarnationId: claim.workerIncarnationId,
         agentCategory: meta.agentCategory,
         role: "worker",
+        executionMode,
         title: task.title,
         prompt: buildMissionSchedulerTaskPrompt(
           { ...mapped, title: task.title, detail: decoded.body },
