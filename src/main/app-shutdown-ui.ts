@@ -1,5 +1,8 @@
 import type { MessageBoxOptions, MessageBoxReturnValue } from "electron";
-import { buildShutdownFailureNotice } from "./app-shutdown";
+import {
+  buildFailureQuitNotice,
+  buildSlowQuitNotice,
+} from "./app-quit-guarantee";
 
 export interface ShutdownNoticeControllerDeps {
   readonly isShutdownComplete: () => boolean;
@@ -11,6 +14,12 @@ export interface ShutdownNoticeControllerDeps {
   readonly authorizeQuit: () => void;
   readonly requestQuit: () => void;
   readonly restartDockWatchdog: () => void;
+  /** Prazo restante do teto inarredável; null quando não armado. */
+  readonly remainingMs: () => number | null;
+  /** Encerramento imediato pedido pelo operador (registrado como incidente). */
+  readonly forceExit: (origin: "slow-notice" | "failure-notice") => void;
+  /** Única revogação legítima da intenção de sair: decisão do operador. */
+  readonly abandonQuit: () => void;
 }
 
 export interface ShutdownNoticeController {
@@ -19,8 +28,10 @@ export interface ShutdownNoticeController {
 }
 
 /**
- * Owns native shutdown-dialog concurrency outside the main bootstrap module.
- * It never grants quit authority unless the operator explicitly asks to retry.
+ * Diálogos nativos do encerramento. Nenhum deles é espera aberta (diretiva
+ * 06/08): sempre há prazo visível e sempre há o botão de forçar — a demora e
+ * a falha viram registro, nunca refém. A intenção de sair só é revogada pela
+ * escolha explícita do operador de manter o app aberto.
  */
 export function createShutdownNoticeController(
   deps: ShutdownNoticeControllerDeps,
@@ -33,18 +44,22 @@ export function createShutdownNoticeController(
       if (slowPromptOpen || deps.isShutdownComplete()) return;
       slowPromptOpen = true;
       deps.focusApp();
+      const notice = buildSlowQuitNotice({ remainingMs: deps.remainingMs() });
       void deps
         .showMessageBox({
           type: "info",
-          title: "O NexusIDE ainda está encerrando",
-          message: "Aguardando a finalização segura dos serviços.",
-          detail:
-            "O app continuará aberto enquanto confirma o encerramento físico " +
-            "dos processos. Nenhum terminal será abandonado por um encerramento forçado.",
-          buttons: ["Continuar aguardando"],
-          defaultId: 0,
-          cancelId: 0,
+          title: notice.title,
+          message: notice.message,
+          detail: notice.detail,
+          buttons: [...notice.buttons],
+          defaultId: 1,
+          cancelId: 1,
           noLink: true,
+        })
+        .then(({ response }) => {
+          if (response === notice.forceButtonIndex) {
+            deps.forceExit("slow-notice");
+          }
         })
         .catch((error) => {
           console.warn("[main] slow shutdown notice failed:", error);
@@ -56,26 +71,39 @@ export function createShutdownNoticeController(
 
     showFailure(error: unknown): void {
       console.error("[main] shutdown failed safely:", error);
-      deps.revokeQuitAuthorization();
-      deps.restartDockWatchdog();
       if (failurePromptOpen) return;
       failurePromptOpen = true;
       deps.focusApp();
-      const notice = buildShutdownFailureNotice(error);
+      const notice = buildFailureQuitNotice({
+        error,
+        remainingMs: deps.remainingMs(),
+      });
       void deps
         .showMessageBox({
           type: "error",
-          ...notice,
-          buttons: ["Manter o NexusIDE aberto", "Tentar novamente"],
-          defaultId: 0,
-          cancelId: 0,
+          title: notice.title,
+          message: notice.message,
+          detail: notice.detail,
+          buttons: [...notice.buttons],
+          defaultId: 1,
+          cancelId: 2,
           noLink: true,
         })
         .then(({ response }) => {
           failurePromptOpen = false;
-          if (response !== 1) return;
-          deps.authorizeQuit();
-          deps.requestQuit();
+          if (response === notice.forceButtonIndex) {
+            deps.forceExit("failure-notice");
+            return;
+          }
+          if (response === 1) {
+            deps.authorizeQuit();
+            deps.requestQuit();
+            return;
+          }
+          // Manter aberto: a ÚNICA revogação legítima da intenção de sair.
+          deps.revokeQuitAuthorization();
+          deps.restartDockWatchdog();
+          deps.abandonQuit();
         })
         .catch(() => {
           failurePromptOpen = false;

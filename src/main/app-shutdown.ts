@@ -94,6 +94,46 @@ export async function shutdownOrchestrationRuntimesWithProof(
   return pty;
 }
 
+/**
+ * Encerramento sem veto (diretiva do dono, 06/08): uma sessão sem prova
+ * física de morte é um INCIDENTE registrado, não um motivo para manter o app
+ * inteiro vivo. O caminho da prova continua idêntico; quando ela falha, o
+ * teardown segue até o fim com o incidente gravado — o processo resistente é
+ * abandonado ao SIGKILL do teto, nunca aguardado para sempre.
+ */
+export async function shutdownOrchestrationRuntimesRecordingStragglers(
+  deps: OrchestrationRuntimeShutdownDeps,
+  record: (incident: {
+    readonly kind: "sessions-unproven" | "reconciliation-incomplete";
+    readonly sessionIds?: readonly string[];
+    readonly detail: string;
+  }) => void,
+): Promise<TerminateAllSessionsResult> {
+  await deps.quiesceOrchestration();
+  const result = await deps.terminateAllSessions();
+  const proven =
+    result.ok &&
+    result.failedSessionIds.length === 0 &&
+    hasExactPhysicalInventoryProof(result);
+  if (!proven) {
+    record({
+      kind: "sessions-unproven",
+      sessionIds: result.failedSessionIds,
+      detail:
+        result.failedSessionIds.join(", ") || "inventário PTY inconsistente",
+    });
+  }
+  deps.shutdownPtyHost();
+  if (!deps.reconcileOrchestratorExits()) {
+    record({
+      kind: "reconciliation-incomplete",
+      detail: "orchestrator exit reconciliation is not durably complete",
+    });
+  }
+  await deps.closeOrchestration();
+  return result;
+}
+
 export interface ShutdownFailureNotice {
   readonly title: string;
   readonly message: string;

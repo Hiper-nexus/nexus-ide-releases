@@ -267,7 +267,7 @@ describe('macOS activate lifecycle', () => {
     const source = fs.readFileSync(path.join(__dirname, 'main.ts'), 'utf-8');
     const shutdownStart = source.indexOf('function shutdown(): Promise<void>');
     const physicalFence = source.indexOf(
-      'await shutdownOrchestrationRuntimesWithProof({',
+      'await shutdownOrchestrationRuntimesRecordingStragglers(',
       shutdownStart,
     );
     const completion = source.indexOf(
@@ -286,31 +286,33 @@ describe('macOS activate lifecycle', () => {
     expect(shutdownBody).not.toContain('app.exit(');
   });
 
-  it('bounds quit with a hard-ceiling force-exit backstop so it can never hang', () => {
+  // TOMBSTONE (06/08): o backstop era cancelado pelo próprio caminho de erro
+  // que ele cobria — o .catch limpava o timer de app.exit. O teto agora é
+  // INARREDÁVEL: armado antes do shutdown e sem nenhuma API de clear; só a
+  // decisão explícita do operador de manter o app aberto (nos avisos) desarma.
+  it('bounds quit with an UNCLEARABLE hard ceiling — no catch can remove it', () => {
     const source = fs.readFileSync(path.join(__dirname, 'main.ts'), 'utf-8');
     const beforeQuit = source.indexOf('app.on("before-quit"');
-    const ceilingStart = source.indexOf(
-      'const forceQuitDeadline = setTimeout(',
-      beforeQuit,
-    );
-    const ceilingEnd = source.indexOf('}, QUIT_HARD_CEILING_MS);', ceilingStart);
+    const armIdx = source.indexOf('quitCeiling.arm();', beforeQuit);
     const shutdownCall = source.indexOf('void shutdown()', beforeQuit);
 
     expect(beforeQuit).toBeGreaterThanOrEqual(0);
-    expect(ceilingStart).toBeGreaterThan(beforeQuit);
-    expect(ceilingEnd).toBeGreaterThan(ceilingStart);
-    // The force-exit is armed BEFORE shutdown is awaited, so a wedge inside
-    // shutdown itself cannot outrun the ceiling.
-    expect(ceilingStart).toBeLessThan(shutdownCall);
-    // app.exit lives ONLY inside the ceiling callback — the last resort.
-    const ceilingBody = source.slice(ceilingStart, ceilingEnd);
-    expect(ceilingBody).toContain('app.exit(0);');
-    // Both the success and failure lanes release the ceiling: a normal quit and
-    // an actionable retry are not hangs and must not be force-killed.
-    const afterShutdown = source.slice(shutdownCall);
+    // Armado ANTES do shutdown ser aguardado: um wedge interno nunca corre
+    // mais rápido que o teto.
+    expect(armIdx).toBeGreaterThan(beforeQuit);
+    expect(armIdx).toBeLessThan(shutdownCall);
+    // O timer clearável antigo não existe mais em NENHUMA forma.
+    expect(source).not.toContain('forceQuitDeadline');
+    // Nenhuma linha do fluxo de quit toca o teto depois de armado — o único
+    // desarme vive no controller de avisos, atrás da escolha do operador.
+    const afterArm = source.slice(armIdx + 'quitCeiling.arm();'.length);
+    expect(afterArm).not.toContain('quitCeiling.abandonQuitByUser');
+    // O construtor do teto entrega app.exit como última instância.
+    const ceilingDeps = source.indexOf('createUnclearableQuitCeiling({');
+    expect(ceilingDeps).toBeGreaterThanOrEqual(0);
     expect(
-      afterShutdown.split('clearTimeout(forceQuitDeadline);').length - 1,
-    ).toBeGreaterThanOrEqual(2);
+      source.slice(ceilingDeps, source.indexOf('});', ceilingDeps)),
+    ).toContain('app.exit(0)');
   });
 
   it('keeps the app open with an actionable retry when safe shutdown fails', () => {
@@ -329,10 +331,19 @@ describe('macOS activate lifecycle', () => {
     expect(source.slice(beforeQuit, failure)).toContain(
       'shutdownPromise = null;',
     );
-    expect(shutdownUiSource).toContain(
-      '"Manter o NexusIDE aberto", "Tentar novamente"',
+    // Falha nunca é beco: forçar (registro), tentar de novo, ou — a ÚNICA
+    // revogação do quit — manter aberto por decisão explícita do operador.
+    const quitGuaranteeSource = fs.readFileSync(
+      path.join(__dirname, 'app-quit-guarantee.ts'),
+      'utf-8',
     );
+    expect(quitGuaranteeSource).toContain('"Forçar encerramento agora"');
+    expect(quitGuaranteeSource).toContain('"Tentar novamente"');
+    expect(quitGuaranteeSource).toContain('"Manter o NexusIDE aberto"');
+    expect(shutdownUiSource).toContain('buildFailureQuitNotice');
+    expect(shutdownUiSource).toContain('deps.forceExit("failure-notice")');
     expect(shutdownUiSource).toContain('deps.revokeQuitAuthorization();');
+    expect(shutdownUiSource).toContain('deps.abandonQuit();');
   });
 
   it('routes confirmed process-bearing window close through the physical app shutdown lane', () => {
@@ -388,7 +399,7 @@ describe('macOS activate lifecycle', () => {
     );
     const beforeQuit = mainSource.indexOf('app.on("before-quit"');
     const physicalProof = mainSource.indexOf(
-      'await shutdownOrchestrationRuntimesWithProof({',
+      'await shutdownOrchestrationRuntimesRecordingStragglers(',
       shutdownFunction,
     );
     const completion = mainSource.indexOf(

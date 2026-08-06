@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildShutdownFailureNotice,
   PhysicalPtyShutdownError,
+  shutdownOrchestrationRuntimesRecordingStragglers,
   shutdownOrchestrationRuntimesWithProof,
   shutdownPtyRuntimeWithProof,
 } from "./app-shutdown";
@@ -18,6 +19,88 @@ function result(
     ...patch,
   };
 }
+
+// DIRETIVA (06/08): nenhuma sessão sozinha veta o quit. Sessão sem prova
+// física de morte é incidente REGISTRADO; o teardown segue até o fim e o app
+// encerra dentro do teto — nunca fica aberto refém de um processo resistente.
+describe("shutdownOrchestrationRuntimesRecordingStragglers", () => {
+  it("registra stragglers e conclui o teardown em vez de abortar", async () => {
+    const order: string[] = [];
+    const incidents: unknown[] = [];
+    const failed = result({
+      ok: false,
+      terminatedSessionIds: ["pty-a"],
+      failedSessionIds: ["pty-b"],
+    });
+    const outcome = await shutdownOrchestrationRuntimesRecordingStragglers(
+      {
+        quiesceOrchestration: async () => {
+          order.push("quiesce");
+        },
+        terminateAllSessions: async () => failed,
+        shutdownPtyHost: () => {
+          order.push("host");
+        },
+        reconcileOrchestratorExits: () => {
+          order.push("reconcile");
+          return true;
+        },
+        closeOrchestration: async () => {
+          order.push("close");
+        },
+      },
+      (incident) => incidents.push(incident),
+    );
+
+    expect(outcome).toBe(failed);
+    expect(order).toEqual(["quiesce", "host", "reconcile", "close"]);
+    expect(incidents).toEqual([
+      expect.objectContaining({
+        kind: "sessions-unproven",
+        sessionIds: ["pty-b"],
+      }),
+    ]);
+  });
+
+  it("registra reconciliação incompleta e segue fechando", async () => {
+    const incidents: unknown[] = [];
+    const order: string[] = [];
+    await shutdownOrchestrationRuntimesRecordingStragglers(
+      {
+        quiesceOrchestration: async () => {},
+        terminateAllSessions: async () => result(),
+        shutdownPtyHost: () => {
+          order.push("host");
+        },
+        reconcileOrchestratorExits: () => false,
+        closeOrchestration: async () => {
+          order.push("close");
+        },
+      },
+      (incident) => incidents.push(incident),
+    );
+    expect(order).toEqual(["host", "close"]);
+    expect(incidents).toEqual([
+      expect.objectContaining({ kind: "reconciliation-incomplete" }),
+    ]);
+  });
+
+  it("caminho feliz não registra incidente nenhum", async () => {
+    const incidents: unknown[] = [];
+    const outcome = await shutdownOrchestrationRuntimesRecordingStragglers(
+      {
+        quiesceOrchestration: async () => {},
+        terminateAllSessions: async () => result(),
+        shutdownPtyHost: () => {},
+        reconcileOrchestratorExits: () => true,
+        closeOrchestration: async () => {},
+      },
+      (incident) => incidents.push(incident),
+    );
+    expect(outcome.ok).toBe(true);
+    expect(incidents).toEqual([]);
+  });
+});
 
 describe("shutdownPtyRuntimeWithProof", () => {
   it("keeps orchestration stores alive through the physical runtime proof", async () => {

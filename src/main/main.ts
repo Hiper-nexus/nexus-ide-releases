@@ -165,8 +165,13 @@ import {
 } from "./runtime-process-inventory";
 import { shutdownPtyHost } from "./pty/pty-host-client";
 import {
-  shutdownOrchestrationRuntimesWithProof,
+  shutdownOrchestrationRuntimesRecordingStragglers,
 } from "./app-shutdown";
+import {
+  createQuitIncidentFileRecorder,
+  createUnclearableQuitCeiling,
+  sweepOrphanPtySupervisors,
+} from "./app-quit-guarantee";
 import { shutdownAllAcpDriverSessions } from "./acp/acp-harness-driver";
 import { createShutdownNoticeController } from "./app-shutdown-ui";
 import {
@@ -679,6 +684,28 @@ if (!wireDeepLinks()) {
 } else {
   app.whenReady().then(async () => {
     await realMissionE2EInitialization;
+    // Varredura de órfãos do PRÓPRIO install: supervisores rodam disclaimed
+    // (ppid 1 mesmo saudáveis), então parentesco não distingue vivo de órfão —
+    // mas no boot, com o lock de instância única, NENHUM supervisor deste
+    // install pode ter dono. Zumbis acumulados (04/08) faziam toda tentativa
+    // de sair falhar a prova física; aqui eles morrem antes de existir sessão.
+    if (process.platform === "darwin") {
+      try {
+        const { execFileSync } = await import("node:child_process");
+        sweepOrphanPtySupervisors({
+          resourcesPath: process.resourcesPath,
+          listProcesses: () =>
+            execFileSync("/bin/ps", ["-axo", "pid=,ppid=,command="], {
+              encoding: "utf8",
+              maxBuffer: 8 * 1024 * 1024,
+            }),
+          kill: (pid, signal) => process.kill(pid, signal),
+          record: recordQuitIncident,
+        });
+      } catch (error) {
+        console.warn("[main] varredura de supervisores órfãos falhou:", error);
+      }
+    }
     // `protocol.handle` requires app.ready, but must exist before the first
     // BrowserWindow starts navigating. Installing it later in bootstrap made
     // every packaged launch fail its first nexus-app:// request and recover
@@ -863,6 +890,25 @@ let shutdownPromise: Promise<void> | null = null;
  * PTY termination budget (term 10s + kill 20s + transport margin).
  */
 const QUIT_HARD_CEILING_MS = 45_000;
+// Registro durável de todo quit que precisou da rede de segurança: teto,
+// botão de forçar, sessão sem prova, órfão varrido. Se esta classe voltar,
+// aparece em dados — não num relato do operador.
+const recordQuitIncident = createQuitIncidentFileRecorder(
+  app.getPath("userData"),
+);
+// Teto INARREDÁVEL: armado antes do shutdown começar e sem NENHUMA API de
+// clear — nenhum catch/finally/branch consegue removê-lo (o defeito-raiz do
+// relato de 06/08 era exatamente o .catch limpando o backstop). A única
+// revogação é a decisão explícita do operador de manter o app aberto.
+const quitCeiling = createUnclearableQuitCeiling({
+  ceilingMs: QUIT_HARD_CEILING_MS,
+  exitApp: () => app.exit(0),
+  record: recordQuitIncident,
+});
+const forceQuitNow = (origin: "slow-notice" | "failure-notice"): void => {
+  recordQuitIncident({ kind: "force-button", detail: origin });
+  app.exit(0);
+};
 const shutdownNotices = createShutdownNoticeController({
   isShutdownComplete: () => shutdownComplete,
   focusApp: () => app.focus({ steal: true }),
@@ -871,6 +917,9 @@ const shutdownNotices = createShutdownNoticeController({
   authorizeQuit: authorizeAppQuit,
   requestQuit: () => app.quit(),
   restartDockWatchdog: startMacOSDockWatchdog,
+  remainingMs: () => quitCeiling.remainingMs(),
+  forceExit: forceQuitNow,
+  abandonQuit: () => quitCeiling.abandonQuitByUser("manter-aberto"),
 });
 
 app.on("activate", () => {
@@ -958,16 +1007,22 @@ function shutdown(): Promise<void> {
     // proving the PTY half, otherwise quitting could leave a harness orphaned
     // even though the normal terminal shutdown gate passed.
     await shutdownAllAcpDriverSessions();
-    await shutdownOrchestrationRuntimesWithProof({
-      quiesceOrchestration: quiesceOrchestrationCoordinator,
-      // Generous fence: Darwin supervisor proof is unbounded once SIGTERM is
-      // delivered; main only bounds the ordered exit-event lag after that.
-      terminateAllSessions: () =>
-        terminateAllSessions(APP_SHUTDOWN_PTY_TERMINATION),
-      shutdownPtyHost,
-      reconcileOrchestratorExits: reconcileMissionOrchestratorExits,
-      closeOrchestration,
-    });
+    // Sem veto de sessão única: falha de prova vira incidente registrado e o
+    // teardown segue até o fim — o processo resistente é abandonado ao teto,
+    // nunca aguardado para sempre (diretiva 06/08).
+    await shutdownOrchestrationRuntimesRecordingStragglers(
+      {
+        quiesceOrchestration: quiesceOrchestrationCoordinator,
+        // Generous fence: Darwin supervisor proof is unbounded once SIGTERM is
+        // delivered; main only bounds the ordered exit-event lag after that.
+        terminateAllSessions: () =>
+          terminateAllSessions(APP_SHUTDOWN_PTY_TERMINATION),
+        shutdownPtyHost,
+        reconcileOrchestratorExits: reconcileMissionOrchestratorExits,
+        closeOrchestration,
+      },
+      recordQuitIncident,
+    );
     stopRemoteBridge();
     configureAgentHookEndpointPath(null);
     await stopAgentHookHttpServer().catch(() => {});
@@ -1053,20 +1108,13 @@ app.on("before-quit", (event) => {
     // zero-inventory snapshot stable against queued IPC/scheduler spawns.
     sealRuntimeProcessAdmissionForShutdown();
     if (shutdownPromise) return;
-    // Hard-ceiling force-exit backstop. app.exit terminates immediately without
-    // re-running before-quit, so no wedge — a stuck-but-alive PTY child, a
-    // pinned runloop, a hung disposer — can pin quit forever (v0.25.0 hang). The
-    // graceful path below cancels it; it is purely the last resort. Cross-
-    // platform by construction: the timer fires on macOS/Windows/Linux alike.
-    const forceQuitDeadline = setTimeout(() => {
-      console.error(
-        "[main] quit exceeded the hard ceiling; forcing exit to avoid a permanent hang",
-      );
-      app.exit(0);
-    }, QUIT_HARD_CEILING_MS);
-    forceQuitDeadline.unref?.();
-    // A demora vira feedback nativo, nunca licença para matar o PTY host sem
-    // prova. O fluxo permanece aberto e seguro até concluir ou falhar.
+    // Teto inarredável: armado ANTES do primeiro await do shutdown e imune a
+    // qualquer catch/finally — o defeito-raiz do relato de 06/08 era o .catch
+    // limpando o backstop exatamente quando ele era necessário. app.exit não
+    // re-executa before-quit, então nenhum wedge — PTY travado, runloop preso,
+    // disposer pendurado, falha REPETIDA de prova — segura o quit para sempre.
+    quitCeiling.arm();
+    // A demora vira feedback nativo COM prazo e saída, nunca espera aberta.
     const slowNotice = setTimeout(() => {
       console.error("[main] shutdown is still waiting for safe completion");
       shutdownNotices.showSlowNotice();
@@ -1074,17 +1122,16 @@ app.on("before-quit", (event) => {
     void shutdown()
       .then(() => {
         clearTimeout(slowNotice);
-        clearTimeout(forceQuitDeadline);
         authorizeAppQuit();
         app.quit();
       })
       .catch((error) => {
         clearTimeout(slowNotice);
-        // A rejected shutdown is a bounded, actionable failure — not a hang —
-        // so release the force-exit ceiling and keep the app open for retry.
-        clearTimeout(forceQuitDeadline);
         // A rejected promise must not poison retries. PTY failures leave the
         // exact sessions registered/inert, so a second attempt can prove them.
+        // O TETO PERMANECE ARMADO: falha não é licença para ficar aberto — o
+        // diálogo oferece forçar/retentar/ficar, e só a escolha explícita de
+        // ficar desarma o prazo.
         shutdownPromise = null;
         shutdownNotices.showFailure(error);
       });
