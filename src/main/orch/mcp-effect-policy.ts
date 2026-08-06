@@ -95,6 +95,9 @@ const READ_ONLY_TOOLS = new Set([
   'model_ranking',
   'mcp_servers',
   'skills_inventory',
+  // Descobre e relata plugins; instalar é outra superfície (catalog_install,
+  // que exige consentimento exato na UI nativa).
+  'plugin_inventory',
   'cli_inventory',
 ]);
 

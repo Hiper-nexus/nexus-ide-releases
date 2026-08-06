@@ -111,11 +111,15 @@ const INSTRUMENT_NAMES = [
   'nexus_model_ranking',
   'nexus_mcp_servers',
   'nexus_skills_inventory',
+  // Ingestão de plugin é INSTRUMENTO, não instalação: descobre e relata. Se um
+  // dia ela ganhar poder de gravar, o teste abaixo ("no new authority") quebra —
+  // que é exatamente o alarme certo.
+  'nexus_plugin_inventory',
   'nexus_cli_inventory',
 ] as const;
 
 describe('buildInstrumentTools', () => {
-  it('registers exactly the five read-only instruments', () => {
+  it('registers exactly the read-only instruments, in order', () => {
     expect(buildInstrumentTools().map((t) => t.name)).toEqual([
       ...INSTRUMENT_NAMES,
     ]);

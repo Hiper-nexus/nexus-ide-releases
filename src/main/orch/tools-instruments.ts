@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import { rankCapabilitiesByNeed } from './capability-need-ranking';
+import { scanInstalledPlugins } from './agent-plugin-scan';
 import path from 'node:path';
 import { z } from 'zod';
 import type { McpToolDef } from './mcp-protocol';
@@ -824,12 +825,55 @@ const cliInventoryTool: McpToolDef = {
   },
 };
 
+/**
+ * Ingestão de plugins: descobre e RELATA, nunca instala.
+ *
+ * Gravar componente de terceiro em `~/.claude` é `catalog_install`, recusado no
+ * dispatch porque exige a superfície nativa (commit, digest, alertas). Expor
+ * uma instalação por aqui seria o mesmo buraco com nome novo — então esta tool
+ * é read-only por desenho, e o operador instala pelo Marketplace sabendo o que
+ * entra.
+ */
+const pluginInventoryTool: McpToolDef = {
+  name: 'nexus_plugin_inventory',
+  description:
+    'Lista os plugins de agente instalados nesta máquina (~/.nexus/plugins e ' +
+    '~/.claude/plugins): nome, versão, componentes ingeríveis e o que este ' +
+    'Nexus IGNORA de cada um. Consulte antes de assumir que um agente/skill de ' +
+    'plugin existe. Read-only: instalar é outra superfície, explicitamente ' +
+    'consentida. Caminhos absolutos nunca são retornados.',
+  inputSchema: { type: 'object', properties: {} },
+  handler: async () => {
+    const plugins = scanInstalledPlugins();
+    return Object.freeze({
+      counts: {
+        total: plugins.length,
+        usable: plugins.filter((p) => p.verdict.ok).length,
+      },
+      plugins: plugins.map((plugin) => ({
+        source: plugin.source,
+        summary: plugin.summary,
+        usable: plugin.verdict.ok,
+        ...(plugin.verdict.ok
+          ? {
+              name: plugin.verdict.name,
+              version: plugin.verdict.version,
+              entries: plugin.verdict.entries,
+              degraded: plugin.verdict.degraded,
+            }
+          : { reason: plugin.verdict.reason }),
+      })),
+    });
+  },
+};
+
 export function buildInstrumentTools(): McpToolDef[] {
   return [
     quotaStatusTool,
     modelRankingTool,
     mcpServersTool,
     skillsInventoryTool,
+    pluginInventoryTool,
     cliInventoryTool,
   ];
 }
