@@ -116,7 +116,11 @@ export const planProofSchema = z
               ...REAL_MISSION_E2E_ADVISORS.map((advisor) => advisor.id),
             ]),
             agentCategory: z.enum(["executor", "reviewer", "scout"]),
-            executionMode: z.enum(["isolated_worktree", "read_only"]),
+            executionMode: z.enum([
+              "isolated_worktree",
+              "read_only",
+              "same_checkout",
+            ]),
             dependsOn: z.array(idSchema).max(2),
           })
           .strict(),
