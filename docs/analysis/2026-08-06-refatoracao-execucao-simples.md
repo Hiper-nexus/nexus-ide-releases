@@ -270,3 +270,75 @@ levantei era a falta de medição ao vivo; ela continua válida como *medição*
 não como bloqueio: a forma correta é **landar com prova unitária do argv e
 registrar explicitamente que os segundos não foram verificados**. Isso é honesto;
 adiar indefinidamente não era.
+
+---
+
+## 9. Cirurgia da camada durável: `same_checkout` como forma de conclusão de 1ª classe
+
+**Achado que define o trabalho:** `same_checkout_validated` **já existe** no
+schema de receipts (`task-dispatch-codec.ts:184`) — e **nada o cunha, nada o
+aceita**. É vocabulário vestigial. Não existe forma de conclusão para
+`same_checkout`; por isso ele só pode ser bloqueado.
+
+### 9.1 O invariante que muda
+
+> Conclusão deve ser provável a partir do **handoff + a ownership efetivamente
+> exercida** — não da existência de uma worktree isolada.
+
+Worktree isolada é **uma** maneira de provar não-interferência, não a definição
+dela. Serialização de escritores é outra. Ownership disjunta é outra.
+
+### 9.2 Onde a suposição "sem worktree ⇒ inválido" está espalhada
+
+Auditoria completa da camada durável:
+
+| # | Local | O que faz hoje | Status |
+|---|---|---|---|
+| 1 | `pty-manager.ts:1483` | recusava o SPAWN sem worktree distinta — **atingia até revisor `read_only`** | **CORRIGIDO** `84110780` |
+| 2 | `mission-scheduler-production.ts:1494-1504` | bloqueia todo `same_checkout` em `handoff_ready` ("replaneje com ownership e worktree isolado") | a fazer |
+| 3 | `task-dispatch-mission-completion-authority.ts:552-555` | `row.execution_mode === "same_checkout"` → `return false` **INCONDICIONAL**: rejeita qualquer receipt, mesmo válido | a fazer — **o mais profundo** |
+| 4 | `task-dispatch-store.ts` | não há método que cunhe `same_checkout_validated` (só `read_only`/`isolated`) | a fazer |
+
+O item 3 é a razão de a ordem importar: cunhar sem aceitar não adianta.
+
+### 9.3 A regra que passa a ser aplicada (para não trocar deadlock por corrupção)
+
+`same_checkout` é seguro quando, e somente quando:
+
+- **escritores serializados** — no máximo 1 dispatch não-`read_only` em estado
+  não-terminal por checkout; **ou**
+- **ownership genuinamente disjunta** entre os escritores simultâneos.
+
+Leitores são livres: não escrevem, não colidem, e desde `347f0b7b` não tomam
+mais slot exclusivo. A serialização precisa ser aplicada na **admissão**
+(claim), não na conclusão — na conclusão já é tarde.
+
+O receipt **registra qual forma foi usada** (`serialized-writer` ou
+`disjoint-ownership`), para a proveniência da missão continuar auditável.
+
+### 9.4 Ordem da cirurgia (cada peça revisável)
+
+1. **Aceitar** `same_checkout_validated` em
+   `task-dispatch-mission-completion-authority.ts` (aditivo, compatível: nada
+   ainda o cunha, então não muda comportamento nenhum).
+2. **Cunhar**: `completeSameCheckoutFromTrustedHandoff` no store, espelhando
+   `completeReadOnlyFromTrustedHandoff` (mesmas travas: CAS de revision,
+   `assertPhysicalTaskHandoffAuthority`, cronologia, intent selado) — **sem**
+   `assertReadOnlyPhysicalGitAuthority`, porque aqui o worker escreveu de fato.
+3. **Aplicar a serialização no claim** (a trava que substitui a worktree).
+4. **Trocar o bloqueio por conclusão** em `mission-scheduler-production.ts:1494`.
+5. **Só então** virar o default do claim de `isolated_worktree` para
+   `same_checkout` (`task-dispatch-claim-authority.ts:90`), atrás do modo.
+
+### 9.5 Compatibilidade retroativa
+
+**Nada de reescrever história.** Missões e receipts criados sob a suposição
+isolada continuam validando pelo caminho `isolated_worktree`, que não é tocado.
+A aceitação é **alargada**, nunca substituída — por isso o passo 1 vem primeiro
+e é inofensivo sozinho.
+
+### 9.6 O teste que é a lápide desta mina
+
+Regressão obrigatória: **um dispatch `same_checkout` que chega em
+`handoff_ready` CONCLUI, em vez de ser rejeitado.** Se algum dia essa suposição
+voltar, esse teste morre primeiro — antes de o usuário morrer.
