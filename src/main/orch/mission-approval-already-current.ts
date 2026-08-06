@@ -22,26 +22,45 @@
  */
 
 import {
-  hasCurrentDispatchAuthority,
+  hasCurrentApprovedDispatchContract,
   type InferIntentMission,
   type MissionOrchestratorRuntimeSnapshot,
 } from "../../shared/mission-intent";
-import { sameMissionOrchestratorRuntime } from "./mission-orchestrator-runtime";
+import { sameMissionOrchestratorGrantRuntime } from "./mission-orchestrator-runtime";
 
 type ApprovalStateMission = InferIntentMission & {
   readonly intentVersion?: number | null;
 };
 
+/**
+ * Alargado em 06/08 pelo voo real da 0.26.1 (missão d9dd6f27): duas janelas
+ * cegas reabriam o modal de uma missão já aprovada e viva —
+ * 1. TEMPORAL: approvedAt gravado segundos antes de o preflight promover a
+ *    missão (status ainda 'pending' / intentState 'ready_to_start');
+ * 2. DRIFT VOLÁTIL: accountId/effort são recomputados a cada tentativa
+ *    (rotação de conta, tuning) e a igualdade estrita nunca mais batia com o
+ *    contrato selado — modal para sempre, sem mudança material de autoridade.
+ * Mudança MATERIAL continua derrubando o veredito: revisão de intent nova,
+ * aprovação revogada, adapter/modelo/confinamento diferente, missão
+ * bloqueada/encerrada ou aguardando decisão real do operador.
+ */
 export function missionApprovalAlreadyCurrent(
   mission: ApprovalStateMission,
   candidateRuntime: MissionOrchestratorRuntimeSnapshot,
 ): boolean {
-  // Espelha `from` de approveIntentFromRenderer: só os estados que caem na lane
-  // de continuar bootstrap podem dispensar a decisão do operador.
   const from = mission.intentState ?? "ready_to_start";
-  if (from !== "dispatched" && from !== "executing") return false;
-  if (!hasCurrentDispatchAuthority(mission)) return false;
-  return sameMissionOrchestratorRuntime(
+  if (
+    from !== "dispatched" &&
+    from !== "executing" &&
+    from !== "ready_to_start"
+  ) {
+    return false;
+  }
+  if (mission.status !== "running" && mission.status !== "pending") {
+    return false;
+  }
+  if (!hasCurrentApprovedDispatchContract(mission)) return false;
+  return sameMissionOrchestratorGrantRuntime(
     mission.intentContract?.orchestratorRuntime,
     candidateRuntime,
   );

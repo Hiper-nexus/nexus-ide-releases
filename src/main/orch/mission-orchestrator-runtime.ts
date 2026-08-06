@@ -103,6 +103,28 @@ export function canonicalMissionOrchestratorRuntime(
   });
 }
 
+/**
+ * Igualdade de AUTORIDADE concedida pela aprovação (fix 06/08 do re-prompt
+ * residual): adapter, modelo e confinamento definem o que o operador aprovou;
+ * accountId e effort são política main-owned recomputada a cada tentativa
+ * (rotação de conta, tuning) — a igualdade estrita fazia o modal de aprovação
+ * voltar PARA SEMPRE numa missão viva cujo candidato fresco divergia do
+ * contrato selado nesses campos voláteis.
+ */
+export function sameMissionOrchestratorGrantRuntime(
+  left: MissionOrchestratorRuntimeSnapshot | null | undefined,
+  right: MissionOrchestratorRuntimeSnapshot | null | undefined,
+): boolean {
+  return Boolean(
+    left &&
+      right &&
+      left.adapterId === right.adapterId &&
+      left.model === right.model &&
+      left.readOnly === right.readOnly &&
+      left.nativeReadOnly === right.nativeReadOnly,
+  );
+}
+
 export function sameMissionOrchestratorRuntime(
   left: MissionOrchestratorRuntimeSnapshot | null | undefined,
   right: MissionOrchestratorRuntimeSnapshot | null | undefined,

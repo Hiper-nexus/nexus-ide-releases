@@ -1382,6 +1382,14 @@ export class RendererMissionAuthority {
         "approval_stale: mission intent, attachments, squad or runtime changed while native confirmation was open",
       );
     }
+    // Aprovação já consumada (06/08, voo real da 0.26.1): com contrato
+    // aprovado VIGENTE e a mesma autoridade concedida, o approve não pode
+    // conceder nada novo — re-selar aqui trocaria accountId/effort no contrato
+    // sem olhos do operador e reabria a janela do re-prompt. Continua o
+    // bootstrap main-owned (idempotente) e devolve rápido; o wizard fecha.
+    if (missionApprovalAlreadyCurrent(loaded, reviewOrchestratorRuntime)) {
+      return this.#continueMainOwnedBootstrap(scope, loaded.id) ?? loaded;
+    }
     const sealed = this.#sealMissionSquadForApproval(
       scope,
       loaded,

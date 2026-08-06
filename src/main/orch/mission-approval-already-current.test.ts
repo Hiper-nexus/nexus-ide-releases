@@ -83,11 +83,11 @@ describe("missionApprovalAlreadyCurrent", () => {
     ).toBe(false);
   });
 
-  it("é falso quando a missão não está mais executando", () => {
+  it("é falso quando a missão saiu de execução por bloqueio/encerramento", () => {
     for (const patch of [
       { status: "blocked" as const, intentState: "blocked_technical" as const },
-      { status: "pending" as const },
       { status: "failed" as const },
+      { status: "done" as const },
     ]) {
       expect(missionApprovalAlreadyCurrent(runningMission(patch), RUNTIME)).toBe(
         false,
@@ -95,11 +95,46 @@ describe("missionApprovalAlreadyCurrent", () => {
     }
   });
 
+  it("JANELA TEMPORAL (06/08): aprovada mas ainda pending/ready_to_start → já-atual", () => {
+    // O voo real da 0.26.1: approvedAt gravado às 09:33:50 e o modal reabria
+    // segundos depois porque o preflight ainda não tinha promovido a missão.
+    expect(
+      missionApprovalAlreadyCurrent(
+        runningMission({ status: "pending", intentState: "ready_to_start" }),
+        RUNTIME,
+      ),
+    ).toBe(true);
+  });
+
+  it("JANELA DE DRIFT (06/08): accountId/effort recomputados não reabrem o modal", () => {
+    expect(
+      missionApprovalAlreadyCurrent(runningMission(), {
+        ...RUNTIME,
+        accountId: "account-rotacionada",
+        effort: "xhigh",
+      }),
+    ).toBe(true);
+  });
+
+  it("mudança MATERIAL de autoridade continua derrubando: adapter ou confinamento", () => {
+    expect(
+      missionApprovalAlreadyCurrent(runningMission(), {
+        ...RUNTIME,
+        adapterId: "codex-outro",
+      }),
+    ).toBe(false);
+    expect(
+      missionApprovalAlreadyCurrent(runningMission(), {
+        ...RUNTIME,
+        nativeReadOnly: false,
+      }),
+    ).toBe(false);
+  });
+
   it("é falso em estados que ainda esperam a decisão do operador", () => {
     for (const intentState of [
       "awaiting_approval",
       "awaiting_goal",
-      "ready_to_start",
       "draft",
     ] as const) {
       expect(
