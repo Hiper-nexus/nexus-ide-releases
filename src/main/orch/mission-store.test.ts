@@ -119,7 +119,7 @@ describe('scoped mission store', () => {
 
     expect(reapproval).toMatchObject({
       status: 'pending',
-      intentState: 'awaiting_approval',
+      intentState: 'ready_to_start',
       intentVersion: 3,
       orchestratorSessionId: undefined,
       milestones: [
@@ -288,7 +288,7 @@ describe('scoped mission store', () => {
 
     expect(reapproval).toMatchObject({
       status: 'pending',
-      intentState: 'awaiting_approval',
+      intentState: 'ready_to_start',
       intentVersion: 5,
       squadId: 'squad-legacy',
       intentContract: {

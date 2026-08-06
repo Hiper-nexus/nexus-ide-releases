@@ -997,13 +997,12 @@ export class RendererMissionAuthority {
         evidenceAttached,
       );
       risk = classifyGoalRisk(contract.goal);
-      const compileEvent =
-        risk === "normal"
-          ? ("compile_ok" as const)
-          : ("needs_approval" as const);
+      // O gate de aprovação saiu do caminho normal (06/08): compilar NUNCA
+      // estaciona a missão. O risco fica gravado no contrato e alimenta a
+      // válvula just-in-time (destrutivo confirma NO MOMENTO do ato).
       const compiled = transitionIntentState({
         from: "intent_compiling",
-        event: compileEvent,
+        event: "compile_ok",
       });
       if (!compiled.ok) throw new Error(compiled.reason);
 

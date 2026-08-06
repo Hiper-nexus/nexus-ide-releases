@@ -1369,7 +1369,9 @@ export class ScopedMissionStore {
              SET status = 'pending',
                  milestones_json = ?,
                  orch_session_id = NULL,
-                 intent_state = 'awaiting_approval',
+                 -- Gate de aprovação removido do caminho normal (06/08): a
+                 -- revisão republicada nasce DESPACHÁVEL, não estacionada.
+                 intent_state = 'ready_to_start',
                  intent_contract_json = ?,
                  intent_version = ?,
                  updated_at = ?
@@ -1770,7 +1772,14 @@ export class ScopedMissionStore {
       squadId: row.squad_id ?? undefined,
       milestones: parseMilestones(row.milestones_json),
       learnings: row.learnings,
-      intentState: row.intent_state,
+      // Migração 06/08 (gate de aprovação removido do caminho normal): linhas
+      // estacionadas em awaiting_approval soltam NA LEITURA para
+      // ready_to_start — idempotente, sem write de migração; o próximo update
+      // persiste o estado novo naturalmente.
+      intentState:
+        row.intent_state === 'awaiting_approval'
+          ? 'ready_to_start'
+          : row.intent_state,
       ...(intentContract ? { intentContract } : {}),
       intentVersion: row.intent_version,
       orchestratorSessionId: row.orch_session_id ?? undefined,

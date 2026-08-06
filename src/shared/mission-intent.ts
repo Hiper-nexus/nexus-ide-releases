@@ -409,16 +409,15 @@ const TRANSITIONS: Readonly<
   intent_compiling: {
     compile_ok: 'ready_to_start',
     compile_ambiguous: 'awaiting_goal',
-    needs_approval: 'awaiting_approval',
   },
   ready_to_start: {
-    needs_approval: 'awaiting_approval',
     start: 'dispatched',
     submit_goal: 'intent_compiling', // new user message preempts
   },
+  // Estado LEGADO (06/08): o gate de aprovação saiu do caminho normal — nada
+  // mais ENTRA aqui (evento needs_approval removido). As transições de SAÍDA
+  // ficam para linhas antigas destravarem; fromRow também solta na leitura.
   awaiting_approval: {
-    // One explicit start action durably approves, then advances through
-    // ready_to_start before any runtime materialization is allowed.
     approve: 'ready_to_start',
     submit_goal: 'intent_compiling',
   },

@@ -174,10 +174,14 @@ describe('mission intent transitions', () => {
     ).toEqual({ ok: true, to: 'dispatched' });
   });
 
-  it('routes sensitive work through awaiting_approval', () => {
+  it('needs_approval não existe mais — nada ENTRA em awaiting_approval (06/08)', () => {
     expect(
       transitionIntentState({ from: 'intent_compiling', event: 'needs_approval' }),
-    ).toEqual({ ok: true, to: 'awaiting_approval' });
+    ).toMatchObject({ ok: false });
+    expect(
+      transitionIntentState({ from: 'ready_to_start', event: 'needs_approval' }),
+    ).toMatchObject({ ok: false });
+    // Linhas legadas ainda SAEM do estado estacionado.
     expect(
       transitionIntentState({ from: 'awaiting_approval', event: 'approve' }),
     ).toEqual({ ok: true, to: 'ready_to_start' });
