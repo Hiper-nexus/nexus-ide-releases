@@ -10,11 +10,34 @@ export const RENDERER_EXACT_CONSENT_TOOLS: ReadonlySet<string> = new Set([
   'squad_save',
 ]);
 
-const PER_ACTION_CONSENT_TOOLS: ReadonlySet<string> = new Set([
-  'catalog_install',
-  'agent_spec_write',
-  'squad_save',
-]);
+/**
+ * Vazio: os três antigos ocupantes são negados antes de chegar aqui, e o `cron`
+ * ganhou caminho de volta. Ver `requiresPerActionConsent`.
+ */
+const PER_ACTION_CONSENT_TOOLS: ReadonlySet<string> = new Set<string>([]);
+
+/**
+ * Ferramentas cujo STORE exige um recibo exato de uma mutação só.
+ *
+ * Distinto de `requiresPerActionConsent` de propósito — o predicado antigo
+ * fazia as duas coisas, e por isso "tirar o modal" apagava junto o recibo e
+ * quebrava toda gravação de agenda com `cron_exact_consent_required`.
+ *
+ * Modal e recibo respondem perguntas diferentes: o modal pergunta QUEM
+ * autorizou; o recibo prova que ESTA mutação foi autorizada uma vez só. Sob a
+ * doutrina de zero fricção quem autoriza é a aprovação da missão somada ao
+ * caminho de volta registrado — a prova de unicidade continua necessária.
+ */
+const EXACT_RECEIPT_TOOLS: ReadonlySet<string> = new Set(['cron']);
+
+export function requiresExactConsentReceipt(
+  toolName: string,
+  args: Readonly<Record<string, unknown>>,
+): boolean {
+  const canonical = canonicalToolName(toolName);
+  if (canonical === 'cron') return args.action !== 'list';
+  return EXACT_RECEIPT_TOOLS.has(canonical);
+}
 
 export function requiresToolConfirmation(
   toolName: string,
@@ -34,12 +57,26 @@ export function isDestructiveEffect(
   return command.length > 0 && isDestructive(command);
 }
 
-/** Persistent global instruction changes outlive mission-wide approval. */
+/**
+ * Consentimento por ação — hoje, VAZIO no caminho da missão, de propósito.
+ *
+ * Ele existia para duas famílias, e nenhuma delas ainda precisa dele:
+ *
+ *  - `catalog_install`, `agent_spec_write`, `squad_save`: nunca chegaram aqui.
+ *    São NEGADOS antes, em `mcp-dispatch.ts` (RENDERER_EXACT_CONSENT_TOOLS), e
+ *    exigem a superfície nativa. Listá-los aqui sugeria uma pergunta que o
+ *    código não faz.
+ *  - `cron`: a mudança de agenda sobrevive à missão que a criou — risco real.
+ *    A resposta passou a ser desfazer + registro visível
+ *    (`cron-reversibility.ts`), não interromper uma missão já aprovada.
+ *
+ * A lista permanece como ponto de extensão: uma mutação nova que sobreviva à
+ * missão e AINDA não tenha caminho de volta entra aqui até ganhar um.
+ */
 export function requiresPerActionConsent(
   toolName: string,
   args: Readonly<Record<string, unknown>>,
 ): boolean {
-  const canonical = canonicalToolName(toolName);
-  if (canonical === 'cron') return args.action !== 'list';
-  return PER_ACTION_CONSENT_TOOLS.has(canonical);
+  void args;
+  return PER_ACTION_CONSENT_TOOLS.has(canonicalToolName(toolName));
 }

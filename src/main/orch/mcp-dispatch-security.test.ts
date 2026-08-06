@@ -551,7 +551,11 @@ describe("MCP dispatch effect safety", () => {
     expect(confirm).not.toHaveBeenCalled();
   });
 
-  it("requires fresh per-action consent for persistent cron mutations", async () => {
+  it("cron muta dentro de missão aprovada SEM modal (N1: zero fricção)", async () => {
+    // Antes este teste exigia o modal. A mudança de agenda continua sendo um
+    // risco real — ela dispara depois que a missão acaba — mas a resposta passou
+    // a ser desfazer + registro visível (cron-reversibility.ts), não interromper
+    // uma missão que o dono já aprovou. `confirm` recusaria; ninguém o consulta.
     const handler = vi.fn(async () => ({ created: true }));
     const confirm = vi.fn(async () => false);
     const registry = registryWith({
@@ -570,12 +574,12 @@ describe("MCP dispatch effect safety", () => {
       workflowOptions({ confirm }),
     );
 
-    expect(result).toMatchObject({ ok: false, error: "user_denied" });
-    expect(confirm).toHaveBeenCalledOnce();
-    expect(handler).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ ok: true });
+    expect(confirm).not.toHaveBeenCalled();
+    expect(handler).toHaveBeenCalledOnce();
   });
 
-  it("passes an exact one-shot consent receipt to an approved cron mutation", async () => {
+  it("minta o recibo exato de mutação de cron sem passar por modal", async () => {
     const handler = vi.fn(
       async (
         _args: Record<string, unknown>,
@@ -618,7 +622,10 @@ describe("MCP dispatch effect safety", () => {
         ),
       },
     });
-    expect(confirm).toHaveBeenCalledOnce();
+    // O ponto do teste depois da N1: o recibo é mintado pela aprovação da
+    // missão, NÃO por um clique. Sem isto, cron-runtime.ts:354 recusaria gravar
+    // com cron_exact_consent_required e "tirar o prompt" teria quebrado o cron.
+    expect(confirm).not.toHaveBeenCalled();
     expect(handler).toHaveBeenCalledOnce();
   });
 
@@ -1074,19 +1081,24 @@ describe("MCP dispatch effect safety", () => {
   });
 
   it("revalidates the frozen workflow revision after confirmation", async () => {
+    // O veículo mudou junto com a N1: o cron deixou de abrir modal, então quem
+    // ainda passa pelo ramo de confirmação é o comando destrutivo SEM
+    // preparador de reversibilidade ligado — o piso que só cai onde o desfazer
+    // existe. A corrida sob teste (revisão congelada muda DURANTE a
+    // confirmação) é a mesma; o que se prova é que ela continua fechando.
     const handler = vi.fn(async () => ({ created: true }));
     let revision = TEST_CONTEXT_REVISION;
     const result = await dispatchToolCall(
       "http-mcp",
       registryWith({
-        name: "nexus_cron",
-        description: "persistent cron",
+        name: "nexus_terminal_run",
+        description: "destructive shell",
         inputSchema: { type: "object", properties: {} },
         handler,
       }),
-      "nexus_cron",
-      { action: "create", name: "revision-race" },
-      missionContext(TEST_CONTEXT_REVISION, ["nexus_cron"]),
+      "nexus_terminal_run",
+      { command: "rm -rf /tmp/revision-race" },
+      missionContext(TEST_CONTEXT_REVISION, ["nexus_terminal_run"]),
       {
         ...workflowOptions(),
         confirm: async () => {

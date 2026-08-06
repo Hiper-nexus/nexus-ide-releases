@@ -62,6 +62,7 @@ import {
 import {
   RENDERER_EXACT_CONSENT_TOOLS,
   isDestructiveEffect,
+  requiresExactConsentReceipt,
   requiresPerActionConsent,
   requiresToolConfirmation,
 } from "./mcp-consent-policy";
@@ -1362,7 +1363,10 @@ export async function dispatchToolCall(
     };
     assertCurrentAuthority();
     const exactUserConsent =
-      userAuthorized && requiresPerActionConsent(tool.name, args)
+      // Recibo, não modal: mintado sempre que o store exige prova de mutação
+      // única — inclusive quando a autorização veio da aprovação da missão.
+      // Amarrar isto ao modal era o que fazia "tirar a pergunta" quebrar o cron.
+      userAuthorized && requiresExactConsentReceipt(tool.name, args)
         ? Object.freeze({
             toolName: canonicalToolName(tool.name),
             action:

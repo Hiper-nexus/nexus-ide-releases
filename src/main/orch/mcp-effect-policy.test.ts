@@ -1,4 +1,6 @@
 import {
+  RENDERER_EXACT_CONSENT_TOOLS,
+  requiresExactConsentReceipt,
   isDestructiveEffect,
   requiresPerActionConsent,
 } from './mcp-consent-policy';
@@ -211,12 +213,33 @@ describe('zero fricção (0.27.0) — o que ainda pergunta, e por quê', () => {
     ).toBe(false);
   });
 
-  it('mudança global persistente sobrevive à missão e mantém consentimento', () => {
-    // Instalar catálogo / reescrever spec de agente / salvar squad valem
-    // DEPOIS da missão terminar: a aprovação da missão não as cobre.
+  it('os três "persistentes" nunca perguntaram: são NEGADOS antes do consentimento', () => {
+    // Correção de premissa medida no código: catalog_install, agent_spec_write e
+    // squad_save caem em RENDERER_EXACT_CONSENT_TOOLS e são recusados em
+    // mcp-dispatch.ts ANTES do ramo de consentimento — exigem a superfície
+    // nativa. Listá-los aqui prometia uma pergunta que o dispatch não faz.
     for (const tool of ['catalog_install', 'agent_spec_write', 'squad_save']) {
-      expect(requiresPerActionConsent(tool, {})).toBe(true);
+      expect(requiresPerActionConsent(tool, {})).toBe(false);
+      expect(RENDERER_EXACT_CONSENT_TOOLS.has(tool)).toBe(true);
     }
+  });
+
+  it('cron muta sem modal, mas o RECIBO exato continua exigido', () => {
+    // A separação que fez a remoção do prompt não quebrar o cron: o modal
+    // pergunta quem autorizou; o recibo prova que a mutação foi autorizada uma
+    // vez só — e cron-runtime.ts:354 recusa gravar sem ele. Amarrar os dois num
+    // predicado só transformava "tirar a pergunta" em cron_exact_consent_required
+    // em toda agenda.
+    expect(requiresPerActionConsent('nexus_cron', { action: 'create' })).toBe(
+      false,
+    );
+    expect(
+      requiresExactConsentReceipt('nexus_cron', { action: 'create' }),
+    ).toBe(true);
+    // Ler agenda não muta nada: sem recibo e sem pergunta.
+    expect(requiresExactConsentReceipt('nexus_cron', { action: 'list' })).toBe(
+      false,
+    );
   });
 
   it('trabalho ordinário de missão NÃO é consentimento por ação', () => {
