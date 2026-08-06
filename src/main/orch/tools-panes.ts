@@ -14,6 +14,10 @@ import { orchWriteSession } from '../pty/pty-manager';
 import {
   listAdapterInfos,
 } from '../adapters/adapter-registry';
+import {
+  armAutoCloseOnHandoff,
+  selectScopedPaneCloseTargets,
+} from './pane-close-scopes';
 import { findAgentInSquad, squadRoutableCliIds } from './squad-store';
 import { adHocSpawnGateError } from './route-provenance';
 import { countLiveMissionWorkerSlots } from './mission-driver-io';
@@ -235,6 +239,12 @@ const paneSpawn: McpToolDef = {
         type: 'boolean',
         description:
           'Spawn with provider-native read-only enforcement. Required before PREVC execution.',
+      },
+      autoCloseOnHandoff: {
+        type: 'boolean',
+        description:
+          'Close this pane automatically when it submits a SUCCESS handoff ' +
+          '(declared at birth; failure keeps the pane open for diagnosis).',
       },
     },
   },
@@ -537,6 +547,12 @@ const paneSpawn: McpToolDef = {
         },
         invocation,
       });
+      // Declarado no nascimento (registro, não pergunta): o pane se fecha
+      // sozinho no handoff SUCCESS — paridade Overclock, libera a vaga sem
+      // segurar slot da onda seguinte; falha preserva pane para diagnóstico.
+      if (args.autoCloseOnHandoff === true && spawned.sessionId) {
+        armAutoCloseOnHandoff(spawned.sessionId, spawned.paneId);
+      }
       return {
         ...spawned,
         ...(executionMode ? { executionMode } : {}),
@@ -833,18 +849,64 @@ const paneWriteMany: McpToolDef = {
 
 const paneClose: McpToolDef = {
   name: 'nexus_pane_close',
-  description: 'Close a pane (collapses the layout and kills its session).',
+  description:
+    'Close a pane (collapses the layout and kills its session). Pass paneId ' +
+    'for one pane, OR scope (caller_mission | caller_workspace) to close the ' +
+    'named set: never the caller, never orchestrators, and running workers ' +
+    'of OTHER missions are preserved.',
   inputSchema: {
     type: 'object',
-    properties: { paneId: { type: 'string' } },
-    required: ['paneId'],
+    properties: {
+      paneId: { type: 'string' },
+      scope: {
+        type: 'string',
+        enum: ['caller_mission', 'caller_workspace'],
+        description:
+          'Explicit close scope (Overclock parity): the caller NAMES what ' +
+          'closes; nothing implicit.',
+      },
+    },
   },
   handler: async (args, ctx) => {
-    const info = authorizePaneRef(ctx, requireStr(args, 'paneId'), 'close');
-    if (!(await requestPaneClose(info.paneId))) {
-      throw new Error('no renderer window available');
+    const scope = str(args, 'scope');
+    if (!scope) {
+      const info = authorizePaneRef(ctx, requireStr(args, 'paneId'), 'close');
+      if (!(await requestPaneClose(info.paneId))) {
+        throw new Error('no renderer window available');
+      }
+      return { ok: true };
     }
-    return { ok: true };
+    if (scope !== 'caller_mission' && scope !== 'caller_workspace') {
+      throw new Error(`unknown close scope: ${scope}`);
+    }
+    if (ctx.role === 'worker') {
+      throw new Error('not authorized: workers cannot scope-close panes');
+    }
+    const suite = getProjectDomainStores(ctx.scope);
+    const selection = selectScopedPaneCloseTargets({
+      scope,
+      callerSessionId: ctx.sessionId,
+      callerMissionId: ctx.missionId,
+      callerScopeRoot: ctx.scope.rootRealPath,
+      panes: listPaneSnapshots().map((pane) => ({
+        paneId: pane.paneId,
+        sessionId: pane.sessionId ?? undefined,
+        missionId: pane.missionId,
+        role: pane.role,
+        scopeRoot: pane.scope?.rootRealPath,
+      })),
+      isMissionRunning: (missionId) =>
+        suite.missions.get(missionId)?.status === 'running',
+    });
+    const closed: string[] = [];
+    for (const paneId of selection.close) {
+      try {
+        if (await requestPaneClose(paneId)) closed.push(paneId);
+      } catch (error) {
+        console.warn(`[pane-close] scope close failed for ${paneId}:`, error);
+      }
+    }
+    return { ok: true, closed, skipped: selection.skipped };
   },
 };
 

@@ -9,6 +9,12 @@ import { handoffStatusSchema } from "../../shared/orch-types";
 import { markHandoffSubmitted } from "./gate";
 import { onHandoffSubmitted } from "./idle-delivery";
 import {
+  armedAutoClosePaneId,
+  disarmAutoCloseOnHandoff,
+  shouldAutoCloseAfterHandoff,
+} from "./pane-close-scopes";
+import { requestPaneClose } from "./pane-registry";
+import {
   assertMcpInvocationCurrent,
   type McpToolDef,
   type McpToolInvocation,
@@ -285,6 +291,29 @@ const handoffSubmitTool: McpToolDef = {
       !replayed || handoff.deliveryState === "queued"
         ? onHandoffSubmitted(handoff, ctx.scope)
         : null;
+    // autoCloseOnHandoff (paridade Overclock): declarado no spawn, dispara SÓ
+    // no success — falha preserva pane e scrollback. Fora do caminho da
+    // resposta: o fechamento nunca atrasa nem derruba o handoff.
+    if (ctx.sessionId) {
+      const autoClosePaneId = armedAutoClosePaneId(ctx.sessionId);
+      if (
+        shouldAutoCloseAfterHandoff({
+          armed: autoClosePaneId !== null,
+          status,
+        })
+      ) {
+        disarmAutoCloseOnHandoff(ctx.sessionId);
+        setTimeout(() => {
+          void Promise.resolve(requestPaneClose(autoClosePaneId!)).catch(
+            (error) =>
+              console.warn(
+                `[handoff] auto-close do pane ${autoClosePaneId} falhou:`,
+                error,
+              ),
+          );
+        }, 0);
+      }
+    }
     return {
       ok: true,
       handoffId: handoff.id,
