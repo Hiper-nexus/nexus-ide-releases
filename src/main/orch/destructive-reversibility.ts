@@ -48,6 +48,15 @@ const RM_RF = /\brm\s+(?:-[a-zA-Z]*\s+)*-?[a-zA-Z]*r[a-zA-Z]*f?[a-zA-Z]*\s+(.+)$
  */
 const SHELL_COMPOSITION = /(\|\||&&|[;|]|\$\(|`|\n)/;
 
+/**
+ * Metacaracteres de glob. `rm -rf dist/*` NÃO pode ir para a lixeira: quem
+ * expande o `*` é o shell, e expandi-lo aqui seria reimplementar o shell —
+ * errando em casos como dotglob, nullglob e nomes com espaço. Sem expansão não
+ * há o que mandar para a lixeira, então isto NÃO é reversível, e o piso de
+ * confirmação continua valendo para ele.
+ */
+const GLOB_METACHARS = /[*?[\]{}]/;
+
 function parseRemovalTargets(command: string): readonly string[] {
   const match = RM_RF.exec(command);
   if (!match?.[1]) return [];
@@ -78,6 +87,14 @@ export function planDestructiveReversibility(
         reason: 'remoção sem alvo legível — não dá para mandar para a lixeira',
       };
     }
+    if (paths.some((path) => GLOB_METACHARS.test(path))) {
+      return {
+        kind: 'record-irreversible',
+        command: trimmed,
+        reason:
+          'alvo usa glob: quem expande é o shell, e sem expansão não há o que mandar para a lixeira',
+      };
+    }
     if (SHELL_COMPOSITION.test(trimmed)) {
       return {
         kind: 'record-irreversible',
@@ -106,4 +123,22 @@ export function planDestructiveReversibility(
     command: trimmed,
     reason: 'efeito sem desfazer conhecido: registrado na auditoria da missão',
   };
+}
+
+/**
+ * Existe caminho de volta EM PRINCÍPIO para este comando? Puro, sem IO.
+ *
+ * É a pergunta que o dispatch tem de fazer ANTES de decidir se pergunta ao
+ * operador — e ela não pode custar um efeito colateral. Preparar de verdade
+ * (mandar para a lixeira) só pode acontecer depois da autorização; classificar
+ * tem de acontecer antes dela.
+ *
+ * A regra que isto sustenta: **o piso de confirmação cai apenas onde o desfazer
+ * existe**. Sem isto, `mkfs`, `dd`, `DROP TABLE` e `npm unpublish` — todos
+ * classificados como sem volta — rodariam sem pergunta E sem desfazer, que é
+ * estritamente pior do que a fricção que a N1 removeu.
+ */
+export function hasReversiblePath(command: string): boolean {
+  const kind = planDestructiveReversibility(command).kind;
+  return kind === 'trash' || kind === 'backup-ref' || kind === 'not-destructive';
 }

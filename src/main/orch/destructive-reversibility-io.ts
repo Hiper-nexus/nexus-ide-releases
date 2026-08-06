@@ -24,6 +24,14 @@ import type { DestructiveReversibilityPlan } from './destructive-reversibility';
 export interface ReversibilityIo {
   /** Lixeira do SO (Electron `shell.trashItem`). Deve rejeitar se falhar. */
   trash(absolutePath: string): Promise<void>;
+  /**
+   * O caminho existe? Medido, não suposto: `shell.trashItem` REJEITA caminho
+   * ausente (verificado em Electron real), e `rm -rf` sobre caminho ausente é
+   * uma limpeza idempotente perfeitamente comum. Sem esta checagem, `rm -rf
+   * build` num repo limpo passaria a FALHAR — capacidade perdida em troca de
+   * nada, porque não havia nada a salvar.
+   */
+  exists(absolutePath: string): Promise<boolean>;
   /** Resolve uma revisão para SHA, ou `null` se ela não existe. */
   revParse(cwd: string, revision: string): Promise<string | null>;
   /** Cria/atualiza uma ref apontando para `sha`. */
@@ -87,12 +95,21 @@ export async function prepareDestructiveReversibility(
     const trashed: string[] = [];
     for (const target of plan.paths) {
       const absolute = io.resolvePath(cwd, target);
+      // Ausente = nada a perder = nada a desfazer. Deixa o `rm -rf` seguinte
+      // ser o no-op que ele já era. Abortar aqui trocaria uma limpeza que
+      // funcionava por um erro que nós inventamos.
+      if (!(await io.exists(absolute))) continue;
+      // Existe e a lixeira falhou: aí SIM aborta. É o único caso em que seguir
+      // significaria apagar sem volta um arquivo que dava para salvar.
       await io.trash(absolute);
       trashed.push(absolute);
     }
     return {
       command: plan.command,
-      revertPath: `Na Lixeira: ${trashed.join(', ')}. Restaurar de lá desfaz.`,
+      revertPath:
+        trashed.length > 0
+          ? `Na Lixeira: ${trashed.join(', ')}. Restaurar de lá desfaz.`
+          : 'Nada a remover: os caminhos já não existiam.',
       reversible: true,
     };
   }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { isDestructive } from '../jarvis/guardrails';
-import { planDestructiveReversibility } from './destructive-reversibility';
+import { hasReversiblePath, planDestructiveReversibility } from './destructive-reversibility';
 
 /**
  * Zero fricção com honestidade (0.27.1): nenhuma pergunta antes de agir, mas
@@ -113,5 +113,33 @@ describe('invariante: todo rm destrutivo carrega -f', () => {
     expect(planDestructiveReversibility('rm -r build').kind).toBe(
       'not-destructive',
     );
+  });
+});
+
+/**
+ * O invariante que impede o pior desfecho possível desta campanha: um comando
+ * SEM volta rodando SEM pergunta. É `hasReversiblePath` que o dispatch consulta
+ * antes de derrubar o piso de confirmação.
+ */
+describe('hasReversiblePath — o piso cai só onde há desfazer', () => {
+  it.each([
+    'rm -rf build/cache',
+    'git push --force origin main',
+    'git reset --hard HEAD~1',
+    'npm test',
+  ])('tem caminho de volta: %s', (command) => {
+    expect(hasReversiblePath(command)).toBe(true);
+  });
+
+  it.each([
+    'mkfs.ext4 /dev/sda1',
+    'dd if=/dev/zero of=/dev/sda',
+    'DROP TABLE users;',
+    'npm unpublish my-package',
+    'rm -rf /',
+    'rm -rf dist/*',
+    'rm -rf build && npm install',
+  ])('NÃO tem caminho de volta, logo continua perguntando: %s', (command) => {
+    expect(hasReversiblePath(command)).toBe(false);
   });
 });

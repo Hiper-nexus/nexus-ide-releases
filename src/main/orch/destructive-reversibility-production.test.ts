@@ -5,6 +5,7 @@ import type { ReversibilityIo } from './destructive-reversibility-io';
 function io(overrides: Partial<ReversibilityIo> = {}): ReversibilityIo {
   return {
     trash: vi.fn(async () => {}),
+    exists: vi.fn(async () => true),
     revParse: vi.fn(async () => 'c'.repeat(40)),
     updateRef: vi.fn(async () => {}),
     resolvePath: (cwd, target) => `${cwd}/${target}`,

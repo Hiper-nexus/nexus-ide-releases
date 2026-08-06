@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { emitDestructiveReversalEvent } from "./mission-event-emit";
+import { hasReversiblePath } from "./destructive-reversibility";
 import {
   hasCurrentApprovedDispatchContract,
   hasCurrentDispatchAuthority,
@@ -957,9 +958,17 @@ export async function dispatchToolCall(
       // O piso destrutivo cai SOMENTE onde o desfazer existe. Sem preparador
       // ligado (seams de teste, caminhos ainda não migrados) ele permanece: a
       // pergunta é pior que nada, mas melhor que perda de dados silenciosa.
+      // O piso destrutivo cai SOMENTE onde o desfazer existe de fato: é preciso
+      // haver preparador ligado E o comando ter caminho de volta em princípio.
+      // Sem a segunda metade, mkfs/dd/DROP TABLE/unpublish — todos sem volta —
+      // rodariam sem pergunta E sem desfazer, estritamente pior que a fricção
+      // que a N1 removeu. Classificação é PURA: perguntar não custa efeito.
       !(
         isDestructiveEffect(tool.name, args) &&
-        !options.prepareDestructiveReversibility
+        !(
+          options.prepareDestructiveReversibility &&
+          hasReversiblePath(typeof args.command === "string" ? args.command : "")
+        )
       ) &&
       !requiresPerActionConsent(tool.name, args)
     ) {

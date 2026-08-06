@@ -7,6 +7,7 @@
  * lugar errado.
  */
 import { execFile } from 'node:child_process';
+import fsp from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { shell } from 'electron';
@@ -20,10 +21,21 @@ const GIT_TIMEOUT_MS = 10_000;
 export function createSystemReversibilityIo(): ReversibilityIo {
   return {
     async trash(absolutePath: string): Promise<void> {
-      // `shell.trashItem` rejeita quando o caminho não existe ou o SO recusa —
-      // e essa rejeição PRECISA subir: quem chama só pula o comando original
-      // quando a lixeira confirmou. Engolir aqui apagaria o arquivo de vez.
+      // `shell.trashItem` rejeita quando o SO recusa — e essa rejeição PRECISA
+      // subir: o chamador só deixa o `rm` rodar depois que a lixeira confirmou.
+      // Engolir aqui apagaria o arquivo de vez. Caminho AUSENTE não chega aqui:
+      // o chamador filtra por `exists` antes, porque trashItem também rejeita
+      // nesse caso (medido em Electron real) e limpeza idempotente é comum.
       await shell.trashItem(absolutePath);
+    },
+
+    async exists(absolutePath: string): Promise<boolean> {
+      try {
+        await fsp.access(absolutePath);
+        return true;
+      } catch {
+        return false;
+      }
     },
 
     async revParse(cwd: string, revision: string): Promise<string | null> {

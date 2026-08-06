@@ -8,6 +8,7 @@ import {
 function fakeIo(overrides: Partial<ReversibilityIo> = {}): ReversibilityIo {
   return {
     trash: vi.fn(async () => {}),
+    exists: vi.fn(async () => true),
     revParse: vi.fn(async () => 'a'.repeat(40)),
     updateRef: vi.fn(async () => {}),
     resolvePath: (cwd, target) =>
@@ -100,5 +101,58 @@ describe('preparo de reversibilidade destrutiva', () => {
 
     expect(io.trash).not.toHaveBeenCalled();
     expect(receipt.reversible).toBe(false);
+  });
+});
+
+/**
+ * Os dois defeitos que a revisão final pegou POR EXECUÇÃO, não por leitura.
+ * Ambos vieram de supor o comportamento de `shell.trashItem`; medido em Electron
+ * real, ele REJEITA caminho ausente e rejeita glob.
+ */
+describe('regressões da revisão final', () => {
+  it('rm -rf de caminho que não existe NÃO aborta — não havia nada a salvar', async () => {
+    const trash = vi.fn(async () => {});
+    const io = fakeIo({ trash, exists: vi.fn(async () => false) });
+
+    const receipt = await prepare('rm -rf build', io);
+
+    // Antes da correção isto rejeitava e derrubava o comando: uma limpeza
+    // idempotente perfeitamente comum passava a falhar por invenção nossa.
+    expect(trash).not.toHaveBeenCalled();
+    expect(receipt.reversible).toBe(true);
+    expect(receipt.revertPath).toContain('já não existiam');
+  });
+
+  it('só o que EXISTE vai para a lixeira, numa lista mista', async () => {
+    const existentes = new Set(['/repo/tem']);
+    const io = fakeIo({
+      exists: vi.fn(async (p: string) => existentes.has(p)),
+    });
+
+    await prepare('rm -rf tem naotem', io);
+
+    expect(io.trash).toHaveBeenCalledTimes(1);
+    expect(io.trash).toHaveBeenCalledWith('/repo/tem');
+  });
+
+  it('lixeira que falha em caminho EXISTENTE ainda aborta — é o caso que importa', async () => {
+    const io = fakeIo({
+      exists: vi.fn(async () => true),
+      trash: vi.fn(async () => {
+        throw new Error('EPERM');
+      }),
+    });
+
+    await expect(prepare('rm -rf build', io)).rejects.toThrow('EPERM');
+  });
+
+  it('glob não é reversível: sem expansão não há o que mandar para a lixeira', async () => {
+    const io = fakeIo();
+    const receipt = await prepare('rm -rf dist/*', io);
+
+    expect(io.trash).not.toHaveBeenCalled();
+    // reversible:false é o que faz o piso de confirmação PERMANECER para ele.
+    expect(receipt.reversible).toBe(false);
+    expect(receipt.revertPath).toContain('glob');
   });
 });
