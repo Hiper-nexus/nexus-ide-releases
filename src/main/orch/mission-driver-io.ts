@@ -279,7 +279,24 @@ export function loadDriveState(
     // Registro indisponível nunca fabrica vivacidade: segue sem o sinal.
     lastWorkerActivityAt = 0;
   }
+  // A fila é a verdade sobre o TRABALHO. Sem esta leitura o fix de conclusão
+  // seria código morto — a armadilha que esta campanha já pegou quatro vezes.
+  // Recibo de integração é o que separa "concluiu" de "concluiu e provou": sem
+  // ele a missão para VISÍVEL, nunca em silêncio.
+  const dispatches = stores.taskDispatches.list(missionId);
+  const completedDispatches = dispatches.filter(
+    (dispatch) => dispatch.state === 'completed',
+  );
+  const dispatchWork = {
+    total: dispatches.length,
+    completed: completedDispatches.length,
+    receipted: completedDispatches.filter(
+      (dispatch) => dispatch.integrationReceipt != null,
+    ).length,
+  };
+
   return deriveDriveState({
+    dispatchWork,
     ...(lastWorkerActivityAt > 0 ? { lastWorkerActivityAt } : {}),
     mission: {
       id: mission.id,
@@ -611,26 +628,50 @@ export function createProductionApplyPorts(
       if (!mission) {
         throw new Error(`complete rejected: mission ${missionId} not found`);
       }
-      if (mission.milestones.length === 0) {
-        throw new Error(
-          'complete rejected: no steps (cannot complete without PREVC steps)',
+      // PROVA DE TRABALHO — o caminho simples (`same_checkout`, padrão desde
+      // 5c0208b9) não produz steps PREVC, e exigi-los aqui rejeitaria para
+      // sempre uma missão que fez tudo. A autoridade NÃO é afrouxada: ela troca
+      // de moeda. Cada dispatch precisa estar concluído E trazer recibo de
+      // integração — a mesma exigência de proveniência, na forma que este
+      // caminho realmente emite.
+      //
+      // Re-derivado aqui de propósito: quem chama não é fonte de autoridade.
+      // Fila indisponível ⇒ SEM prova de trabalho, nunca conclusão fabricada:
+      // cai no caminho PREVC, que segue exigindo tudo o que sempre exigiu.
+      const provingDispatches = stores.taskDispatches?.list(missionId) ?? [];
+      const workProven =
+        provingDispatches.length > 0 &&
+        provingDispatches.every(
+          (dispatch) =>
+            dispatch.state === 'completed' &&
+            dispatch.integrationReceipt != null,
         );
-      }
-      if (!mission.milestones.every((step) => step.status === 'done')) {
-        throw new Error(
-          'complete rejected: not all steps done via trusted evidence',
-        );
-      }
-      for (const step of mission.milestones) {
-        if (step.evidenceIds.length === 0) {
+
+      if (!workProven) {
+        if (mission.milestones.length === 0) {
           throw new Error(
-            `complete rejected: step ${step.id} done without evidenceIds`,
+            'complete rejected: no steps (cannot complete without PREVC steps)',
           );
+        }
+        if (!mission.milestones.every((step) => step.status === 'done')) {
+          throw new Error(
+            'complete rejected: not all steps done via trusted evidence',
+          );
+        }
+      }
+      if (!workProven) {
+        for (const step of mission.milestones) {
+          if (step.evidenceIds.length === 0) {
+            throw new Error(
+              `complete rejected: step ${step.id} done without evidenceIds`,
+            );
+          }
         }
       }
       // Completion is verification-only. It never advances PREVC as a side
       // effect and it never treats registry errors/absence as success.
       if (
+        !workProven &&
         !prevc.isMissionComplete(
           missionId,
           scope,
@@ -651,7 +692,24 @@ export function createProductionApplyPorts(
           'complete rejected: terminal mission has inconsistent intent state',
         );
       }
-      if (
+      // Anti-TOCTOU na moeda que provou: quem concluiu por trabalho re-verifica
+      // a FILA; quem concluiu por PREVC re-verifica os milestones. Checar a
+      // moeda errada aqui deixaria a janela aberta justamente no caminho novo.
+      if (workProven) {
+        const recheck = stores.taskDispatches?.list(missionId) ?? [];
+        if (
+          recheck.length !== provingDispatches.length ||
+          !recheck.every(
+            (dispatch) =>
+              dispatch.state === 'completed' &&
+              dispatch.integrationReceipt != null,
+          )
+        ) {
+          throw new Error(
+            'complete rejected: dispatch authority changed after work proof',
+          );
+        }
+      } else if (
         current.milestones.length !== mission.milestones.length ||
         current.milestones.some(
           (step, index) =>

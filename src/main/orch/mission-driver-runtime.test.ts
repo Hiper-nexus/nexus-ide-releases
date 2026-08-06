@@ -29,6 +29,8 @@ function baseState(overrides: Partial<DriveState> = {}): DriveState {
     steps: [],
     trustedEvidenceReadyForCurrent: false,
     allStepsDone: false,
+    workProven: false,
+    workDoneUnproven: false,
     completionVerified: false,
     contextRot: false,
     paneDead: false,

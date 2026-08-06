@@ -90,6 +90,10 @@ export interface DriveState {
   readonly trustedEvidenceReadyForCurrent: boolean;
   /** All steps present and status=done (PREVC path complete). */
   readonly allStepsDone: boolean;
+  /** Todo dispatch concluído E com recibo: conclusão provada pelo trabalho. */
+  readonly workProven: boolean;
+  /** Todo dispatch concluído, mas faltando recibo: parada visível, não silêncio. */
+  readonly workDoneUnproven: boolean;
   /** Complete workflow plus an immutable, ordered receipt for every step. */
   readonly completionVerified: boolean;
   /** Context-rot signal (fresh-context recovery). */
@@ -160,6 +164,27 @@ export function decideDriveAction(
   // steps exactly at the iteration or wall-clock boundary.
   if (state.completionVerified) {
     return { kind: 'complete', reason: 'all steps done via PREVC' };
+  }
+
+  // O TRABALHO manda. Todo dispatch concluído e com recibo é conclusão provada,
+  // independente de milestone carimbado — a cerimônia é opcional, o trabalho não.
+  if (state.workProven) {
+    return {
+      kind: 'complete',
+      reason: 'todos os dispatches concluídos com recibo de integração',
+    };
+  }
+
+  // Trabalho todo feito e sem prova NÃO pode virar espera silenciosa: foi
+  // exatamente isso que deixou o dono olhando uma tela parada, com o driver
+  // decidindo `wait` em todo tick e attempt_count zerado.
+  if (state.workDoneUnproven) {
+    return {
+      kind: 'block-human',
+      reason:
+        'todos os dispatches concluíram, mas falta recibo de integração em ' +
+        'pelo menos um — trabalho sem prova não é conclusão',
+    };
   }
 
   if (state.allStepsDone) {
@@ -334,6 +359,26 @@ export interface DriveStateInputs {
    * Ausente = não instrumentado; nunca fabrica vivacidade.
    */
   readonly lastWorkerActivityAt?: number;
+  /**
+   * Estado da FILA DE DISPATCH — a verdade sobre o trabalho.
+   *
+   * A conclusão passa a ser derivada daqui, não de milestone carimbado. O
+   * carimbo é artefato de CERIMÔNIA, e o caminho simples (`same_checkout`,
+   * padrão desde 5c0208b9) legitimamente não o produz: quando a cerimônia saiu,
+   * levou junto o batimento que este driver observava, e a missão do gate 0.28.0
+   * ficou com 8/8 dispatches `completed` e `step-1` eternamente `pending`.
+   *
+   * `receipted` conta os concluídos que trouxeram recibo de integração. Concluir
+   * sem recibo não é conclusão: é trabalho sem prova, e vira parada VISÍVEL.
+   *
+   * Ausente = sem instrumentação de fila; o comportamento antigo permanece e
+   * nada é fabricado.
+   */
+  readonly dispatchWork?: {
+    readonly total: number;
+    readonly completed: number;
+    readonly receipted: number;
+  };
   /** Optional explicit trusted evidence ids (overrides derivation from handoffs). */
   readonly trustedEvidenceIds?: ReadonlySet<string>;
 }
@@ -464,6 +509,14 @@ export function deriveDriveState(input: DriveStateInputs): DriveState {
   const allStepsDone =
     steps.length > 0 && steps.every((step) => step.status === 'done');
 
+  // Conclusão derivada do TRABALHO. `total > 0` é deliberado: missão que nunca
+  // despachou nada não tem trabalho feito — zero não é "tudo pronto".
+  const work = input.dispatchWork;
+  const allDispatchesDone =
+    work !== undefined && work.total > 0 && work.completed === work.total;
+  const workProven = allDispatchesDone && work.receipted === work.total;
+  const workDoneUnproven = allDispatchesDone && !workProven;
+
   return {
     missionId: mission.id,
     missionStatus: mission.status,
@@ -475,6 +528,8 @@ export function deriveDriveState(input: DriveStateInputs): DriveState {
     ...(current ? { currentStepId: current.id } : {}),
     trustedEvidenceReadyForCurrent: current?.trustedEvidenceReady === true,
     allStepsDone,
+    workProven,
+    workDoneUnproven,
     completionVerified: signals?.completionVerified === true,
     contextRot: signals?.contextRot === true,
     paneDead: signals?.paneDead === true,
