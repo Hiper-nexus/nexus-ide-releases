@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   REAL_MISSION_E2E_ACCEPTANCE_CRITERIA,
+  REAL_MISSION_E2E_EXECUTOR_NAME,
   REAL_MISSION_E2E_ORCHESTRATOR_NAME,
   REAL_MISSION_E2E_SQUAD_ID,
 } from "../shared/real-mission-e2e";
@@ -14,6 +15,8 @@ const harness = vi.hoisted(() => ({
   stateTap: null as
     | ((sessionId: string, state: "spawning" | "idle" | "busy" | "exited") => void)
     | null,
+  dataTap: null as ((sessionId: string, data: string) => void) | null,
+  repositoryProof: null as Record<string, unknown> | null,
   agentInfos: new Map<string, unknown>(),
   sessionStates: new Map<string, "spawning" | "idle" | "busy" | "exited">(),
   auditEntries: [] as unknown[],
@@ -47,7 +50,12 @@ vi.mock("./pty/pty-manager", () => ({
     harness.stateTap = callback as typeof harness.stateTap;
     return () => {};
   },
-  tapSessionData: () => () => {},
+  tapSessionData: (
+    callback: (sessionId: string, data: string) => void,
+  ) => {
+    harness.dataTap = callback;
+    return () => {};
+  },
   tapSessionExit: () => () => {},
 }));
 
@@ -63,15 +71,16 @@ vi.mock("./real-mission-e2e-prevc", () => ({
 }));
 
 vi.mock("./real-mission-e2e-workspace", () => ({
-  buildRepositoryProof: () => ({
-    initialHeadSha: "a".repeat(40),
-    finalHeadSha: "a".repeat(40),
-    resultSha256: null,
-    commitCount: 1,
-    clean: true,
-    changedBeforeWorker: false,
-    exactSingleCommit: false,
-  }),
+  buildRepositoryProof: () =>
+    harness.repositoryProof ?? {
+      initialHeadSha: "a".repeat(40),
+      finalHeadSha: "a".repeat(40),
+      resultSha256: null,
+      commitCount: 1,
+      clean: true,
+      changedBeforeWorker: false,
+      exactSingleCommit: false,
+    },
   gitCommitIsAncestor: () => false,
   productWizardSquadBinding: () => null,
   sha256: (value: string) => `sha256:${value}`,
@@ -377,6 +386,8 @@ describe("real mission observer advisor participation", () => {
   beforeEach(() => {
     harness.finishes = [];
     harness.stateTap = null;
+    harness.dataTap = null;
+    harness.repositoryProof = null;
     harness.agentInfos = new Map();
     harness.sessionStates = new Map();
     harness.auditEntries = [];
@@ -804,6 +815,104 @@ describe("real mission observer advisor participation", () => {
     const observer = createObserver({ advisorSkipClis: ["kimi"] });
     observer.start();
     harness.stateTap?.("session-kimi", "busy");
+
+    expect(harness.finishes).toEqual(["invariant-failed"]);
+    observer.stop();
+  });
+
+  // REGRESSÃO (gate run 5 da 0.27.0): o invariante pré-worker do repositório
+  // assumia o mundo isolado — workspace só muda na integração — e derrubava o
+  // gate com invariant-failed no instante em que o escritor same_checkout
+  // (caminho simples, POR CONTRATO) tocava o checkout.
+  it("tolera o workspace mudando com o escritor same_checkout físico ativo", async () => {
+    harness.mission = { id: MISSION_ID, status: "running" };
+    harness.agentInfos.set("session-executor", {
+      sessionId: "session-executor",
+      missionId: MISSION_ID,
+      adapterId: "codex",
+      role: "worker",
+      agentName: REAL_MISSION_E2E_EXECUTOR_NAME,
+      workerIncarnationId: "incarnation-executor",
+      readOnly: false,
+      nativeReadOnly: false,
+    });
+    harness.sessionStates.set("session-executor", "busy");
+    harness.dispatches = [
+      {
+        agentRef: "e2e-executor",
+        adapterId: "codex",
+        workerId: REAL_MISSION_E2E_EXECUTOR_NAME,
+        workerIncarnationId: "incarnation-executor",
+        attempt: 1,
+        state: "running",
+        executionMode: "same_checkout",
+        agentCategory: "executor",
+        routeReservationId: "route-executor",
+        routeContract: { adapterId: "codex" },
+        sessionId: "session-executor",
+      },
+    ];
+    const observer = createObserver();
+    observer.start();
+    harness.dataTap?.("session-executor", "criando resultado.txt");
+    // Só DEPOIS do worker físico observado o workspace muda: é a escrita
+    // legítima do serialized-writer, não interferência externa.
+    harness.repositoryProof = {
+      initialHeadSha: "a".repeat(40),
+      finalHeadSha: "a".repeat(40),
+      resultSha256: null,
+      commitCount: 1,
+      clean: false,
+      changedBeforeWorker: false,
+      exactSingleCommit: false,
+    };
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(harness.finishes).toEqual([]);
+    observer.stop();
+  });
+
+  it("segue derrubando mudança de workspace quando o escritor é isolado (sem integração)", async () => {
+    harness.mission = { id: MISSION_ID, status: "running" };
+    harness.agentInfos.set("session-executor", {
+      sessionId: "session-executor",
+      missionId: MISSION_ID,
+      adapterId: "codex",
+      role: "worker",
+      agentName: REAL_MISSION_E2E_EXECUTOR_NAME,
+      workerIncarnationId: "incarnation-executor",
+      readOnly: false,
+      nativeReadOnly: false,
+    });
+    harness.sessionStates.set("session-executor", "busy");
+    harness.dispatches = [
+      {
+        agentRef: "e2e-executor",
+        adapterId: "codex",
+        workerId: REAL_MISSION_E2E_EXECUTOR_NAME,
+        workerIncarnationId: "incarnation-executor",
+        attempt: 1,
+        state: "running",
+        executionMode: "isolated_worktree",
+        agentCategory: "executor",
+        routeReservationId: "route-executor",
+        routeContract: { adapterId: "codex" },
+        sessionId: "session-executor",
+      },
+    ];
+    const observer = createObserver();
+    observer.start();
+    harness.dataTap?.("session-executor", "escrevendo fora da worktree");
+    harness.repositoryProof = {
+      initialHeadSha: "a".repeat(40),
+      finalHeadSha: "a".repeat(40),
+      resultSha256: null,
+      commitCount: 1,
+      clean: false,
+      changedBeforeWorker: false,
+      exactSingleCommit: false,
+    };
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(harness.finishes).toEqual(["invariant-failed"]);
     observer.stop();

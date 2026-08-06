@@ -304,7 +304,8 @@ export const realMissionE2EEvidenceSchema = z
     const reviewerDispatch = chainDispatches[reviewerIndex];
     const qaDispatch = chainDispatches[qaIndex];
     const executorReceipt =
-      executorDispatch?.integrationReceipt?.kind === "worktree_integrated"
+      executorDispatch?.integrationReceipt?.kind === "worktree_integrated" ||
+      executorDispatch?.integrationReceipt?.kind === "same_checkout_validated"
         ? executorDispatch.integrationReceipt
         : null;
     const reviewerReceipt = isNonExecutionValidationReceipt(
@@ -631,7 +632,14 @@ export const realMissionE2EEvidenceSchema = z
             exactDependencies(dispatch.dependsOn, member) &&
             completedDispatchIsPhysical(dispatch) &&
             (member.kind === "execution"
-              ? receipt?.kind === "worktree_integrated"
+              ? // A forma do receipt tem de CASAR com o modo selado do
+                // contrato: escritor same_checkout conclui com o receipt
+                // próprio; escritor isolado segue exigindo a integração de
+                // worktree. Aceitar qualquer forma para qualquer modo seria
+                // erosão do gate.
+                (member.executionMode === "same_checkout"
+                  ? receipt?.kind === "same_checkout_validated"
+                  : receipt?.kind === "worktree_integrated")
               : isNonExecutionValidationReceipt(receipt)),
         );
       });
@@ -969,7 +977,18 @@ export const realMissionE2EEvidenceSchema = z
           evidence.repository.exactSingleCommit &&
           evidence.repository.initialHeadSha !==
             evidence.repository.finalHeadSha &&
-          executorReceipt?.reference === evidence.repository.finalHeadSha,
+          executorReceipt !== null &&
+          // Binding do receipt do executor à geometria: no mundo isolado a
+          // reference É o head integrado; no caminho simples a reference é o
+          // tokenHash do binding serialized-writer (nunca um git sha), então
+          // o vínculo verificável daqui é a consistência de forma com o modo
+          // selado do dispatch — a geometria (head avançou, commit único,
+          // conteúdo exato) já foi provada pelas cláusulas acima.
+          (executorReceipt.kind === "worktree_integrated"
+            ? executorReceipt.reference === evidence.repository.finalHeadSha
+            : executorReceipt.kind === "same_checkout_validated" &&
+              executorDispatch?.executionMode === "same_checkout" &&
+              /^[a-f0-9]{64}$/u.test(executorReceipt.reference)),
       ],
       [
         "physicalSessionIdentity",

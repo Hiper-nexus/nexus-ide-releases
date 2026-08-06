@@ -175,10 +175,15 @@ export function validPassEvidence(
     completedAt: step.completedAt,
     integrationReceipt:
       step.member.kind === "execution"
-        ? {
-            kind: "worktree_integrated",
-            reference: FINAL_HEAD_SHA,
+        ? // O executor do contrato roda em same_checkout (caminho simples);
+          // o receipt fixture tem de ser da MESMA forma que o store real
+          // grava (kind próprio + reference tokenHash + evidenceIds), senão
+          // o teste certifica um mundo que o gate nunca mais produz.
+          {
+            kind: "same_checkout_validated",
+            reference: sha(`${step.slug}-same-checkout-receipt`),
             completedAt: step.completedAt,
+            evidenceIds: [`tool-call-${step.slug}`],
           }
         : {
             kind: "worktree_validated_no_change",

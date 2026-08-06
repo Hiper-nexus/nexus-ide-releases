@@ -447,6 +447,14 @@ export function assertRealMissionPassEvidence(raw) {
         ])
       );
     }
+    if (receipt?.kind === "same_checkout_validated") {
+      return hasExactKeys(receipt, [
+        "kind",
+        "reference",
+        "completedAt",
+        "evidenceIds",
+      ]);
+    }
     if (receipt?.kind === "worktree_validated_no_change") {
       return hasExactKeys(receipt, [
         "kind",
@@ -941,8 +949,14 @@ export function assertRealMissionPassEvidence(raw) {
         dispatch.executionMode === member.executionMode &&
         exactDependencies(dispatch.dependsOn, member) &&
         (member.kind === "execution"
-          ? receipt?.kind === "worktree_integrated" &&
-            GIT_SHA_PATTERN.test(receipt.reference ?? "") &&
+          ? // A forma do receipt casa com o modo selado: same_checkout
+            // conclui com o receipt próprio (reference = tokenHash sha256);
+            // escritor isolado segue exigindo worktree_integrated.
+            (member.executionMode === "same_checkout"
+              ? receipt?.kind === "same_checkout_validated" &&
+                /^[a-f0-9]{64}$/u.test(receipt.reference ?? "")
+              : receipt?.kind === "worktree_integrated" &&
+                GIT_SHA_PATTERN.test(receipt.reference ?? "")) &&
             Number.isInteger(receipt.completedAt)
           : isNonExecutionValidationReceipt(receipt) &&
             Number.isInteger(receipt.completedAt))
@@ -1291,8 +1305,15 @@ export function assertRealMissionPassEvidence(raw) {
     repository?.changedBeforeWorker === false &&
     repository?.exactSingleCommit === true &&
     repository?.initialHeadSha !== repository?.finalHeadSha &&
-    executorReceipt?.kind === "worktree_integrated" &&
-    executorReceipt?.reference === repository?.finalHeadSha &&
+    // Binding do receipt à geometria por forma: no mundo isolado a reference
+    // É o head integrado; no caminho simples ela é o tokenHash do binding
+    // serialized-writer e o vínculo verificável é a consistência com o modo
+    // selado do dispatch (a geometria já foi provada acima).
+    (executorReceipt?.kind === "worktree_integrated"
+      ? executorReceipt?.reference === repository?.finalHeadSha
+      : executorReceipt?.kind === "same_checkout_validated" &&
+        executorDispatch?.executionMode === "same_checkout" &&
+        /^[a-f0-9]{64}$/u.test(executorReceipt?.reference ?? "")) &&
     panes.find((pane) => pane?.agentRef === "e2e-orchestrator")?.sessionId ===
       kickoff?.sessionId &&
     panes.find((pane) => pane?.agentRef === "e2e-executor")?.sessionId ===

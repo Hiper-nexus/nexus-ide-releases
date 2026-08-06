@@ -1330,7 +1330,23 @@ export class RealMissionObserver {
       (dispatch) =>
         dispatch.state === "merging" || dispatch.state === "completed",
     );
-    if (!this.#workerObserved || !integrationMayHaveStarted) {
+    // Caminho simples: o escritor same_checkout muda o workspace DURANTE a
+    // execução (serialized-writer por contrato) — não existe fase de
+    // integração para esperar. Exigir merging|completed aqui era o mundo
+    // isolado punindo a escrita legítima (gate run 5 da 0.27.0). A cerca
+    // pré-worker continua intacta: sem worker físico observado, qualquer
+    // mudança segue sendo interferência.
+    const sameCheckoutWriterMayHaveWritten = dispatches.some(
+      (dispatch) =>
+        dispatch.executionMode === "same_checkout" &&
+        (dispatch.state === "running" ||
+          dispatch.state === "handoff_ready" ||
+          dispatch.state === "merging" ||
+          dispatch.state === "completed"),
+    );
+    const workspaceWriteAuthorized =
+      integrationMayHaveStarted || sameCheckoutWriterMayHaveWritten;
+    if (!this.#workerObserved || !workspaceWriteAuthorized) {
       const repository = buildRepositoryProof(
         this.#scratch,
         this.#changedBeforeWorker,

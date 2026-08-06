@@ -169,6 +169,26 @@ describe("real mission E2E release eligibility and adversarial receipts", () => 
     );
   });
 
+  it("recusa receipt de worktree no escritor same_checkout — a forma tem de casar com o modo selado", () => {
+    const hybrid = validPassEvidence();
+    const dispatches = hybrid.dispatches as Array<Record<string, unknown>>;
+    const executor = dispatches.find(
+      (dispatch) =>
+        (dispatch.integrationReceipt as Record<string, unknown> | null)
+          ?.kind === "same_checkout_validated",
+    );
+    expect(executor).toBeDefined();
+    const receipt = executor!.integrationReceipt as Record<string, unknown>;
+    executor!.integrationReceipt = {
+      kind: "worktree_integrated",
+      reference: (hybrid.repository as Record<string, unknown>).finalHeadSha,
+      completedAt: receipt.completedAt,
+    };
+    expect(() => parseRealMissionE2EEvidence(hybrid)).toThrow(
+      /real-mission invariants/,
+    );
+  });
+
   it("keeps failures closed and actionable without raw output fields", () => {
     const evidence = validPassEvidence();
     evidence.status = "fail";

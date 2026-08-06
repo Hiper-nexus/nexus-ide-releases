@@ -142,6 +142,21 @@ const worktreeIntegratedReceiptSchema = z
   })
   .strict();
 
+/**
+ * Conclusão do escritor same_checkout (caminho simples): a reference é o
+ * tokenHash sha256 do binding de não-interferência (serialized-writer +
+ * physicalHeadSha), nunca um git sha — a geometria do repositório é provada
+ * pelo invariante de PASS, não por igualdade de head aqui.
+ */
+const sameCheckoutValidatedReceiptSchema = z
+  .object({
+    kind: z.literal("same_checkout_validated"),
+    reference: z.string().regex(/^[a-f0-9]{64}$/u),
+    completedAt: timestampSchema,
+    evidenceIds: z.array(idSchema).min(1).max(256),
+  })
+  .strict();
+
 const noChangeReferenceSchema = z
   .string()
   .regex(/^no-change:[a-f0-9]{40,64}:[a-f0-9]{64}$/u);
@@ -204,6 +219,7 @@ export const dispatchProofSchema = z
     integrationReceipt: z
       .discriminatedUnion("kind", [
         worktreeIntegratedReceiptSchema,
+        sameCheckoutValidatedReceiptSchema,
         worktreeNoChangeReceiptSchema,
         readOnlyValidatedReceiptSchema,
       ])
