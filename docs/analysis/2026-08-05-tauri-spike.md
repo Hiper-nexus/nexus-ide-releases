@@ -18,7 +18,7 @@ Leitura honesta: o ganho bruto de disco (~150-250 MB) e de RAM de shell é real,
 | Risco | Evidência concreta | Gravidade |
 |---|---|---|
 | **Gates E2E ficam cegos** | TODO o gate de release dirige o app real por **CDP** (`NEXUS_REMOTE_DEBUG`, browser WS — memória: dev responde HTTP /json, empacotado só browser WS; `release-candidate-gate.mjs`, evidência `e2e-real-mission-evidence`). WKWebView **não tem CDP**. Migrar = reconstruir a instrumentação inteira do gate que hoje é a única prova de release | **Bloqueante** |
-| **Multi-webview imaturo** | O grid de panes (Terminal/Browser/Squad) depende de múltiplas surfaces web independentes; multi-webview do Tauri ainda é experimental para este padrão | **Alta** |
+| ~~**Multi-webview imaturo**~~ | **ARGUMENTO FALSIFICADO (06/08).** O Overclock é Tauri + sidecar Node e roda exatamente este padrão — grid de panes com surfaces independentes — em produção. A arquitetura é viável; sustentar o contrário era erro nosso. Ver `2026-08-06-overclock-varredura-completa.md`. | — |
 | **QA 3 engines vs 1** | Chromium único hoje; Tauri = WKWebView (macOS) + WebView2 (Windows) + WebKitGTK (Linux) sob o mandato multi-plataforma do produto — triplica a matriz de teste visual/comportamental | **Alta** |
 | **Ports nativos** | `better-sqlite3` (N-API), `@lydell/node-pty`, `onnxruntime-node` (voz), keychain/vault (Security.framework; memória: keychain trancado já congelou main thread), AEC wasm — todos assumem runtime Node no processo principal ⇒ **sidecar Node obrigatório**, anulando parte do ganho de RAM e adicionando um IPC novo | **Alta** |
 | **darwin-pty-supervisor / cadeia de responsabilidade** | O disclaim + prova de cohort (main.c) ancora no PROCESSO host; trocar o host muda a cadeia de assinatura/responsibility inteira, recém-endurecida (76d405d1, spec Etapa 1) | **Alta** |
@@ -34,3 +34,28 @@ Leitura honesta: o ganho bruto de disco (~150-250 MB) e de RAM de shell é real,
 3. **(c) Multi-webview Tauri maduro** — suporte estável a N webviews independentes por janela com paridade de eventos.
 
 Gatilho de revisita: reavaliar este documento quando (b) estiver entregue — é a condição no nosso controle. Até lá, todo esforço de tamanho/RAM vai para o `electron-slim` (P1) e a manutenção de currency do Electron (hoje `^43.0.0`, atual).
+
+
+---
+
+## Correção de 06/08 — por que a recomendação continua, com outro motivo
+
+A varredura do Overclock derrubou o argumento técnico principal deste documento:
+ele **é Tauri + sidecar Node**, com grid de panes, em produção. "Multi-webview
+não serve para IDE de panes" está **falsificado por contraexemplo funcionando**.
+
+**A recomendação de FICAR NO ELECTRON continua** — mas o motivo honesto é
+**custo de migração contra benefício nulo para o usuário**, não inviabilidade:
+
+- todo o gate de release e a maquinaria de E2E são baseados em CDP, que é
+  Electron;
+- módulos nativos (better-sqlite3, node-pty, onnx) estão no formato Electron,
+  com a armadilha de ABI já conhecida;
+- o pipeline de release (assinatura, notarização, fuses) é Electron;
+- e **nada do que o operador pediu esta semana** — panes, paralelismo, zero
+  fricção, número humano de pane — depende do shell.
+
+Migrar seria pagar caro para entregar a mesma experiência. Esse é o argumento
+que se sustenta; o outro não se sustentava e foi removido.
+
+Honestidade intelectual neste documento vale mais do que ter estado certo.
