@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { InstalledItem } from './catalog-contract';
+import { listInstalledAgentPluginSkills } from './agent-plugin-catalog';
 
 function scanDir(
   dir: string,
@@ -44,8 +45,9 @@ function uniqueInstalledItems(items: InstalledItem[]): InstalledItem[] {
   });
 }
 
-export function listInstalledCatalogItems(): InstalledItem[] {
-  const home = os.homedir();
+export function listInstalledCatalogItems(
+  home: string = os.homedir(),
+): InstalledItem[] {
   const legacyRoot = path.join(home, '.nexus', 'plugins', 'catalog');
   const legacy = (() => {
     try {
@@ -65,6 +67,7 @@ export function listInstalledCatalogItems(): InstalledItem[] {
     ...scanDir(path.join(home, '.gemini', 'antigravity', 'skills'), 'skill', { dirs: true }),
     ...scanDir(path.join(home, '.kimi-code', 'skills'), 'skill', { dirs: true }),
     ...scanDir(path.join(home, '.grok', 'skills'), 'skill', { dirs: true }),
+    ...listInstalledAgentPluginSkills(home),
     ...legacy,
   ]);
 }

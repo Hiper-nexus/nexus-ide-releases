@@ -8,6 +8,8 @@ import {
   installCatalogItem,
   reviewCatalogInstall,
 } from './catalog';
+import { PLUGIN_MANIFEST_SCHEMA } from './agent-plugin-manifest';
+import { listInstalledCatalogItems } from './catalog-installed';
 
 const COMMIT_SHA = '0123456789abcdef0123456789abcdef01234567';
 const REPO = 'davila7/claude-code-templates';
@@ -94,6 +96,48 @@ describe('catalog immutable supply chain', () => {
         ),
       ).provenance.commitSha,
     ).toBe(COMMIT_SHA);
+  });
+
+  it('shows an installed Agent Plugins skill in the live catalog as installed', async () => {
+    const pluginRoot = path.join(home, '.nexus', 'plugins', 'acme');
+    const skillRoot = path.join(pluginRoot, 'skills', 'review');
+    fs.mkdirSync(skillRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(pluginRoot, 'plugin.json'),
+      JSON.stringify({
+        $schema: PLUGIN_MANIFEST_SCHEMA,
+        name: 'acme',
+        version: '1.0.0',
+        description: 'Acme plugin',
+      }),
+    );
+    fs.writeFileSync(
+      path.join(skillRoot, 'SKILL.md'),
+      '---\nname: review\ndescription: Review code.\n---\n',
+    );
+    const treeUrl = `${API_BASE}/git/trees/${COMMIT_SHA}?recursive=1`;
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn<typeof fetch>()
+        .mockResolvedValueOnce(commitResponse())
+        .mockResolvedValueOnce(
+          jsonAt(treeUrl, { truncated: false, tree: [] }),
+        ),
+    );
+
+    const result = await getCatalogIndex(true);
+    const installed = listInstalledCatalogItems(home);
+
+    expect(result.index?.skills).toContainEqual({
+      kind: 'skill',
+      slug: 'agent-plugin/acme/review',
+      name: 'acme:review',
+      category: 'agent-plugin',
+    });
+    expect(installed).toContainEqual(
+      expect.objectContaining({ kind: 'skill', name: 'acme:review' }),
+    );
   });
 
   it('deduplicates concurrent index refreshes into one bounded network flight', async () => {

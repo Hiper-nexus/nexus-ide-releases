@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { scanComponentFiles, type ScanInput } from './skill-threat-scan';
+import { withAgentPluginCatalogEntries } from './agent-plugin-catalog';
 import type {
   CatalogEntry,
   CatalogIndex,
@@ -347,7 +348,7 @@ export async function getCatalogIndex(refresh = false): Promise<{
 }> {
   const cached = readCache();
   if (!refresh && cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
-    return { ok: true, index: cached };
+    return { ok: true, index: withAgentPluginCatalogEntries(cached) };
   }
   if (catalogIndexFlight) return catalogIndexFlight;
   const flight = (async () => {
@@ -379,10 +380,12 @@ export async function getCatalogIndex(refresh = false): Promise<{
         },
       };
       writeCache(index);
-      return { ok: true, index };
+      return { ok: true, index: withAgentPluginCatalogEntries(index) };
     } catch (err) {
       // Offline / rate limited — serve the stale cache when we have one.
-      if (cached) return { ok: true, index: cached };
+      if (cached) {
+        return { ok: true, index: withAgentPluginCatalogEntries(cached) };
+      }
       const detail = err instanceof Error ? err.message : String(err);
       return { ok: false, error: `catálogo indisponível: ${detail}` };
     }
