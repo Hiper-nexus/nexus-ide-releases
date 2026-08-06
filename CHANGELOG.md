@@ -1,5 +1,60 @@
 # Changelog
 
+## 0.27.0 — O caminho simples: a missão começa quando você pede
+
+Data: 2026-08-06
+
+### Zero fricção — decisão do dono
+
+- **Missão começa NA HORA.** O gate de aprovação saiu do caminho da missão:
+  sem modal, sem "Enviar para aprovação", sem paredão de SHA. A autorização
+  virou REGISTRO auditável — o recibo criptográfico do review integral continua
+  amarrando o contrato, mas ninguém mais pergunta.
+- **Nada estaciona esperando humano.** O estado `awaiting_approval` ficou
+  inalcançável (o evento que levava até ele foi removido da máquina de
+  estados); missões antigas estacionadas SOLTAM sozinhas na primeira abertura.
+- **Parar/encerrar vale na hora.** Sem confirmação — e o encerramento agora
+  PRESERVA panes, scrollback e receipts: você nunca é ejetado da tela de
+  panes, o card diz por que parou e Retomar desfaz.
+
+### Execução simples por padrão
+
+- **Worker roda no SEU workspace.** Worktree isolada virou opt-in: a entrega
+  comum edita o checkout direto, sem provisionar worktree e sem cerimônia de
+  merge ao final. Fan-out largo (N stories) continua isolado como antes.
+- **A entrega conclui pelo caminho simples.** `same_checkout` virou forma de
+  conclusão de primeira classe com recibo próprio que registra COMO a
+  não-interferência foi garantida — receipts antigos seguem válidos e
+  significando exatamente o que sempre significaram.
+- **Pane claude nasce executando.** A tarefa vai no argv: sem colar prompt
+  depois do boot.
+
+### Motor visível e honesto (linha anterior desta série)
+
+- Toque de Espaço digita espaço em QUALQUER pane; segurar dita; "Saída do
+  ditado" selecionável (EN execução / PT literal).
+- A missão diz quantas unidades são elegíveis contra o teto disponível.
+- Unidade de leitura não ocupa vaga de escritor; worker trabalhando nunca é
+  marcado como travado (vivacidade é atividade real).
+
+### Verifique você mesmo
+
+1. Missão nova "corrija X" → roda SEM nenhum diálogo; execução direta no
+   workspace (sem worktree, sem merge final).
+2. Missão que estava parada esperando aprovação → aparece PRONTA no build
+   novo; iniciar segue direto.
+3. Encerrar missão em execução → sem confirmação; panes e scrollback FICAM;
+   card diz o porquê; Retomar retoma.
+4. Pane claude de worker → nasce já executando a tarefa.
+5. Reviewer/QA read-only → não recusa por "worktree exigida" e não ocupa vaga
+   de escritor.
+6. Missão wave-pack → stories seguem em worktrees isoladas (nada mudou no
+   largo).
+7. Detalhe da missão → forma da entrega visível (`simple-implementation` no
+   caminho novo; missões antigas seguem `implementation` isolada).
+8. Toque de Espaço digita espaço; segurar dita; modo de saída troca em
+   Configurações › Voz.
+
 ## 0.26.1 — Hotfix do primeiro voo: voz, aprovação e missões que falam
 
 Data: 2026-08-05

@@ -13,6 +13,76 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.27.0',
+  date: '2026-08-06',
+  codename: 'O caminho simples — a missão começa quando você pede',
+  summary:
+    'Refatoração do modelo de execução por decisão do dono: o gate de ' +
+    'aprovação saiu do caminho da missão (a autorização virou registro ' +
+    'auditável com recibo), nada mais estaciona esperando humano, o worker ' +
+    'comum roda direto no workspace sem worktree e a entrega conclui pelo ' +
+    'caminho simples com recibo próprio. Encerrar preserva panes e histórico; ' +
+    'Retomar desfaz.',
+  highlights: [
+    {
+      title: 'Missão começa na hora, sem perguntas',
+      detail:
+        'Sem modal de aprovação, sem estado estacionado: o evento que levava ' +
+        'a awaiting_approval foi removido da máquina de estados e missões ' +
+        'antigas estacionadas soltam sozinhas na primeira abertura.',
+    },
+    {
+      title: 'Execução no seu workspace',
+      detail:
+        'Worktree isolada virou opt-in. A entrega comum edita o checkout ' +
+        'direto e conclui como same_checkout com recibo que registra como a ' +
+        'não-interferência foi garantida; fan-out largo segue isolado.',
+    },
+    {
+      title: 'Encerramento reversível',
+      detail:
+        'Parar vale na hora e preserva panes, scrollback e receipts — você ' +
+        'nunca é ejetado da tela de panes e Retomar continua de onde parou.',
+    },
+    {
+      title: 'Voz e motor honestos',
+      detail:
+        'Toque de Espaço digita espaço em qualquer pane; segurar dita, com ' +
+        'saída EN-execução ou PT-literal. A missão mostra unidades elegíveis ' +
+        'contra o teto, leitores não ocupam vaga de escritor e vivacidade é ' +
+        'atividade real.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Aprovação que reperguntava para sempre',
+      detail:
+        'As janelas cegas (missão recém-aprovada ainda pending; conta/effort ' +
+        'recomputados) foram fechadas antes de o gate inteiro ser removido.',
+    },
+    {
+      title: 'Espaço engolido em pane de missão',
+      detail:
+        'O espaço retido do hold-to-talk entrava pela lane crua que panes ' +
+        'governados recusam; agora roteia pela mesma lane do teclado.',
+    },
+    {
+      title: 'Ejeção para "O que você quer criar?"',
+      detail:
+        'Encerramento colapsava todos os panes e o fallback de layout vazio ' +
+        'invocava o assistente; panes agora ficam, com motivo e Retomar.',
+    },
+    {
+      title: 'Entrega simples morta na conclusão',
+      detail:
+        'same_checkout era inexprimível (descartado no decode) e todo ' +
+        'handoff_ready simples bloqueava pedindo a cerimônia removida; virou ' +
+        'forma de conclusão de primeira classe.',
+    },
+  ],
+};
+
+export const RELEASE_02601: AppRelease = {
   version: '0.26.1',
   date: '2026-08-05',
   codename: 'Hotfix do primeiro voo — voz, aprovação e missões que falam',
