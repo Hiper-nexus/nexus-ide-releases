@@ -509,6 +509,82 @@ describe('mission runtime physical inventory termination', () => {
   });
 });
 
+describe('demoção preserva os panes — o operador continua no controle (06/08)', () => {
+  it('encerra as sessões físicas SEM colapsar os panes da missão', async () => {
+    // Voo real 06/08: "execução encerrada pelo operador" colapsava todos os
+    // panes; fechar o último pane invoca o HomeDeck (layout-store) e o
+    // operador era EJETADO para "O que você quer criar?" com o scrollback
+    // perdido. Doutrina do próprio layout-store: preservar transcript de
+    // missão morta se resolve NÃO fechando o pane.
+    let current: Mission = {
+      ...mission,
+      status: 'blocked',
+      intentState: 'blocked_user',
+      orchestratorSessionId: 'pty-preserve',
+    };
+    runtime.pty = [
+      {
+        sessionId: 'pty-preserve',
+        paneId: 'pane-preserve',
+        missionId: mission.id,
+        workerIncarnationId: 'inc-preserve',
+        role: 'orchestrator',
+        scope,
+      },
+    ];
+    runtime.snapshots = [
+      {
+        paneId: 'pane-preserve',
+        sessionId: 'pty-preserve',
+        title: 'Maestro',
+        kind: 'cli-agent',
+        state: 'idle',
+        missionId: mission.id,
+        role: 'orchestrator',
+        scope,
+      },
+    ];
+    const stores = {
+      missions: {
+        get: (missionId: string) =>
+          missionId === current.id ? current : null,
+        list: () => [current],
+        update: (missionId: string, patch: Partial<Mission>) => {
+          if (missionId !== current.id) return null;
+          current = { ...current, ...patch, updatedAt: current.updatedAt + 1 };
+          return current;
+        },
+        setOrchestratorSession: (missionId: string, value: string | null) => {
+          if (missionId !== current.id) return null;
+          current = {
+            ...current,
+            orchestratorSessionId: value ?? undefined,
+          };
+          return current;
+        },
+      },
+      missionPanes: {
+        list: (missionId: string) =>
+          missionId === current.id
+            ? [pane('pane-preserve', 'inc-preserve')]
+            : [],
+      },
+    } as never;
+
+    const result = await settleMissionRuntimeDemotion({
+      scope,
+      suite: stores,
+      demotedMission: current,
+    });
+
+    expect(result.termination.ok).toBe(true);
+    expect(runtime.terminatePty).toHaveBeenCalledWith('pty-preserve');
+    // O pane fica: scrollback e controle permanecem com o operador; o card da
+    // missão diz o porquê e oferece Retomar.
+    expect(runtime.closeMissionPane).not.toHaveBeenCalled();
+  });
+});
+
 describe('unauthorized runtime reconciliation lifecycle lock', () => {
   it('does not terminate when an approved resume wins the mission lock', async () => {
     const blocked: Mission = {

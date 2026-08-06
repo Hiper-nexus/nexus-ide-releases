@@ -645,7 +645,10 @@ export async function settleMissionRuntimeDemotion(input: {
       suite: input.suite,
       missionId: input.demotedMission.id,
       reason: 'authority-revoked',
-      collapsePanes: true,
+      // Panes ficam (06/08): fechar o último pane invoca o HomeDeck e EJETA o
+      // operador com o scrollback junto. A sessão morre com prova física; o
+      // pane preserva transcript e controle, e o card diz o porquê + Retomar.
+      collapsePanes: false,
     });
   } catch (error) {
     termination = {
@@ -815,7 +818,9 @@ export async function terminateUnauthorizedMissionRuntimes(
           suite,
           missionId,
           reason: 'authority-revoked',
-          collapsePanes: true,
+          // Mesma doutrina da demoção: sessão não-autorizada morre com prova,
+          // mas o pane (e o scrollback) permanecem com o operador.
+          collapsePanes: false,
         });
       },
     );
