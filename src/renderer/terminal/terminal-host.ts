@@ -17,6 +17,7 @@ import { useOrchStore } from '../state/orch-store';
 import { useToastStore } from '../state/toast-store';
 import { getActiveWorkspacePath } from '../state/active-workspace';
 import { listPanes } from '../lib/split-tree';
+import { paneInputLane } from './pane-input-route';
 import { TERMINAL_THEMES } from '../styles/terminal-theme';
 import {
   discardTerminalOutput,
@@ -1828,6 +1829,20 @@ export function writeToPane(paneId: string, data: string): boolean {
   }
   const sessionId = getPaneSessionId(paneId);
   if (!sessionId) return false;
+  // Mesma lane do teclado (BUG 1, 06/08): pane governado recusa escrita crua
+  // do renderer por design — o espaço retido do hold-to-talk morria em
+  // silêncio aqui. Roteia como o xterm onData: missão → lane do operador.
+  const pane = listPanes(useLayoutStore.getState().root).find(
+    (candidate) => candidate.id === paneId,
+  );
+  const lane = paneInputLane(
+    pane,
+    useOrchStore.getState().paneMissions[paneId],
+  );
+  if (lane === 'operator') {
+    void window.nexus.orch.sendPaneOperatorInput({ sessionId, data });
+    return true;
+  }
   window.nexus.pty.write(sessionId, data);
   return true;
 }
