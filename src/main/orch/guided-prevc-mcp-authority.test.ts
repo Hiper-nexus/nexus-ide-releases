@@ -939,6 +939,10 @@ describe("guided PREVC MCP pre-execution fence", () => {
     ).not.toThrow();
   });
 
+  // Veículo do await: cron ficou promptless (bc2c7416 — o piso caiu onde o
+  // preparador existe) e terminal_run é lane-ops para o Maestro; a janela de
+  // confirmação vem de um bg_run DESTRUTIVO sem preparador no seam — o único
+  // caminho que ainda pergunta.
   it("revalidates after a confirmation await before the handler starts", async () => {
     let current = fence("execution", { active: false });
     const handler = vi.fn(async () => ({ impossible: true }));
@@ -946,17 +950,15 @@ describe("guided PREVC MCP pre-execution fence", () => {
       current = fence("planning");
       return true;
     });
-    const selected = tool("nexus_cron", handler);
+    const selected = tool("nexus_bg_run", handler);
     const result = await dispatchToolCall(
       "http-mcp",
       selected.registry,
-      "nexus_cron",
+      "nexus_bg_run",
       {
-        action: "create",
-        name: "fence-await",
-        schedule: "0 9 * * *",
+        command: "rm -rf /tmp/fence-await",
       },
-      maestro(["nexus_cron"]),
+      maestro(["nexus_bg_run"]),
       dispatchOptions(() => current, { confirm }),
     );
     expect(confirm).toHaveBeenCalledOnce();
