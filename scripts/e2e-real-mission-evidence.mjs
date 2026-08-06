@@ -175,15 +175,12 @@ export function assertRealMissionPassEvidence(raw) {
     Number.isInteger(wizardReceipt?.armedAt) &&
     wizardReceipt.armedAt >= 0 &&
     Number.isInteger(wizardReceipt?.intentSubmittedAt) &&
-    Number.isInteger(wizardReceipt?.nativeDialogOpenedAt) &&
-    Number.isInteger(wizardReceipt?.nativeDialogAcceptedAt) &&
+    wizardReceipt?.nativeDialogOpenedAt === null &&
+    wizardReceipt?.nativeDialogAcceptedAt === null &&
     Number.isInteger(wizardReceipt?.approvalReturnedAt) &&
     wizardReceipt.armedAt <= wizardReceipt.intentSubmittedAt &&
-    wizardReceipt.intentSubmittedAt <= wizardReceipt.nativeDialogOpenedAt &&
-    wizardReceipt.nativeDialogOpenedAt <=
-      wizardReceipt.nativeDialogAcceptedAt &&
-    wizardReceipt.nativeDialogAcceptedAt <= wizardReceipt.approvalReturnedAt &&
-    wizardReceipt.nativeDialogAcceptedAt <= (mission?.approvedAt ?? -1) &&
+    wizardReceipt.intentSubmittedAt <= wizardReceipt.approvalReturnedAt &&
+    wizardReceipt.intentSubmittedAt <= (mission?.approvedAt ?? -1) &&
     (mission?.approvedAt ?? -1) <= wizardReceipt.approvalReturnedAt &&
     (mission?.dispatchedAt ?? -1) <= wizardReceipt.approvalReturnedAt &&
     Number.isInteger(evidence?.finishedAt) &&
@@ -1168,9 +1165,9 @@ export function assertRealMissionPassEvidence(raw) {
       "codexMcpPromptCount",
     ]) &&
     interaction?.evidenceOrigin === "main-owned-instrumentation" &&
-    interaction?.nativeDialogCount === 1 &&
-    interaction?.missionApprovalDialogCount === 1 &&
-    interaction?.missionApprovalAcceptedCount === 1 &&
+    interaction?.nativeDialogCount === 0 &&
+    interaction?.missionApprovalDialogCount === 0 &&
+    interaction?.missionApprovalAcceptedCount === 0 &&
     interaction?.codexMcpPromptCount === 0 &&
     exactReleaseBinding &&
     /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(release?.appVersion ?? "") &&

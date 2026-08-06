@@ -830,7 +830,9 @@ export const realMissionE2EEvidenceSchema = z
               evidence.mission?.squadSourceRevisionHash &&
             evidence.wizardReceipt.squadRevisionHash ===
               evidence.mission?.squadRevisionHash &&
-            evidence.wizardReceipt.nativeDialogAcceptedAt <=
+            evidence.wizardReceipt.nativeDialogOpenedAt === null &&
+            evidence.wizardReceipt.nativeDialogAcceptedAt === null &&
+            evidence.wizardReceipt.intentSubmittedAt <=
               (evidence.mission?.approvedAt ?? -1) &&
             (evidence.mission?.approvedAt ?? -1) <=
               evidence.wizardReceipt.approvalReturnedAt &&
@@ -841,9 +843,11 @@ export const realMissionE2EEvidenceSchema = z
         "interaction",
         evidence.interaction.evidenceOrigin ===
           "main-owned-instrumentation" &&
-          evidence.interaction.nativeDialogCount === 1 &&
-          evidence.interaction.missionApprovalDialogCount === 1 &&
-          evidence.interaction.missionApprovalAcceptedCount === 1 &&
+          // Zero fricção (06/08): ZERO diálogos é o contrato — o gate acusa
+          // se qualquer modal voltar ao caminho da missão.
+          evidence.interaction.nativeDialogCount === 0 &&
+          evidence.interaction.missionApprovalDialogCount === 0 &&
+          evidence.interaction.missionApprovalAcceptedCount === 0 &&
           evidence.interaction.codexMcpPromptCount === 0,
       ],
       [
@@ -1021,13 +1025,15 @@ export function parseReleaseEligibleRealMissionE2EEvidence(
     evidence.wizardReceipt === null ||
     evidence.runtimeAttestation === null ||
     !evidence.missionInventory.exactSingleProductMission ||
-    evidence.interaction.nativeDialogCount !== 1 ||
-    evidence.interaction.missionApprovalDialogCount !== 1 ||
-    evidence.interaction.missionApprovalAcceptedCount !== 1 ||
+    // Zero fricção (06/08): a elegibilidade de release agora EXIGE zero
+    // diálogos — qualquer modal que volte ao caminho da missão reprova aqui.
+    evidence.interaction.nativeDialogCount !== 0 ||
+    evidence.interaction.missionApprovalDialogCount !== 0 ||
+    evidence.interaction.missionApprovalAcceptedCount !== 0 ||
     evidence.interaction.codexMcpPromptCount !== 0
   ) {
     throw new Error(
-      "real mission release evidence requires the physical product wizard, exactly one accepted native approval dialog and zero Codex MCP prompts",
+      "real mission release evidence requires the physical product wizard, ZERO native approval dialogs and zero Codex MCP prompts",
     );
   }
   return evidence;

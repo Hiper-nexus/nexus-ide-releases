@@ -373,21 +373,19 @@ export function installRealMissionProductWizardReceiptAuthority(input: {
           mission,
           draft.squadBinding,
         );
-        const timing = readRealMissionApprovalDialogTiming();
+        // Mundo sem modal (06/08): a aprovação é automática e a cadeia causal
+        // não tem diálogo NENHUM — e assertar ZERO aqui é o que impede o modal
+        // de voltar em silêncio. armed → submitted → approvedAt → dispatched.
         if (
-          realMissionInteractionCapture.nativeDialogCount !== 1 ||
-          realMissionInteractionCapture.missionApprovalDialogCount !== 1 ||
-          realMissionInteractionCapture.missionApprovalAcceptedCount !== 1 ||
-          timing.openedAt === null ||
-          timing.acceptedAt === null ||
+          realMissionInteractionCapture.nativeDialogCount !== 0 ||
+          realMissionInteractionCapture.missionApprovalDialogCount !== 0 ||
+          realMissionInteractionCapture.missionApprovalAcceptedCount !== 0 ||
           draft.armedAt > draft.intentSubmittedAt ||
-          draft.intentSubmittedAt > timing.openedAt ||
-          timing.openedAt > timing.acceptedAt ||
-          timing.acceptedAt > approved.intentContract!.approvedAt! ||
+          draft.intentSubmittedAt > approved.intentContract!.approvedAt! ||
           approved.intentContract!.approvedAt! > now ||
           approved.intentContract!.dispatchedAt! > now
         ) {
-          return fail("product wizard native approval causality is invalid");
+          return fail("product wizard promptless approval causality is invalid");
         }
         const core = Object.freeze({
           origin: "main-owned-product-wizard-causal-chain" as const,
@@ -404,8 +402,8 @@ export function installRealMissionProductWizardReceiptAuthority(input: {
           }),
           armedAt: draft.armedAt,
           intentSubmittedAt: draft.intentSubmittedAt,
-          nativeDialogOpenedAt: timing.openedAt,
-          nativeDialogAcceptedAt: timing.acceptedAt,
+          nativeDialogOpenedAt: null,
+          nativeDialogAcceptedAt: null,
           approvalReturnedAt: now,
         });
         receipt = Object.freeze(

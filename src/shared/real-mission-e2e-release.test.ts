@@ -22,7 +22,7 @@ describe("real mission E2E release eligibility and adversarial receipts", () => 
     );
   });
 
-  it("requires one accepted native dialog and zero Codex MCP prompts", () => {
+  it("requires ZERO native dialogs and zero Codex MCP prompts (promptless contract)", () => {
     const duplicateDialog = validPassEvidence();
     (
       duplicateDialog.interaction as Record<string, unknown>

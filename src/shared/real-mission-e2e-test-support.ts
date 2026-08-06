@@ -69,8 +69,9 @@ export function validPassEvidence(
     approvedContractSha256: sha("approved-contract"),
     armedAt: 10,
     intentSubmittedAt: 10,
-    nativeDialogOpenedAt: 10,
-    nativeDialogAcceptedAt: 10,
+    // Mundo sem modal (06/08): a cadeia promptless não tem diálogo.
+    nativeDialogOpenedAt: null,
+    nativeDialogAcceptedAt: null,
     approvalReturnedAt: 11,
   };
   const acceptanceCriteria =
@@ -385,9 +386,9 @@ export function validPassEvidence(
     },
     interaction: {
       evidenceOrigin: "main-owned-instrumentation",
-      nativeDialogCount: 1,
-      missionApprovalDialogCount: 1,
-      missionApprovalAcceptedCount: 1,
+      nativeDialogCount: 0,
+      missionApprovalDialogCount: 0,
+      missionApprovalAcceptedCount: 0,
       codexMcpPromptCount: 0,
     },
     mission: {

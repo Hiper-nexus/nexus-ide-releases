@@ -66,8 +66,10 @@ const productWizardReceiptCoreSchema = z
     approvedContractSha256: sha256Schema,
     armedAt: timestampSchema,
     intentSubmittedAt: timestampSchema,
-    nativeDialogOpenedAt: timestampSchema,
-    nativeDialogAcceptedAt: timestampSchema,
+    // Mundo sem modal (06/08): a cadeia promptless emite null; valores
+    // numéricos permanecem aceitos para receipts de builds antigos.
+    nativeDialogOpenedAt: timestampSchema.nullable(),
+    nativeDialogAcceptedAt: timestampSchema.nullable(),
     approvalReturnedAt: timestampSchema,
   })
   .strict();
@@ -108,12 +110,19 @@ export const productWizardReceiptSchema = productWizardReceiptCoreSchema
   })
   .strict()
   .superRefine((receipt, context) => {
-    if (
-      receipt.armedAt > receipt.intentSubmittedAt ||
-      receipt.intentSubmittedAt > receipt.nativeDialogOpenedAt ||
-      receipt.nativeDialogOpenedAt > receipt.nativeDialogAcceptedAt ||
-      receipt.nativeDialogAcceptedAt > receipt.approvalReturnedAt
-    ) {
+    // Cadeia promptless (06/08): os campos de diálogo são null. Receipts de
+    // builds antigos ainda trazem números, e neles a ordem antiga vale — os
+    // dois campos nascem juntos, então validar par a par cobre ambos os mundos.
+    const dialogChainValid =
+      receipt.nativeDialogOpenedAt === null ||
+      receipt.nativeDialogAcceptedAt === null
+        ? receipt.nativeDialogOpenedAt === null &&
+          receipt.nativeDialogAcceptedAt === null &&
+          receipt.intentSubmittedAt <= receipt.approvalReturnedAt
+        : receipt.intentSubmittedAt <= receipt.nativeDialogOpenedAt &&
+          receipt.nativeDialogOpenedAt <= receipt.nativeDialogAcceptedAt &&
+          receipt.nativeDialogAcceptedAt <= receipt.approvalReturnedAt;
+    if (receipt.armedAt > receipt.intentSubmittedAt || !dialogChainValid) {
       context.addIssue({
         code: "custom",
         message: "product wizard causal timestamps are out of order",

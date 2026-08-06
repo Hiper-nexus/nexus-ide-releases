@@ -268,11 +268,7 @@ describe("main-owned product wizard causal receipt authority", () => {
     expect(submitted).toMatchObject({ ok: true });
     expect(authority.receiptForMission(missionId)).toBeNull();
 
-    harness.capture.nativeDialogCount = 1;
-    harness.capture.missionApprovalDialogCount = 1;
-    harness.capture.missionApprovalAcceptedCount = 1;
-    harness.timing.openedAt = 102;
-    harness.timing.acceptedAt = 103;
+    // Mundo sem modal: aprovação automática, zero diálogos, sem timing.
     harness.mission = approvedMission();
     vi.setSystemTime(106);
     expect(
@@ -287,8 +283,8 @@ describe("main-owned product wizard causal receipt authority", () => {
       squadRevisionHash: harness.binding.squadRevisionHash,
       armedAt: 100,
       intentSubmittedAt: 101,
-      nativeDialogOpenedAt: 102,
-      nativeDialogAcceptedAt: 103,
+      nativeDialogOpenedAt: null,
+      nativeDialogAcceptedAt: null,
       approvalReturnedAt: 106,
     });
     expect(receipt?.submittedContractSha256).not.toBe(
@@ -448,17 +444,17 @@ describe("main-owned product wizard causal receipt authority", () => {
       armed.nextCapability!,
     );
 
+    // QUALQUER diálogo aparecendo agora é violação — é o guardião contra o
+    // modal voltar em silêncio.
     harness.capture.nativeDialogCount = 2;
     harness.capture.missionApprovalDialogCount = 1;
     harness.capture.missionApprovalAcceptedCount = 1;
-    harness.timing.openedAt = 102;
-    harness.timing.acceptedAt = 103;
     harness.mission = approvedMission();
     vi.setSystemTime(106);
 
     expect(() =>
       invoke(owner, "approval-returned", submitted.nextCapability!),
-    ).toThrow(/native approval causality/i);
+    ).toThrow(/promptless approval causality/i);
     expect(onInvalid).toHaveBeenCalledOnce();
     expect(authority.receiptForMission(missionId)).toBeNull();
     authority.dispose();
