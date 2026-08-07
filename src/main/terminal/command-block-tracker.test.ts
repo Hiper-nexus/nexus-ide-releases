@@ -130,6 +130,29 @@ describe('CommandBlockTracker', () => {
     expect(tracker.listByPane('missing')).toEqual([]);
   });
 
+  it('exposes an immutable Main-owned context for refinery authorization', () => {
+    const tracker = new CommandBlockTracker({ isEnabled: () => true });
+    tracker.bindSession('s1', {
+      paneId: 'pane-a',
+      workspaceId: 'checkout-a',
+      shell: 'zsh',
+      cwd: '/workspace',
+      projectRoot: '/workspace',
+      gitBranch: 'feat/refinery',
+    });
+    tracker.handleData('s1', '\x1b]133;P;Cwd=/workspace/packages/ui\x07');
+
+    const context = tracker.getSessionContext('s1');
+    expect(context).toEqual({
+      paneId: 'pane-a',
+      workspaceId: 'checkout-a',
+      cwd: '/workspace/packages/ui',
+      projectRoot: '/workspace',
+      gitBranch: 'feat/refinery',
+    });
+    expect(Object.isFrozen(context)).toBe(true);
+  });
+
   it('persists an unterminated running block as unknown on PTY exit', () => {
     const finished: Array<{ command: string; status: string }> = [];
     const tracker = new CommandBlockTracker({

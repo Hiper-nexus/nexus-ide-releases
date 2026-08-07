@@ -526,7 +526,7 @@ function bootstrap(): void {
   installMissionDiskProjection();
   registerMissionEventIpc();
   // Product paths: CommandBlock actions, SearchMixer, full product-wave IPC.
-  registerTerminalBlockActionsIpc();
+  registerTerminalBlockActionsIpc(projectRuntimeManager);
   getSearchMixer(); // ensure ripgrep + multi-source providers on the live mixer
   registerSearchMixerIpc();
   registerProductWaveIpc();

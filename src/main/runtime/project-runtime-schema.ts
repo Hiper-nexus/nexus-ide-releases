@@ -727,6 +727,53 @@ BEGIN
 END;
 `;
 
+/**
+ * Materialized command history used by the terminal command refinery.
+ * The observation journal makes aggregation idempotent even after raw block
+ * retention prunes `command_blocks`; stats never learn redacted commands.
+ */
+const COMMAND_REFINERY_SCHEMA = `
+CREATE TABLE command_stats (
+  cwd                TEXT NOT NULL,
+  command            TEXT NOT NULL,
+  cwd_project_root   TEXT,
+  total_count        INTEGER NOT NULL DEFAULT 0 CHECK (total_count >= 0),
+  success_count      INTEGER NOT NULL DEFAULT 0 CHECK (
+    success_count >= 0 AND success_count <= total_count
+  ),
+  distinct_days      INTEGER NOT NULL DEFAULT 0 CHECK (distinct_days >= 0),
+  last_day           INTEGER NOT NULL CHECK (last_day >= 0),
+  first_used         INTEGER NOT NULL CHECK (first_used >= 0),
+  last_used          INTEGER NOT NULL CHECK (last_used >= first_used),
+  last_branch        TEXT,
+  dismissed_count    INTEGER NOT NULL DEFAULT 0 CHECK (dismissed_count >= 0),
+  last_dismissed_at  INTEGER CHECK (
+    last_dismissed_at IS NULL OR last_dismissed_at >= 0
+  ),
+  last_decayed_at    INTEGER NOT NULL CHECK (last_decayed_at >= 0),
+  PRIMARY KEY (cwd, command)
+) WITHOUT ROWID;
+
+CREATE TABLE command_stat_observations (
+  observation_key  TEXT PRIMARY KEY,
+  observed_at      INTEGER NOT NULL CHECK (observed_at >= 0)
+) WITHOUT ROWID;
+
+CREATE TABLE command_stat_days (
+  cwd      TEXT NOT NULL,
+  command  TEXT NOT NULL,
+  day      INTEGER NOT NULL CHECK (day >= 0),
+  PRIMARY KEY (cwd, command, day)
+) WITHOUT ROWID;
+
+CREATE INDEX idx_command_stats_command
+  ON command_stats(command COLLATE NOCASE);
+CREATE INDEX idx_command_stats_project
+  ON command_stats(cwd_project_root, last_used DESC);
+CREATE INDEX idx_command_stats_last_used
+  ON command_stats(last_used DESC);
+`;
+
 /** Durable Ralph-loop budget plus immutable PREVC step receipts. */
 const MISSION_DRIVER_RUNTIME_SCHEMA = `
 CREATE TABLE mission_drive_state (
@@ -859,4 +906,10 @@ export const INITIAL_PROJECT_MIGRATIONS: readonly ProjectMigration[] =
     ...ORCHESTRATION_PROJECT_MIGRATION_SPECS.map((spec) =>
       createProjectMigration(spec),
     ),
+    createProjectMigration({
+      id: '036-command-refinery',
+      schemaVersion: 36,
+      appVersion: '0.28.0',
+      sql: COMMAND_REFINERY_SCHEMA,
+    }),
   ]);

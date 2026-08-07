@@ -80,6 +80,12 @@ export const TERMINAL_BLOCK_CHANNELS = {
   action: 'terminal-block:action',
   /** invoke: list recent blocks for a pane/session (in-memory tracker). */
   list: 'terminal-block:list',
+  /** invoke: ranked, durable suggestions for an owned live terminal. */
+  suggest: 'terminal-block:suggest',
+  /** invoke: suppress one exact suggestion until it is used again. */
+  dismiss: 'terminal-block:dismiss',
+  /** invoke: resolve in Main and re-run a durable suggestion safely. */
+  runSuggestion: 'terminal-block:run-suggestion',
 } as const;
 
 /** Unified SearchMixer IPC. */

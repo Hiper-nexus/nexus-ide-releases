@@ -3,6 +3,7 @@ import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
 import { CommandBlockStore } from './command-block-store';
+import { CommandRefineryStore } from './command-refinery-store';
 import { resolveCommandBlockScope } from './command-block-scope-registry';
 
 /**
@@ -34,7 +35,7 @@ export function createCommandBlockPersister(
     if (!scope) return;
     try {
       const store = new CommandBlockStore(deps.runtimeManager, scope);
-      store.insert({
+      const persisted = store.insert({
         id: block.id,
         sessionId: block.sessionId,
         paneId: block.paneId,
@@ -54,6 +55,13 @@ export function createCommandBlockPersister(
         redaction: block.redaction,
         idempotencyKey: block.idempotencyKey,
       });
+      try {
+        new CommandRefineryStore(deps.runtimeManager, scope).record(persisted);
+      } catch (err) {
+        // The refinery is a rebuildable convenience index. Its failure must
+        // never invalidate the canonical block or skip retention maintenance.
+        console.warn('[command-refinery] index update failed:', err);
+      }
       insertsSincePrune += 1;
       if (insertsSincePrune >= 50) {
         insertsSincePrune = 0;

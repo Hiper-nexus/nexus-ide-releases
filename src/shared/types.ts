@@ -132,6 +132,12 @@ import type {
 import type { PipeApi } from './pipe-types';
 import type { VisionApi } from './vision-ipc';
 import type {
+  CommandRefineryCommandRequest,
+  CommandRefineryMutationResult,
+  CommandRefinerySuggestRequest,
+  CommandRefinerySuggestResult,
+} from './command-refinery';
+import type {
   AdapterAuthStatus,
   ProviderConfigPatch,
   ProviderSettingsInfo,
@@ -892,6 +898,15 @@ export interface NexusApi {
       paneId?: string;
       limit?: number;
     }): Promise<{ blocks: unknown[]; error?: string }>;
+    suggest(
+      req: CommandRefinerySuggestRequest,
+    ): Promise<CommandRefinerySuggestResult>;
+    dismiss(
+      req: CommandRefineryCommandRequest,
+    ): Promise<CommandRefineryMutationResult>;
+    runSuggestion(
+      req: CommandRefineryCommandRequest,
+    ): Promise<CommandRefineryMutationResult>;
   };
   /** Unified SearchMixer (flag: feature.search.mixer). */
   searchMixer: {

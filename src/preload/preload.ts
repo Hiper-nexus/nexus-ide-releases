@@ -1300,6 +1300,12 @@ const api: NexusApi = {
     action: (req: unknown) =>
       ipcRenderer.invoke(TERMINAL_BLOCK_CHANNELS.action, req),
     list: (req) => ipcRenderer.invoke(TERMINAL_BLOCK_CHANNELS.list, req),
+    suggest: (req) =>
+      ipcRenderer.invoke(TERMINAL_BLOCK_CHANNELS.suggest, req),
+    dismiss: (req) =>
+      ipcRenderer.invoke(TERMINAL_BLOCK_CHANNELS.dismiss, req),
+    runSuggestion: (req) =>
+      ipcRenderer.invoke(TERMINAL_BLOCK_CHANNELS.runSuggestion, req),
   },
   searchMixer: {
     search: (query: unknown) =>

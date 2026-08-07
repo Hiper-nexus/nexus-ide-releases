@@ -31,6 +31,14 @@ export interface CommandBlockSessionMeta {
   readonly missionId?: string;
 }
 
+export interface CommandBlockSessionContext {
+  readonly paneId: string;
+  readonly workspaceId: string;
+  readonly cwd: string;
+  readonly projectRoot?: string;
+  readonly gitBranch?: string;
+}
+
 interface LiveSession {
   readonly meta: CommandBlockSessionMeta;
   readonly scanner: Osc133Scanner;
@@ -136,6 +144,21 @@ export class CommandBlockTracker {
 
   findBlock(sessionId: string, blockId: string): CommandBlock | null {
     return this.listBlocks(sessionId).find((b) => b.id === blockId) ?? null;
+  }
+
+  /** Main-owned live coordinates used to authorize scoped refinery reads. */
+  getSessionContext(sessionId: string): CommandBlockSessionContext | null {
+    const session = this.#sessions.get(sessionId);
+    if (!session) return null;
+    return Object.freeze({
+      paneId: session.meta.paneId,
+      workspaceId: session.meta.workspaceId,
+      cwd: session.cwd,
+      ...(session.meta.projectRoot
+        ? { projectRoot: session.meta.projectRoot }
+        : {}),
+      ...(session.meta.gitBranch ? { gitBranch: session.meta.gitBranch } : {}),
+    });
   }
 
   /** All tracked blocks for a pane (newest last in each session). */
