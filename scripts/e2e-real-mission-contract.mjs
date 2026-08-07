@@ -3,9 +3,9 @@ import { createHash } from "node:crypto";
 export const REAL_MISSION_FLAG = "--nexus-real-mission-e2e";
 export const REAL_MISSION_PRODUCT_WIZARD_FLAG =
   "--nexus-real-mission-product-wizard-e2e";
-// O DAG multi-CLI v9 abre todas as 6 CLIs advisor e o executor como raízes do
-// fan-out; depois encadeia revisor Codex → QA. São 9 PTYs físicos de worker no
-// roster completo (mais o orquestrador), com até sete tarefas elegíveis em
+// O DAG multi-CLI v9 abre as 5 CLIs advisor atuais e o executor como raízes do
+// fan-out; depois encadeia revisor Codex → QA. São 8 PTYs físicos de worker no
+// roster completo (mais o orquestrador), com até seis tarefas elegíveis em
 // paralelo antes da cadeia de entrega.
 // 45 min: o harness roda de propósito numa máquina com credenciais quebradas
 // (claude 401, opencode sem auth) para exercitar as cadeias de reroute — e um
@@ -86,7 +86,7 @@ export const REAL_MISSION_CLAUDE_ORCHESTRATOR_EVIDENCE_FILE =
  * Roster advisor multi-CLI do harness (Fase 2), na ordem canônica que a
  * evidência registra. Toda CLI advisor entra somente em tarefa read_only do
  * fan-out consultivo; o pipeline executor → revisor → QA continua codex-only.
- * Tier: grok/claude = mechanically-confined (Seatbelt/argv governado nativo);
+ * Tier: claude = mechanically-confined (argv governado nativo);
  * kimi/agy/opencode/glm = advisory-unconfined (MCP + Seatbelt Nexus).
  * GLM reuses the Claude Code binary with z.ai ANTHROPIC_* env (API key).
  */
@@ -226,6 +226,21 @@ export const REAL_MISSION_FAILURE_REASONS = new Set([
   "session_exited",
   "write_failed",
   "authority_lost",
+  "dispatch-failed",
+  "kickoff-failed",
+  "maestro-pre-dispatch-exit",
+  "worker-no-handoff",
+  "provider-unavailable",
+  "ownership-conflict",
+  "handoff-not-delivered",
+  "orphan-plan",
+  "terminal-failure",
+  "driver-block-human",
+  "agent-status-block",
+  "exclusive-replacement",
+  "runtime-closed",
+  "human-decision",
+  "unknown",
 ]);
 export const REAL_MISSION_STATUSES = new Set([
   "pending",

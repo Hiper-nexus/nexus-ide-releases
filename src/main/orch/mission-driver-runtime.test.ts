@@ -31,6 +31,7 @@ function baseState(overrides: Partial<DriveState> = {}): DriveState {
     allStepsDone: false,
     workProven: false,
     workDoneUnproven: false,
+    prevcCompletionRequired: false,
     completionVerified: false,
     contextRot: false,
     paneDead: false,

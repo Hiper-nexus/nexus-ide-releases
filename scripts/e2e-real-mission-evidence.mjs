@@ -883,16 +883,16 @@ export function assertRealMissionPassEvidence(raw) {
         ]) &&
         milestone?.stepId === `step-${index + 1}` &&
         milestone?.label === expectedAcceptanceCriteria[index] &&
-        milestone?.status === "done" &&
+        milestone?.status === 'done' &&
         Array.isArray(milestone?.evidenceIds) &&
         milestone.evidenceIds.length === 1 &&
-        /^milestone:[a-f0-9]{64}$/u.test(milestone.evidenceIds[0] ?? ""),
+        /^milestone:[a-f0-9]{64}$/u.test(milestone.evidenceIds[0] ?? ''),
     ) &&
     completionStepReceipts.length === completionMilestones.length &&
     completionStepReceipts.every((receipt, index) =>
       receiptMatchesMilestone(receipt, completionMilestones[index], index),
     ) &&
-    completionStepReceipts.at(-1)?.toStage === "complete" &&
+    completionStepReceipts.at(-1)?.toStage === 'complete' &&
     completionStepReceipts.at(-1)?.workflowRevisionAfter ===
       completionWorkflow?.revision &&
     new Set(completionEvidenceIds).size === completionEvidenceIds.length &&
@@ -906,8 +906,8 @@ export function assertRealMissionPassEvidence(raw) {
     Number.isInteger(completionDriver?.lastSuccessAt) &&
     completionDriver.lastAttemptAt >= 0 &&
     completionDriver.lastSuccessAt >= 0 &&
-    completionDriver?.lastActionKind === "complete" &&
-    completionDriver?.lastOutcome === "success" &&
+    completionDriver?.lastActionKind === 'complete' &&
+    completionDriver?.lastOutcome === 'success' &&
     Number.isInteger(completionDriver?.updatedAt) &&
     completionDriver.updatedAt >= 0 &&
     completionDriver.runStartedAt <= completionDriver.lastAttemptAt &&
@@ -916,15 +916,15 @@ export function assertRealMissionPassEvidence(raw) {
     completionDriver.lastSuccessAt === completion.completedAt;
   const dependencyConsumptionHasExactKeys = (receipt) =>
     hasExactKeys(receipt, [
-      "missionId",
-      "consumerTaskId",
-      "dependencyTaskId",
-      "handoffId",
-      "consumerSessionId",
-      "consumerWorkerIncarnationId",
-      "promptSha256",
-      "handoffSummarySha256",
-      "consumedAt",
+      'missionId',
+      'consumerTaskId',
+      'dependencyTaskId',
+      'handoffId',
+      'consumerSessionId',
+      'consumerWorkerIncarnationId',
+      'promptSha256',
+      'handoffSummarySha256',
+      'consumedAt',
     ]);
   const chainPlanIsExact =
     planTasks.length === chain.length &&
@@ -948,15 +948,15 @@ export function assertRealMissionPassEvidence(raw) {
         dispatch.agentCategory === member.agentCategory &&
         dispatch.executionMode === member.executionMode &&
         exactDependencies(dispatch.dependsOn, member) &&
-        (member.kind === "execution"
+        (member.kind === 'execution'
           ? // A forma do receipt casa com o modo selado: same_checkout
             // conclui com o receipt próprio (reference = tokenHash sha256);
             // escritor isolado segue exigindo worktree_integrated.
-            (member.executionMode === "same_checkout"
-              ? receipt?.kind === "same_checkout_validated" &&
-                /^[a-f0-9]{64}$/u.test(receipt.reference ?? "")
-              : receipt?.kind === "worktree_integrated" &&
-                GIT_SHA_PATTERN.test(receipt.reference ?? "")) &&
+            (member.executionMode === 'same_checkout'
+              ? receipt?.kind === 'same_checkout_validated' &&
+                /^[a-f0-9]{64}$/u.test(receipt.reference ?? '')
+              : receipt?.kind === 'worktree_integrated' &&
+                GIT_SHA_PATTERN.test(receipt.reference ?? '')) &&
             Number.isInteger(receipt.completedAt)
           : isNonExecutionValidationReceipt(receipt) &&
             Number.isInteger(receipt.completedAt))
@@ -966,11 +966,7 @@ export function assertRealMissionPassEvidence(raw) {
     chainHandoffs.length === chain.length &&
     exactDurableHandoffSet &&
     chain.every((member, index) =>
-      handoffMatches(
-        chainHandoffs[index],
-        chainDispatches[index],
-        member,
-      ),
+      handoffMatches(chainHandoffs[index], chainDispatches[index], member),
     ) &&
     new Set(chainHandoffs.map((handoff) => handoff?.id)).size ===
       chain.length &&
@@ -1009,7 +1005,7 @@ export function assertRealMissionPassEvidence(raw) {
     const head = physicalReceipt?.worktreeHeadSha;
     const receipt = chainReceipts[index];
     const noChangeHead = chainNoChangeMatches[index]?.[1];
-    if (member.kind === "advisory") {
+    if (member.kind === 'advisory') {
       // Espelho do TS: head inicial é sempre plausível para advisory (leitor
       // paralelo observa pré-entrega e submete depois); head final exige
       // issuedAt >= integração do executor.
@@ -1020,15 +1016,15 @@ export function assertRealMissionPassEvidence(raw) {
           (head === repository?.finalHeadSha &&
             Number.isInteger(physicalReceipt?.issuedAt) &&
             physicalReceipt.issuedAt >= executorIntegratedAt));
-      if (receipt?.kind === "read_only_validated") {
+      if (receipt?.kind === 'read_only_validated') {
         return headMatchesIntegrationChronology;
       }
       return headMatchesIntegrationChronology && noChangeHead === head;
     }
-    if (member.kind === "execution") {
-      return typeof head === "string" && head !== repository?.initialHeadSha;
+    if (member.kind === 'execution') {
+      return typeof head === 'string' && head !== repository?.initialHeadSha;
     }
-    if (receipt?.kind === "read_only_validated") {
+    if (receipt?.kind === 'read_only_validated') {
       return head === repository?.finalHeadSha;
     }
     return (
@@ -1063,9 +1059,8 @@ export function assertRealMissionPassEvidence(raw) {
         receipt.dependencyTaskId === dependencyDispatch?.taskId &&
         receipt.handoffId === dependencyHandoff?.id &&
         receipt.consumerSessionId === dispatch?.sessionId &&
-        receipt.consumerWorkerIncarnationId ===
-          dispatch?.workerIncarnationId &&
-        SHA256_PATTERN.test(receipt.promptSha256 ?? "") &&
+        receipt.consumerWorkerIncarnationId === dispatch?.workerIncarnationId &&
+        SHA256_PATTERN.test(receipt.promptSha256 ?? '') &&
         receipt.handoffSummarySha256 === dependencyHandoff?.summarySha256 &&
         Number.isInteger(receipt.consumedAt) &&
         dependencyDispatch?.completedAt <= receipt.consumedAt &&
@@ -1103,11 +1098,10 @@ export function assertRealMissionPassEvidence(raw) {
         ? handoff.consumedAt
         : accepted?.acceptedAt;
       return (
-        Number.isInteger(deliveredAt) &&
-        deliveredAt <= completion?.completedAt
+        Number.isInteger(deliveredAt) && deliveredAt <= completion?.completedAt
       );
     });
-  // O roster advisor é canônico: as seis CLIs na ordem do contrato, com o
+  // O roster advisor é canônico: as CLIs na ordem do contrato, com o
   // tier exato; skipped não pode carregar recibo físico.
   const participationIsCanonical =
     participation.length === REAL_MISSION_ADVISORS.length &&
@@ -1116,19 +1110,19 @@ export function assertRealMissionPassEvidence(raw) {
       const advisor = REAL_MISSION_ADVISORS[index];
       return (
         hasExactKeys(row, [
-          "cli",
-          "tier",
-          "skipped",
-          "spawnedAt",
-          "firstNexusToolAt",
-          "handoffAt",
+          'cli',
+          'tier',
+          'skipped',
+          'spawnedAt',
+          'firstNexusToolAt',
+          'handoffAt',
         ]) &&
         row?.cli === advisor.cli &&
         row?.tier === advisor.tier &&
         (row?.skipped === null ||
-          row?.skipped === "no-credential" ||
-          row?.skipped === "orchestrator-reserved" ||
-          row?.skipped === "provider-rerouted") &&
+          row?.skipped === 'no-credential' ||
+          row?.skipped === 'orchestrator-reserved' ||
+          row?.skipped === 'provider-rerouted') &&
         (row?.skipped === null ||
           (row?.spawnedAt === null &&
             row?.firstNexusToolAt === null &&
@@ -1143,9 +1137,7 @@ export function assertRealMissionPassEvidence(raw) {
     const advisor = REAL_MISSION_ADVISORS.find(
       (candidate) => candidate.cli === row.cli,
     );
-    const index = chain.findIndex(
-      (member) => member.agentRef === advisor?.id,
-    );
+    const index = chain.findIndex((member) => member.agentRef === advisor?.id);
     const physical =
       index >= 0 ? record(chainHandoffs[index]?.physicalReceipt) : null;
     return (
@@ -1161,60 +1153,59 @@ export function assertRealMissionPassEvidence(raw) {
   const valid =
     exactTopLevelEnvelope &&
     evidence?.schemaVersion === REAL_MISSION_EVIDENCE_SCHEMA_VERSION &&
-    EVIDENCE_ID_PATTERN.test(evidence?.runId ?? "") &&
-    evidence?.status === "pass" &&
+    EVIDENCE_ID_PATTERN.test(evidence?.runId ?? '') &&
+    evidence?.status === 'pass' &&
     evidence?.failure === null &&
     evidence?.expectedContentSha256 === expectedSha &&
-    evidence?.coverageTier === "guided-delivery-core" &&
-    evidence?.planOrigin === "production-guided-planner" &&
-    evidence?.prevcOrigin === "e2e-fixture" &&
-    evidence?.reviewOrigin === "production-physical-worker" &&
-    evidence?.qaOrigin === "production-physical-worker" &&
+    evidence?.coverageTier === 'guided-delivery-core' &&
+    evidence?.planOrigin === 'production-guided-planner' &&
+    evidence?.prevcOrigin === 'e2e-fixture' &&
+    evidence?.reviewOrigin === 'production-physical-worker' &&
+    evidence?.qaOrigin === 'production-physical-worker' &&
     exactRuntimeAttestation &&
     exactWizardSurfaceEvidence &&
     hasExactKeys(interaction, [
-      "evidenceOrigin",
-      "nativeDialogCount",
-      "missionApprovalDialogCount",
-      "missionApprovalAcceptedCount",
-      "codexMcpPromptCount",
+      'evidenceOrigin',
+      'nativeDialogCount',
+      'missionApprovalDialogCount',
+      'missionApprovalAcceptedCount',
+      'codexMcpPromptCount',
     ]) &&
-    interaction?.evidenceOrigin === "main-owned-instrumentation" &&
+    interaction?.evidenceOrigin === 'main-owned-instrumentation' &&
     interaction?.nativeDialogCount === 0 &&
     interaction?.missionApprovalDialogCount === 0 &&
     interaction?.missionApprovalAcceptedCount === 0 &&
     interaction?.codexMcpPromptCount === 0 &&
     exactReleaseBinding &&
-    /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(release?.appVersion ?? "") &&
+    /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(release?.appVersion ?? '') &&
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
-      release?.runId ?? "",
+      release?.runId ?? '',
     ) &&
     canonicalStartedAt &&
     canonicalFinishedAt &&
     finishedAt > startedAt &&
-    /^[a-f0-9]{40}$/u.test(release?.commitSha ?? "") &&
-    /^[a-f0-9]{64}$/u.test(artifact?.sha256 ?? "") &&
-    RELEASE_IDENTITY_PATTERN.test(artifact?.identity ?? "") &&
+    /^[a-f0-9]{40}$/u.test(release?.commitSha ?? '') &&
+    /^[a-f0-9]{64}$/u.test(artifact?.sha256 ?? '') &&
+    RELEASE_IDENTITY_PATTERN.test(artifact?.identity ?? '') &&
     exactMission &&
-    /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(mission?.id ?? "") &&
+    /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(mission?.id ?? '') &&
     exactSingleMissionInventory &&
-    mission?.status === "done" &&
-    mission?.intentState === "done" &&
+    mission?.status === 'done' &&
+    mission?.intentState === 'done' &&
     mission?.intentVersion === 1 &&
-    mission?.squadSourceId === "agentic-nexus-real-mission-e2e" &&
-    SHA256_PATTERN.test(mission?.squadSourceRevisionHash ?? "") &&
-    SHA256_PATTERN.test(mission?.squadRevisionHash ?? "") &&
-    ((evidence?.launchSurface === "private-runner" &&
-      ((mission?.squadId === "agentic-nexus-real-mission-e2e" &&
+    mission?.squadSourceId === 'agentic-nexus-real-mission-e2e' &&
+    SHA256_PATTERN.test(mission?.squadSourceRevisionHash ?? '') &&
+    SHA256_PATTERN.test(mission?.squadRevisionHash ?? '') &&
+    ((evidence?.launchSurface === 'private-runner' &&
+      ((mission?.squadId === 'agentic-nexus-real-mission-e2e' &&
         mission?.squadSourceRevisionHash === mission?.squadRevisionHash) ||
         (/^agentic-runtime-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
-          mission?.squadId ?? "",
+          mission?.squadId ?? '',
         ) &&
-          mission?.squadSourceRevisionHash !==
-            mission?.squadRevisionHash))) ||
-      (evidence?.launchSurface === "product-wizard" &&
+          mission?.squadSourceRevisionHash !== mission?.squadRevisionHash))) ||
+      (evidence?.launchSurface === 'product-wizard' &&
         /^agentic-runtime-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
-          mission?.squadId ?? "",
+          mission?.squadId ?? '',
         ) &&
         mission?.squadSourceRevisionHash !== mission?.squadRevisionHash)) &&
     Number.isInteger(mission?.approvedAt) &&
@@ -1223,19 +1214,19 @@ export function assertRealMissionPassEvidence(raw) {
     mission.dispatchedAt >= 0 &&
     mission.approvedAt <= mission.dispatchedAt &&
     exactKickoff &&
-    typeof kickoff?.sessionId === "string" &&
+    typeof kickoff?.sessionId === 'string' &&
     Number.isInteger(kickoff?.idleAt) &&
     Number.isInteger(kickoff?.busyAt) &&
     Number.isInteger(kickoff?.ptyDataAt) &&
     mission.dispatchedAt <= kickoff.idleAt &&
     kickoff.idleAt <= kickoff.busyAt &&
     kickoff.idleAt <= kickoff.ptyDataAt &&
-    /^[a-f0-9]{64}$/u.test(kickoff?.ptyChunkSha256 ?? "") &&
+    /^[a-f0-9]{64}$/u.test(kickoff?.ptyChunkSha256 ?? '') &&
     exactPlan &&
     plan?.version === 1 &&
     plan?.squadId === mission?.squadId &&
-    /^[a-f0-9]{64}$/u.test(plan?.planHash ?? "") &&
-    /^[a-f0-9]{64}$/u.test(plan?.rosterHash ?? "") &&
+    /^[a-f0-9]{64}$/u.test(plan?.planHash ?? '') &&
+    /^[a-f0-9]{64}$/u.test(plan?.rosterHash ?? '') &&
     chainPlanIsExact &&
     participationIsCanonical &&
     panes.length === 4 &&
@@ -1244,46 +1235,46 @@ export function assertRealMissionPassEvidence(raw) {
     new Set(panes.map((pane) => pane?.sessionId)).size === 4 &&
     panes.filter(
       (pane) =>
-        pane?.role === "orchestrator" &&
-        (pane?.adapterId === "codex" || pane?.adapterId === "claude") &&
-        pane?.agentRef === "e2e-orchestrator" &&
+        pane?.role === 'orchestrator' &&
+        (pane?.adapterId === 'codex' || pane?.adapterId === 'claude') &&
+        pane?.agentRef === 'e2e-orchestrator' &&
         pane?.readOnly === false &&
         pane?.nativeReadOnly === false,
     ).length === 1 &&
     // Variante coerente: orquestrador Claude exige a advisor claude marcada
     // orchestrator-reserved (reserveClaude); orquestrador codex proíbe a marca.
-    ((orchestratorCli === "claude" &&
-      participation.find((row) => record(row)?.cli === "claude")?.skipped ===
-        "orchestrator-reserved") ||
-      (orchestratorCli === "codex" &&
-        participation.find((row) => record(row)?.cli === "claude")?.skipped !==
-          "orchestrator-reserved")) &&
+    ((orchestratorCli === 'claude' &&
+      participation.find((row) => record(row)?.cli === 'claude')?.skipped ===
+        'orchestrator-reserved') ||
+      (orchestratorCli === 'codex' &&
+        participation.find((row) => record(row)?.cli === 'claude')?.skipped !==
+          'orchestrator-reserved')) &&
     panes.filter(
       (pane) =>
-        pane?.role === "worker" &&
-        pane?.adapterId === "codex" &&
-        pane?.agentRef === "e2e-executor" &&
+        pane?.role === 'worker' &&
+        pane?.adapterId === 'codex' &&
+        pane?.agentRef === 'e2e-executor' &&
         pane?.readOnly === false &&
         pane?.nativeReadOnly === false &&
-        typeof pane?.workerIncarnationId === "string",
+        typeof pane?.workerIncarnationId === 'string',
     ).length === 1 &&
     panes.filter(
       (pane) =>
-        pane?.role === "worker" &&
-        pane?.adapterId === "codex" &&
-        pane?.agentRef === "e2e-reviewer" &&
+        pane?.role === 'worker' &&
+        pane?.adapterId === 'codex' &&
+        pane?.agentRef === 'e2e-reviewer' &&
         pane?.readOnly === true &&
         pane?.nativeReadOnly === false &&
-        typeof pane?.workerIncarnationId === "string",
+        typeof pane?.workerIncarnationId === 'string',
     ).length === 1 &&
     panes.filter(
       (pane) =>
-        pane?.role === "worker" &&
-        pane?.adapterId === "codex" &&
-        pane?.agentRef === "e2e-qa" &&
+        pane?.role === 'worker' &&
+        pane?.adapterId === 'codex' &&
+        pane?.agentRef === 'e2e-qa' &&
         pane?.readOnly === true &&
         pane?.nativeReadOnly === false &&
-        typeof pane?.workerIncarnationId === "string",
+        typeof pane?.workerIncarnationId === 'string',
     ).length === 1 &&
     chainDispatchIsExact &&
     chainHandoffIsExact &&
@@ -1294,8 +1285,8 @@ export function assertRealMissionPassEvidence(raw) {
     exactMissionDriverCompletion &&
     qaDispatch?.completedAt <= completion?.completedAt &&
     exactRepository &&
-    /^[a-f0-9]{40,64}$/u.test(repository?.initialHeadSha ?? "") &&
-    /^[a-f0-9]{40,64}$/u.test(repository?.finalHeadSha ?? "") &&
+    /^[a-f0-9]{40,64}$/u.test(repository?.initialHeadSha ?? '') &&
+    /^[a-f0-9]{40,64}$/u.test(repository?.finalHeadSha ?? '') &&
     repository?.resultSha256 === expectedSha &&
     Number.isInteger(repository?.commitCount) &&
     // Fast-forward (2) or real merge commit (3); exactSingleCommit already
@@ -1310,36 +1301,48 @@ export function assertRealMissionPassEvidence(raw) {
     // É o head integrado; no caminho simples ela é o tokenHash do binding
     // serialized-writer e o vínculo verificável é a consistência com o modo
     // selado do dispatch (a geometria já foi provada acima).
-    (executorReceipt?.kind === "worktree_integrated"
+    (executorReceipt?.kind === 'worktree_integrated'
       ? executorReceipt?.reference === repository?.finalHeadSha
-      : executorReceipt?.kind === "same_checkout_validated" &&
-        executorDispatch?.executionMode === "same_checkout" &&
-        /^[a-f0-9]{64}$/u.test(executorReceipt?.reference ?? "")) &&
-    panes.find((pane) => pane?.agentRef === "e2e-orchestrator")?.sessionId ===
+      : executorReceipt?.kind === 'same_checkout_validated' &&
+        executorDispatch?.executionMode === 'same_checkout' &&
+        /^[a-f0-9]{64}$/u.test(executorReceipt?.reference ?? '')) &&
+    panes.find((pane) => pane?.agentRef === 'e2e-orchestrator')?.sessionId ===
       kickoff?.sessionId &&
-    panes.find((pane) => pane?.agentRef === "e2e-executor")?.sessionId ===
+    panes.find((pane) => pane?.agentRef === 'e2e-executor')?.sessionId ===
       executorDispatch?.sessionId &&
-    panes.find((pane) => pane?.agentRef === "e2e-executor")
+    panes.find((pane) => pane?.agentRef === 'e2e-executor')
       ?.workerIncarnationId === executorDispatch?.workerIncarnationId &&
-    panes.find((pane) => pane?.agentRef === "e2e-reviewer")?.sessionId ===
+    panes.find((pane) => pane?.agentRef === 'e2e-reviewer')?.sessionId ===
       reviewerDispatch?.sessionId &&
-    panes.find((pane) => pane?.agentRef === "e2e-reviewer")
+    panes.find((pane) => pane?.agentRef === 'e2e-reviewer')
       ?.workerIncarnationId === reviewerDispatch?.workerIncarnationId &&
-    panes.find((pane) => pane?.agentRef === "e2e-qa")?.sessionId ===
+    panes.find((pane) => pane?.agentRef === 'e2e-qa')?.sessionId ===
       qaDispatch?.sessionId &&
-    panes.find((pane) => pane?.agentRef === "e2e-qa")
-      ?.workerIncarnationId === qaDispatch?.workerIncarnationId;
+    panes.find((pane) => pane?.agentRef === 'e2e-qa')?.workerIncarnationId ===
+      qaDispatch?.workerIncarnationId;
   if (!valid) {
-    if (process.env.NEXUS_E2E_EVIDENCE_DEBUG === "1") {
-      console.error("[evidence-debug]", JSON.stringify({
-        exactTopLevelEnvelope, exactMission, exactRuntimeAttestation,
-        exactSingleMissionInventory, exactWizardSurfaceEvidence,
-        exactReleaseBinding, exactRepository, exactPhysicalPtySet,
-        exactDurableHandoffSet, exactPlan, exactKickoff,
-        exactMissionDriverCompletion, chainPlanIsExact, chainDispatchIsExact,
-      }));
+    if (process.env.NEXUS_E2E_EVIDENCE_DEBUG === '1') {
+      console.error(
+        '[evidence-debug]',
+        JSON.stringify({
+          exactTopLevelEnvelope,
+          exactMission,
+          exactRuntimeAttestation,
+          exactSingleMissionInventory,
+          exactWizardSurfaceEvidence,
+          exactReleaseBinding,
+          exactRepository,
+          exactPhysicalPtySet,
+          exactDurableHandoffSet,
+          exactPlan,
+          exactKickoff,
+          exactMissionDriverCompletion,
+          chainPlanIsExact,
+          chainDispatchIsExact,
+        }),
+      );
     }
-    throw new Error("real mission evidence is incomplete or not a PASS");
+    throw new Error('real mission evidence is incomplete or not a PASS');
   }
   return evidence;
 }
@@ -1353,13 +1356,13 @@ export function assertRealMissionPassEvidence(raw) {
 export function assertRealMissionReleaseEvidence(raw) {
   const evidence = assertRealMissionPassEvidence(raw);
   if (
-    evidence?.launchSurface !== "product-wizard" ||
-    evidence?.wizardCoverage !== "main-owned-product-sequence" ||
+    evidence?.launchSurface !== 'product-wizard' ||
+    evidence?.wizardCoverage !== 'main-owned-product-sequence' ||
     record(evidence?.wizardReceipt) === null ||
     record(evidence?.missionInventory)?.exactSingleProductMission !== true
   ) {
     throw new Error(
-      "real mission release evidence requires product-wizard physical coverage; private-runner evidence is diagnostic-only",
+      'real mission release evidence requires product-wizard physical coverage; private-runner evidence is diagnostic-only',
     );
   }
   // Release exige participação completa das advisors credenciadas: PTY
@@ -1374,9 +1377,9 @@ export function assertRealMissionReleaseEvidence(raw) {
       const row = record(rawRow);
       if (row === null) return false;
       if (
-        row.skipped === "no-credential" ||
-        row.skipped === "orchestrator-reserved" ||
-        row.skipped === "provider-rerouted"
+        row.skipped === 'no-credential' ||
+        row.skipped === 'orchestrator-reserved' ||
+        row.skipped === 'provider-rerouted'
       ) {
         return (
           row.spawnedAt === null &&
@@ -1393,7 +1396,7 @@ export function assertRealMissionReleaseEvidence(raw) {
     });
   if (!participationComplete) {
     throw new Error(
-      "real mission release evidence requires complete participation of every credentialed advisor CLI",
+      'real mission release evidence requires complete participation of every credentialed advisor CLI',
     );
   }
   return evidence;
@@ -1406,7 +1409,7 @@ export function safeChildExitSummary(result) {
       : 1;
   const phase = REAL_MISSION_CHILD_PHASES.has(result?.phase)
     ? result.phase
-    : "spawned";
+    : 'spawned';
   return { exitCode, phase };
 }
 
@@ -1421,12 +1424,12 @@ function safeRealMissionFailureParts(raw, result) {
   const child = safeChildExitSummary(result);
   const failureCode = REAL_MISSION_FAILURE_CODES.has(failure?.code)
     ? failure.code
-    : "invalid-evidence";
+    : 'invalid-evidence';
   const failureReason = REAL_MISSION_FAILURE_REASONS.has(failure?.reason)
     ? failure.reason
     : null;
   const failureDetail =
-    typeof failure?.detail === "string" && failure.detail.trim().length > 0
+    typeof failure?.detail === 'string' && failure.detail.trim().length > 0
       ? failure.detail.trim().slice(0, 4_000)
       : null;
   const missionStatus = REAL_MISSION_STATUSES.has(snapshot?.missionStatus)
@@ -1453,27 +1456,25 @@ export function safeRealMissionFailureReceipt(
   raw,
   result,
   releaseBinding,
-  launchSurface = "private-runner",
+  launchSurface = 'private-runner',
 ) {
   const { child, failure } = safeRealMissionFailureParts(raw, result);
   const release = record(releaseBinding);
   const artifact = record(release?.artifact);
   return {
     schemaVersion: REAL_MISSION_EVIDENCE_SCHEMA_VERSION,
-    status: "fail",
-    coverageTier: "guided-delivery-core",
-    planOrigin: "production-guided-planner",
-    prevcOrigin: "e2e-fixture",
-    reviewOrigin: "production-physical-worker",
-    qaOrigin: "production-physical-worker",
+    status: 'fail',
+    coverageTier: 'guided-delivery-core',
+    planOrigin: 'production-guided-planner',
+    prevcOrigin: 'e2e-fixture',
+    reviewOrigin: 'production-physical-worker',
+    qaOrigin: 'production-physical-worker',
     launchSurface:
-      launchSurface === "product-wizard"
-        ? "product-wizard"
-        : "private-runner",
-    wizardCoverage: "not-covered",
+      launchSurface === 'product-wizard' ? 'product-wizard' : 'private-runner',
+    wizardCoverage: 'not-covered',
     wizardReceipt: null,
     interaction: {
-      evidenceOrigin: "main-owned-instrumentation",
+      evidenceOrigin: 'main-owned-instrumentation',
       nativeDialogCount: 0,
       missionApprovalDialogCount: 0,
       missionApprovalAcceptedCount: 0,
@@ -1481,18 +1482,18 @@ export function safeRealMissionFailureReceipt(
     },
     release: {
       appVersion: /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(
-        release?.appVersion ?? "",
+        release?.appVersion ?? '',
       )
         ? release.appVersion
         : null,
-      commitSha: /^[a-f0-9]{40}$/u.test(release?.commitSha ?? "")
+      commitSha: /^[a-f0-9]{40}$/u.test(release?.commitSha ?? '')
         ? release.commitSha
         : null,
       artifact: {
-        sha256: /^[a-f0-9]{64}$/u.test(artifact?.sha256 ?? "")
+        sha256: /^[a-f0-9]{64}$/u.test(artifact?.sha256 ?? '')
           ? artifact.sha256
           : null,
-        identity: RELEASE_IDENTITY_PATTERN.test(artifact?.identity ?? "")
+        identity: RELEASE_IDENTITY_PATTERN.test(artifact?.identity ?? '')
           ? artifact.identity
           : null,
       },
@@ -1506,7 +1507,7 @@ export function safeRealMissionFailureSummary(raw, result) {
   const { child, failure } = safeRealMissionFailureParts(raw, result);
   const snapshot = failure.snapshot;
   const detailPart =
-    typeof failure.detail === "string" && failure.detail.length > 0
+    typeof failure.detail === 'string' && failure.detail.length > 0
       ? ` detail=${JSON.stringify(failure.detail.slice(0, 240))}`
       : "";
   return (

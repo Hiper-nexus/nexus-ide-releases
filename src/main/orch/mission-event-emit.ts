@@ -10,6 +10,12 @@ import {
 import { emitMissionIntentEvent } from './mission-intent-events';
 import type { MissionEventAppendInput, MissionEventType } from '../../shared/mission-events';
 import type { BootstrapProgressStep } from '../../shared/mission-intent-projection';
+import {
+  describeMissionDegradation,
+  describeMissionDegradationNetwork,
+  type MissionDegradation,
+  type MissionDegradationPath,
+} from './mission-degradation';
 
 /**
  * Thin production emitter for mission driver / orch lifecycle.
@@ -66,6 +72,117 @@ function boundedIdempotencyKey(key: string): string {
   if (key.length <= MAX_IDEMPOTENCY_KEY_LENGTH) return key;
   const digest = createHash('sha256').update(key).digest('hex').slice(0, 24);
   return `${key.slice(0, MAX_IDEMPOTENCY_KEY_LENGTH - 25)}#${digest}`;
+}
+
+/**
+ * Persist the named lower-tier decision. This is the main-owned restart
+ * authority for a degradation; the mission description remains the operator
+ * surface, never the source of permission to bypass a gate.
+ */
+export function emitMissionDegradation(
+  scope: ProjectExecutionScope,
+  missionId: string,
+  degradation: MissionDegradation,
+  intentVersion?: number,
+): boolean {
+  if (!degradation.path) return false;
+  const reason = describeMissionDegradation(degradation).slice(0, 2_048);
+  return emitMissionEvent(scope, {
+    missionId,
+    runId: `degradation-${missionId}`,
+    type: 'custom',
+    origin: 'main',
+    idempotencyKey: boundedIdempotencyKey(
+      `mission_degraded:${missionId}:${degradation.path}:${intentVersion ?? 0}:${degradation.why}`,
+    ),
+    payload: {
+      kind: 'mission_degraded',
+      path: degradation.path,
+      what: degradation.what.slice(0, 256),
+      reducedTo: degradation.reducedTo.slice(0, 512),
+      why: degradation.why.slice(0, 1_024),
+      description: reason,
+      recoverable: degradation.recoverable,
+      ...(intentVersion === undefined ? {} : { intentVersion }),
+    },
+  });
+}
+
+/**
+ * Record the companion nudge/inactivity network. The event is deliberately
+ * separate from the downgrade so a consumer can distinguish "reduced tier"
+ * from "the supervisor is still responsible for re-engaging it".
+ */
+export function emitMissionDegradationNudge(
+  scope: ProjectExecutionScope,
+  missionId: string,
+  degradation: MissionDegradation,
+  intentVersion?: number,
+): boolean {
+  if (!degradation.path) return false;
+  return emitMissionEvent(scope, {
+    missionId,
+    runId: `degradation-${missionId}`,
+    type: 'custom',
+    origin: 'main',
+    idempotencyKey: boundedIdempotencyKey(
+      `mission_degraded_nudge:${missionId}:${degradation.path}:${intentVersion ?? 0}:${degradation.why}`,
+    ),
+    payload: {
+      kind: 'mission_degraded_nudge',
+      path: degradation.path,
+      network: 'nudge-or-inactivity',
+      detail: describeMissionDegradationNetwork(degradation),
+      ...(intentVersion === undefined ? {} : { intentVersion }),
+    },
+  });
+}
+
+/**
+ * Read the main-owned downgrade after a process restart. If the journal is
+ * unavailable we return false: callers must then retain their physical
+ * fail-closed authority instead of trusting a renderer-editable description.
+ */
+export function hasPersistedMissionDegradation(
+  scope: ProjectExecutionScope,
+  missionId: string,
+  path: MissionDegradationPath,
+  intentVersion?: number,
+): boolean {
+  if (
+    !getFeatureFlagRegistry().isEnabled(FEATURE_FLAG_IDS.missionEventJournal) ||
+    !runtimeManager
+  ) {
+    return false;
+  }
+  try {
+    const journal = new MissionEventJournal(runtimeManager, scope);
+    let afterSequence = 0;
+    for (;;) {
+      const events = journal.replay({
+        missionId,
+        afterSequence,
+        limit: 1_000,
+      });
+      const found = events.some((event) => {
+        if (event.type !== 'custom') return false;
+        const payload = event.payload as Record<string, unknown>;
+        return (
+          payload.kind === 'mission_degraded' &&
+          payload.path === path &&
+          (intentVersion === undefined ||
+            payload.intentVersion === intentVersion)
+        );
+      });
+      if (found) return true;
+      const last = events.at(-1);
+      if (!last || events.length < 1_000) return false;
+      afterSequence = last.sequence;
+    }
+  } catch (error) {
+    console.warn('[mission-events] degradation lookup failed:', error);
+    return false;
+  }
 }
 
 export function emitDriverDecision(

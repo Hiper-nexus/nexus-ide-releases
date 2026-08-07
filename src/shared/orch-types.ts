@@ -352,17 +352,17 @@ export interface MissionRouteTrace {
 }
 
 /** Renderer-editable subset of a Mission. Any subset of fields may be patched. */
-export const missionPatchSchema = z.object({
-  title: z.string().min(1).max(512).optional(),
-  description: z.string().max(65_536).optional(),
-  status: missionStatusSchema.optional(),
-  /** Main-owned rebind (D1 default roster). Not a free-form renderer control. */
-  squadId: z.string().min(1).max(128).optional(),
-  milestones: z.array(missionMilestoneInputSchema).max(256).optional(),
-  intentState: missionIntentStateSchema.optional(),
-  intentContract: missionIntentContractSchema.nullable().optional(),
-  intentVersion: z.number().int().nonnegative().max(1_000_000).optional(),
-}).strict();
+export const missionPatchSchema = z
+  .object({
+    title: z.string().min(1).max(512).optional(),
+    description: z.string().max(65_536).optional(),
+    status: missionStatusSchema.optional(),
+    milestones: z.array(missionMilestoneInputSchema).max(256).optional(),
+    intentState: missionIntentStateSchema.optional(),
+    intentContract: missionIntentContractSchema.nullable().optional(),
+    intentVersion: z.number().int().nonnegative().max(1_000_000).optional(),
+  })
+  .strict();
 export type MissionPatch = z.infer<typeof missionPatchSchema>;
 
 export const handoffStatusSchema = z.enum([

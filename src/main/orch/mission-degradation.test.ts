@@ -93,6 +93,7 @@ describe('GUARDA DE BUILD — bloqueio novo exige tier degradado', () => {
     'guided-mission-planner.ts',
     'mission-kickoff.ts',
     'guided-mission-prevc.ts',
+    'mission-orchestrator-bootstrap.ts',
   ];
 
   it('todo código de bloqueio no caminho da missão está na allowlist', () => {

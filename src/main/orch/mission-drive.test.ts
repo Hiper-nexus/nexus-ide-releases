@@ -24,6 +24,7 @@ function baseRunning(overrides: Partial<DriveState> = {}): DriveState {
     allStepsDone: false,
     workProven: false,
     workDoneUnproven: false,
+    prevcCompletionRequired: false,
     completionVerified: false,
     contextRot: false,
     paneDead: false,
@@ -138,6 +139,31 @@ describe('decideDriveAction', () => {
       lastProgressAt: NOW - 1_000,
     });
     expect(decideDriveAction(state, NOW, CONFIG).kind).toBe('complete');
+  });
+
+  it('não troca PREVC congelado por recibos de dispatch', () => {
+    const state = baseRunning({
+      workProven: true,
+      prevcCompletionRequired: true,
+      lastProgressAt: NOW - 1_000,
+    });
+
+    expect(decideDriveAction(state, NOW, CONFIG)).toEqual({
+      kind: 'wait',
+      reason: 'progress 1s ago',
+    });
+  });
+
+  it('mantém o fechamento por recibos no caminho simples sem PREVC', () => {
+    const state = baseRunning({
+      workProven: true,
+      prevcCompletionRequired: false,
+    });
+
+    expect(decideDriveAction(state, NOW, CONFIG)).toMatchObject({
+      kind: 'complete',
+      reason: 'todos os dispatches concluídos com recibo de integração',
+    });
   });
 
   it('complete prevalece quando o último avanço consumiu exatamente o budget', () => {

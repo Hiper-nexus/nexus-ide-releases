@@ -57,6 +57,15 @@ import {
   type PtyStreamMissionControl,
 } from './pty-stream-mission-control';
 import { ensureGuidedMissionPlanForScope } from './guided-mission-planner';
+import {
+  appendMissionDegradationNote,
+  describeMissionDegradation,
+  type MissionDegradation,
+} from './mission-degradation';
+import {
+  emitMissionDegradation,
+  emitMissionDegradationNudge,
+} from './mission-event-emit';
 
 /**
  * Após o primeiro byte, Claude/Codex ainda podem ficar busy carregando MCP e
@@ -119,8 +128,10 @@ export function missionKickoffFailureReasonFromDescription(
 ): MissionKickoffFailureReason | null {
   const candidate = KICKOFF_FAILURE_MARKER_PATTERN.exec(description)?.[1];
   return candidate &&
-    MISSION_KICKOFF_FAILURE_REASONS.has(candidate as MissionKickoffFailureReason)
-    ? candidate as MissionKickoffFailureReason
+    MISSION_KICKOFF_FAILURE_REASONS.has(
+      candidate as MissionKickoffFailureReason,
+    )
+    ? (candidate as MissionKickoffFailureReason)
     : null;
 }
 
@@ -132,6 +143,8 @@ export type MissionKickoffResult =
       readonly detail: string;
       readonly cta: string;
       readonly retryScheduled?: boolean;
+      readonly degraded?: boolean;
+      readonly degradationPath?: 'kickoff.nudge-retry';
     };
 
 export interface MissionKickoffContinuationEvidence {
@@ -168,14 +181,7 @@ function sameMissionCapabilities(
 export function hasExactMissionKickoffContinuation(
   input: MissionKickoffContinuationEvidence,
 ): boolean {
-  const {
-    scope,
-    mission,
-    expectedSessionId,
-    pane,
-    agent,
-    authority,
-  } = input;
+  const { scope, mission, expectedSessionId, pane, agent, authority } = input;
   const paneId = pane?.paneId;
   const isLive =
     input.sessionState === 'spawning' ||
@@ -183,40 +189,40 @@ export function hasExactMissionKickoffContinuation(
     input.sessionState === 'idle';
   return Boolean(
     mission &&
-      mission.orchestratorSessionId === expectedSessionId &&
-      hasCurrentDispatchAuthority(mission) &&
-      input.hasCurrentKickoffAcceptance &&
-      isLive &&
-      pane &&
-      paneId &&
-      pane.missionId === mission.id &&
-      pane.role === 'orchestrator' &&
-      pane.authoritySeal?.intentVersion === mission.intentVersion &&
-      pane.scope &&
-      sameProjectScope(pane.scope, scope) &&
-      agent &&
-      agent.sessionId === expectedSessionId &&
-      agent.paneId === paneId &&
-      agent.adapterId === pane.adapterId &&
-      agent.requestedModel === pane.model &&
-      agent.accountId === pane.accountId &&
-      agent.effort === pane.effort &&
-      agent.cwd === pane.cwd &&
-      agent.missionId === mission.id &&
-      agent.role === 'orchestrator' &&
-      agent.readOnly === (pane.readOnly === true) &&
-      sameMissionCapabilities(agent.allowedTools, pane.allowedTools) &&
-      sameMissionCapabilities(agent.allowedSkills, pane.allowedSkills) &&
-      sameMissionPaneAuthoritySeal(agent.authoritySeal, pane.authoritySeal) &&
-      sameProjectScope(agent.scope, scope) &&
-      authority &&
-      authority.sessionId === expectedSessionId &&
-      authority.paneId === paneId &&
-      authority.kind === 'cli-agent' &&
-      authority.missionId === mission.id &&
-      authority.role === 'orchestrator' &&
-      authority.scope &&
-      sameProjectScope(authority.scope, scope),
+    mission.orchestratorSessionId === expectedSessionId &&
+    hasCurrentDispatchAuthority(mission) &&
+    input.hasCurrentKickoffAcceptance &&
+    isLive &&
+    pane &&
+    paneId &&
+    pane.missionId === mission.id &&
+    pane.role === 'orchestrator' &&
+    pane.authoritySeal?.intentVersion === mission.intentVersion &&
+    pane.scope &&
+    sameProjectScope(pane.scope, scope) &&
+    agent &&
+    agent.sessionId === expectedSessionId &&
+    agent.paneId === paneId &&
+    agent.adapterId === pane.adapterId &&
+    agent.requestedModel === pane.model &&
+    agent.accountId === pane.accountId &&
+    agent.effort === pane.effort &&
+    agent.cwd === pane.cwd &&
+    agent.missionId === mission.id &&
+    agent.role === 'orchestrator' &&
+    agent.readOnly === (pane.readOnly === true) &&
+    sameMissionCapabilities(agent.allowedTools, pane.allowedTools) &&
+    sameMissionCapabilities(agent.allowedSkills, pane.allowedSkills) &&
+    sameMissionPaneAuthoritySeal(agent.authoritySeal, pane.authoritySeal) &&
+    sameProjectScope(agent.scope, scope) &&
+    authority &&
+    authority.sessionId === expectedSessionId &&
+    authority.paneId === paneId &&
+    authority.kind === 'cli-agent' &&
+    authority.missionId === mission.id &&
+    authority.role === 'orchestrator' &&
+    authority.scope &&
+    sameProjectScope(authority.scope, scope),
   );
 }
 
@@ -257,6 +263,8 @@ export interface MissionKickoffAcceptancePorts {
   readonly isAuthorized: () => boolean;
   /** Must fence the mission again before persisting blocked + CTA. */
   readonly block: (reason: MissionKickoffFailureReason) => Promise<void>;
+  /** Lower tier: leave the mission running and hand recovery to nudge/idle. */
+  readonly degrade?: (reason: MissionKickoffFailureReason) => Promise<void>;
 }
 
 export interface MissionKickoffTiming {
@@ -272,7 +280,9 @@ export interface MissionKickoffTiming {
   readonly physicalTurnConfirmMs?: number;
 }
 
-export function missionKickoffFailureDetail(reason: MissionKickoffFailureReason): string {
+export function missionKickoffFailureDetail(
+  reason: MissionKickoffFailureReason,
+): string {
   switch (reason) {
     case 'boot_timeout':
       return 'O terminal não ficou ocioso a tempo; o kickoff não foi colado.';
@@ -300,8 +310,7 @@ export async function runMissionKickoffAcceptance(
   const prompt = assertSafePtyPrompt(input.prompt);
   const realMission = isCurrentProcessRealMissionE2E();
   const bootIdleWindowMs = timing.bootIdleWindowMs ?? BOOT_IDLE_WINDOW_MS;
-  const bootBirthWindowMs =
-    timing.bootBirthWindowMs ?? BOOT_BIRTH_WINDOW_MS;
+  const bootBirthWindowMs = timing.bootBirthWindowMs ?? BOOT_BIRTH_WINDOW_MS;
   const bracketedPasteWindowMs =
     timing.bracketedPasteWindowMs ?? BRACKETED_PASTE_WINDOW_MS;
   const pasteSettleMs = timing.pasteSettleMs ?? PASTE_SETTLE_MS;
@@ -322,7 +331,8 @@ export async function runMissionKickoffAcceptance(
   let sustainedPhysicalTurn = false;
   let physicalConfirmTimer: ReturnType<typeof setTimeout> | null = null;
   let turnStartBaseline = 0;
-  let idleWaiter: ((outcome: 'idle' | 'timeout' | 'exited') => void) | null = null;
+  let idleWaiter: ((outcome: 'idle' | 'timeout' | 'exited') => void) | null =
+    null;
   let birthWaiter: ((outcome: 'born' | 'timeout' | 'exited') => void) | null =
     null;
   let acceptanceWaiter: ((accepted: boolean) => void) | null = null;
@@ -419,27 +429,30 @@ export async function runMissionKickoffAcceptance(
     birthWaiter = null;
     acceptanceWaiter?.(false);
   });
-  const untapInjectability = ports.onInjectabilityChange?.((sessionId) => {
-    if (sessionId !== input.sessionId || !isInjectableIdle()) return;
-    idleWaiter?.('idle');
-    idleWaiter = null;
-  }) ?? (() => {});
+  const untapInjectability =
+    ports.onInjectabilityChange?.((sessionId) => {
+      if (sessionId !== input.sessionId || !isInjectableIdle()) return;
+      idleWaiter?.('idle');
+      idleWaiter = null;
+    }) ?? (() => {});
   const untapTurnStart = ports.onTurnStart((sessionId, sequence) => {
     if (
       sessionId !== input.sessionId ||
       !submitted ||
       sequence <= turnStartBaseline
-    ) return;
+    )
+      return;
     acceptanceWaiter?.(true);
   });
 
-  const delay = (ms: number) => new Promise<void>((resolve) => {
-    const timer = setTimeout(() => {
-      timers.delete(timer);
-      resolve();
-    }, ms);
-    timers.add(timer);
-  });
+  const delay = (ms: number) =>
+    new Promise<void>((resolve) => {
+      const timer = setTimeout(() => {
+        timers.delete(timer);
+        resolve();
+      }, ms);
+      timers.add(timer);
+    });
   /**
    * Espera o provider emitir o primeiro byte — a saída de "spawning".
    *
@@ -511,15 +524,32 @@ export async function runMissionKickoffAcceptance(
         `turnStart=${ports.getTurnStartSequence()}/${turnStartBaseline} ` +
         `hooks=${ports.getHookChannelDetail?.() ?? 'n/a'}`,
     );
-    // The production block port has its own mission/intent/session fence. That
-    // lets mid-flight authority drift become visible while stale rebinds are a
-    // safe no-op. Initial invalid renderer requests never enter this machine.
-    await ports.block(reason);
+    // The production degrade port has its own mission/intent/session fence.
+    // When it is unavailable (unit/legacy seam), retain the old hard block;
+    // production leaves the mission running and lets nudge/inactivity re-enter.
+    let degraded = false;
+    if (ports.degrade) {
+      try {
+        await ports.degrade(reason);
+        degraded = true;
+      } catch (error) {
+        console.warn('[mission-kickoff] degradation path failed:', error);
+        await ports.block(reason);
+      }
+    } else {
+      await ports.block(reason);
+    }
     return {
       accepted: false,
       reason,
       detail: missionKickoffFailureDetail(reason),
       cta: KICKOFF_CTA,
+      ...(degraded
+        ? {
+            degraded: true,
+            degradationPath: 'kickoff.nudge-retry' as const,
+          }
+        : {}),
     };
   };
 
@@ -561,9 +591,7 @@ export async function runMissionKickoffAcceptance(
       });
     }
 
-    const pasted = ports.write(
-      input.sessionId,
-      `\x1b[200~${prompt}\x1b[201~`,
+    const pasted = ports.write(input.sessionId, `\x1b[200~${prompt}\x1b[201~`,
       { markInputBusy: false },
     );
     if (!pasted) return await fail('write_failed');
@@ -790,24 +818,30 @@ function sameScope(
   left: Readonly<ProjectExecutionScope>,
   right: Readonly<ProjectExecutionScope>,
 ): boolean {
-  return left.version === right.version &&
+  return (
+    left.version === right.version &&
     left.installationId === right.installationId &&
     left.projectId === right.projectId &&
     left.checkoutId === right.checkoutId &&
-    left.rootRealPath === right.rootRealPath;
+    left.rootRealPath === right.rootRealPath
+  );
 }
 
 function runtimeAgentSessionInfo(
   sessionId: string,
 ): OwnedAgentSessionInfo | null {
-  return getAgentSessionInfo(sessionId) ?? getAcpDriverSession(sessionId)?.agent ?? null;
+  return (
+    getAgentSessionInfo(sessionId) ??
+    getAcpDriverSession(sessionId)?.agent ??
+    null
+  );
 }
 
-function runtimeSessionState(
-  sessionId: string,
-): PaneSessionState | null {
-  return getSessionState(sessionId) ??
-    (getAcpDriverSession(sessionId) ? 'idle' : null);
+function runtimeSessionState(sessionId: string): PaneSessionState | null {
+  return (
+    getSessionState(sessionId) ??
+    (getAcpDriverSession(sessionId) ? 'idle' : null)
+  );
 }
 
 function requireKickoffAuthority(
@@ -837,24 +871,36 @@ function requireKickoffAuthority(
     (getAcpDriverSession(input.sessionId) !== null &&
       paneAuthority?.owner === null);
   if (
-    !agent || agent.role !== 'orchestrator' || agent.missionId !== mission.id ||
+    !agent ||
+    agent.role !== 'orchestrator' ||
+    agent.missionId !== mission.id ||
     !sameScope(agent.scope, scope) ||
-    !paneAuthority || paneAuthority.kind !== 'cli-agent' ||
+    !paneAuthority ||
+    paneAuthority.kind !== 'cli-agent' ||
     paneAuthority.sessionId !== input.sessionId ||
     !ownerMatches ||
-    paneAuthority.role !== 'orchestrator' || paneAuthority.missionId !== mission.id ||
-    !paneAuthority.scope || !sameScope(paneAuthority.scope, scope) ||
-    !gate || gate.role !== 'orchestrator' || gate.missionId !== mission.id ||
+    paneAuthority.role !== 'orchestrator' ||
+    paneAuthority.missionId !== mission.id ||
+    !paneAuthority.scope ||
+    !sameScope(paneAuthority.scope, scope) ||
+    !gate ||
+    gate.role !== 'orchestrator' ||
+    gate.missionId !== mission.id ||
     !sameScope(gate.scope, scope)
   ) {
-    throw new Error('kickoff rejeitado por divergência de pane/sessão/scope/role');
+    throw new Error(
+      'kickoff rejeitado por divergência de pane/sessão/scope/role',
+    );
   }
   return { scope, stores, mission };
 }
 
 const flights = new Map<
   string,
-  { readonly promptHash: string; readonly promise: Promise<MissionKickoffResult> }
+  {
+    readonly promptHash: string;
+    readonly promise: Promise<MissionKickoffResult>;
+  }
 >();
 
 /**
@@ -894,8 +940,9 @@ export function submitMissionKickoffFromRenderer(
     throw new Error('kickoff canônico exige contrato atual e squad salvo');
   }
   const plan = ensureGuidedMissionPlanForScope(scope, initial.mission.id);
-  const standardTopology: StandardMissionTopology =
-    plan.applicable ? plan.topology : 'delivery';
+  const standardTopology: StandardMissionTopology = plan.applicable
+    ? plan.topology
+    : 'delivery';
   const acpSession = getAcpDriverSession(request.sessionId);
   const canonicalPrompt = buildCanonicalMissionKickoffPrompt(
     initial.mission,
@@ -956,6 +1003,17 @@ function hasScheduledKickoffRecovery(
       stores.missionPanes
         .list(missionId)
         .find((candidate) => candidate.role === 'orchestrator') ?? null;
+    if (
+      mission?.status === 'running' &&
+      mission.orchestratorSessionId === sessionId &&
+      !stores.missions.hasCurrentKickoffAcceptance(missionId) &&
+      pane?.role === 'orchestrator'
+    ) {
+      // The recovery coordinator already owns this running/no-receipt edge.
+      // Returning true makes the lower tier explicit to the caller without
+      // inventing a kickoff acceptance receipt.
+      return true;
+    }
     return hasExactMissionKickoffContinuation({
       scope,
       mission,
@@ -973,6 +1031,40 @@ function hasScheduledKickoffRecovery(
   }
 }
 
+function surfaceKickoffDegradation(
+  scope: Readonly<ProjectExecutionScope>,
+  stores: ReturnType<typeof getProjectDomainStores>,
+  missionId: string,
+  sessionId: string,
+  intentVersion: number,
+  reason: MissionKickoffFailureReason,
+): void {
+  const current = stores.missions.get(missionId);
+  if (
+    !current ||
+    current.status !== 'running' ||
+    !hasCurrentDispatchAuthority(current) ||
+    current.orchestratorSessionId !== sessionId ||
+    (current.intentVersion ?? 0) !== intentVersion
+  )
+    return;
+  const detail = missionKickoffFailureDetail(reason);
+  const degradation: MissionDegradation = {
+    what: 'aceite do kickoff',
+    reducedTo: 'reentrada por nudge/inatividade, sem bloquear a missão',
+    why: detail,
+    recoverable: true,
+    path: 'kickoff.nudge-retry',
+  };
+  const description = appendMissionDegradationNote(
+    current.description ?? '',
+    describeMissionDegradation(degradation),
+  );
+  stores.missions.update(missionId, { description });
+  emitMissionDegradation(scope, missionId, degradation, intentVersion);
+  emitMissionDegradationNudge(scope, missionId, degradation, intentVersion);
+}
+
 /**
  * ACP has a structured turn boundary, so kickoff acceptance is the moment the
  * `session/prompt` request is accepted and the typed turn_started frame is
@@ -984,17 +1076,35 @@ async function runAcpMissionKickoffAcceptance(
   ports: {
     readonly isAuthorized: () => boolean;
     readonly block: (reason: MissionKickoffFailureReason) => Promise<void>;
+    readonly degrade?: (reason: MissionKickoffFailureReason) => Promise<void>;
   },
 ): Promise<MissionKickoffResult> {
   const fail = async (
     reason: MissionKickoffFailureReason,
   ): Promise<MissionKickoffResult> => {
-    await ports.block(reason);
+    let degraded = false;
+    if (ports.degrade) {
+      try {
+        await ports.degrade(reason);
+        degraded = true;
+      } catch (error) {
+        console.warn('[mission-kickoff] ACP degradation path failed:', error);
+        await ports.block(reason);
+      }
+    } else {
+      await ports.block(reason);
+    }
     return {
       accepted: false,
       reason,
       detail: missionKickoffFailureDetail(reason),
       cta: KICKOFF_CTA,
+      ...(degraded
+        ? {
+            degraded: true,
+            degradationPath: 'kickoff.nudge-retry' as const,
+          }
+        : {}),
     };
   };
   if (!ports.isAuthorized()) return fail('authority_lost');
@@ -1079,42 +1189,55 @@ function submitMissionKickoffWithAuthority(
             const note =
               `${KICKOFF_BLOCK_MARKER}\n${missionKickoffFailureMarker(reason)}\n` +
               `## Kickoff não aceito\n${detail} ` +
-              'O Nexus tentará novamente automaticamente; nenhuma nova aprovação ' +
-              'é necessária enquanto este contrato continuar vigente.';
-            const description = current.description.includes(KICKOFF_BLOCK_MARKER)
-              ? current.description
-              : [current.description.trim(), note]
-                  .filter(Boolean)
-                  .join('\n\n')
-                  .slice(0, 65_536);
-            initial.stores.missions.update(input.missionId, {
-              status: 'blocked',
-              intentState: 'blocked_technical',
-              description,
-            });
+                'O Nexus tentará novamente automaticamente; nenhuma nova aprovação ' +
+                'é necessária enquanto este contrato continuar vigente.';
+              const description = current.description.includes(
+                KICKOFF_BLOCK_MARKER,
+              )
+                ? current.description
+                : [current.description.trim(), note]
+                    .filter(Boolean)
+                    .join('\n\n')
+                    .slice(0, 65_536);
+              initial.stores.missions.update(input.missionId, {
+                status: 'blocked',
+                intentState: 'blocked_technical',
+                description,
+              });
+            },
+            degrade: async (reason) => {
+              surfaceKickoffDegradation(
+                scope,
+                initial.stores,
+                input.missionId,
+                input.sessionId,
+                intentVersion,
+                reason,
+              );
+            },
           },
-        },
-      )
-    : runMissionKickoffAcceptance(
-    { sessionId: input.sessionId, prompt: input.prompt },
-    {
-      getState: getSessionState,
-      write: orchWriteSession,
-      onState: tapSessionState,
-      onData: tapSessionData,
-      onExit: tapSessionExit,
-      isInjectableIdle: () =>
-        isSessionInjectableIdle(input.sessionId) &&
-        !cliPromptAutoResponder.shouldDeferInjection(input.sessionId),
-      onInjectabilityChange: (tap) => tapAgentSemanticStatus((entry) => {
-        tap(entry.sessionId);
-      }),
-      getTurnStartSequence: () =>
-        getAgentTurnStartSequence(input.sessionId),
-      getHookChannelDetail: () => {
-        const entry = getAgentSemanticStatusBySession(input.sessionId);
-        return entry
-          ? `canal-vivo(${entry.status})`
+        )
+      : runMissionKickoffAcceptance(
+          { sessionId: input.sessionId, prompt: input.prompt },
+          {
+            getState: getSessionState,
+            write: orchWriteSession,
+            onState: tapSessionState,
+            onData: tapSessionData,
+            onExit: tapSessionExit,
+            isInjectableIdle: () =>
+              isSessionInjectableIdle(input.sessionId) &&
+              !cliPromptAutoResponder.shouldDeferInjection(input.sessionId),
+            onInjectabilityChange: (tap) =>
+              tapAgentSemanticStatus((entry) => {
+                tap(entry.sessionId);
+              }),
+            getTurnStartSequence: () =>
+              getAgentTurnStartSequence(input.sessionId),
+            getHookChannelDetail: () => {
+              const entry = getAgentSemanticStatusBySession(input.sessionId);
+              return entry
+                ? `canal-vivo(${entry.status})`
           : 'nenhum-evento-recebido';
       },
       onTurnStart: (tap) => tapAgentTurnStart((entry) => {
@@ -1137,51 +1260,66 @@ function submitMissionKickoffWithAuthority(
         const note =
           `${KICKOFF_BLOCK_MARKER}\n${missionKickoffFailureMarker(reason)}\n` +
           `## Kickoff não aceito\n${detail} ` +
-          'O Nexus tentará novamente automaticamente; nenhuma nova aprovação ' +
-          'é necessária enquanto este contrato continuar vigente.';
-        const description = current.description.includes(KICKOFF_BLOCK_MARKER)
-          ? current.description
-          : [current.description.trim(), note]
-              .filter(Boolean)
-              .join('\n\n')
-              .slice(0, 65_536);
-        initial.stores.missions.update(input.missionId, {
-          status: 'blocked',
-          intentState: 'blocked_technical',
-          description,
-        });
-      },
-    },
-  )).then((result) => {
-    if (!result.accepted) {
-      return {
-        ...result,
-        retryScheduled: hasScheduledKickoffRecovery(
-          scope,
-          input.missionId,
-          input.sessionId,
-          initial.stores,
-        ),
-      };
-    }
-    // The observed edge is not scheduler authority until the exact
-    // mission/revision/session receipt commits. Revalidate after the async PTY
-    // window so a concurrent rebind cannot inherit a stale successful edge.
-    const current = requireKickoffAuthority(scope, input, expectedOwner);
-    if ((current.mission.intentVersion ?? 0) !== intentVersion) {
-      throw new Error('autoridade do kickoff mudou antes do aceite durável');
-    }
-    current.stores.missions.recordKickoffAcceptance({
-      missionId: input.missionId,
-      intentVersion,
-      orchestratorSessionId: input.sessionId,
-      promptHash,
+                'O Nexus tentará novamente automaticamente; nenhuma nova aprovação ' +
+                'é necessária enquanto este contrato continuar vigente.';
+              const description = current.description.includes(
+                KICKOFF_BLOCK_MARKER,
+              )
+                ? current.description
+                : [current.description.trim(), note]
+                    .filter(Boolean)
+                    .join('\n\n')
+                    .slice(0, 65_536);
+              initial.stores.missions.update(input.missionId, {
+                status: 'blocked',
+                intentState: 'blocked_technical',
+                description,
+              });
+            },
+            degrade: async (reason) => {
+              surfaceKickoffDegradation(
+                scope,
+                initial.stores,
+                input.missionId,
+                input.sessionId,
+                intentVersion,
+                reason,
+              );
+            },
+          },
+        )
+  )
+    .then((result) => {
+      if (!result.accepted) {
+        return {
+          ...result,
+          retryScheduled: hasScheduledKickoffRecovery(
+            scope,
+            input.missionId,
+            input.sessionId,
+            initial.stores,
+          ),
+        };
+      }
+      // The observed edge is not scheduler authority until the exact
+      // mission/revision/session receipt commits. Revalidate after the async PTY
+      // window so a concurrent rebind cannot inherit a stale successful edge.
+      const current = requireKickoffAuthority(scope, input, expectedOwner);
+      if ((current.mission.intentVersion ?? 0) !== intentVersion) {
+        throw new Error('autoridade do kickoff mudou antes do aceite durável');
+      }
+      current.stores.missions.recordKickoffAcceptance({
+        missionId: input.missionId,
+        intentVersion,
+        orchestratorSessionId: input.sessionId,
+        promptHash,
+      });
+      return result;
+    })
+    .finally(() => {
+      const current = flights.get(flightKey);
+      if (current?.promise === promise) flights.delete(flightKey);
     });
-    return result;
-  }).finally(() => {
-    const current = flights.get(flightKey);
-    if (current?.promise === promise) flights.delete(flightKey);
-  });
   flights.set(flightKey, { promptHash, promise });
   return promise;
 }

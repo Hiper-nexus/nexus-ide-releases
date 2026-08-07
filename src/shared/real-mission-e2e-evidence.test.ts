@@ -618,6 +618,26 @@ describe("real mission E2E v9 advisor participation", () => {
     );
   });
 
+  it("accepts a named domain block as a closed failure reason", () => {
+    const evidence = validPassEvidence();
+    evidence.status = "fail";
+    evidence.failure = {
+      code: "mission-blocked",
+      reason: "dispatch-failed",
+      cta: REAL_MISSION_E2E_CTA,
+      snapshot: {
+        missionStatus: "blocked",
+        paneCount: 1,
+        dispatchCount: 0,
+        handoffCount: 0,
+      },
+    };
+
+    expect(parseRealMissionE2EEvidence(evidence).failure?.reason).toBe(
+      "dispatch-failed",
+    );
+  });
+
   it("closes product-wizard FAIL evidence without the causal wizard receipt", () => {
     // O wizard nunca executou (timeout/setup): o FAIL fecha com receipt nulo
     // em vez de derrubar o processo com ZodError no attester.

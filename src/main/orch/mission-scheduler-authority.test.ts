@@ -185,7 +185,51 @@ describe("mission scheduler durable authority", () => {
     expect(completeLegacy).not.toHaveBeenCalled();
   });
 
-  it("completes Wave Pack via legacy when every dispatch carries the pack marker", async () => {
+  it('uses the verified-plan completion path after a persisted PREVC downgrade', async () => {
+    const intent = compileIntentContract({
+      goal: 'corrija o login OAuth com cuidado',
+      acceptanceCriteria: ['Auth validado'],
+      intentVersion: 7,
+      source: 'typed',
+      lane: 'standard',
+    });
+    const currentMission = mission({
+      squadId: 'nexus-story-impl',
+      intentContract: {
+        ...intent,
+        risk: 'sensitive',
+        approvedAt: 1,
+        dispatchedAt: 2,
+        promotedPlan: {} as never,
+      },
+      intentState: 'executing',
+    });
+    const runGuidedBridge = vi.fn(async () => undefined);
+    const completeLegacy = vi.fn();
+
+    await expect(
+      reconcileMissionCompletionAfterSchedulerTick({
+        mission: currentMission,
+        prevcDegraded: true,
+        dispatches: [
+          dispatch({
+            executionMode: 'isolated_worktree',
+            ownership: {
+              files: ['src'],
+              symbols: [],
+              domains: ['guided-implementation'],
+            },
+          }),
+        ],
+        runGuidedBridge,
+        completeLegacy,
+      }),
+    ).resolves.toBe('legacy');
+    expect(runGuidedBridge).not.toHaveBeenCalled();
+    expect(completeLegacy).toHaveBeenCalledWith(7);
+  });
+
+  it('completes Wave Pack via legacy when every dispatch carries the pack marker', async () => {
     const intent = compileIntentContract({
       goal: "implementar as stories do plano promovido",
       acceptanceCriteria: ["Stories entregues"],

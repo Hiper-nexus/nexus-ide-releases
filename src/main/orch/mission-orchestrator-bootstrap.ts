@@ -22,6 +22,7 @@ import {
 } from "../../shared/mission-intent";
 import type {
   Mission,
+  MissionIntentContract,
   MissionOrchestratorBootstrapResult,
   MissionOrchestratorPane,
   MissionPaneAuthoritySeal,
@@ -110,6 +111,16 @@ import {
   stripRecoveryAttemptBlock,
   TERMINAL_OPERATIONAL_FAILURE_MARKER,
 } from "../../shared/mission-recovery-policy";
+import {
+  appendMissionDegradationNote,
+  describeMissionDegradation,
+  LEGITIMATE_MISSION_BLOCKS,
+  type MissionDegradation,
+} from './mission-degradation';
+import {
+  emitMissionDegradation,
+  emitMissionDegradationNudge,
+} from './mission-event-emit';
 import type {
   TaskDispatchRecord,
   TaskDispatchState,
@@ -246,6 +257,14 @@ export interface MissionOrchestratorBootstrapDeps {
     scope: ProjectExecutionScope,
     missionId: string,
     patch: MissionPatch,
+  ): Mission | null;
+  /** Main-only atomic CAS for squad identity and its approved revision hash. */
+  rebindMissionSquadAuthority(
+    scope: ProjectExecutionScope,
+    missionId: string,
+    expected: Mission,
+    squadId: string,
+    contract: MissionIntentContract,
   ): Mission | null;
   setOrchestratorSession(
     scope: ProjectExecutionScope,
@@ -794,10 +813,32 @@ function failureDetail(reason: string, cause?: unknown): string {
   const disposition = classifyOperationalFailure(cause ?? detail);
   const detailDisposition = classifyOperationalFailure(detail);
   return (
-    disposition === "terminal" || detailDisposition === "terminal"
+    disposition === 'terminal' || detailDisposition === 'terminal'
       ? terminalOperationalFailureReason(detail)
       : detail
   ).slice(0, 4_096);
+}
+
+function namedMissionFailureCode(error: unknown): string | null {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    message.match(/\b([a-z][a-z_]{6,50}):/i)?.[1] ??
+    message.match(
+      /\b((?:guided_plan|guided_prevc)_[a-z_]+|squad_runtime_unavailable)\b/i,
+    )?.[1] ??
+    null
+  );
+}
+
+/** Capacity/ceremony gaps keep a live bootstrap; corrupt authority does not. */
+function isDegradableBootstrapFailure(error: unknown): boolean {
+  const code = namedMissionFailureCode(error);
+  if (!code || LEGITIMATE_MISSION_BLOCKS.has(code)) return false;
+  return (
+    code.startsWith('guided_plan_') ||
+    code.startsWith('guided_prevc_') ||
+    code === 'squad_runtime_unavailable'
+  );
 }
 
 const productionDeps: MissionOrchestratorBootstrapDeps = {
@@ -805,6 +846,19 @@ const productionDeps: MissionOrchestratorBootstrapDeps = {
     getProjectDomainStores(scope).missions.get(missionId),
   updateMission: (scope, missionId, patch) =>
     getProjectDomainStores(scope).missions.update(missionId, patch),
+  rebindMissionSquadAuthority: (
+    scope,
+    missionId,
+    expected,
+    squadId,
+    contract,
+  ) =>
+    getProjectDomainStores(scope).missions.rebindMissionSquadAuthority(
+      missionId,
+      expected,
+      squadId,
+      contract,
+    ),
   setOrchestratorSession: (scope, missionId, sessionId) =>
     getProjectDomainStores(scope).missions.setOrchestratorSession(
       missionId,
@@ -859,12 +913,12 @@ const productionDeps: MissionOrchestratorBootstrapDeps = {
   submitKickoff: (scope, input) => submitMissionKickoffFromMain(scope, input),
   emitDispatched: (mission) => {
     emitMissionIntentEvent({
-      name: "task_dispatched",
+      name: 'task_dispatched',
       missionId: mission.id,
       squadId: mission.squadId,
       intentState: mission.intentState,
       intentVersion: mission.intentVersion,
-      reason: "main_orchestrator_bootstrap",
+      reason: 'main_orchestrator_bootstrap',
     });
   },
   emitProgress: (scope, missionId, step, detail) =>
@@ -873,7 +927,7 @@ const productionDeps: MissionOrchestratorBootstrapDeps = {
   snapshotAttachmentPaths: (paths) => snapshotDroppedAttachmentPaths(paths),
   ensurePlanGitBaseline: (scope, missionId) => {
     const mission = getProjectDomainStores(scope).missions.get(missionId);
-    if (mission?.intentContract?.lane === "plan") {
+    if (mission?.intentContract?.lane === 'plan') {
       ensurePlanLaneGitBaseline(scope);
     } else if (mission?.intentContract?.promotedPlan) {
       commitPromotedPlanToGit(
@@ -890,7 +944,7 @@ const productionDeps: MissionOrchestratorBootstrapDeps = {
   ensureMissionPrevc: (scope, missionId) =>
     ensureGuidedMissionPrevcForScope(scope, missionId),
   missionDriverMode: () =>
-    getOrchSettings().missionDriverActiveMode === true ? "active" : "shadow",
+    getOrchSettings().missionDriverActiveMode === true ? 'active' : 'shadow',
   warnDriverInactive: (scope, missionId) =>
     warnGuidedDeliveryDriverInactive(scope, missionId),
 };
@@ -925,9 +979,9 @@ export class MissionOrchestratorBootstrapService {
         this.#failure(
           scope,
           missionId,
-          "materialization_failed",
+          'materialization_failed',
           failureDetail(
-            "O bootstrap main-owned falhou inesperadamente.",
+            'O bootstrap main-owned falhou inesperadamente.',
             error,
           ),
         ),
@@ -945,17 +999,17 @@ export class MissionOrchestratorBootstrapService {
     scope: ProjectExecutionScope,
     missionId: string,
   ): Promise<MissionOrchestratorBootstrapResult> {
-    const initial = this.#deps.getMission(scope, missionId);
+    let initial = this.#deps.getMission(scope, missionId);
     if (
       !initial ||
-      initial.status !== "running" ||
+      initial.status !== 'running' ||
       !hasCurrentDispatchAuthority(initial)
     ) {
       return this.#failure(
         scope,
         missionId,
-        "not_authorized",
-        "O bootstrap exige uma missão running com intenção aprovada.",
+        'not_authorized',
+        'O bootstrap exige uma missão running com intenção aprovada.',
       );
     }
     this.#authorizedSnapshots.set(
@@ -966,12 +1020,12 @@ export class MissionOrchestratorBootstrapService {
       bootstrapFlightKey(scope, missionId),
       bootstrapMissionApprovalSnapshot(initial),
     );
-    this.#emitProgress(scope, missionId, "authority_checked");
+    this.#emitProgress(scope, missionId, 'authority_checked');
     // Worker authority never depends on PREVC preparation. Main prepares only
     // project context in parallel; freeze and review happen after handoff at
     // the promotion boundary so their seal cannot invalidate live workers.
     const guidedPrevcFrozen = false;
-    let standardTopology: StandardMissionTopology = "delivery";
+    let standardTopology: StandardMissionTopology = 'delivery';
     // The sync squad-readiness gate inside ensureMissionPlan reads only the
     // warm subscription cache; warm the keychain-only providers (AGY) first
     // so a live operator session is not read as login-needed. Recovery and
@@ -979,7 +1033,7 @@ export class MissionOrchestratorBootstrapService {
     // IPC-level warm alone is not sufficient here. Conditional await: when no
     // warm is configured the bootstrap must keep its synchronous
     // run-up-to-spawn so concurrent same-tick retries singleflight.
-    this.#emitProgress(scope, missionId, "subscription_auth");
+    this.#emitProgress(scope, missionId, 'subscription_auth');
     const subscriptionAuthWarm = this.#deps.warmSubscriptionAuth?.();
     if (subscriptionAuthWarm) {
       try {
@@ -988,7 +1042,7 @@ export class MissionOrchestratorBootstrapService {
           SUBSCRIPTION_AUTH_WARM_TIMEOUT_MS,
           () =>
             new Error(
-              "warm de autenticação da assinatura excedeu 10s; seguindo sem warm",
+              'warm de autenticação da assinatura excedeu 10s; seguindo sem warm',
             ),
         );
       } catch (warmError) {
@@ -1006,7 +1060,7 @@ export class MissionOrchestratorBootstrapService {
     );
     try {
       const requiresPrePlanGitBaseline =
-        initial.intentContract?.lane === "plan" ||
+        initial.intentContract?.lane === 'plan' ||
         Boolean(initial.intentContract?.promotedPlan);
       if (requiresPrePlanGitBaseline) {
         this.#deps.ensurePlanGitBaseline?.(scope, missionId);
@@ -1014,50 +1068,67 @@ export class MissionOrchestratorBootstrapService {
       const planResult = this.#deps.ensureMissionPlan?.(scope, missionId);
       if (
         planResult &&
-        typeof planResult === "object" &&
-        "applicable" in planResult &&
+        typeof planResult === 'object' &&
+        'applicable' in planResult &&
         planResult.applicable === true &&
-        "topology" in planResult &&
-        (planResult.topology === "team-read-only-fanout" ||
-          planResult.topology === "wave-pack")
+        'topology' in planResult &&
+        (planResult.topology === 'team-read-only-fanout' ||
+          planResult.topology === 'wave-pack')
       ) {
         standardTopology = planResult.topology;
       }
       if (
         !requiresPrePlanGitBaseline &&
-        standardTopology !== "team-read-only-fanout" &&
-        standardTopology !== "wave-pack"
+        standardTopology !== 'team-read-only-fanout' &&
+        standardTopology !== 'wave-pack'
       ) {
         this.#deps.ensurePlanGitBaseline?.(scope, missionId);
       }
     } catch (error) {
-      // Autopilot libre: plan seal is guidance, not a brake before Maestro.
-      // Hardened keeps fail-closed so guided delivery never starts half-sealed.
-      if (!autopilot) {
-        return this.#failure(
-          scope,
-          missionId,
-          "preflight_failed",
-          failureDetail(
-            "O plano main-owned não pôde ser selado antes de iniciar qualquer provider.",
-            error,
-          ),
-        );
+      const detail = failureDetail(
+        'O plano main-owned não pôde ser selado antes de iniciar qualquer provider.',
+        error,
+      );
+      if (!isDegradableBootstrapFailure(error) && !autopilot) {
+        return this.#failure(scope, missionId, 'preflight_failed', detail);
+      }
+      if (isDegradableBootstrapFailure(error)) {
+        this.#surfaceDegradation(scope, missionId, {
+          what: 'preflight do plano',
+          reducedTo: 'bootstrap reconciliável com escritor único',
+          why: detail,
+          recoverable: true,
+          path: 'bootstrap.reconcile',
+        });
       }
       console.warn(
-        `[mission-bootstrap] Autopilot: plan seal skipped for ${missionId}:`,
+        `[mission-bootstrap] plan seal degraded for ${missionId}:`,
         error,
       );
     }
-    this.#emitProgress(scope, missionId, "plan_baseline");
-    const guidedPrevcRequired =
-      missionRequiresGuidedPrevc(initial, standardTopology);
+    const replanned = this.#deps.getMission(scope, missionId);
+    if (replanned) {
+      // Planner D1 may re-pin a live fallback squad or append a degradation
+      // note. Continue with that exact store snapshot, not the pre-plan view.
+      initial = replanned;
+      const key = bootstrapFlightKey(scope, missionId);
+      this.#authorizedSnapshots.set(key, bootstrapMissionSnapshot(initial));
+      this.#authorizedApprovalSnapshots.set(
+        key,
+        bootstrapMissionApprovalSnapshot(initial),
+      );
+    }
+    this.#emitProgress(scope, missionId, 'plan_baseline');
+    const guidedPrevcRequired = missionRequiresGuidedPrevc(
+      initial,
+      standardTopology,
+    );
     // Guided delivery completion is driver-owned: with the driver disabled the
     // mission executes and then silently never flips to done. Surface that at
     // mission start instead of letting it die quietly at the finish line.
     if (
       guidedPrevcRequired &&
-      (this.#deps.missionDriverMode?.() ?? "active") !== "active"
+      (this.#deps.missionDriverMode?.() ?? 'active') !== 'active'
     ) {
       this.#deps.warnDriverInactive?.(scope, missionId);
     }
@@ -1068,52 +1139,70 @@ export class MissionOrchestratorBootstrapService {
       return this.#failure(
         scope,
         missionId,
-        "squad_missing",
-        "O squad salvo ou seu orquestrador não está disponível.",
+        'squad_missing',
+        'O squad salvo ou seu orquestrador não está disponível.',
         undefined,
-        "user",
+        'user',
       );
     }
-    // Hardened: in-flight missions never bind to a live builtin/catalog id
-    // that syncBuiltins can rewrite — reapprove to pin mission-runtime-*.
-    // Autopilot libre: catalog squads are allowed; drift is logged, not a brake.
+    // D1: a mutable/catalog squad is a lower-capacity authority snapshot, not
+    // a reason to wall a running mission. The planner already re-pins the
+    // current roster; the bootstrap records the reduction and the recovery
+    // supervisor will re-enter if the live identity disappears.
     if (!isMissionRuntimeSquadId(squad.id)) {
-      if (!autopilot) {
-        return this.#failure(
-          scope,
-          missionId,
-          "preflight_failed",
-          "guided_plan_squad_stale: a missão ainda aponta para um squad de " +
-            "catálogo mutável. Reaprove para selar um mission-runtime imutável " +
-            "antes de iniciar qualquer provider.",
-          undefined,
-          "user",
-        );
-      }
+      this.#surfaceDegradation(scope, missionId, {
+        what: 'identidade do squad',
+        reducedTo: 'roster vivo do catálogo, reconciliado por inatividade',
+        why: 'o squad aprovado ainda é mutável e não possui snapshot mission-runtime',
+        recoverable: true,
+        path: 'bootstrap.reconcile',
+      });
       console.warn(
-        `[mission-bootstrap] Autopilot: squad ${squad.id} is catalog-live; ` +
-          `continuing without mission-runtime pin for ${missionId}`,
+        `[mission-bootstrap] squad ${squad.id} is catalog-live; ` +
+          `continuing with D1 reconciliation for ${missionId}`,
       );
     }
-    const squadSnapshot = snapshotSquadAuthority(squad);
+    let squadSnapshot = snapshotSquadAuthority(squad);
     if (initial.intentContract?.squadRevisionHash !== squadSnapshot.hash) {
-      if (!autopilot) {
-        return this.#failure(
-          scope,
-          missionId,
-          "preflight_failed",
-          "guided_plan_squad_stale: o squad mudou depois da aprovação. Revise a " +
-            "intenção e aprove novamente antes de iniciar qualquer provider.",
-          undefined,
-          "user",
-        );
-      }
+      this.#surfaceDegradation(scope, missionId, {
+        what: 'revisão do squad',
+        reducedTo: 'roster vivo atual',
+        why: 'o squad mudou depois da aprovação',
+        recoverable: true,
+        path: 'bootstrap.reconcile',
+      });
       console.warn(
-        `[mission-bootstrap] Autopilot: squadRevisionHash drift for ` +
+        `[mission-bootstrap] squadRevisionHash drift for ` +
           `${missionId}; continuing with live squad`,
       );
+      // Re-pin the live roster into the main-owned mission contract before
+      // computing the pane seal. The downgrade changes capacity, not the
+      // operator's intent; leaving the old hash here would turn the same
+      // recoverable catalog churn into a materialization wall.
+      if (initial.intentContract) {
+        const rebound = this.#deps.rebindMissionSquadAuthority(
+          scope,
+          missionId,
+          initial,
+          squad.id,
+          {
+            ...initial.intentContract,
+            squadRevisionHash: squadSnapshot.hash,
+          },
+        );
+        if (rebound) {
+          initial = rebound;
+          squadSnapshot = snapshotSquadAuthority(squad);
+          const key = bootstrapFlightKey(scope, missionId);
+          this.#authorizedSnapshots.set(key, bootstrapMissionSnapshot(initial));
+          this.#authorizedApprovalSnapshots.set(
+            key,
+            bootstrapMissionApprovalSnapshot(initial),
+          );
+        }
+      }
     }
-    this.#emitProgress(scope, missionId, "squad_sealed");
+    this.#emitProgress(scope, missionId, 'squad_sealed');
     // Only production call that persists mission_contracts for a guided
     // mission. It MUST fire before the authority seal is computed below:
     // freezing rotates the PREVC seal (contextRevision/contractHash), and a
@@ -1130,7 +1219,7 @@ export class MissionOrchestratorBootstrapService {
     // (docs/design/orch-fast-path.md). Only Guided-required missions pay this.
     // Do not emit prevc_freeze when skipping — vacancy UI would lie.
     if (guidedPrevcRequired) {
-      this.#emitProgress(scope, missionId, "prevc_freeze");
+      this.#emitProgress(scope, missionId, 'prevc_freeze');
       try {
         void Promise.resolve(
           this.#deps.ensureMissionPrevc?.(scope, missionId),
@@ -1177,62 +1266,61 @@ export class MissionOrchestratorBootstrapService {
       return this.#failure(
         scope,
         missionId,
-        "preflight_failed",
-        failureDetail("O preflight do runtime do orquestrador falhou.", error),
+        'preflight_failed',
+        failureDetail('O preflight do runtime do orquestrador falhou.', error),
         undefined,
-        "user",
+        'user',
       );
     }
     if (!approvedRuntime) {
-      if (!autopilot) {
-        return this.#failure(
-          scope,
-          missionId,
-          "preflight_failed",
-          "O contrato aprovado não contém o snapshot do runtime inicial. " +
-            "Revise a intenção e reaprove antes de iniciar qualquer provider.",
-          undefined,
-          "user",
-        );
-      }
-      // Libre: synthesize from live squad so the first pane is not blocked by
-      // an incomplete intent snapshot from an older approval path.
+      // D1: older approvals without a runtime snapshot use the exact live
+      // runtime resolved by Main, and the downgrade remains visible.
+      this.#surfaceDegradation(scope, missionId, {
+        what: 'snapshot do runtime',
+        reducedTo: 'runtime vivo resolvido pelo Main',
+        why: 'a aprovação não carregava provider/model/account pinados',
+        recoverable: true,
+        path: 'bootstrap.reconcile',
+      });
       console.warn(
-        `[mission-bootstrap] Autopilot: missing orchestratorRuntime for ` +
+        `[mission-bootstrap] missing orchestratorRuntime for ` +
           `${missionId}; using live resolved runtime`,
       );
       approvedRuntime = resolvedRuntime;
     }
     if (!sameMissionOrchestratorRuntime(approvedRuntime, resolvedRuntime)) {
-      // Autopilot (Autopilot libre): cosmetic runtime drift (effort/account
-      // pin, confinement flags) must not re-open the approval ceremony before
-      // the first PTY. Hardened keeps the fail-closed reapprove gate.
-      if (!autopilot) {
+      if (resolvedRuntime.nativeReadOnly === false) {
         return this.#failure(
           scope,
           missionId,
-          "preflight_failed",
-          "O runtime do orquestrador mudou desde a aprovação (provider, modelo, " +
-            "conta, esforço ou confinamento). Revise e reaprove antes de iniciar.",
+          'preflight_failed',
+          'O runtime resolvido não oferece confinamento nativo seguro para o orquestrador.',
           undefined,
-          "user",
+          'user',
         );
       }
+      this.#surfaceDegradation(scope, missionId, {
+        what: 'runtime do orquestrador',
+        reducedTo: 'runtime vivo seguro, com reentrada por inatividade',
+        why: 'provider, modelo, conta, esforço ou confinamento mudaram desde a aprovação',
+        recoverable: true,
+        path: 'bootstrap.reconcile',
+      });
       console.warn(
-        `[mission-bootstrap] Autopilot: runtime drift after approval for ` +
-          `${missionId}; continuing with approved snapshot ` +
-          `(${approvedRuntime.adapterId}/${approvedRuntime.model ?? "default"}).`,
+        `[mission-bootstrap] runtime drift after approval for ` +
+          `${missionId}; using safe live runtime and recovery network`,
       );
+      approvedRuntime = resolvedRuntime;
     }
     // External effects consume the persisted approval, never a mutable
     // settings object. On Autopilot we still honor the approved snapshot so
     // the operator's review remains the authority of record.
     const runtime = approvedRuntime;
-    this.#emitProgress(scope, missionId, "runtime_checked");
+    this.#emitProgress(scope, missionId, 'runtime_checked');
     let isPrevcPreparationStarted = false;
     const preparePrevcInBackground = (): void => {
       if (!guidedPrevcRequired) return;
-      if ((initial.intentContract?.lane ?? "standard") !== "standard") return;
+      if ((initial.intentContract?.lane ?? 'standard') !== 'standard') return;
       if (isPrevcPreparationStarted) return;
       isPrevcPreparationStarted = true;
       try {
@@ -2004,12 +2092,60 @@ export class MissionOrchestratorBootstrapService {
       ? current.description
       : [current.description.trim(), note]
           .filter(Boolean)
-          .join("\n\n")
+          .join('\n\n')
           .slice(0, 65_536);
     this.#deps.updateMission(scope, missionId, {
-      ...missionBlockPatch("technical"),
+      ...missionBlockPatch('technical'),
       description,
     });
+  }
+
+  /**
+   * D1 lower tier for bootstrap capacity gaps. It keeps the exact running
+   * mission/intent authority and relies on the recovery coordinator's nudge /
+   * inactivity cadence to re-enter; it never turns a transient gap into a
+   * blocked mission.
+   */
+  #surfaceDegradation(
+    scope: ProjectExecutionScope,
+    missionId: string,
+    degradation: MissionDegradation,
+  ): void {
+    try {
+      const current = this.#deps.getMission(scope, missionId);
+      if (
+        !current ||
+        current.status !== 'running' ||
+        !hasCurrentDispatchAuthority(current)
+      ) {
+        return;
+      }
+      const description = appendMissionDegradationNote(
+        current.description ?? '',
+        describeMissionDegradation(degradation),
+      );
+      const updated = this.#deps.updateMission(scope, missionId, {
+        description,
+      });
+      const effective = updated ?? current;
+      const key = bootstrapFlightKey(scope, missionId);
+      this.#authorizedSnapshots.set(key, bootstrapMissionSnapshot(effective));
+      this.#authorizedApprovalSnapshots.set(
+        key,
+        bootstrapMissionApprovalSnapshot(effective),
+      );
+      const intentVersion =
+        effective.intentContract?.intentVersion ?? effective.intentVersion;
+      emitMissionDegradation(scope, missionId, degradation, intentVersion);
+      emitMissionDegradationNudge(scope, missionId, degradation, intentVersion);
+    } catch (error) {
+      // Observability is best effort. The physical authority and recovery
+      // supervisor remain the safety net when the card/journal cannot write.
+      console.warn(
+        `[mission-bootstrap] degradation surface failed for ${missionId}:`,
+        error,
+      );
+    }
   }
 
   /**

@@ -18,37 +18,27 @@ import {
   ORPHAN_SEALED_PLAN_MARKER,
 } from './mission-plan-orphan';
 
+/** Closed vocabulary shared by operator surfaces and release evidence. */
+export const MISSION_BLOCK_CAUSE_CODES = [
+  'dispatch-failed',
+  'kickoff-failed',
+  'maestro-pre-dispatch-exit',
+  'worker-no-handoff',
+  'provider-unavailable',
+  'ownership-conflict',
+  'handoff-not-delivered',
+  'orphan-plan',
+  'terminal-failure',
+  'driver-block-human',
+  'agent-status-block',
+  'exclusive-replacement',
+  'runtime-closed',
+  'human-decision',
+  'unknown',
+] as const;
+
 export type MissionBlockCauseCode =
-  /** O despacho abortou antes de o worker existir. */
-  | 'dispatch-failed'
-  /** O Maestro nasceu, mas o kickoff não foi aceito (boot/idle/timeout). */
-  | 'kickoff-failed'
-  /** O Maestro encerrou antes do primeiro dispatch — nenhum worker começou. */
-  | 'maestro-pre-dispatch-exit'
-  /** O worker rodou e encerrou sem entregar handoff. */
-  | 'worker-no-handoff'
-  /** A CLI/modelo do roster não está utilizável agora. */
-  | 'provider-unavailable'
-  /** Outra tarefa já reservou os mesmos arquivos/worktree. */
-  | 'ownership-conflict'
-  /** O worker entregou, mas a entrega não chegou ao orquestrador. */
-  | 'handoff-not-delivered'
-  /** O plano selado ficou numa versão anterior da intenção. */
-  | 'orphan-plan'
-  /** Falha marcada como terminal, sem causa mais específica registrada. */
-  | 'terminal-failure'
-  /** O driver parou a missão no lado humano (paneDead/contextRot após tentativas). */
-  | 'driver-block-human'
-  /** O próprio orquestrador encerrou a missão via status=blocked/failed com nota. */
-  | 'agent-status-block'
-  /** Outra missão/instância assumiu o orquestrador exclusivo desta missão. */
-  | 'exclusive-replacement'
-  /** O operador encerrou a execução preservando histórico e receipts. */
-  | 'runtime-closed'
-  /** Existe pergunta pendente esperando o operador — decisão de verdade. */
-  | 'human-decision'
-  /** Nenhuma razão foi registrada; admitir é melhor que inventar. */
-  | 'unknown';
+  (typeof MISSION_BLOCK_CAUSE_CODES)[number];
 
 export interface MissionBlockCause {
   readonly code: MissionBlockCauseCode;

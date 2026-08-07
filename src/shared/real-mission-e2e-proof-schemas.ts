@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MISSION_BLOCK_CAUSE_CODES } from "./mission-block-cause";
 
 import {
   REAL_MISSION_E2E_ADVISORS,
@@ -478,6 +479,7 @@ export const failureSchema = z
         "session_exited",
         "write_failed",
         "authority_lost",
+        ...MISSION_BLOCK_CAUSE_CODES,
       ])
       .nullable(),
     /**

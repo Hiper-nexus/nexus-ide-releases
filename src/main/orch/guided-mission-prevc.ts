@@ -34,6 +34,10 @@ import {
   describeMissionDegradation,
   type MissionDegradation,
 } from "./mission-degradation";
+import {
+  emitMissionDegradation,
+  emitMissionDegradationNudge,
+} from './mission-event-emit';
 
 export function ownershipRequiresGuidedPrevc(
   domains: readonly string[],
@@ -124,6 +128,7 @@ export function surfaceGuidedPrevcDegradation(
       reducedTo: "caminho simples sem mission_contracts",
       why: reason,
       recoverable: true,
+      path: 'prevc.simple-path',
     };
     // Extend if planner already wrote the shared marker — never drop PREVC why.
     const description = appendMissionDegradationNote(
@@ -131,12 +136,27 @@ export function surfaceGuidedPrevcDegradation(
       describeMissionDegradation(degradation),
     );
     stores.missions.update(missionId, { description });
+    const intentVersion =
+      mission.intentContract?.intentVersion ?? mission.intentVersion;
+    emitMissionDegradation(scope, missionId, degradation, intentVersion);
+    emitMissionDegradationNudge(scope, missionId, degradation, intentVersion);
   } catch (error) {
     console.warn(
       `[guided-prevc] failed to surface D1 degradation for ${missionId}:`,
       error instanceof Error ? error.message : error,
     );
   }
+}
+
+function degradedPrevcResult(reason: string): GuidedMissionPrevcResult {
+  return Object.freeze({
+    required: false,
+    frozen: false,
+    stage: null,
+    readyForWorkerDispatch: true,
+    degraded: true,
+    degradationReason: reason,
+  });
 }
 
 const PRODUCTION_DEPS: GuidedMissionPrevcDeps = {
@@ -150,9 +170,7 @@ const PRODUCTION_DEPS: GuidedMissionPrevcDeps = {
     const stores = getProjectDomainStores(scope);
     return (
       stores.taskDispatches.list(missionId).length > 0 ||
-      stores.missionPanes
-        .list(missionId)
-        .some((pane) => pane.role === "worker")
+      stores.missionPanes.list(missionId).some((pane) => pane.role === 'worker')
     );
   },
   ensureGreenfieldBaseline: (scope, approvedIntent) =>
@@ -169,7 +187,7 @@ const PRODUCTION_BOOTSTRAP_DEPS: GuidedMissionPrevcBootstrapDeps = {
       scope,
       missionId,
       author: {
-        id: "nexus-guided-preflight",
+        id: 'nexus-guided-preflight',
         sessionId: `main:${missionId}:context`,
         provider: "nexus-main",
       },
@@ -431,6 +449,19 @@ export async function ensureGuidedMissionPrevcAtBootstrapBoundary(
   missionId: string,
   deps: GuidedMissionPrevcBootstrapDeps = PRODUCTION_BOOTSTRAP_DEPS,
 ): Promise<GuidedMissionPrevcResult> {
+  const surface = (reason: string): GuidedMissionPrevcResult => {
+    console.warn(`[guided-prevc] D1 degrade mission=${missionId}: ${reason}`);
+    try {
+      deps.surfaceDegradation?.(scope, missionId, reason);
+    } catch (error) {
+      console.warn(
+        `[guided-prevc] degradation surface failed for ${missionId}:`,
+        error,
+      );
+    }
+    return degradedPrevcResult(reason);
+  };
+
   const initial = deps.ensurePrevc(scope, missionId);
   if (!initial.required || initial.frozen) return initial;
 
@@ -439,51 +470,29 @@ export async function ensureGuidedMissionPrevcAtBootstrapBoundary(
     const blockers = prepared.readiness.blockers
       .map((blocker) => blocker.code)
       .slice(0, 16)
-      .join(", ");
+      .join(', ');
     const detail = [
       prepared.blockingError,
       blockers ? `blockers=${blockers}` : null,
       prepared.autopilotHint,
     ]
       .filter((value): value is string => Boolean(value?.trim()))
-      .join("; ")
+      .join('; ')
       .slice(0, 2_048);
     // D1: context bootstrap failure is a capacity gap, not false authority.
     // Continue on the simple path without a PREVC seal — never a silent wall.
     const reason =
-      "contexto não congelado; entrega segue sem selo de PREVC" +
-      (detail ? ` (${detail})` : "");
-    console.warn(
-      `[guided-prevc] D1 degrade mission=${missionId}: ${reason}`,
-    );
-    deps.surfaceDegradation?.(scope, missionId, reason);
-    return Object.freeze({
-      required: false,
-      frozen: false,
-      stage: null,
-      readyForWorkerDispatch: true,
-      degraded: true,
-      degradationReason: reason,
-    });
+      'contexto não congelado; entrega segue sem selo de PREVC' +
+      (detail ? ` (${detail})` : '');
+    return surface(reason);
   }
 
   const frozen = deps.ensurePrevc(scope, missionId);
   if (frozen.required && !frozen.frozen) {
     const reason =
-      "contexto pronto, mas mission_contracts não persistiu; " +
-      "entrega segue sem selo de PREVC";
-    console.warn(
-      `[guided-prevc] D1 degrade mission=${missionId}: ${reason}`,
-    );
-    deps.surfaceDegradation?.(scope, missionId, reason);
-    return Object.freeze({
-      required: false,
-      frozen: false,
-      stage: null,
-      readyForWorkerDispatch: true,
-      degraded: true,
-      degradationReason: reason,
-    });
+      'contexto pronto, mas mission_contracts não persistiu; ' +
+      'entrega segue sem selo de PREVC';
+    return surface(reason);
   }
   return frozen;
 }
@@ -504,9 +513,7 @@ export function assertGuidedPrevcExecutionReady(input: {
   readonly missionId: string;
   readonly approvedGoal?: string;
   readonly approvedAcceptanceCriteria?: readonly string[];
-  readonly workflow: ReturnType<
-    GuidedPrevcWorkflowPort["getMissionWorkflow"]
-  >;
+  readonly workflow: ReturnType<GuidedPrevcWorkflowPort['getMissionWorkflow']>;
 }): void {
   if (!input.required) return;
   if (!input.workflow.contract || !input.workflow.workflow) {

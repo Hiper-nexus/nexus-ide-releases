@@ -178,14 +178,13 @@ export function makeValidRealMissionEvidence({
   }));
   const stepReceipts = milestones.map((milestone, index) => ({
     stepId: milestone.stepId,
-    fromStage: "confirmation",
-    toStage:
-      index === milestones.length - 1 ? "complete" : "confirmation",
+    fromStage: 'confirmation',
+    toStage: index === milestones.length - 1 ? 'complete' : 'confirmation',
     workflowRevisionBefore: 3,
     workflowRevisionAfter: index === milestones.length - 1 ? 4 : 3,
     evidenceIds: [...milestone.evidenceIds],
     evidenceBinding: {
-      missionId: "mission-real",
+      missionId: 'mission-real',
       contextRevision: contextHash,
       contractHash,
       baseSha: initialHeadSha,
@@ -196,26 +195,26 @@ export function makeValidRealMissionEvidence({
     completedAt: completionCompletedAt,
   }));
   const productWizardReceiptCore = {
-    origin: "main-owned-product-wizard-causal-chain",
-    missionId: "mission-real",
+    origin: 'main-owned-product-wizard-causal-chain',
+    missionId: 'mission-real',
     workspaceSha256,
     sourceSquadRevisionHash,
     squadRevisionHash: runtimeSquadRevisionHash,
-    submittedContractSha256: sha256("submitted-contract"),
-    approvedContractSha256: sha256("approved-contract"),
+    submittedContractSha256: sha256('submitted-contract'),
+    approvedContractSha256: sha256('approved-contract'),
     armedAt: 0,
     intentSubmittedAt: 0,
-    nativeDialogOpenedAt: 0,
-    nativeDialogAcceptedAt: 0,
+    nativeDialogOpenedAt: null,
+    nativeDialogAcceptedAt: null,
     approvalReturnedAt: 1,
   };
   const codexWorkerPane = (agentRef) => {
     const step = timeline.find(
       (candidate) => candidate.member.agentRef === agentRef,
     );
-    const readOnly = agentRef !== "e2e-executor";
+    const readOnly = agentRef !== 'e2e-executor';
     return {
-      role: "worker",
+      role: 'worker',
       paneId: `pane-${step.slug}`,
       adapterId: "codex",
       agentRef,
@@ -230,26 +229,26 @@ export function makeValidRealMissionEvidence({
   };
   return {
     schemaVersion: REAL_MISSION_EVIDENCE_SCHEMA_VERSION,
-    runId: "run-synthetic-fixture",
+    runId: 'run-synthetic-fixture',
     appVersion,
     startedAt: 0,
     finishedAt,
-    status: "pass",
+    status: 'pass',
     failure: null,
     workspaceSha256,
     expectedContentSha256,
-    coverageTier: "guided-delivery-core",
-    planOrigin: "production-guided-planner",
-    prevcOrigin: "e2e-fixture",
-    reviewOrigin: "production-physical-worker",
-    qaOrigin: "production-physical-worker",
+    coverageTier: 'guided-delivery-core',
+    planOrigin: 'production-guided-planner',
+    prevcOrigin: 'e2e-fixture',
+    reviewOrigin: 'production-physical-worker',
+    qaOrigin: 'production-physical-worker',
     launchSurface,
     wizardCoverage:
-      launchSurface === "private-runner"
-        ? "not-covered"
-        : "main-owned-product-sequence",
+      launchSurface === 'private-runner'
+        ? 'not-covered'
+        : 'main-owned-product-sequence',
     wizardReceipt:
-      launchSurface === "private-runner"
+      launchSurface === 'private-runner'
         ? null
         : {
             ...productWizardReceiptCore,
@@ -259,24 +258,24 @@ export function makeValidRealMissionEvidence({
           },
     runtimeAttestation: {
       version: 1,
-      algorithm: "hmac-sha256",
-      challengeSha256: sha256("synthetic-challenge"),
-      bindingSha256: sha256("synthetic-binding"),
-      evidenceSha256: sha256("synthetic-evidence"),
-      macSha256: sha256("synthetic-mac"),
+      algorithm: 'hmac-sha256',
+      challengeSha256: sha256('synthetic-challenge'),
+      bindingSha256: sha256('synthetic-binding'),
+      evidenceSha256: sha256('synthetic-evidence'),
+      macSha256: sha256('synthetic-mac'),
     },
     interaction: {
-      evidenceOrigin: "main-owned-instrumentation",
-      nativeDialogCount: 1,
-      missionApprovalDialogCount: 1,
-      missionApprovalAcceptedCount: 1,
+      evidenceOrigin: 'main-owned-instrumentation',
+      nativeDialogCount: 0,
+      missionApprovalDialogCount: 0,
+      missionApprovalAcceptedCount: 0,
       codexMcpPromptCount: 0,
     },
     release: {
       appVersion,
-      runId: "3e112472-c72f-4f5e-b6bd-e9cae5c9c413",
-      startedAt: "2026-07-23T10:00:00.000Z",
-      finishedAt: "2026-07-23T10:01:00.000Z",
+      runId: '3e112472-c72f-4f5e-b6bd-e9cae5c9c413',
+      startedAt: '2026-07-23T10:00:00.000Z',
+      finishedAt: '2026-07-23T10:01:00.000Z',
       commitSha,
       artifact: {
         sha256: artifactSha256,
@@ -284,47 +283,47 @@ export function makeValidRealMissionEvidence({
       },
     },
     mission: {
-      id: "mission-real",
-      status: "done",
-      intentState: "done",
+      id: 'mission-real',
+      status: 'done',
+      intentState: 'done',
       intentVersion: 1,
       squadId:
-        launchSurface === "private-runner"
-          ? "agentic-nexus-real-mission-e2e"
+        launchSurface === 'private-runner'
+          ? 'agentic-nexus-real-mission-e2e'
           : runtimeSquadId,
-      squadSourceId: "agentic-nexus-real-mission-e2e",
+      squadSourceId: 'agentic-nexus-real-mission-e2e',
       squadSourceRevisionHash: sourceSquadRevisionHash,
       squadRevisionHash:
-        launchSurface === "private-runner"
+        launchSurface === 'private-runner'
           ? sourceSquadRevisionHash
           : runtimeSquadRevisionHash,
       approvedAt: 0,
       dispatchedAt: 1,
     },
     missionInventory: {
-      evidenceOrigin: "main-owned-mission-store-inventory",
-      selectedMissionId: "mission-real",
+      evidenceOrigin: 'main-owned-mission-store-inventory',
+      selectedMissionId: 'mission-real',
       observedMissionCount: 1,
-      observedMissionIds: ["mission-real"],
+      observedMissionIds: ['mission-real'],
       finalMissionCount: 1,
-      finalMissionIds: ["mission-real"],
+      finalMissionIds: ['mission-real'],
       exactSingleProductMission: true,
     },
     kickoff: {
-      sessionId: "session-orch",
+      sessionId: 'session-orch',
       idleAt: 1,
       busyAt: 2,
       ptyDataAt: 3,
-      ptyChunkSha256: sha256("kickoff-pty"),
+      ptyChunkSha256: sha256('kickoff-pty'),
     },
     plan: {
       version: 1,
       squadId:
-        launchSurface === "private-runner"
-          ? "agentic-nexus-real-mission-e2e"
+        launchSurface === 'private-runner'
+          ? 'agentic-nexus-real-mission-e2e'
           : runtimeSquadId,
       planHash,
-      rosterHash: sha256("guided-roster"),
+      rosterHash: sha256('guided-roster'),
       tasks: timeline.map((step) => ({
         plannerId: step.member.plannerId,
         taskId: step.taskId,
@@ -336,29 +335,29 @@ export function makeValidRealMissionEvidence({
     },
     panes: [
       {
-        role: "orchestrator",
-        paneId: "pane-orchestrator",
+        role: 'orchestrator',
+        paneId: 'pane-orchestrator',
         adapterId: orchestratorCli,
-        agentRef: "e2e-orchestrator",
+        agentRef: 'e2e-orchestrator',
         workerIncarnationId: null,
-        sessionId: "session-orch",
+        sessionId: 'session-orch',
         readOnly: false,
         nativeReadOnly: false,
         ptySpawnedAt: 1,
         ptyDataAt: 3,
-        ptyChunkSha256: sha256("orchestrator-pty"),
+        ptyChunkSha256: sha256('orchestrator-pty'),
       },
-      codexWorkerPane("e2e-executor"),
-      codexWorkerPane("e2e-reviewer"),
-      codexWorkerPane("e2e-qa"),
+      codexWorkerPane('e2e-executor'),
+      codexWorkerPane('e2e-reviewer'),
+      codexWorkerPane('e2e-qa'),
     ],
     physicalPty: {
       count: 4,
       ids: [
-        "session-orch",
-        "session-executor",
-        "session-reviewer",
-        "session-qa",
+        'session-orch',
+        'session-executor',
+        'session-reviewer',
+        'session-qa',
       ],
     },
     dispatches: timeline.map((step) => ({
@@ -369,7 +368,7 @@ export function makeValidRealMissionEvidence({
       agentCategory: step.member.agentCategory,
       executionMode: step.member.executionMode,
       dependsOn: [...step.dependencyTaskIds],
-      state: "completed",
+      state: 'completed',
       routeReservationId: `reservation-${step.slug}`,
       routeConsumedAt: step.routeConsumedAt,
       routeConsumerMatches: true,

@@ -90,6 +90,8 @@ import {
 } from "./task-dispatch-store";
 import { reconcileLegacyGuidedDirtyCheckoutBootstrap } from "./task-dispatch-lifecycle";
 import { hasTeamReadOnlyFanoutDomain } from "../../shared/mission-topology";
+import { hasPersistedMissionDegradation } from './mission-event-emit';
+import { MISSION_DEGRADATION_PATHS } from './mission-degradation';
 
 export {
   awaitMissionSchedulerAuthorityFence,
@@ -1706,11 +1708,10 @@ async function tickMission(
           markMerged: async () => undefined,
           markFailed: async (taskId, reason) => {
             const currentMission = stores.missions.get(missionId);
-            const intentVersion =
-              currentMission?.intentContract?.intentVersion;
+            const intentVersion = currentMission?.intentContract?.intentVersion;
             if (intentVersion === undefined) return;
             const durableReason =
-              classifyOperationalFailure(new Error(reason)) === "terminal"
+              classifyOperationalFailure(new Error(reason)) === 'terminal'
                 ? terminalOperationalFailureReason(reason)
                 : reason;
             stores.taskDispatches.blockBeforeClaim({
@@ -1729,18 +1730,31 @@ async function tickMission(
   throwIfMissionSchedulerAborted(signal);
   states.set(key, result.state);
   const currentMission = stores.missions.get(missionId);
+  const currentIntentVersion =
+    currentMission?.intentContract?.intentVersion ??
+    currentMission?.intentVersion;
+  const prevcDegraded = Boolean(
+    currentIntentVersion !== undefined &&
+    hasPersistedMissionDegradation(
+      scope,
+      missionId,
+      MISSION_DEGRADATION_PATHS.prevc,
+      currentIntentVersion,
+    ),
+  );
   await reconcileMissionCompletionAfterSchedulerTick({
     mission: currentMission,
     dispatches: stores.taskDispatches.list(missionId),
+    prevcDegraded,
     // Guided completion is PREVC/Mission Driver-owned. The bridge proves the
     // exact current sealed wave is terminal, validates the integrated binding,
     // publishes one idempotent final handoff and only wakes the Driver.
-    runGuidedBridge: () =>
-      runGuidedPrevcPostMergeBridge(scope, missionId),
+    runGuidedBridge: () => runGuidedPrevcPostMergeBridge(scope, missionId),
     completeLegacy: (intentVersion) => {
       stores.taskDispatches.completeMissionFromVerifiedPlan({
         missionId,
         intentVersion,
+        prevcDegraded,
       });
     },
   });

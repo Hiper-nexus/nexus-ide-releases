@@ -1167,7 +1167,9 @@ export class ScopedMissionStore {
 
   /**
    * Main-only: rebind a mission to an immutable `mission-runtime-*` /
-   * `agentic-runtime-*` squad before approval hashes are sealed.
+   * `agentic-runtime-*` squad before approval hashes are sealed or while Main
+   * repairs a degraded authority snapshot. An optional replacement contract
+   * is committed in the same SQLite CAS so id and revision hash cannot tear.
    *
    * Deliberately outside `MissionPatch` so the renderer cannot choose
    * `squad_id`. Builtins stay free to evolve via `syncBuiltins()`; in-flight
@@ -1177,58 +1179,107 @@ export class ScopedMissionStore {
     rawId: string,
     expected: Mission,
     rawSquadId: string,
+    rawContract?: MissionIntentContract,
   ): ScopedMission {
-    const id = entityIdSchema.parse(rawId);
     const squadId = z.string().min(1).max(128).parse(rawSquadId);
     if (!isMissionRuntimeSquadId(squadId)) {
       throw new Error('mission runtime squad binding requires a runtime id');
     }
+    return this.#bindMissionSquadAuthority(
+      rawId,
+      expected,
+      squadId,
+      rawContract,
+    );
+  }
+
+  /**
+   * Main-only D1 repair for a missing/stale squad. Unlike approval pinning,
+   * the best available fallback may be a live catalog roster. The caller must
+   * supply the matching approved-contract hash and both values land in one CAS.
+   */
+  rebindMissionSquadAuthority(
+    rawId: string,
+    expected: Mission,
+    rawSquadId: string,
+    rawContract: MissionIntentContract,
+  ): ScopedMission {
+    const squadId = z.string().min(1).max(128).parse(rawSquadId);
+    return this.#bindMissionSquadAuthority(
+      rawId,
+      expected,
+      squadId,
+      missionIntentContractSchema.parse(rawContract),
+    );
+  }
+
+  #bindMissionSquadAuthority(
+    rawId: string,
+    expected: Mission,
+    squadId: string,
+    rawContract?: MissionIntentContract,
+  ): ScopedMission {
+    const id = entityIdSchema.parse(rawId);
+    const nextContract =
+      rawContract === undefined
+        ? expected.intentContract
+        : missionIntentContractSchema.parse(rawContract);
+    assertIntentContractRevision(nextContract, expected.intentVersion ?? 0);
     if (expected.id !== id) {
       throw new Error('mission runtime squad binding target mismatch');
     }
-    if (expected.squadId === squadId) {
+    if (
+      expected.squadId === squadId &&
+      serializeIntentContract(nextContract) ===
+        serializeIntentContract(expected.intentContract)
+    ) {
       const current = this.get(id);
       if (!current) throw new Error('mission not found');
       return current;
     }
 
     const db = this.#binding.writeDatabase();
-    const updated = db.transaction(() => {
-      const existing = this.#getFromDatabase(db, id);
-      if (!existing) throw new Error('mission not found');
-      if (
-        existing.squadId !== expected.squadId ||
-        (existing.intentVersion ?? 0) !== (expected.intentVersion ?? 0) ||
-        existing.updatedAt !== expected.updatedAt ||
-        existing.status !== expected.status
-      ) {
-        throw new Error('mission runtime squad binding CAS changed');
-      }
-      const updatedAt = this.#binding.now();
-      const result = db
-        .prepare(
-          `UPDATE missions
-              SET squad_id = ?, updated_at = ?
+    const updated = db
+      .transaction(() => {
+        const existing = this.#getFromDatabase(db, id);
+        if (!existing) throw new Error('mission not found');
+        if (
+          existing.squadId !== expected.squadId ||
+          (existing.intentVersion ?? 0) !== (expected.intentVersion ?? 0) ||
+          existing.updatedAt !== expected.updatedAt ||
+          existing.status !== expected.status ||
+          serializeIntentContract(existing.intentContract) !==
+            serializeIntentContract(expected.intentContract)
+        ) {
+          throw new Error('mission runtime squad binding CAS changed');
+        }
+        const updatedAt = this.#binding.now();
+        const result = db
+          .prepare(
+            `UPDATE missions
+              SET squad_id = ?, intent_contract_json = ?, updated_at = ?
             WHERE id = ?
               AND updated_at = ?
               AND (
                 (squad_id IS NULL AND ? IS NULL)
                 OR squad_id = ?
               )`,
-        )
-        .run(
-          squadId,
-          updatedAt,
-          id,
-          expected.updatedAt,
-          expected.squadId ?? null,
-          expected.squadId ?? null,
-        );
-      if (result.changes !== 1) {
-        throw new Error('mission runtime squad binding CAS changed');
-      }
-      return true;
-    }).immediate();
+          )
+          .run(
+            squadId,
+            serializeIntentContract(nextContract),
+            updatedAt,
+            id,
+            expected.updatedAt,
+            expected.squadId ?? null,
+            expected.squadId ?? null,
+          );
+        if (result.changes !== 1) {
+          throw new Error('mission runtime squad binding CAS changed');
+        }
+        return true;
+      })
+      .immediate();
     if (!updated) {
       throw new Error('mission runtime squad binding failed');
     }
@@ -1416,55 +1467,60 @@ export class ScopedMissionStore {
     const id = entityIdSchema.parse(rawId);
     const patch = missionPatchSchema.parse(rawPatch);
     const db = this.#binding.writeDatabase();
-    const updated = db.transaction(() => {
-      const existing = this.#getFromDatabase(db, id);
-      if (!existing) return null;
-      const nextMilestones =
-        patch.milestones !== undefined
-          ? structuralCoerceMilestones(normalizeMilestones(patch.milestones))
-          : cloneMilestones(existing.milestones);
-      const nextIntentContract =
-        patch.intentContract === undefined
-          ? existing.intentContract
-          : patch.intentContract === null
-            ? undefined
-            : patch.intentContract;
-      let next: ScopedMission = {
-        ...existing,
-        ...(patch.title !== undefined ? { title: patch.title } : {}),
-        ...(patch.description !== undefined
-          ? { description: patch.description }
-          : {}),
-        ...(patch.status !== undefined ? { status: patch.status } : {}),
-        ...(patch.squadId !== undefined ? { squadId: patch.squadId } : {}),
-        ...(patch.intentState !== undefined
-          ? { intentState: patch.intentState }
-          : {}),
-        ...(patch.intentVersion !== undefined
-          ? { intentVersion: patch.intentVersion }
-          : {}),
-        ...(patch.intentContract !== undefined
-          ? nextIntentContract
-            ? { intentContract: nextIntentContract }
-            : { intentContract: undefined }
-          : {}),
-        milestones: nextMilestones,
-        updatedAt: this.#binding.now(),
-      };
-      const blockingIntentState = resolveMissionBlockingIntentState({
-        status: next.status,
-        intentState: next.intentState,
-      });
-      if (blockingIntentState) {
-        next = { ...next, intentState: blockingIntentState };
-      }
-      if (patch.intentContract === null) {
-        delete next.intentContract;
-      }
-      assertIntentContractRevision(next.intentContract, next.intentVersion ?? 0);
-      const intentChanged = (next.intentVersion ?? 0) !== (existing.intentVersion ?? 0);
-      const activeDispatches = db.prepare(
-        `SELECT task_id, intent_version FROM task_dispatch_queue
+    const updated = db
+      .transaction(() => {
+        const existing = this.#getFromDatabase(db, id);
+        if (!existing) return null;
+        const nextMilestones =
+          patch.milestones !== undefined
+            ? structuralCoerceMilestones(normalizeMilestones(patch.milestones))
+            : cloneMilestones(existing.milestones);
+        const nextIntentContract =
+          patch.intentContract === undefined
+            ? existing.intentContract
+            : patch.intentContract === null
+              ? undefined
+              : patch.intentContract;
+        let next: ScopedMission = {
+          ...existing,
+          ...(patch.title !== undefined ? { title: patch.title } : {}),
+          ...(patch.description !== undefined
+            ? { description: patch.description }
+            : {}),
+          ...(patch.status !== undefined ? { status: patch.status } : {}),
+          ...(patch.intentState !== undefined
+            ? { intentState: patch.intentState }
+            : {}),
+          ...(patch.intentVersion !== undefined
+            ? { intentVersion: patch.intentVersion }
+            : {}),
+          ...(patch.intentContract !== undefined
+            ? nextIntentContract
+              ? { intentContract: nextIntentContract }
+              : { intentContract: undefined }
+            : {}),
+          milestones: nextMilestones,
+          updatedAt: this.#binding.now(),
+        };
+        const blockingIntentState = resolveMissionBlockingIntentState({
+          status: next.status,
+          intentState: next.intentState,
+        });
+        if (blockingIntentState) {
+          next = { ...next, intentState: blockingIntentState };
+        }
+        if (patch.intentContract === null) {
+          delete next.intentContract;
+        }
+        assertIntentContractRevision(
+          next.intentContract,
+          next.intentVersion ?? 0,
+        );
+        const intentChanged =
+          (next.intentVersion ?? 0) !== (existing.intentVersion ?? 0);
+        const activeDispatches = db
+          .prepare(
+            `SELECT task_id, intent_version FROM task_dispatch_queue
          WHERE mission_id = ?
            AND state IN (
              'claimed', 'routed', 'spawning', 'running',

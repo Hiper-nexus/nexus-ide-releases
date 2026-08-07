@@ -31,6 +31,8 @@ import { getSquad } from "./squad-store";
 import type { TaskDispatchRecord } from "./task-dispatch-codec";
 import { snapshotTaskPlanRoster, type TaskPlanReceipt } from "./task-store";
 import { redeliverPendingHandoffs } from "./idle-delivery";
+import { hasPersistedMissionDegradation } from './mission-event-emit';
+import { MISSION_DEGRADATION_PATHS } from './mission-degradation';
 
 const ACTIVE_DISPATCH_STATES = new Set([
   "claimed",
@@ -233,8 +235,8 @@ function compilePreExecutionPlanContext(input: {
     `Task count: ${input.receipt.tasks.length}`,
     `Plan context limit: ${PRE_EXECUTION_PLAN_CONTEXT_MAX_CHARACTERS} characters`,
     `Sealed task entries: ${input.receipt.tasks.length}/${input.receipt.tasks.length}`,
-    "",
-    "### Sealed tasks",
+    '',
+    '### Sealed tasks',
     ...input.receipt.tasks.map((task, index) =>
       sealedTaskReviewLine(
         task,
@@ -243,13 +245,13 @@ function compilePreExecutionPlanContext(input: {
         latestDispatches.get(task.taskId),
       ),
     ),
-    "",
-    "### Current dispatch ownership",
+    '',
+    '### Current dispatch ownership',
     ...(dispatchLines.length > 0
       ? []
       : [
-          "- No current dispatch row exists yet. Ownership allocation is future " +
-            "execution work and its absence is not a pre-execution finding.",
+          '- No current dispatch row exists yet. Ownership allocation is future ' +
+            'execution work and its absence is not a pre-execution finding.',
         ]),
   ];
   return appendBoundedOwnershipLines(requiredLines, dispatchLines);
@@ -330,7 +332,7 @@ function scopeMissionKey(
     scope.checkoutId,
     scope.rootRealPath,
     missionId,
-  ].join("\0");
+  ].join('\0');
 }
 
 /*
@@ -363,7 +365,7 @@ async function withMissionOperation<T>(
     if (signal?.aborted) {
       throw signal.reason instanceof Error
         ? signal.reason
-        : new Error("PREVC operation authority was revoked");
+        : new Error('PREVC operation authority was revoked');
     }
     return await operation();
   } finally {
@@ -386,15 +388,15 @@ function sameOrderedStrings(
 
 function exactApprovedWorkflow(
   mission: Mission,
-  workflow: ReturnType<ContextWorkflowService["getMissionWorkflow"]>,
+  workflow: ReturnType<ContextWorkflowService['getMissionWorkflow']>,
 ): boolean {
   const approved = mission.intentContract;
   const frozen = workflow.contract?.contract;
   return Boolean(
-      approved &&
-      frozen &&
-      frozen.missionId === mission.id &&
-      frozen.goal === approved.goal.trim() &&
+    approved &&
+    frozen &&
+    frozen.missionId === mission.id &&
+    frozen.goal === approved.goal.trim() &&
     sameOrderedStrings(
       frozen.acceptanceCriteria.map((criterion) => criterion.statement),
       approved.acceptanceCriteria,
@@ -411,11 +413,11 @@ function exactApprovedWorkflow(
 function assertGuidedPlanSquadAuthority(input: {
   readonly mission: Mission;
   readonly receipt: TaskPlanReceipt;
-  readonly getSquad: PrevcAutopilotCoordinatorDependencies["getSquad"];
+  readonly getSquad: PrevcAutopilotCoordinatorDependencies['getSquad'];
 }): void {
   const squadId = input.mission.squadId;
   if (!squadId || input.receipt.squadId !== squadId) {
-    throw new Error("guided post-merge plan/squad identity authority diverged");
+    throw new Error('guided post-merge plan/squad identity authority diverged');
   }
   const squad = input.getSquad(squadId);
   if (
@@ -424,10 +426,10 @@ function assertGuidedPlanSquadAuthority(input: {
     snapshotSquadAuthority(squad).hash !==
       input.mission.intentContract?.squadRevisionHash
   ) {
-    throw new Error("guided post-merge squad revision authority diverged");
+    throw new Error('guided post-merge squad revision authority diverged');
   }
   if (snapshotTaskPlanRoster(squad.agents).hash !== input.receipt.rosterHash) {
-    throw new Error("guided post-merge plan roster authority diverged");
+    throw new Error('guided post-merge plan roster authority diverged');
   }
 }
 
@@ -449,7 +451,7 @@ function currentPlanDispatchesCompleted(input: {
       (task) =>
         !taskIdSet.has(task.taskId) ||
         task.intentVersion !== input.receipt.intentVersion ||
-        task.task.status !== "done",
+        task.task.status !== 'done',
     )
   ) {
     return false;
@@ -464,7 +466,7 @@ function currentPlanDispatchesCompleted(input: {
     currentDispatches.some(
       (dispatch) =>
         !taskIdSet.has(dispatch.taskId) ||
-        dispatch.state !== "completed" ||
+        dispatch.state !== 'completed' ||
         !dispatch.integrationReceipt ||
         dispatch.completedAt === undefined,
     )
@@ -476,12 +478,12 @@ function currentPlanDispatchesCompleted(input: {
   );
   if (
     currentDispatches.some((dispatch) => {
-      if (dispatch.executionMode !== "isolated_worktree") return false;
+      if (dispatch.executionMode !== 'isolated_worktree') return false;
       const worktree = worktreesByTask.get(dispatch.taskId);
       return (
         !worktree ||
         worktree.missionId !== input.mission.id ||
-        worktree.status !== "integrated"
+        worktree.status !== 'integrated'
       );
     })
   ) {
@@ -499,7 +501,7 @@ interface GuidedPostMergeAuthoritySeal {
   readonly rosterHash: string;
   readonly squadId: string;
   readonly taskIds: readonly string[];
-  readonly topology: "delivery";
+  readonly topology: 'delivery';
   readonly frozenContractHash: string;
   readonly contextRevision: string;
   readonly baseSha: string;
@@ -529,41 +531,54 @@ export function inspectGuidedPrevcPostMergeAuthority(
 ): GuidedPostMergeInspection {
   const suite = dependencies.storesForScope(scope);
   const mission = suite.missions.get(missionId);
-  if (!mission || !missionRequiresGuidedPrevc(mission, "delivery")) {
+  if (!mission || !missionRequiresGuidedPrevc(mission, 'delivery')) {
     return Object.freeze({
       ready: false,
-      reason: "mission is outside Main-owned guided PREVC",
+      reason: 'mission is outside Main-owned guided PREVC',
     });
   }
-  if (mission.status !== "running") {
+  if (
+    hasPersistedMissionDegradation(
+      scope,
+      missionId,
+      MISSION_DEGRADATION_PATHS.prevc,
+      mission.intentContract?.intentVersion ?? mission.intentVersion,
+    )
+  ) {
     return Object.freeze({
       ready: false,
-      reason: "mission is not running",
+      reason: 'mission is on the persisted PREVC simple path',
+    });
+  }
+  if (mission.status !== 'running') {
+    return Object.freeze({
+      ready: false,
+      reason: 'mission is not running',
     });
   }
   const contract = mission.intentContract;
   if (!contract || mission.intentVersion !== contract.intentVersion) {
-    throw new Error("guided post-merge intent authority is stale");
+    throw new Error('guided post-merge intent authority is stale');
   }
   const receipt = suite.tasks.getPlanReceipt(missionId, contract.intentVersion);
   if (!receipt) {
     return Object.freeze({
       ready: false,
-      reason: "current sealed Guided v2 plan is missing",
+      reason: 'current sealed Guided v2 plan is missing',
     });
   }
   const topology = standardTopologyFromSealedTaskDetails(
     receipt.tasks.map((task) => task.detail),
   );
-  if (topology === "invalid") {
+  if (topology === 'invalid') {
     throw new Error(
-      "guided post-merge mission topology is mixed; replan and reapprove",
+      'guided post-merge mission topology is mixed; replan and reapprove',
     );
   }
   if (!missionRequiresGuidedPrevc(mission, topology)) {
     return Object.freeze({
       ready: false,
-      reason: "mission is outside Main-owned guided PREVC",
+      reason: 'mission is outside Main-owned guided PREVC',
     });
   }
   assertGuidedPlanSquadAuthority({
@@ -582,9 +597,9 @@ export function inspectGuidedPrevcPostMergeAuthority(
       .list({ missionId, includeDelivered: false })
       .filter(
         (handoff) =>
-          handoff.status === "success" &&
-          handoff.authorityOrigin === "agent" &&
-          handoff.deliveryState === "queued",
+          handoff.status === 'success' &&
+          handoff.authorityOrigin === 'agent' &&
+          handoff.deliveryState === 'queued',
       );
     if (undeliveredSuccess.length > 0) {
       // Best-effort flush: Maestro pode ter sido rebound/recuperado desde a

@@ -85,6 +85,7 @@ import {
 } from "./real-mission-e2e-workspace";
 import type { RealMissionEvidenceAttester } from "./real-mission-e2e-attestation";
 import { hasAutomaticTechnicalRecovery } from "../shared/mission-recovery-policy";
+import { missionBlockCause } from "../shared/mission-block-cause";
 
 // Receipts de ack/estado final de PTY podem aterrissar bem depois da
 // transação de integração (campo: run físico com advisor AGY só estabilizou
@@ -947,6 +948,33 @@ export class RealMissionObserver {
             dispatchedAt: mission.intentContract?.dispatchedAt ?? null,
           }
         : null;
+    const blockCause =
+      failureCode === "mission-blocked"
+        ? missionBlockCause({
+            status: mission?.status,
+            intentState: mission?.intentState,
+            description: mission?.description,
+          })
+        : null;
+    const failureReason =
+      failureCode === "mission-blocked"
+        ? (missionKickoffFailureReasonFromDescription(
+            mission?.description ?? "",
+          ) ?? blockCause?.code ?? "unknown")
+        : null;
+    const failureDetail =
+      failureCode === "mission-blocked" || failureCode === "mission-failed"
+        ? (taskDispatchBlockDetailFromDescription(
+            mission?.description ?? "",
+          ) ?? blockCause?.detail ?? null)
+        : // `invariant-failed` pós-done nascia SEM detail: o gate
+          // reportava "invariant-failed reason=null" e o motivo real
+          // — qual recibo não estabilizou — ficava só num console.warn
+          // que o gate não captura. Três execuções do release foram
+          // diagnosticadas no escuro por causa disso. O erro de
+          // estabilização é exatamente o "porquê" que este campo de
+          // texto livre existe para preservar.
+          (this.#lastSettleErrorDetail ?? null);
     return this.#attestEvidence({
       schemaVersion: REAL_MISSION_E2E_EVIDENCE_SCHEMA_VERSION,
       runId: this.#runId,
@@ -1009,26 +1037,8 @@ export class RealMissionObserver {
       failure: failureCode
         ? {
             code: failureCode,
-            reason:
-              failureCode === "mission-blocked"
-                ? missionKickoffFailureReasonFromDescription(
-                    mission?.description ?? "",
-                  )
-                : null,
-            detail:
-              failureCode === "mission-blocked" ||
-              failureCode === "mission-failed"
-                ? taskDispatchBlockDetailFromDescription(
-                    mission?.description ?? "",
-                  )
-                : // `invariant-failed` pós-done nascia SEM detail: o gate
-                  // reportava "invariant-failed reason=null" e o motivo real
-                  // — qual recibo não estabilizou — ficava só num console.warn
-                  // que o gate não captura. Três execuções do release foram
-                  // diagnosticadas no escuro por causa disso. O erro de
-                  // estabilização é exatamente o "porquê" que este campo de
-                  // texto livre existe para preservar.
-                  (this.#lastSettleErrorDetail ?? null),
+            reason: failureReason,
+            detail: failureDetail,
             cta: REAL_MISSION_E2E_CTA,
             snapshot: {
               missionStatus: mission?.status ?? null,

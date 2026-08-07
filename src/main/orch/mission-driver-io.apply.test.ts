@@ -70,7 +70,11 @@ describe('createProductionApplyPorts advance/complete', () => {
           ...mission,
           milestones: mission.milestones.map((item) =>
             item.id === stepId
-              ? { ...item, status: 'done' as const, evidenceIds: [...evidenceIds] }
+              ? {
+                  ...item,
+                  status: 'done' as const,
+                  evidenceIds: [...evidenceIds],
+                }
               : item,
           ),
         };
@@ -80,77 +84,82 @@ describe('createProductionApplyPorts advance/complete', () => {
       advanceMissionStep: prevcAdvance,
       isMissionComplete: () => true,
     };
-    const ports = createProductionApplyPorts(prevc, () => ({
-      missions: {
-        get: (id: string) => (id === mission.id ? mission : null),
-        update: (_id: string, patch: { milestones?: MissionMilestone[] }) => {
-          if (patch.milestones) {
-            mission = { ...mission, milestones: patch.milestones };
-          }
-          return mission;
-        },
-        markMilestoneDone: (
-          _id: string,
-          stepId: string,
-          trusted: readonly string[],
-        ) => {
-          // Mirror store gate: only done when evidence non-empty and trusted.
-          const target = mission.milestones.find((m) => m.id === stepId);
-          if (
-            target &&
-            target.evidenceIds.length > 0 &&
-            target.evidenceIds.every((e) => trusted.includes(e))
-          ) {
-            mission = {
-              ...mission,
-              milestones: mission.milestones.map((item) =>
-                item.id === stepId
-                  ? { ...item, status: 'done' as const }
-                  : item,
-              ),
-            };
-          }
-          return mission;
-        },
-        setStatus: (id: string, status: Mission['status']) => {
-          if (id !== mission.id) return null;
-          mission = { ...mission, status };
-          return mission;
-        },
-        appendLearning: () => mission,
-        list: () => [mission],
-        create: () => mission,
-      },
-      handoffs: {
-        list: () => [
-          {
-            fromAgent: 'nexus-prevc-autopilot',
-            evidenceTrust: 'nexus-trusted' as const,
-            evidenceIds: [milestoneEvidence1],
-            evidenceBinding: {
-              missionId: mission.id,
-              workflowRevision: 7,
+    const ports = createProductionApplyPorts(
+      prevc,
+      () =>
+        ({
+          missions: {
+            get: (id: string) => (id === mission.id ? mission : null),
+            update: (
+              _id: string,
+              patch: { milestones?: MissionMilestone[] },
+            ) => {
+              if (patch.milestones) {
+                mission = { ...mission, milestones: patch.milestones };
+              }
+              return mission;
             },
-            status: 'success' as const,
-            createdAt: 10,
+            markMilestoneDone: (
+              _id: string,
+              stepId: string,
+              trusted: readonly string[],
+            ) => {
+              // Mirror store gate: only done when evidence non-empty and trusted.
+              const target = mission.milestones.find((m) => m.id === stepId);
+              if (
+                target &&
+                target.evidenceIds.length > 0 &&
+                target.evidenceIds.every((e) => trusted.includes(e))
+              ) {
+                mission = {
+                  ...mission,
+                  milestones: mission.milestones.map((item) =>
+                    item.id === stepId
+                      ? { ...item, status: 'done' as const }
+                      : item,
+                  ),
+                };
+              }
+              return mission;
+            },
+            setStatus: (id: string, status: Mission['status']) => {
+              if (id !== mission.id) return null;
+              mission = { ...mission, status };
+              return mission;
+            },
+            appendLearning: () => mission,
+            list: () => [mission],
+            create: () => mission,
           },
-        ],
-        submit: vi.fn(),
-      },
-    }) as never, undefined, undefined, finalStepAuthority());
+          handoffs: {
+            list: () => [
+              {
+                fromAgent: 'nexus-prevc-autopilot',
+                evidenceTrust: 'nexus-trusted' as const,
+                evidenceIds: [milestoneEvidence1],
+                evidenceBinding: {
+                  missionId: mission.id,
+                  workflowRevision: 7,
+                },
+                status: 'success' as const,
+                createdAt: 10,
+              },
+            ],
+            submit: vi.fn(),
+          },
+        }) as never,
+      undefined,
+      undefined,
+      finalStepAuthority(),
+    );
 
     ports.advanceStep('mission-a', scope, 's1');
 
-    expect(prevcAdvance).toHaveBeenCalledWith(
-      'mission-a',
-      scope,
-      's1',
-      [milestoneEvidence1],
-    );
-    expect(mission.milestones[0]?.status).toBe('done');
-    expect(mission.milestones[0]?.evidenceIds).toEqual([
+    expect(prevcAdvance).toHaveBeenCalledWith('mission-a', scope, 's1', [
       milestoneEvidence1,
     ]);
+    expect(mission.milestones[0]?.status).toBe('done');
+    expect(mission.milestones[0]?.evidenceIds).toEqual([milestoneEvidence1]);
   });
 
   it('rejects current Nexus evidence from any non-PREVC handoff', () => {
@@ -330,63 +339,73 @@ describe('createProductionApplyPorts advance/complete', () => {
       },
       isMissionComplete: () => true,
     };
-    const ports = createProductionApplyPorts(prevc, () => ({
-      missions: {
-        get: () => mission,
-        update: (_id: string, patch: { milestones?: MissionMilestone[] }) => {
-          if (patch.milestones) {
-            mission = { ...mission, milestones: patch.milestones };
-          }
-          return mission;
-        },
-        markMilestoneDone: (
-          _id: string,
-          stepId: string,
-          trusted: readonly string[],
-        ) => {
-          order.push('mark-done');
-          const target = mission.milestones.find((m) => m.id === stepId);
-          if (
-            target &&
-            target.evidenceIds.length > 0 &&
-            target.evidenceIds.every((e) => trusted.includes(e))
-          ) {
-            mission = {
-              ...mission,
-              milestones: mission.milestones.map((item) =>
-                item.id === stepId
-                  ? { ...item, status: 'done' as const }
-                  : item,
-              ),
-            };
-          }
-          return mission;
-        },
-        setStatus: () => mission,
-        appendLearning: () => {
-          order.push('learn');
-          return mission;
-        },
-        list: () => [mission],
-        create: () => mission,
-      },
-      handoffs: {
-        list: () => [
-          {
-            fromAgent: 'nexus-prevc-autopilot',
-            evidenceTrust: 'nexus-trusted' as const,
-            evidenceIds: [milestoneEvidence1],
-            evidenceBinding: {
-              missionId: mission.id,
-              workflowRevision: 7,
+    const ports = createProductionApplyPorts(
+      prevc,
+      () =>
+        ({
+          missions: {
+            get: () => mission,
+            update: (
+              _id: string,
+              patch: { milestones?: MissionMilestone[] },
+            ) => {
+              if (patch.milestones) {
+                mission = { ...mission, milestones: patch.milestones };
+              }
+              return mission;
             },
-            status: 'success' as const,
-            createdAt: 10,
+            markMilestoneDone: (
+              _id: string,
+              stepId: string,
+              trusted: readonly string[],
+            ) => {
+              order.push('mark-done');
+              const target = mission.milestones.find((m) => m.id === stepId);
+              if (
+                target &&
+                target.evidenceIds.length > 0 &&
+                target.evidenceIds.every((e) => trusted.includes(e))
+              ) {
+                mission = {
+                  ...mission,
+                  milestones: mission.milestones.map((item) =>
+                    item.id === stepId
+                      ? { ...item, status: 'done' as const }
+                      : item,
+                  ),
+                };
+              }
+              return mission;
+            },
+            setStatus: () => mission,
+            appendLearning: () => {
+              order.push('learn');
+              return mission;
+            },
+            list: () => [mission],
+            create: () => mission,
           },
-        ],
-        submit: vi.fn(),
-      },
-    }) as never, undefined, undefined, finalStepAuthority());
+          handoffs: {
+            list: () => [
+              {
+                fromAgent: 'nexus-prevc-autopilot',
+                evidenceTrust: 'nexus-trusted' as const,
+                evidenceIds: [milestoneEvidence1],
+                evidenceBinding: {
+                  missionId: mission.id,
+                  workflowRevision: 7,
+                },
+                status: 'success' as const,
+                createdAt: 10,
+              },
+            ],
+            submit: vi.fn(),
+          },
+        }) as never,
+      undefined,
+      undefined,
+      finalStepAuthority(),
+    );
 
     expect(() => ports.advanceStep('mission-a', scope, 's1')).toThrow(
       /workflow not ready/,
@@ -462,31 +481,34 @@ describe('createProductionApplyPorts advance/complete', () => {
         advanceMissionStep: prevcAdvance,
         isMissionComplete: () => false,
       },
-      () => ({
-        missions: {
-          get: () => mission,
-          update: () => mission,
-          markMilestoneDone: () => mission,
-          setStatus: () => mission,
-          appendLearning: () => mission,
-          list: () => [mission],
-          create: () => mission,
-        },
-        handoffs: {
-          list: () => [{
-            fromAgent: 'nexus-prevc-autopilot',
-            evidenceTrust: 'nexus-trusted',
-            evidenceIds: [milestoneEvidence1, milestoneEvidence2],
-            evidenceBinding: {
-              missionId: mission.id,
-              workflowRevision: 7,
-            },
-            status: 'success',
-            createdAt: 10,
-          }],
-          submit: vi.fn(),
-        },
-      }) as never,
+      () =>
+        ({
+          missions: {
+            get: () => mission,
+            update: () => mission,
+            markMilestoneDone: () => mission,
+            setStatus: () => mission,
+            appendLearning: () => mission,
+            list: () => [mission],
+            create: () => mission,
+          },
+          handoffs: {
+            list: () => [
+              {
+                fromAgent: 'nexus-prevc-autopilot',
+                evidenceTrust: 'nexus-trusted',
+                evidenceIds: [milestoneEvidence1, milestoneEvidence2],
+                evidenceBinding: {
+                  missionId: mission.id,
+                  workflowRevision: 7,
+                },
+                status: 'success',
+                createdAt: 10,
+              },
+            ],
+            submit: vi.fn(),
+          },
+        }) as never,
       undefined,
       undefined,
       finalStepAuthority(milestoneEvidence2),
@@ -495,12 +517,9 @@ describe('createProductionApplyPorts advance/complete', () => {
     expect(() => ports.advanceStep('mission-a', scope, 's1')).toThrow(
       /remains non-done/,
     );
-    expect(prevcAdvance).toHaveBeenCalledWith(
-      'mission-a',
-      scope,
-      's1',
-      [milestoneEvidence2],
-    );
+    expect(prevcAdvance).toHaveBeenCalledWith('mission-a', scope, 's1', [
+      milestoneEvidence2,
+    ]);
   });
 
   it('rejects advance when no nexus-trusted evidence exists', async () => {
@@ -587,15 +606,101 @@ describe('createProductionApplyPorts advance/complete', () => {
     expect(mission.status).toBe('running');
   });
 
+  it('refuses dispatch-proof completion while a frozen PREVC workflow exists', () => {
+    let mission = makeMission(
+      [step({ id: 's1', label: 'Design', status: 'pending' })],
+      { intentState: 'executing', intentVersion: 1 },
+    );
+    const completeFromMissionDriver = vi.fn(() => {
+      mission = { ...mission, status: 'done', intentState: 'done' };
+      return mission;
+    });
+    const ports = createProductionApplyPorts(
+      {
+        advanceMissionStep: vi.fn(),
+        isMissionComplete: () => false,
+      },
+      () =>
+        ({
+          missions: {
+            get: () => mission,
+            completeFromMissionDriver,
+          },
+          taskDispatches: {
+            list: () => [
+              {
+                state: 'completed',
+                integrationReceipt: { receiptId: 'integration-1' },
+              },
+            ],
+          },
+        }) as never,
+      undefined,
+      undefined,
+      undefined,
+      () => true,
+    );
+
+    expect(() => ports.completeMission('mission-a', scope)).toThrow(
+      /PREVC workflow or step receipts incomplete/,
+    );
+    expect(completeFromMissionDriver).not.toHaveBeenCalled();
+    expect(mission.status).toBe('running');
+  });
+
+  it('keeps dispatch-proof completion for the simple path without PREVC', () => {
+    let mission = makeMission([], {
+      intentState: 'executing',
+      intentVersion: 1,
+    });
+    const completeFromMissionDriver = vi.fn(() => {
+      mission = { ...mission, status: 'done', intentState: 'done' };
+      return mission;
+    });
+    const taskDispatches = {
+      list: () => [
+        {
+          state: 'completed',
+          integrationReceipt: { receiptId: 'integration-1' },
+        },
+      ],
+    };
+    const ports = createProductionApplyPorts(
+      {
+        advanceMissionStep: vi.fn(),
+        isMissionComplete: () => false,
+      },
+      () =>
+        ({
+          missions: {
+            get: () => mission,
+            completeFromMissionDriver,
+          },
+          taskDispatches,
+        }) as never,
+      undefined,
+      undefined,
+      undefined,
+      () => false,
+    );
+
+    expect(() => ports.completeMission('mission-a', scope)).not.toThrow();
+    expect(completeFromMissionDriver).toHaveBeenCalledOnce();
+    expect(mission).toMatchObject({ status: 'done', intentState: 'done' });
+  });
+
   it('complete atomically closes mission status and intent after PREVC proof', () => {
-    let mission = makeMission([
-      step({
-        id: 's1',
-        label: 'Design',
-        status: 'done',
-        evidenceIds: ['ev-1'],
-      }),
-    ], { intentState: 'executing', intentVersion: 1 });
+    let mission = makeMission(
+      [
+        step({
+          id: 's1',
+          label: 'Design',
+          status: 'done',
+          evidenceIds: ['ev-1'],
+        }),
+      ],
+      { intentState: 'executing', intentVersion: 1 },
+    );
     const completeFromMissionDriver = vi.fn(
       (
         id: string,
@@ -693,18 +798,35 @@ describe('createProductionApplyPorts advance/complete', () => {
 
   it('never exposes worker panes to mission-driver recovery', () => {
     const orchestrator: MissionPaneSpec = {
-      id: 'spec-orch', missionId: 'mission-a', paneId: 'pane-orch',
-      adapterId: 'codex', title: 'Orchestrator', role: 'orchestrator', createdAt: 1,
+      id: 'spec-orch',
+      missionId: 'mission-a',
+      paneId: 'pane-orch',
+      adapterId: 'codex',
+      title: 'Orchestrator',
+      role: 'orchestrator',
+      createdAt: 1,
     };
     const worker: MissionPaneSpec = {
-      id: 'spec-worker', missionId: 'mission-a', paneId: 'pane-worker',
-      adapterId: 'codex', title: 'Worker', role: 'worker', createdAt: 2,
+      id: 'spec-worker',
+      missionId: 'mission-a',
+      paneId: 'pane-worker',
+      adapterId: 'codex',
+      title: 'Worker',
+      role: 'worker',
+      createdAt: 2,
       workerIncarnationId: 'incarnation-1',
     };
-    const liveOrchestratorOnly: PaneSnapshot[] = [{
-      paneId: 'pane-orch', sessionId: 'session-orch', title: 'Orchestrator',
-      kind: 'cli-agent', state: 'idle', missionId: 'mission-a', role: 'orchestrator',
-    }];
+    const liveOrchestratorOnly: PaneSnapshot[] = [
+      {
+        paneId: 'pane-orch',
+        sessionId: 'session-orch',
+        title: 'Orchestrator',
+        kind: 'cli-agent',
+        state: 'idle',
+        missionId: 'mission-a',
+        role: 'orchestrator',
+      },
+    ];
 
     const actionable = actionableMissionPanes([orchestrator, worker]);
     expect(actionable).toEqual([orchestrator]);
@@ -715,12 +837,22 @@ describe('createProductionApplyPorts advance/complete', () => {
 
   it('keeps orchestrators recoverable but excludes legacy workers too', () => {
     const orchestrator: MissionPaneSpec = {
-      id: 'spec-orch', missionId: 'mission-a', paneId: 'pane-orch',
-      adapterId: 'codex', title: 'Orchestrator', role: 'orchestrator', createdAt: 1,
+      id: 'spec-orch',
+      missionId: 'mission-a',
+      paneId: 'pane-orch',
+      adapterId: 'codex',
+      title: 'Orchestrator',
+      role: 'orchestrator',
+      createdAt: 1,
     };
     const legacyWorker: MissionPaneSpec = {
-      id: 'spec-worker', missionId: 'mission-a', paneId: 'pane-worker',
-      adapterId: 'codex', title: 'Worker', role: 'worker', createdAt: 2,
+      id: 'spec-worker',
+      missionId: 'mission-a',
+      paneId: 'pane-worker',
+      adapterId: 'codex',
+      title: 'Worker',
+      role: 'worker',
+      createdAt: 2,
     };
 
     expect(actionableMissionPanes([orchestrator, legacyWorker])).toEqual([
@@ -732,79 +864,153 @@ describe('createProductionApplyPorts advance/complete', () => {
   it('treats a missing persisted worker as dead by stable pane identity', () => {
     const persisted: MissionPaneSpec[] = [
       {
-        id: 'spec-orch', missionId: 'mission-a', paneId: 'pane-orch',
-        adapterId: 'codex', title: 'Orchestrator', role: 'orchestrator', createdAt: 1,
+        id: 'spec-orch',
+        missionId: 'mission-a',
+        paneId: 'pane-orch',
+        adapterId: 'codex',
+        title: 'Orchestrator',
+        role: 'orchestrator',
+        createdAt: 1,
       },
       {
-        id: 'spec-worker', missionId: 'mission-a', paneId: 'pane-worker',
-        adapterId: 'claude', title: 'Worker', role: 'worker', createdAt: 2,
+        id: 'spec-worker',
+        missionId: 'mission-a',
+        paneId: 'pane-worker',
+        adapterId: 'claude',
+        title: 'Worker',
+        role: 'worker',
+        createdAt: 2,
       },
     ];
-    const snapshots: PaneSnapshot[] = [{
-      paneId: 'pane-orch', sessionId: 'session-orch', title: 'Orchestrator',
-      kind: 'cli-agent', state: 'idle', missionId: 'mission-a', role: 'orchestrator',
-    }];
+    const snapshots: PaneSnapshot[] = [
+      {
+        paneId: 'pane-orch',
+        sessionId: 'session-orch',
+        title: 'Orchestrator',
+        kind: 'cli-agent',
+        state: 'idle',
+        missionId: 'mission-a',
+        role: 'orchestrator',
+      },
+    ];
 
-    expect(findDeadMissionPane('mission-a', persisted, snapshots))
-      .toMatchObject({ paneId: 'pane-worker', role: 'worker' });
+    expect(
+      findDeadMissionPane('mission-a', persisted, snapshots),
+    ).toMatchObject({ paneId: 'pane-worker', role: 'worker' });
   });
 
   it('does not recover panes for an inactive workspace just because another scope is mirrored', () => {
-    const scopeA = testProjectScope({ projectId: 'project-a', checkoutId: 'a' });
-    const scopeB = testProjectScope({ projectId: 'project-b', checkoutId: 'b' });
-    const otherWorkspace: PaneSnapshot[] = [{
-      paneId: 'shell-b', sessionId: 'session-b', title: 'Shell B',
-      kind: 'shell', state: 'idle', scope: scopeB,
-    }];
+    const scopeA = testProjectScope({
+      projectId: 'project-a',
+      checkoutId: 'a',
+    });
+    const scopeB = testProjectScope({
+      projectId: 'project-b',
+      checkoutId: 'b',
+    });
+    const otherWorkspace: PaneSnapshot[] = [
+      {
+        paneId: 'shell-b',
+        sessionId: 'session-b',
+        title: 'Shell B',
+        kind: 'shell',
+        state: 'idle',
+        scope: scopeB,
+      },
+    ];
 
     expect(hasMirroredScope(scopeA, otherWorkspace)).toBe(false);
     expect(hasMirroredScope(scopeB, otherWorkspace)).toBe(true);
-    expect(hasMirroredScope(scopeA, [{
-      ...otherWorkspace[0],
-      missionId: 'mission-a',
-    }])).toBe(false);
+    expect(
+      hasMirroredScope(scopeA, [
+        {
+          ...otherWorkspace[0],
+          missionId: 'mission-a',
+        },
+      ]),
+    ).toBe(false);
   });
 
   it('ignores homonymous panes of another scope when deciding pane death', () => {
-    const scopeA = testProjectScope({ projectId: 'project-a', checkoutId: 'a' });
-    const scopeB = testProjectScope({ projectId: 'project-b', checkoutId: 'b' });
-    const persisted: MissionPaneSpec[] = [{
-      id: 'spec-worker', missionId: 'mission-a', paneId: 'pane-worker',
-      adapterId: 'claude', title: 'Worker', role: 'worker', createdAt: 1,
-    }];
+    const scopeA = testProjectScope({
+      projectId: 'project-a',
+      checkoutId: 'a',
+    });
+    const scopeB = testProjectScope({
+      projectId: 'project-b',
+      checkoutId: 'b',
+    });
+    const persisted: MissionPaneSpec[] = [
+      {
+        id: 'spec-worker',
+        missionId: 'mission-a',
+        paneId: 'pane-worker',
+        adapterId: 'claude',
+        title: 'Worker',
+        role: 'worker',
+        createdAt: 1,
+      },
+    ];
     // Scope B runs a live pane with identical mission/pane/role ids. Without
     // scope filtering it masks the missing pane in scope A.
     const snapshots: PaneSnapshot[] = [
       {
-        paneId: 'pane-worker', sessionId: 'session-b', title: 'Worker B',
-        kind: 'cli-agent', state: 'idle', missionId: 'mission-a',
-        role: 'worker', scope: scopeB,
+        paneId: 'pane-worker',
+        sessionId: 'session-b',
+        title: 'Worker B',
+        kind: 'cli-agent',
+        state: 'idle',
+        missionId: 'mission-a',
+        role: 'worker',
+        scope: scopeB,
       },
       {
-        paneId: 'shell-a', sessionId: 'session-a', title: 'Shell A',
-        kind: 'shell', state: 'idle', scope: scopeA,
+        paneId: 'shell-a',
+        sessionId: 'session-a',
+        title: 'Shell A',
+        kind: 'shell',
+        state: 'idle',
+        scope: scopeA,
       },
     ];
 
     const scopedA = snapshotsForScope(scopeA, snapshots);
     expect(scopedA.map((s) => s.paneId)).toEqual(['shell-a']);
-    expect(findDeadMissionPane('mission-a', persisted, scopedA))
-      .toMatchObject({ paneId: 'pane-worker' });
+    expect(findDeadMissionPane('mission-a', persisted, scopedA)).toMatchObject({
+      paneId: 'pane-worker',
+    });
     // In scope B the homonymous pane is alive — nothing to recover there.
     const scopedB = snapshotsForScope(scopeB, snapshots);
     expect(findDeadMissionPane('mission-a', persisted, scopedB)).toBeNull();
   });
 
   it('keeps snapshots with unknown scope to avoid fabricating dead panes', () => {
-    const scopeA = testProjectScope({ projectId: 'project-a', checkoutId: 'a' });
-    const persisted: MissionPaneSpec[] = [{
-      id: 'spec-worker', missionId: 'mission-a', paneId: 'pane-worker',
-      adapterId: 'claude', title: 'Worker', role: 'worker', createdAt: 1,
-    }];
-    const unknownScope: PaneSnapshot[] = [{
-      paneId: 'pane-worker', sessionId: 'session-x', title: 'Worker',
-      kind: 'cli-agent', state: 'idle', missionId: 'mission-a', role: 'worker',
-    }];
+    const scopeA = testProjectScope({
+      projectId: 'project-a',
+      checkoutId: 'a',
+    });
+    const persisted: MissionPaneSpec[] = [
+      {
+        id: 'spec-worker',
+        missionId: 'mission-a',
+        paneId: 'pane-worker',
+        adapterId: 'claude',
+        title: 'Worker',
+        role: 'worker',
+        createdAt: 1,
+      },
+    ];
+    const unknownScope: PaneSnapshot[] = [
+      {
+        paneId: 'pane-worker',
+        sessionId: 'session-x',
+        title: 'Worker',
+        kind: 'cli-agent',
+        state: 'idle',
+        missionId: 'mission-a',
+        role: 'worker',
+      },
+    ];
 
     const scoped = snapshotsForScope(scopeA, unknownScope);
     expect(scoped).toHaveLength(1);
@@ -822,13 +1028,23 @@ describe('createProductionApplyPorts advance/complete', () => {
     );
     const persisted: MissionPaneSpec[] = [
       {
-        id: 'spec-orch', missionId: mission.id, paneId: 'pane-orch',
-        adapterId: 'codex', title: 'Orchestrator', role: 'orchestrator', createdAt: 1,
+        id: 'spec-orch',
+        missionId: mission.id,
+        paneId: 'pane-orch',
+        adapterId: 'codex',
+        title: 'Orchestrator',
+        role: 'orchestrator',
+        createdAt: 1,
       },
       {
-        id: 'spec-worker', missionId: mission.id, paneId: 'pane-worker',
-        adapterId: 'claude', title: 'Worker', agentName: 'Builder',
-        role: 'worker', createdAt: 2,
+        id: 'spec-worker',
+        missionId: mission.id,
+        paneId: 'pane-worker',
+        adapterId: 'claude',
+        title: 'Worker',
+        agentName: 'Builder',
+        role: 'worker',
+        createdAt: 2,
       },
     ];
     const appendLearning = vi.fn();
@@ -846,50 +1062,61 @@ describe('createProductionApplyPorts advance/complete', () => {
     }));
     const ports = createProductionApplyPorts(
       { advanceMissionStep: vi.fn(), isMissionComplete: () => false },
-      () => ({
-        missions: {
-          get: () => mission,
-          appendLearning,
-          rebindOrchestratorSession,
-          hasCurrentKickoffAcceptance: () => true,
-        },
-        missionPanes: { list: () => persisted },
-        taskDispatches: { list: () => [] },
-        handoffs: {
-          list: () => [
-            {
-              id: 'handoff-1',
-              missionId: mission.id,
-              status: 'success',
-              summary: 'API integrada e testes unitários verdes.',
-              artifacts: [],
-              evidenceIds: [],
-              evidenceTrust: 'unverified',
-              delivered: true,
-              deliveryState: 'delivered',
-              createdAt: 10,
-            },
-          ],
-        },
-      }) as never,
+      () =>
+        ({
+          missions: {
+            get: () => mission,
+            appendLearning,
+            rebindOrchestratorSession,
+            hasCurrentKickoffAcceptance: () => true,
+          },
+          missionPanes: { list: () => persisted },
+          taskDispatches: { list: () => [] },
+          handoffs: {
+            list: () => [
+              {
+                id: 'handoff-1',
+                missionId: mission.id,
+                status: 'success',
+                summary: 'API integrada e testes unitários verdes.',
+                artifacts: [],
+                evidenceIds: [],
+                evidenceTrust: 'unverified',
+                delivered: true,
+                deliveryState: 'delivered',
+                createdAt: 10,
+              },
+            ],
+          },
+        }) as never,
       recoverPane,
-      () => [{
-        paneId: 'pane-orch', sessionId: 'session-orch', title: 'Orchestrator',
-        kind: 'cli-agent', state: 'idle', missionId: mission.id,
-        role: 'orchestrator',
-      }],
+      () => [
+        {
+          paneId: 'pane-orch',
+          sessionId: 'session-orch',
+          title: 'Orchestrator',
+          kind: 'cli-agent',
+          state: 'idle',
+          missionId: mission.id,
+          role: 'orchestrator',
+        },
+      ],
     );
 
     await ports.respawnFreshContext(mission.id, scope, 'context rot');
 
-    expect(recoverPane).toHaveBeenCalledWith(expect.objectContaining({
-      missionId: mission.id,
-      paneId: 'pane-orch',
-      role: 'orchestrator',
-      expectedSessionId: 'session-orch',
-      pane: expect.objectContaining({ title: 'Orchestrator' }),
-      recap: expect.stringMatching(/Memória compacta[\s\S]*Codex[\s\S]*API integrada/),
-    }));
+    expect(recoverPane).toHaveBeenCalledWith(
+      expect.objectContaining({
+        missionId: mission.id,
+        paneId: 'pane-orch',
+        role: 'orchestrator',
+        expectedSessionId: 'session-orch',
+        pane: expect.objectContaining({ title: 'Orchestrator' }),
+        recap: expect.stringMatching(
+          /Memória compacta[\s\S]*Codex[\s\S]*API integrada/,
+        ),
+      }),
+    );
     expect(rebindOrchestratorSession).toHaveBeenCalledWith(
       mission.id,
       'session-orch-new',
@@ -919,34 +1146,39 @@ describe('createProductionApplyPorts advance/complete', () => {
         createdAt: 1,
       },
     ];
-    const update = vi.fn((_missionId: string, patch: Record<string, unknown>) => {
-      mission = { ...mission, ...patch } as typeof mission;
-      return mission;
-    });
+    const update = vi.fn(
+      (_missionId: string, patch: Record<string, unknown>) => {
+        mission = { ...mission, ...patch } as typeof mission;
+        return mission;
+      },
+    );
     const recoverPane = vi.fn();
     const ports = createProductionApplyPorts(
       { advanceMissionStep: vi.fn(), isMissionComplete: () => false },
-      () => ({
-        missions: {
-          get: () => mission,
-          update,
-          appendLearning: vi.fn(),
-          hasCurrentKickoffAcceptance: () => true,
-        },
-        missionPanes: { list: () => persisted },
-        taskDispatches: { list: () => [] },
-        handoffs: { list: () => [] },
-      }) as never,
+      () =>
+        ({
+          missions: {
+            get: () => mission,
+            update,
+            appendLearning: vi.fn(),
+            hasCurrentKickoffAcceptance: () => true,
+          },
+          missionPanes: { list: () => persisted },
+          taskDispatches: { list: () => [] },
+          handoffs: { list: () => [] },
+        }) as never,
       recoverPane,
-      () => [{
-        paneId: 'pane-orch-dead',
-        sessionId: 'session-orch-dead',
-        title: 'Orchestrator',
-        kind: 'cli-agent',
-        state: 'exited',
-        missionId: mission.id,
-        role: 'orchestrator',
-      }],
+      () => [
+        {
+          paneId: 'pane-orch-dead',
+          sessionId: 'session-orch-dead',
+          title: 'Orchestrator',
+          kind: 'cli-agent',
+          state: 'exited',
+          missionId: mission.id,
+          role: 'orchestrator',
+        },
+      ],
     );
 
     await expect(
@@ -1006,52 +1238,55 @@ describe('createProductionApplyPorts advance/complete', () => {
     }));
     const ports = createProductionApplyPorts(
       { advanceMissionStep: vi.fn(), isMissionComplete: () => false },
-      () => ({
-        missions: {
-          get: () => mission,
-          rebindOrchestratorSession,
-          appendLearning: vi.fn(),
-          hasCurrentKickoffAcceptance: () => true,
-          update: vi.fn(),
-        },
-        missionPanes: { list: () => persisted },
-        taskDispatches: {
-          list: () => [
-            {
-              missionId: mission.id,
-              intentVersion: 7,
-              state: 'running',
-            },
-          ],
-        },
-        handoffs: {
-          list: () => [
-            {
-              id: 'handoff-queued',
-              missionId: mission.id,
-              status: 'success',
-              authorityOrigin: 'agent',
-              deliveryState: 'queued',
-              delivered: false,
-              summary: 'revisão pronta',
-              artifacts: [],
-              evidenceIds: [],
-              evidenceTrust: 'unverified',
-              createdAt: 10,
-            },
-          ],
-        },
-      }) as never,
+      () =>
+        ({
+          missions: {
+            get: () => mission,
+            rebindOrchestratorSession,
+            appendLearning: vi.fn(),
+            hasCurrentKickoffAcceptance: () => true,
+            update: vi.fn(),
+          },
+          missionPanes: { list: () => persisted },
+          taskDispatches: {
+            list: () => [
+              {
+                missionId: mission.id,
+                intentVersion: 7,
+                state: 'running',
+              },
+            ],
+          },
+          handoffs: {
+            list: () => [
+              {
+                id: 'handoff-queued',
+                missionId: mission.id,
+                status: 'success',
+                authorityOrigin: 'agent',
+                deliveryState: 'queued',
+                delivered: false,
+                summary: 'revisão pronta',
+                artifacts: [],
+                evidenceIds: [],
+                evidenceTrust: 'unverified',
+                createdAt: 10,
+              },
+            ],
+          },
+        }) as never,
       recoverPane,
-      () => [{
-        paneId: 'pane-orch-dead',
-        sessionId: 'session-orch-dead',
-        title: 'Orchestrator',
-        kind: 'cli-agent',
-        state: 'exited',
-        missionId: mission.id,
-        role: 'orchestrator',
-      }],
+      () => [
+        {
+          paneId: 'pane-orch-dead',
+          sessionId: 'session-orch-dead',
+          title: 'Orchestrator',
+          kind: 'cli-agent',
+          state: 'exited',
+          missionId: mission.id,
+          role: 'orchestrator',
+        },
+      ],
     );
 
     await ports.respawnFreshContext(

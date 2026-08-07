@@ -94,6 +94,8 @@ export interface DriveState {
   readonly workProven: boolean;
   /** Todo dispatch concluído, mas faltando recibo: parada visível, não silêncio. */
   readonly workDoneUnproven: boolean;
+  /** A persisted PREVC contract/workflow still owns terminal completion. */
+  readonly prevcCompletionRequired: boolean;
   /** Complete workflow plus an immutable, ordered receipt for every step. */
   readonly completionVerified: boolean;
   /** Context-rot signal (fresh-context recovery). */
@@ -168,7 +170,7 @@ export function decideDriveAction(
 
   // O TRABALHO manda. Todo dispatch concluído e com recibo é conclusão provada,
   // independente de milestone carimbado — a cerimônia é opcional, o trabalho não.
-  if (state.workProven) {
+  if (state.workProven && !state.prevcCompletionRequired) {
     return {
       kind: 'complete',
       reason: 'todos os dispatches concluídos com recibo de integração',
@@ -339,6 +341,7 @@ export interface DriveStateSignals {
   readonly lastActionAt?: number;
   readonly lastActionKind?: string;
   readonly completionVerified?: boolean;
+  readonly prevcCompletionRequired?: boolean;
 }
 
 export interface DriveStateInputs {
@@ -530,6 +533,7 @@ export function deriveDriveState(input: DriveStateInputs): DriveState {
     allStepsDone,
     workProven,
     workDoneUnproven,
+    prevcCompletionRequired: signals?.prevcCompletionRequired === true,
     completionVerified: signals?.completionVerified === true,
     contextRot: signals?.contextRot === true,
     paneDead: signals?.paneDead === true,

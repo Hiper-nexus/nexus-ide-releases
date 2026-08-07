@@ -146,7 +146,8 @@ export function countLiveMissionWorkerSlots(
   for (const worker of workers) {
     if (!worker.paneId) continue;
     const snapshot = snapshotForPersistedPane(missionId, worker, scoped);
-    if (!snapshot || snapshot.state === 'exited') deadPaneIds.push(worker.paneId);
+    if (!snapshot || snapshot.state === 'exited')
+      deadPaneIds.push(worker.paneId);
   }
   return {
     live: workers.length - deadPaneIds.length,
@@ -246,6 +247,13 @@ export function loadDriveState(
     missionId,
     mission.milestones.map((milestone) => milestone.id),
   );
+  // Once a PREVC contract/workflow exists, dispatch receipts remain proof of
+  // work but are no longer terminal authority. The workflow receipts own the
+  // final state transition until completion (or an explicit durable D1
+  // downgrade removes that authority).
+  const prevcCompletionRequired = Boolean(
+    missionWorkflow.contract || missionWorkflow.workflow,
+  );
   let contextRot = false;
   if (missionWorkflow.contract) {
     try {
@@ -318,6 +326,7 @@ export function loadDriveState(
       paneDead,
       contextRot,
       completionVerified,
+      prevcCompletionRequired,
       ...(lastActionAt !== undefined ? { lastActionAt } : {}),
       ...(lastActionKind !== undefined && lastActionKind !== null
         ? { lastActionKind }
@@ -336,6 +345,10 @@ type FinalPrevcHandoffAuthority = (
   missionId: string,
   stepId: string,
 ) => FinalPrevcStepAuthority | null;
+type PrevcCompletionAuthority = (
+  scope: ProjectExecutionScope,
+  missionId: string,
+) => boolean;
 
 function currentFinalPrevcStepAuthority(
   scope: ProjectExecutionScope,
@@ -356,6 +369,14 @@ function currentFinalPrevcStepAuthority(
       workflow.binding,
     ),
   });
+}
+
+function hasPersistedPrevcCompletionAuthority(
+  scope: ProjectExecutionScope,
+  missionId: string,
+): boolean {
+  const state = getContextWorkflowService(scope).getMissionWorkflow(missionId);
+  return Boolean(state.contract || state.workflow);
 }
 
 const MILESTONE_ATTESTATION_ID = /^milestone:[0-9a-f]{64}$/;
@@ -396,14 +417,16 @@ function collectFinalPrevcEvidenceIds(
  * `getStores` is injectable so tests can drive the real port logic with fakes.
  */
 export function createProductionApplyPorts(
-  prevc: PrevcAdvancePort = createProductionPrevcPort(getContextWorkflowService),
+  prevc: PrevcAdvancePort = createProductionPrevcPort(
+    getContextWorkflowService,
+  ),
   getStores: (
     scope: ProjectExecutionScope,
   ) => DomainStores = getProjectDomainStores,
   recoverPane = requestMissionPaneRecovery,
   paneSnapshots = listPaneSnapshots,
-  hasFinalPrevcAuthority: FinalPrevcHandoffAuthority =
-    currentFinalPrevcStepAuthority,
+  hasFinalPrevcAuthority: FinalPrevcHandoffAuthority = currentFinalPrevcStepAuthority,
+  hasPrevcCompletionAuthority: PrevcCompletionAuthority = hasPersistedPrevcCompletionAuthority,
 ): ApplyActionPorts {
   const collectTrusted = (
     scope: ProjectExecutionScope,
@@ -646,8 +669,24 @@ export function createProductionApplyPorts(
             dispatch.state === 'completed' &&
             dispatch.integrationReceipt != null,
         );
+      const simpleWorkProven =
+        workProven && !hasPrevcCompletionAuthority(scope, missionId);
 
-      if (!workProven) {
+      if (
+        workProven &&
+        !simpleWorkProven &&
+        !prevc.isMissionComplete(
+          missionId,
+          scope,
+          mission.milestones.map((step) => step.id),
+        )
+      ) {
+        throw new Error(
+          'complete rejected: PREVC workflow or step receipts incomplete',
+        );
+      }
+
+      if (!simpleWorkProven) {
         if (mission.milestones.length === 0) {
           throw new Error(
             'complete rejected: no steps (cannot complete without PREVC steps)',
@@ -659,7 +698,7 @@ export function createProductionApplyPorts(
           );
         }
       }
-      if (!workProven) {
+      if (!simpleWorkProven) {
         for (const step of mission.milestones) {
           if (step.evidenceIds.length === 0) {
             throw new Error(
@@ -671,7 +710,7 @@ export function createProductionApplyPorts(
       // Completion is verification-only. It never advances PREVC as a side
       // effect and it never treats registry errors/absence as success.
       if (
-        !workProven &&
+        !simpleWorkProven &&
         !prevc.isMissionComplete(
           missionId,
           scope,
@@ -695,7 +734,7 @@ export function createProductionApplyPorts(
       // Anti-TOCTOU na moeda que provou: quem concluiu por trabalho re-verifica
       // a FILA; quem concluiu por PREVC re-verifica os milestones. Checar a
       // moeda errada aqui deixaria a janela aberta justamente no caminho novo.
-      if (workProven) {
+      if (simpleWorkProven) {
         const recheck = stores.taskDispatches?.list(missionId) ?? [];
         if (
           recheck.length !== provingDispatches.length ||

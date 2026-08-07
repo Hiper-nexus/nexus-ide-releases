@@ -383,9 +383,59 @@ describe('scoped mission store', () => {
         { ...standardContract, intentVersion: 2 },
       ),
     ).toThrow(/CAS changed/i);
-    expect(store.get(plan.id)?.squadId).toBe(
-      'agentic-runtime-standard-v2',
+    expect(store.get(plan.id)?.squadId).toBe('agentic-runtime-standard-v2');
+  });
+
+  it('atomically rebinds the runtime squad and its approved authority hash', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope({
+      checkoutId: 'runtime-squad-authority-cas',
+    });
+    let now = 200;
+    const store = createScopedMissionStore(runtimeManager, scope, {
+      now: () => ++now,
+      idFactory: () => 'mission-runtime-authority-cas',
+    });
+    const contract = {
+      ...compileIntentContract({
+        goal: 'Executar com o roster vivo recuperado',
+        intentVersion: 1,
+      }),
+      approvedAt: 190,
+      squadRevisionHash: 'a'.repeat(64),
+    };
+    const mission = store.create({
+      title: 'Recuperação D1',
+      squadId: 'catalog-squad-stale',
+      intentState: 'ready_to_start',
+      intentVersion: 1,
+      intentContract: contract,
+    });
+    const reboundContract = {
+      ...contract,
+      squadRevisionHash: 'b'.repeat(64),
+    };
+
+    const rebound = store.rebindMissionSquadAuthority(
+      mission.id,
+      mission,
+      'nexus-story-impl',
+      reboundContract,
     );
+
+    expect(rebound).toMatchObject({
+      squadId: 'nexus-story-impl',
+      intentVersion: 1,
+    });
+    expect(rebound.intentContract?.squadRevisionHash).toBe('b'.repeat(64));
+    expect(() =>
+      store.rebindMissionSquadAuthority(
+        mission.id,
+        mission,
+        'agentic-runtime-22222222-2222-4222-8222-222222222222',
+        reboundContract,
+      ),
+    ).toThrow(/CAS changed/i);
   });
 
   it('rejects intentVersion skew and clones nested contract arrays', () => {
@@ -396,13 +446,19 @@ describe('scoped mission store', () => {
       deniedTools: ['terminal_run'],
       attachmentPaths: ['/Users/me/.nexus/dropped/proof.png'],
     };
-    expect(() => store.create({
-      title: 'Skewed', intentVersion: 1, intentContract: contract,
-    })).toThrow(/version must match/i);
+    expect(() =>
+      store.create({
+        title: 'Skewed',
+        intentVersion: 1,
+        intentContract: contract,
+      }),
+    ).toThrow(/version must match/i);
 
     const created = store.create({
-      title: 'Current', intentState: 'ready_to_start',
-      intentVersion: 2, intentContract: contract,
+      title: 'Current',
+      intentState: 'ready_to_start',
+      intentVersion: 2,
+      intentContract: contract,
     });
     expect(created.intentContract?.deniedTools).toEqual(['terminal_run']);
     expect(created.intentContract?.deniedTools).not.toBe(contract.deniedTools);
@@ -429,8 +485,14 @@ describe('scoped mission store', () => {
 
   it('physically isolates projects and returns explicit scope coordinates', () => {
     const runtimeManager = manager();
-    const scopeA = testProjectScope({ projectId: 'project-a', checkoutId: 'checkout-a' });
-    const scopeB = testProjectScope({ projectId: 'project-b', checkoutId: 'checkout-b' });
+    const scopeA = testProjectScope({
+      projectId: 'project-a',
+      checkoutId: 'checkout-a',
+    });
+    const scopeB = testProjectScope({
+      projectId: 'project-b',
+      checkoutId: 'checkout-b',
+    });
     const storeA = createScopedMissionStore(runtimeManager, scopeA);
     const storeB = createScopedMissionStore(runtimeManager, scopeB);
 
@@ -473,14 +535,20 @@ describe('scoped mission store', () => {
     expect(store.get('mission-stable')?.milestones).toEqual([
       { id: 'step-1', label: 'design', status: 'pending', evidenceIds: [] },
     ]);
-    expect(store.update('mission-stable', { milestones: ['tested'] })).toMatchObject({
+    expect(
+      store.update('mission-stable', { milestones: ['tested'] }),
+    ).toMatchObject({
       status: 'pending',
       milestones: [
         { id: 'step-1', label: 'tested', status: 'pending', evidenceIds: [] },
       ],
     });
-    expect(store.setStatus('mission-stable', 'running')?.status).toBe('running');
-    expect(store.setOrchestratorSession('mission-stable', 'session-b')).toMatchObject({
+    expect(store.setStatus('mission-stable', 'running')?.status).toBe(
+      'running',
+    );
+    expect(
+      store.setOrchestratorSession('mission-stable', 'session-b'),
+    ).toMatchObject({
       orchestratorSessionId: 'session-b',
     });
     expect(
@@ -580,7 +648,9 @@ describe('scoped mission store', () => {
 
   it('completes a dispatched guided mission after PREVC receipts', () => {
     const runtimeManager = manager();
-    const scope = testProjectScope({ checkoutId: 'driver-complete-dispatched' });
+    const scope = testProjectScope({
+      checkoutId: 'driver-complete-dispatched',
+    });
     let now = 150;
     const store = createScopedMissionStore(runtimeManager, scope, {
       now: () => ++now,

@@ -18,6 +18,17 @@
 
 import { appendMissionVerdict } from '../../shared/mission-block-cause';
 
+/** Stable names for the four mission gates' lower-tier paths. */
+export const MISSION_DEGRADATION_PATHS = Object.freeze({
+  planner: 'planner.single-writer',
+  prevc: 'prevc.simple-path',
+  kickoff: 'kickoff.nudge-retry',
+  bootstrap: 'bootstrap.reconcile',
+} as const);
+
+export type MissionDegradationPath =
+  (typeof MISSION_DEGRADATION_PATHS)[keyof typeof MISSION_DEGRADATION_PATHS];
+
 export interface MissionDegradation {
   /** Capacidade que faltou. */
   readonly what: string;
@@ -27,6 +38,8 @@ export interface MissionDegradation {
   readonly why: string;
   /** Dá para recuperar depois (configurar algo, reaprovar)? */
   readonly recoverable: boolean;
+  /** Stable gate path used by journal/restart recovery. */
+  readonly path?: MissionDegradationPath;
 }
 
 export const MISSION_DEGRADATION_MARKER = '<!-- nexus:mission-degradation -->';
@@ -42,9 +55,22 @@ export function describeMissionDegradation(
   const tail = degradation.recoverable
     ? 'Dá para recuperar depois.'
     : 'Não reversível nesta missão.';
+  const path = degradation.path ? `[${degradation.path}] ` : '';
   return (
-    `${degradation.what} reduzido para ${degradation.reducedTo} — ` +
+    `${path}${degradation.what} reduzido para ${degradation.reducedTo} — ` +
     `${degradation.why}. ${tail}`
+  );
+}
+
+/** Human-readable handoff to the inactivity network after a downgrade. */
+export function describeMissionDegradationNetwork(
+  degradation: MissionDegradation,
+): string {
+  const path = degradation.path ?? 'mission.degradation';
+  return (
+    `Rede D1 ativa (${path}): se o próximo passo ficar inativo, ` +
+    'o nudge tenta reengajar e a inatividade reentra/recolhe um resultado; ' +
+    'não é necessário travar a missão.'
   );
 }
 
@@ -82,9 +108,7 @@ export function appendMissionDegradationNote(
   }
   const lineEnd = description.indexOf('\n', tokenAt);
   const end = lineEnd === -1 ? description.length : lineEnd;
-  return (
-    `${description.slice(0, end).trimEnd()} | ${trimmed}${description.slice(end)}`
-  );
+  return `${description.slice(0, end).trimEnd()} | ${trimmed}${description.slice(end)}`;
 }
 
 /**
@@ -120,6 +144,9 @@ export const LEGITIMATE_MISSION_BLOCKS: ReadonlySet<string> = new Set([
   'guided_prevc_freeze_failed',
   'guided_prevc_invalid_route',
   'guided_prevc_late_freeze_blocked',
+  // Sem o canal Main-owned não existe fallback seguro para dirigir o PTY do
+  // Autopiloto. Injetar diretamente degradaria autoridade, não capacidade.
+  'pty_mission_control_unavailable',
   // Concorrência: recuperação em curso não é falta de capacidade, é espera.
   'recovery_lock_busy',
 ]);

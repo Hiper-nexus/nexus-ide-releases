@@ -203,6 +203,8 @@ export async function awaitMissionSchedulerAuthorityFence<T>(input: {
 export async function reconcileMissionCompletionAfterSchedulerTick(input: {
   readonly mission: Mission | null;
   readonly dispatches: readonly SchedulerCompletionDispatch[];
+  /** Main-owned D1 escape hatch for a persisted PREVC simple-path downgrade. */
+  readonly prevcDegraded?: boolean;
   readonly runGuidedBridge: () => Promise<unknown>;
   readonly completeLegacy: (intentVersion: number) => void;
 }): Promise<"guided" | "legacy" | "none"> {
@@ -213,7 +215,7 @@ export async function reconcileMissionCompletionAfterSchedulerTick(input: {
     input.dispatches,
   );
   if (topology === null) return "none";
-  if (missionRequiresGuidedPrevc(mission, topology)) {
+  if (!input.prevcDegraded && missionRequiresGuidedPrevc(mission, topology)) {
     await input.runGuidedBridge();
     return "guided";
   }

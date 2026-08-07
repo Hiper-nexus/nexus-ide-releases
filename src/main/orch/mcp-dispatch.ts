@@ -79,6 +79,8 @@ import {
   INACTIVE_GUIDED_PREVC_MCP_FENCE,
   resolveProductionGuidedPrevcMcpFence,
 } from "./guided-prevc-mcp-fence";
+import { hasPersistedMissionDegradation } from './mission-event-emit';
+import { MISSION_DEGRADATION_PATHS } from './mission-degradation';
 import {
   handoffLogicalOperationKey,
   handoffRawPayloadSha256,
@@ -105,6 +107,7 @@ export {
 export function assertUnfrozenGuidedExecutionEffectAllowed(
   mission: Parameters<typeof missionRequiresGuidedPrevc>[0],
   sealedTopology?: SealedStandardMissionTopology,
+  options: { readonly prevcDegraded?: boolean } = {},
 ): void {
   if (sealedTopology === "invalid") {
     throw new Error(
@@ -112,7 +115,9 @@ export function assertUnfrozenGuidedExecutionEffectAllowed(
         "delivery, team-read-only-fanout e wave-pack; replaneje e reaprove a missão",
     );
   }
-  if (!missionRequiresGuidedPrevc(mission, sealedTopology)) return;
+  if (
+    options.prevcDegraded ||
+    !missionRequiresGuidedPrevc(mission, sealedTopology)) return;
   throw new Error(
     "guided_prevc_required: execução bloqueada até nexus_context_doctor, " +
       "nexus_mission_freeze_contract e stage=execution",
@@ -125,13 +130,19 @@ function resolveProductionWorkflowAuthority(
 ): WorkflowEffectAuthority {
   const service = getContextWorkflowService(scope);
   const stored = service.getMissionWorkflow(missionId).contract;
-  if (!stored) {
-    let mission: Mission | null = null;
+  let mission: Mission | null = null;
     let sealedTopology: SealedStandardMissionTopology = "delivery";
-    try {
+  let prevcDegraded = false;
+  try {
       const stores = getProjectDomainStores(scope);
       mission = stores.missions.get(missionId);
-      const intentVersion = mission?.intentContract?.intentVersion;
+      const intentVersion = mission?.intentContract?.intentVersion ?? mission?.intentVersion;
+    prevcDegraded = hasPersistedMissionDegradation(
+      scope,
+      missionId,
+      MISSION_DEGRADATION_PATHS.prevc,
+      intentVersion,
+    );
       if (intentVersion !== undefined) {
         const receipt = stores.tasks.getPlanReceipt(missionId, intentVersion);
         sealedTopology = standardTopologyFromSealedTaskDetails(
@@ -151,6 +162,10 @@ function resolveProductionWorkflowAuthority(
         throw error;
       }
     }
+  // A persisted D1 decision outranks an old/stale PREVC contract. The simple
+  // path must stay executable even when the process restarted after the
+  // contract row was written but before the ceremony completed.
+  if (!stored || prevcDegraded) {
     return Object.freeze({
       contextRevision: undefined,
       assertExecutionEffectAllowed: (
@@ -160,8 +175,9 @@ function resolveProductionWorkflowAuthority(
         if (mission) {
           assertUnfrozenGuidedExecutionEffectAllowed(
             mission,
-            sealedTopology,
-          );
+            sealedTopology, {
+            prevcDegraded,
+          });
         }
         for (const candidate of mutationTargetPaths(args)) {
           if (candidate === ".context" || candidate.startsWith(".context/")) {

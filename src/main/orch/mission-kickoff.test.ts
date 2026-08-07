@@ -16,6 +16,7 @@ import {
   missionKickoffFailureReasonFromDescription,
   rendererMissionKickoffRequestSchema,
   runMissionKickoffAcceptance,
+  type MissionKickoffFailureReason,
   type MissionKickoffAcceptancePorts,
 } from './mission-kickoff';
 import { snapshotSquadAuthority } from './squad-authority-snapshot';
@@ -250,9 +251,7 @@ describe('main-owned mission kickoff acceptance', () => {
 
     expect(prompt).toContain(imagePath);
     expect(prompt).toContain('nexus-pet-studio');
-    expect(prompt).toContain(
-      'artifacts/nexus-pet-studio/mission-pet/<pet-id>',
-    );
+    expect(prompt).toContain('artifacts/nexus-pet-studio/mission-pet/<pet-id>');
     expect(prompt).toContain('pacote pronto para o Nexus validar e instalar');
     expect(prompt).toContain('nexus_handoff_submit uma única vez');
     expect(prompt).toMatch(/evidências verificáveis/i);
@@ -280,13 +279,21 @@ describe('main-owned mission kickoff acceptance', () => {
     const result = runMissionKickoffAcceptance(
       { sessionId: 'session-a', prompt: 'Execute a missão aprovada.' },
       value.ports,
-      { pasteSettleMs: 10, bootIdleWindowMs: 50, acceptanceWindowMs: 100, bracketedPasteWindowMs: 0 },
+      {
+        pasteSettleMs: 10,
+        bootIdleWindowMs: 50,
+        acceptanceWindowMs: 100,
+        bracketedPasteWindowMs: 0,
+      },
     );
     await vi.advanceTimersByTimeAsync(10);
 
     await expect(result).resolves.toEqual({ accepted: true });
     expect(value.writes).toEqual([
-      { data: expect.stringContaining('Execute a missão aprovada.'), passive: true },
+      {
+        data: expect.stringContaining('Execute a missão aprovada.'),
+        passive: true,
+      },
       { data: '\r', passive: true },
     ]);
     expect(value.blocked).toEqual([]);
@@ -300,7 +307,12 @@ describe('main-owned mission kickoff acceptance', () => {
     const result = runMissionKickoffAcceptance(
       { sessionId: 'session-busy', prompt: 'Não intercale.' },
       value.ports,
-      { pasteSettleMs: 10, bootIdleWindowMs: 50, acceptanceWindowMs: 100, bracketedPasteWindowMs: 0 },
+      {
+        pasteSettleMs: 10,
+        bootIdleWindowMs: 50,
+        acceptanceWindowMs: 100,
+        bracketedPasteWindowMs: 0,
+      },
     );
     await vi.advanceTimersByTimeAsync(51);
 
@@ -311,6 +323,39 @@ describe('main-owned mission kickoff acceptance', () => {
     });
     expect(value.writes).toEqual([]);
     expect(value.blocked).toEqual(['boot_timeout']);
+  });
+
+  it('leaves the mission live through the named nudge retry path when degradation is available', async () => {
+    vi.useFakeTimers();
+    const value = harness();
+    const degraded: string[] = [];
+    Object.assign(value.ports, {
+      degrade: async (reason: MissionKickoffFailureReason) => {
+        degraded.push(reason);
+      },
+    });
+    value.state = 'busy';
+
+    const result = runMissionKickoffAcceptance(
+      { sessionId: 'session-degraded', prompt: 'Siga pelo menor tier.' },
+      value.ports,
+      {
+        pasteSettleMs: 10,
+        bootIdleWindowMs: 50,
+        acceptanceWindowMs: 100,
+        bracketedPasteWindowMs: 0,
+      },
+    );
+    await vi.advanceTimersByTimeAsync(51);
+
+    await expect(result).resolves.toMatchObject({
+      accepted: false,
+      reason: 'boot_timeout',
+      degraded: true,
+      degradationPath: 'kickoff.nudge-retry',
+    });
+    expect(degraded).toEqual(['boot_timeout']);
+    expect(value.blocked).toEqual([]);
   });
 
   it('espera o provider nascer antes de cobrar ociosidade', async () => {
@@ -379,7 +424,12 @@ describe('main-owned mission kickoff acceptance', () => {
     const result = runMissionKickoffAcceptance(
       { sessionId: 'session-awaiting-input', prompt: 'Não confirme o modal.' },
       value.ports,
-      { pasteSettleMs: 10, bootIdleWindowMs: 50, acceptanceWindowMs: 100, bracketedPasteWindowMs: 0 },
+      {
+        pasteSettleMs: 10,
+        bootIdleWindowMs: 50,
+        acceptanceWindowMs: 100,
+        bracketedPasteWindowMs: 0,
+      },
     );
     await vi.advanceTimersByTimeAsync(51);
 
@@ -451,7 +501,10 @@ describe('main-owned mission kickoff acceptance', () => {
     );
     await vi.advanceTimersByTimeAsync(111);
 
-    await expect(result).resolves.toMatchObject({ accepted: false, reason: 'timeout' });
+    await expect(result).resolves.toMatchObject({
+      accepted: false,
+      reason: 'timeout',
+    });
     expect(value.blocked).toEqual(['timeout']);
   });
 
@@ -645,7 +698,12 @@ describe('main-owned mission kickoff acceptance', () => {
     const result = runMissionKickoffAcceptance(
       { sessionId: 'session-exit', prompt: 'Execute.' },
       value.ports,
-      { pasteSettleMs: 10, bootIdleWindowMs: 50, acceptanceWindowMs: 100, bracketedPasteWindowMs: 0 },
+      {
+        pasteSettleMs: 10,
+        bootIdleWindowMs: 50,
+        acceptanceWindowMs: 100,
+        bracketedPasteWindowMs: 0,
+      },
     );
 
     value.state = null;
@@ -664,7 +722,12 @@ describe('main-owned mission kickoff acceptance', () => {
     const result = runMissionKickoffAcceptance(
       { sessionId: 'session-write-fail', prompt: 'Execute.' },
       value.ports,
-      { pasteSettleMs: 10, bootIdleWindowMs: 50, acceptanceWindowMs: 100, bracketedPasteWindowMs: 0 },
+      {
+        pasteSettleMs: 10,
+        bootIdleWindowMs: 50,
+        acceptanceWindowMs: 100,
+        bracketedPasteWindowMs: 0,
+      },
     );
 
     await expect(result).resolves.toMatchObject({
@@ -680,7 +743,12 @@ describe('main-owned mission kickoff acceptance', () => {
     const result = runMissionKickoffAcceptance(
       { sessionId: 'session-drift', prompt: 'Execute.' },
       value.ports,
-      { pasteSettleMs: 10, bootIdleWindowMs: 50, acceptanceWindowMs: 100, bracketedPasteWindowMs: 0 },
+      {
+        pasteSettleMs: 10,
+        bootIdleWindowMs: 50,
+        acceptanceWindowMs: 100,
+        bracketedPasteWindowMs: 0,
+      },
     );
 
     value.authorized = false;

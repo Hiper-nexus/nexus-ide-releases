@@ -158,7 +158,7 @@ export const realMissionE2EEvidenceSchema = z
         message: "the real-mission harness cannot claim full-flow coverage",
       });
     }
-    // O roster advisor é canônico: as seis CLIs na ordem do contrato, com o
+    // O roster advisor é canônico: as CLIs na ordem do contrato, com o
     // tier de confinamento exato. Advisors skipped não podem carregar recibos.
     if (
       !evidence.participation.every(

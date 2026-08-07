@@ -18,7 +18,10 @@ import {
   topologyForOrchestrationMode,
   type ExtractedWavePackStory,
 } from "../../shared/mission-wave-pack";
-import { emitGuidedFanoutSerialized } from "./mission-event-emit";
+import { emitGuidedFanoutSerialized,
+  emitMissionDegradation,
+  emitMissionDegradationNudge,
+} from "./mission-event-emit";
 import type { ProjectExecutionScope } from "../../shared/types";
 import {
   authReadyModelsForProvider,
@@ -44,6 +47,7 @@ import {
   type GuidedPlanTaskDetailInput,
 } from "./guided-mission-plan-authority";
 import {
+  GUIDED_GREENFIELD_OWNERSHIP,
   listRepositoryOwnershipClaims,
   repositoryOwnershipClaimsFromGitTree,
   resolveGuidedMutationOwnership,
@@ -300,7 +304,6 @@ export function ensureGuidedMissionPlan(
 
   const patchMission = (
     patch: {
-      readonly squadId?: string;
       readonly description?: string;
       readonly intentContract?: Mission["intentContract"];
     },
@@ -319,17 +322,77 @@ export function ensureGuidedMissionPlan(
       return updater.call(suite.missions, missionId, patch) ?? null;
     }
     // Test harnesses expose only get() — mutate the live object in place.
-    if (patch.squadId !== undefined) {
-      (current as { squadId?: string }).squadId = patch.squadId;
-    }
     if (patch.description !== undefined) {
       (current as { description: string }).description = patch.description;
     }
     if (patch.intentContract !== undefined) {
-      (current as { intentContract?: Mission["intentContract"] }).intentContract =
-        patch.intentContract;
+      (current as { intentContract?: Mission['intentContract'] }).intentContract = patch.intentContract;
     }
     return current;
+    };
+  const bindMissionSquadAuthority = (
+    sourceSquad: Squad,
+  ): Readonly<{ mission: MissionWithIntent; squad: Squad }> | null => {
+    const current = suite.missions.get(missionId);
+    if (!current?.intentContract) return null;
+    const binder = (
+      suite.missions as {
+        rebindMissionSquadAuthority?: (
+          id: string,
+          expected: Mission,
+          squadId: string,
+          contract: MissionIntentContract,
+        ) => Mission;
+      }
+    ).rebindMissionSquadAuthority;
+    if (typeof binder === 'function') {
+      const contract = {
+        ...current.intentContract,
+        squadRevisionHash: snapshotSquadAuthority(sourceSquad).hash,
+      };
+      const rebound = binder.call(
+        suite.missions,
+        missionId,
+        current,
+        sourceSquad.id,
+        contract,
+      );
+      return {
+        mission: asMissionWithIntent(rebound),
+        squad: sourceSquad,
+      };
+    }
+
+    // Narrow compatibility seam for planner unit doubles. Production stores
+    // always take the Main-only CAS above; this branch never reaches IPC.
+    const contract = {
+      ...current.intentContract,
+      squadRevisionHash: snapshotSquadAuthority(sourceSquad).hash,
+    };
+    const updater = (
+      suite.missions as {
+        update?: (id: string, next: Record<string, unknown>) => Mission | null;
+      }).update;
+    const rebound =
+      typeof updater === 'function'
+        ? updater.call(suite.missions, missionId, {
+            squadId: sourceSquad.id,
+            intentContract: contract,
+          })
+        : null;
+    if (rebound?.intentContract) {
+      return {
+        mission: rebound as MissionWithIntent,
+        squad: sourceSquad,
+      };
+    }
+    (current as { squadId?: string }).squadId = sourceSquad.id;
+    (current as { intentContract?: MissionIntentContract }).intentContract =
+      contract;
+    return {
+      mission: current as MissionWithIntent,
+      squad: sourceSquad,
+    };
   };
   const resolveDefaultSquad = (): Squad | null => {
     return (
@@ -349,12 +412,12 @@ export function ensureGuidedMissionPlan(
       );
     }
     squad = fallback;
-    patchMission({ squadId: fallback.id });
     recordSquadDegradation({
       what: "squad da missão",
       reducedTo: `${fallback.id} (roster padrão)`,
-      why: "missão sem squad aprovado",
+      why: 'missão sem squad aprovado',
       recoverable: true,
+      path: 'planner.single-writer',
     });
   } else {
     const found = deps.getSquad(mission.squadId);
@@ -362,16 +425,16 @@ export function ensureGuidedMissionPlan(
       const fallback = resolveDefaultSquad();
       if (!fallback) {
         throw new Error(
-          "guided_plan_squad_missing: squad aprovado indisponível e roster padrão ausente",
+          'guided_plan_squad_missing: squad aprovado indisponível e roster padrão ausente',
         );
       }
       squad = fallback;
-      patchMission({ squadId: fallback.id });
       recordSquadDegradation({
-        what: "squad da missão",
+        what: 'squad da missão',
         reducedTo: `${fallback.id} (roster padrão)`,
-        why: "squad aprovado indisponível no catálogo",
+        why: 'squad aprovado indisponível no catálogo',
         recoverable: true,
+        path: 'planner.single-writer',
       });
     } else {
       squad = found;
@@ -381,17 +444,19 @@ export function ensureGuidedMissionPlan(
   const boundSquadRevision = mission.intentContract.squadRevisionHash;
   if (boundSquadRevision === undefined) {
     recordSquadDegradation({
-      what: "vínculo de revisão do squad",
-      reducedTo: "roster vivo atual",
-      why: "intenção sem squadRevisionHash selado",
+      what: 'vínculo de revisão do squad',
+      reducedTo: 'roster vivo atual',
+      why: 'intenção sem squadRevisionHash selado',
       recoverable: true,
+      path: 'planner.single-writer',
     });
   } else if (boundSquadRevision !== squadSnapshot.hash) {
     recordSquadDegradation({
-      what: "revisão do squad",
-      reducedTo: "roster vivo atual",
-      why: "o squad mudou depois da aprovação",
+      what: 'revisão do squad',
+      reducedTo: 'roster vivo atual',
+      why: 'o squad mudou depois da aprovação',
       recoverable: true,
+      path: 'planner.single-writer',
     });
   }
   // Re-pin live squad revision so seal authority accepts the D1 roster
@@ -400,16 +465,13 @@ export function ensureGuidedMissionPlan(
     mission.intentContract.squadRevisionHash !== squadSnapshot.hash ||
     mission.squadId !== squad.id
   ) {
-    const pinned = patchMission({
-      squadId: squad.id,
-      intentContract: {
-        ...mission.intentContract,
-        squadRevisionHash: squadSnapshot.hash,
-      },
-    });
+    const pinned = bindMissionSquadAuthority(squad);
     if (pinned) {
       // Prefer a fresh store read so scope coordinates stay coherent.
-      mission = asMissionWithIntent(suite.missions.get(missionId) ?? pinned);
+      mission = asMissionWithIntent(
+        suite.missions.get(missionId) ?? pinned.mission,
+      );
+      squad = pinned.squad;
       squadSnapshot = snapshotSquadAuthority(squad);
     } else {
       mission = asMissionWithIntent(suite.missions.get(missionId) ?? mission);
@@ -422,16 +484,30 @@ export function ensureGuidedMissionPlan(
     // One marker, all reasons — appendMissionVerdict alone would keep only the first.
     const reason = planDegradations
       .map((degradation) => describeMissionDegradation(degradation))
-      .join(" | ");
+      .join(' | ');
     patchMission({
       description: appendMissionDegradationNote(
-        current.description ?? "",
+        current.description ?? '',
         reason,
       ),
     });
+    for (const degradation of planDegradations) {
+      emitMissionDegradation(
+        suite.tasks.scope,
+        missionId,
+        degradation,
+        current.intentContract?.intentVersion ?? current.intentVersion,
+      );
+      emitMissionDegradationNudge(
+        suite.tasks.scope,
+        missionId,
+        degradation,
+        current.intentContract?.intentVersion ?? current.intentVersion,
+      );
+    }
   };
   if (existing.length > 0) {
-    const topology = existingTopology ?? "delivery";
+    const topology = existingTopology ?? 'delivery';
     // Recovery derives authority from the immutable receipt, never from a
     // fresh interpretation of goal text. This prevents a classifier update
     // from invalidating a delivery that was already approved and sealed.
@@ -448,39 +524,39 @@ export function ensureGuidedMissionPlan(
         existing.find(
           (entry) => entry.plannerId === GUIDED_MISSION_PLANNER_TASK_ID,
         ) ??
-        existing.find((entry) => entry.agentCategory === "executor") ??
+        existing.find((entry) => entry.agentCategory === 'executor') ??
         existing[0]!;
       publishPlanDegradations();
       return Object.freeze({
         applicable: true,
         sealed: false,
-        reason: "already-sealed" as const,
+        reason: 'already-sealed' as const,
         topology,
         workerAgentRef: primary.agentRef,
         taskId: primary.taskId,
       });
     }
-    if (topology === "delivery" || topology === "wave-pack") {
+    if (topology === 'delivery' || topology === 'wave-pack') {
       deps.assertStandardSquadReadiness(squad);
     }
     // Never rewrite an immutable current receipt. Recovery may reuse only the
     // exact roster-complete Guided v2 graph; older valid receipts remain
     // blocked until the operator reapproves a fresh intent/plan.
     const recovered =
-      topology === "team-read-only-fanout"
+      topology === 'team-read-only-fanout'
         ? assertRosterCompleteGuidedTeamFanoutReceipt(existing, squad)
-        : topology === "wave-pack"
+        : topology === 'wave-pack'
           ? assertRosterCompleteGuidedWavePackReceipt(existing, squad)
           : assertRosterCompleteGuidedV2Receipt(existing, squad);
     const primary =
-      "implementation" in recovered
+      'implementation' in recovered
         ? recovered.implementation
         : recovered.primary;
     publishPlanDegradations();
     return Object.freeze({
       applicable: true,
       sealed: false,
-      reason: "already-sealed",
+      reason: 'already-sealed',
       topology,
       workerAgentRef: primary.agentRef,
       taskId: primary.taskId,
@@ -501,56 +577,88 @@ export function ensureGuidedMissionPlan(
     } catch {
       inventoryCache = repositoryOwnershipClaimsFromGitTree([]);
       planDegradations.push({
-        what: "inventário do projeto",
-        reducedTo: "superfície greenfield padrão (escritor único)",
-        why: "não consegui mapear o repositório ao vivo",
+        what: 'inventário do projeto',
+        reducedTo: 'superfície greenfield padrão (escritor único)',
+        why: 'não consegui mapear o repositório ao vivo',
         recoverable: true,
+        path: 'planner.single-writer',
       });
     }
     return inventoryCache;
   };
-  const repositoryAreas = () => partitionOwnershipIntoAreas(repositoryInventory());
+  const repositoryAreas = () =>
+    partitionOwnershipIntoAreas(repositoryInventory());
   const sealDecision = resolveGuidedSealTopology(mission, {
     // Só particiona quando o goal NÃO nomeia alvos — resolveGuidedSealTopology
     // dá prioridade aos arquivos citados, então áreas seriam trabalho jogado
     // fora nesse caso.
     lazyAreas: repositoryAreas,
   });
-  const topology: StandardMissionTopology = sealDecision.topology;
+  let topology: StandardMissionTopology = sealDecision.topology;
   // P0-8 visibility: a decomposable NL goal kept single-writer by the narrow
   // destructive valve must surface — never a silent collapse to one executor.
-  if (sealDecision.nlFanoutSuppressed === "destructive") {
+  if (sealDecision.nlFanoutSuppressed === 'destructive') {
     emitGuidedFanoutSerialized(suite.tasks.scope, missionId, {
       storyCount: sealDecision.nlFanoutStoryCount,
-      reason: "destructive-goal safety valve (single-writer)",
+      reason: 'destructive-goal safety valve (single-writer)',
     });
   }
   // New plans may use the fast classifier / Pack resolver as a proposal. Once
   // sealed, the task receipt above is the sole topology authority across
   // restarts.
-  if (topology === "delivery" || topology === "wave-pack") {
-    deps.assertStandardSquadReadiness(squad);
-  }
   const adapters = deps.listLiveAdapters();
   let rosterWorkers = squad.agents.filter(isGuidedWorkerAgent);
-  const taskPlanRosterHash = snapshotTaskPlanRoster(squad.agents).hash;
+  let taskPlanRosterHash = snapshotTaskPlanRoster(squad.agents).hash;
   if (rosterWorkers.length > 64) {
     const dropped = rosterWorkers.length - 64;
     rosterWorkers = rosterWorkers.slice(0, 64);
     planDegradations.push({
-      what: "roster aprovado",
-      reducedTo: "64 workers (teto do plano)",
+      what: 'roster aprovado',
+      reducedTo: '64 workers (teto do plano)',
       why: `${dropped} assento(s) ficaram de fora do selamento`,
       recoverable: true,
+      path: 'planner.single-writer',
     });
   }
-  if (
-    topology === "team-read-only-fanout" &&
-    rosterWorkers.length === 0
-  ) {
-    throw new Error(
-      "guided_team_fanout_empty: squad aprovado não possui workers",
-    );
+
+  // A saved squad without a worker can still deliver through the bounded
+  // default roster. Re-pin the live fallback exactly like the missing/stale
+  // squad path above; never manufacture a worker from an orchestrator row.
+  if (rosterWorkers.length === 0) {
+    const fallback = resolveDefaultSquad();
+    const fallbackWorkers = fallback?.agents.filter(isGuidedWorkerAgent) ?? [];
+    if (fallback && fallback.id !== squad.id && fallbackWorkers.length > 0) {
+      squad = fallback;
+      rosterWorkers = fallbackWorkers;
+      taskPlanRosterHash = snapshotTaskPlanRoster(squad.agents).hash;
+      const pinned = bindMissionSquadAuthority(fallback);
+      if (pinned) {
+        mission = asMissionWithIntent(
+          suite.missions.get(missionId) ?? pinned.mission,
+        );
+        squad = pinned.squad;
+      }
+      recordSquadDegradation({
+        what: 'worker do squad',
+        reducedTo: `${fallback.id} (escritor único do roster padrão)`,
+        why: 'o squad aprovado não tinha worker executável',
+        recoverable: true,
+        path: 'planner.single-writer',
+      });
+    }
+  }
+  if (topology === 'team-read-only-fanout' && rosterWorkers.length === 0) {
+    topology = 'delivery';
+    planDegradations.push({
+      what: 'fanout de equipe',
+      reducedTo: 'uma unidade sequencial no checkout atual',
+      why: 'o squad aprovado não possui workers executáveis',
+      recoverable: true,
+      path: 'planner.single-writer',
+    });
+  }
+  if (topology === 'delivery' || topology === 'wave-pack') {
+    deps.assertStandardSquadReadiness(squad);
   }
   assertExactRosterRoutes({
     mission,
@@ -558,14 +666,14 @@ export function ensureGuidedMissionPlan(
     adapters,
     rosterHash: taskPlanRosterHash,
     orchestratorCliId: squad.agents.find(
-      (agent) => agent.category === "orchestrator",
+      (agent) => agent.category === 'orchestrator',
     )?.cli,
   });
-  if (topology === "team-read-only-fanout") {
+  if (topology === 'team-read-only-fanout') {
     const coordinationTasks: GuidedPlanTaskDetailInput[] = rosterWorkers.map(
       (agent, index) => ({
         id: guidedFanoutPlannerId(
-          agent.category === "reviewer" ? "review" : "advisory",
+          agent.category === 'reviewer' ? 'review' : 'advisory',
           agent,
           index,
         ),
@@ -576,12 +684,12 @@ export function ensureGuidedMissionPlan(
         detail: guidedTeamCoordinationDetail(mission, agent),
         agentRef: agent.id,
         category: agent.category,
-        executionMode: "read_only",
+        executionMode: 'read_only',
         ownership: {
           files: [],
           symbols: [],
           domains: [
-            agent.category === "reviewer"
+            agent.category === 'reviewer'
               ? GUIDED_TASK_DOMAINS.independentReview
               : GUIDED_TASK_DOMAINS.advisory,
             TEAM_READ_ONLY_FANOUT_DOMAIN,
@@ -600,15 +708,14 @@ export function ensureGuidedMissionPlan(
       suite.tasks.scope,
       suite,
       deps,
-      mission.status === "pending" &&
-        mission.intentState === "ready_to_start" &&
-        typeof mission.intentContract.approvedAt === "number"
+      mission.status === 'pending' &&
+        mission.intentState === 'ready_to_start' &&
+        typeof mission.intentContract.approvedAt === 'number'
         ? {
-            kind: "approved-preflight",
+            kind: 'approved-preflight',
             intentVersion,
             approvedAt: mission.intentContract.approvedAt,
-            approvalReviewSha256:
-              mission.intentContract.approvalReviewSha256,
+            approvalReviewSha256: mission.intentContract.approvalReviewSha256,
           }
         : undefined,
     );
@@ -617,15 +724,14 @@ export function ensureGuidedMissionPlan(
     return Object.freeze({
       applicable: true,
       sealed: true,
-      reason: "sealed",
+      reason: 'sealed',
       topology,
       workerAgentRef: primary.agentRef,
       taskId: primary.taskId,
     });
   }
-  if (topology === "wave-pack") {
-    publishPlanDegradations();
-    return sealWavePackMissionPlan({
+  if (topology === 'wave-pack') {
+    const result = sealWavePackMissionPlan({
       mission,
       missionId,
       intentVersion,
@@ -633,10 +739,12 @@ export function ensureGuidedMissionPlan(
       rosterWorkers,
       suite,
       deps,
+      planDegradations,
     });
+    publishPlanDegradations();
+    return result;
   }
-  const operatorChoice =
-    deps.squadCliPolicy() === "operator-choice";
+  const operatorChoice = deps.squadCliPolicy() === 'operator-choice';
   const worker = choosePrimaryExecutor(squad, operatorChoice);
   const qualityGate = chooseCorrectiveQualityGate(
     squad,
@@ -648,12 +756,12 @@ export function ensureGuidedMissionPlan(
   const advisoryAgents = rosterWorkers.filter(
     (agent) =>
       agent.id !== worker.id &&
-      (agent.category === "executor" ||
-        agent.category === "scout" ||
-        agent.category === "architect"),
+      (agent.category === 'executor' ||
+        agent.category === 'scout' ||
+        agent.category === 'architect'),
   );
   const independentReviewers = rosterWorkers.filter(
-    (agent) => agent.category === "reviewer" && agent.id !== qualityGate.id,
+    (agent) => agent.category === 'reviewer' && agent.id !== qualityGate.id,
   );
   // Work kind decides SHAPE (which stages exist and how they are wired); the
   // roster still decides bodies. `unknown` is deliberately the generic path.
@@ -693,22 +801,23 @@ export function ensureGuidedMissionPlan(
     );
     if (baseOwnership.length > 0) {
       planDegradations.push({
-        what: "ownership do plano",
-        reducedTo: "superfície greenfield padrão (escritor único)",
-        why: "não consegui mapear áreas do projeto",
+        what: 'ownership do plano',
+        reducedTo: 'superfície greenfield padrão (escritor único)',
+        why: 'não consegui mapear áreas do projeto',
         recoverable: true,
+        path: 'planner.single-writer',
       });
     }
   }
   if (baseOwnership.length === 0) {
     throw new Error(
-      "guided_plan_ownership_missing: o inventário seguro do projeto está vazio",
+      'guided_plan_ownership_missing: o inventário seguro do projeto está vazio',
     );
   }
   // A documentation mission must be mechanically unable to reach code — the
   // plan lane's write fence (PLAN_LANE_WRITABLE_PATHS) generalized.
   const ownershipFiles =
-    workGraph.workKind === "doc"
+    workGraph.workKind === 'doc'
       ? documentOwnershipFence(baseOwnership)
       : baseOwnership;
   // Provenance travels WITH the claim, because only the planner knows it.
@@ -721,9 +830,9 @@ export function ensureGuidedMissionPlan(
     intentOwnership.length > 0 ? [] : [OWNERSHIP_COVERAGE_DOMAIN];
   const advisoryTasks = workGraph.advisors.map((agent, index) => {
     const executionMode = guidedAdvisoryExecutionMode(agent);
-    const isolated = executionMode === "isolated_worktree";
+    const isolated = executionMode === 'isolated_worktree';
     return {
-      id: guidedFanoutPlannerId("advisory", agent, index),
+      id: guidedFanoutPlannerId('advisory', agent, index),
       title: `Mapear com ${agent.agentName}: ${mission.title}`.slice(0, 1_024),
       detail: guidedAdvisoryDetail(mission, agent),
       agentRef: agent.id,
@@ -1095,7 +1204,7 @@ export function resolveGuidedSealTopology(
       // escritor). Fan-out de time já abre raízes read-only por agente e não
       // tem o que particionar — varrer o repo ali seria trabalho jogado fora.
       const classifierWouldDeliver =
-        classifyStandardMissionTopology(contract.goal) === "delivery";
+        classifyStandardMissionTopology(contract.goal) === 'delivery';
       const nlStories =
         namedStories.length >= 2
           ? namedStories
@@ -1108,15 +1217,15 @@ export function resolveGuidedSealTopology(
       if (nlStories.length >= 2) {
         // Narrow safety valve: a truly destructive goal stays single-writer,
         // and the suppression is reported so it surfaces in mission state.
-        if (contract.risk === "destructive") {
+        if (contract.risk === 'destructive') {
           return {
-            topology: "delivery",
+            topology: 'delivery',
             nlFanoutStoryCount: nlStories.length,
-            nlFanoutSuppressed: "destructive",
+            nlFanoutSuppressed: 'destructive',
           };
         }
         return {
-          topology: "wave-pack",
+          topology: 'wave-pack',
           nlFanoutStoryCount: nlStories.length,
           nlFanoutSuppressed: null,
         };
@@ -1131,7 +1240,7 @@ export function resolveGuidedSealTopology(
     extractedStoryCount: stories.length,
     forcedMode: forced,
   });
-  return serialized(topologyForOrchestrationMode(mode, "delivery"));
+  return serialized(topologyForOrchestrationMode(mode, 'delivery'));
 }
 
 function sealWavePackMissionPlan(input: {
@@ -1142,23 +1251,32 @@ function sealWavePackMissionPlan(input: {
   readonly rosterWorkers: ReadonlyArray<{
     readonly id: string;
     readonly agentName: string;
-    readonly category: "executor" | "reviewer" | "scout" | "architect";
+    readonly category: 'executor' | 'reviewer' | 'scout' | 'architect';
   }>;
-  readonly suite: Pick<ProjectDomainStoreSuite, "missions" | "tasks">;
+  readonly suite: Pick<ProjectDomainStoreSuite, 'missions' | 'tasks'>;
   readonly deps: GuidedMissionPlannerDeps;
+  readonly planDegradations: MissionDegradation[];
 }): GuidedMissionPlanResult {
-  const { mission, missionId, intentVersion, squad, suite, deps } = input;
+  const {
+    mission,
+    missionId,
+    intentVersion,
+    squad,
+    suite,
+    deps,
+    planDegradations,
+  } = input;
   const contract = mission.intentContract!;
   // Same resolver the topology decision used: structured stories win, else the
   // P0-8 NL per-file decomposition — so the sealed N units match the routing.
   const stories = guidedWavePackStories(contract);
   const allExecutors = input.rosterWorkers
-    .filter((agent) => agent.category === "executor")
+    .filter((agent) => agent.category === 'executor')
     .map((agent) =>
       Object.freeze({
         id: agent.id,
         agentName: agent.agentName,
-        category: "executor" as const,
+        category: 'executor' as const,
       }),
     );
   // Prefer implementation-shaped executors (Dev / Builder). Story Manager and
@@ -1170,12 +1288,12 @@ function sealWavePackMissionPlan(input: {
   );
   const executors =
     preferredExecutors.length > 0 ? preferredExecutors : allExecutors;
-  const operatorChoice = deps.squadCliPolicy() === "operator-choice";
+  const operatorChoice = deps.squadCliPolicy() === 'operator-choice';
   const primaryExecutor = choosePrimaryExecutor(squad, operatorChoice);
   let qualityGate: {
     id: string;
     agentName: string;
-    category: "reviewer";
+    category: 'reviewer';
   } | null = null;
   try {
     const gate = chooseCorrectiveQualityGate(
@@ -1183,27 +1301,55 @@ function sealWavePackMissionPlan(input: {
       primaryExecutor,
       operatorChoice,
     );
-    if (gate.category === "reviewer") {
+    if (gate.category === 'reviewer') {
       qualityGate = {
         id: gate.id,
         agentName: gate.agentName,
-        category: "reviewer",
+        category: 'reviewer',
       };
     }
   } catch {
     qualityGate = null;
   }
   const intentOwnership = resolveGuidedMutationOwnership(contract);
-  const baseOwnership =
+  let baseOwnership =
     intentOwnership.length > 0
       ? intentOwnership
-      : resolveGuidedMutationOwnership(
-          contract,
-          deps.listRepositoryOwnership(suite.tasks.scope),
-        );
+      : (() => {
+          try {
+            return resolveGuidedMutationOwnership(
+              contract,
+              deps.listRepositoryOwnership(suite.tasks.scope),
+            );
+          } catch {
+            planDegradations.push({
+              what: 'inventário do Pack',
+              reducedTo: 'superfície greenfield padrão (escritor único)',
+              why: 'não consegui mapear o repositório ao vivo',
+              recoverable: true,
+              path: 'planner.single-writer',
+            });
+            return [];
+          }
+        })();
+  if (baseOwnership.length === 0) {
+    baseOwnership = resolveGuidedMutationOwnership(
+      contract,
+      GUIDED_GREENFIELD_OWNERSHIP,
+    );
+    if (baseOwnership.length > 0) {
+      planDegradations.push({
+        what: 'ownership do Pack',
+        reducedTo: 'superfície greenfield padrão (escritor único)',
+        why: 'não consegui mapear áreas do projeto',
+        recoverable: true,
+        path: 'planner.single-writer',
+      });
+    }
+  }
   if (baseOwnership.length === 0) {
     throw new Error(
-      "wave_pack_ownership_missing: o inventário seguro do projeto está vazio",
+      'wave_pack_ownership_missing: o inventário seguro do projeto está vazio',
     );
   }
   const ownershipCoverageDomains: readonly string[] =
@@ -1243,11 +1389,11 @@ function sealWavePackMissionPlan(input: {
     suite.tasks.scope,
     suite,
     deps,
-    mission.status === "pending" &&
-      mission.intentState === "ready_to_start" &&
-      typeof contract.approvedAt === "number"
+    mission.status === 'pending' &&
+      mission.intentState === 'ready_to_start' &&
+      typeof contract.approvedAt === 'number'
       ? {
-          kind: "approved-preflight",
+          kind: 'approved-preflight',
           intentVersion,
           approvedAt: contract.approvedAt,
           approvalReviewSha256: contract.approvalReviewSha256,
@@ -1258,8 +1404,8 @@ function sealWavePackMissionPlan(input: {
   return Object.freeze({
     applicable: true,
     sealed: true,
-    reason: "sealed",
-    topology: "wave-pack" as const,
+    reason: 'sealed',
+    topology: 'wave-pack' as const,
     workerAgentRef: primary.agentRef,
     taskId: primary.taskId,
   });

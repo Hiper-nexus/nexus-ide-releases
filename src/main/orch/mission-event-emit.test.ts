@@ -10,10 +10,14 @@ import {
   configureMissionEventEmit,
   emitBootstrapProgress,
   emitDriverDecision,
+  emitMissionDegradation,
+  emitMissionDegradationNudge,
+  hasPersistedMissionDegradation,
   resetBootstrapProgressCountersForTests,
 } from './mission-event-emit';
 import { MissionEventJournal } from './mission-event-journal';
 import type { MissionEvent } from '../../shared/mission-events';
+import { MISSION_DEGRADATION_PATHS } from './mission-degradation';
 
 let baseDir = '';
 let manager: ProjectRuntimeManager;
@@ -79,6 +83,81 @@ describe('mission event emit (production path)', () => {
     const events = journal.projectRecent('m1', 20);
     expect(events).toHaveLength(1);
     expect(events[0]?.idempotencyKey).not.toMatch(/\d{13}/); // no Date.now ms
+  });
+
+  it('persists a named degradation and its nudge/inactivity network', () => {
+    const degradation = {
+      what: 'contrato PREVC',
+      reducedTo: 'caminho simples verificado',
+      why: 'o contexto não congelou a tempo',
+      recoverable: true,
+      path: MISSION_DEGRADATION_PATHS.prevc,
+    } as const;
+
+    expect(
+      emitMissionDegradation(testProjectScope(), 'm1', degradation, 7),
+    ).toBe(true);
+    expect(
+      emitMissionDegradationNudge(testProjectScope(), 'm1', degradation, 7),
+    ).toBe(true);
+    expect(
+      hasPersistedMissionDegradation(
+        testProjectScope(),
+        'm1',
+        MISSION_DEGRADATION_PATHS.prevc,
+        7,
+      ),
+    ).toBe(true);
+
+    const events = new MissionEventJournal(manager, testProjectScope())
+      .projectRecent('m1', 10)
+      .filter((event) => event.type === 'custom');
+    expect(events).toHaveLength(2);
+    expect(
+      events.map((event) => (event.payload as { kind: string }).kind),
+    ).toEqual(['mission_degraded', 'mission_degraded_nudge']);
+    expect((events[1]?.payload as { network: string }).network).toBe(
+      'nudge-or-inactivity',
+    );
+  });
+
+  it('replays the named degradation after the event emitter restarts', () => {
+    const degradation = {
+      what: 'kickoff',
+      reducedTo: 'reentrada por nudge',
+      why: 'o aceite não chegou no prazo',
+      recoverable: true,
+      path: MISSION_DEGRADATION_PATHS.kickoff,
+    } as const;
+    expect(
+      emitMissionDegradation(testProjectScope(), 'm1', degradation, 3),
+    ).toBe(true);
+
+    manager.closeAll();
+    configureMissionEventEmit(null);
+    const restarted = new ProjectRuntimeManager({
+      baseDir,
+      appVersion: '0.15.5',
+    });
+    manager = restarted;
+    configureMissionEventEmit(restarted);
+
+    expect(
+      hasPersistedMissionDegradation(
+        testProjectScope(),
+        'm1',
+        MISSION_DEGRADATION_PATHS.kickoff,
+        3,
+      ),
+    ).toBe(true);
+    expect(
+      hasPersistedMissionDegradation(
+        testProjectScope(),
+        'm1',
+        MISSION_DEGRADATION_PATHS.kickoff,
+        4,
+      ),
+    ).toBe(false);
   });
 });
 

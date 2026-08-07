@@ -45,6 +45,13 @@ import {
 export interface CompleteMissionFromVerifiedPlanInput {
   readonly missionId: string;
   readonly intentVersion: number;
+  /**
+   * Main-owned PREVC simple path. The durable degradation event has already
+   * established that the Guided ceremony is unavailable, so completion may
+   * use the verified-plan CAS while nudge/inactivity remains responsible for
+   * recovery.
+   */
+  readonly prevcDegraded?: boolean;
 }
 
 export interface RecordFanoutMissionConsolidationInput
@@ -723,20 +730,20 @@ function verifyCompletedTaskPlanAuthority(
             }
           | undefined;
         const hasExactConsumption =
-          delivery?.delivery_state === "consumed" &&
+          delivery?.delivery_state === 'consumed' &&
           delivery.consumed_at !== null &&
           delivery.consumed_by_session === mission.orch_session_id &&
           delivery.consumed_delivery_attempt_id ===
             delivery.accepted_attempt_id;
         const isAwaitingExplicitConsumption =
-          (delivery?.delivery_state === "submitted" ||
-            delivery?.delivery_state === "acknowledged") &&
+          (delivery?.delivery_state === 'submitted' ||
+            delivery?.delivery_state === 'acknowledged') &&
           delivery.consumed_at === null &&
           delivery.consumed_by_session === null &&
           delivery.consumed_delivery_attempt_id === null;
         if (
           !delivery ||
-          delivery.status !== "success" ||
+          delivery.status !== 'success' ||
           delivery.session_id !== row.session_id ||
           delivery.worker_incarnation_id !== row.worker_incarnation_id ||
           delivery.delivered !== 1 ||
@@ -764,10 +771,7 @@ function verifyCompletedTaskPlanAuthority(
       // and must never fall through to a saved squad's legacy completion.
       return false;
     }
-    if (
-      wavePackDispatches > 0 &&
-      wavePackDispatches < dispatchRows.length
-    ) {
+    if (wavePackDispatches > 0 && wavePackDispatches < dispatchRows.length) {
       return false;
     }
     if (teamReadOnlyFanoutDispatches > 0 && wavePackDispatches > 0) {
@@ -775,18 +779,20 @@ function verifyCompletedTaskPlanAuthority(
     }
     const sealedTopology =
       teamReadOnlyFanoutDispatches === dispatchRows.length
-        ? "team-read-only-fanout"
+        ? 'team-read-only-fanout'
         : wavePackDispatches === dispatchRows.length
-          ? "wave-pack"
-          : "delivery";
-    const guided = missionRequiresGuidedPrevc(
-      {
-        squadId: mission.squad_id ?? undefined,
-        intentContract: intent,
-      },
-      sealedTopology,
-    );
-    if (mode === "inspect-guided" ? !guided : guided) {
+          ? 'wave-pack'
+          : 'delivery';
+    const guided =
+      !input.prevcDegraded &&
+      missionRequiresGuidedPrevc(
+        {
+          squadId: mission.squad_id ?? undefined,
+          intentContract: intent,
+        },
+        sealedTopology,
+      );
+    if (mode === 'inspect-guided' ? !guided : guided) {
       // The sealed plan decides the completion owner. Goal wording is not
       // reinterpreted after approval; mixed markers were rejected above.
       return false;
@@ -795,12 +801,9 @@ function verifyCompletedTaskPlanAuthority(
       return false;
     }
     let latestFanoutAckAt = 0;
-    if (sealedTopology === "team-read-only-fanout") {
+    if (sealedTopology === 'team-read-only-fanout') {
       for (const delivery of completedDeliveries) {
-        if (
-          !delivery.hasExactConsumption ||
-          delivery.consumedAt === null
-        ) {
+        if (!delivery.hasExactConsumption || delivery.consumedAt === null) {
           return false;
         }
         const ackAt = verifiedFanoutAckTime(db, binding, {
@@ -816,9 +819,9 @@ function verifyCompletedTaskPlanAuthority(
         latestFanoutAckAt = Math.max(latestFanoutAckAt, ackAt);
       }
     }
-    if (mode === "record-fanout-consolidation") {
+    if (mode === 'record-fanout-consolidation') {
       if (
-        sealedTopology !== "team-read-only-fanout" ||
+        sealedTopology !== 'team-read-only-fanout' ||
         !consolidation ||
         !consolidationInput ||
         !consolidationPayloadSha256 ||
@@ -843,10 +846,10 @@ function verifyCompletedTaskPlanAuthority(
         inspected: inspectedConsolidationReceipt,
       });
     }
-    if (mode === "inspect-guided") return true;
+    if (mode === 'inspect-guided') return true;
 
     const fanoutConsolidation =
-      sealedTopology === "team-read-only-fanout"
+      sealedTopology === 'team-read-only-fanout'
         ? readVerifiedFanoutConsolidation(db, binding, {
             missionId,
             intentVersion,
@@ -856,10 +859,7 @@ function verifyCompletedTaskPlanAuthority(
             now,
           })
         : null;
-    if (
-      sealedTopology === "team-read-only-fanout" &&
-      !fanoutConsolidation
-    ) {
+    if (sealedTopology === 'team-read-only-fanout' && !fanoutConsolidation) {
       return false;
     }
 

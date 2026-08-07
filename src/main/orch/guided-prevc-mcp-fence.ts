@@ -13,6 +13,8 @@ import { missionRequiresGuidedPrevc } from "./guided-mission-authority";
 import { standardTopologyFromSealedTaskDetails } from "./guided-mission-topology-authority";
 import { effectPolicyForTool } from "./mcp-effect-policy";
 import { getProjectDomainStores } from "./project-domain-store-registry";
+import { hasPersistedMissionDegradation } from './mission-event-emit';
+import { MISSION_DEGRADATION_PATHS } from './mission-degradation';
 
 export interface GuidedPrevcMcpFenceSnapshot {
   readonly required: boolean;
@@ -55,14 +57,14 @@ export function resolveProductionGuidedPrevcMcpFence(
 ): GuidedPrevcMcpFenceSnapshot {
   const stores = getProjectDomainStores(scope);
   const mission = stores.missions.get(missionId);
-  if (!mission) throw new Error("guided_prevc_mission_missing");
+  if (!mission) throw new Error('guided_prevc_mission_missing');
   const approved = mission.intentContract;
   if (!approved) return INACTIVE_GUIDED_PREVC_MCP_FENCE;
   if (
     mission.intentVersion !== undefined &&
     mission.intentVersion !== approved.intentVersion
   ) {
-    stale("approved intent version is no longer current");
+    stale('approved intent version is no longer current');
   }
   const receipt = stores.tasks.getPlanReceipt(
     missionId,
@@ -71,10 +73,23 @@ export function resolveProductionGuidedPrevcMcpFence(
   const topology = standardTopologyFromSealedTaskDetails(
     receipt?.tasks.map((task) => task.detail) ?? [],
   );
-  if (topology === "invalid") {
+  if (topology === 'invalid') {
     stale(
-      "sealed task plan mixes delivery and team-read-only-fanout authority",
+      'sealed task plan mixes delivery and team-read-only-fanout authority',
     );
+  }
+  // D1 simple-path is a main-owned, journaled decision. A renderer-edited
+  // description cannot opt out of PREVC; only the durable degradation event
+  // for this exact intent revision can do so, including after restart.
+  if (
+    hasPersistedMissionDegradation(
+      scope,
+      missionId,
+      MISSION_DEGRADATION_PATHS.prevc,
+      approved.intentVersion,
+    )
+  ) {
+    return INACTIVE_GUIDED_PREVC_MCP_FENCE;
   }
   if (!missionRequiresGuidedPrevc(mission, topology)) {
     return INACTIVE_GUIDED_PREVC_MCP_FENCE;
@@ -94,7 +109,7 @@ export function resolveProductionGuidedPrevcMcpFence(
     });
   }
   if (!current.contract || !current.workflow) {
-    stale("contract and workflow must exist as one atomic authority");
+    stale('contract and workflow must exist as one atomic authority');
   }
 
   const contract = current.contract.contract;
@@ -104,14 +119,13 @@ export function resolveProductionGuidedPrevcMcpFence(
     contract.projectId === scope.projectId &&
     contract.checkoutId === scope.checkoutId &&
     contract.goal === approved.goal &&
-    contract.acceptanceCriteria.length ===
-      approved.acceptanceCriteria.length &&
+    contract.acceptanceCriteria.length === approved.acceptanceCriteria.length &&
     contract.acceptanceCriteria.every(
       (criterion, index) =>
         criterion.statement === approved.acceptanceCriteria[index],
     );
   if (!exactIntent) {
-    stale("frozen contract differs from the current approved goal or criteria");
+    stale('frozen contract differs from the current approved goal or criteria');
   }
   if (
     workflow.binding.missionId !== contract.missionId ||
@@ -123,25 +137,25 @@ export function resolveProductionGuidedPrevcMcpFence(
     workflow.risk !== contract.risk ||
     JSON.stringify(workflow.route) !== JSON.stringify(contract.route)
   ) {
-    stale("workflow binding differs from its frozen contract");
+    stale('workflow binding differs from its frozen contract');
   }
 
-  const executionIndex = workflow.route.indexOf("execution");
+  const executionIndex = workflow.route.indexOf('execution');
   const currentIndex =
-    workflow.stage === "complete"
+    workflow.stage === 'complete'
       ? workflow.route.length
       : workflow.route.indexOf(workflow.stage);
   if (executionIndex < 0 || currentIndex < 0) {
-    stale("workflow route does not contain its current execution authority");
+    stale('workflow route does not contain its current execution authority');
   }
   const reachedExecution =
-    workflow.stage === "execution" ||
-    workflow.completedStages.includes("execution") ||
+    workflow.stage === 'execution' ||
+    workflow.completedStages.includes('execution') ||
     currentIndex >= executionIndex;
   if (!reachedExecution) {
     const compiled = service.compileMissionSnapshot(missionId);
     if (compiled.contextRevision !== contract.contextRevision) {
-      stale("compiled context snapshot differs from the frozen revision");
+      stale('compiled context snapshot differs from the frozen revision');
     }
   }
   return Object.freeze({
@@ -161,7 +175,7 @@ function assertMissionArgument(
 ): void {
   if (args.missionId !== missionId) {
     throw new Error(
-      "guided_prevc_mcp_fence: requested mission differs from bearer authority",
+      'guided_prevc_mcp_fence: requested mission differs from bearer authority',
     );
   }
 }
@@ -172,28 +186,28 @@ function assertOptionalMissionArgument(
 ): void {
   if (args.missionId !== undefined && args.missionId !== missionId) {
     throw new Error(
-      "guided_prevc_mcp_fence: requested mission differs from bearer authority",
+      'guided_prevc_mcp_fence: requested mission differs from bearer authority',
     );
   }
 }
 
 function assertPhysicalWorker(ctx: AgentGateContext): void {
   if (
-    ctx.role !== "worker" ||
+    ctx.role !== 'worker' ||
     !ctx.missionId ||
     !ctx.sessionId ||
     !ctx.workerIncarnationId
   ) {
     throw new Error(
-      "guided_prevc_mcp_fence: lifecycle call requires the current physical mission worker",
+      'guided_prevc_mcp_fence: lifecycle call requires the current physical mission worker',
     );
   }
 }
 
 function assertPhysicalMaestro(ctx: AgentGateContext): void {
-  if (ctx.role !== "orchestrator" || !ctx.missionId || !ctx.sessionId) {
+  if (ctx.role !== 'orchestrator' || !ctx.missionId || !ctx.sessionId) {
     throw new Error(
-      "guided_prevc_mcp_fence: lifecycle call requires the current physical mission Maestro",
+      'guided_prevc_mcp_fence: lifecycle call requires the current physical mission Maestro',
     );
   }
 }

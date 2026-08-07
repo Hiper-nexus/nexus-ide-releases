@@ -552,151 +552,181 @@ describe("real mission local prerequisites and state restoration", () => {
     expect(summary).not.toMatch(/private|prompt|rawOutput/u);
   });
 
-  it("persists only a bounded failure receipt with a closed kickoff reason", () => {
+  it('persists only a bounded failure receipt with a closed kickoff reason', () => {
     const receipt = safeRealMissionFailureReceipt(
       {
         schemaVersion: REAL_MISSION_EVIDENCE_SCHEMA_VERSION,
-        status: "fail",
+        status: 'fail',
         failure: {
-          code: "mission-blocked",
-          reason: "boot_timeout",
+          code: 'mission-blocked',
+          reason: 'boot_timeout',
           cta: REAL_MISSION_CTA,
           snapshot: {
-            missionStatus: "blocked",
+            missionStatus: 'blocked',
             paneCount: 1,
             dispatchCount: 0,
             handoffCount: 0,
           },
         },
-        prompt: "never persist this",
-        rawOutput: "never persist this either",
+        prompt: 'never persist this',
+        rawOutput: 'never persist this either',
       },
-      { code: 0, phase: "observer-armed" },
+      { code: 0, phase: 'observer-armed' },
       {
-        appVersion: "0.19.26",
-        commitSha: "a".repeat(40),
+        appVersion: '0.19.26',
+        commitSha: 'a'.repeat(40),
         artifact: {
-          sha256: "b".repeat(64),
+          sha256: 'b'.repeat(64),
           identity:
-            "Developer ID Application: Cleofas Pereira rocha (35P5XL3JN6)",
+            'Developer ID Application: Cleofas Pereira rocha (35P5XL3JN6)',
         },
       },
     );
 
     expect(receipt).toEqual({
       schemaVersion: REAL_MISSION_EVIDENCE_SCHEMA_VERSION,
-      status: "fail",
-      coverageTier: "guided-delivery-core",
-      planOrigin: "production-guided-planner",
-      prevcOrigin: "e2e-fixture",
-      reviewOrigin: "production-physical-worker",
-      qaOrigin: "production-physical-worker",
-      launchSurface: "private-runner",
-      wizardCoverage: "not-covered",
+      status: 'fail',
+      coverageTier: 'guided-delivery-core',
+      planOrigin: 'production-guided-planner',
+      prevcOrigin: 'e2e-fixture',
+      reviewOrigin: 'production-physical-worker',
+      qaOrigin: 'production-physical-worker',
+      launchSurface: 'private-runner',
+      wizardCoverage: 'not-covered',
       wizardReceipt: null,
       interaction: {
-        evidenceOrigin: "main-owned-instrumentation",
+        evidenceOrigin: 'main-owned-instrumentation',
         nativeDialogCount: 0,
         missionApprovalDialogCount: 0,
         missionApprovalAcceptedCount: 0,
         codexMcpPromptCount: 0,
       },
       failure: {
-        code: "mission-blocked",
-        reason: "boot_timeout",
+        code: 'mission-blocked',
+        reason: 'boot_timeout',
         detail: null,
         cta: REAL_MISSION_CTA,
         snapshot: {
-          missionStatus: "blocked",
+          missionStatus: 'blocked',
           paneCount: 1,
           dispatchCount: 0,
           handoffCount: 0,
         },
       },
       release: {
-        appVersion: "0.19.26",
-        commitSha: "a".repeat(40),
+        appVersion: '0.19.26',
+        commitSha: 'a'.repeat(40),
         artifact: {
-          sha256: "b".repeat(64),
+          sha256: 'b'.repeat(64),
           identity:
-            "Developer ID Application: Cleofas Pereira rocha (35P5XL3JN6)",
+            'Developer ID Application: Cleofas Pereira rocha (35P5XL3JN6)',
         },
       },
-      child: { exitCode: 0, phase: "observer-armed" },
+      child: { exitCode: 0, phase: 'observer-armed' },
     });
     expect(JSON.stringify(receipt)).not.toMatch(
       /"prompt":|rawOutput|never persist/u,
     );
-  });
-});
-
-describe("independent evidence verifier", () => {
-  it("accepts the complete executor, reviewer and physical-QA proof chain", () => {
-    expect(assertRealMissionPassEvidence(validEvidence()).status).toBe("pass");
+    });
   });
 
-  it("requires the AGY advisor handoff to use its physical PTY stream", () => {
+  it('preserves a closed domain block reason in the bounded failure receipt', () => {
+    const receipt = safeRealMissionFailureReceipt(
+      {
+        schemaVersion: REAL_MISSION_EVIDENCE_SCHEMA_VERSION,
+        status: 'fail',
+        failure: {
+          code: 'mission-blocked',
+          reason: 'dispatch-failed',
+          cta: REAL_MISSION_CTA,
+          snapshot: {
+            missionStatus: 'blocked',
+            paneCount: 1,
+            dispatchCount: 0,
+            handoffCount: 0,
+          },
+        },
+      },
+      { code: 1, phase: 'observer-armed' },
+      {
+        appVersion: '0.28.0',
+        commitSha: 'a'.repeat(40),
+        artifact: {
+          sha256: 'b'.repeat(64),
+          identity:
+            'Developer ID Application: Cleofas Pereira rocha (35P5XL3JN6)',
+        },
+      },
+    );
+
+    expect(receipt.failure.reason).toBe('dispatch-failed');
+  });
+
+describe('independent evidence verifier', () => {
+  it('accepts the complete executor, reviewer and physical-QA proof chain', () => {
+    expect(assertRealMissionPassEvidence(validEvidence()).status).toBe('pass');
+  });
+
+  it('requires the AGY advisor handoff to use its physical PTY stream', () => {
     const physicalAgy = validEvidence();
     const dispatch = physicalAgy.dispatches.find(
-      (candidate) => candidate.agentRef === "e2e-advisor-agy",
+      (candidate) => candidate.agentRef === 'e2e-advisor-agy',
     );
     const handoff = physicalAgy.handoffs.find(
       (candidate) => candidate.id === dispatch.handoffId,
     );
-    handoff.physicalReceipt.source = "pty-stream";
-    handoff.auditIntent.source = "pty-stream";
+    handoff.physicalReceipt.source = 'pty-stream';
+    handoff.auditIntent.source = 'pty-stream';
 
-    expect(assertRealMissionPassEvidence(physicalAgy).status).toBe("pass");
+    expect(assertRealMissionPassEvidence(physicalAgy).status).toBe('pass');
 
     const forgedHttpAgy = validEvidence();
     const forgedDispatch = forgedHttpAgy.dispatches.find(
-      (candidate) => candidate.agentRef === "e2e-advisor-agy",
+      (candidate) => candidate.agentRef === 'e2e-advisor-agy',
     );
     const forgedHandoff = forgedHttpAgy.handoffs.find(
       (candidate) => candidate.id === forgedDispatch.handoffId,
     );
-    forgedHandoff.physicalReceipt.source = "http-mcp";
-    forgedHandoff.auditIntent.source = "http-mcp";
+    forgedHandoff.physicalReceipt.source = 'http-mcp';
+    forgedHandoff.auditIntent.source = 'http-mcp';
     expect(() => assertRealMissionPassEvidence(forgedHttpAgy)).toThrow(
       /incomplete/,
     );
   });
 
-  it("rejects PTY-stream handoffs from every non-AGY worker", () => {
+  it('rejects PTY-stream handoffs from every non-AGY worker', () => {
     const forgedExecutor = validEvidence();
     const dispatch = forgedExecutor.dispatches.find(
-      (candidate) => candidate.agentRef === "e2e-executor",
+      (candidate) => candidate.agentRef === 'e2e-executor',
     );
     const handoff = forgedExecutor.handoffs.find(
       (candidate) => candidate.id === dispatch.handoffId,
     );
-    handoff.physicalReceipt.source = "pty-stream";
-    handoff.auditIntent.source = "pty-stream";
+    handoff.physicalReceipt.source = 'pty-stream';
+    handoff.auditIntent.source = 'pty-stream';
 
     expect(() => assertRealMissionPassEvidence(forgedExecutor)).toThrow(
       /incomplete/,
     );
   });
 
-  it("binds an independent advisor HEAD to the executor integration chronology", () => {
+  it('binds an independent advisor HEAD to the executor integration chronology', () => {
     const withAdvisorHead = (head, noChangeHead = head, issuedAt) => {
       const evidence = validEvidence();
       const dispatch = evidence.dispatches.find(
-        (candidate) =>
-          candidate.plannerId === "guided-advisory-2-e2e-advisor-kimi",
+        (candidate) => candidate.agentRef === 'e2e-advisor-kimi',
       );
       const handoff = evidence.handoffs.find(
         (candidate) => candidate.id === dispatch.handoffId,
       );
-      const cleanDiff = dispatch.integrationReceipt.reference.split(":").at(-1);
+      const cleanDiff = dispatch.integrationReceipt.reference.split(':').at(-1);
 
       handoff.physicalReceipt.worktreeHeadSha = head;
-      dispatch.integrationReceipt.reference =
-        `no-change:${noChangeHead}:${cleanDiff}`;
+      dispatch.integrationReceipt.reference = `no-change:${noChangeHead}:${cleanDiff}`;
       if (issuedAt !== undefined) {
         const acceptedAttempt = handoff.deliveryAttempts[0];
         const participation = evidence.participation.find(
-          (row) => row.cli === "kimi",
+          (row) => row.cli === 'kimi',
         );
         handoff.physicalReceipt.issuedAt = issuedAt;
         acceptedAttempt.startedAt = issuedAt;
@@ -713,7 +743,7 @@ describe("independent evidence verifier", () => {
     const baseline = validEvidence();
     const { initialHeadSha, finalHeadSha } = baseline.repository;
     const executorCompletedAt = baseline.dispatches.find(
-      (dispatch) => dispatch.plannerId === "guided-execution",
+      (dispatch) => dispatch.plannerId === 'guided-execution',
     ).completedAt;
 
     expect(() =>
@@ -723,39 +753,41 @@ describe("independent evidence verifier", () => {
       assertRealMissionPassEvidence(
         withAdvisorHead(finalHeadSha, finalHeadSha, executorCompletedAt),
       ).status,
-    ).toBe("pass");
-    expect(() =>
+    ).toBe('pass');
+    // Um leitor paralelo pode observar o HEAD inicial e só entregar depois da
+    // integração; o SHA prova o que ele leu, não quando terminou de reportar.
+    expect(
       assertRealMissionPassEvidence(
         withAdvisorHead(
           initialHeadSha,
           initialHeadSha,
           executorCompletedAt + 1,
         ),
-      ),
-    ).toThrow(/incomplete/);
+      ).status,
+    ).toBe('pass');
     expect(() =>
-      assertRealMissionPassEvidence(withAdvisorHead("e".repeat(40))),
+      assertRealMissionPassEvidence(withAdvisorHead('e'.repeat(40))),
     ).toThrow(/incomplete/);
     expect(() =>
       assertRealMissionPassEvidence(
-        withAdvisorHead(finalHeadSha, "c".repeat(40)),
+        withAdvisorHead(finalHeadSha, 'c'.repeat(40)),
       ),
     ).toThrow(/incomplete/);
   });
 
-  it("accepts official advisor preflight skips while retaining the post-QA proof chain", () => {
+  it('accepts official advisor preflight skips while retaining the post-QA proof chain', () => {
     const evidence = validEvidence({
-      skipAdvisorClis: ["grok", "kimi", "agy"],
+      skipAdvisorClis: ['kimi', 'agy', 'opencode'],
     });
     const qaDispatch = evidence.dispatches.find(
-      (dispatch) => dispatch.plannerId === "guided-quality-gate",
+      (dispatch) => dispatch.plannerId === 'guided-quality-gate',
     );
     const qaHandoff = evidence.handoffs.find(
       (handoff) => handoff.id === qaDispatch?.handoffId,
     );
 
-    expect(assertRealMissionPassEvidence(evidence).status).toBe("pass");
-    expect(assertRealMissionReleaseEvidence(evidence).status).toBe("pass");
+    expect(assertRealMissionPassEvidence(evidence).status).toBe('pass');
+    expect(assertRealMissionReleaseEvidence(evidence).status).toBe('pass');
     expect(qaHandoff.physicalReceipt.issuedAt).toBeLessThan(
       qaDispatch.integrationReceipt.completedAt,
     );
@@ -764,11 +796,11 @@ describe("independent evidence verifier", () => {
     );
   });
 
-  it("rejects forged skip activity, missing admitted handoff and missing post-QA receipts", () => {
+  it('rejects forged skip activity, missing admitted handoff and missing post-QA receipts', () => {
     const skipWithActivity = validEvidence({
-      skipAdvisorClis: ["grok"],
+      skipAdvisorClis: ['kimi'],
     });
-    skipWithActivity.participation.find((row) => row.cli === "grok").spawnedAt =
+    skipWithActivity.participation.find((row) => row.cli === 'kimi').spawnedAt =
       4;
     expect(() => assertRealMissionPassEvidence(skipWithActivity)).toThrow(
       /incomplete/,
@@ -776,7 +808,7 @@ describe("independent evidence verifier", () => {
 
     const admittedWithoutHandoff = validEvidence();
     admittedWithoutHandoff.participation.find(
-      (row) => row.cli === "grok",
+      (row) => row.cli === 'kimi',
     ).handoffAt = null;
     expect(() => assertRealMissionPassEvidence(admittedWithoutHandoff)).toThrow(
       /incomplete/,
@@ -784,7 +816,7 @@ describe("independent evidence verifier", () => {
 
     const missingQaReceipt = validEvidence();
     missingQaReceipt.dispatches.find(
-      (dispatch) => dispatch.plannerId === "guided-quality-gate",
+      (dispatch) => dispatch.plannerId === 'guided-quality-gate',
     ).integrationReceipt = null;
     expect(() => assertRealMissionPassEvidence(missingQaReceipt)).toThrow(
       /incomplete/,
@@ -797,38 +829,38 @@ describe("independent evidence verifier", () => {
     ).toThrow(/incomplete/);
   });
 
-  it("accepts the claude-orchestrator variant proof chain bound to release", () => {
-    const variant = validEvidence({ orchestratorCli: "claude" });
-    expect(assertRealMissionPassEvidence(variant).status).toBe("pass");
-    expect(assertRealMissionReleaseEvidence(variant).status).toBe("pass");
+  it('accepts the claude-orchestrator variant proof chain bound to release', () => {
+    const variant = validEvidence({ orchestratorCli: 'claude' });
+    expect(assertRealMissionPassEvidence(variant).status).toBe('pass');
+    expect(assertRealMissionReleaseEvidence(variant).status).toBe('pass');
 
     // Orquestrador claude sem a advisor reservada: rejeitado.
-    const unreserved = validEvidence({ orchestratorCli: "claude" });
-    unreserved.participation.find((row) => row.cli === "claude").skipped =
-      "no-credential";
+    const unreserved = validEvidence({ orchestratorCli: 'claude' });
+    unreserved.participation.find((row) => row.cli === 'claude').skipped =
+      'no-credential';
     expect(() => assertRealMissionPassEvidence(unreserved)).toThrow(
       /incomplete/,
     );
 
     // Orquestrador codex carregando a marca orchestrator-reserved: rejeitado.
-    const forgedMark = validEvidence({ skipAdvisorClis: ["claude"] });
-    forgedMark.participation.find((row) => row.cli === "claude").skipped =
-      "orchestrator-reserved";
+    const forgedMark = validEvidence({ skipAdvisorClis: ['claude'] });
+    forgedMark.participation.find((row) => row.cli === 'claude').skipped =
+      'orchestrator-reserved';
     expect(() => assertRealMissionPassEvidence(forgedMark)).toThrow(
       /incomplete/,
     );
   });
 
-  it("does not count the synthetic zero-findings council as review coverage", () => {
+  it('does not count the synthetic zero-findings council as review coverage', () => {
     const misleading = validEvidence();
-    misleading.reviewOrigin = "e2e-merge-review-fixture";
+    misleading.reviewOrigin = 'e2e-merge-review-fixture';
 
     expect(() => assertRealMissionPassEvidence(misleading)).toThrow(
       /incomplete/,
     );
   });
 
-  it("rejects a forged green receipt or any raw provider output field", () => {
+  it('rejects a forged green receipt or any raw provider output field', () => {
     const withoutDispatch = validEvidence();
     withoutDispatch.dispatches = [];
     expect(() => assertRealMissionPassEvidence(withoutDispatch)).toThrow(
@@ -837,18 +869,18 @@ describe("independent evidence verifier", () => {
     expect(() =>
       assertRealMissionPassEvidence({
         ...validEvidence(),
-        rawOutput: "provider transcript must never cross the boundary",
+        rawOutput: 'provider transcript must never cross the boundary',
       }),
     ).toThrow(/forbidden evidence field/);
   });
 
-  it("rejects the obsolete schema v7 release receipt", () => {
+  it('rejects the obsolete schema v7 release receipt', () => {
     const legacy = validEvidence();
     legacy.schemaVersion = 7;
     expect(() => assertRealMissionPassEvidence(legacy)).toThrow(/incomplete/);
   });
 
-  it("rejects top-level drift and missing pane/run attestation identity", () => {
+  it('rejects top-level drift and missing pane/run attestation identity', () => {
     const attacks = [
       (evidence) => {
         delete evidence.runId;
@@ -875,7 +907,7 @@ describe("independent evidence verifier", () => {
     }
   });
 
-  it("rejects rows without a physical worker PTY or current-session acceptance", () => {
+  it('rejects rows without a physical worker PTY or current-session acceptance', () => {
     const noPhysicalWorker = validEvidence();
     noPhysicalWorker.panes[1].ptyDataAt = null;
     noPhysicalWorker.panes[1].ptyChunkSha256 = null;
@@ -884,22 +916,22 @@ describe("independent evidence verifier", () => {
     );
 
     const staleAcceptance = validEvidence();
-    staleAcceptance.handoffs[0].consumedBySessionId = "stale-session";
+    staleAcceptance.handoffs[0].consumedBySessionId = 'stale-session';
     expect(() => assertRealMissionPassEvidence(staleAcceptance)).toThrow(
       /incomplete/,
     );
   });
 
-  it("requires the exact physical mutation authority for every runtime role", () => {
+  it('requires the exact physical mutation authority for every runtime role', () => {
     const mutations = [
-      [0, "readOnly", true],
-      [0, "nativeReadOnly", true],
-      [1, "readOnly", true],
-      [1, "nativeReadOnly", true],
-      [2, "readOnly", false],
-      [2, "nativeReadOnly", true],
-      [3, "readOnly", false],
-      [3, "nativeReadOnly", true],
+      [0, 'readOnly', true],
+      [0, 'nativeReadOnly', true],
+      [1, 'readOnly', true],
+      [1, 'nativeReadOnly', true],
+      [2, 'readOnly', false],
+      [2, 'nativeReadOnly', true],
+      [3, 'readOnly', false],
+      [3, 'nativeReadOnly', true],
     ];
 
     for (const [paneIndex, field, value] of mutations) {
@@ -911,27 +943,23 @@ describe("independent evidence verifier", () => {
     }
   });
 
-  it("rejects a durable handoff omitted from the projected proof set", () => {
+  it('rejects a durable handoff omitted from the projected proof set', () => {
     const evidence = validEvidence();
     evidence.durableHandoffs.count = 4;
-    evidence.durableHandoffs.ids.push("handoff-orphan");
+    evidence.durableHandoffs.ids.push('handoff-orphan');
 
-    expect(() => assertRealMissionPassEvidence(evidence)).toThrow(
-      /incomplete/,
-    );
+    expect(() => assertRealMissionPassEvidence(evidence)).toThrow(/incomplete/);
   });
 
-  it("rejects an observed physical PTY omitted from the pane proof set", () => {
+  it('rejects an observed physical PTY omitted from the pane proof set', () => {
     const evidence = validEvidence();
     evidence.physicalPty.count = 5;
-    evidence.physicalPty.ids.push("session-orphan-retry");
+    evidence.physicalPty.ids.push('session-orphan-retry');
 
-    expect(() => assertRealMissionPassEvidence(evidence)).toThrow(
-      /incomplete/,
-    );
+    expect(() => assertRealMissionPassEvidence(evidence)).toThrow(/incomplete/);
   });
 
-  it("rejects a missing QA, serialized root or synthetic no-change receipt", () => {
+  it('rejects a missing QA, serialized root or synthetic no-change receipt', () => {
     const missingQa = validEvidence();
     missingQa.panes.pop();
     missingQa.dispatches.pop();
@@ -942,10 +970,10 @@ describe("independent evidence verifier", () => {
 
     const serializedRoot = validEvidence();
     const executor = serializedRoot.dispatches.find(
-      (dispatch) => dispatch.plannerId === "guided-execution",
+      (dispatch) => dispatch.plannerId === 'guided-execution',
     );
     const advisory = serializedRoot.dispatches.find((dispatch) =>
-      dispatch.plannerId.startsWith("guided-advisory-"),
+      dispatch.plannerId.startsWith('guided-advisory-'),
     );
     executor.dependsOn = [advisory.taskId];
     expect(() => assertRealMissionPassEvidence(serializedRoot)).toThrow(
@@ -954,7 +982,7 @@ describe("independent evidence verifier", () => {
 
     const detachedQa = validEvidence();
     detachedQa.dispatches.find(
-      (dispatch) => dispatch.plannerId === "guided-quality-gate",
+      (dispatch) => dispatch.plannerId === 'guided-quality-gate',
     ).dependsOn = [];
     expect(() => assertRealMissionPassEvidence(detachedQa)).toThrow(
       /incomplete/,
@@ -962,23 +990,23 @@ describe("independent evidence verifier", () => {
 
     const syntheticReceipt = validEvidence();
     syntheticReceipt.dispatches.find(
-      (dispatch) => dispatch.plannerId === "guided-quality-gate",
+      (dispatch) => dispatch.plannerId === 'guided-quality-gate',
     ).integrationReceipt.evidenceIds = [];
     expect(() => assertRealMissionPassEvidence(syntheticReceipt)).toThrow(
       /incomplete/,
     );
   });
 
-  it("rejects a handoff not authored by the exact worker incarnation", () => {
+  it('rejects a handoff not authored by the exact worker incarnation', () => {
     for (const mutate of [
       (evidence) => {
-        evidence.handoffs[0].authorityOrigin = "operator-confirmed";
+        evidence.handoffs[0].authorityOrigin = 'operator-confirmed';
       },
       (evidence) => {
         evidence.handoffs[0].physicalReceipt = null;
       },
       (evidence) => {
-        evidence.handoffs[0].physicalReceipt.source = "internal";
+        evidence.handoffs[0].physicalReceipt.source = 'internal';
       },
       (evidence) => {
         evidence.handoffs[0].physicalReceipt.worktreeHeadIntegrated = false;
@@ -987,13 +1015,13 @@ describe("independent evidence verifier", () => {
         evidence.handoffs[0].physicalReceipt.issuedAt = 99;
       },
       (evidence) => {
-        evidence.handoffs[0].fromAgent = "Processo main";
+        evidence.handoffs[0].fromAgent = 'Processo main';
       },
       (evidence) => {
-        evidence.handoffs[0].sessionId = "stale-worker";
+        evidence.handoffs[0].sessionId = 'stale-worker';
       },
       (evidence) => {
-        evidence.handoffs[0].workerIncarnationId = "stale-incarnation";
+        evidence.handoffs[0].workerIncarnationId = 'stale-incarnation';
       },
     ]) {
       const evidence = validEvidence();
@@ -1004,7 +1032,7 @@ describe("independent evidence verifier", () => {
     }
   });
 
-  it("rejects missing or mismatched audit intent and physical receipt", () => {
+  it('rejects missing or mismatched audit intent and physical receipt', () => {
     const missingAudit = validEvidence();
     missingAudit.handoffs[0].auditIntent = null;
     expect(() => assertRealMissionPassEvidence(missingAudit)).toThrow(
@@ -1012,38 +1040,36 @@ describe("independent evidence verifier", () => {
     );
 
     const wrongInvocation = validEvidence();
-    wrongInvocation.handoffs[0].auditIntent.invocationId = "forged-call";
+    wrongInvocation.handoffs[0].auditIntent.invocationId = 'forged-call';
     expect(() => assertRealMissionPassEvidence(wrongInvocation)).toThrow(
       /incomplete/,
     );
 
     const wrongScope = validEvidence();
-    wrongScope.handoffs[1].auditIntent.scope.checkoutId = "other-checkout";
+    wrongScope.handoffs[1].auditIntent.scope.checkoutId = 'other-checkout';
     expect(() => assertRealMissionPassEvidence(wrongScope)).toThrow(
       /incomplete/,
     );
   });
 
-  it("accepts the delivery chain after exact current-session acceptance without manual consumption", () => {
+  it('accepts the delivery chain after exact current-session acceptance without manual consumption', () => {
     const submitted = validEvidence();
     for (const handoff of submitted.handoffs) {
-      handoff.deliveryState = "submitted";
+      handoff.deliveryState = 'submitted';
       handoff.consumedAt = null;
       handoff.consumedBySessionId = null;
       handoff.consumedDeliveryAttemptId = null;
     }
 
-    expect(assertRealMissionPassEvidence(submitted).status).toBe("pass");
-    expect(assertRealMissionReleaseEvidence(submitted).status).toBe("pass");
+    expect(assertRealMissionPassEvidence(submitted).status).toBe('pass');
+    expect(assertRealMissionReleaseEvidence(submitted).status).toBe('pass');
   });
 
-  it("rejects partial delivery state, forged consumption or duplicate acceptance", () => {
+  it('rejects partial delivery state, forged consumption or duplicate acceptance', () => {
     const partial = validEvidence();
-    partial.handoffs[0].deliveryState = "acknowledged";
+    partial.handoffs[0].deliveryState = 'acknowledged';
     partial.handoffs[0].consumedBySessionId = null;
-    expect(() => assertRealMissionPassEvidence(partial)).toThrow(
-      /incomplete/,
-    );
+    expect(() => assertRealMissionPassEvidence(partial)).toThrow(/incomplete/);
 
     const consumedWithoutReceipt = validEvidence();
     consumedWithoutReceipt.handoffs[0].consumedAt = null;
@@ -1054,7 +1080,7 @@ describe("independent evidence verifier", () => {
     );
 
     const wrongAttempt = validEvidence();
-    wrongAttempt.handoffs[0].consumedDeliveryAttemptId = "forged-attempt";
+    wrongAttempt.handoffs[0].consumedDeliveryAttemptId = 'forged-attempt';
     expect(() => assertRealMissionPassEvidence(wrongAttempt)).toThrow(
       /incomplete/,
     );
@@ -1062,7 +1088,7 @@ describe("independent evidence verifier", () => {
     const duplicateAccepted = validEvidence();
     duplicateAccepted.handoffs[0].deliveryAttempts.push({
       ...duplicateAccepted.handoffs[0].deliveryAttempts[0],
-      id: "attempt-executor-duplicate",
+      id: 'attempt-executor-duplicate',
       attemptNo: 2,
     });
     expect(() => assertRealMissionPassEvidence(duplicateAccepted)).toThrow(
@@ -1070,7 +1096,7 @@ describe("independent evidence verifier", () => {
     );
   });
 
-  it("requires dependency consumption and durable Mission Driver/PREVC receipts", () => {
+  it('requires dependency consumption and durable Mission Driver/PREVC receipts', () => {
     const noDependency = validEvidence();
     noDependency.dependencyConsumptions = [];
     expect(() => assertRealMissionPassEvidence(noDependency)).toThrow(
@@ -1079,7 +1105,7 @@ describe("independent evidence verifier", () => {
 
     const wrongDependency = validEvidence();
     wrongDependency.dependencyConsumptions[0].consumerSessionId =
-      "session-executor";
+      'session-executor';
     expect(() => assertRealMissionPassEvidence(wrongDependency)).toThrow(
       /incomplete/,
     );
@@ -1092,15 +1118,15 @@ describe("independent evidence verifier", () => {
 
     const legacyMarker = validEvidence();
     legacyMarker.completion = {
-      origin: "main-verified-task-plan",
-      marker: "legacy text marker",
+      origin: 'main-verified-task-plan',
+      marker: 'legacy text marker',
     };
     expect(() => assertRealMissionPassEvidence(legacyMarker)).toThrow(
       /incomplete/,
     );
 
     const failedDriver = validEvidence();
-    failedDriver.completion.driver.lastOutcome = "failed";
+    failedDriver.completion.driver.lastOutcome = 'failed';
     expect(() => assertRealMissionPassEvidence(failedDriver)).toThrow(
       /incomplete/,
     );
@@ -1113,20 +1139,20 @@ describe("independent evidence verifier", () => {
 
     const legacyReceiptPhase = validEvidence();
     legacyReceiptPhase.completion.stepReceipts[0].fromStage =
-      "validation-primary";
+      'validation-primary';
     expect(() => assertRealMissionPassEvidence(legacyReceiptPhase)).toThrow(
       /incomplete/,
     );
 
     const forgedBinding = validEvidence();
     forgedBinding.completion.stepReceipts[0].evidenceBinding.headSha =
-      "f".repeat(40);
+      'f'.repeat(40);
     expect(() => assertRealMissionPassEvidence(forgedBinding)).toThrow(
       /incomplete/,
     );
 
     const permutedAttestations = validEvidence({
-      launchSurface: "private-runner",
+      launchSurface: 'private-runner',
     });
     const firstEvidence =
       permutedAttestations.completion.milestones[0].evidenceIds[0];
@@ -1138,18 +1164,16 @@ describe("independent evidence verifier", () => {
     permutedAttestations.completion.stepReceipts[0].evidenceIds = [
       secondEvidence,
     ];
-    permutedAttestations.completion.milestones[1].evidenceIds = [
-      firstEvidence,
-    ];
+    permutedAttestations.completion.milestones[1].evidenceIds = [firstEvidence];
     permutedAttestations.completion.stepReceipts[1].evidenceIds = [
       firstEvidence,
     ];
-    expect(() =>
-      assertRealMissionPassEvidence(permutedAttestations),
-    ).toThrow(/incomplete/);
+    expect(() => assertRealMissionPassEvidence(permutedAttestations)).toThrow(
+      /incomplete/,
+    );
   });
 
-  it("requires the one approval receipt to precede dispatch and kickoff", () => {
+  it('requires the one approval receipt to precede dispatch and kickoff', () => {
     const missingApproval = validEvidence();
     missingApproval.mission.approvedAt = null;
     expect(() => assertRealMissionPassEvidence(missingApproval)).toThrow(
@@ -1161,7 +1185,7 @@ describe("independent evidence verifier", () => {
     expect(() => assertRealMissionPassEvidence(reversed)).toThrow(/incomplete/);
   });
 
-  it("requires one native approval dialog and zero Codex MCP prompts", () => {
+  it('requires one native approval dialog and zero Codex MCP prompts', () => {
     const duplicateDialog = validEvidence();
     duplicateDialog.interaction.nativeDialogCount = 2;
     expect(() => assertRealMissionPassEvidence(duplicateDialog)).toThrow(
@@ -1175,97 +1199,92 @@ describe("independent evidence verifier", () => {
     );
   });
 
-  it("rejects extra keys at every strict release-evidence boundary", () => {
+  it('rejects extra keys at every strict release-evidence boundary', () => {
     const mutations = [
-      ["evidence", (evidence) => (evidence.extra = "x")],
+      ['evidence', (evidence) => (evidence.extra = 'x')],
       [
-        "runtimeAttestation",
-        (evidence) => (evidence.runtimeAttestation.extra = "x"),
+        'runtimeAttestation',
+        (evidence) => (evidence.runtimeAttestation.extra = 'x'),
       ],
-      ["wizardReceipt", (evidence) => (evidence.wizardReceipt.extra = "x")],
-      ["interaction", (evidence) => (evidence.interaction.extra = "x")],
-      ["mission", (evidence) => (evidence.mission.extra = "x")],
+      ['wizardReceipt', (evidence) => (evidence.wizardReceipt.extra = 'x')],
+      ['interaction', (evidence) => (evidence.interaction.extra = 'x')],
+      ['mission', (evidence) => (evidence.mission.extra = 'x')],
       [
-        "missionInventory",
-        (evidence) => (evidence.missionInventory.extra = "x"),
+        'missionInventory',
+        (evidence) => (evidence.missionInventory.extra = 'x'),
       ],
-      ["kickoff", (evidence) => (evidence.kickoff.extra = "x")],
-      ["plan", (evidence) => (evidence.plan.extra = "x")],
-      ["plan.tasks[]", (evidence) => (evidence.plan.tasks[0].extra = "x")],
-      ["panes[]", (evidence) => (evidence.panes[0].extra = "x")],
-      ["physicalPty", (evidence) => (evidence.physicalPty.extra = "x")],
-      ["dispatches[]", (evidence) => (evidence.dispatches[0].extra = "x")],
+      ['kickoff', (evidence) => (evidence.kickoff.extra = 'x')],
+      ['plan', (evidence) => (evidence.plan.extra = 'x')],
+      ['plan.tasks[]', (evidence) => (evidence.plan.tasks[0].extra = 'x')],
+      ['panes[]', (evidence) => (evidence.panes[0].extra = 'x')],
+      ['physicalPty', (evidence) => (evidence.physicalPty.extra = 'x')],
+      ['dispatches[]', (evidence) => (evidence.dispatches[0].extra = 'x')],
       [
-        "dispatches[].integrationReceipt",
+        'dispatches[].integrationReceipt',
+        (evidence) => (evidence.dispatches[0].integrationReceipt.extra = 'x'),
+      ],
+      ['handoffs[]', (evidence) => (evidence.handoffs[0].extra = 'x')],
+      [
+        'handoffs[].physicalReceipt',
+        (evidence) => (evidence.handoffs[0].physicalReceipt.extra = 'x'),
+      ],
+      [
+        'handoffs[].auditIntent',
+        (evidence) => (evidence.handoffs[0].auditIntent.extra = 'x'),
+      ],
+      [
+        'handoffs[].auditIntent.scope',
+        (evidence) => (evidence.handoffs[0].auditIntent.scope.extra = 'x'),
+      ],
+      [
+        'handoffs[].deliveryAttempts[]',
+        (evidence) => (evidence.handoffs[0].deliveryAttempts[0].extra = 'x'),
+      ],
+      [
+        'dependencyConsumptions[]',
+        (evidence) => (evidence.dependencyConsumptions[0].extra = 'x'),
+      ],
+      ['durableHandoffs', (evidence) => (evidence.durableHandoffs.extra = 'x')],
+      ['completion', (evidence) => (evidence.completion.extra = 'x')],
+      [
+        'completion.driver',
+        (evidence) => (evidence.completion.driver.extra = 'x'),
+      ],
+      [
+        'completion.workflow',
+        (evidence) => (evidence.completion.workflow.extra = 'x'),
+      ],
+      [
+        'completion.workflow.binding',
+        (evidence) => (evidence.completion.workflow.binding.extra = 'x'),
+      ],
+      [
+        'completion.milestones[]',
+        (evidence) => (evidence.completion.milestones[0].extra = 'x'),
+      ],
+      [
+        'completion.stepReceipts[]',
+        (evidence) => (evidence.completion.stepReceipts[0].extra = 'x'),
+      ],
+      [
+        'completion.stepReceipts[].evidenceBinding',
         (evidence) =>
-          (evidence.dispatches[0].integrationReceipt.extra = "x"),
+          (evidence.completion.stepReceipts[0].evidenceBinding.extra = 'x'),
       ],
-      ["handoffs[]", (evidence) => (evidence.handoffs[0].extra = "x")],
+      ['repository', (evidence) => (evidence.repository.extra = 'x')],
+      ['release', (evidence) => (evidence.release.extra = 'x')],
       [
-        "handoffs[].physicalReceipt",
-        (evidence) => (evidence.handoffs[0].physicalReceipt.extra = "x"),
-      ],
-      [
-        "handoffs[].auditIntent",
-        (evidence) => (evidence.handoffs[0].auditIntent.extra = "x"),
+        'release.providerTranscript',
+        (evidence) => (evidence.release.providerTranscript = 'secret output'),
       ],
       [
-        "handoffs[].auditIntent.scope",
-        (evidence) => (evidence.handoffs[0].auditIntent.scope.extra = "x"),
+        'release.artifact',
+        (evidence) => (evidence.release.artifact.extra = 'x'),
       ],
       [
-        "handoffs[].deliveryAttempts[]",
+        'release.artifact.attestationSecretValue',
         (evidence) =>
-          (evidence.handoffs[0].deliveryAttempts[0].extra = "x"),
-      ],
-      [
-        "dependencyConsumptions[]",
-        (evidence) => (evidence.dependencyConsumptions[0].extra = "x"),
-      ],
-      [
-        "durableHandoffs",
-        (evidence) => (evidence.durableHandoffs.extra = "x"),
-      ],
-      ["completion", (evidence) => (evidence.completion.extra = "x")],
-      [
-        "completion.driver",
-        (evidence) => (evidence.completion.driver.extra = "x"),
-      ],
-      [
-        "completion.workflow",
-        (evidence) => (evidence.completion.workflow.extra = "x"),
-      ],
-      [
-        "completion.workflow.binding",
-        (evidence) => (evidence.completion.workflow.binding.extra = "x"),
-      ],
-      [
-        "completion.milestones[]",
-        (evidence) => (evidence.completion.milestones[0].extra = "x"),
-      ],
-      [
-        "completion.stepReceipts[]",
-        (evidence) => (evidence.completion.stepReceipts[0].extra = "x"),
-      ],
-      [
-        "completion.stepReceipts[].evidenceBinding",
-        (evidence) =>
-          (evidence.completion.stepReceipts[0].evidenceBinding.extra = "x"),
-      ],
-      ["repository", (evidence) => (evidence.repository.extra = "x")],
-      ["release", (evidence) => (evidence.release.extra = "x")],
-      [
-        "release.providerTranscript",
-        (evidence) => (evidence.release.providerTranscript = "secret output"),
-      ],
-      [
-        "release.artifact",
-        (evidence) => (evidence.release.artifact.extra = "x"),
-      ],
-      [
-        "release.artifact.attestationSecretValue",
-        (evidence) =>
-          (evidence.release.artifact.attestationSecretValue = "secret"),
+          (evidence.release.artifact.attestationSecretValue = 'secret'),
       ],
     ];
 

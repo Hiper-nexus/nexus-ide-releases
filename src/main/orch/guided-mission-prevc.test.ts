@@ -599,6 +599,54 @@ describe("main-owned guided PREVC preflight", () => {
     expect(surfaceDegradation).toHaveBeenCalledOnce();
   });
 
+  it.each([
+    'guided_prevc_contract_stale: workflow divergiu da intenção aprovada',
+    'guided_prevc_invalid_route: planning não possui próxima etapa',
+    'guided_prevc_late_freeze_blocked: pane já materializado',
+    'guided_prevc_freeze_failed: contrato/workflow não persistiu',
+  ])('keeps corrupt PREVC authority fail-closed: %s', async (message) => {
+    const surfaceDegradation = vi.fn();
+
+    await expect(
+      ensureGuidedMissionPrevcAtBootstrapBoundary(
+        testProjectScope(),
+        'mission-guided',
+        {
+          ensurePrevc: vi.fn(() => {
+            throw new Error(message);
+          }),
+          bootstrapContext: vi.fn(),
+          surfaceDegradation,
+        } as unknown as GuidedMissionPrevcBootstrapDeps,
+      ),
+    ).rejects.toThrow(message);
+    expect(surfaceDegradation).not.toHaveBeenCalled();
+  });
+
+  it('propagates an unexpected context bootstrap failure instead of authorizing D1', async () => {
+    const surfaceDegradation = vi.fn();
+
+    await expect(
+      ensureGuidedMissionPrevcAtBootstrapBoundary(
+        testProjectScope(),
+        'mission-guided',
+        {
+          ensurePrevc: vi.fn(() => ({
+            required: true,
+            frozen: false,
+            stage: null,
+            readyForWorkerDispatch: false,
+          })),
+          bootstrapContext: vi.fn(async () => {
+            throw new Error('context store corrupted');
+          }),
+          surfaceDegradation,
+        } as unknown as GuidedMissionPrevcBootstrapDeps,
+      ),
+    ).rejects.toThrow(/context store corrupted/i);
+    expect(surfaceDegradation).not.toHaveBeenCalled();
+  });
+
   it("fails before Maestro/Doctor when the canonical greenfield brief belongs to another approved intent", () => {
     const mission = approvedMission();
     const freezeContract = vi.fn(() => {
