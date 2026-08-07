@@ -4,6 +4,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { ORCH_CHANNELS } from "../../shared/orch-channels";
+import {
+  missionEngineCommandSchema,
+  missionPrepareRequestSchema,
+  missionReviewSchema,
+  missionSnapshotSchema,
+  missionSummarySnapshotSchema,
+} from "../../shared/mission-engine-contract";
 import type { ProjectExecutionScope } from "../../shared/types";
 import {
   missionPatchSchema,
@@ -89,6 +96,7 @@ import {
   type ProjectDomainStoreSuite,
   type ProjectDomainStoreName,
 } from "./project-domain-store-registry";
+import { missionEngineForScope } from "./mission-engine-registry";
 import { broadcastToProject } from "./project-scoped-broadcast";
 import {
   initIdleDelivery,
@@ -204,7 +212,18 @@ import { missionControlPlaneSnapshot } from "./mission-control-plane-ipc";
  * bootstrap. Every renderer payload is zod-validated at this boundary.
  */
 
+const missionStartSchema = missionReviewSchema
+  .pick({ missionId: true, reviewSha256: true })
+  .strict();
+const canonicalMissionIdSchema = missionReviewSchema.shape.missionId;
+const canonicalMissionSummaryListSchema = z.array(
+  missionSummarySnapshotSchema,
+);
+const canonicalMissionNoInputSchema = z.undefined();
+
 const listeners = new Set<WebContents>();
+let nextMissionSummaryBroadcastVersion = 0;
+const missionSummaryBroadcastVersions = new Map<string, number>();
 const missionAuthorityConfirmations = new WeakSet<WebContents>();
 const immediateSquadConfirmations = new WeakSet<WebContents>();
 const squadDeleteConfirmations = new WeakSet<WebContents>();
@@ -1462,6 +1481,7 @@ function summarizeSquadDeletionForDialog(
 export function configureRendererMissionAuthority(
   runtimeManager: ProjectRuntimeManager,
 ): void {
+  missionSummaryBroadcastVersions.clear();
   projectDomainStores = configureProjectDomainStoreRegistry(runtimeManager);
   rendererMissionAuthority = new RendererMissionAuthority(
     projectDomainStores,
@@ -1548,6 +1568,31 @@ export function tapMissionsSeed(cb: MissionsBroadcastTap): () => void {
   return () => missionsSeedTaps.delete(cb);
 }
 
+function broadcastCanonicalMissionSummaries(
+  scope: ProjectExecutionScope,
+): void {
+  const scopeKey = projectExecutionScopeKey(scope);
+  const version = ++nextMissionSummaryBroadcastVersion;
+  missionSummaryBroadcastVersions.set(scopeKey, version);
+  void Promise.resolve()
+    .then(() => missionEngineForScope(scope).list(scope))
+    .then((items) => {
+      if (missionSummaryBroadcastVersions.get(scopeKey) !== version) return;
+      const summaries = canonicalMissionSummaryListSchema.parse(items);
+      if (missionSummaryBroadcastVersions.get(scopeKey) !== version) return;
+      broadcastToProject(
+        listeners,
+        scope,
+        ORCH_CHANNELS.missionChanged,
+        summaries,
+      );
+    })
+    .catch((error) => {
+      if (missionSummaryBroadcastVersions.get(scopeKey) !== version) return;
+      console.warn("[orch] failed to project canonical mission summaries:", error);
+    });
+}
+
 function broadcastProjectStore(
   scope: ReturnType<typeof requireRendererWorkspaceScope>,
   store: ProjectDomainStoreName,
@@ -1565,6 +1610,7 @@ function broadcastProjectStore(
     const scopeKey = JSON.stringify(scope);
     lastMissionsByScope.set(scopeKey, missions);
     for (const tap of missionsBroadcastTaps) tap(scopeKey, missions);
+    broadcastCanonicalMissionSummaries(scope);
   } else if (store === "handoffs") {
     broadcastToProject(
       listeners,
@@ -1741,6 +1787,7 @@ export async function closeOrchestration(): Promise<void> {
     projectDomainStores = null;
     rendererMissionAuthority = null;
     lastMissionsByScope.clear();
+    missionSummaryBroadcastVersions.clear();
     squadDesignDrafts.clear();
     orchestrationReady = false;
     orchestrationShutdownBlocked = false;
@@ -1832,6 +1879,39 @@ export function registerOrchIpc(): void {
   ipcMain.handle(ORCH_CHANNELS.missionsList, (event) =>
     requireProjectStores(event.sender).missions.list(),
   );
+  ipcMain.handle(ORCH_CHANNELS.missionPrepare, async (event, raw) => {
+    const request = missionPrepareRequestSchema.parse(raw);
+    const scope = requireLiveRendererWorkspaceScope(event.sender);
+    const review = await missionEngineForScope(scope).prepare(scope, request);
+    return missionReviewSchema.parse(review);
+  });
+  ipcMain.handle(ORCH_CHANNELS.missionStart, async (event, raw) => {
+    const input = missionStartSchema.parse(raw);
+    const scope = requireLiveRendererWorkspaceScope(event.sender);
+    const snapshot = await missionEngineForScope(scope).start(scope, input);
+    return missionSnapshotSchema.parse(snapshot);
+  });
+  ipcMain.handle(ORCH_CHANNELS.missionCommand, async (event, raw) => {
+    const command = missionEngineCommandSchema.parse(raw);
+    const scope = requireLiveRendererWorkspaceScope(event.sender);
+    const snapshot = await missionEngineForScope(scope).command(scope, command);
+    return missionSnapshotSchema.parse(snapshot);
+  });
+  ipcMain.handle(ORCH_CHANNELS.missionSnapshot, async (event, raw) => {
+    const missionId = canonicalMissionIdSchema.parse(raw);
+    const scope = requireLiveRendererWorkspaceScope(event.sender);
+    const snapshot = await missionEngineForScope(scope).snapshot(
+      scope,
+      missionId,
+    );
+    return missionSnapshotSchema.parse(snapshot);
+  });
+  ipcMain.handle(ORCH_CHANNELS.missionList, async (event, raw) => {
+    canonicalMissionNoInputSchema.parse(raw);
+    const scope = requireLiveRendererWorkspaceScope(event.sender);
+    const items = await missionEngineForScope(scope).list(scope);
+    return canonicalMissionSummaryListSchema.parse(items);
+  });
   ipcMain.handle(ORCH_CHANNELS.missionPanesList, (event, raw) => {
     if (typeof raw !== "string" || raw.length === 0 || raw.length > 128) {
       return [];

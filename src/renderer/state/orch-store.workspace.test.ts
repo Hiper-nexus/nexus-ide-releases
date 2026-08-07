@@ -1,10 +1,25 @@
 /** @vitest-environment jsdom */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_ONBOARDING } from '../../shared/onboarding-types';
-import type { Handoff } from '../../shared/orch-types';
+import type { MissionSummarySnapshot } from '../../shared/mission-engine-contract';
+import type { Handoff, Mission } from '../../shared/orch-types';
 import { setActiveWorkspacePath } from './active-workspace';
 import { useOnboardingStore } from './onboarding-store';
 import { useOrchStore } from './orch-store';
+
+function missionSummary(
+  id: string,
+  updatedAt = 1,
+): MissionSummarySnapshot {
+  return {
+    id,
+    title: id,
+    state: 'running',
+    progress: { completed: 0, total: 1 },
+    needsAttention: false,
+    updatedAt,
+  };
+}
 
 describe('orch-store workspace isolation', () => {
   beforeEach(() => {
@@ -12,6 +27,9 @@ describe('orch-store workspace isolation', () => {
     Object.defineProperty(window, 'nexus', {
       configurable: true,
       value: {
+        mission: {
+          list: vi.fn(async () => []),
+        },
         onboarding: { set: vi.fn(async () => DEFAULT_ONBOARDING) },
         orch: {
           listMissions: vi.fn(async () => []),
@@ -28,6 +46,7 @@ describe('orch-store workspace isolation', () => {
     });
     useOrchStore.setState({
       missions: [],
+      missionSummaries: [],
       handoffs: [],
       todoLists: [],
       squads: [],
@@ -91,6 +110,108 @@ describe('orch-store workspace isolation', () => {
       },
     ]);
     expect(useOrchStore.getState().missions[0]?.id).toBe('ok');
+  });
+
+  it('accepts canonical summaries only while bound to the active workspace', () => {
+    setActiveWorkspacePath('/ws/a');
+    useOrchStore.getState().setMissionSummaries([
+      missionSummary('unbound'),
+    ]);
+    expect(useOrchStore.getState().missionSummaries).toEqual([]);
+
+    useOrchStore.setState({ boundWorkspacePath: '/ws/a' });
+    useOrchStore.getState().setMissionSummaries([
+      missionSummary('workspace-a'),
+    ]);
+    expect(useOrchStore.getState().missionSummaries).toEqual([
+      missionSummary('workspace-a'),
+    ]);
+
+    setActiveWorkspacePath('/ws/b');
+    useOrchStore.getState().setMissionSummaries([
+      missionSummary('foreign'),
+    ]);
+    expect(useOrchStore.getState().missionSummaries).toEqual([
+      missionSummary('workspace-a'),
+    ]);
+  });
+
+  it('hydrates canonical summaries for the authorized workspace', async () => {
+    setActiveWorkspacePath('/ws/a');
+    const summaries = [missionSummary('restored-summary')];
+    vi.mocked(window.nexus.mission.list).mockResolvedValue(summaries);
+
+    await useOrchStore.getState().hydrate('/ws/a');
+
+    expect(window.nexus.mission.list).toHaveBeenCalledOnce();
+    expect(useOrchStore.getState().missionSummaries).toEqual(summaries);
+    expect(useOrchStore.getState().missions).toEqual([]);
+  });
+
+  it('preserves a canonical changed broadcast newer than the deferred list', async () => {
+    setActiveWorkspacePath('/ws/a');
+    let resolveSummaries!: (items: MissionSummarySnapshot[]) => void;
+    const pendingSummaries = new Promise<MissionSummarySnapshot[]>((resolve) => {
+      resolveSummaries = resolve;
+    });
+    vi.mocked(window.nexus.mission.list).mockReturnValue(pendingSummaries);
+
+    const hydration = useOrchStore.getState().hydrate('/ws/a');
+    expect(useOrchStore.getState().boundWorkspacePath).toBe('/ws/a');
+    const broadcast = [missionSummary('newer-broadcast', 2)];
+    useOrchStore.getState().setMissionSummaries(broadcast);
+    resolveSummaries([missionSummary('stale-list', 1)]);
+    await hydration;
+
+    expect(useOrchStore.getState().missionSummaries).toEqual(broadcast);
+  });
+
+  it('hydrates canonical summaries without waiting for the legacy mission list', async () => {
+    setActiveWorkspacePath('/ws/a');
+    let resolveLegacy!: (missions: Mission[]) => void;
+    const pendingLegacy = new Promise<Mission[]>((resolve) => {
+      resolveLegacy = resolve;
+    });
+    vi.mocked(window.nexus.orch.listMissions).mockReturnValue(pendingLegacy);
+    vi.mocked(window.nexus.mission.list).mockResolvedValue([
+      missionSummary('canonical-ready'),
+    ]);
+
+    const hydration = useOrchStore.getState().hydrate('/ws/a');
+    await vi.waitFor(() =>
+      expect(useOrchStore.getState().missionSummaries).toEqual([
+        missionSummary('canonical-ready'),
+      ]),
+    );
+    resolveLegacy([]);
+    await hydration;
+  });
+
+  it('hydrates the legacy mission mirror without waiting for canonical summaries', async () => {
+    setActiveWorkspacePath('/ws/a');
+    let resolveCanonical!: (items: MissionSummarySnapshot[]) => void;
+    const pendingCanonical = new Promise<MissionSummarySnapshot[]>((resolve) => {
+      resolveCanonical = resolve;
+    });
+    const legacy: Mission = {
+      id: 'legacy-ready',
+      title: 'Legacy ready',
+      description: '',
+      status: 'running',
+      milestones: [],
+      learnings: '',
+      createdAt: 1,
+      updatedAt: 2,
+    };
+    vi.mocked(window.nexus.orch.listMissions).mockResolvedValue([legacy]);
+    vi.mocked(window.nexus.mission.list).mockReturnValue(pendingCanonical);
+
+    const hydration = useOrchStore.getState().hydrate('/ws/a');
+    await vi.waitFor(() =>
+      expect(useOrchStore.getState().missions).toEqual([legacy]),
+    );
+    resolveCanonical([]);
+    await hydration;
   });
 
   it.each(['getMcpInfo', 'listHandoffs'] as const)(
@@ -203,6 +324,7 @@ describe('orch-store workspace isolation', () => {
     setActiveWorkspacePath('/ws/a');
     useOrchStore.setState({
       boundWorkspacePath: '/ws/a',
+      missionSummaries: [missionSummary('old-summary')],
       missions: [
         {
           id: 'old',
@@ -228,6 +350,9 @@ describe('orch-store workspace isolation', () => {
     Object.defineProperty(window, 'nexus', {
       configurable: true,
       value: {
+        mission: {
+          list: vi.fn(async () => deferred.promise),
+        },
         orch: {
           listMissions: vi.fn(async () => deferred.promise),
           listHandoffs: vi.fn(async () => []),
@@ -244,6 +369,7 @@ describe('orch-store workspace isolation', () => {
 
     useOrchStore.getState().resetProjectState();
     expect(useOrchStore.getState().missions).toEqual([]);
+    expect(useOrchStore.getState().missionSummaries).toEqual([]);
     expect(useOrchStore.getState().boundWorkspacePath).toBeNull();
 
     const hydrateA = useOrchStore.getState().hydrate('/ws/a');
@@ -255,5 +381,6 @@ describe('orch-store workspace isolation', () => {
 
     expect(useOrchStore.getState().boundWorkspacePath).toBeNull();
     expect(useOrchStore.getState().missions).toEqual([]);
+    expect(useOrchStore.getState().missionSummaries).toEqual([]);
   });
 });

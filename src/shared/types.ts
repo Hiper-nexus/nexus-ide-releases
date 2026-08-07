@@ -9,6 +9,13 @@
 
 import type { AdapterInfo } from './adapter-types';
 import type { MissionTaskScheduleItem } from './mission-task-schedule';
+import type {
+  MissionEngineCommand,
+  MissionPrepareRequest,
+  MissionReview,
+  MissionSnapshot,
+  MissionSummarySnapshot,
+} from './mission-engine-contract';
 import type { OnboardingState, OnboardingPatch } from './onboarding-types';
 import type {
   PetGalleryImportResult,
@@ -515,6 +522,19 @@ export interface NexusApi {
       cb: (event: JarvisLiveToolTurnCompleteEvent) => void,
     ): Unsubscribe;
     onLiveInterrupted(cb: (event: JarvisLiveInterruptEvent) => void): Unsubscribe;
+  };
+  mission: {
+    prepare(request: MissionPrepareRequest): Promise<MissionReview>;
+    start(input: {
+      missionId: string;
+      reviewSha256: string;
+    }): Promise<MissionSnapshot>;
+    command(command: MissionEngineCommand): Promise<MissionSnapshot>;
+    snapshot(missionId: string): Promise<MissionSnapshot>;
+    list(): Promise<MissionSummarySnapshot[]>;
+    onChanged(
+      listener: (items: MissionSummarySnapshot[]) => void,
+    ): Unsubscribe;
   };
   orch: {
     /** Mirror the current pane set into the main-process registry. */

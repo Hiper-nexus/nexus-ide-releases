@@ -645,6 +645,10 @@ export function useOrchBridge(): void {
         syncPanesNow(); // Critical: close request needs immediate sync
       }),
 
+      window.nexus.mission.onChanged((items) => {
+        useOrchStore.getState().setMissionSummaries(items);
+      }),
+
       window.nexus.orch.onMissionsChanged((missions) => {
         const prev = useOrchStore.getState().missions;
         const prevLanes = new Map(

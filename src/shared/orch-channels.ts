@@ -16,6 +16,12 @@ export const ORCH_CHANNELS = {
   paneSpawnResult: 'orch:pane.spawnResult',
   paneRecoveryResult: 'orch:pane.recoveryResult',
   browserOpenResult: 'orch:browser.openResult',
+  /** Strict canonical MissionEngine surface; scope is always derived in main. */
+  missionPrepare: 'orch:mission.prepare',
+  missionStart: 'orch:mission.start',
+  missionCommand: 'orch:mission.command',
+  missionSnapshot: 'orch:mission.snapshot',
+  missionList: 'orch:mission.list',
   missionsList: 'orch:missions.list',
   missionPanesList: 'orch:missions.panes',
   /** Read-only wave schedule (identities/status only — never sealed detail). */
@@ -107,6 +113,7 @@ export const ORCH_CHANNELS = {
   paneRecoveryRequest: 'orch:pane.recoveryRequest',
   browserOpenRequest: 'orch:browser.openRequest',
   paneCloseRequest: 'orch:pane.closeRequest',
+  missionChanged: 'orch:mission.changed',
   missionsChanged: 'orch:missions.changed',
   handoffsChanged: 'orch:handoffs.changed',
   todosChanged: 'orch:todos.changed',

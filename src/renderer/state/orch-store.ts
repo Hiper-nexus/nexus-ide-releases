@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import type { MissionSummarySnapshot } from '../../shared/mission-engine-contract';
 import type {
   Handoff,
   McpRuntimeInfo,
@@ -19,6 +20,7 @@ export type OrchPanelTab = 'missions' | 'handoffs' | 'todos' | 'squads';
 
 interface OrchState {
   missions: Mission[];
+  missionSummaries: MissionSummarySnapshot[];
   handoffs: Handoff[];
   todoLists: TodoList[];
   squads: Squad[];
@@ -54,6 +56,7 @@ interface OrchState {
   pruneMissionBindings(livePaneIds: Set<string>): void;
 
   setMissions(missions: Mission[]): void;
+  setMissionSummaries(items: MissionSummarySnapshot[]): void;
   setHandoffs(handoffs: Handoff[]): void;
   setTodoLists(lists: TodoList[]): void;
   setSquads(squads: Squad[]): void;
@@ -69,6 +72,7 @@ function acceptsWorkspacePayload(path: string | null): boolean {
 
 export const useOrchStore = create<OrchState>((set, get) => ({
   missions: [],
+  missionSummaries: [],
   handoffs: [],
   todoLists: [],
   squads: [],
@@ -94,15 +98,38 @@ export const useOrchStore = create<OrchState>((set, get) => ({
     const stateBeforeHydration = get();
     const hydrationBaseline = {
       missions: stateBeforeHydration.missions,
+      missionSummaries: stateBeforeHydration.missionSummaries,
       handoffs: stateBeforeHydration.handoffs,
       todoLists: stateBeforeHydration.todoLists,
       squads: stateBeforeHydration.squads,
       mcpInfo: stateBeforeHydration.mcpInfo,
     };
 
+    const canonicalHydration = Promise.resolve()
+      .then(() => window.nexus.mission.list())
+      .then(
+        (missionSummaries) => {
+          if (getActiveWorkspacePath() !== workspacePath) return;
+          if (get().workspaceEpoch !== epoch) return;
+          if (
+            get().missionSummaries === hydrationBaseline.missionSummaries
+          ) {
+            set({ missionSummaries });
+          }
+        },
+        (reason) => {
+          if (
+            getActiveWorkspacePath() === workspacePath &&
+            get().workspaceEpoch === epoch
+          ) {
+            console.warn(
+              '[orch] failed to hydrate canonical mission summaries:',
+              reason,
+            );
+          }
+        },
+      );
     // Começa os auxiliares em paralelo, mas observa suas rejeições desde já.
-    // A lista de missões é a fronteira essencial: assim que chega, vincula o
-    // workspace para que broadcasts posteriores não sejam descartados.
     const auxiliaryHydration = Promise.allSettled([
       window.nexus.orch.listHandoffs(),
       window.nexus.orch.getTodos(),
@@ -112,13 +139,14 @@ export const useOrchStore = create<OrchState>((set, get) => ({
     let missions: Mission[];
     try {
       missions = await window.nexus.orch.listMissions();
-    } catch (err) {
+    } catch (reason) {
       if (
         getActiveWorkspacePath() === workspacePath &&
         get().workspaceEpoch === epoch
       ) {
-        console.warn('[orch] failed to hydrate mission state:', err);
+        console.warn('[orch] failed to hydrate legacy mission state:', reason);
       }
+      await canonicalHydration;
       return;
     }
     if (getActiveWorkspacePath() !== workspacePath) return;
@@ -188,11 +216,13 @@ export const useOrchStore = create<OrchState>((set, get) => ({
       }
     }
     if (Object.keys(auxiliaryPatch).length > 0) set(auxiliaryPatch);
+    await canonicalHydration;
   },
 
   resetProjectState: () =>
     set((s) => ({
       missions: [],
+      missionSummaries: [],
       handoffs: [],
       todoLists: [],
       squads: [],
@@ -235,6 +265,11 @@ export const useOrchStore = create<OrchState>((set, get) => ({
       return { paneMissions: Object.fromEntries(entries) };
     }),
 
+  setMissionSummaries: (missionSummaries) => {
+    const path = getActiveWorkspacePath();
+    if (!acceptsWorkspacePayload(path)) return;
+    set({ missionSummaries });
+  },
   setMissions: (missions) => {
     const path = getActiveWorkspacePath();
     if (!acceptsWorkspacePayload(path)) return;

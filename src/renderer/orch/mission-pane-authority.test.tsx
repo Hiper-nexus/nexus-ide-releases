@@ -98,6 +98,13 @@ function listener() {
   return vi.fn(() => vi.fn());
 }
 
+function missionBridge() {
+  return {
+    list: vi.fn(async () => []),
+    onChanged: listener(),
+  };
+}
+
 function Harness(): null {
   useOrchBridge();
   return null;
@@ -114,6 +121,7 @@ function installNexus(): void {
   Object.defineProperty(window, 'nexus', {
     configurable: true,
     value: {
+      mission: missionBridge(),
       layout: {
         load: vi.fn((path: string) => loadLayout(path)),
         save: vi.fn(async () => undefined),

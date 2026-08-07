@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PTY_CHANNELS } from '../shared/channels';
+import { ORCH_CHANNELS } from '../shared/orch-channels';
 import type { NexusApi, PtyDataEvent } from '../shared/types';
 import { PTY_GAP_NOTICE } from './pty-gap-buffer';
 
@@ -39,6 +40,10 @@ function emitPtyData(payload: PtyDataEvent): void {
   electronMock.handlers
     .get(PTY_CHANNELS.data)
     ?.forEach((cb) => cb({}, payload));
+}
+
+function emitIpc(channel: string, payload: unknown): void {
+  electronMock.handlers.get(channel)?.forEach((cb) => cb({}, payload));
 }
 
 function recoverInvokes(): Array<{ sessionId: string; afterSequence: number }> {
@@ -184,5 +189,124 @@ describe('preload PTY delivery', () => {
 
     emitPtyData({ sessionId: 's1', sequence: 2103, data: 'after' });
     expect(received[received.length - 1]).toBe('after');
+  });
+});
+
+describe('canonical mission preload bridge', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    electronMock.handlers.clear();
+    electronMock.ipcRenderer.on.mockClear();
+    electronMock.ipcRenderer.removeListener.mockClear();
+    electronMock.ipcRenderer.send.mockClear();
+    electronMock.ipcRenderer.invoke.mockReset();
+    electronMock.ipcRenderer.invoke.mockResolvedValue([]);
+    electronMock.contextBridge.exposeInMainWorld.mockClear();
+  });
+
+  it('exposes exactly the six canonical mission methods with no mutation authority', async () => {
+    const api = await loadPreloadApi();
+
+    expect(Object.keys(api.mission).sort()).toEqual([
+      'command',
+      'list',
+      'onChanged',
+      'prepare',
+      'snapshot',
+      'start',
+    ]);
+    expect('update' in api.mission).toBe(false);
+    expect('patch' in api.mission).toBe(false);
+    expect('complete' in api.mission).toBe(false);
+    expect('block' in api.mission).toBe(false);
+  });
+
+  it('invokes every canonical channel with its exact payload shape', async () => {
+    const api = await loadPreloadApi();
+    const prepare = {
+      objective: 'Ship the bridge',
+      contextPaths: ['src/main/orch/orch-ipc.ts'],
+      roster: [
+        {
+          id: 'orchestrator',
+          agentName: 'Maestro',
+          category: 'orchestrator' as const,
+          cli: 'codex',
+        },
+      ],
+    };
+    const start = {
+      missionId: 'mission-1',
+      reviewSha256: 'a'.repeat(64),
+    };
+    const command = {
+      kind: 'resume' as const,
+      missionId: 'mission-1',
+    };
+
+    await api.mission.prepare(prepare);
+    await api.mission.start(start);
+    await api.mission.command(command);
+    await api.mission.snapshot('mission-1');
+    await api.mission.list();
+
+    expect(electronMock.ipcRenderer.invoke.mock.calls).toEqual([
+      [ORCH_CHANNELS.missionPrepare, prepare],
+      [ORCH_CHANNELS.missionStart, start],
+      [ORCH_CHANNELS.missionCommand, command],
+      [ORCH_CHANNELS.missionSnapshot, 'mission-1'],
+      [ORCH_CHANNELS.missionList],
+    ]);
+  });
+
+  it('stops changed delivery after an idempotent double unsubscribe', async () => {
+    const api = await loadPreloadApi();
+    const listener = vi.fn();
+    const unsubscribe = api.mission.onChanged(listener);
+    const summaries = [
+      {
+        id: 'mission-1',
+        title: 'Canonical mission',
+        state: 'running' as const,
+        progress: { completed: 0, total: 1 },
+        needsAttention: false,
+        updatedAt: 2,
+      },
+    ];
+
+    emitIpc(ORCH_CHANNELS.missionChanged, summaries);
+    expect(listener).toHaveBeenCalledWith(summaries);
+
+    unsubscribe();
+    unsubscribe();
+    emitIpc(ORCH_CHANNELS.missionChanged, []);
+    expect(listener).toHaveBeenCalledOnce();
+  });
+
+  it('keeps canonical summaries isolated from the legacy raw mission listener', async () => {
+    const api = await loadPreloadApi();
+    const canonical = vi.fn();
+    const legacy = vi.fn();
+    api.mission.onChanged(canonical);
+    api.orch.onMissionsChanged(legacy);
+    const rawMissions = [{ id: 'legacy', status: 'running' }];
+    const summaries = [
+      {
+        id: 'canonical',
+        title: 'Canonical',
+        state: 'running',
+        progress: { completed: 0, total: 0 },
+        needsAttention: false,
+        updatedAt: 1,
+      },
+    ];
+
+    emitIpc(ORCH_CHANNELS.missionsChanged, rawMissions);
+    expect(legacy).toHaveBeenCalledWith(rawMissions);
+    expect(canonical).not.toHaveBeenCalled();
+
+    emitIpc(ORCH_CHANNELS.missionChanged, summaries);
+    expect(canonical).toHaveBeenCalledWith(summaries);
+    expect(legacy).toHaveBeenCalledOnce();
   });
 });

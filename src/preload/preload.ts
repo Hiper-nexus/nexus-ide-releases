@@ -45,6 +45,7 @@ import {
 import { UPDATE_CHANNELS } from '../shared/update-ipc';
 import type { UpdateState } from '../shared/update-ipc';
 import { ORCH_CHANNELS } from '../shared/orch-channels';
+import type { MissionSummarySnapshot } from '../shared/mission-engine-contract';
 import { REMOTE_CHANNELS } from '../shared/remote-channels';
 import { SETTINGS_CHANNELS } from '../shared/settings-types';
 import type {
@@ -431,6 +432,9 @@ const paneRecoveryRequestListeners = new Set<
 >();
 const browserOpenRequestListeners = new Set<(req: BrowserPaneOpenRequest) => void>();
 const paneCloseRequestListeners = new Set<(request: PaneCloseRequest) => void>();
+const missionChangedListeners = new Set<
+  (items: MissionSummarySnapshot[]) => void
+>();
 const missionsChangedListeners = new Set<(missions: Mission[]) => void>();
 const handoffsChangedListeners = new Set<(handoffs: Handoff[]) => void>();
 const todosChangedListeners = new Set<(lists: TodoList[]) => void>();
@@ -456,6 +460,11 @@ ipcRenderer.on(ORCH_CHANNELS.browserOpenRequest, (_e, req: BrowserPaneOpenReques
 );
 ipcRenderer.on(ORCH_CHANNELS.paneCloseRequest, (_e, request: PaneCloseRequest) =>
   paneCloseRequestListeners.forEach((cb) => cb(request)),
+);
+ipcRenderer.on(
+  ORCH_CHANNELS.missionChanged,
+  (_e, items: MissionSummarySnapshot[]) =>
+    missionChangedListeners.forEach((cb) => cb(items)),
 );
 ipcRenderer.on(ORCH_CHANNELS.missionsChanged, (_e, missions: Mission[]) =>
   missionsChangedListeners.forEach((cb) => cb(missions)),
@@ -998,6 +1007,17 @@ const api: NexusApi = {
     onLiveToolResult: (cb) => addListener(liveToolResultListeners, cb),
     onLiveToolTurnComplete: (cb) => addListener(liveToolTurnCompleteListeners, cb),
     onLiveInterrupted: (cb) => addListener(liveInterruptedListeners, cb),
+  },
+  mission: {
+    prepare: (request) =>
+      ipcRenderer.invoke(ORCH_CHANNELS.missionPrepare, request),
+    start: (input) => ipcRenderer.invoke(ORCH_CHANNELS.missionStart, input),
+    command: (command) =>
+      ipcRenderer.invoke(ORCH_CHANNELS.missionCommand, command),
+    snapshot: (missionId) =>
+      ipcRenderer.invoke(ORCH_CHANNELS.missionSnapshot, missionId),
+    list: () => ipcRenderer.invoke(ORCH_CHANNELS.missionList),
+    onChanged: (listener) => addListener(missionChangedListeners, listener),
   },
   orch: {
     syncPanes: (entries) =>

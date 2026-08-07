@@ -10,8 +10,10 @@ import { PET_STUDIO_SQUAD } from '../../shared/pet-studio';
 
 interface TestOwner {
   id: number;
+  sent: Array<{ channel: string; payload: unknown }>;
   isDestroyed(): boolean;
   isCrashed(): boolean;
+  send(channel: string, payload: unknown): void;
   destroy(): void;
   crash(): void;
 }
@@ -30,6 +32,15 @@ const harness = vi.hoisted(() => {
       next: ProjectExecutionScope | null,
     ) => void
   >();
+  const storeChangeListeners = new Set<
+    (scope: ProjectExecutionScope, store: string) => void
+  >();
+  const missionEngines = new Map<string, any>();
+  const missionEngineForScope = vi.fn((scope: ProjectExecutionScope) => {
+    const engine = missionEngines.get(JSON.stringify(scope));
+    if (!engine) throw new Error(`missing mission engine for ${scope.projectId}`);
+    return engine;
+  });
   return {
     handlers,
     scopes,
@@ -48,6 +59,9 @@ const harness = vi.hoisted(() => {
       writes: [] as Array<{ sessionId: string; data: string }>,
     },
     scopeChangeListeners,
+    storeChangeListeners,
+    missionEngines,
+    missionEngineForScope,
     dialog: {
       showMessageBox: vi.fn(
         async (
@@ -244,7 +258,12 @@ const harness = vi.hoisted(() => {
       return true;
     }),
     projectStores: {
-      onChange: vi.fn(),
+      onChange: vi.fn(
+        (listener: (scope: ProjectExecutionScope, store: string) => void) => {
+          storeChangeListeners.add(listener);
+          return () => storeChangeListeners.delete(listener);
+        },
+      ),
       onScope: vi.fn(),
       forScope: vi.fn(),
       listSuites: vi.fn((): any[] => []),
@@ -270,6 +289,8 @@ vi.mock('../design/designmd-api-client', () => ({
 }));
 
 vi.mock('../persistence/renderer-workspace-scope', () => ({
+  getRendererWorkspaceScope: (owner: TestOwner) =>
+    harness.scopes.get(owner.id) ?? null,
   requireLiveRendererWorkspaceScope: (
     owner: TestOwner,
     expected?: ProjectExecutionScope,
@@ -499,17 +520,15 @@ vi.mock('./project-domain-store-registry', () => ({
     },
   })),
 }));
-vi.mock('./project-scoped-broadcast', () => ({
-  broadcastToProject: vi.fn(),
-  sameProjectScope: (
-    left: ProjectExecutionScope,
-    right: ProjectExecutionScope,
-  ) =>
-    left.installationId === right.installationId &&
-    left.projectId === right.projectId &&
-    left.checkoutId === right.checkoutId &&
-    left.rootRealPath === right.rootRealPath,
-}));
+vi.mock('./mission-engine-registry', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('./mission-engine-registry')>();
+  return {
+    ...actual,
+    missionEngineForScope: harness.missionEngineForScope,
+  };
+});
+
 vi.mock('./idle-delivery', () => ({
   initIdleDelivery: vi.fn(),
   shutdownIdleDelivery: vi.fn(),
@@ -569,6 +588,8 @@ import {
   missionApproveIntentSchema,
   missionSubmitIntentSchema,
   registerOrchIpc,
+  registerOrchListener,
+  unregisterOrchListener,
 } from './orch-ipc';
 import { consumeImmediateSquadSpawnGrant } from './spawn-authority';
 import { clearWizardPlanReviewGrantsForTests } from './mission-wizard-plan-review-grant';
@@ -605,10 +626,13 @@ function makeTempDir(): string {
 function owner(id = 1): TestOwner {
   let destroyed = false;
   let crashed = false;
+  const sent: Array<{ channel: string; payload: unknown }> = [];
   return {
     id,
+    sent,
     isDestroyed: () => destroyed,
     isCrashed: () => crashed,
+    send: (channel, payload) => sent.push({ channel, payload }),
     destroy: () => {
       destroyed = true;
     },
@@ -638,6 +662,94 @@ function deferred<T>() {
     reject = rejectPromise;
   });
   return { promise, resolve, reject };
+}
+
+const CANONICAL_ROSTER = Object.freeze([
+  {
+    id: 'orchestrator',
+    agentName: 'Maestro',
+    category: 'orchestrator' as const,
+    cli: 'codex',
+  },
+]);
+
+const CANONICAL_PREPARE_REQUEST = Object.freeze({
+  objective: 'Ship the canonical mission bridge',
+  contextPaths: ['src/main/orch/orch-ipc.ts'],
+  roster: CANONICAL_ROSTER,
+});
+
+function canonicalReview() {
+  return {
+    missionId: 'mission-canonical',
+    title: 'Canonical mission',
+    objective: CANONICAL_PREPARE_REQUEST.objective,
+    workspaceLabel: 'workspace-a',
+    contextPaths: [...CANONICAL_PREPARE_REQUEST.contextPaths],
+    roster: CANONICAL_ROSTER.map((agent) => ({ ...agent })),
+    permissions: [],
+    warnings: [],
+    reviewSha256: 'a'.repeat(64),
+    createdAt: 1,
+  };
+}
+
+function canonicalSnapshot(id = 'mission-canonical') {
+  return {
+    id,
+    title: 'Canonical mission',
+    objective: CANONICAL_PREPARE_REQUEST.objective,
+    workspaceLabel: 'workspace-a',
+    state: 'running' as const,
+    progress: { completed: 0, total: 1 },
+    agents: [],
+    edges: [],
+    units: [],
+    allowedActions: ['direct', 'stop'] as const,
+    version: 1,
+    updatedAt: 2,
+  };
+}
+
+function canonicalSummary(id = 'mission-canonical', updatedAt = 2) {
+  return {
+    id,
+    title: 'Canonical mission',
+    state: 'running' as const,
+    progress: { completed: 0, total: 1 },
+    needsAttention: false,
+    updatedAt,
+  };
+}
+
+function canonicalEngine() {
+  return {
+    prepare: vi.fn(async () => canonicalReview()),
+    start: vi.fn(async () => canonicalSnapshot()),
+    command: vi.fn(async () => canonicalSnapshot()),
+    snapshot: vi.fn(async () => canonicalSnapshot()),
+    list: vi.fn(async () => [canonicalSummary()]),
+  };
+}
+
+function installCanonicalEngine(
+  scope: ProjectExecutionScope,
+  engine = canonicalEngine(),
+) {
+  harness.missionEngines.set(JSON.stringify(scope), engine);
+  return engine;
+}
+
+function canonicalHandler(channel: string) {
+  const handler = harness.handlers.get(channel);
+  if (!handler) throw new Error(`missing canonical mission handler ${channel}`);
+  return handler;
+}
+
+async function flushCanonicalBroadcast(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
 }
 
 async function write(sender: ReturnType<typeof owner>, raw: unknown) {
@@ -691,6 +803,8 @@ beforeEach(() => {
   harness.paneSnapshots.splice(0);
   harness.agentSessions.splice(0);
   harness.scopeChangeListeners.clear();
+  harness.storeChangeListeners.clear();
+  harness.missionEngines.clear();
   harness.operatorInput.ownedSessions.clear();
   harness.operatorInput.missions.clear();
   harness.operatorInput.missionPanes.splice(0);
@@ -1012,6 +1126,260 @@ afterEach(() => {
   }
 });
 
+
+describe('canonical MissionEngine IPC boundary', () => {
+  const startInput = Object.freeze({
+    missionId: 'mission-canonical',
+    reviewSha256: 'a'.repeat(64),
+  });
+  const command = Object.freeze({
+    kind: 'resume' as const,
+    missionId: 'mission-canonical',
+  });
+  const operations = () =>
+    [
+      [ORCH_CHANNELS.missionPrepare, CANONICAL_PREPARE_REQUEST, 'prepare'],
+      [ORCH_CHANNELS.missionStart, startInput, 'start'],
+      [ORCH_CHANNELS.missionCommand, command, 'command'],
+      [ORCH_CHANNELS.missionSnapshot, 'mission-canonical', 'snapshot'],
+      [ORCH_CHANNELS.missionList, undefined, 'list'],
+    ] as const;
+
+  it('routes all operations through one engine resolved from live main scope', async () => {
+    const sender = owner(901);
+    harness.scopes.set(sender.id, SCOPE_A);
+    const engine = installCanonicalEngine(SCOPE_A);
+
+    await expect(
+      canonicalHandler(ORCH_CHANNELS.missionPrepare)(
+        { sender },
+        CANONICAL_PREPARE_REQUEST,
+      ),
+    ).resolves.toEqual(canonicalReview());
+    await expect(
+      canonicalHandler(ORCH_CHANNELS.missionStart)({ sender }, startInput),
+    ).resolves.toEqual(canonicalSnapshot());
+    await expect(
+      canonicalHandler(ORCH_CHANNELS.missionCommand)({ sender }, command),
+    ).resolves.toEqual(canonicalSnapshot());
+    await expect(
+      canonicalHandler(ORCH_CHANNELS.missionSnapshot)(
+        { sender },
+        'mission-canonical',
+      ),
+    ).resolves.toEqual(canonicalSnapshot());
+    await expect(
+      canonicalHandler(ORCH_CHANNELS.missionList)({ sender }),
+    ).resolves.toEqual([canonicalSummary()]);
+
+    expect(engine.prepare).toHaveBeenCalledWith(
+      SCOPE_A,
+      CANONICAL_PREPARE_REQUEST,
+    );
+    expect(engine.start).toHaveBeenCalledWith(SCOPE_A, startInput);
+    expect(engine.command).toHaveBeenCalledWith(SCOPE_A, command);
+    expect(engine.snapshot).toHaveBeenCalledWith(
+      SCOPE_A,
+      'mission-canonical',
+    );
+    expect(engine.list).toHaveBeenCalledWith(SCOPE_A);
+    expect(harness.missionEngineForScope).toHaveBeenCalledTimes(5);
+    expect(harness.missionEngineForScope.mock.calls.every(
+      ([scope]) => scope === SCOPE_A,
+    )).toBe(true);
+  });
+
+  it.each(operations())(
+    '%s rejects dead, crashed, and unscoped renderers',
+    async (channel, payload) => {
+      installCanonicalEngine(SCOPE_A);
+      const missing = owner(902);
+      const destroyed = owner(903);
+      const crashed = owner(904);
+      harness.scopes.set(destroyed.id, SCOPE_A);
+      harness.scopes.set(crashed.id, SCOPE_A);
+      destroyed.destroy();
+      crashed.crash();
+
+      for (const sender of [missing, destroyed, crashed]) {
+        await expect(
+          canonicalHandler(channel)({ sender }, payload),
+        ).rejects.toThrow();
+      }
+    },
+  );
+
+  it.each([
+    [
+      ORCH_CHANNELS.missionPrepare,
+      { ...CANONICAL_PREPARE_REQUEST, workspacePath: '/forged' },
+      'prepare',
+    ],
+    [
+      ORCH_CHANNELS.missionStart,
+      { ...startInput, status: 'running' },
+      'start',
+    ],
+    [
+      ORCH_CHANNELS.missionCommand,
+      { ...command, intentState: 'approved' },
+      'command',
+    ],
+    [ORCH_CHANNELS.missionSnapshot, '', 'snapshot'],
+    [
+      ORCH_CHANNELS.missionList,
+      { projectId: SCOPE_A.projectId },
+      'list',
+    ],
+  ] as const)(
+    '%s rejects malformed or extra input before engine invocation',
+    async (channel, payload, method) => {
+      const sender = owner(905);
+      harness.scopes.set(sender.id, SCOPE_A);
+      const engine = installCanonicalEngine(SCOPE_A);
+
+      await expect(
+        canonicalHandler(channel)({ sender }, payload),
+      ).rejects.toThrow();
+      expect(engine[method]).not.toHaveBeenCalled();
+      expect(harness.missionEngineForScope).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    [ORCH_CHANNELS.missionPrepare, 'prepare', CANONICAL_PREPARE_REQUEST],
+    [ORCH_CHANNELS.missionStart, 'start', startInput],
+    [ORCH_CHANNELS.missionCommand, 'command', command],
+    [ORCH_CHANNELS.missionSnapshot, 'snapshot', 'mission-canonical'],
+  ] as const)(
+    '%s rejects canonical output contaminated with raw lifecycle fields',
+    async (channel, method, payload) => {
+      const sender = owner(906);
+      harness.scopes.set(sender.id, SCOPE_A);
+      const engine = installCanonicalEngine(SCOPE_A);
+      const valid =
+        method === 'prepare' ? canonicalReview() : canonicalSnapshot();
+      engine[method].mockResolvedValueOnce({
+        ...valid,
+        status: 'running',
+        intentState: 'approved',
+      } as never);
+
+      await expect(
+        canonicalHandler(channel)({ sender }, payload),
+      ).rejects.toThrow();
+    },
+  );
+
+  it('rejects contaminated canonical list output', async () => {
+    const sender = owner(907);
+    harness.scopes.set(sender.id, SCOPE_A);
+    const engine = installCanonicalEngine(SCOPE_A);
+    engine.list.mockResolvedValueOnce([
+      { ...canonicalSummary(), status: 'running' } as never,
+    ]);
+
+    await expect(
+      canonicalHandler(ORCH_CHANNELS.missionList)({ sender }),
+    ).rejects.toThrow();
+  });
+
+  it('broadcasts project-isolated summaries without stale async overtakes', async () => {
+    const oldProjection = deferred<ReturnType<typeof canonicalSummary>[]>();
+    const newProjection = deferred<ReturnType<typeof canonicalSummary>[]>();
+    const engineA = installCanonicalEngine(SCOPE_A);
+    const engineB = installCanonicalEngine(SCOPE_B);
+    engineA.list
+      .mockReturnValueOnce(oldProjection.promise)
+      .mockReturnValueOnce(newProjection.promise);
+    engineB.list.mockResolvedValueOnce([canonicalSummary('mission-b', 4)]);
+    configureRendererMissionAuthority({} as never);
+
+    const rendererA = owner(908);
+    const rendererB = owner(909);
+    harness.scopes.set(rendererA.id, SCOPE_A);
+    harness.scopes.set(rendererB.id, SCOPE_B);
+    registerOrchListener(rendererA as never);
+    registerOrchListener(rendererB as never);
+    const onChange = [...harness.storeChangeListeners][0];
+    if (!onChange) throw new Error('missing project store change listener');
+
+    try {
+      onChange(SCOPE_A, 'missions');
+      onChange(SCOPE_A, 'missions');
+      newProjection.resolve([canonicalSummary('mission-new', 3)]);
+      await flushCanonicalBroadcast();
+
+      expect(
+        rendererA.sent.filter(
+          ({ channel }) => channel === ORCH_CHANNELS.missionChanged,
+        ),
+      ).toEqual([
+        {
+          channel: ORCH_CHANNELS.missionChanged,
+          payload: [canonicalSummary('mission-new', 3)],
+        },
+      ]);
+      expect(
+        rendererB.sent.filter(
+          ({ channel }) => channel === ORCH_CHANNELS.missionChanged,
+        ),
+      ).toEqual([]);
+
+      oldProjection.resolve([canonicalSummary('mission-old', 1)]);
+      await flushCanonicalBroadcast();
+      expect(
+        rendererA.sent.filter(
+          ({ channel }) => channel === ORCH_CHANNELS.missionChanged,
+        ),
+      ).toHaveLength(1);
+
+      onChange(SCOPE_B, 'missions');
+      await flushCanonicalBroadcast();
+      expect(
+        rendererB.sent.filter(
+          ({ channel }) => channel === ORCH_CHANNELS.missionChanged,
+        ),
+      ).toEqual([
+        {
+          channel: ORCH_CHANNELS.missionChanged,
+          payload: [canonicalSummary('mission-b', 4)],
+        },
+      ]);
+    } finally {
+      unregisterOrchListener(rendererA as never);
+      unregisterOrchListener(rendererB as never);
+    }
+  });
+
+  it('does not broadcast contaminated summary projections', async () => {
+    const engine = installCanonicalEngine(SCOPE_A);
+    engine.list.mockResolvedValueOnce([
+      { ...canonicalSummary(), status: 'running' } as never,
+    ]);
+    configureRendererMissionAuthority({} as never);
+    const renderer = owner(910);
+    harness.scopes.set(renderer.id, SCOPE_A);
+    registerOrchListener(renderer as never);
+    const onChange = [...harness.storeChangeListeners][0];
+    if (!onChange) throw new Error('missing project store change listener');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    try {
+      onChange(SCOPE_A, 'missions');
+      await flushCanonicalBroadcast();
+      expect(
+        renderer.sent.filter(
+          ({ channel }) => channel === ORCH_CHANNELS.missionChanged,
+        ),
+      ).toEqual([]);
+      await vi.waitFor(() => expect(warn).toHaveBeenCalled());
+    } finally {
+      unregisterOrchListener(renderer as never);
+      warn.mockRestore();
+    }
+  });
+});
 describe('bounded enrichment authority', () => {
   it.each([
     ORCH_CHANNELS.squadsList,

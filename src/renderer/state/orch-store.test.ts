@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import type { MissionSummarySnapshot } from '../../shared/mission-engine-contract';
+import { setActiveWorkspacePath } from './active-workspace';
 import { useOrchStore } from './orch-store';
 
 /**
@@ -48,5 +50,44 @@ describe('orch-store paneMissions', () => {
     const before = useOrchStore.getState().paneMissions;
     useOrchStore.getState().pruneMissionBindings(new Set(['pane-a']));
     expect(useOrchStore.getState().paneMissions).toBe(before);
+  });
+});
+
+describe('orch-store canonical mission summaries', () => {
+  const summary: MissionSummarySnapshot = {
+    id: 'mission-canonical',
+    title: 'Canonical mission',
+    state: 'running',
+    progress: { completed: 0, total: 1 },
+    needsAttention: false,
+    updatedAt: 2,
+  };
+
+  beforeEach(() => {
+    setActiveWorkspacePath('/workspace/a');
+    useOrchStore.setState({
+      missions: [],
+      missionSummaries: [],
+      boundWorkspacePath: '/workspace/a',
+    });
+  });
+
+  it('stores canonical summaries without mutating the separate legacy mission mirror', () => {
+    const legacyMission = {
+      id: 'legacy',
+      title: 'Legacy mission',
+      description: 'Old product payload',
+      status: 'running' as const,
+      milestones: [],
+      learnings: '',
+      createdAt: 1,
+      updatedAt: 2,
+    };
+    useOrchStore.setState({ missions: [legacyMission] });
+
+    useOrchStore.getState().setMissionSummaries([summary]);
+
+    expect(useOrchStore.getState().missionSummaries).toEqual([summary]);
+    expect(useOrchStore.getState().missions).toEqual([legacyMission]);
   });
 });

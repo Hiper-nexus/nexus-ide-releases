@@ -40,6 +40,13 @@ function listener() {
   return vi.fn(() => vi.fn());
 }
 
+function missionBridge() {
+  return {
+    list: vi.fn(async () => []),
+    onChanged: listener(),
+  };
+}
+
 function Harness(): null {
   useOrchBridge();
   return null;
@@ -60,6 +67,7 @@ function installPresentationHarness(): (
   Object.defineProperty(window, 'nexus', {
     configurable: true,
     value: {
+      mission: missionBridge(),
       orch: {
         onPaneSpawnRequest: listener(),
         onPanePresentationRequest: vi.fn(
@@ -137,6 +145,7 @@ describe('orchestration bridge pane recovery', () => {
     Object.defineProperty(window, 'nexus', {
       configurable: true,
       value: {
+        mission: missionBridge(),
         orch: {
           onPaneSpawnRequest: listener(),
           onPanePresentationRequest: vi.fn(
@@ -417,6 +426,7 @@ describe('orchestration bridge pane recovery', () => {
     Object.defineProperty(window, 'nexus', {
       configurable: true,
       value: {
+        mission: missionBridge(),
         orch: {
           onPaneSpawnRequest: listener(),
           onPanePresentationRequest: vi.fn(
@@ -490,6 +500,7 @@ describe('orchestration bridge pane recovery', () => {
     Object.defineProperty(window, 'nexus', {
       configurable: true,
       value: {
+        mission: missionBridge(),
         orch: {
           onPaneSpawnRequest: vi.fn(
             (cb: (request: OrchPaneSpawnRequest) => void) => {
@@ -561,6 +572,7 @@ describe('orchestration bridge pane recovery', () => {
     Object.defineProperty(window, 'nexus', {
       configurable: true,
       value: {
+        mission: missionBridge(),
         orch: {
           onPaneSpawnRequest: listener(),
           onPanePresentationRequest: vi.fn(
@@ -667,6 +679,7 @@ describe('orchestration bridge pane recovery', () => {
     Object.defineProperty(window, 'nexus', {
       configurable: true,
       value: {
+        mission: missionBridge(),
         orch: {
           onPaneSpawnRequest: listener(),
           onPanePresentationRequest: vi.fn(
@@ -756,6 +769,7 @@ describe('orchestration bridge pane recovery', () => {
     Object.defineProperty(window, 'nexus', {
       configurable: true,
       value: {
+        mission: missionBridge(),
         orch: {
           onPaneSpawnRequest: listener(),
           onPaneRecoveryRequest: vi.fn(
@@ -842,6 +856,7 @@ describe('orchestration bridge pane recovery', () => {
     Object.defineProperty(window, 'nexus', {
       configurable: true,
       value: {
+        mission: missionBridge(),
         orch: {
           onPaneSpawnRequest: listener(),
           onPaneRecoveryRequest: vi.fn(
@@ -912,6 +927,7 @@ describe('orchestration bridge pane recovery', () => {
     Object.defineProperty(window, 'nexus', {
       configurable: true,
       value: {
+        mission: missionBridge(),
         orch: {
           onPaneSpawnRequest: listener(),
           onPaneRecoveryRequest: vi.fn(
@@ -981,6 +997,7 @@ describe('orchestration bridge pane recovery', () => {
     Object.defineProperty(window, 'nexus', {
       configurable: true,
       value: {
+        mission: missionBridge(),
         orch: {
           onPaneSpawnRequest: listener(),
           onPaneRecoveryRequest: vi.fn(
@@ -1052,6 +1069,7 @@ describe('orchestration bridge pane recovery', () => {
     Object.defineProperty(window, 'nexus', {
       configurable: true,
       value: {
+        mission: missionBridge(),
         orch: {
           onPaneSpawnRequest: listener(),
           onPaneRecoveryRequest: listener(),
@@ -1121,6 +1139,7 @@ describe('orchestration bridge pane recovery', () => {
     Object.defineProperty(window, 'nexus', {
       configurable: true,
       value: {
+        mission: missionBridge(),
         orch: {
           onPaneSpawnRequest: listener(),
           onPaneRecoveryRequest: listener(),
@@ -1194,6 +1213,7 @@ describe('orchestration bridge pane recovery', () => {
     Object.defineProperty(window, 'nexus', {
       configurable: true,
       value: {
+        mission: missionBridge(),
         orch: {
           onPaneSpawnRequest: vi.fn(
             (cb: (request: OrchPaneSpawnRequest) => void) => {
@@ -1283,6 +1303,7 @@ describe('orchestration bridge pane recovery', () => {
     Object.defineProperty(window, 'nexus', {
       configurable: true,
       value: {
+        mission: missionBridge(),
         orch: {
           onPaneSpawnRequest: vi.fn(
             (cb: (request: OrchPaneSpawnRequest) => void) => {
@@ -1348,6 +1369,7 @@ describe('orchestration bridge pane recovery', () => {
     Object.defineProperty(window, 'nexus', {
       configurable: true,
       value: {
+        mission: missionBridge(),
         orch: {
           onPaneSpawnRequest: listener(),
           onPaneRecoveryRequest: listener(),
