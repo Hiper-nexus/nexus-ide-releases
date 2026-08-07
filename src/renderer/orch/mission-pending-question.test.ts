@@ -60,28 +60,31 @@ function questionHandoff(
 }
 
 describe('pendingMissionQuestions', () => {
-  it('includes blocked missions and attaches mission titles', () => {
+  // A autoridade é do main: clarify-flow recusa a resposta quando
+  // `mission.status !== 'running'`. Card em missão bloqueada/pendente seria um
+  // botão que o main SEMPRE rejeita — promete uma saída que não existe.
+  it('só pergunta de missão EM EXECUÇÃO, com o título junto', () => {
     const questions = pendingMissionQuestions(
       [
         mission('m-run', 'running', 'Entrega API'),
         mission('m-block', 'blocked', 'Corrigir login'),
+        mission('m-pending', 'pending', 'Na fila'),
         mission('m-done', 'done', 'Já fechada'),
       ],
       [
         questionHandoff('q-run', 'm-run', 10),
         questionHandoff('q-block', 'm-block', 5),
+        questionHandoff('q-pending', 'm-pending', 3),
         questionHandoff('q-done', 'm-done', 1),
       ],
     );
 
-    expect(questions.map((q) => q.questionId)).toEqual(['q-block', 'q-run']);
+    expect(questions.map((q) => q.questionId)).toEqual(['q-run']);
     expect(questions[0]).toMatchObject({
-      questionId: 'q-block',
-      missionId: 'm-block',
-      missionTitle: 'Corrigir login',
-      question: 'Pergunta q-block?',
+      missionId: 'm-run',
+      missionTitle: 'Entrega API',
+      question: 'Pergunta q-run?',
     });
-    expect(questions[1]?.missionTitle).toBe('Entrega API');
   });
 
   it('drops answered, consumed, and foreign-session questions', () => {
@@ -115,7 +118,7 @@ describe('pendingMissionQuestions', () => {
 });
 
 describe('missionIdsAwaitingAnswer', () => {
-  it('returns only mission ids with open questions', () => {
+  it('só devolve missão em execução com pergunta aberta', () => {
     const ids = missionIdsAwaitingAnswer(
       [mission('a'), mission('b'), mission('c', 'pending')],
       [
@@ -123,6 +126,7 @@ describe('missionIdsAwaitingAnswer', () => {
         questionHandoff('q-c', 'c', 2),
       ],
     );
-    expect([...ids].sort()).toEqual(['a', 'c']);
+    // 'b' não tem pergunta; 'c' tem, mas está na fila — o main recusaria.
+    expect([...ids]).toEqual(['a']);
   });
 });

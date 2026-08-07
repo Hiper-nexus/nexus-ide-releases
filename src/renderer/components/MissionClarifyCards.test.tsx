@@ -152,7 +152,9 @@ describe('MissionClarifyCards', () => {
     act(() => root.unmount());
   });
 
-  it('still surfaces questions when the mission is blocked awaiting an answer', () => {
+  // Invertido de propósito: card em missão bloqueada era um botão morto —
+  // clarify-flow recusa a resposta fora de 'running'.
+  it('não mostra pergunta de missão bloqueada — o main recusaria a resposta', () => {
     const { host, root } = mount(
       <MissionClarifyCards
         missions={[mission('mission-blocked', 'blocked')]}
@@ -160,13 +162,10 @@ describe('MissionClarifyCards', () => {
       />,
     );
 
-    expect(host.textContent).toContain('Missão mission-blocked');
-    expect(host.textContent).toContain('Qual banco devemos usar?');
-    expect(
-      [...host.querySelectorAll('button')].some(
-        (button) => button.textContent === 'Postgres',
-      ),
-    ).toBe(true);
+    expect(host.textContent).not.toContain('Missão mission-blocked');
+    expect(host.textContent).not.toContain('Qual banco devemos usar?');
+    // Nenhum chip: o card inteiro some, não fica um botão órfão que falharia.
+    expect(host.querySelectorAll('button')).toHaveLength(0);
     act(() => root.unmount());
   });
 

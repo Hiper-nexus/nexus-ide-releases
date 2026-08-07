@@ -935,10 +935,20 @@ export function MissionRail() {
                         const listAction = missionListAction(m, liveInGrid);
                         const isArchived = archivedIds.includes(m.id);
                         const hasRemoveAction = listAction !== 'none';
+                        // Arquivar existia pela metade: prefs, filtro do rail,
+                        // filtro do board e botão de desarquivar — mas NADA
+                        // chamava setMissionArchived(..., true). O botão de
+                        // volta era inalcançável e o filtro, código morto.
+                        // Só missão terminal sai da mesa: o que ainda pode
+                        // andar se encerra por "bloquear", não por arquivar.
+                        const canArchive =
+                          !isArchived &&
+                          (m.status === 'done' || m.status === 'failed');
                         const rowActionCount =
                           Number(canPromotePlan) +
                           Number(canBlockMission) +
                           1 +
+                          Number(canArchive) +
                           Number(isArchived) +
                           Number(hasRemoveAction);
                         const dotStatus = railDotStatus(
@@ -1118,6 +1128,28 @@ export function MissionRail() {
                                   size={11}
                                 />
                               </button>
+                              {canArchive && (
+                                <button
+                                  type="button"
+                                  className="mission-rail__row-action mission-rail__row-action--archive"
+                                  disabled={busy !== null}
+                                  title="Arquivar — tira da lista sem apagar nada"
+                                  aria-label={`Arquivar missão ${m.title}`}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setArchivedIds(
+                                      setMissionArchived(
+                                        workspacePath,
+                                        m.id,
+                                        true,
+                                      ),
+                                    );
+                                    setNote(null);
+                                  }}
+                                >
+                                  <PixelIcon name="files" size={10} />
+                                </button>
+                              )}
                               {isArchived && (
                                 <button
                                   type="button"

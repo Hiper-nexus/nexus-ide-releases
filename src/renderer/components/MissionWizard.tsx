@@ -2170,7 +2170,7 @@ export function MissionWizard() {
               {missionLane !== "standard" && (
                 <button
                   type="button"
-                  className="wizard__btn wizard__btn--ghost wizard__chip-shortcut--stacked"
+                  className="wizard__btn wizard__btn--ghost wizard__chip-shortcut wizard__chip-shortcut--stacked"
                   title="O objetivo sugere este modo; clique para executar sem restrições"
                   onClick={() => {
                     laneTouchedByUserRef.current = true;

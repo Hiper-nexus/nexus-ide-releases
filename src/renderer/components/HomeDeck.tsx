@@ -371,7 +371,10 @@ export function HomeDeck() {
 
         {/* Aberto por padrão quando há o que corrigir: fechado, o
             diagnóstico só era visto por quem já suspeitava dele. */}
-        <details className="home-deck__advanced" open={!isReady}>
+        <details
+          className="home-deck__advanced"
+          open={adaptersLoaded && !isReady}
+        >
           <summary>Detalhes do ambiente</summary>
           <div
             className="home-deck__status"
