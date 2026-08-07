@@ -36,8 +36,18 @@ const activeWorkspaces: WorkspaceRailWorkspace[] = [
     name: 'Atlas local',
     path: '/projetos/atlas',
     missions: [
-      { id: 'mission-running', title: 'Corrigir o login', status: 'running' },
-      { id: 'mission-blocked', title: 'Publicar a versão', status: 'blocked' },
+      {
+        id: 'mission-running',
+        title: 'Corrigir o login',
+        status: 'running',
+        needsAttention: false,
+      },
+      {
+        id: 'mission-blocked',
+        title: 'Publicar a versão',
+        status: 'blocked_user',
+        needsAttention: true,
+      },
     ],
   },
 ];
@@ -48,7 +58,12 @@ const recentWorkspaces: WorkspaceRailWorkspace[] = [
     name: 'Cometa',
     path: '/projetos/cometa',
     missions: [
-      { id: 'mission-done', title: 'Revisar a página inicial', status: 'done' },
+      {
+        id: 'mission-done',
+        title: 'Revisar a página inicial',
+        status: 'completed',
+        needsAttention: false,
+      },
     ],
   },
 ];
@@ -74,7 +89,7 @@ function renderRail(overrides: Partial<WorkspaceRailProps> = {}) {
 }
 
 describe('WorkspaceRail', () => {
-  it('groups active and recent missions by workspace without empty counters', () => {
+  it('groups missions with valid non-heading labels and hides empty groups', () => {
     const { host } = renderRail();
     const active = host.querySelector('[data-rail-group="active"]');
     const recent = host.querySelector('[data-rail-group="recent"]');
@@ -84,6 +99,20 @@ describe('WorkspaceRail', () => {
     expect(active?.textContent).toContain('Publicar a versão');
     expect(recent?.textContent).toContain('Cometa');
     expect(recent?.textContent).toContain('Revisar a página inicial');
+
+    for (const [group, label] of [
+      [active, 'Em andamento'],
+      [recent, 'Recentes'],
+    ] as const) {
+      const labelId = group?.getAttribute('aria-labelledby');
+      const labelNode = labelId ? document.getElementById(labelId) : null;
+
+      expect(labelId).toBeTruthy();
+      expect(labelNode?.textContent).toBe(label);
+      expect(labelNode?.tagName).toBe('SPAN');
+      expect(group?.contains(labelNode)).toBe(true);
+    }
+    expect(host.querySelector('h1, h2, h3, h4, h5, h6')).toBeNull();
 
     const emptyHost = render(
       <WorkspaceRail
@@ -103,18 +132,116 @@ describe('WorkspaceRail', () => {
     expect(emptyHost.textContent).not.toContain('0');
   });
 
-  it('pairs every mission status with a word and semantic indicator', () => {
-    const { host } = renderRail();
+  it('maps every canonical mission state and prioritizes running warnings', () => {
+    const statusCases = [
+      {
+        id: 'draft',
+        state: 'draft',
+        needsAttention: false,
+        label: 'Preparando',
+        tone: 'pending',
+      },
+      {
+        id: 'review-ready',
+        state: 'review_ready',
+        needsAttention: false,
+        label: 'Pronta para iniciar',
+        tone: 'ready',
+      },
+      {
+        id: 'starting',
+        state: 'starting',
+        needsAttention: false,
+        label: 'Iniciando',
+        tone: 'pending',
+      },
+      {
+        id: 'running',
+        state: 'running',
+        needsAttention: false,
+        label: 'Trabalhando',
+        tone: 'running',
+      },
+      {
+        id: 'running-warning',
+        state: 'running',
+        needsAttention: true,
+        label: 'Trabalhando · aviso',
+        tone: 'blocked',
+      },
+      {
+        id: 'blocked-user',
+        state: 'blocked_user',
+        needsAttention: true,
+        label: 'Precisa de resposta',
+        tone: 'blocked',
+      },
+      {
+        id: 'blocked-technical',
+        state: 'blocked_technical',
+        needsAttention: true,
+        label: 'Precisa de reparo',
+        tone: 'blocked',
+      },
+      {
+        id: 'recovering',
+        state: 'recovering',
+        needsAttention: true,
+        label: 'Recuperando',
+        tone: 'running',
+      },
+      {
+        id: 'stopping',
+        state: 'stopping',
+        needsAttention: false,
+        label: 'Parando',
+        tone: 'pending',
+      },
+      {
+        id: 'failed',
+        state: 'failed',
+        needsAttention: true,
+        label: 'Falhou',
+        tone: 'failed',
+      },
+      {
+        id: 'completed',
+        state: 'completed',
+        needsAttention: false,
+        label: 'Concluída',
+        tone: 'done',
+      },
+    ] as const;
+    const { host } = renderRail({
+      activeWorkspaces: [
+        {
+          id: 'states',
+          name: 'Estados',
+          missions: statusCases.map(({ id, state, needsAttention }) => ({
+            id: `mission-${id}`,
+            title: `Missão ${id}`,
+            status: state,
+            needsAttention,
+          })),
+        },
+      ],
+      recentWorkspaces: [],
+    });
 
-    for (const [missionId, label] of [
-      ['mission-running', 'Em andamento'],
-      ['mission-blocked', 'Precisa de você'],
-      ['mission-done', 'Concluída'],
-    ] as const) {
-      const row = host.querySelector(`[data-mission-id="${missionId}"]`);
+    for (const { id, state, label, tone } of statusCases) {
+      const row = host.querySelector(`[data-mission-id="mission-${id}"]`);
+
       expect(row?.textContent).toContain(label);
-      expect(row?.querySelector('[aria-hidden="true"]')).not.toBeNull();
-      expect(row?.className).toContain('workspace-rail__mission--');
+      expect(row?.getAttribute('aria-label')).toBe(`Missão ${id}. ${label}`);
+      expect(row?.getAttribute('data-mission-state')).toBe(state);
+      expect(row?.classList.contains(`workspace-rail__mission--${tone}`)).toBe(
+        true,
+      );
+      expect(
+        row?.querySelector(
+          '.workspace-rail__mission-indicator[aria-hidden="true"]',
+        ),
+      ).not.toBeNull();
     }
   });
 
@@ -148,7 +275,8 @@ describe('WorkspaceRail', () => {
             {
               id: 'mission-long',
               title: longTitle,
-              status: 'pending',
+              status: 'draft',
+              needsAttention: false,
             },
           ],
         },

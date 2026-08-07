@@ -209,6 +209,7 @@
 }
 
 .workspace-rail__group-title {
+  display: block;
   margin: 0 0 var(--space-2);
   padding: 0 var(--space-2);
   color: var(--text-faint);
@@ -313,7 +314,6 @@
 }
 
 .workspace-rail__mission-status {
-  color: currentColor;
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
   font-weight: 600;
@@ -512,9 +512,12 @@
   }
 
   .product-inspector {
+    justify-self: end;
+    width: 100%;
+    max-width: var(--nexus-shell-inspector-max);
     max-height: 40vh;
     border-top: 1px solid var(--border);
-    border-left: 0;
+    border-left: 1px solid var(--border);
   }
 }
 

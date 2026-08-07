@@ -1,18 +1,12 @@
+import type { MissionLifecycleState } from '../../../shared/mission-engine-contract';
 import { NexusMark } from '../NexusMark';
 import { PixelIcon, type PixelIconName } from '../PixelIcon';
-
-export type WorkspaceRailMissionStatus =
-  | 'running'
-  | 'ready'
-  | 'blocked'
-  | 'failed'
-  | 'pending'
-  | 'done';
 
 export interface WorkspaceRailMission {
   id: string;
   title: string;
-  status: WorkspaceRailMissionStatus;
+  status: MissionLifecycleState;
+  needsAttention: boolean;
 }
 
 export interface WorkspaceRailWorkspace {
@@ -42,22 +36,59 @@ export interface WorkspaceRailProps {
   onOpenSettings: () => void;
 }
 
+type MissionStatusTone =
+  | 'running'
+  | 'ready'
+  | 'blocked'
+  | 'failed'
+  | 'pending'
+  | 'done';
+
 interface MissionStatusDisplay {
   label: string;
   icon: PixelIconName;
+  tone: MissionStatusTone;
 }
 
-const MISSION_STATUS: Record<
-  WorkspaceRailMissionStatus,
-  MissionStatusDisplay
-> = {
-  running: { label: 'Em andamento', icon: 'status-busy' },
-  ready: { label: 'Pronta', icon: 'status-idle' },
-  blocked: { label: 'Precisa de você', icon: 'warn' },
-  failed: { label: 'Falhou', icon: 'status-exited' },
-  pending: { label: 'Na fila', icon: 'status-spawning' },
-  done: { label: 'Concluída', icon: 'check' },
+const MISSION_STATUS: Record<MissionLifecycleState, MissionStatusDisplay> = {
+  draft: { label: 'Preparando', icon: 'file', tone: 'pending' },
+  review_ready: {
+    label: 'Pronta para iniciar',
+    icon: 'status-idle',
+    tone: 'ready',
+  },
+  starting: { label: 'Iniciando', icon: 'status-spawning', tone: 'pending' },
+  running: { label: 'Trabalhando', icon: 'status-busy', tone: 'running' },
+  blocked_user: {
+    label: 'Precisa de resposta',
+    icon: 'user',
+    tone: 'blocked',
+  },
+  blocked_technical: {
+    label: 'Precisa de reparo',
+    icon: 'warn',
+    tone: 'blocked',
+  },
+  recovering: { label: 'Recuperando', icon: 'restart', tone: 'running' },
+  stopping: { label: 'Parando', icon: 'stop', tone: 'pending' },
+  failed: { label: 'Falhou', icon: 'status-exited', tone: 'failed' },
+  completed: { label: 'Concluída', icon: 'check', tone: 'done' },
 };
+
+const RUNNING_WARNING_STATUS: MissionStatusDisplay = {
+  label: 'Trabalhando · aviso',
+  icon: 'warn',
+  tone: 'blocked',
+};
+
+function missionStatusDisplay(
+  state: MissionLifecycleState,
+  needsAttention: boolean,
+): MissionStatusDisplay {
+  return state === 'running' && needsAttention
+    ? RUNNING_WARNING_STATUS
+    : MISSION_STATUS[state];
+}
 
 interface WorkspaceGroupProps {
   label: string;
@@ -77,14 +108,17 @@ function WorkspaceGroup({
   onSelectMission,
 }: WorkspaceGroupProps) {
   if (workspaces.length === 0) return null;
+  const labelId = `workspace-rail-${group}-label`;
 
   return (
     <section
       className="workspace-rail__group"
       data-rail-group={group}
-      aria-label={label}
+      aria-labelledby={labelId}
     >
-      <h2 className="workspace-rail__group-title">{label}</h2>
+      <span id={labelId} className="workspace-rail__group-title">
+        {label}
+      </span>
       <ul className="workspace-rail__workspace-list">
         {workspaces.map((workspace) => {
           const workspaceSelected =
@@ -122,7 +156,10 @@ function WorkspaceGroup({
                   aria-label={`Missões em ${workspace.name}`}
                 >
                   {workspace.missions.map((mission) => {
-                    const status = MISSION_STATUS[mission.status];
+                    const status = missionStatusDisplay(
+                      mission.status,
+                      mission.needsAttention,
+                    );
                     const missionSelected =
                       selection?.kind === 'mission' &&
                       selection.missionId === mission.id;
@@ -131,12 +168,13 @@ function WorkspaceGroup({
                       <li key={mission.id}>
                         <button
                           type="button"
-                          className={`workspace-rail__row workspace-rail__mission workspace-rail__mission--${mission.status}${
+                          className={`workspace-rail__row workspace-rail__mission workspace-rail__mission--${status.tone}${
                             missionSelected
                               ? ' workspace-rail__row--selected'
                               : ''
                           }`}
                           data-mission-id={mission.id}
+                          data-mission-state={mission.status}
                           aria-current={missionSelected ? 'page' : undefined}
                           aria-label={`${mission.title}. ${status.label}`}
                           title={`${mission.title}: ${status.label}`}
