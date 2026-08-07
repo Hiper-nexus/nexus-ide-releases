@@ -1494,8 +1494,20 @@ describe("physical HTTP MCP handoff boundary", () => {
     );
 
     expect(result).toMatchObject({ status: 200, body: { ok: true } });
-    expect(countRows(manager, "handoffs")).toBe(1);
+    expect(countRows(manager, "handoffs")).toBe(2);
     expect(countRows(manager, "handoff_mcp_receipts")).toBe(1);
+    expect(
+      handoffs
+        .list({ missionId: MISSION_ID, includeDelivered: true })
+        .filter((handoff) => handoff.status === "progress"),
+    ).toEqual([
+      expect.objectContaining({
+        summary: expect.stringContaining("Pergunta ao operador:"),
+        artifacts: [
+          expect.objectContaining({ kind: "nexus-clarify-question" }),
+        ],
+      }),
+    ]);
     expect(dispatches.get(taskId)).toMatchObject({
       state: "blocked",
       handoffId: expect.stringMatching(/^handoff-http-/),
@@ -1506,7 +1518,10 @@ describe("physical HTTP MCP handoff boundary", () => {
     ).toMatchObject({
       status: "failed",
     });
-    expect(missions.get(MISSION_ID)).toMatchObject({ status: "blocked" });
+    expect(missions.get(MISSION_ID)).toMatchObject({
+      status: "blocked",
+      intentState: "blocked_user",
+    });
     expect(
       readAuditLog({ scope: testProjectScope(), missionId: MISSION_ID }).map(
         (entry) => entry.result,
@@ -1536,7 +1551,7 @@ describe("physical HTTP MCP handoff boundary", () => {
         },
       },
     });
-    expect(countRows(manager, "handoffs")).toBe(1);
+    expect(countRows(manager, "handoffs")).toBe(2);
     expect(countRows(manager, "handoff_mcp_receipts")).toBe(1);
     expect(dispatches.get(taskId)).toMatchObject({
       state: "blocked",
@@ -1572,7 +1587,7 @@ describe("physical HTTP MCP handoff boundary", () => {
       },
     });
     expect(divergent.body.effectMayHaveCommitted).toBeUndefined();
-    expect(countRows(manager, "handoffs")).toBe(1);
+    expect(countRows(manager, "handoffs")).toBe(2);
     expect(countRows(manager, "handoff_mcp_receipts")).toBe(1);
     expect(spentHandoffSteps(missions)).toBe(1);
     expect(dispatches.get(taskId)).toMatchObject({

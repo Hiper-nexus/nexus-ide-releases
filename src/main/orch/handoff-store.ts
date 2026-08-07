@@ -39,6 +39,7 @@ import {
 import { markHandoffConsumedFromPhysicalAck } from "./handoff-physical-ack-authority";
 import {
   commitTaskDispatchHandoffInTransaction,
+  completeBlockedTaskDispatchHandoffPostCommit,
   resolveCommittedTaskDispatchHandoffReplayInTransaction,
 } from "./task-dispatch-handoff-authority";
 import type { TaskDispatchRecord } from "./task-dispatch-codec";
@@ -790,7 +791,19 @@ export class ScopedHandoffStore {
 
     const committed = insert.immediate();
     if (!committed.replayed) {
-      this.#binding.emitChange();
+      if (
+        mcpBoundary?.dispatchTransition &&
+        committed.handoff.status !== "success" &&
+        committed.taskDispatch
+      ) {
+        completeBlockedTaskDispatchHandoffPostCommit(
+          this.#binding,
+          committed.taskDispatch,
+          mcpBoundary.dispatchTransition.detail,
+        );
+      } else {
+        this.#binding.emitChange();
+      }
       if (committed.taskDispatch) this.#emitDispatchChange();
       if (
         committed.handoff.status === "success" &&

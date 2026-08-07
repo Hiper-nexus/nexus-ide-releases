@@ -11,6 +11,7 @@ import {
 } from "./guided-mission-planner-test-harness";
 import { plannedTaskId, snapshotTaskPlanRoster } from "./task-store";
 import { snapshotSquadAuthority } from "./squad-authority-snapshot";
+import { GUIDED_TASK_DOMAINS } from "./guided-task-kind";
 
 const ROUND_TABLE_GOAL =
   "teste de todos panes cada um me fala oque ele faz na missao";
@@ -235,15 +236,24 @@ describe("guided team coordination topology", () => {
     });
     const h = harness({ currentMission });
 
-    ensureGuidedMissionPlan(h.suite, currentMission.id, h.deps);
+    const result = ensureGuidedMissionPlan(
+      h.suite,
+      currentMission.id,
+      h.deps,
+    );
     const rows = h.createPlanAtomically.mock.calls[0]![0].rows;
 
+    expect(result).toMatchObject({ applicable: true, topology: "delivery" });
     expect(
-      rows.some(
-        (row) =>
-          decodeTaskScheduleDetail(row.detail).meta?.executionMode ===
-          "isolated_worktree",
-      ),
+      rows.some((row) => {
+        const meta = decodeTaskScheduleDetail(row.detail).meta;
+        return (
+          meta?.executionMode === "same_checkout" &&
+          meta.ownership.domains.includes(
+            GUIDED_TASK_DOMAINS.simpleImplementation,
+          )
+        );
+      }),
     ).toBe(true);
     expect(
       rows.some((row) =>

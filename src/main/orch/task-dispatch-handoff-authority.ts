@@ -11,6 +11,7 @@ import {
   taskDispatchIdSchema,
   type TaskDispatchRecord,
 } from "./task-dispatch-codec";
+import { emitWorkerDecisionClarify } from "./worker-decision-clarify";
 import {
   blockTaskDispatchMission,
   getTaskDispatchFromDatabase,
@@ -348,7 +349,9 @@ export function commitTaskDispatchHandoffInTransaction(
     db.prepare(
       `UPDATE tasks SET status = 'failed', updated_at = ? WHERE id = ?`,
     ).run(now, row.task_id);
-    blockTaskDispatchMission(db, row.mission_id, detail, now);
+    // Mission stays running here on purpose: clarify chips are written after
+    // this transaction while status is still running (handoff submit refuses
+    // blocked missions). blockTaskDispatchFromHandoff then flips to blocked_user.
   }
 
   const record = getTaskDispatchFromDatabase(db, row.task_id, coordinates);
@@ -392,12 +395,39 @@ export interface BlockTaskDispatchFromHandoffInput {
   readonly detail: string;
 }
 
+export function completeBlockedTaskDispatchHandoffPostCommit(
+  binding: ScopedStoreBinding,
+  record: TaskDispatchRecord,
+  detail: string,
+): void {
+  const boundedDetail = detail.slice(0, 65_536);
+  // Mission is still running: open chips first, then mark blocked_user.
+  try {
+    emitWorkerDecisionClarify(binding, record.missionId, boundedDetail);
+  } catch (error) {
+    console.warn(
+      "[task-dispatch] worker-decision clarify skipped:",
+      error instanceof Error ? error.message : error,
+    );
+  }
+  // Worker chose status=blocked (governance / product fork) → human decision.
+  blockTaskDispatchMission(
+    binding.writeDatabase(),
+    record.missionId,
+    boundedDetail,
+    binding.now(),
+    "user",
+  );
+  binding.emitChange();
+}
+
 export function blockTaskDispatchFromHandoff(
   binding: ScopedStoreBinding,
   input: BlockTaskDispatchFromHandoffInput,
 ): TaskDispatchRecord {
   const now = binding.now();
   const db = binding.writeDatabase();
+  const detail = input.detail.slice(0, 65_536);
   const record = db
     .transaction(() =>
       commitTaskDispatchHandoffInTransaction(
@@ -411,6 +441,6 @@ export function blockTaskDispatchFromHandoff(
       ),
     )
     .immediate();
-  binding.emitChange();
+  completeBlockedTaskDispatchHandoffPostCommit(binding, record, detail);
   return record;
 }
