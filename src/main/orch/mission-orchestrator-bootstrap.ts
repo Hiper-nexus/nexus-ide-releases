@@ -51,7 +51,6 @@ import type {
   RecordMissionPaneInput,
 } from "./mission-pane-store";
 import {
-  hasExactMissionKickoffContinuation,
   hasPendingMissionKickoffFlight,
   submitMissionKickoffFromMain,
   type MissionKickoffResult,
@@ -72,6 +71,7 @@ import {
 import {
   getProjectDomainStores,
   requireProjectDomainStoreRegistry,
+  type ProjectDomainStoreSuite,
 } from "./project-domain-store-registry";
 import {
   MissionLifecycleLockBusyError,
@@ -121,6 +121,14 @@ import {
   emitMissionDegradation,
   emitMissionDegradationNudge,
 } from './mission-event-emit';
+import { evaluateMissionAdmission } from "./mission-engine-admission";
+import {
+  MainMissionEngine,
+  type MissionStartInput,
+} from "./mission-engine";
+import type { ScopedMissionStore } from "./mission-store";
+import { MissionEngineRegistry } from "./mission-engine-registry";
+import type { ProjectMissionSnapshotView } from "./mission-snapshot";
 import type {
   TaskDispatchRecord,
   TaskDispatchState,
@@ -257,6 +265,19 @@ export interface MissionOrchestratorBootstrapDeps {
     scope: ProjectExecutionScope,
     missionId: string,
     patch: MissionPatch,
+  ): Mission | null;
+  transitionMissionLifecycle(
+    scope: ProjectExecutionScope,
+    missionId: string,
+    expectation: {
+      readonly updatedAt: number;
+      readonly intentVersion: number;
+    },
+    patch: {
+      readonly status: Mission["status"];
+      readonly intentState: NonNullable<Mission["intentState"]>;
+      readonly description?: string;
+    },
   ): Mission | null;
   /** Main-only atomic CAS for squad identity and its approved revision hash. */
   rebindMissionSquadAuthority(
@@ -536,36 +557,6 @@ function isRetryableBootstrapResult(
   );
 }
 
-function hasScheduledBootstrapKickoffRecovery(
-  deps: MissionOrchestratorBootstrapDeps,
-  scope: ProjectExecutionScope,
-  missionId: string,
-  sessionId: string,
-): boolean {
-  try {
-    const mission = deps.getMission(scope, missionId);
-    if (mission && hasAutomaticTechnicalRecovery(mission)) return true;
-    const pane =
-      deps
-        .listMissionPanes(scope, missionId)
-        .find((candidate) => candidate.role === "orchestrator") ?? null;
-    return hasExactMissionKickoffContinuation({
-      scope,
-      mission,
-      expectedSessionId: sessionId,
-      hasCurrentKickoffAcceptance: deps.hasCurrentKickoffAcceptance(
-        scope,
-        missionId,
-      ),
-      sessionState: deps.getSessionState(sessionId),
-      pane,
-      agent: deps.getAgentSessionInfo(sessionId),
-      authority: deps.getRuntimeAuthority(sessionId),
-    });
-  } catch {
-    return false;
-  }
-}
 
 export function needsMissionOrchestratorBootstrapRecovery(
   mission: Pick<Mission, "orchestratorSessionId">,
@@ -573,6 +564,7 @@ export function needsMissionOrchestratorBootstrapRecovery(
   hasCurrentKickoffAcceptance: boolean,
 ): boolean {
   const hasPersistedOrchestrator = panes.some(
+
     (pane) => pane.role === "orchestrator",
   );
   return (
@@ -580,6 +572,45 @@ export function needsMissionOrchestratorBootstrapRecovery(
     !hasPersistedOrchestrator ||
     !hasCurrentKickoffAcceptance
   );
+}
+export function sealMissionStartReview(
+  missions: Pick<ScopedMissionStore, "get" | "transitionLifecycle">,
+  input: MissionStartInput,
+): Mission {
+  const current = missions.get(input.missionId);
+  const reviewSha256 = current?.intentContract?.approvalReviewSha256;
+  if (
+    !current ||
+    !hasCurrentApprovedDispatchContract(current) ||
+    reviewSha256 !== input.reviewSha256 ||
+    !(
+      (current.status === 'pending' &&
+        current.intentState === 'ready_to_start') ||
+      (current.status === 'running' &&
+        (current.intentState === 'dispatched' ||
+          current.intentState === 'executing'))
+    )
+  ) {
+    throw new Error('mission start review fence changed before seal');
+  }
+  const sealed = missions.transitionLifecycle(
+    current.id,
+    {
+      updatedAt: current.updatedAt,
+      intentVersion: current.intentVersion ?? 0,
+    },
+    {
+      status: current.status,
+      intentState: current.intentState,
+    },
+  );
+  if (
+    !sealed ||
+    sealed.intentContract?.approvalReviewSha256 !== input.reviewSha256
+  ) {
+    throw new Error('mission start seal CAS changed before bootstrap');
+  }
+  return sealed;
 }
 
 function sameScope(
@@ -846,6 +877,12 @@ const productionDeps: MissionOrchestratorBootstrapDeps = {
     getProjectDomainStores(scope).missions.get(missionId),
   updateMission: (scope, missionId, patch) =>
     getProjectDomainStores(scope).missions.update(missionId, patch),
+  transitionMissionLifecycle: (scope, missionId, expectation, patch) =>
+    getProjectDomainStores(scope).missions.transitionLifecycle(
+      missionId,
+      expectation,
+      patch,
+    ),
   rebindMissionSquadAuthority: (
     scope,
     missionId,
@@ -1000,16 +1037,18 @@ export class MissionOrchestratorBootstrapService {
     missionId: string,
   ): Promise<MissionOrchestratorBootstrapResult> {
     let initial = this.#deps.getMission(scope, missionId);
-    if (
-      !initial ||
-      initial.status !== 'running' ||
-      !hasCurrentDispatchAuthority(initial)
-    ) {
+    const approvedStart =
+      initial !== null &&
+      hasCurrentApprovedDispatchContract(initial) &&
+      ((initial.status === 'pending' &&
+        initial.intentState === 'ready_to_start') ||
+        hasCurrentDispatchAuthority(initial));
+    if (!initial || !approvedStart) {
       return this.#failure(
         scope,
         missionId,
         'not_authorized',
-        'O bootstrap exige uma missão running com intenção aprovada.',
+        'O bootstrap exige a revisão aprovada vigente em ready_to_start ou uma execução já admitida.',
       );
     }
     this.#authorizedSnapshots.set(
@@ -1236,8 +1275,19 @@ export class MissionOrchestratorBootstrapService {
         );
       }
     }
+    const authoritySealMission =
+      initial.status === 'pending' &&
+      initial.intentState === 'ready_to_start' &&
+      hasCurrentApprovedDispatchContract(initial)
+        ? {
+            ...initial,
+            status: 'running' as const,
+            intentState: 'dispatched' as const,
+          }
+        : initial;
     const authoritySeal =
-      resolveMissionPaneAuthoritySeal(scope, initial, squad) ?? undefined;
+      resolveMissionPaneAuthoritySeal(scope, authoritySealMission, squad) ??
+      undefined;
     if (!authoritySeal) {
       if (!autopilot) {
         return this.#failure(
@@ -1491,6 +1541,14 @@ export class MissionOrchestratorBootstrapService {
       const sessionId = activeOrchestratorSessionId;
       preparePrevcInBackground();
       if (this.#deps.hasCurrentKickoffAcceptance(scope, missionId)) {
+        const admitted = this.#commitStartAdmission(
+          scope,
+          missionId,
+          sessionId,
+          persistedOrchestrator,
+          runtime,
+        );
+        if (!admitted.ok) return admitted.result;
         return {
           ok: true,
           missionId,
@@ -1642,7 +1700,7 @@ export class MissionOrchestratorBootstrapService {
         }
       }
 
-      this.#deps.emitDispatched(current);
+
       const compactMemory = compactMissionContext({ mission: current });
       const prompt = buildIntentDispatchKickoffPrompt({
         squad,
@@ -1679,26 +1737,38 @@ export class MissionOrchestratorBootstrapService {
         sessionId: spawn.sessionId,
         prompt,
       });
-      if (kickoffAttempt.accepted) {
-        this.#emitProgress(scope, missionId, "kickoff_accepted");
+      if (!kickoffAttempt.accepted) {
+        const failure = this.#failure(
+          scope,
+          missionId,
+          'materialization_failed',
+          `kickoff-${kickoffAttempt.reason}: ${kickoffAttempt.detail}`,
+          bootstrapMissionSnapshot(
+            this.#deps.getMission(scope, missionId) ?? current,
+          ),
+        );
+        return kickoffAttempt.retryScheduled
+          ? {
+              ...failure,
+              cta: BOOTSTRAP_AUTO_RETRY_CTA,
+              retryScheduled: true,
+            }
+          : failure;
       }
-      const kickoff =
-        kickoffAttempt.accepted
-          ? kickoffAttempt
-          : {
-              ...kickoffAttempt,
-              retryScheduled: hasScheduledBootstrapKickoffRecovery(
-                this.#deps,
-                scope,
-                missionId,
-                spawn.sessionId,
-              ),
-            };
+      this.#emitProgress(scope, missionId, "kickoff_accepted");
+      const admitted = this.#commitStartAdmission(
+        scope,
+        missionId,
+        spawn.sessionId,
+        paneRow,
+        runtime,
+      );
+      if (!admitted.ok) return admitted.result;
       return {
         ok: true,
         missionId,
         pane: paneResult(paneRow, spawn.sessionId),
-        kickoff,
+        kickoff: kickoffAttempt,
       };
     } catch (error) {
       const detail = failureDetail(
@@ -2094,10 +2164,19 @@ export class MissionOrchestratorBootstrapService {
           .filter(Boolean)
           .join('\n\n')
           .slice(0, 65_536);
-    this.#deps.updateMission(scope, missionId, {
-      ...missionBlockPatch('technical'),
-      description,
-    });
+    this.#deps.transitionMissionLifecycle(
+      scope,
+      missionId,
+      {
+        updatedAt: current.updatedAt,
+        intentVersion: current.intentVersion ?? 0,
+      },
+      {
+        status: 'blocked',
+        intentState: 'blocked_technical',
+        description,
+      },
+    );
   }
 
   /**
@@ -2106,6 +2185,147 @@ export class MissionOrchestratorBootstrapService {
    * inactivity cadence to re-enter; it never turns a transient gap into a
    * blocked mission.
    */
+  #commitStartAdmission(
+    scope: ProjectExecutionScope,
+    missionId: string,
+    sessionId: string,
+    pane: MissionPaneSpec,
+    runtime: MissionOrchestratorRuntimeSnapshot,
+  ):
+    | { readonly ok: true; readonly mission: Mission }
+    | {
+        readonly ok: false;
+        readonly result: MissionOrchestratorBootstrapResult;
+      } {
+    let current = this.#deps.getMission(scope, missionId);
+    const sessionState = this.#deps.getSessionState(sessionId);
+    const live =
+      sessionState === 'spawning' ||
+      sessionState === 'busy' ||
+      sessionState === 'idle';
+    const mismatches = current
+      ? runtimeAuthorityMismatches(
+          scope,
+          current,
+          pane,
+          this.#deps.getAgentSessionInfo(sessionId),
+          this.#deps.getRuntimeAuthority(sessionId),
+          runtime,
+        )
+      : ['mission ausente'];
+    const admission = evaluateMissionAdmission({
+      hasDispatchAuthority: Boolean(
+        current && hasCurrentApprovedDispatchContract(current),
+      ),
+      hasCurrentKickoffReceipt:
+        this.#deps.hasCurrentKickoffAcceptance(scope, missionId),
+      orchestratorLive: live && mismatches.length === 0,
+    });
+    if (!current || !admission.ok) {
+      return {
+        ok: false,
+        result: this.#failure(
+          scope,
+          missionId,
+          'materialization_failed',
+          `mission-start-admission:${admission.ok ? 'authority-missing' : admission.code}`,
+          current ? bootstrapMissionSnapshot(current) : undefined,
+        ),
+      };
+    }
+
+    let promoted = false;
+    if (
+      current.status === 'pending' &&
+      current.intentState === 'ready_to_start'
+    ) {
+      const dispatched = this.#deps.transitionMissionLifecycle(
+        scope,
+        missionId,
+        {
+          updatedAt: current.updatedAt,
+          intentVersion: current.intentVersion ?? 0,
+        },
+        { status: 'running', intentState: 'dispatched' },
+      );
+      if (!dispatched) {
+        return {
+          ok: false,
+          result: this.#failure(
+            scope,
+            missionId,
+            'materialization_failed',
+            'mission-start-admission:authority-missing — lifecycle CAS changed before dispatch',
+            bootstrapMissionSnapshot(current),
+          ),
+        };
+      }
+      current = dispatched;
+      promoted = true;
+    }
+    if (
+      current.status === 'running' &&
+      current.intentState === 'dispatched'
+    ) {
+      const executing = this.#deps.transitionMissionLifecycle(
+        scope,
+        missionId,
+        {
+          updatedAt: current.updatedAt,
+          intentVersion: current.intentVersion ?? 0,
+        },
+        { status: 'running', intentState: 'executing' },
+      );
+      if (!executing) {
+        return {
+          ok: false,
+          result: this.#failure(
+            scope,
+            missionId,
+            'materialization_failed',
+            'mission-start-admission:authority-missing — lifecycle CAS changed before execution',
+            bootstrapMissionSnapshot(current),
+          ),
+        };
+      }
+      current = executing;
+      promoted = true;
+    }
+
+    const finalSessionState = this.#deps.getSessionState(sessionId);
+    const finalAdmission = evaluateMissionAdmission({
+      hasDispatchAuthority: hasCurrentDispatchAuthority(current),
+      hasCurrentKickoffReceipt:
+        this.#deps.hasCurrentKickoffAcceptance(scope, missionId),
+      orchestratorLive:
+        (finalSessionState === 'spawning' ||
+          finalSessionState === 'busy' ||
+          finalSessionState === 'idle') &&
+        runtimeAuthorityMismatches(
+          scope,
+          current,
+          pane,
+          this.#deps.getAgentSessionInfo(sessionId),
+          this.#deps.getRuntimeAuthority(sessionId),
+          runtime,
+        ).length === 0,
+    });
+    if (!finalAdmission.ok) {
+      return {
+        ok: false,
+        result: this.#failure(
+          scope,
+          missionId,
+          'materialization_failed',
+          `mission-start-admission:${finalAdmission.code}`,
+          bootstrapMissionSnapshot(current),
+        ),
+      };
+    }
+    if (promoted) this.#deps.emitDispatched(current);
+    return { ok: true, mission: current };
+  }
+
   #surfaceDegradation(
     scope: ProjectExecutionScope,
     missionId: string,
@@ -2178,7 +2398,7 @@ export class MissionOrchestratorBootstrapService {
     detail: string,
     expectedCurrentSnapshot?: string,
     blockKind: "technical" | "user" = "technical",
-  ): MissionOrchestratorBootstrapResult {
+  ): Extract<MissionOrchestratorBootstrapResult, { ok: false }> {
     const current = this.#deps.getMission(scope, missionId);
     const key = bootstrapFlightKey(scope, missionId);
     const authorizedSnapshot = this.#authorizedSnapshots.get(key);
@@ -2215,10 +2435,22 @@ export class MissionOrchestratorBootstrapService {
             .filter(Boolean)
             .join("\n\n")
             .slice(0, 65_536);
-      const blocked = this.#deps.updateMission(scope, missionId, {
-        ...missionBlockPatch(effectiveBlockKind),
-        description,
-      });
+      const blocked = this.#deps.transitionMissionLifecycle(
+        scope,
+        missionId,
+        {
+          updatedAt: current.updatedAt,
+          intentVersion: current.intentVersion ?? 0,
+        },
+        {
+          status: 'blocked',
+          intentState:
+            effectiveBlockKind === 'technical'
+              ? 'blocked_technical'
+              : 'blocked_user',
+          description,
+        },
+      );
       retryScheduled = blocked
         ? hasAutomaticTechnicalRecovery(blocked)
         : false;
@@ -2514,6 +2746,186 @@ export class MissionOrchestratorBootstrapRecovery {
 }
 
 const productionService = new MissionOrchestratorBootstrapService();
+const missionEngineBootstrapResults = new Map<
+  string,
+  MissionOrchestratorBootstrapResult
+>();
+
+function projectMissionEngineSnapshotView(
+  scope: ProjectExecutionScope,
+  stores: ProjectDomainStoreSuite,
+  missionId: string,
+): ProjectMissionSnapshotView {
+  const mission = stores.missions.get(missionId);
+  if (!mission) throw new Error('mission not found');
+  const orchestratorPane =
+    stores.missionPanes
+      .list(missionId)
+      .find((pane) => pane.role === 'orchestrator') ?? null;
+  const sessionId = mission.orchestratorSessionId;
+  const sessionState = sessionId ? runtimeSessionState(sessionId) : null;
+  const approvedRuntime = mission.intentContract?.orchestratorRuntime;
+  const orchestratorLive = Boolean(
+    sessionId &&
+      orchestratorPane &&
+      approvedRuntime &&
+      (sessionState === 'spawning' ||
+        sessionState === 'busy' ||
+        sessionState === 'idle') &&
+      runtimeAuthorityMismatches(
+        scope,
+        mission,
+        orchestratorPane,
+        runtimeAgentSessionInfo(sessionId),
+        getPaneRuntimeAuthorityBySession(sessionId),
+        approvedRuntime,
+      ).length === 0,
+  );
+  const squad = mission.squadId ? getSquad(mission.squadId) : null;
+  return {
+    mission: {
+      id: mission.id,
+      title: mission.title,
+      objective:
+        mission.intentContract?.goal.trim() ||
+        mission.description.trim() ||
+        mission.title,
+      workspaceLabel: `${scope.projectId}/${scope.checkoutId}`,
+      status: mission.status,
+      version: mission.intentVersion ?? 0,
+      updatedAt: mission.updatedAt,
+    },
+    hasDispatchAuthority: hasCurrentDispatchAuthority(mission),
+    hasCurrentKickoffReceipt:
+      stores.missions.hasCurrentKickoffAcceptance(mission.id),
+    orchestratorLive,
+    tasks: stores.tasks.list(mission.id).map((task) => ({
+      id: task.id,
+      title: task.title,
+      status: task.status,
+      dependsOn: [],
+      evidence: [],
+    })),
+    handoffs: [],
+    panes: [],
+    roster: (squad?.agents ?? []).map((agent) => ({
+      ...agent,
+      allowedTools: agent.allowedTools ? [...agent.allowedTools] : agent.allowedTools,
+      allowedSkills: agent.allowedSkills
+        ? [...agent.allowedSkills]
+        : agent.allowedSkills,
+    })),
+  };
+}
+
+const productionMissionEngines = new MissionEngineRegistry((scope, stores) =>
+  new MainMissionEngine(scope, {
+    arm: async () => {
+      throw new Error('mission engine prepare is not available on the start adapter');
+    },
+    compile: async () => {
+      throw new Error('mission engine compile is not available on the start adapter');
+    },
+    persistReviewFence: async () => {
+      throw new Error('mission engine review persistence is not available on the start adapter');
+    },
+    readReviewFence: async (missionId) => {
+      const reviewSha256 =
+        stores.missions.get(missionId)?.intentContract?.approvalReviewSha256;
+      return reviewSha256 ? { missionId, reviewSha256 } : null;
+    },
+    seal: async (input) => {
+      sealMissionStartReview(stores.missions, input);
+    },
+    bootstrap: async (missionId) => {
+      const result = await productionService.bootstrap(scope, missionId);
+      missionEngineBootstrapResults.set(
+        bootstrapFlightKey(scope, missionId),
+        result,
+      );
+      if (!result.ok) throw new Error(result.error);
+      if (!result.kickoff.accepted) {
+        throw new Error(
+          `mission-start-admission:kickoff-receipt-missing (${result.kickoff.reason})`,
+        );
+      }
+    },
+    retryKickoff: async () => {
+      throw new Error('mission engine retry requires the blocked-start adapter');
+    },
+    resume: async () => {
+      throw new Error('mission engine resume requires the blocked-start adapter');
+    },
+    stop: async () => {
+      throw new Error('mission engine stop is not available on the start adapter');
+    },
+    direct: async () => {
+      throw new Error('mission engine direct is not available on the start adapter');
+    },
+    answerQuestion: async () => {
+      throw new Error('mission engine answer is not available on the start adapter');
+    },
+    readSnapshotView: async (missionId) =>
+      projectMissionEngineSnapshotView(scope, stores, missionId),
+    listSnapshotViews: async () =>
+      stores.missions
+        .list()
+        .map((mission) =>
+          projectMissionEngineSnapshotView(scope, stores, mission.id),
+        ),
+  }),
+);
+
+function blockMissionEngineStartFailure(
+  scope: ProjectExecutionScope,
+  missionId: string,
+  expectedIntentVersion: number,
+  expectedReviewSha256: string | undefined,
+  error: unknown,
+): MissionOrchestratorBootstrapResult {
+  const stores = getProjectDomainStores(scope);
+  const current = stores.missions.get(missionId);
+  const detail = failureDetail('MissionEngine.start falhou.', error);
+  let retryScheduled = false;
+  if (
+    current &&
+    current.status !== 'done' &&
+    current.status !== 'failed' &&
+    (current.intentVersion ?? 0) === expectedIntentVersion &&
+    current.intentContract?.approvalReviewSha256 === expectedReviewSha256
+  ) {
+    const note =
+      `${BOOTSTRAP_BLOCK_MARKER}\n## Orquestrador não iniciado\n${detail} ` +
+      `CTA: ${BOOTSTRAP_AUTO_RETRY_CTA}.`;
+    const description = current.description.includes(BOOTSTRAP_BLOCK_MARKER)
+      ? current.description
+      : [current.description.trim(), note]
+          .filter(Boolean)
+          .join('\n\n')
+          .slice(0, 65_536);
+    const blocked = stores.missions.transitionLifecycle(
+      missionId,
+      {
+        updatedAt: current.updatedAt,
+        intentVersion: expectedIntentVersion,
+      },
+      {
+        status: 'blocked',
+        intentState: 'blocked_technical',
+        description,
+      },
+    );
+    retryScheduled = Boolean(blocked && hasAutomaticTechnicalRecovery(blocked));
+  }
+  return {
+    ok: false,
+    missionId,
+    reason: 'materialization_failed',
+    error: detail,
+    cta: retryScheduled ? BOOTSTRAP_AUTO_RETRY_CTA : BOOTSTRAP_CTA,
+    ...(retryScheduled ? { retryScheduled: true } : {}),
+  };
+}
 const productionScopes = new Map<string, ProjectExecutionScope>();
 const productionRecovery = new MissionOrchestratorBootstrapRecovery({
   listScopes: () => [...productionScopes.values()],
@@ -2602,14 +3014,66 @@ function productionScopeKey(scope: Readonly<ProjectExecutionScope>): string {
   ].join("\0");
 }
 
-/** Main-process boundary used by approval and recovery, sharing one singleflight. */
+/** Main-process boundary used by approval and recovery, sharing one engine start. */
 export function bootstrapMissionOrchestratorForScope(
   scope: ProjectExecutionScope,
   missionId: string,
+  expectedReviewSha256?: string,
 ): Promise<MissionOrchestratorBootstrapResult> {
-  return withMissionLifecycleLock(scope, missionId, () =>
-    productionService.bootstrap(scope, missionId),
-  );
+  return withMissionLifecycleLock(scope, missionId, async () => {
+    const stores = getProjectDomainStores(scope);
+    const initial = stores.missions.get(missionId);
+    if (!initial) {
+      return {
+        ok: false,
+        missionId,
+        reason: 'not_authorized',
+        error: 'MissionEngine.start exige uma missão existente.',
+        cta: BOOTSTRAP_CTA,
+      };
+    }
+    const intentVersion = initial.intentVersion ?? 0;
+    const reviewSha256 =
+      expectedReviewSha256 ??
+      initial.intentContract?.approvalReviewSha256;
+    if (!reviewSha256) {
+      return blockMissionEngineStartFailure(
+        scope,
+        missionId,
+        intentVersion,
+        undefined,
+        new Error('review fence is absent'),
+      );
+    }
+
+    const key = bootstrapFlightKey(scope, missionId);
+    missionEngineBootstrapResults.delete(key);
+    try {
+      await productionMissionEngines
+        .forScope(scope, stores)
+        .start(scope, { missionId, reviewSha256 });
+    } catch (error) {
+      const bootstrapResult = missionEngineBootstrapResults.get(key);
+      if (bootstrapResult) return bootstrapResult;
+      return blockMissionEngineStartFailure(
+        scope,
+        missionId,
+        intentVersion,
+        reviewSha256,
+        error,
+      );
+    }
+    return (
+      missionEngineBootstrapResults.get(key) ??
+      blockMissionEngineStartFailure(
+        scope,
+        missionId,
+        intentVersion,
+        reviewSha256,
+        new Error('MissionEngine.start completed without bootstrap receipt'),
+      )
+    );
+  });
 }
 
 export interface PlanPromotionRestartDeps {

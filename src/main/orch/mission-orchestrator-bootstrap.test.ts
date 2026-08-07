@@ -25,6 +25,7 @@ import {
   restartMissionOrchestratorAfterPlanPromotionForScope,
   runtimeAuthorityMismatches,
   stopMissionOrchestratorBeforePlanPromotionForScope,
+  sealMissionStartReview,
   TECHNICAL_RECOVERY_MAX_ATTEMPTS,
   RECOVERY_ATTEMPT_TIMEOUT_MS,
   type MissionOrchestratorBootstrapDeps,
@@ -37,6 +38,7 @@ import { createMissionPaneAuthoritySeal } from './mission-pane-authority';
 import { NEXUS_STORY_IMPLEMENTATION_SQUAD_ID } from '../../shared/builtin-squad-ids';
 import { selectPhysicalPlanHandoff } from './plan-promotion-authority';
 import type { TaskDispatchRecord } from './task-dispatch-store';
+import type { ScopedMission } from './mission-store';
 import { TERMINAL_OPERATIONAL_FAILURE_MARKER } from '../runtime/operational-failure-policy';
 import { RETIRED_ROSTER_ROUTE_MARKER } from '../../shared/retired-adapter-policy';
 import { RetiredRosterRouteError } from '../../shared/retired-adapter-policy';
@@ -141,10 +143,22 @@ function approvedMission(): Mission {
   };
 }
 
-function authoritySealFor(mission: Mission = approvedMission(),
+function authoritySealFor(
+  mission: Mission = approvedMission(),
   targetSquad: Squad = squad,
 ) {
-  const seal = createMissionPaneAuthoritySeal({ mission, squad: targetSquad });
+  const sealMission =
+    mission.status === 'pending' && mission.intentState === 'ready_to_start'
+      ? {
+          ...mission,
+          status: 'running' as const,
+          intentState: 'dispatched' as const,
+        }
+      : mission;
+  const seal = createMissionPaneAuthoritySeal({
+    mission: sealMission,
+    squad: targetSquad,
+  });
   if (!seal) throw new Error('test mission authority seal was not created');
   return seal;
 }
@@ -190,6 +204,26 @@ function harness(): Harness {
         milestones: value.mission.milestones,
         intentContract: nextIntentContract,
         updatedAt: Date.now(),
+      };
+      return value.mission;
+    },
+    transitionMissionLifecycle: (
+      _scope,
+      missionId,
+      expectation,
+      patch,
+    ) => {
+      if (
+        missionId !== value.mission.id ||
+        value.mission.updatedAt !== expectation.updatedAt ||
+        (value.mission.intentVersion ?? 0) !== expectation.intentVersion
+      ) {
+        return null;
+      }
+      value.mission = {
+        ...value.mission,
+        ...patch,
+        updatedAt: Math.max(Date.now(), expectation.updatedAt + 1),
       };
       return value.mission;
     },
@@ -1226,6 +1260,154 @@ describe('initial main-owned orchestrator bootstrap', () => {
     });
     expect(value.mission.description).toMatch(/encerramento físico.*pendente/i);
   });
+  it('CAS-seals the still-current review SHA immediately before bootstrap side effects', () => {
+    const value = harness();
+    value.mission = {
+      ...value.mission,
+      status: 'pending',
+      intentState: 'ready_to_start',
+      intentContract: {
+        ...value.mission.intentContract!,
+        approvalReviewSha256: 'c'.repeat(64),
+        dispatchedAt: undefined,
+      },
+    };
+    const calls: string[] = [];
+    const scopedMission = (): ScopedMission => ({
+      ...value.mission,
+      projectId: scope.projectId,
+      checkoutId: scope.checkoutId,
+    });
+    const missions = {
+      get: scopedMission,
+      transitionLifecycle: (
+        _missionId: string,
+        expectation: { updatedAt: number; intentVersion: number },
+        patch: {
+          status: Mission['status'];
+          intentState: NonNullable<Mission['intentState']>;
+        },
+      ) => {
+        calls.push('seal-cas');
+        if (
+          expectation.updatedAt !== value.mission.updatedAt ||
+          expectation.intentVersion !== value.mission.intentVersion
+        ) {
+          return null;
+        }
+        value.mission = {
+          ...value.mission,
+          ...patch,
+          updatedAt: value.mission.updatedAt + 1,
+        };
+        return scopedMission();
+      },
+    };
+
+    expect(
+      sealMissionStartReview(missions, {
+        missionId: value.mission.id,
+        reviewSha256: 'c'.repeat(64),
+      }),
+    ).toMatchObject({
+      status: 'pending',
+      intentState: 'ready_to_start',
+    });
+    expect(calls).toEqual(['seal-cas']);
+
+    missions.transitionLifecycle = () => {
+      calls.push('stale-cas');
+      return null;
+    };
+    expect(() =>
+      sealMissionStartReview(missions, {
+        missionId: value.mission.id,
+        reviewSha256: 'c'.repeat(64),
+      }),
+    ).toThrow(/seal.*CAS|review.*changed/i);
+    expect(calls).toEqual(['seal-cas', 'stale-cas']);
+  });
+
+
+  it('keeps the mission pending until the current session receipt is committed, then promotes through the lifecycle CAS', async () => {
+    const value = harness();
+    value.mission = {
+      ...value.mission,
+      status: 'pending',
+      intentState: 'ready_to_start',
+      intentContract: {
+        ...value.mission.intentContract!,
+        approvalReviewSha256: 'a'.repeat(64),
+        dispatchedAt: undefined,
+      },
+    };
+    const submitKickoff = value.deps.submitKickoff;
+    const observedBeforeAcceptance: Array<{
+      status: Mission['status'];
+      intentState: Mission['intentState'];
+      receiptCurrent: boolean;
+    }> = [];
+    value.deps.submitKickoff = async (currentScope, input) => {
+      observedBeforeAcceptance.push({
+        status: value.mission.status,
+        intentState: value.mission.intentState,
+        receiptCurrent: value.kickoffAccepted,
+      });
+      return submitKickoff(currentScope, input);
+    };
+    const service = new MissionOrchestratorBootstrapService(value.deps);
+
+    await expect(
+      service.bootstrap(scope, value.mission.id),
+    ).resolves.toMatchObject({ ok: true, kickoff: { accepted: true } });
+
+    expect(observedBeforeAcceptance).toEqual([
+      {
+        status: 'pending',
+        intentState: 'ready_to_start',
+        receiptCurrent: false,
+      },
+    ]);
+    expect(value.mission).toMatchObject({
+      status: 'running',
+      intentState: 'executing',
+      orchestratorSessionId: 'pty-main-orch',
+    });
+  });
+
+  it('atomically blocks a rejected start as retryable technical instead of leaving it running', async () => {
+    const value = harness();
+    value.mission = {
+      ...value.mission,
+      status: 'pending',
+      intentState: 'ready_to_start',
+      intentContract: {
+        ...value.mission.intentContract!,
+        approvalReviewSha256: 'b'.repeat(64),
+        dispatchedAt: undefined,
+      },
+    };
+    value.deps.submitKickoff = async () => ({
+      accepted: false,
+      reason: 'write_failed',
+      detail: 'A escrita física falhou.',
+      cta: 'Retomar missão',
+    });
+    const service = new MissionOrchestratorBootstrapService(value.deps);
+
+    await expect(
+      service.bootstrap(scope, value.mission.id),
+    ).resolves.toMatchObject({
+      ok: false,
+      reason: 'materialization_failed',
+      retryScheduled: true,
+    });
+    expect(value.mission).toMatchObject({
+      status: 'blocked',
+      intentState: 'blocked_technical',
+      description: expect.stringMatching(/write_failed|escrita física/i),
+    });
+  });
 
   it('spawns, persists and proves kickoff idle→busy without a renderer', async () => {
     const value = harness();
@@ -1617,7 +1799,10 @@ describe('initial main-owned orchestrator bootstrap', () => {
     value.deps.submitKickoff = vi.fn(
       () =>
         new Promise<MissionKickoffResult>((resolve) => {
-          releaseKickoff = resolve;
+          releaseKickoff = (result) => {
+            if (result.accepted) value.kickoffAccepted = true;
+            resolve(result);
+          };
         }),
     );
     const service = new MissionOrchestratorBootstrapService(value.deps);
@@ -2829,25 +3014,22 @@ describe('initial main-owned orchestrator bootstrap', () => {
         reason: 'timeout',
         detail: 'O terminal não produziu a borda idle→busy.',
         cta: 'Retomar missão',
+        retryScheduled: true,
       };
     };
     const service = new MissionOrchestratorBootstrapService(value.deps);
 
     await expect(service.bootstrap(scope, value.mission.id)).resolves.toMatchObject({
-      ok: true,
-      pane: { paneId: 'pane-main-orch', sessionId: 'pty-main-orch' },
-      kickoff: {
-        accepted: false,
-        reason: 'timeout',
-        cta: 'Retomar missão',
-        retryScheduled: true,
-      },
+      ok: false,
+      reason: 'materialization_failed',
+      cta: 'Recuperação automática',
+      retryScheduled: true,
     });
     expect(value.mission.status).toBe('blocked');
     expect(value.closedPanes).toEqual([]);
   });
 
-  it('does not promise retry when a rejected kickoff retained no recovery proof', async () => {
+  it('atomically blocks a rejected kickoff even when the adapter retained no recovery proof', async () => {
     const value = harness();
     value.deps.submitKickoff = async () => ({
       accepted: false,
@@ -2860,16 +3042,14 @@ describe('initial main-owned orchestrator bootstrap', () => {
     const result = await service.bootstrap(scope, value.mission.id);
 
     expect(result).toMatchObject({
-      ok: true,
-      kickoff: {
-        accepted: false,
-        reason: 'authority_lost',
-        retryScheduled: false,
-      },
+      ok: false,
+      reason: 'materialization_failed',
+      cta: 'Recuperação automática',
+      retryScheduled: true,
     });
     expect(value.mission).toMatchObject({
-      status: 'running',
-      intentState: 'dispatched',
+      status: 'blocked',
+      intentState: 'blocked_technical',
     });
   });
 });

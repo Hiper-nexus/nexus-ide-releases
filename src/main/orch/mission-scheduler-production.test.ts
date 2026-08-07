@@ -19,6 +19,7 @@ import {
   missionSchedulerLiveRosterAdapter,
   missionSchedulerRouteRequiresAccount,
   missionSchedulerHasKickoffAuthority,
+  missionSchedulerAdmission,
   orderMissionDispatchesForReconciliation,
   projectBoundedMergeDeferral,
   projectMissionSchedulerActiveWorkers,
@@ -53,6 +54,7 @@ import { runBoundedMissionSchedulerPass } from "./mission-scheduler-concurrency"
 import { testProjectScope } from "./__tests__/scope-fixture";
 import { INTERRUPTED_WORKTREE_RESERVATION_FAILURE_MARKER } from "../runtime/worktree-manager";
 import type { Mission } from "../../shared/orch-types";
+import type { ScopedMission } from "./mission-store";
 import { MissionSchedulerDispatchAuthorityError } from "./mission-scheduler-dispatch-transaction";
 import { TEAM_READ_ONLY_FANOUT_DOMAIN } from "../../shared/mission-topology";
 import type { SchedulerRuntimeTask } from "./mission-scheduler-runtime";
@@ -1409,18 +1411,122 @@ describe("mission scheduler worker lease contract", () => {
     expect(prompt).toContain("bloqueará qualquer mutação");
   });
 
-  it("holds dispatch until the durable kickoff receipt is current", () => {
+  it("schedules zero workers and reports kickoff-receipt-missing for an approved running mission without a receipt", () => {
+    const intent = compileIntentContract({
+      goal: "Entregar a tarefa aprovada",
+      acceptanceCriteria: ["A tarefa foi entregue"],
+      intentVersion: 7,
+      source: "typed",
+      lane: "standard",
+    });
+    const approvedMission: Mission = {
+      id: "mission-no-receipt",
+      title: "Missão aprovada sem receipt",
+      description: "",
+      status: "running",
+      milestones: [],
+      learnings: "",
+      intentState: "executing",
+      intentVersion: 7,
+      intentContract: { ...intent, approvedAt: 10 },
+      orchestratorSessionId: "orchestrator-current",
+      createdAt: 1,
+      updatedAt: 2,
+    };
+
+    const admission = missionSchedulerAdmission({
+      mission: approvedMission,
+      hasCurrentKickoffReceipt: false,
+      orchestratorLive: true,
+    });
+
+    expect(admission).toEqual({
+      ok: false,
+      code: "kickoff-receipt-missing",
+    });
+    expect(admission.ok ? ["task-a"] : []).toEqual([]);
+  });
+
+  it("schedules zero workers when the only receipt belongs to a stale orchestrator session", () => {
+    const intent = compileIntentContract({
+      goal: "Entregar usando somente a sessão atual",
+      acceptanceCriteria: ["Nenhuma sessão substituída despacha"],
+      intentVersion: 7,
+      source: "typed",
+      lane: "standard",
+    });
+    const approvedMission: Mission = {
+      id: "mission-stale-receipt",
+      title: "Missão com receipt stale",
+      description: "",
+      status: "running",
+      milestones: [],
+      learnings: "",
+      intentState: "executing",
+      intentVersion: 7,
+      intentContract: { ...intent, approvedAt: 10 },
+      orchestratorSessionId: "orchestrator-current",
+      createdAt: 1,
+      updatedAt: 2,
+    };
+    const staleReceipt = {
+      intentVersion: 7,
+      orchestratorSessionId: "orchestrator-retired",
+    };
+
+    const admission = missionSchedulerAdmission({
+      mission: approvedMission,
+      hasCurrentKickoffReceipt:
+        staleReceipt.intentVersion === approvedMission.intentVersion &&
+        staleReceipt.orchestratorSessionId ===
+          approvedMission.orchestratorSessionId,
+      orchestratorLive: true,
+    });
+
+    expect(admission).toEqual({
+      ok: false,
+      code: "kickoff-receipt-missing",
+    });
+    expect(admission.ok ? ["task-a"] : []).toEqual([]);
+  });
+
+  it("holds dispatch until receipt and live authority are both current", () => {
+    const intent = compileIntentContract({
+      goal: "Admitir somente a sessão corrente",
+      intentVersion: 7,
+    });
+    const currentScope = testProjectScope();
+    const current: ScopedMission = {
+      id: "mission-a",
+      projectId: currentScope.projectId,
+      checkoutId: currentScope.checkoutId,
+      title: "Missão atual",
+      description: "",
+      status: "running",
+      milestones: [],
+      learnings: "",
+      intentState: "executing",
+      intentVersion: 7,
+      intentContract: { ...intent, approvedAt: 10 },
+      orchestratorSessionId: "orchestrator-current",
+      createdAt: 1,
+      updatedAt: 2,
+    };
     const missions = {
+      get: () => current,
       hasCurrentKickoffAcceptance: () => false,
     };
-    expect(missionSchedulerHasKickoffAuthority(missions, "mission-a")).toBe(
-      false,
-    );
+    expect(
+      missionSchedulerHasKickoffAuthority(missions, "mission-a", true),
+    ).toBe(false);
 
     missions.hasCurrentKickoffAcceptance = () => true;
-    expect(missionSchedulerHasKickoffAuthority(missions, "mission-a")).toBe(
-      true,
-    );
+    expect(
+      missionSchedulerHasKickoffAuthority(missions, "mission-a", false),
+    ).toBe(false);
+    expect(
+      missionSchedulerHasKickoffAuthority(missions, "mission-a", true),
+    ).toBe(true);
   });
 
   it("rechecks lifecycle after paused validation before any merge/receipt effect", async () => {

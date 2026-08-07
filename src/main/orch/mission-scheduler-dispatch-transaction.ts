@@ -33,9 +33,10 @@ import { requireWorktreeRuntimeRegistry } from "../runtime/worktree-runtime-regi
 import { classifyOperationalFailure } from "../runtime/operational-failure-policy";
 import {
   awaitMissionSchedulerAuthorityFence,
-  missionSchedulerHasKickoffAuthority,
+  missionSchedulerAdmission,
 } from "./mission-scheduler-authority";
 import { loadMissionSchedulerDependencyHandoffs } from "./mission-scheduler-dependency-context";
+import { isMissionOrchestratorLiveForScheduler } from "./mission-kickoff";
 import { taskRecordToSchedulerTask } from "./mission-scheduler-io";
 import { decodeTaskScheduleDetail } from "./mission-scheduler-meta";
 import {
@@ -528,6 +529,27 @@ export function assertMissionSchedulerPreProviderAuthority(input: {
     );
   }
 }
+function schedulerDispatchAdmission(
+  scope: ProjectExecutionScope,
+  stores: ReturnType<typeof getProjectDomainStores>,
+  mission: Mission,
+) {
+  const orchestratorPane =
+    stores.missionPanes
+      .list(mission.id)
+      .find((pane) => pane.role === 'orchestrator') ?? null;
+  return missionSchedulerAdmission({
+    mission,
+    hasCurrentKickoffReceipt:
+      stores.missions.hasCurrentKickoffAcceptance(mission.id),
+    orchestratorLive: isMissionOrchestratorLiveForScheduler(
+      scope,
+      mission,
+      orchestratorPane,
+    ),
+  });
+}
+
 
 function hasExactBootstrapExitProof(
   dispatch: TaskDispatchRecord | null,
@@ -647,10 +669,10 @@ export async function dispatchMissionSchedulerTask(
   if (!mission?.intentContract) {
     throw new Error("scheduler dispatch requires an approved mission contract");
   }
-  if (!missionSchedulerHasKickoffAuthority(stores.missions, missionId)) {
-    throw new Error(
-      "kickoff_not_accepted: o scheduler exige recibo durável idle→busy " +
-        "da sessão orquestradora atual",
+  const initialAdmission = schedulerDispatchAdmission(scope, stores, mission);
+  if (!initialAdmission.ok) {
+    throw new MissionSchedulerDispatchAuthorityError(
+      `mission-admission:${initialAdmission.code}`,
     );
   }
   const planned = stores.tasks.getPlannedTask(taskId);
@@ -718,12 +740,27 @@ export async function dispatchMissionSchedulerTask(
   });
   const assertCurrentDispatchAuthority = (): void => {
     const currentMission = stores.missions.get(missionId);
+    if (!currentMission) {
+      throw new MissionSchedulerDispatchAuthorityError(
+        'mission-admission:authority-missing',
+      );
+    }
+    const admission = schedulerDispatchAdmission(
+      scope,
+      stores,
+      currentMission,
+    );
+    if (!admission.ok) {
+      throw new MissionSchedulerDispatchAuthorityError(
+        `mission-admission:${admission.code}`,
+      );
+    }
     const currentPlanned = stores.tasks.getPlannedTask(taskId);
     assertMissionSchedulerPreProviderAuthority({
       expected: dispatchAuthority,
       mission: currentMission,
       planned: currentPlanned,
-      squad: currentMission?.squadId
+      squad: currentMission.squadId
         ? getSquad(currentMission.squadId)
         : null,
     });

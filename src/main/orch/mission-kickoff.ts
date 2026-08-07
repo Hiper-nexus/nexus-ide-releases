@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { WebContents } from 'electron';
 import { z } from 'zod';
 import {
+  hasCurrentApprovedDispatchContract,
   hasCurrentDispatchAuthority,
   isAutoDerivedCriterion,
 } from '../../shared/mission-intent';
@@ -57,15 +58,6 @@ import {
   type PtyStreamMissionControl,
 } from './pty-stream-mission-control';
 import { ensureGuidedMissionPlanForScope } from './guided-mission-planner';
-import {
-  appendMissionDegradationNote,
-  describeMissionDegradation,
-  type MissionDegradation,
-} from './mission-degradation';
-import {
-  emitMissionDegradation,
-  emitMissionDegradationNudge,
-} from './mission-event-emit';
 
 /**
  * Após o primeiro byte, Claude/Codex ainda podem ficar busy carregando MCP e
@@ -178,7 +170,7 @@ function sameMissionCapabilities(
  * that Main will continue only when the exact current session still has its
  * durable receipt, persisted pane and live physical authority.
  */
-export function hasExactMissionKickoffContinuation(
+export function hasExactMissionOrchestratorLiveAuthority(
   input: MissionKickoffContinuationEvidence,
 ): boolean {
   const { scope, mission, expectedSessionId, pane, agent, authority } = input;
@@ -189,40 +181,49 @@ export function hasExactMissionKickoffContinuation(
     input.sessionState === 'idle';
   return Boolean(
     mission &&
-    mission.orchestratorSessionId === expectedSessionId &&
-    hasCurrentDispatchAuthority(mission) &&
-    input.hasCurrentKickoffAcceptance &&
-    isLive &&
-    pane &&
-    paneId &&
-    pane.missionId === mission.id &&
-    pane.role === 'orchestrator' &&
-    pane.authoritySeal?.intentVersion === mission.intentVersion &&
-    pane.scope &&
-    sameProjectScope(pane.scope, scope) &&
-    agent &&
-    agent.sessionId === expectedSessionId &&
-    agent.paneId === paneId &&
-    agent.adapterId === pane.adapterId &&
-    agent.requestedModel === pane.model &&
-    agent.accountId === pane.accountId &&
-    agent.effort === pane.effort &&
-    agent.cwd === pane.cwd &&
-    agent.missionId === mission.id &&
-    agent.role === 'orchestrator' &&
-    agent.readOnly === (pane.readOnly === true) &&
-    sameMissionCapabilities(agent.allowedTools, pane.allowedTools) &&
-    sameMissionCapabilities(agent.allowedSkills, pane.allowedSkills) &&
-    sameMissionPaneAuthoritySeal(agent.authoritySeal, pane.authoritySeal) &&
-    sameProjectScope(agent.scope, scope) &&
-    authority &&
-    authority.sessionId === expectedSessionId &&
-    authority.paneId === paneId &&
-    authority.kind === 'cli-agent' &&
-    authority.missionId === mission.id &&
-    authority.role === 'orchestrator' &&
-    authority.scope &&
-    sameProjectScope(authority.scope, scope),
+      mission.orchestratorSessionId === expectedSessionId &&
+      isLive &&
+      pane &&
+      paneId &&
+      pane.missionId === mission.id &&
+      pane.role === 'orchestrator' &&
+      pane.authoritySeal?.intentVersion === mission.intentVersion &&
+      pane.scope &&
+      sameProjectScope(pane.scope, scope) &&
+      agent &&
+      agent.sessionId === expectedSessionId &&
+      agent.paneId === paneId &&
+      agent.adapterId === pane.adapterId &&
+      agent.requestedModel === pane.model &&
+      agent.accountId === pane.accountId &&
+      agent.effort === pane.effort &&
+      agent.cwd === pane.cwd &&
+      agent.missionId === mission.id &&
+      agent.role === 'orchestrator' &&
+      agent.readOnly === (pane.readOnly === true) &&
+      sameMissionCapabilities(agent.allowedTools, pane.allowedTools) &&
+      sameMissionCapabilities(agent.allowedSkills, pane.allowedSkills) &&
+      sameMissionPaneAuthoritySeal(agent.authoritySeal, pane.authoritySeal) &&
+      sameProjectScope(agent.scope, scope) &&
+      authority &&
+      authority.sessionId === expectedSessionId &&
+      authority.paneId === paneId &&
+      authority.kind === 'cli-agent' &&
+      authority.missionId === mission.id &&
+      authority.role === 'orchestrator' &&
+      authority.scope &&
+      sameProjectScope(authority.scope, scope),
+  );
+}
+
+export function hasExactMissionKickoffContinuation(
+  input: MissionKickoffContinuationEvidence,
+): boolean {
+  return Boolean(
+    hasExactMissionOrchestratorLiveAuthority(input) &&
+      input.mission &&
+      hasCurrentDispatchAuthority(input.mission) &&
+      input.hasCurrentKickoffAcceptance,
   );
 }
 
@@ -844,6 +845,25 @@ function runtimeSessionState(sessionId: string): PaneSessionState | null {
   );
 }
 
+export function isMissionOrchestratorLiveForScheduler(
+  scope: Readonly<ProjectExecutionScope>,
+  mission: Mission,
+  pane: MissionPaneSpec | null,
+): boolean {
+  const sessionId = mission.orchestratorSessionId;
+  if (!sessionId) return false;
+  return hasExactMissionOrchestratorLiveAuthority({
+    scope,
+    mission,
+    expectedSessionId: sessionId,
+    hasCurrentKickoffAcceptance: false,
+    sessionState: runtimeSessionState(sessionId),
+    pane,
+    agent: runtimeAgentSessionInfo(sessionId),
+    authority: getPaneRuntimeAuthorityBySession(sessionId),
+  });
+}
+
 function requireKickoffAuthority(
   scope: Readonly<ProjectExecutionScope>,
   input: z.infer<typeof missionKickoffRequestSchema>,
@@ -853,11 +873,15 @@ function requireKickoffAuthority(
   const mission = stores.missions.get(input.missionId);
   if (
     !mission ||
-    mission.status !== 'running' ||
-    !hasCurrentDispatchAuthority(mission) ||
-    mission.orchestratorSessionId !== input.sessionId
+    !missionHasKickoffStartAuthority(
+      mission,
+      input.sessionId,
+      mission.intentVersion ?? 0,
+    )
   ) {
-    throw new Error('kickoff exige missão running, aprovada e sessão atual');
+    throw new Error(
+      'kickoff exige contrato aprovado atual e sessão orquestradora corrente',
+    );
   }
   const agent = runtimeAgentSessionInfo(input.sessionId);
   const paneAuthority = getPaneRuntimeAuthorityBySession(input.sessionId);
@@ -894,6 +918,63 @@ function requireKickoffAuthority(
   }
   return { scope, stores, mission };
 }
+function missionHasKickoffStartAuthority(
+  mission: Mission,
+  sessionId: string,
+  intentVersion: number,
+): boolean {
+  const lifecycleAuthorized =
+    (mission.status === 'pending' &&
+      mission.intentState === 'ready_to_start' &&
+      hasCurrentApprovedDispatchContract(mission)) ||
+    (mission.status === 'running' && hasCurrentDispatchAuthority(mission));
+  return (
+    lifecycleAuthorized &&
+    mission.orchestratorSessionId === sessionId &&
+    (mission.intentVersion ?? 0) === intentVersion
+  );
+}
+
+function blockMissionKickoffFailure(
+  stores: ReturnType<typeof getProjectDomainStores>,
+  missionId: string,
+  sessionId: string,
+  intentVersion: number,
+  reason: MissionKickoffFailureReason,
+): void {
+  const current = stores.missions.get(missionId);
+  if (
+    !current ||
+    !missionHasKickoffStartAuthority(current, sessionId, intentVersion)
+  ) {
+    return;
+  }
+  const detail = missionKickoffFailureDetail(reason);
+  const note =
+    `${KICKOFF_BLOCK_MARKER}\n${missionKickoffFailureMarker(reason)}\n` +
+    `## Kickoff não aceito\n${detail} ` +
+    'O Nexus tentará novamente automaticamente; nenhuma nova aprovação ' +
+    'é necessária enquanto este contrato continuar vigente.';
+  const description = current.description.includes(KICKOFF_BLOCK_MARKER)
+    ? current.description
+    : [current.description.trim(), note]
+        .filter(Boolean)
+        .join('\n\n')
+        .slice(0, 65_536);
+  stores.missions.transitionLifecycle(
+    missionId,
+    {
+      updatedAt: current.updatedAt,
+      intentVersion,
+    },
+    {
+      status: 'blocked',
+      intentState: 'blocked_technical',
+      description,
+    },
+  );
+}
+
 
 const flights = new Map<
   string,
@@ -1031,39 +1112,6 @@ function hasScheduledKickoffRecovery(
   }
 }
 
-function surfaceKickoffDegradation(
-  scope: Readonly<ProjectExecutionScope>,
-  stores: ReturnType<typeof getProjectDomainStores>,
-  missionId: string,
-  sessionId: string,
-  intentVersion: number,
-  reason: MissionKickoffFailureReason,
-): void {
-  const current = stores.missions.get(missionId);
-  if (
-    !current ||
-    current.status !== 'running' ||
-    !hasCurrentDispatchAuthority(current) ||
-    current.orchestratorSessionId !== sessionId ||
-    (current.intentVersion ?? 0) !== intentVersion
-  )
-    return;
-  const detail = missionKickoffFailureDetail(reason);
-  const degradation: MissionDegradation = {
-    what: 'aceite do kickoff',
-    reducedTo: 'reentrada por nudge/inatividade, sem bloquear a missão',
-    why: detail,
-    recoverable: true,
-    path: 'kickoff.nudge-retry',
-  };
-  const description = appendMissionDegradationNote(
-    current.description ?? '',
-    describeMissionDegradation(degradation),
-  );
-  stores.missions.update(missionId, { description });
-  emitMissionDegradation(scope, missionId, degradation, intentVersion);
-  emitMissionDegradationNudge(scope, missionId, degradation, intentVersion);
-}
 
 /**
  * ACP has a structured turn boundary, so kickoff acceptance is the moment the
@@ -1177,44 +1225,14 @@ function submitMissionKickoffWithAuthority(
         {
           isAuthorized,
           block: async (reason) => {
-            const current = initial.stores.missions.get(input.missionId);
-            if (
-              !current ||
-              current.status !== 'running' ||
-              !hasCurrentDispatchAuthority(current) ||
-              current.orchestratorSessionId !== input.sessionId ||
-              (current.intentVersion ?? 0) !== intentVersion
-            ) return;
-            const detail = missionKickoffFailureDetail(reason);
-            const note =
-              `${KICKOFF_BLOCK_MARKER}\n${missionKickoffFailureMarker(reason)}\n` +
-              `## Kickoff não aceito\n${detail} ` +
-                'O Nexus tentará novamente automaticamente; nenhuma nova aprovação ' +
-                'é necessária enquanto este contrato continuar vigente.';
-              const description = current.description.includes(
-                KICKOFF_BLOCK_MARKER,
-              )
-                ? current.description
-                : [current.description.trim(), note]
-                    .filter(Boolean)
-                    .join('\n\n')
-                    .slice(0, 65_536);
-              initial.stores.missions.update(input.missionId, {
-                status: 'blocked',
-                intentState: 'blocked_technical',
-                description,
-              });
-            },
-            degrade: async (reason) => {
-              surfaceKickoffDegradation(
-                scope,
-                initial.stores,
-                input.missionId,
-                input.sessionId,
-                intentVersion,
-                reason,
-              );
-            },
+            blockMissionKickoffFailure(
+              initial.stores,
+              input.missionId,
+              input.sessionId,
+              intentVersion,
+              reason,
+            );
+          },
           },
         )
       : runMissionKickoffAcceptance(
@@ -1244,41 +1262,10 @@ function submitMissionKickoffWithAuthority(
         tap(entry.sessionId, entry.sequence);
       }),
       isAuthorized,
-      block: async (reason) => {
-        // Session exit removes PTY ownership before exit taps fire. Persisting
-        // the operational block therefore fences mission identity/version,
-        // not liveness; a late timeout still cannot touch a rebind/reapproval.
-        const current = initial.stores.missions.get(input.missionId);
-        if (
-          !current ||
-          current.status !== 'running' ||
-          !hasCurrentDispatchAuthority(current) ||
-          current.orchestratorSessionId !== input.sessionId ||
-          (current.intentVersion ?? 0) !== intentVersion
-        ) return;
-        const detail = missionKickoffFailureDetail(reason);
-        const note =
-          `${KICKOFF_BLOCK_MARKER}\n${missionKickoffFailureMarker(reason)}\n` +
-          `## Kickoff não aceito\n${detail} ` +
-                'O Nexus tentará novamente automaticamente; nenhuma nova aprovação ' +
-                'é necessária enquanto este contrato continuar vigente.';
-              const description = current.description.includes(
-                KICKOFF_BLOCK_MARKER,
-              )
-                ? current.description
-                : [current.description.trim(), note]
-                    .filter(Boolean)
-                    .join('\n\n')
-                    .slice(0, 65_536);
-              initial.stores.missions.update(input.missionId, {
-                status: 'blocked',
-                intentState: 'blocked_technical',
-                description,
-              });
-            },
-            degrade: async (reason) => {
-              surfaceKickoffDegradation(
-                scope,
+            block: async (reason) => {
+              // A late timeout is fenced by mission/session/revision and cannot
+              // block a replacement orchestrator or a newly approved intent.
+              blockMissionKickoffFailure(
                 initial.stores,
                 input.missionId,
                 input.sessionId,

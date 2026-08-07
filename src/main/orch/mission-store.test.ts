@@ -9,7 +9,10 @@ import {
 } from '../runtime/project-runtime-schema';
 import { testProjectScope } from './__tests__/scope-fixture';
 import { createScopedMissionStore } from './mission-store';
-import { compileIntentContract } from '../../shared/mission-intent';
+import {
+  compileIntentContract,
+  hasCurrentDispatchAuthority,
+} from '../../shared/mission-intent';
 import { plannedTaskId } from './task-store';
 import {
   MISSION_ORCHESTRATOR_PRE_DISPATCH_EXIT_MARKER,
@@ -1292,6 +1295,87 @@ describe('scoped mission store', () => {
     });
     expect(reopened.hasCurrentKickoffAcceptance(mission.id)).toBe(false);
   });
+  it('records a sealed pre-CAS kickoff receipt without granting dispatch authority', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope({ checkoutId: 'kickoff-proof-pre-cas' });
+    let sequence = 0;
+    const store = createScopedMissionStore(runtimeManager, scope, {
+      now: () => 9_000,
+      idFactory: () => `mission-kickoff-pre-cas-${++sequence}`,
+    });
+    const approvedContract = {
+      ...compileIntentContract({
+        goal: 'Commit receipt before lifecycle promotion',
+        intentVersion: 2,
+      }),
+      approvedAt: 8_000,
+      approvalReviewSha256: 'c'.repeat(64),
+    };
+    const mission = store.create({
+      title: 'Kickoff pre-CAS',
+      intentState: 'ready_to_start',
+      intentVersion: 2,
+      intentContract: approvedContract,
+      orchestratorSessionId: 'orch-current',
+    });
+    const unsealed = store.create({
+      title: 'Kickoff sem review seal',
+      intentState: 'ready_to_start',
+      intentVersion: 2,
+      intentContract: {
+        ...approvedContract,
+        approvalReviewSha256: undefined,
+      },
+      orchestratorSessionId: 'orch-unsealed',
+    });
+
+    expect(mission.status).toBe('pending');
+    expect(() =>
+      store.recordKickoffAcceptance({
+        missionId: mission.id,
+        intentVersion: 2,
+        orchestratorSessionId: 'orch-stale',
+        promptHash: 'd'.repeat(64),
+      }),
+    ).toThrow(/autoridade.*kickoff/i);
+    expect(() =>
+      store.recordKickoffAcceptance({
+        missionId: mission.id,
+        intentVersion: 1,
+        orchestratorSessionId: 'orch-current',
+        promptHash: 'd'.repeat(64),
+      }),
+    ).toThrow(/autoridade.*kickoff/i);
+    expect(() =>
+      store.recordKickoffAcceptance({
+        missionId: unsealed.id,
+        intentVersion: 2,
+        orchestratorSessionId: 'orch-unsealed',
+        promptHash: 'e'.repeat(64),
+      }),
+    ).toThrow(/autoridade.*kickoff/i);
+
+    store.recordKickoffAcceptance({
+      missionId: mission.id,
+      intentVersion: 2,
+      orchestratorSessionId: 'orch-current',
+      promptHash: 'f'.repeat(64),
+    });
+    expect(store.hasCurrentKickoffAcceptance(mission.id)).toBe(true);
+    expect(hasCurrentDispatchAuthority(store.get(mission.id)!)).toBe(false);
+
+    store.update(mission.id, {
+      intentVersion: 3,
+      intentContract: {
+        ...approvedContract,
+        intentVersion: 3,
+        approvedAt: 8_500,
+        approvalReviewSha256: 'a'.repeat(64),
+      },
+    });
+    expect(store.hasCurrentKickoffAcceptance(mission.id)).toBe(false);
+  });
+
 
   it('bloqueia atomicamente a saída física do Maestro antes do primeiro dispatch', () => {
     const runtimeManager = manager();

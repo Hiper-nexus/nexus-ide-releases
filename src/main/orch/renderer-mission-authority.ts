@@ -471,9 +471,10 @@ export class RendererMissionAuthority {
   readonly #snapshotAttachmentPaths: (
     paths: readonly string[] | undefined,
   ) => MissionAttachmentSnapshot[] | undefined;
-  readonly #requestMissionOrchestratorBootstrap: (
+  readonly #startMissionEngine: (
     scope: ProjectExecutionScope,
     missionId: string,
+    expectedReviewSha256?: string,
   ) => Promise<MissionOrchestratorBootstrapResult>;
   readonly #ensureMissionPlanBeforeBootstrap: (
     scope: ProjectExecutionScope,
@@ -504,11 +505,12 @@ export class RendererMissionAuthority {
     validateAttachmentPaths: (
       paths: readonly string[] | undefined,
     ) => string[] | undefined = validateDroppedAttachmentPaths,
-    requestMissionOrchestratorBootstrap: (
+    startMissionEngine: (
       scope: ProjectExecutionScope,
       missionId: string,
+      expectedReviewSha256?: string,
     ) => Promise<MissionOrchestratorBootstrapResult> = async () => {
-      throw new Error("main-owned mission bootstrap is not configured");
+      throw new Error("main-owned mission engine is not configured");
     },
     resolveSquad: (squadId: string) => Squad | null = getSquad,
     resolveOrchestratorRuntime: (
@@ -532,8 +534,7 @@ export class RendererMissionAuthority {
     this.#allowImmediateDispatch = allowImmediateDispatch;
     this.#resolvePaneActivity = resolvePaneActivity;
     this.#validateAttachmentPaths = validateAttachmentPaths;
-    this.#requestMissionOrchestratorBootstrap =
-      requestMissionOrchestratorBootstrap;
+    this.#startMissionEngine = startMissionEngine;
     this.#resolveSquad = resolveSquad;
     this.#resolveOrchestratorRuntime = resolveOrchestratorRuntime;
     this.#snapshotAttachmentPaths = snapshotAttachmentPaths;
@@ -1641,10 +1642,11 @@ export class RendererMissionAuthority {
         { cause: error },
       );
     }
-    let ready: Mission | null = null;
+    let ready: Mission | null = this.#stores
+      .forScope(scope)
+      .missions.get(missionId);
     if (options.promoteToRunning) {
-      const missions = this.#stores.forScope(scope).missions;
-      const current = missions.get(missionId);
+      const current = ready;
       const contract = current?.intentContract;
       const expected = options.approvedPreflight;
       if (
@@ -1661,49 +1663,27 @@ export class RendererMissionAuthority {
         !hasCurrentApprovedDispatchContract(current)
       ) {
         throw new Error(
-          "guided_plan_preflight_stale: a aprovação mudou antes do despacho",
-        );
-      }
-      const started = transitionIntentState({
-        from: current.intentState,
-        event: "start",
-      });
-      if (!started.ok) throw new Error(started.reason);
-      ready = missions.update(missionId, {
-        status: "running",
-        intentState: started.to,
-        intentContract: {
-          ...contract,
-          dispatchedAt: Date.now(),
-        },
-      });
-      if (!ready) {
-        throw new Error(
-          "guided_plan_preflight_failed: o plano foi selado, mas a missão desapareceu antes do bootstrap",
-        );
-      }
-      if (!hasCurrentDispatchAuthority(ready)) {
-        throw new Error(
-          "guided_plan_preflight_failed: o receipt foi selado, mas a autoridade de despacho não foi persistida",
+          "guided_plan_preflight_stale: a aprovação mudou antes do MissionEngine.start",
         );
       }
     }
     try {
-      void this.#requestMissionOrchestratorBootstrap(scope, missionId).catch(
-        (error) => {
-          // Production bootstrap turns every expected/physical failure into a
-          // durable blocked mission with one CTA. This guard only prevents an
-          // injected or catastrophic rejection from escaping the IPC handler;
-          // the coordinator will retry the still-running durable mission.
-          console.warn(
-            `[mission-authority] bootstrap request failed for ${missionId}:`,
-            error,
-          );
-        },
-      );
+      void this.#startMissionEngine(
+        scope,
+        missionId,
+        options.approvedPreflight?.approvalReviewSha256,
+      ).catch((error) => {
+        // The engine start adapter turns every expected physical failure into
+        // a durable blocked_technical state. This guard contains only an
+        // injected or catastrophic rejection at the renderer boundary.
+        console.warn(
+          `[mission-authority] MissionEngine.start failed for ${missionId}:`,
+          error,
+        );
+      });
     } catch (error) {
       console.warn(
-        `[mission-authority] bootstrap request failed for ${missionId}:`,
+        `[mission-authority] MissionEngine.start failed for ${missionId}:`,
         error,
       );
     }

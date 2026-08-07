@@ -1,4 +1,5 @@
 import type { Handoff, Mission } from "../../shared/orch-types";
+import { hasCurrentDispatchAuthority } from "../../shared/mission-intent";
 import {
   hasTeamReadOnlyFanoutDomain,
   type StandardMissionTopology,
@@ -6,6 +7,10 @@ import {
 import { hasWavePackDomain } from "../../shared/mission-wave-pack";
 import type { ScopedMissionStore } from "./mission-store";
 import { missionRequiresGuidedPrevc } from "./guided-mission-authority";
+import {
+  evaluateMissionAdmission,
+  type MissionAdmissionResult,
+} from "./mission-engine-admission";
 import type {
   TaskDispatchRecord,
   TaskDispatchState,
@@ -86,10 +91,30 @@ export function missionSchedulerCompletionTopology(
 }
 
 export function missionSchedulerHasKickoffAuthority(
-  missions: Pick<ScopedMissionStore, "hasCurrentKickoffAcceptance">,
+  missions: Pick<ScopedMissionStore, "get" | "hasCurrentKickoffAcceptance">,
   missionId: string,
+  orchestratorLive: boolean,
 ): boolean {
-  return missions.hasCurrentKickoffAcceptance(missionId);
+  const mission = missions.get(missionId);
+  if (!mission) return false;
+  return missionSchedulerAdmission({
+    mission,
+    hasCurrentKickoffReceipt:
+      missions.hasCurrentKickoffAcceptance(missionId),
+    orchestratorLive,
+  }).ok;
+}
+
+export function missionSchedulerAdmission(input: {
+  readonly mission: Mission;
+  readonly hasCurrentKickoffReceipt: boolean;
+  readonly orchestratorLive: boolean;
+}): MissionAdmissionResult {
+  return evaluateMissionAdmission({
+    hasDispatchAuthority: hasCurrentDispatchAuthority(input.mission),
+    hasCurrentKickoffReceipt: input.hasCurrentKickoffReceipt,
+    orchestratorLive: input.orchestratorLive,
+  });
 }
 
 export function missionHasSchedulerProgress(

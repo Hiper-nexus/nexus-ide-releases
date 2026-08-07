@@ -42,7 +42,7 @@ import {
   ensurePrevcMergeReady,
 } from "./prevc-merge-preparation";
 import {
-  missionSchedulerHasKickoffAuthority,
+  missionSchedulerAdmission,
   reconcileMissionCompletionAfterSchedulerTick,
 } from "./mission-scheduler-authority";
 import {
@@ -92,10 +92,12 @@ import { reconcileLegacyGuidedDirtyCheckoutBootstrap } from "./task-dispatch-lif
 import { hasTeamReadOnlyFanoutDomain } from "../../shared/mission-topology";
 import { hasPersistedMissionDegradation } from './mission-event-emit';
 import { MISSION_DEGRADATION_PATHS } from './mission-degradation';
+import { isMissionOrchestratorLiveForScheduler } from "./mission-kickoff";
 
 export {
   awaitMissionSchedulerAuthorityFence,
   missionSchedulerHasKickoffAuthority,
+  missionSchedulerAdmission,
   reconcileMissionCompletionAfterSchedulerTick,
   validateMissionMergeWithLifecycleFence,
 } from "./mission-scheduler-authority";
@@ -1441,17 +1443,46 @@ async function retireMissionTaskWorkers(
   });
 }
 
+function currentProductionMissionAdmission(
+  scope: ProjectExecutionScope,
+  missionId: string,
+) {
+  const stores = getProjectDomainStores(scope);
+  const mission = stores.missions.get(missionId);
+  if (!mission) return { stores, mission: null, admission: null };
+  const orchestratorPane =
+    stores.missionPanes
+      .list(missionId)
+      .find((pane) => pane.role === 'orchestrator') ?? null;
+  return {
+    stores,
+    mission,
+    admission: missionSchedulerAdmission({
+      mission,
+      hasCurrentKickoffReceipt:
+        stores.missions.hasCurrentKickoffAcceptance(missionId),
+      orchestratorLive: isMissionOrchestratorLiveForScheduler(
+        scope,
+        mission,
+        orchestratorPane,
+      ),
+    }),
+  };
+}
+
 async function tickMission(
   scope: ProjectExecutionScope,
   missionId: string,
   signal?: AbortSignal,
 ): Promise<void> {
   throwIfMissionSchedulerAborted(signal);
-  const stores = getProjectDomainStores(scope);
+  const { stores, mission, admission } = currentProductionMissionAdmission(
+    scope,
+    missionId,
+  );
   // Nothing downstream—merge, spawn or mission completion—may advance before
-  // the finite idle→busy kickoff proof commits for the current revision and
-  // physical orchestrator session. The mission-store change wakes this tick.
-  if (!missionSchedulerHasKickoffAuthority(stores.missions, missionId)) {
+  // the shared admission evaluator proves authority, receipt and live runtime.
+  if (!admission?.ok) {
     const pendingMerge = stores.taskDispatches
       .list(missionId)
       .some((dispatch) =>
@@ -1459,12 +1490,12 @@ async function tickMission(
       );
     if (pendingMerge) {
       console.warn(
-        `[mission-scheduler] tick skip ${missionId}: kickoff authority ausente com merge pendente`,
+        `[mission-scheduler] tick skip ${missionId}: ` +
+          `${admission?.code ?? 'authority-missing'} com merge pendente`,
       );
     }
     return;
   }
-  const mission = stores.missions.get(missionId);
   const key = missionKey(scope, missionId);
   const state =
     states.get(key) ??
@@ -1749,7 +1780,15 @@ async function tickMission(
     // Guided completion is PREVC/Mission Driver-owned. The bridge proves the
     // exact current sealed wave is terminal, validates the integrated binding,
     // publishes one idempotent final handoff and only wakes the Driver.
-    runGuidedBridge: () => runGuidedPrevcPostMergeBridge(scope, missionId),
+    runGuidedBridge: () => {
+      const current = currentProductionMissionAdmission(scope, missionId);
+      if (!current.admission?.ok) {
+        throw new MissionSchedulerDispatchAuthorityError(
+          `mission-admission:${current.admission?.code ?? 'authority-missing'}`,
+        );
+      }
+      return runGuidedPrevcPostMergeBridge(scope, missionId);
+    },
     completeLegacy: (intentVersion) => {
       stores.taskDispatches.completeMissionFromVerifiedPlan({
         missionId,

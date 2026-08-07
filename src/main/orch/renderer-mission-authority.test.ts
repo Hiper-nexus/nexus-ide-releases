@@ -665,7 +665,7 @@ describe("renderer mission authority", () => {
     );
   });
 
-  it("approves and dispatches a sensitive goal in one user action", () => {
+  it("approves a sensitive goal and starts the engine without early dispatch", () => {
     const awaitingApproval = {
       ...approvedMission,
       status: "pending" as const,
@@ -698,13 +698,13 @@ describe("renderer mission authority", () => {
     );
 
     expect(result).toMatchObject({
-      status: "running",
-      intentState: "dispatched",
+      status: "pending",
+      intentState: "ready_to_start",
       intentContract: {
         intentVersion: 1,
         approvedAt: expect.any(Number),
         approvalReviewSha256,
-        dispatchedAt: expect.any(Number),
+        dispatchedAt: undefined,
         orchestratorRuntime: approvedRuntime,
       },
     });
@@ -720,29 +720,28 @@ describe("renderer mission authority", () => {
         }),
       }),
     );
-    expect(deps.updateMission).toHaveBeenLastCalledWith(
-      mission.id,
-      expect.objectContaining({
-        status: "running",
-        intentState: "dispatched",
-        intentContract: expect.objectContaining({
-          dispatchedAt: expect.any(Number),
-        }),
-      }),
-    );
     expect(deps.ensureMissionPlanBeforeBootstrap).toHaveBeenCalledWith(
       scope,
       mission.id,
     );
     expect(
-      deps.ensureMissionPlanBeforeBootstrap.mock.invocationCallOrder[0],
+      deps.updateMission.mock.invocationCallOrder[0],
     ).toBeLessThan(
-      deps.updateMission.mock.invocationCallOrder.at(-1)!,
+      deps.ensureMissionPlanBeforeBootstrap.mock.invocationCallOrder[0]!,
     );
     expect(
       deps.ensureMissionPlanBeforeBootstrap.mock.invocationCallOrder[0],
     ).toBeLessThan(
       deps.requestMissionOrchestratorBootstrap.mock.invocationCallOrder[0]!,
+    );
+    expect(deps.requestMissionOrchestratorBootstrap).toHaveBeenCalledWith(
+      scope,
+      mission.id,
+      approvalReviewSha256,
+    );
+    expect(deps.updateMission).not.toHaveBeenCalledWith(
+      mission.id,
+      expect.objectContaining({ status: "running" }),
     );
   });
 
@@ -1449,12 +1448,13 @@ describe("renderer mission authority", () => {
     rendererPresent = false;
 
     expect(approved).toMatchObject({
-      status: "running",
-      intentState: "dispatched",
+      status: "pending",
+      intentState: "ready_to_start",
     });
     expect(deps.requestMissionOrchestratorBootstrap).toHaveBeenCalledWith(
       scope,
       mission.id,
+      undefined,
     );
     await vi.waitFor(() => expect(bootstrapFinished).toBe(true));
   });

@@ -5,7 +5,10 @@ import {
   missionStatusSchema,
   type MissionIntentContract,
 } from '../../shared/orch-types';
-import { hasCurrentDispatchAuthority } from '../../shared/mission-intent';
+import {
+  hasCurrentApprovedDispatchContract,
+  hasCurrentDispatchAuthority,
+} from '../../shared/mission-intent';
 import {
   ScopedStoreBinding,
   ScopedStoreCorruptionError,
@@ -112,21 +115,22 @@ function hasExactAuthority(
   authority: ReturnType<typeof parseAuthority>,
   expected?: z.infer<typeof acceptanceInputSchema>,
 ): boolean {
-  return (
-    authority.status === 'running' &&
+  const exactSessionAndRevision =
     authority.orchestratorSessionId !== null &&
     (!expected ||
-      (
-        authority.orchestratorSessionId === expected.orchestratorSessionId &&
-        authority.intentVersion === expected.intentVersion
-      )) &&
-    hasCurrentDispatchAuthority({
-      status: authority.status,
-      description: authority.description,
-      intentState: authority.intentState,
-      intentContract: authority.intentContract,
-      intentVersion: authority.intentVersion,
-    })
+      (authority.orchestratorSessionId === expected.orchestratorSessionId &&
+        authority.intentVersion === expected.intentVersion));
+  if (!exactSessionAndRevision) return false;
+
+  if (hasCurrentDispatchAuthority(authority)) return true;
+  const reviewSha256 = authority.intentContract?.approvalReviewSha256;
+  return (
+    authority.status === 'pending' &&
+    authority.intentState === 'ready_to_start' &&
+    authority.intentContract?.dispatchedAt === undefined &&
+    typeof reviewSha256 === 'string' &&
+    /^[a-f0-9]{64}$/.test(reviewSha256) &&
+    hasCurrentApprovedDispatchContract(authority)
   );
 }
 

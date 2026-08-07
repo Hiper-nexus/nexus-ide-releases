@@ -77,6 +77,12 @@ const MISSION_RUNTIME_AUTHORITY_RECONCILE_MS = 1_000;
  */
 export const MISSION_SCHEDULER_PARTICIPANT_TIMEOUT_MS = 21 * 60_000;
 
+/**
+ * Cadence-only scheduler boundary. `reconcileMissionScheduler` evaluates each
+ * mission through the shared admission result before merge, PREVC or spawn;
+ * keeping this participant free of a second boolean predicate prevents the
+ * coordinator and scheduler from disagreeing about receipt/session liveness.
+ */
 export function runMissionSchedulerCoordinatorParticipant(
   _now: number,
   signal?: AbortSignal,
