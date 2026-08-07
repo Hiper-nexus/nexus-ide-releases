@@ -4,6 +4,7 @@ import {
   assertPackagedSmokeOutput,
   assertMatchingReleaseArchitectures,
   assertNoBundledNodePtySpawnHelpers,
+  assertRequiredElectronFuses,
   assertReleaseArtifacts,
   assertResponsibilitySupervisorSignatureMetadata,
   assertSingleResponsibilitySupervisorPath,
@@ -196,6 +197,25 @@ describe("macOS release artifact contract", () => {
       "/tmp/NexusIDE.app",
     ]);
     expect(invocation.args).not.toContain("npx");
+  });
+
+  it("validates required Electron fuses when the CLI emits ANSI colors", () => {
+    const coloredOutput = [
+      "\u001b[33mRunAsNode\u001b[39m is \u001b[31mDisabled\u001b[39m",
+      "\u001b[33mEnableCookieEncryption\u001b[39m is \u001b[32mEnabled\u001b[39m",
+      "\u001b[33mEnableNodeOptionsEnvironmentVariable\u001b[39m is \u001b[31mDisabled\u001b[39m",
+      "\u001b[33mEnableNodeCliInspectArguments\u001b[39m is \u001b[31mDisabled\u001b[39m",
+      "\u001b[33mEnableEmbeddedAsarIntegrityValidation\u001b[39m is \u001b[32mEnabled\u001b[39m",
+      "\u001b[33mOnlyLoadAppFromAsar\u001b[39m is \u001b[32mEnabled\u001b[39m",
+      "\u001b[33mGrantFileProtocolExtraPrivileges\u001b[39m is \u001b[31mDisabled\u001b[39m",
+    ].join("\n");
+
+    expect(() => assertRequiredElectronFuses(coloredOutput)).not.toThrow();
+    expect(() =>
+      assertRequiredElectronFuses(
+        coloredOutput.replace("Disabled", "Enabled"),
+      ),
+    ).toThrow(/RunAsNode is Disabled/);
   });
 
   it("accepts one host architecture and rejects incoherent DMG/ZIP apps", () => {

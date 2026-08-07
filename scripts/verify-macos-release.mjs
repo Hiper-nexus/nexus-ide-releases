@@ -3,6 +3,7 @@ import { listPackage } from "@electron/asar";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { stripVTControlCharacters } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 export const DEFAULT_BUNDLE_ID = "com.nexuside.app";
@@ -25,6 +26,15 @@ const RELEASE_ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
 );
+
+export function assertRequiredElectronFuses(output) {
+  const fuses = stripVTControlCharacters(String(output));
+  for (const required of REQUIRED_FUSES) {
+    if (!fuses.includes(required)) {
+      throw new Error(`required Electron fuse missing: ${required}`);
+    }
+  }
+}
 
 export function buildFusesReadInvocation(appPath, root = RELEASE_ROOT) {
   return {
@@ -676,11 +686,7 @@ async function verifyApp(appPath, expected, signing) {
 
   const fuseRead = buildFusesReadInvocation(appPath);
   const fuses = runChecked(fuseRead.command, fuseRead.args).combined;
-  for (const required of REQUIRED_FUSES) {
-    if (!fuses.includes(required)) {
-      throw new Error(`required Electron fuse missing: ${required}`);
-    }
-  }
+  assertRequiredElectronFuses(fuses);
 
   const scriptDir = path.dirname(fileURLToPath(import.meta.url));
   const smoke = runChecked(process.execPath, [
