@@ -1264,7 +1264,11 @@ export class TaskDispatchStore {
   recordFanoutConsolidation(
     input: RecordFanoutMissionConsolidationInput,
   ): boolean {
-    return recordFanoutMissionConsolidation(this.#binding, input);
+    return recordFanoutMissionConsolidation(
+      this.#binding,
+      input,
+      this.#missionEngine(),
+    );
   }
 
   hasExactFanoutConsolidationReplay(input: {

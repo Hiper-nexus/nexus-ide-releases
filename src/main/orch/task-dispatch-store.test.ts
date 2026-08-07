@@ -1651,6 +1651,95 @@ describe('durable task dispatcher authority', () => {
     expect(missing.dispatches.get(missing.task.id)?.state).toBe('handoff_ready');
   });
 
+  it('delegates fan-out terminal completion exactly once without raw-writing mission state', () => {
+    const fixture = readOnlyPhysicalHandoffFixture({
+      teamReadOnlyFanout: true,
+    });
+    fixture.dispatches.completeReadOnlyFromTrustedHandoff({
+      taskId: fixture.task.id,
+      revision: fixture.ready.revision,
+    });
+    const handoffs = createScopedHandoffStore(fixture.runtime, fixture.scope);
+    const attempt = handoffs.reserveDeliveryAttempt({
+      handoffId: fixture.handoff.id,
+      missionId: fixture.mission.id,
+      orchestratorSessionId: 'orchestrator-guided-advisor',
+      maxAttempts: 2,
+    });
+    handoffs.markDeliveryAttemptPasted({
+      attemptId: attempt.id,
+      handoffId: fixture.handoff.id,
+      acceptDeadlineAt: Date.now() + 10_000,
+    });
+    expect(
+      handoffs.acceptDeliveryAttempt({
+        attemptId: attempt.id,
+        handoffId: fixture.handoff.id,
+      }),
+    ).toBe(true);
+    acknowledgeHandoffFromPhysicalMaestro({
+      runtime: fixture.runtime,
+      scope: fixture.scope,
+      handoffs,
+      missionId: fixture.mission.id,
+      sessionId: 'orchestrator-guided-advisor',
+      handoffId: fixture.handoff.id,
+    });
+    const completeVerified = vi.fn(
+      (
+        _scope: ProjectExecutionScope,
+        _input: MissionVerifiedCompletionInput,
+      ) => undefined,
+    );
+    const dispatches = createTaskDispatchStore(
+      fixture.runtime,
+      fixture.scope,
+      {
+        missionEngine: {
+          blockUser: vi.fn(),
+          blockTechnical: vi.fn(),
+          resumeTechnical: vi.fn(),
+          completeVerified,
+        } satisfies TaskDispatchMissionEngine,
+      },
+    );
+    const finalOutput =
+      '# Consolidação final\n## Especialistas\nPerspectivas verificadas.\n\n' +
+      '## Maestro\nSíntese física concluída.';
+
+    expect(
+      consolidateFanoutFromPhysicalMaestro({
+        runtime: fixture.runtime,
+        scope: fixture.scope,
+        dispatches,
+        missionId: fixture.mission.id,
+        intentVersion: 4,
+        sessionId: 'orchestrator-guided-advisor',
+        finalOutput,
+      }),
+    ).toBe(true);
+    expect(completeVerified).toHaveBeenCalledOnce();
+    expect(completeVerified).toHaveBeenCalledWith(
+      fixture.scope,
+      expect.objectContaining({
+        missionId: fixture.mission.id,
+        expectedStatus: 'running',
+        expectedIntentState: 'executing',
+        expectedIntentVersion: 4,
+        learnings: finalOutput,
+      }),
+    );
+    expect(
+      createScopedMissionStore(fixture.runtime, fixture.scope).get(
+        fixture.mission.id,
+      ),
+    ).toMatchObject({
+      status: 'running',
+      intentState: 'executing',
+      learnings: '',
+    });
+  });
+
   it('keeps fan-out running after the last ACK and completes after durable Maestro consolidation recovery', () => {
     const fixture = readOnlyPhysicalHandoffFixture({
       teamReadOnlyFanout: true,
@@ -1768,7 +1857,7 @@ describe('durable task dispatcher authority', () => {
     expect(restartedMission?.learnings).toMatch(/FIM-DA-SINTESE-MAESTRO$/);
   });
 
-  it('rebinds fan-out after an old physical ACK and consolidation without wedging current completion', () => {
+  it('rebinds fan-out after an old physical ACK without wedging current consolidation', () => {
     const fixture = readOnlyPhysicalHandoffFixture({
       teamReadOnlyFanout: true,
     });
@@ -1805,18 +1894,6 @@ describe('durable task dispatcher authority', () => {
       sessionId: oldSessionId,
       handoffId: fixture.handoff.id,
     });
-    const oldOutput =
-      '# Consolidação antiga\n## Especialistas\nRodada antiga.\n\n' +
-      '## Maestro\nEsta síntese pertence somente à sessão física anterior.';
-    expect(consolidateFanoutFromPhysicalMaestro({
-      runtime: fixture.runtime,
-      scope: fixture.scope,
-      dispatches: fixture.dispatches,
-      missionId: fixture.mission.id,
-      intentVersion: 4,
-      sessionId: oldSessionId,
-      finalOutput: oldOutput,
-    })).toBe(true);
 
     expect(
       missions.rebindOrchestratorSession(
@@ -1887,7 +1964,7 @@ describe('durable task dispatcher authority', () => {
         missionId: fixture.mission.id,
         intentVersion: 4,
       }),
-    ).toBe(true);
+    ).toBe(false);
     expect(missions.get(fixture.mission.id)).toMatchObject({
       status: 'done',
       intentState: 'done',
@@ -1922,7 +1999,6 @@ describe('durable task dispatcher authority', () => {
         )
         .all(fixture.mission.id, 4),
     ).toEqual([
-      { orchestrator_session_id: oldSessionId },
       { orchestrator_session_id: currentSessionId },
     ]);
   });
@@ -3460,21 +3536,36 @@ describe('durable task dispatcher authority', () => {
     });
   });
 
-  it('replays the full guided physical authority proof after restart without completing the mission', () => {
+  it('replays guided inspection without invoking terminal engine authority', () => {
     const fixture = verifiedPlanFixture('guided-physical-replay', {
       squadId: 'agentic-guided-physical-replay',
     });
+    const completeVerified = vi.fn(
+      (
+        _scope: ProjectExecutionScope,
+        _input: MissionVerifiedCompletionInput,
+      ) => undefined,
+    );
+    const inspecting = createTaskDispatchStore(
+      fixture.runtime,
+      fixture.scope,
+      {
+        missionEngine: {
+          blockUser: vi.fn(),
+          blockTechnical: vi.fn(),
+          resumeTechnical: vi.fn(),
+          completeVerified,
+        } satisfies TaskDispatchMissionEngine,
+      },
+    );
     const input = {
       missionId: fixture.mission.id,
       intentVersion: 7,
     };
 
-    expect(
-      fixture.dispatches.hasVerifiedGuidedPlanAuthority(input),
-    ).toBe(true);
-    expect(
-      fixture.dispatches.hasVerifiedGuidedPlanAuthority(input),
-    ).toBe(true);
+    expect(inspecting.hasVerifiedGuidedPlanAuthority(input)).toBe(true);
+    expect(inspecting.hasVerifiedGuidedPlanAuthority(input)).toBe(true);
+    expect(completeVerified).not.toHaveBeenCalled();
     expect(fixture.missions.get(fixture.mission.id)).toMatchObject({
       status: 'running',
       intentState: 'executing',
@@ -3486,6 +3577,7 @@ describe('durable task dispatcher authority', () => {
       fixture.scope,
     );
     expect(restarted.hasVerifiedGuidedPlanAuthority(input)).toBe(true);
+    expect(completeVerified).not.toHaveBeenCalled();
     expect(
       createScopedMissionStore(fixture.runtime, fixture.scope).get(
         fixture.mission.id,

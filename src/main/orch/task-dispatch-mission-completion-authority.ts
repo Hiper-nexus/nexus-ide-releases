@@ -827,19 +827,23 @@ function verifyCompletedTaskPlanAuthority(
       ) {
         return false;
       }
-      return persistFanoutConsolidationReceipt(db, binding, {
-        missionId,
-        intentVersion,
-        planHash: rawPlan.plan_hash,
-        orchestratorSessionId: mission.orch_session_id,
-        finalOutput: consolidation.finalOutput,
-        maestroPerspective: consolidation.maestroPerspective,
-        payloadSha256: consolidationPayloadSha256,
-        now,
-        physicalReceipt: consolidationInput.physicalReceipt,
-        expectation: consolidationExpectation,
-        inspected: inspectedConsolidationReceipt,
-      });
+      if (
+        !persistFanoutConsolidationReceipt(db, binding, {
+          missionId,
+          intentVersion,
+          planHash: rawPlan.plan_hash,
+          orchestratorSessionId: mission.orch_session_id,
+          finalOutput: consolidation.finalOutput,
+          maestroPerspective: consolidation.maestroPerspective,
+          payloadSha256: consolidationPayloadSha256,
+          now,
+          physicalReceipt: consolidationInput.physicalReceipt,
+          expectation: consolidationExpectation,
+          inspected: inspectedConsolidationReceipt,
+        })
+      ) {
+        return false;
+      }
     }
     if (mode === 'inspect-guided') return true;
 
@@ -1052,11 +1056,13 @@ function replayFanoutMissionConsolidation(
 export function recordFanoutMissionConsolidation(
   binding: ScopedStoreBinding,
   input: RecordFanoutMissionConsolidationInput,
+  missionEngine: Pick<MissionEngine, "completeVerified">,
 ): boolean {
   const recorded = verifyCompletedTaskPlanAuthority(
     binding,
     input,
     "record-fanout-consolidation",
+    missionEngine,
   );
   const replayed = recorded
     ? false

@@ -4,10 +4,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { ORCH_CHANNELS } from "../../shared/orch-channels";
-import {
-  isOperatorSubmit,
-  operatorSubmitUnparkPatch,
-} from "./mission-operator-reply";
 import type { ProjectExecutionScope } from "../../shared/types";
 import {
   missionPatchSchema,
@@ -1785,15 +1781,7 @@ export function registerOrchIpc(): void {
     if (!mission || mission.status === "done" || mission.status === "failed") {
       return false;
     }
-    const written = orchWriteSession(sessionId, data, { markInputBusy: true });
-    // The answer landing is what unparks the mission. Without this the agent
-    // received the reply while the mission stayed `blocked_user` forever —
-    // rail stuck on "Aguarda você", wizard bouncing back to the home screen.
-    if (written && isOperatorSubmit(data)) {
-      const unpark = operatorSubmitUnparkPatch(mission);
-      if (unpark) missions.update(info.missionId, unpark);
-    }
-    return written;
+    return orchWriteSession(sessionId, data, { markInputBusy: true });
   });
 
   ipcMain.on(ORCH_CHANNELS.panesSync, (event, raw) => {
