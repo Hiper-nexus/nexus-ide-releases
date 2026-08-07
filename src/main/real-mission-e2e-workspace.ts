@@ -355,8 +355,8 @@ export function validateHarnessCodexAdapter(): boolean {
 /**
  * Cada CLI advisor **presente** no roster (após NEXUS_REAL_MISSION_ADVISOR_SKIP)
  * precisa de um adapter cli-pty real com PTY obrigatório e uma rota física de
- * handoff. Essa rota pode ser MCP ou o marcador observado no stream PTY; AGY
- * 1.1 usa intencionalmente a segunda porque ignora projeções MCP privadas.
+ * handoff. Essa rota pode ser MCP ou o shim autenticado no PATH; AGY 1.1 usa
+ * intencionalmente a segunda porque ignora projeções MCP privadas.
  * Advisors pulados por env não entram na prova desta rodada.
  */
 /**

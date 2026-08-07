@@ -52,7 +52,7 @@ describe("real mission E2E PASS graph", () => {
     );
   });
 
-  it("requires the AGY advisor handoff to use its physical PTY stream", () => {
+  it("requires the AGY advisor handoff to use its authenticated mission shim", () => {
     const physicalAgy = validPassEvidence();
     const dispatch = (
       physicalAgy.dispatches as Array<Record<string, unknown>>
@@ -62,8 +62,8 @@ describe("real mission E2E PASS graph", () => {
     ).find((candidate) => candidate.id === dispatch.handoffId)!;
     const physicalReceipt = handoff.physicalReceipt as Record<string, unknown>;
     const auditIntent = handoff.auditIntent as Record<string, unknown>;
-    physicalReceipt.source = "pty-stream";
-    auditIntent.source = "pty-stream";
+    physicalReceipt.source = "mission-shim";
+    auditIntent.source = "mission-shim";
 
     expect(parseRealMissionE2EEvidence(physicalAgy).status).toBe("pass");
 
@@ -78,6 +78,21 @@ describe("real mission E2E PASS graph", () => {
       "http-mcp";
     (forgedHandoff.auditIntent as Record<string, unknown>).source = "http-mcp";
     expect(() => parseRealMissionE2EEvidence(forgedHttpAgy)).toThrow(
+      /real-mission invariants/,
+    );
+
+    const forgedPtyAgy = validPassEvidence();
+    const forgedPtyDispatch = (
+      forgedPtyAgy.dispatches as Array<Record<string, unknown>>
+    ).find((candidate) => candidate.agentRef === "e2e-advisor-agy")!;
+    const forgedPtyHandoff = (
+      forgedPtyAgy.handoffs as Array<Record<string, unknown>>
+    ).find((candidate) => candidate.id === forgedPtyDispatch.handoffId)!;
+    (forgedPtyHandoff.physicalReceipt as Record<string, unknown>).source =
+      "pty-stream";
+    (forgedPtyHandoff.auditIntent as Record<string, unknown>).source =
+      "pty-stream";
+    expect(() => parseRealMissionE2EEvidence(forgedPtyAgy)).toThrow(
       /real-mission invariants/,
     );
   });

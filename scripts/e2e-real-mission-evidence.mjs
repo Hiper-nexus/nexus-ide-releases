@@ -606,7 +606,7 @@ export function assertRealMissionPassEvidence(raw) {
     const expectedCli = substitute?.cli ?? member?.cli;
     const expectedSource =
       member?.kind === "advisory" && expectedCli === "agy"
-        ? "pty-stream"
+        ? "mission-shim"
         : "http-mcp";
     return (
       hasExactKeys(handoff, [

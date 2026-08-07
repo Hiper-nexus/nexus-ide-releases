@@ -291,7 +291,7 @@ function createObserver(options?: {
 }
 
 type TestAdvisorCli = 'agy' | 'claude';
-type TestHandoffSource = 'http-mcp' | 'pty-stream';
+type TestHandoffSource = 'http-mcp' | 'pty-stream' | 'mission-shim';
 
 function seedAdvisorPhysicalHandoff(
   cli: TestAdvisorCli,
@@ -546,10 +546,10 @@ describe('real mission observer advisor participation', () => {
     observer.stop();
   });
 
-  it("projects AGY's exact Main-owned PTY-stream handoff and audit receipt", () => {
+  it("projects AGY's exact authenticated mission-shim handoff and audit receipt", () => {
     const { sessionId, issuedAt } = seedAdvisorPhysicalHandoff(
       'agy',
-      'pty-stream',
+      'mission-shim',
     );
     const observer = createObserver();
     observer.start();
@@ -564,12 +564,12 @@ describe('real mission observer advisor participation', () => {
     );
 
     expect(handoff?.physicalReceipt).toMatchObject({
-      source: 'pty-stream',
+      source: 'mission-shim',
       sessionId,
       issuedAt,
     });
     expect(handoff?.auditIntent).toMatchObject({
-      source: 'pty-stream',
+      source: 'mission-shim',
       sessionId,
       occurredAt: 280,
     });
@@ -594,7 +594,7 @@ describe('real mission observer advisor participation', () => {
     expect(handoff?.auditIntent).toBeNull();
   });
 
-  it("does not project HTTP-MCP provenance for AGY's PTY-pinned route", () => {
+  it("does not project HTTP-MCP provenance for AGY's shim-pinned route", () => {
     const { sessionId } = seedAdvisorPhysicalHandoff('agy', 'http-mcp');
     const observer = createObserver();
 

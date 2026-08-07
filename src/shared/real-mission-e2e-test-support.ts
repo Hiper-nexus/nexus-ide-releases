@@ -27,9 +27,9 @@ function memberSlug(agentRef: string): string {
 function handoffSource(member: {
   readonly kind: string;
   readonly cli: string;
-}): "http-mcp" | "pty-stream" {
+}): "http-mcp" | "mission-shim" {
   return member.kind === "advisory" && member.cli === "agy"
-    ? "pty-stream"
+    ? "mission-shim"
     : "http-mcp";
 }
 

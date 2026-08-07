@@ -120,21 +120,21 @@ const HARNESS_WORKER_ROSTER = new Map<
   ),
 ]);
 
-type HarnessHandoffSource = "http-mcp" | "pty-stream";
+type HarnessHandoffSource = "http-mcp" | "mission-shim";
 
 /**
  * The release harness pins each worker to its real physical completion
- * transport. AGY 1.1 cannot consume Nexus MCP projections, so Main observes
- * its terminal marker and mints a PTY-stream receipt. Every other harness
- * worker remains HTTP-MCP-bound; widening PTY receipts globally would hide an
- * accidental MCP regression in another adapter.
+ * transport. AGY 1.1 cannot consume Nexus MCP projections, so it uses the
+ * authenticated filesystem shim injected into the worker PATH. Every other
+ * harness worker remains HTTP-MCP-bound; accepting the legacy PTY fallback as
+ * release proof would hide a regression in the canonical worker transports.
  */
 function harnessHandoffSource(
   agentRef: string | null | undefined,
 ): HarnessHandoffSource | null {
   const roster = agentRef ? HARNESS_WORKER_ROSTER.get(agentRef) : undefined;
   if (!roster) return null;
-  return roster.cli === "agy" ? "pty-stream" : "http-mcp";
+  return roster.cli === "agy" ? "mission-shim" : "http-mcp";
 }
 
 /** plannerIds que o Guided Planner pode selar para o roster do harness. */

@@ -13,7 +13,7 @@ describe("real mission advisor adapter validation", () => {
     );
   }
 
-  it("accepts AGY through its observable PTY handoff route without fake MCP", () => {
+  it("accepts AGY through its authenticated mission shim without fake MCP", () => {
     const agy = builtin("agy");
 
     expect(agy.quirks.nexusMcp).toBe("none");

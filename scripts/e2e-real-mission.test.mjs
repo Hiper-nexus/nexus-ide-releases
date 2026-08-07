@@ -667,7 +667,7 @@ describe('independent evidence verifier', () => {
     expect(assertRealMissionPassEvidence(validEvidence()).status).toBe('pass');
   });
 
-  it('requires the AGY advisor handoff to use its physical PTY stream', () => {
+  it('requires the AGY advisor handoff to use its authenticated mission shim', () => {
     const physicalAgy = validEvidence();
     const dispatch = physicalAgy.dispatches.find(
       (candidate) => candidate.agentRef === 'e2e-advisor-agy',
@@ -675,8 +675,8 @@ describe('independent evidence verifier', () => {
     const handoff = physicalAgy.handoffs.find(
       (candidate) => candidate.id === dispatch.handoffId,
     );
-    handoff.physicalReceipt.source = 'pty-stream';
-    handoff.auditIntent.source = 'pty-stream';
+    handoff.physicalReceipt.source = 'mission-shim';
+    handoff.auditIntent.source = 'mission-shim';
 
     expect(assertRealMissionPassEvidence(physicalAgy).status).toBe('pass');
 
@@ -690,6 +690,19 @@ describe('independent evidence verifier', () => {
     forgedHandoff.physicalReceipt.source = 'http-mcp';
     forgedHandoff.auditIntent.source = 'http-mcp';
     expect(() => assertRealMissionPassEvidence(forgedHttpAgy)).toThrow(
+      /incomplete/,
+    );
+
+    const forgedPtyAgy = validEvidence();
+    const forgedPtyDispatch = forgedPtyAgy.dispatches.find(
+      (candidate) => candidate.agentRef === 'e2e-advisor-agy',
+    );
+    const forgedPtyHandoff = forgedPtyAgy.handoffs.find(
+      (candidate) => candidate.id === forgedPtyDispatch.handoffId,
+    );
+    forgedPtyHandoff.physicalReceipt.source = 'pty-stream';
+    forgedPtyHandoff.auditIntent.source = 'pty-stream';
+    expect(() => assertRealMissionPassEvidence(forgedPtyAgy)).toThrow(
       /incomplete/,
     );
   });
