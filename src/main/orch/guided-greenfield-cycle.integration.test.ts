@@ -512,7 +512,9 @@ describe("guided physically empty workspace cycle", () => {
     expect(git.run(root, ["status", "--porcelain=v1"]).stdout).toBe("");
   });
 
-  it("promotes committed plan.md into source-bound Doctor authority, reaches readiness and freezes", async () => {
+  // Physical Doctor + freeze under thrash regularly exceeds the 15s default
+  // (gate:515 timeout on load~86). Bound is still finite — not "wait forever".
+  it("promotes committed plan.md into source-bound Doctor authority, reaches readiness and freezes", { timeout: 45_000 }, async () => {
     const root = freshDirectory("nexus-guided-plan-cycle-");
     const runtimeRoot = freshDirectory("nexus-guided-plan-runtime-");
     const cacheRoot = freshDirectory("nexus-guided-plan-map-");

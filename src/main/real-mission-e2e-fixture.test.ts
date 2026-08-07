@@ -104,12 +104,7 @@ describe("main-owned real mission squad fixture", () => {
         category: "reviewer",
         allowedTools: [],
       }),
-      expect.objectContaining({
-        id: "e2e-advisor-grok",
-        category: "scout",
-        cli: "grok",
-        allowedTools: [],
-      }),
+      // Fixture 0.28.0: e2e-advisor-grok removed (stall undiagnosable — 9dff542a).
       expect.objectContaining({
         id: "e2e-advisor-kimi",
         category: "scout",
