@@ -380,11 +380,18 @@ export function makeValidRealMissionEvidence({
       completedAt: step.completedAt,
       integrationReceipt:
         step.member.kind === "execution"
-          ? {
-              kind: "worktree_integrated",
-              reference: finalHeadSha,
-              completedAt: step.completedAt,
-            }
+          ? step.member.executionMode === "same_checkout"
+            ? {
+                kind: "same_checkout_validated",
+                reference: sha256(`${step.slug}-serialized-writer`),
+                completedAt: step.completedAt,
+                evidenceIds: [`sensor-${step.slug}`],
+              }
+            : {
+                kind: "worktree_integrated",
+                reference: finalHeadSha,
+                completedAt: step.completedAt,
+              }
           : {
               kind: "worktree_validated_no_change",
               reference: `no-change:${headFor(step.member.kind)}:${sha256(`${step.slug}-clean-diff`)}`,

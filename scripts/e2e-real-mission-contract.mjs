@@ -161,7 +161,7 @@ export function realMissionExpectedTaskChain(presentAdvisorClis) {
     cli: "codex",
     agentCategory: "executor",
     plannerId: "guided-execution",
-    executionMode: "isolated_worktree",
+    executionMode: "same_checkout",
     kind: "execution",
     dependsOnPlannerIds: [],
   };
@@ -276,14 +276,14 @@ export const MISSION_DRIVER_WORKFLOW_STAGES = new Set([
   "complete",
 ]);
 const REAL_MISSION_DELIVERY_ACCEPTANCE_CRITERIA = Object.freeze([
-  "O executor Codex do roster cria resultado.txt no próprio worktree — nunca o orquestrador nem o processo main.",
+  "O executor Codex do roster cria resultado.txt no próprio workspace (caminho simples, sem worktree isolada) — nunca o orquestrador nem o processo main.",
   "resultado.txt contém exatamente nexus-real-mission-e2e-ok seguido de newline.",
   "O próprio executor faz o commit local e chama nexus_handoff_submit; sessão e encarnação conferem com o dispatch do executor.",
   "O motor Nexus integra o commit antes de liberar a tarefa dependente do revisor.",
   "O revisor Codex da cadeia de entrega abre seu próprio PTY físico, valida o HEAD integrado e chama nexus_handoff_submit sem commit vazio nem alteração cosmética.",
-  "O motor Nexus emite para o revisor um receipt Main-owned de validação sem mudança — read_only_validated ou worktree_validated_no_change conforme a rota — antes de liberar a tarefa dependente de QA; o QA consome o handoff predecessor sem precisar reconstruir esse receipt.",
+  "O motor Nexus emite para o revisor um receipt Main-owned de validação sem mudança — read_only_validated, same_checkout_validated ou worktree_validated_no_change conforme a rota — antes de liberar a tarefa dependente de QA; o QA consome o handoff predecessor sem precisar reconstruir esse receipt.",
   "O QA Codex da cadeia de entrega abre seu próprio PTY físico, consome o handoff do revisor e valida o HEAD integrado; o QA não deve editar, alterar ou escrever arquivos e chama nexus_handoff_submit sem mudança artificial.",
-  "Depois do handoff do QA, o motor Nexus emite o receipt final Main-owned de validação sem mudança — read_only_validated ou worktree_validated_no_change conforme a rota — e marca a missão done sem atalho manual; esta é prova Main-owned futura e sua ausência antes do handoff não bloqueia o QA.",
+  "Depois do handoff do QA, o motor Nexus emite o receipt final Main-owned de validação sem mudança — read_only_validated, same_checkout_validated ou worktree_validated_no_change conforme a rota — e marca a missão done sem atalho manual; esta é prova Main-owned futura e sua ausência antes do handoff não bloqueia o QA.",
 ]);
 
 function normalizedAdmittedAdvisorClis(orchestratorCli, admittedAdvisorClis) {
@@ -362,7 +362,8 @@ export function realMissionAcceptanceCriteria(
 }
 export const REAL_MISSION_GOAL =
   'Entregue resultado.txt com o conteúdo exato "nexus-real-mission-e2e-ok\\n". ' +
-  "Na cadeia de entrega executor → revisor → QA, o executor deve implementar e " +
+  "Na cadeia de entrega executor → revisor → QA, o executor deve implementar, " +
+  "fazer exatamente um commit local com a mudança e " +
   "enviar seu handoff; depois o revisor independente valida o HEAD integrado e " +
   "envia seu próprio handoff; por fim o QA consome essa revisão, valida o HEAD e " +
   "envia seu próprio handoff. Handoffs da lane advisor são independentes dessa " +

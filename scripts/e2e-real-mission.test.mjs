@@ -31,11 +31,18 @@ import {
 } from "./e2e-real-mission.mjs";
 import {
   REAL_MISSION_GOAL,
+  REAL_MISSION_PRODUCT_WIZARD_ACCEPTANCE_CRITERIA,
   realMissionAcceptanceCriteria,
   realMissionExpectedTaskChain,
 } from "./e2e-real-mission-contract.mjs";
 import { persistPostPassRejectionReceipt } from "./e2e-real-mission-runtime.mjs";
 import { makeValidRealMissionEvidence } from "./test-support/real-mission-evidence.mjs";
+import {
+  REAL_MISSION_E2E_GOAL,
+  REAL_MISSION_E2E_PRODUCT_WIZARD_ACCEPTANCE_CRITERIA,
+  realMissionE2EAcceptanceCriteria,
+  realMissionE2EExpectedTaskChain,
+} from "../src/shared/real-mission-e2e-contract.ts";
 import {
   assertAdvisorBinaries,
   nodeBinDirsNearCodexPackage,
@@ -69,6 +76,21 @@ afterEach(() => {
 });
 
 describe("real mission packaged harness arguments", () => {
+  it("keeps the external release validator aligned with the packaged app contract", () => {
+    const admitted = ["agy", "opencode", "claude", "glm"];
+
+    expect(REAL_MISSION_GOAL).toBe(REAL_MISSION_E2E_GOAL);
+    expect(REAL_MISSION_PRODUCT_WIZARD_ACCEPTANCE_CRITERIA).toEqual(
+      REAL_MISSION_E2E_PRODUCT_WIZARD_ACCEPTANCE_CRITERIA,
+    );
+    expect(realMissionAcceptanceCriteria("codex", admitted)).toEqual(
+      realMissionE2EAcceptanceCriteria("codex", admitted),
+    );
+    expect(realMissionExpectedTaskChain(admitted)).toEqual(
+      realMissionE2EExpectedTaskChain(admitted),
+    );
+  });
+
   it("keeps admitted advisors, PREVC reviewers and the delivery chain in distinct lanes", () => {
     const admitted = ["opencode", "claude", "glm"];
     const criteria = realMissionAcceptanceCriteria("codex", admitted);
