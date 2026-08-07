@@ -131,6 +131,28 @@ describe("real mission E2E PASS graph", () => {
     );
   });
 
+  it("accepts the authenticated mission-shim fallback for MCP-capable workers", () => {
+    const fallbackEvidence = validPassEvidence();
+
+    for (const agentRef of [
+      "e2e-advisor-claude",
+      "e2e-reviewer",
+      "e2e-qa",
+    ]) {
+      const dispatch = (
+        fallbackEvidence.dispatches as Array<Record<string, unknown>>
+      ).find((candidate) => candidate.agentRef === agentRef)!;
+      const handoff = (
+        fallbackEvidence.handoffs as Array<Record<string, unknown>>
+      ).find((candidate) => candidate.id === dispatch.handoffId)!;
+      (handoff.physicalReceipt as Record<string, unknown>).source =
+        "mission-shim";
+      (handoff.auditIntent as Record<string, unknown>).source = "mission-shim";
+    }
+
+    expect(parseRealMissionE2EEvidence(fallbackEvidence).status).toBe("pass");
+  });
+
   it("cannot label the synthetic zero-findings council as review coverage", () => {
     const misleading = validPassEvidence();
     misleading.reviewOrigin = "e2e-merge-review-fixture";

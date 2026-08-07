@@ -32,6 +32,7 @@ import {
 import {
   REAL_MISSION_GOAL,
   REAL_MISSION_PRODUCT_WIZARD_ACCEPTANCE_CRITERIA,
+  realMissionAllowedHandoffSources,
   realMissionAcceptanceCriteria,
   realMissionExpectedTaskChain,
 } from "./e2e-real-mission-contract.mjs";
@@ -40,6 +41,7 @@ import { makeValidRealMissionEvidence } from "./test-support/real-mission-eviden
 import {
   REAL_MISSION_E2E_GOAL,
   REAL_MISSION_E2E_PRODUCT_WIZARD_ACCEPTANCE_CRITERIA,
+  realMissionE2EAllowedHandoffSources,
   realMissionE2EAcceptanceCriteria,
   realMissionE2EExpectedTaskChain,
 } from "../src/shared/real-mission-e2e-contract.ts";
@@ -88,6 +90,15 @@ describe("real mission packaged harness arguments", () => {
     );
     expect(realMissionExpectedTaskChain(admitted)).toEqual(
       realMissionE2EExpectedTaskChain(admitted),
+    );
+    expect(
+      realMissionExpectedTaskChain(admitted).map((member) =>
+        realMissionAllowedHandoffSources(member),
+      ),
+    ).toEqual(
+      realMissionE2EExpectedTaskChain(admitted).map((member) =>
+        realMissionE2EAllowedHandoffSources(member),
+      ),
     );
   });
 
@@ -759,6 +770,27 @@ describe('independent evidence verifier', () => {
     expect(() => assertRealMissionPassEvidence(forgedHttpExecutor)).toThrow(
       /incomplete/,
     );
+  });
+
+  it('accepts the authenticated mission-shim fallback for MCP-capable workers', () => {
+    const fallbackEvidence = validEvidence();
+
+    for (const agentRef of [
+      'e2e-advisor-claude',
+      'e2e-reviewer',
+      'e2e-qa',
+    ]) {
+      const dispatch = fallbackEvidence.dispatches.find(
+        (candidate) => candidate.agentRef === agentRef,
+      );
+      const handoff = fallbackEvidence.handoffs.find(
+        (candidate) => candidate.id === dispatch.handoffId,
+      );
+      handoff.physicalReceipt.source = 'mission-shim';
+      handoff.auditIntent.source = 'mission-shim';
+    }
+
+    expect(assertRealMissionPassEvidence(fallbackEvidence).status).toBe('pass');
   });
 
   it('binds an independent advisor HEAD to the executor integration chronology', () => {

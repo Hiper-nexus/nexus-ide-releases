@@ -197,6 +197,21 @@ export function realMissionExpectedTaskChain(presentAdvisorClis) {
     },
   ];
 }
+
+const REAL_MISSION_SHIM_ONLY_SOURCES = Object.freeze(["mission-shim"]);
+const REAL_MISSION_MCP_OR_SHIM_SOURCES = Object.freeze([
+  "http-mcp",
+  "mission-shim",
+]);
+
+/** Keep the external release verifier aligned with the packaged-app policy. */
+export function realMissionAllowedHandoffSources(member) {
+  return member?.kind === "execution" ||
+    (member?.kind === "advisory" && member?.cli === "agy")
+    ? REAL_MISSION_SHIM_ONLY_SOURCES
+    : REAL_MISSION_MCP_OR_SHIM_SOURCES;
+}
+
 export const REAL_MISSION_CHILD_PHASES = new Set([
   "spawned",
   "booting",

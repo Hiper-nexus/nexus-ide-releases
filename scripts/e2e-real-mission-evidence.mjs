@@ -17,6 +17,7 @@ import {
   milestoneAttestationId,
   productWizardReceiptChainSha256,
   realMissionAcceptanceCriteria,
+  realMissionAllowedHandoffSources,
   realMissionExpectedTaskChain,
   record,
   sha256,
@@ -604,11 +605,10 @@ export function assertRealMissionPassEvidence(raw) {
         : null;
     const expectedFromAgent = substitute?.name ?? member?.agentName;
     const expectedCli = substitute?.cli ?? member?.cli;
-    const expectedSource =
-      member?.kind === "execution" ||
-      (member?.kind === "advisory" && expectedCli === "agy")
-        ? "mission-shim"
-        : "http-mcp";
+    const allowedSources = realMissionAllowedHandoffSources({
+      kind: member?.kind,
+      cli: expectedCli,
+    });
     return (
       hasExactKeys(handoff, [
         "id",
@@ -663,7 +663,7 @@ export function assertRealMissionPassEvidence(raw) {
       physical?.handoffId === handoff?.id &&
       physical?.receiptId === physical?.toolCallId &&
       physical?.toolName === "nexus_handoff_submit" &&
-      physical?.source === expectedSource &&
+      allowedSources.includes(physical?.source) &&
       physical?.missionId === mission?.id &&
       physical?.sessionId === handoff?.sessionId &&
       physical?.workerIncarnationId === handoff?.workerIncarnationId &&

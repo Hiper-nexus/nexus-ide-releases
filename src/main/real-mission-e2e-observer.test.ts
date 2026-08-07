@@ -290,21 +290,46 @@ function createObserver(options?: {
   });
 }
 
-type TestWorker = 'agy' | 'claude' | 'executor';
+const TEST_WORKERS = {
+  agy: {
+    cli: 'agy',
+    agentRef: 'e2e-advisor-agy',
+    agentName: 'E2E Advisor Agy',
+    executionMode: 'read_only',
+  },
+  claude: {
+    cli: 'claude',
+    agentRef: 'e2e-advisor-claude',
+    agentName: 'E2E Advisor Claude',
+    executionMode: 'read_only',
+  },
+  executor: {
+    cli: 'codex',
+    agentRef: 'e2e-executor',
+    agentName: REAL_MISSION_E2E_EXECUTOR_NAME,
+    executionMode: 'same_checkout',
+  },
+  reviewer: {
+    cli: 'codex',
+    agentRef: 'e2e-reviewer',
+    agentName: 'E2E Revisor',
+    executionMode: 'read_only',
+  },
+  qa: {
+    cli: 'codex',
+    agentRef: 'e2e-qa',
+    agentName: 'E2E QA',
+    executionMode: 'read_only',
+  },
+} as const;
+type TestWorker = keyof typeof TEST_WORKERS;
 type TestHandoffSource = 'http-mcp' | 'pty-stream' | 'mission-shim';
 
 function seedWorkerPhysicalHandoff(
   worker: TestWorker,
   source: TestHandoffSource,
 ): { readonly sessionId: string; readonly issuedAt: number } {
-  const isExecutor = worker === 'executor';
-  const cli = isExecutor ? 'codex' : worker;
-  const agentRef = isExecutor ? 'e2e-executor' : `e2e-advisor-${cli}`;
-  const agentName = isExecutor
-    ? REAL_MISSION_E2E_EXECUTOR_NAME
-    : cli === 'agy'
-      ? 'E2E Advisor Agy'
-      : 'E2E Advisor Claude';
+  const { cli, agentRef, agentName, executionMode } = TEST_WORKERS[worker];
   const sessionId = `session-${worker}`;
   const workerIncarnationId = `incarnation-${worker}`;
   const handoffId = `handoff-${worker}`;
@@ -327,14 +352,14 @@ function seedWorkerPhysicalHandoff(
     role: "worker",
     agentName,
     workerIncarnationId,
-    readOnly: !isExecutor,
+    readOnly: executionMode === 'read_only',
     nativeReadOnly: false,
   });
   harness.dispatches = [
     {
       taskId: `task-${cli}`,
       agentRef,
-      executionMode: isExecutor ? "isolated_worktree" : "read_only",
+      executionMode,
       state: "handoff_ready",
       sessionId,
       workerIncarnationId,
@@ -647,6 +672,29 @@ describe('real mission observer advisor participation', () => {
 
     expect(handoff?.physicalReceipt).toBeNull();
     expect(handoff?.auditIntent).toBeNull();
+  });
+
+  it("projects QA's authenticated mission-shim fallback", () => {
+    const { sessionId, issuedAt } = seedWorkerPhysicalHandoff(
+      'qa',
+      'mission-shim',
+    );
+    const observer = createObserver();
+
+    const evidence = observer.evidence(Date.now(), 'fail', 'timeout');
+    const handoff = evidence.handoffs.find(
+      (candidate) => candidate.sessionId === sessionId,
+    );
+
+    expect(handoff?.physicalReceipt).toMatchObject({
+      source: 'mission-shim',
+      sessionId,
+      issuedAt,
+    });
+    expect(handoff?.auditIntent).toMatchObject({
+      source: 'mission-shim',
+      sessionId,
+    });
   });
 
   it('keeps a proven advisor retry and attributes evidence to the current session', () => {

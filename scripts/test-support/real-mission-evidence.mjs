@@ -6,6 +6,7 @@ import {
   REAL_MISSION_PRODUCT_WIZARD_ACCEPTANCE_CRITERIA,
   productWizardReceiptChainSha256,
   realMissionAcceptanceCriteria,
+  realMissionAllowedHandoffSources,
   realMissionExpectedTaskChain,
 } from "../e2e-real-mission-contract.mjs";
 
@@ -54,11 +55,7 @@ const milestoneAttestationId = (missionId, stepId, binding) =>
   }))}`;
 
 const memberSlug = (agentRef) => agentRef.replace(/^e2e-/u, "");
-const handoffSource = (member) =>
-  member.kind === "execution" ||
-  (member.kind === "advisory" && member.cli === "agy")
-    ? "mission-shim"
-    : "http-mcp";
+const handoffSource = (member) => realMissionAllowedHandoffSources(member)[0];
 
 export function makeValidRealMissionEvidence({
   appVersion = "1.2.3",

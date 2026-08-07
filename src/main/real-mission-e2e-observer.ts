@@ -15,7 +15,9 @@ import {
   REAL_MISSION_E2E_REVIEWER_NAME,
   REAL_MISSION_E2E_RESULT_CONTENT,
   parseRealMissionE2EEvidence,
+  realMissionE2EAllowedHandoffSources,
   realMissionE2EAdvisorSkipClis,
+  realMissionE2EExpectedTaskChain,
   realMissionE2EOrchestratorCli,
   type RealMissionE2EEvidence,
   type RealMissionE2ELaunchSurface,
@@ -100,25 +102,23 @@ const HARNESS_WORKER_ROSTER = new Map<
   {
     readonly agentCategory: "executor" | "reviewer" | "scout";
     readonly cli: string;
+    readonly kind: "advisory" | "execution" | "review" | "quality-gate";
   }
->([
-  [
-    REAL_MISSION_E2E_EXECUTOR_ID,
-    { agentCategory: "executor", cli: "codex" },
-  ],
-  [
-    REAL_MISSION_E2E_REVIEWER_ID,
-    { agentCategory: "reviewer", cli: "codex" },
-  ],
-  [REAL_MISSION_E2E_QA_ID, { agentCategory: "reviewer", cli: "codex" }],
-  ...REAL_MISSION_E2E_ADVISORS.map(
-    (advisor) =>
+>(
+  realMissionE2EExpectedTaskChain(
+    REAL_MISSION_E2E_ADVISORS.map((advisor) => advisor.cli),
+  ).map(
+    (member) =>
       [
-        advisor.id,
-        { agentCategory: advisor.category, cli: advisor.cli },
+        member.agentRef,
+        {
+          agentCategory: member.agentCategory,
+          cli: member.cli,
+          kind: member.kind,
+        },
       ] as const,
   ),
-]);
+);
 
 type HarnessHandoffSource = "http-mcp" | "mission-shim";
 
@@ -126,18 +126,19 @@ type HarnessHandoffSource = "http-mcp" | "mission-shim";
  * The release harness pins each worker to its real physical completion
  * transport. AGY 1.1 cannot consume Nexus MCP projections, and the executor
  * exercises the authenticated filesystem completion path inherited from the
- * Bridge flow. Review and QA remain HTTP-MCP-bound; accepting the legacy PTY
- * fallback as release proof would hide a regression in the canonical worker
- * transports.
+ * Bridge flow. Every other worker may degrade from HTTP-MCP to the same
+ * authenticated shim; accepting the legacy PTY fallback would still hide a
+ * regression in the canonical worker transports.
  */
-function harnessHandoffSource(
+function harnessAcceptsHandoffSource(
   agentRef: string | null | undefined,
-): HarnessHandoffSource | null {
+  source: string | null | undefined,
+): source is HarnessHandoffSource {
   const roster = agentRef ? HARNESS_WORKER_ROSTER.get(agentRef) : undefined;
-  if (!roster) return null;
-  return agentRef === REAL_MISSION_E2E_EXECUTOR_ID || roster.cli === "agy"
-    ? "mission-shim"
-    : "http-mcp";
+  if (!roster || (source !== "http-mcp" && source !== "mission-shim")) {
+    return false;
+  }
+  return realMissionE2EAllowedHandoffSources(roster).includes(source);
 }
 
 /** plannerIds que o Guided Planner pode selar para o roster do harness. */
@@ -702,10 +703,9 @@ export class RealMissionObserver {
       const handoff = this.#suite.handoffs.get(dispatch.handoffId);
       if (!handoff) return [];
       const provenance = handoff.mcpProvenance;
-      const expectedSource = harnessHandoffSource(dispatch.agentRef);
       const physicalSource: HarnessHandoffSource | null =
-        expectedSource !== null && provenance?.source === expectedSource
-          ? expectedSource
+        harnessAcceptsHandoffSource(dispatch.agentRef, provenance?.source)
+          ? provenance.source
           : null;
       const physicalProvenance = physicalSource ? provenance : null;
       const auditIntent = exactAuditIntent(physicalProvenance ?? undefined);

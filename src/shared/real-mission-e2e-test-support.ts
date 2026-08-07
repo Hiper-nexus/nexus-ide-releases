@@ -8,6 +8,7 @@ import {
   REAL_MISSION_E2E_SQUAD_ID,
   productWizardReceiptChainSha256,
   realMissionE2EAcceptanceCriteria,
+  realMissionE2EAllowedHandoffSources,
   realMissionE2EAdvisorTier,
   realMissionE2EExpectedTaskChain,
   type RealMissionE2EAdvisorCli,
@@ -25,13 +26,10 @@ function memberSlug(agentRef: string): string {
 }
 
 function handoffSource(member: {
-  readonly kind: string;
+  readonly kind: "advisory" | "execution" | "review" | "quality-gate";
   readonly cli: string;
 }): "http-mcp" | "mission-shim" {
-  return member.kind === "execution" ||
-    (member.kind === "advisory" && member.cli === "agy")
-    ? "mission-shim"
-    : "http-mcp";
+  return realMissionE2EAllowedHandoffSources(member)[0];
 }
 
 export function validPassEvidence(

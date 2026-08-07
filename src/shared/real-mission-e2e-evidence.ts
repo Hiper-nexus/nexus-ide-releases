@@ -11,6 +11,7 @@ import {
   REAL_MISSION_E2E_REVIEWER_ID,
   REAL_MISSION_E2E_SQUAD_ID,
   realMissionE2EAcceptanceCriteria,
+  realMissionE2EAllowedHandoffSources,
   realMissionE2EAdvisorTier,
   realMissionE2EExpectedTaskChain,
 } from "./real-mission-e2e-contract";
@@ -561,11 +562,10 @@ export const realMissionE2EEvidenceSchema = z
           : null;
       const expectedFromAgent = substitute?.name ?? member.agentName;
       const expectedCli = substitute?.cli ?? member.cli;
-      const expectedSource =
-        member.kind === "execution" ||
-        (member.kind === "advisory" && expectedCli === "agy")
-          ? "mission-shim"
-          : "http-mcp";
+      const allowedSources = realMissionE2EAllowedHandoffSources({
+        kind: member.kind,
+        cli: expectedCli,
+      });
       return Boolean(
         physical &&
           audit &&
@@ -580,7 +580,7 @@ export const realMissionE2EEvidenceSchema = z
           physical.worktreeHeadIntegrated &&
           audit.invocationId === physical.toolCallId &&
           audit.toolName === physical.toolName &&
-          physical.source === expectedSource &&
+          allowedSources.some((source) => source === physical.source) &&
           audit.source === physical.source &&
           audit.missionId === physical.missionId &&
           audit.sessionId === physical.sessionId &&

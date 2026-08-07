@@ -483,6 +483,33 @@ export interface RealMissionE2EChainMember {
   readonly dependsOnPlannerIds: readonly string[];
 }
 
+export type RealMissionE2EHandoffSource = "http-mcp" | "mission-shim";
+
+const REAL_MISSION_E2E_SHIM_ONLY_SOURCES = Object.freeze([
+  "mission-shim",
+] as const);
+const REAL_MISSION_E2E_MCP_OR_SHIM_SOURCES = Object.freeze([
+  "http-mcp",
+  "mission-shim",
+] as const);
+
+/**
+ * Transportes físicos autenticados admitidos por membro do harness.
+ *
+ * O executor prova deliberadamente o caminho leve e o Agy depende dele. Os
+ * demais workers preferem MCP, mas todos recebem `nx-mail` como fallback
+ * Main-owned; rejeitar esse fallback faria a prova falhar justamente quando o
+ * produto degrada de forma correta. PTY nunca é evidência de release.
+ */
+export function realMissionE2EAllowedHandoffSources(
+  member: Pick<RealMissionE2EChainMember, "kind" | "cli">,
+): readonly RealMissionE2EHandoffSource[] {
+  return member.kind === "execution" ||
+    (member.kind === "advisory" && member.cli === "agy")
+    ? REAL_MISSION_E2E_SHIM_ONLY_SOURCES
+    : REAL_MISSION_E2E_MCP_OR_SHIM_SOURCES;
+}
+
 /**
  * DAG exato de tarefas para o conjunto de advisors presentes (não-skipped).
  * Os plannerIds reproduzem guidedFanoutPlannerId: advisors e executor não têm
