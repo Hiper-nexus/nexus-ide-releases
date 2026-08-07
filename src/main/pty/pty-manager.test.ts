@@ -1372,13 +1372,9 @@ describe("AGY advisory native profile", () => {
         const expectedHome = fs.realpathSync.native(nativeHome);
         expect(spec.file).toBe("/mock/bin/agy");
         expect(spec.args).toContain("--dangerously-skip-permissions");
-        expect(
-          spec.args.filter((arg) => arg === "--prompt-interactive"),
-        ).toHaveLength(1);
-        expect(
-          spec.args[spec.args.indexOf("--prompt-interactive") + 1],
-        ).toBe(initialPrompt);
-        expect(spec.args).not.toContain("--print");
+        expect(spec.args.filter((arg) => arg === "--print")).toHaveLength(1);
+        expect(spec.args[spec.args.indexOf("--print") + 1]).toBe(initialPrompt);
+        expect(spec.args).not.toContain("--prompt-interactive");
         expect(spec.args).not.toContain("/usr/bin/sandbox-exec");
         expect(spec.env.HOME).toBe(expectedHome);
         expect(spec.env.USERPROFILE).toBe(expectedHome);

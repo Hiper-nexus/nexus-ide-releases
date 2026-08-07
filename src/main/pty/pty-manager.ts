@@ -1188,6 +1188,8 @@ export function spawnAgentSession(
       if (
         args.some(
           (arg) =>
+            arg === "--print" ||
+            arg.startsWith("--print=") ||
             arg === "--prompt-interactive" ||
             arg.startsWith("--prompt-interactive="),
         )
@@ -1196,7 +1198,13 @@ export function spawnAgentSession(
           "AGY initial prompt conflicts with provider settings extraArgs",
         );
       }
-      args.push("--prompt-interactive", safeInitialPrompt);
+      // Mission workers are one-shot jobs. `--prompt-interactive` executes the
+      // first turn and then deliberately keeps the provider TUI alive; without
+      // an AGY-native Stop hook that left the mission waiting forever while
+      // terminal repaints kept echoing the fallback example. `--print` retains
+      // PTY output (and therefore the physical handoff parser) but exits after
+      // the governed task, so exit enforcement can also degrade explicitly.
+      args.push("--print", safeInitialPrompt);
     } else if (adapter.id === "claude") {
       // `claude [PROMPT]` abre o primeiro turno interativo já executando, sem
       // corrida com o editor da TUI fria — mesma forma do codex (linha ~1545).
