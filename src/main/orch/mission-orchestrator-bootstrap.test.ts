@@ -1845,6 +1845,68 @@ describe('initial main-owned orchestrator bootstrap', () => {
     expect(value.mission.orchestratorSessionId).toBe('pty-main-orch');
   });
 
+  it('recovers a sealed approved pending start after restart without early running authority', async () => {
+    const value = harness();
+    value.mission = {
+      ...value.mission,
+      status: 'pending',
+      intentState: 'ready_to_start',
+      intentContract: {
+        ...value.mission.intentContract!,
+        approvalReviewSha256: 'd'.repeat(64),
+        dispatchedAt: undefined,
+      },
+    };
+    const service = new MissionOrchestratorBootstrapService(value.deps);
+    const bootstrap = vi.fn((candidateScope, missionId) =>
+      service.bootstrap(candidateScope, missionId),
+    );
+    const recovery = new MissionOrchestratorBootstrapRecovery({
+      listScopes: () => [scope],
+      listBootstrapCandidates: () => [value.mission],
+      bootstrap,
+    });
+
+    const first = recovery.reconcile();
+    const second = recovery.reconcile();
+
+    expect(second).toBe(first);
+    await Promise.all([first, second]);
+    expect(bootstrap).toHaveBeenCalledOnce();
+    expect(bootstrap).toHaveBeenCalledWith(scope, value.mission.id);
+    expect(value.spawned).toHaveLength(1);
+    expect(value.mission).toMatchObject({
+      status: 'running',
+      intentState: 'executing',
+      orchestratorSessionId: 'pty-main-orch',
+    });
+  });
+
+  it('does not recover a non-approved pending start after restart', async () => {
+    const value = harness();
+    const pending: Mission = {
+      ...value.mission,
+      status: 'pending',
+      intentState: 'ready_to_start',
+      intentContract: {
+        ...value.mission.intentContract!,
+        approvedAt: undefined,
+        approvalReviewSha256: 'e'.repeat(64),
+        dispatchedAt: undefined,
+      },
+    };
+    const bootstrap = vi.fn();
+    const recovery = new MissionOrchestratorBootstrapRecovery({
+      listScopes: () => [scope],
+      listBootstrapCandidates: () => [pending],
+      bootstrap,
+    });
+
+    await recovery.reconcile();
+
+    expect(bootstrap).not.toHaveBeenCalled();
+  });
+
   it('auto-recovers a technical block without restarting an already recovered revision', async () => {
     const value = harness();
     const blocked: Mission = {

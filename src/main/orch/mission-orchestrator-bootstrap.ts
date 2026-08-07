@@ -155,6 +155,7 @@ const PLAN_PROMOTION_TEARDOWN_BLOCK_MARKER =
 const BOOTSTRAP_CTA = "Retomar missão";
 const BOOTSTRAP_AUTO_RETRY_CTA = "Recuperação automática";
 
+const SEALED_APPROVAL_REVIEW_SHA256_PATTERN = /^[a-f0-9]{64}$/;
 /** Main-owned session inventory shared by PTY and ACP mission transports. */
 function runtimeAgentSessionInfo(
   sessionId: string,
@@ -554,6 +555,16 @@ function isRetryableBootstrapResult(
     result.reason === "spawn_failed" ||
     result.reason === "materialization_failed" ||
     result.reason === "provider_exited"
+  );
+}
+function hasSealedPendingMissionStart(mission: Mission): boolean {
+  const reviewSha256 = mission.intentContract?.approvalReviewSha256;
+  return (
+    mission.status === "pending" &&
+    mission.intentState === "ready_to_start" &&
+    hasCurrentApprovedDispatchContract(mission) &&
+    typeof reviewSha256 === "string" &&
+    SEALED_APPROVAL_REVIEW_SHA256_PATTERN.test(reviewSha256)
   );
 }
 
@@ -2702,8 +2713,9 @@ export class MissionOrchestratorBootstrapRecovery {
           continue;
         }
         if (
-          mission.status !== "running" ||
-          !hasCurrentDispatchAuthority(mission)
+          !hasSealedPendingMissionStart(mission) &&
+          (mission.status !== "running" ||
+            !hasCurrentDispatchAuthority(mission))
         ) {
           continue;
         }
@@ -2942,10 +2954,13 @@ const productionRecovery = new MissionOrchestratorBootstrapRecovery({
         stores.missions.hasCurrentKickoffAcceptance(mission.id),
       );
     });
+    const pendingStarts = stores.missions
+      .list("pending")
+      .filter(hasSealedPendingMissionStart);
     const technicallyBlocked = stores.missions
       .list("blocked")
       .filter(hasAutomaticTechnicalRecovery);
-    return [...running, ...technicallyBlocked];
+    return [...running, ...pendingStarts, ...technicallyBlocked];
   },
   bootstrap: (scope, missionId) =>
     bootstrapMissionOrchestratorForScope(scope, missionId),
