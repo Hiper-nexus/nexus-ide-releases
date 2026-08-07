@@ -76,7 +76,11 @@ describe('search mixer bootstrap', () => {
     }).retain({
       content: '# Mission Checkout Clean\n\nProjection lives outside Git.',
       kind: 'fact',
-      source: 'agent-authored:mission:mission-clean',
+      // Forma real que tools-memory.defaultSource emite (e que
+      // agentAuthoredSourceSchema exige): sha256 da autoridade física do pane.
+      // O texto livre anterior nunca sairia da produção, e aceitá-lo era o que
+      // deixava qualquer `source` contendo `mission:` entrar nesta busca.
+      source: `agent-authored:mission:${'c1ea4'.repeat(12)}abcd`,
     });
 
     const result = await runSearchMixerQuery({

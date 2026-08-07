@@ -1,6 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
+import {
+  isMissionScopedSource,
+  isProjectableMissionId,
+  missionIdFromProjectionSource,
+} from '../../shared/mission-id';
 import { resolveSubdirUnderRoot } from '../security/scoped-workspace-fs';
 import { writeFileAtomic } from '../util/atomic-write';
 
@@ -102,19 +107,27 @@ function ensureProjectionRoot(root: string): void {
   }
 }
 
+/**
+ * kind='mission' É o filtro do provider de busca de missões. Promover por mero
+ * teste de substring sobre `source` deixava o chamador escolher em que missão a
+ * nota aparece; só a forma canônica de atribuição conta (ver mission-id).
+ */
 function projectionKind(
   input: CanonicalMemoryProjectionInput,
 ): MemoryNote['kind'] {
   if (input.kind === 'decision') return 'decision';
-  if (/(?:^|:)mission:/.test(input.source ?? '')) return 'mission';
+  if (isMissionScopedSource(input.source)) return 'mission';
   if (/(?:^|:)(?:agent|pane):/.test(input.source ?? '')) return 'agent';
   return 'note';
 }
 
+/**
+ * O antigo `/(?:^|:)mission:(.+)$/` devolvia o resto da string inteiro — `../x`
+ * incluído — para um campo que a projeção de missão usa como identidade (e como
+ * nome de arquivo). O charset é conferido antes de o id sair daqui.
+ */
 function projectionMissionId(source: string | null): string | undefined {
-  if (!source) return undefined;
-  const match = /(?:^|:)mission:(.+)$/.exec(source);
-  return match?.[1]?.slice(0, 128);
+  return missionIdFromProjectionSource(source);
 }
 
 export function projectionTitle(content: string, id: string): string {
@@ -252,18 +265,26 @@ export function parseFrontmatter(raw: string): ProjectionFrontmatter {
     kindRaw && MEMORY_KINDS.has(kindRaw)
       ? (kindRaw as MemoryNote['kind'])
       : 'note';
-  const missionRaw =
-    /^missionId:\s*(.+)$/m.exec(block)?.[1]?.trim() || undefined;
-  const missionId =
-    missionRaw && missionRaw !== '""'
-      ? missionRaw.replace(/^"|"$/g, '')
-      : undefined;
+  // A identidade lida do frontmatter passa pelo mesmo charset da escrita: um
+  // arquivo plantado satisfaz id == nome do arquivo e ainda declara o resto
+  // livremente, e este campo é justamente o que a projeção de missão usa como
+  // identidade (e como nome de arquivo). Só a forma citada que o escritor emite
+  // conta: `missionId: null` sem aspas não é o id "null", é ausência de valor.
+  //
+  // `kind` fica como declarado de propósito — nota de missão escrita por agente
+  // é legitimamente kind=mission SEM mission id (a provenance carrega
+  // autoridade de sessão, não identidade de missão). Quem autentica o arquivo
+  // é o marcador canônico + id == nome, e quem varre impostor é o reaper.
+  const missionQuoted = /^missionId:\s*"([^"]*)"\s*$/m.exec(block)?.[1];
+  const missionId = isProjectableMissionId(missionQuoted)
+    ? missionQuoted
+    : undefined;
   const idFromFm = /^id:\s*(\S+)/m.exec(block)?.[1]?.trim();
   const canonical = /^canonical:\s*(\S+)/m.exec(block)?.[1]?.trim();
   const updatedRaw = /^updatedAt:\s*(\d{1,15})\s*$/m.exec(block)?.[1];
   return {
     kind,
-    missionId: missionId || undefined,
+    missionId,
     idFromFm,
     canonical,
     ...(updatedRaw ? { updatedAt: Number(updatedRaw) } : {}),

@@ -112,7 +112,10 @@ describe('nexus memory', () => {
       kind: 'fact',
       scope: 'workspace',
       importance: 4,
-      source: 'mission:m1',
+      // Forma canônica de atribuição. Antes bastava um `source` CONTENDO
+      // `mission:` para a nota entrar na busca de missões — o chamador escolhia
+      // sozinho a que missão pertencia (ver mission-id).
+      source: 'operator:mission:m1',
       createdAt: 3,
       updatedAt: 4,
     });

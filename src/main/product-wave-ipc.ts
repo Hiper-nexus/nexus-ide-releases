@@ -9,6 +9,12 @@ import { z } from 'zod';
 import { PRODUCT_WAVE_CHANNELS } from '../shared/channels';
 import { FEATURE_FLAG_IDS } from '../shared/feature-flags';
 import {
+  assertProjectableMissionId,
+  authorizedMissionId,
+  missionProjectionSource,
+} from '../shared/mission-id';
+import type { ProjectExecutionScope } from '../shared/types';
+import {
   MCP_HUB_SYNC_EXPORT_TOOL_ENUM,
   MCP_HUB_SYNC_EXPORT_TOOLS,
 } from '../shared/mcp-hub-sync-api';
@@ -80,6 +86,66 @@ export { PRODUCT_WAVE_CHANNELS };
 
 function workspaceRoot(sender: Electron.WebContents): string {
   return requireScopedRoot(sender).root;
+}
+
+type MissionExistsInScope = (
+  scope: ProjectExecutionScope,
+  missionId: string,
+) => boolean;
+
+let missionLookup: Promise<MissionExistsInScope> | null = null;
+
+/**
+ * O registry de stores por projeto arrasta o grafo inteiro do orquestrador.
+ * Importá-lo estaticamente aqui atrasaria o boot do main e quebraria a
+ * hermeticidade dos testes deste módulo, então ele entra sob demanda — só
+ * quando alguma nota ou decisão realmente reivindica uma missão.
+ */
+function loadMissionLookup(): Promise<MissionExistsInScope> {
+  missionLookup ??= import('./orch/project-domain-store-registry').then(
+    (mod) =>
+      (scope: ProjectExecutionScope, missionId: string): boolean =>
+        Boolean(mod.getProjectDomainStores(scope).missions.get(missionId)),
+  );
+  return missionLookup;
+}
+
+/**
+ * `missionId` chega como texto do renderer. Ele pode NOMEAR uma missão, nunca
+ * provar que ela existe: a prova sai do store do escopo autorizado do sender —
+ * mesmo modelo que memory-ipc.ts documenta para o escopo. O charset é conferido
+ * antes do lookup, então texto não validado não chega ao store nem vira path.
+ * Exportado para teste direto: o caminho não depende de ipcMain.
+ */
+export async function authorizedMissionAttribution(
+  scope: ProjectExecutionScope,
+  claimed: string | undefined,
+): Promise<string | undefined> {
+  if (claimed === undefined) return undefined;
+  const missionId = assertProjectableMissionId(claimed);
+  const missionExists = await loadMissionLookup();
+  return authorizedMissionId(missionId, (id) => missionExists(scope, id));
+}
+
+/**
+ * O `source` da nota decide a que missão ela pertence e se ela entra na busca
+ * de missões — logo é derivado aqui, do kind e de um id JÁ autorizado, nunca
+ * montado com o que o renderer mandou. `operator:mission:manual` era uma missão
+ * inexistente que ainda assim promovia a nota a kind=mission.
+ */
+export function operatorMemorySource(
+  kind: 'decision' | 'mission' | 'agent' | 'note',
+  authorizedMission: string | undefined,
+): string {
+  if (kind !== 'mission') {
+    return kind === 'agent' ? 'operator:agent:manual' : 'operator:note';
+  }
+  if (authorizedMission === undefined) {
+    throw new Error(
+      'mission_id_required: a mission note must name a mission of this workspace',
+    );
+  }
+  return missionProjectionSource(authorizedMission);
 }
 
 function canonicalMemoryView(sender: Electron.WebContents) {
@@ -351,7 +417,7 @@ export function registerProductWaveIpc(): void {
     return listMemoryNotes(root);
   });
 
-  ipcMain.handle(PRODUCT_WAVE_CHANNELS.memoryRemember, (event, raw) => {
+  ipcMain.handle(PRODUCT_WAVE_CHANNELS.memoryRemember, async (event, raw) => {
     requireFlag(FEATURE_FLAG_IDS.nexusMemory, 'feature.memory.nexusMemory');
     const { scope, root, store } = canonicalMemoryView(event.sender);
     const input = z
@@ -364,24 +430,25 @@ export function registerProductWaveIpc(): void {
       .strict()
       .parse(raw);
     const kind = input.kind ?? 'note';
+    // A missão que a nota reivindica é provada contra o escopo do sender antes
+    // de virar `source` (e, adiante, nome de arquivo de projeção).
+    const missionId = await authorizedMissionAttribution(
+      scope,
+      input.missionId,
+    );
     const retained =
       kind === 'decision'
         ? retainTrustedMemory(scope, {
             type: 'operator-decision',
             title: input.title,
             summary: input.body || input.title,
-            ...(input.missionId ? { missionId: input.missionId } : {}),
+            ...(missionId ? { missionId } : {}),
           })
         : store.retain({
             content: `# ${input.title}\n\n${input.body || input.title}`,
             kind: kind === 'mission' ? 'fact' : 'note',
             importance: kind === 'mission' ? 4 : 3,
-            source:
-              kind === 'mission'
-                ? `operator:mission:${input.missionId ?? 'manual'}`
-                : kind === 'agent'
-                  ? 'operator:agent:manual'
-                  : 'operator:note',
+            source: operatorMemorySource(kind, missionId),
           });
     const note = listMemoryNotes(root).find(
       (candidate) => candidate.id === retained.id,
@@ -571,9 +638,9 @@ export function registerProductWaveIpc(): void {
     });
   });
 
-  ipcMain.handle(PRODUCT_WAVE_CHANNELS.autonomyDecide, (event, raw) => {
+  ipcMain.handle(PRODUCT_WAVE_CHANNELS.autonomyDecide, async (event, raw) => {
     requireFlag(FEATURE_FLAG_IDS.autonomyProfiles, 'feature.autonomy.profiles');
-    const root = workspaceRoot(event.sender);
+    const { scope, root } = requireScopedRoot(event.sender);
     const input = z
       .object({
         profile: autonomyProfileSchema,
@@ -584,9 +651,12 @@ export function registerProductWaveIpc(): void {
       })
       .parse(raw);
     // Renderer input cannot claim another workspace or self-attest worktree
-    // isolation. The production effect gate must derive both in main.
+    // isolation. The production effect gate must derive both in main. The same
+    // holds for the mission the decision is filed under: the audit record must
+    // not attribute this decision to a mission the sender cannot prove.
     return decideAutonomy({
       ...input,
+      missionId: await authorizedMissionAttribution(scope, input.missionId),
       scope: root,
       inIsolatedWorktree: false,
     });
