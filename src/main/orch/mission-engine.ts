@@ -11,6 +11,10 @@ import {
   type MissionSummarySnapshot,
 } from '../../shared/mission-engine-contract';
 import {
+  missionIntentStateSchema,
+} from '../../shared/mission-intent';
+import { missionStatusSchema } from '../../shared/orch-types';
+import {
   projectExecutionScopeSchema,
   type ProjectExecutionScope,
 } from '../../shared/types';
@@ -60,11 +64,35 @@ const rootRelativeContextPathsSchema = z
 const missionSnapshotViewListSchema = z
   .array(projectMissionSnapshotViewSchema)
   .max(10_000);
+const missionLifecycleFenceSchema = z
+  .object({
+    missionId: missionIdSchema,
+    expectedStatus: missionStatusSchema,
+    expectedIntentState: missionIntentStateSchema,
+    expectedUpdatedAt: z.number().int().nonnegative(),
+    expectedIntentVersion: z.number().int().nonnegative(),
+  })
+  .strict();
+const missionBlockInputSchema = missionLifecycleFenceSchema
+  .extend({
+    description: z.string().min(1).max(65_536),
+  })
+  .strict();
+const missionVerifiedCompletionInputSchema = missionLifecycleFenceSchema
+  .extend({
+    learnings: z.string().max(65_536),
+  })
+  .strict();
 
 export type MissionArmResult = z.infer<typeof missionArmResultSchema>;
 export type MissionCompilation = z.infer<typeof missionCompilationSchema>;
 export type MissionReviewFence = z.infer<typeof missionReviewFenceSchema>;
 export type MissionStartInput = z.infer<typeof missionStartInputSchema>;
+export type MissionBlockInput = z.infer<typeof missionBlockInputSchema>;
+export type MissionVerifiedCompletionInput = z.infer<
+  typeof missionVerifiedCompletionInputSchema
+>;
+export type MissionTechnicalResumeInput = MissionBlockInput;
 
 type RetryKickoffCommand = Extract<
   MissionEngineCommand,
@@ -100,6 +128,22 @@ export interface MissionEngine {
     scope: ProjectExecutionScope,
     command: MissionEngineCommand,
   ): Promise<MissionSnapshot>;
+  blockUser(
+    scope: ProjectExecutionScope,
+    input: MissionBlockInput,
+  ): void;
+  blockTechnical(
+    scope: ProjectExecutionScope,
+    input: MissionBlockInput,
+  ): void;
+  resumeTechnical(
+    scope: ProjectExecutionScope,
+    input: MissionTechnicalResumeInput,
+  ): void;
+  completeVerified(
+    scope: ProjectExecutionScope,
+    input: MissionVerifiedCompletionInput,
+  ): void;
   snapshot(
     scope: ProjectExecutionScope,
     missionId: string,
@@ -126,6 +170,10 @@ export interface MainMissionEnginePorts {
   readonly stop: (command: StopCommand) => Promise<void>;
   readonly direct: (command: DirectCommand) => Promise<void>;
   readonly answerQuestion: (command: AnswerQuestionCommand) => Promise<void>;
+  readonly blockUser: (input: MissionBlockInput) => void;
+  readonly resumeTechnical: (input: MissionTechnicalResumeInput) => void;
+  readonly blockTechnical: (input: MissionBlockInput) => void;
+  readonly completeVerified: (input: MissionVerifiedCompletionInput) => void;
   readonly readSnapshotView: (
     missionId: string,
   ) => Promise<ProjectMissionSnapshotView>;
@@ -144,6 +192,10 @@ const REQUIRED_PORTS = [
   'stop',
   'direct',
   'answerQuestion',
+  'blockUser',
+  'blockTechnical',
+  'resumeTechnical',
+  'completeVerified',
   'readSnapshotView',
   'listSnapshotViews',
 ] as const satisfies readonly (keyof MainMissionEnginePorts)[];
@@ -296,6 +348,34 @@ export class MainMissionEngine implements MissionEngine {
     }
 
     return this.#readFreshSnapshot(parsed.missionId);
+  }
+
+  blockUser(scope: ProjectExecutionScope, input: MissionBlockInput): void {
+    this.#assertScope(scope);
+    this.#ports.blockUser(missionBlockInputSchema.parse(input));
+  }
+
+  blockTechnical(scope: ProjectExecutionScope, input: MissionBlockInput): void {
+    this.#assertScope(scope);
+    this.#ports.blockTechnical(missionBlockInputSchema.parse(input));
+  }
+
+  resumeTechnical(
+    scope: ProjectExecutionScope,
+    input: MissionTechnicalResumeInput,
+  ): void {
+    this.#assertScope(scope);
+    this.#ports.resumeTechnical(missionBlockInputSchema.parse(input));
+  }
+
+  completeVerified(
+    scope: ProjectExecutionScope,
+    input: MissionVerifiedCompletionInput,
+  ): void {
+    this.#assertScope(scope);
+    this.#ports.completeVerified(
+      missionVerifiedCompletionInputSchema.parse(input),
+    );
   }
 
   async snapshot(

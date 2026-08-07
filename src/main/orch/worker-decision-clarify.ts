@@ -10,8 +10,8 @@ import { getProjectDomainStores } from "./project-domain-store-registry";
 import type { ScopedStoreBinding } from "./scoped-store";
 
 /**
- * Best-effort: mission must already be blocked_user with an orchestrator
- * session. Failures are swallowed by the caller — the block itself is durable.
+ * Persist the operator question while the mission still owns live execution
+ * authority. The caller may block only after this succeeds.
  */
 export function emitWorkerDecisionClarify(
   binding: ScopedStoreBinding,
@@ -34,13 +34,10 @@ export function emitWorkerDecisionClarify(
       }
     | undefined;
   if (!missionRow?.orch_session_id) return null;
-  // Prefer writing while still running (handoff submit requires it). Also
-  // accept blocked_user if a retry path re-opens the question later.
   if (
-    missionRow.status !== "running" &&
-    !(
-      missionRow.status === "blocked" &&
-      missionRow.intent_state === "blocked_user"
+    missionRow.status !== "running" ||
+    !["dispatched", "executing", "validating"].includes(
+      missionRow.intent_state ?? "",
     )
   ) {
     return null;

@@ -10,6 +10,8 @@ import { createScopedHandoffStore } from "./handoff-store";
 import { createScopedMissionStore } from "./mission-store";
 import { createTaskDispatchStore } from "./task-dispatch-store";
 import { createScopedTaskStore } from "./task-store";
+import { completeBlockedTaskDispatchHandoffPostCommit } from "./task-dispatch-handoff-authority";
+import { ScopedStoreBinding } from "./scoped-store";
 
 let baseDir = "";
 const managers: ProjectRuntimeManager[] = [];
@@ -24,7 +26,34 @@ function createRunningFixture() {
   const missions = createScopedMissionStore(runtime, scope);
   const tasks = createScopedTaskStore(runtime, scope);
   const handoffs = createScopedHandoffStore(runtime, scope);
-  const dispatches = createTaskDispatchStore(runtime, scope);
+  const dispatches = createTaskDispatchStore(runtime, scope, {
+    missionEngine: {
+      blockUser: (_scope, input) => {
+        const updated = missions.transitionLifecycle(
+          input.missionId,
+          {
+            updatedAt: input.expectedUpdatedAt,
+            intentVersion: input.expectedIntentVersion,
+          },
+          {
+            status: "blocked",
+            intentState: "blocked_user",
+            description: input.description,
+          },
+        );
+        if (!updated) throw new Error("mission engine lifecycle CAS changed");
+      },
+      blockTechnical: () => {
+        throw new Error("unexpected technical block");
+      },
+      resumeTechnical: () => {
+        throw new Error("unexpected technical resume");
+      },
+      completeVerified: () => {
+        throw new Error("unexpected verified completion");
+      },
+    },
+  });
   const contract = {
     ...compileIntentContract({
       goal: "Provar autoridade física também no bloqueio",
@@ -273,4 +302,33 @@ describe("task dispatch physical handoff authority", () => {
       }),
     ).toThrow(/requires status success/i);
   });
+  it("emits the clarify while the mission is live before delegating the user block", () => {
+    const fixture = createRunningFixture();
+    const dispatch = fixture.dispatches.get(fixture.task.id);
+    if (!dispatch) throw new Error("fixture dispatch missing");
+    const calls: string[] = [];
+
+    completeBlockedTaskDispatchHandoffPostCommit(
+      new ScopedStoreBinding(fixture.runtime, fixture.scope),
+      dispatch,
+      "A política exige uma decisão do operador.",
+      {
+        emitClarify: () => {
+          expect(fixture.missions.get(fixture.mission.id)?.status).toBe("running");
+          calls.push("clarify");
+          return { questionId: "question-worker-decision" };
+        },
+        missionEngine: {
+          blockUser: (_scope, input) => {
+            expect(input.missionId).toBe(fixture.mission.id);
+            expect(fixture.missions.get(fixture.mission.id)?.status).toBe("running");
+            calls.push("block-user");
+          },
+        },
+      },
+    );
+
+    expect(calls).toEqual(["clarify", "block-user"]);
+  });
+
 });

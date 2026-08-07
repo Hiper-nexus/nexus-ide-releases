@@ -1,3 +1,9 @@
+import {
+  missionIntentStateSchema,
+} from "../../shared/mission-intent";
+import { missionStatusSchema } from "../../shared/orch-types";
+import type { ProjectExecutionScope } from "../../shared/types";
+import type { MissionEngine } from "./mission-engine";
 import type { ScopedStoreBinding } from "./scoped-store";
 import type { ScopeCoordinates } from "./scoped-store";
 import { inferWorkerDecisionGuidance } from "../../shared/worker-decision-guidance";
@@ -46,6 +52,26 @@ function taskDispatchMissionBlock(
     TASK_DISPATCH_RESUME_CTA
   );
 }
+export function taskDispatchTechnicalResumeDescription(
+  description: string,
+  detail: string,
+): string {
+  const suffix = taskDispatchMissionBlock(detail);
+  if (!description.endsWith(suffix)) {
+    throw new Error(
+      "retry técnico não corresponde ao bloco canônico atual da missão",
+    );
+  }
+  let resumedDescription = description;
+  do {
+    const prefix = resumedDescription.slice(0, -suffix.length);
+    resumedDescription = prefix.endsWith("\n\n")
+      ? prefix.slice(0, -2)
+      : prefix;
+  } while (resumedDescription.endsWith(suffix));
+  return resumedDescription;
+}
+
 
 /**
  * Removes the exact technical block appended for this dispatch attempt,
@@ -57,14 +83,23 @@ export function resumeTaskDispatchMissionAfterTechnicalFailure(
   db: TaskDispatchDatabase,
   missionId: string,
   detail: string | null,
-  now: number,
+  _now: number,
+  engine: Pick<MissionEngine, "resumeTechnical">,
+  scope: ProjectExecutionScope,
 ): void {
   const row = db
     .prepare(
-      `SELECT status, intent_state, description FROM missions WHERE id = ?`,
+      `SELECT status, intent_state, description, updated_at, intent_version
+       FROM missions WHERE id = ?`,
     )
     .get(missionId) as
-    | { status: string; intent_state: string | null; description: string }
+    | {
+        status: string;
+        intent_state: string | null;
+        description: string;
+        updated_at: number;
+        intent_version: number;
+      }
     | undefined;
   if (!row) {
     throw new Error(`missão não encontrada para retry técnico: ${missionId}`);
@@ -79,31 +114,18 @@ export function resumeTaskDispatchMissionAfterTechnicalFailure(
       "retry técnico não possui autoridade para reabrir esta missão",
     );
   }
-  const suffix = taskDispatchMissionBlock(detail);
-  if (!row.description.endsWith(suffix)) {
-    throw new Error(
-      "retry técnico não corresponde ao bloco canônico atual da missão",
-    );
-  }
-  let description = row.description;
-  do {
-    const prefix = description.slice(0, -suffix.length);
-    description = prefix.endsWith("\n\n")
-      ? prefix.slice(0, -2)
-      : prefix;
-  } while (description.endsWith(suffix));
-  const updated = db
-    .prepare(
-      `UPDATE missions
-          SET status = 'running', intent_state = 'executing',
-              description = ?, updated_at = ?
-        WHERE id = ? AND status = 'blocked'
-          AND intent_state = 'blocked_technical' AND description = ?`,
-    )
-    .run(description, now, missionId, row.description);
-  if (updated.changes !== 1) {
-    throw new Error("retry técnico perdeu CAS ao reabrir a missão");
-  }
+  const description = taskDispatchTechnicalResumeDescription(
+    row.description,
+    detail,
+  );
+  engine.resumeTechnical(scope, {
+    missionId,
+    expectedStatus: "blocked",
+    expectedIntentState: "blocked_technical",
+    expectedUpdatedAt: row.updated_at,
+    expectedIntentVersion: row.intent_version,
+    description,
+  });
 }
 
 /**
@@ -164,54 +186,80 @@ export function blockTaskDispatchMission(
   missionId: string,
   detail: string,
   now: number,
+  kind: "user",
+  engine: Pick<MissionEngine, "blockUser">,
+  scope: ProjectExecutionScope,
+): void;
+export function blockTaskDispatchMission(
+  db: TaskDispatchDatabase,
+  missionId: string,
+  detail: string,
+  now: number,
+  kind: "technical",
+  engine: Pick<MissionEngine, "blockTechnical">,
+  scope: ProjectExecutionScope,
+): void;
+export function blockTaskDispatchMission(
+  db: TaskDispatchDatabase,
+  missionId: string,
+  detail: string,
+  _now: number,
   /**
    * `technical` = spawn/lease/runtime fence (auto-recovery eligible path).
    * `user` = worker chose status=blocked (governance, product fork) — stay on
    * the pane, ask the operator, never paint as technical failure.
    */
-  kind: "technical" | "user" = "technical",
+  kind: "technical" | "user",
+  engine:
+    | Pick<MissionEngine, "blockUser">
+    | Pick<MissionEngine, "blockTechnical">,
+  scope: ProjectExecutionScope,
 ): void {
   const row = db
     .prepare(
-      `SELECT status, intent_state, description FROM missions WHERE id = ?`,
+      `SELECT status, intent_state, description, updated_at, intent_version
+       FROM missions WHERE id = ?`,
     )
     .get(missionId) as
-    | { status: string; intent_state: string | null; description: string }
+    | {
+        status: string;
+        intent_state: string | null;
+        description: string;
+        updated_at: number;
+        intent_version: number;
+      }
     | undefined;
-  if (!row)
+  if (!row) {
     throw new Error(`missão não encontrada para bloqueio: ${missionId}`);
+  }
   const cta = taskDispatchMissionBlock(detail, kind);
-  // Mission descriptions contain operator-authored text. Never treat a marker
-  // merely present in that text as durable state: on the running→blocked
-  // transition we must append our own complete suffix. Idempotency is allowed
-  // only after the mission is already blocked by the exact same canonical
-  // suffix.
-  const alreadyBlockedByThisReason =
-    row.status === "blocked" && row.description.endsWith(cta);
-  const description = alreadyBlockedByThisReason
-    ? row.description
-    : (row.description.trim() ? `${row.description}\n\n${cta}` : cta).slice(
-        0,
-        65_536,
+  if (row.status === "blocked" && row.description.endsWith(cta)) return;
+  const description = (
+    row.description.trim() ? `${row.description}\n\n${cta}` : cta
+  ).slice(0, 65_536);
+  const input = {
+    missionId,
+    expectedStatus: missionStatusSchema.parse(row.status),
+    expectedIntentState: missionIntentStateSchema.parse(
+      row.intent_state ?? "legacy",
+    ),
+    expectedUpdatedAt: row.updated_at,
+    expectedIntentVersion: row.intent_version,
+    description,
+  };
+  if (kind === "user") {
+    if (!("blockUser" in engine)) {
+      throw new TypeError("user block requires MissionEngine.blockUser");
+    }
+    engine.blockUser(scope, input);
+  } else {
+    if (!("blockTechnical" in engine)) {
+      throw new TypeError(
+        "technical block requires MissionEngine.blockTechnical",
       );
-  // Field trap (28/07): this raw UPDATE set status='blocked' and left
-  // intent_state untouched, so every dispatch block produced the inconsistent
-  // pair `blocked` + `dispatched|executing|validating`. MissionStore.update()
-  // normalizes that pair, but this SQL bypasses it, and #fromRow returns the
-  // raw column — so guards reading `mission.intentState` saw `dispatched`
-  // while `resolveEffectiveIntentState` projected `blocked_user`. That split
-  // between projection and column is what wedged missions with no exit.
-  //
-  // Technical dispatch failures (worktree, merge, expired lease, session exit)
-  // use blocked_technical. Worker-authored blocked handoffs use blocked_user
-  // so pet/toast say "precisa de você" instead of "falha técnica".
-  const intentState =
-    kind === "user" ? "blocked_user" : "blocked_technical";
-  db.prepare(
-    `UPDATE missions
-        SET status = 'blocked', intent_state = ?, description = ?, updated_at = ?
-      WHERE id = ?`,
-  ).run(intentState, description, now, missionId);
+    }
+    engine.blockTechnical(scope, input);
+  }
 }
 
 /**

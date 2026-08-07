@@ -1,4 +1,3 @@
-import type { MissionStatus } from '../../shared/orch-types';
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { DriveAction } from './mission-drive';
 
@@ -17,7 +16,7 @@ export interface ApplySnapshot {
  *
  * Invariants:
  *  - signal-stall never kills a worker (handoff-style signal only)
- *  - advance/complete require trusted-evidence gate (never agent self-declare)
+ *  - advance requires trusted-evidence gate (never agent self-declare)
  *  - fail-closed: rejected advance leaves step non-done
  */
 
@@ -46,11 +45,6 @@ export interface ApplyActionPorts {
     scope: ProjectExecutionScope,
     stepId: string,
   ): void | Promise<void>;
-  setMissionStatus(
-    missionId: string,
-    scope: ProjectExecutionScope,
-    status: MissionStatus,
-  ): void | Promise<void>;
   /**
    * Human-side stop WITH a durable, operator-readable verdict in the mission
    * description. Never a silent `{status:'blocked'}` — the rail must be able
@@ -60,14 +54,6 @@ export interface ApplyActionPorts {
     missionId: string,
     scope: ProjectExecutionScope,
     reason: string,
-  ): void | Promise<void>;
-  /**
-   * Complete mission only when all steps are done via trusted evidence path.
-   * Must reject otherwise (never flip status from text promise).
-   */
-  completeMission(
-    missionId: string,
-    scope: ProjectExecutionScope,
   ): void | Promise<void>;
   appendLearning(
     missionId: string,
@@ -118,8 +104,5 @@ export async function applyDriveAction(
         `block-human: ${action.reason}`,
       );
       return { applied: true, kind: 'block-human' };
-    case 'complete':
-      await ports.completeMission(missionId, scope);
-      return { applied: true, kind: 'complete' };
   }
 }

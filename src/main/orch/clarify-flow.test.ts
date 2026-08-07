@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AgentGateContext } from './gate';
 import type { Handoff, Mission } from '../../shared/orch-types';
+import type { MissionSnapshot } from '../../shared/mission-engine-contract';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { buildClarify } from '../../shared/clarify';
 import { compileIntentContract } from '../../shared/mission-intent';
@@ -18,6 +19,23 @@ const scope: ProjectExecutionScope = {
   rootRealPath: '/workspace/a',
   identitySource: 'manifest',
 };
+
+function runningSnapshot(missionId = 'mission-a'): MissionSnapshot {
+  return {
+    id: missionId,
+    title: `Missão ${missionId}`,
+    objective: `Executar ${missionId}`,
+    workspaceLabel: 'project-a/checkout-a',
+    state: 'running',
+    progress: { completed: 0, total: 0 },
+    agents: [],
+    edges: [],
+    units: [],
+    allowedActions: ['stop'],
+    version: 1,
+    updatedAt: 1,
+  };
+}
 
 function mission(
   id = 'mission-a',
@@ -146,6 +164,7 @@ function storesFixture(missions: Mission[]) {
     });
     return true;
   });
+  const command = vi.fn(async () => runningSnapshot());
   return {
     rows,
     stores: {
@@ -165,10 +184,11 @@ function storesFixture(missions: Mission[]) {
     submitOperatorConfirmed,
     markSubmitted,
     markConsumed,
+    missionEngine: { command },
   };
 }
 
-function submitConfirmedAnswer(
+async function submitConfirmedAnswer(
   fixture: ReturnType<typeof storesFixture>,
   input: { missionId: string; questionId: string; answer: string },
   deliver?: (handoff: Handoff, answerScope: ProjectExecutionScope) => unknown,
@@ -184,6 +204,7 @@ function submitConfirmedAnswer(
     input,
     candidate.fence,
     deliver,
+    fixture.missionEngine,
   );
 }
 
@@ -266,7 +287,7 @@ describe('durable clarify flow', () => {
     expect(fixture.submit).not.toHaveBeenCalled();
   });
 
-  it('persists the answer once, consumes the exact question and invokes accepted delivery', () => {
+  it('persists the answer once, consumes the exact question and invokes accepted delivery', async () => {
     const fixture = storesFixture([mission()]);
     const question = persistClarifyQuestion(
       fixture.stores,
@@ -297,7 +318,7 @@ describe('durable clarify flow', () => {
       authorityOrigin: 'agent',
     });
 
-    const result = submitConfirmedAnswer(
+    const result = await submitConfirmedAnswer(
       fixture,
       {
         missionId: 'mission-a',
@@ -306,7 +327,7 @@ describe('durable clarify flow', () => {
       },
       deliver,
     );
-    const repeated = submitConfirmedAnswer(
+    const repeated = await submitConfirmedAnswer(
       fixture,
       {
         missionId: 'mission-a',
@@ -352,7 +373,76 @@ describe('durable clarify flow', () => {
     );
   });
 
-  it('fails closed for another mission and for an unmatched strict answer', () => {
+  it('consumes a blocked answer once and unparks it through the engine command', async () => {
+    const blocked = mission('mission-a', {
+      status: 'blocked',
+      intentState: 'blocked_user',
+    });
+    const fixture = storesFixture([blocked]);
+    const question = persistClarifyQuestion(
+      fixture.stores,
+      context(),
+      buildClarify({
+        question: 'Qual caminho devemos seguir?',
+        options: ['A', 'B'],
+        allowFreeform: false,
+      }),
+    );
+    const input = {
+      missionId: blocked.id,
+      questionId: question.questionId,
+      answer: 'opt-1',
+    };
+    const command = vi.fn(async () => {
+      blocked.status = 'running';
+      blocked.intentState = 'executing';
+      return runningSnapshot(blocked.id);
+    });
+    const deliver = vi.fn();
+    const first = prepareClarifyAnswerAuthorityCandidate(
+      fixture.stores,
+      scope,
+      input,
+    );
+
+    await persistClarifyAnswer(
+      fixture.stores,
+      scope,
+      input,
+      first.fence,
+      deliver,
+      { command },
+    );
+    const replay = prepareClarifyAnswerAuthorityCandidate(
+      fixture.stores,
+      scope,
+      input,
+    );
+    await persistClarifyAnswer(
+      fixture.stores,
+      scope,
+      input,
+      replay.fence,
+      deliver,
+      { command },
+    );
+
+    expect(blocked).toMatchObject({
+      status: 'running',
+      intentState: 'executing',
+    });
+    expect(fixture.submitOperatorConfirmed).toHaveBeenCalledOnce();
+    expect(fixture.markConsumed).toHaveBeenCalledOnce();
+    expect(command).toHaveBeenCalledOnce();
+    expect(command).toHaveBeenCalledWith(scope, {
+      kind: 'answer-question',
+      missionId: blocked.id,
+      questionId: question.questionId,
+      optionId: 'opt-1',
+    });
+  });
+
+  it('fails closed for another mission and for an unmatched strict answer', async () => {
     const fixture = storesFixture([mission(), mission('mission-b')]);
     const question = persistClarifyQuestion(
       fixture.stores,
@@ -364,24 +454,24 @@ describe('durable clarify flow', () => {
       }),
     );
 
-    expect(() =>
+    await expect(
       persistClarifyAnswer(fixture.stores, scope, {
         missionId: 'mission-b',
         questionId: question.questionId,
         answer: 'opt-1',
-      }, '0'.repeat(64)),
-    ).toThrow(/outra missão|não pertence/i);
-    expect(() =>
+      }, '0'.repeat(64), undefined, fixture.missionEngine),
+    ).rejects.toThrow(/outra missão|não pertence/i);
+    await expect(
       persistClarifyAnswer(fixture.stores, scope, {
         missionId: 'mission-a',
         questionId: question.questionId,
         answer: 'MongoDB',
-      }, '0'.repeat(64)),
-    ).toThrow(/escolha uma das opções/i);
+      }, '0'.repeat(64), undefined, fixture.missionEngine),
+    ).rejects.toThrow(/escolha uma das opções/i);
     expect(fixture.submit).toHaveBeenCalledTimes(1);
   });
 
-  it('recusa drift da missão entre o modal nativo e a persistência', () => {
+  it('recusa drift da missão entre o modal nativo e a persistência', async () => {
     const current = mission();
     const fixture = storesFixture([current]);
     const question = persistClarifyQuestion(
@@ -401,18 +491,20 @@ describe('durable clarify flow', () => {
     );
     current.title = 'Título alterado durante o modal';
 
-    expect(() =>
+    await expect(
       persistClarifyAnswer(
         fixture.stores,
         scope,
         input,
         candidate.fence,
+        undefined,
+        fixture.missionEngine,
       ),
-    ).toThrow(/mudou durante a confirmação/i);
+    ).rejects.toThrow(/mudou durante a confirmação/i);
     expect(fixture.submitOperatorConfirmed).not.toHaveBeenCalled();
   });
 
-  it('cannot answer a question through another workspace store or a stale orchestrator', () => {
+  it('cannot answer a question through another workspace store or a stale orchestrator', async () => {
     const workspaceA = storesFixture([mission()]);
     const workspaceB = storesFixture([mission()]);
     const clarify = buildClarify({
@@ -425,7 +517,7 @@ describe('durable clarify flow', () => {
       clarify,
     );
 
-    expect(() =>
+    await expect(
       persistClarifyAnswer(workspaceB.stores, {
         ...scope,
         projectId: 'project-b',
@@ -435,8 +527,8 @@ describe('durable clarify flow', () => {
         missionId: 'mission-a',
         questionId: question.questionId,
         answer: 'opt-1',
-      }, '0'.repeat(64)),
-    ).toThrow(/não existe neste workspace/i);
+      }, '0'.repeat(64), undefined, workspaceB.missionEngine),
+    ).rejects.toThrow(/não existe neste workspace/i);
     expect(() =>
       persistClarifyQuestion(
         workspaceA.stores,

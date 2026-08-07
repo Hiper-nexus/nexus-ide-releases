@@ -13,11 +13,16 @@ import {
   type DurableClarifyQuestion,
 } from '../../shared/clarify';
 import type { Handoff, Mission } from '../../shared/orch-types';
-import { hasCurrentDispatchAuthority } from '../../shared/mission-intent';
+import {
+  hasCurrentApprovedDispatchContract,
+  hasCurrentDispatchAuthority,
+} from '../../shared/mission-intent';
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { AgentGateContext } from './gate';
 import { assertOrchestratorMission } from './gate';
 import type { SubmitHandoffInput } from './handoff-store';
+import type { MissionEngine } from './mission-engine';
+import { missionEngineForScope } from './mission-engine-registry';
 import { onHandoffSubmitted } from './idle-delivery';
 import { getProjectDomainStores } from './project-domain-store-registry';
 
@@ -133,8 +138,19 @@ function resolveAnswerCandidate(
 } {
   const input = clarifyAnswerInputSchema.parse(rawInput);
   const mission = activeMission(stores, input.missionId);
-  if (!hasCurrentDispatchAuthority(mission) || mission.status !== 'running') {
-    throw new Error('a resposta exige a versão atual da missão em execução');
+  const answerableState =
+    (mission.status === 'running' &&
+      ['dispatched', 'executing', 'validating'].includes(
+        mission.intentState ?? '',
+      )) ||
+    (mission.status === 'blocked' &&
+      mission.intentState === 'blocked_user');
+  const hasAnswerAuthority =
+    mission.status === 'blocked'
+      ? hasCurrentApprovedDispatchContract(mission)
+      : hasCurrentDispatchAuthority(mission);
+  if (!hasAnswerAuthority || !answerableState) {
+    throw new Error('a resposta exige a autoridade atual da missão');
   }
   const question = stores.handoffs.get(input.questionId);
   const clarify = question ? questionArtifact(question)?.clarify : undefined;
@@ -303,13 +319,14 @@ export function emitClarifyQuestion(
  * Scoped stores plus mission/question equality prevent cross-workspace and
  * cross-mission replies even if a renderer replays a stale id.
  */
-export function persistClarifyAnswer(
+export async function persistClarifyAnswer(
   stores: ClarifyStores,
   scope: ProjectExecutionScope,
   rawInput: ClarifyAnswerInput,
   expectedFence: string,
   deliver: DeliverClarifyAnswer = onHandoffSubmitted,
-): ClarifyAnswerResult {
+  missionEngine: Pick<MissionEngine, 'command'> = missionEngineForScope(scope),
+): Promise<ClarifyAnswerResult> {
   if (!/^[a-f0-9]{64}$/.test(expectedFence)) {
     throw new Error('confirmação humana ausente ou inválida');
   }
@@ -330,10 +347,33 @@ export function persistClarifyAnswer(
   if (existing) {
     const artifact = answerArtifact(existing);
     if (!artifact) throw new Error('resposta persistida inválida');
+    if (
+      artifact.answer.kind !== answer.kind ||
+      artifact.answer.value !== answer.value
+    ) {
+      throw new Error('esta pergunta já recebeu outra resposta');
+    }
     if (question.deliveryState === 'queued') {
       stores.handoffs.markSubmitted(question.id);
     }
-    stores.handoffs.markConsumed(question.id, input.missionId);
+    if (question.deliveryState !== 'consumed') {
+      if (!stores.handoffs.markConsumed(question.id, input.missionId)) {
+        throw new Error('a pergunta mudou enquanto a resposta era persistida');
+      }
+    }
+    if (
+      resolved.mission.status === 'blocked' &&
+      resolved.mission.intentState === 'blocked_user'
+    ) {
+      await missionEngine.command(scope, {
+        kind: 'answer-question',
+        missionId: input.missionId,
+        questionId: input.questionId,
+        ...(answer.kind === 'chip'
+          ? { optionId: answer.chipId }
+          : { text: answer.value }),
+      });
+    }
     if (existing.deliveryState === 'queued') {
       // Idempotent enqueue also repairs a crash after durable insertion but
       // before the in-memory idle-delivery queue was populated.
@@ -372,6 +412,19 @@ export function persistClarifyAnswer(
   }
   if (!stores.handoffs.markConsumed(question.id, input.missionId)) {
     throw new Error('a pergunta mudou enquanto a resposta era persistida');
+  }
+  if (
+    resolved.mission.status === 'blocked' &&
+    resolved.mission.intentState === 'blocked_user'
+  ) {
+    await missionEngine.command(scope, {
+      kind: 'answer-question',
+      missionId: input.missionId,
+      questionId: input.questionId,
+      ...(answer.kind === 'chip'
+        ? { optionId: answer.chipId }
+        : { text: answer.value }),
+    });
   }
   deliver(response, scope);
   const persisted = stores.handoffs.get(response.id) ?? response;

@@ -1,5 +1,4 @@
 import { appendMissionVerdict } from '../../shared/mission-block-cause';
-import { missionBlockPatch } from '../../shared/mission-blocking';
 import {
   isRecoveryEligibleIntentState,
   resolveEffectiveIntentState,
@@ -26,7 +25,6 @@ import {
 import {
   countPlannedPendingDispatches,
   deriveDriveState,
-  isDispatchWorkProven,
   unusedTrustedEvidenceIds,
   type DriveState,
 } from './mission-drive';
@@ -41,8 +39,6 @@ import {
   disposeMissionDriverRuntime,
   logDecisionActive,
   logDecisionShadow,
-  startMissionDriverLoop,
-  stopMissionDriverLoop,
   type DriveConfig,
   type DriveDeps,
   defaultDriveConfig,
@@ -56,6 +52,8 @@ import { inspectGuidedPrevcPostMergeAuthority } from './prevc-autopilot-coordina
 import { sameProjectScope } from './project-scoped-broadcast';
 import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
 import { missionHasSchedulerProgress } from './mission-scheduler-authority';
+import type { MissionEngine } from './mission-engine';
+import { missionEngineForScope } from './mission-engine-registry';
 
 /** Production Mission Driver IO over scoped stores and active apply ports. */
 
@@ -353,6 +351,13 @@ export function loadDriveState(
 }
 
 type DomainStores = ReturnType<typeof getProjectDomainStores>;
+type BlockingMissionEngine = Pick<
+  MissionEngine,
+  'blockUser' | 'blockTechnical'
+>;
+type BlockingMissionEngineResolver = (
+  scope: ProjectExecutionScope,
+) => BlockingMissionEngine;
 interface FinalPrevcStepAuthority {
   readonly workflowRevision: number;
   readonly evidenceId: string;
@@ -362,10 +367,6 @@ type FinalPrevcHandoffAuthority = (
   missionId: string,
   stepId: string,
 ) => FinalPrevcStepAuthority | null;
-type PrevcCompletionAuthority = (
-  scope: ProjectExecutionScope,
-  missionId: string,
-) => boolean;
 
 function currentFinalPrevcStepAuthority(
   scope: ProjectExecutionScope,
@@ -388,13 +389,6 @@ function currentFinalPrevcStepAuthority(
   });
 }
 
-function hasPersistedPrevcCompletionAuthority(
-  scope: ProjectExecutionScope,
-  missionId: string,
-): boolean {
-  const state = getContextWorkflowService(scope).getMissionWorkflow(missionId);
-  return Boolean(state.contract || state.workflow);
-}
 
 const MILESTONE_ATTESTATION_ID = /^milestone:[0-9a-f]{64}$/;
 
@@ -429,9 +423,10 @@ function collectFinalPrevcEvidenceIds(
 }
 
 /**
- * Production apply ports: real handoff stall signal, PREVC advanceWorkflow via
- * ContextWorkflowService, trusted-evidence markMilestoneDone, status changes.
- * `getStores` is injectable so tests can drive the real port logic with fakes.
+ * Production apply ports: real handoff stall signals, PREVC advanceWorkflow via
+ * ContextWorkflowService, trusted-evidence markMilestoneDone, and Main-owned
+ * MissionEngine blocking. `getStores` and `resolveMissionEngine` are injectable
+ * so tests can drive the real port logic with fakes.
  */
 export function createProductionApplyPorts(
   prevc: PrevcAdvancePort = createProductionPrevcPort(
@@ -443,7 +438,7 @@ export function createProductionApplyPorts(
   recoverPane = requestMissionPaneRecovery,
   paneSnapshots = listPaneSnapshots,
   hasFinalPrevcAuthority: FinalPrevcHandoffAuthority = currentFinalPrevcStepAuthority,
-  hasPrevcCompletionAuthority: PrevcCompletionAuthority = hasPersistedPrevcCompletionAuthority,
+  resolveMissionEngine: BlockingMissionEngineResolver = missionEngineForScope,
 ): ApplyActionPorts {
   const collectTrusted = (
     scope: ProjectExecutionScope,
@@ -509,6 +504,11 @@ export function createProductionApplyPorts(
           stores.taskDispatches.list(missionId),
         )
       ) {
+        if (!mission.intentState) {
+          throw new Error(
+            'fresh-context blocked: mission has no durable intent state',
+          );
+        }
         // Antes do primeiro dispatch durável, sair do Maestro é falha
         // operacional do kickoff — bloqueia com CTA. Depois que o scheduler
         // já possui progresso, a recuperação física (abaixo) é obrigatória:
@@ -528,9 +528,12 @@ export function createProductionApplyPorts(
               .filter(Boolean)
               .join('\n\n')
               .slice(0, 65_536);
-        stores.missions.update(missionId, {
-          status: 'blocked',
-          intentState: 'blocked_technical',
+        resolveMissionEngine(scope).blockTechnical(scope, {
+          missionId,
+          expectedStatus: mission.status,
+          expectedIntentState: mission.intentState,
+          expectedUpdatedAt: mission.updatedAt,
+          expectedIntentVersion: mission.intentVersion ?? 0,
           description,
         });
         throw new Error(
@@ -637,188 +640,32 @@ export function createProductionApplyPorts(
       }
 
     },
-    setMissionStatus: (missionId, scope, status) => {
-      const updated = getStores(scope).missions.setStatus(missionId, status);
-      if (!updated) {
-        throw new Error(`setStatus failed for mission ${missionId}`);
-      }
-    },
     blockHuman: (missionId, scope, reason) => {
       const stores = getStores(scope);
       const current = stores.missions.get(missionId);
       if (!current) {
         throw new Error(`blockHuman failed for mission ${missionId}: not found`);
       }
-      const updated = stores.missions.update(missionId, {
-        ...missionBlockPatch('user'),
-        description: appendMissionVerdict(
-          current.description,
-          '<!-- nexus:driver-block-human -->',
-          '[NEXUS_DRIVER_BLOCK_HUMAN]',
-          reason,
-        ),
-      });
-      if (!updated) {
-        throw new Error(`blockHuman failed for mission ${missionId}`);
+      if (!current.intentState) {
+        throw new Error(
+          `blockHuman failed for mission ${missionId}: intent state missing`,
+        );
       }
-    },
-    completeMission: (missionId, scope) => {
-      const stores = getStores(scope);
-      const mission = stores.missions.get(missionId);
-      if (!mission) {
-        throw new Error(`complete rejected: mission ${missionId} not found`);
-      }
-      // PROVA DE TRABALHO — o caminho simples (`same_checkout`, padrão desde
-      // 5c0208b9) não produz steps PREVC, e exigi-los aqui rejeitaria para
-      // sempre uma missão que fez tudo. A autoridade NÃO é afrouxada: ela troca
-      // de moeda. Cada dispatch precisa estar concluído E trazer recibo de
-      // integração — a mesma exigência de proveniência, na forma que este
-      // caminho realmente emite.
-      //
-      // Re-derivado aqui de propósito: quem chama não é fonte de autoridade.
-      // Fila indisponível ⇒ SEM prova de trabalho, nunca conclusão fabricada:
-      // cai no caminho PREVC, que segue exigindo tudo o que sempre exigiu.
-      const provingDispatches = stores.taskDispatches?.list(missionId) ?? [];
-      const intentVersion = mission.intentContract?.intentVersion;
-      const plannedTaskIds =
-        intentVersion === undefined || !stores.tasks
-          ? []
-          : stores.tasks
-              .listPlannedTasks(missionId, intentVersion)
-              .map((planned) => planned.taskId);
-      const plannedPending = countPlannedPendingDispatches(
-        plannedTaskIds,
-        provingDispatches,
+      const description = appendMissionVerdict(
+        current.description,
+        '<!-- nexus:driver-block-human -->',
+        '[NEXUS_DRIVER_BLOCK_HUMAN]',
+        reason,
       );
-      const workProven = isDispatchWorkProven({
-        total: provingDispatches.length,
-        completed: provingDispatches.filter(
-          (dispatch) => dispatch.state === 'completed',
-        ).length,
-        receipted: provingDispatches.filter(
-          (dispatch) =>
-            dispatch.state === 'completed' &&
-            dispatch.integrationReceipt != null,
-        ).length,
-        plannedPending,
-      });
-      const simpleWorkProven =
-        workProven && !hasPrevcCompletionAuthority(scope, missionId);
-
-      if (
-        workProven &&
-        !simpleWorkProven &&
-        !prevc.isMissionComplete(
-          missionId,
-          scope,
-          mission.milestones.map((step) => step.id),
-        )
-      ) {
-        throw new Error(
-          'complete rejected: PREVC workflow or step receipts incomplete',
-        );
-      }
-
-      if (!simpleWorkProven) {
-        if (mission.milestones.length === 0) {
-          throw new Error(
-            'complete rejected: no steps (cannot complete without PREVC steps)',
-          );
-        }
-        if (!mission.milestones.every((step) => step.status === 'done')) {
-          throw new Error(
-            'complete rejected: not all steps done via trusted evidence',
-          );
-        }
-      }
-      if (!simpleWorkProven) {
-        for (const step of mission.milestones) {
-          if (step.evidenceIds.length === 0) {
-            throw new Error(
-              `complete rejected: step ${step.id} done without evidenceIds`,
-            );
-          }
-        }
-      }
-      // Completion is verification-only. It never advances PREVC as a side
-      // effect and it never treats registry errors/absence as success.
-      if (
-        !simpleWorkProven &&
-        !prevc.isMissionComplete(
-          missionId,
-          scope,
-          mission.milestones.map((step) => step.id),
-        )
-      ) {
-        throw new Error(
-          'complete rejected: PREVC workflow or step receipts incomplete',
-        );
-      }
-      const current = stores.missions.get(missionId);
-      if (!current) {
-        throw new Error(`complete rejected: mission ${missionId} vanished`);
-      }
-      if (current.status === 'done') {
-        if (current.intentState === 'done') return;
-        throw new Error(
-          'complete rejected: terminal mission has inconsistent intent state',
-        );
-      }
-      // Anti-TOCTOU na moeda que provou: quem concluiu por trabalho re-verifica
-      // a FILA; quem concluiu por PREVC re-verifica os milestones. Checar a
-      // moeda errada aqui deixaria a janela aberta justamente no caminho novo.
-      if (simpleWorkProven) {
-        const recheck = stores.taskDispatches?.list(missionId) ?? [];
-        const recheckPlannedPending = countPlannedPendingDispatches(
-          plannedTaskIds,
-          recheck,
-        );
-        if (
-          recheck.length !== provingDispatches.length ||
-          !isDispatchWorkProven({
-            total: recheck.length,
-            completed: recheck.filter(
-              (dispatch) => dispatch.state === 'completed',
-            ).length,
-            receipted: recheck.filter(
-              (dispatch) =>
-                dispatch.state === 'completed' &&
-                dispatch.integrationReceipt != null,
-            ).length,
-            plannedPending: recheckPlannedPending,
-          })
-        ) {
-          throw new Error(
-            'complete rejected: dispatch authority changed after work proof',
-          );
-        }
-      } else if (
-        current.milestones.length !== mission.milestones.length ||
-        current.milestones.some(
-          (step, index) =>
-            step.id !== mission.milestones[index]?.id ||
-            step.status !== 'done' ||
-            step.evidenceIds.length === 0,
-        )
-      ) {
-        throw new Error(
-          'complete rejected: milestone authority changed after PREVC proof',
-        );
-      }
-      const updated = stores.missions.completeFromMissionDriver(missionId, {
+      resolveMissionEngine(scope).blockUser(scope, {
+        missionId,
+        expectedStatus: current.status,
+        expectedIntentState: current.intentState,
         expectedUpdatedAt: current.updatedAt,
         expectedIntentVersion: current.intentVersion ?? 0,
+        description,
       });
-      if (!updated) {
-        throw new Error(
-          `complete rejected: mission completion CAS changed for ${missionId}`,
-        );
-      }
-      if (updated.status !== 'done' || updated.intentState !== 'done') {
-        throw new Error(
-          `complete rejected: terminal projection failed for ${missionId}`,
-        );
-      }
+      return;
     },
     appendLearning: (missionId, scope, entry) => {
       getStores(scope).missions.appendLearning(missionId, entry);
@@ -999,12 +846,7 @@ export function configureMissionDriver(options: {
   );
 }
 
-export {
-  defaultDriveConfig,
-  disposeMissionDriverRuntime,
-  startMissionDriverLoop,
-  stopMissionDriverLoop,
-};
+export { defaultDriveConfig, disposeMissionDriverRuntime };
 
 /** Clear in-process budget/signal/backoff/start memory (tests + dispose). */
 export function resetDriveIoMemoryForTests(): void {

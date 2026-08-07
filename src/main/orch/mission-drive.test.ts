@@ -123,7 +123,7 @@ describe('decideDriveAction', () => {
     }
   });
 
-  it('complete quando todas as etapas estão done via PREVC', () => {
+  it('delegates fully receipted PREVC completion without a driver terminal action', () => {
     const state = baseRunning({
       steps: [
         {
@@ -138,7 +138,10 @@ describe('decideDriveAction', () => {
       completionVerified: true,
       lastProgressAt: NOW - 1_000,
     });
-    expect(decideDriveAction(state, NOW, CONFIG).kind).toBe('complete');
+    expect(decideDriveAction(state, NOW, CONFIG)).toEqual({
+      kind: 'wait',
+      reason: 'terminal completion is verifier-owned',
+    });
   });
 
   it('não troca PREVC congelado por recibos de dispatch', () => {
@@ -154,19 +157,19 @@ describe('decideDriveAction', () => {
     });
   });
 
-  it('mantém o fechamento por recibos no caminho simples sem PREVC', () => {
+  it('delegates proven simple work without a driver terminal action', () => {
     const state = baseRunning({
       workProven: true,
       prevcCompletionRequired: false,
     });
 
-    expect(decideDriveAction(state, NOW, CONFIG)).toMatchObject({
-      kind: 'complete',
-      reason: 'todos os dispatches concluídos com recibo de integração',
+    expect(decideDriveAction(state, NOW, CONFIG)).toEqual({
+      kind: 'wait',
+      reason: 'terminal completion is verifier-owned',
     });
   });
 
-  it('complete prevalece quando o último avanço consumiu exatamente o budget', () => {
+  it('completion readiness never consumes or overrides the driver budget', () => {
     const completeAtBoundary = baseRunning({
       steps: [{
         id: 's1',
@@ -181,7 +184,10 @@ describe('decideDriveAction', () => {
       startedAt: NOW - CONFIG.maxWallClockMs,
     });
 
-    expect(decideDriveAction(completeAtBoundary, NOW, CONFIG).kind).toBe('complete');
+    expect(decideDriveAction(completeAtBoundary, NOW, CONFIG)).toEqual({
+      kind: 'wait',
+      reason: 'terminal completion is verifier-owned',
+    });
   });
 
   it('bloqueia finitamente quando milestones done não possuem receipts válidos', () => {
@@ -340,11 +346,11 @@ describe('decideDriveAction', () => {
     ).toBe('signal-stall');
   });
 
-  it('complete bypasses exponential backoff (terminal path)', () => {
+  it('completion readiness stays verifier-owned inside recovery backoff', () => {
     const state = baseRunning({
       lastProgressAt: NOW - 1_000,
       iteration: 5,
-      lastActionAt: NOW - 100, // deep inside backoff
+      lastActionAt: NOW - 100,
       allStepsDone: true,
       completionVerified: true,
       steps: [
@@ -358,8 +364,11 @@ describe('decideDriveAction', () => {
       ],
     });
     expect(
-      decideDriveAction(state, NOW, { ...CONFIG, baseBackoffMs: 1_000 }).kind,
-    ).toBe('complete');
+      decideDriveAction(state, NOW, { ...CONFIG, baseBackoffMs: 1_000 }),
+    ).toEqual({
+      kind: 'wait',
+      reason: 'terminal completion is verifier-owned',
+    });
   });
 
   it('trusted milestone progress bypasses recovery backoff', () => {

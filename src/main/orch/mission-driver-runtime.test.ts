@@ -6,10 +6,12 @@ import {
 } from './mission-driver-apply';
 import { defaultDriveConfig, type DriveState } from './mission-drive';
 import {
+  configureMissionDriverRuntime,
+  disposeMissionDriverRuntime,
+  reconcileMissionDriver,
   requestMissionDriverTick,
   runDriveTick,
-  startMissionDriverLoop,
-  stopMissionDriverLoop,
+  setMissionDriverReconcileRequest,
   type DriveDeps,
   type DriveSnapshot,
 } from './mission-driver-runtime';
@@ -17,7 +19,7 @@ import {
 const NOW = 1_000_000;
 
 afterEach(() => {
-  stopMissionDriverLoop();
+  disposeMissionDriverRuntime();
   vi.useRealTimers();
 });
 
@@ -131,14 +133,8 @@ function fakePorts(log: string[]): ApplyActionPorts {
     advanceStep: async (missionId, _s, stepId) => {
       log.push(`advance:${missionId}:${stepId}`);
     },
-    setMissionStatus: async (missionId, _s, status) => {
-      log.push(`status:${missionId}:${status}`);
-    },
     blockHuman: async (missionId, _s, reason) => {
       log.push(`blockHuman:${missionId}:${reason.slice(0, 40)}`);
-    },
-    completeMission: async (missionId) => {
-      log.push(`complete:${missionId}`);
     },
     appendLearning: async (missionId, _s, entry) => {
       log.push(`learn:${missionId}:${entry.slice(0, 40)}`);
@@ -146,25 +142,28 @@ function fakePorts(log: string[]): ApplyActionPorts {
   };
 }
 
-describe('mission driver loop coordination', () => {
-  it('ticks immediately and coalesces event-driven wake bursts', async () => {
-    vi.useFakeTimers();
+describe('mission driver coordinator cadence', () => {
+  it('routes wakes to the coordinator and exposes only an explicit reconcile pass', async () => {
     const decisions: DriveSnapshot[] = [];
     const deps = makeDeps({
       missionsByScope: new Map([['p1', [{ id: 'm-fresh' }]]]),
       statesById: new Map([['m-fresh', FRESH]]),
       onDecision: (snapshot) => decisions.push(snapshot),
     });
+    const coordinatorWake = vi.fn(() => true);
+    configureMissionDriverRuntime({
+      deps,
+      config: { ...defaultDriveConfig, mode: 'shadow' },
+    });
+    setMissionDriverReconcileRequest(coordinatorWake);
 
-    startMissionDriverLoop(deps, { ...defaultDriveConfig, mode: 'shadow' });
-    await vi.advanceTimersByTimeAsync(0);
+    expect(requestMissionDriverTick()).toBe(true);
+    expect(requestMissionDriverTick()).toBe(true);
+    expect(coordinatorWake).toHaveBeenCalledTimes(2);
+    expect(decisions).toEqual([]);
+
+    await reconcileMissionDriver();
     expect(decisions).toHaveLength(1);
-
-    expect(requestMissionDriverTick()).toBe(true);
-    expect(requestMissionDriverTick()).toBe(true);
-    expect(requestMissionDriverTick()).toBe(true);
-    await vi.advanceTimersByTimeAsync(0);
-    expect(decisions).toHaveLength(2);
   });
 });
 
@@ -641,8 +640,8 @@ describe('runDriveTick', () => {
       mode: 'active',
     });
     expect(result.applyErrors).toBe(1);
-    expect(result.applied).toBe(1);
-    expect(log).toContain('complete:m-ok');
+    expect(result.applied).toBe(0);
+    expect(log).not.toContain('complete:m-ok');
     expect(outcomes).toContainEqual({
       id: 'm-bad',
       outcome: 'failed',
@@ -727,6 +726,35 @@ describe('runDriveTick', () => {
     expect(iterationById.get('m-stalled')).toBe(1);
     warn.mockRestore();
   });
+  it('never applies a terminal write when completion is already verified', async () => {
+    const log: string[] = [];
+    const decisions: DriveSnapshot[] = [];
+    const ready = baseState({
+      missionId: 'm-ready',
+      allStepsDone: true,
+      completionVerified: true,
+    });
+    const deps = makeDeps({
+      missionsByScope: new Map([['p1', [{ id: ready.missionId }]]]),
+      statesById: new Map([[ready.missionId, ready]]),
+      applyPorts: fakePorts(log),
+      onDecision: (snapshot) => decisions.push(snapshot),
+    });
+
+    const result = await runDriveTick(deps, {
+      ...defaultDriveConfig,
+      mode: 'active',
+    });
+
+    expect(decisions).toHaveLength(1);
+    expect(decisions[0]!.action).toEqual({
+      kind: 'wait',
+      reason: 'terminal completion is verifier-owned',
+    });
+    expect(result.applied).toBe(0);
+    expect(log).toEqual([]);
+  });
+
 });
 
 describe('applyDriveAction', () => {
@@ -764,18 +792,6 @@ describe('applyDriveAction', () => {
     expect(log).toEqual(['stall:m1']);
   });
 
-  it('complete chama completeMission port', async () => {
-    const log: string[] = [];
-    await applyDriveAction(
-      {
-        missionId: 'm1',
-        scope,
-        action: { kind: 'complete', reason: 'all done' },
-      },
-      fakePorts(log),
-    );
-    expect(log).toContain('complete:m1');
-  });
 
   it('advance rejeitado pelo port propaga erro (fail-closed)', async () => {
     const ports = fakePorts([]);

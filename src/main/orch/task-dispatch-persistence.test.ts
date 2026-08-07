@@ -1,6 +1,10 @@
 import Database from "better-sqlite3";
-import { describe, expect, it } from "vitest";
-import { resumeTaskDispatchMissionAfterTechnicalFailure } from "./task-dispatch-persistence";
+import { describe, expect, it, vi } from "vitest";
+import { testProjectScope } from "./__tests__/scope-fixture";
+import {
+  blockTaskDispatchMission,
+  resumeTaskDispatchMissionAfterTechnicalFailure,
+} from "./task-dispatch-persistence";
 
 function dbWithMission(description: string): Database.Database {
   const db = new Database(":memory:");
@@ -10,7 +14,8 @@ function dbWithMission(description: string): Database.Database {
       status TEXT NOT NULL,
       intent_state TEXT,
       description TEXT NOT NULL DEFAULT '',
-      updated_at INTEGER NOT NULL DEFAULT 0
+      updated_at INTEGER NOT NULL DEFAULT 0,
+      intent_version INTEGER NOT NULL DEFAULT 1
     )`,
   );
   db.prepare(
@@ -21,25 +26,66 @@ function dbWithMission(description: string): Database.Database {
 }
 
 describe("resumeTaskDispatchMissionAfterTechnicalFailure", () => {
-  it("reopens a genuine retryable technical block and strips the canonical block", () => {
+  it("delegates exact technical recovery to the engine without lifecycle SQL", () => {
     const detail = "falha técnica transitória no bootstrap do worker";
     const suffix =
       `[NEXUS_TASK_DISPATCH_BLOCKED]\n## Worker bloqueado\n${detail}\n` +
       "Clique em “Retomar missão” para revisar a tarefa e escolher a próxima ação.";
     const db = dbWithMission(`objetivo da missão\n\n${suffix}`);
+    const resumeTechnical = vi.fn();
+
     resumeTaskDispatchMissionAfterTechnicalFailure(
-      db as never,
+      db,
       "mission-1",
       detail,
       Date.now(),
+      { resumeTechnical },
+      testProjectScope(),
     );
+
     const row = db
       .prepare(
         `SELECT status, intent_state, description FROM missions WHERE id = 'mission-1'`,
       )
       .get() as { status: string; intent_state: string; description: string };
-    expect(row.status).toBe("running");
-    expect(row.intent_state).toBe("executing");
-    expect(row.description).not.toContain("NEXUS_TASK_DISPATCH_BLOCKED");
+    expect(resumeTechnical).toHaveBeenCalledWith(testProjectScope(), {
+      missionId: "mission-1",
+      expectedStatus: "blocked",
+      expectedIntentState: "blocked_technical",
+      expectedUpdatedAt: 0,
+      expectedIntentVersion: 1,
+      description: "objetivo da missão",
+    });
+    expect(row).toMatchObject({
+      status: "blocked",
+      intent_state: "blocked_technical",
+      description: `objetivo da missão\n\n${suffix}`,
+    });
+  });
+
+  it("delegates a technical block to the engine without lifecycle SQL", () => {
+    const db = dbWithMission("objetivo");
+    db.prepare(
+      `UPDATE missions SET status = 'running', intent_state = 'executing' WHERE id = 'mission-1'`,
+    ).run();
+    const blockTechnical = vi.fn();
+
+    blockTaskDispatchMission(
+      db,
+      "mission-1",
+      "provider indisponível",
+      Date.now(),
+      "technical",
+      { blockTechnical },
+      testProjectScope(),
+    );
+
+    expect(blockTechnical).toHaveBeenCalledOnce();
+    expect(
+      db
+        .prepare(`SELECT status FROM missions WHERE id = 'mission-1'`)
+        .pluck()
+        .get(),
+    ).toBe("running");
   });
 });

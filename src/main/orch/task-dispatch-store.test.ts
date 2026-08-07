@@ -19,16 +19,18 @@ vi.mock('../persistence/settings-store', async (importOriginal) => {
 
 import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import { compileIntentContract, hasCurrentDispatchAuthority } from '../../shared/mission-intent';
+import type { ProjectExecutionScope } from '../../shared/types';
 import { testProjectScope } from './__tests__/scope-fixture';
 import { createScopedMissionStore } from './mission-store';
 import { createScopedTaskStore, plannedTaskId } from './task-store';
 import {
   assertConcurrentIsolatedWorktreeDisjoint,
-  createTaskDispatchStore,
+  createTaskDispatchStore as createProductionTaskDispatchStore,
   LEGACY_GUIDED_DIRTY_CHECKOUT_BOOTSTRAP_CAUSE,
   LEGACY_GUIDED_DIRTY_CHECKOUT_TERMINAL_REASON,
   TASK_DISPATCH_MAX_SESSION_EXIT_ATTEMPTS,
   TASK_DISPATCH_QUALITY_REPAIR_MARKER,
+  type TaskDispatchMissionEngine,
 } from './task-dispatch-store';
 import { assertTaskQualityReceiptAuthority } from './task-dispatch-quality-receipt-authority';
 import { EMPTY_GIT_DIFF_SHA256 } from './task-dispatch-codec';
@@ -56,6 +58,11 @@ import {
   mintAgentTransportPhysicalReceipt,
   runInsidePtyStreamAgentTransport,
 } from './http-mcp-boundary';
+import type {
+  MissionBlockInput,
+  MissionEngine,
+  MissionVerifiedCompletionInput,
+} from './mission-engine';
 
 let baseDir = '';
 const managers: ProjectRuntimeManager[] = [];
@@ -86,6 +93,84 @@ function manager(): ProjectRuntimeManager {
   });
   managers.push(value);
   return value;
+}
+
+function createTaskDispatchStore(
+  runtime: ProjectRuntimeManager,
+  scope: ProjectExecutionScope,
+  options: Parameters<typeof createProductionTaskDispatchStore>[2] = {},
+) {
+  if (options.missionEngine) {
+    return createProductionTaskDispatchStore(runtime, scope, options);
+  }
+  const missions = createScopedMissionStore(runtime, scope);
+  const transition = (
+    input: MissionBlockInput | MissionVerifiedCompletionInput,
+    patch: Parameters<typeof missions.transitionLifecycle>[2],
+  ): void => {
+    const current = missions.get(input.missionId);
+    if (
+      !current ||
+      current.status !== input.expectedStatus ||
+      current.intentState !== input.expectedIntentState ||
+      current.updatedAt !== input.expectedUpdatedAt ||
+      (current.intentVersion ?? 0) !== input.expectedIntentVersion
+    ) {
+      throw new Error('mission engine lifecycle fence changed');
+    }
+    const updated = missions.transitionLifecycle(
+      input.missionId,
+      {
+        updatedAt: input.expectedUpdatedAt,
+        intentVersion: input.expectedIntentVersion,
+      },
+      patch,
+    );
+    if (!updated) throw new Error('mission engine lifecycle CAS changed');
+  };
+  const engine = {
+    prepare: async () => {
+      throw new Error('not used');
+    },
+    start: async () => {
+      throw new Error('not used');
+    },
+    command: async () => {
+      throw new Error('not used');
+    },
+    snapshot: async () => {
+      throw new Error('not used');
+    },
+    list: async () => [],
+    blockUser: (_scope, input) =>
+      transition(input, {
+        status: 'blocked',
+        intentState: 'blocked_user',
+        description: input.description,
+      }),
+    blockTechnical: (_scope, input) =>
+      transition(input, {
+        status: 'blocked',
+        intentState: 'blocked_technical',
+        description: input.description,
+      }),
+    resumeTechnical: (_scope, input) =>
+      transition(input, {
+        status: 'running',
+        intentState: 'executing',
+        description: input.description,
+      }),
+    completeVerified: (_scope, input) =>
+      transition(input, {
+        status: 'done',
+        intentState: 'done',
+        learnings: input.learnings,
+      }),
+  } satisfies MissionEngine;
+  return createProductionTaskDispatchStore(runtime, scope, {
+    ...options,
+    missionEngine: engine,
+  });
 }
 
 function insertPhysicalHandoffAuthority(input: {
@@ -223,7 +308,7 @@ function withPhysicalMaestroReceipt<T>(input: {
   }
 }
 
-function acknowledgeFanoutFromPhysicalMaestro(input: {
+function acknowledgeHandoffFromPhysicalMaestro(input: {
   readonly runtime: ProjectRuntimeManager;
   readonly scope: ReturnType<typeof testProjectScope>;
   readonly handoffs: ReturnType<typeof createScopedHandoffStore>;
@@ -844,8 +929,18 @@ function verifiedPlanFixture(
       handoffId: handoff.id,
       acceptDeadlineAt: Date.now() + 10_000,
     });
-    handoffs.acceptDeliveryAttempt({
-      attemptId: attempt.id,
+    expect(
+      handoffs.acceptDeliveryAttempt({
+        attemptId: attempt.id,
+        handoffId: handoff.id,
+      }),
+    ).toBe(true);
+    acknowledgeHandoffFromPhysicalMaestro({
+      runtime,
+      scope,
+      handoffs,
+      missionId: mission.id,
+      sessionId: 'orchestrator-golden',
       handoffId: handoff.id,
     });
     return { claim, handoff };
@@ -1702,7 +1797,7 @@ describe('durable task dispatcher authority', () => {
         handoffId: fixture.handoff.id,
       }),
     ).toBe(true);
-    acknowledgeFanoutFromPhysicalMaestro({
+    acknowledgeHandoffFromPhysicalMaestro({
       runtime: fixture.runtime,
       scope: fixture.scope,
       handoffs,
@@ -1760,7 +1855,7 @@ describe('durable task dispatcher authority', () => {
         handoffId: fixture.handoff.id,
       }),
     ).toBe(true);
-    acknowledgeFanoutFromPhysicalMaestro({
+    acknowledgeHandoffFromPhysicalMaestro({
       runtime: fixture.runtime,
       scope: fixture.scope,
       handoffs,
@@ -2175,13 +2270,14 @@ describe('durable task dispatcher authority', () => {
         handoffId: fixture.handoff.id,
       }),
     ).toBe(true);
-    expect(
-      fixture.handoffs.markConsumedAfterAcceptedDelivery(
-        fixture.handoff.id,
-        fixture.mission.id,
-        'orchestrator-guided-implementation',
-      ),
-    ).toBe(true);
+    acknowledgeHandoffFromPhysicalMaestro({
+      runtime: fixture.runtime,
+      scope: fixture.scope,
+      handoffs: fixture.handoffs,
+      missionId: fixture.mission.id,
+      sessionId: 'orchestrator-guided-implementation',
+      handoffId: fixture.handoff.id,
+    });
     // The mission-level authority replays the whole chain and admits the
     // executor no-change receipt with all physical proofs re-verified.
     expect(
@@ -2948,7 +3044,49 @@ describe('durable task dispatcher authority', () => {
     const missions = createScopedMissionStore(runtime, scope);
     const tasks = createScopedTaskStore(runtime, scope);
     const handoffs = createScopedHandoffStore(runtime, scope);
-    const dispatches = createTaskDispatchStore(runtime, scope);
+    const completeVerified = vi.fn(
+      (
+        _scope: ProjectExecutionScope,
+        input: MissionVerifiedCompletionInput,
+      ) => {
+        const current = missions.get(input.missionId);
+        if (
+          !current ||
+          current.status !== input.expectedStatus ||
+          current.intentState !== input.expectedIntentState
+        ) {
+          throw new Error('test engine lifecycle fence changed');
+        }
+        const completed = missions.transitionLifecycle(
+          input.missionId,
+          {
+            updatedAt: input.expectedUpdatedAt,
+            intentVersion: input.expectedIntentVersion,
+          },
+          {
+            status: 'done',
+            intentState: 'done',
+            learnings: input.learnings,
+          },
+        );
+        if (!completed) throw new Error('test engine completion CAS changed');
+      },
+    );
+    const missionEngine = {
+      blockUser: () => {
+        throw new Error('unexpected user block');
+      },
+      blockTechnical: () => {
+        throw new Error('unexpected technical block');
+      },
+      resumeTechnical: () => {
+        throw new Error('unexpected technical resume');
+      },
+      completeVerified,
+    } satisfies TaskDispatchMissionEngine;
+    const dispatches = createTaskDispatchStore(runtime, scope, {
+      missionEngine,
+    });
     const contract = approvedIntentContract({
       goal: 'Completar pelo motor com prova real',
       intentVersion: 7,
@@ -3118,7 +3256,9 @@ describe('durable task dispatcher authority', () => {
     ).toBe(true);
     runtime.close(scope);
     const restartedMissions = createScopedMissionStore(runtime, scope);
-    const restartedDispatches = createTaskDispatchStore(runtime, scope);
+    const restartedDispatches = createTaskDispatchStore(runtime, scope, {
+      missionEngine,
+    });
     const restartedHandoffs = createScopedHandoffStore(runtime, scope);
     restartedMissions.rebindOrchestratorSession(mission.id, 'orchestrator-golden-rebound');
     expect(restartedHandoffs.get(handoff.id)).toMatchObject({
@@ -3215,6 +3355,29 @@ describe('durable task dispatcher authority', () => {
         missionId: mission.id,
         intentVersion: 7,
       }),
+    ).toBe(false);
+    expect(restartedMissions.get(mission.id)).toMatchObject({
+      status: 'running',
+      intentState: 'validating',
+    });
+    acknowledgeHandoffFromPhysicalMaestro({
+      runtime,
+      scope,
+      handoffs: restartedHandoffs,
+      missionId: mission.id,
+      sessionId: 'orchestrator-golden-rebound',
+      handoffId: handoff.id,
+    });
+    expect(restartedHandoffs.get(handoff.id)).toMatchObject({
+      deliveryState: 'consumed',
+      consumedBySession: 'orchestrator-golden-rebound',
+      consumedDeliveryAttemptId: reboundAttempt.id,
+    });
+    expect(
+      restartedDispatches.completeMissionFromVerifiedPlan({
+        missionId: mission.id,
+        intentVersion: 7,
+      }),
     ).toBe(true);
     expect(restartedMissions.get(mission.id)).toMatchObject({
       status: 'done',
@@ -3223,6 +3386,7 @@ describe('durable task dispatcher authority', () => {
     expect(restartedMissions.get(mission.id)?.learnings).toMatch(
       /Conclusão automática verificada[\s\S]*handoffs aceitos pela sessão atual/i,
     );
+    expect(completeVerified).toHaveBeenCalledOnce();
     expect(
       restartedDispatches.completeMissionFromVerifiedPlan({
         missionId: mission.id,
@@ -4869,9 +5033,11 @@ describe('durable task dispatcher authority', () => {
       status: 'running',
       intentState: 'executing',
     });
+    const revokedSibling = dispatches.get(siblingTask.id);
+    if (!revokedSibling) throw new Error('revoked sibling dispatch missing');
     dispatches.fail({
       taskId: siblingTask.id,
-      revision: siblingClaim.revision,
+      revision: revokedSibling.revision,
       leaseToken: siblingClaim.leaseToken,
       error: LEGACY_GUIDED_DIRTY_CHECKOUT_TERMINAL_REASON,
     });
@@ -6218,6 +6384,14 @@ describe('superseded plan generation retirement', () => {
         handoffId: handoff.id,
       }),
     ).toBe(true);
+    acknowledgeHandoffFromPhysicalMaestro({
+      runtime,
+      scope,
+      handoffs,
+      missionId: mission.id,
+      sessionId: 'orchestrator-golden',
+      handoffId: handoff.id,
+    });
 
     expect(
       dispatches.retireSupersededPlanGenerations({

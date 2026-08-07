@@ -134,8 +134,7 @@ export type DriveAction =
       readonly reason: string;
       readonly stepId: string;
     }
-  | { readonly kind: 'block-human'; readonly reason: string }
-  | { readonly kind: 'complete'; readonly reason: string };
+  | { readonly kind: 'block-human'; readonly reason: string };
 
 /**
  * Decide a próxima ação do drive para uma missão. Pura: sem IO, sem relógio
@@ -143,8 +142,8 @@ export type DriveAction =
  *
  * Prioridade (alto → baixo):
  * 1. não-running → wait
- * 2. budget esgotado → block-human
- * 3. all steps done → complete
+ * 2. terminal readiness → wait for the verifier
+ * 3. budget esgotado → block-human
  * 4. account fail → re-route
  * 5. pane dead / context rot → respawn-fresh-context
  * 6. trusted evidence no step atual → advance
@@ -161,19 +160,15 @@ export function decideDriveAction(
     return { kind: 'wait', reason: `mission is ${state.missionStatus}` };
   }
 
-  // A fully receipted PREVC outcome is terminal and cannot consume another
-  // recovery attempt. In particular, the last allowed advance may finish all
-  // steps exactly at the iteration or wall-clock boundary.
-  if (state.completionVerified) {
-    return { kind: 'complete', reason: 'all steps done via PREVC' };
-  }
-
-  // O TRABALHO manda. Todo dispatch concluído e com recibo é conclusão provada,
-  // independente de milestone carimbado — a cerimônia é opcional, o trabalho não.
-  if (state.workProven && !state.prevcCompletionRequired) {
+  // The completion verifier owns the only terminal CAS. Readiness remains
+  // visible to cadence without giving the driver write authority.
+  if (
+    state.completionVerified ||
+    (state.workProven && !state.prevcCompletionRequired)
+  ) {
     return {
-      kind: 'complete',
-      reason: 'todos os dispatches concluídos com recibo de integração',
+      kind: 'wait',
+      reason: 'terminal completion is verifier-owned',
     };
   }
 

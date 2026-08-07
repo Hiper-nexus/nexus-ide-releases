@@ -602,12 +602,10 @@ export function explainUncommittedWorktreeConflict(error: unknown): unknown {
 
 let configured: MissionSchedulerOptions | null = null;
 let unsubscribe: (() => void) | null = null;
-let timer: ReturnType<typeof setInterval> | null = null;
-let started = false;
 let externalReconcileRequest: (() => boolean) | null = null;
 const tickLifecycle = createMissionSchedulerTickLifecycle({
   runPass: (signal) => tick(signal),
-  isLegacyLoopRunning: () => started,
+  isLegacyLoopRunning: () => false,
 });
 
 function missionKey(scope: ProjectExecutionScope, missionId: string): string {
@@ -1925,23 +1923,9 @@ export function configureMissionScheduler(
   );
 }
 
-export function startMissionSchedulerLoop(): void {
-  if (started) return;
-  started = true;
-  timer = setInterval(requestMissionSchedulerTick, MISSION_SCHEDULER_TICK_MS);
-  timer.unref?.();
-  requestMissionSchedulerTick();
-}
-
-export function stopMissionSchedulerLoop(): void {
-  started = false;
-  tickLifecycle.reset();
-  if (timer) clearInterval(timer);
-  timer = null;
-}
 
 export function disposeMissionScheduler(): void {
-  stopMissionSchedulerLoop();
+  tickLifecycle.reset();
   unsubscribe?.();
   unsubscribe = null;
   configured = null;

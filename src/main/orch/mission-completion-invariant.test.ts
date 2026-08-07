@@ -45,17 +45,19 @@ describe('invariante de conclusão: o trabalho manda, não a cerimônia', () => 
     milestones: [{ id: 'step-1', label: 'Entrega', status: 'pending', evidenceIds: [] }],
   };
 
-  it('8/8 dispatches concluídos e comprovados ⇒ missão COMPLETA, mesmo com milestone pendente', () => {
+  it('8/8 dispatches provados delegam conclusão ao verificador, nunca ao driver', () => {
+    const work = { total: 8, completed: 8, receipted: 8 };
     const state = deriveDriveState({
       mission: missaoDoGate,
       handoffs: [],
-      dispatchWork: { total: 8, completed: 8, receipted: 8 },
+      dispatchWork: work,
     });
 
-    const action = decideDriveAction(state, Date.now(), config);
-
-    // Antes do fix isto era `wait` para sempre — a missão do dono nunca fechava.
-    expect(action.kind).toBe('complete');
+    expect(isDispatchWorkProven(work)).toBe(true);
+    expect(decideDriveAction(state, Date.now(), config)).toEqual({
+      kind: 'wait',
+      reason: 'terminal completion is verifier-owned',
+    });
   });
 
   it('trabalho concluído SEM recibo não é silêncio: vira parada visível com motivo', () => {
@@ -84,14 +86,19 @@ describe('invariante de conclusão: o trabalho manda, não a cerimônia', () => 
     expect(decideDriveAction(state, AGORA, config).kind).toBe('wait');
   });
 
-  it('missão sem dispatch nenhum não é "tudo pronto" — zero trabalho não é trabalho feito', () => {
+  it('missão sem dispatch nenhum não oferece prova ao verificador', () => {
+    const work = { total: 0, completed: 0, receipted: 0 };
     const state = deriveDriveState({
       mission: missaoDoGate,
       handoffs: [],
-      dispatchWork: { total: 0, completed: 0, receipted: 0 },
+      dispatchWork: work,
     });
 
-    expect(decideDriveAction(state, Date.now(), config).kind).not.toBe('complete');
+    expect(isDispatchWorkProven(work)).toBe(false);
+    expect(decideDriveAction(state, Date.now(), config)).not.toEqual({
+      kind: 'wait',
+      reason: 'terminal completion is verifier-owned',
+    });
   });
 
   it('sem instrumentação de fila o comportamento antigo permanece — nada é fabricado', () => {
@@ -112,9 +119,12 @@ describe('invariante de conclusão: o trabalho manda, não a cerimônia', () => 
         plannedPending: 2,
       },
     });
+    const action = decideDriveAction(state, Date.now(), config);
 
-    const action = decideDriveAction(state, AGORA, config);
-    expect(action.kind).not.toBe('complete');
+    expect(action).not.toEqual({
+      kind: 'wait',
+      reason: 'terminal completion is verifier-owned',
+    });
     expect(isDispatchWorkProven({
       total: 1,
       completed: 1,
@@ -123,7 +133,7 @@ describe('invariante de conclusão: o trabalho manda, não a cerimônia', () => 
     })).toBe(false);
   });
 
-  it('plano selado esgotado (plannedPending=0) com fila receipted ⇒ complete', () => {
+  it('plano selado esgotado deixa o verificador — e só ele — concluir', () => {
     const state = deriveDriveState({
       mission: missaoDoGate,
       handoffs: [],
@@ -134,7 +144,10 @@ describe('invariante de conclusão: o trabalho manda, não a cerimônia', () => 
         plannedPending: 0,
       },
     });
-    expect(decideDriveAction(state, Date.now(), config).kind).toBe('complete');
+    expect(decideDriveAction(state, Date.now(), config)).toEqual({
+      kind: 'wait',
+      reason: 'terminal completion is verifier-owned',
+    });
   });
 });
 

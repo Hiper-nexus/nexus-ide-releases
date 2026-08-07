@@ -472,6 +472,8 @@ describe("scoped handoff store", () => {
       delivered: true,
       deliveryState: "consumed",
       consumedAt: 120,
+      consumedBySession: "orchestrator-current",
+      consumedDeliveryAttemptId: attempt.id,
     });
     expect(
       runtimeManager

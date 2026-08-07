@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { compileIntentContract } from "../../shared/mission-intent";
 import type { SquadAgent } from "../../shared/orch-types";
 import { ProjectRuntimeManager } from "../runtime/project-runtime-manager";
@@ -13,9 +13,6 @@ import { createWorkflowState } from "../context/prevc-engine";
 import { ReviewCouncil } from "../context/review-council";
 import { testProjectScope } from "./__tests__/scope-fixture";
 import { createScopedHandoffStore } from "./handoff-store";
-import { applyDriveAction } from "./mission-driver-apply";
-import { createProductionApplyPorts } from "./mission-driver-io";
-import type { ProjectDomainStoreSuite } from "./project-domain-store-registry";
 import { createScopedMissionStore } from "./mission-store";
 import {
   buildMissionSchedulerTaskPrompt,
@@ -61,13 +58,29 @@ function manager(): ProjectRuntimeManager {
 }
 
 describe("guided result consumption chain", () => {
-  it("carries advisory→executor→review→QA results and leaves final completion to the PREVC-backed Driver", async () => {
+  it("carries advisory→executor→review→QA results and leaves the terminal write to the verifier", () => {
     const runtime = manager();
     const scope = testProjectScope({ rootRealPath: process.cwd() });
     const missions = createScopedMissionStore(runtime, scope);
     const tasks = createScopedTaskStore(runtime, scope);
     const handoffs = createScopedHandoffStore(runtime, scope);
-    const dispatches = createTaskDispatchStore(runtime, scope);
+    const completeVerified = vi.fn(() => {
+      throw new Error("completion verifier must remain closed in this fixture");
+    });
+    const dispatches = createTaskDispatchStore(runtime, scope, {
+      missionEngine: {
+        blockUser: () => {
+          throw new Error("unexpected user block");
+        },
+        blockTechnical: () => {
+          throw new Error("unexpected technical block");
+        },
+        resumeTechnical: () => {
+          throw new Error("unexpected technical resume");
+        },
+        completeVerified,
+      },
+    });
     const intentVersion = 9;
     const orchestratorSessionId = "orchestrator-guided-consumption";
     const contract = {
@@ -75,9 +88,8 @@ describe("guided result consumption chain", () => {
         goal: "Entregar o fluxo guiado completo com revisão independente",
         intentVersion,
       }),
-      // This scenario proves PREVC-owned completion, not the normal-risk fast
-      // path. Keep the approval explicitly sensitive so the Driver remains
-      // the only authority allowed to flip the final mission state.
+      // Keep approval explicitly sensitive so PREVC remains part of the
+      // verifier's authority instead of degrading to the legacy fast path.
       risk: "sensitive" as const,
       approvedAt: 1,
       dispatchedAt: 1,
@@ -773,41 +785,9 @@ describe("guided result consumption chain", () => {
         ],
       }),
     ).not.toBeNull();
-    const prevc = {
-      advanceMissionStep: () => {
-        throw new Error("completion must not advance a PREVC step");
-      },
-      isMissionComplete: (
-        candidateMissionId: string,
-        candidateScope: typeof scope,
-        stepIds: readonly string[],
-      ) =>
-        candidateMissionId === mission.id &&
-        candidateScope.projectId === scope.projectId &&
-        candidateScope.checkoutId === scope.checkoutId &&
-        stepIds.length === 1 &&
-        stepIds[0] === "step-1",
-    };
-    const stores = {
-      missions,
-      handoffs,
-    } as unknown as ProjectDomainStoreSuite;
-    const result = await applyDriveAction(
-      {
-        missionId: mission.id,
-        scope,
-        action: {
-          kind: "complete",
-          reason: "all guided steps carry immutable PREVC receipts",
-        },
-      },
-      createProductionApplyPorts(prevc, () => stores),
-    );
-
-    expect(result).toEqual({ applied: true, kind: "complete" });
     expect(missions.get(mission.id)).toMatchObject({
-      status: "done",
-      intentState: "done",
+      status: "running",
+      intentState: "executing",
       milestones: [
         expect.objectContaining({
           id: "step-1",
@@ -816,5 +796,6 @@ describe("guided result consumption chain", () => {
         }),
       ],
     });
+    expect(completeVerified).not.toHaveBeenCalled();
   });
 });

@@ -17,6 +17,7 @@ import type { PrevcAdvancePort } from './mission-driver-prevc';
 import {
   missionHasSchedulerProgress as schedulerOwnsMissionProgress,
 } from './mission-scheduler-authority';
+import type { MissionBlockInput } from './mission-engine';
 
 const milestoneEvidence1 = `milestone:${'1'.repeat(64)}`;
 const milestoneEvidence2 = `milestone:${'2'.repeat(64)}`;
@@ -566,165 +567,8 @@ describe('createProductionApplyPorts advance/complete', () => {
     expect(prevcAdvance).not.toHaveBeenCalled();
   });
 
-  it('complete refuses when PREVC workflow is not complete', () => {
-    let mission = makeMission([
-      step({
-        id: 's1',
-        label: 'Design',
-        status: 'done',
-        evidenceIds: ['ev-1'],
-      }),
-    ]);
-    const prevcAdvance = vi.fn();
-    const ports = createProductionApplyPorts(
-      {
-        advanceMissionStep: prevcAdvance,
-        isMissionComplete: () => false,
-      },
-      () =>
-        ({
-          missions: {
-            get: () => mission,
-            update: () => mission,
-            markMilestoneDone: () => mission,
-            setStatus: (_id: string, status: Mission['status']) => {
-              mission = { ...mission, status };
-              return mission;
-            },
-            appendLearning: () => mission,
-            list: () => [mission],
-            create: () => mission,
-          },
-          handoffs: { list: () => [], submit: vi.fn() },
-        }) as never,
-    );
-
-    expect(() => ports.completeMission('mission-a', scope)).toThrow(
-      /workflow or step receipts incomplete/,
-    );
-    expect(prevcAdvance).not.toHaveBeenCalled();
-    expect(mission.status).toBe('running');
-  });
-
-  it('refuses dispatch-proof completion while a frozen PREVC workflow exists', () => {
-    let mission = makeMission(
-      [step({ id: 's1', label: 'Design', status: 'pending' })],
-      { intentState: 'executing', intentVersion: 1 },
-    );
-    const completeFromMissionDriver = vi.fn(() => {
-      mission = { ...mission, status: 'done', intentState: 'done' };
-      return mission;
-    });
-    const ports = createProductionApplyPorts(
-      {
-        advanceMissionStep: vi.fn(),
-        isMissionComplete: () => false,
-      },
-      () =>
-        ({
-          missions: {
-            get: () => mission,
-            completeFromMissionDriver,
-          },
-          taskDispatches: {
-            list: () => [
-              {
-                state: 'completed',
-                integrationReceipt: { receiptId: 'integration-1' },
-              },
-            ],
-          },
-        }) as never,
-      undefined,
-      undefined,
-      undefined,
-      () => true,
-    );
-
-    expect(() => ports.completeMission('mission-a', scope)).toThrow(
-      /PREVC workflow or step receipts incomplete/,
-    );
-    expect(completeFromMissionDriver).not.toHaveBeenCalled();
-    expect(mission.status).toBe('running');
-  });
-
-  it('keeps dispatch-proof completion for the simple path without PREVC', () => {
-    let mission = makeMission([], {
-      intentState: 'executing',
-      intentVersion: 1,
-    });
-    const completeFromMissionDriver = vi.fn(() => {
-      mission = { ...mission, status: 'done', intentState: 'done' };
-      return mission;
-    });
-    const taskDispatches = {
-      list: () => [
-        {
-          state: 'completed',
-          integrationReceipt: { receiptId: 'integration-1' },
-        },
-      ],
-    };
-    const ports = createProductionApplyPorts(
-      {
-        advanceMissionStep: vi.fn(),
-        isMissionComplete: () => false,
-      },
-      () =>
-        ({
-          missions: {
-            get: () => mission,
-            completeFromMissionDriver,
-          },
-          taskDispatches,
-        }) as never,
-      undefined,
-      undefined,
-      undefined,
-      () => false,
-    );
-
-    expect(() => ports.completeMission('mission-a', scope)).not.toThrow();
-    expect(completeFromMissionDriver).toHaveBeenCalledOnce();
-    expect(mission).toMatchObject({ status: 'done', intentState: 'done' });
-  });
-
-  it('complete atomically closes mission status and intent after PREVC proof', () => {
-    let mission = makeMission(
-      [
-        step({
-          id: 's1',
-          label: 'Design',
-          status: 'done',
-          evidenceIds: ['ev-1'],
-        }),
-      ],
-      { intentState: 'executing', intentVersion: 1 },
-    );
-    const completeFromMissionDriver = vi.fn(
-      (
-        id: string,
-        expectation: {
-          expectedUpdatedAt: number;
-          expectedIntentVersion: number;
-        },
-      ) => {
-        if (
-          id !== mission.id ||
-          expectation.expectedUpdatedAt !== mission.updatedAt ||
-          expectation.expectedIntentVersion !== mission.intentVersion
-        ) {
-          return null;
-        }
-        mission = {
-          ...mission,
-          status: 'done',
-          intentState: 'done',
-          updatedAt: mission.updatedAt + 1,
-        };
-        return mission;
-      },
-    );
+  it('does not expose a terminal completion port from the mission driver', () => {
+    const mission = makeMission([]);
     const ports = createProductionApplyPorts(
       {
         advanceMissionStep: vi.fn(),
@@ -736,8 +580,7 @@ describe('createProductionApplyPorts advance/complete', () => {
             get: () => mission,
             update: () => mission,
             markMilestoneDone: () => mission,
-            setStatus: vi.fn(),
-            completeFromMissionDriver,
+            setStatus: () => mission,
             appendLearning: () => mission,
             list: () => [mission],
             create: () => mission,
@@ -746,55 +589,9 @@ describe('createProductionApplyPorts advance/complete', () => {
         }) as never,
     );
 
-    ports.completeMission('mission-a', scope);
-    expect(mission.status).toBe('done');
-    expect(mission.intentState).toBe('done');
-    expect(completeFromMissionDriver).toHaveBeenCalledWith('mission-a', {
-      expectedUpdatedAt: 1,
-      expectedIntentVersion: 1,
-    });
+    expect(ports).not.toHaveProperty('completeMission');
   });
 
-  it('complete fails closed when the terminal CAS loses authority', () => {
-    const mission = makeMission(
-      [
-        step({
-          id: 's1',
-          label: 'Design',
-          status: 'done',
-          evidenceIds: ['ev-1'],
-        }),
-      ],
-      { intentState: 'validating', intentVersion: 2 },
-    );
-    const completeFromMissionDriver = vi.fn(() => null);
-    const ports = createProductionApplyPorts(
-      {
-        advanceMissionStep: vi.fn(),
-        isMissionComplete: () => true,
-      },
-      () =>
-        ({
-          missions: {
-            get: () => mission,
-            completeFromMissionDriver,
-          },
-          handoffs: { list: () => [], submit: vi.fn() },
-        }) as never,
-    );
-
-    expect(() => ports.completeMission('mission-a', scope)).toThrow(
-      /completion CAS changed/i,
-    );
-    expect(completeFromMissionDriver).toHaveBeenCalledWith('mission-a', {
-      expectedUpdatedAt: 1,
-      expectedIntentVersion: 2,
-    });
-    expect(mission).toMatchObject({
-      status: 'running',
-      intentState: 'validating',
-    });
-  });
 
   it('never exposes worker panes to mission-driver recovery', () => {
     const orchestrator: MissionPaneSpec = {
@@ -1132,6 +929,7 @@ describe('createProductionApplyPorts advance/complete', () => {
       [step({ id: 's1', label: 'Validar entrega', status: 'pending' })],
       {
         orchestratorSessionId: 'session-orch-dead',
+        intentState: 'executing',
         description: 'Concluir a missão com prova real.',
       },
     );
@@ -1146,20 +944,24 @@ describe('createProductionApplyPorts advance/complete', () => {
         createdAt: 1,
       },
     ];
-    const update = vi.fn(
-      (_missionId: string, patch: Record<string, unknown>) => {
-        mission = { ...mission, ...patch } as typeof mission;
-        return mission;
+    const recoverPane = vi.fn();
+    const blockTechnical = vi.fn(
+      (_scope: typeof scope, input: MissionBlockInput) => {
+        mission = {
+          ...mission,
+          status: 'blocked',
+          intentState: 'blocked_technical',
+          description: input.description,
+          updatedAt: mission.updatedAt + 1,
+        };
       },
     );
-    const recoverPane = vi.fn();
     const ports = createProductionApplyPorts(
       { advanceMissionStep: vi.fn(), isMissionComplete: () => false },
       () =>
         ({
           missions: {
             get: () => mission,
-            update,
             appendLearning: vi.fn(),
             hasCurrentKickoffAcceptance: () => true,
           },
@@ -1179,6 +981,13 @@ describe('createProductionApplyPorts advance/complete', () => {
           role: 'orchestrator',
         },
       ],
+      undefined,
+      () => ({
+        blockUser: () => {
+          throw new Error('unexpected user block');
+        },
+        blockTechnical,
+      }),
     );
 
     await expect(
@@ -1189,16 +998,16 @@ describe('createProductionApplyPorts advance/complete', () => {
     ).rejects.toThrow(/blocked.*Retomar missão/i);
 
     expect(recoverPane).not.toHaveBeenCalled();
-    expect(update).toHaveBeenLastCalledWith(
-      mission.id,
+    expect(blockTechnical).toHaveBeenLastCalledWith(
+      scope,
       expect.objectContaining({
-        status: 'blocked',
-        intentState: 'blocked_technical',
+        missionId: mission.id,
         description: expect.stringMatching(
           /NEXUS_DEAD_ORCHESTRATOR_RECOVERY_BLOCKED[\s\S]*Retomar missão/,
         ),
       }),
     );
+    expect(blockTechnical).toHaveBeenCalledTimes(2);
     expect(
       mission.description.match(
         /\[NEXUS_DEAD_ORCHESTRATOR_RECOVERY_BLOCKED\]/g,

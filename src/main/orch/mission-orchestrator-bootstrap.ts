@@ -2,6 +2,7 @@ import path from "node:path";
 import type { WebContents } from "electron";
 import { z } from "zod";
 import { GUIDED_PLAN_BLOCK_MARKER } from "../../shared/guided-mission-plan";
+import { parseClarifyAnswerArtifact } from "../../shared/clarify";
 import {
   compactMissionContext,
   missionCompactHasProgress,
@@ -31,6 +32,8 @@ import type {
   PaneSnapshot,
   Squad,
   SquadAgent,
+  MissionIntentState,
+  MissionStatus,
 } from "../../shared/orch-types";
 import { isMissionRuntimeSquadId } from "../../shared/orch-types";
 import type { ProjectExecutionScope } from "../../shared/types";
@@ -124,10 +127,19 @@ import {
 import { evaluateMissionAdmission } from "./mission-engine-admission";
 import {
   MainMissionEngine,
+  type MissionBlockInput,
   type MissionStartInput,
+  type MissionVerifiedCompletionInput,
 } from "./mission-engine";
 import type { ScopedMissionStore } from "./mission-store";
-import { MissionEngineRegistry } from "./mission-engine-registry";
+import {
+  configureMissionEngineForScope,
+  MissionEngineRegistry,
+} from "./mission-engine-registry";
+import {
+  taskDispatchBlockDetailFromDescription,
+  taskDispatchTechnicalResumeDescription,
+} from "./task-dispatch-persistence";
 import type { ProjectMissionSnapshotView } from "./mission-snapshot";
 import type {
   TaskDispatchRecord,
@@ -2830,6 +2842,48 @@ function projectMissionEngineSnapshotView(
   };
 }
 
+interface MissionEngineLifecyclePatch {
+  readonly status: MissionStatus;
+  readonly intentState: MissionIntentState;
+  readonly description?: string;
+  readonly learnings?: string;
+}
+
+function transitionMissionEngineLifecycle(
+  stores: ProjectDomainStoreSuite,
+  input: Pick<
+    MissionBlockInput,
+    | "missionId"
+    | "expectedStatus"
+    | "expectedIntentState"
+    | "expectedUpdatedAt"
+    | "expectedIntentVersion"
+  >,
+  patch: MissionEngineLifecyclePatch,
+): void {
+  const current = stores.missions.get(input.missionId);
+  if (
+    !current ||
+    current.status !== input.expectedStatus ||
+    current.intentState !== input.expectedIntentState ||
+    current.updatedAt !== input.expectedUpdatedAt ||
+    (current.intentVersion ?? 0) !== input.expectedIntentVersion
+  ) {
+    throw new Error("mission engine lifecycle fence changed");
+  }
+  const updated = stores.missions.transitionLifecycle(
+    input.missionId,
+    {
+      updatedAt: input.expectedUpdatedAt,
+      intentVersion: input.expectedIntentVersion,
+    },
+    patch,
+  );
+  if (!updated) {
+    throw new Error("mission engine lifecycle CAS changed");
+  }
+}
+
 const productionMissionEngines = new MissionEngineRegistry((scope, stores) =>
   new MainMissionEngine(scope, {
     arm: async () => {
@@ -2865,8 +2919,45 @@ const productionMissionEngines = new MissionEngineRegistry((scope, stores) =>
     retryKickoff: async () => {
       throw new Error('mission engine retry requires the blocked-start adapter');
     },
-    resume: async () => {
-      throw new Error('mission engine resume requires the blocked-start adapter');
+    resume: async (command) => {
+      const mission = stores.missions.get(command.missionId);
+      if (!mission) throw new Error("mission not found");
+      if (
+        mission.status === "running" &&
+        mission.intentState === "executing"
+      ) {
+        return;
+      }
+      if (
+        mission.status !== "blocked" ||
+        mission.intentState !== "blocked_technical"
+      ) {
+        throw new Error("mission engine resume requires a technical block");
+      }
+      const detail = taskDispatchBlockDetailFromDescription(
+        mission.description,
+      );
+      if (!detail) {
+        throw new Error("mission engine resume requires an exact dispatch block");
+      }
+      transitionMissionEngineLifecycle(
+        stores,
+        {
+          missionId: mission.id,
+          expectedStatus: mission.status,
+          expectedIntentState: mission.intentState,
+          expectedUpdatedAt: mission.updatedAt,
+          expectedIntentVersion: mission.intentVersion ?? 0,
+        },
+        {
+          status: "running",
+          intentState: "executing",
+          description: taskDispatchTechnicalResumeDescription(
+            mission.description,
+            detail,
+          ),
+        },
+      );
     },
     stop: async () => {
       throw new Error('mission engine stop is not available on the start adapter');
@@ -2874,9 +2965,92 @@ const productionMissionEngines = new MissionEngineRegistry((scope, stores) =>
     direct: async () => {
       throw new Error('mission engine direct is not available on the start adapter');
     },
-    answerQuestion: async () => {
-      throw new Error('mission engine answer is not available on the start adapter');
+    answerQuestion: async (command) => {
+      const question = stores.handoffs.get(command.questionId);
+      if (
+        !question ||
+        question.missionId !== command.missionId ||
+        question.deliveryState !== "consumed"
+      ) {
+        throw new Error(
+          "mission engine answer requires the consumed current question",
+        );
+      }
+      const answers = stores.handoffs
+        .list({ missionId: command.missionId, includeDelivered: true })
+        .filter((handoff) => {
+          if (handoff.authorityOrigin !== "operator-confirmed") return false;
+          return handoff.artifacts.some((artifact) => {
+            const parsed = parseClarifyAnswerArtifact(artifact);
+            return parsed?.questionId === command.questionId;
+          });
+        });
+      if (answers.length !== 1) {
+        throw new Error(
+          "mission engine answer requires one operator-confirmed response",
+        );
+      }
+      const answer = answers[0]!.artifacts
+        .map((artifact) => parseClarifyAnswerArtifact(artifact))
+        .find((artifact) => artifact?.questionId === command.questionId);
+      const matchesCommand =
+        answer?.answer.kind === "chip"
+          ? answer.answer.chipId === command.optionId
+          : answer?.answer.kind === "freeform" &&
+            answer.answer.value === command.text;
+      if (!matchesCommand) {
+        throw new Error("mission engine answer diverges from durable response");
+      }
+      const mission = stores.missions.get(command.missionId);
+      if (!mission) throw new Error("mission not found");
+      if (
+        mission.status === "running" &&
+        mission.intentState === "executing"
+      ) {
+        return;
+      }
+      if (
+        mission.status !== "blocked" ||
+        mission.intentState !== "blocked_user"
+      ) {
+        throw new Error("mission engine answer requires a user block");
+      }
+      transitionMissionEngineLifecycle(
+        stores,
+        {
+          missionId: mission.id,
+          expectedStatus: mission.status,
+          expectedIntentState: mission.intentState,
+          expectedUpdatedAt: mission.updatedAt,
+          expectedIntentVersion: mission.intentVersion ?? 0,
+        },
+        { status: "running", intentState: "executing" },
+      );
     },
+    blockUser: (input) =>
+      transitionMissionEngineLifecycle(stores, input, {
+        status: "blocked",
+        intentState: "blocked_user",
+        description: input.description,
+      }),
+    blockTechnical: (input) =>
+      transitionMissionEngineLifecycle(stores, input, {
+        status: "blocked",
+        intentState: "blocked_technical",
+        description: input.description,
+      }),
+    resumeTechnical: (input) =>
+      transitionMissionEngineLifecycle(stores, input, {
+        status: "running",
+        intentState: "executing",
+        description: input.description,
+      }),
+    completeVerified: (input: MissionVerifiedCompletionInput) =>
+      transitionMissionEngineLifecycle(stores, input, {
+        status: "done",
+        intentState: "done",
+        learnings: input.learnings,
+      }),
     readSnapshotView: async (missionId) =>
       projectMissionEngineSnapshotView(scope, stores, missionId),
     listSnapshotViews: async () =>
@@ -2886,6 +3060,9 @@ const productionMissionEngines = new MissionEngineRegistry((scope, stores) =>
           projectMissionEngineSnapshotView(scope, stores, mission.id),
         ),
   }),
+);
+configureMissionEngineForScope((scope) =>
+  productionMissionEngines.forScope(scope, getProjectDomainStores(scope)),
 );
 
 function blockMissionEngineStartFailure(

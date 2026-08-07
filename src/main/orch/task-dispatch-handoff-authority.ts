@@ -11,6 +11,7 @@ import {
   taskDispatchIdSchema,
   type TaskDispatchRecord,
 } from "./task-dispatch-codec";
+import type { MissionEngine } from "./mission-engine";
 import { emitWorkerDecisionClarify } from "./worker-decision-clarify";
 import {
   blockTaskDispatchMission,
@@ -395,28 +396,38 @@ export interface BlockTaskDispatchFromHandoffInput {
   readonly detail: string;
 }
 
+interface BlockedTaskDispatchPostCommitDeps {
+  readonly emitClarify: (
+    binding: ScopedStoreBinding,
+    missionId: string,
+    detail: string,
+  ) => { readonly questionId: string } | null;
+  readonly missionEngine: Pick<MissionEngine, "blockUser">;
+}
+
 export function completeBlockedTaskDispatchHandoffPostCommit(
   binding: ScopedStoreBinding,
   record: TaskDispatchRecord,
   detail: string,
+  deps: BlockedTaskDispatchPostCommitDeps,
 ): void {
   const boundedDetail = detail.slice(0, 65_536);
-  // Mission is still running: open chips first, then mark blocked_user.
-  try {
-    emitWorkerDecisionClarify(binding, record.missionId, boundedDetail);
-  } catch (error) {
-    console.warn(
-      "[task-dispatch] worker-decision clarify skipped:",
-      error instanceof Error ? error.message : error,
-    );
+  const clarification = deps.emitClarify(
+    binding,
+    record.missionId,
+    boundedDetail,
+  );
+  if (!clarification) {
+    throw new Error("worker decision block requires a durable clarification");
   }
-  // Worker chose status=blocked (governance / product fork) → human decision.
   blockTaskDispatchMission(
     binding.writeDatabase(),
     record.missionId,
     boundedDetail,
     binding.now(),
     "user",
+    deps.missionEngine,
+    binding.scope,
   );
   binding.emitChange();
 }
@@ -424,6 +435,7 @@ export function completeBlockedTaskDispatchHandoffPostCommit(
 export function blockTaskDispatchFromHandoff(
   binding: ScopedStoreBinding,
   input: BlockTaskDispatchFromHandoffInput,
+  missionEngine: Pick<MissionEngine, "blockUser">,
 ): TaskDispatchRecord {
   const now = binding.now();
   const db = binding.writeDatabase();
@@ -441,6 +453,9 @@ export function blockTaskDispatchFromHandoff(
       ),
     )
     .immediate();
-  completeBlockedTaskDispatchHandoffPostCommit(binding, record, detail);
+  completeBlockedTaskDispatchHandoffPostCommit(binding, record, detail, {
+    emitClarify: emitWorkerDecisionClarify,
+    missionEngine,
+  });
   return record;
 }

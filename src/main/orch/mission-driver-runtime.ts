@@ -327,12 +327,6 @@ export function logDecisionActive(snapshot: DriveSnapshot): void {
 
 let configuredDeps: DriveDeps | null = null;
 let configuredConfig: DriveConfig = defaultDriveConfig;
-let timer: ReturnType<typeof setInterval> | null = null;
-let wakeTimer: ReturnType<typeof setTimeout> | null = null;
-let runningDeps: DriveDeps | null = null;
-let runningConfig: DriveConfig | null = null;
-let ticking = false;
-let rerunRequested = false;
 let heartbeatCounter = 0;
 let externalReconcileRequest: (() => boolean) | null = null;
 
@@ -340,12 +334,6 @@ export function configureMissionDriverRuntime(options: {
   deps: DriveDeps;
   config?: DriveConfig;
 }): void {
-  if (timer) {
-    console.warn(
-      '[mission-driver] configure chamado com o loop rodando; os novos deps ' +
-        'só passam a valer após stop()+start()',
-    );
-  }
   configuredDeps = options.deps;
   if (options.config) configuredConfig = options.config;
 }
@@ -371,43 +359,10 @@ function reportLoopResult(
   }
 }
 
-function scheduleDriveTick(deps: DriveDeps, config: DriveConfig): void {
-  if (ticking) {
-    rerunRequested = true;
-    return;
-  }
-  if (wakeTimer) return;
-  wakeTimer = setTimeout(() => {
-    wakeTimer = null;
-    if (ticking) {
-      rerunRequested = true;
-      return;
-    }
-    ticking = true;
-    void runDriveTick(deps, config)
-      .then((result) => reportLoopResult(result, config))
-      .catch((err) => console.warn('[mission-driver] tick falhou:', err))
-      .finally(() => {
-        ticking = false;
-        if (!rerunRequested) return;
-        rerunRequested = false;
-        const nextDeps = runningDeps;
-        const nextConfig = runningConfig;
-        if (nextDeps && nextConfig) scheduleDriveTick(nextDeps, nextConfig);
-      });
-  }, 0);
-  wakeTimer.unref?.();
-}
 
-/**
- * Wake event-driven coalescido. Store/pane bursts collapse into one tick; a
- * event arriving during a tick schedules exactly one trailing reconciliation.
- */
+/** Route every wake through the coordinator-owned coalescer. */
 export function requestMissionDriverTick(): boolean {
-  if (externalReconcileRequest) return externalReconcileRequest();
-  if (!timer || !runningDeps || !runningConfig) return false;
-  scheduleDriveTick(runningDeps, runningConfig);
-  return true;
+  return externalReconcileRequest?.() ?? false;
 }
 
 /**
@@ -430,44 +385,8 @@ export async function reconcileMissionDriver(): Promise<DriveTickResult | null> 
   return result;
 }
 
-/** Inicia o loop (idempotente). Requer configure prévio. Timer .unref(). */
-export function startMissionDriverLoop(
-  deps: DriveDeps | null = configuredDeps,
-  config: DriveConfig = configuredConfig,
-): void {
-  if (timer) return; // idempotente
-  if (!deps) {
-    console.warn(
-      '[mission-driver] start chamado antes de configure; loop não iniciado',
-    );
-    return;
-  }
-  const activeDeps = deps;
-  const activeConfig = config;
-  runningDeps = activeDeps;
-  runningConfig = activeConfig;
-  timer = setInterval(() => {
-    scheduleDriveTick(activeDeps, activeConfig);
-  }, DRIVE_TICK_MS);
-  timer.unref?.();
-  // Reconcile immediately at boot; do not leave recovered missions stale for
-  // the first 30-second polling interval.
-  scheduleDriveTick(activeDeps, activeConfig);
-}
-
-export function stopMissionDriverLoop(): void {
-  if (timer) clearInterval(timer);
-  if (wakeTimer) clearTimeout(wakeTimer);
-  timer = null;
-  wakeTimer = null;
-  runningDeps = null;
-  runningConfig = null;
-  ticking = false;
-  rerunRequested = false;
-}
 
 export function disposeMissionDriverRuntime(): void {
-  stopMissionDriverLoop();
   externalReconcileRequest = null;
   configuredDeps = null;
   configuredConfig = defaultDriveConfig;

@@ -42,6 +42,8 @@ import {
   completeBlockedTaskDispatchHandoffPostCommit,
   resolveCommittedTaskDispatchHandoffReplayInTransaction,
 } from "./task-dispatch-handoff-authority";
+import { missionEngineForScope } from "./mission-engine-registry";
+import { emitWorkerDecisionClarify } from "./worker-decision-clarify";
 import type { TaskDispatchRecord } from "./task-dispatch-codec";
 import { handoffLogicalOperationKey } from "./handoff-payload-identity";
 import {
@@ -187,6 +189,8 @@ const handoffRowSchema = z
     submitted_at: z.number().int().nonnegative().nullable(),
     acknowledged_at: z.number().int().nonnegative().nullable(),
     consumed_at: z.number().int().nonnegative().nullable(),
+    consumed_by_session: identifierSchema.nullable(),
+    consumed_delivery_attempt_id: identifierSchema.nullable(),
     created_at: z.number().int().nonnegative(),
   })
   .strict();
@@ -254,10 +258,14 @@ const HANDOFF_SELECT = `
          artifacts_json, evidence_ids_json, evidence_trusted,
          context_revision, contract_hash, base_sha, head_sha, diff_hash,
          workflow_revision, delivered, delivery_state, submitted_at,
-         acknowledged_at, consumed_at, created_at
+         acknowledged_at, consumed_at, consumed_by_session,
+         consumed_delivery_attempt_id, created_at
   FROM handoffs`;
 
-export type ScopedHandoff = ScopedEntity<Handoff>;
+export type ScopedHandoff = ScopedEntity<Handoff> & {
+  readonly consumedBySession?: string;
+  readonly consumedDeliveryAttemptId?: string;
+};
 export type SubmitHandoffInput = z.input<typeof submitHandoffInputSchema>;
 
 export interface PhysicalHandoffDispatchTransition {
@@ -800,6 +808,10 @@ export class ScopedHandoffStore {
           this.#binding,
           committed.taskDispatch,
           mcpBoundary.dispatchTransition.detail,
+          {
+            emitClarify: emitWorkerDecisionClarify,
+            missionEngine: missionEngineForScope(this.#binding.scope),
+          },
         );
       } else {
         this.#binding.emitChange();
@@ -1933,6 +1945,14 @@ export class ScopedHandoffStore {
     ) {
       throw new ScopedStoreCorruptionError("handoff evidence binding");
     }
+    const hasConsumedSession = row.consumed_by_session !== null;
+    const hasConsumedAttempt = row.consumed_delivery_attempt_id !== null;
+    if (
+      hasConsumedSession !== hasConsumedAttempt ||
+      (hasConsumedSession && row.delivery_state !== "consumed")
+    ) {
+      throw new ScopedStoreCorruptionError("handoff consumption authority");
+    }
     const evidenceBinding = wasTrusted
       ? Object.freeze({
           missionId: row.mission_id!,
@@ -1996,6 +2016,9 @@ export class ScopedHandoffStore {
       submittedAt: row.submitted_at ?? undefined,
       acknowledgedAt: row.acknowledged_at ?? undefined,
       consumedAt: row.consumed_at ?? undefined,
+      consumedBySession: row.consumed_by_session ?? undefined,
+      consumedDeliveryAttemptId:
+        row.consumed_delivery_attempt_id ?? undefined,
       createdAt: row.created_at,
       ...this.#binding.coordinates,
     };

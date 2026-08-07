@@ -85,6 +85,10 @@ function createPorts(
     stop: vi.fn(async () => undefined),
     direct: vi.fn(async () => undefined),
     answerQuestion: vi.fn(async () => undefined),
+    blockUser: vi.fn(() => snapshotView()),
+    blockTechnical: vi.fn(() => snapshotView()),
+    resumeTechnical: vi.fn(() => undefined),
+    completeVerified: vi.fn(() => snapshotView()),
     readSnapshotView: vi.fn(async () => snapshotView()),
     listSnapshotViews: vi.fn(async () => [snapshotView()]),
     ...overrides,
@@ -311,6 +315,63 @@ describe('MainMissionEngine', () => {
     ]);
   });
 
+  it('routes main-only lifecycle writes synchronously through one scoped port', () => {
+    const calls: string[] = [];
+    const ports = {
+      ...createPorts(),
+      blockUser: vi.fn(() => {
+        calls.push('block-user');
+      }),
+      blockTechnical: vi.fn(() => {
+        calls.push('block-technical');
+      }),
+      resumeTechnical: vi.fn(() => {
+        calls.push('resume-technical');
+      }),
+      completeVerified: vi.fn(() => {
+        calls.push('complete-verified');
+      }),
+    };
+    const engine = new MainMissionEngine(scope, ports);
+    const fence = {
+      missionId: 'mission-1',
+      expectedStatus: 'running' as const,
+      expectedIntentState: 'executing' as const,
+      expectedUpdatedAt: 1_777_000_000_100,
+      expectedIntentVersion: 3,
+    };
+
+    engine.blockUser(scope, {
+      ...fence,
+      description: 'Aguardando uma decisão humana.',
+    });
+    engine.blockTechnical(scope, {
+      ...fence,
+      description: 'Falha técnica retryable.',
+    });
+    engine.resumeTechnical(scope, {
+      ...fence,
+      expectedStatus: 'blocked',
+      expectedIntentState: 'blocked_technical',
+      description: 'Retry técnico autorizado.',
+    });
+    engine.completeVerified(scope, {
+      ...fence,
+      learnings: 'Plano, PREVC e evidências verificados.',
+    });
+
+    expect(calls).toEqual([
+      'block-user',
+      'block-technical',
+      'resume-technical',
+      'complete-verified',
+    ]);
+    expect(ports.blockUser).toHaveBeenCalledOnce();
+    expect(ports.blockTechnical).toHaveBeenCalledOnce();
+    expect(ports.resumeTechnical).toHaveBeenCalledOnce();
+    expect(ports.completeVerified).toHaveBeenCalledOnce();
+  });
+
   it('rejects malformed commands without invoking a handler', async () => {
     const ports = createPorts();
     const engine = new MainMissionEngine(scope, ports);
@@ -346,6 +407,10 @@ describe('MainMissionEngine', () => {
       'stop',
       'direct',
       'answerQuestion',
+      'blockUser',
+      'blockTechnical',
+      'resumeTechnical',
+      'completeVerified',
       'readSnapshotView',
       'listSnapshotViews',
     ] as const satisfies readonly (keyof MainMissionEnginePorts)[];
@@ -368,6 +433,13 @@ describe('MainMissionEngine', () => {
     const ports = createPorts();
     const engine = new MainMissionEngine(scope, ports);
     const wrongScope = { ...scope, rootRealPath: '/workspace/other' };
+    const lifecycleFence = {
+      missionId: 'mission-1',
+      expectedStatus: 'running' as const,
+      expectedIntentState: 'executing' as const,
+      expectedUpdatedAt: 1_777_000_000_100,
+      expectedIntentVersion: 3,
+    };
 
     await expect(engine.prepare(wrongScope, request)).rejects.toThrow(/scope/i);
     await expect(
@@ -382,6 +454,30 @@ describe('MainMissionEngine', () => {
         missionId: 'mission-1',
       }),
     ).rejects.toThrow(/scope/i);
+    expect(() =>
+      engine.blockUser(wrongScope, {
+        ...lifecycleFence,
+        description: 'Aguardando operador.',
+      }),
+    ).toThrow(/scope/i);
+    expect(() =>
+      engine.blockTechnical(wrongScope, {
+        ...lifecycleFence,
+        description: 'Falha técnica.',
+      }),
+    ).toThrow(/scope/i);
+    expect(() =>
+      engine.resumeTechnical(wrongScope, {
+        ...lifecycleFence,
+        description: 'Retomar após falha técnica.',
+      }),
+    ).toThrow(/scope/i);
+    expect(() =>
+      engine.completeVerified(wrongScope, {
+        ...lifecycleFence,
+        learnings: 'Conclusão verificada.',
+      }),
+    ).toThrow(/scope/i);
     await expect(engine.snapshot(wrongScope, 'mission-1')).rejects.toThrow(
       /scope/i,
     );
@@ -389,6 +485,10 @@ describe('MainMissionEngine', () => {
     expect(ports.arm).not.toHaveBeenCalled();
     expect(ports.readReviewFence).not.toHaveBeenCalled();
     expect(ports.resume).not.toHaveBeenCalled();
+    expect(ports.blockUser).not.toHaveBeenCalled();
+    expect(ports.blockTechnical).not.toHaveBeenCalled();
+    expect(ports.resumeTechnical).not.toHaveBeenCalled();
+    expect(ports.completeVerified).not.toHaveBeenCalled();
     expect(ports.readSnapshotView).not.toHaveBeenCalled();
     expect(ports.listSnapshotViews).not.toHaveBeenCalled();
   });

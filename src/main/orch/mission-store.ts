@@ -132,12 +132,7 @@ const missionLifecyclePatchSchema = z
     status: missionStatusSchema,
     intentState: missionIntentStateSchema,
     description: z.string().max(65_536).optional(),
-  })
-  .strict();
-const missionDriverCompletionExpectationSchema = z
-  .object({
-    expectedUpdatedAt: timestampSchema,
-    expectedIntentVersion: z.number().int().nonnegative().max(1_000_000),
+    learnings: z.string().max(65_536).optional(),
   })
   .strict();
 const orchestratorPreDispatchExitInputSchema = z
@@ -1498,6 +1493,7 @@ export class ScopedMissionStore {
       readonly status: MissionStatus;
       readonly intentState: MissionIntentState;
       readonly description?: string;
+      readonly learnings?: string;
     },
   ): ScopedMission | null {
     const id = entityIdSchema.parse(rawId);
@@ -1523,13 +1519,15 @@ export class ScopedMissionStore {
         const result = db
           .prepare(
             `UPDATE missions
-             SET status = ?, intent_state = ?, description = ?, updated_at = ?
+             SET status = ?, intent_state = ?, description = ?, learnings = ?,
+                 updated_at = ?
              WHERE id = ? AND updated_at = ? AND intent_version = ?`,
           )
           .run(
             patch.status,
             patch.intentState,
             patch.description ?? existing.description,
+            patch.learnings ?? existing.learnings,
             updatedAt,
             id,
             expectation.updatedAt,
@@ -1883,54 +1881,6 @@ export class ScopedMissionStore {
     return this.update(id, { status });
   }
 
-  /**
-   * Exclusive terminal write for the PREVC-backed Mission Driver.
-   *
-   * The caller must prove milestones + immutable PREVC receipts before entering
-   * this store boundary. A single CAS statement then closes both projections;
-   * no observer can see `status=done` with an executing intent (or vice versa).
-   */
-  completeFromMissionDriver(
-    rawId: string,
-    rawExpectation: {
-      readonly expectedUpdatedAt: number;
-      readonly expectedIntentVersion: number;
-    },
-  ): ScopedMission | null {
-    const id = entityIdSchema.parse(rawId);
-    const expectation =
-      missionDriverCompletionExpectationSchema.parse(rawExpectation);
-    const db = this.#binding.writeDatabase();
-    const updated = db
-      .transaction(() => {
-        const updatedAt = this.#binding.now();
-        const result = db
-          .prepare(
-            `UPDATE missions
-             SET status = 'done', intent_state = 'done', updated_at = ?
-             WHERE id = ?
-               AND status = 'running'
-               AND intent_state IN (
-                 'legacy', 'dispatched', 'executing', 'validating'
-               )
-               AND intent_version = ?
-               AND updated_at = ?`,
-          )
-          .run(
-            updatedAt,
-            id,
-            expectation.expectedIntentVersion,
-            expectation.expectedUpdatedAt,
-          );
-        return result.changes === 1
-          ? this.#getFromDatabase(db, id)
-          : null;
-      })
-      .immediate();
-    if (!updated) return null;
-    this.#binding.emitChange();
-    return cloneMission(updated);
-  }
 
   /** Persist a typed user/technical block without an ambiguous status-only write. */
   block(rawId: string, rawKind: MissionBlockKind): ScopedMission | null {

@@ -7,6 +7,7 @@ import {
 import { hasTeamReadOnlyFanoutDomain } from "../../shared/mission-topology";
 import { hasWavePackDomain } from "../../shared/mission-wave-pack";
 import { PRIOR_MISSION_MEMORY_SEPARATOR } from "../../shared/mission-result-format";
+import type { MissionEngine } from "./mission-engine";
 import { ScopedStoreBinding, ScopedStoreCorruptionError } from "./scoped-store";
 import {
   EMPTY_GIT_DIFF_SHA256,
@@ -101,6 +102,7 @@ function verifyCompletedTaskPlanAuthority(
     | CompleteMissionFromVerifiedPlanInput
     | RecordFanoutMissionConsolidationInput,
   mode: VerifiedPlanAuthorityMode,
+  missionEngine?: Pick<MissionEngine, "completeVerified">,
 ): boolean {
   const missionId = taskDispatchIdSchema.parse(input.missionId);
   const intentVersion = z
@@ -159,7 +161,7 @@ function verifyCompletedTaskPlanAuthority(
     const mission = db
       .prepare(
         `SELECT status, intent_state, intent_version, intent_contract_json, learnings,
-                orch_session_id, squad_id
+                orch_session_id, squad_id, updated_at
          FROM missions WHERE id = ?`,
       )
       .get(missionId) as
@@ -171,6 +173,7 @@ function verifyCompletedTaskPlanAuthority(
           learnings: string;
           orch_session_id: string | null;
           squad_id: string | null;
+          updated_at: number;
         }
       | undefined;
     if (!mission || mission.status !== "running") return false;
@@ -735,12 +738,6 @@ function verifyCompletedTaskPlanAuthority(
           delivery.consumed_by_session === mission.orch_session_id &&
           delivery.consumed_delivery_attempt_id ===
             delivery.accepted_attempt_id;
-        const isAwaitingExplicitConsumption =
-          (delivery?.delivery_state === 'submitted' ||
-            delivery?.delivery_state === 'acknowledged') &&
-          delivery.consumed_at === null &&
-          delivery.consumed_by_session === null &&
-          delivery.consumed_delivery_attempt_id === null;
         if (
           !delivery ||
           delivery.status !== 'success' ||
@@ -749,7 +746,7 @@ function verifyCompletedTaskPlanAuthority(
           delivery.delivered !== 1 ||
           !delivery.accepted_attempt_id ||
           delivery.accepted_at === null ||
-          (!hasExactConsumption && !isAwaitingExplicitConsumption)
+          !hasExactConsumption
         ) {
           return false;
         }
@@ -801,23 +798,21 @@ function verifyCompletedTaskPlanAuthority(
       return false;
     }
     let latestFanoutAckAt = 0;
-    if (sealedTopology === 'team-read-only-fanout') {
-      for (const delivery of completedDeliveries) {
-        if (!delivery.hasExactConsumption || delivery.consumedAt === null) {
-          return false;
-        }
-        const ackAt = verifiedFanoutAckTime(db, binding, {
-          missionId,
-          orchestratorSessionId: mission.orch_session_id,
-          handoffId: delivery.handoffId,
-          deliveryAttemptId: delivery.deliveryAttemptId,
-          acceptedAt: delivery.acceptedAt,
-          consumedAt: delivery.consumedAt,
-          now,
-        });
-        if (ackAt === null) return false;
-        latestFanoutAckAt = Math.max(latestFanoutAckAt, ackAt);
+    for (const delivery of completedDeliveries) {
+      if (!delivery.hasExactConsumption || delivery.consumedAt === null) {
+        return false;
       }
+      const ackAt = verifiedFanoutAckTime(db, binding, {
+        missionId,
+        orchestratorSessionId: mission.orch_session_id,
+        handoffId: delivery.handoffId,
+        deliveryAttemptId: delivery.deliveryAttemptId,
+        acceptedAt: delivery.acceptedAt,
+        consumedAt: delivery.consumedAt,
+        now,
+      });
+      if (ackAt === null) return false;
+      latestFanoutAckAt = Math.max(latestFanoutAckAt, ackAt);
     }
     if (mode === 'record-fanout-consolidation') {
       if (
@@ -882,25 +877,17 @@ function verifyCompletedTaskPlanAuthority(
         )
       : `${mission.learnings}${mission.learnings.trim() ? "\n\n" : ""}${authorityNote}`
           .slice(0, 65_536);
-    const updated = db
-      .prepare(
-        `UPDATE missions
-         SET status = 'done', intent_state = 'done', learnings = ?, updated_at = ?
-         WHERE id = ? AND status = 'running' AND intent_version = ?
-           AND intent_state IN ('dispatched', 'executing', 'validating')
-           AND intent_contract_json = ? AND squad_id = ?`,
-      )
-      .run(
-        learnings,
-        now,
-        missionId,
-        intentVersion,
-        mission.intent_contract_json,
-        mission.squad_id,
-      );
-    if (updated.changes !== 1) {
-      throw new Error("mission verified completion lost CAS");
+    if (!missionEngine) {
+      throw new Error("verified completion requires MissionEngine authority");
     }
+    missionEngine.completeVerified(binding.scope, {
+      missionId,
+      expectedStatus: "running",
+      expectedIntentState: mission.intent_state,
+      expectedUpdatedAt: mission.updated_at,
+      expectedIntentVersion: intentVersion,
+      learnings,
+    });
     return true;
   });
   return mode === "inspect-guided"
@@ -924,11 +911,13 @@ export function hasVerifiedGuidedTaskPlanAuthority(
 export function completeMissionFromVerifiedTaskPlan(
   binding: ScopedStoreBinding,
   input: CompleteMissionFromVerifiedPlanInput,
+  missionEngine: Pick<MissionEngine, "completeVerified">,
 ): boolean {
   const completed = verifyCompletedTaskPlanAuthority(
     binding,
     input,
     "complete-legacy",
+    missionEngine,
   );
   if (completed) binding.emitChange();
   return completed;

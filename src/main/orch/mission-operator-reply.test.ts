@@ -23,14 +23,8 @@ describe('isOperatorSubmit', () => {
 });
 
 describe('operatorSubmitUnparkPatch', () => {
-  it('returns a mission parked on the human to execution', () => {
-    // Field trap (28/07): the agent asked, the operator answered, the answer
-    // was delivered — and the mission stayed blocked_user forever because
-    // `user_resume` existed in the state machine with no caller.
-    expect(operatorSubmitUnparkPatch(mission({}))).toEqual({
-      status: 'running',
-      intentState: 'executing',
-    });
+  it('does not let raw pane input bypass durable clarify consumption', () => {
+    expect(operatorSubmitUnparkPatch(mission({}))).toBeNull();
   });
 
   it('leaves a technical block to its own recovery', () => {

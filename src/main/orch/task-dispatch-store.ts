@@ -7,6 +7,8 @@ export {
   type ConcurrentIsolatedWorktreeTask,
 } from "../../shared/mission-wave-pack";
 import type { ProjectRuntimeManager } from "../runtime/project-runtime-manager";
+import type { MissionEngine } from "./mission-engine";
+import { missionEngineForScope } from "./mission-engine-registry";
 import {
   ScopedStoreBinding,
   ScopedStoreCorruptionError,
@@ -153,15 +155,27 @@ export const LEGACY_GUIDED_DIRTY_CHECKOUT_TERMINAL_REASON =
     LEGACY_GUIDED_DIRTY_CHECKOUT_BOOTSTRAP_CAUSE,
   );
 
+export type TaskDispatchMissionEngine = Pick<
+  MissionEngine,
+  "blockUser" | "blockTechnical" | "resumeTechnical" | "completeVerified"
+>;
+
+export interface TaskDispatchStoreOptions extends ScopedStoreOptions {
+  readonly missionEngine?: TaskDispatchMissionEngine;
+}
+
 export class TaskDispatchStore {
   readonly #binding: ScopedStoreBinding;
+  readonly #configuredMissionEngine: TaskDispatchMissionEngine | undefined;
 
   constructor(
     runtimeManager: ProjectRuntimeManager,
     scope: ProjectExecutionScope,
-    options: ScopedStoreOptions = {},
+    options: TaskDispatchStoreOptions = {},
   ) {
-    this.#binding = new ScopedStoreBinding(runtimeManager, scope, options);
+    const { missionEngine, ...storeOptions } = options;
+    this.#binding = new ScopedStoreBinding(runtimeManager, scope, storeOptions);
+    this.#configuredMissionEngine = missionEngine;
   }
 
   get scope(): ProjectExecutionScope {
@@ -247,7 +261,11 @@ export class TaskDispatchStore {
   blockFromHandoff(
     input: BlockTaskDispatchFromHandoffInput,
   ): TaskDispatchRecord {
-    return blockTaskDispatchFromHandoff(this.#binding, input);
+    return blockTaskDispatchFromHandoff(
+      this.#binding,
+      input,
+      this.#missionEngine(),
+    );
   }
 
   /**
@@ -1236,7 +1254,11 @@ export class TaskDispatchStore {
   completeMissionFromVerifiedPlan(
     input: CompleteMissionFromVerifiedPlanInput,
   ): boolean {
-    return completeMissionFromVerifiedTaskPlan(this.#binding, input);
+    return completeMissionFromVerifiedTaskPlan(
+      this.#binding,
+      input,
+      this.#missionEngine(),
+    );
   }
 
   recordFanoutConsolidation(
@@ -2518,6 +2540,8 @@ export class TaskDispatchStore {
           missionId,
           current.state === "blocked" ? current.last_error : null,
           now,
+          this.#missionEngine(),
+          this.#binding.scope,
         );
         const retryAt = now + taskDispatchRetryDelay(current.attempt);
         const updated = db
@@ -2856,6 +2880,8 @@ export class TaskDispatchStore {
             current.mission_id,
             current.last_error,
             now,
+            this.#missionEngine(),
+            this.#binding.scope,
           );
         }
         const retryAt = now + taskDispatchRetryDelay(1);
@@ -3048,6 +3074,8 @@ export class TaskDispatchStore {
             current.mission_id,
             current.last_error,
             now,
+            this.#missionEngine(),
+            this.#binding.scope,
           );
         }
         const taskUpdate = db
@@ -3389,7 +3417,22 @@ export class TaskDispatchStore {
     detail: string,
     now: number,
   ): void {
-    blockTaskDispatchMission(db, missionId, detail, now);
+    blockTaskDispatchMission(
+      db,
+      missionId,
+      detail,
+      now,
+      "technical",
+      this.#missionEngine(),
+      this.#binding.scope,
+    );
+  }
+
+  #missionEngine(): TaskDispatchMissionEngine {
+    return (
+      this.#configuredMissionEngine ??
+      missionEngineForScope(this.#binding.scope)
+    );
   }
 
   #getRow(db: ReturnType<ScopedStoreBinding["readDatabase"]>, taskId: string) {
@@ -3411,7 +3454,7 @@ export class TaskDispatchStore {
 export function createTaskDispatchStore(
   runtimeManager: ProjectRuntimeManager,
   scope: ProjectExecutionScope,
-  options: ScopedStoreOptions = {},
+  options: TaskDispatchStoreOptions = {},
 ): TaskDispatchStore {
   return new TaskDispatchStore(runtimeManager, scope, options);
 }
