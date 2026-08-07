@@ -13,73 +13,74 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.28.0',
-  date: '2026-08-06',
-  codename: 'A missão anda sozinha — e o app sempre fecha',
+  version: '0.28.1',
+  date: '2026-08-07',
+  codename: 'Bridge por fora, Nexus por dentro',
   summary:
-    'O caminho simples virou o padrão de verdade: missão começa na hora sem ' +
-    'nenhuma pergunta, o worker entrega direto no seu workspace com um commit ' +
-    'local como registro, planos abrem em leque por área real do repositório ' +
-    'e bloqueio degrada declarando em vez de errar. Ação destrutiva ganhou ' +
-    'volta (lixeira, refs de undo) no lugar da confirmação; plugins de ' +
-    'terceiros são ingeridos com validação e quarentena; panes têm número ' +
-    'curto durável e ⌘1-9 posicional; e o encerramento é garantido — teto ' +
-    'inarredável, incidentes registrados, órfãos varridos no boot.',
+    'A orquestração robusta do Nexus ganhou uma camada simples de operar e ' +
+    'diagnosticar: cada missão tem um espelho legível em disco, workers ' +
+    'recebem comandos nx-* independentes do MCP, Markdown pode alimentar a ' +
+    'memória com autoridade validada e o histórico do terminal aprende com ' +
+    'frequência, sucesso e recência. Gates degradados agora preservam causa, ' +
+    'prova e autoridade em vez de esconder o ponto de parada.',
   highlights: [
     {
-      title: 'Missão começa na hora, sem perguntas',
+      title: 'Missão legível fora do banco',
       detail:
-        'Sem modal de aprovação, sem estado estacionado: o evento que levava ' +
-        'a awaiting_approval foi removido da máquina de estados e missões ' +
-        'antigas estacionadas soltam sozinhas na primeira abertura.',
+        'BOARD.md, status.json e events.jsonl projetam o journal canônico em ' +
+        'disco com escrita atômica, permissões restritas, redação de dados ' +
+        'sensíveis e recusa de symlink ou escape de diretório.',
     },
     {
-      title: 'Execução no seu workspace',
+      title: 'Comandos nx-* em qualquer worker',
       detail:
-        'Worktree isolada virou opt-in. A entrega comum edita o checkout ' +
-        'direto e conclui como same_checkout com recibo que registra como a ' +
-        'não-interferência foi garantida; fan-out largo segue isolado.',
+        'nx-mail, nx-task e nx-notify entram no PATH com capability por ' +
+        'missão. A entrega chega ao mesmo journal e às mesmas validações de ' +
+        'autoridade mesmo quando hook ou transporte MCP falha.',
     },
     {
-      title: 'Encerramento reversível',
+      title: 'Markdown entra na memória com prova',
       detail:
-        'Parar vale na hora e preserva panes, scrollback e receipts — você ' +
-        'nunca é ejetado da tela de panes e Retomar continua de onde parou.',
+        'Arquivos editados pelo usuário passam por ingestão segura, dedupe e ' +
+        'indexação FTS. A identidade da missão é atribuída pelo processo ' +
+        'principal e não pode ser escolhida ou forjada pelo chamador.',
     },
     {
-      title: 'Voz e motor honestos',
+      title: 'Terminal que aprende sem vazar segredo',
       detail:
-        'Toque de Espaço digita espaço em qualquer pane; segurar dita, com ' +
-        'saída EN-execução ou PT-literal. A missão mostra unidades elegíveis ' +
-        'contra o teto, leitores não ocupam vaga de escritor e vivacidade é ' +
-        'atividade real.',
+        'O command refinery transforma os blocos OSC 133 em sugestões ' +
+        'ranqueadas por contexto, frequência, sucesso e recência, com decay ' +
+        'e dismiss; comandos são redigidos antes de persistir ou sugerir.',
     },
   ],
   fixes: [
     {
-      title: 'Aprovação que reperguntava para sempre',
+      title: 'Bloqueio sem causa no gate',
       detail:
-        'As janelas cegas (missão recém-aprovada ainda pending; conta/effort ' +
-        'recomputados) foram fechadas antes de o gate inteiro ser removido.',
+        'O observer usa a mesma taxonomia de bloqueios do domínio e grava ' +
+        'reason/detail na evidência; mission-blocked deixa de aparecer como ' +
+        'reason=none quando a causa já existe no estado da missão.',
     },
     {
-      title: 'Espaço engolido em pane de missão',
+      title: 'Degradação sem furar autoridade',
       detail:
-        'O espaço retido do hold-to-talk entrava pela lane crua que panes ' +
-        'governados recusam; agora roteia pela mesma lane do teclado.',
+        'Falhas de inbox, PREVC e dispatch ganham caminhos explícitos de ' +
+        'degradação, mantendo receipts, fences e ownership em vez de avançar ' +
+        'por um atalho sem prova.',
     },
     {
-      title: 'Ejeção para "O que você quer criar?"',
+      title: 'Ações operacionais que agora executam',
       detail:
-        'Encerramento colapsava todos os panes e o fallback de layout vazio ' +
-        'invocava o assistente; panes agora ficam, com motivo e Retomar.',
+        'Pergunta pendente só aparece em missão viva, Arquivar chama a ação ' +
+        'real, o CTA de conexão abre o destino correto e atalhos ficam num ' +
+        'contrato único para a interface inteira.',
     },
     {
-      title: 'Entrega simples morta na conclusão',
+      title: 'Overlays acima do workspace',
       detail:
-        'same_checkout era inexprimível (descartado no decode) e todo ' +
-        'handoff_ready simples bloqueava pedindo a cerimônia removida; virou ' +
-        'forma de conclusão de primeira classe.',
+        'Handoff, atualização e notificações usam uma camada própria fora do ' +
+        'grid, com z-index semântico e motion conforme o DESIGN.md; nenhum ' +
+        'modal fica preso sob a WorkspaceBar.',
     },
   ],
 };

@@ -1,5 +1,62 @@
 # Changelog
 
+## 0.28.1 — Bridge por fora, Nexus por dentro
+
+Data: 2026-08-07
+
+Esta versão fecha a primeira onda do cruzamento Bridge × Nexus: mantém SQLite,
+receipts, ownership, effect policy, multi-CLI e worktrees como autoridade, mas
+expõe um caminho legível e degradável para humanos e workers.
+
+### Estado da missão que dá para inspecionar
+
+- Cada missão ganha uma projeção derivada com `BOARD.md`, `status.json` e
+  `events.jsonl`. A fonte da verdade continua sendo o journal SQLite.
+- As escritas são atômicas e isoladas por instalação/missão, com permissões
+  `0700`/`0600`, recusa de symlink/escape e teardown no shutdown.
+- Texto vindo de agente é normalizado e redigido antes de entrar no board;
+  payload bruto, segredo e saída PTY não são copiados para a projeção.
+
+### Coordenação que não depende de MCP ou hook
+
+- `nx-mail`, `nx-task` e `nx-notify` são injetados no `PATH` do worker.
+- Cada shim recebe uma capability vinculada à missão e escreve no mesmo
+  journal canônico. O caminho leve não contorna ACK físico, roster, ownership
+  nem política de efeitos.
+- A degradação de handoff preserva a evidência primeiro e trata falha de inbox
+  como não fatal; motivos de bloqueio chegam ao gate como `reason` e `detail`
+  em vez de `mission-blocked reason=none`.
+
+### Memória Markdown segura
+
+- Markdown passa a ser uma entrada explícita da memória, sem abandonar
+  SQLite/FTS5, dedupe e auditoria.
+- A identidade da missão é atribuída no processo principal. Frontmatter ou
+  argumento de chamador não podem forjar o vínculo com outra missão.
+- Ingestão aplica limites, normalização, redação e validação de origem antes de
+  indexar; projeções geradas continuam distinguíveis de entradas humanas.
+
+### Command refinery e interface operacional
+
+- Blocos OSC 133 agora alimentam estatísticas por contexto com frequência,
+  taxa de sucesso, recência com decay e dismiss; sugestões redigidas aparecem
+  no menu de comandos.
+- Handoff ganhou uma camada de overlay fora do grid, obedecendo aos tokens e
+  à escala de z-index do `DESIGN.md`.
+- Pergunta pendente só aparece em missão viva; Arquivar executa a ação real;
+  atalhos foram unificados e os CTAs apontam para superfícies existentes.
+
+### Limitações conhecidas
+
+- A projeção deliberadamente não guarda transcript PTY bruto. Retenção
+  transcript-first, com política própria de segredo e tamanho, continua
+  pendente.
+- Worker vivo porém mudo ainda não é automaticamente re-roteado para outro
+  membro do roster; o sistema o detecta, cobra e explica, mas pode encerrar a
+  frente como degradada.
+- O tier mais amplo do command refinery ainda é limitado ao checkout local,
+  não um histórico global entre todos os projetos.
+
 ## 0.28.0 — A missão anda sozinha, e o app sempre fecha
 
 O modelo de execução mudou de dono: o caminho simples virou o padrão. Cada
