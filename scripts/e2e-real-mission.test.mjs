@@ -723,6 +723,22 @@ describe('independent evidence verifier', () => {
     );
   });
 
+  it('pins the executor handoff to its authenticated mission shim', () => {
+    const forgedHttpExecutor = validEvidence();
+    const dispatch = forgedHttpExecutor.dispatches.find(
+      (candidate) => candidate.agentRef === 'e2e-executor',
+    );
+    const handoff = forgedHttpExecutor.handoffs.find(
+      (candidate) => candidate.id === dispatch.handoffId,
+    );
+    handoff.physicalReceipt.source = 'http-mcp';
+    handoff.auditIntent.source = 'http-mcp';
+
+    expect(() => assertRealMissionPassEvidence(forgedHttpExecutor)).toThrow(
+      /incomplete/,
+    );
+  });
+
   it('binds an independent advisor HEAD to the executor integration chronology', () => {
     const withAdvisorHead = (head, noChangeHead = head, issuedAt) => {
       const evidence = validEvidence();

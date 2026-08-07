@@ -55,7 +55,8 @@ const milestoneAttestationId = (missionId, stepId, binding) =>
 
 const memberSlug = (agentRef) => agentRef.replace(/^e2e-/u, "");
 const handoffSource = (member) =>
-  member.kind === "advisory" && member.cli === "agy"
+  member.kind === "execution" ||
+  (member.kind === "advisory" && member.cli === "agy")
     ? "mission-shim"
     : "http-mcp";
 

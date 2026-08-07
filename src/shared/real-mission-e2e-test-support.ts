@@ -28,7 +28,8 @@ function handoffSource(member: {
   readonly kind: string;
   readonly cli: string;
 }): "http-mcp" | "mission-shim" {
-  return member.kind === "advisory" && member.cli === "agy"
+  return member.kind === "execution" ||
+    (member.kind === "advisory" && member.cli === "agy")
     ? "mission-shim"
     : "http-mcp";
 }

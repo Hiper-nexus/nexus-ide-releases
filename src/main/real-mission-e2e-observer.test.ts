@@ -290,19 +290,25 @@ function createObserver(options?: {
   });
 }
 
-type TestAdvisorCli = 'agy' | 'claude';
+type TestWorker = 'agy' | 'claude' | 'executor';
 type TestHandoffSource = 'http-mcp' | 'pty-stream' | 'mission-shim';
 
-function seedAdvisorPhysicalHandoff(
-  cli: TestAdvisorCli,
+function seedWorkerPhysicalHandoff(
+  worker: TestWorker,
   source: TestHandoffSource,
 ): { readonly sessionId: string; readonly issuedAt: number } {
-  const agentRef = `e2e-advisor-${cli}`;
-  const agentName = cli === 'agy' ? 'E2E Advisor Agy' : 'E2E Advisor Claude';
-  const sessionId = `session-${cli}`;
-  const workerIncarnationId = `incarnation-${cli}`;
-  const handoffId = `handoff-${cli}`;
-  const toolCallId = `tool-call-${cli}`;
+  const isExecutor = worker === 'executor';
+  const cli = isExecutor ? 'codex' : worker;
+  const agentRef = isExecutor ? 'e2e-executor' : `e2e-advisor-${cli}`;
+  const agentName = isExecutor
+    ? REAL_MISSION_E2E_EXECUTOR_NAME
+    : cli === 'agy'
+      ? 'E2E Advisor Agy'
+      : 'E2E Advisor Claude';
+  const sessionId = `session-${worker}`;
+  const workerIncarnationId = `incarnation-${worker}`;
+  const handoffId = `handoff-${worker}`;
+  const toolCallId = `tool-call-${worker}`;
   const issuedAt = 290;
 
   harness.mission = {
@@ -321,14 +327,14 @@ function seedAdvisorPhysicalHandoff(
     role: "worker",
     agentName,
     workerIncarnationId,
-    readOnly: true,
+    readOnly: !isExecutor,
     nativeReadOnly: false,
   });
   harness.dispatches = [
     {
       taskId: `task-${cli}`,
       agentRef,
-      executionMode: "read_only",
+      executionMode: isExecutor ? "isolated_worktree" : "read_only",
       state: "handoff_ready",
       sessionId,
       workerIncarnationId,
@@ -342,7 +348,7 @@ function seedAdvisorPhysicalHandoff(
     workerIncarnationId,
     fromAgent: agentName,
     authorityOrigin: "agent",
-    summary: `achados do advisor ${cli}`,
+    summary: `entrega física do worker ${worker}`,
     mcpProvenance: {
       receiptId: toolCallId,
       toolCallId,
@@ -547,7 +553,7 @@ describe('real mission observer advisor participation', () => {
   });
 
   it("projects AGY's exact authenticated mission-shim handoff and audit receipt", () => {
-    const { sessionId, issuedAt } = seedAdvisorPhysicalHandoff(
+    const { sessionId, issuedAt } = seedWorkerPhysicalHandoff(
       'agy',
       'mission-shim',
     );
@@ -582,7 +588,7 @@ describe('real mission observer advisor participation', () => {
   });
 
   it('does not project PTY-stream provenance for a non-AGY advisor', () => {
-    const { sessionId } = seedAdvisorPhysicalHandoff('claude', 'pty-stream');
+    const { sessionId } = seedWorkerPhysicalHandoff('claude', 'pty-stream');
     const observer = createObserver();
 
     const evidence = observer.evidence(Date.now(), 'fail', 'timeout');
@@ -595,7 +601,43 @@ describe('real mission observer advisor participation', () => {
   });
 
   it("does not project HTTP-MCP provenance for AGY's shim-pinned route", () => {
-    const { sessionId } = seedAdvisorPhysicalHandoff('agy', 'http-mcp');
+    const { sessionId } = seedWorkerPhysicalHandoff('agy', 'http-mcp');
+    const observer = createObserver();
+
+    const evidence = observer.evidence(Date.now(), 'fail', 'timeout');
+    const handoff = evidence.handoffs.find(
+      (candidate) => candidate.sessionId === sessionId,
+    );
+
+    expect(handoff?.physicalReceipt).toBeNull();
+    expect(handoff?.auditIntent).toBeNull();
+  });
+
+  it("projects the executor's exact authenticated mission-shim handoff", () => {
+    const { sessionId, issuedAt } = seedWorkerPhysicalHandoff(
+      'executor',
+      'mission-shim',
+    );
+    const observer = createObserver();
+
+    const evidence = observer.evidence(Date.now(), 'fail', 'timeout');
+    const handoff = evidence.handoffs.find(
+      (candidate) => candidate.sessionId === sessionId,
+    );
+
+    expect(handoff?.physicalReceipt).toMatchObject({
+      source: 'mission-shim',
+      sessionId,
+      issuedAt,
+    });
+    expect(handoff?.auditIntent).toMatchObject({
+      source: 'mission-shim',
+      sessionId,
+    });
+  });
+
+  it("does not project HTTP-MCP provenance for the executor's shim-pinned route", () => {
+    const { sessionId } = seedWorkerPhysicalHandoff('executor', 'http-mcp');
     const observer = createObserver();
 
     const evidence = observer.evidence(Date.now(), 'fail', 'timeout');

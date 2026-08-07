@@ -115,6 +115,22 @@ describe("real mission E2E PASS graph", () => {
     );
   });
 
+  it("pins the executor handoff to its authenticated mission shim", () => {
+    const forgedHttpExecutor = validPassEvidence();
+    const dispatch = (
+      forgedHttpExecutor.dispatches as Array<Record<string, unknown>>
+    ).find((candidate) => candidate.agentRef === "e2e-executor")!;
+    const handoff = (
+      forgedHttpExecutor.handoffs as Array<Record<string, unknown>>
+    ).find((candidate) => candidate.id === dispatch.handoffId)!;
+    (handoff.physicalReceipt as Record<string, unknown>).source = "http-mcp";
+    (handoff.auditIntent as Record<string, unknown>).source = "http-mcp";
+
+    expect(() => parseRealMissionE2EEvidence(forgedHttpExecutor)).toThrow(
+      /real-mission invariants/,
+    );
+  });
+
   it("cannot label the synthetic zero-findings council as review coverage", () => {
     const misleading = validPassEvidence();
     misleading.reviewOrigin = "e2e-merge-review-fixture";

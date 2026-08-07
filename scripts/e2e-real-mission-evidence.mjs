@@ -605,7 +605,8 @@ export function assertRealMissionPassEvidence(raw) {
     const expectedFromAgent = substitute?.name ?? member?.agentName;
     const expectedCli = substitute?.cli ?? member?.cli;
     const expectedSource =
-      member?.kind === "advisory" && expectedCli === "agy"
+      member?.kind === "execution" ||
+      (member?.kind === "advisory" && expectedCli === "agy")
         ? "mission-shim"
         : "http-mcp";
     return (
