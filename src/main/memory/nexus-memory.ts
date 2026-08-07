@@ -5,12 +5,19 @@ import { resolveSubdirUnderRoot } from '../security/scoped-workspace-fs';
 import { writeFileAtomic } from '../util/atomic-write';
 
 /**
- * Human-readable projection of the canonical SQLite/FTS5 memory.
+ * Human-readable projection of the canonical SQLite/FTS5 memory — and, since
+ * H4, a two-way surface: the *body* of a projection file is an input.
  *
- * Files under `.nexus-memory/` are deliberately generated views, never an
- * ingestion source. A sync rewrites local edits from SQLite and only removes
- * stale files carrying our canonical marker; unrelated human Markdown is
- * preserved but ignored by the memory APIs.
+ * What a file may say is still bounded. Identity is never self-asserted (the
+ * declared id must equal the filename), provenance/kind/importance are never
+ * read back, and a body only wins over SQLite when the frontmatter `updatedAt`
+ * proves it was edited from the version the row still holds. Everything else —
+ * planted files, impostors, damaged frontmatter, stale buffers — is repaired
+ * or reaped exactly as before. Unrelated human Markdown without our canonical
+ * marker stays untouched and invisible to the memory APIs.
+ *
+ * Ingestion itself lives in `nexus-memory-ingest.ts`; this module owns how a
+ * projection is rendered, parsed and listed.
  */
 
 export const DEFAULT_MEMORY_DIR = '.nexus-memory';
@@ -110,7 +117,7 @@ function projectionMissionId(source: string | null): string | undefined {
   return match?.[1]?.slice(0, 128);
 }
 
-function projectionTitle(content: string, id: string): string {
+export function projectionTitle(content: string, id: string): string {
   const firstLine = content
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -123,16 +130,51 @@ function yamlString(value: string | null): string {
   return JSON.stringify(value ?? '');
 }
 
-function canonicalProjectionPath(root: string, id: string): string {
+export function memoryProjectionPath(root: string, id: string): string {
   const parsedId = canonicalProjectionInputSchema.shape.id.parse(id);
   return path.join(root, `${parsedId}.md`);
+}
+
+const PROJECTION_BANNER =
+  '<!-- Edit the body below: the next sync ingests it into the canonical ' +
+  'SQLite memory. Frontmatter is identity — changing it only invalidates ' +
+  'the file. -->';
+
+function normalizeProjectionBody(raw: string): string {
+  return raw.replaceAll('\r\n', '\n').trim();
+}
+
+/**
+ * The visible text of a projection: title heading plus the content below it.
+ *
+ * Dirtiness is decided by comparing *this* against the body read back from
+ * disk, never raw bytes against stored content. The renderer re-emits the
+ * first heading as the title, so a memory stored without one round-trips to a
+ * different string — byte comparison would report an operator edit on every
+ * pass for every heading-less memory, and each pass would rewrite the row.
+ */
+export function projectionBody(input: CanonicalMemoryProjectionInput): string {
+  const title = projectionTitle(input.content, input.id);
+  return normalizeProjectionBody(
+    `# ${title}\n\n${input.content.replace(/^#{1,6}\s+[^\r\n]+\r?\n+/, '')}`,
+  );
+}
+
+/** Inverse of the renderer: the body an operator actually sees and edits. */
+export function extractProjectionBody(raw: string): string {
+  const withoutFrontmatter = raw.replace(
+    /^---\r?\n[\s\S]*?\r?\n---[^\S\n]*\r?\n?/,
+    '',
+  );
+  return normalizeProjectionBody(
+    withoutFrontmatter.replace(/^\s*<!--[\s\S]*?-->[^\S\n]*\r?\n?/, ''),
+  );
 }
 
 function projectionMarkdown(
   input: CanonicalMemoryProjectionInput,
   kind: MemoryNote['kind'],
   missionId: string | undefined,
-  title: string,
 ): string {
   return [
     '---',
@@ -149,11 +191,9 @@ function projectionMarkdown(
     `updatedAt: ${input.updatedAt}`,
     '---',
     '',
-    '<!-- Generated from Nexus SQLite memory. Local edits are overwritten. -->',
+    PROJECTION_BANNER,
     '',
-    `# ${title}`,
-    '',
-    input.content.replace(/^#{1,6}\s+[^\r\n]+\r?\n+/, ''),
+    projectionBody(input),
     '',
   ].join('\n');
 }
@@ -166,11 +206,11 @@ export function writeCanonicalMemoryProjection(
   const input = canonicalProjectionInputSchema.parse(rawInput);
   const root = resolveMemoryRoot(projectRoot, dirname);
   ensureProjectionRoot(root);
-  const filePath = canonicalProjectionPath(root, input.id);
+  const filePath = memoryProjectionPath(root, input.id);
   const kind = projectionKind(input);
   const missionId = projectionMissionId(input.source);
   const title = projectionTitle(input.content, input.id);
-  const markdown = projectionMarkdown(input, kind, missionId, title);
+  const markdown = projectionMarkdown(input, kind, missionId);
   let isCurrent = false;
   try {
     isCurrent =
@@ -194,12 +234,16 @@ export function writeCanonicalMemoryProjection(
 
 const MEMORY_KINDS = new Set(['decision', 'mission', 'agent', 'note']);
 
-function parseFrontmatter(raw: string): {
+export interface ProjectionFrontmatter {
   kind: MemoryNote['kind'];
   missionId?: string;
   idFromFm?: string;
   canonical?: string;
-} {
+  /** Row version this file was rendered from; the conflict token for input. */
+  updatedAt?: number;
+}
+
+export function parseFrontmatter(raw: string): ProjectionFrontmatter {
   const fm = /^---\r?\n([\s\S]*?)\r?\n---/.exec(raw);
   if (!fm) return { kind: 'note' };
   const block = fm[1];
@@ -216,11 +260,13 @@ function parseFrontmatter(raw: string): {
       : undefined;
   const idFromFm = /^id:\s*(\S+)/m.exec(block)?.[1]?.trim();
   const canonical = /^canonical:\s*(\S+)/m.exec(block)?.[1]?.trim();
+  const updatedRaw = /^updatedAt:\s*(\d{1,15})\s*$/m.exec(block)?.[1];
   return {
     kind,
     missionId: missionId || undefined,
     idFromFm,
     canonical,
+    ...(updatedRaw ? { updatedAt: Number(updatedRaw) } : {}),
   };
 }
 
@@ -253,7 +299,7 @@ export function removeCanonicalMemoryProjection(
   dirname = DEFAULT_MEMORY_DIR,
 ): boolean {
   const root = resolveMemoryRoot(projectRoot, dirname);
-  const filePath = canonicalProjectionPath(root, id);
+  const filePath = memoryProjectionPath(root, id);
   if (!fs.existsSync(filePath)) return false;
   const stat = fs.lstatSync(filePath);
   if (!stat.isFile()) return false;
@@ -302,9 +348,122 @@ export function syncCanonicalMemoryProjections(
   }
 }
 
+/**
+ * Cheap staleness token for a projection directory: one readdir plus an lstat
+ * per candidate, no file contents. Everything that can change what the
+ * directory *means* — a create, a rename, a reap, an in-place edit — moves a
+ * name, an mtime or a size.
+ */
+export function projectionSignature(
+  projectRoot: string,
+  dirname = DEFAULT_MEMORY_DIR,
+): string {
+  let root: string;
+  try {
+    root = resolveMemoryRoot(projectRoot, dirname);
+  } catch {
+    return 'unresolvable';
+  }
+  let names: string[];
+  try {
+    names = fs.readdirSync(root).filter((name) => name.endsWith('.md')).sort();
+  } catch {
+    return 'absent';
+  }
+  const parts: string[] = [];
+  for (const name of names) {
+    try {
+      const stat = fs.lstatSync(path.join(root, name));
+      if (!stat.isFile()) continue;
+      parts.push(`${name}:${stat.mtimeMs}:${stat.size}`);
+    } catch {
+      // Vanished mid-scan; the next signature reflects it.
+    }
+  }
+  return parts.join('|');
+}
+
+interface ProjectionScan {
+  readonly signature: string;
+  readonly notes: readonly MemoryNote[];
+}
+
+/**
+ * One entry per live workspace; the cap only keeps a long-lived main process
+ * from accumulating entries for roots nobody reads anymore.
+ */
+const MAX_CACHED_PROJECTION_SCANS = 16;
+const scanCache = new Map<string, ProjectionScan>();
+
+function cacheScan(key: string, scan: ProjectionScan): void {
+  scanCache.delete(key);
+  scanCache.set(key, scan);
+  while (scanCache.size > MAX_CACHED_PROJECTION_SCANS) {
+    const oldest = scanCache.keys().next().value as string | undefined;
+    if (oldest === undefined) break;
+    scanCache.delete(oldest);
+  }
+}
+
+export interface ProjectionCounts {
+  readonly notes: number;
+  readonly byKind: Readonly<Record<MemoryNote['kind'], number>>;
+  /** True when the answer came from the stat cache, with no file re-read. */
+  readonly cached: boolean;
+}
+
+/**
+ * Status with counts and without a full read: the directory is walked only to
+ * prove nothing moved. Callers that merely want totals must never pay for the
+ * whole-directory parse that `listMemoryNotes` does.
+ */
+export function projectionCounts(
+  projectRoot: string,
+  dirname = DEFAULT_MEMORY_DIR,
+): ProjectionCounts {
+  const { notes, cached } = readProjectionNotes(projectRoot, dirname);
+  const byKind: Record<MemoryNote['kind'], number> = {
+    decision: 0,
+    mission: 0,
+    agent: 0,
+    note: 0,
+  };
+  for (const note of notes) byKind[note.kind] += 1;
+  return Object.freeze({
+    notes: notes.length,
+    byKind: Object.freeze(byKind),
+    cached,
+  });
+}
+
+/** Test-only: the cache is keyed by content signature, never by time. */
+export function resetProjectionScanCache(): void {
+  scanCache.clear();
+}
+
+function readProjectionNotes(
+  projectRoot: string,
+  dirname: string,
+): { readonly notes: readonly MemoryNote[]; readonly cached: boolean } {
+  const key = `${projectRoot} ${dirname}`;
+  const signature = projectionSignature(projectRoot, dirname);
+  const hit = scanCache.get(key);
+  if (hit?.signature === signature) return { notes: hit.notes, cached: true };
+  const notes = Object.freeze(scanProjectionNotes(projectRoot, dirname));
+  cacheScan(key, { signature, notes });
+  return { notes, cached: false };
+}
+
 export function listMemoryNotes(
   projectRoot: string,
   dirname = DEFAULT_MEMORY_DIR,
+): MemoryNote[] {
+  return [...readProjectionNotes(projectRoot, dirname).notes];
+}
+
+function scanProjectionNotes(
+  projectRoot: string,
+  dirname: string,
 ): MemoryNote[] {
   const root = resolveMemoryRoot(projectRoot, dirname);
   if (!fs.existsSync(root)) return [];

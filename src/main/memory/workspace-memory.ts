@@ -23,12 +23,21 @@ import type Database from 'better-sqlite3';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { redactSecretText } from '../terminal/command-redaction';
 import {
+  projectionCounts,
+  projectionSignature,
+  projectionTitle,
   removeCanonicalMemoryProjection,
   resolveMemoryRoot,
   syncCanonicalMemoryProjections,
   writeCanonicalMemoryProjection,
   type CanonicalMemoryProjectionInput,
+  type MemoryNote,
+  type ProjectionCounts,
 } from './nexus-memory';
+import {
+  collectProjectionEdits,
+  type ProjectionEdit,
+} from './nexus-memory-ingest';
 
 export const MAX_MEMORY_CONTENT_BYTES = 8_192;
 
@@ -46,6 +55,26 @@ const DATABASE_MODE = 0o600;
 /** Pool de candidatos por banco antes do re-ranking em JS. */
 const RECALL_CANDIDATE_POOL = 64;
 const MAX_QUERY_TOKENS = 12;
+/**
+ * Provenance prefix of Nexus-verified events. These are the only memories the
+ * automatic prompt recall injects (`trustedOnly`), so they are also the only
+ * ones a file on disk may never author.
+ */
+const TRUSTED_SOURCE_PREFIX = 'trusted:';
+/** Candidates offered when an id lookup misses. */
+const NOT_FOUND_SUGGESTIONS = 3;
+const SUGGESTION_TITLE_MAX = 60;
+
+const EMPTY_PROJECTION_COUNTS: ProjectionCounts = Object.freeze({
+  notes: 0,
+  byKind: Object.freeze({
+    decision: 0,
+    mission: 0,
+    agent: 0,
+    note: 0,
+  }) as Readonly<Record<MemoryNote['kind'], number>>,
+  cached: true,
+});
 
 export interface RetainInput {
   readonly content: string;
@@ -113,6 +142,8 @@ export interface MemoryBankStats {
 export interface WorkspaceMemoryStats {
   readonly workspace: MemoryBankStats;
   readonly global: MemoryBankStats;
+  /** Counts of the readable projection, served without a full re-read. */
+  readonly projection: ProjectionCounts;
 }
 
 export interface WorkspaceMemoryStoreOptions {
@@ -334,6 +365,7 @@ export class WorkspaceMemoryStore {
   readonly #now: () => number;
   readonly #projectionRoots = new Set<string>();
   readonly #unsyncedProjectionRoots = new Set<string>();
+  readonly #projectionSignatures = new Map<string, string>();
   #closed = false;
 
   constructor(options: WorkspaceMemoryStoreOptions) {
@@ -419,7 +451,11 @@ export class WorkspaceMemoryStore {
     return root;
   }
 
-  /** Repairs all registered generated views from the SQLite authority. */
+  /**
+   * Reconciles every registered generated view with the SQLite authority in
+   * both directions: operator edits are ingested first, then the view is
+   * rewritten from the (possibly updated) rows.
+   */
   syncProjections(): void {
     this.#assertOpen();
     for (const root of this.#projectionRoots) {
@@ -429,10 +465,21 @@ export class WorkspaceMemoryStore {
     }
   }
 
-  /** First-use sync; subsequent read paths are O(1) until a new root appears. */
+  /**
+   * Read-path reconciliation. A full pass only runs when the directory
+   * signature moved (one readdir plus an lstat per file), so the common case —
+   * nothing touched the projection since the last pass — stays O(dir) instead
+   * of re-reading and re-parsing every note on every keystroke.
+   */
   ensureProjections(): void {
     this.#assertOpen();
-    for (const root of [...this.#unsyncedProjectionRoots]) {
+    for (const root of this.#projectionRoots) {
+      if (
+        !this.#unsyncedProjectionRoots.has(root) &&
+        this.#projectionSignatures.get(root) === projectionSignature(root)
+      ) {
+        continue;
+      }
       if (this.#syncProjectionRootBestEffort(root)) {
         this.#unsyncedProjectionRoots.delete(root);
       }
@@ -442,6 +489,11 @@ export class WorkspaceMemoryStore {
   /**
    * Explicit export only. The workspace is not registered as a live target,
    * so later retention continues writing exclusively to Nexus userData.
+   *
+   * This is also why markdown-as-input does not turn `.nexus-memory/` inside a
+   * checkout into a write port for every agent holding a shell: ingestion runs
+   * only over *registered* roots, and a checkout is never registered. The copy
+   * exported here stays a one-shot dead view.
    */
   exportProjectionsToWorkspace(projectRoot: string): string {
     this.#assertOpen();
@@ -493,7 +545,11 @@ export class WorkspaceMemoryStore {
 
   #syncProjectionRootBestEffort(root: string): boolean {
     try {
+      // Ingest before writing: an operator edit that lands in SQLite must be
+      // reflected by the very same pass, or the write below would erase it.
+      this.#ingestProjectionEdits(root);
       syncCanonicalMemoryProjections(root, this.#activeProjectionRecords());
+      this.#markProjectionSynced(root);
       return true;
     } catch (error) {
       console.warn(
@@ -504,12 +560,112 @@ export class WorkspaceMemoryStore {
     }
   }
 
+  /**
+   * Applies the operator edits found on disk. Everything a file may assert is
+   * bounded here: only the body of an already-active workspace row, only when
+   * the row has not moved since that file was rendered, never a trusted row,
+   * and always through the same secret redaction `retain()` uses.
+   */
+  #ingestProjectionEdits(root: string): number {
+    const edits = collectProjectionEdits(root, this.#activeProjectionRecords());
+    let applied = 0;
+    for (const edit of edits) {
+      try {
+        if (this.#applyProjectionEdit(edit)) applied += 1;
+      } catch (error) {
+        console.warn(
+          `[memory] could not ingest edited projection ${edit.id}:`,
+          error instanceof Error ? error.message : error,
+        );
+      }
+    }
+    return applied;
+  }
+
+  #applyProjectionEdit(edit: ProjectionEdit): boolean {
+    const db = this.#workspaceDb;
+    const row = db
+      .prepare(
+        `SELECT id, content, source, updated_at
+         FROM memories
+         WHERE id = ? AND scope = 'workspace' AND superseded_by IS NULL`,
+      )
+      .get(edit.id) as
+      | {
+          id: string;
+          content: string;
+          source: string | null;
+          updated_at: number;
+        }
+      | undefined;
+    if (!row || row.updated_at !== edit.baseUpdatedAt) return false;
+    if (row.source?.startsWith(TRUSTED_SOURCE_PREFIX)) {
+      console.warn(
+        `[memory] refused disk edit of trusted memory ${edit.id}; projection repaired`,
+      );
+      return false;
+    }
+    if (Buffer.byteLength(edit.content, 'utf8') > MAX_MEMORY_CONTENT_BYTES) {
+      console.warn(
+        `[memory] refused disk edit of ${edit.id}: exceeds ${MAX_MEMORY_CONTENT_BYTES} bytes`,
+      );
+      return false;
+    }
+    const scrubbed = redactMemoryContent(edit.content);
+    const content = scrubbed.content.trim();
+    if (content.length === 0 || content === row.content) return false;
+    const hash = contentHash(content);
+    const now = this.#now();
+
+    const applied = db.transaction((): boolean => {
+      const clash = db
+        .prepare(
+          'SELECT id FROM memories WHERE content_hash = ? AND superseded_by IS NULL',
+        )
+        .get(hash) as { id: string } | undefined;
+      if (clash && clash.id !== row.id) {
+        console.warn(
+          `[memory] refused disk edit of ${edit.id}: duplicates active memory ${clash.id}`,
+        );
+        return false;
+      }
+      const result = db
+        .prepare(
+          `UPDATE memories
+           SET content = ?, content_hash = ?, updated_at = ?
+           WHERE id = ? AND updated_at = ? AND superseded_by IS NULL`,
+        )
+        .run(content, hash, now, row.id, edit.baseUpdatedAt);
+      return result.changes > 0;
+    })();
+
+    if (applied) {
+      // The only audit trail a filesystem edit can leave: provenance stays
+      // whatever the bank already recorded, so the log is where a body that
+      // changed without passing through retain() becomes visible.
+      console.info(
+        `[memory] ingested disk edit of ${edit.id}` +
+          (scrubbed.redacted ? ' (secret redacted)' : ''),
+      );
+    }
+    return applied;
+  }
+
+  #markProjectionSynced(root: string): void {
+    try {
+      this.#projectionSignatures.set(root, projectionSignature(root));
+    } catch {
+      this.#projectionSignatures.delete(root);
+    }
+  }
+
   #writeProjectionBestEffort(id: string): void {
     try {
       const record = this.#projectionRecord(id);
       if (!record) return;
       for (const root of this.#projectionRoots) {
         writeCanonicalMemoryProjection(root, record);
+        this.#markProjectionSynced(root);
       }
     } catch (error) {
       console.warn(
@@ -523,6 +679,7 @@ export class WorkspaceMemoryStore {
     for (const root of this.#projectionRoots) {
       try {
         removeCanonicalMemoryProjection(root, id);
+        this.#markProjectionSynced(root);
       } catch (error) {
         console.warn(
           `[memory] could not remove generated projection ${id}:`,
@@ -647,8 +804,14 @@ export class WorkspaceMemoryStore {
         target.scope !== input.scope ||
         target.source !== authority.source
       ) {
+        // One message for every denial reason on purpose: telling "no such id"
+        // apart from "exists but is not yours" would hand a worker an oracle
+        // over the other banks. What it *can* learn is what it already owns.
         throw new Error(
-          'memory supersedes requires the same agent authority and scope',
+          this.#supersedeDeniedMessage(db, input.supersedes, {
+            source: authority.source,
+            scope: input.scope,
+          }),
         );
       }
 
@@ -826,6 +989,46 @@ export class WorkspaceMemoryStore {
     return forgotten;
   }
 
+  /**
+   * A denial that is actionable: it names up to three memories the caller can
+   * actually supersede. Candidates are restricted to the asking authority's
+   * own active rows, so the hint never enumerates what other panes retained.
+   */
+  #supersedeDeniedMessage(
+    db: Database.Database,
+    id: string,
+    owner: { readonly source: string; readonly scope: MemoryScope },
+  ): string {
+    const rows = db
+      .prepare(
+        `SELECT id, content
+         FROM memories
+         WHERE scope = ? AND source = ? AND superseded_by IS NULL
+         ORDER BY updated_at DESC, id DESC
+         LIMIT ?`,
+      )
+      .all(owner.scope, owner.source, NOT_FOUND_SUGGESTIONS) as Array<{
+      id: string;
+      content: string;
+    }>;
+    const head =
+      `memory supersedes requires the same agent authority and scope: ` +
+      `${id} is not an active memory of this authority in scope ${owner.scope}`;
+    if (rows.length === 0) {
+      return `${head}; this authority has none here yet — retain without supersedes`;
+    }
+    const candidates = rows
+      .map((row) => {
+        const title = projectionTitle(row.content, row.id)
+          .replace(/[\u0000-\u001F\u007F"]+/g, ' ')
+          .trim()
+          .slice(0, SUGGESTION_TITLE_MAX);
+        return `${row.id} ("${title}")`;
+      })
+      .join(', ');
+    return `${head}; closest candidates: ${candidates}`;
+  }
+
   #activeMemoryIdentity(
     db: Database.Database,
     id: string,
@@ -876,7 +1079,21 @@ export class WorkspaceMemoryStore {
     return Object.freeze({
       workspace: this.#statsFor(this.#workspaceDb),
       global: this.#statsFor(this.#globalDb),
+      projection: this.#projectionStats(),
     });
+  }
+
+  /** Counts only, and only from the stat cache when nothing moved on disk. */
+  #projectionStats(): ProjectionCounts {
+    const root = this.#projectionRoots.values().next().value as
+      | string
+      | undefined;
+    if (!root) return EMPTY_PROJECTION_COUNTS;
+    try {
+      return projectionCounts(root);
+    } catch {
+      return EMPTY_PROJECTION_COUNTS;
+    }
   }
 
   #statsFor(db: Database.Database): MemoryBankStats {
