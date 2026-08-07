@@ -1,5 +1,9 @@
 import { z } from 'zod';
 import { resolveMissionBlockingIntentState } from './mission-blocking';
+import {
+  missionStatusForIntent as projectMissionStatusForIntent,
+  type IntentMappedMissionStatus,
+} from './mission-intent-projection';
 import { classifyStandardMissionTopology } from './mission-topology';
 import {
   assertWavePackStoriesReady,
@@ -53,6 +57,24 @@ export const missionIntentStateSchema = z.enum([
   'legacy',
 ]);
 export type MissionIntentState = z.infer<typeof missionIntentStateSchema>;
+
+export interface MissionStatusIntentPair {
+  readonly status: IntentMappedMissionStatus;
+  readonly intentState: MissionIntentState;
+}
+
+export function isMissionStatusIntentPair(
+  pair: MissionStatusIntentPair,
+): boolean {
+  const blockingState = resolveMissionBlockingIntentState(pair);
+  if (pair.status === 'blocked' || pair.status === 'failed') {
+    return blockingState === pair.intentState;
+  }
+  return (
+    blockingState === null &&
+    projectMissionStatusForIntent(pair.intentState) === pair.status
+  );
+}
 
 export const missionIntentSourceSchema = z.enum([
   'typed',

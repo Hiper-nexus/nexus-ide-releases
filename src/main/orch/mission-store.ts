@@ -23,6 +23,7 @@ import {
 import type { ProjectExecutionScope } from '../../shared/types';
 import { hasRetiredRosterRouteMarker } from '../../shared/retired-adapter-policy';
 import {
+  isMissionStatusIntentPair,
   hasCurrentApprovedDispatchContract,
   hasCurrentDispatchAuthority,
   missionBlockKindSchema,
@@ -84,6 +85,17 @@ const createMissionInputSchema = z
   })
   .strict();
 
+export const missionContentPatchSchema = z
+  .object({
+    title: z.string().min(1).max(512).optional(),
+    description: z.string().max(65_536).optional(),
+    milestones: z.array(missionMilestoneInputSchema).max(256).optional(),
+    intentContract: missionIntentContractSchema.nullable().optional(),
+    intentVersion: z.number().int().nonnegative().max(1_000_000).optional(),
+  })
+  .strict();
+export type MissionContentPatch = z.infer<typeof missionContentPatchSchema>;
+
 const missionRowSchema = z
   .object({
     id: z.string().min(1).max(256),
@@ -109,6 +121,19 @@ const hashSchema = z.string().regex(/^[a-f0-9]{64}$/);
 const stepIdSchema = z.string().min(1).max(128);
 const driverActionSchema = z.string().min(1).max(64);
 const timestampSchema = z.number().int().nonnegative();
+const missionLifecycleExpectationSchema = z
+  .object({
+    updatedAt: timestampSchema.max(Number.MAX_SAFE_INTEGER),
+    intentVersion: z.number().int().nonnegative().max(1_000_000),
+  })
+  .strict();
+const missionLifecyclePatchSchema = z
+  .object({
+    status: missionStatusSchema,
+    intentState: missionIntentStateSchema,
+    description: z.string().max(65_536).optional(),
+  })
+  .strict();
 const missionDriverCompletionExpectationSchema = z
   .object({
     expectedUpdatedAt: timestampSchema,
@@ -1461,6 +1486,106 @@ export class ScopedMissionStore {
     }
     this.#binding.emitChange();
     return cloneMission(updated);
+  }
+
+  transitionLifecycle(
+    rawId: string,
+    rawExpectation: {
+      readonly updatedAt: number;
+      readonly intentVersion: number;
+    },
+    rawPatch: {
+      readonly status: MissionStatus;
+      readonly intentState: MissionIntentState;
+      readonly description?: string;
+    },
+  ): ScopedMission | null {
+    const id = entityIdSchema.parse(rawId);
+    const expectation = missionLifecycleExpectationSchema.parse(rawExpectation);
+    const patch = missionLifecyclePatchSchema.parse(rawPatch);
+    if (!isMissionStatusIntentPair(patch)) {
+      throw new Error(
+        `invalid lifecycle pair: ${patch.status}/${patch.intentState}`,
+      );
+    }
+    const db = this.#binding.writeDatabase();
+    const updated = db
+      .transaction(() => {
+        const existing = this.#getFromDatabase(db, id);
+        if (!existing) return null;
+        const updatedAt = Math.max(
+          this.#binding.now(),
+          expectation.updatedAt + 1,
+        );
+        if (!Number.isSafeInteger(updatedAt)) {
+          throw new Error('mission updatedAt cannot advance monotonically');
+        }
+        const result = db
+          .prepare(
+            `UPDATE missions
+             SET status = ?, intent_state = ?, description = ?, updated_at = ?
+             WHERE id = ? AND updated_at = ? AND intent_version = ?`,
+          )
+          .run(
+            patch.status,
+            patch.intentState,
+            patch.description ?? existing.description,
+            updatedAt,
+            id,
+            expectation.updatedAt,
+            expectation.intentVersion,
+          );
+        if (result.changes !== 1) return null;
+
+        const lifecycleRevoked =
+          patch.status === 'blocked' ||
+          patch.status === 'failed' ||
+          patch.intentState === 'blocked_user' ||
+          patch.intentState === 'blocked_technical';
+        if (lifecycleRevoked) {
+          const detail =
+            'A missão foi bloqueada ou falhou; a autoridade deste worker foi revogada.';
+          db.prepare(
+            `UPDATE tasks SET status = 'failed', updated_at = ?
+             WHERE id IN (
+               SELECT task_id FROM task_dispatch_queue
+               WHERE mission_id = ?
+                 AND state IN (
+                   'claimed', 'routed', 'spawning', 'running',
+                   'handoff_ready', 'merging', 'suspended'
+                 )
+             )`,
+          ).run(updatedAt, id);
+          db.prepare(
+            `UPDATE task_dispatch_queue
+             SET state = 'superseded', last_error = ?, revision = revision + 1,
+                 updated_at = ?
+             WHERE mission_id = ?
+               AND state IN (
+                 'claimed', 'routed', 'spawning', 'running',
+                 'handoff_ready', 'merging', 'suspended'
+               )`,
+          ).run(detail, updatedAt, id);
+        }
+        if (patch.status === 'running' && existing.status !== 'running') {
+          db.prepare(
+            'DELETE FROM mission_drive_state WHERE mission_id = ?',
+          ).run(id);
+        }
+        return this.#getFromDatabase(db, id);
+      })
+      .immediate();
+    if (!updated) return null;
+    this.#binding.emitChange();
+    return cloneMission(updated);
+  }
+
+  updateContent(
+    rawId: string,
+    rawPatch: MissionContentPatch,
+  ): ScopedMission | null {
+    const patch = missionContentPatchSchema.parse(rawPatch);
+    return this.update(rawId, patch);
   }
 
   update(rawId: string, rawPatch: MissionPatch): ScopedMission | null {

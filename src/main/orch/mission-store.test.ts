@@ -708,6 +708,229 @@ describe('scoped mission store', () => {
     unsubscribe();
   });
 
+  it('rejects stale lifecycle CAS without mutation or emission', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope({ checkoutId: 'lifecycle-cas-stale' });
+    let now = 400;
+    const store = createScopedMissionStore(runtimeManager, scope, {
+      now: () => ++now,
+      idFactory: () => 'mission-lifecycle-stale',
+    });
+    const mission = store.create({
+      title: 'Lifecycle stale',
+      description: 'Durable current description',
+      intentState: 'executing',
+      intentVersion: 4,
+    });
+    const running = store.setStatus(mission.id, 'running')!;
+    const db = runtimeManager.open(scope).db;
+    db.prepare(
+      `INSERT INTO tasks
+         (id, mission_id, title, detail, status, priority, created_at, updated_at)
+       VALUES ('task-lifecycle-stale', ?, 'Stale lifecycle task', '', 'running', 0, 1, 1)`,
+    ).run(mission.id);
+    db.prepare(
+      `INSERT INTO task_dispatch_queue
+         (id, task_id, mission_id, intent_version, state,
+          lease_token_hash, lease_owner, lease_expires_at, worker_id,
+          created_at, updated_at)
+       VALUES (
+         'dispatch-lifecycle-stale', 'task-lifecycle-stale', ?, 4, 'running',
+         ?, 'main', 10_000, 'worker-lifecycle-stale', 1, 1
+       )`,
+    ).run(mission.id, 'f'.repeat(64));
+    const before = store.get(mission.id);
+    const changed = vi.fn();
+    const unsubscribe = store.onChange(changed);
+
+    expect(
+      store.transitionLifecycle(
+        mission.id,
+        {
+          updatedAt: running.updatedAt - 1,
+          intentVersion: running.intentVersion!,
+        },
+        { status: 'blocked', intentState: 'blocked_technical' },
+      ),
+    ).toBeNull();
+    expect(
+      store.transitionLifecycle(
+        mission.id,
+        {
+          updatedAt: running.updatedAt,
+          intentVersion: running.intentVersion! + 1,
+        },
+        { status: 'blocked', intentState: 'blocked_technical' },
+      ),
+    ).toBeNull();
+
+    expect(store.get(mission.id)).toEqual(before);
+    expect(
+      runtimeManager
+        .open(scope)
+        .db.prepare(
+          'SELECT status, intent_state, description, updated_at FROM missions WHERE id = ?',
+        )
+        .get(mission.id),
+    ).toEqual({
+      status: 'running',
+      intent_state: 'executing',
+      description: 'Durable current description',
+      updated_at: running.updatedAt,
+    });
+    expect(
+      db.prepare('SELECT status, updated_at FROM tasks WHERE id = ?').get(
+        'task-lifecycle-stale',
+      ),
+    ).toEqual({ status: 'running', updated_at: 1 });
+    expect(
+      db.prepare(
+        'SELECT state, last_error, revision, updated_at FROM task_dispatch_queue WHERE id = ?',
+      ).get('dispatch-lifecycle-stale'),
+    ).toEqual({
+      state: 'running',
+      last_error: null,
+      revision: 1,
+      updated_at: 1,
+    });
+    expect(changed).not.toHaveBeenCalled();
+    unsubscribe();
+  });
+
+  it('atomically transitions lifecycle, preserves description, and revokes dispatch authority', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope({ checkoutId: 'lifecycle-cas-success' });
+    const store = createScopedMissionStore(runtimeManager, scope, {
+      now: () => 500,
+      idFactory: () => 'mission-lifecycle-success',
+    });
+    const mission = store.create({
+      title: 'Lifecycle success',
+      description: 'Keep this diagnosis',
+      intentState: 'executing',
+      intentVersion: 2,
+    });
+    const running = store.setStatus(mission.id, 'running')!;
+    const db = runtimeManager.open(scope).db;
+    db.prepare(
+      `INSERT INTO tasks
+         (id, mission_id, title, detail, status, priority, created_at, updated_at)
+       VALUES ('task-lifecycle', ?, 'Lifecycle task', '', 'running', 0, 1, 1)`,
+    ).run(mission.id);
+    db.prepare(
+      `INSERT INTO task_dispatch_queue
+         (id, task_id, mission_id, intent_version, state,
+          lease_token_hash, lease_owner, lease_expires_at, worker_id,
+          created_at, updated_at)
+       VALUES (
+         'dispatch-lifecycle', 'task-lifecycle', ?, 2, 'running',
+         ?, 'main', 10_000, 'worker-lifecycle', 1, 1
+       )`,
+    ).run(mission.id, 'e'.repeat(64));
+    const changed = vi.fn();
+    const unsubscribe = store.onChange(changed);
+
+    const blocked = store.transitionLifecycle(
+      mission.id,
+      {
+        updatedAt: running.updatedAt,
+        intentVersion: running.intentVersion!,
+      },
+      { status: 'blocked', intentState: 'blocked_technical' },
+    );
+
+    expect(blocked).toEqual(
+      expect.objectContaining({
+        status: 'blocked',
+        intentState: 'blocked_technical',
+        description: 'Keep this diagnosis',
+        updatedAt: running.updatedAt + 1,
+      }),
+    );
+    expect(changed).toHaveBeenCalledOnce();
+    expect(
+      db.prepare(
+        'SELECT status, intent_state, description, updated_at FROM missions WHERE id = ?',
+      ).get(mission.id),
+    ).toEqual({
+      status: 'blocked',
+      intent_state: 'blocked_technical',
+      description: 'Keep this diagnosis',
+      updated_at: running.updatedAt + 1,
+    });
+    expect(
+      db.prepare('SELECT status, updated_at FROM tasks WHERE id = ?').get(
+        'task-lifecycle',
+      ),
+    ).toEqual({ status: 'failed', updated_at: running.updatedAt + 1 });
+    expect(
+      db.prepare(
+        'SELECT state, last_error, updated_at FROM task_dispatch_queue WHERE id = ?',
+      ).get('dispatch-lifecycle'),
+    ).toEqual({
+      state: 'superseded',
+      last_error:
+        'A missão foi bloqueada ou falhou; a autoridade deste worker foi revogada.',
+      updated_at: running.updatedAt + 1,
+    });
+    unsubscribe();
+  });
+
+  it('keeps lifecycle fields out of content updates while legacy update remains available', () => {
+    const runtimeManager = manager();
+    const store = createScopedMissionStore(runtimeManager, testProjectScope(), {
+      idFactory: () => 'mission-content-only',
+    });
+    const mission = store.create({ title: 'Original content' });
+    const contract = compileIntentContract({
+      goal: 'Update only durable mission content',
+      intentVersion: 2,
+    });
+
+    expect(
+      store.updateContent(mission.id, {
+        title: 'Updated content',
+        description: 'Content description',
+        milestones: ['Content milestone'],
+        intentContract: contract,
+        intentVersion: 2,
+      }),
+    ).toMatchObject({
+      title: 'Updated content',
+      description: 'Content description',
+      status: 'pending',
+      intentState: 'legacy',
+      intentVersion: 2,
+      milestones: [
+        {
+          id: 'step-1',
+          label: 'Content milestone',
+          status: 'pending',
+          evidenceIds: [],
+        },
+      ],
+    });
+    expect(() =>
+      store.updateContent(mission.id, { status: 'running' } as never),
+    ).toThrow(/Unrecognized key.*status/i);
+    expect(() =>
+      store.updateContent(mission.id, {
+        intentState: 'executing',
+      } as never),
+    ).toThrow(/Unrecognized key.*intentState/i);
+
+    expect(
+      store.update(mission.id, {
+        status: 'running',
+        intentState: 'executing',
+      }),
+    ).toMatchObject({
+      status: 'running',
+      intentState: 'executing',
+      title: 'Updated content',
+    });
+  });
+
   it('rolls back both terminal fields when the atomic Driver write fails', () => {
     const runtimeManager = manager();
     const scope = testProjectScope({ checkoutId: 'driver-complete-failure' });
