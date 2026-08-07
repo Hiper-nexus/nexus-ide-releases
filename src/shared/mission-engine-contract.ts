@@ -1,8 +1,8 @@
 import { z } from 'zod';
 import {
-  agentCategorySchema,
   missionMilestoneSchema,
-  squadAgentSchema,
+  squadAgentObjectSchema,
+  strictSquadAgentSchema,
 } from './orch-types';
 import { missionLaneSchema } from './mission-intent';
 
@@ -10,32 +10,6 @@ const idSchema = z.string().trim().min(1).max(256);
 const labelSchema = z.string().trim().min(1).max(1_024);
 const detailSchema = z.string().trim().min(1).max(16_384);
 const timestampSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
-
-const SQUAD_AGENT_KEYS: Record<string, true> = {
-  id: true,
-  agentName: true,
-  category: true,
-  cli: true,
-  providerId: true,
-  model: true,
-  effort: true,
-  ownsPlanDocs: true,
-  allowedSkills: true,
-  allowedTools: true,
-  persona: true,
-};
-
-const strictSquadAgentSchema = z.preprocess((value) => {
-  if (
-    value !== null &&
-    typeof value === 'object' &&
-    !Array.isArray(value) &&
-    Object.keys(value).some((key) => SQUAD_AGENT_KEYS[key] !== true)
-  ) {
-    return null;
-  }
-  return value;
-}, squadAgentSchema);
 
 export const missionLifecycleStateSchema = z.enum([
   'draft',
@@ -138,31 +112,16 @@ export const missionAgentStateSchema = z.enum([
 ]);
 export type MissionAgentState = z.infer<typeof missionAgentStateSchema>;
 
-export const missionAgentSchema = z
-  .object({
-    id: z.string().min(1).max(128),
-    agentName: z.string().min(1).max(128),
-    category: agentCategorySchema,
-    cli: z.string().min(1).max(64),
-    providerId: z.string().max(128).optional(),
-    model: z.string().max(128).optional(),
-    effort: z
-      .string()
-      .min(1)
-      .max(32)
-      .regex(/^[A-Za-z0-9_-]+$/)
-      .optional(),
-    ownsPlanDocs: z.boolean().optional(),
-    allowedSkills: z.array(z.string().max(128)).max(128).nullable().optional(),
-    allowedTools: z.array(z.string().max(128)).max(128).nullable().optional(),
-    persona: z.string().max(128).optional(),
+export const missionAgentSchema = squadAgentObjectSchema
+  .extend({
     state: missionAgentStateSchema,
     currentUnitId: idSchema.optional(),
     paneId: idSchema.optional(),
     detail: detailSchema.optional(),
   })
   .strict();
-export type MissionAgent = z.infer<typeof missionAgentSchema>;
+export type MissionAgentSnapshot = z.infer<typeof missionAgentSchema>;
+export type MissionAgent = MissionAgentSnapshot;
 
 export const missionEdgeKindSchema = z.enum([
   'delegation',

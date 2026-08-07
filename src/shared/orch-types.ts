@@ -55,63 +55,73 @@ const PROVIDER_ID_TO_CLI: Record<string, string> = {
   'antigravity-cli': 'agy',
 };
 
-export const squadAgentSchema = z.preprocess(
+function normalizeSquadAgent(raw: unknown): unknown {
   // Some squads.json rosters may omit `cli` (workers inherit the default CLI)
   // or carry only a providerId — normalize before validating.
-  (raw) => {
-    if (raw && typeof raw === 'object' && !(raw as { cli?: unknown }).cli) {
-      const agent = raw as { providerId?: string };
-      const mapped = agent.providerId
-        ? PROVIDER_ID_TO_CLI[agent.providerId]
-        : undefined;
-      return { ...raw, cli: mapped ?? 'claude' };
-    }
-    return raw;
-  },
-  z.object({
-    id: authorityString(128, 'agent id', 1),
-    agentName: authorityString(128, 'agent name', 1),
-    category: agentCategorySchema,
-    /** Adapter id (claude, codex, agy, …) that backs this agent. */
-    cli: authorityString(64, 'agent cli', 1),
-    providerId: authorityString(128, 'agent provider id').optional(),
-    model: authorityString(128, 'agent model').optional(),
-    // CLI-owned capability: new levels (for example Codex `ultra`) must not
-    // require a Nexus release. Spawn validation still checks the adapter.
-    effort: z
-      .string()
-      .min(1)
-      .max(32)
-      .regex(/^[A-Za-z0-9_-]+$/)
-      .optional(),
-    /**
-     * Explicit planning-document authority: this roster member authors the
-     * mission's PRD / architecture / epics / stories, or gates them against
-     * the BMAD checklists. It is the only per-agent signal that unlocks the
-     * `bmad-templates` vocabulary, so the skill policy never has to infer
-     * authorship from a squad id or an agent name. Reviewed authority, at the
-     * same level as `category`: main-owned rosters declare it, and the
-     * governed policy only ever reads it from a main-owned roster.
-     */
-    ownsPlanDocs: z.boolean().optional(),
-    /** null/absent = unrestricted. */
-    allowedSkills: z
-      .array(authorityString(128, 'allowed skill'))
-      .max(128)
-      .nullable()
-      .optional(),
-    allowedTools: z
-      .array(authorityString(128, 'allowed tool'))
-      .max(128)
-      .nullable()
-      .optional(),
-    /**
-     * Nome da persona associada a este agente-folha. O persona-store resolve
-     * o name → system-prompt no momento do spawn. Ausente = sem injeção de
-     * persona. Completamente independente da persona de voz (voice-ipc.ts).
-     */
-    persona: authorityString(128, 'agent persona').optional(),
-  }),
+  if (!raw || typeof raw !== 'object') return raw;
+  if ('cli' in raw && raw.cli) return raw;
+
+  const providerId =
+    'providerId' in raw && typeof raw.providerId === 'string'
+      ? raw.providerId
+      : undefined;
+  const mapped = providerId ? PROVIDER_ID_TO_CLI[providerId] : undefined;
+  return { ...raw, cli: mapped ?? 'claude' };
+}
+
+export const squadAgentObjectSchema = z.object({
+  id: authorityString(128, 'agent id', 1),
+  agentName: authorityString(128, 'agent name', 1),
+  category: agentCategorySchema,
+  /** Adapter id (claude, codex, agy, …) that backs this agent. */
+  cli: authorityString(64, 'agent cli', 1),
+  providerId: authorityString(128, 'agent provider id').optional(),
+  model: authorityString(128, 'agent model').optional(),
+  // CLI-owned capability: new levels (for example Codex `ultra`) must not
+  // require a Nexus release. Spawn validation still checks the adapter.
+  effort: z
+    .string()
+    .min(1)
+    .max(32)
+    .regex(/^[A-Za-z0-9_-]+$/)
+    .optional(),
+  /**
+   * Explicit planning-document authority: this roster member authors the
+   * mission's PRD / architecture / epics / stories, or gates them against
+   * the BMAD checklists. It is the only per-agent signal that unlocks the
+   * `bmad-templates` vocabulary, so the skill policy never has to infer
+   * authorship from a squad id or an agent name. Reviewed authority, at the
+   * same level as `category`: main-owned rosters declare it, and the
+   * governed policy only ever reads it from a main-owned roster.
+   */
+  ownsPlanDocs: z.boolean().optional(),
+  /** null/absent = unrestricted. */
+  allowedSkills: z
+    .array(authorityString(128, 'allowed skill'))
+    .max(128)
+    .nullable()
+    .optional(),
+  allowedTools: z
+    .array(authorityString(128, 'allowed tool'))
+    .max(128)
+    .nullable()
+    .optional(),
+  /**
+   * Nome da persona associada a este agente-folha. O persona-store resolve
+   * o name → system-prompt no momento do spawn. Ausente = sem injeção de
+   * persona. Completamente independente da persona de voz (voice-ipc.ts).
+   */
+  persona: authorityString(128, 'agent persona').optional(),
+});
+
+export const strictSquadAgentSchema = z.preprocess(
+  normalizeSquadAgent,
+  squadAgentObjectSchema.strict(),
+);
+
+export const squadAgentSchema = z.preprocess(
+  normalizeSquadAgent,
+  squadAgentObjectSchema,
 );
 export type SquadAgent = z.infer<typeof squadAgentSchema>;
 

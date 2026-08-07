@@ -271,6 +271,27 @@ describe('renderer-safe mission snapshots', () => {
     ).toBe(false);
   });
 
+  it('rejects snapshot roster values rejected by canonical validation', () => {
+    const agentWithBidiControl = {
+      ...agent,
+      agentName: 'Coordinator\u202e',
+    };
+
+    expect(
+      missionPrepareRequestSchema.safeParse({
+        objective: 'Revisar o projeto',
+        contextPaths: [],
+        roster: [agentWithBidiControl],
+      }).success,
+    ).toBe(false);
+    expect(
+      missionSnapshotSchema.safeParse({
+        ...snapshot,
+        agents: [{ ...agentWithBidiControl, state: 'working' }],
+      }).success,
+    ).toBe(false);
+  });
+
   it('accepts the strict mission list summary', () => {
     expect(
       missionSummarySnapshotSchema.parse({
