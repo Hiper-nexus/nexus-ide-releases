@@ -52,19 +52,23 @@ interface RegistryEntry {
   unsubscribers: Array<() => void>;
 }
 
-function scopeKey(scope: ProjectExecutionScope): string {
+export function projectExecutionScopeKey(
+  scope: ProjectExecutionScope,
+): string {
   return `${scope.projectId}\0${scope.checkoutId}`;
 }
 
-function sameScope(
+export function sameProjectExecutionScope(
   left: ProjectExecutionScope,
   right: ProjectExecutionScope,
 ): boolean {
   return (
+    left.version === right.version &&
     left.installationId === right.installationId &&
     left.projectId === right.projectId &&
     left.checkoutId === right.checkoutId &&
-    left.rootRealPath === right.rootRealPath
+    left.rootRealPath === right.rootRealPath &&
+    left.identitySource === right.identitySource
   );
 }
 
@@ -80,10 +84,10 @@ export class ProjectDomainStoreRegistry {
   }
 
   forScope(scope: ProjectExecutionScope): ProjectDomainStoreSuite {
-    const key = scopeKey(scope);
+    const key = projectExecutionScopeKey(scope);
     const existing = this.#entries.get(key);
     if (existing) {
-      if (!sameScope(existing.suite.scope, scope)) {
+      if (!sameProjectExecutionScope(existing.suite.scope, scope)) {
         throw new Error("project store scope identity collision");
       }
       return existing.suite;
