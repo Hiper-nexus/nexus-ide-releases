@@ -300,12 +300,29 @@ describe('agent pane workspace confinement', () => {
     expect(stubs.missionPanesRecord).not.toHaveBeenCalled();
   });
 
-  it('rejects revision-bound writable workers without a distinct execution worktree before probing', async () => {
+  it('rejects isolated_worktree writers without a distinct execution worktree before probing', async () => {
+    // Caminho simples (default): same root é permitido — paridade Overclock.
     await expect(
       spawnPaneAndMaybePrompt({
         adapterId: 'codex',
         missionId: 'm1',
         role: 'worker',
+        executionMode: 'same_checkout',
+        scope,
+        executionScope: scope,
+      }),
+    ).resolves.toBeDefined();
+
+    stubs.requestPaneSpawn.mockClear();
+    stubs.preSpawnProbe.mockClear();
+
+    // Fan-out isolado: same root é recusa fail-closed.
+    await expect(
+      spawnPaneAndMaybePrompt({
+        adapterId: 'codex',
+        missionId: 'm1',
+        role: 'worker',
+        executionMode: 'isolated_worktree',
         scope,
       }),
     ).rejects.toThrow(/physically distinct.*execution worktree/i);
@@ -315,13 +332,13 @@ describe('agent pane workspace confinement', () => {
         adapterId: 'codex',
         missionId: 'm1',
         role: 'worker',
+        executionMode: 'isolated_worktree',
         scope,
         executionScope: scope,
       }),
     ).rejects.toThrow(/physically distinct.*execution worktree/i);
 
     expect(stubs.preSpawnProbe).not.toHaveBeenCalled();
-    expect(stubs.requestPaneSpawn).not.toHaveBeenCalled();
   });
 
   it.each(['claude', 'kimi', 'grok'])(

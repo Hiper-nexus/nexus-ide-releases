@@ -52,7 +52,11 @@ export interface GuidedPlanTaskDetailInput extends PlannerTaskInput {
 
 export interface GuidedV2ReceiptAuthority {
   readonly implementation: PlannedTaskRecord;
-  readonly qualityGate: PlannedTaskRecord;
+  /**
+   * Null on Autopilot vibe receipts (single delivery task, no QA ceremony).
+   * Present on Hardened multi-stage guided graphs.
+   */
+  readonly qualityGate: PlannedTaskRecord | null;
   readonly ordered: readonly PlannedTaskRecord[];
 }
 
@@ -480,6 +484,74 @@ export function assertRosterCompleteGuidedV2Receipt(
       }
     }
 
+    // A entrega canônica existe nas duas formas: isolada ou no próprio
+    // checkout. O receipt precisa ter UMA delas, nunca as duas.
+    const implementationTaskId =
+      singletons.get("implementation") ??
+      singletons.get("simple-implementation");
+    const qualityGateTaskId = singletons.get("quality-gate") ?? null;
+
+    // Autopilot receipts (not roster-complete): delivery alone, or delivery +
+    // ONE post-delivery independent review. No quality-gate, no warm-up.
+    if (
+      implementationTaskId &&
+      !qualityGateTaskId &&
+      (rows.length === 1 || rows.length === 2)
+    ) {
+      assertClosedAcyclicPlanDependencies(
+        rows.map((row) => ({ id: row.entry.taskId, dependsOn: row.dependsOn })),
+      );
+      const implementation = byTaskId.get(implementationTaskId)!.entry;
+      const implRow = byTaskId.get(implementationTaskId)!;
+      if (implRow.dependsOn.length !== 0) {
+        legacyGuidedReceipt(
+          "o receipt Autopilot de entrega não pode declarar dependências",
+        );
+      }
+      if (rows.length === 1) {
+        if (rows[0]!.entry.taskId !== implementationTaskId) {
+          legacyGuidedReceipt(
+            "o receipt Autopilot de uma tarefa deve ser a entrega",
+          );
+        }
+        return Object.freeze({
+          implementation,
+          qualityGate: null,
+          ordered: Object.freeze([implementation]),
+        });
+      }
+      const reviewRow = rows.find(
+        (row) => row.entry.taskId !== implementationTaskId,
+      )!;
+      if (reviewRow.stage !== "independent-review") {
+        legacyGuidedReceipt(
+          "o receipt Autopilot de duas tarefas exige revisão independente pós-entrega",
+        );
+      }
+      if (
+        reviewRow.dependsOn.length !== 1 ||
+        reviewRow.dependsOn[0] !== implementationTaskId
+      ) {
+        legacyGuidedReceipt(
+          "a revisão Autopilot deve depender exatamente da entrega",
+        );
+      }
+      const consumers = dependents.get(implementationTaskId) ?? [];
+      if (
+        consumers.length !== 1 ||
+        consumers[0] !== reviewRow.entry.taskId
+      ) {
+        legacyGuidedReceipt(
+          "a entrega Autopilot deve ter exatamente a revisão como consumidora",
+        );
+      }
+      return Object.freeze({
+        implementation,
+        qualityGate: null,
+        ordered: Object.freeze([implementation, reviewRow.entry]),
+      });
+    }
+
     // Warm-ups are optional auxiliary roots: they never count toward the
     // one-task-per-worker coverage, and a receipt without any warm-up stays
     // byte-compatible with every pre-warmup plan.
@@ -510,12 +582,6 @@ export function assertRosterCompleteGuidedV2Receipt(
       }
     }
 
-    // A entrega canônica existe nas duas formas: isolada ou no próprio
-    // checkout. O receipt precisa ter UMA delas, nunca as duas.
-    const implementationTaskId =
-      singletons.get("implementation") ??
-      singletons.get("simple-implementation");
-    const qualityGateTaskId = singletons.get("quality-gate");
     if (!implementationTaskId || !qualityGateTaskId) {
       legacyGuidedReceipt(
         "o receipt não contém executor e quality gate canônicos",

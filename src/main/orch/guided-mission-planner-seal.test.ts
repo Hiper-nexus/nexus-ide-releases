@@ -179,6 +179,65 @@ describe("Guided Planner v2", () => {
     );
   });
 
+  // Autopilot option B: executor first; ONE read-only review only after handoff.
+  // No warm-up wave-1, no QA gate, no multi-reviewer chain.
+  it("Autopilot sela entrega + revisão pós-entrega (sem warm-up nem QA)", () => {
+    const h = harness({ squadCliPolicy: "operator-choice" });
+
+    expect(
+      ensureGuidedMissionPlan(h.suite, "mission-guided", h.deps),
+    ).toMatchObject({
+      applicable: true,
+      sealed: true,
+      topology: "delivery",
+      workerAgentRef: "generalist",
+    });
+
+    const rows = h.createPlanAtomically.mock.calls[0]![0].rows;
+    expect(rows).toHaveLength(2);
+    const delivery = rows.find(
+      (row) => row.plannerId === GUIDED_MISSION_PLANNER_TASK_ID,
+    );
+    const review = rows.find((row) => row.agentCategory === "reviewer");
+    if (!delivery || !review) throw new Error("missing autopilot delivery/review");
+    expect(delivery).toMatchObject({
+      agentRef: "generalist",
+      agentCategory: "executor",
+    });
+    // Prefer independent reviewer over QA-labelled body.
+    expect(review.agentRef).toBe("reviewer");
+    const deliveryMeta = decodeTaskScheduleDetail(delivery.detail).meta;
+    const reviewMeta = decodeTaskScheduleDetail(review.detail).meta;
+    expect(deliveryMeta).toMatchObject({
+      executionMode: "same_checkout",
+      dependsOn: [],
+      agentCategory: "executor",
+    });
+    expect(deliveryMeta?.ownership?.domains).toContain(
+      "guided-simple-implementation",
+    );
+    expect(reviewMeta).toMatchObject({
+      executionMode: "read_only",
+      agentCategory: "reviewer",
+      dependsOn: [
+        plannedTaskId("mission-guided", 3, GUIDED_MISSION_PLANNER_TASK_ID),
+      ],
+    });
+    expect(reviewMeta?.ownership?.domains).toContain(
+      "guided-independent-review",
+    );
+    expect(rows.some((row) => row.plannerId === GUIDED_MISSION_QA_TASK_ID)).toBe(
+      false,
+    );
+    expect(
+      rows.some((row) =>
+        decodeTaskScheduleDetail(row.detail).meta?.ownership?.domains.includes(
+          "guided-warmup",
+        ),
+      ),
+    ).toBe(false);
+  });
+
   // FLIP DO PADRÃO (06/08): a entrega comum de uma missão guiada é UM escritor
   // por construção, então nasce no caminho simples — sem worktree isolada, sem
   // cerimônia de merge. O fan-out largo continua isolado por escolha.
@@ -268,7 +327,8 @@ describe("Guided Planner v2", () => {
     expect(ownership.files).not.toContain("**");
   });
 
-  it("seals the schema-v9 multi-CLI advisory fan-out around the codex chain", () => {
+  it("Autopilot multi-CLI squad seals executor delivery + post-delivery review only", () => {
+    // No advisor fan-out, no warm-up, no QA wall — just write then read-only review.
     const liveSquad = createRealMissionE2ESquadFixture();
     const contract = compileIntentContract({
       goal: REAL_MISSION_E2E_GOAL,
@@ -292,9 +352,9 @@ describe("Guided Planner v2", () => {
     const h = harness({
       currentMission,
       liveSquad,
+      squadCliPolicy: "operator-choice",
       adapters: [
         liveAdapter("codex"),
-        // grok/agy chegam ao roster com o model default do produto selado.
         {
           id: "grok",
           installed: true,
@@ -317,76 +377,32 @@ describe("Guided Planner v2", () => {
 
     expect(
       ensureGuidedMissionPlan(h.suite, currentMission.id, h.deps),
-    ).toMatchObject({ applicable: true, sealed: true });
+    ).toMatchObject({
+      applicable: true,
+      sealed: true,
+      workerAgentRef: "e2e-executor",
+    });
     const rows = h.createPlanAtomically.mock.calls[0]![0].rows;
-    const schedules = rows.map((row) => ({
-      plannerId: row.plannerId,
-      ...decodeTaskScheduleDetail(row.detail).meta!,
-    }));
-
-    // Fan-out consultivo: advisors read_only independentes + executor codex;
-    // depois a cadeia codex revisor → QA.
-    // Fixture 0.28.0: grok removed from REAL_MISSION_E2E_ADVISORS (stall undiagnosable).
-    const advisoryIds = [
-      "e2e-advisor-kimi",
-      "e2e-advisor-agy",
-      "e2e-advisor-opencode",
-      "e2e-advisor-claude",
-      "e2e-advisor-glm",
-    ];
-    const reviewIds = ["e2e-reviewer"];
-    expect(schedules).toEqual([
-      ...advisoryIds.map((agentRef, index) =>
-        expect.objectContaining({
-          plannerId: `guided-advisory-${index + 1}-${agentRef}`,
-          agentRef,
-          agentCategory: "scout",
-          executionMode: "read_only",
-          dependsOn: [],
-        }),
-      ),
-      expect.objectContaining({
-        plannerId: GUIDED_MISSION_PLANNER_TASK_ID,
-        agentRef: "e2e-executor",
-        agentCategory: "executor",
-        // Padrão desde 06/08: entrega comum é 1 escritor, logo caminho simples.
-        executionMode: "same_checkout",
-        dependsOn: [],
-      }),
-      ...reviewIds.map((agentRef, index) =>
-        expect.objectContaining({
-          plannerId: `guided-review-${index + 1}-${agentRef}`,
-          agentRef,
-          agentCategory: "reviewer",
-          executionMode: "read_only",
-          dependsOn: [
-            plannedTaskId(
-              currentMission.id,
-              3,
-              index === 0
-                ? GUIDED_MISSION_PLANNER_TASK_ID
-                : `guided-review-${index}-${reviewIds[index - 1]}`,
-            ),
-          ],
-        }),
-      ),
-      expect.objectContaining({
-        plannerId: GUIDED_MISSION_QA_TASK_ID,
-        agentRef: "e2e-qa",
-        agentCategory: "reviewer",
-        executionMode: "read_only",
-        dependsOn: [
-          plannedTaskId(
-            currentMission.id,
-            3,
-            "guided-review-1-e2e-reviewer",
-          ),
-        ],
-      }),
+    expect(rows).toHaveLength(2);
+    const delivery = rows.find(
+      (row) => row.plannerId === GUIDED_MISSION_PLANNER_TASK_ID,
+    )!;
+    const review = rows.find((row) => row.agentCategory === "reviewer")!;
+    expect(decodeTaskScheduleDetail(delivery.detail).meta).toMatchObject({
+      agentRef: "e2e-executor",
+      agentCategory: "executor",
+      executionMode: "same_checkout",
+      dependsOn: [],
+    });
+    expect(decodeTaskScheduleDetail(review.detail).meta?.dependsOn).toEqual([
+      plannedTaskId(currentMission.id, 3, GUIDED_MISSION_PLANNER_TASK_ID),
     ]);
+    expect(rows.some((row) => row.plannerId === GUIDED_MISSION_QA_TASK_ID)).toBe(
+      false,
+    );
   });
 
-  it("seals the claude-orchestrator variant chain without any claude worker", () => {
+  it("Autopilot with Claude Maestro still seals non-Claude executor + post-review", () => {
     const liveSquad = createRealMissionE2ESquadFixture([], "claude");
     const contract = compileIntentContract({
       goal: REAL_MISSION_E2E_GOAL,
@@ -410,6 +426,7 @@ describe("Guided Planner v2", () => {
     const h = harness({
       currentMission,
       liveSquad,
+      squadCliPolicy: "operator-choice",
       adapters: [
         liveAdapter("codex"),
         {
@@ -434,76 +451,23 @@ describe("Guided Planner v2", () => {
 
     expect(
       ensureGuidedMissionPlan(h.suite, currentMission.id, h.deps),
-    ).toMatchObject({ applicable: true, sealed: true });
+    ).toMatchObject({
+      applicable: true,
+      sealed: true,
+      workerAgentRef: "e2e-executor",
+    });
     const rows = h.createPlanAtomically.mock.calls[0]![0].rows;
-    const schedules = rows.map((row) => ({
-      plannerId: row.plannerId,
-      ...decodeTaskScheduleDetail(row.detail).meta!,
-    }));
-
-    // Variante claude: advisor claude reservada (orquestrador) e todos os
-    // outros advisors permanecem no fan-out independente.
-    // Fixture 0.28.0: grok removed from REAL_MISSION_E2E_ADVISORS (stall undiagnosable).
-    const advisoryIds = [
-      "e2e-advisor-kimi",
-      "e2e-advisor-agy",
-      "e2e-advisor-opencode",
-      "e2e-advisor-glm",
-    ];
-    const reviewIds = ["e2e-reviewer"];
-    expect(schedules).toEqual([
-      ...advisoryIds.map((agentRef, index) =>
-        expect.objectContaining({
-          plannerId: `guided-advisory-${index + 1}-${agentRef}`,
-          agentRef,
-          agentCategory: "scout",
-          executionMode: "read_only",
-          dependsOn: [],
-        }),
-      ),
-      expect.objectContaining({
-        plannerId: GUIDED_MISSION_PLANNER_TASK_ID,
-        agentRef: "e2e-executor",
-        agentCategory: "executor",
-        // Padrão desde 06/08: entrega comum é 1 escritor, logo caminho simples.
-        executionMode: "same_checkout",
-        dependsOn: [],
-      }),
-      ...reviewIds.map((agentRef, index) =>
-        expect.objectContaining({
-          plannerId: `guided-review-${index + 1}-${agentRef}`,
-          agentRef,
-          agentCategory: "reviewer",
-          executionMode: "read_only",
-          dependsOn: [
-            plannedTaskId(
-              currentMission.id,
-              3,
-              index === 0
-                ? GUIDED_MISSION_PLANNER_TASK_ID
-                : `guided-review-${index}-${reviewIds[index - 1]}`,
-            ),
-          ],
-        }),
-      ),
-      expect.objectContaining({
-        plannerId: GUIDED_MISSION_QA_TASK_ID,
-        agentRef: "e2e-qa",
-        agentCategory: "reviewer",
-        executionMode: "read_only",
-        dependsOn: [
-          plannedTaskId(
-            currentMission.id,
-            3,
-            "guided-review-1-e2e-reviewer",
-          ),
-        ],
-      }),
-    ]);
+    expect(rows).toHaveLength(2);
     expect(
-      rows.every((row) => !row.agentRef.includes("claude")),
-    ).toBe(true);
+      rows.find((row) => row.plannerId === GUIDED_MISSION_PLANNER_TASK_ID)
+        ?.agentRef,
+    ).toBe("e2e-executor");
+    // Claude stays Maestro/reserve — never the sealed delivery body on Autopilot.
+    expect(rows.every((row) => row.agentRef !== "e2e-advisor-claude")).toBe(
+      true,
+    );
   });
+
 
   it("admits only exact credentialless OpenCode models when no usable account exists", () => {
     const provider = {
@@ -608,7 +572,8 @@ describe("Guided Planner v2", () => {
   });
 
   it("seals one honest task for every approved worker identity", () => {
-    const h = harness();
+    // Hardened keeps the multi-stage roster-complete graph; Autopilot is single-task.
+    const h = harness({ squadCliPolicy: "governed" });
 
     const result = ensureGuidedMissionPlan(h.suite, "mission-guided", h.deps);
 
@@ -831,9 +796,11 @@ describe("saved-team (mission-runtime) sealing", () => {
     ).toBe(true);
   });
 
-  it("smoke: Pack seals one parallel task per BMAD story plus QA gate", () => {
+  it("smoke: Autopilot Pack = N parallel story writers, no forced QA (Bridge style)", () => {
+    // Bridge/Overclock: birth N parallel builders, close when they hand off.
+    // Autopilot must not append a serial QA wall after the wave.
     const pack = promotedMissionWithStories({ orchestrationMode: "pack" });
-    const h = harness({ currentMission: pack });
+    const h = harness({ currentMission: pack, squadCliPolicy: "operator-choice" });
     const result = ensureGuidedMissionPlan(h.suite, pack.id, h.deps);
     expect(result).toMatchObject({
       applicable: true,
@@ -856,16 +823,8 @@ describe("saved-team (mission-runtime) sealing", () => {
 
     // MULTI_STORY_PLAN has Story 1.1 + 1.2 → two writers, not one Guided primary.
     expect(storyRows).toHaveLength(2);
-    expect(
-      new Set(
-        storyRows.map(
-          (entry) =>
-            entry.meta!.ownership.domains.find((domain) =>
-              domain.startsWith("wave-pack-story:"),
-            ),
-        ),
-      ).size,
-    ).toBe(2);
+    expect(qaRows).toHaveLength(0);
+    expect(rows).toHaveLength(2);
     expect(
       storyRows.every(
         (entry) =>
@@ -874,10 +833,34 @@ describe("saved-team (mission-runtime) sealing", () => {
           entry.meta.agentCategory === "executor",
       ),
     ).toBe(true);
+  });
+
+  it("smoke: Hardened Pack keeps parallel stories plus QA gate", () => {
+    const pack = promotedMissionWithStories({ orchestrationMode: "pack" });
+    const h = harness({ currentMission: pack, squadCliPolicy: "governed" });
+    const result = ensureGuidedMissionPlan(h.suite, pack.id, h.deps);
+    expect(result).toMatchObject({
+      applicable: true,
+      sealed: true,
+      topology: "wave-pack",
+    });
+
+    const rows = h.createPlanAtomically.mock.calls[0]![0].rows;
+    const decoded = rows.map((row: { detail: string }) =>
+      decodeTaskScheduleDetail(row.detail),
+    );
+    const storyRows = decoded.filter((entry) =>
+      entry.meta?.ownership.domains.some((domain) =>
+        domain.startsWith("wave-pack-story:"),
+      ),
+    );
+    const qaRows = decoded.filter((entry) =>
+      entry.meta?.ownership.domains.includes("guided-quality-gate"),
+    );
+
+    expect(storyRows).toHaveLength(2);
     expect(qaRows).toHaveLength(1);
-    // QA waits on every story wave — dependency cardinality is the Pack contract.
     expect(qaRows[0]!.meta?.dependsOn).toHaveLength(2);
-    // Stories share inventory as merge permit; exclusivity is story domains.
     expect(
       storyRows.every((entry) => (entry.meta?.ownership.files.length ?? 0) > 0),
     ).toBe(true);

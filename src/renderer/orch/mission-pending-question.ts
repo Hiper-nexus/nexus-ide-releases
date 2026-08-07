@@ -22,19 +22,13 @@ import type { Handoff, Mission } from '../../shared/orch-types';
  *  - a lista de status vive aqui, não espalhada por componente.
  */
 
-/**
- * SÓ 'running'. A autoridade é do main: `clarify-flow.ts` recusa a resposta com
- * "a resposta exige a versão atual da missão em execução" quando
- * `mission.status !== 'running'`. Renderizar um card para qualquer outro status
- * produz um botão que o main SEMPRE rejeita — pior que não mostrar nada, porque
- * promete uma saída que não existe.
- *
- * Isto também conserta um caminho morto anterior: a lista antiga aceitava
- * 'pending', que o main já recusava. E mantém `missionBlockCause` honesto — com
- * pergunta pendente restrita a missão em execução, ela nunca compete com a
- * causa técnica de uma missão bloqueada, que é o que o operador precisa ler.
- */
-const ANSWERABLE_STATUSES: ReadonlySet<string> = new Set(['running']);
+function isAnswerableMission(mission: Mission): boolean {
+  if (mission.status === 'running') return true;
+  // Worker-decision stop: chips are the human exit. Technical blocks are not.
+  return (
+    mission.status === 'blocked' && mission.intentState === 'blocked_user'
+  );
+}
 
 /** Handoffs escritos pelo operador ao responder — nunca são perguntas. */
 const OPERATOR_AGENT = 'Operador Nexus';
@@ -64,7 +58,7 @@ export function pendingMissionQuestions(
 ): Array<DurableClarifyQuestion & { readonly missionTitle: string }> {
   const answerable = new Map(
     missions
-      .filter((mission) => ANSWERABLE_STATUSES.has(mission.status))
+      .filter((mission) => isAnswerableMission(mission))
       .map((mission) => [mission.id, mission] as const),
   );
   const answered = answeredQuestionIds(handoffs);

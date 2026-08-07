@@ -54,7 +54,11 @@ describe("Guided Planner v2", () => {
         squadRevisionHash: snapshotSquadAuthority(expandedSquad).hash,
       },
     });
-    const h = harness({ currentMission, liveSquad: expandedSquad });
+    const h = harness({
+      currentMission,
+      liveSquad: expandedSquad,
+      squadCliPolicy: "governed",
+    });
 
     ensureGuidedMissionPlan(h.suite, "mission-guided", h.deps);
 
@@ -179,6 +183,7 @@ describe("Guided Planner v2", () => {
     const h = harness({
       currentMission,
       liveSquad: executionOnlySquad,
+      squadCliPolicy: "governed",
     });
 
     expect(() =>
@@ -667,6 +672,7 @@ describe("Guided Planner v2", () => {
       expect(claims).not.toContain(".");
       expect(claims).not.toContain("*");
 
+      // Autopilot = delivery + post-review. Length 4 was Hardened roster.
       const h = harness();
       const deps: GuidedMissionPlannerDeps = {
         ...h.deps,
@@ -675,7 +681,7 @@ describe("Guided Planner v2", () => {
       expect(
         ensureGuidedMissionPlan(h.suite, "mission-guided", deps),
       ).toMatchObject({ applicable: true, sealed: true });
-      expect(h.createPlanAtomically.mock.calls[0]![0].rows).toHaveLength(4);
+      expect(h.createPlanAtomically.mock.calls[0]![0].rows).toHaveLength(2);
     } finally {
       fs.rmSync(temporaryRoot, { recursive: true, force: true });
     }

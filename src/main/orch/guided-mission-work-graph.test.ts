@@ -78,7 +78,12 @@ function sealGraph(
   readonly byPlannerId: ReadonlyMap<string, SealedNode>;
 } {
   const currentMission = missionWithGoal(goal, liveSquad);
-  const h = harness({ currentMission, liveSquad });
+  // Work-kind shape tests assert the Hardened multi-stage graph.
+  const h = harness({
+    currentMission,
+    liveSquad,
+    squadCliPolicy: "governed",
+  });
   const result = ensureGuidedMissionPlan(h.suite, currentMission.id, h.deps);
   expect(result).toMatchObject({ applicable: true, sealed: true });
   const rows = h.createPlanAtomically.mock.calls[0]![0].rows;
@@ -105,7 +110,11 @@ function sealGraph(
 /** Feeds the sealed rows back through the immutable recovery contract. */
 function recoverFromReceipt(goal: string, liveSquad: Squad = squad) {
   const currentMission = missionWithGoal(goal, liveSquad);
-  const h = harness({ currentMission, liveSquad });
+  const h = harness({
+    currentMission,
+    liveSquad,
+    squadCliPolicy: "governed",
+  });
   ensureGuidedMissionPlan(h.suite, currentMission.id, h.deps);
   const rows = h.createPlanAtomically.mock.calls[0]![0].rows;
   const rosterHash = snapshotTaskPlanRoster(liveSquad.agents).hash;
@@ -310,6 +319,10 @@ describe("every new shape stays recoverable from the immutable receipt", () => {
     expect(recovered.implementation.plannerId).toBe(
       GUIDED_MISSION_PLANNER_TASK_ID,
     );
+    expect(recovered.qualityGate).not.toBeNull();
+    if (!recovered.qualityGate) {
+      throw new Error("expected qualityGate to be non-null");
+    }
     expect(recovered.qualityGate.plannerId).toBe(GUIDED_MISSION_QA_TASK_ID);
     expect(recovered.ordered.map((entry) => entry.plannerId)).toEqual([
       GUIDED_MISSION_REPRODUCTION_TASK_ID,

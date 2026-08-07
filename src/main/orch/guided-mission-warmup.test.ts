@@ -23,7 +23,8 @@ function warmupMeta(detail: string): TaskScheduleMeta | null {
 
 describe("warm-up read-only de reviewer/QA (feature.mission.warmupAdvisories)", () => {
   it("sela um warm-up raiz read-only por reviewer/QA na onda 1", () => {
-    const h = harness({ warmupAdvisories: true });
+    // Warm-ups only exist on the Hardened multi-stage graph.
+    const h = harness({ warmupAdvisories: true, squadCliPolicy: "governed" });
 
     const result = ensureGuidedMissionPlan(h.suite, "mission-guided", h.deps);
 

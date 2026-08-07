@@ -374,16 +374,78 @@ export interface DriveStateInputs {
    * `receipted` conta os concluídos que trouxeram recibo de integração. Concluir
    * sem recibo não é conclusão: é trabalho sem prova, e vira parada VISÍVEL.
    *
+   * `plannedPending` conta tasks do plano SELADO que ainda não têm dispatch
+   * completed+receipted. Sem isto, a 1ª onda (só o executor) fazia
+   * total=completed=receipted=1 e o driver marcava `done` com revisor/QA
+   * ainda pendentes (HiperGO 2026-08-07: mission-2e206148…).
+   *
    * Ausente = sem instrumentação de fila; o comportamento antigo permanece e
    * nada é fabricado.
    */
-  readonly dispatchWork?: {
-    readonly total: number;
-    readonly completed: number;
-    readonly receipted: number;
-  };
+  readonly dispatchWork?: DispatchWorkSnapshot;
   /** Optional explicit trusted evidence ids (overrides derivation from handoffs). */
   readonly trustedEvidenceIds?: ReadonlySet<string>;
+}
+
+/**
+ * Snapshot da fila de trabalho usado por decisão e por apply (mesma moeda).
+ */
+export interface DispatchWorkSnapshot {
+  readonly total: number;
+  readonly completed: number;
+  readonly receipted: number;
+  /**
+   * Tasks do plano selado ainda sem dispatch completed+receipted.
+   * 0/ausente = sem residual de plano (missão só-fila ou plano esgotado).
+   */
+  readonly plannedPending?: number;
+}
+
+/**
+ * Trabalho provado = fila atual terminal E com recibo E sem residual de plano.
+ * Extrair a regra num predicado puro evita divergência entre decide e apply
+ * (a mesma doença que o invariante de conclusão já pune).
+ */
+export function isDispatchWorkProven(
+  work: DispatchWorkSnapshot | undefined,
+): boolean {
+  if (work === undefined) return false;
+  if (work.total <= 0) return false;
+  if (work.completed !== work.total) return false;
+  if (work.receipted !== work.total) return false;
+  if ((work.plannedPending ?? 0) > 0) return false;
+  return true;
+}
+
+/**
+ * Conta quantas tasks do plano selado ainda não têm prova de dispatch.
+ * Plano vazio ⇒ 0 (missão ad-hoc / só-fila).
+ */
+export function countPlannedPendingDispatches(
+  plannedTaskIds: readonly string[],
+  dispatches: readonly {
+    readonly taskId: string;
+    readonly state: string;
+    readonly integrationReceipt?: unknown;
+  }[],
+): number {
+  if (plannedTaskIds.length === 0) return 0;
+  const byTask = new Map(
+    dispatches.map((dispatch) => [dispatch.taskId, dispatch] as const),
+  );
+  let pending = 0;
+  for (const taskId of plannedTaskIds) {
+    const dispatch = byTask.get(taskId);
+    if (
+      !(
+        dispatch?.state === 'completed' &&
+        dispatch.integrationReceipt != null
+      )
+    ) {
+      pending += 1;
+    }
+  }
+  return pending;
 }
 
 function deriveTrustedEvidenceIds(
@@ -514,11 +576,16 @@ export function deriveDriveState(input: DriveStateInputs): DriveState {
 
   // Conclusão derivada do TRABALHO. `total > 0` é deliberado: missão que nunca
   // despachou nada não tem trabalho feito — zero não é "tudo pronto".
+  // Residual de plano selado (plannedPending > 0) também bloqueia: a fila
+  // parcial da onda 1 não pode encerrar a missão antes das ondas 2/3.
   const work = input.dispatchWork;
   const allDispatchesDone =
     work !== undefined && work.total > 0 && work.completed === work.total;
-  const workProven = allDispatchesDone && work.receipted === work.total;
-  const workDoneUnproven = allDispatchesDone && !workProven;
+  const workProven = isDispatchWorkProven(work);
+  const workDoneUnproven =
+    allDispatchesDone &&
+    work !== undefined &&
+    work.receipted < work.total;
 
   return {
     missionId: mission.id,

@@ -948,12 +948,31 @@ describe("main-owned mission pane spawn", () => {
     await expect(requestPaneClose(mainOwned.paneId!)).resolves.toBe(true);
   });
 
-  it("rejects missing and same-root worker execution scopes before provider preparation", async () => {
+  it("rejects same-root ONLY for isolated_worktree writers (simple path stays open)", async () => {
+    // Caminho simples / Overclock: worker no mesmo checkout — deve SPAWNAR.
+    for (const candidateExecutionScope of [undefined, scope]) {
+      const simple = await requestPaneSpawn({
+        adapterId: "codex",
+        missionId: "mission-headless",
+        role: "worker",
+        executionMode: "same_checkout",
+        scope,
+        executionScope: candidateExecutionScope,
+      });
+      expect(simple.ok).toBe(true);
+      if (simple.paneId) {
+        await expect(requestPaneClose(simple.paneId)).resolves.toBe(true);
+      }
+    }
+
+    // Fan-out isolado: mesma raiz é recusa fail-closed.
     for (const candidateExecutionScope of [undefined, scope]) {
       const result = await requestPaneSpawn({
         adapterId: "codex",
         missionId: "mission-headless",
         role: "worker",
+        executionMode: "isolated_worktree",
+        isolatedWriter: true,
         scope,
         executionScope: candidateExecutionScope,
       });
@@ -963,8 +982,7 @@ describe("main-owned mission pane spawn", () => {
       });
     }
 
-    expect(provider.prepare).not.toHaveBeenCalled();
-    expect(pty.spawn).not.toHaveBeenCalled();
+    expect(provider.prepare).toHaveBeenCalled();
   });
 
   it("spawns any live CLI in an autopilot worktree without native confinement", async () => {

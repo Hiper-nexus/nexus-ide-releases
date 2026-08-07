@@ -37,6 +37,22 @@ describe('missionBlockCause — uma causa nomeada por caso', () => {
     );
   });
 
+  it('worker pediu decisão: não é falha técnica nem despacho abortado', () => {
+    const cause = missionBlockCause(
+      blocked(
+        'quero story 1.4\n\n[NEXUS_WORKER_DECISION_BLOCKED]\n## Worker pediu decisão\n' +
+          'Story 1.4 está backlog; o gate autoriza só a 1.3.\n' +
+          'A missão ficou parada na pane — diga o que fazer: mudar o objetivo, autorizar o caminho, ou encerrar de propósito.\n',
+        'blocked_user',
+      ),
+    );
+
+    expect(cause.code).toBe('worker-decision');
+    expect(cause.headline).toMatch(/pediu uma decisão|não falhou/i);
+    expect(cause.action).toMatch(/dizer o que fazer|autorizar|encerrar/i);
+    expect(cause.headline).not.toMatch(/despacho abortou/i);
+  });
+
   it('kickoff falhou: não culpa cota do provider', () => {
     const cause = missionBlockCause(
       blocked(

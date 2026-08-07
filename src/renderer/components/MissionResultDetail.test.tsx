@@ -63,15 +63,20 @@ describe('MissionResultDetail status presentation', () => {
   });
 
   it.each([
-    ['done', 'Concluída'],
-    ['failed', 'Falhou'],
-    ['blocked', 'Encerrada com bloqueio'],
-  ] as const)('keeps terminal status %s explicit', (status, label) => {
+    ['failed', 'Falhou', 'Esta missão foi encerrada sem relatório final persistido.'],
+    ['blocked', 'Encerrada com bloqueio', 'Esta missão foi encerrada sem relatório final persistido.'],
+  ] as const)('keeps terminal status %s explicit', (status, label, emptyCopy) => {
     const { host, root } = renderStatus(status);
     expect(host.textContent).toContain(label);
-    expect(host.textContent).toContain(
-      'Esta missão foi encerrada sem relatório final persistido.',
-    );
+    expect(host.textContent).toContain(emptyCopy);
+    act(() => root.unmount());
+  });
+
+  it('done without report explains early close when plan may still be residual', () => {
+    const { host, root } = renderStatus('done');
+    expect(host.textContent).toContain('Concluída');
+    expect(host.textContent).toMatch(/nova missão/i);
+    expect(host.textContent).toMatch(/fechamento/i);
     act(() => root.unmount());
   });
 

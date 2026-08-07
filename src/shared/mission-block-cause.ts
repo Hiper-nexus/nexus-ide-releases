@@ -24,6 +24,7 @@ export const MISSION_BLOCK_CAUSE_CODES = [
   'kickoff-failed',
   'maestro-pre-dispatch-exit',
   'worker-no-handoff',
+  'worker-decision',
   'provider-unavailable',
   'ownership-conflict',
   'handoff-not-delivered',
@@ -81,6 +82,11 @@ const COPY: Readonly<
   'worker-no-handoff': {
     headline: 'O worker encerrou sem entregar o resultado da tarefa.',
     action: 'Confira login e cota do provider em Providers e retome a missão.',
+  },
+  'worker-decision': {
+    headline: 'O worker parou e pediu uma decisão sua — a missão não falhou.',
+    action:
+      'Leia o motivo na pane/diagnóstico e diga o que fazer: mudar objetivo, autorizar, ou encerrar.',
   },
   'provider-unavailable': {
     headline: 'A CLI selada no roster não está disponível para esta tarefa.',
@@ -159,6 +165,12 @@ const RULES: readonly {
   {
     code: 'worker-no-handoff',
     test: /\[NEXUS_WORKER_RUNTIME_LOST\]|não entregou um handoff|sem entregar um handoff/u,
+  },
+  // Worker-authored blocked handoff (governance / product fork). Must beat
+  // dispatch-failed so we never say "despacho abortou antes do worker".
+  {
+    code: 'worker-decision',
+    test: /\[NEXUS_WORKER_DECISION_BLOCKED\]|## Worker pediu decisão/u,
   },
   {
     code: 'maestro-pre-dispatch-exit',

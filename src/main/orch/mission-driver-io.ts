@@ -24,7 +24,9 @@ import {
   requestMissionPaneRecovery,
 } from './pane-registry';
 import {
+  countPlannedPendingDispatches,
   deriveDriveState,
+  isDispatchWorkProven,
   unusedTrustedEvidenceIds,
   type DriveState,
 } from './mission-drive';
@@ -295,12 +297,27 @@ export function loadDriveState(
   const completedDispatches = dispatches.filter(
     (dispatch) => dispatch.state === 'completed',
   );
+  // Plano selado com ondas ainda não despachadas: a fila parcial NÃO prova
+  // o trabalho. Sem plannedPending o driver fechava em 1/1 dispatch com
+  // revisor/QA pendentes (HiperGO mission-2e206148, 2026-08-07).
+  const intentVersion = mission.intentContract?.intentVersion;
+  const plannedTaskIds =
+    intentVersion === undefined
+      ? []
+      : stores.tasks
+          .listPlannedTasks(missionId, intentVersion)
+          .map((planned) => planned.taskId);
+  const plannedPending = countPlannedPendingDispatches(
+    plannedTaskIds,
+    dispatches,
+  );
   const dispatchWork = {
     total: dispatches.length,
     completed: completedDispatches.length,
     receipted: completedDispatches.filter(
       (dispatch) => dispatch.integrationReceipt != null,
     ).length,
+    plannedPending,
   };
 
   return deriveDriveState({
@@ -662,13 +679,29 @@ export function createProductionApplyPorts(
       // Fila indisponível ⇒ SEM prova de trabalho, nunca conclusão fabricada:
       // cai no caminho PREVC, que segue exigindo tudo o que sempre exigiu.
       const provingDispatches = stores.taskDispatches?.list(missionId) ?? [];
-      const workProven =
-        provingDispatches.length > 0 &&
-        provingDispatches.every(
+      const intentVersion = mission.intentContract?.intentVersion;
+      const plannedTaskIds =
+        intentVersion === undefined || !stores.tasks
+          ? []
+          : stores.tasks
+              .listPlannedTasks(missionId, intentVersion)
+              .map((planned) => planned.taskId);
+      const plannedPending = countPlannedPendingDispatches(
+        plannedTaskIds,
+        provingDispatches,
+      );
+      const workProven = isDispatchWorkProven({
+        total: provingDispatches.length,
+        completed: provingDispatches.filter(
+          (dispatch) => dispatch.state === 'completed',
+        ).length,
+        receipted: provingDispatches.filter(
           (dispatch) =>
             dispatch.state === 'completed' &&
             dispatch.integrationReceipt != null,
-        );
+        ).length,
+        plannedPending,
+      });
       const simpleWorkProven =
         workProven && !hasPrevcCompletionAuthority(scope, missionId);
 
@@ -736,13 +769,24 @@ export function createProductionApplyPorts(
       // moeda errada aqui deixaria a janela aberta justamente no caminho novo.
       if (simpleWorkProven) {
         const recheck = stores.taskDispatches?.list(missionId) ?? [];
+        const recheckPlannedPending = countPlannedPendingDispatches(
+          plannedTaskIds,
+          recheck,
+        );
         if (
           recheck.length !== provingDispatches.length ||
-          !recheck.every(
-            (dispatch) =>
-              dispatch.state === 'completed' &&
-              dispatch.integrationReceipt != null,
-          )
+          !isDispatchWorkProven({
+            total: recheck.length,
+            completed: recheck.filter(
+              (dispatch) => dispatch.state === 'completed',
+            ).length,
+            receipted: recheck.filter(
+              (dispatch) =>
+                dispatch.state === 'completed' &&
+                dispatch.integrationReceipt != null,
+            ).length,
+            plannedPending: recheckPlannedPending,
+          })
         ) {
           throw new Error(
             'complete rejected: dispatch authority changed after work proof',

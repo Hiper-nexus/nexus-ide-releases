@@ -50,11 +50,8 @@ describe('feature flags', () => {
     const DEFAULT_OFF = new Set([
       'feature.remote.relayTransport', // exige relay hospedado + URL explícita
       'feature.autonomy.profiles', // sem consumidor no produto ainda
-      // Warm-up abre reviewer/QA cedo; o review real ainda spawna outra PTY e
-      // o E2E real-mission aborta. Opt-in Labs até reutilizar a sessão.
-      'feature.mission.warmupAdvisories',
-      // Worker TTL é DEFAULT-ON (paridade Overclock §a#1).
-      // Opt-out via override de flag para E2E real-mission (ancora PTYs vivos).
+      // Warm-up e worker TTL são DEFAULT-ON (paridade Bridge multi-pane +
+      // Overclock close→wake). E2E real-mission opt-out via override de flag.
     ]);
     for (const flag of BUILTIN_FEATURE_FLAGS) {
       expect(

@@ -468,7 +468,11 @@ export function guidedTeamCoordinationDetail(
 export function guidedIndependentReviewDetail(
   mission: Mission,
   agent: SquadAgent,
-  options: { readonly qualityGateReadOnly?: boolean } = {},
+  options: {
+    readonly qualityGateReadOnly?: boolean;
+    /** Autopilot option B: this review is the only quality step after delivery. */
+    readonly finalPostDeliveryReview?: boolean;
+  } = {},
 ): string {
   const contract = mission.intentContract;
   if (!contract) {
@@ -480,13 +484,16 @@ export function guidedIndependentReviewDetail(
     guidedAdvisoryExecutionMode(agent) === "read_only"
       ? "Você está sob confinamento mecânico read-only do Nexus."
       : "Sua CLI será executada em um worktree isolado e descartável: preserve o HEAD exato, não edite arquivos e não crie commit. O Nexus provará o estado físico e nunca integrará esse worktree.";
+  const qualityClose = options.finalPostDeliveryReview
+    ? "Esta é a revisão de qualidade da missão: rode checks não mutantes, confira se o código segue padrões/skills do projeto e critérios de aceite, e envie handoff success com evidências e achados (ou blocked se houver defeito real). Não edite."
+    : options.qualityGateReadOnly
+      ? "Rode apenas verificações não mutantes e envie handoff success com evidências e achados; o QA final também será mecanicamente read-only e bloqueará a entrega se encontrar um defeito."
+      : "Rode apenas verificações não mutantes e envie handoff success com evidências e achados; o QA corretivo final repetirá os checks e corrigirá apenas defeitos reais.";
   return [
     `Atue como revisor independente (${agent.agentName}) após a integração do executor.`,
     "Inspecione o HEAD integrado sem confiar no resumo do autor. Não edite arquivos e não crie commit.",
     confinement,
-    options.qualityGateReadOnly
-      ? "Rode apenas verificações não mutantes e envie handoff success com evidências e achados; o QA final também será mecanicamente read-only e bloqueará a entrega se encontrar um defeito."
-      : "Rode apenas verificações não mutantes e envie handoff success com evidências e achados; o QA corretivo final repetirá os checks e corrigirá apenas defeitos reais.",
+    qualityClose,
     "",
     "Objetivo aprovado:",
     contract.goal,

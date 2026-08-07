@@ -109,6 +109,27 @@ describe('missionControlPulse', () => {
     );
   });
 
+  it('mission done with residual plan does not pretend work is still dispatchable (HiperGO)', () => {
+    const pulse = missionControlPulse(
+      snapshot({
+        missionStatus: 'done',
+        queue: [
+          item({ taskId: 'impl', status: 'done' }),
+          item({ taskId: 'rev', dependsOn: ['impl'], waveHint: 2 }),
+          item({ taskId: 'qa', dependsOn: ['rev'], waveHint: 3 }),
+        ],
+      }),
+    );
+
+    expect(pulse.eligible).toBe(1);
+    expect(pulse.waitingOnDeps).toBe(1);
+    expect(pulse.headline).toBe(
+      'Missão encerrada cedo — 2 unidades do plano ficaram sem rodar',
+    );
+    expect(pulse.explanation).toMatch(/nova missão/i);
+    expect(pulse.headline).not.toMatch(/aguardando despacho/i);
+  });
+
   it('names blocks instead of pretending the mission is merely idle', () => {
     const pulse = missionControlPulse(
       snapshot({

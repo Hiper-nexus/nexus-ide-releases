@@ -104,6 +104,17 @@ export interface PaneSpawnOptions {
   readOnly?: boolean;
   /** Confine provider-native writes while retaining audited Nexus delegation. */
   nativeReadOnly?: boolean;
+  /**
+   * Selado no despacho. `same_checkout` (padrão Overclock/Bridge do caminho
+   * simples) escreve no workspace de coordenação — NÃO exige worktree
+   * distinta. `isolated_worktree` é o fan-out multi-escritor.
+   */
+  executionMode?: "same_checkout" | "isolated_worktree" | "read_only";
+  /**
+   * Opt-in: este worker exige worktree fisicamente distinta (concorrência).
+   * Ausente = caminho simples no mesmo checkout (comentário em PaneOrchMeta).
+   */
+  isolatedWriter?: boolean;
   /** Exact approved revision seal retained by the physical PTY. */
   authoritySeal?: MissionPaneAuthoritySeal;
 }
@@ -433,6 +444,15 @@ export function spawnMainOwnedMissionPane(
     Boolean(options.missionId?.trim()) &&
     options.readOnly !== true &&
     options.nativeReadOnly !== true;
+  // Paridade Overclock/Bridge + flip 06/08: worktree distinta SÓ no fan-out
+  // isolado. Default (same_checkout / undefined) = mesmo checkout do chefe,
+  // como o spawn de Builder no Bridge/Overclock. Sem isto o scheduler claimava
+  // a task e o spawn morria — claim sem pane, tile zumbi (HiperGO 2026-08-07).
+  // Espelha tool-util.ts e PaneOrchMeta.isolatedWriter.
+  const requiresDistinctWorktree =
+    writableMissionWorkerIntent &&
+    (options.isolatedWriter === true ||
+      options.executionMode === "isolated_worktree");
   const missionBoundWritableWorker =
     !operatorChoice &&
     writableMissionWorkerIntent &&
@@ -447,7 +467,7 @@ export function spawnMainOwnedMissionPane(
       nativeReadOnly: options.nativeReadOnly,
     });
   if (
-    writableMissionWorkerIntent &&
+    requiresDistinctWorktree &&
     (!options.executionScope ||
       executionScope.rootRealPath === options.scope.rootRealPath)
   ) {

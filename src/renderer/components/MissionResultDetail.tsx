@@ -80,6 +80,15 @@ function emptyMissionResult(mission: Mission): string {
   ) {
     return 'A missão está em andamento; o relatório final será persistido quando a cadeia concluir.';
   }
+  if (mission.status === 'done') {
+    return (
+      'Esta missão foi marcada como concluída sem relatório final. ' +
+      'Se o plano de controle abaixo ainda mostra ondas pendentes, o fechamento ' +
+      'foi cedo demais: o trabalho do executor pode ter sido entregue, mas ' +
+      'revisor/QA não rodaram. Para seguir o desenvolvimento, abra uma nova missão ' +
+      'a partir do último commit — não espere este relatório “continuar sozinho”.'
+    );
+  }
   return 'Esta missão foi encerrada sem relatório final persistido.';
 }
 
@@ -296,9 +305,15 @@ export function MissionResultDetail({
               type="button"
               className="orch-panel__btn mission-result__reopen"
               onClick={onReopen}
-              title="Replaneja e retoma a missão a partir do diagnóstico acima"
+              title={
+                mission.intentState === 'blocked_user'
+                  ? 'Escolha o caminho (ou replaneje a missão a partir desta decisão)'
+                  : 'Replaneja e retoma a missão a partir do diagnóstico acima'
+              }
             >
-              Retomar missão
+              {mission.intentState === 'blocked_user'
+                ? 'Escolher caminho / retomar'
+                : 'Retomar missão'}
             </button>
           )}
         </section>

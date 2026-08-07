@@ -1,5 +1,6 @@
 import type { ScopedStoreBinding } from "./scoped-store";
 import type { ScopeCoordinates } from "./scoped-store";
+import { inferWorkerDecisionGuidance } from "../../shared/worker-decision-guidance";
 import {
   parseTaskDispatchDatabaseRow,
   taskDispatchRecordFromParsedRow,
@@ -12,12 +13,34 @@ export type TaskDispatchDatabase = ReturnType<
 >;
 
 export const TASK_DISPATCH_BLOCK_MARKER = "[NEXUS_TASK_DISPATCH_BLOCKED]";
+/** Worker-authored block (governance, product decision) — needs the operator. */
+export const TASK_DISPATCH_WORKER_DECISION_MARKER =
+  "[NEXUS_WORKER_DECISION_BLOCKED]";
 export const TASK_DISPATCH_SESSION_EXIT_REASON =
   "O worker encerrou sem entregar um handoff confiável.";
 const TASK_DISPATCH_RESUME_CTA =
   "Clique em “Retomar missão” para revisar a tarefa e escolher a próxima ação.";
+const TASK_DISPATCH_WORKER_DECISION_CTA =
+  "A missão ficou parada na pane — diga o que fazer: mudar o objetivo, autorizar o caminho, ou encerrar de propósito.";
 
-function taskDispatchMissionBlock(detail: string): string {
+function taskDispatchMissionBlock(
+  detail: string,
+  kind: "technical" | "user" = "technical",
+): string {
+  if (kind === "user") {
+    const guidance = inferWorkerDecisionGuidance(detail);
+    const optionLines = guidance.options
+      .map((option, index) => `${index + 1}. ${option}`)
+      .join("\n");
+    return (
+      `${TASK_DISPATCH_WORKER_DECISION_MARKER}\n## Worker pediu decisão\n` +
+      `${guidance.summary}\n\n` +
+      `Pergunta: ${guidance.question}\n` +
+      `${optionLines}\n` +
+      `Motivo do worker: ${detail.trim().slice(0, 3_000)}\n` +
+      TASK_DISPATCH_WORKER_DECISION_CTA
+    );
+  }
   return (
     `${TASK_DISPATCH_BLOCK_MARKER}\n## Worker bloqueado\n${detail}\n` +
     TASK_DISPATCH_RESUME_CTA
@@ -90,18 +113,31 @@ export function resumeTaskDispatchMissionAfterTechnicalFailure(
 export function taskDispatchBlockDetailFromDescription(
   description: string,
 ): string | null {
-  const marker = TASK_DISPATCH_BLOCK_MARKER;
-  const start = description.lastIndexOf(marker);
-  if (start < 0) return null;
-  const after = description.slice(start + marker.length);
-  const heading = "## Worker bloqueado\n";
-  const headAt = after.indexOf(heading);
-  if (headAt < 0) return null;
-  let body = after.slice(headAt + heading.length);
-  const ctaAt = body.indexOf(TASK_DISPATCH_RESUME_CTA);
-  if (ctaAt >= 0) body = body.slice(0, ctaAt);
-  const detail = body.trim();
-  return detail.length > 0 ? detail.slice(0, 4_000) : null;
+  const markers = [
+    {
+      marker: TASK_DISPATCH_WORKER_DECISION_MARKER,
+      heading: "## Worker pediu decisão\n",
+      cta: TASK_DISPATCH_WORKER_DECISION_CTA,
+    },
+    {
+      marker: TASK_DISPATCH_BLOCK_MARKER,
+      heading: "## Worker bloqueado\n",
+      cta: TASK_DISPATCH_RESUME_CTA,
+    },
+  ] as const;
+  for (const entry of markers) {
+    const start = description.lastIndexOf(entry.marker);
+    if (start < 0) continue;
+    const after = description.slice(start + entry.marker.length);
+    const headAt = after.indexOf(entry.heading);
+    if (headAt < 0) continue;
+    let body = after.slice(headAt + entry.heading.length);
+    const ctaAt = body.indexOf(entry.cta);
+    if (ctaAt >= 0) body = body.slice(0, ctaAt);
+    const detail = body.trim();
+    if (detail.length > 0) return detail.slice(0, 4_000);
+  }
+  return null;
 }
 
 export function getTaskDispatchRow(
@@ -128,6 +164,12 @@ export function blockTaskDispatchMission(
   missionId: string,
   detail: string,
   now: number,
+  /**
+   * `technical` = spawn/lease/runtime fence (auto-recovery eligible path).
+   * `user` = worker chose status=blocked (governance, product fork) — stay on
+   * the pane, ask the operator, never paint as technical failure.
+   */
+  kind: "technical" | "user" = "technical",
 ): void {
   const row = db
     .prepare(
@@ -138,7 +180,7 @@ export function blockTaskDispatchMission(
     | undefined;
   if (!row)
     throw new Error(`missão não encontrada para bloqueio: ${missionId}`);
-  const cta = taskDispatchMissionBlock(detail);
+  const cta = taskDispatchMissionBlock(detail, kind);
   // Mission descriptions contain operator-authored text. Never treat a marker
   // merely present in that text as durable state: on the running→blocked
   // transition we must append our own complete suffix. Idempotency is allowed
@@ -160,20 +202,16 @@ export function blockTaskDispatchMission(
   // while `resolveEffectiveIntentState` projected `blocked_user`. That split
   // between projection and column is what wedged missions with no exit.
   //
-  // These are dispatch failures — worktree, merge, expired lease, session exit.
-  // `blocked_technical` is what every other mission blocker writes here
-  // (missionBlockPatch('technical')). It also matters for recovery: the
-  // projection default for a dirty pair is `blocked_user`, which makes
-  // `isRecoveryEligibleIntentState` false and silently drops the mission from
-  // the Mission Driver scan and the delegation supervisor — automatic recovery
-  // switched off with nothing saying so. Nothing auto-resumes
-  // `blocked_technical` (driver, scheduler and bootstrap all require running),
-  // so this restores the truth without widening any authority.
+  // Technical dispatch failures (worktree, merge, expired lease, session exit)
+  // use blocked_technical. Worker-authored blocked handoffs use blocked_user
+  // so pet/toast say "precisa de você" instead of "falha técnica".
+  const intentState =
+    kind === "user" ? "blocked_user" : "blocked_technical";
   db.prepare(
     `UPDATE missions
         SET status = 'blocked', intent_state = ?, description = ?, updated_at = ?
       WHERE id = ?`,
-  ).run('blocked_technical', description, now, missionId);
+  ).run(intentState, description, now, missionId);
 }
 
 /**

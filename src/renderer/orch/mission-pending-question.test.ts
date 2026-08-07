@@ -9,6 +9,7 @@ function mission(
   id: string,
   status: Mission['status'] = 'running',
   title = `Missão ${id}`,
+  intentState?: Mission['intentState'],
 ): Mission {
   return {
     id,
@@ -18,6 +19,7 @@ function mission(
     milestones: [],
     learnings: '',
     orchestratorSessionId: `session-${id}`,
+    ...(intentState === undefined ? {} : { intentState }),
     createdAt: 1,
     updatedAt: 1,
   };
@@ -60,27 +62,35 @@ function questionHandoff(
 }
 
 describe('pendingMissionQuestions', () => {
-  // A autoridade é do main: clarify-flow recusa a resposta quando
-  // `mission.status !== 'running'`. Card em missão bloqueada/pendente seria um
-  // botão que o main SEMPRE rejeita — promete uma saída que não existe.
-  it('só pergunta de missão EM EXECUÇÃO, com o título junto', () => {
+  // running + blocked_user (worker pediu decisão). blocked_technical / done /
+  // pending não respondem chip — o main recusaria ou o próximo passo é outro.
+  it('só pergunta de missão executável (running ou blocked_user), com título', () => {
     const questions = pendingMissionQuestions(
       [
         mission('m-run', 'running', 'Entrega API'),
-        mission('m-block', 'blocked', 'Corrigir login'),
+        mission('m-block-user', 'blocked', 'Story 1.4', 'blocked_user'),
+        mission('m-block-tech', 'blocked', 'Crash técnico', 'blocked_technical'),
         mission('m-pending', 'pending', 'Na fila'),
         mission('m-done', 'done', 'Já fechada'),
       ],
       [
         questionHandoff('q-run', 'm-run', 10),
-        questionHandoff('q-block', 'm-block', 5),
+        questionHandoff('q-block-user', 'm-block-user', 5),
+        questionHandoff('q-block-tech', 'm-block-tech', 4),
         questionHandoff('q-pending', 'm-pending', 3),
         questionHandoff('q-done', 'm-done', 1),
       ],
     );
 
-    expect(questions.map((q) => q.questionId)).toEqual(['q-run']);
+    expect(questions.map((q) => q.questionId)).toEqual([
+      'q-block-user',
+      'q-run',
+    ]);
     expect(questions[0]).toMatchObject({
+      missionId: 'm-block-user',
+      missionTitle: 'Story 1.4',
+    });
+    expect(questions[1]).toMatchObject({
       missionId: 'm-run',
       missionTitle: 'Entrega API',
       question: 'Pergunta q-run?',

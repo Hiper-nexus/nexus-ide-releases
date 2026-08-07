@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  countPlannedPendingDispatches,
   decideDriveAction,
   defaultDriveConfig,
   deriveDriveState,
+  isDispatchWorkProven,
   type DriveStateInputs,
 } from './mission-drive';
 
@@ -96,6 +98,44 @@ describe('invariante de conclusão: o trabalho manda, não a cerimônia', () => 
     const state = deriveDriveState({ mission: missaoDoGate, handoffs: [] });
     expect(decideDriveAction(state, AGORA, config).kind).toBe('wait');
   });
+
+  it('1 dispatch completo com plano de 3 tasks ainda pendentes NÃO fecha a missão (HiperGO 07/08)', () => {
+    // Reprodução: onda 1 (executor) completed+receipted; ondas 2/3 (reviewer/QA)
+    // ainda no plano sem dispatch. O driver antigo lia total=1 e marcava done.
+    const state = deriveDriveState({
+      mission: missaoDoGate,
+      handoffs: [],
+      dispatchWork: {
+        total: 1,
+        completed: 1,
+        receipted: 1,
+        plannedPending: 2,
+      },
+    });
+
+    const action = decideDriveAction(state, AGORA, config);
+    expect(action.kind).not.toBe('complete');
+    expect(isDispatchWorkProven({
+      total: 1,
+      completed: 1,
+      receipted: 1,
+      plannedPending: 2,
+    })).toBe(false);
+  });
+
+  it('plano selado esgotado (plannedPending=0) com fila receipted ⇒ complete', () => {
+    const state = deriveDriveState({
+      mission: missaoDoGate,
+      handoffs: [],
+      dispatchWork: {
+        total: 3,
+        completed: 3,
+        receipted: 3,
+        plannedPending: 0,
+      },
+    });
+    expect(decideDriveAction(state, Date.now(), config).kind).toBe('complete');
+  });
 });
 
 /**
@@ -121,22 +161,54 @@ describe('invariante de conclusão: decidir e APLICAR são a mesma promessa', ()
   it.each(provas)(
     'a regra do aplicar bate com a da decisão: $rotulo',
     ({ state, receipt, aceita }) => {
-      // Réplica exata do predicado de autoridade em completeMission.
-      const dispatches = [{ state, integrationReceipt: receipt }];
-      const workProven =
-        dispatches.length > 0 &&
-        dispatches.every(
-          (d) => d.state === 'completed' && d.integrationReceipt != null,
-        );
+      // Mesmo predicado canônico usado por decide e apply.
+      const dispatches = [
+        {
+          taskId: 'task-1',
+          state,
+          integrationReceipt: receipt,
+        },
+      ];
+      const completed = dispatches.filter((d) => d.state === 'completed').length;
+      const receipted = dispatches.filter(
+        (d) => d.state === 'completed' && d.integrationReceipt != null,
+      ).length;
+      const workProven = isDispatchWorkProven({
+        total: dispatches.length,
+        completed,
+        receipted,
+        plannedPending: 0,
+      });
       expect(workProven).toBe(aceita);
     },
   );
 
   it('missão sem dispatch nenhum nunca é "trabalho provado" nos dois lados', () => {
-    const vazio: { state: string; integrationReceipt: unknown }[] = [];
-    const workProven =
-      vazio.length > 0 &&
-      vazio.every((d) => d.state === 'completed' && d.integrationReceipt != null);
-    expect(workProven).toBe(false);
+    expect(
+      isDispatchWorkProven({ total: 0, completed: 0, receipted: 0 }),
+    ).toBe(false);
+  });
+
+  it('aplicar e decidir recusam complete com residual de plano (mesma moeda)', () => {
+    const dispatches = [
+      {
+        taskId: 'task-executor',
+        state: 'completed',
+        integrationReceipt: {},
+      },
+    ];
+    const plannedPending = countPlannedPendingDispatches(
+      ['task-executor', 'task-reviewer', 'task-qa'],
+      dispatches,
+    );
+    expect(plannedPending).toBe(2);
+    expect(
+      isDispatchWorkProven({
+        total: 1,
+        completed: 1,
+        receipted: 1,
+        plannedPending,
+      }),
+    ).toBe(false);
   });
 });

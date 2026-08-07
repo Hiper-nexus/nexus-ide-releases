@@ -687,6 +687,9 @@ function startSpawn(
             Date.now() - spawnedAt < 10_000 &&
             (resumeLatestOnly || res.resumeMode === 'latest');
           setHostSession(host, pane.id, null);
+          // Latch solto: sem isto o host fica em exited eterno e o teclado
+          // morre em silêncio (onData early-return quando sessionId=null).
+          host.spawnStarted = false;
           if (failedFallback) {
             reportPaneResumeIncident(
               pane,
@@ -698,10 +701,22 @@ function startSpawn(
               '\r\n\x1b[31m[nexus doctor] recuperação esgotada sem loop; inicie uma nova sessão neste pane.\x1b[0m',
             );
           }
+          // Linha própria com \r\n em ambos os lados: o aviso de backlog 2 MB
+          // pode cair no meio do buffer e colar "process exited" com "output
+          // because the backlog…" (print do operador 2026-08-07 HiperGO).
           host.term.writeln(
             `\r\n\x1b[90m[nexus] process exited (code ${exitCode})\x1b[0m`,
           );
           useSessionStateStore.getState().setPaneState(pane.id, 'exited');
+          if (missionStillOwnsPane(pane.id, pane)) {
+            host.term.writeln(
+              '\x1b[33m[nexus] a missão ainda é dona deste pane — use o rail para retomar, ou espere o próximo despacho.\x1b[0m',
+            );
+          } else {
+            host.term.writeln(
+              '\x1b[36m[nexus] sessão encerrada. Digite qualquer tecla para abrir um shell neste pane.\x1b[0m',
+            );
+          }
         }),
       );
       if (res.adopted) {
@@ -795,7 +810,18 @@ function startSpawn(
         host.inputVisibility.onUserInput();
         if (host.opened) webglPool.touch(pane.id);
         flushTerminalOutput(host.term);
-        if (!host.sessionId) return;
+        if (!host.sessionId) {
+          // Cadáver de missão/CLI: tecla era no-op e o operador lia "travado".
+          // Missão terminal (done/failed) ou pane sem missão viva → shell.
+          if (
+            paneState(pane.id) === 'exited' &&
+            !host.spawnStarted &&
+            !missionStillOwnsPane(pane.id, pane)
+          ) {
+            void reclaimExitedPaneAsShell(pane, host);
+          }
+          return;
+        }
         // Pane de missão não aceita escrita do renderer — a posse é do main.
         // O teclado do operador entra pedindo, não escrevendo: sem esse desvio
         // a tecla era descartada em silêncio e o terminal parecia morto.
@@ -1487,21 +1513,86 @@ export function scrollPaneToBottom(paneId: string, sendJumpKey = false): void {
   host.term.focus();
 }
 
-function isMainControlledMissionPane(
-  paneId: string,
-  pane?: PaneModel,
-): boolean {
+function missionIdOfPane(paneId: string, pane?: PaneModel): string | undefined {
   const resolved =
     pane ??
     listPanes(useLayoutStore.getState().root).find(
       (candidate) => candidate.id === paneId,
     );
-  return Boolean(
-    resolved?.missionId ||
-      resolved?.role === 'orchestrator' ||
-      resolved?.role === 'worker' ||
-      useOrchStore.getState().paneMissions[paneId],
+  return (
+    resolved?.missionId ?? useOrchStore.getState().paneMissions[paneId]
   );
+}
+
+/**
+ * Missão AINDA viva (running/blocked) é dona do pane. Missão done/failed — ou
+ * vínculo órfão — libera o pane ao operador: caso contrário o processo morto
+ * deixa teclado no-op para sempre (HiperGO 2026-08-07: exit code 0 + backlog
+ * 2 MB, terminal "não deixa digitar").
+ */
+function missionStillOwnsPane(paneId: string, pane?: PaneModel): boolean {
+  const resolved =
+    pane ??
+    listPanes(useLayoutStore.getState().root).find(
+      (candidate) => candidate.id === paneId,
+    );
+  const missionId = missionIdOfPane(paneId, resolved);
+  if (!missionId) return false;
+  const mission = useOrchStore
+    .getState()
+    .missions.find((candidate) => candidate.id === missionId);
+  // Vínculo órfão (missão sumiu do store) ou missão terminal: operador reclama.
+  if (!mission) return false;
+  return mission.status === 'running' || mission.status === 'blocked';
+}
+
+function isMainControlledMissionPane(
+  paneId: string,
+  pane?: PaneModel,
+): boolean {
+  return missionStillOwnsPane(paneId, pane);
+}
+
+/**
+ * Após exit limpo de agente de missão já terminal: vira shell no mesmo xterm
+ * para o operador poder digitar de novo sem fechar o pane / abrir outro.
+ */
+async function reclaimExitedPaneAsShell(
+  pane: PaneModel,
+  host: Host,
+): Promise<void> {
+  if (host.disposed || host.sessionId || host.spawnStarted) return;
+  if (missionStillOwnsPane(pane.id, pane)) return;
+  host.spawnStarted = true;
+  try {
+    host.term.writeln(
+      '\r\n\x1b[36m[nexus] abrindo shell neste pane…\x1b[0m',
+    );
+    const shellPane = useLayoutStore
+      .getState()
+      .reclaimAsOperatorShell(pane.id);
+    useOrchStore.setState((s) => {
+      if (!(pane.id in s.paneMissions)) return s;
+      const next = { ...s.paneMissions };
+      delete next[pane.id];
+      return { paneMissions: next };
+    });
+    if (!shellPane || shellPane.kind !== 'shell') {
+      throw new Error('layout did not convert pane to shell');
+    }
+    host.spawnStarted = false;
+    void startSpawn(shellPane, host, false, false);
+  } catch (error) {
+    host.spawnStarted = false;
+    const message = error instanceof Error ? error.message : String(error);
+    try {
+      host.term.writeln(
+        `\r\n\x1b[31m[nexus] não foi possível abrir shell: ${message}\x1b[0m`,
+      );
+    } catch {
+      // best effort
+    }
+  }
 }
 
 function reportMainOwnedLifecycleOnly(host: Host, action: string): void {

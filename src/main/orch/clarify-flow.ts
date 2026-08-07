@@ -59,6 +59,13 @@ function activeMission(stores: ClarifyStores, missionId: string): Mission {
   if (!mission || mission.id !== missionId) {
     throw new Error('a missão da pergunta não existe neste workspace');
   }
+  // Worker-decision blocks stay answerable: the clarify chips ARE the exit.
+  if (
+    mission.status === 'blocked' &&
+    mission.intentState === 'blocked_user'
+  ) {
+    return mission;
+  }
   if (mission.status !== 'pending' && mission.status !== 'running') {
     throw new Error(
       'a missão da pergunta já está encerrada; reabra a missão antes de responder',

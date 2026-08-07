@@ -207,6 +207,7 @@ describe("Guided Planner v2", () => {
       );
       expect(claims).not.toContain(".git");
 
+      // Autopilot: delivery + post-delivery review (no warm-up / QA chain).
       const h = harness();
       const deps: GuidedMissionPlannerDeps = {
         ...h.deps,
@@ -215,7 +216,7 @@ describe("Guided Planner v2", () => {
       expect(
         ensureGuidedMissionPlan(h.suite, "mission-guided", deps),
       ).toMatchObject({ applicable: true, sealed: true });
-      expect(h.createPlanAtomically.mock.calls[0]![0].rows).toHaveLength(4);
+      expect(h.createPlanAtomically.mock.calls[0]![0].rows).toHaveLength(2);
     } finally {
       fs.rmSync(temporaryRoot, { recursive: true, force: true });
     }

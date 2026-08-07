@@ -720,3 +720,41 @@ describe('layout-store test fixtures go through the seam', () => {
     expect(useLayoutStore.getState().focusedPaneId).toBe('pane-agent');
   });
 });
+
+describe('layout-store reclaimAsOperatorShell', () => {
+  it('converts a dead mission agent pane into a plain shell', () => {
+    const agent: PaneModel = {
+      id: 'pane-maestro',
+      kind: 'cli-agent',
+      title: 'Maestro',
+      adapterId: 'claude',
+      model: 'sonnet',
+      role: 'orchestrator',
+      missionId: 'mission-dead',
+      agentName: 'Maestro',
+    };
+    seedLayout({
+      root: buildGridTree([agent]),
+      focusedPaneId: agent.id,
+      maximizedPaneId: null,
+      hydrated: true,
+      viewKind: 'grid',
+      canvasNodeLayouts: {},
+      canvasViewport: { x: 0, y: 0, zoom: 1 },
+    });
+
+    const reclaimed = useLayoutStore
+      .getState()
+      .reclaimAsOperatorShell(agent.id);
+
+    expect(reclaimed).toMatchObject({
+      id: 'pane-maestro',
+      kind: 'shell',
+      title: 'shell',
+    });
+    expect(reclaimed?.adapterId).toBeUndefined();
+    expect(reclaimed?.missionId).toBeUndefined();
+    expect(reclaimed?.role).toBeUndefined();
+    expect(listPanes(useLayoutStore.getState().root)[0]?.kind).toBe('shell');
+  });
+});

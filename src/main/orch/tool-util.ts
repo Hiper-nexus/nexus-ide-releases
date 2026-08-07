@@ -896,15 +896,17 @@ export async function spawnPaneAndMaybePrompt(
     options.role === 'worker' &&
     Boolean(contextRevision) &&
     options.readOnly !== true;
-  // Caminho simples (06/08): a entrega same_checkout escreve NO workspace por
-  // contrato selado — exigir worktree distinta aqui era o 6º site da era do
-  // isolamento e matou a entrega em loop de 60 retries no gate 0.27.0. A
-  // não-interferência dela é provada na ADMISSÃO (escritor serializado por
-  // ownership) e no recibo, não pela separação física.
-  const sameCheckoutWriter = options.executionMode === 'same_checkout';
+  // Caminho simples (06/08 + paridade Overclock/Bridge): escrita no workspace
+  // de coordenação é o PADRÃO. Worktree distinta só quando o despacho pede
+  // `isolated_worktree` (fan-out multi-escritor). Exigir worktree em todo
+  // worker matou a entrega em loop de retries e deixou claim sem pane
+  // (HiperGO dev 2026-08-07). A não-interferência no caminho simples é
+  // provada na ADMISSÃO (ownership serializado) e no recibo.
+  const requiresDistinctWorktree =
+    options.executionMode === 'isolated_worktree';
   if (
     revisionBoundWritableWorker &&
-    !sameCheckoutWriter &&
+    requiresDistinctWorktree &&
     (!options.executionScope ||
       options.executionScope.rootRealPath === options.scope.rootRealPath)
   ) {
@@ -915,7 +917,7 @@ export async function spawnPaneAndMaybePrompt(
   }
   if (
     revisionBoundWritableWorker &&
-    !sameCheckoutWriter &&
+    requiresDistinctWorktree &&
     !isRevisionBoundWritableWorkerAdapterAllowed(adapter.id)
   ) {
     throw new Error(

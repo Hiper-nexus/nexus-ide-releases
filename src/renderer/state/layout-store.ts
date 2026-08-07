@@ -94,6 +94,11 @@ interface LayoutState {
   /** Pin the account used by this pane (used by account failover + resume). */
   setAccountId(paneId: string, accountId: string | undefined): void;
   /**
+   * Convert a dead mission/agent pane into an operator shell in place.
+   * Clears mission role/adapter binding so the host can spawn a login shell.
+   */
+  reclaimAsOperatorShell(paneId: string): PaneModel | null;
+  /**
    * Restore a persisted tree. A restore is a HINT, never authority: with
    * `preserveLiveMissionPanes` the panes bound to a live mission survive it
    * (see enforceLayoutInvariants / I3).
@@ -1110,6 +1115,24 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
     const root = updatePane(get().root, paneId, { accountId });
     set({ root });
     persist();
+  },
+
+  reclaimAsOperatorShell: (paneId) => {
+    const pane = listPanes(get().root).find((candidate) => candidate.id === paneId);
+    if (!pane) return null;
+    const root = updatePane(get().root, paneId, {
+      kind: 'shell',
+      adapterId: undefined,
+      model: undefined,
+      role: undefined,
+      missionId: undefined,
+      orchRequestId: undefined,
+      agentName: undefined,
+      title: 'shell',
+    });
+    set({ root });
+    persist();
+    return listPanes(root).find((candidate) => candidate.id === paneId) ?? null;
   },
 
   hydrate: (layout, options = {}) => {

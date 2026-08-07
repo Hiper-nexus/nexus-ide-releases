@@ -31,6 +31,7 @@ import { listAdapterInfos } from "../adapters/adapter-registry";
 import { hasAvailableAccount } from "../persistence/account-store";
 import { listProviderSettings } from "../persistence/provider-config-store";
 import { getOrchSettings } from "../persistence/settings-store";
+import { isOperatorChoicePolicy } from "../../shared/squad-cli-policy";
 import { OWNERSHIP_COVERAGE_DOMAIN } from "../runtime/worktree-contract";
 import { requireWorktreeRuntimeRegistry } from "../runtime/worktree-runtime-registry";
 import {
@@ -744,43 +745,12 @@ export function ensureGuidedMissionPlan(
     publishPlanDegradations();
     return result;
   }
-  const operatorChoice = deps.squadCliPolicy() === 'operator-choice';
+  // Autopilot (operator-choice, product default) = vibe delivery: one writer,
+  // same_checkout, no revisor/QA/warmup ceremony. Hardened (governed) keeps
+  // the full multi-stage graph. The heavy motor only runs when the operator
+  // opts into it — a broken ceremony path must not be the floor for vibe.
+  const operatorChoice = isOperatorChoicePolicy(deps.squadCliPolicy());
   const worker = choosePrimaryExecutor(squad, operatorChoice);
-  const qualityGate = chooseCorrectiveQualityGate(
-    squad,
-    worker,
-    operatorChoice,
-  );
-  const qualityGateReadOnly =
-    approvedIntentRequiresReadOnlyQualityGate(mission);
-  const advisoryAgents = rosterWorkers.filter(
-    (agent) =>
-      agent.id !== worker.id &&
-      (agent.category === 'executor' ||
-        agent.category === 'scout' ||
-        agent.category === 'architect'),
-  );
-  const independentReviewers = rosterWorkers.filter(
-    (agent) => agent.category === 'reviewer' && agent.id !== qualityGate.id,
-  );
-  // Work kind decides SHAPE (which stages exist and how they are wired); the
-  // roster still decides bodies. `unknown` is deliberately the generic path.
-  const workGraph = planGuidedWorkGraph({
-    goal: mission.intentContract.goal,
-    advisors: advisoryAgents,
-    reviewers: independentReviewers,
-    isReadOnlyCapable: (agent) =>
-      guidedAdvisoryExecutionMode(agent) === "read_only",
-  });
-  const workKindContract: GuidedWorkKindContractOptions = {
-    workKind: workGraph.workKind,
-    reproductionInContractOnly: workGraph.reproductionInContractOnly,
-    regressionInContractOnly: workGraph.regressionInContractOnly,
-    // Design contract is resolved from the MAIN root and sealed into the task
-    // detail: the isolated worktree is built from a commit and may not carry a
-    // contract the bootstrap autopilot just materialized under `.context/`.
-    workspaceRoot: suite.tasks.scope.rootRealPath,
-  };
   const intentOwnership = resolveGuidedMutationOwnership(
     mission.intentContract,
   );
@@ -814,6 +784,173 @@ export function ensureGuidedMissionPlan(
       'guided_plan_ownership_missing: o inventário seguro do projeto está vazio',
     );
   }
+  const ownershipCoverageDomains: readonly string[] =
+    intentOwnership.length > 0 ? [] : [OWNERSHIP_COVERAGE_DOMAIN];
+
+  if (operatorChoice) {
+    // Autopilot (option B): executor delivers first; ONE read-only review runs
+    // only after that handoff. No warm-up in wave 1, no QA wall, no advisor
+    // fan-out. Quality without the ceremony that produced zombie panes.
+    const vibeWorkGraph = planGuidedWorkGraph({
+      goal: mission.intentContract.goal,
+      advisors: [],
+      reviewers: [],
+      isReadOnlyCapable: () => true,
+    });
+    const vibeWorkKindContract: GuidedWorkKindContractOptions = {
+      workKind: vibeWorkGraph.workKind,
+      reproductionInContractOnly: vibeWorkGraph.reproductionInContractOnly,
+      regressionInContractOnly: vibeWorkGraph.regressionInContractOnly,
+      workspaceRoot: suite.tasks.scope.rootRealPath,
+    };
+    const ownershipFiles =
+      vibeWorkGraph.workKind === 'doc'
+        ? documentOwnershipFence(baseOwnership)
+        : baseOwnership;
+    const vibeTasks: GuidedPlanTaskDetailInput[] = [
+      {
+        id: GUIDED_MISSION_PLANNER_TASK_ID,
+        title: `Entregar: ${mission.title}`.slice(0, 1_024),
+        detail: buildGuidedMissionTaskDetail(mission, vibeWorkKindContract),
+        agentRef: worker.id,
+        category: 'executor',
+        executionMode: 'same_checkout',
+        ownership: {
+          files: [...ownershipFiles],
+          symbols: [],
+          domains: [
+            GUIDED_TASK_DOMAINS.simpleImplementation,
+            ...ownershipCoverageDomains,
+          ],
+        },
+        dependsOn: [],
+      },
+    ];
+    // Prefer an independent reviewer over a QA-labelled body; either is fine
+    // as the single post-delivery read-only pass. Missing reviewer → deliver
+    // only (still vibe-safe; quality is opt-in by roster).
+    const postDeliveryReviewers = rosterWorkers
+      .filter(
+        (agent) =>
+          agent.category === 'reviewer' && agent.id !== worker.id,
+      )
+      .sort((left, right) => {
+        const rank = (agent: { id: string; agentName: string }) =>
+          /\b(qa|quality|teste|test|validation|validação)\b/iu.test(
+            `${agent.id} ${agent.agentName}`,
+          )
+            ? 1
+            : 0;
+        return rank(left) - rank(right) || left.id.localeCompare(right.id);
+      });
+    const postReviewer = postDeliveryReviewers[0];
+    if (postReviewer) {
+      const reviewMode = guidedAdvisoryExecutionMode(postReviewer);
+      vibeTasks.push({
+        id: guidedFanoutPlannerId('review', postReviewer, 0),
+        title: `Revisar: ${mission.title}`.slice(0, 1_024),
+        detail: guidedIndependentReviewDetail(mission, postReviewer, {
+          // Option B: this read-only pass is the quality step (no QA after).
+          finalPostDeliveryReview: true,
+        }),
+        agentRef: postReviewer.id,
+        category: 'reviewer',
+        executionMode: reviewMode,
+        ownership: {
+          files: reviewMode === 'isolated_worktree' ? [...ownershipFiles] : [],
+          symbols: [],
+          domains:
+            reviewMode === 'isolated_worktree'
+              ? [
+                  GUIDED_ISOLATED_ADVISORY_DOMAIN,
+                  'sequential-only',
+                  ...ownershipCoverageDomains,
+                ]
+              : [GUIDED_TASK_DOMAINS.independentReview],
+        },
+        dependsOn: [GUIDED_MISSION_PLANNER_TASK_ID],
+      });
+    } else {
+      planDegradations.push({
+        what: 'revisão pós-entrega',
+        reducedTo: 'só o executor (sem revisor no squad)',
+        why: 'Autopiloto sela review só quando há reviewer no roster',
+        recoverable: true,
+        path: 'planner.autopilot-post-review',
+      });
+    }
+    assertGuidedPlanTaskDetailBudgets({
+      missionId,
+      intentVersion,
+      tasks: vibeTasks,
+    });
+    const vibePlan = sealMainOwnedMissionTaskPlan(
+      {
+        missionId,
+        tasks: vibeTasks,
+      },
+      suite.tasks.scope,
+      suite,
+      deps,
+      mission.status === 'pending' &&
+        mission.intentState === 'ready_to_start' &&
+        typeof mission.intentContract.approvedAt === 'number'
+        ? {
+            kind: 'approved-preflight',
+            intentVersion,
+            approvedAt: mission.intentContract.approvedAt,
+            approvalReviewSha256:
+              mission.intentContract.approvalReviewSha256,
+          }
+        : undefined,
+    );
+    publishPlanDegradations();
+    return Object.freeze({
+      applicable: true,
+      sealed: true,
+      reason: 'sealed',
+      topology,
+      workerAgentRef: worker.id,
+      taskId: taskIdFromPlan(vibePlan),
+    });
+  }
+
+  const qualityGate = chooseCorrectiveQualityGate(
+    squad,
+    worker,
+    operatorChoice,
+  );
+  const qualityGateReadOnly =
+    approvedIntentRequiresReadOnlyQualityGate(mission);
+  const advisoryAgents = rosterWorkers.filter(
+    (agent) =>
+      agent.id !== worker.id &&
+      (agent.category === 'executor' ||
+        agent.category === 'scout' ||
+        agent.category === 'architect'),
+  );
+  const independentReviewers = rosterWorkers.filter(
+    (agent) => agent.category === 'reviewer' && agent.id !== qualityGate.id,
+  );
+  // Work kind decides SHAPE (which stages exist and how they are wired); the
+  // roster still decides bodies. `unknown` is deliberately the generic path.
+  // Hardened only — Autopilot returned above with a single delivery task.
+  const workGraph = planGuidedWorkGraph({
+    goal: mission.intentContract.goal,
+    advisors: advisoryAgents,
+    reviewers: independentReviewers,
+    isReadOnlyCapable: (agent) =>
+      guidedAdvisoryExecutionMode(agent) === "read_only",
+  });
+  const workKindContract: GuidedWorkKindContractOptions = {
+    workKind: workGraph.workKind,
+    reproductionInContractOnly: workGraph.reproductionInContractOnly,
+    regressionInContractOnly: workGraph.regressionInContractOnly,
+    // Design contract is resolved from the MAIN root and sealed into the task
+    // detail: the isolated worktree is built from a commit and may not carry a
+    // contract the bootstrap autopilot just materialized under `.context/`.
+    workspaceRoot: suite.tasks.scope.rootRealPath,
+  };
   // A documentation mission must be mechanically unable to reach code — the
   // plan lane's write fence (PLAN_LANE_WRITABLE_PATHS) generalized.
   const ownershipFiles =
@@ -826,8 +963,6 @@ export function ensureGuidedMissionPlan(
   // goal: identical for every mission on the checkout, so enforcing them as
   // exclusive meant a second mission could never reserve a worktree here.
   // They stay the merge permit; they stop being a veto.
-  const ownershipCoverageDomains: readonly string[] =
-    intentOwnership.length > 0 ? [] : [OWNERSHIP_COVERAGE_DOMAIN];
   const advisoryTasks = workGraph.advisors.map((agent, index) => {
     const executionMode = guidedAdvisoryExecutionMode(agent);
     const isolated = executionMode === 'isolated_worktree';
@@ -1288,28 +1423,33 @@ function sealWavePackMissionPlan(input: {
   );
   const executors =
     preferredExecutors.length > 0 ? preferredExecutors : allExecutors;
-  const operatorChoice = deps.squadCliPolicy() === 'operator-choice';
+  const operatorChoice = isOperatorChoicePolicy(deps.squadCliPolicy());
   const primaryExecutor = choosePrimaryExecutor(squad, operatorChoice);
+  // Bridge/Overclock parallel writers: Autopilot fans out N story roots and
+  // closes when they hand off. Forced QA after the pack is Hardened-only —
+  // it was the serial tail that made multi-pane packs feel like a zombie wall.
   let qualityGate: {
     id: string;
     agentName: string;
     category: 'reviewer';
   } | null = null;
-  try {
-    const gate = chooseCorrectiveQualityGate(
-      squad,
-      primaryExecutor,
-      operatorChoice,
-    );
-    if (gate.category === 'reviewer') {
-      qualityGate = {
-        id: gate.id,
-        agentName: gate.agentName,
-        category: 'reviewer',
-      };
+  if (!operatorChoice) {
+    try {
+      const gate = chooseCorrectiveQualityGate(
+        squad,
+        primaryExecutor,
+        operatorChoice,
+      );
+      if (gate.category === 'reviewer') {
+        qualityGate = {
+          id: gate.id,
+          agentName: gate.agentName,
+          category: 'reviewer',
+        };
+      }
+    } catch {
+      qualityGate = null;
     }
-  } catch {
-    qualityGate = null;
   }
   const intentOwnership = resolveGuidedMutationOwnership(contract);
   let baseOwnership =

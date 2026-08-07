@@ -247,6 +247,11 @@ export function harness(
      * pins the flag deterministically; warm-up suites opt in explicitly.
      */
     warmupAdvisories?: boolean;
+    /**
+     * Product default is Autopilot (`operator-choice`) = single delivery task.
+     * Multi-stage revisor/QA graphs require explicit Hardened (`governed`).
+     */
+    squadCliPolicy?: "operator-choice" | "governed";
   } = {},
 ) {
   getFeatureFlagRegistry().setOverride(
@@ -286,11 +291,12 @@ export function harness(
       createPlanAtomically,
     },
   } as unknown as Pick<ProjectDomainStoreSuite, "missions" | "tasks">;
+  const policy = options.squadCliPolicy ?? "operator-choice";
   const deps: GuidedMissionPlannerDeps = {
     getSquad: vi.fn(() => options.liveSquad ?? squad),
     getAdapterInfo: vi.fn((adapterId) => adapterInfo(adapterId)),
     listMissionWorktrees: vi.fn(() => []),
-    squadCliPolicy: () => "operator-choice",
+    squadCliPolicy: () => policy,
     listLiveAdapters: vi.fn(
       () =>
         options.adapters ?? [
@@ -314,7 +320,9 @@ export function harness(
 export function sealedGuidedV2Receipt(
   options: { warmupAdvisories?: boolean } = {},
 ) {
-  const firstPass = harness(options);
+  // Recovery fixtures need the classic multi-stage receipt (executor + reviews
+  // + QA). That graph only seals under Hardened; Autopilot is single-task.
+  const firstPass = harness({ ...options, squadCliPolicy: "governed" });
   ensureGuidedMissionPlan(firstPass.suite, "mission-guided", firstPass.deps);
   const rows = firstPass.createPlanAtomically.mock.calls[0]![0].rows;
   const rosterHash = snapshotTaskPlanRoster(squad.agents).hash;

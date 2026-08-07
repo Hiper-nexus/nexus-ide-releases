@@ -56,7 +56,12 @@ function missionWithGoal(goal: string, liveSquad: Squad = squad): Mission {
 
 function sealDetails(goal: string): ReadonlyMap<string, string> {
   const currentMission = missionWithGoal(goal);
-  const h = harness({ currentMission, liveSquad: squad });
+  // Design-contract clauses on QA require the Hardened multi-stage seal.
+  const h = harness({
+    currentMission,
+    liveSquad: squad,
+    squadCliPolicy: "governed",
+  });
   expect(ensureGuidedMissionPlan(h.suite, currentMission.id, h.deps)).toMatchObject(
     { applicable: true, sealed: true },
   );
@@ -167,7 +172,11 @@ describe("H4: the design obligation never outruns the design contract", () => {
 describe("the sealed receipt still recovers the plan", () => {
   it("seals the same four nodes for a downgraded visual goal", () => {
     const currentMission = missionWithGoal(LOW_CONFIDENCE_VISUAL_GOAL);
-    const h = harness({ currentMission, liveSquad: squad });
+    const h = harness({
+      currentMission,
+      liveSquad: squad,
+      squadCliPolicy: "governed",
+    });
     ensureGuidedMissionPlan(h.suite, currentMission.id, h.deps);
     const rows = h.createPlanAtomically.mock.calls[0]![0].rows;
     expect(rows).toHaveLength(4);

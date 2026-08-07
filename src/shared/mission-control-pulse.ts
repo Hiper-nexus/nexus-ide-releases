@@ -41,6 +41,17 @@ function plural(count: number, one: string, many: string): string {
   return count === 1 ? one : many;
 }
 
+function isTerminalMissionStatus(status: string | undefined): boolean {
+  return status === 'done' || status === 'failed';
+}
+
+function residualPlanCount(counts: {
+  eligible: number;
+  waitingOnDeps: number;
+}): number {
+  return counts.eligible + counts.waitingOnDeps;
+}
+
 function headlineFor(pulse: {
   queueSize: number;
   running: number;
@@ -48,8 +59,26 @@ function headlineFor(pulse: {
   eligible: number;
   waitingOnDeps: number;
   done: number;
+  missionStatus?: string;
 }): string {
   if (pulse.queueSize === 0) return 'Sem fila';
+  // Missão já terminal com residual de plano: NÃO diga "aguardando despacho"
+  // (implica que alguém vai pegar a fila). O scheduler parou com status done.
+  // Caso HiperGO 2026-08-07: 1/3 done, missão encerrada, barra "1 elegível".
+  if (isTerminalMissionStatus(pulse.missionStatus)) {
+    const residual = residualPlanCount(pulse);
+    if (residual > 0) {
+      return (
+        `Missão encerrada cedo — ${residual} ` +
+        `${plural(residual, 'unidade do plano ficou', 'unidades do plano ficaram')} ` +
+        'sem rodar'
+      );
+    }
+    if (pulse.done === pulse.queueSize) return 'Fila concluída';
+    return pulse.missionStatus === 'failed'
+      ? 'Missão falhou'
+      : 'Missão encerrada';
+  }
   if (pulse.running > 0) {
     return `${pulse.running} ${plural(pulse.running, 'unidade', 'unidades')} ${plural(pulse.running, 'trabalhando', 'trabalhando')} agora`;
   }
@@ -72,11 +101,38 @@ function headlineFor(pulse: {
 
 function explanationFor(
   snapshot: MissionControlSnapshot,
-  counts: { deadPanes: number; eligible: number; waitingOnDeps: number },
+  counts: {
+    deadPanes: number;
+    eligible: number;
+    waitingOnDeps: number;
+    done: number;
+  },
 ): string | null {
   // Um bloqueio nomeado explica a missão melhor que qualquer contagem.
   const namedBlock = snapshot.blocks.find((block) => block.text.length > 0);
   if (namedBlock) return namedBlock.text;
+
+  if (isTerminalMissionStatus(snapshot.missionStatus)) {
+    const residual = residualPlanCount(counts);
+    if (residual > 0) {
+      return (
+        `Só ${counts.done} de ${counts.done + residual} ` +
+        `${plural(counts.done + residual, 'unidade', 'unidades')} do plano ` +
+        'rodou antes da missão fechar. O scheduler não despacha mais com a ' +
+        'missão encerrada — abra uma nova missão para continuar o desenvolvimento, ' +
+        'ou use Retomar se a UI oferecer.'
+      );
+    }
+    if (counts.deadPanes > 0) {
+      return (
+        `${counts.deadPanes} ` +
+        `${plural(counts.deadPanes, 'pane morto', 'panes mortos')} ` +
+        'restaram abertos; a missão já terminou.'
+      );
+    }
+    return null;
+  }
+
   if (counts.deadPanes > 0) {
     return (
       `${counts.deadPanes} ` +
@@ -130,6 +186,7 @@ export function missionControlPulse(
   ).length;
   const blocked = snapshot.blocks.length;
 
+  const done = doneTasks.size;
   return {
     workingPanes,
     idlePanes,
@@ -137,7 +194,7 @@ export function missionControlPulse(
     running,
     eligible,
     waitingOnDeps,
-    done: doneTasks.size,
+    done,
     blocked,
     headline: headlineFor({
       queueSize: snapshot.queue.length,
@@ -145,12 +202,14 @@ export function missionControlPulse(
       blocked,
       eligible,
       waitingOnDeps,
-      done: doneTasks.size,
+      done,
+      missionStatus: snapshot.missionStatus,
     }),
     explanation: explanationFor(snapshot, {
       deadPanes,
       eligible,
       waitingOnDeps,
+      done,
     }),
   };
 }

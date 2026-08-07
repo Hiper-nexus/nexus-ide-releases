@@ -21,6 +21,7 @@ import { appendMissionVerdict } from '../../shared/mission-block-cause';
 /** Stable names for the four mission gates' lower-tier paths. */
 export const MISSION_DEGRADATION_PATHS = Object.freeze({
   planner: 'planner.single-writer',
+  plannerAutopilotPostReview: 'planner.autopilot-post-review',
   prevc: 'prevc.simple-path',
   kickoff: 'kickoff.nudge-retry',
   bootstrap: 'bootstrap.reconcile',

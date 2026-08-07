@@ -59,7 +59,7 @@ describe("Guided Planner v2", () => {
     expect(
       approvedIntentRequiresReadOnlyQualityGate(currentMission),
     ).toBe(true);
-    const h = harness({ currentMission });
+    const h = harness({ currentMission, squadCliPolicy: "governed" });
 
     expect(
       ensureGuidedMissionPlan(h.suite, "mission-guided", h.deps),
@@ -207,6 +207,7 @@ describe("Guided Planner v2", () => {
     const h = harness({
       currentMission: promoted,
       liveSquad: promotedSquad,
+      squadCliPolicy: "governed",
     });
 
     const result = ensureGuidedMissionPlan(h.suite, promoted.id, h.deps);
@@ -283,6 +284,7 @@ describe("Guided Planner v2", () => {
       const h = harness({
         currentMission: waveMission,
         liveSquad: waveSquad,
+        squadCliPolicy: "governed",
       });
       const deps: GuidedMissionPlannerDeps = {
         ...h.deps,
