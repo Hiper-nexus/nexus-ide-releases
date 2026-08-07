@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { ProjectExecutionScope } from './types';
+import type { MissionSnapshot } from './mission-engine-contract';
 import {
   missionIntentContractSchema,
   missionIntentStateSchema,
@@ -284,6 +285,10 @@ export function milestoneLabels(
   return milestones.map((milestone) => milestone.label);
 }
 
+/**
+ * Internal durable storage row owned by the main process. Product UI consumes
+ * {@link MissionSnapshot}; it must never consume `Mission` directly.
+ */
 export interface Mission {
   id: string;
   title: string;
