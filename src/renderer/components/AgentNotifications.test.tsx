@@ -55,6 +55,17 @@ function mount(): { host: HTMLDivElement; root: Root } {
   return { host, root };
 }
 
+/**
+ * O SINO fica na árvore da app (é a âncora medida); o PAINEL vive na camada de
+ * overlay, portalado para fora de #root (H6 — src/renderer/overlay/). Buscar o
+ * conteúdo do painel dentro do host de render passaria a não achar nada, então
+ * a consulta é feita no documento — que é exatamente onde um usuário (e um
+ * leitor de tela) o encontra.
+ */
+function inPanel<T extends HTMLElement>(selector: string): T | null {
+  return document.querySelector<T>(`.agent-notif__panel ${selector}`);
+}
+
 describe('AgentNotifications', () => {
   beforeEach(() => {
     useAgentNotificationStore.setState({ items: [], open: false });
@@ -117,10 +128,12 @@ describe('AgentNotifications', () => {
     const bell = host.querySelector<HTMLButtonElement>('.agent-notif__bell')!;
     act(() => bell.click());
     expect(useAgentNotificationStore.getState().open).toBe(true);
-    expect(host.querySelector('.agent-notif__panel')).not.toBeNull();
+    expect(document.querySelector('.agent-notif__panel')).not.toBeNull();
 
     const closeBtn = Array.from(
-      host.querySelectorAll<HTMLButtonElement>('.agent-notif__icon-btn'),
+      document.querySelectorAll<HTMLButtonElement>(
+        '.agent-notif__panel .agent-notif__icon-btn',
+      ),
     ).find((b) => b.getAttribute('aria-label') === 'Fechar notificações')!;
     act(() => closeBtn.click());
     expect(useAgentNotificationStore.getState().open).toBe(false);
@@ -135,9 +148,7 @@ describe('AgentNotifications', () => {
     act(() =>
       host.querySelector<HTMLButtonElement>('.agent-notif__bell')!.click(),
     );
-    const jump = host.querySelector<HTMLButtonElement>(
-      '.agent-notif__action--primary',
-    )!;
+    const jump = inPanel<HTMLButtonElement>('.agent-notif__action--primary')!;
     act(() => jump.click());
     expect(focus).toHaveBeenCalledWith('pane-1');
     expect(useAgentNotificationStore.getState().open).toBe(false);
@@ -153,9 +164,7 @@ describe('AgentNotifications', () => {
       host.querySelector<HTMLButtonElement>('.agent-notif__bell')!.click(),
     );
     act(() =>
-      host
-        .querySelector<HTMLButtonElement>('.agent-notif__action--primary')!
-        .click(),
+      inPanel<HTMLButtonElement>('.agent-notif__action--primary')!.click(),
     );
     expect(pushToast).toHaveBeenCalledWith(
       'warn',
@@ -172,9 +181,22 @@ describe('AgentNotifications', () => {
       host.querySelector<HTMLButtonElement>('.agent-notif__bell')!.click(),
     );
     expect(
-      host
-        .querySelector('.agent-notif__action--primary')
-        ?.getAttribute('aria-label'),
+      inPanel('.agent-notif__action--primary')?.getAttribute('aria-label'),
     ).toBe('Ir ao pane de Claude');
+  });
+
+  it('H6: o painel sai da árvore da app; o sino fica', () => {
+    seed('completed');
+    const { host } = mount();
+    act(() =>
+      host.querySelector<HTMLButtonElement>('.agent-notif__bell')!.click(),
+    );
+    const panel = document.querySelector('.agent-notif__panel')!;
+    expect(panel).not.toBeNull();
+    // Dentro da .workspace-bar o painel herdava --z-app-chrome (55) e seu
+    // z-index nunca disputava com um modal. Fora dela, disputa.
+    expect(host.contains(panel)).toBe(false);
+    expect(panel.closest('.overlay-layer')).not.toBeNull();
+    expect(host.querySelector('.agent-notif__bell')).not.toBeNull();
   });
 });

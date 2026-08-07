@@ -222,8 +222,11 @@
 .update-modal__backdrop {
   position: fixed;
   inset: 0;
-  z-index: 1300;
-  background: rgba(4, 6, 10, 0.55);
+  /* Era 1300 solto. Mesmo degrau, agora nomeado — e finalmente eficaz: o
+     modal vive na camada de overlay (H6), não mais preso ao contexto de
+     empilhamento da .workspace-bar. O fundo (vidro) vem de
+     .overlay-scrim-glass, aplicado no JSX. */
+  z-index: var(--z-confirm);
   display: grid;
   place-items: start end;
   padding: 52px 16px 0 0;
@@ -236,7 +239,9 @@
   background: var(--bg-elevated);
   box-shadow: var(--shadow-inset-hi), var(--shadow-2);
   padding: 12px 14px 14px;
-  animation: voice-hud-in 160ms var(--ease-out-expo);
+  /* Entrada agora vem de .overlay-enter (spring 180ms) — a curva com
+     overshoot só na chegada. Sem animação própria aqui para não empilhar
+     duas curvas na mesma propriedade. */
 }
 
 .update-modal__head {
@@ -284,6 +289,19 @@
 .update-modal__phase--available,
 .update-modal__phase--ready {
   color: var(--ok, #9ece6a);
+}
+
+/* Único estado VIVO desta superfície: o download em curso. Pulso de 2.2s
+   (--dur-overlay-pulse) via .overlay-live, com kill switch de reduced-motion
+   na própria folha da camada. Motion comunicando estado, não decorando. */
+.update-modal__phase--downloading {
+  animation: overlay-pulse var(--dur-overlay-pulse) var(--ease-overlay-smooth) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .update-modal__phase--downloading {
+    animation: none;
+  }
 }
 
 .update-modal__phase--error {
@@ -367,13 +385,34 @@
 .palette {
   position: fixed;
   inset: 0;
-  z-index: 1000;
+  /* Era 1000 solto — mesmo degrau, agora nomeado (H6). */
+  z-index: var(--z-hard-modal);
 }
 
 .palette__overlay {
   position: absolute;
   inset: 0;
-  background: rgba(4, 6, 10, 0.55);
+  background: var(--overlay-scrim);
+  /* Vidro no SCRIM, nunca no painel nem em ancestral do canvas do xterm.
+     Modal curto e focal: o operador não está lendo o terminal enquanto o ⌘K
+     está aberto, então o custo de reamostragem é limitado no tempo. */
+  backdrop-filter: blur(var(--overlay-blur)) saturate(var(--overlay-saturate));
+  -webkit-backdrop-filter: blur(var(--overlay-blur)) saturate(var(--overlay-saturate));
+  animation: overlay-fade-in var(--dur-overlay-modal) var(--ease-overlay-smooth) both;
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .palette__overlay {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    background: color-mix(in srgb, var(--overlay-scrim) 100%, var(--bg) 30%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .palette__overlay {
+    animation: none;
+  }
 }
 
 .palette__panel {
@@ -396,17 +435,22 @@
     inset 0 1px 0 rgba(255, 255, 255, 0.045),
     var(--shadow-3);
   overflow: hidden;
-  animation: palette-in 140ms var(--ease-out-expo);
+  /* Keyframe próprio (não .overlay-enter) porque o painel já carrega
+     translateX(-50%) de centralização: um keyframe genérico de transform
+     apagaria a centralização no primeiro frame. Duas animações para que o
+     overshoot do spring caia SÓ no transform — na opacidade ele passaria de 1
+     e o clamp achataria justamente o trecho interessante da curva. */
+  animation:
+    palette-in var(--dur-overlay-modal) var(--ease-spring-in) both,
+    overlay-fade-in var(--dur-overlay-modal) var(--ease-overlay-smooth) both;
 }
 
 @keyframes palette-in {
   from {
-    opacity: 0;
-    transform: translateX(-50%) translateY(-6px);
+    transform: translateX(-50%) translateY(-8px) scale(0.985);
   }
   to {
-    opacity: 1;
-    transform: translateX(-50%) translateY(0);
+    transform: translateX(-50%) translateY(0) scale(1);
   }
 }
 
@@ -523,13 +567,31 @@
 .cheatsheet {
   position: fixed;
   inset: 0;
-  z-index: 1000;
+  /* Era 1000 solto — mesmo degrau, agora nomeado (H6). */
+  z-index: var(--z-hard-modal);
 }
 
 .cheatsheet__overlay {
   position: absolute;
   inset: 0;
-  background: rgba(4, 6, 10, 0.55);
+  background: var(--overlay-scrim);
+  backdrop-filter: blur(var(--overlay-blur)) saturate(var(--overlay-saturate));
+  -webkit-backdrop-filter: blur(var(--overlay-blur)) saturate(var(--overlay-saturate));
+  animation: overlay-fade-in var(--dur-overlay-modal) var(--ease-overlay-smooth) both;
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .cheatsheet__overlay {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    background: color-mix(in srgb, var(--overlay-scrim) 100%, var(--bg) 30%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cheatsheet__overlay {
+    animation: none;
+  }
 }
 
 .cheatsheet__panel {
@@ -551,6 +613,26 @@
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.045),
     var(--shadow-3);
+  /* Mesmo motivo do .palette__panel: centralização em transform obriga a
+     keyframe próprio; spring só no transform, fade linear na opacidade. */
+  animation:
+    cheatsheet-in var(--dur-overlay-modal) var(--ease-spring-in) both,
+    overlay-fade-in var(--dur-overlay-modal) var(--ease-overlay-smooth) both;
+}
+
+@keyframes cheatsheet-in {
+  from {
+    transform: translate(-50%, -50%) translateY(-8px) scale(0.985);
+  }
+  to {
+    transform: translate(-50%, -50%) translateY(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cheatsheet__panel {
+    animation: none;
+  }
 }
 
 .cheatsheet__head {

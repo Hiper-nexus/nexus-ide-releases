@@ -469,7 +469,10 @@
   position: fixed;
   inset: 0;
   background: rgba(4, 6, 10, 0.6);
-  z-index: 60;
+  /* H6: era 60 solto e perdia para a palette (1000) — o dialog mais
+     importante da app ficava ATRÁS do ⌘K. --z-confirm é o topo da ladder e
+     agora é lido dentro da camada de overlay. */
+  z-index: var(--z-confirm);
 }
 
 .confirm__panel {
@@ -484,7 +487,26 @@
   border-radius: var(--radius-xl);
   padding: 22px;
   box-shadow: var(--shadow-inset-hi), var(--shadow-3);
-  z-index: 61;
+  /* Um degrau acima do próprio scrim, derivado do token e não escrito à mão. */
+  z-index: calc(var(--z-confirm) + 1);
+  animation:
+    confirm-in var(--dur-overlay-modal) var(--ease-spring-in) both,
+    overlay-fade-in var(--dur-overlay-modal) var(--ease-overlay-smooth) both;
+}
+
+@keyframes confirm-in {
+  from {
+    transform: translate(-50%, -50%) translateY(-8px) scale(0.985);
+  }
+  to {
+    transform: translate(-50%, -50%) translateY(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .confirm__panel {
+    animation: none;
+  }
 }
 
 .confirm__title {

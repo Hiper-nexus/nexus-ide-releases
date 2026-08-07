@@ -15,6 +15,7 @@ import { useOrchStore } from '../state/orch-store';
 import { useMemoryStore } from '../state/memory-store';
 import { useConfigInventoryStore } from '../state/config-inventory-store';
 import { useFilesStore } from '../state/files-store';
+import { OverlayLayer } from '../overlay/overlay-layer';
 import { PixelIcon, type PixelIconName } from './PixelIcon';
 
 /**
@@ -380,10 +381,16 @@ export function AgentNotifications() {
         )}
       </button>
 
-      {open && (
+      {/* H6: o SINO fica na barra (é a âncora medida); o PAINEL vai para a
+          camada de overlay. Dentro da .workspace-bar ele herdava o contexto de
+          empilhamento do chrome (--z-app-chrome: 55) e seu z-index 80 nunca
+          chegava a disputar com um modal. O clique-fora já testava panelRef
+          separado de rootRef, então mover o DOM não muda comportamento algum. */}
+      <OverlayLayer>
+        {open && (
         <div
           ref={panelRef}
-          className="agent-notif__panel"
+          className="agent-notif__panel overlay-enter"
           role="dialog"
           aria-label="Notificações de agentes"
           style={
@@ -463,7 +470,8 @@ export function AgentNotifications() {
             </ul>
           )}
         </div>
-      )}
+        )}
+      </OverlayLayer>
     </div>
   );
 }

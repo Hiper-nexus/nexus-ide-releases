@@ -25,6 +25,7 @@ import {
 import { CommandPalette } from './components/CommandPalette';
 import { useCommandPaletteStore } from './state/command-palette-store';
 import { ConfirmDialog } from './components/ConfirmDialog';
+import { OverlayLayer } from './overlay/overlay-layer';
 import { OrchestrationModeDialog } from './components/OrchestrationModeDialog';
 import { useConfirmStore } from './state/confirm-store';
 import { useToastStore } from './state/toast-store';
@@ -557,7 +558,9 @@ export function App() {
         <SettingsDrawer />
         <MissionWizard />
         <OperatorProfile />
-        <ConfirmDialog />
+        <OverlayLayer>
+          <ConfirmDialog />
+        </OverlayLayer>
         <OrchestrationModeDialog />
         <Toasts />
       </div>
@@ -640,9 +643,22 @@ export function App() {
       <MissionEndorphinFx key={endorphinWorkspaceKey} />
       <CloseWorkspaceDialog />
       <Onboarding />
-      <CommandPalette />
-      <KeyboardCheatsheet />
-      <ConfirmDialog />
+      {/*
+        H6 — camada de overlay. Só o TIER DURO mora aqui: superfícies cujo
+        contrato é "acima de tudo" (--z-hard-modal 1000 … --z-confirm 1300).
+        O tier mole (toasts 44, dimmers de wizard/settings 45/46, chrome 55,
+        OpsBoard 34) fica na árvore da app de propósito: a ladder INTERCALA
+        essas camadas com o chrome — base.css documenta que o chrome tem de
+        ficar ACIMA dos dimmers (clicar em voz/config com o wizard aberto não
+        pode acertar o backdrop e apagar rascunho) e que toast fica ABAIXO do
+        dimmer (nunca cobrir/capturar uma confirmação). Jogar tudo num teto
+        único achataria essas três invariantes.
+      */}
+      <OverlayLayer>
+        <CommandPalette />
+        <KeyboardCheatsheet />
+        <ConfirmDialog />
+      </OverlayLayer>
       <OrchestrationModeDialog />
       <Toasts />
       {dropActive && (

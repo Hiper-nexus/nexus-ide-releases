@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { UpdateState } from '../../shared/update-ipc';
+import { OverlayLayer } from '../overlay/overlay-layer';
 import { CloseButton } from './CloseButton';
 
 /**
@@ -183,9 +184,18 @@ export function UpdateModal({ state, onClose }: Props) {
   };
 
   return (
-    <div className="update-modal__backdrop" onClick={onClose}>
+    // H6: montado dentro da WorkspaceBar (e da LaunchScreen), este modal
+    // declarava --z-confirm-class (1300) dentro de um chrome com z-index 55 —
+    // número alto sem efeito nenhum. Na camada de overlay o 1300 volta a ser
+    // lido entre iguais. O portal do React preserva o borbulhar de eventos,
+    // então o onClick do backdrop e o stopPropagation do painel seguem iguais.
+    <OverlayLayer>
       <div
-        className="update-modal"
+        className="update-modal__backdrop overlay-scrim-glass overlay-scrim-enter"
+        onClick={onClose}
+      >
+      <div
+        className="update-modal overlay-enter"
         role="dialog"
         aria-modal="true"
         aria-label="Atualização do NexusIDE"
@@ -265,6 +275,7 @@ export function UpdateModal({ state, onClose }: Props) {
           </button>
         </div>
       </div>
-    </div>
+      </div>
+    </OverlayLayer>
   );
 }

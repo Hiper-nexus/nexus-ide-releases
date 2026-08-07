@@ -73,6 +73,42 @@ tokens. Estado nunca viaja só em cor: sempre com glifo/palavra
   (`--z-soft-overlay:45 … --z-confirm:1300`) — nunca valor solto.
 - `--bar-height: 44px`, `--toolbar-height: 28px`.
 
+### Camada de overlay — a escada inteira, ancorada no topo
+
+Overlay não mora dentro da árvore do grid. Se morar, herda três coisas do pai
+e não pode recusar nenhuma: contexto de empilhamento, `overflow` e
+`transform`. O sintoma real desta casa: `UpdateModal` e o painel de
+notificações eram montados dentro da `.workspace-bar` — `z-index: 1300` e `80`
+lidos dentro de um chrome com `--z-app-chrome: 55`, ou seja, números altos sem
+efeito. A ladder existia; o lugar é que estava errado.
+
+Solução estrutural (`src/renderer/overlay/overlay-layer.tsx` +
+`styles/overlay-layer.css`): uma raiz de portal irmã de `#root`, direto no
+`<body>`, com `--z-overlay-root` e `isolation: isolate`.
+
+**A ladder segue sendo a fonte única de ordem.** `--z-overlay-root` não é um
+degrau novo — é o valor que leva a escada inteira ao topo, aplicado num nó só,
+que nenhum componente escreve. Como a raiz isola o contexto, dentro dela
+`--z-toast` … `--z-confirm` voltam a ordenar entre iguais. É assim que "nunca
+valor solto" continua verdadeiro com um número alto no sistema: ele aparece
+uma vez, nomeado, na camada — e não em componente nenhum.
+
+**Só o tier duro é portalado** (`--z-hard-modal` … `--z-confirm`: ⌘K,
+cheatsheet, confirm, update, popover de notificações). O tier mole —
+toast (44), dimmers de wizard/settings (45/46), chrome (55), OpsBoard (34) —
+fica na árvore da app **de propósito**, porque a ladder INTERCALA essas
+camadas com o chrome: chrome acima dos dimmers (clicar em voz/config com o
+wizard aberto não pode acertar o backdrop e apagar rascunho), toast abaixo do
+dimmer (nunca cobrir nem capturar uma confirmação). Um teto único achataria
+essas invariantes.
+
+| Token | Valor | Uso |
+|---|---|---|
+| `--z-overlay-root` | `100000` | raiz de portal `.overlay-layer`; único nó que o usa |
+| `--overlay-scrim` | `rgba(4, 6, 10, 0.55)` | fundo do scrim de overlay |
+| `--overlay-blur` | `16px` | vidro do scrim (`0px` desliga no sistema todo) |
+| `--overlay-saturate` | `160%` | saturação do vidro do scrim |
+
 **Hex fora de `:root` é dívida**: use o token ou o `color-mix` dele. Fallbacks
 de `var()` devem ter o valor ATUAL do token (ex.: `var(--bg, #0a0e15)` —
 há fallbacks defasados catalogados para follow-up; ao tocar num arquivo,
@@ -97,6 +133,50 @@ corrija os dele).
 - `prefers-reduced-motion` obrigatório em todo keyframe.
 - **Nunca** animar box-shadow/border em `.pane`: repinta o canvas do xterm e
   lê como flicker. Estado do pane muda cor de borda com transição estática.
+
+### Motion da camada de overlay — dois easings, um papel cada
+
+| Token | Valor | Uso |
+|---|---|---|
+| `--ease-spring-in` | `cubic-bezier(0.34, 1.56, 0.64, 1)` | **só ENTRADA** de painel de overlay |
+| `--ease-overlay-smooth` | `cubic-bezier(0.22, 0.8, 0.2, 1)` | todo o resto: saída, scrim, transição |
+| `--dur-overlay-modal` | `180ms` | entrada de modal (dentro da faixa 150–250ms) |
+| `--dur-overlay-pulse` | `2.2s` | pulso de estado vivo dentro de overlay |
+
+`--ease-spring-in` tem overshoot (segundo control point `1.56` > 1): é a
+**única** curva com bounce do sistema e a exceção deliberada à regra "nunca
+bounce/elastic" que rege o resto. Existe por um motivo estreito — a matéria
+chegando e assentando na entrada de um overlay — e três limites que não se
+negociam:
+
+1. **Só entrada.** Saída, hover, transição de estado e qualquer coisa
+   contínua usam `--ease-overlay-smooth`, que não passa de 1.
+2. **Só transform.** Aplicado à opacidade o overshoot passaria de 1, o
+   navegador clamparia e o trecho interessante da curva viraria platô. Por
+   isso os painéis entram com DUAS animações (transform em spring, opacidade
+   em smooth), não uma.
+3. **Só dentro da camada de overlay.** Nunca em `.pane`, nunca em rail,
+   nunca em conteúdo de canvas.
+
+O pulso de 2.2s (`--dur-overlay-pulse`, classe `.overlay-live`) só marca
+trabalho em curso na própria superfície — e, como todo keyframe da casa, tem
+`prefers-reduced-motion: reduce → animation: none`.
+
+### Vidro do scrim — onde o `backdrop-filter` pode morar
+
+`blur(16px) saturate(160%)` vai no **scrim da camada de overlay**, nunca em
+`.pane` nem em ancestral do canvas do xterm — a regra acima vale para filtro
+tanto quanto para animação. Na camada, o filtro é composição sobre o quadro já
+pintado do app, e o pane não entra na árvore de pintura do overlay.
+
+O custo residual é honesto e não some por estrutura: um `backdrop-filter` de
+tela cheia reamostra a cada frame em que o que está por baixo repinta, e um
+terminal streamando repinta sempre. Por isso o vidro fica **só nos scrims de
+modal curto e focal** (⌘K, cheatsheet, update), onde o operador já não está
+lendo o terminal, e **nunca nos dimmers de vida longa** (wizard/settings), que
+podem ficar abertos com a frota trabalhando atrás. `--overlay-blur: 0px`
+desliga o vidro no sistema inteiro; `prefers-reduced-transparency: reduce`
+já o desliga sozinho e compensa em opacidade.
 
 ## 5. Componentes-primitivos (reusar, não reinventar)
 

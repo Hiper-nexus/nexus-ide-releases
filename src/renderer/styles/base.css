@@ -95,6 +95,15 @@
   --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
   --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  /* Camada de overlay (H6). --ease-spring-in tem overshoot (>1): é a ÚNICA
+     curva com bounce do sistema e existe só para a ENTRADA de um painel de
+     overlay — a matéria chegando e assentando. Nunca em saída, nunca em
+     estado contínuo, nunca fora da camada de overlay. Todo o resto (saída,
+     scrim, transições) usa --ease-overlay-smooth, que não passa de 1. */
+  --ease-spring-in: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-overlay-smooth: cubic-bezier(0.22, 0.8, 0.2, 1);
+  --dur-overlay-modal: 180ms;
+  --dur-overlay-pulse: 2.2s;
 
   /* Overlay ladder — transient toasts stay below modal dimmers, so they can
      never cover or capture a wizard/confirmation. Keep app chrome ABOVE soft dimmers so
@@ -108,6 +117,20 @@
   --z-hard-modal: 1000;
   --z-voice-hud: 1200;
   --z-confirm: 1300;
+  /* Âncora da ladder acima (H6). Não é um degrau novo: é o valor que leva a
+     ESCADA INTEIRA para o topo, aplicado num nó só — a raiz de portal
+     `.overlay-layer`, fora da árvore do grid. Como essa raiz declara
+     `isolation: isolate`, tudo que mora dentro dela volta a ordenar-se pelos
+     degraus nomeados acima, agora sem competir com o resto da app. É por isso
+     que o número alto aparece uma vez e não vira valor solto: nenhum
+     componente pode escrevê-lo. */
+  --z-overlay-root: 100000;
+
+  /* Vidro do scrim de overlay. Vive na CAMADA, nunca em cima do canvas do
+     xterm — ver .overlay-layer em overlay-layer.css. */
+  --overlay-scrim: rgba(4, 6, 10, 0.55);
+  --overlay-blur: 16px;
+  --overlay-saturate: 160%;
 
   /* Escalas — fonte única de espaçamento, tipo, raio e sombra. Valores fora
      da escala são exceção deliberada, não default. */
@@ -2531,7 +2554,11 @@ body {
   position: fixed;
   top: 46px;
   right: 12px;
-  z-index: 80;
+  /* Era 80 solto, e inútil: o painel era montado DENTRO da .workspace-bar,
+     cujo --z-app-chrome (55) fecha um contexto de empilhamento — 80 só valia
+     contra irmãos dentro da barra. Desde H6 o painel é portalado para a
+     camada de overlay, então o degrau nomeado passa a valer de verdade. */
+  z-index: var(--z-hard-modal);
   width: min(360px, calc(100vw - 24px));
   max-height: min(420px, 70vh);
   display: flex;

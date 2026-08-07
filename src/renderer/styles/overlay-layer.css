@@ -1,0 +1,122 @@
+/* H6 — Overlay como camada separada.
+   O "luxo" aqui é estrutura, não enfeite: a raiz do portal existe para que a
+   ladder nomeada de z-index volte a significar alguma coisa, e para que o
+   backdrop-filter more numa camada acima do app em vez de em cima do canvas
+   vivo do xterm. Componente-lado, ver src/renderer/overlay/overlay-layer.tsx. */
+
+/* ============================ A CAMADA ============================ */
+
+.overlay-layer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  /* Área ZERO de propósito. Todos os filhos são `position: fixed` e se
+     resolvem contra a viewport, então a camada não precisa (nem deve) cobrir
+     a tela: cobrir criaria uma superfície de acerto invisível sobre o app
+     mesmo com nenhum overlay aberto. Sem `pointer-events: none` aqui também
+     não há regra de reset para atropelar o `pointer-events: none` deliberado
+     de quem quer deixar passar (ex.: .global-drop-overlay). */
+  width: 0;
+  height: 0;
+  z-index: var(--z-overlay-root);
+  /* O nó que compra a briga de empilhamento uma vez por toda a app. Dentro
+     dele, --z-toast(44) … --z-confirm(1300) voltam a ser a única autoridade
+     de ordem — agora entre iguais, sem herdar teto de ninguém. */
+  isolation: isolate;
+}
+
+/* ============================ SCRIM ============================ */
+/* Regra de ouro do vidro: o filtro fica na CAMADA de overlay, nunca em `.pane`
+   nem em ancestral do canvas do xterm (DESIGN.md §4 — animar/filtrar por cima
+   do pane repinta o terminal e lê como flicker). Aqui o backdrop-filter é
+   efeito de composição sobre o quadro já pintado do app, e o pane não entra na
+   árvore de pintura do overlay.
+
+   O custo residual é honesto e não some por estrutura: um backdrop-filter de
+   tela cheia reamostra a cada frame em que o que está POR BAIXO repinta — e um
+   terminal streamando repinta sempre. Por isso o vidro é ligado só nos scrims
+   de modal curto e focal (⌘K, ⌘/, update), onde o operador já não está lendo
+   o terminal, e nunca nos dimmers de vida longa (wizard/settings), que podem
+   ficar abertos com a frota trabalhando atrás. Para matar o vidro no sistema
+   inteiro basta `--overlay-blur: 0px`. */
+
+.overlay-scrim-glass {
+  background: var(--overlay-scrim);
+  backdrop-filter: blur(var(--overlay-blur)) saturate(var(--overlay-saturate));
+  -webkit-backdrop-filter: blur(var(--overlay-blur)) saturate(var(--overlay-saturate));
+}
+
+/* Transparência reduzida é preferência de acessibilidade independente de
+   motion: sem vidro, e o scrim compensa em opacidade para manter o contraste
+   do painel contra o que ficou legível atrás. */
+@media (prefers-reduced-transparency: reduce) {
+  .overlay-scrim-glass {
+    background: color-mix(in srgb, var(--overlay-scrim) 100%, var(--bg) 30%);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
+/* ============================ MOTION ============================ */
+/* Dois easings, um papel cada (H6):
+   - entrada  → --ease-spring-in  (overshoot, a matéria assenta)
+   - o resto  → --ease-overlay-smooth (sem overshoot: saída, scrim, transição)
+   Duração de modal: --dur-overlay-modal (180ms), dentro da faixa 150–250ms. */
+
+@keyframes overlay-panel-in {
+  from {
+    transform: translate3d(0, 8px, 0) scale(0.985);
+  }
+  to {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes overlay-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Entrada padrão de painel de overlay. Duas animações e não uma porque o
+   overshoot precisa cair só no transform: aplicado à opacidade ele passaria
+   de 1 e o navegador clamparia, achatando justamente o trecho em que a curva
+   é interessante. Só para painéis SEM transform de centralização — quem usa
+   translate(-50%,…) precisa do próprio keyframe (ver overlays.css). */
+.overlay-enter {
+  animation:
+    overlay-panel-in var(--dur-overlay-modal) var(--ease-spring-in) both,
+    overlay-fade-in var(--dur-overlay-modal) var(--ease-overlay-smooth) both;
+}
+
+/* Scrim entra sem bounce: fundo não "chega", só acende. */
+.overlay-scrim-enter {
+  animation: overlay-fade-in var(--dur-overlay-modal) var(--ease-overlay-smooth) both;
+}
+
+/* Pulso de estado VIVO dentro de um overlay (2.2s). Motion comunica estado,
+   não decora: usar só onde há trabalho em curso na própria superfície. */
+@keyframes overlay-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+.overlay-live {
+  animation: overlay-pulse var(--dur-overlay-pulse) var(--ease-overlay-smooth) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .overlay-enter,
+  .overlay-scrim-enter,
+  .overlay-live {
+    animation: none;
+  }
+}
