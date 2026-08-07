@@ -432,7 +432,12 @@ export interface HandoffMcpProvenance {
   readonly receiptId: string;
   readonly toolCallId: string;
   readonly toolName: 'nexus_handoff_submit';
-  readonly source: 'http-mcp' | 'acp-stdio' | 'pty-stream' | 'omp-rpc-stdio';
+  readonly source:
+    | 'http-mcp'
+    | 'acp-stdio'
+    | 'pty-stream'
+    | 'mission-shim'
+    | 'omp-rpc-stdio';
   readonly missionId: string;
   readonly sessionId: string;
   readonly workerIncarnationId?: string;

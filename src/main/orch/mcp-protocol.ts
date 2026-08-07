@@ -69,7 +69,12 @@ export interface McpToolInvocation {
     readonly toolCallId: string;
     readonly toolName: string;
     readonly source:
-      "http-mcp" | "acp-stdio" | "pty-stream" | "ipc-renderer" | "jarvis-voice";
+      | "http-mcp"
+      | "acp-stdio"
+      | "pty-stream"
+      | "mission-shim"
+      | "ipc-renderer"
+      | "jarvis-voice";
     readonly issuedAt: number;
   };
   /**

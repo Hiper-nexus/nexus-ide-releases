@@ -31,7 +31,13 @@ const physicalHandoffRowSchema = z
     receipt_id: identifierSchema,
     tool_call_id: identifierSchema,
     tool_name: z.literal("nexus_handoff_submit"),
-    source: z.enum(["http-mcp", "acp-stdio", "pty-stream", "omp-rpc-stdio"]),
+    source: z.enum([
+      "http-mcp",
+      "acp-stdio",
+      "pty-stream",
+      "mission-shim",
+      "omp-rpc-stdio",
+    ]),
     receipt_mission_id: identifierSchema,
     receipt_session_id: identifierSchema,
     receipt_worker_incarnation_id: identifierSchema,
@@ -49,7 +55,13 @@ const auditIntentPayloadSchema = z
     schema: z.literal("nexus.mcp-audit/v1"),
     project_id: identifierSchema,
     checkout_id: identifierSchema,
-    source: z.enum(["http-mcp", "acp-stdio", "pty-stream", "omp-rpc-stdio"]),
+    source: z.enum([
+      "http-mcp",
+      "acp-stdio",
+      "pty-stream",
+      "mission-shim",
+      "omp-rpc-stdio",
+    ]),
     invocation_id: identifierSchema,
   })
   .passthrough();
@@ -57,7 +69,11 @@ const auditIntentPayloadSchema = z
 export interface PhysicalTaskHandoffAuthority {
   readonly receiptId: string;
   readonly toolCallId: string;
-  readonly source: "http-mcp" | "acp-stdio" | "pty-stream";
+  readonly source:
+    | "http-mcp"
+    | "acp-stdio"
+    | "pty-stream"
+    | "mission-shim";
   readonly authoritySha256: string;
   readonly worktreeHeadSha?: string;
   readonly auditIntentOccurredAt?: number;

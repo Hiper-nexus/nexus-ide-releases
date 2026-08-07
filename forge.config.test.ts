@@ -66,3 +66,11 @@ describe('required PT-BR wake model packaging', () => {
     expect(() => assertRequiredWakeResource(path.resolve('resources'))).not.toThrow();
   });
 });
+
+describe('mission shim packaging', () => {
+  it('ships the private nx command client on every Forge target', () => {
+    expect(forgeConfig.packagerConfig?.extraResource).toContain(
+      'resources/mission-shims',
+    );
+  });
+});

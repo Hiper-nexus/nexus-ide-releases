@@ -208,6 +208,44 @@ afterEach(() => {
 });
 
 describe('mcp-server governed CLI profile wiring', () => {
+  it('injects private nx commands for a mission worker independently of MCP support', () => {
+    const root = tempRoot();
+    const cwd = path.join(root, 'workspace');
+    fs.mkdirSync(cwd, { recursive: true });
+    const originalPath = '/usr/local/bin:/usr/bin:/bin';
+    const decoration = prepareAgentSpawnDecoration(
+      adapter('agy'),
+      { kind: 'cli-agent', cols: 80, rows: 24 },
+      authority(cwd, true),
+      { PATH: originalPath },
+    );
+    if (!decoration) throw new Error('expected AGY worker decoration');
+
+    const shimRoot = decoration.env.NEXUS_SHIM_ROOT;
+    const shimBin = path.join(shimRoot, 'bin');
+    expect(decoration.env.NEXUS_SHIM_SECRET).toMatch(/^[a-f0-9]{64}$/);
+    expect(decoration.env.NEXUS_SHIM_CAPABILITY_ID).toMatch(/^[0-9a-f-]{36}$/);
+    expect(decoration.env.PATH?.split(path.delimiter)).toEqual([
+      shimBin,
+      ...originalPath.split(path.delimiter),
+    ]);
+    expect(decoration.missionShimReadPaths).toEqual([
+      shimBin,
+      path.join(shimRoot, 'responses'),
+      path.join(shimRoot, 'requests'),
+      path.join(shimRoot, 'state'),
+    ]);
+    expect(decoration.missionShimWritePaths).toEqual([
+      path.join(shimRoot, 'requests'),
+      path.join(shimRoot, 'state'),
+    ]);
+    expect(decoration.env.NEXUS_MCP_URL).toBeUndefined();
+    expect(fs.existsSync(path.join(shimBin, 'nx-mail'))).toBe(true);
+
+    decoration.onSpawnFailed?.();
+    expect(fs.existsSync(shimRoot)).toBe(false);
+  });
+
   it('projects Claude trust only from an exact sealed mission authority', () => {
     homePolicyDeps.getOrchSettings.mockReturnValue({
       squadCliPolicy: 'governed',

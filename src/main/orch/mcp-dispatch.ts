@@ -522,7 +522,8 @@ export async function dispatchToolCall(
   const physicalAgentTransport =
     source === "http-mcp" ||
     source === "acp-stdio" ||
-    source === "pty-stream";
+    source === "pty-stream" ||
+    source === "mission-shim";
   const hasCurrentBearerAuthority = () =>
     (!physicalAgentTransport || isCurrentGateContext(ctx)) &&
     (options.assertCurrentCaller?.() ?? true);

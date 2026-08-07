@@ -147,6 +147,11 @@ function consumeCurrentPhysicalAck(
   physicalReceipt: AgentTransportPhysicalReceipt,
   inspected: ConsumedAgentTransportPhysicalReceipt,
 ): ConsumedAgentTransportPhysicalReceipt {
+  if (inspected.source === "mission-shim") {
+    throw new Error(
+      "physical handoff ACK requires an orchestrator transport, not a worker shim",
+    );
+  }
   assertPhysicalAgentToolAuditAuthority(db, binding.coordinates, {
     toolName: "nexus_handoff_ack",
     source: inspected.source,

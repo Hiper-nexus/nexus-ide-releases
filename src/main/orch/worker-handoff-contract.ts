@@ -72,11 +72,9 @@ export function charterTierForWorker(
 
 /**
  * Append the handoff contract a WORKER must fulfil, matched to what its CLI
- * can actually do: MCP-wired adapters get the
- * nexus_handoff_submit tool; every other CLI has NO route to the embedded MCP
- * server, so its only completion signal is printing the legacy marker block —
- * without this instruction those workers finish silently and the orchestrator
- * waits forever.
+ * can actually do. Every mission worker receives the private `nx-mail` command
+ * on PATH; MCP-capable adapters may use the richer tool directly, while legacy
+ * PTY parsing remains the final degraded path for older/non-governed spawns.
  */
 export function withHandoffContract(
   prompt: string,
@@ -84,11 +82,18 @@ export function withHandoffContract(
   hints: HandoffContractHints = {},
 ): string {
   const viaMcp = canUseNexusMcp(adapter);
+  const shimFallback =
+    "Se a tool MCP não estiver disponível, use no shell: " +
+    'nx-mail send --status success --summary "<resumo objetivo>". ' +
+    "Esse comando entra no mesmo dispatcher e na mesma cadeia de receipts.";
   const contract = viaMcp
     ? 'Ao concluir sua tarefa, finalize chamando a tool nexus_handoff_submit ' +
-      'com {status: "success"|"partial"|"failed", summary, artifacts}.'
-    : 'Ao concluir sua tarefa, imprima EXATAMENTE este bloco como texto no ' +
-      'terminal (é seu sinal de conclusão para o orquestrador):\n' +
+      'com {status: "success"|"partial"|"failed", summary, artifacts}. ' +
+      shimFallback
+    : "Ao concluir sua tarefa, tente primeiro o canal canônico em disco. " +
+      shimFallback +
+      " Se nx-mail também estiver indisponível, imprima EXATAMENTE este bloco " +
+      "como texto no terminal (é o fallback físico final):\n" +
       `${LEGACY_MARKER}\n` +
       '{"status":"success","summary":"<resumo objetivo do que fez>","artifacts":[]}';
   // Disciplina em camadas (toggles em Configurações › Squads): a Carta de

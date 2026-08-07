@@ -11,7 +11,8 @@ import {
 export type AgentTransportProvenanceSource =
   | "http-mcp"
   | "acp-stdio"
-  | "pty-stream";
+  | "pty-stream"
+  | "mission-shim";
 
 /**
  * Opaque, one-shot proof minted while an authenticated CLI handoff is inside
@@ -310,6 +311,54 @@ export function runInsidePtyStreamAgentTransport<T>(
 }
 
 /**
+ * Filesystem-shim boundary for one Main-authenticated intent. Authentication,
+ * anti-replay and operation narrowing happen in mission-shim-runtime before
+ * this seam; here we bind that exact request to the live physical PTY owner so
+ * the canonical dispatcher/store can mint its ordinary one-shot receipt.
+ */
+export function runInsideMissionShimTransport<T>(
+  sessionId: string,
+  requestId: string,
+  ctx: AgentGateContext,
+  operation: () => T,
+): T {
+  if (
+    !sessionId ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
+      requestId,
+    ) ||
+    ctx.role !== "worker" ||
+    ctx.sessionId !== sessionId ||
+    !ctx.missionId ||
+    !ctx.workerIncarnationId ||
+    getContextBySession(sessionId) !== ctx ||
+    !isCurrentGateContext(ctx)
+  ) {
+    throw new Error(
+      "handoff_provenance: current authenticated mission shim session is required",
+    );
+  }
+  if (activeAgentTransports.getStore() !== undefined) {
+    throw new Error(
+      "handoff_provenance: mission shim boundary cannot be nested",
+    );
+  }
+  const binding: AgentTransportBinding = {
+    live: true,
+    source: "mission-shim",
+    requestId,
+    token: ctx.token,
+    projectId: ctx.scope.projectId,
+    checkoutId: ctx.scope.checkoutId,
+    missionId: ctx.missionId,
+    sessionId,
+    workerIncarnationId: ctx.workerIncarnationId,
+    issuedInvocationIds: new Set(),
+  };
+  return runWithLiveTransport(binding, operation);
+}
+
+/**
  * Dispatcher/PTY ingest seam. A direct store call is insufficient: minting
  * also requires the active, physically authenticated CLI transport. These are
  * the three terminal orchestration actions whose durable receipts must prove
@@ -343,6 +392,14 @@ export function mintAgentTransportPhysicalReceipt(input: {
   if (!input.ctx.missionId || !input.ctx.sessionId) {
     throw new Error(
       "handoff_provenance: mission and physical session are required",
+    );
+  }
+  if (
+    active.source === "mission-shim" &&
+    input.toolName !== "nexus_handoff_submit"
+  ) {
+    throw new Error(
+      "handoff_provenance: mission shim authority is limited to handoff submit",
     );
   }
   if (active.issuedInvocationIds.has(input.toolCallId)) {

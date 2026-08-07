@@ -434,6 +434,42 @@ describe('process sandbox', () => {
     ).toThrow(/supplemental process sandbox roots are unavailable on linux/i);
   });
 
+  it('binds exact supplemental read and write roots into Linux Bubblewrap', () => {
+    const root = makeDir('nexus-linux-extra-root');
+    const runtime = makeDir('nexus-linux-extra-runtime');
+    const shimRoot = makeDir('nexus-linux-extra-shim');
+    const shimBin = path.join(shimRoot, 'bin');
+    const shimRequests = path.join(shimRoot, 'requests');
+    fs.mkdirSync(shimBin);
+    fs.mkdirSync(shimRequests);
+
+    const plan = buildLinuxBubblewrapPlan(
+      {
+        platform: 'linux',
+        executable: '/usr/bin/node',
+        args: ['--version'],
+        cwd: root,
+        rootRealPath: root,
+        sandboxDir: runtime,
+        env: { PATH: '/usr/bin:/bin' },
+        extraReadPaths: [shimBin],
+        extraWritePaths: [shimRequests],
+      },
+      '/usr/bin/bwrap',
+    );
+
+    expect(plan.args).toEqual(
+      expect.arrayContaining([
+        '--ro-bind',
+        shimBin,
+        shimBin,
+        '--bind',
+        shimRequests,
+        shimRequests,
+      ]),
+    );
+  });
+
   it('makes validation checkout read-only while preserving writable private runtime', () => {
     const root = makeDir('nexus-readonly-root');
     const runtime = makeDir('nexus-readonly-runtime');

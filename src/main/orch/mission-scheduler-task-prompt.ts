@@ -113,11 +113,16 @@ export function buildMissionSchedulerTaskPrompt(
     "",
     "Trabalhe somente dentro do ownership declarado. Em tarefas longas, chame " +
       `nexus_worker_heartbeat no máximo a cada ${heartbeatMinutes} minutos.`,
+    "Se a tool de heartbeat não estiver disponível, use `nx-notify heartbeat` " +
+      "no shell; ele entra no mesmo dispatcher Nexus.",
     "Não abra AskUserQuestion, prompt interativo ou TUI local: o operador não " +
       "enxerga stdin do worker e a missão ficaria pendurada.",
     "Se uma decisão humana for realmente indispensável, não invente uma resposta " +
       "nem tente nexus_clarify: envie nexus_handoff_submit com status=blocked, " +
       "a decisão exata e as opções verificadas para o orquestrador tratar pela rota Nexus.",
+    "Se nexus_handoff_submit não estiver disponível, use no shell: " +
+      '`nx-mail send --status <status> --summary "<resumo objetivo>"`. ' +
+      "O shim preserva o mesmo gate, auditoria e receipt.",
     completionContract,
   ].join("\n");
 }

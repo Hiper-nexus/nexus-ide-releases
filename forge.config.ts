@@ -260,6 +260,7 @@ const config: ForgeConfig = {
     extraResource: [
       'scripts/design-system-sensor.mjs',
       'resources/wake',
+      'resources/mission-shims',
       'resources/model-ranking.json',
       // Pacote de ~15 pets Codex v2 offline (manifest + sheets/*.webp).
       'resources/pets',

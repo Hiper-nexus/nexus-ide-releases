@@ -228,7 +228,12 @@ export const dispatchProofSchema = z
   })
   .strict();
 
-const physicalHandoffSourceSchema = z.enum(["http-mcp", "acp-stdio", "pty-stream"]);
+const physicalHandoffSourceSchema = z.enum([
+  "http-mcp",
+  "acp-stdio",
+  "pty-stream",
+  "mission-shim",
+]);
 
 const physicalHandoffReceiptSchema = z
   .object({

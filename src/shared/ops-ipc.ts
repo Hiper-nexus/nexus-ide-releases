@@ -12,6 +12,7 @@ export type AuditSource =
   | 'http-mcp'
   | 'acp-stdio'
   | 'pty-stream'
+  | 'mission-shim'
   | 'omp-rpc-stdio'
   | 'ipc-renderer'
   | 'jarvis-voice';

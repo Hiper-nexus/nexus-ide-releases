@@ -685,8 +685,6 @@ function linuxPlan(
     throw new Error('invalid Bubblewrap provider path');
   }
   if (
-    input.extraReadPaths.length > 0 ||
-    input.extraWritePaths.length > 0 ||
     input.networkAllowedProcessPaths.length > 0 ||
     input.networkAllowedProcessEndpoints.length > 0 ||
     input.protectedWritePaths.length > 0
@@ -716,6 +714,22 @@ function linuxPlan(
   const createdDirectories = new Set<string>();
   args.push(...linuxBindArgs(input.rootRealPath, maskedRoots, createdDirectories, input.readOnlyRoot));
   args.push(...linuxBindArgs(input.sandboxDir, maskedRoots, createdDirectories));
+  const supplementalMounts = new Map<string, boolean>();
+  for (const candidate of input.extraReadPaths) {
+    supplementalMounts.set(candidate, true);
+  }
+  for (const candidate of input.extraWritePaths) {
+    supplementalMounts.set(candidate, false);
+  }
+  for (const [candidate, readOnly] of [...supplementalMounts].sort(
+    ([left], [right]) =>
+      left.split(path.sep).length - right.split(path.sep).length ||
+      left.localeCompare(right),
+  )) {
+    args.push(
+      ...linuxBindArgs(candidate, maskedRoots, createdDirectories, readOnly),
+    );
+  }
   args.push(
     '--chdir', input.cwd,
     '--cap-drop', 'ALL',

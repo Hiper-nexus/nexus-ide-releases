@@ -112,7 +112,13 @@ const mcpAuditIntentPayloadSchema = z
   .object({
     project_id: identifierSchema,
     checkout_id: identifierSchema,
-    source: z.enum(["http-mcp", "acp-stdio", "pty-stream", "omp-rpc-stdio"]),
+    source: z.enum([
+      "http-mcp",
+      "acp-stdio",
+      "pty-stream",
+      "mission-shim",
+      "omp-rpc-stdio",
+    ]),
     invocation_id: identifierSchema,
   })
   .passthrough();
@@ -123,7 +129,13 @@ const mcpReceiptRowSchema = z
     handoff_id: identifierSchema,
     tool_call_id: identifierSchema,
     tool_name: z.literal("nexus_handoff_submit"),
-    source: z.enum(["http-mcp", "acp-stdio", "pty-stream", "omp-rpc-stdio"]),
+    source: z.enum([
+      "http-mcp",
+      "acp-stdio",
+      "pty-stream",
+      "mission-shim",
+      "omp-rpc-stdio",
+    ]),
     mission_id: identifierSchema,
     session_id: identifierSchema,
     worker_incarnation_id: identifierSchema.nullable(),
@@ -1085,7 +1097,12 @@ export class ScopedHandoffStore {
     input: z.infer<typeof submitHandoffInputSchema>,
     artifactsJson: string,
     evidenceIdsJson: string,
-    replaySource: "http-mcp" | "acp-stdio" | "pty-stream" | "omp-rpc-stdio",
+    replaySource:
+      | "http-mcp"
+      | "acp-stdio"
+      | "pty-stream"
+      | "mission-shim"
+      | "omp-rpc-stdio",
     replayWorktreeHeadSha: string | undefined,
     replayRawPayloadSha256: string,
     logicalOperationKey: string,
@@ -1223,7 +1240,12 @@ export class ScopedHandoffStore {
   #assertCorrelatedMcpAuditIntent(
     db: Database.Database,
     receipt: {
-      readonly source: "http-mcp" | "acp-stdio" | "pty-stream" | "omp-rpc-stdio";
+      readonly source:
+        | "http-mcp"
+        | "acp-stdio"
+        | "pty-stream"
+        | "mission-shim"
+        | "omp-rpc-stdio";
       readonly toolCallId: string;
       readonly missionId: string;
       readonly sessionId: string;

@@ -823,6 +823,107 @@ const MISSION_ROUTE_RESERVATION_SQUAD_BINDING_SCHEMA = `
 ALTER TABLE mission_route_reservations ADD COLUMN squad_id TEXT;
 `;
 
+/**
+ * Adds the authenticated filesystem shim as a first-class physical handoff
+ * provenance. The shim still enters the canonical dispatcher and receipt
+ * chain; this migration only widens the immutable source vocabulary. SQLite
+ * cannot alter a CHECK constraint in place, so the receipt table is rebuilt
+ * while preserving every row, index and trigger.
+ */
+const MISSION_SHIM_HANDOFF_PROVENANCE_SCHEMA = `
+DROP TRIGGER IF EXISTS handoff_mcp_receipt_chain_link_guard;
+DROP TRIGGER IF EXISTS handoff_mcp_receipt_immutable;
+DROP INDEX IF EXISTS idx_handoff_mcp_receipts_worker;
+DROP INDEX IF EXISTS idx_handoff_mcp_receipts_logical_operation;
+DROP INDEX IF EXISTS idx_handoff_mcp_receipts_chain_seq;
+ALTER TABLE handoff_mcp_receipts RENAME TO handoff_mcp_receipts_v34;
+
+CREATE TABLE handoff_mcp_receipts (
+  receipt_id             TEXT PRIMARY KEY,
+  handoff_id             TEXT NOT NULL UNIQUE,
+  tool_call_id           TEXT NOT NULL UNIQUE,
+  tool_name              TEXT NOT NULL CHECK (tool_name = 'nexus_handoff_submit'),
+  source                 TEXT NOT NULL CHECK (
+    source IN (
+      'http-mcp', 'acp-stdio', 'pty-stream', 'mission-shim', 'omp-rpc-stdio'
+    )
+  ),
+  mission_id             TEXT NOT NULL,
+  session_id             TEXT NOT NULL,
+  worker_incarnation_id  TEXT,
+  authority_sha256       TEXT NOT NULL CHECK (length(authority_sha256) = 64),
+  worktree_head_sha      TEXT CHECK (
+    worktree_head_sha IS NULL OR length(worktree_head_sha) IN (40, 64)
+  ),
+  issued_at              INTEGER NOT NULL CHECK (issued_at >= 0),
+  raw_payload_sha256     TEXT CHECK (
+    raw_payload_sha256 IS NULL OR length(raw_payload_sha256) = 64
+  ),
+  logical_operation_key  TEXT CHECK (
+    logical_operation_key IS NULL OR length(logical_operation_key) = 64
+  ),
+  chain_seq              INTEGER CHECK (chain_seq IS NULL OR chain_seq >= 1),
+  prev_receipt_hash      TEXT CHECK (
+    (prev_receipt_hash IS NULL OR length(prev_receipt_hash) = 64)
+    AND (prev_receipt_hash IS NULL OR chain_seq >= 2)
+  ),
+  chain_hash             TEXT CHECK (
+    (chain_hash IS NULL OR length(chain_hash) = 64)
+    AND ((chain_hash IS NULL) = (chain_seq IS NULL))
+  ),
+  agent_pubkey           TEXT CHECK (
+    agent_pubkey IS NULL OR length(agent_pubkey) = 64
+  ),
+  owner_pubkey           TEXT CHECK (
+    owner_pubkey IS NULL OR length(owner_pubkey) = 64
+  ),
+  attestation_json       TEXT,
+  FOREIGN KEY (handoff_id) REFERENCES handoffs(id) ON DELETE CASCADE,
+  FOREIGN KEY (mission_id) REFERENCES missions(id) ON DELETE CASCADE
+);
+
+INSERT INTO handoff_mcp_receipts (
+  receipt_id, handoff_id, tool_call_id, tool_name, source,
+  mission_id, session_id, worker_incarnation_id, authority_sha256,
+  worktree_head_sha, issued_at, raw_payload_sha256, logical_operation_key,
+  chain_seq, prev_receipt_hash, chain_hash,
+  agent_pubkey, owner_pubkey, attestation_json
+)
+SELECT
+  receipt_id, handoff_id, tool_call_id, tool_name, source,
+  mission_id, session_id, worker_incarnation_id, authority_sha256,
+  worktree_head_sha, issued_at, raw_payload_sha256, logical_operation_key,
+  chain_seq, prev_receipt_hash, chain_hash,
+  agent_pubkey, owner_pubkey, attestation_json
+FROM handoff_mcp_receipts_v34;
+
+DROP TABLE handoff_mcp_receipts_v34;
+
+CREATE INDEX idx_handoff_mcp_receipts_worker
+  ON handoff_mcp_receipts(
+    mission_id, session_id, worker_incarnation_id, issued_at
+  );
+CREATE UNIQUE INDEX idx_handoff_mcp_receipts_logical_operation
+  ON handoff_mcp_receipts(logical_operation_key)
+  WHERE logical_operation_key IS NOT NULL;
+CREATE UNIQUE INDEX idx_handoff_mcp_receipts_chain_seq
+  ON handoff_mcp_receipts(mission_id, chain_seq)
+  WHERE chain_seq IS NOT NULL;
+
+CREATE TRIGGER handoff_mcp_receipt_immutable
+BEFORE UPDATE ON handoff_mcp_receipts
+BEGIN
+  SELECT RAISE(ABORT, 'handoff physical receipt is immutable');
+END;
+
+CREATE TRIGGER handoff_mcp_receipt_chain_link_guard
+BEFORE INSERT ON handoff_mcp_receipts
+WHEN NEW.prev_receipt_hash IS NOT NULL AND NEW.chain_seq IS NULL
+BEGIN
+  SELECT RAISE(ABORT, 'handoff receipt chain link requires its chain_seq');
+END;
+`;
+
 export const ORCHESTRATION_PROJECT_MIGRATION_SPECS: readonly ProjectMigrationSpec[] =
   [
     {
@@ -953,5 +1054,11 @@ export const ORCHESTRATION_PROJECT_MIGRATION_SPECS: readonly ProjectMigrationSpe
       schemaVersion: 34,
       appVersion: '0.25.1',
       sql: MISSION_ROUTE_RESERVATION_SQUAD_BINDING_SCHEMA,
+    },
+    {
+      id: '035-mission-shim-handoff-provenance',
+      schemaVersion: 35,
+      appVersion: '0.28.0',
+      sql: MISSION_SHIM_HANDOFF_PROVENANCE_SCHEMA,
     },
   ];

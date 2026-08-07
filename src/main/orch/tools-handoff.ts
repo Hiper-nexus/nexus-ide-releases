@@ -42,7 +42,9 @@ function requireHandoffMcpEffectIntent(
   const intent = invocation?.effectIntent;
   if (
     !intent ||
-    !["http-mcp", "acp-stdio", "pty-stream"].includes(intent.source) ||
+    !["http-mcp", "acp-stdio", "pty-stream", "mission-shim"].includes(
+      intent.source,
+    ) ||
     intent.toolName !== "nexus_handoff_submit" ||
     !invocation?.agentTransportPhysicalReceipt
   ) {

@@ -318,6 +318,16 @@ describe('ProjectRuntimeManager physical isolation', () => {
     expect(
       runtime.db
         .prepare(
+          `SELECT sql FROM sqlite_master
+           WHERE type = 'table' AND name = 'handoff_mcp_receipts'`,
+        )
+        .get(),
+    ).toEqual({
+      sql: expect.stringContaining("'mission-shim'"),
+    });
+    expect(
+      runtime.db
+        .prepare(
           `SELECT migration_id, schema_version
            FROM __nexus_schema_migrations WHERE schema_version = 26`,
         )
@@ -422,6 +432,76 @@ describe('ProjectRuntimeManager physical isolation', () => {
 });
 
 describe('ProjectRuntimeManager migrations and health', () => {
+  it('widens shim provenance without losing immutable receipt rows', () => {
+    const targetScope = scope(PROJECT_A, 'checkout-shim-migration');
+    const beforeShim = manager({
+      migrations: INITIAL_PROJECT_MIGRATIONS.slice(0, -1),
+    });
+    const legacy = beforeShim.open(targetScope);
+    legacy.db
+      .prepare(
+        `INSERT INTO missions
+           (id, title, description, status, milestones_json, created_at,
+            updated_at)
+         VALUES ('mission-shim-migration', 'Shim', '', 'running', '[]', 1, 1)`,
+      )
+      .run();
+    for (const handoffId of ['handoff-before-shim', 'handoff-after-shim']) {
+      legacy.db
+        .prepare(
+          `INSERT INTO handoffs
+             (id, mission_id, session_id, from_agent, status, summary,
+              artifacts_json, delivered, created_at)
+           VALUES (?, 'mission-shim-migration', 'session-shim', 'worker',
+                   'success', 'resumo', '[]', 0, 1)`,
+        )
+        .run(handoffId);
+    }
+    legacy.db
+      .prepare(
+        `INSERT INTO handoff_mcp_receipts
+           (receipt_id, handoff_id, tool_call_id, tool_name, source,
+            mission_id, session_id, worker_incarnation_id, authority_sha256,
+            issued_at)
+         VALUES ('receipt-before-shim', 'handoff-before-shim',
+                 'tool-before-shim', 'nexus_handoff_submit', 'http-mcp',
+                 'mission-shim-migration', 'session-shim', 'worker-shim', ?, 1)`,
+      )
+      .run('a'.repeat(64));
+    beforeShim.close(targetScope);
+
+    const upgraded = manager().open(targetScope);
+    expect(
+      upgraded.db
+        .prepare(
+          `SELECT receipt_id, source FROM handoff_mcp_receipts
+           WHERE receipt_id = 'receipt-before-shim'`,
+        )
+        .get(),
+    ).toEqual({ receipt_id: 'receipt-before-shim', source: 'http-mcp' });
+    expect(() =>
+      upgraded.db
+        .prepare(
+          `INSERT INTO handoff_mcp_receipts
+             (receipt_id, handoff_id, tool_call_id, tool_name, source,
+              mission_id, session_id, worker_incarnation_id, authority_sha256,
+              issued_at)
+           VALUES ('receipt-after-shim', 'handoff-after-shim',
+                   'tool-after-shim', 'nexus_handoff_submit', 'mission-shim',
+                   'mission-shim-migration', 'session-shim', 'worker-shim', ?, 2)`,
+        )
+        .run('b'.repeat(64)),
+    ).not.toThrow();
+    expect(() =>
+      upgraded.db
+        .prepare(
+          `UPDATE handoff_mcp_receipts SET issued_at = 3
+           WHERE receipt_id = 'receipt-before-shim'`,
+        )
+        .run(),
+    ).toThrow(/immutable/i);
+  });
+
   it('backs up the database before applying each pending migration batch', () => {
     const firstMigration = createProjectMigration({
       id: 'test-001-sample',

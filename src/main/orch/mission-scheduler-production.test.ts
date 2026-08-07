@@ -1138,6 +1138,8 @@ describe("mission scheduler worker lease contract", () => {
     expect(prompt).toContain(
       "nexus_worker_heartbeat no máximo a cada 4 minutos",
     );
+    expect(prompt).toContain("nx-notify heartbeat");
+    expect(prompt).toContain("nx-mail send");
     expect(prompt).toContain("Não abra AskUserQuestion");
     expect(prompt).toContain("TUI local");
     expect(prompt).toMatch(/nexus_handoff_submit com status=blocked/i);

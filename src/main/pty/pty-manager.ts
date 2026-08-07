@@ -306,6 +306,10 @@ export interface AgentSpawnDecoration {
   providerStateReadPaths?: readonly string[];
   /** Exact provider-state paths the confined process may update. */
   providerStateWritePaths?: readonly string[];
+  /** Private shim binaries the confined worker may execute/read. */
+  missionShimReadPaths?: readonly string[];
+  /** Private shim dropbox paths the confined worker may update. */
+  missionShimWritePaths?: readonly string[];
   onSpawned?: (sessionId: string) => void;
   /** Called if the PTY fails to spawn, so minted tokens/artifacts are freed. */
   onSpawnFailed?: () => void;
@@ -1675,12 +1679,14 @@ export function spawnAgentSession(
           // neither.
           extraReadPaths: [
             ...codexProcessSandbox.providerStatePaths,
+            ...(decoration?.missionShimReadPaths ?? []),
             ...trustedNativeRuntimeReadPaths,
             ...darwinPtySupervisorReadPaths,
             ...worktreeGit.readPaths,
           ],
           extraWritePaths: [
             ...codexProcessSandbox.providerStatePaths,
+            ...(decoration?.missionShimWritePaths ?? []),
             ...worktreeGit.writePaths,
           ],
           protectedWritePaths: [
@@ -1793,19 +1799,25 @@ export function spawnAgentSession(
         binaryPath: bin,
         processHome: advisoryProcessHome,
         runtimeDir: advisoryRuntimeDir,
-        providerStateReadPaths: agyNativeProfile
-          ? agyNativeProfile.providerStateReadPaths
-          : [
-              ...(decoration?.providerStateReadPaths ?? []),
-              ...advisoryEphemeralGrants,
-              ...advisoryReadOnlyGrants,
-            ],
-        providerStateWritePaths: agyNativeProfile
-          ? agyNativeProfile.providerStateWritePaths
-          : [
-              ...(decoration?.providerStateWritePaths ?? []),
-              ...advisoryEphemeralGrants,
-            ],
+        providerStateReadPaths: [
+          ...(agyNativeProfile
+            ? agyNativeProfile.providerStateReadPaths
+            : [
+                ...(decoration?.providerStateReadPaths ?? []),
+                ...advisoryEphemeralGrants,
+                ...advisoryReadOnlyGrants,
+              ]),
+          ...(decoration?.missionShimReadPaths ?? []),
+        ],
+        providerStateWritePaths: [
+          ...(agyNativeProfile
+            ? agyNativeProfile.providerStateWritePaths
+            : [
+                ...(decoration?.providerStateWritePaths ?? []),
+                ...advisoryEphemeralGrants,
+              ]),
+          ...(decoration?.missionShimWritePaths ?? []),
+        ],
       });
       assertAdvisoryConfinement(
         adapter.id,

@@ -10,6 +10,7 @@ import {
 import {
   consumeAgentTransportPhysicalReceipt,
   mintAgentTransportPhysicalReceipt,
+  runInsideMissionShimTransport,
   runInsidePtyStreamAgentTransport,
 } from "./http-mcp-boundary";
 import { testProjectScope } from "./__tests__/scope-fixture";
@@ -138,6 +139,71 @@ describe("physical agent transport boundary", () => {
     });
   });
 
+  it("mints the same physical receipt from an authenticated mission shim intent", () => {
+    const ctx = context();
+    const consumed = runInsideMissionShimTransport(
+      "session-a",
+      "00000000-0000-4000-8000-000000000001",
+      ctx,
+      () => {
+        const receipt = mintAgentTransportPhysicalReceipt({
+          ctx,
+          toolCallId: "shim-call-a",
+          toolName: "nexus_handoff_submit",
+        });
+        return consumeAgentTransportPhysicalReceipt(receipt, {
+          projectId: ctx.scope.projectId,
+          checkoutId: ctx.scope.checkoutId,
+          missionId: ctx.missionId!,
+          sessionId: "session-a",
+          workerIncarnationId: ctx.workerIncarnationId,
+          rawPayloadSha256: "b".repeat(64),
+        });
+      },
+    );
+
+    expect(consumed).toMatchObject({
+      source: "mission-shim",
+      toolCallId: "shim-call-a",
+      missionId: "mission-a",
+      sessionId: "session-a",
+      workerIncarnationId: "incarnation-a",
+    });
+  });
+
+  it("does not widen the worker-only shim boundary to the Maestro", () => {
+    const ctx = orchestratorContext();
+
+    expect(() =>
+      runInsideMissionShimTransport(
+        "session-maestro",
+        "00000000-0000-4000-8000-000000000002",
+        ctx,
+        () => null,
+      ),
+    ).toThrow(/mission shim session/i);
+  });
+
+  it.each(["nexus_handoff_ack", "nexus_mission_set_status"] as const)(
+    "does not let the shim mint physical authority for %s",
+    (toolName) => {
+      const ctx = context();
+      expect(() =>
+        runInsideMissionShimTransport(
+          "session-a",
+          "00000000-0000-4000-8000-000000000003",
+          ctx,
+          () =>
+            mintAgentTransportPhysicalReceipt({
+              ctx,
+              toolCallId: `shim-forbidden-${toolName}`,
+              toolName,
+            }),
+        ),
+      ).toThrow(/mission shim.*handoff submit/i);
+    },
+  );
+
   it("keeps every production capability seam owned by one exact module", () => {
     const mainDirectory = path.resolve(__dirname, "..");
     const owners = productionTypeScriptFiles(mainDirectory)
@@ -158,6 +224,9 @@ describe("physical agent transport boundary", () => {
     expect(importers("runInsidePtyStreamAgentTransport")).toEqual([
       "orch/mcp-server.ts",
       "orch/pty-stream-handoff.ts",
+    ]);
+    expect(importers("runInsideMissionShimTransport")).toEqual([
+      "orch/mission-shim-runtime.ts",
     ]);
     expect(importers("mintAgentTransportPhysicalReceipt")).toEqual([
       "orch/mcp-dispatch.ts",

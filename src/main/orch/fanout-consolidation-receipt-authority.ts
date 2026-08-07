@@ -226,6 +226,7 @@ function consumeConsolidationReceipt(
 ): ConsumedAgentTransportPhysicalReceipt | null {
   if (
     input.inspected.toolName !== "nexus_mission_set_status" ||
+    input.inspected.source === "mission-shim" ||
     input.inspected.issuedAt > input.now
   ) {
     return null;

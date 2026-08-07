@@ -38,6 +38,7 @@ import {
   consumeAgentTransportPhysicalReceipt,
   mintAgentTransportPhysicalReceipt,
   runInsideHttpMcpTransport,
+  runInsideMissionShimTransport,
   runInsidePtyStreamAgentTransport,
 } from "./http-mcp-boundary";
 import { createScopedMissionStore } from "./mission-store";
@@ -631,6 +632,7 @@ describe("physical HTTP MCP handoff boundary", () => {
       "mcp-dispatch.ts",
       "mcp-protocol.ts",
       "mcp-server.ts",
+      "mission-shim-runtime.ts",
       "pty-stream-handoff.ts",
       "task-dispatch-mission-completion-authority.ts",
     ]);
@@ -706,6 +708,45 @@ describe("physical HTTP MCP handoff boundary", () => {
         { scope: testProjectScope(), missionId: MISSION_ID },
         20,
       ).filter((entry) => entry.source === "pty-stream"),
+    ).toEqual([
+      expect.objectContaining({ result: "intent" }),
+      expect.objectContaining({ result: "ok" }),
+    ]);
+  });
+
+  it("dispatches a handoff through the authenticated mission-shim source", async () => {
+    const result = await runInsideMissionShimTransport(
+      SESSION_ID,
+      "00000000-0000-4000-8000-000000000001",
+      ctx,
+      () =>
+        dispatchToolCall(
+          "mission-shim",
+          registry,
+          "nexus_handoff_submit",
+          {
+            status: "success",
+            summary:
+              "Filesystem shim dispatch completed through the canonical handoff path.",
+          },
+          ctx,
+          dispatchOptions(() => currentMission),
+        ),
+    );
+
+    expect(result).toMatchObject({ ok: true });
+    expect(handlerCalls).toBe(1);
+    expect(
+      manager
+        .open(testProjectScope())
+        .db.prepare("SELECT source FROM handoff_mcp_receipts LIMIT 1")
+        .get(),
+    ).toEqual({ source: "mission-shim" });
+    expect(
+      readAuditLog(
+        { scope: testProjectScope(), missionId: MISSION_ID },
+        20,
+      ).filter((entry) => entry.source === "mission-shim"),
     ).toEqual([
       expect.objectContaining({ result: "intent" }),
       expect.objectContaining({ result: "ok" }),

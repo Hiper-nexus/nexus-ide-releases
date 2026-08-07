@@ -13,6 +13,7 @@ import {
   tapSessionData,
   tapSessionExit,
   tapSessionState,
+  tapSessionTermination,
   type AgentSpawnDecoration,
   type AgentSpawnHook,
 } from "../pty/pty-manager";
@@ -133,6 +134,11 @@ import {
 } from "./prevc-reviewer-profile";
 import type { BoundSpawnAuthority } from "./spawn-authority";
 import { resolveCwdForScope } from "./workspace-path";
+import {
+  createMissionShimRuntime,
+  isMissionShimSandboxSupported,
+  type MissionShimRuntime,
+} from "./mission-shim-runtime";
 
 /**
  * Embedded MCP server (docs/ARCHITECTURE.md §E.2): a localhost HTTP endpoint
@@ -150,9 +156,24 @@ let server: http.Server | null = null;
 let port = 0;
 let registry: McpRegistry | null = null;
 const sessionTokens = new Map<string, string>(); // sessionId → token
+const missionShims = new Set<MissionShimRuntime>();
+const missionShimBySession = new Map<string, MissionShimRuntime>(); // sessionId → runtime
 let disposeTerminationRevocation: (() => void) | null = null;
 let disposePtyMissionControl: (() => void) | null = null;
 const legacyParserTaps = new ReplaceableEventTapScope();
+
+function disposeMissionShim(runtime: MissionShimRuntime | null): void {
+  if (!runtime) return;
+  missionShims.delete(runtime);
+  for (const [sessionId, candidate] of missionShimBySession) {
+    if (candidate === runtime) missionShimBySession.delete(sessionId);
+  }
+  runtime.dispose();
+}
+
+function disposeMissionShimBySession(sessionId: string): void {
+  disposeMissionShim(missionShimBySession.get(sessionId) ?? null);
+}
 
 async function showHttpMcpConfirmation(
   request: McpConfirmationRequest,
@@ -918,34 +939,97 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
       );
     }
 
-    const decoration: AgentSpawnDecoration = {
-      authorityToken: ctx.token,
-      env,
-      extraArgs,
-      ...(advisoryProviderStateHome
-        ? {
-            // Overlay providers (Kimi/Grok): keep the minted runtime as HOME
-            // (pty-manager path), but grant the real provider home so the
-            // overlay's session/auth symlinks resolve read+write.
-            providerStateReadPaths: [advisoryProviderStateHome],
-            providerStateWritePaths: [advisoryProviderStateHome],
+  let missionShim: MissionShimRuntime | null = null;
+  if (
+    ctx.role === "worker" &&
+    Boolean(ctx.missionId?.trim()) &&
+    Boolean(ctx.workerIncarnationId?.trim()) &&
+    isMissionShimSandboxSupported(process.platform)
+  ) {
+    try {
+      missionShim = createMissionShimRuntime({
+        ctx,
+        invoke: async ({ toolName, args }) => {
+          if (!registry) {
+            return {
+              ok: false,
+              tool: toolName,
+              denied: true,
+              error: "mission_shim_dispatch_unavailable",
+            };
           }
-        : {}),
-      onSpawned: (sessionId) => {
-        bindTokenToSession(ctx.token, sessionId);
-        sessionTokens.set(sessionId, ctx.token);
-        cliPromptAutoResponder.bind(sessionId, adapter.id);
-      },
-      onSpawnFailed: () => {
-        // No session will ever exist for this token — drop it from the auth
-        // registry and remove any token-bearing files we wrote.
-        releaseSessionByToken(ctx.token);
-        cleanupAgyMcpConfig(ctx.token);
-        cleanupCliMcpSession(ctx.token);
-        cleanupSessionArtifacts(ctx.token);
-      },
-    };
-    return decoration;
+          return await dispatchToolCall(
+            "mission-shim",
+            registry,
+            toolName,
+            args,
+            ctx,
+            {
+              confirm: confirmHttpMcpTool,
+              prepareDestructiveReversibility: destructiveReversibilityPreparer,
+            },
+          );
+        },
+      });
+      missionShims.add(missionShim);
+      Object.assign(env, missionShim.env);
+      env.PATH = [
+        missionShim.binDir,
+        preparedEnv?.PATH ?? process.env.PATH ?? "",
+      ]
+        .filter(Boolean)
+        .join(path.delimiter);
+    } catch (error) {
+      disposeMissionShim(missionShim);
+      releaseSessionByToken(ctx.token);
+      cleanupAgyMcpConfig(ctx.token);
+      cleanupCliMcpSession(ctx.token);
+      cleanupSessionArtifacts(ctx.token);
+      throw new Error("failed to prepare the private mission shim runtime", {
+        cause: error,
+      });
+    }
+  }
+
+  const decoration: AgentSpawnDecoration = {
+    authorityToken: ctx.token,
+    env,
+    extraArgs,
+    ...(missionShim
+      ? {
+          missionShimReadPaths: missionShim.readPaths,
+          missionShimWritePaths: missionShim.writePaths,
+        }
+      : {}),
+    ...(advisoryProviderStateHome
+      ? {
+          // Overlay providers (Kimi/Grok): keep the minted runtime as HOME
+          // (pty-manager path), but grant the real provider home so the
+          // overlay's session/auth symlinks resolve read+write.
+          providerStateReadPaths: [advisoryProviderStateHome],
+          providerStateWritePaths: [advisoryProviderStateHome],
+        }
+      : {}),
+    onSpawned: (sessionId) => {
+      bindTokenToSession(ctx.token, sessionId);
+      sessionTokens.set(sessionId, ctx.token);
+      cliPromptAutoResponder.bind(sessionId, adapter.id);
+      if (missionShim) {
+        missionShim.bindSession(sessionId);
+        missionShimBySession.set(sessionId, missionShim);
+      }
+    },
+    onSpawnFailed: () => {
+      // No session will ever exist for this token — drop it from the auth
+      // registry and remove any token-bearing files we wrote.
+      releaseSessionByToken(ctx.token);
+      cleanupAgyMcpConfig(ctx.token);
+      cleanupCliMcpSession(ctx.token);
+      cleanupSessionArtifacts(ctx.token);
+      disposeMissionShim(missionShim);
+    },
+  };
+  return decoration;
 };
 
 /** Wire per-agent spawn decoration: gate tokens, MCP config and skill mirrors. */
@@ -1111,8 +1195,14 @@ function installLegacyParser(
         cleanupSessionArtifacts(token);
       }
       clearMcpPermissionSession(sessionId);
+      disposeMissionShimBySession(sessionId);
       releaseSession(sessionId);
     }));
+    track(
+      tapSessionTermination((sessionId) => {
+        disposeMissionShimBySession(sessionId);
+      }),
+    );
   });
 }
 
@@ -1218,6 +1308,8 @@ export function stopMcpServer(): void {
     releaseSessionByToken(token);
   }
   sessionTokens.clear();
+  for (const runtime of [...missionShims]) disposeMissionShim(runtime);
+  missionShimBySession.clear();
   server?.close();
   server = null;
   port = 0;

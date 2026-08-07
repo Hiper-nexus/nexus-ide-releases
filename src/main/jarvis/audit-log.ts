@@ -31,6 +31,7 @@ export type AuditSource =
   | 'http-mcp'
   | 'acp-stdio'
   | 'pty-stream'
+  | 'mission-shim'
   | 'omp-rpc-stdio'
   | 'ipc-renderer'
   | 'jarvis-voice';
@@ -213,7 +214,9 @@ function validateContext(context: AuditContext): ValidAuditContext {
 function isAuditSource(value: unknown): value is AuditSource {
   return (
     value === 'http-mcp' ||
+    value === 'acp-stdio' ||
     value === 'pty-stream' ||
+    value === 'mission-shim' ||
     value === 'omp-rpc-stdio' ||
     value === 'ipc-renderer' ||
     value === 'jarvis-voice'

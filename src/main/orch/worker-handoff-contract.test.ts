@@ -12,12 +12,13 @@ import { LEGACY_MARKER } from "./legacy-handoff";
 import { charterTierForWorker, withHandoffContract } from "./worker-handoff-contract";
 
 describe("worker handoff transport contract", () => {
-  it("routes AGY 1.1 through the physical PTY stream instead of fake MCP", () => {
+  it("teaches AGY the filesystem shim before the physical PTY fallback", () => {
     const prompt = withHandoffContract("Corrija o fluxo da missão.", {
       quirks: { mcpAutoload: false, nexusMcp: "agy" },
     });
 
     expect(prompt).toContain(LEGACY_MARKER);
+    expect(prompt).toContain("nx-mail send");
     expect(prompt).toContain('"status":"success"');
     expect(prompt).not.toContain("chamando a tool nexus_handoff_submit");
   });
@@ -28,6 +29,7 @@ describe("worker handoff transport contract", () => {
     });
 
     expect(prompt).toContain("chamando a tool nexus_handoff_submit");
+    expect(prompt).toContain("nx-mail send");
     expect(prompt).not.toContain(LEGACY_MARKER);
   });
 });
