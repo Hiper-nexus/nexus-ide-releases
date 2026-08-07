@@ -528,6 +528,11 @@ A migração será um corte vertical, não um período indefinido com duas UIs.
 Não haverá aliases visuais, rotas deprecated ou fallback silencioso para o
 produto antigo.
 
+Cada corte que migra o último caller de uma implementação antiga também remove,
+no mesmo commit, o source, export, estilo, teste, flag, canal IPC e documentação
+que ficaram sem uso. Código morto não permanece “para segurança”; a segurança é
+o histórico Git e a prova do novo caminho.
+
 ## 13. Tratamento de falhas
 
 | Falha | Estado | Superfície | Recuperação |
@@ -572,6 +577,8 @@ A simplificação ocorre na apresentação, não removendo garantias.
 - Missão concluída permanece inspecionável e retoma sessões existentes.
 - Não existem simultaneamente Rail, OpsBoard e OrchestrationPanel.
 - Não existe seletor Autopilot/Free/Squad/PRD no caminho novo.
+- Nenhum source, export, CSS, teste, flag ou IPC legado fica sem caller após o
+  corte final.
 
 ### Motor
 
