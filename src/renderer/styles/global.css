@@ -6,6 +6,7 @@
 @import './base.css';
 @import './app-shell.css';
 @import './mission-setup.css';
+@import './mission-board.css';
 @import './agent-avatar.css';
 @import './operator-sprite.css';
 @import './provider-logo.css';

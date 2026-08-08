@@ -248,3 +248,17 @@ export function toUserFacingMissionError(
         : undefined;
   return humanizeMissionErrorDetail(detail, fallback) ?? fallback;
 }
+
+/**
+ * Main product surfaces have an Operations trail for diagnostics. Keep their
+ * recovery copy actionable without repeating transport paths or stack residue.
+ */
+export function toUserFacingMissionRecovery(
+  cause: unknown,
+  fallback = DEFAULT_UNKNOWN_ERROR,
+): string {
+  return (
+    toUserFacingMissionError(cause, fallback).split(" Detalhe técnico:", 1)[0] ??
+    fallback
+  );
+}
