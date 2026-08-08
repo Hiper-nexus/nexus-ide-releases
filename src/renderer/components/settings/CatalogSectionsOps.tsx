@@ -12,6 +12,7 @@ import { askConfirm } from '../../state/confirm-store';
 import { QrCode } from '../QrCode';
 import { waitForSession } from '../../terminal/terminal-host';
 import { formatShortcut } from '../../lib/platform';
+import { SettingsSectionTitle } from './SettingsSectionTitle';
 import {
   SHORTCUT_GROUP_LABELS,
   shortcutsInGroup,
@@ -92,7 +93,7 @@ export function RecipesSection() {
 
   return (
     <section>
-      <h3 className="settings-detail__title">Recipes</h3>
+      <SettingsSectionTitle>Recipes</SettingsSectionTitle>
       <p className="settings-detail__hint">
         Lint de squads/recipes contra catálogo local. Referências inexistentes
         precisam de gap explícito no formato <code>gap:nome: motivo</code>.
@@ -274,7 +275,7 @@ const SHORTCUT_GROUP_ORDER: ShortcutGroupId[] = [
 export function ShortcutsSection() {
   return (
     <section>
-      <h3 className="settings-detail__title">Atalhos</h3>
+      <SettingsSectionTitle>Atalhos</SettingsSectionTitle>
       <p className="settings-detail__hint">
         Teclado e gestos do workspace — a mesma lista do cheatsheet (
         {formatShortcut('mod', '/')}).
@@ -356,7 +357,7 @@ export function RemoteSection() {
 
   return (
     <section>
-      <h3 className="settings-detail__title">Remote</h3>
+      <SettingsSectionTitle>Remote</SettingsSectionTitle>
       <div className="settings-pill-row">
         <span className={`settings-chip ${info?.running ? 'settings-chip--ok' : 'settings-chip--warn'}`}>
           {info?.running ? 'wss online' : 'offline'}

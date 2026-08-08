@@ -4,6 +4,7 @@
   --nexus-shell-rail-width: 240px;
   --nexus-shell-inspector-min: 360px;
   --nexus-shell-inspector-max: 440px;
+  --nexus-shell-workspace-min: 640px;
 
   position: relative;
   width: 100%;
@@ -101,6 +102,11 @@
 .product-canvas {
   position: relative;
   background: var(--bg);
+}
+
+.product-canvas > .product-workspace,
+.product-canvas > .settings-workspace {
+  min-inline-size: var(--nexus-shell-workspace-min);
 }
 
 .product-canvas:focus-visible {

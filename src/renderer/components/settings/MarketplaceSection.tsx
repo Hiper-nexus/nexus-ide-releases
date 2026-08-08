@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { CatalogEntryInfo } from '../../../shared/types';
 import { markVictory } from '../../state/onboarding-store';
+import { SettingsSectionTitle } from './SettingsSectionTitle';
 
 /**
  * Marketplace — the catalog surface: the full
@@ -94,7 +95,7 @@ export function MarketplaceSection() {
 
   return (
     <section>
-      <h3 className="settings-detail__title">Marketplace</h3>
+      <SettingsSectionTitle>Marketplace</SettingsSectionTitle>
       <p className="settings-detail__hint">
         Catálogo aitmpl (davila7/claude-code-templates): {agents.length} agents
         · {skills.length} skills. Instalação em 1 clique para ~/.claude

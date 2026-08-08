@@ -13,6 +13,7 @@ import { ActionCard } from '../ActionCard';
 import { AccountsManager } from './AccountsManager';
 import { ProviderLogo } from '../ProviderLogo';
 import { PixelIcon } from '../PixelIcon';
+import { SettingsSectionTitle } from './SettingsSectionTitle';
 import {
   filterProvidersForTab,
   isLocalCliProvider,
@@ -705,7 +706,7 @@ export function ProvidersPanel() {
     <section className="prov-hub">
       <header className="prov-hub__header">
         <div>
-          <h3 className="settings-detail__title">Providers</h3>
+          <SettingsSectionTitle>Providers</SettingsSectionTitle>
           <p className="settings-detail__hint prov-hub__lede">
             tokens · modelos · contas
           </p>

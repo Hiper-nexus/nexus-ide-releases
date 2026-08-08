@@ -16,6 +16,10 @@ import {
 } from './harness-view-model';
 
 import { AcpHarnessPanel } from './AcpHarnessPanel';
+import {
+  SettingsSectionTitle,
+  SettingsSectionTitleProvider,
+} from './SettingsSectionTitle';
 
 type HarnessView = 'arsenal' | 'recipes' | 'acp';
 
@@ -114,7 +118,7 @@ export function HarnessSection() {
       <header className="harness-hub__intro">
         <div>
           <p className="settings-detail__hint">CAPABILITY HARNESS</p>
-          <h3 className="settings-detail__title">Tarefa certa, capacidade real</h3>
+          <SettingsSectionTitle>Tarefa certa, capacidade real</SettingsSectionTitle>
           <p className="settings-detail__hint">
             Inventário unificado do Nexus. O enriquecimento organiza o que está
             instalado; recipes e squads continuam sendo contratos executáveis.
@@ -174,7 +178,9 @@ export function HarnessSection() {
       {view === 'acp' ? (
         <AcpHarnessPanel />
       ) : view === 'recipes' ? (
-        <RecipesSection />
+        <SettingsSectionTitleProvider level={3}>
+          <RecipesSection />
+        </SettingsSectionTitleProvider>
       ) : (
         <>
           <div className="harness-hub__filters">

@@ -60,6 +60,10 @@ import { DesignSystemsSection } from './DesignSystemsSection';
 import { HarnessSection } from './HarnessSection';
 import { CompanionRelaySection } from './CompanionRelaySection';
 import { LabsSection } from './LabsSection';
+import {
+  SettingsSectionTitleProvider,
+  type SettingsSectionTitleLevel,
+} from './SettingsSectionTitle';
 
 const SETTINGS_ITEMS = SETTINGS_GROUPS.flatMap((group) => group.items);
 
@@ -193,6 +197,7 @@ export interface SettingsSurfaceProps {
   footerActionLabel?: string;
   searchInputRef?: RefObject<HTMLInputElement | null>;
   detailRef?: RefObject<HTMLDivElement | null>;
+  sectionTitleLevel: SettingsSectionTitleLevel;
 }
 
 /** Shared in-flow settings surface used by the page and the transitional drawer. */
@@ -206,6 +211,7 @@ export function SettingsSurface({
   footerActionLabel,
   searchInputRef,
   detailRef,
+  sectionTitleLevel,
 }: SettingsSurfaceProps) {
   const squadsCount = useOrchStore((state) => state.squads.length);
   const mcpToolCount = useOrchStore((state) => state.mcpInfo?.toolCount ?? 0);
@@ -354,17 +360,13 @@ export function SettingsSurface({
           </button>
         </header>
         <div className="settings-detail__content">
-          <h2
-            className="settings-detail__title settings-detail__route-title"
-            tabIndex={-1}
-          >
-            {currentSectionTitle ?? 'Configurações'}
-          </h2>
-          <SettingsSectionContent
-            section={section}
-            adapters={adapters}
-            onNavigateAway={onBack}
-          />
+          <SettingsSectionTitleProvider level={sectionTitleLevel}>
+            <SettingsSectionContent
+              section={section}
+              adapters={adapters}
+              onNavigateAway={onBack}
+            />
+          </SettingsSectionTitleProvider>
         </div>
       </div>
     </>
@@ -427,6 +429,7 @@ export function SettingsWorkspace({
         returnLabel="Voltar"
         returnAriaLabel="Voltar ao destino anterior"
         detailRef={detailRef}
+        sectionTitleLevel={2}
       />
     </section>
   );

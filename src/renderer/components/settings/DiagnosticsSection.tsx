@@ -17,6 +17,7 @@ import {
 import { DoctorEngineSettings } from './DoctorEngineSettings';
 import { ContextDraftsSection } from './ContextDraftsSection';
 import { TerminalPerformanceStatus } from './TerminalPerformanceStatus';
+import { SettingsSectionTitle } from './SettingsSectionTitle';
 
 function useDiagnosticsSnapshot() {
   const [micPermission, setMicPermission] =
@@ -130,7 +131,7 @@ export function DiagnosticsSection() {
 
   return (
     <section>
-      <h3 className="settings-detail__title">Diagnóstico</h3>
+      <SettingsSectionTitle>Diagnóstico</SettingsSectionTitle>
       <p className="settings-detail__hint">
         Estado operacional de mic, permissões, wake engine, sessão realtime e
         custo. A tela não abre o microfone sozinha; ela lê sinais já expostos.

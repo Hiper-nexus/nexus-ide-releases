@@ -6,6 +6,7 @@ import { TERMINAL_THEMES } from '../../styles/terminal-theme';
 import { useSettingsStore } from '../../state/settings-store';
 import { OperatorSprite } from '../OperatorSprite';
 import { PetSection } from './PetSection';
+import { SettingsSectionTitle } from './SettingsSectionTitle';
 
 /**
  * Aparência global: modo pixel (identidade retrô) e paleta do app.
@@ -21,7 +22,7 @@ export function AppearanceSection() {
 
   return (
     <section className="settings-appearance">
-      <h3 className="settings-detail__title">Aparência</h3>
+      <SettingsSectionTitle>Aparência</SettingsSectionTitle>
       <p className="settings-detail__hint">
         Por defeito a UI é dark moderna (sans + cantos suaves). O modo pixel é
         opt-in: cantos retos, VT323 e grid. A paleta aplica-se a barras, drawers

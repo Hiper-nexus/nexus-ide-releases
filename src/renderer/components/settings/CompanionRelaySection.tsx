@@ -6,6 +6,7 @@ import type {
 } from '../../../shared/companion-relay-types';
 import { useProductFlags } from '../../lib/use-product-flags';
 import { MainGeneratedQr } from '../MainGeneratedQr';
+import { SettingsSectionTitle } from './SettingsSectionTitle';
 
 const PRODUCTION_RELAY_URL = 'wss://relay.nexuside.app';
 
@@ -185,7 +186,7 @@ export function CompanionRelaySection() {
 
   return (
     <section>
-      <h3 className="settings-detail__title">Companion mobile (relay E2E)</h3>
+      <SettingsSectionTitle>Companion mobile (relay E2E)</SettingsSectionTitle>
       <p className="settings-detail__hint">
         Sala cega ponta-a-ponta: os frames viajam selados em AES-256-GCM e o
         relay nunca vê o conteúdo. A chave da sala vive só no fragmento do link —

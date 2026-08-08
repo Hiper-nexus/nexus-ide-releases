@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { AuditLogEntry, AuditLogSnapshot } from '../../../shared/ops-ipc';
 import { argsPreview, formatDate, StatusPill } from './ops-format';
+import { SettingsSectionTitle } from './SettingsSectionTitle';
 
 function AuditRow({
   entry,
@@ -77,7 +78,7 @@ export function AuditSection() {
     <section>
       <div className="settings-detail__split-head">
         <div>
-          <h3 className="settings-detail__title">Auditoria</h3>
+          <SettingsSectionTitle>Auditoria</SettingsSectionTitle>
           <p className="settings-detail__hint">
             Leitura read-only dos eventos SQLite isolados por projeto e
             checkout. Textos, comandos com segredos e tokens chegam mascarados.

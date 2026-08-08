@@ -10,6 +10,7 @@ import { AudioDeviceControls } from './AudioDeviceControls';
 import { OrchestratorDefaults } from './OrchestratorDefaults';
 import { MissionDriverSettings } from './MissionDriverSettings';
 import { TerminalPerformanceStatus } from './TerminalPerformanceStatus';
+import { SettingsSectionTitle } from './SettingsSectionTitle';
 
 /** MÓDULOS sections: Terminal, Voice, Providers, Squads, Marketplace. */
 
@@ -57,7 +58,7 @@ export function TerminalSection() {
 
   return (
     <section>
-      <h3 className="settings-detail__title">Terminal</h3>
+      <SettingsSectionTitle>Terminal</SettingsSectionTitle>
       <p className="settings-detail__hint">
         Fonte e shell dos panes xterm. Paleta e modo pixel ficam em Aparência.
       </p>
@@ -150,7 +151,7 @@ export function VoiceSection({ onNavigate }: { onNavigate: () => void }) {
   const openVoice = useVoiceStore((s) => s.openSettings);
   return (
     <section>
-      <h3 className="settings-detail__title">Voice</h3>
+      <SettingsSectionTitle>Voice</SettingsSectionTitle>
       <p className="settings-detail__hint">
         Voz e captura: push-to-talk, STT (Groq/whisper), tradução PT→EN e
         resposta falada (Jarvis). Config em ~/.nexus/plugins/voice.
@@ -175,7 +176,7 @@ export function SystemSection() {
     <section>
       <div className="release-head">
         <div>
-          <h3 className="settings-detail__title">Sistema</h3>
+          <SettingsSectionTitle>Sistema</SettingsSectionTitle>
           <p className="settings-detail__hint">
             Versão atual, changelog e estado do pacote local instalado.
           </p>
@@ -278,7 +279,7 @@ export function SquadsSection({ onNavigate }: { onNavigate: () => void }) {
   }, []);
   return (
     <section>
-      <h3 className="settings-detail__title">Squads</h3>
+      <SettingsSectionTitle>Squads</SettingsSectionTitle>
       <p className="settings-detail__hint">
         Defina como os especialistas trabalham e abra o painel para criar,
         importar ou editar seus {squads.length} squads salvos.

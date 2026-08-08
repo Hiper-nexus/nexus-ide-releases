@@ -8,6 +8,7 @@ import { credentialLinkForKeySlot } from '../../../shared/credential-links';
 import { openExternalFromAnchor } from '../../lib/open-external';
 import { useMediaStudioStore } from '../../state/media-studio-store';
 import { ActionCard } from '../ActionCard';
+import { SettingsSectionTitle } from './SettingsSectionTitle';
 
 /**
  * Settings → Mídia: providers de geração (imagem/vídeo/voz) que viram MCP
@@ -159,7 +160,7 @@ export function MediaSection() {
   return (
     <section className="arsenal-section" aria-label="Mídia">
       <header className="arsenal-section__intro">
-        <h3 className="settings-detail__title">Mídia</h3>
+        <SettingsSectionTitle>Mídia</SettingsSectionTitle>
         <p className="settings-detail__hint">
           Providers de imagem, vídeo e voz que viram MCP tools para os agentes.
           A key fica no Keychain; o agente só recebe o caminho do arquivo

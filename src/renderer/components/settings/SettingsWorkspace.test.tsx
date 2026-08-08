@@ -275,6 +275,32 @@ describe('SettingsWorkspace contracts', () => {
     expect(document.activeElement).toBe(sectionTarget);
   });
 
+  it('exposes Configurações do Nexus once as h1 and Minha Conta once as the only h2 focus target', async () => {
+    useProductNavigationStore.getState().openSettings('account');
+    const host = mount(<SettingsWorkspace />);
+    await settleSectionEffects();
+    const headings = [
+      ...host.querySelectorAll<HTMLHeadingElement>('h1, h2, h3, h4, h5, h6'),
+    ];
+    const pageHeadings = headings.filter(
+      (heading) =>
+        heading.tagName === 'H1' &&
+        heading.textContent?.trim().toLocaleLowerCase('pt-BR') ===
+          'configurações do nexus',
+    );
+    const accountHeadings = headings.filter(
+      (heading) =>
+        heading.textContent?.trim().toLocaleLowerCase('pt-BR') ===
+        'minha conta',
+    );
+
+    expect(pageHeadings).toHaveLength(1);
+    expect(accountHeadings).toHaveLength(1);
+    expect(accountHeadings[0]?.tagName).toBe('H2');
+    act(() => accountHeadings[0]?.focus());
+    expect(document.activeElement).toBe(accountHeadings[0]);
+  });
+
   it('keeps brand and search outside a distinct scrolling settings-groups region', async () => {
     useProductNavigationStore.getState().openSettings('account');
     const host = mount(<SettingsWorkspace />);

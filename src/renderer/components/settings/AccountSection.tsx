@@ -9,6 +9,7 @@ import {
 import type { PublicPlanId } from '../../../../shared/pricing';
 import { askConfirm } from '../../state/confirm-store';
 import { PixelIcon } from '../PixelIcon';
+import { SettingsSectionTitle } from './SettingsSectionTitle';
 
 /**
  * Minha Conta — identidade Nexus (login), time e plano.
@@ -207,7 +208,7 @@ export function AccountSection() {
   return (
     <section className="account">
       <header className="account__intro">
-        <h3 className="settings-detail__title">Minha Conta</h3>
+        <SettingsSectionTitle>Minha Conta</SettingsSectionTitle>
         <p className="settings-detail__hint account__intro-hint">
           Login Nexus, time e plano. Contas das CLIs (Claude, Codex, Kimi…)
           ficam em Providers.

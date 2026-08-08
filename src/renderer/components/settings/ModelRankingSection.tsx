@@ -23,6 +23,7 @@ import {
   sortEntriesWithQuota,
 } from "./ranking-view";
 import { ProviderLogo } from "../ProviderLogo";
+import { SettingsSectionTitle } from "./SettingsSectionTitle";
 
 /**
  * Per-adapter free capacity 0..1 for ranking blend. Uses freest account of each
@@ -439,9 +440,9 @@ export function ModelRankingSection() {
   return (
     <section className="rank-ops" aria-labelledby="ranking-title">
       <header className="rank-ops__intro">
-        <h3 id="ranking-title" className="settings-detail__title">
+        <SettingsSectionTitle id="ranking-title">
           Motor de ranking LLM
-        </h3>
+        </SettingsSectionTitle>
         <p className="settings-detail__hint">
           Nexus-eval multi-eixo alimenta o roteador de missões. Escolha a
           dimensão da corrida, inspecione o radar do modelo e veja quem o motor

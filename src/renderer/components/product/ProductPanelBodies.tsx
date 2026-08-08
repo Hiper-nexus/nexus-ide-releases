@@ -399,7 +399,13 @@ export function MemoryPanelBody({
                   {note.kind === 'note' ? 'nota' : note.kind}
                 </span>
               ) : null}
-              <p className="product-pane__snip">
+              <p
+                className={
+                  presentation === 'full'
+                    ? 'product-pane__snip product-pane__body'
+                    : 'product-pane__snip'
+                }
+              >
                 {presentation === 'full' ? note.body : note.body.slice(0, 200)}
               </p>
             </li>

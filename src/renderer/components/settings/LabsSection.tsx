@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ProductFlagResolutionRow } from '../../../shared/product-api';
+import { SettingsSectionTitle } from './SettingsSectionTitle';
 
 /**
  * Labs — todas as feature flags do produto com switch persistido.
@@ -193,6 +194,7 @@ export function LabsSection() {
 
   return (
     <section>
+      <SettingsSectionTitle>Labs</SettingsSectionTitle>
       <p className="ops-consent-panel__copy">
         Toda capability do produto atrás de flag, com o estado real resolvido
         pelo main (kill switch &gt; canal &gt; override &gt; default). Mudanças

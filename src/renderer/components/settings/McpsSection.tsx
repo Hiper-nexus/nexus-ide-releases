@@ -4,6 +4,7 @@ import { useOrchStore } from '../../state/orch-store';
 import { useSettingsStore } from '../../state/settings-store';
 import { PixelIcon } from '../PixelIcon';
 import { McpAcrossToolsMatrix } from '../McpAcrossToolsMatrix';
+import { SettingsSectionTitle } from './SettingsSectionTitle';
 import {
   exportToolsFromPlan,
   McpAcrossSyncControls,
@@ -119,7 +120,7 @@ export function McpsSection() {
   return (
     <section className="arsenal-section mcp-ritual" aria-label="MCPs">
       <header className="arsenal-section__intro">
-        <h3 className="settings-detail__title">MCP Servers</h3>
+        <SettingsSectionTitle>MCP Servers</SettingsSectionTitle>
         <p className="settings-detail__hint">
           Observe + Sync fill-gaps. Simular não escreve. Export só nas tools
           marcadas. Nunca apaga; backup antes de cada write.

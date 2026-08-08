@@ -20,6 +20,11 @@ interface PendingTodoWrite {
   writeId: symbol;
 }
 
+interface TodoWriteFailure {
+  message: string;
+  targetStatus: TodoStatus;
+}
+
 export function TaskBoardWorkspace() {
   const todoLists = useOrchStore((state) => state.todoLists);
   const workspaceEpoch = useOrchStore((state) => state.workspaceEpoch);
@@ -33,7 +38,7 @@ export function TaskBoardWorkspace() {
   const [pending, setPending] = useState<
     ReadonlyMap<string, PendingTodoWrite>
   >(() => new Map());
-  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [errors, setErrors] = useState<Record<string, TodoWriteFailure>>({});
 
   useEffect(() => {
     pendingWrites.current.clear();
@@ -91,7 +96,10 @@ export function TaskBoardWorkspace() {
       ) {
         setErrors((current) => ({
           ...current,
-          [key]: 'Não foi possível atualizar a tarefa. Tente novamente.',
+          [key]: {
+            message: 'Não foi possível atualizar a tarefa.',
+            targetStatus: status,
+          },
         }));
       }
     } finally {
@@ -217,13 +225,28 @@ export function TaskBoardWorkspace() {
                           </span>
                         ) : null}
                         {error ? (
-                          <p
-                            id={errorId}
-                            className="task-board-workspace__error"
-                            role="alert"
-                          >
-                            {error}
-                          </p>
+                          <div className="task-board-workspace__failure">
+                            <p
+                              id={errorId}
+                              className="task-board-workspace__error"
+                              role="alert"
+                            >
+                              {error.message}
+                            </p>
+                            <button
+                              type="button"
+                              className="task-board-workspace__retry"
+                              onClick={() =>
+                                void setStatus(
+                                  list,
+                                  item,
+                                  error.targetStatus,
+                                )
+                              }
+                            >
+                              Tentar novamente
+                            </button>
+                          </div>
                         ) : null}
                       </li>
                     );

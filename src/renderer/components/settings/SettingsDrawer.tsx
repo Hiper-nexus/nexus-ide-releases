@@ -93,6 +93,7 @@ export function SettingsDrawer() {
           returnKeyboardHint="Esc"
           footerActionLabel="Fechar configurações"
           searchInputRef={searchRef}
+          sectionTitleLevel={3}
         />
       </div>
     </div>

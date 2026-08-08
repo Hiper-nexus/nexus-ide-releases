@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { ScreenPermissionStatus } from '../../../shared/vision-ipc';
 import { useVisionConsentStore } from '../../state/vision-consent-store';
+import { SettingsSectionTitle } from './SettingsSectionTitle';
 import {
   formatDate,
   MetricTile,
@@ -133,7 +134,7 @@ export function VisionSection() {
     <section>
       <div className="settings-detail__split-head">
         <div>
-          <h3 className="settings-detail__title">Vision</h3>
+          <SettingsSectionTitle>Vision</SettingsSectionTitle>
           <p className="settings-detail__hint">
             Jarvis só envia imagem da janela Nexus para provedores multimodais
             quando você permite nesta sessão. Capturas locais e OCR continuam

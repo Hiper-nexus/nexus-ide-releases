@@ -19,6 +19,7 @@ import {
 import { useSettingsStore } from '../../state/settings-store';
 import { useLayoutStore } from '../../state/layout-store';
 import { waitForSession, writeToPane } from '../../terminal/terminal-host';
+import { SettingsSectionTitle } from './SettingsSectionTitle';
 
 /**
  * CATALOG sections: locally installed components (agents/skills), the
@@ -233,7 +234,7 @@ export function AgentsSection() {
   const visible = tierFiltered(items, enrich.enriched, 'agent', tier);
   return (
     <section>
-      <h3 className="settings-detail__title">Agents</h3>
+      <SettingsSectionTitle>Agents</SettingsSectionTitle>
       <p className="settings-detail__hint">
         AI subagents instalados do catálogo ({items.length}) + {squadAgents}{' '}
         agente(s) definidos em squads.
@@ -256,7 +257,7 @@ export function SkillsSection() {
   const visible = tierFiltered(items, enrich.enriched, 'skill', tier);
   return (
     <section>
-      <h3 className="settings-detail__title">Skills</h3>
+      <SettingsSectionTitle>Skills</SettingsSectionTitle>
       <p className="settings-detail__hint">
         Cache local de skills instaladas do catálogo ({items.length}).
       </p>
@@ -286,7 +287,7 @@ export function MediaCatalogSection() {
   const enabled = providers.filter((p) => p.hasKey);
   return (
     <section>
-      <h3 className="settings-detail__title">Mídia</h3>
+      <SettingsSectionTitle>Mídia</SettingsSectionTitle>
       <p className="settings-detail__hint">
         Modelos de geração que os agentes podem disparar via MCP (
         {enabled.length} habilitado{enabled.length === 1 ? '' : 's'} de{' '}
@@ -341,7 +342,7 @@ export function LlmsSection({ adapters }: { adapters: AdapterInfo[] }) {
   const absent = adapters.filter((a) => !a.installed && a.id !== 'shell');
   return (
     <section>
-      <h3 className="settings-detail__title">LLMs · CLIs</h3>
+      <SettingsSectionTitle>LLMs · CLIs</SettingsSectionTitle>
       <p className="settings-detail__hint">
         CLIs de IA instaladas nesta máquina ({installed.length}) — o arsenal de
         execução que o roteador de tarefas distribui por custo.
@@ -485,7 +486,7 @@ export function ToolsSection() {
   return (
     <section className="arsenal-section" aria-label="Tools">
       <header className="arsenal-section__intro">
-        <h3 className="settings-detail__title">Tools</h3>
+        <SettingsSectionTitle>Tools</SettingsSectionTitle>
         <p className="settings-detail__hint">
           Ferramentas nativas do MCP embutido. Agentes chamam via{' '}
           <code>nexus_*</code> ou alias curto — o bridge confirma ações
@@ -591,7 +592,7 @@ export function PluginsSection({ adapters }: { adapters: AdapterInfo[] }) {
   }, []);
   return (
     <section>
-      <h3 className="settings-detail__title">Plugins</h3>
+      <SettingsSectionTitle>Plugins</SettingsSectionTitle>
       <p className="settings-detail__hint">
         {adapters.length} adapters ativos (builtin + usuário). Arquivos do
         usuário em ~/.nexus/plugins ({files.length}) — hot-reload sem rebuild.
@@ -617,7 +618,7 @@ export function HooksSection() {
   }, []);
   return (
     <section>
-      <h3 className="settings-detail__title">Hooks</h3>
+      <SettingsSectionTitle>Hooks</SettingsSectionTitle>
       <p className="settings-detail__hint">
         Lifecycle scripts do skill-gate: workers Claude-like recebem $HOME
         efêmero com hooks PreToolUse / PostToolUse / Stop; demais CLIs mantêm
@@ -649,7 +650,7 @@ export function RulesSection() {
   );
   return (
     <section>
-      <h3 className="settings-detail__title">Rules</h3>
+      <SettingsSectionTitle>Rules</SettingsSectionTitle>
       <p className="settings-detail__hint">
         Permissões por agente (allowlists do skill-gate). Enforcement duplo:
         servidor MCP + hooks no cliente. null = irrestrito.

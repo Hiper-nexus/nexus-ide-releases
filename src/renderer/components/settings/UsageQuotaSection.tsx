@@ -5,6 +5,7 @@ import { useSettingsStore } from '../../state/settings-store';
 import { windowDisplay } from '../../lib/quota-display';
 import type { ProviderQuotaEntry } from '../../../shared/quota-types';
 import { ProviderLogo } from '../ProviderLogo';
+import { SettingsSectionTitle } from './SettingsSectionTitle';
 
 /**
  * Settings → Uso e cotas: fleet list of provider quota windows.
@@ -135,9 +136,9 @@ export function UsageQuotaSection() {
   return (
     <section className="quota-panel" aria-labelledby="quota-title">
       <header className="quota-panel__intro">
-        <h3 id="quota-title" className="settings-detail__title">
+        <SettingsSectionTitle id="quota-title">
           Uso e cotas
-        </h3>
+        </SettingsSectionTitle>
         <p className="settings-detail__hint">
           Só CLIs instaladas/ativas ou com conta no vault. Janelas padrão:{' '}
           <strong>5 Horas</strong> + <strong>Semanal</strong> (Grok também{' '}

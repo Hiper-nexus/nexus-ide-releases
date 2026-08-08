@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { DesignSystemSourceId } from '../../../shared/surface-payload-types';
 import { EmptyState } from '../ActionCard';
+import { SettingsSectionTitle } from './SettingsSectionTitle';
 
 /**
  * designmd.ai needs `external:designmd-api-key`; without it the import walks
@@ -99,7 +100,7 @@ export function DesignSystemsSection() {
 
   return (
     <section>
-      <h3 className="settings-detail__title">Design Systems</h3>
+      <SettingsSectionTitle>Design Systems</SettingsSectionTitle>
       <p className="settings-detail__hint">
         Catálogo público de DESIGN.md no designmd.ai. Sem a chave
         <code> external:designmd-api-key</code> o import cai automaticamente no
