@@ -35,6 +35,23 @@
   animation: settings-in 180ms var(--ease-out-expo);
 }
 
+/* Full-page settings destination. It shares the rail/detail vocabulary with
+   the drawer, but owns no viewport positioning, scrim, z-index, or motion. */
+.settings-workspace {
+  inline-size: 100%;
+  block-size: 100%;
+  min-inline-size: 0;
+  min-block-size: 0;
+  display: flex;
+  overflow: hidden;
+  background:
+    linear-gradient(90deg, var(--pixel-grid) 1px, transparent 1px),
+    linear-gradient(0deg, var(--pixel-grid) 1px, transparent 1px),
+    var(--bg-elevated);
+  background-size: 24px 24px, 24px 24px, auto;
+}
+
+
 @keyframes settings-in {
   from {
     opacity: 0;
@@ -1400,7 +1417,8 @@
 }
 
 @media (max-width: 720px) {
-  .settings__drawer {
+  .settings__drawer,
+  .settings-workspace {
     flex-direction: column;
   }
 

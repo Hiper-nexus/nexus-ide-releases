@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { McpAcrossToolsReport } from '../../../shared/mcp-across-tools';
 import { McpAcrossToolsMatrix } from '../McpAcrossToolsMatrix';
 import { MarketplaceSection } from '../settings/MarketplaceSection';
+import { ActionCard, EmptyState } from '../ActionCard';
 import {
   exportToolsFromPlan,
   McpAcrossSyncControls,
@@ -198,27 +199,50 @@ export function MarketplacePanelBody() {
   );
 }
 
-export function MemoryPanelBody() {
-  const [notes, setNotes] = useState<
-    Array<{ id: string; title: string; body: string; kind?: string }>
-  >([]);
+type ProductMemoryNote = {
+  id: string;
+  title: string;
+  body: string;
+  kind?: string;
+};
+
+type ProductMemoryFailure = {
+  operation: 'load' | 'remember';
+  message: string;
+};
+
+export interface MemoryPanelBodyProps {
+  showOnboarding?: boolean;
+}
+
+export function MemoryPanelBody({
+  showOnboarding = false,
+}: MemoryPanelBodyProps = {}) {
+  const [notes, setNotes] = useState<ProductMemoryNote[]>([]);
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [failure, setFailure] = useState<ProductMemoryFailure | null>(null);
+  const titleInputRef = useRef<HTMLInputElement | null>(null);
+  const savingRef = useRef(false);
 
   const reload = useCallback(async () => {
+    setLoading(true);
+    setFailure(null);
     try {
       const api = productApi();
-      if (!api) return;
-      const list = (await api.memoryList()) as Array<{
-        id: string;
-        title: string;
-        body: string;
-        kind?: string;
-      }>;
+      if (!api) throw new Error('product memory API unavailable');
+      const list = (await api.memoryList()) as ProductMemoryNote[];
       setNotes(list ?? []);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'memory load failed');
+    } catch {
+      setFailure({
+        operation: 'load',
+        message:
+          'Não foi possível acessar a memória local. Tente novamente em instantes.',
+      });
+    } finally {
+      setLoading(false);
     }
   }, []);
 
@@ -227,51 +251,123 @@ export function MemoryPanelBody() {
   }, [reload]);
 
   const remember = async () => {
-    if (!title.trim()) return;
+    const trimmedTitle = title.trim();
+    if (!trimmedTitle || savingRef.current) return;
+
+    savingRef.current = true;
+    setSaving(true);
+    setFailure(null);
     try {
       const api = productApi();
-      if (!api) return;
-      await api.memoryRemember({ title: title.trim(), body, kind: 'note' });
+      if (!api) throw new Error('product memory API unavailable');
+      await api.memoryRemember({
+        title: trimmedTitle,
+        body,
+        kind: 'note',
+      });
       setTitle('');
       setBody('');
       await reload();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'remember failed');
+    } catch {
+      setFailure({
+        operation: 'remember',
+        message:
+          'Não foi possível guardar esta memória. Revise os campos e tente novamente.',
+      });
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
     }
   };
 
   return (
     <div className="product-pane" data-testid="product-memory">
-      {error && <p className="product-pane__error">{error}</p>}
-      <div className="product-pane__form">
-        <input
-          className="product-pane__input"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          placeholder="Título da nota"
-          aria-label="Título da memória"
+      {failure ? (
+        <div className="product-pane__error" role="alert">
+          <p>{failure.message}</p>
+          {failure.operation === 'load' ? (
+            <button
+              type="button"
+              className="product-pane__retry"
+              disabled={loading}
+              onClick={() => void reload()}
+            >
+              Tentar novamente
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
+      {showOnboarding && !loading && !failure && notes.length === 0 ? (
+        <EmptyState
+          icon="file"
+          title="Nenhuma memória ainda"
+          body="Registre a primeira memória para guardar uma decisão, contexto ou aprendizado deste workspace."
+          className="memory-workspace__empty"
+          action={
+            <ActionCard
+              icon="plus"
+              title="Escrever primeira memória"
+              subtitle="O conteúdo fica na projeção local deste workspace."
+              variant="primary"
+              onClick={() => titleInputRef.current?.focus()}
+            />
+          }
         />
-        <textarea
-          className="product-pane__textarea"
-          value={body}
-          onChange={(e) => setBody(e.target.value)}
-          placeholder="Corpo (suporta [[wikilinks]])"
-          rows={3}
-          aria-label="Corpo da memória"
-        />
-        <button type="button" className="product-pane__btn" onClick={() => void remember()}>
-          Lembrar
+      ) : null}
+
+      <div className="product-pane__form" aria-busy={saving || undefined}>
+        <label className="product-pane__field">
+          <span>Título</span>
+          <input
+            ref={titleInputRef}
+            className="product-pane__input"
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+            placeholder="Título da memória"
+            aria-label="Título da memória"
+          />
+        </label>
+        <label className="product-pane__field">
+          <span>Corpo</span>
+          <textarea
+            className="product-pane__textarea"
+            value={body}
+            onChange={(event) => setBody(event.target.value)}
+            placeholder="Corpo da memória, com suporte a [[wikilinks]]"
+            rows={5}
+            aria-label="Corpo da memória"
+          />
+        </label>
+        <button
+          type="button"
+          className="product-pane__btn"
+          disabled={saving || title.trim().length === 0}
+          onClick={() => void remember()}
+        >
+          {saving ? 'Guardando…' : 'Lembrar'}
         </button>
       </div>
-      <ul className="product-pane__list">
-        {notes.map((n) => (
-          <li key={n.id} className="product-pane__item">
-            <strong>{n.title}</strong>
-            {n.kind && <span className="product-pane__sub">{n.kind}</span>}
-            <p className="product-pane__snip">{n.body.slice(0, 200)}</p>
-          </li>
-        ))}
-      </ul>
+
+      {loading ? (
+        <p className="product-pane__loading" role="status">
+          Carregando memórias…
+        </p>
+      ) : notes.length > 0 ? (
+        <ul className="product-pane__list" aria-label="Memórias salvas">
+          {notes.map((note) => (
+            <li key={note.id} className="product-pane__item">
+              <strong>{note.title}</strong>
+              {note.kind ? (
+                <span className="product-pane__sub">
+                  {note.kind === 'note' ? 'nota' : note.kind}
+                </span>
+              ) : null}
+              <p className="product-pane__snip">{note.body.slice(0, 200)}</p>
+            </li>
+          ))}
+        </ul>
+      ) : null}
     </div>
   );
 }
