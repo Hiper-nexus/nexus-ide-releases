@@ -74,6 +74,7 @@ function createPorts(
       warnings: [],
     })),
     persistReviewFence: vi.fn(async () => undefined),
+    discardUnfencedPreparation: vi.fn(async () => true),
     readReviewFence: vi.fn(async () => ({
       missionId: 'mission-1',
       reviewSha256: 'a'.repeat(64),
@@ -166,6 +167,7 @@ describe('MainMissionEngine', () => {
       missionId: 'mission-1',
       reviewSha256: expectedSha,
     });
+    expect(ports.discardUnfencedPreparation).not.toHaveBeenCalled();
     expect(JSON.stringify(review)).not.toContain(scope.rootRealPath);
   });
 
@@ -182,6 +184,26 @@ describe('MainMissionEngine', () => {
     },
   );
 
+  it('discards the exact armed preparation once when compilation throws', async () => {
+    const compilationError = new Error('mission compilation failed');
+    const ports = createPorts({
+      compile: vi.fn(async () => {
+        throw compilationError;
+      }),
+    });
+    const engine = new MainMissionEngine(scope, ports);
+
+    await expect(engine.prepare(scope, request)).rejects.toBe(compilationError);
+    expect(ports.arm).toHaveBeenCalledOnce();
+    expect(ports.compile).toHaveBeenCalledOnce();
+    expect(ports.discardUnfencedPreparation).toHaveBeenCalledOnce();
+    expect(ports.discardUnfencedPreparation).toHaveBeenCalledWith({
+      missionId: 'mission-1',
+      createdAt: 1_777_000_000_000,
+    });
+    expect(ports.persistReviewFence).not.toHaveBeenCalled();
+  });
+
   it('fails closed when compilation returns an unsafe context path', async () => {
     const ports = createPorts({
       compile: vi.fn(async () => ({
@@ -196,7 +218,34 @@ describe('MainMissionEngine', () => {
     const engine = new MainMissionEngine(scope, ports);
 
     await expect(engine.prepare(scope, request)).rejects.toThrow();
+    expect(ports.arm).toHaveBeenCalledOnce();
+    expect(ports.compile).toHaveBeenCalledOnce();
+    expect(ports.discardUnfencedPreparation).toHaveBeenCalledOnce();
+    expect(ports.discardUnfencedPreparation).toHaveBeenCalledWith({
+      missionId: 'mission-1',
+      createdAt: 1_777_000_000_000,
+    });
     expect(ports.persistReviewFence).not.toHaveBeenCalled();
+  });
+
+  it('discards the exact armed preparation once when fence persistence fails', async () => {
+    const persistenceError = new Error('review fence persistence failed');
+    const ports = createPorts({
+      persistReviewFence: vi.fn(async () => {
+        throw persistenceError;
+      }),
+    });
+    const engine = new MainMissionEngine(scope, ports);
+
+    await expect(engine.prepare(scope, request)).rejects.toBe(persistenceError);
+    expect(ports.arm).toHaveBeenCalledOnce();
+    expect(ports.compile).toHaveBeenCalledOnce();
+    expect(ports.persistReviewFence).toHaveBeenCalledOnce();
+    expect(ports.discardUnfencedPreparation).toHaveBeenCalledOnce();
+    expect(ports.discardUnfencedPreparation).toHaveBeenCalledWith({
+      missionId: 'mission-1',
+      createdAt: 1_777_000_000_000,
+    });
   });
 
   it('revalidates the review fence before sealing, bootstraps, then reads fresh state', async () => {

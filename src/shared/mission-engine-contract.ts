@@ -4,7 +4,13 @@ import {
   squadAgentObjectSchema,
   strictSquadAgentSchema,
 } from './orch-types';
-import { missionLaneSchema } from './mission-intent';
+import {
+  MISSION_INTENT_GOAL_MAX_CHARS,
+  missionLaneSchema,
+  missionProjectContextPathSchema,
+} from './mission-intent';
+export const MISSION_PREPARE_TITLE_MAX_CHARS = 512;
+
 
 const idSchema = z.string().trim().min(1).max(256);
 const labelSchema = z.string().trim().min(1).max(1_024);
@@ -44,9 +50,14 @@ export type MissionAdvanced = z.infer<typeof missionAdvancedSchema>;
 
 export const missionPrepareRequestSchema = z
   .object({
-    objective: z.string().trim().min(1).max(65_536),
-    title: labelSchema.optional(),
-    contextPaths: z.array(z.string().trim().min(1).max(4_096)).max(64),
+    objective: z.string().trim().min(1).max(MISSION_INTENT_GOAL_MAX_CHARS),
+    title: z
+      .string()
+      .trim()
+      .min(1)
+      .max(MISSION_PREPARE_TITLE_MAX_CHARS)
+      .optional(),
+    contextPaths: z.array(missionProjectContextPathSchema).max(64),
     roster: z.array(strictSquadAgentSchema).min(1).max(32),
     advanced: missionAdvancedSchema.optional(),
   })
@@ -69,7 +80,7 @@ export const missionReviewSchema = z
     missionId: idSchema,
     title: labelSchema,
     objective: z.string().trim().min(1).max(65_536),
-    workspaceLabel: labelSchema,
+    workspaceLabel: z.string().trim().min(1).max(4_096),
     contextPaths: z.array(z.string().trim().min(1).max(4_096)).max(64),
     roster: z.array(strictSquadAgentSchema).min(1).max(32),
     permissions: z.array(missionPermissionSchema).max(64),

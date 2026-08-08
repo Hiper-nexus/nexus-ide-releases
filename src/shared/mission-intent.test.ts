@@ -98,6 +98,41 @@ describe('mission intent transitions', () => {
     ).toBe(false);
   });
 
+  it('persists only project-relative operator context paths', () => {
+    const contract = compileIntentContract({
+      goal: 'Corrigir checkout',
+      intentVersion: 1,
+      contextPaths: ['src/checkout.ts', 'src/checkout.test.ts'],
+    });
+
+    expect(contract.contextPaths).toEqual([
+      'src/checkout.ts',
+      'src/checkout.test.ts',
+    ]);
+    expect(
+      compileIntentContract({
+        goal: 'Corrigir checkout',
+        intentVersion: 1,
+        contextPaths: ['src\\checkout.ts'],
+      }).contextPaths,
+    ).toEqual(['src/checkout.ts']);
+    for (const invalid of [
+      '/etc/passwd',
+      '../outside.ts',
+      'src/../outside.ts',
+      'C:\\outside.ts',
+      'https://example.com/spec.md',
+    ]) {
+      expect(() =>
+        compileIntentContract({
+          goal: 'Corrigir checkout',
+          intentVersion: 1,
+          contextPaths: [invalid],
+        }),
+      ).toThrow(/project-relative|context path/i);
+    }
+  });
+
   it('keeps orchestrationMode optional and accepts Livre/Pack/Guiado overrides', () => {
     const contract = compileIntentContract({
       goal: 'Ship multi-story pack',

@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { Mission } from "../../shared/orch-types";
+import type { Mission, SquadAgent } from "../../shared/orch-types";
 import { compileIntentContract } from "../../shared/mission-intent";
 import {
   buildGuidedMissionTaskDetail,
@@ -26,6 +26,14 @@ import {
 
 const VISUAL_GOAL =
   "Redesenhar a interface do dashboard React com novos tokens de CSS e tipografia";
+
+const TEST_AGENT: SquadAgent = {
+  id: "executor",
+  agentName: "Executor visual",
+  category: "executor",
+  cli: "codex",
+  allowedTools: ["Read", "Edit"],
+};
 
 function visualMission(): Mission {
   const contract = compileIntentContract({
@@ -119,6 +127,7 @@ describe("guided UI task detail carries the design contract", () => {
       fs.writeFileSync(path.join(root, contractPath), body);
 
       const detail = buildGuidedMissionTaskDetail(visualMission(), {
+        agent: TEST_AGENT,
         workKind: "visual",
         workspaceRoot: root,
       });
@@ -136,6 +145,7 @@ describe("guided UI task detail carries the design contract", () => {
 
   it("carries no fence and no phantom path when the workspace has no contract", () => {
     const detail = buildGuidedMissionTaskDetail(visualMission(), {
+      agent: TEST_AGENT,
       workKind: "visual",
       workspaceRoot: root,
     });
@@ -156,6 +166,7 @@ describe("guided UI task detail carries the design contract", () => {
     fs.writeFileSync(path.join(root, "DESIGN.md"), "# Raiz\n");
 
     const detail = buildGuidedMissionTaskDetail(visualMission(), {
+      agent: TEST_AGENT,
       workKind: "bug",
       workspaceRoot: root,
     });
@@ -166,6 +177,7 @@ describe("guided UI task detail carries the design contract", () => {
 
   it("degrades to the missing-contract clause when no workspace root is known", () => {
     const detail = buildGuidedMissionTaskDetail(visualMission(), {
+      agent: TEST_AGENT,
       workKind: "visual",
     });
 
@@ -180,6 +192,7 @@ describe("guided UI task detail carries the design contract", () => {
     );
 
     const detail = buildGuidedMissionTaskDetail(visualMission(), {
+      agent: TEST_AGENT,
       workKind: "visual",
       workspaceRoot: root,
     });
@@ -208,6 +221,7 @@ describe("the guided gate checks the same file the executor was given", () => {
       );
       for (const readOnly of [true, false]) {
         const detail = guidedQualityGateDetail(visualMission(), {
+          agent: TEST_AGENT,
           readOnly,
           workKind: "visual",
           workspaceRoot: root,
@@ -227,6 +241,7 @@ describe("the guided gate checks the same file the executor was given", () => {
     );
     try {
       const detail = guidedQualityGateDetail(visualMission(), {
+        agent: TEST_AGENT,
         readOnly: true,
         workKind: "visual",
         workspaceRoot: root,

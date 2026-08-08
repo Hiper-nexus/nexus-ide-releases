@@ -1189,6 +1189,261 @@ describe('canonical MissionEngine IPC boundary', () => {
     )).toBe(true);
   });
 
+  it('confirms, revalidates, persists, and then snapshots canonical answers', async () => {
+    configureRendererMissionAuthority({} as never);
+    const sender = owner(908);
+    harness.scopes.set(sender.id, SCOPE_A);
+    harness.windows.set(sender.id, { isDestroyed: () => false });
+    const engine = installCanonicalEngine(SCOPE_A);
+    engine.snapshot.mockResolvedValueOnce(canonicalSnapshot('mission-1'));
+    const command = {
+      kind: 'answer-question' as const,
+      missionId: 'mission-1',
+      questionId: 'question-1',
+      optionId: 'opt-2',
+    };
+
+    await expect(
+      canonicalHandler(ORCH_CHANNELS.missionCommand)({ sender }, command),
+    ).resolves.toEqual(canonicalSnapshot('mission-1'));
+
+    expect(harness.prepareClarifyAnswer).toHaveBeenCalledWith(
+      expect.anything(),
+      SCOPE_A,
+      {
+        missionId: 'mission-1',
+        questionId: 'question-1',
+        answer: 'opt-2',
+      },
+    );
+    expect(harness.persistClarifyAnswer).toHaveBeenCalledWith(
+      expect.anything(),
+      SCOPE_A,
+      {
+        missionId: 'mission-1',
+        questionId: 'question-1',
+        answer: 'opt-2',
+      },
+      'c'.repeat(64),
+    );
+    expect(engine.command).not.toHaveBeenCalled();
+    expect(engine.snapshot).toHaveBeenCalledWith(SCOPE_A, 'mission-1');
+    expect(
+      harness.persistClarifyAnswer.mock.invocationCallOrder[0],
+    ).toBeLessThan(engine.snapshot.mock.invocationCallOrder[0]!);
+  });
+
+  it('cannot persist or snapshot a canonical answer before native confirmation and scope revalidation', async () => {
+    configureRendererMissionAuthority({} as never);
+    const sender = owner(909);
+    harness.scopes.set(sender.id, SCOPE_A);
+    harness.windows.set(sender.id, { isDestroyed: () => false });
+    const engine = installCanonicalEngine(SCOPE_A);
+    const command = {
+      kind: 'answer-question' as const,
+      missionId: 'mission-1',
+      questionId: 'question-1',
+      optionId: 'opt-2',
+    };
+
+    harness.dialog.showMessageBox.mockResolvedValueOnce({ response: 0 });
+    await expect(
+      canonicalHandler(ORCH_CHANNELS.missionCommand)({ sender }, command),
+    ).rejects.toThrow(/user_denied/i);
+    expect(harness.persistClarifyAnswer).not.toHaveBeenCalled();
+    expect(engine.snapshot).not.toHaveBeenCalled();
+
+    harness.dialog.showMessageBox.mockImplementationOnce(async () => {
+      harness.scopes.set(sender.id, SCOPE_B);
+      return { response: 1 };
+    });
+    await expect(
+      canonicalHandler(ORCH_CHANNELS.missionCommand)({ sender }, command),
+    ).rejects.toThrow(/authority changed/i);
+    expect(harness.persistClarifyAnswer).not.toHaveBeenCalled();
+    expect(engine.snapshot).not.toHaveBeenCalled();
+  });
+
+  it('confirms and physically closes canonical stop before reading the stopped snapshot', async () => {
+    configureRendererMissionAuthority({} as never);
+    const sender = owner(910);
+    harness.scopes.set(sender.id, SCOPE_A);
+    harness.windows.set(sender.id, { isDestroyed: () => false });
+    const mission = {
+      id: 'mission-stop-canonical',
+      title: 'Parar com prova física',
+      description: 'Histórico preservado.',
+      status: 'blocked' as const,
+      intentState: 'blocked_user' as const,
+      intentVersion: 3,
+      milestones: [],
+      learnings: '',
+      createdAt: 1,
+      updatedAt: 2,
+    };
+    harness.projectStores.forScope.mockReturnValue({
+      scope: SCOPE_A,
+      missions: {
+        get: (missionId: string) =>
+          missionId === mission.id ? mission : null,
+        list: () => [mission],
+      },
+      missionPanes: { list: () => [] },
+    });
+    const stoppedSnapshot = {
+      ...canonicalSnapshot(mission.id),
+      state: 'blocked_technical' as const,
+      stateReason: {
+        code: 'mission-blocked' as const,
+        label: 'Mission is technically blocked',
+      },
+      allowedActions: ['retry-kickoff', 'stop'] as const,
+    };
+    const engine = installCanonicalEngine(SCOPE_A);
+    engine.snapshot.mockResolvedValueOnce(stoppedSnapshot as never);
+
+    await expect(
+      canonicalHandler(ORCH_CHANNELS.missionCommand)(
+        { sender },
+        { kind: 'stop', missionId: mission.id },
+      ),
+    ).resolves.toEqual(stoppedSnapshot);
+
+    expect(engine.command).not.toHaveBeenCalled();
+    expect(engine.snapshot).toHaveBeenCalledWith(SCOPE_A, mission.id);
+    expect(harness.dialog.showMessageBox).toHaveBeenCalledTimes(1);
+    expect(
+      harness.dialog.showMessageBox.mock.invocationCallOrder[0],
+    ).toBeLessThan(engine.snapshot.mock.invocationCallOrder[0]!);
+  });
+
+  it('does not terminate or snapshot canonical stop before confirmation', async () => {
+    configureRendererMissionAuthority({} as never);
+    const sender = owner(911);
+    harness.scopes.set(sender.id, SCOPE_A);
+    harness.windows.set(sender.id, { isDestroyed: () => false });
+    const mission = {
+      id: 'mission-stop-denied',
+      title: 'Não encerrar',
+      description: 'Permanece em execução.',
+      status: 'running' as const,
+      intentState: 'executing' as const,
+      intentVersion: 2,
+      milestones: [],
+      learnings: '',
+      createdAt: 1,
+      updatedAt: 2,
+    };
+    harness.projectStores.forScope.mockReturnValue({
+      scope: SCOPE_A,
+      missions: {
+        get: (missionId: string) =>
+          missionId === mission.id ? mission : null,
+        list: () => [mission],
+      },
+      missionPanes: { list: () => [] },
+    });
+    const engine = installCanonicalEngine(SCOPE_A);
+    harness.dialog.showMessageBox.mockResolvedValueOnce({ response: 0 });
+
+    await expect(
+      canonicalHandler(ORCH_CHANNELS.missionCommand)(
+        { sender },
+        { kind: 'stop', missionId: mission.id },
+      ),
+    ).rejects.toThrow(/user_denied/i);
+
+    expect(harness.terminatePty).not.toHaveBeenCalled();
+    expect(engine.command).not.toHaveBeenCalled();
+    expect(engine.snapshot).not.toHaveBeenCalled();
+  });
+
+  it('refuses a canonical stopped snapshot when physical exit is not proven', async () => {
+    configureRendererMissionAuthority({} as never);
+    const sender = owner(912);
+    harness.scopes.set(sender.id, SCOPE_A);
+    harness.windows.set(sender.id, { isDestroyed: () => false });
+    let stored = {
+      id: 'mission-stop-proof',
+      title: 'Exigir saída física',
+      description: 'Runtime ainda ativo.',
+      status: 'running' as const,
+      intentState: 'executing' as const,
+      intentVersion: 4,
+      orchestratorSessionId: 'pty-stop-proof',
+      milestones: [],
+      learnings: '',
+      createdAt: 1,
+      updatedAt: 2,
+    };
+    const pane = {
+      id: 'mission-pane-stop-proof',
+      missionId: stored.id,
+      paneId: 'pane-stop-proof',
+      adapterId: 'codex',
+      title: 'Maestro',
+      agentName: 'Maestro',
+      role: 'orchestrator' as const,
+      scope: SCOPE_A,
+      createdAt: 1,
+    };
+    harness.agentSessions.push({
+      sessionId: stored.orchestratorSessionId,
+      paneId: pane.paneId,
+      adapterId: pane.adapterId,
+      cwd: SCOPE_A.rootRealPath,
+      missionId: stored.id,
+      role: 'orchestrator',
+      scope: SCOPE_A,
+    });
+    harness.projectStores.forScope.mockReturnValue({
+      scope: SCOPE_A,
+      missions: {
+        get: (missionId: string) =>
+          missionId === stored.id ? stored : null,
+        list: () => [stored],
+        update: (missionId: string, patch: Record<string, unknown>) => {
+          if (missionId !== stored.id) return null;
+          stored = {
+            ...stored,
+            ...patch,
+            updatedAt: stored.updatedAt + 1,
+          } as typeof stored;
+          return stored;
+        },
+        setOrchestratorSession: (
+          missionId: string,
+          sessionId: string | null,
+        ) => {
+          if (missionId !== stored.id) return null;
+          stored = {
+            ...stored,
+            orchestratorSessionId: sessionId ?? undefined,
+            updatedAt: stored.updatedAt + 1,
+          } as typeof stored;
+          return stored;
+        },
+      },
+      missionPanes: {
+        list: (missionId: string) => (missionId === stored.id ? [pane] : []),
+      },
+    });
+    harness.terminatePty.mockResolvedValueOnce(false);
+    const engine = installCanonicalEngine(SCOPE_A);
+
+    await expect(
+      canonicalHandler(ORCH_CHANNELS.missionCommand)(
+        { sender },
+        { kind: 'stop', missionId: stored.id },
+      ),
+    ).rejects.toThrow(/physical|saída|prova|teardown/i);
+
+    expect(harness.terminatePty).toHaveBeenCalledWith('pty-stop-proof');
+    expect(engine.snapshot).not.toHaveBeenCalled();
+    expect(stored.status).toBe('blocked');
+    expect(stored.orchestratorSessionId).toBe('pty-stop-proof');
+  });
+
   it.each(operations())(
     '%s rejects dead, crashed, and unscoped renderers',
     async (channel, payload) => {
@@ -1223,6 +1478,17 @@ describe('canonical MissionEngine IPC boundary', () => {
     [
       ORCH_CHANNELS.missionCommand,
       { ...command, intentState: 'approved' },
+      'command',
+    ],
+    [
+      ORCH_CHANNELS.missionCommand,
+      {
+        kind: 'direct',
+        missionId: 'mission-canonical',
+        targetAgentId: null,
+        text: 'Continue.',
+        sessionId: 'renderer-forged',
+      },
       'command',
     ],
     [ORCH_CHANNELS.missionSnapshot, '', 'snapshot'],

@@ -114,6 +114,64 @@ export type MissionExecutionMode = z.infer<typeof missionExecutionModeSchema>;
 export const missionLaneSchema = z.enum(['standard', 'consult', 'plan', 'ops']);
 export type MissionLane = z.infer<typeof missionLaneSchema>;
 
+const READ_ONLY_LANE_TOOLS = ['Read'] as const;
+const OPS_LANE_TOOLS = ['Bash', 'Read'] as const;
+const STANDARD_EXECUTOR_TOOLS = ['Bash', 'Read', 'Edit'] as const;
+
+/**
+ * Canonical maximum tool grant for a mission lane and roster role.
+ * Unknown future worker categories inherit the restricted worker policy.
+ */
+export function missionLaneMaximumTools(
+  lane: MissionLane,
+  category: string,
+): readonly string[] | null {
+  if (lane === 'consult' || lane === 'plan') return READ_ONLY_LANE_TOOLS;
+  if (lane === 'ops') return OPS_LANE_TOOLS;
+  if (category === 'orchestrator') return null;
+  return category === 'executor'
+    ? STANDARD_EXECUTOR_TOOLS
+    : OPS_LANE_TOOLS;
+}
+
+export function missionLaneDefaultTools(
+  lane: MissionLane,
+  category: string,
+): string[] | null {
+  const maximum = missionLaneMaximumTools(lane, category);
+  return maximum === null ? null : [...maximum];
+}
+
+export function clampMissionLaneTools(
+  lane: MissionLane,
+  category: string,
+  granted: readonly string[] | null | undefined,
+): string[] | null | undefined {
+  const maximum = missionLaneMaximumTools(lane, category);
+  if (maximum === null) {
+    return granted === undefined
+      ? undefined
+      : granted === null
+        ? null
+        : [...granted];
+  }
+  if (lane === 'consult' || lane === 'plan' || granted == null) {
+    return [...maximum];
+  }
+  return maximum.filter((tool) => granted.includes(tool));
+}
+
+export function missionLaneAllowsTools(
+  lane: MissionLane,
+  category: string,
+  granted: readonly string[] | null | undefined,
+): boolean {
+  const maximum = missionLaneMaximumTools(lane, category);
+  if (maximum === null) return true;
+  if (granted == null) return false;
+  return granted.every((tool) => maximum.includes(tool));
+}
+
 export const missionContextPolicySchema = z.enum([
   'none',
   'minimal',
@@ -217,6 +275,32 @@ export const promotedPlanSnapshotSchema = z
   .strict();
 export type PromotedPlanSnapshot = z.infer<typeof promotedPlanSnapshotSchema>;
 
+export const MISSION_INTENT_GOAL_MAX_CHARS = 16_384;
+
+export const missionProjectContextPathSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(4_096)
+  .refine((value) => {
+    if (
+      value.includes('\0') ||
+      value.startsWith('/') ||
+      value.startsWith('\\') ||
+      value === '~' ||
+      value.startsWith('~/') ||
+      value.startsWith('~\\') ||
+      /^[A-Za-z][A-Za-z0-9+.-]*:/u.test(value)
+    ) {
+      return false;
+    }
+    return value
+      .replaceAll('\\', '/')
+      .split('/')
+      .every((segment) => segment.length > 0 && segment !== '.' && segment !== '..');
+  }, 'context path must be project-relative')
+  .transform((value) => value.replaceAll('\\', '/'));
+
 export const missionIntentContractSchema = z.object({
   version: z.literal(1),
   source: missionIntentSourceSchema,
@@ -224,7 +308,7 @@ export const missionIntentContractSchema = z.object({
   // `trim()`. Canonicalize them at the approval boundary too so a bounded
   // truncation that lands on whitespace cannot make the freshly frozen
   // contract look stale after the one native approval.
-  goal: z.string().trim().min(1).max(16_384),
+  goal: z.string().trim().min(1).max(MISSION_INTENT_GOAL_MAX_CHARS),
   acceptanceCriteria: z
     .array(z.string().trim().min(1).max(2_048))
     .max(32),
@@ -250,6 +334,8 @@ export const missionIntentContractSchema = z.object({
   /** Declared fan-out template that seeded wavePackStories (Landing / SaaS / Fix). */
   wavePackTemplateId: wavePackTemplateIdSchema.optional(),
   contextPolicy: missionContextPolicySchema,
+  /** Operator-selected project files/references, always root-relative. */
+  contextPaths: z.array(missionProjectContextPathSchema).max(64).optional(),
   approvedAt: z.number().int().nonnegative().optional(),
   /**
    * Main-owned SHA-256 receipt for the complete authority review accepted in
@@ -646,6 +732,7 @@ export function compileIntentContract(input: {
   executionMode?: MissionExecutionMode;
   contextPolicy?: MissionContextPolicy;
   acceptanceCriteria?: string[];
+  contextPaths?: string[];
   /** Explicit delivery lane; default standard (code PREVC). */
   lane?: MissionLane;
   /** Operator override Livre / Pack / Guiado. */
@@ -723,6 +810,7 @@ export function compileIntentContract(input: {
       ? { wavePackStories: [...wavePackStories] }
       : {}),
     contextPolicy: input.contextPolicy ?? 'on-demand',
+    ...(input.contextPaths ? { contextPaths: [...input.contextPaths] } : {}),
     intentVersion: input.intentVersion,
     budgets,
   });

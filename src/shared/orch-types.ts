@@ -32,6 +32,8 @@ export const agentCategorySchema = z.enum([
 ]);
 export type AgentCategory = z.infer<typeof agentCategorySchema>;
 
+export const SQUAD_AGENT_INSTRUCTIONS_MAX_CHARS = 4_096;
+
 const INVISIBLE_AUTHORITY_CONTROL_RE =
   /[\0-\x08\x0b\x0c\x0e-\x1f\x7f\u202a-\u202e\u2066-\u2069]/u;
 
@@ -84,6 +86,20 @@ export const squadAgentObjectSchema = z.object({
     .min(1)
     .max(32)
     .regex(/^[A-Za-z0-9_-]+$/)
+    .optional(),
+  /**
+   * Operator-owned context for this role. This is prompt context only:
+   * capability and authority remain exclusively in allowedTools/allowedSkills
+   * plus the main-owned execution contract.
+   */
+  instructions: authorityString(
+    SQUAD_AGENT_INSTRUCTIONS_MAX_CHARS,
+    'agent instructions',
+    1,
+  )
+    .refine((value) => value.trim().length > 0, {
+      message: 'agent instructions cannot be blank',
+    })
     .optional(),
   /**
    * Explicit planning-document authority: this roster member authors the

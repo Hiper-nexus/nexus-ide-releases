@@ -167,6 +167,18 @@ describe('guided Main-owned PREVC kickoff', () => {
     expect(prompt).toMatch(/depois de TODOS os ACKs[\s\S]*## Maestro/i);
     expect(prompt).toMatch(/nexus_mission_set_status[\s\S]*status:"done"/i);
   });
+  it('carries operator-selected project files separately from external attachments', () => {
+    const prompt = guidedPrompt({
+      contextPaths: ['src/checkout.ts', 'src/checkout.test.ts'],
+      attachmentPaths: ['/Users/test/.nexus/dropped/brief.pdf'],
+    });
+
+    expect(prompt).toContain('## Arquivos do projeto escolhidos pelo operador');
+    expect(prompt).toContain('- src/checkout.ts');
+    expect(prompt).toContain('## Anexos validados pelo Nexus');
+    expect(prompt).toContain('- /Users/test/.nexus/dropped/brief.pdf');
+  });
+
 });
 
 describe('escada de fontes de design no kickoff', () => {

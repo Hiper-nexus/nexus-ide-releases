@@ -2,10 +2,15 @@
  * Pure helpers for operator-driven roster growth/shrink on Mission REVISAR.
  * Keeps MissionWizard free of more imperative bulk; unit-testable without React.
  */
-import type { AdapterInfo } from '../../shared/types';
+import { adapterCapabilityMatrixOf } from '../../shared/adapter-types';
+import {
+  missionLaneDefaultTools,
+  type MissionLane,
+} from '../../shared/mission-intent';
+import { classifyWorkKind, type WorkKind } from '../../shared/mission-work-kind';
 import type { SquadAgent } from '../../shared/orch-types';
 import type { ProviderSettingsInfo } from '../../shared/provider-settings-types';
-import { adapterCapabilityMatrixOf } from '../../shared/adapter-types';
+import type { AdapterInfo } from '../../shared/types';
 
 export type CustomizableWorkerCategory = Extract<
   SquadAgent['category'],
@@ -13,6 +18,176 @@ export type CustomizableWorkerCategory = Extract<
 >;
 
 export const MISSION_ROSTER_MAX_AGENTS = 12;
+export interface RecommendedMissionRole {
+  readonly id: string;
+  readonly agentName: string;
+  readonly category: SquadAgent['category'];
+  readonly allowedTools: string[] | null;
+}
+
+type RecommendedMissionRoleIdentity = Omit<
+  RecommendedMissionRole,
+  'allowedTools'
+>;
+
+function applyLaneToolPolicy(
+  lane: MissionLane,
+  roles: readonly RecommendedMissionRoleIdentity[],
+): RecommendedMissionRole[] {
+  return roles.map((role) => ({
+    ...role,
+    allowedTools: missionLaneDefaultTools(lane, role.category),
+  }));
+}
+
+function scopedRoleName(
+  lane: MissionLane,
+  kind: WorkKind,
+): string {
+  if (lane === 'consult') {
+    switch (kind) {
+      case 'bug':
+        return 'Investigar reprodução';
+      case 'visual':
+        return 'Auditar interface';
+      case 'doc':
+        return 'Levantar fontes';
+      case 'ops':
+        return 'Mapear operação';
+      case 'feature':
+        return 'Mapear solução';
+      default:
+        return 'Investigar contexto';
+    }
+  }
+  if (lane === 'plan') {
+    switch (kind) {
+      case 'bug':
+        return 'Planejar correção';
+      case 'visual':
+        return 'Planejar experiência';
+      case 'doc':
+        return 'Estruturar documentação';
+      case 'ops':
+        return 'Planejar operação';
+      case 'feature':
+        return 'Desenhar solução';
+      default:
+        return 'Desenhar abordagem';
+    }
+  }
+  if (lane === 'ops') {
+    return kind === 'ops' ? 'Executar operação' : 'Executar procedimento';
+  }
+  switch (kind) {
+    case 'bug':
+      return 'Verificar regressão';
+    case 'visual':
+      return 'Verificar experiência';
+    case 'doc':
+      return 'Verificar referências';
+    case 'ops':
+      return 'Verificar operação';
+    default:
+      return 'Verificar o resultado';
+  }
+}
+
+/**
+ * Stable, human-readable minimum roster for the selected delivery lane.
+ * Objective classification may refine one visible role name, never its id or
+ * capability boundary.
+ */
+export function recommendMissionRosterRoles(input: {
+  readonly objective: string;
+  readonly lane: MissionLane;
+}): RecommendedMissionRole[] {
+  const scopedName = scopedRoleName(
+    input.lane,
+    classifyWorkKind(input.objective).kind,
+  );
+  switch (input.lane) {
+    case 'consult':
+      return applyLaneToolPolicy(input.lane, [
+        {
+          id: 'mission-coordinator',
+          agentName: 'Coordenar consulta',
+          category: 'orchestrator',
+        },
+        {
+          id: 'consult-scout',
+          agentName: scopedName,
+          category: 'scout',
+        },
+        {
+          id: 'consult-reviewer',
+          agentName: 'Sintetizar recomendações',
+          category: 'reviewer',
+        },
+      ]);
+    case 'plan':
+      return applyLaneToolPolicy(input.lane, [
+        {
+          id: 'mission-coordinator',
+          agentName: 'Coordenar planejamento',
+          category: 'orchestrator',
+        },
+        {
+          id: 'plan-architect',
+          agentName: scopedName,
+          category: 'architect',
+        },
+        {
+          id: 'plan-reviewer',
+          agentName: 'Revisar o plano',
+          category: 'reviewer',
+        },
+      ]);
+    case 'ops':
+      return applyLaneToolPolicy(input.lane, [
+        {
+          id: 'mission-coordinator',
+          agentName: 'Coordenar operação',
+          category: 'orchestrator',
+        },
+        {
+          id: 'ops-operator',
+          agentName: scopedName,
+          category: 'executor',
+        },
+        {
+          id: 'ops-reviewer',
+          agentName: 'Verificar operação',
+          category: 'reviewer',
+        },
+      ]);
+    case 'standard':
+    default:
+      return applyLaneToolPolicy(input.lane, [
+        {
+          id: 'mission-coordinator',
+          agentName: 'Coordenar e revisar',
+          category: 'orchestrator',
+        },
+        {
+          id: 'interface-executor',
+          agentName: 'Implementar interface',
+          category: 'executor',
+        },
+        {
+          id: 'engine-executor',
+          agentName: 'Implementar motor',
+          category: 'executor',
+        },
+        {
+          id: 'result-reviewer',
+          agentName: scopedName,
+          category: 'reviewer',
+        },
+      ]);
+  }
+}
+
 
 export function listCustomAgentCliCandidates(
   adapters: readonly AdapterInfo[],
@@ -34,6 +209,7 @@ export function listCustomAgentCliCandidates(
 
 export function buildCustomRosterAgent(input: {
   readonly category: CustomizableWorkerCategory;
+  readonly lane: MissionLane;
   readonly roster: readonly SquadAgent[];
   readonly adapters: readonly AdapterInfo[];
   readonly providers: readonly ProviderSettingsInfo[];
@@ -87,10 +263,7 @@ export function buildCustomRosterAgent(input: {
       cli: adapter.id,
       model,
       effort: 'medium',
-      allowedTools:
-        input.category === 'executor'
-          ? ['Bash', 'Read', 'Edit']
-          : ['Bash', 'Read'],
+      allowedTools: missionLaneDefaultTools(input.lane, input.category),
       allowedSkills: [],
     },
   };

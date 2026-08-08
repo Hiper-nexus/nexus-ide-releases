@@ -769,6 +769,7 @@ export function buildCanonicalMissionKickoffPrompt(
     risk: contract.risk,
     maxWorkers: contract.budgets.maxWorkers,
     lane: contract.lane ?? 'standard',
+    contextPaths: contract.contextPaths,
     attachmentPaths: contract.attachmentPaths,
     compactMemoryMarkdown: missionCompactHasProgress(compactMemory)
       ? renderMissionCompact(compactMemory)

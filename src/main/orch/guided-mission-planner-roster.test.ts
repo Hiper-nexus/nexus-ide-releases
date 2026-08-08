@@ -94,6 +94,40 @@ describe("Guided Planner v2", () => {
     );
   });
 
+  it("binds each sealed task prompt to the exact selected roster agent instructions", () => {
+    const roleAwareSquad: Squad = {
+      ...squad,
+      agents: squad.agents.map((agent) => ({
+        ...agent,
+        instructions: `contexto-exato-${agent.id}`,
+      })),
+    };
+    const h = harness({
+      currentMission: missionForSquad(roleAwareSquad),
+      liveSquad: roleAwareSquad,
+      squadCliPolicy: "governed",
+    });
+
+    expect(
+      ensureGuidedMissionPlan(h.suite, "mission-guided", h.deps),
+    ).toMatchObject({ applicable: true, sealed: true });
+    const rows = h.createPlanAtomically.mock.calls[0]![0].rows;
+    for (const row of rows) {
+      const selected = roleAwareSquad.agents.find(
+        (agent) => agent.id === row.agentRef,
+      );
+      if (!selected?.instructions) {
+        throw new Error(`missing selected role context for ${row.agentRef}`);
+      }
+      const detail = decodeTaskScheduleDetail(row.detail).body;
+      expect(detail).toContain(selected.instructions);
+      for (const other of roleAwareSquad.agents) {
+        if (!other.instructions || other.id === selected.id) continue;
+        expect(detail).not.toContain(other.instructions);
+      }
+    }
+  });
+
   it("uses the combined sealed-detail budget instead of a smaller prompt-only cap", () => {
     const h = harness({ currentMission: denseUiMission() });
 

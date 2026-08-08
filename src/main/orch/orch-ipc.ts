@@ -10,6 +10,7 @@ import {
   missionReviewSchema,
   missionSnapshotSchema,
   missionSummarySnapshotSchema,
+  type MissionEngineCommand,
 } from "../../shared/mission-engine-contract";
 import type { ProjectExecutionScope } from "../../shared/types";
 import {
@@ -77,6 +78,7 @@ import {
   listAgentSessions,
   orchWriteSession,
 } from '../pty/pty-manager';
+import { assertSafePtyPrompt } from "./pty-prompt-safety";
 import {
   RendererMissionAuthority,
   type RendererMissionAuthorityCandidate,
@@ -1809,6 +1811,102 @@ export async function closeOrchestration(): Promise<void> {
   }
 }
 
+type AnswerQuestionCommand = Extract<
+  MissionEngineCommand,
+  { readonly kind: "answer-question" }
+>;
+type ClarifyAnswerInput = Parameters<
+  typeof prepareClarifyAnswerAuthorityCandidate
+>[2];
+
+function clarifyAnswerInputFromCommand(
+  command: AnswerQuestionCommand,
+): ClarifyAnswerInput {
+  const answer = command.optionId ?? command.text;
+  if (!answer) {
+    throw new Error("canonical clarify answer is absent");
+  }
+  return {
+    missionId: command.missionId,
+    questionId: command.questionId,
+    answer,
+  };
+}
+
+async function runOperatorClarifyAnswer(
+  owner: WebContents,
+  scope: ProjectExecutionScope,
+  stores: ProjectDomainStoreSuite,
+  rawInput: ClarifyAnswerInput,
+) {
+  const candidate = prepareClarifyAnswerAuthorityCandidate(
+    stores,
+    scope,
+    rawInput,
+  );
+  if (!(await confirmClarifyAnswer(owner, scope, candidate))) {
+    throw new Error("user_denied");
+  }
+  requireLiveRendererWorkspaceScope(owner, scope);
+  return persistClarifyAnswer(
+    stores,
+    scope,
+    rawInput,
+    candidate.fence,
+  );
+}
+
+async function runOperatorMissionStop(
+  owner: WebContents,
+  scope: ProjectExecutionScope,
+  suite: ProjectDomainStoreSuite,
+  missionId: string,
+) {
+  if (!suite.missions.get(missionId)) {
+    return withMissionLifecycleLock(scope, missionId, () => {
+      requireLiveRendererWorkspaceScope(owner, scope);
+      // A stale renderer leaf remains physically reconcilable after its
+      // durable row disappears, but not if that row reappears under the lock.
+      if (suite.missions.get(missionId)) {
+        return {
+          ok: false,
+          terminatedSessionIds: [],
+          error:
+            "A missão reapareceu durante a reconciliação. Tente encerrar novamente.",
+        };
+      }
+      return closeOrphanedMissionRuntime({ scope, missionId });
+    });
+  }
+  const candidate = prepareMissionRuntimeTermination({
+    scope,
+    suite,
+    missionId,
+    reason: "operator-close",
+  });
+  if (!(await confirmMissionRuntimeClose(owner, scope, candidate))) {
+    return {
+      ok: false,
+      cancelled: true,
+      terminatedSessionIds: [],
+    };
+  }
+  return withMissionLifecycleLock(scope, missionId, () => {
+    requireLiveRendererWorkspaceScope(owner, scope);
+    if (!suite.missions.get(missionId)) {
+      return closeOrphanedMissionRuntime({ scope, missionId });
+    }
+    // Re-derive the physical inventory under the recovery/bootstrap mutex.
+    // closeMissionRuntimePreservingHistory durably blocks before its first
+    // await and resolves ok only with physical-exit proof.
+    return closeMissionRuntimePreservingHistory({
+      scope,
+      suite,
+      missionId,
+    });
+  });
+}
+
 export function registerOrchIpc(): void {
   ipcMain.handle(ORCH_CHANNELS.paneOperatorInput, (event, raw): boolean => {
     const parsed = paneOperatorInputSchema.safeParse(raw);
@@ -1892,8 +1990,52 @@ export function registerOrchIpc(): void {
     return missionSnapshotSchema.parse(snapshot);
   });
   ipcMain.handle(ORCH_CHANNELS.missionCommand, async (event, raw) => {
+    const rawDirect = raw as {
+      readonly kind?: unknown;
+      readonly text?: unknown;
+    };
+    if (rawDirect?.kind === "direct" && typeof rawDirect.text === "string") {
+      assertSafePtyPrompt(rawDirect.text);
+    }
     const command = missionEngineCommandSchema.parse(raw);
     const scope = requireLiveRendererWorkspaceScope(event.sender);
+    if (command.kind === "answer-question") {
+      const stores = requireProjectStores(event.sender);
+      await runOperatorClarifyAnswer(
+        event.sender,
+        scope,
+        stores,
+        clarifyAnswerInputFromCommand(command),
+      );
+      const snapshot = await missionEngineForScope(scope).snapshot(
+        scope,
+        command.missionId,
+      );
+      return missionSnapshotSchema.parse(snapshot);
+    }
+    if (command.kind === "stop") {
+      const result = await runOperatorMissionStop(
+        event.sender,
+        scope,
+        requireProjectStores(event.sender),
+        command.missionId,
+      );
+      if (!result.ok) {
+        if ("cancelled" in result && result.cancelled === true) {
+          throw new Error("user_denied");
+        }
+        const error =
+          "error" in result && typeof result.error === "string"
+            ? result.error
+            : "mission runtime did not provide physical exit proof";
+        throw new Error(error);
+      }
+      const snapshot = await missionEngineForScope(scope).snapshot(
+        scope,
+        command.missionId,
+      );
+      return missionSnapshotSchema.parse(snapshot);
+    }
     const snapshot = await missionEngineForScope(scope).command(scope, command);
     return missionSnapshotSchema.parse(snapshot);
   });
@@ -2492,64 +2634,11 @@ export function registerOrchIpc(): void {
       throw new Error("invalid mission close runtime payload");
     }
     const scope = requireLiveRendererWorkspaceScope(event.sender);
-    const suite = requireProjectStores(event.sender);
-    const missionId = parsed.data.missionId;
-    if (!suite.missions.get(missionId)) {
-      return withMissionLifecycleLock(scope, missionId, () => {
-        requireLiveRendererWorkspaceScope(event.sender, scope);
-        // A stale renderer leaf must remain closable after its durable mission
-        // row disappeared. Re-authorize under the lifecycle mutex so this
-        // idempotent cleanup cannot race a concurrent mission restoration.
-        if (suite.missions.get(missionId)) {
-          return {
-            ok: false,
-            terminatedSessionIds: [],
-            error:
-              'A missão reapareceu durante a reconciliação. Tente encerrar novamente.',
-          };
-        }
-        return closeOrphanedMissionRuntime({ scope, missionId });
-      });
-    }
-    const candidate = prepareMissionRuntimeTermination({
-      scope,
-      suite,
-      missionId,
-      reason: 'operator-close',
-    });
-    const approved = await confirmMissionRuntimeClose(
+    return runOperatorMissionStop(
       event.sender,
       scope,
-      candidate,
-    );
-    if (!approved) {
-      return {
-        ok: false,
-        cancelled: true,
-        terminatedSessionIds: [],
-      };
-    }
-    return withMissionLifecycleLock(
-      scope,
-      missionId,
-      () => {
-        requireLiveRendererWorkspaceScope(event.sender, scope);
-        if (!suite.missions.get(missionId)) {
-          // The operator already approved this exact mission before the row
-          // disappeared. Finish its scoped physical/visual cleanup rather than
-          // returning a permanent "mission not found" loop.
-          return closeOrphanedMissionRuntime({ scope, missionId });
-        }
-        // O operador aprova ENCERRAR ESTA MISSÃO, não o inventário de sessões
-        // mostrado no modal. Sob o mesmo lock de recovery/bootstrap, rederive
-        // o inventário físico e grave blocked_user antes do primeiro await.
-        // Assim um retry já enfileirado não pode relançar o PTY depois do stop.
-        return closeMissionRuntimePreservingHistory({
-          scope,
-          suite,
-          missionId,
-        });
-      },
+      requireProjectStores(event.sender),
+      parsed.data.missionId,
     );
   });
 
@@ -2619,13 +2708,12 @@ export function registerOrchIpc(): void {
   );
   ipcMain.handle(ORCH_CHANNELS.clarifyAnswerSubmit, async (event, raw) => {
     const scope = requireLiveRendererWorkspaceScope(event.sender);
-    const stores = requireProjectStores(event.sender);
-    const candidate = prepareClarifyAnswerAuthorityCandidate(stores, scope, raw);
-    if (!(await confirmClarifyAnswer(event.sender, scope, candidate))) {
-      throw new Error('user_denied');
-    }
-    requireLiveRendererWorkspaceScope(event.sender, scope);
-    return persistClarifyAnswer(stores, scope, raw, candidate.fence);
+    return runOperatorClarifyAnswer(
+      event.sender,
+      scope,
+      requireProjectStores(event.sender),
+      raw,
+    );
   });
   ipcMain.handle(ORCH_CHANNELS.operatorReviewSubmit, async (event, raw) => {
     const scope = requireLiveRendererWorkspaceScope(event.sender);

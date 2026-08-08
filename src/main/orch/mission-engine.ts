@@ -160,6 +160,9 @@ export interface MainMissionEnginePorts {
     armed: MissionArmResult,
   ) => Promise<MissionCompilation>;
   readonly persistReviewFence: (fence: MissionReviewFence) => Promise<void>;
+  readonly discardUnfencedPreparation: (
+    armed: Pick<MissionArmResult, 'missionId' | 'createdAt'>,
+  ) => Promise<boolean>;
   readonly readReviewFence: (
     missionId: string,
   ) => Promise<MissionReviewFence | null>;
@@ -184,6 +187,7 @@ const REQUIRED_PORTS = [
   'arm',
   'compile',
   'persistReviewFence',
+  'discardUnfencedPreparation',
   'readReviewFence',
   'seal',
   'bootstrap',
@@ -270,27 +274,42 @@ export class MainMissionEngine implements MissionEngine {
     const armed = missionArmResultSchema.parse(
       await this.#ports.arm(safeRequest),
     );
-    const compiled = missionCompilationSchema.parse(
-      await this.#ports.compile(safeRequest, armed),
-    );
-    const payload = missionReviewPayloadSchema.parse({
-      ...armed,
-      ...compiled,
-      contextPaths: rootRelativeContextPathsSchema.parse(compiled.contextPaths),
-    });
-    const review = missionReviewSchema.parse({
-      ...payload,
-      reviewSha256: createHash('sha256')
-        .update(canonicalJson(payload))
-        .digest('hex'),
-    });
-    const fence = missionReviewFenceSchema.parse({
-      missionId: review.missionId,
-      reviewSha256: review.reviewSha256,
-    });
+    try {
+      const compiled = missionCompilationSchema.parse(
+        await this.#ports.compile(safeRequest, armed),
+      );
+      const payload = missionReviewPayloadSchema.parse({
+        ...armed,
+        ...compiled,
+        contextPaths: rootRelativeContextPathsSchema.parse(compiled.contextPaths),
+      });
+      const review = missionReviewSchema.parse({
+        ...payload,
+        reviewSha256: createHash('sha256')
+          .update(canonicalJson(payload))
+          .digest('hex'),
+      });
+      const fence = missionReviewFenceSchema.parse({
+        missionId: review.missionId,
+        reviewSha256: review.reviewSha256,
+      });
 
-    await this.#ports.persistReviewFence(fence);
-    return review;
+      await this.#ports.persistReviewFence(fence);
+      return review;
+    } catch (error) {
+      try {
+        await this.#ports.discardUnfencedPreparation({
+          missionId: armed.missionId,
+          createdAt: armed.createdAt,
+        });
+      } catch (rollbackError) {
+        console.warn(
+          `[mission-engine] failed to discard unfenced preparation ${armed.missionId}:`,
+          rollbackError,
+        );
+      }
+      throw error;
+    }
   }
 
   async start(

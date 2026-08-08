@@ -1040,6 +1040,7 @@ export function MissionWizard() {
   function addAgent(category: CustomizableWorkerCategory): void {
     const built = buildCustomRosterAgent({
       category,
+      lane: missionLane,
       roster,
       adapters,
       providers,

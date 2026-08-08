@@ -129,6 +129,8 @@ export interface IntentDispatchKickoffInput {
   readonly acceptanceCriteria: readonly string[];
   readonly risk: string;
   readonly maxWorkers: number;
+  /** Operator-selected files inside the approved project root. */
+  readonly contextPaths?: readonly string[];
   /** Canonical paths validated by main under ~/.nexus/dropped. */
   readonly attachmentPaths?: readonly string[];
   /** Optional compact memory block (mission ledger) — never a full playbook. */
@@ -294,6 +296,32 @@ function standardLimitLines(input: IntentDispatchKickoffInput): string[] {
   return lines;
 }
 
+function approvedContextBlocks(
+  input: Pick<
+    IntentDispatchKickoffInput,
+    'contextPaths' | 'attachmentPaths'
+  >,
+): string[] {
+  const projectContext =
+    input.contextPaths && input.contextPaths.length > 0
+      ? [
+          '',
+          '## Arquivos do projeto escolhidos pelo operador',
+          ...input.contextPaths.map((contextPath) => `- ${contextPath}`),
+        ]
+      : [];
+  const attachments =
+    input.attachmentPaths && input.attachmentPaths.length > 0
+      ? [
+          '',
+          '## Anexos validados pelo Nexus',
+          'Consulte estes arquivos durante a missão:',
+          ...input.attachmentPaths.map((attachmentPath) => `- ${attachmentPath}`),
+        ]
+      : [];
+  return [...projectContext, ...attachments, ...(attachments.length ? [''] : [])];
+}
+
 function buildTeamRoundtableKickoffPrompt(
   input: IntentDispatchKickoffInput,
   headingTitle: string,
@@ -306,14 +334,7 @@ function buildTeamRoundtableKickoffPrompt(
           '- Cada especialista despachado responde ao objetivo e entrega seu handoff.',
           '- O Maestro identifica sua própria perspectiva na consolidação final.',
         ].join('\n');
-  const attachments =
-    input.attachmentPaths && input.attachmentPaths.length > 0
-      ? [
-          '',
-          '## Anexos validados pelo Nexus',
-          ...input.attachmentPaths.map((attachmentPath) => `- ${attachmentPath}`),
-        ]
-      : [];
+  const attachments = approvedContextBlocks(input);
   const compactMemory =
     input.compactMemoryMarkdown?.trim()
       ? ['', input.compactMemoryMarkdown.trim()]
@@ -371,16 +392,7 @@ export function buildIntentDispatchKickoffPrompt(
     input.compactMemoryMarkdown && input.compactMemoryMarkdown.trim()
       ? ['', input.compactMemoryMarkdown.trim(), '']
       : [''];
-  const attachments =
-    input.attachmentPaths && input.attachmentPaths.length > 0
-      ? [
-          '',
-          '## Anexos validados pelo Nexus',
-          'Consulte estes arquivos durante a missão:',
-          ...input.attachmentPaths.map((attachmentPath) => `- ${attachmentPath}`),
-          '',
-        ]
-      : [];
+  const attachments = approvedContextBlocks(input);
   const lane = input.lane ?? 'standard';
   // Autopilot libre = short paste (Autopilot libre). Hardened keeps the long form.
   const leanAutopilot = input.operatorChoice !== false;

@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
+import { z } from 'zod';
 import type { Db } from '../persistence/db';
 import type { Squad, SquadAgent } from '../../shared/orch-types';
 import {
@@ -131,6 +132,7 @@ export function normalizeEphemeralSquadCandidate(raw: unknown): Squad {
 function assertManagedSavePolicy(
   parsed: Squad,
   authority: 'global' | 'mission-runtime' = 'global',
+  preserveExplicitRoster = false,
 ): Squad {
   if (parsed.id === PET_STUDIO_SQUAD_ID) {
     // Pet Studio is app-managed and repaired to the immutable canonical
@@ -165,7 +167,9 @@ function assertManagedSavePolicy(
   ) {
     throw new Error('mission runtime squad requires exact main-owned lineage');
   }
-  return normalizeUserSquad(parsed);
+  return preserveExplicitRoster
+    ? { ...parsed, builtin: false }
+    : normalizeUserSquad(parsed);
 }
 
 function assertExpectedTargetUnchanged(
@@ -551,7 +555,11 @@ export function prepareMissionRuntimeSquadSave(
           ...parsed,
           agents: withGuidedSkillDefaults(parsed.agents, sourceSquad.agents),
         };
-  const squad = assertManagedSavePolicy(governed, 'mission-runtime');
+  const squad = assertManagedSavePolicy(
+    governed,
+    'mission-runtime',
+    sourceAuthority === 'ephemeral' && !guided,
+  );
   const canonicalJson = canonicalSquadJson(squad);
   const candidate = Object.freeze({
     squad,
@@ -656,6 +664,41 @@ export function deleteSquad(id: string): boolean {
   hub.emit();
   return true;
 }
+/**
+ * Main-only rollback for a runtime squad whose owning preparation row was
+ * removed by exact CAS before review authority was fenced. The expected hash
+ * prevents a stale preparation from deleting a later squad revision. Callers
+ * must prove the owning mission no longer exists before invoking this.
+ */
+export function discardMissionRuntimeSquadIfUnchanged(
+  rawId: string,
+  rawExpectedHash: string,
+): boolean {
+  const id = z.string().min(1).max(128).parse(rawId);
+  const expectedHash = z
+    .string()
+    .regex(/^[a-f0-9]{64}$/u)
+    .parse(rawExpectedHash);
+  if (!isMissionRuntimeSquadId(id)) return false;
+  const current = squads.get(id);
+  if (
+    !current ||
+    current.builtin ||
+    snapshotSquadAuthority(current).hash !== expectedHash
+  ) {
+    return false;
+  }
+  const database = requireWritableDb();
+  try {
+    database.prepare('DELETE FROM squads WHERE id = ?').run(id);
+  } catch (error) {
+    failPersistence('delete', error);
+  }
+  squads.delete(id);
+  hub.emit();
+  return true;
+}
+
 
 /**
  * The exact set of provider CLIs a squad's roster authorizes. Empty when the

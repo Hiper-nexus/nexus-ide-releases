@@ -12,6 +12,7 @@ import {
   applyPreparedSquadSave,
   applyPreparedSquadsImport,
   deleteSquad,
+  discardMissionRuntimeSquadIfUnchanged,
   exportSquadsJson,
   getSquad,
   importSquadsJson,
@@ -349,6 +350,20 @@ describe('squad-store save path', () => {
     const exported = JSON.parse(exportSquadsJson()) as { squads: Squad[] };
     expect(exported.squads.some((squad) => squad.id === runtime.id)).toBe(false);
     expect(exported.squads.some((squad) => squad.id === source.id)).toBe(true);
+    expect(
+      discardMissionRuntimeSquadIfUnchanged(runtime.id, '0'.repeat(64)),
+    ).toBe(false);
+    expect(getSquad(runtime.id)).not.toBeNull();
+    expect(
+      discardMissionRuntimeSquadIfUnchanged(
+        runtime.id,
+        snapshotSquadAuthority(saved).hash,
+      ),
+    ).toBe(true);
+    expect(getSquad(runtime.id)).toBeNull();
+    expect(
+      db.prepare('SELECT id FROM squads WHERE id = ?').get(runtime.id),
+    ).toBeUndefined();
   });
 
   it('recomputes guided draft skills before sealing the runtime snapshot', () => {
@@ -428,6 +443,52 @@ describe('squad-store save path', () => {
             : agent.allowedTools?.length === 0,
         ),
     ).toBe(true);
+  });
+
+  it('preserves an operator-reviewed ephemeral roster without guided rewriting', () => {
+    const source: Squad = {
+      id: 'custom-mission-setup-source',
+      name: 'Equipe escolhida',
+      createdAt: '1',
+      builtin: false,
+      orchestratorInstructions: 'Coordene a missão aprovada.',
+      agents: [
+        {
+          id: 'orch',
+          agentName: 'Maestro',
+          category: 'orchestrator',
+          cli: 'codex',
+          allowedTools: ['nexus_task'],
+          allowedSkills: ['check-work'],
+        },
+        {
+          id: 'worker',
+          agentName: 'Implementador',
+          category: 'executor',
+          cli: 'codex',
+          allowedTools: ['Read', 'Edit'],
+          allowedSkills: ['ponytail'],
+        },
+      ],
+    };
+    const prepared = prepareMissionRuntimeSquadSave(
+      {
+        ...source,
+        id: 'agentic-runtime-123e4567-e89b-42d3-a456-426614174009',
+        runtimeSourceSquadId: source.id,
+        runtimeSourceSquadRevisionHash: snapshotSquadAuthority(source).hash,
+        agents: source.agents.map((agent) => ({ ...agent })),
+      },
+      source,
+      false,
+      'ephemeral',
+    );
+
+    expect(prepared.squad.agents).toEqual(source.agents);
+    expect(prepared.snapshot.agents.map((agent) => agent.allowedTools)).toEqual([
+      ['nexus_task'],
+      ['Read', 'Edit'],
+    ]);
   });
 
   it('sela o piso de skills main-owned quando o roster recebido não declara nenhum', () => {

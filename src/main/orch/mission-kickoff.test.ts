@@ -185,6 +185,7 @@ describe('main-owned mission kickoff acceptance', () => {
       goal: 'Entregar exatamente o contrato aprovado',
       acceptanceCriteria: ['Handoff aceito com prova'],
       intentVersion: 1,
+      contextPaths: ['src/checkout.ts', 'src/checkout.test.ts'],
     });
     const mission: Mission = {
       id: 'mission-a',
@@ -211,6 +212,8 @@ describe('main-owned mission kickoff acceptance', () => {
     expect(prompt).toContain('Entregar exatamente o contrato aprovado');
     expect(prompt).toContain('Handoff aceito com prova');
     expect(prompt).toContain('Coordene somente pelos tools Nexus.');
+    expect(prompt).toContain('## Arquivos do projeto escolhidos pelo operador');
+    expect(prompt).toContain('- src/checkout.ts');
     expect(prompt).not.toContain('Missão antiga');
   });
 

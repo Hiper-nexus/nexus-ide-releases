@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { compileIntentContract } from "../../shared/mission-intent";
-import type { Handoff, Mission } from "../../shared/orch-types";
+import type { Handoff, Mission, SquadAgent } from "../../shared/orch-types";
 import { buildGuidedMissionTaskDetail } from "./guided-mission-planner";
 import { buildMissionSchedulerTaskPrompt } from "./mission-scheduler-production";
 import { selectPhysicalPlanHandoff } from "./plan-promotion-authority";
@@ -8,6 +8,14 @@ import { buildCanonicalMissionKickoffPrompt } from "./mission-kickoff";
 import { BUILTIN_SQUADS } from "./builtin-squads";
 import { snapshotSquadAuthority } from "./squad-authority-snapshot";
 import { NEXUS_STORY_IMPLEMENTATION_SQUAD_ID } from "../../shared/builtin-squad-ids";
+
+const EXECUTOR_AGENT: SquadAgent = {
+  id: "executor",
+  agentName: "Executor",
+  category: "executor",
+  cli: "codex",
+  allowedTools: ["Read", "Edit"],
+};
 
 function planMission(): Mission {
   const contract = compileIntentContract({
@@ -100,7 +108,9 @@ describe("plan promotion → guided task prompt", () => {
         promotedPlan,
       },
     };
-    const detail = buildGuidedMissionTaskDetail(standard);
+    const detail = buildGuidedMissionTaskDetail(standard, {
+      agent: EXECUTOR_AGENT,
+    });
     const prompt = buildMissionSchedulerTaskPrompt(
       {
         id: "guided-execution",
@@ -235,10 +245,14 @@ describe("plan promotion → guided task prompt", () => {
       }),
     };
 
-    expect(buildGuidedMissionTaskDetail(uiMission)).toMatch(
+    expect(
+      buildGuidedMissionTaskDetail(uiMission, { agent: EXECUTOR_AGENT }),
+    ).toMatch(
       /exatamente uma UI estática renderizável.*dist\/.*\.vite\/renderer/i,
     );
-    expect(buildGuidedMissionTaskDetail(uiMission)).toMatch(
+    expect(
+      buildGuidedMissionTaskDetail(uiMission, { agent: EXECUTOR_AGENT }),
+    ).toMatch(
       /processo principal do Nexus.*leitura \+ screenshot/i,
     );
   });
@@ -269,8 +283,8 @@ describe("plan promotion → guided task prompt", () => {
         },
       },
     };
-    expect(() => buildGuidedMissionTaskDetail(standard)).toThrow(
-      /promoted_plan_corrupt/i,
-    );
+    expect(() =>
+      buildGuidedMissionTaskDetail(standard, { agent: EXECUTOR_AGENT }),
+    ).toThrow(/promoted_plan_corrupt/i);
   });
 });

@@ -8,6 +8,7 @@ import type {
 } from '../../shared/orch-types';
 import { TEAM_READ_ONLY_FANOUT_DOMAIN } from '../../shared/mission-topology';
 import type { ProjectExecutionScope } from '../../shared/types';
+import type { MissionEventAppendInput } from '../../shared/mission-events';
 import {
   runMissionKickoffAcceptance,
   type MissionKickoffResult,
@@ -16,6 +17,7 @@ import {
   blockedBootstrapResumePatch,
   blockedMissionRearmPatch,
   blockedPlanPromotionResumePatch,
+  deliverMissionDirectInstruction,
   MissionOrchestratorBootstrapRecovery,
   MissionOrchestratorBootstrapService,
   needsMissionOrchestratorBootstrapRecovery,
@@ -125,6 +127,7 @@ function approvedMission(): Mission {
       risk: 'normal',
       executionMode: 'assisted',
       contextPolicy: 'on-demand',
+      contextPaths: ['src/checkout.ts', 'src/checkout.test.ts'],
       intentVersion: 1,
       approvedAt: 100,
       dispatchedAt: 100,
@@ -1462,6 +1465,10 @@ describe('initial main-owned orchestrator bootstrap', () => {
       '# Missão — Fechar bootstrap main-owned',
     );
     expect(value.kickoffPrompts[0]).not.toContain('# Missão antiga');
+    expect(value.kickoffPrompts[0]).toContain(
+      '## Arquivos do projeto escolhidos pelo operador',
+    );
+    expect(value.kickoffPrompts[0]).toContain('src/checkout.ts');
     expect(value.kickoffPrompts[0]).toContain('## Anexos validados pelo Nexus');
     expect(value.kickoffPrompts[0]).toContain('/validated/proof.png');
   });
@@ -4088,6 +4095,315 @@ describe('blockedBootstrapResumePatch', () => {
     expect(
       blockedBootstrapResumePatch({ ...stale, intentContract: undefined }),
     ).toMatchObject({ ok: false, error: expect.stringMatching(/aprova/i) });
+  });
+});
+
+describe('canonical direct mission delivery', () => {
+  function directFixture() {
+    const mission: Mission = {
+      ...approvedMission(),
+      orchestratorSessionId: 'pty-direct',
+      intentState: 'executing',
+    };
+    const pane: MissionPaneSpec = {
+      id: 'mission-pane-direct',
+      missionId: mission.id,
+      paneId: 'pane-direct',
+      adapterId: 'codex',
+      model: approvedRuntime.model,
+      accountId: approvedRuntime.accountId,
+      effort: approvedRuntime.effort,
+      cwd: scope.rootRealPath,
+      title: 'Maestro',
+      agentName: 'Maestro',
+      role: 'orchestrator',
+      readOnly: false,
+      allowedTools: ['nexus_task'],
+      allowedSkills: ['check-work'],
+      authoritySeal: authoritySealFor(mission),
+      createdAt: 1,
+    };
+    const agent = {
+      sessionId: mission.orchestratorSessionId,
+      paneId: pane.paneId,
+      adapterId: pane.adapterId,
+      model: pane.model,
+      requestedModel: pane.model,
+      accountId: pane.accountId,
+      effort: pane.effort,
+      cwd: pane.cwd,
+      scope,
+      source: 'pending',
+      role: 'orchestrator',
+      missionId: mission.id,
+      readOnly: false,
+      nativeReadOnly: true,
+      allowedTools: ['nexus_task'],
+      allowedSkills: ['check-work'],
+      authoritySeal: pane.authoritySeal,
+    };
+    const authority = {
+      owner: null,
+      paneId: pane.paneId,
+      sessionId: mission.orchestratorSessionId,
+      kind: 'cli-agent',
+      missionId: mission.id,
+      role: 'orchestrator',
+      scope,
+    };
+    const hasCurrentKickoffAcceptance = vi.fn(() => true);
+    const stores = {
+      missions: {
+        get: vi.fn((missionId: string) =>
+          missionId === mission.id ? mission : null,
+        ),
+        hasCurrentKickoffAcceptance,
+      },
+      missionPanes: {
+        list: vi.fn((missionId: string) =>
+          missionId === mission.id ? [pane] : [],
+        ),
+      },
+    } as never;
+    const deliverAgentPrompt = vi.fn(
+      async (
+        _sessionId: string,
+        _prompt: string,
+        _invocation?: unknown,
+        _options?: { readonly adapterId?: string },
+      ) => true,
+    );
+    const emitMissionEvent = vi.fn(
+      (_scope: ProjectExecutionScope, _input: MissionEventAppendInput) => true,
+    );
+    const prompt = vi.fn(async (_text: string) => undefined);
+    const deps = {
+      getRuntimeAgentSessionInfo: vi.fn(() => agent as never),
+      getAcpDriverSession: vi.fn(() => null),
+      getAcpDriverSemanticStatus: vi.fn(() => null),
+      getPaneRuntimeAuthorityBySession: vi.fn(() => authority as never),
+      getSquad: vi.fn(() => squad),
+      deliverAgentPrompt,
+      emitMissionEvent,
+    };
+    return {
+      mission,
+      stores,
+      deps,
+      deliverAgentPrompt,
+      emitMissionEvent,
+      prompt,
+      hasCurrentKickoffAcceptance,
+    };
+  }
+
+  it('waits for PTY acceptance, preserves the exact worker target, then journals', async () => {
+    const value = directFixture();
+    let accept!: (accepted: boolean) => void;
+    value.deliverAgentPrompt.mockImplementationOnce(
+      () =>
+        new Promise<boolean>((resolve) => {
+          accept = resolve;
+        }),
+    );
+
+    const delivery = deliverMissionDirectInstruction(
+      scope,
+      value.stores,
+      {
+        kind: 'direct',
+        missionId: value.mission.id,
+        targetAgentId: 'worker',
+        text: 'Revise o patch final.',
+      },
+      value.deps,
+    );
+    await Promise.resolve();
+
+    expect(value.emitMissionEvent).not.toHaveBeenCalled();
+    expect(value.deliverAgentPrompt).toHaveBeenCalledWith(
+      'pty-direct',
+      expect.stringContaining(
+        '{"kind":"operator_direction","targetAgentId":"worker","text":"Revise o patch final."}',
+      ),
+      undefined,
+      { adapterId: 'codex' },
+    );
+
+    accept(true);
+    await delivery;
+
+    expect(value.emitMissionEvent).toHaveBeenCalledTimes(1);
+    const emitted = value.emitMissionEvent.mock.calls[0]?.[1];
+    expect(emitted).toMatchObject({
+      missionId: value.mission.id,
+      runId: 'operator-direction',
+      type: 'custom',
+      origin: 'main',
+      payload: {
+        kind: 'operator_direction',
+        targetAgentId: 'worker',
+        text: 'Revise o patch final.',
+      },
+    });
+    expect(emitted?.idempotencyKey).toMatch(
+      /^operator_direction:[a-f0-9]{64}$/,
+    );
+  });
+
+  it('uses ACP turn acceptance without writing to a PTY', async () => {
+    const value = directFixture();
+    value.deps.getAcpDriverSession.mockReturnValue({
+      prompt: value.prompt,
+    } as never);
+    let status: 'idle' | 'working' = 'idle';
+    value.prompt.mockImplementation(async () => {
+      status = 'working';
+    });
+    value.deps.getAcpDriverSemanticStatus.mockImplementation(
+      () => status as never,
+    );
+
+    await deliverMissionDirectInstruction(
+      scope,
+      value.stores,
+      {
+        kind: 'direct',
+        missionId: value.mission.id,
+        targetAgentId: null,
+        text: 'Continue a missão.',
+      },
+      value.deps,
+    );
+
+    expect(value.prompt).toHaveBeenCalledWith(
+      expect.stringContaining('"targetAgentId":null'),
+    );
+    expect(value.deliverAgentPrompt).not.toHaveBeenCalled();
+    expect(value.emitMissionEvent).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses ACP delivery without a synchronous turn-acceptance receipt', async () => {
+    const value = directFixture();
+    value.deps.getAcpDriverSession.mockReturnValue({
+      prompt: value.prompt,
+    } as never);
+    value.deps.getAcpDriverSemanticStatus.mockReturnValue('idle' as never);
+
+    await expect(
+      deliverMissionDirectInstruction(
+        scope,
+        value.stores,
+        {
+          kind: 'direct',
+          missionId: value.mission.id,
+          targetAgentId: null,
+          text: 'Continue a missão.',
+        },
+        value.deps,
+      ),
+    ).rejects.toThrow(/turn.*accepted|accepted.*turn/i);
+    expect(value.emitMissionEvent).not.toHaveBeenCalled();
+  });
+
+  it('rejects stale session authority, missing acceptance, unknown targets, and terminal controls before delivery', async () => {
+    const stale = directFixture();
+    stale.mission.orchestratorSessionId = 'stale-session';
+    await expect(
+      deliverMissionDirectInstruction(
+        scope,
+        stale.stores,
+        {
+          kind: 'direct',
+          missionId: stale.mission.id,
+          targetAgentId: null,
+          text: 'Continue.',
+        },
+        stale.deps,
+      ),
+    ).rejects.toThrow(/authority|session|sessão/i);
+    expect(stale.deliverAgentPrompt).not.toHaveBeenCalled();
+
+    const missingSession = directFixture();
+    missingSession.mission.orchestratorSessionId = undefined;
+    await expect(
+      deliverMissionDirectInstruction(
+        scope,
+        missingSession.stores,
+        {
+          kind: 'direct',
+          missionId: missingSession.mission.id,
+          targetAgentId: null,
+          text: 'Continue.',
+        },
+        missingSession.deps,
+      ),
+    ).rejects.toThrow(/session|sessão/i);
+
+    const terminal = directFixture();
+    terminal.mission.status = 'done';
+    terminal.mission.intentState = 'done';
+    await expect(
+      deliverMissionDirectInstruction(
+        scope,
+        terminal.stores,
+        {
+          kind: 'direct',
+          missionId: terminal.mission.id,
+          targetAgentId: null,
+          text: 'Continue.',
+        },
+        terminal.deps,
+      ),
+    ).rejects.toThrow(/live|dispatch|authority/i);
+
+    const missingReceipt = directFixture();
+    missingReceipt.hasCurrentKickoffAcceptance.mockReturnValue(false);
+    await expect(
+      deliverMissionDirectInstruction(
+        scope,
+        missingReceipt.stores,
+        {
+          kind: 'direct',
+          missionId: missingReceipt.mission.id,
+          targetAgentId: null,
+          text: 'Continue.',
+        },
+        missingReceipt.deps,
+      ),
+    ).rejects.toThrow(/acceptance|receipt|recibo/i);
+
+    const unknownTarget = directFixture();
+    await expect(
+      deliverMissionDirectInstruction(
+        scope,
+        unknownTarget.stores,
+        {
+          kind: 'direct',
+          missionId: unknownTarget.mission.id,
+          targetAgentId: 'worker-forged',
+          text: 'Continue.',
+        },
+        unknownTarget.deps,
+      ),
+    ).rejects.toThrow(/target|agent|alvo/i);
+
+    const unsafe = directFixture();
+    await expect(
+      deliverMissionDirectInstruction(
+        scope,
+        unsafe.stores,
+        {
+          kind: 'direct',
+          missionId: unsafe.mission.id,
+          targetAgentId: null,
+          text: 'Continue.\u000d',
+        },
+        unsafe.deps,
+      ),
+    ).rejects.toThrow(/unsafe terminal control/i);
+    expect(unsafe.deliverAgentPrompt).not.toHaveBeenCalled();
+    expect(unsafe.emitMissionEvent).not.toHaveBeenCalled();
   });
 });
 

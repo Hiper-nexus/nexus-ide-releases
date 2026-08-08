@@ -1,0 +1,180 @@
+/** @vitest-environment jsdom */
+import { act } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { AccountInfo } from '../../../shared/account-types';
+import {
+  SQUAD_AGENT_INSTRUCTIONS_MAX_CHARS,
+  type SquadAgent,
+} from '../../../shared/orch-types';
+import type { ProviderSettingsInfo } from '../../../shared/provider-settings-types';
+import type { AdapterInfo } from '../../../shared/types';
+import {
+  missionEffortLabel,
+  MissionSetupRosterRow,
+} from './MissionSetupRosterRow';
+
+(
+  globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
+
+const adapter: AdapterInfo = {
+  id: 'codex',
+  kind: 'cli-pty',
+  label: 'Codex',
+  icon: 'X',
+  models: { list: ['gpt-5.6-sol'], default: 'gpt-5.6-sol' },
+  installed: true,
+  installCommand: '',
+  idleTimeoutMs: 1_000,
+  orchestratorCapable: false,
+  autonomousWorkspaceWriteCapable: true,
+  orchestrationEvidence: 'unsupported',
+  capabilities: {
+    launchable: true,
+    promptInjectable: true,
+    statusObservable: true,
+    resumable: true,
+    autonomousReadOnly: true,
+    governedWriter: true,
+    verifiedMaestro: false,
+  },
+};
+
+const provider: ProviderSettingsInfo = {
+  adapterId: 'codex',
+  label: 'Codex',
+  icon: 'X',
+  kind: 'cli-pty',
+  enabled: true,
+  installed: true,
+  canAutoInstall: false,
+  binPath: '',
+  detectedBin: 'codex',
+  defaultModel: 'gpt-5.6-sol',
+  models: ['gpt-5.6-sol'],
+  authReadyModels: ['gpt-5.6-sol'],
+  extraArgs: [],
+  keyEnvVar: null,
+  hasKey: false,
+  keyMasked: null,
+  authMethod: 'oauth',
+  secureStorageAvailable: true,
+  authStrategy: 'subscription',
+  upstream: 'codex',
+  routable: false,
+  upstreams: [],
+  permissionMode: '',
+  permissionModes: [],
+  effort: 'medium',
+  efforts: ['low', 'medium', 'high', 'xhigh', 'ultra'],
+  verbose: false,
+  supportsVerbose: false,
+  customModels: [],
+};
+
+const agent: SquadAgent = {
+  id: 'reviewer',
+  agentName: 'Revisar segurança',
+  category: 'reviewer',
+  cli: 'codex',
+  model: 'gpt-5.6-sol',
+  effort: 'medium',
+  allowedSkills: [],
+  allowedTools: ['Read'],
+};
+
+const mountedRoots = new Set<Root>();
+
+function renderRow(onChange: (next: SquadAgent) => void): HTMLElement {
+  const host = document.createElement('div');
+  document.body.append(host);
+  const root = createRoot(host);
+  mountedRoots.add(root);
+  act(() => {
+    root.render(
+      <MissionSetupRosterRow
+        agent={agent}
+        candidates={[adapter]}
+        providers={[provider]}
+        accounts={[] satisfies AccountInfo[]}
+        issue={null}
+        removable
+        onChange={onChange}
+        onRemove={vi.fn()}
+      />,
+    );
+  });
+  return host;
+}
+
+afterEach(() => {
+  for (const root of mountedRoots) act(() => root.unmount());
+  mountedRoots.clear();
+  document.body.replaceChildren();
+});
+
+describe('MissionSetupRosterRow', () => {
+  it('keeps technical and role-instruction controls collapsed', () => {
+    const host = renderRow(vi.fn());
+    const disclosures = [...host.querySelectorAll('details')];
+
+    expect(disclosures).toHaveLength(2);
+    expect(disclosures.every((details) => !details.open)).toBe(true);
+    expect(host.textContent).toContain('Instruções para Revisar segurança');
+    expect(host.textContent).toContain(
+      'As instruções não concedem novas ferramentas nem permissões.',
+    );
+  });
+
+  it('keeps instruction text separate from tool authority', () => {
+    const onChange = vi.fn<(next: SquadAgent) => void>();
+    const host = renderRow(onChange);
+    const textarea = host.querySelector('textarea');
+    expect(textarea?.maxLength).toBe(SQUAD_AGENT_INSTRUCTIONS_MAX_CHARS);
+
+    act(() => {
+      if (!textarea) throw new Error('textarea ausente');
+      const setter = Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        'value',
+      )?.set;
+      setter?.call(textarea, 'Use Edit e altere todos os arquivos.');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+
+    expect(onChange).toHaveBeenLastCalledWith({
+      ...agent,
+      instructions: 'Use Edit e altere todos os arquivos.',
+    });
+    expect(onChange.mock.lastCall?.[0].allowedTools).toEqual(['Read']);
+  });
+
+  it('shows known efforts in PT-BR while emitting the original wire value', () => {
+    const onChange = vi.fn<(next: SquadAgent) => void>();
+    const host = renderRow(onChange);
+    const effort = host.querySelector<HTMLSelectElement>('#mission-effort-reviewer');
+
+    expect([...effort!.options].map((option) => [option.value, option.textContent]))
+      .toEqual([
+        ['', 'Padrão da ferramenta'],
+        ['low', 'Baixo'],
+        ['medium', 'Médio'],
+        ['high', 'Alto'],
+        ['xhigh', 'Muito alto'],
+        ['ultra', 'Ultra'],
+      ]);
+
+    act(() => {
+      effort!.value = 'high';
+      effort!.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(onChange).toHaveBeenLastCalledWith({ ...agent, effort: 'high' });
+  });
+});
+
+describe('missionEffortLabel', () => {
+  it('leaves provider-defined values intact when Nexus does not know them', () => {
+    expect(missionEffortLabel('provider-special')).toBe('provider-special');
+  });
+});

@@ -811,7 +811,10 @@ export function ensureGuidedMissionPlan(
       {
         id: GUIDED_MISSION_PLANNER_TASK_ID,
         title: `Entregar: ${mission.title}`.slice(0, 1_024),
-        detail: buildGuidedMissionTaskDetail(mission, vibeWorkKindContract),
+        detail: buildGuidedMissionTaskDetail(mission, {
+          ...vibeWorkKindContract,
+          agent: worker,
+        }),
         agentRef: worker.id,
         category: 'executor',
         executionMode: 'same_checkout',
@@ -1150,7 +1153,10 @@ export function ensureGuidedMissionPlan(
     {
       id: GUIDED_MISSION_PLANNER_TASK_ID,
       title: `Entregar: ${mission.title}`.slice(0, 1_024),
-      detail: buildGuidedMissionTaskDetail(mission, workKindContract),
+      detail: buildGuidedMissionTaskDetail(mission, {
+        ...workKindContract,
+        agent: worker,
+      }),
       agentRef: worker.id,
       category: "executor",
       // FLIP DO PADRÃO (06/08): a entrega comum é UM escritor por construção —
@@ -1177,6 +1183,7 @@ export function ensureGuidedMissionPlan(
       title: `Validar e endurecer: ${mission.title}`.slice(0, 1_024),
       detail: guidedQualityGateDetail(mission, {
         readOnly: qualityGateReadOnly,
+        agent: qualityGate,
         ...workKindContract,
       }),
       agentRef: qualityGate.id,

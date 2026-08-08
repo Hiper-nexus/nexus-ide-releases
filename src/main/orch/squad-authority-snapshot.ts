@@ -8,6 +8,7 @@ export interface SquadAuthorityAgentSnapshot {
   readonly cli: string;
   readonly model: string | null;
   readonly effort: string | null;
+  readonly instructions?: string;
   readonly allowedTools: readonly string[] | null;
   readonly allowedSkills: readonly string[] | null;
 }
@@ -47,6 +48,9 @@ export function snapshotSquadAuthority(squad: Squad): SquadAuthoritySnapshot {
       cli: agent.cli,
       model: agent.model ?? null,
       effort: agent.effort ?? null,
+      ...(agent.instructions === undefined
+        ? {}
+        : { instructions: agent.instructions }),
       allowedTools: agent.allowedTools ? [...agent.allowedTools] : null,
       allowedSkills: agent.allowedSkills ? [...agent.allowedSkills] : null,
     })),
@@ -88,6 +92,7 @@ export function squadAuthorityReviewStrings(
       agent.cli,
       agent.model ?? '',
       agent.effort ?? '',
+      ...(agent.instructions === undefined ? [] : [agent.instructions]),
       ...(agent.allowedTools ?? []),
       ...(agent.allowedSkills ?? []),
     ]),

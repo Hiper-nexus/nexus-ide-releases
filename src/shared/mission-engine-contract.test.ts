@@ -134,6 +134,46 @@ describe('mission preparation and review', () => {
     });
   });
 
+  it('keeps preparation text within durable mission-store limits', () => {
+    const base = {
+      contextPaths: [],
+      roster: [agent],
+    };
+    expect(
+      missionPrepareRequestSchema.safeParse({
+        ...base,
+        objective: 'x'.repeat(16_384),
+      }).success,
+    ).toBe(true);
+    expect(
+      missionPrepareRequestSchema.safeParse({
+        ...base,
+        objective: 'x'.repeat(16_385),
+      }).success,
+    ).toBe(false);
+    expect(
+      missionPrepareRequestSchema.safeParse({
+        ...base,
+        objective: 'x',
+        title: 't'.repeat(512),
+      }).success,
+    ).toBe(true);
+    expect(
+      missionPrepareRequestSchema.safeParse({
+        ...base,
+        objective: 'x',
+        title: 't'.repeat(513),
+      }).success,
+    ).toBe(false);
+    expect(
+      missionPrepareRequestSchema.safeParse({
+        ...base,
+        objective: 'x',
+        contextPaths: ['../fora-do-projeto.ts'],
+      }).success,
+    ).toBe(false);
+  });
+
   it.each([
     ['authoritySeal', 'renderer-controlled'],
     ['approvalSecret', 'renderer-controlled'],

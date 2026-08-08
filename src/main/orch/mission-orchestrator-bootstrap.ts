@@ -1,6 +1,11 @@
 import path from "node:path";
+import { createHash } from "node:crypto";
 import type { WebContents } from "electron";
 import { z } from "zod";
+import {
+  missionEngineCommandSchema,
+  type MissionEngineCommand,
+} from "../../shared/mission-engine-contract";
 import { GUIDED_PLAN_BLOCK_MARKER } from "../../shared/guided-mission-plan";
 import { parseClarifyAnswerArtifact } from "../../shared/clarify";
 import {
@@ -47,7 +52,10 @@ import {
   getSessionState,
   type OwnedAgentSessionInfo,
 } from "../pty/pty-manager";
-import { getAcpDriverSession } from "../acp/acp-harness-driver";
+import {
+  getAcpDriverSemanticStatus,
+  getAcpDriverSession,
+} from "../acp/acp-harness-driver";
 import { releaseSession } from "./gate";
 import type {
   RebindOrchestratorAuthorityInput,
@@ -58,7 +66,14 @@ import {
   submitMissionKickoffFromMain,
   type MissionKickoffResult,
 } from "./mission-kickoff";
-import { emitBootstrapProgress } from "./mission-event-emit";
+import {
+  assertSafePtyPrompt,
+  deliverAgentPrompt,
+} from "./tool-util";
+import {
+  emitBootstrapProgress,
+  emitMissionEvent,
+} from "./mission-event-emit";
 import { emitMissionIntentEvent } from "./mission-intent-events";
 import type { BootstrapProgressStep } from "../../shared/mission-intent-projection";
 import {
@@ -131,6 +146,7 @@ import {
   type MissionStartInput,
   type MissionVerifiedCompletionInput,
 } from "./mission-engine";
+import { createMissionEnginePreparationPorts } from "./mission-engine-preparation";
 import type { ScopedMissionStore } from "./mission-store";
 import {
   configureMissionEngineForScope,
@@ -1734,6 +1750,7 @@ export class MissionOrchestratorBootstrapService {
         risk: current.intentContract!.risk,
         maxWorkers: current.intentContract!.budgets.maxWorkers,
         lane: current.intentContract!.lane ?? "standard",
+        contextPaths: current.intentContract!.contextPaths,
         attachmentPaths,
         compactMemoryMarkdown: missionCompactHasProgress(compactMemory)
           ? renderMissionCompact(compactMemory)
@@ -2775,6 +2792,233 @@ const missionEngineBootstrapResults = new Map<
   MissionOrchestratorBootstrapResult
 >();
 
+type MissionDirectCommand = Extract<
+  MissionEngineCommand,
+  { readonly kind: "direct" }
+>;
+
+export interface MissionDirectDeliveryDeps {
+  readonly getRuntimeAgentSessionInfo: (
+    sessionId: string,
+  ) => OwnedAgentSessionInfo | null;
+  readonly getAcpDriverSession: typeof getAcpDriverSession;
+  readonly getAcpDriverSemanticStatus: typeof getAcpDriverSemanticStatus;
+  readonly getPaneRuntimeAuthorityBySession:
+    typeof getPaneRuntimeAuthorityBySession;
+  readonly getSquad: typeof getSquad;
+  readonly deliverAgentPrompt: typeof deliverAgentPrompt;
+  readonly emitMissionEvent: typeof emitMissionEvent;
+}
+
+const productionMissionDirectDeliveryDeps: MissionDirectDeliveryDeps = {
+  getRuntimeAgentSessionInfo: runtimeAgentSessionInfo,
+  getAcpDriverSession,
+  getAcpDriverSemanticStatus,
+  getPaneRuntimeAuthorityBySession,
+  getSquad,
+  deliverAgentPrompt,
+  emitMissionEvent,
+};
+
+interface MissionDirectAuthority {
+  readonly mission: Mission;
+  readonly sessionId: string;
+  readonly adapterId: string;
+  readonly authorityFingerprint: string;
+}
+
+function missionDirectAuthority(
+  scope: ProjectExecutionScope,
+  stores: ProjectDomainStoreSuite,
+  command: MissionDirectCommand,
+  deps: MissionDirectDeliveryDeps,
+): MissionDirectAuthority {
+  const mission = stores.missions.get(command.missionId);
+  if (!mission || mission.id !== command.missionId) {
+    throw new Error("mission direct requires a current mission");
+  }
+  if (!hasCurrentDispatchAuthority(mission)) {
+    throw new Error("mission direct requires live current dispatch authority");
+  }
+  if (!stores.missions.hasCurrentKickoffAcceptance(mission.id)) {
+    throw new Error("mission direct requires the current kickoff receipt");
+  }
+  const sessionId = mission.orchestratorSessionId;
+  if (!sessionId) {
+    throw new Error("mission direct requires a live orchestrator session");
+  }
+  const agent = deps.getRuntimeAgentSessionInfo(sessionId);
+  if (!agent) {
+    throw new Error("mission direct orchestrator session is not live");
+  }
+  const pane =
+    stores.missionPanes
+      .list(mission.id)
+      .find(
+        (candidate) =>
+          candidate.role === "orchestrator" &&
+          candidate.paneId === agent.paneId,
+      ) ?? null;
+  const approvedRuntime = mission.intentContract?.orchestratorRuntime;
+  if (!pane || !approvedRuntime) {
+    throw new Error("mission direct orchestrator authority is incomplete");
+  }
+  const mismatches = runtimeAuthorityMismatches(
+    scope,
+    mission,
+    pane,
+    agent,
+    deps.getPaneRuntimeAuthorityBySession(sessionId),
+    approvedRuntime,
+  );
+  if (mismatches.length > 0) {
+    throw new Error(
+      `mission direct orchestrator authority mismatch: ${mismatches[0]}`,
+    );
+  }
+
+  let squadRevisionHash = mission.intentContract?.squadRevisionHash ?? null;
+  if (command.targetAgentId !== null) {
+    const currentSquad = mission.squadId
+      ? deps.getSquad(mission.squadId)
+      : null;
+    if (!currentSquad || !squadRevisionHash) {
+      throw new Error("mission direct target requires sealed squad authority");
+    }
+    const currentSquadSnapshot = snapshotSquadAuthority(currentSquad);
+    if (currentSquadSnapshot.hash !== squadRevisionHash) {
+      throw new Error("mission direct target squad authority is stale");
+    }
+    if (
+      !currentSquadSnapshot.agents.some(
+        (candidate) => candidate.id === command.targetAgentId,
+      )
+    ) {
+      throw new Error("mission direct target agent is not in the sealed squad");
+    }
+    squadRevisionHash = currentSquadSnapshot.hash;
+  }
+
+  const authorityFingerprint = createHash("sha256")
+    .update(
+      JSON.stringify({
+        scope: {
+          installationId: scope.installationId,
+          projectId: scope.projectId,
+          checkoutId: scope.checkoutId,
+          rootRealPath: scope.rootRealPath,
+        },
+        missionId: mission.id,
+        intentVersion: mission.intentVersion ?? 0,
+        sessionId,
+        paneId: pane.paneId,
+        adapterId: pane.adapterId,
+        squadRevisionHash,
+        targetAgentId: command.targetAgentId,
+        text: command.text,
+      }),
+    )
+    .digest("hex");
+  return {
+    mission,
+    sessionId,
+    adapterId: pane.adapterId,
+    authorityFingerprint,
+  };
+}
+
+function missionDirectPrompt(command: MissionDirectCommand): string {
+  const payload = {
+    kind: "operator_direction" as const,
+    targetAgentId: command.targetAgentId,
+    text: command.text,
+  };
+  const targetRule =
+    command.targetAgentId === null
+      ? "Apply this direction to your current mission."
+      : `Route this direction to exactly squad agent ${JSON.stringify(command.targetAgentId)} and retain orchestration authority.`;
+  return assertSafePtyPrompt(
+    [
+      "Nexus operator direction accepted by the main process.",
+      targetRule,
+      "Exact direction envelope:",
+      JSON.stringify(payload),
+    ].join("\n"),
+  );
+}
+
+/**
+ * Main-owned canonical direct path. Renderer input selects neither a session
+ * nor a transport: both are rederived from the current sealed mission. The
+ * method resolves only after PTY acceptance proof (or the ACP turn boundary),
+ * revalidates that exact authority, then emits the bounded conversation event.
+ */
+export async function deliverMissionDirectInstruction(
+  scope: ProjectExecutionScope,
+  stores: ProjectDomainStoreSuite,
+  rawCommand: MissionDirectCommand,
+  deps: MissionDirectDeliveryDeps = productionMissionDirectDeliveryDeps,
+): Promise<void> {
+  assertSafePtyPrompt(rawCommand.text);
+  const parsed = missionEngineCommandSchema.parse(rawCommand);
+  if (parsed.kind !== "direct") {
+    throw new Error("mission direct received a non-direct command");
+  }
+  const command = parsed;
+  assertSafePtyPrompt(command.text);
+  const initial = missionDirectAuthority(scope, stores, command, deps);
+  const prompt = missionDirectPrompt(command);
+  const acpSession = deps.getAcpDriverSession(initial.sessionId);
+  if (acpSession) {
+    const status = deps.getAcpDriverSemanticStatus(initial.sessionId);
+    if (status !== "idle" && status !== "completed") {
+      throw new Error("mission direct ACP orchestrator is not ready");
+    }
+    // `promptLiveSession` emits turn_started and flips semantic status to
+    // working synchronously, before its promise follows the provider's full
+    // turn. That transition is the ACP acceptance receipt.
+    const turn = acpSession.prompt(prompt);
+    if (deps.getAcpDriverSemanticStatus(initial.sessionId) !== "working") {
+      void turn.catch(() => undefined);
+      throw new Error("mission direct ACP turn was not accepted");
+    }
+    void turn.catch((error) => {
+      console.warn("[mission-direct] ACP turn ended after acceptance:", error);
+    });
+  } else {
+    const accepted = await deps.deliverAgentPrompt(
+      initial.sessionId,
+      prompt,
+      undefined,
+      { adapterId: initial.adapterId },
+    );
+    if (!accepted) {
+      throw new Error("mission direct delivery was not accepted");
+    }
+  }
+
+  const current = missionDirectAuthority(scope, stores, command, deps);
+  if (
+    current.sessionId !== initial.sessionId ||
+    current.authorityFingerprint !== initial.authorityFingerprint
+  ) {
+    throw new Error("mission direct authority changed during delivery");
+  }
+  const payload = {
+    kind: "operator_direction" as const,
+    targetAgentId: command.targetAgentId,
+    text: command.text,
+  };
+  deps.emitMissionEvent(scope, {
+    missionId: command.missionId,
+    runId: "operator-direction",
+    type: "custom",
+    origin: "main",
+    idempotencyKey: `operator_direction:${initial.authorityFingerprint}`,
+    payload,
+  });
+}
+
 function projectMissionEngineSnapshotView(
   scope: ProjectExecutionScope,
   stores: ProjectDomainStoreSuite,
@@ -2886,15 +3130,10 @@ function transitionMissionEngineLifecycle(
 
 const productionMissionEngines = new MissionEngineRegistry((scope, stores) =>
   new MainMissionEngine(scope, {
-    arm: async () => {
-      throw new Error('mission engine prepare is not available on the start adapter');
-    },
-    compile: async () => {
-      throw new Error('mission engine compile is not available on the start adapter');
-    },
-    persistReviewFence: async () => {
-      throw new Error('mission engine review persistence is not available on the start adapter');
-    },
+    ...createMissionEnginePreparationPorts({
+      scope,
+      missions: stores.missions,
+    }),
     readReviewFence: async (missionId) => {
       const reviewSha256 =
         stores.missions.get(missionId)?.intentContract?.approvalReviewSha256;
@@ -2959,11 +3198,24 @@ const productionMissionEngines = new MissionEngineRegistry((scope, stores) =>
         },
       );
     },
-    stop: async () => {
-      throw new Error('mission engine stop is not available on the start adapter');
+    stop: async (command) => {
+      // Native confirmation + lifecycle lock + physical teardown belong to
+      // the renderer IPC authority boundary. This port is deliberately
+      // post-authority only: it can validate an idempotent completed close,
+      // but can never terminate a live process without that boundary.
+      const mission = stores.missions.get(command.missionId);
+      if (!mission) throw new Error("mission not found");
+      if (
+        (mission.status !== "blocked" && mission.status !== "failed") ||
+        mission.orchestratorSessionId !== undefined
+      ) {
+        throw new Error(
+          "mission engine stop requires completed operator runtime teardown",
+        );
+      }
     },
-    direct: async () => {
-      throw new Error('mission engine direct is not available on the start adapter');
+    direct: async (command) => {
+      await deliverMissionDirectInstruction(scope, stores, command);
     },
     answerQuestion: async (command) => {
       const question = stores.handoffs.get(command.questionId);
