@@ -226,6 +226,77 @@ describe('SettingsWorkspace contracts', () => {
     ).toMatch(/^terminal$/i);
   });
 
+  it('keeps the externally deep-linked section visible in filtered navigation', async () => {
+    useEphemeralDraftStore
+      .getState()
+      .save('settings-nav', { query: 'xterm' });
+    useProductNavigationStore.getState().openSettings('account');
+    const host = mount(<SettingsWorkspace />);
+    await settleSectionEffects();
+
+    expect(
+      host.querySelector('.settings-detail__title')?.textContent ?? '',
+    ).toMatch(/minha conta/i);
+    const active = host.querySelector<HTMLElement>(
+      '.settings-nav__item[aria-current="page"]',
+    );
+    expect(active).not.toBeNull();
+    expect(active?.textContent).toContain('Minha conta');
+  });
+
+  it('provides an h1 and focused h2 route target while resetting detail scroll on deep-link changes', async () => {
+    useProductNavigationStore.getState().openSettings('account');
+    const host = mount(<SettingsWorkspace />);
+    await settleSectionEffects();
+    const pageTitle = host.querySelector<HTMLHeadingElement>(
+      '.settings-workspace h1',
+    );
+    const detail = host.querySelector<HTMLElement>('.settings-detail');
+    const search = host.querySelector<HTMLInputElement>(
+      'input[aria-label="Buscar nas configurações"]',
+    );
+    expect(pageTitle?.textContent).toMatch(/configurações/i);
+    expect(
+      host.querySelector<HTMLHeadingElement>('.settings-detail h2')
+        ?.textContent ?? '',
+    ).toMatch(/minha conta/i);
+    if (!detail || !search) throw new Error('Settings route shell is unavailable');
+    detail.scrollTop = 480;
+    act(() => search.focus());
+
+    act(() => useProductNavigationStore.getState().openSettings('terminal'));
+    await settleSectionEffects();
+
+    const sectionTarget = host.querySelector<HTMLHeadingElement>(
+      '.settings-detail h2',
+    );
+    expect(sectionTarget?.textContent ?? '').toMatch(/^terminal$/i);
+    expect(detail.scrollTop).toBe(0);
+    expect(document.activeElement).toBe(sectionTarget);
+  });
+
+  it('keeps brand and search outside a distinct scrolling settings-groups region', async () => {
+    useProductNavigationStore.getState().openSettings('account');
+    const host = mount(<SettingsWorkspace />);
+    await settleSectionEffects();
+    const nav = host.querySelector<HTMLElement>(
+      'nav[aria-label="Configurações"]',
+    );
+    const brand = nav?.querySelector('.settings-nav__brand') ?? null;
+    const search = nav?.querySelector('.settings-nav__search') ?? null;
+    const scrollingGroups =
+      nav?.querySelector<HTMLElement>('.settings-nav__groups') ?? null;
+
+    expect(brand).not.toBeNull();
+    expect(search).not.toBeNull();
+    expect(scrollingGroups).not.toBeNull();
+    expect(
+      scrollingGroups?.querySelectorAll('.settings-nav__item'),
+    ).toHaveLength(30);
+    expect(scrollingGroups?.contains(brand)).toBe(false);
+    expect(scrollingGroups?.contains(search)).toBe(false);
+  });
+
   it('returns to the exact previous product destination from the page back action', async () => {
     const previous = {
       kind: 'mission' as const,

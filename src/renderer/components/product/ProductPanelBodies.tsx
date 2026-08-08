@@ -213,10 +213,12 @@ type ProductMemoryFailure = {
 
 export interface MemoryPanelBodyProps {
   showOnboarding?: boolean;
+  presentation?: 'compact' | 'full';
 }
 
 export function MemoryPanelBody({
   showOnboarding = false,
+  presentation = 'compact',
 }: MemoryPanelBodyProps = {}) {
   const [notes, setNotes] = useState<ProductMemoryNote[]>([]);
   const [title, setTitle] = useState('');
@@ -226,28 +228,57 @@ export function MemoryPanelBody({
   const [failure, setFailure] = useState<ProductMemoryFailure | null>(null);
   const titleInputRef = useRef<HTMLInputElement | null>(null);
   const savingRef = useRef(false);
+  const reloadGenerationRef = useRef(0);
+  const mountedRef = useRef(false);
 
-  const reload = useCallback(async () => {
-    setLoading(true);
-    setFailure(null);
-    try {
-      const api = productApi();
-      if (!api) throw new Error('product memory API unavailable');
-      const list = (await api.memoryList()) as ProductMemoryNote[];
-      setNotes(list ?? []);
-    } catch {
-      setFailure({
-        operation: 'load',
-        message:
-          'Não foi possível acessar a memória local. Tente novamente em instantes.',
-      });
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const reload = useCallback(
+    async (
+      failureMessage = 'Não foi possível acessar a memória local. Tente novamente em instantes.',
+    ): Promise<boolean> => {
+      if (!mountedRef.current) return false;
+      const generation = ++reloadGenerationRef.current;
+      setLoading(true);
+      setFailure(null);
+      try {
+        const api = productApi();
+        if (!api) throw new Error('product memory API unavailable');
+        const list = (await api.memoryList()) as ProductMemoryNote[];
+        if (
+          !mountedRef.current ||
+          generation !== reloadGenerationRef.current
+        ) {
+          return false;
+        }
+        setNotes(list ?? []);
+        return true;
+      } catch {
+        if (
+          !mountedRef.current ||
+          generation !== reloadGenerationRef.current
+        ) {
+          return false;
+        }
+        setFailure({ operation: 'load', message: failureMessage });
+        return false;
+      } finally {
+        if (
+          mountedRef.current &&
+          generation === reloadGenerationRef.current
+        ) {
+          setLoading(false);
+        }
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
+    mountedRef.current = true;
     void reload();
+    return () => {
+      mountedRef.current = false;
+      reloadGenerationRef.current += 1;
+    };
   }, [reload]);
 
   const remember = async () => {
@@ -265,18 +296,23 @@ export function MemoryPanelBody({
         body,
         kind: 'note',
       });
+      if (!mountedRef.current) return;
       setTitle('');
       setBody('');
-      await reload();
+      await reload(
+        'A memória foi guardada, mas não foi possível atualizar a lista. Tente recarregar.',
+      );
     } catch {
-      setFailure({
-        operation: 'remember',
-        message:
-          'Não foi possível guardar esta memória. Revise os campos e tente novamente.',
-      });
+      if (mountedRef.current) {
+        setFailure({
+          operation: 'remember',
+          message:
+            'Não foi possível guardar esta memória. Revise os campos e tente novamente.',
+        });
+      }
     } finally {
       savingRef.current = false;
-      setSaving(false);
+      if (mountedRef.current) setSaving(false);
     }
   };
 
@@ -363,7 +399,9 @@ export function MemoryPanelBody({
                   {note.kind === 'note' ? 'nota' : note.kind}
                 </span>
               ) : null}
-              <p className="product-pane__snip">{note.body.slice(0, 200)}</p>
+              <p className="product-pane__snip">
+                {presentation === 'full' ? note.body : note.body.slice(0, 200)}
+              </p>
             </li>
           ))}
         </ul>

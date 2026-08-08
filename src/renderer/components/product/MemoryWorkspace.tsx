@@ -20,7 +20,7 @@ export function MemoryWorkspace({ className = '' }: MemoryWorkspaceProps = {}) {
         </p>
       </header>
       <div className="product-workspace__content memory-workspace__content">
-        <MemoryPanelBody showOnboarding />
+        <MemoryPanelBody showOnboarding presentation="full" />
       </div>
     </section>
   );

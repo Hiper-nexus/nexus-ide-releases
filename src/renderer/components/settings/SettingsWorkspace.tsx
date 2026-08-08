@@ -1,6 +1,8 @@
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
+  useRef,
   useState,
   type RefObject,
 } from 'react';
@@ -190,6 +192,7 @@ export interface SettingsSurfaceProps {
   returnKeyboardHint?: string;
   footerActionLabel?: string;
   searchInputRef?: RefObject<HTMLInputElement | null>;
+  detailRef?: RefObject<HTMLDivElement | null>;
 }
 
 /** Shared in-flow settings surface used by the page and the transitional drawer. */
@@ -202,6 +205,7 @@ export function SettingsSurface({
   returnKeyboardHint,
   footerActionLabel,
   searchInputRef,
+  detailRef,
 }: SettingsSurfaceProps) {
   const squadsCount = useOrchStore((state) => state.squads.length);
   const mcpToolCount = useOrchStore((state) => state.mcpInfo?.toolCount ?? 0);
@@ -209,11 +213,21 @@ export function SettingsSurface({
   const [query, setQuery] = useState(
     () => peekEphemeralDraft<{ query: string }>('settings-nav')?.query ?? '',
   );
+  const queryRef = useRef(query);
+  queryRef.current = query;
   const searching = query.trim().length > 0;
   const groups = useMemo(
     () => filterSettingsGroups(SETTINGS_GROUPS, query),
     [query],
   );
+
+  useEffect(() => {
+    const activeSectionIsVisible = filterSettingsGroups(
+      SETTINGS_GROUPS,
+      queryRef.current,
+    ).some((group) => group.items.some((item) => item.id === section));
+    if (!activeSectionIsVisible) setQuery('');
+  }, [section]);
 
   useEffect(() => {
     saveEphemeralDraft('settings-nav', { query });
@@ -282,6 +296,7 @@ export function SettingsSurface({
               aria-label="Buscar nas configurações"
             />
           </div>
+          <div className="settings-nav__groups">
           {searching && groups.length === 0 ? (
             <p className="settings-nav__no-match">
               Nada encontrado para “{query}”.
@@ -302,6 +317,7 @@ export function SettingsSurface({
               </div>
             ))
           )}
+          </div>
         </div>
         <div className="settings-nav__footer">
           <div className="settings-nav__operator">
@@ -319,7 +335,7 @@ export function SettingsSurface({
         </div>
       </nav>
 
-      <div className="settings-detail">
+      <div ref={detailRef} className="settings-detail">
         <header className="settings-detail__nav">
           <div className="settings-detail__location" aria-live="polite">
             <span>Configurações</span>
@@ -338,6 +354,12 @@ export function SettingsSurface({
           </button>
         </header>
         <div className="settings-detail__content">
+          <h2
+            className="settings-detail__title settings-detail__route-title"
+            tabIndex={-1}
+          >
+            {currentSectionTitle ?? 'Configurações'}
+          </h2>
           <SettingsSectionContent
             section={section}
             adapters={adapters}
@@ -367,10 +389,10 @@ export function SettingsWorkspace({
   const backFromSettings = useProductNavigationStore(
     (state) => state.backFromSettings,
   );
-
+  const detailRef = useRef<HTMLDivElement | null>(null);
   const hasControlledSection = controlledSection !== undefined;
-  if (!hasControlledSection && destination.kind !== 'settings') return null;
-
+  const shouldRender =
+    hasControlledSection || destination.kind === 'settings';
   const destinationSection =
     destination.kind === 'settings' ? destination.section : undefined;
   const section = resolveOpenDrawerSection(
@@ -379,17 +401,32 @@ export function SettingsWorkspace({
       : controlledSection,
   );
 
+  useLayoutEffect(() => {
+    if (!shouldRender || !detailRef.current) return;
+    detailRef.current.scrollTop = 0;
+    const heading =
+      detailRef.current.querySelector<HTMLHeadingElement>(
+        '.settings-detail__route-title',
+      );
+    if (!heading) return;
+    heading.focus();
+  }, [section, shouldRender]);
+
+  if (!shouldRender) return null;
+
   return (
     <section
       className={`settings-workspace ${className}`.trim()}
       aria-label="Configurações do Nexus"
     >
+      <h1 className="settings-visually-hidden">Configurações do Nexus</h1>
       <SettingsSurface
         section={section}
         onSelectSection={onSectionChange ?? openSettings}
         onBack={onBack ?? backFromSettings}
         returnLabel="Voltar"
         returnAriaLabel="Voltar ao destino anterior"
+        detailRef={detailRef}
       />
     </section>
   );

@@ -14,21 +14,32 @@ const TODO_STATUS_OPTIONS: ReadonlyArray<{
   { value: 'done', label: 'Concluída' },
 ];
 
+interface PendingTodoWrite {
+  workspaceEpoch: number;
+  boundWorkspacePath: string | null;
+  writeId: symbol;
+}
+
 export function TaskBoardWorkspace() {
   const todoLists = useOrchStore((state) => state.todoLists);
   const workspaceEpoch = useOrchStore((state) => state.workspaceEpoch);
+  const boundWorkspacePath = useOrchStore(
+    (state) => state.boundWorkspacePath,
+  );
   const openMissionSetup = useProductNavigationStore(
     (state) => state.openMissionSetup,
   );
-  const pendingWrites = useRef(new Set<string>());
-  const [pending, setPending] = useState<ReadonlySet<string>>(() => new Set());
+  const pendingWrites = useRef(new Map<string, PendingTodoWrite>());
+  const [pending, setPending] = useState<
+    ReadonlyMap<string, PendingTodoWrite>
+  >(() => new Map());
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   useEffect(() => {
     pendingWrites.current.clear();
-    setPending(new Set());
+    setPending(new Map());
     setErrors({});
-  }, [workspaceEpoch]);
+  }, [workspaceEpoch, boundWorkspacePath]);
   const visibleLists = todoLists.filter((list) => list.items.length > 0);
   const itemCount = visibleLists.reduce((count, list) => count + list.items.length, 0);
 
@@ -40,9 +51,14 @@ export function TaskBoardWorkspace() {
     const key = `${list.id}\u0000${item.id}`;
     if (status === item.status || pendingWrites.current.has(key)) return;
     const writeScope = useOrchStore.getState();
+    const ownership: PendingTodoWrite = {
+      workspaceEpoch: writeScope.workspaceEpoch,
+      boundWorkspacePath: writeScope.boundWorkspacePath,
+      writeId: Symbol(key),
+    };
 
-    pendingWrites.current.add(key);
-    setPending((current) => new Set(current).add(key));
+    pendingWrites.current.set(key, ownership);
+    setPending((current) => new Map(current).set(key, ownership));
     setErrors((current) => {
       if (!(key in current)) return current;
       const next = { ...current };
@@ -79,9 +95,18 @@ export function TaskBoardWorkspace() {
         }));
       }
     } finally {
+      const currentScope = useOrchStore.getState();
+      if (
+        pendingWrites.current.get(key) !== ownership ||
+        currentScope.workspaceEpoch !== ownership.workspaceEpoch ||
+        currentScope.boundWorkspacePath !== ownership.boundWorkspacePath
+      ) {
+        return;
+      }
       pendingWrites.current.delete(key);
       setPending((current) => {
-        const next = new Set(current);
+        if (current.get(key) !== ownership) return current;
+        const next = new Map(current);
         next.delete(key);
         return next;
       });
@@ -126,28 +151,26 @@ export function TaskBoardWorkspace() {
           />
         ) : (
           <div className="task-board-workspace__lists">
-            {visibleLists.map((list) => (
+            {visibleLists.map((list, listIndex) => (
               <section
                 key={list.id}
                 className="task-board-workspace__list"
-                aria-label={`Lista de tarefas ${list.id}`}
+                aria-label={`Lista de tarefas ${listIndex + 1}`}
               >
                 <header className="task-board-workspace__list-header">
-                  <h2>{list.id}</h2>
+                  <h2>Lista {listIndex + 1}</h2>
                   <span>
                     {list.items.length}{' '}
                     {list.items.length === 1 ? 'tarefa' : 'tarefas'}
                   </span>
                 </header>
                 <ul className="task-board-workspace__items">
-                  {list.items.map((item) => {
+                  {list.items.map((item, itemIndex) => {
                     const key = `${list.id}\u0000${item.id}`;
                     const isPending = pending.has(key);
                     const error = errors[key];
                     const errorId = error
-                      ? `task-board-error-${encodeURIComponent(
-                          list.id,
-                        )}-${encodeURIComponent(item.id)}`
+                      ? `task-board-error-${listIndex + 1}-${itemIndex + 1}`
                       : undefined;
 
                     return (

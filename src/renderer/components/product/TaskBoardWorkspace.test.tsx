@@ -48,6 +48,22 @@ const orchBoundary = {
 };
 
 const mountedRoots: Array<{ host: HTMLDivElement; root: Root }> = [];
+type Deferred<T> = {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (reason: unknown) => void;
+};
+
+function createDeferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 
 function mount(node: ReactNode): HTMLDivElement {
   const host = document.createElement('div');
@@ -88,19 +104,25 @@ function statusControl(
   return control;
 }
 
-async function chooseStatus(
+function dispatchStatus(
   control: HTMLSelectElement,
   status: TodoStatus,
-): Promise<void> {
+): void {
   const setter = Object.getOwnPropertyDescriptor(
     HTMLSelectElement.prototype,
     'value',
   )?.set;
   if (!setter) throw new Error('HTMLSelectElement value setter unavailable');
+  setter.call(control, status);
+  control.dispatchEvent(new Event('change', { bubbles: true }));
+}
 
+async function chooseStatus(
+  control: HTMLSelectElement,
+  status: TodoStatus,
+): Promise<void> {
   await act(async () => {
-    setter.call(control, status);
-    control.dispatchEvent(new Event('change', { bubbles: true }));
+    dispatchStatus(control, status);
     await Promise.resolve();
     await Promise.resolve();
   });
@@ -117,6 +139,8 @@ beforeEach(() => {
     todoLists: [],
     selectedMissionId: null,
     boardOpen: false,
+    workspaceEpoch: 0,
+    boundWorkspacePath: null,
   });
   useProductNavigationStore.setState({
     destination: { kind: 'task-board' },
@@ -196,6 +220,131 @@ describe('TaskBoardWorkspace contracts', () => {
     expect(orchBoundary.updateMission).not.toHaveBeenCalled();
     expect(orchBoundary.reopenMission).not.toHaveBeenCalled();
     expect(orchBoundary.removeMission).not.toHaveBeenCalled();
+  });
+
+  it('keeps a newer same-key todo write latched when an older workspace write settles late', async () => {
+    const oldWrite = createDeferred<TodoList>();
+    const newWrite = createDeferred<TodoList>();
+    orchBoundary.setTodoStatus
+      .mockReturnValueOnce(oldWrite.promise)
+      .mockReturnValueOnce(newWrite.promise);
+    useOrchStore.setState({
+      todoLists: [TODO_LIST],
+      workspaceEpoch: 1,
+      boundWorkspacePath: '/workspace/old',
+    });
+    const host = mount(<TaskBoardWorkspace />);
+
+    act(() => {
+      dispatchStatus(statusControl(host, 'Preparar release'), 'in_progress');
+    });
+    expect(orchBoundary.setTodoStatus).toHaveBeenCalledTimes(1);
+    expect(statusControl(host, 'Preparar release').disabled).toBe(true);
+
+    const nextWorkspaceList: TodoList = {
+      ...TODO_LIST,
+      updatedAt: 20,
+      items: TODO_LIST.items.map((item) => ({ ...item, status: item.status })),
+    };
+    act(() => {
+      useOrchStore.setState({
+        todoLists: [nextWorkspaceList],
+        workspaceEpoch: 2,
+        boundWorkspacePath: '/workspace/new',
+      });
+    });
+    expect(statusControl(host, 'Preparar release').disabled).toBe(false);
+
+    act(() => {
+      dispatchStatus(statusControl(host, 'Preparar release'), 'done');
+    });
+    expect(orchBoundary.setTodoStatus).toHaveBeenCalledTimes(2);
+    expect(statusControl(host, 'Preparar release').disabled).toBe(true);
+
+    await act(async () => {
+      oldWrite.resolve({
+        ...TODO_LIST,
+        updatedAt: 10,
+        items: TODO_LIST.items.map((item) =>
+          item.id === 'prepare-release'
+            ? { ...item, status: 'in_progress' }
+            : item,
+        ),
+      });
+      await oldWrite.promise;
+      await Promise.resolve();
+    });
+
+    const stillPending = statusControl(host, 'Preparar release');
+    expect(stillPending.disabled).toBe(true);
+    stillPending.disabled = false;
+    act(() => dispatchStatus(stillPending, 'in_progress'));
+    expect(orchBoundary.setTodoStatus).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      newWrite.resolve({
+        ...nextWorkspaceList,
+        updatedAt: 21,
+        items: nextWorkspaceList.items.map((item) =>
+          item.id === 'prepare-release' ? { ...item, status: 'done' } : item,
+        ),
+      });
+      await newWrite.promise;
+      await Promise.resolve();
+    });
+    expect(statusControl(host, 'Preparar release').disabled).toBe(false);
+  });
+
+  it('uses deterministic PT-BR list labels without exposing canonical list ids', () => {
+    const internalIds = ['mission-019f-private', 'global'];
+    useOrchStore.setState({
+      todoLists: [
+        {
+          id: internalIds[0]!,
+          updatedAt: 1,
+          items: [
+            {
+              id: 'first-item',
+              name: 'Revisar o primeiro fluxo',
+              status: 'todo',
+              createdAt: 1,
+            },
+          ],
+        },
+        {
+          id: internalIds[1]!,
+          updatedAt: 2,
+          items: [
+            {
+              id: 'second-item',
+              name: 'Revisar o segundo fluxo',
+              status: 'done',
+              createdAt: 2,
+            },
+          ],
+        },
+      ],
+    });
+    const host = mount(<TaskBoardWorkspace />);
+    const lists = [
+      ...host.querySelectorAll<HTMLElement>('.task-board-workspace__list'),
+    ];
+
+    expect(lists).toHaveLength(2);
+    expect(lists.map((list) => list.querySelector('h2')?.textContent)).toEqual([
+      'Lista 1',
+      'Lista 2',
+    ]);
+    expect(lists.map((list) => list.getAttribute('aria-label'))).toEqual([
+      'Lista de tarefas 1',
+      'Lista de tarefas 2',
+    ]);
+    for (const id of internalIds) {
+      expect(host.textContent).not.toContain(id);
+      expect(
+        lists.some((list) => list.getAttribute('aria-label')?.includes(id)),
+      ).toBe(false);
+    }
   });
 
   it('shows one useful empty-state CTA that opens mission creation', () => {
