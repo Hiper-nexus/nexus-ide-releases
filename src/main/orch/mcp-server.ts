@@ -75,6 +75,7 @@ import {
   LegacyHandoffDedupe,
   LegacyHandoffParser,
 } from "./legacy-handoff";
+import { missionMarkerObserver } from "./mission-completion-marker";
 import { getProjectDomainStores } from "./project-domain-store-registry";
 import {
   isStaleReadOnlyObservationHandoffResult,
@@ -1319,6 +1320,18 @@ function installLegacyParser(
           }, 50);
         }
       }
+      // Mission completion marker (src/main/orch/mission-completion-marker):
+      // the ONE place the fast lane hears the agent's OWN words. The engine
+      // used to decide completion purely from the PTY state machine, so a CLI
+      // whose parsing never flips to `busy` was re-fed the whole prompt every
+      // 90s forever even after it had written "PRONTO:". `isWatching` is the
+      // cheap gate — false for every pane the fast lane did not arm, and false
+      // again once that pane has spoken, so the hot path pays no extra
+      // stripAnsi.
+      if (missionMarkerObserver.isWatching(sessionId)) {
+        plain ??= stripAnsi(data);
+        missionMarkerObserver.observe(sessionId, plain);
+      }
       if (missionControl.hasChannel(sessionId)) {
         plain ??= stripAnsi(data);
         missionControl.feed(sessionId, plain);
@@ -1343,6 +1356,10 @@ function installLegacyParser(
     track(tapSessionExit((sessionId) => {
       cliPromptAutoResponder.drop(sessionId);
       firstRunInterstitialResponder.drop(sessionId);
+      // `seal`, not `drop`: an agent that writes "PRONTO:" and exits in the
+      // same breath must still be heard by the next fast-lane tick. Buffers
+      // and prompts are freed; only the verdict survives.
+      missionMarkerObserver.seal(sessionId);
       parser.dropSession(sessionId);
       dedupe.dropSession(sessionId);
       rawTails.delete(sessionId);
@@ -1463,6 +1480,7 @@ export function stopMcpServer(): void {
   httpConfirmationScheduler.close();
   cliPromptAutoResponder.clear();
   firstRunInterstitialResponder.clear();
+  missionMarkerObserver.clear();
   disposePtyMissionControl?.();
   disposePtyMissionControl = null;
   for (const token of sessionTokens.values()) {

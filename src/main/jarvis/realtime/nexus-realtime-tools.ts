@@ -57,12 +57,12 @@ export function createNexusRealtimeTools(): RealtimeToolDefinition[] {
           paneName: {
             type: 'string',
             description:
-              'Required for focus_pane. Use a pane title, agent name, or kind such as terminal, browser, agent, or orchestrator.',
+              'Required for focus_pane. Prefer the pane number shown in the injected pane catalog ("7" or "pane 7") — it is the exact address the user says out loud. A pane title, agent name, or kind such as terminal, browser, agent, or orchestrator is also accepted.',
           },
           paneId: {
             type: 'string',
             description:
-              'Canonical pane id from the injected pane catalog for read_pane/send_to_pane. A unique spoken pane title is also accepted. Omit for the focused/orchestrator delegation flow.',
+              'Pane target for read_pane/send_to_pane. Accepts the canonical pane id from the injected pane catalog, the pane number shown there ("7" or "pane 7"), or a unique spoken pane title. When the user names a number, pass that number. Omit for the focused/orchestrator delegation flow.',
           },
           text: {
             type: 'string',

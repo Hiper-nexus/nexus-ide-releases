@@ -1,0 +1,146 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { WebContents } from 'electron';
+import type { PaneRegistryEntry } from '../../shared/orch-types';
+
+/**
+ * O NÚMERO do pane como endereço no protocolo MCP.
+ *
+ * O que estes testes travam: o número é ADIÇÃO. `nexus_pane_list` publica o
+ * número E o id, mirar pelo número atinge o MESMO pane que mirar pelo id, e
+ * nenhuma ambiguidade vira chute — porque mandar trabalho para o terminal
+ * errado é o único erro que não tem desfazer.
+ */
+
+const pty = vi.hoisted(() => ({
+  live: new Set<string>(),
+}));
+
+vi.mock('../pty/pty-manager', () => ({
+  getSessionState: vi.fn((sessionId: string) =>
+    pty.live.has(sessionId) ? 'idle' : null,
+  ),
+  isSessionOwnedBy: vi.fn((_owner: WebContents, sessionId: string) =>
+    pty.live.has(sessionId),
+  ),
+  getAgentSessionInfo: vi.fn(() => null),
+  getOwnedAgentSessionInfo: vi.fn(() => null),
+  listAgentSessionsForPane: vi.fn(() => []),
+  orchKillSession: vi.fn(() => true),
+  orchTerminateSession: vi.fn(async () => true),
+  orchWriteSession: vi.fn(() => true),
+  detachOwnedMissionAgentSession: vi.fn(() => true),
+  spawnMainOwnedAgentSession: vi.fn(),
+  tapSessionData: vi.fn(() => () => {}),
+  tapSessionExit: vi.fn(() => () => {}),
+  tapSessionState: vi.fn(() => () => {}),
+}));
+
+import {
+  getPaneAuthzInfo,
+  listLivePaneNumbers,
+  listPaneSnapshots,
+  syncPanes,
+} from './pane-registry';
+
+function owner(id: number): WebContents {
+  return {
+    id,
+    send: vi.fn(),
+    isDestroyed: () => false,
+  } as unknown as WebContents;
+}
+
+function entry(
+  paneId: string,
+  paneNumber: number | undefined,
+  sessionId: string | null = null,
+): PaneRegistryEntry {
+  return {
+    paneId,
+    sessionId,
+    paneNumber,
+    title: paneId,
+    kind: 'cli-agent',
+  };
+}
+
+const renderer = owner(1);
+
+describe('nexus_pane_list publica o número junto do id', () => {
+  beforeEach(() => {
+    pty.live.clear();
+    syncPanes([], renderer, 'gen-reset');
+  });
+
+  it('cada pane listado carrega paneId E paneNumber', () => {
+    syncPanes(
+      [entry('pane-a1b2c3d4', 1), entry('pane-e5f6a7b8', 2)],
+      renderer,
+      'gen-1',
+    );
+    const listed = listPaneSnapshots();
+    expect(listed).toHaveLength(2);
+    expect(listed.map((pane) => ({ id: pane.paneId, n: pane.paneNumber }))).toEqual([
+      { id: 'pane-a1b2c3d4', n: 1 },
+      { id: 'pane-e5f6a7b8', n: 2 },
+    ]);
+  });
+
+  it('listLivePaneNumbers nomeia os números válidos, ordenados e sem repetição', () => {
+    syncPanes(
+      [entry('pane-a', 4), entry('pane-b', 1), entry('pane-c', undefined)],
+      renderer,
+      'gen-2',
+    );
+    expect(listLivePaneNumbers()).toEqual([1, 4]);
+  });
+});
+
+describe('mirar pelo número atinge o mesmo pane que mirar pelo id', () => {
+  beforeEach(() => {
+    pty.live.clear();
+    syncPanes([], renderer, 'gen-reset');
+    syncPanes(
+      [entry('pane-a1b2c3d4', 1), entry('pane-e5f6a7b8', 7)],
+      renderer,
+      'gen-3',
+    );
+  });
+
+  it('"7", "pane 7" e "pane sete" resolvem para o mesmo pane que o id', () => {
+    const byId = getPaneAuthzInfo('pane-e5f6a7b8');
+    expect(byId?.paneId).toBe('pane-e5f6a7b8');
+    for (const ref of ['7', '#7', 'pane 7', 'pane-7', 'no pane 7', 'pane sete']) {
+      expect(getPaneAuthzInfo(ref)?.paneId).toBe(byId?.paneId);
+    }
+  });
+
+  it('o id continua sendo aceito — o número não substitui o protocolo', () => {
+    expect(getPaneAuthzInfo('pane-a1b2c3d4')?.paneId).toBe('pane-a1b2c3d4');
+  });
+
+  it('número inexistente não resolve (a recusa nomeia os válidos)', () => {
+    expect(getPaneAuthzInfo('pane 9')).toBeNull();
+    expect(listLivePaneNumbers()).toEqual([1, 7]);
+  });
+
+  it('número duplicado entre janelas é ambiguidade, nunca um chute', () => {
+    const segundaJanela = owner(2);
+    pty.live.clear();
+    syncPanes([entry('pane-outra-janela', 7)], segundaJanela, 'gen-w2');
+    // Dois panes vivos com o número 7 → recusa, e o id de cada um segue exato.
+    expect(getPaneAuthzInfo('pane 7')).toBeNull();
+    expect(getPaneAuthzInfo('pane-e5f6a7b8')?.paneId).toBe('pane-e5f6a7b8');
+    expect(getPaneAuthzInfo('pane-outra-janela')?.paneId).toBe('pane-outra-janela');
+    syncPanes([], segundaJanela, 'gen-w2-clear');
+  });
+
+  it('id só de dígitos vence a leitura numérica — identidade primeiro', () => {
+    // ~2% dos ids saem só com dígitos; lê-los como número entregaria o pane
+    // errado. Aqui o id "7" e o NÚMERO 7 apontam para panes diferentes.
+    syncPanes([], renderer, 'gen-reset-2');
+    syncPanes([entry('7', 5), entry('pane-real', 7)], renderer, 'gen-4');
+    expect(getPaneAuthzInfo('7')?.paneId).toBe('7');
+    expect(getPaneAuthzInfo('pane 7')?.paneId).toBe('pane-real');
+  });
+});

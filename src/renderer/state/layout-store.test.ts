@@ -758,3 +758,103 @@ describe('layout-store reclaimAsOperatorShell', () => {
     expect(listPanes(useLayoutStore.getState().root)[0]?.kind).toBe('shell');
   });
 });
+
+/**
+ * NÚMERO do pane através do store: atribuição na criação, sobrevivência ao
+ * restart (hidratação), e a ausência de duplicata numa mistura de criar/fechar.
+ *
+ * A identidade continua sendo o `id` — o número é adição. Estes testes existem
+ * porque o modo de falha que importa é falar "pane 5" e acertar outro pane.
+ */
+describe('layout-store números de pane', () => {
+  function numbersOf(): (number | undefined)[] {
+    return listPanes(useLayoutStore.getState().root).map(
+      (pane) => pane.paneNumber,
+    );
+  }
+
+  beforeEach(() => {
+    useLayoutStore.getState().hydrate(null);
+  });
+
+  it('workspace novo numera a partir de 1', () => {
+    // Compara CONJUNTO, não sequência: `numbersOf` devolve a ordem do layout, e
+    // um split insere o pane novo no meio da árvore. Número é identidade;
+    // posição é o ⌘1-9, que é outro namespace.
+    expect(numbersOf()).toEqual([1]);
+    useLayoutStore.getState().addShellPane();
+    useLayoutStore.getState().addShellPane();
+    expect([...numbersOf()].sort()).toEqual([1, 2, 3]);
+  });
+
+  it('todo pane criado recebe número, e nunca dois iguais', () => {
+    const store = useLayoutStore.getState();
+    store.addShellPane();
+    store.spawnAgent('codex', 'gpt-5');
+    store.addBrowserPane('https://example.com');
+    const numbers = numbersOf();
+    expect(numbers.every((value) => typeof value === 'number')).toBe(true);
+    expect(new Set(numbers).size).toBe(numbers.length);
+  });
+
+  it('o número persistido volta ao MESMO pane depois do restart', () => {
+    // Layout como o disco o guardou: números fora de ordem, de propósito.
+    const saved: WorkspaceLayout = {
+      root: buildGridTree([
+        { id: 'pane-x', kind: 'shell', title: 'x', paneNumber: 3 },
+        { id: 'pane-y', kind: 'shell', title: 'y', paneNumber: 1 },
+      ]),
+      focusedPaneId: 'pane-x',
+    };
+    useLayoutStore.getState().hydrate(saved);
+    const panes = listPanes(useLayoutStore.getState().root);
+    expect(panes.find((pane) => pane.id === 'pane-x')?.paneNumber).toBe(3);
+    expect(panes.find((pane) => pane.id === 'pane-y')?.paneNumber).toBe(1);
+  });
+
+  it('layout antigo SEM número abre normal e recebe o menor livre', () => {
+    // Workspace gravado por versão anterior à numeração: nada pode quebrar.
+    const legacy: WorkspaceLayout = {
+      root: buildGridTree([
+        { id: 'pane-legado-a', kind: 'shell', title: 'a' },
+        { id: 'pane-legado-b', kind: 'shell', title: 'b' },
+      ]),
+      focusedPaneId: null,
+    };
+    useLayoutStore.getState().hydrate(legacy);
+    const panes = listPanes(useLayoutStore.getState().root);
+    expect(panes).toHaveLength(2);
+    expect(panes.map((pane) => pane.paneNumber).sort()).toEqual([1, 2]);
+  });
+
+  it('mistura de criar e fechar não duplica número e reusa o menor livre', () => {
+    const first = useLayoutStore.getState().addShellPane();
+    const second = useLayoutStore.getState().addShellPane();
+    expect([...numbersOf()].sort()).toEqual([1, 2, 3]);
+    useLayoutStore.getState().close(second, 'test');
+    useLayoutStore.getState().close(first, 'test');
+    const numbers = numbersOf();
+    expect(new Set(numbers).size).toBe(numbers.length);
+    // Os números 2 e 3 voltaram para a fila: o próximo pane pega o menor.
+    useLayoutStore.getState().addShellPane();
+    const after = numbersOf();
+    expect(new Set(after).size).toBe(after.length);
+    expect(Math.min(...(after as number[]))).toBe(1);
+    expect(after).toContain(2);
+  });
+
+  it('hidratar outro workspace não deixa vazar os números do anterior', () => {
+    useLayoutStore.getState().hydrate({
+      root: buildGridTree([
+        { id: 'pane-antigo', kind: 'shell', title: 'antigo', paneNumber: 9 },
+      ]),
+      focusedPaneId: null,
+    });
+    expect(numbersOf()).toEqual([9]);
+    useLayoutStore.getState().hydrate({
+      root: buildGridTree([{ id: 'pane-novo', kind: 'shell', title: 'novo' }]),
+      focusedPaneId: null,
+    });
+    expect(numbersOf()).toEqual([1]);
+  });
+});

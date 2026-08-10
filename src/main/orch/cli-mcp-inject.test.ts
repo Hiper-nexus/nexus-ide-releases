@@ -17,6 +17,7 @@ import {
   codexHubMcpArgs,
   grokHubMcpServers,
   loadMcpHubServersForSpawn,
+  MCP_HUB_SPAWN_MAX_SERVERS,
   openCodeHubMcpServers,
 } from "../mcp-hub/mcp-hub-spawn";
 
@@ -567,6 +568,34 @@ describe("loadMcpHubServersForSpawn", () => {
     expect(codex).not.toContain("__nexus_vault__");
     expect(codex).toContain('mcp_servers.plain.env.MODE="fast"');
     expect(codex).toContain('mcp_servers.sealed.http_headers.X-Trace="on"');
+  });
+
+  it("respeita o teto de servidores do hub", () => {
+    const serversOfSize = (count: number) =>
+      Array.from({ length: count }, (_, index) => ({
+        id: `srv${String(index).padStart(3, "0")}`,
+        name: `Server ${index}`,
+        transport: "stdio",
+        command: "run-it",
+      }));
+
+    expect(
+      loadMcpHubServersForSpawn(
+        workspaceWithHub({
+          schemaVersion: 1,
+          servers: serversOfSize(MCP_HUB_SPAWN_MAX_SERVERS),
+        }),
+      ),
+    ).toHaveLength(MCP_HUB_SPAWN_MAX_SERVERS);
+    // Acima do teto o próprio schema recusa o arquivo: degrada para vazio.
+    expect(
+      loadMcpHubServersForSpawn(
+        workspaceWithHub({
+          schemaVersion: 1,
+          servers: serversOfSize(MCP_HUB_SPAWN_MAX_SERVERS + 1),
+        }),
+      ),
+    ).toEqual([]);
   });
 
   it("é determinístico: ordem estável e primeira entrada vence na colisão", () => {

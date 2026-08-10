@@ -113,7 +113,7 @@ function toSpawnServer(server: McpHubServer): McpHubSpawnServer | null {
 }
 
 /** True quando o servidor deve ser declarado como processo local (stdio). */
-export function isStdioHubServer(server: McpHubSpawnServer): boolean {
+function isStdioHubServer(server: McpHubSpawnServer): boolean {
   if (server.transport === 'stdio') return Boolean(server.command);
   return !server.url && Boolean(server.command);
 }

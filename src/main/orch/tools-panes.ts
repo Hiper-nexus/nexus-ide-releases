@@ -595,7 +595,10 @@ const paneList: McpToolDef = {
   name: 'nexus_pane_list',
   description:
     'List every pane in the workspace with its live state ' +
-    '(spawning|busy|idle|exited), adapter, model and mission binding.',
+    '(spawning|busy|idle|exited), adapter, model and mission binding. ' +
+    'Each pane reports both paneId (the protocol identity) and paneNumber ' +
+    '(the short number the operator reads in the pane header and says out ' +
+    'loud); either is accepted wherever a paneId is taken.',
   inputSchema: { type: 'object', properties: {} },
   handler: async (_args, ctx) => listVisiblePaneSnapshots(ctx),
 };
@@ -715,11 +718,16 @@ const paneRead: McpToolDef = {
   name: 'nexus_pane_read',
   description:
     "Read the tail of a pane's terminal output as plain text (ANSI " +
-    'stripped). paneId also accepts a sessionId.',
+    'stripped). paneId also accepts a sessionId or the pane number.',
   inputSchema: {
     type: 'object',
     properties: {
-      paneId: { type: 'string' },
+      paneId: {
+        type: 'string',
+        description:
+          'Pane identity: paneId, sessionId, or the short pane number the ' +
+          'operator sees in the header ("7" or "pane 7").',
+      },
       lines: {
         type: 'number',
         description: 'Max lines from the tail (default 200)',
@@ -770,7 +778,12 @@ const paneWrite: McpToolDef = {
   inputSchema: {
     type: 'object',
     properties: {
-      paneId: { type: 'string' },
+      paneId: {
+        type: 'string',
+        description:
+          'Pane identity: paneId, sessionId, or the short pane number the ' +
+          'operator sees in the header ("7" or "pane 7").',
+      },
       text: { type: 'string' },
       submit: {
         type: 'boolean',
@@ -806,7 +819,12 @@ const paneWriteMany: McpToolDef = {
         items: {
           type: 'object',
           properties: {
-            paneId: { type: 'string' },
+            paneId: {
+        type: 'string',
+        description:
+          'Pane identity: paneId, sessionId, or the short pane number the ' +
+          'operator sees in the header ("7" or "pane 7").',
+      },
             text: { type: 'string' },
             submit: { type: 'boolean' },
           },
@@ -863,7 +881,12 @@ const paneClose: McpToolDef = {
   inputSchema: {
     type: 'object',
     properties: {
-      paneId: { type: 'string' },
+      paneId: {
+        type: 'string',
+        description:
+          'Pane identity: paneId, sessionId, or the short pane number the ' +
+          'operator sees in the header ("7" or "pane 7").',
+      },
       scope: {
         type: 'string',
         enum: ['caller_mission', 'caller_workspace'],
@@ -926,7 +949,12 @@ const paneWaitIdle: McpToolDef = {
   inputSchema: {
     type: 'object',
     properties: {
-      paneId: { type: 'string' },
+      paneId: {
+        type: 'string',
+        description:
+          'Pane identity: paneId, sessionId, or the short pane number the ' +
+          'operator sees in the header ("7" or "pane 7").',
+      },
       timeoutMs: { type: 'number', description: 'Default 120000' },
       lines: { type: 'number' },
     },

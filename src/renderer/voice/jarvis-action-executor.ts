@@ -25,6 +25,7 @@ import {
   resolveSendToPaneTarget,
   resolveSyncRepoViaPaneTarget,
 } from './send-to-pane-target';
+import { parsePaneNumberRef } from '../../shared/pane-number';
 import { requestPaneClose } from '../terminal/pane-close-guard';
 import { sanitizeMcpResultOutput } from './mcp-result-output';
 import { currentViewNarration, currentViewToolOutput } from './current-view-read';
@@ -261,10 +262,44 @@ function looksLikeShellCommand(command: string): boolean {
   return KNOWN_SHELL_COMMANDS.has(firstToken);
 }
 
+/**
+ * Recusa NOMEADA quando o operador ditou um número que não resolve: diz qual
+ * número foi pedido e quais existem. Nunca redireciona para o pane focado —
+ * mandar trabalho para o terminal errado é pior que recusar.
+ *
+ * Devolve `null` quando o alvo não veio de um número, para a frase original da
+ * recusa continuar valendo.
+ */
+function paneNumberRefusal(target: {
+  requestedNumber?: number;
+  validNumbers?: readonly number[];
+}): string | null {
+  if (target.requestedNumber === undefined) return null;
+  const valid = target.validNumbers ?? [];
+  return valid.length === 0
+    ? `Não tem pane ${target.requestedNumber} aberto — não há nenhum pane numerado agora.`
+    : `Não tem pane ${target.requestedNumber} aberto. Os panes abertos são: ${valid.join(', ')}.`;
+}
+
 function findPaneByVoiceName(
   panes: ReturnType<typeof listPanes>,
   paneName: string,
 ): ReturnType<typeof listPanes>[number] | null {
+  // Identidade primeiro, NÚMERO depois, título por último.
+  //
+  // O id cru pode sair só com dígitos (`randomUUID().slice(0,8)`), então ele é
+  // testado antes de qualquer leitura numérica. Em seguida o número — o
+  // endereço que o operador consegue ditar — porque um "7" solto casaria por
+  // substring com qualquer título que contenha 7 ("claude-7"). Número que não
+  // resolve para EXATAMENTE um pane devolve null: recusar é melhor que mandar
+  // trabalho para o terminal errado.
+  const byId = panes.find((pane) => pane.id === paneName.trim());
+  if (byId) return byId;
+  const wantedNumber = parsePaneNumberRef(paneName);
+  if (wantedNumber !== null) {
+    const numbered = panes.filter((pane) => pane.paneNumber === wantedNumber);
+    return numbered.length === 1 ? (numbered[0] ?? null) : null;
+  }
   const wanted = normPaneName(paneName);
   if (!wanted) return null;
   if (/\b(orquestrador|orchestrator)\b/.test(wanted)) {
@@ -1033,6 +1068,7 @@ export async function executeJarvisAction(
       };
     } else if (target.kind === 'asking-pane-gone') {
       sayText =
+        paneNumberRefusal(target) ??
         'O pane que tinha perguntado já fechou. Se ainda precisar, me diz de novo o que fazer.';
       expectReply = true;
       toolResult = {
@@ -1238,7 +1274,9 @@ export async function executeJarvisAction(
         };
       }
     } else if (target.kind === 'asking-pane-gone') {
-      sayText = 'Esse pane já fechou — não tenho pra quem perguntar.';
+      sayText =
+        paneNumberRefusal(target) ??
+        'Esse pane já fechou — não tenho pra quem perguntar.';
       toolResult = { tool: action.type, ok: false, summary: 'pane da pergunta fechado' };
     } else if (target.kind === 'asking-pane-not-agent') {
       sayText = 'Esse pane não é de agente — não escrevo pergunta nele.';
@@ -1278,7 +1316,9 @@ export async function executeJarvisAction(
     const target = resolveSyncRepoViaPaneTarget(action.paneId, panes, focusedPaneId);
 
     if (target.kind === 'asking-pane-gone') {
-      sayText = 'O pane que você citou já fechou. Abre um agente e pede de novo.';
+      sayText =
+        paneNumberRefusal(target) ??
+        'O pane que você citou já fechou. Abre um agente e pede de novo.';
       toolResult = {
         tool: action.type,
         ok: false,

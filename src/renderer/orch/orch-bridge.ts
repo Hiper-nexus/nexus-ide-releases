@@ -54,6 +54,9 @@ function snapshotPanes(): PaneRegistryEntry[] {
   return listPanes(root).map((pane) => ({
     paneId: pane.id,
     sessionId: getPaneSessionId(pane.id),
+    // O número que o operador lê no header viaja junto para o Main poder
+    // aceitar "pane 7" como alvo nas ferramentas MCP.
+    paneNumber: pane.paneNumber,
     title: pane.title,
     kind: pane.kind,
     adapterId: pane.adapterId,

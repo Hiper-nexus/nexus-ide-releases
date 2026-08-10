@@ -1,5 +1,9 @@
 import { create } from 'zustand';
-import { claimPaneNumber, releasePaneNumber } from '../lib/pane-numbers';
+import {
+  claimPaneNumber,
+  hydratePaneNumbers,
+  releasePaneNumber,
+} from '../lib/pane-numbers';
 import type {
   CanvasNodeLayout,
   LayoutNode,
@@ -21,6 +25,7 @@ import {
   splitPane,
   updatePane,
   pickBalancedTarget,
+  withPaneNumbers,
 } from '../lib/split-tree';
 import {
   defaultCanvasLayout,
@@ -795,11 +800,14 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
       req.adapterId,
       req.model,
     );
+    // O id descartado por `createPane` devolve o número à fila antes de o id
+    // real reivindicar o dele: sem isto cada spawn de orquestração queimaria um
+    // número para sempre, e o operador subiria para "pane 40" com 6 panes na
+    // tela. O registro é o MESMO — nunca existem dois numeradores.
+    if (req.paneId !== base.id) releasePaneNumber(base.id);
     const newPane: PaneModel = {
       ...base,
       id: req.paneId,
-      // Pane de posse do Main chega com id próprio: o nome é atribuído aqui,
-      // pelo MESMO registro, para não existirem dois numeradores.
       paneNumber: claimPaneNumber(req.paneId),
       title: req.title ?? base.title,
       accountId: req.accountId,
@@ -1021,7 +1029,10 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
       notifyIfLastMissionPaneClosed(closedPane, reason, listPanes(root));
     }
     // Libera DEPOIS do aviso — a notificação ainda cita o pane que morreu.
-    // O número não volta para a fila: "pane 7" nunca vira outro pane.
+    // O número volta para a fila: o próximo pane recebe o MENOR livre, para o
+    // operador seguir falando números curtos em vez de "pane 312". Enquanto o
+    // pane vive o número é só dele; citar o número de um pane já fechado é
+    // recusado com a lista dos válidos, nunca redirecionado para outro pane.
     releasePaneNumber(paneId);
   },
 
@@ -1060,9 +1071,15 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
     if (paneId && listPanes(currentRoot).some((pane) => pane.id === paneId)) {
       throw new Error(`browser pane identity already exists: ${paneId}`);
     }
+    const base = createPane('browser', getActiveWorkspacePath() ?? undefined);
+    // Pane de posse do Main chega com id próprio, e o número TEM de seguir o id
+    // real. Herdar o número que `createPane` reservou para o id descartado faria
+    // "pane N" resolver para um pane que não existe — exatamente o erro que a
+    // numeração existe para impedir. Libera o descartado, reivindica pelo real.
+    if (paneId && paneId !== base.id) releasePaneNumber(base.id);
     const newPane: PaneModel = {
-      ...createPane('browser', getActiveWorkspacePath() ?? undefined),
-      ...(paneId ? { id: paneId } : {}),
+      ...base,
+      ...(paneId ? { id: paneId, paneNumber: claimPaneNumber(paneId) } : {}),
       title: 'browser',
       browserUrl: url,
       browserOpenRequestId,
@@ -1193,8 +1210,22 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
         : [];
     if (!layout) {
       const restored = initialTree();
-      const root =
+      const bare =
         carried.length > 0 ? buildGridTree(carried) : restored;
+      // Re-semeia a numeração para ESTE workspace: sem isto o registro
+      // continuaria com os números do workspace anterior e o operador leria no
+      // header um número que aponta para um pane que não está mais na tela.
+      //
+      // Só os panes CARREGADOS (missão viva que atravessa a troca) trazem
+      // número legítimo. O placeholder que `initialTree` acabou de criar pegou
+      // o menor livre do registro do workspace que está SAINDO; deixá-lo entrar
+      // no seed faria um workspace novo e vazio abrir em "pane 4". Ele
+      // reivindica do zero.
+      const carriedIds = new Set(carried.map((pane) => pane.id));
+      const seeds = listPanes(bare).map((pane) =>
+        carriedIds.has(pane.id) ? pane : { ...pane, paneNumber: undefined },
+      );
+      const root = withPaneNumbers(bare, hydratePaneNumbers(seeds));
       set({
         root,
         focusedPaneId: firstPaneId(root),
@@ -1215,10 +1246,15 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
         `[layout] restore kept ${survivors.length} live mission pane(s) the saved layout did not contain`,
       );
     }
-    const root =
+    const bare =
       survivors.length > 0
         ? buildGridTree([...restoredPanes, ...survivors])
         : durableLayout.root;
+    // O número SOBREVIVE AO RESTART aqui: o layout persistido guarda
+    // `paneNumber` por pane, e `hydratePaneNumbers` devolve exatamente aquele
+    // número ao mesmo pane. Layout gravado antes da numeração existir chega sem
+    // o campo e recebe o menor livre — workspace antigo abre normal.
+    const root = withPaneNumbers(bare, hydratePaneNumbers(listPanes(bare)));
     // The zoom is deliberately NOT decided here: enforceLayoutInvariants owns
     // it, so a restore that adds panes can never leave one covering them.
     set({

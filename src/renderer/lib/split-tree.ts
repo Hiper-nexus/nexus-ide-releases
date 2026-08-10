@@ -198,6 +198,33 @@ export function paneSlotOf(root: LayoutNode, paneId: string): number | null {
   return index + 1;
 }
 
+/**
+ * Grava o número durável em cada pane da árvore, a partir do mapa que a
+ * hidratação resolveu. Panes que já vinham com o número persistido recebem o
+ * mesmo valor de volta (identidade preservada no restart); os que vieram sem —
+ * layout gravado por versão anterior à numeração — recebem o recém-atribuído.
+ *
+ * Só o campo `paneNumber` é tocado: a identidade do pane é o `id`, e nada mais
+ * na árvore muda aqui.
+ */
+export function withPaneNumbers(
+  root: LayoutNode,
+  numbers: ReadonlyMap<string, number>,
+): LayoutNode {
+  if (root.kind === 'leaf') {
+    const assigned = numbers.get(root.pane.id);
+    if (assigned === undefined || root.pane.paneNumber === assigned) return root;
+    return { ...root, pane: { ...root.pane, paneNumber: assigned } };
+  }
+  return {
+    ...root,
+    children: [
+      withPaneNumbers(root.children[0], numbers),
+      withPaneNumbers(root.children[1], numbers),
+    ],
+  };
+}
+
 /** Update a pane's fields in place (immutably) — used for live titles. */
 export function updatePane(
   root: LayoutNode,

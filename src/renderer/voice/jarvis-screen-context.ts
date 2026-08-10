@@ -92,7 +92,11 @@ export function buildJarvisContext(): JarvisContext {
               : pane.kind === 'browser'
                 ? '[browser] '
                 : '[agente] ';
-        return `${tag}${pane.title}`;
+        // O número que o operador lê no header vai junto: sem vê-lo, o modelo
+        // nunca teria como devolver "pane 7" como alvo.
+        const number =
+          pane.paneNumber !== undefined ? `[pane ${pane.paneNumber}] ` : '';
+        return `${number}${tag}${pane.title}`;
       })
       .slice(0, 20),
     focusedPane: focusedPane?.title ?? null,

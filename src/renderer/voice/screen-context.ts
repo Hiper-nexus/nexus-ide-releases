@@ -47,7 +47,10 @@ function paneKindLabel(pane: PaneModel, orchestratorPaneId: string | null): stri
 function paneSummary(pane: PaneModel, orchestratorPaneId: string | null): string {
   const label = paneKindLabel(pane, orchestratorPaneId);
   const url = pane.kind === 'browser' && pane.browserUrl ? ` @ ${pane.browserUrl}` : '';
-  return `[${label}; id=${pane.id}] ${pane.title}${url}`;
+  // O número entra no catálogo porque o modelo não pode citar um endereço que
+  // nunca lhe foi mostrado — e é este número que o operador fala em voz alta.
+  const number = pane.paneNumber !== undefined ? `pane ${pane.paneNumber}; ` : '';
+  return `[${number}${label}; id=${pane.id}] ${pane.title}${url}`;
 }
 
 function focusedSummary(

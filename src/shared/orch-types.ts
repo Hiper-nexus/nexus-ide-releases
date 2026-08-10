@@ -696,6 +696,13 @@ export type PaneRuntimeState =
 export interface PaneRegistryEntry {
   paneId: string;
   sessionId: string | null;
+  /**
+   * Número humano curto do pane, o que o operador fala ("manda no pane 7").
+   * É ADIÇÃO: `paneId` continua sendo a identidade e a chave do protocolo, e
+   * toda ferramenta que aceita o número também aceita o id. Ausente enquanto o
+   * renderer ainda não sincronizou o pane recém-criado.
+   */
+  paneNumber?: number;
   title: string;
   kind: 'shell' | 'cli-agent' | 'browser';
   adapterId?: string;
@@ -853,6 +860,9 @@ export type BrowserPaneOpenResult = z.infer<typeof browserPaneOpenResultSchema>;
 export const paneRegistryEntrySchema = z.object({
   paneId: z.string().min(1).max(128),
   sessionId: z.string().max(128).nullable(),
+  // Sem este campo o `z.object` descartaria `paneNumber` em silêncio e o Main
+  // nunca veria o número que o operador está lendo na tela.
+  paneNumber: z.number().int().positive().max(999999).optional(),
   title: z.string().max(512),
   kind: z.enum(['shell', 'cli-agent', 'browser']),
   adapterId: z.string().max(64).optional(),

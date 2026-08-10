@@ -11,6 +11,10 @@ import { listPaneSnapshots, requestPaneSpawn } from './pane-registry';
 import { getProjectDomainStores } from './project-domain-store-registry';
 import { getSquad } from './squad-store';
 import { missionEngineForScope } from './mission-engine-registry';
+import {
+  missionMarkerObserver,
+  type MissionMarkerSighting,
+} from './mission-completion-marker';
 
 /**
  * Via Rápida de missão (2026-08-10) — o motor de execução padrão.
@@ -98,6 +102,56 @@ interface FastLaneAgentRun {
   /** Quantas recargas de prompt este agente já recebeu (teto MAX_BOOT_NUDGES). */
   nudges: number;
   promptDeliveredAt: number;
+  /**
+   * A palavra do próprio agente (`PRONTO:`/`BLOQUEADO:`), travada no primeiro
+   * tick que a enxerga. Autoridade acima do estado do PTY: CLI que nunca flipa
+   * para `busy` (agy) entregava e era cutucada em loop para refazer tudo.
+   */
+  marker: MissionMarkerSighting | null;
+}
+
+/**
+ * Vereditos possíveis de uma equipe. `pending` = ainda há agente sem entrega
+ * provada; conclusão só pode ser `success` quando NINGUÉM está pendente e
+ * ninguém se declarou bloqueado.
+ */
+export type FastLaneVerdict =
+  | { readonly kind: 'pending' }
+  | { readonly kind: 'success' }
+  | { readonly kind: 'blocked'; readonly reason: string };
+
+export interface FastLaneAgentDelivery {
+  readonly agentName: string;
+  readonly wasBusy: boolean;
+  readonly marker: MissionMarkerSighting | null;
+}
+
+/** Este agente entregou alguma coisa? Trabalho observado OU palavra dada. */
+export function agentDelivered(agent: FastLaneAgentDelivery): boolean {
+  return agent.wasBusy || agent.marker !== null;
+}
+
+/**
+ * Veredito da equipe, puro. Um `BLOQUEADO:` de qualquer agente proíbe `success`
+ * e carrega a FRASE DELE para o bloqueio — o operador tem que ler o motivo do
+ * agente, não um genérico "os terminais ficaram calados".
+ */
+export function fastLaneVerdict(
+  agents: readonly FastLaneAgentDelivery[],
+): FastLaneVerdict {
+  if (agents.length === 0) return { kind: 'pending' };
+  if (!agents.every(agentDelivered)) return { kind: 'pending' };
+  const blocked = agents.filter((agent) => agent.marker?.kind === 'blocked');
+  if (blocked.length === 0) return { kind: 'success' };
+  const detail = blocked
+    .map((agent) => `${agent.agentName}: ${agent.marker?.text ?? ''}`.trim())
+    .join(' · ');
+  return {
+    kind: 'blocked',
+    reason:
+      `A equipe reportou BLOQUEADO — ${detail}. ` +
+      'Resolva o impedimento e use Retomar.',
+  };
 }
 
 interface FastLaneRun {
@@ -261,6 +315,12 @@ async function spawnAgentPane(
   if (role === 'orchestrator') {
     stores.missions.setOrchestratorSession(mission.id, spawn.sessionId);
   }
+  // Largada nativa: o prompt vai como ARGUMENTO e a TUI o ecoa na tela. Armar o
+  // observador aqui, antes de qualquer byte, é o que impede o eco da própria
+  // instrução (que contém as palavras PRONTO:/BLOQUEADO:) de virar veredito.
+  if (initialPrompt) {
+    missionMarkerObserver.registerPrompt(spawn.sessionId, initialPrompt);
+  }
   return {
     agentId: agent.id,
     agentName: agent.agentName,
@@ -275,6 +335,7 @@ async function spawnAgentPane(
     respawned: false,
     nudges: 0,
     promptDeliveredAt: 0,
+    marker: null,
   };
 }
 
@@ -291,6 +352,17 @@ async function waitPastSpawning(sessionId: string): Promise<void> {
 }
 
 /**
+ * Carimba a entrega no relógio do nudge E arma a trava de eco do observador com
+ * o texto EXATO entregue. Todo caminho de entrega (largada nativa, colagem,
+ * recarga, retomada) passa por aqui: prompt entregue sem registrar é prompt
+ * cujo eco o motor pode confundir com a resposta do agente.
+ */
+function markPromptDelivered(run: FastLaneAgentRun, prompt: string): void {
+  run.promptDeliveredAt = Date.now();
+  missionMarkerObserver.registerPrompt(run.sessionId, prompt);
+}
+
+/**
  * Entrega NUNCA é fatal: `deliverAgentPrompt` lança quando a TUI não aceita
  * dentro da janela, e uma exceção aqui já derrubou o loop de spawn inteiro
  * (coordenador vivo, workers nunca nascidos, observador nunca armado). A
@@ -300,10 +372,10 @@ async function deliverPrompt(
   run: FastLaneAgentRun,
   prompt: string,
 ): Promise<boolean> {
-  run.promptDeliveredAt = Date.now();
+  markPromptDelivered(run, prompt);
   try {
     await waitPastSpawning(run.sessionId);
-    run.promptDeliveredAt = Date.now();
+    markPromptDelivered(run, prompt);
     const accepted = await deliverAgentPrompt(run.sessionId, prompt, undefined, {
       adapterId: run.adapterId,
     });
@@ -356,10 +428,16 @@ function completeRun(run: FastLaneRun): void {
     stopFastLaneRun(run.scope, run.missionId);
     return;
   }
+  // Quando o agente disse com todas as letras o que entregou, é a FRASE DELE
+  // que vai para o resultado — o operador lê o trabalho, não a lista de nomes.
+  const reported = run.agents
+    .filter((agent) => agent.marker?.kind === 'done')
+    .map((agent) => `${agent.agentName}: ${agent.marker?.text ?? ''}`.trim());
   const summary =
     'Equipe concluiu e assentou: ' +
     run.agents.map((agent) => agent.agentName).join(', ') +
-    '. Resultado nos terminais e no workspace.';
+    '. Resultado nos terminais e no workspace.' +
+    (reported.length > 0 ? `\n\n${reported.join('\n')}` : '');
   try {
     missionEngineForScope(run.scope).completeVerified(run.scope, {
       missionId: run.missionId,
@@ -447,6 +525,13 @@ async function tickRun(run: FastLaneRun): Promise<void> {
   const now = Date.now();
   let allSettled = true;
   for (const agent of run.agents) {
+    // A palavra do agente vem ANTES da máquina de estados do PTY. Quem escreveu
+    // `PRONTO:`/`BLOQUEADO:` já se pronunciou: está assentado, não recebe mais
+    // recarga de prompt e não é respawnado. Era exatamente aqui que a `agy` —
+    // pane parado em "Pronto", `busy` que nunca chegou — refazia a tarefa a
+    // cada 90s tendo entregue na primeira vez.
+    agent.marker ??= missionMarkerObserver.markerOf(agent.sessionId);
+    if (agent.marker) continue;
     const state = getSessionState(agent.sessionId);
     if (state === 'busy') {
       agent.wasBusy = true;
@@ -515,7 +600,7 @@ async function tickRun(run: FastLaneRun): Promise<void> {
         agent.paneId = respawned.paneId;
         agent.sessionId = respawned.sessionId;
         if (NATIVE_INITIAL_PROMPT_ADAPTERS.has(agent.adapterId)) {
-          agent.promptDeliveredAt = Date.now();
+          markPromptDelivered(agent, prompt);
           return;
         }
         await deliverPrompt(agent, prompt);
@@ -528,14 +613,17 @@ async function tickRun(run: FastLaneRun): Promise<void> {
     allSettled = false;
   }
 
-  // TODOS trabalharam — `some()` produziu missão done com 2 de 3 agentes
-  // mortos sem executar e o artefato do objetivo inexistente (smoke 0.30.0).
-  const everyoneWorked =
-    run.agents.length > 0 && run.agents.every((agent) => agent.wasBusy);
-  if (allSettled && everyoneWorked) {
+  // TODOS entregaram — `some()` produziu missão done com 2 de 3 agentes mortos
+  // sem executar e o artefato do objetivo inexistente (smoke 0.30.0). Entrega =
+  // trabalho observado no PTY OU a palavra do próprio agente; sem nenhum dos
+  // dois (mudo e morto duas vezes) continua não sendo sucesso.
+  const verdict = fastLaneVerdict(run.agents);
+  if (allSettled && verdict.kind !== 'pending') {
     run.idleConfirmations += 1;
     if (run.idleConfirmations >= IDLE_CONFIRMATIONS_TO_COMPLETE) {
-      completeRun(run);
+      // Quem disse BLOQUEADO proíbe o sucesso e empresta o próprio motivo.
+      if (verdict.kind === 'blocked') blockRunVisible(run, verdict.reason);
+      else completeRun(run);
     }
     return;
   }
@@ -546,7 +634,7 @@ async function tickRun(run: FastLaneRun): Promise<void> {
   if (
     missionAge > STALL_MIN_MISSION_AGE_MS &&
     silentFor > STALL_BLOCK_AFTER_MS &&
-    !everyoneWorked
+    verdict.kind === 'pending'
   ) {
     blockRunVisible(
       run,
@@ -659,7 +747,7 @@ export async function fastLaneBootstrap(
     spawnedPairs.map(async ({ spec, agent }) => {
       const prompt = agentPrompt(spec, live, teamNames, false, designContext);
       if (NATIVE_INITIAL_PROMPT_ADAPTERS.has(agent.adapterId)) {
-        agent.promptDeliveredAt = Date.now();
+        markPromptDelivered(agent, prompt);
         if (agent.role === 'orchestrator') {
           recordFastLaneKickoffAcceptance(scope, live, agent.sessionId, prompt);
         }
@@ -783,6 +871,9 @@ export async function resumeFastLaneMission(
         // em série do mesmo trabalho.
         nudges: 1,
         promptDeliveredAt: Date.now(),
+        // Pane vivo adotado: o veredito que ele já tenha dado nesta vida
+        // continua valendo — retomada não apaga trabalho declarado.
+        marker: missionMarkerObserver.markerOf(alive.sessionId),
       };
       run.agents.push(adopted);
       if (alive.state === 'idle') {
@@ -813,7 +904,7 @@ export async function resumeFastLaneMission(
     }
     run.agents.push(spawned);
     if (NATIVE_INITIAL_PROMPT_ADAPTERS.has(spawned.adapterId)) {
-      spawned.promptDeliveredAt = Date.now();
+      markPromptDelivered(spawned, resumePrompt);
       continue;
     }
     await deliverPrompt(spawned, resumePrompt);

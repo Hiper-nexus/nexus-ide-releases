@@ -27,6 +27,85 @@ describe('isOrchestratorPane / isAgentTargetPane', () => {
   });
 });
 
+describe('resolveSendToPaneTarget por NÚMERO de pane', () => {
+  // Números atribuídos como o operador os vê no header.
+  const numbered = [
+    { ...shell, paneNumber: 1 },
+    { ...browser, paneNumber: 2 },
+    { ...agent, paneNumber: 7 },
+    { ...orch, paneNumber: 4 },
+  ];
+
+  it('"pane 7" entrega exatamente o pane 7', () => {
+    for (const forma of ['7', '#7', 'pane 7', 'pane-7', 'no pane 7', 'pane sete']) {
+      expect(resolveSendToPaneTarget(forma, numbered)).toEqual({
+        kind: 'asking-pane',
+        paneId: 'p-agent',
+      });
+    }
+  });
+
+  it('número desconhecido RECUSA nomeando os válidos — nunca o pane focado', () => {
+    // Mandar trabalho para o terminal errado é pior que recusar. Note o
+    // focusedPaneId passado: mesmo assim não há fallback para ele.
+    expect(resolveSendToPaneTarget('pane 9', numbered, 'p-agent')).toEqual({
+      kind: 'asking-pane-gone',
+      requestedNumber: 9,
+      validNumbers: [1, 2, 4, 7],
+    });
+  });
+
+  it('número não cai para busca por título — "7" não vira "claude-7"', () => {
+    // Sem a precedência do número, normalizePaneName("pane 7") = "7" casaria
+    // por substring com o título "claude-7" e o trabalho iria para o pane errado.
+    const armadilha = [
+      { id: 'p-outro', title: 'claude-7', kind: 'cli-agent', paneNumber: 3 },
+    ];
+    expect(resolveSendToPaneTarget('pane 7', armadilha)).toEqual({
+      kind: 'asking-pane-gone',
+      requestedNumber: 7,
+      validNumbers: [3],
+    });
+  });
+
+  it('número de pane que não é de agente recusa como não-agente', () => {
+    expect(resolveSendToPaneTarget('pane 1', numbered)).toEqual({
+      kind: 'asking-pane-not-agent',
+      title: 'zsh',
+    });
+  });
+
+  it('número duplicado (duas janelas) é ambiguidade, não chute', () => {
+    const colidindo = [
+      { id: 'p-a', title: 'claude a', kind: 'cli-agent', paneNumber: 1 },
+      { id: 'p-b', title: 'claude b', kind: 'cli-agent', paneNumber: 1 },
+    ];
+    expect(resolveSendToPaneTarget('pane 1', colidindo)).toMatchObject({
+      kind: 'asking-pane-ambiguous',
+      titles: ['claude a', 'claude b'],
+    });
+  });
+
+  it('o paneId cru continua vencendo o número — identidade primeiro', () => {
+    // Um id só de dígitos (~2% deles) não pode ser lido como número.
+    const armadilha = [
+      { id: '7', title: 'claude id-numerico', kind: 'cli-agent', paneNumber: 5 },
+      { id: 'p-agent', title: 'claude · worker', kind: 'cli-agent', paneNumber: 7 },
+    ];
+    expect(resolveSendToPaneTarget('7', armadilha)).toEqual({
+      kind: 'asking-pane',
+      paneId: '7',
+    });
+  });
+
+  it('sem número citado, o comportamento antigo não muda', () => {
+    expect(resolveSendToPaneTarget('pane claude worker', numbered)).toEqual({
+      kind: 'asking-pane',
+      paneId: 'p-agent',
+    });
+  });
+});
+
 describe('resolveSendToPaneTarget (C3 follow-ups 2 + 4b)', () => {
   it('paneId de pane de agente vivo → asking-pane (relay direto, sem Confirmo?)', () => {
     expect(resolveSendToPaneTarget('p-agent', panes)).toEqual({

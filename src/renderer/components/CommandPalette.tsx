@@ -53,13 +53,19 @@ export function CommandPalette() {
       out.push({
         id: `pane:${pane.id}`,
         group: 'Panes',
-        label: `Focar: ${pane.title || pane.kind}`,
+        // O número entra no rótulo (e nas keywords) para o operador digitar o
+        // mesmo endereço que fala: "7" acha o pane 7. O `run` continua fechando
+        // sobre o pane concreto, então a busca é só filtro — nunca resolução.
+        label:
+          pane.paneNumber !== undefined
+            ? `Focar pane ${pane.paneNumber}: ${pane.title || pane.kind}`
+            : `Focar: ${pane.title || pane.kind}`,
         icon: pane.kind === 'browser' ? 'browser' : 'terminal',
         hint:
           index < 9
             ? formatShortcut('mod', String(index + 1))
             : undefined,
-        keywords: `pane foco ${pane.adapterId ?? ''} ${state ?? ''}`,
+        keywords: `pane foco ${pane.paneNumber ?? ''} ${pane.adapterId ?? ''} ${state ?? ''}`,
         run: () => {
           const navigation = useProductNavigationStore.getState();
           if (pane.missionId) {

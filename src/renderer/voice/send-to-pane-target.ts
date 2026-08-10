@@ -5,13 +5,21 @@
  * jamais escrita direta em shell/browser. E paneId presente NUNCA cai no gate
  * de delegação: pane sumido vira aviso + re-pergunta, não "Confirmo?" da
  * resposta como se fosse missão nova.
+ *
+ * Também resolve o NÚMERO do pane ("pane 7", "pane sete"), que é o endereço
+ * que o operador consegue ditar. O número é testado antes do título e não cai
+ * para o título quando falha — ver o comentário no corpo.
  */
+
+import { parsePaneNumberRef } from '../../shared/pane-number';
 
 export interface SendToPanePaneLike {
   id: string;
   title: string;
   kind: string;
   orchRequestId?: string;
+  /** Número curto que o operador lê no header e dita ("manda no pane 7"). */
+  paneNumber?: number;
 }
 
 const ORCH_TITLE_RE = /(^|[ ·])orq\b/i;
@@ -27,7 +35,17 @@ export function isAgentTargetPane(pane: SendToPanePaneLike): boolean {
 
 export type SendToPaneTarget =
   | { kind: 'asking-pane'; paneId: string }
-  | { kind: 'asking-pane-gone' }
+  | {
+      kind: 'asking-pane-gone';
+      /**
+       * Preenchidos só quando o operador citou um NÚMERO que não resolve. São
+       * opcionais de propósito: `{ kind: 'asking-pane-gone' }` continua sendo
+       * um valor válido, então nenhum consumidor existente muda de
+       * comportamento — quem sabe ler os campos dá uma recusa melhor.
+       */
+      requestedNumber?: number;
+      validNumbers?: readonly number[];
+    }
   | { kind: 'asking-pane-not-agent'; title: string }
   | { kind: 'asking-pane-ambiguous'; titles: string[] }
   | { kind: 'delegation'; orchestratorPaneId: string }
@@ -40,6 +58,36 @@ export function resolveSendToPaneTarget(
 ): SendToPaneTarget {
   if (requestedPaneId) {
     const exact = panes.find((p) => p.id === requestedPaneId);
+    // NÚMERO ANTES DO TÍTULO, e sem cair no título depois.
+    //
+    // "pane 7" normaliza para "7", e a busca por título faz substring: um pane
+    // chamado "claude-7" casaria e receberia o trabalho destinado ao pane 7.
+    // Silenciosamente mandar para o terminal errado é pior que recusar, então
+    // um número que não resolve para EXATAMENTE um pane vira recusa nomeando os
+    // números válidos — nunca um chute, nunca o pane focado.
+    if (!exact) {
+      const wantedNumber = parsePaneNumberRef(requestedPaneId);
+      if (wantedNumber !== null) {
+        const numbered = panes.filter((p) => p.paneNumber === wantedNumber);
+        if (numbered.length > 1) {
+          return {
+            kind: 'asking-pane-ambiguous',
+            titles: numbered.map((p) => p.title),
+          };
+        }
+        const pane = numbered[0];
+        if (!pane) {
+          return {
+            kind: 'asking-pane-gone',
+            requestedNumber: wantedNumber,
+            validNumbers: livePaneNumbersOf(panes),
+          };
+        }
+        return isAgentTargetPane(pane)
+          ? { kind: 'asking-pane', paneId: pane.id }
+          : { kind: 'asking-pane-not-agent', title: pane.title };
+      }
+    }
     const wanted = normalizePaneName(requestedPaneId);
     const named = exact
       ? []
@@ -95,6 +143,19 @@ export function resolveSyncRepoViaPaneTarget(
     };
   }
   return resolveSendToPaneTarget(undefined, panes, focusedPaneId);
+}
+
+/** Números vivos, ordenados — o que a recusa precisa nomear. */
+export function livePaneNumbersOf(
+  panes: readonly SendToPanePaneLike[],
+): readonly number[] {
+  return [
+    ...new Set(
+      panes
+        .map((pane) => pane.paneNumber)
+        .filter((value): value is number => typeof value === 'number'),
+    ),
+  ].sort((a, b) => a - b);
 }
 
 function normalizePaneName(value: string): string {

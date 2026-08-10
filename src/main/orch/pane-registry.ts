@@ -33,6 +33,7 @@ import {
 } from "../persistence/renderer-workspace-scope";
 import { sameProjectScope } from "./project-scoped-broadcast";
 import { canListPane, type CallerCtx, type PaneAuthzInfo } from "./pane-authz";
+import { parsePaneNumberRef } from "../../shared/pane-number";
 import { makeId } from "./store-util";
 import type { ProjectExecutionScope } from "../../shared/types";
 import {
@@ -1165,9 +1166,22 @@ function authzInfoOf(registered: RegisteredPane): PaneAuthzInfo {
   };
 }
 
-/** Resolve a pane (by paneId or sessionId) to the info the authz check needs. */
+/**
+ * Resolve a pane to the info the authz check needs, accepting any of the three
+ * forms an agent may hold: the `paneId`, the `sessionId`, or the short pane
+ * NUMBER the operator reads in the header ("pane 7", "7", "#7", "pane sete").
+ *
+ * O número é ADIÇÃO, nunca substituição — e a ORDEM É LOAD-BEARING. Identidade
+ * (paneId/sessionId) é testada primeiro porque ~2% dos ids saem só com dígitos
+ * (`randomUUID().slice(0,8)`); lê-los como número entregaria trabalho a OUTRO
+ * pane, que é o pior modo de falha possível aqui.
+ *
+ * Ambiguidade continua sendo `null`, nunca um chute: com duas janelas abertas
+ * as duas numeram a partir de 1, então "pane 1" pode casar dois panes. Quem
+ * chama transforma esse `null` em recusa nomeando os números válidos.
+ */
 export function getPaneAuthzInfo(paneRef: string): PaneAuthzInfo | null {
-  const matches = [
+  const byIdentity = [
     ...panes
       .filter(
         ({ entry }) => entry.paneId === paneRef || entry.sessionId === paneRef,
@@ -1175,7 +1189,32 @@ export function getPaneAuthzInfo(paneRef: string): PaneAuthzInfo | null {
       .map(authzInfoOf),
     ...findMainOwnedPaneAuthz(paneRef),
   ];
-  return matches.length === 1 ? matches[0] : null;
+  if (byIdentity.length > 0) {
+    return byIdentity.length === 1 ? byIdentity[0]! : null;
+  }
+  const wanted = parsePaneNumberRef(paneRef);
+  if (wanted === null) return null;
+  // Só o espelho do renderer tem número: um pane ainda de posse do Main
+  // (transiente/headless) nunca esteve na tela, então o operador não tem
+  // número para ele — segue endereçável pelo id, como antes.
+  const byNumber = panes
+    .filter(({ entry }) => entry.paneNumber === wanted)
+    .map(authzInfoOf);
+  return byNumber.length === 1 ? byNumber[0]! : null;
+}
+
+/**
+ * Números de pane que o Main enxerga agora, em ordem. É o que uma recusa
+ * precisa dizer em voz alta: "pane 9 não existe; válidos: 1, 2, 5".
+ */
+export function listLivePaneNumbers(): readonly number[] {
+  return [
+    ...new Set(
+      panes
+        .map(({ entry }) => entry.paneNumber)
+        .filter((value): value is number => typeof value === 'number'),
+    ),
+  ].sort((a, b) => a - b);
 }
 
 export type OwnedPaneAuthzInfo = Readonly<PaneAuthzInfo> & {

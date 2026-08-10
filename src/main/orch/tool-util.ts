@@ -1,10 +1,12 @@
 import {
   getPaneAuthzInfo,
+  listLivePaneNumbers,
   readSessionOutput,
   requestPaneClose,
   requestPaneSpawn,
   waitForIdle,
 } from './pane-registry';
+import { parsePaneNumberRef } from '../../shared/pane-number';
 import {
   authorizePaneAccess,
   type PaneAction,
@@ -166,10 +168,28 @@ export function strArray(args: Record<string, unknown>, key: string): string[] {
 }
 
 /**
+ * Recusa NOMEADA para um alvo que não resolve. Quando o agente citou um
+ * número, a mensagem lista os números válidos — recusar dizendo qual era a
+ * opção certa é barato; mandar trabalho para o terminal errado não tem volta.
+ * Por isso não existe fallback para "o pane focado" em lugar nenhum.
+ */
+function unknownPaneMessage(paneRef: string): string {
+  if (parsePaneNumberRef(paneRef) === null) return `unknown pane: ${paneRef}`;
+  const valid = listLivePaneNumbers();
+  return valid.length === 0
+    ? `unknown pane: ${paneRef} (no numbered pane is open)`
+    : `unknown pane: ${paneRef} (valid pane numbers: ${valid.join(', ')})`;
+}
+
+/**
  * Object-level authorization gate for the pane tools (SEC#5): resolve a pane
  * ref and confirm `ctx` may perform `action` on it. A worker cannot
  * read/write/close another agent's or the user's pane. Throws on unknown pane
  * or refusal. Returns the pane info (session may be dead — fine for `close`).
+ *
+ * `paneRef` accepts the paneId, the sessionId, or the short pane number the
+ * operator reads in the header ("7", "pane 7"). The number is additive: the
+ * paneId remains the protocol identity and is always accepted.
  */
 export function authorizePaneRef(
   ctx: AgentGateContext,
@@ -177,7 +197,7 @@ export function authorizePaneRef(
   action: PaneAction,
 ): PaneAuthzInfo {
   const info = getPaneAuthzInfo(paneRef);
-  if (!info) throw new Error(`unknown pane: ${paneRef}`);
+  if (!info) throw new Error(unknownPaneMessage(paneRef));
   const decision = authorizePaneAccess(ctx, info, action);
   if (!decision.allow) {
     throw new Error(`not authorized: ${decision.reason}`);
