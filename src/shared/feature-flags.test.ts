@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   BUILTIN_FEATURE_FLAGS,
+  FEATURE_FLAG_IDS,
   channelAllowsFlag,
   featureFlagDefinitionSchema,
   resolveFeatureFlag,
@@ -41,6 +42,19 @@ describe('feature flags', () => {
     expect(
       resolveFeatureFlag(undefined, { runtimeChannel: 'stable' }),
     ).toMatchObject({ enabled: false, reason: 'unknown-flag' });
+  });
+
+  it('enables persistent session and project overview by default on dev', () => {
+    for (const id of [
+      FEATURE_FLAG_IDS.ptyPersistentSession,
+      FEATURE_FLAG_IDS.uiProjectOverview,
+    ] as const) {
+      const def = BUILTIN_FEATURE_FLAGS.find((f) => f.id === id);
+      expect(def).toBeDefined();
+      expect(
+        resolveFeatureFlag(def, { runtimeChannel: 'dev' }).enabled,
+      ).toBe(true);
+    }
   });
 
   it('pins the default-on/off contract per flag (flips are reviewed decisions)', () => {

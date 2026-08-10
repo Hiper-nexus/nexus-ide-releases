@@ -87,6 +87,16 @@ import {
   resolveGatewayBaseUrl,
 } from "./gateway-env";
 import { publishObserverFrame } from "../orch/observer-bus";
+import { getFeatureFlagRegistry } from "../feature-flags/feature-flag-registry";
+import { FEATURE_FLAG_IDS } from "../../shared/feature-flags";
+import {
+  getPersistentSessionBackend,
+  planPersistentAgentSpawn,
+} from "./persistent-session";
+import {
+  deletePersistentPty,
+  upsertPersistentPty,
+} from "../persistence/persistent-session-store";
 
 /**
  * Owns every live PTY session — one per pane, addressed by an opaque id. The
@@ -131,6 +141,18 @@ interface Session {
   lastBackpressureWarnAt: number;
   /** Temp ZDOTDIR/bashrc dirs for OSC 133 — cleaned on session end. */
   shellIntegrationCleanup: string[];
+  /**
+   * When set, the agent process lives in a tmux session. App quit detaches
+   * (does not kill-session); pane close kills the tmux session.
+   */
+  persistentTmuxName?: string;
+  /** Workspace key used in the persistent_pty_sessions registry. */
+  persistentWorkspaceId?: string;
+  /**
+   * When false, finalize must not tmux kill-session (app-quit detach path).
+   * Defaults true whenever persistentTmuxName is set.
+   */
+  killPersistentOnFinalize?: boolean;
 }
 
 export interface OwnedAgentSessionInfo {
@@ -856,6 +878,19 @@ function finalizeSession(
   }
   if (s.shellIntegrationCleanup.length > 0) {
     cleanupShellIntegrationPaths(s.shellIntegrationCleanup);
+  }
+  if (
+    s.persistentTmuxName &&
+    s.killPersistentOnFinalize !== false &&
+    s.persistentWorkspaceId &&
+    s.agent?.paneId
+  ) {
+    try {
+      getPersistentSessionBackend().killSessionSync(s.persistentTmuxName);
+    } catch {
+      // Best-effort: attach client already exited.
+    }
+    deletePersistentPty(s.persistentWorkspaceId, s.agent.paneId);
   }
   // M1: scrub plaintext auth.json from the managed home now that the CLI exited.
   scrubManagedSessionAuth(sessionId);
@@ -1903,6 +1938,30 @@ export function spawnAgentSession(
       ? adapter.stateParsing.idle.ms
       : 800;
 
+  const workspaceId = authority.scope.rootRealPath;
+  const persistencePlan = planPersistentAgentSpawn({
+    enabled: getFeatureFlagRegistry().isEnabled(
+      FEATURE_FLAG_IDS.ptyPersistentSession,
+    ),
+    workspaceId,
+    paneId: req.paneId,
+    cwd: spawnCwd,
+    file: spawnFile,
+    args: spawnArgs,
+    sealedNative: Boolean(trustedNativeLaunch),
+  });
+  if (persistencePlan.mode === "tmux" && persistencePlan.tmuxName && req.paneId) {
+    upsertPersistentPty({
+      workspaceId,
+      paneId: req.paneId,
+      tmuxName: persistencePlan.tmuxName,
+      cwd: spawnCwd,
+      createdAt: Date.now(),
+    });
+    spawnFile = persistencePlan.file;
+    spawnArgs = persistencePlan.args;
+  }
+
   const spec: PtySpawnSpec = {
     sessionId,
     file: spawnFile,
@@ -1911,7 +1970,7 @@ export function spawnAgentSession(
     cols: req.cols,
     rows: req.rows,
     env: spawnEnv,
-    ...(trustedNativeLaunch
+    ...(trustedNativeLaunch && persistencePlan.mode === "direct"
       ? { darwinExecutableSeal: trustedNativeLaunch.darwinExecutableSeal }
       : {}),
   };
@@ -1920,7 +1979,7 @@ export function spawnAgentSession(
   try {
     const host = requireHost();
     const handlers = sessionHandlers(sessionId, () => session);
-    if (trustedNativeLaunch) {
+    if (trustedNativeLaunch && persistencePlan.mode === "direct") {
       revalidateTrustedNativeConfinementLaunch(trustedNativeLaunch);
     }
     proc = host.spawn(spec, handlers);
@@ -1994,6 +2053,13 @@ export function spawnAgentSession(
     replayChars: 0,
     lastBackpressureWarnAt: 0,
     shellIntegrationCleanup: [],
+    ...(persistencePlan.mode === "tmux" && persistencePlan.tmuxName
+      ? {
+          persistentTmuxName: persistencePlan.tmuxName,
+          persistentWorkspaceId: workspaceId,
+          killPersistentOnFinalize: true,
+        }
+      : {}),
   };
   sessions.set(sessionId, session);
   publishObserverFrame({
@@ -2741,6 +2807,12 @@ export interface TerminateAllSessionsResult {
 /** Close PTY admission synchronously before any asynchronous shutdown work. */
 export function sealPtySessionAdmissionForShutdown(): void {
   allSessionsTerminationInProgress = true;
+  // App quit: detach only — leave tmux agent sessions alive for reopen attach.
+  for (const session of sessions.values()) {
+    if (session.persistentTmuxName) {
+      session.killPersistentOnFinalize = false;
+    }
+  }
 }
 
 /**

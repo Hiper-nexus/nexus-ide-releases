@@ -5,6 +5,7 @@ import { useMissionSetupStore } from './mission-setup-store';
 export type ProductDestination =
   | { kind: 'launcher' }
   | { kind: 'terminal' }
+  | { kind: 'project' }
   | { kind: 'mission-setup' }
   | {
       kind: 'mission';
@@ -28,6 +29,7 @@ export interface ProductNavigationState {
 export interface ProductNavigationActions {
   openLauncher(): void;
   openTerminal(): void;
+  openProject(): void;
   openMissionSetup(): void;
   openMission(missionId: string): void;
   showMissionBoard(): void;
@@ -73,6 +75,7 @@ export const useProductNavigationStore = create<ProductNavigationStore>()(
 
       openLauncher: () => open(launcherDestination),
       openTerminal: () => open({ kind: 'terminal' }),
+      openProject: () => open({ kind: 'project' }),
       openMissionSetup: () => open({ kind: 'mission-setup' }),
       openMission: (missionId) =>
         open({ kind: 'mission', missionId, surface: 'board' }),

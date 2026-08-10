@@ -150,6 +150,30 @@ vi.mock("./darwin-pty-supervisor", () => ({
   resolvePackagedDarwinLaunchAuthorizationReadPaths: () => [],
 }));
 
+// Keep unit fixtures on the direct PTY path; persistence has its own suite.
+vi.mock("./persistent-session", () => ({
+  planPersistentAgentSpawn: (input: {
+    file: string;
+    args: readonly string[];
+  }) => ({
+    mode: "direct" as const,
+    file: input.file,
+    args: [...input.args],
+  }),
+  getPersistentSessionBackend: () => ({
+    killSessionSync: vi.fn(),
+  }),
+}));
+vi.mock("../persistence/persistent-session-store", () => ({
+  upsertPersistentPty: vi.fn(() => true),
+  deletePersistentPty: vi.fn(),
+}));
+vi.mock("../feature-flags/feature-flag-registry", () => ({
+  getFeatureFlagRegistry: () => ({
+    isEnabled: () => false,
+  }),
+}));
+
 import {
   __resetPtyShutdownLifecycleForTests,
   agentEnv,
