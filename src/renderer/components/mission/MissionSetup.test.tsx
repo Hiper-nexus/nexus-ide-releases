@@ -1671,20 +1671,6 @@ describe('MissionSetup', () => {
     expect(button(host, 'Iniciar missão').disabled).toBe(false);
   });
 
-  it('exposes the trusted prepare and start edges on the canonical setup controls', async () => {
-    const host = await renderAtTeam();
-    const prepare = button(host, 'Continuar para revisão');
-
-    expect(prepare.dataset.nexusRealMissionWizardLaunch).toBe('prepare');
-
-    act(() => prepare.click());
-    await flush();
-
-    expect(button(host, 'Iniciar missão').dataset.nexusRealMissionWizardLaunch).toBe(
-      'start',
-    );
-  });
-
   it('renders the main-owned review and starts only its visible exact hash before opening its board', async () => {
     const pendingStart = deferred<MissionSnapshot>();
     api.start.mockReturnValueOnce(pendingStart.promise);

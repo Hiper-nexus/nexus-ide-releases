@@ -67,22 +67,6 @@ describe('projectMissionSnapshot', () => {
     expect(snapshot.state).toBe('running');
   });
 
-  it('motor cerimonial (escape): running sem recibo projeta bloqueio técnico', () => {
-    process.env.NEXUS_CEREMONIAL_MISSIONS = '1';
-    try {
-      const view = runningView();
-      view.hasCurrentKickoffReceipt = false;
-
-      const snapshot = projectMissionSnapshot(view);
-
-      expect(snapshot.state).toBe('blocked_technical');
-      expect(snapshot.stateReason?.code).toBe('kickoff-receipt-missing');
-      expect(snapshot.allowedActions).toEqual(['retry-kickoff', 'stop']);
-    } finally {
-      delete process.env.NEXUS_CEREMONIAL_MISSIONS;
-    }
-  });
-
   it('projects done with residual plan work as blocked technical', () => {
     const view = runningView();
     view.mission.status = 'done';

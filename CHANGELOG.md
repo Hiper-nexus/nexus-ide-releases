@@ -1,5 +1,53 @@
 # Changelog
 
+## 0.30.0 — Via Rápida: missão que começa e TERMINA
+
+Data: 2026-08-10
+
+O motor de execução de missão foi substituído. O pipeline cerimonial (plano
+selado → claim → kickoff → receipts → merge queue → autoridade de conclusão)
+saiu do caminho padrão e do código; entrou a **Via Rápida**: um terminal
+interativo por agente, direto no workspace, prompt curto, conclusão observada.
+
+### Missão real, medida nesta máquina
+
+- Criar missão pela UI → equipe → iniciar → terminais visíveis → artefato
+  correto → `Concluída` sozinha: **~90 segundos** (antes: 32 minutos no gate).
+- Frota de 8 panes / 6 providers (claude, agy, codex, glm, kimi, grok)
+  construiu um site de 11 stories se auto-dividindo por um arquivo de
+  coordenação — cada story marcada pelo agente que a implementou.
+- Retomar religa a equipe adotando panes vivos (nunca duplica sessão de auth
+  exclusiva) e o observador fecha a missão quando todos assentam.
+
+### Prontidão deixou de ser gate
+
+- CLI instalada e não desligada participa — como coordenação e como execução.
+  O "a ferramenta escolhida não está pronta" com binário logado morreu.
+- Auth é conversa do terminal do agente (login aparece no pane, como em
+  qualquer terminal). O diálogo de primeiro boot pedindo para editar
+  `~/.claude/settings.json` (hooks de status) não é mais necessário para
+  missão.
+- No approve só resta forma: exatamente um Maestro.
+
+### Operador no comando
+
+- Terminais da equipe aparecem no grid como panes reais: clique e digite
+  direto no agente (inclusive `/comandos` da própria CLI), no meio ou no fim
+  da missão.
+- Preset Enxuta compõe coordenação + execução + verificação válidas.
+- Missões de UI recebem automaticamente o design system do projeto
+  (`DESIGN.md`) e o catálogo do operador (`~/.design-references`) no prompt —
+  zero configuração.
+
+### Remoção do motor antigo
+
+- O código cerimonial sem caller foi REMOVIDO (driver, kickoff machine,
+  scheduler de dispatch, PREVC/freeze, autoridades de plano/claim/receipt,
+  merge queue de missão, shims de e2e no produto) — dezenas de milhares de
+  linhas a menos, junto com os vigias que re-bloqueavam missões vivas.
+- O critério de release passa a ser o smoke da Via Rápida: abrir o app,
+  rodar uma missão trivial e vê-la concluir em minutos.
+
 ## 0.28.1 — Bridge por fora, Nexus por dentro
 
 Data: 2026-08-07
