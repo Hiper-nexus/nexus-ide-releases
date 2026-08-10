@@ -19,7 +19,6 @@ import { useWorkspaceStore } from '../../state/workspace-store';
 const capabilityMocks = vi.hoisted(() => ({
   askConfirm: vi.fn(),
   closeRuntime: vi.fn(),
-  promotePlan: vi.fn(),
 }));
 
 vi.mock('../../state/confirm-store', () => ({
@@ -32,9 +31,6 @@ vi.mock('../../orch/close-mission-runtime', () => ({
     count === 1 ? '1 processo encerrado.' : `${count} processos encerrados.`,
 }));
 
-vi.mock('../../orch/plan-promote-flow', () => ({
-  promotePlanMissionToExecution: capabilityMocks.promotePlan,
-}));
 
 vi.mock('./MissionGraph', () => ({
   MissionGraph: () => <div aria-label="Grafo da missão" />,
@@ -233,7 +229,6 @@ beforeEach(() => {
     ok: true,
     terminatedSessionIds: ['session-capability'],
   } satisfies MissionRuntimeCloseResult);
-  capabilityMocks.promotePlan.mockResolvedValue({ ok: true });
 
   Object.defineProperty(window, 'nexus', {
     configurable: true,
@@ -282,127 +277,6 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   vi.clearAllMocks();
-});
-
-describe('durable plan promotion from the canonical mission board', () => {
-  it('restores Executar plano from rehydrated mission state after the deduped shortcut toast expires', async () => {
-    const planMission = mission({
-      intentState: 'ready_to_start',
-      intentVersion: 1,
-      intentContract: approvedContract('plan'),
-    });
-    snapshotForBoard = snapshot({ id: planMission.id, title: planMission.title });
-
-    act(() => {
-      useToastStore.getState().push('success', 'Plano pronto', {
-        dedupeKey: `plan-ready:${planMission.id}`,
-        action: { label: 'Executar plano', onClick: vi.fn() },
-      });
-      useToastStore.getState().push('success', 'Plano pronto novamente', {
-        dedupeKey: `plan-ready:${planMission.id}`,
-        action: { label: 'Executar plano', onClick: vi.fn() },
-      });
-    });
-    expect(useToastStore.getState().toasts).toHaveLength(1);
-
-    const host = mount(
-      <MissionBoard missionId={planMission.id} onOpenTerminals={vi.fn()} />,
-    );
-    await settle();
-    expect(buttonByName(host, /Executar plano/i)).toBeNull();
-
-    act(() => {
-      const [toast] = useToastStore.getState().toasts;
-      if (toast) useToastStore.getState().dismiss(toast.id);
-      useOrchStore.setState({ missions: [planMission] });
-    });
-    await settle();
-
-    expect(useToastStore.getState().toasts).toHaveLength(0);
-    expect(buttonByName(host, /Executar plano/i)).not.toBeNull();
-  });
-
-  it('disables promotion immediately and rejects a double submit while native review is pending', async () => {
-    const pending = deferred<{ ok: boolean; cancelled?: boolean; error?: string }>();
-    capabilityMocks.promotePlan.mockReturnValueOnce(pending.promise);
-    const planMission = mission({
-      intentState: 'ready_to_start',
-      intentVersion: 1,
-      intentContract: approvedContract('plan'),
-    });
-    const host = renderMissionBoard(planMission, 'review_ready');
-    await settle();
-
-    const promote = buttonByName(host, /Executar plano/i);
-    expect(promote).not.toBeNull();
-    act(() => {
-      promote!.click();
-      promote!.click();
-    });
-
-    expect(capabilityMocks.promotePlan).toHaveBeenCalledTimes(1);
-    expect(promote!.disabled).toBe(true);
-    expect(promote!.getAttribute('aria-busy')).toBe('true');
-
-    pending.resolve({ ok: true });
-    await settle();
-    expect(promote!.disabled).toBe(false);
-    expect(announcementText(host)).toMatch(/plano.+(promovido|execução)/i);
-  });
-
-  it('treats mode-picker cancellation as a focus-safe cancellation, not an error', async () => {
-    capabilityMocks.promotePlan.mockResolvedValueOnce({
-      ok: false,
-      cancelled: true,
-    });
-    const planMission = mission({
-      intentState: 'ready_to_start',
-      intentVersion: 1,
-      intentContract: approvedContract('plan'),
-    });
-    const host = renderMissionBoard(planMission, 'review_ready');
-    await settle();
-
-    const promote = requiredButton(host, /Executar plano/i);
-    promote.focus();
-    act(() => promote.click());
-    await settle();
-
-    expect(promote.disabled).toBe(false);
-    expect(document.activeElement).toBe(promote);
-    expect(host.querySelector('[role="alert"]')).toBeNull();
-    expect(useProductNavigationStore.getState().destination).toMatchObject({
-      kind: 'mission',
-      missionId: planMission.id,
-    });
-  });
-
-  it('announces promotion failure, restores focus, and keeps the current mission open', async () => {
-    capabilityMocks.promotePlan.mockResolvedValueOnce({
-      ok: false,
-      error: 'A revisão nativa não pôde ser aberta.',
-    });
-    const planMission = mission({
-      intentState: 'ready_to_start',
-      intentVersion: 1,
-      intentContract: approvedContract('plan'),
-    });
-    const host = renderMissionBoard(planMission, 'review_ready');
-    await settle();
-
-    const promote = requiredButton(host, /Executar plano/i);
-    promote.focus();
-    act(() => promote.click());
-    await settle();
-
-    expect(announcementText(host)).toMatch(/revisão nativa não pôde ser aberta/i);
-    expect(document.activeElement).toBe(promote);
-    expect(useProductNavigationStore.getState().destination).toEqual({
-      kind: 'mission',
-      missionId: planMission.id,
-      surface: 'board',
-    });
-  });
 });
 
 describe('state-aware mission actions in the canonical mission board', () => {

@@ -23,8 +23,8 @@ import { missionEngineForScope } from './mission-engine-registry';
  * (`idle`/saiu) ⇒ missão `done`. Pane que morre antes de trabalhar é
  * respawnado uma vez; silêncio prolongado vira bloqueio VISÍVEL com retomada.
  *
- * O motor cerimonial completo continua atrás de NEXUS_CEREMONIAL_MISSIONS=1
- * até a remoção definitiva.
+ * O motor cerimonial foi removido fisicamente (varredura 2026-08-10): a Via
+ * Rápida é o caminho único de execução de missão.
  */
 
 const TICK_MS = 5_000;
@@ -38,7 +38,9 @@ const STALL_BLOCK_AFTER_MS = 10 * 60_000;
 const STALL_MIN_MISSION_AGE_MS = 15 * 60_000;
 
 export function missionFastLaneEnabled(): boolean {
-  return process.env.NEXUS_CEREMONIAL_MISSIONS !== '1';
+  // Caminho único: o motor cerimonial e o env NEXUS_CEREMONIAL_MISSIONS
+  // morreram na varredura de 2026-08-10.
+  return true;
 }
 
 /**

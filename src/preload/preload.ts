@@ -831,12 +831,6 @@ const api: NexusApi = {
       ipcRenderer.invoke(ORCH_CHANNELS.missionPaneRestoreAuthority, input),
     resumeMissionBootstrap: (input: { missionId: string }) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionResumeBootstrap, input),
-    promotePlanLane: (input: {
-      missionId: string;
-      orchestrationMode?: 'pack' | 'guided';
-      wavePackTemplateId?: 'landing' | 'saas' | 'fix';
-    }) =>
-      ipcRenderer.invoke(ORCH_CHANNELS.missionPromotePlanLane, input),
     missionEventsRecent: (input) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionEventsRecent, input),
     missionEventsReplay: (input) =>

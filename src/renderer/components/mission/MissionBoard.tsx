@@ -38,7 +38,6 @@ import {
   removeMissionPrompt,
   type MissionListAction,
 } from '../../orch/mission-list-action';
-import { promotePlanMissionToExecution } from '../../orch/plan-promote-flow';
 import { MissionGraph } from './MissionGraph';
 import { DirectionComposer } from './DirectionComposer';
 import { MissionInspector } from './MissionInspector';
@@ -118,10 +117,7 @@ type HeaderAction = Extract<
 >;
 
 type LifecycleAction = Exclude<MissionListAction, 'none'>;
-type PendingBoardAction =
-  | HeaderAction
-  | LifecycleAction
-  | 'promote-plan';
+type PendingBoardAction = HeaderAction | LifecycleAction;
 
 interface BoardActionAttempt {
   readonly requestedMissionId: string;
@@ -246,10 +242,6 @@ export function MissionBoard({
     ? missionListAction(currentMission, hasVisibleMissionPanes)
     : 'none';
   const lifecycleCopy = missionActionCopy(lifecycleAction);
-  const canPromotePlan =
-    currentMission?.intentContract?.lane === 'plan' &&
-    currentMission.status !== 'done' &&
-    currentMission.status !== 'failed';
 
   const selectedAgentId = useMissionInspectorStore(
     (state) => state.selectedAgentId,
@@ -670,59 +662,6 @@ export function MissionBoard({
     })();
   };
 
-  const runPlanPromotion = (invoker: HTMLButtonElement): void => {
-    const mission = currentMission;
-    if (
-      !mission ||
-      mission.intentContract?.lane !== 'plan' ||
-      mission.status === 'done' ||
-      mission.status === 'failed'
-    ) {
-      return;
-    }
-    const attempt = beginBoardAction('promote-plan', invoker);
-    if (!attempt) return;
-
-    void (async () => {
-      let restoreFocus = false;
-      try {
-        const result = await promotePlanMissionToExecution(mission);
-        if (!isCurrentBoardAction(attempt)) return;
-
-        if (result.ok) {
-          setActionAnnouncement(
-            result.detail
-              ? `Plano promovido para execução. ${result.detail}`
-              : 'Plano promovido para execução.',
-          );
-        } else if (result.cancelled) {
-          setActionAnnouncement('Execução do plano cancelada.');
-          restoreFocus = true;
-        } else {
-          setCommandError(
-            toUserFacingMissionRecovery(
-              result.error,
-              'Não foi possível promover o plano para execução. Tente novamente.',
-            ),
-          );
-          restoreFocus = true;
-        }
-      } catch (reason) {
-        if (isCurrentBoardAction(attempt)) {
-          setCommandError(
-            toUserFacingMissionRecovery(
-              reason,
-              'Não foi possível promover o plano para execução. Tente novamente.',
-            ),
-          );
-          restoreFocus = true;
-        }
-      } finally {
-        finishBoardAction(attempt, restoreFocus);
-      }
-    })();
-  };
-
   const runLifecycleAction = (invoker: HTMLButtonElement): void => {
     const mission = currentMission;
     const action = lifecycleAction;
@@ -932,17 +871,6 @@ export function MissionBoard({
           >
             Terminais
           </button>
-          {canPromotePlan && (
-            <button
-              type="button"
-              className="mission-board__button"
-              disabled={pendingAction !== null}
-              aria-busy={pendingAction === 'promote-plan'}
-              onClick={(event) => runPlanPromotion(event.currentTarget)}
-            >
-              Executar plano
-            </button>
-          )}
           {HEADER_ACTIONS.filter(
             (action) =>
               currentSnapshot.allowedActions.includes(action) &&

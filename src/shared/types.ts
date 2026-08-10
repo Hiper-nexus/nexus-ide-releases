@@ -582,13 +582,6 @@ export interface NexusApi {
     resumeMissionBootstrap(input: {
       missionId: string;
     }): Promise<MissionOrchestratorBootstrapResult>;
-    /** After plan.md is ready: plan lane → standard execution. */
-    promotePlanLane(input: {
-      missionId: string;
-      /** Operator Pack/Guiado override stamped on the promoted contract. */
-      orchestrationMode?: 'pack' | 'guided';
-      wavePackTemplateId?: 'landing' | 'saas' | 'fix';
-    }): Promise<Mission>;
     /** Mission event journal — recent projection (flag feature.mission.eventJournal). */
     missionEventsRecent(input: {
       missionId: string;

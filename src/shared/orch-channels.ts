@@ -34,7 +34,6 @@ export const ORCH_CHANNELS = {
    * Promote lane=plan → standard after plan.md is ready so PREVC code work
    * is allowed (operator "Executar plano").
    */
-  missionPromotePlanLane: 'orch:missions.promotePlanLane',
   missionRebind: 'orch:missions.rebind',
   missionUpdate: 'orch:missions.update',
   /** Native-confirmed physical shutdown that preserves the durable mission. */

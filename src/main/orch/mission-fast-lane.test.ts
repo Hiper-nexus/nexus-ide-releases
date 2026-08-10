@@ -1,7 +1,7 @@
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import type { Mission, SquadAgent } from '../../shared/orch-types';
 import {
   agentPrompt,
@@ -35,14 +35,13 @@ function agent(overrides: Partial<SquadAgent> = {}): SquadAgent {
 }
 
 describe('mission fast lane', () => {
-  afterEach(() => {
-    delete process.env.NEXUS_CEREMONIAL_MISSIONS;
-  });
-
-  it('é o caminho padrão; o motor cerimonial é opt-in por env', () => {
-    expect(missionFastLaneEnabled()).toBe(true);
+  it('é o caminho único: o motor cerimonial e o env de opt-out morreram', () => {
     process.env.NEXUS_CEREMONIAL_MISSIONS = '1';
-    expect(missionFastLaneEnabled()).toBe(false);
+    try {
+      expect(missionFastLaneEnabled()).toBe(true);
+    } finally {
+      delete process.env.NEXUS_CEREMONIAL_MISSIONS;
+    }
   });
 
   it('prompt do executor é curto, com objetivo, equipe e marcadores de fim', () => {

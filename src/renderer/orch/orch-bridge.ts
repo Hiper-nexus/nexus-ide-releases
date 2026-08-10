@@ -33,10 +33,6 @@ import {
 } from '../terminal/terminal-host';
 import { waitForBrowserPaneCreated } from '../browser/browser-host';
 import { initAgentNotificationBridge } from './agent-notification-bridge';
-import {
-  detectNewPlanHandoffs,
-  notifyPlanHandoffsReady,
-} from './plan-handoff-notify';
 import type { Handoff } from '../../shared/orch-types';
 import {
   newlyDispatchedPlanMissionIds,
@@ -510,7 +506,6 @@ export function useOrchBridge(): void {
 
   useEffect(() => {
     // First handoffs/missions payloads are snapshots — do not treat as live events.
-    let handoffsPrimed = false;
 
     const un = [
       window.nexus.orch.onPaneSpawnRequest((req) => {
@@ -681,22 +676,9 @@ export function useOrchBridge(): void {
           }
         }
       }),
-      window.nexus.orch.onHandoffsChanged((handoffs: Handoff[]) => {
-        const prev = useOrchStore.getState().handoffs;
-        // First payload after subscribe is a snapshot — mark ids seen, no toasts.
-        if (!handoffsPrimed) {
-          handoffsPrimed = true;
-          usePlanLaneMetricsStore
-            .getState()
-            .seedSeenHandoffIds(handoffs.map((h) => h.id));
-          useOrchStore.getState().setHandoffs(handoffs);
-          return;
-        }
-        const missions = useOrchStore.getState().missions;
-        const ready = detectNewPlanHandoffs(prev, handoffs, missions);
-        if (ready.length > 0) notifyPlanHandoffsReady(ready);
-        useOrchStore.getState().setHandoffs(handoffs);
-      }),
+      window.nexus.orch.onHandoffsChanged((handoffs: Handoff[]) =>
+        useOrchStore.getState().setHandoffs(handoffs),
+      ),
       window.nexus.orch.onTodosChanged((lists) =>
         useOrchStore.getState().setTodoLists(lists),
       ),
