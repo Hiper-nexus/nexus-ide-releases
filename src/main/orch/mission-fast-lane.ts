@@ -168,6 +168,18 @@ function orderedRoster(agents: readonly SquadAgent[]): SquadAgent[] {
   );
 }
 
+/**
+ * CLIs que consomem o prompt como ARGUMENTO de largada (canal nativo do
+ * pty-manager). Para elas a colagem inicial é pulada — o agente já nasce com
+ * a missão; a colagem fica como nudge de reforço para quem não trabalhou.
+ */
+const NATIVE_INITIAL_PROMPT_ADAPTERS: ReadonlySet<string> = new Set([
+  'agy',
+  'codex',
+  'claude',
+  'opencode',
+]);
+
 async function spawnAgentPane(
   scope: ProjectExecutionScope,
   mission: Mission,
@@ -178,6 +190,7 @@ async function spawnAgentPane(
     readonly accountId?: string;
     readonly effort?: string;
   } | null,
+  initialPrompt?: string,
 ): Promise<FastLaneAgentRun | { readonly error: string }> {
   const role: 'orchestrator' | 'worker' =
     agent.category === 'orchestrator' ? 'orchestrator' : 'worker';
@@ -208,6 +221,7 @@ async function spawnAgentPane(
     scope,
     executionScope: scope,
     executionMode: 'same_checkout',
+    ...(initialPrompt ? { initialPrompt } : {}),
   });
   if (!spawn.ok || !spawn.paneId || !spawn.sessionId) {
     return {
@@ -466,23 +480,31 @@ async function tickRun(run: FastLaneRun): Promise<void> {
       const spec = squad?.agents.find((item) => item.id === agent.agentId);
       if (!spec) continue;
       void (async () => {
-        const respawned = await spawnAgentPane(run.scope, mission, spec, null);
+        const prompt = agentPrompt(
+          spec,
+          mission,
+          run.agents.map((item) => item.agentName),
+          true,
+          missionDesignContext(run.scope.rootRealPath),
+        );
+        const respawned = await spawnAgentPane(
+          run.scope,
+          mission,
+          spec,
+          null,
+          prompt,
+        );
         if ('error' in respawned) {
           console.warn(`[fast-lane] respawn falhou: ${respawned.error}`);
           return;
         }
         agent.paneId = respawned.paneId;
         agent.sessionId = respawned.sessionId;
-        await deliverPrompt(
-          agent,
-          agentPrompt(
-            spec,
-            mission,
-            run.agents.map((item) => item.agentName),
-            true,
-            missionDesignContext(run.scope.rootRealPath),
-          ),
-        );
+        if (NATIVE_INITIAL_PROMPT_ADAPTERS.has(agent.adapterId)) {
+          agent.promptDeliveredAt = Date.now();
+          return;
+        }
+        await deliverPrompt(agent, prompt);
       })();
       continue;
     }
@@ -591,10 +613,20 @@ export async function fastLaneBootstrap(
   const runtimeHint = live.intentContract?.orchestratorRuntime ?? null;
   // Fase 1 — spawns (rápidos, sequenciais para não brigar por recursos de
   // boot). Um agente NUNCA derruba os outros: falha vira nota e segue.
+  const designContext = missionDesignContext(scope.rootRealPath);
   const spawnedPairs: Array<{ spec: SquadAgent; agent: FastLaneAgentRun }> = [];
   for (const agent of roster) {
     try {
-      const spawned = await spawnAgentPane(scope, live, agent, runtimeHint);
+      // O prompt vai como ARGUMENTO de largada (canal nativo) — a colagem
+      // pós-boot falhava contra TUIs reais (missão 10/08: 8/8 panes mudos).
+      const prompt = agentPrompt(agent, live, teamNames, false, designContext);
+      const spawned = await spawnAgentPane(
+        scope,
+        live,
+        agent,
+        runtimeHint,
+        prompt,
+      );
       if ('error' in spawned) {
         failures.push(spawned.error);
         continue;
@@ -607,12 +639,18 @@ export async function fastLaneBootstrap(
       );
     }
   }
-  // Fase 2 — prompts em PARALELO: cada TUI espera o próprio boot; oito
-  // agentes em fila serializada custariam minutos de largada.
-  const designContext = missionDesignContext(scope.rootRealPath);
+  // Fase 2 — colagem SÓ para CLIs sem canal nativo de largada; para as
+  // nativas o agente já nasceu com a missão (colar de novo duplicaria).
   await Promise.all(
     spawnedPairs.map(async ({ spec, agent }) => {
       const prompt = agentPrompt(spec, live, teamNames, false, designContext);
+      if (NATIVE_INITIAL_PROMPT_ADAPTERS.has(agent.adapterId)) {
+        agent.promptDeliveredAt = Date.now();
+        if (agent.role === 'orchestrator') {
+          recordFastLaneKickoffAcceptance(scope, live, agent.sessionId, prompt);
+        }
+        return;
+      }
       const accepted = await deliverPrompt(agent, prompt);
       if (accepted && agent.role === 'orchestrator') {
         recordFastLaneKickoffAcceptance(scope, live, agent.sessionId, prompt);
@@ -744,22 +782,24 @@ export async function resumeFastLaneMission(
       }
       continue;
     }
-    const spawned = await spawnAgentPane(scope, live, agent, null);
+    const resumePrompt = agentPrompt(
+      agent,
+      live,
+      teamNames,
+      true,
+      missionDesignContext(scope.rootRealPath),
+    );
+    const spawned = await spawnAgentPane(scope, live, agent, null, resumePrompt);
     if ('error' in spawned) {
       console.warn(`[fast-lane] retomada não abriu ${agent.agentName}: ${spawned.error}`);
       continue;
     }
     run.agents.push(spawned);
-    await deliverPrompt(
-      spawned,
-      agentPrompt(
-        agent,
-        live,
-        teamNames,
-        true,
-        missionDesignContext(scope.rootRealPath),
-      ),
-    );
+    if (NATIVE_INITIAL_PROMPT_ADAPTERS.has(spawned.adapterId)) {
+      spawned.promptDeliveredAt = Date.now();
+      continue;
+    }
+    await deliverPrompt(spawned, resumePrompt);
   }
   if (run.agents.length === 0) {
     throw new Error('a retomada não conseguiu abrir nenhum terminal');

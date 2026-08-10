@@ -1167,7 +1167,11 @@ export function spawnAgentSession(
       adapter.id === "claude" ||
       adapter.id === "opencode") &&
     authority.source === "pending" &&
-    authority.context?.role === "worker" &&
+    // Via Rápida: coordenação também larga com o prompt nativo — a colagem
+    // pós-boot falhava contra TUIs reais (8/8 panes mudos, missão 10/08) e o
+    // argumento de largada é o único canal que não depende de timing.
+    (authority.context?.role === "worker" ||
+      authority.context?.role === "orchestrator") &&
     Boolean(authority.context.missionId?.trim()) &&
     !req.resume
       ? authority.context.initialPrompt
