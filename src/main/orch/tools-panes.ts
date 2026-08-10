@@ -20,7 +20,6 @@ import {
 } from './pane-close-scopes';
 import { findAgentInSquad, squadRoutableCliIds } from './squad-store';
 import { adHocSpawnGateError } from './route-provenance';
-import { countLiveMissionWorkerSlots } from './mission-driver-io';
 import { loadModelCatalog, modelCatalogInfo } from '../adapters/model-catalog';
 import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
 import {
@@ -454,17 +453,24 @@ const paneSpawn: McpToolDef = {
           throw new Error('approval_required: current mission contract unavailable');
         }
         // Slots contam só workers VIVOS: linha durável de worker morto/fechado
-        // não pode segurar maxWorkers para sempre (deadlock de campo).
-        const workerSlots = countLiveMissionWorkerSlots(
-          ctx.scope,
-          missionId,
-          suite.missionPanes.list(missionId),
+        // não pode segurar maxWorkers para sempre (deadlock de campo). Um pane
+        // sem snapshot ainda conta como vivo (recém-spawnado, pré-bind).
+        const liveSnapshotStates = new Map(
+          listPaneSnapshots().map((pane) => [pane.paneId, pane.state] as const),
         );
+        const liveWorkerCount = suite.missionPanes
+          .list(missionId)
+          .filter((row) => row.role === 'worker')
+          .filter(
+            (row) =>
+              !row.paneId ||
+              liveSnapshotStates.get(row.paneId) !== 'exited',
+          ).length;
         const policy = reserveWorkerSpawnSlot({
           scope: ctx.scope,
           missionId,
           contract: missionRow.intentContract,
-          currentWorkerCount: workerSlots.live,
+          currentWorkerCount: liveWorkerCount,
           allowedTools: options.allowedTools,
         });
         if (!policy.ok) {

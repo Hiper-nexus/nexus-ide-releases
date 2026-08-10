@@ -18,10 +18,6 @@ import {
   type McpDispatchOptions,
 } from "./mcp-dispatch";
 import {
-  INACTIVE_GUIDED_PREVC_MCP_FENCE,
-  type GuidedPrevcMcpFenceSnapshot,
-} from "./guided-prevc-mcp-fence";
-import {
   bindTokenToSession,
   getContext,
   mintToken,
@@ -48,7 +44,6 @@ import {
   disposeProjectDomainStoreRegistry,
 } from "./project-domain-store-registry";
 import { compactText } from "./session-compaction";
-import { createScopedTaskStore } from "./task-store";
 import { createTaskDispatchStore } from "./task-dispatch-store";
 
 const MISSION_ID = "mission-http-physical";
@@ -93,8 +88,6 @@ function approvedMission(): Mission {
 function dispatchOptions(
   resolveMission: () => Mission = approvedMission,
   resolveCommittedReplayCandidate?: CommittedPhysicalHandoffReplayCandidateResolver,
-  resolveGuidedPrevcMcpFence: () => GuidedPrevcMcpFenceSnapshot = () =>
-    INACTIVE_GUIDED_PREVC_MCP_FENCE,
 ): McpDispatchOptions {
   return {
     resolveMissionForIntentGate: () => ({
@@ -104,7 +97,6 @@ function dispatchOptions(
     }),
     resolveCommittedPhysicalHandoffReplayCandidate:
       resolveCommittedReplayCandidate,
-    resolveGuidedPrevcMcpFence: () => resolveGuidedPrevcMcpFence(),
   };
 }
 
@@ -145,9 +137,7 @@ describe("physical HTTP MCP handoff boundary", () => {
   let nextHandoffId = 0;
   let handlerCalls = 0;
   let currentMission: Mission;
-  let currentGuidedFence: GuidedPrevcMcpFenceSnapshot;
   let missions: ReturnType<typeof createScopedMissionStore>;
-  let tasks: ReturnType<typeof createScopedTaskStore>;
   let dispatches: ReturnType<typeof createTaskDispatchStore>;
   let handoffs: ReturnType<typeof createScopedHandoffStore>;
   let orchestratorCtx: AgentGateContext;
@@ -174,7 +164,6 @@ describe("physical HTTP MCP handoff boundary", () => {
     });
     missions.setStatus(MISSION_ID, "running");
     missions.setOrchestratorSession(MISSION_ID, ORCHESTRATOR_SESSION_ID);
-    tasks = createScopedTaskStore(manager, scope);
     let nextDispatchId = 0;
     dispatches = createTaskDispatchStore(manager, scope, {
       idFactory: (prefix) =>
@@ -255,7 +244,6 @@ describe("physical HTTP MCP handoff boundary", () => {
       ...approved,
       orchestratorSessionId: ORCHESTRATOR_SESSION_ID,
     };
-    currentGuidedFence = INACTIVE_GUIDED_PREVC_MCP_FENCE;
 
     resetGateForTests();
     ctx = mintToken({
@@ -531,7 +519,6 @@ describe("physical HTTP MCP handoff boundary", () => {
               dispatchOptions(
                 () => currentMission,
                 resolveCommittedReplayCandidate,
-                () => currentGuidedFence,
               ),
             ),
         );
@@ -565,43 +552,6 @@ describe("physical HTTP MCP handoff boundary", () => {
     if (baseDir) fs.rmSync(baseDir, { recursive: true, force: true });
   });
 
-  function seedRunningDispatch(): string {
-    const task = tasks.create({
-      missionId: MISSION_ID,
-      title: "Physical HTTP worker",
-    });
-    const route = missions.reserveRouteDecision(MISSION_ID, task.title, {
-      tier: "hard",
-      adapterId: "grok",
-      reason: "physical HTTP integration route",
-      alternatives: [],
-    });
-    const claim = dispatches.claim({
-      missionId: MISSION_ID,
-      taskId: task.id,
-      intentVersion: 1,
-      workerId: "physical worker",
-      leaseOwner: "main",
-      leaseMs: 30_000,
-    });
-    const routed = dispatches.attachRoute({
-      taskId: task.id,
-      revision: claim.revision,
-      leaseToken: claim.leaseToken,
-      routeReservationId: route.id,
-      adapterId: "grok",
-    });
-    dispatches.bindSpawn({
-      taskId: task.id,
-      revision: routed.revision,
-      leaseToken: claim.leaseToken,
-      paneId: "pane-http-physical",
-      sessionId: SESSION_ID,
-      workerIncarnationId: claim.workerIncarnationId,
-    });
-    expect(claim.workerIncarnationId).toBe(INCARNATION_ID);
-    return task.id;
-  }
 
   async function post(
     summary: string,
@@ -1226,27 +1176,6 @@ describe("physical HTTP MCP handoff boundary", () => {
     });
   });
 
-  it("accepts a physical worker handoff over HTTP while guided PREVC prepares", async () => {
-    currentGuidedFence = Object.freeze({
-      required: true,
-      active: true,
-      hasContract: false,
-      stage: null,
-      risk: null,
-      contractHash: null,
-      workflowRevision: null,
-    });
-
-    const result = await post(
-      "Physical guided worker handoff remains live while PREVC prepares.",
-    );
-
-    expect(result).toMatchObject({ status: 200, body: { ok: true } });
-    expect(handlerCalls).toBe(1);
-    expect(countRows(manager, "handoffs")).toBe(1);
-    expect(countRows(manager, "handoff_mcp_receipts")).toBe(1);
-  });
-
   it("returns one generic handoff after response loss without a dispatch row or second charge", async () => {
     const summary =
       "Physical generic commit is exactly-once after a lost HTTP response.";
@@ -1362,266 +1291,6 @@ describe("physical HTTP MCP handoff boundary", () => {
     expect(countRows(manager, "handoffs")).toBe(1);
     expect(countRows(manager, "handoff_mcp_receipts")).toBe(1);
     expect(spentHandoffSteps(missions)).toBe(1);
-  });
-
-  it("rolls back physical submit and receipt when dispatch CAS faults, then retries cleanly", async () => {
-    const taskId = seedRunningDispatch();
-    const db = manager.open(testProjectScope()).db;
-    db.exec(`
-      CREATE TRIGGER inject_physical_dispatch_crash
-      BEFORE UPDATE OF handoff_id ON task_dispatch_queue
-      WHEN NEW.handoff_id IS NOT NULL
-      BEGIN
-        SELECT RAISE(ABORT, 'injected crash between receipt and dispatch');
-      END
-    `);
-
-    const failed = await post(
-      "Physical atomic-dispatch success must roll every durable row back on fault.",
-    );
-
-    expect(failed).toMatchObject({
-      status: 200,
-      body: {
-        ok: false,
-        error: expect.stringMatching(/injected crash/i),
-        effectMayHaveCommitted: true,
-      },
-    });
-    expect(countRows(manager, "handoffs")).toBe(0);
-    expect(countRows(manager, "handoff_mcp_receipts")).toBe(0);
-    expect(spentHandoffSteps(missions)).toBe(0);
-    expect(dispatches.get(taskId)).toMatchObject({
-      state: "running",
-      handoffId: undefined,
-    });
-
-    db.exec("DROP TRIGGER inject_physical_dispatch_crash");
-    const retried = await post(
-      "Physical atomic-dispatch success must retry from one clean SQLite state.",
-    );
-
-    expect(retried).toMatchObject({ status: 200, body: { ok: true } });
-    expect(countRows(manager, "handoffs")).toBe(1);
-    expect(countRows(manager, "handoff_mcp_receipts")).toBe(1);
-    expect(spentHandoffSteps(missions)).toBe(1);
-    expect(dispatches.get(taskId)).toMatchObject({
-      state: "handoff_ready",
-      handoffId: expect.stringMatching(/^handoff-http-/),
-    });
-  });
-
-  it("returns the committed success handoff on lost-response replay without another row", async () => {
-    const taskId = seedRunningDispatch();
-    const summary =
-      "Physical atomic-dispatch success is exactly-once across a lost response.";
-
-    const first = await post(summary);
-    const committed = dispatches.get(taskId);
-    const replay = await post(summary);
-
-    expect(first).toMatchObject({
-      status: 200,
-      body: {
-        ok: true,
-        result: {
-          handoffId: committed?.handoffId,
-        },
-      },
-    });
-    expect(replay).toMatchObject({
-      status: 200,
-      body: {
-        ok: true,
-        result: {
-          handoffId: committed?.handoffId,
-          replayed: true,
-        },
-      },
-    });
-    expect(countRows(manager, "handoffs")).toBe(1);
-    expect(countRows(manager, "handoff_mcp_receipts")).toBe(1);
-    expect(spentHandoffSteps(missions)).toBe(1);
-    expect(dispatches.get(taskId)).toMatchObject({
-      state: "handoff_ready",
-      handoffId: committed?.handoffId,
-    });
-    expect(
-      readAuditLog({ scope: testProjectScope(), missionId: MISSION_ID }).map(
-        (entry) => entry.result,
-      ),
-    ).toEqual(["intent", "ok", "intent", "ok"]);
-  });
-
-  it("consumes the retry receipt before returning an idempotent handoff", async () => {
-    const taskId = seedRunningDispatch();
-    const summary =
-      "Physical atomic-dispatch one-shot-retry cannot authorize another handoff.";
-
-    const first = await post(summary);
-    const committed = dispatches.get(taskId);
-    const replay = await post(summary);
-
-    expect(first).toMatchObject({ status: 200, body: { ok: true } });
-    expect(replay).toMatchObject({
-      status: 200,
-      body: {
-        ok: true,
-        result: {
-          handoffId: committed?.handoffId,
-          replayed: true,
-          replayReceiptReuseError: expect.stringMatching(
-            /invalid, stale or out-of-scope/i,
-          ),
-        },
-      },
-    });
-    expect(countRows(manager, "handoffs")).toBe(1);
-    expect(countRows(manager, "handoff_mcp_receipts")).toBe(1);
-    expect(dispatches.get(taskId)).toMatchObject({
-      state: "handoff_ready",
-      handoffId: committed?.handoffId,
-    });
-  });
-
-  it("rejects divergent lost-response replay without another handoff or dispatch mutation", async () => {
-    const taskId = seedRunningDispatch();
-    const first = await post(
-      "Physical atomic-dispatch success has one immutable retry payload.",
-    );
-    const committed = dispatches.get(taskId);
-
-    const divergent = await post(
-      "Physical atomic-dispatch success tries a divergent retry payload.",
-    );
-
-    expect(first).toMatchObject({ status: 200, body: { ok: true } });
-    expect(divergent).toMatchObject({
-      status: 200,
-      body: {
-        ok: false,
-        error: expect.stringMatching(/replay recusado.*diverge/i),
-        effectMayHaveCommitted: true,
-      },
-    });
-    expect(countRows(manager, "handoffs")).toBe(1);
-    expect(countRows(manager, "handoff_mcp_receipts")).toBe(1);
-    expect(dispatches.get(taskId)).toMatchObject({
-      state: "handoff_ready",
-      handoffId: committed?.handoffId,
-    });
-  });
-
-  it("commits a physical non-success handoff and terminal block without a false transport error", async () => {
-    const taskId = seedRunningDispatch();
-
-    const result = await post(
-      "Physical atomic-dispatch blocker is terminal and fully receipted.",
-      "blocked",
-    );
-
-    expect(result).toMatchObject({ status: 200, body: { ok: true } });
-    expect(countRows(manager, "handoffs")).toBe(2);
-    expect(countRows(manager, "handoff_mcp_receipts")).toBe(1);
-    expect(
-      handoffs
-        .list({ missionId: MISSION_ID, includeDelivered: true })
-        .filter((handoff) => handoff.status === "progress"),
-    ).toEqual([
-      expect.objectContaining({
-        summary: expect.stringContaining("Pergunta ao operador:"),
-        artifacts: [
-          expect.objectContaining({ kind: "nexus-clarify-question" }),
-        ],
-      }),
-    ]);
-    expect(dispatches.get(taskId)).toMatchObject({
-      state: "blocked",
-      handoffId: expect.stringMatching(/^handoff-http-/),
-      lastError: expect.stringContaining("blocked:"),
-    });
-    expect(
-      tasks.list(MISSION_ID).find((task) => task.id === taskId),
-    ).toMatchObject({
-      status: "failed",
-    });
-    expect(missions.get(MISSION_ID)).toMatchObject({
-      status: "blocked",
-      intentState: "blocked_user",
-    });
-    expect(
-      readAuditLog({ scope: testProjectScope(), missionId: MISSION_ID }).map(
-        (entry) => entry.result,
-      ),
-    ).toEqual(["intent", "ok"]);
-  });
-
-  it("returns the committed non-success handoff after its own mission block", async () => {
-    const taskId = seedRunningDispatch();
-    const summary =
-      "Physical atomic-dispatch blocker remains exactly-once after response loss.";
-
-    const first = await post(summary, "blocked");
-    const committed = dispatches.get(taskId);
-    currentMission = missions.get(MISSION_ID)!;
-    const replay = await post(summary, "blocked");
-
-    expect(first).toMatchObject({ status: 200, body: { ok: true } });
-    expect(currentMission).toMatchObject({ status: "blocked" });
-    expect(replay).toMatchObject({
-      status: 200,
-      body: {
-        ok: true,
-        result: {
-          handoffId: committed?.handoffId,
-          replayed: true,
-        },
-      },
-    });
-    expect(countRows(manager, "handoffs")).toBe(2);
-    expect(countRows(manager, "handoff_mcp_receipts")).toBe(1);
-    expect(dispatches.get(taskId)).toMatchObject({
-      state: "blocked",
-      handoffId: committed?.handoffId,
-    });
-    expect(
-      readAuditLog({ scope: testProjectScope(), missionId: MISSION_ID }).map(
-        (entry) => entry.result,
-      ),
-    ).toEqual(["intent", "ok", "intent", "ok"]);
-  });
-
-  it("rejects a divergent blocker replay after the mission is already blocked", async () => {
-    const taskId = seedRunningDispatch();
-    const first = await post(
-      "Physical atomic-dispatch blocker has one immutable retry payload.",
-      "blocked",
-    );
-    const committed = dispatches.get(taskId);
-    currentMission = missions.get(MISSION_ID)!;
-
-    const divergent = await post(
-      "Physical atomic-dispatch blocker tries a divergent retry payload.",
-      "blocked",
-    );
-
-    expect(first).toMatchObject({ status: 200, body: { ok: true } });
-    expect(divergent).toMatchObject({
-      status: 200,
-      body: {
-        ok: false,
-        error: expect.stringMatching(/dispatch_required/i),
-      },
-    });
-    expect(divergent.body.effectMayHaveCommitted).toBeUndefined();
-    expect(countRows(manager, "handoffs")).toBe(2);
-    expect(countRows(manager, "handoff_mcp_receipts")).toBe(1);
-    expect(spentHandoffSteps(missions)).toBe(1);
-    expect(dispatches.get(taskId)).toMatchObject({
-      state: "blocked",
-      handoffId: committed?.handoffId,
-      lastError: expect.stringContaining("one immutable retry payload"),
-    });
   });
 
   it("reports success when a blocked handoff self-revokes mission dispatch", async () => {

@@ -51,8 +51,6 @@ import {
   permissionScopeForTool,
   type CommittedPhysicalHandoffReplayCandidate,
   type CommittedPhysicalHandoffReplayCandidateResolver,
-  type CommittedFanoutConsolidationReplayCandidate,
-  type CommittedFanoutConsolidationReplayCandidateResolver,
   type IntentGateMissionResolver,
   type McpDispatchOptions,
   type McpDispatchSource,
@@ -69,18 +67,6 @@ import {
 } from "./mcp-consent-policy";
 import { mintAgentTransportPhysicalReceipt } from "./http-mcp-boundary";
 import { assertGovernedWorkspaceControlBoundary } from "./governed-workspace-control-boundary";
-import { missionRequiresGuidedPrevc } from "./guided-mission-authority";
-import {
-  standardTopologyFromSealedTaskDetails,
-  type SealedStandardMissionTopology,
-} from "./guided-mission-topology-authority";
-import {
-  assertGuidedPrevcMcpFence,
-  INACTIVE_GUIDED_PREVC_MCP_FENCE,
-  resolveProductionGuidedPrevcMcpFence,
-} from "./guided-prevc-mcp-fence";
-import { hasPersistedMissionDegradation } from './mission-event-emit';
-import { MISSION_DEGRADATION_PATHS } from './mission-degradation';
 import {
   handoffLogicalOperationKey,
   handoffRawPayloadSha256,
@@ -91,8 +77,6 @@ export {
   permissionScopeForTool,
   type CommittedPhysicalHandoffReplayCandidate,
   type CommittedPhysicalHandoffReplayCandidateResolver,
-  type CommittedFanoutConsolidationReplayCandidate,
-  type CommittedFanoutConsolidationReplayCandidateResolver,
   type IntentGateMissionResolver,
   type McpConfirmationHandler,
   type McpConfirmationRequest,
@@ -104,81 +88,22 @@ export {
   type WorkflowEffectAuthority,
 } from "./mcp-dispatch-contract";
 
-export function assertUnfrozenGuidedExecutionEffectAllowed(
-  mission: Parameters<typeof missionRequiresGuidedPrevc>[0],
-  sealedTopology?: SealedStandardMissionTopology,
-  options: { readonly prevcDegraded?: boolean } = {},
-): void {
-  if (sealedTopology === "invalid") {
-    throw new Error(
-      "guided_plan_mixed_topology_blocked: o receipt selado mistura " +
-        "delivery, team-read-only-fanout e wave-pack; replaneje e reaprove a missão",
-    );
-  }
-  if (
-    options.prevcDegraded ||
-    !missionRequiresGuidedPrevc(mission, sealedTopology)) return;
-  throw new Error(
-    "guided_prevc_required: execução bloqueada até nexus_context_doctor, " +
-      "nexus_mission_freeze_contract e stage=execution",
-  );
-}
-
 function resolveProductionWorkflowAuthority(
   scope: ProjectExecutionScope,
   missionId: string,
 ): WorkflowEffectAuthority {
   const service = getContextWorkflowService(scope);
   const stored = service.getMissionWorkflow(missionId).contract;
-  let mission: Mission | null = null;
-    let sealedTopology: SealedStandardMissionTopology = "delivery";
-  let prevcDegraded = false;
-  try {
-      const stores = getProjectDomainStores(scope);
-      mission = stores.missions.get(missionId);
-      const intentVersion = mission?.intentContract?.intentVersion ?? mission?.intentVersion;
-    prevcDegraded = hasPersistedMissionDegradation(
-      scope,
-      missionId,
-      MISSION_DEGRADATION_PATHS.prevc,
-      intentVersion,
-    );
-      if (intentVersion !== undefined) {
-        const receipt = stores.tasks.getPlanReceipt(missionId, intentVersion);
-        sealedTopology = standardTopologyFromSealedTaskDetails(
-          receipt?.tasks.map((task) => task.detail) ?? [],
-        );
-      }
-    } catch (error) {
-      // Unit/standalone dispatch seams may inject their own intent authority
-      // without booting the production stores. A real production dispatch has
-      // already failed closed in resolveProductionMissionForIntentGate before
-      // reaching this resolver when those stores are unavailable.
-      if (
-        !String(error).includes(
-          "project-scoped domain stores are not initialized",
-        )
-      ) {
-        throw error;
-      }
-    }
-  // A persisted D1 decision outranks an old/stale PREVC contract. The simple
-  // path must stay executable even when the process restarted after the
-  // contract row was written but before the ceremony completed.
-  if (!stored || prevcDegraded) {
+  // Via Rápida: sem PREVC cerimonial. Contratos congelados legados ainda
+  // ganham o guard de mutação do workflow; o caminho simples só protege o
+  // contexto versionado contra escrita de executores.
+  if (!stored) {
     return Object.freeze({
       contextRevision: undefined,
       assertExecutionEffectAllowed: (
         _toolName: string,
         args: Readonly<Record<string, unknown>>,
       ) => {
-        if (mission) {
-          assertUnfrozenGuidedExecutionEffectAllowed(
-            mission,
-            sealedTopology, {
-            prevcDegraded,
-          });
-        }
         for (const candidate of mutationTargetPaths(args)) {
           if (candidate === ".context" || candidate.startsWith(".context/")) {
             throw new Error(
@@ -294,56 +219,6 @@ function resolveProductionCommittedPhysicalHandoffReplayCandidate(
         dispatch.state === "completed"
       : dispatch.state === "blocked";
     return stateMatches && dispatch.handoffId === handoff.id;
-  } catch {
-    return false;
-  }
-}
-
-function resolveProductionCommittedFanoutConsolidationReplayCandidate(
-  scope: ProjectExecutionScope,
-  candidate: CommittedFanoutConsolidationReplayCandidate,
-): boolean {
-  try {
-    const suite = getProjectDomainStores(scope);
-    const mission = suite.missions.get(candidate.missionId);
-    return Boolean(
-        mission?.status === "done" &&
-        mission.orchestratorSessionId === candidate.sessionId &&
-        hasCurrentApprovedDispatchContract(mission) &&
-        suite.taskDispatches.hasExactFanoutConsolidationReplay({
-          missionId: candidate.missionId,
-          orchestratorSessionId: candidate.sessionId,
-          finalOutput: candidate.finalOutput,
-        }),
-    );
-  } catch {
-    return false;
-  }
-}
-
-function isCommittedFanoutConsolidationReplayCandidate(
-  scope: ProjectExecutionScope,
-  missionId: string,
-  ctx: AgentGateContext,
-  args: Readonly<Record<string, unknown>>,
-  mission: Mission,
-  resolve: CommittedFanoutConsolidationReplayCandidateResolver,
-): boolean {
-  if (
-    ctx.role !== "orchestrator" ||
-    !ctx.sessionId ||
-    mission.status !== "done" ||
-    args.status !== "done" ||
-    typeof args.note !== "string"
-  ) {
-    return false;
-  }
-  try {
-    return resolve(scope, {
-      missionId,
-      sessionId: ctx.sessionId,
-      finalOutput: args.note,
-    });
   } catch {
     return false;
   }
@@ -600,19 +475,6 @@ export async function dispatchToolCall(
     };
   }
 
-  const guidedFenceResolver =
-    options.resolveGuidedPrevcMcpFence ??
-    // Isolated dispatch tests that replace the production mission resolver do
-    // not have project stores from which guided ownership can be compiled.
-    // Production call sites never inject this seam.
-    (options.resolveMissionForIntentGate
-      ? () => INACTIVE_GUIDED_PREVC_MCP_FENCE
-      : resolveProductionGuidedPrevcMcpFence);
-  const assertCurrentGuidedFence = (): void => {
-    if (!ctx.missionId) return;
-    const snapshot = guidedFenceResolver(ctx.scope, ctx.missionId);
-    assertGuidedPrevcMcpFence(snapshot, tool.name, args, ctx);
-  };
   const denyBeforeIntent = (reason: string): ToolDispatchResult => {
     const auditFailure = writeAudit(
       () =>
@@ -636,14 +498,6 @@ export async function dispatchToolCall(
       }
     );
   };
-
-  try {
-    assertCurrentGuidedFence();
-  } catch (error) {
-    return denyBeforeIntent(
-      error instanceof Error ? error.message : String(error),
-    );
-  }
 
   if (!isInternalPrevcReviewerToolAllowed(ctx, tool.name)) {
     return denyBeforeIntent(
@@ -765,9 +619,6 @@ export async function dispatchToolCall(
   const resolveCommittedReplayCandidate =
     options.resolveCommittedPhysicalHandoffReplayCandidate ??
     resolveProductionCommittedPhysicalHandoffReplayCandidate;
-  const resolveCommittedFanoutReplayCandidate =
-    options.resolveCommittedFanoutConsolidationReplayCandidate ??
-    resolveProductionCommittedFanoutConsolidationReplayCandidate;
   type IntentCheck =
     | {
         readonly ok: true;
@@ -808,19 +659,6 @@ export async function dispatchToolCall(
           args,
           resolved.mission,
           resolveCommittedReplayCandidate,
-        )
-      ) {
-        return { ok: true, resolved };
-      }
-      if (
-        canonical === "mission_set_status" &&
-        isCommittedFanoutConsolidationReplayCandidate(
-          ctx.scope,
-          ctx.missionId,
-          ctx,
-          args,
-          resolved.mission,
-          resolveCommittedFanoutReplayCandidate,
         )
       ) {
         return { ok: true, resolved };
@@ -1096,17 +934,6 @@ export async function dispatchToolCall(
     }
   }
 
-  // A modal, credential broker, or any other confirmation await can outlive
-  // the pre-execution workflow phase. Recompile the exact fence before any
-  // effect intent, budget reservation, queue mutation, or handler call.
-  try {
-    assertCurrentGuidedFence();
-  } catch (error) {
-    return denyBeforeIntent(
-      error instanceof Error ? error.message : String(error),
-    );
-  }
-
   // Confirmation can outlive the intent or frozen workflow revision. Rebind
   // both authorities immediately before reserving budget and starting effects.
   let boundWorkflowAuthority: WorkflowEffectAuthority | undefined;
@@ -1360,7 +1187,6 @@ export async function dispatchToolCall(
           "intent_preempted: bootstrap cancelled by newer user intent",
         );
       }
-      assertCurrentGuidedFence();
       if (recheckIntent) {
         const currentIntent = checkMissionIntent();
         if (!currentIntent.ok) throw new Error(currentIntent.error);

@@ -1,11 +1,17 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { squadAgentSchema } from "../../shared/orch-types";
-import type { ScheduleOwnership } from "./mission-scheduler";
 import {
   ScopedStoreCorruptionError,
   type ScopeCoordinates,
 } from "./scoped-store";
+
+/** Recorte de propriedade persistido em linhas legadas de dispatch. */
+export interface ScheduleOwnership {
+  readonly files: readonly string[];
+  readonly symbols: readonly string[];
+  readonly domains: readonly string[];
+}
 
 export const EMPTY_GIT_DIFF_SHA256 = createHash("sha256")
   .update("")

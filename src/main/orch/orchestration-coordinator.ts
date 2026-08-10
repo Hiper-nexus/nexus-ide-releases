@@ -10,22 +10,6 @@ import {
   reconcileLoginStuckWatchdog,
 } from './login-stuck-watchdog';
 import {
-  DRIVE_TICK_MS,
-  reconcileMissionDriver,
-  setMissionDriverReconcileRequest,
-} from './mission-driver-runtime';
-import {
-  MISSION_SCHEDULER_TICK_MS,
-  reconcileMissionScheduler,
-  setMissionSchedulerReconcileRequest,
-} from './mission-scheduler-production';
-import {
-  MISSION_ORCHESTRATOR_EXIT_RECONCILE_MS,
-  prepareMissionOrchestratorExitLifecycle,
-  reconcileMissionOrchestratorExits,
-  shutdownMissionOrchestratorExitLifecycle,
-} from './mission-orchestrator-exit-lifecycle';
-import {
   createOrchestrationReconciler,
   type OrchestrationReconciler,
 } from './orchestration-reconciler';
@@ -37,18 +21,6 @@ import { configureHandoffDeliveryRuntimeRecovery } from './idle-delivery';
 import { recoverHandoffDeliveryRuntime } from './handoff-delivery-runtime-recovery';
 import { terminateUnauthorizedMissionRuntimes } from './mission-runtime-termination';
 import { requireProjectDomainStoreRegistry } from './project-domain-store-registry';
-import {
-  prepareStallWatchdog,
-  reconcileStallWatchdog,
-  shutdownStallWatchdog,
-  STALL_SCAN_MS,
-} from './stall-watchdog';
-import {
-  prepareTaskDispatchLifecycle,
-  reconcileTaskDispatchLifecycle,
-  shutdownTaskDispatchLifecycle,
-  TASK_DISPATCH_RECONCILE_MS,
-} from './task-dispatch-lifecycle';
 
 /**
  * Production owner for orchestration supervision.
@@ -62,27 +34,6 @@ let coordinator: OrchestrationReconciler | null = null;
 let disposeLoginWatchdog: (() => void) | null = null;
 let coordinatorStopFlight: Promise<void> | null = null;
 const MISSION_RUNTIME_AUTHORITY_RECONCILE_MS = 1_000;
-/**
- * The merge council has its own 10-minute bound (20 minutes in the packaged
- * physical release gate). Keep the outer participant just beyond that bound:
- * otherwise a healthy reviewer is cancelled every 30 seconds and can never
- * submit its durable report. Abort still reaches the whole scheduler on a
- * genuine overrun or shutdown.
- */
-export const MISSION_SCHEDULER_PARTICIPANT_TIMEOUT_MS = 21 * 60_000;
-
-/**
- * Cadence-only scheduler boundary. `reconcileMissionScheduler` evaluates each
- * mission through the shared admission result before merge, PREVC or spawn;
- * keeping this participant free of a second boolean predicate prevents the
- * coordinator and scheduler from disagreeing about receipt/session liveness.
- */
-export function runMissionSchedulerCoordinatorParticipant(
-  _now: number,
-  signal?: AbortSignal,
-): Promise<void> {
-  return reconcileMissionScheduler(signal);
-}
 
 export function startOrchestrationCoordinator(): void {
   if (coordinator) return;
@@ -90,10 +41,7 @@ export function startOrchestrationCoordinator(): void {
     throw new Error('orchestration coordinator is still stopping');
   }
 
-  prepareStallWatchdog();
   prepareDelegationSupervisor();
-  prepareTaskDispatchLifecycle();
-  prepareMissionOrchestratorExitLifecycle();
   configureHandoffDeliveryRuntimeRecovery(recoverHandoffDeliveryRuntime);
   disposeLoginWatchdog = installLoginStuckWatchdog({ autoTick: false });
 
@@ -104,24 +52,9 @@ export function startOrchestrationCoordinator(): void {
       run: () => reconcileLoginStuckWatchdog(),
     },
     {
-      id: 'stall-watchdog',
-      cadenceMs: STALL_SCAN_MS,
-      run: (now) => reconcileStallWatchdog(now),
-    },
-    {
       id: 'delegation-supervisor',
       cadenceMs: DELEGATION_SCAN_MS,
       run: (now) => reconcileDelegationSupervisor(now),
-    },
-    {
-      id: 'task-dispatch-lifecycle',
-      cadenceMs: TASK_DISPATCH_RECONCILE_MS,
-      run: (now) => reconcileTaskDispatchLifecycle(now),
-    },
-    {
-      id: 'mission-orchestrator-exit',
-      cadenceMs: MISSION_ORCHESTRATOR_EXIT_RECONCILE_MS,
-      run: () => reconcileMissionOrchestratorExits(),
     },
     {
       id: 'mission-runtime-authority',
@@ -148,25 +81,8 @@ export function startOrchestrationCoordinator(): void {
       cadenceMs: HANDOFF_DELIVERY_OUTBOX_RECONCILE_MS,
       run: () => reconcilePendingHandoffDeliveryOutbox(),
     },
-    {
-      id: 'mission-scheduler',
-      cadenceMs: MISSION_SCHEDULER_TICK_MS,
-      timeoutMs: MISSION_SCHEDULER_PARTICIPANT_TIMEOUT_MS,
-      run: runMissionSchedulerCoordinatorParticipant,
-    },
-    {
-      id: 'mission-driver',
-      cadenceMs: DRIVE_TICK_MS,
-      run: () => reconcileMissionDriver(),
-    },
   ]);
   coordinator = instance;
-  setMissionSchedulerReconcileRequest(
-    () => coordinator?.request('mission-scheduler') ?? false,
-  );
-  setMissionDriverReconcileRequest(
-    () => coordinator?.request('mission-driver') ?? false,
-  );
   instance.start();
 }
 
@@ -207,14 +123,9 @@ export async function stopOrchestrationCoordinator(): Promise<void> {
     if (coordinator !== current) {
       throw new Error('orchestration coordinator identity changed during stop');
     }
-    setMissionSchedulerReconcileRequest(null);
-    setMissionDriverReconcileRequest(null);
     disposeLoginWatchdog?.();
     disposeLoginWatchdog = null;
     shutdownDelegationSupervisor();
-    shutdownStallWatchdog();
-    shutdownTaskDispatchLifecycle();
-    shutdownMissionOrchestratorExitLifecycle();
     configureHandoffDeliveryRuntimeRecovery(null);
     coordinator = null;
   })();

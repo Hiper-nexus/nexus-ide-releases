@@ -1,6 +1,5 @@
 import type { HandoffDeliveryRuntimeRecoveryRequest } from "./idle-delivery";
 import { redeliverPendingHandoffs } from "./idle-delivery";
-import { suppressIntentionalMissionOrchestratorExit } from "./mission-orchestrator-exit-lifecycle";
 import {
   getPaneRuntimeAuthorityBySession,
   requestMissionPaneRecovery,
@@ -64,31 +63,21 @@ export async function recoverHandoffDeliveryRuntime(
     );
   const pane = panes.length === 1 ? panes[0] : undefined;
   if (!pane?.paneId || !pane.authoritySeal) return false;
-  const releaseExitSuppression = suppressIntentionalMissionOrchestratorExit({
-    scope: request.scope,
+  const result = await requestMissionPaneRecovery({
     missionId: request.missionId,
-    orchestratorSessionId: request.sessionId,
-    authoritySeal: pane.authoritySeal,
+    paneId: request.paneId,
+    role: "orchestrator",
+    expectedSessionId: request.sessionId,
+    pane,
+    scope: request.scope,
+    recap: recoveryRecap(request),
   });
-  try {
-    const result = await requestMissionPaneRecovery({
-      missionId: request.missionId,
-      paneId: request.paneId,
-      role: "orchestrator",
-      expectedSessionId: request.sessionId,
-      pane,
-      scope: request.scope,
-      recap: recoveryRecap(request),
-    });
-    if (!result.ok || !result.sessionId) return false;
-    const rebound = stores.missions.rebindOrchestratorSession(
-      request.missionId,
-      result.sessionId,
-    );
-    if (rebound?.orchestratorSessionId !== result.sessionId) return false;
-    redeliverPendingHandoffs(request.scope, request.missionId);
-    return true;
-  } finally {
-    releaseExitSuppression();
-  }
+  if (!result.ok || !result.sessionId) return false;
+  const rebound = stores.missions.rebindOrchestratorSession(
+    request.missionId,
+    result.sessionId,
+  );
+  if (rebound?.orchestratorSessionId !== result.sessionId) return false;
+  redeliverPendingHandoffs(request.scope, request.missionId);
+  return true;
 }

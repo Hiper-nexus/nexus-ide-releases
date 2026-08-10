@@ -1,9 +1,6 @@
 import type { Handoff } from "../../shared/orch-types";
 import type { ProjectExecutionScope } from "../../shared/types";
-import {
-  onHandoffSubmitted,
-  recoverAcceptedSchedulerHandoffDelivery,
-} from "./idle-delivery";
+import { onHandoffSubmitted } from "./idle-delivery";
 import { requireProjectDomainStoreRegistry } from "./project-domain-store-registry";
 
 export const HANDOFF_DELIVERY_OUTBOX_RECONCILE_MS = 1_000;
@@ -26,10 +23,6 @@ interface HandoffDeliveryOutboxDependencies {
     handoff: Handoff,
     scope: ProjectExecutionScope,
   ) => unknown;
-  readonly recoverAccepted?: (
-    handoff: Handoff,
-    scope: ProjectExecutionScope,
-  ) => unknown;
 }
 
 /**
@@ -48,9 +41,6 @@ export function reconcilePendingHandoffDeliveryOutbox(
     dependencies.suites ??
     requireProjectDomainStoreRegistry().listSuites();
   const deliver = dependencies.deliver ?? onHandoffSubmitted;
-  const recoverAccepted =
-    dependencies.recoverAccepted ??
-    recoverAcceptedSchedulerHandoffDelivery;
   let attempted = 0;
   let failed = 0;
   for (const suite of suites) {
@@ -74,7 +64,9 @@ export function reconcilePendingHandoffDeliveryOutbox(
           (handoff.deliveryState === "submitted" ||
             handoff.deliveryState === "acknowledged")
         ) {
-          recoverAccepted(handoff, suite.scope);
+          // Aceito e aguardando o ACK explícito do Maestro: o caminho
+          // cerimonial re-provava a autoridade do scheduler aqui; a Via
+          // Rápida não tem dispatch durável a re-provar — nada a refazer.
         } else {
           deliver(handoff, suite.scope);
         }

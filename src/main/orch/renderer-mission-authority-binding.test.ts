@@ -127,8 +127,6 @@ const authority = new RendererMissionAuthority(
   { forScope: deps.forScope } as never,
   () => "context-revision-a",
   deps.resolvePaneActivity,
-  undefined,
-  () => savedSquad,
 );
 
 beforeEach(() => {

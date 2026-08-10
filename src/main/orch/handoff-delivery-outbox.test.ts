@@ -83,44 +83,21 @@ describe("durable handoff delivery outbox", () => {
       scope,
     );
     const deliver = vi.fn();
-    const recoverAccepted = vi.fn(
-      (candidate: Handoff) =>
-        restartedHandoffs.markConsumedAfterAcceptedDelivery(
-          candidate.id,
-          "mission-accepted-crash",
-          "orchestrator-current",
-        ),
-    );
     const suites = [{ scope, handoffs: restartedHandoffs }];
 
+    // Aceito e aguardando ACK: a reconciliação da Via Rápida nunca re-pasta
+    // nem sintetiza consumo — o handoff permanece exatamente como estava.
     expect(
       reconcilePendingHandoffDeliveryOutbox({
         suites,
         deliver,
-        recoverAccepted,
       }),
     ).toEqual({ attempted: 1, failed: 0 });
     expect(deliver).not.toHaveBeenCalled();
-    expect(recoverAccepted).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: handoff.id,
-        deliveryState: "submitted",
-      }),
-      scope,
-    );
     expect(restartedHandoffs.get(handoff.id)).toMatchObject({
       delivered: true,
-      deliveryState: "consumed",
+      deliveryState: "submitted",
     });
-
-    expect(
-      reconcilePendingHandoffDeliveryOutbox({
-        suites,
-        deliver,
-        recoverAccepted,
-      }),
-    ).toEqual({ attempted: 0, failed: 0 });
-    expect(recoverAccepted).toHaveBeenCalledOnce();
   });
 
   it("retries an accepted delivery requeued by orchestrator rebind", () => {
@@ -302,14 +279,11 @@ describe("durable handoff delivery outbox", () => {
       },
     );
 
-    const recoverAccepted = vi.fn();
     expect(
       reconcilePendingHandoffDeliveryOutbox({
         suites: [{ scope, handoffs }],
-        recoverAccepted,
       }),
     ).toEqual({ attempted: 0, failed: 0 });
-    expect(recoverAccepted).not.toHaveBeenCalled();
   });
 
   it("recovers queued work after restart and retries a throwing callback", () => {

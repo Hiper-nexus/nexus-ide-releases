@@ -29,10 +29,6 @@ import {
   isSessionInjectableIdle,
   tapAgentSemanticStatus,
 } from './agent-status';
-import {
-  findCurrentSchedulerOwnedHandoffDispatch,
-  missionSchedulerCompletionTopology,
-} from './mission-scheduler-authority';
 
 /**
  * Automatic handoff delivery: when a worker submits a
@@ -503,99 +499,6 @@ function isDiagnosticDriverHandoff(handoff: Handoff): boolean {
   );
 }
 
-function schedulerDeliveryAuthority(
-  handoff: Handoff,
-  scope: ProjectExecutionScope,
-): DurableDeliveryAuthority | null {
-  if (!handoff.missionId) return null;
-  try {
-    const stores = getProjectDomainStores(scope);
-    const mission = stores.missions.get(handoff.missionId);
-    if (!mission?.orchestratorSessionId) return null;
-    const dispatch = findCurrentSchedulerOwnedHandoffDispatch(
-      mission,
-      stores.missions.hasCurrentKickoffAcceptance(mission.id),
-      handoff,
-      stores.taskDispatches.list(mission.id),
-    );
-    if (!dispatch) return null;
-    return Object.freeze({
-      sessionId: mission.orchestratorSessionId,
-      missionId: mission.id,
-      scope: Object.freeze({ ...scope }),
-    });
-  } catch {
-    return null;
-  }
-}
-
-function schedulerDeliveryTopology(
-  authority: DeliveryAuthority,
-  handoff: Handoff,
-): StandardMissionTopology | null | undefined {
-  const schedulerAuthority = schedulerDeliveryAuthority(
-    handoff,
-    authority.scope,
-  );
-  if (
-    schedulerAuthority?.missionId !== authority.missionId ||
-    schedulerAuthority.sessionId !== authority.sessionId
-  ) {
-    return undefined;
-  }
-  const stores = getProjectDomainStores(authority.scope);
-  const mission = stores.missions.get(authority.missionId);
-  if (!mission) return null;
-  return missionSchedulerCompletionTopology(
-    mission,
-    stores.taskDispatches.list(authority.missionId),
-  );
-}
-
-function durableDispatchOwnsHandoff(
-  authority: DurableDeliveryAuthority,
-  handoffId: string,
-): boolean {
-  try {
-    const handoff = getProjectDomainStores(authority.scope).handoffs.get(
-      handoffId,
-    );
-    if (!handoff) return false;
-    const current = schedulerDeliveryAuthority(handoff, authority.scope);
-    return (
-      current?.missionId === authority.missionId &&
-      current.sessionId === authority.sessionId
-    );
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Restart lane for an accepted scheduler-owned delivery whose explicit Maestro
- * ACK has not committed yet. Re-prove its durable authority, but deliberately
- * preserve `submitted`: accepting a PTY paste proves transport only. The exact
- * orchestrator must call `nexus_handoff_ack` after processing the result.
- */
-export function recoverAcceptedSchedulerHandoffDelivery(
-  handoff: Handoff,
-  scope: ProjectExecutionScope,
-): boolean {
-  let current: Handoff | null;
-  try {
-    current = getProjectDomainStores(scope).handoffs.get(handoff.id);
-  } catch {
-    return false;
-  }
-  if (
-    !current?.delivered ||
-    (current.deliveryState !== 'submitted' &&
-      current.deliveryState !== 'acknowledged')
-  ) return false;
-  const authority = schedulerDeliveryAuthority(current, scope);
-  return authority !== null;
-}
-
 function missionDispatchesAlreadyTerminal(
   authority: DeliveryAuthority,
 ): boolean {
@@ -626,10 +529,7 @@ function blockDeliveryFailure(
   const stores = getProjectDomainStores(authority.scope);
   const mission = stores.missions.get(authority.missionId);
   if (mission && mission.status !== 'done' && mission.status !== 'failed') {
-    if (
-      durableDispatchOwnsHandoff(authority, handoffId) ||
-      missionDispatchesAlreadyTerminal(authority)
-    ) {
+    if (missionDispatchesAlreadyTerminal(authority)) {
       requestRuntimeRecovery(authority, handoffId);
       console.warn(
         '[idle-delivery] Maestro não aceitou a entrega após retry limitado; ' +
@@ -761,10 +661,7 @@ function deliverNow(authority: DeliveryAuthority, handoff: Handoff): boolean {
   }
   const ok = orchWriteSession(
     authority.sessionId,
-    formatDelivery(
-      current,
-      schedulerDeliveryTopology(authority, current),
-    ),
+    formatDelivery(current),
     {
       markInputBusy: false,
     },

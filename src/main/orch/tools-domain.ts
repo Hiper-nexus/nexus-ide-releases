@@ -13,19 +13,17 @@ import {
 import {
   assertMcpInvocationCurrent,
   type McpToolDef,
-  type McpToolInvocation,
 } from './mcp-protocol';
 import { findPane, readSessionOutput, waitForIdle } from './pane-registry';
 import { listProviderSettings } from '../persistence/provider-config-store';
-import { routeTask, type RouteDecision, type TaskTier } from './task-router';
-import { resolveSealedWorkerRoute } from './mission-scheduler-plan';
+import { routeTask, type TaskTier } from './task-router';
 import { countAdapterUses } from './route-pipeline';
 import { recordRouteDecision } from './route-provenance';
 import { recordRouteLog, recentRouteLog } from './route-log';
 import { hasAvailableAccount } from '../persistence/account-store';
 import { authReadyModelsForProvider } from '../adapters/model-auth-readiness';
 import { appendMissionVerdict } from '../../shared/mission-block-cause';
-import { missionStatusSchema, type Mission } from '../../shared/orch-types';
+import { missionStatusSchema } from '../../shared/orch-types';
 import { missionResultSchema } from '../../shared/mission-engine-contract';
 import { buildClarify } from '../../shared/clarify';
 import { emitClarifyQuestion } from './clarify-flow';
@@ -59,20 +57,12 @@ import {
   strArray,
 } from './tool-util';
 import { buildHandoffTools } from './tools-handoff';
-import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
 import { canCompleteConsultLane, canCompleteOpsLane } from '../../shared/mission-intent';
-import { emitPlannedTasksWithContract } from './mission-scheduler';
-import { encodeTaskScheduleDetail } from './mission-scheduler-meta';
 import { isTaskQueueManagedMission } from './task-dispatch-authority';
-import {
-  hasLiveMissionWorktreeAllocation,
-  planMissionTasks,
-} from './mission-task-plan-authority';
 import {
   liveSquadRuntimeInventory,
   warmSquadRuntimeSubscriptionAuth,
 } from './squad-runtime-inventory';
-import { standardTopologyFromSealedTaskDetails } from './guided-mission-topology-authority';
 
 const MAX_MISSION_RESULT_CHARS = 65_536;
 
@@ -307,24 +297,6 @@ const missionListTool: McpToolDef = {
   },
 };
 
-function requireFanoutConsolidationPhysicalReceipt(
-  invocation: McpToolInvocation | undefined,
-): NonNullable<McpToolInvocation['agentTransportPhysicalReceipt']> {
-  const intent = invocation?.effectIntent;
-  if (
-    !intent ||
-    !['http-mcp', 'acp-stdio', 'pty-stream'].includes(intent.source) ||
-    intent.toolName !== 'nexus_mission_set_status' ||
-    !invocation?.agentTransportPhysicalReceipt
-  ) {
-    throw new Error(
-      'fanout_consolidation_provenance: exact physical Maestro tool-call receipt is required',
-    );
-  }
-  assertMcpInvocationCurrent(invocation);
-  return invocation.agentTransportPhysicalReceipt;
-}
-
 const missionSetStatusTool: McpToolDef = {
   name: 'nexus_mission_set_status',
   description:
@@ -355,7 +327,7 @@ const missionSetStatusTool: McpToolDef = {
     },
     required: ['missionId', 'status'],
   },
-  handler: async (args, ctx, invocation) => {
+  handler: async (args, ctx) => {
     const missionId = requireStr(args, 'missionId');
     const status = missionStatusSchema.parse(args.status);
     const note = str(args, 'note')?.trim() ?? '';
@@ -384,55 +356,6 @@ const missionSetStatusTool: McpToolDef = {
         return current;
       }
       const lane = current.intentContract?.lane ?? 'standard';
-      const intentVersion = current.intentContract?.intentVersion;
-      if (
-        lane === 'standard' &&
-        intentVersion !== undefined &&
-        stores.tasks?.hasPlan?.(missionId, intentVersion) === true
-      ) {
-        const planReceipt = stores.tasks.getPlanReceipt(
-          missionId,
-          intentVersion,
-        );
-        const topology = standardTopologyFromSealedTaskDetails(
-          planReceipt?.tasks.map((task) => task.detail) ?? [],
-        );
-        if (topology !== 'team-read-only-fanout') {
-          throw new Error(
-            'task_dispatcher_authority: missão com plano selado ' +
-              '(delivery/wave-pack) só conclui pelo motor Nexus após receipts ' +
-              'verificados; status=done do Maestro não substitui integração',
-          );
-        }
-        assertCurrentMissionOrchestratorSession(ctx, current);
-        const physicalReceipt =
-          requireFanoutConsolidationPhysicalReceipt(invocation);
-        const recorded = stores.taskDispatches.recordFanoutConsolidation({
-          missionId,
-          intentVersion,
-          orchestratorSessionId: ctx.sessionId!,
-          finalOutput: note,
-          physicalReceipt,
-        });
-        if (!recorded) {
-          throw new Error(
-            'task_dispatcher_authority: a consolidação fanout só é aceita após ' +
-              'todos os receipts físicos, ACKs nexus_handoff_ack e a seção ## Maestro',
-          );
-        }
-        stores.taskDispatches.completeMissionFromVerifiedPlan({
-          missionId,
-          intentVersion,
-        });
-        const completed = stores.missions.get(missionId);
-        if (completed?.status !== 'done') {
-          throw new Error(
-            'task_dispatcher_authority: consolidação persistida, mas a prova final ' +
-              'mudou antes da conclusão; o scheduler retomará de forma idempotente',
-          );
-        }
-        return completed;
-      }
       const workflow = getContextWorkflowService(ctx.scope);
       if (!workflow.isMissionDriverComplete(
         missionId,
@@ -882,7 +805,7 @@ const taskTool: McpToolDef = {
     properties: {
       action: {
         type: 'string',
-        enum: ['create', 'update', 'list', 'plan'],
+        enum: ['create', 'update', 'list'],
       },
       title: { type: 'string' },
       detail: { type: 'string' },
@@ -920,73 +843,14 @@ const taskTool: McpToolDef = {
               'task_dispatcher_authority: o plano durável já existe; liste as tasks em vez de criar dispatch manual',
             );
           }
-          if (
-            hasLiveMissionWorktreeAllocation(
-              requireWorktreeRuntimeRegistry().listMission(ctx.scope, missionId),
-            )
-          ) {
-            throw new Error('mission task plan is sealed after the first worktree allocation');
-          }
         }
-        const body = str(args, 'detail') ?? '';
-        const rawOwnership = args.ownership;
-        const rawDepends = args.dependsOn;
-        let detail = body;
-        if (
-          (rawOwnership && typeof rawOwnership === 'object') ||
-          (Array.isArray(rawDepends) && rawDepends.length > 0)
-        ) {
-          const ownershipObj =
-            rawOwnership && typeof rawOwnership === 'object'
-              ? (rawOwnership as {
-                  files?: unknown;
-                  symbols?: unknown;
-                  domains?: unknown;
-                })
-              : {};
-          const files = Array.isArray(ownershipObj.files)
-            ? ownershipObj.files.filter((f): f is string => typeof f === 'string')
-            : [];
-          const symbols = Array.isArray(ownershipObj.symbols)
-            ? ownershipObj.symbols.filter(
-                (s): s is string => typeof s === 'string',
-              )
-            : [];
-          const domains = Array.isArray(ownershipObj.domains)
-            ? ownershipObj.domains.filter(
-                (d): d is string => typeof d === 'string',
-              )
-            : [];
-          const dependsOn = Array.isArray(rawDepends)
-            ? rawDepends.filter((d): d is string => typeof d === 'string')
-            : [];
-          const planned = emitPlannedTasksWithContract([
-            {
-              id: 'pending',
-              title: requireStr(args, 'title'),
-              detail: body,
-              ownership:
-                files.length > 0
-                  ? { files, symbols, domains }
-                  : undefined,
-              dependsOn,
-            },
-          ])[0]!;
-          detail = encodeTaskScheduleDetail(body, {
-            dependsOn: planned.dependsOn,
-            ownership: planned.ownership,
-            merged: false,
-            parallelEligible: planned.parallelEligible,
-          });
-        }
+        const detail = str(args, 'detail') ?? '';
         return tasks.create({
           title: requireStr(args, 'title'),
           detail,
           missionId,
         });
       }
-      case 'plan':
-        return planMissionTasks(args, ctx, suite);
       case 'update': {
         const taskId = requireStr(args, 'taskId');
         const existing = tasks.list().find((task) => task.id === taskId);
@@ -1149,104 +1013,6 @@ const routeLogTool: McpToolDef = {
   },
 };
 
-/**
- * Plano selado = autoridade fechada de rota. Com roster aprovado o router não
- * rankeia providers: resolve o membro EXATO do roster para a task planejada
- * (role/agentRef → cli/model/effort do selo) e falha fechado quando a task não
- * consta no plano — nunca recomenda uma CLI fora do roster. Sem plano selado
- * retorna null e o roteamento livre/governado existente segue intacto.
- */
-function sealedRosterRouteDecision(input: {
-  readonly stores: ReturnType<typeof getProjectDomainStores>;
-  readonly mission: Mission;
-  readonly task: string;
-  readonly tierOverride?: TaskTier;
-}): RouteDecision | null {
-  const intentVersion =
-    input.mission.intentContract?.intentVersion ?? input.mission.intentVersion;
-  if (intentVersion === undefined) return null;
-  const receipt = input.stores.tasks.getPlanReceipt(
-    input.mission.id,
-    intentVersion,
-  );
-  if (!receipt) return null;
-  const wanted = input.task.trim();
-  const exact = receipt.tasks.filter(
-    (entry) => entry.taskId === wanted || entry.title.trim() === wanted,
-  );
-  const matches =
-    exact.length > 0
-      ? exact
-      : receipt.tasks.filter(
-          (entry) =>
-            entry.title.trim().toLowerCase() === wanted.toLowerCase(),
-        );
-  if (matches.length === 0) {
-    const planned = receipt.tasks
-      .map((entry) => `"${entry.title}"`)
-      .join(', ');
-    throw new Error(
-      'roster_sealed_task_fora_do_plano: a missão tem plano selado e a ' +
-        `tarefa "${wanted.slice(0, 120)}" não consta no plano aprovado; ` +
-        'route_task não recomenda CLI fora do roster selado. Tarefas do ' +
-        `plano: ${planned}`,
-    );
-  }
-  if (matches.length > 1) {
-    throw new Error(
-      'roster_sealed_task_ambigua: mais de uma task do plano selado tem o ' +
-        `título "${wanted.slice(0, 120)}"; a seleção do roster exige título ` +
-        'único — corrija o plano em vez de rotear no chute',
-    );
-  }
-  const entry = matches[0]!;
-  const agent = receipt.agents.find(
-    (candidate) => candidate.id === entry.agentRef,
-  );
-  if (!agent) {
-    throw new Error(
-      `roster_sealed_agent_ausente: o agente ${entry.agentRef} da task ` +
-        `"${entry.title}" não consta no roster selado`,
-    );
-  }
-  const liveAdapters = listProviderSettings()
-    .filter((provider) => provider.adapterId !== 'shell')
-    .map((provider) => {
-      const models = [
-        ...authReadyModelsForProvider(provider, provider.models),
-      ];
-      return {
-        id: provider.adapterId,
-        installed:
-          provider.enabled &&
-          provider.installed &&
-          models.length > 0 &&
-          hasAvailableAccount(provider.adapterId),
-        models: { list: models, default: provider.defaultModel },
-      };
-    });
-  const sealed = resolveSealedWorkerRoute({
-    taskText: input.task,
-    agent,
-    adapters: liveAdapters,
-    rosterHash: receipt.rosterHash,
-    orchestratorCliId: receipt.agents.find(
-      (candidate) => candidate.category === 'orchestrator',
-    )?.cli,
-  });
-  const routeLabel =
-    sealed.routeContract.adapterId +
-    (sealed.routeContract.model ? `/${sealed.routeContract.model}` : '');
-  return {
-    ...sealed.decision,
-    tier: input.tierOverride ?? sealed.decision.tier,
-    reason:
-      `roster selado: ${agent.category}=${routeLabel} ` +
-      `(agente ${agent.id}/${agent.agentName}, plano ` +
-      `${receipt.rosterHash.slice(0, 12)}); sem reroute automático`,
-  };
-}
-
 const routeTaskTool: McpToolDef = {
   name: 'nexus_route_task',
   description:
@@ -1327,39 +1093,6 @@ const routeTaskTool: McpToolDef = {
       // os providers keychain-only (AGY) para não ler uma sessão viva como
       // login-needed e derrubar o roteamento da missão.
       await warmSquadRuntimeSubscriptionAuth();
-      // Roster selado = autoridade fechada: a rota sai do membro exato do
-      // roster para a task planejada; task fora do plano falha fechado em vez
-      // de cair no roteamento livre (que já sugeriu CLI fora do roster).
-      const sealedDecision = sealedRosterRouteDecision({
-        stores: missionStores!,
-        mission: mission!,
-        task,
-        tierOverride: tier,
-      });
-      if (sealedDecision) {
-        recordRouteDecision({
-          adapterId: sealedDecision.adapterId,
-          model: sealedDecision.model,
-        });
-        recordRouteLog({
-          task,
-          tier: sealedDecision.tier,
-          adapterId: sealedDecision.adapterId,
-          model: sealedDecision.model,
-          effort: sealedDecision.effort,
-          reason: sealedDecision.reason,
-        });
-        const sealedReservation = missionStores!.missions.reserveRouteDecision(
-          missionId,
-          task,
-          sealedDecision,
-        );
-        return {
-          ...sealedDecision,
-          routeReservationId: sealedReservation.id,
-          routeReservationExpiresAt: sealedReservation.expiresAt,
-        };
-      }
     }
     const governedMissionWorkerIds = missionId
       ? liveSquadRuntimeInventory().policy.routableWorkerCliIds

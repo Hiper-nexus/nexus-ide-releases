@@ -2,9 +2,6 @@ import type { ProjectExecutionScope } from '../../shared/types';
 import type { AuditSource } from '../jarvis/audit-log';
 import type { PermissionScope } from '../jarvis/permissions';
 import type { AgentGateContext } from './gate';
-import type {
-  GuidedPrevcMcpFenceResolver,
-} from './guided-prevc-mcp-fence';
 
 /**
  * Sources allowed to execute a live tool dispatch. PTY stream is a current
@@ -80,17 +77,6 @@ export type CommittedPhysicalHandoffReplayCandidateResolver = (
   candidate: CommittedPhysicalHandoffReplayCandidate,
 ) => boolean;
 
-export interface CommittedFanoutConsolidationReplayCandidate {
-  readonly missionId: string;
-  readonly sessionId: string;
-  readonly finalOutput: string;
-}
-
-export type CommittedFanoutConsolidationReplayCandidateResolver = (
-  scope: ProjectExecutionScope,
-  candidate: CommittedFanoutConsolidationReplayCandidate,
-) => boolean;
-
 export type MissionBudgetReserver = (
   scope: ProjectExecutionScope,
   missionId: string,
@@ -152,15 +138,8 @@ export interface McpDispatchOptions {
    * physical receipt, durable audit, payload and dispatch in one transaction.
    */
   resolveCommittedPhysicalHandoffReplayCandidate?: CommittedPhysicalHandoffReplayCandidateResolver;
-  /** Exact, read-only admission hint for a lost fan-out completion response. */
-  resolveCommittedFanoutConsolidationReplayCandidate?: CommittedFanoutConsolidationReplayCandidateResolver;
   /** Internal seam; production reserves synchronously in the scoped store. */
   reserveMissionBudget?: MissionBudgetReserver;
-  /**
-   * Internal dispatch-test seam. Production compiles the exact guided PREVC
-   * fence from scoped stores/workflow on every authority checkpoint.
-   */
-  resolveGuidedPrevcMcpFence?: GuidedPrevcMcpFenceResolver;
 }
 
 export function permissionScopeForTool(

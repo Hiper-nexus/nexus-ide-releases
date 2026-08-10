@@ -22,8 +22,10 @@ import {
 import { getProjectDomainStores } from "./project-domain-store-registry";
 import { requireStr, str } from "./tool-util";
 import { compactText } from "./session-compaction";
-import { TASK_DISPATCH_HEARTBEAT_LEASE_MS } from "./task-dispatch-lifecycle";
 import type { ScopedHandoff } from "./handoff-store";
+
+/** Lease de heartbeat herdado do dispatch cerimonial (linhas legadas). */
+const TASK_DISPATCH_HEARTBEAT_LEASE_MS = 10 * 60_000;
 import { handoffRawPayloadSha256 } from "./handoff-payload-identity";
 import {
   committedPhysicalWorkerHead,

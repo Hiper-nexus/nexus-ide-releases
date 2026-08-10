@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import {
   getContextKnowledgeService,
@@ -23,10 +22,7 @@ import {
 import {
   assertOrchestratorMission,
   executionScopeFor,
-  getContextBySession,
-  rotateContextRevisionAuthority,
 } from './gate';
-import { MergeValidationCoordinator } from '../context/merge-validation-coordinator';
 import { getProjectDomainStores } from './project-domain-store-registry';
 import { CliContextDraftReviewer } from '../context/cli-context-draft-reviewer';
 import { inspectConfiguredNexusReadiness } from '../runtime/nexus-doctor';
@@ -34,23 +30,6 @@ import {
   runContextBootstrapAutopilot,
   type ContextBootstrapAutopilotResult,
 } from '../context/context-bootstrap-autopilot';
-import { bindFreezeDraftToApprovedIntent } from './mission-freeze-authority';
-import { getAgentSessionInfo } from '../pty/pty-manager';
-import { requestPaneClose } from './pane-registry';
-import { getSquad } from './squad-store';
-import {
-  resolveMissionPaneAuthoritySeal,
-  sameMissionPaneAuthoritySeal,
-} from './mission-pane-authority';
-import { hasCurrentDispatchAuthority } from '../../shared/mission-intent';
-import {
-  drivePrevcAutopilot,
-  runPrevcCouncilReview,
-  runPrevcFinalValidation,
-} from './prevc-autopilot-coordinator';
-import { ensurePrevcMergeReady } from './prevc-merge-preparation';
-import { missionRequiresGuidedPrevc } from './guided-mission-authority';
-import { standardTopologyFromSealedTaskDetails } from './guided-mission-topology-authority';
 
 // Doctor is an idempotent project operation, not a fan-out primitive. Several
 // model retries used to launch independent reviewers for the same drafts.
@@ -79,61 +58,66 @@ function hasContextDoctorFlightForCheckout(ctx: AgentGateContext): boolean {
 
 const identifier = z.string().trim().min(1).max(160)
   .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/);
-function normalizeCompatibleIdentifier(value: string, prefix: string): string {
-  const normalized = value
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .trim();
-  if (/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(normalized)) return normalized;
-  const slug = normalized
-    .replace(/[^A-Za-z0-9._:-]+/g, '-')
-    .replace(/^[^A-Za-z0-9]+/, '')
-    .replace(/-+$/g, '')
-    .slice(0, 160);
-  if (/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(slug)) return slug;
-  const digest = createHash('sha256').update(value).digest('hex').slice(0, 12);
-  return `${prefix}-${digest}`;
-}
 
-function compatibleIdentifier(prefix: string) {
-  return z.string().trim().min(1).max(4_096)
-    .transform((value) => normalizeCompatibleIdentifier(value, prefix));
-}
-
-const criterionSchema = z.preprocess((value) => {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
-  const raw = value as Record<string, unknown>;
-  const { description, ...rest } = raw;
+function missionIdentity(ctx: AgentGateContext) {
+  if (!ctx.sessionId) throw new Error('workflow action requires a bound agent session');
   return {
-    ...rest,
-    statement:
-      typeof rest.statement === 'string' ? rest.statement : description,
+    id: ctx.agentName ?? ctx.label,
+    sessionId: ctx.sessionId,
+    provider: ctx.providerId ?? ctx.label,
   };
-}, z
-  .object({
-    // Models frequently provide a valid checklist but omit bookkeeping ids.
-    // The id is not business authority, so Nexus may derive it deterministically.
-    id: identifier.optional(),
-    statement: z.string().trim().min(1).max(4_096),
-    requiredSensorIds: z.array(identifier).max(64).default([]),
-    invariantRefs: z.array(identifier).max(64).default([]),
-    requiredArtifactIds: z.array(compatibleIdentifier('artifact')).max(64).default([]),
-  })
-  .strict());
-const freezeSchema = z
-  .object({
-    missionId: identifier,
-    goal: z.string().trim().min(1).max(16_384),
-    nonGoals: z.array(z.string().trim().min(1).max(4_096)).max(256).default([]),
-    acceptanceCriteria: z.array(criterionSchema).min(1).max(256),
-    businessInvariantRefs: z.array(identifier).max(256).default([]),
-    impactedDomains: z.array(identifier).max(256).default([]),
-    impactedSymbols: z.array(z.string().trim().min(1).max(512)).max(1_024).default([]),
-    requestedSensors: z.array(identifier).max(256).default([]),
-    requiredArtifacts: z.array(compatibleIdentifier('artifact')).max(256).default([]),
-    riskHints: z.array(z.string().trim().min(1).max(256)).max(256).default([]),
-  })
-  .strict();
+}
+
+function mainOwnedPreExecutionPlanBinding(
+  ctx: AgentGateContext,
+  missionId: string,
+  stage: WorkflowStage | null | undefined,
+):
+  | {
+      readonly intentVersion: number;
+      readonly planHash: string;
+    }
+  | undefined {
+  if (stage !== 'review-primary' && stage !== 'review-secondary') {
+    return undefined;
+  }
+  const stores = getProjectDomainStores(ctx.scope);
+  const mission = stores.missions.get(missionId);
+  const intentVersion = mission?.intentContract?.intentVersion;
+  const receipt =
+    intentVersion === undefined
+      ? null
+      : stores.tasks.getPlanReceipt(missionId, intentVersion);
+  if (!receipt) {
+    throw new Error(
+      'pre-execution authority requires the current Main-owned sealed task plan',
+    );
+  }
+  return Object.freeze({
+    intentVersion: receipt.intentVersion,
+    planHash: receipt.planHash,
+  });
+}
+
+function assertMission(ctx: AgentGateContext, requested: string): void {
+  if (ctx.missionId && ctx.missionId !== requested) {
+    throw new Error('not authorized: workflow mission differs from session mission');
+  }
+  if (!ctx.missionId && ctx.role !== 'user') {
+    throw new Error('not authorized: agent session is not bound to a mission');
+  }
+}
+
+
+
+
+function invocationAuthority(
+  invocation?: McpToolInvocation,
+): () => void {
+  return () => assertMcpInvocationCurrent(invocation);
+}
+
+
 const REVIEW_SEVERITIES = ['critical', 'high', 'medium', 'low'] as const;
 const REVIEW_CATEGORIES = [
   'correctness',
@@ -204,299 +188,6 @@ const contextSourceSchema = z.object({
   sourceHash: contentHashSchema.optional(),
 }).strict();
 
-function missionIdentity(ctx: AgentGateContext) {
-  if (!ctx.sessionId) throw new Error('workflow action requires a bound agent session');
-  return {
-    id: ctx.agentName ?? ctx.label,
-    sessionId: ctx.sessionId,
-    provider: ctx.providerId ?? ctx.label,
-  };
-}
-
-function mainOwnedPreExecutionPlanBinding(
-  ctx: AgentGateContext,
-  missionId: string,
-  stage: WorkflowStage | null | undefined,
-):
-  | {
-      readonly intentVersion: number;
-      readonly planHash: string;
-    }
-  | undefined {
-  if (stage !== 'review-primary' && stage !== 'review-secondary') {
-    return undefined;
-  }
-  const stores = getProjectDomainStores(ctx.scope);
-  const mission = stores.missions.get(missionId);
-  const intentVersion = mission?.intentContract?.intentVersion;
-  const receipt =
-    intentVersion === undefined
-      ? null
-      : stores.tasks.getPlanReceipt(missionId, intentVersion);
-  if (!receipt) {
-    throw new Error(
-      'pre-execution authority requires the current Main-owned sealed task plan',
-    );
-  }
-  return Object.freeze({
-    intentVersion: receipt.intentVersion,
-    planHash: receipt.planHash,
-  });
-}
-
-function assertMission(ctx: AgentGateContext, requested: string): void {
-  if (ctx.missionId && ctx.missionId !== requested) {
-    throw new Error('not authorized: workflow mission differs from session mission');
-  }
-  if (!ctx.missionId && ctx.role !== 'user') {
-    throw new Error('not authorized: agent session is not bound to a mission');
-  }
-}
-
-function sameProjectScope(
-  left: Readonly<AgentGateContext['scope']>,
-  right: Readonly<AgentGateContext['scope']>,
-): boolean {
-  return left.version === right.version &&
-    left.installationId === right.installationId &&
-    left.projectId === right.projectId &&
-    left.checkoutId === right.checkoutId &&
-    left.rootRealPath === right.rootRealPath;
-}
-
-/**
- * Manual/recovery merge tools are a legacy shell around MergeQueue. Bind that
- * shell to the exact live orchestrator pane and approved intent so the queue's
- * post-await authority checkpoints and rollback path are never optional.
- */
-function captureManualMergeAuthority(
-  ctx: AgentGateContext,
-  missionId: string,
-  operation: 'nexus_merge_task' | 'nexus_merge_retry',
-): () => void {
-  assertOrchestratorMission(ctx, missionId);
-  const sessionId = ctx.sessionId;
-  if (!sessionId) throw new Error('merge authority requires a bound session');
-  const stores = getProjectDomainStores(ctx.scope);
-  assertMainTaskDispatcherAuthority(stores, missionId, operation);
-  const mission = stores.missions.get(missionId);
-  const squad = mission?.squadId ? getSquad(mission.squadId) : null;
-  const live = getAgentSessionInfo(sessionId);
-  const pane = live?.paneId
-    ? stores.missionPanes.findByPaneId(live.paneId)
-    : null;
-  const seal = mission && squad
-    ? resolveMissionPaneAuthoritySeal(ctx.scope, mission, squad)
-    : null;
-  const gate = getContextBySession(sessionId);
-  if (
-    !mission ||
-    !hasCurrentDispatchAuthority(mission) ||
-    mission.orchestratorSessionId !== sessionId ||
-    !live ||
-    live.role !== 'orchestrator' ||
-    live.missionId !== missionId ||
-    !live.paneId ||
-    !sameProjectScope(live.scope, ctx.scope) ||
-    !pane ||
-    pane.missionId !== missionId ||
-    pane.role !== 'orchestrator' ||
-    pane.paneId !== live.paneId ||
-    !sameMissionPaneAuthoritySeal(pane.authoritySeal, seal) ||
-    !gate ||
-    gate.token !== ctx.token ||
-    gate.role !== 'orchestrator' ||
-    gate.missionId !== missionId ||
-    !sameProjectScope(gate.scope, ctx.scope)
-  ) {
-    throw new Error('merge authority requires the exact current sealed orchestrator');
-  }
-  const intentVersion = mission.intentVersion ?? 0;
-  const paneId = live.paneId;
-  const expectedSeal = pane.authoritySeal;
-  const expectedContextRevision = ctx.contextRevision;
-
-  return () => {
-    const currentStores = getProjectDomainStores(ctx.scope);
-    const currentMission = currentStores.missions.get(missionId);
-    const currentSquad = currentMission?.squadId
-      ? getSquad(currentMission.squadId)
-      : null;
-    const currentLive = getAgentSessionInfo(sessionId);
-    const currentPane = currentStores.missionPanes.findByPaneId(paneId);
-    const currentSeal = currentMission && currentSquad
-      ? resolveMissionPaneAuthoritySeal(ctx.scope, currentMission, currentSquad)
-      : null;
-    const currentGate = getContextBySession(sessionId);
-    if (
-      !currentMission ||
-      !hasCurrentDispatchAuthority(currentMission) ||
-      (currentMission.intentVersion ?? 0) !== intentVersion ||
-      currentMission.orchestratorSessionId !== sessionId ||
-      !currentLive ||
-      currentLive.paneId !== paneId ||
-      currentLive.role !== 'orchestrator' ||
-      currentLive.missionId !== missionId ||
-      !sameProjectScope(currentLive.scope, ctx.scope) ||
-      !currentPane ||
-      currentPane.missionId !== missionId ||
-      currentPane.role !== 'orchestrator' ||
-      !sameMissionPaneAuthoritySeal(currentPane.authoritySeal, expectedSeal) ||
-      !sameMissionPaneAuthoritySeal(currentPane.authoritySeal, currentSeal) ||
-      !currentGate ||
-      currentGate.token !== ctx.token ||
-      currentGate.role !== 'orchestrator' ||
-      currentGate.missionId !== missionId ||
-      currentGate.contextRevision !== expectedContextRevision ||
-      !sameProjectScope(currentGate.scope, ctx.scope)
-    ) {
-      throw new Error('merge authority revoked: mission, session or seal changed');
-    }
-    assertMainTaskDispatcherAuthority(currentStores, missionId, operation);
-  };
-}
-
-/**
- * Freeze/refreeze rotates only the live orchestrator onto the new PREVC
- * binding. Existing workers retain their prior seal and their processes are
- * revoked; continuing implementation requires a fresh route/spawn under the
- * new contract. A legacy/unsealed orchestrator is never upgraded here.
- */
-async function rotateMissionPaneWorkflowAuthority(
-  ctx: AgentGateContext,
-  missionId: string,
-  assertCurrentAuthority: () => void = () => {},
-): Promise<void> {
-  assertCurrentAuthority();
-  const suite = getProjectDomainStores(ctx.scope);
-  const panes = suite.missionPanes.list(missionId);
-  if (panes.length === 0) return;
-  if (ctx.role !== 'orchestrator' || !ctx.sessionId) {
-    throw new Error(
-      'workflow authority rotation requires the live mission orchestrator',
-    );
-  }
-  const mission = suite.missions.get(missionId);
-  const squad = mission?.squadId ? getSquad(mission.squadId) : null;
-  const nextSeal =
-    mission && squad
-      ? resolveMissionPaneAuthoritySeal(ctx.scope, mission, squad)
-      : null;
-  const live = getAgentSessionInfo(ctx.sessionId);
-  const orchestratorPane =
-    live?.missionId === missionId &&
-    live.role === 'orchestrator' &&
-    live.paneId
-      ? suite.missionPanes.findByPaneId(live.paneId)
-      : null;
-  if (
-    !nextSeal ||
-    !orchestratorPane ||
-    orchestratorPane.missionId !== missionId ||
-    orchestratorPane.role !== 'orchestrator' ||
-    !orchestratorPane.authoritySeal ||
-    !orchestratorPane.paneId
-  ) {
-    throw new Error(
-      'exact sealed orchestrator pane is unavailable for workflow rotation',
-    );
-  }
-  assertCurrentAuthority();
-  suite.missionPanes.rebindOrchestratorAuthority({
-    missionId,
-    paneId: orchestratorPane.paneId,
-    expectedAuthoritySeal: orchestratorPane.authoritySeal,
-    authoritySeal: nextSeal,
-  });
-
-  for (const pane of panes) {
-    if (
-      pane.role === 'worker' &&
-      !sameMissionPaneAuthoritySeal(pane.authoritySeal, nextSeal) &&
-      pane.paneId
-    ) {
-      assertCurrentAuthority();
-      if (!(await requestPaneClose(pane.paneId))) {
-        throw new Error(
-          `worker pane ${pane.paneId} did not produce physical exit proof`,
-        );
-      }
-      assertCurrentAuthority();
-    }
-  }
-}
-
-function invocationAuthority(
-  invocation?: McpToolInvocation,
-): () => void {
-  return () => assertMcpInvocationCurrent(invocation);
-}
-
-/**
- * Guided Main-owned PREVC boundary, mirroring guided-prevc-mcp-fence.ts:
- * the same missionRequiresGuidedPrevc predicate over the sealed task receipt.
- * For these missions the Main already froze the contract and advances every
- * PREVC step itself, so the manual ceremony tools (freeze/refreeze/Doctor/
- * prepare_execution) fail fast with a clear message instead of letting the
- * Maestro burn turns on calls that can never help. Missions outside the
- * boundary (legacy squads, consult/plan/ops lanes) keep the tools.
- *
- * This is an affordance, never an authority gate: when the mission stores
- * cannot be read the call proceeds and the real fence decides.
- */
-function mainOwnsGuidedPrevc(
-  ctx: AgentGateContext,
-  missionId: string,
-): boolean {
-  try {
-    const stores = getProjectDomainStores(ctx.scope);
-    const mission = stores.missions.get(missionId);
-    const approved = mission?.intentContract;
-    if (!mission || !approved) return false;
-    const receipt = stores.tasks.getPlanReceipt(
-      missionId,
-      approved.intentVersion,
-    );
-    const topology = standardTopologyFromSealedTaskDetails(
-      receipt?.tasks.map((task) => task.detail) ?? [],
-    );
-    // Mixed-authority receipts are the fence's stale authority, not a cue to
-    // fail fast here.
-    if (topology === 'invalid') return false;
-    return missionRequiresGuidedPrevc(mission, topology);
-  } catch {
-    return false;
-  }
-}
-
-function assertPrevcCeremonyNotMainOwned(
-  ctx: AgentGateContext,
-  missionId: string | undefined,
-  toolName: string,
-): void {
-  if (!missionId) return;
-  if (mainOwnsGuidedPrevc(ctx, missionId)) {
-    throw new Error(
-      `${toolName}: o Main já é dono do PREVC desta missão — nenhuma ação ` +
-        'necessária. Contrato congelado, planejamento, revisões, sensores e ' +
-        'validação avançam sozinhos.',
-    );
-  }
-}
-
-function markMergedTaskDone(
-  ctx: AgentGateContext,
-  taskId: string,
-): void {
-  const updated = getProjectDomainStores(ctx.scope).tasks.update(
-    taskId,
-    { status: 'done' },
-  );
-  if (!updated) {
-    throw new Error(`integrated task ${taskId} disappeared`);
-  }
-}
-
 const doctorTool: McpToolDef = {
   name: 'nexus_context_doctor',
   description:
@@ -543,10 +234,6 @@ const doctorTool: McpToolDef = {
           : 'Context not ready. Orchestrator must run bootstrap pilot.',
       });
     }
-
-    // Guided Main-owned PREVC: the bootstrap Doctor is Main-owned, so the
-    // Maestro's own Doctor run is pure ceremony — fail fast before any flight.
-    assertPrevcCeremonyNotMainOwned(ctx, ctx.missionId, 'nexus_context_doctor');
 
     const key = contextDoctorScopeKey(ctx);
     let flight = contextDoctorFlights.get(key);
@@ -872,148 +559,6 @@ const contextCommitTool: McpToolDef = {
   },
 };
 
-const freezeTool: McpToolDef = {
-  name: 'nexus_mission_freeze_contract',
-  description:
-    'Compile and freeze the mission contract against the current committed context, Git base, invariants and declarative sensors. For missions outside Main-owned guided PREVC (legacy squads): in guided missions the Main freezes and advances PREVC itself and this call fails fast.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      missionId: { type: 'string' },
-      goal: { type: 'string' },
-      nonGoals: { type: 'array', items: { type: 'string' } },
-      acceptanceCriteria: {
-        type: 'array',
-        items: {
-          type: 'object',
-          properties: {
-            id: { type: 'string' },
-            statement: { type: 'string' },
-            description: {
-              type: 'string',
-              description: 'Legacy alias for statement; prefer statement.',
-            },
-            requiredSensorIds: { type: 'array', items: { type: 'string' } },
-            invariantRefs: { type: 'array', items: { type: 'string' } },
-            requiredArtifactIds: { type: 'array', items: { type: 'string' } },
-          },
-          additionalProperties: false,
-        },
-      },
-      businessInvariantRefs: { type: 'array', items: { type: 'string' } },
-      impactedDomains: { type: 'array', items: { type: 'string' } },
-      impactedSymbols: { type: 'array', items: { type: 'string' } },
-      requestedSensors: { type: 'array', items: { type: 'string' } },
-      requiredArtifacts: { type: 'array', items: { type: 'string' } },
-      riskHints: { type: 'array', items: { type: 'string' } },
-    },
-    required: ['missionId', 'goal', 'acceptanceCriteria'],
-  },
-  handler: async (args, ctx, invocation) => {
-    if (ctx.role === 'worker') throw new Error('only an orchestrator can freeze a contract');
-    const parsed = freezeSchema.parse(args);
-    const input = {
-      ...parsed,
-      acceptanceCriteria: parsed.acceptanceCriteria.map((criterion, index) => ({
-        ...criterion,
-        id: criterion.id ?? `criterion-${index + 1}`,
-      })),
-    };
-    assertMission(ctx, input.missionId);
-    assertPrevcCeremonyNotMainOwned(
-      ctx,
-      input.missionId,
-      'nexus_mission_freeze_contract',
-    );
-    const mission = getProjectDomainStores(ctx.scope).missions.get(input.missionId);
-    const authorized = bindFreezeDraftToApprovedIntent(mission, input);
-    const service = getContextWorkflowService(ctx.scope);
-    const assertCurrentAuthority = invocationAuthority(invocation);
-    // Auto-pilot unions caller scope with the main-derived structural radius;
-    // an agent may broaden the contract, never narrow the approved mission.
-    const enriched = await service.enrichDraftFromOrientation(authorized);
-    assertCurrentAuthority();
-    const frozen = service.freezeContract(enriched, missionIdentity(ctx));
-    await rotateMissionPaneWorkflowAuthority(
-      ctx,
-      input.missionId,
-      assertCurrentAuthority,
-    );
-    assertCurrentAuthority();
-    rotateContextRevisionAuthority(
-      ctx,
-      undefined,
-      frozen.contract.contextRevision,
-    );
-    const autopilot = await drivePrevcAutopilot({
-      scope: ctx.scope,
-      missionId: input.missionId,
-      allowExecutionExit: false,
-      assertCurrentAuthority,
-      ...(invocation?.signal ? { signal: invocation.signal } : {}),
-    });
-    assertCurrentAuthority();
-    return {
-      ...service.getMissionWorkflow(input.missionId),
-      autopilot,
-      orientationEnriched: {
-        impactedSymbols: frozen.contract.impactedSymbols,
-        impactedDomains: frozen.contract.impactedDomains,
-      },
-    };
-  },
-};
-
-const refreezeTool: McpToolDef = {
-  name: 'nexus_mission_refreeze_contract',
-  description:
-    'Re-freeze the mission contract after CONTEXT DRIFT (context revision changed post-freeze). Preserves goal/criteria/scope; rebinds to the current context and Git base; the workflow restarts at the route start so pending evidence is revalidated. Only valid when drift actually happened.',
-  inputSchema: {
-    type: 'object',
-    properties: { missionId: { type: 'string' } },
-    required: ['missionId'],
-  },
-  handler: async (args, ctx, invocation) => {
-    if (ctx.role === 'worker') {
-      throw new Error('only an orchestrator can refreeze a contract');
-    }
-    const parsed = z.object({ missionId: z.string().min(1) }).parse(args);
-    assertMission(ctx, parsed.missionId);
-    assertPrevcCeremonyNotMainOwned(
-      ctx,
-      parsed.missionId,
-      'nexus_mission_refreeze_contract',
-    );
-    const service = getContextWorkflowService(ctx.scope);
-    const assertCurrentAuthority = invocationAuthority(invocation);
-    const previousRevision =
-      service.getMissionWorkflow(parsed.missionId).contract?.contract
-        .contextRevision;
-    assertCurrentAuthority();
-    const frozen = service.refreezeContract(parsed.missionId, missionIdentity(ctx));
-    await rotateMissionPaneWorkflowAuthority(
-      ctx,
-      parsed.missionId,
-      assertCurrentAuthority,
-    );
-    assertCurrentAuthority();
-    rotateContextRevisionAuthority(
-      ctx,
-      previousRevision,
-      frozen.contract.contextRevision,
-    );
-    const autopilot = await drivePrevcAutopilot({
-      scope: ctx.scope,
-      missionId: parsed.missionId,
-      allowExecutionExit: false,
-      assertCurrentAuthority,
-      ...(invocation?.signal ? { signal: invocation.signal } : {}),
-    });
-    assertCurrentAuthority();
-    return { ...service.getMissionWorkflow(parsed.missionId), autopilot };
-  },
-};
-
 const statusTool: McpToolDef = {
   name: 'nexus_workflow_get',
   description: 'Read the frozen mission contract and current computed PREVC stage.',
@@ -1124,58 +669,6 @@ const advanceTool: McpToolDef = {
         ? { preExecutionPlanBinding }
         : {}),
     });
-  },
-};
-
-const prepareExecutionTool: McpToolDef = {
-  name: 'nexus_workflow_prepare_execution',
-  description:
-    'Advance a Main-frozen guided PREVC workflow through deterministic planning and required independent reviews, stopping at execution. Never freezes or refreezes a contract.',
-  inputSchema: {
-    type: 'object',
-    properties: { missionId: { type: 'string' } },
-    required: ['missionId'],
-  },
-  handler: async (args, ctx, invocation) => {
-    if (ctx.role === 'worker') {
-      throw new Error('only an orchestrator can prepare workflow execution');
-    }
-    const missionId = identifier.parse(args.missionId);
-    assertMission(ctx, missionId);
-    assertPrevcCeremonyNotMainOwned(
-      ctx,
-      missionId,
-      'nexus_workflow_prepare_execution',
-    );
-    const service = getContextWorkflowService(ctx.scope);
-    const before = service.getMissionWorkflow(missionId);
-    if (!before.contract || !before.workflow) {
-      throw new Error(
-        'guided_prevc_required: Main did not freeze the mission contract',
-      );
-    }
-    if (before.workflow.stage === 'execution') {
-      return Object.freeze({
-        state: 'execution',
-        transitions: Object.freeze([]),
-      });
-    }
-    const assertCurrentAuthority = invocationAuthority(invocation);
-    const result = await drivePrevcAutopilot({
-      scope: ctx.scope,
-      missionId,
-      allowExecutionExit: false,
-      assertCurrentAuthority,
-      ...(invocation?.signal ? { signal: invocation.signal } : {}),
-    });
-    assertCurrentAuthority();
-    const after = service.getMissionWorkflow(missionId);
-    if (after.workflow?.stage !== 'execution') {
-      throw new Error(
-        `guided_prevc_not_at_execution: workflow terminou em ${after.workflow?.stage ?? 'missing'}`,
-      );
-    }
-    return result;
   },
 };
 
@@ -1342,63 +835,6 @@ const mergeReviewSubmitTool: McpToolDef = {
   },
 };
 
-const mergeTaskTool: McpToolDef = {
-  name: 'nexus_merge_task',
-  description:
-    'Queue one completed task worktree for exact-CAS integration. Nexus runs configured sensors and independent AI review on both detached candidate and materialized checkout.',
-  inputSchema: {
-    type: 'object',
-    properties: { missionId: { type: 'string' }, taskId: { type: 'string' } },
-    required: ['missionId', 'taskId'],
-  },
-  handler: async (args, ctx, invocation) => {
-    const input = z.object({ missionId: identifier, taskId: identifier }).strict().parse(args);
-    const assertManualAuthority = captureManualMergeAuthority(
-      ctx,
-      input.missionId,
-      'nexus_merge_task',
-    );
-    const assertCurrentAuthority = () => {
-      assertMcpInvocationCurrent(invocation);
-      assertManualAuthority();
-    };
-    await ensurePrevcMergeReady(ctx.scope, input.missionId, {
-      ...(invocation?.signal ? { signal: invocation.signal } : {}),
-      assertCurrentAuthority,
-    });
-    assertCurrentAuthority();
-    const service = getContextWorkflowService(ctx.scope);
-    service.assertMutationAllowed(input.missionId, 'nexus_merge_task', {});
-    const validator = new MergeValidationCoordinator(service);
-    const integrated = await requireWorktreeRuntimeRegistry().enqueue({
-      scope: ctx.scope,
-      missionId: input.missionId,
-      taskId: input.taskId,
-      ...(invocation?.signal ? { signal: invocation.signal } : {}),
-      assertCurrentAuthority,
-      validate: (validationContext) => validator.validate(validationContext),
-      finalize: () => {
-        assertCurrentAuthority();
-        markMergedTaskDone(ctx, input.taskId);
-        assertCurrentAuthority();
-      },
-    });
-    // Git integration + task completion are now the linearization point. PREVC
-    // advancement runs afterwards under the same fence; a later block stops
-    // the autopilot but never creates Git-rollback/task-done disagreement.
-    assertCurrentAuthority();
-    const autopilot = await drivePrevcAutopilot({
-      scope: ctx.scope,
-      missionId: input.missionId,
-      allowExecutionExit: true,
-      assertCurrentAuthority,
-      ...(invocation?.signal ? { signal: invocation.signal } : {}),
-    });
-    assertCurrentAuthority();
-    return Object.freeze({ ...integrated, autopilot });
-  },
-};
-
 const mergeStatusTool: McpToolDef = {
   name: 'nexus_merge_status',
   description:
@@ -1429,141 +865,6 @@ const mergeStatusTool: McpToolDef = {
   },
 };
 
-const mergeRetryTool: McpToolDef = {
-  name: 'nexus_merge_retry',
-  description:
-    'Retry one blocked merge with exact queue CAS. Nexus derives persisted trusted evidence itself; callers cannot fabricate acknowledgement IDs.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      missionId: { type: 'string' },
-      taskId: { type: 'string' },
-      expectedStateRevision: { type: 'number' },
-    },
-    required: ['missionId', 'taskId', 'expectedStateRevision'],
-  },
-  handler: async (args, ctx, invocation) => {
-    const input = z.object({
-      missionId: identifier,
-      taskId: identifier,
-      expectedStateRevision: z.number().int().nonnegative(),
-    }).strict().parse(args);
-    const assertManualAuthority = captureManualMergeAuthority(
-      ctx,
-      input.missionId,
-      'nexus_merge_retry',
-    );
-    const assertCurrentAuthority = () => {
-      assertMcpInvocationCurrent(invocation);
-      assertManualAuthority();
-    };
-    await ensurePrevcMergeReady(ctx.scope, input.missionId, {
-      ...(invocation?.signal ? { signal: invocation.signal } : {}),
-      assertCurrentAuthority,
-    });
-    assertCurrentAuthority();
-    const service = getContextWorkflowService(ctx.scope);
-    // Retry owns a narrower gate than ordinary workflow mutation: the durable
-    // queue CAS below proves the exact blocked task/attempt. This must remain
-    // available after a crash where finalization already advanced PREVC.
-    const validator = new MergeValidationCoordinator(service);
-    const integrated = await requireWorktreeRuntimeRegistry().retry({
-      scope: ctx.scope,
-      missionId: input.missionId,
-      taskId: input.taskId,
-      expectedStateRevision: input.expectedStateRevision,
-      ...(invocation?.signal ? { signal: invocation.signal } : {}),
-      assertCurrentAuthority,
-      acknowledgement: {
-        evidenceIds: service.listPersistedEvidenceIds(input.missionId),
-      },
-      validate: (validationContext) => validator.validate(validationContext),
-      finalize: () => {
-        assertCurrentAuthority();
-        markMergedTaskDone(ctx, input.taskId);
-        assertCurrentAuthority();
-      },
-    });
-    assertCurrentAuthority();
-    const autopilot = await drivePrevcAutopilot({
-      scope: ctx.scope,
-      missionId: input.missionId,
-      allowExecutionExit: true,
-      assertCurrentAuthority,
-      ...(invocation?.signal ? { signal: invocation.signal } : {}),
-    });
-    assertCurrentAuthority();
-    return Object.freeze({ ...integrated, autopilot });
-  },
-};
-
-const validationRunTool: McpToolDef = {
-  name: 'nexus_validation_run',
-  description:
-    'Run the full final validation for the integrated mission diff: mandatory Nexus sensors plus independent AI Review Council. No agent-authored pass claim is accepted.',
-  inputSchema: {
-    type: 'object',
-    properties: { missionId: { type: 'string' } },
-    required: ['missionId'],
-  },
-  handler: async (args, ctx, invocation) => {
-    if (ctx.role === 'worker') throw new Error('only an orchestrator can run final validation');
-    const missionId = identifier.parse(args.missionId);
-    assertMission(ctx, missionId);
-    const service = getContextWorkflowService(ctx.scope);
-    const assertCurrentAuthority = invocationAuthority(invocation);
-    const mission = service.getMissionWorkflow(missionId);
-    if (!mission.contract || !mission.workflow) {
-      throw new Error('mission has no frozen workflow');
-    }
-    if (!mission.workflow.stage.startsWith('validation')) {
-      throw new Error('final validation is not allowed in the current workflow stage');
-    }
-    return runPrevcFinalValidation({
-      scope: ctx.scope,
-      missionId,
-      assertCurrentAuthority,
-      ...(invocation?.signal ? { signal: invocation.signal } : {}),
-    });
-  },
-};
-
-const planReviewRunTool: McpToolDef = {
-  name: 'nexus_plan_review_run',
-  description:
-    'Autonomously run the independent Review Council for the frozen plan/contract before high-risk execution. Reviewers are read-only and bound to distinct main-owned identities and physical sessions.',
-  inputSchema: {
-    type: 'object',
-    properties: { missionId: { type: 'string' } },
-    required: ['missionId'],
-  },
-  handler: async (args, ctx, invocation) => {
-    if (ctx.role === 'worker') throw new Error('only an orchestrator can launch plan review');
-    const missionId = identifier.parse(args.missionId);
-    assertMission(ctx, missionId);
-    const service = getContextWorkflowService(ctx.scope);
-    const assertCurrentAuthority = invocationAuthority(invocation);
-    const mission = service.getMissionWorkflow(missionId);
-    if (!mission.contract || !mission.workflow) {
-      throw new Error('mission has no frozen workflow');
-    }
-    if (
-      mission.workflow.stage !== 'review-primary' &&
-      mission.workflow.stage !== 'review-secondary'
-    ) {
-      throw new Error('plan review is not allowed in the current workflow stage');
-    }
-    const review = await runPrevcCouncilReview({
-      scope: ctx.scope,
-      missionId,
-      assertCurrentAuthority,
-      ...(invocation?.signal ? { signal: invocation.signal } : {}),
-    });
-    assertCurrentAuthority();
-    return { ready: review.ready, reason: review.gate.reason, review };
-  },
-};
-
 export function buildContextTools(): McpToolDef[] {
   return [
     doctorTool,
@@ -1577,20 +878,13 @@ export function buildContextTools(): McpToolDef[] {
     contextDraftSupersedeTool,
     contextDraftReviewRunTool,
     contextCommitTool,
-    freezeTool,
-    refreezeTool,
     statusTool,
     reviewTool,
     sensorTool,
     advanceTool,
-    prepareExecutionTool,
     worktreeCreateTool,
     worktreeGetTool,
     mergeReviewSubmitTool,
-    mergeTaskTool,
     mergeStatusTool,
-    mergeRetryTool,
-    validationRunTool,
-    planReviewRunTool,
   ];
 }

@@ -4,7 +4,6 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ProjectExecutionScope } from "../../shared/types";
-import { selectMissionSchedulerWorktreeDependencies } from "../orch/mission-scheduler-worktree-dependencies";
 import { ensureGuidedGitBaseline } from "./guided-greenfield-baseline";
 import {
   OwnershipOverlapError,
@@ -522,51 +521,6 @@ describe("WorktreeManager", () => {
       dependsOn: [{ missionId: "mission-a", taskId: "task-a" }],
     });
     expect(dependent.dependencies).toHaveLength(1);
-  });
-
-  it("creates the QA worktree after a completed read-only reviewer without inventing a Git dependency", async () => {
-    const logicalDependencies = ["guided-independent-review"];
-    const worktreeDependencies =
-      selectMissionSchedulerWorktreeDependencies({
-        missionId: "mission-guided",
-        dependsOn: logicalDependencies,
-        getDispatch: (taskId) =>
-          taskId === "guided-independent-review"
-            ? {
-                taskId,
-                missionId: "mission-guided",
-                state: "completed",
-                executionMode: "read_only",
-                integrationReceipt: {
-                  kind: "read_only_validated",
-                  reference: "handoff-reviewer",
-                  completedAt: 10,
-                },
-                completedAt: 10,
-              }
-            : null,
-      });
-
-    expect(worktreeDependencies).toEqual([]);
-    const qa = await manager.create({
-      scope: projectScope(),
-      missionId: "mission-guided",
-      taskId: "guided-quality-gate",
-      workerId: "qa-independent",
-      ownership: {
-        files: ["src"],
-        symbols: [],
-        domains: ["guided-quality-gate", "sequential-only"],
-      },
-      dependsOn: worktreeDependencies,
-    });
-
-    expect(qa).toMatchObject({
-      missionId: "mission-guided",
-      taskId: "guided-quality-gate",
-      status: "ready",
-      dependencies: [],
-    });
   });
 
   it("blocks a directory claim from running with a nested file claim", async () => {

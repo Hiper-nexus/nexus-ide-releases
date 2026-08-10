@@ -26,8 +26,6 @@ import {
 import type { OrientationSnapshot } from '../../shared/orientation-types';
 import { inspectGitBinding } from './git-binding';
 import { getProjectDomainStores } from '../orch/project-domain-store-registry';
-import { assertPromotedPlanSnapshot } from '../orch/plan-promotion-authority';
-import { resolvePromotedPlanGitSource } from '../orch/promoted-plan-git-authority';
 import { getOrchSettings } from '../persistence/settings-store';
 import {
   buildDesignContractBootstrap,
@@ -610,45 +608,9 @@ function workflowBindingError(scope: ProjectExecutionScope): string | null {
 function resolveLivePromotedPlanBootstrapSource(
   options: ContextBootstrapAutopilotOptions,
 ): SanctionedPromotedPlanBootstrapSource | null {
-  if (options.promotedPlanSource !== undefined) {
-    return options.promotedPlanSource;
-  }
-  const missionId = options.missionId;
-  if (!missionId) return null;
-
-  let mission: ReturnType<
-    ReturnType<typeof getProjectDomainStores>['missions']['get']
-  >;
-  try {
-    mission = getProjectDomainStores(options.scope).missions.get(missionId);
-  } catch (error) {
-    if (
-      error instanceof Error &&
-      error.message === 'project-scoped domain stores are not initialized'
-    ) {
-      return null;
-    }
-    throw error;
-  }
-  const contract = mission?.intentContract;
-  if (!contract?.promotedPlan) return null;
-  if ((contract.lane ?? 'standard') !== 'standard') {
-    throw new Error(
-      'promoted_plan_context_invalid_lane: somente a missão standard promovida pode usar o PRD',
-    );
-  }
-  const snapshot = assertPromotedPlanSnapshot(contract.promotedPlan);
-  const source = resolvePromotedPlanGitSource(options.scope, snapshot);
-  return Object.freeze({
-    file: source.path,
-    content: source.content,
-    sourceHash: source.sourceHash,
-    headSha: source.headSha,
-    approvedIntent: Object.freeze({
-      goal: contract.goal,
-      acceptanceCriteria: Object.freeze([...contract.acceptanceCriteria]),
-    }),
-  });
+  // Via Rápida: a promoção de plano morreu com o motor cerimonial. Apenas a
+  // fonte injetada explicitamente (testes/seams) continua aceita.
+  return options.promotedPlanSource ?? null;
 }
 
 /**

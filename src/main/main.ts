@@ -132,7 +132,6 @@ import {
   configureRendererMissionAuthority,
 } from "./orch/orch-ipc";
 import { quiesceOrchestrationCoordinator } from "./orch/orchestration-coordinator";
-import { reconcileMissionOrchestratorExits } from "./orch/mission-orchestrator-exit-lifecycle";
 import { ProjectRuntimeManager } from "./runtime/project-runtime-manager";
 import {
   buildMultiPcBackendStatus,
@@ -194,10 +193,6 @@ import {
   configureFeatureFlagRegistry,
   enableAllProductFlagsForTesting,
 } from "./feature-flags/feature-flag-registry";
-import {
-  configureMissionScheduler,
-  disposeMissionScheduler,
-} from './orch/mission-scheduler-production';
 import {
   initUsageTelemetry,
   shutdownUsageTelemetry,
@@ -293,25 +288,13 @@ import {
   configureGamificationService,
   shutdownGamificationService,
 } from "./gamification/gamification-service";
-import {
-  getProjectDomainStores,
-  requireProjectDomainStoreRegistry,
-} from "./orch/project-domain-store-registry";
-import {
-  configureProviderFailureWaiver,
-  providerWaiverLearning,
-} from "./orch/provider-failure-waiver";
+import { requireProjectDomainStoreRegistry } from "./orch/project-domain-store-registry";
 import {
   configureCronRuntime,
   disposeCronRuntime,
   startCronLoop,
   stopCronLoop,
 } from "./orch/cron-runtime";
-import {
-  configureMissionDriver,
-  defaultDriveConfig,
-  disposeMissionDriverIo,
-} from "./orch/mission-driver-io";
 import {
   configureGoalDriver,
   stopGoalDriverLoop,
@@ -438,23 +421,6 @@ function bootstrap(): void {
   configureAuditLogRuntime(projectRuntimeManager);
   configurePtyProjectRuntimeManager(projectRuntimeManager);
   configureRendererMissionAuthority(projectRuntimeManager);
-  configureProviderFailureWaiver({
-    runtimeManager: projectRuntimeManager,
-    appendLearning: ({ scope, missionId, taskId, adapterId, hitKind }) => {
-      const stores = getProjectDomainStores(scope);
-      const taskTitle =
-        stores.tasks.list(missionId).find((task) => task.id === taskId)?.title ??
-        taskId;
-      stores.missions.appendLearning(
-        missionId,
-        providerWaiverLearning({
-          taskTitle,
-          adapterId,
-          hitKind,
-        }),
-      );
-    },
-  });
   // Liga a varredura de PTY do teardown de worktree. Injetado aqui, e não
   // importado dentro do registry, porque pty-manager já importa de runtime/ —
   // o import de volta fecharia um ciclo ESM.
@@ -463,7 +429,6 @@ function bootstrap(): void {
     terminate: (sessionId) => orchTerminateSession(sessionId),
   });
   const worktreeRuntime = configureWorktreeRuntimeRegistry(projectRuntimeManager);
-  configureMissionScheduler({ listScopes: knownCronScopes });
   configureContextWorkflowRegistry(projectRuntimeManager, {
     appVersion: app.getVersion(),
     resolveIntegratedMission: (scope, missionId, baseSha) =>
@@ -485,19 +450,6 @@ function bootstrap(): void {
     leaseBackend: cronBackend ?? undefined,
     scheduleBackend: cronBackend ?? undefined,
     listScopes: knownCronScopes,
-  });
-  // Mission driver: ACTIVE por padrão para missões autopilot, com opt-out
-  // explícito para shadow via missionDriverActiveMode. Efeitos continuam
-  // budgetados e subordinados a PREVC/evidência. Spec 2026-07-13.
-  configureMissionDriver({
-    listScopes: knownCronScopes,
-    config: {
-      ...defaultDriveConfig,
-      mode:
-        getOrchSettings().missionDriverActiveMode === true
-          ? 'active'
-          : 'shadow',
-    },
   });
   configureNexusDoctorRuntime({
     runtimeManager: projectRuntimeManager,
@@ -1010,7 +962,9 @@ function shutdown(): Promise<void> {
         terminateAllSessions: () =>
           terminateAllSessions(APP_SHUTDOWN_PTY_TERMINATION),
         shutdownPtyHost,
-        reconcileOrchestratorExits: reconcileMissionOrchestratorExits,
+        // Via Rápida: o supervisor cerimonial de exit do orquestrador morreu;
+        // não há reconciliação durável pendente a provar no shutdown.
+        reconcileOrchestratorExits: () => true,
         closeOrchestration,
       },
       recordQuitIncident,
@@ -1025,8 +979,6 @@ function shutdown(): Promise<void> {
     shutdownQuotaService();
     shutdownGamificationService();
     disposeCronRuntime();
-    disposeMissionDriverIo();
-    disposeMissionScheduler();
     disposeSyncRuntime();
     disposeNexusDoctorRuntime();
     disposeAuditLogRuntime();

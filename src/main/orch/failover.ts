@@ -38,8 +38,6 @@ import {
   requireQuotaService,
 } from '../quota/quota-service';
 import { quotaAvailabilityScore } from '../quota/quota-policy';
-import { requestMissionDriverTick } from './mission-driver-runtime';
-import { handleMissionWorkerProviderNoRoute } from './provider-failure-waiver';
 import { tapObserverFrames } from './observer-bus';
 import type { ObserverFrame } from '../../shared/observer-frame';
 
@@ -268,7 +266,6 @@ function emitFailover(
     ACCOUNT_CHANNELS.failover,
     event,
   );
-  requestMissionDriverTick();
 }
 
 /** Detalhes do pane físico, seja ele renderer-owned ou main-owned/headless. */
@@ -471,83 +468,6 @@ function performSwitch(req: SwitchRequest): void {
   }
 
   if (!next) {
-    // Mission worker sem rota: a política Main-owned decide — advisory Guided
-    // raiz sem consumidores recebe waiver auditável (task done + sessão física
-    // exata fechada + slot liberado); qualquer outra task segue o retry
-    // limitado e a sessão problemática é encerrada pela identidade exata.
-    //
-    // Sobre o attempt: a política é consultada em TODOS os attempts, não só no
-    // hit original. Prender ao attempt 0 fazia uma auth revogada que só se
-    // provava sem rota no retry (dispatch ainda não vinculado no instante do
-    // hit, evidência que sumiu, política retry-required naquele momento)
-    // recuperar apenas pelo caminho lento: session-exit ×3 → blocked → sweep.
-    // Estender é seguro porque (a) `fireScheduledRetry` re-prova a identidade
-    // exata (isCurrentAuthority + resolvePaneDetails) antes de chegar aqui,
-    // então a consulta fala sempre da MESMA encarnação física; (b) os dois
-    // desfechos terminais — `rerouted` e `waived` — retornam sem re-agendar,
-    // encerrando a cadeia; (c) o desfecho `retry` cai na espera-pela-irmã de
-    // sempre, limitada por MAX_SCHEDULED_RETRIES; e (d) o orçamento de 1
-    // substituição por task é durável (a diretiva carimbada pelo guard), então
-    // re-consultar não vira reroute duplo nem waiver antecipado.
-    if (authority.missionId && authority.workerIncarnationId) {
-      const outcome = handleMissionWorkerProviderNoRoute({
-        scope: authority.scope,
-        missionId: authority.missionId,
-        paneId,
-        sessionId: authority.sessionId,
-        workerIncarnationId: authority.workerIncarnationId,
-        adapterId,
-        hit,
-      });
-      if (outcome === 'rerouted') {
-        // A task já pertence a outro agente do roster e a sessão morta foi
-        // fechada — agendar a espera-pela-irmã aqui reagendaria um retry para
-        // uma encarnação que não existe mais.
-        emitFailover(authority, {
-          paneId,
-          fromAccountLabel: fromLabel,
-          toAccountLabel: '',
-          reason:
-            `${hit.reason} — tarefa re-roteada para outro agente do roster`,
-          kind: hit.kind,
-          switched: false,
-          fromAccountId,
-          missionId: authority.missionId,
-        });
-        return;
-      }
-      if (outcome === 'waived') {
-        // Emitido mesmo em retry agendado: a regra de "retry falha em
-        // silêncio" vale para o não-desfecho (segue esperando); um waiver é
-        // fato terminal novo — a task foi dispensada — e o operador precisa
-        // vê-lo no attempt em que aconteceu.
-        console.info(
-          '[failover]',
-          JSON.stringify({
-            paneId,
-            adapterId,
-            fromAccountId: fromAccountId ?? null,
-            toAccountId: null,
-            reason: hit.reason,
-            switched: false,
-            missionTaskWaived: true,
-            attempt,
-          }),
-        );
-        emitFailover(authority, {
-          paneId,
-          fromAccountLabel: fromLabel,
-          toAccountLabel: '',
-          reason: `${hit.reason} — advisory dispensada (provider indisponível)`,
-          kind: hit.kind,
-          switched: false,
-          fromAccountId,
-          missionId: authority.missionId,
-          missionTaskWaived: true,
-        });
-        return;
-      }
-    }
     // Espera-pela-irmã (política do omp): retry automático em
     // min(fim do cooldown da própria conta, menor blockedUntil das irmãs)+1s
     // em vez de desistir ou esperar a janela multi-hora do provedor.

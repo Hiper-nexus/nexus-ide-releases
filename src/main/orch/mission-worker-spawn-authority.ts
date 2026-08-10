@@ -12,7 +12,7 @@ import { isReleaseQualifiedMissionWorkerCli } from './squad-runtime-policy';
 import {
   supportsAdvisoryParticipationCli,
   supportsMechanicallyReadOnlyCli,
-} from './mission-scheduler-plan';
+} from '../../shared/mission-advisory';
 
 export interface MissionWorkerSpawnGate {
   readonly adapterId: string;

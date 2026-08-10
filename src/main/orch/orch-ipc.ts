@@ -157,7 +157,6 @@ import { DEFAULT_DESIGN_TARGET_PATH } from "./design-system-authority";
 import { importDesignContractWithKeylessFallback } from "./design-system-import-fallback";
 import type { AgentGateContext } from "./gate";
 import { reconcileCompletedPetStudioMissions } from "./pet-studio-completion";
-import { requestMissionDriverTick } from "./mission-driver-runtime";
 import { z } from "zod";
 import { PET_STUDIO_SQUAD_ID } from '../../shared/pet-studio';
 import {
@@ -1674,7 +1673,6 @@ export function registerOrchIpc(): void {
           pane.paneId,
         );
       }
-      requestMissionDriverTick();
     }
   });
 
@@ -1682,7 +1680,6 @@ export function registerOrchIpc(): void {
     const parsed = orchPaneSpawnResultSchema.safeParse(raw);
     if (parsed.success) {
       resolvePaneSpawn(parsed.data, event.sender);
-      requestMissionDriverTick();
     }
   });
 
@@ -1690,7 +1687,6 @@ export function registerOrchIpc(): void {
     const parsed = missionPaneRecoveryResultSchema.safeParse(raw);
     if (parsed.success) {
       resolveMissionPaneRecovery(parsed.data, event.sender);
-      requestMissionDriverTick();
     }
   });
 

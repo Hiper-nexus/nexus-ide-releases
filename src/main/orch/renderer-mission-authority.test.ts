@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WebContents } from "electron";
-import type { Handoff, Mission, Squad } from "../../shared/orch-types";
+import type { Mission } from "../../shared/orch-types";
 import { testProjectScope } from "./__tests__/scope-fixture";
 
 const deps = vi.hoisted(() => ({
@@ -94,23 +94,6 @@ const approvedMission = {
     },
   },
 };
-const savedSquad: Squad = {
-  id: "review-squad",
-  name: "Review squad",
-  createdAt: "1",
-  builtin: false,
-  orchestratorInstructions: "## Política\nCoordene pelo contrato Nexus.",
-  agents: [
-    {
-      id: "orch",
-      agentName: "Maestro",
-      category: "orchestrator",
-      cli: "codex",
-      allowedTools: ["nexus_task"],
-      allowedSkills: ["check-work"],
-    },
-  ],
-};
 const approvedRuntime = Object.freeze({
   adapterId: "codex",
   model: "gpt-5.6-sol",
@@ -120,50 +103,11 @@ const approvedRuntime = Object.freeze({
   nativeReadOnly: true as const,
 });
 
-function physicalPlanHandoff(
-  sessionId: string,
-  issuedAt: number,
-): Handoff {
-  return {
-    id: `handoff-${sessionId}`,
-    missionId: mission.id,
-    sessionId,
-    fromAgent: "Maestro",
-    authorityOrigin: "agent",
-    mcpProvenance: {
-      receiptId: `receipt-${sessionId}`,
-      toolCallId: `tool-${sessionId}`,
-      toolName: "nexus_handoff_submit",
-      source: "http-mcp",
-      missionId: mission.id,
-      sessionId,
-      authoritySha256: "a".repeat(64),
-      issuedAt,
-    },
-    status: "success",
-    claimTrust: "untrusted",
-    summary: "# PRD\nPlano físico aprovado.",
-    artifacts: [{ path: "plan.md" }],
-    evidenceIds: [],
-    evidenceTrust: "unverified",
-    delivered: false,
-    deliveryState: "queued",
-    createdAt: issuedAt,
-  };
-}
-
-const identityPin = (squad: Squad): Squad => squad;
 
 const authority = new RendererMissionAuthority(
   { forScope: deps.forScope } as never,
   () => "context-revision-a",
   deps.resolvePaneActivity,
-  deps.validateAttachmentPaths,
-  () => savedSquad,
-  deps.resolveOrchestratorRuntime,
-  deps.snapshotAttachmentPaths,
-  () => undefined,
-  identityPin,
 );
 
 
@@ -448,176 +392,6 @@ describe("renderer mission authority", () => {
       ),
     ).toThrow(/remoção.*stale|mudou.*teardown/i);
     expect(deps.removeMissionIfUnchanged).not.toHaveBeenCalled();
-  });
-
-
-  it("recusa promover plan pré-dispatch sem handoff físico", () => {
-    const planMission = {
-      ...approvedMission,
-      status: "pending" as const,
-      intentState: "ready_to_start" as const,
-      intentVersion: 1,
-      orchestratorSessionId: undefined,
-      intentContract: {
-        ...approvedMission.intentContract,
-        lane: "plan" as const,
-        intentVersion: 1,
-        approvedAt: undefined,
-        dispatchedAt: undefined,
-      },
-    };
-    deps.getMission.mockReturnValue(planMission);
-    expect(() =>
-      authority.planPromotionCandidateFromRenderer(owner, {
-        missionId: planMission.id,
-      }),
-    ).toThrow(/plan_handoff_missing|dispatch físico/i);
-    expect(deps.updateMission).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    ["dispatched", "running"],
-    ["executing", "running"],
-    ["validating", "running"],
-  ] as const)(
-    "promove plan ativo em %s para v+1 não executável e preserva o vínculo a encerrar",
-    (intentState, status) => {
-      const activePlan = {
-        ...approvedMission,
-        status,
-        intentState,
-        intentVersion: 7,
-        intentContract: {
-          ...approvedMission.intentContract,
-          lane: "plan" as const,
-          intentVersion: 7,
-          approvedAt: 700,
-          dispatchedAt: 701,
-        },
-      };
-      const handoff = physicalPlanHandoff("pty-a", 800);
-      deps.listHandoffs.mockReturnValue([handoff]);
-      deps.getHandoff.mockReturnValue(handoff);
-      deps.getMission.mockReturnValue(activePlan);
-      deps.updateMission.mockImplementation(
-        (_missionId: string, patch: Record<string, unknown>) => ({
-          ...deps.getMission(),
-          ...patch,
-        }),
-      );
-
-      const candidate = authority.planPromotionCandidateFromRenderer(owner, {
-        missionId: activePlan.id,
-      });
-      deps.getMission.mockReturnValue({
-        ...activePlan,
-        orchestratorSessionId: undefined,
-      });
-      const detachedCandidate =
-        authority.planPromotionCandidateAfterTeardownFromMain(
-          owner,
-          { missionId: activePlan.id },
-          candidate.promotedPlan!,
-        );
-      const promoted = authority.promotePlanLaneFromRenderer(
-        owner,
-        { missionId: activePlan.id },
-        detachedCandidate.fence,
-        detachedCandidate.promotedPlan!,
-        "d".repeat(64),
-      );
-
-      expect(promoted).toMatchObject({
-        status: "pending",
-        intentState: "ready_to_start",
-        intentVersion: 8,
-        orchestratorSessionId: undefined,
-        intentContract: {
-          lane: "standard",
-          intentVersion: 8,
-          approvedAt: expect.any(Number),
-          approvalReviewSha256: "d".repeat(64),
-        },
-      });
-      expect(promoted.intentContract?.dispatchedAt).toBeUndefined();
-    },
-  );
-
-  it("recusa se o runtime do plano mudar durante a revisão nativa", () => {
-    const activePlan = {
-      ...approvedMission,
-      status: "running" as const,
-      intentState: "executing" as const,
-      intentVersion: 4,
-      orchestratorSessionId: "pty-plan-v4",
-      intentContract: {
-        ...approvedMission.intentContract,
-        lane: "plan" as const,
-        intentVersion: 4,
-        approvedAt: 800,
-        dispatchedAt: 801,
-      },
-    };
-    const handoff = physicalPlanHandoff("pty-plan-v4", 900);
-    deps.listHandoffs.mockReturnValue([handoff]);
-    deps.getHandoff.mockReturnValue(handoff);
-    deps.getMission.mockReturnValue(activePlan);
-    const candidate = authority.planPromotionCandidateFromRenderer(owner, {
-      missionId: activePlan.id,
-    });
-    deps.getMission.mockReturnValue({
-      ...activePlan,
-      orchestratorSessionId: undefined,
-      intentContract: {
-        ...activePlan.intentContract,
-        goal: "Objetivo alterado durante o teardown",
-      },
-    });
-    expect(() =>
-      authority.promotePlanLaneFromRenderer(
-        owner,
-        { missionId: activePlan.id },
-        candidate.fence,
-        candidate.promotedPlan!,
-      ),
-    ).toThrow(/promotion.*stale|intent.*changed/i);
-    expect(deps.updateMission).not.toHaveBeenCalled();
-  });
-
-  it("invalida a revisão se somente a sessão do orquestrador for substituída", () => {
-    const activePlan = {
-      ...approvedMission,
-      intentVersion: 4,
-      orchestratorSessionId: "pty-plan-v4-a",
-      intentContract: {
-        ...approvedMission.intentContract,
-        lane: "plan" as const,
-        intentVersion: 4,
-      },
-    };
-    const handoff = physicalPlanHandoff("pty-plan-v4-a", 900);
-    deps.listHandoffs.mockReturnValue([handoff]);
-    deps.getHandoff.mockReturnValue(handoff);
-    deps.getMission
-      .mockReturnValueOnce(activePlan)
-      .mockReturnValueOnce({
-        ...activePlan,
-        orchestratorSessionId: "pty-plan-v4-b",
-      });
-
-    const candidate = authority.planPromotionCandidateFromRenderer(owner, {
-      missionId: activePlan.id,
-    });
-
-    expect(() =>
-      authority.promotePlanLaneFromRenderer(
-        owner,
-        { missionId: activePlan.id },
-        candidate.fence,
-        candidate.promotedPlan!,
-      ),
-    ).toThrow(/promotion_runtime_live|promotion.*stale/i);
-    expect(deps.updateMission).not.toHaveBeenCalled();
   });
 
 
