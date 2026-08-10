@@ -196,6 +196,34 @@ describe('jarvisActionFastPath', () => {
     });
   });
 
+  it('endereça o pane pelo NÚMERO, com e sem verbo', () => {
+    // O número existe para caber na fala. A referência crua segue adiante: quem
+    // resolve conhece os panes vivos e recusa nomeando os números válidos.
+    for (const [text, paneName] of [
+      ['foca o pane 7', '7'],
+      ['vai pro pane 7', '7'],
+      ['muda para o pane 12', '12'],
+      ['focus pane 7', '7'],
+      ['pane 7', '7'],
+      ['no pane 7', '7'],
+      ['pane sete', 'sete'],
+      ['foca o pane sete', 'sete'],
+      ['painel 3', '3'],
+    ] as const) {
+      expect(jarvisActionFastPath(text, CTX)?.action).toEqual({
+        type: 'focus_pane',
+        paneName,
+      });
+    }
+  });
+
+  it('não rouba "pane N" no meio de uma frase que pede outra coisa', () => {
+    // "manda a tarefa no pane 7" é uma ENTREGA, não uma troca de foco. Tratá-la
+    // como foco desviaria o trabalho para um simples reposicionamento de tela.
+    const action = jarvisActionFastPath('manda a tarefa no pane 7', CTX)?.action;
+    expect(action?.type).not.toBe('focus_pane');
+  });
+
   it('ler a tela atual dispara Vision/OCR em vez de ler um pane', () => {
     for (const text of ['leia esta tela', 'leia essa página', 'o que tem aqui?']) {
       expect(jarvisActionFastPath(text, CTX)?.action).toEqual({

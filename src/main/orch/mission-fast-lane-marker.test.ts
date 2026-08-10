@@ -180,7 +180,7 @@ describe('Via Rápida × marcador do agente', () => {
   });
 
   it('eco do prompt na tela NÃO conclui missão nenhuma (a armadilha)', async () => {
-    await fastLaneBootstrap(scope, 'mission-1');
+    await fastLane.fastLaneBootstrap(scope, 'mission-1');
     for (const sessionId of SESSIONS) sessionStates.set(sessionId, 'idle');
     // A TUI ecoa o prompt entregue, inclusive quebrado por largura — é o texto
     // que CONTÉM "PRONTO:" e "BLOQUEADO:" porque é a instrução que os pede.
@@ -191,7 +191,11 @@ describe('Via Rápida × marcador do agente', () => {
       '"BLOQUEADO: <motivo>" em uma linha.',
     ].join('\n');
     for (const sessionId of SESSIONS) {
-      missionMarkerObserver.observe(sessionId, `${echo}\n`);
+      // O teste não pode passar por omissão: o spawn ARMOU o observador destas
+      // sessões, então elas estão de fato ouvindo quando o eco chega.
+      expect(marker.missionMarkerObserver.isWatching(sessionId)).toBe(true);
+      marker.missionMarkerObserver.observe(sessionId, `${echo}\n`);
+      expect(marker.missionMarkerObserver.markerOf(sessionId)).toBeNull();
     }
 
     await ticks(4);
@@ -222,7 +226,7 @@ describe('Via Rápida × marcador do agente', () => {
   });
 
   it('sem marcador, mudo e morto duas vezes continua não sendo sucesso', async () => {
-    await fastLaneBootstrap(scope, 'mission-1');
+    await fastLane.fastLaneBootstrap(scope, 'mission-1');
     // Ninguém trabalhou e as sessões morreram: o respawn é gasto e elas morrem
     // de novo. Nenhuma palavra dada, nenhum `busy` observado.
     for (const sessionId of SESSIONS) sessionStates.set(sessionId, 'exited');

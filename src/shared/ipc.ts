@@ -75,6 +75,14 @@ const paneModelSchema = z.object({
   id: z.string().min(1).max(128),
   kind: z.enum(['shell', 'cli-agent', 'browser']),
   title: z.string().max(512),
+  /**
+   * Número humano do pane. É ESTE campo que faz o número sobreviver ao
+   * restart: `z.object` descarta chave desconhecida em silêncio, então sem a
+   * entrada aqui o layout gravado voltaria do disco sem número e todo restart
+   * renumeraria os panes do zero — o operador perderia justamente a memória
+   * ("o pane 7 é o do build") que o número existe para criar.
+   */
+  paneNumber: z.number().int().positive().max(999_999).optional(),
   isStructuralPlaceholder: z.literal(true).optional(),
   cwd: z.string().max(4096).optional(),
   browserUrl: z.string().max(4096).optional(),

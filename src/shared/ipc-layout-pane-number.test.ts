@@ -1,0 +1,82 @@
+import { describe, expect, it } from 'vitest';
+import { workspaceLayoutSchema } from './ipc';
+import type { WorkspaceLayout } from './types';
+
+/**
+ * O NÚMERO do pane atravessa a fronteira de persistência.
+ *
+ * `paneModelSchema` é um `z.object`, que descarta chave desconhecida EM
+ * SILÊNCIO. O layout é gravado com `JSON.stringify` (fidelidade total) mas lido
+ * de volta por `workspaceLayoutSchema.parse`, então é a leitura que decide o
+ * que sobrevive. Sem `paneNumber` declarado no schema, todo restart devolveria
+ * panes sem número e a numeração recomeçaria do zero — o operador perderia
+ * exatamente a memória ("o pane 7 é o do build") que o número existe para
+ * criar, e nenhum teste de store pegaria isso, porque o store hidrata a partir
+ * de um objeto em memória que nunca passou pelo schema.
+ */
+describe('workspaceLayoutSchema preserva o número do pane', () => {
+  const layout: WorkspaceLayout = {
+    root: {
+      kind: 'split',
+      id: 'split-1',
+      direction: 'row',
+      children: [
+        {
+          kind: 'leaf',
+          id: 'leaf-1',
+          pane: { id: 'pane-a', kind: 'shell', title: 'a', paneNumber: 3 },
+        },
+        {
+          kind: 'leaf',
+          id: 'leaf-2',
+          pane: { id: 'pane-b', kind: 'shell', title: 'b', paneNumber: 1 },
+        },
+      ],
+    },
+    focusedPaneId: 'pane-a',
+  };
+
+  it('sobrevive ao ciclo real gravar → ler (JSON + parse)', () => {
+    const roundTripped = workspaceLayoutSchema.parse(
+      JSON.parse(JSON.stringify(layout)) as unknown,
+    );
+    const root = roundTripped.root;
+    if (root.kind !== 'split') throw new Error('esperava split');
+    const [left, right] = root.children;
+    if (left.kind !== 'leaf' || right.kind !== 'leaf') {
+      throw new Error('esperava duas folhas');
+    }
+    expect(left.pane.paneNumber).toBe(3);
+    expect(right.pane.paneNumber).toBe(1);
+    // E o id continua sendo a identidade — o número é adição.
+    expect(left.pane.id).toBe('pane-a');
+    expect(right.pane.id).toBe('pane-b');
+  });
+
+  it('layout de versão anterior (sem número) continua carregando', () => {
+    const legacy = {
+      root: {
+        kind: 'leaf',
+        id: 'leaf-1',
+        pane: { id: 'pane-legado', kind: 'shell', title: 'legado' },
+      },
+      focusedPaneId: 'pane-legado',
+    };
+    const parsed = workspaceLayoutSchema.parse(legacy as unknown);
+    if (parsed.root.kind !== 'leaf') throw new Error('esperava folha');
+    expect(parsed.root.pane.id).toBe('pane-legado');
+    expect(parsed.root.pane.paneNumber).toBeUndefined();
+  });
+
+  it('recusa um número inválido em vez de persistir lixo', () => {
+    const corrupt = {
+      root: {
+        kind: 'leaf',
+        id: 'leaf-1',
+        pane: { id: 'pane-a', kind: 'shell', title: 'a', paneNumber: 0 },
+      },
+      focusedPaneId: 'pane-a',
+    };
+    expect(() => workspaceLayoutSchema.parse(corrupt as unknown)).toThrow();
+  });
+});

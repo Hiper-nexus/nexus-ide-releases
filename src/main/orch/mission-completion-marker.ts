@@ -72,8 +72,8 @@ export const MAX_TRACKED_SESSIONS = 256;
 // que costumam abrir a linha onde o agente escreve o marcador. Uma classe, um
 // quantificador — nada de `(?:X+)+`, que é a forma clássica de backtracking
 // catastrófico em cima de saída de terminal arbitrária.
-const LEADING_DECORATION = /^[\s─-╿|>*#`'"•-]+/;
-const TRAILING_FRAME = /[\s─-╿|`]+$/;
+const LEADING_DECORATION = /^[\s─-▟|>*#`'"•-]+/;
+const TRAILING_FRAME = /[\s─-▟|`]+$/;
 
 /** Tira moldura/marcação das pontas e colapsa espaço interno. */
 export function trimLineDecoration(line: string): string {
@@ -87,7 +87,7 @@ export function trimLineDecoration(line: string): string {
 /** Forma comparável de um prompt: sem moldura, espaço colapsado, minúsculo. */
 function normalizeForEcho(text: string): string {
   return text
-    .replace(/[─-╿|]/g, ' ')
+    .replace(/[─-▟|]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
     .toLowerCase();

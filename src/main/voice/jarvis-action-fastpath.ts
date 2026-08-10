@@ -259,6 +259,30 @@ export function jarvisActionFastPath(
     };
   }
 
+  // NÚMERO do pane — o endereço que o operador consegue ditar ("pane 7",
+  // "pane sete"). Duas formas: com verbo ("foca o pane 7") e a enunciação seca
+  // do endereço, que é como as pessoas de fato falam. A forma seca só vale
+  // quando é a FRASE INTEIRA: dentro de uma frase maior "pane 7" é complemento
+  // de outra ação ("manda a tarefa no pane 7"), não um pedido de foco — e
+  // roubá-la aqui desviaria o trabalho para um simples troca-de-foco.
+  const focusByNumber =
+    t.match(
+      /\b(?:foca|foque|focar|seleciona|selecione|selecionar|vai|ir|troca|troque|muda|mude|mudar|focus|select|switch to|go to)\b(?:\s+(?:o|a|os|as|the|pro|pra|para|no|na|em|ao))*\s+(?:pane|painel|aba)[\s-]*([a-z0-9]{1,12})$/,
+    ) ?? t.match(/^(?:(?:no|na|o|a|em|ao)\s+)?(?:pane|painel|aba)[\s-]*([a-z0-9]{1,12})$/);
+  const spokenPaneNumber = focusByNumber
+    ? parsePaneNumberRef(focusByNumber[1])
+    : null;
+  if (focusByNumber && spokenPaneNumber !== null) {
+    // Passa a referência CRUA adiante: quem resolve (findPaneByVoiceName) é
+    // que conhece os panes vivos e recusa nomeando os números válidos.
+    const paneName = focusByNumber[1];
+    return {
+      say: say(ctx, `Focando pane ${spokenPaneNumber}.`),
+      expectReply: false,
+      action: { type: 'focus_pane', paneName },
+    };
+  }
+
   if (
     (/\b(?:proximo|proxima|next)\b.*\b(?:pane|painel|aba|terminal)\b/.test(t) ||
       /\b(?:muda|troca|vai)\b.*\b(?:pane|painel|aba)\b/.test(t)) &&
@@ -297,30 +321,6 @@ export function jarvisActionFastPath(
         action: { type: 'focus_pane', paneName },
       };
     }
-  }
-
-  // NÚMERO do pane — o endereço que o operador consegue ditar ("pane 7",
-  // "pane sete"). Duas formas: com verbo ("foca o pane 7") e a enunciação seca
-  // do endereço, que é como as pessoas de fato falam. A forma seca só vale
-  // quando é a FRASE INTEIRA: dentro de uma frase maior "pane 7" é complemento
-  // de outra ação ("manda a tarefa no pane 7"), não um pedido de foco — e
-  // roubá-la aqui desviaria o trabalho para um simples troca-de-foco.
-  const focusByNumber =
-    t.match(
-      /\b(?:foca|foque|focar|seleciona|selecione|selecionar|vai|ir|troca|troque|muda|mude|mudar|focus|select|switch to|go to)\b(?:\s+(?:o|a|os|as|the|pro|pra|para|no|na|em|ao))*\s+(?:pane|painel|aba)[\s-]*([a-z0-9]{1,12})$/,
-    ) ?? t.match(/^(?:(?:no|na|o|a|em|ao)\s+)?(?:pane|painel|aba)[\s-]*([a-z0-9]{1,12})$/);
-  const spokenPaneNumber = focusByNumber
-    ? parsePaneNumberRef(focusByNumber[1])
-    : null;
-  if (focusByNumber && spokenPaneNumber !== null) {
-    // Passa a referência CRUA adiante: quem resolve (findPaneByVoiceName) é
-    // que conhece os panes vivos e recusa nomeando os números válidos.
-    const paneName = focusByNumber[1];
-    return {
-      say: say(ctx, `Focando pane ${spokenPaneNumber}.`),
-      expectReply: false,
-      action: { type: 'focus_pane', paneName },
-    };
   }
 
   const focusByName = t.match(

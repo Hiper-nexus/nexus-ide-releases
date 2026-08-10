@@ -154,6 +154,18 @@ describe('marcador de conclusão — moldura e chunks do PTY', () => {
     });
   });
 
+  it('goteira de bloco (▌) e marcação de markdown não escondem o marcador', () => {
+    for (const decorated of [
+      '▌ PRONTO: resumo.txt gravado.\n',
+      '┃ PRONTO: resumo.txt gravado.\n',
+      '  > **PRONTO:** resumo.txt gravado.\n',
+    ]) {
+      expect(scanMissionMarker(decorated, [DELIVERED])).toMatchObject({
+        kind: 'done',
+      });
+    }
+  });
+
   it('marcador partido entre chunks do PTY é remontado pelo observador', () => {
     const observer = new MissionMarkerObserver();
     observer.registerPrompt('s1', DELIVERED);
