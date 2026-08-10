@@ -177,6 +177,9 @@ const NATIVE_INITIAL_PROMPT_ADAPTERS: ReadonlySet<string> = new Set([
   'agy',
   'codex',
   'claude',
+  'glm',
+  'longcat',
+  'kimi',
   'opencode',
 ]);
 

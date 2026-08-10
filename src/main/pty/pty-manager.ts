@@ -1165,6 +1165,11 @@ export function spawnAgentSession(
     (adapter.id === "agy" ||
       adapter.id === "codex" ||
       adapter.id === "claude" ||
+      // glm/longcat rodam o MESMO binário do claude (posicional idêntico);
+      // kimi é fork do claude-code com a mesma forma de primeiro turno.
+      adapter.id === "glm" ||
+      adapter.id === "longcat" ||
+      adapter.id === "kimi" ||
       adapter.id === "opencode") &&
     authority.source === "pending" &&
     // Via Rápida: coordenação também larga com o prompt nativo — a colagem
@@ -1215,7 +1220,12 @@ export function spawnAgentSession(
       // correct. Bind the exact Main-authorized root into that registry.
       args.push("--add-dir", cwd);
       args.push("--print", safeInitialPrompt);
-    } else if (adapter.id === "claude") {
+    } else if (
+      adapter.id === "claude" ||
+      adapter.id === "glm" ||
+      adapter.id === "longcat" ||
+      adapter.id === "kimi"
+    ) {
       // `claude [PROMPT]` abre o primeiro turno interativo já executando, sem
       // corrida com o editor da TUI fria — mesma forma do codex (linha ~1545).
       //

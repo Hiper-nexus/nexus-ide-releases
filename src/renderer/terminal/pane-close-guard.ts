@@ -1,10 +1,8 @@
 import type { PaneModel, PaneSessionState } from '../../shared/types';
 import { listPanes } from '../lib/split-tree';
 import { useLayoutStore } from '../state/layout-store';
-import { useOrchStore } from '../state/orch-store';
 import { useSessionStateStore } from '../state/session-state-store';
 import { askConfirm } from '../state/confirm-store';
-import { closeMissionRuntimeAndPanes } from '../orch/close-mission-runtime';
 
 export function paneCloseNeedsConfirmation(
   kind: PaneModel['kind'],
@@ -32,15 +30,12 @@ export async function requestPaneClose(
   const layout = useLayoutStore.getState();
   const pane = listPanes(layout.root).find((candidate) => candidate.id === paneId);
   if (!pane) return false;
-  const missionId =
-    pane.missionId ?? useOrchStore.getState().paneMissions[paneId];
-  if (missionId) {
-    const result = await closeMissionRuntimeAndPanes(
-      missionId,
-      'pane-toolbar-close',
-    );
-    return result.ok;
-  }
+  // Doutrina Via Rápida (10/08): fechar UM pane fecha UM pane — inclusive de
+  // missão. O ✕ de um worker derrubava a missão inteira via
+  // closeMissionRuntimeAndPanes ("fechei um terminal e ela disse que deu
+  // errado e fechou tudo"). O observador da missão trata o agente que saiu
+  // (trabalhou = assentado; não trabalhou = respawn 1x). Encerrar a missão é
+  // SÓ pelo botão Encerrar do cabeçalho.
   const state = useSessionStateStore.getState().paneStates.get(paneId);
   if (paneCloseNeedsConfirmation(pane.kind, state)) {
     const ok = await confirmClose(
