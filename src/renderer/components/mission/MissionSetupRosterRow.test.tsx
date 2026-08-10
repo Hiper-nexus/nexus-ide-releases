@@ -86,7 +86,10 @@ const agent: SquadAgent = {
 
 const mountedRoots = new Set<Root>();
 
-function renderRow(onChange: (next: SquadAgent) => void): HTMLElement {
+function renderRow(
+  onChange: (next: SquadAgent) => void,
+  providerOverrides: Partial<typeof provider> = {},
+): HTMLElement {
   const host = document.createElement('div');
   document.body.append(host);
   const root = createRoot(host);
@@ -96,7 +99,7 @@ function renderRow(onChange: (next: SquadAgent) => void): HTMLElement {
       <MissionSetupRosterRow
         agent={agent}
         candidates={[adapter]}
-        providers={[provider]}
+        providers={[{ ...provider, ...providerOverrides }]}
         accounts={[] satisfies AccountInfo[]}
         issue={null}
         removable
@@ -150,14 +153,16 @@ describe('MissionSetupRosterRow', () => {
     expect(onChange.mock.lastCall?.[0].allowedTools).toEqual(['Read']);
   });
 
-  it('shows known efforts in PT-BR while emitting the original wire value', () => {
+  it('esforço inline no cartão: PT-BR na tela, valor de wire original no onChange', () => {
     const onChange = vi.fn<(next: SquadAgent) => void>();
     const host = renderRow(onChange);
-    const effort = host.querySelector<HTMLSelectElement>('#mission-effort-reviewer');
+    const effort = [...host.querySelectorAll('select')].find((item) =>
+      item.getAttribute('aria-label')?.startsWith('Esforço do modelo'),
+    );
 
     expect([...effort!.options].map((option) => [option.value, option.textContent]))
       .toEqual([
-        ['', 'Padrão da ferramenta'],
+        ['', 'Padrão'],
         ['low', 'Baixo'],
         ['medium', 'Médio'],
         ['high', 'Alto'],
@@ -170,6 +175,40 @@ describe('MissionSetupRosterRow', () => {
       effort!.dispatchEvent(new Event('change', { bubbles: true }));
     });
     expect(onChange).toHaveBeenLastCalledWith({ ...agent, effort: 'high' });
+  });
+
+  it('CLI sem lista de esforços ganha a escada universal (nunca só Padrão)', () => {
+    const onChange = vi.fn<(next: SquadAgent) => void>();
+    const host = renderRow(onChange, { efforts: [] });
+    const effort = [...host.querySelectorAll('select')].find((item) =>
+      item.getAttribute('aria-label')?.startsWith('Esforço do modelo'),
+    );
+    const values = [...effort!.options].map((option) => option.value);
+    expect(values).toContain('medium');
+    expect(values).toContain('max');
+    expect(values.length).toBeGreaterThan(3);
+  });
+
+  it('modelo é campo livre com sugestões: digitar qualquer versão aplica no roster', () => {
+    const onChange = vi.fn<(next: SquadAgent) => void>();
+    const host = renderRow(onChange);
+    const model = host.querySelector<HTMLInputElement>(
+      'input[aria-label^="Modelo para"]',
+    );
+    expect(model).not.toBeNull();
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        'value',
+      )!.set!;
+      setter.call(model!, 'modelo-novissimo-1.5');
+      model!.dispatchEvent(new Event('input', { bubbles: true }));
+      model!.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(onChange).toHaveBeenLastCalledWith({
+      ...agent,
+      model: 'modelo-novissimo-1.5',
+    });
   });
 });
 

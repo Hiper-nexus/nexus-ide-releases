@@ -724,6 +724,69 @@
   flex: 0 0 auto;
 }
 
+/* Personalização direta no cartão: Ferramenta · Modelo (campo livre) · Força.
+   Um trilho só, rótulos pequenos em cima, controles compactos embaixo. */
+.mission-roster-row__controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+  margin-top: 6px;
+  min-width: 0;
+}
+
+.mission-roster-row__control {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.mission-roster-row__control > span {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.mission-roster-row__control select,
+.mission-roster-row__control input {
+  min-height: 32px;
+  padding: 5px 10px;
+  border-radius: 9px;
+  border: 1px solid color-mix(in srgb, var(--text) 14%, transparent);
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  color: var(--text);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  transition:
+    border-color var(--duration-fast, 150ms) ease,
+    background-color var(--duration-fast, 150ms) ease;
+}
+
+.mission-roster-row__control select:hover,
+.mission-roster-row__control input:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border-strong));
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.mission-roster-row__control select:focus-visible,
+.mission-roster-row__control input:focus-visible {
+  border-color: var(--accent);
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: 1px;
+}
+
+.mission-roster-row__control--model {
+  flex: 1 1 220px;
+}
+
+.mission-roster-row__control--model input {
+  width: 100%;
+  min-width: 180px;
+}
+
 .mission-roster-row__details {
   padding: 0;
 }

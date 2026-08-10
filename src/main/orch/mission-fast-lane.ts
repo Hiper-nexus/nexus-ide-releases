@@ -486,11 +486,16 @@ async function tickRun(run: FastLaneRun): Promise<void> {
       })();
       continue;
     }
-    // Respawn já gasto e morreu de novo sem trabalhar: conta como assentado
-    // para não prender a missão — o resumo final nomeia os terminais.
+    // Respawn já gasto e morreu de novo sem trabalhar: NÃO conta como
+    // assentado — done falso é pior que bloqueio visível. O watchdog de
+    // silêncio converte em bloqueio com Retomar.
+    allSettled = false;
   }
 
-  const everyoneWorked = run.agents.some((agent) => agent.wasBusy);
+  // TODOS trabalharam — `some()` produziu missão done com 2 de 3 agentes
+  // mortos sem executar e o artefato do objetivo inexistente (smoke 0.30.0).
+  const everyoneWorked =
+    run.agents.length > 0 && run.agents.every((agent) => agent.wasBusy);
   if (allSettled && everyoneWorked) {
     run.idleConfirmations += 1;
     if (run.idleConfirmations >= IDLE_CONFIRMATIONS_TO_COMPLETE) {

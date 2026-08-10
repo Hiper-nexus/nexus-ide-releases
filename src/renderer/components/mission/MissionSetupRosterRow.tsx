@@ -102,14 +102,31 @@ export function MissionSetupRosterRow({
         ),
       )
     : [];
-  const currentModelIsReady = Boolean(
-    agent.model && readyModels.includes(agent.model),
-  );
-  const effortOptions = selectedProvider?.efforts ?? [];
+  // CLI que não projeta esforços não pode virar um select vazio ("só Padrão"):
+  // o operador escolhe pela escada universal e o spawn aplica exatamente o que
+  // foi escolhido — personalização acima de paternalismo.
+  const FALLBACK_EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+  const effortOptions =
+    selectedProvider?.efforts?.length
+      ? selectedProvider.efforts
+      : FALLBACK_EFFORTS;
   const currentEffortIsListed = Boolean(
     agent.effort && effortOptions.includes(agent.effort),
   );
   const fieldSuffix = agent.id.replace(/[^a-z0-9_-]/giu, '-');
+
+  const handleToolChange = (nextCliId: string): void => {
+    const adapter = candidates.find((item) => item.id === nextCliId);
+    if (!adapter) return;
+    const provider = providers.find((item) => item.adapterId === adapter.id);
+    const model = readyModelForAdapter({ adapter, providers, accounts });
+    onChange({
+      ...agent,
+      cli: adapter.id,
+      ...(model ? { model } : { model: undefined }),
+      ...(provider?.effort ? { effort: provider.effort } : { effort: undefined }),
+    });
+  };
 
   return (
     <li
@@ -140,11 +157,81 @@ export function MissionSetupRosterRow({
               <span className="mission-roster-row__role">
                 {CATEGORY_LABELS[agent.category]}
               </span>
-              <span className="mission-roster-row__tool-chip" title={agent.cli}>
-                {selectedAdapter?.label ?? agent.cli}
-                {agent.model ? ` · ${agent.model}` : ''}
-              </span>
             </span>
+            {/* Personalização direta no cartão: escolher CLI e digitar QUALQUER
+                modelo (sugestões do catálogo via datalist) sem caçar menus. */}
+            <div className="mission-roster-row__controls">
+              <label className="mission-roster-row__control">
+                <span>Ferramenta</span>
+                <select
+                  aria-label={`Ferramenta de IA para ${agent.agentName}`}
+                  value={agent.cli}
+                  onChange={(event) => handleToolChange(event.target.value)}
+                >
+                  {!selectedAdapter && (
+                    <option value={agent.cli} disabled>
+                      {agent.cli} (indisponível)
+                    </option>
+                  )}
+                  {candidates.map((adapter) => (
+                    <option key={adapter.id} value={adapter.id}>
+                      {adapter.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="mission-roster-row__control mission-roster-row__control--model">
+                <span>Modelo</span>
+                <input
+                  type="text"
+                  aria-label={`Modelo para ${agent.agentName}`}
+                  list={`mission-models-${fieldSuffix}`}
+                  value={agent.model ?? ''}
+                  placeholder="padrão da ferramenta"
+                  spellCheck={false}
+                  onChange={(event) =>
+                    onChange({
+                      ...agent,
+                      ...(event.target.value.trim()
+                        ? { model: event.target.value }
+                        : { model: undefined }),
+                    })
+                  }
+                />
+                <datalist id={`mission-models-${fieldSuffix}`}>
+                  {readyModels.map((model) => (
+                    <option key={model} value={model} />
+                  ))}
+                </datalist>
+              </label>
+              <label className="mission-roster-row__control">
+                <span>Esforço</span>
+                <select
+                  aria-label={`Esforço do modelo para ${agent.agentName}`}
+                  value={agent.effort ?? ''}
+                  onChange={(event) =>
+                    onChange({
+                      ...agent,
+                      ...(event.target.value
+                        ? { effort: event.target.value }
+                        : { effort: undefined }),
+                    })
+                  }
+                >
+                  <option value="">Padrão</option>
+                  {agent.effort && !currentEffortIsListed && (
+                    <option value={agent.effort}>
+                      {missionEffortLabel(agent.effort)}
+                    </option>
+                  )}
+                  {effortOptions.map((effort) => (
+                    <option key={effort} value={effort}>
+                      {missionEffortLabel(effort)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
           </div>
           <span className="mission-roster-row__status">
             {issue ? 'Precisa de ajuste' : 'Pronto'}
@@ -219,108 +306,6 @@ export function MissionSetupRosterRow({
               </span>
             </div>
 
-            <div className="mission-setup__field">
-              <label htmlFor={`mission-tool-${fieldSuffix}`}>
-                Ferramenta de IA para {agent.agentName}
-              </label>
-              <select
-                id={`mission-tool-${fieldSuffix}`}
-                value={agent.cli}
-                onChange={(event) => {
-                  const adapter = candidates.find(
-                    (item) => item.id === event.target.value,
-                  );
-                  if (!adapter) return;
-                  const provider = providers.find(
-                    (item) => item.adapterId === adapter.id,
-                  );
-                  const model = readyModelForAdapter({
-                    adapter,
-                    providers,
-                    accounts,
-                  });
-                  onChange({
-                    ...agent,
-                    cli: adapter.id,
-                    ...(model ? { model } : { model: undefined }),
-                    ...(provider?.effort
-                      ? { effort: provider.effort }
-                      : { effort: undefined }),
-                  });
-                }}
-              >
-                {!selectedAdapter && (
-                  <option value={agent.cli} disabled>
-                    {agent.cli} (indisponível)
-                  </option>
-                )}
-                {candidates.map((adapter) => (
-                  <option key={adapter.id} value={adapter.id}>
-                    {adapter.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="mission-setup__field">
-              <label htmlFor={`mission-model-${fieldSuffix}`}>
-                Modelo para {agent.agentName}
-              </label>
-              <select
-                id={`mission-model-${fieldSuffix}`}
-                value={agent.model ?? ''}
-                onChange={(event) =>
-                  onChange({
-                    ...agent,
-                    ...(event.target.value
-                      ? { model: event.target.value }
-                      : { model: undefined }),
-                  })
-                }
-              >
-                {!agent.model && <option value="">Escolha um modelo</option>}
-                {agent.model && !currentModelIsReady && (
-                  <option value={agent.model} disabled>
-                    {agent.model} (indisponível)
-                  </option>
-                )}
-                {readyModels.map((model) => (
-                  <option key={model} value={model}>
-                    {model}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="mission-setup__field">
-              <label htmlFor={`mission-effort-${fieldSuffix}`}>
-                Esforço para {agent.agentName}
-              </label>
-              <select
-                id={`mission-effort-${fieldSuffix}`}
-                value={agent.effort ?? ''}
-                onChange={(event) =>
-                  onChange({
-                    ...agent,
-                    ...(event.target.value
-                      ? { effort: event.target.value }
-                      : { effort: undefined }),
-                  })
-                }
-              >
-                <option value="">Padrão da ferramenta</option>
-                {agent.effort && !currentEffortIsListed && (
-                  <option value={agent.effort}>
-                    {missionEffortLabel(agent.effort)}
-                  </option>
-                )}
-                {effortOptions.map((effort) => (
-                  <option key={effort} value={effort}>
-                    {missionEffortLabel(effort)}
-                  </option>
-                ))}
-              </select>
-            </div>
           </div>
         </details>
       </div>
