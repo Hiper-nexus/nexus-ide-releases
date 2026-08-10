@@ -43,7 +43,16 @@ interface LayoutState {
   canvasViewport: { x: number; y: number; zoom: number };
 
   split(paneId: string, direction: SplitDirection): void;
-  spawnAgent(adapterId: string, model: string): void;
+  /**
+   * Pane de agente pedido pelo OPERADOR (voz, "+ Pane"). `accountId` fixa a
+   * credencial escolhida na hora; ausente mantém o comportamento histórico —
+   * o host descobre a conta ativa do provider no spawn (ensurePaneAccountPin).
+   */
+  spawnAgent(
+    adapterId: string,
+    model: string,
+    options?: { readonly accountId?: string },
+  ): void;
   /** Replace the whole grid with an explicit set of panes (Modo Livre). */
   setPanes(panes: PaneModel[]): void;
   /**
@@ -921,7 +930,7 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
     persist();
   },
 
-  spawnAgent: (adapterId, model) => {
+  spawnAgent: (adapterId, model, options) => {
     const { focusedPaneId: targetId, root: currentRoot, viewKind, canvasNodeLayouts } = get();
     if (listPanes(currentRoot).length >= MAX_LIVE_PANES_HARD) {
       console.warn(
@@ -929,12 +938,17 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
       );
       return;
     }
-    const newPane: PaneModel = createPane(
-      'cli-agent',
-      getActiveWorkspacePath() ?? undefined,
-      adapterId,
-      model,
-    );
+    const newPane: PaneModel = {
+      ...createPane(
+        'cli-agent',
+        getActiveWorkspacePath() ?? undefined,
+        adapterId,
+        model,
+      ),
+      // Só grava quando o operador escolheu a conta: `accountId: undefined`
+      // no modelo persistido não é a mesma coisa que a chave ausente.
+      ...(options?.accountId ? { accountId: options.accountId } : {}),
+    };
     const pivotId = targetId ?? firstPaneId(currentRoot);
     const root = pivotId
       ? splitPane(currentRoot, pivotId, 'row', newPane)

@@ -6,6 +6,7 @@ import { listPanes } from '../lib/split-tree';
 import { reconcileHosts } from '../terminal/terminal-host';
 import { reconcileBrowserPanes } from '../browser/browser-host';
 import { PaneLeaf } from './PaneLeaf';
+import { PanePicker } from './PanePicker';
 
 /**
  * Renders the binary layout tree with react-resizable-panels (MIT). Each split
@@ -57,6 +58,8 @@ export function PaneGrid() {
   return (
     <div className={`grid${maximizedPane ? ' grid--pane-maximized' : ''}`}>
       {maximizedPane ? <PaneLeaf pane={maximizedPane} /> : renderNode(root)}
+      {/* Controle flutuante da grelha: abrir um pane novo sem sair do trabalho. */}
+      <PanePicker />
     </div>
   );
 }
