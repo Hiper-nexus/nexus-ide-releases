@@ -187,6 +187,19 @@ env trio do release; smoke obrigatório).
    universal de fallback. **Validar que o pane honra os três** (args de spawn
    por adapter: `--model`, flag de esforço) comparando com Overclock/Bridge.
 
+## 4d. Feature pedida (10/08): Nexus atualiza as próprias CLIs
+
+Primitivas JÁ existentes: `installCommand` por adapter (registry),
+`canAutoInstall` (provider settings), `confirmCliInstall` (confirmação nativa
+SEC#4 em provider-config-store), sonda de versão na detecção. Falta:
+1. Serviço main de checagem versão-atual × última (npm registry p/ CLIs npm;
+   `claude update`/`--version` onde houver canal próprio; cache diário).
+2. Configurações → seção "Atualizar CLIs": lista com atual→última, botão
+   Atualizar por ferramenta (confirmação nativa) e toggle auto-update.
+3. Runner reusa o canal de install existente; log visível; nunca atualizar
+   CLI com pane de missão vivo usando ela (esperar assentar).
+4. Chip discreto no passo Equipe quando houver update disponível.
+
 ## 5. Estado do e2e definitivo
 
 - **Prova final (pequena)**: missão "ler brief.txt → escrever resumo.txt" pela
