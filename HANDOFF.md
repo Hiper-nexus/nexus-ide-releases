@@ -132,6 +132,44 @@ de escape) e devem ser REMOVIDOS na varredura, com seus testes:
 Sequência sugerida: desconectar imports → `npm run typecheck` guia a poda →
 apagar testes junto → rodar suíte de renderer + main restante.
 
+## 4b. Reta final do release v0.30.0 (retomar AQUI)
+
+Estado: varredura ~concluída (últimos lotes de testes órfãos), commits até
+`40d35768` pushados. **O smoke pegou uma conclusão falsa (done sem artefato,
+2/3 agentes mortos sem executar) e a regra foi corrigida (everyoneWorked =
+every; morto-2x nunca assenta). O release SÓ sai com smoke verde.**
+
+Sequência: (1) varredura entrega relatório → typecheck+suítes 100% →
+(2) reiniciar dev → smoke no lab `/tmp/autopilot-lab/proj` (GUARD: conferir a
+pasta no wizard — o app restaura o último workspace e o smoke já nasceu no
+projeto real do operador uma vez) → `done` + `resumo.txt` corretos →
+(3) push final → ff-push para `main` → tag anotada `v0.30.0` →
+(4) do repo principal `/Users/cleofasrocha/dev/nexus-ide` (node_modules real):
+`PATH=/opt/homebrew/opt/node@22/bin:$PATH NO_COLOR=1 npm run make:release`
+(app dev PARADO) → verify por arch → `npm run release:publish` (gh logado,
+notary `nexus-notary` validado). CHANGELOG 0.30.0 já escrito.
+
+Diagnóstico pendente do smoke: por que agy e glm morrem no boot em panes de
+missão (agy é reincidente; glm via claude-code binário saiu rápido). Ver
+spawn args + [investigar como Overclock/Bridge entregam o primeiro prompt].
+
+## 4c. Especificação visual do passo Equipe (referência BridgeMind — prints do operador 10/08)
+
+1. **Launch mode** em cartões: SAFE (agentes pedem aprovação) × SKIP
+   PERMISSIONS (bypass por CLI, só workspace confiável) — hoje o bypass é
+   implícito; virar escolha visível.
+2. **Chips de composição**: `1 Coordinator · 2 Builders · 1 Scout · 1
+   Reviewer · All Claude · 5 total`, com dropdown de papel
+   (BUILDER/SCOUT/REVIEWER/CUSTOM com descrição de uma linha).
+3. **Catálogo de skills da equipe** (toggles por categoria WORKFLOW/QUALITY/
+   OPS/ANALYSIS — Test-Driven, Code Review, Security Audit, Performance…):
+   cada toggle injeta uma DIRETIVA no prompt dos agentes (expandível mostrando
+   o texto). Mapear para `allowedSkills`/instructions já existentes.
+4. Personalização inline por papel (JÁ FEITO em `40d35768`): Ferramenta,
+   Modelo campo livre com datalist do catálogo da CLI, Esforço com escada
+   universal de fallback. **Validar que o pane honra os três** (args de spawn
+   por adapter: `--model`, flag de esforço) comparando com Overclock/Bridge.
+
 ## 5. Estado do e2e definitivo
 
 - **Prova final (pequena)**: missão "ler brief.txt → escrever resumo.txt" pela
