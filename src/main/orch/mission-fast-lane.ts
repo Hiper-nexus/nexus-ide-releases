@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { Mission, SquadAgent } from '../../shared/orch-types';
+import { isUiMissionText } from '../../shared/mission-work-kind';
 import { getSessionState } from '../pty/pty-manager';
 import { deliverAgentPrompt } from './tool-util';
 import { listPaneSnapshots, requestPaneSpawn } from './pane-registry';
@@ -97,12 +98,18 @@ export function agentPrompt(
   const instructions = agent.instructions?.trim()
     ? `Orientações específicas deste papel: ${agent.instructions.trim()}`
     : '';
+  // Missão de interface: o agente deve honrar o design system do projeto e as
+  // skills de design da própria CLI — sem isso cada pane inventa um estilo.
+  const uiLine = isUiMissionText(objective)
+    ? 'Trabalho de interface: siga o design system do projeto (DESIGN.md, tokens e componentes existentes) e use as skills de design disponíveis na sua CLI antes de criar estilo novo.'
+    : '';
   return [
     header,
     `Objetivo da missão: ${objective}`,
     teamLine,
     resumeLine,
     roleLine,
+    uiLine,
     instructions,
     'Quando terminar, escreva uma linha final "PRONTO: <resumo curto>".',
     'Se algo impedir totalmente o trabalho, escreva "BLOQUEADO: <motivo>" em uma linha.',
