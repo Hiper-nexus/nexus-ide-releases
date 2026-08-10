@@ -252,6 +252,87 @@
   letter-spacing: 0.14em;
 }
 
+/* Busca da nav. Sem regra própria o <input type="search"> caía no estilo
+   default do user agent (caixa branca) sobre o painel escuro. A casca desenha
+   superfície, borda e anel de foco — mesmo idioma de .cmd-blocks__search — e o
+   input fica transparente dentro dela, então ícone e campo leem como um
+   controle só. Poço recuado (--bg sobre --bg-bar) igual .settings-input. */
+.settings-nav__search {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  /* 40px é o piso efetivo de .settings-input (ui-actions.css) e a altura de
+     .settings-nav__item — o campo alinha com o irmão e com os vizinhos. */
+  min-height: 40px;
+  margin: 0 0 var(--space-2);
+  padding: 0 var(--space-3);
+  color: var(--text-dim);
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  transition: border-color 120ms ease, color 120ms ease;
+}
+
+.settings-nav__search:focus-within {
+  color: var(--accent);
+  border-color: var(--accent);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.settings-nav__search-icon {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  color: inherit;
+}
+
+.settings-nav__search-input {
+  flex: 1 1 auto;
+  /* min-width:0 + width:100%: o tamanho intrínseco do input (~20ch) não pode
+     estourar a nav quando ela encolhe. */
+  min-width: 0;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--text-md);
+  appearance: none;
+}
+
+/* O anel de foco vive na casca (:focus-within); sem isto o input ganharia um
+   segundo anel pelo default de base.css e o controle leria como dois campos. */
+.settings-nav__search-input:focus,
+.settings-nav__search-input:focus-visible {
+  outline: none;
+}
+
+.settings-nav__search-input::placeholder {
+  color: var(--text-faint);
+}
+
+/* O X nativo de type="search" não segue o tema (a app não declara
+   color-scheme), então viria como glifo escuro sobre superfície escura. */
+.settings-nav__search-input::-webkit-search-cancel-button,
+.settings-nav__search-input::-webkit-search-decoration {
+  appearance: none;
+}
+
+[data-theme-pixel='on'] .settings-nav__search-input {
+  font-family: var(--font-pixel);
+  font-weight: 400;
+  letter-spacing: 0.1em;
+}
+
+@media (pointer: coarse) {
+  .settings-nav__search {
+    min-height: 44px;
+  }
+}
 
 .settings-nav__section {
   color: var(--text-faint);
@@ -2607,8 +2688,55 @@
   gap: 8px;
 }
 
+/* Célula do grid: o cartão preenche, e o atalho de login flutua nele. Botão
+   dentro de botão é HTML inválido — por isso o slot, não aninhamento. */
+.prov-tile-slot {
+  position: relative;
+  display: flex;
+}
+
+.prov-tile__login {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  padding: 2px 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 18%, var(--bg));
+  color: color-mix(in srgb, var(--accent) 82%, var(--fg));
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, transform 120ms ease;
+}
+
+.prov-tile__login:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 32%, var(--bg));
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.prov-tile__login:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.prov-detail__login {
+  margin-top: 8px;
+  align-self: flex-start;
+}
+
+.prov-hub__login-notice {
+  margin: 8px 0 0;
+  border-left: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  padding-left: 8px;
+}
+
 .prov-tile {
   display: grid;
+  flex: 1;
   grid-template-columns: auto 1fr;
   grid-template-rows: auto auto auto;
   column-gap: 8px;

@@ -7,6 +7,14 @@ import { useAccountStore } from '../../state/account-store';
 import { useProviderStore } from '../../state/provider-store';
 import { ProvidersPanel } from './ProvidersPanel';
 
+const loginTerminal = vi.hoisted(() => ({
+  openCliLoginTerminal: vi.fn(async () => ({
+    ok: true as const,
+    paneId: 'pane-login',
+  })),
+}));
+vi.mock('./cli-login-terminal', () => loginTerminal);
+
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
   .IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -162,6 +170,38 @@ describe('ProvidersPanel hub', () => {
     const { host, root } = mount();
     expect(host.textContent).toContain('1 ct');
     expect(host.textContent).toContain('Principal');
+    act(() => root.unmount());
+  });
+
+  it('logs into a CLI from its own tile, running the command the adapter declares', async () => {
+    loginTerminal.openCliLoginTerminal.mockClear();
+    useProviderStore.setState({
+      providers: [
+        provider('claude', 'Claude'),
+        provider('codex', 'Codex', {
+          authStrategy: 'login-needed',
+          loginCommand: 'codex login',
+        }),
+      ],
+      hydrate: vi.fn(async () => undefined),
+    } as never);
+    const { host, root } = mount();
+
+    // Só a CLI que precisa de login (e sabe como) ganha o atalho no cartão.
+    expect(host.querySelector('[data-testid="prov-login-claude"]')).toBeNull();
+    const pill = host.querySelector<HTMLButtonElement>(
+      '[data-testid="prov-login-codex"]',
+    );
+    expect(pill).toBeTruthy();
+
+    await act(async () => pill!.click());
+
+    expect(loginTerminal.openCliLoginTerminal).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'codex login' }),
+    );
+    expect(
+      host.querySelector('[data-testid="prov-login-notice"]')?.textContent,
+    ).toContain('codex login');
     act(() => root.unmount());
   });
 });

@@ -34,6 +34,7 @@ import {
   rescanAdapterBinaries,
   resolveAdapterBinary,
 } from '../adapters/adapter-registry';
+import { resolveCliLoginCommand } from '../../shared/cli-login';
 import { revalidateExecutable } from '../path-resolver';
 import {
   availableEfforts,
@@ -945,6 +946,14 @@ function toInfo(
     authMethod: adapter.kind === 'cli-pty' ? adapter.auth.method : 'api_key',
     loginHint:
       adapter.kind === 'cli-pty' ? adapter.auth.loginHint : undefined,
+    loginCommand:
+      adapter.kind === 'cli-pty'
+        ? (resolveCliLoginCommand({
+            loginCommand: adapter.auth.loginCommand,
+            authMethod: adapter.auth.method,
+            interactive: adapter.spawn.interactive,
+          }) ?? undefined)
+        : undefined,
     secureStorageAvailable: isSecureStorageAvailable({ probe: false }),
     authStrategy: authDecision(adapterId, defaultModel, {
       statusSnapshot: options.nonBlockingAuth === true,

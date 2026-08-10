@@ -20,6 +20,13 @@ const authSchema = z.object({
   envVarFallback: z.string().optional(),
   credentialStore: z.enum(['keychain', 'env']).optional(),
   loginHint: z.string().optional(),
+  /**
+   * Comando EXATO que autentica esta CLI num terminal (ex.: "codex login",
+   * "opencode auth login"). O Nexus abre um terminal e roda isto — quem sabe o
+   * fluxo é a própria CLI, nunca o Nexus. Ausente: cai no binário interativo
+   * quando o método é OAuth (primeiro run pede login) ou em nada.
+   */
+  loginCommand: z.string().optional(),
 });
 
 const spawnConfigSchema = z.object({

@@ -14,11 +14,18 @@
     "method": "api_key",
     "envVarFallback": "ANTHROPIC_API_KEY",
     "credentialStore": "env",
-    "loginHint": "Set ANTHROPIC_API_KEY or OPENAI_API_KEY in your environment."
+    "loginHint": "Set ANTHROPIC_API_KEY or OPENAI_API_KEY in your environment.",
+    "loginCommand": "opencode auth login"
   },
   "spawn": {
-    "interactive": ["opencode"],
-    "headless": ["opencode", "run", "{{PROMPT}}"],
+    "interactive": [
+      "opencode"
+    ],
+    "headless": [
+      "opencode",
+      "run",
+      "{{PROMPT}}"
+    ],
     "ptyRequired": true,
     "resumeArgs": [
       "--continue"
@@ -59,9 +66,15 @@
     "bracketedPaste": false
   },
   "stateParsing": {
-    "idle": { "type": "timeout", "ms": 800 },
+    "idle": {
+      "type": "timeout",
+      "ms": 800
+    },
     "shellIntegration": false,
-    "exitCodes": { "0": "ok", "1": "error" }
+    "exitCodes": {
+      "0": "ok",
+      "1": "error"
+    }
   },
   "quirks": {
     "altScreen": true,

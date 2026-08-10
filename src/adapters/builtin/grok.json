@@ -14,7 +14,8 @@
     "method": "api_key",
     "credentialStore": "keychain",
     "envVarFallback": "XAI_API_KEY",
-    "loginHint": "Run `grok login` for grok.com OAuth, or set XAI_API_KEY in provider settings."
+    "loginHint": "Run `grok login` for grok.com OAuth, or set XAI_API_KEY in provider settings.",
+    "loginCommand": "grok login"
   },
   "spawn": {
     "interactive": [
@@ -83,7 +84,12 @@
   "control": {
     "effort": {
       "arg": "--reasoning-effort",
-      "levels": ["low", "medium", "high", "xhigh"]
+      "levels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ]
     },
     "permission": {
       "arg": "",

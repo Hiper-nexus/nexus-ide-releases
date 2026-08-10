@@ -11,6 +11,7 @@ import { useProviderStore } from '../../state/provider-store';
 import { openExternalFromAnchor } from '../../lib/open-external';
 import { ActionCard } from '../ActionCard';
 import { AccountsManager } from './AccountsManager';
+import { openCliLoginTerminal } from './cli-login-terminal';
 import { ProviderLogo } from '../ProviderLogo';
 import { PixelIcon } from '../PixelIcon';
 import { SettingsSectionTitle } from './SettingsSectionTitle';
@@ -322,54 +323,97 @@ function ControlFlags({
   );
 }
 
+/**
+ * Uma CLI só ganha atalho de login no cartão quando ela declara o comando E
+ * ainda não está autenticada — o botão existe para resolver o "login" vermelho,
+ * não para poluir cartão que já está ativo (esse caminho fica no detalhe).
+ */
+export function tileNeedsLogin(provider: ProviderSettingsInfo): boolean {
+  return (
+    isLocalCliProvider(provider) &&
+    provider.installed &&
+    Boolean(provider.loginCommand) &&
+    provider.authStrategy === 'login-needed'
+  );
+}
+
 function ProviderTile({
   provider,
   selected,
   accountCount,
+  loginBusy,
   onSelect,
+  onLogin,
 }: {
   provider: ProviderSettingsInfo;
   selected: boolean;
   accountCount: number;
+  loginBusy: boolean;
   onSelect: () => void;
+  onLogin: () => void;
 }) {
   const status = providerStatusLabel(provider);
   const models = modelCountLabel(provider);
+  const needsLogin = tileNeedsLogin(provider);
 
+  // Botão dentro de botão é HTML inválido: o atalho de login mora ao LADO do
+  // cartão (mesma célula do grid), sobreposto pelo CSS.
   return (
-    <button
-      type="button"
-      role="listitem"
-      className={`prov-tile ${selected ? 'prov-tile--selected' : ''} ${provider.enabled ? '' : 'prov-tile--off'}`}
-      onClick={onSelect}
-      aria-pressed={selected}
-      aria-label={`${provider.label}, ${status.label}, modelos ${models}`}
-      data-adapter={provider.adapterId}
-    >
-      <ProviderLogo
-        adapterId={provider.adapterId}
-        label={provider.label}
-        fallback={provider.icon}
-      />
-      <span className="prov-tile__name">{provider.label}</span>
-      <span className={`prov-tile__status prov-tile__status--${status.tone}`}>
-        {status.label}
-      </span>
-      <span className="prov-tile__meta">
-        <span className="prov-tile__models" title="Modelos prontos / no catálogo">
-          {models}
+    <div className="prov-tile-slot" role="listitem">
+      <button
+        type="button"
+        className={`prov-tile ${selected ? 'prov-tile--selected' : ''} ${provider.enabled ? '' : 'prov-tile--off'}`}
+        onClick={onSelect}
+        aria-pressed={selected}
+        aria-label={`${provider.label}, ${status.label}, modelos ${models}`}
+        data-adapter={provider.adapterId}
+      >
+        <ProviderLogo
+          adapterId={provider.adapterId}
+          label={provider.label}
+          fallback={provider.icon}
+        />
+        <span className="prov-tile__name">{provider.label}</span>
+        <span className={`prov-tile__status prov-tile__status--${status.tone}`}>
+          {status.label}
         </span>
-        {accountCount > 0 && (
-          <span className="prov-tile__accounts" title="Contas no vault">
-            {accountCount} ct
+        <span className="prov-tile__meta">
+          <span className="prov-tile__models" title="Modelos prontos / no catálogo">
+            {models}
           </span>
-        )}
-      </span>
-    </button>
+          {accountCount > 0 && (
+            <span className="prov-tile__accounts" title="Contas no vault">
+              {accountCount} ct
+            </span>
+          )}
+        </span>
+      </button>
+      {needsLogin && (
+        <button
+          type="button"
+          className="prov-tile__login"
+          disabled={loginBusy}
+          onClick={onLogin}
+          title={`Abre um terminal e roda "${provider.loginCommand}" — a própria CLI guarda a sessão`}
+          aria-label={`Fazer login em ${provider.label}`}
+          data-testid={`prov-login-${provider.adapterId}`}
+        >
+          {loginBusy ? 'abrindo…' : 'entrar'}
+        </button>
+      )}
+    </div>
   );
 }
 
-function ProviderDetail({ provider }: { provider: ProviderSettingsInfo }) {
+function ProviderDetail({
+  provider,
+  loginBusy,
+  onLogin,
+}: {
+  provider: ProviderSettingsInfo;
+  loginBusy: boolean;
+  onLogin: () => void;
+}) {
   const setConfig = useProviderStore((s) => s.setConfig);
   const hydrateProviders = useProviderStore((s) => s.hydrate);
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -437,6 +481,26 @@ function ProviderDetail({ provider }: { provider: ProviderSettingsInfo }) {
             <p className="prov-detail__install-error" role="alert">
               <PixelIcon name="warn" size={11} /> {installError}
             </p>
+          )}
+          {provider.installed && provider.loginCommand && (
+            <button
+              type="button"
+              className={`settings-btn prov-detail__login ${
+                provider.authStrategy === 'login-needed'
+                  ? 'settings-btn--primary'
+                  : ''
+              }`}
+              disabled={loginBusy}
+              onClick={onLogin}
+              title={`Abre um terminal e roda "${provider.loginCommand}"`}
+              data-testid={`prov-detail-login-${provider.adapterId}`}
+            >
+              {loginBusy
+                ? 'Abrindo terminal…'
+                : provider.authStrategy === 'login-needed'
+                  ? `Fazer login (${provider.loginCommand})`
+                  : `Refazer login (${provider.loginCommand})`}
+            </button>
           )}
         </div>
         <label className="prov__toggle" title="Habilitar/desabilitar">
@@ -594,6 +658,8 @@ export function ProvidersPanel() {
   const [showAbsent, setShowAbsent] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [loginBusyId, setLoginBusyId] = useState<string | null>(null);
+  const [loginNotice, setLoginNotice] = useState<string | null>(null);
 
   const visible = useMemo(
     () => filterProvidersForTab(providers, tab, { showAbsent }),
@@ -635,6 +701,30 @@ export function ProvidersPanel() {
     } finally {
       setRefreshing(false);
     }
+  }
+
+  /**
+   * Login sem atrito: o Nexus abre um terminal, roda o comando de login da
+   * própria CLI e reexamina as CLIs quando aquele terminal encerra. Nenhuma
+   * credencial passa pelo Nexus — quem guarda a sessão é a ferramenta.
+   */
+  async function startLogin(provider: ProviderSettingsInfo) {
+    const command = provider.loginCommand;
+    if (!command || loginBusyId !== null) return;
+    setLoginBusyId(provider.adapterId);
+    setLoginNotice(null);
+    const result = await openCliLoginTerminal({
+      command,
+      onFinished: () => {
+        void refreshCatalog();
+      },
+    });
+    setLoginBusyId(null);
+    setLoginNotice(
+      result.ok
+        ? `${provider.label}: login aberto no terminal (${command}). Conclua por lá — quando aquele terminal fechar, o Nexus reexamina as CLIs sozinho.`
+        : `${provider.label}: ${result.error}`,
+    );
   }
 
   const missingInstallable = useMemo(
@@ -820,14 +910,31 @@ export function ProvidersPanel() {
                 provider={p}
                 selected={p.adapterId === selectedId}
                 accountCount={accountCountByAdapter.get(p.adapterId) ?? 0}
+                loginBusy={loginBusyId === p.adapterId}
                 onSelect={() => setSelectedId(p.adapterId)}
+                onLogin={() => void startLogin(p)}
               />
             ))}
           </div>
         )}
 
+        {loginNotice && (
+          <p
+            className="settings-field__note prov-hub__login-notice"
+            role="status"
+            data-testid="prov-login-notice"
+          >
+            {loginNotice}
+          </p>
+        )}
+
         {selected && (
-          <ProviderDetail key={selected.adapterId} provider={selected} />
+          <ProviderDetail
+            key={selected.adapterId}
+            provider={selected}
+            loginBusy={loginBusyId === selected.adapterId}
+            onLogin={() => void startLogin(selected)}
+          />
         )}
       </div>
     </section>

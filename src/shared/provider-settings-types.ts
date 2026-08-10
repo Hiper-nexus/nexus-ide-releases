@@ -73,6 +73,11 @@ export interface ProviderSettingsInfo {
   keyMasked: string | null;
   authMethod: string;
   loginHint?: string;
+  /**
+   * Comando que autentica esta CLI num terminal ("codex login", "qwen"…).
+   * Ausente = não há fluxo de terminal; o caminho é a key. Ver cli-login.ts.
+   */
+  loginCommand?: string;
   /** True when safeStorage encryption is available on this machine. */
   secureStorageAvailable: boolean;
   /**

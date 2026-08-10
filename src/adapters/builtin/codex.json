@@ -3,7 +3,7 @@
   "id": "codex",
   "label": "Codex",
   "version": "1.0.0",
-  "icon": "\u2b21",
+  "icon": "⬡",
   "bin": "codex",
   "detect": "codex --version",
   "install": {
@@ -14,7 +14,8 @@
     "method": "api_key",
     "envVarFallback": "OPENAI_API_KEY",
     "credentialStore": "keychain",
-    "loginHint": "Set OPENAI_API_KEY in your environment or run `codex login`."
+    "loginHint": "Set OPENAI_API_KEY in your environment or run `codex login`.",
+    "loginCommand": "codex login"
   },
   "spawn": {
     "interactive": [
