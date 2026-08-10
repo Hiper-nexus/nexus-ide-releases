@@ -153,6 +153,23 @@ Diagnóstico pendente do smoke: por que agy e glm morrem no boot em panes de
 missão (agy é reincidente; glm via claude-code binário saiu rápido). Ver
 spawn args + [investigar como Overclock/Bridge entregam o primeiro prompt].
 
+## 4a. BUG EM PRODUÇÃO 0.30.0 — dropdown de modelos com 2 itens (TODAS as CLIs)
+
+Sintoma (print do operador): Modelo do cartão lista só 2 modelos (ex.: claude
+sonnet-5/sonnet-4-5) em produção; em dev mostra 10. FATO APURADO: o
+provider-config-store JÁ une estático+custom+descoberto (:895-905) — a raiz
+NÃO é lá. Em algum ponto do caminho do wizard EM PRODUÇÃO o catálogo chega
+FILTRADO POR AUTH (cache frio → poucos authReadyModels). Suspeito nº 1:
+`squadRuntimeModelsForCli`/`authReadyModelsByCliId` reescrevendo
+`adapter.models.list` na projeção que o renderer consome (squad-runtime-
+inventory reescreve models dos adapters!). Conserto de doutrina Bridge:
+CATÁLOGO NUNCA é filtrado por auth — auth no máximo rotula/ordena. Traçar no
+perfil de PRODUÇÃO (não dev) qual IPC alimenta MissionSetup.inventory e
+remover o scoping. Paliativo já em `bac295ee` (união na UI — só resolve se
+uma das fontes chegar completa). Shipar como 0.30.1 (lembrar: versão em 5
+lugares — package, server/package, lock server, CURRENT_RELEASE, CHANGELOG;
+env trio do release; smoke obrigatório).
+
 ## 4c. Especificação visual do passo Equipe (referência BridgeMind — prints do operador 10/08)
 
 1. **Launch mode** em cartões: SAFE (agentes pedem aprovação) × SKIP
