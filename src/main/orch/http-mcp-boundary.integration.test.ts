@@ -602,8 +602,10 @@ describe("physical HTTP MCP handoff boundary", () => {
           .includes('from "./http-mcp-boundary"'),
       )
       .sort();
+    // fanout-consolidation-receipt-authority.ts e
+    // task-dispatch-mission-completion-authority.ts saíram com o motor
+    // cerimonial: a lista fica ESTRITAMENTE menor, nunca mais permissiva.
     expect(importers).toEqual([
-      "fanout-consolidation-receipt-authority.ts",
       "handoff-physical-ack-authority.ts",
       "handoff-store.ts",
       "mcp-dispatch.ts",
@@ -611,7 +613,6 @@ describe("physical HTTP MCP handoff boundary", () => {
       "mcp-server.ts",
       "mission-shim-runtime.ts",
       "pty-stream-handoff.ts",
-      "task-dispatch-mission-completion-authority.ts",
     ]);
   });
 

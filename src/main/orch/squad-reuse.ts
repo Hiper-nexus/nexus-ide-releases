@@ -36,8 +36,13 @@ function createdAtMs(value: string): number {
  * Mais recente squad DE USUÁRIO cujo roster inteiro está roteável. Builtin
  * (gerenciados pelo app) e fallbacks agênticos auto-gerados ficam de fora —
  * reusar um fallback velho congelaria exatamente o time que queremos evitar.
- * O contrato standard exige Maestro explícito/verificado, executor e reviewer
- * não-Claude; um provider apenas instalado, desabilitado ou sem auth não basta.
+ *
+ * Doutrina fluxo-por-padrão (2026-08-10): o único gate de forma que sobrou é
+ * "exatamente um Maestro" (`assessStandardSquadReadiness`). Evidência de
+ * orquestração, completude do roster e qualificação de escrita autônoma
+ * deixaram de reprovar o reuso — quem impõe confinamento é a fronteira física
+ * de spawn (`assertReleaseQualifiedMissionWorkerSpawn`). Credencial ainda
+ * barra aqui: um agente com modelo sem auth pronta não é roteável.
  */
 export function pickReusableSquad<T extends ReusableSquadLike>(
   squads: T[],

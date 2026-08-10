@@ -73,9 +73,15 @@ export async function fireCronJob(job: CronJob): Promise<void> {
   }
   resolveCwdForScope(scope, job.workingDirectory);
   const authority = assertCronExecutionAuthority(job, scope);
+  // O selo de revisão da faixa automática é o próprio jobBindingHash: um
+  // sha256 já verificado sobre job + contrato + recibo de consentimento exato.
+  // Sem ele o MissionEngine.start recusa a partida ("review_required") e toda
+  // ocorrência agendada morre — a agenda não passa pela revisão humana que
+  // carimba approvalReviewSha256 via persistReviewFence.
   const contract: MissionIntentContract = {
     ...authority.contract,
     dispatchedAt: Date.now(),
+    approvalReviewSha256: authority.jobBindingHash,
     acceptanceCriteria: [...authority.contract.acceptanceCriteria],
     budgets: { ...authority.contract.budgets },
     deniedTools: authority.contract.deniedTools
@@ -118,6 +124,7 @@ export async function fireCronJob(job: CronJob): Promise<void> {
   const launched = await bootstrapMissionOrchestratorForScope(
     scope,
     running.id,
+    authority.jobBindingHash,
   );
   if (!launched.ok) {
     throw new Error(

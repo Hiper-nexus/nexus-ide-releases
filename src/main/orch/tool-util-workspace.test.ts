@@ -1443,8 +1443,6 @@ describe('agent prompt injection', () => {
 
   it('does not treat Claude paste echo plus a false busy edge as prompt acceptance', async () => {
     vi.useFakeTimers();
-    const previous = process.env.NEXUS_REAL_MISSION_E2E;
-    process.env.NEXUS_REAL_MISSION_E2E = '1';
     try {
       stubs.sessionState.mockReturnValue('idle');
       const pending = deliverAgentPrompt(
@@ -1467,19 +1465,12 @@ describe('agent prompt injection', () => {
       await rejected;
       expect(stubs.requestPaneClose).not.toHaveBeenCalled();
     } finally {
-      if (previous === undefined) {
-        delete process.env.NEXUS_REAL_MISSION_E2E;
-      } else {
-        process.env.NEXUS_REAL_MISSION_E2E = previous;
-      }
       vi.useRealTimers();
     }
   });
 
   it('requires Claude UserPromptSubmit even when plugin bootstrap emits busy and output after Enter', async () => {
     vi.useFakeTimers();
-    const previous = process.env.NEXUS_REAL_MISSION_E2E;
-    process.env.NEXUS_REAL_MISSION_E2E = '1';
     try {
       stubs.sessionState.mockReturnValue('idle');
       stubs.writeSession.mockImplementation(
@@ -1508,11 +1499,6 @@ describe('agent prompt injection', () => {
       await rejected;
       expect(stubs.turnStartSequence).toBe(0);
     } finally {
-      if (previous === undefined) {
-        delete process.env.NEXUS_REAL_MISSION_E2E;
-      } else {
-        process.env.NEXUS_REAL_MISSION_E2E = previous;
-      }
       vi.useRealTimers();
     }
   });
@@ -1585,11 +1571,12 @@ describe('agent prompt injection', () => {
     }
   });
 
-  it('keeps the release-only Codex silent busy proof bounded to Codex', async () => {
+  it('não aceita busy silencioso do Codex sem fluxo de saída', async () => {
     vi.useFakeTimers();
-    const previous = process.env.NEXUS_REAL_MISSION_E2E;
-    process.env.NEXUS_REAL_MISSION_E2E = '1';
     try {
+      // Não existe mais atalho de release: nenhum adapter fora da família
+      // Claude é aceito por uma borda busy sozinha. Codex também precisa do
+      // fluxo de saída que prova a abertura física do turno.
       stubs.sessionState.mockReturnValue('idle');
       const pending = deliverAgentPrompt(
         'session-1',
@@ -1597,19 +1584,15 @@ describe('agent prompt injection', () => {
         undefined,
         { adapterId: 'codex' },
       );
+      const rejected = expect(pending).rejects.toThrow(/did not start/i);
 
       await vi.advanceTimersByTimeAsync(500);
       for (const tap of [...stubs.stateTaps]) tap('session-1', 'busy');
       stubs.sessionState.mockReturnValue('busy');
-      await vi.advanceTimersByTimeAsync(400);
+      await vi.advanceTimersByTimeAsync(13_000);
 
-      await expect(pending).resolves.toBe(true);
+      await rejected;
     } finally {
-      if (previous === undefined) {
-        delete process.env.NEXUS_REAL_MISSION_E2E;
-      } else {
-        process.env.NEXUS_REAL_MISSION_E2E = previous;
-      }
       vi.useRealTimers();
     }
   });

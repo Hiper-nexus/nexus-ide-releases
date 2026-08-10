@@ -80,7 +80,9 @@ vi.mock('./mission-orchestrator-runtime', async (importOriginal) => {
   };
 });
 
-vi.mock('./mission-orchestrator-bootstrap', () => ({
+// O bootstrap main-owned vive em mission-engine-production desde a remoção do
+// motor cerimonial. Mockar o módulo antigo deixava o bootstrap real rodar.
+vi.mock('./mission-engine-production', () => ({
   bootstrapMissionOrchestratorForScope: stubs.bootstrap,
 }));
 
@@ -224,13 +226,20 @@ describe('cron sealed golden path', () => {
           squadRevisionHash: executionAuthority.contract.squadRevisionHash,
           orchestratorRuntime: executionAuthority.contract.orchestratorRuntime,
           requiredWorkerAgentRef: 'builder',
+          // Selo de revisão da faixa automática: sem ele o MissionEngine.start
+          // recusa a partida e toda ocorrência agendada morre.
+          approvalReviewSha256: executionAuthority.jobBindingHash,
         }),
       }),
     );
     expect(stubs.updateMission).toHaveBeenCalledWith('mission-cron', {
       status: 'running',
     });
-    expect(stubs.bootstrap).toHaveBeenCalledWith(scope, 'mission-cron');
+    expect(stubs.bootstrap).toHaveBeenCalledWith(
+      scope,
+      'mission-cron',
+      executionAuthority.jobBindingHash,
+    );
   });
 
   it('rejects a stale roster snapshot before creating a mission', async () => {
@@ -362,7 +371,11 @@ describe('cron sealed golden path', () => {
       executionAuthority.jobBindingHash,
     );
     await expect(fireCronJob(updated)).resolves.toBeUndefined();
-    expect(stubs.bootstrap).toHaveBeenCalledWith(scope, 'mission-cron');
+    expect(stubs.bootstrap).toHaveBeenCalledWith(
+      scope,
+      'mission-cron',
+      updated.executionAuthority?.jobBindingHash,
+    );
   });
 
   it('does not silently reapprove a legacy job through a partial update', async () => {

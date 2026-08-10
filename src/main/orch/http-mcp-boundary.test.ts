@@ -233,7 +233,6 @@ describe("physical agent transport boundary", () => {
       "orch/pty-stream-handoff.ts",
     ]);
     expect(importers("consumeAgentTransportPhysicalReceipt")).toEqual([
-      "orch/fanout-consolidation-receipt-authority.ts",
       "orch/handoff-physical-ack-authority.ts",
       "orch/handoff-store.ts",
     ]);
@@ -242,7 +241,6 @@ describe("physical agent transport boundary", () => {
     ).toEqual([
       "orch/handoff-physical-ack-authority.ts",
       "orch/handoff-store.ts",
-      "orch/task-dispatch-mission-completion-authority.ts",
     ]);
   });
 });

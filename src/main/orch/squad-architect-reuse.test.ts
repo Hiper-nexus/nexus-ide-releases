@@ -219,7 +219,10 @@ describe("designSquadFromIntent — Agêntico desenha do zero por padrão", () =
     expect(result.warning).toContain("Meu Time");
   });
 
-  it("não promove Maestro experimental ao reusar squad salvo", async () => {
+  it("honra o Maestro experimental do roster salvo quando o reuso é pedido", async () => {
+    // Doutrina fluxo-por-padrão (2026-08-10): evidência de orquestração deixou
+    // de reprovar o squad salvo. Quem pediu explicitamente o próprio roster
+    // recebe o próprio roster; confinamento continua na fronteira de spawn.
     listAdapterInfosMock.mockReturnValue([
       {
         ...adapterInfo("kimi"),
@@ -260,8 +263,8 @@ describe("designSquadFromIntent — Agêntico desenha do zero por padrão", () =
     );
 
     expect(result.ok).toBe(true);
-    expect(result.squad?.id).toMatch(/^agentic-fallback-/);
-    expect(result.squad?.agents[0]?.cli).toBe("codex");
+    expect(result.squad?.id).toBe("meu-time");
+    expect(result.squad?.agents[0]?.cli).toBe("kimi");
   });
 
   it("falha com instrução acionável quando não há Maestro verificado", async () => {
@@ -365,7 +368,7 @@ describe("designSquadFromIntent — Agêntico desenha do zero por padrão", () =
     ).not.toContain("imagegen");
   });
 
-  it("entrega somente a skill e as tools de mídia governadas ao Codex visual", async () => {
+  it("entrega somente a skill e as tools de mídia governadas ao executor visual", async () => {
     listSquadsMock.mockReturnValue([]);
 
     const result = await designSquadFromIntent(
@@ -377,8 +380,12 @@ describe("designSquadFromIntent — Agêntico desenha do zero por padrão", () =
     const visualExecutor = result.squad?.agents.find(
       (agent) => agent.category === "executor",
     );
+    // A rota visual vai para o primeiro worker elegível — desde a doutrina
+    // fluxo-por-padrão o inventário não pré-filtra workers por qualificação
+    // de escrita, então Kimi entra no roster antes do Codex. O invariante
+    // vivo aqui é o ESCOPO: só esse agente recebe a skill e as tools Nexus.
     expect(visualExecutor).toMatchObject({
-      cli: "codex",
+      cli: "kimi",
       allowedSkills: expect.arrayContaining(["nexus-visual-media"]),
       allowedTools: ["nexus_media_providers", "nexus_image_generate"],
     });
@@ -449,7 +456,11 @@ describe("designSquadFromIntent — Agêntico desenha do zero por padrão", () =
     });
   });
 
-  it("não coloca uma CLI legacy sem handoff físico no fallback guiado", async () => {
+  it("não promove uma CLI legacy sem evidência a Maestro do fallback guiado", async () => {
+    // O que morreu: sob `governed` o inventário filtrava os WORKERS pela
+    // qualificação de escrita autônoma, então só Codex entrava no roster.
+    // O que vive: a lista verificada continua sendo a autoridade de QUEM
+    // coordena, e a CLI `unsupported` nunca vira Maestro.
     listAdapterInfosMock.mockReturnValue([
       adapterInfo("claude"),
       {
@@ -472,10 +483,14 @@ describe("designSquadFromIntent — Agêntico desenha do zero por padrão", () =
     );
 
     expect(result.ok).toBe(true);
+    expect(result.squad?.agents[0]).toMatchObject({
+      category: "orchestrator",
+      cli: "claude",
+    });
     expect(
       result.squad?.agents
-        .filter((agent) => agent.category !== "orchestrator")
-        .every((agent) => agent.cli === "codex"),
+        .filter((agent) => agent.category === "orchestrator")
+        .every((agent) => agent.cli !== "aider"),
     ).toBe(true);
   });
 
@@ -497,108 +512,83 @@ describe("designSquadFromIntent — Agêntico desenha do zero por padrão", () =
     expect(normalizeEphemeralSquadCandidateMock).not.toHaveBeenCalled();
   });
 
-  it("não cria fallback com worker instalado mas sem autenticação pronta", async () => {
-    listAdapterInfosMock.mockReturnValue([
-      adapterInfo("claude"),
-      adapterInfo("codex"),
-    ]);
-    listProviderSettingsMock.mockReturnValue([
-      providerInfo("claude"),
-      providerInfo("codex", { authStrategy: "login-needed" }),
-    ]);
-    listSquadsMock.mockReturnValue([]);
+  // Doutrina fluxo-por-padrão (2026-08-10): prontidão de ferramenta (auth
+  // pendente, ausência de sandbox nativo, modelo externo sem credencial) saiu
+  // do caminho do DESENHO — reprovar aqui derrubava missões reais com a CLI
+  // instalada e logada. Estas quatro configurações continuam existindo em
+  // campo e o desenho agora entrega o time; o fail-closed é a fronteira
+  // física de spawn (assertReleaseQualifiedMissionWorkerSpawn), que sob
+  // `governed` barra worker sem confinamento nativo de escrita.
+  it.each([
+    [
+      "worker instalado sem autenticação pronta",
+      () => [adapterInfo("claude"), adapterInfo("codex")],
+      () => [
+        providerInfo("claude"),
+        providerInfo("codex", { authStrategy: "login-needed" }),
+      ],
+    ],
+    [
+      "OpenCode free sem sandbox nativo de escrita",
+      () => [adapterInfo("claude"), adapterInfo("opencode", false)],
+      () => [
+        providerInfo("claude", { defaultModel: "claude-default" }),
+        providerInfo("opencode", {
+          authStrategy: "login-needed",
+          defaultModel: "opencode/big-pickle",
+        }),
+      ],
+    ],
+    [
+      "default externo do OpenCode sem credencial",
+      () => [adapterInfo("claude"), adapterInfo("opencode", false)],
+      () => [
+        providerInfo("claude", { defaultModel: "claude-default" }),
+        providerInfo("opencode", {
+          authStrategy: "login-needed",
+          defaultModel: "openrouter/openai/gpt-5",
+        }),
+      ],
+    ],
+    [
+      "catálogo OpenCode misto (externo + free conhecido)",
+      () => [adapterInfo("claude"), adapterInfo("opencode", false)],
+      () => [
+        providerInfo("claude", { defaultModel: "claude-default" }),
+        providerInfo("opencode", {
+          authStrategy: "login-needed",
+          defaultModel: "openrouter/openai/gpt-5",
+          models: [
+            "openrouter/openai/gpt-5",
+            "opencode/big-pickle",
+          ],
+        }),
+      ],
+    ],
+  ])(
+    "desenha o time mesmo com %s — o bloqueio real é o spawn",
+    async (_label, adapters, providers) => {
+      listAdapterInfosMock.mockReturnValue(adapters());
+      listProviderSettingsMock.mockReturnValue(providers());
+      listSquadsMock.mockReturnValue([]);
 
-    const result = await designSquadFromIntent(
-      "implementar e validar uma API",
-      "/tmp/ws",
-    );
+      const result = await designSquadFromIntent(
+        "implementar e validar uma API",
+        "/tmp/ws",
+      );
 
-    expect(result).toMatchObject({
-      ok: false,
-      error: expect.stringMatching(/nenhuma CLI de worker.*pronta/i),
-    });
-    expect(normalizeEphemeralSquadCandidateMock).not.toHaveBeenCalled();
-  });
-
-  it("não usa OpenCode free sem sandbox nativo de escrita qualificado", async () => {
-    listAdapterInfosMock.mockReturnValue([
-      adapterInfo("claude"),
-      adapterInfo("opencode", false),
-    ]);
-    listProviderSettingsMock.mockReturnValue([
-      providerInfo("claude", { defaultModel: "claude-default" }),
-      providerInfo("opencode", {
-        authStrategy: "login-needed",
-        defaultModel: "opencode/big-pickle",
-      }),
-    ]);
-    listSquadsMock.mockReturnValue([]);
-
-    const result = await designSquadFromIntent(
-      "implementar e validar uma API",
-      "/tmp/ws",
-    );
-
-    expect(result).toMatchObject({
-      ok: false,
-      error: expect.stringMatching(/nenhuma CLI de worker.*pronta/i),
-    });
-  });
-
-  it("não transforma um default externo do OpenCode em rota sem credencial", async () => {
-    listAdapterInfosMock.mockReturnValue([
-      adapterInfo("claude"),
-      adapterInfo("opencode", false),
-    ]);
-    listProviderSettingsMock.mockReturnValue([
-      providerInfo("claude", { defaultModel: "claude-default" }),
-      providerInfo("opencode", {
-        authStrategy: "login-needed",
-        defaultModel: "openrouter/openai/gpt-5",
-      }),
-    ]);
-    listSquadsMock.mockReturnValue([]);
-
-    const result = await designSquadFromIntent(
-      "implementar e validar uma API",
-      "/tmp/ws",
-    );
-
-    expect(result).toMatchObject({
-      ok: false,
-      error: expect.stringMatching(/nenhuma CLI de worker.*pronta/i),
-    });
-    expect(normalizeEphemeralSquadCandidateMock).not.toHaveBeenCalled();
-  });
-
-  it("não promove nem modelo free conhecido sem sandbox nativo de escrita", async () => {
-    listAdapterInfosMock.mockReturnValue([
-      adapterInfo("claude"),
-      adapterInfo("opencode", false),
-    ]);
-    listProviderSettingsMock.mockReturnValue([
-      providerInfo("claude", { defaultModel: "claude-default" }),
-      providerInfo("opencode", {
-        authStrategy: "login-needed",
-        defaultModel: "openrouter/openai/gpt-5",
-        models: [
-          "openrouter/openai/gpt-5",
-          "opencode/big-pickle",
-        ],
-      }),
-    ]);
-    listSquadsMock.mockReturnValue([]);
-
-    const result = await designSquadFromIntent(
-      "implementar e validar uma API",
-      "/tmp/ws",
-    );
-
-    expect(result).toMatchObject({
-      ok: false,
-      error: expect.stringMatching(/nenhuma CLI de worker.*pronta/i),
-    });
-  });
+      expect(result.ok).toBe(true);
+      expect(result.squad?.id).toMatch(/^agentic-fallback-/);
+      // Claude segue reservado ao Maestro; o worker é a CLI ainda não pronta.
+      expect(result.squad?.agents[0]).toMatchObject({
+        category: "orchestrator",
+        cli: "claude",
+      });
+      expect(
+        result.squad?.agents.some((agent) => agent.category === "executor"),
+      ).toBe(true);
+    },
+  );
 
   it("squad salvo com cli não roteável não é reusado", async () => {
     listSquadsMock.mockReturnValue([
@@ -616,10 +606,16 @@ describe("designSquadFromIntent — Agêntico desenha do zero por padrão", () =
     expect(result.squad?.id).toMatch(/^agentic-fallback-/);
   });
 
-  it("pós-valida saída automática e substitui roster sem executor por fallback seguro", async () => {
+  it("declara política hardened e catálogo runtime, e aceita a forma devolvida pelo modelo", async () => {
+    // Morreu com a doutrina fluxo-por-padrão (2026-08-10): a pós-validação
+    // trocava por fallback determinístico o roster do modelo que viesse sem
+    // executor. `assessStandardSquadReadiness` só cobra "exatamente um
+    // Maestro", então a saída do modelo é aceita como veio. O que continua
+    // vivo aqui é o CONTRATO DE PROMPT: a política hardened e o catálogo
+    // runtime que o arquiteto recebe.
     chatViaBrainChainMock.mockResolvedValue(
       JSON.stringify({
-        name: "Time inválido",
+        name: "Time sem executor",
         orchestratorInstructions: "Revise o workspace.",
         agents: [
           {
@@ -663,16 +659,19 @@ describe("designSquadFromIntent — Agêntico desenha do zero por padrão", () =
     expect(architectRuntimeProfile).toContain(
       "codex [models: codex-default; orquestração: verified; worker guided: qualificado]",
     );
+    // O inventário deixou de pré-filtrar workers por qualificação de escrita:
+    // toda cli-pty instalada entra como "worker guided: qualificado". A
+    // evidência de orquestração continua distinguindo os Maestros.
     expect(architectRuntimeProfile).toContain(
-      "kimi [models: kimi-default; orquestração: experimental; worker guided: não qualificado (somente painel/terminal/manual)]",
+      "kimi [models: kimi-default; orquestração: experimental; worker guided: qualificado]",
     );
-    expect(result.squad?.id).toMatch(/^agentic-fallback-/);
+    // Sem intent, o id é workspace-driven — não caiu no fallback determinístico.
+    expect(result.squad?.id).toBe("custom-ws");
     expect(
-      result.squad?.agents.some((agent) => agent.category === "executor"),
-    ).toBe(true);
-    expect(
-      result.squad?.agents.some((agent) => agent.category === "reviewer"),
-    ).toBe(true);
+      result.squad?.agents.filter(
+        (agent) => agent.category === "orchestrator",
+      ),
+    ).toHaveLength(1);
     expect(normalizeEphemeralSquadCandidateMock).toHaveBeenCalledTimes(1);
   });
 

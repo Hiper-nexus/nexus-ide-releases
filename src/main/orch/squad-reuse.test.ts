@@ -101,37 +101,44 @@ describe("pickReusableSquad", () => {
     ).toBe("meu-time");
   });
 
+  // Doutrina fluxo-por-padrão (2026-08-10): completude de roster deixou de
+  // reprovar o reuso. `assessStandardSquadReadiness` só cobra a FORMA —
+  // exatamente um Maestro — e a qualificação física do worker é imposta no
+  // spawn (`assertReleaseQualifiedMissionWorkerSpawn`), não na escolha do
+  // squad salvo do operador.
   it.each([
     [
-      "executor",
+      "sem executor",
       [
         { cli: "claude", category: "orchestrator" },
         { cli: "kimi", category: "reviewer" },
       ],
     ],
     [
-      "reviewer",
+      "sem reviewer",
       [
         { cli: "claude", category: "orchestrator" },
         { cli: "codex", category: "executor" },
       ],
     ],
     [
-      "worker não-Claude",
+      "só com workers Claude",
       [
         { cli: "claude", category: "orchestrator" },
         { cli: "claude", category: "executor" },
         { cli: "claude", category: "reviewer" },
       ],
     ],
-  ])("ignora squad sem %s roteável", (_label, agents) => {
-    const invalid: ReusableSquadLike = {
+  ])("reusa roster %s — completude não é mais gate de reuso", (_label, agents) => {
+    const partial: ReusableSquadLike = {
       id: "incompleto",
       builtin: false,
       createdAt: "9000",
       agents,
     };
-    expect(pickReusableSquad([invalid], routable, verified)).toBeNull();
+    expect(pickReusableSquad([partial], routable, verified)?.id).toBe(
+      "incompleto",
+    );
   });
 
   it("ignora squad com roster vazio", () => {
@@ -168,14 +175,19 @@ describe("pickReusableSquad", () => {
     ).toBe("epoch-2026");
   });
 
-  it("não reusa automaticamente squad cujo Maestro é experimental", () => {
+  it("reusa squad salvo cujo Maestro é experimental — verificação virou opt-in", () => {
+    // Evidência de orquestração deixou de reprovar o reuso: sob `governed` a
+    // lista verificada ainda manda em QUEM é desenhado como Maestro, mas o
+    // roster que o operador salvou é honrado como está.
     const experimental = squad("time-kimi", 9_000, ["kimi", "codex", "codex"]);
     const safe = squad("time-codex", 1_000, ["codex", "kimi", "agy"]);
 
     expect(
       pickReusableSquad([experimental, safe], routable, verified)?.id,
-    ).toBe("time-codex");
-    expect(pickReusableSquad([experimental], routable, verified)).toBeNull();
+    ).toBe("time-kimi");
+    expect(pickReusableSquad([experimental], routable, verified)?.id).toBe(
+      "time-kimi",
+    );
   });
 
   it("não trata o primeiro worker como Maestro em roster legado inválido", () => {
@@ -192,7 +204,7 @@ describe("pickReusableSquad", () => {
     expect(pickReusableSquad([workerOnly], routable, verified)).toBeNull();
   });
 
-  it("não reusa OpenCode sem sandbox nativo, mesmo com modelo free roteável", () => {
+  it("não reusa modelo OpenCode externo sem credencial; o free continua reusável", () => {
     const policy = buildSquadRuntimeCliPolicy(
       [
         {
@@ -256,10 +268,14 @@ describe("pickReusableSquad", () => {
     };
 
     expect(policy.routableCliIds.has("opencode")).toBe(true);
+    // A política continua rebaixando OpenCode do lane de worker…
     expect(policy.routableWorkerCliIds.has("opencode")).toBe(false);
+    // …mas isso deixou de reprovar o reuso: o confinamento de escrita é
+    // imposto na fronteira física de spawn. O que ainda barra um squad aqui é
+    // credencial: o modelo externo (openrouter/…) não é roteável sem login.
     expect(
-      pickReusableSquad([external, free], policy, new Set(["claude"])),
-    ).toBeNull();
+      pickReusableSquad([external, free], policy, new Set(["claude"]))?.id,
+    ).toBe("time-opencode-free");
     expect(
       pickReusableSquad([external], policy, new Set(["claude"])),
     ).toBeNull();

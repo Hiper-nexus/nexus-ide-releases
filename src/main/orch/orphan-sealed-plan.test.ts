@@ -24,6 +24,12 @@ import {
  *
  * Este arquivo prova o comportamento nos CONSUMIDORES reais. O contrato de
  * persistência (as três leituras sobre SQLite) vive em `task-store.test.ts`.
+ *
+ * ATUALIZAÇÃO (remoção do motor cerimonial): nada em produção sela plano hoje
+ * — `createPlanAtomically` ficou sem chamador. O estado órfão é inalcançável e
+ * as provas do ROTEADOR sobre órfão foram removidas. Os helpers puros
+ * (`sealedPlanPresence`, `OrphanSealedPlanError`) e o gargalo de leitura
+ * continuam cobertos aqui porque continuam exportados e vivos.
  */
 
 const scope = testProjectScope();
@@ -81,7 +87,7 @@ import {
   assertMainTaskDispatcherAuthority,
   isTaskQueueManagedMission,
 } from './task-dispatch-authority';
-import { clearRouteLog, recentRouteLog } from './route-log';
+import { clearRouteLog } from './route-log';
 import { clearRouteProvenance } from './route-provenance';
 
 const MISSION_ID = 'mission-orphan-plan';
@@ -193,51 +199,15 @@ beforeEach(() => {
   mocks.warmSquadRuntimeSubscriptionAuth.mockClear();
 });
 
-describe('consumidor ROTEADOR: nada de adapter livre sobre plano órfão', () => {
-  it('recusa nomeando a causa em vez de oferecer uma CLI fora do roster', async () => {
-    mocks.getProjectDomainStores.mockReturnValue(
-      storesWith([SEALED_VERSION], LIVE_VERSION),
-    );
-
-    await expect(
-      tool('nexus_route_task').handler(
-        { task: 'Mapear a superfície de rota' },
-        context(),
-      ),
-    ).rejects.toThrow(/orphan_sealed_plan/u);
-    await expect(
-      tool('nexus_route_task').handler(
-        { task: 'Mapear a superfície de rota' },
-        context(),
-      ),
-    ).rejects.toThrow(/versão 1 da intenção e a missão está na versão 2/u);
-  });
-
-  it('a preferência explícita por Codex não maquia o órfão: continua recusando', async () => {
-    mocks.getProjectDomainStores.mockReturnValue(
-      storesWith([SEALED_VERSION], LIVE_VERSION),
-    );
-
-    await expect(
-      tool('nexus_route_task').handler(
-        { task: 'Mapear a superfície de rota', preferAdapters: ['codex'] },
-        context(),
-      ),
-    ).rejects.toThrow(/orphan_sealed_plan/u);
-  });
-
-  it('nenhuma rota é registrada quando o plano é órfão', async () => {
-    mocks.getProjectDomainStores.mockReturnValue(
-      storesWith([SEALED_VERSION], LIVE_VERSION),
-    );
-
-    await tool('nexus_route_task')
-      .handler({ task: 'Mapear a superfície de rota' }, context())
-      .catch(() => undefined);
-
-    expect(recentRouteLog()).toEqual([]);
-  });
-
+/**
+ * As três provas do ROTEADOR sobre plano ÓRFÃO saíram junto com o motor
+ * cerimonial: `createPlanAtomically` — o único caminho que gravava
+ * `mission_task_plans` — ficou sem nenhum chamador de produção. Sem ninguém
+ * selando plano, a missão nunca chega ao estado órfão (selado na v1 enquanto a
+ * intenção está na v2), e `nexus_route_task` deixou de consultar roster selado.
+ * A divergência de roster continua fechada no DISPATCH (task-dispatch-store).
+ */
+describe('consumidor ROTEADOR: roteamento sem roster selado', () => {
   it('missão que NUNCA selou plano segue roteando normalmente', async () => {
     mocks.getProjectDomainStores.mockReturnValue(storesWith([], LIVE_VERSION));
 
@@ -335,13 +305,11 @@ describe('invariante de código: ninguém contorna o gargalo do plano', () => {
   const ALLOWED_RAW_PLAN_READERS = new Set([
     // Único dono da tabela: é onde o órfão é detectado.
     'src/main/orch/task-store.ts',
-    // Leitores do lado do DISPATCH: a versão vem da própria linha de dispatch
-    // (ou do parâmetro do claim), nunca da versão viva da missão — e todos já
-    // falham fechado quando a linha não existe.
-    'src/main/orch/task-dispatch-sealed-plan-authority.ts',
-    'src/main/orch/task-dispatch-claim-authority.ts',
+    // Leitor do lado do DISPATCH: a versão vem da própria linha de dispatch,
+    // nunca da versão viva da missão — e já falha fechado quando a linha não
+    // existe. Os três outros donos de dispatch saíram com o motor cerimonial,
+    // então a permissão fica ESTRITAMENTE menor.
     'src/main/orch/task-dispatch-store.ts',
-    'src/main/orch/task-dispatch-mission-completion-authority.ts',
   ]);
 
   function sourceFiles(dir: string): string[] {
