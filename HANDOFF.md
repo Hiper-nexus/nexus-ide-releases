@@ -134,4 +134,22 @@ apagar testes junto → rodar suíte de renderer + main restante.
 
 ## 5. Estado do e2e definitivo
 
-(preencher com o resultado do vigia — `resumo.txt` + `done/done`)
+- **Prova final (pequena)**: missão "ler brief.txt → escrever resumo.txt" pela
+  UI: `done/done` + artefato exato em **~90 segundos**.
+- **Simulação grande**: "Mini-site 11 stories", equipe **Força total (8 panes,
+  6 providers** — claude, agy, codex×3, glm, kimi, grok): a equipe se
+  auto-dividiu pelo STORIES.md (cada story marcada com o nome do agente) e
+  entregou **10 páginas + style.css completos**. Três fantasmas do motor velho
+  atacaram no caminho e foram desligados nesta sessão (exit-watcher do
+  Maestro, seal de adoção do grid, mission-driver); a retomada pós-conserto
+  volta a missão para `running` e o observador conclui.
+
+### Pendência nº 1 da próxima sessão (visual, não motor)
+Os panes da Via Rápida ainda **não são adotados pelo grid do renderer** — a
+missão trabalha e conclui, o painel de Atividade/Fan-out mostra tudo ao vivo,
+mas a vista "Terminais" exibe o empty-state ("nenhum pane foi aberto") no
+lugar dos 8 terminais. O bypass de `canRestoreMissionPane` já existe; falta
+descobrir qual sinal o view usa para montar o grid (provável: fluxo de adoção
+via eventos que o spawn cerimonial emitia). É a única coisa entre o estado
+atual e a experiência plena (ver terminal, digitar no agente, dar /comandos).
+Segunda pendência: varredura de remoção da seção 4.
