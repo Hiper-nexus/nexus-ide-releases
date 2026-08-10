@@ -55,15 +55,32 @@ function runningView(): ProjectMissionSnapshotView {
 }
 
 describe('projectMissionSnapshot', () => {
-  it('projects running without a current receipt as blocked technical', () => {
+  it('Via Rápida: running sem recibo cerimonial continua running', () => {
+    // O tripé autoridade+recibo+liveness era do motor antigo e projetava
+    // "Precisa de reparo" sobre equipes vivas. Sob a Via Rápida (padrão),
+    // running é running; a vida real está nos panes e no observador.
     const view = runningView();
     view.hasCurrentKickoffReceipt = false;
 
     const snapshot = projectMissionSnapshot(view);
 
-    expect(snapshot.state).toBe('blocked_technical');
-    expect(snapshot.stateReason?.code).toBe('kickoff-receipt-missing');
-    expect(snapshot.allowedActions).toEqual(['retry-kickoff', 'stop']);
+    expect(snapshot.state).toBe('running');
+  });
+
+  it('motor cerimonial (escape): running sem recibo projeta bloqueio técnico', () => {
+    process.env.NEXUS_CEREMONIAL_MISSIONS = '1';
+    try {
+      const view = runningView();
+      view.hasCurrentKickoffReceipt = false;
+
+      const snapshot = projectMissionSnapshot(view);
+
+      expect(snapshot.state).toBe('blocked_technical');
+      expect(snapshot.stateReason?.code).toBe('kickoff-receipt-missing');
+      expect(snapshot.allowedActions).toEqual(['retry-kickoff', 'stop']);
+    } finally {
+      delete process.env.NEXUS_CEREMONIAL_MISSIONS;
+    }
   });
 
   it('projects done with residual plan work as blocked technical', () => {

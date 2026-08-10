@@ -108,6 +108,12 @@ import {
   withMissionLifecycleLock,
 } from "./mission-lifecycle-lock";
 import { suppressIntentionalMissionOrchestratorExit } from "./mission-orchestrator-exit-lifecycle";
+import {
+  fastLaneBootstrap,
+  fastLaneOrchestratorPaneSummary,
+  missionFastLaneEnabled,
+  resumeFastLaneMission,
+} from "./mission-fast-lane";
 import { getSquad } from "./squad-store";
 import { snapshotSquadAuthority } from "./squad-authority-snapshot";
 import {
@@ -3385,6 +3391,13 @@ const productionMissionEngines = new MissionEngineRegistry((scope, stores) =>
       sealMissionStartReview(stores.missions, input);
     },
     bootstrap: async (missionId) => {
+      // Via Rápida (padrão): terminais interativos direto no workspace, sem o
+      // pipeline cerimonial. O motor antigo fica atrás de
+      // NEXUS_CEREMONIAL_MISSIONS=1 até a remoção definitiva.
+      if (missionFastLaneEnabled()) {
+        await fastLaneBootstrap(scope, missionId);
+        return;
+      }
       const result = await productionService.bootstrap(scope, missionId);
       missionEngineBootstrapResults.set(
         bootstrapFlightKey(scope, missionId),
@@ -3408,6 +3421,10 @@ const productionMissionEngines = new MissionEngineRegistry((scope, stores) =>
       throw new Error(result.error);
     },
     retryKickoff: async (command) => {
+      if (missionFastLaneEnabled()) {
+        await resumeFastLaneMission(scope, command.missionId);
+        return;
+      }
       const result = await resumeBlockedMissionBootstrapForScope(
         scope,
         command.missionId,
@@ -5103,6 +5120,11 @@ async function resumeBlockedMissionBootstrapWithinLifecycleLock(
 
 /** Starts durable-scope discovery before the coordinator's first pass. */
 export function prepareMissionOrchestratorBootstrapRecovery(): void {
+  // Via Rápida: a recuperação cerimonial NÃO pode disputar missões com o
+  // motor novo — foi exatamente essa varredura que re-kickoffava por cima de
+  // uma equipe viva e travava tudo em kickoff-timeout. Retomada é explícita
+  // (Retomar/retry) e vai para resumeFastLaneMission.
+  if (missionFastLaneEnabled()) return;
   if (disposeProductionScopeListener) return;
   disposeProductionScopeListener = requireProjectDomainStoreRegistry().onScope(
     (scope) => {
@@ -5116,6 +5138,7 @@ export function prepareMissionOrchestratorBootstrapRecovery(): void {
 }
 
 export function reconcileMissionOrchestratorBootstrap(): Promise<void> {
+  if (missionFastLaneEnabled()) return Promise.resolve();
   return productionRecovery.reconcile();
 }
 
@@ -5128,11 +5151,42 @@ export async function shutdownMissionOrchestratorBootstrapRecovery(): Promise<vo
 
 
 /** Renderer boundary for retrying a bootstrap-blocked mission. */
-export function resumeBlockedMissionBootstrapFromRenderer(
+export async function resumeBlockedMissionBootstrapFromRenderer(
   owner: WebContents,
   raw: unknown,
 ): Promise<MissionOrchestratorBootstrapResult> {
   const input = missionOrchestratorBootstrapRequestSchema.parse(raw);
   const scope = requireRendererWorkspaceScope(owner);
+  if (missionFastLaneEnabled()) {
+    try {
+      await resumeFastLaneMission(scope, input.missionId);
+      const pane = fastLaneOrchestratorPaneSummary(scope, input.missionId);
+      if (pane) {
+        return {
+          ok: true,
+          missionId: input.missionId,
+          pane,
+          kickoff: { accepted: true },
+          reused: true,
+        };
+      }
+      return {
+        ok: false,
+        missionId: input.missionId,
+        reason: "spawn_failed",
+        error: "a retomada não conseguiu religar a coordenação",
+        cta: BOOTSTRAP_CTA,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        missionId: input.missionId,
+        reason: "materialization_failed",
+        error:
+          error instanceof Error ? error.message : "retomada da Via Rápida falhou",
+        cta: BOOTSTRAP_CTA,
+      };
+    }
+  }
   return resumeBlockedMissionBootstrapForScope(scope, input.missionId);
 }

@@ -1,5 +1,6 @@
 import { posix, win32 } from 'node:path';
 import { z } from 'zod';
+import { missionFastLaneEnabled } from './mission-fast-lane';
 import {
   missionAgentSchema,
   missionAgentStateSchema,
@@ -161,6 +162,10 @@ function projectState(view: ParsedView): {
   }
 
   if (view.mission.status === 'running') {
+    // Via Rápida: missão running É running. O tripé cerimonial
+    // (autoridade+recibo+liveness) pertencia ao motor antigo e projetava
+    // "Precisa de reparo" sobre equipes vivas trabalhando nos terminais.
+    if (missionFastLaneEnabled()) return { state: 'running' };
     const admission = evaluateMissionAdmission({
       hasDispatchAuthority: view.hasDispatchAuthority,
       hasCurrentKickoffReceipt: view.hasCurrentKickoffReceipt,
