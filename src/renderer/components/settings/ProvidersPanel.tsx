@@ -332,6 +332,8 @@ export function tileNeedsLogin(provider: ProviderSettingsInfo): boolean {
   return (
     isLocalCliProvider(provider) &&
     provider.installed &&
+    // CLI desligada pelo operador não pede login: ela não vai ser usada.
+    provider.enabled &&
     Boolean(provider.loginCommand) &&
     provider.authStrategy === 'login-needed'
   );
