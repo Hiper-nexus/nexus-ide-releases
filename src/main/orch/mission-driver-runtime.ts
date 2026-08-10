@@ -10,6 +10,7 @@ import {
   applyDriveAction,
   type ApplyActionPorts,
 } from './mission-driver-apply';
+import { missionFastLaneEnabled } from './mission-fast-lane';
 
 /**
  * Mission Driver runtime — Fases B/C (shadow observe + active apply).
@@ -136,6 +137,20 @@ export async function runDriveTick(
   deps: DriveDeps,
   config: DriveConfig = defaultDriveConfig,
 ): Promise<DriveTickResult> {
+  // Via Rápida: o driver pertence ao motor cerimonial (respawn-fresh-context,
+  // block-human, conclusão por receipts). Com o motor novo ele re-bloqueava
+  // missões vivas no meio da retomada ('fresh-context blocked: orchestrator
+  // provider exited'). O observador da própria Via Rápida cumpre o papel.
+  if (missionFastLaneEnabled()) {
+    return {
+      scanned: 0,
+      loadNull: 0,
+      loadErrors: 0,
+      decidedNonWait: 0,
+      applied: 0,
+      applyErrors: 0,
+    };
+  }
   const now = deps.now();
   let scanned = 0;
   let loadNull = 0;
