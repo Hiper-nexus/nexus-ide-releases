@@ -2345,6 +2345,49 @@ export function bindOwnedAgentSessionMission(
   return true;
 }
 
+export interface UpdateOwnedAgentSessionRoleInput {
+  role: "orchestrator" | "worker";
+  missionId: string;
+  allowedTools: string[] | null;
+  allowedSkills?: string[] | null;
+  workerIncarnationId?: string | null;
+}
+
+export function updateOwnedAgentSessionRole(
+  sessionId: string,
+  input: UpdateOwnedAgentSessionRoleInput,
+): boolean {
+  const session = sessions.get(sessionId);
+  const info = session?.agent;
+  if (
+    !session ||
+    !info ||
+    info.role === "user" ||
+    (info.missionId && info.missionId !== input.missionId)
+  ) {
+    return false;
+  }
+  const workerIncarnationId =
+    input.role === "worker" && input.workerIncarnationId
+      ? input.workerIncarnationId
+      : undefined;
+  session.agent = {
+    ...info,
+    role: input.role,
+    missionId: input.missionId,
+    workerIncarnationId,
+    allowedTools:
+      input.allowedTools === null ? null : [...input.allowedTools],
+    allowedSkills:
+      input.allowedSkills === undefined
+        ? info.allowedSkills
+        : input.allowedSkills === null
+          ? null
+          : [...input.allowedSkills],
+  };
+  return true;
+}
+
 export function rollbackOwnedAgentSessionMission(
   wc: WebContents,
   sessionId: string,

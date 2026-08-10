@@ -1891,6 +1891,32 @@ export function registerOrchIpc(): void {
     return { ok: mission !== null };
   });
 
+  const missionPromoteOrchestratorSchema = z
+    .object({
+      missionId: z.string().min(1).max(128),
+      paneId: z.string().min(1).max(128).optional(),
+      sessionId: z.string().min(1).max(128).optional(),
+    })
+    .refine((value) => Boolean(value.paneId ?? value.sessionId));
+  ipcMain.handle(ORCH_CHANNELS.missionPromoteOrchestrator, (event, raw) => {
+    const parsed = missionPromoteOrchestratorSchema.safeParse(raw);
+    if (!parsed.success) return { ok: false, error: "invalid_payload" };
+    const result = requireMissionAuthority().promoteOrchestratorFromRenderer(
+      event.sender,
+      parsed.data.missionId,
+      {
+        paneId: parsed.data.paneId,
+        sessionId: parsed.data.sessionId,
+      },
+    );
+    if (result.ok && result.mission) {
+      const scope = requireRendererWorkspaceScope(event.sender);
+      redeliverPendingHandoffs(scope, result.mission.id);
+      broadcastProjectStore(scope, "missions");
+    }
+    return result;
+  });
+
   const missionUpdateSchema = z.object({
     missionId: z.string().min(1).max(128),
     patch: missionPatchSchema,

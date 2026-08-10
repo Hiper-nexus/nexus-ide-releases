@@ -575,6 +575,17 @@ export interface NexusApi {
       missionId: string,
       sessionId: string,
     ): Promise<{ ok: boolean }>;
+    /** Human-owned free promotion of one live mission pane to current leader. */
+    promoteMissionOrchestrator(input: {
+      missionId: string;
+      paneId?: string;
+      sessionId?: string;
+    }): Promise<{
+      ok: boolean;
+      mission?: Mission;
+      warning?: string;
+      error?: string;
+    }>;
     /**
      * Retry the orchestrator bootstrap of a mission the bootstrap itself
      * blocked (blocked_technical + marker). Main re-arms and re-validates.

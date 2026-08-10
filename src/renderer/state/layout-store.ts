@@ -95,6 +95,7 @@ interface LayoutState {
   setBrowserUrl(paneId: string, url: string): void;
   /** Pin the account used by this pane (used by account failover + resume). */
   setAccountId(paneId: string, accountId: string | undefined): void;
+  promoteMissionPaneRole(missionId: string, paneId: string): void;
   /**
    * Convert a dead mission/agent pane into an operator shell in place.
    * Clears mission role/adapter binding so the host can spawn a login shell.
@@ -1138,6 +1139,17 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
 
   setAccountId: (paneId, accountId) => {
     const root = updatePane(get().root, paneId, { accountId });
+    set({ root });
+    persist();
+  },
+
+  promoteMissionPaneRole: (missionId, paneId) => {
+    let root = get().root;
+    for (const pane of listPanes(root)) {
+      if (pane.missionId !== missionId) continue;
+      const role = pane.id === paneId ? 'orchestrator' : 'worker';
+      root = updatePane(root, pane.id, { role });
+    }
     set({ root });
     persist();
   },

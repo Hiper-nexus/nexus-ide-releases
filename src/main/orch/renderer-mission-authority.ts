@@ -25,9 +25,14 @@ import { requireRendererWorkspaceScope } from "../persistence/renderer-workspace
 import { requireWorktreeRuntimeRegistry } from "../runtime/worktree-runtime-registry";
 import {
   getOwnedAgentSessionInfo,
+  updateOwnedAgentSessionRole,
   type OwnedAgentSessionInfo,
 } from "../pty/pty-manager";
-import { getContextBySession, restoreSessionAuthority } from "./gate";
+import {
+  getContextBySession,
+  promoteMissionSessionAuthority,
+  restoreSessionAuthority,
+} from "./gate";
 import { attachOrchMeta, findPaneOwnedBy } from "./pane-registry";
 import type {
   ProjectDomainStoreRegistry,
@@ -42,6 +47,11 @@ import {
   sameMissionPaneAuthoritySeal,
 } from "./mission-pane-authority";
 import type { OrchestrationEvidence } from "../../shared/adapter-types";
+import {
+  getAdapter,
+  isBuiltinAdapter,
+  orchestrationEvidenceForAdapter,
+} from "../adapters/adapter-registry";
 
 
 export interface RendererMissionAuthorityCandidate {
@@ -102,6 +112,18 @@ export interface RendererMissionRemovalCandidate {
   readonly missionId: string;
   readonly title: string;
   readonly fence: string;
+}
+
+export interface PromoteMissionOrchestratorInput {
+  readonly paneId?: string;
+  readonly sessionId?: string;
+}
+
+export interface PromoteMissionOrchestratorResult {
+  readonly ok: boolean;
+  readonly mission?: Mission;
+  readonly warning?: string;
+  readonly error?: string;
 }
 
 interface MissionApprovalFenceInput {
@@ -685,6 +707,93 @@ export class RendererMissionAuthority {
     return missionStore.rebindOrchestratorSession(missionId, sessionId);
   }
 
+  promoteOrchestratorFromRenderer(
+    owner: WebContents,
+    missionId: string,
+    input: PromoteMissionOrchestratorInput,
+  ): PromoteMissionOrchestratorResult {
+    const paneRef = input.paneId ?? input.sessionId;
+    if (!paneRef) return { ok: false, error: "invalid_payload" };
+    const rendererScope = requireRendererWorkspaceScope(owner);
+    const suite = this.#stores.forScope(rendererScope);
+    const mission = suite.missions.get(missionId);
+    if (
+      !mission ||
+      mission.id !== missionId ||
+      !hasCurrentDispatchAuthority(mission)
+    ) {
+      return { ok: false, error: "mission_unavailable" };
+    }
+
+    let owned: ReturnType<typeof ownedPaneSession>;
+    try {
+      owned = ownedPaneSession(owner, paneRef);
+    } catch {
+      return { ok: false, error: "pane_unavailable" };
+    }
+    if (
+      owned.info.missionId !== missionId ||
+      !sameScope(rendererScope, owned.info.scope)
+    ) {
+      return { ok: false, error: "pane_mission_mismatch" };
+    }
+    const spec = suite.missionPanes.promotePaneToOrchestrator(
+      missionId,
+      owned.paneId,
+    );
+    if (!spec) return { ok: false, error: "pane_mission_mismatch" };
+
+    const rebound = suite.missions.rebindOrchestratorSession(
+      missionId,
+      owned.sessionId,
+    );
+    if (!rebound) return { ok: false, error: "mission_unavailable" };
+
+    const previousSessionId = mission.orchestratorSessionId ?? null;
+    promoteMissionSessionAuthority({
+      missionId,
+      promotedSessionId: owned.sessionId,
+      previousSessionId,
+    });
+    updateOwnedAgentSessionRole(owned.sessionId, {
+      role: "orchestrator",
+      missionId,
+      allowedTools: null,
+      allowedSkills: null,
+      workerIncarnationId: null,
+    });
+    if (previousSessionId && previousSessionId !== owned.sessionId) {
+      updateOwnedAgentSessionRole(previousSessionId, {
+        role: "worker",
+        missionId,
+        allowedTools: [],
+        allowedSkills: null,
+        workerIncarnationId: null,
+      });
+    }
+
+    const contextRevision = this.#resolveContextRevision(
+      owned.info.scope,
+      missionId,
+    );
+    attachOrchMeta(owner, owned.paneId, {
+      missionId,
+      contextRevision,
+      agentName: spec.agentName ?? owned.info.agentName,
+      role: "orchestrator",
+      scope: owned.info.scope,
+      allowedTools: null,
+      allowedSkills: null,
+      ...(spec.readOnly === true ? { readOnly: true } : {}),
+    });
+
+    return {
+      ok: true,
+      mission: rebound,
+      warning: this.#promotionWarning(owned.info.adapterId),
+    };
+  }
+
   listMissionPanesForRenderer(
     owner: WebContents,
     missionId: string,
@@ -795,5 +904,17 @@ export class RendererMissionAuthority {
     } catch {
       return null;
     }
+  }
+
+  #promotionWarning(adapterId: string): string | undefined {
+    const adapter = getAdapter(adapterId);
+    const evidence = adapter
+      ? orchestrationEvidenceForAdapter(
+          adapter,
+          isBuiltinAdapter(adapter.id) ? "builtin" : "user",
+        )
+      : "unsupported";
+    if (evidence === "verified") return undefined;
+    return `Provider "${adapterId}" não é orquestrador verificado; promoção livre aplicada por ação explícita do operador.`;
   }
 }

@@ -8,6 +8,8 @@ export type PixelIconName =
   | 'files'
   | 'board'
   | 'orch'
+  | 'crown'
+  | 'crown-outline'
   | 'config'
   | 'mic'
   | 'vision'
@@ -136,6 +138,24 @@ const ICONS: Record<PixelIconName, Rect[]> = {
     [5, 8, 1, 2],
     [1, 5, 2, 1],
     [8, 5, 2, 1],
+  ],
+  crown: [
+    [2, 3, 1, 5],
+    [3, 4, 1, 4],
+    [4, 2, 1, 6],
+    [5, 4, 1, 4],
+    [6, 2, 1, 6],
+    [7, 4, 1, 4],
+    [8, 3, 1, 5],
+    [2, 8, 7, 1],
+  ],
+  'crown-outline': [
+    [2, 3, 1, 5],
+    [4, 2, 1, 3],
+    [6, 2, 1, 3],
+    [8, 3, 1, 5],
+    [3, 6, 5, 1],
+    [2, 8, 7, 1],
   ],
   // sliders (configuração)
   config: [

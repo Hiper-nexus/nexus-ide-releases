@@ -14,6 +14,7 @@ import {
   markHandoffSubmitted,
   MAX_STOP_ATTEMPTS,
   mintToken,
+  promoteMissionSessionAuthority,
   releaseSession,
   resetGateForTests,
   restoreSessionAuthority,
@@ -136,6 +137,70 @@ describe('token registry + stop gate', () => {
   it('never blocks orchestrators or user panes', () => {
     expect(evaluateStop(token('o', 'orchestrator')).allow).toBe(true);
     expect(evaluateStop(token('u', 'user')).allow).toBe(true);
+  });
+
+  it('promotes one mission session to orchestrator and demotes the previous leader', () => {
+    const scope = testProjectScope();
+    const oldLeader = mintToken({
+      label: 'old',
+      role: 'orchestrator',
+      missionId: 'mission-a',
+      scope,
+      allowedTools: null,
+    });
+    const newLeader = mintToken({
+      label: 'new',
+      role: 'worker',
+      missionId: 'mission-a',
+      workerIncarnationId: 'worker-incarnation-new',
+      scope,
+      allowedTools: ['nexus_handoff_submit'],
+    });
+    bindTokenToSession(oldLeader.token, 'pty-old');
+    bindTokenToSession(newLeader.token, 'pty-new');
+
+    expect(
+      promoteMissionSessionAuthority({
+        missionId: 'mission-a',
+        promotedSessionId: 'pty-new',
+        previousSessionId: 'pty-old',
+      }),
+    ).toBe(true);
+
+    expect(getContextBySession('pty-new')).toMatchObject({
+      role: 'orchestrator',
+      missionId: 'mission-a',
+      allowedTools: null,
+    });
+    expect(getContextBySession('pty-new')).not.toHaveProperty(
+      'workerIncarnationId',
+    );
+    expect(getContextBySession('pty-old')).toMatchObject({
+      role: 'worker',
+      missionId: 'mission-a',
+      allowedTools: [],
+    });
+    expect(isToolAllowedForRole('worker', getContextBySession('pty-old')!.allowedTools, 'nexus_handoff_submit')).toBe(true);
+  });
+
+  it('refuses to promote a session from another mission', () => {
+    const scope = testProjectScope();
+    const worker = mintToken({
+      label: 'other',
+      role: 'worker',
+      missionId: 'mission-b',
+      scope,
+      allowedTools: [],
+    });
+    bindTokenToSession(worker.token, 'pty-other');
+
+    expect(
+      promoteMissionSessionAuthority({
+        missionId: 'mission-a',
+        promotedSessionId: 'pty-other',
+      }),
+    ).toBe(false);
+    expect(getContextBySession('pty-other')?.role).toBe('worker');
   });
 
   it('reserves mission authority to its exact orchestrator', () => {
