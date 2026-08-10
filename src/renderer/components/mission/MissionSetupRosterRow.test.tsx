@@ -189,21 +189,43 @@ describe('MissionSetupRosterRow', () => {
     expect(values.length).toBeGreaterThan(3);
   });
 
-  it('modelo é campo livre com sugestões: digitar qualquer versão aplica no roster', () => {
+  it('modelo mostra o catálogo INTEIRO no select (datalist filtrava e parecia 2 modelos)', () => {
     const onChange = vi.fn<(next: SquadAgent) => void>();
     const host = renderRow(onChange);
-    const model = host.querySelector<HTMLInputElement>(
-      'input[aria-label^="Modelo para"]',
+    const model = host.querySelector<HTMLSelectElement>(
+      'select[aria-label^="Modelo para"]',
     );
     expect(model).not.toBeNull();
+    const values = [...model!.options].map((option) => option.value);
+    // Padrão + catálogo completo + digitação livre, sem filtro pelo valor atual.
+    expect(values[0]).toBe('');
+    expect(values).toEqual(
+      expect.arrayContaining([...provider.models, '__custom__']),
+    );
+  });
+
+  it('Digitar modelo… abre campo livre e qualquer versão aplica no roster', () => {
+    const onChange = vi.fn<(next: SquadAgent) => void>();
+    const host = renderRow(onChange);
+    const model = host.querySelector<HTMLSelectElement>(
+      'select[aria-label^="Modelo para"]',
+    )!;
+    act(() => {
+      model.value = '__custom__';
+      model.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    const input = host.querySelector<HTMLInputElement>(
+      'input[aria-label^="Modelo para"]',
+    );
+    expect(input).not.toBeNull();
     act(() => {
       const setter = Object.getOwnPropertyDescriptor(
         HTMLInputElement.prototype,
         'value',
       )!.set!;
-      setter.call(model!, 'modelo-novissimo-1.5');
-      model!.dispatchEvent(new Event('input', { bubbles: true }));
-      model!.dispatchEvent(new Event('change', { bubbles: true }));
+      setter.call(input!, 'modelo-novissimo-1.5');
+      input!.dispatchEvent(new Event('input', { bubbles: true }));
+      input!.dispatchEvent(new Event('change', { bubbles: true }));
     });
     expect(onChange).toHaveBeenLastCalledWith({
       ...agent,

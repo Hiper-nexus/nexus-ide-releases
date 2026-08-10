@@ -1316,11 +1316,13 @@ describe('MissionSetup', () => {
         ) as HTMLSelectElement
       ).value,
     ).toBe('claude');
+    // Modelo agora é SELECT com catálogo inteiro (datalist filtrava pelo
+    // texto preenchido e parecia catálogo de 2 modelos).
     expect(
       (
         host.querySelector(
-          'input[aria-label="Modelo para Coordenar e revisar"]',
-        ) as HTMLInputElement
+          'select[aria-label="Modelo para Coordenar e revisar"]',
+        ) as HTMLSelectElement
       ).value,
     ).toBe('sonnet');
   });

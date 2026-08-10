@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { AccountInfo } from '../../../shared/account-types';
 import {
   SQUAD_AGENT_INSTRUCTIONS_MAX_CHARS,
@@ -117,6 +118,8 @@ export function MissionSetupRosterRow({
   );
   const fieldSuffix = agent.id.replace(/[^a-z0-9_-]/giu, '-');
 
+  const [customModel, setCustomModel] = useState(false);
+
   const handleToolChange = (nextCliId: string): void => {
     const adapter = candidates.find((item) => item.id === nextCliId);
     if (!adapter) return;
@@ -184,27 +187,60 @@ export function MissionSetupRosterRow({
               </label>
               <label className="mission-roster-row__control mission-roster-row__control--model">
                 <span>Modelo</span>
-                <input
-                  type="text"
-                  aria-label={`Modelo para ${agent.agentName}`}
-                  list={`mission-models-${fieldSuffix}`}
-                  value={agent.model ?? ''}
-                  placeholder="padrão da ferramenta"
-                  spellCheck={false}
-                  onChange={(event) =>
-                    onChange({
-                      ...agent,
-                      ...(event.target.value.trim()
-                        ? { model: event.target.value }
-                        : { model: undefined }),
-                    })
-                  }
-                />
-                <datalist id={`mission-models-${fieldSuffix}`}>
-                  {readyModels.map((model) => (
-                    <option key={model} value={model} />
-                  ))}
-                </datalist>
+                {customModel ? (
+                  <input
+                    type="text"
+                    aria-label={`Modelo para ${agent.agentName}`}
+                    value={agent.model ?? ''}
+                    placeholder="digite o id do modelo"
+                    spellCheck={false}
+                    autoFocus
+                    onChange={(event) =>
+                      onChange({
+                        ...agent,
+                        ...(event.target.value.trim()
+                          ? { model: event.target.value }
+                          : { model: undefined }),
+                      })
+                    }
+                    onBlur={() => {
+                      if (readyModels.includes(agent.model ?? '')) {
+                        setCustomModel(false);
+                      }
+                    }}
+                  />
+                ) : (
+                  /* Datalist filtrava as sugestões pelo texto já preenchido e
+                     parecia catálogo de 2 modelos. Select mostra o catálogo
+                     INTEIRO sempre; a última opção abre digitação livre. */
+                  <select
+                    aria-label={`Modelo para ${agent.agentName}`}
+                    value={agent.model ?? ''}
+                    onChange={(event) => {
+                      if (event.target.value === '__custom__') {
+                        setCustomModel(true);
+                        return;
+                      }
+                      onChange({
+                        ...agent,
+                        ...(event.target.value
+                          ? { model: event.target.value }
+                          : { model: undefined }),
+                      });
+                    }}
+                  >
+                    <option value="">Padrão da ferramenta</option>
+                    {agent.model && !readyModels.includes(agent.model) && (
+                      <option value={agent.model}>{agent.model} (custom)</option>
+                    )}
+                    {readyModels.map((model) => (
+                      <option key={model} value={model}>
+                        {model}
+                      </option>
+                    ))}
+                    <option value="__custom__">✏️ Digitar modelo…</option>
+                  </select>
+                )}
               </label>
               <label className="mission-roster-row__control">
                 <span>Esforço</span>
