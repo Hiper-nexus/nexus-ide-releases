@@ -3148,15 +3148,45 @@ const productionMissionEngines = new MissionEngineRegistry((scope, stores) =>
         bootstrapFlightKey(scope, missionId),
         result,
       );
-      if (!result.ok) throw new Error(result.error);
-      if (!result.kickoff.accepted) {
-        throw new Error(
-          `mission-start-admission:kickoff-receipt-missing (${result.kickoff.reason})`,
-        );
+      // Auto-recovery is already scheduled for this mission. Throwing here
+      // makes MissionEngine.start fail closed and the renderer discard the
+      // exact prepared mission while recovery is still running.
+      if (result.ok) {
+        if (
+          !result.kickoff.accepted &&
+          !result.kickoff.retryScheduled
+        ) {
+          throw new Error(
+            `mission-start-admission:kickoff-receipt-missing (${result.kickoff.reason})`,
+          );
+        }
+        return;
       }
+      if (result.retryScheduled) return;
+      throw new Error(result.error);
     },
-    retryKickoff: async () => {
-      throw new Error('mission engine retry requires the blocked-start adapter');
+    retryKickoff: async (command) => {
+      const result = await resumeBlockedMissionBootstrapForScope(
+        scope,
+        command.missionId,
+      );
+      missionEngineBootstrapResults.set(
+        bootstrapFlightKey(scope, command.missionId),
+        result,
+      );
+      if (result.ok) {
+        if (
+          !result.kickoff.accepted &&
+          !result.kickoff.retryScheduled
+        ) {
+          throw new Error(
+            `mission-start-admission:kickoff-receipt-missing (${result.kickoff.reason})`,
+          );
+        }
+        return;
+      }
+      if (result.retryScheduled) return;
+      throw new Error(result.error);
     },
     resume: async (command) => {
       const mission = stores.missions.get(command.missionId);
