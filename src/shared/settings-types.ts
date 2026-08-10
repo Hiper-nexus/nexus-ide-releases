@@ -26,6 +26,7 @@ function isAbsolutePathOrEmpty(value: string): boolean {
  */
 
 export const TERMINAL_THEME_IDS = [
+  'nexus-pink-city',
   'nexus-dark',
   'nexus-light',
   'dracula',
@@ -35,7 +36,7 @@ export const TERMINAL_THEME_IDS = [
 export type TerminalThemeId = (typeof TERMINAL_THEME_IDS)[number];
 
 export const terminalSettingsSchema = z.object({
-  themeId: z.enum(TERMINAL_THEME_IDS).default('nexus-dark'),
+  themeId: z.enum(TERMINAL_THEME_IDS).default('nexus-pink-city'),
   /** Empty string = the app's default monospace stack. */
   fontFamily: z.string().max(256).default(''),
   fontSize: z.number().int().min(9).max(24).default(13),

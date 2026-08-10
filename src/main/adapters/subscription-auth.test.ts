@@ -313,6 +313,60 @@ describe('agyKeychainCredentialIsUsable', () => {
     expect(syncExec).not.toHaveBeenCalled();
   });
 
+  it('treats only the exact AGY Keychain item-not-found result as absence', async () => {
+    if (process.platform !== 'darwin') return;
+    const nativeHome = tempHome();
+    const itemNotFound = Object.assign(new Error('item not found'), {
+      code: 44,
+      killed: false,
+      signal: null,
+    });
+    const asyncExec = vi.fn(
+      (
+        _file: string,
+        _args: readonly string[],
+        _options: Record<string, unknown>,
+        callback: (error: Error | null, stdout: string) => void,
+      ) => {
+        queueMicrotask(() => callback(itemNotFound, ''));
+      },
+    ) as unknown as typeof import('node:child_process').execFile;
+
+    await expect(
+      agyKeychainCredentialIsUsableAsync(asyncExec, {
+        nativeHome,
+        bypassCache: true,
+      }),
+    ).resolves.toBe(false);
+  });
+
+  it('rejects an unavailable AGY Keychain probe instead of reporting logout', async () => {
+    if (process.platform !== 'darwin') return;
+    const nativeHome = tempHome();
+    const unavailable = Object.assign(new Error('probe timed out'), {
+      code: 'ETIMEDOUT',
+      killed: true,
+      signal: 'SIGKILL',
+    });
+    const asyncExec = vi.fn(
+      (
+        _file: string,
+        _args: readonly string[],
+        _options: Record<string, unknown>,
+        callback: (error: Error | null, stdout: string) => void,
+      ) => {
+        queueMicrotask(() => callback(unavailable, ''));
+      },
+    ) as unknown as typeof import('node:child_process').execFile;
+
+    await expect(
+      agyKeychainCredentialIsUsableAsync(asyncExec, {
+        nativeHome,
+        bypassCache: true,
+      }),
+    ).rejects.toThrow('AGY Keychain proof is unavailable');
+  });
+
   it('binds the lookup to native HOME when Electron HOME is isolated', () => {
     if (process.platform !== 'darwin') return;
     const nativeHome = tempHome();
@@ -508,6 +562,26 @@ describe('detectSubscriptionAuth', () => {
     ).resolves.toEqual({ value: false, cacheUpdated: false });
     await expect(
       refreshAgySubscriptionAuthCache(home, asyncKeychainProbe),
+    ).resolves.toEqual({ value: true, cacheUpdated: true });
+    expect(asyncKeychainProbe).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not cache an unavailable authoritative AGY probe as logout', async () => {
+    const home = tempHome();
+    const asyncKeychainProbe = vi
+      .fn<() => Promise<boolean>>()
+      .mockRejectedValueOnce(new Error('Keychain unavailable'))
+      .mockResolvedValueOnce(true);
+
+    await expect(
+      refreshAgySubscriptionAuthCache(home, asyncKeychainProbe, {
+        authoritative: true,
+      }),
+    ).rejects.toThrow('AGY Keychain proof is unavailable');
+    await expect(
+      refreshAgySubscriptionAuthCache(home, asyncKeychainProbe, {
+        authoritative: true,
+      }),
     ).resolves.toEqual({ value: true, cacheUpdated: true });
     expect(asyncKeychainProbe).toHaveBeenCalledTimes(2);
   });

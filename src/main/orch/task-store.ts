@@ -114,6 +114,7 @@ export interface ApprovedPreflightTaskPlanAuthority {
   readonly intentVersion: number;
   readonly approvedAt: number;
   readonly approvalReviewSha256?: string;
+  readonly dispatchedAt?: number;
 }
 
 export interface AtomicTaskPlanInput {
@@ -430,6 +431,7 @@ export class ScopedTaskStore {
         intentVersion: z.number().int().positive().max(1_000_000),
         approvedAt: z.number().int().positive(),
         approvalReviewSha256: hashSchema.optional(),
+        dispatchedAt: z.number().int().positive().optional(),
       })
       .strict()
       .optional()
@@ -483,7 +485,7 @@ export class ScopedTaskStore {
             parsedContract.approvedAt === approvedPreflight.approvedAt &&
             parsedContract.approvalReviewSha256 ===
               approvedPreflight.approvalReviewSha256 &&
-            parsedContract.dispatchedAt === undefined,
+            parsedContract.dispatchedAt === approvedPreflight.dispatchedAt,
         );
       }
       if (mission.status !== 'running' && !exactApprovedPreflight) {

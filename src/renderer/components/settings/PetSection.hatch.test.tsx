@@ -3,20 +3,16 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PetPrefs } from '../../../shared/pet-types';
+import type * as PetHatchFlowModule from '../../pet/pet-hatch-flow';
 import { PetSection } from './PetSection';
-import { useMissionWizardStore } from '../../state/mission-wizard-store';
-import { useSettingsStore } from '../../state/settings-store';
 
-const { launchPetHatchMission } = vi.hoisted(() => ({
-  launchPetHatchMission: vi.fn(async () => ({
-    ok: true,
-    paneId: 'pane-pet-hatch',
-  })),
+const { preparePetHatchMission } = vi.hoisted(() => ({
+  preparePetHatchMission: vi.fn(async () => ({ ok: true })),
 }));
 
 vi.mock('../../pet/pet-hatch-flow', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../../pet/pet-hatch-flow')>()),
-  launchPetHatchMission,
+  ...(await importOriginal<typeof PetHatchFlowModule>()),
+  preparePetHatchMission,
 }));
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
@@ -70,7 +66,7 @@ describe('PetSection — Criar pet com IA (hatch)', () => {
   let root: Root;
 
   beforeEach(() => {
-    launchPetHatchMission.mockClear();
+    preparePetHatchMission.mockClear();
     installedApply.mockClear();
     installPetApi();
     host = document.createElement('div');
@@ -84,16 +80,13 @@ describe('PetSection — Criar pet com IA (hatch)', () => {
     delete (window as { nexus?: unknown }).nexus;
   });
 
-  it('clicar inicia a missão diretamente e fecha o drawer', async () => {
-    useSettingsStore.setState({ drawerOpen: true });
-    useMissionWizardStore.setState({ open: false, agenticIntent: null });
-
+  it('prepares a visible Review without claiming an early start', async () => {
     await act(async () => {
       root.render(<PetSection />);
     });
 
-    const button = [...host.querySelectorAll('button')].find((b) =>
-      b.textContent?.includes('Criar pet com IA'),
+    const button = [...host.querySelectorAll('button')].find((candidate) =>
+      candidate.textContent?.includes('Criar pet com IA'),
     );
     expect(button).toBeTruthy();
 
@@ -101,9 +94,11 @@ describe('PetSection — Criar pet com IA (hatch)', () => {
       button!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    expect(launchPetHatchMission).toHaveBeenCalledWith(IMAGE_PATH);
-    expect(useMissionWizardStore.getState().open).toBe(false);
-    expect(useSettingsStore.getState().drawerOpen).toBe(false);
+    expect(preparePetHatchMission).toHaveBeenCalledWith(IMAGE_PATH);
+    expect(host.textContent).toMatch(/revisão.*pronta/i);
+    expect(host.textContent).not.toMatch(
+      /criação.*iniciada|missão já existe|iniciando a missão/i,
+    );
   });
 
   it('lista pets gerados separadamente e só troca o atual após clique', async () => {

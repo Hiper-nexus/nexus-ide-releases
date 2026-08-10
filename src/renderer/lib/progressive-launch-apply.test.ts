@@ -1,10 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const addShellPane = vi.fn();
-const hide = vi.fn();
-const openForAgentic = vi.fn();
-const toggleBoard = vi.fn();
-const openPanel = vi.fn();
 let paneCount = 1;
 
 vi.mock('./split-tree', () => ({
@@ -23,33 +19,12 @@ vi.mock('../state/layout-store', () => ({
   },
 }));
 
-vi.mock('../state/home-store', () => ({
-  useHomeStore: {
-    getState: () => ({ hide }),
-  },
-}));
-
-vi.mock('../state/mission-wizard-store', () => ({
-  useMissionWizardStore: {
-    getState: () => ({ openForAgentic }),
-  },
-}));
-
-vi.mock('../state/orch-store', () => ({
-  useOrchStore: {
-    getState: () => ({
-      boardOpen: false,
-      toggleBoard,
-      openPanel,
-    }),
-  },
-}));
-
 import {
   applyProgressiveLaunchIfPending,
   stashProgressiveLaunch,
   clearProgressiveLaunch,
 } from './progressive-launch';
+import { useProductNavigationStore } from '../state/product-navigation-store';
 
 const map = new Map<string, string>();
 
@@ -57,10 +32,10 @@ beforeEach(() => {
   map.clear();
   paneCount = 1;
   addShellPane.mockClear();
-  hide.mockClear();
-  openForAgentic.mockClear();
-  toggleBoard.mockClear();
-  openPanel.mockClear();
+  useProductNavigationStore.setState({
+    destination: { kind: 'launcher' },
+    settingsReturnDestination: null,
+  });
   vi.stubGlobal('sessionStorage', {
     getItem: (k: string) => map.get(k) ?? null,
     setItem: (k: string, v: string) => {
@@ -79,37 +54,71 @@ afterEach(() => {
 });
 
 describe('applyProgressiveLaunchIfPending', () => {
-  it('open-without-AI expands panes and never opens mission wizard', () => {
+  it('open-without-AI expands panes and opens the Terminal destination', () => {
     stashProgressiveLaunch({
       mode: 'terminal-only',
       paneCount: 4,
       agentDistribution: 'none',
       openWithoutAi: true,
     });
+
     expect(applyProgressiveLaunchIfPending()).toBe(true);
     expect(addShellPane).toHaveBeenCalled();
-    expect(openForAgentic).not.toHaveBeenCalled();
+    expect(useProductNavigationStore.getState().destination).toEqual({
+      kind: 'terminal',
+    });
   });
 
-  it('missions with AI opens wizard; with openWithoutAi does not', () => {
+  it('opens canonical Mission Setup for missions with AI', () => {
     stashProgressiveLaunch({
       mode: 'missions',
       paneCount: 1,
       agentDistribution: 'one-of-each',
       openWithoutAi: false,
     });
-    applyProgressiveLaunchIfPending();
-    expect(openForAgentic).toHaveBeenCalled();
 
-    openForAgentic.mockClear();
-    stashProgressiveLaunch({
-      mode: 'missions',
-      paneCount: 1,
-      agentDistribution: 'none',
-      openWithoutAi: true,
+    expect(applyProgressiveLaunchIfPending()).toBe(true);
+    expect(useProductNavigationStore.getState().destination).toEqual({
+      kind: 'mission-setup',
     });
-    applyProgressiveLaunchIfPending();
-    expect(openForAgentic).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'swarm',
+      {
+        mode: 'swarm' as const,
+        paneCount: 4 as const,
+        agentDistribution: 'split-evenly' as const,
+        openWithoutAi: false,
+      },
+      { kind: 'mission-setup' },
+    ],
+    [
+      'board',
+      {
+        mode: 'board' as const,
+        paneCount: 1 as const,
+        agentDistribution: 'none' as const,
+        openWithoutAi: false,
+      },
+      { kind: 'task-board' },
+    ],
+    [
+      'terminal-only',
+      {
+        mode: 'terminal-only' as const,
+        paneCount: 2 as const,
+        agentDistribution: 'none' as const,
+        openWithoutAi: true,
+      },
+      { kind: 'terminal' },
+    ],
+  ])('maps progressive mode %s to its product destination', (_label, plan, expected) => {
+    stashProgressiveLaunch(plan);
+
+    expect(applyProgressiveLaunchIfPending()).toBe(true);
+    expect(useProductNavigationStore.getState().destination).toEqual(expected);
   });
 
   it('no-op when nothing stashed', () => {

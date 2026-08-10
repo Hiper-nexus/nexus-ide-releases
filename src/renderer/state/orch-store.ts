@@ -7,7 +7,6 @@ import type {
   Squad,
   TodoList,
 } from '../../shared/orch-types';
-import { markVictory } from './onboarding-store';
 import { getActiveWorkspacePath } from './active-workspace';
 
 /**
@@ -16,8 +15,6 @@ import { getActiveWorkspacePath } from './active-workspace';
  * and rehydrated whenever the main-authorized workspace changes.
  */
 
-export type OrchPanelTab = 'missions' | 'handoffs' | 'todos' | 'squads';
-
 interface OrchState {
   missions: Mission[];
   missionSummaries: MissionSummarySnapshot[];
@@ -25,12 +22,6 @@ interface OrchState {
   todoLists: TodoList[];
   squads: Squad[];
   mcpInfo: McpRuntimeInfo | null;
-  panelOpen: boolean;
-  panelTab: OrchPanelTab;
-  /** Durable mission report selected for inspection; never runtime authority. */
-  selectedMissionId: string | null;
-  /** Ops Board — pipeline espacial de missões (overlay de workspace). */
-  boardOpen: boolean;
   /** paneId → missionId for panes spawned by the orchestration layer. */
   paneMissions: Record<string, string>;
   /**
@@ -43,14 +34,6 @@ interface OrchState {
 
   hydrate(workspacePath: string): Promise<void>;
   resetProjectState(): void;
-  togglePanel(): void;
-  openPanel(tab: OrchPanelTab): void;
-  openMissionDetail(missionId: string): void;
-  clearMissionDetail(): void;
-  setPanelTab(tab: OrchPanelTab): void;
-  toggleBoard(): void;
-  openBoard(): void;
-  closeBoard(): void;
   bindPaneMission(paneId: string, missionId: string | undefined): void;
   /** Remove bindings de panes que não existem mais no layout. */
   pruneMissionBindings(livePaneIds: Set<string>): void;
@@ -77,10 +60,6 @@ export const useOrchStore = create<OrchState>((set, get) => ({
   todoLists: [],
   squads: [],
   mcpInfo: null,
-  panelOpen: false,
-  panelTab: 'missions',
-  selectedMissionId: null,
-  boardOpen: false,
   paneMissions: {},
   boundWorkspacePath: null,
   workspaceEpoch: 0,
@@ -228,24 +207,9 @@ export const useOrchStore = create<OrchState>((set, get) => ({
       squads: [],
       paneMissions: {},
       boundWorkspacePath: null,
-      selectedMissionId: null,
       workspaceEpoch: s.workspaceEpoch + 1,
     })),
 
-  togglePanel: () => set((s) => ({ panelOpen: !s.panelOpen })),
-  openPanel: (tab) =>
-    set({ panelOpen: true, panelTab: tab, selectedMissionId: null }),
-  openMissionDetail: (missionId) =>
-    set({
-      panelOpen: true,
-      panelTab: 'missions',
-      selectedMissionId: missionId,
-    }),
-  clearMissionDetail: () => set({ selectedMissionId: null }),
-  setPanelTab: (tab) => set({ panelTab: tab }),
-  toggleBoard: () => set((s) => ({ boardOpen: !s.boardOpen })),
-  openBoard: () => set({ boardOpen: true }),
-  closeBoard: () => set({ boardOpen: false }),
 
   bindPaneMission: (paneId, missionId) =>
     set((s) => {
@@ -273,13 +237,11 @@ export const useOrchStore = create<OrchState>((set, get) => ({
   setMissions: (missions) => {
     const path = getActiveWorkspacePath();
     if (!acceptsWorkspacePayload(path)) return;
-    if (missions.length > 0) markVictory('firstMission');
     set({ missions });
   },
   setHandoffs: (handoffs) => {
     const path = getActiveWorkspacePath();
     if (!acceptsWorkspacePayload(path)) return;
-    if (handoffs.length > 0) markVictory('firstHandoff');
     set({ handoffs });
   },
   setTodoLists: (todoLists) => {

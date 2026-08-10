@@ -46,6 +46,9 @@ import {
   wizardCoverageSchema,
 } from "./real-mission-e2e-wire";
 
+const CANONICAL_MISSION_SETUP_SOURCE_ID =
+  /^custom-mission-setup-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+
 export const realMissionE2EEvidenceSchema = z
   .object({
     schemaVersion: z.literal(REAL_MISSION_E2E_EVIDENCE_SCHEMA_VERSION),
@@ -119,13 +122,12 @@ export const realMissionE2EEvidenceSchema = z
       context.addIssue({
         code: "custom",
         path: ["wizardReceipt"],
-        message: "private runner cannot carry a product-wizard receipt",
+        message: "private runner cannot carry a Mission Setup receipt",
       });
     }
-    // O receipt causal é obrigatório apenas no PASS. Um FAIL de product-wizard
-    // (wizard nunca executado, timeout, setup) fecha com wizardReceipt nulo —
-    // exigir a cadeia causal aqui derrubava o processo com ZodError em vez de
-    // persistir a evidência de falha.
+    // The causal receipt is required only for a physical Mission Setup PASS.
+    // Setup/timeout failures close with a null receipt so the failure evidence
+    // itself remains persistable.
     if (
       evidence.launchSurface === "product-wizard" &&
       evidence.status === "pass" &&
@@ -135,18 +137,19 @@ export const realMissionE2EEvidenceSchema = z
       context.addIssue({
         code: "custom",
         path: ["wizardReceipt"],
-        message: "product-wizard coverage requires a causal main-owned receipt",
+        message: "Mission Setup coverage requires a causal main-owned receipt",
       });
     }
     if (
       evidence.wizardReceipt !== null &&
       (evidence.wizardReceipt.workspaceSha256 !== evidence.workspaceSha256 ||
-        evidence.wizardReceipt.approvalReturnedAt > evidence.finishedAt)
+        evidence.wizardReceipt.preparedAt < evidence.startedAt ||
+        evidence.wizardReceipt.startedAt > evidence.finishedAt)
     ) {
       context.addIssue({
         code: "custom",
         path: ["wizardReceipt"],
-        message: "product-wizard receipt is outside the evidence boundary",
+        message: "Mission Setup receipt is outside the evidence boundary",
       });
     }
     // This packaged harness exercises the production Guided Planner, four
@@ -842,14 +845,14 @@ export const realMissionE2EEvidenceSchema = z
               evidence.mission?.squadSourceRevisionHash &&
             evidence.wizardReceipt.squadRevisionHash ===
               evidence.mission?.squadRevisionHash &&
-            evidence.wizardReceipt.nativeDialogOpenedAt === null &&
-            evidence.wizardReceipt.nativeDialogAcceptedAt === null &&
-            evidence.wizardReceipt.intentSubmittedAt <=
-              (evidence.mission?.approvedAt ?? -1) &&
+            evidence.wizardReceipt.reviewSha256 ===
+              evidence.mission?.reviewSha256 &&
             (evidence.mission?.approvedAt ?? -1) <=
-              evidence.wizardReceipt.approvalReturnedAt &&
+              evidence.wizardReceipt.preparedAt &&
+            evidence.wizardReceipt.preparedAt <=
+              (evidence.mission?.dispatchedAt ?? -1) &&
             (evidence.mission?.dispatchedAt ?? -1) <=
-              evidence.wizardReceipt.approvalReturnedAt),
+              evidence.wizardReceipt.startedAt),
       ],
       [
         "interaction",
@@ -874,18 +877,16 @@ export const realMissionE2EEvidenceSchema = z
         "missionIdentity",
         evidence.mission !== null &&
           evidence.plan?.squadId === evidence.mission.squadId &&
-          evidence.mission.squadSourceId === REAL_MISSION_E2E_SQUAD_ID &&
-          ((evidence.launchSurface === "private-runner" &&
-            ((evidence.mission.squadId === REAL_MISSION_E2E_SQUAD_ID &&
-              evidence.mission.squadSourceRevisionHash ===
-                evidence.mission.squadRevisionHash) ||
-              (isMissionRuntimeSquadId(evidence.mission.squadId) &&
-                evidence.mission.squadSourceRevisionHash !==
-                  evidence.mission.squadRevisionHash))) ||
-            (evidence.launchSurface === "product-wizard" &&
-              isMissionRuntimeSquadId(evidence.mission.squadId) &&
-              evidence.mission.squadSourceRevisionHash !==
-                evidence.mission.squadRevisionHash)) &&
+          evidence.mission.fixtureSquadId === REAL_MISSION_E2E_SQUAD_ID &&
+          isMissionRuntimeSquadId(evidence.mission.squadId) &&
+          evidence.mission.squadSourceId !== evidence.mission.squadId &&
+          evidence.mission.squadSourceRevisionHash !==
+            evidence.mission.squadRevisionHash &&
+          CANONICAL_MISSION_SETUP_SOURCE_ID.test(
+            evidence.mission.squadSourceId,
+          ) &&
+          evidence.mission.squadSourceRevisionHash !==
+            evidence.mission.fixtureSquadRevisionHash &&
           evidence.mission.approvedAt !== null &&
           evidence.mission.dispatchedAt !== null &&
           evidence.mission.approvedAt <= evidence.mission.dispatchedAt &&
@@ -1056,7 +1057,7 @@ export function parseReleaseEligibleRealMissionE2EEvidence(
     evidence.interaction.codexMcpPromptCount !== 0
   ) {
     throw new Error(
-      "real mission release evidence requires the physical product wizard, ZERO native approval dialogs and zero Codex MCP prompts",
+      "real mission release evidence requires physical Mission Setup, ZERO native approval dialogs and zero Codex MCP prompts",
     );
   }
   return evidence;

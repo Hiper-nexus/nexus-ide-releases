@@ -10,8 +10,8 @@ import { useToastStore } from '../state/toast-store';
  * runtime), um toast acionável devolve a missão pela MESMA rota do card
  * (confirmAndReopenMission → apresentação Main-owned, nada novo é spawnado).
  *
- * O toast cavalga sobre a proteção de janela-preta do layout-store: o Home
- * continua aparecendo quando nada resta na tela — o aviso fica por cima.
+ * O toast cavalga sobre a superfície atual: fechar o pane não altera o destino
+ * do produto, e Terminal exibe sua vaga estrutural por baixo do aviso.
  */
 
 /**

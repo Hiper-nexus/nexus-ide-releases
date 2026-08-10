@@ -1,0 +1,35 @@
+{
+  "name": "appdmg",
+  "version": "0.6.6",
+  "description": "Nexus security-maintained appdmg fork using the bounded macOS image parser",
+  "private": true,
+  "license": "MIT",
+  "author": "Linus Unnebäck <linus@folkdatorn.se>",
+  "repository": "LinusU/node-appdmg",
+  "main": "./index.js",
+  "files": [
+    "index.js",
+    "lib",
+    "schema.json",
+    "LICENSE",
+    "NOTICE.md"
+  ],
+  "dependencies": {
+    "async": "^1.4.2",
+    "ds-store": "^0.1.5",
+    "execa": "^1.0.0",
+    "fs-temp": "^1.0.0",
+    "fs-xattr": "^0.3.0",
+    "is-my-json-valid": "^2.20.0",
+    "minimist": "^1.1.3",
+    "parse-color": "^1.0.0",
+    "path-exists": "^4.0.0",
+    "repeat-string": "^1.5.4"
+  },
+  "engines": {
+    "node": ">=22.12.0 <23"
+  },
+  "os": [
+    "darwin"
+  ]
+}

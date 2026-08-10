@@ -353,7 +353,7 @@ export function loadDriveState(
 type DomainStores = ReturnType<typeof getProjectDomainStores>;
 type BlockingMissionEngine = Pick<
   MissionEngine,
-  'blockUser' | 'blockTechnical'
+  'blockUser' | 'blockTechnical' | 'completeVerified'
 >;
 type BlockingMissionEngineResolver = (
   scope: ProjectExecutionScope,
@@ -664,6 +664,35 @@ export function createProductionApplyPorts(
         expectedUpdatedAt: current.updatedAt,
         expectedIntentVersion: current.intentVersion ?? 0,
         description,
+      });
+      return;
+    },
+    completeMission: (missionId, scope, reason) => {
+      const stores = getStores(scope);
+      const current = stores.missions.get(missionId);
+      if (!current) {
+        throw new Error(
+          `completeMission failed for mission ${missionId}: not found`,
+        );
+      }
+      if (!current.intentState) {
+        throw new Error(
+          `completeMission failed for mission ${missionId}: intent state missing`,
+        );
+      }
+      resolveMissionEngine(scope).completeVerified(scope, {
+        missionId,
+        expectedStatus: current.status,
+        expectedIntentState: current.intentState,
+        expectedUpdatedAt: current.updatedAt,
+        expectedIntentVersion: current.intentVersion ?? 0,
+        learnings: current.learnings ?? '',
+        result: {
+          outcome: 'success',
+          summary: reason,
+          evidenceIds: [],
+          artifactRefs: [],
+        },
       });
       return;
     },

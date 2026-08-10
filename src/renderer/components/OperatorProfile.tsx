@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import {
   GAMIFICATION_COPY,
   type GamificationSnapshot,
@@ -55,15 +55,41 @@ export function OperatorProfile() {
   const [confirmPrestige, setConfirmPrestige] = useState(false);
   const [ioMessage, setIoMessage] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const dialogRef = useRef<HTMLElement>(null);
+  const restoreFocusRef = useRef<HTMLElement | null>(null);
+  const titleId = useId();
+  const descriptionId = useId();
 
   useEffect(() => {
-    if (!open) return undefined;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') close();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open, close]);
+    if (!open) {
+      const restoreTarget = restoreFocusRef.current;
+      restoreFocusRef.current = null;
+      if (restoreTarget?.isConnected) restoreTarget.focus();
+      return;
+    }
+
+    if (
+      restoreFocusRef.current === null &&
+      document.activeElement instanceof HTMLElement &&
+      !dialogRef.current?.contains(document.activeElement)
+    ) {
+      restoreFocusRef.current = document.activeElement;
+    }
+
+    const initialFocus = dialogRef.current?.querySelector<HTMLElement>(
+      'button:not([disabled]), input:not([disabled]):not([type="hidden"]), textarea:not([disabled]), select:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
+    );
+    initialFocus?.focus();
+  }, [open]);
+
+  useEffect(
+    () => () => {
+      const restoreTarget = restoreFocusRef.current;
+      restoreFocusRef.current = null;
+      if (restoreTarget?.isConnected) restoreTarget.focus();
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!open) {
@@ -121,11 +147,45 @@ export function OperatorProfile() {
   return (
     <div className="operator-profile__backdrop" onClick={close}>
       <section
+        ref={dialogRef}
         className="operator-profile"
         role="dialog"
         aria-modal="true"
-        aria-label="Perfil de Operador"
-        onClick={(e) => e.stopPropagation()}
+        aria-labelledby={titleId}
+        aria-describedby={descriptionId}
+        onClick={(event) => event.stopPropagation()}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            event.stopPropagation();
+            close();
+            return;
+          }
+          if (event.key !== 'Tab') return;
+
+          event.preventDefault();
+          event.stopPropagation();
+          const controls = Array.from(
+            event.currentTarget.querySelectorAll<HTMLElement>(
+              'button:not([disabled]), input:not([disabled]):not([type="hidden"]), textarea:not([disabled]), select:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
+            ),
+          ).filter(
+            (element) => element.getAttribute('aria-hidden') !== 'true',
+          );
+          if (controls.length === 0) {
+            event.currentTarget.focus();
+            return;
+          }
+          const currentIndex = controls.indexOf(
+            document.activeElement as HTMLElement,
+          );
+          const nextIndex = event.shiftKey
+            ? currentIndex <= 0
+              ? controls.length - 1
+              : currentIndex - 1
+            : (currentIndex + 1) % controls.length;
+          controls[nextIndex]?.focus();
+        }}
       >
         <header className="operator-profile__header">
           <ChosenPetPortrait
@@ -137,6 +197,9 @@ export function OperatorProfile() {
             className="operator-profile__pet"
           />
           <div className="operator-profile__identity">
+            <h2 id={titleId} className="operator-profile__title">
+              Perfil de Operador
+            </h2>
             <span className="operator-profile__branch">
               {GAMIFICATION_COPY.branches[snapshot.branch]}
               {stars && (
@@ -163,7 +226,7 @@ export function OperatorProfile() {
                 style={{ transform: `scaleX(${progress.ratio})` }}
               />
             </span>
-            <span className="operator-profile__next">
+            <span id={descriptionId} className="operator-profile__next">
               {progress.remaining === null
                 ? snapshot.prestigeReady
                   ? 'jornada no topo — pronta para transcender'

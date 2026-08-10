@@ -139,24 +139,23 @@ describe('tools-terminal', () => {
       const tools = buildTerminalTools();
       const run = tools.find((t) => t.name === 'nexus_terminal_run')!;
 
+      // Write $$ before parking so the kill window cannot race the pidfile.
+      // `exec sleep` keeps the same pid/process-group identity under Seatbelt.
       const result = await run.handler(
         {
-          command: `sleep 30 & child=$!; printf "$child" > ${JSON.stringify(pidFile)}; wait`,
-          // Seatbelt and shell startup can exceed 100 ms when the full suite
-          // saturates the machine. Keep the timeout short enough to exercise
-          // termination while allowing the child to publish its PID first.
-          timeoutMs: 1_000,
+          command: `printf '%s' "$$" > ${JSON.stringify(pidFile)}; exec sleep 60`,
+          timeoutMs: 1_500,
         },
         fakeCtx(),
       ) as { killed: boolean };
 
       expect(result.killed).toBe(true);
+      expect(fs.existsSync(pidFile)).toBe(true);
       const childPid = Number(fs.readFileSync(pidFile, 'utf8'));
       expect(Number.isSafeInteger(childPid)).toBe(true);
-      // FLAKE: SIGKILL no grupo é assíncrono — o kernel só reap o neto depois
-      // que o pai sai, e sob a suíte cheia essa janela passa de um tick. A
-      // assertiva imediata reprovava um kill correto. Espera limitada: o que o
-      // teste prova é que o neto MORRE, não que morre no mesmo instante.
+      expect(childPid).toBeGreaterThan(0);
+      // FLAKE: SIGKILL no grupo é assíncrono — o kernel só reap depois.
+      // Espera limitada: o que o teste prova é que o processo MORRE.
       const deadline = Date.now() + 5_000;
       let alive = true;
       while (alive && Date.now() < deadline) {

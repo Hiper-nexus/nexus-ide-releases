@@ -8,6 +8,13 @@ import {
 } from './mission-scheduler';
 import { productionAdaptiveCapSeed } from './mission-scheduler-production';
 
+/**
+ * A largada da escada é política de produto e pode mudar. O invariante do
+ * teste é a RELAÇÃO (largada, largada+1 após rampa), não o número literal —
+ * hard-codar 2 fazia subir o padrão reprovar uma escada correta.
+ */
+const START = DEFAULT_ADAPTIVE_CAP.currentCap;
+
 const HARDWARE_CEILING = 8; // this machine: 10 cores -> cores-2
 
 describe('resolveAdaptiveLadderPolicy — ceiling coherence (item 3)', () => {
@@ -19,7 +26,7 @@ describe('resolveAdaptiveLadderPolicy — ceiling coherence (item 3)', () => {
     });
 
     expect(policy.maxCap).toBe(8);
-    expect(policy.startCap).toBe(2);
+    expect(policy.startCap).toBe(START);
     expect(policy.rampAfterCleanWaves).toBe(2);
   });
 
@@ -71,7 +78,25 @@ describe('productionAdaptiveCapSeed — wiring (items 1 + 3)', () => {
 
     // 10 cores - 2 = 8, contract 12, panes 14 -> the host is the ceiling.
     expect(seed.maxCap).toBe(8);
-    expect(seed.currentCap).toBe(2);
+    expect(seed.currentCap).toBe(4);
+  });
+
+  it('larga agressiva em produção, a menos que o operador sobrescreva', () => {
+    // A biblioteca é conservadora de propósito (fail-safe); o PRODUTO tem
+    // opinião. Se esta assertiva cair para o default da biblioteca, um host
+    // de 8+ núcleos volta a rastejar em duas frentes sem ninguém perceber.
+    const seed = productionAdaptiveCapSeed(contract(12), {}, limits);
+    expect(seed.currentCap).toBe(4);
+    expect(seed.currentCap).toBeGreaterThan(DEFAULT_ADAPTIVE_CAP.currentCap);
+  });
+
+  it('respeita a largada escolhida pelo operador acima do padrão de produção', () => {
+    const seed = productionAdaptiveCapSeed(
+      contract(12),
+      { adaptiveWaveLadder: { startCap: 1, maxCap: null, rampAfterCleanWaves: null } },
+      limits,
+    );
+    expect(seed.currentCap).toBe(1);
   });
 
   it('never promises a wave wider than the approved contract', () => {
@@ -119,10 +144,10 @@ describe('decideAdaptiveCap — ramp honesty (item 2)', () => {
 
   it('ramps promptly while workers complete without failures', () => {
     let state = ladder();
-    expect(state.currentCap).toBe(2);
+    expect(state.currentCap).toBe(START);
     state = decideAdaptiveCap(state, { kind: 'wave', waveSize: 2, readyCount: 9 });
     state = decideAdaptiveCap(state, { kind: 'wave', waveSize: 2, readyCount: 7 });
-    expect(state.currentCap).toBe(3);
+    expect(state.currentCap).toBe(START + 1);
   });
 
   it('climbs all the way to the ceiling instead of stalling below it', () => {
@@ -149,11 +174,11 @@ describe('decideAdaptiveCap — ramp honesty (item 2)', () => {
     // Serial phase: 1 eligible unit, 1 admitted — nothing was refused.
     state = decideAdaptiveCap(state, { kind: 'wave', waveSize: 1, readyCount: 1 });
     expect(state.consecutiveCleanWaves).toBe(1);
-    expect(state.currentCap).toBe(2);
+    expect(state.currentCap).toBe(START);
 
     // Parallel work returns and the ladder ramps instead of restarting.
     state = decideAdaptiveCap(state, { kind: 'wave', waveSize: 2, readyCount: 5 });
-    expect(state.currentCap).toBe(3);
+    expect(state.currentCap).toBe(START + 1);
   });
 
   it('still resets when a narrow wave means work WAS refused', () => {
@@ -163,7 +188,7 @@ describe('decideAdaptiveCap — ramp honesty (item 2)', () => {
     state = decideAdaptiveCap(state, { kind: 'wave', waveSize: 2, readyCount: 5 });
     state = decideAdaptiveCap(state, { kind: 'wave', waveSize: 1, readyCount: 5 });
     expect(state.consecutiveCleanWaves).toBe(0);
-    expect(state.currentCap).toBe(2);
+    expect(state.currentCap).toBe(START);
   });
 
   it('shrinks immediately on conflict and violation, as before', () => {
@@ -195,15 +220,15 @@ describe('decideAdaptiveCap — ramp honesty (item 2)', () => {
         readyCount: 9,
       });
     }
-    expect(state.currentCap).toBe(2);
+    expect(state.currentCap).toBe(START);
     state = decideAdaptiveCap(state, { kind: 'wave', waveSize: 2, readyCount: 9 });
-    expect(state.currentCap).toBe(3);
+    expect(state.currentCap).toBe(START + 1);
   });
 
   it('stays backward compatible when the caller omits readyCount', () => {
     let state = ladder();
     state = decideAdaptiveCap(state, { kind: 'wave', waveSize: 2 });
     state = decideAdaptiveCap(state, { kind: 'wave', waveSize: 2 });
-    expect(state.currentCap).toBe(3);
+    expect(state.currentCap).toBe(START + 1);
   });
 });

@@ -55,6 +55,15 @@ export interface ApplyActionPorts {
     scope: ProjectExecutionScope,
     reason: string,
   ): void | Promise<void>;
+  /**
+   * Terminal de sucesso: sela a missão com o trabalho que já foi entregue.
+   * O motivo fica no resumo do resultado para o post-mortem ler.
+   */
+  completeMission(
+    missionId: string,
+    scope: ProjectExecutionScope,
+    reason: string,
+  ): void | Promise<void>;
   appendLearning(
     missionId: string,
     scope: ProjectExecutionScope,
@@ -96,6 +105,14 @@ export async function applyDriveAction(
     case 'advance':
       await ports.advanceStep(missionId, scope, action.stepId);
       return { applied: true, kind: 'advance' };
+    case 'complete':
+      await ports.completeMission(missionId, scope, action.reason);
+      await ports.appendLearning(
+        missionId,
+        scope,
+        `complete: ${action.reason}`,
+      );
+      return { applied: true, kind: 'complete' };
     case 'block-human':
       await ports.blockHuman(missionId, scope, action.reason);
       await ports.appendLearning(

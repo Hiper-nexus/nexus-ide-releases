@@ -1,13 +1,15 @@
 import type { JarvisAction, JarvisContext, JarvisReply } from '../../shared/voice-ipc';
+import type { SquadAgent } from '../../shared/orch-types';
 import { useLayoutStore } from '../state/layout-store';
 import { listPanes } from '../lib/split-tree';
 import { useWorkspaceStore } from '../state/workspace-store';
 import { useOrchStore } from '../state/orch-store';
-import { useMissionWizardStore } from '../state/mission-wizard-store';
-import { useHomeStore } from '../state/home-store';
-import { useGamificationStore } from '../state/gamification-store';
+import { useProductNavigationStore } from '../state/product-navigation-store';
+import {
+  useMissionSetupStore,
+  type MissionSetupStep,
+} from '../state/mission-setup-store';
 import { useVoiceStore } from './voice-store';
-import { useSettingsStore } from '../state/settings-store';
 import {
   submitPromptToPane,
   submitPromptToPaneConfirmed,
@@ -15,19 +17,9 @@ import {
   writeToPane,
 } from '../terminal/terminal-host';
 import { useSessionStateStore } from '../state/session-state-store';
-import {
-  assessTerminalVisibility,
-  readUiVisibilityState,
-} from './terminal-visibility';
 import { waitForBrowserPaneCreated } from '../browser/browser-host';
-import { launchSquadMission } from '../orch/mission-launcher';
-import {
-  missionGoalNeedsFutureEvidence,
-  MISSION_EVIDENCE_WAIT_MESSAGE,
-} from '../../shared/mission-evidence';
 import { isMissingModelKeyError } from '../lib/credential-errors';
 import { invokeMcpWithConfirm, mapActionToTool } from '../services/mcp-bridge';
-import { reopenMission } from '../orch/mission-reopen';
 import {
   isOrchestratorPane,
   resolveSendToPaneTarget,
@@ -99,6 +91,40 @@ async function confirmUiState<T>(
   return evidence.status === 'committed';
 }
 
+interface MissionSetupPrefill {
+  objective?: string;
+  roster?: readonly SquadAgent[];
+  step?: MissionSetupStep;
+}
+
+function openCanonicalMissionSetup(
+  prefill: MissionSetupPrefill = {},
+): boolean {
+  const workspace = useWorkspaceStore.getState().current;
+  if (!workspace) return false;
+  useMissionSetupStore.getState().clearEntryContext();
+
+  useMissionSetupStore.getState().setWorkspace(workspace.path);
+  let setup = useMissionSetupStore.getState();
+  if (prefill.objective !== undefined) {
+    setup.setObjective(prefill.objective);
+  }
+  if (prefill.roster !== undefined) {
+    useMissionSetupStore.getState().setRoster(prefill.roster);
+  }
+  setup = useMissionSetupStore.getState();
+  const step =
+    prefill.step ??
+    (setup.draft.objective.trim()
+      ? setup.draft.roster.length > 0
+        ? 'review'
+        : 'team'
+      : 'mission');
+  setup.setStep(step);
+  useProductNavigationStore.getState().openMissionSetup();
+  return true;
+}
+
 function findOrchestratorPane(
   root: ReturnType<typeof useLayoutStore.getState>['root'],
 ): string | null {
@@ -138,27 +164,28 @@ function repositorySyncNarration(result: {
 }
 
 /**
- * Soft-dismiss overlays that occlude panes so Jarvis-driven navigation is
- * visible. NEVER hard-discards user drafts (mission objective, voice form,
- * diff notes…) — those live in mission-wizard draft / ephemeral-draft-store.
- * See ui-overlay-policy.ts.
+ * Voice-owned soft UI may close before pane navigation. Product navigation,
+ * not legacy drawers or home/wizard booleans, makes the terminal surface
+ * visible. Hard confirmations remain untouched.
  */
 function dismissBlockingOverlays(): void {
-  useGamificationStore.getState().closeProfile();
-  useHomeStore.getState().hide();
-  // Soft close — keeps mission-wizard draft for re-open.
-  useMissionWizardStore.getState().close();
-  useOrchStore.getState().closeBoard();
-  // Soft close — voice-settings form is pocketed in ephemeral-draft-store.
   useVoiceStore.getState().closeSettings();
-  const settings = useSettingsStore.getState();
-  if (settings.drawerOpen) settings.closeDrawer();
 }
 
-/** Garante que o pane recém-aberto fique visível (grade + foco). */
+/** Garante que o pane fique visível sem descartar seu contexto de missão. */
 function revealPaneForUser(paneId: string): void {
   dismissBlockingOverlays();
   const layout = useLayoutStore.getState();
+  const pane = listPanes(layout.root).find(
+    (candidate) => candidate.id === paneId,
+  );
+  const navigation = useProductNavigationStore.getState();
+  if (pane?.missionId) {
+    navigation.openMission(pane.missionId);
+    useProductNavigationStore.getState().showMissionTerminals();
+  } else {
+    navigation.openTerminal();
+  }
   if (layout.viewKind !== 'grid') layout.toggleView();
   layout.focus(paneId);
 }
@@ -274,16 +301,18 @@ async function navigateBrowserPane(
 ): Promise<{ ok: boolean; summary: string }> {
   const pane = focusedOrFirstBrowserPane();
   if (!pane) return { ok: false, summary: 'nenhum browser aberto' };
+  revealPaneForUser(pane.id);
+  markEffect(control);
   try {
     checkpoint(control);
     await window.nexus.browser[nav](pane.id);
     markEffect(control);
     checkpoint(control);
     return { ok: true, summary: `browser ${nav} em ${pane.title}` };
-  } catch (err) {
+  } catch {
     return {
       ok: false,
-      summary: err instanceof Error ? err.message : String(err),
+      summary: 'navegação do browser indisponível',
     };
   }
 }
@@ -325,7 +354,7 @@ async function executeViaMcp(
 
 /**
  * Executa a ação decidida pelo cérebro — MCP primeiro (guardrails + audit),
- * fallback UI para squads, workspaces e wizards.
+ * com fallback de UI para o setup canônico, workspaces e panes.
  */
 export async function executeJarvisAction(
   reply: JarvisReply,
@@ -377,13 +406,12 @@ export async function executeJarvisAction(
         summary: `visão atual lida localmente (AX ${vision.ax.status}; OCR ${vision.ocr.status})`,
         output: currentViewToolOutput(vision),
       };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+    } catch {
       sayText = 'Não consegui ler esta tela agora.';
       toolResult = {
         tool: action.type,
         ok: false,
-        summary: `leitura visual indisponível: ${message}`,
+        summary: 'leitura visual indisponível',
       };
     }
   } else if (action.type === 'read_pane') {
@@ -466,100 +494,105 @@ export async function executeJarvisAction(
       expectReply = true;
       toolResult = { tool: action.type, ok: false, summary: 'nenhum squad salvo' };
     } else {
-      useMissionWizardStore.getState().openSquadPicker();
-      markEffect(control);
+      const opened = openCanonicalMissionSetup({ step: 'team' });
+      if (opened) markEffect(control);
       const confirmed = await confirmUiState(
-        () => useMissionWizardStore.getState(),
-        (wizard) => wizard.open && wizard.visibleStep === 'squad-select',
+        () => useProductNavigationStore.getState().destination,
+        (destination) => destination.kind === 'mission-setup',
         control,
       );
       sayText = confirmed
         ? 'Abrindo seus squads salvos. Qual você quer usar?'
-        : 'Tentei abrir a lista de squads, mas ainda não confirmei a tela.';
+        : 'Tentei abrir a seleção de equipe, mas ainda não confirmei a tela.';
       toolResult = {
         tool: action.type,
         ok: confirmed,
         summary: confirmed
-          ? 'seletor de squads salvos aberto e confirmado'
-          : 'seletor de squads sem pós-condição confirmada',
+          ? 'seleção de equipe aberta no setup canônico'
+          : 'setup de missão sem pós-condição confirmada',
       };
     }
   } else if (action.type === 'open_squad') {
     const squads = useOrchStore.getState().squads;
     const resolution = resolveSquadByVoiceName(action.squadName, squads);
-    const match = resolution.kind === 'match' ? resolution.squad : null;
-    console.log(
-      `[voice] ação open_squad "${action.squadName}" → ${match ? `match: ${match.name}` : resolution.kind.toUpperCase()}`,
-    );
     if (resolution.kind === 'ambiguous') {
       const choices = resolution.candidates
         .slice(0, 4)
         .map((squad) => squad.name)
         .join(', ');
-      sayText = `Encontrei mais de um squad parecido: ${choices}. Qual deles você quer iniciar?`;
+      sayText = `Encontrei mais de um squad parecido: ${choices}. Qual deles você quer usar?`;
       expectReply = true;
       toolResult = { tool: action.type, ok: false, summary: 'squad ambíguo' };
-    } else if (match && !useWorkspaceStore.getState().current) {
-      sayText =
-        'Antes eu preciso de um projeto aberto. Quer que eu abra um dos recentes? Diga o nome.';
-      expectReply = true;
-      toolResult = { tool: action.type, ok: false, summary: 'sem workspace aberto' };
-    } else if (match) {
-      const adapters = await window.nexus.adapters.list();
-      checkpoint(control);
-      const res = await launchSquadMission(match, adapters);
-      if (res.ok && res.armed && res.missionId) {
-        markEffect(control);
-        // Intent-first: shell only — open goal composer, no agent pane.
-        useMissionWizardStore
-          .getState()
-          .openForArmedMission(match.id, res.missionId);
+    } else if (resolution.kind === 'match') {
+      const squad = resolution.squad;
+      const opened = openCanonicalMissionSetup({
+        roster: squad.agents,
+        step: 'mission',
+      });
+      if (!opened) {
         sayText =
-          `Squad ${match.name} pronto. Aguardando seu objetivo — nenhum especialista iniciado, zero tokens usados.`;
-      } else if (res.ok) {
+          'Antes eu preciso de um projeto aberto. Quer que eu abra um dos recentes? Diga o nome.';
+        expectReply = true;
+        toolResult = { tool: action.type, ok: false, summary: 'sem workspace aberto' };
+      } else {
         markEffect(control);
-        useMissionWizardStore.getState().close({ discard: true });
-        sayText = `Squad ${match.name} iniciado.`;
+        sayText = `Squad ${squad.name} selecionado. Qual é o objetivo da missão?`;
+        expectReply = true;
+        toolResult = {
+          tool: action.type,
+          ok: true,
+          summary: `squad ${squad.name} copiado para o setup da missão`,
+        };
       }
-      checkpoint(control);
-      console.log(
-        `[voice] launch squad "${match.name}" → ${
-          res.ok ? (res.armed ? 'ARMADO' : 'NO AR') : `falhou: ${res.error}`
-        }`,
-      );
-      if (!res.ok) sayText = res.error ?? 'Não consegui subir o squad.';
-      toolResult = {
-        tool: action.type,
-        ok: res.ok,
-        summary: res.ok
-          ? res.armed
-            ? `squad ${match.name} armado (awaiting_goal)`
-            : `squad ${match.name} iniciado`
-          : (res.error ?? 'falhou'),
-      };
     } else {
       sayText = `Não achei o squad "${action.squadName}". Os disponíveis são: ${context.squads.join(', ')}.`;
       toolResult = { tool: action.type, ok: false, summary: 'squad não encontrado' };
     }
   } else if (action.type === 'open_workspace') {
     const wanted = action.workspaceName.toLowerCase().trim();
-    // STT/Live often says "abrir workspace" / "iniciar no workspace" without a
-    // project name — treat as new_workspace wizard, not a failed open.
+    const workspaceStore = useWorkspaceStore.getState();
     if (
       !wanted ||
       /^(novo|nova|new|workspace-new|new-workspace|novo-workspace)$/i.test(wanted)
     ) {
-      useMissionWizardStore.getState().openForNewWorkspace();
-      sayText = sayText.trim() || 'Abrindo o assistente de novo workspace.';
-      toolResult = { tool: 'new_workspace', ok: true, summary: 'wizard de workspace aberto' };
+      try {
+        await workspaceStore.pick();
+        markEffect(control);
+        checkpoint(control);
+        const current = useWorkspaceStore.getState().current;
+        if (current) {
+          useProductNavigationStore.getState().openTerminal();
+          sayText = `Projeto ${current.name} aberto.`;
+          toolResult = {
+            tool: 'new_workspace',
+            ok: true,
+            summary: 'workspace escolhido e terminal aberto',
+          };
+        } else {
+          sayText = 'A escolha de projeto foi cancelada.';
+          toolResult = {
+            tool: 'new_workspace',
+            ok: false,
+            summary: 'seleção de workspace cancelada',
+          };
+        }
+      } catch {
+        sayText = 'Não consegui abrir o seletor de projetos.';
+        toolResult = {
+          tool: 'new_workspace',
+          ok: false,
+          summary: 'falha ao escolher workspace',
+        };
+      }
     } else {
-      const ws = useWorkspaceStore.getState();
-      const all = [...ws.recents];
-      const resolution = resolveWorkspaceByVoiceName(action.workspaceName, all);
+      const resolution = resolveWorkspaceByVoiceName(
+        action.workspaceName,
+        workspaceStore.recents,
+      );
       if (resolution.kind === 'match') {
         const match = resolution.workspace;
         try {
-          await ws.open(match.path);
+          await workspaceStore.open(match.path);
           markEffect(control);
           const evidence = await waitForActionEvidence({
             read: () => useWorkspaceStore.getState().current?.path ?? null,
@@ -569,6 +602,7 @@ export async function executeJarvisAction(
           });
           checkpoint(control);
           if (evidence.status === 'committed') {
+            useProductNavigationStore.getState().openTerminal();
             sayText = `Projeto ${match.name} aberto.`;
             toolResult = {
               tool: action.type,
@@ -584,13 +618,19 @@ export async function executeJarvisAction(
               summary: `workspace ${match.name} sem pós-condição confirmada`,
             };
           }
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
+        } catch {
           sayText = `Não consegui abrir ${match.name}.`;
-          toolResult = { tool: action.type, ok: false, summary: message };
+          toolResult = {
+            tool: action.type,
+            ok: false,
+            summary: 'falha ao abrir workspace',
+          };
         }
       } else if (resolution.kind === 'ambiguous') {
-        const names = resolution.candidates.slice(0, 4).map((item) => item.name).join(', ');
+        const names = resolution.candidates
+          .slice(0, 4)
+          .map((item) => item.name)
+          .join(', ');
         sayText = `Encontrei mais de um workspace compatível: ${names}. Qual deles você quer abrir?`;
         expectReply = true;
         toolResult = { tool: action.type, ok: false, summary: 'workspace ambíguo' };
@@ -601,142 +641,141 @@ export async function executeJarvisAction(
       }
     }
   } else if (action.type === 'design_squad') {
-    const ws = useWorkspaceStore.getState().current;
-    if (!ws) {
+    const workspace = useWorkspaceStore.getState().current;
+    if (!workspace) {
       sayText = 'Abre um projeto primeiro que eu monto o squad dele.';
       toolResult = { tool: action.type, ok: false, summary: 'sem workspace aberto' };
     } else {
-      // Await design so Live gets a real tool result + confirmation prompt
-      // (peer ADE: open review → ask "Disparo?" before wizard-fire).
       try {
-        const res = await window.nexus.orch.designSquad(ws.path);
-        if (res.ok) markEffect(control);
+        const result = await window.nexus.orch.designSquad(workspace.path);
         checkpoint(control);
-        if (res.ok && res.squad) {
-          useMissionWizardStore.getState().openForSquad(res.squad.id);
-          sayText = `Squad ${res.squad.name} pronto na revisão. Quer usar esta equipe na missão?`;
+        if (result.ok && result.squad) {
+          openCanonicalMissionSetup({
+            roster: result.squad.agents,
+            step: 'mission',
+          });
+          markEffect(control);
+          sayText = `Squad ${result.squad.name} pronto na revisão. Qual é o objetivo da missão?`;
           expectReply = true;
           toolResult = {
             tool: action.type,
             ok: true,
-            summary: `squad ${res.squad.name} em revisão — aguardando escolha`,
+            summary: `squad ${result.squad.name} copiado para o setup da missão`,
           };
         } else {
-          if (isMissingModelKeyError(res.error)) useVoiceStore.getState().openSettings();
-          sayText = `Não consegui montar o squad: ${res.error ?? 'erro'}.`;
+          if (isMissingModelKeyError(result.error)) {
+            useProductNavigationStore
+              .getState()
+              .openSettings('providers');
+          }
+          sayText = 'Não consegui montar o squad.';
           toolResult = {
             tool: action.type,
             ok: false,
-            summary: res.error ?? 'design falhou',
+            summary: 'design de squad falhou',
           };
         }
-      } catch (err) {
-        sayText = `Não consegui montar o squad: ${err instanceof Error ? err.message : String(err)}.`;
-        toolResult = { tool: action.type, ok: false, summary: 'design falhou' };
+      } catch {
+        sayText = 'Não consegui montar o squad.';
+        toolResult = {
+          tool: action.type,
+          ok: false,
+          summary: 'design de squad falhou',
+        };
       }
     }
   } else if (action.type === 'confirm_squad') {
-    const wizard = useMissionWizardStore.getState();
-    const canConfirm =
-      wizard.visibleStep === 'squad-review' ||
-      wizard.visibleStep === 'intent-plan';
-    if (wizard.open && wizard.visibleStep === 'intent-compose') {
+    const entrySetup = useMissionSetupStore.getState();
+    if (entrySetup.entryContext) entrySetup.clearEntryContext();
+    const setup = useMissionSetupStore.getState();
+    if (!setup.workspacePath || setup.draft.roster.length === 0) {
       sayText =
-        'O squad está pronto, mas ainda preciso do objetivo antes de iniciar qualquer especialista.';
+        'Não tem uma equipe na revisão agora. Diga "iniciar squad" para escolher uma.';
       expectReply = true;
       toolResult = {
         tool: action.type,
         ok: false,
-        summary: 'missão armada ainda aguardando objetivo',
+        summary: 'setup sem equipe selecionada',
       };
-    } else if (!wizard.open || !wizard.presetSquadId || !canConfirm) {
-      sayText =
-        'Não tem um squad na revisão agora. Diga "iniciar squad" pra eu montar um primeiro.';
-      expectReply = true;
-      toolResult = { tool: action.type, ok: false, summary: 'wizard de squad fechado' };
     } else {
-      wizard.requestVoiceLaunch();
-      sayText =
-        wizard.visibleStep === 'intent-plan'
-          ? 'Abrindo a aprovação final da missão.'
-          : 'Squad selecionado. Agora falta revisar o objetivo.';
+      setup.setStep(setup.draft.objective.trim() ? 'review' : 'mission');
+      useProductNavigationStore.getState().openMissionSetup();
+      markEffect(control);
+      sayText = setup.draft.objective.trim()
+        ? 'Abrindo a aprovação final da missão.'
+        : 'Equipe selecionada. Agora falta revisar o objetivo.';
       expectReply = false;
       toolResult = {
         tool: action.type,
         ok: true,
-        summary:
-          wizard.visibleStep === 'intent-plan'
-            ? 'aprovação final da missão solicitada'
-            : 'squad selecionado para a missão',
+        summary: setup.draft.objective.trim()
+          ? 'revisão canônica da missão aberta'
+          : 'equipe confirmada no setup canônico',
       };
     }
   } else if (action.type === 'new_agentic_mission') {
-    const wizard = useMissionWizardStore.getState();
-    const voiceGoal = action.intent?.trim();
-    // Intent-first: if a squad is already armed, submit the goal via the same
-    // main-process intent path (prompt queue + intentVersion preemption).
-    if (wizard.armedMissionId && voiceGoal) {
-      try {
-        checkpoint(control);
-        const planned = await window.nexus.orch.submitMissionIntent({
-          missionId: wizard.armedMissionId,
-          goal: voiceGoal,
-          source: 'voice',
-        });
-        markEffect(control);
-        // Voice IPC currently carries no attachment/evidence signal.
-        const waitingForEvidence =
-          planned.intentState === 'awaiting_goal' &&
-          missionGoalNeedsFutureEvidence(voiceGoal, false);
-        sayText =
-          waitingForEvidence
-            ? MISSION_EVIDENCE_WAIT_MESSAGE
-            : sayText.trim() ||
-              `Objetivo registrado para a missão armada: ${voiceGoal.slice(0, 80)}.`;
-        toolResult = {
-          tool: action.type,
-          ok: true,
-          summary: waitingForEvidence
-            ? 'objetivo aguardando evidências antes do dispatch'
-            : 'objetivo de voz enviado à missão armada (intent queue)',
-          output: {
-            missionId: planned.id,
-            intentState: planned.intentState,
-            intentVersion: planned.intentVersion,
-          },
-        };
-      } catch (cause) {
-        const message =
-          cause instanceof Error ? cause.message : 'falha ao registrar objetivo';
-        sayText = `Não consegui registrar o objetivo: ${message}`;
-        toolResult = {
-          tool: action.type,
-          ok: false,
-          summary: message,
-        };
-      }
+    const opened = openCanonicalMissionSetup({
+      ...(action.intent?.trim()
+        ? { objective: action.intent.trim(), step: 'team' as const }
+        : { step: 'mission' as const }),
+    });
+    if (!opened) {
+      sayText = 'Abre um projeto primeiro; aí eu preparo a missão.';
+      toolResult = { tool: action.type, ok: false, summary: 'sem workspace aberto' };
     } else {
-      useMissionWizardStore.getState().openForAgentic(action.intent, 'voice');
+      markEffect(control);
       sayText =
         sayText.trim() ||
         (action.intent
-          ? 'Abrindo a missão no modo agêntico com o objetivo preenchido.'
-          : 'Abrindo a missão no modo agêntico.');
+          ? 'Abrindo o setup da missão com o objetivo preenchido.'
+          : 'Abrindo o setup da missão.');
       toolResult = {
         tool: action.type,
         ok: true,
         summary: action.intent
-          ? 'wizard de missão aberto no modo agêntico com objetivo'
-          : 'wizard de missão aberto no modo agêntico',
+          ? 'setup de missão aberto com objetivo'
+          : 'setup de missão aberto',
         ...(action.intent ? { output: { intent: action.intent } } : {}),
       };
     }
   } else if (action.type === 'new_mission') {
-    useMissionWizardStore.getState().openForMission();
-    toolResult = { tool: action.type, ok: true, summary: 'wizard de missão aberto' };
+    const opened = openCanonicalMissionSetup({ step: 'mission' });
+    if (opened) markEffect(control);
+    toolResult = {
+      tool: action.type,
+      ok: opened,
+      summary: opened ? 'setup de missão aberto' : 'sem workspace aberto',
+    };
   } else if (action.type === 'new_workspace') {
-    useMissionWizardStore.getState().openForNewWorkspace();
-    toolResult = { tool: action.type, ok: true, summary: 'wizard de workspace aberto' };
+    try {
+      await useWorkspaceStore.getState().pick();
+      markEffect(control);
+      checkpoint(control);
+      const workspace = useWorkspaceStore.getState().current;
+      if (workspace) {
+        useProductNavigationStore.getState().openTerminal();
+        sayText = `Projeto ${workspace.name} aberto.`;
+        toolResult = {
+          tool: action.type,
+          ok: true,
+          summary: 'workspace escolhido e terminal aberto',
+        };
+      } else {
+        sayText = 'A escolha de projeto foi cancelada.';
+        toolResult = {
+          tool: action.type,
+          ok: false,
+          summary: 'seleção de workspace cancelada',
+        };
+      }
+    } catch {
+      sayText = 'Não consegui abrir o seletor de projetos.';
+      toolResult = {
+        tool: action.type,
+        ok: false,
+        summary: 'falha ao escolher workspace',
+      };
+    }
   } else if (action.type === 'open_terminal') {
     const workspace = useWorkspaceStore.getState().current;
     if (!workspace) {
@@ -745,33 +784,30 @@ export async function executeJarvisAction(
     } else {
       const layout = useLayoutStore.getState();
       const panes = listPanes(layout.root);
-      const homeVisible = useHomeStore.getState().visible;
-      const loneShell =
-        panes.length === 1 && panes[0].kind === 'shell' && !panes[0].orchRequestId;
-      const paneId =
-        loneShell && homeVisible ? panes[0].id : layout.addShellPane();
-      if (loneShell && homeVisible) {
-        layout.claimStructuralPlaceholder(paneId);
-      }
+      const reusableShell =
+        panes.length === 1 &&
+        panes[0].kind === 'shell' &&
+        !panes[0].orchRequestId;
+      const paneId = reusableShell ? panes[0].id : layout.addShellPane();
+      if (reusableShell) layout.claimStructuralPlaceholder(paneId);
       revealPaneForUser(paneId);
       markEffect(control);
       const sessionId = await waitForSession(paneId, 5_000);
       checkpoint(control);
-      const visibility = assessTerminalVisibility(
-        paneId,
-        readUiVisibilityState(),
-        Boolean(sessionId),
-      );
-      if (visibility.visible) {
+      if (sessionId) {
         sayText = 'Terminal aberto.';
-        toolResult = { tool: action.type, ok: true, summary: 'terminal aberto e visível' };
-      } else if (sessionId) {
-        const blocked = visibility.reasons.join(', ');
-        sayText = `Criei o terminal, mas ainda não está visível (${blocked}).`;
-        toolResult = { tool: action.type, ok: false, summary: `terminal oculto: ${blocked}` };
+        toolResult = {
+          tool: action.type,
+          ok: true,
+          summary: 'terminal aberto e visível',
+        };
       } else {
         sayText = 'Abri o painel, mas o terminal ainda não iniciou.';
-        toolResult = { tool: action.type, ok: false, summary: 'terminal sem sessão' };
+        toolResult = {
+          tool: action.type,
+          ok: false,
+          summary: 'terminal sem sessão',
+        };
       }
     }
   } else if (action.type === 'close_pane') {
@@ -790,32 +826,38 @@ export async function executeJarvisAction(
       toolResult = { tool: action.type, ok: false, summary: 'sem pane focado' };
     }
   } else if (action.type === 'open_board') {
-    const orch = useOrchStore.getState();
-    if (!orch.boardOpen) orch.toggleBoard();
+    useProductNavigationStore.getState().openTaskBoard();
     const confirmed = await confirmUiState(
-      () => useOrchStore.getState().boardOpen,
-      Boolean,
+      () => useProductNavigationStore.getState().destination,
+      (destination) => destination.kind === 'task-board',
       control,
     );
-    sayText = confirmed ? 'Quadro aberto.' : 'Tentei abrir o quadro, mas não confirmei a tela.';
+    sayText = confirmed
+      ? 'Quadro aberto.'
+      : 'Tentei abrir o quadro, mas não confirmei a tela.';
     toolResult = {
       tool: action.type,
       ok: confirmed,
-      summary: confirmed ? 'quadro aberto e confirmado' : 'quadro sem pós-condição',
+      summary: confirmed
+        ? 'quadro de tarefas aberto e confirmado'
+        : 'quadro sem pós-condição',
     };
   } else if (action.type === 'open_settings') {
-    const settings = useSettingsStore.getState();
-    if (!settings.drawerOpen) settings.toggleDrawer();
+    useProductNavigationStore.getState().openSettings();
     const confirmed = await confirmUiState(
-      () => useSettingsStore.getState().drawerOpen,
-      Boolean,
+      () => useProductNavigationStore.getState().destination,
+      (destination) => destination.kind === 'settings',
       control,
     );
-    sayText = confirmed ? 'Configurações abertas.' : 'Tentei abrir as configurações, mas não confirmei a tela.';
+    sayText = confirmed
+      ? 'Configurações abertas.'
+      : 'Tentei abrir as configurações, mas não confirmei a tela.';
     toolResult = {
       tool: action.type,
       ok: confirmed,
-      summary: confirmed ? 'configurações abertas e confirmadas' : 'configurações sem pós-condição',
+      summary: confirmed
+        ? 'configurações abertas e confirmadas'
+        : 'configurações sem pós-condição',
     };
   } else if (action.type === 'open_voice_settings') {
     useVoiceStore.getState().openSettings();
@@ -824,55 +866,75 @@ export async function executeJarvisAction(
       Boolean,
       control,
     );
-    sayText = confirmed ? 'Configurações de voz abertas.' : 'Tentei abrir os ajustes de voz, mas não confirmei a tela.';
+    sayText = confirmed
+      ? 'Configurações de voz abertas.'
+      : 'Tentei abrir os ajustes de voz, mas não confirmei a tela.';
     toolResult = {
       tool: action.type,
       ok: confirmed,
-      summary: confirmed ? 'configurações de voz abertas e confirmadas' : 'voz sem pós-condição',
+      summary: confirmed
+        ? 'configurações de voz abertas e confirmadas'
+        : 'voz sem pós-condição',
     };
   } else if (action.type === 'open_canvas') {
+    dismissBlockingOverlays();
+    useProductNavigationStore.getState().openTerminal();
     const layout = useLayoutStore.getState();
     if (layout.viewKind !== 'canvas') layout.toggleView();
-    useHomeStore.getState().hide();
     const confirmed = await confirmUiState(
       () => useLayoutStore.getState().viewKind,
       (kind) => kind === 'canvas',
       control,
     );
-    sayText = confirmed ? 'Canvas aberto.' : 'Tentei abrir o canvas, mas não confirmei a tela.';
-    toolResult = { tool: action.type, ok: confirmed, summary: confirmed ? 'modo canvas confirmado' : 'canvas sem pós-condição' };
+    sayText = confirmed
+      ? 'Canvas aberto.'
+      : 'Tentei abrir o canvas, mas não confirmei a tela.';
+    toolResult = {
+      tool: action.type,
+      ok: confirmed,
+      summary: confirmed
+        ? 'modo canvas confirmado'
+        : 'canvas sem pós-condição',
+    };
   } else if (action.type === 'open_grid') {
+    dismissBlockingOverlays();
+    useProductNavigationStore.getState().openTerminal();
     const layout = useLayoutStore.getState();
     if (layout.viewKind !== 'grid') layout.toggleView();
-    useHomeStore.getState().hide();
     const confirmed = await confirmUiState(
       () => useLayoutStore.getState().viewKind,
       (kind) => kind === 'grid',
       control,
     );
-    sayText = confirmed ? 'Grade aberta.' : 'Tentei abrir a grade, mas não confirmei a tela.';
-    toolResult = { tool: action.type, ok: confirmed, summary: confirmed ? 'modo grade confirmado' : 'grade sem pós-condição' };
+    sayText = confirmed
+      ? 'Grade aberta.'
+      : 'Tentei abrir a grade, mas não confirmei a tela.';
+    toolResult = {
+      tool: action.type,
+      ok: confirmed,
+      summary: confirmed ? 'modo grade confirmado' : 'grade sem pós-condição',
+    };
   } else if (action.type === 'open_browser') {
-    useGamificationStore.getState().closeProfile();
     const paneId = useLayoutStore.getState().addBrowserPane(action.url);
-    useHomeStore.getState().hide();
+    revealPaneForUser(paneId);
     markEffect(control);
     try {
       await waitForBrowserPaneCreated(paneId, 3_000);
-      markEffect(control);
       checkpoint(control);
       sayText = action.url ? 'Site aberto.' : 'Browser aberto.';
       toolResult = {
         tool: action.type,
         ok: true,
-        summary: action.url ? `browser aberto em ${action.url}` : 'browser aberto',
+        summary: action.url
+          ? `browser aberto em ${action.url}`
+          : 'browser aberto',
       };
-    } catch (err) {
+    } catch {
       sayText = 'Criei o pane do browser, mas ele ainda não respondeu.';
       toolResult = {
         tool: action.type,
         ok: false,
-        summary: err instanceof Error ? err.message : String(err),
+        summary: 'browser ainda indisponível',
       };
     }
   } else if (action.type === 'browser_back') {
@@ -896,7 +958,7 @@ export async function executeJarvisAction(
     } else {
       const index = panes.findIndex((pane) => pane.id === layout.focusedPaneId);
       const next = panes[(index + 1 + panes.length) % panes.length];
-      layout.focus(next.id);
+      revealPaneForUser(next.id);
       const confirmed = await confirmUiState(
         () => useLayoutStore.getState().focusedPaneId,
         (id) => id === next.id,
@@ -914,7 +976,7 @@ export async function executeJarvisAction(
     } else {
       const index = panes.findIndex((pane) => pane.id === layout.focusedPaneId);
       const prev = index < 0 ? panes[0] : panes[(index - 1 + panes.length) % panes.length];
-      layout.focus(prev.id);
+      revealPaneForUser(prev.id);
       const confirmed = await confirmUiState(
         () => useLayoutStore.getState().focusedPaneId,
         (id) => id === prev.id,
@@ -931,7 +993,7 @@ export async function executeJarvisAction(
       sayText = `Não achei um pane chamado ${action.paneName}.`;
       toolResult = { tool: action.type, ok: false, summary: 'pane não encontrado' };
     } else {
-      layout.focus(target.id);
+      revealPaneForUser(target.id);
       const confirmed = await confirmUiState(
         () => useLayoutStore.getState().focusedPaneId,
         (id) => id === target.id,
@@ -994,20 +1056,23 @@ export async function executeJarvisAction(
         summary: 'nome de pane ambíguo — envio bloqueado',
       };
     } else if (target.kind === 'no-agent-pane') {
-      // send_to_pane is natural-language delegation only. Never reinterpret it
-      // as shell input: that produced a misleading native command dialog for
-      // ordinary mission objectives. Preserve the objective by opening the
-      // intent-first mission flow; explicit shell requests still use the
-      // dedicated run_command branch and retain its confirmation guardrail.
-      useMissionWizardStore.getState().openForAgentic(action.text, 'voice');
-      markEffect(control);
-      sayText =
-        'Abrindo uma missão agêntica com esse objetivo. Nenhum agente foi iniciado ainda.';
+      // Natural-language delegation is mission setup input, never shell input.
+      // Explicit shell requests retain the native run_command confirmation.
+      const opened = openCanonicalMissionSetup({
+        objective: action.text,
+        step: 'team',
+      });
+      if (opened) markEffect(control);
+      sayText = opened
+        ? 'Abrindo o setup da missão com esse objetivo. Nenhum agente foi iniciado ainda.'
+        : 'Abre um projeto primeiro; aí eu preparo essa missão.';
       toolResult = {
         tool: action.type,
-        ok: true,
-        summary: 'objetivo encaminhado ao fluxo intent-first',
-        output: { intent: action.text },
+        ok: opened,
+        summary: opened
+          ? 'objetivo encaminhado ao setup canônico'
+          : 'sem workspace aberto',
+        ...(opened ? { output: { intent: action.text } } : {}),
       };
     } else {
       const missionPrompt = prepareDelegationPrompt(action.text);
@@ -1066,10 +1131,8 @@ export async function executeJarvisAction(
     const focused = fp ? panesNow.find((p) => p.id === fp) : undefined;
     const shellPane = focused?.kind === 'shell' ? focused : panesNow.find((p) => p.kind === 'shell');
     const targetPaneId = shellPane?.id ?? useLayoutStore.getState().addShellPane();
-    if (!shellPane) {
-      useHomeStore.getState().hide();
-      markEffect(control);
-    }
+    revealPaneForUser(targetPaneId);
+    markEffect(control);
     const sessionId = await waitForSession(targetPaneId, 5_000);
     checkpoint(control);
     if (!sessionId) {
@@ -1102,35 +1165,28 @@ export async function executeJarvisAction(
     const mcp = await executeViaMcp(action, sayText, control);
     if (mcp) return { ...mcp, expectReply };
   } else if (action.type === 'restore_mission_panes') {
-    const orch = useOrchStore.getState();
-    const missions = orch.missions ?? [];
+    const missions = useOrchStore.getState().missionSummaries;
     if (missions.length === 0) {
-      sayText = 'Não tem nenhuma missão salva para restaurar.';
+      sayText = 'Não tem nenhuma missão salva para abrir.';
       toolResult = { tool: action.type, ok: false, summary: 'sem missões' };
     } else {
-      const alvo = action.alvo?.toLowerCase();
-      const target = alvo
-        ? missions.find((m) => m.title?.toLowerCase().includes(alvo)) ?? missions[0]
+      const wanted = action.alvo?.toLowerCase();
+      const target = wanted
+        ? missions.find((mission) =>
+            mission.title.toLowerCase().includes(wanted),
+          ) ?? missions[0]
         : missions[0];
-      const result = await reopenMission(target);
-      if (result.ok) markEffect(control);
-      checkpoint(control);
-      if (result.ok) {
-        sayText = `Missão restaurada com ${result.panes ?? 0} panes.`;
-        toolResult = {
-          tool: action.type,
-          ok: true,
-          summary: `missão restaurada (${result.panes} panes)`,
-          output: {
-            ackId: result.ackId,
-            sessionIds: result.sessionIds,
-            ackedAt: result.ackedAt,
-          },
-        };
-      } else {
-        sayText = result.error ?? 'Não consegui restaurar a missão.';
-        toolResult = { tool: action.type, ok: false, summary: result.error ?? 'falhou' };
-      }
+      const navigation = useProductNavigationStore.getState();
+      navigation.openMission(target.id);
+      useProductNavigationStore.getState().showMissionTerminals();
+      markEffect(control);
+      sayText = `Abrindo os terminais da missão ${target.title}.`;
+      toolResult = {
+        tool: action.type,
+        ok: true,
+        summary: `terminais da missão ${target.title} abertos`,
+        output: { missionId: target.id },
+      };
     }
   } else if (action.type === 'ask_pane') {
     // C3: pergunta autorada por LLM só pode ir pra pane de agente/orquestrador

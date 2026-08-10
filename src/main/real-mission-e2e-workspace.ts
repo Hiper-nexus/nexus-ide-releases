@@ -27,7 +27,7 @@ import {
 import { getSquad } from "./orch/squad-store";
 import {
   isExactRealMissionE2ESquadFixture,
-  resolveProductWizardRealMissionE2ESquadBinding,
+  resolveCanonicalRealMissionE2ESquadBinding,
   type RealMissionE2ESquadBinding,
 } from "./real-mission-e2e-fixture";
 import { stageRealMissionE2EContextCorpus } from "./real-mission-e2e-prevc";
@@ -280,13 +280,22 @@ export function validateHarnessSquad(): boolean {
 }
 
 export function productWizardSquadBinding(
-  mission: Pick<Mission, "squadId" | "intentContract">,
+  mission: Pick<Mission, "squadId" | "title" | "intentContract">,
 ): RealMissionE2ESquadBinding | null {
-  if (typeof mission.squadId !== "string") return null;
-  return resolveProductWizardRealMissionE2ESquadBinding(mission.squadId);
+  if (
+    typeof mission.squadId !== "string" ||
+    typeof mission.intentContract?.goal !== "string"
+  ) {
+    return null;
+  }
+  return resolveCanonicalRealMissionE2ESquadBinding({
+    squadId: mission.squadId,
+    title: mission.title,
+    objective: mission.intentContract.goal,
+  });
 }
 
-export function isProductWizardPreApprovalMission(
+export function isProductMissionSetupPreparedMission(
   mission: Mission | null | undefined,
 ): mission is Mission {
   const contract = mission?.intentContract;
@@ -295,8 +304,7 @@ export function isProductWizardPreApprovalMission(
     mission &&
     binding &&
     mission.status === "pending" &&
-    (mission.intentState === "ready_to_start" ||
-      mission.intentState === "awaiting_approval") &&
+    mission.intentState === "ready_to_start" &&
     mission.intentVersion === 1 &&
     mission.orchestratorSessionId == null &&
     contract?.version === 1 &&
@@ -306,10 +314,14 @@ export function isProductWizardPreApprovalMission(
     (contract.lane ?? "standard") === "standard" &&
     contract.contextPolicy === "on-demand" &&
     contract.intentVersion === 1 &&
-    contract.approvedAt === undefined &&
+    Number.isInteger(contract.approvedAt) &&
+    typeof contract.approvalReviewSha256 === "string" &&
+    /^[a-f0-9]{64}$/u.test(contract.approvalReviewSha256) &&
     contract.dispatchedAt === undefined &&
-    contract.squadRevisionHash === undefined &&
-    contract.orchestratorRuntime === undefined &&
+    contract.squadRevisionHash === binding.squadRevisionHash &&
+    contract.orchestratorRuntime?.adapterId === "codex" &&
+    contract.orchestratorRuntime.readOnly === false &&
+    contract.orchestratorRuntime.nativeReadOnly === false &&
     contract.acceptanceCriteria.length ===
       REAL_MISSION_E2E_PRODUCT_WIZARD_ACCEPTANCE_CRITERIA.length &&
     contract.acceptanceCriteria.every(

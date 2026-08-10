@@ -276,6 +276,28 @@ describe('mission orchestrator runtime authority', () => {
     ).toThrow(/sem autenticação pronta/i);
   });
 
+  it('resolves review authority before provider authentication', () => {
+    const runtime = resolveProductionMissionOrchestratorRuntime(
+      squad,
+      {
+        id: 'maestro',
+        agentName: 'Maestro',
+        category: 'orchestrator',
+        cli: 'custom-cli',
+        model: 'custom-model',
+      },
+      productionDeps('operator-choice', { providerReady: false }),
+      { requireProviderReadiness: false },
+    );
+
+    expect(runtime).toEqual({
+      adapterId: 'custom-cli',
+      model: 'custom-model',
+      readOnly: false,
+      nativeReadOnly: false,
+    });
+  });
+
   it('preserves the MCP and native read-only gates in governed mode', () => {
     expect(() =>
       resolveProductionMissionOrchestratorRuntime(

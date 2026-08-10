@@ -1,6 +1,5 @@
 import { useEffect, useRef } from 'react';
 import { useVoiceStore } from './voice-store';
-import { markVictory } from '../state/onboarding-store';
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
 import { VoiceCapture } from './voice-capture';
@@ -393,7 +392,6 @@ export function useVoiceController(active = true): void {
       passiveWakeDeadline.invalidate();
       latestRealtimeUserTranscript = null;
       try {
-        markVictory('voiceEnabled');
         // Power-off halts narration until the user re-engages via wake/PTT.
         resumeJarvisNarration();
         stopAllPlayback();

@@ -50,21 +50,15 @@ export const SHORTCUTS: readonly ShortcutEntry[] = Object.freeze([
   Object.freeze({
     id: 'mission-new',
     keys: formatShortcut('mod', 'N'),
-    action: 'Nova missão (começa no seletor de modo)',
+    action: 'Nova missão',
     group: 'command' as const,
     primary: true,
     short: 'missão',
   }),
   Object.freeze({
-    id: 'mission-quick',
-    keys: formatShortcut('mod', 'shift', 'N'),
-    action: 'Missão rápida — cai direto no objetivo, sem escolher modo',
-    group: 'command' as const,
-  }),
-  Object.freeze({
-    id: 'ops-board',
+    id: 'task-board',
     keys: formatShortcut('mod', 'B'),
-    action: 'Painel de operações (pipeline de missões)',
+    action: 'Quadro de tarefas',
     group: 'command' as const,
   }),
   Object.freeze({
@@ -189,10 +183,9 @@ export function primaryShortcuts(
 export const GLOBAL_HANDLER_SHORTCUT_IDS: readonly string[] = Object.freeze([
   'settings',
   'operator-profile',
-  'ops-board',
+  'task-board',
   'command-palette',
   'cheatsheet',
-  'mission-quick',
   'mission-new',
   'focus-pane-n',
   'split-right',

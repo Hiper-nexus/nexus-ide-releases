@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 export const REAL_MISSION_FLAG = "--nexus-real-mission-e2e";
 export const REAL_MISSION_PRODUCT_WIZARD_FLAG =
   "--nexus-real-mission-product-wizard-e2e";
-// O DAG multi-CLI v9 abre as 5 CLIs advisor atuais e o executor como raízes do
+// O DAG multi-CLI v10 abre as 5 CLIs advisor atuais e o executor como raízes do
 // fan-out; depois encadeia revisor Codex → QA. São 8 PTYs físicos de worker no
 // roster completo (mais o orquestrador), com até seis tarefas elegíveis em
 // paralelo antes da cadeia de entrega.
@@ -15,7 +15,7 @@ export const REAL_MISSION_PRODUCT_WIZARD_FLAG =
 // travamentos genuínos continuam cobertos pelos watchdogs do produto (25 min).
 export const REAL_MISSION_TIMEOUT_MS = 45 * 60_000;
 export const REAL_MISSION_EVIDENCE_FILE = "real-mission-evidence.json";
-export const REAL_MISSION_EVIDENCE_SCHEMA_VERSION = 9;
+export const REAL_MISSION_EVIDENCE_SCHEMA_VERSION = 11;
 export const REAL_MISSION_EXPECTED_CONTENT = "nexus-real-mission-e2e-ok\n";
 export const REAL_MISSION_CTA =
   "Abra o relatório de evidências, corrija o estado bloqueado e execute novamente antes da release.";
@@ -395,19 +395,17 @@ export function sha256(value) {
 export function productWizardReceiptChainSha256(receipt) {
   return sha256(
     JSON.stringify({
-      version: "nexus-product-wizard-causal-chain-v1",
+      version: "nexus-mission-setup-causal-chain-v2",
       origin: receipt?.origin,
       missionId: receipt?.missionId,
       workspaceSha256: receipt?.workspaceSha256,
       sourceSquadRevisionHash: receipt?.sourceSquadRevisionHash,
       squadRevisionHash: receipt?.squadRevisionHash,
-      submittedContractSha256: receipt?.submittedContractSha256,
-      approvedContractSha256: receipt?.approvedContractSha256,
-      armedAt: receipt?.armedAt,
-      intentSubmittedAt: receipt?.intentSubmittedAt,
-      nativeDialogOpenedAt: receipt?.nativeDialogOpenedAt,
-      nativeDialogAcceptedAt: receipt?.nativeDialogAcceptedAt,
-      approvalReturnedAt: receipt?.approvalReturnedAt,
+      reviewSha256: receipt?.reviewSha256,
+      preparedContractSha256: receipt?.preparedContractSha256,
+      startedContractSha256: receipt?.startedContractSha256,
+      preparedAt: receipt?.preparedAt,
+      startedAt: receipt?.startedAt,
     }),
   );
 }

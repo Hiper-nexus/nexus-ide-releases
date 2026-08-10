@@ -1,6 +1,5 @@
 import fs from "node:fs";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
 import { app, ipcMain } from "electron";
 
 import {
@@ -15,58 +14,10 @@ import {
   parseFunctionalSmokeResult,
 } from "../shared/smoke-types";
 import { grantWorkspacePathFromTrustedMain } from "./persistence/workspace-store";
-import {
-  currentDarwinPtySupervisorRuntime,
-  DARWIN_PTY_PACKAGED_SMOKE_TRUST_PROFILE,
-  DARWIN_PTY_PROVIDER_PROBE_RECEIPT,
-  packagedDarwinPtySmokeSupervisorCommand,
-  resolvePackagedDarwinPtySmokeProviderSeal,
-} from "./pty/darwin-pty-supervisor";
 import { createRealPtyHost } from "./pty/pty-host-client";
 import { proveDarwinPtyPipelineForSmoke } from "./pty/darwin-pty-smoke";
 
-export function proveDarwinPtySupervisorForSmoke(
-  options: {
-    readonly platform?: NodeJS.Platform;
-    readonly buildCommand?: () => {
-      readonly file: string;
-      readonly args: string[];
-    };
-    readonly spawn?: typeof spawnSync;
-  } = {},
-): boolean {
-  if ((options.platform ?? process.platform) !== "darwin") return false;
-  const command =
-    options.buildCommand?.() ??
-    (() => {
-      const runtime = currentDarwinPtySupervisorRuntime(
-        __dirname,
-        DARWIN_PTY_PACKAGED_SMOKE_TRUST_PROFILE,
-      );
-      const seal = resolvePackagedDarwinPtySmokeProviderSeal(runtime);
-      return packagedDarwinPtySmokeSupervisorCommand(runtime, seal);
-    })();
-  const result = (options.spawn ?? spawnSync)(command.file, command.args, {
-    cwd: process.cwd(),
-    env: process.env,
-    encoding: "utf8",
-    timeout: 10_000,
-    killSignal: "SIGTERM",
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  if (
-    result.error ||
-    result.status !== 0 ||
-    result.signal !== null ||
-    !result.stdout?.includes(DARWIN_PTY_PROVIDER_PROBE_RECEIPT)
-  ) {
-    throw new Error(
-      `Darwin PTY supervisor probe failed: ` +
-        `${result.error?.message ?? result.stderr ?? result.signal ?? result.status}`,
-    );
-  }
-  return true;
-}
+
 
 // CI smoke test: `NexusIDE --smoke-test` boots the app for real (full main
 // init + window + renderer bundle) and exits 0 only after React commits a real
@@ -94,12 +45,6 @@ export function initSmokeTest(): void {
     (line, isError) => (isError ? console.error(line) : console.log(line)),
   );
 
-  try {
-    proveDarwinPtySupervisorForSmoke();
-  } catch (error) {
-    settle("functional-failed", smokeErrorMessage(error));
-    return;
-  }
 
   // Registering a listener suppresses Electron's blocking exception dialog,
   // turning a post-import crash into a clean non-zero exit.
@@ -119,6 +64,9 @@ export function initSmokeTest(): void {
 
   app.on("browser-window-created", (_event, win) => {
     const wc = win.webContents;
+    // The utility-process pipeline below is the production path and subsumes
+    // the direct helper self-probe. Running both trace-exec proofs inside the
+    // Electron process can deadlock Security.framework during AppKit startup.
     const darwinPtyPipelineProof = proveDarwinPtyPipelineForSmoke(
       createRealPtyHost(),
       {

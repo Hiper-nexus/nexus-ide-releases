@@ -266,7 +266,7 @@ describe('manual release candidate gate', () => {
     })).toThrow(/provenance/i);
   });
 
-  it.runIf(process.platform === 'darwin' && process.arch === 'arm64')('runs signed verifier and one product-wizard E2E before producing a commit/artifact-bound receipt', async () => {
+  it.runIf(process.platform === 'darwin' && process.arch === 'arm64')('runs signed verifier and one physical Mission Setup E2E before producing a commit/artifact-bound receipt', async () => {
     const root = tempRoot();
     const dmg = path.join(root, 'out', 'make', 'nested', 'NexusIDE-arm64.dmg');
     const zip = path.join(root, 'out', 'make', 'nested', 'NexusIDE-arm64.zip');
@@ -465,7 +465,7 @@ describe('manual release candidate gate', () => {
         extractE2EApp: async (_zipPath, _expectedSha256, callback) =>
           callback(app),
       }),
-    ).rejects.toThrow(/product-wizard physical coverage/i);
+    ).rejects.toThrow(/physical Mission Setup coverage/i);
     expect(runUiE2E).toHaveBeenCalledOnce();
   });
 

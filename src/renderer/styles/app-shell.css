@@ -1,7 +1,7 @@
 /* Nexus V2 product frame: continuous surfaces, quiet chrome and one canvas. */
 
 .nexus-shell {
-  --nexus-shell-rail-width: 240px;
+  --nexus-shell-rail-width: 184px;
   --nexus-shell-inspector-min: 360px;
   --nexus-shell-inspector-max: 440px;
   --nexus-shell-workspace-min: 640px;
@@ -144,6 +144,15 @@
   min-height: var(--bar-height);
   padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--border);
+}
+
+:root[data-platform='mac'] .workspace-rail__identity {
+  padding-top: calc(var(--space-6) + var(--space-2));
+  -webkit-app-region: drag;
+}
+
+:root[data-platform='mac'] .workspace-rail__new {
+  -webkit-app-region: no-drag;
 }
 
 .workspace-rail__brand {
@@ -511,7 +520,7 @@
   color: var(--btn-primary-ink);
 }
 
-@media (max-width: 1099px) {
+@media (max-width: 1199px) {
   .nexus-shell__body--with-inspector {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr) minmax(0, auto);

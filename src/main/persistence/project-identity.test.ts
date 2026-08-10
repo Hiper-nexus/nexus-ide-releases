@@ -316,6 +316,19 @@ describe('project identity', () => {
     expect(scope.identitySource).toBe('manifest');
   });
 
+  it('captures the canonical workspace directory dev/inode in the frozen scope', () => {
+    const repository = path.join(root, 'workspace-authority');
+    initializeRepository(repository, { content: 'workspace-authority' });
+    writeManifest(repository);
+
+    const scope = resolveProjectExecutionScope(repository, options(root));
+    const stat = fs.lstatSync(scope.rootRealPath, { bigint: true });
+
+    expect(scope.workspaceRootDevice).toBe(stat.dev.toString());
+    expect(scope.workspaceRootInode).toBe(stat.ino.toString());
+    expect(Object.isFrozen(scope)).toBe(true);
+  });
+
   it('fails closed when manifested checkout collision registry is disabled', () => {
     const repository = path.join(root, 'registry-required');
     initializeRepository(repository, { content: 'registry-required' });

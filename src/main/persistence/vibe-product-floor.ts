@@ -9,6 +9,8 @@ import type { OrchSettings } from '../../shared/settings-types';
 export type VibeProductMigrations = {
   /** One-shot: no OS sandbox + no handoff attestation by default. */
   readonly vibeNoSandboxFloor20260803?: boolean;
+  /** One-shot: move the former Nexus Dark default to Pink City. */
+  readonly pinkCityDefault20260807?: boolean;
   /** Legacy stamp from the attestation-only migration; treated as partial. */
   readonly vibeAttestationOff20260803?: boolean;
 };

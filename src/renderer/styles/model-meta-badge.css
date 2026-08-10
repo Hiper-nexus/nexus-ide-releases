@@ -35,18 +35,6 @@
   text-overflow: ellipsis;
 }
 
-/* Célula do seletor de modelo no Mission Wizard: empilha o <select> e o selo
-   numa única coluna do grid de controles (preserva as 3 colunas do roster). */
-.wizard__model-cell {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
-}
-
-.wizard__model-cell .wizard__model-meta {
-  padding-left: 2px;
-}
 
 /* Marcador de raciocínio: um acento parcimonioso, não um enfeite. */
 .model-meta-badge__reason {

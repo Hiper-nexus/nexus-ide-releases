@@ -407,6 +407,13 @@ export interface PaneModel {
   transient?: true;
   /** Bounded ANSI snapshot used only to repaint scrollback after a cold restart. */
   terminalScrollback?: string;
+  /**
+   * Colunas que o terminal tinha quando `terminalScrollback` foi capturado.
+   * O replay só é seguro na MESMA largura — uma TUI posiciona a moldura com
+   * cursor absoluto, então uma grade diferente entrelaça caixa e texto de forma
+   * irreversível (reflow não reconstrói cursor absoluto).
+   */
+  terminalScrollbackCols?: number;
 }
 
 /**

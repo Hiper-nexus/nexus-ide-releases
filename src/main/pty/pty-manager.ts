@@ -306,12 +306,14 @@ export interface AgentSpawnDecoration {
   providerStateReadPaths?: readonly string[];
   /** Exact provider-state paths the confined process may update. */
   providerStateWritePaths?: readonly string[];
+  /** Exact Main-owned mission attachment files granted read-only to the child. */
+  attachmentReadPaths?: readonly string[];
   /** Private shim binaries the confined worker may execute/read. */
   missionShimReadPaths?: readonly string[];
   /** Private shim dropbox paths the confined worker may update. */
   missionShimWritePaths?: readonly string[];
   onSpawned?: (sessionId: string) => void;
-  /** Called if the PTY fails to spawn, so minted tokens/artifacts are freed. */
+  /** Spawn-local token/shim cleanup only; mission attachment seals survive retry. */
   onSpawnFailed?: () => void;
 }
 
@@ -1204,6 +1206,10 @@ export function spawnAgentSession(
       // terminal repaints kept echoing the fallback example. `--print` retains
       // PTY output (and therefore the physical handoff parser) but exits after
       // the governed task, so exit enforcement can also degrade explicitly.
+      // AGY keeps its own workspace registry and otherwise sends tool calls to
+      // ~/.gemini/antigravity-cli/scratch even when the child process cwd is
+      // correct. Bind the exact Main-authorized root into that registry.
+      args.push("--add-dir", cwd);
       args.push("--print", safeInitialPrompt);
     } else if (adapter.id === "claude") {
       // `claude [PROMPT]` abre o primeiro turno interativo já executando, sem
@@ -1688,6 +1694,7 @@ export function spawnAgentSession(
           extraReadPaths: [
             ...codexProcessSandbox.providerStatePaths,
             ...(decoration?.missionShimReadPaths ?? []),
+            ...(decoration?.attachmentReadPaths ?? []),
             ...trustedNativeRuntimeReadPaths,
             ...darwinPtySupervisorReadPaths,
             ...worktreeGit.readPaths,
@@ -1857,6 +1864,7 @@ export function spawnAgentSession(
           extraReadPaths: [
             ...advisorySandbox.extraWritePaths,
             ...advisorySandbox.providerStateReadPaths,
+            ...(decoration?.attachmentReadPaths ?? []),
           ],
           extraWritePaths: [
             ...advisorySandbox.extraWritePaths,
@@ -2080,7 +2088,9 @@ function sameSessionScope(
     left.installationId === right.installationId &&
     left.projectId === right.projectId &&
     left.checkoutId === right.checkoutId &&
-    left.rootRealPath === right.rootRealPath
+    left.rootRealPath === right.rootRealPath &&
+    left.workspaceRootDevice === right.workspaceRootDevice &&
+    left.workspaceRootInode === right.workspaceRootInode
   );
 }
 

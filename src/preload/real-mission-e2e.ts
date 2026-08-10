@@ -1,52 +1,46 @@
 import {
+  missionPrepareRequestSchema,
+  missionReviewSchema,
+  missionSnapshotSchema,
+  type MissionPrepareRequest,
+} from "../shared/mission-engine-contract";
+import {
+  REAL_MISSION_E2E_ADVISORS,
   REAL_MISSION_E2E_GOAL,
-  REAL_MISSION_E2E_SQUAD_ID,
+  createRealMissionE2ESquadFixture,
   realMissionE2EAcceptanceCriteria,
   realMissionE2ERendererFailureSignal,
   realMissionE2ERunPayloadSchema,
+  type RealMissionE2EObservePayload,
 } from "../shared/real-mission-e2e";
 
 export interface RealMissionE2EApi {
   readonly workspace: {
     open(path: string): Promise<unknown>;
   };
-  readonly orch: {
-    armMission(input: { title: string; squadId: string }): Promise<unknown>;
-    submitMissionIntent(input: {
+  readonly mission: {
+    prepare(request: MissionPrepareRequest): Promise<unknown>;
+    start(input: {
       missionId: string;
-      goal: string;
-      source: "typed";
-      contextPolicy: "minimal";
-      acceptanceCriteria: string[];
-      lane: "standard";
-    }): Promise<unknown>;
-    approveMissionIntent(input: { missionId: string }): Promise<unknown>;
-    bootstrapMissionOrchestrator(input: {
-      missionId: string;
+      reviewSha256: string;
     }): Promise<unknown>;
   };
 }
 
+export type RealMissionE2EObservation = RealMissionE2EObservePayload;
+
 export interface RealMissionE2ERunnerDeps {
   readonly prepareFixture: (rendererFailureToken: string) => Promise<unknown>;
-  readonly observeMission: (missionId: string) => Promise<unknown>;
+  readonly observeMission: (input: RealMissionE2EObservation) => Promise<unknown>;
 }
+
+const REAL_MISSION_E2E_TITLE = "Release gate: missão real empacotada";
+const REAL_MISSION_E2E_CONTEXT_PATHS = Object.freeze(["README.md"]);
 
 function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
-}
-
-function missionIdFrom(value: unknown): string {
-  const missionId = record(value)?.id;
-  if (
-    typeof missionId !== "string" ||
-    !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(missionId)
-  ) {
-    throw new Error("mission response did not contain a valid id");
-  }
-  return missionId;
 }
 
 function resultIsOk(value: unknown): boolean {
@@ -58,10 +52,95 @@ function workspaceIsOpenAt(value: unknown, expectedPath: string): boolean {
   return current?.path === expectedPath;
 }
 
+function sameStrings(
+  actual: readonly string[] | undefined,
+  expected: readonly string[],
+): boolean {
+  return (
+    actual !== undefined &&
+    actual.length === expected.length &&
+    actual.every((value, index) => value === expected[index])
+  );
+}
+
+function prepareRequestForPayload(
+  payload: ReturnType<typeof realMissionE2ERunPayloadSchema.parse>,
+): MissionPrepareRequest {
+  const admitted = new Set(payload.admittedAdvisorClis);
+  const canonicalAdmitted = REAL_MISSION_E2E_ADVISORS.filter(
+    (advisor) =>
+      admitted.has(advisor.cli) &&
+      !(payload.orchestratorCli === "claude" && advisor.cli === "claude"),
+  ).map((advisor) => advisor.cli);
+  if (!sameStrings(payload.admittedAdvisorClis, canonicalAdmitted)) {
+    throw new Error("main-issued admitted advisor roster is not canonical");
+  }
+
+  const skippedAdvisorClis = REAL_MISSION_E2E_ADVISORS.filter(
+    (advisor) => !admitted.has(advisor.cli),
+  ).map((advisor) => advisor.cli);
+  const fixture = createRealMissionE2ESquadFixture(
+    skippedAdvisorClis,
+    payload.orchestratorCli,
+  );
+  const acceptanceCriteria = realMissionE2EAcceptanceCriteria(
+    payload.orchestratorCli,
+    payload.admittedAdvisorClis,
+  );
+
+  return missionPrepareRequestSchema.parse({
+    title: REAL_MISSION_E2E_TITLE,
+    objective: REAL_MISSION_E2E_GOAL,
+    contextPaths: [...REAL_MISSION_E2E_CONTEXT_PATHS],
+    acceptanceCriteria: [...acceptanceCriteria],
+    roster: fixture.agents.map((agent) => ({ ...agent })),
+    advanced: { lane: "standard" },
+  });
+}
+
+function assertExactReview(
+  rawReview: unknown,
+  request: MissionPrepareRequest,
+  workspacePath: string,
+) {
+  const parsed = missionReviewSchema.safeParse(rawReview);
+  if (!parsed.success) {
+    throw new Error("canonical mission review is malformed", {
+      cause: parsed.error,
+    });
+  }
+  const review = parsed.data;
+  if (
+    review.title !== request.title ||
+    review.objective !== request.objective ||
+    review.workspaceLabel !== workspacePath ||
+    !sameStrings(review.contextPaths, request.contextPaths) ||
+    !sameStrings(review.acceptanceCriteria, request.acceptanceCriteria ?? []) ||
+    JSON.stringify(review.roster) !== JSON.stringify(request.roster)
+  ) {
+    throw new Error("canonical mission review changed the release authority");
+  }
+  return review;
+}
+
+async function reportRendererFailure(
+  deps: RealMissionE2ERunnerDeps,
+  rendererFailureToken: string,
+): Promise<void> {
+  try {
+    await deps.observeMission({
+      kind: "renderer-failure",
+      signal: realMissionE2ERendererFailureSignal(rendererFailureToken),
+    });
+  } catch {
+    // Main may already have persisted a closed observer/setup failure.
+  }
+}
+
 /**
- * Physical UI setup stops after opening the isolated workspace and installing
- * the exact source roster. It deliberately has no code path to arm, submit,
- * approve or bootstrap a mission; those actions must come from MissionWizard.
+ * The physical product path stops after opening the isolated workspace and
+ * installing the exact source roster. Canonical Mission Setup owns prepare,
+ * renders the returned review, and starts only from the operator action.
  */
 export async function prepareRealMissionProductWizardE2E(
   api: Pick<RealMissionE2EApi, "workspace">,
@@ -79,22 +158,16 @@ export async function prepareRealMissionProductWizardE2E(
       throw new Error("main-owned release fixture could not be prepared");
     }
   } catch (error) {
-    try {
-      await deps.observeMission(
-        realMissionE2ERendererFailureSignal(payload.rendererFailureToken),
-      );
-    } catch {
-      // Main may already have persisted a closed setup failure.
-    }
+    await reportRendererFailure(deps, payload.rendererFailureToken);
     throw error;
   }
 }
 
 /**
- * The runner exercises only the public preload bridge for product actions.
- * Its private boundaries carry only a main-issued fixture capability and a
- * strict mission id. Main owns fixture persistence and starts independent
- * store/PTY observation before the first orchestrator is spawned.
+ * Exercise only the canonical public mission facade. Main still owns fixture
+ * persistence, the immutable review fence, bootstrap, PTY observation, and all
+ * release evidence. The observer is acknowledged before mission.start can
+ * perform its first seal/bootstrap side effect.
  */
 export async function runRealMissionE2E(
   api: RealMissionE2EApi,
@@ -102,87 +175,52 @@ export async function runRealMissionE2E(
   deps: RealMissionE2ERunnerDeps,
 ): Promise<string> {
   const payload = realMissionE2ERunPayloadSchema.parse(rawPayload);
+  const request = prepareRequestForPayload(payload);
 
   try {
-    // Main grants this exact scratch path before delivering the run event. Open
-    // it first so renderer-scoped orchestration IPC has a bound project runtime;
-    // probing squads before this point is correctly denied by main authority.
+    // Bind the main-granted project scope before fixture or mission authority.
     const workspace = await api.workspace.open(payload.workspacePath);
     if (!workspaceIsOpenAt(workspace, payload.workspacePath)) {
       throw new Error("trusted scratch workspace did not open");
     }
 
-    // This private main boundary joins the real initOrchestration singleflight
-    // before persisting the compiled fixture. A squads-list probe is only a
-    // cache read and is not a readiness receipt for MCP/coordinator startup.
     const prepared = await deps.prepareFixture(payload.rendererFailureToken);
     if (!resultIsOk(prepared)) {
       throw new Error("main-owned release fixture could not be prepared");
     }
 
-    const armed = await api.orch.armMission({
-      title: "Release gate: missão real empacotada",
-      squadId: REAL_MISSION_E2E_SQUAD_ID,
+    const review = assertExactReview(
+      await api.mission.prepare(request),
+      request,
+      payload.workspacePath,
+    );
+    const observation = await deps.observeMission({
+      kind: "mission-review",
+      missionId: review.missionId,
+      reviewSha256: review.reviewSha256,
     });
-    const missionId = missionIdFrom(armed);
-    const submitted = await api.orch.submitMissionIntent({
-      missionId,
-      goal: REAL_MISSION_E2E_GOAL,
-      // Enter the ordinary beginner path so approval must invoke the
-      // production Guided Planner. Automation-owned missions intentionally
-      // use a different exact-worker contract and would not prove this flow.
-      // Os critérios seguem a variante de orquestrador selada pelo main.
-      source: "typed",
-      contextPolicy: "minimal",
-      acceptanceCriteria: [
-        ...realMissionE2EAcceptanceCriteria(
-          payload.orchestratorCli,
-          payload.admittedAdvisorClis,
-        ),
-      ],
-      lane: "standard",
-    });
-    if (
-      missionIdFrom(submitted) !== missionId ||
-      record(submitted)?.status !== "pending"
-    ) {
-      throw new Error("release gate mission intent was not sealed as pending");
-    }
-
-    // Approval is itself allowed to start the main-owned bootstrap. Install the
-    // store/PTY observer while the exact compiled fixture is still pending so no
-    // physical spawn or kickoff edge can happen before observation is active.
-    const observation = await deps.observeMission(missionId);
     if (!resultIsOk(observation)) {
-      throw new Error("main observer did not arm");
+      throw new Error("main observer did not arm for the canonical review");
     }
 
-    // The release operator still crosses the ordinary product approval IPC.
-    // Only disposable fixture preparation is main-owned; no private channel
-    // may bypass the native "Aprovar e iniciar" authority boundary.
-    const approved = await api.orch.approveMissionIntent({ missionId });
+    // start owns the single production seal/bootstrap. No renderer bootstrap
+    // call follows it, so the orchestrator cannot be materialized twice.
+    const started = missionSnapshotSchema.safeParse(
+      await api.mission.start({
+        missionId: review.missionId,
+        reviewSha256: review.reviewSha256,
+      }),
+    );
     if (
-      missionIdFrom(approved) !== missionId ||
-      record(approved)?.status !== "running"
+      !started.success ||
+      started.data.id !== review.missionId ||
+      started.data.state !== "running"
     ) {
-      throw new Error("release gate mission was not approved as running");
+      throw new Error("canonical mission start did not return the running review");
     }
-
-    const bootstrap = await api.orch.bootstrapMissionOrchestrator({
-      missionId,
-    });
-    if (!resultIsOk(bootstrap)) {
-      throw new Error("main-owned orchestrator bootstrap failed");
-    }
-    return missionId;
+    return review.missionId;
   } catch (error) {
-    try {
-      await deps.observeMission(
-        realMissionE2ERendererFailureSignal(payload.rendererFailureToken),
-      );
-    } catch {
-      // Main may already have closed the gate for an observer/invariant error.
-    }
+    await reportRendererFailure(deps, payload.rendererFailureToken);
     throw error;
   }
 }

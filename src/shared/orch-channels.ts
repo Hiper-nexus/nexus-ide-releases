@@ -24,49 +24,17 @@ export const ORCH_CHANNELS = {
   missionList: 'orch:mission.list',
   missionsList: 'orch:missions.list',
   missionPanesList: 'orch:missions.panes',
-  /** Read-only wave schedule (identities/status only — never sealed detail). */
-  missionsTaskSchedule: 'orch:missions.taskSchedule',
   /** P1-0 slice 1: snapshot único do plano de controle (panes+fila+ownership+blocks). */
   missionControlPlane: 'orch:missions.controlPlane',
   /** Main-owned proof that one restored layout pane still has live mission authority. */
   missionPaneRestoreAuthority: 'orch:missions.paneRestoreAuthority',
-  missionCreate: 'orch:missions.create',
-  /** Native-confirmed, exact one-shot grant for Pet/legacy immediate launch. */
-  missionAuthorizeImmediateSquad:
-    'orch:missions.authorizeImmediateSquad',
-  /** Intent-first: arm a squad mission shell without an orchestrator pane. */
-  missionArm: 'orch:missions.arm',
-  /** Intent-first: submit/compile a goal contract (bumps intentVersion). */
-  missionSubmitIntent: 'orch:missions.submitIntent',
-  /** Intent-first: authorize dispatch after plan approval. */
-  missionApproveIntent: 'orch:missions.approveIntent',
-  /**
-   * Materialize the approved mission's first orchestrator in main. The
-   * renderer sends only missionId; every runtime field comes from main stores.
-   */
-  missionBootstrapOrchestrator: 'orch:missions.bootstrapOrchestrator',
   /** Retry the orchestrator bootstrap of a bootstrap-blocked mission. */
   missionResumeBootstrap: 'orch:missions.resumeBootstrap',
-  /** Re-arm a blocked mission (sanctioned resume) before pane restore. */
-  missionRearm: 'orch:missions.rearm',
   /**
    * Promote lane=plan → standard after plan.md is ready so PREVC code work
    * is allowed (operator "Executar plano").
    */
   missionPromotePlanLane: 'orch:missions.promotePlanLane',
-  /** Main-owned passive paste + finite idle→busy/output acceptance proof. */
-  missionKickoffSubmit: 'orch:missions.kickoffSubmit',
-  /** Bind a live orchestrator pane to an armed mission (no new mission row). */
-  missionBindOrchestrator: 'orch:missions.bindOrchestrator',
-  /**
-   * Explicit "Preparar projeto": allow bounded context bootstrap while still
-   * awaiting a real goal (does not dispatch workers).
-   */
-  missionPrepareProject: 'orch:missions.prepareProject',
-  /** Cancel an executing prepare-project preflight without touching the mission. */
-  missionCancelPreparation: 'orch:missions.cancelPreparation',
-  /** Intent-first: prompt queue snapshot (executing / queued / cancelled). */
-  missionPromptQueue: 'orch:missions.promptQueue',
   missionRebind: 'orch:missions.rebind',
   missionUpdate: 'orch:missions.update',
   /** Native-confirmed physical shutdown that preserves the durable mission. */

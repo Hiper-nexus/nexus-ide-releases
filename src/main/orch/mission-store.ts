@@ -3,6 +3,10 @@ import { isDeepStrictEqual } from 'node:util';
 import { z } from 'zod';
 import type Database from 'better-sqlite3';
 import {
+  missionResultSchema,
+  type MissionResult,
+} from '../../shared/mission-engine-contract';
+import {
   canMarkMilestoneDone,
   isMissionRuntimeSquadId,
   missionIntentContractSchema,
@@ -105,6 +109,7 @@ const missionRowSchema = z
     squad_id: z.string().min(1).max(128).nullable(),
     milestones_json: z.string(),
     learnings: z.string().max(65_536),
+    result_json: z.string().nullable(),
     orch_session_id: z.string().min(1).max(256).nullable(),
     intent_state: missionIntentStateSchema.default('legacy'),
     intent_contract_json: z.string().nullable().optional(),
@@ -133,6 +138,8 @@ const missionLifecyclePatchSchema = z
     intentState: missionIntentStateSchema,
     description: z.string().max(65_536).optional(),
     learnings: z.string().max(65_536).optional(),
+    intentContract: missionIntentContractSchema.optional(),
+    result: missionResultSchema.optional(),
   })
   .strict();
 const orchestratorPreDispatchExitInputSchema = z
@@ -231,6 +238,15 @@ function cloneMission(mission: ScopedMission): ScopedMission {
   return {
     ...mission,
     milestones: cloneMilestones(mission.milestones),
+    ...(mission.result
+      ? {
+          result: {
+            ...mission.result,
+            evidenceIds: [...mission.result.evidenceIds],
+            artifactRefs: [...mission.result.artifactRefs],
+          },
+        }
+      : {}),
     ...(mission.intentContract
       ? {
           intentContract: {
@@ -274,6 +290,7 @@ function missionRemovalSnapshot(mission: Readonly<Mission>): object {
     squadId: mission.squadId ?? null,
     milestones: mission.milestones,
     learnings: mission.learnings,
+    result: mission.result ?? null,
     orchestratorSessionId: mission.orchestratorSessionId ?? null,
     intentState: mission.intentState ?? null,
     intentContract: mission.intentContract ?? null,
@@ -301,6 +318,23 @@ function serializeIntentContract(
 ): string | null {
   if (contract == null) return null;
   return JSON.stringify(contract);
+}
+
+function parseMissionResult(
+  raw: string | null | undefined,
+): MissionResult | undefined {
+  if (raw == null) return undefined;
+  try {
+    return missionResultSchema.parse(JSON.parse(raw));
+  } catch (error) {
+    throw new ScopedStoreCorruptionError('mission result', { cause: error });
+  }
+}
+
+function serializeMissionResult(
+  result: MissionResult | null | undefined,
+): string | null {
+  return result == null ? null : JSON.stringify(missionResultSchema.parse(result));
 }
 
 function assertIntentContractRevision(
@@ -602,9 +636,9 @@ export class ScopedMissionStore {
       .prepare(
         `INSERT INTO missions
            (id, title, description, status, squad_id, milestones_json,
-            learnings, orch_session_id, intent_state, intent_contract_json,
-            intent_version, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            learnings, result_json, orch_session_id, intent_state,
+            intent_contract_json, intent_version, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         mission.id,
@@ -614,6 +648,7 @@ export class ScopedMissionStore {
         mission.squadId ?? null,
         JSON.stringify(mission.milestones),
         mission.learnings,
+        null,
         mission.orchestratorSessionId ?? null,
         mission.intentState ?? 'legacy',
         serializeIntentContract(mission.intentContract),
@@ -637,8 +672,8 @@ export class ScopedMissionStore {
     const row = db
       .prepare(
         `SELECT id, title, description, status, squad_id, milestones_json,
-                learnings, orch_session_id, intent_state, intent_contract_json,
-                intent_version, created_at, updated_at
+                learnings, result_json, orch_session_id, intent_state,
+                intent_contract_json, intent_version, created_at, updated_at
          FROM missions WHERE id = ?`,
       )
       .get(id);
@@ -653,8 +688,8 @@ export class ScopedMissionStore {
           .readDatabase()
           .prepare(
             `SELECT id, title, description, status, squad_id, milestones_json,
-                    learnings, orch_session_id, intent_state, intent_contract_json,
-                    intent_version, created_at, updated_at
+                    learnings, result_json, orch_session_id, intent_state,
+                    intent_contract_json, intent_version, created_at, updated_at
              FROM missions WHERE status = ?
              ORDER BY created_at DESC, id ASC`,
           )
@@ -663,8 +698,8 @@ export class ScopedMissionStore {
           .readDatabase()
           .prepare(
             `SELECT id, title, description, status, squad_id, milestones_json,
-                    learnings, orch_session_id, intent_state, intent_contract_json,
-                    intent_version, created_at, updated_at
+                    learnings, result_json, orch_session_id, intent_state,
+                    intent_contract_json, intent_version, created_at, updated_at
              FROM missions ORDER BY created_at DESC, id ASC`,
           )
           .all();
@@ -1494,6 +1529,8 @@ export class ScopedMissionStore {
       readonly intentState: MissionIntentState;
       readonly description?: string;
       readonly learnings?: string;
+      readonly intentContract?: MissionIntentContract;
+      readonly result?: MissionResult;
     },
   ): ScopedMission | null {
     const id = entityIdSchema.parse(rawId);
@@ -1504,11 +1541,20 @@ export class ScopedMissionStore {
         `invalid lifecycle pair: ${patch.status}/${patch.intentState}`,
       );
     }
+    if (patch.status === 'done' && patch.result === undefined) {
+      throw new Error('terminal mission completion requires a canonical result');
+    }
     const db = this.#binding.writeDatabase();
-    const updated = db
-      .transaction(() => {
+    const nestedTransaction = db.inTransaction;
+    const applyTransition = (): ScopedMission | null => {
         const existing = this.#getFromDatabase(db, id);
         if (!existing) return null;
+        const nextIntentContract =
+          patch.intentContract ?? existing.intentContract;
+        assertIntentContractRevision(
+          nextIntentContract,
+          expectation.intentVersion,
+        );
         const updatedAt = Math.max(
           this.#binding.now(),
           expectation.updatedAt + 1,
@@ -1516,11 +1562,15 @@ export class ScopedMissionStore {
         if (!Number.isSafeInteger(updatedAt)) {
           throw new Error('mission updatedAt cannot advance monotonically');
         }
+        const nextResult =
+          patch.status === 'done'
+            ? (patch.result ?? existing.result)
+            : undefined;
         const result = db
           .prepare(
             `UPDATE missions
              SET status = ?, intent_state = ?, description = ?, learnings = ?,
-                 updated_at = ?
+                 result_json = ?, intent_contract_json = ?, updated_at = ?
              WHERE id = ? AND updated_at = ? AND intent_version = ?`,
           )
           .run(
@@ -1528,6 +1578,8 @@ export class ScopedMissionStore {
             patch.intentState,
             patch.description ?? existing.description,
             patch.learnings ?? existing.learnings,
+            serializeMissionResult(nextResult),
+            serializeIntentContract(nextIntentContract),
             updatedAt,
             id,
             expectation.updatedAt,
@@ -1571,10 +1623,26 @@ export class ScopedMissionStore {
           ).run(id);
         }
         return this.#getFromDatabase(db, id);
-      })
-      .immediate();
+    };
+    const updated = nestedTransaction
+      ? applyTransition()
+      : db.transaction(applyTransition).immediate();
     if (!updated) return null;
-    this.#binding.emitChange();
+    if (nestedTransaction) {
+      const committedUpdatedAt = updated.updatedAt;
+      queueMicrotask(() => {
+        const committed = this.get(id);
+        if (
+          committed?.updatedAt === committedUpdatedAt &&
+          committed.status === updated.status &&
+          committed.intentState === updated.intentState
+        ) {
+          this.#binding.emitChange();
+        }
+      });
+    } else {
+      this.#binding.emitChange();
+    }
     return cloneMission(updated);
   }
 
@@ -1589,6 +1657,11 @@ export class ScopedMissionStore {
   update(rawId: string, rawPatch: MissionPatch): ScopedMission | null {
     const id = entityIdSchema.parse(rawId);
     const patch = missionPatchSchema.parse(rawPatch);
+    if (patch.status === 'done') {
+      throw new Error(
+        'verified completion must be committed through MissionEngine authority',
+      );
+    }
     const db = this.#binding.writeDatabase();
     const updated = db
       .transaction(() => {
@@ -1634,6 +1707,9 @@ export class ScopedMissionStore {
         }
         if (patch.intentContract === null) {
           delete next.intentContract;
+        }
+        if (next.status !== 'done') {
+          delete next.result;
         }
         assertIntentContractRevision(
           next.intentContract,
@@ -1686,8 +1762,8 @@ export class ScopedMissionStore {
         .prepare(
           `UPDATE missions
            SET title = ?, description = ?, status = ?, milestones_json = ?,
-               intent_state = ?, intent_contract_json = ?, intent_version = ?,
-               updated_at = ?
+               result_json = ?, intent_state = ?, intent_contract_json = ?,
+               intent_version = ?, updated_at = ?
            WHERE id = ?`,
         )
         .run(
@@ -1695,6 +1771,7 @@ export class ScopedMissionStore {
           next.description,
           next.status,
           JSON.stringify(next.milestones),
+          serializeMissionResult(next.result),
           next.intentState ?? 'legacy',
           serializeIntentContract(next.intentContract),
           next.intentVersion ?? 0,
@@ -1896,6 +1973,7 @@ export class ScopedMissionStore {
       throw new ScopedStoreCorruptionError('mission', { cause: error });
     }
     const intentContract = parseIntentContract(row.intent_contract_json);
+    const missionResult = parseMissionResult(row.result_json);
     return {
       id: row.id,
       title: row.title,
@@ -1904,6 +1982,7 @@ export class ScopedMissionStore {
       squadId: row.squad_id ?? undefined,
       milestones: parseMilestones(row.milestones_json),
       learnings: row.learnings,
+      ...(missionResult ? { result: missionResult } : {}),
       // Migração 06/08 (gate de aprovação removido do caminho normal): linhas
       // estacionadas em awaiting_approval soltam NA LEITURA para
       // ready_to_start — idempotente, sem write de migração; o próximo update

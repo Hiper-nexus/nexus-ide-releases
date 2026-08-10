@@ -6,7 +6,6 @@ import type { Mission } from '../../shared/orch-types';
 import type { PaneModel, WorkspaceLayout } from '../../shared/types';
 import { buildGridTree, listPanes } from '../lib/split-tree';
 import { setActiveWorkspacePath } from '../state/active-workspace';
-import { useHomeStore } from '../state/home-store';
 import {
   detachWorkspaceLayout,
   flushLayout,
@@ -15,6 +14,8 @@ import {
   useLayoutStore,
 } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
+import { useMissionInspectorStore } from '../state/mission-inspector-store';
+import { useProductNavigationStore } from '../state/product-navigation-store';
 import { PaneGrid } from './PaneGrid';
 
 /**
@@ -188,7 +189,15 @@ describe('a SOLITARY structural placeholder is a vacancy, not a session', () => 
     installNexus();
     setActiveWorkspacePath(WORKSPACE);
     useOrchStore.setState({ missions: [], paneMissions: {} });
-    useHomeStore.setState({ visible: false });
+    useMissionInspectorStore.setState({
+      missionId: null,
+      tab: 'agent',
+      selectedAgentId: null,
+    });
+    useProductNavigationStore.setState({
+      destination: { kind: 'terminal' },
+      settingsReturnDestination: null,
+    });
   });
 
   afterEach(() => {
@@ -221,7 +230,10 @@ describe('a SOLITARY structural placeholder is a vacancy, not a session', () => 
     await act(async () => {
       await switchWorkspaceLayout(WORKSPACE);
     });
-    setTerminalSnapshotProvider(() => 'saída viva de um shell qualquer');
+    setTerminalSnapshotProvider(() => ({
+      data: 'saída viva de um shell qualquer',
+      cols: 96,
+    }));
 
     flushLayout(true);
 
@@ -264,7 +276,12 @@ describe('a SOLITARY structural placeholder is a vacancy, not a session', () => 
     expect(text()).toMatch(/despacho|bloque|parou/i);
     const detail = buttonWith('Ver a missão');
     act(() => detail.click());
-    expect(useOrchStore.getState().selectedMissionId).toBe('mission-live');
+    expect(useProductNavigationStore.getState().destination).toEqual({
+      kind: 'mission',
+      missionId: 'mission-live',
+      surface: 'board',
+    });
+    expect(useMissionInspectorStore.getState().tab).toBe('activity');
 
     act(() => root.unmount());
   });
@@ -281,6 +298,19 @@ describe('a SOLITARY structural placeholder is a vacancy, not a session', () => 
     act(() => root.unmount());
   });
 
+  it('opens canonical Mission Setup from an idle vacancy', () => {
+    seedPlaceholderOnly();
+    render();
+
+    act(() => buttonWith('Começar uma missão').click());
+
+    expect(useProductNavigationStore.getState().destination).toEqual({
+      kind: 'mission-setup',
+    });
+
+    act(() => root.unmount());
+  });
+
   /** The operator must still get a real terminal the moment they ask for one. */
   it('the CTA claims the vacancy and a real terminal takes its place', () => {
     seedPlaceholderOnly();
@@ -292,6 +322,36 @@ describe('a SOLITARY structural placeholder is a vacancy, not a session', () => 
     expect(host.querySelector('.pane__terminal')).not.toBeNull();
     expect(terminal.attachHost).toHaveBeenCalled();
     expect(useLayoutStore.getState().focusedPaneId).toBe('pane-5ba1523f');
+
+    act(() => root.unmount());
+  });
+
+  it('closing the final Terminal pane leaves an actionable PaneVacancy on Terminal', () => {
+    const pane: PaneModel = {
+      id: 'pane-final',
+      kind: 'shell',
+      title: 'Terminal',
+    };
+    useLayoutStore.setState({
+      root: buildGridTree([pane]),
+      focusedPaneId: pane.id,
+      maximizedPaneId: null,
+      hydrated: true,
+      viewKind: 'grid',
+    });
+    useProductNavigationStore.getState().openTerminal();
+    render();
+
+    act(() => useLayoutStore.getState().close(pane.id, 'user'));
+
+    expect(useProductNavigationStore.getState().destination).toEqual({
+      kind: 'terminal',
+    });
+    expect(buttonWith('Abrir terminal aqui')).toBeTruthy();
+    expect(livePane().isStructuralPlaceholder).toBe(true);
+
+    act(() => buttonWith('Abrir terminal aqui').click());
+    expect(livePane().isStructuralPlaceholder).toBeUndefined();
 
     act(() => root.unmount());
   });

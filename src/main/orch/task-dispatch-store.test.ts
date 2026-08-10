@@ -165,6 +165,7 @@ function createTaskDispatchStore(
         status: 'done',
         intentState: 'done',
         learnings: input.learnings,
+        result: input.result,
       }),
   } satisfies MissionEngine;
   return createProductionTaskDispatchStore(runtime, scope, {
@@ -708,6 +709,7 @@ function verifiedPlanFixture(
     goal?: string;
     mixedTopology?: boolean;
     qualityGoal?: string;
+    acknowledgeDelivery?: boolean;
   } = {},
 ) {
   const runtime = manager();
@@ -935,14 +937,16 @@ function verifiedPlanFixture(
         handoffId: handoff.id,
       }),
     ).toBe(true);
-    acknowledgeHandoffFromPhysicalMaestro({
-      runtime,
-      scope,
-      handoffs,
-      missionId: mission.id,
-      sessionId: 'orchestrator-golden',
-      handoffId: handoff.id,
-    });
+    if (options.acknowledgeDelivery !== false) {
+      acknowledgeHandoffFromPhysicalMaestro({
+        runtime,
+        scope,
+        handoffs,
+        missionId: mission.id,
+        sessionId: 'orchestrator-golden',
+        handoffId: handoff.id,
+      });
+    }
     return { claim, handoff };
   };
   const primary = completePlannedTask({
@@ -1727,6 +1731,10 @@ describe('durable task dispatcher authority', () => {
         expectedIntentState: 'executing',
         expectedIntentVersion: 4,
         learnings: finalOutput,
+        result: expect.objectContaining({
+          outcome: 'success',
+          summary: finalOutput,
+        }),
       }),
     );
     expect(
@@ -3143,6 +3151,7 @@ describe('durable task dispatcher authority', () => {
             status: 'done',
             intentState: 'done',
             learnings: input.learnings,
+            result: input.result,
           },
         );
         if (!completed) throw new Error('test engine completion CAS changed');
@@ -3431,33 +3440,22 @@ describe('durable task dispatcher authority', () => {
         missionId: mission.id,
         intentVersion: 7,
       }),
-    ).toBe(false);
-    expect(restartedMissions.get(mission.id)).toMatchObject({
-      status: 'running',
-      intentState: 'validating',
-    });
-    acknowledgeHandoffFromPhysicalMaestro({
-      runtime,
-      scope,
-      handoffs: restartedHandoffs,
-      missionId: mission.id,
-      sessionId: 'orchestrator-golden-rebound',
-      handoffId: handoff.id,
-    });
-    expect(restartedHandoffs.get(handoff.id)).toMatchObject({
-      deliveryState: 'consumed',
-      consumedBySession: 'orchestrator-golden-rebound',
-      consumedDeliveryAttemptId: reboundAttempt.id,
-    });
-    expect(
-      restartedDispatches.completeMissionFromVerifiedPlan({
-        missionId: mission.id,
-        intentVersion: 7,
-      }),
     ).toBe(true);
+    expect(restartedHandoffs.get(handoff.id)).toMatchObject({
+      deliveryState: 'submitted',
+      consumedAt: undefined,
+    });
     expect(restartedMissions.get(mission.id)).toMatchObject({
       status: 'done',
       intentState: 'done',
+      result: {
+        outcome: 'success',
+        summary: expect.stringMatching(
+          /Conclusão automática verificada[\s\S]*Entregas verificadas[\s\S]*Implementação integrada/i,
+        ),
+        evidenceIds: qualityEvidenceIds,
+        artifactRefs: [integratedHeadSha],
+      },
     });
     expect(restartedMissions.get(mission.id)?.learnings).toMatch(
       /Conclusão automática verificada[\s\S]*handoffs aceitos pela sessão atual/i,
@@ -3469,6 +3467,23 @@ describe('durable task dispatcher authority', () => {
         intentVersion: 7,
       }),
     ).toBe(false);
+  });
+
+  it('completes scheduler-owned delivery after the current Maestro accepts it without manual ACK', () => {
+    const fixture = verifiedPlanFixture('delivery-no-manual-ack', {
+      acknowledgeDelivery: false,
+    });
+
+    expect(
+      fixture.dispatches.completeMissionFromVerifiedPlan({
+        missionId: fixture.mission.id,
+        intentVersion: 7,
+      }),
+    ).toBe(true);
+    expect(fixture.missions.get(fixture.mission.id)).toMatchObject({
+      status: 'done',
+      intentState: 'done',
+    });
   });
 
   it('fails closed when a guided verified plan loses its PREVC quality rows', () => {

@@ -12,6 +12,7 @@ import {
   missionSummarySnapshotSchema,
   type MissionEngineCommand,
 } from "../../shared/mission-engine-contract";
+import { PET_STUDIO_SQUAD } from '../../shared/pet-studio';
 import type { ProjectExecutionScope } from "../../shared/types";
 import {
   missionPatchSchema,
@@ -84,10 +85,6 @@ import {
   type RendererMissionAuthorityCandidate,
   type RendererMissionLifecycleCandidate,
 } from "./renderer-mission-authority";
-import {
-  consumeWizardPlanReviewGrant,
-  recordWizardPlanReviewGrant,
-} from "./mission-wizard-plan-review-grant";
 import { deleteMissionPromptQueue } from "./mission-prompt-queue-registry";
 import { withMissionLifecycleLock } from "./mission-lifecycle-lock";
 import {
@@ -163,8 +160,6 @@ import type { AgentGateContext } from "./gate";
 import { reconcileCompletedPetStudioMissions } from "./pet-studio-completion";
 import { requestMissionDriverTick } from "./mission-driver-runtime";
 import { z } from "zod";
-import { submitMissionKickoffFromRenderer } from './mission-kickoff';
-import { getOrchSettings } from '../persistence/settings-store';
 import { PET_STUDIO_SQUAD_ID } from '../../shared/pet-studio';
 import {
   persistOperatorReviewFeedback,
@@ -177,14 +172,10 @@ import {
   type ClarifyAnswerAuthorityCandidate,
 } from './clarify-flow';
 import {
-  bootstrapMissionOrchestratorForScope,
-  bootstrapMissionOrchestratorFromRenderer,
-  rearmBlockedMissionFromRenderer,
   restartMissionOrchestratorAfterPlanPromotionForScope,
   resumeBlockedMissionBootstrapFromRenderer,
   stopMissionOrchestratorBeforePlanPromotionForScope,
 } from './mission-orchestrator-bootstrap';
-import { ensureGuidedMissionPlanForScope } from './guided-mission-planner';
 import { warmSquadRuntimeSubscriptionAuth } from './squad-runtime-inventory';
 import {
   snapshotSquadAuthority,
@@ -198,15 +189,8 @@ import {
   settleMissionRuntimeDemotion,
   terminateMissionRuntime,
 } from './mission-runtime-termination';
-import {
-  applyExclusiveOrchestratorReplacement,
-  prepareExclusiveOrchestratorReplacement,
-  type ExclusiveOrchestratorReplacementCandidate,
-} from './exclusive-orchestrator-replacement';
-import { issueImmediateSquadSpawnGrant } from './spawn-authority';
 import { BoundedAsyncOperationPool } from './bounded-async-operation-pool';
 import { commitPromotedPlanToGit } from "./promoted-plan-git-authority";
-import { missionTaskScheduleForRenderer } from "./mission-task-schedule-ipc";
 import { missionControlPlaneSnapshot } from "./mission-control-plane-ipc";
 
 /**
@@ -227,7 +211,6 @@ const listeners = new Set<WebContents>();
 let nextMissionSummaryBroadcastVersion = 0;
 const missionSummaryBroadcastVersions = new Map<string, number>();
 const missionAuthorityConfirmations = new WeakSet<WebContents>();
-const immediateSquadConfirmations = new WeakSet<WebContents>();
 const squadDeleteConfirmations = new WeakSet<WebContents>();
 const operatorAttestationConfirmations = new WeakSet<WebContents>();
 const catalogInstallConfirmations = new WeakSet<WebContents>();
@@ -409,42 +392,6 @@ function rendererAsyncAuthorityFence(
   };
 }
 
-export const missionSubmitIntentSchema = z
-  .object({
-    missionId: z.string().min(1).max(128),
-    goal: z.string().min(1).max(16_384),
-    source: z.enum(["typed", "voice", "imported-issue", "automation"]).optional(),
-    contextPolicy: z.enum(["none", "minimal", "on-demand"]).optional(),
-    acceptanceCriteria: z.array(z.string().min(1).max(2_048)).max(32).optional(),
-    lane: z.enum(["standard", "consult", "plan", "ops"]).optional(),
-    orchestrationMode: z.enum(["livre", "pack", "guided"]).optional(),
-    wavePackTemplateId: z.enum(["landing", "saas", "fix"]).optional(),
-    evidenceAttached: z.boolean().optional(),
-    /**
-     * Somente o wizard de produto marca isto, e apenas na submissão que ele
-     * mesmo exibirá na revisão de plano in-app: main emite um grant
-     * (sender+missão+intentVersion, single-use, TTL) e o Start dessa revisão
-     * vale como a aprovação. Qualquer outro caller cai no modal nativo.
-     */
-    planReviewSurface: z.enum(["product-wizard"]).optional(),
-  })
-  .superRefine((value, ctx) => {
-    if (value.orchestrationMode === "pack" && !value.wavePackTemplateId) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "wave_pack_template_required",
-        path: ["wavePackTemplateId"],
-      });
-    }
-  });
-
-export const missionApproveIntentSchema = z
-  .object({
-    missionId: z.string().min(1).max(128),
-    evidenceAttached: z.boolean().optional(),
-    attachmentPaths: z.array(z.string().min(1).max(4_096)).max(6).optional(),
-  })
-  .strict();
 
 /**
  * Teclado do operador num pane de missão. O teto é digitação e edição de
@@ -458,7 +405,7 @@ export const paneOperatorInputSchema = z
   })
   .strict();
 
-export const missionOrchestratorBootstrapSchema = z
+const missionResumeBootstrapSchema = z
   .object({
     missionId: z.string().min(1).max(128),
   })
@@ -545,8 +492,6 @@ interface MissionAuthorityDialogReview {
 function missionAuthorityDialogDetail(
   scope: ProjectExecutionScope,
   candidate: RendererMissionAuthorityCandidate,
-  action: "approve" | "promote",
-  replacement?: ExclusiveOrchestratorReplacementCandidate,
 ): MissionAuthorityDialogReview {
   const budgets = candidate.budgets;
   const roster = candidate.squad.agents;
@@ -578,7 +523,6 @@ function missionAuthorityDialogDetail(
         : 'não suportada';
   const promotedPlan = candidate.promotedPlan;
   const hasQualifiedCodexWorkspaceWriter =
-    (candidate.lane === 'standard' || action === 'promote') &&
     candidate.executionMode !== 'manual' &&
     candidate.squad.agents.some(
       (agent) => agent.category === 'executor' && agent.cli === 'codex',
@@ -602,13 +546,10 @@ function missionAuthorityDialogDetail(
   const promotedPlanReview = promotedPlan
     ? `promovido · digest=${promotedPlan.digest}`
     : 'direto (sem promoção)';
-  const replacementReview = replacement
-    ? `${replacement.entries.length} missão(ões)/${replacement.entries.reduce((total, entry) => total + entry.sessionIds.length, 0)} sessão(ões)`
-    : 'nenhuma';
   const { fence: _runtimeFence, ...reviewedAuthority } = candidate;
   const fullReview = {
     version: 1,
-    action,
+    action: 'promote',
     workspace: {
       version: scope.version,
       installationId: scope.installationId,
@@ -618,12 +559,11 @@ function missionAuthorityDialogDetail(
       identitySource: scope.identitySource,
     },
     authority: reviewedAuthority,
-    replacement: replacement ?? null,
+    replacement: null,
     installNetwork: installNetworkAuthority,
   };
   const reviewSha256 = dialogDigest(fullReview);
-  const laneReview =
-    action === 'promote' ? `${candidate.lane}→standard` : candidate.lane;
+  const laneReview = `${candidate.lane}→standard`;
   // Digests por linha viraram fricção: o operador não confere hash de cada
   // campo no modal. O vínculo criptográfico real é o `reviewSha256` (computado
   // do fullReview acima) e ele permanece como única âncora na linha final.
@@ -633,7 +573,7 @@ function missionAuthorityDialogDetail(
     `Missão: ${compactDialogText(candidate.title, 64)} · intenção=v${candidate.intentVersion} · ID=${compactDialogText(candidate.missionId, 48)}`,
     `Objetivo: ${compactDialogText(candidate.goal, 96)}`,
     `Execução: risco=${candidate.risk} · lane=${laneReview} · modo=${candidate.executionMode} · orch=${candidate.orchestrationMode ?? 'auto'}${candidate.wavePackTemplateId ? `/${candidate.wavePackTemplateId}` : ''}${typeof candidate.wavePackStoryCount === 'number' ? `·stories=${candidate.wavePackStoryCount}` : ''} · orçamento P${budgets.planningTokens}/E${budgets.executionTokens}/W${budgets.maxWorkers}${budgets.maxSteps === undefined ? '' : `/S${budgets.maxSteps}`}`,
-    `Maestro/workers: ${compactDialogText(maestro?.agentName ?? '(ausente)', 28)}/${compactDialogText(runtime.adapterId, 20)} · workers=${workers.length} · ${orchestratorEvidence} · model=${compactDialogText(runtime.model ?? 'default', 28)} · squad=${compactDialogText(candidate.squad.name, 32)} (${compactDialogText(candidate.squad.id, 64)}) SHA-256=${candidate.squad.hash} · trocas=${replacementReview}`,
+    `Maestro/workers: ${compactDialogText(maestro?.agentName ?? '(ausente)', 28)}/${compactDialogText(runtime.adapterId, 20)} · workers=${workers.length} · ${orchestratorEvidence} · model=${compactDialogText(runtime.model ?? 'default', 28)} · squad=${compactDialogText(candidate.squad.name, 32)} (${compactDialogText(candidate.squad.id, 64)}) SHA-256=${candidate.squad.hash} · trocas=nenhuma`,
     `Permissões: critérios=${candidate.acceptanceCriteria.length} · negadas=${candidate.deniedTools.length} · tools=${grantedToolCount}+${unrestrictedToolAgents} irrestrito(s) · skills=${grantedSkillCount}+${unrestrictedSkillAgents} irrestrito(s)`,
     `Evidências/plano: evidência=${candidate.evidenceAttached ? 'sim' : 'não'} · anexos=${candidate.attachmentPaths.length} · plano=${promotedPlanReview}`,
     installNetworkReview,
@@ -857,36 +797,75 @@ async function confirmCatalogInstallPayload(
   return result.response === 1;
 }
 
-async function confirmMissionAuthorityChange(
+async function authorizePlanPromotion(
   owner: WebContents,
   scope: ProjectExecutionScope,
   candidate: RendererMissionAuthorityCandidate,
-  action: "approve" | "promote",
-  replacement?: ExclusiveOrchestratorReplacementCandidate,
-  _delegation?: { wizardPlanReviewVerified?: boolean },
-): Promise<string | null> {
-  // ZERO FRICÇÃO (decisão do dono, 06/08): nenhum prompt no caminho da
-  // missão — nem upfront, nem destrutivo, nem promoção. A segurança migrou de
-  // CONFIRMAÇÃO para REVERSIBILIDADE + REGISTRO: o recibo criptográfico
-  // permanece (reviewSha256 do review integral entra no contrato e amarra o
-  // fence), histórico/receipts são preservados no encerramento, e a
-  // autorização vira registro auditável — o sistema conta o que fez em vez de
-  // interrogar antes de fazer. O parâmetro owner permanece na assinatura para
-  // callers/escopo; nenhuma janela é tocada.
+): Promise<string> {
+  // Promotion is recorded rather than prompted. The integral review digest is
+  // persisted in the contract and binds the exact authority to the operation.
   void owner;
-  const review = missionAuthorityDialogDetail(
-    scope,
-    candidate,
-    action,
-    replacement,
-  );
+  const review = missionAuthorityDialogDetail(scope, candidate);
   console.log(
-    `[orch] mission ${action} auto-authorized risk=${candidate.risk} ` +
+    `[orch] mission promote auto-authorized risk=${candidate.risk} ` +
       `project=${scope.projectId} mission=${candidate.missionId} ` +
       `reviewSha256=${review.reviewSha256}`,
   );
   return review.reviewSha256;
 }
+async function confirmPetStudioMissionStart(
+  owner: WebContents,
+  scope: ProjectExecutionScope,
+  mission: Mission,
+  reviewSha256: string,
+): Promise<boolean> {
+  const window = BrowserWindow.fromWebContents(owner);
+  if (!window || window.isDestroyed()) {
+    throw new Error('renderer window is unavailable');
+  }
+  const attachments = mission.intentContract?.attachmentSnapshots ?? [];
+  const attachment = attachments[0];
+  if (
+    attachments.length !== 1 ||
+    !attachment?.sourcePath ||
+    !attachment.sealId ||
+    !attachment.device ||
+    !attachment.inode
+  ) {
+    throw new Error(
+      'pet start confirmation requires one sealed governed attachment',
+    );
+  }
+  const agent = PET_STUDIO_SQUAD.agents[0]!;
+  const permissions =
+    '• Gerar imagens para este pet: somente pela skill nexus-pet-studio ' +
+    'na sessão Codex revisada.';
+  const result = await dialog.showMessageBox(window, {
+    type: 'question',
+    title: 'Nexus IDE — confirmar criação do pet',
+    buttons: ['Cancelar', 'Iniciar criação do pet'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+    message: 'Iniciar a sessão Codex revisada para criar este pet?',
+    detail:
+      `Workspace: ${safeDialogLabel(scope.rootRealPath, 4_096)}\n` +
+      `Imagem escolhida: ${safeDialogLabel(attachment.sourcePath, 4_096)}\n` +
+      `Artefato selado: ${safeDialogLabel(attachment.path, 4_096)}\n` +
+      `Identidade: seal=${attachment.sealId} · dev=${attachment.device} · inode=${attachment.inode}\n` +
+      `SHA-256: ${attachment.sha256}\n` +
+      `Bytes: ${attachment.size}\n` +
+      `Revisão: ${reviewSha256}\n\n` +
+      `Equipe fixa: ${PET_STUDIO_SQUAD.name}\n` +
+      `Sessão: ${agent.cli} / ${agent.model}\n` +
+      `Skill permitida: ${(agent.allowedSkills ?? []).join(', ')}\n` +
+      `Ferramentas permitidas: ${(agent.allowedTools ?? []).join(', ')}\n\n` +
+      `Permissões:\n${permissions}\n\n` +
+      'A missão e a geração só começarão após esta confirmação nativa.',
+  });
+  return result.response === 1;
+}
+
 
 async function confirmMissionLifecycleDemotion(
   owner: WebContents,
@@ -940,88 +919,6 @@ async function confirmMissionRuntimeClose(
   }
 }
 
-interface ImmediateSquadLaunchCandidate {
-  readonly squad: SquadAuthoritySnapshot;
-  readonly paneId: string;
-  readonly adapterId: string;
-  readonly model?: string;
-  readonly accountId?: string;
-  readonly effort?: string;
-  readonly missionTitle: string;
-  readonly missionGoal: string;
-}
-
-async function confirmImmediateSquadLaunch(
-  owner: WebContents,
-  scope: ProjectExecutionScope,
-  candidate: ImmediateSquadLaunchCandidate,
-): Promise<boolean> {
-  const window = BrowserWindow.fromWebContents(owner);
-  if (!window || window.isDestroyed()) {
-    throw new Error("renderer window is unavailable");
-  }
-  if (immediateSquadConfirmations.has(owner)) {
-    throw new Error("immediate squad confirmation is already pending");
-  }
-  immediateSquadConfirmations.add(owner);
-  try {
-    const MAX_ROSTER_LINES = 12;
-    const shownAgents = candidate.squad.agents.slice(0, MAX_ROSTER_LINES);
-    const rosterLines = shownAgents.map(
-      (agent, index) =>
-        `${index + 1}. ${safeDialogLabel(agent.agentName, 64)} ` +
-        `(${safeDialogLabel(agent.category, 32)}, ` +
-        `cli=${safeDialogLabel(agent.cli, 32)}, ` +
-        `model=${safeDialogLabel(agent.model ?? "default", 64)}, ` +
-        `effort=${safeDialogLabel(agent.effort ?? "default", 24)}, ` +
-        `tools=${safeDialogLabel((agent.allowedTools ?? []).join(",") || "(default)", 96)}, ` +
-        `skills=${safeDialogLabel((agent.allowedSkills ?? []).join(",") || "(nenhuma)", 96)})`,
-    );
-    const rosterOverflow = candidate.squad.agents.length - shownAgents.length;
-    if (rosterOverflow > 0) {
-      rosterLines.push(
-        `… +${rosterOverflow} agente(s) — conteúdo exato garantido pelo hash`,
-      );
-    }
-    const roster = rosterLines.join("\n");
-    const petStudioBoundary =
-      candidate.squad.id === PET_STUDIO_SQUAD_ID
-        ? "\nPet Studio: o Codex pode escrever somente neste workspace, sem rede de subprocessos; .agents/.codex continuam protegidos. Geração de mídia pode exigir confirmação de provider/custo. O Nexus valida os bytes e instala um id novo em ~/.codex/pets sem sobrescrever pets existentes.\n"
-        : "";
-    const result = await dialog.showMessageBox(window, {
-      type: "warning",
-      title: "Nexus IDE — iniciar squad imediato",
-      buttons: ["Cancelar", "Autorizar e iniciar"],
-      defaultId: 0,
-      cancelId: 0,
-      noLink: true,
-      message:
-        "Autorizar este runtime e objetivo exatos sem passar pelo wizard PREVC?",
-      // Native message boxes grow to fit `detail` and never scroll: dumping
-      // the full instructions/briefing overflowed off-screen and made the
-      // dialog unusable. Show a bounded summary; the squad hash pins the
-      // integral content (instructions, capabilities) exactly.
-      detail:
-        `Workspace: ${safeDialogLabel(scope.rootRealPath, 512)}\n` +
-        `Título: ${safeDialogLabel(candidate.missionTitle, 160)}\n` +
-        `Objetivo: ${safeDialogLabel(candidate.missionGoal, 400)}\n` +
-        `Squad: ${safeDialogLabel(candidate.squad.name, 128)} ` +
-        `(${safeDialogLabel(candidate.squad.id, 96)})\n` +
-        `Pane: ${safeDialogLabel(candidate.paneId, 96)}\n` +
-        `Runtime: adapter=${safeDialogLabel(candidate.adapterId, 64)}, ` +
-        `model=${safeDialogLabel(candidate.model ?? "default", 96)}, ` +
-        `account=${safeDialogLabel(candidate.accountId ?? "none", 96)}, ` +
-        `effort=${safeDialogLabel(candidate.effort ?? "default", 32)}\n` +
-        `Roster:\n${roster}\n\n` +
-        `Hash exato (fixa instruções e capacidades integrais): ${candidate.squad.hash}\n` +
-        petStudioBoundary +
-        "O grant é opaco, de uso único e preso ao conteúdo fixado pelo hash acima.",
-    });
-    return result.response === 1;
-  } finally {
-    immediateSquadConfirmations.delete(owner);
-  }
-}
 
 /**
  * A mission snapshot may skip the separate "save globally" ceremony only
@@ -1485,18 +1382,7 @@ export function configureRendererMissionAuthority(
 ): void {
   missionSummaryBroadcastVersions.clear();
   projectDomainStores = configureProjectDomainStoreRegistry(runtimeManager);
-  rendererMissionAuthority = new RendererMissionAuthority(
-    projectDomainStores,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    bootstrapMissionOrchestratorForScope,
-    undefined,
-    undefined,
-    undefined,
-    ensureGuidedMissionPlanForScope,
-  );
+  rendererMissionAuthority = new RendererMissionAuthority(projectDomainStores);
   projectDomainStores.onChange((scope, store) => {
     broadcastProjectStore(scope, store);
     if (store === 'missions' || store === 'mission-panes') {
@@ -1986,7 +1872,43 @@ export function registerOrchIpc(): void {
   ipcMain.handle(ORCH_CHANNELS.missionStart, async (event, raw) => {
     const input = missionStartSchema.parse(raw);
     const scope = requireLiveRendererWorkspaceScope(event.sender);
-    const snapshot = await missionEngineForScope(scope).start(scope, input);
+    const stores = getProjectDomainStores(scope);
+    const mission = stores.missions.get(input.missionId);
+    if (mission?.squadId === PET_STUDIO_SQUAD.id) {
+      if (
+        mission.intentContract?.approvalReviewSha256 !== input.reviewSha256
+      ) {
+        throw new Error('pet review fence mismatch before confirmation');
+      }
+      const confirmed = await confirmPetStudioMissionStart(
+        event.sender,
+        scope,
+        mission,
+        input.reviewSha256,
+      );
+      if (!confirmed) throw new Error('user_denied');
+      requireLiveRendererWorkspaceScope(event.sender, scope);
+      const current = stores.missions.get(input.missionId);
+      if (
+        !current ||
+        current.squadId !== mission.squadId ||
+        current.updatedAt !== mission.updatedAt ||
+        current.intentVersion !== mission.intentVersion ||
+        current.intentContract?.approvalReviewSha256 !==
+          input.reviewSha256 ||
+        JSON.stringify(current.intentContract?.attachmentSnapshots) !==
+          JSON.stringify(mission.intentContract?.attachmentSnapshots)
+      ) {
+        throw new Error(
+          'pet start became stale while native confirmation was open',
+        );
+      }
+    }
+    const snapshot = await withMissionLifecycleLock(
+      scope,
+      input.missionId,
+      () => missionEngineForScope(scope).start(scope, input),
+    );
     return missionSnapshotSchema.parse(snapshot);
   });
   ipcMain.handle(ORCH_CHANNELS.missionCommand, async (event, raw) => {
@@ -2063,31 +1985,14 @@ export function registerOrchIpc(): void {
       raw,
     );
   });
-  ipcMain.handle(ORCH_CHANNELS.missionsTaskSchedule, (event, raw) => {
-    const parsed = z
-      .object({ missionId: z.string().min(1).max(128) })
-      .strict()
-      .safeParse(raw);
-    if (!parsed.success) return { tasks: [] };
-    // requireProjectStores resolves the renderer workspace scope and refuses
-    // foreign workspaces, so the projection can never cross projects.
-    const stores = requireProjectStores(event.sender);
-    const mission = stores.missions.get(parsed.data.missionId);
-    if (!mission) return { tasks: [] };
-    try {
-      return { tasks: missionTaskScheduleForRenderer(stores, mission) };
-    } catch {
-      return { tasks: [] };
-    }
-  });
   ipcMain.handle(ORCH_CHANNELS.missionControlPlane, (event, raw) => {
     const parsed = z
       .object({ missionId: z.string().min(1).max(128) })
       .strict()
       .safeParse(raw);
     if (!parsed.success) return null;
-    // Mesmo contrato do missionsTaskSchedule: requireProjectStores confina o
-    // renderer ao próprio workspace; panes filtrados por missão na fusão.
+    // requireProjectStores confines this projection to the renderer's live
+    // workspace; pane filtering below remains mission-scoped.
     const stores = requireProjectStores(event.sender);
     const mission = stores.missions.get(parsed.data.missionId);
     if (!mission) return null;
@@ -2120,250 +2025,16 @@ export function registerOrchIpc(): void {
     },
   );
 
-  // A missão nasce NO LANÇAMENTO (renderer), não à mercê de o LLM chamar
-  // nexus_mission_create — sem isto, a missão nova não aparecia em lugar
-  // nenhum enquanto a antiga já tinha sido deslocada.
-  const missionCreateSchema = z.object({
-    title: z.string().min(1).max(512),
-    goal: z.string().min(1).max(16_384).optional(),
-    squadId: z.string().min(1).max(128),
-    /** Pane do orquestrador — entra na composição para o reopen restaurá-lo. */
-    orchestratorPane: z.object({
-      paneId: z.string().min(1).max(128),
-      adapterId: z.string().min(1).max(128).optional(),
-      model: z.string().max(128).optional(),
-      accountId: z.string().max(128).optional(),
-      cwd: z.string().max(4096).optional(),
-      title: z.string().max(512).optional(),
-      agentName: z.string().max(256).optional(),
-    }),
-  });
-  ipcMain.handle(ORCH_CHANNELS.missionCreate, (event, raw) => {
-    const parsed = missionCreateSchema.safeParse(raw);
-    if (!parsed.success) throw new Error("invalid mission create payload");
-    return requireMissionAuthority().createMissionFromRenderer(
-      event.sender,
-      parsed.data,
-    );
-  });
 
-  const immediateSquadLaunchSchema = z
-    .object({
-      squadId: z.string().min(1).max(128),
-      paneId: z.string().min(1).max(128),
-      adapterId: z.string().min(1).max(64),
-      model: z.string().min(1).max(128).optional(),
-      accountId: z.string().min(1).max(128).optional(),
-      effort: z.string().min(1).max(32).optional(),
-      missionTitle: z
-        .string()
-        .min(1)
-        .max(512)
-        .refine(
-          (value) =>
-            !/[\0-\x08\x0b\x0c\x0e-\x1f\x7f\u202a-\u202e\u2066-\u2069]/.test(
-              value,
-            ),
-          "mission title contains invisible control characters",
-        ),
-      missionGoal: z
-        .string()
-        .min(1)
-        .max(16_384)
-        .refine(
-          (value) =>
-            !/[\0-\x08\x0b\x0c\x0e-\x1f\x7f\u202a-\u202e\u2066-\u2069]/.test(
-              value,
-            ),
-          "mission goal contains invisible control characters",
-        ),
-    })
-    .strict();
-  ipcMain.handle(
-    ORCH_CHANNELS.missionAuthorizeImmediateSquad,
-    async (event, raw) => {
-      const parsed = immediateSquadLaunchSchema.safeParse(raw);
-      if (!parsed.success) {
-        throw new Error("invalid immediate squad launch payload");
-      }
-      const isAllowed =
-        parsed.data.squadId === PET_STUDIO_SQUAD_ID ||
-        getOrchSettings().intentFirstMissionRuntimeV1 === false;
-      if (!isAllowed) {
-        throw new Error(
-          "intent-first: immediate squad launch is not authorized",
-        );
-      }
-      const scope = requireLiveRendererWorkspaceScope(event.sender);
-      const matches = listSquads().filter(
-        (candidate) => candidate.id === parsed.data.squadId,
-      );
-      if (matches.length !== 1) {
-        throw new Error("exact saved squad is unavailable");
-      }
-      const snapshot = snapshotSquadAuthority(matches[0]);
-      assertSquadReviewable(snapshot);
-      const candidate: ImmediateSquadLaunchCandidate = {
-        squad: snapshot,
-        ...parsed.data,
-        missionTitle: parsed.data.missionTitle.trim(),
-      };
-      if (!(await confirmImmediateSquadLaunch(event.sender, scope, candidate))) {
-        throw new Error("user_denied");
-      }
-      requireLiveRendererWorkspaceScope(event.sender, scope);
-      const currentMatches = listSquads().filter(
-        (current) => current.id === parsed.data.squadId,
-      );
-      if (
-        currentMatches.length !== 1 ||
-        snapshotSquadAuthority(currentMatches[0]).hash !== snapshot.hash
-      ) {
-        throw new Error(
-          "saved squad changed while native confirmation was open",
-        );
-      }
-      const orchestrator =
-        currentMatches[0].agents.find(
-          (agent) => agent.category === "orchestrator",
-        ) ?? null;
-      if (!orchestrator) {
-        throw new Error("saved squad has no orchestrator");
-      }
-      return {
-        grant: issueImmediateSquadSpawnGrant({
-          owner: event.sender,
-          scope,
-          squad: currentMatches[0],
-          runtime: {
-            adapterId: parsed.data.adapterId,
-            model: parsed.data.model,
-            accountId: parsed.data.accountId,
-            effort: parsed.data.effort,
-            paneId: parsed.data.paneId,
-            title: orchestrator.agentName,
-            missionTitle: parsed.data.missionTitle.trim(),
-            missionGoal: parsed.data.missionGoal.trim(),
-          },
-          ttlMs: 120_000,
-        }),
-      };
-    },
-  );
-
-  const missionArmSchema = z.object({
-    title: z.string().min(1).max(512),
-    squadId: z.string().min(1).max(128),
-  });
-  ipcMain.handle(ORCH_CHANNELS.missionArm, (event, raw) => {
-    const parsed = missionArmSchema.safeParse(raw);
-    if (!parsed.success) throw new Error("invalid mission arm payload");
-    return requireMissionAuthority().armMissionFromRenderer(
-      event.sender,
-      parsed.data,
-    );
-  });
-
-  ipcMain.handle(ORCH_CHANNELS.missionSubmitIntent, (event, raw) => {
-    const parsed = missionSubmitIntentSchema.safeParse(raw);
-    if (!parsed.success) throw new Error("invalid mission submit intent payload");
-    const { planReviewSurface, ...input } = parsed.data;
-    const mission = requireMissionAuthority().submitIntentFromRenderer(
-      event.sender,
-      input,
-    );
-    if (planReviewSurface === "product-wizard") {
-      recordWizardPlanReviewGrant(
-        event.sender,
-        mission.id,
-        mission.intentVersion ?? 0,
-      );
-    }
-    return mission;
-  });
-
-  ipcMain.handle(ORCH_CHANNELS.missionApproveIntent, async (event, raw) => {
-    const parsed = missionApproveIntentSchema.safeParse(raw);
-    if (!parsed.success) throw new Error("invalid mission approve intent payload");
-    const scope = requireLiveRendererWorkspaceScope(event.sender);
-    const authority = requireMissionAuthority();
-    // The sync squad-readiness gate below reads only the warm subscription
-    // cache; a cold AGY keychain session would otherwise read as login-needed
-    // and block a healthy roster. Warm it (async, memoized) before every
-    // candidate/approve read inside this handler.
-    await warmSquadRuntimeSubscriptionAuth();
-    const candidate = authority.missionApprovalCandidateFromRenderer(
-      event.sender,
-      parsed.data,
-    );
-    // Single-use: consome aqui para que um grant válido nunca autorize dois
-    // approves — se qualquer guarda abaixo cair no modal ou negar, o próximo
-    // approve volta ao diálogo nativo.
-    const wizardPlanReviewVerified = consumeWizardPlanReviewGrant(
-      event.sender,
-      candidate.missionId,
-      candidate.intentVersion,
-    );
-    const replacement = prepareExclusiveOrchestratorReplacement({
-      incomingMissionId: candidate.missionId,
-      incomingAdapterId: candidate.orchestratorRuntime.adapterId,
-    });
-    const approvalReviewSha256 = await confirmMissionAuthorityChange(
-      event.sender,
-      scope,
-      candidate,
-      "approve",
-      replacement.entries.length > 0 ? replacement : undefined,
-      { wizardPlanReviewVerified },
-    );
-    if (!approvalReviewSha256) throw new Error("user_denied");
-    requireLiveRendererWorkspaceScope(event.sender, scope);
-    const currentCandidate = authority.missionApprovalCandidateFromRenderer(
-      event.sender,
-      parsed.data,
-    );
-    if (currentCandidate.fence !== candidate.fence) {
-      throw new Error(
-        'approval_stale: mission intent, attachments, squad or runtime changed while native confirmation was open',
-      );
-    }
-    await applyExclusiveOrchestratorReplacement({
-      incomingMissionId: candidate.missionId,
-      incomingAdapterId: candidate.orchestratorRuntime.adapterId,
-      expectedFence: replacement.fence,
-    });
-    requireLiveRendererWorkspaceScope(event.sender, scope);
-    return authority.approveIntentFromRenderer(
-      event.sender,
-      parsed.data,
-      candidate.fence,
-      approvalReviewSha256,
-    );
-  });
-
-  ipcMain.handle(ORCH_CHANNELS.missionBootstrapOrchestrator, (event, raw) => {
-    const parsed = missionOrchestratorBootstrapSchema.safeParse(raw);
-    if (!parsed.success) {
-      throw new Error("invalid mission orchestrator bootstrap payload");
-    }
-    return bootstrapMissionOrchestratorFromRenderer(event.sender, parsed.data);
-  });
 
   ipcMain.handle(ORCH_CHANNELS.missionResumeBootstrap, (event, raw) => {
-    const parsed = missionOrchestratorBootstrapSchema.safeParse(raw);
+    const parsed = missionResumeBootstrapSchema.safeParse(raw);
     if (!parsed.success) {
       throw new Error("invalid mission bootstrap resume payload");
     }
     return resumeBlockedMissionBootstrapFromRenderer(event.sender, parsed.data);
   });
 
-  ipcMain.handle(ORCH_CHANNELS.missionRearm, (event, raw) => {
-    const parsed = missionOrchestratorBootstrapSchema.safeParse(raw);
-    if (!parsed.success) {
-      throw new Error("invalid mission rearm payload");
-    }
-    return rearmBlockedMissionFromRenderer(event.sender, parsed.data);
-  });
 
 
   const missionPromotePlanSchema = z
@@ -2378,8 +2049,8 @@ export function registerOrchIpc(): void {
     if (!parsed.success) throw new Error("invalid promote plan lane payload");
     const scope = requireLiveRendererWorkspaceScope(event.sender);
     const authority = requireMissionAuthority();
-    // Same cold-keychain hazard as missionApproveIntent: the sync readiness
-    // gate inside every candidate/promote read must see the real AGY session.
+    // The synchronous readiness gate must see the warmed AGY subscription
+    // cache before each candidate and promotion read.
     await warmSquadRuntimeSubscriptionAuth();
     const candidate = authority.planPromotionCandidateFromRenderer(
       event.sender,
@@ -2390,13 +2061,11 @@ export function registerOrchIpc(): void {
         'plan_handoff_missing: a promoção exige um PRD/plano físico revisável',
       );
     }
-    const approvalReviewSha256 = await confirmMissionAuthorityChange(
+    const approvalReviewSha256 = await authorizePlanPromotion(
       event.sender,
       scope,
       candidate,
-      "promote",
     );
-    if (!approvalReviewSha256) throw new Error("user_denied");
     requireLiveRendererWorkspaceScope(event.sender, scope);
     const candidateBeforeTeardown =
       authority.planPromotionCandidateFromRenderer(
@@ -2468,86 +2137,6 @@ export function registerOrchIpc(): void {
     return getProjectDomainStores(scope).missions.get(promoted.id) ?? promoted;
   });
 
-  ipcMain.handle(ORCH_CHANNELS.missionKickoffSubmit, async (event, raw) => {
-    // ensureGuidedMissionPlanForScope (sync, inside the kickoff authority
-    // path) re-runs the squad-readiness gate; warm the keychain-only
-    // subscription cache first so a live AGY session is not read as
-    // login-needed.
-    await warmSquadRuntimeSubscriptionAuth();
-    return submitMissionKickoffFromRenderer(event.sender, raw);
-  });
-
-  const missionPrepareProjectSchema = z.object({
-    missionId: z.string().min(1).max(128),
-  });
-  ipcMain.handle(ORCH_CHANNELS.missionPrepareProject, (event, raw) => {
-    const parsed = missionPrepareProjectSchema.safeParse(raw);
-    if (!parsed.success) throw new Error("invalid mission prepare project payload");
-    return requireMissionAuthority().prepareProjectFromRenderer(
-      event.sender,
-      parsed.data,
-    );
-  });
-
-  ipcMain.handle(ORCH_CHANNELS.missionCancelPreparation, (event, raw) => {
-    const parsed = missionPrepareProjectSchema.safeParse(raw);
-    if (!parsed.success) throw new Error("invalid mission cancellation payload");
-    return requireMissionAuthority().cancelPreparationFromRenderer(
-      event.sender,
-      parsed.data,
-    );
-  });
-
-  const missionPromptQueueSchema = z.object({
-    missionId: z.string().min(1).max(128),
-  });
-  ipcMain.handle(ORCH_CHANNELS.missionPromptQueue, (event, raw) => {
-    const parsed = missionPromptQueueSchema.safeParse(raw);
-    if (!parsed.success) throw new Error("invalid mission prompt queue payload");
-    const snap = requireMissionAuthority().getPromptQueueFromRenderer(
-      event.sender,
-      parsed.data,
-    );
-    return {
-      executing: snap.executing
-        ? {
-            id: snap.executing.id,
-            kind: snap.executing.kind,
-            status: snap.executing.status,
-            intentVersion: snap.executing.intentVersion,
-            body: snap.executing.body.slice(0, 256),
-          }
-        : null,
-      queued: snap.queued.map((item) => ({
-        id: item.id,
-        kind: item.kind,
-        status: item.status,
-        intentVersion: item.intentVersion,
-        body: item.body.slice(0, 256),
-      })),
-      cancelled: snap.cancelled.slice(-8).map((item) => ({
-        id: item.id,
-        kind: item.kind,
-        status: item.status,
-        intentVersion: item.intentVersion,
-        body: item.body.slice(0, 256),
-      })),
-    };
-  });
-
-  const missionBindOrchestratorSchema = missionCreateSchema.extend({
-    missionId: z.string().min(1).max(128),
-  });
-  ipcMain.handle(ORCH_CHANNELS.missionBindOrchestrator, (event, raw) => {
-    const parsed = missionBindOrchestratorSchema.safeParse(raw);
-    if (!parsed.success) {
-      throw new Error("invalid mission bind orchestrator payload");
-    }
-    return requireMissionAuthority().bindOrchestratorToMissionFromRenderer(
-      event.sender,
-      parsed.data,
-    );
-  });
 
   const missionRebindSchema = z.object({
     missionId: z.string().min(1).max(128),

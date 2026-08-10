@@ -695,6 +695,261 @@ describe('scoped mission store', () => {
     unsubscribe();
   });
 
+  it('persists the canonical completion result atomically and clears it when work resumes', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope({ checkoutId: 'mission-result-cas' });
+    let now = 450;
+    const store = createScopedMissionStore(runtimeManager, scope, {
+      now: () => ++now,
+      idFactory: () => 'mission-result-cas',
+    });
+    const mission = store.create({
+      title: 'Canonical result',
+      intentState: 'executing',
+      intentVersion: 2,
+    });
+    const running = store.setStatus(mission.id, 'running')!;
+    const result = {
+      outcome: 'success' as const,
+      summary: 'Entrega validada pelo motor principal.',
+      evidenceIds: ['evidence-quality-gate'],
+      artifactRefs: ['0123456789abcdef0123456789abcdef01234567'],
+    };
+
+    const completed = store.transitionLifecycle(
+      mission.id,
+      {
+        updatedAt: running.updatedAt,
+        intentVersion: running.intentVersion!,
+      },
+      {
+        status: 'done',
+        intentState: 'done',
+        learnings: '## Conclusão\nEntrega validada.',
+        result,
+      },
+    );
+
+    expect(completed?.result).toEqual(result);
+    runtimeManager.close(scope);
+    const reopened = createScopedMissionStore(runtimeManager, scope);
+    expect(reopened.get(mission.id)?.result).toEqual(result);
+
+    const resumed = reopened.transitionLifecycle(
+      mission.id,
+      {
+        updatedAt: completed!.updatedAt,
+        intentVersion: completed!.intentVersion!,
+      },
+      { status: 'running', intentState: 'executing' },
+    );
+    expect(resumed?.result).toBeUndefined();
+    expect(
+      runtimeManager
+        .open(scope)
+        .db.prepare('SELECT result_json FROM missions WHERE id = ?')
+        .get(mission.id),
+    ).toEqual({ result_json: null });
+  });
+
+  it('requires a canonical result for every terminal lifecycle commit', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope({ checkoutId: 'mission-result-required' });
+    const store = createScopedMissionStore(runtimeManager, scope, {
+      idFactory: () => 'mission-result-required',
+    });
+    const mission = store.create({
+      title: 'Result-required completion',
+      intentState: 'executing',
+      intentVersion: 1,
+    });
+    const running = store.setStatus(mission.id, 'running')!;
+
+    expect(() =>
+      store.transitionLifecycle(
+        mission.id,
+        {
+          updatedAt: running.updatedAt,
+          intentVersion: running.intentVersion!,
+        },
+        {
+          status: 'done',
+          intentState: 'done',
+          learnings: 'Completion without canonical output must fail closed.',
+        },
+      ),
+    ).toThrow(/canonical.*result/i);
+    expect(store.get(mission.id)).toMatchObject({
+      status: 'running',
+      intentState: 'executing',
+    });
+  });
+
+  it('emits nested lifecycle changes only after the enclosing transaction commits', async () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope({ checkoutId: 'mission-nested-commit' });
+    let now = 475;
+    const store = createScopedMissionStore(runtimeManager, scope, {
+      now: () => ++now,
+      idFactory: () => 'mission-nested-commit',
+    });
+    const mission = store.create({
+      title: 'Nested verified completion',
+      intentState: 'executing',
+      intentVersion: 1,
+    });
+    const running = store.setStatus(mission.id, 'running')!;
+    const changed = vi.fn();
+    const unsubscribe = store.onChange(changed);
+    const db = runtimeManager.open(scope).db;
+    const result = {
+      outcome: 'success' as const,
+      summary: 'Nested completion committed with its verification frame.',
+      evidenceIds: [],
+      artifactRefs: [],
+    };
+
+    expect(() =>
+      db
+        .transaction(() => {
+          store.transitionLifecycle(
+            mission.id,
+            {
+              updatedAt: running.updatedAt,
+              intentVersion: running.intentVersion!,
+            },
+            {
+              status: 'done',
+              intentState: 'done',
+              learnings: 'Rolled back verification.',
+              result,
+            },
+          );
+          throw new Error('rollback outer verification');
+        })
+        .immediate(),
+    ).toThrow(/rollback outer verification/);
+    await Promise.resolve();
+    expect(changed).not.toHaveBeenCalled();
+    expect(store.get(mission.id)).toMatchObject({
+      status: 'running',
+      intentState: 'executing',
+    });
+
+    const completed = db
+      .transaction(() =>
+        store.transitionLifecycle(
+          mission.id,
+          {
+            updatedAt: running.updatedAt,
+            intentVersion: running.intentVersion!,
+          },
+          {
+            status: 'done',
+            intentState: 'done',
+            learnings: 'Committed verification.',
+            result,
+          },
+        ),
+      )
+      .immediate();
+    expect(changed).not.toHaveBeenCalled();
+    await Promise.resolve();
+    expect(changed).toHaveBeenCalledOnce();
+    expect(completed?.result).toEqual(result);
+    expect(store.get(mission.id)?.result).toEqual(result);
+    unsubscribe();
+  });
+
+  it('rejects terminal completion through generic status mutations', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope({ checkoutId: 'mission-done-authority' });
+    const store = createScopedMissionStore(runtimeManager, scope, {
+      idFactory: () => 'mission-done-authority',
+    });
+    const mission = store.create({
+      title: 'Only MissionEngine may complete',
+      intentState: 'executing',
+      intentVersion: 1,
+    });
+    store.setStatus(mission.id, 'running');
+
+    expect(() => store.setStatus(mission.id, 'done')).toThrow(
+      /verified completion|MissionEngine/i,
+    );
+    expect(() => store.update(mission.id, { status: 'done' })).toThrow(
+      /verified completion|MissionEngine/i,
+    );
+    const unchanged = store.get(mission.id);
+    expect(unchanged).toMatchObject({
+      status: 'running',
+      intentState: 'executing',
+    });
+    expect(unchanged?.result).toBeUndefined();
+  });
+
+  it('atomically persists the start-request marker with the lifecycle fence', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope({ checkoutId: 'mission-start-request-cas' });
+    let now = 500;
+    const store = createScopedMissionStore(runtimeManager, scope, {
+      now: () => ++now,
+      idFactory: () => 'mission-start-request-cas',
+    });
+    const contract = {
+      ...compileIntentContract({
+        goal: 'Execute only after the operator starts this reviewed mission',
+        intentVersion: 1,
+      }),
+      approvedAt: 100,
+      approvalReviewSha256: 'a'.repeat(64),
+    };
+    const mission = store.create({
+      title: 'Start request CAS',
+      intentState: 'ready_to_start',
+      intentVersion: 1,
+      intentContract: contract,
+    });
+
+    const sealed = store.transitionLifecycle(
+      mission.id,
+      {
+        updatedAt: mission.updatedAt,
+        intentVersion: mission.intentVersion!,
+      },
+      {
+        status: 'pending',
+        intentState: 'ready_to_start',
+        intentContract: { ...contract, dispatchedAt: 501 },
+      },
+    );
+
+    expect(sealed).toMatchObject({
+      status: 'pending',
+      intentState: 'ready_to_start',
+      intentContract: {
+        approvalReviewSha256: 'a'.repeat(64),
+        dispatchedAt: 501,
+      },
+    });
+    expect(store.get(mission.id)?.intentContract?.dispatchedAt).toBe(501);
+    expect(
+      store.transitionLifecycle(
+        mission.id,
+        {
+          updatedAt: mission.updatedAt,
+          intentVersion: mission.intentVersion!,
+        },
+        {
+          status: 'pending',
+          intentState: 'ready_to_start',
+          intentContract: { ...contract, dispatchedAt: 502 },
+        },
+      ),
+    ).toBeNull();
+    expect(store.get(mission.id)?.intentContract?.dispatchedAt).toBe(501);
+  });
+
   it('atomically transitions lifecycle, preserves description, and revokes dispatch authority', () => {
     const runtimeManager = manager();
     const scope = testProjectScope({ checkoutId: 'lifecycle-cas-success' });
@@ -1166,6 +1421,7 @@ describe('scoped mission store', () => {
       }),
       approvedAt: 8_000,
       approvalReviewSha256: 'c'.repeat(64),
+      dispatchedAt: 8_500,
     };
     const mission = store.create({
       title: 'Kickoff pre-CAS',

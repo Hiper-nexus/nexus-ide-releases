@@ -91,7 +91,10 @@ export function assertRealMissionPassEvidence(raw) {
       "status",
       "intentState",
       "intentVersion",
+      "reviewSha256",
       "squadId",
+      "fixtureSquadId",
+      "fixtureSquadRevisionHash",
       "squadSourceId",
       "squadSourceRevisionHash",
       "squadRevisionHash",
@@ -146,46 +149,42 @@ export function assertRealMissionPassEvidence(raw) {
     new Set(finalMissionIds).size === 1 &&
     finalMissionIds[0] === mission?.id &&
     missionInventory?.exactSingleProductMission === true;
-  const exactProductWizardReceipt =
+  const exactMissionSetupReceipt =
     hasExactKeys(wizardReceipt, [
       "origin",
       "missionId",
       "workspaceSha256",
       "sourceSquadRevisionHash",
       "squadRevisionHash",
-      "submittedContractSha256",
-      "approvedContractSha256",
-      "armedAt",
-      "intentSubmittedAt",
-      "nativeDialogOpenedAt",
-      "nativeDialogAcceptedAt",
-      "approvalReturnedAt",
+      "reviewSha256",
+      "preparedContractSha256",
+      "startedContractSha256",
+      "preparedAt",
+      "startedAt",
       "chainSha256",
     ]) &&
-    wizardReceipt?.origin === "main-owned-product-wizard-causal-chain" &&
+    wizardReceipt?.origin === "main-owned-mission-setup-causal-chain" &&
     wizardReceipt?.missionId === mission?.id &&
     SHA256_PATTERN.test(evidence?.workspaceSha256 ?? "") &&
     wizardReceipt?.workspaceSha256 === evidence?.workspaceSha256 &&
     wizardReceipt?.sourceSquadRevisionHash ===
       mission?.squadSourceRevisionHash &&
     wizardReceipt?.squadRevisionHash === mission?.squadRevisionHash &&
-    SHA256_PATTERN.test(wizardReceipt?.submittedContractSha256 ?? "") &&
-    SHA256_PATTERN.test(wizardReceipt?.approvedContractSha256 ?? "") &&
-    wizardReceipt?.submittedContractSha256 !==
-      wizardReceipt?.approvedContractSha256 &&
-    Number.isInteger(wizardReceipt?.armedAt) &&
-    wizardReceipt.armedAt >= 0 &&
-    Number.isInteger(wizardReceipt?.intentSubmittedAt) &&
-    wizardReceipt?.nativeDialogOpenedAt === null &&
-    wizardReceipt?.nativeDialogAcceptedAt === null &&
-    Number.isInteger(wizardReceipt?.approvalReturnedAt) &&
-    wizardReceipt.armedAt <= wizardReceipt.intentSubmittedAt &&
-    wizardReceipt.intentSubmittedAt <= wizardReceipt.approvalReturnedAt &&
-    wizardReceipt.intentSubmittedAt <= (mission?.approvedAt ?? -1) &&
-    (mission?.approvedAt ?? -1) <= wizardReceipt.approvalReturnedAt &&
-    (mission?.dispatchedAt ?? -1) <= wizardReceipt.approvalReturnedAt &&
+    wizardReceipt?.reviewSha256 === mission?.reviewSha256 &&
+    SHA256_PATTERN.test(wizardReceipt?.preparedContractSha256 ?? "") &&
+    SHA256_PATTERN.test(wizardReceipt?.startedContractSha256 ?? "") &&
+    wizardReceipt?.preparedContractSha256 !==
+      wizardReceipt?.startedContractSha256 &&
+    Number.isInteger(wizardReceipt?.preparedAt) &&
+    wizardReceipt.preparedAt >= 0 &&
+    Number.isInteger(evidence?.startedAt) &&
+    evidence.startedAt <= wizardReceipt.preparedAt &&
+    Number.isInteger(wizardReceipt?.startedAt) &&
+    (mission?.approvedAt ?? -1) <= wizardReceipt.preparedAt &&
+    wizardReceipt.preparedAt <= (mission?.dispatchedAt ?? -1) &&
+    (mission?.dispatchedAt ?? -1) <= wizardReceipt.startedAt &&
     Number.isInteger(evidence?.finishedAt) &&
-    wizardReceipt.approvalReturnedAt <= evidence.finishedAt &&
+    wizardReceipt.startedAt <= evidence.finishedAt &&
     SHA256_PATTERN.test(wizardReceipt?.chainSha256 ?? "") &&
     wizardReceipt?.chainSha256 ===
       productWizardReceiptChainSha256(wizardReceipt);
@@ -196,7 +195,7 @@ export function assertRealMissionPassEvidence(raw) {
       evidence.wizardReceipt === null) ||
     (evidence?.launchSurface === "product-wizard" &&
       evidence?.wizardCoverage === "main-owned-product-sequence" &&
-      exactProductWizardReceipt);
+      exactMissionSetupReceipt);
   const kickoff = record(evidence?.kickoff);
   const plan = record(evidence?.plan);
   const repository = record(evidence?.repository);
@@ -1194,21 +1193,21 @@ export function assertRealMissionPassEvidence(raw) {
     mission?.status === 'done' &&
     mission?.intentState === 'done' &&
     mission?.intentVersion === 1 &&
-    mission?.squadSourceId === 'agentic-nexus-real-mission-e2e' &&
+    SHA256_PATTERN.test(mission?.reviewSha256 ?? '') &&
+    mission?.fixtureSquadId === 'agentic-nexus-real-mission-e2e' &&
+    SHA256_PATTERN.test(mission?.fixtureSquadRevisionHash ?? '') &&
+    /^agentic-runtime-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
+      mission?.squadId ?? '',
+    ) &&
+    mission?.squadSourceId !== mission?.squadId &&
     SHA256_PATTERN.test(mission?.squadSourceRevisionHash ?? '') &&
     SHA256_PATTERN.test(mission?.squadRevisionHash ?? '') &&
-    ((evidence?.launchSurface === 'private-runner' &&
-      ((mission?.squadId === 'agentic-nexus-real-mission-e2e' &&
-        mission?.squadSourceRevisionHash === mission?.squadRevisionHash) ||
-        (/^agentic-runtime-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
-          mission?.squadId ?? '',
-        ) &&
-          mission?.squadSourceRevisionHash !== mission?.squadRevisionHash))) ||
-      (evidence?.launchSurface === 'product-wizard' &&
-        /^agentic-runtime-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
-          mission?.squadId ?? '',
-        ) &&
-        mission?.squadSourceRevisionHash !== mission?.squadRevisionHash)) &&
+    mission?.squadSourceRevisionHash !== mission?.squadRevisionHash &&
+    /^custom-mission-setup-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
+      mission?.squadSourceId ?? '',
+    ) &&
+    mission?.squadSourceRevisionHash !==
+      mission?.fixtureSquadRevisionHash &&
     Number.isInteger(mission?.approvedAt) &&
     Number.isInteger(mission?.dispatchedAt) &&
     mission.approvedAt >= 0 &&
@@ -1363,7 +1362,7 @@ export function assertRealMissionReleaseEvidence(raw) {
     record(evidence?.missionInventory)?.exactSingleProductMission !== true
   ) {
     throw new Error(
-      'real mission release evidence requires product-wizard physical coverage; private-runner evidence is diagnostic-only',
+      'real mission release evidence requires physical Mission Setup coverage; private-runner evidence is diagnostic-only',
     );
   }
   // Release exige participação completa das advisors credenciadas: PTY

@@ -35,39 +35,35 @@
 }
 
 :root {
-  /* Hallmark · theme: nexus-dark-premium · accent: indigo ~4% · genre: modern-minimal(dark)
-     Contrato visual do Nexus (0.21): superfícies neutras EM CAMADAS, hierarquia
-     por espaço e contraste, e sinal operacional índigo — o ciano-neon com glow
-     era o visual-padrão de toda ferramenta de IA e saiu do default. A cor só
-     aparece quando existe estado ou ação; nunca como textura de fundo. */
-  --bg: #0b0b0c;
-  --bg-elevated: #141416;
-  --bg-bar: #101012;
-  --border: rgb(255 255 255 / .07);
-  --border-strong: rgb(255 255 255 / .14);
+  /* Pink City default: near-black neutral layers, quiet dividers and a pink
+     operational signal reserved for live, selected and focused state. Color
+     never becomes wallpaper; hierarchy comes from space and contrast. */
+  --bg: #080709;
+  --bg-elevated: #111013;
+  --bg-bar: #0d0b0f;
+  --border: rgb(255 255 255 / .08);
+  --border-strong: rgb(255 255 255 / .16);
   --card-hi: rgb(255 255 255 / .05);
-  --text: #fafafa;
-  --text-dim: #a1a1a1;
-  --text-faint: #8f8f8f;
-  /* Acento de ação/vida. Índigo: presença sem estridência, usado em menos de
-     5% da tela (indicador ativo, foco, um link). Tinta escura sobre ele por
-     contraste (~7:1); branco daria ~3:1. */
-  --accent: #7c86ff;
-  --accent-ink: #0b0b0c;
+  --text: #faf7f9;
+  --text-dim: #aaa2a8;
+  --text-faint: #928b90;
+  /* Pink City signal: focus, live state and selection only. Dark ink keeps
+     solid selected controls above AA without turning the CTA pink. */
+  --accent: #ff4f8b;
+  --accent-ink: #080709;
   --accent-soft: color-mix(in srgb, var(--accent) 15%, transparent);
   --accent-strong: color-mix(in srgb, var(--accent) 30%, transparent);
   --accent-hover: color-mix(in srgb, var(--accent) 82%, #ffffff);
-  /* Glow MORTO no default (0.21): halo de neon era a assinatura do visual
-     genérico de ferramenta de IA. Superfícies ganham profundidade por camada e
-     sombra, não por brilho. */
+  /* Glow stays dormant: depth comes from neutral layers and shadows. */
   --accent-glow: transparent;
-  /* CTA primário BRANCO sobre escuro — a assinatura da escola dark premium.
-     Deliberadamente NÃO deriva do acento: a ação principal é a coisa mais
-     clara da tela, e o acento fica reservado para estado. */
-  --btn-primary: #fafafa;
-  --btn-primary-ink: #0b0b0c;
-  --btn-primary-hover: #ffffff;
-  --danger: #f85149;
+  /* The neutral-white primary action remains the clearest control. It does
+     not derive from the live/selection accent. */
+  --btn-primary: #faf7f9;
+  --btn-primary-ink: #080709;
+  --btn-primary-hover: #fffafd;
+  /* Orange-red remains distinct from the pink signal and readable on both
+     Pink City surfaces. */
+  --danger: #ff6b4a;
   /* Acento do DESIGN MODE (segunda voz deliberada, azul-ferramenta): fora da
      doutrina de sinal operacional de propósito — marca "modo de edição". */
   --design: #2f6ae0;
@@ -75,10 +71,8 @@
   --scrollbar-track: rgba(4, 6, 10, 0.44);
   --scrollbar-thumb: rgba(255, 255, 255, 0.22);
   --scrollbar-thumb-hover: color-mix(in srgb, var(--accent) 62%, transparent);
-  /* Grid de pixels MORTO no DEFAULT (0.21): linhas transparentes — ops-board,
-     settings e launch mantêm os gradientes (layout intacto), sem o desenho.
-     O modo pixel é escolha explícita do usuário e recupera o grid abaixo, em
-     [data-theme-pixel='on']. */
+  /* Pixel grid is dormant by default; product workspaces keep their layered
+     gradients without the drawing. Pixel mode restores the grid explicitly. */
   --pixel-grid: transparent;
   --radius: 10px;
   --bar-height: 44px;
@@ -105,10 +99,8 @@
   --dur-overlay-modal: 180ms;
   --dur-overlay-pulse: 2.2s;
 
-  /* Overlay ladder — transient toasts stay below modal dimmers, so they can
-     never cover or capture a wizard/confirmation. Keep app chrome ABOVE soft dimmers so
-     mid-form clicks on voice/config never hit the backdrop and wipe drafts.
-     Hard modals (confirm, agent-picker, update) still cover chrome.
+  /* Overlay ladder: transient toasts stay below modal dimmers. App chrome
+     remains above soft dimmers, while hard confirmations cover chrome.
      See src/renderer/lib/ui-overlay-policy.ts. */
   --z-toast: 44;
   --z-soft-overlay: 45;
@@ -180,7 +172,7 @@
 
   /* Semântica de estado ÚNICA para missões/agentes em toda superfície
      (rail, ops board, orch panel, toolbar). Um estado, uma cor, em todo
-     lugar — trabalhando pulsa em ciano, pronto/feito assenta em verde,
+     lugar — trabalhando pulsa no acento, pronto/feito assenta em verde,
      bloqueado pede atenção em âmbar, falha grita em vermelho. */
   --state-running: var(--accent);
   --state-ready: var(--ok);
@@ -188,6 +180,15 @@
   --state-blocked: var(--warn);
   --state-failed: var(--danger);
   --state-pending: var(--text-dim);
+}
+
+/* Per-theme fallbacks for values that previously inherited from the Nexus
+   Dark root. applyUiTheme mirrors them inline during every live switch. */
+[data-theme='nexus-dark'] {
+  --text-faint: #8f8f8f;
+  --btn-primary: #fafafa;
+  --btn-primary-ink: #0b0b0c;
+  --btn-primary-hover: #ffffff;
 }
 
 /* Ajustes de sinal para o tema claro (ui-theme.ts seta data-theme no <html>):
@@ -208,19 +209,23 @@
   --btn-primary-hover: #23262e;
 }
 
-/* O terceiro nível de texto é calculado POR TEMA: #8f8f8f só atinge AA sobre
-   as superfícies do Nexus dark. Sobre o elevated do Dracula (#2f3242) cai a
-   3.92:1 e sobre o do Solarized (#073642) a 4.02:1 — rótulo de seção de 11px
-   abaixo do mínimo. Estes valores ficam ≥4.5:1 sobre --bg E --bg-elevated do
-   próprio tema, e um degrau abaixo de --text-dim (a hierarquia continua). */
+/* O terceiro nível de texto é calculado POR TEMA. Cada valor fica ≥4.5:1
+   sobre --bg e --bg-elevated do próprio tema e um degrau abaixo de
+   --text-dim, preservando a hierarquia. */
 [data-theme='dracula'] {
   /* 5.32:1 sobre #282a36, 4.74:1 sobre #2f3242. */
   --text-faint: #979dba;
+  --btn-primary: #fafafa;
+  --btn-primary-ink: #0b0b0c;
+  --btn-primary-hover: #ffffff;
 }
 
 [data-theme='solarized-dark'] {
   /* 5.49:1 sobre #002b36, 4.75:1 sobre #073642. */
   --text-faint: #8ca0a3;
+  --btn-primary: #fafafa;
+  --btn-primary-ink: #0b0b0c;
+  --btn-primary-hover: #ffffff;
 }
 
 * {
@@ -241,9 +246,21 @@ body,
 }
 
 body {
-  /* Atmosfera: um respiro de acento no alto e um contra-luz frio no canto
-     oposto, a ≤5% — dimensão sem virar decoração (orçamento de acento da
-     direção 0.21 é <5% da tela). Segue o tema via color-mix. */
+  /* Pink City is a continuous dark canvas. Accent belongs to live, selected
+     and focused state, never an atmospheric wash. */
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+/* Preserve the selectable pre-Pink themes' existing low-contrast atmosphere.
+   Pink City intentionally keeps the uninterrupted canvas above. */
+[data-theme='nexus-dark'] body,
+[data-theme='nexus-light'] body,
+[data-theme='dracula'] body,
+[data-theme='solarized-dark'] body {
   background:
     radial-gradient(
       1100px 480px at 50% -12%,
@@ -257,10 +274,6 @@ body {
     ),
     var(--bg);
   background-attachment: fixed;
-  color: var(--text);
-  font-family: var(--font-ui);
-  -webkit-font-smoothing: antialiased;
-  overflow: hidden;
 }
 
 /* Anel de foco padrão da app: :where() zera a especificidade, então qualquer
@@ -386,547 +399,19 @@ body {
   height: 100%;
 }
 
-/* ---- Top workspace bar ---- */
-.workspace-bar {
-  height: var(--bar-height);
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 0 10px 0 84px; /* leave room for macOS traffic lights */
-  background: var(--bg-bar);
-  border-bottom: 1px solid var(--border);
-  -webkit-app-region: drag;
-  user-select: none;
-  overflow: visible; /* menus drop below the bar */
-  position: relative;
-  /* Above soft modal dimmers (wizard/settings) so Jarvis/config stay clickable. */
-  z-index: var(--z-app-chrome);
-}
-
-/* Win/Linux usam titlebar NATIVA (window.ts: titleBarStyle default fora do
-   darwin) — os 84px dos traffic lights seriam espaço morto na barra. */
-[data-platform='windows'] .workspace-bar,
-[data-platform='linux'] .workspace-bar {
-  padding-left: 10px;
-}
-
-.workspace-bar__brand {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: 0 1 auto;
-  min-width: 0;
-  max-width: min(470px, 42vw);
-  -webkit-app-region: no-drag;
-}
-
-.workspace-bar__logo {
-  color: var(--accent);
-  font-size: 14px;
-  flex: 0 0 auto;
-}
-
-.workspace-bar__name {
-  display: block;
-  width: 100%;
-  font-weight: 600;
-  font-size: 12px;
-  letter-spacing: 0.02em;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.workspace-bar__ws {
-  position: relative;
-  min-width: 0;
-  width: 100%;
-  display: flex;
-  align-items: center;
-  flex: 1 1 auto;
-}
-
-.workspace-bar__name-btn {
-  appearance: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  width: 100%;
-  min-width: 0;
-  max-width: 100%;
-  min-height: 32px;
-  padding: 3px 8px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--accent) 7%, var(--bg));
-  color: var(--text);
-  cursor: pointer;
-  font: inherit;
-  overflow: hidden;
-}
-
-.workspace-bar__name-btn:hover,
-.workspace-bar__name-btn[aria-expanded='true'] {
-  background: var(--accent-soft);
-  border-color: var(--border-strong);
-}
-
-.workspace-bar__name-caret {
-  flex: 0 0 auto;
-  font-size: 9px;
-  color: var(--text-dim);
-  line-height: 1;
-}
-
-.workspace-bar__context-copy {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  line-height: 1.05;
-}
-
-.workspace-bar__context-label {
-  color: var(--text-dim);
-  font-family: var(--font-mono);
-  font-size: 8px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-/* Workspace identity and creation stay visible independently from mission
-   controls. Hiding creation under the name menu made project switching look
-   unavailable, especially after a long coding session. */
-.workspace-bar__new-workspace {
-  appearance: none;
-  min-height: 30px;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  flex: 0 0 auto;
-  padding: 4px 8px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--text-dim);
-  cursor: pointer;
-  font: inherit;
-  font-size: 10px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.workspace-bar__new-workspace:hover,
-.workspace-bar__new-workspace:focus-visible {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  color: var(--text);
-}
-
-.workspace-bar__workspace-path {
-  max-width: 320px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* (.workspace-bar__tag removida — classe morta: nenhum componente a renderiza.
-   A identidade VT323 agora aparece no default em .toolbar__badge, eyebrows e
-   no chip de frota.) */
-
-.workspace-bar__actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex: 1 1 auto;
-  min-width: 0;
-  justify-content: flex-end;
-  overflow: visible;
-  /* Keep the flexible empty track draggable. Interactive zones below opt out
-     explicitly, so dragging the chrome cannot get lost between controls. */
-  -webkit-app-region: drag;
-}
-
-.workspace-bar__zone {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex: 0 0 auto;
-  min-width: 0;
-  -webkit-app-region: no-drag;
-}
-
-/* As zonas existiam na marcação mas não no olho: com o mesmo respiro entre
-   itens e entre grupos, frota, cota, missão, ferramentas e conta liam como uma
-   fileira única de chips avulsos. O filete e o respiro maior entre zonas — e
-   só entre elas — dão a leitura de grupos que a estrutura já afirmava. */
-.workspace-bar__zone + .workspace-bar__zone {
-  margin-left: 4px;
-  padding-left: 10px;
-  border-left: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
-}
-
-.workspace-bar__zone--status {
-  /* Frota + cota + custo cabem numa linha — o teto antigo (200px) empilhava
-     "cota / 54%" e esmagava o $ em ovais legíveis só no hover. */
-  flex: 0 1 auto;
-  max-width: min(420px, 38vw);
-  overflow: hidden;
-  flex-shrink: 1;
-  gap: 6px;
-}
-
-.workspace-bar__zone--primary,
-.workspace-bar__zone--tools,
-.workspace-bar__zone--system {
-  flex: 0 0 auto;
-}
-
-.workspace-bar__zone--primary {
-  gap: 6px;
-}
-
-.workspace-bar__more,
-.workspace-bar__mission-menu {
-  position: relative;
-}
-
-.workspace-bar__menu {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  z-index: 80;
-  min-width: 180px;
-  padding: 4px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
-  background: var(--bg-elevated, var(--bg-bar));
-  box-shadow: var(--shadow-inset-hi), var(--shadow-1, 0 8px 24px rgba(0, 0, 0, 0.35));
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.workspace-bar__menu--end {
-  left: auto;
-  right: 0;
-}
-
-.workspace-bar__menu--missions {
-  min-width: 260px;
-  max-width: min(360px, 70vw);
-  max-height: min(420px, 70vh);
-  overflow-y: auto;
-}
-
-.workspace-bar__menu-heading {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 8px 10px 6px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text);
-}
-
-.workspace-bar__menu-heading-meta {
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--text-dim);
-}
-
-.workspace-bar__menu-empty {
-  margin: 0;
-  padding: 8px 10px 10px;
-  font-size: 12px;
-  color: var(--text-dim);
-}
-
-.workspace-bar__menu-item--accent {
-  color: var(--btn-primary-ink);
-  background: var(--btn-primary);
-  border-color: var(--btn-primary);
-  font-weight: 600;
-}
-
-.workspace-bar__menu-item--accent:hover {
-  background: var(--btn-primary-hover);
-  border-color: var(--btn-primary-hover);
-}
-
-.workspace-bar__menu-mission {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 0;
-  text-align: left;
-}
-
-.workspace-bar__menu-mission-title {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-}
-
-.workspace-bar__menu-mission-meta {
-  font-size: 11px;
-  color: var(--text-dim);
-}
-
-.workspace-bar__mission-count {
-  min-width: 16px;
-  height: 16px;
-  padding: 0 4px;
-  border-radius: 999px;
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-size: 10px;
-  font-weight: 700;
-  line-height: 16px;
-  text-align: center;
-}
-
-.workspace-bar__btn--missions {
-  gap: 6px;
-}
-
-/* Nova missão always shows a label — primary action must be scannable. */
-.workspace-bar--compact .workspace-bar__zone--primary .workspace-bar__btn--primary .workspace-bar__btn-label,
-.workspace-bar--icons .workspace-bar__zone--primary .workspace-bar__btn--primary .workspace-bar__btn-label {
-  display: inline;
-}
-
-.workspace-bar__menu-item {
-  appearance: none;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 7px 10px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  font-size: 12px;
-  text-align: left;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.workspace-bar__menu-item:hover,
-.workspace-bar__menu-item--active {
-  background: var(--accent-soft);
-  border-color: var(--border-strong);
-  color: var(--text);
-}
-
-.workspace-bar__menu-sep {
-  height: 1px;
-  margin: 4px 6px;
-  background: var(--border);
-}
-
-.workspace-bar__count {
-  color: var(--text-dim);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-}
-
-.workspace-bar__btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  background: transparent;
-  border: 1px solid var(--border-strong);
-  color: var(--text);
-  font-size: 11px;
-  padding: 4px 10px;
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background 120ms ease, border-color 120ms ease;
-}
-
-.workspace-bar__btn-label {
-  line-height: 1;
-}
-
-.workspace-bar__btn:hover {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-}
-
-/* Feedback tátil de pressão — estado, não coreografia (80ms). */
-.workspace-bar__btn:active,
+/* Shared pane-toolbar press feedback. */
 .toolbar__btn:active {
   transform: translateY(0.5px);
   transition-duration: 80ms;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .workspace-bar__btn:active,
   .toolbar__btn:active {
     transform: none;
   }
 }
 
-.workspace-bar__btn--more {
-  min-width: 28px;
-  padding-left: 8px;
-  padding-right: 8px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-}
-
-/* Density: full (≥1480) labels; icons (1160–1479) no labels; compact (<1160) overflow */
-.workspace-bar--icons .workspace-bar__btn,
-.workspace-bar--compact .workspace-bar__btn {
-  padding: 4px 7px;
-  font-size: 10px;
-}
-
-.workspace-bar--compact .workspace-bar__zone--status {
-  max-width: min(200px, 28vw);
-}
-
-.workspace-bar--compact .workspace-bar__brand {
-  max-width: min(250px, 38vw);
-}
-
-.workspace-bar--compact .workspace-bar__context-label,
-.workspace-bar--compact .workspace-bar__new-workspace-label {
-  display: none;
-}
-
-.workspace-bar--compact .workspace-bar__new-workspace {
-  width: 30px;
-  padding: 4px;
-  justify-content: center;
-}
-
-.workspace-bar__todo {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-  max-width: 140px;
-  overflow: hidden;
-  font-size: 11px;
-  color: var(--text-dim);
-}
-
-.workspace-bar__todo-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.workspace-bar__account-zone {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  max-width: 240px;
-  /* Menu is position:absolute and wider than the chip — don't clip it */
-  overflow: visible;
-  position: relative;
-  z-index: 40;
-}
-
-.workspace-bar__account-zone .account-switcher {
-  max-width: 200px;
-  overflow: visible;
-}
-
-.workspace-bar__account-zone .account-switcher__menu {
-  /* Prefer opening leftward from the right edge of the chip in the top bar */
-  right: 0;
-  left: auto;
-  width: min(320px, 92vw);
-  min-width: min(280px, 92vw);
-}
-
-.workspace-bar__account-restart {
-  border: 1px solid color-mix(in srgb, var(--accent, #7dd3fc) 50%, transparent);
-  background: color-mix(in srgb, var(--accent, #7dd3fc) 15%, transparent);
-  color: var(--fg, #e8e8e8);
-  border-radius: 6px;
-  width: 26px;
-  height: 26px;
-  cursor: pointer;
-  font-size: 14px;
-  line-height: 1;
-  padding: 0;
-}
-
-.workspace-bar__account-restart:hover {
-  background: color-mix(in srgb, var(--accent, #7dd3fc) 28%, transparent);
-}
-
-.workspace-bar__account-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  max-width: 120px;
-  padding: 3px 8px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
-  background: var(--bg);
-  color: var(--text-dim);
-  font-size: 10px;
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.workspace-bar__account-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  flex: 0 0 6px;
-  background: var(--ok);
-}
-
-.workspace-bar__account-dot--cool {
-  background: var(--warn);
-}
-
-/* Legacy ws-btn kept for LaunchScreen / other chrome */
-.workspace-bar__ws-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-}
-
 /* ---- Grid + panels ---- */
-/* Linha flex: trilha de missões (coluna fixa à esquerda) + grid/canvas.
-   Sem o display:flex a trilha empilhava ACIMA do grid e empurrava o
-   height:100% do grid para fora da janela — as últimas linhas do terminal
-   ficavam abaixo da borda e o xterm "não rolava até embaixo". */
-.app__body {
-  --app-body-inset: 0px;
-  --mission-rail-width: 248px;
-  flex: 1 1 auto;
-  min-height: 0;
-  padding: var(--app-body-inset);
-  display: flex;
-  gap: 0;
-}
-
-@media (max-width: 1120px) {
-  .app__body {
-    --mission-rail-width: 210px;
-  }
-}
 
 .grid,
 .panel-group {
@@ -951,22 +436,6 @@ body {
     0 14px 42px rgba(0, 0, 0, 0.42);
 }
 
-/* Filhos no fluxo do body ocupam o restante da linha; min-width: 0 permite
-   encolher abaixo do conteúdo do terminal. */
-.app__body > .grid,
-.app__body > .canvas-container {
-  flex: 1 1 auto;
-  min-width: 0;
-  width: auto;
-}
-
-/* Product contextual panel: fixed-width sibling after the pane area. */
-.app__body > .ctx-panel,
-.app__body > .ctx-panel__show {
-  flex: 0 0 auto;
-  align-self: stretch;
-  min-height: 0;
-}
 
 /* Panel inner div (library applies our class to the nested element). */
 .panel {
@@ -1044,7 +513,7 @@ body {
 }
 
 /* Estado da frota legível de LONGE, não só no glifo de 10px: agente
-   trabalhando marca ciano na borda; morto tinge de vermelho.
+   trabalhando marca a cor de acento na borda; morto tinge de vermelho.
    Sem animação de box-shadow no pane — em Electron isso repinta o
    canvas do xterm e parece o terminal “piscando” a cada busy↔idle. */
 .pane--state-busy:not(.pane--focused) {
@@ -1304,9 +773,9 @@ body {
 
 .toolbar__close:hover,
 .toolbar__close:focus-visible {
-  color: var(--danger, #f85149);
-  border-color: var(--danger, #f85149);
-  background: color-mix(in srgb, var(--danger, #f85149) 18%, transparent);
+  color: var(--danger);
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 18%, transparent);
   outline: none;
 }
 
@@ -1602,9 +1071,9 @@ body {
   max-width: 240px;
   padding: 5px 8px;
   border-radius: 6px;
-  background: color-mix(in srgb, var(--bg-elevated, #1a1b22) 96%, #000);
-  border: 1px solid var(--border-strong, #3a3b45);
-  color: var(--text, #e8e8ee);
+  background: color-mix(in srgb, var(--bg-elevated) 96%, #000);
+  border: 1px solid var(--border-strong);
+  color: var(--text);
   font-size: 11px;
   font-weight: 500;
   line-height: 1.35;
@@ -1643,9 +1112,9 @@ body {
   max-width: 220px;
   padding: 5px 8px;
   border-radius: 6px;
-  background: color-mix(in srgb, var(--bg-elevated, #1a1b22) 96%, #000);
-  border: 1px solid var(--border-strong, #3a3b45);
-  color: var(--text, #e8e8ee);
+  background: color-mix(in srgb, var(--bg-elevated) 96%, #000);
+  border: 1px solid var(--border-strong);
+  color: var(--text);
   font-size: 11px;
   font-weight: 500;
   line-height: 1.35;
@@ -1678,8 +1147,8 @@ body {
   min-width: 220px;
   padding: 6px;
   border-radius: 8px;
-  background: color-mix(in srgb, var(--bg-elevated, #1a1b22) 98%, #000);
-  border: 1px solid var(--border-strong, #3a3b45);
+  background: color-mix(in srgb, var(--bg-elevated) 98%, #000);
+  border: 1px solid var(--border-strong);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
   display: flex;
   flex-direction: column;
@@ -2434,11 +1903,10 @@ body {
    accent no hover) — o override local ficou redundante e foi removido. */
 
 /* ---- Toolbar agent extensions ---- */
-/* CLI + modelo é metadado estático, não sinal operacional. Em ciano com borda
-   ciano ele virava o elemento mais alto da barra — mais alto que o nome do
-   agente e do mesmo tom que o estado "vivo", violando a doutrina em que ciano
-   significa ativo/interativo. Neutro aqui; a cor da identidade fica por conta
-   do logo do provider, que já é colorido. */
+/* CLI + modelo é metadado estático, não sinal operacional. Com borda e texto
+   no acento ele virava o elemento mais alto da barra, acima do nome do agente
+   e do mesmo tom que o estado "vivo". Neutro aqui; a cor da identidade fica
+   por conta do logo do provider, que já é colorido. */
 .toolbar__badge--agent {
   display: inline-flex;
   align-items: center;
@@ -2454,29 +1922,6 @@ body {
 /* (.toolbar__state consolidado no bloco principal acima — a redefinição
    duplicada que existia aqui só repetia font-size/flex e foi removida.) */
 
-/* ---- Workspace bar agent button ---- */
-.workspace-bar__btn--agent {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-  color: var(--accent);
-  font-weight: 600;
-}
-
-.workspace-bar__btn--agent:hover {
-  background: var(--accent-strong);
-}
-
-/* ---- Status cluster (frota · cota · custo) — altura e raio unificados ---- */
-.workspace-bar__zone--status > .agent-notif,
-.workspace-bar__zone--status > .fleet-chip,
-.workspace-bar__zone--status > .quota-chip,
-.workspace-bar__zone--status > .cost-summary {
-  flex: 0 0 auto;
-  height: 26px;
-  box-sizing: border-box;
-  white-space: nowrap;
-  border-radius: 999px;
-}
 
 /* ---- Agent notifications inbox (BridgeMind-style) ---- */
 .agent-notif {
@@ -2538,7 +1983,7 @@ body {
   padding: 0 3px;
   border-radius: 999px;
   background: var(--accent);
-  color: var(--accent-ink, #fff);
+  color: var(--accent-ink);
   font-size: 9px;
   font-weight: 700;
   line-height: 14px;
@@ -2548,16 +1993,11 @@ body {
 }
 
 .agent-notif__panel {
-  /* fixed: a zona de status da barra é overflow:hidden e recortaria um popover
-     absolute. top/right reais vêm de um style inline ancorado ao sino; estes
-     valores são só o fallback do primeiro frame antes do layout-effect medir. */
+  /* Portaled above the shell. Inline top/right coordinates anchor it to the
+     bell; these values are only the first-frame fallback before measurement. */
   position: fixed;
   top: 46px;
   right: 12px;
-  /* Era 80 solto, e inútil: o painel era montado DENTRO da .workspace-bar,
-     cujo --z-app-chrome (55) fecha um contexto de empilhamento — 80 só valia
-     contra irmãos dentro da barra. Desde H6 o painel é portalado para a
-     camada de overlay, então o degrau nomeado passa a valer de verdade. */
   z-index: var(--z-hard-modal);
   width: min(360px, calc(100vw - 24px));
   max-height: min(420px, 70vh);
@@ -2690,8 +2130,8 @@ body {
 }
 
 .agent-notif__item--exited .agent-notif__status-icon {
-  color: var(--danger, #f7768e);
-  background: color-mix(in srgb, var(--danger, #f7768e) 16%, transparent);
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
 }
 
 .agent-notif__body {
@@ -2741,8 +2181,8 @@ body {
 }
 
 .agent-notif__badge--exited {
-  color: var(--danger, #f7768e);
-  background: color-mix(in srgb, var(--danger, #f7768e) 12%, transparent);
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
 }
 
 .agent-notif__ago {
@@ -2776,89 +2216,19 @@ body {
 }
 
 .agent-notif__action--primary {
-  color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  min-height: 32px;
+  color: var(--btn-primary-ink);
+  border-color: var(--btn-primary);
+  background: var(--btn-primary);
 }
 
 .agent-notif__action--primary:hover {
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--btn-primary-ink);
+  border-color: var(--btn-primary-hover);
+  background: var(--btn-primary-hover);
 }
 
 
-/* ---- Fleet chip: rollup da frota na zona de status ---- */
-/* Responde "quantos trabalhando / prontos / encerrados" sem caçar pane por
-   pane. Clique foca quem precisa de atenção (encerrado primeiro, depois
-   ocupado). */
-.fleet-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  height: 26px;
-  padding: 0 10px;
-  border: 1px solid var(--border-strong);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--bg) 55%, transparent);
-  color: var(--text-dim);
-  font-family: var(--font-pixel);
-  font-size: 13px;
-  letter-spacing: 0.06em;
-  line-height: 1;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: border-color 120ms ease, background 120ms ease;
-}
-
-.fleet-chip:hover {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-}
-
-.fleet-chip__seg {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-variant-numeric: tabular-nums;
-}
-
-.fleet-chip__dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  flex: 0 0 auto;
-  background: var(--state-pending);
-}
-
-.fleet-chip__seg--working {
-  color: var(--text);
-}
-.fleet-chip__seg--working .fleet-chip__dot {
-  background: var(--state-running);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--state-running) 20%, transparent);
-  animation: state-breathe 2.2s ease-in-out infinite;
-}
-
-.fleet-chip__seg--ready .fleet-chip__dot {
-  background: var(--state-ready);
-}
-
-.fleet-chip__seg--sleeping .fleet-chip__dot {
-  background: var(--state-pending);
-}
-
-.fleet-chip__seg--down {
-  color: var(--danger);
-}
-.fleet-chip__seg--down .fleet-chip__dot {
-  background: var(--state-failed);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--state-failed) 20%, transparent);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .fleet-chip__seg--working .fleet-chip__dot {
-    animation: none;
-  }
-}
 
 /* ---- Quota panel: e-mail da conta sob o título do card ----
    Mesmo padrão do subtítulo/meta do AccountSwitcher (10px, --text-dim,

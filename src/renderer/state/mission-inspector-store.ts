@@ -17,6 +17,7 @@ export interface MissionInspectorState {
 
 export interface MissionInspectorActions {
   bindSnapshot(snapshot: MissionSnapshot): void;
+  selectMissionTab(missionId: string, tab: InspectorTab): void;
   selectAgent(agentId: string): void;
   selectTab(tab: InspectorTab): void;
 }
@@ -31,7 +32,7 @@ export const useMissionInspectorStore = create<MissionInspectorStore>()(
     selectedAgentId: null,
 
     bindSnapshot: (snapshot) => {
-      const { missionId, selectedAgentId } = get();
+      const { missionId, selectedAgentId, tab } = get();
       const isSameMission = missionId === snapshot.id;
 
       if (!isSameMission) {
@@ -40,6 +41,7 @@ export const useMissionInspectorStore = create<MissionInspectorStore>()(
         );
         set({
           missionId: snapshot.id,
+          tab: missionId === null ? tab : 'activity',
           selectedAgentId: orchestrator?.id ?? snapshot.agents[0]?.id ?? null,
         });
       } else {
@@ -60,6 +62,15 @@ export const useMissionInspectorStore = create<MissionInspectorStore>()(
           });
         }
       }
+    },
+
+    selectMissionTab: (missionId, tab) => {
+      const missionChanged = get().missionId !== missionId;
+      set({
+        missionId,
+        tab,
+        ...(missionChanged ? { selectedAgentId: null } : {}),
+      });
     },
 
     selectAgent: (agentId) => {

@@ -26,19 +26,6 @@ export const UI_Z = {
   confirm: 1300,
   voiceHud: 1200,
 } as const;
-
-/** Surfaces that must soft-close when Jarvis needs the panes visible. */
-export const BLOCKING_SOFT_SURFACES = [
-  'mission-wizard',
-  'settings-drawer',
-  'voice-settings',
-  'ops-board',
-  'home-deck',
-  'operator-profile',
-] as const;
-
-export type BlockingSoftSurface = (typeof BLOCKING_SOFT_SURFACES)[number];
-
 /**
  * True when a form draft has user-authored content worth restoring after
  * soft-close. Empty strings / default modes do not count.

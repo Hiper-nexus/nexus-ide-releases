@@ -633,7 +633,6 @@ function ResultProjection({ snapshot }: { readonly snapshot: MissionSnapshot }) 
     <article className="mission-inspector__result">
       <header className="mission-inspector__projection-header">
         <h2>{RESULT_OUTCOME_LABELS[result.outcome]}</h2>
-        <code>{result.outcome}</code>
       </header>
       <p className="mission-inspector__result-summary">{result.summary}</p>
       <section aria-label="Evidências do resultado">

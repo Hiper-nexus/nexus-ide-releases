@@ -55,8 +55,8 @@ describe('invariante de conclusão: o trabalho manda, não a cerimônia', () => 
 
     expect(isDispatchWorkProven(work)).toBe(true);
     expect(decideDriveAction(state, Date.now(), config)).toEqual({
-      kind: 'wait',
-      reason: 'terminal completion is verifier-owned',
+      kind: 'complete',
+      reason: 'trabalho planejado concluído — fechando a missão',
     });
   });
 
@@ -69,11 +69,11 @@ describe('invariante de conclusão: o trabalho manda, não a cerimônia', () => 
 
     const action = decideDriveAction(state, Date.now(), config);
 
-    // Nunca `wait`: um driver que não consegue progredir com o trabalho todo
-    // pronto TEM de aparecer, com razão legível. Degenerar em silêncio foi o
-    // que fez o dono olhar uma tela parada sem saber de nada.
-    expect(action.kind).not.toBe('wait');
-    expect(action.reason).toMatch(/recibo|comprova/i);
+    // Nunca `wait`: trabalho todo pronto TEM de fechar a missão, com razão
+    // legível. Degenerar em silêncio foi o que fez o dono olhar uma tela
+    // parada sem saber de nada — e um selo que nunca chega não é entrega.
+    expect(action.kind).toBe('complete');
+    expect(action.reason).toMatch(/recibo|comprova|entregue/i);
   });
 
   it('trabalho ainda em curso continua esperando — o invariante não força conclusão', () => {
@@ -96,8 +96,8 @@ describe('invariante de conclusão: o trabalho manda, não a cerimônia', () => 
 
     expect(isDispatchWorkProven(work)).toBe(false);
     expect(decideDriveAction(state, Date.now(), config)).not.toEqual({
-      kind: 'wait',
-      reason: 'terminal completion is verifier-owned',
+      kind: 'complete',
+      reason: 'trabalho planejado concluído — fechando a missão',
     });
   });
 
@@ -145,8 +145,8 @@ describe('invariante de conclusão: o trabalho manda, não a cerimônia', () => 
       },
     });
     expect(decideDriveAction(state, Date.now(), config)).toEqual({
-      kind: 'wait',
-      reason: 'terminal completion is verifier-owned',
+      kind: 'complete',
+      reason: 'trabalho planejado concluído — fechando a missão',
     });
   });
 });

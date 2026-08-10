@@ -3,13 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const focus = vi.fn();
 const setPanes = vi.fn();
 const bindPaneMission = vi.fn();
-const killLiveAgents = vi.fn();
-const killConflictingOrchestrators = vi.fn(
-  (_id?: string) => [] as string[],
-);
 const listMissionPanes = vi.fn();
 const resumeMissionBootstrap = vi.fn();
-const rearmMission = vi.fn();
 const terminalMocks = vi.hoisted(() => ({
   waitForSession: vi.fn(
     async (paneId: string): Promise<string | null> => `session-${paneId}`,
@@ -20,7 +15,6 @@ const terminalMocks = vi.hoisted(() => ({
   prepareMissionPaneResume: vi.fn(),
   markPersistedAuthorityOnSpawn: vi.fn(),
 }));
-const hideHome = vi.fn();
 
 let layoutPanes: Array<{
   id: string;
@@ -67,24 +61,6 @@ vi.mock('../terminal/terminal-host', () => ({
   getPaneSessionId: terminalMocks.getPaneSessionId,
 }));
 
-vi.mock('../state/home-store', () => ({
-  useHomeStore: { getState: () => ({ hide: hideHome }) },
-}));
-
-vi.mock('./mission-launcher', async () => {
-  const actual = await vi.importActual<typeof import('./mission-auth-conflict')>(
-    './mission-auth-conflict',
-  );
-  return {
-    killLiveAgents: () => killLiveAgents(),
-    killConflictingOrchestrators: (id: string | undefined) =>
-      killConflictingOrchestrators(id),
-    conflictingOrchestratorPanes: (id: string | undefined) =>
-      actual.conflictingOrchestratorPanes(id),
-    hardReopenWouldKillAgents: (id: string | undefined) =>
-      actual.hardReopenWouldKillAgents(id),
-  };
-});
 
 import { reopenMission } from './mission-reopen';
 
@@ -95,7 +71,6 @@ describe('reopenMission soft / multi', () => {
       { id: 'live-1', kind: 'cli-agent', role: 'orchestrator', adapterId: 'codex' },
     ];
     paneMissions = { 'live-1': 'mission-live' };
-    killConflictingOrchestrators.mockReturnValue([]);
     terminalMocks.waitForSession.mockImplementation(
       async (paneId: string) => `session-${paneId}`,
     );
@@ -106,13 +81,11 @@ describe('reopenMission soft / multi', () => {
       ok: false,
       error: 'A missão não está bloqueada pelo bootstrap.',
     });
-    rearmMission.mockResolvedValue({ ok: true });
     vi.stubGlobal('window', {
       nexus: {
         orch: {
           listMissionPanes,
           resumeMissionBootstrap,
-          rearmMission,
           rebindMissionOrchestrator: vi.fn(async () => ({ ok: true })),
         },
         pty: { kill: vi.fn() },
@@ -157,7 +130,6 @@ describe('reopenMission soft / multi', () => {
       ackedAt: expect.any(Number),
     });
     expect(focus).toHaveBeenCalledWith('live-1');
-    expect(killLiveAgents).not.toHaveBeenCalled();
     expect(listMissionPanes).toHaveBeenCalledWith('mission-live');
     expect(terminalMocks.prepareMissionPaneResume).not.toHaveBeenCalled();
     expect(setPanes).not.toHaveBeenCalled();
@@ -217,7 +189,6 @@ describe('reopenMission soft / multi', () => {
     expect(result.ok).toBe(true);
     expect(result.soft).toBe(false);
     expect(result.multi).toBe(true);
-    expect(killLiveAgents).not.toHaveBeenCalled();
     expect(setPanes).toHaveBeenCalled();
     const merged = setPanes.mock.calls[0]![0] as Array<{ id: string }>;
     expect(merged.map((p) => p.id)).toContain('live-1');
@@ -265,8 +236,6 @@ describe('reopenMission soft / multi', () => {
     expect(result.ok).toBe(true);
     const mounted = setPanes.mock.calls[0]![0] as Array<{ id: string }>;
     expect(mounted.map((pane) => pane.id)).toEqual(['orch-x']);
-    // A missão reaberta é dona da tela — Home não cobre nem grid de 1 pane.
-    expect(hideHome).toHaveBeenCalled();
   });
 
   it('keeps a shell the operator claimed (not a structural placeholder)', async () => {
@@ -333,11 +302,9 @@ describe('reopenMission soft / multi', () => {
       error: expect.stringMatching(/saída|encerramento físico/i),
     });
     expect(setPanes).not.toHaveBeenCalled();
-    expect(killLiveAgents).not.toHaveBeenCalled();
     expect(listMissionPanes).not.toHaveBeenCalled();
     expect(terminalMocks.prepareMissionPaneResume).not.toHaveBeenCalled();
     expect(resumeMissionBootstrap).not.toHaveBeenCalled();
-    expect(rearmMission).not.toHaveBeenCalled();
   });
 
   it('fails closed on exclusive-auth conflict without renderer-side kill', async () => {
@@ -378,9 +345,7 @@ describe('reopenMission soft / multi', () => {
       error: expect.stringMatching(/credencial exclusiva|saída/i),
     });
     expect(setPanes).not.toHaveBeenCalled();
-    expect(killConflictingOrchestrators).not.toHaveBeenCalled();
     expect(terminalMocks.prepareMissionPaneResume).not.toHaveBeenCalled();
-    expect(rearmMission).not.toHaveBeenCalled();
   });
 
   it('fails before rearm or spawn preparation when the complete mission would exceed grid capacity', async () => {
@@ -416,7 +381,6 @@ describe('reopenMission soft / multi', () => {
       ok: false,
       error: expect.stringMatching(/grid|vaga/i),
     });
-    expect(rearmMission).not.toHaveBeenCalled();
     expect(terminalMocks.prepareMissionPaneResume).not.toHaveBeenCalled();
     expect(setPanes).not.toHaveBeenCalled();
   });
@@ -554,7 +518,6 @@ describe('reopenMission soft / multi', () => {
     expect(resumeMissionBootstrap).toHaveBeenCalledWith({
       missionId: 'mission-blocked',
     });
-    expect(rearmMission).not.toHaveBeenCalled();
     expect(listMissionPanes).not.toHaveBeenCalled();
     expect(terminalMocks.prepareMissionPaneResume).not.toHaveBeenCalled();
     expect(
@@ -588,7 +551,6 @@ describe('reopenMission soft / multi', () => {
       error: 'A aprovação da missão não está mais vigente.',
     });
     expect(terminalMocks.prepareMissionPaneResume).not.toHaveBeenCalled();
-    expect(rearmMission).not.toHaveBeenCalled();
     expect(listMissionPanes).not.toHaveBeenCalled();
     expect(setPanes).not.toHaveBeenCalled();
   });
@@ -676,7 +638,6 @@ describe('reopenMission soft / multi', () => {
       sessionIds: ['session-bootstrap'],
     });
     expect(listMissionPanes).not.toHaveBeenCalled();
-    expect(rearmMission).not.toHaveBeenCalled();
     expect(terminalMocks.prepareMissionPaneResume).not.toHaveBeenCalled();
     expect(
       terminalMocks.markPersistedAuthorityOnSpawn,
@@ -798,7 +759,6 @@ describe('reopenMission soft / multi', () => {
     );
     expect(result.ok).toBe(false);
     expect(result.error).toMatch(/encerramento físico|saída/i);
-    expect(killLiveAgents).not.toHaveBeenCalled();
     expect(setPanes).not.toHaveBeenCalled();
     expect(terminalMocks.prepareMissionPaneResume).not.toHaveBeenCalled();
   });
@@ -814,7 +774,6 @@ describe('reopenMission soft / multi', () => {
       { id: 'worker-x', kind: 'cli-agent', adapterId: 'codex' },
     ];
     paneMissions = { 'claude-orch': 'mission-a', 'worker-x': 'mission-a' };
-    killConflictingOrchestrators.mockReturnValue(['claude-orch']);
     listMissionPanes.mockResolvedValueOnce([
       {
         id: 'spec-1',
@@ -837,8 +796,6 @@ describe('reopenMission soft / multi', () => {
       updatedAt: 2,
     });
     expect(result.ok).toBe(false);
-    expect(killLiveAgents).not.toHaveBeenCalled();
-    expect(killConflictingOrchestrators).not.toHaveBeenCalled();
     expect(setPanes).not.toHaveBeenCalled();
   });
 });

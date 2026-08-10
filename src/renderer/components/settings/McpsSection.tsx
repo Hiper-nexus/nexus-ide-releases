@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { McpAcrossToolsReport } from '../../../shared/mcp-across-tools';
 import { useOrchStore } from '../../state/orch-store';
-import { useSettingsStore } from '../../state/settings-store';
+import { useProductNavigationStore } from '../../state/product-navigation-store';
 import { PixelIcon } from '../PixelIcon';
 import { McpAcrossToolsMatrix } from '../McpAcrossToolsMatrix';
 import { SettingsSectionTitle } from './SettingsSectionTitle';
@@ -238,7 +238,9 @@ export function McpsSection() {
             <button
               type="button"
               className="settings-btn"
-              onClick={() => useSettingsStore.getState().openDrawer('tools')}
+              onClick={() =>
+                useProductNavigationStore.getState().openSettings('tools')
+              }
             >
               Ver tools
             </button>

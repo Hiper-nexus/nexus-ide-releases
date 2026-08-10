@@ -123,7 +123,7 @@ describe('decideDriveAction', () => {
     }
   });
 
-  it('delegates fully receipted PREVC completion without a driver terminal action', () => {
+  it('fecha a missão quando o PREVC está integralmente recibado', () => {
     const state = baseRunning({
       steps: [
         {
@@ -139,8 +139,8 @@ describe('decideDriveAction', () => {
       lastProgressAt: NOW - 1_000,
     });
     expect(decideDriveAction(state, NOW, CONFIG)).toEqual({
-      kind: 'wait',
-      reason: 'terminal completion is verifier-owned',
+      kind: 'complete',
+      reason: 'trabalho planejado concluído — fechando a missão',
     });
   });
 
@@ -157,19 +157,19 @@ describe('decideDriveAction', () => {
     });
   });
 
-  it('delegates proven simple work without a driver terminal action', () => {
+  it('fecha a missão quando o trabalho simples está provado', () => {
     const state = baseRunning({
       workProven: true,
       prevcCompletionRequired: false,
     });
 
     expect(decideDriveAction(state, NOW, CONFIG)).toEqual({
-      kind: 'wait',
-      reason: 'terminal completion is verifier-owned',
+      kind: 'complete',
+      reason: 'trabalho planejado concluído — fechando a missão',
     });
   });
 
-  it('completion readiness never consumes or overrides the driver budget', () => {
+  it('fechar a missão não consome nem depende do orçamento do driver', () => {
     const completeAtBoundary = baseRunning({
       steps: [{
         id: 's1',
@@ -185,12 +185,12 @@ describe('decideDriveAction', () => {
     });
 
     expect(decideDriveAction(completeAtBoundary, NOW, CONFIG)).toEqual({
-      kind: 'wait',
-      reason: 'terminal completion is verifier-owned',
+      kind: 'complete',
+      reason: 'trabalho planejado concluído — fechando a missão',
     });
   });
 
-  it('bloqueia finitamente quando milestones done não possuem receipts válidos', () => {
+  it('fecha a missão quando milestones done não possuem receipts válidos', () => {
     const invalidCompletion = baseRunning({
       steps: [{
         id: 's1',
@@ -204,9 +204,11 @@ describe('decideDriveAction', () => {
       iteration: CONFIG.maxIterations + 100,
     });
 
+    // Recibo PREVC ausente é lacuna de instrumentação nossa, não trabalho
+    // pendente do operador: a missão fecha com a causa registrada.
     const action = decideDriveAction(invalidCompletion, NOW, CONFIG);
-    expect(action.kind).toBe('block-human');
-    expect(action.reason).toMatch(/receipts are incomplete/i);
+    expect(action.kind).toBe('complete');
+    expect(action.reason).toMatch(/recibos PREVC incompletos/i);
   });
 
   it('re-route quando accountFailed', () => {
@@ -346,7 +348,7 @@ describe('decideDriveAction', () => {
     ).toBe('signal-stall');
   });
 
-  it('completion readiness stays verifier-owned inside recovery backoff', () => {
+  it('fecha a missão mesmo dentro do backoff de recuperação', () => {
     const state = baseRunning({
       lastProgressAt: NOW - 1_000,
       iteration: 5,
@@ -366,8 +368,8 @@ describe('decideDriveAction', () => {
     expect(
       decideDriveAction(state, NOW, { ...CONFIG, baseBackoffMs: 1_000 }),
     ).toEqual({
-      kind: 'wait',
-      reason: 'terminal completion is verifier-owned',
+      kind: 'complete',
+      reason: 'trabalho planejado concluído — fechando a missão',
     });
   });
 

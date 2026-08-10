@@ -23,6 +23,7 @@ import {
   isHumanWaitIntentState,
   isRecoveryEligibleIntentState,
   missionBlockPatch,
+  missionAttachmentSnapshotSchema,
   missionIntentContractSchema,
   resolveDispatchAuthorizedAt,
   resolveMissionBlockingIntentState,
@@ -94,6 +95,39 @@ describe('mission intent transitions', () => {
       missionIntentContractSchema.safeParse({
         ...contract,
         approvalReviewSha256: 'A'.repeat(64),
+      }).success,
+    ).toBe(false);
+  });
+
+  it('parses legacy generic attachment snapshots and all-or-nothing sealed metadata', () => {
+    const legacy = {
+      path: '/tmp/legacy-proof.png',
+      sha256: 'a'.repeat(64),
+      size: 12,
+    };
+    expect(missionAttachmentSnapshotSchema.parse(legacy)).toEqual(legacy);
+
+    const sealed = {
+      ...legacy,
+      path:
+        '/Users/test/.nexus/mission-attachments/checkout-a/' +
+        '0123456789abcdef0123456789abcdef.png',
+      sourcePath: '/workspace/.nexus/attachments/reference.png',
+      sealId: '0123456789abcdef0123456789abcdef',
+      device: '16777234',
+      inode: '984721',
+    };
+    expect(missionAttachmentSnapshotSchema.parse(sealed)).toEqual(sealed);
+    expect(
+      missionAttachmentSnapshotSchema.safeParse({
+        ...legacy,
+        sourcePath: sealed.sourcePath,
+      }).success,
+    ).toBe(false);
+    expect(
+      missionAttachmentSnapshotSchema.safeParse({
+        ...sealed,
+        executionPath: '/renderer/grant.png',
       }).success,
     ).toBe(false);
   });

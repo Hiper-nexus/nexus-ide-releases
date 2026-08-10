@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   bindRendererWorkspaceScope,
+  bindResolvedRendererWorkspaceScope,
   clearRendererWorkspaceScope,
   getRendererWorkspaceScope,
   onRendererWorkspaceScopeChange,
@@ -119,6 +120,49 @@ describe('renderer workspace scope', () => {
     });
 
     expect(() => requireLiveRendererWorkspaceScope(owner, scopeA)).toThrow(
+      /renderer workspace authority changed/i,
+    );
+  });
+
+  it('publishes and rejects a same-path scope whose filesystem identity changed', () => {
+    const root = workspace();
+    const owner = {
+      id: 1,
+      isDestroyed: () => false,
+      isCrashed: () => false,
+    };
+    const original = bindRendererWorkspaceScope(owner, root, {
+      installationId,
+      checkoutRegistryFile: path.join(root, 'checkouts.json'),
+    });
+    const changes: Array<{
+      previousDevice?: string;
+      nextDevice?: string;
+    }> = [];
+    const unsubscribe = onRendererWorkspaceScopeChange(
+      (_changedOwner, previous, next) => {
+        changes.push({
+          previousDevice: previous?.workspaceRootDevice,
+          nextDevice: next?.workspaceRootDevice,
+        });
+      },
+    );
+    const substituted = {
+      ...original,
+      workspaceRootDevice:
+        original.workspaceRootDevice === '0' ? '1' : '0',
+    };
+
+    bindResolvedRendererWorkspaceScope(owner, substituted);
+    unsubscribe();
+
+    expect(changes).toEqual([
+      {
+        previousDevice: original.workspaceRootDevice,
+        nextDevice: substituted.workspaceRootDevice,
+      },
+    ]);
+    expect(() => requireLiveRendererWorkspaceScope(owner, original)).toThrow(
       /renderer workspace authority changed/i,
     );
   });

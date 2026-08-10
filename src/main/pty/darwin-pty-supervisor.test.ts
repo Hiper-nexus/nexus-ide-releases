@@ -257,7 +257,14 @@ function buildAdHocMarkerExecutable(source: string, output: string): void {
   ]);
 }
 
-function waitForValue<T>(read: () => T | false, timeoutMs = 8_000): Promise<T> {
+/**
+ * These fixtures spawn real PTYs, tracers, and signal cohorts. Under the full
+ * suite (maxWorkers 4 on one machine) the kernel can take far longer than a
+ * quiet run to publish a fixture marker, and an 8s ceiling turned a correct
+ * barrier into a red test. The wait proves the fixture ARRIVES, not that it
+ * arrives fast, so the ceiling is generous while still bounded.
+ */
+function waitForValue<T>(read: () => T | false, timeoutMs = 30_000): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   return new Promise((resolve, reject) => {
     const poll = () => {
@@ -1009,7 +1016,7 @@ describe.runIf(process.platform === "darwin")(
               ...extraEnvironment,
               NEXUS_TEST_EXECUTION_LOG: executionLog,
             },
-            timeout: 8_000,
+            timeout: 25_000,
           },
         );
         expect(result.error).toBeUndefined();
@@ -1149,7 +1156,7 @@ describe.runIf(process.platform === "darwin")(
               ...process.env,
               NEXUS_TEST_EXECUTION_LOG: executionLog,
             },
-            timeout: 8_000,
+            timeout: 25_000,
           },
         );
 
@@ -1158,12 +1165,14 @@ describe.runIf(process.platform === "darwin")(
         expect(result.stdout).not.toContain(
           DARWIN_PTY_PROVIDER_PROBE_RECEIPT,
         );
+        // bootstrap -> disclaimed image; the mismatched Developer ID is
+        // rejected before the provider-probe image can execute.
         expect(
           fs
             .readFileSync(executionLog, "utf8")
             .split("\n")
             .filter(Boolean),
-        ).toHaveLength(1);
+        ).toHaveLength(2);
       },
       20_000,
     );
@@ -1210,7 +1219,7 @@ describe.runIf(process.platform === "darwin")(
         const exit = new Promise<{ exitCode: number }>((resolve, reject) => {
           const timeout = setTimeout(
             () => reject(new Error("stage-zero PTY did not exit")),
-            8_000,
+            25_000,
           );
           terminal?.onExit((event) => {
             clearTimeout(timeout);
@@ -1226,7 +1235,7 @@ describe.runIf(process.platform === "darwin")(
       } finally {
         await cleanupPty(terminal);
       }
-    }, 20_000);
+    }, 60_000);
 
     it("rejects a swapped helper under 5,000 SIGCONT signals before its constructor runs", async () => {
       const { root, helper, runtime } = temporaryRuntime();
@@ -1309,7 +1318,7 @@ describe.runIf(process.platform === "darwin")(
           await cleanupProcessGroup(launch.child.pid);
         }
       }
-    }, 20_000);
+    }, 60_000);
 
     it("rejects a helper swapped between its initial and responsibility exec", async () => {
       const { root, helper, runtime } = temporaryRuntime();
@@ -1378,7 +1387,7 @@ describe.runIf(process.platform === "darwin")(
           await cleanupProcessGroup(launch.child.pid);
         }
       }
-    }, 20_000);
+    }, 60_000);
 
     it("kills a traced helper if the Perl tracer is SIGKILLed before its responsibility exec", async () => {
       const { root, helper, runtime } = temporaryRuntime();
@@ -1433,7 +1442,7 @@ describe.runIf(process.platform === "darwin")(
           await cleanupProcessGroup(launch.child.pid);
         }
       }
-    }, 20_000);
+    }, 60_000);
 
     it("rejects physical proof when the authenticated helper is SIGKILLed after provider detach", async () => {
       const { root, helper, runtime } = temporaryRuntime();
@@ -1480,7 +1489,7 @@ describe.runIf(process.platform === "darwin")(
           await cleanupProcessGroup(launch.child.pid);
         }
       }
-    }, 20_000);
+    }, 60_000);
 
     it("maps a proven provider exit in the reserved signal band to an unambiguous receipt", async () => {
       const { helper, runtime } = temporaryRuntime();
@@ -1501,7 +1510,7 @@ describe.runIf(process.platform === "darwin")(
           signal: result.signal,
         }),
       ).toBe(true);
-    }, 20_000);
+    }, 60_000);
 
     it("rejects physical proof when the authenticated helper dies during teardown proof", async () => {
       const { root, helper, runtime } = temporaryRuntime();
@@ -1558,7 +1567,7 @@ describe.runIf(process.platform === "darwin")(
           await cleanupProcessGroup(launch.child.pid);
         }
       }
-    }, 20_000);
+    }, 60_000);
 
     it("times out through EINTR and leaves no provider or descendant", async () => {
       const { root, helper, runtime } = temporaryRuntime();
@@ -1622,7 +1631,7 @@ describe.runIf(process.platform === "darwin")(
           await cleanupProcessGroup(launch.child.pid);
         }
       }
-    }, 20_000);
+    }, 60_000);
 
     it("forwards SIGTERM through the exact helper and leaves no orphan", async () => {
       const { root, helper, runtime } = temporaryRuntime();
@@ -1679,6 +1688,6 @@ describe.runIf(process.platform === "darwin")(
           await cleanupProcessGroup(launch.child.pid);
         }
       }
-    }, 20_000);
+    }, 60_000);
   },
 );

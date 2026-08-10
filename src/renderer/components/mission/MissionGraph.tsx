@@ -50,6 +50,14 @@ interface PositionedEdge {
   readonly targetAgent: MissionAgentSnapshot;
 }
 
+interface VisualEdge {
+  readonly id: string;
+  readonly kind: MissionEdge['kind'] | 'topology';
+  readonly label?: string;
+  readonly source: MissionGraphPosition;
+  readonly target: MissionGraphPosition;
+}
+
 type GraphSurfaceStyle = CSSProperties & {
   readonly '--mission-graph-width': string;
   readonly '--mission-graph-height': string;
@@ -169,11 +177,27 @@ export function MissionGraph({
     positionsByAgentId,
     agentsById,
   );
+  const visualEdges: readonly VisualEdge[] =
+    edges.length > 0
+      ? edges.map(({ edge, source, target }) => ({
+          id: edge.id,
+          kind: edge.kind,
+          label: edge.label,
+          source,
+          target,
+        }))
+      : layout.slice(1).map((target) => ({
+          id: `topology-${layout[0].agentId}-${target.agentId}`,
+          kind: 'topology',
+          source: layout[0],
+          target,
+        }));
 
   return (
     <section
       className="mission-graph"
       aria-label={`Equipe e conexões da missão ${snapshot.title}`}
+      data-mission-state={snapshot.state}
     >
       <div className="mission-graph__surface" style={surfaceStyle}>
         <svg
@@ -184,19 +208,29 @@ export function MissionGraph({
           aria-hidden="true"
           focusable="false"
         >
-          {edges.map(({ edge, source, target }) => (
-            <line
-              key={edge.id}
-              className={`mission-graph__edge mission-graph__edge--${edge.kind}`}
-              x1={source.x}
-              y1={source.y}
-              x2={target.x}
-              y2={target.y}
-              data-edge-id={edge.id}
-              data-edge-kind={edge.kind}
-              data-edge-label={edge.label}
-              vectorEffect="non-scaling-stroke"
-            />
+          {visualEdges.map(({ id, kind, label, source, target }) => (
+            <g key={id}>
+              <line
+                className={`mission-graph__edge mission-graph__edge--${kind}`}
+                x1={source.x}
+                y1={source.y}
+                x2={target.x}
+                y2={target.y}
+                data-edge-id={id}
+                data-edge-kind={kind}
+                data-edge-label={label}
+                vectorEffect="non-scaling-stroke"
+              />
+              <line
+                className="mission-graph__edge-signal"
+                x1={source.x}
+                y1={source.y}
+                x2={target.x}
+                y2={target.y}
+                data-edge-signal-for={id}
+                vectorEffect="non-scaling-stroke"
+              />
+            </g>
           ))}
         </svg>
 

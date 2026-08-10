@@ -20,6 +20,16 @@ import {
   reconcileCompletedPetStudioMissions,
 } from './pet-studio-completion';
 
+const engineMocks = vi.hoisted(() => ({
+  completeVerified: vi.fn(),
+}));
+
+vi.mock('./mission-engine-registry', () => ({
+  missionEngineForScope: () => ({
+    completeVerified: engineMocks.completeVerified,
+  }),
+}));
+
 const scope = testProjectScope();
 let sandbox = '';
 let codexHome = '';
@@ -134,6 +144,24 @@ beforeEach(() => {
     projectId: scope.projectId,
     checkoutId: scope.checkoutId,
   };
+  engineMocks.completeVerified.mockReset();
+  engineMocks.completeVerified.mockImplementation(
+    (
+      _scope: unknown,
+      input: {
+        result: NonNullable<ScopedMission['result']>;
+        learnings: string;
+      },
+    ) => {
+      mission = {
+        ...mission,
+        status: 'done',
+        intentState: 'done',
+        result: input.result,
+        learnings: input.learnings,
+      };
+    },
+  );
   setStatus = vi.fn(() => ({ ...mission, status: 'done' }));
   markSubmitted = vi.fn(() => true);
   markConsumed = vi.fn(() => true);
@@ -158,7 +186,20 @@ describe('Pet Studio completion boundary', () => {
     expect(
       realpathSync(join(installedPackageDir, 'spritesheet.webp')),
     ).toBe(join(realpathSync(installedPackageDir), 'spritesheet.webp'));
-    expect(setStatus).toHaveBeenCalledWith(mission.id, 'done');
+    expect(engineMocks.completeVerified).toHaveBeenCalledWith(
+      scope,
+      expect.objectContaining({
+        missionId: mission.id,
+        expectedStatus: 'running',
+        result: {
+          outcome: 'success',
+          summary: 'Pet final gerado, validado e empacotado com sucesso.',
+          evidenceIds: [],
+          artifactRefs: [realpathSync(installedPackageDir)],
+        },
+      }),
+    );
+    expect(setStatus).not.toHaveBeenCalled();
     expect(markSubmitted).toHaveBeenCalledWith('handoff-pet');
     expect(markConsumed).toHaveBeenCalledWith('handoff-pet', mission.id);
   });
@@ -243,9 +284,10 @@ describe('Pet Studio completion boundary', () => {
     writeValidPackage();
     const result = reconcileCompletedPetStudioMissions(
       {
+        scope,
         missions: {
+          get: vi.fn((id: string) => (id === mission.id ? mission : null)),
           list: vi.fn(() => [mission]),
-          setStatus,
         },
       },
       { codexHome, workspaceRoot },
@@ -258,8 +300,8 @@ describe('Pet Studio completion boundary', () => {
         packageDir: realpathSync(installedPackageDir),
       },
     ]);
-    expect(setStatus).toHaveBeenCalledOnce();
-    expect(setStatus).toHaveBeenCalledWith(mission.id, 'done');
+    expect(engineMocks.completeVerified).toHaveBeenCalledOnce();
+    expect(setStatus).not.toHaveBeenCalled();
   });
 
   it('does not recover when two fresh packages make ownership ambiguous', () => {
@@ -275,9 +317,10 @@ describe('Pet Studio completion boundary', () => {
 
     const result = reconcileCompletedPetStudioMissions(
       {
+        scope,
         missions: {
+          get: vi.fn((id: string) => (id === mission.id ? mission : null)),
           list: vi.fn(() => [mission]),
-          setStatus,
         },
       },
       { codexHome, workspaceRoot },
@@ -431,7 +474,11 @@ describe('Pet Studio completion boundary', () => {
       completed: true,
       packageDir: realpathSync(installedPackageDir),
     });
-    expect(setStatus).toHaveBeenCalledWith(mission.id, 'done');
+    expect(engineMocks.completeVerified).toHaveBeenCalledWith(
+      scope,
+      expect.objectContaining({ missionId: mission.id }),
+    );
+    expect(setStatus).not.toHaveBeenCalled();
   });
 
   it('rejects an existing pet catalog entry that is a symlink', () => {

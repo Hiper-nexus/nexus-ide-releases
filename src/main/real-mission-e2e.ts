@@ -18,7 +18,7 @@ import {
   isCurrentProcessRealMissionProductWizardE2E,
   isExclusiveRealMissionE2E,
   isRealMissionE2ERendererFailureSignal,
-  isRealMissionE2EPreApprovalMission,
+  isRealMissionE2EReviewReadyMission,
   realMissionE2EAcceptanceCriteria,
   realMissionE2EAdvisorSkipClis,
   realMissionE2EObservePayloadSchema,
@@ -38,7 +38,7 @@ import { replaceOrchSettings } from "./persistence/settings-store";
 import { grantWorkspacePathFromTrustedMain } from "./persistence/workspace-store";
 import {
   persistRealMissionE2ESquadFixture,
-  resolvePrivateRealMissionE2ESquadBinding,
+  resolveCanonicalRealMissionE2ESquadBinding,
   type RealMissionE2ESquadBinding,
 } from "./real-mission-e2e-fixture";
 import {
@@ -52,11 +52,12 @@ import { RealMissionE2EMissionInventoryFence } from "./real-mission-e2e-mission-
 import { RealMissionObserver } from "./real-mission-e2e-observer";
 import {
   installRealMissionProductWizardReceiptAuthority,
+  scheduleProductWizardTrustedLaunchClicks,
   type RealMissionProductWizardReceiptAuthority,
 } from "./real-mission-e2e-product-wizard";
 import {
   atomicWriteEvidence,
-  isProductWizardPreApprovalMission,
+  isProductMissionSetupPreparedMission,
   productWizardSquadBinding,
   runGit,
   setupScratchRepository,
@@ -92,104 +93,6 @@ export { readDurableAuthoritySnapshot } from "./real-mission-e2e-authority";
  * durable receipts, repository checks, and final verdict all stay in main.
  */
 
-function scheduleProductWizardTrustedLaunchClicks(
-  sender: WebContents,
-  isSettled: () => boolean,
-  onGaveUp?: () => void,
-): () => void {
-  let attempts = 0;
-  let clicked = false;
-  let sawButton = false;
-  let sawDisabled = false;
-  // Single-flight: two overlapping async probes could both read a pre-click
-  // DOM, then both send trusted clicks — the second one lands on whatever the
-  // post-click relayout moved under the stale coordinates (the "Salvar
-  // configuração" incident that re-parented the runtime squad lineage).
-  let probing = false;
-  const timer = setInterval(() => {
-    if (isSettled() || clicked || sender.isDestroyed() || sender.isCrashed()) {
-      clearInterval(timer);
-      return;
-    }
-    if (probing) return;
-    attempts += 1;
-    if (attempts > 120) {
-      clearInterval(timer);
-      console.error(
-        "[real-mission] product-wizard-launch-gave-up " +
-          `attempts=${attempts} sawButton=${sawButton} sawDisabled=${sawDisabled}`,
-      );
-      onGaveUp?.();
-      return;
-    }
-    probing = true;
-    void (async () => {
-      try {
-        if (sender.isDestroyed() || sender.isCrashed()) return;
-        const state = (await sender.executeJavaScript(`(() => {
-          const el = document.querySelector(
-            '[data-nexus-real-mission-wizard-launch="true"]',
-          );
-          if (!(el instanceof HTMLElement)) return { kind: "missing" };
-          const disabled =
-            (el instanceof HTMLButtonElement && el.disabled) ||
-            el.getAttribute("aria-disabled") === "true";
-          const rect = el.getBoundingClientRect();
-          if (rect.width < 1 || rect.height < 1) return { kind: "hidden" };
-          if (disabled) {
-            const title = el.getAttribute("title") || "";
-            return { kind: "disabled", title };
-          }
-          const x = Math.round(rect.left + rect.width / 2);
-          const y = Math.round(rect.top + rect.height / 2);
-          // The enable transition collapses the advanced-roster details and
-          // reflows the wizard. Only click when the center of the measured
-          // rect still resolves to the launch button itself.
-          const hit = document.elementFromPoint(x, y);
-          if (!hit || !(el === hit || el.contains(hit))) {
-            return { kind: "obscured" };
-          }
-          return { kind: "ready", x, y };
-        })()`)) as
-          | { kind: "missing" | "hidden" | "disabled" | "obscured"; title?: string }
-          | { kind: "ready"; x: number; y: number };
-        if (clicked || isSettled()) return;
-        if (state.kind === "disabled") {
-          sawButton = true;
-          sawDisabled = true;
-          if (attempts === 1 || attempts % 20 === 0) {
-            console.warn(
-              "[real-mission] product-wizard-launch-disabled " +
-                `title=${JSON.stringify(state.title ?? "")}`,
-            );
-          }
-          return;
-        }
-        if (state.kind !== "ready") return;
-        sawButton = true;
-        sender.focus();
-        const common = {
-          x: state.x,
-          y: state.y,
-          button: "left" as const,
-          clickCount: 1,
-        };
-        sender.sendInputEvent({ type: "mouseDown", ...common });
-        sender.sendInputEvent({ type: "mouseUp", ...common });
-        clicked = true;
-        clearInterval(timer);
-        console.log(
-          "[real-mission] PHASE phase=product-wizard-launch-clicked",
-        );
-      } catch {
-        // Button may not be mounted yet; keep polling.
-      } finally {
-        probing = false;
-      }
-    })();
-  }, 250);
-  return () => clearInterval(timer);
-}
 
 export function initRealMissionE2E(): void {
   if (!isCurrentProcessRealMissionE2E()) return;
@@ -354,8 +257,8 @@ export function initRealMissionE2E(): void {
     unsubscribeProductWizardMission?.();
     unsubscribeProductWizardMission = null;
     // The observer can reach a final verdict while the renderer is still
-    // unwinding a trusted launch click (for example, approval transitions the
-    // mission to blocked before the queued `approval-returned` receipt edge).
+    // unwinding a trusted Start click (for example, dispatch transitions the
+    // mission to blocked before the queued `mission-started` receipt edge).
     // Keep terminal acknowledgements installed until process teardown so that
     // finalization cannot orphan an already-authorized renderer invoke.
     productWizardReceiptAuthority?.quiesce();
@@ -484,6 +387,7 @@ export function initRealMissionE2E(): void {
     sender: WebContents,
     suite: ProjectDomainStoreSuite,
     mission: Mission,
+    reviewSha256: string,
     squadBinding: RealMissionE2ESquadBinding,
     acceptanceCriteria: readonly string[],
     inventoryFence?: RealMissionE2EMissionInventoryFence,
@@ -524,6 +428,7 @@ export function initRealMissionE2E(): void {
       scratch,
       suite,
       missionId: mission.id,
+      reviewSha256,
       launchSurface,
       squadBinding,
       acceptanceCriteria,
@@ -558,10 +463,10 @@ export function initRealMissionE2E(): void {
       }
       if (observer !== null) return;
       const candidates = missions
-        .filter((mission) => isProductWizardPreApprovalMission(mission));
+        .filter((mission) => isProductMissionSetupPreparedMission(mission));
       if (candidates.length > 1) {
         console.error(
-          "[real-mission] observer-invalid reason=multiple-preapproval-missions " +
+          "[real-mission] observer-invalid reason=multiple-prepared-missions " +
             `count=${candidates.length}`,
         );
         finish("observer-invalid");
@@ -570,7 +475,13 @@ export function initRealMissionE2E(): void {
       const mission = candidates[0];
       if (!mission) return;
       const squadBinding = productWizardSquadBinding(mission);
-      if (!squadBinding || !validateHarnessRoster()) {
+      const reviewSha256 =
+        mission.intentContract?.approvalReviewSha256;
+      if (
+        !squadBinding ||
+        typeof reviewSha256 !== "string" ||
+        !validateHarnessRoster()
+      ) {
         console.error(
           "[real-mission] observer-invalid reason=roster-or-binding " +
             `binding=${squadBinding ? "ok" : "null"} ` +
@@ -591,6 +502,7 @@ export function initRealMissionE2E(): void {
           sender,
           suite,
           mission,
+          reviewSha256,
           squadBinding,
           REAL_MISSION_E2E_PRODUCT_WIZARD_ACCEPTANCE_CRITERIA,
           inventoryFence,
@@ -703,12 +615,16 @@ export function initRealMissionE2E(): void {
       if (observer === null) finish("observer-invalid");
       throw new Error("invalid real mission observation payload");
     }
-    if (
-      isRealMissionE2ERendererFailureSignal(
-        parsed.data.missionId,
-        rendererFailureToken,
-      )
-    ) {
+    if (parsed.data.kind === "renderer-failure") {
+      if (
+        !isRealMissionE2ERendererFailureSignal(
+          parsed.data.signal,
+          rendererFailureToken,
+        )
+      ) {
+        if (observer === null) finish("observer-invalid");
+        throw new Error("invalid renderer failure capability");
+      }
       finish("renderer-failed");
       return { ok: true };
     }
@@ -725,8 +641,29 @@ export function initRealMissionE2E(): void {
     }
     const suite = getProjectDomainStores(scope);
     const mission = suite.missions.get(parsed.data.missionId);
-    const squadBinding = resolvePrivateRealMissionE2ESquadBinding();
-    const missionValid = isRealMissionE2EPreApprovalMission(mission);
+    const squadBinding =
+      mission?.squadId && mission.intentContract?.goal
+        ? resolveCanonicalRealMissionE2ESquadBinding({
+            squadId: mission.squadId,
+            title: mission.title,
+            objective: mission.intentContract.goal,
+          })
+        : null;
+    const acceptanceCriteria = realMissionE2EAcceptanceCriteria(
+      orchestratorCli,
+      admittedAdvisorClis,
+    );
+    const missionValid =
+      squadBinding !== null &&
+      isRealMissionE2EReviewReadyMission(mission, {
+        missionId: parsed.data.missionId,
+        squadId: squadBinding.squadId,
+        squadRevisionHash: squadBinding.squadRevisionHash,
+        reviewSha256: parsed.data.reviewSha256,
+        orchestratorCli,
+        acceptanceCriteria,
+        contextPaths: ["README.md"],
+      });
     const squadValid = validateHarnessSquad();
     const codexValid = validateHarnessCodexAdapter();
     const advisorsValid = validateHarnessAdvisorAdapters();
@@ -738,21 +675,22 @@ export function initRealMissionE2E(): void {
       !advisorsValid
     ) {
       console.error(
-        "[real-mission] observer-invalid reason=private-roster-or-binding " +
+        "[real-mission] observer-invalid reason=canonical-review-or-binding " +
           `mission=${missionValid} binding=${Boolean(squadBinding)} ` +
           `squad=${squadValid} codex=${codexValid} advisors=${advisorsValid}`,
       );
       finish("observer-invalid");
       throw new Error(
-        "real mission contract is not the sealed release fixture",
+        "real mission contract is not the canonical reviewed release mission",
       );
     }
     armObserver(
       event.sender,
       suite,
       mission,
+      parsed.data.reviewSha256,
       squadBinding,
-      realMissionE2EAcceptanceCriteria(orchestratorCli),
+      acceptanceCriteria,
     );
     return { ok: true };
   });

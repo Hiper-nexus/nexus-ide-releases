@@ -267,7 +267,6 @@ import { registerBillingIpc } from "./persistence/billing-ipc";
 import { syncLicenseOnBoot } from "./license-sync";
 import { registerTeamIpc } from "./team-ipc";
 import { initDesktopPet, isPetWindow } from "./pet/pet-window";
-import { registerOnboardingIpc } from "./persistence/onboarding-store";
 import {
   registerNotesIpc,
   registerNotesListener,
@@ -631,7 +630,6 @@ function bootstrap(): void {
     syncLicenseOnBoot();
     traceBootstrap('after license sync');
   }
-  registerOnboardingIpc();
   registerPipeIpc(); // also calls initPanePipes()
   registerRemoteIpc();
   registerIntegrationsIpc();
@@ -1058,6 +1056,13 @@ function shutdown(): Promise<void> {
       // and the remaining Electron process group, but it never treats a root
       // process disappearing on its own as PTY teardown proof.
       console.log("[smoke] shutdown-complete: physical PTY inventory proven");
+      // BridgeSpace pattern: once the intentional shutdown proof is written,
+      // leave immediately. Waiting for Electron's nested quit/app.exit path
+      // can keep the root alive past the packaged-smoke grace window.
+      console.log("[smoke] expected-exit");
+      process.exit(
+        typeof process.exitCode === "number" ? process.exitCode : 0,
+      );
     }
   })();
   return shutdownPromise;
@@ -1123,14 +1128,41 @@ app.on("before-quit", (event) => {
     // disposer pendurado, falha REPETIDA de prova — segura o quit para sempre.
     quitCeiling.arm();
     // A demora vira feedback nativo COM prazo e saída, nunca espera aberta.
-    const slowNotice = setTimeout(() => {
-      console.error("[main] shutdown is still waiting for safe completion");
-      shutdownNotices.showSlowNotice();
-    }, 10_000);
+    // Packaged smoke never opens native notices — they can wedge the runloop
+    // behind a modal and block the only path that must leave exit(0).
+    let slowNotice: ReturnType<typeof setTimeout> | undefined;
+    if (!isCurrentProcessSmokeTest()) {
+      slowNotice = setTimeout(() => {
+        console.error("[main] shutdown is still waiting for safe completion");
+        shutdownNotices.showSlowNotice();
+      }, 10_000);
+    }
     void shutdown()
       .then(() => {
         clearTimeout(slowNotice);
         authorizeAppQuit();
+        if (isCurrentProcessSmokeTest()) {
+          // BridgeSpace pattern: intentional expected exit after proof.
+          // Electron can keep the root alive after app.quit/app.exit while
+          // residual helpers drain; packaged smoke only needs the proven
+          // shutdown log plus a hard root exit(0).
+          const code =
+            typeof process.exitCode === "number" ? process.exitCode : 0;
+          console.log("[smoke] expected-exit");
+          for (const win of BrowserWindow.getAllWindows()) {
+            try {
+              win.destroy();
+            } catch {
+              // Best-effort; exit path must continue.
+            }
+          }
+          try {
+            app.exit(code);
+          } catch {
+            // Fall through to process.exit / SIGKILL.
+          }
+          process.exit(code);
+        }
         app.quit();
       })
       .catch((error) => {

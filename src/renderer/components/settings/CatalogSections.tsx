@@ -16,8 +16,8 @@ import {
   catalogEmptyKindFromMessage,
   catalogInstallableEmptyMessage,
 } from '../empty-cta-policy';
-import { useSettingsStore } from '../../state/settings-store';
 import { useLayoutStore } from '../../state/layout-store';
+import { useProductNavigationStore } from '../../state/product-navigation-store';
 import { waitForSession, writeToPane } from '../../terminal/terminal-host';
 import { SettingsSectionTitle } from './SettingsSectionTitle';
 
@@ -175,7 +175,7 @@ function InstalledList({
               variant="primary"
               size="sm"
               onClick={() =>
-                useSettingsStore.getState().openDrawer('marketplace')
+                useProductNavigationStore.getState().openSettings('marketplace')
               }
             />
           ) : undefined
@@ -310,7 +310,9 @@ export function MediaCatalogSection() {
               subtitle="keys de geração"
               variant="primary"
               size="sm"
-              onClick={() => useSettingsStore.getState().openDrawer('media')}
+              onClick={() =>
+                useProductNavigationStore.getState().openSettings('media')
+              }
             />
           }
         />
@@ -340,6 +342,37 @@ export function MediaCatalogSection() {
 export function LlmsSection({ adapters }: { adapters: AdapterInfo[] }) {
   const installed = adapters.filter((a) => a.installed && a.id !== 'shell');
   const absent = adapters.filter((a) => !a.installed && a.id !== 'shell');
+  const [pendingInstallId, setPendingInstallId] = useState<string | null>(null);
+  const [installError, setInstallError] = useState<string | null>(null);
+
+  async function openInstallTerminal(adapter: AdapterInfo): Promise<void> {
+    if (!adapter.installCommand || pendingInstallId !== null) return;
+    setInstallError(null);
+    setPendingInstallId(adapter.id);
+
+    const layout = useLayoutStore.getState();
+    const paneId = layout.addShellPane({ focus: false });
+    let sessionId: string | null = null;
+    try {
+      sessionId = await waitForSession(paneId);
+    } catch {
+      // The failure copy below is the one announced to the operator.
+    }
+
+    if (!sessionId) {
+      layout.close(paneId, 'settings-install-terminal-unavailable');
+      setPendingInstallId(null);
+      setInstallError(
+        'O terminal não ficou disponível. A instalação não foi iniciada.',
+      );
+      return;
+    }
+
+    writeToPane(paneId, `${adapter.installCommand}\n`);
+    setPendingInstallId(null);
+    layout.focus(paneId);
+    useProductNavigationStore.getState().openTerminal();
+  }
   return (
     <section>
       <SettingsSectionTitle>LLMs · CLIs</SettingsSectionTitle>
@@ -347,6 +380,11 @@ export function LlmsSection({ adapters }: { adapters: AdapterInfo[] }) {
         CLIs de IA instaladas nesta máquina ({installed.length}) — o arsenal de
         execução que o roteador de tarefas distribui por custo.
       </p>
+      {installError ? (
+        <p className="settings-error" role="alert">
+          {installError}
+        </p>
+      ) : null}
       {installed.length === 0 ? (
         <EmptyState
           icon="terminal"
@@ -364,7 +402,9 @@ export function LlmsSection({ adapters }: { adapters: AdapterInfo[] }) {
               subtitle="chaves · CLIs"
               variant="primary"
               size="sm"
-              onClick={() => useSettingsStore.getState().openDrawer('providers')}
+              onClick={() =>
+                useProductNavigationStore.getState().openSettings('providers')
+              }
             />
           }
         />
@@ -396,22 +436,13 @@ export function LlmsSection({ adapters }: { adapters: AdapterInfo[] }) {
                   {a.installCommand ? (
                     <button
                       className="settings-btn settings-btn--sm"
-                      onClick={() => {
-                        const command = a.installCommand;
-                        const paneId = useLayoutStore.getState().addShellPane();
-                        useLayoutStore.getState().focus(paneId);
-                        useSettingsStore.getState().closeDrawer();
-                        // addShellPane is synchronous, but the PTY spawns async.
-                        // Wait for the live session instead of guessing a fixed
-                        // delay so a cold or slow terminal never silently drops
-                        // the command.
-                        void waitForSession(paneId, 15_000).then((sessionId) => {
-                          if (sessionId) writeToPane(paneId, command + '\n');
-                        });
-                      }}
+                      onClick={() => void openInstallTerminal(a)}
+                      disabled={pendingInstallId !== null}
+                      aria-busy={pendingInstallId === a.id}
                       title={`Executar comando: ${a.installCommand}`}
                     >
-                      <PixelIcon name="terminal" size={10} /> Instalar
+                      <PixelIcon name="terminal" size={10} />{' '}
+                      {pendingInstallId === a.id ? 'Abrindo…' : 'Instalar'}
                     </button>
                   ) : (
                     <span className="settings-chip">manual</span>
@@ -541,7 +572,9 @@ export function ToolsSection() {
               subtitle="servidor · status"
               variant="primary"
               size="sm"
-              onClick={() => useSettingsStore.getState().openDrawer('mcps')}
+              onClick={() =>
+                useProductNavigationStore.getState().openSettings('mcps')
+              }
             />
           }
         />
@@ -672,7 +705,9 @@ export function RulesSection() {
               subtitle="Orquestração e allowlists"
               variant="primary"
               size="sm"
-              onClick={() => useSettingsStore.getState().openDrawer('squads')}
+              onClick={() =>
+                useProductNavigationStore.getState().openSettings('squads')
+              }
             />
           }
         />
@@ -698,5 +733,5 @@ export function RulesSection() {
 
 /* Recipes, Atalhos e Remote moraram aqui; foram extraídos para
    CatalogSectionsOps.tsx (teto de 800 linhas por módulo). Re-export mantém
-   os imports do SettingsDrawer intactos. */
+   os consumidores de Settings independentes dessa divisão interna. */
 export { RecipesSection, RemoteSection, ShortcutsSection } from './CatalogSectionsOps';

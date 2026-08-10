@@ -13,6 +13,7 @@ import path from "node:path";
 import type { MissionContract } from "./context/contract-compiler";
 import type { ProjectDomainStoreSuite } from "./orch/project-domain-store-registry";
 import type { Mission } from "../shared/orch-types";
+import type * as RealMissionE2EFixtureModule from "./real-mission-e2e-fixture";
 import { testProjectScope } from "./orch/__tests__/scope-fixture";
 import { snapshotSquadAuthority } from "./orch/squad-authority-snapshot";
 import {
@@ -30,6 +31,19 @@ const mocks = vi.hoisted(() => ({
   },
 }));
 
+const fixtureMocks = vi.hoisted(() => ({
+  resolveBinding: vi.fn(),
+}));
+
+vi.mock("./real-mission-e2e-fixture", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof RealMissionE2EFixtureModule>();
+  return {
+    ...actual,
+    resolveCanonicalRealMissionE2ESquadBinding: fixtureMocks.resolveBinding,
+  };
+});
+
 vi.mock("./context/context-workflow-registry", () => ({
   getContextWorkflowService: () => mocks.workflow,
 }));
@@ -45,6 +59,7 @@ afterEach(() => {
   mocks.workflow.getMissionWorkflow.mockReset();
   mocks.workflow.freezeContract.mockReset();
   mocks.workflow.advance.mockReset();
+  fixtureMocks.resolveBinding.mockReset();
   if (originalE2EEnvironment === undefined) {
     delete process.env.NEXUS_REAL_MISSION_E2E;
   } else {
@@ -57,9 +72,26 @@ function fixture(missionId: string, rootRealPath = `/workspace/${missionId}`) {
     checkoutId: `checkout-${missionId}`,
     rootRealPath,
   });
-  const squadRevisionHash = snapshotSquadAuthority(
+  const fixtureSquadRevisionHash = snapshotSquadAuthority(
     createRealMissionE2ESquadFixture(),
   ).hash;
+  const squadId = `agentic-runtime-${missionId}`;
+  const squadRevisionHash = "b".repeat(64);
+  fixtureMocks.resolveBinding.mockImplementation((input) =>
+    input.squadId === squadId &&
+    input.title === "Release gate: missão real empacotada" &&
+    input.objective === REAL_MISSION_E2E_GOAL
+      ? {
+          squadId,
+          fixtureSquadId: REAL_MISSION_E2E_SQUAD_ID,
+          fixtureSquadRevisionHash,
+          sourceSquadId:
+            "custom-mission-setup-11111111-1111-4111-8111-111111111111",
+          sourceSquadRevisionHash: "a".repeat(64),
+          squadRevisionHash,
+        }
+      : null,
+  );
   const mission: Mission & {
     projectId: string;
     checkoutId: string;
@@ -70,7 +102,7 @@ function fixture(missionId: string, rootRealPath = `/workspace/${missionId}`) {
     title: "Release gate: missão real empacotada",
     description: "",
     status: "running" as const,
-    squadId: REAL_MISSION_E2E_SQUAD_ID,
+    squadId,
     milestones: [],
     learnings: "",
     intentState: "executing",

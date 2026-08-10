@@ -163,22 +163,52 @@ describe('TerminalWorkspace contracts', () => {
     expect(host.querySelector('.grid')).toBeNull();
   });
 
-  it('preserves every canonical terminal host across a Board to Terminals remount without direct spawn or empty/reduced reconciliation', () => {
-    const first = mount(<TerminalWorkspace />);
-    unmount(first);
-    mount(<TerminalWorkspace />);
+  it('mounts every pane host while hidden and reveals the same canonical grid without reattaching', () => {
+    const mounted = mount(<TerminalWorkspace hidden />);
+    const workspace = mounted.host.querySelector<HTMLElement>(
+      '.terminal-workspace',
+    );
+    const grid = mounted.host.querySelector('.grid');
 
-    const attachedIds = terminalRuntime.attachHost.mock.calls.map(
+    expect(workspace?.hidden).toBe(true);
+    expect(workspace?.getAttribute('aria-hidden')).toBe('true');
+    expect(grid).not.toBeNull();
+
+    const attachedWhileHidden = terminalRuntime.attachHost.mock.calls.map(
       ([pane]) => (pane as PaneModel).id,
     );
     for (const paneId of CANONICAL_IDS) {
-      expect(attachedIds.filter((id) => id === paneId)).toHaveLength(2);
+      expect(
+        attachedWhileHidden.filter((id) => id === paneId),
+      ).toHaveLength(1);
     }
+    expect(terminalRuntime.reconcileHosts).toHaveBeenCalledTimes(1);
 
-    expect(terminalRuntime.reconcileHosts).toHaveBeenCalledTimes(2);
-    for (const [liveIds] of terminalRuntime.reconcileHosts.mock.calls) {
-      expect([...(liveIds as Set<string>)].sort()).toEqual(CANONICAL_IDS);
+    act(() =>
+      mounted.root.render(
+        <TerminalWorkspace
+          missionId="mission-release"
+          onBackToBoard={vi.fn()}
+        />,
+      ),
+    );
+
+    expect(
+      mounted.host.querySelector<HTMLElement>('.terminal-workspace'),
+    ).toBe(workspace);
+    expect(mounted.host.querySelector('.grid')).toBe(grid);
+    expect(workspace?.hidden).toBe(false);
+    expect(workspace?.hasAttribute('aria-hidden')).toBe(false);
+
+    const attachedAfterReveal = terminalRuntime.attachHost.mock.calls.map(
+      ([pane]) => (pane as PaneModel).id,
+    );
+    for (const paneId of CANONICAL_IDS) {
+      expect(
+        attachedAfterReveal.filter((id) => id === paneId),
+      ).toHaveLength(1);
     }
+    expect(terminalRuntime.reconcileHosts).toHaveBeenCalledTimes(1);
     expect(ptySpawn).not.toHaveBeenCalled();
   });
 

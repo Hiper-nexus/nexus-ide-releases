@@ -1,12 +1,7 @@
 import type { Squad } from '../../shared/orch-types';
-import type { AdapterInfo } from '../../shared/adapter-types';
-import {
-  PET_STUDIO_SQUAD,
-} from '../../shared/pet-studio';
-import {
-  launchSquadMission,
-  type SquadLaunchOptions,
-} from '../orch/mission-launcher';
+import { PET_STUDIO_SQUAD } from '../../shared/pet-studio';
+import { useMissionSetupStore } from '../state/mission-setup-store';
+import { useProductNavigationStore } from '../state/product-navigation-store';
 import { useWorkspaceStore } from '../state/workspace-store';
 
 /** Slug legível a partir do nome do arquivo-base. */
@@ -40,53 +35,43 @@ export function hatchPetIntent(imagePath: string): string {
   ].join('\n');
 }
 
-export interface PetHatchLaunchResult {
+export interface PetHatchPreparationResult {
   ok: boolean;
-  paneId?: string;
-  squad?: Squad;
   error?: string;
 }
 
-interface PetHatchLaunchDeps {
+export interface PetHatchPreparationDeps {
   saveSquad(squad: Squad): Promise<{ ok: boolean; error?: string }>;
-  listAdapters(): Promise<AdapterInfo[]>;
-  launchSquad(
-    squad: Squad,
-    adapters: AdapterInfo[],
-    options?: SquadLaunchOptions,
-  ): Promise<{
-    ok: boolean;
-    paneId?: string;
-    error?: string;
-  }>;
   workspacePath(): string | null;
 }
 
-const runtimeDeps: PetHatchLaunchDeps = {
+const runtimeDeps: PetHatchPreparationDeps = {
   saveSquad: (squad) => window.nexus.orch.saveSquad(squad),
-  listAdapters: () => window.nexus.adapters.list(),
-  launchSquad: launchSquadMission,
   workspacePath: () => useWorkspaceStore.getState().current?.path ?? null,
 };
 
-/** Selecionar a imagem já basta: monta o squad e inicia uma missão real. */
-export async function launchPetHatchMission(
+let preparationGeneration = 0;
+
+/**
+ * Persists the app-owned squad, seeds one ephemeral exact Review, and changes
+ * only product navigation. Mission preparation/start remain Review-owned.
+ */
+export async function preparePetHatchMission(
   imagePath: string,
-  deps: PetHatchLaunchDeps = runtimeDeps,
-): Promise<PetHatchLaunchResult> {
+  deps: PetHatchPreparationDeps = runtimeDeps,
+): Promise<PetHatchPreparationResult> {
+  const generation = ++preparationGeneration;
+  const setup = useMissionSetupStore.getState();
+  setup.clearEntryContext();
   const workspacePath = deps.workspacePath();
   if (!workspacePath) {
     return { ok: false, error: 'Abra um workspace antes de criar o pet.' };
   }
-
-  const intent = hatchPetIntent(imagePath);
+  setup.setWorkspace(workspacePath);
+  const entryAuthorityRevision =
+    useMissionSetupStore.getState().entryAuthorityRevision;
   try {
-    const [saved, adapters] = await Promise.all([
-      // Repair every launch, not only when the id is absent. Old/custom rows
-      // using the reserved id must never regain extra agents or Nexus tools.
-      deps.saveSquad(PET_STUDIO_SQUAD),
-      deps.listAdapters(),
-    ]);
+    const saved = await deps.saveSquad(PET_STUDIO_SQUAD);
     if (!saved.ok) {
       return {
         ok: false,
@@ -95,24 +80,39 @@ export async function launchPetHatchMission(
           'Não consegui preparar o squad nativo Pet Studio.',
       };
     }
-    // The saved squad is the authority snapshot. Per-image bytes belong to
-    // the native-confirmed mission goal, never to a renderer-mutated roster.
-    const squad: Squad = PET_STUDIO_SQUAD;
-    const launched = await deps.launchSquad(squad, adapters, {
-      profile: 'pet-studio',
-      adapterId: 'codex',
-      missionTitle: `Criar mascote ${petSlugFromImagePath(imagePath)}`,
-      missionGoal: intent,
+    const currentSetup = useMissionSetupStore.getState();
+    if (
+      generation !== preparationGeneration ||
+      deps.workspacePath() !== workspacePath ||
+      currentSetup.entryAuthorityRevision !== entryAuthorityRevision
+    ) {
+      return {
+        ok: false,
+        error: 'A imagem selecionada ficou desatualizada. Selecione-a novamente.',
+      };
+    }
+
+    const slug = petSlugFromImagePath(imagePath);
+    const entryContext = currentSetup.beginPetStudioReview({
+      objective: hatchPetIntent(imagePath),
+      title: `Criar pet ${slug}`,
+      referenceImagePath: imagePath,
     });
-    if (!launched.ok) return launched;
-    return { ...launched, squad };
+    if (!entryContext) {
+      return {
+        ok: false,
+        error: 'A imagem não pertence aos anexos governados deste workspace.',
+      };
+    }
+    useProductNavigationStore.getState().openPetReviewFromSettings();
+    return { ok: true };
   } catch (cause) {
     return {
       ok: false,
       error:
         cause instanceof Error
           ? cause.message
-          : 'Falha inesperada ao iniciar a criação do pet.',
+          : 'Falha inesperada ao preparar a revisão do pet.',
     };
   }
 }

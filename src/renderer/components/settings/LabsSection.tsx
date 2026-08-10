@@ -23,10 +23,6 @@ export const LABS_FLAG_COPY: Record<string, { title: string; hint?: string }> = 
     title: 'Busca unificada',
     hint: 'Arquivos, missões e skills na aba Busca do painel contextual (somente leitura).',
   },
-  'feature.ui.progressiveOnboarding': {
-    title: 'Onboarding progressivo',
-    hint: 'Wizard de lançamento em etapas (modo → layout → agentes) na tela inicial.',
-  },
   'feature.ui.contextualPanel': {
     title: 'Painel contextual (direita)',
     hint: 'Guarda-chuva das abas Busca/Skills/Editor/Memória/Missão/Git — Alt+] alterna.',

@@ -1,7 +1,6 @@
 import type { MissionOrchestratorPane } from '../../shared/orch-types';
 import type { PaneModel } from '../../shared/types';
 import { createPane, listPanes } from '../lib/split-tree';
-import { useHomeStore } from '../state/home-store';
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
 import {
@@ -91,7 +90,6 @@ export async function presentMainOwnedMissionPane(
   // consume the persisted-authority flag.
   markPersistedAuthorityOnSpawn(pane.id);
   orch.bindPaneMission(pane.id, missionId);
-  useHomeStore.getState().hide();
 
   const next =
     kept.length === 0 || kept.every((candidate) => candidate.kind === 'shell')

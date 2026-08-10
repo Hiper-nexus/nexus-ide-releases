@@ -1,10 +1,9 @@
 import type { ITheme } from '@xterm/xterm';
 import type { TerminalThemeId } from '../../shared/settings-types';
 
-/** Terminal palette casada com o shell operacional.
-    background/cursor seguem os tokens da UI (--bg #0b0b0c, --accent índigo
-    #7c86ff) — hex-drift entre shell e terminal é regressão. A tabela ANSI
-    continua a anterior: é cor de CONTEÚDO do terminal, não de chrome. */
+/** Stable untinted dark xterm palette. Pink City deliberately reuses this
+    exact object: terminal content remains independent from UI chrome, while
+    Nexus Dark keeps the same background, cursor and ANSI colors as before. */
 export const TERMINAL_THEME: ITheme = {
   background: '#0b0b0c',
   foreground: '#ededef',
@@ -118,7 +117,8 @@ export const TERMINAL_THEMES: Record<
   TerminalThemeId,
   { label: string; theme: ITheme }
 > = {
-  'nexus-dark': { label: 'Nexus', theme: TERMINAL_THEME },
+  'nexus-pink-city': { label: 'Pink City', theme: TERMINAL_THEME },
+  'nexus-dark': { label: 'Nexus Dark', theme: TERMINAL_THEME },
   'nexus-light': { label: 'Nexus Light', theme: NEXUS_LIGHT },
   dracula: { label: 'Dracula', theme: DRACULA },
   'solarized-dark': { label: 'Solarized Dark', theme: SOLARIZED_DARK },

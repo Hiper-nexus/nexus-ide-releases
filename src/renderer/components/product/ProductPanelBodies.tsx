@@ -4,8 +4,10 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { McpAcrossToolsReport } from '../../../shared/mcp-across-tools';
+import type { FileNode } from '../../../shared/files-types';
 import { McpAcrossToolsMatrix } from '../McpAcrossToolsMatrix';
 import { MarketplaceSection } from '../settings/MarketplaceSection';
+import { PixelIcon } from '../PixelIcon';
 import { ActionCard, EmptyState } from '../ActionCard';
 import {
   exportToolsFromPlan,
@@ -19,6 +21,8 @@ import {
   serializeSkillDragPayload,
 } from '../../lib/pane-interactions';
 import { useToastStore } from '../../state/toast-store';
+import { useFilesStore } from '../../state/files-store';
+import { readableMemoryBody } from './memory-note-readable';
 
 type Hit = {
   id: string;
@@ -391,57 +395,193 @@ export function MemoryPanelBody({
         </p>
       ) : notes.length > 0 ? (
         <ul className="product-pane__list" aria-label="Memórias salvas">
-          {notes.map((note) => (
-            <li key={note.id} className="product-pane__item">
-              <strong>{note.title}</strong>
-              {note.kind ? (
-                <span className="product-pane__sub">
-                  {note.kind === 'note' ? 'nota' : note.kind}
-                </span>
-              ) : null}
-              <p
-                className={
-                  presentation === 'full'
-                    ? 'product-pane__snip product-pane__body'
-                    : 'product-pane__snip'
-                }
-              >
-                {presentation === 'full' ? note.body : note.body.slice(0, 200)}
-              </p>
-            </li>
-          ))}
+          {notes.map((note) => {
+            const readable = readableMemoryBody(note.body, note.title);
+            return (
+              <li key={note.id} className="product-pane__item">
+                <strong>{note.title}</strong>
+                {note.kind ? (
+                  <span className="product-pane__sub">
+                    {note.kind === 'note' ? 'nota' : note.kind}
+                  </span>
+                ) : null}
+                <p
+                  className={
+                    presentation === 'full'
+                      ? 'product-pane__snip product-pane__body'
+                      : 'product-pane__snip'
+                  }
+                >
+                  {presentation === 'full'
+                    ? readable.body
+                    : readable.body.slice(0, 200)}
+                </p>
+              </li>
+            );
+          })}
         </ul>
       ) : null}
     </div>
   );
 }
 
+interface EditorTreeNodeProps {
+  readonly node: FileNode;
+  readonly depth: number;
+  readonly onSelectFile: (relPath: string) => void;
+}
+
+function EditorTreeNode({
+  node,
+  depth,
+  onSelectFile,
+}: EditorTreeNodeProps) {
+  const expanded = useFilesStore((state) =>
+    state.expanded.has(node.relPath),
+  );
+  const children = useFilesStore((state) => state.children[node.relPath]);
+  const loadError = useFilesStore(
+    (state) => state.loadErrors[node.relPath],
+  );
+  const loading = useFilesStore((state) =>
+    state.loadingDirs.has(node.relPath),
+  );
+  const openPath = useFilesStore((state) => state.openFile?.relPath);
+  const toggleDir = useFilesStore((state) => state.toggleDir);
+  const loadDir = useFilesStore((state) => state.loadDir);
+  const isDirectory = node.kind === 'dir';
+  const active = !isDirectory && openPath === node.relPath;
+
+  return (
+    <li className="product-editor__tree-item">
+      <button
+        type="button"
+        className={`product-editor__tree-node${active ? ' is-active' : ''}`}
+        style={{ paddingLeft: 8 + depth * 14 }}
+        aria-expanded={isDirectory ? expanded : undefined}
+        aria-current={active ? 'page' : undefined}
+        title={node.relPath}
+        onClick={() => {
+          if (isDirectory) {
+            void toggleDir(node.relPath);
+          } else {
+            onSelectFile(node.relPath);
+          }
+        }}
+      >
+        <PixelIcon
+          name={
+            isDirectory
+              ? expanded
+                ? 'chevron-down'
+                : 'chevron'
+              : 'file'
+          }
+          size={10}
+        />
+        <span>{node.name}</span>
+      </button>
+      {isDirectory && expanded ? (
+        children === undefined && loadError ? (
+          <div
+            className="product-editor__tree-load-error"
+            style={{ paddingLeft: 22 + depth * 14 }}
+          >
+            <span className="product-editor__tree-error" role="alert">
+              {loadError}
+            </span>
+            <button
+              type="button"
+              className="product-editor__retry"
+              aria-label={`Tentar carregar ${node.name} novamente`}
+              onClick={() => void loadDir(node.relPath)}
+            >
+              Tentar novamente
+            </button>
+          </div>
+        ) : children === undefined && loading ? (
+          <span
+            className="product-editor__tree-note"
+            style={{ paddingLeft: 22 + depth * 14 }}
+            role="status"
+          >
+            Carregando…
+          </span>
+        ) : children === undefined ? null : children.length === 0 ? (
+          <span
+            className="product-editor__tree-note"
+            style={{ paddingLeft: 22 + depth * 14 }}
+          >
+            Pasta vazia
+          </span>
+        ) : (
+          <ul className="product-editor__tree-list">
+            {children.map((child) => (
+              <EditorTreeNode
+                key={child.relPath}
+                node={child}
+                depth={depth + 1}
+                onSelectFile={onSelectFile}
+              />
+            ))}
+          </ul>
+        )
+      ) : null}
+    </li>
+  );
+}
+
 export function EditorPanelBody() {
-  const [relPath, setRelPath] = useState('');
-  const [content, setContent] = useState('');
-  const [path, setPath] = useState<string | null>(null);
-  const [contentHash, setContentHash] = useState<string | null>(null);
-  const [dirty, setDirty] = useState(false);
-  const [status, setStatus] = useState<string | null>(null);
+  const root = useFilesStore((state) => state.children['']);
+  const rootError = useFilesStore((state) => state.loadErrors['']);
+  const rootLoading = useFilesStore((state) => state.loadingDirs.has(''));
+  const file = useFilesStore((state) => state.openFile);
+  const saving = useFilesStore((state) => state.saving);
+  const loadDir = useFilesStore((state) => state.loadDir);
+  const selectFile = useFilesStore((state) => state.selectFile);
+  const edit = useFilesStore((state) => state.edit);
+  const saveFile = useFilesStore((state) => state.save);
+  const [saveStatus, setSaveStatus] = useState<string | null>(null);
   const [cursor, setCursor] = useState({ line: 1, col: 1 });
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const gutterRef = useRef<HTMLDivElement | null>(null);
-  /**
-   * WCAG 2.1.2 (no keyboard trap): Tab normally indents, which would trap
-   * focus. Escape arms a one-shot so the following Tab moves focus out —
-   * the WAI-ARIA recommended escape hatch for editors.
-   */
   const escArmedRef = useRef(false);
-
+  const content = file?.content ?? '';
   const lineCount = useMemo(() => content.split('\n').length, [content]);
+  const readFailed = Boolean(file?.error && !file.dirty);
+  const editable = Boolean(
+    file &&
+      !file.loading &&
+      !file.tooLarge &&
+      !file.binary &&
+      !readFailed,
+  );
+
+  useEffect(() => {
+    if (root === undefined && !rootError && !rootLoading) void loadDir('');
+  }, [loadDir, root, rootError, rootLoading]);
+
+  useEffect(() => {
+    setCursor({ line: 1, col: 1 });
+    escArmedRef.current = false;
+  }, [file?.loading, file?.relPath]);
+
+  const handleSelectFile = useCallback(
+    (relPath: string) => {
+      setSaveStatus(null);
+      void selectFile(relPath);
+    },
+    [selectFile],
+  );
 
   const updateCursor = () => {
-    const el = textareaRef.current;
-    if (!el) return;
-    const upTo = el.value.slice(0, el.selectionStart);
-    const line = upTo.split('\n').length;
-    const col = el.selectionStart - upTo.lastIndexOf('\n');
-    setCursor({ line, col });
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    const beforeCursor = textarea.value.slice(0, textarea.selectionStart);
+    setCursor({
+      line: beforeCursor.split('\n').length,
+      col: textarea.selectionStart - beforeCursor.lastIndexOf('\n'),
+    });
   };
 
   const syncGutter = () => {
@@ -450,12 +590,25 @@ export function EditorPanelBody() {
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Escape') {
+  const save = async () => {
+    setSaveStatus(null);
+    if (await saveFile()) setSaveStatus('Salvo');
+  };
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (
+      (event.metaKey || event.ctrlKey) &&
+      event.key.toLowerCase() === 's'
+    ) {
+      event.preventDefault();
+      void save();
+      return;
+    }
+    if (event.key === 'Escape') {
       escArmedRef.current = true;
       return;
     }
-    if (e.key !== 'Tab') {
+    if (event.key !== 'Tab') {
       escArmedRef.current = false;
       return;
     }
@@ -463,126 +616,172 @@ export function EditorPanelBody() {
       escArmedRef.current = false;
       return;
     }
-    e.preventDefault();
-    const el = e.currentTarget;
-    const { selectionStart, selectionEnd, value } = el;
-    const next = value.slice(0, selectionStart) + '  ' + value.slice(selectionEnd);
-    setContent(next);
-    setDirty(true);
+    event.preventDefault();
+    const textarea = event.currentTarget;
+    const { selectionStart, selectionEnd, value } = textarea;
+    const next =
+      value.slice(0, selectionStart) + '  ' + value.slice(selectionEnd);
+    setSaveStatus(null);
+    edit(next);
     requestAnimationFrame(() => {
-      el.selectionStart = el.selectionEnd = selectionStart + 2;
+      textarea.selectionStart = textarea.selectionEnd = selectionStart + 2;
       updateCursor();
     });
   };
 
-  const open = async () => {
-    if (!relPath.trim()) return;
-    try {
-      const api = productApi();
-      if (!api) return;
-      const doc = (await api.editorOpen(relPath.trim())) as {
-        path?: string;
-        content?: string;
-        binary?: boolean;
-        tooLarge?: boolean;
-        contentHash?: string;
-      };
-      if (doc.binary) {
-        setStatus('Arquivo binário — não editável');
-        return;
-      }
-      if (doc.tooLarge) {
-        setStatus('Arquivo grande demais para o editor');
-        return;
-      }
-      setPath(doc.path ?? null);
-      setContent(doc.content ?? '');
-      setContentHash(doc.contentHash ?? null);
-      setDirty(false);
-      setCursor({ line: 1, col: 1 });
-      setStatus(`Aberto ${doc.path ?? relPath}`);
-    } catch (err) {
-      setStatus(err instanceof Error ? err.message : 'falha ao abrir');
-    }
-  };
-
-  const save = async () => {
-    if (!path || !contentHash) return;
-    try {
-      const api = productApi();
-      if (!api) return;
-      const saved = (await api.editorApply({
-        path,
-        content,
-        write: true,
-        expectedContentHash: contentHash,
-      })) as { contentHash?: string };
-      setContentHash(saved.contentHash ?? contentHash);
-      setDirty(false);
-      setStatus('Salvo');
-    } catch (err) {
-      setStatus(err instanceof Error ? err.message : 'falha ao salvar');
-    }
-  };
-
   return (
-    <div className="product-pane" data-testid="product-editor">
-      <div className="product-pane__form product-pane__form--row">
-        <input
-          className="product-pane__input"
-          value={relPath}
-          onChange={(e) => setRelPath(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && void open()}
-          placeholder="caminho/relativo.ts"
-          aria-label="Caminho relativo"
-        />
-        <button type="button" className="product-pane__btn" onClick={() => void open()}>
-          Abrir
-        </button>
-        <button
-          type="button"
-          className="product-pane__btn"
-          disabled={!path || !dirty}
-          onClick={() => void save()}
-        >
-          Salvar
-        </button>
-      </div>
-      {status && <p className="product-pane__meta">{status}</p>}
-      <div className="editor-code">
-        <div className="editor-code__gutter" ref={gutterRef} aria-hidden="true">
-          {Array.from({ length: lineCount }, (_, i) => (
-            <span key={i} className="editor-code__line-no">
-              {i + 1}
-            </span>
-          ))}
+    <div
+      className="product-pane product-editor"
+      data-testid="product-editor"
+    >
+      <nav
+        className="product-editor__tree"
+        aria-label="Arquivos do workspace"
+        aria-busy={rootLoading || undefined}
+      >
+        <div className="product-editor__tree-heading">
+          <span>Workspace</span>
+          {root ? <span>{root.length}</span> : null}
         </div>
-        <textarea
-          ref={textareaRef}
-          className="product-pane__textarea product-pane__textarea--editor editor-code__textarea"
-          value={content}
-          onChange={(e) => {
-            setContent(e.target.value);
-            setDirty(true);
-            updateCursor();
-          }}
-          onKeyDown={handleKeyDown}
-          onScroll={syncGutter}
-          onSelect={updateCursor}
-          onClick={updateCursor}
-          spellCheck={false}
-          wrap="off"
-          aria-label="Conteúdo do editor"
-        />
-      </div>
-      <div className="editor-code__status" aria-live="polite">
-        <span>
-          Ln {cursor.line}, Col {cursor.col}
-        </span>
-        <span>{lineCount} linhas</span>
-        <span>{content.length} chars</span>
-        {dirty && <span className="editor-code__dirty">não salvo</span>}
-      </div>
+        {rootError ? (
+          <div className="product-editor__load-error">
+            <p className="product-editor__error" role="alert">
+              {rootError}
+            </p>
+            <button
+              type="button"
+              className="product-editor__retry"
+              aria-label="Tentar carregar arquivos novamente"
+              onClick={() => void loadDir('')}
+            >
+              Tentar novamente
+            </button>
+          </div>
+        ) : root === undefined ? (
+          <p className="product-editor__tree-state" role="status">
+            Carregando arquivos…
+          </p>
+        ) : root.length === 0 ? (
+          <p className="product-editor__tree-state">
+            Este workspace não contém arquivos.
+          </p>
+        ) : (
+          <ul className="product-editor__tree-list">
+            {root.map((node) => (
+              <EditorTreeNode
+                key={node.relPath}
+                node={node}
+                depth={0}
+                onSelectFile={handleSelectFile}
+              />
+            ))}
+          </ul>
+        )}
+      </nav>
+
+      <section
+        className="product-editor__workspace"
+        aria-label="Editor de arquivo"
+        aria-busy={saving || file?.loading || undefined}
+      >
+        {!file ? (
+          <div className="product-editor__empty">
+            <PixelIcon name="file" size={20} />
+            <strong>Editor de workspace</strong>
+            <span>Selecione um arquivo para ver ou editar.</span>
+          </div>
+        ) : (
+          <>
+            <div className="product-editor__toolbar">
+              <span className="product-editor__path" title={file.relPath}>
+                {file.relPath}
+                {file.dirty ? ' •' : ''}
+              </span>
+              <button
+                type="button"
+                className="product-pane__btn product-editor__save"
+                disabled={!file.dirty || saving || !editable}
+                onClick={() => void save()}
+              >
+                {saving ? 'Salvando…' : 'Salvar'}
+              </button>
+            </div>
+
+            {file.error ? (
+              <p className="product-editor__error" role="alert">
+                {file.error}
+              </p>
+            ) : null}
+
+            {file.loading ? (
+              <div className="product-editor__notice" role="status">
+                Abrindo arquivo…
+              </div>
+            ) : readFailed ? null : file.tooLarge ? (
+              <div className="product-editor__notice">
+                Arquivo grande demais para edição inline.
+              </div>
+            ) : file.binary ? (
+              <div className="product-editor__notice">
+                Arquivo binário não pode ser editado como texto.
+              </div>
+            ) : (
+              <>
+                <div className="editor-code">
+                  <div
+                    className="editor-code__gutter"
+                    ref={gutterRef}
+                    aria-hidden="true"
+                  >
+                    {Array.from({ length: lineCount }, (_, index) => (
+                      <span key={index} className="editor-code__line-no">
+                        {index + 1}
+                      </span>
+                    ))}
+                  </div>
+                  <textarea
+                    ref={textareaRef}
+                    className="product-pane__textarea product-pane__textarea--editor editor-code__textarea"
+                    value={content}
+                    onChange={(event) => {
+                      setSaveStatus(null);
+                      edit(event.target.value);
+                      updateCursor();
+                    }}
+                    onKeyDown={handleKeyDown}
+                    onScroll={syncGutter}
+                    onSelect={updateCursor}
+                    onClick={updateCursor}
+                    spellCheck={false}
+                    wrap="off"
+                    aria-label={`Conteúdo de ${file.relPath}`}
+                  />
+                </div>
+                <div className="editor-code__status">
+                  <span>
+                    Ln {cursor.line}, Col {cursor.col}
+                  </span>
+                  <span>{lineCount} linhas</span>
+                  <span>{content.length} chars</span>
+                  {file.dirty ? (
+                    <span className="editor-code__dirty">não salvo</span>
+                  ) : null}
+                </div>
+              </>
+            )}
+
+            {saveStatus ? (
+              <p
+                className="product-editor__feedback"
+                role="status"
+                aria-live="polite"
+              >
+                {saveStatus}
+              </p>
+            ) : null}
+          </>
+        )}
+      </section>
     </div>
   );
 }

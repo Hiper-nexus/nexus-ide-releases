@@ -64,6 +64,10 @@ const provider = vi.hoisted(() => ({
     ok: true as const,
     overrides: { binPath: "/mock/bin/codex" },
   })),
+  prepareAuthoritative: vi.fn(async () => ({
+    ok: true as const,
+    overrides: { binPath: "/mock/bin/agy" },
+  })),
 }));
 const orchSettings = vi.hoisted(() => ({
   squadCliPolicy: "operator-choice" as "operator-choice" | "governed",
@@ -167,6 +171,7 @@ vi.mock("../adapters/adapter-registry", () => ({
 
 vi.mock("../persistence/provider-config-store", () => ({
   prepareProviderSpawn: provider.prepare,
+  prepareProviderSpawnAuthoritative: provider.prepareAuthoritative,
 }));
 
 vi.mock("../persistence/settings-store", () => ({
@@ -270,6 +275,11 @@ describe("main-owned mission pane spawn", () => {
       ok: true,
       overrides: { binPath: "/mock/bin/codex" },
     });
+    provider.prepareAuthoritative.mockClear();
+    provider.prepareAuthoritative.mockResolvedValue({
+      ok: true,
+      overrides: { binPath: "/mock/bin/agy" },
+    });
     binaryTrust.rejectedBinPath = null;
     missionAuthority.currentSeal = missionAuthority.seal;
     missionAuthority.paneSpecSeal = missionAuthority.seal;
@@ -343,6 +353,40 @@ describe("main-owned mission pane spawn", () => {
     await expect(requestPaneClose(pty.paneId)).resolves.toBe(true);
     expect(pty.terminate).toHaveBeenCalledWith("pty-headless-1");
     expect(getPaneRuntimeAuthorityBySession("pty-headless-1")).toBeNull();
+  });
+
+  it("revalidates AGY auth before a headless main-owned PTY spawn", async () => {
+    const result = await requestPaneSpawn({
+      adapterId: "agy",
+      model: "gemini-3.1-pro-high",
+      cwd: executionScope.rootRealPath,
+      missionId: "mission-headless",
+      agentName: "Reviewer Headless",
+      workerIncarnationId: "worker-incarnation-agy",
+      role: "worker",
+      allowedTools: [],
+      allowedSkills: null,
+      scope,
+      executionScope,
+    });
+    if (result.ok && result.paneId) {
+      await requestPaneClose(result.paneId);
+    }
+
+    expect(result).toMatchObject({
+      ok: true,
+      sessionId: "pty-headless-1",
+    });
+    expect(provider.prepareAuthoritative).toHaveBeenCalledWith("agy", {
+      effort: undefined,
+      accountId: undefined,
+      model: "gemini-3.1-pro-high",
+      isolatedHome: expect.any(Boolean),
+    });
+    expect(provider.prepare).not.toHaveBeenCalled();
+    expect(pty.spawn.mock.calls[0]?.[2]).toMatchObject({
+      binPath: "/mock/bin/agy",
+    });
   });
 
   it("re-presents the exact live main-owned session on a renderer generation without spawning again", async () => {
@@ -1087,6 +1131,50 @@ describe("main-owned mission pane spawn", () => {
     });
     clearRendererWorkspaceScope(owner);
     await requestPaneClose(pty.paneId);
+  });
+
+  it("revalidates AGY auth when an unclaimed renderer spawn falls back to main", async () => {
+    const owner = {
+      id: 921,
+      isDestroyed: () => false,
+      isCrashed: () => false,
+      send: vi.fn(),
+    } as unknown as WebContents & { send: ReturnType<typeof vi.fn> };
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    registerOrchRenderer(owner);
+    try {
+      const resultPromise = requestPaneSpawn({
+        adapterId: "agy",
+        model: "gemini-3.1-pro-high",
+        missionId: "mission-headless",
+        agentName: "Reviewer Headless",
+        workerIncarnationId: "worker-incarnation-agy-fallback",
+        role: "worker",
+        scope,
+        executionScope,
+      });
+      expect(owner.send).toHaveBeenCalledOnce();
+
+      unregisterOrchRenderer(owner);
+
+      await expect(resultPromise).resolves.toMatchObject({
+        ok: true,
+        paneId: expect.stringMatching(/^pane-/),
+        sessionId: "pty-headless-1",
+      });
+      expect(provider.prepareAuthoritative).toHaveBeenCalledWith("agy", {
+        effort: undefined,
+        accountId: undefined,
+        model: "gemini-3.1-pro-high",
+        isolatedHome: expect.any(Boolean),
+      });
+      expect(provider.prepare).not.toHaveBeenCalled();
+    } finally {
+      clearRendererWorkspaceScope(owner);
+      if (pty.paneId) {
+        await requestPaneClose(pty.paneId);
+      }
+    }
   });
 
   it("rejects authority drift that occurs while an unclaimed renderer spawn is pending", async () => {

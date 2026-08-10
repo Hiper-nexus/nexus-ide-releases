@@ -1045,8 +1045,15 @@ static int bootstrap_local_smoke_supervisor(int argc, char **argv) {
             argv[0]);
     return NEXUS_EXIT_USAGE;
   }
+  /*
+   * Local package smoke cannot launch arbitrary code: the disclaimed image
+   * revalidates the exact ad-hoc helper, CDHash, packaged path, and sole
+   * provider-probe mode. Do not consume the general provider-launch
+   * authorization here; its live responsible-process lookup can deadlock
+   * Security.framework while this bootstrap image is trace-stopped.
+   */
   return bootstrap_disclaimed_supervisor_mode(
-      argc, argv, "__run-disclaimed-local-smoke", command_index, true);
+      argc, argv, "__run-disclaimed-local-smoke", command_index, false);
 }
 
 static int bootstrap_packaged_smoke_supervisor(int argc, char **argv) {
@@ -1749,8 +1756,6 @@ static bool consume_main_owned_launch_authorization(
     return false;
   }
 
-  struct process_record stage_zero;
-  bool has_apple_stage_zero = direct_parent_is_apple_perl(api, &stage_zero);
   if (mode == NEXUS_HELPER_SIGNING_ADHOC) {
     /*
      * Local builds are ad-hoc signed and cannot carry the release Team chain.
@@ -1759,6 +1764,8 @@ static bool consume_main_owned_launch_authorization(
      */
     return true;
   }
+  struct process_record stage_zero;
+  bool has_apple_stage_zero = direct_parent_is_apple_perl(api, &stage_zero);
 
   char main_path[PATH_MAX];
   char utility_path[PATH_MAX];

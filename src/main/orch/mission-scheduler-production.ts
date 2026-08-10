@@ -168,7 +168,11 @@ export function productionAdaptiveCapSeed(
   const ladder = settings.adaptiveWaveLadder ?? {};
   return createAdaptiveCapState(
     resolveAdaptiveLadderPolicy({
-      startCap: ladder.startCap ?? null,
+      // Largada de produção: 2 desperdiçava um host de 8+ núcleos (missão
+      // rastejando em duas frentes até a segunda onda limpa). O teto real
+      // (cores-2 e orçamento de panes) segue sendo a trava — a largada é que
+      // não precisa ser tímida. Operador ainda sobrescreve pelas settings.
+      startCap: ladder.startCap ?? 4,
       maxCap: ladder.maxCap ?? null,
       rampAfterCleanWaves: ladder.rampAfterCleanWaves ?? null,
       // Never promise a wave the approved contract or the host cannot honour;

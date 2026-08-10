@@ -16,12 +16,9 @@ import type { ProjectDomainStoreSuite } from "./orch/project-domain-store-regist
 import { getProjectDomainStores } from "./orch/project-domain-store-registry";
 import { requireRendererWorkspaceScope } from "./persistence/renderer-workspace-scope";
 import type { RealMissionE2ESquadBinding } from "./real-mission-e2e-fixture";
+import { realMissionInteractionCapture } from "./real-mission-e2e-lifecycle";
 import {
-  readRealMissionApprovalDialogTiming,
-  realMissionInteractionCapture,
-} from "./real-mission-e2e-lifecycle";
-import {
-  isProductWizardPreApprovalMission,
+  isProductMissionSetupPreparedMission,
   productWizardSquadBinding,
   sha256,
 } from "./real-mission-e2e-workspace";
@@ -30,14 +27,14 @@ interface ProductWizardReceiptDraft {
   readonly missionId: string;
   readonly workspaceSha256: string;
   readonly squadBinding: RealMissionE2ESquadBinding;
-  readonly armedAt: number;
-  readonly submittedContractSha256: string | null;
-  readonly intentSubmittedAt: number | null;
+  readonly reviewSha256: string;
+  readonly preparedContractSha256: string;
+  readonly preparedAt: number;
 }
 
 interface ProductWizardGestureCapability {
   readonly sha256: string;
-  readonly expectedStep: "mission-armed" | "intent-submitted" | "approval-returned";
+  readonly expectedStep: "mission-prepared" | "mission-started";
   readonly expiresAt: number;
 }
 
@@ -71,6 +68,8 @@ function sameSquadBinding(
   return (
     right !== null &&
     right.squadId === left.squadId &&
+    right.fixtureSquadId === left.fixtureSquadId &&
+    right.fixtureSquadRevisionHash === left.fixtureSquadRevisionHash &&
     right.sourceSquadId === left.sourceSquadId &&
     right.sourceSquadRevisionHash === left.sourceSquadRevisionHash &&
     right.squadRevisionHash === left.squadRevisionHash
@@ -86,64 +85,44 @@ function assertNoMissionEffects(
     suite.taskDispatches.list(missionId).length !== 0 ||
     suite.tasks.list(missionId).length !== 0
   ) {
-    throw new Error("product wizard arm already has runtime effects");
+    throw new Error("prepared mission already has runtime effects");
   }
 }
 
-function assertDialogNotOpened(): void {
-  const timing = readRealMissionApprovalDialogTiming();
+function assertNoApprovalInteraction(): void {
   if (
     realMissionInteractionCapture.nativeDialogCount !== 0 ||
     realMissionInteractionCapture.missionApprovalDialogCount !== 0 ||
-    realMissionInteractionCapture.missionApprovalAcceptedCount !== 0 ||
-    timing.openedAt !== null ||
-    timing.acceptedAt !== null
+    realMissionInteractionCapture.missionApprovalAcceptedCount !== 0
   ) {
-    throw new Error("native approval dialog opened before intent submission");
+    throw new Error("canonical mission setup opened an approval dialog");
   }
 }
 
-function assertExactArmedMission(
+function assertExactPreparedMission(
   suite: ProjectDomainStoreSuite,
   mission: Mission | null,
-): RealMissionE2ESquadBinding {
+): {
+  readonly mission: Mission;
+  readonly binding: RealMissionE2ESquadBinding;
+} {
   const binding = mission ? productWizardSquadBinding(mission) : null;
   if (
-    !mission ||
+    !isProductMissionSetupPreparedMission(mission) ||
     !binding ||
-    mission.status !== "pending" ||
-    mission.intentState !== "awaiting_goal" ||
-    mission.intentVersion !== 0 ||
-    mission.intentContract != null ||
-    mission.orchestratorSessionId != null
+    typeof mission.intentContract?.approvalReviewSha256 !== "string"
   ) {
-    throw new Error("product wizard did not arm the exact inert mission shell");
+    throw new Error("mission setup did not prepare the exact reviewed mission");
   }
   assertNoMissionEffects(suite, mission.id);
-  assertDialogNotOpened();
-  return binding;
+  assertNoApprovalInteraction();
+  return { mission, binding };
 }
 
-function assertExactSubmittedMission(
+function assertExactStartedMission(
   mission: Mission | null,
   expectedBinding: RealMissionE2ESquadBinding,
-): Mission {
-  if (
-    !isProductWizardPreApprovalMission(mission) ||
-    !sameSquadBinding(
-      expectedBinding,
-      mission ? productWizardSquadBinding(mission) : null,
-    )
-  ) {
-    throw new Error("product wizard intent is not the exact preapproval mission");
-  }
-  assertDialogNotOpened();
-  return mission;
-}
-
-function assertExactApprovedMission(
-  mission: Mission | null,
-  expectedBinding: RealMissionE2ESquadBinding,
+  expectedReviewSha256: string,
 ): Mission {
   const contract = mission?.intentContract;
   if (
@@ -164,6 +143,10 @@ function assertExactApprovedMission(
     (contract.lane ?? "standard") !== "standard" ||
     contract.contextPolicy !== "on-demand" ||
     contract.intentVersion !== 1 ||
+    contract.approvalReviewSha256 !== expectedReviewSha256 ||
+    contract.orchestratorRuntime?.adapterId !== "codex" ||
+    contract.orchestratorRuntime.readOnly !== false ||
+    contract.orchestratorRuntime.nativeReadOnly !== false ||
     contract.squadRevisionHash !== expectedBinding.squadRevisionHash ||
     !Number.isInteger(contract.approvedAt) ||
     !Number.isInteger(contract.dispatchedAt) ||
@@ -176,16 +159,130 @@ function assertExactApprovedMission(
         REAL_MISSION_E2E_PRODUCT_WIZARD_ACCEPTANCE_CRITERIA[index],
     )
   ) {
-    throw new Error("product wizard approval did not seal the exact mission");
+    throw new Error("mission setup start did not dispatch the reviewed mission");
   }
+  assertNoApprovalInteraction();
   return mission;
 }
 
+export function scheduleProductWizardTrustedLaunchClicks(
+  sender: WebContents,
+  isSettled: () => boolean,
+  onGaveUp?: () => void,
+): () => void {
+  let stage: "prepare" | "start" | "done" = "prepare";
+  let attempts = 0;
+  let sawButton = false;
+  let sawDisabled = false;
+  // Single-flight prevents a stale coordinate probe from clicking the next
+  // control after Mission Setup reflows from Prepare into Review.
+  let probing = false;
+  const timer = setInterval(() => {
+    if (
+      isSettled() ||
+      stage === "done" ||
+      sender.isDestroyed() ||
+      sender.isCrashed()
+    ) {
+      clearInterval(timer);
+      return;
+    }
+    if (probing) return;
+    attempts += 1;
+    if (attempts > 120) {
+      clearInterval(timer);
+      console.error(
+        "[real-mission] mission-setup-trusted-click-gave-up " +
+          `stage=${stage} attempts=${attempts} ` +
+          `sawButton=${sawButton} sawDisabled=${sawDisabled}`,
+      );
+      onGaveUp?.();
+      return;
+    }
+    probing = true;
+    const expectedStage = stage;
+    void (async () => {
+      try {
+        if (sender.isDestroyed() || sender.isCrashed()) return;
+        const state = (await sender.executeJavaScript(`(() => {
+          const el = document.querySelector(
+            '[data-nexus-real-mission-wizard-launch="${expectedStage}"]',
+          );
+          if (!(el instanceof HTMLElement)) return { kind: "missing" };
+          const disabled =
+            (el instanceof HTMLButtonElement && el.disabled) ||
+            el.getAttribute("aria-disabled") === "true";
+          const rect = el.getBoundingClientRect();
+          if (rect.width < 1 || rect.height < 1) return { kind: "hidden" };
+          if (disabled) {
+            return {
+              kind: "disabled",
+              title: el.getAttribute("title") || "",
+            };
+          }
+          const x = Math.round(rect.left + rect.width / 2);
+          const y = Math.round(rect.top + rect.height / 2);
+          const hit = document.elementFromPoint(x, y);
+          if (!hit || !(el === hit || el.contains(hit))) {
+            return { kind: "obscured" };
+          }
+          return { kind: "ready", x, y };
+        })()`)) as
+          | {
+              kind: "missing" | "hidden" | "disabled" | "obscured";
+              title?: string;
+            }
+          | { kind: "ready"; x: number; y: number };
+        if (stage !== expectedStage || isSettled()) return;
+        if (state.kind === "disabled") {
+          sawButton = true;
+          sawDisabled = true;
+          if (attempts === 1 || attempts % 20 === 0) {
+            console.warn(
+              "[real-mission] mission-setup-control-disabled " +
+                `stage=${expectedStage} ` +
+                `title=${JSON.stringify(state.title ?? "")}`,
+            );
+          }
+          return;
+        }
+        if (state.kind !== "ready") return;
+        sawButton = true;
+        sender.focus();
+        const common = {
+          x: state.x,
+          y: state.y,
+          button: "left" as const,
+          clickCount: 1,
+        };
+        sender.sendInputEvent({ type: "mouseDown", ...common });
+        sender.sendInputEvent({ type: "mouseUp", ...common });
+        console.log(
+          `[real-mission] PHASE phase=mission-setup-${expectedStage}-clicked`,
+        );
+        if (expectedStage === "prepare") {
+          stage = "start";
+          attempts = 0;
+          sawButton = false;
+          sawDisabled = false;
+        } else {
+          stage = "done";
+          clearInterval(timer);
+        }
+      } catch {
+        // The canonical control may not be mounted yet; keep polling.
+      } finally {
+        probing = false;
+      }
+    })();
+  }, 250);
+  return () => clearInterval(timer);
+}
 /**
- * Installs the sole causal authority for product-wizard release evidence.
- * Renderer hints carry only a mission id and step name. Preload attaches the
- * capability it retained after the trusted click; main derives every
- * timestamp, state snapshot and hash from the live isolated runtime.
+ * Installs the sole causal authority for physical Mission Setup release
+ * evidence. Renderer hints carry only a mission id and canonical step name.
+ * Preload attaches the capability retained from trusted Prepare through Start;
+ * main derives every timestamp, state snapshot, review fence, and hash.
  */
 export function installRealMissionProductWizardReceiptAuthority(input: {
   readonly owner: () => WebContents | null;
@@ -238,24 +335,24 @@ export function installRealMissionProductWizardReceiptAuthority(input: {
           typeof raw !== "object" ||
           Array.isArray(raw) ||
           Object.keys(raw).length !== 1 ||
-          (raw as { source?: unknown }).source !==
-            "trusted-mission-wizard-launch"
+          !("source" in raw) ||
+          raw.source !== "trusted-mission-setup-prepare"
         ) {
-          return fail("product wizard trusted gesture authority is unavailable");
+          return fail("mission setup trusted prepare authority is unavailable");
         }
         const scope = requireRendererWorkspaceScope(event.sender);
         if (scope.rootRealPath !== scratchPath) {
-          return fail("product wizard trusted gesture workspace mismatch");
+          return fail("mission setup trusted prepare workspace mismatch");
         }
         const suite = getProjectDomainStores(scope);
         if (suite.missions.list().length !== 0) {
-          return fail("product wizard trusted gesture started after mission effects");
+          return fail("mission setup trusted prepare began after mission effects");
         }
         gestureStarted = true;
         return {
           ok: true,
           runId: input.runId,
-          capability: issueGestureCapability("mission-armed"),
+          capability: issueGestureCapability("mission-prepared"),
         };
       } catch (error) {
         input.onInvalid();
@@ -283,11 +380,11 @@ export function installRealMissionProductWizardReceiptAuthority(input: {
           !scratchPath ||
           !parsed.success
         ) {
-          return fail("product wizard causal authority is unavailable");
+          return fail("mission setup causal authority is unavailable");
         }
         const scope = requireRendererWorkspaceScope(event.sender);
         if (scope.rootRealPath !== scratchPath) {
-          return fail("product wizard causal workspace authority mismatch");
+          return fail("mission setup causal workspace authority mismatch");
         }
         const suite = getProjectDomainStores(scope);
         const mission = suite.missions.get(parsed.data.missionId);
@@ -307,22 +404,36 @@ export function installRealMissionProductWizardReceiptAuthority(input: {
           return fail("product wizard trusted gesture capability is invalid");
         }
 
-        if (parsed.data.step === "mission-armed") {
-          if (draft !== null || receipt !== null) {
-            return fail("product wizard arm step is duplicated or out of order");
+        if (parsed.data.step === "mission-prepared") {
+          if (
+            draft !== null ||
+            receipt !== null ||
+            !input.observerArmed(parsed.data.missionId)
+          ) {
+            return fail(
+              "mission setup prepared step is duplicated or lacks observation",
+            );
           }
-          const squadBinding = assertExactArmedMission(suite, mission);
+          const prepared = assertExactPreparedMission(suite, mission);
+          const contract = prepared.mission.intentContract!;
+          if (contract.approvedAt! > now) {
+            return fail("mission setup prepared timestamp is not causal");
+          }
           draft = Object.freeze({
-            missionId: parsed.data.missionId,
+            missionId: prepared.mission.id,
             workspaceSha256: sha256(scope.rootRealPath),
-            squadBinding,
-            armedAt: now,
-            submittedContractSha256: null,
-            intentSubmittedAt: null,
+            squadBinding: prepared.binding,
+            reviewSha256: contract.approvalReviewSha256!,
+            preparedContractSha256: hashCanonical({
+              missionId: prepared.mission.id,
+              intentVersion: prepared.mission.intentVersion,
+              intentContract: contract,
+            }),
+            preparedAt: now,
           });
           return {
             ok: true,
-            nextCapability: issueGestureCapability("intent-submitted"),
+            nextCapability: issueGestureCapability("mission-started"),
           };
         }
 
@@ -330,81 +441,39 @@ export function installRealMissionProductWizardReceiptAuthority(input: {
           !draft ||
           receipt !== null ||
           draft.missionId !== parsed.data.missionId ||
-          draft.workspaceSha256 !== sha256(scope.rootRealPath)
-        ) {
-          return fail("product wizard causal step is duplicated or out of order");
-        }
-
-        if (parsed.data.step === "intent-submitted") {
-          if (
-            draft.intentSubmittedAt !== null ||
-            draft.submittedContractSha256 !== null ||
-            !input.observerArmed(parsed.data.missionId)
-          ) {
-            return fail("product wizard intent step lacks main observation");
-          }
-          const submitted = assertExactSubmittedMission(
-            mission,
-            draft.squadBinding,
-          );
-          draft = Object.freeze({
-            ...draft,
-            submittedContractSha256: hashCanonical({
-              missionId: submitted.id,
-              intentVersion: submitted.intentVersion,
-              intentContract: submitted.intentContract,
-            }),
-            intentSubmittedAt: now,
-          });
-          return {
-            ok: true,
-            nextCapability: issueGestureCapability("approval-returned"),
-          };
-        }
-
-        if (
-          draft.intentSubmittedAt === null ||
-          draft.submittedContractSha256 === null ||
+          draft.workspaceSha256 !== sha256(scope.rootRealPath) ||
           !input.observerArmed(parsed.data.missionId)
         ) {
-          return fail("product wizard approval step lacks submitted intent");
+          return fail("mission setup start is duplicated or out of order");
         }
-        const approved = assertExactApprovedMission(
+        const started = assertExactStartedMission(
           mission,
           draft.squadBinding,
+          draft.reviewSha256,
         );
-        // Mundo sem modal (06/08): a aprovação é automática e a cadeia causal
-        // não tem diálogo NENHUM — e assertar ZERO aqui é o que impede o modal
-        // de voltar em silêncio. armed → submitted → approvedAt → dispatched.
+        const startedContract = started.intentContract!;
         if (
-          realMissionInteractionCapture.nativeDialogCount !== 0 ||
-          realMissionInteractionCapture.missionApprovalDialogCount !== 0 ||
-          realMissionInteractionCapture.missionApprovalAcceptedCount !== 0 ||
-          draft.armedAt > draft.intentSubmittedAt ||
-          draft.intentSubmittedAt > approved.intentContract!.approvedAt! ||
-          approved.intentContract!.approvedAt! > now ||
-          approved.intentContract!.dispatchedAt! > now
+          draft.preparedAt > startedContract.dispatchedAt! ||
+          startedContract.dispatchedAt! > now
         ) {
-          return fail("product wizard promptless approval causality is invalid");
+          return fail("mission setup prepare/start causality is invalid");
         }
         const core = Object.freeze({
-          origin: "main-owned-product-wizard-causal-chain" as const,
-          missionId: approved.id,
+          origin: "main-owned-mission-setup-causal-chain" as const,
+          missionId: started.id,
           workspaceSha256: draft.workspaceSha256,
           sourceSquadRevisionHash:
             draft.squadBinding.sourceSquadRevisionHash,
           squadRevisionHash: draft.squadBinding.squadRevisionHash,
-          submittedContractSha256: draft.submittedContractSha256,
-          approvedContractSha256: hashCanonical({
-            missionId: approved.id,
-            intentVersion: approved.intentVersion,
-            intentContract: approved.intentContract,
+          reviewSha256: draft.reviewSha256,
+          preparedContractSha256: draft.preparedContractSha256,
+          startedContractSha256: hashCanonical({
+            missionId: started.id,
+            intentVersion: started.intentVersion,
+            intentContract: startedContract,
           }),
-          armedAt: draft.armedAt,
-          intentSubmittedAt: draft.intentSubmittedAt,
-          nativeDialogOpenedAt: null,
-          nativeDialogAcceptedAt: null,
-          approvalReturnedAt: now,
+          preparedAt: draft.preparedAt,
+          startedAt: now,
         });
         receipt = Object.freeze(
           productWizardReceiptSchema.parse({

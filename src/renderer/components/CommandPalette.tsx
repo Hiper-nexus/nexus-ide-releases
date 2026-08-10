@@ -4,17 +4,11 @@ import { useCheatsheetStore } from '../state/cheatsheet-store';
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
 import { useSessionStateStore } from '../state/session-state-store';
-import { useSettingsStore } from '../state/settings-store';
-import { useMissionWizardStore } from '../state/mission-wizard-store';
-import { useFilesStore } from '../state/files-store';
-import { useHomeStore } from '../state/home-store';
-import { useIntegrationsStore } from '../state/integrations-store';
-import { useContextualPanelNavStore } from '../state/contextual-panel-nav-store';
+import { useProductNavigationStore } from '../state/product-navigation-store';
 import { listPanes } from '../lib/split-tree';
 import { filterPaletteActions } from '../lib/command-palette-filter';
 import { formatShortcut } from '../lib/platform';
 import { shortcutKeys } from '../lib/shortcuts';
-import { confirmAndReopenMission } from '../orch/confirm-reopen-mission';
 import { PixelIcon, type PixelIconName } from './PixelIcon';
 import { ActionCard, EmptyState } from './ActionCard';
 
@@ -35,12 +29,14 @@ interface PaletteAction {
 }
 
 export function CommandPalette() {
-  const open = useCommandPaletteStore((s) => s.open);
-  const close = useCommandPaletteStore((s) => s.close);
-  const root = useLayoutStore((s) => s.root);
-  const viewKind = useLayoutStore((s) => s.viewKind);
-  const missions = useOrchStore((s) => s.missions);
-  const paneStates = useSessionStateStore((s) => s.paneStates);
+  const open = useCommandPaletteStore((state) => state.open);
+  const close = useCommandPaletteStore((state) => state.close);
+  const root = useLayoutStore((state) => state.root);
+  const viewKind = useLayoutStore((state) => state.viewKind);
+  const missionSummaries = useOrchStore(
+    (state) => state.missionSummaries,
+  );
+  const paneStates = useSessionStateStore((state) => state.paneStates);
 
   const [query, setQuery] = useState('');
   const [cursor, setCursor] = useState(0);
@@ -59,21 +55,33 @@ export function CommandPalette() {
         group: 'Panes',
         label: `Focar: ${pane.title || pane.kind}`,
         icon: pane.kind === 'browser' ? 'browser' : 'terminal',
-        hint: index < 9 ? formatShortcut('mod', String(index + 1)) : undefined,
+        hint:
+          index < 9
+            ? formatShortcut('mod', String(index + 1))
+            : undefined,
         keywords: `pane foco ${pane.adapterId ?? ''} ${state ?? ''}`,
-        run: () => layout.focus(pane.id),
+        run: () => {
+          const navigation = useProductNavigationStore.getState();
+          if (pane.missionId) {
+            navigation.openMission(pane.missionId);
+            useProductNavigationStore.getState().showMissionTerminals();
+          } else {
+            navigation.openTerminal();
+          }
+          layout.focus(pane.id);
+        },
       });
     });
 
-    for (const mission of missions) {
-      if (mission.status === 'done' || mission.status === 'failed') continue;
+    for (const mission of missionSummaries) {
       out.push({
         id: `mission:${mission.id}`,
         group: 'Missões',
-        label: `Retomar missão: ${mission.title}`,
+        label: `Abrir missão: ${mission.title}`,
         icon: 'mission',
-        keywords: `missao ${mission.status}`,
-        run: () => void confirmAndReopenMission(mission),
+        keywords: `missao ${mission.state}`,
+        run: () =>
+          useProductNavigationStore.getState().openMission(mission.id),
       });
     }
 
@@ -84,130 +92,128 @@ export function CommandPalette() {
       run: () => void,
       hint?: string,
       keywords?: string,
-    ) => out.push({ id: `tool:${id}`, group: 'Ações', label, icon, run, hint, keywords });
+    ) =>
+      out.push({
+        id: `tool:${id}`,
+        group: 'Ações',
+        label,
+        icon,
+        run,
+        hint,
+        keywords,
+      });
 
-    // Hints de atalho vêm do catálogo único (`lib/shortcuts`) — não recriar
-    // formatShortcut aqui, senão o cheatsheet e o palette divergem de novo.
     tool(
       'mission-new',
       'Nova missão',
       'mission',
-      () => useMissionWizardStore.getState().openForMission(),
+      () => useProductNavigationStore.getState().openMissionSetup(),
       shortcutKeys('mission-new'),
-      'wizard modo livre agente squad',
+      'missão objetivo equipe',
     );
     tool(
-      'mission-quick',
-      'Missão rápida',
-      'mission',
-      () => useMissionWizardStore.getState().openForAgentic(),
-      shortcutKeys('mission-quick'),
-      'rapida agentic objetivo sem modo',
+      'terminal',
+      'Abrir terminal',
+      'terminal',
+      () => {
+        useProductNavigationStore.getState().openTerminal();
+        layout.addShellPane();
+      },
+      '',
+      'shell novo',
     );
-    tool('terminal', 'Abrir terminal', 'terminal', () => layout.addShellPane(), '', 'shell novo');
-    tool('browser', 'Abrir navegador', 'browser', () => layout.addBrowserPane(), '', 'web browser');
+    tool(
+      'browser',
+      'Abrir navegador',
+      'browser',
+      () => {
+        useProductNavigationStore.getState().openTerminal();
+        layout.addBrowserPane();
+      },
+      '',
+      'web browser',
+    );
     tool(
       'view',
       viewKind === 'canvas' ? 'Mudar para grade' : 'Mudar para canvas',
       viewKind === 'canvas' ? 'grid' : 'canvas',
-      () => layout.toggleView(),
+      () => {
+        useProductNavigationStore.getState().openTerminal();
+        layout.toggleView();
+      },
       '',
-      'layout visao',
+      'layout visão',
     );
     tool(
-      'files',
-      'Arquivos do workspace',
-      'files',
-      () => useFilesStore.getState().togglePanel(),
-      '',
-      'file tree',
-    );
-    tool(
-      'context-skills',
+      'skills',
       'Skills do projeto',
       'agent',
-      () => useContextualPanelNavStore.getState().openTab('skills'),
+      () => useProductNavigationStore.getState().openSettings('skills'),
       '',
-      'skill catalogo contexto',
+      'skill catálogo contexto',
     );
     tool(
-      'context-marketplace',
+      'marketplace',
       'Marketplace de agentes e skills',
       'star',
-      () => useContextualPanelNavStore.getState().openTab('marketplace'),
+      () =>
+        useProductNavigationStore
+          .getState()
+          .openSettings('marketplace'),
       '',
-      'marketplace instalar agent skill catalogo',
+      'marketplace instalar agent skill catálogo',
     );
     tool(
-      'context-memory',
+      'memory',
       'Memória do projeto',
       'files',
-      () => useContextualPanelNavStore.getState().openTab('memory'),
+      () => useProductNavigationStore.getState().openMemory(),
       '',
-      'memory memoria decisoes contexto',
+      'memory memória decisões contexto',
     );
     tool(
-      'context-browser',
-      'Hub MCP e navegador de contexto',
+      'mcps',
+      'MCPs e ferramentas',
       'browser',
-      () => useContextualPanelNavStore.getState().openTab('browser'),
+      () => useProductNavigationStore.getState().openSettings('mcps'),
       '',
-      'mcp hub browser contexto',
+      'mcp servidores ferramentas contexto',
     );
     tool(
       'board',
-      'Painel de operações',
+      'Quadro de tarefas',
       'board',
-      () => useOrchStore.getState().toggleBoard(),
-      shortcutKeys('ops-board'),
-      'ops pipeline kanban',
+      () => useProductNavigationStore.getState().openTaskBoard(),
+      shortcutKeys('task-board'),
+      'quadro tarefas pipeline kanban',
     );
     tool(
+      'squads',
+      'Equipes e squads',
       'orch',
-      'Equipe (missões e handoffs)',
-      'orch',
-      () => useOrchStore.getState().togglePanel(),
+      () => useProductNavigationStore.getState().openSettings('squads'),
       '',
-      'squad orquestracao',
-    );
-    tool(
-      'home',
-      'Painel inicial',
-      'sparkle',
-      () => useHomeStore.getState().show(),
-      '',
-      'home deck inicio',
-    );
-    tool(
-      'integrations',
-      'GitHub e integrações',
-      'bolt',
-      () => useIntegrationsStore.getState().show(),
-      '',
-      'github pr pull request issues linear git apps port forward',
+      'squad equipe agentes',
     );
     tool(
       'settings',
       'Configurações',
       'config',
-      () => useSettingsStore.getState().openDrawer(),
+      () => useProductNavigationStore.getState().openSettings(),
       shortcutKeys('settings'),
-      'settings preferencias',
+      'settings preferências',
     );
-    // "ajuda" e "help" precisam CASAR com algo: o cheatsheet era a única
-    // superfície de ajuda do app e só era alcançável por quem já sabia o
-    // atalho. Sem estas keywords, buscar "ajuda" no ⌘K não devolvia nada.
     tool(
       'cheatsheet',
       'Ajuda e atalhos do teclado',
       'key',
       () => useCheatsheetStore.getState().toggle(),
       shortcutKeys('cheatsheet'),
-      'ajuda help teclas shortcuts atalhos comandos duvida como',
+      'ajuda help teclas shortcuts atalhos comandos dúvida como',
     );
 
     return out;
-  }, [open, root, missions, paneStates, viewKind]);
+  }, [open, root, missionSummaries, paneStates, viewKind]);
 
   const filtered = useMemo(
     () => filterPaletteActions(actions, query),
@@ -294,7 +300,9 @@ export function CommandPalette() {
                       size="sm"
                       onClick={() => {
                         close();
-                        useMissionWizardStore.getState().openForMission();
+                        useProductNavigationStore
+                          .getState()
+                          .openMissionSetup();
                       }}
                     />
                     <ActionCard
@@ -303,7 +311,9 @@ export function CommandPalette() {
                       size="sm"
                       onClick={() => {
                         close();
-                        useSettingsStore.getState().openDrawer('providers');
+                        useProductNavigationStore
+                          .getState()
+                          .openSettings('providers');
                       }}
                     />
                     <ActionCard

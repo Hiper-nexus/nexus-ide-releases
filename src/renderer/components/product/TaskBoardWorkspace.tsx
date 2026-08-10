@@ -4,6 +4,7 @@ import { orchTodosEmptyBeat } from '../../../shared/endorphin';
 import { useOrchStore } from '../../state/orch-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
 import { ActionCard, EmptyState } from '../ActionCard';
+import { PixelIcon } from '../PixelIcon';
 
 const TODO_STATUS_OPTIONS: ReadonlyArray<{
   value: TodoStatus;
@@ -123,15 +124,34 @@ export function TaskBoardWorkspace() {
 
   const emptyBeat = orchTodosEmptyBeat();
 
+  // Bridge parity: the board reads as status columns, not opaque list ids.
+  // Every column stays visible so the operator can see the whole flow at once.
+  const columns = TODO_STATUS_OPTIONS.map((option) => ({
+    status: option.value,
+    label: option.label,
+    entries: visibleLists.flatMap((list) =>
+      list.items
+        .filter((item) => item.status === option.value)
+        .map((item) => ({ list, item })),
+    ),
+  }));
+
   return (
     <section
       className="product-workspace task-board-workspace"
       aria-label="Quadro de tarefas"
     >
       <header className="product-workspace__header">
-        <div className="product-workspace__heading">
-          <span className="product-workspace__context">Execução do workspace</span>
-          <h1>Quadro</h1>
+        <div className="product-workspace__identity">
+          <span className="product-workspace__badge" aria-hidden="true">
+            <PixelIcon name="board" size={16} />
+          </span>
+          <div className="product-workspace__heading">
+            <span className="product-workspace__context">
+              Execução do workspace
+            </span>
+            <h1>Quadro</h1>
+          </div>
         </div>
         {itemCount > 0 ? (
           <p className="product-workspace__summary" aria-live="polite">
@@ -141,7 +161,7 @@ export function TaskBoardWorkspace() {
       </header>
 
       <div className="product-workspace__content task-board-workspace__content">
-        {visibleLists.length === 0 ? (
+        {itemCount === 0 ? (
           <EmptyState
             icon="board"
             title={emptyBeat.title}
@@ -157,28 +177,32 @@ export function TaskBoardWorkspace() {
               />
             }
           />
-        ) : (
-          <div className="task-board-workspace__lists">
-            {visibleLists.map((list, listIndex) => (
-              <section
-                key={list.id}
-                className="task-board-workspace__list"
-                aria-label={`Lista de tarefas ${listIndex + 1}`}
-              >
-                <header className="task-board-workspace__list-header">
-                  <h2>Lista {listIndex + 1}</h2>
-                  <span>
-                    {list.items.length}{' '}
-                    {list.items.length === 1 ? 'tarefa' : 'tarefas'}
-                  </span>
-                </header>
+        ) : null}
+
+        <div className="task-board-workspace__lists">
+          {columns.map((column) => (
+            <section
+              key={column.status}
+              className="task-board-workspace__list"
+              data-status={column.status}
+              aria-label={`Tarefas: ${column.label}`}
+            >
+              <header className="task-board-workspace__list-header">
+                <h2>{column.label}</h2>
+                <span>{column.entries.length}</span>
+              </header>
+              {column.entries.length === 0 ? (
+                <p className="task-board-workspace__column-empty">
+                  Sem tarefas
+                </p>
+              ) : (
                 <ul className="task-board-workspace__items">
-                  {list.items.map((item, itemIndex) => {
+                  {column.entries.map(({ list, item }, itemIndex) => {
                     const key = `${list.id}\u0000${item.id}`;
                     const isPending = pending.has(key);
                     const error = errors[key];
                     const errorId = error
-                      ? `task-board-error-${listIndex + 1}-${itemIndex + 1}`
+                      ? `task-board-error-${column.status}-${itemIndex + 1}`
                       : undefined;
 
                     return (
@@ -237,11 +261,7 @@ export function TaskBoardWorkspace() {
                               type="button"
                               className="task-board-workspace__retry"
                               onClick={() =>
-                                void setStatus(
-                                  list,
-                                  item,
-                                  error.targetStatus,
-                                )
+                                void setStatus(list, item, error.targetStatus)
                               }
                             >
                               Tentar novamente
@@ -252,10 +272,10 @@ export function TaskBoardWorkspace() {
                     );
                   })}
                 </ul>
-              </section>
-            ))}
-          </div>
-        )}
+              )}
+            </section>
+          ))}
+        </div>
       </div>
     </section>
   );

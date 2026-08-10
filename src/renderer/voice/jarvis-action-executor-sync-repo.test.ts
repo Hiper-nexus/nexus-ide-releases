@@ -5,7 +5,6 @@ import { buildSyncRepoViaPanePrompt } from '../../shared/sync-repo-via-pane';
 const {
   confirmCommand,
   layoutState,
-  missionWizardState,
   paneStates,
   resolveSyncRepoViaPaneTarget,
   submitPromptToPane,
@@ -18,11 +17,6 @@ const {
   submitPromptToPaneConfirmed: vi.fn(),
   waitForSession: vi.fn(),
   paneStates: new Map<string, string>(),
-  missionWizardState: {
-    open: false,
-    close: vi.fn(),
-    openForAgentic: vi.fn(),
-  },
   layoutState: {
     focusedPaneId: 'pane-agent' as string | null,
     viewKind: 'grid' as string,
@@ -67,25 +61,14 @@ vi.mock('../state/workspace-store', () => ({
 }));
 vi.mock('../state/orch-store', () => ({
   useOrchStore: {
-    getState: () => ({ squads: [], closeBoard: vi.fn() }),
+    getState: () => ({ squads: [] }),
   },
-}));
-vi.mock('../state/mission-wizard-store', () => ({
-  useMissionWizardStore: { getState: () => missionWizardState },
-}));
-vi.mock('../state/home-store', () => ({
-  useHomeStore: { getState: () => ({ hide: vi.fn() }) },
 }));
 vi.mock('../state/gamification-store', () => ({
   useGamificationStore: { getState: () => ({ closeProfile: vi.fn() }) },
 }));
 vi.mock('./voice-store', () => ({
   useVoiceStore: { getState: () => ({ closeSettings: vi.fn() }) },
-}));
-vi.mock('../state/settings-store', () => ({
-  useSettingsStore: {
-    getState: () => ({ drawerOpen: false, toggleDrawer: vi.fn() }),
-  },
 }));
 vi.mock('../terminal/terminal-host', () => ({
   submitPromptToPane,
@@ -99,7 +82,6 @@ vi.mock('../state/session-state-store', () => ({
   },
 }));
 vi.mock('../browser/browser-host', () => ({ waitForBrowserPaneCreated: vi.fn() }));
-vi.mock('../orch/mission-launcher', () => ({ launchSquadMission: vi.fn() }));
 vi.mock('../lib/credential-errors', () => ({ isMissingModelKeyError: () => false }));
 vi.mock('../services/mcp-bridge', () => ({
   invokeMcpWithConfirm: vi.fn(),
@@ -231,7 +213,6 @@ describe('sync_repo_via_pane executor', () => {
       { say: '', action: { type: 'sync_repo_via_pane', mode: 'status' } },
       context,
     );
-    expect(missionWizardState.openForAgentic).not.toHaveBeenCalled();
     expect(layoutState.spawnAgent).toHaveBeenCalledWith('codex', 'gpt-5.5');
     expect(submitPromptToPaneConfirmed).toHaveBeenCalledWith(
       'pane-spawned-2',

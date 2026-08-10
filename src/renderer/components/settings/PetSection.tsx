@@ -17,10 +17,9 @@ import { ActionCard } from '../ActionCard';
 import { CustomPetSprite } from '../../pet/CustomPetSprite';
 import { SheetPetSprite } from '../../pet/SheetPetSprite';
 import { filterPaletteActions } from '../../lib/command-palette-filter';
-import { useSettingsStore } from '../../state/settings-store';
 import {
   hatchPetIntent,
-  launchPetHatchMission,
+  preparePetHatchMission,
   petSlugFromImagePath,
 } from '../../pet/pet-hatch-flow';
 import { useToastStore } from '../../state/toast-store';
@@ -602,8 +601,8 @@ export function PetSection() {
   };
 
   /**
-   * "Gerar pet com IA": escolhe a imagem-base e inicia o Pet Studio fixo —
-   * um único Codex executa a skill nexus-pet-studio sem abrir reviewers/worktrees.
+   * Escolhe a imagem-base e abre a revisão canônica do Pet Studio. Nenhuma
+   * missão inicia antes da aceitação explícita na etapa Revisar.
    */
   const onHatchPet = async () => {
     if (!petApi.pickImage || hatchBusy) return;
@@ -615,19 +614,20 @@ export function PetSection() {
         setImportNote(picked.error ?? 'Não consegui usar essa imagem.');
         return;
       }
-      setImportNote('Montando o executor visual e iniciando a missão…');
-      const launched = await launchPetHatchMission(picked.path);
-      if (!launched.ok) {
-        const message = launched.error ?? 'Não consegui iniciar a criação do pet.';
+      setImportNote('Preparando a revisão segura do Pet Studio…');
+      const prepared = await preparePetHatchMission(picked.path);
+      if (!prepared.ok) {
+        const message =
+          prepared.error ?? 'Não consegui preparar a revisão do pet.';
         setImportNote(message);
-        useToastStore.getState().push('error', 'Pet não iniciado', message);
+        useToastStore.getState().push('error', 'Pet não preparado', message);
         return;
       }
-      useSettingsStore.getState().closeDrawer();
+      setImportNote('Revisão do pet pronta para sua confirmação.');
       useToastStore.getState().push(
         'success',
-        'Criação do pet iniciada',
-        'A missão já existe e o executor visual recebeu a imagem-base.',
+        'Revisão do pet pronta',
+        'Confira a imagem, a sessão Codex e as permissões antes de iniciar.',
       );
     } finally {
       setHatchBusy(false);
@@ -850,7 +850,7 @@ export function PetSection() {
               {petApi.pickImage && (
                 <ActionCard
                   icon="sparkle"
-                  title={hatchBusy ? 'Iniciando criação…' : 'Criar pet com IA'}
+                  title={hatchBusy ? 'Preparando revisão…' : 'Criar pet com IA'}
                   subtitle="Foto → pet v2 completo"
                   variant="primary"
                   disabled={hatchBusy}
@@ -865,11 +865,12 @@ export function PetSection() {
               />
             </div>
             <p className="settings-field__note">
-              Criar com IA abre uma missão que desenha seu pet em todas as
-              poses a partir de uma foto (processo lento, padrão Codex).
-              Spritesheets Codex v2 (8×11) e petdex (8×9) importam direto — inclusive
-              os de ~/.codex/pets. Os arquivos finais ficam locais; a geração
-              usa o provider Codex configurado.
+              Criar com IA prepara uma revisão da missão que desenhará seu pet
+              em todas as poses a partir de uma foto. A criação só começa
+              depois da sua confirmação na etapa Revisar. Spritesheets Codex
+              v2 (8×11) e petdex (8×9) importam direto — inclusive os de
+              ~/.codex/pets. Os arquivos finais ficam locais; a geração usa o
+              provider Codex configurado.
             </p>
             <input
               ref={sheetRef}

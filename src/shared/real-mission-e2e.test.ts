@@ -16,7 +16,7 @@ import {
   createRealMissionE2ESquadFixture,
   isExclusiveRealMissionE2E,
   isRealMissionE2E,
-  isRealMissionE2EPreApprovalMission,
+  isRealMissionE2EReviewReadyMission,
   isRealMissionE2ERendererFailureSignal,
   realMissionE2EAcceptanceCriteria,
   realMissionE2ELaunchSurface,
@@ -252,13 +252,16 @@ describe("real mission E2E closed receipts", () => {
     expect(REAL_MISSION_E2E_SQUAD_ID).toMatch(/^agentic-/u);
   });
 
-  it("arms observation only for the exact sealed pre-approval fixture", () => {
+  it("arms observation only for the exact canonical review fence", () => {
+    const reviewSha256 = "a".repeat(64);
+    const squadRevisionHash = "b".repeat(64);
     const mission = {
       id: "mission-e2e",
       status: "pending",
       intentState: "ready_to_start",
       intentVersion: 1,
-      squadId: REAL_MISSION_E2E_SQUAD_ID,
+      squadId: "agentic-runtime-11111111-1111-4111-8111-111111111111",
+      orchestratorSessionId: null,
       intentContract: {
         version: 1,
         source: "typed",
@@ -266,51 +269,90 @@ describe("real mission E2E closed receipts", () => {
         executionMode: "autopilot",
         lane: "standard",
         contextPolicy: "minimal",
+        contextPaths: ["README.md"],
         intentVersion: 1,
         acceptanceCriteria: [...REAL_MISSION_E2E_ACCEPTANCE_CRITERIA],
+        approvedAt: 10,
+        approvalReviewSha256: reviewSha256,
+        squadRevisionHash,
+        orchestratorRuntime: { adapterId: "codex" },
       },
     } as const;
+    const expectation = {
+      missionId: mission.id,
+      squadId: mission.squadId,
+      squadRevisionHash,
+      reviewSha256,
+      orchestratorCli: "codex" as const,
+      acceptanceCriteria: REAL_MISSION_E2E_ACCEPTANCE_CRITERIA,
+      contextPaths: ["README.md"],
+    };
 
-    expect(isRealMissionE2EPreApprovalMission(mission)).toBe(true);
+    expect(isRealMissionE2EReviewReadyMission(mission, expectation)).toBe(true);
     expect(
-      isRealMissionE2EPreApprovalMission({
-        ...mission,
-        status: "running",
-      }),
+      isRealMissionE2EReviewReadyMission(
+        { ...mission, status: "running" },
+        expectation,
+      ),
     ).toBe(false);
     expect(
-      isRealMissionE2EPreApprovalMission({
-        ...mission,
-        intentContract: {
-          ...mission.intentContract,
-          approvedAt: 10,
-          dispatchedAt: 10,
+      isRealMissionE2EReviewReadyMission(
+        {
+          ...mission,
+          intentContract: {
+            ...mission.intentContract,
+            approvalReviewSha256: "c".repeat(64),
+          },
         },
-      }),
+        expectation,
+      ),
     ).toBe(false);
     expect(
-      isRealMissionE2EPreApprovalMission({
-        ...mission,
-        intentContract: {
-          ...mission.intentContract,
-          goal: "forged goal",
+      isRealMissionE2EReviewReadyMission(
+        {
+          ...mission,
+          intentContract: {
+            ...mission.intentContract,
+            goal: "forged goal",
+          },
         },
-      }),
+        expectation,
+      ),
     ).toBe(false);
   });
 
-  it("accepts only a strict missionId observation payload", () => {
+  it("accepts only explicit review-fence or sanitized-failure observations", () => {
     expect(
-      realMissionE2EObservePayloadSchema.parse({ missionId: "mission-1" }),
-    ).toEqual({ missionId: "mission-1" });
+      realMissionE2EObservePayloadSchema.parse({
+        kind: "mission-review",
+        missionId: "mission-1",
+        reviewSha256: "a".repeat(64),
+      }),
+    ).toEqual({
+      kind: "mission-review",
+      missionId: "mission-1",
+      reviewSha256: "a".repeat(64),
+    });
+    expect(
+      realMissionE2EObservePayloadSchema.parse({
+        kind: "renderer-failure",
+        signal: realMissionE2ERendererFailureSignal(rendererFailureToken),
+      }),
+    ).toEqual({
+      kind: "renderer-failure",
+      signal: realMissionE2ERendererFailureSignal(rendererFailureToken),
+    });
     expect(() =>
       realMissionE2EObservePayloadSchema.parse({
+        kind: "mission-review",
         missionId: "mission-1",
-        workspacePath: "/forged",
       }),
     ).toThrow();
     expect(() =>
-      realMissionE2EObservePayloadSchema.parse({ missionId: "../mission" }),
+      realMissionE2EObservePayloadSchema.parse({
+        kind: "renderer-failure",
+        signal: "../failure",
+      }),
     ).toThrow();
   });
 
@@ -463,13 +505,15 @@ describe("real mission E2E claude orchestrator variant", () => {
     ).toEqual(["codex"]);
   });
 
-  it("arms observation for the variant pre-approval intent only with the variant criteria", () => {
-    const baseMission = {
+  it("arms the variant review only with its exact criteria and runtime", () => {
+    const reviewSha256 = "a".repeat(64);
+    const squadRevisionHash = "b".repeat(64);
+    const mission = {
       id: "mission-e2e",
       status: "pending",
       intentState: "ready_to_start",
       intentVersion: 1,
-      squadId: REAL_MISSION_E2E_SQUAD_ID,
+      squadId: "agentic-runtime-11111111-1111-4111-8111-111111111111",
       orchestratorSessionId: null,
       intentContract: {
         version: 1,
@@ -478,34 +522,40 @@ describe("real mission E2E claude orchestrator variant", () => {
         executionMode: "autopilot",
         lane: "standard",
         contextPolicy: "minimal",
+        contextPaths: ["README.md"],
         intentVersion: 1,
-      },
-    };
-    const variantMission = {
-      ...baseMission,
-      intentContract: {
-        ...baseMission.intentContract,
         acceptanceCriteria: [
           ...REAL_MISSION_E2E_CLAUDE_ORCHESTRATOR_ACCEPTANCE_CRITERIA,
         ],
+        approvedAt: 10,
+        approvalReviewSha256: reviewSha256,
+        squadRevisionHash,
+        orchestratorRuntime: { adapterId: "claude" },
       },
+    } as const;
+    const expectation = {
+      missionId: mission.id,
+      squadId: mission.squadId,
+      squadRevisionHash,
+      reviewSha256,
+      orchestratorCli: "claude" as const,
+      acceptanceCriteria:
+        REAL_MISSION_E2E_CLAUDE_ORCHESTRATOR_ACCEPTANCE_CRITERIA,
+      contextPaths: ["README.md"],
     };
-    expect(isRealMissionE2EPreApprovalMission(variantMission, "claude")).toBe(
-      true,
-    );
-    // Critérios da variante errada não abrem observação.
-    expect(isRealMissionE2EPreApprovalMission(variantMission, "codex")).toBe(
-      false,
-    );
-    const codexMission = {
-      ...baseMission,
-      intentContract: {
-        ...baseMission.intentContract,
-        acceptanceCriteria: [...REAL_MISSION_E2E_ACCEPTANCE_CRITERIA],
-      },
-    };
-    expect(isRealMissionE2EPreApprovalMission(codexMission, "claude")).toBe(
-      false,
-    );
+
+    expect(isRealMissionE2EReviewReadyMission(mission, expectation)).toBe(true);
+    expect(
+      isRealMissionE2EReviewReadyMission(mission, {
+        ...expectation,
+        orchestratorCli: "codex",
+      }),
+    ).toBe(false);
+    expect(
+      isRealMissionE2EReviewReadyMission(mission, {
+        ...expectation,
+        acceptanceCriteria: REAL_MISSION_E2E_ACCEPTANCE_CRITERIA,
+      }),
+    ).toBe(false);
   });
 });

@@ -154,7 +154,12 @@ function killFixtureProcess(pid) {
   }
 }
 
-function waitFor(predicate, timeoutMs = 5_000) {
+/**
+ * Real PTYs, tracers and signal cohorts: under the full suite these fixtures
+ * can take far longer to settle than on a quiet machine. The waits prove the
+ * fixture ARRIVES, not that it arrives fast, so ceilings are generous but bounded.
+ */
+function waitFor(predicate, timeoutMs = 30_000) {
   const deadline = Date.now() + timeoutMs;
   return new Promise((resolve, reject) => {
     const poll = () => {
@@ -393,7 +398,7 @@ suite("Darwin supervisor one-shot launch authorization", () => {
     if (nexusDeveloperIdentity) {
       buildPackagedAuthorizationFixtures();
     }
-  }, 30_000);
+  }, 150_000);
 
   afterAll(() => {
     rmSync(fixtureRoot, { recursive: true, force: true });
@@ -426,7 +431,7 @@ suite("Darwin supervisor one-shot launch authorization", () => {
     } finally {
       killFixtureProcess(nestedPid);
     }
-  }, 15_000);
+  }, 150_000);
 
   it("rejects re-entry through Apple Perl and leaves no orphan", async () => {
     const nestedPidFile = path.join(fixtureRoot, "nested-perl.pid");
@@ -471,7 +476,7 @@ suite("Darwin supervisor one-shot launch authorization", () => {
     } finally {
       killFixtureProcess(nestedPid);
     }
-  }, 15_000);
+  }, 150_000);
 
   packagedSuite(
     "accepts only the exact packaged Main and Utility live code chains",
@@ -484,18 +489,18 @@ suite("Darwin supervisor one-shot launch authorization", () => {
       const main = spawnSync(
         packagedMain,
         ["/usr/bin/perl", ...helperArguments],
-        { encoding: "utf8", timeout: 10_000 },
+        { encoding: "utf8", timeout: 30_000 },
       );
       expect(main).toMatchObject({ status: 0, signal: null });
 
       const utility = spawnSync(
         packagedMain,
         [packagedUtility, "/usr/bin/perl", ...helperArguments],
-        { encoding: "utf8", timeout: 10_000 },
+        { encoding: "utf8", timeout: 30_000 },
       );
       expect(utility).toMatchObject({ status: 0, signal: null });
     },
-    20_000,
+    150_000,
   );
 
   packagedSuite(
@@ -511,12 +516,12 @@ suite("Darwin supervisor one-shot launch authorization", () => {
       const result = spawnSync(
         packagedMain,
         ["/usr/bin/perl", ...helperArguments],
-        { encoding: "utf8", timeout: 10_000 },
+        { encoding: "utf8", timeout: 30_000 },
       );
       expect(result).toMatchObject({ status: 0, signal: null });
       expect(result.stdout).toContain(DARWIN_PTY_PROVIDER_PROBE_RECEIPT);
     },
-    20_000,
+    150_000,
   );
 
   packagedSuite(
@@ -578,7 +583,7 @@ suite("Darwin supervisor one-shot launch authorization", () => {
         [packagedUtility, oldMachOOnlyPlan.file, ...oldMachOOnlyPlan.args],
         {
           encoding: "utf8",
-          timeout: 10_000,
+          timeout: 30_000,
           env: oldMachOOnlyPlan.env,
         },
       );
@@ -608,7 +613,7 @@ suite("Darwin supervisor one-shot launch authorization", () => {
         [packagedUtility, plan.file, ...plan.args],
         {
           encoding: "utf8",
-          timeout: 10_000,
+          timeout: 30_000,
           env: plan.env,
         },
       );
@@ -624,7 +629,7 @@ suite("Darwin supervisor one-shot launch authorization", () => {
       expect(result.signal).toBe(null);
       expect(result.stdout).toContain(DARWIN_PTY_PROVIDER_PROBE_RECEIPT);
     },
-    20_000,
+    150_000,
   );
 
   packagedSuite(
@@ -646,12 +651,12 @@ suite("Darwin supervisor one-shot launch authorization", () => {
       const result = spawnSync(
         packagedMain,
         ["/usr/bin/perl", ...helperArguments],
-        { encoding: "utf8", timeout: 10_000 },
+        { encoding: "utf8", timeout: 30_000 },
       );
       expect(result).toMatchObject({ status: 0, signal: null });
       expect(result.stdout).toContain(DARWIN_PTY_PROVIDER_PROBE_RECEIPT);
     },
-    20_000,
+    150_000,
   );
 
   packagedSuite(
@@ -680,7 +685,7 @@ suite("Darwin supervisor one-shot launch authorization", () => {
           ["/usr/bin/perl", ...helperArguments],
           {
             encoding: "utf8",
-            timeout: 10_000,
+            timeout: 30_000,
             env: {
               ...process.env,
               NEXUS_TEST_CHILD_PID_FILE: stageZeroPidFile,
@@ -702,6 +707,6 @@ suite("Darwin supervisor one-shot launch authorization", () => {
         killFixtureProcess(stageZeroPid);
       }
     },
-    20_000,
+    150_000,
   );
 });

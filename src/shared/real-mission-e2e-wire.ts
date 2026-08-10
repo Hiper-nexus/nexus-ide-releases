@@ -30,9 +30,8 @@ export const wizardCoverageSchema = z.enum([
   "main-owned-product-sequence",
 ]);
 export const productWizardStepSchema = z.enum([
-  "mission-armed",
-  "intent-submitted",
-  "approval-returned",
+  "mission-prepared",
+  "mission-started",
 ]);
 export const productWizardGestureCapabilitySchema = z
   .string()
@@ -57,20 +56,16 @@ export const realMissionE2EProductWizardStepPayloadSchema = z
 
 const productWizardReceiptCoreSchema = z
   .object({
-    origin: z.literal("main-owned-product-wizard-causal-chain"),
+    origin: z.literal("main-owned-mission-setup-causal-chain"),
     missionId: idSchema,
     workspaceSha256: sha256Schema,
     sourceSquadRevisionHash: sha256Schema,
     squadRevisionHash: sha256Schema,
-    submittedContractSha256: sha256Schema,
-    approvedContractSha256: sha256Schema,
-    armedAt: timestampSchema,
-    intentSubmittedAt: timestampSchema,
-    // Mundo sem modal (06/08): a cadeia promptless emite null; valores
-    // numéricos permanecem aceitos para receipts de builds antigos.
-    nativeDialogOpenedAt: timestampSchema.nullable(),
-    nativeDialogAcceptedAt: timestampSchema.nullable(),
-    approvalReturnedAt: timestampSchema,
+    reviewSha256: sha256Schema,
+    preparedContractSha256: sha256Schema,
+    startedContractSha256: sha256Schema,
+    preparedAt: timestampSchema,
+    startedAt: timestampSchema,
   })
   .strict();
 
@@ -85,19 +80,17 @@ export function productWizardReceiptChainSha256(
     sha256(
       utf8ToBytes(
         JSON.stringify({
-          version: "nexus-product-wizard-causal-chain-v1",
+          version: "nexus-mission-setup-causal-chain-v2",
           origin: receipt.origin,
           missionId: receipt.missionId,
           workspaceSha256: receipt.workspaceSha256,
           sourceSquadRevisionHash: receipt.sourceSquadRevisionHash,
           squadRevisionHash: receipt.squadRevisionHash,
-          submittedContractSha256: receipt.submittedContractSha256,
-          approvedContractSha256: receipt.approvedContractSha256,
-          armedAt: receipt.armedAt,
-          intentSubmittedAt: receipt.intentSubmittedAt,
-          nativeDialogOpenedAt: receipt.nativeDialogOpenedAt,
-          nativeDialogAcceptedAt: receipt.nativeDialogAcceptedAt,
-          approvalReturnedAt: receipt.approvalReturnedAt,
+          reviewSha256: receipt.reviewSha256,
+          preparedContractSha256: receipt.preparedContractSha256,
+          startedContractSha256: receipt.startedContractSha256,
+          preparedAt: receipt.preparedAt,
+          startedAt: receipt.startedAt,
         }),
       ),
     ),
@@ -110,36 +103,26 @@ export const productWizardReceiptSchema = productWizardReceiptCoreSchema
   })
   .strict()
   .superRefine((receipt, context) => {
-    // Cadeia promptless (06/08): os campos de diálogo são null. Receipts de
-    // builds antigos ainda trazem números, e neles a ordem antiga vale — os
-    // dois campos nascem juntos, então validar par a par cobre ambos os mundos.
-    const dialogChainValid =
-      receipt.nativeDialogOpenedAt === null ||
-      receipt.nativeDialogAcceptedAt === null
-        ? receipt.nativeDialogOpenedAt === null &&
-          receipt.nativeDialogAcceptedAt === null &&
-          receipt.intentSubmittedAt <= receipt.approvalReturnedAt
-        : receipt.intentSubmittedAt <= receipt.nativeDialogOpenedAt &&
-          receipt.nativeDialogOpenedAt <= receipt.nativeDialogAcceptedAt &&
-          receipt.nativeDialogAcceptedAt <= receipt.approvalReturnedAt;
-    if (receipt.armedAt > receipt.intentSubmittedAt || !dialogChainValid) {
+    if (receipt.preparedAt > receipt.startedAt) {
       context.addIssue({
         code: "custom",
-        message: "product wizard causal timestamps are out of order",
+        message: "mission setup causal timestamps are out of order",
       });
     }
-    if (receipt.submittedContractSha256 === receipt.approvedContractSha256) {
+    if (
+      receipt.preparedContractSha256 === receipt.startedContractSha256
+    ) {
       context.addIssue({
         code: "custom",
-        path: ["approvedContractSha256"],
-        message: "approved contract must differ from the submitted contract",
+        path: ["startedContractSha256"],
+        message: "started contract must differ from the prepared contract",
       });
     }
     if (receipt.chainSha256 !== productWizardReceiptChainSha256(receipt)) {
       context.addIssue({
         code: "custom",
         path: ["chainSha256"],
-        message: "product wizard causal chain hash is invalid",
+        message: "Mission Setup causal chain hash is invalid",
       });
     }
   });
@@ -174,11 +157,24 @@ export const realMissionE2EPrepareFixturePayloadSchema = z
   })
   .strict();
 
-export const realMissionE2EObservePayloadSchema = z
-  .object({
-    missionId: idSchema,
-  })
-  .strict();
+export const realMissionE2EObservePayloadSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      kind: z.literal("mission-review"),
+      missionId: idSchema,
+      reviewSha256: sha256Schema,
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("renderer-failure"),
+      signal: idSchema,
+    })
+    .strict(),
+]);
+export type RealMissionE2EObservePayload = z.infer<
+  typeof realMissionE2EObservePayloadSchema
+>;
 
 export function realMissionE2ERendererFailureSignal(token: string): string {
   return `${REAL_MISSION_E2E_RENDERER_FAILURE_PREFIX}${sha256Schema.parse(token)}`;

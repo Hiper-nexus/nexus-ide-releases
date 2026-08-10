@@ -140,8 +140,6 @@ beforeEach(() => {
     terminal: DEFAULT_TERMINAL_SETTINGS,
     ui: DEFAULT_UI_SETTINGS,
     audio: DEFAULT_AUDIO_SETTINGS,
-    drawerOpen: false,
-    drawerSection: null,
     hydrated: true,
   });
   useProductNavigationStore.setState({

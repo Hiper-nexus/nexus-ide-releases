@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Mission } from '../../shared/orch-types';
+import type { Mission, Squad } from '../../shared/orch-types';
+import { useMissionSetupStore } from '../state/mission-setup-store';
+import { useOrchStore } from '../state/orch-store';
+import { useProductNavigationStore } from '../state/product-navigation-store';
+import { useWorkspaceStore } from '../state/workspace-store';
 
 const harness = vi.hoisted(() => ({
   askConfirm: vi.fn(),
@@ -9,20 +13,10 @@ const harness = vi.hoisted(() => ({
   hardReopenWouldKillAgents: vi.fn(),
   isIntentFirstMissionShell: vi.fn(),
   livePaneIdsForMission: vi.fn(),
-  openForArmedMission: vi.fn(),
 }));
 
 vi.mock('../state/confirm-store', () => ({
   askConfirm: harness.askConfirm,
-}));
-
-vi.mock('../state/mission-wizard-store', () => ({
-  useMissionWizardStore: {
-    getState: () => ({
-      openForArmedMission: harness.openForArmedMission,
-      saveDraft: vi.fn(),
-    }),
-  },
 }));
 
 vi.mock('./mission-reopen', () => ({
@@ -34,6 +28,39 @@ vi.mock('./mission-reopen', () => ({
 }));
 
 import { confirmAndReopenMission } from './confirm-reopen-mission';
+
+const workspace = {
+  path: '/tmp/nexus',
+  name: 'nexus',
+  lastOpenedAt: 1,
+};
+const squad: Squad = {
+  id: 'squad-1',
+  name: 'Equipe salva',
+  createdAt: '1',
+  builtin: false,
+  orchestratorInstructions: 'Coordene a missão.',
+  agents: [
+    {
+      id: 'coordinator',
+      agentName: 'Coordenar',
+      category: 'orchestrator',
+      cli: 'codex',
+      model: 'gpt-5.6-sol',
+      allowedTools: ['nexus_task'],
+      allowedSkills: [],
+    },
+    {
+      id: 'maker',
+      agentName: 'Implementar',
+      category: 'executor',
+      cli: 'codex',
+      model: 'gpt-5.6-sol',
+      allowedTools: ['Read', 'Edit'],
+      allowedSkills: [],
+    },
+  ],
+};
 
 function blockedMission(
   intentState: 'blocked_technical' | 'blocked_user',
@@ -54,6 +81,27 @@ function blockedMission(
 describe('confirmAndReopenMission', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    useWorkspaceStore.setState({ current: workspace });
+    useOrchStore.setState({ squads: [squad] });
+    useMissionSetupStore.setState({
+      workspacePath: workspace.path,
+      draft: {
+        objective: '',
+        title: '',
+        contextPaths: [],
+        roster: [],
+        advanced: { lane: 'standard' },
+        step: 'mission',
+        revision: 0,
+      },
+      persistence: { status: 'idle' },
+      workspaceDrafts: {},
+      entryContext: null,
+    } as never);
+    useProductNavigationStore.setState({
+      destination: { kind: 'terminal' },
+      settingsReturnDestination: null,
+    });
     harness.isIntentFirstMissionShell.mockReturnValue(false);
     harness.livePaneIdsForMission.mockReturnValue([]);
     harness.hardReopenWouldDisplaceLayout.mockReturnValue(true);
@@ -63,6 +111,7 @@ describe('confirmAndReopenMission', () => {
       nexus: {
         orch: {
           listMissionPanes: harness.listMissionPanes,
+          missionControlPlane: vi.fn(async () => ({ queue: [] })),
         },
       },
     });
@@ -88,7 +137,7 @@ describe('confirmAndReopenMission', () => {
       return {
         id: 'mission-armed',
         title: 'quero continuar codando',
-        description: '',
+        description: 'quero continuar codando',
         status: 'pending',
         intentState: 'ready_to_start',
         squadId: 'squad-1',
@@ -99,9 +148,8 @@ describe('confirmAndReopenMission', () => {
       };
     }
 
-    it('abre os panes gravados em vez de ejetar para o assistente', async () => {
-      // O bug relatado: a missão tinha panes, foi classificada como shell
-      // armado e o operador caiu no wizard de Nova Missão, sem volta.
+    it('abre os panes gravados em vez de substituir a missão no Setup', async () => {
+      // Pane evidence keeps the operator on the existing mission terminals.
       const mission = armedShell();
       harness.isIntentFirstMissionShell.mockReturnValue(true);
       harness.listMissionPanes.mockResolvedValue([
@@ -115,11 +163,13 @@ describe('confirmAndReopenMission', () => {
         ok: true,
         panes: 2,
       });
-      expect(harness.openForArmedMission).not.toHaveBeenCalled();
+      expect(useProductNavigationStore.getState().destination).toEqual({
+        kind: 'terminal',
+      });
       expect(harness.reopenMission).toHaveBeenCalledWith(mission);
     });
 
-    it('só abre o assistente com prova de zero panes gravados', async () => {
+    it('abre Mission Setup apenas com prova de zero panes gravados', async () => {
       const mission = armedShell();
       harness.isIntentFirstMissionShell.mockReturnValue(true);
       harness.listMissionPanes.mockResolvedValue([]);
@@ -129,10 +179,13 @@ describe('confirmAndReopenMission', () => {
         panes: 0,
         intentShell: true,
       });
-      expect(harness.openForArmedMission).toHaveBeenCalledWith(
-        'squad-1',
-        'mission-armed',
-      );
+      expect(useProductNavigationStore.getState().destination).toEqual({
+        kind: 'mission-setup',
+      });
+      expect(useMissionSetupStore.getState().draft).toMatchObject({
+        objective: 'quero continuar codando',
+        step: 'review',
+      });
     });
 
     it('permanece na página com aviso quando o estado não é reconhecido', async () => {
@@ -146,7 +199,9 @@ describe('confirmAndReopenMission', () => {
       expect(result.ok).toBe(false);
       expect(result.error).toContain('Nova missão');
       // Nunca o assistente como fallback de estado desconhecido.
-      expect(harness.openForArmedMission).not.toHaveBeenCalled();
+      expect(useProductNavigationStore.getState().destination).toEqual({
+        kind: 'terminal',
+      });
       expect(harness.reopenMission).not.toHaveBeenCalled();
     });
 
@@ -163,7 +218,9 @@ describe('confirmAndReopenMission', () => {
         panes: 2,
         soft: true,
       });
-      expect(harness.openForArmedMission).not.toHaveBeenCalled();
+      expect(useProductNavigationStore.getState().destination).toEqual({
+        kind: 'terminal',
+      });
     });
   });
 });

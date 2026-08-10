@@ -1,9 +1,12 @@
 import type { Mission } from '../../shared/orch-types';
 import { askConfirm } from '../state/confirm-store';
-import { useMissionWizardStore } from '../state/mission-wizard-store';
+import { useMissionSetupStore } from '../state/mission-setup-store';
+import { useOrchStore } from '../state/orch-store';
+import { useProductNavigationStore } from '../state/product-navigation-store';
+import { useWorkspaceStore } from '../state/workspace-store';
+import { hardReopenWouldKillAgents } from './mission-auth-conflict';
 import {
   hardReopenWouldDisplaceLayout,
-  hardReopenWouldKillAgents,
   isIntentFirstMissionShell,
   livePaneIdsForMission,
   reopenMission,
@@ -12,10 +15,14 @@ import {
 import { missionResumeRoute } from './mission-resume-route';
 
 /**
- * Resume an intent-first (agentic) shell: reopen Nova Missão on the goal
- * composer with any compiled objective pre-filled. No panes to restore.
+ * Replace an intent-first shell through canonical Mission Setup Review using
+ * the exact saved squad. The old shell remains until replacement start wins.
  */
-export function resumeIntentFirstMissionShell(mission: Mission): MissionReopenResult {
+export function resumeIntentFirstMissionShell(
+  mission: Mission,
+): MissionReopenResult {
+  const setup = useMissionSetupStore.getState();
+  setup.clearEntryContext();
   const squadId = mission.squadId?.trim();
   if (!squadId) {
     return {
@@ -24,47 +31,66 @@ export function resumeIntentFirstMissionShell(mission: Mission): MissionReopenRe
         'Esta missão ainda não tem squad. Abra Nova Missão e escolha o time de novo.',
     };
   }
+  const squad = useOrchStore
+    .getState()
+    .squads.find((candidate) => candidate.id === squadId);
+  if (!squad) {
+    return {
+      ok: false,
+      error:
+        'A equipe salva desta missão não está mais disponível. Escolha outra equipe antes de continuar.',
+    };
+  }
+  const workspace = useWorkspaceStore.getState().current;
+  if (!workspace) {
+    return {
+      ok: false,
+      error: 'Abra o workspace desta missão antes de continuar.',
+    };
+  }
 
   const goal =
     mission.intentContract?.goal?.trim() ||
     mission.description?.trim() ||
     '';
-
-  useMissionWizardStore.getState().openForArmedMission(squadId, mission.id);
-  // Seed draft so the wizard restores the objective on open (same path as soft-close).
-  useMissionWizardStore.getState().saveDraft({
-    variant: 'mission',
-    step: 'intent-compose',
-    mode: 'agentic',
-    intent: goal,
-    missionGoal: goal,
-    missionLane:
-      mission.intentContract?.lane === 'consult'
-        ? 'consult'
-        : mission.intentContract?.lane === 'plan'
-          ? 'plan'
-          : mission.intentContract?.lane === 'ops'
-            ? 'ops'
-            : 'standard',
-    squadId,
-    armedMissionId: mission.id,
-    count: 2,
-    slots: [],
-    wsPath: '',
-    missionAttachments: [],
-  });
-
+  if (!goal) {
+    return {
+      ok: false,
+      error: 'A missão antiga não possui um objetivo recuperável.',
+    };
+  }
+  const lane = mission.intentContract?.lane ?? 'standard';
+  setup.setWorkspace(workspace.path);
+  useProductNavigationStore.getState().openMissionSetup();
+  const seeded = useMissionSetupStore
+    .getState()
+    .beginLegacyReplacementReview({
+      workspacePath: workspace.path,
+      supersededMissionId: mission.id,
+      objective: goal,
+      title: mission.title,
+      contextPaths: mission.intentContract?.contextPaths ?? [],
+      roster: squad.agents,
+      acceptanceCriteria: [
+        ...(mission.intentContract?.acceptanceCriteria ?? []),
+      ],
+      lane,
+    });
+  if (!seeded) {
+    return {
+      ok: false,
+      error: 'Não foi possível restaurar esta missão na revisão canônica.',
+    };
+  }
   return { ok: true, panes: 0, intentShell: true };
 }
 
 /**
- * Shared reopen entry for MissionRail, OpsBoard, and Orch panel.
- * Soft-focus when already live; confirm only when exclusive-auth kill
- * (e.g. second Claude orchestrator) is required. Safe multi-mission merges
- * without a confirm dialog.
+ * Shared reopen entry for retained mission callers. Soft-focus when already
+ * live; confirm only when an exclusive-auth kill is required.
  *
- * Intent-first shells (modo agêntico armado, Sem objetivo / Pronta) reopen
- * the wizard instead of failing with "sem panes".
+ * Intent-first shells with no pane evidence enter canonical replacement
+ * Review instead of failing with "sem panes".
  */
 export async function confirmAndReopenMission(
   mission: Mission,
@@ -117,8 +143,8 @@ export async function confirmAndReopenMission(
     isArmedShell: isIntentFirstMissionShell(mission),
     plannedWork,
   });
-  // Assistente SÓ com prova de zero panes; estado não reconhecido permanece
-  // na página com aviso, nunca cai no assistente por fallback.
+  // Replacement Review only with proof of zero panes; an unrecognized state
+  // stays in place with a notice and never falls through to Setup.
   if (route.kind === 'wizard') return resumeIntentFirstMissionShell(mission);
   if (route.kind === 'stay') return { ok: false, error: route.notice };
 
@@ -130,7 +156,7 @@ export async function confirmAndReopenMission(
       const specs = await window.nexus.orch.listMissionPanes(mission.id);
       const orch = specs.find((s) => s.role === 'orchestrator') ?? specs[0];
       wouldKill = hardReopenWouldKillAgents(orch?.adapterId);
-      // Race: list came back empty for a shell we didn't classify — still wizard.
+      // A racing empty list for a recognized shell still uses replacement Review.
       if (specs.length === 0 && isIntentFirstMissionShell(mission)) {
         return resumeIntentFirstMissionShell(mission);
       }

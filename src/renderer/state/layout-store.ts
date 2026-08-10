@@ -28,7 +28,6 @@ import {
   nextCanvasLayout,
 } from '../lib/canvas-layout';
 import { getActiveWorkspacePath } from './active-workspace';
-import { useHomeStore } from './home-store';
 import { notifyIfLastMissionPaneClosed } from '../orch/mission-last-pane-notify';
 import { isAutomatedReviewerPaneIdentity } from '../../shared/automated-reviewer-pane';
 
@@ -47,8 +46,11 @@ interface LayoutState {
   spawnAgent(adapterId: string, model: string): void;
   /** Replace the whole grid with an explicit set of panes (Modo Livre). */
   setPanes(panes: PaneModel[]): void;
-  /** Add a fresh shell terminal pane (＋ Terminal) alongside the others. */
-  addShellPane(): string;
+  /**
+   * Add a fresh shell terminal pane alongside the others. Callers that must
+   * wait for PTY readiness can opt out of focus until the session exists.
+   */
+  addShellPane(options?: { readonly focus?: boolean }): string;
   /** Add an embedded browser pane. */
   addBrowserPane(
     url?: string,
@@ -84,7 +86,7 @@ interface LayoutState {
   toggleMaximizePane(paneId: string): void;
   /** Drop a spent orchRequestId so Reiniciar does not reuse a dead token. */
   clearOrchRequestId(paneId: string): void;
-  /** Claim Home's empty-state shell so automation can never discard it. */
+  /** Claim the canonical structural vacancy as an operator shell. */
   claimStructuralPlaceholder(paneId: string): void;
   focus(paneId: string): void;
   setTitle(paneId: string, title: string): void;
@@ -149,10 +151,18 @@ function ownsPersistedLayout(key: string): boolean {
   return layoutWorkspacePath === key;
 }
 
-let terminalSnapshotProvider: ((paneId: string) => string | undefined) | null = null;
+/** Fita ANSI mais a largura em que foi capturada — o replay depende das duas. */
+export interface TerminalSnapshot {
+  readonly data: string;
+  readonly cols: number;
+}
+
+let terminalSnapshotProvider:
+  | ((paneId: string) => TerminalSnapshot | undefined)
+  | null = null;
 
 export function setTerminalSnapshotProvider(
-  provider: ((paneId: string) => string | undefined) | null,
+  provider: ((paneId: string) => TerminalSnapshot | undefined) | null,
 ): void {
   terminalSnapshotProvider = provider;
 }
@@ -166,12 +176,17 @@ function rootWithTerminalSnapshots(root: LayoutNode): LayoutNode {
     // next restore. Whatever a stray host reports for this id, it is not this
     // pane's work.
     if (isStructuralPlaceholderPane(root.pane)) return root;
-    const terminalScrollback = terminalSnapshotProvider(root.pane.id);
+    const snapshot = terminalSnapshotProvider(root.pane.id);
     return {
       ...root,
       pane: {
         ...root.pane,
-        ...(terminalScrollback ? { terminalScrollback } : {}),
+        ...(snapshot
+          ? {
+              terminalScrollback: snapshot.data,
+              terminalScrollbackCols: snapshot.cols,
+            }
+          : {}),
       },
     };
   }
@@ -599,8 +614,16 @@ function rootWithoutVacancyResidue(root: LayoutNode): LayoutNode {
   let next = root;
   for (const pane of listPanes(root)) {
     if (!isStructuralPlaceholderPane(pane)) continue;
-    if (pane.terminalScrollback === undefined) continue;
-    next = updatePane(next, pane.id, { terminalScrollback: undefined });
+    if (
+      pane.terminalScrollback === undefined &&
+      pane.terminalScrollbackCols === undefined
+    ) {
+      continue;
+    }
+    next = updatePane(next, pane.id, {
+      terminalScrollback: undefined,
+      terminalScrollbackCols: undefined,
+    });
   }
   return next;
 }
@@ -820,8 +843,14 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
     return newPane.id;
   },
 
-  addShellPane: () => {
-    const { root: currentRoot, focusedPaneId, viewKind, canvasNodeLayouts } = get();
+  addShellPane: (options) => {
+    const {
+      root: currentRoot,
+      focusedPaneId,
+      maximizedPaneId,
+      viewKind,
+      canvasNodeLayouts,
+    } = get();
     const newPane = createPane('shell', getActiveWorkspacePath() ?? undefined);
     const pivot = focusedPaneId ?? firstPaneId(currentRoot);
     // ＋ Terminal on a fresh workspace means "I want two terminals", so the
@@ -848,10 +877,11 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
           }
         : canvasNodeLayouts;
     bumpTreeVersion();
+    const focusNewPane = options?.focus !== false;
     set({
       root,
-      focusedPaneId: newPane.id,
-      maximizedPaneId: null,
+      focusedPaneId: focusNewPane ? newPane.id : focusedPaneId,
+      maximizedPaneId: focusNewPane ? null : maximizedPaneId,
       canvasNodeLayouts: updatedLayouts,
     });
     persist();
@@ -964,19 +994,14 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
     bumpTreeVersion();
     set({ root, focusedPaneId, maximizedPaneId });
     persist();
-    // Closing the LAST pane replaces it with a fresh shell — visually a no-op.
-    // Surface the Home deck so the click has feedback and a next step.
-    //
-    // This must fire for EVERY reason, not only an operator click. Gating it on
-    // `reason === 'user'` (an attempt to stop Home from covering a dead
-    // mission's transcript) left the window completely black when the runtime
-    // closed the last pane: there was no transcript left to protect and nothing
-    // took Home's place. Keeping a dead mission's output on screen has to be
-    // solved by not closing its pane, never by rendering nothing.
-    if (next === null) useHomeStore.getState().show();
-    // Missão viva que perdeu o último pane visível continua rodando Main-owned
-    // em segundo plano — avisa com ação de reabrir (o Home acima permanece;
-    // o toast cavalga por cima dele). Ver mission-last-pane-notify.ts.
+    // The tree cannot be empty, so closing the final pane leaves the canonical
+    // structural vacancy in place. Product navigation is the sole visible
+    // authority: Terminal keeps showing the actionable vacancy, while closing
+    // a runtime pane from Settings, Memory, Task Board, Setup, or Mission Board
+    // must not eject the operator from that destination.
+    // A live Main-owned mission that loses its last visible pane keeps running
+    // in the background; the notification offers recovery without taking over
+    // the current product destination.
     const closedPane = before.find((pane) => pane.id === paneId);
     if (closedPane) {
       notifyIfLastMissionPaneClosed(closedPane, reason, listPanes(root));

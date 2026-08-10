@@ -41,10 +41,12 @@ import {
   repaintAdoptedFrame,
 } from './adoption-repaint';
 import {
+  SCROLLBACK_WIDTH_MISMATCH_NOTICE,
   SESSION_BOUNDARY_NOTICE,
   terminalBufferHasContent,
 } from './session-boundary-notice';
 import {
+  canReplayScrollback,
   terminalGridChanged,
   terminalOutputPolicy,
   terminalScrollbackLines,
@@ -99,6 +101,14 @@ interface Host {
    */
   pendingScrollback?: string;
   /**
+   * Largura em que `pendingScrollback` foi capturado. Esperar a largura
+   * definitiva não basta: a fita já CARREGA a geometria antiga. Reescrever
+   * 100 colunas de moldura numa grade de 76 produz exatamente o entrelaçamento
+   * descrito acima. Quando as larguras não batem, o replay é descartado — um
+   * pane limpo com a sessão viva atrás é melhor que histórico ilegível.
+   */
+  pendingScrollbackCols?: number;
+  /**
    * The pane already shows (or is about to replay) content from a previous
    * session — persisted scrollback or an earlier live session in this same
    * xterm. A new session attaching to such a pane prints the
@@ -114,7 +124,17 @@ interface Host {
 function flushPendingScrollback(host: Host): void {
   const pending = host.pendingScrollback;
   if (!pending || host.disposed || !host.opened) return;
+  const capturedCols = host.pendingScrollbackCols;
   delete host.pendingScrollback;
+  delete host.pendingScrollbackCols;
+
+  // Geometria diferente: a fita é irrecuperável. Descartar é a única saída
+  // honesta — reflow não desfaz cursor absoluto.
+  if (!canReplayScrollback(capturedCols, host.term.cols)) {
+    host.term.write(SCROLLBACK_WIDTH_MISMATCH_NOTICE);
+    return;
+  }
+
   host.inputVisibility.follow();
   host.term.write(pending, () => {
     if (host.disposed || !host.inputVisibility.isFollowing) return;
@@ -249,7 +269,10 @@ setTerminalSnapshotProvider((paneId) => {
   if (!host || host.disposed || !host.opened) return undefined;
   try {
     flushTerminalOutput(host.term);
-    return host.serialize.serialize().slice(-MAX_PERSISTED_SCROLLBACK);
+    return {
+      data: host.serialize.serialize().slice(-MAX_PERSISTED_SCROLLBACK),
+      cols: host.term.cols,
+    };
   } catch {
     return undefined;
   }
@@ -310,8 +333,10 @@ function fontFamilyOf(settings: TerminalSettings): string {
 }
 
 function themeOf(settings: TerminalSettings) {
-  return (TERMINAL_THEMES[settings.themeId] ?? TERMINAL_THEMES['nexus-dark'])
-    .theme;
+  return (
+    TERMINAL_THEMES[settings.themeId] ??
+    TERMINAL_THEMES[DEFAULT_TERMINAL_SETTINGS.themeId]
+  ).theme;
 }
 
 /** Apply user settings: restyle every live terminal, remember for new ones. */
@@ -1192,6 +1217,7 @@ export function attachHost(pane: PaneModel, slot: HTMLElement): void {
     // no ResizeObserver, quando o slot ainda não é mensurável neste frame).
     if (pane.terminalScrollback) {
       host.pendingScrollback = pane.terminalScrollback;
+      host.pendingScrollbackCols = pane.terminalScrollbackCols;
       // Latched at assignment: flushPendingScrollback drops the pending copy
       // before xterm finishes parsing it, so a fast spawn must still see the
       // restored content and print the session boundary divider.
@@ -1726,10 +1752,10 @@ export function getPaneSessionId(paneId: string): string | null {
 const SESSION_WAIT_TIMEOUT_MS = 60_000;
 
 /**
- * Resolve with a pane's PTY session id once it materializes (spawn is async),
- * or null on timeout. Event-driven via onPaneSessionChange — the single shared
- * implementation that replaced three identical 150ms polling copies in the
- * orchestration modules.
+ * Resolve with a pane's PTY session id once it materializes, or null on
+ * timeout. A newly created operator shell can be waiting behind Settings, so
+ * this starts its backing host headlessly; navigation and focus remain with
+ * the caller until the real session event arrives.
  */
 export function waitForSession(
   paneId: string,
@@ -1737,6 +1763,23 @@ export function waitForSession(
 ): Promise<string | null> {
   const existing = getPaneSessionId(paneId);
   if (existing) return Promise.resolve(existing);
+  let pendingSpawn: Promise<string | null> | null = null;
+  const pane = listPanes(useLayoutStore.getState().root).find(
+    (candidate) => candidate.id === paneId,
+  );
+  if (pane?.kind === 'shell' && pane.isStructuralPlaceholder !== true) {
+    const host = getOrCreateHost(pane);
+    if (!host.spawnStarted && !host.hibernated) {
+      pendingSpawn = startSpawn(
+        pane,
+        host,
+        resumeOnFirstSpawn.delete(pane.id),
+        false,
+        undefined,
+        restoreAuthorityOnFirstSpawn.delete(pane.id),
+      );
+    }
+  }
   return new Promise((resolve) => {
     let settled = false;
     const finish = (value: string | null): void => {
@@ -1750,6 +1793,9 @@ export function waitForSession(
       if (id === paneId && sessionId) finish(sessionId);
     });
     const timer = setTimeout(() => finish(getPaneSessionId(paneId)), timeoutMs);
+    void pendingSpawn?.then((sessionId) => {
+      if (!sessionId) finish(null);
+    });
   });
 }
 

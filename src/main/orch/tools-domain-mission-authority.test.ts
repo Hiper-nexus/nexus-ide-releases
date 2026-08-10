@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   saveSquad: vi.fn(),
   createRemoteTmuxSession: vi.fn(),
   realMissionE2E: false,
+  completeVerified: vi.fn(),
 }));
 
 vi.mock('../../shared/real-mission-e2e', async (importOriginal) => {
@@ -23,6 +24,17 @@ vi.mock('./project-domain-store-registry', () => ({
   getProjectDomainStores: mocks.getProjectDomainStores,
 }));
 
+
+vi.mock('./mission-engine-registry', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('./mission-engine-registry')>();
+  return {
+    ...actual,
+    missionEngineForScope: () => ({
+      completeVerified: mocks.completeVerified,
+    }),
+  };
+});
 vi.mock('../context/context-workflow-registry', () => ({
   getContextWorkflowService: mocks.getContextWorkflowService,
 }));
@@ -185,20 +197,36 @@ describe('mission creation authority', () => {
   });
 
   it('allows standard-lane done with a durable note when no contract is frozen', async () => {
-    const setStatus = vi.fn((id: string, status: string) => ({
-      id,
-      status,
-    }));
+    const setStatus = vi.fn();
     const appendLearning = vi.fn();
+    let stored: Record<string, unknown> = {
+      id: 'mission-existing',
+      title: 'Login',
+      status: 'running',
+      intentState: 'executing',
+      intentVersion: 2,
+      updatedAt: 41,
+      learnings: '',
+      milestones: [],
+      intentContract: { lane: 'standard' },
+    };
+    mocks.completeVerified.mockImplementation(
+      (
+        _scope: unknown,
+        input: { result: unknown; learnings: string },
+      ) => {
+        stored = {
+          ...stored,
+          status: 'done',
+          intentState: 'done',
+          result: input.result,
+          learnings: input.learnings,
+        };
+      },
+    );
     mocks.getProjectDomainStores.mockReturnValue({
       missions: {
-        get: () => ({
-          id: 'mission-existing',
-          status: 'running',
-          learnings: '',
-          milestones: [],
-          intentContract: { lane: 'standard' },
-        }),
+        get: () => stored,
         setStatus,
         appendLearning,
       },
@@ -218,9 +246,24 @@ describe('mission creation authority', () => {
       context('orchestrator'),
     );
 
-    expect(result).toMatchObject({ id: 'mission-existing', status: 'done' });
-    expect(setStatus).toHaveBeenCalledWith('mission-existing', 'done');
-    expect(appendLearning).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({
+      id: 'mission-existing',
+      status: 'done',
+      result: {
+        outcome: 'success',
+        summary: 'Form de login corrigido e validado manualmente no navegador.',
+      },
+    });
+    expect(mocks.completeVerified).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        missionId: 'mission-existing',
+        expectedStatus: 'running',
+        result: expect.objectContaining({ outcome: 'success' }),
+      }),
+    );
+    expect(setStatus).not.toHaveBeenCalled();
+    expect(appendLearning).not.toHaveBeenCalled();
   });
 
   it('não aceita note como done de squad sem worker e handoff entregue', async () => {
@@ -469,20 +512,36 @@ describe('mission creation authority', () => {
   });
 
   it('allows ops-lane done with a durable note (no PREVC green required)', async () => {
-    const setStatus = vi.fn((id: string, status: string) => ({
-      id,
-      status,
-    }));
+    const setStatus = vi.fn();
     const appendLearning = vi.fn();
+    let stored: Record<string, unknown> = {
+      id: 'mission-existing',
+      title: 'Publicação operacional',
+      status: 'running',
+      intentState: 'executing',
+      intentVersion: 4,
+      updatedAt: 73,
+      learnings: '',
+      milestones: [],
+      intentContract: { lane: 'ops' },
+    };
+    mocks.completeVerified.mockImplementation(
+      (
+        _scope: unknown,
+        input: { result: unknown; learnings: string },
+      ) => {
+        stored = {
+          ...stored,
+          status: 'done',
+          intentState: 'done',
+          result: input.result,
+          learnings: input.learnings,
+        };
+      },
+    );
     mocks.getProjectDomainStores.mockReturnValue({
       missions: {
-        get: () => ({
-          id: 'mission-existing',
-          status: 'running',
-          learnings: '',
-          milestones: [],
-          intentContract: { lane: 'ops' },
-        }),
+        get: () => stored,
         setStatus,
         appendLearning,
       },
@@ -501,9 +560,17 @@ describe('mission creation authority', () => {
       context('orchestrator'),
     );
 
-    expect(result).toMatchObject({ id: 'mission-existing', status: 'done' });
-    expect(setStatus).toHaveBeenCalledWith('mission-existing', 'done');
-    expect(appendLearning).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({
+      id: 'mission-existing',
+      status: 'done',
+      result: {
+        outcome: 'success',
+        summary: 'Backup tar.gz gerado na VPS e landing page publicada no nginx.',
+      },
+    });
+    expect(mocks.completeVerified).toHaveBeenCalledOnce();
+    expect(setStatus).not.toHaveBeenCalled();
+    expect(appendLearning).not.toHaveBeenCalled();
   });
 
   it('rejects ops-lane done without a durable note', async () => {

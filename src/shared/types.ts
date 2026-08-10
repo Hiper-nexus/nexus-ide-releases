@@ -8,7 +8,6 @@
  */
 
 import type { AdapterInfo } from './adapter-types';
-import type { MissionTaskScheduleItem } from './mission-task-schedule';
 import type {
   MissionEngineCommand,
   MissionPrepareRequest,
@@ -16,7 +15,6 @@ import type {
   MissionSnapshot,
   MissionSummarySnapshot,
 } from './mission-engine-contract';
-import type { OnboardingState, OnboardingPatch } from './onboarding-types';
 import type {
   PetGalleryImportResult,
   PetGalleryListResult,
@@ -439,10 +437,6 @@ export interface NexusApi {
     rescan(): Promise<AdapterInfo[]>;
     onChanged(cb: (adapters: AdapterInfo[]) => void): Unsubscribe;
   };
-  onboarding: {
-    get(): Promise<OnboardingState>;
-    set(patch: OnboardingPatch): Promise<OnboardingState>;
-  };
   update: {
     /** Snapshot do estado do auto-update (fase, versão atual, disponível). */
     getState(): Promise<UpdateState>;
@@ -581,65 +575,6 @@ export interface NexusApi {
       missionId: string,
       sessionId: string,
     ): Promise<{ ok: boolean }>;
-    /** Patch a mission's editable fields (title/description/status/milestones). */
-    /** Cria o registro da missão no lançamento (não depende do LLM). */
-    createMission(input: {
-      title: string;
-      goal?: string;
-      squadId?: string;
-      orchestratorPane?: {
-        paneId: string;
-        adapterId: string;
-        model?: string;
-        accountId?: string;
-        cwd?: string;
-        title?: string;
-        agentName?: string;
-      };
-    }): Promise<Mission>;
-    authorizeImmediateSquadLaunch(input: {
-      squadId: string;
-      paneId: string;
-      adapterId: string;
-      model?: string;
-      accountId?: string;
-      effort?: string;
-      missionTitle: string;
-      missionGoal: string;
-    }): Promise<{ grant: string }>;
-    /** Intent-first: create awaiting_goal shell without orchestrator pane. */
-    armMission(input: { title: string; squadId: string }): Promise<Mission>;
-    submitMissionIntent(input: {
-      missionId: string;
-      goal: string;
-      source?: 'typed' | 'voice' | 'imported-issue' | 'automation';
-      contextPolicy?: 'none' | 'minimal' | 'on-demand';
-      acceptanceCriteria?: string[];
-      /** standard | consult | plan (design-only plan.md) | ops (infra, sem PREVC). */
-      lane?: 'standard' | 'consult' | 'plan' | 'ops';
-      orchestrationMode?: 'livre' | 'pack' | 'guided';
-      wavePackTemplateId?: 'landing' | 'saas' | 'fix';
-      /** Current print/audio evidence must be present before dispatch. */
-      evidenceAttached?: boolean;
-      /**
-       * Product wizard only: THIS submission will be shown in the in-app plan
-       * review, whose Start click counts as the approval (main-owned grant).
-       */
-      planReviewSurface?: 'product-wizard';
-    }): Promise<Mission>;
-    approveMissionIntent(input: {
-      missionId: string;
-      evidenceAttached?: boolean;
-      /** Staged candidates; main validates and canonicalizes before approval. */
-      attachmentPaths?: string[];
-    }): Promise<Mission>;
-    /**
-     * Materialize the approved mission's initial orchestrator. Runtime
-     * identity is derived and sealed in main; no provider metadata is input.
-     */
-    bootstrapMissionOrchestrator(input: {
-      missionId: string;
-    }): Promise<MissionOrchestratorBootstrapResult>;
     /**
      * Retry the orchestrator bootstrap of a mission the bootstrap itself
      * blocked (blocked_technical + marker). Main re-arms and re-validates.
@@ -647,13 +582,6 @@ export interface NexusApi {
     resumeMissionBootstrap(input: {
       missionId: string;
     }): Promise<MissionOrchestratorBootstrapResult>;
-    /**
-     * Re-arm a blocked mission (sanctioned user_resume/begin_execution) so
-     * pane restore can resolve the current authority seal. No spawn happens.
-     */
-    rearmMission(input: {
-      missionId: string;
-    }): Promise<{ ok: true } | { ok: false; error: string }>;
     /** After plan.md is ready: plan lane → standard execution. */
     promotePlanLane(input: {
       missionId: string;
@@ -661,58 +589,11 @@ export interface NexusApi {
       orchestrationMode?: 'pack' | 'guided';
       wavePackTemplateId?: 'landing' | 'saas' | 'fix';
     }): Promise<Mission>;
-    /** Submit an approved mission kickoff through main-owned PTY authority. */
-    submitMissionKickoff(input: {
-      missionId: string;
-      sessionId: string;
-    }): Promise<
-      | { accepted: true }
-      | {
-          accepted: false;
-          reason: 'boot_timeout' | 'timeout' | 'session_exited' | 'write_failed' | 'authority_lost';
-          detail: string;
-          cta: string;
-          retryScheduled?: boolean;
-        }
-    >;
-    /** Explicit prepare-project while still awaiting a real goal. */
-    prepareMissionProject(input: { missionId: string }): Promise<Mission>;
-    cancelMissionPreparation(input: {
-      missionId: string;
-    }): Promise<{ cancelled: boolean }>;
-    /** Runtime surface for prompt queue: executing / queued / cancelled. */
-    getMissionPromptQueue(input: { missionId: string }): Promise<{
-      executing: {
-        id: string;
-        kind: string;
-        status: string;
-        intentVersion: number;
-        body: string;
-      } | null;
-      queued: Array<{
-        id: string;
-        kind: string;
-        status: string;
-        intentVersion: number;
-        body: string;
-      }>;
-      cancelled: Array<{
-        id: string;
-        kind: string;
-        status: string;
-        intentVersion: number;
-        body: string;
-      }>;
-    }>;
     /** Mission event journal — recent projection (flag feature.mission.eventJournal). */
     missionEventsRecent(input: {
       missionId: string;
       limit?: number;
     }): Promise<{ events: unknown[]; enabled?: boolean; error?: string }>;
-    /** Read-only wave schedule — identities/status only, never sealed detail. */
-    missionTaskSchedule(input: {
-      missionId: string;
-    }): Promise<{ tasks: MissionTaskScheduleItem[] }>;
     missionEventsReplay(input: {
       missionId: string;
       afterSequence?: number;
@@ -728,20 +609,6 @@ export interface NexusApi {
       missionId: string;
       consumerId?: string;
     }): Promise<{ cursor: unknown; enabled?: boolean; error?: string }>;
-    bindMissionOrchestrator(input: {
-      missionId: string;
-      title: string;
-      squadId: string;
-      orchestratorPane: {
-        paneId: string;
-        adapterId?: string;
-        model?: string;
-        accountId?: string;
-        cwd?: string;
-        title?: string;
-        agentName?: string;
-      };
-    }): Promise<Mission>;
     updateMission(missionId: string, patch: MissionPatch): Promise<Mission>;
     closeMissionRuntime(missionId: string): Promise<MissionRuntimeCloseResult>;
     removeMission(missionId: string): Promise<{ removed: boolean }>;

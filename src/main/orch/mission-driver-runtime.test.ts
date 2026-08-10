@@ -136,6 +136,9 @@ function fakePorts(log: string[]): ApplyActionPorts {
     blockHuman: async (missionId, _s, reason) => {
       log.push(`blockHuman:${missionId}:${reason.slice(0, 40)}`);
     },
+    completeMission: async (missionId, _s, reason) => {
+      log.push(`complete:${missionId}:${reason.slice(0, 40)}`);
+    },
     appendLearning: async (missionId, _s, entry) => {
       log.push(`learn:${missionId}:${entry.slice(0, 40)}`);
     },
@@ -640,8 +643,10 @@ describe('runDriveTick', () => {
       mode: 'active',
     });
     expect(result.applyErrors).toBe(1);
-    expect(result.applied).toBe(0);
-    expect(log).not.toContain('complete:m-ok');
+    // m-ok tem trabalho verificado: fecha. m-bad falha no advance e conta erro
+    // sem abortar o tick — um defeito não pode impedir a outra missão de fechar.
+    expect(result.applied).toBe(1);
+    expect(log.some((entry) => entry.startsWith('complete:m-ok'))).toBe(true);
     expect(outcomes).toContainEqual({
       id: 'm-bad',
       outcome: 'failed',
@@ -726,7 +731,7 @@ describe('runDriveTick', () => {
     expect(iterationById.get('m-stalled')).toBe(1);
     warn.mockRestore();
   });
-  it('never applies a terminal write when completion is already verified', async () => {
+  it('aplica a conclusão terminal quando o trabalho já está verificado', async () => {
     const log: string[] = [];
     const decisions: DriveSnapshot[] = [];
     const ready = baseState({
@@ -748,11 +753,14 @@ describe('runDriveTick', () => {
 
     expect(decisions).toHaveLength(1);
     expect(decisions[0]!.action).toEqual({
-      kind: 'wait',
-      reason: 'terminal completion is verifier-owned',
+      kind: 'complete',
+      reason: 'trabalho planejado concluído — fechando a missão',
     });
-    expect(result.applied).toBe(0);
-    expect(log).toEqual([]);
+    expect(result.applied).toBe(1);
+    expect(log).toEqual([
+      'complete:m-ready:trabalho planejado concluído — fechando ',
+      'learn:m-ready:complete: trabalho planejado concluído —',
+    ]);
   });
 
 });

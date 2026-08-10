@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { useConfirmStore } from '../state/confirm-store';
 
 /**
@@ -8,7 +8,7 @@ import { useConfirmStore } from '../state/confirm-store';
  *   overlay de baixo (OpsBoard/Settings/Wizard) e atalhos globais (⌘K/⌘W)
  *   não vazam enquanto a pergunta está aberta;
  * - Tab preso nos controles (o focus-trap do SettingsDrawer não rouba);
- * - foco nasce no botão seguro (cancelar), ou no textarea se reason for pedido.
+ * - foco nasce no botão seguro (cancelar).
  */
 
 export function ConfirmDialog() {
@@ -16,16 +16,10 @@ export function ConfirmDialog() {
   const decide = useConfirmStore((s) => s.decide);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const confirmRef = useRef<HTMLButtonElement>(null);
-  const reasonRef = useRef<HTMLTextAreaElement>(null);
-  const [reason, setReason] = useState('');
 
   useEffect(() => {
     if (!pending) return undefined;
-    setReason('');
-    const focusTarget = pending.requireReason
-      ? reasonRef.current
-      : cancelRef.current;
-    focusTarget?.focus();
+    cancelRef.current?.focus();
     const onKey = (e: KeyboardEvent) => {
       // Nada atravessa o dialog: nem para os listeners de window dos
       // overlays de baixo, nem para os atalhos do App.
@@ -37,9 +31,6 @@ export function ConfirmDialog() {
       } else if (e.key === 'Tab') {
         e.preventDefault();
         const focusables: HTMLElement[] = [];
-        if (pending.requireReason && reasonRef.current) {
-          focusables.push(reasonRef.current);
-        }
         if (cancelRef.current) focusables.push(cancelRef.current);
         if (confirmRef.current) focusables.push(confirmRef.current);
         if (focusables.length === 0) return;
@@ -49,9 +40,9 @@ export function ConfirmDialog() {
           ? focusables[(idx <= 0 ? focusables.length : idx) - 1]
           : focusables[(idx + 1) % focusables.length];
         next?.focus();
-      } else if (e.key === 'Enter' && !pending.requireReason) {
+      } else if (e.key === 'Enter') {
         // Enter ativa o botão focado (comportamento nativo que o stop acima
-        // não deve engolir). With a reason field, Enter stays in the textarea.
+        // não deve engolir).
         if (
           document.activeElement === cancelRef.current ||
           document.activeElement === confirmRef.current
@@ -67,10 +58,6 @@ export function ConfirmDialog() {
 
   if (!pending) return null;
 
-  const minReason = pending.reasonMinLength ?? 8;
-  const reasonOk =
-    !pending.requireReason || reason.trim().length >= minReason;
-
   return (
     <div
       className="confirm"
@@ -82,27 +69,6 @@ export function ConfirmDialog() {
       <div className="confirm__panel">
         <h3 className="confirm__title">{pending.title}</h3>
         <p className="confirm__body">{pending.body}</p>
-        {pending.requireReason && (
-          <label className="confirm__reason">
-            <span className="confirm__reason-label">
-              {pending.reasonLabel}
-            </span>
-            <textarea
-              ref={reasonRef}
-              className="confirm__reason-input"
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              placeholder={pending.reasonPlaceholder ?? 'Descreva o motivo…'}
-              rows={3}
-              aria-required="true"
-            />
-            {reason.trim().length > 0 && !reasonOk && (
-              <span className="confirm__reason-hint">
-                Mínimo {minReason} caracteres.
-              </span>
-            )}
-          </label>
-        )}
         <div className="confirm__actions">
           <button
             ref={cancelRef}
@@ -116,8 +82,7 @@ export function ConfirmDialog() {
             ref={confirmRef}
             type="button"
             className={`confirm__btn ${pending.danger ? 'confirm__btn--danger' : 'confirm__btn--primary'}`}
-            disabled={!reasonOk}
-            onClick={() => decide(true, reason)}
+            onClick={() => decide(true)}
           >
             {pending.confirmLabel}
           </button>

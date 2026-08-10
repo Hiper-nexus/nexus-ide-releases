@@ -64,6 +64,11 @@ export function humanizeToastDetail(
   return humanizeMissionErrorDetail(detail);
 }
 
+
+const ATTENTION_TITLE_PATTERN =
+  /^Missão precisa de você$/i;
+const ATTENTION_GROUP_KEY = 'mission-attention-group';
+
 function inferredDedupeKey(
   kind: ToastKind,
   title: string,
@@ -72,7 +77,7 @@ function inferredDedupeKey(
   // These are successive views of the same launch incident. A confirmed retry
   // still replaces the previous error because every new state remains visible.
   if (
-    /^(?:Frota em campo|Não deu pra iniciar (?:a execução|o squad)|Missão precisa de você)$/i.test(
+    /^(?:Frota em campo|Não deu pra iniciar (?:a execução|o squad)|Missão precisa de você|\d+ missões precisam de você)$/i.test(
       title.trim(),
     )
   ) {
@@ -81,6 +86,20 @@ function inferredDedupeKey(
   return `${kind}:${normalizeWhitespace(title).toLocaleLowerCase('pt-BR')}:${
     detail?.toLocaleLowerCase('pt-BR') ?? ''
   }`;
+}
+function isAttentionToastTitle(kind: ToastKind, title: string): boolean {
+  return (
+    kind === 'warn' &&
+    (ATTENTION_TITLE_PATTERN.test(title.trim()) ||
+      /^\d+\s+missões precisam de você$/i.test(title.trim()))
+  );
+}
+
+function isAttentionToast(item: Toast): boolean {
+  return (
+    item.dedupeKey === ATTENTION_GROUP_KEY ||
+    isAttentionToastTitle(item.kind, item.title)
+  );
 }
 
 function clearToastTimer(id: number): void {
@@ -99,9 +118,30 @@ export const useToastStore = create<ToastStore>((set, get) => ({
       typeof detailOrOptions === 'string'
         ? { detail: detailOrOptions }
         : detailOrOptions ?? {};
-    const detail = humanizeToastDetail(opts.detail);
-    const dedupeKey =
+    let detail = humanizeToastDetail(opts.detail);
+    let dedupeKey =
       opts.dedupeKey ?? inferredDedupeKey(kind, title, detail);
+
+    // Bridge-style grouping: repeated "needs you" warnings collapse into ONE
+    // actionable card with a running count instead of stacking identical ones.
+    if (isAttentionToastTitle(kind, title) && opts.action) {
+      const existing = get().toasts.filter(isAttentionToast);
+      if (existing.length > 0) {
+        const previousCount = existing.reduce((acc, item) => {
+          const match = /^(\d+)\s+missões/i.exec(item.title.trim());
+          return acc + (match ? Number.parseInt(match[1], 10) : 1);
+        }, 0);
+        for (const item of existing) {
+          clearToastTimer(item.id);
+        }
+        set({ toasts: get().toasts.filter((item) => !isAttentionToast(item)) });
+        title = `${previousCount + 1} missões precisam de você`;
+        detail = 'Várias execuções aguardam decisão. Abra o Quadro para ver todas.';
+        opts.action = { label: 'Ver missões', onClick: opts.action.onClick };
+        dedupeKey = ATTENTION_GROUP_KEY;
+      }
+    }
+
     const toast: Toast = {
       id,
       kind,

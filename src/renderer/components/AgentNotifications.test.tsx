@@ -9,6 +9,8 @@ import {
 import { useAgentNotificationStore } from '../state/agent-notification-store';
 import { useLayoutStore } from '../state/layout-store';
 import { useToastStore } from '../state/toast-store';
+import { useOrchStore } from '../state/orch-store';
+import { useProductNavigationStore } from '../state/product-navigation-store';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
   .IS_REACT_ACT_ENVIRONMENT = true;
@@ -71,6 +73,13 @@ describe('AgentNotifications', () => {
     useAgentNotificationStore.setState({ items: [], open: false });
     seedPane(true);
     useToastStore.setState({ toasts: [] } as never);
+    useOrchStore.setState({
+      paneMissions: {},
+    } as never);
+    useProductNavigationStore.setState({
+      destination: { kind: 'terminal' },
+      settingsReturnDestination: null,
+    });
     const focus = vi.fn();
     useLayoutStore.setState({ focus } as never);
   });
@@ -140,10 +149,30 @@ describe('AgentNotifications', () => {
     expect(document.activeElement).toBe(bell);
   });
 
-  it('jump-to-pane on a live pane focuses it and closes the panel', () => {
+  it('closes the inbox when a full-page product destination takes authority', () => {
+    seed('completed');
+    const { host } = mount();
+    const bell = host.querySelector<HTMLButtonElement>(
+      '.agent-notif__bell',
+    )!;
+    act(() => bell.click());
+    expect(useAgentNotificationStore.getState().open).toBe(true);
+
+    act(() => useProductNavigationStore.getState().openTaskBoard());
+
+    expect(useAgentNotificationStore.getState().open).toBe(false);
+    expect(document.querySelector('.agent-notif__panel')).toBeNull();
+    expect(document.activeElement).not.toBe(bell);
+  });
+
+  it('jump-to-pane on a truly unbound live pane opens generic Terminal, focuses it, and closes the panel', () => {
     seed('completed');
     const focus = vi.fn();
     useLayoutStore.setState({ focus } as never);
+    useProductNavigationStore.setState({
+      destination: { kind: 'memory' },
+      settingsReturnDestination: null,
+    });
     const { host } = mount();
     act(() =>
       host.querySelector<HTMLButtonElement>('.agent-notif__bell')!.click(),
@@ -151,6 +180,38 @@ describe('AgentNotifications', () => {
     const jump = inPanel<HTMLButtonElement>('.agent-notif__action--primary')!;
     act(() => jump.click());
     expect(focus).toHaveBeenCalledWith('pane-1');
+    expect(useProductNavigationStore.getState().destination).toEqual({
+      kind: 'terminal',
+    });
+    expect(useAgentNotificationStore.getState().open).toBe(false);
+  });
+
+  it('jump-to-pane honors paneMissions-only ownership and opens Mission Terminals', () => {
+    seed('completed');
+    useOrchStore.setState({
+      paneMissions: { [PANE.id]: 'mission-bound' },
+    });
+    useProductNavigationStore.setState({
+      destination: { kind: 'memory' },
+      settingsReturnDestination: null,
+    });
+    const focus = vi.fn();
+    useLayoutStore.setState({ focus } as never);
+    const { host } = mount();
+    act(() =>
+      host.querySelector<HTMLButtonElement>('.agent-notif__bell')!.click(),
+    );
+
+    act(() =>
+      inPanel<HTMLButtonElement>('.agent-notif__action--primary')!.click(),
+    );
+
+    expect(useProductNavigationStore.getState().destination).toEqual({
+      kind: 'mission',
+      missionId: 'mission-bound',
+      surface: 'terminals',
+    });
+    expect(focus).toHaveBeenCalledWith(PANE.id);
     expect(useAgentNotificationStore.getState().open).toBe(false);
   });
 

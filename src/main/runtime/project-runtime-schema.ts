@@ -774,6 +774,11 @@ CREATE INDEX idx_command_stats_last_used
   ON command_stats(last_used DESC);
 `;
 
+/** Canonical, main-verified mission output rendered by the result inspector. */
+const MISSION_RESULT_SCHEMA = `
+ALTER TABLE missions ADD COLUMN result_json TEXT;
+`;
+
 /** Durable Ralph-loop budget plus immutable PREVC step receipts. */
 const MISSION_DRIVER_RUNTIME_SCHEMA = `
 CREATE TABLE mission_drive_state (
@@ -911,5 +916,11 @@ export const INITIAL_PROJECT_MIGRATIONS: readonly ProjectMigration[] =
       schemaVersion: 36,
       appVersion: '0.28.0',
       sql: COMMAND_REFINERY_SCHEMA,
+    }),
+    createProjectMigration({
+      id: '037-mission-result',
+      schemaVersion: 37,
+      appVersion: '0.28.1',
+      sql: MISSION_RESULT_SCHEMA,
     }),
   ]);

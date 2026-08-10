@@ -567,7 +567,7 @@ describe('createProductionApplyPorts advance/complete', () => {
     expect(prevcAdvance).not.toHaveBeenCalled();
   });
 
-  it('does not expose a terminal completion port from the mission driver', () => {
+  it('expõe a porta de conclusão terminal do driver — fechar é a função do produto', () => {
     const mission = makeMission([]);
     const ports = createProductionApplyPorts(
       {
@@ -589,7 +589,7 @@ describe('createProductionApplyPorts advance/complete', () => {
         }) as never,
     );
 
-    expect(ports).not.toHaveProperty('completeMission');
+    expect(ports).toHaveProperty('completeMission');
   });
 
 
@@ -987,6 +987,9 @@ describe('createProductionApplyPorts advance/complete', () => {
           throw new Error('unexpected user block');
         },
         blockTechnical,
+        completeVerified: () => {
+          throw new Error('unexpected completion');
+        },
       }),
     );
 

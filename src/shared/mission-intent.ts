@@ -216,11 +216,34 @@ export type MissionOrchestratorRuntimeSnapshot = z.infer<
 
 export const missionAttachmentSnapshotSchema = z
   .object({
+    /** Provider input. Sealed Pet snapshots point outside the checkout. */
     path: z.string().min(1).max(4_096),
     sha256: z.string().regex(/^[a-f0-9]{64}$/),
     size: z.number().int().nonnegative().max(14 * 1024 * 1024),
+    /** Display-only origin reviewed by the operator; never a sandbox grant. */
+    sourcePath: z.string().min(1).max(4_096).optional(),
+    /** Main-minted random identity embedded in the sealed artifact filename. */
+    sealId: z.string().regex(/^[a-f0-9]{32,128}$/).optional(),
+    /** Persisted identity of the exact sealed regular file. */
+    device: z.string().regex(/^[0-9]+$/).optional(),
+    inode: z.string().regex(/^[0-9]+$/).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((snapshot, context) => {
+    const sealedMetadata = [
+      snapshot.sourcePath,
+      snapshot.sealId,
+      snapshot.device,
+      snapshot.inode,
+    ];
+    const present = sealedMetadata.filter((value) => value !== undefined).length;
+    if (present !== 0 && present !== sealedMetadata.length) {
+      context.addIssue({
+        code: 'custom',
+        message: 'sealed attachment metadata must be complete',
+      });
+    }
+  });
 export type MissionAttachmentSnapshot = z.infer<
   typeof missionAttachmentSnapshotSchema
 >;

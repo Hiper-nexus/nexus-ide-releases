@@ -788,7 +788,7 @@ function assertPublishPhysicalCandidateCore(
     typeof evidencePath !== 'string'
   ) {
     throw new Error(
-      'release publication requires an authoritative physical product-wizard receipt',
+      'release publication requires an authoritative physical Mission Setup receipt',
     );
   }
   const stat = fs.lstatSync(evidencePath);

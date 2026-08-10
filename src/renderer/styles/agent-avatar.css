@@ -203,16 +203,14 @@
   flex: 0 0 auto;
   padding-left: 2px;
 }
-.agent-avatar-group .agent-avatar,
-.agent-avatar-group .ops-board__agent-focus .agent-avatar {
+.agent-avatar-group .agent-avatar {
   border-radius: 50% !important;
   box-shadow:
     0 0 0 2px var(--bg-elevated, #141416),
     inset 0 0 0 1px color-mix(in srgb, var(--agent-state) 30%, var(--border));
   transition: transform 140ms var(--ease-out-quart, ease), box-shadow 140ms ease;
 }
-.agent-avatar-group .agent-avatar:hover,
-.agent-avatar-group .ops-board__agent-focus:hover .agent-avatar {
+.agent-avatar-group .agent-avatar:hover {
   transform: translateY(-2px) scale(1.14);
   z-index: 10;
   box-shadow:
@@ -228,18 +226,6 @@
   .toolbar__agent-avatar { display: none; }
 }
 
-@media (max-width: 760px) {
-  .wizard__agent-identity .agent-avatar { --agent-size: 30px; }
-  .home-deck__squad .agent-avatar-group .agent-avatar:nth-child(n + 5) { display: none; }
-}
-
-@media (max-width: 620px) {
-  .home-deck__squad .agent-avatar-group .agent-avatar:nth-child(n + 4) { display: none; }
-}
-
-@media (max-width: 480px) {
-  .home-deck__squad .agent-avatar-group .agent-avatar:nth-child(n + 3) { display: none; }
-}
 
 @media (prefers-reduced-motion: reduce) {
   .agent-avatar,

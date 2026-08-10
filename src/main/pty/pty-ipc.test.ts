@@ -77,6 +77,7 @@ const settingsDeps = vi.hoisted(() => ({
 
 const providerDeps = vi.hoisted(() => ({
   prepareProviderSpawn: vi.fn(),
+  prepareProviderSpawnAuthoritative: vi.fn(),
   providerReadiness: vi.fn(() => ({ ready: true, reason: "ready" })),
   providerSpawnOverrides: vi.fn(() => ({
     binPath: "/usr/local/bin/claude",
@@ -167,11 +168,16 @@ vi.mock("../adapters/adapter-registry", () => ({
             },
           },
         }
-      : id === "opencode" || id === "custom"
+      : id === "opencode" || id === "custom" || id === "agy"
         ? {
             id,
             kind: "cli-pty",
-            label: id === "opencode" ? "OpenCode" : "Custom CLI",
+            label:
+              id === "opencode"
+                ? "OpenCode"
+                : id === "agy"
+                  ? "Antigravity"
+                  : "Custom CLI",
             bin: id,
             install: { command: `install ${id}` },
             quirks: { mcpAutoload: true },
@@ -192,6 +198,8 @@ vi.mock("../path-resolver", () => ({
 vi.mock("../persistence/provider-config-store", () => ({
   isProviderEnabled: () => true,
   prepareProviderSpawn: providerDeps.prepareProviderSpawn,
+  prepareProviderSpawnAuthoritative:
+    providerDeps.prepareProviderSpawnAuthoritative,
   providerReadiness: providerDeps.providerReadiness,
   providerSpawnOverrides: providerDeps.providerSpawnOverrides,
 }));
@@ -540,6 +548,64 @@ describe("registerPtyIpc account fail-fast", () => {
       "pty-created",
       authorityDeps.scope,
     );
+  });
+
+  it("revalidates AGY auth at the final PTY spawn boundary", async () => {
+    const sender = { id: 7 };
+    const basePending = sealedPendingSpawn();
+    const pending = {
+      ...basePending,
+      sealedRequest: {
+        ...basePending.sealedRequest,
+        adapterId: "agy",
+        accountId: undefined,
+      },
+    };
+    authorityDeps.claimPendingSpawnMeta.mockReturnValueOnce(pending);
+    authorityDeps.getMission.mockReturnValueOnce(approvedMissionForSpawn());
+    authorityDeps.resolveCwdForScope.mockReturnValueOnce(
+      "/workspace/a/packages/api",
+    );
+    providerDeps.prepareProviderSpawnAuthoritative.mockResolvedValueOnce({
+      ok: true,
+      overrides: {
+        binPath: "/usr/local/bin/agy",
+        defaultModel: null,
+        extraArgs: [],
+        keyEnv: {},
+        suppressEnv: [],
+      },
+    });
+    const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
+    const request = {
+      kind: "cli-agent" as const,
+      adapterId: "agy",
+      model: "sealed-model",
+      effort: "high",
+      orchRequestId: "orchspawn-1",
+      missionId: "mission-a",
+      paneId: "pane-main-sealed",
+      cwd: "/workspace/a/packages/api",
+      resume: false,
+      resumeLatestOnly: false,
+      restorePersistedAuthority: false,
+      cols: 100,
+      rows: 30,
+    };
+
+    await expect(handler?.({ sender }, request)).resolves.toEqual({
+      ok: true,
+      sessionId: "pty-created",
+    });
+    expect(
+      providerDeps.prepareProviderSpawnAuthoritative,
+    ).toHaveBeenCalledWith("agy", {
+      effort: "high",
+      accountId: undefined,
+      model: "sealed-model",
+      isolatedHome: expect.any(Boolean),
+    });
+    expect(providerDeps.prepareProviderSpawn).not.toHaveBeenCalled();
   });
 
   it.each([

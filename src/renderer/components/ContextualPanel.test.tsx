@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useContextualPanelNavStore } from "../state/contextual-panel-nav-store";
 import { ContextualPanel } from "./ContextualPanel";
 
@@ -49,7 +49,46 @@ describe("ContextualPanel renderer navigation", () => {
     act(() => root.unmount());
   });
 
-  it("keeps only relevant tabs and supports roving keyboard navigation", () => {
+  it("reports visibility so AppShell can own the secondary inspector slot", () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const onStateChange = vi.fn();
+    act(() => {
+      root.render(
+        <ContextualPanel
+          workspaceId="/tmp/nexus"
+          storage={null}
+          initial={{ visible: false }}
+          onStateChange={onStateChange}
+        />,
+      );
+    });
+
+    expect(onStateChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        workspaceId: "/tmp/nexus",
+        visible: false,
+      }),
+    );
+
+    act(() => {
+      host
+        .querySelector<HTMLButtonElement>(
+          '[aria-label="Abrir painel de contexto"]',
+        )
+        ?.click();
+    });
+
+    expect(onStateChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        workspaceId: "/tmp/nexus",
+        visible: true,
+      }),
+    );
+    act(() => root.unmount());
+  });
+  it("normalizes retired tabs and supports roving keyboard navigation", () => {
     const host = document.createElement("div");
     document.body.appendChild(host);
     const root = createRoot(host);
@@ -57,7 +96,7 @@ describe("ContextualPanel renderer navigation", () => {
       root.render(
         <ContextualPanel
           storage={null}
-          initial={{ visible: true, activeTab: "mission" }}
+          initial={{ visible: true, activeTab: "browser" }}
           relevantTabs={["mission", "editor", "git", "search"]}
           children={{
             mission: <span>Missão</span>,
@@ -68,6 +107,14 @@ describe("ContextualPanel renderer navigation", () => {
         />,
       );
     });
+
+    act(() => useContextualPanelNavStore.getState().openTab("browser"));
+    expect(host.querySelector('[data-testid="ctx-tab-mission"]')).toBeTruthy();
+    expect(
+      [...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')].some(
+        (tab) => tab.textContent === "Browser",
+      ),
+    ).toBe(false);
 
     const tabs = [
       ...host.querySelectorAll<HTMLButtonElement>('[role="tab"]'),

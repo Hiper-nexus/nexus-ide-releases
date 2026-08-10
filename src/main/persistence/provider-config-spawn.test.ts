@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const spawnDeps = vi.hoisted(() => ({
   prepareAccount: vi.fn(),
   runtimeKey: vi.fn<() => string | null>(() => 'sk-global-other-account'),
+  hasSecret: vi.fn(() => false),
   launcherKey: vi.fn<(providerId: string) => string | null>(() => null),
   subscriptionAuthed: vi.fn<
     (adapterId: string, model?: string) => boolean
@@ -115,7 +116,7 @@ const agyAdapter = {
     loginHint: 'agy login',
   },
   env: {
-    passthrough: [],
+    passthrough: ['ANTHROPIC_API_KEY', 'AGY_API_KEY'],
   },
   models: {
     flag: '--model',
@@ -225,7 +226,7 @@ vi.mock('../adapters/custom-models', () => ({
 vi.mock('./secrets-store', () => ({
   getKey: spawnDeps.runtimeKey,
   hasCachedSecret: () => false,
-  hasSecret: () => false,
+  hasSecret: spawnDeps.hasSecret,
   isSecureStorageAvailable: () => true,
   maskedKey: () => null,
   setKey: vi.fn(),
@@ -267,6 +268,7 @@ vi.mock('./account-store', () => ({
 import {
   listProviderSettings,
   prepareProviderSpawn,
+  prepareProviderSpawnAuthoritative,
   providerAuthStrategyAuthoritativeAsync,
   providerReadiness,
 } from './provider-config-store';
@@ -275,6 +277,7 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     spawnDeps.runtimeKey.mockReturnValue('sk-global-other-account');
+    spawnDeps.hasSecret.mockReturnValue(false);
     spawnDeps.launcherKey.mockReturnValue(null);
     spawnDeps.subscriptionAuthed.mockReturnValue(true);
     spawnDeps.subscriptionStatusAuthed.mockReturnValue(true);
@@ -432,6 +435,139 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
     );
   });
 
+  it('prepares AGY from the authoritative auth proof without decrypting the vault', async () => {
+    spawnDeps.subscriptionStatusAuthed.mockReturnValue(false);
+    spawnDeps.runtimeKey.mockClear();
+    spawnDeps.resolveAuthStrategy.mockImplementation((input) =>
+      input.subscriptionAuthed
+        ? {
+            strategy: 'subscription',
+            injectKey: false,
+            suppressKeyEnv: true,
+          }
+        : {
+            strategy: 'login-needed',
+            injectKey: false,
+            suppressKeyEnv: false,
+          },
+    );
+
+    await expect(
+      prepareProviderSpawnAuthoritative('agy', {
+        model: 'gemini-3.6-flash-high',
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      overrides: {
+        binPath: '/opt/homebrew/bin/agy',
+        keyEnv: {},
+      },
+    });
+    expect(spawnDeps.refreshAgyAuth).toHaveBeenCalledWith(
+      expect.any(String),
+      undefined,
+      { authoritative: true },
+    );
+    expect(spawnDeps.runtimeKey).not.toHaveBeenCalled();
+  });
+
+  it.each(['api_key', 'subscription'] as const)(
+    'keeps an authoritative AGY subscription ahead of a stale implicit %s account',
+    async (mode) => {
+      spawnDeps.hasSecret.mockReturnValue(true);
+      spawnDeps.listAccounts.mockReturnValue([
+        {
+          id: `agy-stale-${mode}`,
+          adapterId: 'agy',
+          label: 'Stale AGY credential',
+          mode,
+          upstream: 'anthropic',
+          createdAt: 1,
+        },
+      ]);
+      spawnDeps.getActiveAccount.mockReturnValue({
+        id: `agy-stale-${mode}`,
+        adapterId: 'agy',
+        label: 'Stale AGY credential',
+        mode,
+        upstream: 'anthropic',
+        createdAt: 1,
+      });
+
+      await expect(
+        prepareProviderSpawnAuthoritative('agy', {
+          model: 'gemini-3.6-flash-high',
+        }),
+      ).resolves.toMatchObject({
+        ok: true,
+        overrides: {
+          keyEnv: {},
+          suppressEnv: ['ANTHROPIC_API_KEY', 'AGY_API_KEY'],
+        },
+      });
+      expect(spawnDeps.getActiveAccount).not.toHaveBeenCalled();
+      expect(spawnDeps.ensureSubscriptionActive).not.toHaveBeenCalled();
+      expect(spawnDeps.runtimeKey).not.toHaveBeenCalled();
+    },
+  );
+
+  it('fails closed when the authoritative AGY Keychain proof is unavailable', async () => {
+    spawnDeps.hasSecret.mockReturnValue(true);
+    spawnDeps.refreshAgyAuth.mockRejectedValueOnce(
+      new Error('simulated Keychain outage'),
+    );
+
+    await expect(
+      prepareProviderSpawnAuthoritative('agy', {
+        model: 'gemini-3.6-flash-high',
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringContaining('sessão nativa do AGY'),
+    });
+    expect(spawnDeps.runtimeKey).not.toHaveBeenCalled();
+  });
+
+  it('uses the API-key fallback only after an authoritative AGY absence', async () => {
+    spawnDeps.hasSecret.mockReturnValue(true);
+    spawnDeps.refreshAgyAuth.mockResolvedValueOnce({
+      value: false,
+      cacheUpdated: false,
+    });
+    spawnDeps.resolveAuthStrategy.mockImplementation((input) =>
+      input.subscriptionAuthed
+        ? {
+            strategy: 'subscription',
+            injectKey: false,
+            suppressKeyEnv: true,
+          }
+        : input.hasStoredKey
+          ? {
+              strategy: 'api-key',
+              injectKey: true,
+              suppressKeyEnv: false,
+            }
+          : {
+              strategy: 'login-needed',
+              injectKey: false,
+              suppressKeyEnv: false,
+            },
+    );
+
+    await expect(
+      prepareProviderSpawnAuthoritative('agy', {
+        model: 'gemini-3.6-flash-high',
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      overrides: {
+        keyEnv: { ANTHROPIC_API_KEY: 'sk-global-other-account' },
+        suppressEnv: [],
+      },
+    });
+    expect(spawnDeps.runtimeKey).toHaveBeenCalledWith('agy');
+  });
+
   it.each([
     'openrouter/openai/gpt-5',
     'opencode/unreviewed-free',
@@ -568,6 +704,38 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
     expect(result).toMatchObject({ ok: false });
     if (result.ok) throw new Error('expected a refused claude spawn');
     expect(result.error).toMatch(/credencial nativa do Claude/i);
+  });
+
+  it('preserves a non-AGY active account when native subscription auth also exists', () => {
+    spawnDeps.listAccounts.mockReturnValue([
+      {
+        id: 'kimi-managed-key',
+        adapterId: 'kimi',
+        label: 'Managed Kimi key',
+        mode: 'api_key',
+        upstream: 'anthropic',
+        createdAt: 1,
+      },
+    ]);
+    spawnDeps.getActiveAccount.mockReturnValue({
+      id: 'kimi-managed-key',
+      adapterId: 'kimi',
+      label: 'Managed Kimi key',
+      mode: 'api_key',
+      upstream: 'anthropic',
+      createdAt: 1,
+    });
+
+    expect(prepareProviderSpawn('kimi')).toMatchObject({
+      ok: true,
+      overrides: {
+        keyEnv: {
+          KIMI_MODEL_API_KEY: 'sk-active-other-account',
+        },
+        suppressEnv: [],
+      },
+    });
+    expect(spawnDeps.getActiveAccount).toHaveBeenCalledWith('kimi');
   });
 
   it('injects Kimi API credentials through the official transient-model env', () => {

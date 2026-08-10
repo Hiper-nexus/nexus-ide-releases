@@ -21,7 +21,7 @@ describe('toast store UX policy', () => {
   it('turns Electron transport errors into a short recovery instruction', () => {
     expect(
       humanizeToastDetail(
-        "Error invoking remote method 'orch:missions.approvalIntent': Error: " +
+        "Error invoking remote method 'orch:mission.start': Error: " +
           'guided_plan_preflight_blocked: guided_plan_unborn_with_files: ' +
           'faça o primeiro commit dos arquivos existentes e tente iniciar a missão novamente',
       ),
@@ -34,7 +34,7 @@ describe('toast store UX policy', () => {
     expect(
       humanizeToastDetail(
         'A missão não foi autorizada: Error invoking remote method ' +
-          "'orch:missions.approvalIntent': Error: " +
+          "'orch:mission.start': Error: " +
           'guided_plan_legacy_receipt_blocked: receipt antigo',
       ),
     ).toBe(
@@ -50,7 +50,7 @@ describe('toast store UX policy', () => {
     expect(
       humanizeToastDetail(
         'A missão não foi autorizada: Error invoking remote method ' +
-          "'orch:missions.approveIntent': Error: " +
+          "'orch:mission.start': Error: " +
           'guided_plan_preflight_blocked: project runtime contains an invalid worktree state',
       ),
     ).toBe(
@@ -62,7 +62,7 @@ describe('toast store UX policy', () => {
     expect(
       humanizeToastDetail(
         'A missão não foi autorizada: Error invoking remote method ' +
-          "'orch:missions.approveIntent': Error: provider temporarily unavailable",
+          "'orch:mission.start': Error: provider temporarily unavailable",
       ),
     ).toMatch(
       /^Não foi possível concluir esta etapa\. Tente novamente\. Se continuar, abra Operações para ver o diagnóstico\. Detalhe técnico: /,
@@ -75,7 +75,7 @@ describe('toast store UX policy', () => {
     push(
       'error',
       'Não deu pra iniciar a execução',
-      "Error invoking remote method 'orch:missions.approvalIntent': Error: " +
+      "Error invoking remote method 'orch:mission.start': Error: " +
         'guided_plan_preflight_blocked: guided_plan_unborn_with_files',
     );
     push(

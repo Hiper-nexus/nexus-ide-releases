@@ -7,12 +7,15 @@ export interface TerminalWorkspaceProps {
   /** Mission context is chrome only. The canonical layout always stays intact. */
   missionId?: string;
   onBackToBoard?: () => void;
+  /** Keeps pane/session hosts mounted while removing the surface from navigation. */
+  hidden?: boolean;
   className?: string;
 }
 
 export function TerminalWorkspace({
   missionId,
   onBackToBoard,
+  hidden = false,
   className = '',
 }: TerminalWorkspaceProps) {
   const viewKind = useLayoutStore((state) => state.viewKind);
@@ -21,13 +24,20 @@ export function TerminalWorkspace({
   return (
     <section
       className={`product-workspace terminal-workspace ${className}`.trim()}
+      hidden={hidden}
+      aria-hidden={hidden ? true : undefined}
       aria-label={inMission ? 'Terminais da missão' : 'Terminais'}
     >
       {inMission ? (
         <header className="product-workspace__header terminal-workspace__header">
-          <div className="product-workspace__heading">
-            <span className="product-workspace__context">Missão ativa</span>
-            <h1>Terminais</h1>
+          <div className="product-workspace__identity">
+            <span className="product-workspace__badge" aria-hidden="true">
+              <PixelIcon name="terminal" size={16} />
+            </span>
+            <div className="product-workspace__heading">
+              <span className="product-workspace__context">Missão ativa</span>
+              <h1>Terminais</h1>
+            </div>
           </div>
           {onBackToBoard ? (
             <button

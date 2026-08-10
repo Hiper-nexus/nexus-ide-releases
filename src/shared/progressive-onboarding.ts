@@ -1,8 +1,7 @@
 import { z } from 'zod';
 
 /**
- * Progressive onboarding + launcher contracts (BridgeSpace-inspired, clean-room).
- * Feature-flagged via feature.ui.progressiveOnboarding.
+ * Progressive launcher contracts (BridgeSpace-inspired, clean-room).
  */
 
 export const WORK_MODES = [

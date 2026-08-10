@@ -11,7 +11,6 @@ import {
   MAX_LIVE_PANES_HARD,
 } from '../lib/split-tree';
 import { setActiveWorkspacePath } from '../state/active-workspace';
-import { useHomeStore } from '../state/home-store';
 import {
   abandonWorkspaceLayoutAfterMainSwitch,
   detachWorkspaceLayout,
@@ -247,7 +246,6 @@ describe('mission pane authority vs. workspace layout restore', () => {
   afterEach(() => {
     detachWorkspaceLayout();
     setActiveWorkspacePath(null);
-    useHomeStore.setState({ visible: false });
     Reflect.deleteProperty(window, 'nexus');
     document.body.innerHTML = '';
     vi.clearAllMocks();

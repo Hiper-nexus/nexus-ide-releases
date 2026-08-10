@@ -39,8 +39,7 @@ import { decodeTaskScheduleDetail } from "./orch/mission-scheduler-meta";
 import { getContextWorkflowService } from "./context/context-workflow-registry";
 import { readAuditLog, type AuditEntry } from "./jarvis/audit-log";
 import {
-  resolvePrivateRealMissionE2ESquadBinding,
-  resolveProductWizardRealMissionE2ESquadBinding,
+  resolveCanonicalRealMissionE2ESquadBinding,
   type RealMissionE2ESquadBinding,
 } from "./real-mission-e2e-fixture";
 import {
@@ -81,7 +80,6 @@ import { freezeRealMissionE2EPrevCIfNeeded } from "./real-mission-e2e-prevc";
 import {
   buildRepositoryProof,
   gitCommitIsAncestor,
-  productWizardSquadBinding,
   sha256,
   type ScratchRepository,
 } from "./real-mission-e2e-workspace";
@@ -161,6 +159,7 @@ export class RealMissionObserver {
   readonly #scratch: ScratchRepository;
   readonly #suite: ProjectDomainStoreSuite;
   readonly #missionId: string;
+  readonly #reviewSha256: string;
   readonly #launchSurface: RealMissionE2ELaunchSurface;
   readonly #squadBinding: RealMissionE2ESquadBinding;
   readonly #acceptanceCriteria: readonly string[];
@@ -207,6 +206,7 @@ export class RealMissionObserver {
     scratch: ScratchRepository;
     suite: ProjectDomainStoreSuite;
     missionId: string;
+    reviewSha256: string;
     launchSurface: RealMissionE2ELaunchSurface;
     squadBinding: RealMissionE2ESquadBinding;
     acceptanceCriteria: readonly string[];
@@ -232,6 +232,7 @@ export class RealMissionObserver {
     this.#scratch = input.scratch;
     this.#suite = input.suite;
     this.#missionId = input.missionId;
+    this.#reviewSha256 = input.reviewSha256;
     this.#launchSurface = input.launchSurface;
     this.#squadBinding = input.squadBinding;
     this.#acceptanceCriteria = [...input.acceptanceCriteria];
@@ -419,32 +420,37 @@ export class RealMissionObserver {
         ? this.#wizardReceiptForMission(this.#missionId)
         : null;
     const currentSquadBinding = (() => {
-      if (!mission) return null;
-      if (this.#launchSurface === "product-wizard") {
-        return productWizardSquadBinding(mission);
+      const missionSquadId = mission?.squadId;
+      const objective = mission?.intentContract?.goal;
+      if (
+        !mission ||
+        typeof missionSquadId !== "string" ||
+        typeof objective !== "string"
+      ) {
+        return null;
       }
-      // Private runs are armed against the exact source fixture, but approval
-      // now seals a main-owned immutable `agentic-runtime-*` snapshot before
-      // execution. Follow only that validated source → runtime lineage. This
-      // is deliberately not a prefix/hash heuristic: the resolver rechecks
-      // the source bytes, runtime metadata and exact executable roster.
-      const missionSquadId = mission.squadId;
-      if (typeof missionSquadId !== "string") return null;
-      if (missionSquadId !== this.#squadBinding.squadId) {
-        return resolveProductWizardRealMissionE2ESquadBinding(
-          missionSquadId,
-        );
-      }
-      return resolvePrivateRealMissionE2ESquadBinding();
+      return resolveCanonicalRealMissionE2ESquadBinding({
+        squadId: missionSquadId,
+        title: mission.title,
+        objective,
+      });
     })();
     const squadBindingStillExact =
       currentSquadBinding !== null &&
+      currentSquadBinding.squadId === this.#squadBinding.squadId &&
+      currentSquadBinding.fixtureSquadId ===
+        this.#squadBinding.fixtureSquadId &&
+      currentSquadBinding.fixtureSquadRevisionHash ===
+        this.#squadBinding.fixtureSquadRevisionHash &&
       currentSquadBinding.sourceSquadId ===
         this.#squadBinding.sourceSquadId &&
       currentSquadBinding.sourceSquadRevisionHash ===
         this.#squadBinding.sourceSquadRevisionHash &&
+      currentSquadBinding.squadRevisionHash ===
+        this.#squadBinding.squadRevisionHash &&
       mission?.intentContract?.squadRevisionHash ===
-        currentSquadBinding.squadRevisionHash;
+        currentSquadBinding.squadRevisionHash &&
+      mission?.intentContract?.approvalReviewSha256 === this.#reviewSha256;
     const effectiveSquadBinding = squadBindingStillExact
       ? currentSquadBinding
       : null;
@@ -942,7 +948,11 @@ export class RealMissionObserver {
             status: mission.status,
             intentState: mission.intentState ?? null,
             intentVersion: mission.intentVersion ?? 0,
+            reviewSha256: this.#reviewSha256,
             squadId: effectiveSquadBinding.squadId,
+            fixtureSquadId: effectiveSquadBinding.fixtureSquadId,
+            fixtureSquadRevisionHash:
+              effectiveSquadBinding.fixtureSquadRevisionHash,
             squadSourceId: effectiveSquadBinding.sourceSquadId,
             squadSourceRevisionHash:
               effectiveSquadBinding.sourceSquadRevisionHash,

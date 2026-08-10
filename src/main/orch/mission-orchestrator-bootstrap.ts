@@ -1,10 +1,12 @@
 import path from "node:path";
 import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from 'node:util';
 import type { WebContents } from "electron";
 import { z } from "zod";
 import {
   missionEngineCommandSchema,
   type MissionEngineCommand,
+  type MissionResult,
 } from "../../shared/mission-engine-contract";
 import { GUIDED_PLAN_BLOCK_MARKER } from "../../shared/guided-mission-plan";
 import { parseClarifyAnswerArtifact } from "../../shared/clarify";
@@ -42,10 +44,16 @@ import type {
 } from "../../shared/orch-types";
 import { isMissionRuntimeSquadId } from "../../shared/orch-types";
 import type { ProjectExecutionScope } from "../../shared/types";
+import {
+  PET_STUDIO_SQUAD,
+  PET_STUDIO_SQUAD_ID,
+} from '../../shared/pet-studio';
 import { requireRendererWorkspaceScope } from "../persistence/renderer-workspace-scope";
 import {
+  revalidateSealedAttachmentSnapshots,
   snapshotDroppedAttachmentPaths,
   validateDroppedAttachmentPaths,
+  workspaceRootAuthorityFromScope,
 } from "../persistence/dropped-files";
 import {
   getAgentSessionInfo,
@@ -56,6 +64,10 @@ import {
   getAcpDriverSemanticStatus,
   getAcpDriverSession,
 } from "../acp/acp-harness-driver";
+import {
+  getAgentSemanticStatus,
+  getAgentSemanticStatusBySession,
+} from "./agent-status";
 import { releaseSession } from "./gate";
 import type {
   RebindOrchestratorAuthorityInput,
@@ -156,7 +168,11 @@ import {
   taskDispatchBlockDetailFromDescription,
   taskDispatchTechnicalResumeDescription,
 } from "./task-dispatch-persistence";
-import type { ProjectMissionSnapshotView } from "./mission-snapshot";
+import {
+  resolveMissionAgentLiveState,
+  type MissionAgentTaskFallback,
+  type ProjectMissionSnapshotView,
+} from "./mission-snapshot";
 import type {
   TaskDispatchRecord,
   TaskDispatchState,
@@ -270,8 +286,12 @@ function sameAttachmentSnapshots(
       return (
         candidate !== undefined &&
         snapshot.path === candidate.path &&
+        snapshot.sourcePath === candidate.sourcePath &&
+        snapshot.sealId === candidate.sealId &&
         snapshot.sha256 === candidate.sha256 &&
-        snapshot.size === candidate.size
+        snapshot.size === candidate.size &&
+        snapshot.device === candidate.device &&
+        snapshot.inode === candidate.inode
       );
     })
   );
@@ -394,6 +414,10 @@ export interface MissionOrchestratorBootstrapDeps {
   ): string[] | undefined;
   snapshotAttachmentPaths(
     paths: readonly string[] | undefined,
+  ): MissionAttachmentSnapshot[] | undefined;
+  revalidatePetStudioAttachmentSnapshots?(
+    scope: ProjectExecutionScope,
+    snapshots: readonly MissionAttachmentSnapshot[] | undefined,
   ): MissionAttachmentSnapshot[] | undefined;
   /** Main-owned planning preflight; runs before every external bootstrap effect. */
   ensureMissionPlan?(scope: ProjectExecutionScope, missionId: string): unknown;
@@ -591,6 +615,8 @@ function hasSealedPendingMissionStart(mission: Mission): boolean {
     mission.status === "pending" &&
     mission.intentState === "ready_to_start" &&
     hasCurrentApprovedDispatchContract(mission) &&
+    typeof mission.intentContract?.dispatchedAt === "number" &&
+    mission.intentContract.dispatchedAt > 0 &&
     typeof reviewSha256 === "string" &&
     SEALED_APPROVAL_REVIEW_SHA256_PATTERN.test(reviewSha256)
   );
@@ -618,20 +644,59 @@ export function sealMissionStartReview(
 ): Mission {
   const current = missions.get(input.missionId);
   const reviewSha256 = current?.intentContract?.approvalReviewSha256;
-  if (
-    !current ||
-    !hasCurrentApprovedDispatchContract(current) ||
-    reviewSha256 !== input.reviewSha256 ||
-    !(
-      (current.status === 'pending' &&
+  const approved = current
+    ? hasCurrentApprovedDispatchContract(current)
+    : false;
+  const lifecycleOk = Boolean(
+    current &&
+      ((current.status === 'pending' &&
         current.intentState === 'ready_to_start') ||
-      (current.status === 'running' &&
-        (current.intentState === 'dispatched' ||
-          current.intentState === 'executing'))
-    )
-  ) {
-    throw new Error('mission start review fence changed before seal');
+        (current.status === 'running' &&
+          (current.intentState === 'dispatched' ||
+            current.intentState === 'executing'))),
+  );
+  const hashOk = reviewSha256 === input.reviewSha256;
+  if (!current || !approved || !hashOk || !lifecycleOk) {
+    const reasons: string[] = [];
+    if (!current) reasons.push('mission-missing');
+    else {
+      if (!approved) {
+        reasons.push(
+          `approval-missing(intentVersion=${current.intentVersion ?? 'null'},contractIntentVersion=${current.intentContract?.intentVersion ?? 'null'},approvedAt=${current.intentContract?.approvedAt ?? 'null'},goalEmpty=${!(current.intentContract?.goal?.trim())})`,
+        );
+      }
+      if (!hashOk) {
+        reasons.push(
+          `hash-mismatch(persisted=${reviewSha256 ?? 'null'},input=${input.reviewSha256})`,
+        );
+      }
+      if (!lifecycleOk) {
+        reasons.push(
+          `lifecycle(${current.status}/${current.intentState ?? 'null'})`,
+        );
+      }
+    }
+    console.error('[mission-start-seal] review fence rejected', {
+      missionId: input.missionId,
+      reasons,
+      status: current?.status ?? null,
+      intentState: current?.intentState ?? null,
+      intentVersion: current?.intentVersion ?? null,
+      contractIntentVersion: current?.intentContract?.intentVersion ?? null,
+      approvedAt: current?.intentContract?.approvedAt ?? null,
+      persistedReviewSha256: reviewSha256 ?? null,
+      inputReviewSha256: input.reviewSha256,
+      dispatchedAt: current?.intentContract?.dispatchedAt ?? null,
+    });
+    throw new Error(
+      `mission start review fence changed before seal (${reasons.join('; ')})`,
+    );
   }
+  const dispatchedAt =
+    typeof current.intentContract?.dispatchedAt === 'number' &&
+    current.intentContract.dispatchedAt > 0
+      ? current.intentContract.dispatchedAt
+      : Date.now();
   const sealed = missions.transitionLifecycle(
     current.id,
     {
@@ -640,12 +705,17 @@ export function sealMissionStartReview(
     },
     {
       status: current.status,
-      intentState: current.intentState,
+      intentState: current.intentState!,
+      intentContract: {
+        ...current.intentContract!,
+        dispatchedAt,
+      },
     },
   );
   if (
     !sealed ||
-    sealed.intentContract?.approvalReviewSha256 !== input.reviewSha256
+    sealed.intentContract?.approvalReviewSha256 !== input.reviewSha256 ||
+    sealed.intentContract.dispatchedAt !== dispatchedAt
   ) {
     throw new Error('mission start seal CAS changed before bootstrap');
   }
@@ -660,7 +730,9 @@ function sameScope(
     left.installationId === right.installationId &&
     left.projectId === right.projectId &&
     left.checkoutId === right.checkoutId &&
-    left.rootRealPath === right.rootRealPath
+    left.rootRealPath === right.rootRealPath &&
+    left.workspaceRootDevice === right.workspaceRootDevice &&
+    left.workspaceRootInode === right.workspaceRootInode
   );
 }
 
@@ -1001,6 +1073,13 @@ const productionDeps: MissionOrchestratorBootstrapDeps = {
     emitBootstrapProgress(scope, missionId, step, detail),
   validateAttachmentPaths: (paths) => validateDroppedAttachmentPaths(paths),
   snapshotAttachmentPaths: (paths) => snapshotDroppedAttachmentPaths(paths),
+  revalidatePetStudioAttachmentSnapshots: (scope, snapshots) =>
+    snapshots
+      ? revalidateSealedAttachmentSnapshots(snapshots, {
+          workspaceRootAuthority: workspaceRootAuthorityFromScope(scope),
+          checkoutId: scope.checkoutId,
+        })
+      : undefined,
   ensurePlanGitBaseline: (scope, missionId) => {
     const mission = getProjectDomainStores(scope).missions.get(missionId);
     if (mission?.intentContract?.lane === 'plan') {
@@ -1314,19 +1393,8 @@ export class MissionOrchestratorBootstrapService {
         );
       }
     }
-    const authoritySealMission =
-      initial.status === 'pending' &&
-      initial.intentState === 'ready_to_start' &&
-      hasCurrentApprovedDispatchContract(initial)
-        ? {
-            ...initial,
-            status: 'running' as const,
-            intentState: 'dispatched' as const,
-          }
-        : initial;
     const authoritySeal =
-      resolveMissionPaneAuthoritySeal(scope, authoritySealMission, squad) ??
-      undefined;
+      resolveMissionPaneAuthoritySeal(scope, initial, squad) ?? undefined;
     if (!authoritySeal) {
       if (!autopilot) {
         return this.#failure(
@@ -1624,14 +1692,39 @@ export class MissionOrchestratorBootstrapService {
 
     let attachmentPaths: string[] | undefined;
     let attachmentSnapshots: MissionAttachmentSnapshot[] | undefined;
+    const initialContract = initial.intentContract;
     try {
-      attachmentPaths = this.#deps.validateAttachmentPaths(
-        initial.intentContract?.attachmentPaths,
-      );
-      attachmentSnapshots = this.#deps.snapshotAttachmentPaths(attachmentPaths);
+      if (!initialContract) {
+        throw new Error("mission attachment contract is unavailable");
+      }
+      if (initial.squadId === PET_STUDIO_SQUAD_ID) {
+        if (!this.#deps.revalidatePetStudioAttachmentSnapshots) {
+          throw new Error("Pet Studio attachment validation is unavailable");
+        }
+        attachmentSnapshots =
+          this.#deps.revalidatePetStudioAttachmentSnapshots(
+            scope,
+            initialContract.attachmentSnapshots,
+          );
+        if (
+          attachmentSnapshots?.length !== 1 ||
+          initialContract.attachmentPaths?.length !== 1 ||
+          initialContract.attachmentPaths[0] !==
+            attachmentSnapshots[0]?.path
+        ) {
+          throw new Error("Pet Studio sealed attachment identity is invalid");
+        }
+        attachmentPaths = attachmentSnapshots.map((snapshot) => snapshot.path);
+      } else {
+        attachmentPaths = this.#deps.validateAttachmentPaths(
+          initialContract.attachmentPaths,
+        );
+        attachmentSnapshots =
+          this.#deps.snapshotAttachmentPaths(attachmentPaths);
+      }
       if (
         !sameAttachmentSnapshots(
-          initial.intentContract?.attachmentSnapshots,
+          initialContract.attachmentSnapshots,
           attachmentSnapshots,
         )
       ) {
@@ -3026,10 +3119,9 @@ function projectMissionEngineSnapshotView(
 ): ProjectMissionSnapshotView {
   const mission = stores.missions.get(missionId);
   if (!mission) throw new Error('mission not found');
+  const missionPanes = stores.missionPanes.list(missionId);
   const orchestratorPane =
-    stores.missionPanes
-      .list(missionId)
-      .find((pane) => pane.role === 'orchestrator') ?? null;
+    missionPanes.find((pane) => pane.role === 'orchestrator') ?? null;
   const sessionId = mission.orchestratorSessionId;
   const sessionState = sessionId ? runtimeSessionState(sessionId) : null;
   const approvedRuntime = mission.intentContract?.orchestratorRuntime;
@@ -3050,6 +3142,141 @@ function projectMissionEngineSnapshotView(
       ).length === 0,
   );
   const squad = mission.squadId ? getSquad(mission.squadId) : null;
+  const roster = (squad?.agents ?? []).map((agent) => ({
+    ...agent,
+    allowedTools: agent.allowedTools ? [...agent.allowedTools] : agent.allowedTools,
+    allowedSkills: agent.allowedSkills
+      ? [...agent.allowedSkills]
+      : agent.allowedSkills,
+  }));
+  const rosterById = new Map(roster.map((agent) => [agent.id, agent] as const));
+  const rosterByName = new Map(
+    roster.map((agent) => [agent.agentName, agent] as const),
+  );
+  const taskAgentById = new Map(
+    stores.tasks
+      .listPlannedTasks(mission.id, mission.intentVersion ?? 0)
+      .map((planned) => [planned.taskId, planned.agentRef] as const),
+  );
+  const tasks = stores.tasks.list(mission.id).map((task) => {
+    const agentId = taskAgentById.get(task.id);
+    return {
+      id: task.id,
+      title: task.title,
+      status: task.status,
+      ...(agentId ? { agentId } : {}),
+      dependsOn: [] as string[],
+      evidence: [] as Array<{ id: string; path?: string }>,
+    };
+  });
+  const taskFallbackByAgent = new Map<string, MissionAgentTaskFallback>();
+  for (const agent of roster) {
+    const agentTasks = tasks.filter((task) => task.agentId === agent.id);
+    if (agentTasks.some((task) => task.status === 'running')) {
+      taskFallbackByAgent.set(agent.id, 'working');
+    } else if (agentTasks.some((task) => task.status === 'failed')) {
+      taskFallbackByAgent.set(agent.id, 'failed');
+    } else if (
+      agentTasks.length > 0 &&
+      agentTasks.every((task) => task.status === 'done')
+    ) {
+      taskFallbackByAgent.set(agent.id, 'done');
+    } else {
+      taskFallbackByAgent.set(agent.id, 'queued');
+    }
+  }
+  const livePaneSnapshots = listPaneSnapshots();
+  const sessionByPaneId = new Map<string, string>();
+  for (const snapshot of livePaneSnapshots) {
+    if (snapshot.sessionId) {
+      sessionByPaneId.set(snapshot.paneId, snapshot.sessionId);
+    }
+  }
+  if (
+    orchestratorPane?.paneId &&
+    mission.orchestratorSessionId &&
+    !sessionByPaneId.has(orchestratorPane.paneId)
+  ) {
+    sessionByPaneId.set(
+      orchestratorPane.paneId,
+      mission.orchestratorSessionId,
+    );
+  }
+  const dispatches = stores.taskDispatches.list(missionId);
+  for (const dispatch of dispatches) {
+    if (dispatch.paneId && dispatch.sessionId && !sessionByPaneId.has(dispatch.paneId)) {
+      sessionByPaneId.set(dispatch.paneId, dispatch.sessionId);
+    }
+  }
+  const currentUnitByAgent = new Map<string, string>();
+  for (const task of tasks) {
+    if (task.status === 'running' && task.agentId) {
+      currentUnitByAgent.set(task.agentId, task.id);
+    }
+  }
+  for (const dispatch of dispatches) {
+    if (
+      !dispatch.agentRef ||
+      currentUnitByAgent.has(dispatch.agentRef) ||
+      !['running', 'spawning', 'routed'].includes(dispatch.state)
+    ) {
+      continue;
+    }
+    currentUnitByAgent.set(dispatch.agentRef, dispatch.taskId);
+  }
+
+  const panes: ProjectMissionSnapshotView['panes'] = [];
+  const claimedAgentIds = new Set<string>();
+  for (const pane of missionPanes) {
+    if (!pane.paneId) continue;
+    let agentId: string | undefined;
+    if (pane.agentName && rosterByName.has(pane.agentName)) {
+      agentId = rosterByName.get(pane.agentName)!.id;
+    } else if (pane.role === 'orchestrator') {
+      agentId = roster.find((agent) => agent.category === 'orchestrator')?.id;
+    } else {
+      const dispatch = dispatches.find(
+        (candidate) =>
+          candidate.paneId === pane.paneId ||
+          (pane.workerIncarnationId !== undefined &&
+            candidate.workerIncarnationId === pane.workerIncarnationId),
+      );
+      if (dispatch?.agentRef && rosterById.has(dispatch.agentRef)) {
+        agentId = dispatch.agentRef;
+      }
+    }
+    if (!agentId || claimedAgentIds.has(agentId)) continue;
+    claimedAgentIds.add(agentId);
+
+    const paneSessionId = sessionByPaneId.get(pane.paneId) ?? null;
+    const liveSessionState = paneSessionId
+      ? runtimeSessionState(paneSessionId)
+      : null;
+    const semantic =
+      getAgentSemanticStatus(pane.paneId)?.status ??
+      (paneSessionId
+        ? getAgentSemanticStatusBySession(paneSessionId)?.status
+        : null) ??
+      (paneSessionId ? getAcpDriverSemanticStatus(paneSessionId) : null);
+    const state = resolveMissionAgentLiveState({
+      semantic,
+      sessionState:
+        liveSessionState === 'spawning' ||
+        liveSessionState === 'busy' ||
+        liveSessionState === 'idle'
+          ? liveSessionState
+          : null,
+      taskState: taskFallbackByAgent.get(agentId) ?? 'queued',
+    });
+    const currentUnitId = currentUnitByAgent.get(agentId);
+    panes.push({
+      paneId: pane.paneId,
+      agentId,
+      state,
+      ...(currentUnitId ? { currentUnitId } : {}),
+    });
+  }
+
   return {
     mission: {
       id: mission.id,
@@ -3062,27 +3289,16 @@ function projectMissionEngineSnapshotView(
       status: mission.status,
       version: mission.intentVersion ?? 0,
       updatedAt: mission.updatedAt,
+      ...(mission.result ? { result: mission.result } : {}),
     },
     hasDispatchAuthority: hasCurrentDispatchAuthority(mission),
     hasCurrentKickoffReceipt:
       stores.missions.hasCurrentKickoffAcceptance(mission.id),
     orchestratorLive,
-    tasks: stores.tasks.list(mission.id).map((task) => ({
-      id: task.id,
-      title: task.title,
-      status: task.status,
-      dependsOn: [],
-      evidence: [],
-    })),
+    tasks,
     handoffs: [],
-    panes: [],
-    roster: (squad?.agents ?? []).map((agent) => ({
-      ...agent,
-      allowedTools: agent.allowedTools ? [...agent.allowedTools] : agent.allowedTools,
-      allowedSkills: agent.allowedSkills
-        ? [...agent.allowedSkills]
-        : agent.allowedSkills,
-    })),
+    panes,
+    roster,
   };
 }
 
@@ -3091,6 +3307,7 @@ interface MissionEngineLifecyclePatch {
   readonly intentState: MissionIntentState;
   readonly description?: string;
   readonly learnings?: string;
+  readonly result?: MissionResult;
 }
 
 function transitionMissionEngineLifecycle(
@@ -3135,10 +3352,35 @@ const productionMissionEngines = new MissionEngineRegistry((scope, stores) =>
       missions: stores.missions,
     }),
     readReviewFence: async (missionId) => {
+      const mission = stores.missions.get(missionId);
+      if (mission?.squadId === PET_STUDIO_SQUAD_ID) {
+        const saved = getSquad(PET_STUDIO_SQUAD_ID);
+        if (!saved || !isDeepStrictEqual(saved, PET_STUDIO_SQUAD)) {
+          throw new Error('saved Pet Studio squad authority changed');
+        }
+      }
       const reviewSha256 =
-        stores.missions.get(missionId)?.intentContract?.approvalReviewSha256;
-      return reviewSha256 ? { missionId, reviewSha256 } : null;
+        mission?.intentContract?.approvalReviewSha256;
+      if (!reviewSha256) return null;
+      return {
+        missionId,
+        reviewSha256,
+        ...(mission.squadId === PET_STUDIO_SQUAD_ID
+          ? {
+              profile: { kind: "pet-studio" as const },
+              attachments:
+                mission.intentContract?.attachmentSnapshots?.map(
+                  (snapshot) => ({ ...snapshot }),
+                ) ?? [],
+            }
+          : {}),
+      };
     },
+    revalidatePetStudioAttachments: (snapshots) =>
+      revalidateSealedAttachmentSnapshots(snapshots, {
+        workspaceRootAuthority: workspaceRootAuthorityFromScope(scope),
+        checkoutId: scope.checkoutId,
+      }),
     seal: async (input) => {
       sealMissionStartReview(stores.missions, input);
     },
@@ -3332,6 +3574,7 @@ const productionMissionEngines = new MissionEngineRegistry((scope, stores) =>
         status: "done",
         intentState: "done",
         learnings: input.learnings,
+        result: input.result,
       }),
     readSnapshotView: async (missionId) =>
       projectMissionEngineSnapshotView(scope, stores, missionId),
@@ -4205,15 +4448,6 @@ function rearmBlockedMissionWithinLifecycleLock(
   return { ok: true };
 }
 
-/** Renderer boundary for the pane-preserving re-arm. */
-export function rearmBlockedMissionFromRenderer(
-  owner: WebContents,
-  raw: unknown,
-): Promise<{ ok: true } | { ok: false; error: string }> {
-  const input = missionOrchestratorBootstrapRequestSchema.parse(raw);
-  const scope = requireRendererWorkspaceScope(owner);
-  return rearmBlockedMissionForScope(scope, input.missionId);
-}
 
 const DEAD_GRAPH_DISPATCH_STATES = new Set<TaskDispatchState>([
   "superseded",
@@ -4892,15 +5126,6 @@ export async function shutdownMissionOrchestratorBootstrapRecovery(): Promise<vo
   await productionRecovery.waitForIdle();
 }
 
-/** Renderer boundary: the only accepted input is the opaque mission id. */
-export function bootstrapMissionOrchestratorFromRenderer(
-  owner: WebContents,
-  raw: unknown,
-): Promise<MissionOrchestratorBootstrapResult> {
-  const input = missionOrchestratorBootstrapRequestSchema.parse(raw);
-  const scope = requireRendererWorkspaceScope(owner);
-  return bootstrapMissionOrchestratorForScope(scope, input.missionId);
-}
 
 /** Renderer boundary for retrying a bootstrap-blocked mission. */
 export function resumeBlockedMissionBootstrapFromRenderer(

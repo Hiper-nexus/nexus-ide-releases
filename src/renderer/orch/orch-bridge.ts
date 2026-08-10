@@ -11,7 +11,6 @@ import {
   whenWorkspaceLayoutSettled,
 } from '../state/layout-store';
 import { getActiveWorkspacePath } from '../state/active-workspace';
-import { useHomeStore } from '../state/home-store';
 import { useOrchStore } from '../state/orch-store';
 import { useSessionStateStore } from '../state/session-state-store';
 import { useWorkspaceStore } from '../state/workspace-store';
@@ -230,11 +229,10 @@ function isStructuralWorkspacePlaceholder(pane: PaneModel): boolean {
 }
 
 /**
- * A fresh workspace owns one structural shell until the first real surface is
- * mounted. Home visibility cannot identify it: intent-first launch hides Home
- * before Main publishes the orchestrator. The explicit marker is cleared when
- * the operator opens that terminal, so shape alone can never authorize an
- * automated close of a live manual shell.
+ * A fresh workspace owns one explicitly marked structural shell until the
+ * first real surface is mounted. The marker is cleared when the operator opens
+ * that terminal, so shape alone can never authorize an automated close of a
+ * live manual shell.
  */
 function panesAfterMainOwnedPresentation(
   existing: PaneModel[],
@@ -316,7 +314,6 @@ function normalizeExactHealthyPresentation(
     paneFromPresentation(req),
   );
   if (next === existing) return;
-  useHomeStore.getState().hide();
   layout.setPanes(next);
 }
 
@@ -345,7 +342,6 @@ async function presentLiveMainOwnedPane(
 
   if (req.transport === 'acp') {
     useOrchStore.getState().bindPaneMission(req.paneId, req.missionId);
-    useHomeStore.getState().hide();
     const pane = current ? { ...current, agentTransport: 'acp' as const } : paneFromPresentation(req);
     const next = panesAfterMainOwnedPresentation(existing, pane);
     if (next !== existing) useLayoutStore.getState().setPanes(next);
@@ -358,7 +354,6 @@ async function presentLiveMainOwnedPane(
   // never grants a fresh renderer-authored spawn.
   markPersistedAuthorityOnSpawn(req.paneId);
   useOrchStore.getState().bindPaneMission(req.paneId, req.missionId);
-  useHomeStore.getState().hide();
   const pane = current ?? paneFromPresentation(req);
   const next = panesAfterMainOwnedPresentation(existing, pane);
   if (next !== existing) {
@@ -519,6 +514,9 @@ export function useOrchBridge(): void {
 
     const un = [
       window.nexus.orch.onPaneSpawnRequest((req) => {
+        console.info(
+          `[orch] pane spawn received id=${req.requestId} mission=${req.missionId ?? "none"} role=${req.role ?? "none"}`,
+        );
         void (async () => {
           let paneId: string | null = null;
           try {
@@ -545,12 +543,14 @@ export function useOrchBridge(): void {
                 agentName: req.agentName,
                 role: req.role ?? 'worker',
               });
-            // Um spawn da orquestração é uma superfície real: o Home não pode
-            // ficar por cima (o auto-hide do deck só dispara com 2+ panes —
-            // mesmo motivo do hide em presentLiveMainOwnedPane).
-            useHomeStore.getState().hide();
+            console.info(
+              `[orch] pane spawn materialized id=${req.requestId} pane=${paneId}`,
+            );
             useOrchStore.getState().bindPaneMission(paneId, req.missionId);
             const sessionId = await waitForSession(paneId, 75_000);
+            console.info(
+              `[orch] pane spawn session result id=${req.requestId} pane=${paneId} session=${sessionId ?? "none"}`,
+            );
             if (!sessionId) {
               cleanupFailedOrchPane(req, paneId);
               window.nexus.orch.sendPaneSpawnResult({

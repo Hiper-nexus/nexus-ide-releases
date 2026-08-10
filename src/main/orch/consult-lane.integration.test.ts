@@ -35,7 +35,7 @@ describe('consult lane end-to-end', () => {
   });
 
   it('submit → contract → consult prompt → mutable tools denied → done needs learning', () => {
-    // 1) Contract as produced by submitMissionIntent(lane=consult)
+    // 1) Contract persisted by the canonical MissionEngine prepare/start path.
     const contract = compileIntentContract({
       goal: 'Ler logs da Vercel e resumir os erros de deploy de ontem',
       intentVersion: 1,

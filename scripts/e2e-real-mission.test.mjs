@@ -1388,7 +1388,7 @@ describe('independent evidence verifier', () => {
 
     expect(() => assertRealMissionPassEvidence(privateEvidence)).not.toThrow();
     expect(() => assertRealMissionReleaseEvidence(privateEvidence)).toThrow(
-      /product-wizard.*diagnostic-only/i,
+      /Mission Setup.*diagnostic-only/i,
     );
     expect(() =>
       assertRealMissionReleaseEvidence(validEvidence()),
@@ -1407,7 +1407,7 @@ describe('independent evidence verifier', () => {
     );
   });
 
-  it("requires the exact causal product-wizard receipt in the release mirror", () => {
+  it("requires the exact causal Mission Setup receipt in the release mirror", () => {
     const missing = validEvidence();
     delete missing.wizardReceipt;
     expect(() => assertRealMissionPassEvidence(missing)).toThrow(/incomplete/);
@@ -1416,7 +1416,7 @@ describe('independent evidence verifier', () => {
       ["missionId", "other-mission"],
       ["workspaceSha256", "e".repeat(64)],
       ["squadRevisionHash", "f".repeat(64)],
-      ["submittedContractSha256", "0".repeat(64)],
+      ["preparedContractSha256", "0".repeat(64)],
     ]) {
       const tampered = validEvidence();
       tampered.wizardReceipt[field] = value;
@@ -1427,8 +1427,8 @@ describe('independent evidence verifier', () => {
     }
 
     const reversed = validEvidence();
-    reversed.wizardReceipt.nativeDialogOpenedAt = 2;
-    reversed.wizardReceipt.nativeDialogAcceptedAt = 1;
+    reversed.wizardReceipt.preparedAt = 2;
+    reversed.wizardReceipt.startedAt = 1;
     expect(() => assertRealMissionPassEvidence(reversed)).toThrow(/incomplete/);
 
     const privateWithReceipt = validEvidence({

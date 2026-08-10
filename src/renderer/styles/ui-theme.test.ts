@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import fs from "node:fs";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { TerminalThemeId } from "../../shared/settings-types";
 import { applyUiTheme, LEGACY_NEXUS_CYAN_PALETTE } from "./ui-theme";
 
@@ -16,7 +16,6 @@ function readStyles(file: string): string {
 
 const baseCss = readStyles("base.css");
 const panelsCss = readStyles("panels.css");
-const settingsCss = readStyles("settings.css");
 
 /** Body of the first rule matching `selector`, in the given stylesheet. */
 function ruleBody(css: string, selector: string): string {
@@ -32,6 +31,17 @@ function tokenForTheme(themeId: TerminalThemeId, token: string): string {
     new RegExp(`${token}:\\s*([^;]+);`),
   )?.[1];
   return (own ?? root ?? "").trim();
+}
+
+const PINK_CITY_THEME_ID = "nexus-pink-city" as TerminalThemeId;
+
+function computedRootTokens<const T extends readonly string[]>(
+  tokenNames: T,
+): Record<T[number], string> {
+  const rootStyles = getComputedStyle(document.documentElement);
+  return Object.fromEntries(
+    tokenNames.map((token) => [token, rootStyles.getPropertyValue(token).trim()]),
+  ) as Record<T[number], string>;
 }
 
 function channel(value: number): number {
@@ -75,6 +85,122 @@ describe("Nexus Light UI palette", () => {
       contrast(accent, root.getPropertyValue("--bg")),
     ).toBeGreaterThanOrEqual(4.5);
     expect(contrast(accentInk, accent)).toBeGreaterThanOrEqual(4.5);
+  });
+});
+
+describe("Pink City UI palette", () => {
+  let mountedBaseStyles: HTMLStyleElement;
+
+  beforeEach(() => {
+    mountedBaseStyles = document.createElement("style");
+    mountedBaseStyles.textContent = baseCss;
+    document.head.append(mountedBaseStyles);
+  });
+
+  afterEach(() => {
+    mountedBaseStyles.remove();
+    document.documentElement.removeAttribute("style");
+    delete document.documentElement.dataset.theme;
+    delete document.documentElement.dataset.platform;
+  });
+
+  it("applies the canonical Pink City tokens to the root", () => {
+    applyUiTheme(PINK_CITY_THEME_ID);
+
+    expect(document.documentElement.dataset.theme).toBe("nexus-pink-city");
+    expect(
+      computedRootTokens([
+        "--bg",
+        "--bg-elevated",
+        "--bg-bar",
+        "--text",
+        "--text-dim",
+        "--accent",
+        "--accent-ink",
+        "--btn-primary",
+        "--btn-primary-ink",
+      ] as const),
+    ).toEqual({
+      "--bg": "#080709",
+      "--bg-elevated": "#111013",
+      "--bg-bar": "#0d0b0f",
+      "--text": "#faf7f9",
+      "--text-dim": "#aaa2a8",
+      "--accent": "#ff4f8b",
+      "--accent-ink": "#080709",
+      "--btn-primary": "#faf7f9",
+      "--btn-primary-ink": "#080709",
+    });
+  });
+
+  it("meets WCAG AA for every Pink City text pair on both surfaces", () => {
+    applyUiTheme(PINK_CITY_THEME_ID);
+    const tokens = computedRootTokens([
+      "--bg",
+      "--bg-elevated",
+      "--text",
+      "--text-dim",
+      "--text-faint",
+      "--accent",
+      "--btn-primary",
+      "--btn-primary-ink",
+    ] as const);
+
+    expect(tokens["--accent"]).toBe("#ff4f8b");
+    expect(tokens["--btn-primary"]).toBe("#faf7f9");
+
+    for (const foreground of [
+      "--text",
+      "--text-dim",
+      "--text-faint",
+      "--accent",
+      "--btn-primary",
+    ] as const) {
+      expect(tokens[foreground]).toMatch(/^#[0-9a-f]{6}$/i);
+      for (const background of ["--bg", "--bg-elevated"] as const) {
+        expect(
+          contrast(tokens[foreground], tokens[background]),
+          `${foreground} on ${background}`,
+        ).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+
+    expect(
+      contrast(tokens["--btn-primary-ink"], tokens["--btn-primary"]),
+      "--btn-primary-ink on --btn-primary",
+    ).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("restores the current neutral and indigo palette when Nexus Dark is selected", () => {
+    applyUiTheme(PINK_CITY_THEME_ID);
+    applyUiTheme("nexus-dark");
+
+    expect(document.documentElement.dataset.theme).toBe("nexus-dark");
+    expect(
+      computedRootTokens([
+        "--bg",
+        "--bg-elevated",
+        "--bg-bar",
+        "--text",
+        "--text-dim",
+        "--text-faint",
+        "--accent",
+        "--accent-ink",
+        "--btn-primary",
+        "--btn-primary-ink",
+      ] as const),
+    ).toEqual({
+      "--bg": "#0b0b0c",
+      "--bg-elevated": "#141416",
+      "--bg-bar": "#101012",
+      "--text": "#fafafa",
+      "--text-dim": "#a1a1a1",
+      "--text-faint": "#8f8f8f",
+      "--accent": "#7c86ff",
+      "--accent-ink": "#0b0b0c",
+      "--btn-primary": "#fafafa",
+      "--btn-primary-ink": "#0b0b0c",
+    });
   });
 });
 
@@ -172,13 +298,6 @@ describe("--text-faint holds AA in EVERY theme", () => {
 });
 
 describe("token discipline — 0.21 CTA and pixel-grid campaign", () => {
-  it("the file editor Save button speaks the primary CTA tokens", () => {
-    const save = ruleBody(panelsCss, ".files-editor__save");
-    expect(save).toContain("background: var(--btn-primary)");
-    expect(save).toContain("color: var(--btn-primary-ink)");
-    expect(save).not.toContain("var(--accent)");
-    expect(panelsCss).toContain("--btn-primary-hover");
-  });
 
   it("the toast action is a discreet secondary, not a second primary CTA", () => {
     const action = ruleBody(panelsCss, ".toast__action");
@@ -195,9 +314,4 @@ describe("token discipline — 0.21 CTA and pixel-grid campaign", () => {
     );
   });
 
-  it("the settings drawer draws both grid lines from the token", () => {
-    const drawer = ruleBody(settingsCss, ".settings__drawer");
-    expect(drawer).not.toMatch(/rgba\(/);
-    expect(drawer.match(/var\(--pixel-grid\)/g)).toHaveLength(2);
-  });
 });

@@ -8,6 +8,7 @@ import type {
 } from '../../shared/orch-types';
 import { TEAM_READ_ONLY_FANOUT_DOMAIN } from '../../shared/mission-topology';
 import type { ProjectExecutionScope } from '../../shared/types';
+import { PET_STUDIO_SQUAD } from '../../shared/pet-studio';
 import type { MissionEventAppendInput } from '../../shared/mission-events';
 import {
   runMissionKickoffAcceptance,
@@ -434,6 +435,8 @@ function harness(): Harness {
               size: 1,
             },
       ),
+    revalidatePetStudioAttachmentSnapshots: (_scope, snapshots) =>
+      snapshots?.map((snapshot) => ({ ...snapshot })),
   };
   return value;
 }
@@ -1289,6 +1292,7 @@ describe('initial main-owned orchestrator bootstrap', () => {
         patch: {
           status: Mission['status'];
           intentState: NonNullable<Mission['intentState']>;
+          intentContract?: Mission['intentContract'];
         },
       ) => {
         calls.push('seal-cas');
@@ -1315,6 +1319,7 @@ describe('initial main-owned orchestrator bootstrap', () => {
     ).toMatchObject({
       status: 'pending',
       intentState: 'ready_to_start',
+      intentContract: { dispatchedAt: expect.any(Number) },
     });
     expect(calls).toEqual(['seal-cas']);
 
@@ -1341,7 +1346,7 @@ describe('initial main-owned orchestrator bootstrap', () => {
       intentContract: {
         ...value.mission.intentContract!,
         approvalReviewSha256: 'a'.repeat(64),
-        dispatchedAt: undefined,
+        dispatchedAt: 2,
       },
     };
     const submitKickoff = value.deps.submitKickoff;
@@ -1471,6 +1476,78 @@ describe('initial main-owned orchestrator bootstrap', () => {
     expect(value.kickoffPrompts[0]).toContain('src/checkout.ts');
     expect(value.kickoffPrompts[0]).toContain('## Anexos validados pelo Nexus');
     expect(value.kickoffPrompts[0]).toContain('/validated/proof.png');
+  });
+
+  it('revalidates a Pet seal and prompts with only its sealed provider path', async () => {
+    const value = harness();
+    const sealed = {
+      path: '/private/sealed-home/.nexus/mission-attachments/checkout/seal.png',
+      sourcePath: '/workspace/.nexus/attachments/operator-cat.png',
+      sealId: '0123456789abcdef0123456789abcdef',
+      sha256: '9'.repeat(64),
+      size: 321,
+      device: '42',
+      inode: '84',
+    };
+    const maker = PET_STUDIO_SQUAD.agents[0]!;
+    const petRuntime = {
+      ...approvedRuntime,
+      model: maker.model,
+      effort: maker.effort,
+      nativeReadOnly: false as const,
+    };
+    value.sealSquad = PET_STUDIO_SQUAD;
+    value.mission = {
+      ...value.mission,
+      squadId: PET_STUDIO_SQUAD.id,
+      intentContract: {
+        ...value.mission.intentContract!,
+        attachmentPaths: [sealed.path],
+        attachmentSnapshots: [sealed],
+        squadRevisionHash: snapshotSquadAuthority(PET_STUDIO_SQUAD).hash,
+        orchestratorRuntime: petRuntime,
+      },
+    };
+    value.deps.getSquad = (id) =>
+      id === PET_STUDIO_SQUAD.id ? PET_STUDIO_SQUAD : null;
+    value.deps.resolveRuntime = () => petRuntime;
+    const physicalAgent = value.deps.getAgentSessionInfo('pty-main-orch');
+    if (!physicalAgent) throw new Error('missing physical Pet agent fixture');
+    value.deps.getAgentSessionInfo = (sessionId) =>
+      sessionId === 'pty-main-orch'
+        ? {
+            ...physicalAgent,
+            adapterId: maker.cli,
+            model: petRuntime.model,
+            requestedModel: petRuntime.model,
+            effort: petRuntime.effort,
+            agentName: maker.agentName,
+            nativeReadOnly: false,
+            allowedTools:
+              maker.allowedTools === null || maker.allowedTools === undefined
+                ? null
+                : [...maker.allowedTools],
+            allowedSkills:
+              maker.allowedSkills === null || maker.allowedSkills === undefined
+                ? null
+                : [...maker.allowedSkills],
+            authoritySeal: authoritySealFor(
+              value.mission,
+              PET_STUDIO_SQUAD,
+            ),
+          }
+        : null;
+    const revalidate = vi.fn(() => [{ ...sealed }]);
+    value.deps.revalidatePetStudioAttachmentSnapshots = revalidate;
+
+    const result = await new MissionOrchestratorBootstrapService(
+      value.deps,
+    ).bootstrap(scope, value.mission.id);
+
+    expect(result.ok).toBe(true);
+    expect(revalidate).toHaveBeenCalledWith(scope, [sealed]);
+    expect(value.kickoffPrompts[0]).toContain(sealed.path);
+    expect(value.kickoffPrompts[0]).not.toContain(sealed.sourcePath);
   });
 
   it('emits operator-visible bootstrap steps in exact order', async () => {
@@ -1861,7 +1938,7 @@ describe('initial main-owned orchestrator bootstrap', () => {
       intentContract: {
         ...value.mission.intentContract!,
         approvalReviewSha256: 'd'.repeat(64),
-        dispatchedAt: undefined,
+        dispatchedAt: 2,
       },
     };
     const service = new MissionOrchestratorBootstrapService(value.deps);
@@ -1887,6 +1964,30 @@ describe('initial main-owned orchestrator bootstrap', () => {
       intentState: 'executing',
       orchestratorSessionId: 'pty-main-orch',
     });
+  });
+
+  it('does not recover a reviewed pending mission before the user requests start', async () => {
+    const value = harness();
+    const reviewed: Mission = {
+      ...value.mission,
+      status: 'pending',
+      intentState: 'ready_to_start',
+      intentContract: {
+        ...value.mission.intentContract!,
+        approvalReviewSha256: 'e'.repeat(64),
+        dispatchedAt: undefined,
+      },
+    };
+    const bootstrap = vi.fn();
+    const recovery = new MissionOrchestratorBootstrapRecovery({
+      listScopes: () => [scope],
+      listBootstrapCandidates: () => [reviewed],
+      bootstrap,
+    });
+
+    await recovery.reconcile();
+
+    expect(bootstrap).not.toHaveBeenCalled();
   });
 
   it('does not recover a non-approved pending start after restart', async () => {

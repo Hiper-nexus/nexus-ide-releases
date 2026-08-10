@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MISSION_PREPARE_TITLE_MAX_CHARS } from '../../shared/mission-engine-contract';
 import { MISSION_INTENT_GOAL_MAX_CHARS } from '../../shared/mission-intent';
 import type { SquadAgent } from '../../shared/orch-types';
@@ -40,6 +40,50 @@ function resetStore(): void {
   });
 }
 
+/**
+ * Storage double bound to `window`, not to `Storage.prototype`.
+ *
+ * Other suites replace the whole `window` global; a prototype spy then never
+ * fires because the live `localStorage` no longer inherits from the patched
+ * prototype. Swapping the property makes these tests independent of whatever
+ * ran before them in the same worker.
+ */
+function withStorageFailure(overrides: {
+  getItem?: (key: string) => string | null;
+  setItem?: (key: string, value: string) => void;
+}): { restore: () => void; setItem: ReturnType<typeof vi.fn>; getItem: ReturnType<typeof vi.fn> } {
+  const real = window.localStorage;
+  const descriptor = Object.getOwnPropertyDescriptor(window, 'localStorage');
+  const setItem = vi.fn(
+    overrides.setItem ?? ((key: string, value: string) => real.setItem(key, value)),
+  );
+  const getItem = vi.fn(
+    overrides.getItem ?? ((key: string) => real.getItem(key)),
+  );
+  const double = {
+    get length() {
+      return real.length;
+    },
+    clear: () => real.clear(),
+    key: (index: number) => real.key(index),
+    removeItem: (key: string) => real.removeItem(key),
+    getItem,
+    setItem,
+  } as unknown as Storage;
+  Object.defineProperty(window, 'localStorage', {
+    configurable: true,
+    get: () => double,
+  });
+  return {
+    setItem,
+    getItem,
+    restore: () => {
+      if (descriptor) Object.defineProperty(window, 'localStorage', descriptor);
+      else Object.defineProperty(window, 'localStorage', { configurable: true, value: real });
+    },
+  };
+}
+
 function allObjectKeys(value: unknown, keys = new Set<string>()): Set<string> {
   if (Array.isArray(value)) {
     for (const item of value) allObjectKeys(item, keys);
@@ -58,6 +102,14 @@ describe('mission setup draft store', () => {
     localStorage.clear();
     vi.restoreAllMocks();
     resetStore();
+  });
+
+  // Storage spies must be torn down after the test that installed them:
+  // a beforeEach-only restore runs before the next spy, so a leaked spy
+  // survives into other files sharing this worker.
+  afterEach(() => {
+    vi.restoreAllMocks();
+    localStorage.clear();
   });
 
   it('ignores draft edits until a project workspace exists', () => {
@@ -337,19 +389,22 @@ describe('mission setup draft store', () => {
   });
 
   it('keeps the in-memory draft usable when localStorage is unavailable', () => {
-    const setItem = vi
-      .spyOn(Storage.prototype, 'setItem')
-      .mockImplementation(() => {
+    const storage = withStorageFailure({
+      setItem: () => {
         throw new DOMException('Quota exceeded', 'QuotaExceededError');
-      });
-
-    const store = useMissionSetupStore.getState();
-    expect(() => store.setWorkspace('/projects/alpha')).not.toThrow();
-    expect(() => store.setObjective('Rascunho preservado')).not.toThrow();
-    expect(useMissionSetupStore.getState().draft.objective).toBe(
-      'Rascunho preservado',
-    );
-    expect(setItem).toHaveBeenCalled();
+      },
+    });
+    try {
+      const store = useMissionSetupStore.getState();
+      expect(() => store.setWorkspace('/projects/alpha')).not.toThrow();
+      expect(() => store.setObjective('Rascunho preservado')).not.toThrow();
+      expect(useMissionSetupStore.getState().draft.objective).toBe(
+        'Rascunho preservado',
+      );
+      expect(storage.setItem).toHaveBeenCalled();
+    } finally {
+      storage.restore();
+    }
   });
 
   it('reports read failures and retries without pretending the draft is empty', () => {
@@ -366,11 +421,11 @@ describe('mission setup draft store', () => {
         },
       }),
     );
-    const getItem = vi
-      .spyOn(Storage.prototype, 'getItem')
-      .mockImplementation(() => {
+    const storage = withStorageFailure({
+      getItem: () => {
         throw new DOMException('Blocked', 'SecurityError');
-      });
+      },
+    });
 
     const store = useMissionSetupStore.getState();
     store.setWorkspace(workspacePath);
@@ -384,7 +439,7 @@ describe('mission setup draft store', () => {
       },
     });
 
-    getItem.mockRestore();
+    storage.restore();
     store.retryPersistence();
 
     expect(useMissionSetupStore.getState()).toMatchObject({
@@ -397,11 +452,11 @@ describe('mission setup draft store', () => {
   });
 
   it('keeps failed writes in memory per workspace and persists them on retry', () => {
-    const setItem = vi
-      .spyOn(Storage.prototype, 'setItem')
-      .mockImplementation(() => {
+    const storage = withStorageFailure({
+      setItem: () => {
         throw new DOMException('Quota exceeded', 'QuotaExceededError');
-      });
+      },
+    });
     const store = useMissionSetupStore.getState();
 
     store.setWorkspace('/projects/alpha');
@@ -422,7 +477,7 @@ describe('mission setup draft store', () => {
       'Rascunho mantido somente na memória',
     );
 
-    setItem.mockRestore();
+    storage.restore();
     store.retryPersistence();
 
     expect(useMissionSetupStore.getState().persistence).toEqual({

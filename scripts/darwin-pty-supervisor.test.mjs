@@ -200,7 +200,12 @@ async function cleanupProcessGroup(processGroupId) {
   );
 }
 
-function waitFor(predicate, timeoutMs = 8_000) {
+/**
+ * Real PTYs, tracers and signal cohorts: under the full suite these fixtures
+ * can take far longer to settle than on a quiet machine. The waits prove the
+ * fixture ARRIVES, not that it arrives fast, so ceilings are generous but bounded.
+ */
+function waitFor(predicate, timeoutMs = 30_000) {
   const deadline = Date.now() + timeoutMs;
   return new Promise((resolve, reject) => {
     const poll = () => {
@@ -260,7 +265,7 @@ function processExists(pid) {
   }
 }
 
-function waitForTerminalExit(terminal, timeoutMs = 8_000) {
+function waitForTerminalExit(terminal, timeoutMs = 25_000) {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       reject(new Error("timed out waiting for supervised PTY exit"));
@@ -541,7 +546,7 @@ suite("Darwin PTY native responsibility supervisor", () => {
         throw new Error("sealed replacement unexpectedly reused the CDHash");
       }
     }
-  }, 20_000);
+  }, 60_000);
 
   afterAll(() => {
     rmSync(fixtureRoot, { recursive: true, force: true });
@@ -622,7 +627,7 @@ suite("Darwin PTY native responsibility supervisor", () => {
       expect(result.stdout).toContain("NEXUS_SEALED_EXECUTED");
       expect(readFileSync(marker, "utf8")).toBe("executed");
     },
-    20_000,
+    60_000,
   );
 
   signedSuite.each([
@@ -663,7 +668,7 @@ suite("Darwin PTY native responsibility supervisor", () => {
       expect(existsSync(marker)).toBe(false);
       expect(result.stderr).toContain("live code identity rejected");
     },
-    20_000,
+    60_000,
   );
 
   signedSuite(
@@ -705,7 +710,7 @@ suite("Darwin PTY native responsibility supervisor", () => {
       );
       expect(existsSync(marker)).toBe(false);
     },
-    20_000,
+    60_000,
   );
 
   signedSuite(
@@ -748,7 +753,7 @@ suite("Darwin PTY native responsibility supervisor", () => {
         killFixtureProcess(tracedPid);
       }
     },
-    20_000,
+    60_000,
   );
 
   signedSuite(
@@ -772,7 +777,7 @@ suite("Darwin PTY native responsibility supervisor", () => {
       expect(result.stdout).toContain("NEXUS_SEALED_EXECUTED");
       expect(readFileSync(marker, "utf8")).toBe("executed");
     },
-    20_000,
+    60_000,
   );
 
   signedSuite(
@@ -864,7 +869,7 @@ suite("Darwin PTY native responsibility supervisor", () => {
         renameSync(trustedBackup, sealedFixture);
       }
     },
-    20_000,
+    60_000,
   );
 
   it("reaps the direct child and entire responsibility cohort after SIGTERM", async () => {
@@ -887,7 +892,7 @@ suite("Darwin PTY native responsibility supervisor", () => {
     } finally {
       cleanupCohort(cohort, terminalExited);
     }
-  }, 20_000);
+  }, 60_000);
 
   it("delivers Ctrl-C to a continuing child without closing the pane, then reaps on SIGTERM", async () => {
     const cohort = await launchLongLivedCohort("ctrl-c", {
@@ -924,7 +929,7 @@ suite("Darwin PTY native responsibility supervisor", () => {
     } finally {
       cleanupCohort(cohort, terminalExited);
     }
-  }, 20_000);
+  }, 60_000);
 
   it("owns and reaps a double-forked, setsid, PPID-1 daemon before preserving the CLI exit", async () => {
     const daemonPidFile = path.join(fixtureRoot, "daemon.pid");
@@ -1020,5 +1025,5 @@ suite("Darwin PTY native responsibility supervisor", () => {
     expect(stderr.join("")).not.toMatch(
       /private responsibility.*unavailable|not its own signed/i,
     );
-  }, 20_000);
+  }, 60_000);
 });

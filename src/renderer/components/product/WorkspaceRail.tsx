@@ -12,7 +12,6 @@ export interface WorkspaceRailMission {
 export interface WorkspaceRailWorkspace {
   id: string;
   name: string;
-  path?: string;
   missions: readonly WorkspaceRailMission[];
 }
 
@@ -135,11 +134,7 @@ function WorkspaceGroup({
                 data-workspace-id={workspace.id}
                 aria-current={workspaceSelected ? 'page' : undefined}
                 aria-label={`Abrir workspace ${workspace.name}`}
-                title={
-                  workspace.path
-                    ? `${workspace.name}\n${workspace.path}`
-                    : workspace.name
-                }
+                title={workspace.name}
                 onClick={() => onSelectWorkspace(workspace.id)}
               >
                 <span className="workspace-rail__workspace-icon" aria-hidden>

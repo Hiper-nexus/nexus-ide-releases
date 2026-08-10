@@ -51,27 +51,28 @@ export function validPassEvidence(
   ).map((advisor) => advisor.cli);
   const chain = realMissionE2EExpectedTaskChain(presentAdvisorClis);
   const planHash = sha("guided-plan");
-  const sourceSquadRevisionHash = sha("source-squad-revision");
+  const fixtureSquadRevisionHash = sha("fixture-squad-revision");
   const contextHash = sha("frozen-context");
   const contractHash = sha("frozen-contract");
   const finalDiffHash = sha("integrated-diff");
   const runtimeSquadRevisionHash = sha("runtime-squad-revision");
   const runtimeSquadId =
     "agentic-runtime-11111111-1111-4111-8111-111111111111";
+  const sourceSquadId =
+    "custom-mission-setup-11111111-1111-4111-8111-111111111111";
+  const sourceSquadRevisionHash = sha("canonical-setup-source-revision");
+  const reviewSha256 = sha("canonical-mission-review");
   const productWizardReceiptCore = {
-    origin: "main-owned-product-wizard-causal-chain" as const,
+    origin: "main-owned-mission-setup-causal-chain" as const,
     missionId: "mission-e2e",
     workspaceSha256: sha("workspace"),
     sourceSquadRevisionHash,
     squadRevisionHash: runtimeSquadRevisionHash,
-    submittedContractSha256: sha("submitted-contract"),
-    approvedContractSha256: sha("approved-contract"),
-    armedAt: 10,
-    intentSubmittedAt: 10,
-    // Mundo sem modal (06/08): a cadeia promptless não tem diálogo.
-    nativeDialogOpenedAt: null,
-    nativeDialogAcceptedAt: null,
-    approvalReturnedAt: 11,
+    reviewSha256,
+    preparedContractSha256: sha("prepared-contract"),
+    startedContractSha256: sha("started-contract"),
+    preparedAt: 10,
+    startedAt: 12,
   };
   const acceptanceCriteria =
     launchSurface === "product-wizard"
@@ -400,16 +401,13 @@ export function validPassEvidence(
       status: "done",
       intentState: "done",
       intentVersion: 1,
-      squadId:
-        launchSurface === "product-wizard"
-          ? runtimeSquadId
-          : REAL_MISSION_E2E_SQUAD_ID,
-      squadSourceId: REAL_MISSION_E2E_SQUAD_ID,
+      reviewSha256,
+      squadId: runtimeSquadId,
+      fixtureSquadId: REAL_MISSION_E2E_SQUAD_ID,
+      fixtureSquadRevisionHash,
+      squadSourceId: sourceSquadId,
       squadSourceRevisionHash: sourceSquadRevisionHash,
-      squadRevisionHash:
-        launchSurface === "product-wizard"
-          ? runtimeSquadRevisionHash
-          : sourceSquadRevisionHash,
+      squadRevisionHash: runtimeSquadRevisionHash,
       approvedAt: 10,
       dispatchedAt: 11,
     },
@@ -431,10 +429,7 @@ export function validPassEvidence(
     },
     plan: {
       version: 1,
-      squadId:
-        launchSurface === "product-wizard"
-          ? runtimeSquadId
-          : REAL_MISSION_E2E_SQUAD_ID,
+      squadId: runtimeSquadId,
       planHash,
       rosterHash: sha("guided-roster"),
       tasks: planTasks,

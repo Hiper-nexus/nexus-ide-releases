@@ -94,8 +94,6 @@ import { NOTE_CHANNELS } from '../shared/note-types';
 import type { Note, NotesChangedEvent } from '../shared/note-types';
 import { PIPE_CHANNELS } from '../shared/pipe-types';
 import type { Pipe, PipeMode } from '../shared/pipe-types';
-import { ONBOARDING_CHANNELS } from '../shared/onboarding-types';
-import type { OnboardingPatch } from '../shared/onboarding-types';
 import type {
   NexusApi,
   BrowserDesignEventPayload,
@@ -565,6 +563,8 @@ ipcRenderer.on(PIPE_CHANNELS.changed, (_e, pipes: Pipe[]) =>
 
 let realMissionProductWizardE2EPrepared = false;
 let realMissionProductWizardCapability: string | null = null;
+let realMissionProductWizardPreparedRecorded = false;
+let realMissionProductWizardStartTrusted = false;
 type RealMissionProductWizardGestureState =
   | {
       readonly active: true;
@@ -590,23 +590,33 @@ window.addEventListener(
     if (!realMissionProductWizardE2EPrepared || !event.isTrusted) {
       return;
     }
-    // One successful gesture owns the whole causal chain. A failed/rejected
-    // gesture must not poison later trusted clicks (operator retry).
-    if (realMissionProductWizardGesture !== null) {
-      return;
-    }
     const launch = event
       .composedPath()
       .find(
         (candidate): candidate is HTMLElement =>
           candidate instanceof HTMLElement &&
-          candidate.dataset.nexusRealMissionWizardLaunch === 'true',
+          (candidate.dataset.nexusRealMissionWizardLaunch === 'prepare' ||
+            candidate.dataset.nexusRealMissionWizardLaunch === 'start'),
       );
     if (!launch || launch.getAttribute('aria-disabled') === 'true') return;
+    const launchStage = launch.dataset.nexusRealMissionWizardLaunch;
+    if (launchStage === 'start') {
+      if (
+        realMissionProductWizardGesture !== null &&
+        realMissionProductWizardPreparedRecorded &&
+        realMissionProductWizardCapability !== null
+      ) {
+        realMissionProductWizardStartTrusted = true;
+      }
+      return;
+    }
+    // Only trusted Prepare mints authority; Start can only consume the
+    // capability advanced by the main-verified prepared receipt.
+    if (realMissionProductWizardGesture !== null) return;
 
     realMissionProductWizardGesture = ipcRenderer
       .invoke(REAL_MISSION_E2E_CHANNELS.beginProductWizardGesture, {
-        source: 'trusted-mission-wizard-launch',
+        source: 'trusted-mission-setup-prepare',
       })
       .then((raw: unknown) => {
         if (
@@ -622,6 +632,8 @@ window.addEventListener(
         ) {
           realMissionProductWizardE2EPrepared = false;
           realMissionProductWizardCapability = null;
+          realMissionProductWizardPreparedRecorded = false;
+          realMissionProductWizardStartTrusted = false;
           return { active: false } as const;
         }
         if (
@@ -644,6 +656,8 @@ window.addEventListener(
         // Allow a later trusted click to mint a fresh one-shot capability.
         realMissionProductWizardGesture = null;
         realMissionProductWizardCapability = null;
+        realMissionProductWizardPreparedRecorded = false;
+        realMissionProductWizardStartTrusted = false;
         throw error;
       });
     // The renderer cannot observe this promise. Attach a rejection handler so
@@ -656,7 +670,7 @@ window.addEventListener(
 
 async function recordRealMissionProductWizardStepFromPreload(input: {
   readonly missionId: string;
-  readonly step: 'mission-armed' | 'intent-submitted' | 'approval-returned';
+  readonly step: 'mission-prepared' | 'mission-started';
 }): Promise<{ ok: true; inactive?: true }> {
   if (!realMissionProductWizardE2EPrepared) {
     return { ok: true, inactive: true };
@@ -668,6 +682,12 @@ async function recordRealMissionProductWizardStepFromPreload(input: {
   const gestureState = await gesture;
   if (!gestureState.active || !realMissionProductWizardE2EPrepared) {
     return { ok: true, inactive: true };
+  }
+  if (
+    input.step === 'mission-started' &&
+    !realMissionProductWizardStartTrusted
+  ) {
+    throw new Error('trusted Mission Setup Start was not observed');
   }
   const capability = realMissionProductWizardCapability;
   // Consume before IPC. A timeout, main rejection or renderer replay can never
@@ -692,12 +712,23 @@ async function recordRealMissionProductWizardStepFromPreload(input: {
     realMissionProductWizardE2EPrepared = false;
     realMissionProductWizardGesture = null;
     realMissionProductWizardCapability = null;
+    realMissionProductWizardPreparedRecorded = false;
+    realMissionProductWizardStartTrusted = false;
     return { ok: true, inactive: true };
   }
   const next = (raw as { nextCapability?: unknown }).nextCapability;
   if (next !== undefined) {
     realMissionProductWizardCapability =
       productWizardGestureCapabilitySchema.parse(next);
+  }
+  if (input.step === 'mission-prepared') {
+    realMissionProductWizardPreparedRecorded = true;
+  }
+  if (input.step === 'mission-started') {
+    realMissionProductWizardE2EPrepared = false;
+    realMissionProductWizardGesture = null;
+    realMissionProductWizardPreparedRecorded = false;
+    realMissionProductWizardStartTrusted = false;
   }
   return { ok: true };
 }
@@ -931,11 +962,6 @@ const api: NexusApi = {
       return () => adapterChangedListeners.delete(cb);
     },
   },
-  onboarding: {
-    get: () => ipcRenderer.invoke(ONBOARDING_CHANNELS.get),
-    set: (patch: OnboardingPatch) =>
-      ipcRenderer.invoke(ONBOARDING_CHANNELS.set, patch),
-  },
   update: {
     getState: () => ipcRenderer.invoke(UPDATE_CHANNELS.getState),
     check: () => ipcRenderer.invoke(UPDATE_CHANNELS.check),
@@ -1051,106 +1077,22 @@ const api: NexusApi = {
       paneId: string;
     }) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionPaneRestoreAuthority, input),
-    createMission: (input: {
-      title: string;
-      goal?: string;
-      squadId?: string;
-      orchestratorPane?: {
-        paneId: string;
-        adapterId: string;
-        model?: string;
-        accountId?: string;
-        cwd?: string;
-        title?: string;
-        agentName?: string;
-      };
-    }) => ipcRenderer.invoke(ORCH_CHANNELS.missionCreate, input),
-    authorizeImmediateSquadLaunch: (input: {
-      squadId: string;
-      paneId: string;
-      adapterId: string;
-      model?: string;
-      accountId?: string;
-      effort?: string;
-      missionTitle: string;
-      missionGoal: string;
-    }) =>
-      ipcRenderer.invoke(
-        ORCH_CHANNELS.missionAuthorizeImmediateSquad,
-        input,
-      ),
-    armMission: (input: { title: string; squadId: string }) =>
-      ipcRenderer.invoke(ORCH_CHANNELS.missionArm, input),
-    submitMissionIntent: (input: {
-      missionId: string;
-      goal: string;
-      source?: 'typed' | 'voice' | 'imported-issue' | 'automation';
-      /** prepare-project is NOT accepted — use prepareMissionProject. */
-      contextPolicy?: 'none' | 'minimal' | 'on-demand';
-      acceptanceCriteria?: string[];
-      /** standard | consult | plan (design-only) | ops (infra, sem PREVC). */
-      lane?: 'standard' | 'consult' | 'plan' | 'ops';
-      orchestrationMode?: 'livre' | 'pack' | 'guided';
-      wavePackTemplateId?: 'landing' | 'saas' | 'fix';
-      evidenceAttached?: boolean;
-      /**
-       * Wizard de produto apenas: ESTA submissão será exibida na revisão de
-       * plano in-app, cujo Start vale como aprovação (grant main-owned).
-       */
-      planReviewSurface?: 'product-wizard';
-    }) => ipcRenderer.invoke(ORCH_CHANNELS.missionSubmitIntent, input),
-    approveMissionIntent: (input: {
-      missionId: string;
-      evidenceAttached?: boolean;
-      attachmentPaths?: string[];
-    }) =>
-      ipcRenderer.invoke(ORCH_CHANNELS.missionApproveIntent, input),
-    bootstrapMissionOrchestrator: (input: { missionId: string }) =>
-      ipcRenderer.invoke(ORCH_CHANNELS.missionBootstrapOrchestrator, input),
     resumeMissionBootstrap: (input: { missionId: string }) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionResumeBootstrap, input),
-    rearmMission: (input: { missionId: string }) =>
-      ipcRenderer.invoke(ORCH_CHANNELS.missionRearm, input),
     promotePlanLane: (input: {
       missionId: string;
       orchestrationMode?: 'pack' | 'guided';
       wavePackTemplateId?: 'landing' | 'saas' | 'fix';
     }) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionPromotePlanLane, input),
-    submitMissionKickoff: (input: {
-      missionId: string;
-      sessionId: string;
-    }) => ipcRenderer.invoke(ORCH_CHANNELS.missionKickoffSubmit, input),
-    prepareMissionProject: (input: { missionId: string }) =>
-      ipcRenderer.invoke(ORCH_CHANNELS.missionPrepareProject, input),
-    cancelMissionPreparation: (input: { missionId: string }) =>
-      ipcRenderer.invoke(ORCH_CHANNELS.missionCancelPreparation, input),
-    getMissionPromptQueue: (input: { missionId: string }) =>
-      ipcRenderer.invoke(ORCH_CHANNELS.missionPromptQueue, input),
     missionEventsRecent: (input) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionEventsRecent, input),
-    missionTaskSchedule: (input) =>
-      ipcRenderer.invoke(ORCH_CHANNELS.missionsTaskSchedule, input),
     missionEventsReplay: (input) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionEventsReplay, input),
     missionEventsAck: (input) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionEventsAck, input),
     missionEventsCursor: (input) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionEventsCursor, input),
-    bindMissionOrchestrator: (input: {
-      missionId: string;
-      title: string;
-      squadId: string;
-      orchestratorPane: {
-        paneId: string;
-        adapterId?: string;
-        model?: string;
-        accountId?: string;
-        cwd?: string;
-        title?: string;
-        agentName?: string;
-      };
-    }) => ipcRenderer.invoke(ORCH_CHANNELS.missionBindOrchestrator, input),
     rebindMissionOrchestrator: (missionId: string, sessionId: string) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionRebind, { missionId, sessionId }),
     updateMission: (missionId: string, patch: MissionPatch) =>
@@ -1568,17 +1510,19 @@ ipcRenderer.on(
   (_event, payload: unknown) => {
     if (realMissionProductWizardE2EPrepared) return;
     realMissionProductWizardE2EPrepared = true;
+    realMissionProductWizardPreparedRecorded = false;
+    realMissionProductWizardStartTrusted = false;
     void prepareRealMissionProductWizardE2E(api, payload, {
       prepareFixture: (rendererFailureToken) =>
         ipcRenderer.invoke(REAL_MISSION_E2E_CHANNELS.prepareFixture, {
           rendererFailureToken,
         }),
-      observeMission: (missionId) =>
-        ipcRenderer.invoke(REAL_MISSION_E2E_CHANNELS.observe, { missionId }),
+      observeMission: (input) =>
+        ipcRenderer.invoke(REAL_MISSION_E2E_CHANNELS.observe, input),
     })
       .then(() => {
-        // This signal only opens a modal at a main-selected fixture. It carries
-        // no mission id, coverage label, counter or execution authority.
+        // This signal only opens canonical Mission Setup at a main-selected
+        // fixture. It carries no mission id or execution authority.
         window.sessionStorage.setItem(
           REAL_MISSION_E2E_PRODUCT_WIZARD_READY_STORAGE_KEY,
           '1',
@@ -1588,7 +1532,12 @@ ipcRenderer.on(
         );
       })
       .catch(() => {
-        console.error('[real-mission] product-wizard-setup-failed');
+        realMissionProductWizardE2EPrepared = false;
+        realMissionProductWizardGesture = null;
+        realMissionProductWizardCapability = null;
+        realMissionProductWizardPreparedRecorded = false;
+        realMissionProductWizardStartTrusted = false;
+        console.error('[real-mission] product-setup-failed');
       });
   },
 );
@@ -1600,8 +1549,8 @@ ipcRenderer.on(REAL_MISSION_E2E_CHANNELS.run, (_event, payload: unknown) => {
       ipcRenderer.invoke(REAL_MISSION_E2E_CHANNELS.prepareFixture, {
         rendererFailureToken,
       }),
-    observeMission: (missionId) =>
-      ipcRenderer.invoke(REAL_MISSION_E2E_CHANNELS.observe, { missionId }),
+    observeMission: (input) =>
+      ipcRenderer.invoke(REAL_MISSION_E2E_CHANNELS.observe, input),
   }).catch(() => {
     // Main owns the timeout/verdict and persists the only evidence receipt.
     // Never echo an exception here: provider/PTY errors can contain prompts.

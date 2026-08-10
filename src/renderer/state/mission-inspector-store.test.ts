@@ -146,6 +146,19 @@ describe('ephemeral mission inspector store', () => {
     });
   });
 
+  it('resets a stale tab to Activity when the bound mission changes without an explicit route', () => {
+    const store = useMissionInspectorStore.getState();
+    store.bindSnapshot(snapshot('mission-a', [coordinator, worker]));
+    store.selectTab('result');
+
+    store.bindSnapshot(snapshot('mission-b', [coordinator, reviewer]));
+
+    expect(useMissionInspectorStore.getState()).toMatchObject({
+      missionId: 'mission-b',
+      tab: 'activity',
+    });
+  });
+
   it.each([
     {
       label: 'the orchestrator',

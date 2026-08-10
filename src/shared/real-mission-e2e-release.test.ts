@@ -44,7 +44,7 @@ describe("real mission E2E release eligibility and adversarial receipts", () => 
     const privateEvidence = validPassEvidence();
     expect(() =>
       parseReleaseEligibleRealMissionE2EEvidence(privateEvidence),
-    ).toThrow(/physical product wizard/i);
+    ).toThrow(/physical Mission Setup/i);
 
     const productEvidence = validPassEvidence("product-wizard");
     expect(() =>
@@ -55,10 +55,10 @@ describe("real mission E2E release eligibility and adversarial receipts", () => 
     flagOnly.wizardCoverage = "not-covered";
     expect(() =>
       parseReleaseEligibleRealMissionE2EEvidence(flagOnly),
-    ).toThrow(/real-mission invariants|physical product wizard/i);
+    ).toThrow(/real-mission invariants|physical Mission Setup/i);
   });
 
-  it("binds product-wizard coverage to the exact main-owned causal receipt", () => {
+  it("binds Mission Setup coverage to the exact main-owned causal receipt", () => {
     const missing = validPassEvidence("product-wizard");
     missing.wizardReceipt = null;
     expect(() => parseRealMissionE2EEvidence(missing)).toThrow(
@@ -69,7 +69,7 @@ describe("real mission E2E release eligibility and adversarial receipts", () => 
       ["missionId", "other-mission"],
       ["workspaceSha256", sha("other-workspace")],
       ["squadRevisionHash", sha("other-squad")],
-      ["submittedContractSha256", sha("other-submitted-contract")],
+      ["preparedContractSha256", sha("other-prepared-contract")],
     ] as const) {
       const tampered = validPassEvidence("product-wizard");
       (tampered.wizardReceipt as Record<string, unknown>)[field] = value;
@@ -81,8 +81,8 @@ describe("real mission E2E release eligibility and adversarial receipts", () => 
 
     const reversed = validPassEvidence("product-wizard");
     const reversedReceipt = reversed.wizardReceipt as Record<string, unknown>;
-    reversedReceipt.nativeDialogOpenedAt = 12;
-    reversedReceipt.nativeDialogAcceptedAt = 10;
+    reversedReceipt.preparedAt = 12;
+    reversedReceipt.startedAt = 10;
     expect(() => parseRealMissionE2EEvidence(reversed)).toThrow();
 
     const privateWithReceipt = validPassEvidence();
@@ -90,7 +90,7 @@ describe("real mission E2E release eligibility and adversarial receipts", () => 
       "product-wizard",
     ).wizardReceipt;
     expect(() => parseRealMissionE2EEvidence(privateWithReceipt)).toThrow(
-      /private runner cannot carry a product-wizard receipt/i,
+      /private runner cannot carry a Mission Setup receipt/i,
     );
   });
 

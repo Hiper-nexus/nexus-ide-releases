@@ -655,9 +655,25 @@ async function settlePendingSpawnFailure(
     return;
   }
 
-  const fallback = options.allowMainFallback
-    ? fallbackPendingSpawnToMainRuntime(pending, mainOwnedPaneHooks)
-    : null;
+  let fallback: OrchPaneSpawnResult | null = null;
+  if (options.allowMainFallback) {
+    try {
+      fallback = await fallbackPendingSpawnToMainRuntime(
+        pending,
+        mainOwnedPaneHooks,
+      );
+    } catch (fallbackError) {
+      const detail =
+        fallbackError instanceof Error
+          ? fallbackError.message
+          : String(fallbackError);
+      fallback = {
+        requestId,
+        ok: false,
+        error: `${error}; main fallback failed: ${detail}`,
+      };
+    }
+  }
   sendAttemptPaneCleanup(
     pending.owner,
     requestId,
@@ -1782,6 +1798,9 @@ export function requestPaneSpawn(
     restorePersistedAuthority: false,
   });
   return new Promise((resolve) => {
+    console.info(
+      `[pane-registry] spawn requested id=${requestId} mission=${options.missionId ?? "none"} role=${options.role ?? "none"} owner=${owner.id}`,
+    );
     const timer = setTimeout(() => {
       void settlePendingSpawnFailure(
         requestId,

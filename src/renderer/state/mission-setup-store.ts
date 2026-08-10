@@ -4,12 +4,14 @@ import {
   clampMissionLaneTools,
   MISSION_INTENT_GOAL_MAX_CHARS,
   missionLaneSchema,
+  missionIntentContractSchema,
   type MissionLane,
 } from '../../shared/mission-intent';
 import {
   strictSquadAgentSchema,
   type SquadAgent,
 } from '../../shared/orch-types';
+import { PET_STUDIO_SQUAD } from '../../shared/pet-studio';
 import { MISSION_PREPARE_TITLE_MAX_CHARS } from '../../shared/mission-engine-contract';
 
 export const MISSION_SETUP_DRAFT_VERSION = 1 as const;
@@ -26,6 +28,47 @@ export interface MissionSetupDraft {
   step: MissionSetupStep;
   revision: number;
 }
+export interface PetStudioMissionSetupEntryContext {
+  kind: 'pet-studio';
+  origin: 'settings-appearance';
+  objective: string;
+  title: string;
+  roster: SquadAgent[];
+  profile: {
+    kind: 'pet-studio';
+    referenceImagePath: string;
+  };
+  step: 'review';
+  revision: number;
+}
+
+export interface LegacyReplacementMissionSetupEntryContext {
+  kind: 'legacy-replacement';
+  supersededMissionId: string;
+  acceptanceCriteria: string[];
+}
+
+export type MissionSetupEntryContext =
+  | PetStudioMissionSetupEntryContext
+  | LegacyReplacementMissionSetupEntryContext;
+
+export interface BeginPetStudioReviewInput {
+  objective: string;
+  title: string;
+  referenceImagePath: string;
+}
+
+export interface BeginLegacyReplacementReviewInput {
+  workspacePath: string;
+  supersededMissionId: string;
+  objective: string;
+  title: string;
+  contextPaths: readonly string[];
+  acceptanceCriteria: readonly string[];
+  roster: readonly SquadAgent[];
+  lane: MissionLane;
+}
+
 
 interface StoredMissionSetupDraft {
   version: typeof MISSION_SETUP_DRAFT_VERSION;
@@ -52,16 +95,18 @@ export type MissionSetupPersistenceState =
       reason: MissionSetupPersistenceErrorReason;
     };
 
-interface WorkspaceDraftMemory {
+export interface WorkspaceDraftMemory {
   draft: MissionSetupDraft;
   persistence: MissionSetupPersistenceState;
 }
 
-interface MissionSetupStore {
+export interface MissionSetupStore {
   workspacePath: string | null;
   draft: MissionSetupDraft;
   persistence: MissionSetupPersistenceState;
   workspaceDrafts: Record<string, WorkspaceDraftMemory>;
+  entryContext: MissionSetupEntryContext | null;
+  entryAuthorityRevision: number;
   setWorkspace(workspacePath: string | null): void;
   setObjective(objective: string): void;
   setTitle(title: string): void;
@@ -69,6 +114,13 @@ interface MissionSetupStore {
   setRoster(roster: readonly SquadAgent[]): void;
   setAdvancedLane(lane: MissionLane): void;
   setStep(step: MissionSetupStep): void;
+  beginPetStudioReview(
+    input: BeginPetStudioReviewInput,
+  ): PetStudioMissionSetupEntryContext | null;
+  beginLegacyReplacementReview(
+    input: BeginLegacyReplacementReviewInput,
+  ): boolean;
+  clearEntryContext(): void;
   retryPersistence(): void;
   resetWorkspace(workspacePath?: string): void;
 }
@@ -165,6 +217,69 @@ export function normalizeProjectContextPath(value: string): string | null {
   const projectPath = segments.join('/');
   return projectPath.length <= 4_096 ? projectPath : null;
 }
+function normalizedHostPath(value: string): string {
+  return value.trim().replaceAll('\\', '/').replace(/\/+$/u, '');
+}
+
+export function isGovernedPetStudioReferencePath(
+  referenceImagePath: string,
+  workspacePath?: string | null,
+): boolean {
+  const image = normalizedHostPath(referenceImagePath);
+  const absolute =
+    image.startsWith('/') || /^[A-Za-z]:\//u.test(image);
+  if (
+    !absolute ||
+    /[\u0000-\u001f\u007f]/u.test(image) ||
+    image.split('/').some((segment) => segment === '.' || segment === '..')
+  ) {
+    return false;
+  }
+  if (workspacePath) {
+    const root = normalizedHostPath(workspacePath);
+    return image.startsWith(`${root}/.nexus/attachments/`);
+  }
+  return image.includes('/.nexus/attachments/');
+}
+
+export function isExactPetStudioEntryContext(
+  value: MissionSetupEntryContext | null | undefined,
+  draft?: MissionSetupDraft,
+  workspacePath?: string | null,
+): value is PetStudioMissionSetupEntryContext {
+  if (
+    value?.kind !== 'pet-studio' ||
+    value.origin !== 'settings-appearance' ||
+    value.profile?.kind !== 'pet-studio' ||
+    typeof value.profile.referenceImagePath !== 'string' ||
+    value.step !== 'review' ||
+    !Number.isSafeInteger(value.revision) ||
+    value.revision < 0 ||
+    typeof value.objective !== 'string' ||
+    !value.objective.trim() ||
+    typeof value.title !== 'string' ||
+    !value.title.trim() ||
+    !isGovernedPetStudioReferencePath(
+      value.profile.referenceImagePath,
+      workspacePath,
+    ) ||
+    JSON.stringify(value.roster) !== JSON.stringify(PET_STUDIO_SQUAD.agents)
+  ) {
+    return false;
+  }
+  return (
+    draft === undefined ||
+    (draft.revision === value.revision &&
+      draft.step === 'review' &&
+      draft.objective === value.objective &&
+      draft.title === value.title &&
+      draft.contextPaths.length === 0 &&
+      draft.advanced.lane === 'standard' &&
+      JSON.stringify(draft.roster) ===
+        JSON.stringify(PET_STUDIO_SQUAD.agents))
+  );
+}
+
 
 function cloneAgent(agent: SquadAgent): SquadAgent {
   return {
@@ -363,7 +478,12 @@ export const useMissionSetupStore = create<MissionSetupStore>((set, get) => {
     update: (draft: MissionSetupDraft) => MissionSetupDraft,
   ): void => {
     const current = get();
-    if (!current.workspacePath) return;
+    if (
+      !current.workspacePath ||
+      current.entryContext?.kind === 'pet-studio'
+    ) {
+      return;
+    }
     const next = update(current.draft);
     storeCurrentWorkspace(
       next,
@@ -385,13 +505,22 @@ export const useMissionSetupStore = create<MissionSetupStore>((set, get) => {
     draft: createEmptyMissionSetupDraft(),
     persistence: { status: 'idle' },
     workspaceDrafts: {},
+    entryContext: null,
+    entryAuthorityRevision: 0,
 
     setWorkspace: (workspacePath) => {
       const current = get();
+      const entryAuthorityRevision = Math.min(
+        Number.MAX_SAFE_INTEGER,
+        current.entryAuthorityRevision + 1,
+      );
       if (workspacePath === current.workspacePath) return;
 
       let workspaceDrafts = current.workspaceDrafts;
-      if (current.workspacePath) {
+      if (
+        current.workspacePath &&
+        current.entryContext?.kind !== 'pet-studio'
+      ) {
         workspaceDrafts = {
           ...workspaceDrafts,
           [current.workspacePath]: {
@@ -404,9 +533,13 @@ export const useMissionSetupStore = create<MissionSetupStore>((set, get) => {
       if (!workspacePath) {
         set({
           workspacePath: null,
-          draft: createEmptyMissionSetupDraft(),
+          draft: createEmptyMissionSetupDraft(
+            Math.min(Number.MAX_SAFE_INTEGER, current.draft.revision + 1),
+          ),
           persistence: { status: 'idle' },
           workspaceDrafts,
+          entryContext: null,
+          entryAuthorityRevision,
         });
         return;
       }
@@ -418,6 +551,8 @@ export const useMissionSetupStore = create<MissionSetupStore>((set, get) => {
           draft: cloneDraft(remembered.draft),
           persistence: remembered.persistence,
           workspaceDrafts,
+          entryContext: null,
+          entryAuthorityRevision,
         });
         return;
       }
@@ -431,6 +566,8 @@ export const useMissionSetupStore = create<MissionSetupStore>((set, get) => {
           ...workspaceDrafts,
           [workspacePath]: loaded,
         },
+        entryContext: null,
+        entryAuthorityRevision,
       });
     },
 
@@ -481,6 +618,192 @@ export const useMissionSetupStore = create<MissionSetupStore>((set, get) => {
       if (step === get().draft.step) return;
       replaceDraft((draft) => ({ ...draft, step }));
     },
+    beginPetStudioReview: (input) => {
+      const current = get();
+      const workspacePath = current.workspacePath;
+      const objective = input.objective
+        .trim()
+        .slice(0, MISSION_INTENT_GOAL_MAX_CHARS);
+      const title = input.title.trim().slice(0, MISSION_PREPARE_TITLE_MAX_CHARS);
+      if (
+        !workspacePath ||
+        !objective ||
+        !title ||
+        !isGovernedPetStudioReferencePath(
+          input.referenceImagePath,
+          workspacePath,
+        )
+      ) {
+        return null;
+      }
+      const revision = Math.min(
+        Number.MAX_SAFE_INTEGER,
+        Math.max(
+          current.draft.revision,
+          current.entryContext?.kind === 'pet-studio'
+            ? current.entryContext.revision
+            : 0,
+        ) + 1,
+      );
+      const roster = PET_STUDIO_SQUAD.agents.map(cloneAgent);
+      const draft: MissionSetupDraft = {
+        objective,
+        title,
+        contextPaths: [],
+        roster: roster.map(cloneAgent),
+        advanced: { lane: 'standard' },
+        step: 'review',
+        revision,
+      };
+      const entryContext: PetStudioMissionSetupEntryContext = {
+        kind: 'pet-studio',
+        origin: 'settings-appearance',
+        objective,
+        title,
+        roster,
+        profile: {
+          kind: 'pet-studio',
+          referenceImagePath: normalizedHostPath(input.referenceImagePath),
+        },
+        step: 'review',
+        revision,
+      };
+      const workspaceDrafts =
+        current.entryContext?.kind === 'pet-studio'
+          ? current.workspaceDrafts
+          : {
+              ...current.workspaceDrafts,
+              [workspacePath]: {
+                draft: cloneDraft(current.draft),
+                persistence: current.persistence,
+              },
+            };
+      set({
+        draft,
+        persistence: { status: 'idle' },
+        workspaceDrafts,
+        entryContext,
+      });
+      return entryContext;
+    },
+
+    beginLegacyReplacementReview: (input) => {
+      const current = get();
+      const roster = strictRosterSchema.safeParse(input.roster);
+      const lane = missionLaneSchema.safeParse(input.lane);
+      const acceptanceCriteria =
+        missionIntentContractSchema.shape.acceptanceCriteria.safeParse(
+          input.acceptanceCriteria,
+        );
+      const objective = input.objective
+        .trim()
+        .slice(0, MISSION_INTENT_GOAL_MAX_CHARS);
+      const title = input.title.trim().slice(0, MISSION_PREPARE_TITLE_MAX_CHARS);
+      const supersededMissionId = input.supersededMissionId.trim();
+      if (
+        current.workspacePath !== input.workspacePath ||
+        !objective ||
+        !title ||
+        !supersededMissionId ||
+        !roster.success ||
+        roster.data.length < 2 ||
+        !acceptanceCriteria.success ||
+        !lane.success
+      ) {
+        return false;
+      }
+      const revision = Math.min(
+        Number.MAX_SAFE_INTEGER,
+        current.draft.revision + 1,
+      );
+      const draft: MissionSetupDraft = {
+        objective,
+        title,
+        contextPaths: normalizedContextPaths(input.contextPaths),
+        roster: roster.data.map((agent) =>
+          cloneAgentForLane(agent, lane.data),
+        ),
+        advanced: { lane: lane.data },
+        step: 'review',
+        revision,
+      };
+      const persistence = persistWorkspaceDraft(input.workspacePath, draft);
+      set({
+        draft,
+        persistence,
+        workspaceDrafts: {
+          ...current.workspaceDrafts,
+          [input.workspacePath]: { draft, persistence },
+        },
+        entryContext: {
+          kind: 'legacy-replacement',
+          supersededMissionId,
+          acceptanceCriteria: [...acceptanceCriteria.data],
+        },
+      });
+      return true;
+    },
+
+    clearEntryContext: () => {
+      const current = get();
+      const entryAuthorityRevision = Math.min(
+        Number.MAX_SAFE_INTEGER,
+        current.entryAuthorityRevision + 1,
+      );
+      if (!current.entryContext) {
+        set({ entryAuthorityRevision });
+        return;
+      }
+      const revision = Math.min(
+        Number.MAX_SAFE_INTEGER,
+        current.draft.revision + 1,
+      );
+      if (current.entryContext.kind === 'pet-studio') {
+        const remembered = current.workspacePath
+          ? current.workspaceDrafts[current.workspacePath] ??
+            readWorkspaceDraft(current.workspacePath)
+          : null;
+        const draft = remembered
+          ? {
+              ...cloneDraft(remembered.draft),
+              revision: Math.max(remembered.draft.revision, revision),
+            }
+          : createEmptyMissionSetupDraft(revision);
+        const persistence = current.workspacePath
+          ? persistWorkspaceDraft(current.workspacePath, draft)
+          : { status: 'idle' as const };
+        set({
+          draft,
+          persistence,
+          workspaceDrafts: current.workspacePath
+            ? {
+                ...current.workspaceDrafts,
+                [current.workspacePath]: { draft, persistence },
+              }
+            : current.workspaceDrafts,
+          entryContext: null,
+          entryAuthorityRevision,
+        });
+        return;
+      }
+      const draft = { ...current.draft, revision };
+      const persistence = current.workspacePath
+        ? persistWorkspaceDraft(current.workspacePath, draft)
+        : current.persistence;
+      set({
+        draft,
+        persistence,
+        workspaceDrafts: current.workspacePath
+          ? {
+              ...current.workspaceDrafts,
+              [current.workspacePath]: { draft, persistence },
+            }
+          : current.workspaceDrafts,
+        entryContext: null,
+        entryAuthorityRevision,
+      });
+    },
+
 
     retryPersistence: () => {
       const current = get();
@@ -500,9 +823,13 @@ export const useMissionSetupStore = create<MissionSetupStore>((set, get) => {
     },
 
     resetWorkspace: (workspacePath) => {
-      const current = get();
+      let current = get();
       const target = workspacePath ?? current.workspacePath;
       if (!target) return;
+      if (target === current.workspacePath && current.entryContext) {
+        current.clearEntryContext();
+        current = get();
+      }
       const previous =
         target === current.workspacePath
           ? current.draft
@@ -517,7 +844,12 @@ export const useMissionSetupStore = create<MissionSetupStore>((set, get) => {
         [target]: { draft: empty, persistence },
       };
       if (target === current.workspacePath) {
-        set({ draft: empty, persistence, workspaceDrafts });
+        set({
+          draft: empty,
+          persistence,
+          workspaceDrafts,
+          entryContext: null,
+        });
       } else {
         set({ workspaceDrafts });
       }

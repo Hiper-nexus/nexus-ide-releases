@@ -306,6 +306,9 @@ export interface AdaptiveCapState {
 }
 
 export const DEFAULT_ADAPTIVE_CAP: AdaptiveCapState = Object.freeze({
+  // Fail-safe da BIBLIOTECA: qualquer chamador sem política explícita começa
+  // estreito. A largada de produção é opinião do produto e vive em
+  // `productionAdaptiveCapSeed` — não se herda agressividade por acidente.
   currentCap: 2,
   wavesObserved: 0,
   consecutiveCleanWaves: 0,

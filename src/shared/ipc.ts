@@ -90,6 +90,13 @@ const paneModelSchema = z.object({
   missionId: z.string().min(1).max(128).optional(),
   transient: z.literal(true).optional(),
   terminalScrollback: z.string().max(256_000).optional(),
+  /**
+   * Largura (colunas) em que o scrollback acima foi capturado. Uma TUI desenha
+   * caixas com cursor absoluto: reescrever essa fita numa grade mais estreita
+   * entrelaça moldura e texto, e reflow não desfaz. Sem esse número não há como
+   * saber se o replay é seguro.
+   */
+  terminalScrollbackCols: z.number().int().positive().max(2_000).optional(),
 });
 
 // Recursive layout tree schema (leaf | split with two children).

@@ -4,7 +4,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const harness = vi.hoisted(() => ({
   setPanes: vi.fn(),
   focus: vi.fn(),
-  hide: vi.fn(),
   bindPaneMission: vi.fn(),
   markPersistedAuthorityOnSpawn: vi.fn(),
   waitForSession: vi.fn(),
@@ -29,10 +28,6 @@ vi.mock('../state/orch-store', () => ({
       bindPaneMission: harness.bindPaneMission,
     }),
   },
-}));
-
-vi.mock('../state/home-store', () => ({
-  useHomeStore: { getState: () => ({ hide: harness.hide }) },
 }));
 
 vi.mock('../lib/split-tree', () => ({
@@ -108,7 +103,6 @@ describe('presentMainOwnedMissionPane', () => {
     ]);
     expect(harness.waitForSession).toHaveBeenCalledWith('pane-new', 75_000);
     expect(harness.focus).toHaveBeenCalledWith('pane-new');
-    expect(harness.hide).toHaveBeenCalledOnce();
   });
 
   it('removes explicitly displaced conflicts and placeholder-only layouts', async () => {

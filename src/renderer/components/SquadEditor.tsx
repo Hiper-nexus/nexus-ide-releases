@@ -16,6 +16,7 @@ const CATEGORIES: AgentCategory[] = [
 
 type Props = {
   squad: Squad;
+  mode?: 'create' | 'edit';
   onClose: () => void;
   onSaved: (message: string) => void;
 };
@@ -25,7 +26,12 @@ type Props = {
  * uma cópia editável (a regra vive em applySquadEdit). Permite mudar nome,
  * instruções e, por agente, cli/model/categoria/nome.
  */
-export function SquadEditor({ squad, onClose, onSaved }: Props) {
+export function SquadEditor({
+  squad,
+  mode = 'edit',
+  onClose,
+  onSaved,
+}: Props) {
   const [adapters, setAdapters] = useState<AdapterInfo[]>([]);
   const [name, setName] = useState(squad.name);
   const [instructions, setInstructions] = useState(squad.orchestratorInstructions);
@@ -34,6 +40,7 @@ export function SquadEditor({ squad, onClose, onSaved }: Props) {
   );
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const creating = mode === 'create';
 
   useEffect(() => {
     let cancelled = false;
@@ -66,12 +73,15 @@ export function SquadEditor({ squad, onClose, onSaved }: Props) {
   function modelsFor(cli: string): string[] {
     return adapters.find((a) => a.id === cli)?.models.list ?? [];
   }
+  function requestClose() {
+    if (!busy) onClose();
+  }
 
   async function onSave() {
     setBusy(true);
     setError(null);
     try {
-      const newId = `squad-${crypto.randomUUID()}`;
+      const newId = squad.builtin ? `squad-${crypto.randomUUID()}` : squad.id;
       const edited = applySquadEdit(
         {
           id: squad.id,
@@ -87,13 +97,15 @@ export function SquadEditor({ squad, onClose, onSaved }: Props) {
       );
       const result = await window.nexus.orch.saveSquad(edited as Squad);
       if (!result.ok) {
-        setError(result.error ?? 'falha ao salvar');
+        setError(result.error ?? 'Falha ao salvar o squad.');
         return;
       }
       onSaved(
-        squad.builtin
-          ? `Cópia editável de "${squad.name}" criada`
-          : `Squad "${edited.name}" atualizado`,
+        creating
+          ? `Squad "${edited.name}" criado`
+          : squad.builtin
+            ? `Cópia editável de "${squad.name}" criada`
+            : `Squad "${edited.name}" atualizado`,
       );
       onClose();
     } catch (cause) {
@@ -109,24 +121,29 @@ export function SquadEditor({ squad, onClose, onSaved }: Props) {
   return createPortal(
     <div
       className="squad-editor__scrim"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) requestClose();
       }}
-      onKeyDown={(e) => {
-        if (e.key === 'Escape') onClose();
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') requestClose();
       }}
     >
     <div
       className="squad-editor"
       role="dialog"
       aria-modal="true"
-      aria-label={`Editar ${squad.name}`}
+      aria-label={creating ? 'Criar squad' : `Editar ${squad.name}`}
+      aria-busy={busy}
     >
       <header className="squad-editor__head">
         <strong>
-          {squad.builtin ? 'Duplicar e personalizar' : 'Editar squad'}
+          {creating
+            ? 'Criar squad'
+            : squad.builtin
+              ? 'Duplicar e personalizar'
+              : 'Editar squad'}
         </strong>
-        <CloseButton onClick={onClose} label="Fechar editor" />
+        <CloseButton onClick={requestClose} label="Fechar editor" />
       </header>
       {squad.builtin && (
         <p className="squad-editor__hint">
@@ -219,15 +236,21 @@ export function SquadEditor({ squad, onClose, onSaved }: Props) {
         </p>
       )}
       <div className="squad-editor__actions">
-        <button className="orch-panel__btn" onClick={onClose} disabled={busy}>
+        <button
+          type="button"
+          className="settings-btn"
+          onClick={requestClose}
+          disabled={busy}
+        >
           Cancelar
         </button>
         <button
-          className="orch-panel__btn orch-panel__btn--primary"
+          type="button"
+          className="settings-btn settings-btn--primary"
           onClick={() => void onSave()}
           disabled={busy || !name.trim()}
         >
-          {squad.builtin ? 'Criar cópia' : 'Salvar'}
+          {busy ? 'Salvando…' : squad.builtin ? 'Criar cópia' : 'Salvar'}
         </button>
       </div>
     </div>

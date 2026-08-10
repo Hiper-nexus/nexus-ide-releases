@@ -1,10 +1,10 @@
-# NexusIDE — Documento de Arquitetura (Fase 1)
+# NexusIDE — Documento de Arquitetura
 
 > **Produto:** Terminal IDE multi-agente para macOS.
-> **Status:** DESIGN ONLY — nenhum código de produto nesta fase.
-> **Data:** 2026-07-03
-> **Audiência:** executores das fases 2+ (`typescript-pro`, `electron-pro`, `frontend-developer`).
-> **Fontes:** `recon-oss-multi-agent-terminal.md` (OSS/CLIs) + `voice-pipeline-report.md` (Jarvis).
+> **Status:** IMPLEMENTADO — decisões-base e corte de produto V2.
+> **Atualizado:** 2026-08-08
+> **Audiência:** mantenedores de main, preload, renderer, PTY e MCP.
+> **Fontes:** implementação em `src/` e documentos de subsistemas citados abaixo.
 
 Este documento é **prescritivo e decisivo**. Onde há trade-off, a decisão está tomada e justificada.
 
@@ -21,6 +21,22 @@ Contratos e infraestrutura **feature-flagged** (default **off**), clean-room —
 
 Diagnóstico: `docs/analysis/2026-07-13-warp-bridgemind-phase0-diagnosis.md`.  
 PTY stream, effect policy, budgets e `event_ledger` **permanecem**; as novas camadas são laterais.
+
+### Corte de produto V2 (2026-08-08)
+
+`src/renderer/App.tsx` monta uma única navegação declarada por
+`product-navigation-store.ts`: launcher, terminal, configuração de missão,
+missão (quadro ou terminais), quadro de tarefas, memória e configurações.
+`AppShell` e `WorkspaceRail` são o chrome único; Mission Rail, Ops Board,
+Orchestration Panel e o wizard modal antigos não têm montagem paralela.
+
+O ciclo de vida canônico de missão cruza o preload em `window.nexus.mission`
+(`prepare`, `start`, `command`, `snapshot`, `list`, `onChanged`) e é
+implementado pelo `MissionEngine`. `window.nexus.orch` permanece para
+capacidades que ainda são realmente distintas — panes, eventos, reabertura,
+squads e projeções de controle — e não deve receber uma segunda API de ciclo
+de vida. A configuração de missão é a única superfície de criação; o quadro é
+a única superfície de verdade operacional.
 
 ---
 

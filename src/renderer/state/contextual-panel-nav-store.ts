@@ -1,10 +1,16 @@
 import { create } from "zustand";
 import type { ContextualTab } from "../../shared/contextual-panel";
 
+export interface ContextualPanelOpenOptions {
+  readonly focus?: boolean;
+}
+
 interface ContextualPanelNavState {
   requestedTab: ContextualTab | null;
   requestId: number;
-  openTab(tab: ContextualTab): void;
+  focusRequested: boolean;
+  openTab(tab: ContextualTab, options?: ContextualPanelOpenOptions): void;
+  acknowledge(requestId: number): void;
 }
 
 /**
@@ -15,10 +21,18 @@ export const useContextualPanelNavStore = create<ContextualPanelNavState>(
   (set) => ({
     requestedTab: null,
     requestId: 0,
-    openTab: (requestedTab) =>
+    focusRequested: false,
+    openTab: (requestedTab, options) =>
       set((state) => ({
         requestedTab,
         requestId: state.requestId + 1,
+        focusRequested: options?.focus ?? false,
       })),
+    acknowledge: (requestId) =>
+      set((state) =>
+        state.requestId === requestId
+          ? { requestedTab: null, focusRequested: false }
+          : state,
+      ),
   }),
 );

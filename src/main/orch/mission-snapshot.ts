@@ -121,17 +121,17 @@ function admissionReason(
     case 'authority-missing':
       return {
         code: admission.code,
-        label: 'Dispatch authority is missing',
+        label: 'Autoridade de execução ausente',
       };
     case 'kickoff-receipt-missing':
       return {
         code: admission.code,
-        label: 'Current kickoff receipt is missing',
+        label: 'Confirmação de início ausente',
       };
     case 'orchestrator-not-live':
       return {
         code: admission.code,
-        label: 'Orchestrator is not live',
+        label: 'Coordenação inativa',
       };
   }
 }
@@ -155,7 +155,7 @@ function projectState(view: ParsedView): {
       state: 'blocked_user',
       stateReason: {
         code: 'open-question',
-        label: 'Waiting for user clarification',
+        label: 'Aguardando sua resposta',
       },
     };
   }
@@ -172,12 +172,13 @@ function projectState(view: ParsedView): {
   }
 
   if (view.mission.status === 'done') {
+    if (view.mission.result) return { state: 'completed' };
     return hasResidualWork(view)
       ? {
           state: 'blocked_technical',
           stateReason: {
             code: 'residual-work',
-            label: 'Mission has residual work',
+            label: 'A missão ainda tem trabalho pendente',
           },
         }
       : { state: 'completed' };
@@ -191,7 +192,7 @@ function projectState(view: ParsedView): {
         state: 'blocked_technical',
         stateReason: {
           code: 'mission-blocked',
-          label: 'Mission is technically blocked',
+          label: 'A missão encontrou um bloqueio técnico',
         },
       };
     case 'failed':
@@ -225,10 +226,70 @@ function allowedActions(
   }
 }
 
+
+export type MissionAgentLiveSemantic =
+  | 'working'
+  | 'completed'
+  | 'awaiting-input'
+  | 'idle'
+  | 'error';
+
+export type MissionAgentLiveSession = 'spawning' | 'busy' | 'idle' | null;
+
+export type MissionAgentTaskFallback = 'queued' | 'working' | 'failed' | 'done';
+
+/**
+ * Prefer live PTY/hook/ACP signals for board chips. Task status is only a
+ * fallback when the live channel is quiet or absent — never let an idle
+ * transport hide an actively running sealed task, and never invent `waiting`
+ * without an explicit permission/elicitation latch.
+ */
+export function resolveMissionAgentLiveState(input: {
+  readonly semantic?: MissionAgentLiveSemantic | null;
+  readonly sessionState?: MissionAgentLiveSession;
+  readonly taskState?: MissionAgentTaskFallback;
+}): z.infer<typeof missionAgentStateSchema> {
+  const semantic = input.semantic ?? null;
+  const sessionState = input.sessionState ?? null;
+  const taskState = input.taskState ?? 'queued';
+
+  if (
+    semantic === 'working' ||
+    sessionState === 'busy' ||
+    sessionState === 'spawning'
+  ) {
+    return 'working';
+  }
+  if (semantic === 'awaiting-input') return 'waiting';
+  if (semantic === 'error') return 'failed';
+
+  if (sessionState === null) {
+    if (taskState === 'working') return 'working';
+    if (taskState === 'failed') return 'failed';
+    if (taskState === 'done') return 'done';
+    // Pane row still listed but the physical session is gone.
+    return 'stopped';
+  }
+
+  if (semantic === 'completed') {
+    if (taskState === 'working') return 'working';
+    if (taskState === 'failed') return 'failed';
+    return 'done';
+  }
+
+  // Live idle transport (hook idle / quiet PTY): keep task truth when present.
+  if (taskState === 'working') return 'working';
+  if (taskState === 'failed') return 'failed';
+  if (taskState === 'done') return 'done';
+  return 'queued';
+}
+
 function fallbackAgentState(
   view: ParsedView,
   agentId: string,
+  missionState: MissionLifecycleState,
 ): z.infer<typeof missionAgentStateSchema> {
+  if (missionState === 'completed') return 'done';
   const tasks = view.tasks.filter((task) => task.agentId === agentId);
   if (tasks.some((task) => task.status === 'running')) return 'working';
   if (tasks.some((task) => task.status === 'failed')) return 'failed';
@@ -260,7 +321,10 @@ export function projectMissionSnapshot(
         agentName: agent.agentName,
         category: agent.category,
         cli: agent.cli,
-        state: pane?.state ?? fallbackAgentState(view, agent.id),
+        state:
+          state === 'completed'
+            ? 'done'
+            : (pane?.state ?? fallbackAgentState(view, agent.id, state)),
         ...(pane?.currentUnitId
           ? { currentUnitId: pane.currentUnitId }
           : {}),

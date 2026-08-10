@@ -36,6 +36,7 @@ import {
   missionListAction,
   removeMissionPrompt,
 } from './mission-list-action';
+import { MISSION_RUNTIME_CLOSED_MARKER } from '../../shared/mission-recovery-policy';
 
 function mission(patch: Partial<Mission> = {}): Mission {
   return {
@@ -94,10 +95,26 @@ describe('mission list action policy', () => {
     const closed = mission({
       status: 'blocked',
       intentState: 'blocked_user',
+      description: MISSION_RUNTIME_CLOSED_MARKER,
     });
     expect(missionListAction(closed, false)).toBe('remove');
     expect(removeMissionPrompt(closed).confirmLabel).toBe('Remover missão');
     expect(removeMissionPrompt(closed).body).toMatch(/Não dá para desfazer/i);
+  });
+
+  it('keeps a user-blocked active mission when there is no runtime that can be closed safely', () => {
+    const awaitingOperator = mission({
+      status: 'blocked',
+      intentState: 'blocked_user',
+      intentVersion: 1,
+      intentContract: {
+        goal: 'Aguardar uma decisão do operador',
+        intentVersion: 1,
+        approvedAt: 1,
+      } as Mission['intentContract'],
+    });
+
+    expect(missionListAction(awaitingOperator, false)).toBe('none');
   });
 
   it('oferece parar sem apagar enquanto o Main prepara um retry técnico', () => {

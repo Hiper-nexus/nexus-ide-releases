@@ -7,7 +7,6 @@ import {
   REAL_MISSION_E2E_GOAL,
   REAL_MISSION_E2E_SQUAD_ID,
 } from "../shared/real-mission-e2e";
-import { retargetSquadInstructions } from "../shared/mission-identity";
 import {
   prepareSquadSave as prepareProductionSquadSave,
   type PreparedSquadSave,
@@ -16,7 +15,7 @@ import { snapshotSquadAuthority } from "./orch/squad-authority-snapshot";
 import {
   isExactRealMissionE2ESquadFixture,
   persistRealMissionE2ESquadFixture,
-  resolveProductWizardRealMissionE2ESquadBinding,
+  resolveCanonicalRealMissionE2ESquadBinding,
 } from "./real-mission-e2e-fixture";
 
 function sha256(value: string): string {
@@ -217,148 +216,98 @@ describe("main-owned real mission squad fixture", () => {
     ).toBe(false);
   });
 
-  it("binds only an exact main-lineage product-wizard runtime roster", () => {
-    const source = createRealMissionE2ESquadFixture();
-    const runtime: Squad = {
-      ...source,
-      id: "agentic-runtime-11111111-1111-4111-8111-111111111111",
-      createdAt: "runtime",
+
+
+  it("binds canonical prepare to its actual ephemeral source and exact fixture authority", () => {
+    const fixture = createRealMissionE2ESquadFixture();
+    const title = "Release gate: missão real empacotada";
+    const sourceId =
+      "custom-mission-setup-11111111-1111-4111-8111-111111111111";
+    const ephemeralSource: Squad = {
+      id: sourceId,
+      name: `Equipe — ${title}`,
+      createdAt: "ignored-by-authority-snapshot",
       builtin: false,
-      runtimeSourceSquadId: source.id,
-      runtimeSourceSquadRevisionHash: snapshotSquadAuthority(source).hash,
-      orchestratorInstructions: retargetSquadInstructions(
-        source.orchestratorInstructions,
+      orchestratorInstructions: [
+        "# Missão aprovada no Nexus",
+        "Coordene somente o objetivo e os limites persistidos no contrato da missão.",
+        "Delegue pelos papéis da equipe e exija evidência antes de concluir.",
+        "",
         REAL_MISSION_E2E_GOAL,
-      ),
-      agents: source.agents.map((agent) => ({
-        ...agent,
-        model: "gpt-5.5",
-      })),
+      ].join("\n"),
+      agents: fixture.agents.map((agent) => ({ ...agent })),
+    };
+    const runtime: Squad = {
+      ...ephemeralSource,
+      id: "agentic-runtime-22222222-2222-4222-8222-222222222222",
+      createdAt: "runtime",
+      runtimeSourceSquadId: sourceId,
+      runtimeSourceSquadRevisionHash:
+        snapshotSquadAuthority(ephemeralSource).hash,
     };
     const lookup = (id: string) =>
-      id === source.id ? source : id === runtime.id ? runtime : null;
+      id === fixture.id ? fixture : id === runtime.id ? runtime : null;
 
     expect(
-      resolveProductWizardRealMissionE2ESquadBinding(runtime.id, lookup),
-    ).toMatchObject({
+      resolveCanonicalRealMissionE2ESquadBinding(
+        {
+          squadId: runtime.id,
+          title,
+          objective: REAL_MISSION_E2E_GOAL,
+        },
+        lookup,
+      ),
+    ).toEqual({
       squadId: runtime.id,
-      sourceSquadId: source.id,
-      sourceSquadRevisionHash: snapshotSquadAuthority(source).hash,
+      fixtureSquadId: fixture.id,
+      fixtureSquadRevisionHash: snapshotSquadAuthority(fixture).hash,
+      sourceSquadId: sourceId,
+      sourceSquadRevisionHash: snapshotSquadAuthority(ephemeralSource).hash,
       squadRevisionHash: snapshotSquadAuthority(runtime).hash,
     });
 
-    const tampered: Squad = {
-      ...runtime,
-      agents: runtime.agents.map((agent) =>
-        agent.id === "e2e-qa" ? { ...agent, cli: "kimi" } : agent,
-      ),
-    };
     expect(
-      resolveProductWizardRealMissionE2ESquadBinding(
-        tampered.id,
-        (id) => (id === source.id ? source : tampered),
+      resolveCanonicalRealMissionE2ESquadBinding(
+        {
+          squadId: runtime.id,
+          title,
+          objective: `${REAL_MISSION_E2E_GOAL} forged`,
+        },
+        lookup,
       ),
     ).toBeNull();
-  });
-
-  it("binds a runtime minted from a byte-identical operator copy of the fixture", () => {
-    // "Salvar configuração" na revisão salva o fixture como cópia de usuário
-    // (`squad-*`) e reseleciona a cópia; o launch cunha o runtime a partir
-    // dela. Conteúdo idêntico (só o id muda) continua sendo o fixture.
-    const source = createRealMissionE2ESquadFixture();
-    const operatorCopy: Squad = {
-      ...source,
-      id: "squad-4efe96d6-9d43-4408-8af6-6b8a8b32803c",
-    };
-    const runtime: Squad = {
-      ...source,
-      id: "mission-runtime-11111111-1111-4111-8111-111111111111",
-      createdAt: "runtime",
-      builtin: false,
-      runtimeSourceSquadId: operatorCopy.id,
-      runtimeSourceSquadRevisionHash:
-        snapshotSquadAuthority(operatorCopy).hash,
-    };
-    const lookup = (id: string) =>
-      id === source.id
-        ? source
-        : id === operatorCopy.id
-          ? operatorCopy
-          : id === runtime.id
-            ? runtime
-            : null;
-
     expect(
-      resolveProductWizardRealMissionE2ESquadBinding(runtime.id, lookup),
-    ).toMatchObject({
-      squadId: runtime.id,
-      sourceSquadId: source.id,
-      sourceSquadRevisionHash: snapshotSquadAuthority(source).hash,
-      squadRevisionHash: snapshotSquadAuthority(runtime).hash,
-    });
-
-    // Cópia do operador com instruções retargeted também é aceita sem quebra de lineage.
-    const operatorCopyRetargeted: Squad = {
-      ...source,
-      id: "squad-retargeted-4efe96d6",
-      orchestratorInstructions: retargetSquadInstructions(
-        source.orchestratorInstructions,
-        REAL_MISSION_E2E_GOAL,
-      ),
-    };
-    const runtimeRetargeted: Squad = {
-      ...runtime,
-      id: "mission-runtime-22222222-2222-4222-8222-222222222222",
-      runtimeSourceSquadId: operatorCopyRetargeted.id,
-      runtimeSourceSquadRevisionHash: snapshotSquadAuthority(
-        operatorCopyRetargeted,
-      ).hash,
-    };
-    const lookupRetargeted = (id: string) =>
-      id === source.id
-        ? source
-        : id === operatorCopyRetargeted.id
-          ? operatorCopyRetargeted
-          : id === runtimeRetargeted.id
-            ? runtimeRetargeted
-            : null;
-
-    expect(
-      resolveProductWizardRealMissionE2ESquadBinding(
-        runtimeRetargeted.id,
-        lookupRetargeted,
-      ),
-    ).toMatchObject({
-      squadId: runtimeRetargeted.id,
-      sourceSquadId: source.id,
-      sourceSquadRevisionHash: snapshotSquadAuthority(source).hash,
-      squadRevisionHash: snapshotSquadAuthority(runtimeRetargeted).hash,
-    });
-
-    // Cópia com conteúdo divergente (roster editado) continua rejeitada.
-    const driftedCopy: Squad = {
-      ...operatorCopy,
-      agents: operatorCopy.agents.map((agent) =>
-        agent.id === "e2e-qa" ? { ...agent, cli: "kimi" } : agent,
-      ),
-    };
-    const runtimeFromDrifted: Squad = {
-      ...runtime,
-      agents: driftedCopy.agents.map((agent) => ({ ...agent })),
-      runtimeSourceSquadRevisionHash:
-        snapshotSquadAuthority(driftedCopy).hash,
-    };
-    expect(
-      resolveProductWizardRealMissionE2ESquadBinding(
-        runtimeFromDrifted.id,
+      resolveCanonicalRealMissionE2ESquadBinding(
+        {
+          squadId: runtime.id,
+          title,
+          objective: REAL_MISSION_E2E_GOAL,
+        },
         (id) =>
-          id === source.id
-            ? source
-            : id === driftedCopy.id
-              ? driftedCopy
-              : id === runtimeFromDrifted.id
-                ? runtimeFromDrifted
-                : null,
+          id === fixture.id
+            ? fixture
+            : {
+                ...runtime,
+                agents: runtime.agents.map((agent, index) =>
+                  index === 1 ? { ...agent, model: "forged-model" } : agent,
+                ),
+              },
+      ),
+    ).toBeNull();
+    expect(
+      resolveCanonicalRealMissionE2ESquadBinding(
+        {
+          squadId: runtime.id,
+          title,
+          objective: REAL_MISSION_E2E_GOAL,
+        },
+        (id) =>
+          id === fixture.id
+            ? fixture
+            : {
+                ...runtime,
+                runtimeSourceSquadRevisionHash: "f".repeat(64),
+              },
       ),
     ).toBeNull();
   });

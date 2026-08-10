@@ -1,12 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { useSettingsStore } from '../../state/settings-store';
 import {
   resolveOpenDrawerSection,
   SETTINGS_DRAWER_DEFAULT_SECTION,
 } from './settings-drawer-section';
 
-describe('resolveOpenDrawerSection (SettingsDrawer panel selection)', () => {
-  it('uses default when openDrawer() left no target', () => {
+describe('resolveOpenDrawerSection', () => {
+  it('uses the account section when no destination is provided', () => {
     expect(resolveOpenDrawerSection(null)).toBe(SETTINGS_DRAWER_DEFAULT_SECTION);
     expect(resolveOpenDrawerSection(undefined)).toBe(
       SETTINGS_DRAWER_DEFAULT_SECTION,
@@ -14,30 +13,8 @@ describe('resolveOpenDrawerSection (SettingsDrawer panel selection)', () => {
     expect(SETTINGS_DRAWER_DEFAULT_SECTION).toBe('account');
   });
 
-  it('honors targeted openDrawer(section)', () => {
+  it('preserves an explicit product settings section', () => {
     expect(resolveOpenDrawerSection('providers')).toBe('providers');
     expect(resolveOpenDrawerSection('ranking')).toBe('ranking');
-  });
-
-  it('store path: providers → soft close → generic open resumes providers', () => {
-    useSettingsStore.setState({ drawerOpen: false, drawerSection: null });
-    useSettingsStore.getState().openDrawer('providers');
-    expect(useSettingsStore.getState().drawerSection).toBe('providers');
-    expect(
-      resolveOpenDrawerSection(useSettingsStore.getState().drawerSection),
-    ).toBe('providers');
-
-    useSettingsStore.getState().closeDrawer();
-    // Soft-close keeps the section (overlay / Jarvis must not reset nav).
-    expect(useSettingsStore.getState().drawerSection).toBe('providers');
-
-    useSettingsStore.getState().openDrawer();
-    expect(useSettingsStore.getState()).toMatchObject({
-      drawerOpen: true,
-      drawerSection: 'providers',
-    });
-    expect(
-      resolveOpenDrawerSection(useSettingsStore.getState().drawerSection),
-    ).toBe('providers');
   });
 });

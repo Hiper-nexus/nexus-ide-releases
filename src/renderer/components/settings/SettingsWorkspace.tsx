@@ -7,6 +7,7 @@ import {
   type RefObject,
 } from 'react';
 import type { AdapterInfo } from '../../../shared/types';
+import { isMissionRuntimeSquadId } from '../../../shared/orch-types';
 import { useOrchStore } from '../../state/orch-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
 import {
@@ -16,7 +17,6 @@ import {
 import {
   SETTINGS_GROUPS,
   filterSettingsGroups,
-  settingsSectionPillar,
   type NavGroup,
   type NavItem,
   type SettingsSection,
@@ -71,9 +71,6 @@ function NavGroupHeading({ group }: { group: NavGroup }) {
   return (
     <div className="settings-nav__section-head">
       <p className="settings-nav__section">{group.label}</p>
-      {group.story ? (
-        <p className="settings-nav__section-story">{group.story}</p>
-      ) : null}
     </div>
   );
 }
@@ -145,7 +142,7 @@ function SettingsSectionContent({
     case 'ranking':
       return <ModelRankingSection />;
     case 'squads':
-      return <SquadsSection onNavigate={onNavigateAway} />;
+      return <SquadsSection />;
     case 'harness':
       return <HarnessSection />;
     case 'marketplace':
@@ -213,7 +210,10 @@ export function SettingsSurface({
   detailRef,
   sectionTitleLevel,
 }: SettingsSurfaceProps) {
-  const squadsCount = useOrchStore((state) => state.squads.length);
+  const squadsCount = useOrchStore(
+    (state) =>
+      state.squads.filter((squad) => !isMissionRuntimeSquadId(squad.id)).length,
+  );
   const mcpToolCount = useOrchStore((state) => state.mcpInfo?.toolCount ?? 0);
   const [adapters, setAdapters] = useState<AdapterInfo[]>([]);
   const [query, setQuery] = useState(
@@ -267,26 +267,22 @@ export function SettingsSurface({
   const currentSectionTitle = SETTINGS_ITEMS.find(
     (item) => item.id === section,
   )?.title;
-  const activePillar = settingsSectionPillar(section);
+
 
   return (
     <>
       <nav className="settings-nav" aria-label="Configurações">
         <div className="settings-nav__body">
-          <div className="settings-nav__brand" aria-label="Nexus Config">
+          <div className="settings-nav__brand" aria-label="Configurações">
             <span className="settings-nav__brand-mark" aria-hidden>
-              NX
+              <PixelIcon name="config" size={14} />
             </span>
             <span className="settings-nav__brand-copy">
-              <span className="settings-nav__brand-kicker">
-                {activePillar.label}
-              </span>
-              <span className="settings-nav__brand-title">Nexus config</span>
+              <span className="settings-nav__brand-title">Configurações</span>
               <span className="settings-nav__brand-subtitle">
-                {activePillar.story}
+                Conta, app e agentes
               </span>
             </span>
-            <span className="settings-nav__brand-signal" aria-hidden />
           </div>
           <div className="settings-nav__search">
             <span className="settings-nav__search-icon" aria-hidden>

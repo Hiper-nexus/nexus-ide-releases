@@ -1,4 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
+import type {
+  MissionPrepareRequest,
+  MissionReview,
+} from '../shared/mission-engine-contract';
 import {
   FUNCTIONAL_SMOKE_FILE_CONTENT,
   FUNCTIONAL_SMOKE_MIN_ADAPTERS,
@@ -6,6 +10,51 @@ import {
   runFunctionalSmokeProbes,
   type FunctionalSmokeApi,
 } from './functional-smoke';
+
+const FUNCTIONAL_SMOKE_REVIEW_SHA256 = 'a'.repeat(64);
+
+function successfulMissionReview(
+  request: MissionPrepareRequest,
+): MissionReview {
+  return {
+    missionId: 'mission-smoke-1',
+    title: request.title ?? request.objective,
+    objective: request.objective,
+    workspaceLabel: 'nexus-smoke-workspace',
+    contextPaths: [...request.contextPaths],
+    roster: request.roster.map((agent) => ({
+      ...agent,
+      allowedSkills: agent.allowedSkills
+        ? [...agent.allowedSkills]
+        : agent.allowedSkills,
+      allowedTools: agent.allowedTools
+        ? [...agent.allowedTools]
+        : agent.allowedTools,
+    })),
+    permissions: [
+      {
+        id: 'workspace-read',
+        label: 'Ler arquivos do projeto',
+        detail: 'Somente o projeto selecionado e os contextos aprovados.',
+      },
+      {
+        id: 'workspace-write',
+        label: 'Alterar arquivos do projeto',
+        detail: 'Somente dentro da pasta selecionada e dos worktrees da missão.',
+      },
+      {
+        id: 'local-commands',
+        label: 'Executar comandos locais',
+        detail:
+          'Sob sandbox, orçamento e ferramentas aprovadas para cada papel.',
+      },
+    ],
+    warnings: [],
+    reviewSha256: FUNCTIONAL_SMOKE_REVIEW_SHA256,
+    createdAt: 1,
+  };
+}
+
 
 function successfulApi(): FunctionalSmokeApi {
   return {
@@ -23,13 +72,18 @@ function successfulApi(): FunctionalSmokeApi {
     },
     settings: {
       get: vi.fn(async () => ({})),
-      orchGet: vi.fn(async () => ({ intentFirstMissionRuntimeV1: true })),
+      orchGet: vi.fn(async () => ({})),
       audioGet: vi.fn(async () => ({})),
       uiGet: vi.fn(async () => ({})),
       listShells: vi.fn(async () => ['/bin/zsh']),
     },
     providers: { list: vi.fn(async () => [{ adapterId: 'claude' }]) },
     voice: { getInfo: vi.fn(async () => ({ routing: 'jarvis' })) },
+    mission: {
+      prepare: vi.fn(async (request: MissionPrepareRequest) =>
+        successfulMissionReview(request),
+      ),
+    },
     orch: {
       getMcpInfo: vi.fn(async () => ({
         running: true,
@@ -39,19 +93,15 @@ function successfulApi(): FunctionalSmokeApi {
       listMissions: vi.fn(async () => []),
       listSquads: vi.fn(async () => []),
       listMissionPanes: vi.fn(async () => []),
-      armMission: vi.fn(async () => ({
-        id: 'mission-smoke-1',
-        title: 'Smoke intent arm',
-        status: 'pending',
-        intentState: 'awaiting_goal',
-        intentVersion: 0,
-        orchestratorSessionId: undefined,
-      })),
       // Sessão de shell plana NÃO tem missão: a lane do operador recusa.
       sendPaneOperatorInput: vi.fn(async () => false),
     },
     pty: (() => {
       const listeners = new Map<string, (data: string) => void>();
+      const exitListeners = new Map<
+        string,
+        (info: { exitCode: number; signal?: number }) => void
+      >();
       return {
         spawn: vi.fn(async () => ({ ok: true, sessionId: 'pty-smoke-1' })),
         writeConfirmed: vi.fn(async (sessionId: string, data: string) => {
@@ -60,11 +110,22 @@ function successfulApi(): FunctionalSmokeApi {
           queueMicrotask(() => listeners.get(sessionId)?.(data));
           return true;
         }),
-        kill: vi.fn(),
+        kill: vi.fn((sessionId: string) => {
+          queueMicrotask(() => exitListeners.get(sessionId)?.({ exitCode: 0 }));
+        }),
         onData: vi.fn((sessionId: string, cb: (data: string) => void) => {
           listeners.set(sessionId, cb);
           return () => listeners.delete(sessionId);
         }),
+        onExit: vi.fn(
+          (
+            sessionId: string,
+            cb: (info: { exitCode: number; signal?: number }) => void,
+          ) => {
+            exitListeners.set(sessionId, cb);
+            return () => exitListeners.delete(sessionId);
+          },
+        ),
       };
     })(),
     mcp: {
@@ -147,24 +208,98 @@ describe('runFunctionalSmokeProbes', () => {
     if (!result.ok) throw new Error(`unexpected failure: ${result.failedProbe}`);
     expect(result.toolCount).toBe(FUNCTIONAL_SMOKE_MIN_TOOLS);
     expect(result.adapterCount).toBe(FUNCTIONAL_SMOKE_MIN_ADAPTERS);
-    expect(result.probes).toContain('intent-first-settings');
-    expect(result.probes).toContain('intent-arm');
+    expect(result.probes).toContain('mission-prepare');
     expect(result.probes).toContain('product-flags');
     expect(result.probes).toContain('search-mixer-ipc');
     expect(result.probes).toContain('mcp-ui-read');
     expect(result.probes).toContain('mcp-file-read');
     expect(result.probes).toContain('mcp-write-guard');
     expect(api.workspace.open).toHaveBeenCalledWith('/tmp/nexus-smoke-workspace');
-    expect(api.orch.armMission).toHaveBeenCalled();
+    expect(api.mission.prepare).toHaveBeenCalledWith({
+      objective:
+        'Verify canonical mission preparation without starting any workers.',
+      title: 'Functional smoke: canonical mission preparation',
+      contextPaths: [],
+      roster: [
+        {
+          id: 'functional-smoke-orchestrator',
+          agentName: 'Functional Smoke Orchestrator',
+          category: 'orchestrator',
+          cli: 'codex',
+          allowedSkills: [],
+          allowedTools: [],
+        },
+        {
+          id: 'functional-smoke-executor',
+          agentName: 'Functional Smoke Executor',
+          category: 'executor',
+          cli: 'codex',
+          allowedSkills: [],
+          allowedTools: [],
+        },
+        {
+          id: 'functional-smoke-reviewer',
+          agentName: 'Functional Smoke Reviewer',
+          category: 'reviewer',
+          cli: 'codex',
+          allowedSkills: [],
+          allowedTools: [],
+        },
+      ],
+      advanced: { lane: 'standard' },
+    });
+    expect(api.orch.listMissionPanes).toHaveBeenCalledWith('mission-smoke-1');
     expect(api.product.flagsList).toHaveBeenCalled();
     expect(api.mcp.invoke).toHaveBeenCalledWith('nexus_file_read', { path: 'smoke.txt' });
   });
 
-  it('fails when intent-first is explicitly disabled', async () => {
+  it.each([
+    [
+      'request identity',
+      (review: MissionReview) => ({
+        ...review,
+        title: 'A different prepared mission',
+      }),
+    ],
+    [
+      'review SHA-256',
+      (review: MissionReview) => ({
+        ...review,
+        reviewSha256: 'not-a-review-hash',
+      }),
+    ],
+    [
+      'standard permissions',
+      (review: MissionReview) => ({
+        ...review,
+        permissions: [],
+      }),
+    ],
+  ] as const)(
+    'fails closed when mission.prepare returns invalid %s',
+    async (_caseName, corruptReview) => {
+      const api = successfulApi();
+      vi.mocked(api.mission.prepare).mockImplementation(async (request) =>
+        corruptReview(successfulMissionReview(request)),
+      );
+
+      const result = await runFunctionalSmokeProbes(api, '/tmp/workspace', {
+        delay: async () => {},
+        probeTimeoutMs: 100,
+      });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error('expected mission-prepare probe to fail');
+      expect(result.failedProbe).toBe('mission-prepare');
+      expect(api.orch.listMissionPanes).not.toHaveBeenCalled();
+    },
+  );
+
+  it('fails when mission.prepare creates any pane', async () => {
     const api = successfulApi();
-    vi.mocked(api.settings.orchGet).mockResolvedValue({
-      intentFirstMissionRuntimeV1: false,
-    });
+    vi.mocked(api.orch.listMissionPanes).mockResolvedValue([
+      { id: 'unexpected-pane' },
+    ]);
 
     const result = await runFunctionalSmokeProbes(api, '/tmp/workspace', {
       delay: async () => {},
@@ -172,27 +307,8 @@ describe('runFunctionalSmokeProbes', () => {
     });
 
     expect(result.ok).toBe(false);
-    if (result.ok) throw new Error('expected intent-first probe to fail');
-    expect(result.failedProbe).toBe('intent-first-settings');
-  });
-
-  it('fails when arm binds an orchestrator or creates panes', async () => {
-    const api = successfulApi();
-    vi.mocked(api.orch.armMission).mockResolvedValue({
-      id: 'mission-bad',
-      status: 'running',
-      intentState: 'awaiting_goal',
-      orchestratorSessionId: 'sess-1',
-    });
-
-    const result = await runFunctionalSmokeProbes(api, '/tmp/workspace', {
-      delay: async () => {},
-      probeTimeoutMs: 100,
-    });
-
-    expect(result.ok).toBe(false);
-    if (result.ok) throw new Error('expected intent-arm probe to fail');
-    expect(result.failedProbe).toBe('intent-arm');
+    if (result.ok) throw new Error('expected mission-prepare probe to fail');
+    expect(result.failedProbe).toBe('mission-prepare');
   });
 
   it('waits for the embedded MCP server instead of racing app bootstrap', async () => {

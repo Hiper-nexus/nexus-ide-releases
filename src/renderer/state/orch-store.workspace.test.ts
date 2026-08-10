@@ -1,10 +1,8 @@
 /** @vitest-environment jsdom */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { DEFAULT_ONBOARDING } from '../../shared/onboarding-types';
 import type { MissionSummarySnapshot } from '../../shared/mission-engine-contract';
 import type { Handoff, Mission } from '../../shared/orch-types';
 import { setActiveWorkspacePath } from './active-workspace';
-import { useOnboardingStore } from './onboarding-store';
 import { useOrchStore } from './orch-store';
 
 function missionSummary(
@@ -30,7 +28,6 @@ describe('orch-store workspace isolation', () => {
         mission: {
           list: vi.fn(async () => []),
         },
-        onboarding: { set: vi.fn(async () => DEFAULT_ONBOARDING) },
         orch: {
           listMissions: vi.fn(async () => []),
           listHandoffs: vi.fn(async () => []),
@@ -53,10 +50,6 @@ describe('orch-store workspace isolation', () => {
       paneMissions: {},
       boundWorkspacePath: null,
       workspaceEpoch: 0,
-    });
-    useOnboardingStore.setState({
-      state: DEFAULT_ONBOARDING,
-      loaded: false,
     });
   });
 

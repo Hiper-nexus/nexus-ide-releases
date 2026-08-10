@@ -57,7 +57,7 @@ describe('progressive onboarding contracts', () => {
   });
 
   it('forces agentDistribution none when openWithoutAi semantics apply', () => {
-    // Schema allows agents, but product path (ProgressiveOnboarding) forces none.
+    // Terminal-only product routing forces an agent-free launch.
     // Contract: openWithoutAi true is valid with agentDistribution none.
     const plan = progressiveLaunchSchema.parse({
       openWithoutAi: true,

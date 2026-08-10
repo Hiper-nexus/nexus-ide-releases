@@ -31,6 +31,7 @@ import {
   useMissionSetupStore,
 } from '../../state/mission-setup-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
+import { useProviderStore } from '../../state/provider-store';
 import { useWorkspaceStore } from '../../state/workspace-store';
 import {
   MissionSetup,
@@ -268,6 +269,7 @@ const api = {
   getOrchSettings: vi.fn(async () => ORCH_SETTINGS),
   prepare: vi.fn<Window['nexus']['mission']['prepare']>(async () => REVIEW),
   start: vi.fn<Window['nexus']['mission']['start']>(async () => SNAPSHOT),
+  removeMission: vi.fn(async () => ({ removed: true })),
 };
 
 const initialWorkspaceState = useWorkspaceStore.getState();
@@ -282,6 +284,7 @@ function installNexusApi(): void {
       accounts: { list: api.listAccounts },
       settings: { orchGet: api.getOrchSettings },
       mission: { prepare: api.prepare, start: api.start },
+      orch: { removeMission: api.removeMission },
     } as unknown as Window['nexus'],
   });
 }
@@ -406,6 +409,7 @@ beforeEach(() => {
     destination: { kind: 'mission-setup' },
     settingsReturnDestination: null,
   });
+  useProviderStore.setState({ providers: [] });
 });
 
 afterEach(() => {
@@ -415,7 +419,57 @@ afterEach(() => {
   mountedRoots.clear();
   document.body.replaceChildren();
   vi.restoreAllMocks();
+  restoreStorageDoubles();
 });
+
+const installedStorageDoubles = new Set<() => void>();
+
+/**
+ * Storage double bound to `window`, not to `Storage.prototype`.
+ *
+ * Other suites replace the whole `window` global; a prototype spy then never
+ * fires because the live `localStorage` no longer inherits from the patched
+ * prototype. Swapping the property keeps these tests deterministic no matter
+ * what ran before them in the same worker.
+ */
+function withStorageFailure(overrides: {
+  getItem?: (key: string) => string | null;
+  setItem?: (key: string, value: string) => void;
+}): { restore: () => void } {
+  const real = window.localStorage;
+  const descriptor = Object.getOwnPropertyDescriptor(window, 'localStorage');
+  const double = {
+    get length() {
+      return real.length;
+    },
+    clear: () => real.clear(),
+    key: (index: number) => real.key(index),
+    removeItem: (key: string) => real.removeItem(key),
+    getItem: overrides.getItem ?? ((key: string) => real.getItem(key)),
+    setItem:
+      overrides.setItem ?? ((key: string, value: string) => real.setItem(key, value)),
+  } as unknown as Storage;
+  Object.defineProperty(window, 'localStorage', {
+    configurable: true,
+    get: () => double,
+  });
+  const restore = (): void => {
+    if (!installedStorageDoubles.delete(restore)) return;
+    if (descriptor) Object.defineProperty(window, 'localStorage', descriptor);
+    else
+      Object.defineProperty(window, 'localStorage', {
+        configurable: true,
+        value: real,
+      });
+  };
+  installedStorageDoubles.add(restore);
+  return { restore };
+}
+
+function restoreStorageDoubles(): void {
+  for (const restore of [...installedStorageDoubles].reverse()) restore();
+  installedStorageDoubles.clear();
+}
 
 describe('recommended mission team', () => {
   it('uses the existing secret-free readiness policy and produces strict stable roles', () => {
@@ -484,11 +538,40 @@ describe('recommended mission team', () => {
     expect(
       missionRosterIssue({
         roster: changedRoster,
+        lane: 'standard',
         readiness,
         providers: PROVIDERS,
         accounts: ACCOUNTS,
       }),
     ).toMatch(/não está pronta/i);
+  });
+
+  it('blocks a standard team that drops its executor or reviewer', () => {
+    const readiness = missionRuntimeReadiness(
+      [CLAUDE, CODEX],
+      PROVIDERS,
+      ACCOUNTS,
+      ORCH_SETTINGS.squadCliPolicy,
+    );
+    const common = {
+      lane: 'standard' as const,
+      readiness,
+      providers: PROVIDERS,
+      accounts: ACCOUNTS,
+    };
+
+    expect(
+      missionRosterIssue({
+        ...common,
+        roster: [REVIEW_ROSTER[0]!, REVIEW_ROSTER[3]!],
+      }),
+    ).toMatch(/executor|implementa/i);
+    expect(
+      missionRosterIssue({
+        ...common,
+        roster: [REVIEW_ROSTER[0]!, REVIEW_ROSTER[1]!],
+      }),
+    ).toMatch(/verific|revis/i);
   });
 
   it('keeps compatibility with the existing coordinator/removal guard', () => {
@@ -754,11 +837,11 @@ describe('MissionSetup', () => {
   it('announces a quota failure, keeps the edit in memory, and retries saving', async () => {
     const host = render(<MissionSetup />);
     await flush();
-    const setItem = vi
-      .spyOn(Storage.prototype, 'setItem')
-      .mockImplementation(() => {
+    const storage = withStorageFailure({
+      setItem: () => {
         throw new DOMException('Quota exceeded', 'QuotaExceededError');
-      });
+      },
+    });
 
     enterText(
       fieldByLabel<HTMLTextAreaElement>(
@@ -784,7 +867,7 @@ describe('MissionSetup', () => {
       },
     });
 
-    setItem.mockRestore();
+    storage.restore();
     act(() => button(host, 'Tentar salvar novamente').click());
 
     expect(useMissionSetupStore.getState().persistence).toEqual({
@@ -817,11 +900,11 @@ describe('MissionSetup', () => {
         },
       }),
     );
-    const getItem = vi
-      .spyOn(Storage.prototype, 'getItem')
-      .mockImplementation(() => {
+    const storage = withStorageFailure({
+      getItem: () => {
         throw new DOMException('Blocked', 'SecurityError');
-      });
+      },
+    });
     const host = render(<MissionSetup />);
     await flush();
 
@@ -835,7 +918,7 @@ describe('MissionSetup', () => {
       ).disabled,
     ).toBe(true);
 
-    getItem.mockRestore();
+    storage.restore();
     act(() => button(host, 'Tentar ler novamente').click());
     await flush();
 
@@ -850,8 +933,10 @@ describe('MissionSetup', () => {
 
 
   it('focuses the persisted-draft read alert or its first recovery action instead of the blocked step', async () => {
-    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
-      throw new DOMException('Blocked', 'SecurityError');
+    withStorageFailure({
+      getItem: () => {
+        throw new DOMException('Blocked', 'SecurityError');
+      },
     });
     const host = render(<MissionSetup />);
     await flush();
@@ -888,8 +973,10 @@ describe('MissionSetup', () => {
     expect(host.textContent).toContain('O rascunho salvo está corrompido');
     expect(blockedObjective.disabled).toBe(true);
 
-    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
-      throw new DOMException('Quota exceeded', 'QuotaExceededError');
+    withStorageFailure({
+      setItem: () => {
+        throw new DOMException('Quota exceeded', 'QuotaExceededError');
+      },
     });
     act(() =>
       button(host, 'Descartar rascunho salvo e começar vazio').click(),
@@ -1118,6 +1205,27 @@ describe('MissionSetup', () => {
     );
   });
 
+  it('reconciles team readiness when the live provider store warms after the cold snapshot', async () => {
+    const staleClaude: ProviderSettingsInfo = {
+      ...provider(CLAUDE),
+      authReadyModels: [],
+      authStrategy: 'login-needed',
+    };
+    api.listProviders.mockResolvedValue([staleClaude, provider(CODEX)]);
+    const host = await renderAtTeam();
+
+    expect(host.querySelector('[data-category="orchestrator"]')).toBeNull();
+
+    act(() => {
+      useProviderStore.getState().receive(PROVIDERS);
+    });
+    await flush();
+
+    const coordinator = host.querySelector('[data-category="orchestrator"]');
+    expect(coordinator?.getAttribute('data-state')).toBe('ready');
+    expect(coordinator?.textContent).toContain('Pronto');
+  });
+
 
   it.each(MISSION_LANE_GUIDANCE_CASES)(
     'explains $label with concrete PT-BR capabilities as soon as it is selected',
@@ -1222,6 +1330,26 @@ describe('MissionSetup', () => {
     act(() => button(host, `Remover ${lastWorker!.agentName}`).click());
     expect(host.textContent).toContain('Mantenha ao menos');
     expect(useMissionSetupStore.getState().draft.roster).toHaveLength(2);
+  });
+
+  it('omits unsupported effort values from custom roster agents', async () => {
+    api.listProviders.mockResolvedValueOnce(
+      PROVIDERS.map((item) =>
+        item.adapterId === 'codex'
+          ? { ...item, effort: '', efforts: [] }
+          : item,
+      ),
+    );
+    const host = await renderAtTeam();
+
+    act(() => button(host, 'Adicionar implementação').click());
+
+    const added = useMissionSetupStore
+      .getState()
+      .draft.roster.find((agent) => agent.agentName === 'Implementar outra parte');
+    expect(added).toBeDefined();
+    expect(Object.hasOwn(added!, 'effort')).toBe(false);
+    expect(JSON.parse(JSON.stringify(added))).toEqual(added);
   });
 
   it('recommends from the entered objective after fast inventory and refreshes the automatic team for consultation', async () => {
@@ -1521,6 +1649,20 @@ describe('MissionSetup', () => {
     expect(button(host, 'Iniciar missão').disabled).toBe(false);
   });
 
+  it('exposes the trusted prepare and start edges on the canonical setup controls', async () => {
+    const host = await renderAtTeam();
+    const prepare = button(host, 'Continuar para revisão');
+
+    expect(prepare.dataset.nexusRealMissionWizardLaunch).toBe('prepare');
+
+    act(() => prepare.click());
+    await flush();
+
+    expect(button(host, 'Iniciar missão').dataset.nexusRealMissionWizardLaunch).toBe(
+      'start',
+    );
+  });
+
   it('renders the main-owned review and starts only its visible exact hash before opening its board', async () => {
     const pendingStart = deferred<MissionSnapshot>();
     api.start.mockReturnValueOnce(pendingStart.promise);
@@ -1695,73 +1837,86 @@ describe('MissionSetup', () => {
     expect(host.textContent).toContain(REVIEW.objective);
   });
 
-  it.each([
-    {
-      failure: 'review fence mismatch',
-      scenario: 'uma revisão desatualizada',
-    },
-    {
-      failure: 'unexpected start failure',
-      scenario: 'uma falha desconhecida',
-    },
-  ])(
-    'descarta $scenario e exige uma nova revisão exata antes de reiniciar',
-    async ({ failure }) => {
-      const refreshedReview: MissionReview = {
-        ...REVIEW,
-        missionId: 'mission-refreshed',
-        objective: 'Entrega atualizada por uma nova revisão principal',
-        reviewSha256: 'b'.repeat(64),
-        createdAt: REVIEW.createdAt + 1,
-      };
-      api.prepare
-        .mockResolvedValueOnce(REVIEW)
-        .mockResolvedValueOnce(refreshedReview);
-      api.start
-        .mockRejectedValueOnce(new Error(failure))
-        .mockResolvedValueOnce(SNAPSHOT);
-      const host = await renderAtReview();
-      const staleStart = button(host, 'Iniciar missão');
+  it('descarta uma revisão desatualizada e exige uma nova revisão exata antes de reiniciar', async () => {
+    const refreshedReview: MissionReview = {
+      ...REVIEW,
+      missionId: 'mission-refreshed',
+      objective: 'Entrega atualizada por uma nova revisão principal',
+      reviewSha256: 'b'.repeat(64),
+      createdAt: REVIEW.createdAt + 1,
+    };
+    api.prepare
+      .mockResolvedValueOnce(REVIEW)
+      .mockResolvedValueOnce(refreshedReview);
+    api.start
+      .mockRejectedValueOnce(new Error('review fence mismatch'))
+      .mockResolvedValueOnce(SNAPSHOT);
+    const host = await renderAtReview();
+    const staleStart = button(host, 'Iniciar missão');
 
-      act(() => staleStart.click());
-      await flush();
+    act(() => staleStart.click());
+    await flush();
 
-      expect(api.start).toHaveBeenCalledTimes(1);
-      expect(api.start).toHaveBeenNthCalledWith(1, {
-        missionId: REVIEW.missionId,
-        reviewSha256: REVIEW.reviewSha256,
-      });
-      expect(host.textContent).not.toContain(REVIEW.objective);
-      expect(host.textContent).toContain(
-        'A revisão pode ter ficado desatualizada e foi descartada',
-      );
-      expect(host.textContent).not.toContain(failure);
-      expect(host.textContent).not.toContain('É seguro tentar novamente');
-      expect(useMissionSetupStore.getState().draft.objective).toBe(
-        'Criar um fluxo simples de missão',
-      );
-      expect(button(host, 'Iniciar missão').disabled).toBe(true);
+    expect(api.start).toHaveBeenCalledTimes(1);
+    expect(api.start).toHaveBeenNthCalledWith(1, {
+      missionId: REVIEW.missionId,
+      reviewSha256: REVIEW.reviewSha256,
+    });
+    expect(api.removeMission).toHaveBeenCalledWith(REVIEW.missionId);
+    expect(host.textContent).not.toContain(REVIEW.objective);
+    expect(host.textContent).toContain(
+      'A revisão pode ter ficado desatualizada e foi descartada',
+    );
+    expect(host.textContent).not.toContain('review fence mismatch');
+    expect(button(host, 'Iniciar missão').disabled).toBe(true);
 
-      act(() => staleStart.click());
-      expect(api.start).toHaveBeenCalledTimes(1);
+    act(() => staleStart.click());
+    expect(api.start).toHaveBeenCalledTimes(1);
 
-      act(() => button(host, 'Preparar nova revisão').click());
-      await flush();
+    act(() => button(host, 'Preparar nova revisão').click());
+    await flush();
 
-      expect(api.prepare).toHaveBeenCalledTimes(2);
-      expect(host.textContent).toContain(refreshedReview.objective);
-      expect(button(host, 'Iniciar missão').disabled).toBe(false);
+    expect(api.prepare).toHaveBeenCalledTimes(2);
+    expect(host.textContent).toContain(refreshedReview.objective);
+    expect(button(host, 'Iniciar missão').disabled).toBe(false);
 
-      act(() => button(host, 'Iniciar missão').click());
-      await flush();
+    act(() => button(host, 'Iniciar missão').click());
+    await flush();
 
-      expect(api.start).toHaveBeenCalledTimes(2);
-      expect(api.start).toHaveBeenNthCalledWith(2, {
-        missionId: refreshedReview.missionId,
-        reviewSha256: refreshedReview.reviewSha256,
-      });
-    },
-  );
+    expect(api.start).toHaveBeenCalledTimes(2);
+    expect(api.start).toHaveBeenNthCalledWith(2, {
+      missionId: refreshedReview.missionId,
+      reviewSha256: refreshedReview.reviewSha256,
+    });
+  });
+
+  it('preserva a missão e mostra o diagnóstico real quando o kickoff falha', async () => {
+    api.prepare.mockResolvedValueOnce(REVIEW);
+    api.start.mockRejectedValueOnce(
+      new Error(
+        'kickoff-session_exited: O terminal encerrou antes de aceitar o kickoff.',
+      ),
+    );
+    const host = await renderAtReview();
+
+    act(() => button(host, 'Iniciar missão').click());
+    await flush();
+
+    expect(api.start).toHaveBeenCalledTimes(1);
+    expect(api.removeMission).not.toHaveBeenCalledWith(REVIEW.missionId);
+    expect(host.textContent).toContain(
+      'O agente de coordenação encerrou antes de aceitar o início',
+    );
+    expect(host.textContent).not.toContain(
+      'A revisão pode ter ficado desatualizada e foi descartada',
+    );
+    expect(useProductNavigationStore.getState().destination).toEqual({
+      kind: 'mission',
+      missionId: REVIEW.missionId,
+      surface: 'board',
+    });
+  });
+
 
   it('uses native names, focusable status, and plain PT-BR without legacy wizard jargon', async () => {
     const host = render(<MissionSetup />);

@@ -188,17 +188,55 @@ export function getOrCreateInstallationId(
   } satisfies InstallationState);
   return parseInstallationState(file).installationId;
 }
-function canonicalWorkspaceRoot(root: string): string {
+interface CanonicalWorkspaceAuthority {
+  readonly rootRealPath: string;
+  readonly workspaceRootDevice: string;
+  readonly workspaceRootInode: string;
+}
+
+function canonicalWorkspaceAuthority(root: string): CanonicalWorkspaceAuthority {
   let realRoot: string;
   try {
     realRoot = fs.realpathSync(path.resolve(root));
   } catch (error) {
     throw new Error(`workspace cannot be resolved: ${root}`, { cause: error });
   }
-  if (!fs.statSync(realRoot).isDirectory()) {
-    throw new Error(`workspace is not a directory: ${root}`);
+  const lexical = fs.lstatSync(realRoot, { bigint: true });
+  if (lexical.isSymbolicLink() || !lexical.isDirectory()) {
+    throw new Error(`workspace is not a real directory: ${root}`);
   }
-  return realRoot;
+
+  const noFollow =
+    'O_NOFOLLOW' in fs.constants ? fs.constants.O_NOFOLLOW : 0;
+  const directory =
+    'O_DIRECTORY' in fs.constants ? fs.constants.O_DIRECTORY : 0;
+  const fd = fs.openSync(
+    realRoot,
+    fs.constants.O_RDONLY | noFollow | directory,
+  );
+  try {
+    const opened = fs.fstatSync(fd, { bigint: true });
+    const current = fs.lstatSync(realRoot, { bigint: true });
+    if (
+      !opened.isDirectory() ||
+      current.isSymbolicLink() ||
+      !current.isDirectory() ||
+      opened.dev !== lexical.dev ||
+      opened.ino !== lexical.ino ||
+      current.dev !== opened.dev ||
+      current.ino !== opened.ino ||
+      fs.realpathSync(realRoot) !== realRoot
+    ) {
+      throw new Error(`workspace changed while resolving authority: ${root}`);
+    }
+    return Object.freeze({
+      rootRealPath: realRoot,
+      workspaceRootDevice: opened.dev.toString(),
+      workspaceRootInode: opened.ino.toString(),
+    });
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 function isInsideRoot(root: string, target: string): boolean {
   const relative = path.relative(root, target);
@@ -320,7 +358,8 @@ export function createProjectManifest(
   input: { readonly projectId: string; readonly name?: string },
   runner: ProjectGitRunner = processGitRunner,
 ): ProjectManifest {
-  const rootRealPath = canonicalWorkspaceRoot(workspaceRoot);
+  const rootRealPath =
+    canonicalWorkspaceAuthority(workspaceRoot).rootRealPath;
   let repository: GitRepositoryContext;
   try {
     repository = collectGitRepositoryContext(rootRealPath, runner);
@@ -814,7 +853,12 @@ export function resolveProjectExecutionScope(
   const installationId =
     options.installationId ?? getOrCreateInstallationId();
   const runner = options.gitRunner ?? processGitRunner;
-  const rootRealPath = canonicalWorkspaceRoot(workspaceRoot);
+  const workspaceAuthority = canonicalWorkspaceAuthority(workspaceRoot);
+  const {
+    rootRealPath,
+    workspaceRootDevice,
+    workspaceRootInode,
+  } = workspaceAuthority;
   const identity = projectIdentity(rootRealPath, runner);
   const checkoutRegistryFile =
     typeof installationOrOptions === 'string'
@@ -849,6 +893,8 @@ export function resolveProjectExecutionScope(
     projectId: identity.projectId,
     checkoutId,
     rootRealPath,
+    workspaceRootDevice,
+    workspaceRootInode,
     identitySource: identity.identitySource,
   });
 }

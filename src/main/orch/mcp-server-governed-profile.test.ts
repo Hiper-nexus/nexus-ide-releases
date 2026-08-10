@@ -530,6 +530,7 @@ describe('mcp-server governed CLI profile wiring', () => {
       missionId: undefined,
       petStudioMediaAuthority: true,
     });
+    expect(exactImmediate.attachmentReadPaths).toBeUndefined();
 
     const exactResume = prepareAgentSpawnDecoration(
       adapter('codex'),
@@ -541,6 +542,7 @@ describe('mcp-server governed CLI profile wiring', () => {
     expect(
       getContext(exactResume.env.NEXUS_MCP_TOKEN)?.petStudioMediaAuthority,
     ).toBe(true);
+    expect(exactResume.attachmentReadPaths).toBeUndefined();
 
     const deniedAuthorities = [
       petAuthority(cwd, { squadId: 'lookalike-pet-studio' }),

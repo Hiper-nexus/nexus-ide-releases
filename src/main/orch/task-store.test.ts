@@ -323,6 +323,7 @@ describe('scoped task store', () => {
         }),
         approvedAt,
         approvalReviewSha256,
+        dispatchedAt: 102,
       },
     });
     const tasks = createScopedTaskStore(runtimeManager, scope, { now: () => 202 });
@@ -361,6 +362,7 @@ describe('scoped task store', () => {
         intentVersion: 2,
         approvedAt,
         approvalReviewSha256,
+        dispatchedAt: 102,
       },
     });
 
@@ -374,6 +376,7 @@ describe('scoped task store', () => {
       intentContract: {
         approvedAt,
         approvalReviewSha256,
+        dispatchedAt: 102,
       },
     });
   });
@@ -588,21 +591,34 @@ describe('scoped task store', () => {
     const legacyManager = new ProjectRuntimeManager({
       baseDir,
       appVersion: '0.19.27-test',
-      migrations: INITIAL_PROJECT_MIGRATIONS.slice(0, -2),
+      migrations: INITIAL_PROJECT_MIGRATIONS.filter(
+        ({ schemaVersion }) => schemaVersion <= 16,
+      ),
     });
     managers.push(legacyManager);
-    const missions = createScopedMissionStore(legacyManager, scope);
-    const mission = missions.create({
-      title: 'Legacy sealed plan',
-      squadId: squad.id,
-      intentVersion: 1,
-      intentState: 'dispatched',
-      intentContract: compileIntentContract({
-        goal: 'Upgrade preserving data',
-        intentVersion: 1,
-      }),
-    });
-    legacyManager.open(scope).db.prepare(
+    const mission = { id: 'mission-legacy-016' };
+    const legacyDb = legacyManager.open(scope).db;
+    legacyDb
+      .prepare(
+        `INSERT INTO missions
+           (id, title, description, status, squad_id, milestones_json,
+            orch_session_id, created_at, updated_at, learnings, intent_state,
+            intent_contract_json, intent_version)
+         VALUES (?, ?, '', 'running', ?, '[]', NULL, 100, 100, '',
+                 'dispatched', ?, 1)`,
+      )
+      .run(
+        mission.id,
+        'Legacy sealed plan',
+        squad.id,
+        JSON.stringify(
+          compileIntentContract({
+            goal: 'Upgrade preserving data',
+            intentVersion: 1,
+          }),
+        ),
+      );
+    legacyDb.prepare(
       `INSERT INTO mission_task_plans
          (mission_id, intent_version, plan_hash, planner_json, created_at)
        VALUES (?, 1, ?, ?, 123)`,

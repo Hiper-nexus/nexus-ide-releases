@@ -16,7 +16,6 @@ import {
 import { applyTerminalSettings } from '../terminal/terminal-host';
 import { applyPixelMode, applyUiTheme } from '../styles/ui-theme';
 import { setAudioDevicePreferences } from '../voice/audio-device-preferences';
-import type { SettingsSection } from '../components/settings/settings-nav';
 
 /** One entry point: restyle terminals AND the whole app UI. */
 function applyEverywhere(settings: TerminalSettings): void {
@@ -41,17 +40,15 @@ function settingsApi() {
 }
 
 /**
- * Renderer mirror of terminal + UI settings plus the settings-drawer open
- * state. Every change round-trips through the main process (validate +
- * persist + broadcast) and is applied live.
+ * Renderer mirror of terminal, UI, and audio settings. Every change
+ * round-trips through the main process (validate + persist + broadcast) and
+ * is applied live.
  */
 
 interface SettingsState {
   terminal: TerminalSettings;
   ui: UiSettings;
   audio: AudioSettings;
-  drawerOpen: boolean;
-  drawerSection: SettingsSection | null;
   hydrated: boolean;
 
   hydrate(): Promise<void>;
@@ -61,17 +58,12 @@ interface SettingsState {
   receive(settings: TerminalSettings): void;
   receiveUi(ui: UiSettings): void;
   receiveAudio(audio: AudioSettings): void;
-  toggleDrawer(): void;
-  openDrawer(section?: SettingsSection): void;
-  closeDrawer(): void;
 }
 
 export const useSettingsStore = create<SettingsState>((set) => ({
   terminal: DEFAULT_TERMINAL_SETTINGS,
   ui: DEFAULT_UI_SETTINGS,
   audio: DEFAULT_AUDIO_SETTINGS,
-  drawerOpen: false,
-  drawerSection: null,
   hydrated: false,
 
   hydrate: async () => {
@@ -128,21 +120,6 @@ export const useSettingsStore = create<SettingsState>((set) => ({
     set({ audio });
   },
 
-  toggleDrawer: () =>
-    set((s) => ({
-      drawerOpen: !s.drawerOpen,
-      // Soft-close keeps the section so reopening resumes the same panel
-      // (Jarvis/overlay must not reset navigation mid-settings).
-      drawerSection: s.drawerSection,
-    })),
-  openDrawer: (section) =>
-    set((s) => ({
-      drawerOpen: true,
-      // Explicit target wins; generic open reuses last soft section if any.
-      drawerSection: section !== undefined ? section : s.drawerSection,
-    })),
-  // Soft-close: hide only. Section + search draft survive for the next open.
-  closeDrawer: () => set({ drawerOpen: false }),
 }));
 
 /** Boot hook: hydrate once and follow main-process broadcasts. */

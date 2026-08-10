@@ -1,9 +1,46 @@
-/* Estúdio de Mídia — painel de geração de imagem/vídeo para usuários leigos.
-   Reusa o shell do IntegrationsPanel (.int-scrim/.int-panel/.int-tab); aqui só
-   o que é específico do estúdio (form, chips, preview, galeria). */
+/* Estúdio de Mídia — modal autocontido de geração de imagem/vídeo.
+   O shell vive aqui para não depender do IntegrationsPanel legado. */
+
+.ms-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-hard-modal);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: calc(var(--bar-height) + var(--space-4)) var(--space-4)
+    var(--space-4);
+}
 
 .ms-panel {
   width: min(760px, 100%);
+  max-height: min(86vh, 760px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-inset-hi), var(--shadow-3);
+}
+
+.ms-panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.ms-panel__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
 }
 
 .ms-head {
@@ -20,7 +57,93 @@
 }
 
 .ms-tabs {
+  display: flex;
   max-width: 260px;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--bg) 60%, transparent);
+}
+
+.ms-tab {
+  appearance: none;
+  flex: 1;
+  padding: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ms-tab:hover {
+  color: var(--text);
+}
+
+.ms-tab--active {
+  background: var(--bg-elevated);
+  color: var(--text);
+  box-shadow: var(--shadow-1);
+}
+
+.ms-button {
+  appearance: none;
+  min-height: 44px;
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-md);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ms-button:not(:disabled):hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.ms-button--primary {
+  border-color: var(--btn-primary);
+  background: var(--btn-primary);
+  color: var(--btn-primary-ink);
+}
+
+.ms-button--primary:not(:disabled):hover {
+  border-color: var(--btn-primary-hover);
+  background: var(--btn-primary-hover);
+}
+
+.ms-button--sm {
+  min-height: 38px;
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+
+.ms-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.ms-dim {
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+}
+
+.ms-gallery__title {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .ms-form {
@@ -146,7 +269,7 @@
   font-weight: 650;
 }
 
-.ms-empty .int-panel__dim {
+.ms-empty .ms-dim {
   margin: 0;
 }
 

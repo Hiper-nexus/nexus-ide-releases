@@ -18,26 +18,19 @@
 @import './settings-controls.css';
 @import './settings-appearance.css';
 @import './ui-actions.css';
-@import './launch.css';
-@import './launch-wizard.css';
 @import './panels.css';
 @import './endorphin.css';
 @import './endorphin-surfaces.css';
 @import './mcp-across-tools.css';
 @import './cost-operator.css';
-@import './home-deck.css';
 @import './home-billing.css';
 @import './voice-settings.css';
-@import './rail-onboarding.css';
-@import './ops-board.css';
 @import './integrations.css';
 @import './media-studio.css';
 @import './product-wave.css';
 @import './product-workspaces.css';
 @import './git-scm.css';
-@import './config-inventory.css';
 @import './model-meta-badge.css';
-@import './mission-kickoff.css';
 /* Camada de overlay (H6) por último de propósito: é a folha que ANCORA a
    ladder no topo e define scrim/motion da camada. Vindo depois, suas regras
    de vidro e entrada vencem sem precisar de !important. */

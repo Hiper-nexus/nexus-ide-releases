@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PaneModel } from "../../shared/types";
 import { useContextualPanelNavStore } from "../state/contextual-panel-nav-store";
 import { useOrchStore } from "../state/orch-store";
+import { useProductNavigationStore } from "../state/product-navigation-store";
 import { PaneContextMenu } from "./PaneContextMenu";
 
 const { submitPromptToPane, getPaneSessionId, getScrollbackExcerpt } =
@@ -71,6 +72,10 @@ describe("PaneContextMenu authority routing", () => {
       value: { writeText: vi.fn(async () => undefined) },
     });
     useContextualPanelNavStore.setState({ requestedTab: null, requestId: 0 });
+    useProductNavigationStore.setState({
+      destination: { kind: "terminal" },
+      settingsReturnDestination: null,
+    });
     useOrchStore.setState({
       missions: [
         {
@@ -85,8 +90,6 @@ describe("PaneContextMenu authority routing", () => {
           updatedAt: 1,
         },
       ],
-      panelOpen: false,
-      panelTab: "missions",
     });
   });
 
@@ -107,23 +110,27 @@ describe("PaneContextMenu authority routing", () => {
     act(() => root.unmount());
   });
 
-  it("plans worktree through the mission dispatcher without running git", async () => {
+  it("plans worktree and opens its canonical mission board without running git", async () => {
     const { root } = mount();
-    await act(async () => button("Planejar worktree").click());
+    try {
+      await act(async () => button("Planejar worktree").click());
 
-    const clipboard = navigator.clipboard.writeText as ReturnType<typeof vi.fn>;
-    expect(clipboard).toHaveBeenCalledWith(
-      expect.stringContaining("nexus_task plan"),
-    );
-    expect(clipboard.mock.calls[0]?.[0]).not.toMatch(
-      /\bgit\s+worktree\s+add\b/,
-    );
-    expect(useOrchStore.getState()).toMatchObject({
-      panelOpen: true,
-      panelTab: "missions",
-    });
-    expect(submitPromptToPane).not.toHaveBeenCalled();
-    act(() => root.unmount());
+      const clipboard = vi.mocked(navigator.clipboard.writeText);
+      expect(clipboard).toHaveBeenCalledWith(
+        expect.stringContaining("nexus_task plan"),
+      );
+      expect(clipboard.mock.calls[0]?.[0]).not.toMatch(
+        /\bgit\s+worktree\s+add\b/,
+      );
+      expect(useProductNavigationStore.getState().destination).toEqual({
+        kind: "mission",
+        missionId: "mission-1",
+        surface: "board",
+      });
+      expect(submitPromptToPane).not.toHaveBeenCalled();
+    } finally {
+      act(() => root.unmount());
+    }
   });
 
   it("opens Git through the contextual panel and copies bounded pane output", async () => {
@@ -140,6 +147,7 @@ describe("PaneContextMenu authority routing", () => {
     );
     act(() => second.root.unmount());
   });
+
 
   it("moves focus through menu items with arrow keys", () => {
     const { root } = mount();

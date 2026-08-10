@@ -34,7 +34,6 @@ const activeWorkspaces: WorkspaceRailWorkspace[] = [
   {
     id: 'atlas',
     name: 'Atlas local',
-    path: '/projetos/atlas',
     missions: [
       {
         id: 'mission-running',
@@ -56,7 +55,6 @@ const recentWorkspaces: WorkspaceRailWorkspace[] = [
   {
     id: 'cometa',
     name: 'Cometa',
-    path: '/projetos/cometa',
     missions: [
       {
         id: 'mission-done',
@@ -99,6 +97,10 @@ describe('WorkspaceRail', () => {
     expect(active?.textContent).toContain('Publicar a versão');
     expect(recent?.textContent).toContain('Cometa');
     expect(recent?.textContent).toContain('Revisar a página inicial');
+    expect(
+      host.querySelector<HTMLButtonElement>('[data-workspace-id="atlas"]')
+        ?.title,
+    ).toBe('Atlas local');
 
     for (const [group, label] of [
       [active, 'Em andamento'],

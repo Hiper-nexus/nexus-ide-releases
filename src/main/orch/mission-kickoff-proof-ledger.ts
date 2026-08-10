@@ -127,7 +127,8 @@ function hasExactAuthority(
   return (
     authority.status === 'pending' &&
     authority.intentState === 'ready_to_start' &&
-    authority.intentContract?.dispatchedAt === undefined &&
+    typeof authority.intentContract?.dispatchedAt === 'number' &&
+    authority.intentContract.dispatchedAt > 0 &&
     typeof reviewSha256 === 'string' &&
     /^[a-f0-9]{64}$/.test(reviewSha256) &&
     hasCurrentApprovedDispatchContract(authority)

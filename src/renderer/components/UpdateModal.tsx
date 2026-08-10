@@ -138,9 +138,6 @@ export function UpdateStatusButton({
   if (!alwaysVisible && !isUpdateNoticeVisible(state)) return null;
   const title = getUpdateButtonTitle(state);
   const className = [
-    'workspace-bar__btn',
-    'workspace-bar__btn--update',
-    `workspace-bar__btn--update-${state.phase}`,
     'update-status-btn',
     'update-status-btn--bar',
     compact ? 'update-status-btn--compact' : '',
@@ -184,11 +181,8 @@ export function UpdateModal({ state, onClose }: Props) {
   };
 
   return (
-    // H6: montado dentro da WorkspaceBar (e da LaunchScreen), este modal
-    // declarava --z-confirm-class (1300) dentro de um chrome com z-index 55 —
-    // número alto sem efeito nenhum. Na camada de overlay o 1300 volta a ser
-    // lido entre iguais. O portal do React preserva o borbulhar de eventos,
-    // então o onClick do backdrop e o stopPropagation do painel seguem iguais.
+    // Portaled so the named overlay ladder governs the modal independently of
+    // whichever product destination exposes the update control.
     <OverlayLayer>
       <div
         className="update-modal__backdrop overlay-scrim-glass overlay-scrim-enter"

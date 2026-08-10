@@ -104,14 +104,33 @@ export function quarantineProjectIdentity(
   });
 }
 
-export const projectExecutionScopeSchema = z.object({
-  version: z.literal(PROJECT_IDENTITY_VERSION),
-  installationId: z.string().min(1).max(128),
-  projectId: z.string().min(1).max(128),
-  checkoutId: z.string().min(1).max(128),
-  rootRealPath: z.string().min(1).max(4096),
-  identitySource: z.enum(['manifest', 'provisional']),
-}).strict();
+export const projectExecutionScopeSchema = z
+  .object({
+    version: z.literal(PROJECT_IDENTITY_VERSION),
+    installationId: z.string().min(1).max(128),
+    projectId: z.string().min(1).max(128),
+    checkoutId: z.string().min(1).max(128),
+    rootRealPath: z.string().min(1).max(4096),
+    /**
+     * Trusted identity of the real workspace directory opened by Main.
+     * Optional only so persisted legacy scopes remain parseable.
+     */
+    workspaceRootDevice: z.string().regex(/^[0-9]+$/).optional(),
+    workspaceRootInode: z.string().regex(/^[0-9]+$/).optional(),
+    identitySource: z.enum(['manifest', 'provisional']),
+  })
+  .strict()
+  .superRefine((scope, context) => {
+    if (
+      (scope.workspaceRootDevice === undefined) !==
+      (scope.workspaceRootInode === undefined)
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: 'workspace root filesystem identity must be complete',
+      });
+    }
+  });
 
 /**
  * Immutable authority attached to a session when it is created. Paths are

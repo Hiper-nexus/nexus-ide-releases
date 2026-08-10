@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import {
   missionEngineCommandSchema,
+  missionResultSchema,
   missionPrepareRequestSchema,
   missionReviewSchema,
   type MissionEngineCommand,
@@ -12,8 +13,10 @@ import {
 } from '../../shared/mission-engine-contract';
 import {
   missionIntentStateSchema,
+  type MissionAttachmentSnapshot,
 } from '../../shared/mission-intent';
 import { missionStatusSchema } from '../../shared/orch-types';
+import { PET_STUDIO_SQUAD } from '../../shared/pet-studio';
 import {
   projectExecutionScopeSchema,
   type ProjectExecutionScope,
@@ -46,17 +49,28 @@ const missionCompilationSchema = missionReviewPayloadSchema
     title: true,
     objective: true,
     contextPaths: true,
+    acceptanceCriteria: true,
     roster: true,
     permissions: true,
     warnings: true,
+    attachments: true,
   })
   .strict();
 
 const missionReviewFenceSchema = missionReviewSchema
   .pick({ missionId: true, reviewSha256: true })
+  .extend({
+    profile: z
+      .object({ kind: z.literal('pet-studio') })
+      .strict()
+      .optional(),
+    attachments: missionReviewSchema.shape.attachments,
+  })
   .strict();
 
-const missionStartInputSchema = missionReviewFenceSchema;
+const missionStartInputSchema = missionReviewFenceSchema
+  .pick({ missionId: true, reviewSha256: true })
+  .strict();
 const missionIdSchema = missionReviewSchema.shape.missionId;
 const rootRelativeContextPathsSchema = z
   .array(rootRelativeProjectPathSchema)
@@ -81,6 +95,7 @@ const missionBlockInputSchema = missionLifecycleFenceSchema
 const missionVerifiedCompletionInputSchema = missionLifecycleFenceSchema
   .extend({
     learnings: z.string().max(65_536),
+    result: missionResultSchema,
   })
   .strict();
 
@@ -166,6 +181,9 @@ export interface MainMissionEnginePorts {
   readonly readReviewFence: (
     missionId: string,
   ) => Promise<MissionReviewFence | null>;
+  readonly revalidatePetStudioAttachments?: (
+    snapshots: readonly MissionAttachmentSnapshot[],
+  ) => readonly MissionAttachmentSnapshot[];
   readonly seal: (input: MissionStartInput) => Promise<void>;
   readonly bootstrap: (missionId: string) => Promise<void>;
   readonly retryKickoff: (command: RetryKickoffCommand) => Promise<void>;
@@ -214,23 +232,62 @@ function canonicalJson(value: unknown): string {
   }
 
   if (Array.isArray(value)) {
-    return `[${value.map((entry) => canonicalJson(entry)).join(',')}]`;
+    return `[${value
+      .map((entry) =>
+        entry === undefined ||
+        typeof entry === 'function' ||
+        typeof entry === 'symbol'
+          ? 'null'
+          : canonicalJson(entry),
+      )
+      .join(',')}]`;
   }
 
-  return `{${Object.keys(value)
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .filter((key) => {
+      const entry = record[key];
+      return (
+        entry !== undefined &&
+        typeof entry !== 'function' &&
+        typeof entry !== 'symbol'
+      );
+    })
     .sort()
-    .map(
-      (key) =>
-        `${JSON.stringify(key)}:${canonicalJson(
-          (value as Record<string, unknown>)[key],
-        )}`,
-    )
+    .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
     .join(',')}}`;
 }
+function canonicalPrepareRequest(
+  request: MissionPrepareRequest,
+): MissionPrepareRequest {
+  const contextPaths = rootRelativeContextPathsSchema.parse(
+    request.contextPaths,
+  );
+  if (request.profile?.kind !== 'pet-studio') {
+    return missionPrepareRequestSchema.parse({ ...request, contextPaths });
+  }
+  return missionPrepareRequestSchema.parse({
+    ...request,
+    contextPaths: [],
+    roster: PET_STUDIO_SQUAD.agents.map((agent) => ({
+      ...agent,
+      allowedTools:
+        agent.allowedTools === null ? null : [...(agent.allowedTools ?? [])],
+      allowedSkills:
+        agent.allowedSkills === null ? null : [...(agent.allowedSkills ?? [])],
+    })),
+    advanced: { lane: 'standard' },
+  });
+}
+
 
 export class MainMissionEngine implements MissionEngine {
   readonly #scope: ProjectExecutionScope;
   readonly #ports: MainMissionEnginePorts;
+  readonly #preparedPetAttachments = new Map<
+    string,
+    readonly MissionAttachmentSnapshot[]
+  >();
 
   constructor(scope: ProjectExecutionScope, ports: MainMissionEnginePorts) {
     this.#scope = Object.freeze({ ...projectExecutionScopeSchema.parse(scope) });
@@ -264,12 +321,7 @@ export class MainMissionEngine implements MissionEngine {
   ): Promise<MissionReview> {
     this.#assertScope(scope);
     const parsedRequest = missionPrepareRequestSchema.parse(request);
-    const safeRequest = missionPrepareRequestSchema.parse({
-      ...parsedRequest,
-      contextPaths: rootRelativeContextPathsSchema.parse(
-        parsedRequest.contextPaths,
-      ),
-    });
+    const safeRequest = canonicalPrepareRequest(parsedRequest);
 
     const armed = missionArmResultSchema.parse(
       await this.#ports.arm(safeRequest),
@@ -289,12 +341,24 @@ export class MainMissionEngine implements MissionEngine {
           .update(canonicalJson(payload))
           .digest('hex'),
       });
+      if (
+        safeRequest.profile?.kind === 'pet-studio' &&
+        review.attachments?.length !== 1
+      ) {
+        throw new Error('pet attachment snapshot is absent from review');
+      }
       const fence = missionReviewFenceSchema.parse({
         missionId: review.missionId,
         reviewSha256: review.reviewSha256,
       });
 
       await this.#ports.persistReviewFence(fence);
+      if (safeRequest.profile?.kind === 'pet-studio') {
+        this.#preparedPetAttachments.set(
+          review.missionId,
+          review.attachments!.map((snapshot) => ({ ...snapshot })),
+        );
+      }
       return review;
     } catch (error) {
       try {
@@ -335,10 +399,43 @@ export class MainMissionEngine implements MissionEngine {
     ) {
       throw new Error('review fence mismatch');
     }
+    const petAttachments =
+      fence.profile?.kind === 'pet-studio'
+        ? fence.attachments
+        : this.#preparedPetAttachments.get(parsedInput.missionId);
+    if (fence.profile?.kind === 'pet-studio' || petAttachments) {
+      if (petAttachments?.length !== 1) {
+        throw new Error('pet attachment snapshot is absent');
+      }
+      if (!this.#ports.revalidatePetStudioAttachments) {
+        throw new Error('pet attachment validation is unavailable');
+      }
+      try {
+        const current =
+          this.#ports.revalidatePetStudioAttachments(petAttachments);
+        if (
+          current.length !== 1 ||
+          current[0]?.path !== petAttachments[0]?.path ||
+          current[0]?.sourcePath !== petAttachments[0]?.sourcePath ||
+          current[0]?.sealId !== petAttachments[0]?.sealId ||
+          current[0]?.sha256 !== petAttachments[0]?.sha256 ||
+          current[0]?.size !== petAttachments[0]?.size ||
+          current[0]?.device !== petAttachments[0]?.device ||
+          current[0]?.inode !== petAttachments[0]?.inode
+        ) {
+          throw new Error('sealed attachment identity changed');
+        }
+      } catch (error) {
+        throw new Error('pet attachment validation failed', { cause: error });
+      }
+    }
+
 
     await this.#ports.seal(parsedInput);
     await this.#ports.bootstrap(parsedInput.missionId);
-    return this.#readFreshSnapshot(parsedInput.missionId);
+    const snapshot = await this.#readFreshSnapshot(parsedInput.missionId);
+    this.#preparedPetAttachments.delete(parsedInput.missionId);
+    return snapshot;
   }
 
   async command(

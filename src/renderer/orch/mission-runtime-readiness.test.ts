@@ -137,6 +137,38 @@ describe("mission runtime readiness", () => {
     ).toBe(false);
   });
 
+  it("aceita CLI que autentica pela própria assinatura sem lista de modelos", () => {
+    // Regressão real: Claude Code logado e respondendo, mas o coordenador
+    // aparecia como "a ferramenta escolhida não está pronta" e a missão nem
+    // começava. A projeção não tinha authReadyModels porque a CLI não deposita
+    // chave no Nexus — ausência de informação não é negativa.
+    const claude = adapter("claude", {
+      models: { list: ["claude-sonnet-5"], default: "claude-sonnet-5" },
+    });
+    const snapshot = provider("claude", {
+      defaultModel: "claude-sonnet-5",
+      models: ["claude-sonnet-5"],
+      authReadyModels: [],
+      authStrategy: "subscription",
+    });
+
+    expect(isAdapterModelAuthenticated(claude, [snapshot])).toBe(true);
+  });
+
+  it("continua recusando uma CLI que exige login e não tem conta", () => {
+    const codex = adapter("codex", {
+      models: { list: ["gpt-5.5"], default: "gpt-5.5" },
+    });
+    const snapshot = provider("codex", {
+      defaultModel: "gpt-5.5",
+      models: ["gpt-5.5"],
+      authReadyModels: [],
+      authStrategy: "login-needed",
+    });
+
+    expect(isAdapterModelAuthenticated(codex, [snapshot])).toBe(false);
+  });
+
   it("binds readiness to the selected model instead of provider-wide auth", () => {
     const claude = adapter("claude", {
       models: {

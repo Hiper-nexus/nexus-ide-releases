@@ -3,6 +3,7 @@ import { act, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Mission, TodoList, TodoStatus } from '../../../shared/orch-types';
+import { useMissionSetupStore } from '../../state/mission-setup-store';
 import { useOrchStore } from '../../state/orch-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
 import { TaskBoardWorkspace } from './TaskBoardWorkspace';
@@ -137,8 +138,6 @@ beforeEach(() => {
   useOrchStore.setState({
     missions: [LEGACY_MISSION],
     todoLists: [],
-    selectedMissionId: null,
-    boardOpen: false,
     workspaceEpoch: 0,
     boundWorkspacePath: null,
   });
@@ -295,7 +294,7 @@ describe('TaskBoardWorkspace contracts', () => {
     expect(statusControl(host, 'Preparar release').disabled).toBe(false);
   });
 
-  it('uses deterministic PT-BR list labels without exposing canonical list ids', () => {
+  it('groups tasks into deterministic PT-BR status columns without exposing canonical list ids', () => {
     const internalIds = ['mission-019f-private', 'global'];
     useOrchStore.setState({
       todoLists: [
@@ -330,15 +329,21 @@ describe('TaskBoardWorkspace contracts', () => {
       ...host.querySelectorAll<HTMLElement>('.task-board-workspace__list'),
     ];
 
-    expect(lists).toHaveLength(2);
+    expect(lists).toHaveLength(3);
     expect(lists.map((list) => list.querySelector('h2')?.textContent)).toEqual([
-      'Lista 1',
-      'Lista 2',
+      'A fazer',
+      'Em andamento',
+      'Concluída',
     ]);
     expect(lists.map((list) => list.getAttribute('aria-label'))).toEqual([
-      'Lista de tarefas 1',
-      'Lista de tarefas 2',
+      'Tarefas: A fazer',
+      'Tarefas: Em andamento',
+      'Tarefas: Concluída',
     ]);
+    // The 'done' item lands in the 'Concluída' column, not in a list bucket.
+    expect(
+      lists[2]?.querySelector('.task-board-workspace__item-name')?.textContent,
+    ).toBe('Revisar o segundo fluxo');
     for (const id of internalIds) {
       expect(host.textContent).not.toContain(id);
       expect(
@@ -351,6 +356,9 @@ describe('TaskBoardWorkspace contracts', () => {
     useOrchStore.setState({
       todoLists: [{ id: 'empty-list', items: [], updatedAt: 1 }],
     });
+    useMissionSetupStore.setState({
+      entryContext: { kind: 'pet-studio', revision: 1 },
+    } as never);
     const host = mount(<TaskBoardWorkspace />);
     const buttons = [...host.querySelectorAll<HTMLButtonElement>('button')];
 
@@ -365,6 +373,9 @@ describe('TaskBoardWorkspace contracts', () => {
     expect(useProductNavigationStore.getState().destination).toEqual({
       kind: 'mission-setup',
     });
+    expect(
+      Reflect.get(useMissionSetupStore.getState(), 'entryContext'),
+    ).toBeNull();
     expect(orchBoundary.updateMission).not.toHaveBeenCalled();
     expect(orchBoundary.reopenMission).not.toHaveBeenCalled();
     expect(orchBoundary.removeMission).not.toHaveBeenCalled();

@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import type { WebContents } from 'electron';
 import { z } from 'zod';
 import {
   hasCurrentApprovedDispatchContract,
@@ -29,18 +28,18 @@ import {
   type OwnedAgentSessionInfo,
 } from '../pty/pty-manager';
 import { getAcpDriverSession } from '../acp/acp-harness-driver';
-import { requireRendererWorkspaceScope } from '../persistence/renderer-workspace-scope';
 import { getContextBySession } from './gate';
 import { missionRequiresGuidedPrevc } from './guided-mission-authority';
 import {
   getPaneRuntimeAuthorityBySession,
+  readSessionOutput,
   type PaneRuntimeAuthority,
 } from './pane-registry';
 import { getProjectDomainStores } from './project-domain-store-registry';
 import { sameMissionPaneAuthoritySeal } from './mission-pane-authority';
+import { sanitizeMissionOrchestratorExitOutput } from './mission-orchestrator-exit-policy';
 import { sameProjectScope } from './project-scoped-broadcast';
 import { assertSafePtyPrompt } from './pty-prompt-safety';
-import { getSquad } from './squad-store';
 import { snapshotSquadAuthority } from './squad-authority-snapshot';
 import { assertPromotedPlanSnapshot } from './plan-promotion-authority';
 import {
@@ -57,7 +56,6 @@ import {
   getPtyStreamMissionControl,
   type PtyStreamMissionControl,
 } from './pty-stream-mission-control';
-import { ensureGuidedMissionPlanForScope } from './guided-mission-planner';
 
 /**
  * Após o primeiro byte, Claude/Codex ainda podem ficar busy carregando MCP e
@@ -691,10 +689,6 @@ const missionKickoffRequestSchema = z.object({
   prompt: z.string().min(1).max(65_536),
 }).strict();
 
-export const rendererMissionKickoffRequestSchema = z.object({
-  missionId: z.string().min(1).max(128),
-  sessionId: z.string().min(1).max(128),
-}).strict();
 
 function buildPetStudioKickoffPrompt(
   mission: Mission,
@@ -868,7 +862,6 @@ export function isMissionOrchestratorLiveForScheduler(
 function requireKickoffAuthority(
   scope: Readonly<ProjectExecutionScope>,
   input: z.infer<typeof missionKickoffRequestSchema>,
-  expectedOwner?: WebContents,
 ) {
   const stores = getProjectDomainStores(scope);
   const mission = stores.missions.get(input.missionId);
@@ -887,14 +880,6 @@ function requireKickoffAuthority(
   const agent = runtimeAgentSessionInfo(input.sessionId);
   const paneAuthority = getPaneRuntimeAuthorityBySession(input.sessionId);
   const gate = getContextBySession(input.sessionId);
-  const ownerMatches =
-    expectedOwner === undefined ||
-    paneAuthority?.owner === expectedOwner ||
-    // ACP sessions remain main-owned even after their semantic pane is
-    // presented in a renderer. The workspace scope and bearer gate below are
-    // still required; owner=null is the deliberate transport distinction.
-    (getAcpDriverSession(input.sessionId) !== null &&
-      paneAuthority?.owner === null);
   if (
     !agent ||
     agent.role !== 'orchestrator' ||
@@ -903,7 +888,6 @@ function requireKickoffAuthority(
     !paneAuthority ||
     paneAuthority.kind !== 'cli-agent' ||
     paneAuthority.sessionId !== input.sessionId ||
-    !ownerMatches ||
     paneAuthority.role !== 'orchestrator' ||
     paneAuthority.missionId !== mission.id ||
     !paneAuthority.scope ||
@@ -1001,49 +985,6 @@ export function hasPendingMissionKickoffFlight(missionId: string): boolean {
   return false;
 }
 
-/** Renderer boundary: resolve all authority in main and keep one exact flight. */
-export function submitMissionKickoffFromRenderer(
-  owner: WebContents,
-  raw: unknown,
-): Promise<MissionKickoffResult> {
-  const request = rendererMissionKickoffRequestSchema.parse(raw);
-  const scope = requireRendererWorkspaceScope(owner);
-  const provisional = {
-    ...request,
-    // Authority is resolved before any prompt is constructed. The placeholder
-    // never reaches PTY and exists only to reuse the exact session gate.
-    prompt: 'authority-check',
-  };
-  const initial = requireKickoffAuthority(scope, provisional, owner);
-  const squad = initial.mission.squadId
-    ? getSquad(initial.mission.squadId)
-    : null;
-  if (!initial.mission.intentContract || !squad) {
-    throw new Error('kickoff canônico exige contrato atual e squad salvo');
-  }
-  const plan = ensureGuidedMissionPlanForScope(scope, initial.mission.id);
-  const standardTopology: StandardMissionTopology = plan.applicable
-    ? plan.topology
-    : 'delivery';
-  const acpSession = getAcpDriverSession(request.sessionId);
-  const canonicalPrompt = buildCanonicalMissionKickoffPrompt(
-    initial.mission,
-    squad,
-    standardTopology,
-  );
-  const input = {
-    ...request,
-    prompt: acpSession
-      ? canonicalPrompt
-      : bindPtyMissionControlToKickoff(
-          initial.mission,
-          request.sessionId,
-          canonicalPrompt,
-        ),
-  };
-  assertSafePtyPrompt(input.prompt);
-  return submitMissionKickoffWithAuthority(scope, input, initial, owner);
-}
 
 /**
  * Trusted main boundary used by the initial headless orchestrator bootstrap.
@@ -1177,7 +1118,6 @@ function submitMissionKickoffWithAuthority(
   scope: Readonly<ProjectExecutionScope>,
   input: z.infer<typeof missionKickoffRequestSchema>,
   initial: ReturnType<typeof requireKickoffAuthority>,
-  expectedOwner?: WebContents,
 ): Promise<MissionKickoffResult> {
   const intentVersion = initial.mission.intentVersion ?? 0;
   const flightKey = [
@@ -1214,7 +1154,7 @@ function submitMissionKickoffWithAuthority(
 
   const isAuthorized = () => {
     try {
-      const current = requireKickoffAuthority(scope, input, expectedOwner);
+      const current = requireKickoffAuthority(scope, input);
       return (current.mission.intentVersion ?? 0) === intentVersion;
     } catch {
       return false;
@@ -1279,6 +1219,15 @@ function submitMissionKickoffWithAuthority(
   )
     .then((result) => {
       if (!result.accepted) {
+        if (result.reason === 'session_exited') {
+          const outputTail = sanitizeMissionOrchestratorExitOutput(
+            readSessionOutput(input.sessionId, 80),
+          );
+          console.warn(
+            `[mission-kickoff] provider exited before acceptance ` +
+              `session=${input.sessionId} output=${outputTail || '<empty>'}`,
+          );
+        }
         return {
           ...result,
           retryScheduled: hasScheduledKickoffRecovery(
@@ -1292,7 +1241,7 @@ function submitMissionKickoffWithAuthority(
       // The observed edge is not scheduler authority until the exact
       // mission/revision/session receipt commits. Revalidate after the async PTY
       // window so a concurrent rebind cannot inherit a stale successful edge.
-      const current = requireKickoffAuthority(scope, input, expectedOwner);
+      const current = requireKickoffAuthority(scope, input);
       if ((current.mission.intentVersion ?? 0) !== intentVersion) {
         throw new Error('autoridade do kickoff mudou antes do aceite durável');
       }

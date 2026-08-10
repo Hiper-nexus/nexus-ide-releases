@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import { missionResultSchema } from "../../shared/mission-engine-contract";
 import {
   hasCurrentApprovedDispatchContract,
   missionIntentContractSchema,
@@ -82,6 +83,31 @@ function boundedFanoutLearnings(
     PRIOR_MISSION_MEMORY_SEPARATOR +
     priorLearnings.slice(-available)
   );
+}
+
+function boundedDeliveryResultSummary(
+  authorityNote: string,
+  deliverySummaries: readonly string[],
+): string {
+  const chunks = [authorityNote.slice(0, MAX_VISIBLE_MISSION_RESULT_CHARS)];
+  let remaining = MAX_VISIBLE_MISSION_RESULT_CHARS - chunks[0]!.length;
+  if (remaining === 0 || deliverySummaries.length === 0) return chunks[0]!;
+
+  const heading = "\n\n## Entregas verificadas";
+  if (remaining <= heading.length) return chunks[0]!;
+  chunks.push(heading);
+  remaining -= heading.length;
+
+  for (const rawSummary of deliverySummaries) {
+    const summary = rawSummary.trim();
+    const prefix = "\n- ";
+    if (!summary || remaining <= prefix.length) continue;
+    const take = Math.min(summary.length, remaining - prefix.length);
+    chunks.push(prefix, summary.slice(0, take));
+    remaining -= prefix.length + take;
+    if (take < summary.length || remaining === 0) break;
+  }
+  return chunks.join("");
 }
 
 /**
@@ -356,6 +382,9 @@ function verifyCompletedTaskPlanAuthority(
       readonly consumedAt: number | null;
       readonly hasExactConsumption: boolean;
     }> = [];
+    const resultEvidenceIds = new Set<string>();
+    const resultArtifactRefs = new Set<string>();
+    const deliverySummaries: string[] = [];
     for (const entry of plan.tasks) {
       const row = dispatchByTask.get(entry.taskId);
       if (!row) return false;
@@ -436,9 +465,10 @@ function verifyCompletedTaskPlanAuthority(
       ) {
         return false;
       }
-      if (
-        hasTeamReadOnlyFanoutDomain(sealed.schedule.ownership.domains)
-      ) {
+      const requiresManualAck = hasTeamReadOnlyFanoutDomain(
+        sealed.schedule.ownership.domains,
+      );
+      if (requiresManualAck) {
         teamReadOnlyFanoutDispatches += 1;
       }
       if (hasWavePackDomain(sealed.schedule.ownership.domains)) {
@@ -640,6 +670,21 @@ function verifyCompletedTaskPlanAuthority(
           return false;
         }
       }
+      for (const evidenceId of receipt.evidenceIds ?? []) {
+        if (resultEvidenceIds.size >= 64) break;
+        const parsedEvidenceId =
+          missionResultSchema.shape.evidenceIds.element.safeParse(evidenceId);
+        if (parsedEvidenceId.success) {
+          resultEvidenceIds.add(parsedEvidenceId.data);
+        }
+      }
+      const parsedArtifactRef =
+        missionResultSchema.shape.artifactRefs.element.safeParse(
+          receipt.reference,
+        );
+      if (parsedArtifactRef.success && resultArtifactRefs.size < 64) {
+        resultArtifactRefs.add(parsedArtifactRef.data);
+      }
       if (!waiver) {
         if (!physical) return false;
         const physicalHandoff = physical;
@@ -687,7 +732,7 @@ function verifyCompletedTaskPlanAuthority(
         }
         const delivery = db
           .prepare(
-            `SELECT h.status, h.session_id, h.worker_incarnation_id,
+            `SELECT h.status, h.summary, h.session_id, h.worker_incarnation_id,
                   h.delivered, h.delivery_state, h.consumed_at,
                   h.consumed_by_session, h.consumed_delivery_attempt_id,
                   (
@@ -721,6 +766,7 @@ function verifyCompletedTaskPlanAuthority(
           ) as
           | {
               status: string;
+              summary: string;
               session_id: string | null;
               worker_incarnation_id: string | null;
               delivered: number;
@@ -746,10 +792,11 @@ function verifyCompletedTaskPlanAuthority(
           delivery.delivered !== 1 ||
           !delivery.accepted_attempt_id ||
           delivery.accepted_at === null ||
-          !hasExactConsumption
+          (requiresManualAck && !hasExactConsumption)
         ) {
           return false;
         }
+        deliverySummaries.push(delivery.summary);
         completedDeliveries.push({
           handoffId: row.handoff_id!,
           deliveryAttemptId: delivery.accepted_attempt_id,
@@ -798,21 +845,26 @@ function verifyCompletedTaskPlanAuthority(
       return false;
     }
     let latestFanoutAckAt = 0;
-    for (const delivery of completedDeliveries) {
-      if (!delivery.hasExactConsumption || delivery.consumedAt === null) {
-        return false;
+    // Delivery and wave-pack are Main-owned after exact session acceptance;
+    // their PTY contract explicitly says no_manual_ack_required. Only fan-out
+    // needs an explicit Maestro ACK because its synthesis is the final product.
+    if (sealedTopology === 'team-read-only-fanout') {
+      for (const delivery of completedDeliveries) {
+        if (!delivery.hasExactConsumption || delivery.consumedAt === null) {
+          return false;
+        }
+        const ackAt = verifiedFanoutAckTime(db, binding, {
+          missionId,
+          orchestratorSessionId: mission.orch_session_id,
+          handoffId: delivery.handoffId,
+          deliveryAttemptId: delivery.deliveryAttemptId,
+          acceptedAt: delivery.acceptedAt,
+          consumedAt: delivery.consumedAt,
+          now,
+        });
+        if (ackAt === null) return false;
+        latestFanoutAckAt = Math.max(latestFanoutAckAt, ackAt);
       }
-      const ackAt = verifiedFanoutAckTime(db, binding, {
-        missionId,
-        orchestratorSessionId: mission.orch_session_id,
-        handoffId: delivery.handoffId,
-        deliveryAttemptId: delivery.deliveryAttemptId,
-        acceptedAt: delivery.acceptedAt,
-        consumedAt: delivery.consumedAt,
-        now,
-      });
-      if (ackAt === null) return false;
-      latestFanoutAckAt = Math.max(latestFanoutAckAt, ackAt);
     }
     if (mode === 'record-fanout-consolidation') {
       if (
@@ -881,6 +933,14 @@ function verifyCompletedTaskPlanAuthority(
         )
       : `${mission.learnings}${mission.learnings.trim() ? "\n\n" : ""}${authorityNote}`
           .slice(0, 65_536);
+    const result = missionResultSchema.parse({
+      outcome: "success",
+      summary: fanoutConsolidation
+        ? fanoutConsolidation.final_output
+        : boundedDeliveryResultSummary(authorityNote, deliverySummaries),
+      evidenceIds: [...resultEvidenceIds],
+      artifactRefs: [...resultArtifactRefs],
+    });
     if (!missionEngine) {
       throw new Error("verified completion requires MissionEngine authority");
     }
@@ -891,6 +951,7 @@ function verifyCompletedTaskPlanAuthority(
       expectedUpdatedAt: mission.updated_at,
       expectedIntentVersion: intentVersion,
       learnings,
+      result,
     });
     return true;
   });

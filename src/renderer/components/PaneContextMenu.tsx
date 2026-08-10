@@ -8,6 +8,7 @@ import {
 import { useContextualPanelNavStore } from "../state/contextual-panel-nav-store";
 import { useOrchStore } from "../state/orch-store";
 import { useToastStore } from "../state/toast-store";
+import { useProductNavigationStore } from "../state/product-navigation-store";
 import {
   getPaneSessionId,
   getScrollbackExcerpt,
@@ -60,7 +61,6 @@ export function PaneContextMenu({
       ? state.missions.find((item) => item.id === pane.missionId)
       : undefined,
   );
-  const openOrchPanel = useOrchStore((state) => state.openPanel);
   const openContextualTab = useContextualPanelNavStore(
     (state) => state.openTab,
   );
@@ -149,7 +149,8 @@ export function PaneContextMenu({
     });
   }
 
-  if (pane.missionId && mission?.status === "running") {
+  if (pane.missionId) {
+    const missionId = pane.missionId;
     actions.push({
       id: "worktree",
       label: "Planejar worktree",
@@ -172,7 +173,7 @@ export function PaneContextMenu({
             "A missão foi aberta, mas a instrução não pôde ser copiada.",
           );
         }
-        openOrchPanel("missions");
+        useProductNavigationStore.getState().openMission(missionId);
       },
     });
   }
@@ -182,7 +183,7 @@ export function PaneContextMenu({
     label: "Abrir painel Git",
     detail: "Mostra alterações e histórico do workspace.",
     icon: "files",
-    run: () => openContextualTab("git"),
+    run: () => openContextualTab("git", { focus: true }),
   });
 
   actions.push({

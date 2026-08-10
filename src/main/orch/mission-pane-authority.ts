@@ -6,6 +6,7 @@ import type {
 } from "../../shared/orch-types";
 import type { ProjectExecutionScope } from "../../shared/types";
 import {
+  hasCurrentApprovedDispatchContract,
   hasCurrentDispatchAuthority,
   missionIntentAuthoritySnapshot,
   type MissionIntentContract,
@@ -46,6 +47,19 @@ export function hashMissionIntentAuthority(
   return sha256(missionIntentAuthoritySnapshot(contract));
 }
 
+function hasPendingMainOwnedStartAuthority(mission: Mission): boolean {
+  const contract = mission.intentContract;
+  return Boolean(
+    mission.status === "pending" &&
+      mission.intentState === "ready_to_start" &&
+      !mission.orchestratorSessionId &&
+      hasCurrentApprovedDispatchContract(mission) &&
+      Number.isSafeInteger(contract?.dispatchedAt) &&
+      (contract?.dispatchedAt ?? 0) > 0 &&
+      /^[a-f0-9]{64}$/i.test(contract?.approvalReviewSha256 ?? ""),
+  );
+}
+
 export function createMissionPaneAuthoritySeal(input: {
   readonly mission: Mission;
   readonly squad: Squad;
@@ -58,7 +72,8 @@ export function createMissionPaneAuthoritySeal(input: {
   if (
     !intentContract ||
     intentVersion <= 0 ||
-    !hasCurrentDispatchAuthority(mission)
+    !hasCurrentDispatchAuthority(mission) &&
+    !hasPendingMainOwnedStartAuthority(mission)
   ) {
     return null;
   }

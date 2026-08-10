@@ -1,9 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 
+import type {
+  MissionPrepareRequest,
+  MissionReview,
+  MissionSnapshot,
+} from "../shared/mission-engine-contract";
 import {
   REAL_MISSION_E2E_ADVISORS,
   REAL_MISSION_E2E_ACCEPTANCE_CRITERIA,
   REAL_MISSION_E2E_GOAL,
+  createRealMissionE2ESquadFixture,
   realMissionE2EAcceptanceCriteria,
   realMissionE2ERendererFailureSignal,
 } from "../shared/real-mission-e2e";
@@ -11,9 +17,11 @@ import {
   prepareRealMissionProductWizardE2E,
   runRealMissionE2E,
   type RealMissionE2EApi,
+  type RealMissionE2EObservation,
 } from "./real-mission-e2e";
 
 const rendererFailureToken = "f".repeat(64);
+const reviewSha256 = "a".repeat(64);
 const runPayload = {
   workspacePath: "/tmp/nexus-real-workspace",
   rendererFailureToken,
@@ -22,6 +30,44 @@ const runPayload = {
   ),
 } as const;
 
+function snapshot(missionId = "mission-real-1"): MissionSnapshot {
+  return {
+    id: missionId,
+    title: "Release gate: missão real empacotada",
+    objective: REAL_MISSION_E2E_GOAL,
+    workspaceLabel: runPayload.workspacePath,
+    state: "running",
+    progress: { completed: 0, total: 1 },
+    agents: [],
+    edges: [],
+    units: [],
+    allowedActions: ["stop"],
+    version: 1,
+    updatedAt: 2,
+  };
+}
+
+function reviewFor(request: MissionPrepareRequest): MissionReview {
+  return {
+    missionId: "mission-real-1",
+    title: request.title!,
+    objective: request.objective,
+    workspaceLabel: runPayload.workspacePath,
+    contextPaths: [...request.contextPaths],
+    acceptanceCriteria: [...(request.acceptanceCriteria ?? [])],
+    roster: request.roster.map((agent) => ({ ...agent })),
+    permissions: [
+      {
+        id: "workspace-write",
+        label: "Alterar arquivos do projeto",
+      },
+    ],
+    warnings: [],
+    reviewSha256,
+    createdAt: 1,
+  };
+}
+
 function apiFixture(events: string[] = []): RealMissionE2EApi {
   return {
     workspace: {
@@ -29,161 +75,189 @@ function apiFixture(events: string[] = []): RealMissionE2EApi {
         current: { path: workspacePath },
       })),
     },
-    orch: {
-      armMission: vi.fn(async () => ({
-        id: "mission-real-1",
-        status: "pending",
-      })),
-      submitMissionIntent: vi.fn(async () => ({
-        id: "mission-real-1",
-        status: "pending",
-      })),
-      approveMissionIntent: vi.fn(async () => {
-        events.push("approve");
-        // Production approval starts main-owned bootstrap immediately. Keep
-        // that side effect visible so this test catches observers armed only
-        // after approval has already had a chance to spawn the orchestrator.
-        events.push("approval-bootstrap");
-        return {
-          id: "mission-real-1",
-          status: "running",
-        };
+    mission: {
+      prepare: vi.fn(async (request: MissionPrepareRequest) => {
+        events.push("prepare");
+        return reviewFor(request);
       }),
-      bootstrapMissionOrchestrator: vi.fn(async () => {
-        events.push("bootstrap");
-        return { ok: true, missionId: "mission-real-1" };
+      start: vi.fn(async (input) => {
+        events.push("start");
+        events.push("start-bootstrap-side-effect");
+        return snapshot(input.missionId);
       }),
     },
   };
 }
 
+function successfulDeps(events: string[] = []) {
+  return {
+    prepareFixture: vi.fn(async () => {
+      events.push("prepare-fixture");
+      return { ok: true };
+    }),
+    observeMission: vi.fn(async (input: RealMissionE2EObservation) => {
+      events.push(
+        input.kind === "mission-review"
+          ? `observe:${input.missionId}:${input.reviewSha256}`
+          : "observe:renderer-failure",
+      );
+      return { ok: true };
+    }),
+  };
+}
+
 describe("real mission E2E preload runner", () => {
-  it("prepares the physical wizard without arm, submit, approve or bootstrap", async () => {
+  it("prepares the physical product path without preparing or starting a mission", async () => {
     const api = apiFixture();
-    const prepareFixture = vi.fn(async () => ({ ok: true }));
-    const observeMission = vi.fn(async () => ({ ok: true }));
+    const deps = successfulDeps();
 
     await expect(
-      prepareRealMissionProductWizardE2E(api, runPayload, {
-        prepareFixture,
-        observeMission,
-      }),
+      prepareRealMissionProductWizardE2E(api, runPayload, deps),
     ).resolves.toBeUndefined();
 
     expect(api.workspace.open).toHaveBeenCalledExactlyOnceWith(
       runPayload.workspacePath,
     );
-    expect(prepareFixture).toHaveBeenCalledExactlyOnceWith(
+    expect(deps.prepareFixture).toHaveBeenCalledExactlyOnceWith(
       rendererFailureToken,
     );
-    expect(observeMission).not.toHaveBeenCalled();
-    expect(api.orch.armMission).not.toHaveBeenCalled();
-    expect(api.orch.submitMissionIntent).not.toHaveBeenCalled();
-    expect(api.orch.approveMissionIntent).not.toHaveBeenCalled();
-    expect(api.orch.bootstrapMissionOrchestrator).not.toHaveBeenCalled();
+    expect(deps.observeMission).not.toHaveBeenCalled();
+    expect(api.mission.prepare).not.toHaveBeenCalled();
+    expect(api.mission.start).not.toHaveBeenCalled();
   });
 
-  it("opens the main-granted workspace before requesting the main-owned fixture", async () => {
+  it("opens workspace, installs the fixture, prepares, observes, then starts", async () => {
     const events: string[] = [];
     const api = apiFixture(events);
-    let workspaceOpened = false;
     api.workspace.open = vi.fn(async (workspacePath: string) => {
       events.push("workspace-open");
-      workspaceOpened = true;
       return { current: { path: workspacePath } };
     });
-    const prepareFixture = vi.fn(async () => {
-      events.push("prepare-fixture");
-      if (!workspaceOpened) {
-        throw new Error("renderer has no authorized workspace scope");
-      }
-      return { ok: true };
-    });
+    const deps = successfulDeps(events);
 
-    await expect(
-      runRealMissionE2E(api, runPayload, {
-        prepareFixture,
-        observeMission: async () => ({ ok: true }),
-      }),
-    ).resolves.toBe("mission-real-1");
-    expect(events.slice(0, 2)).toEqual(["workspace-open", "prepare-fixture"]);
-  });
-
-  it("arms the main observer before approval can start bootstrap", async () => {
-    const events: string[] = [];
-    const api = apiFixture(events);
-    const observeMission = vi.fn(async (missionId: string) => {
-      events.push(`observe:${missionId}`);
-      return { ok: true };
-    });
-    const prepareFixture = vi.fn(async () => {
-      events.push("prepare-fixture");
-      return { ok: true };
-    });
-    await expect(
-      runRealMissionE2E(api, runPayload, { prepareFixture, observeMission }),
-    ).resolves.toBe("mission-real-1");
+    await expect(runRealMissionE2E(api, runPayload, deps)).resolves.toBe(
+      "mission-real-1",
+    );
 
     expect(events).toEqual([
+      "workspace-open",
       "prepare-fixture",
-      "observe:mission-real-1",
-      "approve",
-      "approval-bootstrap",
-      "bootstrap",
+      "prepare",
+      `observe:mission-real-1:${reviewSha256}`,
+      "start",
+      "start-bootstrap-side-effect",
     ]);
-    expect(prepareFixture).toHaveBeenCalledExactlyOnceWith(
-      rendererFailureToken,
-    );
-    expect(api.orch.approveMissionIntent).toHaveBeenCalledExactlyOnceWith({
-      missionId: "mission-real-1",
-    });
-    expect(api.orch.submitMissionIntent).toHaveBeenCalledWith({
-      missionId: "mission-real-1",
-      goal: REAL_MISSION_E2E_GOAL,
-      source: "typed",
-      contextPolicy: "minimal",
-      acceptanceCriteria: [...REAL_MISSION_E2E_ACCEPTANCE_CRITERIA],
-      lane: "standard",
-    });
-    expect(observeMission).toHaveBeenCalledExactlyOnceWith("mission-real-1");
   });
 
-  it("uses the advisor roster sealed by main instead of preload process.env", async () => {
+  it("submits the exact admitted fixture roster and full acceptance intent", async () => {
+    const api = apiFixture();
+    const deps = successfulDeps();
+
+    await runRealMissionE2E(api, runPayload, deps);
+
+    expect(api.mission.prepare).toHaveBeenCalledExactlyOnceWith({
+      title: "Release gate: missão real empacotada",
+      objective: REAL_MISSION_E2E_GOAL,
+      contextPaths: ["README.md"],
+      acceptanceCriteria: [...REAL_MISSION_E2E_ACCEPTANCE_CRITERIA],
+      roster: createRealMissionE2ESquadFixture().agents,
+      advanced: { lane: "standard" },
+    });
+    expect(deps.observeMission).toHaveBeenCalledExactlyOnceWith({
+      kind: "mission-review",
+      missionId: "mission-real-1",
+      reviewSha256,
+    });
+    expect(api.mission.start).toHaveBeenCalledExactlyOnceWith({
+      missionId: "mission-real-1",
+      reviewSha256,
+    });
+  });
+
+  it("uses only the ordered advisor roster sealed by main", async () => {
     const api = apiFixture();
     const admittedAdvisorClis = runPayload.admittedAdvisorClis.filter(
-      (cli) => cli !== "grok",
+      (cli) => cli !== "kimi",
     );
+
+    await runRealMissionE2E(
+      api,
+      { ...runPayload, admittedAdvisorClis },
+      successfulDeps(),
+    );
+
+    const request = vi.mocked(api.mission.prepare).mock.calls[0]![0];
+    expect(request.acceptanceCriteria).toEqual([
+      ...realMissionE2EAcceptanceCriteria("codex", admittedAdvisorClis),
+    ]);
+    expect(request.roster.map((agent) => agent.cli)).not.toContain("kimi");
+    expect(request.roster).toEqual(
+      createRealMissionE2ESquadFixture(["kimi"]).agents,
+    );
+  });
+
+  it("fails closed on a non-canonical admitted-roster payload", async () => {
+    const api = apiFixture();
+    const deps = successfulDeps();
 
     await expect(
       runRealMissionE2E(
         api,
-        { ...runPayload, admittedAdvisorClis },
         {
-          prepareFixture: async () => ({ ok: true }),
-          observeMission: async () => ({ ok: true }),
+          ...runPayload,
+          admittedAdvisorClis: [
+            ...runPayload.admittedAdvisorClis,
+            runPayload.admittedAdvisorClis[0],
+          ],
         },
+        deps,
       ),
-    ).resolves.toBe("mission-real-1");
+    ).rejects.toThrow(/admitted advisor roster/i);
 
-    expect(api.orch.submitMissionIntent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        acceptanceCriteria: [
-          ...realMissionE2EAcceptanceCriteria("codex", admittedAdvisorClis),
-        ],
-      }),
-    );
+    expect(api.workspace.open).not.toHaveBeenCalled();
+    expect(api.mission.prepare).not.toHaveBeenCalled();
+    expect(api.mission.start).not.toHaveBeenCalled();
   });
 
-  it("does not bootstrap when the main-owned observer rejects the mission id", async () => {
+  it("does not start when the main observer rejects the review fence", async () => {
     const api = apiFixture();
-    await expect(
-      runRealMissionE2E(api, runPayload, {
-        prepareFixture: async () => ({ ok: true }),
-        observeMission: async () => ({ ok: false }),
-      }),
-    ).rejects.toThrow(/observer/);
-    expect(api.orch.approveMissionIntent).not.toHaveBeenCalled();
-    expect(api.orch.bootstrapMissionOrchestrator).not.toHaveBeenCalled();
+    const deps = successfulDeps();
+    deps.observeMission.mockResolvedValueOnce({ ok: false });
+
+    await expect(runRealMissionE2E(api, runPayload, deps)).rejects.toThrow(
+      /observer/,
+    );
+    expect(api.mission.start).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["review hash", { reviewSha256: "not-a-sha" }],
+    ["acceptance intent", { acceptanceCriteria: ["weakened"] }],
+    [
+      "roster",
+      {
+        roster: createRealMissionE2ESquadFixture().agents.map((agent, index) =>
+          index === 1 ? { ...agent, cli: "kimi" } : agent,
+        ),
+      },
+    ],
+  ])("rejects a mismatched canonical %s before observation", async (_name, drift) => {
+    const api = apiFixture();
+    const deps = successfulDeps();
+    vi.mocked(api.mission.prepare).mockImplementationOnce(async (request) => ({
+      ...reviewFor(request),
+      ...drift,
+    }));
+
+    await expect(runRealMissionE2E(api, runPayload, deps)).rejects.toThrow(
+      /canonical mission review|review/i,
+    );
+
+    expect(api.mission.start).not.toHaveBeenCalled();
+    expect(deps.observeMission).toHaveBeenCalledExactlyOnceWith({
+      kind: "renderer-failure",
+      signal: realMissionE2ERendererFailureSignal(rendererFailureToken),
+    });
   });
 
   it("reports an early sanitized failure with the main-issued nonce", async () => {
@@ -191,43 +265,42 @@ describe("real mission E2E preload runner", () => {
     api.workspace.open = vi.fn(async () => {
       throw new Error("private provider transcript must not cross IPC");
     });
-    const observeMission = vi.fn(async () => ({ ok: true }));
+    const deps = successfulDeps();
 
-    await expect(
-      runRealMissionE2E(api, runPayload, {
-        prepareFixture: async () => ({ ok: true }),
-        observeMission,
-      }),
-    ).rejects.toThrow(/private provider transcript/);
-
-    expect(observeMission).toHaveBeenCalledExactlyOnceWith(
-      realMissionE2ERendererFailureSignal(rendererFailureToken),
+    await expect(runRealMissionE2E(api, runPayload, deps)).rejects.toThrow(
+      /private provider transcript/,
     );
-    expect(JSON.stringify(observeMission.mock.calls)).not.toContain(
+
+    expect(deps.observeMission).toHaveBeenCalledExactlyOnceWith({
+      kind: "renderer-failure",
+      signal: realMissionE2ERendererFailureSignal(rendererFailureToken),
+    });
+    expect(JSON.stringify(deps.observeMission.mock.calls)).not.toContain(
       "private provider transcript",
     );
-    expect(api.orch.armMission).not.toHaveBeenCalled();
+    expect(api.mission.prepare).not.toHaveBeenCalled();
+    expect(api.mission.start).not.toHaveBeenCalled();
   });
 
   it("rejects forged main payload fields before any public API call", async () => {
     const api = apiFixture();
+    const deps = successfulDeps();
+
     await expect(
       runRealMissionE2E(
         api,
         {
-          workspacePath: "/tmp/nexus-real-workspace",
-          rendererFailureToken,
-          admittedAdvisorClis: runPayload.admittedAdvisorClis,
+          ...runPayload,
           missionId: "forged",
           pass: true,
           rawOutput: "forged",
         },
-        {
-          prepareFixture: async () => ({ ok: true }),
-          observeMission: async () => ({ ok: true }),
-        },
+        deps,
       ),
     ).rejects.toThrow();
-    expect(api.orch.armMission).not.toHaveBeenCalled();
+
+    expect(api.workspace.open).not.toHaveBeenCalled();
+    expect(api.mission.prepare).not.toHaveBeenCalled();
+    expect(api.mission.start).not.toHaveBeenCalled();
   });
 });

@@ -3,7 +3,7 @@ import type { AccountInfo } from '../../../shared/account-types';
 import { accountLoginCommandFor } from '../../../shared/account-login-commands';
 import { useAccountStore } from '../../state/account-store';
 import { useLayoutStore } from '../../state/layout-store';
-import { useSettingsStore } from '../../state/settings-store';
+import { useProductNavigationStore } from '../../state/product-navigation-store';
 import { useUsageStore } from '../../state/usage-store';
 import { waitForSession } from '../../terminal/terminal-host';
 import { askConfirm } from '../../state/confirm-store';
@@ -110,7 +110,7 @@ export function AccountsManager({
   const active = accounts.find((a) => a.active) ?? null;
   const standby = accounts.filter((a) => !a.active);
   const addShellPane = useLayoutStore((s) => s.addShellPane);
-  const closeSettingsDrawer = useSettingsStore((s) => s.closeDrawer);
+  const focusPane = useLayoutStore((s) => s.focus);
   const loginCommand = accountLoginCommandFor(adapterId);
 
   async function refreshAuth() {
@@ -221,25 +221,34 @@ export function AccountsManager({
   }
 
   /**
-   * "Entrar com nova conta": abre um terminal já disparando o comando de
-   * login da CLI — o próprio CLI abre o navegador na URL de auth do provider.
-   * Sem isto, adicionar conta por login criava a entrada e parava aí (o
-   * usuário tinha que descobrir e rodar o comando na mão).
+   * Create the login pane without moving focus or leaving Settings. The PTY
+   * session is the readiness authority; only after it exists do we write,
+   * focus the pane, and reveal Terminal.
    */
   async function openLoginTerminal() {
     if (!loginCommand) return;
     setBusy(true);
+    let paneId: string | null = null;
     try {
-      const paneId = addShellPane();
+      paneId = addShellPane({ focus: false });
       const sessionId = await waitForSession(paneId);
       if (!sessionId) {
+        useLayoutStore
+          .getState()
+          .close(paneId, 'settings-login-terminal-unavailable');
         showNotice('Não consegui abrir o terminal de login.', 'err');
         return;
       }
       window.nexus.pty.write(sessionId, `${loginCommand}\r`);
-      // Fecha o drawer para o terminal (e o navegador que o CLI abre) ficarem
-      // visíveis; ao voltar aqui, é só "Salvar no vault".
-      closeSettingsDrawer();
+      focusPane(paneId);
+      useProductNavigationStore.getState().openTerminal();
+    } catch {
+      if (paneId) {
+        useLayoutStore
+          .getState()
+          .close(paneId, 'settings-login-terminal-failed');
+      }
+      showNotice('Não consegui abrir o terminal de login.', 'err');
     } finally {
       setBusy(false);
     }
@@ -727,7 +736,7 @@ export function AccountsManager({
       {notice && (
         <p
           className={`acct__notice acct__notice--${noticeTone}`}
-          role="status"
+          role={noticeTone === 'err' ? 'alert' : 'status'}
         >
           {notice}
         </p>

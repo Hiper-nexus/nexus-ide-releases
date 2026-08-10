@@ -7,24 +7,23 @@ import {
   type AgentNotificationKind,
 } from '../../shared/agent-notification';
 import { listPanes } from '../lib/split-tree';
+import {
+  attentionMissionIdForPane,
+  routeMissionAttention,
+} from '../lib/mission-attention-route';
 import { useAgentNotificationStore } from '../state/agent-notification-store';
 import { useLayoutStore } from '../state/layout-store';
 import { useToastStore } from '../state/toast-store';
-import { useSettingsStore } from '../state/settings-store';
-import { useOrchStore } from '../state/orch-store';
-import { useMemoryStore } from '../state/memory-store';
-import { useConfigInventoryStore } from '../state/config-inventory-store';
-import { useFilesStore } from '../state/files-store';
+import { useProductNavigationStore } from '../state/product-navigation-store';
 import { OverlayLayer } from '../overlay/overlay-layer';
 import { PixelIcon, type PixelIconName } from './PixelIcon';
 
 /**
- * Workspace-bar agent notification inbox (BridgeMind-style):
- * completed / needs-input / exited with jump-to-pane + mark read.
- *
- * O painel é `position: fixed` ancorado abaixo do sino: a zona de status da
- * barra é `overflow:hidden` (trunca os chips), então um popover absoluto lá
- * dentro seria recortado — fixed escapa do clip.
+ * Product-shell agent notification inbox:
+ * - unobtrusive notification bell with unread badge
+ * - lightweight feed of completed / needs_input / exited
+ * - direct jump to a live pane, using product navigation as the visible
+ *   destination authority
  */
 
 function kindClass(kind: AgentNotificationKind): string {
@@ -116,7 +115,7 @@ function NotificationRow({
 }: {
   item: AgentNotification;
   now: number;
-  onJump: (paneId: string) => void;
+  onJump: (item: AgentNotification) => void;
   onMarkRead: (id: string) => void;
 }) {
   const status = agentNotificationStatusLabel(item.kind);
@@ -148,8 +147,9 @@ function NotificationRow({
             type="button"
             className="agent-notif__action agent-notif__action--primary"
             aria-label={`Ir ao pane de ${item.agentLabel}`}
+            data-preserve-destination-focus="true"
             onClick={() => {
-              onJump(item.paneId);
+              onJump(item);
               onMarkRead(item.id);
             }}
           >
@@ -172,34 +172,27 @@ function NotificationRow({
 }
 
 export function AgentNotifications() {
-  const items = useAgentNotificationStore((s) => s.items);
-  const open = useAgentNotificationStore((s) => s.open);
-  const setOpen = useAgentNotificationStore((s) => s.setOpen);
-  const toggle = useAgentNotificationStore((s) => s.toggle);
-  const markRead = useAgentNotificationStore((s) => s.markRead);
-  const markAllRead = useAgentNotificationStore((s) => s.markAllRead);
-  const clear = useAgentNotificationStore((s) => s.clear);
-  const focus = useLayoutStore((s) => s.focus);
-  const pushToast = useToastStore((s) => s.push);
-
-  // Popover é efêmero: qualquer drawer/painel maior que abra o fecha, para não
-  // ficar flutuando por cima de uma superfície que tomou a tela.
-  const anyDrawerOpen = useSettingsStore(
-    (s) => s.drawerOpen,
+  const items = useAgentNotificationStore((state) => state.items);
+  const open = useAgentNotificationStore((state) => state.open);
+  const setOpen = useAgentNotificationStore((state) => state.setOpen);
+  const toggle = useAgentNotificationStore((state) => state.toggle);
+  const markRead = useAgentNotificationStore((state) => state.markRead);
+  const markAllRead = useAgentNotificationStore(
+    (state) => state.markAllRead,
   );
-  const orchPanel = useOrchStore((s) => s.panelOpen);
-  const boardOpen = useOrchStore((s) => s.boardOpen);
-  const memoryPanel = useMemoryStore((s) => s.panelOpen);
-  const configInv = useConfigInventoryStore((s) => s.open);
-  const filesOpen = useFilesStore((s) => s.open);
-  const surfaceOpen =
-    anyDrawerOpen ||
-    orchPanel ||
-    boardOpen ||
-    memoryPanel ||
-    configInv ||
-    filesOpen;
-
+  const clear = useAgentNotificationStore((state) => state.clear);
+  const focus = useLayoutStore((state) => state.focus);
+  const pushToast = useToastStore((state) => state.push);
+  const destination = useProductNavigationStore(
+    (state) => state.destination,
+  );
+  const destinationKey =
+    destination.kind === 'mission'
+      ? `${destination.kind}:${destination.missionId}:${destination.surface}`
+      : destination.kind === 'settings'
+        ? `${destination.kind}:${destination.section ?? ''}`
+        : destination.kind;
+  const previousDestinationKey = useRef(destinationKey);
   const rootRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const bellRef = useRef<HTMLButtonElement>(null);
@@ -231,8 +224,13 @@ export function AgentNotifications() {
   }, [items]);
 
   useEffect(() => {
-    if (surfaceOpen && open) setOpen(false);
-  }, [surfaceOpen, open, setOpen]);
+    const changed = previousDestinationKey.current !== destinationKey;
+    previousDestinationKey.current = destinationKey;
+    if (changed && open) {
+      restoreFocusRef.current = false;
+      setOpen(false);
+    }
+  }, [destinationKey, open, setOpen]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -332,11 +330,11 @@ export function AgentNotifications() {
     };
   }, [open, setOpen]);
 
-  function jumpToPane(paneId: string) {
-    // Lê o root VIVO: o pane pode ter fechado entre o push e este clique.
-    const root = useLayoutStore.getState().root;
-    const exists = listPanes(root).some((p) => p.id === paneId);
-    if (!exists) {
+  function jumpToPane(item: AgentNotification) {
+    const pane = listPanes(useLayoutStore.getState().root).find(
+      (candidate) => candidate.id === item.paneId,
+    );
+    if (!pane) {
       pushToast(
         'warn',
         'Pane fechado',
@@ -344,8 +342,24 @@ export function AgentNotifications() {
       );
       return false;
     }
-    restoreFocusRef.current = false; // foco vai para o pane, não volta ao sino
-    focus(paneId);
+
+    const missionId = attentionMissionIdForPane(pane);
+    if (missionId) {
+      routeMissionAttention({
+        missionId,
+        cause:
+          item.kind === 'completed'
+            ? 'completed'
+            : item.kind === 'needs_input'
+              ? 'human-input'
+              : 'technical-failure',
+        notificationPaneId: item.paneId,
+      });
+    } else {
+      useProductNavigationStore.getState().openTerminal();
+      focus(item.paneId);
+    }
+    restoreFocusRef.current = false;
     setOpen(false);
     return true;
   }
@@ -461,8 +475,8 @@ export function AgentNotifications() {
                   key={item.id}
                   item={item}
                   now={now}
-                  onJump={(paneId) => {
-                    jumpToPane(paneId);
+                  onJump={(item) => {
+                    jumpToPane(item);
                   }}
                   onMarkRead={markRead}
                 />

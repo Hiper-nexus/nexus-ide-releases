@@ -15,6 +15,14 @@
 export const SESSION_BOUNDARY_NOTICE =
   '\r\n\x1b[90m── sessão anterior encerrada · nova sessão iniciada ──\x1b[0m\r\n';
 
+/**
+ * Escrito quando o histórico salvo é descartado por ter sido capturado em
+ * outra largura. Sem essa linha o pane volta vazio e o operador acha que
+ * perdeu a sessão — quando a sessão está viva, só o histórico ficou de fora.
+ */
+export const SCROLLBACK_WIDTH_MISMATCH_NOTICE =
+  '\r\n\x1b[90m── histórico anterior omitido: a largura do painel mudou · a sessão continua ativa ──\x1b[0m\r\n';
+
 /** Minimal xterm buffer surface needed for the content probe. */
 export interface TerminalBufferProbe {
   /** Lines that already scrolled into the scrollback region. */

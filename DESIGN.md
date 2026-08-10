@@ -7,59 +7,58 @@ vencem — e o outro se corrige. Validador: `scripts/design-system-sensor.mjs`.
 ## 1. Identidade
 
 Sci-fi operacional refinado: centro de comando denso em sinal, calmo em ruído.
-Dark-first, um acento índigo para o que está VIVO, tipografia neutra (Inter) com
-assinatura pixel (VT323) usada com parcimônia. Nunca gamer-RGB, nunca SaaS de
-cards brancos, nunca IDE corporativo de 40 ícones na toolbar.
+Dark-first, acento Pink City reservado ao que está VIVO, tipografia neutra
+(Inter) com assinatura pixel (VT323) usada com parcimônia. Nunca gamer-RGB,
+nunca SaaS de cards brancos, nunca IDE corporativo de 40 ícones na toolbar.
 
 ## 2. Tokens (fonte única: `src/renderer/styles/base.css` `:root`)
 
 ### Cor — doutrina aviônica
 
-| Token | Valor (nexus-dark) | Uso |
+| Token | Valor (`nexus-pink-city`, default) | Uso |
 |---|---|---|
-| `--bg` | `#0b0b0c` | fundo raiz |
-| `--bg-elevated` | `#141416` | panes, cards |
-| `--bg-bar` | `#101012` | barras/chrome |
-| `--border` / `--border-strong` | `rgb(255 255 255 / .07)` / `rgb(255 255 255 / .14)` | divisórias |
-| `--text` / `--text-dim` | `#fafafa` / `#a1a1a1` | texto (dim ≥5:1, WCAG AA — não baixar) |
-| `--accent` | `#7c86ff` | **só o que está vivo/interativo**: foco, agente ativo, item selecionado |
-| `--accent-ink` | `#0b0b0c` | tinta sobre superfície de acento (~7:1) |
-| `--btn-primary` / `--btn-primary-ink` | `#fafafa` / `#0b0b0c` | **CTA primário: branco, não acento** |
+| `--bg` | `#080709` | fundo raiz |
+| `--bg-elevated` | `#111013` | panes, cards |
+| `--bg-bar` | `#0d0b0f` | barras/chrome |
+| `--border` / `--border-strong` | `rgb(255 255 255 / .08)` / `rgb(255 255 255 / .16)` | divisórias |
+| `--text` / `--text-dim` / `--text-faint` | `#faf7f9` / `#aaa2a8` / `#928b90` | hierarquia de texto com AA |
+| `--accent` | `#ff4f8b` | **só o que está vivo/interativo**: foco, agente ativo, item selecionado |
+| `--accent-ink` | `#080709` | tinta escura sobre superfície de acento |
+| `--btn-primary` / `--btn-primary-ink` | `#faf7f9` / `#080709` | **CTA primário: branco neutro, não acento** |
 | `--accent-glow` | `transparent` | **morto no default** — ver abaixo |
-| `--danger` | `#f85149` | falha, destrutivo |
+| `--danger` | `#ff6b4a` | falha, destrutivo; distinto do rosa operacional |
 | `--design` | `#2f6ae0` | segunda voz: design mode |
 | `--ok` / `--live` / `--warn` / `--gold` | `#7ee2a8` / `#3ce08d` / `#e5c07b` / `#ffd166` | sinais |
 
-A base é **cinza neutro**, não azul-negro. Um fundo tingido faz toda superfície
-parecer levemente acesa e o sinal perde contra o quê se destacar; o neutro
-devolve ao acento o poder de significar. As bordas são branco translúcido de
-propósito: um fio de opacidade compõe corretamente sobre qualquer camada da
-pilha (bar, elevated, modal) em vez de exigir um hex por camada.
+A base é **near-black neutra**, não azul-negro nem rosa tingido. Cor é sinal,
+nunca wallpaper. As bordas são branco translúcido de propósito: um fio de
+opacidade compõe corretamente sobre qualquer camada da pilha (bar, elevated,
+modal) em vez de exigir um hex por camada.
 
-### Por que índigo, e por que o CTA é branco (0.21)
+### Por que Pink City, e por que o CTA é branco (0.28.1)
 
-Até a 0.20 o acento era ciano `#3dd9ff` com halo (`--accent-glow`). Os dois
-saíram do default por um motivo específico: **near-black + um acento neon com
-glow é o visual-padrão de toda ferramenta de IA de 2026** — não distingue o
-Nexus de nada. O índigo tem presença sem estridência, e o halo morreu porque
-profundidade se faz com camada e sombra, não com brilho.
+Até a 0.20 o acento era ciano `#3dd9ff`; entre 0.21 e 0.28.0 o default era
+Nexus Dark com índigo `#7c86ff`. Pink City assumiu o default em 0.28.1 para
+alinhar o produto ao cockpit operacional observado, sem colorir suas
+superfícies: rosa aparece só em foco, seleção e estado vivo. `nexus-dark`
+permanece selecionável e com sua paleta anterior intacta.
 
 A regra que sustenta a identidade: **a ação primária é a coisa mais clara da
-tela (branco), e o acento fica reservado para ESTADO.** Se o CTA voltar a
-derivar de `--accent`, a assinatura se perde — foi exatamente esse acoplamento
-(`--btn-primary: var(--accent)`) que anulou a primeira tentativa de redesign.
+tela (branco neutro), e o acento fica reservado para ESTADO.** Se o CTA voltar
+a derivar de `--accent`, o rosa deixa de comunicar estado e vira decoração.
 
-O ciano segue disponível como escolha explícita do usuário
-(`LEGACY_NEXUS_CYAN_PALETTE` em `ui-theme.ts`), nunca como default.
+O ciano permanece apenas em `LEGACY_NEXUS_CYAN_PALETTE` para integrações
+legadas. Não é default nem opção do picker atual.
 
 Derivados do acento (`--accent-soft/strong/hover/glow`) são `color-mix` do
-`--accent` — **nunca** sobrescreva por tema; temas trocam só `--accent`.
+`--accent` — **nunca** sobrescreva por tema. Cada tema fornece apenas sua
+paleta-base, CTA e perigo; componentes consomem tokens, nunca hex de tema.
 
 ### Estado operacional — um estado, uma cor, em toda superfície
 
 `--state-running: accent` (respira no acento) · `--state-ready/done: ok` ·
 `--state-blocked: warn` · `--state-failed: danger` · `--state-pending: text-dim`.
-Rail, OpsBoard, toolbar de pane, FleetChip e bordas de pane consomem SÓ estes
+Mission Board, inspetor, toolbar de pane, FleetChip e bordas de pane consomem SÓ estes
 tokens. Estado nunca viaja só em cor: sempre com glifo/palavra
 (`paneSessionView` em `src/shared/pane-session-view.ts`).
 
@@ -95,11 +94,11 @@ uma vez, nomeado, na camada — e não em componente nenhum.
 
 **Só o tier duro é portalado** (`--z-hard-modal` … `--z-confirm`: ⌘K,
 cheatsheet, confirm, update, popover de notificações). O tier mole —
-toast (44), dimmers de wizard/settings (45/46), chrome (55), OpsBoard (34) —
-fica na árvore da app **de propósito**, porque a ladder INTERCALA essas
-camadas com o chrome: chrome acima dos dimmers (clicar em voz/config com o
-wizard aberto não pode acertar o backdrop e apagar rascunho), toast abaixo do
-dimmer (nunca cobrir nem capturar uma confirmação). Um teto único achataria
+toast (44), scrims/menus de workspace (45/46) e chrome (55) — fica na árvore
+da app **de propósito**, porque a ladder INTERCALA essas camadas com o chrome:
+chrome acima dos scrims transitórios (clicar em voz/config não pode acertar um
+backdrop e descartar estado), toast abaixo do scrim (nunca cobrir nem capturar
+uma confirmação). Um teto único achataria
 essas invariantes.
 
 | Token | Valor | Uso |
@@ -215,10 +214,14 @@ já o desliga sozinho e compensa em opacidade.
 
 ## 8. Temas
 
-`ui-theme.ts`: nexus-dark (default), nexus-light, dracula, solarized-dark.
-Tema = 10 vars de paleta; derivados seguem via color-mix. Tema claro ajusta
-sinais (`--ok` etc.) para segurar AA. Modo pixel (`data-theme-pixel='on'`)
-zera raios e promove VT323 a `--font-ui` — opt-in, ortogonal ao tema.
+`ui-theme.ts`: `nexus-pink-city` (default), `nexus-dark`, `nexus-light`,
+`dracula`, `solarized-dark`. Tema = 14 vars de paleta; derivados de acento
+seguem via `color-mix`. Troca ao vivo deve substituir todos os tokens sem
+herdar fallback/valor inline do tema anterior. A paleta xterm de Pink City é
+deliberadamente a mesma paleta escura não tingida de Nexus Dark. Tema claro
+ajusta sinais (`--ok` etc.) para segurar AA. Modo pixel
+(`data-theme-pixel='on'`) zera raios e promove VT323 a `--font-ui` — opt-in,
+ortogonal ao tema.
 
 ## 9. Do / Don't rápido
 
@@ -235,36 +238,36 @@ Fontes OFL: VT323, Inter, JetBrains Mono (licença em
 `third_party/provenance/fonts-inter-jetbrains.json`). Componentes Orca
 (design mode): `third_party/provenance/orca-*.json`.
 
-## 11. Referência estrutural — Orca
+## 11. Referência estrutural — Overclock desktop
 
-Fonte observada em 2026-07-25:
-[onorca.dev](https://www.onorca.dev/) e os pôsteres públicos de
-[status dos agentes](https://www.onorca.dev/whats-new/posters/agent-statuses.jpg),
-[split screen](https://www.onorca.dev/whats-new/posters/orca-split-screen.jpg) e
-[terminal](https://www.onorca.dev/whats-new/posters/ghostty-style-terminal.jpg).
-A captura local de auditoria fica em `.firecrawl/` (ignorada pelo Git) e pode
-ser refeita com `firecrawl-website-design-clone`.
+Fonte observada localmente em 2026-08-07: `/Applications/Overclock.app`
+(1.3.x), do primeiro boot à missão em execução. Capturas de auditoria são
+artefatos locais temporários; não entram no produto nem no repositório.
 
-Usar os padrões de composição, não marca, logo, copy ou imagens do Orca:
+Reproduzir composição, densidade e fluxo — nunca marca, logo, copy, sprites ou
+outros assets do Overclock:
 
-- **Rail quieto e hierárquico.** Workspace/missão é a linha principal; agentes
-  aparecem aninhados apenas quando existem. Um fill sutil e uma borda completa
-  de 1px marcam seleção; os demais itens não ganham card ou borda própria.
-- **Canvas é o protagonista.** Terminal, editor ou entrega ocupam todo o espaço
-  restante. Painéis de contexto são drawers sob demanda, não colunas permanentes.
-- **Estado compacto.** Dot + verbo + tempo curto substituem blocos de telemetria.
-  Detalhes técnicos ficam no hover/foco, expansão da missão ou “Operações”.
-- **Divisórias, não caixas.** Superfícies contínuas, borda de 1px e contraste
-  por elevação sutil. Glow só sinaliza foco vivo; nunca contorna toda a tela.
-- **Progressive disclosure real.** A jornada padrão mostra missão, próximo passo
-  e entrega. Worktree, CLI, modelo, budget, receipts e PREVC aparecem dentro da
-  missão expandida ou na camada avançada.
-- **Motion de continuidade.** Seleção e drawers usam 150–220ms com
+- **Rail compacto e hierárquico.** Largura persistente de `184px` (faixa
+  permitida: 160–200px). Workspace/missão é a linha principal; agentes aparecem
+  aninhados apenas quando existem. Seleção usa fill sutil + borda de 1px; os
+  demais itens não ganham card próprio.
+- **Canvas é o protagonista.** Terminal, editor ou entrega ocupam o restante.
+  Inspector é secundário: inline apenas quando canvas + inspector cabem;
+  empilhado em 1100px. Painéis de contexto são sob demanda.
+- **Chrome quieto.** Canvas near-black contínuo, barra e divisórias finas,
+  texto técnico mono denso. Sem mosaico de cards, gradiente decorativo ou
+  toolbar de ícones redundantes.
+- **Pink City é sinal.** Rosa só marca foco, seleção e trabalho vivo. CTA
+  primário é branco neutro; pronto = verde, atenção = âmbar, falha = vermelho.
+  Estado sempre inclui glifo/palavra, nunca depende apenas da cor.
+- **Missão primeiro, linguagem leiga.** A jornada padrão mostra objetivo,
+  equipe recomendada, revisão explícita, execução e entrega. Worktree, CLI,
+  modelo, budget, receipts e PREVC ficam na camada avançada.
+- **Motion de continuidade.** Seleção e painéis usam 150–220ms com
   `--ease-out-quart`; conteúdo preserva posição durante atualizações. Novos
   agentes entram com opacity + translateY de no máximo 4px. Nada pulsa salvo
   estado running e nada anima dimensões de terminal.
 
-Adaptação Nexus: manter Inter, VT323 pontual, tokens aviônicos e copy PT-BR.
-Não importar o monocromático puro do Orca nem remover nossos sinais de
-autoridade. O ganho esperado é menos chrome, melhor agrupamento e transições
-mais previsíveis — não transformar o Nexus numa cópia visual.
+Adaptação Nexus: manter Inter, VT323 pontual, contratos de autoridade, copy
+PT-BR e terminal real. O objetivo é entrar no Nexus e reconhecer imediatamente
+a composição operacional observada sem copiar propriedade visual de terceiros.

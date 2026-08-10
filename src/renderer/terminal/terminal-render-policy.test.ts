@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  canReplayScrollback,
   terminalGridChanged,
   terminalOutputPolicy,
   terminalScrollbackLines,
@@ -105,5 +106,26 @@ describe('terminal render policy', () => {
     expect(terminalScrollbackLines('shell', 'adaptive')).toBe(6_000);
     expect(terminalScrollbackLines('cli-agent', 'quality')).toBe(5_000);
     expect(terminalScrollbackLines('shell', 'quality')).toBe(10_000);
+  });
+});
+
+describe('canReplayScrollback', () => {
+  it('permite o replay quando a largura de captura sobrevive', () => {
+    expect(canReplayScrollback(96, 96)).toBe(true);
+  });
+
+  it('recusa o replay quando a grade encolheu', () => {
+    // Bug real: o painel contextual abriu no restore, o pane passou de 96 para
+    // 76 colunas e a fita da TUI voltou entrelaçada — moldura por cima do
+    // texto, letras soltas empilhadas na borda.
+    expect(canReplayScrollback(96, 76)).toBe(false);
+  });
+
+  it('recusa também quando a grade cresceu', () => {
+    expect(canReplayScrollback(76, 96)).toBe(false);
+  });
+
+  it('permite fitas antigas sem largura gravada', () => {
+    expect(canReplayScrollback(undefined, 80)).toBe(true);
   });
 });

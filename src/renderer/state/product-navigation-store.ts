@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { SettingsSection } from '../components/settings/settings-nav';
+import { useMissionSetupStore } from './mission-setup-store';
 
 export type ProductDestination =
   | { kind: 'launcher' }
@@ -35,6 +36,8 @@ export interface ProductNavigationActions {
   openMemory(): void;
   openSettings(section?: SettingsSection): void;
   backFromSettings(): void;
+  openPetReviewFromSettings(): void;
+  returnToSettingsSection(section: 'appearance'): void;
   closeWorkspace(): void;
 }
 
@@ -48,10 +51,12 @@ const launcherDestination: NonSettingsProductDestination = {
 export const useProductNavigationStore = create<ProductNavigationStore>()(
   (set) => {
     const open = (destination: NonSettingsProductDestination): void => {
+      useMissionSetupStore.getState().clearEntryContext();
       set({ destination, settingsReturnDestination: null });
     };
 
     const showMissionSurface = (surface: 'board' | 'terminals'): void => {
+      useMissionSetupStore.getState().clearEntryContext();
       set((state) =>
         state.destination.kind === 'mission'
           ? {
@@ -75,7 +80,21 @@ export const useProductNavigationStore = create<ProductNavigationStore>()(
       showMissionTerminals: () => showMissionSurface('terminals'),
       openTaskBoard: () => open({ kind: 'task-board' }),
       openMemory: () => open({ kind: 'memory' }),
+      openPetReviewFromSettings: () => {
+        set((state) => ({
+          destination: { kind: 'mission-setup' },
+          settingsReturnDestination: state.settingsReturnDestination,
+        }));
+      },
+      returnToSettingsSection: (section) => {
+        useMissionSetupStore.getState().clearEntryContext();
+        set((state) => ({
+          destination: { kind: 'settings', section },
+          settingsReturnDestination: state.settingsReturnDestination,
+        }));
+      },
       openSettings: (section) => {
+        useMissionSetupStore.getState().clearEntryContext();
         set((state) => ({
           destination:
             section === undefined
@@ -88,6 +107,7 @@ export const useProductNavigationStore = create<ProductNavigationStore>()(
         }));
       },
       backFromSettings: () => {
+        useMissionSetupStore.getState().clearEntryContext();
         set((state) => {
           if (state.destination.kind !== 'settings') return {};
           return {

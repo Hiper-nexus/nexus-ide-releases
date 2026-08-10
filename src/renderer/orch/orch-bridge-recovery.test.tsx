@@ -11,7 +11,6 @@ import type {
 } from '../../shared/orch-types';
 import { listPanes } from '../lib/split-tree';
 import { setActiveWorkspacePath } from '../state/active-workspace';
-import { useHomeStore } from '../state/home-store';
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
 import { useOrchBridge } from './orch-bridge';
@@ -120,7 +119,6 @@ describe('orchestration bridge pane recovery', () => {
 
   afterEach(() => {
     setActiveWorkspacePath(null);
-    useHomeStore.setState({ visible: false });
     Reflect.deleteProperty(window, 'nexus');
     document.body.innerHTML = '';
     vi.clearAllMocks();
@@ -288,7 +286,6 @@ describe('orchestration bridge pane recovery', () => {
       paneId === 'pane-restored' ? 'session-restored' : null,
     );
     const present = installPresentationHarness();
-    useHomeStore.setState({ visible: false });
     useLayoutStore.getState().setPanes([
       {
         id: 'shell-restored',
@@ -323,7 +320,6 @@ describe('orchestration bridge pane recovery', () => {
       .mockResolvedValueOnce('session-manual')
       .mockResolvedValueOnce('session-mixed');
     const present = installPresentationHarness();
-    useHomeStore.setState({ visible: false });
     useLayoutStore.setState({
       root: {
         kind: 'leaf',
@@ -386,7 +382,6 @@ describe('orchestration bridge pane recovery', () => {
     );
     terminal.waitForSession.mockResolvedValueOnce('session-mission');
     const present = installPresentationHarness();
-    useHomeStore.setState({ visible: false });
     useLayoutStore.setState({
       root: {
         kind: 'leaf',
@@ -418,11 +413,11 @@ describe('orchestration bridge pane recovery', () => {
     act(() => mounted.root.unmount());
   });
 
-  it('replaces the Home placeholder shell with the first main-owned mission pane', async () => {
+  it('replaces the lone structural placeholder with the first main-owned mission pane', async () => {
     let presentationHandler:
       | ((req: MissionPanePresentationRequest) => void)
       | null = null;
-    terminal.waitForSession.mockResolvedValueOnce('session-home');
+    terminal.waitForSession.mockResolvedValueOnce('session-first');
     Object.defineProperty(window, 'nexus', {
       configurable: true,
       value: {
@@ -449,32 +444,31 @@ describe('orchestration bridge pane recovery', () => {
         },
       },
     });
-    useHomeStore.setState({ visible: true });
     useLayoutStore.setState({
       root: {
         kind: 'leaf',
-        id: 'leaf-home-placeholder',
+        id: 'leaf-first-placeholder',
         pane: {
-          id: 'shell-home-placeholder',
+          id: 'shell-first-placeholder',
           kind: 'shell',
           title: 'Shell',
           isStructuralPlaceholder: true,
         },
       },
-      focusedPaneId: 'shell-home-placeholder',
+      focusedPaneId: 'shell-first-placeholder',
     });
     const mounted = mount();
 
     await act(async () => {
       presentationHandler?.({
-        missionId: 'mission-home',
-        paneId: 'pane-home',
-        sessionId: 'session-home',
+        missionId: 'mission-first',
+        paneId: 'pane-first',
+        sessionId: 'session-first',
         role: 'orchestrator',
         pane: {
           adapterId: 'codex',
           model: 'gpt-5.6-sol',
-          cwd: '/workspace/home',
+          cwd: '/workspace/first',
           title: 'Maestro',
           agentName: 'Maestro',
           role: 'orchestrator',
@@ -482,19 +476,18 @@ describe('orchestration bridge pane recovery', () => {
       });
       await vi.waitFor(() => {
         expect(terminal.waitForSession).toHaveBeenCalledWith(
-          'pane-home',
+          'pane-first',
           75_000,
         );
       });
     });
 
     expect(listPanes(useLayoutStore.getState().root).map((pane) => pane.id))
-      .toEqual(['pane-home']);
-    expect(useHomeStore.getState().visible).toBe(false);
+      .toEqual(['pane-first']);
     act(() => mounted.root.unmount());
   });
 
-  it('spawn channel replaces the lone structural placeholder and hides Home', async () => {
+  it('spawn channel replaces the lone structural placeholder', async () => {
     let spawnHandler: ((request: OrchPaneSpawnRequest) => void) | null = null;
     const sendPaneSpawnResult = vi.fn();
     Object.defineProperty(window, 'nexus', {
@@ -523,7 +516,6 @@ describe('orchestration bridge pane recovery', () => {
         },
       },
     });
-    useHomeStore.setState({ visible: true });
     useLayoutStore.setState({
       root: {
         kind: 'leaf',
@@ -561,7 +553,6 @@ describe('orchestration bridge pane recovery', () => {
     // orquestração o substitui (mesma regra do canal de apresentação).
     expect(listPanes(useLayoutStore.getState().root).map((pane) => pane.id))
       .toEqual(['pane-launch']);
-    expect(useHomeStore.getState().visible).toBe(false);
     act(() => mounted.root.unmount());
   });
 

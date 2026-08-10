@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import type { WebContents } from "electron";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -27,12 +26,15 @@ const harness = vi.hoisted(() => {
     mission: null as unknown,
     missionCount: 0,
     observerArmed: false,
-    preapprovalValid: false,
-    scopeRoot: "/private/nexus-real-mission",
+    preparedValid: false,
+    scopeRoot: "/workspace/e2e",
     workspaceSha256: "c".repeat(64),
     binding: {
       squadId: "agentic-runtime-11111111-1111-4111-8111-111111111111",
-      sourceSquadId: "nexus-real-mission-e2e",
+      fixtureSquadId: "agentic-nexus-real-mission-e2e",
+      fixtureSquadRevisionHash: "f".repeat(64),
+      sourceSquadId:
+        "custom-mission-setup-11111111-1111-4111-8111-111111111111",
       sourceSquadRevisionHash: "a".repeat(64),
       squadRevisionHash: "b".repeat(64),
     },
@@ -45,10 +47,6 @@ const harness = vi.hoisted(() => {
       nativeDialogCount: 0,
       missionApprovalDialogCount: 0,
       missionApprovalAcceptedCount: 0,
-    },
-    timing: {
-      openedAt: null as number | null,
-      acceptedAt: null as number | null,
     },
   };
 });
@@ -86,7 +84,6 @@ vi.mock("./orch/project-domain-store-registry", () => ({
 
 vi.mock("./real-mission-e2e-lifecycle", () => ({
   realMissionInteractionCapture: harness.capture,
-  readRealMissionApprovalDialogTiming: () => ({ ...harness.timing }),
 }));
 
 vi.mock("./real-mission-e2e-workspace", () => ({
@@ -104,11 +101,14 @@ vi.mock("./real-mission-e2e-workspace", () => ({
   },
   productWizardSquadBinding: (mission: Mission | null | undefined) =>
     mission?.squadId === harness.binding.squadId ? harness.binding : null,
-  isProductWizardPreApprovalMission: (mission: Mission | null | undefined) =>
-    harness.preapprovalValid && mission === harness.mission,
+  isProductMissionSetupPreparedMission: (mission: Mission | null | undefined) =>
+    harness.preparedValid && mission === harness.mission,
 }));
 
-import { installRealMissionProductWizardReceiptAuthority } from "./real-mission-e2e-product-wizard";
+import {
+  installRealMissionProductWizardReceiptAuthority,
+  scheduleProductWizardTrustedLaunchClicks,
+} from "./real-mission-e2e-product-wizard";
 
 const missionId = "mission-product-wizard";
 const owner = {
@@ -116,32 +116,28 @@ const owner = {
   isCrashed: () => false,
 } as unknown as WebContents;
 
-function armedMission(): Mission {
+const reviewSha256 = "d".repeat(64);
+
+function preparedMission(): Mission {
   return {
     id: missionId,
-    title: "Nexus physical release mission",
-    description: "",
+    title: "Release gate: missão real empacotada",
+    description: REAL_MISSION_E2E_GOAL,
     status: "pending",
     squadId: harness.binding.squadId,
     milestones: [],
     learnings: "",
-    intentState: "awaiting_goal",
-    intentVersion: 0,
+    intentState: "ready_to_start",
+    intentVersion: 1,
     createdAt: 1,
     updatedAt: 1,
-  };
-}
-
-function submittedMission(): Mission {
-  return {
-    ...armedMission(),
-    intentState: "awaiting_approval",
-    intentVersion: 1,
     intentContract: {
       version: 1,
       source: "typed",
       goal: REAL_MISSION_E2E_GOAL,
-      acceptanceCriteria: [...REAL_MISSION_E2E_PRODUCT_WIZARD_ACCEPTANCE_CRITERIA],
+      acceptanceCriteria: [
+        ...REAL_MISSION_E2E_PRODUCT_WIZARD_ACCEPTANCE_CRITERIA,
+      ],
       risk: "normal",
       executionMode: "autopilot",
       lane: "standard",
@@ -152,21 +148,27 @@ function submittedMission(): Mission {
         executionTokens: 8_000,
         maxWorkers: 3,
       },
+      squadRevisionHash: harness.binding.squadRevisionHash,
+      approvalReviewSha256: reviewSha256,
+      approvedAt: 99,
+      orchestratorRuntime: {
+        adapterId: "codex",
+        readOnly: false,
+        nativeReadOnly: false,
+      },
     },
   };
 }
 
-function approvedMission(): Mission {
-  const submitted = submittedMission();
+function startedMission(dispatchedAt = 105): Mission {
+  const prepared = preparedMission();
   return {
-    ...submitted,
+    ...prepared,
     status: "running",
     intentState: "dispatched",
     intentContract: {
-      ...submitted.intentContract!,
-      squadRevisionHash: harness.binding.squadRevisionHash,
-      approvedAt: 104,
-      dispatchedAt: 105,
+      ...prepared.intentContract!,
+      dispatchedAt,
     },
   };
 }
@@ -179,10 +181,10 @@ function begin(sender: WebContents = owner): {
   const handler = harness.handlers.get(
     REAL_MISSION_E2E_CHANNELS.beginProductWizardGesture,
   );
-  if (!handler) throw new Error("product wizard gesture handler is not registered");
+  if (!handler) throw new Error("mission setup gesture handler is not registered");
   return handler(
     { sender },
-    { source: "trusted-mission-wizard-launch" },
+    { source: "trusted-mission-setup-prepare" },
   ) as {
     ok: true;
     runId: string;
@@ -230,258 +232,178 @@ beforeEach(() => {
   harness.mission = null;
   harness.missionCount = 0;
   harness.observerArmed = false;
-  harness.preapprovalValid = false;
+  harness.preparedValid = false;
   harness.effects.paneCount = 0;
   harness.effects.dispatchCount = 0;
   harness.effects.taskCount = 0;
   harness.capture.nativeDialogCount = 0;
   harness.capture.missionApprovalDialogCount = 0;
   harness.capture.missionApprovalAcceptedCount = 0;
-  harness.timing.openedAt = null;
-  harness.timing.acceptedAt = null;
 });
 
-describe("main-owned product wizard causal receipt authority", () => {
-  it("seals a receipt only after the three physical UI steps and native approval", () => {
+describe("main-owned Mission Setup causal receipt authority", () => {
+  it("seals only the exact observed prepare followed by the exact start", () => {
     const { authority, onInvalid } = install();
     const launched = begin();
-    expect(launched).toMatchObject({
-      ok: true,
-      runId: "run-product-wizard",
-    });
 
-    harness.mission = armedMission();
+    harness.preparedValid = true;
+    harness.mission = preparedMission();
     harness.missionCount = 1;
-    const armed = invoke(owner, "mission-armed", launched.capability);
-    expect(armed).toMatchObject({ ok: true });
-    expect(authority.receiptForMission(missionId)).toBeNull();
-
-    harness.mission = submittedMission();
-    harness.preapprovalValid = true;
     harness.observerArmed = true;
-    vi.setSystemTime(101);
-    const submitted = invoke(
+    const prepared = invoke(
       owner,
-      "intent-submitted",
-      armed.nextCapability!,
+      "mission-prepared",
+      launched.capability,
     );
-    expect(submitted).toMatchObject({ ok: true });
     expect(authority.receiptForMission(missionId)).toBeNull();
 
-    // Mundo sem modal: aprovação automática, zero diálogos, sem timing.
-    harness.mission = approvedMission();
     vi.setSystemTime(106);
+    harness.mission = startedMission();
     expect(
-      invoke(owner, "approval-returned", submitted.nextCapability!),
+      invoke(owner, "mission-started", prepared.nextCapability!),
     ).toEqual({ ok: true });
 
     const receipt = authority.receiptForMission(missionId);
-    expect(productWizardReceiptSchema.parse(receipt)).toMatchObject({
+    expect(productWizardReceiptSchema.parse(receipt)).toEqual(receipt);
+    expect(receipt).toMatchObject({
+      origin: "main-owned-mission-setup-causal-chain",
       missionId,
       workspaceSha256: harness.workspaceSha256,
       sourceSquadRevisionHash: harness.binding.sourceSquadRevisionHash,
       squadRevisionHash: harness.binding.squadRevisionHash,
-      armedAt: 100,
-      intentSubmittedAt: 101,
-      nativeDialogOpenedAt: null,
-      nativeDialogAcceptedAt: null,
-      approvalReturnedAt: 106,
+      reviewSha256,
+      preparedAt: 100,
+      startedAt: 106,
     });
-    expect(receipt?.submittedContractSha256).not.toBe(
-      receipt?.approvedContractSha256,
+    expect(receipt?.preparedContractSha256).not.toBe(
+      receipt?.startedContractSha256,
     );
     expect(onInvalid).not.toHaveBeenCalled();
-
-    authority.dispose();
-    expect(
-      harness.handlers.has(
-        REAL_MISSION_E2E_CHANNELS.recordProductWizardStep,
-      ),
-    ).toBe(false);
-    expect(
-      harness.handlers.has(
-        REAL_MISSION_E2E_CHANNELS.beginProductWizardGesture,
-      ),
-    ).toBe(false);
-  });
-
-  it("drains queued renderer edges after observer finalization without reopening evidence authority", () => {
-    const { authority, onInvalid } = install();
-    const launched = begin();
-    harness.mission = armedMission();
-    harness.missionCount = 1;
-
-    authority.quiesce();
-
-    const beginHandler = harness.handlers.get(
-      REAL_MISSION_E2E_CHANNELS.beginProductWizardGesture,
-    );
-    expect(beginHandler).toBeDefined();
-    expect(
-      beginHandler?.(
-        { sender: owner },
-        { source: "trusted-mission-wizard-launch" },
-      ),
-    ).toEqual({ ok: true, inactive: true });
-    expect(
-      invoke(owner, "mission-armed", launched.capability),
-    ).toEqual({ ok: true, inactive: true });
-    expect(authority.receiptForMission(missionId)).toBeNull();
-    expect(onInvalid).not.toHaveBeenCalled();
-    expect(
-      harness.handlers.has(
-        REAL_MISSION_E2E_CHANNELS.recordProductWizardStep,
-      ),
-    ).toBe(true);
-
-    authority.dispose();
-    expect(
-      harness.handlers.has(
-        REAL_MISSION_E2E_CHANNELS.recordProductWizardStep,
-      ),
-    ).toBe(false);
-  });
-
-  it("quiesces the live renderer channel before the packaged gate quits", () => {
-    const source = readFileSync(
-      new URL("./real-mission-e2e.ts", import.meta.url),
-      "utf8",
-    );
-    const finishStart = source.indexOf(
-      "const finish = (failureCode: FailureCode | null) =>",
-    );
-    const finishEnd = source.indexOf(
-      "const prematureExitHandlers =",
-      finishStart,
-    );
-    const finishSource = source.slice(finishStart, finishEnd);
-
-    expect(finishStart).toBeGreaterThan(0);
-    expect(finishEnd).toBeGreaterThan(finishStart);
-    expect(finishSource).toContain(
-      "productWizardReceiptAuthority?.quiesce()",
-    );
-    expect(finishSource).not.toContain(
-      "productWizardReceiptAuthority?.dispose()",
-    );
-    expect(finishSource.indexOf(".quiesce()")).toBeLessThan(
-      finishSource.indexOf("app.quit()"),
-    );
-  });
-
-  it("fails closed without a gesture and on replayed, foreign, or effected steps", () => {
-    const { authority, onInvalid } = install();
-    harness.mission = armedMission();
-    harness.missionCount = 1;
-    expect(() =>
-      invoke(owner, "mission-armed", "0".repeat(64)),
-    ).toThrow(/capability|authority/i);
-    expect(onInvalid).toHaveBeenCalledOnce();
-    expect(authority.receiptForMission(missionId)).toBeNull();
-    authority.dispose();
-
-    harness.mission = null;
-    harness.missionCount = 0;
-    const replayRun = install();
-    const launched = begin();
-    harness.mission = armedMission();
-    harness.missionCount = 1;
-    const armed = invoke(owner, "mission-armed", launched.capability);
-    expect(() =>
-      invoke(owner, "intent-submitted", launched.capability),
-    ).toThrow(/capability/i);
-    expect(replayRun.onInvalid).toHaveBeenCalledOnce();
-    expect(armed.nextCapability).toMatch(/^[a-f0-9]{64}$/u);
-    replayRun.authority.dispose();
-
-    harness.mission = null;
-    harness.missionCount = 0;
-    const foreignRun = install();
-    const foreignCapability = begin().capability;
-    harness.mission = armedMission();
-    harness.missionCount = 1;
-    expect(() =>
-      invoke(
-        {
-          isDestroyed: () => false,
-          isCrashed: () => false,
-        } as unknown as WebContents,
-        "mission-armed",
-        foreignCapability,
-      ),
-    ).toThrow(/authority/i);
-    expect(foreignRun.onInvalid).toHaveBeenCalledOnce();
-    foreignRun.authority.dispose();
-
-    harness.mission = null;
-    harness.missionCount = 0;
-    const effectedRun = install();
-    const effectedCapability = begin().capability;
-    harness.mission = armedMission();
-    harness.missionCount = 1;
-    harness.effects.paneCount = 1;
-    expect(() =>
-      invoke(owner, "mission-armed", effectedCapability),
-    ).toThrow(/runtime effects/i);
-    expect(effectedRun.onInvalid).toHaveBeenCalledOnce();
-    effectedRun.authority.dispose();
-    harness.effects.paneCount = 0;
-  });
-
-  it("rejects approval without exactly one accepted and ordered native dialog", () => {
-    const { authority, onInvalid } = install();
-    const launched = begin();
-    harness.mission = armedMission();
-    harness.missionCount = 1;
-    const armed = invoke(owner, "mission-armed", launched.capability);
-    harness.mission = submittedMission();
-    harness.preapprovalValid = true;
-    harness.observerArmed = true;
-    vi.setSystemTime(101);
-    const submitted = invoke(
-      owner,
-      "intent-submitted",
-      armed.nextCapability!,
-    );
-
-    // QUALQUER diálogo aparecendo agora é violação — é o guardião contra o
-    // modal voltar em silêncio.
-    harness.capture.nativeDialogCount = 2;
-    harness.capture.missionApprovalDialogCount = 1;
-    harness.capture.missionApprovalAcceptedCount = 1;
-    harness.mission = approvedMission();
-    vi.setSystemTime(106);
-
-    expect(() =>
-      invoke(owner, "approval-returned", submitted.nextCapability!),
-    ).toThrow(/promptless approval causality/i);
-    expect(onInvalid).toHaveBeenCalledOnce();
-    expect(authority.receiptForMission(missionId)).toBeNull();
     authority.dispose();
   });
 
-  it("rejects cross-run capabilities and trusted gesture replay", () => {
-    const first = install("run-a");
-    const firstCapability = begin().capability;
+  it("mints prepare authority only before any mission exists", () => {
+    const first = install();
+    harness.missionCount = 1;
+    expect(() => begin()).toThrow(/after mission effects/i);
+    expect(first.onInvalid).toHaveBeenCalledOnce();
     first.authority.dispose();
+  });
 
-    const second = install("run-b");
-    const secondCapability = begin().capability;
-    harness.mission = armedMission();
+  it("rejects prepared evidence without the observer or inert mission state", () => {
+    const run = install();
+    const launched = begin();
+    harness.preparedValid = true;
+    harness.mission = preparedMission();
     harness.missionCount = 1;
-    expect(() =>
-      invoke(owner, "mission-armed", firstCapability),
-    ).toThrow(/capability/i);
-    expect(second.onInvalid).toHaveBeenCalledOnce();
-    expect(secondCapability).not.toBe(firstCapability);
-    second.authority.dispose();
 
-    harness.mission = null;
-    harness.missionCount = 0;
-    const replay = install("run-c");
-    expect(begin().capability).toMatch(/^[a-f0-9]{64}$/u);
-    expect(() => begin()).toThrow(/gesture authority/i);
-    expect(replay.onInvalid).toHaveBeenCalledOnce();
-    replay.authority.dispose();
+    expect(() =>
+      invoke(owner, "mission-prepared", launched.capability),
+    ).toThrow(/observation/i);
+    expect(run.authority.receiptForMission(missionId)).toBeNull();
+    expect(run.onInvalid).toHaveBeenCalledOnce();
+    run.authority.dispose();
+  });
+
+  it("consumes each capability before validating the step", () => {
+    const run = install();
+    const launched = begin();
+    harness.preparedValid = true;
+    harness.mission = preparedMission();
+    harness.missionCount = 1;
+    harness.observerArmed = true;
+    const prepared = invoke(
+      owner,
+      "mission-prepared",
+      launched.capability,
+    );
+
+    expect(() =>
+      invoke(owner, "mission-started", launched.capability),
+    ).toThrow(/capability/i);
+    expect(prepared.nextCapability).toMatch(/^[a-f0-9]{64}$/u);
+    expect(run.onInvalid).toHaveBeenCalledOnce();
+    run.authority.dispose();
+  });
+
+  it("rejects a start that predates the prepared receipt", () => {
+    const run = install();
+    const launched = begin();
+    harness.preparedValid = true;
+    harness.mission = preparedMission();
+    harness.missionCount = 1;
+    harness.observerArmed = true;
+    const prepared = invoke(
+      owner,
+      "mission-prepared",
+      launched.capability,
+    );
+
+    vi.setSystemTime(106);
+    harness.mission = startedMission(99);
+    expect(() =>
+      invoke(owner, "mission-started", prepared.nextCapability!),
+    ).toThrow(/causality/i);
+    expect(run.authority.receiptForMission(missionId)).toBeNull();
+    run.authority.dispose();
+  });
+
+  it("quiesces queued canonical steps without minting evidence", () => {
+    const run = install();
+    const launched = begin();
+    run.authority.quiesce();
+    harness.preparedValid = true;
+    harness.missionCount = 1;
+    harness.observerArmed = true;
+
+    expect(
+      invoke(owner, "mission-prepared", launched.capability),
+    ).toEqual({ ok: true, inactive: true });
+    expect(run.authority.receiptForMission(missionId)).toBeNull();
+    expect(run.onInvalid).not.toHaveBeenCalled();
+    run.authority.dispose();
+  });
+});
+
+describe("trusted Mission Setup click scheduler", () => {
+  it("clicks Prepare, waits for enabled Start, then clicks Start once", async () => {
+    const probedStages: string[] = [];
+    const inputEvents: unknown[] = [];
+    let startProbes = 0;
+    const sender = {
+      isDestroyed: () => false,
+      isCrashed: () => false,
+      focus: vi.fn(),
+      executeJavaScript: vi.fn(async (source: string) => {
+        const stage = source.includes(
+          'data-nexus-real-mission-wizard-launch="prepare"',
+        )
+          ? "prepare"
+          : "start";
+        probedStages.push(stage);
+        if (stage === "start" && startProbes++ === 0) {
+          return { kind: "disabled", title: "Review required" };
+        }
+        return { kind: "ready", x: 20, y: 30 };
+      }),
+      sendInputEvent: vi.fn((event: unknown) => {
+        inputEvents.push(event);
+      }),
+    } as unknown as WebContents;
+    const gaveUp = vi.fn();
+
+    const stop = scheduleProductWizardTrustedLaunchClicks(
+      sender,
+      () => false,
+      gaveUp,
+    );
+    await vi.advanceTimersByTimeAsync(250);
+    await vi.advanceTimersByTimeAsync(250);
+    await vi.advanceTimersByTimeAsync(250);
+
+    expect(probedStages).toEqual(["prepare", "start", "start"]);
+    expect(inputEvents).toHaveLength(4);
+    expect(gaveUp).not.toHaveBeenCalled();
+    stop();
   });
 });

@@ -23,6 +23,26 @@
   background: var(--bg-bar);
 }
 
+/* Bridge parity: the page identity reads as [icon badge] + title. */
+.product-workspace__identity {
+  min-inline-size: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.product-workspace__badge {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  inline-size: 34px;
+  block-size: 34px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+}
+
 .product-workspace__heading {
   min-inline-size: 0;
   display: flex;
@@ -85,6 +105,10 @@
 }
 
 /* Terminal: React surfaces only provide slots; terminal-host owns each PTY. */
+.terminal-workspace[hidden] {
+  display: none;
+}
+
 .terminal-workspace__header {
   min-block-size: var(--bar-height);
   padding-block: var(--space-2);
@@ -111,49 +135,95 @@
 
 .task-board-workspace__empty {
   max-inline-size: 38rem;
-  margin: min(12vh, var(--space-8)) auto 0;
+  /* Columns stay visible underneath, so the CTA sits above them, not over them. */
+  margin: 0 auto var(--space-6);
 }
 
 .task-board-workspace__lists {
-  inline-size: min(100%, 72rem);
+  inline-size: min(100%, 78rem);
   margin-inline: auto;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-5);
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: start;
+  gap: var(--space-4);
 }
 
 .task-board-workspace__list {
+  display: flex;
+  flex-direction: column;
+  min-block-size: 12rem;
   border: 1px solid var(--border);
-  border-radius: var(--radius-xl);
+  border-top: 2px solid var(--border-strong);
+  border-radius: 14px;
   overflow: hidden;
-  background: var(--bg-elevated);
+  background: color-mix(in srgb, var(--bg-elevated) 70%, transparent);
+}
+
+/* Bridge parity: each column is colour-anchored by its status. */
+.task-board-workspace__list[data-status='todo'] {
+  border-top-color: color-mix(in srgb, var(--text) 30%, transparent);
+}
+
+.task-board-workspace__list[data-status='in_progress'] {
+  border-top-color: var(--accent);
+}
+
+.task-board-workspace__list[data-status='done'] {
+  border-top-color: var(--ok, #34d399);
 }
 
 .task-board-workspace__list-header {
-  min-block-size: 48px;
+  min-block-size: 44px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
+  padding: 10px var(--space-4);
   border-bottom: 1px solid var(--border);
-  background: var(--bg-bar);
+  background: color-mix(in srgb, var(--bg-bar) 70%, transparent);
 }
 
 .task-board-workspace__list-header h2 {
   min-inline-size: 0;
   margin: 0;
   overflow: hidden;
-  color: var(--text);
-  font: 600 var(--text-base)/1.25 var(--font-ui);
+  color: var(--text-dim);
+  font: 700 11px/1.2 var(--font-ui);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .task-board-workspace__list-header span {
   flex: 0 0 auto;
+  min-inline-size: 22px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 10%, transparent);
   color: var(--text-dim);
-  font: 500 var(--text-xs)/1.2 var(--font-mono);
+  font: 700 11px/1.4 var(--font-mono);
+  text-align: center;
+}
+
+.task-board-workspace__list[data-status='in_progress'] .task-board-workspace__list-header span {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+}
+
+.task-board-workspace__list[data-status='done'] .task-board-workspace__list-header span {
+  background: color-mix(in srgb, var(--ok, #34d399) 18%, transparent);
+  color: var(--ok, #34d399);
+}
+
+.task-board-workspace__column-empty {
+  display: grid;
+  place-items: center;
+  min-block-size: 6rem;
+  margin: 0;
+  padding: var(--space-5) var(--space-4);
+  color: var(--text-dim);
+  font-size: 12px;
 }
 
 .task-board-workspace__items {
@@ -424,6 +494,7 @@
 .product-pane__retry {
   flex: 0 0 auto;
   min-block-size: 34px;
+  min-inline-size: var(--space-6);
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
@@ -433,10 +504,14 @@
   cursor: pointer;
 }
 
-.product-pane__retry:hover:not(:disabled),
+.product-pane__retry:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
 .product-pane__retry:focus-visible {
   border-color: var(--accent);
-  outline: none;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 @media (max-width: 760px) {
@@ -447,6 +522,10 @@
 
   .product-workspace__summary {
     max-inline-size: 28ch;
+  }
+
+  .task-board-workspace__lists {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .task-board-workspace__content,

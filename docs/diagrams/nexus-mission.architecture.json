@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "NexusIDE — Mission Engine Architecture",
+    "subtitle": "Renderer → Main orch → PTY workers → adapters (AGY / GLM / Claude)",
+    "output": "nexus-mission.html"
+  },
+  "layout": {
+    "mode": "grid",
+    "cols": 6,
+    "origin": [40, 110],
+    "gapX": 40,
+    "gapY": 72,
+    "cellW": 130,
+    "cellH": 64
+  },
+  "components": [
+    { "id": "user", "type": "external", "label": "Operador", "sublabel": "vibe coding", "row": 1, "col": 0 },
+
+    { "id": "setup", "type": "frontend", "label": "MissionSetup", "sublabel": "wizard Bridge-style", "row": 0, "col": 1 },
+    { "id": "nav", "type": "frontend", "label": "Product Nav", "sublabel": "shell + rail", "row": 1, "col": 1 },
+    { "id": "toasts", "type": "frontend", "label": "Toasts / Vacancy", "sublabel": "status cards", "row": 2, "col": 1 },
+
+    { "id": "ipc", "type": "messagebus", "label": "Preload IPC", "sublabel": "contextIsolated", "row": 1, "col": 2 },
+
+    { "id": "seal", "type": "backend", "label": "Mission Seal", "sublabel": "plan authority", "row": 0, "col": 3 },
+    { "id": "drive", "type": "backend", "label": "Mission Drive", "sublabel": "bootstrap → kickoff", "row": 1, "col": 3 },
+    { "id": "dispatch", "type": "backend", "label": "Task Dispatch", "sublabel": "handoff authority", "row": 2, "col": 3 },
+
+    { "id": "adapters", "type": "cloud", "label": "Adapters", "sublabel": "AGY · GLM · Claude", "row": 0, "col": 4 },
+    { "id": "pty", "type": "backend", "label": "PTY Manager", "sublabel": "spawnAgentSession", "row": 1, "col": 4 },
+    { "id": "sandbox", "type": "security", "label": "Sandbox", "sublabel": "Seatbelt / bwrap", "row": 2, "col": 4 },
+
+    { "id": "worktree", "type": "database", "label": "Git Worktree", "sublabel": "mission fs", "row": 0, "col": 5 },
+    { "id": "persist", "type": "database", "label": "Mission Store", "sublabel": "disk projection", "row": 1, "col": 5 },
+    { "id": "keys", "type": "security", "label": "Provider Keys", "sublabel": "ZAI · vault · env", "row": 2, "col": 5 }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Renderer (React)", "wraps": ["setup", "nav", "toasts"] },
+    { "kind": "security-group", "label": "Main · orch/ (security-sensitive)", "wraps": ["seal", "drive", "dispatch", "pty", "adapters", "sandbox"] },
+    { "kind": "region", "label": "Persistence & credentials", "wraps": ["worktree", "persist", "keys"] }
+  ],
+  "connections": [
+    { "from": "user", "to": "nav", "label": "abre missão", "variant": "emphasis", "fromSide": "right", "toSide": "left", "labelAt": [185, 242] },
+    { "from": "nav", "to": "setup", "variant": "dashed", "fromSide": "top", "toSide": "bottom" },
+    { "from": "setup", "to": "ipc", "label": "seal+start", "variant": "emphasis", "fromSide": "bottom", "toSide": "left", "route": "orthogonal-h", "labelDy": -20 },
+    { "from": "nav", "to": "ipc", "fromSide": "right", "toSide": "left" },
+    { "from": "ipc", "to": "seal", "label": "IPC", "variant": "emphasis", "fromSide": "top", "toSide": "left", "route": "orthogonal-h", "labelDy": -16 },
+    { "from": "seal", "to": "drive", "variant": "emphasis", "fromSide": "bottom", "toSide": "top" },
+    { "from": "drive", "to": "dispatch", "fromSide": "bottom", "toSide": "top" },
+    { "from": "drive", "to": "pty", "label": "spawn", "variant": "emphasis", "fromSide": "right", "toSide": "left", "labelDy": -18 },
+    { "from": "adapters", "to": "pty", "fromSide": "bottom", "toSide": "top" },
+    { "from": "keys", "to": "adapters", "label": "ZAI→token", "variant": "security", "fromSide": "top", "toSide": "right", "route": "orthogonal-h", "labelAt": [895, 242] },
+    { "from": "pty", "to": "sandbox", "variant": "security", "fromSide": "bottom", "toSide": "top" },
+    { "from": "dispatch", "to": "worktree", "label": "workdir", "fromSide": "right", "toSide": "bottom", "route": "orthogonal-h", "labelAt": [810, 320] },
+    { "from": "drive", "to": "persist", "fromSide": "right", "toSide": "left", "route": "orthogonal-h" },
+    { "from": "toasts", "to": "ipc", "variant": "dashed", "fromSide": "right", "toSide": "bottom", "route": "orthogonal-h" }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Fluxo feliz",
+      "items": [
+        "1. Wizard sela plano (adapters + roster)",
+        "2. Mission Drive bootstrap → kickoff",
+        "3. PTY spawna AGY (orch) + workers GLM",
+        "4. Worktree isola o fs da missão",
+        "5. Toasts/Vacancy só alertam se blocked"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Fixes desta sessão",
+      "items": [
+        "Seal: erro real (não 'stale review')",
+        "GLM: ZAI_API_KEY → ANTHROPIC_AUTH_TOKEN",
+        "Vacancy: status calmo (não alarme amarelo)",
+        "Toasts: cards Bridge-style agrupados",
+        "panels.css: restaurado (não truncado)"
+      ]
+    }
+  ]
+}

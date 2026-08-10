@@ -26,12 +26,14 @@ import { hasAvailableAccount } from '../persistence/account-store';
 import { authReadyModelsForProvider } from '../adapters/model-auth-readiness';
 import { appendMissionVerdict } from '../../shared/mission-block-cause';
 import { missionStatusSchema, type Mission } from '../../shared/orch-types';
+import { missionResultSchema } from '../../shared/mission-engine-contract';
 import { buildClarify } from '../../shared/clarify';
 import { emitClarifyQuestion } from './clarify-flow';
 import { findAgent, listAgents, saveSquad } from './squad-store';
 import { DEFAULT_TODO_LIST } from './todo-store';
 import { getProjectDomainStores } from './project-domain-store-registry';
 import { getContextWorkflowService } from '../context/context-workflow-registry';
+import { missionEngineForScope } from './mission-engine-registry';
 import { saveCatalogOverlay, proposeRecipes } from './catalog-overlay';
 import {
   addCronJob,
@@ -72,6 +74,18 @@ import {
   warmSquadRuntimeSubscriptionAuth,
 } from './squad-runtime-inventory';
 import { standardTopologyFromSealedTaskDetails } from './guided-mission-topology-authority';
+
+const MAX_MISSION_RESULT_CHARS = 65_536;
+
+function completionLearnings(
+  existingLearnings: string,
+  note: string,
+): string {
+  if (!note) return existingLearnings;
+  const entry = `## Consulta / conclusão\n${note}`;
+  if (!existingLearnings.trim()) return entry.slice(0, MAX_MISSION_RESULT_CHARS);
+  return `${existingLearnings}\n\n${entry}`.slice(-MAX_MISSION_RESULT_CHARS);
+}
 
 /**
  * MCP tools for handoffs (2), agents (3), missions (5), squad/catalog/task
@@ -371,6 +385,14 @@ const missionSetStatusTool: McpToolDef = {
       }
     }
     if (status === 'done') {
+      if (current.status === 'done') {
+        if (!current.result) {
+          throw new Error(
+            'completed mission is missing its canonical MissionResult',
+          );
+        }
+        return current;
+      }
       const lane = current.intentContract?.lane ?? 'standard';
       const intentVersion = current.intentContract?.intentVersion;
       if (
@@ -386,7 +408,6 @@ const missionSetStatusTool: McpToolDef = {
           planReceipt?.tasks.map((task) => task.detail) ?? [],
         );
         if (topology !== 'team-read-only-fanout') {
-          if (current.status === 'done') return current;
           throw new Error(
             'task_dispatcher_authority: missão com plano selado ' +
               '(delivery/wave-pack) só conclui pelo motor Nexus após receipts ' +
@@ -422,7 +443,6 @@ const missionSetStatusTool: McpToolDef = {
         }
         return completed;
       }
-      if (current.status === 'done') return current;
       const workflow = getContextWorkflowService(ctx.scope);
       if (!workflow.isMissionDriverComplete(
         missionId,
@@ -494,6 +514,38 @@ const missionSetStatusTool: McpToolDef = {
           );
         }
       }
+      const summary =
+        note ||
+        current.learnings.trim() ||
+        `Missão "${current.title}" concluída pelo motor Nexus após verificação.`;
+      const result = missionResultSchema.parse({
+        outcome: 'success',
+        summary: summary.slice(0, MAX_MISSION_RESULT_CHARS),
+        evidenceIds: [
+          ...new Set(
+            current.milestones.flatMap(
+              (milestone) => milestone.evidenceIds ?? [],
+            ),
+          ),
+        ].slice(0, 64),
+        artifactRefs: [],
+      });
+      missionEngineForScope(ctx.scope).completeVerified(ctx.scope, {
+        missionId,
+        expectedStatus: 'running',
+        expectedIntentState: current.intentState ?? 'legacy',
+        expectedUpdatedAt: current.updatedAt,
+        expectedIntentVersion: current.intentVersion ?? 0,
+        learnings: completionLearnings(current.learnings, note),
+        result,
+      });
+      const completed = stores.missions.get(missionId);
+      if (completed?.status !== 'done' || !completed.result) {
+        throw new Error(
+          'MissionEngine did not persist the canonical verified completion result',
+        );
+      }
+      return completed;
     }
     if (note.length > 0) {
       const heading =
@@ -501,9 +553,7 @@ const missionSetStatusTool: McpToolDef = {
           ? '## Encerrada como bloqueada'
           : status === 'failed'
             ? '## Falha'
-            : status === 'done'
-              ? '## Consulta / conclusão'
-              : '## Nota de status';
+            : '## Nota de status';
       stores.missions.appendLearning(missionId, `${heading}\n${note}`);
     }
     // Fail-safe demotion used to vanish into learnings only — the rail showed

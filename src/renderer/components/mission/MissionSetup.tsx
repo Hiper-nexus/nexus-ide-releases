@@ -15,12 +15,16 @@ import {
 } from '../../../shared/settings-types';
 import { missionRuntimeReadiness } from '../../orch/mission-runtime-readiness';
 import {
+  isExactPetStudioEntryContext,
   type MissionSetupDraft,
+  type MissionSetupEntryContext,
   type MissionSetupPersistenceState,
   type MissionSetupStep,
+  type MissionSetupStore,
   useMissionSetupStore,
 } from '../../state/mission-setup-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
+import { useProviderStore } from '../../state/provider-store';
 import { useWorkspaceStore } from '../../state/workspace-store';
 import { MissionStep } from './MissionStep';
 import {
@@ -79,6 +83,7 @@ function missionSetupPersistenceMessage(
 
 export function missionPrepareRequestFromDraft(
   draft: MissionSetupDraft,
+  entryContext: MissionSetupEntryContext | null = null,
 ): MissionPrepareRequest {
   const title = draft.title.trim();
   return {
@@ -100,6 +105,20 @@ export function missionPrepareRequestFromDraft(
       ),
     })),
     advanced: { lane: draft.advanced.lane },
+    ...(entryContext?.kind === 'legacy-replacement' &&
+    entryContext.acceptanceCriteria.length > 0
+      ? {
+          acceptanceCriteria: [...entryContext.acceptanceCriteria],
+        }
+      : {}),
+    ...(entryContext?.kind === 'pet-studio'
+      ? {
+          profile: {
+            kind: 'pet-studio' as const,
+            referenceImagePath: entryContext.profile.referenceImagePath,
+          },
+        }
+      : {}),
   };
 }
 
@@ -123,6 +142,50 @@ function emptyInventory(): MissionTeamInventory {
 function missionRosterFingerprint(roster: readonly SquadAgent[]): string {
   return JSON.stringify(roster) ?? '[]';
 }
+function missionSetupAuthorityKey(
+  state: Pick<
+    MissionSetupStore,
+    'workspacePath' | 'draft' | 'entryContext'
+  >,
+): string | null {
+  if (!state.workspacePath) return null;
+  const entry =
+    state.entryContext?.kind === 'pet-studio'
+      ? `${state.entryContext.kind}\u0000${state.entryContext.profile.referenceImagePath}\u0000${state.entryContext.revision}`
+      : state.entryContext?.kind === 'legacy-replacement'
+        ? `${state.entryContext.kind}\u0000${state.entryContext.supersededMissionId}\u0000${JSON.stringify(state.entryContext.acceptanceCriteria)}`
+        : 'ordinary';
+  return `${state.workspacePath}\u0000${state.draft.revision}\u0000${entry}`;
+}
+function discardPreparedReview(review: MissionReview): void {
+  void window.nexus.orch?.removeMission(review.missionId).catch(() => undefined);
+}
+
+function isStaleReviewStartError(message: string): boolean {
+  return /review fence|fence mismatch|fence is absent|desatualizad|prepar(ar|ação).*(mudou|descart)/i.test(
+    message,
+  );
+}
+
+function humanizeMissionStartError(message: string): string {
+  const trimmed = message.trim();
+  if (/kickoff-session_exited|terminal encerrou antes/i.test(trimmed)) {
+    return 'O agente de coordenação encerrou antes de aceitar o início. A missão foi preservada — abra-a e use Retomar missão.';
+  }
+  if (/kickoff-|materialization_failed|spawn_failed|provider_exited/i.test(trimmed)) {
+    return 'O início da missão falhou ao subir o coordenador. A missão foi preservada com o diagnóstico real para retomar.';
+  }
+  if (/exclusive auth family/i.test(trimmed)) {
+    return 'Já existe um coordenador vivo com a mesma conta. Encerre a sessão antiga ou aguarde a saída física antes de iniciar outra missão.';
+  }
+  if (trimmed.length > 0 && trimmed.length <= 280 && !/^\s*Error:/i.test(trimmed)) {
+    return trimmed;
+  }
+  return 'Não foi possível iniciar a missão. A preparação foi preservada quando seguro; veja o diagnóstico da missão ou tente novamente.';
+}
+
+
+
 
 export function MissionSetup() {
   const workspace = useWorkspaceStore((state) => state.current);
@@ -130,6 +193,7 @@ export function MissionSetup() {
   const workspacePath = useMissionSetupStore((state) => state.workspacePath);
   const draft = useMissionSetupStore((state) => state.draft);
   const persistence = useMissionSetupStore((state) => state.persistence);
+  const entryContext = useMissionSetupStore((state) => state.entryContext);
   const setWorkspace = useMissionSetupStore((state) => state.setWorkspace);
   const setObjective = useMissionSetupStore((state) => state.setObjective);
   const setTitle = useMissionSetupStore((state) => state.setTitle);
@@ -147,11 +211,15 @@ export function MissionSetup() {
   const resetWorkspace = useMissionSetupStore(
     (state) => state.resetWorkspace,
   );
+  const clearEntryContext = useMissionSetupStore(
+    (state) => state.clearEntryContext,
+  );
 
   const [inventoryAttempt, setInventoryAttempt] = useState(0);
   const [inventory, setInventory] = useState<MissionTeamInventory>(
     emptyInventory,
   );
+  const liveProviders = useProviderStore((state) => state.providers);
   const [pickingWorkspace, setPickingWorkspace] = useState(false);
   const [workspaceActionError, setWorkspaceActionError] = useState<
     string | null
@@ -172,6 +240,7 @@ export function MissionSetup() {
   const pendingPrepareKeyRef = useRef<string | null>(null);
   const pendingStartKeyRef = useRef<string | null>(null);
   const enteredReviewKeyRef = useRef<string | null>(null);
+  const startedReviewMissionIdRef = useRef<string | null>(null);
   const lastAuthorityKeyRef = useRef<string | null | undefined>(undefined);
   const automaticRosterFingerprintRef = useRef<string | null>(null);
   const recommendationWorkspaceRef = useRef<
@@ -180,9 +249,16 @@ export function MissionSetup() {
   const persistedDraftReadAlertRef = useRef<HTMLDivElement>(null);
 
   const canonicalWorkspacePath = workspace?.path ?? null;
-  const authorityKey = workspacePath
-    ? `${workspacePath}\u0000${draft.revision}`
-    : null;
+  const petStudioReview = isExactPetStudioEntryContext(
+    entryContext,
+    draft,
+    workspacePath,
+  );
+  const authorityKey = missionSetupAuthorityKey({
+    workspacePath,
+    draft,
+    entryContext,
+  });
   const visibleReview =
     reviewEnvelope && reviewEnvelope.authorityKey === authorityKey
       ? reviewEnvelope.review
@@ -265,8 +341,35 @@ export function MissionSetup() {
     };
   }, [inventoryAttempt]);
 
+  // A foto inicial de `providers.list()` sai do cache frio, que reprova
+  // credencial somente-Keychain (ex.: Claude). O main esquenta o cache e
+  // re-transmite; o store vivo recebe. Sem esta reconciliação o readiness
+  // fica preso na foto errada até o operador tentar de novo.
+  useEffect(() => {
+    if (liveProviders.length === 0) return;
+    setInventory((current) => {
+      if (current.status === 'loading') return current;
+      if (
+        JSON.stringify(current.providers) === JSON.stringify(liveProviders)
+      ) {
+        return current;
+      }
+      return {
+        ...current,
+        providers: liveProviders,
+        readiness: missionRuntimeReadiness(
+          current.adapters,
+          liveProviders,
+          current.accounts,
+          current.settings.squadCliPolicy,
+        ),
+      };
+    });
+  }, [liveProviders]);
+
   useEffect(() => {
     if (
+      entryContext !== null ||
       !workspacePath ||
       hasUnreadDraft ||
       inventory.status !== 'ready' ||
@@ -299,6 +402,7 @@ export function MissionSetup() {
     draft.advanced.lane,
     draft.objective,
     draft.roster,
+    entryContext,
     hasUnreadDraft,
     inventory,
     setRoster,
@@ -306,8 +410,16 @@ export function MissionSetup() {
   ]);
 
   useEffect(() => {
+    const invalidPetReview =
+      entryContext?.kind === 'pet-studio' && !petStudioReview;
     if (lastAuthorityKeyRef.current === undefined) {
       lastAuthorityKeyRef.current = authorityKey;
+      if (invalidPetReview) {
+        clearEntryContext();
+        useProductNavigationStore
+          .getState()
+          .returnToSettingsSection('appearance');
+      }
       return;
     }
     if (lastAuthorityKeyRef.current === authorityKey) return;
@@ -318,13 +430,34 @@ export function MissionSetup() {
     pendingPrepareKeyRef.current = null;
     pendingStartKeyRef.current = null;
     enteredReviewKeyRef.current =
-      draft.step === 'review' ? authorityKey : null;
+      draft.step === 'review' && !petStudioReview ? authorityKey : null;
     setReviewEnvelope(null);
     setPrepareStatus('idle');
     setStartStatus('idle');
+    if (
+      reviewEnvelope &&
+      reviewEnvelope.authorityKey !== authorityKey &&
+      reviewEnvelope.review.missionId !== startedReviewMissionIdRef.current
+    ) {
+      discardPreparedReview(reviewEnvelope.review);
+    }
     setReviewError(null);
-    if (draft.step === 'review') setStep('team');
-  }, [authorityKey, draft.step, setStep]);
+    if (invalidPetReview) {
+      clearEntryContext();
+      useProductNavigationStore
+        .getState()
+        .returnToSettingsSection('appearance');
+      return;
+    }
+    if (draft.step === 'review' && !petStudioReview) setStep('team');
+  }, [
+    authorityKey,
+    clearEntryContext,
+    draft.step,
+    entryContext,
+    petStudioReview,
+    setStep,
+  ]);
 
   const inventoryReadyForReview =
     inventory.status === 'ready' &&
@@ -335,18 +468,35 @@ export function MissionSetup() {
     const setupState = useMissionSetupStore.getState();
     const currentWorkspacePath =
       useWorkspaceStore.getState().current?.path ?? null;
-    const currentKey = setupState.workspacePath
-      ? `${setupState.workspacePath}\u0000${setupState.draft.revision}`
-      : null;
+    const currentKey = missionSetupAuthorityKey(setupState);
     if (
       currentKey !== capturedAuthorityKey ||
       currentWorkspacePath !== setupState.workspacePath
     ) {
       return;
     }
+    if (
+      setupState.entryContext?.kind === 'pet-studio' &&
+      !isExactPetStudioEntryContext(
+        setupState.entryContext,
+        setupState.draft,
+        setupState.workspacePath,
+      )
+    ) {
+      setReviewEnvelope(null);
+      setPrepareStatus('error');
+      setReviewError(
+        'A autoridade fixa do Pet Studio mudou. Volte para Aparência e selecione a imagem novamente.',
+      );
+      return;
+    }
+
 
     const requestResult = missionPrepareRequestSchema.safeParse(
-      missionPrepareRequestFromDraft(setupState.draft),
+      missionPrepareRequestFromDraft(
+        setupState.draft,
+        setupState.entryContext,
+      ),
     );
     if (!requestResult.success) {
       setReviewEnvelope(null);
@@ -368,17 +518,17 @@ export function MissionSetup() {
       const review = await window.nexus.mission.prepare(requestResult.data);
       const latestSetup = useMissionSetupStore.getState();
       const latestWorkspace = useWorkspaceStore.getState().current?.path ?? null;
-      const latestKey = latestSetup.workspacePath
-        ? `${latestSetup.workspacePath}\u0000${latestSetup.draft.revision}`
-        : null;
+      const latestKey = missionSetupAuthorityKey(latestSetup);
       if (
         generation !== authorityGenerationRef.current ||
         latestKey !== capturedAuthorityKey ||
         latestWorkspace !== latestSetup.workspacePath
       ) {
+        discardPreparedReview(review);
         return;
       }
       setReviewEnvelope({ authorityKey: capturedAuthorityKey, review });
+      startedReviewMissionIdRef.current = null;
       setPrepareStatus('ready');
     } catch {
       if (generation !== authorityGenerationRef.current) return;
@@ -490,12 +640,25 @@ export function MissionSetup() {
     authorityGenerationRef.current += 1;
     startGenerationRef.current += 1;
     pendingPrepareKeyRef.current = null;
+    if (
+      visibleReview &&
+      visibleReview.missionId !== startedReviewMissionIdRef.current
+    ) {
+      discardPreparedReview(visibleReview);
+    }
     pendingStartKeyRef.current = null;
     enteredReviewKeyRef.current = null;
     setReviewEnvelope(null);
     setPrepareStatus('idle');
     setStartStatus('idle');
     setReviewError(null);
+    if (entryContext?.kind === 'pet-studio') {
+      clearEntryContext();
+      useProductNavigationStore
+        .getState()
+        .returnToSettingsSection('appearance');
+      return;
+    }
     setStep('team');
   };
 
@@ -516,47 +679,106 @@ export function MissionSetup() {
     const currentSetup = useMissionSetupStore.getState();
     const currentWorkspace =
       useWorkspaceStore.getState().current?.path ?? null;
-    const currentAuthorityKey = currentSetup.workspacePath
-      ? `${currentSetup.workspacePath}\u0000${currentSetup.draft.revision}`
-      : null;
+    const currentAuthorityKey = missionSetupAuthorityKey(currentSetup);
+    const currentDestination =
+      useProductNavigationStore.getState().destination;
     if (
       currentAuthorityKey !== authorityKey ||
-      currentWorkspace !== currentSetup.workspacePath
+      currentWorkspace !== currentSetup.workspacePath ||
+      currentDestination.kind !== 'mission-setup'
     ) {
       return;
     }
     const capturedReview = visibleReview;
+    const capturedSupersededMissionId =
+      currentSetup.entryContext?.kind === 'legacy-replacement'
+        ? currentSetup.entryContext.supersededMissionId
+        : null;
     const generation = ++startGenerationRef.current;
     pendingStartKeyRef.current = authorityKey;
+    startedReviewMissionIdRef.current = capturedReview.missionId;
     setStartStatus('loading');
     setReviewError(null);
 
+    let startSucceeded = false;
     try {
       const snapshot = await window.nexus.mission.start({
         missionId: capturedReview.missionId,
         reviewSha256: capturedReview.reviewSha256,
       });
+      startSucceeded = true;
+      if (capturedSupersededMissionId) {
+        await window.nexus.orch.removeMission(capturedSupersededMissionId);
+      }
+
       const latestSetup = useMissionSetupStore.getState();
       const latestWorkspace = useWorkspaceStore.getState().current?.path ?? null;
-      const latestKey = latestSetup.workspacePath
-        ? `${latestSetup.workspacePath}\u0000${latestSetup.draft.revision}`
-        : null;
+      const latestKey = missionSetupAuthorityKey(latestSetup);
+      const latestDestination =
+        useProductNavigationStore.getState().destination;
       if (
         generation !== startGenerationRef.current ||
         latestKey !== authorityKey ||
-        latestWorkspace !== latestSetup.workspacePath
+        latestWorkspace !== latestSetup.workspacePath ||
+        latestDestination.kind !== 'mission-setup'
       ) {
         return;
       }
+      clearEntryContext();
       useProductNavigationStore.getState().openMission(snapshot.id);
-    } catch {
+    } catch (error) {
+      const rawMessage =
+        error instanceof Error
+          ? error.message
+          : typeof error === 'string'
+            ? error
+            : '';
+      const staleReview = isStaleReviewStartError(rawMessage);
+      const leftSetup =
+        useProductNavigationStore.getState().destination.kind !==
+        'mission-setup';
+      if (!startSucceeded) {
+        if (
+          startedReviewMissionIdRef.current === capturedReview.missionId
+        ) {
+          startedReviewMissionIdRef.current = null;
+        }
+        // Discard the prepared review when the fence is stale, or when the
+        // operator already left Setup during a deferred start — otherwise the
+        // unused replacement leaks while the legacy shell stays on screen.
+        // Kickoff/provider failures while still on Setup leave a durable
+        // blocked mission the operator can open and resume.
+        if (staleReview || leftSetup) {
+          discardPreparedReview(capturedReview);
+        }
+      }
       if (generation !== startGenerationRef.current) return;
+      // Operator already left Setup: do not steal navigation or mutate the
+      // setup UI underneath Terminal/Board.
+      if (leftSetup) return;
       setReviewEnvelope(null);
-      setPrepareStatus('error');
+      if (startSucceeded) {
+        setPrepareStatus('error');
+        setStartStatus('error');
+        setReviewError(
+          'A missão iniciou, mas a substituição da missão anterior não pôde ser concluída.',
+        );
+        return;
+      }
+      if (staleReview) {
+        setPrepareStatus('error');
+        setStartStatus('error');
+        setReviewError(
+          'A revisão pode ter ficado desatualizada e foi descartada. Prepare uma nova revisão antes de iniciar a missão.',
+        );
+        return;
+      }
+      setPrepareStatus('idle');
       setStartStatus('error');
-      setReviewError(
-        'A revisão pode ter ficado desatualizada e foi descartada. Prepare uma nova revisão antes de iniciar a missão.',
-      );
+      setReviewError(humanizeMissionStartError(rawMessage));
+      useProductNavigationStore
+        .getState()
+        .openMission(capturedReview.missionId);
     } finally {
       if (
         generation === startGenerationRef.current &&
@@ -603,8 +825,11 @@ export function MissionSetup() {
                 data-state={state}
                 aria-current={state === 'current' ? 'step' : undefined}
               >
+                <span className="mission-setup__progress-dot" aria-hidden="true">
+                  {state === 'completed' ? '✓' : index + 1}
+                </span>
                 <span className="mission-setup__progress-label">{label}</span>
-                <span className="mission-setup__progress-state">
+                <span className="mission-setup__progress-state mission-setup__sr-only">
                   {state === 'current'
                     ? 'Atual'
                     : state === 'completed'
@@ -685,6 +910,7 @@ export function MissionSetup() {
             recommendationStale={recommendationStale}
             revision={draft.revision}
             inventory={inventory}
+            entryContext={entryContext}
             onRosterChange={changeRoster}
             onBack={() => setStep('mission')}
             onContinue={() => {
@@ -704,6 +930,11 @@ export function MissionSetup() {
             prepareStatus={prepareStatus}
             startStatus={startStatus}
             error={reviewError}
+            backLabel={
+              entryContext?.kind === 'pet-studio'
+                ? 'Voltar para aparência'
+                : undefined
+            }
             onBack={leaveReview}
             onRetryPrepare={retryPrepare}
             onStart={() => void startMission()}

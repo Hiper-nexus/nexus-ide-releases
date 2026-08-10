@@ -1,157 +1,22 @@
-/* Agent picker, auto-update (badge + modal).
-   Módulo extraído do antigo global.css monolítico — a ordem de import
-   em global.css preserva a cascata original. */
-
-/* ---- Agent picker dialog ---- */
-.agent-picker {
-  position: fixed;
-  /* Hard modal, but leave the top chrome free so Jarvis stays reachable. */
-  top: var(--bar-height);
-  right: 0;
-  bottom: 0;
-  left: 0;
-  z-index: var(--z-hard-modal);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.agent-picker__overlay {
-  position: absolute;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.55);
-}
-
-.agent-picker__panel {
-  position: relative;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  padding: 20px;
-  min-width: 320px;
-  max-width: 420px;
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
-}
-
-/* Voice panel styles live in voice-settings.css (single source of truth). */
-
-.agent-picker__title {
-  margin: 0 0 16px;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text);
-}
-
-.agent-picker__empty {
-  color: var(--text-dim);
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-.agent-picker__empty code {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--accent);
-}
-
-.agent-picker__label {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--text-dim);
-  margin-bottom: 12px;
-}
-
-.agent-picker__select {
-  background: var(--bg);
-  border: 1px solid var(--border-strong);
-  color: var(--text);
-  font-size: 13px;
-  padding: 6px 8px;
-  border-radius: var(--radius-md);
-  outline: none;
-  cursor: pointer;
-  width: 100%;
-}
-
-.agent-picker__select-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-.agent-picker__select-row .agent-picker__select {
-  min-width: 0;
-  flex: 1 1 auto;
-}
-
-.agent-picker__select:focus {
-  border-color: var(--accent);
-}
-
-.agent-picker__hint {
-  font-size: 11px;
-  color: var(--text-dim);
-  margin: 4px 0 12px;
-  line-height: 1.5;
-}
-
-.agent-picker__error {
-  margin: 0 0 12px;
-  color: var(--danger);
-  font-size: 11px;
-  line-height: 1.45;
-}
-
-.agent-picker__actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 16px;
-}
-
-.agent-picker__btn {
-  background: transparent;
-  border: 1px solid var(--border-strong);
-  color: var(--text);
-  font-size: 12px;
-  padding: 6px 14px;
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  transition: background 120ms ease;
-}
-
-.agent-picker__btn:hover {
-  background: var(--accent-soft);
-}
-
-.agent-picker__btn--primary {
-  background: var(--btn-primary);
-  border-color: var(--btn-primary);
-  color: var(--btn-primary-ink);
-  font-weight: 600;
-}
-
-.agent-picker__btn--primary:hover {
-  background: var(--btn-primary-hover);
-  border-color: var(--btn-primary-hover);
-}
-
-.agent-picker__btn--primary:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-/* ---- Auto-update: status chip + modal ---- */
+/* Auto-update status chip and modal. */
 
 .update-status-btn {
+  appearance: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 5px;
+  padding: 4px 10px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 11px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
 }
 
 .update-status-btn__glyph {
@@ -176,42 +41,25 @@
   display: none;
 }
 
-.workspace-bar__btn--update {
-  color: var(--accent);
-  border-color: var(--accent-strong, color-mix(in srgb, var(--accent) 28%, transparent));
-}
-
-.workspace-bar__btn--update-idle,
-.workspace-bar__btn--update-uptodate {
+.update-status-btn--idle,
+.update-status-btn--uptodate {
   color: var(--text-dim);
   border-color: var(--border-strong);
 }
 
-.workspace-bar__btn--update-checking,
-.workspace-bar__btn--update-unsupported {
+.update-status-btn--checking,
+.update-status-btn--unsupported {
   color: var(--accent);
-}
-
-.workspace-bar__btn--update-ready {
-  color: var(--ok, #9ece6a);
-  border-color: currentColor;
-}
-
-.workspace-bar__btn--update-error {
-  color: var(--danger);
-  border-color: currentColor;
-}
-
-.workspace-bar__btn--update-downloading {
-  animation: voice-orb-breathe 1.4s ease-in-out infinite;
 }
 
 .update-status-btn--ready {
   color: var(--ok, #9ece6a);
+  border-color: currentColor;
 }
 
 .update-status-btn--error {
   color: var(--danger);
+  border-color: currentColor;
 }
 
 .update-status-btn--checking,
@@ -222,10 +70,7 @@
 .update-modal__backdrop {
   position: fixed;
   inset: 0;
-  /* Era 1300 solto. Mesmo degrau, agora nomeado — e finalmente eficaz: o
-     modal vive na camada de overlay (H6), não mais preso ao contexto de
-     empilhamento da .workspace-bar. O fundo (vidro) vem de
-     .overlay-scrim-glass, aplicado no JSX. */
+  /* The modal is portaled into the named overlay layer. */
   z-index: var(--z-confirm);
   display: grid;
   place-items: start end;

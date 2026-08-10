@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useId,
   useRef,
   useState,
@@ -36,6 +37,9 @@ function clampPanelWidth(
   return Math.min(maximum, Math.max(MIN_PANEL_WIDTH, widthPx));
 }
 
+export type ContextualPanelFocusTarget = 'show-control' | 'active-tab';
+export type ContextualPanelPlacement = 'header' | 'inspector';
+
 export interface ContextualPanelProps {
   readonly flagEnabled?: boolean;
   readonly workspaceId?: string;
@@ -43,15 +47,40 @@ export interface ContextualPanelProps {
   /** Optional controlled active tab; undefined keeps navigation internal. */
   readonly activeTab?: ContextualTab;
   readonly onStateChange?: (state: ContextualPanelState) => void;
+  /** Actual AppShell slot; omitted when the component is not reparented. */
+  readonly placement?: ContextualPanelPlacement;
+  /** Focus handoff owned by a parent that reparents this component. */
+  readonly focusTarget?: ContextualPanelFocusTarget | null;
+  readonly onFocusTargetChange?: (
+    target: ContextualPanelFocusTarget | null,
+  ) => void;
   readonly children?: Partial<Record<ContextualTab, React.ReactNode>>;
   /** Inject storage for tests; defaults to localStorage when available. */
   readonly storage?: KeyValueStorage | null;
   /**
-   * Tabs relevant to the active launcher mode. When provided, irrelevant tabs
-   * are hidden to reduce clutter; the active tab always stays visible so the
-   * user never loses their current context.
+   * Tabs relevant to the active product surface. Unsupported persisted or
+   * requested tabs normalize to Mission when possible, otherwise to the first
+   * supported tab.
    */
   readonly relevantTabs?: readonly ContextualTab[];
+}
+
+function supportedTabs(
+  relevantTabs: readonly ContextualTab[] | undefined,
+): ContextualTab[] {
+  const tabs = relevantTabs
+    ? [...new Set(relevantTabs)]
+    : [...CONTEXTUAL_TABS];
+  return tabs.length > 0 ? tabs : ['mission'];
+}
+
+function normalizeActiveTab(
+  activeTab: ContextualTab,
+  relevantTabs: readonly ContextualTab[] | undefined,
+): ContextualTab {
+  const tabs = supportedTabs(relevantTabs);
+  if (tabs.includes(activeTab)) return activeTab;
+  return tabs.includes('mission') ? 'mission' : (tabs[0] ?? 'mission');
 }
 
 function initialState(
@@ -59,17 +88,22 @@ function initialState(
   initial: Partial<ContextualPanelState> | undefined,
   controlledTab: ContextualTab | undefined,
   storage: KeyValueStorage | null,
+  relevantTabs: readonly ContextualTab[] | undefined,
 ): ContextualPanelState {
   const persisted =
     workspaceId && storage
       ? loadContextualPanelState(workspaceId, storage)
       : null;
-  return contextualPanelStateSchema.parse({
+  const parsed = contextualPanelStateSchema.parse({
     ...initial,
     ...persisted,
     workspaceId,
     ...(controlledTab ? { activeTab: controlledTab } : {}),
   });
+  return {
+    ...parsed,
+    activeTab: normalizeActiveTab(parsed.activeTab, relevantTabs),
+  };
 }
 
 /**
@@ -83,6 +117,9 @@ export function ContextualPanel({
   initial,
   activeTab: controlledTab,
   onStateChange,
+  placement,
+  focusTarget,
+  onFocusTargetChange,
   children,
   storage: storageProp,
   relevantTabs,
@@ -91,7 +128,13 @@ export function ContextualPanel({
     storageProp === undefined ? browserLocalStorage() : storageProp;
 
   const [state, setState] = useState<ContextualPanelState>(() =>
-    initialState(workspaceId, initial, controlledTab, storage),
+    initialState(
+      workspaceId,
+      initial,
+      controlledTab,
+      storage,
+      relevantTabs,
+    ),
   );
   const [viewportWidth, setViewportWidth] = useState(() =>
     typeof window === 'undefined' ? 1440 : window.innerWidth,
@@ -100,7 +143,14 @@ export function ContextualPanel({
     (nav) => nav.requestedTab,
   );
   const requestId = useContextualPanelNavStore((nav) => nav.requestId);
+  const focusRequested = useContextualPanelNavStore(
+    (nav) => nav.focusRequested,
+  );
+  const acknowledgeRequest = useContextualPanelNavStore(
+    (nav) => nav.acknowledge,
+  );
   const handledRequestId = useRef(0);
+  const showButtonRef = useRef<HTMLButtonElement>(null);
   const tabRefs = useRef(new Map<ContextualTab, HTMLButtonElement>());
   const generatedId = useId().replaceAll(':', '');
   const panelDomId = `ctx-panel-${generatedId}`;
@@ -116,6 +166,7 @@ export function ContextualPanel({
           viewportWidth - missionRailWidth - MIN_CANVAS_WIDTH,
         ),
       );
+  const visibleTabs = supportedTabs(relevantTabs);
   const renderedWidth = clampPanelWidth(
     state.widthPx,
     responsiveMaximum,
@@ -129,9 +180,20 @@ export function ContextualPanel({
 
   // Rehydrate when workspace changes (real product path).
   useEffect(() => {
-    setState(initialState(workspaceId, initial, controlledTab, storage));
+    const next = initialState(
+      workspaceId,
+      initial,
+      controlledTab,
+      storage,
+      relevantTabs,
+    );
+    setState(next);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only on workspaceId
   }, [workspaceId]);
+
+  useEffect(() => {
+    onStateChange?.(state);
+  }, [onStateChange, state]);
 
   const update = useCallback(
     (patch: Partial<ContextualPanelState>) => {
@@ -139,16 +201,19 @@ export function ContextualPanel({
         const next = contextualPanelStateSchema.parse({
           ...prev,
           ...patch,
+          activeTab: normalizeActiveTab(
+            patch.activeTab ?? prev.activeTab,
+            relevantTabs,
+          ),
           workspaceId: workspaceId ?? prev.workspaceId,
         });
         if (workspaceId && storage) {
           saveContextualPanelState(workspaceId, next, storage);
         }
-        onStateChange?.(next);
         return next;
       });
     },
-    [onStateChange, workspaceId, storage],
+    [workspaceId, storage, relevantTabs],
   );
 
   useEffect(() => {
@@ -159,14 +224,59 @@ export function ContextualPanel({
   }, [controlledTab]);
 
   useEffect(() => {
-    if (
-      requestId > handledRequestId.current &&
-      requestedTab
-    ) {
-      handledRequestId.current = requestId;
-      update({ activeTab: requestedTab, visible: true });
+    if (requestId <= handledRequestId.current || !requestedTab) return;
+    handledRequestId.current = requestId;
+    if (focusRequested) {
+      onFocusTargetChange?.('active-tab');
     }
-  }, [requestId, requestedTab, update]);
+    update({ activeTab: requestedTab, visible: true });
+    acknowledgeRequest(requestId);
+  }, [
+    acknowledgeRequest,
+    focusRequested,
+    onFocusTargetChange,
+    requestId,
+    requestedTab,
+    update,
+  ]);
+
+  useEffect(() => {
+    const normalized = normalizeActiveTab(state.activeTab, relevantTabs);
+    if (normalized !== state.activeTab) {
+      update({ activeTab: normalized });
+    }
+  }, [relevantTabs, state.activeTab, update]);
+
+  useLayoutEffect(() => {
+    if (!focusTarget) return;
+    let target: HTMLButtonElement | null | undefined;
+    if (focusTarget === 'show-control') {
+      if (
+        state.visible ||
+        (placement !== undefined && placement !== 'header')
+      ) {
+        return;
+      }
+      target = showButtonRef.current;
+    } else {
+      if (
+        !state.visible ||
+        (placement !== undefined && placement !== 'inspector')
+      ) {
+        return;
+      }
+      target = tabRefs.current.get(state.activeTab);
+    }
+    if (!target) return;
+    target.focus();
+    onFocusTargetChange?.(null);
+  }, [
+    focusTarget,
+    onFocusTargetChange,
+    placement,
+    state.activeTab,
+    state.visible,
+  ]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -203,22 +313,25 @@ export function ContextualPanel({
   if (!state.visible) {
     return (
       <button
+        ref={showButtonRef}
         type="button"
         className="ctx-panel__show"
-        onClick={() => update({ visible: true })}
+        onClick={(event) => {
+          if (document.activeElement === event.currentTarget) {
+            onFocusTargetChange?.('active-tab');
+          }
+          update({ visible: true });
+        }}
         title="Abrir painel de contexto (Alt+])"
         aria-label="Abrir painel de contexto"
       >
-        Abrir contexto
+        <PixelIcon name="chevron" size={12} />
       </button>
     );
   }
 
   const copy = CONTEXTUAL_TAB_COPY[state.activeTab];
   const body = children?.[state.activeTab];
-  const visibleTabs = relevantTabs
-    ? [...new Set([...relevantTabs, state.activeTab])]
-    : [...CONTEXTUAL_TABS];
 
   const onTabKeyDown = (
     event: ReactKeyboardEvent<HTMLButtonElement>,
@@ -303,7 +416,12 @@ export function ContextualPanel({
         <button
           type="button"
           className="ctx-panel__hide"
-          onClick={() => update({ visible: false })}
+          onClick={(event) => {
+            if (document.activeElement === event.currentTarget) {
+              onFocusTargetChange?.('show-control');
+            }
+            update({ visible: false });
+          }}
           title="Ocultar (Alt+])"
           aria-label="Ocultar painel"
         >

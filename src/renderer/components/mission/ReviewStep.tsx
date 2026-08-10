@@ -12,6 +12,7 @@ interface ReviewStepProps {
   prepareStatus: MissionPrepareStatus;
   startStatus: MissionStartStatus;
   error: string | null;
+  backLabel?: string;
   onBack(): void;
   onRetryPrepare(): void;
   onStart(): void;
@@ -100,6 +101,7 @@ export function ReviewStep({
   prepareStatus,
   startStatus,
   error,
+  backLabel = 'Voltar para equipe',
   onBack,
   onRetryPrepare,
   onStart,
@@ -142,13 +144,13 @@ export function ReviewStep({
   return (
     <section className="mission-setup__step" aria-labelledby="mission-review-title">
       <header className="mission-setup__step-header">
-        <p className="mission-setup__step-kicker">Revisar</p>
+        <p className="mission-setup__step-kicker">Etapa 3 · Revisar</p>
         <h1 id="mission-review-title" ref={headingRef} tabIndex={-1}>
-          Confira antes de iniciar
+          Revisar e iniciar
         </h1>
         <p>
-          Esta é a revisão produzida pelo processo principal. Iniciar usa
-          exatamente o conteúdo mostrado aqui.
+          Confira o resumo abaixo. Iniciar usa exatamente este conteúdo — dá
+          para ajustar tudo depois.
         </p>
       </header>
 
@@ -181,6 +183,7 @@ export function ReviewStep({
       {prepareStatus === 'error' && !review && (
         <button
           type="button"
+          data-nexus-real-mission-wizard-launch="prepare"
           className="mission-setup__button mission-setup__button--secondary"
           onClick={onRetryPrepare}
         >
@@ -190,36 +193,121 @@ export function ReviewStep({
 
       {review && (
         <div className="mission-review" aria-label="Revisão atual da missão">
-          <section className="mission-setup__continuous-section">
+          <section className="mission-setup__continuous-section mission-review__brief">
             <h2>Entrega solicitada</h2>
-            <h3>{review.title}</h3>
+            <h3 className="mission-review__brief-title">{review.title}</h3>
             <p className="mission-review__objective">{review.objective}</p>
           </section>
 
-          <section className="mission-setup__continuous-section">
-            <h2>Projeto</h2>
-            <p>{review.workspaceLabel}</p>
-          </section>
-          <section className="mission-setup__continuous-section mission-review__lane-summary">
-            <h2>Tipo de trabalho</h2>
-            <h3>{lanePresentation.label}</h3>
-            <p>{lanePresentation.guidance}</p>
-          </section>
-
-          <section className="mission-setup__continuous-section">
-            <h2>Arquivos e referências</h2>
-            {review.contextPaths.length > 0 ? (
-              <ul className="mission-review__plain-list">
-                {review.contextPaths.map((path) => (
-                  <li key={path}>
-                    <code>{path}</code>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p>Nenhum arquivo específico foi incluído.</p>
+          <dl className="mission-review__briefing">
+            <div className="mission-review__brief-row">
+              <dt>Pasta</dt>
+              <dd><code>{review.workspaceLabel}</code></dd>
+            </div>
+            <div className="mission-review__brief-row">
+              <dt>Equipe</dt>
+              <dd>
+                {review.roster.length}{' '}
+                {review.roster.length === 1 ? 'papel' : 'papéis'} ·{' '}
+                {review.roster
+                  .filter((agent) => agent.category === 'orchestrator')
+                  .length}{' '}
+                coordenação · {workerCount}{' '}
+                {workerCount === 1 ? 'execução' : 'execuções'}
+              </dd>
+            </div>
+            <div className="mission-review__brief-row">
+              <dt>Modo</dt>
+              <dd>
+                {lanePresentation.label} — {lanePresentation.guidance}
+              </dd>
+            </div>
+            <div className="mission-review__brief-row">
+              <dt>Paralelo</dt>
+              <dd>
+                até {parallelism} {parallelism === 1 ? 'frente' : 'frentes'} ao
+                mesmo tempo
+              </dd>
+            </div>
+            <div className="mission-review__brief-row">
+              <dt>Contexto</dt>
+              <dd>
+                {review.contextPaths.length > 0 ? (
+                  <span className="mission-review__chips">
+                    {review.contextPaths.map((path) => (
+                      <code key={path}>{path}</code>
+                    ))}
+                  </span>
+                ) : (
+                  'Nenhum arquivo específico'
+                )}
+              </dd>
+            </div>
+            {review.acceptanceCriteria &&
+              review.acceptanceCriteria.length > 0 && (
+                <div className="mission-review__brief-row">
+                  <dt>Pronto quando</dt>
+                  <dd>
+                    <ul className="mission-review__plain-list">
+                      {review.acceptanceCriteria.map((criterion) => (
+                        <li key={criterion}>{criterion}</li>
+                      ))}
+                    </ul>
+                  </dd>
+                </div>
+              )}
+            {review.permissions.length > 0 && (
+              <div className="mission-review__brief-row">
+                <dt>Permissões</dt>
+                <dd>
+                  <ul className="mission-review__plain-list">
+                    {review.permissions.map((permission) => (
+                      <li key={permission.id}>
+                        {permission.label}
+                        {permission.detail ? ` — ${permission.detail}` : ''}
+                      </li>
+                    ))}
+                  </ul>
+                </dd>
+              </div>
             )}
-          </section>
+            {review.warnings.length > 0 && (
+              <div className="mission-review__brief-row mission-review__brief-row--warn">
+                <dt>Atenção</dt>
+                <dd>
+                  <ul className="mission-review__warnings">
+                    {review.warnings.map((warning) => (
+                      <li key={warning}>{warning}</li>
+                    ))}
+                  </ul>
+                </dd>
+              </div>
+            )}
+            {review.attachments && review.attachments.length > 0 && (
+              <div className="mission-review__brief-row">
+                <dt>Anexos</dt>
+                <dd>
+                  <ul className="mission-review__detail-list">
+                    {review.attachments.map((attachment) => (
+                      <li key={`${attachment.path}:${attachment.sha256}`}>
+                        <strong>
+                          {attachment.path.split(/[\\/]/u).at(-1) ??
+                            attachment.path}
+                        </strong>
+                        <span>
+                          Caminho revisado: <code>{attachment.path}</code>
+                        </span>
+                        <span>
+                          SHA-256: <code>{attachment.sha256}</code>
+                        </span>
+                        <span>Tamanho: {attachment.size} bytes</span>
+                      </li>
+                    ))}
+                  </ul>
+                </dd>
+              </div>
+            )}
+          </dl>
 
           <section className="mission-setup__continuous-section">
             <h2>Equipe</h2>
@@ -227,6 +315,21 @@ export function ReviewStep({
               {review.roster.map((agent) => (
                 <li key={agent.id} className="mission-review__role-card">
                   <div className="mission-review__role-heading">
+                    <span
+                      className="mission-review__role-avatar"
+                      aria-hidden="true"
+                      data-category={agent.category}
+                    >
+                      {agent.category === 'orchestrator'
+                        ? '♛'
+                        : agent.category === 'reviewer'
+                          ? '◎'
+                          : agent.category === 'scout'
+                            ? '⌕'
+                            : agent.category === 'architect'
+                              ? '⬡'
+                              : '⚒'}
+                    </span>
                     <strong>{agent.agentName}</strong>
                     <span>
                       {agent.category === 'orchestrator'
@@ -236,6 +339,10 @@ export function ReviewStep({
                           : agent.category === 'executor'
                             ? 'Implementa a entrega'
                             : 'Apoia a entrega'}
+                    </span>
+                    <span className="mission-review__role-tool">
+                      {agent.cli}
+                      {agent.model ? ` · ${agent.model}` : ''}
                     </span>
                   </div>
                   <dl className="mission-review__authority-list">
@@ -254,44 +361,6 @@ export function ReviewStep({
                 </li>
               ))}
             </ul>
-          </section>
-
-          <section className="mission-setup__continuous-section">
-            <h2>Permissões</h2>
-            {review.permissions.length > 0 ? (
-              <ul className="mission-review__detail-list">
-                {review.permissions.map((permission) => (
-                  <li key={permission.id}>
-                    <strong>{permission.label}</strong>
-                    {permission.detail && <span>{permission.detail}</span>}
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p>Nenhuma permissão adicional foi solicitada.</p>
-            )}
-          </section>
-
-          <section className="mission-setup__continuous-section">
-            <h2>Riscos e avisos</h2>
-            {review.warnings.length > 0 ? (
-              <ul className="mission-review__warnings">
-                {review.warnings.map((warning) => (
-                  <li key={warning}>{warning}</li>
-                ))}
-              </ul>
-            ) : (
-              <p>Nenhum risco específico foi apontado.</p>
-            )}
-          </section>
-
-          <section className="mission-setup__continuous-section">
-            <h2>Trabalho em paralelo</h2>
-            <p>
-              A equipe pode avançar em até {parallelism}{' '}
-              {parallelism === 1 ? 'frente' : 'frentes'} ao mesmo tempo. Esta
-              estimativa considera apenas os papéis da equipe.
-            </p>
           </section>
 
           <details className="mission-setup__disclosure mission-setup__continuous-section">
@@ -358,10 +427,11 @@ export function ReviewStep({
             startStatus === 'loading' ? 'mission-review-status' : undefined
           }
         >
-          Voltar para equipe
+          {backLabel}
         </button>
         <button
           type="button"
+          data-nexus-real-mission-wizard-launch="start"
           className="mission-setup__button mission-setup__button--primary mission-setup__button--start"
           onClick={onStart}
           disabled={startDisabled}

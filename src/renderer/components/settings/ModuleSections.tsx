@@ -5,12 +5,18 @@ import { useOrchStore } from '../../state/orch-store';
 import { useVoiceStore } from '../../voice/voice-store';
 import { CURRENT_RELEASE } from '../../../shared/release-notes';
 import type { DesignDirection } from '../../../shared/settings-types';
+import {
+  isMissionRuntimeSquadId,
+  type Squad,
+} from '../../../shared/orch-types';
 import { UpdateReadinessPanel } from './ObservabilitySections';
 import { AudioDeviceControls } from './AudioDeviceControls';
 import { OrchestratorDefaults } from './OrchestratorDefaults';
 import { MissionDriverSettings } from './MissionDriverSettings';
 import { TerminalPerformanceStatus } from './TerminalPerformanceStatus';
 import { SettingsSectionTitle } from './SettingsSectionTitle';
+import { EmptyState } from '../ActionCard';
+import { SquadEditor } from '../SquadEditor';
 
 /** MÓDULOS sections: Terminal, Voice, Providers, Squads, Marketplace. */
 
@@ -256,9 +262,62 @@ function DesignDial({
   );
 }
 
-export function SquadsSection({ onNavigate }: { onNavigate: () => void }) {
+type SquadOperation = 'import' | 'export' | `delete:${string}`;
+
+type SquadFeedback = {
+  tone: 'info' | 'success' | 'error';
+  message: string;
+};
+
+function createSquadDraft(): Squad {
+  const draftId = crypto.randomUUID();
+  return {
+    id: `squad-${draftId}`,
+    name: '',
+    createdAt: String(Date.now()),
+    builtin: false,
+    orchestratorInstructions: '',
+    agents: [
+      {
+        id: `coordinator-${draftId}`,
+        agentName: 'Coordenador',
+        category: 'orchestrator',
+        cli: 'codex',
+        allowedSkills: [],
+        allowedTools: null,
+      },
+      {
+        id: `executor-${draftId}`,
+        agentName: 'Executor',
+        category: 'executor',
+        cli: 'codex',
+        allowedSkills: [],
+        allowedTools: null,
+      },
+    ],
+  };
+}
+
+function squadResultError(result: unknown): string | null {
+  if (!result || typeof result !== 'object' || !('error' in result)) return null;
+  const error = result.error;
+  return typeof error === 'string' && error.trim() ? error : null;
+}
+
+function squadFailureMessage(cause: unknown, fallback: string): string {
+  return cause instanceof Error && cause.message.trim()
+    ? cause.message
+    : fallback;
+}
+
+export function SquadsSection() {
   const squads = useOrchStore((s) => s.squads);
-  const openPanel = useOrchStore((s) => s.openPanel);
+  const visibleSquads = squads
+    .filter((squad) => !isMissionRuntimeSquadId(squad.id))
+    .sort((a, b) => Number(a.builtin ?? false) - Number(b.builtin ?? false));
+  const [editing, setEditing] = useState<Squad | null>(null);
+  const [feedback, setFeedback] = useState<SquadFeedback | null>(null);
+  const [operation, setOperation] = useState<SquadOperation | null>(null);
   const [leanCode, setLeanCode] = useState(true);
   const [seniorMode, setSeniorMode] = useState(true);
   const [designPro, setDesignPro] = useState(true);
@@ -266,6 +325,7 @@ export function SquadsSection({ onNavigate }: { onNavigate: () => void }) {
   const [designVariance, setDesignVariance] = useState(5);
   const [designMotion, setDesignMotion] = useState(5);
   const [designDensity, setDesignDensity] = useState(5);
+
   useEffect(() => {
     void window.nexus.settings.orchGet().then((o) => {
       setLeanCode(o.leanCode);
@@ -277,12 +337,159 @@ export function SquadsSection({ onNavigate }: { onNavigate: () => void }) {
       setDesignDensity(o.designDensity ?? 5);
     });
   }, []);
+
+  function openCreateEditor() {
+    setFeedback(null);
+    setEditing(createSquadDraft());
+  }
+
+  async function importSquads() {
+    if (operation) return;
+    setOperation('import');
+    setFeedback(null);
+    try {
+      const result = await window.nexus.orch.importSquads();
+      const error = squadResultError(result);
+      if (result.ok) {
+        const count = result.count ?? 0;
+        setFeedback({
+          tone: 'success',
+          message: `Importados ${count} ${count === 1 ? 'squad' : 'squads'}.`,
+        });
+      } else if (!error || error === 'user_denied') {
+        setFeedback({ tone: 'info', message: 'Importação cancelada.' });
+      } else {
+        setFeedback({ tone: 'error', message: error });
+      }
+    } catch (cause) {
+      setFeedback({
+        tone: 'error',
+        message: squadFailureMessage(
+          cause,
+          'Não foi possível importar os squads.',
+        ),
+      });
+    } finally {
+      setOperation(null);
+    }
+  }
+
+  async function exportSquads() {
+    if (operation || visibleSquads.length === 0) return;
+    setOperation('export');
+    setFeedback(null);
+    try {
+      const result = await window.nexus.orch.exportSquads();
+      const error = squadResultError(result);
+      if (result.ok && result.path) {
+        setFeedback({
+          tone: 'success',
+          message: `Squads exportados para ${result.path}.`,
+        });
+      } else if (result.ok) {
+        setFeedback({
+          tone: 'error',
+          message: 'A exportação terminou sem informar o arquivo salvo.',
+        });
+      } else if (!error || error === 'user_denied') {
+        setFeedback({ tone: 'info', message: 'Exportação cancelada.' });
+      } else {
+        setFeedback({ tone: 'error', message: error });
+      }
+    } catch (cause) {
+      setFeedback({
+        tone: 'error',
+        message: squadFailureMessage(
+          cause,
+          'Não foi possível exportar os squads.',
+        ),
+      });
+    } finally {
+      setOperation(null);
+    }
+  }
+
+  async function deleteSavedSquad(squad: Squad) {
+    if (operation) return;
+    const operationId: SquadOperation = `delete:${squad.id}`;
+    setOperation(operationId);
+    setFeedback(null);
+    try {
+      const confirmed = await askConfirm({
+        title: `Apagar o squad "${squad.name}"?`,
+        body: 'O squad salvo será removido. Esta ação não pode ser desfeita.',
+        confirmLabel: 'Apagar squad',
+        cancelLabel: 'Manter squad',
+        danger: true,
+      });
+      if (!confirmed) {
+        setFeedback({ tone: 'info', message: 'Exclusão cancelada.' });
+        return;
+      }
+
+      const result = await window.nexus.orch.deleteSquad(squad.id);
+      const error = squadResultError(result);
+      if (result.ok) {
+        setFeedback({
+          tone: 'success',
+          message: `Squad "${squad.name}" apagado.`,
+        });
+      } else if (error === 'user_denied') {
+        setFeedback({ tone: 'info', message: 'Exclusão cancelada.' });
+      } else {
+        setFeedback({
+          tone: 'error',
+          message: error ?? `Não foi possível apagar o squad "${squad.name}".`,
+        });
+      }
+    } catch (cause) {
+      setFeedback({
+        tone: 'error',
+        message: squadFailureMessage(
+          cause,
+          `Não foi possível apagar o squad "${squad.name}".`,
+        ),
+      });
+    } finally {
+      setOperation(null);
+    }
+  }
+
+  const managementActions = (
+    <div className="settings-squads__actions">
+      <button
+        type="button"
+        className="settings-btn settings-btn--primary"
+        onClick={openCreateEditor}
+        disabled={operation !== null}
+      >
+        Criar squad
+      </button>
+      <button
+        type="button"
+        className="settings-btn"
+        onClick={() => void importSquads()}
+        disabled={operation !== null}
+      >
+        {operation === 'import' ? 'Importando…' : 'Importar'}
+      </button>
+      <button
+        type="button"
+        className="settings-btn"
+        onClick={() => void exportSquads()}
+        disabled={operation !== null || visibleSquads.length === 0}
+      >
+        {operation === 'export' ? 'Exportando…' : 'Exportar'}
+      </button>
+    </div>
+  );
+
   return (
     <section>
       <SettingsSectionTitle>Squads</SettingsSectionTitle>
       <p className="settings-detail__hint">
-        Defina como os especialistas trabalham e abra o painel para criar,
-        importar ou editar seus {squads.length} squads salvos.
+        Defina como os especialistas trabalham e mantenha squads reutilizáveis
+        sem sair das Configurações.
       </p>
 
       <OrchestratorDefaults />
@@ -373,57 +580,99 @@ export function SquadsSection({ onNavigate }: { onNavigate: () => void }) {
           />
         </>
       )}
+
       <div className="settings-section-heading settings-section-heading--with-count">
-        <h4>Squads disponíveis</h4>
-        <span className="settings-chip">{squads.length}</span>
+        <h4>Squads salvos</h4>
+        <span className="settings-chip">{visibleSquads.length}</span>
       </div>
-      <ul className="settings-list">
-        {[...squads]
-          .sort((a, b) => Number(a.builtin ?? false) - Number(b.builtin ?? false))
-          .map((s) => (
-            <li key={s.id} className="settings-list__item">
-              <div className="settings-list__head">
-                <span className="settings-list__title">{s.name}</span>
-                <span className="settings-chip">
-                  {s.builtin ? 'original' : 'seu'}
-                </span>
-                <span className="settings-chip">{s.agents.length} agentes</span>
-                <div className="settings-list__spacer" />
-                {!s.builtin && (
-                  <button
-                    className="settings-btn settings-btn--danger"
-                    title="Apagar este squad (não pode desfazer)"
-                    onClick={() => {
-                      void askConfirm({
-                        title: `Apagar o squad "${s.name}"?`,
-                        body: 'Não dá para desfazer.',
-                        confirmLabel: 'Apagar squad',
-                        danger: true,
-                      }).then((ok) => {
-                        if (ok) void window.nexus.orch.deleteSquad(s.id);
-                      });
-                    }}
-                  >
-                    Apagar
-                  </button>
-                )}
-              </div>
-            </li>
-          ))}
-      </ul>
+      {visibleSquads.length === 0 ? (
+        <EmptyState
+          className="settings-squads__empty"
+          icon="users"
+          title="Nenhum squad salvo"
+          body={
+            <p>
+              Crie uma equipe reutilizável ou importe um inventário de squads.
+            </p>
+          }
+          action={managementActions}
+        />
+      ) : (
+        <>
+          {managementActions}
+          <ul className="settings-list" aria-label="Squads salvos">
+            {visibleSquads.map((squad) => {
+              const deleting = operation === `delete:${squad.id}`;
+              return (
+                <li key={squad.id} className="settings-list__item">
+                  <div className="settings-list__head settings-squads__row">
+                    <span className="settings-list__title">{squad.name}</span>
+                    <span className="settings-chip">
+                      {squad.builtin ? 'original' : 'seu'}
+                    </span>
+                    <span className="settings-chip">
+                      {squad.agents.length}{' '}
+                      {squad.agents.length === 1 ? 'agente' : 'agentes'}
+                    </span>
+                    <div className="settings-squads__row-actions">
+                      <button
+                        type="button"
+                        className="settings-btn"
+                        disabled={operation !== null}
+                        title={
+                          squad.builtin
+                            ? 'Criar uma cópia editável deste squad'
+                            : 'Editar nome, instruções e agentes'
+                        }
+                        onClick={() => {
+                          setFeedback(null);
+                          setEditing(squad);
+                        }}
+                      >
+                        {squad.builtin ? 'Personalizar' : 'Editar'}
+                      </button>
+                      {!squad.builtin ? (
+                        <button
+                          type="button"
+                          className="settings-btn settings-btn--danger"
+                          disabled={operation !== null}
+                          onClick={() => void deleteSavedSquad(squad)}
+                        >
+                          {deleting ? 'Apagando…' : 'Apagar'}
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </>
+      )}
+      {feedback ? (
+        <p
+          className={`settings-squads__feedback settings-squads__feedback--${feedback.tone}`}
+          role={feedback.tone === 'error' ? 'alert' : 'status'}
+          aria-atomic="true"
+        >
+          {feedback.message}
+        </p>
+      ) : null}
       <p className="settings-field__note">
-        Squads que você cria (manuais ou &quot;sob medida&quot;) ficam salvos
-        para sempre. Os originais voltam sozinhos a cada início.
+        Squads criados ou importados ficam disponíveis para novas missões. Os
+        originais do Nexus continuam gerenciados pelo aplicativo.
       </p>
-      <button
-        className="settings-btn settings-btn--primary"
-        onClick={() => {
-          onNavigate();
-          openPanel('squads');
-        }}
-      >
-        Gerenciar no painel de orquestração
-      </button>
+      {editing ? (
+        <SquadEditor
+          key={editing.id}
+          squad={editing}
+          mode={editing.name ? 'edit' : 'create'}
+          onClose={() => setEditing(null)}
+          onSaved={(message) =>
+            setFeedback({ tone: 'success', message })
+          }
+        />
+      ) : null}
     </section>
   );
 }

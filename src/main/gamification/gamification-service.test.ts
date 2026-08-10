@@ -7,6 +7,7 @@ import { GAMIFICATION_CHANNELS } from '../../shared/gamification-types';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { testProjectScope } from '../orch/__tests__/scope-fixture';
 import { ProjectDomainStoreRegistry } from '../orch/project-domain-store-registry';
+import type { ScopedMission, ScopedMissionStore } from '../orch/mission-store';
 import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import {
   INITIAL_PROJECT_MIGRATIONS,
@@ -29,6 +30,38 @@ const CONTEXT_REVISION = 'd'.repeat(64);
 const BASE_SHA = 'a'.repeat(40);
 const HEAD_SHA = 'b'.repeat(40);
 const DIFF_HASH = 'e'.repeat(64);
+
+function completeMission(
+  store: ScopedMissionStore,
+  mission: ScopedMission,
+  evidenceIds: readonly string[] = [],
+): ScopedMission {
+  const running =
+    mission.status === 'running'
+      ? mission
+      : store.setStatus(mission.id, 'running');
+  if (!running) throw new Error('mission fixture did not enter running');
+  const completed = store.transitionLifecycle(
+    mission.id,
+    {
+      updatedAt: running.updatedAt,
+      intentVersion: running.intentVersion ?? 0,
+    },
+    {
+      status: 'done',
+      intentState: 'done',
+      learnings: `Verified test completion for ${mission.title}.`,
+      result: {
+        outcome: 'success',
+        summary: `Verified test completion for ${mission.title}.`,
+        evidenceIds: [...evidenceIds],
+        artifactRefs: [],
+      },
+    },
+  );
+  if (!completed) throw new Error('mission fixture completion CAS failed');
+  return completed;
+}
 
 let baseDir = '';
 const managers: ProjectRuntimeManager[] = [];
@@ -278,7 +311,7 @@ describe('ProjectGamificationService on scoped runtimes', () => {
       missionId: mission.id,
       evidenceIds: ['evidence-efficient'],
     });
-    suite.missions.update(mission.id, { status: 'done' });
+    completeMission(suite.missions, mission, ['evidence-efficient']);
 
     const event = xpEvents(runtimeManager, executionScope).find(
       (candidate) => candidate.entityKey === `mission:${mission.id}`,
@@ -304,7 +337,7 @@ describe('ProjectGamificationService on scoped runtimes', () => {
         missionId: mission.id,
         evidenceIds: [evidenceId],
       });
-      suite.missions.update(mission.id, { status: 'done' });
+      completeMission(suite.missions, mission, [evidenceId]);
     }
     const beforeDuplicateScan = service.snapshot(executionScope);
     suite.handoffs.submit({
@@ -344,7 +377,7 @@ describe('ProjectGamificationService on scoped runtimes', () => {
     const executionScope = scope();
     const suite = registry.forScope(executionScope);
     const mission = suite.missions.create({ title: 'Missão antiga' });
-    suite.missions.update(mission.id, { status: 'done' });
+    completeMission(suite.missions, mission);
     seedTrustedEvidence(
       runtimeManager,
       executionScope,

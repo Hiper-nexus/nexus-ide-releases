@@ -1497,18 +1497,18 @@
   }
 }
 
-/* ---- Toasts ---- */
+/* ---- Toasts (Bridge-style modern cards) ---- */
 .toasts {
   position: fixed;
-  right: 12px;
-  bottom: max(16px, calc(env(safe-area-inset-bottom) + 16px));
+  right: 16px;
+  bottom: max(20px, calc(env(safe-area-inset-bottom) + 20px));
   z-index: var(--z-toast);
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  width: min(340px, calc(100vw - 24px));
-  max-height: calc(100vh - 24px);
-  max-height: calc(100dvh - 24px);
+  gap: 10px;
+  width: min(360px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  max-height: calc(100dvh - 32px);
   overflow: hidden;
   overscroll-behavior: contain;
   pointer-events: none;
@@ -1516,19 +1516,36 @@
 .toast {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
-  padding: 9px 8px 9px 9px;
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.38);
-  animation: toast-in 200ms var(--ease-out-expo);
+  gap: 12px;
+  background: color-mix(in srgb, var(--bg-elevated) 96%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border-strong) 72%, transparent);
+  border-radius: 14px;
+  padding: 14px 12px 14px 14px;
+  box-shadow: 0 10px 32px color-mix(in srgb, #000 28%, transparent),
+    0 2px 8px color-mix(in srgb, #000 16%, transparent);
+  backdrop-filter: blur(14px);
+  animation: toast-in 260ms var(--ease-out-expo);
   pointer-events: auto;
+}
+.toast--warn {
+  border-color: color-mix(in srgb, var(--warn) 34%, var(--border-strong));
+  box-shadow: 0 10px 32px color-mix(in srgb, #000 28%, transparent),
+    inset 3px 0 0 color-mix(in srgb, var(--warn) 72%, transparent);
+}
+.toast--error {
+  border-color: color-mix(in srgb, var(--danger) 34%, var(--border-strong));
+  box-shadow: 0 10px 32px color-mix(in srgb, #000 28%, transparent),
+    inset 3px 0 0 color-mix(in srgb, var(--danger) 72%, transparent);
+}
+.toast--success {
+  border-color: color-mix(in srgb, var(--ok) 30%, var(--border-strong));
+  box-shadow: 0 10px 32px color-mix(in srgb, #000 28%, transparent),
+    inset 3px 0 0 color-mix(in srgb, var(--ok) 68%, transparent);
 }
 @keyframes toast-in {
   from {
     opacity: 0;
-    transform: translateX(16px);
+    transform: translateX(18px) translateY(6px);
   }
   to {
     opacity: 1;
@@ -1543,9 +1560,9 @@
 .toast__icon {
   display: grid;
   place-items: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 6px;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
   flex: 0 0 auto;
   background: color-mix(in srgb, var(--accent) 16%, transparent);
   color: var(--accent);
@@ -1566,13 +1583,14 @@
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 4px;
   min-width: 0;
 }
 .toast__title {
   display: -webkit-box;
   overflow: hidden;
-  font-size: 12px;
+  color: var(--text);
+  font-size: 13px;
   font-weight: 650;
   line-height: 1.35;
   overflow-wrap: anywhere;
@@ -1581,33 +1599,29 @@
 }
 .toast__detail {
   color: var(--text-dim);
-  font-size: 11px;
-  line-height: 1.4;
+  font-size: 12px;
+  line-height: 1.45;
   overflow-wrap: anywhere;
   white-space: normal;
 }
-/* Ação SECUNDÁRIA por decisão: o toast é transitório e o mesmo destino existe
-   no Ops Board — quem ignorar não perde nada. Um CTA sólido no canto criaria
-   um segundo primário competindo com o da tela e, em toast de erro/alerta,
-   colidiria com o ícone semântico (vermelho/âmbar) dentro de 340px. Fica na
-   mesma língua discreta do .confirm__btn: contorno quieto, acento só no
-   hover/foco. */
+/* Toast actions remain secondary to the canonical destination CTA. */
 .toast__action {
   align-self: flex-start;
-  margin-top: 4px;
+  margin-top: 6px;
   min-height: 44px;
-  padding: 8px 12px;
-  border-radius: 6px;
-  border: 1px solid var(--border-strong);
+  padding: 9px 16px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--border-strong) 80%, transparent);
   background: transparent;
   color: var(--text);
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 650;
   cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease;
 }
 .toast__action:hover {
   border-color: var(--accent);
-  background: var(--accent-soft);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 .toast__action:focus-visible {
   outline: 2px solid var(--accent);
@@ -1619,7 +1633,7 @@
   justify-content: center;
   width: 44px;
   height: 44px;
-  margin: -8px -6px 0 0;
+  margin: -10px -8px 0 0;
   background: transparent;
   border: none;
   color: var(--text-dim);

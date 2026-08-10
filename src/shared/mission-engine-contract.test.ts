@@ -15,6 +15,20 @@ const agent = {
   category: 'orchestrator' as const,
   cli: 'codex',
 };
+const executorAgent = {
+  ...agent,
+  id: 'executor',
+  agentName: 'Executor',
+  category: 'executor' as const,
+};
+const reviewerAgent = {
+  ...agent,
+  id: 'reviewer',
+  agentName: 'Reviewer',
+  category: 'reviewer' as const,
+};
+const standardRoster = [agent, executorAgent, reviewerAgent];
+
 
 const progress = { completed: 1, total: 2 };
 
@@ -122,22 +136,52 @@ describe('mission preparation and review', () => {
         objective: 'Revisar o projeto',
         title: 'Revisão',
         contextPaths: ['src/shared'],
+        acceptanceCriteria: ['Nenhum risco crítico permanece sem evidência.'],
         roster: [agent],
         advanced: { lane: 'consult' },
       }),
     ).toEqual({
       objective: 'Revisar o projeto',
       title: 'Revisão',
+      acceptanceCriteria: ['Nenhum risco crítico permanece sem evidência.'],
       contextPaths: ['src/shared'],
       roster: [agent],
       advanced: { lane: 'consult' },
     });
   });
 
+  it('rejects a standard delivery roster without an executor or reviewer', () => {
+    const base = {
+      objective: 'Implementar e verificar a entrega',
+      contextPaths: [],
+      advanced: { lane: 'standard' as const },
+    };
+
+    expect(
+      missionPrepareRequestSchema.safeParse({
+        ...base,
+        roster: [agent, reviewerAgent],
+      }).success,
+    ).toBe(false);
+    expect(
+      missionPrepareRequestSchema.safeParse({
+        ...base,
+        roster: [agent, executorAgent],
+      }).success,
+    ).toBe(false);
+    expect(
+      missionPrepareRequestSchema.safeParse({
+        ...base,
+        roster: standardRoster,
+      }).success,
+    ).toBe(true);
+  });
+
+
   it('keeps preparation text within durable mission-store limits', () => {
     const base = {
       contextPaths: [],
-      roster: [agent],
+      roster: standardRoster,
     };
     expect(
       missionPrepareRequestSchema.safeParse({
@@ -174,6 +218,32 @@ describe('mission preparation and review', () => {
     ).toBe(false);
   });
 
+  it('bounds operator-authored acceptance criteria in prepare and review', () => {
+    const request = {
+      objective: 'Revisar o projeto',
+      contextPaths: [],
+      roster: standardRoster,
+    };
+    expect(
+      missionPrepareRequestSchema.safeParse({
+        ...request,
+        acceptanceCriteria: ['Critério verificável'],
+      }).success,
+    ).toBe(true);
+    expect(
+      missionPrepareRequestSchema.safeParse({
+        ...request,
+        acceptanceCriteria: Array.from({ length: 33 }, (_, index) => `C${index}`),
+      }).success,
+    ).toBe(false);
+    expect(
+      missionPrepareRequestSchema.safeParse({
+        ...request,
+        acceptanceCriteria: ['x'.repeat(2_049)],
+      }).success,
+    ).toBe(false);
+  });
+
   it.each([
     ['authoritySeal', 'renderer-controlled'],
     ['approvalSecret', 'renderer-controlled'],
@@ -185,7 +255,7 @@ describe('mission preparation and review', () => {
       missionPrepareRequestSchema.parse({
         objective: 'Revisar o projeto',
         contextPaths: [],
-        roster: [agent],
+        roster: standardRoster,
         [field]: value,
       }),
     ).toThrow();
@@ -200,6 +270,7 @@ describe('mission preparation and review', () => {
         workspaceLabel: 'nexus-ide',
         contextPaths: ['src/shared'],
         roster: [agent],
+        acceptanceCriteria: ['Nenhum risco crítico permanece sem evidência.'],
         permissions: [
           {
             id: 'workspace-read',

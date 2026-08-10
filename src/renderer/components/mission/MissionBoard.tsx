@@ -5,6 +5,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
 } from 'react';
@@ -20,7 +21,26 @@ import {
 } from '../../../shared/mission-events';
 import { useMissionInspectorStore } from '../../state/mission-inspector-store';
 import { toUserFacingMissionRecovery } from '../../lib/user-facing-mission-error';
+import { listPanes } from '../../lib/split-tree';
+import { askConfirm } from '../../state/confirm-store';
+import { useLayoutStore } from '../../state/layout-store';
+import { useOrchStore } from '../../state/orch-store';
+import { useProductNavigationStore } from '../../state/product-navigation-store';
+import { useWorkspaceStore } from '../../state/workspace-store';
+import {
+  closeMissionNote,
+  closeMissionRuntimeAndPanes,
+} from '../../orch/close-mission-runtime';
+import {
+  discardMissionPrompt,
+  missionActionCopy,
+  missionListAction,
+  removeMissionPrompt,
+  type MissionListAction,
+} from '../../orch/mission-list-action';
+import { promotePlanMissionToExecution } from '../../orch/plan-promote-flow';
 import { MissionGraph } from './MissionGraph';
+import { DirectionComposer } from './DirectionComposer';
 import { MissionInspector } from './MissionInspector';
 import {
   MissionQuestion,
@@ -96,6 +116,19 @@ type HeaderAction = Extract<
   MissionAllowedAction,
   'retry-kickoff' | 'resume' | 'stop'
 >;
+
+type LifecycleAction = Exclude<MissionListAction, 'none'>;
+type PendingBoardAction =
+  | HeaderAction
+  | LifecycleAction
+  | 'promote-plan';
+
+interface BoardActionAttempt {
+  readonly requestedMissionId: string;
+  readonly requestGeneration: number;
+  readonly sessionGeneration: number;
+  readonly invoker: HTMLButtonElement;
+}
 
 const HEADER_ACTIONS: readonly HeaderAction[] = [
   'retry-kickoff',
@@ -182,7 +215,11 @@ export function MissionBoard({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [commandError, setCommandError] = useState<string | null>(null);
   const [journalError, setJournalError] = useState<string | null>(null);
-  const [pendingAction, setPendingAction] = useState<HeaderAction | null>(null);
+  const [pendingAction, setPendingAction] =
+    useState<PendingBoardAction | null>(null);
+  const [actionAnnouncement, setActionAnnouncement] = useState<string | null>(
+    null,
+  );
   const [questionState, setQuestionState] =
     useState<MissionQuestionState>(emptyQuestionState);
   const [workspaceDimensions, setWorkspaceDimensions] =
@@ -190,6 +227,29 @@ export function MissionBoard({
   const [inspectorRatio, setInspectorRatio] = useState(
     DEFAULT_INSPECTOR_RATIO,
   );
+
+  const currentMission = useOrchStore(
+    (state) =>
+      state.missions.find((mission) => mission.id === missionId) ?? null,
+  );
+  const paneMissions = useOrchStore((state) => state.paneMissions);
+  const layoutRoot = useLayoutStore((state) => state.root);
+  const hasVisibleMissionPanes = useMemo(
+    () =>
+      listPanes(layoutRoot).some(
+        (pane) =>
+          (pane.missionId ?? paneMissions[pane.id]) === missionId,
+      ),
+    [layoutRoot, missionId, paneMissions],
+  );
+  const lifecycleAction: MissionListAction = currentMission
+    ? missionListAction(currentMission, hasVisibleMissionPanes)
+    : 'none';
+  const lifecycleCopy = missionActionCopy(lifecycleAction);
+  const canPromotePlan =
+    currentMission?.intentContract?.lane === 'plan' &&
+    currentMission.status !== 'done' &&
+    currentMission.status !== 'failed';
 
   const selectedAgentId = useMissionInspectorStore(
     (state) => state.selectedAgentId,
@@ -205,6 +265,7 @@ export function MissionBoard({
     setLoading(true);
     setLoadError(null);
     setCommandError(null);
+    setActionAnnouncement(null);
     setJournalError(null);
     setPendingAction(null);
     setQuestionState(emptyQuestionState());
@@ -512,6 +573,56 @@ export function MissionBoard({
     window.addEventListener('blur', finishDrag);
   };
 
+  const beginBoardAction = (
+    action: PendingBoardAction,
+    invoker: HTMLButtonElement,
+  ): BoardActionAttempt | null => {
+    if (actionPendingRef.current) return null;
+
+    actionPendingRef.current = true;
+    const attempt: BoardActionAttempt = {
+      requestedMissionId: missionId,
+      requestGeneration: ++actionGenerationRef.current,
+      sessionGeneration: sessionGenerationRef.current,
+      invoker,
+    };
+    setPendingAction(action);
+    setCommandError(null);
+    setActionAnnouncement(null);
+    return attempt;
+  };
+
+  const isCurrentBoardAction = (attempt: BoardActionAttempt): boolean =>
+    missionIdRef.current === attempt.requestedMissionId &&
+    sessionGenerationRef.current === attempt.sessionGeneration &&
+    actionGenerationRef.current === attempt.requestGeneration;
+
+  const finishBoardAction = (
+    attempt: BoardActionAttempt,
+    restoreFocus: boolean,
+  ): void => {
+    if (!isCurrentBoardAction(attempt)) return;
+
+    actionPendingRef.current = false;
+    setPendingAction(null);
+    if (!restoreFocus) return;
+
+    window.setTimeout(() => {
+      if (isCurrentBoardAction(attempt) && attempt.invoker.isConnected) {
+        attempt.invoker.focus({ preventScroll: true });
+      }
+    }, 0);
+  };
+
+  const routeAfterLifecycleSuccess = (): void => {
+    const navigation = useProductNavigationStore.getState();
+    if (useWorkspaceStore.getState().current) {
+      navigation.openTerminal();
+    } else {
+      navigation.openLauncher();
+    }
+  };
+
   const executeCommand = useCallback(
     async (command: MissionEngineCommand): Promise<MissionSnapshot> => {
       const requestedMissionId = missionId;
@@ -532,40 +643,174 @@ export function MissionBoard({
     [missionId],
   );
 
-  const runHeaderAction = (action: HeaderAction): void => {
-    if (actionPendingRef.current) return;
+  const runHeaderAction = (
+    action: HeaderAction,
+    invoker: HTMLButtonElement,
+  ): void => {
+    const attempt = beginBoardAction(action, invoker);
+    if (!attempt) return;
 
-    actionPendingRef.current = true;
-    const requestGeneration = ++actionGenerationRef.current;
-    const sessionGeneration = sessionGenerationRef.current;
-    setPendingAction(action);
-    setCommandError(null);
-
-    void executeCommand({ kind: action, missionId })
-      .catch((reason: unknown) => {
-        if (
-          missionIdRef.current === missionId &&
-          sessionGenerationRef.current === sessionGeneration &&
-          actionGenerationRef.current === requestGeneration
-        ) {
+    void (async () => {
+      let restoreFocus = false;
+      try {
+        await executeCommand({ kind: action, missionId });
+      } catch (reason) {
+        if (isCurrentBoardAction(attempt)) {
           setCommandError(
             toUserFacingMissionRecovery(
               reason,
               'Não foi possível executar esta ação. Tente novamente.',
             ),
           );
+          restoreFocus = true;
         }
-      })
-      .finally(() => {
-        if (
-          missionIdRef.current === missionId &&
-          sessionGenerationRef.current === sessionGeneration &&
-          actionGenerationRef.current === requestGeneration
-        ) {
-          actionPendingRef.current = false;
-          setPendingAction(null);
+      } finally {
+        finishBoardAction(attempt, restoreFocus);
+      }
+    })();
+  };
+
+  const runPlanPromotion = (invoker: HTMLButtonElement): void => {
+    const mission = currentMission;
+    if (
+      !mission ||
+      mission.intentContract?.lane !== 'plan' ||
+      mission.status === 'done' ||
+      mission.status === 'failed'
+    ) {
+      return;
+    }
+    const attempt = beginBoardAction('promote-plan', invoker);
+    if (!attempt) return;
+
+    void (async () => {
+      let restoreFocus = false;
+      try {
+        const result = await promotePlanMissionToExecution(mission);
+        if (!isCurrentBoardAction(attempt)) return;
+
+        if (result.ok) {
+          setActionAnnouncement(
+            result.detail
+              ? `Plano promovido para execução. ${result.detail}`
+              : 'Plano promovido para execução.',
+          );
+        } else if (result.cancelled) {
+          setActionAnnouncement('Execução do plano cancelada.');
+          restoreFocus = true;
+        } else {
+          setCommandError(
+            toUserFacingMissionRecovery(
+              result.error,
+              'Não foi possível promover o plano para execução. Tente novamente.',
+            ),
+          );
+          restoreFocus = true;
         }
-      });
+      } catch (reason) {
+        if (isCurrentBoardAction(attempt)) {
+          setCommandError(
+            toUserFacingMissionRecovery(
+              reason,
+              'Não foi possível promover o plano para execução. Tente novamente.',
+            ),
+          );
+          restoreFocus = true;
+        }
+      } finally {
+        finishBoardAction(attempt, restoreFocus);
+      }
+    })();
+  };
+
+  const runLifecycleAction = (invoker: HTMLButtonElement): void => {
+    const mission = currentMission;
+    const action = lifecycleAction;
+    if (!mission || action === 'none') return;
+
+    const attempt = beginBoardAction(action, invoker);
+    if (!attempt) return;
+
+    void (async () => {
+      let restoreFocus = false;
+      try {
+        if (action === 'close-runtime' || action === 'stop-recovery') {
+          const result = await closeMissionRuntimeAndPanes(
+            mission.id,
+            'mission-board-close',
+          );
+          if (!isCurrentBoardAction(attempt)) return;
+
+          if (!result.ok && result.cancelled) {
+            setActionAnnouncement(
+              action === 'stop-recovery'
+                ? 'Parada da recuperação cancelada.'
+                : 'Encerramento cancelado.',
+            );
+            restoreFocus = true;
+            return;
+          }
+          if (!result.ok) {
+            setCommandError(
+              toUserFacingMissionRecovery(
+                result.error,
+                'Não foi possível encerrar a missão com segurança. Tente novamente.',
+              ),
+            );
+            restoreFocus = true;
+            return;
+          }
+
+          setActionAnnouncement(
+            action === 'stop-recovery'
+              ? 'Recuperação automática parada. Histórico preservado.'
+              : closeMissionNote(result.terminatedSessionIds.length),
+          );
+          routeAfterLifecycleSuccess();
+          return;
+        }
+
+        const prompt =
+          action === 'remove'
+            ? removeMissionPrompt(mission)
+            : discardMissionPrompt(mission);
+        const confirmed = await askConfirm({ ...prompt, danger: true });
+        if (!isCurrentBoardAction(attempt)) return;
+        if (!confirmed) {
+          setActionAnnouncement(
+            action === 'discard'
+              ? 'Descarte cancelado.'
+              : 'Remoção cancelada.',
+          );
+          restoreFocus = true;
+          return;
+        }
+
+        const result = await window.nexus.orch.removeMission(mission.id);
+        if (!isCurrentBoardAction(attempt)) return;
+        setActionAnnouncement(
+          action === 'discard'
+            ? 'Missão descartada.'
+            : result.removed
+              ? 'Missão removida.'
+              : 'A missão já não estava na lista.',
+        );
+        routeAfterLifecycleSuccess();
+      } catch (reason) {
+        if (isCurrentBoardAction(attempt)) {
+          const fallback =
+            action === 'discard'
+              ? 'Não foi possível descartar a missão. Tente novamente.'
+              : action === 'remove'
+                ? 'Não foi possível remover a missão. Tente novamente.'
+                : 'Não foi possível encerrar a missão com segurança. Tente novamente.';
+          setCommandError(toUserFacingMissionRecovery(reason, fallback));
+          restoreFocus = true;
+        }
+      } finally {
+        finishBoardAction(attempt, restoreFocus);
+      }
+    })();
   };
 
   if (!currentSnapshot) {
@@ -682,12 +927,26 @@ export function MissionBoard({
           <button
             type="button"
             className="mission-board__button mission-board__button--secondary"
+            disabled={pendingAction !== null}
             onClick={() => onOpenTerminals(missionId)}
           >
             Terminais
           </button>
-          {HEADER_ACTIONS.filter((action) =>
-            currentSnapshot.allowedActions.includes(action),
+          {canPromotePlan && (
+            <button
+              type="button"
+              className="mission-board__button"
+              disabled={pendingAction !== null}
+              aria-busy={pendingAction === 'promote-plan'}
+              onClick={(event) => runPlanPromotion(event.currentTarget)}
+            >
+              Executar plano
+            </button>
+          )}
+          {HEADER_ACTIONS.filter(
+            (action) =>
+              currentSnapshot.allowedActions.includes(action) &&
+              (action !== 'stop' || currentMission === null),
           ).map((action) => (
             <button
               key={action}
@@ -699,11 +958,26 @@ export function MissionBoard({
               }`}
               disabled={pendingAction !== null}
               aria-busy={pendingAction === action}
-              onClick={() => runHeaderAction(action)}
+              onClick={(event) =>
+                runHeaderAction(action, event.currentTarget)
+              }
             >
               {HEADER_ACTION_LABELS[action]}
             </button>
           ))}
+          {currentMission && lifecycleAction !== 'none' && (
+            <button
+              type="button"
+              className="mission-board__button mission-board__button--secondary mission-board__button--danger"
+              title={lifecycleCopy.title}
+              aria-label={`${lifecycleCopy.verb}: ${lifecycleCopy.title}`}
+              disabled={pendingAction !== null}
+              aria-busy={pendingAction === lifecycleAction}
+              onClick={(event) => runLifecycleAction(event.currentTarget)}
+            >
+              {lifecycleCopy.verb}
+            </button>
+          )}
         </div>
       </header>
 
@@ -739,6 +1013,17 @@ export function MissionBoard({
       {commandError && (
         <p className="mission-board__inline-error" role="alert">
           {commandError}
+        </p>
+      )}
+
+      {actionAnnouncement && (
+        <p
+          className="mission-board__announcement"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          {actionAnnouncement}
         </p>
       )}
 
@@ -792,6 +1077,17 @@ export function MissionBoard({
           />
         </div>
       </div>
+
+      {currentSnapshot && (
+        <div className="mission-board__direct-bar">
+          <DirectionComposer
+            missionId={currentSnapshot.id}
+            agents={currentSnapshot.agents}
+            disabled={currentSnapshot.state === 'completed'}
+            onCommand={executeCommand}
+          />
+        </div>
+      )}
     </article>
   );
 }

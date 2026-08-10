@@ -40,6 +40,7 @@ import {
   applyVibeNoSandboxFloor,
   type VibeProductMigrations,
 } from './vibe-product-floor';
+import { applyPinkCityDefaultTheme } from './pink-city-default-migration';
 
 /**
  * Terminal settings store: ~/.nexus/settings.json (same user-dir convention
@@ -63,6 +64,8 @@ const audioListeners = new Set<WebContents>();
 const uiListeners = new Set<WebContents>();
 
 function load(): void {
+  let floorChanged = false;
+
   try {
     const raw = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
     const parsed = terminalSettingsSchema.safeParse(raw?.terminal ?? raw);
@@ -114,18 +117,33 @@ function load(): void {
     if (floor.changed) {
       orchSettings = floor.orch;
       productMigrations = floor.productMigrations;
-      try {
-        persist();
+      floorChanged = true;
+    }
+  } catch {
+    // Missing/corrupt file — keep defaults.
+  }
+
+  const pinkCity = applyPinkCityDefaultTheme({
+    terminal: current,
+    productMigrations,
+  });
+  if (pinkCity.changed) {
+    current = pinkCity.terminal;
+    productMigrations = pinkCity.productMigrations;
+  }
+
+  if (floorChanged || pinkCity.changed) {
+    try {
+      persist();
+      if (floorChanged) {
         console.info(
           '[settings] Autopilot floor: sem sandbox de processo e sem ' +
             'atestação crypto no handoff (Hardened só se o operador mudar).',
         );
-      } catch {
-        // Keep in-memory floor even if disk is read-only this boot.
       }
+    } catch {
+      // Keep in-memory migrations even if disk is read-only this boot.
     }
-  } catch {
-    // Missing/corrupt file — keep defaults.
   }
 }
 

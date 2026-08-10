@@ -72,6 +72,35 @@ describe("mission pane authority", () => {
     expect(sameMissionPaneApprovalSeal(current, expected)).toBe(true);
   });
 
+  it("seals only an explicitly requested pending start before the PTY exists", () => {
+    const running = approvedMission();
+    const pending: Mission = {
+      ...running,
+      status: "pending",
+      intentState: "ready_to_start",
+      orchestratorSessionId: undefined,
+      intentContract: {
+        ...running.intentContract!,
+        approvalReviewSha256: "a".repeat(64),
+        dispatchedAt: 12,
+      },
+    };
+
+    expect(createMissionPaneAuthoritySeal({ mission: pending, squad })).not.toBeNull();
+    expect(
+      createMissionPaneAuthoritySeal({
+        mission: {
+          ...pending,
+          intentContract: {
+            ...pending.intentContract!,
+            dispatchedAt: undefined,
+          },
+        },
+        squad,
+      }),
+    ).toBeNull();
+  });
+
   it("still revokes a pane when the approved goal changes", () => {
     const mission = approvedMission();
     const expected = createMissionPaneAuthoritySeal({ mission, squad });

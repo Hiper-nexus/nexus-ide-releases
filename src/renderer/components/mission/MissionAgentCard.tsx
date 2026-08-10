@@ -3,6 +3,7 @@ import type {
   MissionAgentSnapshot,
   MissionUnit,
 } from '../../../shared/mission-engine-contract';
+import { PixelIcon, type PixelIconName } from '../PixelIcon';
 
 const CATEGORY_LABELS: Readonly<
   Record<MissionAgentSnapshot['category'], string>
@@ -13,6 +14,16 @@ const CATEGORY_LABELS: Readonly<
   reviewer: 'Revisão',
   architect: 'Arquitetura',
 };
+
+const CATEGORY_ICONS = {
+  orchestrator: 'orch',
+  scout: 'search',
+  executor: 'terminal',
+  reviewer: 'check',
+  architect: 'grid',
+} as const satisfies Readonly<
+  Record<MissionAgentSnapshot['category'], PixelIconName>
+>;
 
 const STATE_LABELS: Readonly<Record<MissionAgentSnapshot['state'], string>> = {
   queued: 'Na fila',
@@ -87,7 +98,17 @@ export function MissionAgentCard({
       onClick={() => onSelectAgent(agent.id)}
     >
       <span className="mission-agent-card__meta">
-        <span className="mission-agent-card__category">{categoryLabel}</span>
+        <span className="mission-agent-card__category">
+          <span
+            className="mission-agent-card__category-icon"
+            data-agent-category-icon={agent.category}
+          >
+            <PixelIcon name={CATEGORY_ICONS[agent.category]} size={12} />
+          </span>
+          <span className="mission-agent-card__category-label">
+            {categoryLabel}
+          </span>
+        </span>
         <span className="mission-agent-card__state">{stateLabel}</span>
       </span>
 

@@ -16,7 +16,7 @@ export const REAL_MISSION_E2E_TIMEOUT_MS = 30 * 60_000;
 export const REAL_MISSION_E2E_EVIDENCE_FILE = "real-mission-evidence.json";
 export const REAL_MISSION_E2E_CLAUDE_ORCHESTRATOR_EVIDENCE_FILE =
   "real-mission-evidence-claude-orchestrator.json";
-export const REAL_MISSION_E2E_EVIDENCE_SCHEMA_VERSION = 9;
+export const REAL_MISSION_E2E_EVIDENCE_SCHEMA_VERSION = 11;
 export const REAL_MISSION_E2E_BUNDLE_ID = "com.nexuside.app";
 
 export const REAL_MISSION_E2E_CHANNELS = Object.freeze({
@@ -40,9 +40,9 @@ export const REAL_MISSION_E2E_PRODUCT_WIZARD_STEP_RESULT_MESSAGE =
   "nexus:real-mission-product-wizard-step-result";
 
 /**
- * The `agentic-` prefix is product authority, not decoration: it makes the
- * fixture enter the same deterministic Guided Planner used by beginner
- * missions. A harness-only plan is deliberately impossible in schema v9.
+ * The `agentic-*` prefix is product authority, not decoration; fixture,
+ * ephemeral source, runtime, canonical review, and Mission Setup receipt
+ * authorities are distinct in schema v11.
  */
 export const REAL_MISSION_E2E_SQUAD_ID = "agentic-nexus-real-mission-e2e";
 export const REAL_MISSION_E2E_ORCHESTRATOR_ID = "e2e-orchestrator";
@@ -594,6 +594,7 @@ export function realMissionE2EExpectedTaskChain(
 }
 
 interface RealMissionE2EObservationMission {
+  readonly id?: string;
   readonly status?: string;
   readonly intentState?: string;
   readonly intentVersion?: number;
@@ -607,33 +608,54 @@ interface RealMissionE2EObservationMission {
     readonly executionMode?: string;
     readonly lane?: string;
     readonly contextPolicy?: string;
+    readonly contextPaths?: readonly string[];
     readonly approvedAt?: number;
+    readonly approvalReviewSha256?: string;
     readonly dispatchedAt?: number;
     readonly intentVersion?: number;
     readonly squadRevisionHash?: string;
-    readonly orchestratorRuntime?: unknown;
+    readonly orchestratorRuntime?: {
+      readonly adapterId?: string;
+    } | null;
   } | null;
 }
 
+export interface RealMissionE2EReviewReadyExpectation {
+  readonly missionId: string;
+  readonly squadId: string;
+  readonly squadRevisionHash: string;
+  readonly reviewSha256: string;
+  readonly orchestratorCli: RealMissionE2EOrchestratorCli;
+  readonly acceptanceCriteria: readonly string[];
+  readonly contextPaths: readonly string[];
+}
+
+function exactStrings(
+  actual: readonly string[] | undefined,
+  expected: readonly string[],
+): boolean {
+  return (
+    actual !== undefined &&
+    actual.length === expected.length &&
+    actual.every((value, index) => value === expected[index])
+  );
+}
+
 /**
- * The observer must be installed after the exact fixture intent is compiled
- * but before approval can synchronously start the main-owned bootstrap. A
- * variante de orquestrador vem da env do processo (default codex).
+ * The private runner arms observation only after canonical prepare persisted
+ * the exact review fence and runtime squad, and before start may dispatch.
  */
-export function isRealMissionE2EPreApprovalMission(
+export function isRealMissionE2EReviewReadyMission(
   mission: RealMissionE2EObservationMission | null | undefined,
-  orchestratorCli: RealMissionE2EOrchestratorCli = realMissionE2EOrchestratorCli(),
+  expected: RealMissionE2EReviewReadyExpectation,
 ): mission is RealMissionE2EObservationMission {
   const contract = mission?.intentContract;
-  const criteria = contract?.acceptanceCriteria;
-  const acceptanceCriteria = realMissionE2EAcceptanceCriteria(orchestratorCli);
   return (
-    mission?.status === "pending" &&
-    // 0.27.0: zero fricção — nenhuma missão estaciona em awaiting_approval.
+    mission?.id === expected.missionId &&
+    mission.status === "pending" &&
     mission.intentState === "ready_to_start" &&
-    Number.isInteger(mission.intentVersion) &&
-    (mission.intentVersion ?? 0) > 0 &&
-    mission.squadId === REAL_MISSION_E2E_SQUAD_ID &&
+    mission.intentVersion === 1 &&
+    mission.squadId === expected.squadId &&
     mission.orchestratorSessionId == null &&
     contract?.version === 1 &&
     contract.source === "typed" &&
@@ -641,16 +663,14 @@ export function isRealMissionE2EPreApprovalMission(
     contract.executionMode === "autopilot" &&
     contract.lane === "standard" &&
     contract.contextPolicy === "minimal" &&
+    exactStrings(contract.contextPaths, expected.contextPaths) &&
     contract.intentVersion === mission.intentVersion &&
-    contract.approvedAt === undefined &&
+    Number.isInteger(contract.approvedAt) &&
+    contract.approvalReviewSha256 === expected.reviewSha256 &&
     contract.dispatchedAt === undefined &&
-    contract.squadRevisionHash === undefined &&
-    contract.orchestratorRuntime === undefined &&
-    Array.isArray(criteria) &&
-    criteria.length === acceptanceCriteria.length &&
-    criteria.every(
-      (criterion, index) => criterion === acceptanceCriteria[index],
-    )
+    contract.squadRevisionHash === expected.squadRevisionHash &&
+    contract.orchestratorRuntime?.adapterId === expected.orchestratorCli &&
+    exactStrings(contract.acceptanceCriteria, expected.acceptanceCriteria)
   );
 }
 

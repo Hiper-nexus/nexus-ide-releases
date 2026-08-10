@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { useQuotaStore } from '../../state/quota-store';
 import { useAccountStore } from '../../state/account-store';
-import { useSettingsStore } from '../../state/settings-store';
+import { useProductNavigationStore } from '../../state/product-navigation-store';
 import { windowDisplay } from '../../lib/quota-display';
 import type { ProviderQuotaEntry } from '../../../shared/quota-types';
 import { ProviderLogo } from '../ProviderLogo';
@@ -121,7 +121,7 @@ export function UsageQuotaSection() {
   const error = useQuotaStore((s) => s.error);
   const hydrate = useQuotaStore((s) => s.hydrate);
   const refresh = useQuotaStore((s) => s.refresh);
-  const openDrawer = useSettingsStore((s) => s.openDrawer);
+  const openSettings = useProductNavigationStore((s) => s.openSettings);
   // Já hidratado no boot via useAccountController (App.tsx) — aqui é só lookup.
   const accounts = useAccountStore((s) => s.accounts);
   const entries = snapshot.entries;
@@ -219,7 +219,7 @@ export function UsageQuotaSection() {
               <button
                 type="button"
                 className="settings-btn settings-btn--primary"
-                onClick={() => openDrawer('providers')}
+                onClick={() => openSettings('providers')}
               >
                 Abrir Providers
               </button>

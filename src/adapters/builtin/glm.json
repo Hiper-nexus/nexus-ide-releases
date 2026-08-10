@@ -45,7 +45,8 @@
       "API_TIMEOUT_MS": "600000"
     },
     "passthrough": [
-      "ANTHROPIC_AUTH_TOKEN"
+      "ANTHROPIC_AUTH_TOKEN",
+      "ZAI_API_KEY"
     ],
     "ephemeralHome": false
   },

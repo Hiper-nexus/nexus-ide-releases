@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
+
 import {
   projectMissionSnapshot,
+  resolveMissionAgentLiveState,
   type ProjectMissionSnapshotView,
 } from './mission-snapshot';
 
@@ -98,6 +100,12 @@ describe('projectMissionSnapshot', () => {
   it('projects a verified terminal plan as completed', () => {
     const view = runningView();
     view.mission.status = 'done';
+    view.mission.result = {
+      outcome: 'success',
+      summary: 'Mission engine shipped and verified.',
+      evidenceIds: ['evidence-1'],
+      artifactRefs: ['commit-1'],
+    };
     view.tasks[0]!.status = 'done';
     view.panes[0]!.state = 'done';
     view.handoffs = [
@@ -115,7 +123,68 @@ describe('projectMissionSnapshot', () => {
     expect(snapshot.state).toBe('completed');
     expect(snapshot.stateReason).toBeUndefined();
     expect(snapshot.progress).toEqual({ completed: 1, total: 1 });
+    expect(snapshot.result).toEqual(view.mission.result);
     expect(snapshot.allowedActions).toEqual([]);
+  });
+
+  it('marks every roster member done after verified completion closes their panes', () => {
+    const view = runningView();
+    view.mission.status = 'done';
+    view.mission.result = {
+      outcome: 'success',
+      summary: 'Mission engine shipped and verified.',
+      evidenceIds: ['evidence-1'],
+      artifactRefs: ['commit-1'],
+    };
+    view.tasks[0]!.status = 'done';
+    view.panes = [];
+    view.roster = [
+      {
+        id: 'coordinator',
+        agentName: 'Coordinator',
+        category: 'orchestrator',
+        cli: 'codex',
+      },
+      ...view.roster,
+    ];
+
+    const snapshot = projectMissionSnapshot(view);
+
+    expect(snapshot.state).toBe('completed');
+    expect(snapshot.agents.map((agent) => agent.state)).toEqual([
+      'done',
+      'done',
+    ]);
+  });
+
+  it('keeps a canonical result completed despite stale residual projections', () => {
+    const view = runningView();
+    view.mission.status = 'done';
+    view.mission.result = {
+      outcome: 'success',
+      summary: 'Canonical result already committed by MissionEngine.',
+      evidenceIds: ['evidence-1'],
+      artifactRefs: ['commit-1'],
+    };
+    view.tasks[0]!.status = 'pending';
+    view.panes[0]!.state = 'working';
+    view.handoffs = [
+      {
+        id: 'handoff-stale',
+        sourceAgentId: 'agent-1',
+        targetAgentId: 'agent-1',
+        kind: 'handoff',
+        settled: false,
+      },
+    ];
+
+    const snapshot = projectMissionSnapshot(view);
+
+    expect(snapshot.state).toBe('completed');
+    expect(snapshot.stateReason).toBeUndefined();
+    expect(snapshot.allowedActions).toEqual([]);
+    expect(snapshot.result).toEqual(view.mission.result);
+    expect(snapshot.agents.map((agent) => agent.state)).toEqual(['done']);
   });
 
   it('emits only evidence ids and non-authority roster fields', () => {
@@ -149,4 +218,99 @@ describe('projectMissionSnapshot', () => {
       expect(() => projectMissionSnapshot(view)).toThrow();
     },
   );
+});
+
+describe('resolveMissionAgentLiveState', () => {
+  it('projects busy and spawning sessions as working', () => {
+    expect(
+      resolveMissionAgentLiveState({ sessionState: 'busy', taskState: 'queued' }),
+    ).toBe('working');
+    expect(
+      resolveMissionAgentLiveState({
+        sessionState: 'spawning',
+        taskState: 'queued',
+      }),
+    ).toBe('working');
+  });
+
+  it('projects awaiting-input as waiting without inventing it from idle', () => {
+    expect(
+      resolveMissionAgentLiveState({
+        semantic: 'awaiting-input',
+        sessionState: 'idle',
+        taskState: 'queued',
+      }),
+    ).toBe('waiting');
+    expect(
+      resolveMissionAgentLiveState({
+        semantic: 'idle',
+        sessionState: 'idle',
+        taskState: 'queued',
+      }),
+    ).toBe('queued');
+  });
+
+  it('keeps sealed running tasks visible over quiet transport', () => {
+    expect(
+      resolveMissionAgentLiveState({
+        semantic: 'idle',
+        sessionState: 'idle',
+        taskState: 'working',
+      }),
+    ).toBe('working');
+    expect(
+      resolveMissionAgentLiveState({
+        semantic: 'completed',
+        sessionState: 'idle',
+        taskState: 'working',
+      }),
+    ).toBe('working');
+  });
+
+  it('marks a listed pane without a live session as stopped', () => {
+    expect(
+      resolveMissionAgentLiveState({
+        sessionState: null,
+        taskState: 'queued',
+      }),
+    ).toBe('stopped');
+  });
+
+  it('projects hook error as failed and completed idle as done', () => {
+    expect(
+      resolveMissionAgentLiveState({
+        semantic: 'error',
+        sessionState: 'idle',
+        taskState: 'queued',
+      }),
+    ).toBe('failed');
+    expect(
+      resolveMissionAgentLiveState({
+        semantic: 'completed',
+        sessionState: 'idle',
+        taskState: 'done',
+      }),
+    ).toBe('done');
+  });
+});
+
+describe('projectMissionSnapshot live pane preference', () => {
+  it('prefers live pane waiting over task fallback queued', () => {
+    const view = runningView();
+    view.tasks[0]!.status = 'pending';
+    view.panes[0] = {
+      paneId: 'pane-1',
+      agentId: 'agent-1',
+      state: 'waiting',
+      currentUnitId: 'task-1',
+    };
+
+    const snapshot = projectMissionSnapshot(view);
+    expect(snapshot.agents[0]).toMatchObject({
+      id: 'agent-1',
+      state: 'waiting',
+      paneId: 'pane-1',
+      currentUnitId: 'task-1',
+    });
+  });
 });

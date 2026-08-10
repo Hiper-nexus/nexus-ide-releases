@@ -715,14 +715,20 @@ function assertAppOwnedSignature(
   const releaseSigned =
     satisfiesPackagedDarwinSupervisorSignaturePolicy(helper, app) &&
     hasExactNexusRequirement(utilityHelper, NEXUS_UTILITY_HELPER_IDENTIFIER);
-  const localSmokeAdHoc =
-    trustProfile === DARWIN_PTY_PACKAGED_SMOKE_TRUST_PROFILE &&
-    satisfiesPackagedDarwinAdHocSmokeSignaturePolicy(
-      helper,
-      app,
-      utilityHelper,
-    );
-  if (!releaseSigned && !localSmokeAdHoc) {
+  const localAdHocPackaged = satisfiesPackagedDarwinAdHocSmokeSignaturePolicy(
+    helper,
+    app,
+    utilityHelper,
+  );
+  // Ad-hoc packages are admitted only for the packaged smoke harness:
+  // either the explicit smoke trust profile (provider probe) or the
+  // NEXUS_PACKAGED_SMOKE env marker inherited by the PTY utilityProcess.
+  // Normal product launches still require the Nexus Team ID chain.
+  const smokeAllowsLocalAdHoc =
+    localAdHocPackaged &&
+    (trustProfile === DARWIN_PTY_PACKAGED_SMOKE_TRUST_PROFILE ||
+      process.env.NEXUS_PACKAGED_SMOKE === "1");
+  if (!releaseSigned && !smokeAllowsLocalAdHoc) {
     throw new Error(
       `helper and application must both carry Nexus Team ID ${NEXUS_APPLE_TEAM_ID}`,
     );

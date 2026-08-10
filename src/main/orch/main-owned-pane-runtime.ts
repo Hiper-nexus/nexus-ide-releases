@@ -16,7 +16,11 @@ import {
   isFileAuthAdapter,
   trackManagedSession,
 } from "../adapters/managed-credentials";
-import { prepareProviderSpawn } from "../persistence/provider-config-store";
+import {
+  prepareProviderSpawn,
+  prepareProviderSpawnAuthoritative,
+  type ProviderSpawnPreparation,
+} from "../persistence/provider-config-store";
 import {
   getAgentSessionInfo,
   getSessionState,
@@ -238,10 +242,10 @@ export function listVisibleMainOwnedPaneSnapshots(
     }));
 }
 
-export function fallbackPendingSpawnToMain(
+export async function fallbackPendingSpawnToMain(
   pending: PendingMainOwnedSpawn,
   hooks: MainOwnedPaneHooks,
-): OrchPaneSpawnResult | null {
+): Promise<OrchPaneSpawnResult | null> {
   const { missionId, role } = pending.meta;
   if (
     pending.claimed ||
@@ -251,7 +255,7 @@ export function fallbackPendingSpawnToMain(
   ) {
     return null;
   }
-  return spawnMainOwnedMissionPane(
+  return spawnMainOwnedMissionPaneAsync(
     {
       adapterId: pending.request.adapterId,
       model: pending.request.model,
@@ -334,6 +338,7 @@ export function spawnMainOwnedMissionPane(
     role: "orchestrator" | "worker";
   },
   hooks: MainOwnedPaneHooks,
+  authoritativePreparation?: ProviderSpawnPreparation,
 ): OrchPaneSpawnResult {
   const requestId = makeId("orchspawn");
   const paneId = makeId("pane");
@@ -519,24 +524,26 @@ export function spawnMainOwnedMissionPane(
         "orchestrator spawn refused before provider preparation",
     };
   }
-  const prepared = prepareProviderSpawn(adapter.id, {
-    effort: options.effort,
-    accountId: options.accountId,
-    model: options.model,
-    // A decisão de credencial do Claude depende do HOME que o spawn hook vai
-    // aplicar: no HOME efêmero o CLI não alcança a linhagem nativa.
-    isolatedHome: shouldUseEphemeralHome(
-      adapter,
-      requiresSpawnGate({
-        role: options.role,
-        allowedTools: options.allowedTools,
-        allowedSkills: options.allowedSkills,
-      }),
-      {
-        mode: operatorChoice ? "operator-choice" : "hardened",
-      },
-    ),
-  });
+  const prepared =
+    authoritativePreparation ??
+    prepareProviderSpawn(adapter.id, {
+      effort: options.effort,
+      accountId: options.accountId,
+      model: options.model,
+      // A decisão de credencial do Claude depende do HOME que o spawn hook vai
+      // aplicar: no HOME efêmero o CLI não alcança a linhagem nativa.
+      isolatedHome: shouldUseEphemeralHome(
+        adapter,
+        requiresSpawnGate({
+          role: options.role,
+          allowedTools: options.allowedTools,
+          allowedSkills: options.allowedSkills,
+        }),
+        {
+          mode: operatorChoice ? "operator-choice" : "hardened",
+        },
+      ),
+    });
   if (!prepared.ok) return { requestId, ok: false, error: prepared.error };
   let preparedOverrides = prepared.overrides;
   if (nativeReadOnly || missionBoundWritableWorker) {
@@ -661,8 +668,8 @@ export function spawnMainOwnedMissionPane(
 }
 
 /**
- * Async mission-pane spawn — required for ACP transport. PTY path delegates
- * to the synchronous implementation unchanged.
+ * Async mission-pane spawn. Besides ACP, the PTY path uses this boundary to
+ * revalidate Keychain-only AGY auth without blocking Electron's main loop.
  */
 export async function spawnMainOwnedMissionPaneAsync(
   options: PaneSpawnOptions & {
@@ -672,6 +679,33 @@ export async function spawnMainOwnedMissionPaneAsync(
   hooks: MainOwnedPaneHooks,
 ): Promise<OrchPaneSpawnResult> {
   if (getOrchSettings().agentTransport !== "acp") {
+    const adapter = getAdapter(options.adapterId);
+    if (
+      adapter?.kind === "cli-pty" &&
+      adapter.id === "agy" &&
+      !options.accountId
+    ) {
+      const operatorChoice = isOperatorChoicePolicy(
+        getOrchSettings().squadCliPolicy,
+      );
+      const prepared = await prepareProviderSpawnAuthoritative(adapter.id, {
+        effort: options.effort,
+        accountId: options.accountId,
+        model: options.model,
+        isolatedHome: shouldUseEphemeralHome(
+          adapter,
+          requiresSpawnGate({
+            role: options.role,
+            allowedTools: options.allowedTools,
+            allowedSkills: options.allowedSkills,
+          }),
+          {
+            mode: operatorChoice ? "operator-choice" : "hardened",
+          },
+        ),
+      });
+      return spawnMainOwnedMissionPane(options, hooks, prepared);
+    }
     return spawnMainOwnedMissionPane(options, hooks);
   }
   const requestId = makeId("orchspawn");

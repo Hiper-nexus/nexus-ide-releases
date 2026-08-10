@@ -1,19 +1,5 @@
-/* Canvas (xyflow, sticky notes) + Voice (pill, orb, HUD).
-   Módulo extraído do antigo global.css monolítico — a ordem de import
-   em global.css preserva a cascata original. */
+/* Canvas (xyflow, sticky notes) interaction surface. */
 
-/* ---- Canvas view toggle button ---- */
-.workspace-bar__btn--view {
-  border-color: var(--border-strong);
-  min-width: 76px;
-  text-align: center;
-}
-
-.workspace-bar__btn--view-active {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-  color: var(--accent);
-}
 
 /* ---- Canvas container ---- */
 .canvas-container {

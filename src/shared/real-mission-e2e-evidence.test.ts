@@ -598,7 +598,7 @@ describe("real mission E2E v9 advisor participation", () => {
     ).toBe(true);
   });
 
-  it("accepts the immutable runtime squad lineage in a private diagnostic", () => {
+  it("accepts canonical runtime lineage with distinct source and fixture authority", () => {
     const evidence = validPassEvidence("private-runner", {
       skipAdvisorClis: [
         "kimi",
@@ -608,21 +608,21 @@ describe("real mission E2E v9 advisor participation", () => {
         "glm",
       ],
     });
-    const runtimeSquadId =
-      "agentic-runtime-11111111-1111-4111-8111-111111111111";
-    const runtimeHash = sha("private-runtime-squad");
-    const mission = evidence.mission as Record<string, unknown>;
-    const plan = evidence.plan as Record<string, unknown>;
-    mission.squadId = runtimeSquadId;
-    mission.squadRevisionHash = runtimeHash;
-    plan.squadId = runtimeSquadId;
 
     const parsed = parseRealMissionE2EEvidence(evidence);
-    expect(parsed.mission?.squadId).toBe(runtimeSquadId);
-    expect(parsed.mission?.squadSourceId).toBe(
+    expect(parsed.mission?.squadId).toMatch(/^agentic-runtime-/u);
+    expect(parsed.mission?.squadSourceId).toMatch(
+      /^custom-mission-setup-/u,
+    );
+    expect(parsed.mission?.fixtureSquadId).toBe(
       "agentic-nexus-real-mission-e2e",
     );
-    expect(parsed.mission?.squadSourceRevisionHash).not.toBe(runtimeHash);
+    expect(parsed.mission?.squadSourceRevisionHash).not.toBe(
+      parsed.mission?.squadRevisionHash,
+    );
+    expect(parsed.mission?.fixtureSquadRevisionHash).not.toBe(
+      parsed.mission?.squadSourceRevisionHash,
+    );
   });
 
   it("rejects a private runtime squad without the canonical source lineage", () => {

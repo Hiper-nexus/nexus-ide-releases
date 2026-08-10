@@ -77,8 +77,23 @@ export function isAdapterModelAuthenticated(
     accounts,
     preferredAccountId,
   );
+  // Uma CLI que autentica pela PRÓPRIA assinatura (Claude Code, Codex…) não
+  // deposita chave nem conta no Nexus: exigir o modelo em `authReadyModels`
+  // reprovava um coordenador que funciona de verdade e travava a missão em
+  // "a ferramenta escolhida não está pronta" — com o binário logado e
+  // respondendo. Instalada + estratégia de assinatura basta aqui; a fronteira
+  // de spawn continua fail-closed e é ela quem tem a palavra final.
+  const authenticatesItself =
+    provider.authStrategy === 'subscription' ||
+    provider.authStrategy === 'credentialless';
   if (Array.isArray(provider.authReadyModels)) {
-    return provider.authReadyModels.includes(model) || managedAccountReady;
+    // Lista declarada é autoritativa: granularidade por modelo é intencional.
+    // Lista VAZIA não é "nada autorizado" — é ausência de informação, e é
+    // exatamente o que uma CLI de assinatura própria produz.
+    if (provider.authReadyModels.length > 0) {
+      return provider.authReadyModels.includes(model) || managedAccountReady;
+    }
+    return managedAccountReady || authenticatesItself;
   }
   // Rolling compatibility for an older main snapshot. The final spawn
   // boundary remains authoritative and fail-closed.

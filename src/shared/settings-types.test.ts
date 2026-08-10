@@ -3,6 +3,7 @@ import {
   DEFAULT_AUDIO_SETTINGS,
   DEFAULT_ORCH_SETTINGS,
   DEFAULT_TERMINAL_SETTINGS,
+  TERMINAL_THEME_IDS,
   audioSettingsPatchSchema,
   audioSettingsSchema,
   orchSettingsSchema,
@@ -15,9 +16,21 @@ describe('terminalSettingsSchema', () => {
     expect(terminalSettingsSchema.parse({})).toEqual(
       DEFAULT_TERMINAL_SETTINGS,
     );
-    expect(DEFAULT_TERMINAL_SETTINGS.themeId).toBe('nexus-dark');
+    expect(DEFAULT_TERMINAL_SETTINGS.themeId).toBe('nexus-pink-city');
     expect(DEFAULT_TERMINAL_SETTINGS.fontSize).toBe(13);
     expect(DEFAULT_TERMINAL_SETTINGS.performanceMode).toBe('adaptive');
+  });
+
+  it('keeps Pink City and Nexus Dark available as explicit theme selections', () => {
+    expect(TERMINAL_THEME_IDS).toEqual(
+      expect.arrayContaining(['nexus-pink-city', 'nexus-dark']),
+    );
+    expect(
+      terminalSettingsSchema.parse({ themeId: 'nexus-pink-city' }).themeId,
+    ).toBe('nexus-pink-city');
+    expect(terminalSettingsSchema.parse({ themeId: 'nexus-dark' }).themeId).toBe(
+      'nexus-dark',
+    );
   });
 
   it('rejects unknown theme ids', () => {

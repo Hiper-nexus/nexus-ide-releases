@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { PaneModel } from '../../shared/types';
-import { useHomeStore } from '../state/home-store';
+import { routeMissionAttention } from '../lib/mission-attention-route';
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
+import { useProductNavigationStore } from '../state/product-navigation-store';
 import { ActionCard, EmptyState } from './ActionCard';
 import { PaneInteractionSurface } from './PaneInteractionSurface';
 import { PaneToolbar } from './PaneToolbar';
@@ -24,9 +25,8 @@ import {
  * shell, with output, apparently doing something.
  *
  * Here the vacancy looks like a vacancy and says what the workspace is actually
- * doing. Claiming it is one click away, so the operator who WANTS a terminal
- * still gets a real one — the same claim `split`, `＋Terminal`, the Home deck
- * and the voice executor already perform through the store.
+ * doing. Claiming it is one click away, so the operator who wants a terminal
+ * still gets a real one through the same store-backed claim path.
  */
 export function PaneVacancy({ pane }: { readonly pane: PaneModel }) {
   const isFocused = useLayoutStore((state) => state.focusedPaneId === pane.id);
@@ -144,7 +144,7 @@ export function PaneVacancyBody({ pane }: { readonly pane: PaneModel }) {
                   subtitle="Descrever o objetivo no início"
                   onClick={(event) => {
                     event.stopPropagation();
-                    useHomeStore.getState().show();
+                    useProductNavigationStore.getState().openMissionSetup();
                   }}
                 />
               </>
@@ -152,9 +152,9 @@ export function PaneVacancyBody({ pane }: { readonly pane: PaneModel }) {
           />
         ) : (
           <EmptyState
-            icon="warn"
-            role="alert"
-            title={`"${intent.missionTitle}" ainda não abriu nenhum agente`}
+            icon={vacancyMission?.status === 'blocked' ? 'warn' : 'mission'}
+            role={vacancyMission?.status === 'blocked' ? 'alert' : 'status'}
+            title={intent.missionTitle}
             body={
               <>
                 <p>{intent.headline}</p>
@@ -171,7 +171,13 @@ export function PaneVacancyBody({ pane }: { readonly pane: PaneModel }) {
                   subtitle="Diagnóstico e próximo passo"
                   onClick={(event) => {
                     event.stopPropagation();
-                    useOrchStore.getState().openMissionDetail(intent.missionId);
+                    routeMissionAttention({
+                      missionId: intent.missionId,
+                      cause:
+                        vacancyMission?.status === 'blocked'
+                          ? 'technical-failure'
+                          : 'technical-recovery',
+                    });
                   }}
                 />
                 {openTerminal}

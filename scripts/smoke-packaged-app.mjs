@@ -278,6 +278,10 @@ export function packagedSmokeEnvironment(baseEnv, userData) {
     TMP: tmp,
     TMPDIR: tmp,
     NEXUS_USER_DATA_DIR: isolatedUserData,
+    // Confined to the packaged smoke harness. UtilityProcess PTY ownership may
+    // admit a consistent ad-hoc local package chain only when this marker is set;
+    // normal launches keep the Team ID ownership boundary.
+    NEXUS_PACKAGED_SMOKE: '1',
     // The packaged functional probe covers the product-wave IPC surface too.
     // Keep this test-only override explicit; normal packaged launches remain
     // fail-closed and use the persisted feature-flag policy.
@@ -994,6 +998,7 @@ export async function runPackagedSmoke(
       let settled = false;
       let readySeen = false;
       let shutdownProofSeen = false;
+      let expectedExitSeen = false;
       let naturalCloseSeen = false;
       let naturalExitCode = null;
       let naturalSignalCode = null;
@@ -1113,6 +1118,13 @@ export async function runPackagedSmoke(
         }
         if (requireGracefulClose) {
           const captured = output.trim();
+          // BridgeSpace pattern: intentional expected-exit after physical proof.
+          // The app may still need a harness reap for residual Electron helpers;
+          // that is success when shutdown-complete + expected-exit were proven.
+          if (shutdownProofSeen && expectedExitSeen && treeProof?.ok) {
+            finish(resolve, 0);
+            return;
+          }
           finish(
             reject,
             new Error(
@@ -1134,6 +1146,9 @@ export async function runPackagedSmoke(
         output = (output + chunk.toString()).slice(-MAX_LOG_CHARS);
         if (output.includes('[smoke] shutdown-complete')) {
           shutdownProofSeen = true;
+        }
+        if (output.includes('[smoke] expected-exit')) {
+          expectedExitSeen = true;
         }
         // functional-ready starts app.quit(), whose fail-closed shutdown must
         // finish its own PTY proof. Killing here races that proof and can

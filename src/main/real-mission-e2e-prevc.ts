@@ -3,14 +3,11 @@ import fs from "node:fs";
 import path from "node:path";
 
 import {
-  createRealMissionE2ESquadFixture,
   isCurrentProcessRealMissionE2E,
   isCurrentProcessRealMissionProductWizardE2E,
   REAL_MISSION_E2E_GOAL,
   REAL_MISSION_E2E_PRODUCT_WIZARD_ACCEPTANCE_CRITERIA,
-  REAL_MISSION_E2E_SQUAD_ID,
   realMissionE2EAcceptanceCriteria,
-  realMissionE2EAdvisorSkipClis,
   realMissionE2EOrchestratorCli,
 } from "../shared/real-mission-e2e";
 import type { Mission } from "../shared/orch-types";
@@ -23,10 +20,9 @@ import { getContextWorkflowService } from "./context/context-workflow-registry";
 import type { MissionContract } from "./context/contract-compiler";
 import type { ProjectDomainStoreSuite } from "./orch/project-domain-store-registry";
 import {
-  resolveProductWizardRealMissionE2ESquadBinding,
+  resolveCanonicalRealMissionE2ESquadBinding,
   type RealMissionE2ESquadBinding,
 } from "./real-mission-e2e-fixture";
-import { snapshotSquadAuthority } from "./orch/squad-authority-snapshot";
 
 /**
  * Operational PREVC for the packaged release gate.
@@ -45,12 +41,6 @@ const CONTEXT_DOCS = [
   "testing",
 ] as const;
 
-const REAL_MISSION_E2E_SQUAD_REVISION_HASH = snapshotSquadAuthority(
-  createRealMissionE2ESquadFixture(
-    realMissionE2EAdvisorSkipClis(),
-    realMissionE2EOrchestratorCli(),
-  ),
-).hash;
 
 function sameScope(
   left: Readonly<ProjectExecutionScope>,
@@ -81,39 +71,35 @@ interface RealMissionE2EContractProfile {
 }
 
 function realMissionE2EContractProfile(
-  mission: Pick<Mission, "squadId">,
+  mission: Pick<Mission, "squadId" | "title" | "intentContract">,
 ): RealMissionE2EContractProfile | null {
-  if (mission.squadId === REAL_MISSION_E2E_SQUAD_ID) {
-    return {
-      binding: {
-        squadId: REAL_MISSION_E2E_SQUAD_ID,
-        sourceSquadId: REAL_MISSION_E2E_SQUAD_ID,
-        sourceSquadRevisionHash: REAL_MISSION_E2E_SQUAD_REVISION_HASH,
-        squadRevisionHash: REAL_MISSION_E2E_SQUAD_REVISION_HASH,
-      },
-      acceptanceCriteria: realMissionE2EAcceptanceCriteria(
-        realMissionE2EOrchestratorCli(),
-      ),
-      contextPolicy: "minimal",
-    };
-  }
   if (
-    !isCurrentProcessRealMissionProductWizardE2E() ||
-    typeof mission.squadId !== "string"
+    typeof mission.squadId !== "string" ||
+    typeof mission.intentContract?.goal !== "string"
   ) {
     return null;
   }
-  const binding = resolveProductWizardRealMissionE2ESquadBinding(
-    mission.squadId,
-  );
-  return binding
+  const binding = resolveCanonicalRealMissionE2ESquadBinding({
+    squadId: mission.squadId,
+    title: mission.title,
+    objective: mission.intentContract.goal,
+  });
+  if (!binding) return null;
+
+  return isCurrentProcessRealMissionProductWizardE2E()
     ? {
         binding,
         acceptanceCriteria:
           REAL_MISSION_E2E_PRODUCT_WIZARD_ACCEPTANCE_CRITERIA,
         contextPolicy: "on-demand",
       }
-    : null;
+    : {
+        binding,
+        acceptanceCriteria: realMissionE2EAcceptanceCriteria(
+          realMissionE2EOrchestratorCli(),
+        ),
+        contextPolicy: "minimal",
+      };
 }
 
 function isExactRealMissionE2EIntent(
@@ -151,7 +137,8 @@ function isExactRealMissionE2EIntent(
       Number.isInteger(contract.approvedAt) &&
       Number.isInteger(contract.dispatchedAt) &&
       contract.squadRevisionHash === profile.binding.squadRevisionHash &&
-      contract.orchestratorRuntime?.adapterId === "codex" &&
+      contract.orchestratorRuntime?.adapterId ===
+        realMissionE2EOrchestratorCli() &&
       contract.orchestratorRuntime.readOnly === false &&
       contract.orchestratorRuntime.nativeReadOnly === false &&
       contract.parentTaskId === undefined &&

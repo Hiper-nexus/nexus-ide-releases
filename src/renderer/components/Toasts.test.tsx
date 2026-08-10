@@ -37,7 +37,7 @@ describe('Toasts', () => {
     useToastStore.getState().push(
       'error',
       'Não deu pra iniciar a execução',
-      "Error invoking remote method 'orch:missions.approvalIntent': Error: " +
+      "Error invoking remote method 'orch:mission.start': Error: " +
         'guided_plan_preflight_blocked: guided_plan_unborn_with_files',
     );
 

@@ -72,7 +72,7 @@ const CACHE_TTL_MS = 60_000;
 const AGY_AUTHORITATIVE_PROOF_TTL_MS = 5_000;
 const cache = new Map<string, { value: boolean; at: number }>();
 let claudeRefreshInFlight: Promise<ClaudeAuthRefreshResult> | null = null;
-let agyRefreshInFlight: Promise<ClaudeAuthRefreshResult> | null = null;
+let agyRefreshInFlight: Promise<boolean> | null = null;
 
 export interface SubscriptionAuthDetectionOptions {
   /**
@@ -136,6 +136,7 @@ function existsAt(home: string, ...segments: string[]): boolean {
 /** Claude Code stores its OAuth session in the login keychain on macOS. */
 export function claudeKeychainHas(
   execImpl: typeof execFileSync = execFileSync,
+  timeoutMs = 5_000,
 ): boolean {
   if (process.platform !== 'darwin') return false;
   try {
@@ -144,7 +145,7 @@ export function claudeKeychainHas(
       ['find-generic-password', '-s', 'Claude Code-credentials'],
       {
         stdio: 'pipe',
-        timeout: 5_000,
+        timeout: timeoutMs,
         killSignal: 'SIGKILL',
       },
     );
@@ -325,6 +326,35 @@ export interface AgyKeychainProbeOptions {
   readonly bypassCache?: boolean;
 }
 
+export class AgyKeychainProbeUnavailableError extends Error {
+  constructor() {
+    super('AGY Keychain proof is unavailable');
+    this.name = 'AgyKeychainProbeUnavailableError';
+  }
+}
+
+function isAgyKeychainItemNotFound(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const detail = error as {
+    code?: unknown;
+    killed?: unknown;
+    signal?: unknown;
+  };
+  return (
+    (detail.code === 44 || detail.code === '44') &&
+    detail.killed !== true &&
+    (detail.signal === null || detail.signal === undefined)
+  );
+}
+
+function agyKeychainProbeUnavailable(
+  error: unknown,
+): AgyKeychainProbeUnavailableError {
+  return error instanceof AgyKeychainProbeUnavailableError
+    ? error
+    : new AgyKeychainProbeUnavailableError();
+}
+
 function resolveAgyNativeHome(requestedHome: string): string | null {
   if (!path.isAbsolute(requestedHome) || requestedHome.includes('\0')) {
     return null;
@@ -423,10 +453,12 @@ export function agyKeychainCredentialIsUsableAsync(
   const nativeHome = resolveAgyNativeHome(
     options.nativeHome ?? realUserHome(),
   );
-  if (!nativeHome) return Promise.resolve(false);
+  if (!nativeHome) {
+    return Promise.reject(new AgyKeychainProbeUnavailableError());
+  }
   const cached = reusableAgyKeychainValue(nativeHome, options);
   if (cached !== null) return Promise.resolve(cached);
-  return new Promise((resolve) => {
+  const { promise, resolve, reject } = Promise.withResolvers<boolean>();
     try {
       execImpl(
         '/usr/bin/security',
@@ -445,16 +477,24 @@ export function agyKeychainCredentialIsUsableAsync(
           },
         },
         (error, stdout) => {
-          const value = error === null && agyKeychainBlobIsUsable(stdout);
+          if (error) {
+            if (isAgyKeychainItemNotFound(error)) {
+              rememberAgyKeychainValue(nativeHome, false, options);
+              resolve(false);
+            } else {
+              reject(agyKeychainProbeUnavailable(error));
+            }
+            return;
+          }
+          const value = agyKeychainBlobIsUsable(stdout);
           rememberAgyKeychainValue(nativeHome, value, options);
           resolve(value);
         },
       );
-    } catch {
-      rememberAgyKeychainValue(nativeHome, false, options);
-      resolve(false);
+    } catch (error) {
+      reject(agyKeychainProbeUnavailable(error));
     }
-  });
+  return promise;
 }
 
 /** Test seam: drop the memoized AGY keychain probe result. */
@@ -770,7 +810,6 @@ export function refreshAgySubscriptionAuthCache(
     cacheSubscriptionAuth('agy', true);
     return Promise.resolve({ value: true, cacheUpdated: true });
   }
-  if (agyRefreshInFlight) return agyRefreshInFlight;
   const runKeychainProbe =
     keychainProbe ??
     (() =>
@@ -780,9 +819,14 @@ export function refreshAgySubscriptionAuthCache(
         // freeze Main; a positive proof is reusable by the adjacent spawn gate.
         bypassCache: true,
       }));
-  agyRefreshInFlight = Promise.resolve()
-    .then(runKeychainProbe)
-    .catch(() => false)
+  if (!agyRefreshInFlight) {
+    agyRefreshInFlight = Promise.resolve()
+      .then(runKeychainProbe)
+      .finally(() => {
+        agyRefreshInFlight = null;
+      });
+  }
+  return agyRefreshInFlight
     .then((value) => {
       cacheSubscriptionAuth('agy', value);
       return {
@@ -790,10 +834,12 @@ export function refreshAgySubscriptionAuthCache(
         cacheUpdated: value ? cached !== true : cached === true,
       };
     })
-    .finally(() => {
-      agyRefreshInFlight = null;
+    .catch((error) => {
+      if (options.authoritative === true) {
+        throw agyKeychainProbeUnavailable(error);
+      }
+      return { value: false, cacheUpdated: false };
     });
-  return agyRefreshInFlight;
 }
 
 /**

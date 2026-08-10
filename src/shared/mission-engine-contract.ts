@@ -3,11 +3,15 @@ import {
   missionMilestoneSchema,
   squadAgentObjectSchema,
   strictSquadAgentSchema,
+  type SquadAgent,
 } from './orch-types';
 import {
   MISSION_INTENT_GOAL_MAX_CHARS,
+  missionAttachmentSnapshotSchema,
+  missionIntentContractSchema,
   missionLaneSchema,
   missionProjectContextPathSchema,
+  type MissionLane,
 } from './mission-intent';
 export const MISSION_PREPARE_TITLE_MAX_CHARS = 512;
 
@@ -47,6 +51,35 @@ export const missionAdvancedSchema = z
   .object({ lane: missionLaneSchema.optional() })
   .strict();
 export type MissionAdvanced = z.infer<typeof missionAdvancedSchema>;
+export const missionPrepareProfileSchema = z
+  .object({
+    kind: z.literal('pet-studio'),
+    referenceImagePath: z.string().trim().min(1).max(4_096),
+  })
+  .strict();
+export type MissionPrepareProfile = z.infer<
+  typeof missionPrepareProfileSchema
+>;
+
+
+export type MissionDeliveryRosterIssue =
+  | 'executor-required'
+  | 'reviewer-required';
+
+export function missionDeliveryRosterIssue(
+  roster: readonly Pick<SquadAgent, 'category'>[],
+  lane: MissionLane,
+): MissionDeliveryRosterIssue | null {
+  if (lane !== 'standard' && lane !== 'ops') return null;
+  if (!roster.some((agent) => agent.category === 'executor')) {
+    return 'executor-required';
+  }
+  if (!roster.some((agent) => agent.category === 'reviewer')) {
+    return 'reviewer-required';
+  }
+  return null;
+}
+
 
 export const missionPrepareRequestSchema = z
   .object({
@@ -58,10 +91,30 @@ export const missionPrepareRequestSchema = z
       .max(MISSION_PREPARE_TITLE_MAX_CHARS)
       .optional(),
     contextPaths: z.array(missionProjectContextPathSchema).max(64),
+    acceptanceCriteria:
+      missionIntentContractSchema.shape.acceptanceCriteria.optional(),
     roster: z.array(strictSquadAgentSchema).min(1).max(32),
     advanced: missionAdvancedSchema.optional(),
+    profile: missionPrepareProfileSchema.optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((request, context) => {
+    if (request.profile?.kind === 'pet-studio') return;
+    const issue = missionDeliveryRosterIssue(
+      request.roster,
+      request.advanced?.lane ?? 'standard',
+    );
+    if (!issue) return;
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['roster'],
+      message:
+        issue === 'executor-required'
+          ? 'standard delivery roster requires an executor'
+          : 'standard delivery roster requires a reviewer',
+    });
+  });
+
 export type MissionPrepareRequest = z.infer<
   typeof missionPrepareRequestSchema
 >;
@@ -82,7 +135,10 @@ export const missionReviewSchema = z
     objective: z.string().trim().min(1).max(65_536),
     workspaceLabel: z.string().trim().min(1).max(4_096),
     contextPaths: z.array(z.string().trim().min(1).max(4_096)).max(64),
+    acceptanceCriteria:
+      missionIntentContractSchema.shape.acceptanceCriteria.optional(),
     roster: z.array(strictSquadAgentSchema).min(1).max(32),
+    attachments: z.array(missionAttachmentSnapshotSchema).max(6).optional(),
     permissions: z.array(missionPermissionSchema).max(64),
     warnings: z.array(detailSchema).max(64),
     reviewSha256: z.string().regex(/^[a-f0-9]{64}$/),

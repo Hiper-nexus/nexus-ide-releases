@@ -184,6 +184,33 @@ describe("physical HTTP MCP handoff boundary", () => {
     });
     handoffs = createScopedHandoffStore(manager, scope, {
       idFactory: () => `handoff-http-${++nextHandoffId}`,
+      missionEngine: {
+        blockUser: (_scope, input) => {
+          const current = missions.get(input.missionId);
+          if (
+            !current ||
+            current.status !== input.expectedStatus ||
+            current.intentState !== input.expectedIntentState ||
+            current.updatedAt !== input.expectedUpdatedAt ||
+            (current.intentVersion ?? 0) !== input.expectedIntentVersion
+          ) {
+            throw new Error("mission engine lifecycle fence changed");
+          }
+          const updated = missions.transitionLifecycle(
+            input.missionId,
+            {
+              updatedAt: input.expectedUpdatedAt,
+              intentVersion: input.expectedIntentVersion,
+            },
+            {
+              status: "blocked",
+              intentState: "blocked_user",
+              description: input.description,
+            },
+          );
+          if (!updated) throw new Error("mission engine lifecycle CAS changed");
+        },
+      },
     });
     const resolveCommittedReplayCandidate: CommittedPhysicalHandoffReplayCandidateResolver =
       (_candidateScope, candidate) => {

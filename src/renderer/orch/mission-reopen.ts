@@ -3,7 +3,6 @@ import type { PaneModel } from '../../shared/types';
 import { createPane, listPanes } from '../lib/split-tree';
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
-import { useHomeStore } from '../state/home-store';
 import { getActiveWorkspacePath } from '../state/active-workspace';
 import {
   getPaneSessionId,
@@ -13,7 +12,7 @@ import {
 import {
   conflictingOrchestratorPanes,
   hardReopenWouldKillAgents,
-} from './mission-launcher';
+} from './mission-auth-conflict';
 import { presentMainOwnedMissionPane } from './mission-pane-presentation';
 
 /**
@@ -290,9 +289,6 @@ export async function reopenMission(
       (sessionId): sessionId is string => Boolean(sessionId),
     )
   ) {
-    // Mesmo no soft-focus a missão é dona da tela (Home aberto pela paleta
-    // cobriria um grid de pane único — o auto-hide exige 2+ panes).
-    useHomeStore.getState().hide();
     useLayoutStore.getState().focus(panes[0]!.id);
     return acknowledgedReopen(mission.id, existingSessionIds, {
       panes: panes.length,
@@ -315,10 +311,6 @@ export async function reopenMission(
   } else {
     useLayoutStore.getState().setPanes([...keptDurable, ...panes]);
   }
-
-  // A missão reaberta é dona da tela: o Home não pode ficar por cima nem de
-  // um grid de pane único (o auto-hide do deck só dispara com 2+ panes).
-  useHomeStore.getState().hide();
 
   for (const pane of panes) {
     useOrchStore.getState().bindPaneMission(pane.id, mission.id);

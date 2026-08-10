@@ -9,7 +9,6 @@
  */
 
 import {
-  FUNCTIONAL_SMOKE_ARM_SQUAD_ID,
   FUNCTIONAL_SMOKE_FILE_CONTENT,
   FUNCTIONAL_SMOKE_MIN_ADAPTERS,
   FUNCTIONAL_SMOKE_MIN_TOOLS,
@@ -17,6 +16,11 @@ import {
   type FunctionalSmokeResult,
 } from '../shared/smoke-types';
 import { FEATURE_FLAG_IDS } from '../shared/feature-flags';
+import {
+  missionReviewSchema,
+  type MissionPrepareRequest,
+  type MissionReview,
+} from '../shared/mission-engine-contract';
 // Máquina de estados PURA (sem DOM, sem timers, sem imports) — é justamente
 // por isso que o binário empacotado consegue exercitá-la de dentro do preload
 // e provar o contrato do Space no mesmo build que vai para o usuário.
@@ -32,7 +36,6 @@ interface HoldToTalkLike {
 }
 
 export {
-  FUNCTIONAL_SMOKE_ARM_SQUAD_ID,
   FUNCTIONAL_SMOKE_FILE_CONTENT,
   FUNCTIONAL_SMOKE_MIN_ADAPTERS,
   FUNCTIONAL_SMOKE_MIN_TOOLS,
@@ -44,6 +47,45 @@ const MCP_POLL_DELAY_MS = 100;
 // probe deadline above that window so a healthy slow packaged launch cannot be
 // rejected by the wrapper before the MCP-specific poll completes.
 const DEFAULT_PROBE_TIMEOUT_MS = 10_000;
+const FUNCTIONAL_SMOKE_MISSION_REQUEST: MissionPrepareRequest = {
+  objective:
+    'Verify canonical mission preparation without starting any workers.',
+  title: 'Functional smoke: canonical mission preparation',
+  contextPaths: [],
+  roster: [
+    {
+      id: 'functional-smoke-orchestrator',
+      agentName: 'Functional Smoke Orchestrator',
+      category: 'orchestrator',
+      cli: 'codex',
+      allowedSkills: [],
+      allowedTools: [],
+    },
+    {
+      id: 'functional-smoke-executor',
+      agentName: 'Functional Smoke Executor',
+      category: 'executor',
+      cli: 'codex',
+      allowedSkills: [],
+      allowedTools: [],
+    },
+    {
+      id: 'functional-smoke-reviewer',
+      agentName: 'Functional Smoke Reviewer',
+      category: 'reviewer',
+      cli: 'codex',
+      allowedSkills: [],
+      allowedTools: [],
+    },
+  ],
+  advanced: { lane: 'standard' },
+};
+const FUNCTIONAL_SMOKE_PERMISSION_IDS = [
+  'workspace-read',
+  'workspace-write',
+  'local-commands',
+] as const;
+const REVIEW_SHA256_RE = /^[a-f0-9]{64}$/u;
 
 interface McpInfo {
   running: boolean;
@@ -84,16 +126,14 @@ export interface FunctionalSmokeApi {
   voice: {
     getInfo(): Promise<unknown>;
   };
+  mission: {
+    prepare(request: MissionPrepareRequest): Promise<unknown>;
+  };
   orch: {
     getMcpInfo(): Promise<McpInfo>;
     listMissions(): Promise<unknown[]>;
     listSquads(): Promise<unknown[]>;
-    listMissionPanes?(missionId: string): Promise<unknown[]>;
-    /** Intent-first arm: awaiting_goal shell without orchestrator pane. */
-    armMission(input: {
-      title: string;
-      squadId: string;
-    }): Promise<unknown>;
+    listMissionPanes(missionId: string): Promise<unknown[]>;
     /** Lane do operador — deve RECUSAR sessões sem vínculo de missão. */
     sendPaneOperatorInput(input: {
       sessionId: string;
@@ -110,6 +150,10 @@ export interface FunctionalSmokeApi {
     writeConfirmed(sessionId: string, data: string): Promise<boolean>;
     kill(sessionId: string): void;
     onData(sessionId: string, cb: (data: string) => void): () => void;
+    onExit(
+      sessionId: string,
+      cb: (info: { exitCode: number; signal?: number }) => void,
+    ): () => void;
   };
   mcp: {
     invoke(tool: string, args?: Record<string, unknown>): Promise<McpResult>;
@@ -151,6 +195,55 @@ interface FunctionalSmokeDeps {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function parseFunctionalSmokeReview(value: unknown): MissionReview | null {
+  const parsed = missionReviewSchema.safeParse(value);
+  if (!parsed.success) return null;
+  const review = parsed.data;
+  const expectedRoster = FUNCTIONAL_SMOKE_MISSION_REQUEST.roster;
+  const hasExactRoster =
+    review.roster.length === expectedRoster.length &&
+    review.roster.every((agent, index) => {
+      const expected = expectedRoster[index];
+      return (
+        expected !== undefined &&
+        agent.id === expected.id &&
+        agent.agentName === expected.agentName &&
+        agent.category === expected.category &&
+        agent.cli === expected.cli &&
+        agent.providerId === expected.providerId &&
+        agent.model === expected.model &&
+        agent.effort === expected.effort &&
+        agent.instructions === expected.instructions &&
+        agent.ownsPlanDocs === expected.ownsPlanDocs &&
+        agent.persona === expected.persona &&
+        Array.isArray(agent.allowedSkills) &&
+        agent.allowedSkills.length === 0 &&
+        Array.isArray(agent.allowedTools) &&
+        agent.allowedTools.length === 0
+      );
+    });
+  if (
+    review.title !== FUNCTIONAL_SMOKE_MISSION_REQUEST.title ||
+    review.objective !== FUNCTIONAL_SMOKE_MISSION_REQUEST.objective ||
+    review.contextPaths.length !==
+      FUNCTIONAL_SMOKE_MISSION_REQUEST.contextPaths.length ||
+    !review.contextPaths.every(
+      (contextPath, index) =>
+        contextPath === FUNCTIONAL_SMOKE_MISSION_REQUEST.contextPaths[index],
+    ) ||
+    !hasExactRoster ||
+    review.attachments !== undefined ||
+    !REVIEW_SHA256_RE.test(review.reviewSha256) ||
+    review.permissions.length !== FUNCTIONAL_SMOKE_PERMISSION_IDS.length ||
+    !FUNCTIONAL_SMOKE_PERMISSION_IDS.every((permissionId) =>
+      review.permissions.some((permission) => permission.id === permissionId),
+    )
+  ) {
+    return null;
+  }
+  return review;
 }
 
 function hasLoopbackMcpUrl(value: string | null): boolean {
@@ -280,47 +373,29 @@ export async function runFunctionalSmokeProbes(
     return { ok: false, probes, failedProbe: 'settings-ipc' };
   }
 
-  // Intent-first must be the default product path (explicit false = legacy kickoff).
+  // Canonical prepare must return the exact review fence without starting
+  // workers or materializing a mission pane.
   if (
     !(await probe(
-      'intent-first-settings',
-      () => api.settings.orchGet(),
-      (value) =>
-        isRecord(value) && value.intentFirstMissionRuntimeV1 !== false,
-    ))
-  ) {
-    return { ok: false, probes, failedProbe: 'intent-first-settings' };
-  }
-
-  // Arm creates awaiting_goal without binding an orchestrator session or panes.
-  if (
-    !(await probe(
-      'intent-arm',
+      'mission-prepare',
       async () => {
-        const mission = await api.orch.armMission({
-          title: 'Smoke intent arm',
-          squadId: FUNCTIONAL_SMOKE_ARM_SQUAD_ID,
-        });
-        if (!isRecord(mission) || typeof mission.id !== 'string') {
-          return { ok: false };
-        }
-        const panes =
-          typeof api.orch.listMissionPanes === 'function'
-            ? await api.orch.listMissionPanes(mission.id)
-            : [];
-        return { mission, panes };
+        const review = parseFunctionalSmokeReview(
+          await api.mission.prepare(FUNCTIONAL_SMOKE_MISSION_REQUEST),
+        );
+        if (!review) return { review: null, panes: null };
+        return {
+          review,
+          panes: await api.orch.listMissionPanes(review.missionId),
+        };
       },
       (value) =>
         isRecord(value) &&
-        isRecord(value.mission) &&
-        value.mission.intentState === 'awaiting_goal' &&
-        value.mission.orchestratorSessionId == null &&
-        value.mission.status !== 'running' &&
+        isRecord(value.review) &&
         Array.isArray(value.panes) &&
         value.panes.length === 0,
     ))
   ) {
-    return { ok: false, probes, failedProbe: 'intent-arm' };
+    return { ok: false, probes, failedProbe: 'mission-prepare' };
   }
 
   // Product flags are enumerable and each definition exposes killSwitch authority.
@@ -598,7 +673,22 @@ export async function runFunctionalSmokeProbes(
     }
   } finally {
     if (dictationCleanup.unsubscribe) dictationCleanup.unsubscribe();
-    if (dictationCleanup.sessionId) api.pty.kill(dictationCleanup.sessionId);
+    if (dictationCleanup.sessionId) {
+      const sessionId = dictationCleanup.sessionId;
+      await new Promise<void>((resolve) => {
+        let settled = false;
+        const finish = () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          unsubscribeExit();
+          resolve();
+        };
+        const unsubscribeExit = api.pty.onExit(sessionId, () => finish());
+        const timer = setTimeout(finish, 4_000);
+        api.pty.kill(sessionId);
+      });
+    }
   }
 
   return { ok: true, probes, toolCount, adapterCount };

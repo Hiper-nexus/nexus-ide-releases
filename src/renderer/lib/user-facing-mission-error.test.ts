@@ -8,7 +8,7 @@ describe("user-facing mission errors", () => {
   it("maps governed preflight codes to a concrete recovery instruction", () => {
     expect(
       humanizeMissionErrorDetail(
-        "Error invoking remote method 'orch:missions.approveIntent': Error: " +
+        "Error invoking remote method 'orch:mission.start': Error: " +
           "guided_plan_preflight_blocked: guided_plan_unborn_with_files",
       ),
     ).toBe(
@@ -128,7 +128,7 @@ describe("user-facing mission errors", () => {
     expect(
       toUserFacingMissionError(
         new Error(
-          "Error invoking remote method 'orch:missions.approveIntent': Error: " +
+          "Error invoking remote method 'orch:mission.start': Error: " +
             "guided_plan_preflight_blocked: guided_prevc_context_bootstrap_blocked: " +
             "o contexto governado não ficou pronto; blockers=invalid-context-attestation, " +
             "missing-context-attestation; Context not ready.",

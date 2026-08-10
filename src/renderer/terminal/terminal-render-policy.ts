@@ -51,3 +51,23 @@ export function terminalGridChanged(
     previous.rows !== next.rows
   );
 }
+
+/**
+ * O scrollback salvo pode ser reescrito nesta grade?
+ *
+ * Uma TUI desenha moldura com cursor absoluto. A fita serializada carrega a
+ * geometria da captura, então reescrevê-la numa largura diferente entrelaça
+ * caixa e texto — e reflow não desfaz cursor absoluto. Esperar a largura
+ * definitiva antes de escrever não resolve: o problema está nos bytes, não no
+ * instante.
+ *
+ * Fitas antigas não têm largura gravada (`undefined`); replay é permitido para
+ * não apagar histórico de quem atualizou no meio de uma sessão.
+ */
+export function canReplayScrollback(
+  capturedCols: number | undefined,
+  currentCols: number,
+): boolean {
+  if (capturedCols === undefined) return true;
+  return capturedCols === currentCols;
+}

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import {
   useOrchestrationModeStore,
   type PromoteOrchestrationChoice,
@@ -15,43 +15,42 @@ import {
 export function OrchestrationModeDialog() {
   const pending = useOrchestrationModeStore((s) => s.pending);
   const decide = useOrchestrationModeStore((s) => s.decide);
-  const cancelRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const restoreFocusRef = useRef<HTMLElement | null>(null);
   const primaryRef = useRef<HTMLButtonElement>(null);
-  const secondaryRef = useRef<HTMLButtonElement>(null);
   const [templateId, setTemplateId] = useState<WavePackTemplateId | "">("");
+  const titleId = useId();
+  const descriptionId = useId();
 
   useEffect(() => {
     if (!pending) {
       setTemplateId("");
-      return undefined;
+      const restoreTarget = restoreFocusRef.current;
+      restoreFocusRef.current = null;
+      if (restoreTarget?.isConnected) restoreTarget.focus();
+      return;
     }
+
+    if (
+      restoreFocusRef.current === null &&
+      document.activeElement instanceof HTMLElement &&
+      !dialogRef.current?.contains(document.activeElement)
+    ) {
+      restoreFocusRef.current = document.activeElement;
+    }
+
     setTemplateId(pending.templateRequiredForPack ? "landing" : "");
-    const preferred =
-      pending.recommended === "pack" ? primaryRef.current : secondaryRef.current;
-    preferred?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      e.stopImmediatePropagation();
-      e.stopPropagation();
-      if (e.key === "Escape") {
-        e.preventDefault();
-        decide(null);
-        return;
-      }
-      if (e.key !== "Tab") return;
-      e.preventDefault();
-      const focusables = [cancelRef.current, secondaryRef.current, primaryRef.current]
-        .filter((el): el is HTMLButtonElement => Boolean(el));
-      if (focusables.length === 0) return;
-      const active = document.activeElement;
-      const idx = focusables.findIndex((el) => el === active);
-      const next = e.shiftKey
-        ? focusables[(idx <= 0 ? focusables.length : idx) - 1]!
-        : focusables[(idx + 1) % focusables.length]!;
-      next.focus();
-    };
-    window.addEventListener("keydown", onKey, { capture: true });
-    return () => window.removeEventListener("keydown", onKey, { capture: true });
-  }, [pending, decide]);
+    primaryRef.current?.focus();
+  }, [pending]);
+
+  useEffect(
+    () => () => {
+      const restoreTarget = restoreFocusRef.current;
+      restoreFocusRef.current = null;
+      if (restoreTarget?.isConnected) restoreTarget.focus();
+    },
+    [],
+  );
 
   if (!pending) return null;
 
@@ -113,20 +112,58 @@ export function OrchestrationModeDialog() {
 
   return (
     <div
+      ref={dialogRef}
       className="confirm"
       role="dialog"
       aria-modal="true"
-      aria-label={pending.title}
+      aria-labelledby={titleId}
+      aria-describedby={descriptionId}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          decide(null);
+          return;
+        }
+        if (event.key !== "Tab") return;
+
+        event.preventDefault();
+        event.stopPropagation();
+        const focusables = Array.from(
+          event.currentTarget.querySelectorAll<HTMLElement>(
+            'button:not([disabled]), input:not([disabled]):not([type="hidden"]), textarea:not([disabled]), select:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
+          ),
+        ).filter(
+          (element) => element.getAttribute("aria-hidden") !== "true",
+        );
+        if (focusables.length === 0) {
+          event.currentTarget.focus();
+          return;
+        }
+        const currentIndex = focusables.indexOf(
+          document.activeElement as HTMLElement,
+        );
+        const nextIndex = event.shiftKey
+          ? currentIndex <= 0
+            ? focusables.length - 1
+            : currentIndex - 1
+          : (currentIndex + 1) % focusables.length;
+        focusables[nextIndex]?.focus();
+      }}
     >
       <div className="confirm__overlay" onClick={() => decide(null)} />
       <div className="confirm__panel confirm__panel--orch-mode">
-        <h3 className="confirm__title">{pending.title}</h3>
-        <p className="confirm__body">{pending.body}</p>
+        <h3 id={titleId} className="confirm__title">
+          {pending.title}
+        </h3>
+        <p id={descriptionId} className="confirm__body">
+          {pending.body}
+        </p>
         <div className="confirm__orch-choices" role="group" aria-label="Modo de execução">
           {choices.map((choice) => (
             <button
               key={choice.mode}
-              ref={choice.primary ? primaryRef : secondaryRef}
+              ref={choice.primary ? primaryRef : undefined}
               type="button"
               className={`confirm__orch-choice${
                 choice.primary ? " confirm__orch-choice--recommended" : ""
@@ -149,11 +186,10 @@ export function OrchestrationModeDialog() {
             </button>
           ))}
         </div>
-        <label className="confirm__body" style={{ display: "block", marginTop: 12 }}>
+        <label className="confirm__orch-template">
           Template Pack (opcional se o plano já tem ≥2 stories)
           <select
-            className="wizard__input"
-            style={{ display: "block", width: "100%", marginTop: 6 }}
+            className="confirm__orch-template-select"
             value={templateId}
             onChange={(e) =>
               setTemplateId((e.target.value || "") as WavePackTemplateId | "")
@@ -172,7 +208,6 @@ export function OrchestrationModeDialog() {
         </label>
         <div className="confirm__actions">
           <button
-            ref={cancelRef}
             type="button"
             className="confirm__btn"
             onClick={() => decide(null)}

@@ -186,7 +186,10 @@ export function resolveProductionMissionOrchestratorRuntime(
   _squad: Squad,
   orchestrator: SquadAgent,
   deps: MissionOrchestratorRuntimeDeps = productionRuntimeDeps,
+  options: { readonly requireProviderReadiness?: boolean } = {},
 ): MissionOrchestratorRuntimeSnapshot {
+  const requireProviderReadiness =
+    options.requireProviderReadiness !== false;
   const settings = deps.getSettings();
   const operatorChoice = isOperatorChoicePolicy(settings.squadCliPolicy);
   // The approved saved roster owns the route. A profile default is only a
@@ -276,7 +279,12 @@ export function resolveProductionMissionOrchestratorRuntime(
       `${adapter.label} está desativado em Configurações › Providers.`,
     );
   }
-  if (accounts.length > 0 && !account && !operatorChoice) {
+  if (
+    requireProviderReadiness &&
+    accounts.length > 0 &&
+    !account &&
+    !operatorChoice
+  ) {
     throw new Error(
       'Nenhuma conta do orquestrador tem credencial válida fora de cooldown.',
     );
@@ -285,7 +293,7 @@ export function resolveProductionMissionOrchestratorRuntime(
     (runtimeComesFromRoster ? orchestrator.model : undefined) ||
     settings.defaultModel ||
     defaultSquadModelForAdapter(adapterId);
-  if (!account) {
+  if (requireProviderReadiness && !account) {
     const readiness = deps.providerReadiness(adapterId, model);
     if (!readiness.ready) throw new Error(readiness.reason);
   }

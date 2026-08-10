@@ -21,6 +21,7 @@ import {
 import { parseReviewReport } from "../context/review-council";
 import { parseTrustedEvidence } from "../context/sensor-broker";
 import type { ProjectRuntimeManager } from "../runtime/project-runtime-manager";
+import type { MissionEngine } from "./mission-engine";
 import { retainAcceptedHandoffMemoryBestEffort } from "../memory/trusted-memory";
 import {
   encodeJsonArray,
@@ -400,16 +401,25 @@ function assertEvidenceMatches(
   }
 }
 
+export interface ScopedHandoffStoreOptions extends ScopedStoreOptions {
+  readonly missionEngine?: Pick<MissionEngine, "blockUser">;
+}
+
 export class ScopedHandoffStore {
   readonly #binding: ScopedStoreBinding;
+  readonly #configuredMissionEngine:
+    | Pick<MissionEngine, "blockUser">
+    | undefined;
   readonly #dispatchChangeListeners = new Set<ScopedStoreChangeListener>();
 
   constructor(
     runtimeManager: ProjectRuntimeManager,
     scope: ProjectExecutionScope,
-    options: ScopedStoreOptions = {},
+    options: ScopedHandoffStoreOptions = {},
   ) {
-    this.#binding = new ScopedStoreBinding(runtimeManager, scope, options);
+    const { missionEngine, ...storeOptions } = options;
+    this.#binding = new ScopedStoreBinding(runtimeManager, scope, storeOptions);
+    this.#configuredMissionEngine = missionEngine;
   }
 
   get scope(): ProjectExecutionScope {
@@ -810,7 +820,9 @@ export class ScopedHandoffStore {
           mcpBoundary.dispatchTransition.detail,
           {
             emitClarify: emitWorkerDecisionClarify,
-            missionEngine: missionEngineForScope(this.#binding.scope),
+            missionEngine:
+              this.#configuredMissionEngine ??
+              missionEngineForScope(this.#binding.scope),
           },
         );
       } else {
@@ -2082,7 +2094,7 @@ export class ScopedHandoffStore {
 export function createScopedHandoffStore(
   runtimeManager: ProjectRuntimeManager,
   scope: ProjectExecutionScope,
-  options: ScopedStoreOptions = {},
+  options: ScopedHandoffStoreOptions = {},
 ): ScopedHandoffStore {
   return new ScopedHandoffStore(runtimeManager, scope, options);
 }

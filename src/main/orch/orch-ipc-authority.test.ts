@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ORCH_CHANNELS } from '../../shared/orch-channels';
 import type { Squad } from '../../shared/orch-types';
 import type { ProjectExecutionScope } from '../../shared/types';
-import { PET_STUDIO_SQUAD } from '../../shared/pet-studio';
+import { withMissionLifecycleLock } from './mission-lifecycle-lock';
 
 interface TestOwner {
   id: number;
@@ -95,22 +95,15 @@ const harness = vi.hoisted(() => {
     buildRecipeOverlay: vi.fn(),
     proposeRecipes: vi.fn(),
     saveCatalogOverlay: vi.fn(),
-    bootstrapMissionOrchestrator: vi.fn(),
     stopPlanPromotion: vi.fn(),
     restartPlanPromotion: vi.fn(),
     warmSquadRuntimeSubscriptionAuth: vi.fn(
       async (..._args: unknown[]) => {},
     ),
-    submitMissionKickoff: vi.fn(
-      async (_owner: unknown, _raw: unknown) => ({ ok: true }),
-    ),
     terminatePty: vi.fn(async (_sessionId: string) => true),
     missionRemovalCandidate: vi.fn(),
     prepareMissionRemoval: vi.fn(),
     removeMission: vi.fn(),
-    missionApprovalCandidate: vi.fn(),
-    approveMission: vi.fn(),
-    submitMissionIntent: vi.fn(),
     planPromotionCandidate: vi.fn(),
     promotePlan: vi.fn(),
     missionLifecycleCandidate: vi.fn(),
@@ -393,25 +386,6 @@ vi.mock('../pty/pty-manager', () => ({
 }));
 vi.mock('./renderer-mission-authority', () => ({
   RendererMissionAuthority: class {
-    submitIntentFromRenderer(owner: unknown, input: unknown) {
-      return harness.submitMissionIntent(owner, input);
-    }
-    missionApprovalCandidateFromRenderer(owner: unknown, input: unknown) {
-      return harness.missionApprovalCandidate(owner, input);
-    }
-    approveIntentFromRenderer(
-      owner: unknown,
-      input: unknown,
-      fence: string,
-      approvalReviewSha256: string,
-    ) {
-      return harness.approveMission(
-        owner,
-        input,
-        fence,
-        approvalReviewSha256,
-      );
-    }
     planPromotionCandidateFromRenderer(owner: unknown, input: unknown) {
       return harness.planPromotionCandidate(owner, input);
     }
@@ -472,8 +446,7 @@ vi.mock('./renderer-mission-authority', () => ({
   },
 }));
 vi.mock('./mission-orchestrator-bootstrap', () => ({
-  bootstrapMissionOrchestratorForScope: vi.fn(),
-  bootstrapMissionOrchestratorFromRenderer: harness.bootstrapMissionOrchestrator,
+  resumeBlockedMissionBootstrapFromRenderer: vi.fn(),
   stopMissionOrchestratorBeforePlanPromotionForScope:
     harness.stopPlanPromotion,
   restartMissionOrchestratorAfterPlanPromotionForScope:
@@ -486,14 +459,6 @@ vi.mock('./squad-runtime-inventory', async (importOriginal) => {
     ...actual,
     warmSquadRuntimeSubscriptionAuth: (...args: unknown[]) =>
       harness.warmSquadRuntimeSubscriptionAuth(...args),
-  };
-});
-vi.mock('./mission-kickoff', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('./mission-kickoff')>();
-  return {
-    ...actual,
-    submitMissionKickoffFromRenderer: (owner: unknown, raw: unknown) =>
-      harness.submitMissionKickoff(owner, raw),
   };
 });
 vi.mock("./promoted-plan-git-authority", () => ({
@@ -585,14 +550,10 @@ import {
   getOrchestrationStartHealth,
   initOrchestration,
   ASYNC_ENRICHMENT_TIMEOUT_MS,
-  missionApproveIntentSchema,
-  missionSubmitIntentSchema,
   registerOrchIpc,
   registerOrchListener,
   unregisterOrchListener,
 } from './orch-ipc';
-import { consumeImmediateSquadSpawnGrant } from './spawn-authority';
-import { clearWizardPlanReviewGrantsForTests } from './mission-wizard-plan-review-grant';
 import {
   startOrchestrationCoordinator,
   stopOrchestrationCoordinator,
@@ -669,6 +630,18 @@ const CANONICAL_ROSTER = Object.freeze([
     id: 'orchestrator',
     agentName: 'Maestro',
     category: 'orchestrator' as const,
+    cli: 'codex',
+  },
+  {
+    id: 'executor',
+    agentName: 'Implementer',
+    category: 'executor' as const,
+    cli: 'codex',
+  },
+  {
+    id: 'reviewer',
+    agentName: 'Reviewer',
+    category: 'reviewer' as const,
     cli: 'codex',
   },
 ]);
@@ -912,64 +885,6 @@ beforeEach(() => {
     fence: 'removal-fence-a',
   });
   harness.removeMission.mockReturnValue(true);
-  harness.missionApprovalCandidate.mockReturnValue({
-    missionId: 'mission-1',
-    title: 'Corrigir o golden path',
-    goal: 'Implementar, testar e entregar a missão real',
-    lane: 'standard',
-    risk: 'sensitive',
-    executionMode: 'autopilot',
-    contextPolicy: 'on-demand',
-    acceptanceCriteria: ['Teste real passa', 'Handoff aceito'],
-    deniedTools: ['nexus_git_force_push'],
-    evidenceAttached: true,
-    attachmentPaths: ['/Users/me/.nexus/dropped/proof.png'],
-    attachmentSnapshots: [
-      {
-        path: '/Users/me/.nexus/dropped/proof.png',
-        sha256: 'e'.repeat(64),
-        size: 321,
-      },
-    ],
-    squad: {
-      id: 'saved-squad',
-      name: 'Squad auditado',
-      orchestratorInstructions: 'Coordene somente pelo contrato exibido.',
-      agents: [
-        {
-          id: 'orch',
-          agentName: 'Maestro',
-          category: 'orchestrator',
-          cli: 'codex',
-          model: 'gpt-5.6-sol',
-          effort: 'high',
-          allowedTools: ['nexus_task'],
-          allowedSkills: ['check-work'],
-        },
-      ],
-      hash: 'a'.repeat(64),
-    },
-    orchestratorRuntime: {
-      adapterId: 'codex',
-      model: 'gpt-5.6-sol',
-      accountId: 'account-a',
-      effort: 'high',
-      readOnly: false,
-      nativeReadOnly: true,
-    },
-    orchestratorEvidence: 'verified',
-    intentVersion: 3,
-    budgets: {
-      planningTokens: 4_000,
-      executionTokens: 12_000,
-      maxWorkers: 3,
-      maxSteps: 12,
-    },
-    fence: 'approval-fence-3',
-  });
-  harness.approveMission.mockReturnValue({ id: 'mission-1', status: 'running' });
-  harness.submitMissionIntent.mockReturnValue({ id: 'mission-1', intentVersion: 3 });
-  clearWizardPlanReviewGrantsForTests();
   harness.planPromotionCandidate.mockReturnValue({
     missionId: 'mission-plan',
     title: 'Plano revisado',
@@ -1040,7 +955,6 @@ beforeEach(() => {
     missionId: 'mission-plan',
   });
   harness.warmSquadRuntimeSubscriptionAuth.mockImplementation(async () => {});
-  harness.submitMissionKickoff.mockResolvedValue({ ok: true });
   harness.restartPlanPromotion.mockImplementation(async () => {
     harness.operatorInput.missions.delete('mission-plan');
     return {
@@ -1189,6 +1103,53 @@ describe('canonical MissionEngine IPC boundary', () => {
     )).toBe(true);
   });
 
+  it('holds the mission lifecycle lock until start admission finishes', async () => {
+    const sender = owner(911);
+    harness.scopes.set(sender.id, SCOPE_A);
+    const order: string[] = [];
+    let releaseStart!: () => void;
+    let markStartEntered!: () => void;
+    const startEntered = new Promise<void>((resolve) => {
+      markStartEntered = resolve;
+    });
+    const startGate = new Promise<void>((resolve) => {
+      releaseStart = resolve;
+    });
+    const engine = installCanonicalEngine(SCOPE_A);
+    engine.start.mockImplementationOnce(async () => {
+      order.push('start-entered');
+      markStartEntered();
+      await startGate;
+      order.push('start-finished');
+      return canonicalSnapshot();
+    });
+
+    const start = canonicalHandler(ORCH_CHANNELS.missionStart)(
+      { sender },
+      startInput,
+    );
+    await startEntered;
+    const competingLifecycleMutation = withMissionLifecycleLock(
+      SCOPE_A,
+      startInput.missionId,
+      async () => {
+        order.push('competing-mutation');
+      },
+    );
+    await Promise.resolve();
+
+    expect(order).toEqual(['start-entered']);
+
+    releaseStart();
+    await expect(start).resolves.toEqual(canonicalSnapshot());
+    await competingLifecycleMutation;
+    expect(order).toEqual([
+      'start-entered',
+      'start-finished',
+      'competing-mutation',
+    ]);
+  });
+
   it('confirms, revalidates, persists, and then snapshots canonical answers', async () => {
     configureRendererMissionAuthority({} as never);
     const sender = owner(908);
@@ -1295,7 +1256,7 @@ describe('canonical MissionEngine IPC boundary', () => {
       state: 'blocked_technical' as const,
       stateReason: {
         code: 'mission-blocked' as const,
-        label: 'Mission is technically blocked',
+        label: 'A missão encontrou um bloqueio técnico',
       },
       allowedActions: ['retry-kickoff', 'stop'] as const,
     };
@@ -1985,118 +1946,6 @@ describe('bounded enrichment authority', () => {
   });
 });
 
-describe('immediate squad native grant authority', () => {
-  it('issues one opaque grant bound to the reviewed squad, runtime and goal', async () => {
-    const sender = owner();
-    harness.scopes.set(sender.id, SCOPE_A);
-    harness.windows.set(sender.id, { isDestroyed: () => false });
-    harness.squads.push(SAVED_SQUAD);
-    const handler = harness.handlers.get(
-      ORCH_CHANNELS.missionAuthorizeImmediateSquad,
-    );
-    if (!handler) throw new Error('missing immediate squad handler');
-
-    const result = (await handler(
-      { sender },
-      {
-        squadId: SAVED_SQUAD.id,
-        paneId: 'pane-immediate',
-        adapterId: 'codex',
-        model: 'gpt-5.6-sol',
-        accountId: 'account-a',
-        effort: 'high',
-        missionTitle: 'Implementar o objetivo exato',
-        missionGoal: 'Implementar o objetivo exato',
-      },
-    )) as { grant: string };
-
-    expect(result.grant).toMatch(/^squadgrant_[A-Za-z0-9_-]{40,}$/);
-    const options = harness.dialog.showMessageBox.mock.calls.at(-1)?.[1];
-    expect(options?.detail).toContain('Implementar o objetivo exato');
-    // Compacto: instruções integrais ficam fixadas pelo hash, fora do modal.
-    expect(options?.detail).not.toContain('Coordene somente pelo contrato');
-    expect(options?.detail).toContain('Hash exato');
-    const consumed = consumeImmediateSquadSpawnGrant({
-      requestId: result.grant,
-      owner: sender as never,
-      scope: SCOPE_A,
-      squads: [SAVED_SQUAD as unknown as Squad],
-      runtime: {
-        adapterId: 'codex',
-        model: 'gpt-5.6-sol',
-        accountId: 'account-a',
-        effort: 'high',
-        paneId: 'pane-immediate',
-      },
-    });
-    expect(consumed?.authority.immediateMissionTitle).toBe(
-      'Implementar o objetivo exato',
-    );
-    expect(consumed?.runtime).toMatchObject({
-      title: 'Maestro',
-      missionTitle: 'Implementar o objetivo exato',
-      missionGoal: 'Implementar o objetivo exato',
-    });
-  });
-
-  it('denial produces no grant and no process-capable receipt', async () => {
-    const sender = owner();
-    harness.scopes.set(sender.id, SCOPE_A);
-    harness.windows.set(sender.id, { isDestroyed: () => false });
-    harness.squads.push(SAVED_SQUAD);
-    harness.dialog.showMessageBox.mockResolvedValueOnce({ response: 0 });
-    const handler = harness.handlers.get(
-      ORCH_CHANNELS.missionAuthorizeImmediateSquad,
-    )!;
-
-    await expect(
-      handler(
-        { sender },
-        {
-          squadId: SAVED_SQUAD.id,
-          paneId: 'pane-immediate',
-          adapterId: 'codex',
-          missionTitle: 'Denied goal',
-          missionGoal: 'Denied goal',
-        },
-      ),
-    ).rejects.toThrow(/user_denied/);
-  });
-
-  it('expõe a fronteira exata do Pet Studio no único modal de início', async () => {
-    const sender = owner();
-    harness.scopes.set(sender.id, SCOPE_A);
-    harness.windows.set(sender.id, { isDestroyed: () => false });
-    harness.squads.push(PET_STUDIO_SQUAD);
-    const handler = harness.handlers.get(
-      ORCH_CHANNELS.missionAuthorizeImmediateSquad,
-    )!;
-
-    await handler(
-      { sender },
-      {
-        squadId: PET_STUDIO_SQUAD.id,
-        paneId: 'pane-pet',
-        adapterId: 'codex',
-        effort: 'high',
-        missionTitle: 'Criar mascote',
-        missionGoal: 'Criar mascote com a referência autorizada',
-      },
-    );
-
-    expect(harness.dialog.showMessageBox).toHaveBeenCalledTimes(1);
-    const detail = String(
-      harness.dialog.showMessageBox.mock.calls[0]?.[1]?.detail ?? '',
-    );
-    expect(detail).toContain('nexus-pet-studio');
-    expect(detail).toContain('nexus_media_providers,nexus_image_generate');
-    expect(detail).toContain(
-      'Codex pode escrever somente neste workspace, sem rede de subprocessos',
-    );
-    expect(detail).toContain('.agents/.codex continuam protegidos');
-    expect(detail).toContain('sem sobrescrever pets existentes');
-  });
-});
 
 describe('catalog and overlay renderer authority', () => {
   function setupCatalog(channel: string) {
@@ -2353,164 +2202,6 @@ describe('agent spec renderer authority', () => {
   });
 });
 
-describe('mission intent IPC evidence contract', () => {
-  it('accepts only the product-wizard plan review surface on submit', () => {
-    expect(
-      missionSubmitIntentSchema.parse({
-        missionId: 'mission-1',
-        goal: 'Analisar os anexos da missão',
-        planReviewSurface: 'product-wizard',
-      }),
-    ).toMatchObject({ planReviewSurface: 'product-wizard' });
-    expect(() =>
-      missionSubmitIntentSchema.parse({
-        missionId: 'mission-1',
-        goal: 'Analisar os anexos da missão',
-        planReviewSurface: 'forged-surface',
-      }),
-    ).toThrow();
-  });
-
-  it('preserves evidenceAttached through submit and approve validation', () => {
-    expect(missionSubmitIntentSchema.parse({
-      missionId: 'mission-1',
-      goal: 'Analisar os anexos da missão',
-      evidenceAttached: true,
-    })).toMatchObject({ evidenceAttached: true });
-    expect(missionApproveIntentSchema.parse({
-      missionId: 'mission-1',
-      evidenceAttached: true,
-      attachmentPaths: ['/Users/me/.nexus/dropped/proof.png'],
-    })).toMatchObject({
-      evidenceAttached: true,
-      attachmentPaths: ['/Users/me/.nexus/dropped/proof.png'],
-    });
-    expect(() =>
-      missionApproveIntentSchema.parse({
-        missionId: 'mission-1',
-        evidenceAttached: true,
-        providerId: 'forged',
-      }),
-    ).toThrow();
-    expect(() =>
-      missionApproveIntentSchema.parse({
-        missionId: 'mission-1',
-        attachmentPaths: Array.from(
-          { length: 7 },
-          (_, index) => `/Users/me/.nexus/dropped/${index}`,
-        ),
-      }),
-    ).toThrow();
-  });
-
-  it('accepts only missionId for main-owned orchestrator bootstrap', async () => {
-    const sender = owner();
-    harness.scopes.set(sender.id, SCOPE_A);
-    harness.bootstrapMissionOrchestrator.mockResolvedValueOnce({
-      ok: true,
-      missionId: 'mission-1',
-    });
-    const handler = harness.handlers.get(
-      ORCH_CHANNELS.missionBootstrapOrchestrator,
-    );
-    expect(handler).toBeTypeOf('function');
-
-    await expect(
-      handler?.({ sender }, { missionId: 'mission-1' }),
-    ).resolves.toMatchObject({ ok: true, missionId: 'mission-1' });
-    expect(harness.bootstrapMissionOrchestrator).toHaveBeenCalledWith(
-      sender,
-      { missionId: 'mission-1' },
-    );
-
-    await expect(async () =>
-      handler?.(
-        { sender },
-        {
-          missionId: 'mission-1',
-          adapterId: 'forged-provider',
-          model: 'forged-model',
-          cwd: '/tmp/forged',
-        },
-      )
-    ).rejects.toThrow(/invalid mission orchestrator bootstrap payload/i);
-    expect(harness.bootstrapMissionOrchestrator).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe('autorização de missão sem prompt — zero fricção (06/08)', () => {
-  function missionHandler(channel: string) {
-    configureRendererMissionAuthority({} as never);
-    const handler = harness.handlers.get(channel);
-    if (!handler) throw new Error(`missing ${channel} handler`);
-    return handler;
-  }
-
-  it('approve resolve SEM diálogo e o recibo integral amarra o fence', async () => {
-    const sender = owner();
-    harness.scopes.set(sender.id, SCOPE_A);
-    harness.windows.set(sender.id, { isDestroyed: () => false });
-    const handler = missionHandler(ORCH_CHANNELS.missionApproveIntent);
-
-    await expect(
-      handler({ sender }, { missionId: 'mission-1' }),
-    ).resolves.toMatchObject({ id: 'mission-1', status: 'running' });
-
-    expect(harness.dialog.showMessageBox).not.toHaveBeenCalled();
-    const reviewSha256 = harness.approveMission.mock.calls.at(-1)?.[3];
-    expect(reviewSha256).toMatch(/^[a-f0-9]{64}$/);
-    expect(harness.approveMission).toHaveBeenCalledWith(
-      sender,
-      { missionId: 'mission-1' },
-      'approval-fence-3',
-      reviewSha256,
-    );
-  });
-
-  it('risco destrutivo e rota experimental também NÃO perguntam — registro, não prompt', async () => {
-    const sender = owner();
-    harness.scopes.set(sender.id, SCOPE_A);
-    harness.windows.set(sender.id, { isDestroyed: () => false });
-    const base = harness.missionApprovalCandidate();
-    harness.missionApprovalCandidate.mockReturnValue({
-      ...base,
-      risk: 'destructive',
-      orchestratorEvidence: 'experimental',
-    });
-    const handler = missionHandler(ORCH_CHANNELS.missionApproveIntent);
-
-    await expect(
-      handler({ sender }, { missionId: 'mission-1' }),
-    ).resolves.toMatchObject({ id: 'mission-1' });
-
-    expect(harness.dialog.showMessageBox).not.toHaveBeenCalled();
-    expect(harness.approveMission).toHaveBeenCalled();
-    harness.missionApprovalCandidate.mockReturnValue(base);
-  });
-
-  it('o recibo integral MUDA quando autoridade não exibida muda', async () => {
-    const sender = owner();
-    harness.scopes.set(sender.id, SCOPE_A);
-    harness.windows.set(sender.id, { isDestroyed: () => false });
-    const base = harness.missionApprovalCandidate();
-    const handler = missionHandler(ORCH_CHANNELS.missionApproveIntent);
-
-    await handler({ sender }, { missionId: 'mission-1' });
-    const first = harness.approveMission.mock.calls.at(-1)?.[3];
-
-    harness.missionApprovalCandidate.mockReturnValue({
-      ...base,
-      deniedTools: [...base.deniedTools, 'nexus_pane_close'],
-    });
-    await handler({ sender }, { missionId: 'mission-1' });
-    const second = harness.approveMission.mock.calls.at(-1)?.[3];
-
-    expect(first).toMatch(/^[a-f0-9]{64}$/);
-    expect(second).toMatch(/^[a-f0-9]{64}$/);
-    expect(second).not.toBe(first);
-    harness.missionApprovalCandidate.mockReturnValue(base);
-  });
-});
 
 describe('mission removal IPC authority', () => {
   function configureAndGetHandler() {
@@ -3240,41 +2931,6 @@ describe('saved squad mutation authority', () => {
     expect(harness.applyPreparedSquadSave).toHaveBeenCalledOnce();
   });
 
-  it('save runtime + início abre exatamente o único modal semântico da missão', async () => {
-    const { handler, sender } = setup(ORCH_CHANNELS.squadSave);
-    await expect(handler({ sender }, SAVED_SQUAD)).resolves.toMatchObject({
-      ok: true,
-      squad: expect.objectContaining({ id: SAVED_SQUAD.id }),
-    });
-    expect(harness.dialog.showMessageBox).not.toHaveBeenCalled();
-    const saved = (await handler(
-      { sender },
-      {
-        squad: SAVED_SQUAD,
-        purpose: 'mission-runtime',
-        guided: false,
-        sourceSquadId: SAVED_SQUAD.id,
-      },
-    )) as { ok: boolean; squad?: Squad };
-    if (!saved.squad) throw new Error('missing runtime squad');
-    expect(harness.dialog.showMessageBox).not.toHaveBeenCalled();
-
-    const base = harness.missionApprovalCandidate();
-    const runtimeSnapshot = harness.prepareSquadSave(saved.squad).snapshot;
-    harness.missionApprovalCandidate.mockReturnValueOnce({
-      ...base,
-      squad: runtimeSnapshot,
-    });
-    const approve = harness.handlers.get(ORCH_CHANNELS.missionApproveIntent);
-    if (!approve) throw new Error('missing mission approval handler');
-
-    await approve({ sender }, { missionId: 'mission-1' });
-
-    // Zero fricção (06/08): NENHUM modal — a autorização é registro + recibo.
-    expect(harness.dialog.showMessageBox).not.toHaveBeenCalled();
-    const reviewSha256 = harness.approveMission.mock.calls.at(-1)?.[3];
-    expect(reviewSha256).toMatch(/^[a-f0-9]{64}$/);
-  });
 
 
   it('runtime é imutável e worker com wildcard não ganha save silencioso', async () => {

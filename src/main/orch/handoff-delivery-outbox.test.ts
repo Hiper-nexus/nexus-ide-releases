@@ -257,7 +257,7 @@ describe("durable handoff delivery outbox", () => {
       title: "Terminal accepted delivery",
       orchestratorSessionId: "orchestrator-terminal",
     });
-    missions.setStatus("mission-terminal", "running");
+    const running = missions.setStatus("mission-terminal", "running")!;
     const handoff = handoffs.submit({
       missionId: "mission-terminal",
       sessionId: "worker-terminal",
@@ -283,7 +283,24 @@ describe("durable handoff delivery outbox", () => {
     ).toBe(true);
     expect(handoffs.listDeliveryOutboxCandidates()).toHaveLength(1);
 
-    missions.setStatus("mission-terminal", "done");
+    missions.transitionLifecycle(
+      "mission-terminal",
+      {
+        updatedAt: running.updatedAt,
+        intentVersion: running.intentVersion ?? 0,
+      },
+      {
+        status: "done",
+        intentState: "done",
+        learnings: "Accepted delivery verified before terminal recovery.",
+        result: {
+          outcome: "success",
+          summary: "Accepted delivery verified before terminal recovery.",
+          evidenceIds: [],
+          artifactRefs: [],
+        },
+      },
+    );
 
     const recoverAccepted = vi.fn();
     expect(

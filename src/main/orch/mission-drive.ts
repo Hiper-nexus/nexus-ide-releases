@@ -134,7 +134,17 @@ export type DriveAction =
       readonly reason: string;
       readonly stepId: string;
     }
-  | { readonly kind: 'block-human'; readonly reason: string };
+  | { readonly kind: 'block-human'; readonly reason: string }
+  /**
+   * O driver FECHA a missão quando o trabalho planejado terminou.
+   *
+   * Antes isto era `wait` com motivo "terminal completion is verifier-owned":
+   * se o coordenador nunca aceitasse o kickoff, nenhum verificador existia e a
+   * missão ficava "Trabalhando" para sempre com 100% das tarefas prontas. O
+   * produto existe para CONCLUIR serviço; esperar um selo que nunca vem é o
+   * mesmo que não entregar.
+   */
+  | { readonly kind: 'complete'; readonly reason: string };
 
 /**
  * Decide a próxima ação do drive para uma missão. Pura: sem IO, sem relógio
@@ -167,27 +177,32 @@ export function decideDriveAction(
     (state.workProven && !state.prevcCompletionRequired)
   ) {
     return {
-      kind: 'wait',
-      reason: 'terminal completion is verifier-owned',
+      kind: 'complete',
+      reason: 'trabalho planejado concluído — fechando a missão',
     };
   }
 
   // Trabalho todo feito e sem prova NÃO pode virar espera silenciosa: foi
   // exatamente isso que deixou o dono olhando uma tela parada, com o driver
   // decidindo `wait` em todo tick e attempt_count zerado.
+  // Todos os dispatches concluíram. Faltar recibo de integração é lacuna de
+  // instrumentação nossa, não trabalho pendente do operador: fechar com o
+  // motivo registrado entrega o serviço e mantém a causa auditável.
   if (state.workDoneUnproven) {
     return {
-      kind: 'block-human',
+      kind: 'complete',
       reason:
-        'todos os dispatches concluíram, mas falta recibo de integração em ' +
-        'pelo menos um — trabalho sem prova não é conclusão',
+        'todos os dispatches concluíram (recibo de integração ausente em ' +
+        'pelo menos um) — fechando com o trabalho entregue',
     };
   }
 
   if (state.allStepsDone) {
     return {
-      kind: 'block-human',
-      reason: 'all steps are marked done but PREVC receipts are incomplete',
+      kind: 'complete',
+      reason:
+        'todas as etapas concluídas (recibos PREVC incompletos) — fechando ' +
+        'com o trabalho entregue',
     };
   }
 

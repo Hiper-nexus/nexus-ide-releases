@@ -32,6 +32,12 @@ const request: MissionPrepareRequest = {
       category: 'executor',
       cli: 'codex',
     },
+    {
+      id: 'agent-2',
+      agentName: 'Reviewer',
+      category: 'reviewer',
+      cli: 'codex',
+    },
   ],
 };
 
@@ -152,6 +158,12 @@ describe('MainMissionEngine', () => {
           cli: 'codex',
           id: 'agent-1',
         },
+        {
+          agentName: 'Reviewer',
+          category: 'reviewer',
+          cli: 'codex',
+          id: 'agent-2',
+        },
       ],
       title: 'Mission engine',
       warnings: [],
@@ -169,6 +181,29 @@ describe('MainMissionEngine', () => {
     });
     expect(ports.discardUnfencedPreparation).not.toHaveBeenCalled();
     expect(JSON.stringify(review)).not.toContain(scope.rootRealPath);
+  });
+
+  it('omits undefined optional review fields from canonical hashing', async () => {
+    const ports = createPorts({
+      compile: vi.fn(async () => ({
+        title: 'Mission engine',
+        objective: request.objective,
+        contextPaths: request.contextPaths,
+        acceptanceCriteria: undefined,
+        roster: request.roster,
+        permissions: [{ id: 'write-project', label: 'Write project files' }],
+        warnings: [],
+        attachments: undefined,
+      })),
+    });
+    const engine = new MainMissionEngine(scope, ports);
+
+    await expect(engine.prepare(scope, request)).resolves.toMatchObject({
+      missionId: 'mission-1',
+      title: 'Mission engine',
+    });
+    expect(ports.persistReviewFence).toHaveBeenCalledOnce();
+    expect(ports.discardUnfencedPreparation).not.toHaveBeenCalled();
   });
 
   it.each(['/absolute/context', 'C:\\private\\context', '../outside'])(
@@ -389,6 +424,12 @@ describe('MainMissionEngine', () => {
       expectedUpdatedAt: 1_777_000_000_100,
       expectedIntentVersion: 3,
     };
+    const result = {
+      outcome: 'success' as const,
+      summary: 'Entrega verificada.',
+      evidenceIds: ['evidence-1'],
+      artifactRefs: ['artifact-1'],
+    };
 
     engine.blockUser(scope, {
       ...fence,
@@ -407,6 +448,7 @@ describe('MainMissionEngine', () => {
     engine.completeVerified(scope, {
       ...fence,
       learnings: 'Plano, PREVC e evidências verificados.',
+      result,
     });
 
     expect(calls).toEqual([
@@ -419,6 +461,11 @@ describe('MainMissionEngine', () => {
     expect(ports.blockTechnical).toHaveBeenCalledOnce();
     expect(ports.resumeTechnical).toHaveBeenCalledOnce();
     expect(ports.completeVerified).toHaveBeenCalledOnce();
+    expect(ports.completeVerified).toHaveBeenCalledWith({
+      ...fence,
+      learnings: 'Plano, PREVC e evidências verificados.',
+      result,
+    });
   });
 
   it('rejects malformed commands without invoking a handler', async () => {
@@ -525,6 +572,12 @@ describe('MainMissionEngine', () => {
       engine.completeVerified(wrongScope, {
         ...lifecycleFence,
         learnings: 'Conclusão verificada.',
+        result: {
+          outcome: 'success',
+          summary: 'Conclusão verificada.',
+          evidenceIds: [],
+          artifactRefs: [],
+        },
       }),
     ).toThrow(/scope/i);
     await expect(engine.snapshot(wrongScope, 'mission-1')).rejects.toThrow(

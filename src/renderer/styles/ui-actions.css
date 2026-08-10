@@ -136,10 +136,17 @@
   align-items: flex-start;
   gap: 14px;
   margin: 0;
-  padding: 16px 16px 18px;
-  border: 1px dashed var(--border-strong);
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--bg) 45%, transparent);
+  padding: 18px 18px 20px;
+  border: 1px solid color-mix(in srgb, var(--border-strong) 60%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bg-elevated) 72%, transparent);
+  box-shadow: 0 2px 12px color-mix(in srgb, #000 8%, transparent);
+  backdrop-filter: blur(8px);
+}
+
+.empty-state[role='alert'] {
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--border-strong));
+  background: color-mix(in srgb, var(--accent) 5%, var(--bg-elevated));
 }
 
 .empty-state__icon {
@@ -148,9 +155,14 @@
   width: 44px;
   height: 44px;
   border-radius: 12px;
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
   color: var(--accent);
   flex-shrink: 0;
+}
+
+.empty-state[role='alert'] .empty-state__icon {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
 }
 
 .empty-state__body {
@@ -165,12 +177,13 @@
   font-size: 14px;
   font-weight: 650;
   color: var(--text);
+  line-height: 1.35;
 }
 
 .empty-state__copy {
   margin: 0;
   font-size: 13px;
-  line-height: 1.45;
+  line-height: 1.5;
   color: var(--text-dim);
 }
 
@@ -179,7 +192,7 @@
 }
 
 .empty-state__action {
-  margin-top: 6px;
+  margin-top: 8px;
   display: flex;
   flex-wrap: wrap;
   gap: 8px;

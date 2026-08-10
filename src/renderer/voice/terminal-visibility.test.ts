@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { ProductDestination } from '../state/product-navigation-store';
 import {
   assessTerminalVisibility,
   listBlockingOverlayLabels,
@@ -6,80 +7,103 @@ import {
   type UiVisibilityState,
 } from './terminal-visibility';
 
-const NO_OVERLAYS: BlockingOverlayFlags = {
+const NO_MOUNTED_OVERLAYS = {
   operatorProfile: false,
-  homeDeck: false,
-  settingsDrawer: false,
   voiceSettings: false,
-  missionWizard: false,
-  opsBoard: false,
-  onboarding: false,
   closeWorkspaceDialog: false,
-  orchPanel: false,
-  filesPanel: false,
-};
+  orchestrationMode: false,
+  mediaStudio: false,
+  commandPalette: false,
+  confirmation: false,
+  keyboardCheatsheet: false,
+} as unknown as BlockingOverlayFlags;
 
-function baseState(overrides: Partial<UiVisibilityState> = {}): UiVisibilityState {
+function baseState(
+  destination: ProductDestination,
+  overrides: Partial<UiVisibilityState> = {},
+): UiVisibilityState {
   return {
     workspaceOpen: true,
+    destination,
     viewKind: 'grid',
     focusedPaneId: 'shell-1',
     focusedPaneKind: 'shell',
     shellPaneIds: ['shell-1'],
-    overlays: { ...NO_OVERLAYS },
+    overlays: { ...NO_MOUNTED_OVERLAYS },
     ...overrides,
-  };
+  } as UiVisibilityState;
 }
 
-describe('assessTerminalVisibility', () => {
-  it('marca visível quando grade, foco shell e sem overlays', () => {
-    expect(assessTerminalVisibility('shell-1', baseState(), true)).toEqual({
+describe('terminal visibility follows mounted product surfaces', () => {
+  it.each([
+    ['Launcher', { kind: 'launcher' }],
+    ['Mission Setup', { kind: 'mission-setup' }],
+    [
+      'Mission Board',
+      { kind: 'mission', missionId: 'mission-a', surface: 'board' },
+    ],
+    ['Task Board', { kind: 'task-board' }],
+    ['Memory', { kind: 'memory' }],
+    ['Settings', { kind: 'settings', section: 'providers' }],
+  ] as const)('does not report a hidden terminal through %s', (_label, destination) => {
+    const result = assessTerminalVisibility(
+      'shell-1',
+      baseState(destination),
+      true,
+    );
+
+    expect(result.visible).toBe(false);
+    expect(result.reasons.some((reason) => /destino|destination|surface/i.test(reason)))
+      .toBe(true);
+  });
+
+  it.each([
+    ['standalone Terminal', { kind: 'terminal' }],
+    [
+      'Mission Terminals',
+      { kind: 'mission', missionId: 'mission-a', surface: 'terminals' },
+    ],
+  ] as const)('reports a ready focused terminal on %s', (_label, destination) => {
+    expect(
+      assessTerminalVisibility('shell-1', baseState(destination), true),
+    ).toEqual({
       visible: true,
       reasons: [],
     });
   });
 
-  it('falha quando perfil operador cobre a tela', () => {
+  it('reports a mounted blocking overlay instead of the terminal beneath it', () => {
+    const overlays = {
+      ...NO_MOUNTED_OVERLAYS,
+      operatorProfile: true,
+    } as BlockingOverlayFlags;
     const result = assessTerminalVisibility(
       'shell-1',
-      baseState({
-        overlays: { ...NO_OVERLAYS, operatorProfile: true },
-      }),
+      baseState({ kind: 'terminal' }, { overlays }),
       true,
     );
+
     expect(result.visible).toBe(false);
-    expect(result.reasons.some((r) => r.includes('perfil operador'))).toBe(true);
+    expect(listBlockingOverlayLabels(overlays)).toContain('perfil operador');
+    expect(result.reasons).toContain('overlay: perfil operador');
   });
 
-  it('falha quando home deck cobre terminal existente', () => {
+  it('still rejects a canvas or unfocused pane on a terminal-bearing destination', () => {
     const result = assessTerminalVisibility(
       'shell-1',
-      baseState({
-        overlays: { ...NO_OVERLAYS, homeDeck: true },
-      }),
+      baseState(
+        { kind: 'terminal' },
+        { viewKind: 'canvas', focusedPaneId: 'shell-other' },
+      ),
       true,
     );
-    expect(result.visible).toBe(false);
-    expect(result.reasons.some((r) => r.includes('home deck'))).toBe(true);
-  });
 
-  it('falha em canvas mesmo com sessão PTY', () => {
-    const result = assessTerminalVisibility(
-      'shell-1',
-      baseState({ viewKind: 'canvas' }),
-      true,
+    expect(result.visible).toBe(false);
+    expect(result.reasons).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/canvas/),
+        expect.stringMatching(/sem foco/),
+      ]),
     );
-    expect(result.visible).toBe(false);
-    expect(result.reasons.some((r) => r.includes('canvas'))).toBe(true);
-  });
-
-  it('lista overlays bloqueantes para contexto de tela', () => {
-    expect(
-      listBlockingOverlayLabels({
-        ...NO_OVERLAYS,
-        operatorProfile: true,
-        homeDeck: true,
-      }),
-    ).toEqual(['perfil operador', 'home deck']);
   });
 });

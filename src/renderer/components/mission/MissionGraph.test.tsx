@@ -342,8 +342,8 @@ describe('MissionGraph', () => {
     expect(svg).not.toBeNull();
 
     const renderedConnections = [
-      ...svg!.querySelectorAll<SVGElement>('line, path, polyline'),
-    ].filter((element) => !element.closest('defs'));
+      ...svg!.querySelectorAll<SVGElement>('.mission-graph__edge'),
+    ];
     expect(renderedConnections).toHaveLength(2);
 
     const firstCard = host.querySelector('button');
@@ -351,6 +351,43 @@ describe('MissionGraph', () => {
     expect(
       svg!.compareDocumentPosition(firstCard!) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+
+  it('layers a state signal over every visible canonical connection', () => {
+    const { host } = renderGraph(null);
+    const graph = host.querySelector<HTMLElement>('.mission-graph');
+    const svg = host.querySelector('svg');
+
+    expect(graph?.dataset.missionState).toBe('running');
+    expect(
+      svg?.querySelectorAll('.mission-graph__edge-signal'),
+    ).toHaveLength(2);
+  });
+
+  it('draws topology guides when no canonical relationship has been persisted', () => {
+    const graphWithoutEdges = {
+      ...snapshot,
+      edges: [],
+    } satisfies MissionSnapshot;
+    const { host } = renderGraph(null, { snapshot: graphWithoutEdges });
+
+    expect(
+      host.querySelectorAll('.mission-graph__edge--topology'),
+    ).toHaveLength(graphWithoutEdges.agents.length - 1);
+    expect(host.querySelector('.mission-graph__relationships')).toBeNull();
+  });
+
+  it('uses the built-in pixel icon language for every agent category', () => {
+    const { host } = renderGraph(null);
+
+    for (const agent of snapshot.agents) {
+      const card = agentButton(host, agent.agentName);
+      const icon = card.querySelector(
+        `[data-agent-category-icon="${agent.category}"] svg`,
+      );
+      expect(icon).not.toBeNull();
+      expect(icon?.getAttribute('aria-hidden')).toBe('true');
+    }
   });
 
   it('renders semantic agent-card buttons with complete canonical details', () => {

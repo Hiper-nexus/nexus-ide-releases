@@ -717,6 +717,7 @@ export function ensureGuidedMissionPlan(
             intentVersion,
             approvedAt: mission.intentContract.approvedAt,
             approvalReviewSha256: mission.intentContract.approvalReviewSha256,
+            dispatchedAt: mission.intentContract.dispatchedAt,
           }
         : undefined,
     );
@@ -904,6 +905,7 @@ export function ensureGuidedMissionPlan(
             approvedAt: mission.intentContract.approvedAt,
             approvalReviewSha256:
               mission.intentContract.approvalReviewSha256,
+            dispatchedAt: mission.intentContract.dispatchedAt,
           }
         : undefined,
     );
@@ -1227,6 +1229,7 @@ export function ensureGuidedMissionPlan(
           approvedAt: mission.intentContract.approvedAt,
           approvalReviewSha256:
             mission.intentContract.approvalReviewSha256,
+          dispatchedAt: mission.intentContract.dispatchedAt,
         }
       : undefined,
   );
@@ -1544,6 +1547,7 @@ function sealWavePackMissionPlan(input: {
           intentVersion,
           approvedAt: contract.approvedAt,
           approvalReviewSha256: contract.approvalReviewSha256,
+          dispatchedAt: contract.dispatchedAt,
         }
       : undefined,
   );

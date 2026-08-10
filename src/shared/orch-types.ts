@@ -1,6 +1,9 @@
 import { z } from 'zod';
 import type { ProjectExecutionScope } from './types';
-import type { MissionSnapshot } from './mission-engine-contract';
+import type {
+  MissionResult,
+  MissionSnapshot,
+} from './mission-engine-contract';
 import {
   missionIntentContractSchema,
   missionIntentStateSchema,
@@ -348,6 +351,8 @@ export interface Mission {
    * ledger. Informational in the renderer; never accepted back as authority.
    */
   latestRoute?: MissionRouteTrace;
+  /** Canonical, main-verified completion payload shown by the product UI. */
+  result?: MissionResult;
   createdAt: number;
   updatedAt: number;
 }

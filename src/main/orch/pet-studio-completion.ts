@@ -19,12 +19,15 @@ import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import type { Handoff } from '../../shared/orch-types';
 import { PET_STUDIO_SQUAD_ID } from '../../shared/pet-studio';
+import { missionResultSchema } from '../../shared/mission-engine-contract';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { readWebpDimensions } from '../pet/pet-library';
 import {
   getProjectDomainStores,
   type ProjectDomainStoreSuite,
 } from './project-domain-store-registry';
+import type { MissionEngine } from './mission-engine';
+import { missionEngineForScope } from './mission-engine-registry';
 
 const MAX_SPRITESHEET_BYTES = 2.5 * 1024 * 1024;
 const MAX_MANIFEST_BYTES = 64 * 1024;
@@ -42,11 +45,15 @@ type CompletionStores = {
     'markSubmitted' | 'markConsumed'
   >;
 };
+type CompletionMission = NonNullable<
+  ReturnType<CompletionStores['missions']['get']>
+>;
 
 type RecoveryStores = {
+  readonly scope: ProjectExecutionScope;
   readonly missions: Pick<
     ProjectDomainStoreSuite['missions'],
-    'list' | 'setStatus'
+    'get' | 'list'
   >;
 };
 
@@ -62,6 +69,7 @@ interface PetStudioCompletionDependencies {
   readonly codexHome?: string;
   /** Test seam; production always uses the main-owned canonical scope root. */
   readonly workspaceRoot?: string;
+  readonly missionEngine?: Pick<MissionEngine, 'completeVerified'>;
 }
 
 function artifactPath(artifact: unknown): string | null {
@@ -456,6 +464,47 @@ function recoverablePackageArtifacts(
   return packages;
 }
 
+function completeInstalledPetMission(
+  stores: {
+    readonly missions: Pick<ProjectDomainStoreSuite['missions'], 'get'>;
+  },
+  scope: ProjectExecutionScope,
+  mission: CompletionMission,
+  missionEngine: Pick<MissionEngine, 'completeVerified'>,
+  packageDir: string,
+  summary: string,
+  evidenceIds: readonly string[],
+): CompletionMission {
+  const result = missionResultSchema.parse({
+    outcome: 'success',
+    summary,
+    evidenceIds: [...new Set(evidenceIds)].slice(0, 64),
+    artifactRefs: [packageDir],
+  });
+  const completionEntry = `## Pet Studio concluído\n${summary}\nPacote instalado: ${packageDir}`;
+  const learnings = (
+    mission.learnings.trim()
+      ? `${mission.learnings}\n\n${completionEntry}`
+      : completionEntry
+  ).slice(-65_536);
+  missionEngine.completeVerified(scope, {
+    missionId: mission.id,
+    expectedStatus: 'running',
+    expectedIntentState: mission.intentState ?? 'legacy',
+    expectedUpdatedAt: mission.updatedAt,
+    expectedIntentVersion: mission.intentVersion ?? 0,
+    learnings,
+    result,
+  });
+  const completed = stores.missions.get(mission.id);
+  if (completed?.status !== 'done' || !completed.result) {
+    throw new Error(
+      'MissionEngine did not persist the canonical Pet Studio result',
+    );
+  }
+  return completed;
+}
+
 export interface PetStudioRecoveryResult {
   readonly missionId: string;
   readonly completed: boolean;
@@ -472,7 +521,7 @@ export function reconcileCompletedPetStudioMissions(
   stores: RecoveryStores,
   dependencies: Pick<
     PetStudioCompletionDependencies,
-    'codexHome' | 'workspaceRoot'
+    'codexHome' | 'workspaceRoot' | 'missionEngine'
   > = {},
 ): PetStudioRecoveryResult[] {
   const missions = stores.missions
@@ -526,7 +575,15 @@ export function reconcileCompletedPetStudioMissions(
       resolve(workspaceRoot),
       codexHome,
     );
-    stores.missions.setStatus(mission.id, 'done');
+    completeInstalledPetMission(
+      stores,
+      stores.scope,
+      mission,
+      dependencies.missionEngine ?? missionEngineForScope(stores.scope),
+      installed.packageDir,
+      `Pet Studio recuperado após reinicialização e instalado em ${installed.packageDir}.`,
+      [],
+    );
     return [
       {
         missionId: mission.id,
@@ -621,7 +678,16 @@ export function completePetStudioHandoff(
           join(homedir(), '.codex'),
       ),
     );
-    stores.missions.setStatus(handoff.missionId, 'done');
+    completeInstalledPetMission(
+      stores,
+      scope,
+      mission,
+      dependencies.missionEngine ?? missionEngineForScope(scope),
+      validated.packageDir,
+      handoff.summary ||
+        `Pet Studio validado e instalado em ${validated.packageDir}.`,
+      handoff.evidenceIds,
+    );
     consume(stores, handoff.id, handoff.missionId);
     return { handled: true, completed: true, ...validated };
   } catch (cause) {

@@ -338,6 +338,18 @@
   border-radius: var(--radius-lg);
 }
 
+.mission-board__announcement {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--mission-state-color) 7%, var(--bg-bar));
+  color: var(--text-dim);
+  font-size: var(--text-md);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
 /* Pending user decisions remain in the normal document flow. The restrained
    warning tint makes the question unmistakable without turning it into a modal. */
 .mission-board__question-region {
@@ -632,6 +644,7 @@
 
 .mission-graph {
   --mission-graph-edge: var(--text-dim);
+  --mission-graph-flow: var(--state-running);
 
   width: 100%;
   height: 100%;
@@ -652,10 +665,93 @@
   margin-inline: auto;
 }
 
-.mission-graph__edges {
+.mission-graph__surface::before,
+.mission-graph__surface::after {
   position: absolute;
   inset: 0;
   z-index: 0;
+  pointer-events: none;
+  content: '';
+}
+
+.mission-graph__surface::before {
+  background-image:
+    radial-gradient(
+      circle,
+      color-mix(in srgb, var(--border-strong) 55%, transparent) 0 1px,
+      transparent 1.5px
+    ),
+    linear-gradient(
+      to right,
+      color-mix(in srgb, var(--border) 58%, transparent) 1px,
+      transparent 1px
+    ),
+    linear-gradient(
+      to bottom,
+      color-mix(in srgb, var(--border) 58%, transparent) 1px,
+      transparent 1px
+    );
+  background-position: center;
+  background-size:
+    calc(var(--space-6) * 3) calc(var(--space-6) * 3),
+    var(--space-6) var(--space-6),
+    var(--space-6) var(--space-6);
+  opacity: 0.58;
+  -webkit-mask-image: radial-gradient(ellipse at center, black 36%, transparent 88%);
+  mask-image: radial-gradient(ellipse at center, black 36%, transparent 88%);
+}
+
+.mission-graph__surface::after {
+  background: radial-gradient(
+    circle at 50% 32%,
+    color-mix(in srgb, var(--mission-graph-flow) 10%, transparent),
+    transparent 42%
+  );
+  opacity: 0;
+  transition: opacity 220ms var(--ease-out-quart);
+}
+
+.mission-graph[data-mission-state='starting'],
+.mission-graph[data-mission-state='running'],
+.mission-graph[data-mission-state='recovering'] {
+  --mission-graph-edge: color-mix(
+    in srgb,
+    var(--state-running) 58%,
+    var(--text-dim)
+  );
+  --mission-graph-flow: var(--state-running);
+}
+
+.mission-graph[data-mission-state='blocked_user'],
+.mission-graph[data-mission-state='blocked_technical'] {
+  --mission-graph-edge: var(--state-blocked);
+  --mission-graph-flow: var(--state-blocked);
+}
+
+.mission-graph[data-mission-state='failed'] {
+  --mission-graph-edge: var(--state-failed);
+  --mission-graph-flow: var(--state-failed);
+}
+
+.mission-graph[data-mission-state='completed'] {
+  --mission-graph-edge: color-mix(
+    in srgb,
+    var(--state-done) 62%,
+    var(--text-dim)
+  );
+  --mission-graph-flow: var(--state-done);
+}
+
+.mission-graph[data-mission-state='starting'] .mission-graph__surface::after,
+.mission-graph[data-mission-state='running'] .mission-graph__surface::after,
+.mission-graph[data-mission-state='recovering'] .mission-graph__surface::after {
+  opacity: 1;
+}
+
+.mission-graph__edges {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
   display: block;
   width: var(--mission-graph-width);
   height: var(--mission-graph-height);
@@ -668,6 +764,42 @@
   stroke-width: 2px;
   stroke-linecap: round;
   shape-rendering: geometricPrecision;
+}
+
+.mission-graph__edge {
+  opacity: 0.72;
+}
+
+.mission-graph__edge--topology {
+  stroke-width: 1.5px;
+  opacity: 0.64;
+}
+
+.mission-graph__edge-signal {
+  stroke: var(--mission-graph-flow);
+  stroke-width: 2px;
+  stroke-dasharray: var(--space-3) var(--space-5);
+  stroke-linecap: round;
+  opacity: 0;
+  filter: drop-shadow(0 0 var(--space-1) var(--mission-graph-flow));
+}
+
+.mission-graph[data-mission-state='starting'] .mission-graph__edge-signal,
+.mission-graph[data-mission-state='running'] .mission-graph__edge-signal,
+.mission-graph[data-mission-state='recovering'] .mission-graph__edge-signal {
+  opacity: 0.92;
+  animation: mission-graph-signal-flow 1.6s linear infinite;
+}
+
+.mission-graph[data-mission-state='completed'] .mission-graph__edge-signal {
+  stroke-dasharray: none;
+  opacity: 0.28;
+}
+
+@keyframes mission-graph-signal-flow {
+  to {
+    stroke-dashoffset: calc(-1 * (var(--space-3) + var(--space-5)));
+  }
 }
 
 .mission-graph__edge--delegation,
@@ -693,7 +825,7 @@
 .mission-graph__cards {
   position: absolute;
   inset: 0;
-  z-index: 1;
+  z-index: 2;
   pointer-events: none;
 }
 
@@ -945,9 +1077,34 @@
 }
 
 .mission-agent-card__category {
+  display: flex;
+  align-items: center;
   min-width: 0;
+  gap: var(--space-2);
   overflow: hidden;
   color: var(--text-dim);
+}
+
+.mission-agent-card__category-icon {
+  display: inline-grid;
+  width: var(--space-5);
+  height: var(--space-5);
+  flex: 0 0 var(--space-5);
+  place-items: center;
+  border: 1px solid
+    color-mix(in srgb, var(--mission-agent-state-color) 46%, var(--border));
+  border-radius: var(--radius-sm);
+  background: color-mix(
+    in srgb,
+    var(--mission-agent-state-color) 10%,
+    var(--bg-elevated)
+  );
+  color: var(--mission-agent-state-color);
+}
+
+.mission-agent-card__category-label {
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1025,6 +1182,20 @@
   color: var(--text-dim);
   font-size: var(--text-xs);
   line-height: 1.35;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mission-graph__surface::after {
+    transition: none;
+  }
+
+  .mission-graph[data-mission-state='starting'] .mission-graph__edge-signal,
+  .mission-graph[data-mission-state='running'] .mission-graph__edge-signal,
+  .mission-graph[data-mission-state='recovering'] .mission-graph__edge-signal {
+    stroke-dasharray: none;
+    opacity: 0.58;
+    animation: none;
+  }
 }
 
 /* The inspector fills its bounded region. The adjacent explicit separator owns
@@ -1546,4 +1717,133 @@
   .mission-inspector__tab {
     transition: none;
   }
+}
+
+/* ---- Direct bar (Bridge parity: talk to the swarm from the board) ---- */
+.mission-board__direct-bar {
+  flex: 0 0 auto;
+  padding: 10px 16px 14px;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 90%, transparent);
+  backdrop-filter: blur(10px);
+}
+
+.mission-board__direct-bar .mission-board__direction-composer {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: min(100%, 920px);
+  margin: 0 auto;
+  padding: 7px 8px 7px 10px;
+  border: 1px solid color-mix(in srgb, var(--border-strong) 78%, transparent);
+  border-top: 1px solid color-mix(in srgb, var(--border-strong) 78%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-elevated) 92%, transparent);
+  box-shadow: 0 6px 20px color-mix(in srgb, #000 22%, transparent);
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.mission-board__direct-bar .mission-board__direction-composer:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border-strong));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 20%, transparent),
+    0 8px 26px color-mix(in srgb, #000 26%, transparent);
+}
+
+/* Labels stay for assistive tech; the pill reads as one control. */
+.mission-board__direct-bar .mission-board__direction-field > label,
+.mission-board__direct-bar .mission-board__direction-hint {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.mission-board__direct-bar .mission-board__direction-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 0;
+}
+
+.mission-board__direct-bar .mission-board__direction-field--target {
+  grid-column: 1;
+}
+
+.mission-board__direct-bar .mission-board__direction-field--draft {
+  grid-column: 2;
+  flex: 1;
+}
+
+.mission-board__direct-bar .mission-board__direction-target {
+  max-width: 180px;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.mission-board__direct-bar .mission-board__direction-draft {
+  width: 100%;
+  min-height: 34px;
+  max-height: 120px;
+  padding: 7px 4px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+  resize: none;
+}
+
+.mission-board__direct-bar .mission-board__direction-draft:focus {
+  outline: none;
+}
+
+.mission-board__direct-bar .mission-board__direction-draft::placeholder {
+  color: var(--text-dim);
+}
+
+.mission-board__direct-bar .mission-board__direction-submit {
+  grid-column: 3;
+  min-width: 44px;
+  min-height: 36px;
+  padding: 0 18px;
+  border: none;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-ink, #fff);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: filter 140ms ease;
+}
+
+.mission-board__direct-bar .mission-board__direction-submit:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.mission-board__direct-bar .mission-board__direction-submit:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.mission-board__direct-bar .mission-board__direction-error {
+  grid-column: 1 / -1;
+  margin: 4px 0 0;
+  padding: 0 8px;
+  color: var(--danger);
+  font-size: 12px;
 }

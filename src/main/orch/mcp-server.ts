@@ -4,8 +4,9 @@ import { createSystemReversibilityIo } from "./destructive-reversibility-system-
 import fs from "node:fs";
 import path from "node:path";
 import { app, dialog } from "electron";
-import type { McpRuntimeInfo } from "../../shared/orch-types";
+import type { McpRuntimeInfo, Mission } from "../../shared/orch-types";
 import { hasCurrentApprovedDispatchContract } from "../../shared/mission-intent";
+import { PET_STUDIO_SQUAD_ID } from "../../shared/pet-studio";
 import {
   getSessionState,
   orchWriteSession,
@@ -17,6 +18,10 @@ import {
   type AgentSpawnDecoration,
   type AgentSpawnHook,
 } from "../pty/pty-manager";
+import {
+  revalidateSealedAttachmentSnapshots,
+  workspaceRootAuthorityFromScope,
+} from "../persistence/dropped-files";
 import {
   bindTokenToSession,
   evaluateStop,
@@ -58,7 +63,10 @@ import {
 } from "./confirmation-format";
 import { MAX_MCP_PAYLOAD_BYTES } from "./mcp-args-validation";
 import { buildToolset } from "./tools";
-import { stripAnsi } from "./pane-registry";
+import {
+  assertMissionSpawnAuthorityCurrent,
+  stripAnsi,
+} from "./pane-registry";
 import {
   isPlaceholderSummary,
   LegacyHandoffDedupe,
@@ -647,6 +655,59 @@ export function resolveInternalPrevcReviewerAuthorityForSpawn(
   return undefined;
 }
 
+function missionAttachmentReadPathsForSpawn(
+  authority: Parameters<AgentSpawnHook>[2],
+  hasPetStudioAuthority: boolean,
+): readonly string[] | undefined {
+  if (!hasPetStudioAuthority) return undefined;
+  const missionId = authority.context?.missionId;
+  if (!missionId) return undefined;
+  let mission: Mission | null;
+  try {
+    mission = getProjectDomainStores(authority.scope).missions.get(missionId);
+  } catch {
+    // Legacy Pet authority has no sealed external artifact to grant. A new
+    // governed mission always has the strict snapshot below and reaches this
+    // hook through the configured project-domain registry.
+    return undefined;
+  }
+  const attachment = mission?.intentContract?.attachmentSnapshots?.[0];
+  if (
+    mission?.intentContract?.attachmentSnapshots?.length !== 1 ||
+    !attachment ||
+    attachment.sourcePath === undefined ||
+    attachment.sealId === undefined ||
+    attachment.device === undefined ||
+    attachment.inode === undefined
+  ) {
+    return undefined;
+  }
+  if (
+    mission.squadId !== PET_STUDIO_SQUAD_ID ||
+    !hasCurrentApprovedDispatchContract(mission)
+  ) {
+    throw new Error("Pet Studio mission attachment authority is not current");
+  }
+  assertMissionSpawnAuthorityCurrent({
+    missionId,
+    scope: authority.scope,
+    contextRevision: authority.context?.contextRevision,
+    authoritySeal: authority.context?.authoritySeal,
+  });
+  const snapshots = revalidateSealedAttachmentSnapshots([attachment], {
+    workspaceRootAuthority: workspaceRootAuthorityFromScope(authority.scope),
+    checkoutId: authority.scope.checkoutId,
+  });
+  if (
+    snapshots.length !== 1 ||
+    mission.intentContract?.attachmentPaths?.length !== 1 ||
+    mission.intentContract.attachmentPaths[0] !== snapshots[0]?.path
+  ) {
+    throw new Error("Pet Studio sealed attachment grant is invalid");
+  }
+  return Object.freeze(snapshots.map((snapshot) => snapshot.path));
+}
+
 /**
  * Build the main-owned spawn boundary for one agent. Exported so integration
  * tests can prove the real wiring, rather than exercising overlay helpers in
@@ -991,10 +1052,28 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
     }
   }
 
+  let attachmentReadPaths: readonly string[] | undefined;
+  try {
+    attachmentReadPaths = missionAttachmentReadPathsForSpawn(
+      authority,
+      petStudioMediaAuthority === true,
+    );
+  } catch (error) {
+    disposeMissionShim(missionShim);
+    releaseSessionByToken(ctx.token);
+    cleanupAgyMcpConfig(ctx.token);
+    cleanupCliMcpSession(ctx.token);
+    cleanupSessionArtifacts(ctx.token);
+    throw new Error("failed to bind sealed mission attachments", {
+      cause: error,
+    });
+  }
+
   const decoration: AgentSpawnDecoration = {
     authorityToken: ctx.token,
     env,
     extraArgs,
+    ...(attachmentReadPaths ? { attachmentReadPaths } : {}),
     ...(missionShim
       ? {
           missionShimReadPaths: missionShim.readPaths,

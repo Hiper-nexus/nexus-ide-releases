@@ -13,6 +13,7 @@ export {
   realMissionE2EProductWizardStepPayloadSchema,
   realMissionE2ERendererFailureSignal,
   realMissionE2ERunPayloadSchema,
+  type RealMissionE2EObservePayload,
   type RealMissionE2EProductWizardReceipt,
   type RealMissionE2EProductWizardStep,
   type RealMissionRuntimeAttestation,

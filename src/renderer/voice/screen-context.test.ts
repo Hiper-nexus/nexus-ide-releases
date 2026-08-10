@@ -46,58 +46,7 @@ describe('buildScreenSnapshot', () => {
     expect(snapshot.wakePrompt).not.toContain('[browser]');
   });
 
-  it('summarizes the home deck with visible actions and ready squads', () => {
-    const snapshot = buildScreenSnapshot({
-      workspaceName: 'cashback',
-      viewKind: 'grid',
-      focusedPaneId: null,
-      orchestratorPaneId: null,
-      activeMissions: [],
-      panes: [],
-      surface: {
-        kind: 'home' as const,
-        readySquads: ['Code Review', 'QA Swarm'],
-        hiddenShellCount: 0,
-      },
-    });
-
-    expect(snapshot.context).toContain('home deck open');
-    expect(snapshot.context).toContain('visible actions: start mission, custom squad, terminal');
-    expect(snapshot.context).toContain('ready squads: Code Review, QA Swarm');
-    expect(snapshot.wakePrompt).toContain('Pronto para operar');
-  });
-
-  it('warns when home deck hides existing shell panes', () => {
-    const snapshot = buildScreenSnapshot({
-      workspaceName: 'cashback',
-      viewKind: 'grid',
-      focusedPaneId: 'shell-1',
-      orchestratorPaneId: null,
-      activeMissions: [],
-      panes: [pane({ id: 'shell-1', title: 'main', kind: 'shell' })],
-      surface: { kind: 'home', readySquads: [], hiddenShellCount: 1 },
-    });
-
-    expect(snapshot.context).toContain('shell pane(s) exist underneath but are NOT visible');
-    expect(snapshot.wakePrompt).toContain('terminal por baixo');
-  });
-
-  it('reports operator profile overlay blocking panes', () => {
-    const snapshot = buildScreenSnapshot({
-      workspaceName: 'nexus-ide',
-      viewKind: 'grid',
-      focusedPaneId: 'shell-1',
-      orchestratorPaneId: null,
-      activeMissions: [],
-      panes: [pane({ id: 'shell-1', title: 'main', kind: 'shell' })],
-      surface: { kind: 'operator-profile' },
-    });
-
-    expect(snapshot.context).toContain('operator profile overlay open');
-    expect(snapshot.context).toContain('terminal NOT visible');
-  });
-
-  it('reports the exact mission wizard step and saved squad choices', () => {
+  it('reports settings destination open and handles wake prompts', () => {
     const snapshot = buildScreenSnapshot({
       workspaceName: 'nexus-ide',
       viewKind: 'grid',
@@ -105,21 +54,12 @@ describe('buildScreenSnapshot', () => {
       orchestratorPaneId: null,
       activeMissions: [],
       panes: [],
-      surface: {
-        kind: 'wizard',
-        mode: 'nova missão',
-        step: 'mode',
-        visibleActions: ['Modo Livre', 'Modo Squad', 'Modo Agêntico'],
-        readySquads: ['Code Review', 'QA Swarm'],
-      },
+      surface: { kind: 'settings' },
     });
 
-    expect(snapshot.context).toContain('visible step: mode');
-    expect(snapshot.context).toContain('visible actions: Modo Livre, Modo Squad, Modo Agêntico');
-    expect(snapshot.context).toContain('saved squads: Code Review, QA Swarm');
-    expect(snapshot.wakePrompt).toContain('escolha de modo');
+    expect(snapshot.context).toContain('settings destination open: providers, accounts, catalog, media, shortcuts, modules');
+    expect(snapshot.wakePrompt).toContain('Estou nas configuracoes. Quer ajustar providers, keys ou outro modulo?');
   });
-
   it('lists blocking overlays on workspace surface', () => {
     const snapshot = buildScreenSnapshot({
       workspaceName: 'nexus-ide',
@@ -154,11 +94,8 @@ describe('buildScreenSnapshot', () => {
       ],
       panes,
       surface: {
-        kind: 'wizard',
-        mode: 'novo workspace',
-        step: 'mode',
-        visibleActions: ['Modo Livre', 'Modo Squad', 'Modo Agêntico'],
-        readySquads: [],
+        kind: 'workspace',
+        blockingOverlays: [],
       },
     });
 

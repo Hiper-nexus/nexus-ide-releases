@@ -223,7 +223,7 @@ describe("mission task plan authority", () => {
         ...contract,
         approvedAt: 1,
         approvalReviewSha256: "a".repeat(64),
-        dispatchedAt: undefined,
+        dispatchedAt: 2,
         squadRevisionHash: snapshotSquadAuthority(squad).hash,
       },
     };
@@ -239,6 +239,7 @@ describe("mission task plan authority", () => {
         intentVersion: 7,
         approvedAt: 1,
         approvalReviewSha256: "a".repeat(64),
+        dispatchedAt: 2,
       },
     );
 

@@ -1,17 +1,23 @@
 import { useEffect, useRef, useState } from 'react';
 import type { AccountInfo } from '../../../shared/account-types';
 import type { MissionLane } from '../../../shared/mission-intent';
+import { missionDeliveryRosterIssue } from '../../../shared/mission-engine-contract';
 import {
   strictSquadAgentSchema,
   type SquadAgent,
 } from '../../../shared/orch-types';
 import type { ProviderSettingsInfo } from '../../../shared/provider-settings-types';
 import type { OrchSettings } from '../../../shared/settings-types';
+import { PET_STUDIO_SQUAD } from '../../../shared/pet-studio';
 import type { AdapterInfo } from '../../../shared/types';
 import {
   isAdapterModelAuthenticated,
   type MissionRuntimeReadiness,
 } from '../../orch/mission-runtime-readiness';
+import {
+  isExactPetStudioEntryContext,
+  type MissionSetupEntryContext,
+} from '../../state/mission-setup-store';
 import {
   buildCustomRosterAgent,
   MISSION_ROSTER_MAX_AGENTS,
@@ -49,6 +55,7 @@ interface TeamStepProps {
   recommendationStale: boolean;
   revision: number;
   inventory: MissionTeamInventory;
+  entryContext?: MissionSetupEntryContext | null;
   onRosterChange(roster: readonly SquadAgent[]): void;
   onBack(): void;
   onContinue(): void;
@@ -68,6 +75,17 @@ function providerEffort(
     ? provider.effort
     : undefined;
 }
+
+/**
+ * Tamanhos prontos de equipe. Total inclui a coordenação, então 4 = 1 coord +
+ * 3 execuções. O teto real continua sendo `cores - 2` e o orçamento de panes
+ * do agendador — o preset só compõe, nunca amplia permissão.
+ */
+const TEAM_PRESETS: ReadonlyArray<{ total: number; label: string }> = [
+  { total: 3, label: 'Enxuta' },
+  { total: 5, label: 'Padrão' },
+  { total: 8, label: 'Força total' },
+];
 
 export function buildRecommendedMissionRoster({
   objective,
@@ -138,9 +156,11 @@ export function buildRecommendedMissionRoster({
 
 export function missionRosterIssue(input: {
   roster: readonly SquadAgent[];
+  lane: MissionLane;
   readiness: MissionRuntimeReadiness;
   providers: readonly ProviderSettingsInfo[];
   accounts: readonly AccountInfo[];
+  entryContext?: MissionSetupEntryContext | null;
 }): string | null {
   const parsed = strictSquadAgentSchema
     .array()
@@ -156,8 +176,21 @@ export function missionRosterIssue(input: {
   if (coordinators.length !== 1) {
     return 'A equipe precisa ter uma pessoa responsável por coordenar e revisar.';
   }
-  if (input.roster.length === 1) {
+  if (
+    input.roster.length === 1 &&
+    (!isExactPetStudioEntryContext(input.entryContext) ||
+      JSON.stringify(input.roster) !== JSON.stringify(PET_STUDIO_SQUAD.agents))
+  ) {
     return 'Adicione ao menos uma pessoa para executar ou verificar a entrega.';
+  }
+  if (!isExactPetStudioEntryContext(input.entryContext)) {
+    const deliveryIssue = missionDeliveryRosterIssue(input.roster, input.lane);
+    if (deliveryIssue === 'executor-required') {
+      return 'Adicione ao menos uma pessoa responsável por implementar ou executar a entrega.';
+    }
+    if (deliveryIssue === 'reviewer-required') {
+      return 'Adicione ao menos uma pessoa independente para verificar a entrega.';
+    }
   }
 
   const coordinatorIds = new Set(
@@ -220,6 +253,7 @@ export function TeamStep({
   recommendationStale,
   revision,
   inventory,
+  entryContext,
   onRosterChange,
   onBack,
   onContinue,
@@ -255,9 +289,11 @@ export function TeamStep({
     inventory.status === 'ready'
       ? missionRosterIssue({
           roster,
+          lane,
           readiness: inventory.readiness,
           providers: inventory.providers,
           accounts: inventory.accounts,
+          entryContext,
         })
       : inventory.status === 'error'
         ? inventory.error ?? 'Não foi possível conferir a equipe.'
@@ -302,16 +338,20 @@ export function TeamStep({
         : category === 'scout'
           ? 'Pesquisar referências'
           : 'Implementar outra parte';
+    const model =
+      sourceProvider?.defaultModel || built.agent.model || undefined;
+    const nextAgent = {
+      ...built.agent,
+      agentName:
+        customCount === 0 ? baseName : `${baseName} ${customCount + 1}`,
+    };
+    if (effort) nextAgent.effort = effort;
+    else delete nextAgent.effort;
+    if (model) nextAgent.model = model;
+    else delete nextAgent.model;
     onRosterChange([
       ...roster.map((agent) => ({ ...agent })),
-      {
-        ...built.agent,
-        agentName:
-          customCount === 0 ? baseName : `${baseName} ${customCount + 1}`,
-        ...(effort ? { effort } : { effort: undefined }),
-        model:
-          sourceProvider?.defaultModel || built.agent.model || undefined,
-      },
+      nextAgent,
     ]);
     setEditError(null);
   };
@@ -333,6 +373,73 @@ export function TeamStep({
     setEditError(null);
   };
 
+  /**
+   * Presets de tamanho de equipe (padrão Bridge: RECON/SQUAD/CREW).
+   *
+   * Sem isto o operador só conseguia crescer a equipe um cartão por vez, e o
+   * roster recomendado de 3 deixava um host de 8+ núcleos rodando duas frentes.
+   * O preset é uma conveniência de composição: cada papel adicionado passa
+   * pelo MESMO `buildCustomRosterAgent`, então nenhuma permissão nova é criada.
+   */
+  const applyTeamPreset = (targetTotal: number): void => {
+    setEditError(null);
+    let next = roster.map((agent) => ({ ...agent }));
+
+    // Encolher: remove executores extras, nunca a coordenação nem o último worker.
+    while (next.length > targetTotal) {
+      const removable = [...next]
+        .reverse()
+        .find((agent) => agent.category !== 'orchestrator');
+      if (!removable) break;
+      const planned = planRemoveRosterAgent(next, removable.id);
+      if (!planned.ok) break;
+      next = planned.next.map((agent) => ({ ...agent }));
+    }
+
+    // Crescer: acrescenta execução pela via já auditada.
+    while (next.length < targetTotal) {
+      const built = buildCustomRosterAgent({
+        category: 'executor',
+        lane,
+        roster: next,
+        adapters: inventory.readiness.qualifiedWorkers,
+        providers: inventory.providers,
+        now: revision + next.length + 1,
+      });
+      if (!built.ok) {
+        setEditError(
+          built.error.includes('Limite')
+            ? built.error
+            : 'Não há outra ferramenta de IA pronta para crescer a equipe.',
+        );
+        break;
+      }
+      const customCount = next.filter((agent) =>
+        agent.id.startsWith('custom-executor-'),
+      ).length;
+      const sourceProvider = inventory.providers.find(
+        (provider) => provider.adapterId === built.agent.cli,
+      );
+      const effort = providerEffort(built.agent.cli, inventory.providers);
+      const model =
+        sourceProvider?.defaultModel || built.agent.model || undefined;
+      const nextAgent = {
+        ...built.agent,
+        agentName:
+          customCount === 0
+            ? 'Implementar outra parte'
+            : `Implementar outra parte ${customCount + 1}`,
+      };
+      if (effort) nextAgent.effort = effort;
+      else delete nextAgent.effort;
+      if (model) nextAgent.model = model;
+      else delete nextAgent.model;
+      next = [...next, nextAgent];
+    }
+
+    onRosterChange(next);
+  };
+
   const continueToReview = (): void => {
     if (rosterIssue) {
       setEditError(rosterIssue);
@@ -346,21 +453,54 @@ export function TeamStep({
   return (
     <section className="mission-setup__step" aria-labelledby="mission-team-title">
       <header className="mission-setup__step-header">
-        <p className="mission-setup__step-kicker">Equipe</p>
+        <p className="mission-setup__step-kicker">Etapa 2 · Equipe</p>
         <h1 id="mission-team-title" ref={headingRef} tabIndex={-1}>
-          Quem vai cuidar da entrega
+          Monte a equipe
         </h1>
         <p>
-          A recomendação prioriza ferramentas conectadas e papéis claros. Abra
-          um papel somente se quiser ajustar os detalhes técnicos.
+          Cada cartão é um papel. Abra só o que quiser ajustar — o resto já vem
+          pronto com a ferramenta conectada.
         </p>
       </header>
 
       <div className="mission-setup__continuous-section">
         <div className="mission-setup__section-heading">
-          <h2>Equipe recomendada</h2>
-          <span>{roster.length} integrantes</span>
+          <h2>Papéis da missão</h2>
+          <span className="mission-setup__count-chip">
+            {roster.length} {roster.length === 1 ? 'integrante' : 'integrantes'}
+          </span>
         </div>
+
+        {inventory.status === 'ready' &&
+          inventory.readiness.hasOperationalRoute && (
+            <div className="mission-setup__presets">
+              <span className="mission-setup__presets-label">
+                Tamanho da equipe
+              </span>
+              <div
+                className="mission-setup__preset-row"
+                role="group"
+                aria-label="Tamanho da equipe"
+              >
+                {TEAM_PRESETS.map((preset) => (
+                  <button
+                    key={preset.total}
+                    type="button"
+                    className="mission-setup__preset"
+                    aria-pressed={roster.length === preset.total}
+                    onClick={() => applyTeamPreset(preset.total)}
+                  >
+                    <strong>{preset.total}</strong>
+                    <span>{preset.label}</span>
+                  </button>
+                ))}
+              </div>
+              <p className="mission-setup__hint">
+                Mais gente = mais terminais em paralelo. O limite da máquina
+                continua valendo.
+              </p>
+            </div>
+          )}
 
         {recommendationStale && (
           <div
@@ -457,21 +597,23 @@ export function TeamStep({
 
       {inventory.status === 'ready' && inventory.readiness.hasOperationalRoute && (
         <div className="mission-setup__continuous-section mission-setup__team-actions">
-          <h2>Adicionar outro papel</h2>
-          <div className="mission-setup__inline-actions">
+          <h2>Adicionar papel</h2>
+          <div className="mission-setup__inline-actions mission-setup__role-chips">
             <button
               ref={addRoleControlRef}
               type="button"
-              className="mission-setup__button mission-setup__button--secondary"
+              className="mission-setup__role-chip"
               onClick={() => addAgent('executor')}
             >
+              <span aria-hidden="true">⚒</span>
               Adicionar implementação
             </button>
             <button
               type="button"
-              className="mission-setup__button mission-setup__button--secondary"
+              className="mission-setup__role-chip"
               onClick={() => addAgent('reviewer')}
             >
+              <span aria-hidden="true">◎</span>
               Adicionar verificação
             </button>
           </div>
@@ -499,6 +641,7 @@ export function TeamStep({
         </button>
         <button
           type="button"
+          data-nexus-real-mission-wizard-launch="prepare"
           className="mission-setup__button mission-setup__button--primary"
           onClick={continueToReview}
           aria-describedby={rosterIssue ? 'mission-team-continue-reason' : undefined}

@@ -33,7 +33,11 @@ import {
 } from "../adapters/adapter-registry";
 import { revalidateExecutable } from "../path-resolver";
 import type { CliPtyAdapter } from "../../shared/adapter-types";
-import { prepareProviderSpawn } from "../persistence/provider-config-store";
+import {
+  prepareProviderSpawn,
+  prepareProviderSpawnAuthoritative,
+  type ProviderSpawnPreparation,
+} from "../persistence/provider-config-store";
 import { requireRendererWorkspaceScope } from "../persistence/renderer-workspace-scope";
 import { trackManagedSession } from "../adapters/managed-credentials";
 import { isFileAuthAdapter } from "../adapters/managed-credentials";
@@ -187,6 +191,7 @@ function spawnCliPtyAgentPane(
   sender: WebContents,
   adapter: CliPtyAdapter,
   spawn: ResolvedMainOwnedAgentSpawn,
+  authoritativePreparation?: ProviderSpawnPreparation,
 ): SpawnResult | Promise<SpawnResult> {
   try {
     const {
@@ -223,7 +228,7 @@ function spawnCliPtyAgentPane(
         `adapter ${adapter.id} cannot enforce native read-only authority`,
       );
     }
-    const preparation = prepareProviderSpawn(adapter.id, {
+    const perSpawn = {
       effort: request.effort,
       accountId: request.accountId,
       model: request.model,
@@ -234,13 +239,27 @@ function spawnCliPtyAgentPane(
         requiresSpawnGate(authority.context),
         {
           mode:
-            adapter.quirks.mcpAutoload &&
-            operatorChoice
+            adapter.quirks.mcpAutoload && operatorChoice
               ? "operator-choice"
               : "hardened",
         },
       ),
-    });
+    };
+    if (adapter.id === "agy" && authoritativePreparation === undefined) {
+      return prepareProviderSpawnAuthoritative(adapter.id, perSpawn).then(
+        (preparation) =>
+          spawnCliPtyAgentPane(sender, adapter, spawn, preparation),
+        (error) => ({
+          ok: false,
+          error:
+            error instanceof Error
+              ? error.message
+              : "failed to verify provider authentication",
+        }),
+      );
+    }
+    const preparation =
+      authoritativePreparation ?? prepareProviderSpawn(adapter.id, perSpawn);
     if (!preparation.ok) {
       throw new Error(preparation.error);
     }

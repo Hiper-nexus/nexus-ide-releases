@@ -94,13 +94,6 @@ vi.mock('../context/context-workflow-registry', () => ({
   })),
 }));
 
-vi.mock('../persistence/settings-store', () => ({
-  getOrchSettings: () => ({ intentFirstMissionRuntimeV1: true }),
-}));
-
-vi.mock('../context/orientation/orientation-service', () => ({
-  tryGetProjectOrientationService: () => null,
-}));
 
 import { RendererMissionAuthority } from './renderer-mission-authority';
 import { BUILTIN_SQUADS } from './builtin-squads';
@@ -193,8 +186,6 @@ describe('promotePlanLaneFromRenderer', () => {
       undefined,
       undefined,
       undefined,
-      undefined,
-      undefined,
       (requestedId) =>
         [...extraSquads, squad].find(
           (candidate) => candidate.id === requestedId,
@@ -207,7 +198,6 @@ describe('promotePlanLaneFromRenderer', () => {
         readOnly: false,
         nativeReadOnly: true,
       }),
-      undefined,
       undefined,
       assertStandardSquadReadiness,
       (source) => source,

@@ -23,6 +23,9 @@ const request: MissionPrepareRequest = {
   title: 'Corrigir o checkout',
   objective: 'Corrija o total do checkout e prove o resultado.',
   contextPaths: ['src/checkout.ts', 'src/checkout.test.ts'],
+  acceptanceCriteria: [
+    'O total corrigido possui evidência verificável no checkout.',
+  ],
   roster: [
     {
       id: 'mission-coordinator',
@@ -40,6 +43,15 @@ const request: MissionPrepareRequest = {
       cli: 'codex',
       model: 'gpt-5.6-sol',
       allowedTools: ['Read', 'Edit'],
+      allowedSkills: [],
+    },
+    {
+      id: 'checkout-reviewer',
+      agentName: 'Revisar checkout',
+      category: 'reviewer',
+      cli: 'codex',
+      model: 'gpt-5.6-sol',
+      allowedTools: ['Read'],
       allowedSkills: [],
     },
   ],
@@ -211,6 +223,7 @@ describe('production MissionEngine preparation ports', () => {
       objective: request.objective,
       workspaceLabel: '/workspace/a',
       contextPaths: request.contextPaths,
+      acceptanceCriteria: request.acceptanceCriteria,
       roster: runtimeSquad.agents,
     });
     expect(review.permissions.map((permission) => permission.id)).toContain(
@@ -228,6 +241,7 @@ describe('production MissionEngine preparation ports', () => {
         goal: request.objective,
         lane: 'standard',
         contextPaths: request.contextPaths,
+        acceptanceCriteria: request.acceptanceCriteria,
         approvedAt: 200,
         approvalReviewSha256: review.reviewSha256,
         squadRevisionHash: snapshotSquadAuthority(runtimeSquad).hash,
@@ -266,10 +280,11 @@ describe('production MissionEngine preparation ports', () => {
     await expect(
       preparation.arm({
         ...request,
-        roster: request.roster.map((agent) => ({
-          ...agent,
-          category: 'executor' as const,
-        })),
+        roster: request.roster.map((agent) =>
+          agent.category === 'orchestrator'
+            ? { ...agent, category: 'executor' as const }
+            : agent,
+        ),
       }),
     ).rejects.toThrow(/coordenador|orchestrator/i);
     expect(store.missions.create).not.toHaveBeenCalled();

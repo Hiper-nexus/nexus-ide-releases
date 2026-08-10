@@ -71,7 +71,9 @@ export function makeValidRealMissionEvidence({
   const expectedContentSha256 = sha256("nexus-real-mission-e2e-ok\n");
   const planHash = sha256("guided-plan");
   const sourceSquadRevisionHash = sha256("source-squad-revision");
+  const fixtureSquadRevisionHash = sha256("fixture-squad-revision");
   const runtimeSquadRevisionHash = sha256("runtime-squad-revision");
+  const reviewSha256 = sha256("canonical-mission-review");
   const workspaceSha256 = sha256("workspace");
   const runtimeSquadId =
     "agentic-runtime-11111111-1111-4111-8111-111111111111";
@@ -193,18 +195,16 @@ export function makeValidRealMissionEvidence({
     completedAt: completionCompletedAt,
   }));
   const productWizardReceiptCore = {
-    origin: 'main-owned-product-wizard-causal-chain',
+    origin: 'main-owned-mission-setup-causal-chain',
     missionId: 'mission-real',
     workspaceSha256,
     sourceSquadRevisionHash,
     squadRevisionHash: runtimeSquadRevisionHash,
-    submittedContractSha256: sha256('submitted-contract'),
-    approvedContractSha256: sha256('approved-contract'),
-    armedAt: 0,
-    intentSubmittedAt: 0,
-    nativeDialogOpenedAt: null,
-    nativeDialogAcceptedAt: null,
-    approvalReturnedAt: 1,
+    reviewSha256,
+    preparedContractSha256: sha256('prepared-contract'),
+    startedContractSha256: sha256('started-contract'),
+    preparedAt: 0,
+    startedAt: 1,
   };
   const codexWorkerPane = (agentRef) => {
     const step = timeline.find(
@@ -285,16 +285,14 @@ export function makeValidRealMissionEvidence({
       status: 'done',
       intentState: 'done',
       intentVersion: 1,
-      squadId:
-        launchSurface === 'private-runner'
-          ? 'agentic-nexus-real-mission-e2e'
-          : runtimeSquadId,
-      squadSourceId: 'agentic-nexus-real-mission-e2e',
+      reviewSha256,
+      squadId: runtimeSquadId,
+      fixtureSquadId: 'agentic-nexus-real-mission-e2e',
+      fixtureSquadRevisionHash,
+      squadSourceId:
+        'custom-mission-setup-11111111-1111-4111-8111-111111111111',
       squadSourceRevisionHash: sourceSquadRevisionHash,
-      squadRevisionHash:
-        launchSurface === 'private-runner'
-          ? sourceSquadRevisionHash
-          : runtimeSquadRevisionHash,
+      squadRevisionHash: runtimeSquadRevisionHash,
       approvedAt: 0,
       dispatchedAt: 1,
     },
@@ -316,10 +314,7 @@ export function makeValidRealMissionEvidence({
     },
     plan: {
       version: 1,
-      squadId:
-        launchSurface === 'private-runner'
-          ? 'agentic-nexus-real-mission-e2e'
-          : runtimeSquadId,
+      squadId: runtimeSquadId,
       planHash,
       rosterHash: sha256('guided-roster'),
       tasks: timeline.map((step) => ({

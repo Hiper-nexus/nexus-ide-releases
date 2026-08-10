@@ -1,4 +1,8 @@
-import type { ReactNode } from 'react';
+import {
+  useLayoutEffect,
+  useRef,
+  type ReactNode,
+} from 'react';
 
 export interface AppShellProps {
   rail: ReactNode;
@@ -9,6 +13,8 @@ export interface AppShellProps {
   contentId?: string;
   contentLabel?: string;
   inspectorLabel?: string;
+  /** Incremented only when an outgoing destination owned focus. */
+  focusRequest?: number;
   className?: string;
 }
 
@@ -25,8 +31,22 @@ export function AppShell({
   contentId = 'nexus-product-content',
   contentLabel = 'Conteúdo do produto',
   inspectorLabel = 'Detalhes',
+  focusRequest,
   className = '',
 }: AppShellProps) {
+  const mainRef = useRef<HTMLElement>(null);
+  const handledFocusRequest = useRef(focusRequest);
+
+  useLayoutEffect(() => {
+    if (
+      focusRequest === undefined ||
+      handledFocusRequest.current === focusRequest
+    ) {
+      return;
+    }
+    handledFocusRequest.current = focusRequest;
+    mainRef.current?.focus();
+  }, [focusRequest]);
   return (
     <div className={`nexus-shell ${className}`.trim()}>
       <a className="nexus-shell__skip-link" href={`#${contentId}`}>
@@ -55,6 +75,7 @@ export function AppShell({
             }`}
           >
             <main
+              ref={mainRef}
               id={contentId}
               className="product-canvas"
               aria-label={contentLabel}

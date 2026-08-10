@@ -329,16 +329,16 @@ export function providerAuthStrategy(
 }
 
 /**
- * Uncached readiness for the final autonomous spawn boundary. Renderer/status
+ * Uncached auth decision for the final autonomous spawn boundary. Renderer/status
  * snapshots deliberately use the short cache; process creation must observe
  * the credential source as it exists now.
  */
-export async function providerAuthStrategyAuthoritativeAsync(
+async function authDecisionAuthoritativeAsync(
   adapterId: string,
   selectedModel?: string,
-): Promise<ProviderSettingsInfo['authStrategy']> {
+): Promise<AuthDecision> {
   if (adapterId !== 'agy') {
-    return providerAuthStrategy(adapterId, selectedModel);
+    return authDecision(adapterId, selectedModel);
   }
   const adapter = getAdapter(adapterId);
   const authMethod =
@@ -352,7 +352,15 @@ export async function providerAuthStrategyAuthoritativeAsync(
     authMethod,
     hasStoredKey: hasRuntimeKey(adapterId),
     subscriptionAuthed: result.value,
-  }).strategy;
+  });
+}
+
+export async function providerAuthStrategyAuthoritativeAsync(
+  adapterId: string,
+  selectedModel?: string,
+): Promise<ProviderSettingsInfo['authStrategy']> {
+  return (await authDecisionAuthoritativeAsync(adapterId, selectedModel))
+    .strategy;
 }
 
 function effectiveProviderModel(
@@ -617,6 +625,7 @@ function buildProviderSpawnOverrides(
   const account =
     preparedAccount?.account ??
     (!perSpawn.accountId &&
+    !(adapterId === 'agy' && options.decision?.strategy === 'subscription') &&
     !credentiallessOpenCode &&
     adapterId !== 'claude' &&
     listAccounts(adapterId).length > 0
@@ -743,21 +752,18 @@ export type ProviderSpawnPreparation =
   | { ok: true; overrides: ProviderSpawnOverrides }
   | { ok: false; error: string };
 
-/** Resolve all spawn-time auth synchronously, before node-pty is touched. */
-export function prepareProviderSpawn(
+function prepareProviderSpawnWithDecision(
   adapterId: string,
-  perSpawn: ProviderPerSpawn = {},
+  perSpawn: ProviderPerSpawn,
+  spawnDecision: AuthDecision | undefined,
 ): ProviderSpawnPreparation {
   const infrastructure = providerInfrastructureReadiness(adapterId);
   if (!infrastructure.ready) {
     return { ok: false, error: infrastructure.reason };
   }
-  const spawnDecision = perSpawn.accountId
-    ? undefined
-    : authDecision(adapterId, perSpawn.model);
   const readiness = perSpawn.accountId
-      ? infrastructure
-      : resolveProviderReadiness(adapterId, perSpawn.model, {
+    ? infrastructure
+    : resolveProviderReadiness(adapterId, perSpawn.model, {
         decision: spawnDecision,
       });
   if (!readiness.ready) return { ok: false, error: readiness.reason };
@@ -781,17 +787,69 @@ export function prepareProviderSpawn(
         adapterId,
         perSpawn,
         preparedAccount,
-        {
-          decision: spawnDecision,
-        },
+        { decision: spawnDecision },
       ),
     };
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'provider account is not activatable',
+      error:
+        err instanceof Error
+          ? err.message
+          : 'provider account is not activatable',
     };
   }
+}
+
+/** Resolve cached spawn-time auth synchronously, before node-pty is touched. */
+export function prepareProviderSpawn(
+  adapterId: string,
+  perSpawn: ProviderPerSpawn = {},
+): ProviderSpawnPreparation {
+  return prepareProviderSpawnWithDecision(
+    adapterId,
+    perSpawn,
+    perSpawn.accountId
+      ? undefined
+      : authDecision(adapterId, perSpawn.model),
+  );
+}
+
+/**
+ * Resolve live Keychain-only auth asynchronously at the final spawn boundary.
+ * This keeps Electron's main event loop out of SecItemCopyMatching while
+ * ensuring a stale status cache cannot route a signed-in CLI through the vault.
+ */
+export async function prepareProviderSpawnAuthoritative(
+  adapterId: string,
+  perSpawn: ProviderPerSpawn = {},
+): Promise<ProviderSpawnPreparation> {
+  const infrastructure = providerInfrastructureReadiness(adapterId);
+  if (!infrastructure.ready) {
+    return { ok: false, error: infrastructure.reason };
+  }
+  let spawnDecision: AuthDecision | undefined;
+  if (!perSpawn.accountId) {
+    try {
+      spawnDecision = await authDecisionAuthoritativeAsync(
+        adapterId,
+        perSpawn.model,
+      );
+    } catch {
+      return {
+        ok: false,
+        error:
+          adapterId === 'agy'
+            ? 'não foi possível verificar a sessão nativa do AGY; desbloqueie o Keychain e tente novamente'
+            : 'não foi possível verificar a autenticação do provider',
+      };
+    }
+  }
+  return prepareProviderSpawnWithDecision(
+    adapterId,
+    perSpawn,
+    spawnDecision,
+  );
 }
 
 /** Backward-compatible strict accessor for non-IPC callers. */

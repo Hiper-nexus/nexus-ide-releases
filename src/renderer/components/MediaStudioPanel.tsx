@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import type {
   MediaArtifactInfo,
   MediaGenerationResult,
   MediaProviderInfo,
   MediaStudioRequest,
 } from '../../shared/media-types';
-import { useSettingsStore } from '../state/settings-store';
+import { useProductNavigationStore } from '../state/product-navigation-store';
 import { CloseButton } from './CloseButton';
 import { PixelIcon } from './PixelIcon';
 
@@ -99,12 +99,47 @@ export function MediaStudioPanel({
   const [copied, setCopied] = useState(false);
   // storageKeys com fetch de thumb já tentado — não re-dispara em falha.
   const thumbTried = useRef(new Set<string>());
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const restoreFocusRef = useRef<HTMLElement | null>(null);
+  const titleId = useId();
+  const descriptionId = useId();
 
   const ofKind = useMemo(
     () => (providers ?? []).filter((p) => p.kind === tab),
     [providers, tab],
   );
   const keyed = useMemo(() => ofKind.filter((p) => p.hasKey), [ofKind]);
+
+  useEffect(() => {
+    if (!open) {
+      const restoreTarget = restoreFocusRef.current;
+      restoreFocusRef.current = null;
+      if (restoreTarget?.isConnected) restoreTarget.focus();
+      return;
+    }
+
+    if (
+      restoreFocusRef.current === null &&
+      document.activeElement instanceof HTMLElement &&
+      !dialogRef.current?.contains(document.activeElement)
+    ) {
+      restoreFocusRef.current = document.activeElement;
+    }
+
+    const initialFocus = dialogRef.current?.querySelector<HTMLElement>(
+      'button:not([disabled]), input:not([disabled]):not([type="hidden"]), textarea:not([disabled]), select:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
+    );
+    initialFocus?.focus();
+  }, [open]);
+
+  useEffect(
+    () => () => {
+      const restoreTarget = restoreFocusRef.current;
+      restoreFocusRef.current = null;
+      if (restoreTarget?.isConnected) restoreTarget.focus();
+    },
+    [],
+  );
 
   // Carrega providers + galeria ao abrir (e recarrega a cada abertura).
   useEffect(() => {
@@ -248,28 +283,65 @@ export function MediaStudioPanel({
     });
   }
 
+  function openMediaSettings() {
+    restoreFocusRef.current = null;
+    onClose();
+    useProductNavigationStore.getState().openSettings('media');
+  }
+
   const selProvider = providers?.find((p) => p.id === result?.res.provider);
 
   return (
     <div
-      className="int-scrim"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
+      className="ms-scrim overlay-scrim-glass overlay-scrim-enter"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
       }}
     >
       <div
-        className="int-panel ms-panel"
+        ref={dialogRef}
+        className="ms-panel overlay-enter"
         role="dialog"
         aria-modal="true"
-        aria-label="Estúdio de Mídia"
-        onKeyDown={(e) => {
-          if (e.key === 'Escape') onClose();
+        aria-labelledby={titleId}
+        aria-describedby={descriptionId}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            event.stopPropagation();
+            onClose();
+            return;
+          }
+          if (event.key !== 'Tab') return;
+
+          event.preventDefault();
+          event.stopPropagation();
+          const focusables = Array.from(
+            event.currentTarget.querySelectorAll<HTMLElement>(
+              'button:not([disabled]), input:not([disabled]):not([type="hidden"]), textarea:not([disabled]), select:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
+            ),
+          ).filter(
+            (element) => element.getAttribute('aria-hidden') !== 'true',
+          );
+          if (focusables.length === 0) {
+            event.currentTarget.focus();
+            return;
+          }
+          const currentIndex = focusables.indexOf(
+            document.activeElement as HTMLElement,
+          );
+          const nextIndex = event.shiftKey
+            ? currentIndex <= 0
+              ? focusables.length - 1
+              : currentIndex - 1
+            : (currentIndex + 1) % focusables.length;
+          focusables[nextIndex]?.focus();
         }}
       >
-        <header className="int-panel__head">
+        <header className="ms-panel__head">
           <div className="ms-head">
-            <strong>Estúdio de Mídia</strong>
-            <span className="ms-subtitle">
+            <strong id={titleId}>Estúdio de Mídia</strong>
+            <span id={descriptionId} className="ms-subtitle">
               Crie imagens e vídeos com IA. Descreva o que você quer e clique em
               Gerar.
             </span>
@@ -277,13 +349,13 @@ export function MediaStudioPanel({
           <CloseButton onClick={onClose} label="Fechar Estúdio de Mídia" />
         </header>
 
-        <div className="int-panel__body">
-          <div className="int-tabs ms-tabs" role="tablist" aria-label="Tipo de mídia">
+        <div className="ms-panel__body">
+          <div className="ms-tabs" role="tablist" aria-label="Tipo de mídia">
             <button
               type="button"
               role="tab"
               aria-selected={tab === 'image'}
-              className={tab === 'image' ? 'int-tab int-tab--active' : 'int-tab'}
+              className={tab === 'image' ? 'ms-tab ms-tab--active' : 'ms-tab'}
               onClick={() => setTab('image')}
             >
               Imagem
@@ -292,7 +364,7 @@ export function MediaStudioPanel({
               type="button"
               role="tab"
               aria-selected={tab === 'video'}
-              className={tab === 'video' ? 'int-tab int-tab--active' : 'int-tab'}
+              className={tab === 'video' ? 'ms-tab ms-tab--active' : 'ms-tab'}
               onClick={() => setTab('video')}
             >
               Vídeo
@@ -304,18 +376,14 @@ export function MediaStudioPanel({
               <p className="ms-empty__title">
                 Nenhum provider de {KIND_PT[tab]} configurado
               </p>
-              <p className="int-panel__dim">
+              <p className="ms-dim">
                 Para gerar {KIND_PT[tab]}, conecte uma API key em Ajustes → Mídia.
                 Leva menos de um minuto.
               </p>
               <button
                 type="button"
-                className="int-panel__btn int-panel__btn--primary ms-empty__cta"
-                onClick={() => {
-                  // Fecha o Estúdio primeiro: o drawer abriria atrás do scrim.
-                  onClose();
-                  useSettingsStore.getState().openDrawer('media');
-                }}
+                className="ms-button ms-button--primary ms-empty__cta"
+                onClick={openMediaSettings}
               >
                 Configurar API key
               </button>
@@ -422,7 +490,7 @@ export function MediaStudioPanel({
 
               <button
                 type="button"
-                className="int-panel__btn int-panel__btn--primary ms-generate"
+                className="ms-button ms-button--primary ms-generate"
                 disabled={!prompt.trim() || Boolean(job) || !sel}
                 onClick={generate}
               >
@@ -440,11 +508,11 @@ export function MediaStudioPanel({
                     ? 'Gerando sua imagem… leva alguns segundos'
                     : 'Gerando vídeo… pode levar alguns minutos. Você pode cancelar.'}
                 </strong>
-                <span className="int-panel__dim">{elapsed}s decorridos</span>
+                <span className="ms-dim">{elapsed}s decorridos</span>
               </div>
               <button
                 type="button"
-                className="int-panel__btn int-panel__btn--sm"
+                className="ms-button ms-button--sm"
                 onClick={cancel}
               >
                 Cancelar
@@ -475,10 +543,10 @@ export function MediaStudioPanel({
                 <strong className="ms-result__name">
                   {basename(result.storageKey ?? result.res.path)}
                 </strong>
-                <span className="int-panel__dim">
+                <span className="ms-dim">
                   {selProvider?.label ?? result.res.provider} · {result.res.model}
                 </span>
-                <span className="int-panel__dim">
+                <span className="ms-dim">
                   Custo estimado:{' '}
                   {result.res.estimatedCostUsd !== null
                     ? formatUsd(result.res.estimatedCostUsd)
@@ -487,7 +555,7 @@ export function MediaStudioPanel({
                 <div className="ms-result__actions">
                   <button
                     type="button"
-                    className="int-panel__btn int-panel__btn--sm"
+                    className="ms-button ms-button--sm"
                     disabled={!result.storageKey}
                     onClick={() => {
                       if (result.storageKey) {
@@ -499,7 +567,7 @@ export function MediaStudioPanel({
                   </button>
                   <button
                     type="button"
-                    className="int-panel__btn int-panel__btn--sm"
+                    className="ms-button ms-button--sm"
                     onClick={copyPath}
                   >
                     {copied ? 'Copiado!' : 'Copiar caminho'}
@@ -515,7 +583,7 @@ export function MediaStudioPanel({
               {error.recoverJobId && (
                 <button
                   type="button"
-                  className="int-panel__btn int-panel__btn--sm int-panel__btn--primary"
+                  className="ms-button ms-button--sm ms-button--primary"
                   onClick={resume}
                 >
                   Retomar sem pagar de novo
@@ -525,9 +593,9 @@ export function MediaStudioPanel({
           )}
 
           <section className="ms-gallery">
-            <h4 className="int-card__title">Suas criações</h4>
+            <h4 className="ms-gallery__title">Suas criações</h4>
             {artifacts.length === 0 ? (
-              <p className="int-panel__dim">Suas criações aparecerão aqui.</p>
+              <p className="ms-dim">Suas criações aparecerão aqui.</p>
             ) : (
               <div className="ms-grid">
                 {artifacts.map((a) => (

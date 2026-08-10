@@ -1,4 +1,5 @@
 import type { Mission } from '../../shared/orch-types';
+import { hasCurrentApprovedDispatchContract } from '../../shared/mission-intent';
 import {
   missionHasLiveRuntime,
   missionIsOperationallyActive,
@@ -29,6 +30,15 @@ export type MissionListAction =
   | 'remove'
   | 'none';
 
+function missionAwaitsOperatorDecision(mission: Mission): boolean {
+  return (
+    mission.status === 'blocked' &&
+    mission.intentState === 'blocked_user' &&
+    !wasMissionRuntimeClosedByOperator(mission) &&
+    hasCurrentApprovedDispatchContract(mission)
+  );
+}
+
 export function missionListAction(
   mission: Mission,
   hasVisiblePanes: boolean,
@@ -41,6 +51,7 @@ export function missionListAction(
     return 'close-runtime';
   }
   if (missionHasLiveRuntime(mission, hasVisiblePanes)) return 'close-runtime';
+  if (missionAwaitsOperatorDecision(mission)) return 'none';
   if (missionIsOperationallyActive(mission, hasVisiblePanes)) return 'none';
   if (canDiscardMission(mission)) return 'discard';
   return 'remove';
@@ -99,6 +110,3 @@ export function removeMissionPrompt(mission: Mission): {
     confirmLabel: 'Remover missão',
   };
 }
-
-/** @deprecated use removeMissionPrompt — kept for tests migrating off archive */
-export const archiveMissionPrompt = removeMissionPrompt;

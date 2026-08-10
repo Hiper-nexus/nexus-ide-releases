@@ -238,6 +238,7 @@ describe('isolation args and environment', () => {
       TMPDIR: '/tmp/nexus-packaged-smoke/tmp',
       NEXUS_USER_DATA_DIR: userData,
       NEXUS_FORCE_ALL_FLAGS: '1',
+      NEXUS_PACKAGED_SMOKE: '1',
     });
     expect(env).not.toHaveProperty('OPENAI_API_KEY');
     expect(env).not.toHaveProperty('GITHUB_TOKEN');

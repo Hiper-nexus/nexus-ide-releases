@@ -449,33 +449,40 @@ type ProductDestination =
 - `src/renderer/components/MissionRail.tsx` and layout test
 - `src/renderer/components/OpsBoard.tsx` and tests
 - `src/renderer/components/OrchestrationPanel.tsx`
+- `src/renderer/components/MissionResultDetail.tsx` and tests
 - `src/renderer/components/WorkspaceBar.tsx`
 - `src/renderer/components/LaunchScreen.tsx`
 - `src/renderer/components/HomeDeck.tsx`
 - old `src/renderer/components/MissionComposer.tsx` and test
 - `src/renderer/components/MissionKickoffBanner.tsx` and test
-- `src/renderer/components/OrchestrationModeDialog.tsx`
 - `src/renderer/components/settings/SettingsDrawer.tsx`
 - `src/renderer/components/memory/MemoryPanel.tsx`
 - `src/renderer/components/MissionEndorphinFx.tsx`
+- `src/renderer/components/OperatorFx.tsx` and tests
+- `src/renderer/components/Onboarding.tsx`, `src/renderer/state/onboarding-store.ts`, victory callers, and zero-caller renderer IPC
+- `src/renderer/components/FilesPanel.tsx` and phantom visibility callers only after contextual Editor owns its tree/open/edit/save behavior; retain the files domain store without panel chrome
 - `src/renderer/state/mission-wizard-store.ts` and test
-- `src/renderer/state/home-store.ts` and test if present
+- `src/renderer/state/home-store.ts` and test only after every last-pane/presentation caller is migrated
 - `src/renderer/styles/launch-wizard.css`
 - `src/renderer/styles/home-deck.css`
 - `src/renderer/styles/ops-board.css`
 - `src/renderer/styles/mission-kickoff.css`
 
-**Modify:** renderer stores, mission IPC/channel/preload types, `global.css`, and mixed styles containing only deleted selectors.
+**Retain and repair before deletion work:** mounted `OrchestrationModeDialog`, `MediaStudioPanel`, and `OperatorProfile`; durable Board/Inspector plan promotion; state-aware mission stop/close/discard/remove controls; Settings squad create/import/edit/export/delete; contextual file tree/editor; shared cause-aware attention routes; modal focus/native-pane suppression; `settings-drawer-section.ts`; reopen/close/rebind/promote/handoff runtime operations.
 
-- [ ] **Step 1: Search exact symbols/channels**. Every match is migrated now or proves a live non-legacy use; uncertainty is not a reason to retain dead code.
-- [ ] **Step 2: Remove `panelOpen`, `panelTab`, `selectedMissionId`, `boardOpen` and actions** from orch-store; remove drawer navigation ownership from settings-store while retaining values.
-- [ ] **Step 3: Remove old renderer lifecycle channels** for create/arm/submit/approve/bootstrap/kickoff/rearm/promote/update once all product callers use `window.nexus.mission`.
-- [ ] **Step 4: Delete listed files, exports and `global.css` imports in one change**.
-- [ ] **Step 5: Trim `orchestration.css`, `panels.css`, `rail-onboarding.css`, `product-wave.css` to live selectors; delete/import-remove any empty file**.
-- [ ] **Step 6: Run:** `npm run typecheck` and `npm run test:changed`  
+**Modify:** canonical MissionPrepare/Review for the main-validated ephemeral Pet Studio profile and governed image snapshot; renderer stores/callers; renderer-only mission IPC/channel/preload types; `global.css`; mixed styles containing only deleted selectors.
+
+- [ ] **Step 1: Freeze exact symbol/channel inventory.** Every match is migrated now or proves a retained non-legacy capability. Do not infer safety from an unmounted component.
+- [ ] **Step 2: Add Pet Studio prepare profile.** Force `nexus-pet-studio`, exact one-Codex authority, governed snapshot, rendered fence, and native start confirmation. Use Pet-specific navigation that preserves Settings return provenance; every cancel/back/success/reselection/workspace/rail/non-Pet entry invalidates ephemeral context and late prepare work.
+- [ ] **Step 3: Restore retained resolvers and capabilities.** Mount Mode, Media, and Operator Profile; make Plan promotion durably reachable; move squad management into Settings and FilesPanel behavior into contextual Editor; migrate intent-shell reopen; expose the existing state-aware mission action matrix; enforce modal focus and browser-pane suppression.
+- [ ] **Step 4: Migrate navigation callers.** Last-pane close never changes a non-terminal destination and Terminal stays on PaneVacancy; Settings terminal actions reveal their panes; attention uses the shared cause-to-tab matrix; Jarvis/visibility/preload harnesses use real product destinations and mounted overlays. Preserve a legacy shell until replacement starts.
+- [ ] **Step 5: Delete listed legacy UI/stores/styles** only after zero-caller proof. Keep mounted Mode, Media, Operator Profile, files domain store, settings resolver, and runtime helpers.
+- [ ] **Step 6: Remove obsolete store fields.** Drop orch panel/board, Settings drawer, home/wizard/files-panel/onboarding phantom state while retaining files domain data and persisted settings.
+- [ ] **Step 7: Remove only renderer creation-lifecycle endpoints** for create/immediate-authorize/arm/submit/approve/renderer-bootstrap/renderer-kickoff/bind/rearm/prepare-project/cancel-preparation/prompt-queue after callers and preload harnesses migrate. KEEP `promotePlanLane`, `resumeMissionBootstrap`, `rebindMissionOrchestrator`, `closeMissionRuntime`, main-owned kickoff/bootstrap, and V2-owned removal; re-prove `updateMission` separately.
+- [ ] **Step 8: Run:** `npm run typecheck`, focused co-located tests, and `npm run test:changed`  
 Expected: PASS.
-- [ ] **Step 7: Search production source** for `MissionWizard|MissionRail|OpsBoard|OrchestrationPanel|panelOpen|boardOpen|missionUpdate`. Expected: zero production matches.
-- [ ] **Step 8: Commit:** `git commit -m "refactor(renderer): remove superseded Nexus product"`.
+- [ ] **Step 9: Search production source** for deleted surfaces, store fields, launcher helpers, and removed channels. Expected: zero production matches; retained capabilities have canonical callers.
+- [ ] **Step 10: Commit:** `git commit -m "refactor(renderer): remove superseded Nexus product"`.
 
 ---
 

@@ -329,13 +329,13 @@ export function MissionStep({
   return (
     <section className="mission-setup__step" aria-labelledby="mission-step-title">
       <header className="mission-setup__step-header">
-        <p className="mission-setup__step-kicker">Missão</p>
+        <p className="mission-setup__step-kicker">Etapa 1 · Missão</p>
         <h1 id="mission-step-title" ref={headingRef} tabIndex={-1}>
-          Defina a entrega
+          O que você quer entregar?
         </h1>
         <p>
-          Diga o resultado esperado. A equipe usa a pasta escolhida como limite
-          para ler e alterar arquivos.
+          Descreva o resultado em linguagem comum. A equipe só lê e altera
+          arquivos dentro da pasta escolhida.
         </p>
       </header>
 

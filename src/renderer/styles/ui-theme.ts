@@ -1,16 +1,18 @@
-import type { TerminalThemeId } from "../../shared/settings-types";
+import {
+  DEFAULT_TERMINAL_SETTINGS,
+  type TerminalThemeId,
+} from "../../shared/settings-types";
 
 /**
  * App-wide UI palettes, one per terminal theme. Selecting a theme in
- * Settings → Terminal restyles the WHOLE IDE (bar, drawers, launcher,
- * panels) by overriding the CSS custom properties on :root — the terminal
- * panes get their matching xterm palette via terminal-host.
+ * Settings → Aparência restyles the whole IDE (bar, drawers, launcher,
+ * panels) by overriding CSS custom properties on :root. Terminal panes get
+ * the selected xterm palette independently via terminal-host.
  *
  * Derivados do acento (--accent-soft/strong/hover/glow) NÃO moram aqui:
  * base.css os computa com color-mix a partir de --accent, então cada tema
- * os herda corretamente de graça. Aqui só entra o que não dá para derivar —
- * incluindo --accent-ink (tinta sobre CTA sólido), que é decisão de
- * contraste por tema, não conta de cor.
+ * os herda corretamente de graça. Aqui só entra o que não dá para derivar,
+ * incluindo --text-faint, a tinta sobre acento e o CTA neutro por tema.
  */
 
 export interface UiPalette {
@@ -21,8 +23,12 @@ export interface UiPalette {
   borderStrong: string;
   text: string;
   textDim: string;
+  textFaint: string;
   accent: string;
   accentInk: string;
+  btnPrimary: string;
+  btnPrimaryInk: string;
+  btnPrimaryHover: string;
   danger: string;
 }
 
@@ -40,17 +46,35 @@ export const LEGACY_NEXUS_CYAN_PALETTE: UiPalette = {
   borderStrong: "#2c3a55",
   text: "#d7dfec",
   textDim: "#8a94aa",
+  textFaint: "#8f8f8f",
   accent: "#3dd9ff",
   accentInk: "#051019",
+  btnPrimary: "#fafafa",
+  btnPrimaryInk: "#0b0b0c",
+  btnPrimaryHover: "#ffffff",
   danger: "#ff7a90",
 };
 
 const PALETTES: Record<TerminalThemeId, UiPalette> = {
-  // Tema "Nexus" (id estável `nexus-dark`, DEFAULT do app): superfícies
-  // neutras em camadas e acento índigo operacional (0.21 — o ciano-neon saiu
-  // do default por ser o visual-padrão de toda ferramenta de IA; segue
-  // disponível como LEGACY_NEXUS_CYAN_PALETTE). Tem que casar com os
-  // defaults de base.css:root.
+  // Pink City is the product default. The pink signal is reserved for live,
+  // selected and focused state; the primary action stays neutral-white.
+  "nexus-pink-city": {
+    bg: "#080709",
+    bgElevated: "#111013",
+    bgBar: "#0d0b0f",
+    border: "rgb(255 255 255 / 0.08)",
+    borderStrong: "rgb(255 255 255 / 0.16)",
+    text: "#faf7f9",
+    textDim: "#aaa2a8",
+    textFaint: "#928b90",
+    accent: "#ff4f8b",
+    accentInk: "#080709",
+    btnPrimary: "#faf7f9",
+    btnPrimaryInk: "#080709",
+    btnPrimaryHover: "#fffafd",
+    danger: "#ff6b4a",
+  },
+  // Nexus Dark remains the stable neutral/indigo selectable palette from 0.21.
   "nexus-dark": {
     bg: "#0b0b0c",
     bgElevated: "#141416",
@@ -59,8 +83,12 @@ const PALETTES: Record<TerminalThemeId, UiPalette> = {
     borderStrong: "rgb(255 255 255 / 0.14)",
     text: "#fafafa",
     textDim: "#a1a1a1",
+    textFaint: "#8f8f8f",
     accent: "#7c86ff",
     accentInk: "#0b0b0c",
+    btnPrimary: "#fafafa",
+    btnPrimaryInk: "#0b0b0c",
+    btnPrimaryHover: "#ffffff",
     danger: "#f85149",
   },
   "nexus-light": {
@@ -71,10 +99,14 @@ const PALETTES: Record<TerminalThemeId, UiPalette> = {
     borderStrong: "#c3cddf",
     text: "#2a3040",
     textDim: "#5d6880",
+    textFaint: "#6b7080",
     // ≥4.5:1 tanto sobre --bg-bar quanto sobre --bg para rótulos pequenos,
-    // mantendo também texto branco AA no CTA sólido.
+    // mantendo também texto branco AA no acento sólido.
     accent: "#0b70b4",
     accentInk: "#ffffff",
+    btnPrimary: "#16181d",
+    btnPrimaryInk: "#fafafa",
+    btnPrimaryHover: "#23262e",
     danger: "#c73a52",
   },
   dracula: {
@@ -84,10 +116,14 @@ const PALETTES: Record<TerminalThemeId, UiPalette> = {
     border: "#3b3e51",
     borderStrong: "#4d5170",
     text: "#f8f8f2",
-    // 5.79:1 sobre o elevated — metadados pequenos continuam AA.
+    // 5.79:1 sobre o elevated; metadados pequenos continuam AA.
     textDim: "#a8aecb",
+    textFaint: "#979dba",
     accent: "#bd93f9",
     accentInk: "#14101f",
+    btnPrimary: "#fafafa",
+    btnPrimaryInk: "#0b0b0c",
+    btnPrimaryHover: "#ffffff",
     danger: "#ff7a90",
   },
   "solarized-dark": {
@@ -100,8 +136,12 @@ const PALETTES: Record<TerminalThemeId, UiPalette> = {
     // 5.08:1 sobre o elevated (o cinza Solarized canônico é insuficiente
     // para os rótulos de 10–12 px usados pelo cockpit).
     textDim: "#8fa6aa",
+    textFaint: "#8ca0a3",
     accent: "#2aa4e8",
     accentInk: "#01222c",
+    btnPrimary: "#fafafa",
+    btnPrimaryInk: "#0b0b0c",
+    btnPrimaryHover: "#ffffff",
     danger: "#ff7a70",
   },
 };
@@ -114,23 +154,28 @@ const VAR_MAP: Array<[keyof UiPalette, string]> = [
   ["borderStrong", "--border-strong"],
   ["text", "--text"],
   ["textDim", "--text-dim"],
+  ["textFaint", "--text-faint"],
   ["accent", "--accent"],
   ["accentInk", "--accent-ink"],
+  ["btnPrimary", "--btn-primary"],
+  ["btnPrimaryInk", "--btn-primary-ink"],
+  ["btnPrimaryHover", "--btn-primary-hover"],
   ["danger", "--danger"],
 ];
 
-/** Vars que versões antigas setavam inline e hoje são derivadas em CSS. */
-const LEGACY_INLINE_VARS = ["--accent-soft"];
+/** Vars que versões antigas setavam inline e hoje pertencem ao base.css. */
+const LEGACY_INLINE_VARS = ["--accent-soft", "--accent-glow"];
 
 /** Restyle the whole app to the palette matching the selected theme. */
 export function applyUiTheme(themeId: TerminalThemeId): void {
-  const palette = PALETTES[themeId] ?? PALETTES["nexus-dark"];
+  const palette =
+    PALETTES[themeId] ?? PALETTES[DEFAULT_TERMINAL_SETTINGS.themeId];
   const root = document.documentElement;
   for (const [key, cssVar] of VAR_MAP) {
     root.style.setProperty(cssVar, palette[key]);
   }
-  // Um set inline antigo venceria o color-mix de base.css para sempre;
-  // limpar garante que os derivados sigam o acento do tema atual.
+  // Um valor inline antigo venceria base.css para sempre; limpar garante que
+  // derivados e defaults estáticos acompanhem o tema atual.
   for (const cssVar of LEGACY_INLINE_VARS) {
     root.style.removeProperty(cssVar);
   }

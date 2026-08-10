@@ -479,7 +479,10 @@ function makeCodexAdapter(
   };
 }
 
-function installGovernedCodexTestHook(root: string): () => void {
+function installGovernedCodexTestHook(
+  root: string,
+  attachmentReadPath?: string,
+): () => void {
   const home = path.join(root, "home");
   fs.mkdirSync(home, { recursive: true });
   vi.stubEnv("HOME", home);
@@ -502,6 +505,9 @@ function installGovernedCodexTestHook(root: string): () => void {
       authorityToken: ctx.token,
       env: { NEXUS_MCP_TOKEN: ctx.token },
       extraArgs: [],
+      ...(attachmentReadPath
+        ? { attachmentReadPaths: [attachmentReadPath] }
+        : {}),
     };
   });
   return () => {
@@ -1374,6 +1380,10 @@ describe("AGY advisory native profile", () => {
         expect(spec.args).toContain("--dangerously-skip-permissions");
         expect(spec.args.filter((arg) => arg === "--print")).toHaveLength(1);
         expect(spec.args[spec.args.indexOf("--print") + 1]).toBe(initialPrompt);
+        expect(spec.args.filter((arg) => arg === "--add-dir")).toHaveLength(1);
+        expect(spec.args[spec.args.indexOf("--add-dir") + 1]).toBe(
+          fs.realpathSync.native(worktree),
+        );
         expect(spec.args).not.toContain("--prompt-interactive");
         expect(spec.args).not.toContain("/usr/bin/sandbox-exec");
         expect(spec.env.HOME).toBe(expectedHome);
@@ -2749,7 +2759,18 @@ describe("cli-agent spawn argv hardening", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-pty-sandbox-"));
     const worktree = path.join(root, "worker");
     fs.mkdirSync(worktree);
-    const cleanupHook = installGovernedCodexTestHook(root);
+    const attachmentRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nexus-pty-attachment-"),
+    );
+    const sealedAttachment = path.join(attachmentRoot, "seal.png");
+    fs.writeFileSync(sealedAttachment, "sealed");
+    fs.chmodSync(sealedAttachment, 0o400);
+    const canonicalAttachmentRoot = fs.realpathSync(attachmentRoot);
+    const canonicalSealedAttachment = fs.realpathSync(sealedAttachment);
+    const cleanupHook = installGovernedCodexTestHook(
+      root,
+      canonicalSealedAttachment,
+    );
     try {
       const coordination = trustedSpawn(fs.realpathSync(root)).scope;
       const execution = trustedSpawn(fs.realpathSync(worktree)).scope;
@@ -2822,6 +2843,21 @@ describe("cli-agent spawn argv hardening", () => {
       // Darwin cannot nest Seatbelt profiles. Nexus owns the outer physical
       // boundary and Codex runs without a second inner sandbox.
       expectDarwinCodexOuterSandbox(spec);
+      expect(spec.args[1]).toContain(
+        `(literal "${canonicalSealedAttachment}")`,
+      );
+      expect(spec.args[1]).not.toContain(
+        `(subpath "${canonicalAttachmentRoot}")`,
+      );
+      const writeSectionStart = spec.args[1].indexOf("(allow file-write*");
+      const readSectionStart = spec.args[1].indexOf("(deny file-read*");
+      expect(writeSectionStart).toBeGreaterThan(-1);
+      expect(readSectionStart).toBeGreaterThan(writeSectionStart);
+      const writeRules = spec.args[1].slice(
+        writeSectionStart,
+        readSectionStart,
+      );
+      expect(writeRules).not.toContain(canonicalSealedAttachment);
       expect(governedCodexArgv(spec)).toEqual([
         "--model",
         "gpt-5.6-terra",
@@ -2855,6 +2891,7 @@ describe("cli-agent spawn argv hardening", () => {
         "nexus_governed_workspace",
       );
     } finally {
+      fs.rmSync(attachmentRoot, { recursive: true, force: true });
       cleanupHook();
       adapterTrust.builtinIds.add("codex");
       fs.rmSync(root, { recursive: true, force: true });

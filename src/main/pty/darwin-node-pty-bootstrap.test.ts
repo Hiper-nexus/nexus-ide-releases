@@ -37,6 +37,32 @@ afterEach(() => {
   }
 });
 
+/**
+ * Polls the receipt the exec'd image writes. Under Vitest the node-pty data
+ * callback never fires (its exit callback does), so a stdout assertion would
+ * measure the runner instead of the bootstrap. This is a real-PTY integration
+ * test, so fake timers cannot model it: the wait is bounded and proves the
+ * receipt ARRIVES, not that it arrives instantly.
+ */
+async function waitForOutput(
+  receiptPath: string,
+  marker: string,
+  timeoutMs = 10_000,
+): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    let seen = "";
+    try {
+      seen = fs.readFileSync(receiptPath, "utf8");
+    } catch {
+      // The exec'd image may not have written the receipt yet.
+    }
+    if (seen.includes(marker)) return seen;
+    if (Date.now() >= deadline) return seen;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
+
 function waitForExit(
   terminal: nodePty.IPty,
   timeoutMs = 8_000,
@@ -116,6 +142,12 @@ describe.runIf(process.platform === "darwin")(
         path.join(os.tmpdir(), "nexus bootstrap cwd with spaces "),
       );
       temporaryDirectories.push(root);
+      // The receipt is written to a file, not only to the PTY: under Vitest the
+      // node-pty data callback does not deliver (the exit event does), so an
+      // stdout-only assertion would test the runner, not the bootstrap. The
+      // file carries the exact same proof — untainted cwd, argv and provider
+      // PATH, observed from inside the exec'd image on a real TTY.
+      const receipt = path.join(root, "bootstrap-receipt.txt");
       const stageOne = String.raw`
 use strict;
 use warnings;
@@ -123,13 +155,19 @@ my $provider_path = delete $ENV{"NEXUS_NODE_PTY_PROVIDER_PATH"};
 defined($provider_path) or die "missing provider path\n";
 $provider_path =~ /\A([^\0]*)\z/s or die "invalid provider path\n";
 $ENV{"PATH"} = $1;
-printf "BOOTSTRAP_CWD=%s ARG=%s PATH=%s TTY=%s\n",
+my $line = sprintf "BOOTSTRAP_CWD=%s ARG=%s PATH=%s TTY=%s\n",
   $ENV{"PWD"}, $ARGV[0], $ENV{"PATH"}, (-t 0 ? "yes" : "no");
+print $line;
+my $receipt = $ARGV[1];
+$receipt =~ /\A(\/[^\0]*)\z/s or die "invalid receipt path\n";
+open(my $fh, ">", $1) or die "cannot open receipt\n";
+print $fh $line;
+close($fh) or die "cannot close receipt\n";
 `;
       const launch = darwinNodePtyBootstrapLaunch(
         root,
         "/usr/bin/perl",
-        ["-e", stageOne, "--", "tainted argument"],
+        ["-e", stageOne, "--", "tainted argument", receipt],
         {
           ...Object.fromEntries(
             Object.entries(process.env).filter(
@@ -157,12 +195,11 @@ printf "BOOTSTRAP_CWD=%s ARG=%s PATH=%s TTY=%s\n",
       await expect(waitForExit(terminal)).resolves.toMatchObject({
         exitCode: 0,
       });
-      expect(output.join("")).toContain(`BOOTSTRAP_CWD=${root}`);
-      expect(output.join("")).toContain("ARG=tainted argument");
-      expect(output.join("")).toContain(
-        "PATH=relative:/provider/bin:/usr/bin:/bin",
-      );
-      expect(output.join("")).toContain("TTY=yes");
+      const printed = await waitForOutput(receipt, `BOOTSTRAP_CWD=${root}`);
+      expect(printed).toContain(`BOOTSTRAP_CWD=${root}`);
+      expect(printed).toContain("ARG=tainted argument");
+      expect(printed).toContain("PATH=relative:/provider/bin:/usr/bin:/bin");
+      expect(printed).toContain("TTY=yes");
     });
 
     it("never executes a swapped legacy spawn-helper constructor", async () => {

@@ -68,6 +68,8 @@ export function sameProjectExecutionScope(
     left.projectId === right.projectId &&
     left.checkoutId === right.checkoutId &&
     left.rootRealPath === right.rootRealPath &&
+    left.workspaceRootDevice === right.workspaceRootDevice &&
+    left.workspaceRootInode === right.workspaceRootInode &&
     left.identitySource === right.identitySource
   );
 }

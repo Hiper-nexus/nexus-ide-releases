@@ -8,6 +8,7 @@ import type {
 import { useOrchStore } from '../../state/orch-store';
 import { useWorkspaceStore } from '../../state/workspace-store';
 import { useLayoutStore } from '../../state/layout-store';
+import { useProductNavigationStore } from '../../state/product-navigation-store';
 import { askConfirm } from '../../state/confirm-store';
 import { QrCode } from '../QrCode';
 import { waitForSession } from '../../terminal/terminal-host';
@@ -325,6 +326,7 @@ export function RemoteSection() {
   const [sessionName, setSessionName] = useState('');
   const [prompt, setPrompt] = useState('');
   const [result, setResult] = useState<RemoteSpawnResult | null>(null);
+  const [terminalError, setTerminalError] = useState<string | null>(null);
 
   async function refresh() {
     setInfo(await window.nexus.remote.bridgeStatus());
@@ -335,6 +337,7 @@ export function RemoteSection() {
   }, []);
 
   async function createRemote() {
+    setTerminalError(null);
     const next = await window.nexus.remote.createTmux({
       target,
       cli,
@@ -349,143 +352,239 @@ export function RemoteSection() {
         confirmLabel: 'Abrir e executar',
       });
       if (!proceed) return;
-      const paneId = useLayoutStore.getState().addShellPane();
-      const sessionId = await waitForSession(paneId);
-      if (sessionId) window.nexus.pty.write(sessionId, `${next.attachCommand}\n`);
+      const layout = useLayoutStore.getState();
+      const paneId = layout.addShellPane({ focus: false });
+      let sessionId: string | null = null;
+      try {
+        sessionId = await waitForSession(paneId);
+      } catch {
+        // The announced failure below owns error presentation.
+      }
+      if (!sessionId) {
+        layout.close(paneId, 'settings-remote-terminal-unavailable');
+        setTerminalError(
+          'O terminal remoto não ficou disponível. A sessão não foi anexada.',
+        );
+        return;
+      }
+      window.nexus.pty.write(sessionId, `${next.attachCommand}\n`);
+      layout.focus(paneId);
+      useProductNavigationStore.getState().openTerminal();
     }
   }
 
   return (
-    <section>
-      <SettingsSectionTitle>Remote</SettingsSectionTitle>
-      <div className="settings-pill-row">
-        <span className={`settings-chip ${info?.running ? 'settings-chip--ok' : 'settings-chip--warn'}`}>
-          {info?.running ? 'wss online' : 'offline'}
-        </span>
-        <button
-          className="settings-btn"
-          onClick={async () => {
-            setInfo(await window.nexus.remote.bridgeStart());
-          }}
-          title="Só este computador (127.0.0.1)"
-        >
-          Iniciar (local)
-        </button>
-        <button
-          className="settings-btn settings-btn--primary"
-          onClick={async () => {
-            setInfo(await window.nexus.remote.bridgeStart({ host: '0.0.0.0' }));
-          }}
-          title="Expõe na rede local para o celular conectar — só faça em redes de confiança"
-        >
-          Iniciar (LAN — celular)
-        </button>
-        <button
-          className="settings-btn"
-          onClick={async () => {
-            setInfo(await window.nexus.remote.bridgeRotatePairing());
-          }}
-        >
-          Novo código
-        </button>
-        <button
-          className="settings-btn"
-          onClick={async () => {
-            setInfo(await window.nexus.remote.bridgeRevokeTokens());
-          }}
-        >
-          Revogar tokens
-        </button>
-      </div>
+    <section className="settings-stack">
+      <header className="settings-stack__header">
+        <div>
+          <SettingsSectionTitle>Remote</SettingsSectionTitle>
+          <p className="settings-detail__hint">
+            Bridge local para o celular e sessões SSH/tmux em máquinas remotas.
+          </p>
+        </div>
+      </header>
 
-      {info && (
-        <ul className="settings-list">
-          <li className="settings-list__item">
-            <div className="settings-list__head">
-              <span className="settings-list__title settings-list__title--mono">
-                {info.pairingCode ?? '------'}
-              </span>
-              <span className="settings-chip">{info.tokenCount} token(s)</span>
-            </div>
-            <p className="settings-list__detail">
-              {info.urls.join(' · ') || 'sem URL ativa'}
+      <section className="settings-card" aria-labelledby="remote-bridge-title">
+        <div className="settings-card__head">
+          <div className="settings-card__titles">
+            <h3 id="remote-bridge-title" className="settings-card__title">
+              Bridge mobile
+            </h3>
+            <p className="settings-card__subtitle">
+              Pareie o companion na mesma rede com código e QR.
             </p>
-            {info.urls.length > 0 && (() => {
-              const lanUrl = info.urls
-                .filter((u) => !u.includes('127.0.0.1'))
-                .map((u) => u.replace('wss://', 'https://'))[0];
-              return (
-                <>
-                  <p className="settings-list__detail">
-                    📱 abra no celular:{' '}
-                    {lanUrl ?? 'só localhost — inicie em LAN e conecte na mesma rede'}
-                  </p>
-                  {lanUrl && (
-                    <div className="settings-qr">
-                      <QrCode
-                        value={`${lanUrl}#code=${info.pairingCode ?? ''}`}
-                        size={180}
-                        label="QR code para parear o celular"
-                      />
-                    </div>
-                  )}
-                </>
-              );
-            })()}
-            <p className="settings-list__detail">
-              cert: {info.certFingerprint ?? '—'} · clients: {info.clientCount}
-            </p>
-          </li>
-        </ul>
-      )}
+          </div>
+          <span
+            className={`settings-status-pill ${
+              info?.running ? 'settings-status-pill--ok' : 'settings-status-pill--warn'
+            }`}
+          >
+            {info?.running ? 'Online' : 'Offline'}
+          </span>
+        </div>
 
-      <div className="settings-list__item">
-        <div className="settings-list__head">
-          <span className="settings-list__title">SSH/tmux</span>
+        <div className="settings-action-row" role="group" aria-label="Ações do bridge">
           <button
+            type="button"
             className="settings-btn"
+            onClick={async () => {
+              setInfo(await window.nexus.remote.bridgeStart());
+            }}
+            title="Só este computador (127.0.0.1)"
+          >
+            Iniciar (local)
+          </button>
+          <button
+            type="button"
+            className="settings-btn settings-btn--primary"
+            onClick={async () => {
+              setInfo(await window.nexus.remote.bridgeStart({ host: '0.0.0.0' }));
+            }}
+            title="Expõe na rede local para o celular conectar — só faça em redes de confiança"
+          >
+            Iniciar (LAN — celular)
+          </button>
+          <button
+            type="button"
+            className="settings-btn"
+            onClick={async () => {
+              setInfo(await window.nexus.remote.bridgeRotatePairing());
+            }}
+          >
+            Novo código
+          </button>
+          <button
+            type="button"
+            className="settings-btn"
+            onClick={async () => {
+              setInfo(await window.nexus.remote.bridgeRevokeTokens());
+            }}
+          >
+            Revogar tokens
+          </button>
+        </div>
+
+        {info ? (
+          <div className="settings-card__body">
+            <div className="settings-meta-grid">
+              <div className="settings-meta">
+                <span className="settings-meta__label">Código</span>
+                <strong className="settings-meta__value settings-meta__value--mono">
+                  {info.pairingCode ?? '------'}
+                </strong>
+              </div>
+              <div className="settings-meta">
+                <span className="settings-meta__label">Tokens</span>
+                <strong className="settings-meta__value">
+                  {info.tokenCount}
+                </strong>
+              </div>
+              <div className="settings-meta">
+                <span className="settings-meta__label">Clientes</span>
+                <strong className="settings-meta__value">
+                  {info.clientCount}
+                </strong>
+              </div>
+              <div className="settings-meta settings-meta--wide">
+                <span className="settings-meta__label">URL</span>
+                <strong className="settings-meta__value settings-meta__value--mono">
+                  {info.urls.join(' · ') || 'sem URL ativa'}
+                </strong>
+              </div>
+              <div className="settings-meta settings-meta--wide">
+                <span className="settings-meta__label">Certificado</span>
+                <strong className="settings-meta__value settings-meta__value--mono">
+                  {info.certFingerprint ?? '—'}
+                </strong>
+              </div>
+            </div>
+
+            {info.urls.length > 0
+              ? (() => {
+                  const lanUrl = info.urls
+                    .filter((u) => !u.includes('127.0.0.1'))
+                    .map((u) => u.replace('wss://', 'https://'))[0];
+                  return (
+                    <div className="settings-card__aside">
+                      <p className="settings-card__note">
+                        {lanUrl
+                          ? `Abra no celular: ${lanUrl}`
+                          : 'Só localhost — inicie em LAN e conecte na mesma rede.'}
+                      </p>
+                      {lanUrl ? (
+                        <div className="settings-qr">
+                          <QrCode
+                            value={`${lanUrl}#code=${info.pairingCode ?? ''}`}
+                            size={180}
+                            label="QR code para parear o celular"
+                          />
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })()
+              : null}
+          </div>
+        ) : (
+          <p className="settings-card__note">Carregando estado do bridge…</p>
+        )}
+      </section>
+
+      <section className="settings-card" aria-labelledby="remote-ssh-title">
+        <div className="settings-card__head">
+          <div className="settings-card__titles">
+            <h3 id="remote-ssh-title" className="settings-card__title">
+              SSH / tmux
+            </h3>
+            <p className="settings-card__subtitle">
+              Cria ou adota uma sessão remota e anexa num terminal do Nexus.
+            </p>
+          </div>
+          <button
+            type="button"
+            className="settings-btn settings-btn--primary"
             onClick={() => void createRemote()}
             disabled={!target.trim()}
           >
-            Criar/adotar
+            Criar / adotar
           </button>
         </div>
-        <div className="settings-form-grid">
-          <input
-            className="settings-input"
-            value={target}
-            placeholder="user@host"
-            onChange={(e) => setTarget(e.target.value)}
-          />
-          <select
-            className="settings-input"
-            value={cli}
-            onChange={(e) => setCli(e.target.value as typeof cli)}
-          >
-            <option value="claude">claude</option>
-            <option value="codex">codex</option>
-            <option value="agy">agy</option>
-            <option value="kimi">kimi</option>
-          </select>
-          <input
-            className="settings-input"
-            value={sessionName}
-            placeholder="tmux session"
-            onChange={(e) => setSessionName(e.target.value)}
-          />
+
+        <div className="settings-form-grid settings-form-grid--remote">
+          <label className="settings-field">
+            <span className="settings-field__label">Host</span>
+            <input
+              className="settings-input"
+              value={target}
+              placeholder="user@host"
+              onChange={(e) => setTarget(e.target.value)}
+            />
+          </label>
+          <label className="settings-field">
+            <span className="settings-field__label">CLI</span>
+            <select
+              className="settings-input"
+              value={cli}
+              onChange={(e) => setCli(e.target.value as typeof cli)}
+            >
+              <option value="claude">claude</option>
+              <option value="codex">codex</option>
+              <option value="agy">agy</option>
+              <option value="kimi">kimi</option>
+            </select>
+          </label>
+          <label className="settings-field">
+            <span className="settings-field__label">Sessão tmux</span>
+            <input
+              className="settings-input"
+              value={sessionName}
+              placeholder="opcional"
+              onChange={(e) => setSessionName(e.target.value)}
+            />
+          </label>
+          <label className="settings-field settings-field--wide">
+            <span className="settings-field__label">Prompt inicial</span>
+            <textarea
+              className="settings-textarea"
+              value={prompt}
+              placeholder="Mensagem opcional ao abrir a sessão"
+              onChange={(e) => setPrompt(e.target.value)}
+              rows={4}
+            />
+          </label>
         </div>
-        <textarea
-          className="settings-textarea"
-          value={prompt}
-          placeholder="prompt inicial"
-          onChange={(e) => setPrompt(e.target.value)}
-        />
-        {result && (
-          <p className="settings-list__detail">
+
+        {result ? (
+          <p className="settings-card__note" role="status">
             {result.ok ? result.attachCommand : result.error}
           </p>
-        )}
-      </div>
+        ) : null}
+        {terminalError ? (
+          <p className="settings-error" role="alert">
+            {terminalError}
+          </p>
+        ) : null}
+      </section>
     </section>
   );
 }

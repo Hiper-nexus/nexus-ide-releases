@@ -30,7 +30,9 @@ function publishScopeChange(
     previous?.projectId === next?.projectId &&
     previous?.checkoutId === next?.checkoutId &&
     previous?.rootRealPath === next?.rootRealPath &&
-    previous?.installationId === next?.installationId
+    previous?.installationId === next?.installationId &&
+    previous?.workspaceRootDevice === next?.workspaceRootDevice &&
+    previous?.workspaceRootInode === next?.workspaceRootInode
   ) {
     return;
   }
@@ -85,6 +87,8 @@ function isSameExecutionScope(
     current.projectId === expected.projectId &&
     current.checkoutId === expected.checkoutId &&
     current.rootRealPath === expected.rootRealPath &&
+    current.workspaceRootDevice === expected.workspaceRootDevice &&
+    current.workspaceRootInode === expected.workspaceRootInode &&
     current.identitySource === expected.identitySource
   );
 }

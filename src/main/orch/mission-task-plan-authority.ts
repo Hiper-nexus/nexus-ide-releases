@@ -453,12 +453,12 @@ export function sealMainOwnedMissionTaskPlan(
       mission.status === "pending" &&
       mission.intentState === "ready_to_start" &&
       mission.orchestratorSessionId === undefined &&
-      contract.dispatchedAt === undefined &&
       hasCurrentApprovedDispatchContract(mission) &&
       mission.intentVersion === authority.intentVersion &&
       contract.intentVersion === authority.intentVersion &&
       contract.approvedAt === authority.approvedAt &&
-      contract.approvalReviewSha256 === authority.approvalReviewSha256,
+      contract.approvalReviewSha256 === authority.approvalReviewSha256 &&
+      contract.dispatchedAt === authority.dispatchedAt,
   );
   if (
     !mission?.intentContract ||
