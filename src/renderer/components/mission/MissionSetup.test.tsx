@@ -522,7 +522,10 @@ describe('recommended mission team', () => {
     expect(strictSquadAgentSchema.array().safeParse(roster).success).toBe(true);
   });
 
-  it('rechecks secret-free readiness after a model selection changes', () => {
+  it('não reprova mais o roster por modelo sem autenticação (doutrina fluxo-por-padrão)', () => {
+    // Antes, trocar o modelo para um valor fora de authReadyModels travava o
+    // "Continuar para revisão". Agora o modelo é assunto da própria CLI no
+    // terminal; o roster só bloqueia por forma ou ferramenta não instalada.
     const readiness = missionRuntimeReadiness(
       [CLAUDE, CODEX],
       PROVIDERS,
@@ -543,7 +546,22 @@ describe('recommended mission team', () => {
         providers: PROVIDERS,
         accounts: ACCOUNTS,
       }),
-    ).toMatch(/não está pronta/i);
+    ).toBeNull();
+
+    const uninstalledRoster = REVIEW_ROSTER.map((agent) =>
+      agent.id === 'interface-executor'
+        ? { ...agent, cli: 'ferramenta-inexistente' }
+        : agent,
+    );
+    expect(
+      missionRosterIssue({
+        roster: uninstalledRoster,
+        lane: 'standard',
+        readiness,
+        providers: PROVIDERS,
+        accounts: ACCOUNTS,
+      }),
+    ).toMatch(/não está instalada/i);
   });
 
   it('blocks a standard team that drops its executor or reviewer', () => {
@@ -1205,7 +1223,10 @@ describe('MissionSetup', () => {
     );
   });
 
-  it('reconciles team readiness when the live provider store warms after the cold snapshot', async () => {
+  it('monta a equipe mesmo com snapshot frio de auth — cache de keychain não esconde coordenador', async () => {
+    // Antes, o snapshot frio (login-needed) escondia o coordenador até o warm
+    // assíncrono chegar — e a missão nem podia ser montada. Doutrina
+    // fluxo-por-padrão: instalada = participa desde o primeiro snapshot.
     const staleClaude: ProviderSettingsInfo = {
       ...provider(CLAUDE),
       authReadyModels: [],
@@ -1214,7 +1235,8 @@ describe('MissionSetup', () => {
     api.listProviders.mockResolvedValue([staleClaude, provider(CODEX)]);
     const host = await renderAtTeam();
 
-    expect(host.querySelector('[data-category="orchestrator"]')).toBeNull();
+    const coldCoordinator = host.querySelector('[data-category="orchestrator"]');
+    expect(coldCoordinator?.getAttribute('data-state')).toBe('ready');
 
     act(() => {
       useProviderStore.getState().receive(PROVIDERS);

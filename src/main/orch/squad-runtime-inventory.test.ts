@@ -201,7 +201,7 @@ describe("live squad runtime inventory", () => {
     ).not.toThrow();
   });
 
-  it("keeps a one-way handoff CLI in the worker pool but out of Maestro choices", () => {
+  it("CLI sem metadado de controle também coordena — a capacidade ordena, não filtra", () => {
     listAdapterInfosMock.mockReturnValue([
       adapter("claude", { evidence: "verified" }),
       adapter("worker-only", {
@@ -219,9 +219,11 @@ describe("live squad runtime inventory", () => {
     expect(inventory.workerAdapters.map((item) => item.id)).toContain(
       "worker-only",
     );
-    expect(inventory.orchestratorAdapters.map((item) => item.id)).not.toContain(
+    // Capaz de controle vem primeiro; o resto continua elegível.
+    expect(inventory.orchestratorAdapters.map((item) => item.id)).toEqual([
+      "claude",
       "worker-only",
-    );
+    ]);
   });
 
   it("does not trust a user adapter merely because it overrides id=codex", () => {
@@ -240,10 +242,11 @@ describe("live squad runtime inventory", () => {
 
     const inventory = liveSquadRuntimeInventory();
     expect(inventory.policy.routableCliIds.has("codex")).toBe(true);
+    // A política continua rebaixando o worker forjado no catálogo…
     expect(inventory.policy.routableWorkerCliIds.has("codex")).toBe(false);
-    expect(() => assertLiveGuidedSquadReadiness(squad("codex"))).toThrow(
-      /executor-unavailable/i,
-    );
+    // …mas a prontidão do squad não reprova mais por isso: quem impõe
+    // confinamento de escrita é a fronteira física de spawn (governed).
+    expect(() => assertLiveGuidedSquadReadiness(squad("codex"))).not.toThrow();
   });
 
   it("blocks a cold-cache AGY worker with the concrete auth cause, then routes it after the warm", async () => {
@@ -282,13 +285,13 @@ describe("live squad runtime inventory", () => {
       ],
     };
 
-    // Cold cache: AGY reads as login-needed and the gate names that cause.
+    // Cold cache: a POLÍTICA ainda lê login-needed (catálogo/spawn)…
     expect(liveSquadRuntimeInventory().policy.routableCliIds.has("agy")).toBe(
       false,
     );
-    expect(() => assertLiveGuidedSquadReadiness(agyWorkerSquad)).toThrow(
-      /worker-unavailable: o worker em agy.*login-needed \(sessão AGY não detectada/i,
-    );
+    // …mas a prontidão do squad não trava mais a missão por cache frio de
+    // keychain — o gate de auth no approve foi removido de propósito.
+    expect(() => assertLiveGuidedSquadReadiness(agyWorkerSquad)).not.toThrow();
 
     // The async boundary warms the keychain-only providers before the sync
     // readiness check; afterwards the same roster is routable.

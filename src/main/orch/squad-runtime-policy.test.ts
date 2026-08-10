@@ -174,51 +174,9 @@ describe("buildSquadRuntimeCliPolicy", () => {
     expect([...policy.routableCliIds]).toEqual(["claude", "opencode"]);
     expect([...policy.credentiallessOnlyCliIds]).toEqual(["opencode"]);
     expect(policy.credentiallessDefaultModelByCliId).toEqual({});
-
-    const base = [{ category: "orchestrator", cli: "claude" }];
-    expect(
-      assessStandardSquadReadiness(
-        [
-          ...base,
-          {
-            category: "executor",
-            cli: "opencode",
-            model: "opencode/big-pickle",
-          },
-          {
-            category: "reviewer",
-            cli: "opencode",
-            model: "opencode/big-pickle",
-          },
-          ],
-          policy,
-          new Set(["claude"]),
-        ),
-    ).toMatchObject({ ok: false, code: "executor-unavailable" });
-    for (const model of [
-      "openrouter/openai/gpt-5",
-      "opencode/unreviewed-free",
-    ]) {
-      expect(
-        assessStandardSquadReadiness(
-          [
-            ...base,
-            {
-              category: "executor",
-              cli: "opencode",
-              model,
-            },
-            {
-              category: "reviewer",
-              cli: "opencode",
-              model: "opencode/big-pickle",
-            },
-          ],
-          policy,
-          new Set(["claude"]),
-        ),
-      ).toMatchObject({ ok: false, code: "executor-unavailable" });
-    }
+    // Doutrina fluxo-por-padrão: a política ainda computa o gating de modelo
+    // free (para o catálogo/spawn), mas a PRONTIDÃO do squad não reprova mais
+    // por modelo — a CLI é a autoridade do próprio modelo no terminal.
   });
 
   it("downgrades an authenticated but cooling OpenCode pool to free-only", () => {
@@ -258,40 +216,8 @@ describe("buildSquadRuntimeCliPolicy", () => {
     expect([...policy.routableCliIds]).toEqual(["claude", "opencode"]);
     expect([...policy.credentiallessOnlyCliIds]).toEqual(["opencode"]);
     expect(policy.credentiallessDefaultModelByCliId).toEqual({});
-    expect(
-      assessStandardSquadReadiness(
-        [
-          { category: "orchestrator", cli: "claude" },
-          {
-            category: "executor",
-            cli: "opencode",
-            model: "opencode/big-pickle",
-          },
-          {
-            category: "reviewer",
-            cli: "opencode",
-            model: "opencode/big-pickle",
-          },
-        ],
-        policy,
-        new Set(["claude"]),
-      ),
-    ).toMatchObject({ ok: false, code: "executor-unavailable" });
-    expect(
-      assessStandardSquadReadiness(
-        [
-          { category: "orchestrator", cli: "claude" },
-          { category: "executor", cli: "opencode" },
-          {
-            category: "reviewer",
-            cli: "opencode",
-            model: "opencode/big-pickle",
-          },
-        ],
-        policy,
-        new Set(["claude"]),
-      ),
-    ).toMatchObject({ ok: false, code: "executor-unavailable" });
+    // Doutrina fluxo-por-padrão: prontidão não reprova mais por modelo; a
+    // política ainda expõe o catálogo credentialless para o spawn.
   });
 
   it("does not restrict OpenCode models after real provider auth exists", () => {
@@ -310,14 +236,19 @@ describe("buildSquadRuntimeCliPolicy", () => {
   });
 });
 
-describe("assessStandardSquadReadiness", () => {
+describe("assessStandardSquadReadiness (doutrina fluxo-por-padrão)", () => {
+  // 2026-08-10: o único gate de forma que sobrou é "exatamente um Maestro".
+  // Rota/auth/modelo/reserva-Claude deixaram de reprovar o squad no approve —
+  // isso derrubava missões reais com `squad_runtime_unavailable:*` mesmo com a
+  // ferramenta instalada e logada. A conversa de login vive no terminal do
+  // agente; a fronteira física de spawn permanece fail-closed.
   const policy = buildSquadRuntimeCliPolicy(
     [provider("claude"), provider("codex"), provider("kimi")],
     () => true,
   );
   const verified = new Set(["claude", "codex"]);
 
-  it("accepts distinct executor/reviewer identities on the same worker CLI", () => {
+  it("aceita executor/reviewer distintos na mesma CLI de worker", () => {
     expect(
       assessStandardSquadReadiness(
         [
@@ -331,7 +262,7 @@ describe("assessStandardSquadReadiness", () => {
     ).toEqual({ ok: true });
   });
 
-  it("revalidates every unauthenticated OpenCode roster model", () => {
+  it("não reprova mais por modelo credentialless não pré-aprovado", () => {
     const opencodePolicy = buildSquadRuntimeCliPolicy(
       [
         provider("claude"),
@@ -349,27 +280,7 @@ describe("assessStandardSquadReadiness", () => {
           {
             category: "executor",
             cli: "opencode",
-            model: "opencode/big-pickle",
-          },
-          {
-            category: "reviewer",
-            cli: "opencode",
             model: "opencode/north-mini-code-free",
-          },
-        ],
-        opencodePolicy,
-        verified,
-      ),
-    ).toMatchObject({ ok: false, code: "executor-unavailable" });
-
-    expect(
-      assessStandardSquadReadiness(
-        [
-          { category: "orchestrator", cli: "claude" },
-          {
-            category: "executor",
-            cli: "opencode",
-            model: "opencode/big-pickle",
           },
           {
             category: "reviewer",
@@ -380,10 +291,10 @@ describe("assessStandardSquadReadiness", () => {
         opencodePolicy,
         verified,
       ),
-    ).toMatchObject({ ok: false, code: "executor-unavailable" });
+    ).toEqual({ ok: true });
   });
 
-  it("rejects every guided worker without physical MCP or PTY-stream handoff", () => {
+  it("não reprova mais um worker sem handoff físico qualificado (só a forma importa)", () => {
     const legacyPolicy = buildSquadRuntimeCliPolicy(
       [
         provider("claude"),
@@ -404,14 +315,10 @@ describe("assessStandardSquadReadiness", () => {
         legacyPolicy,
         verified,
       ),
-    ).toMatchObject({
-      ok: false,
-      code: "worker-unavailable",
-      detail: expect.stringMatching(/aider.*handoff físico/i),
-    });
+    ).toEqual({ ok: true });
   });
 
-  it("names the concrete auth cause when a keychain-only worker reads login-needed", () => {
+  it("não reprova mais uma CLI keychain-only lida como login-needed", () => {
     const coldAgyPolicy = buildSquadRuntimeCliPolicy(
       [
         provider("claude"),
@@ -421,9 +328,6 @@ describe("assessStandardSquadReadiness", () => {
       () => true,
     );
 
-    expect(coldAgyPolicy.unroutableReasonByCliId?.["agy"]).toMatch(
-      /login-needed/,
-    );
     expect(
       assessStandardSquadReadiness(
         [
@@ -435,16 +339,10 @@ describe("assessStandardSquadReadiness", () => {
         coldAgyPolicy,
         verified,
       ),
-    ).toMatchObject({
-      ok: false,
-      code: "worker-unavailable",
-      detail: expect.stringMatching(
-        /agy.*login-needed.*sessão AGY não detectada/i,
-      ),
-    });
+    ).toEqual({ ok: true });
   });
 
-  it("names the missing account when no credential can serve the CLI", () => {
+  it("não reprova mais por conta gerenciada ausente — a CLI cobra sua própria auth", () => {
     const noAccountPolicy = buildSquadRuntimeCliPolicy(
       [provider("claude"), provider("codex"), provider("kimi")],
       (adapterId) => adapterId !== "kimi",
@@ -461,39 +359,10 @@ describe("assessStandardSquadReadiness", () => {
         noAccountPolicy,
         verified,
       ),
-    ).toMatchObject({
-      ok: false,
-      code: "worker-unavailable",
-      detail: expect.stringMatching(/kimi.*sem conta disponível/i),
-    });
-  });
-
-  it("admits read-only advisors that never write autonomously", () => {
-    const advisoryPolicy = buildSquadRuntimeCliPolicy(
-      [provider("claude"), provider("codex"), provider("grok"), provider("kimi")],
-      () => true,
-    );
-
-    expect(
-      assessStandardSquadReadiness(
-        [
-          { category: "orchestrator", cli: "codex" },
-          { category: "executor", cli: "codex" },
-          { category: "reviewer", cli: "codex" },
-          // grok: mechanically confined read_only lane (kernel Seatbelt).
-          { category: "reviewer", cli: "grok" },
-          // kimi: advisory tier behind the Nexus MCP read-only authority.
-          { category: "scout", cli: "kimi" },
-          // claude: admissible as advisor because the Maestro is not Claude.
-          { category: "reviewer", cli: "claude" },
-        ],
-        advisoryPolicy,
-        verified,
-      ),
     ).toEqual({ ok: true });
   });
 
-  it("keeps the Claude advisor out when the Maestro is also Claude", () => {
+  it("aceita dois workers Claude — a reserva de sessão vive na fronteira de spawn, não aqui", () => {
     expect(
       assessStandardSquadReadiness(
         [
@@ -505,127 +374,56 @@ describe("assessStandardSquadReadiness", () => {
         policy,
         verified,
       ),
-    ).toMatchObject({ ok: false, code: "claude-worker" });
-  });
-
-  it("lets the single Claude session execute when another CLI is Maestro in autopilot", () => {
-    const autopilot = buildSquadRuntimeCliPolicy(
-      [provider("claude"), provider("codex"), provider("kimi")],
-      () => true,
-      true,
-    );
-
-    expect(
-      assessStandardSquadReadiness(
-        [
-          { category: "orchestrator", cli: "codex" },
-          { category: "executor", cli: "claude" },
-          { category: "reviewer", cli: "kimi" },
-        ],
-        autopilot,
-        verified,
-        true,
-      ),
     ).toEqual({ ok: true });
-    expect(
-      assessStandardSquadReadiness(
-        [
-          { category: "orchestrator", cli: "codex" },
-          { category: "executor", cli: "claude" },
-          { category: "reviewer", cli: "claude" },
-        ],
-        autopilot,
-        verified,
-        true,
-      ),
-    ).toMatchObject({ ok: false, code: "claude-worker" });
   });
 
-  it("never admits a writing category through the read-only lane", () => {
-    // kimi holds no autonomous write confinement: as an executor it is a
-    // worker, not an advisor, so the roster must fail closed.
+  it("aceita Maestro não-verificado — verificação é opt-in governed, imposta fisicamente", () => {
     expect(
       assessStandardSquadReadiness(
         [
-          { category: "orchestrator", cli: "codex" },
-          { category: "executor", cli: "kimi" },
-          { category: "reviewer", cli: "codex" },
+          { category: "orchestrator", cli: "kimi" },
+          { category: "executor", cli: "codex" },
+          { category: "reviewer", cli: "kimi" },
         ],
         policy,
         verified,
       ),
-    ).toMatchObject({ ok: false, code: "executor-unavailable" });
+    ).toEqual({ ok: true });
   });
 
-  it("still requires an active adapter route for a read-only advisor", () => {
-    const withoutKimi = buildSquadRuntimeCliPolicy(
-      [provider("claude"), provider("codex")],
-      () => true,
-    );
-
+  it("aceita executor em CLI não roteável — a rota real é resolvida no dispatch", () => {
     expect(
       assessStandardSquadReadiness(
         [
-          { category: "orchestrator", cli: "codex" },
-          { category: "executor", cli: "codex" },
-          { category: "reviewer", cli: "codex" },
-          { category: "scout", cli: "kimi" },
+          { category: "orchestrator", cli: "claude" },
+          { category: "executor", cli: "missing" },
+          { category: "reviewer", cli: "kimi" },
         ],
-        withoutKimi,
+        policy,
         verified,
       ),
-    ).toMatchObject({ ok: false, code: "worker-unavailable" });
+    ).toEqual({ ok: true });
   });
 
   it.each([
     [
-      "explicit Maestro",
+      "zero Maestro",
       [
         { category: "executor", cli: "codex" },
         { category: "reviewer", cli: "kimi" },
       ],
-      "maestro-count",
     ],
     [
-      "verified Maestro",
-      [
-        { category: "orchestrator", cli: "kimi" },
-        { category: "executor", cli: "codex" },
-        { category: "reviewer", cli: "kimi" },
-      ],
-      "maestro-unverified",
-    ],
-    [
-      "routable non-Claude executor",
+      "dois Maestros",
       [
         { category: "orchestrator", cli: "claude" },
-        { category: "executor", cli: "missing" },
-        { category: "reviewer", cli: "kimi" },
+        { category: "orchestrator", cli: "codex" },
+        { category: "executor", cli: "kimi" },
       ],
-      "executor-unavailable",
     ],
-    [
-      "routable non-Claude reviewer",
-      [
-        { category: "orchestrator", cli: "claude" },
-        { category: "executor", cli: "codex" },
-        { category: "reviewer", cli: "missing" },
-      ],
-      "reviewer-unavailable",
-    ],
-    [
-      "global Claude reservation",
-      [
-        { category: "orchestrator", cli: "claude" },
-        { category: "executor", cli: "codex" },
-        { category: "reviewer", cli: "kimi" },
-        { category: "scout", cli: "claude" },
-      ],
-      "claude-worker",
-    ],
-  ])("rejects a standard squad without %s", (_label, agents, code) => {
+  ])("recusa um squad com %s (única regra de forma que sobra)", (_label, agents) => {
     expect(
       assessStandardSquadReadiness(agents, policy, verified),
-    ).toMatchObject({ ok: false, code });
+    ).toMatchObject({ ok: false, code: "maestro-count" });
   });
 });

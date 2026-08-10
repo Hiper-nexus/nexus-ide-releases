@@ -193,32 +193,16 @@ export function missionRosterIssue(input: {
     }
   }
 
-  const coordinatorIds = new Set(
-    input.readiness.verifiedMaestros.map((adapter) => adapter.id),
-  );
-  const workerIds = new Set(
-    input.readiness.qualifiedWorkers.map((adapter) => adapter.id),
-  );
+  // Doutrina fluxo-por-padrão: a equipe só é barrada por FORMA (schema, uma
+  // coordenação, alguém para executar). Prontidão de ferramenta virou dica no
+  // cartão — o terminal do agente é quem mostra login/instalação de verdade.
+  // A única recusa que sobra é ferramenta desconhecida nesta máquina.
   for (const agent of input.roster) {
-    const qualified =
-      agent.category === 'orchestrator'
-        ? coordinatorIds.has(agent.cli)
-        : workerIds.has(agent.cli);
-    const adapter = [
-      ...input.readiness.verifiedMaestros,
-      ...input.readiness.qualifiedWorkers,
-    ].find((candidate) => candidate.id === agent.cli);
-    if (
-      !qualified ||
-      !adapter ||
-      !isAdapterModelAuthenticated(
-        adapter,
-        input.providers,
-        agent.model,
-        input.accounts,
-      )
-    ) {
-      return `A ferramenta escolhida para “${agent.agentName}” não está pronta. Abra as configurações técnicas desse papel.`;
+    const installed = input.readiness.detectedAdapters.some(
+      (candidate) => candidate.id === agent.cli,
+    );
+    if (!installed) {
+      return `A ferramenta de “${agent.agentName}” não está instalada nesta máquina. Troque a ferramenta desse papel.`;
     }
   }
   return null;
@@ -228,21 +212,16 @@ function issueForAgent(
   agent: SquadAgent,
   inventory: MissionTeamInventory,
 ): string | null {
-  const qualified =
-    agent.category === 'orchestrator'
-      ? inventory.readiness.verifiedMaestros
-      : inventory.readiness.qualifiedWorkers;
-  const adapter = qualified.find((item) => item.id === agent.cli);
-  if (!adapter) return 'A ferramenta escolhida não está pronta para este papel.';
+  const adapter = inventory.readiness.detectedAdapters.find(
+    (item) => item.id === agent.cli,
+  );
+  if (!adapter) {
+    return 'Ferramenta não instalada nesta máquina — troque a ferramenta deste papel.';
+  }
   if (
-    !isAdapterModelAuthenticated(
-      adapter,
-      inventory.providers,
-      agent.model,
-      inventory.accounts,
-    )
+    !isAdapterModelAuthenticated(adapter, inventory.providers, agent.model)
   ) {
-    return 'Escolha um modelo conectado e disponível.';
+    return 'Ferramenta desligada nas configurações — religue ou troque a ferramenta.';
   }
   return null;
 }

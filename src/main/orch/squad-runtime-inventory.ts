@@ -1,8 +1,5 @@
 import type { AdapterInfo } from "../../shared/adapter-types";
-import {
-  adapterCapabilityMatrixOf,
-  orchestrationEvidenceOf,
-} from "../../shared/adapter-types";
+import { orchestrationEvidenceOf } from "../../shared/adapter-types";
 import type { Squad } from "../../shared/orch-types";
 import { isOperatorChoicePolicy } from "../../shared/squad-cli-policy";
 import { listAdapterInfos } from "../adapters/adapter-registry";
@@ -63,11 +60,13 @@ export function liveSquadRuntimeInventory(): LiveSquadRuntimeInventory {
   const providerById = new Map(
     providers.map((provider) => [provider.adapterId, provider] as const),
   );
+  // Doutrina fluxo-por-padrão: o inventário não esconde CLI instalada por
+  // estado de rota/auth — isso escondia coordenadores reais e derrubava o
+  // bootstrap com `squad_missing`. Rota/credencial continuam enriquecendo o
+  // catálogo de modelos abaixo; deixar de PARTICIPAR só acontece por não
+  // estar instalada (ou ser o shell, que não é agente).
   const adapters = adapterInfos
-    .filter(
-      (adapter) =>
-        adapter.id !== "shell" && policy.routableCliIds.has(adapter.id),
-    )
+    .filter((adapter) => adapter.id !== "shell" && adapter.installed)
     .map((adapter) => {
       const credentiallessDefault =
         policy.credentiallessDefaultModelByCliId[adapter.id];
@@ -112,26 +111,23 @@ export function liveSquadRuntimeInventory(): LiveSquadRuntimeInventory {
   const verifiedOrchestrators = adapters.filter(
     (adapter) => orchestrationEvidenceOf(adapter) === "verified",
   );
+  // Metadado de capacidade ORDENA (controle de missão primeiro), não filtra:
+  // qualquer cli-pty instalada pode ocupar a sessão do Maestro. Sob
+  // `governed` (opt-in) a lista verificada continua sendo a autoridade.
+  const cliPtyAdapters = adapters.filter(
+    (adapter) => adapter.kind === "cli-pty",
+  );
   const orchestratorAdapters = operatorChoice
-    ? adapters.filter((adapter) => {
-        const capabilities = adapterCapabilityMatrixOf(adapter);
-        return (
-          adapter.kind === "cli-pty" &&
-          adapter.missionControlCapable === true &&
-          capabilities.launchable &&
-          capabilities.promptInjectable &&
-          capabilities.statusObservable
-        );
-      })
+    ? [...cliPtyAdapters].sort(
+        (left, right) =>
+          Number(right.missionControlCapable === true) -
+          Number(left.missionControlCapable === true),
+      )
     : verifiedOrchestrators;
   return Object.freeze({
     policy,
     adapters: Object.freeze(adapters),
-    workerAdapters: Object.freeze(
-      adapters.filter((adapter) =>
-        policy.routableWorkerCliIds.has(adapter.id),
-      ),
-    ),
+    workerAdapters: Object.freeze(cliPtyAdapters),
     orchestratorAdapters: Object.freeze(orchestratorAdapters),
     verifiedOrchestrators: Object.freeze(verifiedOrchestrators),
     verifiedOrchestratorCliIds: new Set(

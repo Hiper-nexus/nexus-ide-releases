@@ -2,7 +2,6 @@ import {
   authReadyModelsForProvider,
   isCredentiallessOpenCodeModel,
 } from "../adapters/model-auth-readiness";
-import { supportsReadOnlyParticipationCli } from "../../shared/mission-advisory";
 
 /**
  * Main-owned squad readiness policy.
@@ -318,37 +317,6 @@ export function buildSquadRuntimeCliPolicy(
 }
 
 /**
- * The only roster categories that can hold a read_only lane. Executor and
- * architect are excluded on purpose: both write to the workspace, so they
- * always owe the autonomous write confinement demanded of a mission worker.
- */
-const READ_ONLY_PARTICIPATION_CATEGORIES: ReadonlySet<unknown> = new Set([
-  "reviewer",
-  "scout",
-]);
-
-/**
- * Advisory participation lane: a reviewer/scout on a CLI that can hold a
- * read_only lane joins the mission through Nexus read-only authority (or its
- * own mechanical confinement) and therefore never needs autonomous
- * workspace write. It still must be routable as an adapter — advisory is a
- * narrower authority, not an exemption from having an active route.
- */
-function isReadOnlyParticipant(
-  agent: SquadRuntimeAgentLike,
-  policy: SquadRuntimeCliPolicy,
-): boolean {
-  return (
-    READ_ONLY_PARTICIPATION_CATEGORIES.has(agent.category) &&
-    typeof agent.cli === "string" &&
-    supportsReadOnlyParticipationCli(agent.cli) &&
-    // No physical handoff route means it can never prove participation.
-    policy.handoffCapableCliIds.has(agent.cli) &&
-    isSquadRuntimeAgentRoutable(agent, policy)
-  );
-}
-
-/**
  * Concrete one-line PT-BR cause (no secrets) for a worker that failed
  * `isSquadRuntimeAgentRoutable`, so the readiness gate names the exact
  * failing condition instead of a generic "adapter unavailable".
@@ -392,14 +360,18 @@ export function squadWorkerUnavailableReason(
  */
 export function assessStandardSquadReadiness(
   agents: readonly SquadRuntimeAgentLike[],
-  policy: SquadRuntimeCliPolicy,
-  verifiedOrchestratorCliIds: ReadonlySet<string>,
-  /**
-   * When true (`orch.squadCliPolicy === 'operator-choice'`), any routable
-   * Maestro is enough — the release-qualified verified-Maestro gate is skipped.
-   */
-  operatorChoice = false,
+  _policy: SquadRuntimeCliPolicy,
+  _verifiedOrchestratorCliIds: ReadonlySet<string>,
+  _operatorChoice = false,
 ): StandardSquadReadiness {
+  // Doutrina fluxo-por-padrão (2026-08-10): este gate reaplicava no approve a
+  // mesma cerimônia de auth/rota do wizard e derrubava missões reais com
+  // `squad_runtime_unavailable:*` (maestro-unavailable com o binário logado,
+  // claude-worker, executor/reviewer "sem rota ativa"). Prontidão de
+  // ferramenta não é pré-condição de missão: o terminal do agente mostra a
+  // conversa real de login, e a fronteira física de spawn continua existindo.
+  // Só a FORMA do squad permanece bloqueante — sem exatamente um Maestro não
+  // existe missão coordenável.
   const orchestrators = agents.filter(
     (agent) => agent.category === "orchestrator",
   );
@@ -410,95 +382,5 @@ export function assessStandardSquadReadiness(
       detail: "o squad precisa de exatamente um Maestro explícito",
     });
   }
-
-  const orchestratorCli = orchestrators[0]?.cli;
-  if (
-    typeof orchestratorCli !== "string" ||
-    !isSquadRuntimeAgentRoutable(orchestrators[0]!, policy)
-  ) {
-    return Object.freeze({
-      ok: false,
-      code: "maestro-unavailable",
-      detail: "o Maestro aprovado não possui rota ativa",
-    });
-  }
-  if (
-    !operatorChoice &&
-    !verifiedOrchestratorCliIds.has(orchestratorCli)
-  ) {
-    return Object.freeze({
-      ok: false,
-      code: "maestro-unverified",
-      detail: "o Maestro aprovado não possui orquestração verificada",
-    });
-  }
-
-  // reserveClaude keeps exactly one Claude OAuth session per mission. In
-  // autopilot that one process may be a writer or reviewer when the Maestro is
-  // NOT Claude. Two Claude roster workers would still contend for the same
-  // credential state, so reject that roster before dispatch.
-  const claudeNonOrchestrators = agents.filter(
-    (agent) => agent.category !== "orchestrator" && agent.cli === "claude",
-  );
-  if (
-    claudeNonOrchestrators.length > 0 &&
-    (orchestratorCli === "claude" || claudeNonOrchestrators.length > 1)
-  ) {
-    return Object.freeze({
-      ok: false,
-      code: "claude-worker",
-      detail:
-        orchestratorCli === "claude"
-          ? "Claude já está em uso pelo Maestro desta missão"
-          : "o squad pode usar no máximo um worker Claude por missão",
-    });
-  }
-
-  const hasExecutor = agents.some(
-    (agent) =>
-      agent.category === "executor" &&
-      isSquadRuntimeAgentRoutable(agent, policy, true),
-  );
-  if (!hasExecutor) {
-    return Object.freeze({
-      ok: false,
-      code: "executor-unavailable",
-      detail: "o squad precisa de um executor com rota ativa",
-    });
-  }
-
-  const hasReviewer = agents.some(
-    (agent) =>
-      agent.category === "reviewer" &&
-      isSquadRuntimeAgentRoutable(agent, policy, true),
-  );
-  if (!hasReviewer) {
-    return Object.freeze({
-      ok: false,
-      code: "reviewer-unavailable",
-      detail: "o squad precisa de um QA/reviewer com rota ativa",
-    });
-  }
-
-  const unroutableWorker = agents.find(
-    (agent) =>
-      agent.category !== "orchestrator" &&
-      !isReadOnlyParticipant(agent, policy) &&
-      !isSquadRuntimeAgentRoutable(agent, policy, true),
-  );
-  if (unroutableWorker) {
-    const cli =
-      typeof unroutableWorker.cli === "string"
-        ? unroutableWorker.cli
-        : "não identificada";
-    return Object.freeze({
-      ok: false,
-      code: "worker-unavailable",
-      detail:
-        `o worker em ${cli} não possui rota ativa qualificada pelo Nexus ` +
-        `— motivo: ${squadWorkerUnavailableReason(unroutableWorker, policy)}`,
-    });
-  }
-
   return Object.freeze({ ok: true });
 }
