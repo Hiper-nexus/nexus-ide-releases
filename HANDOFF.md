@@ -200,6 +200,20 @@ SEC#4 em provider-config-store), sonda de versão na detecção. Falta:
    CLI com pane de missão vivo usando ela (esperar assentar).
 4. Chip discreto no passo Equipe quando houver update disponível.
 
+## 4e. Frota completa + login por CLI (rodada noturna 10/08)
+
+- 18 CLIs ativas via adapters de usuário em `~/.nexus/plugins/adapters/`
+  (fonte da verdade: o launcher do operador `~/.local/bin/ai` — DeepSeek =
+  claude+base deepseek, Sakana = wrapper codex-fugu, qwen default qwen3.8-max,
+  prime-agent sem one-shot). REGRA: adapter manual NUNCA inventa catálogo de
+  modelos — ou a CLI informa, ou o operador cadastra.
+- 0.30.1 (UI): botão "+ Adicionar CLI" no Providers (form → escreve o JSON do
+  user adapter → rescan) e botão "Fazer login no terminal" por CLI (abre pane
+  rodando o fluxo de login da própria CLI; estado "Login verificado" quando a
+  detecção aprovar) — pedido explícito do operador.
+- Consolidar os adapters de usuário úteis como builtins na 0.30.1 (deepseek,
+  qwen, gemini ao menos), mantendo o mecanismo manual para o resto.
+
 ## 5. Estado do e2e definitivo
 
 - **Prova final (pequena)**: missão "ler brief.txt → escrever resumo.txt" pela
