@@ -1,4 +1,7 @@
 import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { Mission, SquadAgent } from '../../shared/orch-types';
 import { isUiMissionText } from '../../shared/mission-work-kind';
@@ -38,6 +41,37 @@ export function missionFastLaneEnabled(): boolean {
   return process.env.NEXUS_CEREMONIAL_MISSIONS !== '1';
 }
 
+/**
+ * Contexto de design resolvido SEM atrito: o operador não configura nada — o
+ * spawn olha o que existe (DESIGN.md do projeto e o catálogo do usuário em
+ * ~/.design-references, com índice em README.md) e aponta os agentes de UI
+ * para lá. Falha de filesystem nunca bloqueia; devolve vazio.
+ */
+export function missionDesignContext(
+  workspaceRoot: string,
+  home: string = homedir(),
+): string {
+  try {
+    const parts: string[] = [];
+    if (existsSync(join(workspaceRoot, 'DESIGN.md'))) {
+      parts.push(
+        'O projeto tem DESIGN.md na raiz — ele é a autoridade de estilo: leia antes de qualquer tela.',
+      );
+    }
+    const catalogRoot = join(home, '.design-references');
+    if (existsSync(catalogRoot)) {
+      parts.push(
+        `Catálogo de referências de design do operador: ${catalogRoot} ` +
+          '(índice em README.md; um .md por marca/estilo). Consulte o que ' +
+          'combinar com o pedido e siga os tokens/composição de lá.',
+      );
+    }
+    return parts.join(' ');
+  } catch {
+    return '';
+  }
+}
+
 interface FastLaneAgentRun {
   readonly agentId: string;
   readonly agentName: string;
@@ -75,6 +109,7 @@ export function agentPrompt(
   mission: Mission,
   teamNames: readonly string[],
   resume: boolean,
+  designContext = '',
 ): string {
   const objective = mission.description?.trim() || mission.title;
   const others = teamNames.filter((name) => name !== agent.agentName);
@@ -101,7 +136,12 @@ export function agentPrompt(
   // Missão de interface: o agente deve honrar o design system do projeto e as
   // skills de design da própria CLI — sem isso cada pane inventa um estilo.
   const uiLine = isUiMissionText(objective)
-    ? 'Trabalho de interface: siga o design system do projeto (DESIGN.md, tokens e componentes existentes) e use as skills de design disponíveis na sua CLI antes de criar estilo novo.'
+    ? [
+        'Trabalho de interface: siga o design system do projeto e use as skills de design disponíveis na sua CLI antes de criar estilo novo.',
+        designContext,
+      ]
+        .filter(Boolean)
+        .join(' ')
     : '';
   return [
     header,
@@ -408,6 +448,7 @@ async function tickRun(run: FastLaneRun): Promise<void> {
               mission,
               run.agents.map((item) => item.agentName),
               false,
+              missionDesignContext(run.scope.rootRealPath),
             ),
           );
         }
@@ -437,6 +478,7 @@ async function tickRun(run: FastLaneRun): Promise<void> {
             mission,
             run.agents.map((item) => item.agentName),
             true,
+            missionDesignContext(run.scope.rootRealPath),
           ),
         );
       })();
@@ -560,19 +602,13 @@ export async function fastLaneBootstrap(
   }
   // Fase 2 — prompts em PARALELO: cada TUI espera o próprio boot; oito
   // agentes em fila serializada custariam minutos de largada.
+  const designContext = missionDesignContext(scope.rootRealPath);
   await Promise.all(
     spawnedPairs.map(async ({ spec, agent }) => {
-      const accepted = await deliverPrompt(
-        agent,
-        agentPrompt(spec, live, teamNames, false),
-      );
+      const prompt = agentPrompt(spec, live, teamNames, false, designContext);
+      const accepted = await deliverPrompt(agent, prompt);
       if (accepted && agent.role === 'orchestrator') {
-        recordFastLaneKickoffAcceptance(
-          scope,
-          live,
-          agent.sessionId,
-          agentPrompt(spec, live, teamNames, false),
-        );
+        recordFastLaneKickoffAcceptance(scope, live, agent.sessionId, prompt);
       }
     }),
   );
@@ -688,7 +724,16 @@ export async function resumeFastLaneMission(
       };
       run.agents.push(adopted);
       if (alive.state === 'idle') {
-        await deliverPrompt(adopted, agentPrompt(agent, live, teamNames, true));
+        await deliverPrompt(
+          adopted,
+          agentPrompt(
+            agent,
+            live,
+            teamNames,
+            true,
+            missionDesignContext(scope.rootRealPath),
+          ),
+        );
       }
       continue;
     }
@@ -698,7 +743,16 @@ export async function resumeFastLaneMission(
       continue;
     }
     run.agents.push(spawned);
-    await deliverPrompt(spawned, agentPrompt(agent, live, teamNames, true));
+    await deliverPrompt(
+      spawned,
+      agentPrompt(
+        agent,
+        live,
+        teamNames,
+        true,
+        missionDesignContext(scope.rootRealPath),
+      ),
+    );
   }
   if (run.agents.length === 0) {
     throw new Error('a retomada não conseguiu abrir nenhum terminal');

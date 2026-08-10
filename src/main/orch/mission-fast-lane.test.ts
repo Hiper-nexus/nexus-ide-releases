@@ -1,6 +1,13 @@
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Mission, SquadAgent } from '../../shared/orch-types';
-import { agentPrompt, missionFastLaneEnabled } from './mission-fast-lane';
+import {
+  agentPrompt,
+  missionDesignContext,
+  missionFastLaneEnabled,
+} from './mission-fast-lane';
 
 function mission(overrides: Partial<Mission> = {}): Mission {
   return {
@@ -82,5 +89,40 @@ describe('mission fast lane', () => {
       false,
     );
     expect(prompt).toContain('Use apenas comandos POSIX.');
+  });
+
+  it('missão de UI aponta DESIGN.md do projeto e o catálogo ~/.design-references sem atrito', () => {
+    const workspace = mkdtempSync(join(tmpdir(), 'fastlane-ws-'));
+    const home = mkdtempSync(join(tmpdir(), 'fastlane-home-'));
+    writeFileSync(join(workspace, 'DESIGN.md'), '# tokens');
+    mkdirSync(join(home, '.design-references'));
+    writeFileSync(join(home, '.design-references', 'README.md'), '# índice');
+
+    const context = missionDesignContext(workspace, home);
+    expect(context).toContain('DESIGN.md');
+    expect(context).toContain('.design-references');
+
+    const uiMission = mission({
+      description:
+        'Redesenhe a tela de login com um layout novo de interface e css.',
+    });
+    const prompt = agentPrompt(agent(), uiMission, [], false, context);
+    expect(prompt).toContain('DESIGN.md');
+    expect(prompt).toContain('.design-references');
+
+    // Sem nada no disco: contexto vazio e prompt continua limpo.
+    const emptyHome = mkdtempSync(join(tmpdir(), 'fastlane-vazio-'));
+    expect(missionDesignContext(emptyHome, emptyHome)).toBe('');
+  });
+
+  it('missão sem cara de UI não carrega o catálogo de design', () => {
+    const prompt = agentPrompt(
+      agent(),
+      mission(),
+      [],
+      false,
+      'Catálogo: ~/.design-references',
+    );
+    expect(prompt).not.toContain('design-references');
   });
 });
