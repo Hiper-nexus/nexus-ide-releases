@@ -53,10 +53,16 @@
 
 import type { Handoff } from '../../shared/orch-types';
 import type { ProjectExecutionScope } from '../../shared/types';
-import { orchWriteSession, tapSessionExit } from '../pty/pty-manager';
+import {
+  getLastSessionInputOrigin,
+  orchWriteSession,
+  tapSessionExit,
+  type SessionInputOrigin,
+} from '../pty/pty-manager';
 import {
   getPaneRuntimeAuthorityBySession,
   readSessionOutput,
+  stripAnsi,
   type PaneRuntimeAuthority,
 } from './pane-registry';
 import { getProjectDomainStores } from './project-domain-store-registry';
@@ -69,6 +75,7 @@ export const WORKER_QUIET_GRACE_MS = 20_000;
 export const WORKER_ENFORCE_GRACE_MS = 45_000;
 /** Linhas de tail anexadas ao handoff sintético como "último estado". */
 const TAIL_LINES = 40;
+const SYNTHETIC_SUMMARY_MAX_CHARS = 4_096;
 
 export const WORKER_HANDOFF_REQUIRED_MARKER = '[NEXUS_HANDOFF_REQUIRED]';
 
@@ -114,6 +121,7 @@ export function decideQuietWorker(state: QuietWorkerState): QuietWorkerAction {
 export interface SyntheticHandoffInput {
   readonly status: 'blocked' | 'failed';
   readonly summary: string;
+  readonly fullText?: string;
 }
 
 export interface WorkerHandoffEnforcementDeps {
@@ -134,6 +142,9 @@ export interface WorkerHandoffEnforcementDeps {
     input: SyntheticHandoffInput,
   ) => void;
   readonly readTail: (sessionId: string) => string;
+  readonly lastInputOrigin: (
+    sessionId: string,
+  ) => SessionInputOrigin | undefined;
   readonly quietGraceMs: number;
   readonly enforceGraceMs: number;
   readonly log: (message: string) => void;
@@ -192,6 +203,7 @@ function productionDeps(): WorkerHandoffEnforcementDeps {
       onHandoffSubmitted(handoff, authority.scope);
     },
     readTail: (sessionId) => readSessionOutput(sessionId, TAIL_LINES),
+    lastInputOrigin: (sessionId) => getLastSessionInputOrigin(sessionId),
     quietGraceMs: WORKER_QUIET_GRACE_MS,
     enforceGraceMs: WORKER_ENFORCE_GRACE_MS,
     log: (message) => console.warn(`[handoff-enforcement] ${message}`),
@@ -267,6 +279,29 @@ function armTimer(
   watch.timer = timer;
 }
 
+function truncateStart(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  return text.slice(text.length - maxChars);
+}
+
+function syntheticSummary(
+  authority: PaneRuntimeAuthority,
+  reason: string,
+  missionNote: string,
+  tail: string,
+): string {
+  const prefix =
+    `${WORKER_HANDOFF_REQUIRED_MARKER} Fechamento mecânico pelo Nexus no ` +
+    `lugar do worker "${authority.paneId}": ${reason}.${missionNote}`;
+  if (!tail) return truncateStart(prefix, SYNTHETIC_SUMMARY_MAX_CHARS);
+  const header = `${prefix}\n\nÚltimo estado real observado do pane:\n`;
+  const boundedTail = truncateStart(
+    tail,
+    Math.max(0, SYNTHETIC_SUMMARY_MAX_CHARS - header.length),
+  );
+  return `${header}${boundedTail}`.slice(0, SYNTHETIC_SUMMARY_MAX_CHARS);
+}
+
 /**
  * Re-avalia do zero (autoridade, missão, handoff) e executa a ação devida.
  * `exited` pula a exigência de PTY idle: não há PTY.
@@ -294,6 +329,16 @@ function evaluate(
     exited,
   });
   if (action === 'ignore') return;
+  if ((deps.lastInputOrigin(sessionId) ?? 'system') === 'human') {
+    armTimer(watch, deps.enforceGraceMs, () =>
+      evaluate(deps, sessionId, exited),
+    );
+    deps.log(
+      `fechamento sintético adiado: última entrada foi humana ` +
+        `(pane=${authority.paneId}, session=${sessionId})`,
+    );
+    return;
+  }
   if (action === 'nudge') {
     // Nunca escreve dentro de um turno vivo: se voltou a trabalhar, o próprio
     // status não-idle já desarmou; aqui só confirmamos antes de digitar.
@@ -333,7 +378,7 @@ function enforce(
   clearTimer(watch);
   let tail = '';
   try {
-    tail = deps.readTail(sessionId).trim();
+    tail = stripAnsi(deps.readTail(sessionId)).trim();
   } catch {
     tail = '';
   }
@@ -360,16 +405,9 @@ function enforce(
         'este relatório é a evidência do que o worker estava fazendo no ' +
         'encerramento.'
       : '';
-  // H3 write order: evidence (tail) → durable inbox (submit) → done.
-  // Nudge already ran (or failed) earlier; we never re-nudge here.
-  const summary =
-    `${WORKER_HANDOFF_REQUIRED_MARKER} Handoff submetido pelo Nexus no lugar ` +
-    `do worker "${authority.paneId}": ${reason}. Nenhum resultado foi ` +
-    'declarado por ele, então o resultado real é desconhecido — leia o pane ' +
-    `(nexus_pane_read) antes de aceitar ou re-despachar a tarefa.${missionNote}` +
-    (tail ? `\n\nÚltimo estado observado do pane:\n${tail}` : '');
+  const summary = syntheticSummary(authority, reason, missionNote, tail);
   try {
-    deps.submitSynthetic(authority, { status, summary });
+    deps.submitSynthetic(authority, { status, summary, fullText: summary });
   } catch (error) {
     deps.log(
       `falha ao submeter handoff de cobrança (session=${sessionId}): ${

@@ -111,6 +111,7 @@ interface Harness {
     sessionId: string;
     status: string;
     summary: string;
+    fullText?: string;
   }>;
   handoffs: Handoff[];
   missionStatus: string;
@@ -144,9 +145,11 @@ function makeHarness(
         sessionId: authority.sessionId!,
         status: input.status,
         summary: input.summary,
+        fullText: input.fullText,
       });
     },
     readTail: () => 'ultima linha do worker',
+    lastInputOrigin: () => 'system',
     quietGraceMs: WORKER_QUIET_GRACE_MS,
     enforceGraceMs: WORKER_ENFORCE_GRACE_MS,
     log: () => {},
@@ -253,6 +256,50 @@ describe('worker-handoff-enforcement runtime', () => {
     expect(harness.submitted[0]!.status).toBe('blocked');
     expect(harness.submitted[0]!.summary).toContain('sem entregar um handoff');
     expect(harness.submitted[0]!.summary).toContain('ultima linha do worker');
+  });
+
+  it('usa o tail real do PTY como summary/fullText do sintético, rotulado e truncado', () => {
+    const harness = makeHarness({
+      readTail: () =>
+        `\x1b[31m${'x'.repeat(5_000)}\x1b[0m\nresultado final impresso`,
+    });
+    initWorkerHandoffEnforcement(harness.deps);
+
+    emitExit('s1');
+
+    expect(harness.submitted).toHaveLength(1);
+    const submitted = harness.submitted[0]!;
+    expect(submitted.summary).toContain(WORKER_HANDOFF_REQUIRED_MARKER);
+    expect(submitted.summary).toContain('Fechamento mecânico');
+    expect(submitted.summary).toContain('resultado final impresso');
+    expect(submitted.summary).not.toContain('\x1b[31m');
+    expect(submitted.summary.length).toBeLessThanOrEqual(4_096);
+    expect(submitted.fullText).toBe(submitted.summary);
+  });
+
+  it('adia o fechamento sintético quando a última entrada foi humana', () => {
+    const harness = makeHarness({
+      lastInputOrigin: () => 'human',
+    });
+    initWorkerHandoffEnforcement(harness.deps);
+
+    emitStatus('s1', 'idle');
+    vi.advanceTimersByTime(WORKER_QUIET_GRACE_MS + WORKER_ENFORCE_GRACE_MS);
+
+    expect(harness.nudges).toHaveLength(0);
+    expect(harness.submitted).toHaveLength(0);
+  });
+
+  it('trata origem desconhecida como system para não perder resultado', () => {
+    const harness = makeHarness({
+      lastInputOrigin: () => undefined,
+    });
+    initWorkerHandoffEnforcement(harness.deps);
+
+    emitStatus('s1', 'idle');
+    vi.advanceTimersByTime(WORKER_QUIET_GRACE_MS);
+
+    expect(harness.nudges).toHaveLength(1);
   });
 
   it('cancela a cobrança quando o worker volta a trabalhar', () => {
@@ -364,6 +411,7 @@ describe('worker-handoff-enforcement runtime', () => {
           sessionId: authority.sessionId!,
           status: input.status,
           summary: input.summary,
+          fullText: input.fullText,
         });
       },
     };

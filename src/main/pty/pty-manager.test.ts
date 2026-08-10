@@ -158,6 +158,7 @@ import {
   configureAgentHookEndpointPath,
   consumeMissionOrchestratorGrant,
   getAgentSessionInfo,
+  getLastSessionInputOrigin,
   getOwnedAgentSessionInfo,
   getSessionState,
   adoptMainOwnedAgentSession,
@@ -3927,6 +3928,33 @@ describe("cli-agent spawn argv hardening", () => {
       (call) => call[0] === "pty:stateChange",
     );
     expect(stateSends).toHaveLength(0);
+
+    killSession(owner, sessionId);
+  });
+
+  it("tracks renderer keyboard writes as human and main-owned writes as system", () => {
+    const h = fakeHost();
+    setPtyHost(h.host);
+    const owner = fakeWc();
+    const trusted = trustedSpawn();
+    const { sessionId } = spawnSession(
+      owner,
+      { kind: "shell", cols: 80, rows: 24 },
+      { scope: trusted.scope, cwd: trusted.cwd, shell: "/bin/zsh" },
+    );
+
+    expect(getLastSessionInputOrigin(sessionId)).toBeUndefined();
+
+    expect(writeSession(owner, sessionId, "typed by user")).toBe(true);
+    expect(getLastSessionInputOrigin(sessionId)).toBe("human");
+
+    expect(orchWriteSession(sessionId, "pane_write")).toBe(true);
+    expect(getLastSessionInputOrigin(sessionId)).toBe("system");
+
+    expect(
+      orchWriteSession(sessionId, "explicit", { inputOrigin: "human" }),
+    ).toBe(true);
+    expect(getLastSessionInputOrigin(sessionId)).toBe("human");
 
     killSession(owner, sessionId);
   });
