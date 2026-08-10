@@ -150,6 +150,19 @@ describe('mission preparation and review', () => {
     });
   });
 
+  it('aceita o opt-in de escolha livre em advanced', () => {
+    const parsed = missionPrepareRequestSchema.parse({
+      objective: 'Implementar e verificar a entrega',
+      contextPaths: [],
+      roster: standardRoster,
+      advanced: { lane: 'standard', freeAgentChoice: true },
+    });
+    expect(parsed.advanced).toEqual({
+      lane: 'standard',
+      freeAgentChoice: true,
+    });
+  });
+
   it('rejects a standard delivery roster without an executor or reviewer', () => {
     const base = {
       objective: 'Implementar e verificar a entrega',

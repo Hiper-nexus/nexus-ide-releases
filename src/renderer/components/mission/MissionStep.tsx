@@ -26,6 +26,7 @@ interface MissionStepProps {
   onTitleChange(title: string): void;
   onContextPathsChange(paths: readonly string[]): void;
   onLaneChange(lane: MissionLane): void;
+  onFreeAgentChoiceChange(freeAgentChoice: boolean): void;
   onContinue(): void;
 }
 
@@ -169,6 +170,7 @@ export function MissionStep({
   onTitleChange,
   onContextPathsChange,
   onLaneChange,
+  onFreeAgentChoiceChange,
   onContinue,
 }: MissionStepProps) {
   const headingRef = useRef<HTMLHeadingElement>(null);
@@ -588,6 +590,31 @@ export function MissionStep({
           </select>
           <span id="mission-lane-hint" className="mission-setup__hint">
             {lanePresentation.guidance}
+          </span>
+        </div>
+        <div className="mission-setup__field">
+          <label className="mission-setup__checkbox" htmlFor="mission-free-agent-choice">
+            <input
+              id="mission-free-agent-choice"
+              type="checkbox"
+              checked={draft.advanced.freeAgentChoice ?? false}
+              disabled={draftEditingDisabled}
+              aria-describedby="mission-free-agent-choice-hint"
+              onChange={(event) => {
+                if (!draftEditingDisabled) {
+                  onFreeAgentChoiceChange(event.target.checked);
+                }
+              }}
+            />
+            <span>Escolha livre de agentes</span>
+          </label>
+          <span
+            id="mission-free-agent-choice-hint"
+            className="mission-setup__hint"
+          >
+            A coordenação pode usar qualquer ferramenta de IA instalada, sem
+            equipe fixa. As proteções de segurança (pasta do projeto,
+            ferramentas permitidas, uma alteração por vez) continuam valendo.
           </span>
         </div>
       </details>

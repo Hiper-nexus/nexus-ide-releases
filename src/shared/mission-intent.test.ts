@@ -493,6 +493,22 @@ describe('compileIntentContract', () => {
       compileIntentContract({ goal: '   ', intentVersion: 1 }),
     ).toThrow(/intent_required/);
   });
+
+  it('carimba freeAgentChoice quando o opt-in de modo livre é pedido', () => {
+    const free = compileIntentContract({
+      goal: 'Corrigir o botão de salvar',
+      intentVersion: 1,
+      freeAgentChoice: true,
+    });
+    expect(free.freeAgentChoice).toBe(true);
+
+    // Ausente por padrão: nunca default silencioso.
+    const normal = compileIntentContract({
+      goal: 'Corrigir o botão de salvar',
+      intentVersion: 1,
+    });
+    expect(normal.freeAgentChoice).toBeUndefined();
+  });
   it('marks the synthesized criterion so prompt builders can dedupe it', () => {
     const derived = compileIntentContract({
       goal: 'Corrigir o botão de salvar',

@@ -19,6 +19,12 @@ export interface MissionWorkerSpawnGate {
   readonly missionId?: string;
   readonly role?: 'orchestrator' | 'worker' | 'user';
   readonly readOnly?: boolean;
+  /**
+   * Per-mission "Escolha livre de agentes" opt-in (contract-sealed). When set,
+   * any live cli-pty may write inside its execution scope even under the global
+   * `governed` policy — the operator explicitly chose it for this mission.
+   */
+  readonly freeAgentChoice?: boolean;
 }
 
 /**
@@ -43,7 +49,9 @@ export function assertReleaseQualifiedMissionWorkerSpawn(
   const operatorChoice = isOperatorChoicePolicy(
     getOrchSettings().squadCliPolicy,
   );
-  if (operatorChoice && adapter?.kind === 'cli-pty') {
+  // Per-mission free-choice opt-in widens the lane exactly like the global
+  // operator-choice policy: any live cli-pty writes inside its execution scope.
+  if ((operatorChoice || options.freeAgentChoice === true) && adapter?.kind === 'cli-pty') {
     return;
   }
   const qualified =

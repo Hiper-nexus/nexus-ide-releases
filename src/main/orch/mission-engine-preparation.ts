@@ -485,6 +485,11 @@ export function createMissionEnginePreparationPorts(input: {
         source: 'typed',
         intentVersion: 1,
         lane: request.advanced?.lane ?? 'standard',
+        // Opt-in por missão: o Pet Studio reescreve `advanced` (lane standard,
+        // sem este flag) — modo livre só chega por escolha explícita do fluxo.
+        ...(request.advanced?.freeAgentChoice
+          ? { freeAgentChoice: true }
+          : {}),
         contextPolicy:
           request.contextPaths.length > 0 ? 'minimal' : 'on-demand',
         contextPaths: [...request.contextPaths],

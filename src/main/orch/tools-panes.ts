@@ -20,6 +20,12 @@ import {
 } from './pane-close-scopes';
 import { findAgentInSquad, squadRoutableCliIds } from './squad-store';
 import { adHocSpawnGateError } from './route-provenance';
+import { recordRouteLog } from './route-log';
+import {
+  isFreeAgentChoiceContract,
+  requiresRouteReservation,
+  squadBindingViolationError,
+} from './free-agent-choice';
 import { loadModelCatalog, modelCatalogInfo } from '../adapters/model-catalog';
 import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
 import {
@@ -74,6 +80,23 @@ function defaultModelForAdapter(adapterId: string): string | undefined {
     if (def.id === adapterId) return def.models?.default;
   }
   return undefined;
+}
+
+/**
+ * "Escolha livre de agentes" (opt-in por missão) lido do contrato de intenção
+ * selado. Fail-safe: qualquer erro de leitura ou missão sem contrato = off, ou
+ * seja, o caminho cerimonial atual permanece intacto.
+ */
+function missionFreeAgentChoice(
+  scope: ProjectExecutionScope,
+  missionId: string,
+): boolean {
+  try {
+    const mission = getProjectDomainStores(scope).missions.get(missionId);
+    return isFreeAgentChoiceContract(mission?.intentContract);
+  } catch {
+    return false;
+  }
 }
 
 const SAME_CHECKOUT_ACTIVE_STATES = new Set<PaneSnapshot['state']>([
@@ -339,24 +362,36 @@ const paneSpawn: McpToolDef = {
         scope: ctx.scope,
       };
     }
-    // Reject stale/sticky/non-reserved legacy roster choices before consuming
-    // a route reservation or mutating any worker-slot/worktree state. The
-    // physical spawn path repeats this check as the final backstop.
+    // "Escolha livre de agentes" (opt-in por missão): atravessa os três gates
+    // cerimoniais (release-qualified / squad_binding / route_reservation)
+    // mantendo os guardrails que não são cerimônia. Lido do contrato selado e
+    // propagado ao backstop físico via options.freeAgentChoice.
+    const freeAgentChoice = options.missionId
+      ? missionFreeAgentChoice(ctx.scope, options.missionId)
+      : false;
+    if (freeAgentChoice) {
+      options = { ...options, freeAgentChoice: true };
+    }
+    // Gate (a): reject stale/sticky/non-reserved legacy roster choices before
+    // consuming a route reservation or mutating any worker-slot/worktree state.
+    // Free-choice widens the lane exactly like the global operator-choice
+    // policy. The physical spawn path repeats this check as the final backstop.
     if (
       options.missionId &&
       options.role === 'worker' &&
       options.readOnly !== true &&
       !isMissionWorkerWriteEligibleCli(
         options.adapterId,
-        isOperatorChoicePolicy(getOrchSettings().squadCliPolicy),
+        isOperatorChoicePolicy(getOrchSettings().squadCliPolicy) ||
+          freeAgentChoice,
       )
     ) {
       throw new Error(
         `governed_worker_spawn_unsupported: ${options.adapterId} não pode ` +
           'executar como worker autônomo de missão nesta release; use o ' +
           'adapter Codex builtin qualificado, ative Configurações › ' +
-          'Orquestração › Escolha livre, ou abra esse CLI manualmente no ' +
-          'Terminal fora da missão',
+          'Squads › Escolha livre (ou inicie a missão em modo livre), ou ' +
+          'abra esse CLI manualmente no Terminal fora da missão',
       );
     }
     let releaseWorkerSlot: (() => void) | undefined;
@@ -395,32 +430,41 @@ const paneSpawn: McpToolDef = {
               'criados pelo dispatcher durável do main; aguarde o Nexus despachar a task',
           );
         }
-        // Vínculo do squad no caminho agêntico: um worker ad-hoc (sem agentName)
-        // só pode rodar numa CLI que o roster do squad selado da missão contém.
-        // O conjunto é o roster INTEIRO (multi-CLI) — o gate admite QUALQUER
-        // membro (claude/codex/gemini/...), nunca força um provider só, e recusa
-        // uma CLI de fora do squad. Membros nomeados já são vinculados pelo
-        // branch de agentName acima (findAgentInSquad + agent.cli). Fail-open
-        // quando o roster é irresolúvel (conjunto vazio): sem membros para
-        // julgar, não há colapso a impedir.
+        // Gate (b) — vínculo do squad no caminho agêntico: um worker ad-hoc
+        // (sem agentName) só pode rodar numa CLI que o roster do squad selado da
+        // missão contém. O conjunto é o roster INTEIRO (multi-CLI) — o gate
+        // admite QUALQUER membro (claude/codex/gemini/...), nunca força um
+        // provider só, e recusa uma CLI de fora do squad. Membros nomeados já
+        // são vinculados pelo branch de agentName acima (findAgentInSquad +
+        // agent.cli). Fail-open quando o roster é irresolúvel (conjunto vazio).
+        // Modo livre dispensa o vínculo por completo.
         if (!agentRef && missionRow.squadId) {
-          const rosterClis = squadRoutableCliIds(missionRow.squadId);
-          if (rosterClis.size > 0 && !rosterClis.has(options.adapterId)) {
-            throw new Error(
-              `squad_binding_violation: a missão está vinculada ao squad ` +
-                `${missionRow.squadId}; um worker ad-hoc só pode usar uma CLI do ` +
-                `roster (${[...rosterClis].join(', ')}), não ${options.adapterId}. ` +
-                `Spawne um agente nomeado do squad (agentName) ou roteie para um ` +
-                `membro do roster.`,
-            );
-          }
+          const bindingError = squadBindingViolationError({
+            hasNamedAgent: false,
+            missionSquadId: missionRow.squadId,
+            rosterClis: squadRoutableCliIds(missionRow.squadId),
+            adapterId: options.adapterId,
+            freeAgentChoice,
+          });
+          if (bindingError) throw new Error(bindingError);
         }
-        if (missionRow.status === 'running' && !rosterRouteAuthorized) {
+        // Gate (c) — uma missão em execução exige routeReservationId de
+        // nexus_route_task, salvo rota sticky do roster ou modo livre. No modo
+        // livre a auditoria é preservada com um registro no route_log (spawn
+        // sem reserva continua "ver para crer").
+        if (
+          requiresRouteReservation({
+            missionRunning: missionRow.status === 'running',
+            rosterRouteAuthorized,
+            freeAgentChoice,
+          })
+        ) {
           if (!routeReservationId) {
             throw new Error(
               'route_reservation_required: missão em execução exige routeReservationId válido; ' +
                 'chame nexus_route_task e repasse routeReservationId/adapterId/model/effort, ' +
-                'ou use agentName sem substituir a rota sticky do roster',
+                'use agentName sem substituir a rota sticky do roster, ' +
+                'ou inicie a missão em modo livre (Escolha livre de agentes)',
             );
           }
           const expectedRoute = {
@@ -443,6 +487,32 @@ const paneSpawn: McpToolDef = {
               ctx.sessionId!,
             );
           };
+        }
+        // Auditoria do modo livre: um spawn que atravessou o gate de reserva por
+        // Escolha livre ainda é registrado no route_log — a decisão de rota
+        // continua inspecionável ("ver para crer"), só sem a cerimônia da
+        // reserva durável.
+        if (
+          freeAgentChoice &&
+          missionRow.status === 'running' &&
+          !rosterRouteAuthorized &&
+          !routeReservationId &&
+          options.role === 'worker'
+        ) {
+          recordRouteLog({
+            task:
+              options.prompt?.slice(0, 120) ??
+              options.title ??
+              options.agentName ??
+              'worker ad-hoc',
+            tier: 'free',
+            adapterId: options.adapterId,
+            ...(options.model ? { model: options.model } : {}),
+            ...(options.effort ? { effort: options.effort } : {}),
+            reason:
+              'escolha livre de agentes (opt-in da missão): spawn sem ' +
+              'RouteReservation nem squad_binding',
+          });
         }
       }
       if (options.role === 'worker' && options.missionId) {

@@ -71,6 +71,33 @@ describe('mission-worker-spawn-authority', () => {
     expect(isRevisionBoundWritableWorkerAdapterAllowed('kimi')).toBe(true);
   });
 
+  it('modo livre da missão libera kimi writer mesmo sob governed', () => {
+    getOrchSettings.mockReturnValue({ squadCliPolicy: 'governed' });
+    getAdapter.mockReturnValue({ id: 'kimi', kind: 'cli-pty' });
+    supportsEnforceableWorkspaceWriteNativeAuthority.mockReturnValue(false);
+    expect(() =>
+      assertReleaseQualifiedMissionWorkerSpawn({
+        adapterId: 'kimi',
+        missionId: 'm1',
+        role: 'worker',
+        freeAgentChoice: true,
+      }),
+    ).not.toThrow();
+  });
+
+  it('modo livre não vale para adapter que não é cli-pty', () => {
+    getOrchSettings.mockReturnValue({ squadCliPolicy: 'governed' });
+    getAdapter.mockReturnValue({ id: 'openai', kind: 'api' });
+    expect(() =>
+      assertReleaseQualifiedMissionWorkerSpawn({
+        adapterId: 'openai',
+        missionId: 'm1',
+        role: 'worker',
+        freeAgentChoice: true,
+      }),
+    ).toThrow(/governed_worker_spawn_unsupported/);
+  });
+
   it('still allows kimi as read_only advisor under governed', () => {
     getAdapter.mockReturnValue({ id: 'kimi', kind: 'cli-pty' });
     supportsEnforceableWorkspaceWriteNativeAuthority.mockReturnValue(false);

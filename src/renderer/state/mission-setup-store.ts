@@ -24,7 +24,7 @@ export interface MissionSetupDraft {
   title: string;
   contextPaths: string[];
   roster: SquadAgent[];
-  advanced: { lane: MissionLane };
+  advanced: { lane: MissionLane; freeAgentChoice?: boolean };
   step: MissionSetupStep;
   revision: number;
 }
@@ -113,6 +113,7 @@ export interface MissionSetupStore {
   setContextPaths(contextPaths: readonly string[]): void;
   setRoster(roster: readonly SquadAgent[]): void;
   setAdvancedLane(lane: MissionLane): void;
+  setFreeAgentChoice(freeAgentChoice: boolean): void;
   setStep(step: MissionSetupStep): void;
   beginPetStudioReview(
     input: BeginPetStudioReviewInput,
@@ -151,7 +152,12 @@ const missionSetupDraftSchema = z
         'context paths must be unique',
       ),
     roster: z.array(missionSetupRosterAgentSchema).max(12),
-    advanced: z.object({ lane: missionLaneSchema }).strict(),
+    advanced: z
+      .object({
+        lane: missionLaneSchema,
+        freeAgentChoice: z.boolean().optional(),
+      })
+      .strict(),
     step: z.enum(['mission', 'team', 'review']),
     revision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   })
@@ -610,7 +616,17 @@ export const useMissionSetupStore = create<MissionSetupStore>((set, get) => {
       revise((draft) => ({
         ...draft,
         roster: draft.roster.map((agent) => cloneAgentForLane(agent, lane)),
-        advanced: { lane },
+        advanced: { ...draft.advanced, lane },
+      }));
+    },
+
+    setFreeAgentChoice: (freeAgentChoice) => {
+      if (freeAgentChoice === (get().draft.advanced.freeAgentChoice ?? false)) {
+        return;
+      }
+      revise((draft) => ({
+        ...draft,
+        advanced: { ...draft.advanced, freeAgentChoice },
       }));
     },
 

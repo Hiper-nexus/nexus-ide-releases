@@ -48,7 +48,11 @@ export const missionAllowedActionSchema = z.enum([
 export type MissionAllowedAction = z.infer<typeof missionAllowedActionSchema>;
 
 export const missionAdvancedSchema = z
-  .object({ lane: missionLaneSchema.optional() })
+  .object({
+    lane: missionLaneSchema.optional(),
+    /** "Escolha livre de agentes" — opt-in por missão (ver mission-intent). */
+    freeAgentChoice: z.boolean().optional(),
+  })
   .strict();
 export type MissionAdvanced = z.infer<typeof missionAdvancedSchema>;
 export const missionPrepareProfileSchema = z
