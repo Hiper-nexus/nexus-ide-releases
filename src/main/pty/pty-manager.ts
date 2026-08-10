@@ -1190,8 +1190,13 @@ export function spawnAgentSession(
     // Via Rápida: coordenação também larga com o prompt nativo — a colagem
     // pós-boot falhava contra TUIs reais (8/8 panes mudos, missão 10/08) e o
     // argumento de largada é o único canal que não depende de timing.
+    //
+    // AGY fica FORA dessa ampliação: o canal nativo dele é `--print`, que sai
+    // depois da tarefa (one-shot de worker, por desenho abaixo). Numa
+    // coordenação isso é morte no boot — o pane fecha antes de coordenar
+    // qualquer coisa. Coordenação AGY continua recebendo o prompt por colagem.
     (authority.context?.role === "worker" ||
-      authority.context?.role === "orchestrator") &&
+      (authority.context?.role === "orchestrator" && adapter.id !== "agy")) &&
     Boolean(authority.context.missionId?.trim()) &&
     !req.resume
       ? authority.context.initialPrompt

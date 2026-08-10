@@ -262,11 +262,20 @@ export function OrchestratorDefaults() {
             : "Instale ou escolha um Maestro verificado para iniciar novos squads."}
         </p>
       )}
-      {!providerUnavailable && !runtimeAuthenticated && (
+      {/* Modelo sumido é aviso próprio: desde que login deixou de ser
+          pré-condição de missão, a CLI instalada conta como autenticada e este
+          bloco inteiro sumia — o chip dizia "modelo indisponível" e nada
+          explicava o que fazer. */}
+      {!providerUnavailable && missingModel && (
         <p className="settings-orchestrator__warning" role="status">
-          {missingModel
-            ? "O modelo salvo não está mais disponível. Escolha outro modelo antes de iniciar."
-            : "Autentique a sessão ou escolha uma conta válida para o modelo selecionado. O Nexus revalida tudo novamente antes do spawn."}
+          O modelo salvo não está mais disponível. Escolha outro modelo antes de
+          iniciar.
+        </p>
+      )}
+      {!providerUnavailable && !missingModel && !runtimeAuthenticated && (
+        <p className="settings-orchestrator__warning" role="status">
+          Autentique a sessão ou escolha uma conta válida para o modelo
+          selecionado. O Nexus revalida tudo novamente antes do spawn.
         </p>
       )}
 
