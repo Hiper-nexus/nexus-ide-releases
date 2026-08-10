@@ -9,6 +9,13 @@ on:
 permissions:
   contents: read
 
+# Cancela runs sobrepostas do mesmo ref. Commits diretos na main em rajada
+# disparavam runs duplicadas deste gate. cancel-in-progress mata a run
+# anterior quando um novo commit chega; a proteção do gate permanece íntegra.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   check:
     runs-on: ubuntu-latest
