@@ -364,11 +364,19 @@ export function TeamStep({
     setEditError(null);
     let next = roster.map((agent) => ({ ...agent }));
 
-    // Encolher: remove executores extras, nunca a coordenação nem o último worker.
+    // Encolher: remove executores extras primeiro e preserva UM revisor —
+    // a regra de forma exige verificação independente, e o preset "3" gerava
+    // equipe sem revisor que travava o Continuar (beco sem saída).
     while (next.length > targetTotal) {
-      const removable = [...next]
-        .reverse()
-        .find((agent) => agent.category !== 'orchestrator');
+      const reviewers = next.filter((agent) => agent.category === 'reviewer');
+      const removable =
+        [...next]
+          .reverse()
+          .find(
+            (agent) =>
+              agent.category !== 'orchestrator' &&
+              (agent.category !== 'reviewer' || reviewers.length > 1),
+          ) ?? null;
       if (!removable) break;
       const planned = planRemoveRosterAgent(next, removable.id);
       if (!planned.ok) break;

@@ -3233,7 +3233,10 @@ function projectMissionEngineSnapshotView(
 
   const panes: ProjectMissionSnapshotView['panes'] = [];
   const claimedAgentIds = new Set<string>();
-  for (const pane of missionPanes) {
+  // Mais NOVO primeiro: após uma retomada existem linhas antigas de panes
+  // mortos para o mesmo agente, e o primeiro claim vence — iterar do mais
+  // velho fazia o cartão do grafo mostrar "stopped" com o processo novo vivo.
+  for (const pane of [...missionPanes].reverse()) {
     if (!pane.paneId) continue;
     let agentId: string | undefined;
     if (pane.agentName && rosterByName.has(pane.agentName)) {

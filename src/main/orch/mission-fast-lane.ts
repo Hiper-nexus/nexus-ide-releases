@@ -3,10 +3,7 @@ import type { ProjectExecutionScope } from '../../shared/types';
 import type { Mission, SquadAgent } from '../../shared/orch-types';
 import { getSessionState } from '../pty/pty-manager';
 import { deliverAgentPrompt } from './tool-util';
-import {
-  listPaneSnapshots,
-  spawnMainOwnedMissionPaneAsync,
-} from './pane-registry';
+import { listPaneSnapshots, requestPaneSpawn } from './pane-registry';
 import { getProjectDomainStores } from './project-domain-store-registry';
 import { getSquad } from './squad-store';
 import { missionEngineForScope } from './mission-engine-registry';
@@ -142,11 +139,12 @@ async function spawnAgentPane(
     (role === 'orchestrator' && runtimeHint?.effort) || agent.effort || undefined;
   const accountId =
     role === 'orchestrator' ? runtimeHint?.accountId || undefined : undefined;
-  // Selo NUNCA é passado daqui: o canonicalizador do spawn carimba o selo
-  // "atual" sozinho, e um selo calculado à parte diverge ("stale mission pane
-  // authority") e derruba spawns legítimos. A visibilidade do grid vem do
-  // bypass de adoção para pane main-owned da Via Rápida.
-  const spawn = await spawnMainOwnedMissionPaneAsync({
+  // requestPaneSpawn é o caminho VISÍVEL: cria o tile no grid do renderer
+  // (xterm real, clicável — a autonomia do operador) e mantém o fluxo de
+  // estado do PTY vivo. O spawner headless deixava a equipe trabalhando
+  // invisível ("nenhum pane foi aberto" com 8 CLIs vivas). Selo NUNCA é
+  // passado daqui: o canonicalizador do spawn carimba o atual sozinho.
+  const spawn = await requestPaneSpawn({
     adapterId,
     ...(model ? { model } : {}),
     ...(effort ? { effort } : {}),
@@ -374,19 +372,19 @@ async function tickRun(run: FastLaneRun): Promise<void> {
   let allSettled = true;
   for (const agent of run.agents) {
     const state = getSessionState(agent.sessionId);
-    if (state === 'busy' || state === 'spawning') {
-      if (state === 'busy') {
-        agent.wasBusy = true;
-        run.lastBusyAt = now;
-      }
+    if (state === 'busy') {
+      agent.wasBusy = true;
+      run.lastBusyAt = now;
       allSettled = false;
       continue;
     }
-    if (state === 'idle') {
-      if (agent.wasBusy) continue; // assentou depois de trabalhar
-      // Vivo mas nunca trabalhou: prompt pode ter se perdido no boot da TUI.
-      // O nudge re-tenta em janelas de 90s (a entrega re-carimba o relógio),
-      // então uma TUI lenta ganha quantas recargas precisar.
+    if (state === 'spawning' || state === 'idle') {
+      if (state === 'idle' && agent.wasBusy) continue; // assentou após trabalhar
+      // Vivo mas nunca trabalhou (idle) OU preso em spawning: prompt pode ter
+      // se perdido no boot da TUI. O nudge re-tenta em janelas de 90s (a
+      // entrega re-carimba o relógio) — uma TUI lenta ganha quantas recargas
+      // precisar. `spawning` preso também recebe nudge: já houve retomada em
+      // que o parsing nunca flipou e a frota inteira ficou muda.
       allSettled = false;
       if (
         agent.promptDeliveredAt === 0 ||
