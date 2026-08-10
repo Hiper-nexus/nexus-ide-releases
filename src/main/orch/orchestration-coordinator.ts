@@ -20,12 +20,6 @@ import {
   setMissionSchedulerReconcileRequest,
 } from './mission-scheduler-production';
 import {
-  MISSION_ORCHESTRATOR_BOOTSTRAP_RECONCILE_MS,
-  prepareMissionOrchestratorBootstrapRecovery,
-  reconcileMissionOrchestratorBootstrap,
-  shutdownMissionOrchestratorBootstrapRecovery,
-} from './mission-orchestrator-bootstrap';
-import {
   MISSION_ORCHESTRATOR_EXIT_RECONCILE_MS,
   prepareMissionOrchestratorExitLifecycle,
   reconcileMissionOrchestratorExits,
@@ -100,7 +94,6 @@ export function startOrchestrationCoordinator(): void {
   prepareDelegationSupervisor();
   prepareTaskDispatchLifecycle();
   prepareMissionOrchestratorExitLifecycle();
-  prepareMissionOrchestratorBootstrapRecovery();
   configureHandoffDeliveryRuntimeRecovery(recoverHandoffDeliveryRuntime);
   disposeLoginWatchdog = installLoginStuckWatchdog({ autoTick: false });
 
@@ -129,11 +122,6 @@ export function startOrchestrationCoordinator(): void {
       id: 'mission-orchestrator-exit',
       cadenceMs: MISSION_ORCHESTRATOR_EXIT_RECONCILE_MS,
       run: () => reconcileMissionOrchestratorExits(),
-    },
-    {
-      id: 'mission-orchestrator-bootstrap',
-      cadenceMs: MISSION_ORCHESTRATOR_BOOTSTRAP_RECONCILE_MS,
-      run: () => reconcileMissionOrchestratorBootstrap(),
     },
     {
       id: 'mission-runtime-authority',
@@ -227,7 +215,6 @@ export async function stopOrchestrationCoordinator(): Promise<void> {
     shutdownStallWatchdog();
     shutdownTaskDispatchLifecycle();
     shutdownMissionOrchestratorExitLifecycle();
-    await shutdownMissionOrchestratorBootstrapRecovery();
     configureHandoffDeliveryRuntimeRecovery(null);
     coordinator = null;
   })();

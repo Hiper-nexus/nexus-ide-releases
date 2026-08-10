@@ -34,7 +34,7 @@ import {
   CronPortableScheduleService,
   type PortableCronUpdateInput,
 } from './cron-portable-schedule-service';
-import { bootstrapMissionOrchestratorForScope } from './mission-orchestrator-bootstrap';
+import { bootstrapMissionOrchestratorForScope } from './mission-engine-production';
 import type { PortableCronScheduleBackend } from './portable-cron-definition';
 import { getProjectDomainStores } from './project-domain-store-registry';
 

@@ -82,7 +82,6 @@ import {
 import { assertSafePtyPrompt } from "./pty-prompt-safety";
 import {
   RendererMissionAuthority,
-  type RendererMissionAuthorityCandidate,
   type RendererMissionLifecycleCandidate,
 } from "./renderer-mission-authority";
 import { deleteMissionPromptQueue } from "./mission-prompt-queue-registry";
@@ -171,12 +170,7 @@ import {
   prepareClarifyAnswerAuthorityCandidate,
   type ClarifyAnswerAuthorityCandidate,
 } from './clarify-flow';
-import {
-  restartMissionOrchestratorAfterPlanPromotionForScope,
-  resumeBlockedMissionBootstrapFromRenderer,
-  stopMissionOrchestratorBeforePlanPromotionForScope,
-} from './mission-orchestrator-bootstrap';
-import { warmSquadRuntimeSubscriptionAuth } from './squad-runtime-inventory';
+import { resumeBlockedMissionBootstrapFromRenderer } from './mission-engine-production';
 import {
   snapshotSquadAuthority,
   squadAuthorityReviewStrings,
@@ -190,7 +184,6 @@ import {
   terminateMissionRuntime,
 } from './mission-runtime-termination';
 import { BoundedAsyncOperationPool } from './bounded-async-operation-pool';
-import { commitPromotedPlanToGit } from "./promoted-plan-git-authority";
 import { missionControlPlaneSnapshot } from "./mission-control-plane-ipc";
 
 /**
@@ -448,8 +441,6 @@ function safeDialogLabel(value: string, maxChars = 256): string {
 const OPERATOR_DIALOG_FORBIDDEN =
   /[\0-\x08\x0b\x0c\x0e-\x1f\x7f\u202a-\u202e\u2066-\u2069]/u;
 const MAX_OPERATOR_DIALOG_CHARS = 16_000;
-const MISSION_APPROVAL_DIALOG_LINES = 9;
-const MAX_MISSION_APPROVAL_DIALOG_CHARS = 1_800;
 
 function assertExactOperatorDialog(detail: string): string {
   if (OPERATOR_DIALOG_FORBIDDEN.test(detail)) {
@@ -461,142 +452,6 @@ function assertExactOperatorDialog(detail: string): string {
     );
   }
   return detail;
-}
-
-function compactDialogText(value: string, maxChars: number): string {
-  const normalized = safeDialogLabel(value, Number.MAX_SAFE_INTEGER)
-    .replace(/\s+/gu, ' ')
-    .trim();
-  if (normalized.length <= maxChars) return normalized;
-  return `${normalized.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`;
-}
-
-function dialogDigest(value: unknown): string {
-  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
-}
-
-function missionAuthorityReviewDigest(
-  candidate: RendererMissionAuthorityCandidate,
-): string {
-  const { fence: _runtimeFence, ...reviewedAuthority } = candidate;
-  return dialogDigest(reviewedAuthority);
-}
-
-interface MissionAuthorityDialogReview {
-  readonly detail: string;
-  /** Resumo de 3 linhas do modal padrão; o paredão fica atrás de "Detalhes". */
-  readonly summary: string;
-  readonly reviewSha256: string;
-}
-
-function missionAuthorityDialogDetail(
-  scope: ProjectExecutionScope,
-  candidate: RendererMissionAuthorityCandidate,
-): MissionAuthorityDialogReview {
-  const budgets = candidate.budgets;
-  const roster = candidate.squad.agents;
-  const maestro =
-    roster.find((agent) => agent.category === 'orchestrator') ?? null;
-  const workers = roster.filter(
-    (agent) => agent.category !== 'orchestrator',
-  );
-  const grantedToolCount = roster.reduce(
-    (total, agent) => total + (agent.allowedTools?.length ?? 0),
-    0,
-  );
-  const grantedSkillCount = roster.reduce(
-    (total, agent) => total + (agent.allowedSkills?.length ?? 0),
-    0,
-  );
-  const unrestrictedToolAgents = roster.filter(
-    (agent) => agent.allowedTools === null,
-  ).length;
-  const unrestrictedSkillAgents = roster.filter(
-    (agent) => agent.allowedSkills === null,
-  ).length;
-  const runtime = candidate.orchestratorRuntime;
-  const orchestratorEvidence =
-    candidate.orchestratorEvidence === 'verified'
-      ? 'verificada'
-      : candidate.orchestratorEvidence === 'experimental'
-        ? 'experimental (gate incompleto)'
-        : 'não suportada';
-  const promotedPlan = candidate.promotedPlan;
-  const hasQualifiedCodexWorkspaceWriter =
-    candidate.executionMode !== 'manual' &&
-    candidate.squad.agents.some(
-      (agent) => agent.category === 'executor' && agent.cli === 'codex',
-    );
-  const installNetworkAuthority = {
-    enabled: false,
-    reason: hasQualifiedCodexWorkspaceWriter
-      ? 'codex-shell-network-denied-use-main-owned-mcp'
-      : 'no-qualified-codex-workspace-writer',
-    providerNetwork: 'pinned-vendor-process-only',
-    workspaceWriteWorkersNetwork: false,
-    readOnlyWorkersNetwork: false,
-    remotePackageInstall: false,
-    dependencyCapability: 'bundled-runtime-paths-only',
-    dependencyTool: 'load_workspace_dependencies',
-    mainOwnedTerminalAndBackground: false,
-  };
-  const installNetworkReview = hasQualifiedCodexWorkspaceWriter
-    ? 'Rede de shell: desativada · provider/MCP somente no binário Codex fixado · runtime empacotado via load_workspace_dependencies; instalação remota de pacotes indisponível'
-    : 'Rede: desativada · sem executor Codex workspace-write; read-only/main terminal sem rede';
-  const promotedPlanReview = promotedPlan
-    ? `promovido · digest=${promotedPlan.digest}`
-    : 'direto (sem promoção)';
-  const { fence: _runtimeFence, ...reviewedAuthority } = candidate;
-  const fullReview = {
-    version: 1,
-    action: 'promote',
-    workspace: {
-      version: scope.version,
-      installationId: scope.installationId,
-      projectId: scope.projectId,
-      checkoutId: scope.checkoutId,
-      rootRealPath: scope.rootRealPath,
-      identitySource: scope.identitySource,
-    },
-    authority: reviewedAuthority,
-    replacement: null,
-    installNetwork: installNetworkAuthority,
-  };
-  const reviewSha256 = dialogDigest(fullReview);
-  const laneReview = `${candidate.lane}→standard`;
-  // Digests por linha viraram fricção: o operador não confere hash de cada
-  // campo no modal. O vínculo criptográfico real é o `reviewSha256` (computado
-  // do fullReview acima) e ele permanece como única âncora na linha final.
-  // Mantidos: SHA do squad (identidade do runtime) e digest do plano promovido.
-  const lines = [
-    `Workspace: ${compactDialogText(scope.rootRealPath, 100)}`,
-    `Missão: ${compactDialogText(candidate.title, 64)} · intenção=v${candidate.intentVersion} · ID=${compactDialogText(candidate.missionId, 48)}`,
-    `Objetivo: ${compactDialogText(candidate.goal, 96)}`,
-    `Execução: risco=${candidate.risk} · lane=${laneReview} · modo=${candidate.executionMode} · orch=${candidate.orchestrationMode ?? 'auto'}${candidate.wavePackTemplateId ? `/${candidate.wavePackTemplateId}` : ''}${typeof candidate.wavePackStoryCount === 'number' ? `·stories=${candidate.wavePackStoryCount}` : ''} · orçamento P${budgets.planningTokens}/E${budgets.executionTokens}/W${budgets.maxWorkers}${budgets.maxSteps === undefined ? '' : `/S${budgets.maxSteps}`}`,
-    `Maestro/workers: ${compactDialogText(maestro?.agentName ?? '(ausente)', 28)}/${compactDialogText(runtime.adapterId, 20)} · workers=${workers.length} · ${orchestratorEvidence} · model=${compactDialogText(runtime.model ?? 'default', 28)} · squad=${compactDialogText(candidate.squad.name, 32)} (${compactDialogText(candidate.squad.id, 64)}) SHA-256=${candidate.squad.hash} · trocas=nenhuma`,
-    `Permissões: critérios=${candidate.acceptanceCriteria.length} · negadas=${candidate.deniedTools.length} · tools=${grantedToolCount}+${unrestrictedToolAgents} irrestrito(s) · skills=${grantedSkillCount}+${unrestrictedSkillAgents} irrestrito(s)`,
-    `Evidências/plano: evidência=${candidate.evidenceAttached ? 'sim' : 'não'} · anexos=${candidate.attachmentPaths.length} · plano=${promotedPlanReview}`,
-    installNetworkReview,
-    `Review integral: SHA-256=${reviewSha256} · qualquer mudança exige nova aprovação`,
-  ];
-  if (lines.length !== MISSION_APPROVAL_DIALOG_LINES) {
-    throw new Error('mission approval dialog line budget is inconsistent');
-  }
-  const detail = assertExactOperatorDialog(lines.join('\n'));
-  if (detail.length > MAX_MISSION_APPROVAL_DIALOG_CHARS) {
-    throw new Error('mission approval dialog exceeds the compact size budget');
-  }
-  // Disclosure progressiva (06/08): o modal padrão mostra este RESUMO; o
-  // paredão integral fica atrás do botão "Detalhes". O vínculo criptográfico
-  // não muda — reviewSha256 continua computado do fullReview completo.
-  const summary = assertExactOperatorDialog(
-    [
-      `Objetivo: ${compactDialogText(candidate.goal, 96)}`,
-      `Execução: modo=${candidate.executionMode} · risco=${candidate.risk} · Maestro=${compactDialogText(runtime.adapterId, 20)}/${compactDialogText(runtime.model ?? 'default', 28)} · workers=${workers.length} · orçamento P${budgets.planningTokens}/E${budgets.executionTokens}/W${budgets.maxWorkers}`,
-      `Review integral: SHA-256=${reviewSha256} · "Detalhes" mostra squad, permissões e rede`,
-    ].join('\n'),
-  );
-  return Object.freeze({ detail, summary, reviewSha256 });
 }
 
 async function confirmClarifyAnswer(
@@ -797,22 +652,6 @@ async function confirmCatalogInstallPayload(
   return result.response === 1;
 }
 
-async function authorizePlanPromotion(
-  owner: WebContents,
-  scope: ProjectExecutionScope,
-  candidate: RendererMissionAuthorityCandidate,
-): Promise<string> {
-  // Promotion is recorded rather than prompted. The integral review digest is
-  // persisted in the contract and binds the exact authority to the operation.
-  void owner;
-  const review = missionAuthorityDialogDetail(scope, candidate);
-  console.log(
-    `[orch] mission promote auto-authorized risk=${candidate.risk} ` +
-      `project=${scope.projectId} mission=${candidate.missionId} ` +
-      `reviewSha256=${review.reviewSha256}`,
-  );
-  return review.reviewSha256;
-}
 async function confirmPetStudioMissionStart(
   owner: WebContents,
   scope: ProjectExecutionScope,
@@ -2035,107 +1874,6 @@ export function registerOrchIpc(): void {
     return resumeBlockedMissionBootstrapFromRenderer(event.sender, parsed.data);
   });
 
-
-
-  const missionPromotePlanSchema = z
-    .object({
-      missionId: z.string().min(1).max(128),
-      orchestrationMode: z.enum(['pack', 'guided']).optional(),
-      wavePackTemplateId: z.enum(['landing', 'saas', 'fix']).optional(),
-    })
-    .strict();
-  ipcMain.handle(ORCH_CHANNELS.missionPromotePlanLane, async (event, raw) => {
-    const parsed = missionPromotePlanSchema.safeParse(raw);
-    if (!parsed.success) throw new Error("invalid promote plan lane payload");
-    const scope = requireLiveRendererWorkspaceScope(event.sender);
-    const authority = requireMissionAuthority();
-    // The synchronous readiness gate must see the warmed AGY subscription
-    // cache before each candidate and promotion read.
-    await warmSquadRuntimeSubscriptionAuth();
-    const candidate = authority.planPromotionCandidateFromRenderer(
-      event.sender,
-      parsed.data,
-    );
-    if (!candidate.promotedPlan) {
-      throw new Error(
-        'plan_handoff_missing: a promoção exige um PRD/plano físico revisável',
-      );
-    }
-    const approvalReviewSha256 = await authorizePlanPromotion(
-      event.sender,
-      scope,
-      candidate,
-    );
-    requireLiveRendererWorkspaceScope(event.sender, scope);
-    const candidateBeforeTeardown =
-      authority.planPromotionCandidateFromRenderer(
-        event.sender,
-        parsed.data,
-      );
-    if (candidateBeforeTeardown.fence !== candidate.fence) {
-      throw new Error(
-        'promotion_stale: mission, saved squad or runtime changed while native confirmation was open',
-      );
-    }
-    const stopped =
-      await stopMissionOrchestratorBeforePlanPromotionForScope(
-        scope,
-        candidate.missionId,
-        candidate.intentVersion,
-      );
-    if (!stopped.ok) throw new Error(stopped.error);
-    requireLiveRendererWorkspaceScope(event.sender, scope);
-    const candidateAfterTeardown =
-      authority.planPromotionCandidateAfterTeardownFromMain(
-        event.sender,
-        parsed.data,
-        candidate.promotedPlan,
-      );
-    if (
-      missionAuthorityReviewDigest(candidateAfterTeardown) !==
-      missionAuthorityReviewDigest(candidate)
-    ) {
-      throw new Error(
-        'promotion_stale: reviewed mission authority changed during physical teardown',
-      );
-    }
-    const stoppedStores = getProjectDomainStores(scope);
-    const stoppedMission = stoppedStores.missions.get(candidate.missionId);
-    if (
-      !stoppedMission ||
-      stoppedMission.orchestratorSessionId !== undefined ||
-      stoppedStores.missionPanes.list(candidate.missionId).length > 0
-    ) {
-      throw new Error(
-        'promotion_runtime_reappeared: plan runtime was not durably stopped',
-      );
-    }
-    commitPromotedPlanToGit(
-      scope,
-      candidateAfterTeardown.promotedPlan!,
-    );
-    const promoted = authority.promotePlanLaneFromRenderer(
-      event.sender,
-      parsed.data,
-      candidateAfterTeardown.fence,
-      candidateAfterTeardown.promotedPlan!,
-      approvalReviewSha256,
-    );
-    const intentVersion = promoted.intentVersion;
-    if (!Number.isInteger(intentVersion)) {
-      throw new Error('promoted mission has no exact intent revision');
-    }
-    const restarted =
-      await restartMissionOrchestratorAfterPlanPromotionForScope(
-        scope,
-        promoted.id,
-        intentVersion!,
-      );
-    if (!restarted.ok) {
-      throw new Error(restarted.error);
-    }
-    return getProjectDomainStores(scope).missions.get(promoted.id) ?? promoted;
-  });
 
 
   const missionRebindSchema = z.object({

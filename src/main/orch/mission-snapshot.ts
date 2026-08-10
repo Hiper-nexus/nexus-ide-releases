@@ -1,6 +1,5 @@
 import { posix, win32 } from 'node:path';
 import { z } from 'zod';
-import { missionFastLaneEnabled } from './mission-fast-lane';
 import {
   missionAgentSchema,
   missionAgentStateSchema,
@@ -19,10 +18,6 @@ import {
   missionStatusSchema,
   strictSquadAgentSchema,
 } from '../../shared/orch-types';
-import {
-  evaluateMissionAdmission,
-  type MissionAdmissionResult,
-} from './mission-engine-admission';
 
 function isRootRelativeProjectPath(value: string): boolean {
   if (
@@ -115,28 +110,6 @@ export type ProjectMissionSnapshotView = z.infer<
 
 type ParsedView = z.output<typeof projectMissionSnapshotViewSchema>;
 
-function admissionReason(
-  admission: Exclude<MissionAdmissionResult, { readonly ok: true }>,
-): MissionStateReason {
-  switch (admission.code) {
-    case 'authority-missing':
-      return {
-        code: admission.code,
-        label: 'Autoridade de execução ausente',
-      };
-    case 'kickoff-receipt-missing':
-      return {
-        code: admission.code,
-        label: 'Confirmação de início ausente',
-      };
-    case 'orchestrator-not-live':
-      return {
-        code: admission.code,
-        label: 'Coordenação inativa',
-      };
-  }
-}
-
 function hasResidualWork(view: ParsedView): boolean {
   return (
     view.tasks.some((task) => task.status !== 'done') ||
@@ -165,15 +138,7 @@ function projectState(view: ParsedView): {
     // Via Rápida: missão running É running. O tripé cerimonial
     // (autoridade+recibo+liveness) pertencia ao motor antigo e projetava
     // "Precisa de reparo" sobre equipes vivas trabalhando nos terminais.
-    if (missionFastLaneEnabled()) return { state: 'running' };
-    const admission = evaluateMissionAdmission({
-      hasDispatchAuthority: view.hasDispatchAuthority,
-      hasCurrentKickoffReceipt: view.hasCurrentKickoffReceipt,
-      orchestratorLive: view.orchestratorLive,
-    });
-    return admission.ok
-      ? { state: 'running' }
-      : { state: 'blocked_technical', stateReason: admissionReason(admission) };
+    return { state: 'running' };
   }
 
   if (view.mission.status === 'done') {
