@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useVoiceStore, type VoiceUiStatus } from '../voice/voice-store';
+import { useDictationMode } from '../voice/use-dictation-mode';
 import { anchorFromDrag, hudPositionStyle, isHudMini } from '../voice/hud-prefs';
 import { requestJarvisWake } from '../voice/manual-wake';
 import {
@@ -80,6 +81,14 @@ export function VoiceHud() {
   );
 
   const liveStatus = liveState?.status ?? 'dormant';
+  // Chip CODE/CHAT no titlebar (paridade Overclock): mesmo controle do chip da
+  // barra superior — useDictationMode centraliza estado + persistência.
+  const {
+    mode: dictationMode,
+    label: dictationLabel,
+    title: dictationTitle,
+    toggle: toggleDictationMode,
+  } = useDictationMode();
   const wakeBlockedPid = info?.wakeLockHolderPid ?? null;
   const wakeBlocked = info?.wakeWordEnabled === true && wakeBlockedPid !== null;
   const canClickWake = status === 'idle' && info?.enabled === true && !wakeBlocked;
@@ -330,6 +339,16 @@ export function VoiceHud() {
           {responseMuted ? ' · MUDA' : ''}
         </span>
         <span className="voice-hud__ctls">
+          <button
+            className={`voice-hud__ctl voice-hud__ctl--mode ${dictationMode === 'english' ? 'voice-hud__ctl--active' : ''}`}
+            title={dictationTitle}
+            aria-label="Alternar modo do ditado entre Code e Chat"
+            aria-pressed={dictationMode === 'english'}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={() => void toggleDictationMode()}
+          >
+            {dictationLabel}
+          </button>
           <button
             className={`voice-hud__ctl ${responseMuted ? 'voice-hud__ctl--active' : ''}`}
             title={

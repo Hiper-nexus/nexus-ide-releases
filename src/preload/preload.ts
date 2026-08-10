@@ -841,6 +841,11 @@ const api: NexusApi = {
       ipcRenderer.invoke(ORCH_CHANNELS.missionEventsCursor, input),
     rebindMissionOrchestrator: (missionId: string, sessionId: string) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionRebind, { missionId, sessionId }),
+    promoteMissionOrchestrator: (input: {
+      missionId: string;
+      paneId?: string;
+      sessionId?: string;
+    }) => ipcRenderer.invoke(ORCH_CHANNELS.missionPromoteOrchestrator, input),
     updateMission: (missionId: string, patch: MissionPatch) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionUpdate, { missionId, patch }),
     closeMissionRuntime: (missionId: string) =>

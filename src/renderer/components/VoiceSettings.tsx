@@ -944,7 +944,7 @@ return (
                       </select>
                     </label>
                     <label className="agent-picker__label">
-                      Saída do ditado
+                      Modo do ditado
                       <select
                         className="agent-picker__select"
                         value={dictationMode}
@@ -955,9 +955,11 @@ return (
                         }
                       >
                         <option value="english">
-                          inglês otimizado p/ execução (paridade ClockVoice)
+                          Code — inglês otimizado p/ execução
                         </option>
-                        <option value="portuguese">português literal</option>
+                        <option value="portuguese">
+                          Chat — português literal
+                        </option>
                       </select>
                     </label>
                   </div>

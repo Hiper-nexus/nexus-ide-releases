@@ -1031,6 +1031,46 @@ describe('idle delivery authority and lifecycle', () => {
     delivery.shutdownIdleDelivery();
   });
 
+  it('replays durable pending handoffs to the promoted orchestrator session', async () => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    const pending = handoff({ id: 'handoff-promoted' });
+    storeMocks.handoffs.set(pending.id, pending);
+    authorizeTarget(scope);
+    storeMocks.missions.set(`${scope.projectId}:${scope.checkoutId}:mission-a`, {
+      id: 'mission-a',
+      orchestratorSessionId: 'promoted-session',
+      status: 'running',
+      description: 'Objetivo original',
+    });
+    paneMocks.authorities.set('promoted-session', {
+      owner: { id: 101 },
+      paneId: 'promoted-pane',
+      sessionId: 'promoted-session',
+      kind: 'cli-agent',
+      missionId: 'mission-a',
+      role: 'orchestrator',
+      scope,
+    });
+    ptyMocks.state = 'idle';
+    delivery.initIdleDelivery();
+
+    expect(delivery.redeliverPendingHandoffs(scope, 'mission-a')).toBe(1);
+    await vi.advanceTimersByTimeAsync(150);
+
+    expect(ptyMocks.writes).toHaveBeenCalledWith(
+      'promoted-session',
+      expect.stringContaining('completed the requested work'),
+      { markInputBusy: false },
+    );
+    expect(ptyMocks.writes).not.toHaveBeenCalledWith(
+      'orchestrator-session',
+      expect.any(String),
+      expect.any(Object),
+    );
+    delivery.shutdownIdleDelivery();
+  });
+
   it('drops queued state when its owning renderer changes workspace', async () => {
     const delivery = await import('./idle-delivery');
     const scopeA = testProjectScope();

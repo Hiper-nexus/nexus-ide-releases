@@ -6,6 +6,7 @@ import {
 } from './state/layout-store';
 import { VoiceHud } from './components/VoiceHud';
 import { VoiceSettings } from './components/VoiceSettings';
+import { DictationModeChip } from './components/DictationModeChip';
 import {
   CloseWorkspaceDialog,
   useCloseWorkspaceStore,
@@ -868,6 +869,7 @@ export function App() {
             <>
               <AgentNotifications />
               {!contextualPanelVisible ? contextualPanel : null}
+              <DictationModeChip />
             </>
           ) : undefined
         }

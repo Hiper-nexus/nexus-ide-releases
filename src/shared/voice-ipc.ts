@@ -31,6 +31,12 @@ export const transcribeRequestSchema = z.object({
   /** Name expected in a passive wake transcription; never persisted as audio text. */
   passiveWakeWord: z.string().min(1).max(48).optional(),
   /**
+   * Vocabulary/style bias forwarded to Whisper-compatible APIs (`prompt` form
+   * field) and local whisper.cpp (`--prompt`). English text — the translations
+   * endpoint conditions on English prompts. Used by dictation "code mode".
+   */
+  prompt: z.string().min(1).max(600).optional(),
+  /**
    * ITEM 7: total wall-clock budget (ms) for the STT chain on the WAKE path.
    * When set, at most one cloud attempt runs (on a tight deadline) before
    * jumping to keyless local whisper, so a hung cloud provider can't hold a

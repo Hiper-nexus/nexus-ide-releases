@@ -18,6 +18,7 @@ const flagMocks = vi.hoisted(() => ({ isEnabled: vi.fn(() => true) }));
 const catalogMocks = vi.hoisted(() => ({ listInstalledCatalogItems: vi.fn() }));
 const adapterMocks = vi.hoisted(() => ({ listAdapterInfos: vi.fn() }));
 const providerMocks = vi.hoisted(() => ({ listProviderSettings: vi.fn() }));
+const enrichMocks = vi.hoisted(() => ({ loadEnrichedCatalog: vi.fn() }));
 
 vi.mock('../quota/quota-service', () => ({
   requireQuotaService: () => ({ lastSnapshot: quotaMocks.lastSnapshot }),
@@ -33,6 +34,10 @@ vi.mock('../feature-flags/feature-flag-registry', () => ({
 
 vi.mock('./catalog-installed', () => ({
   listInstalledCatalogItems: catalogMocks.listInstalledCatalogItems,
+}));
+
+vi.mock('./harness-enrich', () => ({
+  loadEnrichedCatalog: enrichMocks.loadEnrichedCatalog,
 }));
 
 vi.mock('../adapters/adapter-registry', () => ({
@@ -652,6 +657,59 @@ describe('nexus_skills_inventory', () => {
         modifiedAt: 1_700_000_000_000,
       },
     ]);
+  });
+
+  it('anota itens com tier/blurb/whenToUse do arsenal enriquecido quando existe', async () => {
+    catalogMocks.listInstalledCatalogItems.mockReturnValue(items);
+    enrichMocks.loadEnrichedCatalog.mockReturnValue({
+      version: 1,
+      updatedAt: 1_700_000_000_000,
+      items: [
+        {
+          name: 'impeccable',
+          kind: 'skill',
+          tier: 'builder',
+          blurb: 'Design e polimento de frontend',
+          whenToUse: 'UI nova ou redesign',
+        },
+        // Mesmo nome, kind diferente: não pode vazar pro skill.
+        { name: 'impeccable', kind: 'agent', tier: 'reviewer', blurb: 'outro' },
+      ],
+    });
+
+    const out = (await tool('nexus_skills_inventory').handler({}, ctx())) as {
+      items: Array<Record<string, unknown>>;
+    };
+    expect(out.items[0]).toMatchObject({
+      name: 'impeccable',
+      tier: 'builder',
+      blurb: 'Design e polimento de frontend',
+      whenToUse: 'UI nova ou redesign',
+    });
+  });
+
+  it('sem catálogo enriquecido os itens saem sem anotação e nada quebra', async () => {
+    catalogMocks.listInstalledCatalogItems.mockReturnValue(items);
+    enrichMocks.loadEnrichedCatalog.mockReturnValue(null);
+
+    const out = (await tool('nexus_skills_inventory').handler({}, ctx())) as {
+      available: boolean;
+      items: Array<Record<string, unknown>>;
+    };
+    expect(out.available).toBe(true);
+    expect(out.items[0]).not.toHaveProperty('tier');
+  });
+
+  it('falha ao carregar o enriquecido degrada silenciosamente (inventário nunca cai)', async () => {
+    catalogMocks.listInstalledCatalogItems.mockReturnValue(items);
+    enrichMocks.loadEnrichedCatalog.mockImplementation(() => {
+      throw new Error('disk corrupt');
+    });
+
+    const out = (await tool('nexus_skills_inventory').handler({}, ctx())) as {
+      available: boolean;
+    };
+    expect(out.available).toBe(true);
   });
 
   it('reports the calling agent own skill gate, not other agents', async () => {

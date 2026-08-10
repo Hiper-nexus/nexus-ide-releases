@@ -259,6 +259,39 @@ describe('transcribe — quota/rate-limit fallback (free-tier Groq)', () => {
   });
 });
 
+describe('transcribe — priming de ditado (modo code)', () => {
+  it('anexa req.prompt ao form — vocabulário técnico bias na tradução', async () => {
+    let prompt: FormDataEntryValue | null = null;
+    const fetchImpl = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      prompt = (init?.body as FormData).get('prompt');
+      return jsonResponse(200, { text: 'commit and push to the worktree' });
+    }) as unknown as typeof fetch;
+
+    const result = await transcribe(
+      { ...REQ, translate: true, prompt: 'Software engineering dictation. commit, worktree.' },
+      config(),
+      PROBES,
+      deps({ fetchImpl }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(prompt).toBe('Software engineering dictation. commit, worktree.');
+  });
+
+  it('sem req.prompt o form não ganha prompt (transcrição normal intocada)', async () => {
+    let hasPrompt = true;
+    const fetchImpl = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      hasPrompt = (init?.body as FormData).has('prompt');
+      return jsonResponse(200, { text: 'oi' });
+    }) as unknown as typeof fetch;
+
+    const result = await transcribe(REQ, config(), PROBES, deps({ fetchImpl }));
+
+    expect(result.ok).toBe(true);
+    expect(hasPrompt).toBe(false);
+  });
+});
+
 describe('transcribe — passive wake', () => {
   it('biases the short transcription toward the configured Jarvis wake word', async () => {
     let prompt: FormDataEntryValue | null = null;

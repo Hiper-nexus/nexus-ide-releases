@@ -172,6 +172,8 @@ async function attemptCloud(
     // Whisper-compatible APIs use this as vocabulary bias; it improves a
     // two-word wake without changing the user's normal STT configuration.
     form.append('prompt', passiveWakeTranscriptionPrompt(req.passiveWakeWord));
+  } else if (req.prompt) {
+    form.append('prompt', req.prompt);
   }
   const language = req.language ?? plugin.language;
   if (!translate && language) form.append('language', language);
@@ -280,6 +282,7 @@ async function attemptLocal(
     const language = req.language ?? plugin.language ?? plugin.translateFrom;
     if (language) args.push('-l', language);
     if (translate) args.push('-tr');
+    if (req.prompt) args.push('--prompt', req.prompt);
     await deps.runLocal(bin, args);
     const text = deps.readText(txt).trim();
     if (!text) return { ok: false, needsKey: false, reason: 'local whisper returned empty text' };

@@ -132,6 +132,30 @@ describe('mission setup draft store', () => {
     );
   });
 
+  it('liga a Escolha livre de agentes e preserva o flag ao trocar o tipo de trabalho', () => {
+    const store = useMissionSetupStore.getState();
+    store.setWorkspace('/projects/free');
+    expect(
+      useMissionSetupStore.getState().draft.advanced.freeAgentChoice,
+    ).toBeUndefined();
+
+    store.setFreeAgentChoice(true);
+    expect(
+      useMissionSetupStore.getState().draft.advanced.freeAgentChoice,
+    ).toBe(true);
+
+    // Trocar de lane não pode derrubar o opt-in de modo livre.
+    store.setAdvancedLane('consult');
+    const advanced = useMissionSetupStore.getState().draft.advanced;
+    expect(advanced.lane).toBe('consult');
+    expect(advanced.freeAgentChoice).toBe(true);
+
+    store.setFreeAgentChoice(false);
+    expect(
+      useMissionSetupStore.getState().draft.advanced.freeAgentChoice,
+    ).toBe(false);
+  });
+
   it('persists independent versioned drafts under each canonical workspace path', () => {
     const store = useMissionSetupStore.getState();
     store.setWorkspace('/projects/alpha');

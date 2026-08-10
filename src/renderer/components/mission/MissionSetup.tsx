@@ -104,7 +104,10 @@ export function missionPrepareRequestFromDraft(
         agent.allowedTools,
       ),
     })),
-    advanced: { lane: draft.advanced.lane },
+    advanced: {
+      lane: draft.advanced.lane,
+      ...(draft.advanced.freeAgentChoice ? { freeAgentChoice: true } : {}),
+    },
     ...(entryContext?.kind === 'legacy-replacement' &&
     entryContext.acceptanceCriteria.length > 0
       ? {
@@ -203,6 +206,9 @@ export function MissionSetup() {
   const setRoster = useMissionSetupStore((state) => state.setRoster);
   const setAdvancedLane = useMissionSetupStore(
     (state) => state.setAdvancedLane,
+  );
+  const setFreeAgentChoice = useMissionSetupStore(
+    (state) => state.setFreeAgentChoice,
   );
   const setStep = useMissionSetupStore((state) => state.setStep);
   const retryPersistence = useMissionSetupStore(
@@ -898,6 +904,7 @@ export function MissionSetup() {
             onTitleChange={setTitle}
             onContextPathsChange={setContextPaths}
             onLaneChange={changeLane}
+            onFreeAgentChoiceChange={setFreeAgentChoice}
             onContinue={() => setStep('team')}
           />
         )}

@@ -35,6 +35,7 @@ export const ORCH_CHANNELS = {
    * is allowed (operator "Executar plano").
    */
   missionRebind: 'orch:missions.rebind',
+  missionPromoteOrchestrator: 'orch:mission.promoteOrchestrator',
   missionUpdate: 'orch:missions.update',
   /** Native-confirmed physical shutdown that preserves the durable mission. */
   missionCloseRuntime: 'orch:missions.closeRuntime',

@@ -537,6 +537,52 @@ export function restoreSessionAuthority(
   return true;
 }
 
+export interface PromoteMissionSessionAuthorityInput {
+  missionId: string;
+  promotedSessionId: string;
+  previousSessionId?: string | null;
+}
+
+export function promoteMissionSessionAuthority(
+  input: PromoteMissionSessionAuthorityInput,
+): boolean {
+  const missionId = input.missionId.trim();
+  const promoted = contextBySession.get(input.promotedSessionId);
+  if (
+    !missionId ||
+    !promoted ||
+    promoted.missionId !== missionId ||
+    (promoted.role !== "worker" && promoted.role !== "orchestrator")
+  ) {
+    return false;
+  }
+  promoted.role = "orchestrator";
+  promoted.allowedTools = null;
+  promoted.allowedSkills = null;
+  promoted.handoffSubmitted = false;
+  delete promoted.workerIncarnationId;
+
+  const previousSessionId = input.previousSessionId?.trim();
+  if (
+    previousSessionId &&
+    previousSessionId !== input.promotedSessionId
+  ) {
+    const previous = contextBySession.get(previousSessionId);
+    if (
+      previous &&
+      previous.missionId === missionId &&
+      previous.role === "orchestrator"
+    ) {
+      previous.role = "worker";
+      previous.allowedTools = [];
+      previous.allowedSkills = null;
+      previous.handoffSubmitted = false;
+      delete previous.workerIncarnationId;
+    }
+  }
+  return true;
+}
+
 /** Compensation for a failed cross-store mission creation commit. */
 export function rollbackSessionAuthorityMission(
   sessionId: string,

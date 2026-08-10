@@ -238,6 +238,7 @@ export type SessionExitTap = (
   sessionId: string,
   agent: OwnedAgentSessionInfo | null,
 ) => void;
+export type SessionInputOrigin = "human" | "system";
 /** Logical authority revocation starts before physical PTY exit is proven. */
 export type SessionTerminationTap = (
   sessionId: string,
@@ -248,6 +249,20 @@ const dataTaps = new Set<SessionDataTap>();
 const stateTaps = new Set<SessionStateTap>();
 const exitTaps = new Set<SessionExitTap>();
 const terminationTaps = new Set<SessionTerminationTap>();
+const lastInputOrigins = new Map<string, SessionInputOrigin>();
+
+function markSessionInputOrigin(
+  sessionId: string,
+  origin: SessionInputOrigin,
+): void {
+  lastInputOrigins.set(sessionId, origin);
+}
+
+export function getLastSessionInputOrigin(
+  sessionId: string,
+): SessionInputOrigin | undefined {
+  return lastInputOrigins.get(sessionId);
+}
 
 export function tapSessionData(cb: SessionDataTap): () => void {
   dataTaps.add(cb);
@@ -837,6 +852,7 @@ function finalizeSession(
     return;
   }
   sessions.delete(sessionId);
+  lastInputOrigins.delete(sessionId);
   if (s.idleTimer) clearTimeout(s.idleTimer);
   if (s.hookBusyTimer) clearTimeout(s.hookBusyTimer);
   if (s.missionOrchestratorGrantTimer) {
@@ -2363,6 +2379,49 @@ export function bindOwnedAgentSessionMission(
   return true;
 }
 
+export interface UpdateOwnedAgentSessionRoleInput {
+  role: "orchestrator" | "worker";
+  missionId: string;
+  allowedTools: string[] | null;
+  allowedSkills?: string[] | null;
+  workerIncarnationId?: string | null;
+}
+
+export function updateOwnedAgentSessionRole(
+  sessionId: string,
+  input: UpdateOwnedAgentSessionRoleInput,
+): boolean {
+  const session = sessions.get(sessionId);
+  const info = session?.agent;
+  if (
+    !session ||
+    !info ||
+    info.role === "user" ||
+    (info.missionId && info.missionId !== input.missionId)
+  ) {
+    return false;
+  }
+  const workerIncarnationId =
+    input.role === "worker" && input.workerIncarnationId
+      ? input.workerIncarnationId
+      : undefined;
+  session.agent = {
+    ...info,
+    role: input.role,
+    missionId: input.missionId,
+    workerIncarnationId,
+    allowedTools:
+      input.allowedTools === null ? null : [...input.allowedTools],
+    allowedSkills:
+      input.allowedSkills === undefined
+        ? info.allowedSkills
+        : input.allowedSkills === null
+          ? null
+          : [...input.allowedSkills],
+  };
+  return true;
+}
+
 export function rollbackOwnedAgentSessionMission(
   wc: WebContents,
   sessionId: string,
@@ -2407,6 +2466,7 @@ export function writeSession(
     return false;
   }
   // User wrote input → re-arm the idle timer if applicable.
+  markSessionInputOrigin(sessionId, "human");
   if (session.state === "idle") {
     session.state = "busy";
     emitStateChange(wc, sessionId, "busy");
@@ -2491,7 +2551,10 @@ export function liveSessionSummary(wc?: WebContents): {
 export function orchWriteSession(
   sessionId: string,
   data: string,
-  options: { readonly markInputBusy?: boolean } = {},
+  options: {
+    readonly markInputBusy?: boolean;
+    readonly inputOrigin?: SessionInputOrigin;
+  } = {},
 ): boolean {
   const session = sessions.get(sessionId);
   if (!session) return false;
@@ -2503,6 +2566,7 @@ export function orchWriteSession(
     emitStateChange(session.wc, sessionId, "busy");
   }
   if (session.idleTimeoutMs > 0) armIdleTimer(sessionId, session);
+  markSessionInputOrigin(sessionId, options.inputOrigin ?? "system");
   session.proc.write(data);
   return true;
 }

@@ -146,6 +146,7 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
   const maximizedPaneId = useLayoutStore((s) => s.maximizedPaneId);
   const toggleMaximizePane = useLayoutStore((s) => s.toggleMaximizePane);
   const renameTitle = useLayoutStore((s) => s.renameTitle);
+  const promoteMissionPaneRole = useLayoutStore((s) => s.promoteMissionPaneRole);
   // Slot posicional ⌘1-9: derivado do layout AO VIVO — recalcula quando panes
   // abrem/fecham, exatamente como o atalho resolve o alvo.
   const paneSlot = useLayoutStore((s) =>
@@ -215,6 +216,58 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
 
   const actions = useMemo((): ToolbarAction[] => {
     const list: ToolbarAction[] = [];
+
+    if (pane.kind === 'cli-agent' && pane.missionId && !isVacancy) {
+      if (pane.role === 'orchestrator') {
+        list.push({
+          id: 'mission-leader',
+          label: 'Líder',
+          detail: 'Orquestrador atual da missão',
+          icon: 'crown',
+          active: true,
+          primary: true,
+          run: () => {},
+        });
+      } else {
+        const missionId = pane.missionId;
+        list.push({
+          id: 'promote-orchestrator',
+          label: 'Promover',
+          detail: 'Promover a orquestrador (líder da missão nesta sessão)',
+          icon: 'crown-outline',
+          primary: true,
+          run: () => {
+            void askConfirm({
+              title: 'Promover este pane?',
+              body: 'Este pane passa a liderar a missão e recebe os próximos handoffs.',
+              confirmLabel: 'Promover',
+            }).then(async (ok) => {
+              if (!ok) return;
+              const result = await window.nexus.orch.promoteMissionOrchestrator({
+                missionId,
+                paneId: pane.id,
+              });
+              if (!result.ok) {
+                await askConfirm({
+                  title: 'Promoção não aplicada',
+                  body: result.error ?? 'O pane não tem autoridade viva para esta missão.',
+                  confirmLabel: 'OK',
+                });
+                return;
+              }
+              promoteMissionPaneRole(missionId, pane.id);
+              if (result.warning) {
+                await askConfirm({
+                  title: 'Promoção aplicada com aviso',
+                  body: result.warning,
+                  confirmLabel: 'OK',
+                });
+              }
+            });
+          },
+        });
+      }
+    }
 
     // A vacancy has no session, so "Fim" and "Dormir" would operate on
     // nothing. Offering them is the same lie as rendering a prompt: controls
@@ -326,6 +379,7 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
     isHibernated,
     isMaximized,
     paneState,
+    promoteMissionPaneRole,
     split,
     toggleMaximizePane,
   ]);
@@ -356,6 +410,9 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
       : density === 'icons'
         ? a.id === 'restart'
         : a.id === 'scroll-end' || a.id === 'hibernate' || a.id === 'restart',
+  );
+  const missionVisible = actions.filter(
+    (a) => a.id === 'mission-leader' || a.id === 'promote-orchestrator',
   );
   const layoutVisible = actions.filter(
     (a) => a.id === 'maximize' || a.id === 'split-right' || a.id === 'split-down',
@@ -521,6 +578,7 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
       </div>
 
       <div className="toolbar__actions">
+        {renderGroup(missionVisible, 'Missão')}
         {renderGroup(sessionVisible, 'Sessão')}
         {pane.kind !== 'browser' && !isVacancy && density !== 'compact' && (
           <div className="toolbar__group" role="group" aria-label="Command blocks">

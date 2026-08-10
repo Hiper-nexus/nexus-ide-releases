@@ -7,16 +7,22 @@ const deps = vi.hoisted(() => ({
   findPaneOwnedBy: vi.fn(),
   attachOrchMeta: vi.fn(),
   getOwnedAgentSessionInfo: vi.fn(),
+  updateOwnedAgentSessionRole: vi.fn(),
   requireRendererWorkspaceScope: vi.fn(),
   getContextBySession: vi.fn(),
   restoreSessionAuthority: vi.fn(),
+  promoteMissionSessionAuthority: vi.fn(),
   getMission: vi.fn(),
   rebindMissionOrchestratorSession: vi.fn(),
+  promotePaneToOrchestrator: vi.fn(),
   updateMission: vi.fn(),
   findMissionPaneByPaneId: vi.fn(),
   listMissionPanes: vi.fn(),
   forScope: vi.fn(),
   resolvePaneActivity: vi.fn(),
+  getAdapter: vi.fn(),
+  isBuiltinAdapter: vi.fn(),
+  orchestrationEvidenceForAdapter: vi.fn(),
 }));
 
 vi.mock("./squad-store", () => ({
@@ -30,6 +36,7 @@ vi.mock("./pane-registry", () => ({
 
 vi.mock("../pty/pty-manager", () => ({
   getOwnedAgentSessionInfo: deps.getOwnedAgentSessionInfo,
+  updateOwnedAgentSessionRole: deps.updateOwnedAgentSessionRole,
 }));
 
 vi.mock("../persistence/renderer-workspace-scope", () => ({
@@ -39,6 +46,13 @@ vi.mock("../persistence/renderer-workspace-scope", () => ({
 vi.mock("./gate", () => ({
   getContextBySession: deps.getContextBySession,
   restoreSessionAuthority: deps.restoreSessionAuthority,
+  promoteMissionSessionAuthority: deps.promoteMissionSessionAuthority,
+}));
+
+vi.mock("../adapters/adapter-registry", () => ({
+  getAdapter: deps.getAdapter,
+  isBuiltinAdapter: deps.isBuiltinAdapter,
+  orchestrationEvidenceForAdapter: deps.orchestrationEvidenceForAdapter,
 }));
 
 
@@ -154,9 +168,21 @@ beforeEach(() => {
     allowedSkills: session.allowedSkills,
   });
   deps.restoreSessionAuthority.mockReturnValue(true);
+  deps.promoteMissionSessionAuthority.mockReturnValue(true);
+  deps.updateOwnedAgentSessionRole.mockReturnValue(true);
   deps.getMission.mockReturnValue(mission);
   deps.rebindMissionOrchestratorSession.mockReturnValue(mission);
+  deps.promotePaneToOrchestrator.mockReturnValue({
+    ...session,
+    id: "mpane-promoted",
+    missionId: "mission-a",
+    paneId: "pane-a",
+    role: "orchestrator",
+  });
   deps.updateMission.mockReturnValue(mission);
+  deps.getAdapter.mockReturnValue({ id: "codex", kind: "cli-pty" });
+  deps.isBuiltinAdapter.mockReturnValue(true);
+  deps.orchestrationEvidenceForAdapter.mockReturnValue("verified");
   deps.forScope.mockReturnValue({
     missions: {
       get: deps.getMission,
@@ -166,6 +192,7 @@ beforeEach(() => {
     missionPanes: {
       findByPaneId: deps.findMissionPaneByPaneId,
       list: deps.listMissionPanes,
+      promotePaneToOrchestrator: deps.promotePaneToOrchestrator,
     },
   });
 });
@@ -348,6 +375,109 @@ describe("renderer mission authority", () => {
     expect(
       authority.rebindMissionFromRenderer(owner, "mission-b", "pty-a"),
     ).toBeNull();
+  });
+
+  it("promotes any owned live mission pane to orchestrator by explicit operator action", () => {
+    deps.getMission.mockReturnValue({
+      ...approvedMission,
+      orchestratorSessionId: "pty-old",
+    });
+    deps.findPaneOwnedBy.mockReturnValue({
+      paneId: "pane-worker",
+      sessionId: "pty-worker",
+      title: "OpenCode worker",
+      kind: "cli-agent",
+      adapterId: "opencode",
+    });
+    deps.getOwnedAgentSessionInfo.mockReturnValue({
+      ...session,
+      sessionId: "pty-worker",
+      paneId: "pane-worker",
+      adapterId: "opencode",
+      role: "worker",
+      missionId: "mission-a",
+      workerIncarnationId: "worker-incarnation-opencode",
+      allowedTools: ["nexus_handoff_submit"],
+    });
+    deps.getAdapter.mockReturnValue({ id: "opencode", kind: "cli-pty" });
+    deps.isBuiltinAdapter.mockReturnValue(false);
+    deps.orchestrationEvidenceForAdapter.mockReturnValue("experimental");
+    deps.rebindMissionOrchestratorSession.mockReturnValue(approvedMission);
+
+    const result = authority.promoteOrchestratorFromRenderer(
+      owner,
+      "mission-a",
+      { paneId: "pane-worker" },
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      mission: approvedMission,
+      warning:
+        'Provider "opencode" não é orquestrador verificado; promoção livre aplicada por ação explícita do operador.',
+    });
+    expect(deps.promotePaneToOrchestrator).toHaveBeenCalledWith(
+      "mission-a",
+      "pane-worker",
+    );
+    expect(deps.rebindMissionOrchestratorSession).toHaveBeenCalledWith(
+      "mission-a",
+      "pty-worker",
+    );
+    expect(deps.promoteMissionSessionAuthority).toHaveBeenCalledWith({
+      missionId: "mission-a",
+      promotedSessionId: "pty-worker",
+      previousSessionId: "pty-old",
+    });
+    expect(deps.updateOwnedAgentSessionRole).toHaveBeenCalledWith(
+      "pty-worker",
+      {
+        role: "orchestrator",
+        missionId: "mission-a",
+        allowedTools: null,
+        allowedSkills: null,
+        workerIncarnationId: null,
+      },
+    );
+    expect(deps.attachOrchMeta).toHaveBeenCalledWith(
+      owner,
+      "pane-worker",
+      expect.objectContaining({
+        missionId: "mission-a",
+        role: "orchestrator",
+        scope,
+        allowedTools: null,
+      }),
+    );
+  });
+
+  it("rejects promotion for a dead pane or another mission", () => {
+    deps.getMission.mockReturnValue(approvedMission);
+    deps.findPaneOwnedBy.mockReturnValueOnce(null);
+    expect(
+      authority.promoteOrchestratorFromRenderer(owner, "mission-a", {
+        paneId: "pane-missing",
+      }),
+    ).toEqual({ ok: false, error: "pane_unavailable" });
+
+    deps.findPaneOwnedBy.mockReturnValueOnce({
+      paneId: "pane-worker",
+      sessionId: "pty-worker",
+      title: "Worker",
+      kind: "cli-agent",
+    });
+    deps.getOwnedAgentSessionInfo.mockReturnValueOnce({
+      ...session,
+      sessionId: "pty-worker",
+      paneId: "pane-worker",
+      role: "worker",
+      missionId: "mission-b",
+    });
+    expect(
+      authority.promoteOrchestratorFromRenderer(owner, "mission-a", {
+        paneId: "pane-worker",
+      }),
+    ).toEqual({ ok: false, error: "pane_mission_mismatch" });
   });
 
   it("lists reopen specs only inside the renderer main-owned scope", () => {

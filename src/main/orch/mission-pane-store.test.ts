@@ -204,6 +204,63 @@ describe('scoped mission pane store', () => {
     expect(panes.list(missionB.id)[0].allowedSkills).toBeUndefined();
   });
 
+  it('promotes one mission pane to orchestrator and demotes the previous leader', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope();
+    const mission = createScopedMissionStore(runtimeManager, scope).create({
+      title: 'Promote leader',
+    });
+    const panes = createScopedMissionPaneStore(runtimeManager, scope);
+    panes.record({
+      missionId: mission.id,
+      adapterId: 'codex',
+      title: 'Old leader',
+      role: 'orchestrator',
+      paneId: 'pane-old',
+      allowedTools: null,
+    });
+    panes.record({
+      missionId: mission.id,
+      adapterId: 'opencode',
+      title: 'New leader',
+      role: 'worker',
+      paneId: 'pane-new',
+      workerIncarnationId: 'worker-incarnation-new',
+      allowedTools: ['nexus_handoff_submit'],
+    });
+
+    const promoted = panes.promotePaneToOrchestrator(mission.id, 'pane-new');
+
+    expect(promoted).toMatchObject({
+      missionId: mission.id,
+      paneId: 'pane-new',
+      role: 'orchestrator',
+      workerIncarnationId: undefined,
+    });
+    expect(panes.list(mission.id)).toMatchObject([
+      { paneId: 'pane-new', role: 'orchestrator' },
+      { paneId: 'pane-old', role: 'worker' },
+    ]);
+  });
+
+  it('fails promotion when the pane is dead or belongs to another mission', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope();
+    const missions = createScopedMissionStore(runtimeManager, scope);
+    const missionA = missions.create({ title: 'A' });
+    const missionB = missions.create({ title: 'B' });
+    const panes = createScopedMissionPaneStore(runtimeManager, scope);
+    panes.record({
+      missionId: missionB.id,
+      adapterId: 'codex',
+      role: 'worker',
+      paneId: 'pane-b',
+    });
+
+    expect(panes.promotePaneToOrchestrator(missionA.id, 'pane-missing')).toBeNull();
+    expect(panes.promotePaneToOrchestrator(missionA.id, 'pane-b')).toBeNull();
+  });
+
   it('deduplicates one composition member and only fills missing authority fields', () => {
     const runtimeManager = manager();
     const scope = testProjectScope();

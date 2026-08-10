@@ -340,6 +340,16 @@ export const missionIntentContractSchema = z.object({
   /** Optional; missing/legacy contracts default to standard. */
   lane: missionLaneSchema.optional(),
   /**
+   * "Escolha livre de agentes" (opt-in por missão, análogo Overclock). Quando
+   * true, o orquestrador pode nexus_pane_spawn QUALQUER adapter instalado +
+   * modelo do catálogo sem routeReservationId e sem squad_binding, atravessando
+   * os gates cerimoniais. Os guardrails que NÃO são cerimônia (containment de
+   * workspace, allowlists de tools, 1 escritor por checkout, maxWorkers) seguem
+   * valendo, e a escolha continua auditada no route_log. Ausente/false = o
+   * comportamento atual (rota selada do roster). Nunca default silencioso.
+   */
+  freeAgentChoice: z.boolean().optional(),
+  /**
    * Optional operator override for Livre / Pack / Guiado (Wave Pack).
    * Missing/legacy contracts leave mode selection to the pure resolver.
    */
@@ -762,6 +772,8 @@ export function compileIntentContract(input: {
   orchestrationMode?: MissionOrchestrationMode;
   /** Pack template that seeds structured stories when mode is pack. */
   wavePackTemplateId?: WavePackTemplateId;
+  /** "Escolha livre de agentes" — opt-in por missão (ver schema). */
+  freeAgentChoice?: boolean;
 }): MissionIntentContract {
   const goal = input.goal.trim();
   if (!goal) {
@@ -834,6 +846,7 @@ export function compileIntentContract(input: {
       : {}),
     contextPolicy: input.contextPolicy ?? 'on-demand',
     ...(input.contextPaths ? { contextPaths: [...input.contextPaths] } : {}),
+    ...(input.freeAgentChoice ? { freeAgentChoice: true } : {}),
     intentVersion: input.intentVersion,
     budgets,
   });

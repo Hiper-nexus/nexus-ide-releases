@@ -389,6 +389,72 @@ export class ScopedMissionPaneStore {
     return this.#listFromDatabase(this.#binding.readDatabase(), missionId);
   }
 
+  promotePaneToOrchestrator(
+    rawMissionId: string,
+    rawPaneId: string,
+  ): ScopedMissionPaneSpec | null {
+    const missionId = entityIdSchema.parse(rawMissionId);
+    const paneId = entityIdSchema.parse(rawPaneId);
+    const db = this.#binding.writeDatabase();
+    const result = db.transaction(() => {
+      const rows = this.#listFromDatabase(db, missionId);
+      const target = rows.find((spec) => spec.paneId === paneId);
+      if (!target) return { spec: null, changed: false };
+
+      const update = db.prepare(
+        `UPDATE mission_panes
+         SET role = ?, scope_json = ?, allowed_tools_json = ?,
+             allowed_skills_json = ?
+         WHERE id = ?`,
+      );
+      let changed = false;
+      let promoted: ScopedMissionPaneSpec | null = null;
+      for (const spec of rows) {
+        const isPromoted = spec.id === target.id;
+        const isPreviousLeader = !isPromoted && spec.role === 'orchestrator';
+        const next: ScopedMissionPaneSpec = isPromoted
+          ? {
+              ...spec,
+              role: 'orchestrator',
+              workerIncarnationId: undefined,
+              allowedTools: null,
+              allowedSkills: null,
+            }
+          : isPreviousLeader
+            ? {
+                ...spec,
+                role: 'worker',
+                workerIncarnationId: undefined,
+                allowedTools: [],
+                allowedSkills: null,
+              }
+            : spec;
+        if (isPromoted) promoted = next;
+        if (next === spec) continue;
+        const updateResult = update.run(
+          next.role,
+          encodePersistedPaneScopes({
+            coordinationScope: this.#binding.scope,
+            executionScope: next.executionScope,
+            readOnly: next.readOnly === true,
+            workerIncarnationId: next.workerIncarnationId,
+            authoritySeal: next.authoritySeal,
+          }),
+          encodeCapabilityList(next.allowedTools),
+          encodeCapabilityList(next.allowedSkills),
+          next.id,
+        );
+        if (updateResult.changes !== 1) {
+          throw new ScopedStoreCorruptionError('mission pane promotion');
+        }
+        changed = true;
+      }
+      return { spec: promoted, changed };
+    })();
+    if (result.changed) this.#binding.emitChange();
+    return result.spec ? cloneSpec(result.spec) : null;
+  }
+
   /** Compensation hook for a pane whose cross-store authority bind failed. */
   remove(rawId: string): boolean {
     const id = entityIdSchema.parse(rawId);

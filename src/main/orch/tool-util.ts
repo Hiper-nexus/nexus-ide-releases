@@ -780,6 +780,12 @@ export interface SpawnToolOptions {
   role?: 'orchestrator' | 'worker';
   /** Forma de execução selada do dispatch; decide o escopo de escrita válido. */
   executionMode?: 'same_checkout' | 'isolated_worktree' | 'read_only';
+  /**
+   * "Escolha livre de agentes" da missão (contract-sealed). Propagado ao
+   * backstop físico assertReleaseQualifiedMissionWorkerSpawn para que o gate de
+   * CLI release-qualified honre o opt-in por missão mesmo sob `governed`.
+   */
+  freeAgentChoice?: boolean;
   prompt?: string;
   scope: AgentGateContext['scope'];
   executionScope?: AgentGateContext['executionScope'];
