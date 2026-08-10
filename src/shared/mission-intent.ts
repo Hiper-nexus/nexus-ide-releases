@@ -1118,7 +1118,6 @@ export function synthesizeImmediateDispatchContract(input: {
             'task',
             'worktree_create',
             'worktree_merge',
-            'mission_freeze_contract',
           ],
         }
       : {}),

@@ -43,9 +43,6 @@ describe('MCP effect policy', () => {
     expect(effectPolicyForTool('nexus_context_draft_review_run')).toBe(
       'bootstrap-authority',
     );
-    expect(effectPolicyForTool('nexus_mission_freeze_contract')).toBe(
-      'bootstrap-authority',
-    );
     expect(effectPolicyForTool('nexus_code_map_refresh')).toBe('bootstrap-authority');
     expect(effectPolicyForTool('nexus_mission_set_status')).toBe('bootstrap-authority');
   });

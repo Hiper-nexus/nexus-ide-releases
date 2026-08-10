@@ -116,7 +116,6 @@ const BOOTSTRAP_AUTHORITY_TOOLS = new Set([
   'context_scaffold',
   'code_map_refresh',
   'mission_create',
-  'mission_freeze_contract',
   'mission_set_status',
   // Memória agentic (C2): mutação estreita e validada (≤8KB, redação de
   // segredos, dedupe) do banco de memórias em userData — não toca workspace

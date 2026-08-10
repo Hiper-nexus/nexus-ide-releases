@@ -97,7 +97,6 @@ const PET_STUDIO_DENIED_TOOLS = Object.freeze([
   'task',
   'worktree_create',
   'worktree_merge',
-  'mission_freeze_contract',
 ]);
 
 const PET_STUDIO_ACCEPTANCE_CRITERIA = Object.freeze([
