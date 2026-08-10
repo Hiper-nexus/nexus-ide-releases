@@ -13,6 +13,78 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.31.0',
+  date: '2026-08-10',
+  codename: 'A frota inteira na mão: login, "+ Pane" e panes com nome',
+  summary:
+    'A Via Rápida ganhou a operação em volta dela: 18 CLIs reconhecidas com ' +
+    'logo e login pelo próprio cartão, um "+ Pane" que abre qualquer ' +
+    'ferramenta no modelo que você escolher, panes com nome falável ' +
+    '("pane 7") que a voz entende, e o MCP do hub finalmente chegando dentro ' +
+    'do terminal do agente. Junto, o fim do loop que fazia agente refazer ' +
+    'trabalho já entregue.',
+  highlights: [
+    {
+      title: 'Login da CLI pelo próprio cartão',
+      detail:
+        'A ferramenta que ainda não autenticou mostra "entrar": o Nexus abre ' +
+        'um terminal e roda o comando de login DELA. Nenhuma credencial passa ' +
+        'pelo Nexus, e quando o terminal fecha o painel reexamina sozinho.',
+    },
+    {
+      title: '+ Pane: qualquer CLI, na hora',
+      detail:
+        'Um botão na grelha abre terminal, browser ou qualquer uma das CLIs ' +
+        'instaladas — com a conta e o modelo escolhidos na hora, filtrando ' +
+        'por texto. CLI sem catálogo entra no padrão da própria ferramenta.',
+    },
+    {
+      title: 'Pane 7 é o nome dele',
+      detail:
+        'Cada pane ganhou nome curto e falável, estável entre reinícios, ' +
+        'reusando o menor livre. "pane sete" funciona na voz e nos comandos; ' +
+        'número ambíguo recusa dizendo quais valem, em vez de chutar.',
+    },
+    {
+      title: 'MCP do hub chega no agente',
+      detail:
+        'Os servidores MCP que você sincroniza para o hub agora entram na ' +
+        'configuração por sessão do pane — claude, codex, opencode, kimi e ' +
+        'grok — sem afrouxar o isolamento de missão.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Fim do trabalho refeito em loop',
+      detail:
+        'O motor lê o PRONTO do próprio agente em vez de depender só do ' +
+        'estado do terminal, e a recarga de prompt tem teto. CLI que entrega ' +
+        'sem ficar "ocupada" não é mais cutucada para refazer tudo.',
+    },
+    {
+      title: 'Missão agendada voltou a partir',
+      detail:
+        'Toda ocorrência de cron morria exigindo um selo de revisão que só a ' +
+        'aprovação humana carimbava. A faixa automática agora usa o próprio ' +
+        'consentimento verificado da agenda.',
+    },
+    {
+      title: 'Telas de primeiro run não param mais a missão',
+      detail:
+        'Confiança no diretório, consentimento de dados e migração de CLI ' +
+        'são respondidos na largada — o "sim" só sai quando o diretório é o ' +
+        'da própria missão; consentimento e migração são adiados, nunca aceitos.',
+    },
+    {
+      title: 'Sync de MCP não sobrescreve mais o que não leu',
+      detail:
+        'Config existente que o leitor recusava era tratada como vazia e ' +
+        'substituída sem backup. Ilegível agora é recusa.',
+    },
+  ],
+};
+
+export const RELEASE_03000: AppRelease = {
   version: '0.30.0',
   date: '2026-08-10',
   codename: 'Via Rápida: missão que começa e termina',

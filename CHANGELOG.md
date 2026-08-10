@@ -1,5 +1,70 @@
 # Changelog
 
+## 0.31.0 — A frota inteira na mão: login, "+ Pane" e panes com nome
+
+Data: 2026-08-10
+
+A 0.30.0 fez a missão começar e terminar. Esta fecha a operação em volta dela:
+a frota de CLIs do operador reconhecida e logável de dentro do app, um jeito de
+abrir qualquer ferramenta no meio do trabalho, panes que dá para chamar pelo
+nome, e o MCP que você sincroniza finalmente chegando dentro do terminal do
+agente.
+
+### Operação da frota
+
+- **18 CLIs reconhecidas**, cada uma com marca própria no lugar da inicial em
+  caixa cinza. Adapters do operador vivem em `~/.nexus/plugins/adapters/` e
+  sobrevivem a atualização do app.
+- **Login pelo cartão**: a CLI que ainda não autenticou mostra "entrar"; o
+  Nexus abre um terminal e roda o comando de login DELA (`codex login`,
+  `opencode auth login`, `cursor-agent login`, `qwen`, `gemini`…). Nenhuma
+  credencial passa pelo Nexus; quando aquele terminal fecha, o painel
+  reexamina as CLIs sozinho.
+- **Cada CLI entra no modo de operação livre que ela documenta** — a flag real
+  de cada ferramenta, lida do `--help` dela. Onde a CLI não tem flag (qwen,
+  prime-agent), o campo fica vazio em vez de inventar.
+- **"+ Pane"**: botão na grelha abre terminal, browser ou qualquer CLI
+  instalada, escolhendo conta e modelo na hora, com filtro por texto.
+
+### Panes com nome
+
+- Cada pane ganhou **nome curto e falável** (`pane 7`), estável entre
+  reinícios, reusando o menor número livre. O número é endereço ADICIONAL: o
+  id continua sendo a identidade em layout, PTY, missão e protocolo.
+- Voz e comandos aceitam "pane 7", "pane sete", "no pane 7". Número ambíguo
+  **recusa dizendo quais valem**, em vez de mandar trabalho para o pane errado.
+
+### Missão
+
+- **Fim do trabalho refeito em loop**: o motor lê o `PRONTO:` do próprio
+  agente em vez de depender só do estado do terminal, e a recarga de prompt
+  tem teto. CLI que entrega sem nunca ficar "ocupada" não é mais cutucada para
+  refazer tudo. `BLOQUEADO:` carrega a frase do agente para o bloqueio.
+- **Missão agendada voltou a partir**: toda ocorrência de cron morria exigindo
+  um selo de revisão que só a aprovação humana carimbava.
+- **Telas de primeiro run** (confiança no diretório, consentimento de dados,
+  migração de CLI) são respondidas na largada. O "sim" só sai quando o
+  diretório impresso é o da própria missão; consentimento e migração são
+  ADIADOS, nunca aceitos.
+- Coordenação AGY não larga mais em modo one-shot (`--print` fechava o pane
+  antes de coordenar).
+- CLI sem catálogo declarado não bloqueia mais "Adicionar papel".
+
+### MCP
+
+- **O hub deixou de ser registro morto**: os servidores sincronizados entram na
+  configuração por sessão do pane (claude/glm/longcat, codex, opencode, kimi,
+  grok) sem afrouxar o isolamento de missão.
+- **Sync não sobrescreve mais o que não conseguiu ler**: config existente que o
+  leitor recusava virava "vazia" e era substituída sem backup.
+
+### Vindo da paridade Overclock
+
+- Chip CODE/CHAT sempre visível na barra superior e modo code do ditado.
+- Modo livre de agentes ao iniciar missão.
+- Promover qualquer pane a orquestrador da missão.
+- Doutrina de orquestração e playbook do squad no prompt de largada.
+
 ## 0.30.0 — Via Rápida: missão que começa e TERMINA
 
 Data: 2026-08-10
