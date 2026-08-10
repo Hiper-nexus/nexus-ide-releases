@@ -413,7 +413,7 @@ describe('mission creation authority', () => {
     expect(setStatus).not.toHaveBeenCalled();
   });
 
-  it('não deixa o orquestrador antecipar done de um plano selado', async () => {
+  it('não deixa o orquestrador antecipar done de missão standard com squad', async () => {
     const setStatus = vi.fn();
     mocks.getProjectDomainStores.mockReturnValue({
       missions: {
@@ -432,6 +432,10 @@ describe('mission creation authority', () => {
         getPlanReceipt: () => ({ tasks: [] }),
       },
     });
+    mocks.getContextWorkflowService.mockReturnValue({
+      isMissionDriverComplete: () => false,
+      getMissionWorkflow: () => ({ contract: null, workflow: null }),
+    });
 
     await expect(missionSetStatusTool().handler(
       {
@@ -440,9 +444,8 @@ describe('mission creation authority', () => {
         note: 'Worker disse que terminou, mas o merge e a entrega ainda não foram provados.',
       },
       context('orchestrator'),
-    )).rejects.toThrow(/plano selado.*motor.*receipts/i);
+    )).rejects.toThrow(/main-owned verified completion required/i);
     expect(setStatus).not.toHaveBeenCalled();
-    expect(mocks.getContextWorkflowService).not.toHaveBeenCalled();
   });
 
   it('rejects standard-lane done without a durable note when no contract is frozen', async () => {

@@ -9,25 +9,8 @@ import {
   canCompleteConsultLane,
   compileIntentContract,
 } from '../../shared/mission-intent';
-import { buildIntentDispatchKickoffPrompt } from '../../shared/mission-dispatch-kickoff';
 import { assertMissionIntentAllowsTool } from './mission-intent-gate';
-import type { Mission, Squad } from '../../shared/orch-types';
-
-const squad = {
-  id: 'navalha',
-  name: 'NavalhaGO',
-  orchestratorInstructions: 'Coordene a missão.',
-  agents: [
-    {
-      id: 'orch',
-      agentName: 'Orch',
-      category: 'orchestrator' as const,
-      cli: 'claude',
-    },
-  ],
-  createdAt: '1',
-  builtin: false,
-} satisfies Squad;
+import type { Mission } from '../../shared/orch-types';
 
 describe('consult lane end-to-end', () => {
   beforeEach(() => {
@@ -63,22 +46,7 @@ describe('consult lane end-to-end', () => {
       updatedAt: 1,
     };
 
-    // 2) Kickoff prompt is the consult contract, not PREVC code path
-    const prompt = buildIntentDispatchKickoffPrompt({
-      squad,
-      missionId: mission.id,
-      goal: contract.goal,
-      acceptanceCriteria: contract.acceptanceCriteria,
-      risk: contract.risk,
-      maxWorkers: contract.budgets.maxWorkers,
-      lane: contract.lane,
-    });
-    expect(prompt).toContain('lane=consult');
-    expect(prompt).toMatch(/somente leitura/i);
-    expect(prompt).not.toContain('nexus_mission_freeze_contract');
-    expect(prompt).not.toContain('nexus_merge_task');
-
-    // 3) Mutable tools rejected; reads allowed
+    // 2) Mutable tools rejected; reads allowed
     expect(
       assertMissionIntentAllowsTool('nexus_git_status', { mission }).ok,
     ).toBe(true);

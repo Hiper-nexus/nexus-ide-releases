@@ -19,6 +19,10 @@ const deps = vi.hoisted(() => ({
   resolvePaneActivity: vi.fn(),
 }));
 
+vi.mock("./squad-store", () => ({
+  getSquad: () => savedSquad,
+  pinMissionRuntimeSquad: (squad: unknown) => squad,
+}));
 vi.mock("./pane-registry", () => ({
   findPaneOwnedBy: deps.findPaneOwnedBy,
   attachOrchMeta: deps.attachOrchMeta,
@@ -433,7 +437,7 @@ describe("renderer mission authority", () => {
     ).toBe(false);
   });
 
-  it("rejects legacy pane composition without a current authority seal", () => {
+  it("restaura pane sem selo gravado (Via Rápida não grava selo de autoridade)", () => {
     deps.getMission.mockReturnValue(approvedMission);
     deps.findMissionPaneByPaneId.mockReturnValue({
       id: "mpane-legacy",
@@ -453,7 +457,7 @@ describe("renderer mission authority", () => {
         "mission-a",
         "pane-legacy",
       ),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("never exposes a legacy PREVC reviewer to renderer reopen", () => {

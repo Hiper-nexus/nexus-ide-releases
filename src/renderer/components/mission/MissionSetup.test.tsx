@@ -1307,15 +1307,21 @@ describe('MissionSetup', () => {
     expect(rowDetails?.open).toBe(false);
     act(() => rowDetails?.querySelector('summary')?.click());
     expect(rowDetails?.open).toBe(true);
+    // Personalização inline (40d35768): Ferramenta/Modelo vivem no cartão,
+    // fora do painel técnico, referenciados por aria-label.
     expect(
-      fieldByLabel<HTMLSelectElement>(
-        host,
-        'Ferramenta de IA para Coordenar e revisar',
+      (
+        host.querySelector(
+          'select[aria-label="Ferramenta de IA para Coordenar e revisar"]',
+        ) as HTMLSelectElement
       ).value,
     ).toBe('claude');
     expect(
-      fieldByLabel<HTMLSelectElement>(host, 'Modelo para Coordenar e revisar')
-        .value,
+      (
+        host.querySelector(
+          'input[aria-label="Modelo para Coordenar e revisar"]',
+        ) as HTMLInputElement
+      ).value,
     ).toBe('sonnet');
   });
 
