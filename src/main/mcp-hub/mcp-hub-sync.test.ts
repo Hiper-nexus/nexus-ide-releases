@@ -253,6 +253,46 @@ describe('plan + apply fill-gaps', () => {
     expect(opencode.mcp['only-here']).toBeUndefined();
   });
 
+  it('recusa exportar quando a config da tool existe mas não pôde ser lida', () => {
+    // Config grande demais para o leitor: antes ela era tratada como "vazia" e
+    // o export escrevia um arquivo novo POR CIMA dela — sem backup, porque não
+    // havia conteúdo lido para salvar. Aqui ela tem que sair intacta.
+    const home = tmpHome();
+    fs.mkdirSync(path.join(home, '.cursor'), { recursive: true });
+    const cursorPath = path.join(home, '.cursor', 'mcp.json');
+    const oversized = JSON.stringify({
+      mcpServers: { firecrawl: { command: 'npx' } },
+      pad: 'x'.repeat(2_000_001),
+    });
+    fs.writeFileSync(cursorPath, oversized);
+    const hub: McpHubConfig = {
+      schemaVersion: 1,
+      servers: [
+        {
+          id: 'only-here',
+          name: 'only-here',
+          transport: 'stdio',
+          command: 'npx',
+          tools: [],
+          source: 'nexus',
+        },
+      ],
+    };
+
+    applyMcpSync({
+      hub,
+      hubPath: path.join(home, 'hub.json'),
+      home,
+      mode: 'export',
+      exportTools: ['cursor'],
+    });
+
+    expect(fs.readFileSync(cursorPath, 'utf8')).toBe(oversized);
+    expect(
+      fs.readdirSync(path.join(home, '.cursor')).filter((f) => f !== 'mcp.json'),
+    ).toEqual([]);
+  });
+
   it('não apaga servers existentes na tool', () => {
     const home = tmpHome();
     fs.mkdirSync(path.join(home, '.cursor'), { recursive: true });

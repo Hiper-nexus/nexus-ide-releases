@@ -61,6 +61,21 @@ export interface McpSyncApplyResult {
   }[];
 }
 
+/**
+ * Config que está lá mas o leitor recusa (grande demais, ou nem é arquivo
+ * regular). Distinguir isso de "não existe" é o que separa criar uma config
+ * nova de destruir a config do operador.
+ */
+function configExistsButUnreadable(file: string): boolean {
+  try {
+    const st = fs.statSync(file);
+    return !st.isFile() || st.size > MAX_BYTES;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    return true;
+  }
+}
+
 function readTextLimited(file: string): string | null {
   try {
     const st = fs.statSync(file);
@@ -290,6 +305,12 @@ function existingIdsInTool(
   tool: McpSyncExportToolId,
   filePath: string,
 ): Set<string> | null {
+  // Arquivo que EXISTE mas não pôde ser lido não é "config vazia": tratá-lo
+  // como vazia fazia o export escrever um arquivo novo por cima da config real
+  // do operador — e sem backup, já que não havia conteúdo para salvar. A
+  // promessa da tela ("nunca apaga; backup antes de cada write") só é
+  // verdadeira se ilegível = recusa.
+  if (configExistsButUnreadable(filePath)) return null;
   const raw = readTextLimited(filePath);
   if (raw === null) return new Set(); // missing file = empty (we may create JSON tools)
   try {
@@ -397,6 +418,10 @@ function mergeJsonToolFile(
   additions: Record<string, Record<string, unknown>>,
   dryRun: boolean,
 ): { backupPath: string | null; added: string[] } {
+  // Última barreira antes da escrita: nunca sobrescrever o que não foi lido.
+  if (configExistsButUnreadable(filePath)) {
+    return { backupPath: null, added: [] };
+  }
   const raw = readTextLimited(filePath);
   let root: Record<string, unknown>;
   try {
