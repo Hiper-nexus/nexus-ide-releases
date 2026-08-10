@@ -7,6 +7,15 @@ import longcatLogo from '../assets/provider-logos/longcat.svg';
 import aiderLogo from '../assets/provider-logos/aider.png';
 import antigravityLogo from '../assets/provider-logos/agy.svg';
 import opencodeLogo from '../assets/provider-logos/opencode.svg';
+import qwenLogo from '../assets/provider-logos/qwen.svg';
+import geminiLogo from '../assets/provider-logos/gemini.svg';
+import deepseekLogo from '../assets/provider-logos/deepseek.svg';
+import sakanaLogo from '../assets/provider-logos/sakana.svg';
+import qoderLogo from '../assets/provider-logos/qoder.svg';
+import ompLogo from '../assets/provider-logos/omp.svg';
+import museLogo from '../assets/provider-logos/muse.svg';
+import primeAgentLogo from '../assets/provider-logos/prime-agent.svg';
+import cursorAgentLogo from '../assets/provider-logos/cursor-agent.svg';
 
 const PROVIDER_LOGOS: Record<string, { src: string; mono?: boolean }> = {
   claude: { src: claudeLogo },
@@ -18,6 +27,18 @@ const PROVIDER_LOGOS: Record<string, { src: string; mono?: boolean }> = {
   aider: { src: aiderLogo },
   agy: { src: antigravityLogo },
   opencode: { src: opencodeLogo, mono: true },
+  // Marcas geométricas originais do Nexus (ver NOTICE.md): cada uma carrega a
+  // cor de acento do provider, então nenhuma delas é `mono` — o filtro mono
+  // pinta o glifo de branco e apagaria justamente o que as distingue.
+  qwen: { src: qwenLogo },
+  gemini: { src: geminiLogo },
+  deepseek: { src: deepseekLogo },
+  sakana: { src: sakanaLogo },
+  qoder: { src: qoderLogo },
+  omp: { src: ompLogo },
+  muse: { src: museLogo },
+  'prime-agent': { src: primeAgentLogo },
+  'cursor-agent': { src: cursorAgentLogo },
 };
 
 export function ProviderLogo({
