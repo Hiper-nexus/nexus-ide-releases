@@ -132,7 +132,37 @@ de escape) e devem ser REMOVIDOS na varredura, com seus testes:
 Sequência sugerida: desconectar imports → `npm run typecheck` guia a poda →
 apagar testes junto → rodar suíte de renderer + main restante.
 
-## 4b. Reta final do release v0.30.0 (retomar AQUI)
+## 4z. RELEASE 0.31.0 — parado no passo do build (RETOMAR AQUI)
+
+Estado em 10/08 à noite: **tudo mergeado e etiquetado; o build notarizado NÃO
+rodou.** Nada pela metade — o ponto de parada é limpo.
+
+Feito:
+- merge da outra sessão (`work/paridade-overclock-2026-08-10`, 7 commits: voz
+  CODE/CHAT, modo livre, coroa de orquestrador, playbook do squad) resolvido no
+  único conflito real (mission-fast-lane: prompt com squad × canal nativo).
+- `main` fast-forward para `9118aeff`; branch pushado.
+- versão 0.31.0 alinhada nos 5 pontos (package, server/package, 3 entradas do
+  lock, CURRENT_RELEASE, CHANGELOG). Notas de 0.30.0 preservadas em
+  `RELEASE_03000`.
+- tag anotada `v0.31.0` criada e pushada.
+- worktree isolado de build pronto: `/Users/cleofasrocha/dev/nexus-release-0.31.0`
+  (detached em v0.31.0, `npm ci` próprio já concluído). Foi preciso isolar
+  porque o repo principal está SUJO com trabalho não commitado de outra sessão
+  e o gate de release exige árvore limpa.
+
+Falta, nesta ordem (app dev PARADO):
+1. `cd /Users/cleofasrocha/dev/nexus-release-0.31.0`
+2. `PATH=/opt/homebrew/opt/node@22/bin:$PATH NO_COLOR=1 NEXUS_MAC_PUBLISH_RELEASE=1 APPLE_TEAM_ID=35P5XL3JN6 APPLE_KEYCHAIN_PROFILE=nexus-notary npm run make:release`
+3. verify por arch + `npm run release:candidate` (smoke do app empacotado)
+4. `npm run release:publish` (gh logado; perfil notary `nexus-notary`)
+
+Lembretes que já custaram release: `NO_COLOR=1` (FORCE_COLOR do shell reprova o
+gate de fuses), node@22 do homebrew (22.23.1 — o `check-build-node.mjs` recusa o
+node do PATH do usuário), e NUNCA rodar isso em árvore com `node_modules`
+symlinkado.
+
+## 4b. Reta final do release v0.30.0 (histórico)
 
 Estado: varredura ~concluída (últimos lotes de testes órfãos), commits até
 `40d35768` pushados. **O smoke pegou uma conclusão falsa (done sem artefato,
