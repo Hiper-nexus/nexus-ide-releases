@@ -843,7 +843,8 @@ body {
 .toolbar__pane-number {
   flex: 0 0 auto;
   min-width: 1.35em;
-  padding: 0 4px;
+  padding: 0 5px;
+  white-space: nowrap;
   border-radius: 4px;
   border: 1px solid var(--border-strong);
   background: var(--card-hi);

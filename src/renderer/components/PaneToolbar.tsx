@@ -388,12 +388,25 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
           posição — não muda quando outro pane fecha.
         */}
         {pane.paneNumber !== undefined && (
-          <span
-            className="toolbar__pane-number"
-            data-tip={`Pane ${pane.paneNumber} — nome fixo deste pane, use para se referir a ele`}
+          <button
+            type="button"
+            className="toolbar__pane-number nodrag"
+            aria-label={`Pane ${pane.paneNumber}. Copiar identificador ${pane.id}`}
+            data-tip={
+              copiedId
+                ? 'ID copiado'
+                : `Pane ${pane.paneNumber} — nome fixo deste pane (fala e comandos). Clique para copiar o ID: ${pane.id}`
+            }
+            onClick={(event) => {
+              event.stopPropagation();
+              void navigator.clipboard.writeText(pane.id).then(() => {
+                setCopiedId(true);
+                window.setTimeout(() => setCopiedId(false), 1_500);
+              });
+            }}
           >
-            {pane.paneNumber}
-          </span>
+            {copiedId ? 'copiado' : `pane ${pane.paneNumber}`}
+          </button>
         )}
         {/*
           Slot posicional (⌘1-9): POSIÇÃO no grid visível, não identidade —
@@ -444,21 +457,29 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
             {pane.title}
           </span>
         )}
-        <button
-          type="button"
-          className="toolbar__badge toolbar__pane-id nodrag"
-          aria-label={`Copiar identificador do pane ${pane.id}`}
-          data-tip={copiedId ? 'ID copiado' : `Copiar ID do pane: ${pane.id}`}
-          onClick={(event) => {
-            event.stopPropagation();
-            void navigator.clipboard.writeText(pane.id).then(() => {
-              setCopiedId(true);
-              window.setTimeout(() => setCopiedId(false), 1_500);
-            });
-          }}
-        >
-          {copiedId ? 'copiado' : `#${pane.id.slice(-6)}`}
-        </button>
+        {/*
+          O hexadecimal só aparece para quem NÃO tem nome falável (layout
+          antigo, antes da numeração). Com o número na tela, "#e05ae6" era ruído
+          disputando o lugar do nome — mas o id continua a um clique daqui,
+          porque é ele que a depuração e o protocolo usam.
+        */}
+        {pane.paneNumber === undefined && (
+          <button
+            type="button"
+            className="toolbar__badge toolbar__pane-id nodrag"
+            aria-label={`Copiar identificador do pane ${pane.id}`}
+            data-tip={copiedId ? 'ID copiado' : `Copiar ID do pane: ${pane.id}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              void navigator.clipboard.writeText(pane.id).then(() => {
+                setCopiedId(true);
+                window.setTimeout(() => setCopiedId(false), 1_500);
+              });
+            }}
+          >
+            {copiedId ? 'copiado' : `#${pane.id.slice(-6)}`}
+          </button>
+        )}
         {pane.role === 'orchestrator' && (
           <span
             className="toolbar__badge toolbar__badge--orch"
