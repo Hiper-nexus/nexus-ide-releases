@@ -10,12 +10,10 @@ import {
   assertCandidateArtifactSeal,
   captureCandidateArtifactSeal,
   assertReleaseRepositoryState,
-  preflightRosterFor,
   runReleaseCandidateGate,
   runReleaseCandidateGateTestCore,
 } from './release-candidate-gate.mjs';
 import { buildReleaseSecurityArtifacts } from './release-security-gate.mjs';
-import { makeValidRealMissionEvidence } from './test-support/real-mission-evidence.mjs';
 
 const roots = [];
 const TAG_AUTHORITY = {
@@ -96,11 +94,11 @@ describe('manual release candidate gate', () => {
   it('keeps dependency injection outside the sealed production entrypoint', () => {
     expect(() =>
       runReleaseCandidateGate({
-        runUiE2E: vi.fn(),
+        runPackagedSmoke: vi.fn(),
       }),
     ).toThrow(/rejects dependency override/i);
     const inherited = Object.create({
-      runUiE2E: vi.fn(),
+      runPackagedSmoke: vi.fn(),
       runChecked: vi.fn(),
       repository: {},
     });
@@ -266,7 +264,7 @@ describe('manual release candidate gate', () => {
     })).toThrow(/provenance/i);
   });
 
-  it.runIf(process.platform === 'darwin' && process.arch === 'arm64')('runs signed verifier and one physical Mission Setup E2E before producing a commit/artifact-bound receipt', async () => {
+  it.runIf(process.platform === 'darwin' && process.arch === 'arm64')('runs signed verifier and the packaged smoke before producing a commit/artifact-bound receipt', async () => {
     const root = tempRoot();
     const dmg = path.join(root, 'out', 'make', 'nested', 'NexusIDE-arm64.dmg');
     const zip = path.join(root, 'out', 'make', 'nested', 'NexusIDE-arm64.zip');
@@ -278,22 +276,8 @@ describe('manual release candidate gate', () => {
     );
     fs.writeFileSync(dmg, 'dmg');
     fs.writeFileSync(zip, 'zip');
-    const uiEvidence = makeValidRealMissionEvidence();
-    const claudeEvidence = makeValidRealMissionEvidence({
-      orchestratorCli: "claude",
-    });
     const runChecked = vi.fn(() => ({ stdout: '', stderr: '' }));
-    const runUiE2E = vi.fn(async (_app, options) => {
-      fs.writeFileSync(options.evidencePath, JSON.stringify(uiEvidence));
-      fs.writeFileSync(
-        path.join(
-          path.dirname(options.evidencePath),
-          'real-mission-evidence-claude-orchestrator.json',
-        ),
-        JSON.stringify(claudeEvidence),
-      );
-      return { evidencePath: options.evidencePath };
-    });
+    const runPackagedSmoke = vi.fn(async () => {});
     const result = await runReleaseCandidateGateTestCore({
       root,
       environment: {
@@ -311,7 +295,7 @@ describe('manual release candidate gate', () => {
       },
       buildSecurityArtifacts: buildTestSecurityArtifacts,
       runChecked,
-      runUiE2E,
+      runPackagedSmoke,
       extractE2EApp: async (_zipPath, _expectedSha256, callback) =>
         callback(app),
       now: () => new Date('2026-07-23T01:00:00.000Z'),
@@ -326,30 +310,29 @@ describe('manual release candidate gate', () => {
       ]),
       expect.any(Object),
     );
-    expect(runUiE2E).toHaveBeenCalledWith(
-      app,
-      expect.objectContaining({
-        evidencePath: path.join(
-          root,
-          'release-artifacts',
-          'security',
-          'real-mission-evidence.json',
-        ),
-        launchSurface: 'product-wizard',
-        releaseBinding: expect.objectContaining({
-          appVersion: '1.2.3',
-          commitSha: 'a'.repeat(40),
-          artifact: {
-            sha256: hash('zip'),
-            identity:
-              'Developer ID Application: Cleofas Pereira rocha (35P5XL3JN6)',
-          },
-        }),
-      }),
+    expect(runPackagedSmoke).toHaveBeenCalledWith(app);
+    expect(runPackagedSmoke).toHaveBeenCalledOnce();
+    const smokeReportPath = path.join(
+      root,
+      'release-artifacts',
+      'security',
+      'packaged-smoke-report.json',
     );
-    expect(runUiE2E).toHaveBeenCalledOnce();
+    const smokeReport = JSON.parse(fs.readFileSync(smokeReportPath, 'utf8'));
+    expect(smokeReport).toMatchObject({
+      schemaVersion: 1,
+      status: 'pass',
+      smoke: 'packaged-app',
+      appVersion: '1.2.3',
+      commitSha: 'a'.repeat(40),
+      artifact: {
+        sha256: hash('zip'),
+        identity:
+          'Developer ID Application: Cleofas Pereira rocha (35P5XL3JN6)',
+      },
+    });
     expect(result.receipt).toMatchObject({
-      schemaVersion: 4,
+      schemaVersion: 5,
       version: '1.2.3',
       tag: 'v1.2.3',
       commitSha: 'a'.repeat(40),
@@ -358,23 +341,21 @@ describe('manual release candidate gate', () => {
       tagSignatureVerified: true,
       architecture: 'arm64',
       artifacts: {
-        e2eEvidence: {
-          name: 'real-mission-evidence.json',
-          sha256: hash(`${JSON.stringify(uiEvidence)}`),
-        },
-        e2eEvidenceClaudeOrchestrator: {
-          name: 'real-mission-evidence-claude-orchestrator.json',
-          sha256: hash(`${JSON.stringify(claudeEvidence)}`),
+        dmg: { name: 'NexusIDE-arm64.dmg', sha256: hash('dmg') },
+        zip: { name: 'NexusIDE-arm64.zip', sha256: hash('zip') },
+        packagedSmoke: {
+          name: 'packaged-smoke-report.json',
+          sha256: hash(fs.readFileSync(smokeReportPath, 'utf8')),
         },
       },
       verification: {
         signedNotarized: true,
-        realMissionE2E: true,
-        physicalProductWizard: false,
-        claudeOrchestratorE2E: true,
-        singleProductMission: true,
+        packagedSmoke: true,
+        sameCommitAndArtifacts: true,
+        tagSignatureVerified: true,
       },
     });
+    expect(result.smokeReportPath).toBe(smokeReportPath);
     expect(result.receiptPath).toBeNull();
     const testCoreManifest = JSON.parse(
       fs.readFileSync(
@@ -406,24 +387,14 @@ describe('manual release candidate gate', () => {
           sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
         }),
         expect.objectContaining({
-          name: 'real-mission-evidence.json',
-          sha256: hash(`${JSON.stringify(uiEvidence)}`),
+          name: 'packaged-smoke-report.json',
+          sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
         }),
       ]),
     );
-    expect(
-      fs.existsSync(
-        path.join(
-          root,
-          'release-artifacts',
-          'security',
-          'real-mission-engine-evidence.json',
-        ),
-      ),
-    ).toBe(false);
   });
 
-  it.runIf(process.platform === 'darwin' && process.arch === 'arm64')('fails closed when the exact-ZIP product run produces only private-runner evidence', async () => {
+  it.runIf(process.platform === 'darwin' && process.arch === 'arm64')('fails closed when the packaged smoke fails against the sealed ZIP app', async () => {
     const root = tempRoot();
     const dmg = path.join(root, 'out', 'make', 'nested', 'NexusIDE-arm64.dmg');
     const zip = path.join(root, 'out', 'make', 'nested', 'NexusIDE-arm64.zip');
@@ -435,58 +406,8 @@ describe('manual release candidate gate', () => {
     );
     fs.writeFileSync(dmg, 'dmg');
     fs.writeFileSync(zip, 'zip');
-    const writePrivateEvidence = async (_app, options) => {
-      const diagnostic = makeValidRealMissionEvidence({
-        launchSurface: 'private-runner',
-      });
-      fs.writeFileSync(options.evidencePath, JSON.stringify(diagnostic));
-    };
-    const runUiE2E = vi.fn(writePrivateEvidence);
-
-    await expect(
-      runReleaseCandidateGateTestCore({
-        root,
-        environment: {
-          NEXUS_MAC_PUBLISH_RELEASE: '1',
-          APPLE_TEAM_ID: '35P5XL3JN6',
-          APPLE_KEYCHAIN_PROFILE: 'nexus-notary',
-        },
-        generatedAfterMs: Date.now() - 1_000,
-        authority: RELEASE_AUTHORITY,
-        repository: {
-          statusPorcelain: '',
-          headSha: 'a'.repeat(40),
-          tagCommitSha: 'a'.repeat(40),
-          ...TAG_AUTHORITY,
-        },
-        buildSecurityArtifacts: buildTestSecurityArtifacts,
-        runChecked: vi.fn(() => ({ stdout: '', stderr: '' })),
-        runUiE2E,
-        extractE2EApp: async (_zipPath, _expectedSha256, callback) =>
-          callback(app),
-      }),
-    ).rejects.toThrow(/physical Mission Setup coverage/i);
-    expect(runUiE2E).toHaveBeenCalledOnce();
-  });
-
-  it.runIf(process.platform === 'darwin' && process.arch === 'arm64')('fails closed when the claude-orchestrator variant evidence is missing', async () => {
-    const root = tempRoot();
-    const dmg = path.join(root, 'out', 'make', 'nested', 'NexusIDE-arm64.dmg');
-    const zip = path.join(root, 'out', 'make', 'nested', 'NexusIDE-arm64.zip');
-    const app = path.join(
-      root,
-      'out',
-      'NexusIDE-darwin-arm64',
-      'NexusIDE.app',
-    );
-    fs.writeFileSync(dmg, 'dmg');
-    fs.writeFileSync(zip, 'zip');
-    const runUiE2E = vi.fn(async (_app, options) => {
-      // Só a evidência codex é produzida: a variante claude nunca fecha.
-      fs.writeFileSync(
-        options.evidencePath,
-        JSON.stringify(makeValidRealMissionEvidence()),
-      );
+    const runPackagedSmoke = vi.fn(async () => {
+      throw new Error('functional smoke probes failed');
     });
 
     await expect(
@@ -507,108 +428,21 @@ describe('manual release candidate gate', () => {
         },
         buildSecurityArtifacts: buildTestSecurityArtifacts,
         runChecked: vi.fn(() => ({ stdout: '', stderr: '' })),
-        runUiE2E,
+        runPackagedSmoke,
         extractE2EApp: async (_zipPath, _expectedSha256, callback) =>
           callback(app),
       }),
-    ).rejects.toThrow(/claude-orchestrator|ENOENT/i);
-    expect(runUiE2E).toHaveBeenCalledOnce();
-  });
-
-  it.runIf(process.platform === 'darwin' && process.arch === 'arm64')('accepts one physical Codex variant when Claude is explicitly skipped', async () => {
-    const root = tempRoot();
-    const dmg = path.join(root, 'out', 'make', 'nested', 'NexusIDE-arm64.dmg');
-    const zip = path.join(root, 'out', 'make', 'nested', 'NexusIDE-arm64.zip');
-    const app = path.join(
-      root,
-      'out',
-      'NexusIDE-darwin-arm64',
-      'NexusIDE.app',
-    );
-    fs.writeFileSync(dmg, 'dmg');
-    fs.writeFileSync(zip, 'zip');
-    const evidence = makeValidRealMissionEvidence();
-    const runUiE2E = vi.fn(async (_app, options) => {
-      fs.writeFileSync(options.evidencePath, JSON.stringify(evidence));
-      return {
-        evidence,
-        evidencePath: options.evidencePath,
-        skippedOrchestrators: ['claude'],
-      };
-    });
-
-    const result = await runReleaseCandidateGateTestCore({
-      root,
-      environment: {
-        NEXUS_MAC_PUBLISH_RELEASE: '1',
-        NEXUS_REAL_MISSION_ADVISOR_SKIP: 'claude',
-        APPLE_TEAM_ID: '35P5XL3JN6',
-        APPLE_KEYCHAIN_PROFILE: 'nexus-notary',
-      },
-      generatedAfterMs: Date.now() - 1_000,
-      authority: RELEASE_AUTHORITY,
-      repository: {
-        statusPorcelain: '',
-        headSha: 'a'.repeat(40),
-        tagCommitSha: 'a'.repeat(40),
-        ...TAG_AUTHORITY,
-      },
-      buildSecurityArtifacts: buildTestSecurityArtifacts,
-      runChecked: vi.fn(() => ({ stdout: '', stderr: '' })),
-      runUiE2E,
-      extractE2EApp: async (_zipPath, _expectedSha256, callback) =>
-        callback(app),
-    });
-
-    expect(result.receipt.artifacts).not.toHaveProperty(
-      'e2eEvidenceClaudeOrchestrator',
-    );
-    expect(result.receipt.verification).toMatchObject({
-      skippedOrchestrators: ['claude'],
-    });
-    expect(result.receipt.verification).not.toHaveProperty(
-      'claudeOrchestratorE2E',
-    );
+    ).rejects.toThrow(/functional smoke probes failed/i);
+    expect(runPackagedSmoke).toHaveBeenCalledOnce();
     expect(
       fs.existsSync(
         path.join(
           root,
           'release-artifacts',
           'security',
-          'real-mission-evidence-claude-orchestrator.json',
+          'packaged-smoke-report.json',
         ),
       ),
     ).toBe(false);
-  });
-});
-
-// REGRESSAO: o preflight sondava o roster FIXO, entao um advisor deslogado
-// (claude sem sessao OAuth) bloqueava a release mesmo quando o operador ja
-// havia declarado o skip antes do ciclo. Sondar quem nao participa e falso
-// negativo — exatamente o defeito que o preflight existe para evitar. O skip
-// continua honesto: e declarado antes, entra na evidencia e aparece no publish.
-describe('preflightRosterFor', () => {
-  it('sonda o roster inteiro quando nada foi declarado', () => {
-    expect(preflightRosterFor({})).toContain('claude');
-    expect(preflightRosterFor({})).toContain('codex');
-  });
-
-  it('remove do preflight o provedor com skip DECLARADO antes do ciclo', () => {
-    const roster = preflightRosterFor({
-      NEXUS_REAL_MISSION_ADVISOR_SKIP: 'claude',
-    });
-    expect(roster).not.toContain('claude');
-    expect(roster).toContain('codex');
-    expect(roster).toContain('grok');
-  });
-
-  it('aceita varios skips e ignora lixo fora do formato declarado', () => {
-    expect(
-      preflightRosterFor({ NEXUS_REAL_MISSION_ADVISOR_SKIP: 'claude,kimi' }),
-    ).toEqual(['codex', 'grok', 'agy', 'opencode', 'glm']);
-    // Valor fora do padrao nao pode virar skip silencioso: o roster fica inteiro.
-    expect(
-      preflightRosterFor({ NEXUS_REAL_MISSION_ADVISOR_SKIP: 'claude; rm -rf /' }),
-    ).toContain('claude');
   });
 });

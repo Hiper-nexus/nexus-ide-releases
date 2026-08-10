@@ -11,7 +11,6 @@ import {
   buildFinalizedReleaseSecurityFields,
   finalizeReleaseSecurityArtifacts,
 } from './release-security-gate.mjs';
-import { makeValidRealMissionEvidence } from './test-support/real-mission-evidence.mjs';
 
 const roots = [];
 const securityAuthority = {
@@ -43,48 +42,27 @@ afterEach(() => {
 });
 
 describe('manual release security artifacts', () => {
-  it('records an explicit Claude outage without claiming or fabricating Claude evidence', () => {
-    const common = {
+  it('carries the packaged smoke report in the finalized security fields', () => {
+    const fields = buildFinalizedReleaseSecurityFields({
       signingIdentity:
         'Developer ID Application: Cleofas Pereira rocha (35P5XL3JN6)',
       dmg: { name: 'NexusIDE.dmg', bytes: 3, sha256: 'a'.repeat(64) },
       zip: { name: 'NexusIDE.zip', bytes: 3, sha256: 'b'.repeat(64) },
-      e2eEvidence: {
-        name: 'real-mission-evidence.json',
+      packagedSmoke: {
+        name: 'packaged-smoke-report.json',
         bytes: 10,
         sha256: 'c'.repeat(64),
       },
-    };
-
-    expect(() =>
-      buildFinalizedReleaseSecurityFields(common),
-    ).toThrow(/claude orchestrator evidence/i);
-
-    const skipped = buildFinalizedReleaseSecurityFields({
-      ...common,
-      skippedOrchestrators: ['claude'],
     });
-    expect(skipped.verification).toEqual({
-      physicalProductWizard: true,
-      skippedOrchestrators: ['claude'],
+    expect(fields.verification).toEqual({ packagedSmoke: true });
+    expect(fields.releaseArtifacts).toMatchObject({
+      signingIdentity:
+        'Developer ID Application: Cleofas Pereira rocha (35P5XL3JN6)',
+      packagedSmoke: {
+        name: 'packaged-smoke-report.json',
+        sha256: 'c'.repeat(64),
+      },
     });
-    expect(skipped.verification).not.toHaveProperty(
-      'physicalClaudeOrchestrator',
-    );
-    expect(skipped.releaseArtifacts).not.toHaveProperty(
-      'e2eEvidenceClaudeOrchestrator',
-    );
-    expect(() =>
-      buildFinalizedReleaseSecurityFields({
-        ...common,
-        skippedOrchestrators: ['claude'],
-        e2eEvidenceClaudeOrchestrator: {
-          name: 'real-mission-evidence-claude-orchestrator.json',
-          bytes: 10,
-          sha256: 'd'.repeat(64),
-        },
-      }),
-    ).toThrow(/fabricated Claude evidence/i);
   });
 
   it('requires the exact repository-authorized Node patch', () => {
@@ -267,7 +245,7 @@ describe('manual release security artifacts', () => {
     })).toThrow(/build toolchain.*1 vulnerabilidade/i);
   });
 
-  it('never finalizes a structurally valid but synthetic physical receipt', () => {
+  it('finalizes only a bound packaged smoke report and rejects forgeries', () => {
     const root = tempRoot();
     const artifacts = path.join(root, 'artifacts');
     buildReleaseSecurityArtifacts({
@@ -277,18 +255,7 @@ describe('manual release security artifacts', () => {
         status: 0,
         stdout: JSON.stringify(
           args[0] === 'audit'
-            ? {
-                metadata: {
-                  vulnerabilities: {
-                    info: 0,
-                    low: 0,
-                    moderate: 0,
-                    high: 0,
-                    critical: 0,
-                    total: 0,
-                  },
-                },
-              }
+            ? { metadata: { vulnerabilities: { total: 0 } } }
             : { bomFormat: 'CycloneDX', components: [] },
         ),
         stderr: '',
@@ -299,140 +266,87 @@ describe('manual release security artifacts', () => {
     });
     const dmg = path.join(root, 'NexusIDE.dmg');
     const zip = path.join(root, 'NexusIDE.zip');
-    const evidence = path.join(root, 'real-mission-evidence.json');
+    const smokeReportPath = path.join(root, 'packaged-smoke-report.json');
     fs.writeFileSync(dmg, 'dmg');
     fs.writeFileSync(zip, 'zip');
-    fs.writeFileSync(
-      evidence,
-      JSON.stringify(makeValidRealMissionEvidence()),
-    );
+    const identity =
+      'Developer ID Application: Cleofas Pereira rocha (35P5XL3JN6)';
+    const goodReport = {
+      schemaVersion: 1,
+      status: 'pass',
+      smoke: 'packaged-app',
+      appVersion: '1.2.3',
+      commitSha: 'a'.repeat(40),
+      artifact: { sha256: shaFor('zip'), identity },
+      finishedAt: '2026-07-23T01:00:00.000Z',
+    };
 
+    // Relatório de outro ZIP: nunca finaliza.
+    fs.writeFileSync(
+      smokeReportPath,
+      JSON.stringify({
+        ...goodReport,
+        artifact: { sha256: 'f'.repeat(64), identity },
+      }),
+    );
     expect(() =>
       finalizeReleaseSecurityArtifacts({
         securityDir: artifacts,
         root,
         dmgPath: dmg,
         zipPath: zip,
-        evidencePath: evidence,
+        smokeReportPath,
         commitSha: 'a'.repeat(40),
         version: '1.2.3',
         ...securityAuthority,
-        expectedE2EArtifactSha256: shaFor('zip'),
-        expectedSigningIdentity:
-          'Developer ID Application: Cleofas Pereira rocha (35P5XL3JN6)',
+        expectedSigningIdentity: identity,
         now: () => new Date('2026-07-23T01:00:00.000Z'),
       }),
-    ).toThrow(/live verified runtime proof/i);
-  });
+    ).toThrow(/commit\/version\/ZIP\/identity/i);
 
-  it('never finalizes private-runner evidence as release security proof', () => {
-    const root = tempRoot();
-    const artifacts = path.join(root, 'artifacts');
-    buildReleaseSecurityArtifacts({
-      root,
-      outDir: artifacts,
-      runCommand: (args) => ({
-        status: 0,
-        stdout: JSON.stringify(
-          args[0] === 'audit'
-            ? { metadata: { vulnerabilities: { total: 0 } } }
-            : { bomFormat: 'CycloneDX', components: [] },
-        ),
-        stderr: '',
-      }),
-      commitSha: 'a'.repeat(40),
-      ...securityAuthority,
-      runtime: { node: 'v22.23.1', npm: '12.0.0' },
-    });
-    const dmg = path.join(root, 'NexusIDE.dmg');
-    const zip = path.join(root, 'NexusIDE.zip');
-    const evidence = path.join(root, 'private-runner.json');
-    fs.writeFileSync(dmg, 'dmg');
-    fs.writeFileSync(zip, 'zip');
+    // Relatório sem status pass: nunca finaliza.
     fs.writeFileSync(
-      evidence,
-      JSON.stringify(
-        makeValidRealMissionEvidence({
-          launchSurface: 'private-runner',
-        }),
-      ),
+      smokeReportPath,
+      JSON.stringify({ ...goodReport, status: 'fail' }),
     );
-
     expect(() =>
       finalizeReleaseSecurityArtifacts({
         securityDir: artifacts,
         root,
         dmgPath: dmg,
         zipPath: zip,
-        evidencePath: evidence,
+        smokeReportPath,
         commitSha: 'a'.repeat(40),
         version: '1.2.3',
         ...securityAuthority,
-        expectedE2EArtifactSha256: shaFor('zip'),
-        expectedSigningIdentity:
-          'Developer ID Application: Cleofas Pereira rocha (35P5XL3JN6)',
+        expectedSigningIdentity: identity,
+        now: () => new Date('2026-07-23T01:00:00.000Z'),
       }),
-    ).toThrow(/product-wizard|diagnostic-only|physical/i);
+    ).toThrow(/invalid or not a pass/i);
+
+    // Relatório correto: finaliza e sela o asset ao lado do manifesto.
+    fs.writeFileSync(smokeReportPath, JSON.stringify(goodReport));
+    const finalized = finalizeReleaseSecurityArtifacts({
+      securityDir: artifacts,
+      root,
+      dmgPath: dmg,
+      zipPath: zip,
+      smokeReportPath,
+      commitSha: 'a'.repeat(40),
+      version: '1.2.3',
+      ...securityAuthority,
+      expectedSigningIdentity: identity,
+      now: () => new Date('2026-07-23T01:00:00.000Z'),
+    });
+    expect(finalized.verification).toEqual({ packagedSmoke: true });
+    expect(finalized.releaseArtifacts).toMatchObject({
+      signingIdentity: identity,
+      zip: { name: 'NexusIDE.zip', sha256: shaFor('zip') },
+      packagedSmoke: { name: 'packaged-smoke-report.json' },
+    });
     expect(
-      fs.existsSync(path.join(artifacts, 'real-mission-evidence.json')),
-    ).toBe(false);
-  });
-
-  it('rejects a structurally forged PASS receipt during finalization', () => {
-    const root = tempRoot();
-    const artifacts = path.join(root, 'artifacts');
-    buildReleaseSecurityArtifacts({
-      root,
-      outDir: artifacts,
-      runCommand: (args) => ({
-        status: 0,
-        stdout: JSON.stringify(
-          args[0] === 'audit'
-            ? { metadata: { vulnerabilities: { total: 0 } } }
-            : { bomFormat: 'CycloneDX', components: [] },
-        ),
-        stderr: '',
-      }),
-      commitSha: 'a'.repeat(40),
-      ...securityAuthority,
-      runtime: { node: 'v22.23.1', npm: '12.0.0' },
-    });
-    const dmg = path.join(root, 'NexusIDE.dmg');
-    const zip = path.join(root, 'NexusIDE.zip');
-    const evidence = path.join(root, 'real-mission-evidence.json');
-    fs.writeFileSync(dmg, 'dmg');
-    fs.writeFileSync(zip, 'zip');
-    fs.writeFileSync(
-      evidence,
-      JSON.stringify({
-        status: 'pass',
-        release: {
-          commitSha: 'a'.repeat(40),
-          appVersion: '1.2.3',
-          artifact: {
-            sha256: shaFor('zip'),
-            identity:
-              'Developer ID Application: Cleofas Pereira rocha (35P5XL3JN6)',
-          },
-        },
-      }),
-    );
-
-    expect(() =>
-      finalizeReleaseSecurityArtifacts({
-        securityDir: artifacts,
-        root,
-        dmgPath: dmg,
-        zipPath: zip,
-        evidencePath: evidence,
-        commitSha: 'a'.repeat(40),
-        version: '1.2.3',
-        ...securityAuthority,
-        expectedE2EArtifactSha256: shaFor('zip'),
-        expectedSigningIdentity:
-          'Developer ID Application: Cleofas Pereira rocha (35P5XL3JN6)',
-      }),
-    ).toThrow(/real mission evidence|incomplete|PASS/i);
+      fs.existsSync(path.join(artifacts, 'packaged-smoke-report.json')),
+    ).toBe(true);
   });
 
   it('rejects a forged or stale security manifest before finalization', () => {

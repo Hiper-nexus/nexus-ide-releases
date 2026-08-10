@@ -3,7 +3,6 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { makeValidRealMissionEvidence } from './test-support/real-mission-evidence.mjs';
 
 import {
   CANONICAL_RELEASE_REPO,
@@ -51,66 +50,74 @@ describe('manual GitHub release publication', () => {
     );
   });
 
-  it('rejects literal/private evidence even when receipt booleans claim physical UI', () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-publish-physical-'));
+  it('rejects a forged or unbound packaged smoke report at publish time', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-publish-smoke-'));
     publicationRoots.push(root);
-    const evidencePath = path.join(root, 'evidence.json');
-    const privateEvidence = makeValidRealMissionEvidence({
+    const smokeReportPath = path.join(root, 'packaged-smoke-report.json');
+    const goodReport = {
+      schemaVersion: 1,
+      status: 'pass',
+      smoke: 'packaged-app',
       appVersion: '1.2.3',
       commitSha: 'a'.repeat(40),
-      artifactSha256: 'b'.repeat(64),
-      launchSurface: 'private-runner',
-    });
-    fs.writeFileSync(evidencePath, JSON.stringify(privateEvidence));
+      artifact: {
+        sha256: 'b'.repeat(64),
+        identity:
+          'Developer ID Application: Cleofas Pereira rocha (35P5XL3JN6)',
+      },
+      finishedAt: '2026-07-23T00:00:00.000Z',
+    };
+
+    // Status != pass nunca publica, mesmo com booleans do receipt afirmando ok.
+    fs.writeFileSync(
+      smokeReportPath,
+      JSON.stringify({ ...goodReport, status: 'fail' }),
+    );
     expect(() =>
       assertPublishPhysicalCandidate({
-        evidencePath,
+        smokeReportPath,
         receipt: {
           version: '1.2.3',
           commitSha: 'a'.repeat(40),
           artifacts: {
             zip: { sha256: 'b'.repeat(64) },
-            e2eEvidence: {
-              sha256: digest(fs.readFileSync(evidencePath)),
+            packagedSmoke: {
+              sha256: digest(fs.readFileSync(smokeReportPath)),
             },
           },
           verification: {
-            physicalProductWizard: true,
+            packagedSmoke: true,
           },
         },
       }),
-    ).toThrow(/product-wizard|physical/i);
-  });
+    ).toThrow(/live authority|invalid or not a pass/i);
 
-  it('rejects a literal single-mission flag when the physical inventory disagrees', () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-publish-inventory-'));
-    publicationRoots.push(root);
-    const evidencePath = path.join(root, 'evidence.json');
-    const evidence = makeValidRealMissionEvidence();
-    evidence.missionInventory.observedMissionCount = 2;
-    evidence.missionInventory.observedMissionIds.push('mission-extra');
-    evidence.missionInventory.exactSingleProductMission = false;
-    fs.writeFileSync(evidencePath, JSON.stringify(evidence));
-
+    // Relatório amarrado a OUTRO ZIP nunca publica.
+    fs.writeFileSync(
+      smokeReportPath,
+      JSON.stringify({
+        ...goodReport,
+        artifact: { ...goodReport.artifact, sha256: 'f'.repeat(64) },
+      }),
+    );
     expect(() =>
       assertPublishPhysicalCandidate({
-        evidencePath,
+        smokeReportPath,
         receipt: {
           version: '1.2.3',
           commitSha: 'a'.repeat(40),
           artifacts: {
-            zip: { sha256: evidence.release.artifact.sha256 },
-            e2eEvidence: {
-              sha256: digest(fs.readFileSync(evidencePath)),
+            zip: { sha256: 'b'.repeat(64) },
+            packagedSmoke: {
+              sha256: digest(fs.readFileSync(smokeReportPath)),
             },
           },
           verification: {
-            physicalProductWizard: true,
-            singleProductMission: true,
+            packagedSmoke: true,
           },
         },
       }),
-    ).toThrow(/inventory|product-wizard|physical/i);
+    ).toThrow(/live authority|does not match/i);
   });
 
   it('requires the repository-pinned Node patch before touching GitHub', async () => {
@@ -404,7 +411,7 @@ describe('manual GitHub release publication', () => {
       expect(resolveSecurityAssets(
         fixture.securityDir,
         fixture.receipt,
-      )).toHaveLength(8);
+      )).toHaveLength(7);
       fs.writeFileSync(
         path.join(fixture.securityDir, 'undeclared-secret.txt'),
         'private',
@@ -413,33 +420,6 @@ describe('manual GitHub release publication', () => {
         fixture.securityDir,
         fixture.receipt,
       )).toThrow(/undeclared/);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it('publishes an honestly sealed candidate without Claude evidence after an explicit skip', () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-publish-skip-'));
-    try {
-      const fixture = createCandidateSecurityFixture(
-        root,
-        {},
-        { skipClaude: true },
-      );
-      const assets = resolveSecurityAssets(
-        fixture.securityDir,
-        fixture.receipt,
-      );
-
-      expect(
-        assets.some((asset) => asset.includes('claude-orchestrator')),
-      ).toBe(false);
-      expect(fixture.receipt.artifacts).not.toHaveProperty(
-        'e2eEvidenceClaudeOrchestrator',
-      );
-      expect(fixture.receipt.verification).not.toHaveProperty(
-        'physicalClaudeOrchestrator',
-      );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -558,40 +538,6 @@ describe('manual GitHub release publication', () => {
           tagSignerFingerprint: null,
         },
       })).toThrow(/artifact digest/);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it('revalidates and materializes a durable candidate with Claude explicitly skipped', () => {
-    const root = createReusableCandidateFixture({ skipClaude: true });
-    try {
-      const commitSha = 'a'.repeat(40);
-      const candidate = loadReusableReleaseCandidate({
-        root,
-        environment: publishEnvironment(),
-        authority: releaseAuthority(),
-        repository: {
-          statusPorcelain: '?? out/\n?? release-artifacts/\n',
-          headSha: commitSha,
-          tagCommitSha: commitSha,
-          tagObjectSha: 'e'.repeat(40),
-          tagObjectType: 'tag',
-          tagSignerFingerprint: null,
-        },
-      });
-      const materialized = materializeReusableReleaseCandidate(
-        root,
-        candidate,
-      );
-
-      expect(
-        materialized.canonicalAssets.some((asset) =>
-          asset.name.includes('claude-orchestrator')),
-      ).toBe(false);
-      expect(candidate.receipt.verification).toMatchObject({
-        skippedOrchestrators: ['claude'],
-      });
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -1121,13 +1067,21 @@ function publicationFixture() {
   const canonicalAssets = describeLocalReleaseAssets(canonicalAssetPaths);
   const publicAssetPaths = canonicalAssetPaths.slice(0, 2);
   const publicAssets = describeLocalReleaseAssets(publicAssetPaths);
-  const physicalEvidence = makeValidRealMissionEvidence({
+  const smokeReport = JSON.stringify({
+    schemaVersion: 1,
+    status: 'pass',
+    smoke: 'packaged-app',
     appVersion: '1.2.3',
     commitSha: 'a'.repeat(40),
-    artifactSha256: canonicalAssets[1].sha256,
+    artifact: {
+      sha256: canonicalAssets[1].sha256,
+      identity:
+        'Developer ID Application: Cleofas Pereira rocha (35P5XL3JN6)',
+    },
+    finishedAt: '2026-07-23T00:00:00.000Z',
   });
-  const evidencePath = path.join(root, 'physical-evidence.json');
-  fs.writeFileSync(evidencePath, JSON.stringify(physicalEvidence));
+  const smokeReportPath = path.join(root, 'packaged-smoke-report.json');
+  fs.writeFileSync(smokeReportPath, smokeReport);
   return {
     candidate: {
       receipt: {
@@ -1142,17 +1096,16 @@ function publicationFixture() {
             name: path.basename(canonicalAssetPaths[1]),
             sha256: canonicalAssets[1].sha256,
           },
-          e2eEvidence: {
-            name: path.basename(evidencePath),
-            sha256: digest(fs.readFileSync(evidencePath)),
+          packagedSmoke: {
+            name: path.basename(smokeReportPath),
+            sha256: digest(smokeReport),
           },
         },
         verification: {
-          physicalProductWizard: true,
-          singleProductMission: true,
+          packagedSmoke: true,
         },
       },
-      evidencePath,
+      smokeReportPath,
     },
     release: {
       canonicalAssetPaths,
@@ -1234,7 +1187,7 @@ function fakeGitHub({ states, fixture, events }) {
   };
 }
 
-function createReusableCandidateFixture({ skipClaude = false } = {}) {
+function createReusableCandidateFixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-reuse-test-'));
   fs.mkdirSync(path.join(root, 'server'), { recursive: true });
   fs.mkdirSync(path.join(root, 'src', 'shared'), { recursive: true });
@@ -1309,28 +1262,20 @@ function createReusableCandidateFixture({ skipClaude = false } = {}) {
   );
   fs.writeFileSync(dmgPath, 'dmg');
   fs.writeFileSync(zipPath, 'zip');
-  createCandidateSecurityFixture(
-    root,
-    {
-      dmg: {
-        name: path.basename(dmgPath),
-        sha256: digest('dmg'),
-      },
-      zip: {
-        name: path.basename(zipPath),
-        sha256: digest('zip'),
-      },
+  createCandidateSecurityFixture(root, {
+    dmg: {
+      name: path.basename(dmgPath),
+      sha256: digest('dmg'),
     },
-    { skipClaude },
-  );
+    zip: {
+      name: path.basename(zipPath),
+      sha256: digest('zip'),
+    },
+  });
   return root;
 }
 
-function createCandidateSecurityFixture(
-  root,
-  artifactOverrides = {},
-  { skipClaude = false } = {},
-) {
+function createCandidateSecurityFixture(root, artifactOverrides = {}) {
   const securityDir = path.join(root, 'release-artifacts', 'security');
   fs.mkdirSync(securityDir, { recursive: true });
   if (!fs.existsSync(path.join(root, 'package-lock.json'))) {
@@ -1383,32 +1328,25 @@ function createCandidateSecurityFixture(
     name: 'NexusIDE.zip',
     sha256: 'c'.repeat(64),
   };
-  const physicalEvidence = makeValidRealMissionEvidence({
+  const smokeReport = JSON.stringify({
+    schemaVersion: 1,
+    status: 'pass',
+    smoke: 'packaged-app',
     appVersion: '1.2.3',
     commitSha: 'a'.repeat(40),
-    artifactSha256: zipArtifact.sha256,
+    artifact: {
+      sha256: zipArtifact.sha256,
+      identity:
+        'Developer ID Application: Cleofas Pereira rocha (35P5XL3JN6)',
+    },
+    finishedAt: '2026-07-23T00:00:00.000Z',
   });
-  const evidence = JSON.stringify(physicalEvidence);
   fs.writeFileSync(
-    path.join(securityDir, 'real-mission-evidence.json'),
-    evidence,
+    path.join(securityDir, 'packaged-smoke-report.json'),
+    smokeReport,
   );
-  const claudeEvidence = JSON.stringify({
-    ...physicalEvidence,
-    panes: (physicalEvidence.panes ?? []).map((pane) =>
-      pane?.role === 'orchestrator'
-        ? { ...pane, adapterId: 'claude' }
-        : pane,
-    ),
-  });
-  if (!skipClaude) {
-    fs.writeFileSync(
-      path.join(securityDir, 'real-mission-evidence-claude-orchestrator.json'),
-      claudeEvidence,
-    );
-  }
   const receipt = {
-    schemaVersion: 4,
+    schemaVersion: 5,
     verifiedAt: '2026-07-23T00:00:00.000Z',
     version: '1.2.3',
     tag: 'v1.2.3',
@@ -1420,27 +1358,14 @@ function createCandidateSecurityFixture(
     artifacts: {
       dmg: dmgArtifact,
       zip: zipArtifact,
-      e2eEvidence: {
-        name: 'real-mission-evidence.json',
-        sha256: digest(evidence),
+      packagedSmoke: {
+        name: 'packaged-smoke-report.json',
+        sha256: digest(smokeReport),
       },
-      ...(!skipClaude
-        ? {
-            e2eEvidenceClaudeOrchestrator: {
-              name: 'real-mission-evidence-claude-orchestrator.json',
-              sha256: digest(claudeEvidence),
-            },
-          }
-        : {}),
     },
     verification: {
       signedNotarized: true,
-      realMissionE2E: true,
-      physicalProductWizard: true,
-      ...(!skipClaude
-        ? { physicalClaudeOrchestrator: true }
-        : { skippedOrchestrators: ['claude'] }),
-      singleProductMission: true,
+      packagedSmoke: true,
       sameCommitAndArtifacts: true,
       tagSignatureVerified: false,
     },
@@ -1463,28 +1388,17 @@ function createCandidateSecurityFixture(
       runtime: { node: 'v22.23.1', npm: '12.0.0' },
       files,
       verification: {
-        physicalProductWizard: true,
-        ...(!skipClaude
-          ? { physicalClaudeOrchestrator: true }
-          : { skippedOrchestrators: ['claude'] }),
+        packagedSmoke: true,
       },
       releaseArtifacts: {
         signingIdentity:
           'Developer ID Application: Cleofas Pereira rocha (35P5XL3JN6)',
         dmg: receipt.artifacts.dmg,
         zip: receipt.artifacts.zip,
-        e2eEvidence: {
-          ...receipt.artifacts.e2eEvidence,
-          bytes: Buffer.byteLength(evidence),
+        packagedSmoke: {
+          ...receipt.artifacts.packagedSmoke,
+          bytes: Buffer.byteLength(smokeReport),
         },
-        ...(!skipClaude
-          ? {
-              e2eEvidenceClaudeOrchestrator: {
-                ...receipt.artifacts.e2eEvidenceClaudeOrchestrator,
-                bytes: Buffer.byteLength(claudeEvidence),
-              },
-            }
-          : {}),
       },
     };
   fs.writeFileSync(

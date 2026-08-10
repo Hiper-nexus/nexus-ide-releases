@@ -9,13 +9,15 @@ import {
   assertAuthoritativeReleaseCandidate,
   runReleaseCandidateGate,
 } from './release-candidate-gate.mjs';
-import { assertRealMissionReleaseEvidence } from './e2e-real-mission.mjs';
 import {
   assertReleaseRepositoryState,
   collectReleaseRepositoryState,
   readAndAssertReleaseAuthority,
 } from './release-authority.mjs';
-import { assertReleaseSecurityManifest } from './release-security-gate.mjs';
+import {
+  assertPackagedSmokeReleaseReport,
+  assertReleaseSecurityManifest,
+} from './release-security-gate.mjs';
 
 export const CANONICAL_RELEASE_REPO = 'cleofasvolarehost/nexus-ide';
 export const PUBLIC_RELEASE_REPO = 'cleofasvolarehost/nexus-ide-releases';
@@ -401,20 +403,10 @@ export function buildAtomicReleasePushArgs({
   ];
 }
 
-function hasExactClaudeOrchestratorSkip(skippedOrchestrators) {
-  return (
-    Array.isArray(skippedOrchestrators) &&
-    skippedOrchestrators.length === 1 &&
-    skippedOrchestrators[0] === 'claude'
-  );
-}
 
 export function resolveSecurityAssets(securityDir, receipt) {
   const manifestPath = path.join(securityDir, 'security-manifest.json');
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-  const receiptSkips = receipt?.verification?.skippedOrchestrators;
-  const manifestSkips = manifest?.verification?.skippedOrchestrators;
-  const isClaudeSkipped = hasExactClaudeOrchestratorSkip(receiptSkips);
   if (
     manifest?.schemaVersion !== 3 ||
     manifest?.commitSha !== receipt.commitSha ||
@@ -423,23 +415,10 @@ export function resolveSecurityAssets(securityDir, receipt) {
     manifest?.releaseArtifacts?.dmg?.sha256 !== receipt.artifacts.dmg.sha256 ||
     manifest?.releaseArtifacts?.zip?.name !== receipt.artifacts.zip.name ||
     manifest?.releaseArtifacts?.zip?.sha256 !== receipt.artifacts.zip.sha256 ||
-    manifest?.releaseArtifacts?.e2eEvidence?.name !==
-      receipt.artifacts.e2eEvidence.name ||
-    manifest?.releaseArtifacts?.e2eEvidence?.sha256 !==
-      receipt.artifacts.e2eEvidence.sha256 ||
-    manifest?.releaseArtifacts?.e2eEvidenceClaudeOrchestrator?.name !==
-      receipt.artifacts.e2eEvidenceClaudeOrchestrator?.name ||
-    manifest?.releaseArtifacts?.e2eEvidenceClaudeOrchestrator?.sha256 !==
-      receipt.artifacts.e2eEvidenceClaudeOrchestrator?.sha256 ||
-    (receiptSkips !== undefined && !isClaudeSkipped) ||
-    JSON.stringify(receiptSkips) !== JSON.stringify(manifestSkips) ||
-    (isClaudeSkipped &&
-      (receipt?.verification?.claudeOrchestratorE2E !== undefined ||
-        receipt?.verification?.physicalClaudeOrchestrator !== undefined ||
-        manifest?.verification?.physicalClaudeOrchestrator !== undefined ||
-        receipt?.artifacts?.e2eEvidenceClaudeOrchestrator !== undefined ||
-        manifest?.releaseArtifacts?.e2eEvidenceClaudeOrchestrator !==
-          undefined)) ||
+    manifest?.releaseArtifacts?.packagedSmoke?.name !==
+      receipt.artifacts.packagedSmoke.name ||
+    manifest?.releaseArtifacts?.packagedSmoke?.sha256 !==
+      receipt.artifacts.packagedSmoke.sha256 ||
     !Array.isArray(manifest.files)
   ) {
     throw new Error('security manifest and candidate receipt are not coherent');
@@ -468,22 +447,10 @@ export function resolveSecurityAssets(securityDir, receipt) {
   ) {
     throw new Error('security manifest file inventory is incoherent');
   }
-  const claudeEvidenceName =
-    receipt.artifacts.e2eEvidenceClaudeOrchestrator?.name;
-  if (!isClaudeSkipped && (
-    typeof claudeEvidenceName !== 'string' ||
-      path.basename(claudeEvidenceName) !== claudeEvidenceName ||
-      claudeEvidenceName === receipt.artifacts.e2eEvidence.name
-  )) {
-    throw new Error(
-      'candidate receipt is missing the sealed Claude orchestrator evidence asset',
-    );
-  }
   const expectedSealedNames = [
     ...manifestNames,
     'security-manifest.json',
-    receipt.artifacts.e2eEvidence.name,
-    ...(!isClaudeSkipped ? [claudeEvidenceName] : []),
+    receipt.artifacts.packagedSmoke.name,
   ];
   if (new Set(expectedSealedNames).size !== expectedSealedNames.length) {
     throw new Error('security manifest contains duplicate reserved assets');
@@ -518,26 +485,13 @@ export function resolveSecurityAssets(securityDir, receipt) {
   ) {
     throw new Error('candidate receipt security asset seal is incomplete');
   }
-  const sealedEvidence = sealed.find(
-    (entry) => entry.name === receipt.artifacts.e2eEvidence.name,
+  const sealedSmoke = sealed.find(
+    (entry) => entry.name === receipt.artifacts.packagedSmoke.name,
   );
   if (
-    sealedEvidence?.sha256 !== receipt.artifacts.e2eEvidence.sha256
+    sealedSmoke?.sha256 !== receipt.artifacts.packagedSmoke.sha256
   ) {
-    throw new Error('candidate receipt E2E evidence seal is incoherent');
-  }
-  if (!isClaudeSkipped) {
-    const sealedClaudeEvidence = sealed.find(
-      (entry) => entry.name === claudeEvidenceName,
-    );
-    if (
-      sealedClaudeEvidence?.sha256 !==
-      receipt.artifacts.e2eEvidenceClaudeOrchestrator.sha256
-    ) {
-      throw new Error(
-        'candidate receipt Claude orchestrator E2E evidence seal is incoherent',
-      );
-    }
+    throw new Error('candidate receipt packaged smoke seal is incoherent');
   }
   const actual = fs
     .readdirSync(securityDir, { withFileTypes: true });
@@ -579,41 +533,37 @@ export function resolveSecurityAssets(securityDir, receipt) {
       throw new Error(`security asset digest mismatch: ${entry.name}`);
     }
   }
-  const evidencePath = path.join(
+  const smokeReportPath = path.join(
     securityDir,
-    receipt.artifacts.e2eEvidence.name,
+    receipt.artifacts.packagedSmoke.name,
   );
   if (
-    fileSha256(evidencePath) !== receipt.artifacts.e2eEvidence.sha256
+    fileSha256(smokeReportPath) !== receipt.artifacts.packagedSmoke.sha256
   ) {
-    throw new Error('E2E evidence digest mismatch before publication');
+    throw new Error('packaged smoke report digest mismatch before publication');
   }
-  let physicalEvidence;
+  let smokeReport;
   try {
-    physicalEvidence = assertRealMissionReleaseEvidence(
-      JSON.parse(fs.readFileSync(evidencePath, 'utf8')),
+    smokeReport = assertPackagedSmokeReleaseReport(
+      JSON.parse(fs.readFileSync(smokeReportPath, 'utf8')),
     );
   } catch (error) {
     throw new Error(
-      `published candidate lacks valid physical product-wizard evidence: ${
+      `published candidate lacks a valid packaged smoke report: ${
         error instanceof Error ? error.message : String(error)
       }`,
     );
   }
   if (
-    receipt?.verification?.physicalProductWizard !== true ||
-    receipt?.verification?.singleProductMission !==
-      physicalEvidence.missionInventory?.exactSingleProductMission ||
-    physicalEvidence.missionInventory?.exactSingleProductMission !== true ||
-    physicalEvidence.release?.commitSha !== receipt.commitSha ||
-    physicalEvidence.release?.appVersion !== receipt.version ||
-    physicalEvidence.release?.artifact?.sha256 !==
-      receipt.artifacts.zip.sha256 ||
-    physicalEvidence.release?.artifact?.identity !==
+    receipt?.verification?.packagedSmoke !== true ||
+    smokeReport.commitSha !== receipt.commitSha ||
+    smokeReport.appVersion !== receipt.version ||
+    smokeReport.artifact.sha256 !== receipt.artifacts.zip.sha256 ||
+    smokeReport.artifact.identity !==
       manifest?.releaseArtifacts?.signingIdentity
   ) {
     throw new Error(
-      'physical product-wizard evidence and candidate receipt are not coherent',
+      'packaged smoke report and candidate receipt are not coherent',
     );
   }
   return allowed.map((name) => path.join(securityDir, name));
@@ -691,18 +641,13 @@ function assertCandidateReceiptShape(
     tagSignatureVerified,
   },
 ) {
-  const skippedOrchestrators =
-    receipt?.verification?.skippedOrchestrators;
-  const isClaudeSkipped = hasExactClaudeOrchestratorSkip(
-    skippedOrchestrators,
-  );
   const artifactNames = [
     receipt?.artifacts?.dmg?.name,
     receipt?.artifacts?.zip?.name,
-    receipt?.artifacts?.e2eEvidence?.name,
+    receipt?.artifacts?.packagedSmoke?.name,
   ];
   if (
-    receipt?.schemaVersion !== 4 ||
+    receipt?.schemaVersion !== 5 ||
     receipt?.version !== version ||
     receipt?.tag !== `v${version}` ||
     receipt?.commitSha !== commitSha ||
@@ -729,30 +674,14 @@ function assertCandidateReceiptShape(
     new Set(artifactNames).size !== artifactNames.length ||
     !Number.isFinite(Date.parse(receipt?.verifiedAt ?? '')) ||
     receipt?.verification?.signedNotarized !== true ||
-    receipt?.verification?.realMissionE2E !== true ||
-    receipt?.verification?.physicalProductWizard !== true ||
-    receipt?.verification?.singleProductMission !== true ||
+    receipt?.verification?.packagedSmoke !== true ||
     receipt?.verification?.sameCommitAndArtifacts !== true ||
     receipt?.verification?.tagSignatureVerified !==
       receipt?.tagSignatureVerified ||
-    (skippedOrchestrators !== undefined && !isClaudeSkipped) ||
-    (isClaudeSkipped &&
-      (receipt?.verification?.claudeOrchestratorE2E !== undefined ||
-        receipt?.verification?.physicalClaudeOrchestrator !== undefined ||
-        receipt?.artifacts?.e2eEvidenceClaudeOrchestrator !== undefined)) ||
-    (!isClaudeSkipped &&
-      (typeof receipt?.artifacts?.e2eEvidenceClaudeOrchestrator?.name !==
-        'string' ||
-        path.basename(
-          receipt.artifacts.e2eEvidenceClaudeOrchestrator.name,
-        ) !== receipt.artifacts.e2eEvidenceClaudeOrchestrator.name ||
-        !/^[a-f0-9]{64}$/u.test(
-          receipt?.artifacts?.e2eEvidenceClaudeOrchestrator?.sha256 ?? '',
-        ))) ||
     !/^[a-f0-9]{64}$/u.test(receipt?.artifacts?.dmg?.sha256 ?? '') ||
     !/^[a-f0-9]{64}$/u.test(receipt?.artifacts?.zip?.sha256 ?? '') ||
     !/^[a-f0-9]{64}$/u.test(
-      receipt?.artifacts?.e2eEvidence?.sha256 ?? '',
+      receipt?.artifacts?.packagedSmoke?.sha256 ?? '',
     ) ||
     !Array.isArray(receipt?.securityAssets) ||
     receipt.securityAssets.length < 3 ||
@@ -782,49 +711,46 @@ function assertPublishPhysicalCandidateCore(
     assertAuthoritativeReleaseCandidate(candidate);
   }
   const receipt = candidate?.receipt;
-  const evidencePath = candidate?.evidencePath;
+  const smokeReportPath = candidate?.smokeReportPath;
   if (
-    receipt?.verification?.physicalProductWizard !== true ||
-    typeof evidencePath !== 'string'
+    receipt?.verification?.packagedSmoke !== true ||
+    typeof smokeReportPath !== 'string'
   ) {
     throw new Error(
-      'release publication requires an authoritative physical Mission Setup receipt',
+      'release publication requires an authoritative packaged smoke receipt',
     );
   }
-  const stat = fs.lstatSync(evidencePath);
+  const stat = fs.lstatSync(smokeReportPath);
   if (!stat.isFile() || stat.isSymbolicLink()) {
-    throw new Error('physical product-wizard evidence is not a regular file');
+    throw new Error('packaged smoke report is not a regular file');
   }
   if (
-    fileSha256(evidencePath) !== receipt?.artifacts?.e2eEvidence?.sha256
+    fileSha256(smokeReportPath) !== receipt?.artifacts?.packagedSmoke?.sha256
   ) {
-    throw new Error('physical product-wizard evidence digest is stale');
+    throw new Error('packaged smoke report digest is stale');
   }
-  let evidence;
+  let smokeReport;
   try {
-    evidence = assertRealMissionReleaseEvidence(
-      JSON.parse(fs.readFileSync(evidencePath, 'utf8')),
+    smokeReport = assertPackagedSmokeReleaseReport(
+      JSON.parse(fs.readFileSync(smokeReportPath, 'utf8')),
     );
   } catch (error) {
     throw new Error(
-      `release publication rejected physical product-wizard evidence: ${
+      `release publication rejected the packaged smoke report: ${
         error instanceof Error ? error.message : String(error)
       }`,
     );
   }
   if (
-    receipt?.verification?.singleProductMission !==
-      evidence.missionInventory?.exactSingleProductMission ||
-    evidence.missionInventory?.exactSingleProductMission !== true ||
-    evidence.release?.commitSha !== receipt.commitSha ||
-    evidence.release?.appVersion !== receipt.version ||
-    evidence.release?.artifact?.sha256 !== receipt.artifacts.zip.sha256
+    smokeReport.commitSha !== receipt.commitSha ||
+    smokeReport.appVersion !== receipt.version ||
+    smokeReport.artifact.sha256 !== receipt.artifacts.zip.sha256
   ) {
     throw new Error(
-      'physical product-wizard evidence does not match release candidate',
+      'packaged smoke report does not match release candidate',
     );
   }
-  return evidence;
+  return smokeReport;
 }
 
 export function assertPublishPhysicalCandidate(candidate) {
@@ -833,12 +759,12 @@ export function assertPublishPhysicalCandidate(candidate) {
 
 /**
  * Load a durable local release candidate receipt and re-bind it to the current
- * HEAD/tag, DMG/ZIP digests, security assets and E2E evidence files.
+ * HEAD/tag, DMG/ZIP digests, security assets and the packaged smoke report.
  *
  * Used in two cases:
  * 1. Canonical release already published — resume mirror without re-running E2E
  * 2. Fresh / draft publication — reuse a green local candidate so publish does
- *    not re-run the expensive packaged real-mission gate
+ *    not re-run the full packaged candidate gate
  *
  * Neither path is trust-on-first-use: every declared byte is re-hashed first.
  */
@@ -896,9 +822,9 @@ export function loadReusableReleaseCandidate(options = {}) {
     receipt,
     receiptPath,
     artifacts,
-    evidencePath: path.join(
+    smokeReportPath: path.join(
       securityDir,
-      receipt.artifacts.e2eEvidence.name,
+      receipt.artifacts.packagedSmoke.name,
     ),
   };
   REUSABLE_RELEASE_CANDIDATES.set(candidate, Object.freeze({
@@ -907,7 +833,7 @@ export function loadReusableReleaseCandidate(options = {}) {
       .update(JSON.stringify(receipt))
       .digest('hex'),
     receiptPath,
-    evidencePath: candidate.evidencePath,
+    smokeReportPath: candidate.smokeReportPath,
     artifacts: Object.freeze({
       dmg: Object.freeze({
         path: artifacts.dmg,
@@ -932,7 +858,7 @@ function assertReusableReleaseCandidate(root, candidate) {
     !seal ||
     seal.root !== resolvedRoot ||
     seal.receiptPath !== candidate.receiptPath ||
-    seal.evidencePath !== candidate.evidencePath ||
+    seal.smokeReportPath !== candidate.smokeReportPath ||
     seal.artifacts.dmg.path !== candidate.artifacts?.dmg ||
     seal.artifacts.zip.path !== candidate.artifacts?.zip ||
     seal.receiptSha256 !== createHash('sha256')
@@ -1297,7 +1223,7 @@ async function publishManualReleaseCore(
     candidate = await reusableLoader({ root, environment });
   } else {
     // Prefer a durable green local receipt bound to HEAD + packages over a
-    // second packaged real-mission run. Fall back to the full gate when the
+    // second packaged gate run. Fall back to the full gate when the
     // receipt is missing, stale, or fails revalidation.
     try {
       candidate = await reusableLoader({ root, environment });

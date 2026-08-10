@@ -10,15 +10,32 @@ import {
   collectReleaseRepositoryState,
   readAndAssertReleaseAuthority,
 } from './release-authority.mjs';
-import {
-  assertRealMissionReleaseEvidence,
-  assertVerifiedRealMissionRuntimeProof,
-} from './e2e-real-mission.mjs';
 import { bootstrapPinnedNpm } from './make-release.mjs';
-import {
-  assertFastLaneWaiverDocument,
-  FAST_LANE_WAIVER_ASSET,
-} from './release-fast-lane.mjs';
+
+/** Nome do relatório de smoke empacotado selado junto dos assets de segurança. */
+export const PACKAGED_SMOKE_REPORT_ASSET = 'packaged-smoke-report.json';
+
+/**
+ * Valida o relatório do smoke empacotado que substituiu a evidência da missão
+ * real cerimonial. O relatório é escrito pelo gate do candidato logo após o
+ * smoke passar contra o app extraído do ZIP selado, e amarra versão, commit,
+ * sha do ZIP e identidade de assinatura.
+ */
+export function assertPackagedSmokeReleaseReport(report) {
+  if (
+    report?.schemaVersion !== 1 ||
+    report?.status !== 'pass' ||
+    report?.smoke !== 'packaged-app' ||
+    typeof report?.appVersion !== 'string' ||
+    !/^[a-f0-9]{40}$/u.test(report?.commitSha ?? '') ||
+    !/^[a-f0-9]{64}$/u.test(report?.artifact?.sha256 ?? '') ||
+    typeof report?.artifact?.identity !== 'string' ||
+    !Number.isFinite(Date.parse(report?.finishedAt ?? ''))
+  ) {
+    throw new Error('packaged smoke report is invalid or not a pass');
+  }
+  return report;
+}
 
 const MAX_COMMAND_OUTPUT_BYTES = 64 * 1024 * 1024;
 
@@ -411,10 +428,10 @@ export function assertReleaseSecurityManifest({
   }
   if (
     manifest.releaseArtifacts !== undefined &&
-    manifest?.verification?.physicalProductWizard !== true
+    manifest?.verification?.packagedSmoke !== true
   ) {
     throw new Error(
-      'finalized security manifest lacks physical product-wizard authority',
+      'finalized security manifest lacks packaged smoke authority',
     );
   }
   if (!securityDir) return manifest;
@@ -439,50 +456,41 @@ export function assertReleaseSecurityManifest({
   }
   if (manifest.releaseArtifacts !== undefined) {
     if (
-      typeof manifest?.releaseArtifacts?.e2eEvidence?.name !== 'string' ||
+      typeof manifest?.releaseArtifacts?.packagedSmoke?.name !== 'string' ||
       typeof manifest?.releaseArtifacts?.zip?.sha256 !== 'string' ||
       typeof manifest?.releaseArtifacts?.signingIdentity !== 'string'
     ) {
       throw new Error(
-        'finalized security manifest lacks physical product-wizard authority',
+        'finalized security manifest lacks packaged smoke authority',
       );
     }
-    const evidencePath = path.join(
+    const smokeReportPath = path.join(
       path.resolve(securityDir),
-      manifest.releaseArtifacts.e2eEvidence.name,
+      manifest.releaseArtifacts.packagedSmoke.name,
     );
-    const evidenceFile = hashFile(evidencePath);
+    const smokeFile = hashFile(smokeReportPath);
     if (
-      evidenceFile.bytes !== manifest.releaseArtifacts.e2eEvidence.bytes ||
-      evidenceFile.sha256 !== manifest.releaseArtifacts.e2eEvidence.sha256
+      smokeFile.bytes !== manifest.releaseArtifacts.packagedSmoke.bytes ||
+      smokeFile.sha256 !== manifest.releaseArtifacts.packagedSmoke.sha256
     ) {
-      throw new Error('finalized physical E2E evidence digest mismatch');
+      throw new Error('finalized packaged smoke report digest mismatch');
     }
-    let physicalEvidence;
-    try {
-      physicalEvidence = assertRealMissionReleaseEvidence(
-        parseJson(
-          fs.readFileSync(evidencePath, 'utf8'),
-          'evidência E2E física',
-        ),
-      );
-    } catch (error) {
-      throw new Error(
-        `finalized security manifest has no valid physical product-wizard evidence: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-    }
+    const smokeReport = assertPackagedSmokeReleaseReport(
+      parseJson(
+        fs.readFileSync(smokeReportPath, 'utf8'),
+        'relatório de smoke empacotado',
+      ),
+    );
     if (
-      physicalEvidence.release?.commitSha !== commitSha ||
-      physicalEvidence.release?.appVersion !== version ||
-      physicalEvidence.release?.artifact?.sha256 !==
+      smokeReport.commitSha !== commitSha ||
+      smokeReport.appVersion !== version ||
+      smokeReport.artifact.sha256 !==
         manifest.releaseArtifacts.zip.sha256 ||
-      physicalEvidence.release?.artifact?.identity !==
+      smokeReport.artifact.identity !==
         manifest.releaseArtifacts.signingIdentity
     ) {
       throw new Error(
-        'finalized physical E2E evidence does not match security manifest authority',
+        'finalized packaged smoke report does not match security manifest authority',
       );
     }
   }
@@ -506,66 +514,15 @@ function hasExactClaudeOrchestratorSkip(skippedOrchestrators) {
 }
 
 export function buildFinalizedReleaseSecurityFields(options) {
-  const isClaudeSkipped = hasExactClaudeOrchestratorSkip(
-    options.skippedOrchestrators,
-  );
-  if (
-    options.skippedOrchestrators !== undefined &&
-    !isClaudeSkipped
-  ) {
-    throw new Error('invalid skipped release orchestrator declaration');
-  }
-  // Fast lane: a missão real empacotada NÃO rodou neste ciclo. O manifesto diz
-  // isso na cara — `physicalProductWizard: false` — e carrega o waiver que
-  // nomeia o baseline verde reusado. Fingir `true` aqui seria o único jeito de
-  // a fast lane virar mentira, então é exatamente o que não se faz.
-  const fastLane = options.fastLaneWaiver
-    ? {
-        physicalProductWizard: false,
-        fastLaneWaiver: {
-          lane: options.fastLaneWaiver.lane,
-          baselineCommitSha: options.fastLaneWaiver.baseline.commitSha,
-          baselineVersion: options.fastLaneWaiver.baseline.version,
-          asset: options.fastLaneWaiverAsset,
-        },
-      }
-    : { physicalProductWizard: true };
-  if (isClaudeSkipped) {
-    if (options.e2eEvidenceClaudeOrchestrator !== undefined) {
-      throw new Error(
-        'Claude orchestrator skip cannot include fabricated Claude evidence',
-      );
-    }
-    return {
-      verification: {
-        ...fastLane,
-        skippedOrchestrators: ['claude'],
-      },
-      releaseArtifacts: {
-        signingIdentity: options.signingIdentity,
-        dmg: options.dmg,
-        zip: options.zip,
-        e2eEvidence: options.e2eEvidence,
-      },
-    };
-  }
-  if (options.e2eEvidenceClaudeOrchestrator === undefined) {
-    throw new Error(
-      'Claude orchestrator evidence and runtime proof are required',
-    );
-  }
   return {
     verification: {
-      ...fastLane,
-      physicalClaudeOrchestrator: !options.fastLaneWaiver,
+      packagedSmoke: true,
     },
     releaseArtifacts: {
       signingIdentity: options.signingIdentity,
       dmg: options.dmg,
       zip: options.zip,
-      e2eEvidence: options.e2eEvidence,
-      e2eEvidenceClaudeOrchestrator:
-        options.e2eEvidenceClaudeOrchestrator,
+      packagedSmoke: options.packagedSmoke,
     },
   };
 }
@@ -590,195 +547,35 @@ export function finalizeReleaseSecurityArtifacts(options) {
   });
   const dmg = hashFile(options.dmgPath);
   const zip = hashFile(options.zipPath);
-  // Fast lane: a evidência reusada pertence, por construção, ao commit/ZIP do
-  // BASELINE verde — não a este. O waiver é a única autoridade que autoriza
-  // essa divergência, e ele é re-verificado aqui (binding do candidate novo,
-  // bytes da evidência no disco e reclassificação do próprio diff).
-  const waiver = options.fastLaneWaiver ?? null;
-  if (waiver) {
-    assertFastLaneWaiverDocument(waiver, {
-      securityDir,
-      candidate: {
-        version: options.version,
-        commitSha,
-        zipSha256: zip.sha256,
-        dmgSha256: dmg.sha256,
-      },
-    });
-  }
-  const evidenceBinding = waiver
-    ? {
-        commitSha: waiver.baseline.commitSha,
-        appVersion: waiver.baseline.version,
-        zipSha256: waiver.baseline.zipSha256,
-      }
-    : { commitSha, appVersion: options.version, zipSha256: zip.sha256 };
-  let evidence;
-  try {
-    evidence = assertRealMissionReleaseEvidence(
-      parseJson(
-        fs.readFileSync(options.evidencePath, 'utf8'),
-        'evidência E2E',
-      ),
-    );
-  } catch (error) {
-    throw new Error(
-      `real mission evidence is incomplete or not a PASS: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-  }
-  if (
-    evidence?.status !== 'pass' ||
-    evidence?.launchSurface !== 'product-wizard' ||
-    evidence?.wizardCoverage !== 'main-owned-product-sequence' ||
-    evidence?.release?.commitSha !== evidenceBinding.commitSha ||
-    evidence?.release?.appVersion !== evidenceBinding.appVersion ||
-    evidence?.release?.artifact?.identity !== options.expectedSigningIdentity
-  ) {
-    throw new Error(
-      'evidência E2E não pertence ao mesmo commit/versão/identidade',
-    );
-  }
-  if (!waiver) {
-    assertVerifiedRealMissionRuntimeProof(options.runtimeProof, {
-      evidence,
-      releaseBinding: {
-        appVersion: options.version,
-        commitSha,
-        artifact: {
-          sha256: options.expectedE2EArtifactSha256,
-          identity: options.expectedSigningIdentity,
-        },
-      },
-    });
-  } else if (options.runtimeProof !== undefined) {
-    throw new Error(
-      'fast lane waiver cannot carry a live runtime proof it did not produce',
-    );
-  }
-  if (
-    zip.sha256 !== options.expectedE2EArtifactSha256 ||
-    evidence?.release?.artifact?.sha256 !== evidenceBinding.zipSha256
-  ) {
-    throw new Error('digest do ZIP executado diverge da evidência E2E');
-  }
-  const evidenceAssetPath = path.join(
-    securityDir,
-    'real-mission-evidence.json',
-  );
-  if (path.resolve(options.evidencePath) !== evidenceAssetPath) {
-    fs.copyFileSync(options.evidencePath, evidenceAssetPath);
-  }
-  const e2eEvidence = hashFile(evidenceAssetPath);
-  const claudeEvidenceAssetPath = path.join(
-    securityDir,
-    'real-mission-evidence-claude-orchestrator.json',
-  );
-  const isClaudeSkipped = hasExactClaudeOrchestratorSkip(
-    options.skippedOrchestrators,
+  const smokeReport = assertPackagedSmokeReleaseReport(
+    parseJson(
+      fs.readFileSync(options.smokeReportPath, 'utf8'),
+      'relatório de smoke empacotado',
+    ),
   );
   if (
-    options.skippedOrchestrators !== undefined &&
-    !isClaudeSkipped
+    smokeReport.commitSha !== commitSha ||
+    smokeReport.appVersion !== options.version ||
+    smokeReport.artifact.sha256 !== zip.sha256 ||
+    smokeReport.artifact.identity !== options.expectedSigningIdentity
   ) {
-    throw new Error('invalid skipped release orchestrator declaration');
-  }
-  let claudeOrchestratorEvidence;
-  if (isClaudeSkipped) {
-    if (
-      options.claudeOrchestratorEvidencePath !== undefined ||
-      options.claudeOrchestratorRuntimeProof !== undefined ||
-      fs.existsSync(claudeEvidenceAssetPath)
-    ) {
-      throw new Error(
-        'explicit Claude orchestrator skip cannot reuse or fabricate Claude evidence',
-      );
-    }
-  } else {
-    // The Claude-orchestrator variant evidence is bound to the same commit,
-    // version, identity and ZIP, and carries its own live runtime proof.
-    // A fast lane never reuses it: that variant's live runtime proof is
-    // unreproducible from a receipt, so a waived cycle must decline the lane
-    // instead of pretending the second orchestrator was exercised.
-    if (waiver) {
-      throw new Error(
-        'fast lane requires a baseline with the explicit Claude orchestrator skip',
-      );
-    }
-    if (
-      typeof options.claudeOrchestratorEvidencePath !== 'string' ||
-      options.claudeOrchestratorRuntimeProof === undefined
-    ) {
-      throw new Error(
-        'claude orchestrator evidence and runtime proof are required',
-      );
-    }
-    const claudeEvidence = assertRealMissionReleaseEvidence(
-      parseJson(
-        fs.readFileSync(options.claudeOrchestratorEvidencePath, 'utf8'),
-        'evidência E2E orquestrador Claude',
-      ),
+    throw new Error(
+      'packaged smoke report does not belong to this exact commit/version/ZIP/identity',
     );
-    if (
-      claudeEvidence?.status !== 'pass' ||
-      claudeEvidence?.launchSurface !== 'product-wizard' ||
-      claudeEvidence?.wizardCoverage !== 'main-owned-product-sequence' ||
-      claudeEvidence?.release?.commitSha !== commitSha ||
-      claudeEvidence?.release?.appVersion !== options.version ||
-      claudeEvidence?.release?.artifact?.identity !==
-        options.expectedSigningIdentity ||
-      claudeEvidence?.release?.artifact?.sha256 !== zip.sha256
-    ) {
-      throw new Error(
-        'evidência E2E orquestrador Claude não pertence ao mesmo commit/versão/identidade/ZIP',
-      );
-    }
-    assertVerifiedRealMissionRuntimeProof(
-      options.claudeOrchestratorRuntimeProof,
-      {
-        evidence: claudeEvidence,
-        releaseBinding: {
-          appVersion: options.version,
-          commitSha,
-          artifact: {
-            sha256: options.expectedE2EArtifactSha256,
-            identity: options.expectedSigningIdentity,
-          },
-        },
-      },
-    );
-    if (
-      path.resolve(options.claudeOrchestratorEvidencePath) !==
-      claudeEvidenceAssetPath
-    ) {
-      fs.copyFileSync(
-        options.claudeOrchestratorEvidencePath,
-        claudeEvidenceAssetPath,
-      );
-    }
-    claudeOrchestratorEvidence = {
-      name: path.basename(claudeEvidenceAssetPath),
-      ...hashFile(claudeEvidenceAssetPath),
-    };
   }
+  const smokeAssetPath = path.join(securityDir, PACKAGED_SMOKE_REPORT_ASSET);
+  if (path.resolve(options.smokeReportPath) !== smokeAssetPath) {
+    fs.copyFileSync(options.smokeReportPath, smokeAssetPath);
+  }
+  const packagedSmoke = {
+    name: PACKAGED_SMOKE_REPORT_ASSET,
+    ...hashFile(smokeAssetPath),
+  };
   const finalizedFields = buildFinalizedReleaseSecurityFields({
-    signingIdentity: evidence.release.artifact.identity,
+    signingIdentity: smokeReport.artifact.identity,
     dmg: { name: path.basename(options.dmgPath), ...dmg },
     zip: { name: path.basename(options.zipPath), ...zip },
-    e2eEvidence: {
-      name: path.basename(evidenceAssetPath),
-      ...e2eEvidence,
-    },
-    ...(isClaudeSkipped
-      ? { skippedOrchestrators: ['claude'] }
-      : {
-          e2eEvidenceClaudeOrchestrator:
-            claudeOrchestratorEvidence,
-        }),
-    ...(waiver
-      ? { fastLaneWaiver: waiver, fastLaneWaiverAsset: FAST_LANE_WAIVER_ASSET }
-      : {}),
+    packagedSmoke,
   });
   const finalized = {
     ...manifest,

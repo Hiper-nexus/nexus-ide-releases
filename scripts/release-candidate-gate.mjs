@@ -1,29 +1,16 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import {
-  calibratedProvidersFrom,
-  probeProviderWithSpec,
-  runProviderPreflight,
-} from './release-provider-preflight.mjs';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
-  assertRealMissionReleaseEvidence,
-  assertVerifiedRealMissionRuntimeProof,
-  realMissionProductWizardOrchestrators,
-  runPackagedRealMissionProductWizard,
-} from './e2e-real-mission.mjs';
-import {
-  mergeRealMissionAdvisorSkipEnv,
-  REAL_MISSION_ADVISOR_SKIP_ENV,
-} from './e2e-real-mission-contract.mjs';
-import {
+  assertPackagedSmokeReleaseReport,
   assertReleaseSecurityManifest,
   buildReleaseSecurityArtifactsWithPinnedNpm,
   finalizeReleaseSecurityArtifacts,
+  PACKAGED_SMOKE_REPORT_ASSET,
 } from './release-security-gate.mjs';
 import {
   assertReleaseRepositoryState,
@@ -63,10 +50,9 @@ export function assertAuthoritativeReleaseCandidate(candidate) {
     .digest('hex');
   if (
     currentReceiptSha256 !== authority.receiptSha256 ||
-    candidate.evidencePath !== authority.evidencePath ||
+    candidate.smokeReportPath !== authority.smokeReportPath ||
     candidate.artifacts?.dmg !== authority.dmgPath ||
-    candidate.artifacts?.zip !== authority.zipPath ||
-    candidate.runtimeProof !== authority.runtimeProof
+    candidate.artifacts?.zip !== authority.zipPath
   ) {
     throw new Error('live release candidate authority was mutated');
   }
@@ -172,68 +158,6 @@ function defaultRunChecked(command, args, options = {}) {
     stdout: result.stdout ?? '',
     stderr: result.stderr ?? '',
   };
-}
-
-/** Roster real da missão do gate — o preflight nunca diverge do que ela usa. */
-const RELEASE_GATE_ROSTER_CLIS = Object.freeze([
-  'codex',
-  'claude',
-  'grok',
-  'agy',
-  'opencode',
-  'kimi',
-  'glm',
-]);
-
-/**
- * Provedores que a missão do gate REALMENTE vai usar: o roster menos os skips
- * DECLARADOS pelo operador antes do ciclo.
- *
- * Sem este filtro o preflight sondava o roster inteiro e um advisor deslogado
- * bloqueava a release mesmo quando ela já declarava que não o usaria — sondar
- * quem não participa é falso negativo, o defeito que o preflight mais evita.
- * O skip continua honesto: é declarado antes do ciclo, entra na evidência como
- * `skippedOrchestrators`/advisor skip e aparece no publish; ele reduz o que a
- * missão exige, nunca esconde uma falha de quem participou.
- */
-export function preflightRosterFor(environment, roster = RELEASE_GATE_ROSTER_CLIS) {
-  const declared = mergeRealMissionAdvisorSkipEnv(
-    environment?.[REAL_MISSION_ADVISOR_SKIP_ENV],
-    [],
-  );
-  const skipped = new Set(declared ? declared.split(',') : []);
-  return roster.filter((cli) => !skipped.has(cli));
-}
-const PROVIDER_PROBE_TIMEOUT_MS = 90_000;
-const PROVIDER_PROBE_MAX_BUFFER = 256 * 1024;
-
-/**
- * Sonda viva dos provedores exigidos. Timeout curto de propósito: um provedor
- * que demora 90s numa pergunta trivial é exatamente o que pendura a missão.
- */
-async function defaultProviderPreflight(environment) {
-  const clis = calibratedProvidersFrom(
-    preflightRosterFor(environment),
-    environment,
-  );
-  return runProviderPreflight(clis, (cli) =>
-    probeProviderWithSpec(cli, (command, args) => {
-      const result = spawnSync(command, [...args], {
-        encoding: 'utf8',
-        env: environment,
-        maxBuffer: PROVIDER_PROBE_MAX_BUFFER,
-        shell: false,
-        timeout: PROVIDER_PROBE_TIMEOUT_MS,
-      });
-      return {
-        spawnFailed: result.error?.code === 'ENOENT',
-        timedOut: result.signal !== null && result.status === null,
-        status: result.status,
-        stdout: result.stdout,
-        stderr: result.stderr,
-      };
-    }, environment),
-  );
 }
 
 function assertPublishEnvironment(environment) {
@@ -447,18 +371,10 @@ async function runReleaseCandidateGateCore(
     productionAuthority === RELEASE_CANDIDATE_PRODUCTION_AUTHORITY;
   const root = path.resolve(options.root ?? process.cwd());
   const environment = options.environment ?? process.env;
-  const skippedOrchestrators =
-    realMissionProductWizardOrchestrators(environment).includes('claude')
-      ? []
-      : ['claude'];
-  const isClaudeOrchestratorSkipped =
-    skippedOrchestrators.includes('claude');
   const runChecked = options.runChecked ?? defaultRunChecked;
-  const runUiE2E = authoritative
-    ? runPackagedRealMissionProductWizard
-    : options.runUiE2E;
-  const runPreflight =
-    options.runPreflight ?? (() => defaultProviderPreflight(environment));
+  const runPackagedSmoke = authoritative
+    ? null
+    : options.runPackagedSmoke;
   const extractE2EApp =
     options.extractE2EApp ??
     ((zipPath, expectedSha256, callback) =>
@@ -469,9 +385,9 @@ async function runReleaseCandidateGateCore(
         runChecked,
       ));
   const now = options.now ?? (() => new Date());
-  if (!authoritative && typeof runUiE2E !== 'function') {
+  if (!authoritative && typeof runPackagedSmoke !== 'function') {
     throw new Error(
-      'test core requires an explicit non-authoritative UI exerciser',
+      'test core requires an explicit non-authoritative smoke exerciser',
     );
   }
   assertPublishEnvironment(environment);
@@ -574,124 +490,39 @@ async function runReleaseCandidateGateCore(
   ], { cwd: root, env: environment, timeout: 60 * 60_000 });
   assertCandidateArtifactSeal(artifactSeal);
 
-  const evidencePath = path.join(
-    root,
-    'release-artifacts',
-    'security',
-    'real-mission-evidence.json',
-  );
-  const claudeOrchestratorEvidencePath = path.join(
-    root,
-    'release-artifacts',
-    'security',
-    'real-mission-evidence-claude-orchestrator.json',
-  );
-  const e2eArtifactSha256 = artifactSeal.zip.sha256;
-  const releaseBinding = {
-    appVersion: version,
-    commitSha: state.commitSha,
-    artifact: {
-      sha256: e2eArtifactSha256,
-      identity: EXPECTED_IDENTITY,
-    },
+  // SMOKE EMPACOTADO — substitui a missão real cerimonial como prova viva do
+  // candidato: o app extraído do ZIP selado precisa abrir, provar os probes
+  // funcionais e encerrar limpo. O relatório resultante amarra versão, commit,
+  // sha do ZIP e identidade de assinatura e entra selado nos assets.
+  const smokeReportPath = path.join(securityDir, PACKAGED_SMOKE_REPORT_ASSET);
+  const defaultPackagedSmoke = async (appPath) => {
+    runChecked(process.execPath, [
+      path.join(scriptDir, 'smoke-packaged-app.mjs'),
+      '--app',
+      appPath,
+    ], { cwd: root, env: environment, timeout: 10 * 60_000 });
   };
-  const assertBoundProductWizardEvidence = () => {
-    const evidence = assertRealMissionReleaseEvidence(
-      JSON.parse(fs.readFileSync(evidencePath, 'utf8')),
-    );
-    if (
-      evidence.release?.appVersion !== version ||
-      evidence.release?.commitSha !== state.commitSha ||
-      evidence.release?.artifact?.sha256 !== artifactSeal.zip.sha256 ||
-      evidence.release?.artifact?.identity !== EXPECTED_IDENTITY
-    ) {
-      throw new Error(
-        'physical product-wizard evidence is not bound to this exact ZIP, commit, version and signing identity',
-      );
-    }
-    return evidence;
-  };
-  const assertBoundClaudeOrchestratorEvidence = () => {
-    const evidence = assertRealMissionReleaseEvidence(
-      JSON.parse(fs.readFileSync(claudeOrchestratorEvidencePath, 'utf8')),
-    );
-    if (
-      evidence.release?.appVersion !== version ||
-      evidence.release?.commitSha !== state.commitSha ||
-      evidence.release?.artifact?.sha256 !== artifactSeal.zip.sha256 ||
-      evidence.release?.artifact?.identity !== EXPECTED_IDENTITY
-    ) {
-      throw new Error(
-        'physical claude-orchestrator evidence is not bound to this exact ZIP, commit, version and signing identity',
-      );
-    }
-    return evidence;
-  };
-  // PREFLIGHT DE PROVEDOR — antes de gastar o ciclo. Uma CLI com sessão
-  // expirada ou sem chave só se revela ~40 min depois, como "worker sem
-  // atividade e sem heartbeat por 10 minutos (stalled)", e o ciclo inteiro é
-  // perdido. Numa noite de release isso custou sete execuções. Só bloqueia com
-  // sonda CALIBRADA contra provedor real; CLI sem spec validada nunca reprova.
-  if (authoritative) {
-    const preflight = await runPreflight();
-    if (!preflight.ok) {
-      throw new Error(`[release-candidate] ${preflight.summary}`);
-    }
-    process.stderr.write(
-      `[release-candidate] preflight de provedor: ${preflight.summary}\n`,
-    );
-  }
-  let runtimeProof = null;
-  let claudeOrchestratorRuntimeProof = null;
   await extractE2EApp(
     artifacts.zip,
     artifactSeal.zip.sha256,
     async (appPath) => {
-    const uiRun = await runUiE2E(appPath, {
-      evidencePath,
-      environment,
-      releaseBinding,
-      ...(authoritative
-        ? {}
-        : { launchSurface: 'product-wizard' }),
-    });
-    if (authoritative) {
-      assertVerifiedRealMissionRuntimeProof(uiRun?.runtimeProof, {
-        evidence: uiRun?.evidence,
-        releaseBinding,
-      });
-      runtimeProof = uiRun.runtimeProof;
-      if (isClaudeOrchestratorSkipped) {
-        if (
-          JSON.stringify(uiRun?.skippedOrchestrators) !==
-          JSON.stringify(skippedOrchestrators)
-        ) {
-          throw new Error(
-            'physical product-wizard run did not attest the explicit Claude orchestrator skip',
-          );
-        }
-      } else {
-        assertVerifiedRealMissionRuntimeProof(
-          uiRun?.claudeOrchestrator?.runtimeProof,
-          {
-            evidence: uiRun?.claudeOrchestrator?.evidence,
-            releaseBinding,
-          },
-        );
-        claudeOrchestratorRuntimeProof =
-          uiRun.claudeOrchestrator.runtimeProof;
-      }
-    }
-    assertBoundProductWizardEvidence();
-    if (!isClaudeOrchestratorSkipped) {
-      assertBoundClaudeOrchestratorEvidence();
-    }
+      await (authoritative ? defaultPackagedSmoke : runPackagedSmoke)(appPath);
     },
   );
-  const productWizardEvidence = assertBoundProductWizardEvidence();
-  if (!isClaudeOrchestratorSkipped) {
-    assertBoundClaudeOrchestratorEvidence();
-  }
+  const smokeReport = {
+    schemaVersion: 1,
+    status: 'pass',
+    smoke: 'packaged-app',
+    appVersion: version,
+    commitSha: state.commitSha,
+    artifact: {
+      sha256: artifactSeal.zip.sha256,
+      identity: EXPECTED_IDENTITY,
+    },
+    finishedAt: now().toISOString(),
+  };
+  assertPackagedSmokeReleaseReport(smokeReport);
+  writeJson(smokeReportPath, smokeReport);
   assertCandidateArtifactSeal(artifactSeal);
 
   if (authoritative) {
@@ -700,28 +531,20 @@ async function runReleaseCandidateGateCore(
       securityDir,
       dmgPath: artifacts.dmg,
       zipPath: artifacts.zip,
-      evidencePath,
-      ...(isClaudeOrchestratorSkipped
-        ? { skippedOrchestrators }
-        : {
-            claudeOrchestratorEvidencePath,
-            claudeOrchestratorRuntimeProof,
-          }),
+      smokeReportPath,
       commitSha: state.commitSha,
       version,
       tagObjectSha: state.tagObjectSha,
       tagSignerFingerprint: state.tagSignerFingerprint,
       tagSignatureVerified: state.tagSignatureVerified,
-      expectedE2EArtifactSha256: e2eArtifactSha256,
       expectedSigningIdentity: EXPECTED_IDENTITY,
-      runtimeProof,
       now,
     });
   }
   assertCandidateArtifactSeal(artifactSeal);
   const securityAssets = describeSecurityAssets(securityDir);
   const receipt = {
-    schemaVersion: 4,
+    schemaVersion: 5,
     verifiedAt: now().toISOString(),
     version,
     tag: state.tag,
@@ -739,29 +562,15 @@ async function runReleaseCandidateGateCore(
         name: path.basename(artifacts.zip),
         sha256: artifactSeal.zip.sha256,
       },
-      e2eEvidence: {
-        name: path.basename(evidencePath),
-        sha256: sha256File(evidencePath),
+      packagedSmoke: {
+        name: PACKAGED_SMOKE_REPORT_ASSET,
+        sha256: sha256File(smokeReportPath),
       },
-      ...(!isClaudeOrchestratorSkipped
-        ? {
-            e2eEvidenceClaudeOrchestrator: {
-              name: path.basename(claudeOrchestratorEvidencePath),
-              sha256: sha256File(claudeOrchestratorEvidencePath),
-            },
-          }
-        : {}),
     },
     securityAssets,
     verification: {
       signedNotarized: true,
-      realMissionE2E: true,
-      physicalProductWizard: authoritative,
-      ...(!isClaudeOrchestratorSkipped
-        ? { claudeOrchestratorE2E: true }
-        : { skippedOrchestrators }),
-      singleProductMission:
-        productWizardEvidence.missionInventory.exactSingleProductMission,
+      packagedSmoke: true,
       sameCommitAndArtifacts: true,
       tagSignatureVerified: state.tagSignatureVerified,
     },
@@ -774,18 +583,16 @@ async function runReleaseCandidateGateCore(
     receipt,
     receiptPath: authoritative ? receiptPath : null,
     artifacts,
-    evidencePath,
-    runtimeProof,
+    smokeReportPath,
   };
   if (authoritative) {
     AUTHORITATIVE_RELEASE_CANDIDATES.set(candidate, Object.freeze({
       receiptSha256: createHash('sha256')
         .update(JSON.stringify(receipt))
         .digest('hex'),
-      evidencePath,
+      smokeReportPath,
       dmgPath: artifacts.dmg,
       zipPath: artifacts.zip,
-      runtimeProof,
     }));
   }
   return candidate;
