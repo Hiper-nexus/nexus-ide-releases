@@ -10,8 +10,6 @@ import {
 import { getProjectDomainStores } from './project-domain-store-registry';
 import { getSquad } from './squad-store';
 import { missionEngineForScope } from './mission-engine-registry';
-import { resolveMissionPaneAuthoritySeal } from './mission-pane-authority';
-import type { MissionPaneAuthoritySeal } from '../../shared/orch-types';
 
 /**
  * Via Rápida de missão (2026-08-10) — o motor de execução padrão.
@@ -124,21 +122,6 @@ function orderedRoster(agents: readonly SquadAgent[]): SquadAgent[] {
   );
 }
 
-/** Selo de autoridade do pane — sem ele o grid do renderer recusa a adoção
- * e a equipe trabalha invisível. Falha de resolução nunca bloqueia o spawn. */
-function paneSealFor(
-  scope: ProjectExecutionScope,
-  mission: Mission,
-): MissionPaneAuthoritySeal | null {
-  try {
-    const squad = mission.squadId ? getSquad(mission.squadId) : null;
-    if (!squad) return null;
-    return resolveMissionPaneAuthoritySeal(scope, mission, squad);
-  } catch {
-    return null;
-  }
-}
-
 async function spawnAgentPane(
   scope: ProjectExecutionScope,
   mission: Mission,
@@ -159,7 +142,10 @@ async function spawnAgentPane(
     (role === 'orchestrator' && runtimeHint?.effort) || agent.effort || undefined;
   const accountId =
     role === 'orchestrator' ? runtimeHint?.accountId || undefined : undefined;
-  const authoritySeal = paneSealFor(scope, mission);
+  // Selo NUNCA é passado daqui: o canonicalizador do spawn carimba o selo
+  // "atual" sozinho, e um selo calculado à parte diverge ("stale mission pane
+  // authority") e derruba spawns legítimos. A visibilidade do grid vem do
+  // bypass de adoção para pane main-owned da Via Rápida.
   const spawn = await spawnMainOwnedMissionPaneAsync({
     adapterId,
     ...(model ? { model } : {}),
@@ -175,7 +161,6 @@ async function spawnAgentPane(
     scope,
     executionScope: scope,
     executionMode: 'same_checkout',
-    ...(authoritySeal ? { authoritySeal } : {}),
   });
   if (!spawn.ok || !spawn.paneId || !spawn.sessionId) {
     return {
@@ -198,7 +183,6 @@ async function spawnAgentPane(
     allowedSkills: agent.allowedSkills ? [...agent.allowedSkills] : [],
     readOnly: false,
     executionScope: scope,
-    ...(authoritySeal ? { authoritySeal } : {}),
   });
   if (role === 'orchestrator') {
     stores.missions.setOrchestratorSession(mission.id, spawn.sessionId);
@@ -364,14 +348,22 @@ async function tickRun(run: FastLaneRun): Promise<void> {
   if (mission.status === 'blocked' && mission.intentState) {
     // Algum vigia legado gravou blocked por cima de uma equipe viva (já
     // aconteceu com o exit do Maestro pós-trabalho). A Via Rápida é a dona da
-    // missão: re-assume e segue observando. Se o CAS falhar, o próximo tick
-    // re-lê.
-    const resumed = stores.missions.transitionLifecycle(
-      run.missionId,
-      { updatedAt: mission.updatedAt, intentVersion: mission.intentVersion ?? 0 },
-      { status: 'running', intentState: 'executing' },
-    );
-    if (!resumed) return;
+    // missão: re-assume pelo engine e segue observando.
+    try {
+      missionEngineForScope(run.scope).resumeTechnical(run.scope, {
+        missionId: run.missionId,
+        expectedStatus: mission.status,
+        expectedIntentState: mission.intentState,
+        expectedUpdatedAt: mission.updatedAt,
+        expectedIntentVersion: mission.intentVersion ?? 0,
+        description: mission.description ?? '',
+      });
+    } catch (error) {
+      console.warn(
+        '[fast-lane] re-assumir missão bloqueada falhou (tenta no próximo tick):',
+        error instanceof Error ? error.message : error,
+      );
+    }
     return;
   }
   if (mission.status !== 'running') {
@@ -621,12 +613,22 @@ export async function resumeFastLaneMission(
 
   let live = mission;
   if (mission.status === 'blocked' && mission.intentState) {
-    const resumed = stores.missions.transitionLifecycle(
-      missionId,
-      { updatedAt: mission.updatedAt, intentVersion: mission.intentVersion ?? 0 },
-      { status: 'running', intentState: 'executing' },
-    );
-    if (resumed) live = resumed;
+    try {
+      missionEngineForScope(scope).resumeTechnical(scope, {
+        missionId,
+        expectedStatus: mission.status,
+        expectedIntentState: mission.intentState,
+        expectedUpdatedAt: mission.updatedAt,
+        expectedIntentVersion: mission.intentVersion ?? 0,
+        description: mission.description ?? '',
+      });
+      live = stores.missions.get(missionId) ?? mission;
+    } catch (error) {
+      console.warn(
+        '[fast-lane] transição blocked→running falhou na retomada:',
+        error instanceof Error ? error.message : error,
+      );
+    }
   }
 
   stopFastLaneRun(scope, missionId);
