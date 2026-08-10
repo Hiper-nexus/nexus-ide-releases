@@ -5,6 +5,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import type { McpToolDef } from './mcp-protocol';
 import type { AgentGateContext } from './gate';
+import type { EnrichedCatalogItem } from '../../shared/surface-payload-types';
 import { homeRelativeDirOf, OUTSIDE_HOME_LABEL } from './home-relative-path';
 
 /**
@@ -578,7 +579,10 @@ const skillsInventoryTool: McpToolDef = {
     'machine (Settings → Skills): name, kind, home-relative source directory, ' +
     'size and mtime. Consult BEFORE planning work that assumes a skill ' +
     'exists, and before naming a skill in a squad. Also reports the calling ' +
-    "agent's OWN skill gate (allowlist) — never another agent's. Absolute " +
+    "agent's OWN skill gate (allowlist) — never another agent's. When the " +
+    'enriched arsenal exists, each item carries tier ' +
+    '(scout|builder|reviewer), blurb and whenToUse — ground squad/pipeline ' +
+    'composition in THESE annotations, never in memory. Absolute ' +
     'paths are never returned. Read-only: installing is a separate, ' +
     'explicitly-granted tool.',
   inputSchema: {
@@ -627,6 +631,22 @@ const skillsInventoryTool: McpToolDef = {
         counts: { skill: 0, agent: 0 },
         items: [],
       });
+    }
+
+    // Arsenal enriquecido (harness-enrich): anotação tier/blurb/whenToUse por
+    // item, quando o catálogo anotado existe. Opcional por construção — o
+    // inventário nunca falha nem muda de forma por causa do enriquecimento.
+    let enrichedByKey: ReadonlyMap<string, EnrichedCatalogItem> | null = null;
+    try {
+      const { loadEnrichedCatalog } = await import('./harness-enrich');
+      const enriched = loadEnrichedCatalog();
+      if (enriched && Array.isArray(enriched.items) && enriched.items.length > 0) {
+        enrichedByKey = new Map(
+          enriched.items.map((entry) => [`${entry.kind}:${entry.name}`, entry]),
+        );
+      }
+    } catch {
+      // Sem anotação — inventário segue íntegro.
     }
 
     const counts = {
@@ -680,16 +700,26 @@ const skillsInventoryTool: McpToolDef = {
       // D1: necessidade que não casou com nada devolve o catálogo com
       // matched:false. Busca sem resultado não pode ser pior que não buscar.
       ...(input.need ? { need: input.need, matched: ranking?.matched === true } : {}),
-      items: capped.map((item) => ({
-        name: item.name,
-        kind: item.kind,
-        source: homeRelativeSource(item.file),
-        sizeBytes: item.size,
-        modifiedAt: item.modifiedAt,
-        ...(matchedTermsByName.has(item.name)
-          ? { matchedTerms: matchedTermsByName.get(item.name) }
-          : {}),
-      })),
+      items: capped.map((item) => {
+        const annotation = enrichedByKey?.get(`${item.kind}:${item.name}`);
+        return {
+          name: item.name,
+          kind: item.kind,
+          source: homeRelativeSource(item.file),
+          sizeBytes: item.size,
+          modifiedAt: item.modifiedAt,
+          ...(matchedTermsByName.has(item.name)
+            ? { matchedTerms: matchedTermsByName.get(item.name) }
+            : {}),
+          ...(annotation
+            ? {
+                tier: annotation.tier,
+                blurb: annotation.blurb,
+                ...(annotation.whenToUse ? { whenToUse: annotation.whenToUse } : {}),
+              }
+            : {}),
+        };
+      }),
     });
   },
 };
