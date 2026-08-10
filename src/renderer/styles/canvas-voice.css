@@ -117,6 +117,14 @@
   background: rgba(240, 198, 116, 0.14);
 }
 
+/* Chip textual CODE/CHAT — mesmo chassi dos ctls, largura pelo conteúdo. */
+.voice-hud__ctl--mode {
+  width: auto;
+  padding: 0 6px;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+}
+
 .voice-hud--mini .voice-hud__ctls {
   margin-left: 4px;
   flex-shrink: 0;
