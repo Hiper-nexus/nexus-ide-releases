@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import type { Mission, SquadAgent } from '../../shared/orch-types';
+import type { Mission, Squad, SquadAgent } from '../../shared/orch-types';
 import {
   agentPrompt,
   missionDesignContext,
@@ -32,6 +32,18 @@ function agent(overrides: Partial<SquadAgent> = {}): SquadAgent {
     cli: 'codex',
     ...overrides,
   } as SquadAgent;
+}
+
+function squad(overrides: Partial<Squad> = {}): Squad {
+  return {
+    id: 'squad-1',
+    name: 'Equipe',
+    createdAt: '1',
+    builtin: false,
+    orchestratorInstructions: '',
+    agents: [],
+    ...overrides,
+  } as Squad;
 }
 
 describe('mission fast lane', () => {
@@ -123,5 +135,63 @@ describe('mission fast lane', () => {
       'Catálogo: ~/.design-references',
     );
     expect(prompt).not.toContain('design-references');
+  });
+
+  it('kickoff do orquestrador injeta a doutrina + o playbook do squad', () => {
+    const prompt = agentPrompt(
+      agent({
+        id: 'coord',
+        agentName: 'Coordenar e revisar',
+        category: 'orchestrator',
+      }),
+      mission(),
+      ['Coordenar e revisar', 'Implementar motor'],
+      false,
+      '',
+      squad({
+        orchestratorInstructions: 'Rode os gates verdes antes de fechar a missão.',
+      }),
+    );
+    // doutrina de orquestração
+    expect(prompt).toMatch(/idle/i);
+    expect(prompt).toContain('nexus_pane_spawn');
+    expect(prompt).toContain('same_checkout');
+    // playbook do squad, verbatim
+    expect(prompt).toContain('Rode os gates verdes antes de fechar a missão.');
+  });
+
+  it('kickoff de worker NÃO recebe o bloco de delegação/doutrina', () => {
+    const prompt = agentPrompt(
+      agent(),
+      mission(),
+      ['Coordenar e revisar', 'Implementar motor'],
+      false,
+      '',
+      squad({ orchestratorInstructions: 'Rode os gates verdes.' }),
+    );
+    expect(prompt).not.toContain('nexus_pane_spawn');
+    expect(prompt).not.toContain('same_checkout');
+    expect(prompt).not.toContain('Rode os gates verdes.');
+  });
+
+  it('orquestrador sem orchestratorInstructions (ou sem squad) não quebra', () => {
+    expect(() =>
+      agentPrompt(
+        agent({ id: 'coord', agentName: 'Coord', category: 'orchestrator' }),
+        mission(),
+        [],
+        false,
+        '',
+        squad({ orchestratorInstructions: '' }),
+      ),
+    ).not.toThrow();
+    const prompt = agentPrompt(
+      agent({ id: 'coord', agentName: 'Coord', category: 'orchestrator' }),
+      mission(),
+      [],
+      false,
+    );
+    // sem squad (default null) a doutrina base continua presente
+    expect(prompt).toMatch(/idle/i);
   });
 });

@@ -3,8 +3,9 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { ProjectExecutionScope } from '../../shared/types';
-import type { Mission, SquadAgent } from '../../shared/orch-types';
+import type { Mission, Squad, SquadAgent } from '../../shared/orch-types';
 import { isUiMissionText } from '../../shared/mission-work-kind';
+import { buildOrchestratorDoctrine } from './orchestrator-doctrine';
 import { getSessionState } from '../pty/pty-manager';
 import { deliverAgentPrompt } from './tool-util';
 import { listPaneSnapshots, requestPaneSpawn } from './pane-registry';
@@ -112,6 +113,7 @@ export function agentPrompt(
   teamNames: readonly string[],
   resume: boolean,
   designContext = '',
+  squad: Squad | null = null,
 ): string {
   const objective = mission.description?.trim() || mission.title;
   const others = teamNames.filter((name) => name !== agent.agentName);
@@ -145,6 +147,13 @@ export function agentPrompt(
         .filter(Boolean)
         .join(' ')
     : '';
+  // A doutrina de orquestração (espera dirigida por handoff, delegação fiel,
+  // política de workspace, nota de voz) + o playbook do squad entram SÓ no
+  // prompt da coordenação. Workers têm o worker-handoff-contract; não duplicar.
+  const doctrine =
+    agent.category === 'orchestrator'
+      ? buildOrchestratorDoctrine(squad, mission)
+      : '';
   return [
     header,
     `Objetivo da missão: ${objective}`,
@@ -155,6 +164,7 @@ export function agentPrompt(
     instructions,
     'Quando terminar, escreva uma linha final "PRONTO: <resumo curto>".',
     'Se algo impedir totalmente o trabalho, escreva "BLOQUEADO: <motivo>" em uma linha.',
+    doctrine,
   ]
     .filter(Boolean)
     .join('\n');
@@ -451,6 +461,7 @@ async function tickRun(run: FastLaneRun): Promise<void> {
               run.agents.map((item) => item.agentName),
               false,
               missionDesignContext(run.scope.rootRealPath),
+              squad,
             ),
           );
         }
@@ -481,6 +492,7 @@ async function tickRun(run: FastLaneRun): Promise<void> {
             run.agents.map((item) => item.agentName),
             true,
             missionDesignContext(run.scope.rootRealPath),
+            squad,
           ),
         );
       })();
@@ -612,7 +624,14 @@ export async function fastLaneBootstrap(
   const designContext = missionDesignContext(scope.rootRealPath);
   await Promise.all(
     spawnedPairs.map(async ({ spec, agent }) => {
-      const prompt = agentPrompt(spec, live, teamNames, false, designContext);
+      const prompt = agentPrompt(
+        spec,
+        live,
+        teamNames,
+        false,
+        designContext,
+        squad,
+      );
       const accepted = await deliverPrompt(agent, prompt);
       if (accepted && agent.role === 'orchestrator') {
         recordFastLaneKickoffAcceptance(scope, live, agent.sessionId, prompt);
@@ -739,6 +758,7 @@ export async function resumeFastLaneMission(
             teamNames,
             true,
             missionDesignContext(scope.rootRealPath),
+            squad,
           ),
         );
       }
@@ -758,6 +778,7 @@ export async function resumeFastLaneMission(
         teamNames,
         true,
         missionDesignContext(scope.rootRealPath),
+        squad,
       ),
     );
   }
