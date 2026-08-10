@@ -144,6 +144,16 @@ apagar testes junto → rodar suíte de renderer + main restante.
   Maestro, seal de adoção do grid, mission-driver); a retomada pós-conserto
   volta a missão para `running` e o observador conclui.
 
+### Achados da retomada da frota (medidos ao vivo, corrigir na próxima)
+1. **Nudge não cobre `spawning`**: na retomada de 8 panes, as sessões novas
+   ficaram presas em `spawning` (parsing de estado nunca flipou), a entrega
+   inicial falhou e o nudge — que só dispara em `idle` — nunca re-entregou.
+   Conserto: nudge também para `spawning` velho (>90s) e investigar por que o
+   estado não flipa em pane headless respawnado.
+2. **Cartões do grafo projetam panes VELHOS**: após retomada, os cards mostram
+   "stopped" (linhas antigas de mission_panes) com 8 processos novos vivos —
+   a projeção deve preferir a linha mais recente por agente.
+
 ### Pendência nº 1 da próxima sessão (visual, não motor)
 Os panes da Via Rápida ainda **não são adotados pelo grid do renderer** — a
 missão trabalha e conclui, o painel de Atividade/Fan-out mostra tudo ao vivo,
