@@ -125,6 +125,42 @@
   font-weight: 700;
 }
 
+/* Chip CODE/CHAT da barra superior (paridade Overclock: sempre visível). */
+.product-header {
+  display: flex;
+  align-items: center;
+}
+
+.dictation-mode-chip {
+  appearance: none;
+  margin-left: auto;
+  margin-right: 10px;
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+.dictation-mode-chip:hover {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.dictation-mode-chip--code {
+  color: #f0c674;
+  border-color: rgba(240, 198, 116, 0.7);
+  background: rgba(240, 198, 116, 0.14);
+}
+
 .voice-hud--mini .voice-hud__ctls {
   margin-left: 4px;
   flex-shrink: 0;

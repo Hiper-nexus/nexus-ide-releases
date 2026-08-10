@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useVoiceStore, type VoiceUiStatus } from '../voice/voice-store';
+import { useDictationMode } from '../voice/use-dictation-mode';
 import { anchorFromDrag, hudPositionStyle, isHudMini } from '../voice/hud-prefs';
 import { requestJarvisWake } from '../voice/manual-wake';
 import {
@@ -67,7 +68,6 @@ export function VoiceHud() {
   const liveTool = useVoiceStore((s) => s.liveTool);
   const hud = useVoiceStore((s) => s.hud);
   const responseMuted = useVoiceStore((s) => s.responseMuted);
-  const setInfo = useVoiceStore((s) => s.setInfo);
   const setHudMode = useVoiceStore((s) => s.setHudMode);
   const setHudAnchor = useVoiceStore((s) => s.setHudAnchor);
   const setHudWidth = useVoiceStore((s) => s.setHudWidth);
@@ -81,19 +81,14 @@ export function VoiceHud() {
   );
 
   const liveStatus = liveState?.status ?? 'dormant';
-  // Chip CODE/CHAT no titlebar (paridade Overclock): alterna o modo do ditado
-  // sem abrir as configurações. Persistência otimista via setConfig; em falha,
-  // o info do store fica como está e o chip não mente.
-  const dictationMode = info?.dictationOutputMode ?? 'english';
-  const toggleDictationMode = async () => {
-    const next = dictationMode === 'english' ? 'portuguese' : 'english';
-    try {
-      const updated = await window.nexus.voice.setConfig({ dictationOutputMode: next });
-      setInfo(updated);
-    } catch {
-      // Sem toast aqui: o chip reflete o store — se não salvou, não muda.
-    }
-  };
+  // Chip CODE/CHAT no titlebar (paridade Overclock): mesmo controle do chip da
+  // barra superior — useDictationMode centraliza estado + persistência.
+  const {
+    mode: dictationMode,
+    label: dictationLabel,
+    title: dictationTitle,
+    toggle: toggleDictationMode,
+  } = useDictationMode();
   const wakeBlockedPid = info?.wakeLockHolderPid ?? null;
   const wakeBlocked = info?.wakeWordEnabled === true && wakeBlockedPid !== null;
   const canClickWake = status === 'idle' && info?.enabled === true && !wakeBlocked;
@@ -346,17 +341,13 @@ export function VoiceHud() {
         <span className="voice-hud__ctls">
           <button
             className={`voice-hud__ctl voice-hud__ctl--mode ${dictationMode === 'english' ? 'voice-hud__ctl--active' : ''}`}
-            title={
-              dictationMode === 'english'
-                ? 'Ditado: Code — inglês otimizado p/ execução (clique p/ Chat)'
-                : 'Ditado: Chat — português literal (clique p/ Code)'
-            }
+            title={dictationTitle}
             aria-label="Alternar modo do ditado entre Code e Chat"
             aria-pressed={dictationMode === 'english'}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={() => void toggleDictationMode()}
           >
-            {dictationMode === 'english' ? 'CODE' : 'CHAT'}
+            {dictationLabel}
           </button>
           <button
             className={`voice-hud__ctl ${responseMuted ? 'voice-hud__ctl--active' : ''}`}
