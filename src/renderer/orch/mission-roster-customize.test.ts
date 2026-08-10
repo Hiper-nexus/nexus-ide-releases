@@ -136,6 +136,39 @@ describe('mission-roster-customize', () => {
     expect(result.agent.allowedTools).toEqual(['Bash', 'Read', 'Edit']);
   });
 
+  it('skips a CLI without a declared catalog instead of aborting the whole add', () => {
+    const result = buildCustomRosterAgent({
+      category: 'executor',
+      lane: 'standard',
+      roster: [orch, exec],
+      // Adapter manual do operador: sem catálogo declarado, e primeiro da fila.
+      adapters: [
+        adapter('qoder', { models: { list: [], default: '' } }),
+        adapter('kimi'),
+      ],
+      providers: [provider('qoder'), provider('kimi')],
+      now: 1,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.agent.cli).toBe('kimi');
+  });
+
+  it('still adds a CLI without catalog when it is the only one — modelo é o padrão da ferramenta', () => {
+    const result = buildCustomRosterAgent({
+      category: 'executor',
+      lane: 'standard',
+      roster: [orch, exec],
+      adapters: [adapter('qoder', { models: { list: [], default: '' } })],
+      providers: [provider('qoder')],
+      now: 1,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.agent.cli).toBe('qoder');
+    expect(result.agent.model).toBe('');
+  });
+
   it.each(customRoleLaneCases)(
     'grants a custom $category only the $lane lane tool policy',
     ({ lane, category, allowedTools }) => {

@@ -189,6 +189,15 @@ export function recommendMissionRosterRoles(input: {
 }
 
 
+/** Modelo declarado pelo adapter, ou "" quando o catálogo é da própria CLI. */
+function modelOfAdapter(adapter: AdapterInfo): string {
+  return (
+    adapter.models.default?.trim() ||
+    adapter.models.list.find((m) => m.trim())?.trim() ||
+    ''
+  );
+}
+
 export function listCustomAgentCliCandidates(
   adapters: readonly AdapterInfo[],
   providers: readonly ProviderSettingsInfo[],
@@ -227,8 +236,18 @@ export function buildCustomRosterAgent(input: {
     orchCli,
   );
   const used = new Set(input.roster.map((a) => a.cli));
+  // CLI sem catálogo declarado (adapter manual do operador) continua elegível:
+  // ela entra com "padrão da ferramenta" e o modelo quem escolhe é a própria
+  // CLI no spawn. Antes, a primeira candidata sem catálogo abortava o
+  // "Adicionar papel" inteiro — com 18 CLIs instaladas o operador via
+  // "não há outra ferramenta pronta". Preferimos quem declara modelo, mas
+  // nunca reprovamos quem não declara.
+  const unused = candidates.filter((c) => !used.has(c.id));
+  const preference = [...unused, ...candidates];
   const adapter =
-    candidates.find((c) => !used.has(c.id)) ?? candidates[0] ?? null;
+    preference.find((c) => modelOfAdapter(c).length > 0) ??
+    preference[0] ??
+    null;
   if (!adapter) {
     return {
       ok: false,
@@ -236,16 +255,7 @@ export function buildCustomRosterAgent(input: {
         'Nenhuma CLI instalada disponível para um novo integrante. Conecte um provider em Configurações.',
     };
   }
-  const model =
-    adapter.models.default?.trim() ||
-    adapter.models.list.find((m) => m.trim()) ||
-    '';
-  if (!model) {
-    return {
-      ok: false,
-      error: `A CLI ${adapter.label} não expõe modelos utilizáveis.`,
-    };
-  }
+  const model = modelOfAdapter(adapter);
   const ordinal =
     input.roster.filter((a) => a.category === input.category).length + 1;
   const labels: Record<CustomizableWorkerCategory, string> = {

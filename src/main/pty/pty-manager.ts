@@ -3,6 +3,10 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { WebContents } from "electron";
+import {
+  firstDeclaredModel,
+  interactiveTemplateForModel,
+} from "./agent-model-argv";
 import { ensureUtf8Locale } from "./pty-env-locale";
 import { PTY_CHANNELS } from "../../shared/channels";
 import type { SpawnRequest, PaneSessionState } from "../../shared/types";
@@ -1041,14 +1045,25 @@ export function spawnAgentSession(
   assertExclusiveOrchestratorProcessAvailable(adapter, authority);
   const model = normalizeAgentModel(
     adapter,
-    req.model ?? overrides.defaultModel ?? adapter.models.default,
+    firstDeclaredModel([
+      req.model,
+      overrides.defaultModel,
+      adapter.models.default,
+    ]),
   );
-  const argv = resolvePlaceholders(adapter.spawn.interactive, {
-    MODEL: model,
-    CWD: cwd,
-    SESSION_ID: "",
-    PROMPT: "",
-  }).filter((a) => a.length > 0);
+  const argv = resolvePlaceholders(
+    interactiveTemplateForModel(
+      adapter.spawn.interactive,
+      adapter.models.flag,
+      model,
+    ),
+    {
+      MODEL: model,
+      CWD: cwd,
+      SESSION_ID: "",
+      PROMPT: "",
+    },
+  ).filter((a) => a.length > 0);
 
   // Absolute path only — bare names re-search PATH inside the PTY host, which
   // often has a minimal Finder PATH and misses ~/.kimi-code/bin, Homebrew, etc.
