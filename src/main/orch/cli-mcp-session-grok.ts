@@ -31,6 +31,7 @@ import {
   GROK_STATUS_HOOKS_FILE,
   grokStatusHooksDocument,
 } from './hook-status-config';
+import { grokHubMcpServers } from '../mcp-hub/mcp-hub-spawn';
 
 function governedGrokProjectPolicy(
   cwd: string | undefined,
@@ -175,6 +176,9 @@ export function prepareGrokMcpSession(
           : {}),
         mcp_servers: {
           ...servers,
+          // Hub do workspace: o perfil ambiente do ~/.grok continua zerado no
+          // overlay governado; só o que o operador declarou entra.
+          ...grokHubMcpServers(options.hubServers ?? []),
           [serverName]: {
             url,
             enabled: true,

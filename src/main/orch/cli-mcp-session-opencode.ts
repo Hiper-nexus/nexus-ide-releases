@@ -12,6 +12,7 @@ import type {
   CliMcpSessionResult,
 } from './cli-mcp-session-types';
 import { resolveGovernedCliProfile } from './governed-cli-profile';
+import { openCodeHubMcpServers } from '../mcp-hub/mcp-hub-spawn';
 
 /** OpenCode's official highest-priority runtime config; no token reaches disk. */
 export function prepareOpenCodeMcpSession(
@@ -24,6 +25,9 @@ export function prepareOpenCodeMcpSession(
   const policy = resolveGovernedCliProfile(token, options);
   const content = {
     mcp: {
+      // `--pure` continua desligando todo plugin externo: o que entra aqui é
+      // exclusivamente o que o operador declarou no hub do workspace.
+      ...openCodeHubMcpServers(options.hubServers ?? []),
       [serverName]: {
         type: 'remote',
         url,

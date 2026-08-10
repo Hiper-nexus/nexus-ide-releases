@@ -26,6 +26,7 @@ import {
   stripExecutableProfileConfig,
 } from './governed-cli-profile';
 import { mergeKimiStatusHooks } from './hook-status-config';
+import { claudeFamilyHubMcpServers } from '../mcp-hub/mcp-hub-spawn';
 
 /**
  * Kimi officially resolves MCP from $KIMI_CODE_HOME/mcp.json. The overlay
@@ -89,6 +90,9 @@ export function prepareKimiMcpSession(
         ...source,
         mcpServers: {
           ...servers,
+          // Hub do workspace: entra depois do perfil ambiente (que o overlay
+          // governado já zerou) e antes do `nexus`, que sempre vence.
+          ...claudeFamilyHubMcpServers(options.hubServers ?? []),
           [serverName]: {
             url,
             bearerTokenEnvVar: 'NEXUS_MCP_TOKEN',

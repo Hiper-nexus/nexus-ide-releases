@@ -12,6 +12,13 @@ import {
   purgeStaleAgyMcpConfigs,
   supportsMcpInjection,
 } from "./cli-mcp-inject";
+import {
+  claudeFamilyHubMcpServers,
+  codexHubMcpArgs,
+  grokHubMcpServers,
+  loadMcpHubServersForSpawn,
+  openCodeHubMcpServers,
+} from "../mcp-hub/mcp-hub-spawn";
 
 const tempDirs: string[] = [];
 const preparedTokens: string[] = [];
@@ -385,6 +392,206 @@ describe("prepareAgyMcpConfig", () => {
         path.join(result.geminiHomeDir, "config", "skills", "blocked"),
       ),
     ).toBe(false);
+  });
+});
+
+describe("loadMcpHubServersForSpawn", () => {
+  function workspaceWithHub(hub: unknown): string {
+    const workspace = path.join(makeTempDir(), "workspace");
+    fs.mkdirSync(path.join(workspace, ".nexus"), { recursive: true });
+    fs.writeFileSync(
+      path.join(workspace, ".nexus", "mcp-hub.json"),
+      typeof hub === "string" ? hub : JSON.stringify(hub, null, 2),
+    );
+    return workspace;
+  }
+
+  const stdioServer = {
+    id: "context7",
+    name: "Context7",
+    transport: "stdio",
+    command: "npx",
+    args: ["-y", "@upstash/context7-mcp"],
+    env: { CONTEXT7_MODE: "docs" },
+  };
+  const httpServer = {
+    id: "linear",
+    name: "Linear",
+    transport: "streamable-http",
+    url: "https://mcp.linear.app/mcp",
+    headers: { Authorization: "Bearer hub-linear-secret" },
+  };
+
+  it("materializa stdio e http do hub para Claude e Codex, ao lado do nexus", () => {
+    const workspace = workspaceWithHub({
+      schemaVersion: 1,
+      servers: [httpServer, stdioServer],
+    });
+
+    const servers = loadMcpHubServersForSpawn(workspace);
+    expect(servers.map((s) => s.key)).toEqual(["context7", "linear"]);
+
+    const claude = claudeFamilyHubMcpServers(servers);
+    expect(claude.context7).toEqual({
+      type: "stdio",
+      command: "npx",
+      args: ["-y", "@upstash/context7-mcp"],
+      env: { CONTEXT7_MODE: "docs" },
+    });
+    expect(claude.linear).toEqual({
+      type: "http",
+      url: "https://mcp.linear.app/mcp",
+      headers: { Authorization: "Bearer hub-linear-secret" },
+    });
+
+    const codex = codexHubMcpArgs(servers).join(" ");
+    expect(codex).toContain('mcp_servers.context7.command="npx"');
+    expect(codex).toContain(
+      'mcp_servers.context7.args=["-y","@upstash/context7-mcp"]',
+    );
+    expect(codex).toContain('mcp_servers.context7.env.CONTEXT7_MODE="docs"');
+    expect(codex).toContain(
+      'mcp_servers.linear.url="https://mcp.linear.app/mcp"',
+    );
+
+    const opencode = openCodeHubMcpServers(servers);
+    expect(opencode.context7).toEqual({
+      type: "local",
+      command: ["npx", "-y", "@upstash/context7-mcp"],
+      enabled: true,
+      environment: { CONTEXT7_MODE: "docs" },
+    });
+    expect(opencode.linear).toMatchObject({
+      type: "remote",
+      url: "https://mcp.linear.app/mcp",
+      enabled: true,
+    });
+
+    const grok = grokHubMcpServers(servers);
+    expect(grok.context7).toMatchObject({ command: "npx", enabled: true });
+    expect(grok.linear).toMatchObject({
+      url: "https://mcp.linear.app/mcp",
+      http_headers: { Authorization: "Bearer hub-linear-secret" },
+    });
+  });
+
+  it("hub ausente, vazio ou corrompido degrada para lista vazia", () => {
+    const empty = path.join(makeTempDir(), "no-nexus-dir");
+    fs.mkdirSync(empty, { recursive: true });
+
+    expect(loadMcpHubServersForSpawn(empty)).toEqual([]);
+    expect(loadMcpHubServersForSpawn(undefined)).toEqual([]);
+    expect(loadMcpHubServersForSpawn("relative/path")).toEqual([]);
+    expect(
+      loadMcpHubServersForSpawn(
+        workspaceWithHub({ schemaVersion: 1, servers: [] }),
+      ),
+    ).toEqual([]);
+    expect(
+      loadMcpHubServersForSpawn(workspaceWithHub("{ not json at all")),
+    ).toEqual([]);
+    expect(
+      loadMcpHubServersForSpawn(
+        workspaceWithHub({ schemaVersion: 9, servers: "nope" }),
+      ),
+    ).toEqual([]);
+    // Um único servidor fora do contrato invalida o arquivo inteiro: nunca
+    // inventamos uma leitura parcial de um hub que o schema recusa.
+    expect(
+      loadMcpHubServersForSpawn(
+        workspaceWithHub({
+          schemaVersion: 1,
+          servers: [{ id: "x", name: "x", transport: "carrier-pigeon" }],
+        }),
+      ),
+    ).toEqual([]);
+  });
+
+  it("pula entrada sem command e sem url, e o namespace reservado do nexus", () => {
+    const workspace = workspaceWithHub({
+      schemaVersion: 1,
+      servers: [
+        { id: "ghost", name: "Ghost", transport: "stdio" },
+        { id: "blank-url", name: "Blank", transport: "streamable-http", url: "  " },
+        { id: "nexus", name: "Impostor", transport: "stdio", command: "evil" },
+        { id: "nexus_deadbeef", name: "Impostor 2", transport: "stdio", command: "evil" },
+        stdioServer,
+      ],
+    });
+
+    expect(loadMcpHubServersForSpawn(workspace).map((s) => s.key)).toEqual([
+      "context7",
+    ]);
+  });
+
+  it("nunca escreve ref de cofre, placeholder mascarado ou segredo em argv", () => {
+    const workspace = workspaceWithHub({
+      schemaVersion: 1,
+      servers: [
+        {
+          id: "sealed",
+          name: "Sealed",
+          transport: "streamable-http",
+          url: "https://sealed.example/mcp",
+          headers: {
+            Authorization: "__nexus_vault__:mcphub:abc:sealed:headers:Authorization",
+            "X-Trace": "on",
+          },
+        },
+        {
+          id: "masked",
+          name: "Masked",
+          transport: "stdio",
+          command: "run-it",
+          env: { API_KEY: "[REDACTED]", MODE: "fast" },
+        },
+        {
+          id: "plain",
+          name: "Plain",
+          transport: "stdio",
+          command: "run-it",
+          env: { API_TOKEN: "plain-secret-value", MODE: "fast" },
+        },
+      ],
+    });
+
+    const servers = loadMcpHubServersForSpawn(workspace);
+    const claude = JSON.stringify(claudeFamilyHubMcpServers(servers));
+    expect(claude).not.toContain("__nexus_vault__");
+    expect(claude).not.toContain("[REDACTED]");
+    expect(claude).toContain("plain-secret-value");
+
+    // argv é legível por qualquer processo (`ps`): campo secreto fica de fora.
+    const codex = codexHubMcpArgs(servers).join(" ");
+    expect(codex).not.toContain("plain-secret-value");
+    expect(codex).not.toContain("__nexus_vault__");
+    expect(codex).toContain('mcp_servers.plain.env.MODE="fast"');
+    expect(codex).toContain('mcp_servers.sealed.http_headers.X-Trace="on"');
+  });
+
+  it("é determinístico: ordem estável e primeira entrada vence na colisão", () => {
+    const workspace = workspaceWithHub({
+      schemaVersion: 1,
+      servers: [
+        { id: "zeta", name: "Z", transport: "stdio", command: "z" },
+        { id: "io.github/tool", name: "A", transport: "stdio", command: "first" },
+        { id: "io_github_tool", name: "B", transport: "stdio", command: "second" },
+        { id: "alpha", name: "Al", transport: "stdio", command: "a" },
+      ],
+    });
+
+    const servers = loadMcpHubServersForSpawn(workspace);
+    expect(servers.map((s) => s.key)).toEqual([
+      "alpha",
+      "io_github_tool",
+      "zeta",
+    ]);
+    expect(servers.find((s) => s.key === "io_github_tool")?.command).toBe(
+      "first",
+    );
+    expect(codexHubMcpArgs(servers)).toEqual(
+      codexHubMcpArgs(loadMcpHubServersForSpawn(workspace)),
+    );
   });
 });
 

@@ -2,12 +2,14 @@ import http from "node:http";
 import { createDestructiveReversibilityPreparer } from "./destructive-reversibility-production";
 import { createSystemReversibilityIo } from "./destructive-reversibility-system-io";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { app, dialog } from "electron";
 import type { McpRuntimeInfo, Mission } from "../../shared/orch-types";
 import { hasCurrentApprovedDispatchContract } from "../../shared/mission-intent";
 import { PET_STUDIO_SQUAD_ID } from "../../shared/pet-studio";
 import {
+  getAgentSessionInfo,
   getSessionState,
   orchWriteSession,
   setAgentSpawnHook,
@@ -18,6 +20,7 @@ import {
   type AgentSpawnDecoration,
   type AgentSpawnHook,
 } from "../pty/pty-manager";
+import { FirstRunInterstitialResponder } from "../pty/first-run-interstitial";
 import {
   revalidateSealedAttachmentSnapshots,
   workspaceRootAuthorityFromScope,
@@ -93,6 +96,7 @@ import {
 } from "./hooks-gen";
 import { handleHookStatusHttp } from "./hook-status-endpoint";
 import {
+  getAgentSemanticStatusBySession,
   isSessionInjectableIdle,
   resetAgentStatusOnExit,
 } from "./agent-status";
@@ -113,6 +117,12 @@ import {
   prepareOpenCodeMcpSession,
   purgeStaleCliMcpSessions,
 } from "./cli-mcp-session-config";
+import {
+  claudeFamilyHubMcpServers,
+  codexHubMcpArgs,
+  loadMcpHubServersForSpawn,
+  type McpHubSpawnServer,
+} from "../mcp-hub/mcp-hub-spawn";
 import { ensureSkillsForCli } from "./skill-mirror";
 import {
   isPetStudioNativeWorkspaceAuthority,
@@ -169,6 +179,15 @@ const missionShimBySession = new Map<string, MissionShimRuntime>(); // sessionId
 let disposeTerminationRevocation: (() => void) | null = null;
 let disposePtyMissionControl: (() => void) | null = null;
 const legacyParserTaps = new ReplaceableEventTapScope();
+/**
+ * First-run interstitial responder (workspace trust, data-sharing consent,
+ * migration offers). It shares the operator's kill switch with
+ * `cliPromptAutoResponder`: one switch in Settings › Mission Driver disables
+ * every automatic keypress Nexus can make.
+ */
+const firstRunInterstitialResponder = new FirstRunInterstitialResponder(
+  () => getOrchSettings().cliPromptAutoResponderEnabled,
+);
 
 function disposeMissionShim(runtime: MissionShimRuntime | null): void {
   if (!runtime) return;
@@ -507,9 +526,19 @@ async function handleGateRequest(
   }
 }
 
-function buildMcpConfig(token: string): object {
+/**
+ * Config MCP por sessão da família Claude. Os servidores que o operador
+ * declarou no hub (`.nexus/mcp-hub.json`) entram AQUI, no mesmo arquivo 0600 —
+ * é o que torna `--strict-mcp-config` compatível com "levar as configs de um
+ * pane para outro". `nexus` é escrito por último e nunca pode ser sobrescrito.
+ */
+function buildMcpConfig(
+  token: string,
+  hubServers: readonly McpHubSpawnServer[] = [],
+): object {
   return {
     mcpServers: {
+      ...claudeFamilyHubMcpServers(hubServers),
       nexus: {
         type: "http",
         url: mcpUrl(),
@@ -802,10 +831,16 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
     // Real provider home (~/.kimi-code, ~/.grok) the governed overlay symlinks
     // session/auth state into. The advisory sandbox grants it read+write.
     let advisoryProviderStateHome: string | undefined;
+    // Servidores MCP que o operador declarou explicitamente no hub do
+    // workspace. Única leitura de hub no spawn; nunca lê o config ambiente de
+    // outra ferramenta e nunca falha o spawn (hub quebrado ⇒ lista vazia).
+    const hubServers = loadMcpHubServersForSpawn(
+      authority.scope.rootRealPath,
+    );
     // Delegação VISÍVEL (benchmark §4.5): Claude recebe o hard-deny de Task
     // pelo adapter base, então o bloqueio vale para panes diretos e
     // orquestrados sem duplicar flags aqui.
-    const mcpConfig = buildMcpConfig(ctx.token);
+    const mcpConfig = buildMcpConfig(ctx.token, hubServers);
     const thirdPartyClaudeFamily = isThirdPartyClaudeFamily(
       adapter,
       preparedEnv,
@@ -937,6 +972,10 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
               approveBoundTools: approveBoundCodexTools,
             }),
           );
+          // Servidores do hub pelo MESMO canal `-c` — o strip do ambiente do
+          // ~/.codex real continua valendo; o que o pane ganha é só o que o
+          // operador declarou.
+          extraArgs.push(...codexHubMcpArgs(hubServers));
           // Additive status hooks as per-session -c overrides (emdash wave 1)
           // — same argv-only channel as the MCP injection, zero disk writes.
           extraArgs.push(...codexStatusHookArgs());
@@ -948,12 +987,15 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           // on older codex would break the spawn; unresolved version omits.
           extraArgs.push(...codexHookTrustBypassArgs(adapter.bin));
         } else if (flavor === "opencode") {
-          const prepared = prepareOpenCodeMcpSession(mcpUrl(), ctx.token);
+          const prepared = prepareOpenCodeMcpSession(mcpUrl(), ctx.token, {
+            hubServers,
+          });
           Object.assign(env, prepared.env);
           extraArgs.push(...prepared.extraArgs);
         } else if (flavor === "kimi") {
           const prepared = prepareKimiMcpSession(mcpUrl(), ctx.token, {
             providerHome: preparedEnv?.KIMI_CODE_HOME,
+            hubServers,
           });
           Object.assign(env, prepared.env);
           extraArgs.push(...prepared.extraArgs);
@@ -963,6 +1005,7 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
             providerHome: preparedEnv?.GROK_HOME,
             cwd: authority.cwd,
             workspaceRoot: authority.scope.rootRealPath,
+            hubServers,
           });
           Object.assign(env, prepared.env);
           extraArgs.push(...prepared.extraArgs);
@@ -1093,6 +1136,20 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
       bindTokenToSession(ctx.token, sessionId);
       sessionTokens.set(sessionId, ctx.token);
       cliPromptAutoResponder.bind(sessionId, adapter.id);
+      // First-run interstitials (workspace trust, data-sharing consent,
+      // migration offers): mission panes only, and always against the exact
+      // main-owned cwd this spawn was authorized for — never a path read off
+      // the screen. A pane without a missionId binds anyway but can never be
+      // answered: the operator answers their own terminal's prompts.
+      const spawned = getAgentSessionInfo(sessionId);
+      if (spawned) {
+        firstRunInterstitialResponder.bind(sessionId, {
+          adapterId: spawned.adapterId,
+          ...(spawned.missionId ? { missionId: spawned.missionId } : {}),
+          cwd: spawned.cwd,
+          homeDir: os.homedir(),
+        });
+      }
       if (missionShim) {
         missionShim.bindSession(sessionId);
         missionShimBySession.set(sessionId, missionShim);
@@ -1236,6 +1293,32 @@ function installLegacyParser(
           orchWriteSession(sessionId, response);
         }, 50);
       }
+      // First-run interstitial responder (src/main/pty/first-run-interstitial):
+      // the ONE place it reads PTY output. `isWatching` is the cheap gate — it
+      // is false outside the short post-spawn window and once every screen this
+      // CLI can show has been answered, so no stripAnsi is paid on the hot path.
+      if (firstRunInterstitialResponder.isWatching(sessionId)) {
+        plain ??= stripAnsi(data);
+        const firstRun = firstRunInterstitialResponder.observe(
+          sessionId,
+          plain,
+          {
+            agentWorkObserved:
+              getAgentSemanticStatusBySession(sessionId)?.status === "working",
+          },
+        );
+        if (firstRun) {
+          console.warn(
+            `[first-run] respondendo "${firstRun.pattern}" na sessão ` +
+              `${sessionId} (missão ${
+                firstRunInterstitialResponder.missionOf(sessionId) ?? "?"
+              })`,
+          );
+          setTimeout(() => {
+            orchWriteSession(sessionId, firstRun.answer);
+          }, 50);
+        }
+      }
       if (missionControl.hasChannel(sessionId)) {
         plain ??= stripAnsi(data);
         missionControl.feed(sessionId, plain);
@@ -1259,6 +1342,7 @@ function installLegacyParser(
     }));
     track(tapSessionExit((sessionId) => {
       cliPromptAutoResponder.drop(sessionId);
+      firstRunInterstitialResponder.drop(sessionId);
       parser.dropSession(sessionId);
       dedupe.dropSession(sessionId);
       rawTails.delete(sessionId);
@@ -1378,6 +1462,7 @@ export function stopMcpServer(): void {
   disposeTerminationRevocation = null;
   httpConfirmationScheduler.close();
   cliPromptAutoResponder.clear();
+  firstRunInterstitialResponder.clear();
   disposePtyMissionControl?.();
   disposePtyMissionControl = null;
   for (const token of sessionTokens.values()) {

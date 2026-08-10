@@ -43,6 +43,41 @@ function write(file: string, value: string): void {
   fs.writeFileSync(file, value);
 }
 
+/** Escreve o hub do operador em `<workspace>/.nexus/mcp-hub.json`. */
+function writeHub(workspaceRoot: string, hub: unknown): void {
+  write(
+    path.join(workspaceRoot, '.nexus', 'mcp-hub.json'),
+    typeof hub === 'string' ? hub : JSON.stringify(hub, null, 2),
+  );
+}
+
+/** Lê o config MCP por sessão que o spawn realmente passou no `--mcp-config`. */
+function generatedClaudeMcpServers(
+  decoration: AgentSpawnDecoration,
+): Record<string, Record<string, unknown>> {
+  const index = decoration.extraArgs.indexOf('--mcp-config');
+  if (index < 0) throw new Error('expected a generated --mcp-config');
+  const file = decoration.extraArgs[index + 1]!;
+  const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as {
+    mcpServers: Record<string, Record<string, unknown>>;
+  };
+  return parsed.mcpServers;
+}
+
+const HUB_STDIO_SERVER = {
+  id: 'context7',
+  name: 'Context7',
+  transport: 'stdio',
+  command: 'npx',
+  args: ['-y', '@upstash/context7-mcp'],
+};
+const HUB_HTTP_SERVER = {
+  id: 'linear',
+  name: 'Linear',
+  transport: 'streamable-http',
+  url: 'https://mcp.linear.app/mcp',
+};
+
 function adapter(
   id:
     | 'claude'
@@ -888,6 +923,185 @@ describe('mcp-server governed CLI profile wiring', () => {
 
     decoration.onSpawnFailed?.();
     expect(fs.readFileSync(nativeConfig).equals(originalBytes)).toBe(true);
+  });
+
+  it('carries the workspace MCP hub into the generated per-session config', () => {
+    const root = tempRoot();
+    const home = path.join(root, 'home');
+    const workspace = path.join(root, 'workspace');
+    fs.mkdirSync(workspace, { recursive: true });
+    fs.mkdirSync(home, { recursive: true });
+    const cwd = fs.realpathSync(workspace);
+    vi.stubEnv('HOME', home);
+    writeHub(cwd, {
+      schemaVersion: 1,
+      servers: [HUB_HTTP_SERVER, HUB_STDIO_SERVER],
+    });
+
+    const claude = prepareAgentSpawnDecoration(
+      adapter('claude'),
+      { kind: 'cli-agent', cols: 80, rows: 24 },
+      authority(cwd, true),
+      undefined,
+    );
+    if (!claude) throw new Error('expected Claude mission decoration');
+    const servers = generatedClaudeMcpServers(claude);
+    expect(Object.keys(servers).sort()).toEqual([
+      'context7',
+      'linear',
+      'nexus',
+    ]);
+    expect(servers.context7).toEqual({
+      type: 'stdio',
+      command: 'npx',
+      args: ['-y', '@upstash/context7-mcp'],
+    });
+    expect(servers.linear).toEqual({
+      type: 'http',
+      url: 'https://mcp.linear.app/mcp',
+    });
+    expect(servers.nexus).toMatchObject({ type: 'http' });
+    // O isolamento continua: o hub é conteúdo do config, não uma abertura.
+    expect(claude.extraArgs).toContain('--strict-mcp-config');
+
+    // O overlay governado (HOME efêmero) usa outro caminho de escrita e
+    // precisa carregar o mesmo conteúdo.
+    homePolicyDeps.getOrchSettings.mockReturnValue({
+      squadCliPolicy: 'governed',
+    });
+    const governedClaude = prepareAgentSpawnDecoration(
+      adapter('claude'),
+      { kind: 'cli-agent', cols: 80, rows: 24 },
+      authority(cwd, true),
+      undefined,
+    );
+    if (!governedClaude) throw new Error('expected governed Claude decoration');
+    expect(governedClaude.env.HOME).toBeTruthy();
+    expect(Object.keys(generatedClaudeMcpServers(governedClaude)).sort()).toEqual(
+      ['context7', 'linear', 'nexus'],
+    );
+    expect(governedClaude.extraArgs).toContain('--strict-mcp-config');
+    homePolicyDeps.getOrchSettings.mockReturnValue({
+      squadCliPolicy: 'operator-choice',
+    });
+
+    const codex = prepareAgentSpawnDecoration(
+      adapter('codex'),
+      { kind: 'cli-agent', cols: 80, rows: 24 },
+      authority(cwd, true),
+      undefined,
+    );
+    if (!codex) throw new Error('expected Codex mission decoration');
+    const codexArgs = codex.extraArgs.join(' ');
+    expect(codexArgs).toContain('mcp_servers.context7.command="npx"');
+    expect(codexArgs).toContain(
+      'mcp_servers.context7.args=["-y","@upstash/context7-mcp"]',
+    );
+    expect(codexArgs).toContain(
+      'mcp_servers.linear.url="https://mcp.linear.app/mcp"',
+    );
+    expect(codexArgs).toMatch(/mcp_servers\.nexus_[0-9a-f]{12}\.url=/);
+
+    const opencode = prepareAgentSpawnDecoration(
+      adapter('opencode'),
+      { kind: 'cli-agent', cols: 80, rows: 24 },
+      authority(cwd, true),
+      undefined,
+    );
+    if (!opencode) throw new Error('expected OpenCode mission decoration');
+    const opencodeConfig = JSON.parse(
+      opencode.env.OPENCODE_CONFIG_CONTENT,
+    ) as { mcp: Record<string, unknown> };
+    expect(Object.keys(opencodeConfig.mcp)).toContain('context7');
+    expect(Object.keys(opencodeConfig.mcp)).toContain('linear');
+    expect(opencode.extraArgs).toContain('--pure');
+
+    const kimi = prepareAgentSpawnDecoration(
+      adapter('kimi'),
+      { kind: 'cli-agent', cols: 80, rows: 24 },
+      authority(cwd, true),
+      { KIMI_CODE_HOME: path.join(home, '.kimi-code') },
+    );
+    if (!kimi) throw new Error('expected Kimi mission decoration');
+    expect(
+      fs.readFileSync(path.join(kimi.env.KIMI_CODE_HOME, 'mcp.json'), 'utf8'),
+    ).toContain('@upstash/context7-mcp');
+
+    const grok = prepareAgentSpawnDecoration(
+      adapter('grok'),
+      { kind: 'cli-agent', cols: 80, rows: 24 },
+      authority(cwd, true),
+      { GROK_HOME: path.join(home, '.grok') },
+    );
+    if (!grok) throw new Error('expected Grok mission decoration');
+    expect(
+      fs.readFileSync(path.join(grok.env.GROK_HOME, 'config.toml'), 'utf8'),
+    ).toContain('mcp.linear.app');
+
+    for (const decoration of [
+      claude,
+      governedClaude,
+      codex,
+      opencode,
+      kimi,
+      grok,
+    ]) {
+      decoration.onSpawnFailed?.();
+    }
+  });
+
+  it('degrades an absent, empty or corrupt hub to the pre-hub config', () => {
+    const root = tempRoot();
+    const home = path.join(root, 'home');
+    fs.mkdirSync(home, { recursive: true });
+    vi.stubEnv('HOME', home);
+
+    const workspaces = ['absent', 'empty', 'corrupt', 'unusable'].map(
+      (name) => {
+        const workspace = path.join(root, name);
+        fs.mkdirSync(workspace, { recursive: true });
+        return fs.realpathSync(workspace);
+      },
+    );
+    writeHub(workspaces[1]!, { schemaVersion: 1, servers: [] });
+    writeHub(workspaces[2]!, '{ this is not json');
+    // Sem `command` E sem `url` não há nada a que conectar: entrada ignorada.
+    writeHub(workspaces[3]!, {
+      schemaVersion: 1,
+      servers: [{ id: 'ghost', name: 'Ghost', transport: 'stdio' }],
+    });
+
+    for (const cwd of workspaces) {
+      const claude = prepareAgentSpawnDecoration(
+        adapter('claude'),
+        { kind: 'cli-agent', cols: 80, rows: 24 },
+        authority(cwd, true),
+        undefined,
+      );
+      if (!claude) throw new Error('expected Claude decoration');
+      expect(Object.keys(generatedClaudeMcpServers(claude))).toEqual(['nexus']);
+      expect(claude.extraArgs).toContain('--mcp-config');
+      expect(claude.extraArgs).toContain('--settings');
+      expect(claude.extraArgs).toContain('--strict-mcp-config');
+
+      const codex = prepareAgentSpawnDecoration(
+        adapter('codex'),
+        { kind: 'cli-agent', cols: 80, rows: 24 },
+        authority(cwd, true),
+        undefined,
+      );
+      if (!codex) throw new Error('expected Codex decoration');
+      const declared = new Set(
+        [...codex.extraArgs.join(' ').matchAll(
+          /mcp_servers\.([A-Za-z0-9_-]+)\./g,
+        )].map((match) => match[1]!),
+      );
+      expect(declared.size).toBe(1);
+      expect([...declared][0]).toMatch(/^nexus_[0-9a-f]{12}$/);
+
+      claude.onSpawnFailed?.();
+      codex.onSpawnFailed?.();
+    }
   });
 
   it('preserves the full real profile for a direct pane', () => {

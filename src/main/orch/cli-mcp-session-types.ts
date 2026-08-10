@@ -1,10 +1,17 @@
 import type { GovernedCliProfileOptions } from './governed-cli-profile';
 import type { CodexNativeAuthority } from '../pty/codex-native-authority';
+import type { McpHubSpawnServer } from '../mcp-hub/mcp-hub-spawn';
 
 export interface CliMcpSessionOptions extends GovernedCliProfileOptions {
   home?: string;
   providerHome?: string;
   artifactRoot?: string;
+  /**
+   * Servidores declarados pelo operador no hub do workspace
+   * (`.nexus/mcp-hub.json`), já saneados. Materializados no config por sessão
+   * junto do `nexus` — o isolamento do perfil ambiente continua intacto.
+   */
+  hubServers?: readonly McpHubSpawnServer[];
   /** Trusted main-owned working directory (used to suppress project add-ons). */
   cwd?: string;
   /** Trusted checkout root bounding project discovery suppression. */
