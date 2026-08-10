@@ -1,215 +1,137 @@
-# Handoff — Nexus IDE
+# Handoff — Nexus IDE · Via Rápida de Missão
 
-Branch `security/p0h1-mission-projection-hardening` · último commit `51872948`
-258 arquivos modificados + 34 novos, **nada commitado**.
-
----
-
-## 1. Onde parou
-
-A missão **ainda não roda de ponta a ponta**: o coordenador é reprovado no passo
-Equipe. Quatro hipóteses foram medidas e descartadas — **a causa continua em
-aberto** e não há conserto pronto para aplicar. Detalhe na seção 3.
+Branch `claude/mission-projection-hardening-f08ee5` (contém todo o trabalho anterior de
+`security/p0h1-mission-projection-hardening` via fast-forward).
 
 ---
 
-## 2. Feito nesta rodada (com prova)
+## 1. O que mudou nesta sessão (2026-08-10)
 
-### 2.1 Motor de missão — a missão agora fecha sozinha
-**Problema:** trabalho 100% concluído e a missão ficava `running` para sempre.
-O driver decidia `wait` com o motivo `terminal completion is verifier-owned`,
-esperando um selo que nunca vinha.
+### 1.1 Decisão de arquitetura: motor de execução novo (Via Rápida)
 
-**Conserto:** `DriveAction` ganhou `complete`; os três portões (`workProven`,
-`workDoneUnproven`, `allStepsDone`) agora **fecham** em vez de bloquear;
-`completeMission` implementado sobre `MissionEngine.completeVerified`.
+O pipeline cerimonial (plano selado → claim → kickoff ping-pong → receipts →
+merge queue → autoridade de conclusão) foi **substituído como caminho padrão**
+por um motor de ~600 linhas: [mission-fast-lane.ts](src/main/orch/mission-fast-lane.ts).
 
-| Arquivo | Mudança |
-|---|---|
-| `src/main/orch/mission-drive.ts` | `DriveAction.complete` + 3 portões abertos |
-| `src/main/orch/mission-driver-apply.ts` | `case 'complete'` → `completeMission` |
-| `src/main/orch/mission-driver-io.ts` | porta `completeMission` sobre `completeVerified` |
-| `src/main/orch/mission-completion-invariant.test.ts` | 4 invariantes reescritos |
+Modelo Overclock/BridgeMind:
 
-**Prova:** 107/107 testes do motor verdes · typecheck limpo.
-Driver confirmado em `active` por padrão (`missionDriverActiveMode: default(true)`).
+1. `Iniciar missão` → **um terminal interativo por agente**, direto no
+   workspace (`same_checkout`), com prompt curto de objetivo.
+2. Agentes trabalham contínuo no próprio PTY — sem "uma ação por turno,
+   processo morre, espera despacho" (o padrão antigo custava ~54s e 4.6k
+   tokens POR AÇÃO do coordenador).
+3. Conclusão **observada**: todo agente trabalhou (`busy`) e assentou
+   (`idle`/saiu) ⇒ `done/done` via `MissionEngine.completeVerified`.
+4. Pane que morre antes de trabalhar: respawn 1×. Prompt perdido no boot da
+   TUI: nudge 1× após 90s. Silêncio total prolongado: bloqueio VISÍVEL com
+   Retomar (nunca trava muda).
+5. Retomada (`Retomar`/retry) **adota panes vivos** (nunca duplica — a família
+   de auth exclusiva do claude recusa 2º coordenador) e religa os mortos.
 
-### 2.2 Paralelismo — largada de 4 terminais, teto de 7
-**Problema:** missão abria com 2 terminais e subia para 3. O gargalo era o
-roster recomendado de 3 papéis, não a máquina.
+O motor antigo continua atrás de `NEXUS_CEREMONIAL_MISSIONS=1` **até a
+varredura de remoção** (seção 4).
 
-| Arquivo | Mudança |
-|---|---|
-| `src/main/orch/mission-scheduler.ts` | `DEFAULT_ADAPTIVE_CAP.currentCap` 2 → 4 |
-| `src/renderer/components/mission/TeamStep.tsx` | presets **3 Enxuta / 5 Padrão / 8 Força total** |
-| `src/renderer/styles/mission-setup.css` | cards de preset |
+### 1.2 Gates removidos (doutrina fluxo-por-padrão)
 
-Nesta máquina (10 núcleos): `paneBudget 14`, `cores-2 = 8`, roster 8 →
-**7 terminais em paralelo**, largando com 4.
-Os limites reais continuam intactos — nada fura hardware nem orçamento de panes.
-
-**Prova:** 149/149 testes de missão · 18/18 da escada · verificado na tela.
-
-### 2.3 Paridade visual com o Bridge (7 superfícies)
-Missão, Equipe, Revisar, Board, Quadro, Memória, Configurações.
-- Board com barra de direção; Quadro virou **kanban por status**
-  (`A FAZER / EM ANDAMENTO / CONCLUÍDA`) com acento por coluna.
-- Memória: criado `memory-note-readable.ts` — remove scaffolding YAML/HTML e
-  UUIDs de 36 chars que vazavam para a tela.
-- **Badge de ícone no cabeçalho** das 3 superfícies que compartilham
-  `product-workspace__header` (Memória `file`, Quadro `board`, Terminal `terminal`).
-
-**Prova:** 264 arquivos / 1876 testes de renderer verdes · comparação lado a
-lado em `/tmp/nexus-vs-bridge-full.png`.
-
-### 2.4 Botão "Abrir contexto" — parou de roubar o clique do X
-**Problema (reportado com print):** a pílula flutuava em `right:8px; top:48px`,
-exatamente sobre a barra de ações do pane (`Ampliar · À direita · Abaixo · ✕ Fechar`).
-
-**Conserto:** virou **aba estreita na borda direita**, centro vertical — a única
-faixa livre (o topo é do pane, o rodapé é do HUD de voz). 18px de largura,
-ícone `chevron` girado 180° apontando para de onde o painel surge.
-
-| Arquivo | Mudança |
-|---|---|
-| `src/renderer/components/ContextualPanel.tsx` | texto → ícone |
-| `src/renderer/styles/product-wave.css` | `right:0; top:50%; translateY(-50%)`; raio `8px 0 0 8px` |
-
-**Prova:** 5/5 testes · typecheck limpo · **verificado na tela** (`/tmp/fix-01.png`):
-barra de ações totalmente livre.
-
-### 2.5 Readiness — CLI de assinatura própria deixou de ser reprovada
-`isAdapterModelAuthenticated` exigia o modelo dentro de `authReadyModels`.
-Lista **vazia** não é "nada autorizado" — é ausência de informação, que é
-exatamente o que uma CLI de assinatura própria produz.
-
-`src/renderer/orch/mission-runtime-readiness.ts`:
-- lista **não vazia** → continua autoritativa (granularidade por modelo preservada);
-- lista **vazia** → aceita `authStrategy` `subscription` / `credentialless`.
-
-**Prova:** 10/10, incluindo o caso negativo — `login-needed` sem conta **continua recusado**.
-
-### 2.6 Auditoria honesta das 15 flags
-14 portam comportamento real (`requireFlag` derruba o handler IPC).
-**1 está morta:** `feature.autonomy.profiles` — zero consumidores no renderer,
-só o próprio teste de default. Ligar não muda nada visível.
-
----
-
-## 3. Bloqueio atual — causa **ainda em aberto**
-
-**Sintoma:** no passo Equipe o coordenador aparece com
-*"Precisa de ajuste — A ferramenta escolhida não está pronta para este papel"*.
-A missão não começa.
-
-**Não é o CLI.** Medido nesta máquina:
-
-```
-claude --version               2.1.226
-claude --model claude-sonnet-5 responde OK
-```
-
-**A cadeia real, medida com sonda (`/tmp/auth-probe.mts`):**
-
-```
-keychain (sync)              = true    credencial EXISTE
-detect file-only             = false   não há arquivo
-detect com keychain          = true    detecção completa APROVA
-hasSubscriptionAuthForStatus = false   o caminho que a UI usa REPROVA
-```
-
-O Claude Code guarda a credencial **no Keychain do macOS**
-(`security find-generic-password -s "Claude Code-credentials"`), sem arquivo.
-`hasSubscriptionAuthForStatus` olha **só arquivo**, de propósito — a consulta ao
-keychain custa **346 ms medidos** por chamada e travaria o event loop do Electron
-a cada snapshot. Há teste protegendo isso
-(*"warms a Keychain-only Claude status asynchronously without poisoning the cold cache"*).
-**Tentei encurtar o prazo para 400ms e revertei** — o custo é real e o teste está certo.
-
-**Onde a investigação parou — e uma correção honesta:**
-`provider-config-store.ts:1331` dispara o aquecimento assíncrono no
-`providers.list` e **re-transmite** quando o cache esquenta. Existe um store
-vivo que escuta (`provider-store.ts:62`, montado em `App.tsx:249`).
-
-> **Errei numa versão anterior deste documento.** Escrevi que a wizard não
-> ouvia esse aviso e que faltava um conserto de ~3 linhas. **Não falta.**
-> `MissionSetup.tsx:222` já lê `useProviderStore` e `MissionSetup.tsx:348-368`
-> já recomputa `missionRuntimeReadiness` sempre que `liveProviders` muda.
-> A ligação está feita. **Não escreva esse código de novo.**
-
-Ou seja: a causa do veredito *"não está pronta"* **continua em aberto**. O que
-já está descartado, com medição:
-
-| Hipótese | Veredito |
-|---|---|
-| CLI quebrada ou deslogada | **descartada** — `claude --model claude-sonnet-5` responde OK |
-| Modelo fora de `authReadyModels` | **descartada** — corrigido na seção 2.5, 10/10 |
-| Wizard não escuta mudança de provider | **descartada** — ligação já existe |
-| Sonda de keychain no caminho de status | **descartada como conserto** — 346 ms medidos, há teste protegendo |
-
-### Próximo passo de diagnóstico (não de código)
-
-Falta observar o que o app **realmente** projeta em runtime. Duas suspeitas
-ainda não medidas:
-
-1. `security` pode ser negado dentro do Electron (TCC), embora funcione no
-   terminal — aí `refreshClaudeSubscriptionAuthCache` nunca vira `true`.
-2. `claude` pode estar caindo fora de `verifiedMaestros` por
-   `missionControlCapable !== true`, e não por autenticação
-   (`mission-runtime-readiness.ts`, filtro sob política `operator-choice`).
-
-Sonda pronta e reutilizável: **`/tmp/auth-probe.mts`**
-(`node --import tsx /tmp/auth-probe.mts`). Ela já imprime os quatro valores
-citados acima. Falta o equivalente **dentro do Electron** — um log pontual em
-`provider-config-store` na hora de montar o snapshot resolve, ou reativar o
-DevTools remoto (o `DevToolsActivePort` diz `9222`, mas o endpoint HTTP estava
-mudo nesta sessão).
-
----
-
-## 4. Pendente
-
-| # | Item | Estado |
+| Onde | Antes | Agora |
 |---|---|---|
-| 1 | **Achar por que o coordenador é reprovado** | causa **não identificada**; hipóteses já descartadas na seção 3. Bloqueia todo o resto |
-| 2 | **Rodar missão de PRD ponta a ponta** | repo de teste criado em `/tmp/nexus-prd-lab`; bloqueado pelo item 1 |
-| 3 | `feature.autonomy.profiles` morta | decidir: ligar na UI ou remover do Labs. Começado, interrompido |
-| 4 | Gate completo pós-edições | último: **11270/11271** — a única falha (`cron-routes`) passa isolada 18/18, é pressão de CPU do PostgreSQL-WASM sob 4 workers |
-| 5 | Commit / push / release | 258+34 arquivos soltos; versão já subida `0.28.1 → 0.30.0` em `package.json`, lock e `server/`; **nada empurrado**, sem upstream |
+| [mission-runtime-readiness.ts](src/renderer/orch/mission-runtime-readiness.ts) | auth/modelo/conta reprovavam coordenador ("não está pronta") | instalada + não desligada = participa; capacidade ORDENA, não filtra |
+| [TeamStep.tsx](src/renderer/components/mission/TeamStep.tsx) | loop de auth por agente bloqueava "Continuar" | só forma (schema, 1 coordenação) + ferramenta instalada; resto vira dica no cartão |
+| [squad-runtime-policy.ts](src/main/orch/squad-runtime-policy.ts) `assessStandardSquadReadiness` | maestro-unavailable/claude-worker/executor-unavailable/reviewer-unavailable no approve | só `maestro-count` (exatamente 1) |
+| [squad-runtime-inventory.ts](src/main/orch/squad-runtime-inventory.ts) | inventário escondia CLI sem rota/auth (`squad_missing`) | toda cli-pty instalada participa |
+| [mission-snapshot.ts](src/main/orch/mission-snapshot.ts) | tripé autoridade+recibo+liveness projetava "Precisa de reparo" sobre missão viva | running É running (Via Rápida) |
+| [mission-orchestrator-bootstrap.ts](src/main/orch/mission-orchestrator-bootstrap.ts) | reconciler/recovery cerimonial re-kickoffava por cima da equipe viva (kickoff-timeout eterno sem hooks) | varreduras desligadas sob Via Rápida; Retomar → `resumeFastLaneMission` |
 
-### Sobre o item 4 — atenção ao rodar testes
-Se aparecerem ~430 falhas de uma vez, **não é regressão**: é ABI.
-O app rodando recompila `better-sqlite3` para Electron (`NODE_MODULE_VERSION 148`)
-e o vitest precisa de Node (`127`).
+### 1.3 Prova end-to-end (real, nesta máquina, build dev)
 
-```bash
-# pare o app antes
-npm run rebuild:node
-```
+Missão: "Leia brief.txt e escreva a primeira frase em resumo.txt" em
+`/tmp/autopilot-lab/proj`, equipe recomendada de 4 (claude coordenação, agy +
+codex execução, revisor).
+
+- Wizard 3 passos → Iniciar: **sem nenhuma reprova de readiness** (o cartão
+  que dizia "Precisa de ajuste" agora diz "Pronto").
+- 4 terminais interativos abriram; a equipe trabalhou; `resumo.txt` criado com
+  o conteúdo exato **e commitado pela própria equipe** ("Create resumo.txt
+  with first sentence of brief.txt").
+- Missão fechou sozinha: `done/done` + result no banco.
+- Kickoff aceito **sem os hooks de status** (o diálogo de primeiro boot que
+  pedia para editar `~/.claude/settings.json` é desnecessário para missão).
+- Duração ~5-6 min (maior parte = boot das CLIs), contra 32 min do gate
+  cerimonial.
+
+Segunda rodada ("Prova definitiva") no build com o pacote anti-briga validou:
+projeção `running` limpa (sem "Precisa de reparo") — resultado final na seção 5.
 
 ---
 
-## 5. Como retomar
+## 2. Aprendizados operacionais da sessão
+
+1. **Dois motores não podem disputar a mesma missão.** O reconciler antigo
+   via "running sem recibo", re-kickoffava, estourava `kickoff-timeout` (a
+   confirmação de turno dependia dos hooks recusados) e gravava blocked por
+   cima da equipe viva. Qualquer motor novo precisa desligar as varreduras do
+   velho.
+2. **`workspace.open` programático é gate**: "workspace path was not
+   authorized by the folder picker". O picker nativo funciona via
+   Cmd+Shift+G (osascript). Relaxar depois para caminhos do usuário com
+   auditoria.
+3. O campo "Pasta do projeto" do wizard aceita digitação mas quem manda é o
+   workspace ativo — digitar não troca. Ou vira read-only com botão, ou passa
+   a trocar de verdade.
+4. Preset "Enxuta 3" gera equipe sem revisor e a regra de forma exige revisor
+   → beco. Ou o preset compõe com revisor, ou a exigência vira advisory.
+5. Cartões do grafo mostram "Na fila" para agentes vivos da Via Rápida (o
+   mapeamento de estado dos cards lê dispatches, que não existem mais).
+   Cosmético; mapear estado do pane → card.
+6. agy falhou spawn em caminhos de retomada mais de uma vez (histórico de
+   keychain/TCC). O respawn 1× + equipe cobre, mas vale investigação própria.
+7. Recents do rail aparecem de perfis anteriores mesmo com userData novo
+   (fonte compartilhada — provavelmente `~/.nexus`). Inofensivo; auditar.
+
+---
+
+## 3. Como rodar
 
 ```bash
-cd /Users/cleofasrocha/dev/nexus-ide
-
-# 1. diagnosticar o item 1 — NÃO há conserto pronto para aplicar
-
-# 2. validar o alvo
-npx vitest run src/renderer/components/mission
-npx tsc --noEmit -p tsconfig.json
-
-# 3. subir o app e provar na tela
-#    (perfil de dev: .dev-user-data-v2-live-fix)
-NEXUS_USER_DATA_DIR=.dev-user-data-v2-live-fix npm run start
-
-# 4. gate completo, com o app PARADO
-npm run rebuild:node && npm test
+NEXUS_USER_DATA_DIR=.dev-user-data-autopilot NEXUS_REMOTE_DEBUG=9222 NEXUS_DEV_NO_VAULT=1 npm run start
 ```
 
-### Decisões de release ainda em aberto
-1. **Destino** — merge/PR para `main`, ou empurrar a branch `security/p0h1-...`?
-2. **Versão** — `0.30.0` já está escrita nos arquivos. Confirmar ou reverter.
-3. **Escopo do commit** — um único commit grande, ou separado em blocos lógicos
-   (UI Bridge · motor+GLM · robustez e testes)? Recomendo separado: fica revisável.
+- Motor antigo (se precisar comparar): `NEXUS_CEREMONIAL_MISSIONS=1`.
+- Driver CDP do e2e ao vivo: scratchpad `cdp.mjs` (targets/eval/shot) +
+  `pick-folder.applescript` para o picker nativo.
+
+---
+
+## 4. Varredura de remoção (próxima sessão) — código órfão do motor antigo
+
+Com a Via Rápida como único caminho, perdem o último caller REAL (fora o env
+de escape) e devem ser REMOVIDOS na varredura, com seus testes:
+
+- `mission-orchestrator-bootstrap.ts`: `MissionOrchestratorBootstrapService`
+  inteiro (bootstrap cerimonial, kickoff machine, recovery/reconciler,
+  retirement) — mantém só: fábrica de ports do engine, `deliverMissionDirectInstruction`,
+  projeção de snapshot, e os helpers que a Via Rápida usa.
+- `mission-kickoff.ts` + `mission-kickoff-proof-ledger.ts` (o recibo pode
+  virar interno da Via Rápida ou sair com a projeção simplificada).
+- `guided-mission-planner.ts`, `mission-task-plan-authority.ts`,
+  `guided-mission-prevc.ts`, `mission-freeze-authority.ts`,
+  `guided-prevc-mcp-fence.ts`, `plan-promotion-authority.ts`,
+  `promoted-plan-git-authority.ts`, `prevc-merge-preparation.ts`,
+  `prevc-autopilot-coordinator.ts`.
+- `mission-scheduler*.ts` (decide/runtime/production/dispatch-transaction/
+  authority/guided-finalization), `task-dispatch-*.ts` (store/claim/lifecycle/
+  handoff/quality-receipt/physical-git/physical-handoff/sealed-plan/
+  mission-completion-authority), `merge-queue*.ts` + watchdogs.
+- `mission-driver-*` (o observador da Via Rápida cumpre o papel; avaliar
+  manter só stall-visibility).
+- Shims de e2e no produto: `real-mission-e2e-*.ts` (main/preload) e o gate de
+  45 min — trocar por um smoke da Via Rápida (abrir app → missão trivial →
+  done < 5 min).
+- `orchestration-coordinator.ts`: retirar participantes scheduler/driver.
+
+Sequência sugerida: desconectar imports → `npm run typecheck` guia a poda →
+apagar testes junto → rodar suíte de renderer + main restante.
+
+## 5. Estado do e2e definitivo
+
+(preencher com o resultado do vigia — `resumo.txt` + `done/done`)
