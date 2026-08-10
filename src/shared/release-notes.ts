@@ -13,74 +13,66 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.28.1',
-  date: '2026-08-07',
-  codename: 'Bridge por fora, Nexus por dentro',
+  version: '0.30.0',
+  date: '2026-08-10',
+  codename: 'Via Rápida: missão que começa e termina',
   summary:
-    'A orquestração robusta do Nexus ganhou uma camada simples de operar e ' +
-    'diagnosticar: cada missão tem um espelho legível em disco, workers ' +
-    'recebem comandos nx-* independentes do MCP, Markdown pode alimentar a ' +
-    'memória com autoridade validada e o histórico do terminal aprende com ' +
-    'frequência, sucesso e recência. Gates degradados agora preservam causa, ' +
-    'prova e autoridade em vez de esconder o ponto de parada.',
+    'O motor de execução de missão foi substituído: Iniciar missão abre um ' +
+    'terminal interativo por agente direto no workspace, com prompt curto, e ' +
+    'a conclusão é observada — a equipe trabalha, assenta e a missão fecha ' +
+    'sozinha. Missão real medida em ~90 segundos (antes: 32 minutos de ' +
+    'cerimônia). O pipeline antigo foi removido por inteiro: −111 mil linhas.',
   highlights: [
     {
-      title: 'Missão legível fora do banco',
+      title: 'Missão termina sozinha',
       detail:
-        'BOARD.md, status.json e events.jsonl projetam o journal canônico em ' +
-        'disco com escrita atômica, permissões restritas, redação de dados ' +
-        'sensíveis e recusa de symlink ou escape de diretório.',
+        'Conclusão observada e honesta: todos os agentes trabalharam e ' +
+        'assentaram ⇒ Concluída. Agente que morre sem executar nunca vira ' +
+        'done falso — a missão bloqueia visível com Retomar.',
     },
     {
-      title: 'Comandos nx-* em qualquer worker',
+      title: 'Prontidão deixou de ser gate',
       detail:
-        'nx-mail, nx-task e nx-notify entram no PATH com capability por ' +
-        'missão. A entrega chega ao mesmo journal e às mesmas validações de ' +
-        'autoridade mesmo quando hook ou transporte MCP falha.',
+        'CLI instalada participa como coordenação e execução. Login é ' +
+        'conversa do terminal do agente; o passo Equipe não reprova mais ' +
+        'ferramenta logada e nenhum hook externo é necessário.',
     },
     {
-      title: 'Markdown entra na memória com prova',
+      title: 'Terminais reais, operador no comando',
       detail:
-        'Arquivos editados pelo usuário passam por ingestão segura, dedupe e ' +
-        'indexação FTS. A identidade da missão é atribuída pelo processo ' +
-        'principal e não pode ser escolhida ou forjada pelo chamador.',
+        'A equipe aparece no grid como panes de verdade: clique e digite ' +
+        'direto no agente, no meio ou no fim da missão. Ferramenta, modelo ' +
+        '(campo livre) e esforço personalizáveis em cada papel.',
     },
     {
-      title: 'Terminal que aprende sem vazar segredo',
+      title: 'Frotas paralelas de verdade',
       detail:
-        'O command refinery transforma os blocos OSC 133 em sugestões ' +
-        'ranqueadas por contexto, frequência, sucesso e recência, com decay ' +
-        'e dismiss; comandos são redigidos antes de persistir ou sugerir.',
+        'Força total abre 8 terminais de até 6 providers diferentes que se ' +
+        'auto-dividem pelas stories do objetivo. Missões de interface ' +
+        'recebem o design system do projeto e o catálogo do operador.',
     },
   ],
   fixes: [
     {
-      title: 'Bloqueio sem causa no gate',
+      title: 'Fim dos vigias que travavam missão viva',
       detail:
-        'O observer usa a mesma taxonomia de bloqueios do domínio e grava ' +
-        'reason/detail na evidência; mission-blocked deixa de aparecer como ' +
-        'reason=none quando a causa já existe no estado da missão.',
+        'Reconciler, exit-watchdog do Maestro, driver cerimonial e o selo de ' +
+        'adoção do grid re-bloqueavam equipes trabalhando. Todos removidos ' +
+        'com o motor antigo.',
     },
     {
-      title: 'Degradação sem furar autoridade',
+      title: 'Retomar adota panes vivos',
       detail:
-        'Falhas de inbox, PREVC e dispatch ganham caminhos explícitos de ' +
-        'degradação, mantendo receipts, fences e ownership em vez de avançar ' +
-        'por um atalho sem prova.',
+        'A retomada religa a equipe reaproveitando sessões vivas em vez de ' +
+        'duplicar coordenador de auth exclusiva, e re-entrega o prompt a ' +
+        'quem ainda não trabalhou.',
     },
     {
-      title: 'Ações operacionais que agora executam',
+      title: 'Release validada pelo smoke',
       detail:
-        'Pergunta pendente só aparece em missão viva, Arquivar chama a ação ' +
-        'real, o CTA de conexão abre o destino correto e atalhos ficam num ' +
-        'contrato único para a interface inteira.',
-    },
-    {
-      title: 'Overlays acima do workspace',
-      detail:
-        'Handoff, atualização e notificações usam uma camada própria fora do ' +
-        'grid, com z-index semântico e motion conforme o DESIGN.md; nenhum ' +
-        'modal fica preso sob a WorkspaceBar.',
+        'O gate de release passou a ser a prova que importa: o app abre, ' +
+        'roda uma missão trivial e a conclui com artefato correto em ' +
+        'minutos.',
     },
   ],
 };
