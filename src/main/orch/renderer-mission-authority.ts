@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { WebContents } from "electron";
+import { missionFastLaneEnabled } from "./mission-fast-lane";
 import {
   classifyGoalRisk,
   defaultBudgetsForRisk,
@@ -1283,6 +1284,10 @@ export class RendererMissionAuthority {
     ) {
       return false;
     }
+    // Via Rápida: pane gravado pelo main, escopo conferido acima — sem selo
+    // gravado não há o que comparar, e recusar aqui deixava a equipe inteira
+    // trabalhando INVISÍVEL ("nenhum pane foi aberto ainda" com 8 CLIs vivas).
+    if (missionFastLaneEnabled() && !spec.authoritySeal) return true;
     const squad = mission.squadId ? this.#resolveSquad(mission.squadId) : null;
     if (!squad) return false;
     const currentSeal = resolveMissionPaneAuthoritySeal(

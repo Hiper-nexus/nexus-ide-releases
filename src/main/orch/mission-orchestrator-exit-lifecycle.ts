@@ -17,6 +17,7 @@ import {
   requireProjectDomainStoreRegistry,
 } from './project-domain-store-registry';
 import { sameProjectScope } from './project-scoped-broadcast';
+import { missionFastLaneEnabled } from './mission-fast-lane';
 import type {
   OrchestratorPreDispatchExitInput,
   ScopedMissionStore,
@@ -250,6 +251,12 @@ export function handleMissionOrchestratorSessionExit(
   authority: OwnedAgentSessionInfo | null,
   deps: MissionOrchestratorExitLifecycleDeps = productionDeps,
 ): boolean {
+  // Via Rápida: "zero dispatches" é conceito do motor cerimonial — a equipe
+  // trabalha sem fila de dispatch, e o Maestro sair depois de fazer a parte
+  // dele é FIM NORMAL de turno, não morte pré-delegação. Este bloqueio gravou
+  // blocked_technical por cima de uma frota viva com o site inteiro entregue.
+  // O observador da Via Rápida é quem trata pane morto (respawn/assentado).
+  if (missionFastLaneEnabled()) return false;
   if (
     !authority ||
     authority.role !== 'orchestrator' ||
@@ -304,6 +311,7 @@ export function handleMissionOrchestratorSessionExit(
 export function reconcileMissionOrchestratorExits(
   deps: MissionOrchestratorExitLifecycleDeps = productionDeps,
 ): boolean {
+  if (missionFastLaneEnabled()) return true;
   let complete = true;
   const attempted = new Set<string>();
   for (const [key, pending] of [...pendingExitTombstones]) {
