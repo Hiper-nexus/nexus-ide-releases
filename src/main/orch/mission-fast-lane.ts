@@ -32,6 +32,15 @@ const TICK_MS = 5_000;
 const IDLE_CONFIRMATIONS_TO_COMPLETE = 2;
 /** Pane que nunca ficou busy depois do prompt ganha UMA recarga de prompt. */
 const BOOT_NUDGE_AFTER_MS = 90_000;
+/**
+ * Teto de recargas por agente. Sem ele o tick reentregava o prompt INTEIRO a
+ * cada 90s para sempre quando o parsing de estado da CLI não flipava para busy
+ * — e CLI que já tinha entregue a parte dela refazia tudo em loop (agy: "sua
+ * conversa já está aberta em outra instância"). Trabalho refeito é pior que
+ * silêncio: duplica escrita no workspace. Depois do teto o agente para de ser
+ * cutucado e o watchdog de silêncio converte em bloqueio VISÍVEL com Retomar.
+ */
+const MAX_BOOT_NUDGES = 2;
 /** Sem nenhum agente busy por este intervalo ⇒ bloqueio técnico visível. */
 const STALL_BLOCK_AFTER_MS = 10 * 60_000;
 /** Idade mínima da missão antes de o watchdog de silêncio poder agir. */
@@ -86,7 +95,8 @@ interface FastLaneAgentRun {
   sessionId: string;
   wasBusy: boolean;
   respawned: boolean;
-  nudged: boolean;
+  /** Quantas recargas de prompt este agente já recebeu (teto MAX_BOOT_NUDGES). */
+  nudges: number;
   promptDeliveredAt: number;
 }
 
@@ -263,7 +273,7 @@ async function spawnAgentPane(
     sessionId: spawn.sessionId,
     wasBusy: false,
     respawned: false,
-    nudged: false,
+    nudges: 0,
     promptDeliveredAt: 0,
   };
 }
@@ -453,10 +463,11 @@ async function tickRun(run: FastLaneRun): Promise<void> {
       // que o parsing nunca flipou e a frota inteira ficou muda.
       allSettled = false;
       if (
-        agent.promptDeliveredAt === 0 ||
-        now - agent.promptDeliveredAt > BOOT_NUDGE_AFTER_MS
+        agent.nudges < MAX_BOOT_NUDGES &&
+        (agent.promptDeliveredAt === 0 ||
+          now - agent.promptDeliveredAt > BOOT_NUDGE_AFTER_MS)
       ) {
-        agent.nudged = true;
+        agent.nudges += 1;
         const squad = mission.squadId ? getSquad(mission.squadId) : null;
         const spec = squad?.agents.find((item) => item.id === agent.agentId);
         if (spec) {
@@ -767,7 +778,10 @@ export async function resumeFastLaneMission(
         sessionId: alive.sessionId,
         wasBusy: alive.state === 'busy',
         respawned: false,
-        nudged: false,
+        // Pane adotado numa retomada já recebeu prompt em vida anterior: entra
+        // com o teto parcialmente gasto para a retomada não virar re-execução
+        // em série do mesmo trabalho.
+        nudges: 1,
         promptDeliveredAt: Date.now(),
       };
       run.agents.push(adopted);
