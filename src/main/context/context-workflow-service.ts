@@ -1154,7 +1154,7 @@ export class ContextWorkflowService {
       // sem código nenhum e o agente ficava sem rota. Agora aponta a cura.
       throw new Error(
         'mission context drifted after freeze: the project context revision ' +
-          'changed. Chame nexus_mission_refreeze_contract para re-vincular o ' +
+          'changed. Abra a missão e use Retomar missão para re-vincular o ' +
           'contrato ao contexto atual (goal e critérios são preservados; o ' +
           'workflow recomeça na rota para revalidar evidência).',
       );

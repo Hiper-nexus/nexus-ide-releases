@@ -102,28 +102,20 @@ describe('native context knowledge MCP tools', () => {
         'nexus_context_draft_review_run',
         'nexus_context_draft_apply',
         'nexus_context_commit',
-        'nexus_workflow_prepare_execution',
+        // nexus_workflow_prepare_execution e nexus_merge_retry saíram com o
+        // motor cerimonial. Do merge sobra a leitura (status) e o envio de
+        // parecer: não existe mais entrada de merge acionável pelo LLM.
         'nexus_merge_status',
-        'nexus_merge_retry',
+        'nexus_merge_review_submit',
       ]),
     );
   });
 
-  it('publishes the complete contract criterion schema instead of an opaque object', () => {
-    const schema = tool('nexus_mission_freeze_contract').inputSchema as {
-      properties?: Record<string, unknown>;
-    };
-    expect(schema.properties?.acceptanceCriteria).toMatchObject({
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: expect.objectContaining({
-          statement: { type: 'string' },
-          requiredArtifactIds: { type: 'array', items: { type: 'string' } },
-        }),
-      },
-    });
-  });
+  /**
+   * A prova do schema de acceptanceCriteria saiu com nexus_mission_freeze_contract:
+   * nenhuma ferramenta MCP sobrevivente aceita acceptanceCriteria, então não há
+   * mais schema de critério publicado para manter honesto.
+   */
 
   it('publishes the exact merge-review finding contract to reviewer CLIs', () => {
     const schema = tool('nexus_merge_review_submit').inputSchema;
