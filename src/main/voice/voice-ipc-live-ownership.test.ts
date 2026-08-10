@@ -512,7 +512,6 @@ afterEach(() => {
 
 describe("Voice Live IPC ownership", () => {
   it.each([
-    ["real mission", "NEXUS_REAL_MISSION_E2E"],
     ["explicit dev kill-switch", "NEXUS_DISABLE_VOICE_CAPTURE"],
   ])("does not arm wake or Live during %s automation", async (_label, envName) => {
     closeVoiceIpc();

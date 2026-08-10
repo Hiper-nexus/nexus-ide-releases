@@ -1,11 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import type { CliPtyAdapter } from '../../shared/adapter-types';
-
-const e2eFlag = vi.hoisted(() => ({ value: false }));
-vi.mock('../../shared/real-mission-e2e', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../../shared/real-mission-e2e')>()),
-  isCurrentProcessRealMissionE2E: () => e2eFlag.value,
-}));
 import {
   isMissionBoundCodexWorkspaceAuthority,
   isPetStudioNativeWorkspaceAuthority,
@@ -507,34 +501,6 @@ describe('secureAutonomousCliArgs', () => {
     expect(args).not.toContain('never');
   });
 
-  it('honors the caller approval never under the release-gate e2e doctrine', () => {
-    const codex = builtinCli('codex');
-    e2eFlag.value = true;
-    try {
-      const args = secureAutonomousCliArgs(codex, [
-        '--sandbox',
-        'workspace-write',
-        '--ask-for-approval',
-        'never',
-      ], false, {
-        enforceWorkspaceWriteSandbox: true,
-        trustedCodexPermissionProfile:
-          CODEX_WORKSPACE_PERMISSION_PROFILE,
-        trustedCodexExternalProcessSandbox: true,
-      });
-
-      expect(args).toEqual([
-        '--sandbox',
-        'danger-full-access',
-        '--ask-for-approval',
-        'never',
-      ]);
-      expect(args).not.toContain('on-request');
-    } finally {
-      e2eFlag.value = false;
-    }
-  });
-
   it('keeps production on-request under the trusted outer sandbox', () => {
     const codex = builtinCli('codex');
 
@@ -836,17 +802,6 @@ describe('secureAutonomousCliArgs', () => {
       expect(args).toContain(flag);
     }
     expect(args).toContain('--auto');
-  });
-
-  it('forces verified yolo for every release-gate CLI that declares one (not only Codex)', () => {
-    e2eFlag.value = true;
-    try {
-      const kimi = builtinCli('kimi');
-      const args = secureAutonomousCliArgs(kimi, [], false);
-      expect(args).toContain('--auto');
-    } finally {
-      e2eFlag.value = false;
-    }
   });
 
   it('preserves each built-in provider native yolo flag for writable workers', () => {

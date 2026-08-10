@@ -30,7 +30,6 @@ import {
   automatedReviewSkills,
   automatedReviewTools,
 } from '../orch/prevc-reviewer-profile';
-import { isCurrentProcessRealMissionE2E } from '../../shared/real-mission-e2e';
 import { listIndependentCliReviewCandidates } from './cli-independent-review-policy';
 import { warmSquadRuntimeSubscriptionAuth } from '../orch/squad-runtime-inventory';
 import {
@@ -49,11 +48,8 @@ import {
   type ScopedMissionPaneSpec,
 } from '../orch/mission-pane-store';
 
-/** Ordinary missions: 10 min. Real-mission release gate: 20 min — the merge
- * council spawns live CLI reviewers and cold HOME + MCP boot routinely exceeds
- * 10 min on the simple gate deliverable without being stuck. */
+/** Ordinary missions: 10 min. */
 const REVIEW_TIMEOUT_MS = 10 * 60_000;
-const REAL_MISSION_REVIEW_TIMEOUT_MS = 20 * 60_000;
 const REVIEWER_SPAWN_ATTEMPTS = 3;
 // Nudge only after a long true idle — firing while Codex pauses between
 // tool calls re-pastes a brief and can reset an in-flight review turn.
@@ -516,11 +512,7 @@ export class CliAutomatedReviewer {
       dependencies.prepareDesignSurface ?? prepareDesignSurface;
     this.#closeDesignSurface =
       dependencies.closeDesignSurface ?? closeDesignSurface;
-    this.#timeoutMs =
-      dependencies.timeoutMs ??
-      (isCurrentProcessRealMissionE2E()
-        ? REAL_MISSION_REVIEW_TIMEOUT_MS
-        : REVIEW_TIMEOUT_MS);
+    this.#timeoutMs = dependencies.timeoutMs ?? REVIEW_TIMEOUT_MS;
     this.#idleNudgeMs = dependencies.idleNudgeMs ?? REVIEWER_IDLE_NUDGE_MS;
     this.#maxIdleNudges = dependencies.maxIdleNudges ?? REVIEWER_MAX_IDLE_NUDGES;
     this.#spawnAttempts = dependencies.spawnAttempts ?? REVIEWER_SPAWN_ATTEMPTS;

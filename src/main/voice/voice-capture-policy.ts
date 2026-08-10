@@ -1,7 +1,6 @@
 export interface VoiceCapturePolicyInput {
   readonly isPackaged: boolean;
   readonly isSmokeTest: boolean;
-  readonly isRealMissionE2E: boolean;
   readonly disableVoiceCaptureEnv?: string;
 }
 
@@ -15,7 +14,7 @@ export interface VoiceCapturePolicyInput {
 export function shouldAllowVoiceCapture(
   input: VoiceCapturePolicyInput,
 ): boolean {
-  if (input.isSmokeTest || input.isRealMissionE2E) return false;
+  if (input.isSmokeTest) return false;
   if (
     !input.isPackaged &&
     input.disableVoiceCaptureEnv?.trim() === '1'

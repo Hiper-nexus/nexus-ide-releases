@@ -86,7 +86,6 @@ import {
 import { requiresVoiceCommandConfirmation } from "../jarvis/guardrails";
 import { ensureAllDefaultWakeModelsInstalled } from "./ensure-wake-models";
 import { isCurrentProcessSmokeTest } from "../smoke-core";
-import { isCurrentProcessRealMissionE2E } from "../../shared/real-mission-e2e";
 import { shouldAllowVoiceCapture } from "./voice-capture-policy";
 
 /**
@@ -625,7 +624,6 @@ function voiceCaptureAllowed(): boolean {
   return shouldAllowVoiceCapture({
     isPackaged: app.isPackaged === true,
     isSmokeTest: isCurrentProcessSmokeTest(),
-    isRealMissionE2E: isCurrentProcessRealMissionE2E(),
     disableVoiceCaptureEnv: process.env.NEXUS_DISABLE_VOICE_CAPTURE,
   });
 }

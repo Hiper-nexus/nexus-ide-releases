@@ -3,9 +3,7 @@ import { shouldAllowVoiceCapture } from './voice-capture-policy';
 
 describe('voice capture policy', () => {
   it.each([
-    { isSmokeTest: true, isRealMissionE2E: false },
-    { isSmokeTest: false, isRealMissionE2E: true },
-    { isSmokeTest: true, isRealMissionE2E: true },
+    { isSmokeTest: true },
   ])('fails closed for automation: %o', (automation) => {
     expect(
       shouldAllowVoiceCapture({
@@ -20,7 +18,6 @@ describe('voice capture policy', () => {
       shouldAllowVoiceCapture({
         isPackaged: false,
         isSmokeTest: false,
-        isRealMissionE2E: false,
         disableVoiceCaptureEnv: '1',
       }),
     ).toBe(false);
@@ -31,7 +28,6 @@ describe('voice capture policy', () => {
       shouldAllowVoiceCapture({
         isPackaged: true,
         isSmokeTest: false,
-        isRealMissionE2E: false,
         disableVoiceCaptureEnv: '1',
       }),
     ).toBe(true);

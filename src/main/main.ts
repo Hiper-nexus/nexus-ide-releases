@@ -22,7 +22,6 @@ import {
   isCurrentProcessSmokeTest,
   shouldUseUserDataOverride,
 } from "./smoke-core";
-import { isCurrentProcessRealMissionE2E } from "../shared/real-mission-e2e";
 import {
   restoreMainWindowOnActivate,
   shouldCreateWindowOnActivate,
@@ -52,10 +51,7 @@ app.commandLine.appendSwitch(
 const userDataOverride = process.env.NEXUS_USER_DATA_DIR;
 if (
   userDataOverride &&
-  (
-    shouldUseUserDataOverride(app.isPackaged, process.argv, userDataOverride) ||
-    isCurrentProcessRealMissionE2E()
-  )
+  shouldUseUserDataOverride(app.isPackaged, process.argv, userDataOverride)
 ) {
   app.setPath("userData", userDataOverride);
 }
@@ -666,18 +662,9 @@ function bootstrap(): void {
 }
 
 function isAutomatedReleaseTest(): boolean {
-  return isCurrentProcessSmokeTest() || isCurrentProcessRealMissionE2E();
+  return isCurrentProcessSmokeTest();
 }
 
-let realMissionE2EInitialization: Promise<void> = Promise.resolve();
-if (isCurrentProcessRealMissionE2E()) {
-  // Keep the release harness and its fixture-only dependencies out of every
-  // ordinary desktop launch. Start loading immediately, then fence window
-  // creation below so the mounted event cannot outrun its IPC observers.
-  realMissionE2EInitialization = import('./real-mission-e2e').then(
-    ({ initRealMissionE2E }) => initRealMissionE2E(),
-  );
-}
 initSmokeTest();
 
 // Single-instance + protocolo nexus:// precisam ser registrados ANTES do
@@ -686,7 +673,6 @@ if (!wireDeepLinks()) {
   app.quit();
 } else {
   app.whenReady().then(async () => {
-    await realMissionE2EInitialization;
     // Varredura de órfãos do PRÓPRIO install: supervisores rodam disclaimed
     // (ppid 1 mesmo saudáveis), então parentesco não distingue vivo de órfão —
     // mas no boot, com o lock de instância única, NENHUM supervisor deste

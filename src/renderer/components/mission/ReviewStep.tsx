@@ -183,7 +183,6 @@ export function ReviewStep({
       {prepareStatus === 'error' && !review && (
         <button
           type="button"
-          data-nexus-real-mission-wizard-launch="prepare"
           className="mission-setup__button mission-setup__button--secondary"
           onClick={onRetryPrepare}
         >
@@ -431,7 +430,6 @@ export function ReviewStep({
         </button>
         <button
           type="button"
-          data-nexus-real-mission-wizard-launch="start"
           className="mission-setup__button mission-setup__button--primary mission-setup__button--start"
           onClick={onStart}
           disabled={startDisabled}

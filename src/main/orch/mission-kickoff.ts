@@ -49,7 +49,6 @@ import {
   tapAgentSemanticStatus,
   tapAgentTurnStart,
 } from './agent-status';
-import { isCurrentProcessRealMissionE2E } from '../../shared/real-mission-e2e';
 import { hasAutomaticTechnicalRecovery } from '../../shared/mission-recovery-policy';
 import { cliPromptAutoResponder } from './cli-prompt-autoresponder';
 import {
@@ -79,8 +78,6 @@ const PASTE_IDLE_WINDOW_MS = 8_000;
 /** Janela finita para o hook nativo ou a prova física sustentada do turno. */
 export const ACCEPTANCE_WINDOW_MS = 30_000;
 /** Real-mission Codex may keep processing after paste; give it longer to re-idle. */
-const REAL_MISSION_PASTE_IDLE_WINDOW_MS = 12_000;
-const REAL_MISSION_ACCEPTANCE_WINDOW_MS = 45_000;
 /**
  * Fallback quando UserPromptSubmit não chega: busy contínuo e pelo menos dois
  * chunks pós-Enter por esta janela. Um repaint de frame único nunca basta.
@@ -307,18 +304,13 @@ export async function runMissionKickoffAcceptance(
   timing: MissionKickoffTiming = {},
 ): Promise<MissionKickoffResult> {
   const prompt = assertSafePtyPrompt(input.prompt);
-  const realMission = isCurrentProcessRealMissionE2E();
   const bootIdleWindowMs = timing.bootIdleWindowMs ?? BOOT_IDLE_WINDOW_MS;
   const bootBirthWindowMs = timing.bootBirthWindowMs ?? BOOT_BIRTH_WINDOW_MS;
   const bracketedPasteWindowMs =
     timing.bracketedPasteWindowMs ?? BRACKETED_PASTE_WINDOW_MS;
   const pasteSettleMs = timing.pasteSettleMs ?? PASTE_SETTLE_MS;
-  const pasteIdleWindowMs =
-    timing.pasteIdleWindowMs ??
-    (realMission ? REAL_MISSION_PASTE_IDLE_WINDOW_MS : PASTE_IDLE_WINDOW_MS);
-  const acceptanceWindowMs =
-    timing.acceptanceWindowMs ??
-    (realMission ? REAL_MISSION_ACCEPTANCE_WINDOW_MS : ACCEPTANCE_WINDOW_MS);
+  const pasteIdleWindowMs = timing.pasteIdleWindowMs ?? PASTE_IDLE_WINDOW_MS;
+  const acceptanceWindowMs = timing.acceptanceWindowMs ?? ACCEPTANCE_WINDOW_MS;
   const physicalTurnConfirmMs =
     timing.physicalTurnConfirmMs ?? KICKOFF_PHYSICAL_TURN_CONFIRM_MS;
   const timers = new Set<ReturnType<typeof setTimeout>>();

@@ -45,7 +45,6 @@ import {
   assertMcpInvocationCurrent,
   type McpToolInvocation,
 } from './mcp-protocol';
-import { isCurrentProcessRealMissionE2E } from '../../shared/real-mission-e2e';
 import type { MissionPaneAuthoritySeal } from '../../shared/orch-types';
 import { sanitizeMissionOrchestratorExitOutput } from './mission-orchestrator-exit-policy';
 import {
@@ -332,14 +331,12 @@ async function injectWithBusyProof(
   prompt: string,
   windowMs: number,
   invocation?: McpToolInvocation,
-  allowSilentBusyProof = false,
   requireTurnStartProof = false,
   canSubmit?: () => boolean,
 ): Promise<boolean> {
   // Never interleave a brief with boot or a turn already in progress. The
   // caller may retry only after an actual idle snapshot/edge.
   if (!isSessionInjectableIdle(sessionId)) return false;
-  const realMission = isCurrentProcessRealMissionE2E();
   let observedBusy = getSessionState(sessionId) === 'busy';
   let observedOutput = false;
   let observedOutputChunks = 0;
@@ -353,8 +350,7 @@ async function injectWithBusyProof(
   const hasAcceptanceProof = () =>
     requireTurnStartProof
       ? turnStartObserved || sustainedPhysicalTurn
-      : observedBusy &&
-        (observedOutput || (allowSilentBusyProof && realMission));
+      : observedBusy && observedOutput;
   const maybeAccept = () => {
     if (hasAcceptanceProof()) settle?.(true);
   };
@@ -514,7 +510,6 @@ export function submitPendingAgentPrompt(
     '',
     options.windowMs ?? RESTORED_PROMPT_ACCEPTANCE_WINDOW_MS,
     invocation,
-    options.adapterId === 'codex',
     CLAUDE_FAMILY_TURN_PROOF_ADAPTERS.has(options.adapterId ?? ''),
     options.canSubmit,
   );
@@ -545,7 +540,6 @@ export async function deliverAgentPrompt(
           prompt,
           PROMPT_ACCEPTANCE_WINDOW_MS,
           invocation,
-          options.adapterId === 'codex',
           CLAUDE_FAMILY_TURN_PROOF_ADAPTERS.has(options.adapterId ?? ''),
         )
       ) {
@@ -553,7 +547,7 @@ export async function deliverAgentPrompt(
       }
     } catch (error) {
       lastError = error;
-      // Fall through: real-mission may still keep a live session.
+      // Fall through: a sessão pode continuar viva para a próxima tentativa.
     }
   }
   if (lastError instanceof Error) throw lastError;

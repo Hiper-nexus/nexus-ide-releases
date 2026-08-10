@@ -1,4 +1,3 @@
-import { app } from "electron";
 import type { Mission, Squad } from "../../shared/orch-types";
 import {
   hasCurrentDispatchAuthority,
@@ -27,7 +26,6 @@ import { getOrchSettings } from "../persistence/settings-store";
 import { isOperatorChoicePolicy } from "../../shared/squad-cli-policy";
 import { quotaAvailabilityScore } from "../quota/quota-policy";
 import { requireQuotaService } from "../quota/quota-service";
-import { trustRealMissionCodexProjectPath } from "../real-mission-codex-trust";
 import { ensureGuidedGitBaselineForWorktreeAsync } from "../runtime/guided-greenfield-baseline";
 import { requireWorktreeRuntimeRegistry } from "../runtime/worktree-runtime-registry";
 import { classifyOperationalFailure } from "../runtime/operational-failure-policy";
@@ -961,16 +959,6 @@ export async function dispatchMissionSchedulerTask(
       );
     }
     const executionRoot = worktree?.worktreePath ?? scope.rootRealPath;
-    if (worktree?.worktreePath) {
-      try {
-        trustRealMissionCodexProjectPath(
-          app.getPath("userData"),
-          worktree.worktreePath,
-        );
-      } catch {
-        // Exact Codex project trust is best-effort for the release gate only.
-      }
-    }
     const routeReservation = stores.missions.reserveRouteDecision(
       missionId,
       taskText,

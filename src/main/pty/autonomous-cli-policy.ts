@@ -5,7 +5,6 @@ import {
   PET_STUDIO_SQUAD_ID,
 } from '../../shared/pet-studio';
 import type { MissionPaneAuthoritySeal } from '../../shared/orch-types';
-import { isCurrentProcessRealMissionE2E } from '../../shared/real-mission-e2e';
 import type { SpawnAuthoritySource } from '../orch/spawn-authority';
 import { snapshotSquadAuthority } from '../orch/squad-authority-snapshot';
 import {
@@ -455,16 +454,12 @@ function codexGovernedArgs(
     // global approval `on-request`: Codex 0.145 auto-approves the exact Nexus
     // server through its server-scoped AppToolApproval::Approve setting, while
     // `never` + Disabled would silently approve every MCP server if strict
-    // config ever drifted. The release-gate e2e is the single exception: its
-    // doctrine (see releaseGateFullAuto in secureAutonomousCliArgs) is zero
-    // approval prompts, the worker stalls on any provider question, and the
-    // outer Seatbelt boundary plus the server-scoped MCP config remain the
-    // physical authority — so the caller's `approval` is honored there.
+    // config ever drifted.
     args.push(
       '--sandbox',
       'danger-full-access',
       '--ask-for-approval',
-      isCurrentProcessRealMissionE2E() ? approval : 'on-request',
+      'on-request',
     );
   } else {
     // Without a trusted outer process boundary, keep the private
@@ -570,19 +565,7 @@ export function secureAutonomousCliArgs(
   const permission = adapter.control?.permission;
   const usesNexusOnlyTools = adapter.quirks.mcpAutoload;
   const safeArgs = permission?.safe ?? [];
-  // Release-gate workers run unattended in disposable worktrees. Without YOLO
-  // any CLI stalls on provider approval prompts ("Approve once") and the
-  // mission never produces a handoff. Force the adapter's verified yolo
-  // sequence for every provider that declares one — not just Codex.
-  const releaseGateFullAuto =
-    isCurrentProcessRealMissionE2E() &&
-    (permission?.yolo?.length ?? 0) > 0
-      ? permission!.yolo
-      : [];
-  const requestedFullAuto =
-    releaseGateFullAuto.length > 0
-      ? releaseGateFullAuto
-      : requestedFullAutoSequence(adapter, currentArgs);
+  const requestedFullAuto = requestedFullAutoSequence(adapter, currentArgs);
 
   /*
    * Read-only is an authority boundary, not a provider preference. Resolve it

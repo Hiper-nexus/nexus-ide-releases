@@ -7,18 +7,8 @@ const mocks = vi.hoisted(() => ({
   getContextWorkflowService: vi.fn(),
   saveSquad: vi.fn(),
   createRemoteTmuxSession: vi.fn(),
-  realMissionE2E: false,
   completeVerified: vi.fn(),
 }));
-
-vi.mock('../../shared/real-mission-e2e', async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import('../../shared/real-mission-e2e')>();
-  return {
-    ...actual,
-    isCurrentProcessRealMissionE2E: () => mocks.realMissionE2E,
-  };
-});
 
 vi.mock('./project-domain-store-registry', () => ({
   getProjectDomainStores: mocks.getProjectDomainStores,
@@ -107,36 +97,6 @@ function remoteSpawnTool() {
 describe('mission creation authority', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.realMissionE2E = false;
-  });
-
-  it('forbids blocked/failed demotion during real-mission E2E', async () => {
-    const setStatus = vi.fn();
-    mocks.realMissionE2E = true;
-    mocks.getProjectDomainStores.mockReturnValue({
-      missions: {
-        get: () => ({
-          id: 'mission-existing',
-          status: 'running',
-          learnings: 'advisor lento no scout',
-          milestones: [],
-        }),
-        setStatus,
-        appendLearning: vi.fn(),
-      },
-    });
-
-    await expect(
-      missionSetStatusTool().handler(
-        {
-          missionId: 'mission-existing',
-          status: 'blocked',
-          note: 'advisor kimi travou o fan-out',
-        },
-        context('orchestrator'),
-      ),
-    ).rejects.toThrow(/forbidden in real-mission E2E/i);
-    expect(setStatus).not.toHaveBeenCalled();
   });
 
   it.each(['worker', 'orchestrator'] as const)(

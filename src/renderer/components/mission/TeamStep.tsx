@@ -628,7 +628,6 @@ export function TeamStep({
         </button>
         <button
           type="button"
-          data-nexus-real-mission-wizard-launch="prepare"
           className="mission-setup__button mission-setup__button--primary"
           onClick={continueToReview}
           aria-describedby={rosterIssue ? 'mission-team-continue-reason' : undefined}
