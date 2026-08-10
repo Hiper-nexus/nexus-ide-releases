@@ -93,14 +93,16 @@ export function MissionSetupRosterRow({
     (item) => item.adapterId === agent.cli,
   );
   const readyModels = selectedAdapter
-    ? (selectedProvider?.models ?? selectedAdapter.models.list).filter((model) =>
-        isAdapterModelAuthenticated(
-          selectedAdapter,
-          providers,
-          model,
-          accounts,
-        ),
-      )
+    ? [
+        // UNIÃO das fontes: a descoberta do CLI em produção devolvia 2
+        // modelos e SUBSTITUÍA o catálogo estático do adapter (10) — o
+        // dropdown de produção mostrava só sonnet-5/sonnet-4-5. O campo é
+        // livre de todo jeito; as sugestões devem somar tudo que se conhece.
+        ...new Set([
+          ...(selectedProvider?.models ?? []),
+          ...selectedAdapter.models.list,
+        ]),
+      ]
     : [];
   // CLI que não projeta esforços não pode virar um select vazio ("só Padrão"):
   // o operador escolhe pela escada universal e o spawn aplica exatamente o que
