@@ -214,6 +214,37 @@ SEC#4 em provider-config-store), sonda de versão na detecção. Falta:
 - Consolidar os adapters de usuário úteis como builtins na 0.30.1 (deepseek,
   qwen, gemini ao menos), mantendo o mecanismo manual para o resto.
 
+## 4f. MCP e harness: o que é real (auditoria 10/08)
+
+Pergunta do operador: "o MCP funciona no Nexus como funciona no Overclock e no
+Bridge?". Resposta com evidência:
+
+- **Servidor MCP embutido: REAL.** `startMcpServer` (src/main/orch/mcp-server.ts)
+  serve ~137 tools `nexus_*` vivas por HTTP de loopback com bearer. O contador
+  da tela lê o registry, não uma lista fixa.
+- **Injeção no spawn: REAL e por adapter** (pty-manager, hook em todo spawn):
+  claude/glm/longcat `--mcp-config` (+`--strict-mcp-config` sob missão), codex
+  `-c mcp_servers.nexus_*`, opencode config inline + `--pure`, kimi/grok via
+  overlay de HOME privado. **agy e aider não recebem nada** — declaram
+  `quirks.nexusMcp: "none"`. 28 testes provam argv e env.
+- **Coluna NEXUS vazia na matriz: bug de exibição, não MCP quebrado.** A coluna
+  lê `<workspace>/.nexus/mcp-hub.json` (registro do hub), e `probeNexus`
+  devolve `status:'ok'` fixo — "hub inexistente" e "hub com 0 servers" ficam
+  idênticos na tela.
+- **Buraco de verdade: o hub não é consumido por ninguém.** Sincronizar os 15
+  servers do operador PARA o hub não dá acesso a agente nenhum; e o pane de
+  missão é isolado de propósito (`--strict-mcp-config`, `--pure`). Ou seja,
+  "levar a config de um pane para outro" ainda NÃO existe. Fix em andamento:
+  alimentar a config por sessão com os servers do hub (mantendo o isolamento —
+  o hub é a superfície de opt-in).
+- **Sync tinha caminho de perda de dados** (config que existia e não pôde ser
+  lida virava "vazia" → arquivo novo por cima, sem backup). Corrigido com
+  teste que reprova sem o guard.
+- **Harness: majoritariamente real** (transporte cli-pty/acp, spawn ACP,
+  "Testar" com subprocesso, "Enriquecer arsenal" alimentando o prompt do
+  arquiteto de squad). Decorativos: filtros/tiles do arsenal, `installHint`,
+  tier `builtin` e 5 exports mortos em harness-store.
+
 ## 5. Estado do e2e definitivo
 
 - **Prova final (pequena)**: missão "ler brief.txt → escrever resumo.txt" pela
