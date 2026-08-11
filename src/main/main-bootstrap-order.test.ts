@@ -24,7 +24,9 @@ describe("main bootstrap settings migration order", () => {
     const runtime = bootstrapSource.indexOf(
       "projectRuntimeManager = new ProjectRuntimeManager",
     );
-    const scheduler = bootstrapSource.indexOf("configureMissionScheduler(");
+    // configureMissionScheduler foi varrido com o núcleo cerimonial (ac0bc643);
+    // o fast-lane não agenda no bootstrap. O que importa aqui é que o runtime
+    // de orquestração só é construído DEPOIS da migração dos defaults retirados.
     const orchestrationIpc = bootstrapSource.indexOf("registerOrchIpc();");
 
     expect([
@@ -33,14 +35,12 @@ describe("main bootstrap settings migration order", () => {
       providers,
       migration,
       runtime,
-      scheduler,
       orchestrationIpc,
     ]).not.toContain(-1);
     expect(settings).toBeLessThan(adapters);
     expect(adapters).toBeLessThan(providers);
     expect(providers).toBeLessThan(migration);
     expect(migration).toBeLessThan(runtime);
-    expect(migration).toBeLessThan(scheduler);
     expect(migration).toBeLessThan(orchestrationIpc);
   });
 

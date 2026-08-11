@@ -53,6 +53,12 @@ const claudeAdapter = {
     list: ['claude-sonnet'],
     default: 'claude-sonnet',
   },
+  spawn: {
+    interactive: ['claude'],
+    headless: [],
+    ptyRequired: true,
+    extraArgs: [],
+  },
 };
 
 const kimiAdapter = {
@@ -77,6 +83,12 @@ const kimiAdapter = {
     flag: '--model',
     list: ['kimi-code/kimi-for-coding'],
     default: 'kimi-code/kimi-for-coding',
+  },
+  spawn: {
+    interactive: ['kimi'],
+    headless: [],
+    ptyRequired: true,
+    extraArgs: [],
   },
 };
 
@@ -103,6 +115,12 @@ const opencodeAdapter = {
     ],
     default: 'opencode/big-pickle',
   },
+  spawn: {
+    interactive: ['opencode'],
+    headless: [],
+    ptyRequired: true,
+    extraArgs: [],
+  },
 };
 
 const agyAdapter = {
@@ -123,6 +141,12 @@ const agyAdapter = {
     list: ['gemini-3.6-flash-high'],
     default: 'gemini-3.6-flash-high',
   },
+  spawn: {
+    interactive: ['agy'],
+    headless: [],
+    ptyRequired: true,
+    extraArgs: [],
+  },
 };
 
 const credentiallessAdapter = {
@@ -140,6 +164,12 @@ const credentiallessAdapter = {
     flag: '--model',
     list: ['local/default'],
     default: 'local/default',
+  },
+  spawn: {
+    interactive: ['local-agent'],
+    headless: [],
+    ptyRequired: true,
+    extraArgs: [],
   },
 };
 
