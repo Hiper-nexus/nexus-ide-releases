@@ -1,7 +1,16 @@
 import { useEffect, useState } from 'react';
 import type { UpdateState } from '../../shared/update-ipc';
+import { CURRENT_RELEASE } from '../../shared/release-notes';
 import { OverlayLayer } from '../overlay/overlay-layer';
 import { CloseButton } from './CloseButton';
+
+/** Estado mínimo offline: versão visível, sem funcionalidade de update. */
+const OFFLINE_UPDATE_STATE: UpdateState = {
+  phase: 'unsupported',
+  currentVersion: CURRENT_RELEASE.version,
+  source: 'none',
+  canInstall: false,
+};
 
 /**
  * Painel de atualização — o fim do "às cegas": versão atual, última checagem,
@@ -101,6 +110,15 @@ export function isUpdateNoticeVisible(state: UpdateState): boolean {
 export function useUpdateState(): UpdateState | null {
   const [state, setState] = useState<UpdateState | null>(null);
   useEffect(() => {
+    // A ponte de update é opcional: contexto sem ela (harness de teste, preload
+    // reduzido) não pode DERRUBAR a casca do app. Mas — ao contrário do fix
+    // estreito de 2173e725 — o chip NUNCA some: sem ponte, cai no estado offline
+    // que mostra a versão atual sem funcionalidade de update. "Sumiu o campo de
+    // versão" resolvido de verdade (não depende de ninguém lembrar de montar).
+    if (!window.nexus?.update?.getState) {
+      setState(OFFLINE_UPDATE_STATE);
+      return;
+    }
     let cancelled = false;
     void window.nexus.update
       .getState()
@@ -108,7 +126,10 @@ export function useUpdateState(): UpdateState | null {
         logRendererUpdate('getState', summarizeUpdateState(s));
         if (!cancelled) setState(s);
       })
-      .catch((err) => logRendererError('getState failed', err));
+      .catch((err) => {
+        logRendererError('getState failed', err);
+        if (!cancelled) setState(OFFLINE_UPDATE_STATE);
+      });
     const unsub = window.nexus.update.onState((next) => {
       logRendererUpdate('state', summarizeUpdateState(next));
       setState(next);

@@ -369,6 +369,11 @@ async function waitPastSpawning(sessionId: string): Promise<void> {
  */
 function markPromptDelivered(run: FastLaneAgentRun, prompt: string): void {
   run.promptDeliveredAt = Date.now();
+  // O boot da CLI (shell init, TUI renderizando) flipa `wasBusy` antes de
+  // qualquer trabalho real. Resetar aqui garante que só atividade PÓS-entrega
+  // do prompt conte como "trabalhou" — sem isso, idle pós-boot vira "assentou"
+  // e a missão conclui em 10s com zero trabalho feito (bug 11/08).
+  run.wasBusy = false;
   missionMarkerObserver.registerPrompt(run.sessionId, prompt);
 }
 
@@ -544,7 +549,14 @@ async function tickRun(run: FastLaneRun): Promise<void> {
     if (agent.marker) continue;
     const state = getSessionState(agent.sessionId);
     if (state === 'busy') {
-      agent.wasBusy = true;
+      // Só conta como "trabalhou" DEPOIS que o prompt foi entregue. O boot da
+      // CLI (shell init, TUI renderizando) também flips `busy` e, sem esta
+      // guarda, idle pós-boot vira "assentou" concluindo a missão em 10s com
+      // zero trabalho feito (bug real 11/08: "lixo continua, fala que concluiu
+      // antes de fazer nada").
+      if (agent.promptDeliveredAt > 0) {
+        agent.wasBusy = true;
+      }
       run.lastBusyAt = now;
       allSettled = false;
       continue;
