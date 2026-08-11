@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   __resetPersistentSessionWarningsForTests,
@@ -10,14 +11,31 @@ import {
   type TmuxRunnerSync,
 } from './persistent-session';
 
+function workspaceHash(workspaceId: string): string {
+  return createHash('sha256').update(workspaceId).digest('hex').slice(0, 16);
+}
+
 describe('tmuxSessionName', () => {
-  it('sanitizes workspace and pane into a stable nexus name', () => {
-    expect(tmuxSessionName('/Users/me/App', 'pane-1')).toBe(
-      'nexus-Users-me-App-pane-1',
+  it('uses workspace hash so pane identity survives long paths', () => {
+    const ws = '/Users/me/App';
+    expect(tmuxSessionName(ws, 'pane-1')).toBe(
+      `nexus-${workspaceHash(ws)}-pane-1`,
     );
   });
 
-  it('caps length at 80 characters', () => {
+  it('keeps distinct pane ids when workspace path would exceed 80 chars', () => {
+    const longWs = `/Users/${'x'.repeat(200)}/project`;
+    const a = tmuxSessionName(longWs, 'pane-aaaa');
+    const b = tmuxSessionName(longWs, 'pane-bbbb');
+    expect(a).not.toBe(b);
+    expect(a).toContain('pane-aaaa');
+    expect(b).toContain('pane-bbbb');
+    expect(a.length).toBeLessThanOrEqual(80);
+    expect(b.length).toBeLessThanOrEqual(80);
+    expect(a.startsWith(`nexus-${workspaceHash(longWs)}-`)).toBe(true);
+  });
+
+  it('caps length at 80 characters even with a huge pane token', () => {
     const name = tmuxSessionName('w'.repeat(100), 'p'.repeat(100));
     expect(name.length).toBeLessThanOrEqual(80);
     expect(name.startsWith('nexus-')).toBe(true);
@@ -159,7 +177,7 @@ describe('planPersistentAgentSpawn', () => {
     __resetPersistentSessionWarningsForTests();
   });
 
-  it('stays direct when disabled, sealed, or missing pane', () => {
+  it('stays direct when disabled, sealed, sandboxed, or missing pane', () => {
     const backend = createPersistentSessionBackend(
       async () => ({ code: 0, stdout: '', stderr: '' }),
       'darwin',
@@ -186,6 +204,19 @@ describe('planPersistentAgentSpawn', () => {
         file: '/bin/claude',
         args: [],
         sealedNative: true,
+        backend,
+      }).mode,
+    ).toBe('direct');
+    expect(
+      planPersistentAgentSpawn({
+        enabled: true,
+        workspaceId: '/ws',
+        paneId: 'p1',
+        cwd: '/ws',
+        file: '/bin/claude',
+        args: [],
+        sealedNative: false,
+        processSandboxActive: true,
         backend,
       }).mode,
     ).toBe('direct');

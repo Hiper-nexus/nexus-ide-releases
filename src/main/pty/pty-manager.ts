@@ -1664,6 +1664,8 @@ export function spawnAgentSession(
   let spawnArgs = args;
   let spawnCwd = cwd;
   let spawnEnv = cleanEnv(env);
+  /** Seatbelt/Bubblewrap already owns this spawn — never wrap with tmux attach. */
+  let processSandboxActive = false;
   if (codexProcessSandbox) {
     try {
       if (adapter.id !== "codex" || !trustedCodexPermissionProfile) {
@@ -1764,6 +1766,7 @@ export function spawnAgentSession(
         spawnArgs = plan.args;
         spawnCwd = plan.cwd;
         spawnEnv = cleanEnv(plan.env);
+        processSandboxActive = true;
       }
     } catch (error) {
       decoration?.onSpawnFailed?.();
@@ -1926,6 +1929,7 @@ export function spawnAgentSession(
         spawnArgs = plan.args;
         spawnCwd = plan.cwd;
         spawnEnv = cleanEnv(plan.env);
+        processSandboxActive = true;
       }
     } catch (error) {
       decoration?.onSpawnFailed?.();
@@ -1950,21 +1954,35 @@ export function spawnAgentSession(
     args: spawnArgs,
     env: spawnEnv,
     sealedNative: Boolean(trustedNativeLaunch),
+    processSandboxActive,
     onMissingSession: () => {
       // Stale registry row after cold start with a dead tmux session.
       if (req.paneId) deletePersistentPty(workspaceId, req.paneId);
     },
   });
   if (persistencePlan.mode === "tmux" && persistencePlan.tmuxName && req.paneId) {
-    upsertPersistentPty({
+    const tracked = upsertPersistentPty({
       workspaceId,
       paneId: req.paneId,
       tmuxName: persistencePlan.tmuxName,
       cwd: spawnCwd,
       createdAt: Date.now(),
     });
-    spawnFile = persistencePlan.file;
-    spawnArgs = persistencePlan.args;
+    if (tracked) {
+      spawnFile = persistencePlan.file;
+      spawnArgs = persistencePlan.args;
+    } else {
+      // Registry refused (e.g. UNIQUE tmux_name) — do not attach blind;
+      // tear down the session ensureSession just created and stay direct.
+      try {
+        getPersistentSessionBackend().killSessionSync(persistencePlan.tmuxName);
+      } catch (err) {
+        console.warn(
+          "[pty] failed to kill untracked persistent tmux session:",
+          err instanceof Error ? err.message : err,
+        );
+      }
+    }
   }
 
   const spec: PtySpawnSpec = {

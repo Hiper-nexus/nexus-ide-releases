@@ -69,7 +69,7 @@ não como filho direto do utilityProcess sem intermediário.
 
 - **Nome tmux:** `nexus-<paneId>` (estável; não usar `pty-*` efêmero).
 - **Probe:** `tmux -V` + `has-session -t <name>`; timeout curto; falha = fallback.
-- **Flag default:** `defaultEnabled: true` no canal `dev`; kill-switch permanece.
+- **Flag default:** `defaultEnabled: false` no canal `dev` (fail-closed: `tmux attach` furaria advisory sandbox); kill-switch permanece. Opt-in só quando o operador aceita o trade-off ou o wrap sandboxed existir.
 - **Sandbox:** Seatbelt/Bubblewrap continua no tree; se o profile rejeitar o
   wrapper tmux, log + fallback PTY direto (não bloquear spawn).
 - **Mission resume / authority:** attach não recria grant; reusa o mesmo

@@ -6,6 +6,7 @@
  * Spawn path in pty-manager is synchronous, so sync helpers use execFileSync.
  */
 
+import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 
 export type TmuxRunner = (
@@ -19,6 +20,7 @@ export type TmuxRunnerSync = (
 ) => { code: number; stdout: string; stderr: string };
 
 const TMUX_NAME_MAX = 80;
+const WORKSPACE_HASH_LEN = 16;
 const DEFAULT_TIMEOUT_MS = 5_000;
 const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 /** Cap env pairs passed as repeated `-e` to keep argv bounded. */
@@ -26,19 +28,36 @@ const MAX_ENV_ENTRIES = 256;
 
 let warnedTmuxMissing = false;
 let warnedSealedSkip = false;
+let warnedSandboxSkip = false;
 
 /** Exact-match tmux target (`=` prevents prefix collisions after truncation). */
 export function tmuxTarget(name: string): string {
   return `=${name}`;
 }
 
-/** Sanitize workspace + pane into a stable tmux session name. */
+function sanitizeTmuxToken(value: string): string {
+  return value
+    .replace(/[^a-zA-Z0-9_-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+/**
+ * Stable tmux session name that keeps the pane identity even for long
+ * workspace paths. Format: `nexus-<sha256(workspace)[0:16]>-<paneSanitized>`.
+ * Truncation (if any) eats the pane token from the end only after the hash.
+ */
 export function tmuxSessionName(workspaceId: string, paneId: string): string {
-  const raw = `nexus-${workspaceId}-${paneId}`;
-  const cleaned = raw.replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/-+/g, '-');
-  const trimmed = cleaned.replace(/^-+|-+$/g, '');
-  if (trimmed.length <= TMUX_NAME_MAX) return trimmed || 'nexus-session';
-  return trimmed.slice(0, TMUX_NAME_MAX).replace(/-+$/g, '') || 'nexus-session';
+  const wsHash = createHash('sha256')
+    .update(workspaceId)
+    .digest('hex')
+    .slice(0, WORKSPACE_HASH_LEN);
+  const pane = sanitizeTmuxToken(paneId) || 'pane';
+  const prefix = `nexus-${wsHash}-`;
+  const maxPane = TMUX_NAME_MAX - prefix.length;
+  if (maxPane < 1) return `nexus-${wsHash}`.slice(0, TMUX_NAME_MAX);
+  if (pane.length <= maxPane) return `${prefix}${pane}`;
+  return `${prefix}${pane.slice(0, maxPane).replace(/-+$/g, '')}`;
 }
 
 /**
@@ -266,6 +285,7 @@ export function __setPersistentSessionBackendForTests(
 export function __resetPersistentSessionWarningsForTests(): void {
   warnedTmuxMissing = false;
   warnedSealedSkip = false;
+  warnedSandboxSkip = false;
 }
 
 export type PersistentSpawnPlan = {
@@ -290,6 +310,12 @@ export function planPersistentAgentSpawn(input: {
   args: readonly string[];
   env?: Readonly<Record<string, string>>;
   sealedNative: boolean;
+  /**
+   * True when Seatbelt/Bubblewrap already rewrote the spawn (advisory or
+   * governed outer-process). tmux attach would let the operator open an
+   * unsandboxed shell inside the same session — refuse the wrap.
+   */
+  processSandboxActive?: boolean;
   backend?: PersistentSessionBackend;
   /** Called when a named session is missing so callers can drop stale registry. */
   onMissingSession?: (tmuxName: string) => void;
@@ -309,6 +335,16 @@ export function planPersistentAgentSpawn(input: {
       console.info(
         '[pty] persistentSession skipped for native-sealed launch ' +
           '(Darwin authenticity binds the CLI binary; tmux wrap stays off)',
+      );
+    }
+    return direct();
+  }
+  if (input.processSandboxActive) {
+    if (!warnedSandboxSkip) {
+      warnedSandboxSkip = true;
+      console.info(
+        '[pty] persistentSession skipped for process-sandboxed launch ' +
+          '(tmux attach would bypass Seatbelt/Bubblewrap confinement)',
       );
     }
     return direct();

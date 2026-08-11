@@ -32,7 +32,15 @@ function createMemoryDb(): Db {
         run(...params: unknown[]) {
           const [workspace_id, pane_id, tmux_name, cwd, created_at] =
             params as [string, string, string, string, number];
-          rows.set(key(workspace_id, pane_id), {
+          const nextKey = key(workspace_id, pane_id);
+          for (const [existingKey, row] of rows) {
+            if (row.tmux_name === tmux_name && existingKey !== nextKey) {
+              throw new Error(
+                'UNIQUE constraint failed: persistent_pty_sessions.tmux_name',
+              );
+            }
+          }
+          rows.set(nextKey, {
             workspace_id,
             pane_id,
             tmux_name,
@@ -164,5 +172,27 @@ describe('persistent-session-store', () => {
         createdAt: 1,
       }),
     ).toBe(false);
+  });
+
+  it('returns false on UNIQUE(tmux_name) instead of throwing', () => {
+    expect(
+      upsertPersistentPty({
+        workspaceId: '/tmp/ws',
+        paneId: 'pane-1',
+        tmuxName: 'nexus-shared',
+        cwd: '/tmp/ws',
+        createdAt: 1,
+      }),
+    ).toBe(true);
+    expect(
+      upsertPersistentPty({
+        workspaceId: '/tmp/ws',
+        paneId: 'pane-2',
+        tmuxName: 'nexus-shared',
+        cwd: '/tmp/ws',
+        createdAt: 2,
+      }),
+    ).toBe(false);
+    expect(getPersistentPty('/tmp/ws', 'pane-2')).toBeNull();
   });
 });

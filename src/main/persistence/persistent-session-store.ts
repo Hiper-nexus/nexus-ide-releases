@@ -25,24 +25,34 @@ function valid(value: string, max = ID_MAX): string {
 export function upsertPersistentPty(record: PersistentPtyRecord): boolean {
   const db = getDb();
   if (!db) return false;
-  const workspaceId = valid(record.workspaceId);
-  const paneId = valid(record.paneId, 256);
-  const tmuxName = valid(record.tmuxName, 128);
-  const cwd = valid(record.cwd, 4096);
-  const createdAt =
-    Number.isFinite(record.createdAt) && record.createdAt > 0
-      ? Math.floor(record.createdAt)
-      : Date.now();
-  db.prepare(
-    `INSERT INTO persistent_pty_sessions
-       (workspace_id, pane_id, tmux_name, cwd, created_at)
-     VALUES (?, ?, ?, ?, ?)
-     ON CONFLICT(workspace_id, pane_id)
-     DO UPDATE SET tmux_name = excluded.tmux_name,
-                   cwd = excluded.cwd,
-                   created_at = excluded.created_at`,
-  ).run(workspaceId, paneId, tmuxName, cwd, createdAt);
-  return true;
+  try {
+    const workspaceId = valid(record.workspaceId);
+    const paneId = valid(record.paneId, 256);
+    const tmuxName = valid(record.tmuxName, 128);
+    const cwd = valid(record.cwd, 4096);
+    const createdAt =
+      Number.isFinite(record.createdAt) && record.createdAt > 0
+        ? Math.floor(record.createdAt)
+        : Date.now();
+    db.prepare(
+      `INSERT INTO persistent_pty_sessions
+         (workspace_id, pane_id, tmux_name, cwd, created_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(workspace_id, pane_id)
+       DO UPDATE SET tmux_name = excluded.tmux_name,
+                     cwd = excluded.cwd,
+                     created_at = excluded.created_at`,
+    ).run(workspaceId, paneId, tmuxName, cwd, createdAt);
+    return true;
+  } catch (err) {
+    // UNIQUE(tmux_name) or corrupt identity must not abort agent spawn —
+    // caller falls back to direct PTY after killing the orphan tmux session.
+    console.warn(
+      '[pty] persistent registry upsert failed:',
+      err instanceof Error ? err.message : err,
+    );
+    return false;
+  }
 }
 
 export function getPersistentPty(

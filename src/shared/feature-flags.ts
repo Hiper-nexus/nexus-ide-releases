@@ -292,13 +292,14 @@ export const BUILTIN_FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
     id: FEATURE_FLAG_IDS.ptyPersistentSession,
     owner: 'pty',
     description:
-      'Sessão PTY persistente via tmux: quit do app faz detach (agente continua); reopen faz attach. Sem tmux no PATH, fallback para PTY direto. Clean-room paridade Xirp.',
+      'Sessão PTY persistente via tmux: quit do app faz detach (agente continua); reopen faz attach. Fail-closed por default — OFF até sandbox/advisory path negar wrap com segurança. Sem tmux no PATH, ou sob Seatbelt/Bubblewrap/native-seal, fallback para PTY direto. Clean-room paridade Xirp.',
     channel: 'dev',
     createdAt: '2026-08-10',
     removeAfter: '2027-03-31',
     killSwitch: false,
     telemetry: true,
-    defaultEnabled: true,
+    // Fail-closed: tmux attach bypasses advisory process sandbox; opt-in only.
+    defaultEnabled: false,
   },
   {
     id: FEATURE_FLAG_IDS.uiProjectOverview,

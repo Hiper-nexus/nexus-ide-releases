@@ -44,7 +44,7 @@
 - Test: `src/shared/feature-flags.test.ts` (criar ou estender se existir)
 
 **Interfaces:**
-- Produces: `FEATURE_FLAG_IDS.ptyPersistentSession = 'feature.pty.persistentSession'`, `FEATURE_FLAG_IDS.uiProjectOverview = 'feature.ui.projectOverview'`, ambas em `BUILTIN_FEATURE_FLAGS` com `defaultEnabled: true`, `channel: 'dev'`, `createdAt: '2026-08-10'`, `removeAfter: '2027-03-31'`.
+- Produces: `FEATURE_FLAG_IDS.ptyPersistentSession = 'feature.pty.persistentSession'` (`defaultEnabled: false`, fail-closed sandbox), `FEATURE_FLAG_IDS.uiProjectOverview = 'feature.ui.projectOverview'` (`defaultEnabled: true`), ambas em `BUILTIN_FEATURE_FLAGS` com `channel: 'dev'`, `createdAt: '2026-08-10'`, `removeAfter: '2027-03-31'`.
 
 - [ ] **Step 1: Add failing assertion** in feature-flags test (or new file) that both IDs resolve default-enabled.
 
