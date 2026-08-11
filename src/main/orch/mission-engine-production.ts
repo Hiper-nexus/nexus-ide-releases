@@ -34,11 +34,13 @@ import {
 import {
   getAgentSessionInfo,
   getSessionState,
+  listAgentSessions,
   type OwnedAgentSessionInfo,
 } from "../pty/pty-manager";
 import {
   getAcpDriverSemanticStatus,
   getAcpDriverSession,
+  listAcpDriverAgentSessions,
 } from "../acp/acp-harness-driver";
 import {
   getAgentSemanticStatus,
@@ -66,6 +68,7 @@ import {
 } from "./mission-fast-lane";
 import { getSquad } from "./squad-store";
 import { snapshotSquadAuthority } from "./squad-authority-snapshot";
+import { isFreeAgentChoiceContract } from "./free-agent-choice";
 import {
   MainMissionEngine,
   type MissionBlockInput,
@@ -353,6 +356,10 @@ export interface MissionDirectDeliveryDeps {
   readonly getPaneRuntimeAuthorityBySession:
     typeof getPaneRuntimeAuthorityBySession;
   readonly getSquad: typeof getSquad;
+  /** Workers vivos (PTY + ACP) de uma missão — o alvo do caminho operador-como-orquestrador. */
+  readonly listMissionWorkerSessions: (
+    missionId: string,
+  ) => readonly OwnedAgentSessionInfo[];
   readonly deliverAgentPrompt: typeof deliverAgentPrompt;
   readonly emitMissionEvent: typeof emitMissionEvent;
 }
@@ -363,6 +370,17 @@ const productionMissionDirectDeliveryDeps: MissionDirectDeliveryDeps = {
   getAcpDriverSemanticStatus,
   getPaneRuntimeAuthorityBySession,
   getSquad,
+  listMissionWorkerSessions: (missionId) =>
+    [
+      ...listAgentSessions().filter(
+        (session) =>
+          session.missionId === missionId && session.role === "worker",
+      ),
+      ...listAcpDriverAgentSessions().filter(
+        (session) =>
+          session.missionId === missionId && session.role === "worker",
+      ),
+    ],
   deliverAgentPrompt,
   emitMissionEvent,
 };
@@ -371,7 +389,150 @@ interface MissionDirectAuthority {
   readonly mission: Mission;
   readonly sessionId: string;
   readonly adapterId: string;
+  /** Direção entregue direto ao worker (squad sem orquestrador na Via Rápida). */
+  readonly operatorDirectToWorker: boolean;
   readonly authorityFingerprint: string;
+}
+
+/**
+ * Squad selada: devolve o hash de revisão de squad autorizado. Quando um alvo
+ * é nomeado, re-valida contra a squad viva e exige pertencimento (gate 8).
+ */
+function sealedSquadTargetHash(
+  mission: Mission,
+  command: MissionDirectCommand,
+  deps: MissionDirectDeliveryDeps,
+): string | null {
+  const sealedHash = mission.intentContract?.squadRevisionHash ?? null;
+  if (command.targetAgentId === null) {
+    return sealedHash;
+  }
+  const currentSquad = mission.squadId ? deps.getSquad(mission.squadId) : null;
+  if (!currentSquad || !sealedHash) {
+    throw new Error("mission direct target requires sealed squad authority");
+  }
+  const currentSquadSnapshot = snapshotSquadAuthority(currentSquad);
+  if (currentSquadSnapshot.hash !== sealedHash) {
+    throw new Error("mission direct target squad authority is stale");
+  }
+  if (
+    !currentSquadSnapshot.agents.some(
+      (candidate) => candidate.id === command.targetAgentId,
+    )
+  ) {
+    throw new Error("mission direct target agent is not in the sealed squad");
+  }
+  return currentSquadSnapshot.hash;
+}
+
+/**
+ * Caminho operador-como-orquestrador: resolve o worker vivo alvo da direção.
+ * Sem alvo nomeado exige exatamente um worker (direção à missão); com alvo
+ * nomeado, casa o agente selado da squad com o worker vivo por agentName.
+ */
+/**
+ * A direção à missão (targetAgentId null) só pode chegar num worker que a
+ * squad SELADA autorizou — o mesmo gate 8 do alvo nomeado. Modo livre dispensa
+ * o vínculo (worker decoupled da squad por opt-in selado); squad com selo e
+ * hash divergente (drift pós-seal) falha fechado, como o caminho nomeado.
+ */
+function assertSealedSquadAuthorizesWorker(
+  mission: Mission,
+  worker: OwnedAgentSessionInfo,
+  deps: MissionDirectDeliveryDeps,
+): void {
+  if (isFreeAgentChoiceContract(mission.intentContract)) return;
+  const sealedHash = mission.intentContract?.squadRevisionHash ?? null;
+  const currentSquad = mission.squadId ? deps.getSquad(mission.squadId) : null;
+  if (!currentSquad || !sealedHash) {
+    throw new Error("mission direct worker requires sealed squad authority");
+  }
+  const currentSquadSnapshot = snapshotSquadAuthority(currentSquad);
+  if (currentSquadSnapshot.hash !== sealedHash) {
+    throw new Error("mission direct squad authority is stale");
+  }
+  if (
+    !currentSquadSnapshot.agents.some(
+      (candidate) => candidate.agentName === worker.agentName,
+    )
+  ) {
+    throw new Error("mission direct worker is not in the sealed squad");
+  }
+}
+
+/**
+ * Pane worker casa com a sessão viva do worker: mesmo paneId E identidade
+ * consistente. Os campos de identidade são opcionais na spec (linhas legadas),
+ * então só são exigidos quando presentes — um pane que declara identidade
+ * divergente é rejeitado (finding 2 do security review: binding de pane não
+ * podia ser só paneId).
+ */
+function workerPaneMatchesSession(
+  pane: MissionPaneSpec,
+  worker: OwnedAgentSessionInfo,
+): boolean {
+  if (pane.role !== "worker" || pane.paneId !== worker.paneId) return false;
+  if (pane.agentName !== undefined && pane.agentName !== worker.agentName) {
+    return false;
+  }
+  if (
+    pane.workerIncarnationId !== undefined &&
+    pane.workerIncarnationId !== worker.workerIncarnationId
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * A squad SELADA contém um agente de categoria orquestrador? (finding 3 do
+ * security review.) O discriminador "operador É o orquestrador" não pode ser
+ * só `orchestratorSessionId == null`: se a missão foi selada COM orquestrador
+ * e a sessão dele morreu/foi limpa, NÃO devemos descer silenciosamente para o
+ * caminho worker — a direção precisa falhar fechada exigindo orquestrador vivo.
+ * Squad divergente após o selo não decide (o hash é a autoridade).
+ */
+function sealedSquadHasOrchestrator(
+  mission: Mission,
+  deps: MissionDirectDeliveryDeps,
+): boolean {
+  const sealedHash = mission.intentContract?.squadRevisionHash ?? null;
+  const currentSquad = mission.squadId ? deps.getSquad(mission.squadId) : null;
+  if (!currentSquad || !sealedHash) return false;
+  const snapshot = snapshotSquadAuthority(currentSquad);
+  if (snapshot.hash !== sealedHash) return false;
+  return snapshot.agents.some((agent) => agent.category === "orchestrator");
+}
+
+function resolveDirectWorkerSession(
+  mission: Mission,
+  command: MissionDirectCommand,
+  deps: MissionDirectDeliveryDeps,
+): OwnedAgentSessionInfo {
+  const liveWorkers = deps.listMissionWorkerSessions(mission.id);
+  if (command.targetAgentId === null) {
+    if (liveWorkers.length !== 1) {
+      throw new Error(
+        liveWorkers.length === 0
+          ? "mission direct requires a live worker in the fast-lane squad"
+          : "mission direct for a single worker is ambiguous: name the target agent",
+      );
+    }
+    const worker = liveWorkers[0];
+    assertSealedSquadAuthorizesWorker(mission, worker, deps);
+    return worker;
+  }
+  const currentSquad = mission.squadId ? deps.getSquad(mission.squadId) : null;
+  const targetAgent = currentSquad?.agents.find(
+    (candidate) => candidate.id === command.targetAgentId,
+  );
+  const match = liveWorkers.find(
+    (worker) => worker.agentName === targetAgent?.agentName,
+  );
+  if (!match) {
+    throw new Error("mission direct target worker is not live");
+  }
+  return match;
 }
 
 function missionDirectAuthority(
@@ -387,64 +548,71 @@ function missionDirectAuthority(
   if (!hasCurrentDispatchAuthority(mission)) {
     throw new Error("mission direct requires live current dispatch authority");
   }
-  if (!stores.missions.hasCurrentKickoffAcceptance(mission.id)) {
-    throw new Error("mission direct requires the current kickoff receipt");
-  }
-  const sessionId = mission.orchestratorSessionId;
-  if (!sessionId) {
-    throw new Error("mission direct requires a live orchestrator session");
-  }
-  const agent = deps.getRuntimeAgentSessionInfo(sessionId);
-  if (!agent) {
-    throw new Error("mission direct orchestrator session is not live");
-  }
-  const pane =
-    stores.missionPanes
-      .list(mission.id)
-      .find(
-        (candidate) =>
-          candidate.role === "orchestrator" &&
-          candidate.paneId === agent.paneId,
-      ) ?? null;
-  const approvedRuntime = mission.intentContract?.orchestratorRuntime;
-  if (!pane || !approvedRuntime) {
-    throw new Error("mission direct orchestrator authority is incomplete");
-  }
-  const mismatches = runtimeAuthorityMismatches(
-    scope,
-    mission,
-    pane,
-    agent,
-    deps.getPaneRuntimeAuthorityBySession(sessionId),
-    approvedRuntime,
-  );
-  if (mismatches.length > 0) {
-    throw new Error(
-      `mission direct orchestrator authority mismatch: ${mismatches[0]}`,
+
+  // Só desce para o caminho worker quando a squad selada NÃO tem orquestrador
+  // (modo livre) — se o selo previa orquestrador mas a sessão morreu, falha
+  // fechada exigindo orquestrador vivo (finding 3 do security review).
+  const operatorIsOrchestrator =
+    mission.orchestratorSessionId == null && !sealedSquadHasOrchestrator(mission, deps);
+  let sessionId: string;
+  let pane: MissionPaneSpec;
+  if (operatorIsOrchestrator) {
+    // Via Rápida com squad sem orquestrador: o operador É o orquestrador.
+    // Gates 1/2 acima já valem; a conclusão é observacional e a direção vai
+    // contra um worker vivo — pular kickoff acceptance e o selo de runtime do
+    // orquestrador, mantendo squad selada (8) e idempotência (9).
+    const worker = resolveDirectWorkerSession(mission, command, deps);
+    const workerPane =
+      stores.missionPanes
+        .list(mission.id)
+        .find((candidate) => workerPaneMatchesSession(candidate, worker)) ?? null;
+    if (!workerPane) {
+      throw new Error("mission direct worker pane authority is incomplete");
+    }
+    sessionId = worker.sessionId;
+    pane = workerPane;
+  } else {
+    if (!stores.missions.hasCurrentKickoffAcceptance(mission.id)) {
+      throw new Error("mission direct requires the current kickoff receipt");
+    }
+    const orchestratorSessionId = mission.orchestratorSessionId;
+    if (!orchestratorSessionId) {
+      throw new Error("mission direct requires a live orchestrator session");
+    }
+    const agent = deps.getRuntimeAgentSessionInfo(orchestratorSessionId);
+    if (!agent) {
+      throw new Error("mission direct orchestrator session is not live");
+    }
+    const orchestratorPane =
+      stores.missionPanes
+        .list(mission.id)
+        .find(
+          (candidate) =>
+            candidate.role === "orchestrator" &&
+            candidate.paneId === agent.paneId,
+        ) ?? null;
+    const approvedRuntime = mission.intentContract?.orchestratorRuntime;
+    if (!orchestratorPane || !approvedRuntime) {
+      throw new Error("mission direct orchestrator authority is incomplete");
+    }
+    const mismatches = runtimeAuthorityMismatches(
+      scope,
+      mission,
+      orchestratorPane,
+      agent,
+      deps.getPaneRuntimeAuthorityBySession(orchestratorSessionId),
+      approvedRuntime,
     );
+    if (mismatches.length > 0) {
+      throw new Error(
+        `mission direct orchestrator authority mismatch: ${mismatches[0]}`,
+      );
+    }
+    sessionId = orchestratorSessionId;
+    pane = orchestratorPane;
   }
 
-  let squadRevisionHash = mission.intentContract?.squadRevisionHash ?? null;
-  if (command.targetAgentId !== null) {
-    const currentSquad = mission.squadId
-      ? deps.getSquad(mission.squadId)
-      : null;
-    if (!currentSquad || !squadRevisionHash) {
-      throw new Error("mission direct target requires sealed squad authority");
-    }
-    const currentSquadSnapshot = snapshotSquadAuthority(currentSquad);
-    if (currentSquadSnapshot.hash !== squadRevisionHash) {
-      throw new Error("mission direct target squad authority is stale");
-    }
-    if (
-      !currentSquadSnapshot.agents.some(
-        (candidate) => candidate.id === command.targetAgentId,
-      )
-    ) {
-      throw new Error("mission direct target agent is not in the sealed squad");
-    }
-    squadRevisionHash = currentSquadSnapshot.hash;
-  }
+  const squadRevisionHash = sealedSquadTargetHash(mission, command, deps);
 
   const authorityFingerprint = createHash("sha256")
     .update(
@@ -470,18 +638,25 @@ function missionDirectAuthority(
     mission,
     sessionId,
     adapterId: pane.adapterId,
+    operatorDirectToWorker: operatorIsOrchestrator,
     authorityFingerprint,
   };
 }
 
-function missionDirectPrompt(command: MissionDirectCommand): string {
+function missionDirectPrompt(
+  command: MissionDirectCommand,
+  operatorDirectToWorker: boolean,
+): string {
   const payload = {
     kind: "operator_direction" as const,
     targetAgentId: command.targetAgentId,
     text: command.text,
   };
-  const targetRule =
-    command.targetAgentId === null
+  const targetRule = operatorDirectToWorker
+    ? command.targetAgentId === null
+      ? "The operator directs this mission directly: apply the direction to the current work."
+      : "The operator selected this agent directly: apply the direction to the current work."
+    : command.targetAgentId === null
       ? "Apply this direction to your current mission."
       : `Route this direction to exactly squad agent ${JSON.stringify(command.targetAgentId)} and retain orchestration authority.`;
   return assertSafePtyPrompt(
@@ -514,12 +689,12 @@ export async function deliverMissionDirectInstruction(
   const command = parsed;
   assertSafePtyPrompt(command.text);
   const initial = missionDirectAuthority(scope, stores, command, deps);
-  const prompt = missionDirectPrompt(command);
+  const prompt = missionDirectPrompt(command, initial.operatorDirectToWorker);
   const acpSession = deps.getAcpDriverSession(initial.sessionId);
   if (acpSession) {
     const status = deps.getAcpDriverSemanticStatus(initial.sessionId);
     if (status !== "idle" && status !== "completed") {
-      throw new Error("mission direct ACP orchestrator is not ready");
+      throw new Error("mission direct ACP target is not ready");
     }
     // `promptLiveSession` emits turn_started and flips semantic status to
     // working synchronously, before its promise follows the provider's full

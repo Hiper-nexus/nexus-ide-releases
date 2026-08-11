@@ -17,7 +17,7 @@ import { MISSION_PREPARE_TITLE_MAX_CHARS } from '../../shared/mission-engine-con
 export const MISSION_SETUP_DRAFT_VERSION = 1 as const;
 const MISSION_SETUP_STORAGE_PREFIX = 'nexus:mission-setup:draft:v1:';
 
-export type MissionSetupStep = 'mission' | 'team' | 'review';
+export type MissionSetupStep = 'mission' | 'express' | 'team' | 'review';
 
 export interface MissionSetupDraft {
   objective: string;
@@ -158,7 +158,7 @@ const missionSetupDraftSchema = z
         freeAgentChoice: z.boolean().optional(),
       })
       .strict(),
-    step: z.enum(['mission', 'team', 'review']),
+    step: z.enum(['mission', 'express', 'team', 'review']),
     revision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   })
   .strict();
@@ -182,7 +182,7 @@ export function createEmptyMissionSetupDraft(
     contextPaths: [],
     roster: [],
     advanced: { lane: 'standard' },
-    step: 'mission',
+    step: 'express',
     revision,
   };
 }

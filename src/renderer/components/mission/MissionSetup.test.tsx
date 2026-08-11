@@ -392,7 +392,7 @@ beforeEach(() => {
     hydrated: true,
   });
   useMissionSetupStore.setState({
-    workspacePath: null,
+    workspacePath: WORKSPACE.path,
     draft: {
       objective: '',
       title: '',
@@ -799,6 +799,7 @@ describe('MissionSetup', () => {
 
   it('focuses a workspace error when no project is active', async () => {
     useWorkspaceStore.setState({ current: null });
+    useMissionSetupStore.setState({ workspacePath: null });
     const host = render(<MissionSetup />);
     await flush();
 
@@ -810,6 +811,7 @@ describe('MissionSetup', () => {
 
   it('keeps draft controls disabled until a project exists and explains the next action', async () => {
     useWorkspaceStore.setState({ current: null });
+    useMissionSetupStore.setState({ workspacePath: null });
     const host = render(<MissionSetup />);
     await flush();
 
@@ -923,6 +925,9 @@ describe('MissionSetup', () => {
         throw new DOMException('Blocked', 'SecurityError');
       },
     });
+    // Força a leitura no mount: com workspacePath já igual ao do workspace,
+    // setWorkspace seria no-op e a falha de leitura não aconteceria.
+    useMissionSetupStore.setState({ workspacePath: null });
     const host = render(<MissionSetup />);
     await flush();
 
@@ -932,7 +937,7 @@ describe('MissionSetup', () => {
     expect(
       fieldByLabel<HTMLTextAreaElement>(
         host,
-        'O que você quer que a equipe entregue?',
+        'O que você quer que a missão entregue?',
       ).disabled,
     ).toBe(true);
 
@@ -956,6 +961,7 @@ describe('MissionSetup', () => {
         throw new DOMException('Blocked', 'SecurityError');
       },
     });
+    useMissionSetupStore.setState({ workspacePath: null });
     const host = render(<MissionSetup />);
     await flush();
 
@@ -966,10 +972,10 @@ describe('MissionSetup', () => {
     );
     const retry = button(host, 'Tentar ler novamente');
     const blockedStepHeading =
-      host.querySelector<HTMLHeadingElement>('#mission-step-title');
+      host.querySelector<HTMLHeadingElement>('#express-mission-title');
     const objective = fieldByLabel<HTMLTextAreaElement>(
       host,
-      'O que você quer que a equipe entregue?',
+      'O que você quer que a missão entregue?',
     );
 
     expect(objective.disabled).toBe(true);
@@ -981,12 +987,14 @@ describe('MissionSetup', () => {
       missionSetupStorageKey(WORKSPACE.path),
       '{rascunho-corrompido',
     );
+    // Força a leitura no mount (setWorkspace no-op deixaria o rascunho sem ler).
+    useMissionSetupStore.setState({ workspacePath: null });
     const host = render(<MissionSetup />);
     await flush();
 
     const blockedObjective = fieldByLabel<HTMLTextAreaElement>(
       host,
-      'O que você quer que a equipe entregue?',
+      'O que você quer que a missão entregue?',
     );
     expect(host.textContent).toContain('O rascunho salvo está corrompido');
     expect(blockedObjective.disabled).toBe(true);
@@ -1003,23 +1011,10 @@ describe('MissionSetup', () => {
 
     const objective = fieldByLabel<HTMLTextAreaElement>(
       host,
-      'O que você quer que a equipe entregue?',
+      'O que você quer que a missão entregue?',
     );
     expect(objective.value).toBe('');
     expect(objective.disabled).toBe(false);
-    expect(
-      fieldByLabel<HTMLInputElement>(host, 'Nome da missão (opcional)')
-        .disabled,
-    ).toBe(false);
-    expect(
-      fieldByLabel<HTMLInputElement>(
-        host,
-        'Adicionar arquivo ou referência',
-      ).disabled,
-    ).toBe(false);
-    expect(
-      fieldByLabel<HTMLSelectElement>(host, 'Tipo de trabalho').disabled,
-    ).toBe(false);
     expect(host.textContent).not.toContain(
       'O rascunho salvo está corrompido',
     );
@@ -1201,6 +1196,8 @@ describe('MissionSetup', () => {
     api.getOrchSettings
       .mockRejectedValueOnce(new Error('settings socket failed'))
       .mockResolvedValueOnce(ORCH_SETTINGS);
+    // Força a leitura do rascunho salvo (step 'team') no mount.
+    useMissionSetupStore.setState({ workspacePath: null });
     const host = render(<MissionSetup />);
     await flush();
 
@@ -1951,5 +1948,223 @@ describe('MissionSetup', () => {
     expect(host.textContent).not.toMatch(
       /\b(?:PRD|Autopilot|Squad|Maestro|worker|receipt)\b/i,
     );
+  });
+});
+
+describe('Caminho Expresso', () => {
+  /** Monta o MissionSetup já na tela Expresso, com pasta ativa e inventário ok. */
+  async function renderAtExpress(): Promise<HTMLElement> {
+    useMissionSetupStore.setState({
+      workspacePath: WORKSPACE.path,
+      draft: {
+        objective: '',
+        title: '',
+        contextPaths: [],
+        roster: [],
+        advanced: { lane: 'standard' },
+        step: 'express',
+        revision: 0,
+      },
+      persistence: { status: 'idle' },
+      workspaceDrafts: {},
+    });
+    const host = render(<MissionSetup />);
+    await flush();
+    return host;
+  }
+
+  it('abre direto no Expresso (sem wizard) com a pasta e o objetivo habilitados', async () => {
+    const host = await renderAtExpress();
+
+    expect(host.textContent).toContain('Descreva e pronto');
+    expect(
+      host.querySelector('nav[aria-label="Etapas da missão"]'),
+    ).toBeNull();
+    expect(host.querySelector('[aria-current="step"]')).toBeNull();
+    expect(
+      fieldByLabel<HTMLInputElement>(host, 'Pasta do projeto').value,
+    ).toBe(WORKSPACE.path);
+    const objective = fieldByLabel<HTMLTextAreaElement>(
+      host,
+      'O que você quer que a missão entregue?',
+    );
+    expect(objective.value).toBe('');
+    expect(objective.disabled).toBe(false);
+    expect(button(host, 'Iniciar missão').type).toBe('button');
+    expect(button(host, 'Avançado').type).toBe('button');
+  });
+
+  it('Iniciar missão recomenda a equipe e chama prepare+start com modo livre selado', async () => {
+    const host = await renderAtExpress();
+    enterText(
+      fieldByLabel<HTMLTextAreaElement>(
+        host,
+        'O que você quer que a missão entregue?',
+      ),
+      'Construir uma landing page com formulário de contato',
+    );
+    await flush();
+    await flush();
+    expect(host.textContent).toContain('Equipe automática');
+
+    act(() => button(host, 'Iniciar missão').click());
+    await flush();
+
+    expect(api.prepare).toHaveBeenCalledTimes(1);
+    const prepared = api.prepare.mock.calls[0]![0];
+    expect(prepared.advanced).toEqual({
+      lane: 'standard',
+      freeAgentChoice: true,
+    });
+    expect(
+      prepared.roster.some((agent) => agent.category === 'orchestrator'),
+    ).toBe(true);
+    expect(
+      prepared.roster.some((agent) => agent.category === 'executor'),
+    ).toBe(true);
+    expect(api.start).toHaveBeenCalledTimes(1);
+    expect(api.start).toHaveBeenCalledWith({
+      missionId: REVIEW.missionId,
+      reviewSha256: REVIEW.reviewSha256,
+    });
+    expect(useProductNavigationStore.getState().destination).toEqual({
+      kind: 'mission',
+      missionId: SNAPSHOT.id,
+      surface: 'board',
+    });
+  });
+
+  it('pula workers sem modelo configurado na rotação em vez de devolver null', () => {
+    const cursor = adapter('cursor-agent', {
+      models: { list: [], default: '' },
+    });
+    const adapters = [CLAUDE, CODEX, cursor];
+    const providers = [provider(CLAUDE), provider(CODEX), provider(cursor)];
+    const readiness = missionRuntimeReadiness(adapters, providers, []);
+
+    const roster = buildRecommendedMissionRoster({
+      readiness,
+      providers,
+      accounts: [],
+      settings: ORCH_SETTINGS,
+      objective: 'Construir uma landing page',
+      lane: 'standard',
+    });
+
+    expect(roster).not.toBeNull();
+    expect(roster?.some((agent) => agent.cli === 'cursor-agent')).toBe(false);
+    expect(roster?.map((agent) => agent.category)).toEqual([
+      'orchestrator',
+      'executor',
+      'executor',
+      'reviewer',
+    ]);
+  });
+
+  it('Iniciar missão segue mesmo com um worker sem modelo no inventário', async () => {
+    const cursor = adapter('cursor-agent', {
+      models: { list: [], default: '' },
+    });
+    api.listAdapters.mockResolvedValue([CLAUDE, CODEX, cursor]);
+    api.listProviders.mockResolvedValue([
+      provider(CLAUDE),
+      provider(CODEX),
+      provider(cursor),
+    ]);
+    const host = await renderAtExpress();
+
+    enterText(
+      fieldByLabel<HTMLTextAreaElement>(
+        host,
+        'O que você quer que a missão entregue?',
+      ),
+      'Construir uma landing page',
+    );
+    await flush();
+    await flush();
+
+    act(() => button(host, 'Iniciar missão').click());
+    await flush();
+
+    expect(host.textContent).not.toContain(
+      'Não foi possível montar uma equipe automática',
+    );
+    expect(api.prepare).toHaveBeenCalledTimes(1);
+    const prepared = api.prepare.mock.calls[0]![0];
+    expect(
+      prepared.roster.some((agent) => agent.cli === 'cursor-agent'),
+    ).toBe(false);
+    expect(api.start).toHaveBeenCalledTimes(1);
+  });
+
+  it('Iniciar missão sem pasta ativa abre o seletor de pasta', async () => {
+    const pick = vi.fn(async () => {});
+    useWorkspaceStore.setState({ current: null, pick });
+    const host = render(<MissionSetup />);
+    await flush();
+
+    const objective = fieldByLabel<HTMLTextAreaElement>(
+      host,
+      'O que você quer que a missão entregue?',
+    );
+    expect(objective.disabled).toBe(true);
+    expect(host.textContent).toContain(
+      'Escolha uma pasta de projeto para preencher os dados da missão.',
+    );
+
+    act(() => button(host, 'Iniciar missão').click());
+    await flush();
+
+    expect(pick).toHaveBeenCalledTimes(1);
+    expect(api.prepare).not.toHaveBeenCalled();
+  });
+
+  it('sem rota operacional mostra a mensagem amigável e bloqueia o Iniciar', async () => {
+    api.listAdapters.mockResolvedValue([]);
+    api.listProviders.mockResolvedValue([]);
+    const host = await renderAtExpress();
+
+    expect(host.textContent).toContain(
+      'Conecte um provedor em Configurações para a missão poder começar.',
+    );
+
+    enterText(
+      fieldByLabel<HTMLTextAreaElement>(
+        host,
+        'O que você quer que a missão entregue?',
+      ),
+      'Construir uma landing page',
+    );
+    await flush();
+    act(() => button(host, 'Iniciar missão').click());
+    await flush();
+
+    expect(api.prepare).not.toHaveBeenCalled();
+    expect(host.textContent).toContain(
+      'Conecte um provedor em Configurações antes de iniciar a missão.',
+    );
+  });
+
+  it('Avançado revela o wizard completo na etapa Equipe', async () => {
+    const host = await renderAtExpress();
+    enterText(
+      fieldByLabel<HTMLTextAreaElement>(
+        host,
+        'O que você quer que a missão entregue?',
+      ),
+      'Construir uma landing page',
+    );
+    await flush();
+    await flush();
+
+    act(() => button(host, 'Avançado').click());
+    await flush();
+
+    expect(host.querySelector('nav[aria-label="Etapas da missão"]')).not.toBeNull();
+    expect(
+      host.querySelector('[aria-current="step"]')?.textContent,
+    ).toContain('Equipe');
+    expect(host.textContent).not.toContain('Descreva e pronto');
+    expect(button(host, 'Voltar para missão')).toBeDefined();
   });
 });

@@ -176,7 +176,7 @@ describe('mission setup draft store', () => {
       contextPaths: [],
       roster: [],
       advanced: { lane: 'standard' },
-      step: 'mission',
+      step: 'express',
       revision: 0,
     });
     store.setObjective('Corrigir a busca');

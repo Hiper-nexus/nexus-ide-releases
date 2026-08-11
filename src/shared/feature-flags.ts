@@ -68,6 +68,8 @@ export const FEATURE_FLAG_IDS = {
   missionEventJournal: 'feature.mission.eventJournal',
   missionWarmupAdvisories: 'feature.mission.warmupAdvisories',
   missionWorkerHandoffTtl: 'feature.mission.workerHandoffTtl',
+  /** Nudge + handoff sintético do enforcement global (Overclock parity). */
+  workerHandoffEnforcement: 'feature.mission.workerHandoffEnforcement',
   searchMixer: 'feature.search.mixer',
   contextualPanel: 'feature.ui.contextualPanel',
   codemirrorEditor: 'feature.editor.codemirror',
@@ -154,6 +156,18 @@ export const BUILTIN_FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
     killSwitch: false,
     telemetry: false,
     defaultEnabled: true,
+  },
+  {
+    id: FEATURE_FLAG_IDS.workerHandoffEnforcement,
+    owner: 'orch',
+    description:
+      'Nudge + handoff sintético do worker-handoff-enforcement global (~20s/~45s, paridade Overclock). DEFAULT-OFF: a Via Rápida supervisiona os workers (boot nudge 90s, stall watchdog → blocked) e completa por observação, criando zero handoffs — o enforcement global brigava com essa conclusão. Religável via override de flag se um motor cerimonial voltar.',
+    channel: 'dev',
+    createdAt: '2026-08-11',
+    removeAfter: '2027-03-31',
+    killSwitch: false,
+    telemetry: true,
+    defaultEnabled: false,
   },
   {
     id: FEATURE_FLAG_IDS.paneNonWorkerAutoClose,

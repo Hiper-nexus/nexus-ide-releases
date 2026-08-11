@@ -427,7 +427,7 @@ export function App() {
         useMissionSetupStore
           .getState()
           .setWorkspace(useWorkspaceStore.getState().current?.path ?? null);
-        useMissionSetupStore.getState().setStep('mission');
+        useMissionSetupStore.getState().setStep('express');
         useProductNavigationStore.getState().openMissionSetup();
         return;
       }
@@ -514,7 +514,7 @@ export function App() {
           'Use arquivos que estejam dentro do workspace para anexá-los como contexto da missão.',
         );
       }
-      useMissionSetupStore.getState().setStep('mission');
+      useMissionSetupStore.getState().setStep('express');
       useProductNavigationStore.getState().openMissionSetup();
     };
     window.addEventListener('dragover', onDragOver);

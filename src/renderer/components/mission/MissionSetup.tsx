@@ -26,6 +26,7 @@ import {
 import { useProductNavigationStore } from '../../state/product-navigation-store';
 import { useProviderStore } from '../../state/provider-store';
 import { useWorkspaceStore } from '../../state/workspace-store';
+import { ExpressMissionStart } from './ExpressMissionStart';
 import { MissionStep } from './MissionStep';
 import {
   ReviewStep,
@@ -239,6 +240,11 @@ export function MissionSetup() {
     useState<MissionStartStatus>('idle');
   const [reviewError, setReviewError] = useState<string | null>(null);
   const [recommendationStale, setRecommendationStale] = useState(false);
+  const [expressStatus, setExpressStatus] = useState<'idle' | 'loading'>(
+    'idle',
+  );
+  const [expressError, setExpressError] = useState<string | null>(null);
+  const expressBusyRef = useRef(false);
 
   const pickingWorkspaceRef = useRef(false);
   const authorityGenerationRef = useRef(0);
@@ -285,6 +291,7 @@ export function MissionSetup() {
     recommendationWorkspaceRef.current = workspacePath;
     automaticRosterFingerprintRef.current = null;
     setRecommendationStale(false);
+    setExpressError(null);
   }, [workspacePath]);
 
   useEffect(() => {
@@ -440,6 +447,8 @@ export function MissionSetup() {
     setReviewEnvelope(null);
     setPrepareStatus('idle');
     setStartStatus('idle');
+    setExpressStatus('idle');
+    expressBusyRef.current = false;
     if (
       reviewEnvelope &&
       reviewEnvelope.authorityKey !== authorityKey &&
@@ -565,6 +574,7 @@ export function MissionSetup() {
 
   const changeObjective = (objective: string): void => {
     if (objective === draft.objective) return;
+    setExpressError(null);
     const currentFingerprint = missionRosterFingerprint(draft.roster);
     if (
       draft.roster.length > 0 &&
@@ -632,6 +642,7 @@ export function MissionSetup() {
     pickingWorkspaceRef.current = true;
     setPickingWorkspace(true);
     setWorkspaceActionError(null);
+    setExpressError(null);
     try {
       await pickWorkspace();
     } catch {
@@ -796,6 +807,125 @@ export function MissionSetup() {
     }
   };
 
+  const startExpress = async (): Promise<void> => {
+    if (expressBusyRef.current) return;
+    const setupState = useMissionSetupStore.getState();
+    const currentWorkspacePath =
+      useWorkspaceStore.getState().current?.path ?? null;
+    if (
+      !currentWorkspacePath ||
+      setupState.workspacePath !== currentWorkspacePath
+    ) {
+      void pickProjectFolder();
+      return;
+    }
+    if (!setupState.draft.objective.trim()) {
+      setExpressError('Descreva o que você quer que a missão entregue.');
+      return;
+    }
+    if (!inventoryReadyForReview) {
+      setExpressError(
+        inventory.status === 'loading'
+          ? 'Aguarde a verificação dos provedores conectados.'
+          : 'Conecte um provedor em Configurações antes de iniciar a missão.',
+      );
+      return;
+    }
+    const recommended = buildRecommendedMissionRoster({
+      readiness: inventory.readiness,
+      providers: inventory.providers,
+      accounts: inventory.accounts,
+      settings: inventory.settings,
+      objective: setupState.draft.objective,
+      lane: 'standard',
+    });
+    if (!recommended) {
+      setExpressError(
+        'Não foi possível montar uma equipe automática. Use o modo Avançado para escolher os agentes.',
+      );
+      return;
+    }
+    // Override local do draft — NUNCA setRoster/setFreeAgentChoice no store:
+    // ambos bumpam `revision` → `authorityKey` muda → o efeito de autoridade
+    // invalida o start em voo. O request enviado usa a equipe recomendada e o
+    // modo livre selados só nesta chamada.
+    const expressDraft: MissionSetupDraft = {
+      ...setupState.draft,
+      roster: recommended,
+      advanced: { lane: 'standard', freeAgentChoice: true },
+    };
+    const requestResult = missionPrepareRequestSchema.safeParse(
+      missionPrepareRequestFromDraft(expressDraft, setupState.entryContext),
+    );
+    if (!requestResult.success) {
+      setExpressError('Revise o objetivo antes de tentar novamente.');
+      return;
+    }
+    const capturedAuthorityKey = authorityKey;
+    if (!capturedAuthorityKey) return;
+
+    const generation = ++startGenerationRef.current;
+    expressBusyRef.current = true;
+    setExpressStatus('loading');
+    setExpressError(null);
+
+    try {
+      const review = await window.nexus.mission.prepare(requestResult.data);
+      const latestSetup = useMissionSetupStore.getState();
+      const latestWorkspace =
+        useWorkspaceStore.getState().current?.path ?? null;
+      const latestKey = missionSetupAuthorityKey(latestSetup);
+      if (
+        generation !== startGenerationRef.current ||
+        latestKey !== capturedAuthorityKey ||
+        latestWorkspace !== latestSetup.workspacePath ||
+        latestSetup.draft.step !== 'express'
+      ) {
+        discardPreparedReview(review);
+        return;
+      }
+      const snapshot = await window.nexus.mission.start({
+        missionId: review.missionId,
+        reviewSha256: review.reviewSha256,
+      });
+      const finalSetup = useMissionSetupStore.getState();
+      const finalWorkspace = useWorkspaceStore.getState().current?.path ?? null;
+      const finalKey = missionSetupAuthorityKey(finalSetup);
+      const finalDestination =
+        useProductNavigationStore.getState().destination;
+      if (
+        generation !== startGenerationRef.current ||
+        finalKey !== capturedAuthorityKey ||
+        finalWorkspace !== finalSetup.workspacePath ||
+        finalSetup.draft.step !== 'express' ||
+        finalDestination.kind !== 'mission-setup'
+      ) {
+        return;
+      }
+      clearEntryContext();
+      useProductNavigationStore.getState().openMission(snapshot.id);
+    } catch (error) {
+      if (generation !== startGenerationRef.current) return;
+      const rawMessage =
+        error instanceof Error
+          ? error.message
+          : typeof error === 'string'
+            ? error
+            : '';
+      const leftSetup =
+        useProductNavigationStore.getState().destination.kind !==
+        'mission-setup';
+      if (leftSetup) return;
+      setExpressStatus('idle');
+      setExpressError(humanizeMissionStartError(rawMessage));
+    } finally {
+      if (generation === startGenerationRef.current) {
+        expressBusyRef.current = false;
+        setExpressStatus((status) => (status === 'loading' ? 'idle' : status));
+      }
+    }
+  };
+
   if (workspacePath !== canonicalWorkspacePath) {
     return (
       <div className="mission-setup" aria-busy="true">
@@ -816,45 +946,54 @@ export function MissionSetup() {
 
   return (
     <div className="mission-setup" data-step={draft.step}>
-      <nav className="mission-setup__progress" aria-label="Etapas da missão">
-        <ol>
-          {STEP_LABELS.map(({ step, label }, index) => {
-            const state =
-              index === currentStepIndex
-                ? 'current'
-                : index < currentStepIndex
-                  ? 'completed'
-                  : 'available';
-            return (
-              <li
-                key={step}
-                data-state={state}
-                aria-current={state === 'current' ? 'step' : undefined}
-              >
-                <span className="mission-setup__progress-dot" aria-hidden="true">
-                  {state === 'completed' ? '✓' : index + 1}
-                </span>
-                <span className="mission-setup__progress-label">{label}</span>
-                <span className="mission-setup__progress-state mission-setup__sr-only">
-                  {state === 'current'
-                    ? 'Atual'
-                    : state === 'completed'
-                      ? 'Concluída'
-                      : 'Disponível'}
-                </span>
-              </li>
-            );
-          })}
-        </ol>
-      </nav>
-      <p
-        className="mission-setup__sr-only"
-        role="status"
-        aria-live="polite"
-        aria-atomic="true"
-      >
-        Etapa atual: {currentStepLabel}
-      </p>
+      {draft.step !== 'express' && (
+        <>
+          <nav className="mission-setup__progress" aria-label="Etapas da missão">
+            <ol>
+              {STEP_LABELS.map(({ step, label }, index) => {
+                const state =
+                  index === currentStepIndex
+                    ? 'current'
+                    : index < currentStepIndex
+                      ? 'completed'
+                      : 'available';
+                return (
+                  <li
+                    key={step}
+                    data-state={state}
+                    aria-current={state === 'current' ? 'step' : undefined}
+                  >
+                    <span
+                      className="mission-setup__progress-dot"
+                      aria-hidden="true"
+                    >
+                      {state === 'completed' ? '✓' : index + 1}
+                    </span>
+                    <span className="mission-setup__progress-label">
+                      {label}
+                    </span>
+                    <span className="mission-setup__progress-state mission-setup__sr-only">
+                      {state === 'current'
+                        ? 'Atual'
+                        : state === 'completed'
+                          ? 'Concluída'
+                          : 'Disponível'}
+                    </span>
+                  </li>
+                );
+              })}
+            </ol>
+          </nav>
+          <p
+            className="mission-setup__sr-only"
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+          >
+            Etapa atual: {currentStepLabel}
+          </p>
+        </>
+      )}
 
       {persistenceNotice && (
         <div
@@ -891,6 +1030,25 @@ export function MissionSetup() {
       )}
 
       <div className="mission-setup__canvas">
+        {draft.step === 'express' && (
+          <ExpressMissionStart
+            workspace={workspace}
+            draft={draft}
+            draftFieldsDisabled={!workspace || hasUnreadDraft}
+            suppressHeadingAutofocus={hasUnreadDraft}
+            pickingWorkspace={pickingWorkspace}
+            workspaceActionError={workspaceActionError}
+            inventoryReady={inventoryReadyForReview}
+            inventoryLoading={inventory.status === 'loading'}
+            busy={expressStatus === 'loading'}
+            error={expressError}
+            onPickWorkspace={() => void pickProjectFolder()}
+            onObjectiveChange={changeObjective}
+            onStart={() => void startExpress()}
+            onAdvanced={() => setStep('team')}
+          />
+        )}
+
         {draft.step === 'mission' && (
           <MissionStep
             workspace={workspace}

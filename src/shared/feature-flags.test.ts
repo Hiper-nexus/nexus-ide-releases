@@ -74,6 +74,10 @@ describe('feature flags', () => {
       'feature.pty.persistentSession',
       // Warm-up e worker TTL são DEFAULT-ON (paridade Bridge multi-pane +
       // Overclock close→wake). E2E real-mission opt-out via override de flag.
+      // Enforcement global (nudge 20s + handoff sintético 45s) é DEFAULT-OFF:
+      // a Via Rápida supervisiona os workers e completa por observação — o
+      // enforcement brigava com essa conclusão (B1, dossiê 2026-08-11).
+      'feature.mission.workerHandoffEnforcement',
     ]);
     for (const flag of BUILTIN_FEATURE_FLAGS) {
       expect(

@@ -125,13 +125,24 @@ export function buildRecommendedMissionRoster({
   });
   if (!coordinatorModel) return null;
 
+  // A rotação de execução pula workers sem modelo utilizável. Um CLI instalado
+  // sem modelos configurados (ex.: cursor-agent) não pode ocupar papel de
+  // execução — e reprovar a equipe inteira por causa dele matava o Caminho
+  // Expresso (dossiê 2026-08-11): `readyModelForAdapter` devolve null, o loop
+  // abaixo `return null` e a tela morre com a mensagem genérica.
+  const readyWorkers = workers.filter(
+    (adapter) =>
+      readyModelForAdapter({ adapter, providers, accounts }) !== null,
+  );
+  if (readyWorkers.length === 0) return null;
+
   const roster: SquadAgent[] = [];
   const roles = recommendMissionRosterRoles({ objective, lane });
   for (const [index, role] of roles.entries()) {
     const adapter =
       role.category === 'orchestrator'
         ? coordinator
-        : workers[(index - 1) % workers.length];
+        : readyWorkers[(index - 1) % readyWorkers.length];
     if (!adapter) return null;
     const model =
       role.category === 'orchestrator'

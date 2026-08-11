@@ -44,7 +44,7 @@ export function ProjectOverview({
     setup.clearEntryContext();
     setup.setWorkspace(workspacePath);
     setup.setObjective(text);
-    setup.setStep('mission');
+    setup.setStep('express');
     useProductNavigationStore.getState().openMissionSetup();
   };
 

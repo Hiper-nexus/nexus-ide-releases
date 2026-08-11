@@ -28,6 +28,8 @@ import {
   type Squad,
 } from "../../shared/orch-types";
 import { getDb } from "../persistence/db";
+import { getFeatureFlagRegistry } from "../feature-flags/feature-flag-registry";
+import { FEATURE_FLAG_IDS } from "../../shared/feature-flags";
 import type { ProjectRuntimeManager } from "../runtime/project-runtime-manager";
 import {
   onRendererWorkspaceScopeChange,
@@ -1410,8 +1412,17 @@ export async function initOrchestration(): Promise<void> {
     initIdleDelivery();
     initWorkerHandoffTtl();
     // Garantia de handoff (Stop-hook do Overclock): worker que trabalha e fica
-    // mudo não pode matar a missão em silêncio.
-    initWorkerHandoffEnforcement();
+    // mudo não pode matar a missão em silêncio. DEFAULT-OFF: a Via Rápida
+    // supervisiona os workers (boot nudge 90s, stall watchdog → blocked) e
+    // completa por observação, criando zero handoffs — o enforcement global
+    // brigava com essa conclusão. Religável via override de flag.
+    if (
+      getFeatureFlagRegistry().isEnabled(
+        FEATURE_FLAG_IDS.workerHandoffEnforcement,
+      )
+    ) {
+      initWorkerHandoffEnforcement();
+    }
     const startSupervisor =
       orchestrationStartSupervisor ??
       new OrchestrationStartSupervisor({
