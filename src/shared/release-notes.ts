@@ -13,6 +13,35 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.31.1',
+  date: '2026-08-11',
+  codename: 'A porta de atualizar voltou',
+  summary:
+    'Hotfix: o app tinha ficado SEM nenhuma superfície de atualização desde ' +
+    '01/08 — o chip foi removido do App num fix de missão e ninguém remontou, ' +
+    'então duas releases inteiras passaram sem porta para atualizar. Ela ' +
+    'voltou, no cabeçalho e no launcher. Junto vem a persistência de sessão ' +
+    'endurecida (tmux) da frente de paridade, ainda atrás de flag.',
+  highlights: [
+    {
+      title: 'Atualizar o app de novo é possível pela tela',
+      detail:
+        'O chip de atualização voltou ao cabeçalho e ao launcher, e agora é ' +
+        'um componente único — não depende mais de alguém lembrar de montar ' +
+        'as três peças (estado, chip e painel) na mão.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Persistência de sessão endurecida',
+      detail:
+        'Nome de sessão por hash, skip sob sandbox e flag desligada por ' +
+        'padrão na frente de PTY persistente via tmux.',
+    },
+  ],
+};
+
+export const RELEASE_03100: AppRelease = {
   version: '0.31.0',
   date: '2026-08-10',
   codename: 'A frota inteira na mão: login, "+ Pane" e panes com nome',

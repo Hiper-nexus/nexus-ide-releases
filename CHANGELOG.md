@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.31.1 — A porta de atualizar voltou
+
+Data: 2026-08-11
+
+Hotfix de um buraco que passou despercebido por dez dias: **o app ficou sem
+nenhuma superfície de atualização**. O commit `5a6cb8b8` (01/08, "harden mission
+validation and pane UX") removeu `<UpdateNotifier alwaysVisible />` do `App.tsx`
+e ninguém remontou; a composição sumiu junto, deixando no `UpdateModal.tsx` só
+as peças soltas — hook de estado, chip e painel — sem nenhum consumidor. O motor
+de update no main sempre esteve vivo; o que faltava era a porta. As releases
+0.30.0 e 0.31.0 saíram assim.
+
+- O chip voltou ao **cabeçalho** (com workspace aberto) e ao **launcher** — que
+  é exatamente onde se chega para atualizar.
+- Voltou como **componente único** (`UpdateNotifier`), para não depender de
+  alguém lembrar de montar as três peças na mão.
+- Persistência de sessão via tmux endurecida: nome por hash, skip sob sandbox e
+  flag desligada por padrão (frente de paridade, ainda opt-in).
+
 ## 0.31.0 — A frota inteira na mão: login, "+ Pane" e panes com nome
 
 Data: 2026-08-10
