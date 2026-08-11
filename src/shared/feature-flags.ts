@@ -83,6 +83,10 @@ export const FEATURE_FLAG_IDS = {
   parallelScheduler: 'orch.parallelScheduler',
   /** Auto-fechar panes não-worker (spawn manual / agentes de ferramenta) após idle > N s. */
   paneNonWorkerAutoClose: 'feature.pane.nonWorkerAutoClose',
+  /** PTY atrás de tmux: quit=detach, reopen=attach (paridade Xirp clean-room). */
+  ptyPersistentSession: 'feature.pty.persistentSession',
+  /** Superfície Project Overview + minimap + goal box. */
+  uiProjectOverview: 'feature.ui.projectOverview',
 } as const;
 
 export type FeatureFlagId =
@@ -282,6 +286,31 @@ export const BUILTIN_FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
     telemetry: true,
     // The production loop still requires an approved mission contract and a
     // sealed task plan before any worker pane or worktree is created.
+    defaultEnabled: true,
+  },
+  {
+    id: FEATURE_FLAG_IDS.ptyPersistentSession,
+    owner: 'pty',
+    description:
+      'Sessão PTY persistente via tmux: quit do app faz detach (agente continua); reopen faz attach. Fail-closed por default — OFF até sandbox/advisory path negar wrap com segurança. Sem tmux no PATH, ou sob Seatbelt/Bubblewrap/native-seal, fallback para PTY direto. Clean-room paridade Xirp.',
+    channel: 'dev',
+    createdAt: '2026-08-10',
+    removeAfter: '2027-03-31',
+    killSwitch: false,
+    telemetry: true,
+    // Fail-closed: tmux attach bypasses advisory process sandbox; opt-in only.
+    defaultEnabled: false,
+  },
+  {
+    id: FEATURE_FLAG_IDS.uiProjectOverview,
+    owner: 'ui',
+    description:
+      'Destinação Projeto: overview do workspace com flock/minimap, goal box e Cmd+G. Não substitui MissionEngine.',
+    channel: 'dev',
+    createdAt: '2026-08-10',
+    removeAfter: '2027-03-31',
+    killSwitch: false,
+    telemetry: true,
     defaultEnabled: true,
   },
 ] as const;

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   BUILTIN_FEATURE_FLAGS,
+  FEATURE_FLAG_IDS,
   channelAllowsFlag,
   featureFlagDefinitionSchema,
   resolveFeatureFlag,
@@ -43,6 +44,24 @@ describe('feature flags', () => {
     ).toMatchObject({ enabled: false, reason: 'unknown-flag' });
   });
 
+  it('keeps project overview ON and persistent session OFF by default on dev', () => {
+    const overview = BUILTIN_FEATURE_FLAGS.find(
+      (f) => f.id === FEATURE_FLAG_IDS.uiProjectOverview,
+    );
+    expect(overview).toBeDefined();
+    expect(
+      resolveFeatureFlag(overview, { runtimeChannel: 'dev' }).enabled,
+    ).toBe(true);
+
+    const persistent = BUILTIN_FEATURE_FLAGS.find(
+      (f) => f.id === FEATURE_FLAG_IDS.ptyPersistentSession,
+    );
+    expect(persistent).toBeDefined();
+    expect(
+      resolveFeatureFlag(persistent, { runtimeChannel: 'dev' }).enabled,
+    ).toBe(false);
+  });
+
   it('pins the default-on/off contract per flag (flips are reviewed decisions)', () => {
     // Fase de operador único: superfícies prontas nascem ON (descoberta em uso
     // real); ficam OFF só as com efeito fora do workspace, dependência de infra
@@ -50,6 +69,9 @@ describe('feature flags', () => {
     const DEFAULT_OFF = new Set([
       'feature.remote.relayTransport', // exige relay hospedado + URL explícita
       'feature.autonomy.profiles', // sem consumidor no produto ainda
+      // tmux attach fura advisory Seatbelt/Bubblewrap — fail-closed até
+      // o wrap sandboxed existir (H2 senior review 2026-08-11).
+      'feature.pty.persistentSession',
       // Warm-up e worker TTL são DEFAULT-ON (paridade Bridge multi-pane +
       // Overclock close→wake). E2E real-mission opt-out via override de flag.
     ]);

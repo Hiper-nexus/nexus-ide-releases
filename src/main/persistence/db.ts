@@ -144,6 +144,16 @@ CREATE TABLE IF NOT EXISTS provider_pane_sessions (
   account_id      TEXT,
   PRIMARY KEY (installation_id, project_id, checkout_id, pane_id, adapter_id)
 );
+
+/* tmux-backed PTY sessions that survive app quit (feature.pty.persistentSession). */
+CREATE TABLE IF NOT EXISTS persistent_pty_sessions (
+  workspace_id TEXT NOT NULL,
+  pane_id      TEXT NOT NULL,
+  tmux_name    TEXT NOT NULL UNIQUE,
+  cwd          TEXT NOT NULL,
+  created_at   INTEGER NOT NULL,
+  PRIMARY KEY (workspace_id, pane_id)
+);
 `;
 
 let db: Db | null = null;

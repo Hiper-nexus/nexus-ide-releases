@@ -96,6 +96,8 @@ function productDestinationContext(
       return 'launcher';
     case 'terminal':
       return terminalVacant ? 'terminal vacancy (vaga livre)' : 'terminal';
+    case 'project':
+      return 'project overview (projeto / flock)';
     case 'mission-setup':
       return 'mission setup (preparar missão)';
     case 'mission':
@@ -150,6 +152,8 @@ function wakePrompt(surface: ScreenSurface, focused: string, workspaceName: stri
             : focused === 'none'
               ? `Estou no Terminal do workspace ${workspaceName}. Quer abrir uma nova sessão?`
               : `Estou no ${focused}. O que vamos fazer nele?`;
+        case 'project':
+          return `Estou no Projeto do workspace ${workspaceName}. Quer preparar uma missão ou focar uma sessão?`;
         case 'mission-setup':
           return 'Estou no Mission Setup. Quer continuar preparando a missão?';
         case 'mission':

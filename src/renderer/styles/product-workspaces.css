@@ -593,3 +593,130 @@
     transition: none;
   }
 }
+
+/* Project overview (Xirp parity clean-room) */
+
+.project-overview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding: var(--space-5);
+  max-inline-size: 720px;
+  margin-inline: auto;
+  min-block-size: 100%;
+  box-sizing: border-box;
+}
+
+.project-overview__title {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+.project-overview__path {
+  margin: var(--space-1) 0 0;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  word-break: break-all;
+}
+
+.project-overview__goal {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.project-overview__goal-label {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.project-overview__goal-input {
+  width: 100%;
+  resize: vertical;
+  min-block-size: 4.5rem;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elevated, var(--bg-bar));
+  color: var(--text);
+  font: inherit;
+}
+
+.project-overview__goal-submit {
+  justify-self: start;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-bar);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.project-overview__goal-submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.project-overview__flock-title {
+  margin: 0 0 var(--space-2);
+  font-size: 0.95rem;
+}
+
+.project-overview__empty {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.project-overview__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.project-overview__item {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-1);
+}
+
+.project-overview__session {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-bar);
+  color: var(--text);
+  text-align: start;
+  cursor: pointer;
+}
+
+.project-overview__session-copy {
+  display: grid;
+  gap: 2px;
+  min-inline-size: 0;
+}
+
+.project-overview__session-title {
+  font-weight: 500;
+}
+
+.project-overview__session-meta {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.project-overview__close {
+  display: grid;
+  place-items: center;
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}

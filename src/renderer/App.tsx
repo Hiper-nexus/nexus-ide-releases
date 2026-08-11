@@ -88,6 +88,7 @@ import {
 import { MissionSetup } from './components/mission/MissionSetup';
 import { MissionBoard } from './components/mission/MissionBoard';
 import { TerminalWorkspace } from './components/product/TerminalWorkspace';
+import { ProjectOverviewConnected } from './components/product/ProjectOverview';
 import { TaskBoardWorkspace } from './components/product/TaskBoardWorkspace';
 import { MemoryWorkspace } from './components/product/MemoryWorkspace';
 import { SettingsWorkspace } from './components/settings/SettingsWorkspace';
@@ -167,6 +168,8 @@ function productDestinationLabel(destination: ProductDestination): string {
       return 'Launcher';
     case 'terminal':
       return 'Terminal do workspace';
+    case 'project':
+      return 'Projeto';
     case 'mission-setup':
       return 'Preparar missão';
     case 'mission':
@@ -273,6 +276,14 @@ export function App() {
     [],
   );
 
+  // Flag-off / Labs kill-switch: orphan `project` destinations fall back to
+  // Terminal so the rail item disappearing never leaves a dead surface.
+  useEffect(() => {
+    if (productFlags[FEATURE_FLAG_IDS.uiProjectOverview] !== false) return;
+    if (destination.kind !== 'project') return;
+    useProductNavigationStore.getState().openTerminal();
+  }, [destination.kind, productFlags]);
+
   // Each workspace owns its saved pane tree. A workspace identity change may
   // choose Terminal, but ordinary store refreshes never reset the active
   // product destination.
@@ -377,6 +388,21 @@ export function App() {
         return;
       }
       if (
+        event.key.toLowerCase() === 'g' &&
+        !event.shiftKey &&
+        !event.altKey
+      ) {
+        if (!useWorkspaceStore.getState().current) return;
+        if (
+          productFlags[FEATURE_FLAG_IDS.uiProjectOverview] === false
+        ) {
+          return;
+        }
+        event.preventDefault();
+        useProductNavigationStore.getState().openProject();
+        return;
+      }
+      if (
         event.key.toLowerCase() === 'k' &&
         !event.shiftKey &&
         !event.altKey
@@ -444,7 +470,7 @@ export function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [productFlags]);
 
   // Finder drops become canonical, root-relative project context. External
   // files are never staged into an unreviewed absolute-path mission contract.
@@ -708,6 +734,9 @@ export function App() {
       break;
     case 'terminal':
       break;
+    case 'project':
+      destinationContent = <ProjectOverviewConnected />;
+      break;
     case 'mission-setup':
       destinationContent = <MissionSetup />;
       break;
@@ -783,9 +812,14 @@ export function App() {
       name: workspace.name,
       missions: [],
     }));
+  const projectOverviewEnabled =
+    productFlags[FEATURE_FLAG_IDS.uiProjectOverview] !== false;
+
   let selection: WorkspaceRailSelection = null;
   if (destination.kind === 'mission') {
     selection = { kind: 'mission', missionId: destination.missionId };
+  } else if (destination.kind === 'project' && projectOverviewEnabled) {
+    selection = { kind: 'project' };
   } else if (destination.kind === 'task-board') {
     selection = { kind: 'task-board' };
   } else if (destination.kind === 'memory') {
@@ -794,7 +828,9 @@ export function App() {
     selection = { kind: 'settings' };
   } else if (
     currentWorkspace &&
-    (destination.kind === 'terminal' || destination.kind === 'mission-setup')
+    (destination.kind === 'terminal' ||
+      destination.kind === 'mission-setup' ||
+      (destination.kind === 'project' && !projectOverviewEnabled))
   ) {
     selection = {
       kind: 'workspace',
@@ -859,6 +895,12 @@ export function App() {
                 missionId,
                 cause: 'rail-selection',
               })
+            }
+            projectEnabled={Boolean(currentWorkspace) && projectOverviewEnabled}
+            onOpenProject={
+              currentWorkspace && projectOverviewEnabled
+                ? navigation.openProject
+                : undefined
             }
             onOpenTaskBoard={navigation.openTaskBoard}
             onOpenMemory={navigation.openMemory}

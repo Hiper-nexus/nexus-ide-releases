@@ -41,6 +41,13 @@ describe('product navigation', () => {
     }
   });
 
+  it('opens the project overview destination', () => {
+    useProductNavigationStore.getState().openProject();
+    expect(useProductNavigationStore.getState().destination).toEqual({
+      kind: 'project',
+    });
+  });
+
   it('returns to the launcher when the workspace closes', () => {
     const store = useProductNavigationStore.getState();
     store.openMission('mission-17');

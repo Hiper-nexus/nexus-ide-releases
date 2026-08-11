@@ -18,6 +18,7 @@ export interface WorkspaceRailWorkspace {
 export type WorkspaceRailSelection =
   | { kind: 'workspace'; workspaceId: string }
   | { kind: 'mission'; missionId: string }
+  | { kind: 'project' }
   | { kind: 'task-board' }
   | { kind: 'memory' }
   | { kind: 'settings' }
@@ -30,6 +31,8 @@ export interface WorkspaceRailProps {
   onCreateNew: () => void;
   onSelectWorkspace: (workspaceId: string) => void;
   onSelectMission: (missionId: string) => void;
+  projectEnabled?: boolean;
+  onOpenProject?: () => void;
   onOpenTaskBoard: () => void;
   onOpenMemory: () => void;
   onOpenSettings: () => void;
@@ -205,7 +208,7 @@ function WorkspaceGroup({
 
 function isSelected(
   selection: WorkspaceRailSelection,
-  kind: 'task-board' | 'memory' | 'settings',
+  kind: 'project' | 'task-board' | 'memory' | 'settings',
 ): boolean {
   return selection?.kind === kind;
 }
@@ -218,10 +221,13 @@ export function WorkspaceRail({
   onCreateNew,
   onSelectWorkspace,
   onSelectMission,
+  projectEnabled = false,
+  onOpenProject,
   onOpenTaskBoard,
   onOpenMemory,
   onOpenSettings,
 }: WorkspaceRailProps) {
+  const projectSelected = isSelected(selection, 'project');
   const taskBoardSelected = isSelected(selection, 'task-board');
   const memorySelected = isSelected(selection, 'memory');
   const settingsSelected = isSelected(selection, 'settings');
@@ -266,6 +272,22 @@ export function WorkspaceRail({
       </div>
 
       <ul className="workspace-rail__fixed" aria-label="Destinos fixos">
+        {projectEnabled && onOpenProject ? (
+          <li>
+            <button
+              type="button"
+              className={`workspace-rail__row workspace-rail__fixed-row${
+                projectSelected ? ' workspace-rail__row--selected' : ''
+              }`}
+              aria-current={projectSelected ? 'page' : undefined}
+              aria-label="Abrir Projeto"
+              onClick={onOpenProject}
+            >
+              <PixelIcon name="files" size={12} />
+              <span className="workspace-rail__row-label">Projeto</span>
+            </button>
+          </li>
+        ) : null}
         <li>
           <button
             type="button"
