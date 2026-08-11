@@ -92,6 +92,7 @@ import { TaskBoardWorkspace } from './components/product/TaskBoardWorkspace';
 import { MemoryWorkspace } from './components/product/MemoryWorkspace';
 import { SettingsWorkspace } from './components/settings/SettingsWorkspace';
 import { AgentNotifications } from './components/AgentNotifications';
+import { UpdateNotifier } from './components/UpdateModal';
 import {
   useProductNavigationStore,
   type ProductDestination,
@@ -867,11 +868,19 @@ export function App() {
         header={
           currentWorkspace ? (
             <>
+              {/* Atualizar o app tem que estar SEMPRE alcançável: o chip saiu
+                  do App em 01/08 num fix de missão e o produto passou duas
+                  releases sem nenhuma porta para atualizar. */}
+              <UpdateNotifier alwaysVisible />
               <AgentNotifications />
               {!contextualPanelVisible ? contextualPanel : null}
               <DictationModeChip />
             </>
-          ) : undefined
+          ) : (
+            // Sem workspace aberto (launcher) o cabeçalho ficava vazio — e era
+            // exatamente ali que o operador chegava para atualizar.
+            <UpdateNotifier alwaysVisible />
+          )
         }
         contentLabel={productDestinationLabel(destination)}
         focusRequest={destinationFocusRequest}

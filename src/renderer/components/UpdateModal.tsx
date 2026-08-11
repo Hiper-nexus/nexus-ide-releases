@@ -273,3 +273,35 @@ export function UpdateModal({ state, onClose }: Props) {
     </OverlayLayer>
   );
 }
+
+/**
+ * Chip de atualização + painel, prontos para montar.
+ *
+ * A composição existia e sumiu do App em 01/08 (commit `5a6cb8b8`, junto de um
+ * fix de missão), deixando o painel órfão: o app passou DUAS releases sem
+ * nenhuma superfície de atualizar — "a parte de atualizar o app sumiu". Voltou
+ * como componente próprio para não depender de ninguém lembrar de montar as
+ * três peças na mão.
+ */
+export function UpdateNotifier({
+  alwaysVisible = false,
+  compact = false,
+}: {
+  alwaysVisible?: boolean;
+  compact?: boolean;
+}) {
+  const state = useUpdateState();
+  const [open, setOpen] = useState(false);
+  if (!state) return null;
+  return (
+    <>
+      <UpdateStatusButton
+        state={state}
+        alwaysVisible={alwaysVisible}
+        compact={compact}
+        onClick={() => setOpen(true)}
+      />
+      {open && <UpdateModal state={state} onClose={() => setOpen(false)} />}
+    </>
+  );
+}
