@@ -1,8 +1,11 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  __resetPersistentSessionWarningsForTests,
   createPersistentSessionBackend,
   planPersistentAgentSpawn,
+  tmuxEnvArgs,
   tmuxSessionName,
+  tmuxTarget,
   type TmuxRunner,
   type TmuxRunnerSync,
 } from './persistent-session';
@@ -18,6 +21,22 @@ describe('tmuxSessionName', () => {
     const name = tmuxSessionName('w'.repeat(100), 'p'.repeat(100));
     expect(name.length).toBeLessThanOrEqual(80);
     expect(name.startsWith('nexus-')).toBe(true);
+  });
+});
+
+describe('tmuxTarget / tmuxEnvArgs', () => {
+  it('uses exact-match targets', () => {
+    expect(tmuxTarget('nexus-a')).toBe('=nexus-a');
+  });
+
+  it('builds -e pairs and drops invalid keys', () => {
+    expect(
+      tmuxEnvArgs({
+        HOME: '/tmp/home',
+        'bad-key': 'x',
+        PATH: '/bin',
+      }),
+    ).toEqual(['-e', 'HOME=/tmp/home', '-e', 'PATH=/bin']);
   });
 });
 
@@ -55,9 +74,13 @@ describe('createPersistentSessionBackend', () => {
         args: [],
       }),
     ).resolves.toBe('exists');
+    expect(runner).toHaveBeenCalledWith(
+      ['has-session', '-t', '=nexus-a'],
+      { timeoutMs: 2_000 },
+    );
   });
 
-  it('creates a detached session when missing', async () => {
+  it('creates a detached session with env when missing', async () => {
     const runner = vi
       .fn<TmuxRunner>()
       .mockResolvedValueOnce({ code: 1, stdout: '', stderr: '' })
@@ -69,6 +92,7 @@ describe('createPersistentSessionBackend', () => {
         cwd: '/tmp/proj',
         command: 'claude',
         args: ['--foo'],
+        env: { HOME: '/tmp/home', ANTHROPIC_API_KEY: 'secret' },
       }),
     ).resolves.toBe('created');
     expect(runner).toHaveBeenLastCalledWith(
@@ -79,6 +103,10 @@ describe('createPersistentSessionBackend', () => {
         'nexus-a',
         '-c',
         '/tmp/proj',
+        '-e',
+        'HOME=/tmp/home',
+        '-e',
+        'ANTHROPIC_API_KEY=secret',
         'claude',
         '--foo',
       ],
@@ -86,7 +114,7 @@ describe('createPersistentSessionBackend', () => {
     );
   });
 
-  it('builds attach args for the PTY host', () => {
+  it('builds attach args with exact target', () => {
     const backend = createPersistentSessionBackend(async () => ({
       code: 0,
       stdout: '',
@@ -94,11 +122,11 @@ describe('createPersistentSessionBackend', () => {
     }));
     expect(backend.attachArgs('nexus-a')).toEqual({
       file: 'tmux',
-      args: ['attach-session', '-t', 'nexus-a'],
+      args: ['attach-session', '-t', '=nexus-a'],
     });
   });
 
-  it('kills a named session', async () => {
+  it('kills a named session with exact target', async () => {
     const runner = vi.fn<TmuxRunner>().mockResolvedValue({
       code: 0,
       stdout: '',
@@ -106,9 +134,10 @@ describe('createPersistentSessionBackend', () => {
     });
     const backend = createPersistentSessionBackend(runner, 'darwin');
     await backend.killSession('nexus-a');
-    expect(runner).toHaveBeenCalledWith(['kill-session', '-t', 'nexus-a'], {
-      timeoutMs: 5_000,
-    });
+    expect(runner).toHaveBeenCalledWith(
+      ['kill-session', '-t', '=nexus-a'],
+      { timeoutMs: 5_000 },
+    );
   });
 
   it('lists only nexus- prefixed sessions', async () => {
@@ -126,6 +155,10 @@ describe('createPersistentSessionBackend', () => {
 });
 
 describe('planPersistentAgentSpawn', () => {
+  beforeEach(() => {
+    __resetPersistentSessionWarningsForTests();
+  });
+
   it('stays direct when disabled, sealed, or missing pane', () => {
     const backend = createPersistentSessionBackend(
       async () => ({ code: 0, stdout: '', stderr: '' }),
@@ -170,17 +203,25 @@ describe('planPersistentAgentSpawn', () => {
     ).toBe('direct');
   });
 
-  it('creates tmux session and returns attach args', () => {
-    const sync = vi
-      .fn<TmuxRunnerSync>()
-      .mockReturnValueOnce({ code: 0, stdout: 'tmux 3.4', stderr: '' }) // -V
-      .mockReturnValueOnce({ code: 1, stdout: '', stderr: '' }) // has-session
-      .mockReturnValueOnce({ code: 0, stdout: '', stderr: '' }); // new-session
+  it('creates tmux session with env and returns attach args', () => {
+    const sync = vi.fn<TmuxRunnerSync>((args) => {
+      if (args[0] === '-V') {
+        return { code: 0, stdout: 'tmux 3.4', stderr: '' };
+      }
+      if (args[0] === 'has-session') {
+        return { code: 1, stdout: '', stderr: '' };
+      }
+      if (args[0] === 'new-session') {
+        return { code: 0, stdout: '', stderr: '' };
+      }
+      return { code: 1, stdout: '', stderr: 'unexpected' };
+    });
     const backend = createPersistentSessionBackend(
       async () => ({ code: 0, stdout: '', stderr: '' }),
       'darwin',
       sync,
     );
+    const onMissing = vi.fn();
     const plan = planPersistentAgentSpawn({
       enabled: true,
       workspaceId: '/ws',
@@ -188,16 +229,52 @@ describe('planPersistentAgentSpawn', () => {
       cwd: '/ws',
       file: '/bin/claude',
       args: ['--foo'],
+      env: { HOME: '/tmp/h' },
       sealedNative: false,
       backend,
+      onMissingSession: onMissing,
     });
     expect(plan.mode).toBe('tmux');
     expect(plan.file).toBe('tmux');
     expect(plan.args).toEqual([
       'attach-session',
       '-t',
-      expect.stringMatching(/^nexus-/),
+      expect.stringMatching(/^=nexus-/),
     ]);
     expect(plan.tmuxName).toMatch(/^nexus-/);
+    expect(plan.reattached).toBe(false);
+    expect(onMissing).toHaveBeenCalledWith(plan.tmuxName);
+    expect(sync).toHaveBeenCalledWith(
+      expect.arrayContaining(['-e', 'HOME=/tmp/h', '/bin/claude', '--foo']),
+      { timeoutMs: 10_000 },
+    );
+  });
+
+  it('reattaches without recreating when session exists', () => {
+    const sync = vi
+      .fn<TmuxRunnerSync>()
+      .mockReturnValueOnce({ code: 0, stdout: 'tmux 3.4', stderr: '' })
+      .mockReturnValueOnce({ code: 0, stdout: '', stderr: '' }); // has-session
+    const backend = createPersistentSessionBackend(
+      async () => ({ code: 0, stdout: '', stderr: '' }),
+      'darwin',
+      sync,
+    );
+    const onMissing = vi.fn();
+    const plan = planPersistentAgentSpawn({
+      enabled: true,
+      workspaceId: '/ws',
+      paneId: 'pane-1',
+      cwd: '/ws',
+      file: '/bin/claude',
+      args: [],
+      sealedNative: false,
+      backend,
+      onMissingSession: onMissing,
+    });
+    expect(plan.mode).toBe('tmux');
+    expect(plan.reattached).toBe(true);
+    expect(onMissing).not.toHaveBeenCalled();
+    expect(sync).toHaveBeenCalledTimes(2);
   });
 });

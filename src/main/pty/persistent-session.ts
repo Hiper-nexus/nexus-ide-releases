@@ -20,6 +20,17 @@ export type TmuxRunnerSync = (
 
 const TMUX_NAME_MAX = 80;
 const DEFAULT_TIMEOUT_MS = 5_000;
+const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+/** Cap env pairs passed as repeated `-e` to keep argv bounded. */
+const MAX_ENV_ENTRIES = 256;
+
+let warnedTmuxMissing = false;
+let warnedSealedSkip = false;
+
+/** Exact-match tmux target (`=` prevents prefix collisions after truncation). */
+export function tmuxTarget(name: string): string {
+  return `=${name}`;
+}
 
 /** Sanitize workspace + pane into a stable tmux session name. */
 export function tmuxSessionName(workspaceId: string, paneId: string): string {
@@ -28,6 +39,35 @@ export function tmuxSessionName(workspaceId: string, paneId: string): string {
   const trimmed = cleaned.replace(/^-+|-+$/g, '');
   if (trimmed.length <= TMUX_NAME_MAX) return trimmed || 'nexus-session';
   return trimmed.slice(0, TMUX_NAME_MAX).replace(/-+$/g, '') || 'nexus-session';
+}
+
+/**
+ * Build repeated `tmux -e KEY=VALUE` args. Drops invalid keys and caps count.
+ * Values may contain `=` (tmux splits on first `=`).
+ */
+export function tmuxEnvArgs(
+  env: Readonly<Record<string, string>> | undefined,
+): string[] {
+  if (!env) return [];
+  const out: string[] = [];
+  let count = 0;
+  for (const [key, value] of Object.entries(env)) {
+    if (!ENV_KEY_RE.test(key)) continue;
+    if (typeof value !== 'string') continue;
+    if (key.includes('\0') || value.includes('\0')) continue;
+    out.push('-e', `${key}=${value}`);
+    count += 1;
+    if (count >= MAX_ENV_ENTRIES) break;
+  }
+  return out;
+}
+
+export interface EnsureSessionInput {
+  name: string;
+  cwd: string;
+  command: string;
+  args: readonly string[];
+  env?: Readonly<Record<string, string>>;
 }
 
 async function defaultRunner(
@@ -56,11 +96,7 @@ async function defaultRunner(
       killed?: boolean;
     };
     const code =
-      typeof e.code === 'number'
-        ? e.code
-        : e.killed
-          ? 124
-          : 1;
+      typeof e.code === 'number' ? e.code : e.killed ? 124 : 1;
     return {
       code,
       stdout: typeof e.stdout === 'string' ? e.stdout : '',
@@ -96,23 +132,27 @@ function defaultRunnerSync(
   }
 }
 
+function newSessionArgs(input: EnsureSessionInput): string[] {
+  return [
+    'new-session',
+    '-d',
+    '-s',
+    input.name,
+    '-c',
+    input.cwd,
+    ...tmuxEnvArgs(input.env),
+    input.command,
+    ...input.args,
+  ];
+}
+
 export interface PersistentSessionBackend {
   probeAvailable(): Promise<boolean>;
   probeAvailableSync(): boolean;
   hasSession(name: string): Promise<boolean>;
   hasSessionSync(name: string): boolean;
-  ensureSession(input: {
-    name: string;
-    cwd: string;
-    command: string;
-    args: readonly string[];
-  }): Promise<'created' | 'exists'>;
-  ensureSessionSync(input: {
-    name: string;
-    cwd: string;
-    command: string;
-    args: readonly string[];
-  }): 'created' | 'exists';
+  ensureSession(input: EnsureSessionInput): Promise<'created' | 'exists'>;
+  ensureSessionSync(input: EnsureSessionInput): 'created' | 'exists';
   attachArgs(name: string): { file: string; args: string[] };
   killSession(name: string): Promise<void>;
   killSessionSync(name: string): void;
@@ -137,7 +177,7 @@ export function createPersistentSessionBackend(
     },
 
     async hasSession(name: string): Promise<boolean> {
-      const result = await runner(['has-session', '-t', name], {
+      const result = await runner(['has-session', '-t', tmuxTarget(name)], {
         timeoutMs: 2_000,
       });
       return result.code === 0;
@@ -145,24 +185,15 @@ export function createPersistentSessionBackend(
 
     hasSessionSync(name: string): boolean {
       return (
-        runnerSync(['has-session', '-t', name], { timeoutMs: 2_000 }).code ===
-        0
+        runnerSync(['has-session', '-t', tmuxTarget(name)], {
+          timeoutMs: 2_000,
+        }).code === 0
       );
     },
 
     async ensureSession(input): Promise<'created' | 'exists'> {
       if (await this.hasSession(input.name)) return 'exists';
-      const args = [
-        'new-session',
-        '-d',
-        '-s',
-        input.name,
-        '-c',
-        input.cwd,
-        input.command,
-        ...input.args,
-      ];
-      const result = await runner(args, { timeoutMs: 10_000 });
+      const result = await runner(newSessionArgs(input), { timeoutMs: 10_000 });
       if (result.code !== 0) {
         throw new Error(
           `tmux new-session failed (${result.code}): ${result.stderr || result.stdout}`,
@@ -173,17 +204,7 @@ export function createPersistentSessionBackend(
 
     ensureSessionSync(input): 'created' | 'exists' {
       if (this.hasSessionSync(input.name)) return 'exists';
-      const args = [
-        'new-session',
-        '-d',
-        '-s',
-        input.name,
-        '-c',
-        input.cwd,
-        input.command,
-        ...input.args,
-      ];
-      const result = runnerSync(args, { timeoutMs: 10_000 });
+      const result = runnerSync(newSessionArgs(input), { timeoutMs: 10_000 });
       if (result.code !== 0) {
         throw new Error(
           `tmux new-session failed (${result.code}): ${result.stderr || result.stdout}`,
@@ -193,15 +214,22 @@ export function createPersistentSessionBackend(
     },
 
     attachArgs(name: string): { file: string; args: string[] } {
-      return { file: 'tmux', args: ['attach-session', '-t', name] };
+      return {
+        file: 'tmux',
+        args: ['attach-session', '-t', tmuxTarget(name)],
+      };
     },
 
     async killSession(name: string): Promise<void> {
-      await runner(['kill-session', '-t', name], { timeoutMs: 5_000 });
+      await runner(['kill-session', '-t', tmuxTarget(name)], {
+        timeoutMs: 5_000,
+      });
     },
 
     killSessionSync(name: string): void {
-      runnerSync(['kill-session', '-t', name], { timeoutMs: 5_000 });
+      runnerSync(['kill-session', '-t', tmuxTarget(name)], {
+        timeoutMs: 5_000,
+      });
     },
 
     async listNexusSessions(): Promise<string[]> {
@@ -234,6 +262,21 @@ export function __setPersistentSessionBackendForTests(
   sharedBackend = backend;
 }
 
+/** Test isolation for one-shot warnings. */
+export function __resetPersistentSessionWarningsForTests(): void {
+  warnedTmuxMissing = false;
+  warnedSealedSkip = false;
+}
+
+export type PersistentSpawnPlan = {
+  mode: 'direct' | 'tmux';
+  file: string;
+  args: string[];
+  tmuxName?: string;
+  /** True when an existing tmux session was reattached (cold reopen). */
+  reattached?: boolean;
+};
+
 /**
  * Decide whether a resolved agent spawn should be wrapped in tmux.
  * Skip sealed/native-confined launches — authenticity binds the CLI binary.
@@ -245,26 +288,43 @@ export function planPersistentAgentSpawn(input: {
   cwd: string;
   file: string;
   args: readonly string[];
+  env?: Readonly<Record<string, string>>;
   sealedNative: boolean;
   backend?: PersistentSessionBackend;
-}): {
-  mode: 'direct' | 'tmux';
-  file: string;
-  args: string[];
-  tmuxName?: string;
-} {
-  if (
-    !input.enabled ||
-    input.sealedNative ||
-    !input.paneId ||
-    !input.workspaceId
-  ) {
-    return { mode: 'direct', file: input.file, args: [...input.args] };
+  /** Called when a named session is missing so callers can drop stale registry. */
+  onMissingSession?: (tmuxName: string) => void;
+}): PersistentSpawnPlan {
+  const direct = (): PersistentSpawnPlan => ({
+    mode: 'direct',
+    file: input.file,
+    args: [...input.args],
+  });
+
+  if (!input.enabled || !input.paneId || !input.workspaceId) {
+    return direct();
   }
+  if (input.sealedNative) {
+    if (!warnedSealedSkip) {
+      warnedSealedSkip = true;
+      console.info(
+        '[pty] persistentSession skipped for native-sealed launch ' +
+          '(Darwin authenticity binds the CLI binary; tmux wrap stays off)',
+      );
+    }
+    return direct();
+  }
+
   const backend = input.backend ?? getPersistentSessionBackend();
   if (!backend.probeAvailableSync()) {
-    return { mode: 'direct', file: input.file, args: [...input.args] };
+    if (!warnedTmuxMissing) {
+      warnedTmuxMissing = true;
+      console.warn(
+        '[pty] persistentSession unavailable: tmux missing — using direct PTY',
+      );
+    }
+    return direct();
   }
+
   const name = tmuxSessionName(input.workspaceId, input.paneId);
   try {
     if (backend.hasSessionSync(name)) {
@@ -274,13 +334,16 @@ export function planPersistentAgentSpawn(input: {
         file: attach.file,
         args: attach.args,
         tmuxName: name,
+        reattached: true,
       };
     }
+    input.onMissingSession?.(name);
     backend.ensureSessionSync({
       name,
       cwd: input.cwd,
       command: input.file,
       args: input.args,
+      env: input.env,
     });
     const attach = backend.attachArgs(name);
     return {
@@ -288,12 +351,13 @@ export function planPersistentAgentSpawn(input: {
       file: attach.file,
       args: attach.args,
       tmuxName: name,
+      reattached: false,
     };
   } catch (err) {
     console.warn(
       '[pty] persistentSession fallback to direct spawn:',
       err instanceof Error ? err.message : err,
     );
-    return { mode: 'direct', file: input.file, args: [...input.args] };
+    return direct();
   }
 }

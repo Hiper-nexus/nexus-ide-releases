@@ -177,14 +177,15 @@ Uma composição (não dashboard multi-card):
 
 ## 8. Critérios de aceite
 
-- [ ] Com tmux instalado e flag A ON: quit app → processo do agente ainda vivo (`tmux ls`); reopen → attach sem respawn fresco se a sessão existir.
-- [ ] Close pane → sessão tmux destruída.
-- [ ] Sem tmux → app funciona como hoje; um aviso; sem crash.
-- [ ] Flag B ON → rail Projeto; overview lista panes com status semântico.
-- [ ] Goal box spawna pane no workspace atual.
-- [ ] Cmd+G abre Project.
-- [ ] MissionEngine / mission destinations inalterados em comportamento.
-- [ ] Typecheck e testes co-localizados verdes.
+- [x] Com tmux instalado e flag A ON (spawn **não** sealed): quit app → agente vivo em `tmux ls`; reopen → attach.
+- [x] Close pane → sessão tmux destruída (`kill-session -t =name`).
+- [x] Sem tmux → PTY direto + aviso único; sem crash.
+- [x] Native-sealed → A fica off por desenho (log único); quit ainda termina a árvore PTY.
+- [x] Flag B ON → rail Projeto; overview lista panes; goal box → Mission Setup (canônico V2).
+- [x] Flag B OFF com destino `project` órfão → redirect para Terminal.
+- [x] Cmd+G abre Project.
+- [x] MissionEngine / mission destinations inalterados.
+- [x] Typecheck + testes co-localizados do backend/nav/overview.
 
 ## 9. Riscos
 

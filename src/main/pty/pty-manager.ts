@@ -1948,7 +1948,12 @@ export function spawnAgentSession(
     cwd: spawnCwd,
     file: spawnFile,
     args: spawnArgs,
+    env: spawnEnv,
     sealedNative: Boolean(trustedNativeLaunch),
+    onMissingSession: () => {
+      // Stale registry row after cold start with a dead tmux session.
+      if (req.paneId) deletePersistentPty(workspaceId, req.paneId);
+    },
   });
   if (persistencePlan.mode === "tmux" && persistencePlan.tmuxName && req.paneId) {
     upsertPersistentPty({

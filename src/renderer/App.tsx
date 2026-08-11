@@ -275,6 +275,14 @@ export function App() {
     [],
   );
 
+  // Flag-off / Labs kill-switch: orphan `project` destinations fall back to
+  // Terminal so the rail item disappearing never leaves a dead surface.
+  useEffect(() => {
+    if (productFlags[FEATURE_FLAG_IDS.uiProjectOverview] !== false) return;
+    if (destination.kind !== 'project') return;
+    useProductNavigationStore.getState().openTerminal();
+  }, [destination.kind, productFlags]);
+
   // Each workspace owns its saved pane tree. A workspace identity change may
   // choose Terminal, but ordinary store refreshes never reset the active
   // product destination.
