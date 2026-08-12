@@ -8,10 +8,10 @@
  * Modelo: mesmo padrão dos hooks do concorrente (~/.overclock-app/*.mjs).
  */
 
+import { app } from 'electron';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 
 const HANDOFF_HOOK_FILES = [
   'handoff-stop.mjs',
@@ -35,13 +35,11 @@ export function installHandoffHookScripts(home = homedir()): string[] {
   const destDir = nexusHooksDir(home);
   mkdirSync(destDir, { recursive: true, mode: 0o700 });
 
-  const sourceDir = join(
-    dirname(fileURLToPath(import.meta.url)),
-    '..',
-    'main',
-    'orch',
-    'hooks',
-  );
+  // No dev: __dirname aponta pra src/main/orch/hooks/.
+  // No bundle: os hooks estão em resources/hooks/ ou app.asar.
+  const sourceDir = app.isPackaged
+    ? join(process.resourcesPath, 'hooks')
+    : join(app.getAppPath(), 'src', 'main', 'orch', 'hooks');
 
   const installed: string[] = [];
   for (const filename of HANDOFF_HOOK_FILES) {
