@@ -36,7 +36,15 @@ export const CURRENT_RELEASE: AppRelease = {
         'continuam no caminho que preserva o rascunho.',
     },
   ],
-  fixes: [],
+  fixes: [
+    {
+      title: 'Audit da toolchain volta a zero',
+      detail:
+        'extract-zip (GHSA-jmr9-qjv8-65gv, sem patch) é substituído pelo ' +
+        'fork endurecido @electron-internal/extract-zip@1.0.4 no packager. ' +
+        'Não entra no app empacotado.',
+    },
+  ],
 };
 
 export const RELEASE_03100: AppRelease = {

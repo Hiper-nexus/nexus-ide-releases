@@ -16,6 +16,11 @@ pular o conteúdo quando o operador pede uma missão nova.
   mesmo quando o board está aberto e o store ainda não tem
   `workspacePath`. Handoffs (ProjectOverview, Jarvis, reabrir) continuam
   em `openMissionSetup` e preservam o objetivo.
+- **Toolchain: `extract-zip` vira o fork endurecido do Electron.**
+  GHSA-jmr9-qjv8-65gv (symlink traversal, sem patch upstream) apareceu
+  no audit depois da 0.32.2. Override aponta `extract-zip` para
+  `@electron-internal/extract-zip@1.0.4`, já usado pelo próprio
+  `electron`. Só afeta o packager na máquina de build.
 
 ## 0.32.2 — Paralelismo read-only + hooks de handoff funcionais
 
