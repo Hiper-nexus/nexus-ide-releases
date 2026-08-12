@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.32.0 — Motor limpo, paridade total
+
+Data: 2026-08-12
+
+Reescrita completa do motor de execução de missão com padrão de coordenação
+via MCP. A Via Rápida spawna só o orquestrador; workers são invocados sob
+demanda. Prompt entregue no argv de nascença para todas as CLIs. Hooks de
+handoff com auto-entrega e fallback mecânico.
+
+- **Motor limpo.** tickRun, wasBusy, markerObserver, nudge, respawn, settlement
+  removidos. 590 linhas (era 989). Orquestrador coordena via nexus_pane_spawn,
+  nexus_handoff_list, nexus_mission_set_status.
+- **Prompt-at-birth.** Prompt no argv de nascença para TODAS as CLIs. Zero
+  timing race, zero paste pós-boot.
+- **Resume de worker.** nexus_pane_spawn({resume: "h-N"|"pane-N"}) retoma
+  worker fechado com contexto intacto.
+- **pane_wait_idle.** 15s cap, boot confirmation only. Nunca para esperar
+  resultado de worker.
+- **Watcher com handoff_list.** Se orquestrador morrer, engine avalia handoffs
+  dos workers para decidir sucesso ou bloqueio.
+- **Hooks de handoff.** handoff-stop.mjs, handoff-deliver.mjs, soft-status.mjs
+  instalados automaticamente no bootstrap.
+- **Worker com auto-entrega.** ≤280 caracteres = entrega verbatim automática.
+  >280 = chama nexus_handoff_submit. PRONTO/BLOQUEADO removido do prompt.
+
 ## 0.31.4 — Expresso, sem regressões
 
 Data: 2026-08-12
