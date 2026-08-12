@@ -235,7 +235,7 @@ const paneSpawn: McpToolDef = {
     'nexus_route_task: in a running mission, pass its routeReservationId too. ' +
     'The explicit adapterId/model WIN over non-sticky roster defaults (cost routing). ' +
     'Prompt is delivered in the CLI argv AT BIRTH — the pane wakes already ' +
-    'executing it (Overclock parity). Returns {paneId, sessionId}.',
+    'executing it (coordination parity). Returns {paneId, sessionId}.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -636,7 +636,7 @@ const paneSpawn: McpToolDef = {
         invocation,
       });
       // Declarado no nascimento (registro, não pergunta): o pane se fecha
-      // sozinho no handoff SUCCESS — paridade Overclock, libera a vaga sem
+      // sozinho no handoff SUCCESS — paridade Bridge, libera a vaga sem
       // segurar slot da onda seguinte; falha preserva pane para diagnóstico.
       if (args.autoCloseOnHandoff === true && spawned.sessionId) {
         armAutoCloseOnHandoff(spawned.sessionId, spawned.paneId);
@@ -973,7 +973,7 @@ const paneClose: McpToolDef = {
         type: 'string',
         enum: ['caller_mission', 'caller_workspace'],
         description:
-          'Explicit close scope (Overclock parity): the caller NAMES what ' +
+          'Explicit close scope (coordination parity): the caller NAMES what ' +
           'closes; nothing implicit.',
       },
     },

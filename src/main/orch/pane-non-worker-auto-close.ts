@@ -1,5 +1,5 @@
 /**
- * Auto-fechar panes não-worker idle (P1-4, paridade Overclock commit 869c08f7).
+ * Auto-fechar panes não-worker idle (P1-4, paridade Bridge commit 869c08f7).
  *
  * Panes spawados manualmente pelo usuário ou por agentes de ferramenta (sem
  * role de missão) são encerrados após ficarem idle por NON_WORKER_AUTO_CLOSE_TTL_MS.

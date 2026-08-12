@@ -1411,7 +1411,7 @@ export async function initOrchestration(): Promise<void> {
     initPaneRegistry();
     initIdleDelivery();
     initWorkerHandoffTtl();
-    // Garantia de handoff (Stop-hook do Overclock): worker que trabalha e fica
+    // Garantia de handoff (Stop-hook do modelo): worker que trabalha e fica
     // mudo não pode matar a missão em silêncio. DEFAULT-OFF: a Via Rápida
     // supervisiona os workers (boot nudge 90s, stall watchdog → blocked) e
     // completa por observação, criando zero handoffs — o enforcement global

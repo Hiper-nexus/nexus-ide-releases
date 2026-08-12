@@ -26,7 +26,7 @@ export const HOOK_SCRIPT = `#!/usr/bin/env node
 //     payload, relança a si mesmo detached e sai em ms; a rede roda no neto.
 //     Gate fora do ar NUNCA trava o encerramento do worker.
 //
-// A forma do stop foi medida no motor do Overclock (handoff-deliver.mjs:400-430,
+// A forma do stop foi medida no motor do modelo (handoff-deliver.mjs:400-430,
 // handoff-stop.mjs:497-520) e é exatamente por isso que eles conseguem instalar
 // o hook em todo pane sem risco. O nosso era síncrono e fail-closed nos dois
 // eventos, que é a razão documentada (auditoria 0fe423aa) de nunca o termos

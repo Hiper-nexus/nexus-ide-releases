@@ -61,7 +61,7 @@ export const LABS_FLAG_COPY: Record<string, { title: string; hint?: string }> = 
   },
   'feature.mission.workerHandoffTtl': {
     title: 'Worker TTL pós-handoff',
-    hint: 'Paridade Overclock (opt-in): worker idle com todos os handoffs consumidos fecha sozinho ~30s depois, liberando o pane. Qualquer trabalho novo cancela.',
+    hint: 'Paridade Bridge (opt-in): worker idle com todos os handoffs consumidos fecha sozinho ~30s depois, liberando o pane. Qualquer trabalho novo cancela.',
   },
 };
 

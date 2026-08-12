@@ -1,7 +1,7 @@
 /**
  * Modo livre de agentes (opt-in por missão) — decisões puras dos gates.
  *
- * "Iniciar missão em modo livre" é o análogo Overclock: o orquestrador spawna
+ * "Iniciar missão em modo livre" é o análogo Bridge: o orquestrador spawna
  * QUALQUER CLI/modelo instalado como worker, sem cerimônia. O flag mora no
  * contrato de intenção da missão (`MissionIntentContract.freeAgentChoice`),
  * selado no início — nunca é default silencioso, sempre opt-in do operador.

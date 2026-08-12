@@ -68,7 +68,7 @@ export interface PaneOrchMeta {
    * Modo concorrente OPT-IN: este worker exige worktree fisicamente distinta.
    *
    * Ausente (padrão) = caminho SIMPLES: o worker roda no próprio workspace com
-   * cwd herdado, como no Overclock. O isolamento existe para proteger
+   * cwd herdado, como no modelo. O isolamento existe para proteger
    * ESCRITORES CONCORRENTES entre si; cobrá-lo de toda missão transformava um
    * requisito de fan-out largo em porta trancada — inclusive para revisores
    * read-only, que não escrevem nada. Ver
@@ -109,7 +109,7 @@ export interface PaneSpawnOptions {
   /** Confine provider-native writes while retaining audited Nexus delegation. */
   nativeReadOnly?: boolean;
   /**
-   * Selado no despacho. `same_checkout` (padrão Overclock/Bridge do caminho
+   * Selado no despacho. `same_checkout` (padrão Bridge do caminho
    * simples) escreve no workspace de coordenação — NÃO exige worktree
    * distinta. `isolated_worktree` é o fan-out multi-escritor.
    */
@@ -457,9 +457,9 @@ export function spawnMainOwnedMissionPane(
     Boolean(options.missionId?.trim()) &&
     options.readOnly !== true &&
     options.nativeReadOnly !== true;
-  // Paridade Overclock/Bridge + flip 06/08: worktree distinta SÓ no fan-out
+  // Paridade Bridge + flip 06/08: worktree distinta SÓ no fan-out
   // isolado. Default (same_checkout / undefined) = mesmo checkout do chefe,
-  // como o spawn de Builder no Bridge/Overclock. Sem isto o scheduler claimava
+  // como o spawn de Builder no Bridge. Sem isto o scheduler claimava
   // a task e o spawn morria — claim sem pane, tile zumbi (HiperGO 2026-08-07).
   // Espelha tool-util.ts e PaneOrchMeta.isolatedWriter.
   const requiresDistinctWorktree =

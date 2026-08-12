@@ -81,7 +81,7 @@ export function VoiceHud() {
   );
 
   const liveStatus = liveState?.status ?? 'dormant';
-  // Chip CODE/CHAT no titlebar (paridade Overclock): mesmo controle do chip da
+  // Chip CODE/CHAT no titlebar (paridade Bridge): mesmo controle do chip da
   // barra superior — useDictationMode centraliza estado + persistência.
   const {
     mode: dictationMode,

@@ -1,6 +1,6 @@
 /**
  * Fechamento de panes por ESCOPO explícito + autoCloseOnHandoff (paridade
- * Overclock, gap e). Doutrina: o chamador NOMEIA o que fecha — nada implícito;
+ * coordenação, gap e). Doutrina: o chamador NOMEIA o que fecha — nada implícito;
  * o desligamento automático é declarado no nascimento do pane (registro, não
  * pergunta) e só dispara no handoff success — falha preserva pane e scrollback
  * para diagnóstico.

@@ -1,7 +1,7 @@
 import { useDictationMode } from '../voice/use-dictation-mode';
 
 /**
- * Chip CODE/CHAT da barra superior (paridade Overclock: o modo do ditado fica
+ * Chip CODE/CHAT da barra superior (paridade Bridge: o modo do ditado fica
  * sempre visível, não escondido atrás do HUD). Mesmo comportamento do chip do
  * HUD do Jarvis — um clique alterna e persiste.
  */

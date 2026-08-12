@@ -68,7 +68,7 @@ export const FEATURE_FLAG_IDS = {
   missionEventJournal: 'feature.mission.eventJournal',
   missionWarmupAdvisories: 'feature.mission.warmupAdvisories',
   missionWorkerHandoffTtl: 'feature.mission.workerHandoffTtl',
-  /** Nudge + handoff sintético do enforcement global (Overclock parity). */
+  /** Nudge + handoff sintético do enforcement global (coordination parity). */
   workerHandoffEnforcement: 'feature.mission.workerHandoffEnforcement',
   searchMixer: 'feature.search.mixer',
   contextualPanel: 'feature.ui.contextualPanel',
@@ -139,7 +139,7 @@ export const BUILTIN_FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
     removeAfter: '2027-03-31',
     killSwitch: false,
     telemetry: false,
-    // DEFAULT-ON (paridade Bridge/Overclock multi-pane na onda 1): reviewer/QA
+    // DEFAULT-ON (paridade Bridge multi-pane na onda 1): reviewer/QA
     // abrem em read-only enquanto o executor implementa — o grid deixa de
     // parecer "só Maestro + 1 worker". E2E real-mission que ancora PTYs deve
     // desligar via override de flag (como workerHandoffTtl).
@@ -149,7 +149,7 @@ export const BUILTIN_FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
     id: FEATURE_FLAG_IDS.missionWorkerHandoffTtl,
     owner: 'orch',
     description:
-      'Worker TTL pós-handoff (paridade Overclock §a#1): worker idle com todos os handoffs consumidos é encerrado ~30s depois, liberando o pane. DEFAULT-ON — restaura a aresta close→wake incondicional. Opt-out via override de flag para E2E real-mission (ancora workers a PTYs vivos).',
+      'Worker TTL pós-handoff (paridade Bridge §a#1): worker idle com todos os handoffs consumidos é encerrado ~30s depois, liberando o pane. DEFAULT-ON — restaura a aresta close→wake incondicional. Opt-out via override de flag para E2E real-mission (ancora workers a PTYs vivos).',
     channel: 'dev',
     createdAt: '2026-08-04',
     removeAfter: '2027-03-31',
@@ -161,7 +161,7 @@ export const BUILTIN_FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
     id: FEATURE_FLAG_IDS.workerHandoffEnforcement,
     owner: 'orch',
     description:
-      'Nudge + handoff sintético do worker-handoff-enforcement global (~20s/~45s, paridade Overclock). DEFAULT-OFF: a Via Rápida supervisiona os workers (boot nudge 90s, stall watchdog → blocked) e completa por observação, criando zero handoffs — o enforcement global brigava com essa conclusão. Religável via override de flag se um motor cerimonial voltar.',
+      'Nudge + handoff sintético do worker-handoff-enforcement global (~20s/~45s, paridade Bridge). DEFAULT-OFF: a Via Rápida supervisiona os workers (boot nudge 90s, stall watchdog → blocked) e completa por observação, criando zero handoffs — o enforcement global brigava com essa conclusão. Religável via override de flag se um motor cerimonial voltar.',
     channel: 'dev',
     createdAt: '2026-08-11',
     removeAfter: '2027-03-31',
@@ -173,7 +173,7 @@ export const BUILTIN_FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
     id: FEATURE_FLAG_IDS.paneNonWorkerAutoClose,
     owner: 'orch',
     description:
-      'Auto-fechar panes não-worker (spawn manual / agentes de ferramenta) idle além do TTL configurável (default 300s). Paridade Overclock commit 869c08f7.',
+      'Auto-fechar panes não-worker (spawn manual / agentes de ferramenta) idle além do TTL configurável (default 300s). Paridade commit 869c08f7.',
     channel: 'dev',
     createdAt: '2026-08-05',
     removeAfter: '2027-03-31',

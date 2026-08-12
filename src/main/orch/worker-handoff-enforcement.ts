@@ -1,7 +1,7 @@
 /**
- * Garantia de handoff do worker (paridade Overclock — Stop-hook / H3).
+ * Garantia de handoff do worker (paridade Bridge — Stop-hook / H3).
  *
- * No Overclock um worker NÃO consegue encerrar sua sessão sem submeter um
+ * Um worker NÃO consegue encerrar sua sessão sem submeter um
  * handoff: um Stop-hook bloqueia a saída. No Nexus a detecção era inteiramente
  * PÓS-MORTE, e havia um buraco silencioso entre os três guardas existentes:
  *
@@ -17,7 +17,7 @@
  * nunca chega e a missão morre em silêncio — trabalho acontecendo com zero
  * prova de entrega. Este módulo fecha exatamente esse buraco.
  *
- * ## Doutrina H3 (Overclock / Bridge) — DEGRADAR, nunca congelar
+ * ## Doutrina H3 — DEGRADAR, nunca congelar
  *
  * Ordem de escrita deliberada (sobrevive kill no meio e corrida
  * "consume antes do poll"):
@@ -26,7 +26,7 @@
  *      confiar em notificação in-memory;
  *   3. **nudge** — cutucada no PTY (melhor esforço; se falha, não para).
  *
- * Se o notify/cutucada falha, o Overclock diz: *"swarm monitor will fall
+ * Se o notify/cutucada falha, o sistema diz: *"swarm monitor will fall
  * back to inactivity detection"* — DEGRADA. Equivalente aqui:
  *   - cutucada não escreve → enforce sintético na hora (sem esperar grace);
  *   - submit sintético falha → **não** marca `enforced` (senão a missão
@@ -105,7 +105,7 @@ export interface QuietWorkerState {
  * existe para fechar: a missão que se auto-encerra ENQUANTO um worker ainda
  * codifica é o caso originador do hotfix — se o encerramento silenciasse a
  * cobrança, o relatório daquele worker se perderia justamente quando é mais
- * necessário (por que a missão morreu?). Overclock: o resultado permanece
+ * necessário (por que a missão morreu?). o resultado permanece
  * coletável depois do fato; aqui a submissão é durável e o `handoff_list`
  * continua servindo mesmo sem orquestrador vivo.
  */

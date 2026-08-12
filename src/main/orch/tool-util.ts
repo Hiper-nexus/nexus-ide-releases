@@ -925,7 +925,7 @@ export async function spawnPaneAndMaybePrompt(
     options.role === 'worker' &&
     Boolean(contextRevision) &&
     options.readOnly !== true;
-  // Caminho simples (06/08 + paridade Overclock/Bridge): escrita no workspace
+  // Caminho simples (06/08 + paridade Bridge/Bridge): escrita no workspace
   // de coordenação é o PADRÃO. Worktree distinta só quando o despacho pede
   // `isolated_worktree` (fan-out multi-escritor). Exigir worktree em todo
   // worker matou a entrega em loop de retries e deixou claim sem pane
@@ -1025,7 +1025,7 @@ export async function spawnPaneAndMaybePrompt(
           hints: [options.title, options.agentName],
         })
     : undefined;
-  // Overclock parity (12/08): prompt entregue no argv de NASCENÇA para TODA
+  // coordination parity (12/08): prompt entregue no argv de NASCENÇA para TODA
   // CLI que aceita — igual pane_spawn. Antes isso era restrito a 3 adapters
   // (agy/codex/opencode) e todo o resto recebia por colagem pós-boot, que é o
   // canal que falha contra TUI fria (timing race, eco, mutez). Agora o resolvedor

@@ -2,7 +2,7 @@
  * Delegação por PONTEIRO — brief persistido, worker escreve o resultado de volta.
  *
  * Hoje o briefing inteiro viaja no contexto de todo worker: caro em tokens,
- * caro no boot, e sem deixar rastro. O formato aqui é o do Overclock, medido em
+ * caro no boot, e sem deixar rastro. O formato aqui é o do modelo, medido em
  * disco: o brief vive num arquivo do WORKSPACE, o worker recebe uma LINHA de
  * ponteiro, executa, e escreve o resultado no MESMO arquivo sob `## Resultado`.
  *

@@ -12,7 +12,7 @@ import { getSquad } from './squad-store';
 import { missionEngineForScope } from './mission-engine-registry';
 
 /**
- * Via Rápida de missão (2026-08-12) — motor limpo, padrão Overclock.
+ * Via Rápida de missão (2026-08-12) — motor limpo, modelo PULL.
  *
  * O modelo é simples: spawna o ORQUESTRADOR com o briefing completo da missão
  * (objetivo + roster de workers + instruções de coordenação). O orquestrador
@@ -115,7 +115,7 @@ export function agentPrompt(
     `Você é ${agent.agentName} (${agent.category === 'orchestrator' ? 'orquestrador' : 'worker'})`,
     agent.category === 'orchestrator'
       ? [
-          '## ORQUESTRAÇÃO (padrão Overclock)',
+          '## ORQUESTRAÇÃO (modelo PULL)',
           '',
           'Você é o ORQUESTRADOR. Você NÃO executa tarefas — você COORDENA.',
           '',
@@ -146,7 +146,7 @@ export function agentPrompt(
           doctrine,
         ].join('\n')
       : [
-          '## WORKER (padrão Overclock)',
+          '## WORKER (modelo PULL)',
           '',
           'Você é um worker. Execute a tarefa e entregue o resultado.',
           'Sua resposta SERÁ ENTREGUE AUTOMATICAMENTE ao orquestrador.',
@@ -276,7 +276,7 @@ function stopWatcher(scope: ProjectExecutionScope, missionId: string): void {
 /**
  * Watcher tick — verifica o estado da missão e do orquestrador.
  *
- * Padrão Overclock: NÃO faz polling de worker. O orquestrador chama
+ * O orquestrador NÃO faz polling de worker. Ele chama
  * nexus_pane_spawn, os workers chamam nexus_handoff_submit quando terminam,
  * e o orquestrador chama nexus_mission_set_status({status:"done"}) quando
  * todos entregaram. O watcher só observa o status da missão e a saúde do
@@ -458,7 +458,7 @@ function startWatcher(
  *
  * O orquestrador recebe o roster de workers e as instruções para coordenar
  * via MCP tools (nexus_pane_spawn, nexus_handoff_list). Os workers são
- * spawnados SOB DEMANDA pelo orquestrador — modelo PULL do Overclock.
+ * spawnados SOB DEMANDA pelo orquestrador.
  */
 export async function fastLaneBootstrap(
   scope: ProjectExecutionScope,

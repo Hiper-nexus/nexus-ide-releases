@@ -1,7 +1,7 @@
 /**
- * Worker TTL pós-handoff (paridade Overclock 1.2.4, opt-in).
+ * Worker TTL pós-handoff (paridade Bridge 1.2.4, opt-in).
  *
- * O Overclock fecha workers ~30s após um handoff limpo: o resultado já é
+ * O modelo fecha workers ~30s após um handoff limpo: o resultado já é
  * durável no SQLite, então manter o PTY vivo só consome pane, memória e
  * contexto visual. Aqui, um worker da missão que entregou TODOS os seus
  * handoffs (delivery_state='consumed') e ficou idle é encerrado após
@@ -11,7 +11,7 @@
  *
  * Fail-safe por construção:
  * - opt-in via feature.mission.workerHandoffTtl (default OFF — igual ao
- *   opt-in do Overclock; e evita invariant violation no e2e real-mission,
+ *   opt-in do modelo; e evita invariant violation no e2e real-mission,
  *   que ancora workers a PTYs físicos vivos, mesmo raciocínio do
  *   feature.mission.warmupAdvisories);
  * - nunca toca orchestrator/user panes;
@@ -33,7 +33,7 @@ import {
 import { getProjectDomainStores } from './project-domain-store-registry';
 import { isSessionInjectableIdle, tapAgentSemanticStatus } from './agent-status';
 
-/** ~30s, espelhando o TTL observado no Overclock 1.2.4. */
+/** ~30s, espelhando o TTL observado no modelo 1.2.4. */
 export const WORKER_POST_HANDOFF_TTL_MS = 30_000;
 
 export interface WorkerHandoffTtlDeps {

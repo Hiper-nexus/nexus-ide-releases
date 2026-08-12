@@ -340,7 +340,7 @@ export const missionIntentContractSchema = z.object({
   /** Optional; missing/legacy contracts default to standard. */
   lane: missionLaneSchema.optional(),
   /**
-   * "Escolha livre de agentes" (opt-in por missão, análogo Overclock). Quando
+   * "Escolha livre de agentes" (opt-in por missão, análogo Bridge). Quando
    * true, o orquestrador pode nexus_pane_spawn QUALQUER adapter instalado +
    * modelo do catálogo sem routeReservationId e sem squad_binding, atravessando
    * os gates cerimoniais. Os guardrails que NÃO são cerimônia (containment de

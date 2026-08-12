@@ -1,5 +1,5 @@
 /**
- * Busca de capacidade por NECESSIDADE, ranqueada (paridade Overclock, gap f).
+ * Busca de capacidade por NECESSIDADE, ranqueada (paridade Bridge, gap f).
  *
  * Hoje `nexus_agent_list` e `nexus_skills_inventory` DESPEJAM o catálogo: quem
  * delega recebe tudo e escolhe lendo. Numa máquina com dezenas de agentes e

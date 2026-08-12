@@ -319,7 +319,7 @@ const handoffSubmitTool: McpToolDef = {
       !replayed || handoff.deliveryState === "queued"
         ? onHandoffSubmitted(handoff, ctx.scope)
         : null;
-    // autoCloseOnHandoff (paridade Overclock): declarado no spawn, dispara SÓ
+    // autoCloseOnHandoff (paridade Bridge): declarado no spawn, dispara SÓ
     // no success — falha preserva pane e scrollback. Fora do caminho da
     // resposta: o fechamento nunca atrasa nem derruba o handoff.
     if (ctx.sessionId) {

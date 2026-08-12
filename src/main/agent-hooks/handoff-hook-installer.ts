@@ -5,7 +5,7 @@
  * copiados do bundle para ~/.nexus/agent-hooks/ e registrados como Stop hooks
  * no ~/.claude/settings.json. Não interfere com o hook-service existente.
  *
- * Modelo: mesmo padrão dos hooks do concorrente (~/.overclock-app/*.mjs).
+ * Modelo: mesmo padrão dos hooks do modelo (~/.nexus/hooks/*.mjs).
  */
 
 import { app } from 'electron';

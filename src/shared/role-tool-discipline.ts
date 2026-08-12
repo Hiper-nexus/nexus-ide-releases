@@ -1,7 +1,7 @@
 /**
  * Disciplina de papel imposta no LAUNCH, não pedida no prompt.
  *
- * Medido no motor do Overclock: o piloto dele não tem Read/Bash/pane_list
+ * Medido no motor do modelo: o piloto dele não tem Read/Bash/pane_list
  * porque essas tools são removidas no spawn via argv `--disallowedTools`. O
  * orquestrador não deriva para executar porque a capacidade está AUSENTE — não
  * porque um prompt pediu bom comportamento.
