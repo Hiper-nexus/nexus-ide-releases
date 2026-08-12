@@ -1832,8 +1832,8 @@ export function requestPaneSpawn(
     transient: options.transient === true ? true : undefined,
     agentName: options.agentName,
     role: options.role,
-    resume: false,
-    resumeLatestOnly: false,
+    resume: options.resume != null && options.resume !== false,
+    resumeLatestOnly: options.resumeLatestOnly === true,
     restorePersistedAuthority: false,
   });
   return new Promise((resolve) => {

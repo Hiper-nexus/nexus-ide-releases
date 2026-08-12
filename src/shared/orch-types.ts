@@ -746,9 +746,9 @@ export interface OrchPaneSpawnRequest {
   /** Agente do squad que este pane representa — exibido no badge do pane. */
   agentName?: string;
   role?: 'orchestrator' | 'worker';
-  /** New mission workers are always fresh; renderer may not select recovery. */
-  resume: false;
-  resumeLatestOnly: false;
+  /** New mission workers are always fresh by default; main may request resume. */
+  resume: boolean;
+  resumeLatestOnly: boolean;
   restorePersistedAuthority: false;
 }
 

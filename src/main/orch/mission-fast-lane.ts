@@ -324,9 +324,10 @@ async function tickWatcher(state: WatcherState): Promise<void> {
 
   const silenceDuration = now - state.lastOrchActivityAt;
 
-  // Orquestrador morto há muito tempo → encerra missão.
+  // Orquestrador morto há muito tempo → verifica handoffs e decide.
   // O orquestrador deveria ter chamado nexus_mission_set_status antes de
-  // morrer. Se não chamou, damos um tempo (30min) e encerramos por inatividade.
+  // morrer. Se não chamou, damos um tempo (30min) e avaliamos os handoffs
+  // dos workers para decidir se foi sucesso ou bloqueio.
   if (
     orchState !== 'busy' &&
     orchState !== 'idle' &&
@@ -334,26 +335,50 @@ async function tickWatcher(state: WatcherState): Promise<void> {
     silenceDuration > ORCHESTRATOR_SILENCE_TIMEOUT_MS
   ) {
     try {
-      const engine = missionEngineForScope(state.scope);
-      engine.completeVerified(state.scope, {
+      // Verifica handoffs dos workers como fallback.
+      const handoffs = stores.handoffs.list({
         missionId: state.missionId,
-        expectedStatus: mission.status,
-        expectedIntentState: mission.intentState ?? 'executing',
-        expectedUpdatedAt: mission.updatedAt,
-        expectedIntentVersion: mission.intentVersion ?? 0,
-        learnings: mission.learnings ?? '',
-        result: {
-          outcome: 'success',
-          summary:
-            'Missão concluída por inatividade do orquestrador. ' +
-            'Verifique os terminais para os resultados.',
-          evidenceIds: [],
-          artifactRefs: [],
-        },
+        includeDelivered: false,
       });
+      const doneHandoffs = handoffs.filter((h) => h.status === 'success');
+      const blockedHandoffs = handoffs.filter(
+        (h) => h.status === 'blocked' || h.status === 'failed',
+      );
+
+      const engine = missionEngineForScope(state.scope);
+      if (doneHandoffs.length > 0 || blockedHandoffs.length > 0) {
+        const summaries = [...doneHandoffs, ...blockedHandoffs]
+          .map((h) => `${h.fromAgent ?? h.sessionId ?? 'worker'}: ${h.summary ?? ''}`)
+          .join('; ');
+        engine.completeVerified(state.scope, {
+          missionId: state.missionId,
+          expectedStatus: mission.status,
+          expectedIntentState: mission.intentState ?? 'executing',
+          expectedUpdatedAt: mission.updatedAt,
+          expectedIntentVersion: mission.intentVersion ?? 0,
+          learnings: mission.learnings ?? '',
+          result: {
+            outcome: blockedHandoffs.length > 0 ? 'partial' : 'success',
+            summary: `Missão concluída. Handoffs dos workers: ${summaries}`,
+            evidenceIds: [],
+            artifactRefs: [],
+          },
+        });
+      } else {
+        engine.blockTechnical(state.scope, {
+          missionId: state.missionId,
+          expectedStatus: mission.status,
+          expectedIntentState: mission.intentState ?? 'executing',
+          expectedUpdatedAt: mission.updatedAt,
+          expectedIntentVersion: mission.intentVersion ?? 0,
+          description:
+            'O orquestrador encerrou sem concluir a missão e nenhum worker ' +
+            'entregou handoff. Verifique os terminais e use Retomar.',
+        });
+      }
     } catch (error) {
       console.warn(
-        '[fast-lane] conclusão por inatividade falhou:',
+        '[fast-lane] avaliação de handoffs falhou:',
         error instanceof Error ? error.message : error,
       );
     }

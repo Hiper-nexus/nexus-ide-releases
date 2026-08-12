@@ -268,6 +268,16 @@ const paneSpawn: McpToolDef = {
           'Close this pane automatically when it submits a SUCCESS handoff ' +
           '(declared at birth; failure keeps the pane open for diagnosis).',
       },
+      resume: {
+        type: 'string',
+        description:
+          'Resume a CLOSED worker with its context intact: pass the task id ' +
+          '("h-N") or the old paneId ("pane-N"). The new pane relaunches that ' +
+          'worker\'s CLI session (e.g. claude --resume / codex resume) — same ' +
+          'files and conversation in its head, zero re-briefing. Use for any ' +
+          'adjustment/follow-up on a deliverable whose worker was already closed. ' +
+          'Combine with prompt (the adjustment).',
+      },
     },
   },
   handler: async (args, ctx, invocation) => {
@@ -326,6 +336,7 @@ const paneSpawn: McpToolDef = {
         readOnly: args.readOnly === true,
         prompt: str(args, 'prompt'),
         scope: ctx.scope,
+        resume: str(args, 'resume') ? true : undefined,
       };
     } else {
       const adHocAdapterId = requireStr(args, 'adapterId');
@@ -360,6 +371,7 @@ const paneSpawn: McpToolDef = {
         readOnly: args.readOnly === true,
         prompt: str(args, 'prompt'),
         scope: ctx.scope,
+        resume: str(args, 'resume') ? true : undefined,
       };
     }
     // "Escolha livre de agentes" (opt-in por missão): atravessa os três gates

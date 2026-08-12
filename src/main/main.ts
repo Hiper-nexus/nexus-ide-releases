@@ -773,6 +773,23 @@ if (!wireDeepLinks()) {
       } catch (err) {
         console.warn("[main] managed agent hooks bootstrap failed:", err);
       }
+
+      // Handoff hooks são essenciais para missão — instalados SEM consentimento.
+      // Eles permitem que workers entreguem resultados automaticamente (≤280 chars)
+      // e que o fallback mecânico capture resultados de CLIs sem hook nativo.
+      try {
+        const {
+          installHandoffHookScripts,
+          registerHandoffStopHook,
+        } = await import('./agent-hooks/handoff-hook-installer');
+        const installed = installHandoffHookScripts();
+        if (installed.length > 0) {
+          console.info('[main] handoff hooks instalados:', installed.join(', '));
+          registerHandoffStopHook();
+        }
+      } catch (err) {
+        console.warn('[main] handoff hook install failed:', err);
+      }
     }
 
     // Gap B: child-process-gone → bridge (classification + GPU fallback marker).

@@ -798,6 +798,14 @@ export interface SpawnToolOptions {
    * is not in allowedTools.
    */
   omitHandoffContract?: boolean;
+  /**
+   * Resume a CLOSED worker with its context intact. Accepts task id ("h-N"),
+   * paneId ("pane-N"), or boolean (resume mode on). The pty-manager resolves
+   * the exact session and passes --resume <id> (or equivalent) to the CLI.
+   */
+  resume?: boolean | string;
+  /** Only consider the latest session (no exact-session resume lookup). */
+  resumeLatestOnly?: boolean;
 }
 
 /**

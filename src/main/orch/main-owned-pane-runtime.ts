@@ -121,6 +121,14 @@ export interface PaneSpawnOptions {
   isolatedWriter?: boolean;
   /** Exact approved revision seal retained by the physical PTY. */
   authoritySeal?: MissionPaneAuthoritySeal;
+  /**
+   * Resume a CLOSED worker with its context intact. Triggers
+   * --resume <sessionId> (or equivalent) via pty-manager resume logic.
+   * Accepts boolean (resume mode on) or a task/pane id string.
+   */
+  resume?: boolean | string;
+  /** Only consider the latest session (no exact-session resume lookup). */
+  resumeLatestOnly?: boolean;
 }
 
 export interface MainOwnedPane {
