@@ -122,6 +122,8 @@ export interface MissionSetupStore {
     input: BeginLegacyReplacementReviewInput,
   ): boolean;
   clearEntryContext(): void;
+  /** Reseta o draft para vazio — usado ao abrir uma nova missão. */
+  clearDraft(): void;
   retryPersistence(): void;
   resetWorkspace(workspacePath?: string): void;
 }
@@ -760,6 +762,39 @@ export const useMissionSetupStore = create<MissionSetupStore>((set, get) => {
       return true;
     },
 
+    clearDraft: () => {
+      const current = get();
+      const draft = createEmptyMissionSetupDraft(
+        Math.min(Number.MAX_SAFE_INTEGER, current.draft.revision + 1),
+      );
+      // Remove do localStorage também — senão o próximo load restaura o antigo.
+      if (current.workspacePath) {
+        try {
+          const key = missionSetupStorageKey(current.workspacePath);
+          window.localStorage.removeItem(key);
+        } catch {
+          // best-effort
+        }
+      }
+      const persistence = current.workspacePath
+        ? persistWorkspaceDraft(current.workspacePath, draft)
+        : { status: 'idle' as const };
+      set({
+        draft,
+        persistence,
+        workspaceDrafts: current.workspacePath
+          ? {
+              ...current.workspaceDrafts,
+              [current.workspacePath]: { draft, persistence },
+            }
+          : current.workspaceDrafts,
+        entryContext: null,
+        entryAuthorityRevision: Math.min(
+          Number.MAX_SAFE_INTEGER,
+          current.entryAuthorityRevision + 1,
+        ),
+      });
+    },
     clearEntryContext: () => {
       const current = get();
       const entryAuthorityRevision = Math.min(

@@ -76,7 +76,10 @@ export const useProductNavigationStore = create<ProductNavigationStore>()(
       openLauncher: () => open(launcherDestination),
       openTerminal: () => open({ kind: 'terminal' }),
       openProject: () => open({ kind: 'project' }),
-      openMissionSetup: () => open({ kind: 'mission-setup' }),
+      openMissionSetup: () => {
+        useMissionSetupStore.getState().clearDraft();
+        open({ kind: 'mission-setup' });
+      },
       openMission: (missionId) =>
         open({ kind: 'mission', missionId, surface: 'board' }),
       showMissionBoard: () => showMissionSurface('board'),
