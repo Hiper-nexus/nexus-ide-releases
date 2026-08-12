@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.31.4 — Expresso, sem regressões
+
+Data: 2026-08-12
+
+Reconstruído da baseline 0.31.1 + Expresso + P0-1/P0-2 + wasBusy fix + update
+chip fix. Os 9 commits da sessão paralela foram removidos — eram eles que
+causavam loop de respawn e conclusão falsa da missão.
+
+- **Missão não conclui mais antes de trabalhar.** wasBusy só conta atividade
+  depois que o prompt foi entregue.
+- **Chip de versão nunca mais some.** Fallback offline com CURRENT_RELEASE.
+- **Sem loop de respawn.** Revertido o refactor de entrega de prompt.
+
 ## 0.31.1 — A porta de atualizar voltou
 
 Data: 2026-08-11
