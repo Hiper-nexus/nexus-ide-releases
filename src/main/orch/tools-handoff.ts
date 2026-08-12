@@ -20,7 +20,8 @@ import {
   type McpToolInvocation,
 } from "./mcp-protocol";
 import { getProjectDomainStores } from "./project-domain-store-registry";
-import { orchWriteSession, requireStr, str } from "./tool-util";
+import { requireStr, str } from "./tool-util";
+import { orchWriteSession } from "../pty/pty-manager";
 import { compactText } from "./session-compaction";
 import type { ScopedHandoff } from "./handoff-store";
 
