@@ -31,6 +31,7 @@ export interface ProductNavigationActions {
   openTerminal(): void;
   openProject(): void;
   openMissionSetup(): void;
+  openNewMission(): void;
   openMission(missionId: string): void;
   showMissionBoard(): void;
   showMissionTerminals(): void;
@@ -77,7 +78,10 @@ export const useProductNavigationStore = create<ProductNavigationStore>()(
       openTerminal: () => open({ kind: 'terminal' }),
       openProject: () => open({ kind: 'project' }),
       openMissionSetup: () => {
-        useMissionSetupStore.getState().clearDraft();
+        open({ kind: 'mission-setup' });
+      },
+      openNewMission: () => {
+        useMissionSetupStore.getState().beginFreshMission();
         open({ kind: 'mission-setup' });
       },
       openMission: (missionId) =>

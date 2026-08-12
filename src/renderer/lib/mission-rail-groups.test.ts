@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Mission } from '../../shared/orch-types';
 import {
   groupMissionsForRail,
+  missionHasLiveRuntime,
   missionIsOperationallyActive,
   missionRailResumeCopy,
   railDotStatus,
@@ -203,6 +204,29 @@ describe('groupMissionsForRail', () => {
     });
     const all = sections.flatMap((s) => s.missions.map((m) => m.id));
     expect(all).toEqual(['a']);
+  });
+
+  it('keeps a completed mission in Concluídas even when transcript panes remain', () => {
+    const completed = mission({
+      id: 'done-panes',
+      title: 'Assas',
+      status: 'done',
+      intentState: 'done',
+      orchestratorSessionId: 'pty-stale',
+      updatedAt: 50,
+    });
+    const sections = groupMissionsForRail({
+      missions: [completed],
+      openMissionIds: new Set(['done-panes']),
+      pinnedIds: [],
+      query: '',
+    });
+    const map = Object.fromEntries(
+      sections.map((s) => [s.id, s.missions.map((m) => m.id)]),
+    );
+    expect(map.done).toEqual(['done-panes']);
+    expect(map.active).toEqual([]);
+    expect(missionHasLiveRuntime(completed, true)).toBe(false);
   });
 
   it('keeps pinned out of other sections even if active', () => {

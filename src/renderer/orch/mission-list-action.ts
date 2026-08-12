@@ -44,6 +44,9 @@ export function missionListAction(
   hasVisiblePanes: boolean,
 ): MissionListAction {
   if (hasAutomaticTechnicalRecovery(mission)) return 'stop-recovery';
+  // Completed missions have nothing to Encerrar — Main rejects that path.
+  // Offer Remover even when transcript panes or a stale session pointer remain.
+  if (mission.status === 'done') return 'remove';
   if (
     wasMissionRuntimeClosedByOperator(mission) &&
     mission.orchestratorSessionId !== undefined

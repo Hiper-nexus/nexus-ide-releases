@@ -60,7 +60,7 @@ export function applyProgressiveLaunchIfPending(): boolean {
   switch (plan.mode) {
     case 'missions':
     case 'swarm':
-      navigation.openMissionSetup();
+      navigation.openNewMission();
       break;
     case 'board':
       navigation.openTaskBoard();

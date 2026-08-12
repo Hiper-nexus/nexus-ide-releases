@@ -113,7 +113,7 @@ export function CommandPalette() {
       'mission-new',
       'Nova missão',
       'mission',
-      () => useProductNavigationStore.getState().openMissionSetup(),
+      () => useProductNavigationStore.getState().openNewMission(),
       shortcutKeys('mission-new'),
       'missão objetivo equipe',
     );
@@ -308,7 +308,7 @@ export function CommandPalette() {
                         close();
                         useProductNavigationStore
                           .getState()
-                          .openMissionSetup();
+                          .openNewMission();
                       }}
                     />
                     <ActionCard

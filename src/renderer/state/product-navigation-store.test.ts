@@ -1,4 +1,9 @@
+/** @vitest-environment jsdom */
 import { beforeEach, describe, expect, it } from 'vitest';
+import {
+  createEmptyMissionSetupDraft,
+  useMissionSetupStore,
+} from './mission-setup-store';
 import { useProductNavigationStore } from './product-navigation-store';
 
 describe('product navigation', () => {
@@ -6,6 +11,18 @@ describe('product navigation', () => {
     useProductNavigationStore.setState({
       destination: { kind: 'launcher' },
       settingsReturnDestination: null,
+    });
+    useMissionSetupStore.setState({
+      workspacePath: '/projects/alpha',
+      draft: {
+        ...createEmptyMissionSetupDraft(),
+        objective: 'Rascunho da equipe anterior',
+        step: 'team',
+        revision: 4,
+      },
+      persistence: { status: 'saved' },
+      workspaceDrafts: {},
+      entryContext: null,
     });
   });
 
@@ -126,5 +143,30 @@ describe('product navigation', () => {
     expect(
       useProductNavigationStore.getState().settingsReturnDestination,
     ).toBeNull();
+  });
+
+  it('openNewMission starts on Missão instead of restoring Equipe', () => {
+    useProductNavigationStore.getState().openNewMission();
+
+    expect(useProductNavigationStore.getState().destination).toEqual({
+      kind: 'mission-setup',
+    });
+    expect(useMissionSetupStore.getState().draft).toMatchObject({
+      objective: '',
+      step: 'mission',
+      roster: [],
+    });
+  });
+
+  it('openMissionSetup keeps a prefilled objective for handoff callers', () => {
+    useMissionSetupStore.getState().setObjective('Corrigir o login');
+    useProductNavigationStore.getState().openMissionSetup();
+
+    expect(useProductNavigationStore.getState().destination).toEqual({
+      kind: 'mission-setup',
+    });
+    expect(useMissionSetupStore.getState().draft.objective).toBe(
+      'Corrigir o login',
+    );
   });
 });

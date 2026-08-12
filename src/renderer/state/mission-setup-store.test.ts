@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MISSION_PREPARE_TITLE_MAX_CHARS } from '../../shared/mission-engine-contract';
 import { MISSION_INTENT_GOAL_MAX_CHARS } from '../../shared/mission-intent';
 import type { SquadAgent } from '../../shared/orch-types';
+import { setActiveWorkspacePath } from './active-workspace';
 import {
   createEmptyMissionSetupDraft,
   missionSetupStorageKey,
@@ -32,11 +33,13 @@ const implementer: SquadAgent = {
 };
 
 function resetStore(): void {
+  setActiveWorkspacePath(null);
   useMissionSetupStore.setState({
     workspacePath: null,
     draft: createEmptyMissionSetupDraft(),
     persistence: { status: 'idle' },
     workspaceDrafts: {},
+    entryContext: null,
   });
 }
 
@@ -514,6 +517,45 @@ describe('mission setup draft store', () => {
     ).toMatchObject({
       draft: { objective: 'Rascunho mantido somente na memória' },
     });
+  });
+
+  it('Novo começa na etapa Missão e não restaura Equipe do rascunho persistido', () => {
+    const path = '/projects/saasbarbearia';
+    setActiveWorkspacePath(path);
+    localStorage.setItem(
+      missionSetupStorageKey(path),
+      JSON.stringify({
+        version: 1,
+        workspacePath: path,
+        draft: {
+          ...createEmptyMissionSetupDraft(),
+          objective: 'Missão anterior já despachada',
+          roster: [coordinator],
+          step: 'team',
+          revision: 6,
+        },
+      }),
+    );
+
+    useMissionSetupStore.getState().beginFreshMission();
+
+    expect(useMissionSetupStore.getState()).toMatchObject({
+      workspacePath: path,
+      draft: {
+        objective: '',
+        roster: [],
+        step: 'mission',
+      },
+    });
+    expect(
+      JSON.parse(localStorage.getItem(missionSetupStorageKey(path)) ?? '{}'),
+    ).toMatchObject({
+      draft: { objective: '', step: 'mission', roster: [] },
+    });
+
+    useMissionSetupStore.getState().setWorkspace(path);
+    expect(useMissionSetupStore.getState().draft.step).toBe('mission');
+    expect(useMissionSetupStore.getState().draft.objective).toBe('');
   });
 });
 

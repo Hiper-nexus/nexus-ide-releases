@@ -32,8 +32,8 @@ export function TaskBoardWorkspace() {
   const boundWorkspacePath = useOrchStore(
     (state) => state.boundWorkspacePath,
   );
-  const openMissionSetup = useProductNavigationStore(
-    (state) => state.openMissionSetup,
+  const openNewMission = useProductNavigationStore(
+    (state) => state.openNewMission,
   );
   const pendingWrites = useRef(new Map<string, PendingTodoWrite>());
   const [pending, setPending] = useState<
@@ -173,7 +173,7 @@ export function TaskBoardWorkspace() {
                 title="Criar nova missão"
                 subtitle="Defina o objetivo para gerar as primeiras tarefas."
                 variant="primary"
-                onClick={openMissionSetup}
+                onClick={openNewMission}
               />
             }
           />

@@ -127,7 +127,7 @@ describe('Pet-specific product navigation', () => {
     ['Task Board', (store: PetNavigationActions) => store.openTaskBoard()],
     ['Memory', (store: PetNavigationActions) => store.openMemory()],
     ['Settings', (store: PetNavigationActions) => store.openSettings('account')],
-    ['ordinary New Mission', (store: PetNavigationActions) => store.openMissionSetup()],
+    ['ordinary New Mission', (store: PetNavigationActions) => store.openNewMission()],
   ])('clears Pet authority before a rail route leaves Review for %s', (_name, leave) => {
     seedPetReview();
 

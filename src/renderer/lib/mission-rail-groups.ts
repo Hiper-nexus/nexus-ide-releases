@@ -35,6 +35,12 @@ export function missionHasLiveRuntime(
   // instant the mission is no longer active work, even if the retired session
   // pointer and transcript panes remain visible during teardown.
   if (wasMissionRuntimeClosedByOperator(mission)) return false;
+  // Durable completion is authoritative even while transcripts remain in the
+  // grid or a stale orchestratorSessionId is still on the row. Main refuses
+  // Encerrar on done ("não possui execução encerrável"), so treating leftover
+  // panes as live runtime trapped the operator behind Encerrar forever —
+  // Remover never appeared and the missão concluída could not be deleted.
+  if (mission.status === 'done') return false;
   // Physical evidence first.
   if (hasVisiblePanes) return true;
   if (mission.orchestratorSessionId !== undefined) return true;

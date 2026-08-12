@@ -10,6 +10,8 @@ import type {
   Mission,
   MissionRuntimeCloseResult,
 } from '../../../shared/orch-types';
+import { buildGridTree } from '../../lib/split-tree';
+import { useLayoutStore } from '../../state/layout-store';
 import { useMissionInspectorStore } from '../../state/mission-inspector-store';
 import { useOrchStore } from '../../state/orch-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
@@ -274,6 +276,7 @@ afterEach(() => {
   }
   document.body.replaceChildren();
   Reflect.deleteProperty(window, 'nexus');
+  useLayoutStore.setState({ root: buildGridTree([]) });
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   vi.clearAllMocks();
@@ -318,7 +321,32 @@ describe('state-aware mission actions in the canonical mission board', () => {
       expected: /Remover/i,
       forbidden: /Descartar|Encerrar|Parar/i,
     },
+    {
+      label: 'completed mission with leftover transcript panes',
+      current: mission({
+        status: 'done',
+        intentState: 'done',
+        orchestratorSessionId: 'pty-stale',
+      }),
+      snapshotState: 'completed' as const,
+      expected: /Remover/i,
+      forbidden: /Descartar|Encerrar|Parar/i,
+      seedTranscriptPanes: true,
+    },
   ])('offers only the safe $label action', async (testCase) => {
+    if ('seedTranscriptPanes' in testCase && testCase.seedTranscriptPanes) {
+      useLayoutStore.setState({
+        root: buildGridTree([
+          {
+            id: 'pane-transcript',
+            kind: 'cli-agent',
+            title: 'claude',
+            adapterId: 'claude',
+            missionId: testCase.current.id,
+          },
+        ]),
+      });
+    }
     const host = renderMissionBoard(testCase.current, testCase.snapshotState);
     await settle();
 

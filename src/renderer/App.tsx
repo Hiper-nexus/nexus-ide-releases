@@ -423,12 +423,7 @@ export function App() {
         !event.altKey
       ) {
         event.preventDefault();
-        useMissionSetupStore.getState().clearEntryContext();
-        useMissionSetupStore
-          .getState()
-          .setWorkspace(useWorkspaceStore.getState().current?.path ?? null);
-        useMissionSetupStore.getState().setStep('express');
-        useProductNavigationStore.getState().openMissionSetup();
+        useProductNavigationStore.getState().openNewMission();
         return;
       }
       if (
@@ -726,7 +721,7 @@ export function App() {
       destinationContent = (
         <Launcher
           onOpenWorkspace={pickWorkspace}
-          onStartMission={navigation.openMissionSetup}
+          onStartMission={navigation.openNewMission}
           onOpenTaskBoard={navigation.openTaskBoard}
           onOpenMemory={navigation.openMemory}
         />
@@ -888,7 +883,7 @@ export function App() {
             activeWorkspaces={activeWorkspaces}
             recentWorkspaces={projectedRecents}
             selection={selection}
-            onCreateNew={navigation.openMissionSetup}
+            onCreateNew={navigation.openNewMission}
             onSelectWorkspace={selectWorkspace}
             onSelectMission={(missionId) =>
               routeMissionAttention({

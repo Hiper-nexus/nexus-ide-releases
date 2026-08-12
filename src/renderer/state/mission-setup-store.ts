@@ -13,6 +13,7 @@ import {
 } from '../../shared/orch-types';
 import { PET_STUDIO_SQUAD } from '../../shared/pet-studio';
 import { MISSION_PREPARE_TITLE_MAX_CHARS } from '../../shared/mission-engine-contract';
+import { getActiveWorkspacePath } from './active-workspace';
 
 export const MISSION_SETUP_DRAFT_VERSION = 1 as const;
 const MISSION_SETUP_STORAGE_PREFIX = 'nexus:mission-setup:draft:v1:';
@@ -124,6 +125,12 @@ export interface MissionSetupStore {
   clearEntryContext(): void;
   /** Reseta o draft para vazio — usado ao abrir uma nova missão. */
   clearDraft(): void;
+  /**
+   * Começa uma missão nova na etapa Missão, no workspace ativo.
+   * Apaga rascunho persistido (Equipe/Revisar) para o + Novo não reabrir
+   * a etapa seguinte da execução anterior.
+   */
+  beginFreshMission(workspacePath?: string | null): void;
   retryPersistence(): void;
   resetWorkspace(workspacePath?: string): void;
 }
@@ -762,38 +769,44 @@ export const useMissionSetupStore = create<MissionSetupStore>((set, get) => {
       return true;
     },
 
-    clearDraft: () => {
+    beginFreshMission: (workspacePath) => {
       const current = get();
-      const draft = createEmptyMissionSetupDraft(
-        Math.min(Number.MAX_SAFE_INTEGER, current.draft.revision + 1),
+      const target =
+        workspacePath ?? current.workspacePath ?? getActiveWorkspacePath();
+      const draft: MissionSetupDraft = {
+        ...createEmptyMissionSetupDraft(
+          Math.min(Number.MAX_SAFE_INTEGER, current.draft.revision + 1),
+        ),
+        step: 'mission',
+      };
+      const entryAuthorityRevision = Math.min(
+        Number.MAX_SAFE_INTEGER,
+        current.entryAuthorityRevision + 1,
       );
-      // Remove do localStorage também — senão o próximo load restaura o antigo.
-      if (current.workspacePath) {
-        try {
-          const key = missionSetupStorageKey(current.workspacePath);
-          window.localStorage.removeItem(key);
-        } catch {
-          // best-effort
-        }
+      if (!target) {
+        set({
+          draft,
+          persistence: { status: 'idle' },
+          entryContext: null,
+          entryAuthorityRevision,
+        });
+        return;
       }
-      const persistence = current.workspacePath
-        ? persistWorkspaceDraft(current.workspacePath, draft)
-        : { status: 'idle' as const };
+      const persistence = persistWorkspaceDraft(target, draft);
       set({
+        workspacePath: target,
         draft,
         persistence,
-        workspaceDrafts: current.workspacePath
-          ? {
-              ...current.workspaceDrafts,
-              [current.workspacePath]: { draft, persistence },
-            }
-          : current.workspaceDrafts,
+        workspaceDrafts: {
+          ...current.workspaceDrafts,
+          [target]: { draft, persistence },
+        },
         entryContext: null,
-        entryAuthorityRevision: Math.min(
-          Number.MAX_SAFE_INTEGER,
-          current.entryAuthorityRevision + 1,
-        ),
+        entryAuthorityRevision,
       });
+    },
+    clearDraft: () => {
+      get().beginFreshMission();
     },
     clearEntryContext: () => {
       const current = get();

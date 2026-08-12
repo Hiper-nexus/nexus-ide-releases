@@ -147,6 +147,23 @@ describe('mission list action policy', () => {
     expect(canDiscardMission(mission({ status: 'done' }))).toBe(false);
   });
 
+  it('missão concluída oferece Remover mesmo com transcripts ou session pointer', () => {
+    // Field trap: leftover grid panes and orch_session_id made Encerrar the
+    // only action. Clicking it failed ("não possui execução encerrável") and
+    // Remover never appeared.
+    expect(missionListAction(mission({ status: 'done' }), true)).toBe('remove');
+    expect(
+      missionListAction(
+        mission({
+          status: 'done',
+          intentState: 'done',
+          orchestratorSessionId: 'pty-stale',
+        }),
+        true,
+      ),
+    ).toBe('remove');
+  });
+
   it('rascunho nunca despachado segue descartável com cópia própria', () => {
     const draft = mission({ intentState: 'awaiting_goal' });
     expect(missionListAction(draft, false)).toBe('discard');

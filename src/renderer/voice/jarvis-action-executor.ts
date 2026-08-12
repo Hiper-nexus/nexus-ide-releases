@@ -774,13 +774,22 @@ export async function executeJarvisAction(
       };
     }
   } else if (action.type === 'new_mission') {
-    const opened = openCanonicalMissionSetup({ step: 'mission' });
-    if (opened) markEffect(control);
-    toolResult = {
-      tool: action.type,
-      ok: opened,
-      summary: opened ? 'setup de missão aberto' : 'sem workspace aberto',
-    };
+    const workspace = useWorkspaceStore.getState().current;
+    if (!workspace) {
+      toolResult = {
+        tool: action.type,
+        ok: false,
+        summary: 'sem workspace aberto',
+      };
+    } else {
+      useProductNavigationStore.getState().openNewMission();
+      markEffect(control);
+      toolResult = {
+        tool: action.type,
+        ok: true,
+        summary: 'setup de missão aberto',
+      };
+    }
   } else if (action.type === 'new_workspace') {
     try {
       await useWorkspaceStore.getState().pick();

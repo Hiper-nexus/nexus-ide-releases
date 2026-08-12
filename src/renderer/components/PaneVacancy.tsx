@@ -144,7 +144,7 @@ export function PaneVacancyBody({ pane }: { readonly pane: PaneModel }) {
                   subtitle="Descrever o objetivo no início"
                   onClick={(event) => {
                     event.stopPropagation();
-                    useProductNavigationStore.getState().openMissionSetup();
+                    useProductNavigationStore.getState().openNewMission();
                   }}
                 />
               </>
