@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.32.5 — Handoff entra; squad não cola no GLM
+
+Data: 2026-08-12
+
+O relatório do worker deixa de ficar no compositor sem Enter, e o roteador
+passa a escolher CLI/esforço por tipo de trabalho.
+
+- **Handoff chega com Enter.** Paste entre colchetes, 500 ms de settle e
+  Enter (com retry). O dump cru no PTY do Maestro — 280 chars + “use
+  nexus_handoff_list” — saiu; só o idle-delivery acorda o orquestrador.
+- **Lista do Maestro vê o rastro completo.** `nexus_handoff_list` no
+  orquestrador inclui entregues por padrão; `full:true` é o alias que o
+  prompt já pedia.
+- **Motor de especialidade + diversidade na onda.** UI, segurança, bug,
+  doc e ops ganham prior heurístico e esforço mínimo. Reservas abertas da
+  missão entram na contagem, então o 2º e o 3º worker não repetem o GLM
+  do 1º. Slot vazio (`resources/mission-specialty-benchmark.json` e
+  `~/.nexus/mission-specialty-benchmark.json`) para o benchmark Nexus.
+
 ## 0.32.4 — Concluída mostra Remover, não Encerrar
 
 Data: 2026-08-12

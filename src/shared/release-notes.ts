@@ -13,27 +13,48 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.32.4',
+  version: '0.32.5',
   date: '2026-08-12',
-  codename: 'Concluída mostra Remover, não Encerrar',
+  codename: 'Handoff entra; squad não cola no GLM',
   summary:
-    'Hotfix do quadro: missão Concluída deixa de oferecer Encerrar e passa ' +
-    'a oferecer Remover, que apaga a missão mesmo com transcript residual.',
+    'O relatório do worker deixa de ficar no compositor sem Enter, e o ' +
+    'roteador passa a escolher CLI/esforço por tipo de trabalho — UI não ' +
+    'herda o GLM barato, e três workers da mesma onda não caem na mesma CLI.',
   highlights: [
     {
-      title: 'Quadro Concluída oferece Remover',
+      title: 'Handoff chega com Enter',
       detail:
-        'O badge vinha do snapshot; o botão olhava panes e um runtime velho. ' +
-        'Encerrar era recusado pelo main. Com o quadro em Concluída ou Falhou, ' +
-        'a ação é Remover.',
+        'A entrega usa paste entre colchetes, espera 500 ms e manda Enter ' +
+        '(com retry). O dump cru no PTY do Maestro, que cortava em 280 chars ' +
+        'e pedia nexus_handoff_list, saiu.',
+    },
+    {
+      title: 'Lista do Maestro vê o rastro completo',
+      detail:
+        'nexus_handoff_list no orquestrador inclui entregues por padrão. ' +
+        'full:true é o alias que o prompt já pedia.',
+    },
+    {
+      title: 'Motor de especialidade + diversidade na onda',
+      detail:
+        'UI, segurança, bug, doc e ops ganham prior heurístico e esforço ' +
+        'mínimo. Reservas abertas da missão entram na contagem, então o 2º ' +
+        'e o 3º worker não repetem o GLM do 1º. Slot vazio para o benchmark ' +
+        'Nexus por especialidade.',
     },
   ],
   fixes: [
     {
-      title: 'Remover não trava em pane de transcript',
+      title: 'Handoff incompleto no compositor',
       detail:
-        'Missão done/failed segue apagável se o collapse do pane falhar e ' +
-        'nenhum processo restar vivo.',
+        'O wake truncado ficava no editor sem submit; o TUI pintava busy e ' +
+        'a entrega real ia para a fila. Agora só idle-delivery acorda o Maestro.',
+    },
+    {
+      title: 'Três panes no mesmo GLM',
+      detail:
+        'Fan-out paralelo lia só panes já gravados. Com a onda vazia, os ' +
+        'três route_task pegavam o lead do tier medium.',
     },
   ],
 };
