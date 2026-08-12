@@ -324,15 +324,26 @@ async function tickWatcher(state: WatcherState): Promise<void> {
 
   const silenceDuration = now - state.lastOrchActivityAt;
 
-  // Orquestrador morto há muito tempo → verifica handoffs e decide.
-  // O orquestrador deveria ter chamado nexus_mission_set_status antes de
-  // morrer. Se não chamou, damos um tempo (30min) e avaliamos os handoffs
-  // dos workers para decidir se foi sucesso ou bloqueio.
-  if (
+  // Orquestrador morto? Verifica AGORA se a missão ainda tem panes vivos.
+  // Se todos os panes foram fechados, não faz sentido esperar 30min.
+  const orchDead =
     orchState !== 'busy' &&
     orchState !== 'idle' &&
-    orchState !== 'spawning' &&
-    silenceDuration > ORCHESTRATOR_SILENCE_TIMEOUT_MS
+    orchState !== 'spawning';
+
+  const missionPanes = listPaneSnapshots().filter(
+    (p) => p.missionId === state.missionId,
+  );
+  const livePanes = missionPanes.filter(
+    (p) => p.state === 'busy' || p.state === 'idle' || p.state === 'spawning',
+  );
+  const allPanesDead = orchDead && livePanes.length === 0;
+
+  // Age IMEDIATAMENTE se o orquestrador morreu e não há panes vivos,
+  // OU se passou o timeout de silêncio.
+  if (
+    allPanesDead ||
+    (orchDead && silenceDuration > ORCHESTRATOR_SILENCE_TIMEOUT_MS)
   ) {
     try {
       // Verifica handoffs dos workers como fallback.
@@ -386,37 +397,9 @@ async function tickWatcher(state: WatcherState): Promise<void> {
     return;
   }
 
-  // Orquestrador sumiu sem deixar rastro (sessão inexistente) e ainda não
-  // deu timeout de silêncio → bloqueia visível.
-  if (
-    orchState !== 'busy' &&
-    orchState !== 'idle' &&
-    orchState !== 'spawning'
-  ) {
-    try {
-      const engine = missionEngineForScope(state.scope);
-      const current = stores.missions.get(state.missionId);
-      if (current && current.status === 'running' && current.intentState) {
-        engine.blockTechnical(state.scope, {
-          missionId: state.missionId,
-          expectedStatus: current.status,
-          expectedIntentState: current.intentState,
-          expectedUpdatedAt: current.updatedAt,
-          expectedIntentVersion: current.intentVersion ?? 0,
-          description:
-            'O orquestrador encerrou inesperadamente. Verifique os terminais ' +
-            'e use Retomar para religar a equipe.',
-        });
-      }
-    } catch (error) {
-      console.warn(
-        '[fast-lane] bloqueio por orquestrador morto falhou:',
-        error instanceof Error ? error.message : error,
-      );
-    }
-    stopWatcher(state.scope, state.missionId);
-    return;
-  }
+  // Orquestrador morreu mas ainda há panes vivos e o timeout não passou →
+  // deixa o delegation-supervisor tentar recovery. Não bloqueia — workers
+  // ainda podem estar trabalhando.
 }
 
 function startWatcher(
