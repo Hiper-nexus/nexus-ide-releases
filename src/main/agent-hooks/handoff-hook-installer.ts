@@ -9,7 +9,7 @@
  */
 
 import { app } from 'electron';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -50,6 +50,7 @@ export function installHandoffHookScripts(home = homedir()): string[] {
       const content = readFileSync(src);
       if (existsSync(dest) && readFileSync(dest).equals(content)) continue;
       copyFileSync(src, dest);
+      try { chmodSync(dest, 0o755); } catch { /* best-effort */ }
       installed.push(filename);
     } catch {
       // Best-effort: não bloqueia o bootstrap por causa de hook.
