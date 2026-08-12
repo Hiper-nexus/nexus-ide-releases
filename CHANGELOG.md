@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.32.4 — Concluída mostra Remover, não Encerrar
+
+Data: 2026-08-12
+
+Hotfix: o quadro já dizia Concluída e o botão vermelho ainda era Encerrar.
+
+- **O estado do quadro manda no botão.** Badge Concluída vinha do snapshot;
+  Encerrar olhava panes/transcript e um runtime velho no orch-store. O main
+  recusa Encerrar em missão `done`. Com snapshot `completed`/`failed`, a
+  ação é Remover — mesmo se a linha do orch ainda parecer viva.
+- **Remover de missão concluída não trava em transcript.** Se o collapse do
+  pane falha mas nenhum processo resta vivo, a remoção segue.
+
 ## 0.32.3 — Missão concluída some; + Novo começa na Missão
 
 Data: 2026-08-12

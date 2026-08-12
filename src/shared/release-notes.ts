@@ -13,36 +13,27 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.32.3',
+  version: '0.32.4',
   date: '2026-08-12',
-  codename: 'Concluída some, Novo começa na Missão',
+  codename: 'Concluída mostra Remover, não Encerrar',
   summary:
-    'Dois consertos de operação no board: missão concluída volta a ter ' +
-    'Remover, e + Novo abre na etapa Missão em vez de restaurar a Equipe ' +
-    'de um rascunho antigo.',
+    'Hotfix do quadro: missão Concluída deixa de oferecer Encerrar e passa ' +
+    'a oferecer Remover, que apaga a missão mesmo com transcript residual.',
   highlights: [
     {
-      title: 'Missão concluída volta a ter Remover',
+      title: 'Quadro Concluída oferece Remover',
       detail:
-        'Transcript e session id velho não contam mais como execução viva. ' +
-        'Com status done, a lista oferece Remover — Encerrar era recusado ' +
-        'pelo main e a missão ficava presa no board.',
-    },
-    {
-      title: '+ Novo abre na etapa Missão',
-      detail:
-        'Nova missão grava rascunho vazio com step mission mesmo com o ' +
-        'board aberto. Handoffs (objetivo pré-preenchido, Jarvis, reabrir) ' +
-        'continuam no caminho que preserva o rascunho.',
+        'O badge vinha do snapshot; o botão olhava panes e um runtime velho. ' +
+        'Encerrar era recusado pelo main. Com o quadro em Concluída ou Falhou, ' +
+        'a ação é Remover.',
     },
   ],
   fixes: [
     {
-      title: 'Audit da toolchain volta a zero',
+      title: 'Remover não trava em pane de transcript',
       detail:
-        'extract-zip (GHSA-jmr9-qjv8-65gv, sem patch) é substituído pelo ' +
-        'fork endurecido @electron-internal/extract-zip@1.0.4 no packager. ' +
-        'Não entra no app empacotado.',
+        'Missão done/failed segue apagável se o collapse do pane falhar e ' +
+        'nenhum processo restar vivo.',
     },
   ],
 };
