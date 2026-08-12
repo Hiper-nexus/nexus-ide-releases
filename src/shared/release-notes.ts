@@ -13,48 +13,36 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.32.5',
+  version: '0.32.6',
   date: '2026-08-12',
-  codename: 'Handoff entra; squad não cola no GLM',
+  codename: 'Qualquer pane lê o outro',
   summary:
-    'O relatório do worker deixa de ficar no compositor sem Enter, e o ' +
-    'roteador passa a escolher CLI/esforço por tipo de trabalho — UI não ' +
-    'herda o GLM barato, e três workers da mesma onda não caem na mesma CLI.',
+    'Na mesma missão qualquer pane lê o buffer do outro — worker, sênior e ' +
+    'orquestrador. O allowlist vazio dos workers não cega mais o pane_read; ' +
+    'outra missão e o terminal do usuário continuam fechados.',
   highlights: [
     {
-      title: 'Handoff chega com Enter',
+      title: 'Leitura cruzada de pane na missão',
       detail:
-        'A entrega usa paste entre colchetes, espera 500 ms e manda Enter ' +
-        '(com retry). O dump cru no PTY do Maestro, que cortava em 280 chars ' +
-        'e pedia nexus_handoff_list, saiu.',
+        'nexus_pane_read / pane_read_many / pane_list / pane_whoami passam a ' +
+        'ser always-allowed, como no Overclock. O operador pode pedir “olha ' +
+        'o que o pane 7 está fazendo” e o agente lê o PTY do alvo.',
     },
     {
-      title: 'Lista do Maestro vê o rastro completo',
+      title: 'Sênior e workers se enxergam',
       detail:
-        'nexus_handoff_list no orquestrador inclui entregues por padrão. ' +
-        'full:true é o alias que o prompt já pedia.',
-    },
-    {
-      title: 'Motor de especialidade + diversidade na onda',
-      detail:
-        'UI, segurança, bug, doc e ops ganham prior heurístico e esforço ' +
-        'mínimo. Reservas abertas da missão entram na contagem, então o 2º ' +
-        'e o 3º worker não repetem o GLM do 1º. Slot vazio para o benchmark ' +
-        'Nexus por especialidade.',
+        'Worker lê worker, worker lê orquestrador, orquestrador lê worker. ' +
+        'Write/spawn/close do coordenador e o shell do usuário seguem ' +
+        'bloqueados.',
     },
   ],
   fixes: [
     {
-      title: 'Handoff incompleto no compositor',
+      title: 'Allowlist vazia cegava o peer',
       detail:
-        'O wake truncado ficava no editor sem submit; o TUI pintava busy e ' +
-        'a entrega real ia para a fila. Agora só idle-delivery acorda o Maestro.',
-    },
-    {
-      title: 'Três panes no mesmo GLM',
-      detail:
-        'Fan-out paralelo lia só panes já gravados. Com a onda vazia, os ' +
-        'três route_task pegavam o lead do tier medium.',
+        'A authz já permitia leitura intra-missão, mas workers com ' +
+        'allowedTools: [] não viam nem podiam chamar pane_read. O gate ' +
+        'abre só a observação; o filesystem sandbox não muda.',
     },
   ],
 };

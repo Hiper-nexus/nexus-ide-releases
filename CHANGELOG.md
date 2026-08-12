@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.32.6 — Qualquer pane lê o outro
+
+Data: 2026-08-12
+
+Na mesma missão qualquer pane lê o buffer do outro — worker, sênior e
+orquestrador. Paridade Overclock: `pane_read` deixa de ser cegado pelo
+allowlist vazio dos workers.
+
+- **Leitura cruzada de pane.** `nexus_pane_read` / `pane_read_many` /
+  `pane_list` / `pane_whoami` são always-allowed. O operador pede “olha o
+  que o pane 7 está fazendo” e o agente lê o PTY do alvo (número falado
+  ou paneId).
+- **Sênior e workers se enxergam.** Worker lê worker, worker lê
+  orquestrador, orquestrador lê worker. Write/spawn/close no coordenador
+  e o shell do usuário continuam recusados; outra missão também.
+- **Allowlist vazia não cega mais.** A authz já permitia a leitura; o
+  skill-gate é que escondia a tool. Filesystem sandbox intacto.
+
 ## 0.32.5 — Handoff entra; squad não cola no GLM
 
 Data: 2026-08-12
