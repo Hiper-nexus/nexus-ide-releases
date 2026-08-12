@@ -13,7 +13,7 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.32.0',
+  version: '0.32.1',
   date: '2026-08-11',
   codename: 'A porta de atualizar voltou',
   summary:
