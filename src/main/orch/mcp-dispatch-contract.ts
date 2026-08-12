@@ -90,6 +90,13 @@ export interface WorkflowEffectAuthority {
   assertExecutionEffectAllowed(
     toolName: string,
     args: Readonly<Record<string, unknown>>,
+    /**
+     * True quando o caller está confinado a leitura (pane.readOnly).
+     * A gate de mutação preserva as proteções que valem para qualquer caller
+     * (.context/ read-only, merge-queue) e faz short-circuit nas guards de
+     * contract/stage — read-only não escreve.
+     */
+    callerReadOnly?: boolean,
   ): void;
 }
 

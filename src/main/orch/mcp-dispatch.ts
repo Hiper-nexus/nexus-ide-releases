@@ -119,7 +119,9 @@ function resolveProductionWorkflowAuthority(
     assertExecutionEffectAllowed: (
       toolName: string,
       args: Readonly<Record<string, unknown>>,
-    ) => service.assertMutationAllowed(missionId, toolName, args),
+      callerReadOnly = false,
+    ) =>
+      service.assertMutationAllowed(missionId, toolName, args, callerReadOnly),
   });
 }
 
@@ -376,7 +378,7 @@ function bindEffectAuthority(
     // assertExecutionEffectAllowed quando a política é execution-effect.
   }
   if (policy === "execution-effect") {
-    authority.assertExecutionEffectAllowed(toolName, args);
+    authority.assertExecutionEffectAllowed(toolName, args, ctx.readOnly === true);
   }
   return {
     contextRevision: authority.contextRevision,
@@ -1206,6 +1208,7 @@ export async function dispatchToolCall(
           currentWorkflowAuthority.assertExecutionEffectAllowed(
             tool.name,
             args,
+            ctx.readOnly === true,
           );
         }
       }

@@ -1956,7 +1956,28 @@ export class ContextWorkflowService {
     missionId: string,
     toolName: string,
     args: Readonly<Record<string, unknown>>,
+    callerReadOnly = false,
   ): void {
+    // Guards que valem para TODO caller (inclusive read-only): o contexto
+    // versionado é authority read-only, e o Git da missão deve passar pelo
+    // merge queue. Estas checks vêm ANTES do short-circuit de read-only para
+    // que um caller confinado a leitura ainda assim seja barrado de tocar
+    // .context/ ou de fazer push/pull direto.
+    for (const candidate of mutationTargetPaths(args)) {
+      if (candidate === '.context' || candidate.startsWith('.context/')) {
+        throw new Error('versioned context authority is read-only to executors');
+      }
+    }
+    if (toolName === 'nexus_git_push' || toolName === 'nexus_git_pull') {
+      throw new Error('mission Git integration must use the Nexus merge queue');
+    }
+    // Read-only nunca escreve: as guards de contract/stage não se aplicam.
+    // Sem este short-circuit, um worker read-only cujo CLI subjacente tente
+    // uma escrita bateria aqui ANTES do fast-path de read-only (que existe
+    // em mcp-protocol.ts e mission-intent-gate.ts), recebendo "code mutation
+    // blocked until mission context and contract are frozen" mesmo em missão
+    // sem contrato congelado — sintoma gêmeo do bug de serialização.
+    if (callerReadOnly) return;
     const stored = this.#store.getContract(missionId);
     const workflow = this.#store.getWorkflow(missionId);
     if (!stored || !workflow) {
@@ -1965,14 +1986,6 @@ export class ContextWorkflowService {
     this.#assertContextCurrent(stored.contract);
     if (workflow.stage !== 'execution') {
       throw new Error(`code mutation blocked during workflow stage ${workflow.stage}`);
-    }
-    for (const candidate of mutationTargetPaths(args)) {
-      if (candidate === '.context' || candidate.startsWith('.context/')) {
-        throw new Error('versioned context authority is read-only to executors');
-      }
-    }
-    if (toolName === 'nexus_git_push' || toolName === 'nexus_git_pull') {
-      throw new Error('mission Git integration must use the Nexus merge queue');
     }
   }
 }

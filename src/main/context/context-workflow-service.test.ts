@@ -961,6 +961,47 @@ describe('native context workflow service', () => {
       .toThrow(/context is not ready/i);
   });
 
+  it('read-only caller bypasses contract/stage gates but still protects .context/ and merge-queue', () => {
+    const { service } = fixture();
+
+    // Sem contrato congelado: um caller ESCRITOR bloqueia; um READ-ONLY passa.
+    expect(() => service.assertMutationAllowed('mission-a', 'nexus_file_write', { path: 'src/a.ts' }))
+      .toThrow(/contract.*frozen/i);
+    expect(() => service.assertMutationAllowed(
+      'mission-a', 'nexus_file_write', { path: 'src/a.ts' }, true,
+    )).not.toThrow();
+
+    service.freezeContract(
+      {
+        missionId: 'mission-a',
+        goal: 'Small change',
+        acceptanceCriteria: [{
+          id: 'works', statement: 'Works', requiredSensorIds: [],
+          invariantRefs: [], requiredArtifactIds: [],
+        }],
+      },
+      { id: 'author-a', sessionId: 'author-session', provider: 'codex' },
+    );
+
+    // Avança para validation-primary: escritor bloqueia por stage; read-only passa.
+    expect(service.advance('mission-a', 'validation-primary').stage)
+      .toBe('validation-primary');
+    expect(() => service.assertMutationAllowed('mission-a', 'nexus_file_write', { path: 'src/a.ts' }))
+      .toThrow(/validation-primary/i);
+    expect(() => service.assertMutationAllowed(
+      'mission-a', 'nexus_file_write', { path: 'src/a.ts' }, true,
+    )).not.toThrow();
+
+    // Proteções que valem para TODO caller (inclusive read-only) permanecem:
+    // .context/ é authority read-only mesmo para um caller read-only.
+    expect(() => service.assertMutationAllowed('mission-a', 'nexus_file_write', {
+      path: '.context/config/policy.json',
+    }, true)).toThrow(/read-only/i);
+    // Git da missão deve passar pelo merge queue, inclusive para read-only.
+    expect(() => service.assertMutationAllowed('mission-a', 'nexus_git_push', {}, true))
+      .toThrow(/merge queue/i);
+  });
+
   it('supports extra milestones and validates a pre-integration receipt against a non-empty diff', () => {
     const { root, scope, manager, service } = fixture();
     createScopedMissionStore(manager, scope).update('mission-a', {

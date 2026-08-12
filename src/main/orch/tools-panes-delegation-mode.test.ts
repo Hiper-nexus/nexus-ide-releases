@@ -14,6 +14,7 @@ function pane(
   role: PaneSnapshot['role'] = 'worker',
   missionId = 'mission-a',
   checkoutRoot = '/repo/a',
+  extra: Partial<PaneSnapshot> = {},
 ): PaneSnapshot {
   return {
     paneId: `${missionId}-${role}-${state}`,
@@ -24,6 +25,7 @@ function pane(
     role,
     missionId,
     executionScope: testProjectScope({ rootRealPath: checkoutRoot }),
+    ...extra,
   };
 }
 
@@ -41,6 +43,26 @@ describe('pre-contract same-checkout delegation', () => {
     expect(activeSameCheckoutWorker([
       pane('spawning', 'worker', 'mission-b'),
     ], '/repo/a')?.state).toBe('spawning');
+  });
+
+  it('does NOT block on read-only workers (they cannot mutate the shared checkout)', () => {
+    // A doutrina é "1 worker ESCRITOR por vez". Um fan-out de leitura (mapa
+    // de viabilidade + auditoria cética) não pode ficar serializado como se
+    // fosse escrita concorrente — leitura não muta o índice do checkout.
+    expect(activeSameCheckoutWorker([
+      pane('busy', 'worker', 'mission-a', '/repo/a', { readOnly: true }),
+    ], '/repo/a')).toBeNull();
+
+    expect(activeSameCheckoutWorker([
+      pane('spawning', 'worker', 'mission-a', '/repo/a', { nativeReadOnly: true }),
+    ], '/repo/a')).toBeNull();
+
+    // Um escritor vivo ao lado de um leitor vivo ainda bloqueia (escritor é o
+    // limitador, não o leitor).
+    expect(activeSameCheckoutWorker([
+      pane('busy', 'worker', 'mission-a', '/repo/a', { readOnly: true }),
+      pane('busy', 'worker', 'mission-a', '/repo/a'),
+    ], '/repo/a')?.state).toBe('busy');
   });
 
   it('injects a non-destructive ownership contract into the worker prompt', () => {

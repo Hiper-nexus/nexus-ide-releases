@@ -176,8 +176,16 @@ export function activeSameCheckoutWorker(
 ): PaneSnapshot | null {
   return panes.find((pane) =>
     pane.role === 'worker' &&
+    // A doutrina (orchestrator-doctrine.ts) diz "1 worker ESCRITOR por vez".
+    // Um worker readOnly/nativeReadOnly não muta o checkout compartilhado e
+    // não pode ser o bloqueador serializador de um spawn paralelo — caso
+    // contrário um único fan-out de leitura (mapa de viabilidade + auditoria)
+    // fica serializado como se fosse escrita concorrente. Espelha o guard de
+    // disjointness em mission-wave-pack.ts que já ignora não-escritores.
+    !pane.readOnly &&
+    !pane.nativeReadOnly &&
     pane.executionScope?.rootRealPath === checkoutRoot &&
-    SAME_CHECKOUT_ACTIVE_STATES.has(pane.state)
+    SAME_CHECKOUT_ACTIVE_STATES.has(pane.state),
   ) ?? null;
 }
 
