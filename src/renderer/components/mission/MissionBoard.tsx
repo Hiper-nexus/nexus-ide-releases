@@ -34,7 +34,7 @@ import {
 import {
   discardMissionPrompt,
   missionActionCopy,
-  missionListAction,
+  missionBoardLifecycleAction,
   removeMissionPrompt,
   type MissionListAction,
 } from '../../orch/mission-list-action';
@@ -238,9 +238,11 @@ export function MissionBoard({
       ),
     [layoutRoot, missionId, paneMissions],
   );
-  const lifecycleAction: MissionListAction = currentMission
-    ? missionListAction(currentMission, hasVisibleMissionPanes)
-    : 'none';
+  const lifecycleAction: MissionListAction = missionBoardLifecycleAction(
+    snapshot?.id === missionId ? snapshot.state : null,
+    currentMission,
+    hasVisibleMissionPanes,
+  );
   const lifecycleCopy = missionActionCopy(lifecycleAction);
 
   const selectedAgentId = useMissionInspectorStore(
@@ -665,7 +667,8 @@ export function MissionBoard({
   const runLifecycleAction = (invoker: HTMLButtonElement): void => {
     const mission = currentMission;
     const action = lifecycleAction;
-    if (!mission || action === 'none') return;
+    if (action === 'none') return;
+    if (!mission && action !== 'remove') return;
 
     const attempt = beginBoardAction(action, invoker);
     if (!attempt) return;
@@ -674,6 +677,7 @@ export function MissionBoard({
       let restoreFocus = false;
       try {
         if (action === 'close-runtime' || action === 'stop-recovery') {
+          if (!mission) return;
           const result = await closeMissionRuntimeAndPanes(
             mission.id,
             'mission-board-close',
@@ -709,18 +713,37 @@ export function MissionBoard({
           return;
         }
 
-        const prompt =
-          action === 'remove'
-            ? removeMissionPrompt(mission)
-            : discardMissionPrompt(mission);
+        if (action === 'remove') {
+          const prompt = removeMissionPrompt({
+            title: mission?.title ?? snapshotRef.current?.title ?? 'missão',
+          });
+          const confirmed = await askConfirm({ ...prompt, danger: true });
+          if (!isCurrentBoardAction(attempt)) return;
+          if (!confirmed) {
+            setActionAnnouncement('Remoção cancelada.');
+            restoreFocus = true;
+            return;
+          }
+
+          const result = await window.nexus.orch.removeMission(
+            mission?.id ?? missionId,
+          );
+          if (!isCurrentBoardAction(attempt)) return;
+          setActionAnnouncement(
+            result.removed
+              ? 'Missão removida.'
+              : 'A missão já não estava na lista.',
+          );
+          routeAfterLifecycleSuccess();
+          return;
+        }
+
+        if (!mission) return;
+        const prompt = discardMissionPrompt(mission);
         const confirmed = await askConfirm({ ...prompt, danger: true });
         if (!isCurrentBoardAction(attempt)) return;
         if (!confirmed) {
-          setActionAnnouncement(
-            action === 'discard'
-              ? 'Descarte cancelado.'
-              : 'Remoção cancelada.',
-          );
+          setActionAnnouncement('Descarte cancelado.');
           restoreFocus = true;
           return;
         }
@@ -728,11 +751,9 @@ export function MissionBoard({
         const result = await window.nexus.orch.removeMission(mission.id);
         if (!isCurrentBoardAction(attempt)) return;
         setActionAnnouncement(
-          action === 'discard'
+          result.removed
             ? 'Missão descartada.'
-            : result.removed
-              ? 'Missão removida.'
-              : 'A missão já não estava na lista.',
+            : 'A missão já não estava na lista.',
         );
         routeAfterLifecycleSuccess();
       } catch (reason) {
@@ -893,7 +914,8 @@ export function MissionBoard({
               {HEADER_ACTION_LABELS[action]}
             </button>
           ))}
-          {currentMission && lifecycleAction !== 'none' && (
+          {(currentMission || lifecycleAction === 'remove') &&
+            lifecycleAction !== 'none' && (
             <button
               type="button"
               className="mission-board__button mission-board__button--secondary mission-board__button--danger"

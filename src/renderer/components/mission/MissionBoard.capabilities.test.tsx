@@ -333,6 +333,18 @@ describe('state-aware mission actions in the canonical mission board', () => {
       forbidden: /Descartar|Encerrar|Parar/i,
       seedTranscriptPanes: true,
     },
+    {
+      label: 'completed snapshot with stale orch runtime',
+      current: mission({
+        status: 'running',
+        intentState: 'executing',
+        orchestratorSessionId: 'pty-stale',
+      }),
+      snapshotState: 'completed' as const,
+      expected: /Remover/i,
+      forbidden: /Descartar|Encerrar|Parar/i,
+      seedTranscriptPanes: true,
+    },
   ])('offers only the safe $label action', async (testCase) => {
     if ('seedTranscriptPanes' in testCase && testCase.seedTranscriptPanes) {
       useLayoutStore.setState({
@@ -352,6 +364,61 @@ describe('state-aware mission actions in the canonical mission board', () => {
 
     expect(buttonByName(host, testCase.expected)).not.toBeNull();
     expect(buttonByName(host, testCase.forbidden)).toBeNull();
+  });
+
+  it('offers Remover for a completed board even when the orch row is missing', async () => {
+    snapshotForBoard = snapshot({
+      id: 'mission-capability',
+      title: 'Publicar plano aprovado',
+      state: 'completed',
+    });
+    useOrchStore.setState({ missions: [], handoffs: [], paneMissions: {} });
+    useProductNavigationStore.setState({
+      destination: {
+        kind: 'mission',
+        missionId: 'mission-capability',
+        surface: 'board',
+      },
+      settingsReturnDestination: null,
+    });
+    const host = mount(
+      <MissionBoard
+        missionId="mission-capability"
+        onOpenTerminals={vi.fn()}
+      />,
+    );
+    await settle();
+
+    expect(buttonByName(host, /Remover/i)).not.toBeNull();
+    expect(buttonByName(host, /Encerrar/i)).toBeNull();
+  });
+
+  it('deletes a completed snapshot instead of calling Encerrar on a stale orch row', async () => {
+    useLayoutStore.setState({
+      root: buildGridTree([
+        {
+          id: 'pane-transcript',
+          kind: 'cli-agent',
+          title: 'claude',
+          adapterId: 'claude',
+          missionId: 'mission-capability',
+        },
+      ]),
+    });
+    const stale = mission({
+      status: 'running',
+      intentState: 'executing',
+      orchestratorSessionId: 'pty-stale',
+    });
+    const host = renderMissionBoard(stale, 'completed');
+    await settle();
+
+    act(() => requiredButton(host, /Remover/i).click());
+    await settle();
+
+    expect(api.removeMission).toHaveBeenCalledTimes(1);
+    expect(api.removeMission).toHaveBeenCalledWith(stale.id);
+    expect(capabilityMocks.closeRuntime).not.toHaveBeenCalled();
   });
 
   it('offers no destructive control for an active user-blocked mission with no runtime to close', async () => {

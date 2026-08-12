@@ -33,6 +33,7 @@ import {
   canDiscardMission,
   discardMissionPrompt,
   missionActionCopy,
+  missionBoardLifecycleAction,
   missionListAction,
   removeMissionPrompt,
 } from './mission-list-action';
@@ -168,5 +169,46 @@ describe('mission list action policy', () => {
     const draft = mission({ intentState: 'awaiting_goal' });
     expect(missionListAction(draft, false)).toBe('discard');
     expect(discardMissionPrompt(draft).confirmLabel).toBe('Descartar missão');
+  });
+});
+
+describe('missionBoardLifecycleAction', () => {
+  it('quadro Concluída oferece Remover mesmo com orch row ainda viva', () => {
+    const stale = mission({
+      status: 'running',
+      intentState: 'executing',
+      orchestratorSessionId: 'pty-stale',
+    });
+    expect(missionBoardLifecycleAction('completed', stale, true)).toBe(
+      'remove',
+    );
+    expect(missionBoardLifecycleAction('completed', stale, false)).toBe(
+      'remove',
+    );
+    expect(missionBoardLifecycleAction('completed', null, true)).toBe(
+      'remove',
+    );
+  });
+
+  it('quadro Falhou também oferece Remover em vez de Encerrar', () => {
+    const stale = mission({
+      status: 'running',
+      orchestratorSessionId: 'pty-stale',
+    });
+    expect(missionBoardLifecycleAction('failed', stale, true)).toBe('remove');
+  });
+
+  it('quadro em execução continua Encerrar quando o runtime está vivo', () => {
+    const live = mission({
+      status: 'running',
+      intentState: 'executing',
+      orchestratorSessionId: 'pty-live',
+    });
+    expect(missionBoardLifecycleAction('running', live, true)).toBe(
+      'close-runtime',
+    );
+    expect(missionBoardLifecycleAction(null, live, true)).toBe(
+      'close-runtime',
+    );
   });
 });

@@ -1,3 +1,4 @@
+import type { MissionLifecycleState } from '../../shared/mission-engine-contract';
 import type { Mission } from '../../shared/orch-types';
 import { hasCurrentApprovedDispatchContract } from '../../shared/mission-intent';
 import {
@@ -8,6 +9,11 @@ import {
   hasAutomaticTechnicalRecovery,
   wasMissionRuntimeClosedByOperator,
 } from '../../shared/mission-recovery-policy';
+
+const TERMINAL_BOARD_STATES: ReadonlySet<MissionLifecycleState> = new Set([
+  'completed',
+  'failed',
+]);
 
 export function canDiscardMission(mission: Mission): boolean {
   if (mission.orchestratorSessionId !== undefined) return false;
@@ -60,6 +66,23 @@ export function missionListAction(
   return 'remove';
 }
 
+/**
+ * Board header authority. The Concluída/Falhou badge comes from the engine
+ * snapshot; Encerrar used to follow a stale orch row (leftover panes or a
+ * session pointer) and Main then refused Encerrar on a done mission.
+ */
+export function missionBoardLifecycleAction(
+  snapshotState: MissionLifecycleState | null | undefined,
+  mission: Mission | null,
+  hasVisiblePanes: boolean,
+): MissionListAction {
+  if (snapshotState && TERMINAL_BOARD_STATES.has(snapshotState)) {
+    return 'remove';
+  }
+  if (!mission) return 'none';
+  return missionListAction(mission, hasVisiblePanes);
+}
+
 /** Rótulo curto do botão de cada ação — usado em title/aria-label. */
 export function missionActionCopy(action: MissionListAction): {
   verb: string;
@@ -100,7 +123,7 @@ export function discardMissionPrompt(mission: Mission): {
   };
 }
 
-export function removeMissionPrompt(mission: Mission): {
+export function removeMissionPrompt(mission: Pick<Mission, 'title'>): {
   title: string;
   body: string;
   confirmLabel: string;

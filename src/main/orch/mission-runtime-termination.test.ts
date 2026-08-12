@@ -46,6 +46,7 @@ vi.mock('./pane-registry', () => ({
 import {
   closeOrphanedMissionRuntime,
   closeMissionRuntimePreservingHistory,
+  missionHasLivePhysicalSession,
   prepareMissionRuntimeTermination,
   settleMissionRuntimeDemotion,
   terminateMissionRuntime,
@@ -954,5 +955,29 @@ describe('operator close preserves durable mission history', () => {
     });
     if (!result.mission) throw new Error('mission result expected');
     expect(hasAutomaticTechnicalRecovery(result.mission)).toBe(false);
+  });
+});
+
+describe('missionHasLivePhysicalSession', () => {
+  it('detects a live PTY bound to the mission in this scope', () => {
+    runtime.pty = [physical('pty-live', 'pane-live', 'inc-live')];
+    expect(missionHasLivePhysicalSession(scope, mission.id)).toBe(true);
+    expect(missionHasLivePhysicalSession(scope, 'mission-other')).toBe(false);
+  });
+
+  it('ignores a live PTY that belongs to another project scope', () => {
+    const otherScope = Object.freeze({
+      ...scope,
+      projectId: 'project-other',
+      checkoutId: 'checkout-other',
+      rootRealPath: '/workspace/other',
+    });
+    runtime.pty = [
+      {
+        ...physical('pty-foreign', 'pane-foreign', 'inc-foreign'),
+        scope: otherScope,
+      },
+    ];
+    expect(missionHasLivePhysicalSession(scope, mission.id)).toBe(false);
   });
 });

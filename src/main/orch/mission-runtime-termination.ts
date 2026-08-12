@@ -80,6 +80,16 @@ function physicalSessionIsLive(sessionId: string): boolean {
   );
 }
 
+export function missionHasLivePhysicalSession(
+  scope: ProjectExecutionScope,
+  missionId: string,
+): boolean {
+  return [...listAgentSessions(), ...listAcpDriverAgentSessions()].some(
+    (session) =>
+      session.missionId === missionId && sameScope(session.scope, scope),
+  );
+}
+
 async function terminatePhysicalSession(sessionId: string): Promise<boolean> {
   const acp = getAcpDriverSession(sessionId);
   if (acp) {

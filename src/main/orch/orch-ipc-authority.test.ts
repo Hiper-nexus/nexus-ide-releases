@@ -2440,6 +2440,153 @@ describe('mission removal IPC authority', () => {
     ).rejects.toThrow(/histórico.*preservado.*supervisor unavailable/i);
     expect(harness.removeMission).not.toHaveBeenCalled();
   });
+
+  it('remove missão concluída mesmo com pane de transcript sem processo vivo', async () => {
+    const sender = owner();
+    harness.scopes.set(sender.id, SCOPE_A);
+    harness.windows.set(sender.id, { isDestroyed: () => false });
+    const mission = {
+      id: 'mission-done',
+      title: 'Assas',
+      description: 'Histórico concluído.',
+      status: 'done' as const,
+      intentState: 'done' as const,
+      orchestratorSessionId: 'pty-stale',
+      milestones: [],
+      learnings: '',
+      createdAt: 1,
+      updatedAt: 2,
+    };
+    harness.paneSnapshots.push({
+      paneId: 'pane-transcript',
+      sessionId: 'pty-stale',
+      title: 'claude',
+      kind: 'cli-agent',
+      state: 'idle',
+      missionId: mission.id,
+      role: 'orchestrator',
+      scope: SCOPE_A,
+    });
+    harness.projectStores.forScope.mockReturnValueOnce({
+      scope: SCOPE_A,
+      missions: {
+        get: (missionId: string) =>
+          missionId === mission.id ? mission : null,
+        list: () => [mission],
+      },
+      missionPanes: { list: () => [] },
+    });
+    harness.missionRemovalCandidate.mockReturnValueOnce({
+      missionId: mission.id,
+      title: mission.title,
+      fence: 'fence-done',
+    });
+    harness.prepareMissionRemoval.mockReturnValueOnce({
+      missionId: mission.id,
+      title: mission.title,
+      fence: 'fence-done',
+    });
+    const handler = configureAndGetHandler();
+
+    await expect(
+      handler({ sender }, { missionId: mission.id }),
+    ).resolves.toEqual({ removed: true });
+    expect(harness.removeMission).toHaveBeenCalledWith(
+      sender,
+      mission.id,
+      'fence-done',
+    );
+    expect(harness.terminatePty).not.toHaveBeenCalled();
+  });
+
+  it('remove missão concluída quando o collapse do pane falha mas nenhum processo resta vivo', async () => {
+    const sender = owner();
+    harness.scopes.set(sender.id, SCOPE_A);
+    harness.windows.set(sender.id, { isDestroyed: () => false });
+    const { requestMissionPaneClose } = await import('./pane-registry');
+    const mission = {
+      id: 'mission-done-collapse',
+      title: 'Assas',
+      description: 'Concluída com transcript residual.',
+      status: 'done' as const,
+      intentState: 'done' as const,
+      orchestratorSessionId: 'pty-residual',
+      milestones: [],
+      learnings: '',
+      createdAt: 1,
+      updatedAt: 2,
+    };
+    harness.agentSessions.push({
+      sessionId: 'pty-residual',
+      paneId: 'pane-residual',
+      adapterId: 'codex',
+      cwd: SCOPE_A.rootRealPath,
+      missionId: mission.id,
+      role: 'orchestrator',
+      scope: SCOPE_A,
+    });
+    harness.paneSnapshots.push({
+      paneId: 'pane-residual',
+      sessionId: 'pty-residual',
+      title: 'claude',
+      kind: 'cli-agent',
+      state: 'idle',
+      missionId: mission.id,
+      role: 'orchestrator',
+      scope: SCOPE_A,
+    });
+    harness.terminatePty.mockImplementationOnce(async (sessionId: string) => {
+      const index = harness.agentSessions.findIndex(
+        (entry) => entry.sessionId === sessionId,
+      );
+      if (index >= 0) harness.agentSessions.splice(index, 1);
+      return true;
+    });
+    vi.mocked(requestMissionPaneClose).mockResolvedValueOnce(false);
+    harness.projectStores.forScope.mockReturnValueOnce({
+      scope: SCOPE_A,
+      missions: {
+        get: (missionId: string) =>
+          missionId === mission.id ? mission : null,
+        list: () => [mission],
+      },
+      missionPanes: {
+        list: () => [
+          {
+            id: 'mission-pane-residual',
+            missionId: mission.id,
+            paneId: 'pane-residual',
+            adapterId: 'codex',
+            title: 'Orquestrador',
+            agentName: 'Maestro',
+            role: 'orchestrator',
+            scope: SCOPE_A,
+            createdAt: 1,
+          },
+        ],
+      },
+    });
+    harness.missionRemovalCandidate.mockReturnValueOnce({
+      missionId: mission.id,
+      title: mission.title,
+      fence: 'fence-done-collapse',
+    });
+    harness.prepareMissionRemoval.mockReturnValueOnce({
+      missionId: mission.id,
+      title: mission.title,
+      fence: 'fence-done-collapse',
+    });
+    const handler = configureAndGetHandler();
+
+    await expect(
+      handler({ sender }, { missionId: mission.id }),
+    ).resolves.toEqual({ removed: true });
+    expect(harness.removeMission).toHaveBeenCalledWith(
+      sender,
+      mission.id,
+      'fence-done-collapse',
+    );
+  });
 });
 
 describe('mission runtime close IPC authority', () => {

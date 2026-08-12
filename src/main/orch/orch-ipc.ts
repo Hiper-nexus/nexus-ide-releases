@@ -180,6 +180,7 @@ import {
 import {
   closeOrphanedMissionRuntime,
   closeMissionRuntimePreservingHistory,
+  missionHasLivePhysicalSession,
   prepareMissionRuntimeTermination,
   settleMissionRuntimeDemotion,
   terminateMissionRuntime,
@@ -2043,11 +2044,19 @@ export function registerOrchIpc(): void {
             error instanceof Error ? error.message : String(error);
         }
         if (terminationError) {
-          throw new Error(
-            "Remoção recusada. O histórico foi preservado junto com a missão, " +
-              "tasks e receipts porque o teardown não comprovou a saída física: " +
-              terminationError,
-          );
+          const current = suite.missions.get(parsed.data.missionId);
+          const terminalHistory =
+            current?.status === 'done' || current?.status === 'failed';
+          if (
+            !terminalHistory ||
+            missionHasLivePhysicalSession(scope, parsed.data.missionId)
+          ) {
+            throw new Error(
+              "Remoção recusada. O histórico foi preservado junto com a missão, " +
+                "tasks e receipts porque o teardown não comprovou a saída física: " +
+                terminationError,
+            );
+          }
         }
         requireLiveRendererWorkspaceScope(event.sender, scope);
         const removed = authority.removeMissionFromRenderer(
