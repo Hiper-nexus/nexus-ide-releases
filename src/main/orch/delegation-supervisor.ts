@@ -231,8 +231,15 @@ function scanSuite(suite: ProjectDomainStoreSuite, now: number): void {
         reason: 'delegation_supervisor_stage_2_recovery_active',
         meta: { stage: 2, deliveredToPty: false, deliveryState: 'submitted' },
       });
+      // Acorda a Via Rápida: o orquestrador morreu, spawna um novo.
+      // Antes ficava parado esperando "Mission Driver recovery" que nunca vinha.
+      void import('./mission-fast-lane').then(({ resumeFastLaneMission }) =>
+        resumeFastLaneMission(suite.scope, mission.id).catch((err) =>
+          console.warn('[delegation-supervisor] resume falhou:', err),
+        ),
+      );
       console.warn(
-        `[delegation-supervisor] stage 2 — mission ${mission.id} remains running for Mission Driver recovery`,
+        `[delegation-supervisor] stage 2 — mission ${mission.id} restart via fast-lane`,
       );
       continue;
     }
