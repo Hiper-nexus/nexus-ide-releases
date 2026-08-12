@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "source": "nexus-benchmark/unpublished",
+  "updatedAt": "2026-08-12T00:00:00.000Z",
+  "description": "Tabela vazia de propósito. O motor de rota usa heurística por especialidade (visual, security, bug, ops, doc) até o benchmark Nexus existir. Preencha specialties.<id> com {adapterId, model?, effort?, score} em ordem de preferência — o router passa a honrar essa lista sem mudança de call site. Overlay do operador: ~/.nexus/mission-specialty-benchmark.json.",
+  "specialties": {}
+}

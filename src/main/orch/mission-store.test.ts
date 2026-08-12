@@ -1179,6 +1179,7 @@ describe('scoped mission store', () => {
       ],
     };
     const reserved = store.reserveRouteDecision(mission.id, 'implementar RC3', decision);
+    expect(store.listOpenRouteAdapterIds(mission.id)).toEqual(['codex']);
     expect(reserved).toMatchObject({
       id: 'route-reservation-2',
       missionId: mission.id,
@@ -1219,6 +1220,7 @@ describe('scoped mission store', () => {
       consumedAt: 1_001,
       consumedBySession: 'orchestrator-session',
     });
+    expect(reopened.listOpenRouteAdapterIds(mission.id)).toEqual([]);
     expect(reopened.list()[0]?.latestRoute).toMatchObject({
       reservationId: reserved.id,
       state: 'consumed',

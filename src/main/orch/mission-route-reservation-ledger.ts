@@ -33,6 +33,10 @@ const routeDecisionSchema = z
     effort: z.string().min(1).max(64).optional(),
     reason: z.string().min(1).max(16_384),
     alternatives: z.array(routeCandidateSchema).max(256),
+    specialty: z
+      .enum(['visual', 'security', 'bug', 'feature', 'doc', 'ops', 'general'])
+      .optional(),
+    policySource: z.enum(['heuristic', 'nexus-eval', 'benchmark']).optional(),
   })
   .strict();
 
@@ -292,6 +296,30 @@ export class MissionRouteReservationLedger {
       this.#binding.readDatabase(),
       reservationId,
     );
+  }
+
+  /**
+   * Adapter ids of unconsumed, unexpired reservations for this mission.
+   * Fan-out `nexus_route_task` calls must count these so the second worker
+   * of a wave does not inherit the same GLM/table lead as the first.
+   */
+  listOpenRouteAdapterIds(rawMissionId: string, rawAt?: number): string[] {
+    const missionId = entityIdSchema.parse(rawMissionId);
+    const at =
+      rawAt === undefined
+        ? this.#binding.now()
+        : timestampSchema.parse(rawAt);
+    const rows = this.#binding
+      .readDatabase()
+      .prepare(
+        `SELECT adapter_id FROM mission_route_reservations
+          WHERE mission_id = ?
+            AND consumed_at IS NULL
+            AND expires_at > ?
+          ORDER BY created_at ASC`,
+      )
+      .all(missionId, at) as Array<{ adapter_id: string }>;
+    return rows.map((row) => row.adapter_id);
   }
 
   assertRouteReservation(

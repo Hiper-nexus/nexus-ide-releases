@@ -6,7 +6,7 @@ import {
   resolveEffectiveIntentState,
 } from "../../shared/mission-intent";
 import { handoffStatusSchema } from "../../shared/orch-types";
-import { markHandoffSubmitted } from "./gate";
+import { markHandoffSubmitted, type GateRole } from "./gate";
 import { onHandoffSubmitted } from "./idle-delivery";
 import {
   armedAutoClosePaneId,
@@ -21,8 +21,6 @@ import {
 } from "./mcp-protocol";
 import { getProjectDomainStores } from "./project-domain-store-registry";
 import { requireStr, str } from "./tool-util";
-import { orchWriteSession } from "../pty/pty-manager";
-import { stripAnsi } from "./pane-registry";
 import { compactText } from "./session-compaction";
 import type { ScopedHandoff } from "./handoff-store";
 
@@ -76,6 +74,23 @@ function requireHandoffAckPhysicalReceipt(
   }
   assertMcpInvocationCurrent(invocation);
   return invocation.agentTransportPhysicalReceipt;
+}
+
+/**
+ * Maestro inbox vs audit trail.
+ *
+ * The store defaults to undelivered-only. After idle-delivery marks a row
+ * submitted/consumed, that filter returns []. The Maestro prompt tells it to
+ * call `nexus_handoff_list({full:true})` "to see every handoff"; `full` was
+ * not in the schema, so the call silently listed an empty pending inbox.
+ */
+export function resolveHandoffListIncludeDelivered(
+  args: Record<string, unknown>,
+  role: GateRole,
+): boolean {
+  if (args.includeDelivered === false) return false;
+  if (args.includeDelivered === true || args.full === true) return true;
+  return role === "orchestrator";
 }
 
 const handoffSubmitTool: McpToolDef = {
@@ -289,28 +304,11 @@ const handoffSubmitTool: McpToolDef = {
     if (handoff.evidenceTrust === "nexus-trusted") {
       markHandoffSubmitted(ctx);
     }
-    // Acorda o orquestrador: entrega o handoff no PTY dele pra que ele saiba
-    // que tem resultado novo. Sem isto, o orquestrador ficava em
-    // chef_idle_awaiting_workers pra sempre — o handoff existia mas ninguém
-    // avisava. Bug real 12/08: worker chamou nexus_handoff_submit, foi OK,
-    // mas orquestrador nunca recebeu.
-    if (mission.orchestratorSessionId) {
-      try {
-        // Sanitiza contra PTY injection: remove ANSI/controle das strings
-        // que vêm do worker antes de escrever no terminal do orquestrador.
-        const safeAgent = stripAnsi(fromAgent || 'worker');
-        const safeStatus = stripAnsi(status);
-        const safeSummary = stripAnsi(summary.slice(0, 280));
-        const wakeMsg =
-          `\n📬 ${safeAgent}: **${safeStatus}** — ${safeSummary}\n` +
-          `   (use nexus_handoff_list para ver todos os handoffs)\n`;
-        orchWriteSession(mission.orchestratorSessionId, wakeMsg, {
-          markInputBusy: false,
-        });
-      } catch {
-        // Best-effort: handoff já está armazenado, wake é bônus.
-      }
-    }
+    // Wake is exclusively `onHandoffSubmitted` → idle-delivery (bracketed
+    // paste + 500 ms settle + Enter). A raw PTY dump here (commit 2b8b4e1d)
+    // left `📬 … (use nexus_handoff_list)` sitting in the Maestro composer
+    // without submit, and the TUI repaint made idle-delivery queue for minutes.
+    //
     // A queued replay may be recovering from a process/network loss after the
     // SQLite commit but before delivery/completion side effects. Once delivery
     // advanced, replaying Pet Studio would re-read mutable artifact paths and
@@ -357,13 +355,16 @@ const handoffSubmitTool: McpToolDef = {
 const handoffListTool: McpToolDef = {
   name: "nexus_handoff_list",
   description:
-    "List submitted handoffs (undelivered by default; includeDelivered: true " +
-    "for the full audit trail). Optionally filter by missionId.",
+    "List handoffs for the current mission. The Maestro sees the full audit " +
+    "trail by default (including delivered/consumed). Pass includeDelivered: " +
+    "false for only undelivered rows. full:true is the documented alias for " +
+    "the complete trail (same as includeDelivered:true).",
   inputSchema: {
     type: "object",
     properties: {
       missionId: { type: "string" },
       includeDelivered: { type: "boolean" },
+      full: { type: "boolean" },
     },
   },
   handler: async (args, ctx) => {
@@ -377,7 +378,7 @@ const handoffListTool: McpToolDef = {
         : ctx.missionId;
     return getProjectDomainStores(ctx.scope).handoffs.list({
       missionId,
-      includeDelivered: args.includeDelivered === true,
+      includeDelivered: resolveHandoffListIncludeDelivered(args, ctx.role),
     });
   },
 };

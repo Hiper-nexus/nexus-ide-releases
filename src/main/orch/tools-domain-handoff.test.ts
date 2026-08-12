@@ -14,7 +14,11 @@ const mocks = vi.hoisted(() => ({
   submitAndTransition: vi.fn(),
   markHandoffSubmitted: vi.fn(),
   onHandoffSubmitted: vi.fn(),
+  orchWriteSession: vi.fn(() => true),
   getStores: vi.fn(),
+  listHandoffs: vi.fn(
+    (): Array<{ id: string; delivered?: boolean }> => [],
+  ),
   heartbeat: vi.fn(),
   acceptHandoff: vi.fn(),
   markConsumedFromPhysicalAck: vi.fn(),
@@ -27,6 +31,11 @@ vi.mock("./gate", async (importOriginal) => ({
 
 vi.mock("./idle-delivery", () => ({
   onHandoffSubmitted: mocks.onHandoffSubmitted,
+}));
+
+vi.mock("../pty/pty-manager", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../pty/pty-manager")>()),
+  orchWriteSession: mocks.orchWriteSession,
 }));
 
 vi.mock("./project-domain-store-registry", () => ({
@@ -153,6 +162,14 @@ function heartbeatTool() {
   return tool;
 }
 
+function listTool() {
+  const tool = buildDomainTools().find(
+    (candidate) => candidate.name === "nexus_handoff_list",
+  );
+  if (!tool) throw new Error("handoff list tool is not registered");
+  return tool;
+}
+
 function acknowledgeTool() {
   const tool = buildDomainTools().find(
     (candidate) => candidate.name === "nexus_handoff_ack",
@@ -171,6 +188,7 @@ describe("handoff MCP stop receipt", () => {
           title: "Mission",
           description: "Authorized work",
           status: "running",
+          orchestratorSessionId: "orchestrator-session",
           milestones: [],
           learnings: "",
           intentState: "dispatched",
@@ -202,7 +220,7 @@ describe("handoff MCP stop receipt", () => {
         submitFromPhysicalAgentBoundaryWithReplay: mocks.submitWithReplay,
         submitFromPhysicalAgentBoundaryAndTransitionDispatch:
           mocks.submitAndTransition,
-        list: vi.fn(),
+        list: mocks.listHandoffs,
         markConsumedFromPhysicalAck: mocks.markConsumedFromPhysicalAck,
       },
       taskDispatches: {
@@ -446,6 +464,7 @@ describe("handoff MCP stop receipt", () => {
     });
     expect(mocks.markHandoffSubmitted).not.toHaveBeenCalled();
     expect(mocks.onHandoffSubmitted).toHaveBeenCalledWith(submitted, scope);
+    expect(mocks.orchWriteSession).not.toHaveBeenCalled();
   });
 
   it("reconciles a queued generic replay after a lost post-commit callback", async () => {
@@ -882,5 +901,54 @@ describe("handoff MCP stop receipt", () => {
         },
       ),
     ).rejects.toThrow(/sess[aã]o/i);
+  });
+
+  it("lists the Maestro audit trail by default, including delivered rows", async () => {
+    const rows = [{ id: "handoff-consumed", delivered: true }];
+    mocks.listHandoffs.mockReturnValue(rows);
+
+    await expect(
+      listTool().handler({}, orchestratorContext()),
+    ).resolves.toEqual(rows);
+    expect(mocks.listHandoffs).toHaveBeenCalledWith({
+      missionId: "mission-a",
+      includeDelivered: true,
+    });
+  });
+
+  it("honors full:true as the complete trail advertised to the Maestro", async () => {
+    mocks.listHandoffs.mockReturnValue([{ id: "handoff-a" }]);
+
+    await listTool().handler({ full: true }, orchestratorContext());
+    expect(mocks.listHandoffs).toHaveBeenCalledWith({
+      missionId: "mission-a",
+      includeDelivered: true,
+    });
+  });
+
+  it("keeps includeDelivered:false as the pending-only inbox", async () => {
+    mocks.listHandoffs.mockReturnValue([]);
+
+    await listTool().handler(
+      { includeDelivered: false },
+      orchestratorContext(),
+    );
+    expect(mocks.listHandoffs).toHaveBeenCalledWith({
+      missionId: "mission-a",
+      includeDelivered: false,
+    });
+  });
+
+  it("confines a worker to its own mission even when another id is guessed", async () => {
+    mocks.listHandoffs.mockReturnValue([]);
+
+    await listTool().handler(
+      { missionId: "mission-other", full: true },
+      context(),
+    );
+    expect(mocks.listHandoffs).toHaveBeenCalledWith({
+      missionId: "mission-a",
+      includeDelivered: true,
+    });
   });
 });

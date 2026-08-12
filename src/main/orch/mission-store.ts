@@ -405,6 +405,13 @@ export class ScopedMissionStore {
     return this.#routeReservations.getRouteReservation(rawReservationId);
   }
 
+  listOpenRouteAdapterIds(rawMissionId: string, rawAt?: number): string[] {
+    return this.#routeReservations.listOpenRouteAdapterIds(
+      rawMissionId,
+      rawAt,
+    );
+  }
+
   assertRouteReservation(
     rawExpected: RouteReservationExpectation,
   ): MissionRouteReservation {

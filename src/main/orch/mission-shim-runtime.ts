@@ -267,7 +267,7 @@ function mapOperation(request: MissionShimRequest): {
   if (request.command === "mail" && request.operation === "list") {
     return {
       toolName: "nexus_handoff_list",
-      args: pickArgs(request.args, ["includeDelivered"]),
+      args: pickArgs(request.args, ["includeDelivered", "full", "missionId"]),
     };
   }
   if (request.command === "task" && request.operation === "list") {

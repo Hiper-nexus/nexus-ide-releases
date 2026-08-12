@@ -1,10 +1,19 @@
 /**
- * Task router — the orchestrator's cost brain. Classifies a task description
- * into a complexity tier and picks the cheapest agent that can handle it
- * (adapter + model + reasoning effort), so easy work never burns
- * Opus/Fable-class tokens and hard work never lands on a fast-and-loose
- * model. Pure logic (no electron imports) — fully unit-testable; the MCP tool
- * nexus_route_task feeds it the live adapter list.
+ * Task router — the orchestrator's cost + specialty brain. Classifies a
+ * task into a complexity tier AND a work specialty (visual, security, bug,
+ * …), then picks adapter + model + effort. Easy work never burns
+ * Opus/Fable-class tokens; UI work does not inherit the cheapest coding
+ * lead; a three-worker fan-out does not all land on GLM.
+ *
+ * Ranking layers (highest wins when present):
+ *   1. operator/sealed roster (call site)
+ *   2. specialty benchmark table (empty until Nexus eval exists)
+ *   3. nexus-eval quality by dimension (when every installed adapter is scored)
+ *   4. heuristic specialty prior + DEFAULT_ROUTING_TABLE
+ *   5. mission diversity (open RouteReservations + live panes)
+ *
+ * Pure logic (no electron imports) — fully unit-testable; the MCP tool
+ * nexus_route_task feeds it the live adapter list and the merged benchmark.
  */
 import {
   hasAuthoritativeModelQuality,
@@ -14,6 +23,15 @@ import {
   modelRoutingRank,
   type ModelCatalog,
 } from '../adapters/model-catalog';
+import {
+  applyEffortFloor,
+  classifyRouteSpecialty,
+  preferAdapterOrder,
+  resolveSpecialtyPolicy,
+  type RoutePolicySource,
+  type RouteSpecialty,
+  type SpecialtyBenchmark,
+} from '../../shared/mission-route-specialty';
 import { adapterCircuitBreakers } from './circuit-breaker';
 import { multiScoreRerank } from './route-pipeline';
 
@@ -43,6 +61,12 @@ export interface RouteContext {
    * with multi-score (x-algorithm pattern). False preserves pure table order.
    */
   multiScore?: boolean;
+  /**
+   * Injected specialty table. `undefined` uses the empty published benchmark
+   * (heuristic). Callers that merged a user overlay pass that object here so
+   * unit tests never read `~/.nexus`.
+   */
+  specialtyBenchmark?: SpecialtyBenchmark | null;
 }
 
 export type RankedRouteEntry = {
@@ -246,22 +270,19 @@ export interface RouteDecision {
   reason: string;
   /** Remaining installed candidates of the tier, for manual override. */
   alternatives: RouteCandidate[];
+  /** Work specialty the motor classified (visual, security, …). */
+  specialty?: RouteSpecialty;
+  /** Why this adapter won: heuristic prior, eval scores, or benchmark rows. */
+  policySource?: RoutePolicySource;
 }
 
 type QualityDimension = 'coding' | 'reasoning' | 'frontend' | 'security';
 
-const FRONTEND_DIMENSION_RE =
-  /\b(frontend|landing|website|interface|ui|ux|css|design|responsive|acessibilidade)\b/i;
-const SECURITY_DIMENSION_RE =
-  /\b(security|seguran|auth|oauth|permission|token|secret|payment|pagamento|billing)\b/i;
-
 function qualityDimension(taskText: string, tier: TaskTier): QualityDimension {
-  if (FRONTEND_DIMENSION_RE.test(taskText)) {
-    return 'frontend';
-  }
-  if (SECURITY_DIMENSION_RE.test(taskText)) {
-    return 'security';
-  }
+  const specialty = classifyRouteSpecialty(taskText).specialty;
+  if (specialty === 'visual') return 'frontend';
+  if (specialty === 'security') return 'security';
+  if (specialty === 'bug') return 'reasoning';
   return tier === 'hard' || tier === 'critical' ? 'reasoning' : 'coding';
 }
 
@@ -377,6 +398,11 @@ export function routeTask(
 
   const classification = classifyTask(taskText);
   const tier = tierOverride ?? classification.tier;
+  const specialtyVerdict = classifyRouteSpecialty(taskText);
+  const policy = resolveSpecialtyPolicy(
+    specialtyVerdict.specialty,
+    context.specialtyBenchmark,
+  );
   // A avaliação por dimensão só pode PRÉ-EMPTAR a tabela de diversidade
   // quando TODO adapter instalado tem ≥1 modelo avaliado. Com cobertura
   // parcial (ex.: kimi/agy sem nota nexus-eval), rankear só os avaliados
@@ -445,6 +471,26 @@ export function routeTask(
     }
   }
 
+  // Specialty prior (heuristic today, benchmark when that table has rows)
+  // reorders BEFORE multi-score so a UI task does not inherit the medium-tier
+  // GLM lead, and a second route_task in the same wave can still diversify.
+  // Eval-full coverage already ranked by qualityDimension(specialty) — do not
+  // undo measured scores with the heuristic prior. A real benchmark table
+  // outranks both.
+  const prependIds = [
+    ...(context.preferAdapters ?? []),
+    ...(policy.source === 'benchmark' || evaluated.length === 0
+      ? policy.preferAdapterIds
+      : []),
+  ].filter((id, index, all) => all.indexOf(id) === index);
+  if (prependIds.length > 0) {
+    ranked = preferAdapterOrder(
+      ranked,
+      (entry) => entry.c.adapterId,
+      prependIds,
+    );
+  }
+
   // x-algorithm multi-score: activate when mission has history, circuit open,
   // or caller opts in — preserves pure table order on cold first pick.
   const anyCircuitOpen = ranked.some((r) =>
@@ -479,6 +525,10 @@ export function routeTask(
       if (alt) chosen = alt;
     }
     const pick = chosen.c;
+    const effort = applyEffortFloor(pick.effort, policy.effortFloor);
+    const policySource: RoutePolicySource = chosen.evaluated
+      ? 'nexus-eval'
+      : policy.source;
     const borrowed =
       chosen.fromTier === tier
         ? ''
@@ -490,6 +540,7 @@ export function routeTask(
     const evaluationNote = chosen.evaluated
       ? '; selecionado por avaliação Nexus por dimensão'
       : '';
+    const specialtyNote = `; specialty=${specialtyVerdict.specialty} source=${policySource}`;
     const riskNote =
       skippedRisk.length > 0
         ? `; evitou ${[...new Set(skippedRisk)].slice(0, 3).join(', ')}`
@@ -498,9 +549,11 @@ export function routeTask(
       tier,
       adapterId: pick.adapterId,
       model: pick.model,
-      effort: pick.effort,
-      reason: `${tier}${borrowed}; ${why}${costNote}${evaluationNote}${riskNote}${multiScoreNote}`,
+      effort,
+      reason: `${tier}${borrowed}${specialtyNote}; ${why}${costNote}${evaluationNote}${riskNote}${multiScoreNote}`,
       alternatives: ranked.filter((r) => r.c !== pick).map((r) => r.c),
+      specialty: specialtyVerdict.specialty,
+      policySource,
     };
   }
 
@@ -509,8 +562,10 @@ export function routeTask(
   return {
     tier,
     adapterId: fallback,
-    effort: table[tier][0]?.effort,
-    reason: `${tier}; ${why}; nenhum candidato da tabela instalado — usando ${fallback}`,
+    effort: applyEffortFloor(table[tier][0]?.effort, policy.effortFloor),
+    reason: `${tier}; specialty=${specialtyVerdict.specialty} source=${policy.source}; ${why}; nenhum candidato da tabela instalado — usando ${fallback}`,
     alternatives: [],
+    specialty: specialtyVerdict.specialty,
+    policySource: policy.source,
   };
 }

@@ -17,9 +17,10 @@ import {
 import { findPane, readSessionOutput, waitForIdle } from './pane-registry';
 import { listProviderSettings } from '../persistence/provider-config-store';
 import { routeTask, type TaskTier } from './task-router';
-import { countAdapterUses } from './route-pipeline';
+import { mergeAdapterUseLists } from './route-pipeline';
 import { recordRouteDecision } from './route-provenance';
 import { recordRouteLog, recentRouteLog } from './route-log';
+import { loadSpecialtyBenchmark } from './specialty-benchmark';
 import { hasAvailableAccount } from '../persistence/account-store';
 import { authReadyModelsForProvider } from '../adapters/model-auth-readiness';
 import { appendMissionVerdict } from '../../shared/mission-block-cause';
@@ -1018,9 +1019,11 @@ const routeTaskTool: McpToolDef = {
   description:
     'Mission-orchestrator-only: reserve the best cost/capability route for a task before spawning it. ' +
     'The decision is resolved against the current installed provider and model ' +
-    'catalog, never against model names remembered by the orchestrator. Classifies the task ' +
-    '(trivial|easy|medium|hard|critical) and returns {tier, adapterId, ' +
-    'model, effort, reason, alternatives, routeReservationId, routeReservationExpiresAt}: ' +
+    'catalog, never against model names remembered by the orchestrator. ' +
+    'Classifies the task (trivial|easy|medium|hard|critical) and the work ' +
+    'specialty (visual|security|bug|feature|doc|ops|general), then returns ' +
+    '{tier, specialty, policySource, adapterId, model, effort, reason, ' +
+    'alternatives, routeReservationId, routeReservationExpiresAt}: ' +
     'for a mission, pass routeReservationId and adapterId/model/effort straight ' +
     'into nexus_pane_spawn. Call it for every delegation and trust the ' +
     'returned runtime snapshot so removed, deprecated or unavailable models are never forced by a stale playbook. ' +
@@ -1145,27 +1148,36 @@ const routeTaskTool: McpToolDef = {
       quotaFallbackNote = `; quota auto-exclude reverted, all candidates cooling: ${quotaExcluded.join(',')}`;
     }
     let missionAdapterIds: string[] | undefined;
+    let reservedAdapterIds: string[] | undefined;
     if (missionId) {
       try {
-        missionAdapterIds = getProjectDomainStores(ctx.scope)
-          .missionPanes.list(missionId)
+        const stores = getProjectDomainStores(ctx.scope);
+        missionAdapterIds = stores.missionPanes
+          .list(missionId)
           .map((pane) => pane.adapterId)
           .filter(Boolean);
+        reservedAdapterIds = stores.missions.listOpenRouteAdapterIds(missionId);
       } catch {
         missionAdapterIds = undefined;
+        reservedAdapterIds = undefined;
       }
     }
     const preferAdapters = strArray(args, 'preferAdapters');
-    const missionUseCounts = missionAdapterIds?.length
-      ? countAdapterUses(missionAdapterIds)
-      : undefined;
+    const missionUseCounts = mergeAdapterUseLists(
+      missionAdapterIds,
+      reservedAdapterIds,
+    );
+    const usedAdapterIds = [
+      ...(missionAdapterIds ?? []),
+      ...(reservedAdapterIds ?? []),
+    ];
     // Claude shares one OAuth credential state. Another CLI may route one
     // Claude worker in autopilot, but once any Claude pane belongs to this
     // mission a second concurrent Claude route is physically unavailable.
     const reserveClaude = Boolean(
       missionId &&
         (ctx.providerId === 'claude' ||
-          missionAdapterIds?.includes('claude')),
+          usedAdapterIds.includes('claude')),
     );
     if (reserveClaude) {
       adapters = adapters.map((adapter) =>
@@ -1182,11 +1194,12 @@ const routeTaskTool: McpToolDef = {
       reserveClaude,
       undefined,
       {
-        missionUsedAdapters: missionAdapterIds?.length
-          ? new Set(missionAdapterIds)
-          : undefined,
+        missionUsedAdapters:
+          usedAdapterIds.length > 0 ? new Set(usedAdapterIds) : undefined,
         missionUseCounts,
         preferAdapters: preferAdapters.length > 0 ? preferAdapters : undefined,
+        multiScore: Boolean(missionId),
+        specialtyBenchmark: loadSpecialtyBenchmark(),
       },
     );
     if (!decision) {

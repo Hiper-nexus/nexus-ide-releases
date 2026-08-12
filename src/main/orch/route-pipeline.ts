@@ -170,3 +170,14 @@ export function countAdapterUses(
   }
   return map;
 }
+
+/**
+ * Merge pane history + still-open route reservations into one use-count map.
+ * Empty input returns undefined so the router keeps cold-start table order.
+ */
+export function mergeAdapterUseLists(
+  ...lists: Array<readonly string[] | undefined>
+): Map<string, number> | undefined {
+  const merged = lists.flatMap((list) => list ?? []);
+  return merged.length > 0 ? countAdapterUses(merged) : undefined;
+}

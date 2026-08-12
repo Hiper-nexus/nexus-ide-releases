@@ -5,6 +5,7 @@ import {
   routeTask,
   type AdapterAvailability,
 } from './task-router';
+import { countAdapterUses } from './route-pipeline';
 
 function adapters(...installed: string[]): AdapterAvailability[] {
   const all = [
@@ -261,6 +262,66 @@ describe('routeTask', () => {
       effort: 'high',
     });
     expect(decision!.reason).toContain('avaliação Nexus por dimensão');
+  });
+});
+
+describe('routeTask specialty + diversidade de onda', () => {
+  it('não entrega UI no lead barato do tier medium (GLM)', () => {
+    const decision = routeTask(
+      'criar a nova tela de cobrança com estados vazios e acessibilidade',
+      adapters('glm', 'agy', 'claude', 'codex'),
+    );
+    expect(decision!.specialty).toBe('visual');
+    expect(decision!.policySource).toBe('heuristic');
+    expect(decision!.adapterId).toBe('agy');
+    expect(decision!.reason).toContain('specialty=visual');
+  });
+
+  it('honra benchmark da especialidade quando a tabela tem linhas', () => {
+    const decision = routeTask(
+      'criar a nova tela de onboarding com estados vazios e acessibilidade',
+      adapters('glm', 'agy', 'claude', 'codex'),
+      DEFAULT_ROUTING_TABLE,
+      undefined,
+      false,
+      undefined,
+      {
+        specialtyBenchmark: {
+          schemaVersion: 1,
+          source: 'nexus-benchmark/v1',
+          specialties: {
+            visual: [
+              { adapterId: 'codex', model: 'gpt-5.6-luna', score: 94, effort: 'high' },
+            ],
+          },
+        },
+      },
+    );
+    expect(decision!.policySource).toBe('benchmark');
+    expect(decision!.adapterId).toBe('codex');
+    expect(decision!.effort).toBe('high');
+  });
+
+  it('espalha CLIs no fan-out: o 2º e 3º worker não herdam o GLM do 1º', () => {
+    const pool = adapters('glm', 'kimi', 'grok', 'codex', 'longcat', 'agy');
+    const task =
+      'implementar um endpoint que retorna o resumo diário dos usuários ativos';
+    const first = routeTask(task, pool, DEFAULT_ROUTING_TABLE, 'medium');
+    expect(first!.adapterId).toBe('glm');
+
+    const second = routeTask(task, pool, DEFAULT_ROUTING_TABLE, 'medium', false, undefined, {
+      missionUseCounts: new Map([[first!.adapterId, 1]]),
+      multiScore: true,
+    });
+    expect(second!.adapterId).not.toBe(first!.adapterId);
+
+    const third = routeTask(task, pool, DEFAULT_ROUTING_TABLE, 'medium', false, undefined, {
+      missionUseCounts: countAdapterUses([first!.adapterId, second!.adapterId]),
+      multiScore: true,
+    });
+    expect(
+      new Set([first!.adapterId, second!.adapterId, third!.adapterId]).size,
+    ).toBe(3);
   });
 });
 

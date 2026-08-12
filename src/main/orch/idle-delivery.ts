@@ -69,6 +69,7 @@ interface PendingEnter {
   readonly handoffId: string;
   readonly attemptId: string;
   readonly attemptNo: number;
+  settleTimer?: ReturnType<typeof setTimeout>;
   retryTimer?: ReturnType<typeof setTimeout>;
   acceptanceTimer?: ReturnType<typeof setTimeout>;
   submitStarted?: boolean;
@@ -108,7 +109,16 @@ const MAX_DELIVERY_SUMMARY = 4000;
  * sempre (markSubmitted é durável e o replay só olha não-entregues).
  */
 const SUBMIT_ACCEPTANCE_WINDOW_MS = 12_000;
-const DELIVERY_IDLE_STABILITY_MS = 150;
+/** Idle must hold this long before paste — a one-frame idle flicker is not injectable. */
+export const DELIVERY_IDLE_STABILITY_MS = 150;
+/**
+ * Same bound as `injectPrompt` in tool-util.ts. Claude/Codex swallow the first
+ * CR while the editor is still ingesting a large paste; sending Enter in the
+ * same JS turn as the paste leaves the handoff sitting in the composer.
+ */
+export const HANDOFF_PROMPT_SETTLE_MS = 500;
+/** Second CR if the session is still injectable-idle after the first submit. */
+export const HANDOFF_ENTER_RETRY_MS = 400;
 const MAX_DELIVERY_ATTEMPTS = MAX_HANDOFF_DELIVERY_ATTEMPTS;
 const HANDOFF_DELIVERY_CTA =
   'Handoff não entregue. Clique em Reabrir para retomar o orquestrador e reenviar a entrega.';
@@ -414,6 +424,7 @@ function isCurrentAuthority(authority: DeliveryAuthority): boolean {
 }
 
 function clearPendingEnter(pending: PendingEnter): void {
+  if (pending.settleTimer) clearTimeout(pending.settleTimer);
   if (pending.retryTimer) clearTimeout(pending.retryTimer);
   if (pending.acceptanceTimer) clearTimeout(pending.acceptanceTimer);
   pendingEnters.delete(pending);
@@ -596,17 +607,12 @@ function retryOrBlockDelivery(
 
 function submitDelivery(
   authority: DeliveryAuthority,
-  handoffId: string,
-  attempt: HandoffDeliveryAttempt,
+  pending: PendingEnter,
 ): void {
-  const pending: PendingEnter = {
-    authority,
-    handoffId,
-    attemptId: attempt.id,
-    attemptNo: attempt.attemptNo,
-    submitStarted: true,
-  };
-  pendingEnters.add(pending);
+  if (!pendingEnters.has(pending) || pending.submitStarted) return;
+  // Linearize before write(): a fake/test transport may publish busy
+  // synchronously from the CR, and that edge is the acceptance proof.
+  pending.submitStarted = true;
   const submitted = orchWriteSession(authority.sessionId, '\r', {
     markInputBusy: false,
   });
@@ -634,7 +640,7 @@ function submitDelivery(
         markInputBusy: false,
       });
     }
-  }, 400);
+  }, HANDOFF_ENTER_RETRY_MS);
 }
 
 function deliverNow(authority: DeliveryAuthority, handoff: Handoff): boolean {
@@ -659,9 +665,13 @@ function deliverNow(authority: DeliveryAuthority, handoff: Handoff): boolean {
     }
     return false;
   }
+  const payload = formatDelivery(current);
+  // Bracketed paste: one editor transaction, matching `injectPrompt` /
+  // Overclock pane_write. A raw dump of a 4k summary can repaint the TUI
+  // line-by-line and eat the CR that used to follow in the same turn.
   const ok = orchWriteSession(
     authority.sessionId,
-    formatDelivery(current),
+    `\x1b[200~${payload}\x1b[201~`,
     {
       markInputBusy: false,
     },
@@ -690,9 +700,23 @@ function deliverNow(authority: DeliveryAuthority, handoff: Handoff): boolean {
     retryOrBlockDelivery(authority, current.id, attempt.attemptNo);
     return true;
   }
-  // Paste, durable "pasted" transition and Enter share one JS turn. No other
-  // agent activity can steal the 150 ms gap that previously existed here.
-  submitDelivery(authority, current.id, attempt);
+  const pending: PendingEnter = {
+    authority,
+    handoffId: current.id,
+    attemptId: attempt.id,
+    attemptNo: attempt.attemptNo,
+    submitStarted: false,
+  };
+  pendingEnters.add(pending);
+  pending.settleTimer = setTimeout(() => {
+    pending.settleTimer = undefined;
+    if (!pendingEnters.has(pending)) return;
+    if (!isCurrentAuthority(authority)) {
+      clearPendingEnter(pending);
+      return;
+    }
+    submitDelivery(authority, pending);
+  }, HANDOFF_PROMPT_SETTLE_MS);
   return true;
 }
 

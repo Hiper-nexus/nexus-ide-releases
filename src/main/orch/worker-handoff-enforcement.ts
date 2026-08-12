@@ -67,7 +67,11 @@ import {
 } from './pane-registry';
 import { getProjectDomainStores } from './project-domain-store-registry';
 import { isSessionInjectableIdle, tapAgentSemanticStatus } from './agent-status';
-import { onHandoffSubmitted } from './idle-delivery';
+import {
+  HANDOFF_ENTER_RETRY_MS,
+  HANDOFF_PROMPT_SETTLE_MS,
+  onHandoffSubmitted,
+} from './idle-delivery';
 
 /** Carência para o worker submeter sozinho depois de ficar idle. */
 export const WORKER_QUIET_GRACE_MS = 20_000;
@@ -178,7 +182,8 @@ function productionDeps(): WorkerHandoffEnforcementDeps {
       const sessionId = authority.sessionId;
       if (!sessionId) return false;
       // Bracketed paste: o texto inteiro vira UMA transação do editor da TUI,
-      // como em `injectPrompt` (tool-util.ts:211).
+      // como em `injectPrompt` (tool-util.ts:211). Enter só depois do settle
+      // — o mesmo CR imediato do idle-delivery era engolido pelo compositor.
       if (
         !orchWriteSession(sessionId, `\x1b[200~${text}\x1b[201~`, {
           markInputBusy: false,
@@ -186,7 +191,8 @@ function productionDeps(): WorkerHandoffEnforcementDeps {
       ) {
         return false;
       }
-      return orchWriteSession(sessionId, '\r', { markInputBusy: false });
+      scheduleNudgedEnter(sessionId);
+      return true;
     },
     submitSynthetic: (authority, input) => {
       if (!authority.scope || !authority.missionId) return;
@@ -244,6 +250,7 @@ interface EnforcementWatch {
 }
 
 const watches = new Map<string, EnforcementWatch>();
+const nudgeSubmitTimers = new Set<ReturnType<typeof setTimeout>>();
 let untapStatus: (() => void) | null = null;
 let untapExit: (() => void) | null = null;
 let activeDeps: WorkerHandoffEnforcementDeps | null = null;
@@ -258,6 +265,28 @@ function watchFor(sessionId: string): EnforcementWatch {
   };
   watches.set(sessionId, created);
   return created;
+}
+
+function clearNudgeSubmitTimers(): void {
+  for (const timer of nudgeSubmitTimers) clearTimeout(timer);
+  nudgeSubmitTimers.clear();
+}
+
+function scheduleNudgedEnter(sessionId: string): void {
+  const settle = setTimeout(() => {
+    nudgeSubmitTimers.delete(settle);
+    orchWriteSession(sessionId, '\r', { markInputBusy: false });
+    const retry = setTimeout(() => {
+      nudgeSubmitTimers.delete(retry);
+      if (isSessionInjectableIdle(sessionId)) {
+        orchWriteSession(sessionId, '\r', { markInputBusy: false });
+      }
+    }, HANDOFF_ENTER_RETRY_MS);
+    if (typeof retry.unref === 'function') retry.unref();
+    nudgeSubmitTimers.add(retry);
+  }, HANDOFF_PROMPT_SETTLE_MS);
+  if (typeof settle.unref === 'function') settle.unref();
+  nudgeSubmitTimers.add(settle);
 }
 
 function clearTimer(watch: EnforcementWatch): void {
@@ -468,6 +497,7 @@ export function shutdownWorkerHandoffEnforcement(): void {
   untapStatus = null;
   untapExit?.();
   untapExit = null;
+  clearNudgeSubmitTimers();
   for (const watch of watches.values()) clearTimer(watch);
   watches.clear();
   activeDeps = null;

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { loadModelCatalog } from '../adapters/model-catalog';
 import {
   countAdapterUses,
+  mergeAdapterUseLists,
   multiScoreRerank,
   scoreRouteCandidate,
 } from './route-pipeline';
@@ -155,5 +156,17 @@ describe('countAdapterUses', () => {
     const m = countAdapterUses(['codex', 'grok', 'codex']);
     expect(m.get('codex')).toBe(2);
     expect(m.get('grok')).toBe(1);
+  });
+});
+
+describe('mergeAdapterUseLists', () => {
+  it('soma panes e reservas abertas', () => {
+    const merged = mergeAdapterUseLists(['glm'], ['glm', 'kimi']);
+    expect(merged?.get('glm')).toBe(2);
+    expect(merged?.get('kimi')).toBe(1);
+  });
+
+  it('retorna undefined quando não há histórico', () => {
+    expect(mergeAdapterUseLists([], undefined)).toBeUndefined();
   });
 });

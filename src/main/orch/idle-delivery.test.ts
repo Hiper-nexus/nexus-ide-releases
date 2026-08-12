@@ -425,6 +425,20 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+async function advanceUntilPasted(
+  delivery: typeof import('./idle-delivery'),
+): Promise<void> {
+  await vi.advanceTimersByTimeAsync(delivery.DELIVERY_IDLE_STABILITY_MS);
+}
+
+async function advanceUntilSubmitted(
+  delivery: typeof import('./idle-delivery'),
+): Promise<void> {
+  await vi.advanceTimersByTimeAsync(
+    delivery.DELIVERY_IDLE_STABILITY_MS + delivery.HANDOFF_PROMPT_SETTLE_MS,
+  );
+}
+
 describe('idle delivery authority and lifecycle', () => {
   it('does not paste or submit while an idle-looking permission prompt is active', async () => {
     const delivery = await import('./idle-delivery');
@@ -445,7 +459,7 @@ describe('idle delivery authority and lifecycle', () => {
       status: 'completed',
     });
     expect(ptyMocks.writes).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(150);
+    await advanceUntilSubmitted(delivery);
     expect(ptyMocks.writes).toHaveBeenCalledTimes(2);
     expect(ptyMocks.writes).toHaveBeenLastCalledWith(
       'orchestrator-session',
@@ -586,7 +600,7 @@ describe('idle delivery authority and lifecycle', () => {
 
     delivery.onHandoffSubmitted(handoff(), scope);
     expect(storeMocks.delivered).toEqual([]);
-    await vi.advanceTimersByTimeAsync(150);
+    await advanceUntilSubmitted(delivery);
 
     expect(ptyMocks.writes).toHaveBeenLastCalledWith(
       'orchestrator-session',
@@ -618,13 +632,45 @@ describe('idle delivery authority and lifecycle', () => {
 
     ptyMocks.state = 'idle';
     ptyMocks.stateTaps[0]('orchestrator-session', 'idle');
-    await vi.advanceTimersByTimeAsync(150);
+    await advanceUntilSubmitted(delivery);
     expect(ptyMocks.writes).toHaveBeenLastCalledWith(
       'orchestrator-session',
       '\r',
       { markInputBusy: false },
     );
     expect(storeMocks.delivered).toEqual([]);
+    delivery.shutdownIdleDelivery();
+  });
+
+  it('settles the pasted handoff before Enter so paste flicker is not submit proof', async () => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    authorizeTarget(scope);
+    ptyMocks.state = 'idle';
+    delivery.initIdleDelivery();
+
+    delivery.onHandoffSubmitted(handoff(), scope);
+    await advanceUntilPasted(delivery);
+
+    const pasteWrites = ptyMocks.writes.mock.calls.filter(([, data]) =>
+      String(data).includes('handoff_id=handoff-a'),
+    );
+    expect(pasteWrites).toHaveLength(1);
+    expect(String(pasteWrites[0]![1])).toMatch(/^\x1b\[200~/);
+    expect(ptyMocks.writes.mock.calls.filter(([, data]) => data === '\r')).toHaveLength(0);
+
+    ptyMocks.state = 'busy';
+    ptyMocks.stateTaps[0]('orchestrator-session', 'busy');
+    expect(storeMocks.delivered).toEqual([]);
+
+    ptyMocks.state = 'idle';
+    ptyMocks.stateTaps[0]('orchestrator-session', 'idle');
+    await vi.advanceTimersByTimeAsync(delivery.HANDOFF_PROMPT_SETTLE_MS);
+    expect(ptyMocks.writes.mock.calls.filter(([, data]) => data === '\r')).toHaveLength(1);
+
+    ptyMocks.state = 'busy';
+    ptyMocks.stateTaps[0]('orchestrator-session', 'busy');
+    expect(storeMocks.delivered).toEqual([{ scope, id: 'handoff-a' }]);
     delivery.shutdownIdleDelivery();
   });
 
@@ -659,7 +705,7 @@ describe('idle delivery authority and lifecycle', () => {
 
     ptyMocks.state = 'idle';
     ptyMocks.stateTaps[0]('orchestrator-session', 'idle');
-    await vi.advanceTimersByTimeAsync(150);
+    await advanceUntilSubmitted(delivery);
 
     expect([...storeMocks.deliveryAttempts.values()]).toEqual([
       expect.objectContaining({
@@ -693,7 +739,7 @@ describe('idle delivery authority and lifecycle', () => {
     delivery.initIdleDelivery();
 
     delivery.onHandoffSubmitted(handoff(), scope);
-    await vi.advanceTimersByTimeAsync(150);
+    await advanceUntilSubmitted(delivery);
     expect(ptyMocks.writes.mock.calls.filter((call) => call[1] === '\r')).toHaveLength(1);
 
     // Turno curtíssimo: termina antes dos 400 ms do retry. O polling antigo
@@ -727,7 +773,7 @@ describe('idle delivery authority and lifecycle', () => {
     storeMocks.handoffs.set(second.id, second);
     delivery.onHandoffSubmitted(first, scope);
     delivery.onHandoffSubmitted(second, scope);
-    await vi.advanceTimersByTimeAsync(150);
+    await advanceUntilSubmitted(delivery);
 
     expect(ptyMocks.writes.mock.calls.filter((call) =>
       String(call[1]).includes('handoff_id=handoff-'),
@@ -738,7 +784,7 @@ describe('idle delivery authority and lifecycle', () => {
 
     ptyMocks.state = 'idle';
     ptyMocks.stateTaps[0]('orchestrator-session', 'idle');
-    await vi.advanceTimersByTimeAsync(150);
+    await advanceUntilSubmitted(delivery);
     expect(ptyMocks.writes.mock.calls.filter((call) =>
       String(call[1]).includes('handoff_id=handoff-'),
     )).toHaveLength(2);
@@ -847,7 +893,8 @@ describe('idle delivery authority and lifecycle', () => {
     delivery.initIdleDelivery();
 
     delivery.onHandoffSubmitted(handoff(), scope);
-    await vi.advanceTimersByTimeAsync(300);
+    await advanceUntilPasted(delivery);
+    await advanceUntilSubmitted(delivery);
 
     const attempts = [...storeMocks.deliveryAttempts.values()];
     expect(attempts).toHaveLength(2);
@@ -877,7 +924,8 @@ describe('idle delivery authority and lifecycle', () => {
     delivery.initIdleDelivery();
 
     delivery.onHandoffSubmitted(handoff(), scope);
-    await vi.advanceTimersByTimeAsync(300);
+    await advanceUntilSubmitted(delivery);
+    await advanceUntilSubmitted(delivery);
 
     const attempts = [...storeMocks.deliveryAttempts.values()];
     expect(attempts).toHaveLength(2);
@@ -897,7 +945,7 @@ describe('idle delivery authority and lifecycle', () => {
     delivery.initIdleDelivery();
 
     delivery.onHandoffSubmitted(handoff(), scope);
-    await vi.advanceTimersByTimeAsync(25_000);
+    await vi.advanceTimersByTimeAsync(30_000);
 
     const deliveries = ptyMocks.writes.mock.calls.filter((call) =>
       String(call[1]).includes('completed the requested work'),
@@ -982,7 +1030,8 @@ describe('idle delivery authority and lifecycle', () => {
     delivery.initIdleDelivery();
 
     delivery.onHandoffSubmitted(handoff(), scope);
-    await vi.advanceTimersByTimeAsync(550);
+    await advanceUntilSubmitted(delivery);
+    await vi.advanceTimersByTimeAsync(delivery.HANDOFF_ENTER_RETRY_MS);
 
     expect(ptyMocks.writes.mock.calls.filter((call) => call[1] === '\r')).toHaveLength(2);
     await vi.advanceTimersByTimeAsync(2_000);
@@ -998,10 +1047,10 @@ describe('idle delivery authority and lifecycle', () => {
     delivery.initIdleDelivery();
 
     delivery.onHandoffSubmitted(handoff(), scope);
-    await vi.advanceTimersByTimeAsync(150);
+    await advanceUntilSubmitted(delivery);
     ptyMocks.state = 'busy';
     ptyMocks.stateTaps[0]('orchestrator-session', 'busy');
-    await vi.advanceTimersByTimeAsync(400);
+    await vi.advanceTimersByTimeAsync(delivery.HANDOFF_ENTER_RETRY_MS);
 
     expect(ptyMocks.writes.mock.calls.filter((call) => call[1] === '\r')).toHaveLength(1);
     delivery.shutdownIdleDelivery();
@@ -1017,7 +1066,7 @@ describe('idle delivery authority and lifecycle', () => {
     delivery.initIdleDelivery();
 
     expect(delivery.redeliverPendingHandoffs(scope, 'mission-a')).toBe(1);
-    await vi.advanceTimersByTimeAsync(150);
+    await advanceUntilSubmitted(delivery);
 
     expect(ptyMocks.writes).toHaveBeenCalledWith(
       'orchestrator-session',
