@@ -114,6 +114,9 @@ out/
 # nunca deve entrar no histórico.
 .dev-user-data*/
 
+# Cache local da CLI ZCode (sessões, image-cache) — artefato de runtime, não versionável.
+.zcode/
+
 # Generated codebase graph and extraction cache (kept locally for audits).
 graphify-out/
 
