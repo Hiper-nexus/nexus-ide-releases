@@ -337,14 +337,9 @@ async function tickWatcher(state: WatcherState): Promise<void> {
   const livePanes = missionPanes.filter(
     (p) => p.state === 'busy' || p.state === 'idle' || p.state === 'spawning',
   );
-  const allPanesDead = orchDead && livePanes.length === 0;
-
-  // Age IMEDIATAMENTE se o orquestrador morreu e não há panes vivos,
-  // OU se passou o timeout de silêncio.
-  if (
-    allPanesDead ||
-    (orchDead && silenceDuration > ORCHESTRATOR_SILENCE_TIMEOUT_MS)
-  ) {
+  // Se não há NENHUM pane vivo nesta missão, avalia AGORA.
+  // Não espera timeout — a missão está visivelmente terminada.
+  if (livePanes.length === 0) {
     try {
       // Verifica handoffs dos workers como fallback.
       const handoffs = stores.handoffs.list({
