@@ -28,9 +28,6 @@ import { missionEngineForScope } from './mission-engine-registry';
 
 /** Intervalo de observação da missão. */
 const WATCHER_INTERVAL_MS = 15_000;
-/** Tempo máximo de missão sem atividade no orquestrador. */
-const ORCHESTRATOR_SILENCE_TIMEOUT_MS = 30 * 60_000;
-
 interface WatcherState {
   readonly scope: ProjectExecutionScope;
   readonly missionId: string;
@@ -314,23 +311,13 @@ async function tickWatcher(state: WatcherState): Promise<void> {
     return;
   }
 
-  // Verifica se o orquestrador ainda está vivo.
+  // Atualiza timestamp de atividade se o orquestrador está busy.
   const orchState = getSessionState(state.orchSessionId);
-  const now = Date.now();
-
   if (orchState === 'busy') {
-    state.lastOrchActivityAt = now;
+    state.lastOrchActivityAt = Date.now();
   }
 
-  const silenceDuration = now - state.lastOrchActivityAt;
-
-  // Orquestrador morto? Verifica AGORA se a missão ainda tem panes vivos.
-  // Se todos os panes foram fechados, não faz sentido esperar 30min.
-  const orchDead =
-    orchState !== 'busy' &&
-    orchState !== 'idle' &&
-    orchState !== 'spawning';
-
+  // Verifica se há panes vivos nesta missão.
   const missionPanes = listPaneSnapshots().filter(
     (p) => p.missionId === state.missionId,
   );
