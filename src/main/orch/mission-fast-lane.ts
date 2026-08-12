@@ -588,7 +588,8 @@ export async function resumeFastLaneMission(
     return;
   }
 
-  // Se bloqueada, tenta re-assumir.
+  // Se bloqueada, tenta re-assumir E spawna novo orquestrador.
+  // resumeTechnical só muda o status — não abre panes.
   if (mission.status === 'blocked' && mission.intentState) {
     try {
       missionEngineForScope(scope).resumeTechnical(scope, {
@@ -601,10 +602,13 @@ export async function resumeFastLaneMission(
       });
     } catch (error) {
       console.warn(
-        '[fast-lane] retomar missão bloqueada falhou:',
+        '[fast-lane] resumeTechnical falhou:',
         error instanceof Error ? error.message : error,
       );
+      // Falhou o resumeTechnical, mas o bootstrap ainda pode funcionar
+      // se a missão já estiver em running.
     }
+    await fastLaneBootstrap(scope, missionId);
     return;
   }
 
