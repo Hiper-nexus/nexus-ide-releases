@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.32.3 — Missão concluída some; + Novo começa na Missão
+
+Data: 2026-08-12
+
+Dois consertos de operação no board: apagar o que já terminou, e não
+pular o conteúdo quando o operador pede uma missão nova.
+
+- **Missão concluída volta a ter Remover.** `missionHasLiveRuntime` e
+  `missionListAction` tratavam panes de transcript e `orchestratorSessionId`
+  velho como execução viva, então a UI oferecia Encerrar. O main recusa
+  Encerrar em `done`. Com status `done`, a ação é Remover.
+- **+ Novo abre na etapa Missão.** `openNewMission` chama
+  `beginFreshMission`, que grava rascunho vazio com `step: 'mission'`
+  mesmo quando o board está aberto e o store ainda não tem
+  `workspacePath`. Handoffs (ProjectOverview, Jarvis, reabrir) continuam
+  em `openMissionSetup` e preservam o objetivo.
+
 ## 0.32.2 — Paralelismo read-only + hooks de handoff funcionais
 
 Data: 2026-08-12

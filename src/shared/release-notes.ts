@@ -13,41 +13,30 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.32.2',
+  version: '0.32.3',
   date: '2026-08-12',
-  codename: 'Leitura destravada, handoff entregue',
+  codename: 'Concluída some, Novo começa na Missão',
   summary:
-    'Três correções que destravam fan-out de leitura e restauram a entrega ' +
-    'de handoff. Mesma campanha: read-only era tratado como escritor em duas ' +
-    'gates de orquestração, e os hooks de handoff nunca rodaram desde o ' +
-    'commit f6a3c5f3 (shebang com placeholder não interpolado).',
+    'Dois consertos de operação no board: missão concluída volta a ter ' +
+    'Remover, e + Novo abre na etapa Missão em vez de restaurar a Equipe ' +
+    'de um rascunho antigo.',
   highlights: [
     {
-      title: 'Paralelismo read-only destravado',
+      title: 'Missão concluída volta a ter Remover',
       detail:
-        'Um worker só-leitura não bloqueia mais spawns paralelos. Fan-out ' +
-        'de leitura (mapa de viabilidade + auditoria cética) não fica ' +
-        'serializado como se fosse escrita concorrente. A doutrina sempre ' +
-        'disse "1 worker ESCRITOR por vez"; o código agora reflete.',
+        'Transcript e session id velho não contam mais como execução viva. ' +
+        'Com status done, a lista oferece Remover — Encerrar era recusado ' +
+        'pelo main e a missão ficava presa no board.',
     },
     {
-      title: 'Hooks de handoff funcionais',
+      title: '+ Novo abre na etapa Missão',
       detail:
-        'Os hooks de Stop e Deliver voltam a rodar. O shebang polyglot ' +
-        'agora interpola o caminho absoluto do node em runtime (espelhando ' +
-        'o sidecar do Overclock), em vez de tentar executar a string literal ' +
-        '"process.execPath". O handoff volta a chegar no orquestrador.',
+        'Nova missão grava rascunho vazio com step mission mesmo com o ' +
+        'board aberto. Handoffs (objetivo pré-preenchido, Jarvis, reabrir) ' +
+        'continuam no caminho que preserva o rascunho.',
     },
   ],
-  fixes: [
-    {
-      title: 'Gate de mutação respeita read-only',
-      detail:
-        'assertMutationAllowed recebe o confinamento read-only do caller e ' +
-        'faz short-circuit nas guards de contract/stage. Proteções que valem ' +
-        'para qualquer caller (.context/ read-only, merge-queue) permanecem.',
-    },
-  ],
+  fixes: [],
 };
 
 export const RELEASE_03100: AppRelease = {
