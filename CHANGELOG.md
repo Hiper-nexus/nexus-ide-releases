@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.32.2 — Paralelismo read-only + hooks de handoff funcionais
+
+Data: 2026-08-12
+
+Três correções que destravam fan-out de leitura e restauram a entrega de
+handoff. Mesma campanha: read-only era tratado como escritor em duas gates,
+e os hooks de handoff nunca rodaram desde o commit `f6a3c5f3` (shebang com
+placeholder não interpolado).
+
+- **Paralelismo read-only destravado.** `activeSameCheckoutWorker`
+  (`tools-panes.ts:173`) agora exclui panes `readOnly`/`nativeReadOnly` do
+  filtro serializador. Um fan-out de leitura (mapa de viabilidade +
+  auditoria cética) não fica mais serializado como se fosse escrita
+  concorrente. Espelha o guard de disjointness em `mission-wave-pack.ts:392`.
+- **Gate de mutação respeita read-only.** `assertMutationAllowed`
+  (`context-workflow-service.ts:1955`) recebe `callerReadOnly` e faz
+  short-circuit nas guards de contract/stage — read-only não escreve.
+  Proteções que valem para qualquer caller (`.context/` read-only,
+  merge-queue) permanecem para read-only.
+- **Hooks de handoff interpolam o node path.** `handoff-stop.mjs`,
+  `handoff-deliver.mjs`, `soft-status.mjs` tinham `exec process.execPath`
+  como literal desde `f6a3c5f3`. Installer (`handoff-hook-installer.ts`)
+  agora interpola o caminho absoluto do node em runtime, espelhando o
+  sidecar do Overclock; em produção envolve com `ELECTRON_RUN_AS_NODE=1`.
+
 ## 0.32.1 — Watcher: panes fechados detectados na hora
 
 Data: 2026-08-12
