@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.32.1 — Watcher: panes fechados detectados na hora
+
+Data: 2026-08-12
+
+Mesmas melhorias da 0.32.0 com o fix crítico do watcher:
+zero panes vivos na missão → avalia handoffs e conclui/bloqueia
+imediatamente. Sem esperar 30 minutos de timeout.
+
 ## 0.32.0 — Motor limpo, paridade total
 
 Data: 2026-08-12
