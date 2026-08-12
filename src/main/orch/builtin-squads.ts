@@ -35,22 +35,27 @@ const SPEAK_HUMAN =
  * completo; o Pet Studio declara apenas dependências locais e as duas tools
  * Nexus de mídia necessárias ao pipeline visual. Todo
  * worker é uma folha que só precisa entregar o handoff (nexus_handoff_submit é
- * sempre permitido), então seu `allowedTools` é `[]` — sem pane cross-access,
- * sem spawnar panes, sem controlar a missão. `allowedSkills` fica aberto de
- * propósito: skills rodam no contexto do próprio worker (não é vetor de escape
- * lateral) e workers legítimos precisam delas (ex.: impeccable no UX Designer).
+ * sempre permitido), então seu `allowedTools` é `[]` — sem spawnar panes, sem
+ * write/close cruzado, sem controlar a missão. Leitura de pane na mesma missão
+ * (nexus_pane_read / pane_read_many / pane_list / pane_whoami) é always-allowed
+ * no gate, paridade Overclock: qualquer pane enxerga o outro, inclusive o
+ * orquestrador; pane-authz continua recusando outra missão e o shell do usuário.
+ * `allowedSkills` fica aberto de propósito: skills rodam no contexto do próprio
+ * worker (não é vetor de escape lateral) e workers legítimos precisam delas
+ * (ex.: impeccable no UX Designer).
  *
  * NOTA — normalizador canônico: esta é a ÚNICA regra de allowlist do produto.
  * Os built-ins a aplicam no load; os squads custom/arquiteto/importados a
  * aplicam na camada de persistência (squad-store.saveSquad / importSquadsJson)
  * para que TODO worker persistido tenha `allowedTools` não-nulo e passe o
  * fire-gate do wizard (validateWorkerToolScopes). O `[]` do worker escopa
- * APENAS o toolset MCP do Nexus (nexus_pane_*, remote_*, etc.) — as tools
- * NATIVAS da CLI do worker (Read/Write/Edit/Bash/Grep/Glob) não passam por este
- * gate, então `[]` NÃO incapacita o worker: ele continua codando normalmente e
- * só perde acesso cruzado a panes/missão, entregando via nexus_handoff_submit
- * (sempre permitido). Tools nativas continuam sob o sandbox/modo de permissão
- * seguro do próprio CLI; o hook distingue essas tools das chamadas MCP Nexus.
+ * APENAS o toolset MCP de CONTROLE do Nexus (nexus_pane_spawn/write/close,
+ * remote_*, missão) — as tools NATIVAS da CLI do worker (Read/Write/Edit/Bash/
+ * Grep/Glob) não passam por este gate, então `[]` NÃO incapacita o worker: ele
+ * continua codando normalmente, lê peers via pane_read (always-allowed) e
+ * entrega via nexus_handoff_submit (sempre permitido). Tools nativas continuam
+ * sob o sandbox/modo de permissão seguro do próprio CLI; o hook distingue essas
+ * tools das chamadas MCP Nexus.
  * Ver gate.ts isHookToolAllowed/isToolAllowed + mcp-protocol.ts.
  *
  * CORREÇÃO (`allowedSkills`): "aberto de propósito" valia enquanto ausente
@@ -80,9 +85,10 @@ export function withAllowlists(agents: SquadAgent[]): SquadAgent[] {
 
 /**
  * Toolset Nexus read-only dos reviewers do Review P0–P3: leitura de arquivo,
- * busca, diff/log/status + handoff. Sem panes, sem missão, sem escrita — o
- * gate MCP recusa qualquer outra tool. handoff_submit/handoff_list já são
- * sempre permitidas pelo gate; ficam explícitas para documentar o contrato.
+ * busca, diff/log/status + handoff. Sem spawn/write/close de pane, sem missão,
+ * sem escrita — o gate MCP recusa qualquer outra tool de controle. Observação
+ * de pane (pane_read/list/whoami) e handoff_submit/handoff_list já são
+ * always-allowed pelo gate; handoff fica explícito para documentar o contrato.
  * (As tools NATIVAS da CLI continuam disponíveis; o prompt instrui read-only.)
  */
 const REVIEW_P0P3_READONLY_TOOLS: string[] = [

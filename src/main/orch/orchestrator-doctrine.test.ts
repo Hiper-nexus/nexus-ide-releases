@@ -37,6 +37,7 @@ describe('orchestrator doctrine', () => {
     // anti-polling: proíbe vigiar worker vivo em loop de read/wait
     expect(text).toMatch(/nexus_pane_read|pane_wait/);
     expect(text).toMatch(/delegar e encerrar o turno/i);
+    expect(text).toMatch(/olhar o que o pane/i);
   });
 
   it('ensina delegação de 1 chamada e relay fiel do pedido humano', () => {

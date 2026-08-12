@@ -184,9 +184,11 @@ function unknownPaneMessage(paneRef: string): string {
 
 /**
  * Object-level authorization gate for the pane tools (SEC#5): resolve a pane
- * ref and confirm `ctx` may perform `action` on it. A worker cannot
- * read/write/close another agent's or the user's pane. Throws on unknown pane
- * or refusal. Returns the pane info (session may be dead — fine for `close`).
+ * ref and confirm `ctx` may perform `action` on it. Inside the caller's
+ * mission any pane may read any other (including the orchestrator); workers
+ * still cannot write/close the orchestrator or touch the user's shell/browser.
+ * Throws on unknown pane or refusal. Returns the pane info (session may be
+ * dead — fine for `close`).
  *
  * `paneRef` accepts the paneId, the sessionId, or the short pane number the
  * operator reads in the header ("7", "pane 7"). The number is additive: the

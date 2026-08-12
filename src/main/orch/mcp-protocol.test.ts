@@ -255,17 +255,38 @@ describe('handleMcpMessage', () => {
     expect(res).toBeNull();
   });
 
-  it('lists only allowlisted tools', async () => {
+  it('lists allowlisted tools plus always-allowed pane observation', async () => {
     resetGateForTests();
     const ctx = mintToken({
       label: 'restricted',
       role: 'worker',
       scope: testProjectScope(),
-      allowedTools: ['pane_read'],
+      allowedTools: ['file_read'],
     });
-    const res = await handleMcpMessage(makeRegistry(), ctx, req('tools/list'));
+    const fileRead: McpToolDef = {
+      name: 'nexus_file_read',
+      description: 'read a file',
+      inputSchema: { type: 'object', properties: {} },
+      handler: async () => ({ ok: true }),
+    };
+    const paneWrite: McpToolDef = {
+      name: 'nexus_pane_write',
+      description: 'write a pane',
+      inputSchema: { type: 'object', properties: {} },
+      handler: async () => ({ ok: true }),
+    };
+    const registry: McpRegistry = {
+      tools: [...makeRegistry().tools, fileRead, paneWrite],
+      serverName: 'nexus-test',
+      serverVersion: '0.0.1',
+    };
+    const res = await handleMcpMessage(registry, ctx, req('tools/list'));
     const tools = (res?.result as { tools: Array<{ name: string }> }).tools;
-    expect(tools.map((t) => t.name)).toEqual(['nexus_pane_read']);
+    expect(tools.map((t) => t.name)).toEqual([
+      'nexus_pane_read',
+      'nexus_pane_read_many',
+      'nexus_file_read',
+    ]);
   });
 
   it('advertises image generation only to the exact main-owned Pet marker', async () => {
@@ -692,10 +713,21 @@ describe('handleMcpMessage', () => {
       scope: testProjectScope(),
       allowedTools: ['pane_read'],
     });
+    const paneWrite: McpToolDef = {
+      name: 'nexus_pane_write',
+      description: 'write a pane',
+      inputSchema: { type: 'object', properties: {} },
+      handler: async () => ({ ok: true }),
+    };
+    const registry: McpRegistry = {
+      tools: [...makeRegistry().tools, paneWrite],
+      serverName: 'nexus-test',
+      serverVersion: '0.0.1',
+    };
     const res = await handleMcpMessage(
-      makeRegistry(),
+      registry,
       ctx,
-      req('tools/call', { name: 'nexus_pane_read_many', arguments: {} }),
+      req('tools/call', { name: 'nexus_pane_write', arguments: {} }),
     );
     const result = res?.result as { isError?: boolean; content: Array<{ text: string }> };
     expect(result.isError).toBe(true);

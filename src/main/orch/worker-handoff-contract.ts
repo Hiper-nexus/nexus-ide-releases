@@ -86,6 +86,11 @@ export function withHandoffContract(
     "Se a tool MCP não estiver disponível, use no shell: " +
     'nx-mail send --status success --summary "<resumo objetivo>". ' +
     "Esse comando entra no mesmo dispatcher e na mesma cadeia de receipts.";
+  const peerRead =
+    'Quando o operador pedir para olhar o que outro pane está fazendo, chame ' +
+    'nexus_pane_read com o número falado ("7" ou "pane 7"). Na mesma missão ' +
+    'qualquer pane lê o outro, inclusive o orquestrador; panes de outra missão ' +
+    'e o terminal do usuário ficam fora. Uma leitura basta — não entre em loop.';
   const contract = viaMcp
     ? 'Ao concluir sua tarefa, finalize chamando a tool nexus_handoff_submit ' +
       'com {status: "success"|"partial"|"failed", summary, artifacts}. ' +
@@ -110,7 +115,7 @@ export function withHandoffContract(
   const design =
     orch.designPro && tier.design ? `\n\n${composeDesignCharter(orch)}` : '';
   const lean = orch.leanCode && tier.lean ? `\n\n${PONYTAIL_RULES}` : '';
-  return `${prompt}${charter}${design}${lean}\n\n${contract}`;
+  return `${prompt}${charter}${design}${lean}\n\n${peerRead}\n\n${contract}`;
 }
 
 

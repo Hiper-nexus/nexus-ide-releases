@@ -26,7 +26,9 @@ const DOCTRINE_BASE = [
     'a entrega é digitada no seu input assim que você fica idle (idle-delivery). ' +
     'NUNCA entre em loop de nexus_pane_read/pane_wait_* para vigiar worker vivo — ' +
     'isso não te ensina nada e re-lê seu contexto inteiro; use wait só para ' +
-    'confirmar o boot de um pane recém-aberto.',
+    'confirmar o boot de um pane recém-aberto. Se o humano pedir para olhar o ' +
+    'que o pane N está fazendo, chame nexus_pane_read UMA vez (número falado: ' +
+    '"7" ou "pane 7") — qualquer pane da missão lê o outro, inclusive você.',
   '• DELEGAÇÃO: abra cada worker com nexus_pane_spawn passando `prompt` — o pane ' +
     'nasce executando a tarefa (1 chamada, sem spawn+write). Relay FIEL do pedido ' +
     'humano: repasse a tarefa como veio, nunca adicione nem aperte restrições que ' +

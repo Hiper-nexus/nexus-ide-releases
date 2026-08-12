@@ -53,12 +53,18 @@ describe('isToolAllowed', () => {
     expect(isToolAllowed(['pane_read'], 'nexus_pane_read')).toBe(true);
   });
 
-  it('always allows handoff tools and ToolSearch, even with empty allowlist', () => {
+  it('always allows handoff tools, pane observation, and ToolSearch, even with empty allowlist', () => {
     expect(isToolAllowed([], 'nexus_handoff_submit')).toBe(true);
     expect(isToolAllowed([], 'handoff_list')).toBe(true);
     expect(isToolAllowed([], 'nexus_handoff_ack')).toBe(true);
     expect(isToolAllowed([], 'nexus_worker_heartbeat')).toBe(true);
     expect(isToolAllowed([], 'ToolSearch')).toBe(true);
+    expect(isToolAllowed([], 'nexus_pane_read')).toBe(true);
+    expect(isToolAllowed([], 'pane_read_many')).toBe(true);
+    expect(isToolAllowed([], 'nexus_pane_list')).toBe(true);
+    expect(isToolAllowed([], 'nexus_pane_whoami')).toBe(true);
+    expect(isToolAllowed([], 'nexus_pane_write')).toBe(false);
+    expect(isToolAllowed([], 'nexus_pane_spawn')).toBe(false);
   });
 
   it('never grants high-impact tools implicitly (null allowlist)', () => {

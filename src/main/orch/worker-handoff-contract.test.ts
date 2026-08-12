@@ -30,6 +30,8 @@ describe("worker handoff transport contract", () => {
 
     expect(prompt).toContain("chamando a tool nexus_handoff_submit");
     expect(prompt).toContain("nx-mail send");
+    expect(prompt).toContain("nexus_pane_read");
+    expect(prompt).toMatch(/olhar o que outro pane/);
     expect(prompt).not.toContain(LEGACY_MARKER);
   });
 });

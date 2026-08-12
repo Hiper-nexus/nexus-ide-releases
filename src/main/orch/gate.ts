@@ -18,7 +18,10 @@ import {
  * whether the client-side PreToolUse hook was bypassed.
  *
  * Allowlist semantics: `null` = unrestricted, and
- * handoff_submit / handoff_list / handoff_ack / ToolSearch are always allowed.
+ * handoff_submit / handoff_list / handoff_ack / ToolSearch plus in-mission
+ * pane observation (pane_read / pane_read_many / pane_list / pane_whoami)
+ * are always allowed. Object-level pane-authz still confines reads to the
+ * caller's mission and blocks the user's shell/browser.
  */
 
 export type GateRole = "orchestrator" | "worker" | "user";
@@ -76,6 +79,14 @@ const ALWAYS_ALLOWED = new Set([
   "handoff_ack",
   "worker_heartbeat",
   "toolsearch",
+  // Overclock parity: any pane in the mission may inspect any other pane's
+  // PTY buffer (worker↔worker, worker→orchestrator, orchestrator→worker).
+  // Write/spawn/close stay on the squad allowlist. pane-authz is the real
+  // boundary (same mission, never the user's shell/browser).
+  "pane_read",
+  "pane_read_many",
+  "pane_list",
+  "pane_whoami",
 ]);
 
 /**

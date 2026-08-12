@@ -684,11 +684,12 @@ const paneSpawn: McpToolDef = {
 const paneList: McpToolDef = {
   name: 'nexus_pane_list',
   description:
-    'List every pane in the workspace with its live state ' +
-    '(spawning|busy|idle|exited), adapter, model and mission binding. ' +
-    'Each pane reports both paneId (the protocol identity) and paneNumber ' +
-    '(the short number the operator reads in the pane header and says out ' +
-    'loud); either is accepted wherever a paneId is taken.',
+    'List the panes this caller may see (same mission; never the user\'s ' +
+    'shell). Use this to resolve a spoken "pane 7" / peer title before ' +
+    'nexus_pane_read. Each pane reports paneId (protocol identity) and ' +
+    'paneNumber (the short header number the operator says out loud); ' +
+    'either is accepted wherever a paneId is taken. Live state is ' +
+    'spawning|busy|idle|exited, plus adapter, model and mission binding.',
   inputSchema: { type: 'object', properties: {} },
   handler: async (_args, ctx) => listVisiblePaneSnapshots(ctx),
 };
@@ -807,8 +808,13 @@ const paneListProviders: McpToolDef = {
 const paneRead: McpToolDef = {
   name: 'nexus_pane_read',
   description:
-    "Read the tail of a pane's terminal output as plain text (ANSI " +
-    'stripped). paneId also accepts a sessionId or the pane number.',
+    "Read the tail of a pane's terminal as plain text (ANSI stripped). " +
+    'When the operator says "look at what pane X is doing" / "olha o que ' +
+    'o pane X está fazendo", call this once with that pane — do not poll ' +
+    'in a loop (completion arrives via handoff_submit). Any pane in the ' +
+    'same mission may read any other, including the orchestrator/senior; ' +
+    'other missions and the user\'s shell/browser are refused. paneId ' +
+    'accepts paneId, sessionId, or the spoken header number ("7", "pane 7").',
   inputSchema: {
     type: 'object',
     properties: {
@@ -833,7 +839,12 @@ const paneRead: McpToolDef = {
 
 const paneReadMany: McpToolDef = {
   name: 'nexus_pane_read_many',
-  description: 'Read the output tails of several panes at once.',
+  description:
+    'Read the output tails of several panes at once. Same visibility as ' +
+    'nexus_pane_read: same-mission peers including the orchestrator; ' +
+    'unknown / other-mission / user-shell targets return per-item errors. ' +
+    'Prefer this over looping nexus_pane_read; prefer handoff_list when ' +
+    'you only need structured completion, not the raw PTY.',
   inputSchema: {
     type: 'object',
     properties: {

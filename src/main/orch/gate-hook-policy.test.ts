@@ -8,7 +8,10 @@ describe('CLI hook gate policy', () => {
     expect(isHookToolAllowed([], 'Read')).toBe(true);
     expect(isHookToolAllowed([], 'Edit')).toBe(true);
     expect(isHookToolAllowed([], 'Bash')).toBe(true);
-    expect(isHookToolAllowed([], 'mcp__nexus__nexus_pane_read')).toBe(false);
+    expect(isHookToolAllowed([], 'mcp__nexus__nexus_pane_read')).toBe(true);
+    expect(isHookToolAllowed([], 'mcp__nexus__nexus_pane_list')).toBe(true);
+    expect(isHookToolAllowed([], 'mcp__nexus__nexus_pane_write')).toBe(false);
+    expect(isHookToolAllowed([], 'mcp__nexus__nexus_pane_spawn')).toBe(false);
     expect(
       isHookToolAllowed(
         ['nexus_pane_read'],
