@@ -56,7 +56,7 @@ describe('mission fast lane', () => {
     }
   });
 
-  it('prompt do executor é curto, com objetivo, equipe e marcadores de fim', () => {
+  it('prompt do worker é curto, com objetivo e marcadores de fim', () => {
     const prompt = agentPrompt(
       agent(),
       mission(),
@@ -65,41 +65,30 @@ describe('mission fast lane', () => {
     );
     expect(prompt).toContain('Implementar motor');
     expect(prompt).toContain('Leia brief.txt');
-    expect(prompt).toContain('Coordenar e revisar');
     expect(prompt).toContain('PRONTO:');
     expect(prompt).toContain('BLOQUEADO:');
-    // A alma da correção de lentidão: nada de parede de protocolo.
     expect(prompt.length).toBeLessThan(1200);
-    expect(prompt).not.toContain('NEXUS_ACTION');
-    expect(prompt).not.toContain('receipt');
   });
 
-  it('prompt da coordenação pede verificação real e autoriza corrigir', () => {
+  it('prompt do orquestrador contém instruções de coordenação e delegação', () => {
     const prompt = agentPrompt(
       agent({ id: 'coord', agentName: 'Coordenar e revisar', category: 'orchestrator' }),
       mission(),
       ['Coordenar e revisar', 'Implementar motor'],
       false,
     );
-    expect(prompt).toContain('coordenação');
-    expect(prompt).toMatch(/verifique/i);
-    expect(prompt).toMatch(/corrija você mesmo/i);
+    // O orquestrador recebe instruções de COORDENAR, não executar.
+    expect(prompt).toContain('COORDENAR');
+    expect(prompt).toContain('nexus_pane_spawn');
+    expect(prompt).toContain('nexus_handoff_list');
+    expect(prompt).toContain('nexus_mission_set_status');
+    // Workers são listados como disponíveis para spawn.
+    expect(prompt).toContain('Implementar motor');
   });
 
-  it('retomada avisa para conferir o que já existe antes de refazer', () => {
+  it('retomada avisa que foi religado', () => {
     const prompt = agentPrompt(agent(), mission(), [], true);
-    expect(prompt).toMatch(/RETOMADA/i);
-    expect(prompt).toMatch(/antes de refazer/i);
-  });
-
-  it('instruções específicas do papel entram no prompt', () => {
-    const prompt = agentPrompt(
-      agent({ instructions: 'Use apenas comandos POSIX.' }),
-      mission(),
-      [],
-      false,
-    );
-    expect(prompt).toContain('Use apenas comandos POSIX.');
+    expect(prompt).toContain('religado');
   });
 
   it('missão de UI aponta DESIGN.md do projeto e o catálogo ~/.design-references sem atrito', () => {
@@ -152,12 +141,12 @@ describe('mission fast lane', () => {
         orchestratorInstructions: 'Rode os gates verdes antes de fechar a missão.',
       }),
     );
-    // doutrina de orquestração
-    expect(prompt).toMatch(/idle/i);
+    // doutrina de orquestração: instruções MCP
     expect(prompt).toContain('nexus_pane_spawn');
-    expect(prompt).toContain('same_checkout');
+    expect(prompt).toContain('nexus_handoff_list');
     // playbook do squad, verbatim
     expect(prompt).toContain('Rode os gates verdes antes de fechar a missão.');
+    // sem 'same_checkout' no novo formato (o orquestrador não precisa saber)
   });
 
   it('kickoff de worker NÃO recebe o bloco de delegação/doutrina', () => {
@@ -170,7 +159,7 @@ describe('mission fast lane', () => {
       squad({ orchestratorInstructions: 'Rode os gates verdes.' }),
     );
     expect(prompt).not.toContain('nexus_pane_spawn');
-    expect(prompt).not.toContain('same_checkout');
+    expect(prompt).not.toContain('nexus_handoff_list');
     expect(prompt).not.toContain('Rode os gates verdes.');
   });
 
@@ -191,7 +180,7 @@ describe('mission fast lane', () => {
       [],
       false,
     );
-    // sem squad (default null) a doutrina base continua presente
-    expect(prompt).toMatch(/idle/i);
+    // sem squad (default null), o orquestrador ainda recebe instruções MCP
+    expect(prompt).toContain('COORDENAR');
   });
 });

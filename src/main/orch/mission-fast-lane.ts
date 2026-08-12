@@ -111,7 +111,7 @@ export function agentPrompt(
     `Objetivo: ${objective}`,
     mission.learnings ? `Aprendizados anteriores: ${mission.learnings}` : '',
     uiNote,
-    designContext,
+    uiNote ? designContext : '',
     `Você é ${agent.agentName} (${agent.category === 'orchestrator' ? 'orquestrador' : 'worker'})`,
     agent.category === 'orchestrator'
       ? [
