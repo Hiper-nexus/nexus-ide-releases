@@ -20,7 +20,7 @@ import {
   type McpToolInvocation,
 } from "./mcp-protocol";
 import { getProjectDomainStores } from "./project-domain-store-registry";
-import { requireStr, str } from "./tool-util";
+import { orchWriteSession, requireStr, str } from "./tool-util";
 import { compactText } from "./session-compaction";
 import type { ScopedHandoff } from "./handoff-store";
 
@@ -286,6 +286,23 @@ const handoffSubmitTool: McpToolDef = {
     }
     if (handoff.evidenceTrust === "nexus-trusted") {
       markHandoffSubmitted(ctx);
+    }
+    // Acorda o orquestrador: entrega o handoff no PTY dele pra que ele saiba
+    // que tem resultado novo. Sem isto, o orquestrador ficava em
+    // chef_idle_awaiting_workers pra sempre — o handoff existia mas ninguém
+    // avisava. Bug real 12/08: worker chamou nexus_handoff_submit, foi OK,
+    // mas orquestrador nunca recebeu.
+    if (mission.orchestratorSessionId) {
+      try {
+        const wakeMsg =
+          `\n📬 ${fromAgent || 'worker'}: **${status}** — ${summary.slice(0, 280)}\n` +
+          `   (use nexus_handoff_list para ver todos os handoffs)\n`;
+        orchWriteSession(mission.orchestratorSessionId, wakeMsg, {
+          markInputBusy: false,
+        });
+      } catch {
+        // Best-effort: handoff já está armazenado, wake é bônus.
+      }
     }
     // A queued replay may be recovering from a process/network loss after the
     // SQLite commit but before delivery/completion side effects. Once delivery
