@@ -13,30 +13,39 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.32.1',
-  date: '2026-08-11',
-  codename: 'A porta de atualizar voltou',
+  version: '0.32.2',
+  date: '2026-08-12',
+  codename: 'Leitura destravada, handoff entregue',
   summary:
-    'Hotfix: o app tinha ficado SEM nenhuma superfície de atualização desde ' +
-    '01/08 — o chip foi removido do App num fix de missão e ninguém remontou, ' +
-    'então duas releases inteiras passaram sem porta para atualizar. Ela ' +
-    'voltou, no cabeçalho e no launcher. Junto vem a persistência de sessão ' +
-    'endurecida (tmux) da frente de paridade, ainda atrás de flag.',
+    'Três correções que destravam fan-out de leitura e restauram a entrega ' +
+    'de handoff. Mesma campanha: read-only era tratado como escritor em duas ' +
+    'gates de orquestração, e os hooks de handoff nunca rodaram desde o ' +
+    'commit f6a3c5f3 (shebang com placeholder não interpolado).',
   highlights: [
     {
-      title: 'Atualizar o app de novo é possível pela tela',
+      title: 'Paralelismo read-only destravado',
       detail:
-        'O chip de atualização voltou ao cabeçalho e ao launcher, e agora é ' +
-        'um componente único — não depende mais de alguém lembrar de montar ' +
-        'as três peças (estado, chip e painel) na mão.',
+        'Um worker só-leitura não bloqueia mais spawns paralelos. Fan-out ' +
+        'de leitura (mapa de viabilidade + auditoria cética) não fica ' +
+        'serializado como se fosse escrita concorrente. A doutrina sempre ' +
+        'disse "1 worker ESCRITOR por vez"; o código agora reflete.',
+    },
+    {
+      title: 'Hooks de handoff funcionais',
+      detail:
+        'Os hooks de Stop e Deliver voltam a rodar. O shebang polyglot ' +
+        'agora interpola o caminho absoluto do node em runtime (espelhando ' +
+        'o sidecar do Overclock), em vez de tentar executar a string literal ' +
+        '"process.execPath". O handoff volta a chegar no orquestrador.',
     },
   ],
   fixes: [
     {
-      title: 'Persistência de sessão endurecida',
+      title: 'Gate de mutação respeita read-only',
       detail:
-        'Nome de sessão por hash, skip sob sandbox e flag desligada por ' +
-        'padrão na frente de PTY persistente via tmux.',
+        'assertMutationAllowed recebe o confinamento read-only do caller e ' +
+        'faz short-circuit nas guards de contract/stage. Proteções que valem ' +
+        'para qualquer caller (.context/ read-only, merge-queue) permanecem.',
     },
   ],
 };
