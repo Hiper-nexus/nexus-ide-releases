@@ -1009,37 +1009,49 @@ const paneClose: McpToolDef = {
   },
 };
 
+/** Timeout máximo para confirmação de boot — 15s, igual concorrente. */
+const PANE_BOOT_TIMEOUT_MS = 15_000;
+
 const paneWaitIdle: McpToolDef = {
   name: 'nexus_pane_wait_idle',
   description:
-    "Block until a pane's CLI goes idle (finished responding), exits, or " +
-    'the timeout elapses. Returns {state, output} with the fresh tail. ' +
-    `timeoutMs is capped at ${PANE_WAIT_TIMEOUT_CAP_MS} per call; on state ` +
-    '"timeout" call again to keep waiting.',
+    'Boot confirmation only — hard-capped at 15s. Confirms a pane came up ' +
+    'and its CLI is ready. NEVER use this to wait for worker RESULTS ' +
+    '(results arrive via nexus_handoff_submit and wake you automatically). ' +
+    'Returns {state}. On timeout the pane is still booting — call again or ' +
+    'proceed (the pane will finish booting on its own).',
   inputSchema: {
     type: 'object',
     properties: {
       paneId: {
         type: 'string',
         description:
-          'Pane identity: paneId, sessionId, or the short pane number the ' +
-          'operator sees in the header ("7" or "pane 7").',
+          'Pane identity: paneId, sessionId, or the short pane number.',
       },
-      timeoutMs: { type: 'number', description: 'Default 120000' },
-      lines: { type: 'number' },
+      timeoutMs: {
+        type: 'number',
+        description: `Max wait in ms. Default ${PANE_BOOT_TIMEOUT_MS} (15s). Hard cap ${PANE_BOOT_TIMEOUT_MS}.`,
+      },
+      poll: {
+        type: 'boolean',
+        description: 'If true, return current status immediately without blocking.',
+      },
     },
     required: ['paneId'],
   },
   handler: async (args, ctx) => {
     const sessionId = authorizedSessionIdOf(ctx, requireStr(args, 'paneId'), 'wait');
-    const state = await waitForIdle(
-      sessionId,
-      Math.min(num(args, 'timeoutMs') ?? 120_000, PANE_WAIT_TIMEOUT_CAP_MS),
+    const requestedTimeout = num(args, 'timeoutMs');
+    const effectiveTimeout = Math.min(
+      requestedTimeout ?? PANE_BOOT_TIMEOUT_MS,
+      PANE_BOOT_TIMEOUT_MS,
     );
-    return {
-      state,
-      output: readSessionOutput(sessionId, num(args, 'lines') ?? 60),
-    };
+    if (args.poll === true) {
+      const state = await waitForIdle(sessionId, 0);
+      return { state };
+    }
+    const state = await waitForIdle(sessionId, effectiveTimeout);
+    return { state };
   },
 };
 
