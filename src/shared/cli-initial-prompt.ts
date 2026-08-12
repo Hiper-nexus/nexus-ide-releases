@@ -1,0 +1,94 @@
+/**
+ * Como cada CLI recebe o PRIMEIRO prompt de uma missão.
+ *
+ * Isto existia como corrente de `if (adapter.id === 'kimi' || …)` dentro do
+ * pty-manager, escrita de cabeça. Custou caro nos dois sentidos: o kimi estava
+ * na lista sem aceitar posicional (o pane cuspia o help e ficava mudo), e grok,
+ * cursor-agent, muse e qoder ficavam de fora mesmo aceitando — cada um
+ * dependendo de colagem pós-boot, que é o canal que falha contra TUI fria.
+ *
+ * A regra agora é: quem declara, manda; quem não declara, herda do BINÁRIO —
+ * porque o contrato é do binário, não do nome do adapter. glm, longcat e
+ * deepseek rodam o mesmo `claude`; sakana roda `codex` por um wrapper. Todos
+ * herdam o contrato do executável que realmente sobe.
+ *
+ * A tabela abaixo não é palpite: saiu da linha `Usage:` de cada binário
+ * instalado nesta máquina (11/08).
+ */
+
+export type InitialPromptChannel =
+  /** Prompt vai como último argumento e a TUI SEGUE interativa. */
+  | { readonly kind: 'positional' }
+  /**
+   * A CLI só aceita prompt num modo não-interativo (`-p`, `--print`, `run`).
+   * Serve para worker one-shot; NUNCA para um pane que precisa continuar vivo.
+   */
+  | { readonly kind: 'oneshot'; readonly args: readonly string[] }
+  /** Sem canal de argv: entrega por colagem depois do boot. */
+  | { readonly kind: 'paste' };
+
+/**
+ * Binários cuja linha de uso declara prompt posicional:
+ *   claude   → `claude [options] [command] [prompt]`
+ *   codex    → `codex [OPTIONS] [PROMPT]`
+ *   grok     → `grok [OPTIONS] [PROMPT] [COMMAND]`
+ *   agent    → `agent [options] [command] [prompt...]`  (cursor-agent)
+ *   muse     → `muse [OPTIONS] [PROMPT]`
+ *   qodercli → `qodercli [options] [command] [query...]`
+ */
+const POSITIONAL_BINARIES: ReadonlySet<string> = new Set([
+  'claude',
+  'codex',
+  'codex-fugu',
+  'grok',
+  'cursor-agent',
+  'agent',
+  'muse',
+  'qodercli',
+]);
+
+export interface InitialPromptSource {
+  /** `spawn.initialPrompt` declarado pelo adapter, quando houver. */
+  readonly declared?: 'positional' | 'oneshot' | 'paste' | null;
+  /** Argumentos do modo one-shot (ex.: ['--print'], ['-p'], ['run']). */
+  readonly oneshotArgs?: readonly string[] | null;
+  /** `spawn.interactive` — só o binário importa aqui. */
+  readonly interactive?: readonly string[] | null;
+}
+
+/** Nome do executável, sem diretório nem extensão. */
+function binaryName(interactive: readonly string[] | null | undefined): string {
+  const raw = (interactive?.[0] ?? '').trim();
+  if (raw.length === 0) return '';
+  const last = raw.split(/[\\/]/u).pop() ?? raw;
+  return last.replace(/\.(exe|cmd|bat)$/iu, '').toLowerCase();
+}
+
+export function initialPromptChannel(
+  source: InitialPromptSource,
+): InitialPromptChannel {
+  const declared = source.declared ?? null;
+  if (declared === 'positional') return { kind: 'positional' };
+  if (declared === 'paste') return { kind: 'paste' };
+  if (declared === 'oneshot') {
+    const args = (source.oneshotArgs ?? []).filter(
+      (arg) => typeof arg === 'string' && arg.trim().length > 0,
+    );
+    // One-shot sem os argumentos que ligam o modo é contrato incompleto —
+    // melhor colar depois do boot do que subir um pane que ignora o prompt.
+    return args.length > 0 ? { kind: 'oneshot', args } : { kind: 'paste' };
+  }
+  return POSITIONAL_BINARIES.has(binaryName(source.interactive))
+    ? { kind: 'positional' }
+    : { kind: 'paste' };
+}
+
+/**
+ * O pane de missão precisa continuar vivo para o operador digitar nele. Só o
+ * canal posicional atende isso; one-shot fecha depois da tarefa.
+ */
+export function acceptsInteractiveInitialPrompt(
+  source: InitialPromptSource,
+): boolean {
+  return initialPromptChannel(source).kind === 'positional';
+}

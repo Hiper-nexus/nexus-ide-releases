@@ -234,8 +234,8 @@ const paneSpawn: McpToolDef = {
     'agent — inherits allowlists/title) and ALSO adapterId/model/effort from ' +
     'nexus_route_task: in a running mission, pass its routeReservationId too. ' +
     'The explicit adapterId/model WIN over non-sticky roster defaults (cost routing). ' +
-    'Optional prompt is typed into the CLI once it ' +
-    'boots. Returns {paneId, sessionId}.',
+    'Prompt is delivered in the CLI argv AT BIRTH — the pane wakes already ' +
+    'executing it (Overclock parity). Returns {paneId, sessionId}.',
   inputSchema: {
     type: 'object',
     properties: {

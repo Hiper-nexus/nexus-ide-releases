@@ -143,6 +143,7 @@ vi.mock('../adapters/adapter-registry', () => ({
           id,
           kind: 'cli-pty',
           bin: id,
+          spawn: { interactive: [id], extraArgs: [] },
           models: { default: 'provider/model', list: ['provider/model'] },
           quirks:
             id === 'opencode' ? { nexusMcp: 'opencode' } : {},

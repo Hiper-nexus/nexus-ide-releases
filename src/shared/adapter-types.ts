@@ -35,6 +35,10 @@ const spawnConfigSchema = z.object({
   ptyRequired: z.boolean(),
   resumeArgs: z.array(z.string()).default([]),
   extraArgs: z.array(z.string()).default([]),
+  /** Canal de largada declarado pelo adapter. Omitido = herda do binário. */
+  initialPrompt: z.enum(['positional', 'oneshot', 'paste']).optional(),
+  /** Argumentos que ligam o modo one-shot (`--print`, `-p`, `run`…). */
+  initialPromptArgs: z.array(z.string()).optional(),
   /**
    * Flag que aceita um session id DITADO pelo Nexus no spawn (ex.:
    * "--session-id" no claude). Com ele, a telemetria real de tokens atribui o

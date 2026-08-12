@@ -56,6 +56,7 @@ import {
 import { getOrchSettings } from '../persistence/settings-store';
 import { isOperatorChoicePolicy } from '../../shared/squad-cli-policy';
 import { issueAgentIdentityBestEffort } from './agent-identity-spawn';
+import { initialPromptChannel } from '../../shared/cli-initial-prompt';
 
 export { assertSafePtyPrompt } from './pty-prompt-safety';
 
@@ -1016,13 +1017,20 @@ export async function spawnPaneAndMaybePrompt(
           hints: [options.title, options.agentName],
         })
     : undefined;
+  // Overclock parity (12/08): prompt entregue no argv de NASCENÇA para TODA
+  // CLI que aceita — igual pane_spawn. Antes isso era restrito a 3 adapters
+  // (agy/codex/opencode) e todo o resto recebia por colagem pós-boot, que é o
+  // canal que falha contra TUI fria (timing race, eco, mutez). Agora o resolvedor
+  // é o MESMO que o pty-manager e o deliveredByNativeChannel usam — uma lista só.
   const shouldUseNativeInitialPrompt = Boolean(
-    (adapter.id === 'agy' ||
-      adapter.id === 'codex' ||
-      adapter.id === 'opencode') &&
-      options.missionId &&
+    options.missionId &&
       options.role === 'worker' &&
-      finalPrompt,
+      finalPrompt &&
+      initialPromptChannel({
+        declared: adapter.spawn.initialPrompt,
+        oneshotArgs: adapter.spawn.initialPromptArgs,
+        interactive: adapter.spawn.interactive,
+      }).kind !== 'paste',
   );
   let initialPrompt: string | undefined;
   if (shouldUseNativeInitialPrompt && finalPrompt) {
