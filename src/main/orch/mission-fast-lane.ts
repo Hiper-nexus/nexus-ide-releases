@@ -115,32 +115,56 @@ export function agentPrompt(
     `Você é ${agent.agentName} (${agent.category === 'orchestrator' ? 'orquestrador' : 'worker'})`,
     agent.category === 'orchestrator'
       ? [
-          'Sua função é COORDENAR a equipe. Você NÃO executa tarefas diretamente — ' +
-            'você analisa o objetivo, divide em tarefas, e delega cada uma a um worker ' +
-            'via nexus_pane_spawn. Depois coleta os resultados via nexus_handoff_list, ' +
-            'valida, e reporta o resultado final.',
-          'Workers disponíveis (spawne via nexus_pane_spawn com agentName):',
+          '## ORQUESTRAÇÃO (padrão Overclock)',
+          '',
+          'Você é o ORQUESTRADOR. Você NÃO executa tarefas — você COORDENA.',
+          '',
+          '### Workflow',
+          '1. Analise o objetivo e divida em tarefas independentes',
+          '2. Para CADA tarefa: chame nexus_pane_spawn({agentName, prompt, model, effort})',
+          '   - O prompt vai no argv de NASCENÇA — o worker já acorda executando',
+          '   - Uma chamada só. NUNCA spawn + pane_write separados.',
+          '3. Depois de spawnar, ENCERRE SEU TURNO. NÃO faça polling.',
+          '   - Resultados chegam via nexus_handoff_submit e ACORDAM você',
+          '   - re-chamar pane_read/pane_list/handoff_list em loop não ensina nada',
+          '4. Quando acordar com resultados, valide via nexus_handoff_list({full:true})',
+          '   - Use o campo `evidence` para CONFIRMAR — comandos, exit codes, arquivos',
+          '   - NÃO confie cegamente no summary',
+          '5. Se algo errado: re-spawne o worker com correções pontuais',
+          '6. Quando TODOS entregarem: chame nexus_mission_set_status({status:"done"})',
+          '',
+          '### Workers disponíveis (use com agentName)',
           ...teamNames
             .filter((n) => n !== agent.agentName)
             .map((n) => `  - ${n}`),
-          'Fluxo de trabalho:',
-          '1. Analise o objetivo e divida em tarefas claras',
-          '2. Para CADA tarefa: chame nexus_pane_spawn({agentName, prompt, model, effort})',
-          '3. Aguarde os resultados via nexus_handoff_list({scope: "caller_mission"})',
-          '4. Valide cada entrega — se algo estiver errado, re-spawne o worker com correções',
-          '5. Quando TODOS os workers entregarem, chame nexus_mission_set_status({status: "completed"})',
-          'Se um worker falhar ou bloquear, tente outro worker ou relate o bloqueio.',
+          '',
+          '### Regras',
+          '- pane_wait_idle é SÓ confirmação de boot (15s). NUNCA espere resultado nele.',
+          '- Worker parado sem handoff? Pergunte via pane_write. NÃO leia o terminal dele.',
+          '- BLOQUEADO de um worker não trava a missão. Re-spawne com outro ou ajuste.',
+          '',
           doctrine,
         ].join('\n')
-      : 'Você é um worker. Execute a tarefa designada e entregue o resultado.',
-    'REGRA DE ENCERRAMENTO (obrigatória): a ÚLTIMA coisa que você escreve é ' +
-      'uma linha começando exatamente com "PRONTO: " seguida de um resumo curto ' +
-      'do que você fez.',
-    'Sem essa linha o Nexus não tem como saber que você terminou e a missão ' +
-      'fica aberta esperando por você — mesmo com o trabalho pronto.',
-    'Se algo impedir totalmente o trabalho, escreva no lugar dela uma linha ' +
-      'começando com "BLOQUEADO: " e o motivo.',
-    'Escreva a linha no próprio terminal (é a sua saída), não em arquivo.',
+      : [
+          '## WORKER (padrão Overclock)',
+          '',
+          'Você é um worker. Execute a tarefa e entregue o resultado.',
+          'Sua resposta SERÁ ENTREGUE AUTOMATICAMENTE ao orquestrador.',
+          '',
+          '### Como entregar',
+          '- Resposta CURTA (≤280 caracteres): apenas responda e encerre o turno.',
+          '  O sistema captura e entrega VERBATIM — não chame ferramenta nenhuma.',
+          '- Resposta LONGA ou erro: chame nexus_handoff_submit como ÚLTIMA ação:',
+          '  {summary: "1-2 frases — a CONCLUSÃO, não descrição do trabalho",',
+          '   status: "done"|"blocked"|"error",',
+          '   fullText: "sua resposta completa"}',
+          '- NUNCA escreva a resposta num arquivo (a menos que a tarefa peça).',
+          '- NUNCA duplique a resposta em artifacts.',
+          '',
+          '### Depois de chamar handoff_submit',
+          '- Seu turno ACABOU. Uma linha curta de fechamento e PARE.',
+          '- NÃO re-envie, NÃO expanda. O orquestrador já recebeu.',
+        ].join('\n'),
     resume ? '(Você foi religado após uma tentativa anterior.)' : '',
   ]
     .filter(Boolean)
@@ -249,6 +273,15 @@ function stopWatcher(scope: ProjectExecutionScope, missionId: string): void {
   watchers.delete(key);
 }
 
+/**
+ * Watcher tick — verifica o estado da missão e do orquestrador.
+ *
+ * Padrão Overclock: NÃO faz polling de worker. O orquestrador chama
+ * nexus_pane_spawn, os workers chamam nexus_handoff_submit quando terminam,
+ * e o orquestrador chama nexus_mission_set_status({status:"done"}) quando
+ * todos entregaram. O watcher só observa o status da missão e a saúde do
+ * orquestrador.
+ */
 async function tickWatcher(state: WatcherState): Promise<void> {
   if (state.stopped) {
     stopWatcher(state.scope, state.missionId);
@@ -264,7 +297,13 @@ async function tickWatcher(state: WatcherState): Promise<void> {
   }
 
   // Missão já concluída ou bloqueada → encerra observador.
-  if (mission.status === 'done' || mission.status === 'blocked') {
+  if (mission.status === 'done' || mission.status === 'failed') {
+    stopWatcher(state.scope, state.missionId);
+    return;
+  }
+
+  // Bloqueada por alguém (orquestrador ou vigia externo) → encerra.
+  if (mission.status === 'blocked') {
     stopWatcher(state.scope, state.missionId);
     return;
   }
@@ -278,13 +317,16 @@ async function tickWatcher(state: WatcherState): Promise<void> {
   // Verifica se o orquestrador ainda está vivo.
   const orchState = getSessionState(state.orchSessionId);
   const now = Date.now();
-  const silenceDuration = now - state.lastOrchActivityAt;
 
   if (orchState === 'busy') {
     state.lastOrchActivityAt = now;
   }
 
-  // Orquestrador morto há muito tempo → verifica handoffs e decide.
+  const silenceDuration = now - state.lastOrchActivityAt;
+
+  // Orquestrador morto há muito tempo → encerra missão.
+  // O orquestrador deveria ter chamado nexus_mission_set_status antes de
+  // morrer. Se não chamou, damos um tempo (30min) e encerramos por inatividade.
   if (
     orchState !== 'busy' &&
     orchState !== 'idle' &&
@@ -292,7 +334,6 @@ async function tickWatcher(state: WatcherState): Promise<void> {
     silenceDuration > ORCHESTRATOR_SILENCE_TIMEOUT_MS
   ) {
     try {
-      // Tenta completar por inatividade do orquestrador.
       const engine = missionEngineForScope(state.scope);
       engine.completeVerified(state.scope, {
         missionId: state.missionId,
@@ -320,14 +361,13 @@ async function tickWatcher(state: WatcherState): Promise<void> {
     return;
   }
 
-  // Orquestrador sumiu sem deixar rastro → bloqueia.
+  // Orquestrador sumiu sem deixar rastro (sessão inexistente) e ainda não
+  // deu timeout de silêncio → bloqueia visível.
   if (
     orchState !== 'busy' &&
     orchState !== 'idle' &&
     orchState !== 'spawning'
   ) {
-    // Sessão não existe mais. Se a missão tem handoffs, tenta completar.
-    // Senão, bloqueia.
     try {
       const engine = missionEngineForScope(state.scope);
       const current = stores.missions.get(state.missionId);

@@ -56,7 +56,7 @@ describe('mission fast lane', () => {
     }
   });
 
-  it('prompt do worker é curto, com objetivo e marcadores de fim', () => {
+  it('prompt do worker é curto, com objetivo e instruções Overlock', () => {
     const prompt = agentPrompt(
       agent(),
       mission(),
@@ -65,24 +65,24 @@ describe('mission fast lane', () => {
     );
     expect(prompt).toContain('Implementar motor');
     expect(prompt).toContain('Leia brief.txt');
-    expect(prompt).toContain('PRONTO:');
-    expect(prompt).toContain('BLOQUEADO:');
-    expect(prompt.length).toBeLessThan(1200);
+    expect(prompt).toContain('WORKER');
+    expect(prompt).toContain('handoff_submit');
+    expect(prompt).toContain('ENTREGUE AUTOMATICAMENTE');
+    expect(prompt.length).toBeLessThan(2000);
   });
 
-  it('prompt do orquestrador contém instruções de coordenação e delegação', () => {
+  it('prompt do orquestrador contém instruções Overlock de coordenação', () => {
     const prompt = agentPrompt(
       agent({ id: 'coord', agentName: 'Coordenar e revisar', category: 'orchestrator' }),
       mission(),
       ['Coordenar e revisar', 'Implementar motor'],
       false,
     );
-    // O orquestrador recebe instruções de COORDENAR, não executar.
-    expect(prompt).toContain('COORDENAR');
+    expect(prompt).toContain('ORQUESTRAÇÃO');
     expect(prompt).toContain('nexus_pane_spawn');
     expect(prompt).toContain('nexus_handoff_list');
     expect(prompt).toContain('nexus_mission_set_status');
-    // Workers são listados como disponíveis para spawn.
+    expect(prompt).toContain('NUNCA');
     expect(prompt).toContain('Implementar motor');
   });
 
@@ -180,7 +180,8 @@ describe('mission fast lane', () => {
       [],
       false,
     );
-    // sem squad (default null), o orquestrador ainda recebe instruções MCP
-    expect(prompt).toContain('COORDENAR');
+    // sem squad (default null), o orquestrador ainda recebe instruções Overlock
+    expect(prompt).toContain('ORQUESTRAÇÃO');
+    expect(prompt).toContain('nexus_pane_spawn');
   });
 });
