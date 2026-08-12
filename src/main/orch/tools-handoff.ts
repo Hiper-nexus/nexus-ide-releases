@@ -22,6 +22,7 @@ import {
 import { getProjectDomainStores } from "./project-domain-store-registry";
 import { requireStr, str } from "./tool-util";
 import { orchWriteSession } from "../pty/pty-manager";
+import { stripAnsi } from "./pane-registry";
 import { compactText } from "./session-compaction";
 import type { ScopedHandoff } from "./handoff-store";
 
@@ -295,8 +296,13 @@ const handoffSubmitTool: McpToolDef = {
     // mas orquestrador nunca recebeu.
     if (mission.orchestratorSessionId) {
       try {
+        // Sanitiza contra PTY injection: remove ANSI/controle das strings
+        // que vêm do worker antes de escrever no terminal do orquestrador.
+        const safeAgent = stripAnsi(fromAgent || 'worker');
+        const safeStatus = stripAnsi(status);
+        const safeSummary = stripAnsi(summary.slice(0, 280));
         const wakeMsg =
-          `\n📬 ${fromAgent || 'worker'}: **${status}** — ${summary.slice(0, 280)}\n` +
+          `\n📬 ${safeAgent}: **${safeStatus}** — ${safeSummary}\n` +
           `   (use nexus_handoff_list para ver todos os handoffs)\n`;
         orchWriteSession(mission.orchestratorSessionId, wakeMsg, {
           markInputBusy: false,
