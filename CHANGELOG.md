@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.32.12 — A equipe volta depois do restart
+
+Data: 2026-08-13
+
+Reabrir panes e o restore após restart deixam de matar Interface,
+Motor e Verificar. Gemini 3.7 entra no catálogo; as CLIs que listam
+modelos renovam sozinhas.
+
+- **Reabrir panes restaura workers.** Sem incarnation no spec (comum
+  depois do restart) o Main reconcilia o dispatch do pane em vez de
+  falhar com `missing pane/incarnation restart authority`.
+- **Teclado no pane morto.** Posse de missão não é mudez. Digitar,
+  Reiniciar ou Acordar devolve um shell; a missão continua no rail.
+  O coordenador não aposenta o único leaf num loop.
+- **Split do operador sobrevive.** À direita / Abaixo não some quando
+  a missão sincroniza a grade.
+- **Gemini 3.7 Flash.** Default do AGY e da rota trivial/easy. Preço
+  de introdução no ledger.
+- **Descoberta viva.** Grok, AGY, Kimi, OpenCode, Cursor, Qoder, Prime
+  e OMP renovam o catálogo na abertura e a cada 5 min. Claude/Codex
+  seguem o cache oficial. IDs passam pelo `isModelId`.
+
 ## 0.32.11 — Encerrar não é concluir
 
 Data: 2026-08-13

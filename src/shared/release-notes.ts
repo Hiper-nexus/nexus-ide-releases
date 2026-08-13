@@ -13,72 +13,58 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.32.11',
+  version: '0.32.12',
   date: '2026-08-13',
-  codename: 'Encerrar não é concluir',
+  codename: 'A equipe volta depois do restart',
   summary:
-    'Encerrar estaciona a missão. Concluir é um ato do operador. A ' +
-    'segunda missão deixa a irmã viva. Anexos do cliente entram no ' +
-    'workspace, não no HOME. Modelo e effort selados na escolha das CLIs ' +
-    'nunca perdem para o default da ferramenta.',
+    'Reabrir panes e o restore após restart deixam de matar Interface, ' +
+    'Motor e Verificar. Gemini 3.7 entra no catálogo; as CLIs que listam ' +
+    'modelos renovam sozinhas.',
   highlights: [
     {
-      title: 'N Maestros no mesmo workspace',
+      title: 'Reabrir panes restaura workers',
       detail:
-        'Exclusivo por missão. Começar a segunda não mata a primeira.',
+        'Sem incarnation no spec (comum depois do restart) o Main ' +
+        'reconcilia o dispatch do pane em vez de falhar com missing ' +
+        'pane/incarnation restart authority.',
     },
     {
-      title: 'Marcar concluída',
+      title: 'Teclado no pane morto',
       detail:
-        'Depois do Encerrar, o quadro oferece concluir pelo MissionEngine. ' +
-        'Pet não pede atenção em missão que o operador já estacionou.',
+        'Posse de missão não é mudez. Digitar, Reiniciar ou Acordar ' +
+        'devolve um shell; a missão continua no rail. O coordenador não ' +
+        'aposenta o único leaf num loop.',
     },
     {
-      title: 'Anexos do cliente',
+      title: 'Split do operador sobrevive',
       detail:
-        'Drop/paste de áudio, texto e imagem de fora copia para ' +
-        '{workspace}/.nexus/attachments/mission-context/. Express e wizard ' +
-        'mostram a lista. Pane aberto não volta sozinho ao Express.',
+        'À direita / Abaixo não some quando a missão sincroniza a grade.',
     },
     {
-      title: 'Setup que rola',
+      title: 'Gemini 3.7 Flash',
       detail:
-        'Review, Missão, Equipe e Expresso num scroller. CTA Iniciar missão ' +
-        'sticky. Sem deserto preto de 100vh.',
+        'Default do AGY e da rota trivial/easy. Preço de introdução no ledger.',
     },
     {
-      title: 'Quadro com missão viva',
+      title: 'Descoberta viva de modelos',
       detail:
-        'Running/blocked aparece em andamento mesmo sem tasks. Empty-state ' +
-        'só quando não há missão nem tarefa.',
-    },
-    {
-      title: 'Ranking em faixas',
-      detail:
-        'Rápido / equilibrado / profundo, doutrina default-DOWN. Fixture ' +
-        'não vira nota medida. Faixa só reordena modelos do mesmo CLI.',
+        'Grok, AGY, Kimi, OpenCode, Cursor, Qoder, Prime e OMP renovam o ' +
+        'catálogo na abertura e a cada 5 min. Claude/Codex seguem o cache ' +
+        'oficial. IDs passam pelo isModelId.',
     },
   ],
   fixes: [
     {
-      title: 'Handoff observado no PTY',
+      title: 'Selo de workflow rotacionado',
       detail:
-        'AGY e Express promovem o bloco NEXUS_HANDOFF pintado no terminal, ' +
-        'sem esperar MCP.',
+        'canRestore não some com a equipe quando só a metade PREVC girou. ' +
+        'Mudança de intent ainda pede replane.',
     },
     {
-      title: 'Modelo selado vence o default',
+      title: 'Digitação recusada deixa de ser silenciosa',
       detail:
-        'GPT 5.6 Sol e DeepSeek V4 Pro no início da missão não caem mais ' +
-        'em 5.5/Flash. Se o modelo selado não puder ir no argv, o spawn ' +
-        'falha visível. Effort selado segue a mesma regra.',
-    },
-    {
-      title: 'Despacho com Enter',
-      detail:
-        'O primeiro prompt vai no argv de toda CLI que aceita posicional ' +
-        'pelo binário (não por uma lista de ids). Colagem ainda prova o ' +
-        'Enter; pane mudo não conta como disparado.',
+        'Se o main recusar a lane do operador, o pane avisa. Hold de ' +
+        'missão não pede um diálogo que não existe.',
     },
   ],
 };
