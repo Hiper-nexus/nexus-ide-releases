@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.32.7 — O próximo passo óbvio
+
+Data: 2026-08-13
+
+Um botão no Git que muda sozinho, o pet cafeinado, a lista de atenção e
+o login do Kimi que para de cair sozinho.
+
+- **Botão único do Git.** Adicionar tudo → Commit → Publicar → Enviar →
+  Abrir PR → Enfileirar. Título e corpo do PR saem dos commits
+  (`Fixes #N` se a issue aparecer na branch).
+- **Fila de PR e auto-merge.** Card no painel + tools `nexus_pr_*`.
+  PR mergeado não oferece Abrir PR; PR fechado oferece um novo.
+- **Pet cafeinado.** Xícara com vapor; gole na celebração; café some na
+  crise. Mesa limpa no Git usa a mesma xícara.
+- **Atenção e issues.** ⌘J (Enter, PR na fila, missão travada, CLI sem
+  login). Começar missão a partir da issue. Comentário no diff vai ao
+  agente.
+- **Kimi não queima o login.** A sonda de cota não rotaciona mais o
+  refresh token nativo (`Stored token for "kimi-code" was rejected`).
+  AGY no mesmo contrato.
+
 ## 0.32.6 — Qualquer pane lê o outro
 
 Data: 2026-08-12

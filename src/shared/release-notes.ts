@@ -13,36 +13,58 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.32.6',
-  date: '2026-08-12',
-  codename: 'Qualquer pane lê o outro',
+  version: '0.32.7',
+  date: '2026-08-13',
+  codename: 'O próximo passo óbvio',
   summary:
-    'Na mesma missão qualquer pane lê o buffer do outro — worker, sênior e ' +
-    'orquestrador. O allowlist vazio dos workers não cega mais o pane_read; ' +
-    'outra missão e o terminal do usuário continuam fechados.',
+    'Um botão no Git que muda sozinho — adicionar, commitar, publicar, ' +
+    'abrir PR, enfileirar — o pet cafeinado, a lista de atenção (⌘J) e o ' +
+    'login do Kimi que para de cair sozinho.',
   highlights: [
     {
-      title: 'Leitura cruzada de pane na missão',
+      title: 'Botão único do Git',
       detail:
-        'nexus_pane_read / pane_read_many / pane_list / pane_whoami passam a ' +
-        'ser always-allowed, como no Overclock. O operador pode pedir “olha ' +
-        'o que o pane 7 está fazendo” e o agente lê o PTY do alvo.',
+        'O rodapé do painel Git deixa de ser só Commit. O texto vira ' +
+        'Adicionar tudo, Commit, Publicar, Enviar, Abrir PR ou Enfileirar. ' +
+        'O título e o corpo do PR saem dos commits; Fixes #N entra quando a ' +
+        'issue aparece na branch.',
     },
     {
-      title: 'Sênior e workers se enxergam',
+      title: 'Fila de PR e auto-merge',
       detail:
-        'Worker lê worker, worker lê orquestrador, orquestrador lê worker. ' +
-        'Write/spawn/close do coordenador e o shell do usuário seguem ' +
-        'bloqueados.',
+        'O card do PR mostra o estado da fila. Enfileirar e auto-merge ' +
+        'passam pelo mesmo botão e pelas tools nexus_pr_inspect / enqueue / ' +
+        'auto_merge. PR já mergeado não oferece Abrir PR de novo.',
+    },
+    {
+      title: 'Pet cafeinado',
+      detail:
+        'O mascote ganha xícara e vapor. Missão entregue ou pane livre: o ' +
+        'vapor acelera, a xícara tomba num gole e aparece cafe. Crise ' +
+        'urgente some com o café. Mesa limpa no Git usa a mesma xícara.',
+    },
+    {
+      title: 'Lista de atenção e issue → missão',
+      detail:
+        '⌘J junta Enter, PR na fila, missão travada e CLI sem login. No ' +
+        'painel Git, Issues tem Começar missão. Clique numa linha do diff ' +
+        'manda o comentário ao agente.',
     },
   ],
   fixes: [
     {
-      title: 'Allowlist vazia cegava o peer',
+      title: 'Kimi pedia login de novo sozinho',
       detail:
-        'A authz já permitia leitura intra-missão, mas workers com ' +
-        'allowedTools: [] não viam nem podiam chamar pane_read. O gate ' +
-        'abre só a observação; o filesystem sandbox não muda.',
+        'A sonda de cota renovava o OAuth no mesmo arquivo do CLI. O ' +
+        'refresh rotaciona o grant; quem perdia a corrida via Stored token ' +
+        'for kimi-code was rejected. A sonda agora só lê o access token. ' +
+        'AGY segue o mesmo contrato.',
+    },
+    {
+      title: 'Pet não celebra no meio da crise',
+      detail:
+        'O flash cafe e o badge de intervenção não aparecem juntos. Balão ' +
+        'urgente volta a entrar com animação, não a piscar no DOM.',
     },
   ],
 };
