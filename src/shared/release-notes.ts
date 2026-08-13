@@ -13,34 +13,34 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.32.9',
+  version: '0.32.10',
   date: '2026-08-13',
-  codename: 'O pin do gate',
+  codename: 'O handoff que chega',
   summary:
-    'A 0.32.8 notariada não passou o candidato: o npm marcou nanoid 3.3.17 ' +
-    'hoje. O pin 3.3.18 destrava o gate. O produto é o da 0.32.8.',
+    'O menu do pane pedia handoff pela escrita crua. O main recusa isso ' +
+    'em worker de missão. O toast dizia sucesso. Agora o clique vai pela ' +
+    'lane do operador, com recibo.',
   highlights: [
     {
-      title: '⌘J pede Enter de verdade',
+      title: 'Handoff pela lane do operador',
       detail:
-        'A lista de atenção deixa de ficar muda no pedido de confirmação. ' +
-        'Os hooks (permissão, waiting, blocked) alimentam o item; ele some ' +
-        'quando o agente segue ou o pane fecha. O ping no desktop avisa na ' +
-        'entrada.',
+        'O clique pede nexus_handoff_submit pelo mesmo caminho do teclado. ' +
+        'Toast de sucesso só se o main aceitar. Soltar skill no mesmo pane ' +
+        'usa a mesma rota.',
     },
   ],
   fixes: [
     {
-      title: 'nanoid 3.3.18 no override',
+      title: 'Toast de handoff deixou de mentir',
       detail:
-        'O advisory GHSA-2v37-7h3g-55p8 passou a listar <3.3.18. Sem o pin ' +
-        'o gate de segurança recusa a toolchain e a release não sobe.',
+        'A escrita crua do PTY é recusada em agente orquestrado. O menu ' +
+        'ainda devolvia sucesso. Agora espera o recibo da lane do operador.',
     },
     {
-      title: 'release:candidate era o script errado',
+      title: 'Worktree não promete checkout',
       detail:
-        'O alias rodava o smoke do .app desempacotado e quebrava com ENOENT. ' +
-        'Agora aponta o gate: assinatura, staple, smoke no ZIP, receipt.',
+        'O item copia a instrução e abre a missão. O motor só cria o ' +
+        'worktree depois da cola no orquestrador.',
     },
   ],
 };

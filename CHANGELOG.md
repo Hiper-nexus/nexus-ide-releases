@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.32.10 — O handoff que chega
+
+Data: 2026-08-13
+
+O menu do pane pedia handoff pela escrita crua. O main recusa isso em
+worker de missão. O toast dizia sucesso e o worker não via nada.
+
+- **Handoff pela lane do operador.** O clique vai pelo mesmo caminho do
+  teclado, com recibo. Toast de sucesso só se o main aceitar. Soltar
+  skill no mesmo pane usa a mesma rota.
+- **Worktree não promete checkout.** O item copia a instrução e abre a
+  missão. O motor só cria o worktree depois da cola no orquestrador.
+
 ## 0.32.9 — O pin do gate
 
 Data: 2026-08-13
