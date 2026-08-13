@@ -28,7 +28,8 @@ import { missionStatusSchema } from '../../shared/orch-types';
 import { missionResultSchema } from '../../shared/mission-engine-contract';
 import { buildClarify } from '../../shared/clarify';
 import { emitClarifyQuestion } from './clarify-flow';
-import { findAgent, listAgents, saveSquad } from './squad-store';
+import { findAgent, getSquad, listAgents, saveSquad } from './squad-store';
+import { pinUniqueSealedRosterOnDecision } from '../../shared/sealed-agent-runtime';
 import { DEFAULT_TODO_LIST } from './todo-store';
 import { getProjectDomainStores } from './project-domain-store-registry';
 import { getContextWorkflowService } from '../context/context-workflow-registry';
@@ -1229,6 +1230,11 @@ const routeTaskTool: McpToolDef = {
           `${decision.reason}; sugestão livre: nenhuma missão vinculada, ` +
           'portanto nenhum roster selado foi consultado',
       };
+    } else if (mission?.squadId) {
+      const squad = getSquad(mission.squadId);
+      if (squad) {
+        decision = pinUniqueSealedRosterOnDecision(decision, squad.agents);
+      }
     }
     // Proveniência: o spawn ad-hoc de modelos com warning de catálogo exige
     // uma decisão recente do router (ver adHocSpawnGateError em tools-panes).

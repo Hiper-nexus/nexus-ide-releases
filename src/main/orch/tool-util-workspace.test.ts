@@ -139,15 +139,44 @@ vi.mock('../adapters/adapter-registry', () => ({
             },
           },
         }
-      : {
-          id,
-          kind: 'cli-pty',
-          bin: id,
-          spawn: { interactive: [id], extraArgs: [] },
-          models: { default: 'provider/model', list: ['provider/model'] },
-          quirks:
-            id === 'opencode' ? { nexusMcp: 'opencode' } : {},
-        },
+      : id === 'agy'
+        ? {
+            id: 'agy',
+            kind: 'cli-pty',
+            label: 'Antigravity (agy)',
+            bin: 'agy',
+            spawn: {
+              interactive: ['agy'],
+              extraArgs: [],
+              initialPrompt: 'oneshot',
+              initialPromptArgs: ['--print'],
+            },
+            models: { default: 'provider/model', list: ['provider/model'] },
+            quirks: {},
+          }
+        : id === 'opencode'
+          ? {
+              id: 'opencode',
+              kind: 'cli-pty',
+              label: 'OpenCode',
+              bin: 'opencode',
+              spawn: {
+                interactive: ['opencode'],
+                extraArgs: [],
+                initialPrompt: 'oneshot',
+                initialPromptArgs: ['run'],
+              },
+              models: { default: 'provider/model', list: ['provider/model'] },
+              quirks: { nexusMcp: 'opencode' },
+            }
+          : {
+              id,
+              kind: 'cli-pty',
+              bin: id,
+              spawn: { interactive: [id], extraArgs: [] },
+              models: { default: 'provider/model', list: ['provider/model'] },
+              quirks: {},
+            },
   ),
   isBuiltinAdapter: vi.fn((id: string) => id === 'codex'),
   isAdapterInstalled: vi.fn(() => false),
@@ -1229,6 +1258,54 @@ describe('agent prompt injection', () => {
       await vi.advanceTimersByTimeAsync(900);
       await pending;
       expect(stubs.writeSession).toHaveBeenCalledTimes(2); // paste + one CR
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('retries Enter after a paste-echo busy that settled back to idle', async () => {
+    vi.useFakeTimers();
+    try {
+      stubs.sessionState.mockReturnValue('busy');
+      const pending = injectPrompt('session-1', 'go');
+      await vi.advanceTimersByTimeAsync(499);
+      stubs.sessionState.mockReturnValue('idle');
+      for (const tap of [...stubs.stateTaps]) tap('session-1', 'idle');
+      await vi.advanceTimersByTimeAsync(1);
+      expect(
+        (
+          stubs.writeSession.mock.calls as unknown as Array<
+            readonly [string, string]
+          >
+        ).filter((call) => call[1] === '\r'),
+      ).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(400);
+      await pending;
+      expect(
+        (
+          stubs.writeSession.mock.calls as unknown as Array<
+            readonly [string, string]
+          >
+        ).filter((call) => call[1] === '\r'),
+      ).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('fails visibly when Enter cannot be written to the PTY', async () => {
+    vi.useFakeTimers();
+    try {
+      stubs.sessionState.mockReturnValue('idle');
+      stubs.writeSession.mockImplementation(((_sessionId: string, data: string) => {
+        return data !== '\r';
+      }) as typeof stubs.writeSession);
+      const pending = injectPrompt('session-1', 'go');
+      const rejected = expect(pending).rejects.toThrow(
+        'agent prompt Enter was not delivered to the PTY',
+      );
+      await vi.advanceTimersByTimeAsync(500);
+      await rejected;
     } finally {
       vi.useRealTimers();
     }

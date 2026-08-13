@@ -57,7 +57,9 @@ export interface InitialPromptSource {
 }
 
 /** Nome do executável, sem diretório nem extensão. */
-function binaryName(interactive: readonly string[] | null | undefined): string {
+export function spawnBinaryName(
+  interactive: readonly string[] | null | undefined,
+): string {
   const raw = (interactive?.[0] ?? '').trim();
   if (raw.length === 0) return '';
   const last = raw.split(/[\\/]/u).pop() ?? raw;
@@ -78,9 +80,46 @@ export function initialPromptChannel(
     // melhor colar depois do boot do que subir um pane que ignora o prompt.
     return args.length > 0 ? { kind: 'oneshot', args } : { kind: 'paste' };
   }
-  return POSITIONAL_BINARIES.has(binaryName(source.interactive))
+  return POSITIONAL_BINARIES.has(spawnBinaryName(source.interactive))
     ? { kind: 'positional' }
     : { kind: 'paste' };
+}
+
+/**
+ * Anexa o primeiro prompt ao argv DEPOIS da política governada. Posicional
+ * fica no fim; `run` (OpenCode) é subcomando e vai na frente. Colagem não
+ * mexe no argv.
+ */
+export function applyInitialPromptToArgv(
+  args: readonly string[],
+  channel: InitialPromptChannel,
+  prompt: string,
+): string[] {
+  const next = [...args];
+  if (channel.kind === 'positional') {
+    next.push(prompt);
+    return next;
+  }
+  if (channel.kind === 'oneshot') {
+    for (const flag of channel.args) {
+      if (
+        next.includes(flag) ||
+        next.some((arg) => arg.startsWith(`${flag}=`))
+      ) {
+        throw new Error(
+          `initial prompt conflicts with provider settings extraArgs (${flag})`,
+        );
+      }
+    }
+    if (channel.args.length === 1 && channel.args[0] === 'run') {
+      next.unshift('run');
+      next.push(prompt);
+      return next;
+    }
+    next.push(...channel.args, prompt);
+    return next;
+  }
+  return next;
 }
 
 /**

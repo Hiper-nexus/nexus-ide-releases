@@ -19,7 +19,8 @@ export const CURRENT_RELEASE: AppRelease = {
   summary:
     'Encerrar estaciona a missão. Concluir é um ato do operador. A ' +
     'segunda missão deixa a irmã viva. Anexos do cliente entram no ' +
-    'workspace, não no HOME.',
+    'workspace, não no HOME. Modelo e effort selados na escolha das CLIs ' +
+    'nunca perdem para o default da ferramenta.',
   highlights: [
     {
       title: 'N Maestros no mesmo workspace',
@@ -64,6 +65,20 @@ export const CURRENT_RELEASE: AppRelease = {
       detail:
         'AGY e Express promovem o bloco NEXUS_HANDOFF pintado no terminal, ' +
         'sem esperar MCP.',
+    },
+    {
+      title: 'Modelo selado vence o default',
+      detail:
+        'GPT 5.6 Sol e DeepSeek V4 Pro no início da missão não caem mais ' +
+        'em 5.5/Flash. Se o modelo selado não puder ir no argv, o spawn ' +
+        'falha visível. Effort selado segue a mesma regra.',
+    },
+    {
+      title: 'Despacho com Enter',
+      detail:
+        'O primeiro prompt vai no argv de toda CLI que aceita posicional ' +
+        'pelo binário (não por uma lista de ids). Colagem ainda prova o ' +
+        'Enter; pane mudo não conta como disparado.',
     },
   ],
 };

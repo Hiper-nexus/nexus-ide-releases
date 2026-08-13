@@ -18,7 +18,7 @@ import {
   armAutoCloseOnHandoff,
   selectScopedPaneCloseTargets,
 } from './pane-close-scopes';
-import { findAgentInSquad, squadRoutableCliIds } from './squad-store';
+import { findAgentInSquad, getSquad, squadRoutableCliIds } from './squad-store';
 import { adHocSpawnGateError } from './route-provenance';
 import { recordRouteLog } from './route-log';
 import {
@@ -50,6 +50,10 @@ import {
 import { applyWorkerSpawnPolicy } from '../../shared/mission-intent';
 import type { MissionIntentContract } from '../../shared/mission-intent';
 import type { ProjectExecutionScope } from '../../shared/types';
+import {
+  honorSealedRosterRuntime,
+  uniqueSealedRuntimeForAdapter,
+} from '../../shared/sealed-agent-runtime';
 import { getContextWorkflowService } from '../context/context-workflow-registry';
 import { isTaskQueueManagedMission } from './task-dispatch-authority';
 import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
@@ -80,6 +84,22 @@ function defaultModelForAdapter(adapterId: string): string | undefined {
     if (def.id === adapterId) return def.models?.default;
   }
   return undefined;
+}
+
+function uniqueSealedRuntimeForMission(
+  scope: ProjectExecutionScope,
+  missionId: string,
+  adapterId: string,
+): { readonly model: string; readonly effort?: string } | null {
+  try {
+    const mission = getProjectDomainStores(scope).missions.get(missionId);
+    if (!mission?.squadId) return null;
+    const squad = getSquad(mission.squadId);
+    if (!squad) return null;
+    return uniqueSealedRuntimeForAdapter(squad.agents, adapterId);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -239,11 +259,14 @@ const paneSpawn: McpToolDef = {
   name: 'nexus_pane_spawn',
   description:
     'Open a new terminal pane running an AI CLI. Provide agentName (a squad ' +
-    'agent — inherits allowlists/title) and ALSO adapterId/model/effort from ' +
-    'nexus_route_task: in a running mission, pass its routeReservationId too. ' +
-    'The explicit adapterId/model WIN over non-sticky roster defaults (cost routing). ' +
-    'Prompt is delivered in the CLI argv AT BIRTH — the pane wakes already ' +
-    'executing it (coordination parity). Returns {paneId, sessionId}.',
+    'agent — inherits allowlists/title). The model and effort sealed on that ' +
+    'roster member WIN over nexus_route_task, ranking, and the CLI default ' +
+    '(Codex 5.5 / DeepSeek Flash / adapter.models.default). Pass adapterId ' +
+    'only to fail over to a different CLI — never to substitute the sealed ' +
+    'model on the same CLI. If the sealed model cannot be applied, spawn fails ' +
+    'visibly. In a running mission, pass routeReservationId when the CLI is ' +
+    'not the sticky roster route. Prompt is delivered in the CLI argv AT BIRTH. ' +
+    'Returns {paneId, sessionId}.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -313,18 +336,22 @@ const paneSpawn: McpToolDef = {
       const requestedAdapterId = str(args, 'adapterId');
       const requestedModel = str(args, 'model');
       const requestedEffort = str(args, 'effort');
-      const selectedAdapterId = requestedAdapterId ?? agent.cli;
-      const selectedModel = requestedModel ?? agent.model;
-      const selectedEffort = requestedEffort ?? agent.effort;
+      const honored = honorSealedRosterRuntime({
+        sealedCli: agent.cli,
+        sealedModel: agent.model,
+        sealedEffort: agent.effort,
+        requestedAdapterId,
+        requestedModel,
+        requestedEffort,
+      });
+      const selectedAdapterId = honored.adapterId;
+      const selectedModel = honored.model;
+      const selectedEffort = honored.effort;
       const noRouteOverride =
         requestedAdapterId === undefined &&
         requestedModel === undefined &&
         requestedEffort === undefined;
-      rosterRouteAuthorized =
-        noRouteOverride ||
-        (selectedAdapterId === agent.cli &&
-          selectedModel === agent.model &&
-          selectedEffort === agent.effort);
+      rosterRouteAuthorized = honored.rosterHonored || noRouteOverride;
       options = {
         adapterId: selectedAdapterId,
         model: selectedModel,
@@ -349,11 +376,24 @@ const paneSpawn: McpToolDef = {
     } else {
       const adHocAdapterId = requireStr(args, 'adapterId');
       const adHocModel = str(args, 'model');
+      const adHocEffort = str(args, 'effort');
+      const adHocMissionId = childMissionId(ctx, str(args, 'missionId'));
+      const uniqueSealed = adHocMissionId
+        ? uniqueSealedRuntimeForMission(
+            ctx.scope,
+            adHocMissionId,
+            adHocAdapterId,
+          )
+        : null;
+      const selectedAdHocModel = uniqueSealed?.model ?? adHocModel;
+      const selectedAdHocEffort = uniqueSealed?.effort ?? adHocEffort;
       // Spawn ad-hoc (sem agentName): modelo com warning de catálogo (ex.:
       // grok-4.5) só entra se veio de uma decisão real do nexus_route_task.
       // Omitir o model NÃO contorna o gate: sem model explícito, o que roda é
-      // o default do adapter — é ele que precisa passar na checagem.
-      const gateModel = adHocModel ?? defaultModelForAdapter(adHocAdapterId);
+      // o default do adapter — é ele que precisa passar na checagem. Roster
+      // selado único para esta CLI vence esse default.
+      const gateModel =
+        selectedAdHocModel ?? defaultModelForAdapter(adHocAdapterId);
       if (!routeReservationId) {
         const gateError = adHocSpawnGateError(
           adHocAdapterId,
@@ -364,11 +404,11 @@ const paneSpawn: McpToolDef = {
       }
       options = {
         adapterId: adHocAdapterId,
-        model: adHocModel,
-        effort: str(args, 'effort'),
+        model: selectedAdHocModel,
+        effort: selectedAdHocEffort,
         cwd: str(args, 'cwd'),
         title: str(args, 'title'),
-        missionId: childMissionId(ctx, str(args, 'missionId')),
+        missionId: adHocMissionId,
         contextRevision: ctx.contextRevision,
         // An MCP-initiated spawn is the orchestrator delegating: default to a
         // WORKER (gated) so an ad-hoc spawn without agentName never lands as an

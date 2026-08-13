@@ -23,7 +23,10 @@ import {
 } from '../pty/pty-manager';
 import { getAdapter } from '../adapters/adapter-registry';
 import { discoverCliModels } from '../adapters/cli-model-discovery';
-import { resolveRoutableModel } from './task-router';
+import {
+  isRoutableModelResolution,
+  resolveRoutableModel,
+} from './task-router';
 import { getProjectDomainStores } from './project-domain-store-registry';
 import { hasBoundHandoffForExactDispatchWorker } from './task-dispatch-codec';
 import { resolveCwdForScope } from './workspace-path';
@@ -56,7 +59,7 @@ import {
 import { getOrchSettings } from '../persistence/settings-store';
 import { isOperatorChoicePolicy } from '../../shared/squad-cli-policy';
 import { issueAgentIdentityBestEffort } from './agent-identity-spawn';
-import { initialPromptChannel } from '../../shared/cli-initial-prompt';
+import { initialPromptChannel, spawnBinaryName } from '../../shared/cli-initial-prompt';
 
 export { assertSafePtyPrompt } from './pty-prompt-safety';
 
@@ -102,6 +105,15 @@ const CLAUDE_FAMILY_TURN_PROOF_ADAPTERS = new Set([
   'glm',
   'longcat',
 ]);
+
+function requiresClaudeFamilyTurnProof(adapterId: string | undefined): boolean {
+  if (!adapterId) return false;
+  if (CLAUDE_FAMILY_TURN_PROOF_ADAPTERS.has(adapterId)) return true;
+  const adapter = getAdapter(adapterId);
+  return adapter?.kind === 'cli-pty'
+    ? spawnBinaryName(adapter.spawn.interactive) === 'claude'
+    : false;
+}
 
 function agentBootExitError(sessionId: string): Error {
   const outputTail = sanitizeMissionOrchestratorExitOutput(
@@ -271,7 +283,14 @@ async function submitEnter(
     }
     assertMcpInvocationCurrent(invocation);
     if (onBeforeSubmit?.() === false) return;
-    orchWriteSession(sessionId, '\r', { markInputBusy: false });
+    // Paste-echo busy during settle is not proof that Enter was accepted.
+    // Re-arm after the composer has settled so a DeepSeek/Claude TUI that
+    // painted during paste still gets the second CR if it is idle now.
+    observedBusy = getSessionState(sessionId) === 'busy';
+    const firstEnter = orchWriteSession(sessionId, '\r', { markInputBusy: false });
+    if (!firstEnter) {
+      throw new Error('agent prompt Enter was not delivered to the PTY');
+    }
     await delay(ENTER_RETRY_MS);
     if (
       !observedBusy &&
@@ -281,7 +300,10 @@ async function submitEnter(
     ) {
       assertMcpInvocationCurrent(invocation);
       if (onBeforeSubmit?.() === false) return;
-      orchWriteSession(sessionId, '\r', { markInputBusy: false });
+      const secondEnter = orchWriteSession(sessionId, '\r', { markInputBusy: false });
+      if (!secondEnter) {
+        throw new Error('agent prompt Enter was not delivered to the PTY');
+      }
     }
   } catch (error) {
     if (invocation) {
@@ -533,7 +555,7 @@ export function submitPendingAgentPrompt(
     '',
     options.windowMs ?? RESTORED_PROMPT_ACCEPTANCE_WINDOW_MS,
     invocation,
-    CLAUDE_FAMILY_TURN_PROOF_ADAPTERS.has(options.adapterId ?? ''),
+    requiresClaudeFamilyTurnProof(options.adapterId),
     options.canSubmit,
   );
 }
@@ -563,7 +585,7 @@ export async function deliverAgentPrompt(
           prompt,
           PROMPT_ACCEPTANCE_WINDOW_MS,
           invocation,
-          CLAUDE_FAMILY_TURN_PROOF_ADAPTERS.has(options.adapterId ?? ''),
+          requiresClaudeFamilyTurnProof(options.adapterId),
         )
       ) {
         return true;
@@ -969,17 +991,31 @@ export async function spawnPaneAndMaybePrompt(
   // 1ª variante da mesma família. Sem variante, mantém o pedido (não piora).
   const runnableModels =
     discoverCliModels().get(options.adapterId) ?? adapter.models.list;
-  const modelResolution = resolveRoutableModel(options.model, runnableModels);
-  const effectiveModel = modelResolution.ok ? modelResolution.model : options.model;
-  if (
-    options.model &&
-    modelResolution.ok &&
-    modelResolution.model !== options.model
-  ) {
-    console.warn(
-      `[spawn] ${options.adapterId}:${options.model} não é um modelo que o CLI roda; ` +
-        `usando a variante real ${modelResolution.model ?? '(default)'}.`,
-    );
+  const sealedModel = options.model?.trim();
+  let effectiveModel = options.model;
+  if (sealedModel) {
+    if (
+      adapter.models.list.includes(sealedModel) ||
+      runnableModels.includes(sealedModel)
+    ) {
+      effectiveModel = sealedModel;
+    } else {
+      const modelResolution = resolveRoutableModel(sealedModel, runnableModels);
+      if (
+        modelResolution.ok &&
+        modelResolution.model &&
+        modelResolution.model !== sealedModel &&
+        !isRoutableModelResolution(sealedModel, modelResolution.model)
+      ) {
+        throw new Error(
+          `${adapter.label}: modelo selado "${sealedModel}" não é executável ` +
+            `neste CLI; recusando fallback silencioso para ${modelResolution.model}`,
+        );
+      }
+      effectiveModel = modelResolution.ok
+        ? modelResolution.model
+        : sealedModel;
+    }
   }
   // Pre-spawn credential probe (peer ADE F-256 harvest): judge the exact
   // effective model before a pane exists. This matters for OpenCode: its
@@ -1175,10 +1211,7 @@ export async function spawnPaneAndMaybePrompt(
             result.sessionId,
             finalPrompt,
           );
-        } else if (hooks.onPromptAccepted || options.readOnly === true) {
-          // Read-only reviewers (merge-council) must not burn the full review
-          // timeout as silent zombies when the brief was swallowed. Callers that
-          // register onPromptAccepted already require the same proof.
+        } else {
           throw new Error(
             'agent prompt remained live without physical acceptance proof',
           );

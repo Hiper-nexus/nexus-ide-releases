@@ -31,7 +31,9 @@
     "resumeIdArgs": [
       "--conversation"
     ],
-    "extraArgs": []
+    "extraArgs": [],
+    "initialPrompt": "oneshot",
+    "initialPromptArgs": ["--print"]
   },
   "env": {
     "static": {},

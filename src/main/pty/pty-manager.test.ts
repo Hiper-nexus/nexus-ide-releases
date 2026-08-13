@@ -1516,6 +1516,166 @@ describe("AGY advisory native profile", () => {
     }
   });
 
+  it("entrega o prompt no argv de um adapter DeepSeek que roda o binário claude", async () => {
+    setSquadCliPolicyLookupForTests(() => "operator-choice");
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-deepseek-argv-"));
+    const worktree = path.join(root, "worktree");
+    fs.mkdirSync(worktree);
+    const host = fakeHost();
+    setPtyHost(host.host);
+    const baseAuthority = revisionBoundWorker(fs.realpathSync.native(worktree));
+    const initialPrompt = "Implemente com deepseek-v4-pro e entregue o handoff.";
+    const authority: BoundSpawnAuthority = {
+      ...baseAuthority,
+      context: { ...baseAuthority.context!, initialPrompt },
+    };
+    const adapter: CliPtyAdapter = {
+      ...makeAdapter({ static: {}, passthrough: [], ephemeralHome: false }),
+      id: "deepseek",
+      bin: "claude",
+      label: "DeepSeek",
+      spawn: {
+        ...makeAdapter({ static: {}, passthrough: [], ephemeralHome: false }).spawn,
+        interactive: ["claude", "--model", "{{MODEL}}"],
+      },
+      models: {
+        flag: "--model",
+        list: ["deepseek-v4-flash", "deepseek-v4-pro"],
+        default: "deepseek-v4-flash",
+      },
+    };
+    let sessionId: string | null = null;
+    try {
+      ({ sessionId } = spawnMainOwnedAgentSession(
+        {
+          kind: "cli-agent",
+          paneId: "deepseek-argv-birth",
+          cols: 100,
+          rows: 30,
+          model: "deepseek-v4-pro",
+        },
+        adapter,
+        {},
+        authority,
+      ));
+      const spec = host.specFor(sessionId);
+      expect(spec.args.filter((a) => a === initialPrompt)).toHaveLength(1);
+      expect(spec.args).toEqual(
+        expect.arrayContaining(["--model", "deepseek-v4-pro"]),
+      );
+      expect(spec.args).not.toContain("deepseek-v4-flash");
+    } finally {
+      if (sessionId) await orchTerminateSession(sessionId);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("entrega o prompt posicional no argv do grok — sem allowlist de ids", async () => {
+    setSquadCliPolicyLookupForTests(() => "operator-choice");
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-grok-argv-"));
+    const worktree = path.join(root, "worktree");
+    fs.mkdirSync(worktree);
+    const host = fakeHost();
+    setPtyHost(host.host);
+    const baseAuthority = revisionBoundWorker(fs.realpathSync.native(worktree));
+    const initialPrompt = "Implemente no grok e chame nexus_handoff_submit.";
+    const authority: BoundSpawnAuthority = {
+      ...baseAuthority,
+      context: { ...baseAuthority.context!, initialPrompt },
+    };
+    let sessionId: string | null = null;
+    try {
+      ({ sessionId } = spawnMainOwnedAgentSession(
+        {
+          kind: "cli-agent",
+          paneId: "grok-argv-birth",
+          cols: 100,
+          rows: 30,
+          model: "grok-4.5",
+        },
+        builtinCliPtyAdapter("grok"),
+        {},
+        authority,
+      ));
+      const spec = host.specFor(sessionId);
+      expect(spec.args.filter((a) => a === initialPrompt)).toHaveLength(1);
+      expect(spec.args).toEqual(
+        expect.arrayContaining(["--model", "grok-4.5"]),
+      );
+    } finally {
+      if (sessionId) await orchTerminateSession(sessionId);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("passa gpt-5.6-sol no argv do Codex — nunca omite a flag para o default 5.5", async () => {
+    setSquadCliPolicyLookupForTests(() => "operator-choice");
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-codex-sol-"));
+    const worktree = path.join(root, "worktree");
+    fs.mkdirSync(worktree);
+    const host = fakeHost();
+    setPtyHost(host.host);
+    const baseAuthority = revisionBoundWorker(fs.realpathSync.native(worktree));
+    const authority: BoundSpawnAuthority = {
+      ...baseAuthority,
+      context: {
+        ...baseAuthority.context!,
+        initialPrompt: "Implemente com Sol e entregue o handoff.",
+      },
+    };
+    let sessionId: string | null = null;
+    try {
+      ({ sessionId } = spawnMainOwnedAgentSession(
+        {
+          kind: "cli-agent",
+          paneId: "codex-sol-birth",
+          cols: 100,
+          rows: 30,
+          model: "gpt-5.6-sol",
+        },
+        builtinCliPtyAdapter("codex"),
+        {},
+        authority,
+      ));
+      const spec = host.specFor(sessionId);
+      expect(spec.args).toEqual(
+        expect.arrayContaining(["--model", "gpt-5.6-sol"]),
+      );
+      expect(spec.args).not.toContain("gpt-5.5");
+    } finally {
+      if (sessionId) await orchTerminateSession(sessionId);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("recusa spawn quando o modelo selado não tem flag no adapter", async () => {
+    setSquadCliPolicyLookupForTests(() => "operator-choice");
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-sealed-model-"));
+    const worktree = path.join(root, "worktree");
+    fs.mkdirSync(worktree);
+    const host = fakeHost();
+    setPtyHost(host.host);
+    const adapter: CliPtyAdapter = {
+      ...makeAdapter({ static: {}, passthrough: [], ephemeralHome: false }),
+      models: { flag: "", list: ["sealed-model"], default: "default" },
+    };
+    expect(() =>
+      spawnMainOwnedAgentSession(
+        {
+          kind: "cli-agent",
+          paneId: "sealed-model-missing-flag",
+          cols: 100,
+          rows: 30,
+          model: "sealed-model",
+        },
+        adapter,
+        {},
+        revisionBoundWorker(fs.realpathSync.native(worktree)),
+      ),
+    ).toThrow(/modelo selado "sealed-model"/);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
   it("does not pass a worker initial prompt to an AGY orchestrator", async () => {
     setSquadCliPolicyLookupForTests(() => "operator-choice");
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-agy-maestro-"));

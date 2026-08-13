@@ -4,9 +4,15 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { WebContents } from "electron";
 import {
+  argvHonorsModel,
   firstDeclaredModel,
   interactiveTemplateForModel,
+  sealedModelMissingFromArgvError,
 } from "./agent-model-argv";
+import {
+  applyInitialPromptToArgv,
+  initialPromptChannel,
+} from "../../shared/cli-initial-prompt";
 import { ensureUtf8Locale } from "./pty-env-locale";
 import { PTY_CHANNELS } from "../../shared/channels";
 import type { SpawnRequest, PaneSessionState } from "../../shared/types";
@@ -998,14 +1004,22 @@ export interface AgentSpawnOverrides {
   suppressEnv?: string[];
 }
 
-function normalizeAgentModel(adapter: CliPtyAdapter, model: string): string {
+function normalizeAgentModel(
+  adapter: CliPtyAdapter,
+  model: string,
+  failClosedOnUnusable: boolean,
+): string {
   if (adapter.id === "kimi" && model === "kimi-for-coding") {
     return "kimi-code/kimi-for-coding";
   }
   // OpenCode 1.17 requires provider/model. A stale unqualified preference is
   // not a valid fallback: omit --model and let OpenCode use its own configured
-  // default instead of failing the pane at startup.
+  // default instead of failing the pane at startup. A sealed mission model
+  // must never take that silent default — fail visible.
   if (adapter.id === "opencode" && model && !model.includes("/")) {
+    if (failClosedOnUnusable) {
+      throw sealedModelMissingFromArgvError(adapter.label, model);
+    }
     return "";
   }
   return model;
@@ -1099,6 +1113,13 @@ export function spawnAgentSession(
   }
   const cwd = requireTrustedAgentCwd(authority);
   assertExclusiveOrchestratorProcessAvailable(adapter, authority);
+  const requestedModel = (req.model ?? overrides.defaultModel)?.trim() || "";
+  const missionSealedModel = Boolean(
+    requestedModel &&
+      authority.context?.missionId?.trim() &&
+      (authority.context.role === "worker" ||
+        authority.context.role === "orchestrator"),
+  );
   const model = normalizeAgentModel(
     adapter,
     firstDeclaredModel([
@@ -1106,6 +1127,7 @@ export function spawnAgentSession(
       overrides.defaultModel,
       adapter.models.default,
     ]),
+    missionSealedModel,
   );
   const argv = resolvePlaceholders(
     interactiveTemplateForModel(
@@ -1133,23 +1155,40 @@ export function spawnAgentSession(
   }
   let args = argv.slice(1);
   // Adapters whose interactive argv has no {{MODEL}} placeholder would
-  // silently DROP the requested model (route_task picks grok-code-fast-1,
-  // grok boots on its default). When a model was explicitly requested and the
-  // adapter declares a model flag, append it.
-  const explicitModel = req.model ?? overrides.defaultModel;
+  // silently DROP the resolved model (Codex boots on CLI 5.5, Grok on its
+  // default). Append the flag whenever we have a model to honor — sealed
+  // first, else adapter default — unless Kimi already carries it in env.
   const templateHasModel = adapter.spawn.interactive.some((a) =>
     a.includes("{{MODEL}}"),
   );
   const usesKimiTransientModel =
     adapter.id === "kimi" && Boolean(overrides.keyEnv?.KIMI_MODEL_NAME);
   if (
-    explicitModel &&
     model &&
     !templateHasModel &&
     adapter.models.flag &&
     !usesKimiTransientModel
   ) {
     args.push(adapter.models.flag, model);
+  }
+  if (
+    missionSealedModel &&
+    !adapter.models.flag &&
+    !usesKimiTransientModel
+  ) {
+    throw sealedModelMissingFromArgvError(adapter.label, requestedModel);
+  }
+  if (
+    req.effort?.trim() &&
+    adapter.control?.effort?.levels &&
+    adapter.control.effort.levels.length > 0 &&
+    !adapter.control.effort.levels.includes(req.effort.trim())
+  ) {
+    throw new Error(
+      `${adapter.label}: effort selado "${req.effort.trim()}" não é ` +
+        `suportado (${adapter.control.effort.levels.join(", ")}). ` +
+        "Recusando o default da CLI.",
+    );
   }
   // Resume only when the captured provider session belongs to this account.
   // Cross-account failover must spawn fresh + inject a continuity pack instead.
@@ -1232,29 +1271,22 @@ export function spawnAgentSession(
   if (overrides.extraArgs && overrides.extraArgs.length > 0) {
     args.push(...overrides.extraArgs);
   }
+  const promptChannel = initialPromptChannel({
+    declared: adapter.spawn.initialPrompt,
+    oneshotArgs: adapter.spawn.initialPromptArgs,
+    interactive: adapter.spawn.interactive,
+  });
+  // Canal do BINÁRIO, não allowlist de ids: glm/longcat/deepseek herdam o
+  // `claude` posicional; sakana herda o `codex`. One-shot (AGY `--print`,
+  // OpenCode `run`) mata o pane — só worker. Orquestrador one-shot cola.
   const nativeInitialPrompt =
-    (adapter.id === "agy" ||
-      adapter.id === "codex" ||
-      adapter.id === "claude" ||
-      // glm/longcat rodam o MESMO binário do claude (posicional idêntico);
-      // kimi é fork do claude-code com a mesma forma de primeiro turno.
-      adapter.id === "glm" ||
-      adapter.id === "longcat" ||
-      adapter.id === "kimi" ||
-      adapter.id === "opencode") &&
     authority.source === "pending" &&
-    // Via Rápida: coordenação também larga com o prompt nativo — a colagem
-    // pós-boot falhava contra TUIs reais (8/8 panes mudos, missão 10/08) e o
-    // argumento de largada é o único canal que não depende de timing.
-    //
-    // AGY fica FORA dessa ampliação: o canal nativo dele é `--print`, que sai
-    // depois da tarefa (one-shot de worker, por desenho abaixo). Numa
-    // coordenação isso é morte no boot — o pane fecha antes de coordenar
-    // qualquer coisa. Coordenação AGY continua recebendo o prompt por colagem.
+    Boolean(authority.context?.missionId?.trim()) &&
+    !req.resume &&
+    promptChannel.kind !== "paste" &&
     (authority.context?.role === "worker" ||
-      (authority.context?.role === "orchestrator" && adapter.id !== "agy")) &&
-    Boolean(authority.context.missionId?.trim()) &&
-    !req.resume
+      (authority.context?.role === "orchestrator" &&
+        promptChannel.kind === "positional"))
       ? authority.context.initialPrompt
       : undefined;
   let safeNativeInitialPrompt: string | undefined;
@@ -1271,59 +1303,6 @@ export function spawnAgentSession(
       );
     }
     safeNativeInitialPrompt = safeInitialPrompt;
-    if (adapter.id === "agy") {
-      if (
-        args.some(
-          (arg) =>
-            arg === "--print" ||
-            arg.startsWith("--print=") ||
-            arg === "--prompt-interactive" ||
-            arg.startsWith("--prompt-interactive="),
-        )
-      ) {
-        throw new Error(
-          "AGY initial prompt conflicts with provider settings extraArgs",
-        );
-      }
-      // Mission workers are one-shot jobs. `--prompt-interactive` executes the
-      // first turn and then deliberately keeps the provider TUI alive; without
-      // an AGY-native Stop hook that left the mission waiting forever while
-      // terminal repaints kept echoing the fallback example. `--print` retains
-      // PTY output (and therefore the physical handoff parser) but exits after
-      // the governed task, so exit enforcement can also degrade explicitly.
-      // AGY keeps its own workspace registry and otherwise sends tool calls to
-      // ~/.gemini/antigravity-cli/scratch even when the child process cwd is
-      // correct. Bind the exact Main-authorized root into that registry.
-      args.push("--add-dir", cwd);
-      args.push("--print", safeInitialPrompt);
-    } else if (
-      adapter.id === "claude" ||
-      adapter.id === "glm" ||
-      adapter.id === "longcat" ||
-      adapter.id === "kimi"
-    ) {
-      // `claude [PROMPT]` abre o primeiro turno interativo já executando, sem
-      // corrida com o editor da TUI fria — mesma forma do codex (linha ~1545).
-      //
-      // Sem varredura de "posicional já existente": o argv interativo do claude
-      // é `--model <valor>` + extraArgs `--disallowedTools Task`, e VALORES de
-      // flag são indistinguíveis de posicionais por inspeção ingênua — o
-      // primeiro rascunho deste guard reprovou o próprio caminho feliz. O
-      // prompt vem da autoridade selada do Main, que é a única fonte, e por
-      // isso é anexado por último, como no codex.
-      args.push(safeInitialPrompt);
-    } else if (adapter.id === "opencode") {
-      if (args.includes("run")) {
-        throw new Error(
-          "OpenCode initial prompt conflicts with provider settings extraArgs",
-        );
-      }
-      // Mission advisors are one-shot workers. OpenCode's native headless
-      // route retains PTY output and MCP tools while avoiding the Bun/OpenTUI
-      // renderer that can segfault during terminal-capability negotiation.
-      args.unshift("run");
-      args.push(safeInitialPrompt);
-    }
   }
   const sessionId = makeSessionId();
   const gatewayBaseUrl = configuredGatewayBaseUrl();
@@ -1664,12 +1643,49 @@ export function spawnAgentSession(
       operatorChoiceWorkspaceWrite,
       operatorChoiceParticipation: executionPolicy.isFrictionless,
     });
-    if (adapter.id === "codex" && safeNativeInitialPrompt !== undefined) {
-      // `codex [PROMPT]` starts the first interactive turn without racing the
-      // cold TUI editor. Append only after the governed argv allowlist has
-      // reconstructed every option: this prompt came from Main's sealed
-      // mission authority and must remain the sole positional argument.
-      args.push(safeNativeInitialPrompt);
+    if (safeNativeInitialPrompt !== undefined) {
+      // Append after governed reconstruction: Codex/Claude rebuild argv from
+      // an allowlist and would drop a positional prompt injected earlier.
+      if (adapter.id === "agy") {
+        if (
+          args.some(
+            (arg) =>
+              arg === "--print" ||
+              arg.startsWith("--print=") ||
+              arg === "--prompt-interactive" ||
+              arg.startsWith("--prompt-interactive="),
+          )
+        ) {
+          throw new Error(
+            "AGY initial prompt conflicts with provider settings extraArgs",
+          );
+        }
+        // AGY keeps its own workspace registry and otherwise sends tool calls
+        // to ~/.gemini/antigravity-cli/scratch even when cwd is correct.
+        args.push("--add-dir", cwd);
+      }
+      args = applyInitialPromptToArgv(
+        args,
+        promptChannel,
+        safeNativeInitialPrompt,
+      );
+    }
+    if (
+      !usesKimiTransientModel &&
+      ((missionSealedModel &&
+        !argvHonorsModel(
+          args,
+          adapter.models.flag,
+          model || requestedModel,
+        )) ||
+        (!missionSealedModel &&
+          model &&
+          !argvHonorsModel(args, adapter.models.flag, model)))
+    ) {
+      throw sealedModelMissingFromArgvError(
+        adapter.label,
+        requestedModel || model,
+      );
     }
     if (
       executionPolicy.enableLiveWeb &&

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  argvHonorsModel,
   firstDeclaredModel,
   interactiveTemplateForModel,
 } from './agent-model-argv';
@@ -55,5 +56,17 @@ describe('interactiveTemplateForModel', () => {
     expect(interactiveTemplateForModel(['codex'], '--model', '')).toEqual([
       'codex',
     ]);
+  });
+});
+
+describe('argvHonorsModel', () => {
+  it('exige a flag e o valor selado — omissão é o default silencioso', () => {
+    expect(argvHonorsModel(['--sandbox'], '--model', 'gpt-5.6-sol')).toBe(false);
+    expect(
+      argvHonorsModel(['--model', 'gpt-5.6-sol'], '--model', 'gpt-5.6-sol'),
+    ).toBe(true);
+    expect(argvHonorsModel(['--model', 'gpt-5.5'], '--model', 'gpt-5.6-sol')).toBe(
+      false,
+    );
   });
 });

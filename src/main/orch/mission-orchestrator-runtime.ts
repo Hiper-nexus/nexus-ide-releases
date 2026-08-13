@@ -289,9 +289,12 @@ export function resolveProductionMissionOrchestratorRuntime(
       'Nenhuma conta do orquestrador tem credencial válida fora de cooldown.',
     );
   }
+  const sealedModel = runtimeComesFromRoster
+    ? present(orchestrator.model)
+    : undefined;
   const model =
-    (runtimeComesFromRoster ? orchestrator.model : undefined) ||
-    settings.defaultModel ||
+    sealedModel ||
+    present(settings.defaultModel) ||
     defaultSquadModelForAdapter(adapterId);
   if (requireProviderReadiness && !account) {
     const readiness = deps.providerReadiness(adapterId, model);

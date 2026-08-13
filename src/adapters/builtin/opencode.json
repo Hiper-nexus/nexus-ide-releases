@@ -33,7 +33,9 @@
     "resumeIdArgs": [
       "--session"
     ],
-    "extraArgs": []
+    "extraArgs": [],
+    "initialPrompt": "oneshot",
+    "initialPromptArgs": ["run"]
   },
   "env": {
     "static": {},

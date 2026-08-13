@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   acceptsInteractiveInitialPrompt,
+  applyInitialPromptToArgv,
   initialPromptChannel,
+  spawnBinaryName,
 } from './cli-initial-prompt';
 
 describe('initialPromptChannel', () => {
@@ -86,5 +88,51 @@ describe('acceptsInteractiveInitialPrompt', () => {
       }),
     ).toBe(false);
     expect(acceptsInteractiveInitialPrompt({ interactive: ['kimi'] })).toBe(false);
+  });
+});
+
+describe('applyInitialPromptToArgv', () => {
+  it('anexa posicional no fim — contrato do binário claude/codex/grok', () => {
+    expect(
+      applyInitialPromptToArgv(
+        ['--model', 'deepseek-v4-pro'],
+        { kind: 'positional' },
+        'faça a tarefa',
+      ),
+    ).toEqual(['--model', 'deepseek-v4-pro', 'faça a tarefa']);
+  });
+
+  it('OpenCode oneshot: run na frente, prompt no fim', () => {
+    expect(
+      applyInitialPromptToArgv(
+        ['--model', 'opencode/big-pickle', '--auto'],
+        { kind: 'oneshot', args: ['run'] },
+        'revise',
+      ),
+    ).toEqual(['run', '--model', 'opencode/big-pickle', '--auto', 'revise']);
+  });
+
+  it('AGY oneshot: --print e prompt no fim', () => {
+    expect(
+      applyInitialPromptToArgv(
+        ['--add-dir', '/tmp/ws'],
+        { kind: 'oneshot', args: ['--print'] },
+        'mapeie',
+      ),
+    ).toEqual(['--add-dir', '/tmp/ws', '--print', 'mapeie']);
+  });
+
+  it('colagem não mexe no argv', () => {
+    expect(
+      applyInitialPromptToArgv(['--model', 'k3'], { kind: 'paste' }, 'x'),
+    ).toEqual(['--model', 'k3']);
+  });
+});
+
+describe('spawnBinaryName', () => {
+  it('reconhece o claude absoluto usado por DeepSeek/GLM', () => {
+    expect(spawnBinaryName(['/opt/homebrew/bin/claude', '--model', 'x'])).toBe(
+      'claude',
+    );
   });
 });

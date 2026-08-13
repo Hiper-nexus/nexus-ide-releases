@@ -39,3 +39,34 @@ export function interactiveTemplateForModel(
   }
   return argv;
 }
+
+/**
+ * O modelo pedido pelo spawn TEM de aparecer no argv. Sem a flag, Codex cai
+ * no 5.5, DeepSeek no Flash, Claude no sonnet — exatamente o silêncio que o
+ * operador proibiu.
+ */
+export function argvHonorsModel(
+  args: readonly string[],
+  modelFlag: string | undefined,
+  model: string,
+): boolean {
+  const trimmed = model.trim();
+  if (!trimmed) return true;
+  if (!modelFlag?.trim()) return false;
+  const flag = modelFlag.trim();
+  if (flag.endsWith('=')) {
+    return args.some((arg) => arg === `${flag}${trimmed}`);
+  }
+  const index = args.indexOf(flag);
+  return index >= 0 && args[index + 1] === trimmed;
+}
+
+export function sealedModelMissingFromArgvError(
+  adapterLabel: string,
+  model: string,
+): Error {
+  return new Error(
+    `${adapterLabel}: modelo selado "${model}" não entrou no argv do spawn ` +
+      '(a CLI cairia no default). Recusando em vez de silenciar.',
+  );
+}
