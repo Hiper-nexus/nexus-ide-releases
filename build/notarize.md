@@ -117,7 +117,8 @@ submissão, o build deve falhar; pacote ad-hoc nunca é promovido.
 ## Verificar antes de distribuir
 
 O comando manual equivalente abaixo é útil para diagnóstico; o gate canônico é
-`npm run release:candidate`, que também executa o E2E e amarra as evidências:
+`npm run release:candidate`, que verifica o build assinado, faz staple, roda o
+smoke no ZIP selado e amarra o receipt:
 
 ```bash
 node scripts/verify-macos-release.mjs \

@@ -45,6 +45,41 @@ describe('collectAttentionItems', () => {
     expect(items[1]?.title).toContain('#4');
   });
 
+  it('waitingAgents vivo substitui needs_input histórico', () => {
+    const items = collectAttentionItems({
+      notifications: [
+        { paneId: 'stale', agentLabel: 'Codex', kind: 'needs_input' },
+      ],
+      waitingAgents: [{ paneId: 'live', agentLabel: 'Claude' }],
+      pr: null,
+      missions: [],
+      providers: [],
+    });
+    expect(items).toEqual([
+      {
+        id: 'enter:live',
+        kind: 'enter',
+        title: 'Claude pede Enter',
+        detail: 'O agente está esperando você confirmar no terminal.',
+        targetId: 'live',
+      },
+    ]);
+  });
+
+  it('waitingAgents vazio não recai no histórico', () => {
+    expect(
+      collectAttentionItems({
+        notifications: [
+          { paneId: 'stale', agentLabel: 'Codex', kind: 'needs_input' },
+        ],
+        waitingAgents: [],
+        pr: null,
+        missions: [],
+        providers: [],
+      }),
+    ).toEqual([]);
+  });
+
   it('fica vazia quando não há nada pedindo ação', () => {
     expect(
       collectAttentionItems({

@@ -51,7 +51,7 @@ npm run rebuild:node           # rebuild native modules for Node (CI/tests)
 | `npm run lint` | Alias for `tsc --noEmit` |
 | `npm run start` | Dev server (hot reload) |
 | `npm run make` | Build and package with Electron Forge |
-| `npm run release:candidate` | Release gate (typecheck + test + security) |
+| `npm run release:candidate` | Gate do candidato (assinatura, staple, smoke do ZIP, receipt) |
 | `npm run release:security` | Security gate (renderer sinks + audit) |
 
 ## Authoritative Owners

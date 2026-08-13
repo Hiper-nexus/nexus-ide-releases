@@ -250,6 +250,20 @@ export interface BgTaskEventPayload {
 }
 
 /**
+ * Hook waiting latch pushed by main (`orch:agent.waiting`).
+ * `source` is one hook plane; the renderer keeps the pane listed while
+ * either plane still needs a human.
+ */
+export interface AgentWaitingEvent {
+  readonly source: 'orca' | 'semantic';
+  readonly sessionId: string;
+  readonly paneId: string;
+  readonly agentLabel: string;
+  readonly state: string;
+  readonly at: number;
+}
+
+/**
  * Login-stuck watchdog event pushed by main (`orch:pane.loginStuck`). Shape
  * mirrors the event built in src/main/orch/login-stuck-watchdog.ts.
  * `stuck:false` is the recovery edge (login screen left / real progress) —
@@ -696,6 +710,7 @@ export interface NexusApi {
     onSquadsChanged(cb: (squads: Squad[]) => void): Unsubscribe;
     onBgTaskEvent(cb: (event: BgTaskEventPayload) => void): Unsubscribe;
     onPaneLoginStuck(cb: (event: PaneLoginStuckEvent) => void): Unsubscribe;
+    onAgentWaiting(cb: (event: AgentWaitingEvent) => void): Unsubscribe;
   };
   remote: {
     bridgeStatus(): Promise<RemoteBridgeInfo>;

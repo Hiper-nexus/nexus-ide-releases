@@ -62,7 +62,8 @@ Remoção física do motor de missão cerimonial, substituído pela Via Rápida
 - `scripts/e2e-real-mission*.mjs`, `scripts/test-support/real-mission-evidence.mjs`
   e `scripts/release-fast-lane.mjs` (waiver que reusava evidência de baseline —
   premissa morta) foram deletados. `package.json`: `e2e:real-mission` removido;
-  `release:candidate` → `smoke-packaged-app.mjs`.
+  `release:candidate` → `scripts/release-candidate-gate.mjs` (o smoke do
+  `.app` desempacotado continua em `smoke:package`).
 - O preflight de provedores do gate morreu junto (sondava o roster da missão
   cerimonial; o smoke não usa provedores).
 

@@ -4,6 +4,7 @@
  *
  * PTY idle is noisy: "completed" only fires after a sustained busy period.
  * True "needs_input" requires agent-status hooks (not inferred from hibernate).
+ * Live latches arrive via `orch:agent.waiting` (see `agent-waiting.ts`).
  */
 
 export const AGENT_NOTIFICATION_KINDS = [

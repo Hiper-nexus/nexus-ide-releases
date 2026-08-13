@@ -1,6 +1,8 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { AgentWaitingEvent } from '../../shared/types';
 import { useAgentNotificationStore } from '../state/agent-notification-store';
+import { useAgentWaitingStore } from '../state/agent-waiting-store';
 import {
   initAgentNotificationBridge,
   resetAgentNotificationBridgeForTests,
@@ -9,6 +11,8 @@ import {
   useSessionStateStore,
   __resetSessionStateDisplayTimersForTests,
 } from '../state/session-state-store';
+
+let waitingHandler: ((event: AgentWaitingEvent) => void) | null = null;
 
 vi.mock('../state/layout-store', () => ({
   useLayoutStore: {
@@ -43,6 +47,20 @@ describe('agent-notification-bridge', () => {
   let stop: (() => void) | null = null;
 
   beforeEach(() => {
+    waitingHandler = null;
+    vi.stubGlobal('window', {
+      nexus: {
+        orch: {
+          onBgTaskEvent: () => () => {},
+          onAgentWaiting: (cb: (event: AgentWaitingEvent) => void) => {
+            waitingHandler = cb;
+            return () => {
+              if (waitingHandler === cb) waitingHandler = null;
+            };
+          },
+        },
+      },
+    });
     vi.useFakeTimers();
     vi.setSystemTime(0);
     useSessionStateStore.setState({
@@ -50,6 +68,7 @@ describe('agent-notification-bridge', () => {
       displayStates: new Map(),
     });
     useAgentNotificationStore.setState({ items: [], open: false });
+    useAgentWaitingStore.getState().clear();
     __resetSessionStateDisplayTimersForTests();
     resetAgentNotificationBridgeForTests();
     stop = initAgentNotificationBridge();
@@ -60,7 +79,9 @@ describe('agent-notification-bridge', () => {
     stop = null;
     __resetSessionStateDisplayTimersForTests();
     resetAgentNotificationBridgeForTests();
+    useAgentWaitingStore.getState().clear();
     vi.useRealTimers();
+    vi.unstubAllGlobals();
   });
 
   it('does not notify on a boot/respawn (spawning→busy→idle)', () => {
@@ -123,5 +144,57 @@ describe('agent-notification-bridge', () => {
     setState('pane-claude', 'exited');
     expect(useAgentNotificationStore.getState().items[0]?.kind).toBe('exited');
     fresh();
+  });
+
+  it('hook awaiting-input vira needs_input e latch vivo', () => {
+    waitingHandler?.({
+      source: 'semantic',
+      sessionId: 's1',
+      paneId: 'pane-claude',
+      agentLabel: 'Claude',
+      state: 'awaiting-input',
+      at: 10,
+    });
+    const items = useAgentNotificationStore.getState().items;
+    expect(items).toHaveLength(1);
+    expect(items[0]?.kind).toBe('needs_input');
+    expect(items[0]?.agentLabel).toBe('Claude');
+    expect(
+      useAgentWaitingStore.getState().snapshot.entries.has('pane-claude'),
+    ).toBe(true);
+  });
+
+  it('working depois de awaiting-input solta o latch', () => {
+    waitingHandler?.({
+      source: 'semantic',
+      sessionId: 's1',
+      paneId: 'pane-claude',
+      agentLabel: 'Claude',
+      state: 'awaiting-input',
+      at: 10,
+    });
+    waitingHandler?.({
+      source: 'semantic',
+      sessionId: 's1',
+      paneId: 'pane-claude',
+      agentLabel: 'Claude',
+      state: 'working',
+      at: 20,
+    });
+    expect(useAgentWaitingStore.getState().snapshot.entries.size).toBe(0);
+  });
+
+  it('exited limpa o latch do pane', () => {
+    waitingHandler?.({
+      source: 'orca',
+      sessionId: 's1',
+      paneId: 'pane-claude',
+      agentLabel: 'Claude',
+      state: 'waiting',
+      at: 10,
+    });
+    setState('pane-claude', 'busy');
+    setState('pane-claude', 'exited');
+    expect(useAgentWaitingStore.getState().snapshot.entries.size).toBe(0);
   });
 });

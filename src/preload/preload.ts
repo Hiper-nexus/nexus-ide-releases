@@ -93,6 +93,7 @@ import type {
   PtyStateChangeEvent,
   PaneSessionState,
   AdapterInfo,
+  AgentWaitingEvent,
   BgTaskEventPayload,
   PaneLoginStuckEvent,
 } from '../shared/types';
@@ -425,6 +426,7 @@ const todosChangedListeners = new Set<(lists: TodoList[]) => void>();
 const squadsChangedListeners = new Set<(squads: Squad[]) => void>();
 const bgTaskEventListeners = new Set<(event: BgTaskEventPayload) => void>();
 const paneLoginStuckListeners = new Set<(event: PaneLoginStuckEvent) => void>();
+const agentWaitingListeners = new Set<(event: AgentWaitingEvent) => void>();
 
 ipcRenderer.on(ORCH_CHANNELS.paneSpawnRequest, (_e, req: OrchPaneSpawnRequest) =>
   paneSpawnRequestListeners.forEach((cb) => cb(req)),
@@ -467,6 +469,9 @@ ipcRenderer.on(ORCH_CHANNELS.bgTaskEvent, (_e, event: BgTaskEventPayload) =>
 );
 ipcRenderer.on(ORCH_CHANNELS.paneLoginStuck, (_e, event: PaneLoginStuckEvent) =>
   paneLoginStuckListeners.forEach((cb) => cb(event)),
+);
+ipcRenderer.on(ORCH_CHANNELS.agentWaiting, (_e, event: AgentWaitingEvent) =>
+  agentWaitingListeners.forEach((cb) => cb(event)),
 );
 
 const settingsChangedListeners = new Set<(settings: TerminalSettings) => void>();
@@ -914,6 +919,8 @@ const api: NexusApi = {
       addListener(bgTaskEventListeners, cb),
     onPaneLoginStuck: (cb: (event: PaneLoginStuckEvent) => void) =>
       addListener(paneLoginStuckListeners, cb),
+    onAgentWaiting: (cb: (event: AgentWaitingEvent) => void) =>
+      addListener(agentWaitingListeners, cb),
   },
   remote: {
     bridgeStatus: () => ipcRenderer.invoke(REMOTE_CHANNELS.bridgeStatus),

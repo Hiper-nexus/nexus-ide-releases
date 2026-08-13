@@ -67,6 +67,12 @@ import {
   unregisterLoginStuckTarget,
 } from "./login-stuck-watchdog";
 import {
+  initAgentWaitingBroadcast,
+  registerAgentWaitingTarget,
+  shutdownAgentWaitingBroadcast,
+  unregisterAgentWaitingTarget,
+} from "./agent-waiting-broadcast";
+import {
   initPaneRegistry,
   listPaneSnapshots,
   registerOrchRenderer,
@@ -1371,6 +1377,7 @@ export function registerOrchListener(wc: WebContents): void {
   registerOrchRenderer(wc);
   registerBgTaskEventTarget(wc);
   registerLoginStuckTarget(wc);
+  registerAgentWaitingTarget(wc);
 }
 
 export function unregisterOrchListener(wc: WebContents): void {
@@ -1378,6 +1385,7 @@ export function unregisterOrchListener(wc: WebContents): void {
   unregisterOrchRenderer(wc);
   unregisterBgTaskEventTarget(wc);
   unregisterLoginStuckTarget(wc);
+  unregisterAgentWaitingTarget(wc);
 }
 
 export function getOrchestrationStartHealth(): OrchestrationStartHealth {
@@ -1411,6 +1419,7 @@ export async function initOrchestration(): Promise<void> {
     initSquadStore(db);
     initPaneRegistry();
     initIdleDelivery();
+    initAgentWaitingBroadcast();
     initWorkerHandoffTtl();
     // Garantia de handoff (Stop-hook do modelo): worker que trabalha e fica
     // mudo não pode matar a missão em silêncio. DEFAULT-OFF: a Via Rápida
@@ -1516,6 +1525,7 @@ export async function closeOrchestration(): Promise<void> {
     disposeSquadBroadcast?.();
     disposeSquadBroadcast = null;
     shutdownIdleDelivery();
+    shutdownAgentWaitingBroadcast();
     shutdownWorkerHandoffTtl();
     shutdownWorkerHandoffEnforcement();
     stopAllPreviews();

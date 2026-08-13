@@ -19,6 +19,15 @@ export type AttentionInboxInput = {
     agentLabel: string;
     kind: 'completed' | 'needs_input' | 'exited';
   }>;
+  /**
+   * Live hook latches (permission / waiting). When present, this is the
+   * source of truth for "pede Enter" — historical needs_input notifications
+   * are ignored so ⌘J does not keep a lie after the agent continues.
+   */
+  waitingAgents?: ReadonlyArray<{
+    paneId: string;
+    agentLabel: string;
+  }>;
   pr: {
     number: number;
     title: string;
@@ -43,8 +52,13 @@ export function collectAttentionItems(
   input: AttentionInboxInput,
 ): AttentionItem[] {
   const items: AttentionItem[] = [];
-  for (const n of input.notifications) {
-    if (n.kind !== 'needs_input') continue;
+  const enterSources =
+    input.waitingAgents !== undefined
+      ? input.waitingAgents
+      : input.notifications
+          .filter((n) => n.kind === 'needs_input')
+          .map((n) => ({ paneId: n.paneId, agentLabel: n.agentLabel }));
+  for (const n of enterSources) {
     items.push({
       id: `enter:${n.paneId}`,
       kind: 'enter',

@@ -21,7 +21,7 @@
     "package": "electron-forge package",
     "smoke:package": "node scripts/smoke-packaged-app.mjs",
     "release:security": "node scripts/release-security-gate.mjs",
-    "release:candidate": "node scripts/smoke-packaged-app.mjs",
+    "release:candidate": "node scripts/release-candidate-gate.mjs",
     "release:publish": "node scripts/publish-release.mjs",
     "security:renderer-sinks": "node scripts/check-renderer-sinks.mjs",
     "premake": "node scripts/patch-node-pty-darwin.mjs && node scripts/bundle-skills.mjs && node scripts/check-build-node.mjs && npm run build:darwin-pty-supervisor && npm run security:renderer-sinks && npm run typecheck && npm run rebuild:electron",

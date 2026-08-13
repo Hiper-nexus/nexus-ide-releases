@@ -498,6 +498,12 @@ vi.mock('./idle-delivery', () => ({
   initIdleDelivery: vi.fn(),
   shutdownIdleDelivery: vi.fn(),
 }));
+vi.mock('./agent-waiting-broadcast', () => ({
+  initAgentWaitingBroadcast: vi.fn(),
+  shutdownAgentWaitingBroadcast: vi.fn(),
+  registerAgentWaitingTarget: vi.fn(),
+  unregisterAgentWaitingTarget: vi.fn(),
+}));
 vi.mock('./clarify-flow', () => ({
   prepareClarifyAnswerAuthorityCandidate: harness.prepareClarifyAnswer,
   persistClarifyAnswer: harness.persistClarifyAnswer,

@@ -3,9 +3,11 @@ import {
   type BusyEpoch,
   type PaneRuntimeHint,
 } from '../../shared/agent-notification';
+import type { AgentWaitingEvent } from '../../shared/types';
 import { notifyDesktopAttention } from '../lib/desktop-attention-ping';
 import { listPanes } from '../lib/split-tree';
 import { useAgentNotificationStore } from '../state/agent-notification-store';
+import { useAgentWaitingStore } from '../state/agent-waiting-store';
 import { useLayoutStore } from '../state/layout-store';
 import { useSessionStateStore } from '../state/session-state-store';
 
@@ -60,6 +62,10 @@ function processTransition(
     busyEpochs.set(paneId, evalResult.busyEpoch);
   }
 
+  if (evalResult.kind === 'exited') {
+    useAgentWaitingStore.getState().clearPane(paneId);
+  }
+
   if (!evalResult.kind) return;
   const label = resolveAgentLabel(paneId);
   if (!label) return;
@@ -70,6 +76,20 @@ function processTransition(
     createdAt: now,
   });
   notifyDesktopAttention({ kind: evalResult.kind, agentLabel: label });
+}
+
+function onAgentWaiting(event: AgentWaitingEvent): void {
+  const result = useAgentWaitingStore.getState().apply(event);
+  if (!result.entered || !result.entry) return;
+  const label =
+    resolveAgentLabel(result.entry.paneId) ?? result.entry.agentLabel;
+  useAgentNotificationStore.getState().push({
+    paneId: result.entry.paneId,
+    agentLabel: label,
+    kind: 'needs_input',
+    createdAt: event.at || Date.now(),
+  });
+  notifyDesktopAttention({ kind: 'needs_input', agentLabel: label });
 }
 
 function onSessionStateChange(): void {
@@ -84,9 +104,12 @@ function onSessionStateChange(): void {
     processTransition(paneId, prev, state, now);
   }
 
-  // Panes removed from the map — drop busy tracking only.
+  // Panes removed from the map — drop busy tracking and any Enter latch.
   for (const paneId of lastSnapshot.keys()) {
-    if (!current.has(paneId)) busyEpochs.delete(paneId);
+    if (!current.has(paneId)) {
+      busyEpochs.delete(paneId);
+      useAgentWaitingStore.getState().clearPane(paneId);
+    }
   }
 
   lastSnapshot = nextSnapshot;
@@ -121,8 +144,14 @@ export function initAgentNotificationBridge(): () => void {
   const thisUnsub = useSessionStateStore.subscribe(onSessionStateChange);
   unsub = thisUnsub;
   let stopBg: (() => void) | null = null;
+  let stopWaiting: (() => void) | null = null;
   try {
     stopBg = window.nexus.orch.onBgTaskEvent(onBgTaskEvent);
+  } catch {
+    // preload may not expose in unit tests
+  }
+  try {
+    stopWaiting = window.nexus.orch.onAgentWaiting(onAgentWaiting);
   } catch {
     // preload may not expose in unit tests
   }
@@ -133,6 +162,7 @@ export function initAgentNotificationBridge(): () => void {
     thisUnsub();
     unsub = null;
     stopBg?.();
+    stopWaiting?.();
     stopBridge = null;
     busyEpochs.clear();
     lastSnapshot = new Map();

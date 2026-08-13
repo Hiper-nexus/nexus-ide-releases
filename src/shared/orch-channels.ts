@@ -90,4 +90,9 @@ export const ORCH_CHANNELS = {
   bgTaskEvent: 'orch:bgTask.event',
   /** Login-stuck watchdog: pane stuck on a CLI login screen (or recovered). */
   paneLoginStuck: 'orch:pane.loginStuck',
+  /**
+   * Hook plane → renderer: agent is waiting for Enter / permission.
+   * Transition-only on each source (semantic + orca); the renderer ORs them.
+   */
+  agentWaiting: 'orch:agent.waiting',
 } as const;

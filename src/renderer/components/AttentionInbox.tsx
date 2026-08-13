@@ -4,6 +4,7 @@ import { listPanes } from '../lib/split-tree';
 import { routeMissionAttention } from '../lib/mission-attention-route';
 import { useAttentionInboxStore } from '../state/attention-inbox-store';
 import { useAgentNotificationStore } from '../state/agent-notification-store';
+import { useAgentWaitingStore } from '../state/agent-waiting-store';
 import { useContextualPanelNavStore } from '../state/contextual-panel-nav-store';
 import { useGitScmStore } from '../state/git-scm-store';
 import { useLayoutStore } from '../state/layout-store';
@@ -44,6 +45,7 @@ export function AttentionInbox() {
   const open = useAttentionInboxStore((s) => s.open);
   const setOpen = useAttentionInboxStore((s) => s.setOpen);
   const notifications = useAgentNotificationStore((s) => s.items);
+  const waitingSnapshot = useAgentWaitingStore((s) => s.snapshot);
   const pr = useGitScmStore((s) => s.pr);
   const missions = useOrchStore((s) => s.missionSummaries);
   const providers = useProviderStore((s) => s.providers);
@@ -64,6 +66,7 @@ export function AttentionInbox() {
     () =>
       collectAttentionItems({
         notifications,
+        waitingAgents: [...waitingSnapshot.entries.values()],
         pr: pr
           ? {
               number: pr.number,
@@ -75,7 +78,7 @@ export function AttentionInbox() {
         missions,
         providers,
       }),
-    [notifications, pr, missions, providers],
+    [notifications, waitingSnapshot, pr, missions, providers],
   );
 
   if (!open) return null;
