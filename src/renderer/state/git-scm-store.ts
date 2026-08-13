@@ -3,8 +3,14 @@ import type {
   GitFileChange,
   GitLogEntry,
 } from '../../shared/git-scm';
+import type { ExternalIssue, ForgePrInspect } from '../../shared/integrations-types';
+import { generateLocalPullRequestFields } from '../../shared/pull-request-generation';
+import {
+  decideGitPrimaryAction,
+  dispatchGitPrimaryAction,
+} from './git-primary-action';
 
-export type GitScmTab = 'changes' | 'history';
+export type GitScmTab = 'changes' | 'history' | 'issues';
 
 export type SelectedGitFile = {
   path: string;
@@ -20,6 +26,12 @@ interface GitScmStore {
   untracked: GitFileChange[];
   clean: boolean;
   truncated: boolean;
+  ahead: number;
+  behind: number;
+  hasUpstream: boolean;
+  hasUnresolvedConflicts: boolean;
+  defaultBranch: string | null;
+  remoteBusy: boolean;
   commits: GitLogEntry[];
   commitMessage: string;
   selected: SelectedGitFile | null;
@@ -28,6 +40,9 @@ interface GitScmStore {
   mutating: boolean;
   committing: boolean;
   error: string | null;
+  pr: ForgePrInspect | null;
+  prBusy: boolean;
+  prError: string | null;
 
   setTab(tab: GitScmTab): void;
   setCommitMessage(message: string): void;
@@ -38,6 +53,15 @@ interface GitScmStore {
   stageAll(section: 'unstaged' | 'untracked' | 'all'): Promise<void>;
   unstageAll(): Promise<void>;
   commit(): Promise<boolean>;
+  pushCurrentBranch(): Promise<boolean>;
+  createPrFromDraft(): Promise<boolean>;
+  runPrimaryAction(): Promise<boolean>;
+  enqueuePr(mode?: 'when-ready' | 'now'): Promise<boolean>;
+  setAutoMerge(enabled: boolean): Promise<boolean>;
+  issues: ExternalIssue[];
+  issuesError: string | null;
+  issuesLoading: boolean;
+  refreshIssues(): Promise<void>;
   reset(): void;
 }
 
@@ -48,6 +72,11 @@ function emptyLists() {
     untracked: [] as GitFileChange[],
     clean: true,
     truncated: false,
+    ahead: 0,
+    behind: 0,
+    hasUpstream: false,
+    hasUnresolvedConflicts: false,
+    defaultBranch: null as string | null,
     branch: null as string | null,
     remote: null as string | null,
   };
@@ -66,11 +95,19 @@ export const useGitScmStore = create<GitScmStore>((set, get) => ({
   loading: false,
   mutating: false,
   committing: false,
+  remoteBusy: false,
   error: null,
+  pr: null,
+  prBusy: false,
+  prError: null,
+  issues: [],
+  issuesError: null,
+  issuesLoading: false,
 
   setTab: (tab) => {
     set({ tab });
     if (tab === 'history') void get().refresh();
+    if (tab === 'issues') void get().refreshIssues();
   },
 
   setCommitMessage: (commitMessage) => set({ commitMessage }),
@@ -100,6 +137,11 @@ export const useGitScmStore = create<GitScmStore>((set, get) => ({
         untracked: status.untracked ?? [],
         clean: status.clean ?? false,
         truncated: status.truncated ?? false,
+        ahead: status.ahead ?? 0,
+        behind: status.behind ?? 0,
+        hasUpstream: status.hasUpstream ?? false,
+        hasUnresolvedConflicts: status.hasUnresolvedConflicts ?? false,
+        defaultBranch: status.defaultBranch ?? null,
       });
 
       if (get().tab === 'history') {
@@ -107,6 +149,18 @@ export const useGitScmStore = create<GitScmStore>((set, get) => ({
         if (seq !== refreshSeq) return;
         if (log.ok) set({ commits: log.commits });
         else set({ error: log.error });
+      }
+
+      const inspect = api.inspectPr;
+      if (inspect) {
+        try {
+          const pr = await inspect();
+          if (seq !== refreshSeq) return;
+          if (pr.ok) set({ pr: pr.review, prError: null });
+          else set({ pr: null, prError: pr.error });
+        } catch {
+          if (seq === refreshSeq) set({ pr: null, prError: null });
+        }
       }
 
       if (selected) {
@@ -288,6 +342,173 @@ export const useGitScmStore = create<GitScmStore>((set, get) => ({
     }
   },
 
+  pushCurrentBranch: async () => {
+    const api = window.nexus?.integrations;
+    if (!api?.gitPush) {
+      set({ error: 'API git push indisponível' });
+      return false;
+    }
+    set({ remoteBusy: true, error: null });
+    try {
+      const r = await api.gitPush();
+      if (!r.ok) {
+        set({ remoteBusy: false, error: r.error });
+        return false;
+      }
+      set({ remoteBusy: false });
+      await get().refresh();
+      return true;
+    } catch (err) {
+      set({
+        remoteBusy: false,
+        error: err instanceof Error ? err.message : 'falha ao enviar a branch',
+      });
+      return false;
+    }
+  },
+
+  createPrFromDraft: async () => {
+    const api = window.nexus?.integrations;
+    if (!api?.createPr) {
+      set({ error: 'API de PR indisponível' });
+      return false;
+    }
+    set({ remoteBusy: true, error: null, prError: null });
+    try {
+      const log = await api.gitLog(20);
+      const commits = log.ok ? log.commits : get().commits;
+      const draft = generateLocalPullRequestFields({
+        branch: get().branch,
+        base: get().defaultBranch ?? 'main',
+        commits,
+      });
+      const r = await api.createPr({
+        title: draft.title,
+        body: draft.body,
+        draft: draft.draft,
+      });
+      if (!r.ok) {
+        set({ remoteBusy: false, error: r.error, prError: r.error });
+        return false;
+      }
+      set({ remoteBusy: false });
+      await get().refresh();
+      return true;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'falha ao abrir PR';
+      set({ remoteBusy: false, error: message, prError: message });
+      return false;
+    }
+  },
+
+  runPrimaryAction: async () => {
+    const s = get();
+    const decision = decideGitPrimaryAction({
+      stagedCount: s.staged.length,
+      unstagedCount: s.unstaged.length,
+      untrackedCount: s.untracked.length,
+      commitMessage: s.commitMessage,
+      hasUnresolvedConflicts: s.hasUnresolvedConflicts,
+      committing: s.committing,
+      remoteBusy: s.remoteBusy,
+      branch: s.branch,
+      hasUpstream: s.hasUpstream,
+      ahead: s.ahead,
+      behind: s.behind,
+      defaultBranch: s.defaultBranch,
+      pr: s.pr,
+    });
+    return dispatchGitPrimaryAction(decision, {
+      commit: () => get().commit(),
+      stageAll: () => get().stageAll('all'),
+      push: () => get().pushCurrentBranch(),
+      createPr: () => get().createPrFromDraft(),
+      enqueuePr: () => get().enqueuePr('when-ready'),
+    });
+  },
+
+  refreshIssues: async () => {
+    const api = window.nexus?.integrations;
+    if (!api?.listGithubIssues && !api?.listLinearIssues) {
+      set({ issuesError: 'API de issues indisponível', issues: [] });
+      return;
+    }
+    set({ issuesLoading: true, issuesError: null });
+    try {
+      const [gh, linear] = await Promise.all([
+        api.listGithubIssues?.({ limit: 20, state: 'open' }).catch(() => null),
+        api.listLinearIssues?.({ limit: 20 }).catch(() => null),
+      ]);
+      const issues: ExternalIssue[] = [];
+      if (gh?.ok) issues.push(...gh.issues);
+      if (linear?.ok) issues.push(...linear.issues);
+      const err =
+        (gh && !gh.ok ? gh.error : null) ||
+        (linear && !linear.ok ? linear.error : null);
+      set({
+        issuesLoading: false,
+        issues,
+        issuesError: issues.length === 0 ? err : null,
+      });
+    } catch (err) {
+      set({
+        issuesLoading: false,
+        issues: [],
+        issuesError: err instanceof Error ? err.message : 'falha ao listar issues',
+      });
+    }
+  },
+
+  enqueuePr: async (mode) => {
+    const api = window.nexus?.integrations;
+    if (!api?.enqueuePr) {
+      set({ prError: 'API de PR indisponível' });
+      return false;
+    }
+    set({ prBusy: true, prError: null });
+    try {
+      const r = await api.enqueuePr({ mode });
+      if (!r.ok) {
+        set({ prBusy: false, prError: r.error });
+        return false;
+      }
+      set({ prBusy: false });
+      await get().refresh();
+      return true;
+    } catch (err) {
+      set({
+        prBusy: false,
+        prError: err instanceof Error ? err.message : 'falha ao enfileirar PR',
+      });
+      return false;
+    }
+  },
+
+  setAutoMerge: async (enabled) => {
+    const api = window.nexus?.integrations;
+    if (!api?.setAutoMerge) {
+      set({ prError: 'API de PR indisponível' });
+      return false;
+    }
+    set({ prBusy: true, prError: null });
+    try {
+      const r = await api.setAutoMerge({ enabled });
+      if (!r.ok) {
+        set({ prBusy: false, prError: r.error });
+        return false;
+      }
+      set({ prBusy: false });
+      await get().refresh();
+      return true;
+    } catch (err) {
+      set({
+        prBusy: false,
+        prError: err instanceof Error ? err.message : 'falha no auto-merge',
+      });
+      return false;
+    }
+  },
+
   reset: () => {
     refreshSeq += 1;
     selectSeq += 1;
@@ -301,7 +522,14 @@ export const useGitScmStore = create<GitScmStore>((set, get) => ({
       loading: false,
       mutating: false,
       committing: false,
+      remoteBusy: false,
       error: null,
+      pr: null,
+      prBusy: false,
+      prError: null,
+      issues: [],
+      issuesError: null,
+      issuesLoading: false,
     });
   },
 }));

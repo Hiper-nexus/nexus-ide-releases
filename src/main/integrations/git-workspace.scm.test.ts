@@ -58,6 +58,11 @@ describe('git-workspace SCM integration (real git)', () => {
     if (!status.ok) return;
     expect(status.clean).toBe(true);
     expect(status.branch).toBe('main');
+    expect(status.hasUpstream).toBe(false);
+    expect(status.ahead).toBe(0);
+    expect(status.behind).toBe(0);
+    expect(status.hasUnresolvedConflicts).toBe(false);
+    expect(status.defaultBranch).toBe('main');
 
     fs.writeFileSync(path.join(root, 'hello.ts'), 'export const n = 1;\n');
     fs.writeFileSync(path.join(root, 'README.md'), '# scm\nchanged\n');

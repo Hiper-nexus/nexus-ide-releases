@@ -63,6 +63,8 @@ describe('isToolAllowed', () => {
     expect(isToolAllowed([], 'pane_read_many')).toBe(true);
     expect(isToolAllowed([], 'nexus_pane_list')).toBe(true);
     expect(isToolAllowed([], 'nexus_pane_whoami')).toBe(true);
+    expect(isToolAllowed([], 'nexus_pr_inspect')).toBe(true);
+    expect(isToolAllowed([], 'nexus_pr_enqueue')).toBe(false);
     expect(isToolAllowed([], 'nexus_pane_write')).toBe(false);
     expect(isToolAllowed([], 'nexus_pane_spawn')).toBe(false);
   });

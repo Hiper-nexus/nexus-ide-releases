@@ -56,6 +56,14 @@ export const SHORTCUTS: readonly ShortcutEntry[] = Object.freeze([
     short: 'missão',
   }),
   Object.freeze({
+    id: 'attention-inbox',
+    keys: formatShortcut('mod', 'J'),
+    action: 'Lista de atenção: Enter, PR, missão, login',
+    group: 'command' as const,
+    primary: true,
+    short: 'atenção',
+  }),
+  Object.freeze({
     id: 'task-board',
     keys: formatShortcut('mod', 'B'),
     action: 'Quadro de tarefas',
@@ -187,6 +195,7 @@ export const GLOBAL_HANDLER_SHORTCUT_IDS: readonly string[] = Object.freeze([
   'command-palette',
   'cheatsheet',
   'mission-new',
+  'attention-inbox',
   'focus-pane-n',
   'split-right',
   'split-down',

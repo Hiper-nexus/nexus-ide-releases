@@ -84,7 +84,12 @@ describe('fetchKimiUsageWithOauth', () => {
         refreshToken: 'rt',
         expiresAt: 1,
       },
-      { fetchImpl: fetchImpl as never, persistRefresh: false, now: Date.now() },
+      {
+        fetchImpl: fetchImpl as never,
+        allowRefresh: true,
+        persistRefresh: false,
+        now: Date.now(),
+      },
     );
 
     expect(fetchImpl).toHaveBeenCalledWith(
@@ -100,6 +105,38 @@ describe('fetchKimiUsageWithOauth', () => {
       }),
     );
     expect(w?.some((x) => x.kind === 'hours')).toBe(true);
+    expect(w?.some((x) => x.kind === 'weekly')).toBe(true);
+  });
+
+  it('não rotaciona o grant nativo — access expirado usa o token atual', async () => {
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (String(url).includes('auth.kimi.com')) {
+        throw new Error('quota probe must not refresh native kimi-code');
+      }
+      if (String(url).includes('/usages')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => LIVE_USAGES,
+          text: async () => '',
+        };
+      }
+      return { ok: false, status: 404, json: async () => ({}), text: async () => '' };
+    });
+
+    const w = await fetchKimiUsageWithOauth(
+      {
+        accessToken: 'stale-but-cli-owned',
+        refreshToken: 'rt-must-not-be-spent',
+        expiresAt: 1,
+      },
+      { fetchImpl: fetchImpl as never, now: Date.now() },
+    );
+
+    expect(fetchImpl).not.toHaveBeenCalledWith(
+      KIMI_OAUTH_TOKEN_URL,
+      expect.anything(),
+    );
     expect(w?.some((x) => x.kind === 'weekly')).toBe(true);
   });
 });

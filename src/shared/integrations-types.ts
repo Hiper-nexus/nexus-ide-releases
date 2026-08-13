@@ -37,6 +37,11 @@ export const INTEGRATIONS_CHANNELS = {
   forgeListPrs: 'integrations:forge.listPrs',
   /** PR/MR aberto para a branch atual (read-side da camada forge). */
   forgeBranchReview: 'integrations:forge.branchReview',
+  /** PR da branch atual + metadata da merge queue do GitHub. */
+  forgeInspectPr: 'integrations:forge.inspectPr',
+  /** Enfileira o PR (Merge when ready / enqueue / stack merge-async). */
+  forgeEnqueuePr: 'integrations:forge.enqueuePr',
+  forgeSetAutoMerge: 'integrations:forge.setAutoMerge',
   githubListIssues: 'integrations:github.listIssues',
   linearListIssues: 'integrations:linear.listIssues',
   linearSetKey: 'integrations:linear.setKey',
@@ -47,6 +52,7 @@ export const INTEGRATIONS_CHANNELS = {
   gitCommit: 'integrations:git.commit',
   gitLog: 'integrations:git.log',
   gitFileDiff: 'integrations:git.fileDiff',
+  gitPush: 'integrations:git.push',
   setGithubToken: 'integrations:github.setToken',
   hasGithubToken: 'integrations:github.hasToken',
   githubDeviceFlowStatus: 'integrations:github.deviceFlowStatus',
@@ -121,6 +127,42 @@ export type ListIssuesResult =
 export type BranchReviewResult =
   | { ok: true; branch: string; review: ForgePrSummary | null }
   | { ok: false; error: string; githubError?: GitHubApiError };
+
+export type ForgePrInspect = {
+  number: number;
+  url: string;
+  title: string;
+  state: 'open' | 'closed' | 'merged' | 'draft';
+  sourceBranch: string;
+  targetBranch: string;
+  mergeable?: string;
+  mergeStateStatus?: string | null;
+  reviewDecision?: string | null;
+  autoMergeEnabled: boolean;
+  autoMergeAllowed: boolean | null;
+  mergeQueueRequired: boolean | null;
+  stacked: boolean;
+};
+
+export type InspectPrResult =
+  | { ok: true; branch: string; review: ForgePrInspect | null }
+  | { ok: false; error: string; githubError?: GitHubApiError };
+
+export type EnqueuePrRequest = {
+  number?: number;
+  mode?: 'when-ready' | 'now';
+  mergeMethod?: 'squash' | 'merge' | 'rebase';
+};
+
+export type EnqueuePrResult =
+  | { ok: true; action: 'enqueued' | 'when-ready' | 'stack'; number: number }
+  | { ok: false; error: string; githubError?: GitHubApiError };
+
+export type SetAutoMergeRequest = {
+  number?: number;
+  enabled: boolean;
+  mergeMethod?: 'squash' | 'merge' | 'rebase';
+};
 
 /** Payload of GITHUB_DEVICE_CODE_CHANNEL (main → renderer). */
 export type GitHubDeviceCodePayload = {
@@ -223,4 +265,16 @@ export const gitFileDiffSchema = z.object({
   path: z.string().min(1).max(4096).superRefine(safePathspec),
   staged: z.boolean().optional(),
   untracked: z.boolean().optional(),
+});
+
+export const enqueuePrSchema = z.object({
+  number: z.number().int().positive().max(1_000_000).optional(),
+  mode: z.enum(['when-ready', 'now']).optional(),
+  mergeMethod: z.enum(['squash', 'merge', 'rebase']).optional(),
+});
+
+export const setAutoMergeSchema = z.object({
+  number: z.number().int().positive().max(1_000_000).optional(),
+  enabled: z.boolean(),
+  mergeMethod: z.enum(['squash', 'merge', 'rebase']).optional(),
 });

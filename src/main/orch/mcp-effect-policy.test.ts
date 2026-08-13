@@ -142,6 +142,7 @@ describe('MCP effect policy', () => {
     for (const tool of [
       'nexus_file_read',
       'nexus_git_diff',
+      'nexus_pr_inspect',
       'nexus_pane_read',
       'nexus_context_draft_get',
       'nexus_context_draft_review',
@@ -161,6 +162,8 @@ describe('MCP effect policy', () => {
       'nexus_git_add',
       'nexus_git_commit',
       'nexus_git_push',
+      'nexus_pr_enqueue',
+      'nexus_pr_auto_merge',
       'nexus_pane_spawn',
       'nexus_route_task',
       'nexus_context_draft_apply',

@@ -1,0 +1,87 @@
+/* Xícara SVG — vapor compartilhado (pet + empty states do Git).
+   O posicionamento no sprite (.pet__coffee) fica em pet.css: a janela do
+   pet não importa o CSS da app, então pet.css também @importa este arquivo. */
+
+.pet-coffee__steam {
+  opacity: 0;
+  animation: pet-steam 2.6s ease-in-out infinite;
+}
+
+.pet-coffee__steam--b {
+  animation-delay: 0.87s;
+}
+
+.pet-coffee__steam--c {
+  animation-delay: 1.74s;
+}
+
+.pet-coffee--celebrating .pet-coffee__steam {
+  animation-duration: 1.3s;
+}
+
+/* Inclinação de "gole" durante a celebração: a xícara tomba brevemente como
+   se o pet estivesse bebendo. Período de 1s aproxima o bounce do sprite (0.5s
+   celebrate), com um desvio intencional para não ser mecânico. */
+.pet-coffee--celebrating {
+  animation: pet-coffee-sip 1s ease-in-out infinite;
+  transform-origin: bottom center;
+}
+
+@keyframes pet-coffee-sip {
+  0%, 60%, 100% { transform: rotate(0deg); }
+  30%           { transform: rotate(-14deg); }
+}
+
+@keyframes pet-steam {
+  0% {
+    opacity: 0;
+    transform: translateY(0) scaleX(1);
+  }
+  20% {
+    opacity: 0.9;
+  }
+  80% {
+    opacity: 0;
+    transform: translateY(-9px) scaleX(1.5);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-9px);
+  }
+}
+
+@keyframes pet-coffee-in {
+  from {
+    opacity: 0;
+    transform: scale(0.55) translateY(5px);
+  }
+  to {
+    opacity: 0.8;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.git-scm__empty-coffee {
+  color: color-mix(in srgb, var(--accent, #7c86ff) 35%, #c4a06a);
+  opacity: 0.92;
+  margin-bottom: 2px;
+  animation: pet-coffee-in 380ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pet-coffee__steam {
+    animation: none;
+    opacity: 0.4;
+  }
+
+  /* Inclina estática em reduced-motion: presença visual sem animação. */
+  .pet-coffee--celebrating {
+    animation: none;
+    transform: rotate(-8deg);
+  }
+
+  .git-scm__empty-coffee {
+    animation: none;
+    opacity: 0.75;
+  }
+}

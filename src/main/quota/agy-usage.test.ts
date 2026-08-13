@@ -72,7 +72,7 @@ describe('fetchAgyUsageWindows', () => {
         refreshToken: 'rt',
         expiryDate: 1, // long expired
       },
-      { fetchImpl: fetchImpl as never, now: Date.now() },
+      { fetchImpl: fetchImpl as never, now: Date.now(), allowRefresh: true },
     );
 
     expect(fetchImpl).toHaveBeenCalledWith(

@@ -217,6 +217,31 @@ const schemas = new Map<string, z.ZodType<Record<string, unknown>>>([
     z.object({ name: z.string().min(1).max(255), cwd: optionalPathText }).strict(),
   ],
   [
+    'pr_inspect',
+    z.object({
+      number: positiveInt.max(1_000_000).optional(),
+      cwd: optionalPathText,
+    }).strict(),
+  ],
+  [
+    'pr_enqueue',
+    z.object({
+      number: positiveInt.max(1_000_000).optional(),
+      mode: z.enum(['when-ready', 'now']).optional(),
+      mergeMethod: z.enum(['squash', 'merge', 'rebase']).optional(),
+      cwd: optionalPathText,
+    }).strict(),
+  ],
+  [
+    'pr_auto_merge',
+    z.object({
+      enabled: z.boolean(),
+      number: positiveInt.max(1_000_000).optional(),
+      mergeMethod: z.enum(['squash', 'merge', 'rebase']).optional(),
+      cwd: optionalPathText,
+    }).strict(),
+  ],
+  [
     'editor_focus',
     z.object({
       path: pathText,

@@ -170,6 +170,11 @@ describe('detectLimit', () => {
   it('detects auth errors', () => {
     expect(detectLimit('401 authentication_error')?.kind).toBe('auth');
     expect(detectLimit('invalid api key provided')?.kind).toBe('auth');
+    expect(
+      detectLimit(
+        'Error: [internal] Stored token for "kimi-code" was rejected; re-login required.',
+      )?.kind,
+    ).toBe('auth');
   });
 
   it('detects real 401 spellings (framed number / unauthorized)', () => {

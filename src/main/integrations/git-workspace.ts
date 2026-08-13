@@ -12,6 +12,7 @@
  */
 import {
   assertSafeGitPathspec,
+  hasUnresolvedGitConflicts,
   parseGitLogOneline,
   parsePorcelainV1,
   truncateDiff,
@@ -153,6 +154,58 @@ export function gitBranchPushState(
   return { isOnRemote: true, aheadCount };
 }
 
+function parseLeftRightCount(stdout: string): { ahead: number; behind: number } {
+  const [behindRaw, aheadRaw] = stdout.trim().split(/\s+/);
+  return {
+    ahead: Number.parseInt(aheadRaw ?? '', 10) || 0,
+    behind: Number.parseInt(behindRaw ?? '', 10) || 0,
+  };
+}
+
+/**
+ * Divergence vs the configured upstream, falling back to origin/<branch>
+ * when tracking is missing but the remote ref exists (already published).
+ */
+export function gitUpstreamStatus(
+  cwd: string,
+  branch: string | null,
+): { hasUpstream: boolean; ahead: number; behind: number } {
+  const empty = { hasUpstream: false, ahead: 0, behind: 0 };
+  if (!branch) return empty;
+  const name = branch.trim();
+  if (
+    !name ||
+    name === 'HEAD' ||
+    !SAFE_BRANCH_NAME.test(name) ||
+    name.startsWith('-') ||
+    name.includes('..')
+  ) {
+    return empty;
+  }
+
+  const tracked = git(cwd, ['rev-parse', '--abbrev-ref', '@{upstream}']);
+  const upstreamRef = tracked.ok ? tracked.stdout.trim() : '';
+  if (upstreamRef) {
+    const count = git(cwd, [
+      'rev-list',
+      '--left-right',
+      '--count',
+      `${upstreamRef}...HEAD`,
+    ]);
+    if (!count.ok) return { hasUpstream: true, ahead: 0, behind: 0 };
+    return { hasUpstream: true, ...parseLeftRightCount(count.stdout) };
+  }
+
+  const probe = gitBranchPushState(cwd, name);
+  if (!probe.isOnRemote) return empty;
+  const behind = git(cwd, ['rev-list', '--count', `HEAD..origin/${name}`]);
+  return {
+    hasUpstream: true,
+    ahead: probe.aheadCount,
+    behind: behind.ok ? Number.parseInt(behind.stdout.trim(), 10) || 0 : 0,
+  };
+}
+
 export function gitDiff(cwd: string, staged = false): { ok: true; diff: string } | { ok: false; error: string } {
   const unsafe = refuseUnsafeConfig(cwd);
   if (unsafe) return { ok: false, error: unsafe };
@@ -183,10 +236,18 @@ export function gitScmStatus(cwd: string): GitStatusResult {
     return { ok: false, error: r.stderr.trim() || `git status exit ${r.code}` };
   }
   const parsed = parsePorcelainV1(r.stdout);
+  const branch = gitCurrentBranch(cwd);
+  const upstream = gitUpstreamStatus(cwd, branch);
   return {
     ok: true,
-    branch: gitCurrentBranch(cwd),
+    branch,
     remote: gitRemoteOrigin(cwd),
+    defaultBranch: gitDefaultBranch(cwd),
+    hasUnresolvedConflicts: hasUnresolvedGitConflicts(
+      parsed.staged,
+      parsed.unstaged,
+    ),
+    ...upstream,
     ...parsed,
   };
 }

@@ -522,8 +522,8 @@ export const REMOTE_CLIENT_HTML = `<!doctype html>
       Notification.permission !== 'granted'
     ) return;
     var body = status === 'done'
-      ? 'Uma missão foi concluída.'
-      : 'Uma missão foi bloqueada e requer ação no desktop.';
+      ? 'Uma missão terminou. Abra o desktop para revisar o resultado.'
+      : 'Uma missão precisa de você — abra o desktop e aperte Enter ou responda.';
     try {
       new Notification('Nexus Remote', {
         body: body,

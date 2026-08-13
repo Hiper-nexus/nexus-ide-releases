@@ -1,7 +1,9 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import {
+  agentAttentionPhrase,
   agentNotificationStatusLabel,
+  shouldPingHumanForNotification,
   countUnread,
   evaluatePaneTransition,
   formatNotificationAgo,
@@ -131,5 +133,18 @@ describe('agent-notification domain', () => {
     }
     expect(items).toHaveLength(AGENT_NOTIFICATION_MAX);
     expect(items[0]?.paneId).toBe(`p${AGENT_NOTIFICATION_MAX + 11}`);
+  });
+});
+
+describe('agentAttentionPhrase', () => {
+  it('pede Enter e revisão em português', () => {
+    expect(agentAttentionPhrase('needs_input', 'Claude')).toBe(
+      'Claude precisa que você aperte Enter.',
+    );
+    expect(agentAttentionPhrase('completed', 'Codex')).toBe(
+      'Codex terminou e espera sua revisão.',
+    );
+    expect(shouldPingHumanForNotification('exited')).toBe(false);
+    expect(shouldPingHumanForNotification('completed')).toBe(true);
   });
 });

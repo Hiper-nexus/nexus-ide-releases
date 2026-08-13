@@ -6,6 +6,7 @@ import { porcelainZToLf } from '../../shared/git-scm';
 import {
   INTEGRATIONS_CHANNELS,
   createPrSchema,
+  enqueuePrSchema,
   gitCommitSchema,
   gitFileDiffSchema,
   gitLogSchema,
@@ -13,6 +14,7 @@ import {
   listIssuesSchema,
   portForwardSchema,
   remoteWorktreeSchema,
+  setAutoMergeSchema,
   setTokenSchema,
 } from '../../shared/integrations-types';
 import {
@@ -252,6 +254,17 @@ export function registerIntegrationsIpc(): void {
     }
   });
 
+  ipcMain.handle(INTEGRATIONS_CHANNELS.gitPush, (event) => {
+    try {
+      const cwd = workspaceCwd(event);
+      const branch = gitCurrentBranch(cwd);
+      if (!branch) return { ok: false as const, error: 'sem branch para enviar' };
+      return gitPushCurrentBranch(cwd, branch);
+    } catch (err) {
+      return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
   ipcMain.handle(INTEGRATIONS_CHANNELS.forgeCreatePr, async (event, raw) => {
     const parsed = createPrSchema.safeParse(raw);
     if (!parsed.success) return { ok: false, error: 'invalid request' };
@@ -341,6 +354,154 @@ export function registerIntegrationsIpc(): void {
         return { ok: false, error: result.reason, githubError: result.apiError };
       }
       return { ok: true, branch, review: result.review };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle(INTEGRATIONS_CHANNELS.forgeInspectPr, async (event) => {
+    try {
+      const cwd = workspaceCwd(event);
+      const forge = selectForge(gitRemoteOrigin(cwd));
+      if (!forge) {
+        return { ok: false, error: 'origin não é um remote hospedado reconhecido' };
+      }
+      const token = forgeTokenFor(forge.providerId);
+      if (!token) {
+        return { ok: false, error: forgeTokenMissingHint(forge.providerId) };
+      }
+      const branch = gitCurrentBranch(cwd);
+      if (!branch) return { ok: false, error: 'não consegui resolver a branch atual' };
+      const provider = resolveForgeProvider(forge, token, defaultGithubHttp);
+      if (!provider.getReviewForBranch || !provider.inspectReview) {
+        return { ok: true, branch, review: null };
+      }
+      const listed = await provider.getReviewForBranch(
+        { owner: forge.owner, name: forge.name, host: forge.host },
+        branch,
+      );
+      if (!listed.ok) {
+        return { ok: false, error: listed.reason, githubError: listed.apiError };
+      }
+      if (!listed.review) return { ok: true, branch, review: null };
+      const inspected = await provider.inspectReview(
+        { owner: forge.owner, name: forge.name, host: forge.host },
+        listed.review.number,
+      );
+      if (!inspected.ok) {
+        return { ok: false, error: inspected.reason, githubError: inspected.apiError };
+      }
+      return { ok: true, branch, review: inspected.review };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle(INTEGRATIONS_CHANNELS.forgeEnqueuePr, async (event, raw) => {
+    const parsed = enqueuePrSchema.safeParse(raw ?? {});
+    if (!parsed.success) return { ok: false, error: 'invalid request' };
+    try {
+      const cwd = workspaceCwd(event);
+      const forge = selectForge(gitRemoteOrigin(cwd));
+      if (!forge) {
+        return { ok: false, error: 'origin não é um remote hospedado reconhecido' };
+      }
+      const token = forgeTokenFor(forge.providerId);
+      if (!token) {
+        return { ok: false, error: forgeTokenMissingHint(forge.providerId) };
+      }
+      const provider = resolveForgeProvider(forge, token, defaultGithubHttp);
+      if (!provider.enqueueMergeQueue) {
+        return { ok: false, error: `merge queue ainda não suportada para ${forge.providerId}` };
+      }
+      let number = parsed.data.number;
+      if (!number) {
+        const branch = gitCurrentBranch(cwd);
+        if (!branch || !provider.getReviewForBranch) {
+          return { ok: false, error: 'informe o número do PR' };
+        }
+        const listed = await provider.getReviewForBranch(
+          { owner: forge.owner, name: forge.name, host: forge.host },
+          branch,
+        );
+        if (!listed.ok) return { ok: false, error: listed.reason, githubError: listed.apiError };
+        number = listed.review?.number;
+      }
+      if (!number) return { ok: false, error: 'nenhum PR aberto nesta branch' };
+      const authorization: ForgeAuthorization = {
+        grantedBy: 'operator-ui',
+        grantedAt: Date.now(),
+        scope: ['enqueue-merge-queue', 'auto-merge'],
+        reason: 'Enfileirar PR na merge queue do GitHub',
+        expiresAt: Date.now() + 2 * 60_000,
+      };
+      const result = await provider.enqueueMergeQueue(
+        { owner: forge.owner, name: forge.name, host: forge.host },
+        {
+          number,
+          mode: parsed.data.mode,
+          mergeMethod: parsed.data.mergeMethod,
+        },
+        authorization,
+      );
+      return result.ok
+        ? { ok: true, action: result.action, number }
+        : { ok: false, error: result.reason, githubError: result.apiError };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle(INTEGRATIONS_CHANNELS.forgeSetAutoMerge, async (event, raw) => {
+    const parsed = setAutoMergeSchema.safeParse(raw);
+    if (!parsed.success) return { ok: false, error: 'invalid request' };
+    try {
+      const cwd = workspaceCwd(event);
+      const forge = selectForge(gitRemoteOrigin(cwd));
+      if (!forge) {
+        return { ok: false, error: 'origin não é um remote hospedado reconhecido' };
+      }
+      const token = forgeTokenFor(forge.providerId);
+      if (!token) {
+        return { ok: false, error: forgeTokenMissingHint(forge.providerId) };
+      }
+      const provider = resolveForgeProvider(forge, token, defaultGithubHttp);
+      if (!provider.setAutoMerge) {
+        return { ok: false, error: `auto-merge ainda não suportado para ${forge.providerId}` };
+      }
+      let number = parsed.data.number;
+      if (!number) {
+        const branch = gitCurrentBranch(cwd);
+        if (!branch || !provider.getReviewForBranch) {
+          return { ok: false, error: 'informe o número do PR' };
+        }
+        const listed = await provider.getReviewForBranch(
+          { owner: forge.owner, name: forge.name, host: forge.host },
+          branch,
+        );
+        if (!listed.ok) return { ok: false, error: listed.reason, githubError: listed.apiError };
+        number = listed.review?.number;
+      }
+      if (!number) return { ok: false, error: 'nenhum PR aberto nesta branch' };
+      const authorization: ForgeAuthorization = {
+        grantedBy: 'operator-ui',
+        grantedAt: Date.now(),
+        scope: ['auto-merge', 'enqueue-merge-queue'],
+        reason: 'Ligar ou desligar auto-merge do GitHub',
+        expiresAt: Date.now() + 2 * 60_000,
+      };
+      const result = await provider.setAutoMerge(
+        { owner: forge.owner, name: forge.name, host: forge.host },
+        {
+          number,
+          enabled: parsed.data.enabled,
+          mergeMethod: parsed.data.mergeMethod,
+        },
+        authorization,
+      );
+      return result.ok
+        ? { ok: true, action: result.action, number }
+        : { ok: false, error: result.reason, githubError: result.apiError };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }

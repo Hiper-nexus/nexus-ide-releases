@@ -163,7 +163,13 @@ export async function refreshGeminiAccessToken(
 
 export async function fetchAgyUsageWindows(
   creds: GeminiOauthCreds,
-  opts?: { fetchImpl?: FetchLike; timeoutMs?: number; now?: number },
+  opts?: {
+    fetchImpl?: FetchLike;
+    timeoutMs?: number;
+    now?: number;
+    /** Default false: o login nativo ~/.gemini é do CLI, não da sonda de cota. */
+    allowRefresh?: boolean;
+  },
 ): Promise<QuotaWindow[] | null> {
   const fetchImpl = opts?.fetchImpl ?? (globalThis.fetch as FetchLike);
   if (typeof fetchImpl !== 'function') return null;
@@ -175,7 +181,7 @@ export async function fetchAgyUsageWindows(
     !access ||
     (typeof creds.expiryDate === 'number' && creds.expiryDate < now + 60_000);
 
-  if (expired && creds.refreshToken) {
+  if (expired && creds.refreshToken && opts?.allowRefresh === true) {
     access = await refreshGeminiAccessToken(creds.refreshToken, {
       fetchImpl,
       timeoutMs,

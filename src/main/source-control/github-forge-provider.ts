@@ -5,10 +5,18 @@
 // branch; failures classified into the typed GitHubApiError taxonomy (emdash).
 
 import type {
+  ForgeAutoMergeInput,
   ForgeCreateReviewResult,
+  ForgeEnqueueResult,
   ForgeGetReviewForBranchResult,
+  ForgeInspectReviewResult,
   ForgeProvider,
 } from './forge-provider';
+import {
+  enqueueGitHubPullRequest,
+  inspectGitHubPullRequest,
+  setGitHubPullRequestAutoMerge,
+} from './github-pr-queue';
 // re-exported types below
 import {
   assertForgeWriteAuthorized,
@@ -34,6 +42,12 @@ export type GitHubHttp = {
   ) => Promise<GitHubHttpResponse>;
   getJson: (
     url: string,
+    headers: Record<string, string>,
+  ) => Promise<GitHubHttpResponse>;
+  /** Needed for GitHub stacked-PR merge-async (PUT). Optional for older callers. */
+  putJson?: (
+    url: string,
+    body: unknown,
     headers: Record<string, string>,
   ) => Promise<GitHubHttpResponse>;
 };
@@ -166,6 +180,69 @@ export function createGitHubForgeProvider(options: GitHubForgeOptions): ForgePro
           targetBranch: pr.base?.ref ?? '',
         },
       };
+    },
+    async inspectReview(repo, prNumber): Promise<ForgeInspectReviewResult> {
+      return inspectGitHubPullRequest(
+        { token: options.token, http: options.http, apiBase },
+        repo,
+        prNumber,
+      );
+    },
+    async enqueueMergeQueue(repo, input, auth): Promise<ForgeEnqueueResult> {
+      const kind = 'enqueue-merge-queue' as const;
+      if (!assertForgeWriteAuthorized(auth, kind)) {
+        recordForgeAudit({
+          provider: 'github',
+          kind,
+          authorized: false,
+          actor: auth.grantedBy || 'unknown',
+          detail: 'missing or incomplete authorization',
+        });
+        return { ok: false, reason: 'unauthorized' };
+      }
+      const result = await enqueueGitHubPullRequest(
+        { token: options.token, http: options.http, apiBase },
+        repo,
+        input,
+      );
+      recordForgeAudit({
+        provider: 'github',
+        kind,
+        authorized: true,
+        actor: auth.grantedBy,
+        detail: result.ok
+          ? `enqueue ${result.action} PR #${input.number} on ${repo.owner}/${repo.name}`
+          : result.reason,
+      });
+      return result;
+    },
+    async setAutoMerge(repo, input: ForgeAutoMergeInput, auth): Promise<ForgeEnqueueResult> {
+      const kind = 'auto-merge' as const;
+      if (!assertForgeWriteAuthorized(auth, kind)) {
+        recordForgeAudit({
+          provider: 'github',
+          kind,
+          authorized: false,
+          actor: auth.grantedBy || 'unknown',
+          detail: 'missing or incomplete authorization',
+        });
+        return { ok: false, reason: 'unauthorized' };
+      }
+      const result = await setGitHubPullRequestAutoMerge(
+        { token: options.token, http: options.http, apiBase },
+        repo,
+        input,
+      );
+      recordForgeAudit({
+        provider: 'github',
+        kind,
+        authorized: true,
+        actor: auth.grantedBy,
+        detail: result.ok
+          ? `auto-merge ${input.enabled ? 'on' : 'off'} PR #${input.number}`
+          : result.reason,
+      });
+      return result;
     },
   };
 }

@@ -130,6 +130,27 @@ export function agentNotificationStatusLabel(kind: AgentNotificationKind): strin
   return 'ENCERRADO';
 }
 
+/** Frase humana em PT para ping no desktop/celular. Só estados que pedem ação. */
+export function agentAttentionPhrase(
+  kind: AgentNotificationKind,
+  agentLabel: string,
+): string {
+  const name = agentLabel.trim() || 'O agente';
+  if (kind === 'needs_input') {
+    return `${name} precisa que você aperte Enter.`;
+  }
+  if (kind === 'completed') {
+    return `${name} terminou e espera sua revisão.`;
+  }
+  return `${name} encerrou a sessão.`;
+}
+
+export function shouldPingHumanForNotification(
+  kind: AgentNotificationKind,
+): boolean {
+  return kind === 'needs_input' || kind === 'completed';
+}
+
 export function formatNotificationAgo(now: number, createdAt: number): string {
   const delta = Math.max(0, now - createdAt);
   if (delta < 60_000) return 'agora';

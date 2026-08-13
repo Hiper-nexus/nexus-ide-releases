@@ -87,6 +87,8 @@ const ALWAYS_ALLOWED = new Set([
   "pane_read_many",
   "pane_list",
   "pane_whoami",
+  // Observation: any pane can read GitHub merge-queue state for the branch PR.
+  "pr_inspect",
 ]);
 
 /**

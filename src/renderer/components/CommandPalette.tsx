@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useCommandPaletteStore } from '../state/command-palette-store';
+import { useAttentionInboxStore } from '../state/attention-inbox-store';
 import { useCheatsheetStore } from '../state/cheatsheet-store';
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
@@ -116,6 +117,17 @@ export function CommandPalette() {
       () => useProductNavigationStore.getState().openNewMission(),
       shortcutKeys('mission-new'),
       'missão objetivo equipe',
+    );
+    tool(
+      'attention',
+      'Lista de atenção',
+      'warn',
+      () => {
+        close();
+        useAttentionInboxStore.getState().setOpen(true);
+      },
+      shortcutKeys('attention-inbox'),
+      'atenção enter pr fila missão login',
     );
     tool(
       'terminal',

@@ -36,6 +36,7 @@ const READ_ONLY_TOOLS = new Set([
   'git_diff',
   'git_log',
   'git_status',
+  'pr_inspect',
   'handoff_list',
   'media_providers',
   // Consulta de memória agentic (C2): leitura FTS local; o único write é o
@@ -220,6 +221,8 @@ const EXECUTION_EFFECT_TOOLS = new Set([
   'git_commit',
   'git_pull',
   'git_push',
+  'pr_enqueue',
+  'pr_auto_merge',
   'image_generate',
   'terminal_run',
   'bg_run',

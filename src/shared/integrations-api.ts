@@ -12,10 +12,12 @@ import type {
 import type {
   BranchReviewResult,
   CreatePrResult,
+  EnqueuePrResult,
   GitHubAuthErrorPayload,
   GitHubDeviceCodePayload,
   GitHubDeviceFlowIpcResult,
   GitHubDeviceFlowStatus,
+  InspectPrResult,
   ListIssuesResult,
   ListPrsResult,
 } from './integrations-types';
@@ -52,6 +54,7 @@ export interface IntegrationsApi {
     staged?: boolean;
     untracked?: boolean;
   }): Promise<GitFileDiffResult>;
+  gitPush(): Promise<GitMutateResult>;
   createPr(req: {
     title: string;
     body?: string;
@@ -62,6 +65,17 @@ export interface IntegrationsApi {
   listPrs(): Promise<ListPrsResult>;
   /** PR/MR aberto para a branch atual (null quando não existe). */
   branchReview(): Promise<BranchReviewResult>;
+  inspectPr(): Promise<InspectPrResult>;
+  enqueuePr(req?: {
+    number?: number;
+    mode?: 'when-ready' | 'now';
+    mergeMethod?: 'squash' | 'merge' | 'rebase';
+  }): Promise<EnqueuePrResult>;
+  setAutoMerge(req: {
+    number?: number;
+    enabled: boolean;
+    mergeMethod?: 'squash' | 'merge' | 'rebase';
+  }): Promise<EnqueuePrResult>;
   listGithubIssues(opts?: {
     limit?: number;
     state?: 'open' | 'closed' | 'all';

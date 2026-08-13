@@ -13,7 +13,13 @@ export type ForgeProviderId =
   | 'azure-devops'
   | 'gitea';
 
-export type ForgeWriteKind = 'create-review' | 'update-review' | 'comment' | 'merge';
+export type ForgeWriteKind =
+  | 'create-review'
+  | 'update-review'
+  | 'comment'
+  | 'merge'
+  | 'enqueue-merge-queue'
+  | 'auto-merge';
 
 /** Explicit user/session authorization for any external forge mutation. */
 export type ForgeAuthorization = {
@@ -80,6 +86,56 @@ export type ForgeGetReviewForBranchResult =
       readonly apiError?: GitHubApiError;
     };
 
+/** GitHub merge-queue / auto-merge snapshot (Orca hosted-review parity). */
+export type ForgePRInspect = {
+  readonly number: number;
+  readonly nodeId?: string;
+  readonly url: string;
+  readonly title: string;
+  readonly state: 'open' | 'closed' | 'merged' | 'draft';
+  readonly sourceBranch: string;
+  readonly targetBranch: string;
+  readonly headSha?: string;
+  readonly mergeable?: string;
+  readonly mergeStateStatus?: string | null;
+  readonly reviewDecision?: string | null;
+  readonly autoMergeEnabled: boolean;
+  readonly autoMergeAllowed: boolean | null;
+  readonly mergeQueueRequired: boolean | null;
+  readonly stacked: boolean;
+};
+
+export type ForgeInspectReviewResult =
+  | { readonly ok: true; readonly review: ForgePRInspect }
+  | { readonly ok: true; readonly review: null }
+  | {
+      readonly ok: false;
+      readonly reason: string;
+      readonly apiError?: GitHubApiError;
+    };
+
+export type ForgeEnqueueMode = 'when-ready' | 'now';
+
+export type ForgeEnqueueInput = {
+  readonly number: number;
+  readonly mode?: ForgeEnqueueMode;
+  readonly mergeMethod?: 'squash' | 'merge' | 'rebase';
+};
+
+export type ForgeEnqueueResult =
+  | { readonly ok: true; readonly action: 'enqueued' | 'when-ready' | 'stack' }
+  | {
+      readonly ok: false;
+      readonly reason: string;
+      readonly apiError?: GitHubApiError;
+    };
+
+export type ForgeAutoMergeInput = {
+  readonly number: number;
+  readonly enabled: boolean;
+  readonly mergeMethod?: 'squash' | 'merge' | 'rebase';
+};
+
 export type ForgeProvider = {
   readonly id: ForgeProviderId;
   readonly supportsReviewCreation: boolean;
@@ -98,6 +154,21 @@ export type ForgeProvider = {
     repo: ForgeRepositoryRef,
     branch: string,
   ): Promise<ForgeGetReviewForBranchResult>;
+  /** Rich PR + merge-queue metadata. GitHub only; other forges omit. */
+  inspectReview?(
+    repo: ForgeRepositoryRef,
+    prNumber: number,
+  ): Promise<ForgeInspectReviewResult>;
+  enqueueMergeQueue?(
+    repo: ForgeRepositoryRef,
+    input: ForgeEnqueueInput,
+    auth: ForgeAuthorization,
+  ): Promise<ForgeEnqueueResult>;
+  setAutoMerge?(
+    repo: ForgeRepositoryRef,
+    input: ForgeAutoMergeInput,
+    auth: ForgeAuthorization,
+  ): Promise<ForgeEnqueueResult>;
 };
 
 const auditLog: ForgeAuditEntry[] = [];

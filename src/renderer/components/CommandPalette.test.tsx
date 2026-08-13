@@ -9,6 +9,7 @@ import { useLayoutStore } from '../state/layout-store';
 import { useMissionSetupStore } from '../state/mission-setup-store';
 import { useOrchStore } from '../state/orch-store';
 import { useProductNavigationStore } from '../state/product-navigation-store';
+import { useAttentionInboxStore } from '../state/attention-inbox-store';
 import { useSessionStateStore } from '../state/session-state-store';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
@@ -73,6 +74,7 @@ beforeEach(() => {
     settingsReturnDestination: null,
   });
   useCommandPaletteStore.setState({ open: true });
+  useAttentionInboxStore.setState({ open: false });
 });
 
 afterEach(() => {
@@ -140,6 +142,16 @@ describe('CommandPalette product navigation', () => {
     expect(labels.some((label) => label.includes('Quadro de tarefas'))).toBe(
       true,
     );
+    expect(labels.some((label) => label.includes('Lista de atenção'))).toBe(
+      true,
+    );
+  });
+
+  it('abre a lista de atenção e fecha o palette', () => {
+    const host = render(<CommandPalette />);
+    act(() => actionButton(host, 'Lista de atenção').click());
+    expect(useCommandPaletteStore.getState().open).toBe(false);
+    expect(useAttentionInboxStore.getState().open).toBe(true);
   });
 
   it('keeps a focused mission pane inside its named mission terminals', () => {

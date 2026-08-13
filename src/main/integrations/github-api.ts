@@ -32,6 +32,11 @@ export type GithubHttp = {
     body: unknown,
     headers: Record<string, string>,
   ) => Promise<GithubHttpResponse>;
+  putJson?: (
+    url: string,
+    body: unknown,
+    headers: Record<string, string>,
+  ) => Promise<GithubHttpResponse>;
 };
 
 function collectHeaders(res: Response): Record<string, string> {
@@ -42,20 +47,31 @@ function collectHeaders(res: Response): Record<string, string> {
   return out;
 }
 
+async function jsonRequest(
+  url: string,
+  headers: Record<string, string>,
+  init?: RequestInit,
+): Promise<GithubHttpResponse> {
+  const res = await fetch(url, { ...init, headers });
+  const body = await res.json().catch(() => null);
+  return { status: res.status, body, headers: collectHeaders(res) };
+}
+
 export const defaultGithubHttp: GithubHttp = {
   async getJson(url, headers) {
-    const res = await fetch(url, { headers });
-    const body = await res.json().catch(() => null);
-    return { status: res.status, body, headers: collectHeaders(res) };
+    return jsonRequest(url, headers);
   },
   async postJson(url, body, headers) {
-    const res = await fetch(url, {
+    return jsonRequest(url, headers, {
       method: 'POST',
-      headers,
       body: JSON.stringify(body),
     });
-    const parsed = await res.json().catch(() => null);
-    return { status: res.status, body: parsed, headers: collectHeaders(res) };
+  },
+  async putJson(url, body, headers) {
+    return jsonRequest(url, headers, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    });
   },
 };
 

@@ -180,6 +180,13 @@ const PATTERNS: Pattern[] = [
   { kind: 'auth', cooldownMs: 15 * 60 * 1000, re: /oauth token (?:expired|revoked)/i },
   { kind: 'auth', cooldownMs: 15 * 60 * 1000, re: /(?:error|failed|unable).{0,40}(?:not logged in|session expired)/i },
   { kind: 'auth', cooldownMs: 15 * 60 * 1000, re: /refresh token (?:expired|invalid|revoked)/i },
+  // Kimi Code / Claude-family CLI: refresh rotacionado por outro ator
+  // (sonda de cota, overlay) — o pane ecoa isto e pede /login.
+  {
+    kind: 'auth',
+    cooldownMs: 15 * 60 * 1000,
+    re: /stored token for ["'][^"']+["'] was rejected/i,
+  },
   { kind: 'auth', cooldownMs: 15 * 60 * 1000, re: /(?:erro|falha).{0,40}(?:n[aã]o autenticado|sess[aã]o expirada|token inv[aá]lido)/i },
 ];
 

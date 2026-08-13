@@ -103,6 +103,7 @@ describe('requiresConfirmation', () => {
     expect(requiresConfirmation('nexus_file_open', { path: 'foo.ts' })).toBe(false);
     expect(requiresConfirmation('nexus_file_close', { path: 'foo.ts' })).toBe(false);
     expect(requiresConfirmation('nexus_git_status', {})).toBe(false);
+    expect(requiresConfirmation('nexus_pr_inspect', {})).toBe(false);
     expect(requiresConfirmation('nexus_git_sync', {})).toBe(false);
     expect(requiresConfirmation('nexus_git_diff', {})).toBe(false);
     expect(requiresConfirmation('nexus_git_log', {})).toBe(false);

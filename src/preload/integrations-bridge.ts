@@ -53,10 +53,16 @@ export function createIntegrationsBridge(ipcRenderer: IpcRenderer): Integrations
       ipcRenderer.invoke(INTEGRATIONS_CHANNELS.gitLog, { count: count ?? 20 }),
     gitFileDiff: (input) =>
       ipcRenderer.invoke(INTEGRATIONS_CHANNELS.gitFileDiff, input),
+    gitPush: () => ipcRenderer.invoke(INTEGRATIONS_CHANNELS.gitPush),
     createPr: (req) => ipcRenderer.invoke(INTEGRATIONS_CHANNELS.forgeCreatePr, req),
     listPrs: () => ipcRenderer.invoke(INTEGRATIONS_CHANNELS.forgeListPrs),
     branchReview: () =>
       ipcRenderer.invoke(INTEGRATIONS_CHANNELS.forgeBranchReview),
+    inspectPr: () => ipcRenderer.invoke(INTEGRATIONS_CHANNELS.forgeInspectPr),
+    enqueuePr: (req) =>
+      ipcRenderer.invoke(INTEGRATIONS_CHANNELS.forgeEnqueuePr, req ?? {}),
+    setAutoMerge: (req) =>
+      ipcRenderer.invoke(INTEGRATIONS_CHANNELS.forgeSetAutoMerge, req),
     listGithubIssues: (opts) =>
       ipcRenderer.invoke(INTEGRATIONS_CHANNELS.githubListIssues, opts ?? {}),
     listLinearIssues: (opts) =>

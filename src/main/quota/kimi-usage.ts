@@ -340,7 +340,15 @@ export async function fetchKimiCodingUsageWindows(
 }
 
 /**
- * Full probe: OAuth creds (refresh if needed) or raw API key → 5h + weekly windows.
+ * Full probe: OAuth creds or raw API key → 5h + weekly windows.
+ *
+ * ATENÇÃO à linhagem (mesmo contrato do Claude em claude-oauth-refresh.ts):
+ * o refresh do Kimi ROTACIONA o refresh token. `~/.kimi-code/credentials`
+ * é do CLI — a sonda de cota NÃO pode trocar esse grant. Quem perde a
+ * corrida (probe vs pane) cai em
+ * `Stored token for "kimi-code" was rejected; re-login required`.
+ * Default: só lê o access token atual. `allowRefresh` é só para linhagem
+ * que o Nexus é o único dono (testes / vault isolado).
  */
 export async function fetchKimiUsageWithOauth(
   creds: KimiOauthCreds | string,
@@ -348,7 +356,12 @@ export async function fetchKimiUsageWithOauth(
     fetchImpl?: FetchLike;
     timeoutMs?: number;
     now?: number;
-    /** Write refreshed tokens back to ~/.kimi-code/credentials */
+    /**
+     * Trocar o refresh token. Default false — o CLI nativo é o dono.
+     * Sem persistir, um refresh ainda CONSOME o grant rotacionado.
+     */
+    allowRefresh?: boolean;
+    /** Só vale com allowRefresh. Escreve ~/.kimi-code — perigoso no login nativo. */
     persistRefresh?: boolean;
   },
 ): Promise<QuotaWindow[] | null> {
@@ -366,14 +379,14 @@ export async function fetchKimiUsageWithOauth(
     !access ||
     (typeof creds.expiresAt === 'number' && creds.expiresAt < nowSec + 30);
 
-  if (expired && refresh) {
+  if (expired && refresh && opts?.allowRefresh === true) {
     const refreshed = await refreshKimiAccessToken(refresh, {
       fetchImpl: opts?.fetchImpl,
       timeoutMs: opts?.timeoutMs,
     });
     if (refreshed) {
       access = refreshed.accessToken;
-      if (opts?.persistRefresh !== false) {
+      if (opts.persistRefresh === true) {
         writeKimiCredentialsFile({
           accessToken: refreshed.accessToken,
           refreshToken: refreshed.refreshToken ?? refresh,

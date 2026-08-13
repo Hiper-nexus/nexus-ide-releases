@@ -6,6 +6,7 @@ import {
   porcelainZToLf,
   truncateDiff,
   unquotePorcelainPath,
+  hasUnresolvedGitConflicts,
   GIT_SCM_MAX_DIFF_CHARS,
 } from './git-scm';
 
@@ -107,5 +108,13 @@ describe('assertSafeGitPathspec', () => {
     expect(() => assertSafeGitPathspec('/etc/passwd')).toThrow();
     expect(() => assertSafeGitPathspec('-rf')).toThrow();
     expect(() => assertSafeGitPathspec(' spaced')).toThrow();
+  });
+});
+
+describe('hasUnresolvedGitConflicts', () => {
+  it('detects porcelain U in staged or unstaged', () => {
+    expect(hasUnresolvedGitConflicts([{ path: 'a.ts', status: 'U' }], [])).toBe(true);
+    expect(hasUnresolvedGitConflicts([], [{ path: 'a.ts', status: 'U' }])).toBe(true);
+    expect(hasUnresolvedGitConflicts([{ path: 'a.ts', status: 'M' }], [])).toBe(false);
   });
 });

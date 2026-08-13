@@ -205,6 +205,9 @@ vi.mock('./components/CommandPalette', () => ({
 vi.mock('./components/KeyboardCheatsheet', () => ({
   KeyboardCheatsheet: () => <div data-preserved-overlay="cheatsheet" />,
 }));
+vi.mock('./components/AttentionInbox', () => ({
+  AttentionInbox: () => <div data-preserved-overlay="attention" />,
+}));
 vi.mock('./components/ConfirmDialog', () => ({
   ConfirmDialog: () => <div data-preserved-overlay="confirmation" />,
 }));
@@ -254,6 +257,7 @@ vi.mock('./components/PixelIcon', () => ({ PixelIcon: () => null }));
 import { App } from './App';
 import { useAgentNotificationStore } from './state/agent-notification-store';
 import { useCheatsheetStore } from './state/cheatsheet-store';
+import { useAttentionInboxStore } from './state/attention-inbox-store';
 import { useCommandPaletteStore } from './state/command-palette-store';
 import { useConfirmStore } from './state/confirm-store';
 import { useGamificationStore } from './state/gamification-store';
@@ -371,6 +375,7 @@ beforeEach(() => {
   useMediaStudioStore.setState({ open: false } as never);
   useGamificationStore.setState({ profileOpen: false } as never);
   useCommandPaletteStore.setState({ open: false });
+  useAttentionInboxStore.setState({ open: false });
   useAgentNotificationStore.setState({ items: [], open: false });
   useConfirmStore.setState({ pending: null });
   useCheatsheetStore.setState({ open: false });
@@ -584,6 +589,7 @@ describe('App Nexus V2 cutover', () => {
 
     for (const overlay of [
       'palette',
+      'attention',
       'cheatsheet',
       'confirmation',
       'voice-hud',
@@ -695,6 +701,23 @@ describe('App Nexus V2 cutover', () => {
       }
     },
   );
+
+  it('abre a lista de atenção com ⌘J quando há workspace', () => {
+    openWorkspace();
+    useProductNavigationStore.getState().openTerminal();
+    mountApp();
+    act(() => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'j',
+          metaKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+    expect(useAttentionInboxStore.getState().open).toBe(true);
+  });
 
   it('preserves focus on a persistent WorkspaceRail destination control', () => {
     openWorkspace();

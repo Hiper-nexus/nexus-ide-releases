@@ -20,7 +20,24 @@ export type GitScmSnapshot = {
   raw: string;
   /** True when lists were truncated for UI safety. */
   truncated?: boolean;
+  /** Commits on HEAD not on the upstream (0 when unknown / no upstream). */
+  ahead: number;
+  /** Commits on the upstream not on HEAD. */
+  behind: number;
+  /** True when @{upstream} or origin/<branch> exists. */
+  hasUpstream: boolean;
+  /** Unmerged paths (porcelain U). */
+  hasUnresolvedConflicts: boolean;
+  /** Repo default branch (origin/HEAD), used to refuse PRs from itself. */
+  defaultBranch: string | null;
 };
+
+export function hasUnresolvedGitConflicts(
+  staged: readonly GitFileChange[],
+  unstaged: readonly GitFileChange[],
+): boolean {
+  return [...staged, ...unstaged].some((f) => f.status === 'U');
+}
 
 export type GitLogEntry = {
   hash: string;

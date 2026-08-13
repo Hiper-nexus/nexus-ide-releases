@@ -93,6 +93,8 @@ import { TaskBoardWorkspace } from './components/product/TaskBoardWorkspace';
 import { MemoryWorkspace } from './components/product/MemoryWorkspace';
 import { SettingsWorkspace } from './components/settings/SettingsWorkspace';
 import { AgentNotifications } from './components/AgentNotifications';
+import { AttentionInbox } from './components/AttentionInbox';
+import { useAttentionInboxStore } from './state/attention-inbox-store';
 import { UpdateNotifier } from './components/UpdateModal';
 import {
   useProductNavigationStore,
@@ -409,7 +411,19 @@ export function App() {
       ) {
         if (!useWorkspaceStore.getState().current) return;
         event.preventDefault();
+        useAttentionInboxStore.getState().setOpen(false);
         useCommandPaletteStore.getState().toggle();
+        return;
+      }
+      if (
+        event.key.toLowerCase() === 'j' &&
+        !event.shiftKey &&
+        !event.altKey
+      ) {
+        if (!useWorkspaceStore.getState().current) return;
+        event.preventDefault();
+        useCommandPaletteStore.getState().close();
+        useAttentionInboxStore.getState().toggle();
         return;
       }
       if (event.key === '/' && !event.shiftKey && !event.altKey) {
@@ -940,6 +954,7 @@ export function App() {
               {operatorProfileOpen ? <OperatorProfile /> : null}
               {orchestrationModeOpen ? <OrchestrationModeDialog /> : null}
               <CommandPalette />
+              <AttentionInbox />
               <KeyboardCheatsheet />
               <ConfirmDialog />
             </OverlayLayer>

@@ -5,6 +5,7 @@ import { buildMediaTools } from './tools-media';
 import { buildFileTools } from './tools-files';
 import { buildTerminalTools } from './tools-terminal';
 import { buildGitTools } from './tools-git';
+import { buildPrTools } from './tools-pr';
 import { buildEditorTools } from './tools-editor';
 import { buildVisionTools } from './tools-vision';
 import { buildContextTools } from './tools-context';
@@ -29,7 +30,7 @@ import { buildInstrumentTools } from './tools-instruments';
  *
  * Groups: panes (10), routing, handoffs, agents, missions, squad/catalog/task,
  * todos, preview/browser, perf, media generation (image/video/audio),
- * files (5), terminal (2), git (10), editor (4), design (1),
+ * files (5), terminal (2), git (10), GitHub PR/queue (3), editor (4), design (1),
  * design systems (3), read-only security audits (2), bg tasks, plan lane, hunks.
  * LSP (4) is a bounded, no-watcher TypeScript sidecar owned by main.
  * Instruments (5) are the read-only gauges — quota, model ranking, MCP hub,
@@ -50,6 +51,7 @@ export function buildToolset(): McpToolDef[] {
     ...buildHunkTools(),
     ...buildLspTools(),
     ...buildGitTools(),
+    ...buildPrTools(),
     ...buildEditorTools(),
     ...buildVisionTools(),
     ...buildDesignTools(),

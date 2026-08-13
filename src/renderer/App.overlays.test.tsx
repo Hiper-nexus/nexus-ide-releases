@@ -143,6 +143,7 @@ vi.mock('./components/CommandPalette', () => ({ CommandPalette: () => null }));
 vi.mock('./components/KeyboardCheatsheet', () => ({
   KeyboardCheatsheet: () => null,
 }));
+vi.mock('./components/AttentionInbox', () => ({ AttentionInbox: () => null }));
 vi.mock('./components/ConfirmDialog', () => ({ ConfirmDialog: () => null }));
 vi.mock('./components/CloseWorkspaceDialog', async (importActual) => ({
   ...(await importActual<Record<string, unknown>>()),

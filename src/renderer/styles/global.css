@@ -31,6 +31,7 @@
 @import './product-wave.css';
 @import './product-workspaces.css';
 @import './git-scm.css';
+@import './coffee-cup.css';
 @import './model-meta-badge.css';
 /* Camada de overlay (H6) por último de propósito: é a folha que ANCORA a
    ladder no topo e define scrim/motion da camada. Vindo depois, suas regras

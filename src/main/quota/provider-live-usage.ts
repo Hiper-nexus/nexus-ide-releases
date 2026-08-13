@@ -192,10 +192,12 @@ export async function fetchLiveProviderWindows(
           deps.resolveKimiOauthCreds(accountId),
         );
         if (oauth?.refreshToken || oauth?.accessToken) {
+          // Never rotate native ~/.kimi-code from the quota probe.
           const w = await fetchKimiUsageWithOauth(oauth, {
             fetchImpl,
             now,
-            persistRefresh: true,
+            allowRefresh: false,
+            persistRefresh: false,
           });
           if (w?.length) return w;
         }

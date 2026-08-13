@@ -16,7 +16,7 @@ afterEach(() => {
 const auth: ForgeAuthorization = {
   grantedBy: 'user:test',
   grantedAt: Date.now(),
-  scope: ['create-review'],
+  scope: ['create-review', 'enqueue-merge-queue', 'auto-merge'],
   reason: 'manual PR from UI',
 };
 
@@ -129,6 +129,19 @@ describe('GitHub forge provider', () => {
     });
     expect(getJson).toHaveBeenCalledOnce();
     expect(getJson.mock.calls[0]![0]).toContain('head=');
+  });
+
+  it('refuses enqueue without enqueue-merge-queue scope', async () => {
+    const gh = createGitHubForgeProvider({
+      token: 't',
+      http: { postJson: vi.fn(), getJson: vi.fn() },
+    });
+    const result = await gh.enqueueMergeQueue!(
+      { owner: 'o', name: 'r', host: 'github.com' },
+      { number: 1 },
+      { grantedBy: 'user:test', grantedAt: Date.now(), scope: ['create-review'], reason: 'pr' },
+    );
+    expect(result).toEqual({ ok: false, reason: 'unauthorized' });
   });
 });
 

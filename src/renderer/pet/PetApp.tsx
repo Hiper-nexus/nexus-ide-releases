@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { PetPlacement, PetPrefs } from '../../shared/pet-types';
 import { isPetUrgentEvent } from '../../shared/pet-types';
 import { OperatorSprite, type OperatorMood } from '../components/OperatorSprite';
+import { CoffeeCup } from './CoffeeCup';
 import { CustomPetSprite } from './CustomPetSprite';
 import { SheetPetSprite, type SheetAnim } from './SheetPetSprite';
 import {
@@ -39,6 +40,8 @@ const RUN_DIR_HYSTERESIS_PX = 14;
 /** Tempo mínimo numa direção antes de poder inverter (evita piscar L↔R). */
 const RUN_DIR_MIN_MS = 90;
 const CELEBRATE_MS = 3_000;
+/** Mesmo tempo do celebrate: o "cafe" flutua por 3 s e desaparece. */
+const CAFEINANDO_MS = CELEBRATE_MS;
 
 /** Preset → props do OperatorSprite (skins já existentes da gamificação). */
 function spriteSkinFor(preset: PetPrefs['preset']): string | null {
@@ -77,6 +80,9 @@ export function PetApp() {
     vertical: 'bottom',
   });
   const celebrateTimer = useRef<number | null>(null);
+  /** Flash visual quando um agente fica idle (agent-idle = tarefa concluída). */
+  const [cafeinando, setCafeinando] = useState(false);
+  const cafeinadoTimer = useRef<number | null>(null);
   const drag = useRef<{ startX: number; startY: number; dragging: boolean } | null>(
     null,
   );
@@ -163,6 +169,25 @@ export function PetApp() {
           CELEBRATE_MS,
         );
       }
+      // Flash "cafe" no pane livre e na missão entregue — o balão
+      // continua operacional ("Missão concluída"); o café é a batida.
+      if (event.kind === 'agent-idle' || event.kind === 'mission-done') {
+        if (cafeinadoTimer.current) window.clearTimeout(cafeinadoTimer.current);
+        setCafeinando(true);
+        cafeinadoTimer.current = window.setTimeout(
+          () => setCafeinando(false),
+          CAFEINANDO_MS,
+        );
+      }
+      // Crise urgente: cancela o flash "cafe" imediatamente — café durante
+      // intervenção é distração e contradição visual com o badge de alerta.
+      if (isPetUrgentEvent(event.kind)) {
+        if (cafeinadoTimer.current) {
+          window.clearTimeout(cafeinadoTimer.current);
+          cafeinadoTimer.current = null;
+        }
+        setCafeinando(false);
+      }
     });
     // StrictMode monta/limpa o primeiro effect de propósito. Adiar um tick e
     // cancelar no cleanup garante que só a assinatura estável libera a fila.
@@ -185,6 +210,7 @@ export function PetApp() {
       offEvents();
       window.removeEventListener('mousemove', onWinMove);
       if (celebrateTimer.current) window.clearTimeout(celebrateTimer.current);
+      if (cafeinadoTimer.current) window.clearTimeout(cafeinadoTimer.current);
       if (leaveTimerRef.current !== null) {
         window.clearTimeout(leaveTimerRef.current);
         leaveTimerRef.current = null;
@@ -511,6 +537,19 @@ export function PetApp() {
           {(needingYou || balloon?.urgent) && (
             <span className="pet__alert" aria-hidden="true">
               !
+            </span>
+          )}
+          {/* Xícara de café: visível quando acordado e sem crise ativa.
+              Vapor acelera brevemente quando o pet comemora (celebrating). */}
+          {showAsAwake && !needingYou && !balloon?.urgent && (
+            <div className="pet__coffee" aria-hidden="true">
+              <CoffeeCup size={24} celebrating={celebrating} />
+            </div>
+          )}
+          {/* Flash "cafe" — aparece por ~3 s quando um agente fica idle. */}
+          {cafeinando && showAsAwake && (
+            <span className="pet__cafeinando" aria-hidden="true">
+              cafe
             </span>
           )}
         </div>

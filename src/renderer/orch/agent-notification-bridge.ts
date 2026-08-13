@@ -3,6 +3,7 @@ import {
   type BusyEpoch,
   type PaneRuntimeHint,
 } from '../../shared/agent-notification';
+import { notifyDesktopAttention } from '../lib/desktop-attention-ping';
 import { listPanes } from '../lib/split-tree';
 import { useAgentNotificationStore } from '../state/agent-notification-store';
 import { useLayoutStore } from '../state/layout-store';
@@ -68,6 +69,7 @@ function processTransition(
     kind: evalResult.kind,
     createdAt: now,
   });
+  notifyDesktopAttention({ kind: evalResult.kind, agentLabel: label });
 }
 
 function onSessionStateChange(): void {

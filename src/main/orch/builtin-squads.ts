@@ -97,6 +97,7 @@ const REVIEW_P0P3_READONLY_TOOLS: string[] = [
   'nexus_git_diff',
   'nexus_git_log',
   'nexus_git_status',
+  'nexus_pr_inspect',
   'nexus_handoff_submit',
   'nexus_handoff_list',
 ];

@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { gitBranchPushState, gitDefaultBranch, gitPushCurrentBranch } from './git-workspace';
+import { gitBranchPushState, gitDefaultBranch, gitPushCurrentBranch, gitUpstreamStatus } from './git-workspace';
 
 function run(cwd: string, args: string[]): string {
   const r = spawnSync('git', args, {
@@ -184,6 +184,59 @@ describe('gitBranchPushState (real git)', () => {
     expect(gitBranchPushState(clone, 'a:refs/heads/b')).toEqual({
       isOnRemote: false,
       aheadCount: 0,
+    });
+  });
+});
+
+describe('gitUpstreamStatus (real git)', () => {
+  let origin: string;
+  let clone: string;
+
+  beforeEach(() => {
+    origin = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-up-origin-'));
+    run(origin, ['init', '--bare', '-b', 'trunk']);
+    clone = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-up-clone-'));
+    run(clone, ['clone', origin, '.']);
+    run(clone, ['config', 'user.name', 'Nexus Push Test']);
+    run(clone, ['config', 'user.email', 'push-test@nexus.local']);
+    fs.writeFileSync(path.join(clone, 'README.md'), '# push\n');
+    run(clone, ['add', 'README.md']);
+    run(clone, ['commit', '-m', 'init']);
+    run(clone, ['push', '-u', 'origin', 'trunk']);
+    run(origin, ['symbolic-ref', 'HEAD', 'refs/heads/trunk']);
+    run(clone, ['remote', 'set-head', 'origin', '-a']);
+  });
+
+  afterEach(() => {
+    fs.rmSync(origin, { recursive: true, force: true });
+    fs.rmSync(clone, { recursive: true, force: true });
+  });
+
+  it('reports tracking branch with zero divergence', () => {
+    expect(gitUpstreamStatus(clone, 'trunk')).toEqual({
+      hasUpstream: true,
+      ahead: 0,
+      behind: 0,
+    });
+  });
+
+  it('counts ahead after a local commit', () => {
+    fs.writeFileSync(path.join(clone, 'n.txt'), 'n\n');
+    run(clone, ['add', 'n.txt']);
+    run(clone, ['commit', '-m', 'n']);
+    expect(gitUpstreamStatus(clone, 'trunk')).toEqual({
+      hasUpstream: true,
+      ahead: 1,
+      behind: 0,
+    });
+  });
+
+  it('reports no upstream on a never-pushed branch', () => {
+    run(clone, ['checkout', '-b', 'feature/local']);
+    expect(gitUpstreamStatus(clone, 'feature/local')).toEqual({
+      hasUpstream: false,
+      ahead: 0,
+      behind: 0,
     });
   });
 });

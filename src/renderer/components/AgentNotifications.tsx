@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
+  agentAttentionPhrase,
   agentNotificationStatusLabel,
   countUnread,
   formatNotificationAgo,
@@ -217,9 +218,7 @@ export function AgentNotifications() {
     }
     if (top && top.id !== lastAnnouncedId.current) {
       lastAnnouncedId.current = top.id;
-      setAnnounce(
-        `${top.agentLabel}: ${agentNotificationStatusLabel(top.kind)}`,
-      );
+      setAnnounce(agentAttentionPhrase(top.kind, top.agentLabel));
     }
   }, [items]);
 
