@@ -13,34 +13,57 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.32.10',
+  version: '0.32.11',
   date: '2026-08-13',
-  codename: 'O handoff que chega',
+  codename: 'Encerrar não é concluir',
   summary:
-    'O menu do pane pedia handoff pela escrita crua. O main recusa isso ' +
-    'em worker de missão. O toast dizia sucesso. Agora o clique vai pela ' +
-    'lane do operador, com recibo.',
+    'Encerrar estaciona a missão. Concluir é um ato do operador. A ' +
+    'segunda missão deixa a irmã viva. Anexos do cliente entram no ' +
+    'workspace, não no HOME.',
   highlights: [
     {
-      title: 'Handoff pela lane do operador',
+      title: 'N Maestros no mesmo workspace',
       detail:
-        'O clique pede nexus_handoff_submit pelo mesmo caminho do teclado. ' +
-        'Toast de sucesso só se o main aceitar. Soltar skill no mesmo pane ' +
-        'usa a mesma rota.',
+        'Exclusivo por missão. Começar a segunda não mata a primeira.',
+    },
+    {
+      title: 'Marcar concluída',
+      detail:
+        'Depois do Encerrar, o quadro oferece concluir pelo MissionEngine. ' +
+        'Pet não pede atenção em missão que o operador já estacionou.',
+    },
+    {
+      title: 'Anexos do cliente',
+      detail:
+        'Drop/paste de áudio, texto e imagem de fora copia para ' +
+        '{workspace}/.nexus/attachments/mission-context/. Express e wizard ' +
+        'mostram a lista. Pane aberto não volta sozinho ao Express.',
+    },
+    {
+      title: 'Setup que rola',
+      detail:
+        'Review, Missão, Equipe e Expresso num scroller. CTA Iniciar missão ' +
+        'sticky. Sem deserto preto de 100vh.',
+    },
+    {
+      title: 'Quadro com missão viva',
+      detail:
+        'Running/blocked aparece em andamento mesmo sem tasks. Empty-state ' +
+        'só quando não há missão nem tarefa.',
+    },
+    {
+      title: 'Ranking em faixas',
+      detail:
+        'Rápido / equilibrado / profundo, doutrina default-DOWN. Fixture ' +
+        'não vira nota medida. Faixa só reordena modelos do mesmo CLI.',
     },
   ],
   fixes: [
     {
-      title: 'Toast de handoff deixou de mentir',
+      title: 'Handoff observado no PTY',
       detail:
-        'A escrita crua do PTY é recusada em agente orquestrado. O menu ' +
-        'ainda devolvia sucesso. Agora espera o recibo da lane do operador.',
-    },
-    {
-      title: 'Worktree não promete checkout',
-      detail:
-        'O item copia a instrução e abre a missão. O motor só cria o ' +
-        'worktree depois da cola no orquestrador.',
+        'AGY e Express promovem o bloco NEXUS_HANDOFF pintado no terminal, ' +
+        'sem esperar MCP.',
     },
   ],
 };

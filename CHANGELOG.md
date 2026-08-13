@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.32.11 — Encerrar não é concluir
+
+Data: 2026-08-13
+
+Encerrar estaciona a missão. Concluir é um ato do operador. A segunda
+missão deixa a irmã viva. Anexos do cliente entram no workspace, não
+no HOME.
+
+- **N Maestros no mesmo workspace.** Exclusivo por missão. Começar a
+  segunda não mata a primeira.
+- **Marcar concluída.** Depois do Encerrar, o quadro oferece concluir
+  pelo MissionEngine — nunca um `done` genérico. Pet não pede atenção
+  em missão que o operador já estacionou.
+- **Anexos do cliente.** Drop/paste de áudio, texto e imagem de fora
+  copia para `{workspace}/.nexus/attachments/mission-context/`. Express
+  e wizard mostram a lista. Pane aberto não volta sozinho ao Express.
+- **Setup que rola.** Review, Missão, Equipe e Expresso num scroller;
+  CTA Iniciar missão sticky; sem deserto preto de `100vh`.
+- **Quadro com missão viva.** Running/blocked aparece em andamento
+  mesmo sem tasks. Empty-state só quando não há missão nem tarefa.
+- **Ranking em faixas.** Rápido / equilibrado / profundo, doutrina
+  default-DOWN. Fixture não vira nota medida. Faixa só reordena modelos
+  do mesmo CLI.
+- **Handoff observado no PTY.** AGY e Express promovem o bloco
+  `NEXUS_HANDOFF` pintado no terminal, sem esperar MCP.
+
 ## 0.32.10 — O handoff que chega
 
 Data: 2026-08-13
