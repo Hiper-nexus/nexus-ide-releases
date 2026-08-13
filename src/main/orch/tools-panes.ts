@@ -1081,7 +1081,7 @@ const paneClose: McpToolDef = {
 };
 
 /** Timeout máximo para confirmação de boot — 15s, igual concorrente. */
-const PANE_BOOT_TIMEOUT_MS = 15_000;
+export const PANE_BOOT_TIMEOUT_MS = 15_000;
 
 const paneWaitIdle: McpToolDef = {
   name: 'nexus_pane_wait_idle',

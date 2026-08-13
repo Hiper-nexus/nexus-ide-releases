@@ -21,7 +21,11 @@ vi.mock('./tool-util', async (importOriginal) => ({
 }));
 
 import { CODEX_MCP_TOOL_TIMEOUT_SEC } from './cli-mcp-inject';
-import { buildPaneTools, PANE_WAIT_TIMEOUT_CAP_MS } from './tools-panes';
+import {
+  buildPaneTools,
+  PANE_BOOT_TIMEOUT_MS,
+  PANE_WAIT_TIMEOUT_CAP_MS,
+} from './tools-panes';
 
 function context(): AgentGateContext {
   return {
@@ -70,15 +74,17 @@ describe('pane wait timeout cap', () => {
     ]);
   });
 
-  it('caps nexus_pane_wait_idle the same way', async () => {
+  it('caps nexus_pane_wait_idle as boot confirmation, not the MCP tool cap', async () => {
     const result = (await tool('nexus_pane_wait_idle').handler(
       { paneId: 'pane-1', timeoutMs: 120_000 },
       context(),
     )) as { state: string; output: string };
 
+    expect(PANE_BOOT_TIMEOUT_MS).toBe(15_000);
+    expect(PANE_BOOT_TIMEOUT_MS).toBeLessThan(PANE_WAIT_TIMEOUT_CAP_MS);
     expect(harness.waitForIdle).toHaveBeenCalledWith(
       'session-1',
-      PANE_WAIT_TIMEOUT_CAP_MS,
+      PANE_BOOT_TIMEOUT_MS,
     );
     expect(result.state).toBe('timeout');
   });

@@ -33,13 +33,25 @@ function agent(overrides: Partial<SquadAgent> = {}): SquadAgent {
   } as SquadAgent;
 }
 
-/** O prompt REAL que a Via Rápida entrega — a fonte da armadilha. */
+/** O prompt REAL do worker (modelo PULL) — handoff_submit, sem PRONTO:. */
 const DELIVERED = agentPrompt(
   agent(),
   mission(),
   ['Coordenar e revisar', 'Implementar motor'],
   false,
 );
+
+/**
+ * Prompt sintético com a armadilha antiga: a instrução CONTÉM `PRONTO:`.
+ * O scanner ainda precisa filtrar eco disso; a Via Rápida atual já não
+ * entrega esse texto.
+ */
+const TRAP_PROMPT = [
+  'Quando terminar, escreva uma linha final',
+  '"PRONTO: <resumo curto>".',
+  'Se algo impedir totalmente o trabalho, escreva',
+  '"BLOQUEADO: <motivo>" em uma linha.',
+].join('\n');
 
 /** Quebra o texto em linhas de `width` colunas, como uma TUI estreita faria. */
 function hardWrap(text: string, width: number): string {
@@ -56,9 +68,10 @@ function hardWrap(text: string, width: number): string {
 }
 
 describe('marcador de conclusão — a armadilha do eco do prompt', () => {
-  it('o prompt entregue contém as palavras dos marcadores (a armadilha existe)', () => {
-    expect(DELIVERED).toContain('PRONTO:');
-    expect(DELIVERED).toContain('BLOQUEADO:');
+  it('o prompt PULL do worker não pede PRONTO:/BLOQUEADO: — entrega é handoff', () => {
+    expect(DELIVERED).not.toContain('PRONTO:');
+    expect(DELIVERED).not.toContain('BLOQUEADO:');
+    expect(DELIVERED).toContain('nexus_handoff_submit');
   });
 
   it('eco do prompt REAL sozinho NÃO produz marcador nenhum', () => {
@@ -67,13 +80,13 @@ describe('marcador de conclusão — a armadilha do eco do prompt', () => {
 
   it('eco quebrado por largura de TUI, com marcador abrindo linha, continua sendo eco', () => {
     for (const width of [24, 32, 41, 48, 55, 60, 72, 80]) {
-      const echoed = hardWrap(DELIVERED, width);
+      const echoed = hardWrap(TRAP_PROMPT, width);
       // Prova que o teste é real: alguma dessas larguras coloca o marcador no
       // começo de uma linha, que é exatamente o que a âncora sozinha não filtra.
-      expect(scanMissionMarker(echoed, [DELIVERED])).toBeNull();
+      expect(scanMissionMarker(echoed, [TRAP_PROMPT])).toBeNull();
     }
     const anchored = [24, 32, 41, 48, 55, 60, 72, 80].some((width) =>
-      hardWrap(DELIVERED, width)
+      hardWrap(TRAP_PROMPT, width)
         .split('\n')
         .some((line) => trimLineDecoration(line).startsWith('PRONTO:')),
     );
@@ -86,7 +99,7 @@ describe('marcador de conclusão — a armadilha do eco do prompt', () => {
       '│ PRONTO: <resumo curto>"…                                     │',
       '│ BLOQUEADO: <motivo>" em uma linha.                           │',
     ].join('\n');
-    expect(scanMissionMarker(repaint, [DELIVERED])).toBeNull();
+    expect(scanMissionMarker(repaint, [TRAP_PROMPT])).toBeNull();
   });
 
   it('resposta genuína DEPOIS do eco é detectada com o texto do agente', () => {
@@ -136,12 +149,12 @@ describe('marcador de conclusão — a armadilha do eco do prompt', () => {
   });
 
   it('isPromptEcho reconhece trecho literal, prefixo cortado e continuação', () => {
-    expect(isPromptEcho('PRONTO: <resumo curto>".', [DELIVERED])).toBe(true);
-    expect(isPromptEcho('PRONTO: <resumo cur', [DELIVERED])).toBe(true);
-    expect(isPromptEcho('PRONTO: <resumo curto>"… (truncado)', [DELIVERED])).toBe(
+    expect(isPromptEcho('PRONTO: <resumo curto>".', [TRAP_PROMPT])).toBe(true);
+    expect(isPromptEcho('PRONTO: <resumo cur', [TRAP_PROMPT])).toBe(true);
+    expect(isPromptEcho('PRONTO: <resumo curto>"… (truncado)', [TRAP_PROMPT])).toBe(
       true,
     );
-    expect(isPromptEcho('PRONTO: resumo.txt gravado.', [DELIVERED])).toBe(false);
+    expect(isPromptEcho('PRONTO: resumo.txt gravado.', [TRAP_PROMPT])).toBe(false);
   });
 });
 

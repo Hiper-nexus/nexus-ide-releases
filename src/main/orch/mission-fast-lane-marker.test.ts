@@ -4,38 +4,62 @@ import type { Mission, SquadAgent } from '../../shared/orch-types';
 import { testProjectScope } from './__tests__/scope-fixture';
 
 /**
- * Prova de comportamento da Via Rápida em cima do marcador do agente.
- *
- * O bug ao vivo: `agy` nunca flipou para `busy` (pane parado em "Pronto"), o
- * motor leu "viva mas nunca trabalhou" e reentregou o prompt INTEIRO a cada
- * 90s para sempre — o agente já tinha escrito `PRONTO: ...` e refazia tudo em
- * loop. Cada teste abaixo roda o observador REAL de tick (setInterval) com
- * relógio falso, e o par baseline/corrigido é a prova: mesmas condições, só a
- * palavra do agente muda.
+ * Via Rápida no modelo PULL: o motor não lê PRONTO/BLOQUEADO do PTY e não
+ * recutuca o pane. Conclui ou bloqueia pelos handoffs quando não há pane vivo.
  */
 
-const sessionStates = new Map<string, PaneSessionState | null>();
-const deliverAgentPrompt = vi.fn(async () => true);
-const completeVerified = vi.fn();
-const blockTechnical = vi.fn();
-const resumeTechnical = vi.fn();
-let spawnCount = 0;
+const harness = vi.hoisted(() => ({
+  sessionStates: new Map<string, PaneSessionState | null>(),
+  snapshots: [] as Array<{
+    missionId: string;
+    paneId: string;
+    sessionId: string;
+    role: 'orchestrator' | 'worker';
+    agentName: string;
+  }>,
+  handoffs: [] as Array<{
+    status: string;
+    summary: string;
+    fromAgent?: string;
+    sessionId?: string;
+  }>,
+  deliverAgentPrompt: vi.fn(async () => true),
+  completeVerified: vi.fn(),
+  blockTechnical: vi.fn(),
+  resumeTechnical: vi.fn(),
+  spawnCount: 0,
+}));
 
 vi.mock('../pty/pty-manager', () => ({
-  getSessionState: (sessionId: string) => sessionStates.get(sessionId) ?? null,
+  getSessionState: (sessionId: string) =>
+    harness.sessionStates.get(sessionId) ?? null,
 }));
 
 vi.mock('./tool-util', () => ({
-  deliverAgentPrompt: (...args: unknown[]) => deliverAgentPrompt(...(args as [])),
+  deliverAgentPrompt: (...args: unknown[]) =>
+    harness.deliverAgentPrompt(...(args as [])),
 }));
 
 vi.mock('./pane-registry', () => ({
-  listPaneSnapshots: () => [],
+  listPaneSnapshots: () =>
+    harness.snapshots.map((pane) => ({
+      ...pane,
+      state: harness.sessionStates.get(pane.sessionId) ?? 'idle',
+    })),
   requestPaneSpawn: async () => {
-    spawnCount += 1;
-    const sessionId = `session-${spawnCount}`;
-    sessionStates.set(sessionId, 'idle');
-    return { requestId: 'r', ok: true, paneId: `pane-${spawnCount}`, sessionId };
+    harness.spawnCount += 1;
+    const sessionId = `session-${harness.spawnCount}`;
+    const paneId = `pane-${harness.spawnCount}`;
+    harness.sessionStates.set(sessionId, 'idle');
+    harness.snapshots.push({
+      missionId: 'mission-1',
+      paneId,
+      sessionId,
+      role: harness.spawnCount === 1 ? 'orchestrator' : 'worker',
+      agentName:
+        harness.spawnCount === 1 ? 'Coordenar e revisar' : 'Implementar motor',
+    });
+    return { requestId: 'r', ok: true, paneId, sessionId };
   },
 }));
 
@@ -70,6 +94,7 @@ vi.mock('./project-domain-store-registry', () => ({
       recordKickoffAcceptance: () => {},
     },
     missionPanes: { record: () => {}, list: () => [] },
+    handoffs: { list: () => harness.handoffs },
   }),
 }));
 
@@ -94,9 +119,10 @@ vi.mock('./squad-store', () => ({
 
 vi.mock('./mission-engine-registry', () => ({
   missionEngineForScope: () => ({
-    completeVerified: (...args: unknown[]) => completeVerified(...args),
-    blockTechnical: (...args: unknown[]) => blockTechnical(...args),
-    resumeTechnical: (...args: unknown[]) => resumeTechnical(...args),
+    completeVerified: (...args: unknown[]) =>
+      harness.completeVerified(...args),
+    blockTechnical: (...args: unknown[]) => harness.blockTechnical(...args),
+    resumeTechnical: (...args: unknown[]) => harness.resumeTechnical(...args),
   }),
 }));
 
@@ -107,37 +133,29 @@ let fastLane: FastLaneModule;
 let marker: MarkerModule;
 
 const scope = testProjectScope();
-/** Sessões que a fase de spawn cria, na ordem do roster. */
-const SESSIONS = ['session-1', 'session-2'] as const;
 
-/** Escreve a linha final do agente na sessão, como a TUI faria. */
-function agentSays(sessionId: string, line: string): void {
-  marker.missionMarkerObserver.observe(sessionId, `${line}\n`);
-}
-
-async function bootAllIdle(): Promise<void> {
+async function bootOrchestratorIdle(): Promise<string> {
   await fastLane.fastLaneBootstrap(scope, 'mission-1');
-  // Nenhum agente jamais fica `busy`: é exatamente o estado da `agy` no bug.
-  for (const sessionId of SESSIONS) sessionStates.set(sessionId, 'idle');
+  const sessionId = 'session-1';
+  harness.sessionStates.set(sessionId, 'idle');
+  return sessionId;
 }
 
-/** Avança o relógio em ticks de 5s do observador. */
 async function ticks(count: number): Promise<void> {
-  await vi.advanceTimersByTimeAsync(5_000 * count);
+  await vi.advanceTimersByTimeAsync(15_000 * count);
 }
 
 beforeEach(async () => {
   vi.useFakeTimers();
-  sessionStates.clear();
-  deliverAgentPrompt.mockClear();
-  completeVerified.mockClear();
-  blockTechnical.mockClear();
-  resumeTechnical.mockClear();
-  spawnCount = 0;
+  harness.sessionStates.clear();
+  harness.snapshots.length = 0;
+  harness.handoffs.length = 0;
+  harness.deliverAgentPrompt.mockClear();
+  harness.completeVerified.mockClear();
+  harness.blockTechnical.mockClear();
+  harness.resumeTechnical.mockClear();
+  harness.spawnCount = 0;
   liveMission = mission;
-  // A Via Rápida guarda os runs vivos em estado de módulo (e `fastLaneBootstrap`
-  // é idempotente por missão): sem grafo novo, o segundo teste do arquivo cairia
-  // no guard e nunca abriria terminal nenhum.
   vi.resetModules();
   fastLane = await import('./mission-fast-lane');
   marker = await import('./mission-completion-marker');
@@ -147,95 +165,77 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe('Via Rápida × marcador do agente', () => {
-  it('BASELINE do bug: sem marcador, pane idle eterno é recutucado e nada conclui', async () => {
-    await bootAllIdle();
-    // Muito além da janela de 90s: o motor só tem o estado do PTY para ler.
-    await ticks(40);
+describe('Via Rápida × modelo PULL', () => {
+  it('spawna só o orquestrador; pane idle não é recutucado nem concluído', async () => {
+    await bootOrchestratorIdle();
+    expect(harness.spawnCount).toBe(1);
 
-    expect(deliverAgentPrompt).toHaveBeenCalled();
-    expect(completeVerified).not.toHaveBeenCalled();
+    await ticks(4);
+
+    expect(harness.deliverAgentPrompt).not.toHaveBeenCalled();
+    expect(harness.completeVerified).not.toHaveBeenCalled();
+    expect(harness.blockTechnical).not.toHaveBeenCalled();
   });
 
-  it('todos escreveram PRONTO: conclui com sucesso e ninguém é cutucado, mesmo sem nunca ficar busy', async () => {
-    await bootAllIdle();
-    agentSays(SESSIONS[0], 'PRONTO: revisei o resultado e está correto.');
-    agentSays(
-      SESSIONS[1],
-      'PRONTO: Primeira frase do brief.txt gravada em resumo.txt.',
-    );
+  it('orquestrador morto com handoff de sucesso conclui a missão', async () => {
+    await bootOrchestratorIdle();
+    harness.handoffs.push({
+      status: 'success',
+      summary: 'Primeira frase do brief.txt gravada em resumo.txt.',
+      fromAgent: 'Implementar motor',
+      sessionId: 'session-2',
+    });
+    harness.sessionStates.set('session-1', 'exited');
 
-    await ticks(40);
+    await ticks(1);
 
-    expect(deliverAgentPrompt).not.toHaveBeenCalled();
-    expect(blockTechnical).not.toHaveBeenCalled();
-    expect(completeVerified).toHaveBeenCalledTimes(1);
-    const [, args] = completeVerified.mock.calls[0] as [
+    expect(harness.deliverAgentPrompt).not.toHaveBeenCalled();
+    expect(harness.blockTechnical).not.toHaveBeenCalled();
+    expect(harness.completeVerified).toHaveBeenCalledTimes(1);
+    const [, args] = harness.completeVerified.mock.calls[0] as [
       unknown,
       { result: { outcome: string; summary: string } },
     ];
     expect(args.result.outcome).toBe('success');
-    // O resultado carrega a frase do próprio agente, não só a lista de nomes.
     expect(args.result.summary).toContain('Primeira frase do brief.txt');
   });
 
-  it('eco do prompt na tela NÃO conclui missão nenhuma (a armadilha)', async () => {
-    await fastLane.fastLaneBootstrap(scope, 'mission-1');
-    for (const sessionId of SESSIONS) sessionStates.set(sessionId, 'idle');
-    // A TUI ecoa o prompt entregue, inclusive quebrado por largura — é o texto
-    // que CONTÉM "PRONTO:" e "BLOQUEADO:" porque é a instrução que os pede.
-    const echo = [
-      'Quando terminar, escreva uma linha final',
-      '"PRONTO: <resumo curto>".',
-      'Se algo impedir totalmente o trabalho, escreva',
-      '"BLOQUEADO: <motivo>" em uma linha.',
-    ].join('\n');
-    for (const sessionId of SESSIONS) {
-      // O teste não pode passar por omissão: o spawn ARMOU o observador destas
-      // sessões, então elas estão de fato ouvindo quando o eco chega.
-      expect(marker.missionMarkerObserver.isWatching(sessionId)).toBe(true);
-      marker.missionMarkerObserver.observe(sessionId, `${echo}\n`);
-      expect(marker.missionMarkerObserver.markerOf(sessionId)).toBeNull();
-    }
+  it('PRONTO no PTY não arma observador nem conclui — entrega é handoff', async () => {
+    const sessionId = await bootOrchestratorIdle();
+    expect(marker.missionMarkerObserver.isWatching(sessionId)).toBe(false);
+    marker.missionMarkerObserver.observe(
+      sessionId,
+      'PRONTO: Primeira frase do brief.txt gravada em resumo.txt.\n',
+    );
+    expect(marker.missionMarkerObserver.markerOf(sessionId)).toBeNull();
 
-    await ticks(4);
+    await ticks(2);
 
-    expect(completeVerified).not.toHaveBeenCalled();
-    expect(blockTechnical).not.toHaveBeenCalled();
+    expect(harness.completeVerified).not.toHaveBeenCalled();
+    expect(harness.blockTechnical).not.toHaveBeenCalled();
   });
 
-  it('um PRONTO + um BLOQUEADO: não conclui como sucesso e o bloqueio cita o motivo do agente', async () => {
-    await bootAllIdle();
-    agentSays(SESSIONS[0], 'PRONTO: revisei o que existia.');
-    agentSays(SESSIONS[1], 'BLOQUEADO: brief.txt não existe no diretório.');
+  it('orquestrador morto sem handoff bloqueia com causa visível', async () => {
+    await bootOrchestratorIdle();
+    harness.sessionStates.set('session-1', 'exited');
 
-    await ticks(4);
+    await ticks(1);
 
-    expect(completeVerified).not.toHaveBeenCalled();
-    expect(blockTechnical).toHaveBeenCalledTimes(1);
-    const [, args] = blockTechnical.mock.calls[0] as [
+    expect(harness.completeVerified).not.toHaveBeenCalled();
+    expect(harness.blockTechnical).toHaveBeenCalledTimes(1);
+    const [, args] = harness.blockTechnical.mock.calls[0] as [
       unknown,
       { description: string },
     ];
-    expect(args.description).toContain(
-      'brief.txt não existe no diretório.',
-    );
-    expect(args.description).toContain('Implementar motor');
-    // Nada de genérico: o operador lê a frase do agente, não "terminais calados".
-    expect(args.description).not.toContain('terminais calados');
+    expect(args.description).toContain('nenhum worker');
+    expect(args.description).toContain('handoff');
   });
 
-  it('sem marcador, mudo e morto duas vezes continua não sendo sucesso', async () => {
-    await fastLane.fastLaneBootstrap(scope, 'mission-1');
-    // Ninguém trabalhou e as sessões morreram: o respawn é gasto e elas morrem
-    // de novo. Nenhuma palavra dada, nenhum `busy` observado.
-    for (const sessionId of SESSIONS) sessionStates.set(sessionId, 'exited');
+  it('pane morto sem handoff continua não sendo sucesso', async () => {
+    await bootOrchestratorIdle();
+    harness.sessionStates.set('session-1', 'exited');
     await ticks(2);
-    for (const [sessionId] of sessionStates) {
-      sessionStates.set(sessionId, 'exited');
-    }
-    await ticks(6);
 
-    expect(completeVerified).not.toHaveBeenCalled();
+    expect(harness.completeVerified).not.toHaveBeenCalled();
   });
 });
