@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.32.9 — O pin do gate
+
+Data: 2026-08-13
+
+A 0.32.8 notariada não passou o candidato: o npm marcou nanoid 3.3.17
+hoje. O pin 3.3.18 destrava o gate. O produto é o da 0.32.8.
+
+- **nanoid 3.3.18.** Override da toolchain; sem isso o audit do
+  candidato recusa a release.
+- **⌘J pede Enter de verdade.** Hooks de permissão / waiting / blocked
+  alimentam a lista; o item some quando o agente segue ou o pane fecha.
+  Ping no desktop na entrada.
+- **release:candidate é o gate.** O alias deixou de ser o smoke do
+  `.app` solto (ENOENT) e aponta assinatura, staple, smoke no ZIP e
+  receipt.
+
 ## 0.32.8 — O Enter que faltava
 
 Data: 2026-08-13

@@ -13,12 +13,12 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.32.8',
+  version: '0.32.9',
   date: '2026-08-13',
-  codename: 'O Enter que faltava',
+  codename: 'O pin do gate',
   summary:
-    '⌘J mostra quando o agente pede Enter, e o comando de candidato de ' +
-    'release volta a ser o gate de verdade.',
+    'A 0.32.8 notariada não passou o candidato: o npm marcou nanoid 3.3.17 ' +
+    'hoje. O pin 3.3.18 destrava o gate. O produto é o da 0.32.8.',
   highlights: [
     {
       title: '⌘J pede Enter de verdade',
@@ -30,6 +30,12 @@ export const CURRENT_RELEASE: AppRelease = {
     },
   ],
   fixes: [
+    {
+      title: 'nanoid 3.3.18 no override',
+      detail:
+        'O advisory GHSA-2v37-7h3g-55p8 passou a listar <3.3.18. Sem o pin ' +
+        'o gate de segurança recusa a toolchain e a release não sobe.',
+    },
     {
       title: 'release:candidate era o script errado',
       detail:
