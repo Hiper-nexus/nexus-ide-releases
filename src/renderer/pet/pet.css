@@ -18,6 +18,9 @@
   --pet-accent: #45d7ff;
   --pet-danger: #ff7a90;
   --pet-warn: #e5c07b;
+  /* Espelham --gold / --accent da app: a janela do pet não importa base.css. */
+  --pet-gold: #ffd166;
+  --pet-pink: #ff4f8b;
   --pet-font: ui-sans-serif, -apple-system, 'SF Pro Text', Segoe UI, system-ui,
     sans-serif;
   --pet-font-pixel: 'VT323', 'Courier New', monospace;
@@ -456,12 +459,13 @@ body,
 /* Posição da xícara no sprite. Vapor/keyframes: coffee-cup.css. */
 .pet__coffee {
   position: absolute;
-  bottom: -4px;
-  left: 0px;
-  color: var(--pet-accent);
-  opacity: 0.8;
+  bottom: -6px;
+  left: -2px;
+  color: var(--pet-gold);
+  opacity: 1;
   pointer-events: none;
   animation: pet-coffee-in 380ms ease-out;
+  filter: drop-shadow(0 2px 4px rgb(0 0 0 / 0.5));
 }
 
 .pet--solid .pet__coffee {
@@ -478,33 +482,35 @@ body,
 
 .pet__cafeinando {
   position: absolute;
-  top: -10px;
-  left: 2px;
-  color: var(--pet-accent);
+  top: -14px;
+  left: 0;
+  color: var(--pet-pink);
   font-family: var(--pet-font-pixel);
-  font-size: 14px;
-  letter-spacing: 0.15em;
+  font-size: 20px;
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  line-height: 1;
   pointer-events: none;
   animation: pet-cafeinando 3s ease-out forwards;
 }
 
 @keyframes pet-cafeinando {
-  0%   { opacity: 0; transform: translateY(5px) scale(0.65); }
-  12%  { opacity: 1; transform: translateY(-2px) scale(1.08); }
+  0%   { opacity: 0; transform: translateY(6px) scale(0.7); }
+  12%  { opacity: 1; transform: translateY(-4px) scale(1.16); }
   28%  { opacity: 1; transform: translateY(0) scale(1); }
-  65%  { opacity: 0.85; }
-  100% { opacity: 0; transform: translateY(-14px); }
+  70%  { opacity: 0.92; }
+  100% { opacity: 0; transform: translateY(-16px); }
 }
 
 /* prefers-reduced-motion: vapor estático, sem entradas animadas */
 @media (prefers-reduced-motion: reduce) {
   .pet__coffee {
     animation: none;
-    opacity: 0.55;
+    opacity: 1;
   }
 
   .pet__cafeinando {
     animation: none;
-    opacity: 0;
+    opacity: 1;
   }
 }

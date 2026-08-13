@@ -20,6 +20,28 @@ export type ExitedPaneKeyAction =
   | 'reclaim-shell'
   | 'ignore';
 
+export type UnlockRetiredPaneDisposition = 'keep-paused' | 'reclaim-shell';
+
+/**
+ * Missão viva (pending/running/blocked) NÃO vira shell. Falha ao consultar
+ * o status também preserva o pane — fail-closed, nunca destrói o histórico
+ * do agente porque o IPC piscou.
+ */
+export function decideUnlockRetiredMissionPane(input: {
+  readonly missionStatus?: 'pending' | 'running' | 'blocked' | 'done' | 'failed';
+  readonly lookupFailed?: boolean;
+}): UnlockRetiredPaneDisposition {
+  if (input.lookupFailed) return 'keep-paused';
+  if (
+    input.missionStatus === 'pending' ||
+    input.missionStatus === 'running' ||
+    input.missionStatus === 'blocked'
+  ) {
+    return 'keep-paused';
+  }
+  return 'reclaim-shell';
+}
+
 export function decideExitedPaneKey(input: {
   readonly hasSession: boolean;
   readonly spawnStarted: boolean;
@@ -55,7 +77,7 @@ export function pruneWouldLeaveOperatorMute(
 }
 
 export const MISSION_OWNED_EXIT_NOTICE =
-  '[nexus] a missão ainda é dona deste pane — digite para retomar o teclado, ou clique a missão no rail e use Retomar.';
+  '[nexus] a missão ainda é dona deste pane — clique a missão no rail e use Retomar.';
 
 export const STALE_AUTHORITY_SYNC_NOTICE =
   '[nexus] contexto antigo detectado — sincronizando a missão uma vez pela autoridade principal…';
@@ -68,7 +90,7 @@ export const BLOCKED_RESUME_NOTICE =
 
 export const MISSION_HOLD_NOTICE =
   '[Nexus] Agente em pausa — a sessão anterior NÃO foi reiniciada automaticamente.\r\n' +
-  '  Digite para retomar o teclado, ou clique a missão no rail e use Retomar.\r\n';
+  '  Clique a missão no rail e use Retomar.\r\n';
 
 export const STANDALONE_HOLD_NOTICE =
   '[Nexus] Agente em pausa — a sessão anterior NÃO foi reiniciada automaticamente.\r\n' +

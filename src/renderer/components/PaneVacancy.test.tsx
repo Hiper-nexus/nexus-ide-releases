@@ -410,6 +410,17 @@ describe('a SOLITARY structural placeholder is a vacancy, not a session', () => 
     act(() => root.unmount());
   });
 
+  it('shows the coffee spill overlay on the focused idle vacancy', () => {
+    seedPlaceholderOnly();
+    render();
+
+    const spill = host.querySelector('.spill-corner');
+    expect(spill).not.toBeNull();
+    expect(spill?.getAttribute('aria-hidden')).toBe('true');
+
+    act(() => root.unmount());
+  });
+
   /** I1 is untouched: real content still evicts the vacancy outright. */
   it('a presented mission pane still REPLACES the vacancy (I1 unchanged)', () => {
     seedPlaceholderOnly();

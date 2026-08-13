@@ -3,6 +3,7 @@ import {
   BLOCKED_RESUME_NOTICE,
   decideExitedPaneKey,
   decideStaleAuthorityRecovery,
+  decideUnlockRetiredMissionPane,
   MISSION_HOLD_NOTICE,
   MISSION_OWNED_EXIT_NOTICE,
   pruneWouldLeaveOperatorMute,
@@ -43,6 +44,36 @@ describe('decideStaleAuthorityRecovery — uma sincronização, não um ciclo', 
         autoResumeAlreadySpent: true,
       }),
     ).toBe('unlock-keyboard');
+  });
+});
+
+describe('decideUnlockRetiredMissionPane — missão viva não vira shell', () => {
+  it('pending, running e blocked preservam o pane', () => {
+    expect(
+      decideUnlockRetiredMissionPane({ missionStatus: 'pending' }),
+    ).toBe('keep-paused');
+    expect(
+      decideUnlockRetiredMissionPane({ missionStatus: 'running' }),
+    ).toBe('keep-paused');
+    expect(
+      decideUnlockRetiredMissionPane({ missionStatus: 'blocked' }),
+    ).toBe('keep-paused');
+  });
+
+  it('done, failed ou missão ausente podem virar shell', () => {
+    expect(
+      decideUnlockRetiredMissionPane({ missionStatus: 'done' }),
+    ).toBe('reclaim-shell');
+    expect(
+      decideUnlockRetiredMissionPane({ missionStatus: 'failed' }),
+    ).toBe('reclaim-shell');
+    expect(decideUnlockRetiredMissionPane({})).toBe('reclaim-shell');
+  });
+
+  it('falha ao consultar o status é fail-closed: não destrói o pane', () => {
+    expect(
+      decideUnlockRetiredMissionPane({ lookupFailed: true }),
+    ).toBe('keep-paused');
   });
 });
 
@@ -150,8 +181,9 @@ describe('pruneWouldLeaveOperatorMute', () => {
 
 describe('copy alinhada ao caminho real', () => {
   it('missão em pausa não pede um diálogo que não existe', () => {
-    expect(MISSION_HOLD_NOTICE).toMatch(/Digite para retomar o teclado/);
+    expect(MISSION_HOLD_NOTICE).toMatch(/Retomar/);
     expect(MISSION_HOLD_NOTICE).toMatch(/rail/);
+    expect(MISSION_HOLD_NOTICE).not.toMatch(/Digite para retomar o teclado/);
     expect(MISSION_HOLD_NOTICE).not.toMatch(/Confirme o diálogo/);
   });
 
@@ -159,8 +191,9 @@ describe('copy alinhada ao caminho real', () => {
     expect(STANDALONE_HOLD_NOTICE).toMatch(/Confirme o diálogo/);
   });
 
-  it('rodapé e retire apontam para teclado + rail, não para ctrl fictício', () => {
-    expect(MISSION_OWNED_EXIT_NOTICE).toMatch(/digite para retomar o teclado/);
+  it('rodapé e retire apontam para o rail, não para ctrl fictício nem shell mentiroso', () => {
+    expect(MISSION_OWNED_EXIT_NOTICE).toMatch(/Retomar/);
+    expect(MISSION_OWNED_EXIT_NOTICE).not.toMatch(/digite para retomar o teclado/);
     expect(MISSION_OWNED_EXIT_NOTICE).not.toMatch(/ctrl/i);
     expect(STALE_AUTHORITY_SYNC_NOTICE).toMatch(/uma vez/);
     expect(STALE_AUTHORITY_UNLOCK_NOTICE).toMatch(/Digite para um shell/);

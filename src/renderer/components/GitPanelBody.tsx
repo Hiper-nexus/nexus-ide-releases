@@ -507,7 +507,7 @@ export function GitPanelBody() {
           {clean && !loading ? (
             <div className="git-scm__empty" data-testid="git-scm-clean">
               <div className="git-scm__empty-coffee" aria-hidden>
-                <CoffeeCup size={40} celebrating={!decision.disabled} />
+                <CoffeeCup size={56} celebrating={!decision.disabled} />
               </div>
               <h3>Mesa limpa</h3>
               <p>

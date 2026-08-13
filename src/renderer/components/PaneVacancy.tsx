@@ -4,6 +4,7 @@ import { routeMissionAttention } from '../lib/mission-attention-route';
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
 import { useProductNavigationStore } from '../state/product-navigation-store';
+import { CoffeeSpillCorner } from '../pet/CoffeeCup';
 import { ActionCard, EmptyState } from './ActionCard';
 import { PaneInteractionSurface } from './PaneInteractionSurface';
 import { PaneToolbar } from './PaneToolbar';
@@ -37,6 +38,11 @@ export function PaneVacancy({ pane }: { readonly pane: PaneModel }) {
     >
       <PaneToolbar pane={pane} isFocused={isFocused} />
       <PaneVacancyBody pane={pane} />
+      {/* Café derramando — overlay decorativo no canto; só quando o pane tem foco.
+          Montado/desmontado com o foco → animação replays a cada visita.
+          position: absolute dentro de .pane (position: relative; overflow: hidden).
+          pointer-events: none — nunca rouba input do terminal ou do grid. */}
+      {isFocused && <CoffeeSpillCorner />}
     </PaneInteractionSurface>
   );
 }

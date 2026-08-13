@@ -24,6 +24,7 @@ import {
   BLOCKED_RESUME_NOTICE,
   decideExitedPaneKey,
   decideStaleAuthorityRecovery,
+  decideUnlockRetiredMissionPane,
   MISSION_HOLD_NOTICE,
   MISSION_OWNED_EXIT_NOTICE,
   STALE_AUTHORITY_SYNC_NOTICE,
@@ -1632,8 +1633,15 @@ async function reclaimExitedPaneAsShell(
 }
 
 /**
- * Pane aposentado / pausado com missão viva: devolve teclado sem outra
- * onda de sync. A missão continua no rail; a apresentação vira shell.
+ * Pane aposentado / pausado com missão viva: deixa em pausa honesta SEM
+ * transformar em shell enquanto a missão ainda está ativa. Só converte para
+ * shell quando a missão foi concluída/falhou ou não existe mais.
+ *
+ * BUG corrigido: a versão anterior transformava SEMPRE em shell, mesmo com
+ * missão running, fazendo o rail mentir "Trabalhando" enquanto o pane virava
+ * um shell comum. O operador via mensagens contraditórias e perdia o histórico
+ * do agente. Agora: missão ativa = pane pausado preservado, missão encerrada =
+ * pode virar shell.
  */
 export async function unlockRetiredMissionPane(
   pane: PaneModel,
@@ -1641,10 +1649,62 @@ export async function unlockRetiredMissionPane(
 ): Promise<void> {
   heldSpawnPanes.delete(pane.id);
   const target = host ?? hosts.get(pane.id);
+  const missionId =
+    pane.missionId ?? useOrchStore.getState().paneMissions[pane.id];
+
+  let missionStatus:
+    | 'pending'
+    | 'running'
+    | 'blocked'
+    | 'done'
+    | 'failed'
+    | undefined;
+  let lookupFailed = false;
+  if (missionId) {
+    const local = useOrchStore
+      .getState()
+      .missions.find((mission) => mission.id === missionId);
+    try {
+      const missions = await window.nexus.orch.listMissions();
+      missionStatus = missions.find((mission) => mission.id === missionId)
+        ?.status;
+    } catch {
+      if (local) {
+        missionStatus = local.status;
+      } else {
+        lookupFailed = true;
+      }
+    }
+  }
+
+  const disposition = decideUnlockRetiredMissionPane({
+    missionStatus,
+    lookupFailed,
+  });
+
   if (target && !target.disposed) {
     if (target.sessionId) return;
-    target.hibernated = false;
     target.spawnStarted = false;
+
+    if (disposition === 'keep-paused') {
+      const alreadyPaused =
+        target.hibernated && paneState(pane.id) === 'hibernated';
+      target.hibernated = true;
+      if (!alreadyPaused) {
+        try {
+          target.term.writeln(
+            '\r\n\x1b[90m[nexus] Pane pausado — a missão continua no rail. ' +
+              'Use Retomar no rail para reativar.\x1b[0m',
+          );
+        } catch {
+          // Presentation is best effort
+        }
+      }
+      useSessionStateStore.getState().setPaneState(pane.id, 'hibernated');
+      return;
+    }
+
+    target.hibernated = false;
     try {
       target.term.writeln(`\r\n\x1b[33m${STALE_AUTHORITY_UNLOCK_NOTICE}\x1b[0m`);
     } catch {
@@ -1656,7 +1716,13 @@ export async function unlockRetiredMissionPane(
     });
     return;
   }
-  // Host ainda não montou: vira shell no layout para o attach não
+
+  if (disposition === 'keep-paused') {
+    useSessionStateStore.getState().setPaneState(pane.id, 'hibernated');
+    return;
+  }
+
+  // Missão encerrada: vira shell no layout para o attach não
   // respawnar o cli-agent órfão e deixar a grade morta de novo.
   useLayoutStore.getState().reclaimAsOperatorShell(pane.id);
   useOrchStore.setState((s) => {

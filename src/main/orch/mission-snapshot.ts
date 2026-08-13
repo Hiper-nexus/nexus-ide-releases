@@ -136,9 +136,49 @@ function projectState(view: ParsedView): {
   }
 
   if (view.mission.status === 'running') {
-    // Via Rápida: missão running É running. O tripé cerimonial
-    // (autoridade+recibo+liveness) pertencia ao motor antigo e projetava
-    // "Precisa de reparo" sobre equipes vivas trabalhando nos terminais.
+    // Via Rápida: missão running É running — mas SÓ quando há runtime real.
+    // Se o orquestrador não está vivo E todos os panes estão stopped (sem
+    // sessão), o status 'running' no banco é stale e NÃO pode ser projetado
+    // como "Trabalhando" ao operador. Isso acontece após restart quando o
+    // restore falhou mas o status não foi atualizado: a UI mostrava
+    // "Trabalhando" enquanto os panes exibiam "agente em pausa, sessão NÃO
+    // reiniciada". A correção: verificar liveness antes de aceitar 'running'.
+    const hasLiveRuntime =
+      view.orchestratorLive ||
+      view.panes.some(
+        (pane) =>
+          pane.state !== 'stopped' &&
+          pane.state !== 'done' &&
+          pane.state !== 'failed',
+      );
+
+    if (!hasLiveRuntime) {
+      // Runtime não existe: restore falhou, sessões não foram reiniciadas.
+      // O operador DEVE ver "Encerrada pelo operador" ou "Precisa de reparo",
+      // nunca "Trabalhando" mentindo sobre runtime inexistente.
+      if (view.runtimeClosedByOperator) {
+        return {
+          state: 'blocked_user',
+          stateReason: {
+            code: 'runtime-closed',
+            label: 'Encerrada pelo operador',
+          },
+        };
+      }
+      if (view.panes.length === 0) {
+        // Kickoff: a missão já está running e o leaf ainda não nasceu.
+        // Sem pane morto para testemunhar o cadáver, não inventa restore-failed.
+        return { state: 'running' };
+      }
+      return {
+        state: 'blocked_technical',
+        stateReason: {
+          code: 'restore-failed',
+          label: 'O runtime não foi restaurado após restart',
+        },
+      };
+    }
+
     return { state: 'running' };
   }
 
@@ -246,10 +286,10 @@ export function resolveMissionAgentLiveState(input: {
   if (semantic === 'error') return 'failed';
 
   if (sessionState === null) {
-    if (taskState === 'working') return 'working';
     if (taskState === 'failed') return 'failed';
     if (taskState === 'done') return 'done';
-    // Pane row still listed but the physical session is gone.
+    // Sem processo físico, tarefa "running" no banco é cadáver pós-restart —
+    // não é working. Idle transport (sessão viva e quieta) continua abaixo.
     return 'stopped';
   }
 

@@ -30,6 +30,7 @@ import {
   listPanes,
   paneSlotOf,
 } from '../lib/split-tree';
+import { resolveModelChipLabel } from '../lib/pane-model-label';
 
 interface Props {
   pane: PaneModel;
@@ -172,6 +173,12 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
   const adapterLabel = pane.adapterId
     ? `${pane.adapterId}${pane.model ? ` · ${pane.model}` : ''}`
     : null;
+  // Chip compacto de LLM/versão — visível só quando o badge de adapter some (< 380px).
+  // Fonte canônica: pane.adapterId + pane.model + pane.effort (despachados pelo spawn).
+  const modelChipLabel =
+    pane.kind === 'cli-agent'
+      ? resolveModelChipLabel(pane.adapterId, pane.model, pane.effort)
+      : null;
   const isHibernated = paneState === 'hibernated';
   const isMaximized = maximizedPaneId === pane.id;
 
@@ -551,6 +558,24 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
             data-tip={`Worker do squad: ${pane.agentName}`}
           >
             {pane.agentName}
+          </span>
+        )}
+        {/*
+          Chip compacto de LLM/versão: aparece quando o badge de adapter some
+          (< 380 px via container query em base.css). O título da tarefa pode
+          truncar, mas este chip NÃO desaparece — prioridade visual sobre o
+          nome longo. Texto: médio (família + versão) em 'icons' density,
+          compacto (só família) em 'compact' density.
+        */}
+        {modelChipLabel && (
+          <span
+            className="toolbar__model-chip"
+            title={modelChipLabel.full}
+            aria-label={`Modelo: ${modelChipLabel.full}`}
+          >
+            {density === 'compact'
+              ? modelChipLabel.compact
+              : modelChipLabel.medium}
           </span>
         )}
         {adapterLabel ? (

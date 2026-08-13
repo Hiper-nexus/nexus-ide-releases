@@ -4,7 +4,7 @@
 
 .pet-coffee__steam {
   opacity: 0;
-  animation: pet-steam 2.6s ease-in-out infinite;
+  animation: pet-steam 2.4s ease-in-out infinite;
 }
 
 .pet-coffee__steam--b {
@@ -16,7 +16,7 @@
 }
 
 .pet-coffee--celebrating .pet-coffee__steam {
-  animation-duration: 1.3s;
+  animation-duration: 1.1s;
 }
 
 /* Inclinação de "gole" durante a celebração: a xícara tomba brevemente como
@@ -37,16 +37,16 @@
     opacity: 0;
     transform: translateY(0) scaleX(1);
   }
-  20% {
-    opacity: 0.9;
+  18% {
+    opacity: 1;
   }
-  80% {
+  78% {
     opacity: 0;
-    transform: translateY(-9px) scaleX(1.5);
+    transform: translateY(-11px) scaleX(1.45);
   }
   100% {
     opacity: 0;
-    transform: translateY(-9px);
+    transform: translateY(-11px);
   }
 }
 
@@ -56,22 +56,24 @@
     transform: scale(0.55) translateY(5px);
   }
   to {
-    opacity: 0.8;
+    opacity: 1;
     transform: scale(1) translateY(0);
   }
 }
 
+/* Mesa limpa: ouro quente + Pink City no objeto vivo — nunca wallpaper. */
 .git-scm__empty-coffee {
-  color: color-mix(in srgb, var(--accent, #7c86ff) 35%, #c4a06a);
-  opacity: 0.92;
-  margin-bottom: 2px;
+  color: color-mix(in srgb, var(--gold, #ffd166) 62%, var(--accent, #ff4f8b));
+  opacity: 1;
+  margin-bottom: var(--space-2, 8px);
+  padding: var(--space-1, 4px);
   animation: pet-coffee-in 380ms ease-out;
 }
 
 @media (prefers-reduced-motion: reduce) {
   .pet-coffee__steam {
     animation: none;
-    opacity: 0.4;
+    opacity: 0.75;
   }
 
   /* Inclina estática em reduced-motion: presença visual sem animação. */
@@ -82,6 +84,101 @@
 
   .git-scm__empty-coffee {
     animation: none;
-    opacity: 0.75;
+    opacity: 1;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Overlay de café derramando — canto do pane vago focado
+   Irmão da PaneToolbar, posição absoluta dentro de .pane (position: relative;
+   overflow: hidden). Nunca toca a surface do terminal; pointer-events: none.
+   Anima só opacity e transform — compositor. Uma única execução (forwards).
+   ───────────────────────────────────────────────────────────────────────── */
+
+.spill-corner {
+  position: absolute;
+  top: calc(var(--toolbar-height, 28px) + 4px);
+  right: 16px;
+  pointer-events: none;
+  z-index: 1;
+  overflow: visible;
+}
+
+/* Corpo escuro — mistura de ouro quente com marrom de café */
+.spill__stream--body {
+  stroke: color-mix(in srgb, var(--gold, #ffd166) 18%, #1c0800);
+  opacity: 0;
+  animation: spill-stream 1.55s var(--ease-overlay-smooth, cubic-bezier(.22,.8,.2,1)) 0.08s forwards;
+}
+
+/* Reflexo dourado — fio de luz no filete */
+.spill__stream--sheen {
+  stroke: var(--gold, #ffd166);
+  opacity: 0;
+  animation: spill-stream 1.55s var(--ease-overlay-smooth, cubic-bezier(.22,.8,.2,1)) 0.28s forwards;
+}
+
+/* Gotas */
+.spill__drop--1,
+.spill__drop--2 {
+  fill: color-mix(in srgb, var(--gold, #ffd166) 18%, #1c0800);
+  opacity: 0;
+}
+
+.spill__drop--1 {
+  animation: spill-drop 0.42s ease-out 0.62s forwards;
+}
+
+.spill__drop--2 {
+  animation: spill-drop 0.42s ease-out 0.92s forwards;
+}
+
+/* Poça */
+.spill__pool {
+  fill: color-mix(in srgb, var(--gold, #ffd166) 18%, #1c0800);
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+  transform: scaleX(0);
+  animation: spill-pool 0.52s ease-out 0.82s forwards;
+}
+
+@keyframes spill-stream {
+  from { opacity: 0; }
+  to   { opacity: 0.85; }
+}
+
+@keyframes spill-drop {
+  from { opacity: 0; transform: translateY(-5px); }
+  to   { opacity: 0.68; transform: translateY(0); }
+}
+
+@keyframes spill-pool {
+  from { opacity: 0; transform: scaleX(0); }
+  to   { opacity: 0.58; transform: scaleX(1); }
+}
+
+/* prefers-reduced-motion — mancha estática, sem movimento */
+@media (prefers-reduced-motion: reduce) {
+  .spill__stream--body {
+    animation: none;
+    opacity: 0.55;
+  }
+
+  .spill__stream--sheen {
+    animation: none;
+    opacity: 0.22;
+  }
+
+  .spill__drop--1,
+  .spill__drop--2 {
+    animation: none;
+    opacity: 0.45;
+  }
+
+  .spill__pool {
+    animation: none;
+    opacity: 0.38;
+    transform: scaleX(1);
   }
 }

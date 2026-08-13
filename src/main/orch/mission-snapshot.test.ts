@@ -67,6 +67,101 @@ describe('projectMissionSnapshot', () => {
     expect(snapshot.state).toBe('running');
   });
 
+  it('BUG corrigido: running sem runtime real NÃO projeta "Trabalhando"', () => {
+    // BUG: após restart, se o restore falhou, o mission.status ficava 'running'
+    // no banco mas o runtime não existia (orchestratorLive: false, todos panes
+    // stopped). O rail mostrava "Trabalhando" mentindo ao operador.
+    // CORREÇÃO: verificar liveness real antes de aceitar status 'running'.
+    const view = runningView();
+    view.mission.status = 'running'; // stale status no banco
+    view.orchestratorLive = false; // orquestrador NÃO está vivo
+    view.panes = [
+      {
+        paneId: 'pane-1',
+        agentId: 'agent-1',
+        state: 'stopped', // sessão não existe
+        currentUnitId: undefined,
+      },
+    ];
+
+    const snapshot = projectMissionSnapshot(view);
+
+    // Deve projetar blocked_technical, NÃO running
+    expect(snapshot.state).toBe('blocked_technical');
+    expect(snapshot.stateReason?.code).toBe('restore-failed');
+    expect(snapshot.stateReason?.label).toContain('runtime não foi restaurado');
+  });
+
+  it('running com orquestrador vivo E panes stopped continua running', () => {
+    // Se o orquestrador está vivo mas workers estão stopped, ainda é running
+    // porque há runtime ativo (o orquestrador).
+    const view = runningView();
+    view.orchestratorLive = true;
+    view.panes = [
+      {
+        paneId: 'pane-1',
+        agentId: 'agent-1',
+        state: 'stopped',
+        currentUnitId: undefined,
+      },
+    ];
+
+    const snapshot = projectMissionSnapshot(view);
+
+    expect(snapshot.state).toBe('running');
+  });
+
+  it('running com orquestrador morto mas workers queued continua running', () => {
+    // Se há panes queued/working/waiting, há runtime ativo mesmo sem
+    // orquestrador (workers podem estar esperando tarefas).
+    const view = runningView();
+    view.orchestratorLive = false;
+    view.panes = [
+      {
+        paneId: 'pane-1',
+        agentId: 'agent-1',
+        state: 'queued', // worker na fila = runtime existe
+        currentUnitId: undefined,
+      },
+    ];
+
+    const snapshot = projectMissionSnapshot(view);
+
+    expect(snapshot.state).toBe('running');
+  });
+
+  it('runtime-closed tem precedência sobre restore-failed', () => {
+    // Se o operador encerrou explicitamente (runtimeClosedByOperator: true),
+    // isso vence o restore-failed — é blocked_user com reason runtime-closed.
+    const view = runningView();
+    view.mission.status = 'running';
+    view.orchestratorLive = false;
+    view.runtimeClosedByOperator = true;
+    view.panes = [
+      {
+        paneId: 'pane-1',
+        agentId: 'agent-1',
+        state: 'stopped',
+        currentUnitId: undefined,
+      },
+    ];
+
+    const snapshot = projectMissionSnapshot(view);
+
+    expect(snapshot.state).toBe('blocked_user');
+    expect(snapshot.stateReason?.code).toBe('runtime-closed');
+  });
+
+  it('running sem panes e sem orquestrador ainda é kickoff, não restore-failed', () => {
+    const view = runningView();
+    view.orchestratorLive = false;
+    view.panes = [];
+
+    const snapshot = projectMissionSnapshot(view);
+
+    expect(snapshot.state).toBe('running');
+  });
+
   it('projects done with residual plan work as blocked technical', () => {
     const view = runningView();
     view.mission.status = 'done';
@@ -273,6 +368,12 @@ describe('resolveMissionAgentLiveState', () => {
       resolveMissionAgentLiveState({
         sessionState: null,
         taskState: 'queued',
+      }),
+    ).toBe('stopped');
+    expect(
+      resolveMissionAgentLiveState({
+        sessionState: null,
+        taskState: 'working',
       }),
     ).toBe('stopped');
   });

@@ -1920,6 +1920,51 @@ body {
   white-space: nowrap;
 }
 
+/* Chip compacto de LLM/versão — aparece SOMENTE quando o badge de adapter
+   some (< 380px via container query). Nunca usa display:none permanente:
+   trunca, não desaparece. Prioridade visual sobre o título da tarefa.
+
+   Posição no DOM: logo antes do badge de adapter, de modo que quando o
+   badge se torna visível novamente (> 380px) o chip some e o badge assume
+   sem sobreposição de informação.
+
+   Texto: densidade 'icons' → medium ("Claude Sonnet", "GPT 5.5"),
+           densidade 'compact' → compact ("Claude", "GPT", "Gemini"). */
+.toolbar__model-chip {
+  display: none; /* oculto acima de 380px — badge já cobre a info */
+  flex: 0 0 auto;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.01em;
+  color: var(--text-dim);
+  background: color-mix(in srgb, var(--border) 60%, transparent);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 2px 5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 90px;
+  cursor: default;
+  line-height: 1;
+  user-select: none;
+}
+
+@container pane-toolbar (max-width: 380px) {
+  /* Badge some → chip entra. Até 380px mostra família + versão reduzida. */
+  .toolbar__model-chip {
+    display: inline-flex;
+  }
+}
+
+@container pane-toolbar (max-width: 260px) {
+  /* Pane muito estreito: contrai para garantir visibilidade mínima. */
+  .toolbar__model-chip {
+    max-width: 56px;
+  }
+}
+
 /* (.toolbar__state consolidado no bloco principal acima — a redefinição
    duplicada que existia aqui só repetia font-size/flex e foi removida.) */
 
