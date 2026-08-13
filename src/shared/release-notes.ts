@@ -13,58 +13,28 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.32.7',
+  version: '0.32.8',
   date: '2026-08-13',
-  codename: 'O próximo passo óbvio',
+  codename: 'O Enter que faltava',
   summary:
-    'Um botão no Git que muda sozinho — adicionar, commitar, publicar, ' +
-    'abrir PR, enfileirar — o pet cafeinado, a lista de atenção (⌘J) e o ' +
-    'login do Kimi que para de cair sozinho.',
+    '⌘J mostra quando o agente pede Enter, e o comando de candidato de ' +
+    'release volta a ser o gate de verdade.',
   highlights: [
     {
-      title: 'Botão único do Git',
+      title: '⌘J pede Enter de verdade',
       detail:
-        'O rodapé do painel Git deixa de ser só Commit. O texto vira ' +
-        'Adicionar tudo, Commit, Publicar, Enviar, Abrir PR ou Enfileirar. ' +
-        'O título e o corpo do PR saem dos commits; Fixes #N entra quando a ' +
-        'issue aparece na branch.',
-    },
-    {
-      title: 'Fila de PR e auto-merge',
-      detail:
-        'O card do PR mostra o estado da fila. Enfileirar e auto-merge ' +
-        'passam pelo mesmo botão e pelas tools nexus_pr_inspect / enqueue / ' +
-        'auto_merge. PR já mergeado não oferece Abrir PR de novo.',
-    },
-    {
-      title: 'Pet cafeinado',
-      detail:
-        'O mascote ganha xícara e vapor. Missão entregue ou pane livre: o ' +
-        'vapor acelera, a xícara tomba num gole e aparece cafe. Crise ' +
-        'urgente some com o café. Mesa limpa no Git usa a mesma xícara.',
-    },
-    {
-      title: 'Lista de atenção e issue → missão',
-      detail:
-        '⌘J junta Enter, PR na fila, missão travada e CLI sem login. No ' +
-        'painel Git, Issues tem Começar missão. Clique numa linha do diff ' +
-        'manda o comentário ao agente.',
+        'A lista de atenção deixa de ficar muda no pedido de confirmação. ' +
+        'Os hooks (permissão, waiting, blocked) alimentam o item; ele some ' +
+        'quando o agente segue ou o pane fecha. O ping no desktop avisa na ' +
+        'entrada.',
     },
   ],
   fixes: [
     {
-      title: 'Kimi pedia login de novo sozinho',
+      title: 'release:candidate era o script errado',
       detail:
-        'A sonda de cota renovava o OAuth no mesmo arquivo do CLI. O ' +
-        'refresh rotaciona o grant; quem perdia a corrida via Stored token ' +
-        'for kimi-code was rejected. A sonda agora só lê o access token. ' +
-        'AGY segue o mesmo contrato.',
-    },
-    {
-      title: 'Pet não celebra no meio da crise',
-      detail:
-        'O flash cafe e o badge de intervenção não aparecem juntos. Balão ' +
-        'urgente volta a entrar com animação, não a piscar no DOM.',
+        'O alias rodava o smoke do .app desempacotado e quebrava com ENOENT. ' +
+        'Agora aponta o gate: assinatura, staple, smoke no ZIP, receipt.',
     },
   ],
 };

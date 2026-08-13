@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.32.8 — O Enter que faltava
+
+Data: 2026-08-13
+
+⌘J mostra quando o agente pede Enter, e o comando de candidato de
+release volta a ser o gate de verdade.
+
+- **⌘J pede Enter de verdade.** Hooks de permissão / waiting / blocked
+  alimentam a lista; o item some quando o agente segue ou o pane fecha.
+  Ping no desktop na entrada.
+- **release:candidate é o gate.** O alias deixou de ser o smoke do
+  `.app` solto (ENOENT) e aponta assinatura, staple, smoke no ZIP e
+  receipt.
+
 ## 0.32.7 — O próximo passo óbvio
 
 Data: 2026-08-13
