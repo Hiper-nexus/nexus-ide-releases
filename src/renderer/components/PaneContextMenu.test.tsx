@@ -6,25 +6,34 @@ import type { PaneModel } from "../../shared/types";
 import { useContextualPanelNavStore } from "../state/contextual-panel-nav-store";
 import { useOrchStore } from "../state/orch-store";
 import { useProductNavigationStore } from "../state/product-navigation-store";
+import { useToastStore } from "../state/toast-store";
 import { PaneContextMenu } from "./PaneContextMenu";
 
-const { submitPromptToPane, getPaneSessionId, getScrollbackExcerpt } =
-  vi.hoisted(() => ({
-    submitPromptToPane: vi.fn<(paneId: string, prompt: string) => boolean>(
-      () => true,
-    ),
-    getPaneSessionId: vi.fn<(paneId: string) => string | null>(
-      () => "session-worker",
-    ),
-    getScrollbackExcerpt: vi.fn<(paneId: string, max?: number) => string>(
-      () => "resultado validado\nok",
-    ),
-  }));
+const { submitLivePanePrompt } = vi.hoisted(() => ({
+  submitLivePanePrompt: vi.fn<
+    (
+      pane: { readonly id: string },
+      prompt: string,
+    ) => Promise<boolean>
+  >(async () => true),
+}));
+
+const { getPaneSessionId, getScrollbackExcerpt } = vi.hoisted(() => ({
+  getPaneSessionId: vi.fn<(paneId: string) => string | null>(
+    () => "session-worker",
+  ),
+  getScrollbackExcerpt: vi.fn<(paneId: string, max?: number) => string>(
+    () => "resultado validado\nok",
+  ),
+}));
+
+vi.mock("../terminal/submit-live-pane-prompt", () => ({
+  submitLivePanePrompt,
+}));
 
 vi.mock("../terminal/terminal-host", () => ({
   getPaneSessionId,
   getScrollbackExcerpt,
-  submitPromptToPane,
 }));
 
 (
@@ -91,6 +100,7 @@ describe("PaneContextMenu authority routing", () => {
         },
       ],
     });
+    useToastStore.setState({ toasts: [] });
   });
 
   afterEach(() => {
@@ -98,22 +108,55 @@ describe("PaneContextMenu authority routing", () => {
     vi.restoreAllMocks();
   });
 
-  it("asks the worker to submit a real handoff instead of fabricating one", () => {
+  it("asks the worker to submit a real handoff instead of fabricating one", async () => {
     const { root } = mount();
-    act(() => button("Solicitar handoff").click());
+    await act(async () => button("Solicitar handoff").click());
 
-    expect(submitPromptToPane).toHaveBeenCalledTimes(1);
-    expect(submitPromptToPane.mock.calls[0]?.[0]).toBe("pane-worker");
-    expect(submitPromptToPane.mock.calls[0]?.[1]).toContain(
+    expect(submitLivePanePrompt).toHaveBeenCalledTimes(1);
+    expect(submitLivePanePrompt.mock.calls[0]?.[0]).toMatchObject({
+      id: "pane-worker",
+      kind: "cli-agent",
+      missionId: "mission-1",
+    });
+    expect(submitLivePanePrompt.mock.calls[0]?.[1]).toContain(
       "nexus_handoff_submit",
     );
+    expect(useToastStore.getState().toasts.map((toast) => toast.title)).toEqual([
+      "Handoff solicitado",
+    ]);
+    act(() => root.unmount());
+  });
+
+  it("does not toast success when the operator lane refuses the handoff", async () => {
+    submitLivePanePrompt.mockResolvedValueOnce(false);
+    const { root } = mount();
+    await act(async () => button("Solicitar handoff").click());
+
+    expect(useToastStore.getState().toasts.map((toast) => toast.title)).toEqual([
+      "Handoff não solicitado",
+    ]);
+    act(() => root.unmount());
+  });
+
+  it("does not toast success when the operator lane throws", async () => {
+    submitLivePanePrompt.mockRejectedValueOnce(new Error("lane down"));
+    const { root } = mount();
+    await act(async () => button("Solicitar handoff").click());
+
+    expect(useToastStore.getState().toasts.map((toast) => toast.title)).toEqual([
+      "Handoff não solicitado",
+    ]);
     act(() => root.unmount());
   });
 
   it("plans worktree and opens its canonical mission board without running git", async () => {
     const { root } = mount();
     try {
-      await act(async () => button("Planejar worktree").click());
+      const worktree = button("Planejar worktree");
+      expect(worktree.textContent).toContain("Cole no orquestrador");
+      expect(worktree.textContent).not.toContain("cria o checkout");
+
+      await act(async () => worktree.click());
 
       const clipboard = vi.mocked(navigator.clipboard.writeText);
       expect(clipboard).toHaveBeenCalledWith(
@@ -127,7 +170,7 @@ describe("PaneContextMenu authority routing", () => {
         missionId: "mission-1",
         surface: "board",
       });
-      expect(submitPromptToPane).not.toHaveBeenCalled();
+      expect(submitLivePanePrompt).not.toHaveBeenCalled();
     } finally {
       act(() => root.unmount());
     }

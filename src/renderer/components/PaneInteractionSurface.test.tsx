@@ -10,19 +10,22 @@ import {
 import { useOrchStore } from "../state/orch-store";
 import { PaneInteractionSurface } from "./PaneInteractionSurface";
 
-const { getPaneSessionId, submitPromptToPane } = vi.hoisted(() => ({
+const { getPaneSessionId, submitLivePanePrompt } = vi.hoisted(() => ({
   getPaneSessionId: vi.fn<(paneId: string) => string | null>(
     () => "session-worker",
   ),
-  submitPromptToPane: vi.fn<(paneId: string, prompt: string) => boolean>(
-    () => true,
-  ),
+  submitLivePanePrompt: vi.fn<
+    (pane: { readonly id: string }, prompt: string) => Promise<boolean>
+  >(async () => true),
 }));
 
 vi.mock("../terminal/terminal-host", () => ({
   getPaneSessionId,
   getScrollbackExcerpt: vi.fn(() => ""),
-  submitPromptToPane,
+}));
+
+vi.mock("../terminal/submit-live-pane-prompt", () => ({
+  submitLivePanePrompt,
 }));
 
 (
@@ -104,7 +107,7 @@ describe("PaneInteractionSurface skill drop", () => {
     vi.restoreAllMocks();
   });
 
-  it("submits a bounded skill request to an allowed live agent", () => {
+  it("submits a bounded skill request to an allowed live agent", async () => {
     const { host, root } = mount(
       <PaneInteractionSurface pane={workerPane} className="pane">
         <span>terminal</span>
@@ -112,10 +115,13 @@ describe("PaneInteractionSurface skill drop", () => {
     );
 
     dropSkill(host.firstElementChild!);
+    await act(async () => {
+      await Promise.resolve();
+    });
 
     expect(getPaneSessionId).toHaveBeenCalledWith("pane-worker");
-    expect(submitPromptToPane).toHaveBeenCalledWith(
-      "pane-worker",
+    expect(submitLivePanePrompt).toHaveBeenCalledWith(
+      workerPane,
       expect.stringContaining("skill `code-review`"),
     );
     act(() => root.unmount());
@@ -140,7 +146,7 @@ describe("PaneInteractionSurface skill drop", () => {
     dropSkill(host.firstElementChild!);
 
     expect(getPaneSessionId).not.toHaveBeenCalled();
-    expect(submitPromptToPane).not.toHaveBeenCalled();
+    expect(submitLivePanePrompt).not.toHaveBeenCalled();
     act(() => root.unmount());
   });
 });

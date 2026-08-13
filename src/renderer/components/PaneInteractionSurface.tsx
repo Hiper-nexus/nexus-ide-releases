@@ -10,10 +10,8 @@ import {
 import { useLayoutStore } from "../state/layout-store";
 import { useOrchStore } from "../state/orch-store";
 import { useToastStore } from "../state/toast-store";
-import {
-  getPaneSessionId,
-  submitPromptToPane,
-} from "../terminal/terminal-host";
+import { submitLivePanePrompt } from "../terminal/submit-live-pane-prompt";
+import { getPaneSessionId } from "../terminal/terminal-host";
 import { PaneContextMenu } from "./PaneContextMenu";
 
 export interface PaneInteractionSurfaceProps {
@@ -82,23 +80,29 @@ export function PaneInteractionSurface({
       );
       return;
     }
-    const sent = submitPromptToPane(
-      pane.id,
-      buildSkillInvocationPrompt(payload.name),
-    );
-    if (!sent) {
-      pushToast(
-        "warn",
-        "Skill não enviada",
-        "A sessão do agente deixou de responder.",
-      );
-      return;
-    }
-    pushToast(
-      "success",
-      "Skill enviada",
-      `${payload.name}: o Nexus mantém as permissões do agente.`,
-    );
+    void submitLivePanePrompt(pane, buildSkillInvocationPrompt(payload.name))
+      .then((sent) => {
+        if (!sent) {
+          pushToast(
+            "warn",
+            "Skill não enviada",
+            "A sessão do agente deixou de responder.",
+          );
+          return;
+        }
+        pushToast(
+          "success",
+          "Skill enviada",
+          `${payload.name}: o Nexus mantém as permissões do agente.`,
+        );
+      })
+      .catch(() => {
+        pushToast(
+          "warn",
+          "Skill não enviada",
+          "A sessão do agente deixou de responder.",
+        );
+      });
   }
 
   return (

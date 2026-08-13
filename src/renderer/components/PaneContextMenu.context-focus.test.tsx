@@ -18,10 +18,12 @@ import { PaneContextMenu } from "./PaneContextMenu";
 const terminalHost = vi.hoisted(() => ({
   getPaneSessionId: vi.fn(() => "session-worker"),
   getScrollbackExcerpt: vi.fn(() => ""),
-  submitPromptToPane: vi.fn(() => true),
 }));
 
 vi.mock("../terminal/terminal-host", () => terminalHost);
+vi.mock("../terminal/submit-live-pane-prompt", () => ({
+  submitLivePanePrompt: vi.fn(async () => true),
+}));
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }

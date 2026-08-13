@@ -9,10 +9,10 @@ import { useContextualPanelNavStore } from "../state/contextual-panel-nav-store"
 import { useOrchStore } from "../state/orch-store";
 import { useToastStore } from "../state/toast-store";
 import { useProductNavigationStore } from "../state/product-navigation-store";
+import { submitLivePanePrompt } from "../terminal/submit-live-pane-prompt";
 import {
   getPaneSessionId,
   getScrollbackExcerpt,
-  submitPromptToPane,
 } from "../terminal/terminal-host";
 import { PixelIcon, type PixelIconName } from "./PixelIcon";
 
@@ -127,24 +127,32 @@ export function PaneContextMenu({
       label: "Solicitar handoff",
       detail: "Pede ao worker uma entrega durável para o orquestrador.",
       icon: "mission",
-      run: () => {
-        const sent = submitPromptToPane(
-          pane.id,
-          buildHandoffRequestPrompt(pane),
-        );
-        if (!sent) {
+      run: async () => {
+        try {
+          const sent = await submitLivePanePrompt(
+            pane,
+            buildHandoffRequestPrompt(pane),
+          );
+          if (!sent) {
+            pushToast(
+              "warn",
+              "Handoff não solicitado",
+              "O worker não aceitou a solicitação.",
+            );
+            return;
+          }
+          pushToast(
+            "success",
+            "Handoff solicitado",
+            "O gate da missão validará a entrega do worker.",
+          );
+        } catch {
           pushToast(
             "warn",
             "Handoff não solicitado",
-            "O worker não tem uma sessão ativa.",
+            "O worker não aceitou a solicitação.",
           );
-          return;
         }
-        pushToast(
-          "success",
-          "Handoff solicitado",
-          "O gate da missão validará a entrega do worker.",
-        );
       },
     });
   }
@@ -154,8 +162,7 @@ export function PaneContextMenu({
     actions.push({
       id: "worktree",
       label: "Planejar worktree",
-      detail:
-        "Copia a instrução e abre a missão. O motor Nexus cria o checkout.",
+      detail: "Copia a instrução e abre a missão. Cole no orquestrador.",
       icon: "orch",
       run: async () => {
         const instruction = buildWorktreePlanningPrompt(pane);
