@@ -20,6 +20,16 @@ import { filesFromClipboardData } from '../lib/mission-attachments';
 import { resolveDroppedMissionContextPath } from '../lib/mission-shell-file-intake';
 import { listPanes } from '../lib/split-tree';
 import { paneInputLane } from './pane-input-route';
+import {
+  BLOCKED_RESUME_NOTICE,
+  decideExitedPaneKey,
+  decideStaleAuthorityRecovery,
+  MISSION_HOLD_NOTICE,
+  MISSION_OWNED_EXIT_NOTICE,
+  STALE_AUTHORITY_SYNC_NOTICE,
+  STALE_AUTHORITY_UNLOCK_NOTICE,
+  STANDALONE_HOLD_NOTICE,
+} from './mission-owned-pane-policy';
 import { TERMINAL_THEMES } from '../styles/terminal-theme';
 import {
   discardTerminalOutput,
@@ -462,9 +472,7 @@ async function routeBlockedMissionToResume(
     const missions = await window.nexus.orch.listMissions();
     const mission = missions.find((candidate) => candidate.id === missionId);
     if (!mission || mission.status !== 'blocked') return false;
-    host.term.writeln(
-      '\r\n\x1b[36m[nexus] missão bloqueada — retomando pela autoridade principal…\x1b[0m',
-    );
+    host.term.writeln(`\r\n\x1b[36m${BLOCKED_RESUME_NOTICE}\x1b[0m`);
     const { reopenMission } = await import('../orch/mission-reopen');
     const resumed = await reopenMission(mission);
     if (!resumed.ok) {
@@ -562,28 +570,36 @@ function startSpawn(
           Boolean(missionId) &&
           /persisted mission pane authority/i.test(res.error);
         if (isPersistedMissionAuthorityRefresh) {
-          // A persisted pane is only presentation; Main owns the mission. Do
-          // not dump an internal seal/CAS diagnostic into the user's terminal
-          // and then leave a red dead end. The blocked path is re-armed by
-          // Main; a revision that already advanced simply retires this stale
-          // presentation while the current coordinator continues.
+          // Uma sync. O spawn que já era restorePersistedAuthority — ou a
+          // cota de auto-resume gasta — NÃO dispara outra onda: era o loop
+          // que aposentava o único pane do Maestro e deixava o teclado mudo.
+          host.spawnStarted = false;
           console.warn(
             `[mission-restore] stale pane ${pane.id} was not restarted:`,
             res.error,
           );
-          host.term.writeln(
-            '\r\n\x1b[36m[nexus] contexto antigo detectado — sincronizando a missão pela autoridade principal…\x1b[0m',
-          );
-          void routeBlockedMissionToResume(host, missionId!).then((resumed) => {
-            if (!resumed && !host.disposed) {
-              host.term.writeln(
-                '\r\n\x1b[33m[nexus] pane antigo aposentado; a revisão atual continua pelo coordenador da missão.\x1b[0m',
-              );
-            }
+          const action = decideStaleAuthorityRecovery({
+            restorePersistedAuthority,
+            autoResumeAlreadySpent: missionAutoResumeSpent.has(missionId!),
           });
+          if (action === 'sync-once') {
+            host.term.writeln(
+              `\r\n\x1b[36m${STALE_AUTHORITY_SYNC_NOTICE}\x1b[0m`,
+            );
+            void routeBlockedMissionToResume(host, missionId!).then(
+              (resumed) => {
+                if (!resumed && !host.disposed) {
+                  void unlockRetiredMissionPane(pane, host);
+                }
+              },
+            );
+          } else {
+            void unlockRetiredMissionPane(pane, host);
+          }
           useSessionStateStore.getState().setPaneState(pane.id, 'exited');
           return null;
         }
+        host.spawnStarted = false;
         host.term.writeln(
           `\r\n\x1b[31m[nexus] failed to start: ${res.error}\x1b[0m`,
         );
@@ -737,7 +753,7 @@ function startSpawn(
           useSessionStateStore.getState().setPaneState(pane.id, 'exited');
           if (missionStillOwnsPane(pane.id, pane)) {
             host.term.writeln(
-              '\x1b[33m[nexus] a missão ainda é dona deste pane — use o rail para retomar, ou espere o próximo despacho.\x1b[0m',
+              `\x1b[33m${MISSION_OWNED_EXIT_NOTICE}\x1b[0m`,
             );
           } else {
             host.term.writeln(
@@ -838,13 +854,16 @@ function startSpawn(
         if (host.opened) webglPool.touch(pane.id);
         flushTerminalOutput(host.term);
         if (!host.sessionId) {
-          // Cadáver de missão/CLI: tecla era no-op e o operador lia "travado".
-          // Missão terminal (done/failed) ou pane sem missão viva → shell.
-          if (
-            paneState(pane.id) === 'exited' &&
-            !host.spawnStarted &&
-            !missionStillOwnsPane(pane.id, pane)
-          ) {
+          const keyAction = decideExitedPaneKey({
+            hasSession: false,
+            spawnStarted: host.spawnStarted,
+            paneState: paneState(pane.id),
+            missionOwns: missionStillOwnsPane(pane.id, pane),
+            spawnHeld: heldSpawnPanes.has(pane.id),
+          });
+          if (keyAction === 'resume-keyboard') {
+            void unlockRetiredMissionPane(pane, host);
+          } else if (keyAction === 'reclaim-shell') {
             void reclaimExitedPaneAsShell(pane, host);
           }
           return;
@@ -854,10 +873,7 @@ function startSpawn(
         // a tecla era descartada em silêncio e o terminal parecia morto.
         // O vínculo vem do orchStore quando o pane restaurado chega sem ele.
         if (pane.kind === 'cli-agent' && missionId) {
-          void window.nexus.orch.sendPaneOperatorInput({
-            sessionId: host.sessionId,
-            data,
-          });
+          sendOperatorInputOrNotify(pane.id, host.sessionId, data);
           return;
         }
         window.nexus.pty.write(host.sessionId, data);
@@ -866,6 +882,7 @@ function startSpawn(
       return res.sessionId;
     } catch (err) {
       if (host.disposed || host.spawnGeneration !== generation) return null;
+      host.spawnStarted = false;
       const message = err instanceof Error ? err.message : String(err);
       host.term.writeln(
         `\r\n\x1b[31m[nexus] failed to start: ${message}\x1b[0m`,
@@ -1223,10 +1240,11 @@ export function attachHost(pane: PaneModel, slot: HTMLElement): void {
       if (host.opened && !host.holdNoticeWritten) {
         host.holdNoticeWritten = true;
         try {
+          const missionOwned = Boolean(
+            pane.missionId ?? useOrchStore.getState().paneMissions[pane.id],
+          );
           host.term.writeln(
-            '\r\n  [Nexus] Agente em pausa — a sessão anterior NÃO foi ' +
-              'reiniciada automaticamente.\r\n' +
-              '  Confirme o diálogo ou retome a missão no rail quando quiser.\r\n',
+            `\r\n${missionOwned ? MISSION_HOLD_NOTICE : STANDALONE_HOLD_NOTICE}`,
           );
         } catch {
           // xterm may not be ready; ignore.
@@ -1379,7 +1397,17 @@ export function markPersistedAuthorityOnSpawn(paneId: string): void {
 // standalone agents.
 setRestoredPanesHandler((panes) => {
   for (const pane of panes) {
-    if (pane.kind === 'cli-agent') holdSpawnUntilApproved(pane.id);
+    // Missão não entra no hold cego: o gate real auto-retoma ou o teclado
+    // destrava. Segurar orq/worker aqui era o limbo "Confirme o diálogo"
+    // sem diálogo.
+    if (
+      pane.kind === 'cli-agent' &&
+      !pane.missionId &&
+      pane.role !== 'orchestrator' &&
+      pane.role !== 'worker'
+    ) {
+      holdSpawnUntilApproved(pane.id);
+    }
   }
 });
 
@@ -1562,9 +1590,15 @@ function isMainControlledMissionPane(
 async function reclaimExitedPaneAsShell(
   pane: PaneModel,
   host: Host,
+  options: { readonly ignoreMissionOwnership?: boolean } = {},
 ): Promise<void> {
   if (host.disposed || host.sessionId || host.spawnStarted) return;
-  if (missionStillOwnsPane(pane.id, pane)) return;
+  if (
+    !options.ignoreMissionOwnership &&
+    missionStillOwnsPane(pane.id, pane)
+  ) {
+    return;
+  }
   host.spawnStarted = true;
   try {
     host.term.writeln(
@@ -1595,6 +1629,43 @@ async function reclaimExitedPaneAsShell(
       // best effort
     }
   }
+}
+
+/**
+ * Pane aposentado / pausado com missão viva: devolve teclado sem outra
+ * onda de sync. A missão continua no rail; a apresentação vira shell.
+ */
+export async function unlockRetiredMissionPane(
+  pane: PaneModel,
+  host?: Host,
+): Promise<void> {
+  heldSpawnPanes.delete(pane.id);
+  const target = host ?? hosts.get(pane.id);
+  if (target && !target.disposed) {
+    if (target.sessionId) return;
+    target.hibernated = false;
+    target.spawnStarted = false;
+    try {
+      target.term.writeln(`\r\n\x1b[33m${STALE_AUTHORITY_UNLOCK_NOTICE}\x1b[0m`);
+    } catch {
+      // Presentation is best effort; the shell spawn is the unlock.
+    }
+    useSessionStateStore.getState().setPaneState(pane.id, 'exited');
+    await reclaimExitedPaneAsShell(pane, target, {
+      ignoreMissionOwnership: true,
+    });
+    return;
+  }
+  // Host ainda não montou: vira shell no layout para o attach não
+  // respawnar o cli-agent órfão e deixar a grade morta de novo.
+  useLayoutStore.getState().reclaimAsOperatorShell(pane.id);
+  useOrchStore.setState((s) => {
+    if (!(pane.id in s.paneMissions)) return s;
+    const next = { ...s.paneMissions };
+    delete next[pane.id];
+    return { paneMissions: next };
+  });
+  useSessionStateStore.getState().clearPaneState(pane.id);
 }
 
 function reportMainOwnedLifecycleOnly(host: Host, action: string): void {
@@ -1630,8 +1701,12 @@ export function respawnWithResume(
   const host = hosts.get(pane.id);
   if (!host || host.disposed) return;
   if (isMainControlledMissionPane(pane.id, pane)) {
-    // Numa missão bloqueada, "Reiniciar" É a intenção de retomar — encaminha
-    // para o caminho sancionado em vez de repetir a recusa até virar spam.
+    // Sessão morta: Reiniciar é retomar teclado, não outra sync que aposenta
+    // o único leaf. Missão bloqueada com processo vivo segue o bootstrap.
+    if (!host.sessionId) {
+      void unlockRetiredMissionPane(pane, host);
+      return;
+    }
     const missionId =
       pane.missionId ?? useOrchStore.getState().paneMissions[pane.id];
     void (async () => {
@@ -1639,7 +1714,7 @@ export function respawnWithResume(
         ? await routeBlockedMissionToResume(host, missionId, { manual: true })
         : false;
       if (!routed) {
-        reportMainOwnedLifecycleOnly(host, 'Reiniciar ou trocar conta');
+        void unlockRetiredMissionPane(pane, host);
       }
     })();
     return;
@@ -1702,8 +1777,8 @@ export function wakeHost(pane: PaneModel): boolean {
   if (!host || host.disposed || host.sessionId) return false;
   if (pane.kind === 'browser') return false;
   if (isMainControlledMissionPane(pane.id, pane)) {
-    reportMainOwnedLifecycleOnly(host, 'Acordar/recriar');
-    return false;
+    void unlockRetiredMissionPane(pane, host);
+    return true;
   }
   host.hibernated = false;
   host.spawnStarted = false;
@@ -1928,6 +2003,27 @@ export async function respawnMissionPaneFresh(
   return healthy;
 }
 
+function sendOperatorInputOrNotify(
+  paneId: string,
+  sessionId: string,
+  data: string,
+): void {
+  void window.nexus.orch.sendPaneOperatorInput({ sessionId, data }).then(
+    (accepted) => {
+      if (accepted) return;
+      const target = hosts.get(paneId);
+      if (!target || target.disposed) return;
+      try {
+        target.term.writeln(
+          '\r\n\x1b[33m[nexus] o main recusou a digitação neste pane.\x1b[0m',
+        );
+      } catch {
+        // best effort
+      }
+    },
+  );
+}
+
 /**
  * Write text into a pane's PTY as if the user typed it — the exact same path as
  * keyboard input. Used by voice routing to inject the transcribed prompt into
@@ -1953,7 +2049,7 @@ export function writeToPane(paneId: string, data: string): boolean {
     useOrchStore.getState().paneMissions[paneId],
   );
   if (lane === 'operator') {
-    void window.nexus.orch.sendPaneOperatorInput({ sessionId, data });
+    sendOperatorInputOrNotify(paneId, sessionId, data);
     return true;
   }
   window.nexus.pty.write(sessionId, data);

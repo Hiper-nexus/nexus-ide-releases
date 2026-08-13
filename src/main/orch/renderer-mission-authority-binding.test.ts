@@ -567,6 +567,72 @@ describe("renderer mission authority", () => {
     ).toBe(false);
   });
 
+  it("restaura pane cujo selo de workflow rotacionou no restart (aprovação intacta)", () => {
+    const authoritySeal = createMissionPaneAuthoritySeal({
+      mission: approvedMission,
+      squad: savedSquad,
+    });
+    expect(authoritySeal).not.toBeNull();
+    deps.getMission.mockReturnValue(approvedMission);
+    deps.findMissionPaneByPaneId.mockReturnValue({
+      id: "mpane-rotated",
+      missionId: "mission-a",
+      paneId: "pane-rotated",
+      adapterId: "codex",
+      cwd: session.cwd,
+      title: "Motor",
+      role: "worker",
+      scope,
+      authoritySeal: {
+        ...authoritySeal!,
+        contextRevision: "workflow-before-restart",
+        contractHash: "workflow-before-restart",
+      },
+      createdAt: 1,
+    });
+
+    expect(
+      authority.canRestoreMissionPaneForRenderer(
+        owner,
+        "mission-a",
+        "pane-rotated",
+      ),
+    ).toBe(true);
+  });
+
+  it("recusa restore quando a aprovação (intent) mudou — isso pede replane", () => {
+    const authoritySeal = createMissionPaneAuthoritySeal({
+      mission: approvedMission,
+      squad: savedSquad,
+    });
+    expect(authoritySeal).not.toBeNull();
+    deps.getMission.mockReturnValue(approvedMission);
+    deps.findMissionPaneByPaneId.mockReturnValue({
+      id: "mpane-replanned",
+      missionId: "mission-a",
+      paneId: "pane-replanned",
+      adapterId: "codex",
+      cwd: session.cwd,
+      title: "Motor",
+      role: "worker",
+      scope,
+      authoritySeal: {
+        ...authoritySeal!,
+        intentVersion: 2,
+        intentContractHash: "approved-then-replanned",
+      },
+      createdAt: 1,
+    });
+
+    expect(
+      authority.canRestoreMissionPaneForRenderer(
+        owner,
+        "mission-a",
+        "pane-replanned",
+      ),
+    ).toBe(false);
+  });
+
   it("restaura pane sem selo gravado (Via Rápida não grava selo de autoridade)", () => {
     deps.getMission.mockReturnValue(approvedMission);
     deps.findMissionPaneByPaneId.mockReturnValue({

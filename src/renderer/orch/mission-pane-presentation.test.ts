@@ -107,7 +107,7 @@ describe('presentMainOwnedMissionPane', () => {
 
   it('removes explicitly displaced conflicts and placeholder-only layouts', async () => {
     harness.layoutPanes = [
-      { id: 'shell-1', kind: 'shell' },
+      { id: 'shell-1', kind: 'shell', isStructuralPlaceholder: true },
       { id: 'pane-conflict', kind: 'cli-agent', missionId: 'mission-old' },
     ];
     harness.paneMissions = { 'pane-conflict': 'mission-old' };
@@ -120,6 +120,30 @@ describe('presentMainOwnedMissionPane', () => {
     );
 
     expect(harness.setPanes).toHaveBeenCalledWith([
+      expect.objectContaining({ id: 'pane-new' }),
+    ]);
+  });
+
+  it('keeps an operator shell opened beside the mission pane', async () => {
+    harness.layoutPanes = [
+      { id: 'shell-split', kind: 'shell' },
+      {
+        id: 'pane-old',
+        kind: 'cli-agent',
+        missionId: 'mission-a',
+        role: 'orchestrator',
+      },
+    ];
+
+    await presentMainOwnedMissionPane(
+      'mission-a',
+      sealed,
+      {},
+      { waitForSession: harness.waitForSession },
+    );
+
+    expect(harness.setPanes).toHaveBeenCalledWith([
+      expect.objectContaining({ id: 'shell-split', kind: 'shell' }),
       expect.objectContaining({ id: 'pane-new' }),
     ]);
   });

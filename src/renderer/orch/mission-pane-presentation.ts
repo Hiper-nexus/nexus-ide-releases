@@ -91,10 +91,12 @@ export async function presentMainOwnedMissionPane(
   markPersistedAuthorityOnSpawn(pane.id);
   orch.bindPaneMission(pane.id, missionId);
 
-  const next =
-    kept.length === 0 || kept.every((candidate) => candidate.kind === 'shell')
-      ? [pane]
-      : [...kept, pane];
+  // Vacancy/placeholder some. Shell que o operador abriu (À direita / Abaixo)
+  // fica: a sync da missão não pode apagar o único teclado da grade.
+  const keptDurable = kept.filter(
+    (candidate) => candidate.isStructuralPlaceholder !== true,
+  );
+  const next = keptDurable.length === 0 ? [pane] : [...keptDurable, pane];
   layout.setPanes(next);
   layout.focus(pane.id);
 

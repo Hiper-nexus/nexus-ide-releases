@@ -44,6 +44,7 @@ import { getSquad } from "./squad-store";
 import { type SquadAuthoritySnapshot } from "./squad-authority-snapshot";
 import {
   resolveMissionPaneAuthoritySeal,
+  sameMissionPaneApprovalSeal,
   sameMissionPaneAuthoritySeal,
 } from "./mission-pane-authority";
 import type { OrchestrationEvidence } from "../../shared/adapter-types";
@@ -883,7 +884,12 @@ export class RendererMissionAuthority {
       mission,
       squad,
     );
-    return sameMissionPaneAuthoritySeal(spec.authoritySeal, currentSeal);
+    if (sameMissionPaneAuthoritySeal(spec.authoritySeal, currentSeal)) {
+      return true;
+    }
+    // Restart / PREVC pode rotacionar só a metade workflow. Aprovação
+    // (intent + squad) intacta: reconcilia — não some com a equipe.
+    return sameMissionPaneApprovalSeal(spec.authoritySeal, currentSeal);
   }
 
   /** Activity is best-effort metadata: a resolver bug must not break reopen. */

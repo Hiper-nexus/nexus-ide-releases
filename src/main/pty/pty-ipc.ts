@@ -72,11 +72,10 @@ import { getCommandBlockTracker } from "../terminal/command-block-tracker";
 import { registerCommandBlockScope } from "../terminal/command-block-scope-registry";
 import { getProjectDomainStores } from "../orch/project-domain-store-registry";
 import {
-  TASK_DISPATCH_MISSING_RUNTIME_REASON,
   type TaskDispatchRecord,
   type TaskDispatchStore,
 } from "../orch/task-dispatch-store";
-import { TASK_DISPATCH_SESSION_EXIT_REASON } from "../orch/task-dispatch-persistence";
+import { selectPersistedWorkerRestartDispatch } from "./persisted-worker-restart";
 
 let projectRuntimeManager: ProjectRuntimeManager | null = null;
 const RESTARTED_WORKER_LEASE_MS = 10 * 60_000;
@@ -112,32 +111,22 @@ function resolvePersistedWorkerRestart(
 ): PersistedWorkerRestart | null {
   const pane = spawn.persistedPane;
   if (pane?.role !== "worker") return null;
-  if (!pane.paneId || !pane.workerIncarnationId) {
-    throw new Error(
-      "persisted worker is missing pane/incarnation restart authority",
-    );
-  }
+  const paneId = pane.paneId ?? spawn.request.paneId;
   const scope = spawn.authority.coordinationScope ?? pane.scope;
+  if (!paneId || !scope) return null;
   const store = getProjectDomainStores(scope).taskDispatches;
-  const matches = store.list(pane.missionId).filter((dispatch) => {
-    const isRestartable =
-      dispatch.state === "running" ||
-      (dispatch.state === "superseded" &&
-        (dispatch.lastError === TASK_DISPATCH_MISSING_RUNTIME_REASON ||
-          dispatch.lastError === TASK_DISPATCH_SESSION_EXIT_REASON));
-    return (
-      isRestartable &&
-      dispatch.paneId === pane.paneId &&
-      dispatch.workerIncarnationId === pane.workerIncarnationId
-    );
+  const dispatch = selectPersistedWorkerRestartDispatch({
+    paneId,
+    workerIncarnationId: pane.workerIncarnationId,
+    dispatches: store.list(pane.missionId),
   });
-  if (matches.length !== 1 || !matches[0]!.sessionId) {
-    throw new Error(
-      "nenhum dispatch exato e atual autoriza reiniciar este worker persistido",
-    );
+  if (!dispatch?.sessionId || !dispatch.workerIncarnationId) {
+    // Pane gravado, sem dispatch exato: o worker ainda abre. Recusar aqui
+    // era o "missing pane/incarnation restart authority" que matava a
+    // equipe no Reabrir panes após restart.
+    return null;
   }
-  const dispatch = matches[0]!;
-  if (getSessionState(dispatch.sessionId!) !== null) {
+  if (getSessionState(dispatch.sessionId) !== null) {
     throw new Error(
       "o processo exato do dispatch ainda está ativo; replacement negado",
     );
@@ -380,10 +369,13 @@ function spawnCliPtyAgentPane(
         }
         workerRestart.store.rebindRestartedWorker({
           missionId: persistedPane!.missionId,
-          paneId: persistedPane!.paneId!,
+          paneId:
+            persistedPane!.paneId ??
+            request.paneId ??
+            workerRestart.dispatch.paneId!,
           expectedSessionId: workerRestart.dispatch.sessionId!,
           replacementSessionId: sessionId,
-          workerIncarnationId: persistedPane!.workerIncarnationId!,
+          workerIncarnationId: workerRestart.dispatch.workerIncarnationId!,
           leaseMs: RESTARTED_WORKER_LEASE_MS,
         });
       } catch (error) {

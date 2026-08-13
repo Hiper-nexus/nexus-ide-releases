@@ -702,7 +702,7 @@ describe("registerPtyIpc account fail-fast", () => {
     });
   });
 
-  it("refuses a persisted worker when no exact restartable dispatch exists", async () => {
+  it("opens a persisted worker without rebind when no restartable dispatch exists", async () => {
     providerDeps.prepareProviderSpawn.mockReturnValueOnce({
       ok: true,
       overrides: {},
@@ -742,12 +742,140 @@ describe("registerPtyIpc account fail-fast", () => {
       },
     );
 
-    expect(result).toEqual({
-      ok: false,
-      error: expect.stringMatching(/dispatch.*exato|exact.*dispatch/i),
-    });
-    expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
+    expect(result).toEqual({ ok: true, sessionId: "pty-created" });
+    expect(ptyDeps.spawnAgentSession).toHaveBeenCalledOnce();
     expect(dispatchDeps.rebindRestartedWorker).not.toHaveBeenCalled();
+  });
+
+  it("reconciles a persisted worker missing incarnation after restart", async () => {
+    providerDeps.prepareProviderSpawn.mockReturnValueOnce({
+      ok: true,
+      overrides: {},
+    });
+    const persisted = {
+      id: "mpane-worker-no-incarnation",
+      missionId: "mission-a",
+      adapterId: "claude",
+      title: "Motor",
+      agentName: "Motor",
+      role: "worker" as const,
+      paneId: "pane-3",
+      cwd: "/workspace/a/trusted-cwd",
+      scope: authorityDeps.scope,
+      authoritySeal: authoritySealFor(),
+      createdAt: 1,
+    };
+    authorityDeps.findMissionPaneByPaneId.mockReturnValueOnce(persisted);
+    authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
+    authorityDeps.resolveCwdForScope.mockReturnValueOnce(persisted.cwd);
+    dispatchDeps.list.mockReturnValueOnce([
+      {
+        id: "dispatch-motor",
+        taskId: "task-motor",
+        missionId: persisted.missionId,
+        revision: 4,
+        state: "running",
+        paneId: persisted.paneId,
+        sessionId: "pty-dead",
+        workerIncarnationId: "worker-incarnation-after-restart",
+      },
+    ]);
+    const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
+
+    const result = await handler?.(
+      { sender: { id: 7 } },
+      {
+        kind: "cli-agent",
+        adapterId: "claude",
+        missionId: persisted.missionId,
+        paneId: persisted.paneId,
+        resume: true,
+        resumeLatestOnly: false,
+        restorePersistedAuthority: false,
+        cwd: persisted.cwd,
+        cols: 100,
+        rows: 30,
+      },
+    );
+
+    expect(result).toEqual({ ok: true, sessionId: "pty-created" });
+    expect(JSON.stringify(result)).not.toMatch(
+      /missing pane\/incarnation restart authority/,
+    );
+    expect(dispatchDeps.rebindRestartedWorker).toHaveBeenCalledWith({
+      missionId: persisted.missionId,
+      paneId: persisted.paneId,
+      expectedSessionId: "pty-dead",
+      replacementSessionId: "pty-created",
+      workerIncarnationId: "worker-incarnation-after-restart",
+      leaseMs: 10 * 60_000,
+    });
+  });
+
+  it("reconciles a persisted worker whose incarnation rotated after restart", async () => {
+    providerDeps.prepareProviderSpawn.mockReturnValueOnce({
+      ok: true,
+      overrides: {},
+    });
+    const persisted = {
+      id: "mpane-worker-stale-incarnation",
+      missionId: "mission-a",
+      adapterId: "claude",
+      title: "Interface",
+      agentName: "Interface",
+      workerIncarnationId: "worker-incarnation-before-restart",
+      role: "worker" as const,
+      paneId: "pane-4",
+      cwd: "/workspace/a/trusted-cwd",
+      scope: authorityDeps.scope,
+      authoritySeal: authoritySealFor(),
+      createdAt: 1,
+    };
+    authorityDeps.findMissionPaneByPaneId.mockReturnValueOnce(persisted);
+    authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
+    authorityDeps.resolveCwdForScope.mockReturnValueOnce(persisted.cwd);
+    dispatchDeps.list.mockReturnValueOnce([
+      {
+        id: "dispatch-interface",
+        taskId: "task-interface",
+        missionId: persisted.missionId,
+        revision: 7,
+        state: "running",
+        paneId: persisted.paneId,
+        sessionId: "pty-dead",
+        workerIncarnationId: "worker-incarnation-after-restart",
+      },
+    ]);
+    const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
+
+    const result = await handler?.(
+      { sender: { id: 7 } },
+      {
+        kind: "cli-agent",
+        adapterId: "claude",
+        missionId: persisted.missionId,
+        paneId: persisted.paneId,
+        resume: true,
+        resumeLatestOnly: false,
+        restorePersistedAuthority: false,
+        cwd: persisted.cwd,
+        cols: 100,
+        rows: 30,
+      },
+    );
+
+    expect(result).toEqual({ ok: true, sessionId: "pty-created" });
+    expect(JSON.stringify(result)).not.toMatch(
+      /missing pane\/incarnation restart authority/,
+    );
+    expect(dispatchDeps.rebindRestartedWorker).toHaveBeenCalledWith({
+      missionId: persisted.missionId,
+      paneId: persisted.paneId,
+      expectedSessionId: "pty-dead",
+      replacementSessionId: "pty-created",
+      workerIncarnationId: "worker-incarnation-after-restart",
+      leaseMs: 10 * 60_000,
+    });
   });
 
   it("respawns a proven-dead persisted orchestrator fresh without a grant", () => {

@@ -10,7 +10,9 @@ import {
   discardPaneSpawnState,
   holdSpawnUntilApproved,
   releaseHeldSpawns,
+  unlockRetiredMissionPane,
 } from '../terminal/terminal-host';
+import { pruneWouldLeaveOperatorMute } from '../terminal/mission-owned-pane-policy';
 import { isAutomatedReviewerPaneIdentity } from '../../shared/automated-reviewer-pane';
 import { useOrchStore } from '../state/orch-store';
 import { listPanes } from '../lib/split-tree';
@@ -194,6 +196,13 @@ function pruneOrphanMissionPane(
   if (orphanPrunesInFlight.has(key)) return;
   orphanPrunesInFlight.add(key);
   try {
+    const live = listPanes(useLayoutStore.getState().root);
+    if (pruneWouldLeaveOperatorMute(live, pane.id)) {
+      // Único leaf do coordenador: apagar deixava o operador sem teclado.
+      discardPaneSpawnState(pane.id);
+      void unlockRetiredMissionPane(pane);
+      return;
+    }
     // Close while the spawn is still held. If layout cleanup ever throws, the
     // pane remains fail-closed instead of becoming runnable by accident.
     useLayoutStore.getState().close(pane.id, 'restore-orphan-mission-pane');

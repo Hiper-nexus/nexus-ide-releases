@@ -5,12 +5,25 @@ const holdSpawnUntilApproved = vi.fn();
 const markResumeOnSpawn = vi.fn();
 const releaseHeldSpawns = vi.fn();
 const discardPaneSpawnState = vi.fn();
+const unlockRetiredMissionPane = vi.fn();
 const askConfirm = vi.fn();
 const setRestoredPanesHandler = vi.fn();
 const closePane = vi.fn();
 const pruneMissionBindings = vi.fn();
 const orchGet = vi.fn();
 const canRestoreMissionPane = vi.fn();
+const layoutRoot = vi.hoisted(() => ({
+  current: {
+    kind: 'leaf' as const,
+    id: 'leaf-shell',
+    pane: {
+      id: 'sh-1',
+      kind: 'shell' as const,
+      title: 'shell',
+      cwd: '/ws',
+    } as { id: string; kind: string; title: string; cwd: string; missionId?: string; role?: string },
+  },
+}));
 
 vi.mock('../terminal/terminal-host', () => ({
   holdSpawnUntilApproved: (...args: unknown[]) => holdSpawnUntilApproved(...args),
@@ -18,6 +31,8 @@ vi.mock('../terminal/terminal-host', () => ({
   releaseHeldSpawns: (...args: unknown[]) => releaseHeldSpawns(...args),
   discardPaneSpawnState: (...args: unknown[]) =>
     discardPaneSpawnState(...args),
+  unlockRetiredMissionPane: (...args: unknown[]) =>
+    unlockRetiredMissionPane(...args),
 }));
 
 vi.mock('../state/confirm-store', () => ({
@@ -29,7 +44,7 @@ vi.mock('../state/layout-store', () => ({
   useLayoutStore: {
     getState: () => ({
       close: (...args: unknown[]) => closePane(...args),
-      root: { kind: 'leaf' as const, pane: shell },
+      root: layoutRoot.current,
     }),
   },
 }));
@@ -91,6 +106,7 @@ describe('restore-agents-gate', () => {
     markResumeOnSpawn.mockReset();
     releaseHeldSpawns.mockReset();
     discardPaneSpawnState.mockReset();
+    unlockRetiredMissionPane.mockReset();
     askConfirm.mockReset();
     setRestoredPanesHandler.mockReset();
     closePane.mockReset();
@@ -99,6 +115,11 @@ describe('restore-agents-gate', () => {
     canRestoreMissionPane.mockReset();
     orchGet.mockResolvedValue({ agentRestorePolicy: 'ask' });
     canRestoreMissionPane.mockResolvedValue(true);
+    layoutRoot.current = {
+      kind: 'leaf',
+      id: 'leaf-shell',
+      pane: shell,
+    };
     Object.defineProperty(window, 'nexus', {
       configurable: true,
       value: {
@@ -225,6 +246,22 @@ describe('restore-agents-gate', () => {
       'orphan-pane',
       'restore-orphan-mission-pane',
     );
+  });
+
+  it('unlocks the last coordinator pane instead of pruning the operator mute', async () => {
+    canRestoreMissionPane.mockResolvedValue(false);
+    const last = missionAgent('pane-6', 'Coordenar e revisar');
+    layoutRoot.current = {
+      kind: 'leaf',
+      id: 'leaf-last',
+      pane: last,
+    };
+
+    await gateRestoredAgents([last]);
+
+    expect(discardPaneSpawnState).toHaveBeenCalledWith('pane-6');
+    expect(unlockRetiredMissionPane).toHaveBeenCalledWith(last);
+    expect(closePane).not.toHaveBeenCalled();
   });
 
   it('coalesces duplicate HMR gates and prunes an orphan only once', async () => {
