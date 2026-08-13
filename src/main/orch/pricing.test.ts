@@ -18,6 +18,12 @@ describe('priceForModel', () => {
     expect(priceForModel('gemini-flash-latest')).toEqual(
       MODEL_PRICES['gemini-flash'],
     );
+    expect(priceForModel('gemini-3.7-flash-high')).toEqual(
+      MODEL_PRICES['gemini-3.7-flash'],
+    );
+    expect(priceForModel('gemini-3.6-flash-low')).toEqual(
+      MODEL_PRICES['gemini-3.6-flash'],
+    );
     expect(priceForModel('gemini-2.5-pro')).toEqual(MODEL_PRICES.gemini);
     expect(priceForModel('claude-sonnet-5')).toEqual(
       MODEL_PRICES['claude-sonnet'],

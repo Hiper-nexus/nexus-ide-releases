@@ -30,6 +30,10 @@ import {
   discoverCliModels,
 } from './cli-model-discovery';
 import {
+  discoveredModelsFor,
+  refreshAllDiscoveredModels,
+} from './model-discovery';
+import {
   USER_MODEL_CATALOG_FILE,
   applyModelCatalogToAdapter,
   invalidateModelCatalogCache,
@@ -282,7 +286,11 @@ function toAdapterInfo(
   const custom = getCustomModels(adapter.id).filter(
     (m) => !adapter.models.list.includes(m),
   );
-  const modelList = [...adapter.models.list, ...custom];
+  const staticIds = [...adapter.models.list, ...custom];
+  const discovered = discoveredModelsFor(adapter.id).filter(
+    (m) => !staticIds.includes(m),
+  );
+  const modelList = [...staticIds, ...discovered];
   const capabilities = adapterCapabilityMatrixForAdapter(adapter, origin);
   return {
     id: adapter.id,
@@ -480,10 +488,17 @@ export function initAdapterRegistry(): void {
     if (updated) scheduleReloadAndBroadcast();
   });
 
+  refreshAllDiscoveredModels(
+    [...registry.keys()],
+    () => scheduleReloadAndBroadcast(),
+  );
+
   // Remote metadata is eventually consistent; CLI cache watchers provide the
-  // immediate path. Polling covers providers that atomically replace caches in
-  // directories the platform watcher cannot observe.
+  // immediate path (Claude/Codex). Polling covers providers that atomically
+  // replace caches in directories the platform watcher cannot observe, and
+  // re-asks CLIs that expose a live models command (see MODEL_DISCOVERY_INVENTORY).
   periodicRefresh ??= setInterval(() => {
+    refreshAllDiscoveredModels([...registry.keys()]);
     void refreshRemoteModelCatalog().finally(() => scheduleReloadAndBroadcast());
   }, 5 * 60_000);
   periodicRefresh.unref?.();

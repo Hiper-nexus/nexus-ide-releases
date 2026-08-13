@@ -28,6 +28,10 @@ export const CLI_MODEL_CACHE_SOURCES: CliModelCacheSource[] = [
       path.join(home, '.config', 'opencode', 'models.json'),
     ],
   },
+  // OpenCode's cache is a provider-keyed map (not `{ models: [] }`), so this
+  // reader usually yields nothing; live `opencode models` in model-discovery
+  // is the official listing. Claude/Codex have no list command — this cache
+  // (when the CLI writes it) is their official mechanism.
 ];
 
 const MODEL_ID = MODEL_ID_PATTERN;

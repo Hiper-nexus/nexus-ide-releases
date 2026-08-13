@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-07-28T16:00:00.000Z",
+  "updatedAt": "2026-08-13T21:00:00.000Z",
   "adapters": {
     "claude": {
       "default": "claude-sonnet-5",
@@ -164,8 +164,26 @@
       ]
     },
     "agy": {
-      "default": "gemini-3.6-flash-high",
+      "default": "gemini-3.7-flash-high",
       "models": [
+        {
+          "id": "gemini-3.7-flash-low",
+          "availability": "free",
+          "costTier": "free",
+          "source": "remote"
+        },
+        {
+          "id": "gemini-3.7-flash-high",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "remote"
+        },
+        {
+          "id": "gemini-3.7-flash-medium",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "remote"
+        },
         {
           "id": "gemini-3.6-flash-low",
           "availability": "free",

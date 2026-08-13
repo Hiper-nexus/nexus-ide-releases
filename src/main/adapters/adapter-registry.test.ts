@@ -284,9 +284,12 @@ describe('builtin adapters', () => {
     ) as { models?: { default?: string; list?: string[] } } | undefined;
     const models = agy?.models?.list ?? [];
 
-    expect(agy?.models?.default).toBe('gemini-3.6-flash-high');
+    expect(agy?.models?.default).toBe('gemini-3.7-flash-high');
     expect(models).toEqual(
       expect.arrayContaining([
+        'gemini-3.7-flash-high',
+        'gemini-3.7-flash-medium',
+        'gemini-3.7-flash-low',
         'gemini-3.6-flash-high',
         'gemini-3.6-flash-medium',
         'gemini-3.6-flash-low',

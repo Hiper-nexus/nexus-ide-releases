@@ -27,6 +27,8 @@ export const MODEL_PRICES: Record<string, ModelPrice> = {
   claude: { inputPerM: 3, outputPerM: 15 },
   'gpt-5-mini': { inputPerM: 0.25, outputPerM: 2 },
   'gpt-5': { inputPerM: 1.25, outputPerM: 10 },
+  // Gemini 3.7 Flash intro list price (Google AI, through 2026-12-31).
+  'gemini-3.7-flash': { inputPerM: 0.75, outputPerM: 3.75 },
   'gemini-3.6-flash': { inputPerM: 1.5, outputPerM: 7.5 },
   'gemini-flash': { inputPerM: 0.3, outputPerM: 2.5 },
   gemini: { inputPerM: 1.25, outputPerM: 10 },

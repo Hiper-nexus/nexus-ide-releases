@@ -2,7 +2,7 @@
 export const SQUAD_MODEL_DEFAULTS = {
   codex: 'gpt-5.6-terra',
   grok: 'grok-4.5',
-  gemini: 'gemini-3.6-flash-high',
+  gemini: 'gemini-3.7-flash-high',
 } as const;
 
 export function defaultSquadModelForAdapter(adapterId: string): string | undefined {
