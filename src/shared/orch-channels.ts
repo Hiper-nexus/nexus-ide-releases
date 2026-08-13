@@ -39,6 +39,8 @@ export const ORCH_CHANNELS = {
   missionUpdate: 'orch:missions.update',
   /** Native-confirmed physical shutdown that preserves the durable mission. */
   missionCloseRuntime: 'orch:missions.closeRuntime',
+  /** Operator archives a parked or finished mission as verified-complete. */
+  missionCompleteByOperator: 'orch:missions.completeByOperator',
   missionRemove: 'orch:missions.remove',
   /** Mission event journal consumer (flag: feature.mission.eventJournal). */
   missionEventsRecent: 'orch:missionEvents.recent',

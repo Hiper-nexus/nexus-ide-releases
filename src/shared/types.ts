@@ -72,6 +72,7 @@ import type {
   PaneCloseRequest,
   McpRuntimeInfo,
   Mission,
+  MissionOperatorCompleteResult,
   MissionRuntimeCloseResult,
   MissionOrchestratorBootstrapResult,
   MissionPaneSpec,
@@ -629,6 +630,9 @@ export interface NexusApi {
     }): Promise<{ cursor: unknown; enabled?: boolean; error?: string }>;
     updateMission(missionId: string, patch: MissionPatch): Promise<Mission>;
     closeMissionRuntime(missionId: string): Promise<MissionRuntimeCloseResult>;
+    completeMissionByOperator(
+      missionId: string,
+    ): Promise<MissionOperatorCompleteResult>;
     removeMission(missionId: string): Promise<{ removed: boolean }>;
     listHandoffs(): Promise<Handoff[]>;
     /** Resolve one durable mission question through scoped main authority. */
@@ -784,6 +788,14 @@ export interface NexusApi {
     read(relPath: string): Promise<ReadFileResult>;
     write(relPath: string, content: string): Promise<{ ok: boolean; error?: string }>;
     saveDropped(name: string, base64: string): Promise<{ ok: boolean; path?: string; error?: string }>;
+    /**
+     * Copy an external audio/image/text blob into
+     * `.nexus/attachments/mission-context/` and return the root-relative path.
+     */
+    importMissionAttachment(
+      name: string,
+      base64: string,
+    ): Promise<{ ok: boolean; path?: string; error?: string }>;
     /** Resolve a dragged File to its absolute filesystem path (webUtils). */
     pathForFile(file: File): string;
   };

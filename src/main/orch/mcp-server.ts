@@ -68,6 +68,7 @@ import { MAX_MCP_PAYLOAD_BYTES } from "./mcp-args-validation";
 import { buildToolset } from "./tools";
 import {
   assertMissionSpawnAuthorityCurrent,
+  readSessionOutput,
   stripAnsi,
 } from "./pane-registry";
 import {
@@ -79,6 +80,7 @@ import { missionMarkerObserver } from "./mission-completion-marker";
 import { getProjectDomainStores } from "./project-domain-store-registry";
 import {
   isStaleReadOnlyObservationHandoffResult,
+  promoteObservedPtyHandoffs,
   submitPtyStreamHandoff,
   terminateStaleReadOnlyMcpSession,
   terminateStaleReadOnlyPtyStreamSession,
@@ -1352,6 +1354,16 @@ function installLegacyParser(
     }));
     track(tapSessionState((sessionId, state) => {
       missionControl.observeSessionState(sessionId, state);
+      // Overclock Stop-hook parity: the live chunk parser can miss a TUI
+      // repaint (ANSI split across NEXUS_HANDOFF). When the pane goes idle,
+      // re-read the already-stripped ring buffer and promote any completed
+      // block so the Maestro of this mission wakes.
+      if (state === "idle") {
+        const tail = readSessionOutput(sessionId, 400);
+        if (tail.includes("NEXUS_HANDOFF")) {
+          void promoteObservedPtyHandoffs(sessionId, tail);
+        }
+      }
     }));
     track(tapSessionExit((sessionId) => {
       cliPromptAutoResponder.drop(sessionId);

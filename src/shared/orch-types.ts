@@ -357,6 +357,18 @@ export interface Mission {
   updatedAt: number;
 }
 
+export type MissionOperatorCompleteResult =
+  | {
+      readonly ok: true;
+      readonly mission?: Mission;
+    }
+  | {
+      readonly ok: false;
+      readonly mission?: Mission;
+      readonly cancelled?: boolean;
+      readonly error?: string;
+    };
+
 export type MissionRuntimeCloseResult =
   | {
       readonly ok: true;

@@ -1,10 +1,16 @@
 # Nexus Eval (LLM ranking)
 
-Offline, reproducible model evaluation that feeds:
+Offline, reproducible model evaluation. Two consumers, with an honesty gate
+between them:
 
-1. `resources/model-catalog.json` → `quality` blocks (`source: nexus-eval/...`)
-2. `resources/model-ranking.json` → public ranking DTO (landing + in-app)
-3. `task-router` automatic selection by dimension × cost
+1. `resources/model-ranking.json` → public ranking DTO (Settings + `nexus_model_ranking`)
+2. `resources/model-catalog.json` → `quality` blocks (`source: nexus-eval/...`)
+3. `task-router` uses quality **only** when `hasAuthoritativeModelQuality` — a
+   `.../fixture` source is plumbing, not evidence. The live prior today is
+   cost + specialty heuristic + operational bands (fast / balanced / deep).
+
+`npm run eval:export-ranking` still writes the public DTO. It must not put
+fixture scores back into the published catalog.
 
 ## Run offline pipeline
 

@@ -2,9 +2,11 @@
   --mission-control-block-size: calc(var(--space-5) + var(--space-4));
   --mission-action-block-size: calc(var(--space-5) + var(--space-3));
   --mission-compact-action-block-size: var(--space-6);
+  display: flex;
+  flex-direction: column;
   height: 100%;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
   background: var(--bg);
   color: var(--text);
 }
@@ -25,6 +27,7 @@
   position: sticky;
   top: 0;
   z-index: var(--z-app-chrome);
+  flex: 0 0 auto;
   border-bottom: 1px solid var(--border);
   background: color-mix(in srgb, var(--bg) 94%, transparent);
   backdrop-filter: blur(10px);
@@ -140,16 +143,29 @@
   white-space: nowrap;
 }
 
+.mission-setup > .mission-setup__error-summary {
+  flex: 0 0 auto;
+}
+
+/* One scroller. Do not give this (or .mission-setup__step) min-height: 100%
+   / 100vh: percentage min-height against overflow:auto tracks scrollHeight
+   and grows without end, leaving a black void above the CTA. */
 .mission-setup__canvas {
-  min-height: calc(100% - 56px);
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+  overflow-anchor: none;
 }
 
 .mission-setup__step {
   display: flex;
+  flex: 1 0 auto;
   flex-direction: column;
   width: min(100%, 860px);
   margin: 0 auto;
-  min-height: calc(100vh - var(--bar-height));
+  min-height: 0;
   padding: var(--space-6) var(--space-7) var(--space-8);
   animation: mission-setup-enter 180ms var(--ease-out-quart);
 }
@@ -414,6 +430,49 @@
   min-height: var(--mission-control-block-size);
 }
 
+.mission-attachment-picker {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.mission-attachment-picker__drop {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+}
+
+.mission-attachment-picker__drop--active {
+  border-color: var(--accent);
+}
+
+.mission-attachment-picker__drop p {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+}
+
+.mission-attachment-picker__list {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mission-attachment-picker__list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border);
+  font-size: var(--text-sm);
+}
+
 .mission-setup__button {
   display: inline-flex;
   align-items: center;
@@ -477,13 +536,39 @@
   color: var(--danger);
 }
 
+.mission-setup__step-dock,
+.mission-setup__step > .mission-setup__step-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: var(--z-app-chrome);
+  margin-top: auto;
+  background: color-mix(in srgb, var(--bg) 94%, transparent);
+  backdrop-filter: blur(10px);
+  border-top: 1px solid var(--border);
+}
+
+.mission-setup__step-dock {
+  flex: 0 0 auto;
+  padding-top: var(--space-3);
+  padding-bottom: var(--space-2);
+}
+
 .mission-setup__step-actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
   margin-top: auto;
-  padding-top: var(--space-7);
+  padding-top: var(--space-5);
+  padding-bottom: var(--space-2);
+}
+
+.mission-setup__step-dock .mission-setup__step-actions {
+  margin-top: 0;
+  padding-top: var(--space-3);
+  padding-bottom: 0;
+  background: transparent;
+  border-top: 0;
 }
 
 .mission-setup__step-actions--end {
@@ -1001,6 +1086,25 @@
 
 .mission-review {
   width: 100%;
+}
+
+.mission-review--pending {
+  max-width: 760px;
+  margin: var(--space-5) 0 0;
+  padding: var(--space-4);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+}
+
+.mission-review--pending p {
+  margin: 0;
+  color: var(--text);
+  line-height: 1.5;
+}
+
+.mission-review--pending .mission-setup__button {
+  margin-top: var(--space-3);
 }
 
 .mission-setup__continuous-section .mission-review__objective {

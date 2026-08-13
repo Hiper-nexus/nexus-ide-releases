@@ -96,6 +96,7 @@ export const projectMissionSnapshotViewSchema = z
     hasDispatchAuthority: z.boolean(),
     hasCurrentKickoffReceipt: z.boolean(),
     orchestratorLive: z.boolean(),
+    runtimeClosedByOperator: z.boolean().optional(),
     tasks: z.array(snapshotTaskViewSchema).max(256),
     handoffs: z.array(snapshotHandoffViewSchema).max(256),
     panes: z.array(snapshotPaneViewSchema).max(64),
@@ -158,6 +159,15 @@ function projectState(view: ParsedView): {
     case 'pending':
       return { state: 'review_ready' };
     case 'blocked':
+      if (view.runtimeClosedByOperator) {
+        return {
+          state: 'blocked_user',
+          stateReason: {
+            code: 'runtime-closed',
+            label: 'Encerrada pelo operador',
+          },
+        };
+      }
       return {
         state: 'blocked_technical',
         stateReason: {
@@ -180,7 +190,9 @@ function allowedActions(
     case 'running':
       return ['direct', 'stop'];
     case 'blocked_user':
-      return ['answer-question', 'stop'];
+      return stateReason?.code === 'runtime-closed'
+        ? ['resume']
+        : ['answer-question', 'stop'];
     case 'blocked_technical':
       return stateReason?.code === 'residual-work'
         ? ['resume', 'stop']
@@ -327,12 +339,14 @@ export function projectMissionSummarySnapshot(
     state: snapshot.state,
     ...(snapshot.stateReason ? { stateReason: snapshot.stateReason } : {}),
     progress: snapshot.progress,
-    needsAttention: [
-      'blocked_user',
-      'blocked_technical',
-      'recovering',
-      'failed',
-    ].includes(snapshot.state),
+    needsAttention:
+      snapshot.stateReason?.code !== 'runtime-closed' &&
+      [
+        'blocked_user',
+        'blocked_technical',
+        'recovering',
+        'failed',
+      ].includes(snapshot.state),
     updatedAt: snapshot.updatedAt,
   });
 }

@@ -140,6 +140,12 @@ export function ReviewStep({
     0;
   const parallelism = Math.max(1, workerCount);
   const lanePresentation = missionLanePresentation(lane);
+  const pendingCopy =
+    prepareStatus === 'loading' || startStatus === 'loading'
+      ? 'Montando o resumo da missão — objetivo, equipe, contexto e permissões.'
+      : prepareStatus === 'error'
+        ? 'A revisão não está visível. O rascunho foi preservado; prepare de novo para ver o resumo e iniciar.'
+        : 'A revisão ainda não está visível. Volte para a equipe ou aguarde o resumo aparecer.';
 
   return (
     <section className="mission-setup__step" aria-labelledby="mission-review-title">
@@ -180,14 +186,23 @@ export function ReviewStep({
         </div>
       )}
 
-      {prepareStatus === 'error' && !review && (
-        <button
-          type="button"
-          className="mission-setup__button mission-setup__button--secondary"
-          onClick={onRetryPrepare}
+      {!review && (
+        <div
+          className="mission-review mission-review--pending"
+          role="region"
+          aria-label="Estado da revisão"
         >
-          Preparar nova revisão
-        </button>
+          <p>{pendingCopy}</p>
+          {prepareStatus === 'error' && (
+            <button
+              type="button"
+              className="mission-setup__button mission-setup__button--secondary"
+              onClick={onRetryPrepare}
+            >
+              Preparar nova revisão
+            </button>
+          )}
+        </div>
       )}
 
       {review && (
@@ -416,36 +431,38 @@ export function ReviewStep({
         </div>
       )}
 
-      <footer className="mission-setup__step-actions">
-        <button
-          type="button"
-          className="mission-setup__button mission-setup__button--secondary"
-          onClick={onBack}
-          disabled={startStatus === 'loading'}
-          aria-describedby={
-            startStatus === 'loading' ? 'mission-review-status' : undefined
-          }
+      <div className="mission-setup__step-dock">
+        <footer className="mission-setup__step-actions">
+          <button
+            type="button"
+            className="mission-setup__button mission-setup__button--secondary"
+            onClick={onBack}
+            disabled={startStatus === 'loading'}
+            aria-describedby={
+              startStatus === 'loading' ? 'mission-review-status' : undefined
+            }
+          >
+            {backLabel}
+          </button>
+          <button
+            type="button"
+            className="mission-setup__button mission-setup__button--primary mission-setup__button--start"
+            onClick={onStart}
+            disabled={startDisabled}
+            aria-describedby={
+              disabledReason ? 'mission-start-disabled-reason' : undefined
+            }
+          >
+            {startStatus === 'loading' ? 'Iniciando missão…' : 'Iniciar missão'}
+          </button>
+        </footer>
+        <p
+          id="mission-start-disabled-reason"
+          className="mission-setup__hint mission-setup__disabled-reason"
         >
-          {backLabel}
-        </button>
-        <button
-          type="button"
-          className="mission-setup__button mission-setup__button--primary mission-setup__button--start"
-          onClick={onStart}
-          disabled={startDisabled}
-          aria-describedby={
-            disabledReason ? 'mission-start-disabled-reason' : undefined
-          }
-        >
-          {startStatus === 'loading' ? 'Iniciando missão…' : 'Iniciar missão'}
-        </button>
-      </footer>
-      <p
-        id="mission-start-disabled-reason"
-        className="mission-setup__hint mission-setup__disabled-reason"
-      >
-        {disabledReason}
-      </p>
+          {disabledReason}
+        </p>
+      </div>
     </section>
   );
 }

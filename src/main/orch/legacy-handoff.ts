@@ -13,15 +13,23 @@ export const LEGACY_MARKER = '### NEXUS_HANDOFF v1';
 /**
  * Some terminal-native providers normalize a Markdown heading by one level
  * when rendering their final answer (field case: AGY emitted `##` although
- * the sealed prompt contained `###`). The marker is only a framing token: the
- * Main still derives mission/session/incarnation from the physical PTY tap and
- * validates the strict payload plus the authenticated worker HEAD. Accept the
- * three common heading levels without accepting a bare/case-folded sentinel.
+ * the sealed prompt contained `###`). TUIs also reprint the contract as
+ * bare `NEXUS_HANDOFF` / `NEXUS_HANDOFF v1` with no hashes (Overclock Stop-hook
+ * and the pane-3 AGY field case). The marker is only a framing token: the
+ * Main still derives mission/session/incarnation from the physical PTY tap.
+ * Case-folded sentinels stay rejected so random prose cannot promote.
  */
 const LEGACY_MARKER_VARIANTS = Object.freeze([
   LEGACY_MARKER,
   '## NEXUS_HANDOFF v1',
   '#### NEXUS_HANDOFF v1',
+  '# NEXUS_HANDOFF v1',
+  '### NEXUS_HANDOFF',
+  '## NEXUS_HANDOFF',
+  '#### NEXUS_HANDOFF',
+  '# NEXUS_HANDOFF',
+  'NEXUS_HANDOFF v1',
+  'NEXUS_HANDOFF',
 ]);
 
 const MAX_BLOCK_CHARS = 16_384;
@@ -212,17 +220,46 @@ export class LegacyHandoffDedupe {
   }
 }
 
+/**
+ * Overclock Stop-hooks submit `status: "done" | "error"`. Map those onto the
+ * Nexus contract so a worker that copied Overclock muscle memory still lands.
+ */
+function normalizeObservedHandoffStatus(raw: unknown): HandoffStatus | null {
+  if (raw === 'done') return 'success';
+  if (raw === 'error') return 'failed';
+  const parsed = handoffStatusSchema.safeParse(raw);
+  return parsed.success ? parsed.data : null;
+}
+
 function toPayload(value: unknown): LegacyHandoffPayload | null {
   if (typeof value !== 'object' || value === null) return null;
   const obj = value as Record<string, unknown>;
-  const status = handoffStatusSchema.safeParse(obj.status);
+  const status = normalizeObservedHandoffStatus(obj.status);
   const summary = typeof obj.summary === 'string' ? obj.summary : null;
-  if (!status.success || !summary) return null;
+  if (!status || !summary) return null;
   return {
-    status: status.data,
+    status,
     summary,
     artifacts: Array.isArray(obj.artifacts) ? obj.artifacts : [],
   };
+}
+
+/**
+ * Scan a complete (already ANSI-stripped) PTY snapshot for every completed
+ * legacy block. Used when the live chunk parser missed a TUI repaint: idle
+ * and exit promotion re-read the ring buffer the same way Overclock's
+ * Stop-hook re-reads the last assistant turn.
+ */
+export function extractLegacyHandoffsFromText(
+  text: string,
+): LegacyHandoffPayload[] {
+  if (!text.includes('NEXUS_HANDOFF')) return [];
+  const received: LegacyHandoffPayload[] = [];
+  const parser = new LegacyHandoffParser((_sessionId, payload) => {
+    received.push(payload);
+  });
+  parser.feed('snapshot', text);
+  return received;
 }
 
 /**

@@ -7,9 +7,11 @@
  *
  * Ranking layers (highest wins when present):
  *   1. operator/sealed roster (call site)
- *   2. specialty benchmark table (empty until Nexus eval exists)
- *   3. nexus-eval quality by dimension (when every installed adapter is scored)
- *   4. heuristic specialty prior + DEFAULT_ROUTING_TABLE
+ *   2. specialty benchmark table (measured rows only — fixture/estimate ignored)
+ *   3. nexus-eval quality by dimension (when every installed adapter is scored;
+ *      `.../fixture` sources are not authoritative)
+ *   4. heuristic specialty prior + operational band (cost/availability) +
+ *      DEFAULT_ROUTING_TABLE
  *   5. mission diversity (open RouteReservations + live panes)
  *
  * Pure logic (no electron imports) — fully unit-testable; the MCP tool
@@ -32,6 +34,11 @@ import {
   type RouteSpecialty,
   type SpecialtyBenchmark,
 } from '../../shared/mission-route-specialty';
+import {
+  bandForSpecialty,
+  classifyOperationalBand,
+  preferOperationalBand,
+} from '../../shared/model-operational-bands';
 import { adapterCircuitBreakers } from './circuit-breaker';
 import { multiScoreRerank } from './route-pipeline';
 
@@ -491,6 +498,47 @@ export function routeTask(
     );
   }
 
+  // Overclock-style cost band: refine a heuristic specialty prior at model
+  // granularity (haiku vs opus on the same CLI). Adapter order stays the
+  // heuristic/table lead — do not float Grok/GLM over Kimi. Empty prefer
+  // lists (feature/general) skip this. Never runs on a measured benchmark
+  // or full eval coverage.
+  let bandNote = '';
+  if (
+    policy.source === 'heuristic' &&
+    policy.preferAdapterIds.length > 0 &&
+    evaluated.length === 0
+  ) {
+    const targetBand = bandForSpecialty(policy.specialty);
+    const preferred = new Set(policy.preferAdapterIds);
+    const head = ranked.filter((entry) => preferred.has(entry.c.adapterId));
+    const tail = ranked.filter((entry) => !preferred.has(entry.c.adapterId));
+    const adapterOrder: string[] = [];
+    const byAdapter = new Map<string, typeof head>();
+    for (const entry of head) {
+      const adapterId = entry.c.adapterId;
+      if (!byAdapter.has(adapterId)) {
+        adapterOrder.push(adapterId);
+        byAdapter.set(adapterId, []);
+      }
+      byAdapter.get(adapterId)!.push(entry);
+    }
+    ranked = [
+      ...adapterOrder.flatMap((adapterId) =>
+        preferOperationalBand(
+          byAdapter.get(adapterId)!,
+          (entry) =>
+            classifyOperationalBand(
+              modelCatalogInfo(modelCatalog, entry.c.adapterId, entry.c.model),
+            ),
+          targetBand,
+        ),
+      ),
+      ...tail,
+    ];
+    bandNote = `; band=${targetBand}`;
+  }
+
   // x-algorithm multi-score: activate when mission has history, circuit open,
   // or caller opts in — preserves pure table order on cold first pick.
   const anyCircuitOpen = ranked.some((r) =>
@@ -550,7 +598,7 @@ export function routeTask(
       adapterId: pick.adapterId,
       model: pick.model,
       effort,
-      reason: `${tier}${borrowed}${specialtyNote}; ${why}${costNote}${evaluationNote}${riskNote}${multiScoreNote}`,
+      reason: `${tier}${borrowed}${specialtyNote}; ${why}${costNote}${evaluationNote}${riskNote}${bandNote}${multiScoreNote}`,
       alternatives: ranked.filter((r) => r.c !== pick).map((r) => r.c),
       specialty: specialtyVerdict.specialty,
       policySource,

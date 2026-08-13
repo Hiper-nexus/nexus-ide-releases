@@ -302,6 +302,39 @@ describe('routeTask specialty + diversidade de onda', () => {
     expect(decision!.effort).toBe('high');
   });
 
+  it('não trata tabela de fixture como benchmark', () => {
+    const decision = routeTask(
+      'criar a nova tela de onboarding com estados vazios e acessibilidade',
+      adapters('glm', 'agy', 'claude', 'codex'),
+      DEFAULT_ROUTING_TABLE,
+      undefined,
+      false,
+      undefined,
+      {
+        specialtyBenchmark: {
+          schemaVersion: 1,
+          source: 'nexus-eval/v1/fixture',
+          specialties: {
+            visual: [{ adapterId: 'codex', score: 99, effort: 'high' }],
+          },
+        },
+      },
+    );
+    expect(decision!.policySource).toBe('heuristic');
+    expect(decision!.adapterId).toBe('agy');
+  });
+
+  it('doc mecânico anota a faixa rápida sem trocar o CLI da prioridade heurística', () => {
+    const decision = routeTask(
+      'atualizar o README com o guia de instalação',
+      adapters('glm', 'kimi', 'agy', 'grok'),
+    );
+    expect(decision!.specialty).toBe('doc');
+    expect(decision!.policySource).toBe('heuristic');
+    expect(decision!.adapterId).toBe('kimi');
+    expect(decision!.reason).toContain('band=fast');
+  });
+
   it('espalha CLIs no fan-out: o 2º e 3º worker não herdam o GLM do 1º', () => {
     const pool = adapters('glm', 'kimi', 'grok', 'codex', 'longcat', 'agy');
     const task =

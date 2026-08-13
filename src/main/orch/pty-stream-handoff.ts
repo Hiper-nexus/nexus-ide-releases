@@ -45,6 +45,10 @@ import {
 import { compactText } from "./session-compaction";
 import type { TaskDispatchRecord } from "./task-dispatch-codec";
 import { getMissionEventRuntimeManager } from "./mission-event-emit";
+import {
+  extractLegacyHandoffsFromText,
+  isPlaceholderSummary,
+} from "./legacy-handoff";
 
 const ptyStreamHandoffPayloadSchema = z
   .object({
@@ -125,12 +129,12 @@ interface PreparedPtyHandoff {
   readonly ctx: AgentGateContext;
   readonly suite: ProjectDomainStoreSuite;
   readonly missionId: string;
-  readonly dispatch: TaskDispatchRecord;
+  readonly dispatch: TaskDispatchRecord | undefined;
   readonly payload: PtyStreamHandoffPayload;
   readonly rawArgs: PtyStreamHandoffPayload;
   readonly rawPayloadSha256: string;
   readonly summary: string;
-  readonly worktreeHeadSha: string;
+  readonly worktreeHeadSha: string | undefined;
   readonly invocationId: string;
   readonly startedAt: number;
   readonly auditContext: AuditContext;
@@ -186,32 +190,38 @@ function normalizePtySummary(rawSummary: string): string {
   return rawSummary.replace(/[\t\f\v ]+/gu, " ").trim();
 }
 
-function requireBoundDispatch(
+function findBoundDispatch(
   suite: ProjectDomainStoreSuite,
   missionId: string,
   sessionId: string,
-  workerIncarnationId: string,
-): TaskDispatchRecord {
-  const exactDispatches = suite.taskDispatches
+  workerIncarnationId: string | undefined,
+): TaskDispatchRecord | undefined {
+  const sessionDispatches = suite.taskDispatches
     .list(missionId)
-    .filter(
-      (dispatch) =>
-        dispatch.sessionId === sessionId &&
-        dispatch.workerIncarnationId === workerIncarnationId,
-    );
-  if (exactDispatches.length !== 1) {
+    .filter((dispatch) => dispatch.sessionId === sessionId);
+  const boundDispatch = workerIncarnationId
+    ? sessionDispatches.find(
+        (dispatch) => dispatch.workerIncarnationId === workerIncarnationId,
+      )
+    : sessionDispatches[0];
+  if (
+    sessionDispatches.length > 0 &&
+    (!boundDispatch ||
+      !workerIncarnationId ||
+      boundDispatch.workerIncarnationId !== workerIncarnationId)
+  ) {
     throw new Error(
       "worker incarnation obsoleta: PTY stream não pertence ao dispatch físico atual",
     );
   }
-  return exactDispatches[0]!;
+  return boundDispatch;
 }
 
 function assertCurrentHandoffOrigin(
   ctx: AgentGateContext,
   suite: ProjectDomainStoreSuite,
   mission: NonNullable<ReturnType<ProjectDomainStoreSuite["missions"]["get"]>>,
-  dispatch: TaskDispatchRecord,
+  dispatch: TaskDispatchRecord | undefined,
   sessionId: string,
 ): void {
   const intentState = resolveEffectiveIntentState({
@@ -229,7 +239,7 @@ function assertCurrentHandoffOrigin(
   });
   const terminalReplay =
     (mission.status === "blocked" || mission.status === "done") &&
-    dispatch.handoffId !== undefined;
+    dispatch?.handoffId !== undefined;
   if (!origin.ok && !terminalReplay) throw new Error(origin.error);
 }
 
@@ -249,27 +259,32 @@ async function preparePtyHandoff(
   if (!mission || !hasCurrentApprovedDispatchContract(mission)) {
     throw new Error("handoff_origin: current approved mission unavailable");
   }
-  const dispatch = requireBoundDispatch(
+  const dispatch = findBoundDispatch(
     suite,
     mission.id,
     sessionId,
-    ctx.workerIncarnationId!,
+    ctx.workerIncarnationId,
   );
   assertCurrentHandoffOrigin(ctx, suite, mission, dispatch, sessionId);
   const rawArgs = Object.freeze({ ...payload });
-  const worktreeHeadSha = await committedPhysicalWorkerHead(ctx, true);
-  if (!worktreeHeadSha) {
+  const worktreeHeadSha = await committedPhysicalWorkerHead(
+    ctx,
+    dispatch !== undefined,
+  );
+  if (dispatch && !worktreeHeadSha) {
     throw new Error("handoff_provenance: physical worker HEAD is required");
   }
   // Stale-observation fence (shared with the HTTP MCP transport): a Guided
   // read_only lane whose tree went stale between bind and handoff is
   // refused before any receipt/audit state exists, so the scheduler retry
   // re-reviews the integrated tree and seals it honestly.
-  assertReadOnlyLaneObservationCurrent({
-    lane: dispatch,
-    missionDispatches: suite.taskDispatches.list(mission.id),
-    worktreeHeadSha,
-  });
+  if (dispatch && worktreeHeadSha) {
+    assertReadOnlyLaneObservationCurrent({
+      lane: dispatch,
+      missionDispatches: suite.taskDispatches.list(mission.id),
+      worktreeHeadSha,
+    });
+  }
   return Object.freeze({
     sessionId,
     ctx,
@@ -299,6 +314,7 @@ function commitPhysicalPtyHandoff(
   physicalReceipt: ReturnType<typeof mintAgentTransportPhysicalReceipt>,
 ) {
   const { ctx, dispatch, missionId, payload, sessionId, suite } = prepared;
+  const fromAgent = dispatch?.workerId ?? ctx.agentName ?? ctx.label;
   const manager = getMissionEventRuntimeManager();
   let attestation:
     | {
@@ -312,7 +328,7 @@ function commitPhysicalPtyHandoff(
     const proof = lookupIssuedHandoffAttestation(
       runtime.db,
       missionId,
-      dispatch.workerId,
+      fromAgent,
       Math.floor(Date.now() / 1000),
     );
     const gate = gateHandoffAttestation(runtime.db, missionId, proof);
@@ -327,28 +343,43 @@ function commitPhysicalPtyHandoff(
       };
     }
   }
-  return suite.handoffs.submitFromPhysicalAgentBoundaryAndTransitionDispatch(
-    {
-      status: payload.status,
-      summary: prepared.summary,
-      artifacts: payload.artifacts,
-      missionId,
-      sessionId,
-      workerIncarnationId: ctx.workerIncarnationId,
-      fromAgent: dispatch.workerId,
-    },
+  const handoffInput = {
+    status: payload.status,
+    summary: prepared.summary,
+    artifacts: payload.artifacts,
+    missionId,
+    sessionId,
+    workerIncarnationId: ctx.workerIncarnationId,
+    fromAgent,
+  };
+  const provenance = {
+    worktreeHeadSha: prepared.worktreeHeadSha,
+    rawPayloadSha256: prepared.rawPayloadSha256,
+  };
+  if (dispatch && ctx.workerIncarnationId) {
+    return suite.handoffs.submitFromPhysicalAgentBoundaryAndTransitionDispatch(
+      handoffInput,
+      physicalReceipt,
+      provenance,
+      {
+        sessionId,
+        workerIncarnationId: ctx.workerIncarnationId,
+        detail: `${payload.status}: ${prepared.summary}`,
+      },
+      attestation,
+    );
+  }
+  const committed = suite.handoffs.submitFromPhysicalAgentBoundaryWithReplay(
+    handoffInput,
     physicalReceipt,
-    {
-      worktreeHeadSha: prepared.worktreeHeadSha,
-      rawPayloadSha256: prepared.rawPayloadSha256,
-    },
-    {
-      sessionId,
-      workerIncarnationId: ctx.workerIncarnationId!,
-      detail: `${payload.status}: ${prepared.summary}`,
-    },
+    provenance,
     attestation,
   );
+  return {
+    handoff: committed.handoff,
+    replayed: committed.replayed,
+    taskDispatch: undefined,
+  };
 }
 
 async function persistPtyHandoff(
@@ -390,7 +421,7 @@ async function persistPtyHandoff(
     }
     return Object.freeze({
       handoffId: committed.handoff.id,
-      taskDispatchState: committed.taskDispatch.state,
+      taskDispatchState: committed.taskDispatch?.state ?? "",
       replayed: committed.replayed,
     });
   });
@@ -435,4 +466,37 @@ export async function submitPtyStreamHandoff(
     auditPtyHandoffFailure(prepared, error);
     throw error;
   }
+}
+
+export function extractPromotablePtyHandoffs(
+  text: string,
+): PtyStreamHandoffPayload[] {
+  return extractLegacyHandoffsFromText(text).filter(
+    (payload) => !isPlaceholderSummary(payload.summary),
+  );
+}
+
+/**
+ * Overclock Stop-hook parity: when the worker already printed a completion
+ * block, Main promotes it from the observed PTY snapshot. Does not wait for
+ * the model to call MCP or nx-mail.
+ */
+export async function promoteObservedPtyHandoffs(
+  sessionId: string,
+  text: string,
+): Promise<number> {
+  const payloads = extractPromotablePtyHandoffs(text);
+  let promoted = 0;
+  for (const payload of payloads) {
+    try {
+      await submitPtyStreamHandoff(sessionId, payload);
+      promoted += 1;
+    } catch (error) {
+      console.warn(
+        `[handoff] observed PTY block rejected (${sessionId}):`,
+        error,
+      );
+    }
+  }
+  return promoted;
 }

@@ -32,6 +32,7 @@ export function canDiscardMission(mission: Mission): boolean {
 export type MissionListAction =
   | 'close-runtime'
   | 'stop-recovery'
+  | 'complete'
   | 'discard'
   | 'remove'
   | 'none';
@@ -53,11 +54,9 @@ export function missionListAction(
   // Completed missions have nothing to Encerrar — Main rejects that path.
   // Offer Remover even when transcript panes or a stale session pointer remain.
   if (mission.status === 'done') return 'remove';
-  if (
-    wasMissionRuntimeClosedByOperator(mission) &&
-    mission.orchestratorSessionId !== undefined
-  ) {
-    return 'close-runtime';
+  if (wasMissionRuntimeClosedByOperator(mission)) {
+    if (mission.orchestratorSessionId !== undefined) return 'close-runtime';
+    return 'complete';
   }
   if (missionHasLiveRuntime(mission, hasVisiblePanes)) return 'close-runtime';
   if (missionAwaitsOperatorDecision(mission)) return 'none';
@@ -98,6 +97,11 @@ export function missionActionCopy(action: MissionListAction): {
       return {
         verb: 'Parar',
         title: 'Parar a recuperação automática e preservar o histórico',
+      };
+    case 'complete':
+      return {
+        verb: 'Marcar concluída',
+        title: 'Arquivar esta missão como concluída. Histórico permanece.',
       };
     case 'discard':
       return { verb: 'Descartar', title: 'Descartar este rascunho' };

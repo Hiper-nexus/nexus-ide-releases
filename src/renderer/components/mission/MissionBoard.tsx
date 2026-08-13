@@ -713,6 +713,36 @@ export function MissionBoard({
           return;
         }
 
+        if (action === 'complete') {
+          if (!mission) return;
+          const result = await window.nexus.orch.completeMissionByOperator(
+            mission.id,
+          );
+          if (!isCurrentBoardAction(attempt)) return;
+
+          if (!result.ok && result.cancelled) {
+            setActionAnnouncement('Conclusão cancelada.');
+            restoreFocus = true;
+            return;
+          }
+          if (!result.ok) {
+            setCommandError(
+              toUserFacingMissionRecovery(
+                result.error,
+                'Não foi possível marcar a missão como concluída. Tente novamente.',
+              ),
+            );
+            restoreFocus = true;
+            return;
+          }
+
+          setActionAnnouncement(
+            'Missão marcada como concluída. Histórico preservado.',
+          );
+          refreshSnapshotRef.current?.();
+          return;
+        }
+
         if (action === 'remove') {
           const prompt = removeMissionPrompt({
             title: mission?.title ?? snapshotRef.current?.title ?? 'missão',
@@ -763,6 +793,8 @@ export function MissionBoard({
               ? 'Não foi possível descartar a missão. Tente novamente.'
               : action === 'remove'
                 ? 'Não foi possível remover a missão. Tente novamente.'
+                : action === 'complete'
+                  ? 'Não foi possível marcar a missão como concluída. Tente novamente.'
                 : 'Não foi possível encerrar a missão com segurança. Tente novamente.';
           setCommandError(toUserFacingMissionRecovery(reason, fallback));
           restoreFocus = true;
@@ -918,7 +950,11 @@ export function MissionBoard({
             lifecycleAction !== 'none' && (
             <button
               type="button"
-              className="mission-board__button mission-board__button--secondary mission-board__button--danger"
+              className={
+                lifecycleAction === 'complete'
+                  ? 'mission-board__button mission-board__button--secondary'
+                  : 'mission-board__button mission-board__button--secondary mission-board__button--danger'
+              }
               title={lifecycleCopy.title}
               aria-label={`${lifecycleCopy.verb}: ${lifecycleCopy.title}`}
               disabled={pendingAction !== null}

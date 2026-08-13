@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import { missionProjectContextPathSchema } from '../../shared/mission-intent';
 import {
   buildMissionAttachmentsContext,
   classifyMissionAttachment,
   filesFromClipboardData,
+  isMissionContextAttachmentPath,
   namePastedMissionFile,
   validateMissionAttachment,
   type MissionAttachment,
@@ -43,6 +45,20 @@ describe('mission attachments', () => {
   it('builds a bounded context block for the mission agents', () => {
     expect(buildMissionAttachmentsContext([attachment])).toContain('erro.png');
     expect(buildMissionAttachmentsContext([])).toBe('');
+  });
+
+  it('recognizes imported mission-context paths', () => {
+    expect(
+      isMissionContextAttachmentPath(
+        '.nexus/attachments/mission-context/token-cliente.m4a',
+      ),
+    ).toBe(true);
+    expect(isMissionContextAttachmentPath('src/App.tsx')).toBe(false);
+    expect(
+      missionProjectContextPathSchema.safeParse(
+        '.nexus/attachments/mission-context/token-cliente.m4a',
+      ).success,
+    ).toBe(true);
   });
 
   it('extracts screenshot pastes and ignores text-only clipboard', () => {
@@ -87,5 +103,21 @@ describe('mission attachments', () => {
       files: [shot],
     });
     expect(files).toHaveLength(1);
+  });
+
+  it('collects Finder audio drops from the files list even when items also exist', () => {
+    const audio = realFile('cliente.m4a', 'audio/mp4', 'm4a-bytes');
+    const files = filesFromClipboardData({
+      items: [
+        {
+          kind: 'file',
+          type: 'audio/mp4',
+          getAsFile: () => null,
+        },
+      ],
+      files: [audio],
+    });
+    expect(files).toHaveLength(1);
+    expect(files[0]?.name).toBe('cliente.m4a');
   });
 });

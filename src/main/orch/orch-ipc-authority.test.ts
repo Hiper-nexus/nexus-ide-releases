@@ -4,7 +4,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ORCH_CHANNELS } from '../../shared/orch-channels';
-import type { Squad } from '../../shared/orch-types';
+import type { Mission, Squad } from '../../shared/orch-types';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { withMissionLifecycleLock } from './mission-lifecycle-lock';
 
@@ -2868,6 +2868,187 @@ describe('mission runtime close IPC authority', () => {
     ).rejects.toThrow(/invalid mission close runtime payload/i);
     expect(harness.dialog.showMessageBox).not.toHaveBeenCalled();
     expect(harness.terminatePty).not.toHaveBeenCalled();
+  });
+});
+
+describe('mission complete by operator IPC authority', () => {
+  function configureAndGetHandler() {
+    configureRendererMissionAuthority({} as never);
+    const handler = harness.handlers.get(
+      ORCH_CHANNELS.missionCompleteByOperator,
+    );
+    if (!handler) {
+      throw new Error('missing mission complete by operator handler');
+    }
+    return handler;
+  }
+
+  function parkedMission(): Mission {
+    return {
+      id: 'mission-parked',
+      title: 'Missão estacionada',
+      description: '<!-- nexus:runtime-closed -->\nEncerrada.',
+      status: 'blocked',
+      intentState: 'blocked_user',
+      intentVersion: 2,
+      milestones: [],
+      learnings: '',
+      createdAt: 1,
+      updatedAt: 10,
+    };
+  }
+
+  it('validates the complete payload before inspecting the mission', async () => {
+    const sender = owner();
+    harness.scopes.set(sender.id, SCOPE_A);
+    harness.windows.set(sender.id, { isDestroyed: () => false });
+    const handler = configureAndGetHandler();
+
+    await expect(handler({ sender }, { missionId: '' })).rejects.toThrow(
+      /invalid mission complete by operator payload/i,
+    );
+    await expect(
+      handler({ sender }, { missionId: 'mission-a', forged: true }),
+    ).rejects.toThrow(/invalid mission complete by operator payload/i);
+    expect(harness.dialog.showMessageBox).not.toHaveBeenCalled();
+  });
+
+  it('refuses a live runtime without opening the archive dialog', async () => {
+    const sender = owner();
+    harness.scopes.set(sender.id, SCOPE_A);
+    harness.windows.set(sender.id, { isDestroyed: () => false });
+    const stored = parkedMission();
+    harness.agentSessions.push({
+      sessionId: 'pty-still-live',
+      paneId: 'pane-still-live',
+      adapterId: 'claude',
+      cwd: SCOPE_A.rootRealPath,
+      missionId: stored.id,
+      role: 'orchestrator',
+      scope: SCOPE_A,
+    });
+    harness.projectStores.forScope.mockReturnValue({
+      scope: SCOPE_A,
+      missions: {
+        get: (missionId: string) => (missionId === stored.id ? stored : null),
+        list: () => [stored],
+      },
+      missionPanes: { list: () => [] },
+    });
+    const engine = {
+      ...canonicalEngine(),
+      completeVerified: vi.fn(),
+    };
+    installCanonicalEngine(SCOPE_A, engine);
+    const handler = configureAndGetHandler();
+
+    await expect(
+      handler({ sender }, { missionId: stored.id }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/processos vivos/i),
+    });
+    expect(harness.dialog.showMessageBox).not.toHaveBeenCalled();
+    expect(engine.completeVerified).not.toHaveBeenCalled();
+  });
+
+  it('archives a parked mission through completeVerified after native confirm', async () => {
+    const sender = owner();
+    harness.scopes.set(sender.id, SCOPE_A);
+    harness.windows.set(sender.id, { isDestroyed: () => false });
+    let stored: Mission = parkedMission();
+    harness.projectStores.forScope.mockReturnValue({
+      scope: SCOPE_A,
+      missions: {
+        get: (missionId: string) => (missionId === stored.id ? stored : null),
+        list: () => [stored],
+      },
+      missionPanes: { list: () => [] },
+    });
+    const engine = {
+      ...canonicalEngine(),
+      completeVerified: vi.fn((_scope: unknown, input: { result?: unknown }) => {
+        stored = {
+          ...stored,
+          status: 'done',
+          intentState: 'done',
+          result: input.result as Mission['result'],
+          updatedAt: stored.updatedAt + 1,
+        };
+      }),
+    };
+    installCanonicalEngine(SCOPE_A, engine);
+    const handler = configureAndGetHandler();
+
+    await expect(
+      handler({ sender }, { missionId: stored.id }),
+    ).resolves.toMatchObject({
+      ok: true,
+      mission: expect.objectContaining({
+        id: stored.id,
+        status: 'done',
+      }),
+    });
+    expect(harness.dialog.showMessageBox).toHaveBeenCalledOnce();
+    expect(engine.completeVerified).toHaveBeenCalledOnce();
+  });
+
+  it('is idempotent for an already-done mission without a dialog', async () => {
+    const sender = owner();
+    harness.scopes.set(sender.id, SCOPE_A);
+    harness.windows.set(sender.id, { isDestroyed: () => false });
+    const stored: Mission = {
+      ...parkedMission(),
+      status: 'done',
+      intentState: 'done',
+    };
+    harness.projectStores.forScope.mockReturnValue({
+      scope: SCOPE_A,
+      missions: {
+        get: (missionId: string) => (missionId === stored.id ? stored : null),
+        list: () => [stored],
+      },
+      missionPanes: { list: () => [] },
+    });
+    const engine = {
+      ...canonicalEngine(),
+      completeVerified: vi.fn(),
+    };
+    installCanonicalEngine(SCOPE_A, engine);
+    const handler = configureAndGetHandler();
+
+    await expect(
+      handler({ sender }, { missionId: stored.id }),
+    ).resolves.toEqual({ ok: true, mission: stored });
+    expect(harness.dialog.showMessageBox).not.toHaveBeenCalled();
+    expect(engine.completeVerified).not.toHaveBeenCalled();
+  });
+
+  it('returns cancelled when the operator dismisses the native dialog', async () => {
+    const sender = owner();
+    harness.scopes.set(sender.id, SCOPE_A);
+    harness.windows.set(sender.id, { isDestroyed: () => false });
+    const stored = parkedMission();
+    harness.projectStores.forScope.mockReturnValue({
+      scope: SCOPE_A,
+      missions: {
+        get: (missionId: string) => (missionId === stored.id ? stored : null),
+        list: () => [stored],
+      },
+      missionPanes: { list: () => [] },
+    });
+    harness.dialog.showMessageBox.mockResolvedValueOnce({ response: 0 });
+    const engine = {
+      ...canonicalEngine(),
+      completeVerified: vi.fn(),
+    };
+    installCanonicalEngine(SCOPE_A, engine);
+    const handler = configureAndGetHandler();
+
+    await expect(
+      handler({ sender }, { missionId: stored.id }),
+    ).resolves.toMatchObject({ ok: false, cancelled: true });
+    expect(engine.completeVerified).not.toHaveBeenCalled();
   });
 });
 

@@ -16,6 +16,8 @@ import { useSessionStateStore } from '../state/session-state-store';
 import { useOrchStore } from '../state/orch-store';
 import { useToastStore } from '../state/toast-store';
 import { getActiveWorkspacePath } from '../state/active-workspace';
+import { filesFromClipboardData } from '../lib/mission-attachments';
+import { resolveDroppedMissionContextPath } from '../lib/mission-shell-file-intake';
 import { listPanes } from '../lib/split-tree';
 import { paneInputLane } from './pane-input-route';
 import { TERMINAL_THEMES } from '../styles/terminal-theme';
@@ -1068,23 +1070,15 @@ function shellQuote(p: string): string {
   return /[\s'"\\$`(){}[\]!*?&;|<>]/.test(p) ? `'${p.replace(/'/g, "'\\''")}'` : p;
 }
 
-function bufferToBase64(buf: ArrayBuffer): string {
-  const bytes = new Uint8Array(buf);
-  let binary = '';
-  const CHUNK = 0x8000;
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
-  }
-  return btoa(binary);
-}
-
-/** Save a pasted/dropped binary blob into ~/.nexus/dropped, inject its path. */
-async function injectSavedBlob(host: Host, file: File): Promise<void> {
+/** Copy a pasted/dropped blob into the workspace mission-context dir, inject its path. */
+async function injectDroppedFile(host: Host, file: File): Promise<void> {
   try {
-    const base64 = bufferToBase64(await file.arrayBuffer());
-    const res = await window.nexus.files.saveDropped(file.name || 'pasted', base64);
-    if (res.ok && res.path && host.sessionId) {
-      window.nexus.pty.write(host.sessionId, `${shellQuote(res.path)} `);
+    const path = await resolveDroppedMissionContextPath(
+      getActiveWorkspacePath(),
+      file,
+    );
+    if (path && host.sessionId) {
+      window.nexus.pty.write(host.sessionId, `${shellQuote(path)} `);
     }
   } catch {
     // Ignore — a failed drop should never break the terminal.
@@ -1140,17 +1134,11 @@ function wireInteractions(host: Host, sendJumpKeyOnScroll = false): void {
   element.addEventListener(
     'paste',
     (e: ClipboardEvent) => {
-      const items = e.clipboardData?.items;
-      if (!items) return;
-      for (let i = 0; i < items.length; i++) {
-        if (items[i].type.startsWith('image/')) {
-          e.preventDefault();
-          const file = items[i].getAsFile();
-          if (file) void injectSavedBlob(host, file);
-          return;
-        }
-      }
-      // Plain text → let xterm's native paste handle it.
+      const files = filesFromClipboardData(e.clipboardData);
+      if (files.length === 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      for (const file of files) void injectDroppedFile(host, file);
     },
     true,
   );
@@ -1162,22 +1150,10 @@ function wireInteractions(host: Host, sendJumpKeyOnScroll = false): void {
 
   element.addEventListener('drop', (e: DragEvent) => {
     e.preventDefault();
-    const files = e.dataTransfer?.files;
-    if (!files || files.length === 0) return;
-    const paths: string[] = [];
-    for (let i = 0; i < files.length; i++) {
-      const p = window.nexus.files.pathForFile(files[i]);
-      if (p) paths.push(p);
-    }
-    if (paths.length > 0 && host.sessionId) {
-      window.nexus.pty.write(
-        host.sessionId,
-        paths.map(shellQuote).join(' ') + ' ',
-      );
-    } else {
-      // No real path (e.g. an image dragged from a browser) → save + inject.
-      for (let i = 0; i < files.length; i++) void injectSavedBlob(host, files[i]);
-    }
+    e.stopPropagation();
+    const files = Array.from(e.dataTransfer?.files ?? []);
+    if (files.length === 0) return;
+    for (const file of files) void injectDroppedFile(host, file);
   });
 }
 

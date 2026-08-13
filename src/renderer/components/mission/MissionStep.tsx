@@ -13,6 +13,8 @@ import {
   MISSION_LANE_OPTIONS,
   missionLanePresentation,
 } from './mission-lane-presentation';
+import { MissionAttachmentPicker } from './MissionAttachmentPicker';
+import { isMissionContextAttachmentPath } from '../../lib/mission-attachments';
 
 interface MissionStepProps {
   workspace: WorkspaceInfo | null;
@@ -191,6 +193,9 @@ export function MissionStep({
     useState<PendingRemovalFocus | null>(null);
 
   const draftEditingDisabled = draftFieldsDisabled || !workspace;
+  const projectContextPaths = draft.contextPaths.filter(
+    (path) => !isMissionContextAttachmentPath(path),
+  );
   const disabledReasonId = 'mission-draft-disabled-reason';
   const disabledReason = workspace
     ? 'Resolva o carregamento do rascunho antes de preencher os dados da missão.'
@@ -285,16 +290,15 @@ export function MissionStep({
     setContextError(null);
   };
 
-  const removeContextPath = (path: string, index: number): void => {
+  const removeContextPath = (path: string): void => {
     if (draftEditingDisabled) return;
+    const index = projectContextPaths.indexOf(path);
     setPendingRemovalFocus({
       removedPath: path,
-      nextPath: draft.contextPaths[index + 1] ?? null,
-      previousPath: draft.contextPaths[index - 1] ?? null,
+      nextPath: projectContextPaths[index + 1] ?? null,
+      previousPath: projectContextPaths[index - 1] ?? null,
     });
-    onContextPathsChange(
-      draft.contextPaths.filter((_, itemIndex) => itemIndex !== index),
-    );
+    onContextPathsChange(draft.contextPaths.filter((item) => item !== path));
   };
 
   const continueToTeam = (): void => {
@@ -451,31 +455,39 @@ export function MissionStep({
       </div>
 
       <div className="mission-setup__continuous-section">
+        <MissionAttachmentPicker
+          contextPaths={draft.contextPaths}
+          disabled={draftEditingDisabled}
+          onContextPathsChange={onContextPathsChange}
+        />
+      </div>
+
+      <div className="mission-setup__continuous-section">
         <div className="mission-setup__section-heading">
           <div>
             <h2>Arquivos e referências</h2>
             <p>Opcional. Use caminhos relativos à pasta do projeto.</p>
           </div>
-          <span>{draft.contextPaths.length}/64</span>
+          <span>{projectContextPaths.length}/64</span>
         </div>
 
-        {draft.contextPaths.length > 0 && (
+        {projectContextPaths.length > 0 && (
           <ul className="mission-context-list" aria-label="Contexto da missão">
-            {draft.contextPaths.map((path, index) => (
+            {projectContextPaths.map((path, index) => (
               <ContextPathRow
                 key={path}
                 path={path}
                 index={index}
                 disabled={draftEditingDisabled}
                 disabledReasonId={disabledReasonId}
-                onCommit={(nextPath) =>
-                  onContextPathsChange(
-                    draft.contextPaths.map((item, itemIndex) =>
-                      itemIndex === index ? nextPath : item,
-                    ),
-                  )
-                }
-                onRemove={() => removeContextPath(path, index)}
+                  onCommit={(nextPath) =>
+                    onContextPathsChange(
+                      draft.contextPaths.map((item) =>
+                        item === path ? nextPath : item,
+                      ),
+                    )
+                  }
+                onRemove={() => removeContextPath(path)}
                 onRemoveButtonRef={(button) => {
                   if (button) {
                     removeButtonRefs.current.set(path, button);

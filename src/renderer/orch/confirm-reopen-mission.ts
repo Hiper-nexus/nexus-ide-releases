@@ -1,10 +1,8 @@
 import type { Mission } from '../../shared/orch-types';
-import { askConfirm } from '../state/confirm-store';
 import { useMissionSetupStore } from '../state/mission-setup-store';
 import { useOrchStore } from '../state/orch-store';
 import { useProductNavigationStore } from '../state/product-navigation-store';
 import { useWorkspaceStore } from '../state/workspace-store';
-import { hardReopenWouldKillAgents } from './mission-auth-conflict';
 import {
   hardReopenWouldDisplaceLayout,
   isIntentFirstMissionShell,
@@ -87,7 +85,8 @@ export function resumeIntentFirstMissionShell(
 
 /**
  * Shared reopen entry for retained mission callers. Soft-focus when already
- * live; confirm only when an exclusive-auth kill is required.
+ * live; merge when another mission occupies the grid. Never kill a live
+ * Maestro to make room for this one.
  *
  * Intent-first shells with no pane evidence enter canonical replacement
  * Review instead of failing with "sem panes".
@@ -149,31 +148,14 @@ export async function confirmAndReopenMission(
   if (route.kind === 'stay') return { ok: false, error: route.notice };
 
   if (hardReopenWouldDisplaceLayout(mission.id)) {
-    // Peek orchestrator adapter from a lightweight hard path only when kill needed.
-    // We confirm aggressively only for shared-login conflicts; pure layout merge is silent.
-    let wouldKill = false;
     try {
       const specs = await window.nexus.orch.listMissionPanes(mission.id);
-      const orch = specs.find((s) => s.role === 'orchestrator') ?? specs[0];
-      wouldKill = hardReopenWouldKillAgents(orch?.adapterId);
       // A racing empty list for a recognized shell still uses replacement Review.
       if (specs.length === 0 && isIntentFirstMissionShell(mission)) {
         return resumeIntentFirstMissionShell(mission);
       }
     } catch {
-      wouldKill = false;
-    }
-
-    if (wouldKill) {
-      const ok = await askConfirm({
-        title: `Retomar "${mission.title}"?`,
-        body: 'Retomar exige encerrar o orquestrador Claude já em execução (login partilhado). Outros panes podem permanecer.',
-        confirmLabel: 'Encerrar e retomar',
-        danger: true,
-      });
-      if (!ok) {
-        return { ok: false, error: 'Retoma cancelada.' };
-      }
+      // Merge proceeds; reopenMission owns the layout capacity gate.
     }
   }
 

@@ -1066,17 +1066,22 @@ function assertExclusiveOrchestratorProcessAvailable(
   if (authority.context?.role !== "orchestrator") return;
   const family = sharedAgentAuthFamily(adapter.id);
   if (!family) return;
+  // One Maestro per mission until that process exits. A second mission in the
+  // same workspace keeps its own runtime — stealing the other Maestro is what
+  // made "iniciar a segunda" fechar a primeira.
+  const incomingMissionId = authority.context.missionId?.trim() || null;
   const conflict = [...sessions.values()]
     .map((session) => session.agent)
     .find(
       (agent) =>
         agent?.role === "orchestrator" &&
-        sharedAgentAuthFamily(agent.adapterId) === family,
+        sharedAgentAuthFamily(agent.adapterId) === family &&
+        (agent.missionId?.trim() || null) === incomingMissionId,
     );
   if (conflict) {
     throw new Error(
       `exclusive auth family ${family} already has a live orchestrator ` +
-        `(${conflict.sessionId}); physical exit proof is required before spawn`,
+        `(${conflict.sessionId}) for this mission; physical exit proof is required before spawn`,
     );
   }
 }

@@ -9,10 +9,6 @@ import {
   prepareMissionPaneResume,
   waitForSession,
 } from '../terminal/terminal-host';
-import {
-  conflictingOrchestratorPanes,
-  hardReopenWouldKillAgents,
-} from './mission-auth-conflict';
 import { presentMainOwnedMissionPane } from './mission-pane-presentation';
 
 /**
@@ -21,11 +17,9 @@ import { presentMainOwnedMissionPane } from './mission-pane-presentation';
  * CLI re-spawned using resume flags so previous conversations continue.
  *
  * Soft focus: if the mission already has live panes, only focus them.
- * Soft multi: if another mission is live and there is no shared-login
- * conflict (e.g. dual Claude orch), merge panes — no kill of the other
- * mission (Orca-style parallel work).
- * Hard: forceHard or exclusive-auth conflict → kill conflicting (or all)
- * then restore this mission's composition.
+ * Soft multi: if another mission is live, merge panes — no kill of the other
+ * mission (parallel work). A second Claude Maestro is its own runtime.
+ * Hard: forceHard is rejected; Main must prove physical exit first.
  */
 
 const MAX_REOPEN_PANES = 12;
@@ -126,7 +120,7 @@ export function hardReopenWouldDisplaceAgents(missionId: string): boolean {
   return hardReopenWouldDisplaceLayout(missionId);
 }
 
-export { hardReopenWouldKillAgents };
+export { hardReopenWouldKillAgents } from './mission-auth-conflict';
 
 function specsToPanes(
   specs: MissionPaneSpec[],
@@ -158,14 +152,9 @@ function specsToPanes(
   });
 }
 
-function primaryOrchestratorAdapter(specs: MissionPaneSpec[]): string | undefined {
-  const orch = specs.find((s) => s.role === 'orchestrator');
-  return orch?.adapterId ?? specs[0]?.adapterId;
-}
-
 /**
  * Soft focus when the mission is already open; otherwise reopen with
- * multi-mission merge when safe (no exclusive-auth dual orch).
+ * multi-mission merge. Another live Maestro is kept, never stolen.
  */
 export async function reopenMission(
   mission: Mission,
@@ -236,21 +225,8 @@ export async function reopenMission(
 
   const fallbackCwd = getActiveWorkspacePath() ?? undefined;
   const panes = specsToPanes(specs, mission.id, fallbackCwd);
-  const incomingAdapter = primaryOrchestratorAdapter(specs);
   const existing = listPanes(useLayoutStore.getState().root);
-  const conflicts = conflictingOrchestratorPanes(incomingAdapter);
-  // Exclude conflicts that are panes we're about to re-bind with same id.
   const newIds = new Set(panes.map((p) => p.id));
-  const foreignConflicts = conflicts.filter((p) => !newIds.has(p.id));
-
-  if (foreignConflicts.length > 0) {
-    return {
-      ok: false,
-      error:
-        'Há um orquestrador com credencial exclusiva em execução. O Nexus não substitui esse processo sem prova física de saída.',
-    };
-  }
-
   const kept = existing.filter((pane) => !newIds.has(pane.id));
   // Um placeholder estrutural nunca reclamado pelo operador não é conteúdo:
   // os caminhos de apresentação main-owned já o substituem. Mantê-lo deixava

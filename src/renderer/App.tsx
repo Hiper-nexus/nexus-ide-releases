@@ -71,7 +71,14 @@ import {
   SearchPanelBody,
   SkillsPanelBody,
 } from './components/product/ProductPanelBodies';
-import { filesFromClipboardData } from './lib/mission-attachments';
+import {
+  filesFromClipboardData,
+  stageMissionAttachment,
+} from './lib/mission-attachments';
+import {
+  partitionDroppedMissionFiles,
+  shellClaimsMissionFileDrop,
+} from './lib/mission-shell-file-intake';
 import { MissionJournalPanel } from './components/product/MissionJournalPanel';
 import { FanoutComparePanel } from './components/FanoutComparePanel';
 import { GitPanelBody } from './components/GitPanelBody';
@@ -101,7 +108,6 @@ import {
   type ProductDestination,
 } from './state/product-navigation-store';
 import {
-  normalizeProjectContextPath,
   useMissionSetupStore,
 } from './state/mission-setup-store';
 import {
@@ -133,25 +139,6 @@ function BootScreen() {
       </div>
     </div>
   );
-}
-
-function droppedProjectContextPath(
-  workspacePath: string,
-  file: File,
-): string | null {
-  const absolutePath = window.nexus.files.pathForFile(file);
-  if (!absolutePath) return null;
-
-  const root = workspacePath.replaceAll('\\', '/').replace(/\/+$/u, '');
-  const candidate = absolutePath.replaceAll('\\', '/');
-  const caseInsensitive = /^[A-Za-z]:\//u.test(root);
-  const comparableRoot = caseInsensitive ? root.toLowerCase() : root;
-  const comparableCandidate = caseInsensitive
-    ? candidate.toLowerCase()
-    : candidate;
-  const prefix = `${comparableRoot}/`;
-  if (!comparableCandidate.startsWith(prefix)) return null;
-  return normalizeProjectContextPath(candidate.slice(root.length + 1));
 }
 
 function productDestinationKey(destination: ProductDestination): string {
@@ -481,15 +468,17 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [productFlags]);
 
-  // Finder drops become canonical, root-relative project context. External
-  // files are never staged into an unreviewed absolute-path mission contract.
+  // Finder drops on launcher/setup become mission context. An open pane or
+  // mission keeps the event — claiming it here used to bounce the operator
+  // back to Express with "Arquivo fora do projeto".
   useEffect(() => {
     const hasFiles = (event: DragEvent) =>
       Array.from(event.dataTransfer?.types ?? []).includes('Files');
     const onDragOver = (event: DragEvent) => {
       if (!hasFiles(event)) return;
       event.preventDefault();
-      setDropActive(true);
+      const destination = useProductNavigationStore.getState().destination;
+      setDropActive(shellClaimsMissionFileDrop(destination.kind));
     };
     const onDragLeave = (event: DragEvent) => {
       if (event.relatedTarget === null) setDropActive(false);
@@ -498,33 +487,56 @@ export function App() {
       if (!hasFiles(event)) return;
       event.preventDefault();
       setDropActive(false);
+      const destination = useProductNavigationStore.getState().destination;
+      if (!shellClaimsMissionFileDrop(destination.kind)) {
+        return;
+      }
+      event.stopPropagation();
+
       const workspace = useWorkspaceStore.getState().current;
       if (!workspace) return;
       const files = filesFromClipboardData(event.dataTransfer);
       if (files.length === 0) return;
 
-      const contextPaths = files.flatMap((file) => {
-        const path = droppedProjectContextPath(workspace.path, file);
-        return path ? [path] : [];
-      });
+      const split = partitionDroppedMissionFiles(workspace.path, files);
       const setup = useMissionSetupStore.getState();
-      setup.clearEntryContext();
-      setup.setWorkspace(workspace.path);
-      if (contextPaths.length > 0) {
+      if (destination.kind === 'launcher') {
+        setup.clearEntryContext();
+        setup.setWorkspace(workspace.path);
+        setup.setStep('express');
+        useProductNavigationStore.getState().openMissionSetup();
+      }
+
+      void (async () => {
+        const imported: string[] = [];
+        for (const file of split.toImport) {
+          try {
+            imported.push((await stageMissionAttachment(file)).path);
+          } catch (error) {
+            useToastStore.getState().push(
+              'warn',
+              'Não foi possível anexar',
+              error instanceof Error
+                ? error.message
+                : `Falha ao importar ${file.name}.`,
+            );
+          }
+        }
+        const contextPaths = [...split.inProject, ...imported];
+        if (contextPaths.length === 0) {
+          useToastStore.getState().push(
+            'warn',
+            'Arquivo não suportado',
+            'Anexe áudio, imagem ou texto — mesmo de fora da pasta do projeto.',
+          );
+          return;
+        }
         const current = useMissionSetupStore.getState();
         current.setContextPaths([
           ...current.draft.contextPaths,
           ...contextPaths,
         ]);
-      } else {
-        useToastStore.getState().push(
-          'warn',
-          'Arquivo fora do projeto',
-          'Use arquivos que estejam dentro do workspace para anexá-los como contexto da missão.',
-        );
-      }
-      useMissionSetupStore.getState().setStep('express');
-      useProductNavigationStore.getState().openMissionSetup();
+      })();
     };
     window.addEventListener('dragover', onDragOver);
     window.addEventListener('dragleave', onDragLeave);

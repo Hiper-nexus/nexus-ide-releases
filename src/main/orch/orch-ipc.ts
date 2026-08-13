@@ -193,6 +193,7 @@ import {
 } from './mission-runtime-termination';
 import { BoundedAsyncOperationPool } from './bounded-async-operation-pool';
 import { missionControlPlaneSnapshot } from "./mission-control-plane-ipc";
+import { completeMissionByOperator } from "./mission-operator-complete";
 
 /**
  * Renderer-facing IPC for the orchestration domain, plus the domain
@@ -759,6 +760,41 @@ async function confirmMissionRuntimeClose(
         `Sessões físicas: ${candidate.sessionIds.length}\n\n` +
         "Os processos e panes desta missão serão encerrados. Tasks, entregas, " +
         "receipts e histórico permanecem salvos, e a missão poderá ser retomada depois.",
+    });
+    return result.response === 1;
+  } finally {
+    missionAuthorityConfirmations.delete(owner);
+  }
+}
+
+async function confirmMissionOperatorComplete(
+  owner: WebContents,
+  scope: ProjectExecutionScope,
+  mission: Pick<Mission, "id" | "title">,
+): Promise<boolean> {
+  const window = BrowserWindow.fromWebContents(owner);
+  if (!window || window.isDestroyed()) {
+    throw new Error("renderer window is unavailable");
+  }
+  if (missionAuthorityConfirmations.has(owner)) {
+    throw new Error("mission authority confirmation is already pending");
+  }
+  missionAuthorityConfirmations.add(owner);
+  try {
+    const result = await dialog.showMessageBox(window, {
+      type: "warning",
+      title: "Nexus IDE — marcar missão como concluída",
+      buttons: ["Cancelar", "Marcar concluída"],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+      message: `Marcar "${safeDialogLabel(mission.title, 512)}" como concluída?`,
+      detail:
+        `Workspace: ${safeDialogLabel(scope.rootRealPath, 4_096)}\n` +
+        `Missão: ${safeDialogLabel(mission.id, 128)}\n\n` +
+        "A missão entra no histórico como concluída. Encerrar só estaciona " +
+        "os processos; isto arquiva. Tasks, receipts e o quadro permanecem. " +
+        "Não apaga a missão.",
     });
     return result.response === 1;
   } finally {
@@ -2012,6 +2048,58 @@ export function registerOrchIpc(): void {
       parsed.data.missionId,
     );
   });
+
+  const missionCompleteByOperatorSchema = z
+    .object({ missionId: z.string().min(1).max(128) })
+    .strict();
+  ipcMain.handle(
+    ORCH_CHANNELS.missionCompleteByOperator,
+    async (event, raw) => {
+      const parsed = missionCompleteByOperatorSchema.safeParse(raw);
+      if (!parsed.success) {
+        throw new Error("invalid mission complete by operator payload");
+      }
+      const scope = requireLiveRendererWorkspaceScope(event.sender);
+      const suite = requireProjectStores(event.sender);
+      const missionId = parsed.data.missionId;
+      const current = suite.missions.get(missionId);
+      if (!current) {
+        return { ok: false, error: "Missão não encontrada." };
+      }
+      if (current.status === "done") {
+        return { ok: true, mission: current };
+      }
+      if (missionHasLivePhysicalSession(scope, missionId)) {
+        return {
+          ok: false,
+          mission: current,
+          error:
+            "Ainda há processos vivos. Encerrar a missão antes de marcar como concluída.",
+        };
+      }
+      if (!(await confirmMissionOperatorComplete(event.sender, scope, current))) {
+        return { ok: false, cancelled: true, mission: current };
+      }
+      return withMissionLifecycleLock(scope, missionId, () => {
+        requireLiveRendererWorkspaceScope(event.sender, scope);
+        if (missionHasLivePhysicalSession(scope, missionId)) {
+          return {
+            ok: false,
+            mission: suite.missions.get(missionId) ?? current,
+            error:
+              "Ainda há processos vivos. Encerrar a missão antes de marcar como concluída.",
+          };
+        }
+        return completeMissionByOperator(scope, suite, missionId, {
+          completeVerified: (completeScope, input) =>
+            missionEngineForScope(completeScope).completeVerified(
+              completeScope,
+              input,
+            ),
+        });
+      });
+    },
+  );
 
   ipcMain.handle(ORCH_CHANNELS.missionRemove, async (event, raw) => {
     const parsed = missionRemoveSchema.safeParse(raw);

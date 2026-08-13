@@ -8,8 +8,10 @@ import {
 } from '../../../shared/mission-engine-contract';
 import type {
   Mission,
+  MissionOperatorCompleteResult,
   MissionRuntimeCloseResult,
 } from '../../../shared/orch-types';
+import { MISSION_RUNTIME_CLOSED_MARKER } from '../../../shared/mission-recovery-policy';
 import { buildGridTree } from '../../lib/split-tree';
 import { useLayoutStore } from '../../state/layout-store';
 import { useMissionInspectorStore } from '../../state/mission-inspector-store';
@@ -81,6 +83,8 @@ const api = {
   missionEventsRecent:
     vi.fn<Window['nexus']['orch']['missionEventsRecent']>(),
   removeMission: vi.fn<Window['nexus']['orch']['removeMission']>(),
+  completeMissionByOperator:
+    vi.fn<Window['nexus']['orch']['completeMissionByOperator']>(),
 };
 
 function mission(patch: Partial<Mission> = {}): Mission {
@@ -226,6 +230,10 @@ beforeEach(() => {
     events: [],
   });
   api.removeMission.mockResolvedValue({ removed: true });
+  api.completeMissionByOperator.mockResolvedValue({
+    ok: true,
+    mission: mission({ status: 'done', intentState: 'done' }),
+  } satisfies MissionOperatorCompleteResult);
   capabilityMocks.askConfirm.mockResolvedValue(true);
   capabilityMocks.closeRuntime.mockResolvedValue({
     ok: true,
@@ -243,6 +251,7 @@ beforeEach(() => {
       orch: {
         missionEventsRecent: api.missionEventsRecent,
         removeMission: api.removeMission,
+        completeMissionByOperator: api.completeMissionByOperator,
       },
     } as unknown as Window['nexus'],
   });
@@ -293,7 +302,7 @@ describe('state-aware mission actions in the canonical mission board', () => {
       }),
       snapshotState: 'running' as const,
       expected: /Encerrar/i,
-      forbidden: /Descartar|Remover|Parar/i,
+      forbidden: /Descartar|Remover|Parar|concluída/i,
     },
     {
       label: 'automatic recovery',
@@ -305,21 +314,21 @@ describe('state-aware mission actions in the canonical mission board', () => {
       }),
       snapshotState: 'recovering' as const,
       expected: /Parar/i,
-      forbidden: /Descartar|Remover|Encerrar/i,
+      forbidden: /Descartar|Remover|Encerrar|concluída/i,
     },
     {
       label: 'eligible draft',
       current: mission({ status: 'pending', intentState: 'draft' }),
       snapshotState: 'draft' as const,
       expected: /Descartar/i,
-      forbidden: /Remover|Encerrar|Parar/i,
+      forbidden: /Remover|Encerrar|Parar|concluída/i,
     },
     {
       label: 'terminal history',
       current: mission({ status: 'done', intentState: 'done' }),
       snapshotState: 'completed' as const,
       expected: /Remover/i,
-      forbidden: /Descartar|Encerrar|Parar/i,
+      forbidden: /Descartar|Encerrar|Parar|concluída/i,
     },
     {
       label: 'completed mission with leftover transcript panes',
@@ -330,7 +339,7 @@ describe('state-aware mission actions in the canonical mission board', () => {
       }),
       snapshotState: 'completed' as const,
       expected: /Remover/i,
-      forbidden: /Descartar|Encerrar|Parar/i,
+      forbidden: /Descartar|Encerrar|Parar|concluída/i,
       seedTranscriptPanes: true,
     },
     {
@@ -342,8 +351,19 @@ describe('state-aware mission actions in the canonical mission board', () => {
       }),
       snapshotState: 'completed' as const,
       expected: /Remover/i,
-      forbidden: /Descartar|Encerrar|Parar/i,
+      forbidden: /Descartar|Encerrar|Parar|concluída/i,
       seedTranscriptPanes: true,
+    },
+    {
+      label: 'parked after Encerrar',
+      current: mission({
+        status: 'blocked',
+        intentState: 'blocked_user',
+        description: `${MISSION_RUNTIME_CLOSED_MARKER}\nEncerrada.`,
+      }),
+      snapshotState: 'blocked_user' as const,
+      expected: /Marcar concluída/i,
+      forbidden: /Descartar|Remover|Encerrar|Parar/i,
     },
   ])('offers only the safe $label action', async (testCase) => {
     if ('seedTranscriptPanes' in testCase && testCase.seedTranscriptPanes) {
@@ -432,8 +452,26 @@ describe('state-aware mission actions in the canonical mission board', () => {
     await settle();
 
     expect(
-      buttonByName(host, /Descartar|Remover|Encerrar|Parar/i),
+      buttonByName(host, /Descartar|Remover|Encerrar|Parar|concluída/i),
     ).toBeNull();
+  });
+
+  it('marca concluída a missão estacionada pelo Encerrar sem remover o histórico', async () => {
+    const parked = mission({
+      status: 'blocked',
+      intentState: 'blocked_user',
+      description: `${MISSION_RUNTIME_CLOSED_MARKER}\nEncerrada.`,
+    });
+    const host = renderMissionBoard(parked, 'blocked_user');
+    await settle();
+
+    act(() => requiredButton(host, /Marcar concluída/i).click());
+    await settle();
+
+    expect(api.completeMissionByOperator).toHaveBeenCalledTimes(1);
+    expect(api.completeMissionByOperator).toHaveBeenCalledWith(parked.id);
+    expect(api.removeMission).not.toHaveBeenCalled();
+    expect(capabilityMocks.closeRuntime).not.toHaveBeenCalled();
   });
 
   it('guards runtime close against double submit, announces failure, restores focus, and stays on the mission', async () => {

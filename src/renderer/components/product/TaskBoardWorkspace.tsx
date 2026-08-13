@@ -1,6 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { TodoItem, TodoList, TodoStatus } from '../../../shared/orch-types';
 import { orchTodosEmptyBeat } from '../../../shared/endorphin';
+import { statusLabel } from '../../lib/mission-rail-groups';
+import {
+  projectTaskBoardEntries,
+  taskBoardIsEmpty,
+} from '../../lib/task-board-projection';
 import { useOrchStore } from '../../state/orch-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
 import { ActionCard, EmptyState } from '../ActionCard';
@@ -28,6 +33,7 @@ interface TodoWriteFailure {
 
 export function TaskBoardWorkspace() {
   const todoLists = useOrchStore((state) => state.todoLists);
+  const missions = useOrchStore((state) => state.missions);
   const workspaceEpoch = useOrchStore((state) => state.workspaceEpoch);
   const boundWorkspacePath = useOrchStore(
     (state) => state.boundWorkspacePath,
@@ -35,6 +41,7 @@ export function TaskBoardWorkspace() {
   const openNewMission = useProductNavigationStore(
     (state) => state.openNewMission,
   );
+  const openMission = useProductNavigationStore((state) => state.openMission);
   const pendingWrites = useRef(new Map<string, PendingTodoWrite>());
   const [pending, setPending] = useState<
     ReadonlyMap<string, PendingTodoWrite>
@@ -46,8 +53,15 @@ export function TaskBoardWorkspace() {
     setPending(new Map());
     setErrors({});
   }, [workspaceEpoch, boundWorkspacePath]);
-  const visibleLists = todoLists.filter((list) => list.items.length > 0);
-  const itemCount = visibleLists.reduce((count, list) => count + list.items.length, 0);
+  const boardEntries = useMemo(
+    () => projectTaskBoardEntries({ missions, todoLists }),
+    [missions, todoLists],
+  );
+  const itemCount = boardEntries.length;
+  const missionCount = boardEntries.filter(
+    (entry) => entry.kind === 'mission',
+  ).length;
+  const todoCount = itemCount - missionCount;
 
   const setStatus = async (
     list: TodoList,
@@ -123,17 +137,14 @@ export function TaskBoardWorkspace() {
   };
 
   const emptyBeat = orchTodosEmptyBeat();
+  const boardEmpty = taskBoardIsEmpty(boardEntries);
 
   // Bridge parity: the board reads as status columns, not opaque list ids.
-  // Every column stays visible so the operator can see the whole flow at once.
+  // Running/blocked missions occupy Em andamento even before any todo exists.
   const columns = TODO_STATUS_OPTIONS.map((option) => ({
     status: option.value,
     label: option.label,
-    entries: visibleLists.flatMap((list) =>
-      list.items
-        .filter((item) => item.status === option.value)
-        .map((item) => ({ list, item })),
-    ),
+    entries: boardEntries.filter((entry) => entry.status === option.value),
   }));
 
   return (
@@ -155,13 +166,19 @@ export function TaskBoardWorkspace() {
         </div>
         {itemCount > 0 ? (
           <p className="product-workspace__summary" aria-live="polite">
-            {itemCount} {itemCount === 1 ? 'tarefa' : 'tarefas'} no fluxo
+            {missionCount > 0
+              ? `${missionCount} ${missionCount === 1 ? 'missão' : 'missões'}${
+                  todoCount > 0
+                    ? ` · ${todoCount} ${todoCount === 1 ? 'tarefa' : 'tarefas'}`
+                    : ''
+                } no fluxo`
+              : `${todoCount} ${todoCount === 1 ? 'tarefa' : 'tarefas'} no fluxo`}
           </p>
         ) : null}
       </header>
 
       <div className="product-workspace__content task-board-workspace__content">
-        {itemCount === 0 ? (
+        {boardEmpty ? (
           <EmptyState
             icon="board"
             title={emptyBeat.title}
@@ -197,8 +214,39 @@ export function TaskBoardWorkspace() {
                 </p>
               ) : (
                 <ul className="task-board-workspace__items">
-                  {column.entries.map(({ list, item }, itemIndex) => {
-                    const key = `${list.id}\u0000${item.id}`;
+                  {column.entries.map((entry, itemIndex) => {
+                    if (entry.kind === 'mission') {
+                      const missionStatus = entry.mission.status;
+                      return (
+                        <li
+                          key={entry.key}
+                          className={`task-board-workspace__item task-board-workspace__item--mission task-board-workspace__item--${entry.status}`}
+                        >
+                          <span
+                            className={`task-board-workspace__dot task-board-workspace__dot--${entry.status}${
+                              missionStatus === 'blocked'
+                                ? ' task-board-workspace__dot--blocked'
+                                : ''
+                            }`}
+                            aria-hidden="true"
+                          />
+                          <button
+                            type="button"
+                            className="task-board-workspace__mission-open"
+                            onClick={() => openMission(entry.mission.id)}
+                          >
+                            <span className="task-board-workspace__item-name">
+                              {entry.name}
+                            </span>
+                            <span className="task-board-workspace__mission-badge">
+                              Missão · {statusLabel(missionStatus)}
+                            </span>
+                          </button>
+                        </li>
+                      );
+                    }
+                    const { list, item } = entry;
+                    const key = entry.key;
                     const isPending = pending.has(key);
                     const error = errors[key];
                     const errorId = error
@@ -207,7 +255,7 @@ export function TaskBoardWorkspace() {
 
                     return (
                       <li
-                        key={item.id}
+                        key={entry.key}
                         className={`task-board-workspace__item task-board-workspace__item--${item.status}`}
                         aria-busy={isPending || undefined}
                       >

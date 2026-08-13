@@ -4,15 +4,20 @@ import type { QuotaFleetSnapshot } from "../../../shared/quota-types";
 import { useProviderStore } from "../../state/provider-store";
 import { useQuotaStore } from "../../state/quota-store";
 import {
+  OPERATIONAL_BAND_LABELS,
+  OPERATIONAL_DOCTRINE,
   RADAR_AXES,
   SORT_LABELS,
   SORT_MISSION,
+  type OperationalBand,
   type SortKey,
+  bandOfEntry,
   costEfficiency,
   costLabel,
   estimateBadge,
   formatEvalTime,
   gridRingPath,
+  groupEntriesByBand,
   pickForDimension,
   pickValue,
   radarPoints,
@@ -118,6 +123,10 @@ function RaceChart({
                 ) : (
                   <span className="rank-race__missing"> · off-machine</span>
                 )}
+                <span className="rank-race__band">
+                  {" "}
+                  · {OPERATIONAL_BAND_LABELS[bandOfEntry(entry)]}
+                </span>
                 {estimate !== null && (
                   <span
                     className="rank-estimate"
@@ -351,6 +360,52 @@ function MissionPicks({
   );
 }
 
+const BAND_ORDER: OperationalBand[] = ["fast", "balanced", "deep"];
+
+function BandBoard({
+  entries,
+  onSelect,
+}: {
+  entries: PublicModelRankingEntry[];
+  onSelect: (id: string) => void;
+}) {
+  const groups = groupEntriesByBand(entries);
+  return (
+    <div className="rank-bands" role="list" aria-label="Faixas operacionais">
+      {BAND_ORDER.map((band) => {
+        const rows = groups[band];
+        return (
+          <div key={band} className="rank-bands__col" role="listitem">
+            <h5 className="rank-bands__title">
+              {OPERATIONAL_BAND_LABELS[band]}
+              <span className="rank-bands__count">{rows.length}</span>
+            </h5>
+            <p className="rank-bands__hint">{OPERATIONAL_DOCTRINE.bands[band]}</p>
+            <ul className="rank-bands__list">
+              {rows.slice(0, 4).map((entry) => (
+                <li key={entry.id}>
+                  <button
+                    type="button"
+                    className="rank-bands__item"
+                    onClick={() => onSelect(entry.id)}
+                  >
+                    <ProviderLogo
+                      adapterId={entry.adapterId}
+                      label={entry.adapterId}
+                      size="sm"
+                    />
+                    <span className="rank-bands__model">{entry.modelId}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function ModelRankingSection() {
   const [snapshot, setSnapshot] = useState<Awaited<
     ReturnType<NonNullable<typeof window.nexus>["ranking"]["public"]>
@@ -444,9 +499,11 @@ export function ModelRankingSection() {
           Motor de ranking LLM
         </SettingsSectionTitle>
         <p className="settings-detail__hint">
-          Nexus-eval multi-eixo alimenta o roteador de missões. Escolha a
-          dimensão da corrida, inspecione o radar do modelo e veja quem o motor
-          mandaria para cada tipo de tarefa — não só uma tabela de números.
+          O roteador usa faixas de custo (rápido / equilibrado / profundo) e a
+          regra default DOWN: não queimar modelo caro em trabalho mecânico. A
+          corrida abaixo é o radar Nexus-eval — hoje marcada como estimativa de
+          fixture, não auditoria. Score de fixture não entra no catálogo nem na
+          tabela de especialidade.
         </p>
       </header>
 
@@ -489,7 +546,15 @@ export function ModelRankingSection() {
           </div>
 
           <div className="rank-ops__block">
-            <h4 className="rank-ops__block-title">Picks do motor por missão</h4>
+            <h4 className="rank-ops__block-title">
+              Faixas operacionais · default DOWN
+            </h4>
+            <p className="rank-ops__mission-hint">{OPERATIONAL_DOCTRINE.summary}</p>
+            <BandBoard entries={snapshot.entries} onSelect={setSelectedId} />
+          </div>
+
+          <div className="rank-ops__block">
+            <h4 className="rank-ops__block-title">Picks do radar por missão</h4>
             <MissionPicks entries={snapshot.entries} onSelect={setSelectedId} />
           </div>
 
@@ -580,7 +645,8 @@ export function ModelRankingSection() {
                 })}
               </div>
               <p className="rank-ops__foot">
-                fonte {selected.source}
+                faixa {OPERATIONAL_BAND_LABELS[bandOfEntry(selected)]} · custo{" "}
+                {costLabel(selected)} · fonte {selected.source}
                 {estimateBadge(selected) !== null && (
                   <span className="rank-estimate">
                     {" "}

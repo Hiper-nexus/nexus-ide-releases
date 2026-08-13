@@ -13,6 +13,7 @@ import {
 import type { ProjectExecutionScope } from '../../shared/types';
 import {
   DROPPED_ATTACHMENT_MAX_BASE64_CHARS,
+  importWorkspaceMissionAttachment,
   saveDroppedFile,
 } from './dropped-files';
 import { requireRendererWorkspaceScope } from './renderer-workspace-scope';
@@ -382,6 +383,24 @@ export function registerFilesIpc(hooks: FilesIpcTestHooks = {}): void {
       return { ok: false, error: 'invalid payload' };
     }
     return saveDroppedFile(raw.name, raw.base64);
+  });
+
+  ipcMain.handle(FILES_CHANNELS.importMissionAttachment, (event, raw) => {
+    const scope = requireRendererWorkspaceScope(event.sender);
+    if (
+      !raw ||
+      typeof raw.name !== 'string' ||
+      raw.name.length > 512 ||
+      typeof raw.base64 !== 'string' ||
+      raw.base64.length > DROPPED_ATTACHMENT_MAX_BASE64_CHARS
+    ) {
+      return { ok: false, error: 'invalid payload' };
+    }
+    return importWorkspaceMissionAttachment(
+      scope.rootRealPath,
+      raw.name,
+      raw.base64,
+    );
   });
 
   ipcMain.handle(FILES_CHANNELS.list, (event, raw) => {

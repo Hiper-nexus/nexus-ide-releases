@@ -348,6 +348,184 @@ export function saveDroppedFile(
   }
 }
 
+export const MISSION_CONTEXT_ATTACHMENT_SEGMENTS = [
+  '.nexus',
+  'attachments',
+  'mission-context',
+] as const;
+
+export const MISSION_CONTEXT_ATTACHMENT_PREFIX = `${MISSION_CONTEXT_ATTACHMENT_SEGMENTS.join('/')}/`;
+
+function isInsideOrSame(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return (
+    relative === '' ||
+    (relative !== '..' &&
+      !relative.startsWith(`..${path.sep}`) &&
+      !path.isAbsolute(relative))
+  );
+}
+
+function requireRealWorkspaceRoot(
+  workspaceRoot: string,
+  uid: number | null,
+): string {
+  if (
+    !path.isAbsolute(workspaceRoot) ||
+    workspaceRoot.length > DROPPED_ATTACHMENT_MAX_PATH_CHARS ||
+    /[\u0000-\u001f\u007f]/.test(workspaceRoot)
+  ) {
+    throw new Error('workspace root is invalid');
+  }
+  const lexical = path.resolve(workspaceRoot);
+  const stat = fs.lstatSync(lexical);
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    throw new Error('workspace root must be a real directory');
+  }
+  assertOwned(stat, uid, 'workspace root');
+  const real = fs.realpathSync(lexical);
+  if (real !== lexical) {
+    throw new Error('workspace root cannot traverse a symlink');
+  }
+  return real;
+}
+
+function ensurePrivateChildDirectory(
+  parentReal: string,
+  childName: string,
+  uid: number | null,
+  workspaceRoot: string,
+): string {
+  const next = path.join(parentReal, childName);
+  if (!fs.existsSync(next)) {
+    fs.mkdirSync(next, { mode: 0o700 });
+  }
+  const stat = fs.lstatSync(next);
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    throw new Error('mission context directory is invalid');
+  }
+  assertOwned(stat, uid, 'mission context directory');
+  const real = fs.realpathSync(next);
+  if (real !== path.resolve(next) || !isInsideOrSame(workspaceRoot, real)) {
+    throw new Error('mission context directory cannot traverse a symlink');
+  }
+  fs.chmodSync(real, 0o700);
+  return real;
+}
+
+function requireMissionContextDirectory(
+  workspaceRoot: string,
+  uid: number | null,
+): string {
+  let current = requireRealWorkspaceRoot(workspaceRoot, uid);
+  for (const segment of MISSION_CONTEXT_ATTACHMENT_SEGMENTS) {
+    current = ensurePrivateChildDirectory(current, segment, uid, workspaceRoot);
+  }
+  return current;
+}
+
+/**
+ * Copies one renderer-provided blob into the project so mission agents can
+ * read it. Returns a root-relative context path, never a host home path.
+ */
+export function importWorkspaceMissionAttachment(
+  workspaceRoot: string,
+  name: string,
+  base64: string,
+  options: SaveDroppedFileOptions = {},
+): SaveDroppedFileResult {
+  let file = '';
+  let fd: number | null = null;
+  let created = false;
+  let createdIdentity: fs.Stats | null = null;
+  try {
+    const decoded = decodeBase64(base64);
+    const uid = expectedUid(options);
+    const root = requireMissionContextDirectory(workspaceRoot, uid);
+    const token =
+      options.token?.() ??
+      `${Date.now().toString(36)}-${randomBytes(8).toString('hex')}`;
+    const storedName = droppedFileName(name, token);
+    file = path.join(root, storedName);
+    const noFollow =
+      'O_NOFOLLOW' in fs.constants ? fs.constants.O_NOFOLLOW : 0;
+    fd = fs.openSync(
+      file,
+      fs.constants.O_WRONLY |
+        fs.constants.O_CREAT |
+        fs.constants.O_EXCL |
+        noFollow,
+      0o600,
+    );
+    created = true;
+    const opened = fs.fstatSync(fd);
+    createdIdentity = opened;
+    if (!opened.isFile()) {
+      throw new Error('mission context target is not a regular file');
+    }
+    assertOwned(opened, uid, 'mission context file');
+    assertSingleLink(opened, 'mission context file');
+    fs.writeFileSync(fd, decoded);
+    fs.fchmodSync(fd, 0o600);
+    fs.fsyncSync(fd);
+    const written = fs.fstatSync(fd);
+    if (
+      !written.isFile() ||
+      written.size !== decoded.length ||
+      !sameFileIdentity(opened, written)
+    ) {
+      throw new Error('mission context write was not durable');
+    }
+    assertSingleLink(written, 'mission context file');
+    const canonical = fs.realpathSync(file);
+    const current = fs.lstatSync(file);
+    const canonicalStat = fs.lstatSync(canonical);
+    if (
+      !isInside(root, canonical) ||
+      current.isSymbolicLink() ||
+      !current.isFile() ||
+      !canonicalStat.isFile() ||
+      !sameFileIdentity(written, current) ||
+      !sameFileIdentity(written, canonicalStat)
+    ) {
+      throw new Error('mission context path changed during staging');
+    }
+    assertOwned(current, uid, 'mission context file');
+    assertSingleLink(current, 'mission context file');
+    fs.closeSync(fd);
+    fd = null;
+    return {
+      ok: true,
+      path: `${MISSION_CONTEXT_ATTACHMENT_PREFIX}${storedName}`,
+    };
+  } catch (error) {
+    if (fd !== null) {
+      try {
+        fs.closeSync(fd);
+      } catch {
+        // Best-effort cleanup below.
+      }
+    }
+    if (created && file && createdIdentity) {
+      try {
+        const current = fs.lstatSync(file);
+        if (
+          !current.isSymbolicLink() &&
+          sameFileIdentity(createdIdentity, current)
+        ) {
+          fs.unlinkSync(file);
+        }
+      } catch {
+        // The exclusively-created file was already removed.
+      }
+    }
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : 'import failed',
+    };
+  }
+}
+
 function assertAttachmentCount(paths: readonly unknown[]): void {
   if (paths.length > DROPPED_ATTACHMENT_MAX_COUNT) {
     throw new Error(

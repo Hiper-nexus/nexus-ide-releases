@@ -5,9 +5,9 @@ import { useLayoutStore } from '../state/layout-store';
 import { getPaneSessionId } from '../terminal/terminal-host';
 
 /**
- * Auth surfaces that cannot host two live orchestrators at once.
- * Claude CLI rewrites the same keychain item — dual orch = mutual logout.
- * Other adapters return null (parallel missions allowed when safe).
+ * Auth surfaces that share a process-level login (Claude keychain).
+ * Concurrent missions are allowed; this family is advisory, never a kill
+ * fence. Main still refuses a second Maestro for the SAME mission.
  */
 export function sharedAuthFamily(adapterId: string | undefined): string | null {
   return sharedAgentAuthFamily(adapterId);
@@ -19,12 +19,7 @@ export function isExclusiveOrchestratorAdapter(adapterId: string | undefined): b
 
 /**
  * Live cli-agent panes that are orchestrators. Live means a real PTY session:
- * the shared-login collision this feeds (dual Claude orch = mutual keychain
- * logout) only exists for a RUNNING CLI. A layout pane whose spawn failed or
- * never started holds no credential — counting it blocked every new mission
- * behind a zombie ("orquestrador incompatível sem autoridade") with no exit
- * besides closing the pane by hand. The main process still owns the
- * authoritative race fence (assertExclusiveOrchestratorProcessAvailable).
+ * a layout pane whose spawn failed or never started holds no credential.
  */
 export function listLiveOrchestratorPanes(): PaneModel[] {
   return listPanes(useLayoutStore.getState().root).filter(
@@ -49,9 +44,11 @@ export function conflictingOrchestratorPanes(
   );
 }
 
-/** True when starting this adapter as orch would require killing another live orch. */
-export function hardReopenWouldKillAgents(incomingAdapterId: string | undefined): boolean {
-  return conflictingOrchestratorPanes(incomingAdapterId).length > 0;
+/** Never kill another mission's Maestro to make room for this one. */
+export function hardReopenWouldKillAgents(
+  _incomingAdapterId: string | undefined,
+): boolean {
+  return false;
 }
 
 /**
@@ -66,9 +63,9 @@ export function killPaneSessions(paneIds: readonly string[]): void {
   }
 }
 
-/** Kill only live orchestrators that conflict with the incoming adapter. */
-export function killConflictingOrchestrators(incomingAdapterId: string | undefined): string[] {
-  const conflict = conflictingOrchestratorPanes(incomingAdapterId);
-  killPaneSessions(conflict.map((p) => p.id));
-  return conflict.map((p) => p.id);
+/** Never kill another mission's Maestro to make room for this one. */
+export function killConflictingOrchestrators(
+  _incomingAdapterId: string | undefined,
+): string[] {
+  return [];
 }

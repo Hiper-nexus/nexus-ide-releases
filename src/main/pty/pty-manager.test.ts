@@ -269,6 +269,17 @@ function missionGrant(
   };
 }
 
+function missionGrantFor(missionId: string): BoundSpawnAuthority {
+  const grant = missionGrant();
+  return {
+    ...grant,
+    context: {
+      ...grant.context!,
+      missionId,
+    },
+  };
+}
+
 function petStudioGrant(
   cwd = fs.realpathSync(process.cwd()),
 ): BoundSpawnAuthority {
@@ -1892,6 +1903,49 @@ describe("cli-agent spawn argv hardening", () => {
       listAgentSessions().filter((session) => session.adapterId === "claude"),
     ).toHaveLength(1);
     orchKillSession(first.sessionId);
+  });
+
+  it("allows a second exclusive-auth orchestrator for a different mission", () => {
+    const h = fakeHost();
+    setPtyHost(h.host);
+    const adapter: CliPtyAdapter = {
+      ...makeAdapter({
+        static: {},
+        passthrough: [],
+        ephemeralHome: false,
+      }),
+      id: "claude",
+      label: "Claude",
+    };
+    const first = spawnAgentSession(
+      null,
+      {
+        kind: "cli-agent",
+        paneId: "pane-claude-mission-a",
+        cols: 80,
+        rows: 24,
+      },
+      adapter,
+      {},
+      missionGrantFor("mission-a"),
+    );
+    const second = spawnAgentSession(
+      null,
+      {
+        kind: "cli-agent",
+        paneId: "pane-claude-mission-b",
+        cols: 80,
+        rows: 24,
+      },
+      adapter,
+      {},
+      missionGrantFor("mission-b"),
+    );
+    expect(
+      listAgentSessions().filter((session) => session.adapterId === "claude"),
+    ).toHaveLength(2);
+    orchKillSession(first.sessionId);
+    orchKillSession(second.sessionId);
   });
 
   it("revokes a stubborn PTY bearer but keeps exclusivity until process-tree proof", async () => {

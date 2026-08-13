@@ -435,6 +435,68 @@ describe('nexus_model_ranking', () => {
     )) as { available: boolean };
     expect(out.available).toBe(true);
   });
+
+  it('sempre devolve doutrina + faixas — paridade com overclock_model_list', async () => {
+    rankingMocks.getPublicModelRanking.mockReturnValue({
+      ...ranking,
+      entries: [
+        ...ranking.entries,
+        {
+          id: 'grok/fast',
+          adapterId: 'grok',
+          modelId: 'fast',
+          overall: 0.4,
+          costTier: 'low',
+          evaluatedAt: '2026-07-30T00:00:00.000Z',
+          source: 'nexus-eval/v1',
+        },
+      ],
+    });
+    const out = (await tool('nexus_model_ranking').handler(
+      { need: 'atualizar o README com o guia de instalação' },
+      ctx(),
+    )) as {
+      doctrine: { rule: string };
+      bands: { fast: Array<{ modelId: string }> };
+      need: {
+        specialty: string;
+        band: string;
+        pick: { modelId: string; degraded: boolean; servedBand: string };
+      };
+    };
+    expect(out.doctrine.rule).toBe('default-down');
+    expect(out.need.specialty).toBe('doc');
+    expect(out.need.band).toBe('fast');
+    expect(out.need.pick.modelId).toBe('fast');
+    expect(out.need.pick.degraded).toBe(false);
+    expect(out.bands.fast.some((e) => e.modelId === 'fast')).toBe(true);
+  });
+
+  it('degrada a faixa quando o alvo está vazio — nunca escala UP', async () => {
+    rankingMocks.getPublicModelRanking.mockReturnValue({
+      ...ranking,
+      entries: [
+        {
+          id: 'grok/fast',
+          adapterId: 'grok',
+          modelId: 'fast',
+          overall: 0.4,
+          costTier: 'low',
+          evaluatedAt: '2026-07-30T00:00:00.000Z',
+          source: 'nexus-eval/v1',
+        },
+      ],
+    });
+    const out = (await tool('nexus_model_ranking').handler(
+      { need: 'auditar autenticação e cobrança' },
+      ctx(),
+    )) as {
+      need: { band: string; pick: { servedBand: string; degraded: boolean } };
+    };
+    expect(out.need.band).toBe('deep');
+    expect(out.need.pick.servedBand).toBe('fast');
+    expect(out.need.pick.degraded).toBe(true);
+  });
 });
 
 describe('nexus_mcp_servers', () => {

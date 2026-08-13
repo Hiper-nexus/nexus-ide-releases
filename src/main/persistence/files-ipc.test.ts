@@ -205,6 +205,7 @@ describe('file explorer IPC renderer authority', () => {
     FILES_CHANNELS.read,
     FILES_CHANNELS.write,
     FILES_CHANNELS.saveDropped,
+    FILES_CHANNELS.importMissionAttachment,
   ])(
     'fails closed for an unbound renderer on %s',
     (channel) => {
@@ -212,7 +213,8 @@ describe('file explorer IPC renderer authority', () => {
       renderers.push(window);
 
       const raw =
-        channel === FILES_CHANNELS.saveDropped
+        channel === FILES_CHANNELS.saveDropped ||
+        channel === FILES_CHANNELS.importMissionAttachment
           ? { name: 'drop.txt', base64: 'YmxvY2tlZA==' }
           : {
               relPath: channel === FILES_CHANNELS.list ? '' : 'same.txt',
@@ -426,6 +428,30 @@ describe('file explorer IPC renderer authority', () => {
     ).toEqual({ ok: false, error: 'unsafe file' });
     expect(fs.readFileSync(path.join(root, 'nested', 'raced.txt'), 'utf8')).toBe(
       'attacker',
+    );
+  });
+
+  it('imports an external blob into workspace mission-context, not ~/.nexus/dropped', () => {
+    const root = project('import-root', 'inside');
+    const window = renderer(801);
+    renderers.push(window);
+    bindResolvedRendererWorkspaceScope(
+      window,
+      scope(root, 'project-a', 'checkout-a'),
+    );
+
+    const result = invoke<{ ok: boolean; path?: string }>(
+      FILES_CHANNELS.importMissionAttachment,
+      window,
+      { name: 'cliente.m4a', base64: Buffer.from('audio-bytes').toString('base64') },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.path).toMatch(
+      /^\.nexus\/attachments\/mission-context\/.+cliente\.m4a$/,
+    );
+    expect(fs.readFileSync(path.join(root, result.path!), 'utf8')).toBe(
+      'audio-bytes',
     );
   });
 });

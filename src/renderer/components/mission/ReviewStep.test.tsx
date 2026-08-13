@@ -315,4 +315,78 @@ describe('ReviewStep', () => {
     expect(beginnerTools).toContain('Editar arquivos');
     expect(normalizedText(beginnerRole)).not.toMatch(/\b(?:Bash|Read|Edit)\b/);
   });
+
+  it('keeps the start action in a dock and shows objective, team and context in the beginner review', () => {
+    const host = renderReadyReview({
+      ...CUSTOM_REVIEW,
+      contextPaths: ['src/renderer/App.tsx'],
+    });
+    const dock = host.querySelector('.mission-setup__step-dock');
+    const reviewRegion = host.querySelector<HTMLElement>(
+      '[aria-label="Revisão atual da missão"]',
+    );
+    const beginnerReview = reviewRegion?.cloneNode(true) as
+      | HTMLElement
+      | undefined;
+    for (const disclosure of beginnerReview?.querySelectorAll('details') ?? []) {
+      disclosure.remove();
+    }
+    const beginnerText = beginnerReview ? normalizedText(beginnerReview) : '';
+
+    expect(dock).not.toBeNull();
+    expect(dock?.contains(startButton(host))).toBe(true);
+    expect(beginnerText).toContain(CUSTOM_REVIEW.objective);
+    expect(beginnerText).toContain('Coordenadora de entrega');
+    expect(beginnerText).toContain('src/renderer/App.tsx');
+    expect(host.querySelector('.mission-review--pending')).toBeNull();
+  });
+
+  it.each([
+    {
+      prepareStatus: 'loading' as const,
+      copy: /Montando o resumo da missão/i,
+      retry: false,
+    },
+    {
+      prepareStatus: 'idle' as const,
+      copy: /revisão ainda não está visível/i,
+      retry: false,
+    },
+    {
+      prepareStatus: 'error' as const,
+      copy: /revisão não está visível/i,
+      retry: true,
+    },
+  ])(
+    'shows an honest pending review when prepare is $prepareStatus instead of an empty desert',
+    ({ prepareStatus, copy, retry }) => {
+      const host = render(
+        <ReviewStep
+          review={null}
+          lane="standard"
+          prepareStatus={prepareStatus}
+          startStatus="idle"
+          error={
+            prepareStatus === 'error' ? 'Falha ao preparar a revisão.' : null
+          }
+          onBack={vi.fn()}
+          onRetryPrepare={vi.fn()}
+          onStart={vi.fn()}
+        />,
+      );
+      const pending = host.querySelector('.mission-review--pending');
+      const start = startButton(host);
+
+      expect(pending).not.toBeNull();
+      expect(normalizedText(pending!)).toMatch(copy);
+      expect(host.querySelector('[aria-label="Revisão atual da missão"]')).toBeNull();
+      expect(start.disabled).toBe(true);
+      expect(start.closest('.mission-setup__step-dock')).not.toBeNull();
+      expect(
+        Array.from(host.querySelectorAll('button')).some(
+          (item) => item.textContent?.trim() === 'Preparar nova revisão',
+        ),
+      ).toBe(retry);
+    },
+  );
 });

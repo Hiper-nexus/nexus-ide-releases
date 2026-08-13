@@ -35,7 +35,6 @@ import {
   missionActionCopy,
   missionBoardLifecycleAction,
   missionListAction,
-  removeMissionPrompt,
 } from './mission-list-action';
 import { MISSION_RUNTIME_CLOSED_MARKER } from '../../shared/mission-recovery-policy';
 
@@ -92,15 +91,28 @@ describe('mission list action policy', () => {
     ).toBe('close-runtime');
   });
 
-  it('após encerrar, a ação vira remover — o operador limpa a lista', () => {
+  it('após encerrar, a ação vira marcar concluída — Encerrar não é Concluir', () => {
     const closed = mission({
       status: 'blocked',
       intentState: 'blocked_user',
       description: MISSION_RUNTIME_CLOSED_MARKER,
     });
-    expect(missionListAction(closed, false)).toBe('remove');
-    expect(removeMissionPrompt(closed).confirmLabel).toBe('Remover missão');
-    expect(removeMissionPrompt(closed).body).toMatch(/Não dá para desfazer/i);
+    expect(missionListAction(closed, false)).toBe('complete');
+    expect(missionListAction(closed, true)).toBe('complete');
+    expect(missionActionCopy('complete')).toEqual({
+      verb: 'Marcar concluída',
+      title: 'Arquivar esta missão como concluída. Histórico permanece.',
+    });
+  });
+
+  it('após encerrar, Encerrar volta se o session pointer ainda está vivo', () => {
+    const closedLive = mission({
+      status: 'blocked',
+      intentState: 'blocked_user',
+      description: MISSION_RUNTIME_CLOSED_MARKER,
+      orchestratorSessionId: 'pty-leftover',
+    });
+    expect(missionListAction(closedLive, false)).toBe('close-runtime');
   });
 
   it('keeps a user-blocked active mission when there is no runtime that can be closed safely', () => {

@@ -14,6 +14,7 @@ import {
   hasCurrentDispatchAuthority,
   type MissionOrchestratorRuntimeSnapshot,
 } from "../../shared/mission-intent";
+import { wasMissionRuntimeClosedByOperator } from "../../shared/mission-recovery-policy";
 import type {
   Mission,
   MissionIntentState,
@@ -920,6 +921,7 @@ function projectMissionEngineSnapshotView(
     hasCurrentKickoffReceipt:
       stores.missions.hasCurrentKickoffAcceptance(mission.id),
     orchestratorLive,
+    runtimeClosedByOperator: wasMissionRuntimeClosedByOperator(mission),
     tasks,
     handoffs: [],
     panes,

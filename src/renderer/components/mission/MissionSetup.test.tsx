@@ -270,6 +270,10 @@ const api = {
   prepare: vi.fn<Window['nexus']['mission']['prepare']>(async () => REVIEW),
   start: vi.fn<Window['nexus']['mission']['start']>(async () => SNAPSHOT),
   removeMission: vi.fn(async () => ({ removed: true })),
+  importMissionAttachment: vi.fn(async (name: string) => ({
+    ok: true,
+    path: `.nexus/attachments/mission-context/token-${name}`,
+  })),
 };
 
 const initialWorkspaceState = useWorkspaceStore.getState();
@@ -285,6 +289,10 @@ function installNexusApi(): void {
       settings: { orchGet: api.getOrchSettings },
       mission: { prepare: api.prepare, start: api.start },
       orch: { removeMission: api.removeMission },
+      files: {
+        importMissionAttachment: api.importMissionAttachment,
+        pathForFile: () => '',
+      },
     } as unknown as Window['nexus'],
   });
 }
@@ -1992,6 +2000,58 @@ describe('Caminho Expresso', () => {
     expect(objective.disabled).toBe(false);
     expect(button(host, 'Iniciar missão').type).toBe('button');
     expect(button(host, 'Avançado').type).toBe('button');
+    expect(host.textContent).toContain('Anexos do cliente');
+    expect(
+      host.querySelector('input[type="file"][accept*="audio"]'),
+    ).not.toBeNull();
+  });
+
+  it('anexa áudio de fora do projeto como contexto relativo da missão', async () => {
+    const host = await renderAtExpress();
+    const input = host.querySelector<HTMLInputElement>('input[type="file"]');
+    expect(input).not.toBeNull();
+    const audio = new File(['bytes'], 'cliente.m4a', { type: 'audio/mp4' });
+    Object.defineProperty(input, 'files', { configurable: true, value: [audio] });
+    act(() => {
+      input!.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await flush();
+    await flush();
+
+    expect(api.importMissionAttachment).toHaveBeenCalledTimes(1);
+    expect(useMissionSetupStore.getState().draft.contextPaths).toEqual([
+      '.nexus/attachments/mission-context/token-cliente.m4a',
+    ]);
+    expect(host.textContent).toContain('cliente.m4a');
+  });
+
+  it('mostra anexos do cliente no wizard avançado e importa áudio externo', async () => {
+    const host = render(<MissionSetup />);
+    await flush();
+
+    expect(host.textContent).toContain('Anexos do cliente');
+    expect(
+      host.querySelector('input[type="file"][accept*="audio"]'),
+    ).not.toBeNull();
+
+    const input = host.querySelector<HTMLInputElement>('input[type="file"]');
+    expect(input).not.toBeNull();
+    const audio = new File(['bytes'], 'cliente.m4a', { type: 'audio/mp4' });
+    Object.defineProperty(input, 'files', { configurable: true, value: [audio] });
+    act(() => {
+      input!.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await flush();
+    await flush();
+
+    expect(api.importMissionAttachment).toHaveBeenCalledTimes(1);
+    expect(useMissionSetupStore.getState().draft.contextPaths).toEqual([
+      '.nexus/attachments/mission-context/token-cliente.m4a',
+    ]);
+    expect(host.textContent).toContain('cliente.m4a');
+    expect(host.textContent).not.toContain(
+      '.nexus/attachments/mission-context/token-cliente.m4a',
+    );
   });
 
   it('Iniciar missão recomenda a equipe e chama prepare+start com modo livre selado', async () => {

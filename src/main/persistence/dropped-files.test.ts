@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   DROPPED_ATTACHMENT_MAX_BYTES,
   droppedFileName,
+  importWorkspaceMissionAttachment,
+  MISSION_CONTEXT_ATTACHMENT_PREFIX,
   saveDroppedFile,
   releaseSealedAttachmentSnapshots,
   revalidateSealedAttachmentSnapshots,
@@ -117,6 +119,53 @@ describe('secure dropped-file staging', () => {
 
     expect(result).toMatchObject({ ok: false });
     expect(fs.existsSync(droppedDir())).toBe(false);
+  });
+});
+
+describe('workspace mission-context import', () => {
+  function workspace(): string {
+    const root = path.join(tempRoot, 'project');
+    fs.mkdirSync(root, { mode: 0o755 });
+    return fs.realpathSync(root);
+  }
+
+  it('copies bytes into a root-relative .nexus/attachments/mission-context path', () => {
+    const root = workspace();
+    const result = importWorkspaceMissionAttachment(
+      root,
+      'cliente.m4a',
+      Buffer.from('audio-bytes').toString('base64'),
+      { token: () => 'fixed-token' },
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      path: `${MISSION_CONTEXT_ATTACHMENT_PREFIX}${droppedFileName('cliente.m4a', 'fixed-token')}`,
+    });
+    if (!result.ok) return;
+    const abs = path.join(root, result.path);
+    expect(fs.readFileSync(abs, 'utf8')).toBe('audio-bytes');
+    expect(fs.statSync(path.dirname(abs)).mode & 0o777).toBe(0o700);
+    expect(fs.statSync(abs).mode & 0o777).toBe(0o600);
+    expect(path.isAbsolute(result.path)).toBe(false);
+  });
+
+  it('does not follow a symlink out of the workspace', () => {
+    const root = workspace();
+    const outside = path.join(tempRoot, 'outside');
+    fs.mkdirSync(outside);
+    const nexus = path.join(root, '.nexus');
+    fs.symlinkSync(outside, nexus);
+
+    const result = importWorkspaceMissionAttachment(
+      root,
+      'attack.txt',
+      Buffer.from('forjado').toString('base64'),
+      { token: () => 'attack' },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(fs.existsSync(path.join(outside, 'attachments'))).toBe(false);
   });
 });
 

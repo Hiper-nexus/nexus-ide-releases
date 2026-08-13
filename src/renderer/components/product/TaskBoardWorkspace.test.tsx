@@ -157,14 +157,41 @@ afterEach(() => {
 });
 
 describe('TaskBoardWorkspace contracts', () => {
-  it('renders only canonical todoLists from useOrchStore and never mission pipeline records', () => {
+  it('shows a running mission on the board even before any task exists', () => {
+    const host = mount(<TaskBoardWorkspace />);
+
+    expect(host.textContent).toContain(LEGACY_MISSION.title);
+    expect(host.textContent).toMatch(/missão.*rodando/i);
+    expect(host.textContent).not.toMatch(/sem tarefas no fluxo/i);
+    expect(host.querySelector('.task-board-workspace__empty')).toBeNull();
+  });
+
+  it('opens the running mission from the board card without mutating todos', () => {
+    const host = mount(<TaskBoardWorkspace />);
+    const open = host.querySelector<HTMLButtonElement>(
+      '.task-board-workspace__mission-open',
+    );
+    if (!open) throw new Error('Mission card was not rendered');
+
+    act(() => open.click());
+
+    expect(useProductNavigationStore.getState().destination).toEqual({
+      kind: 'mission',
+      missionId: LEGACY_MISSION.id,
+      surface: 'board',
+    });
+    expect(orchBoundary.setTodoStatus).not.toHaveBeenCalled();
+    expect(orchBoundary.updateMission).not.toHaveBeenCalled();
+  });
+
+  it('renders canonical todoLists alongside mission cards', () => {
     useOrchStore.setState({ todoLists: [TODO_LIST] });
     const host = mount(<TaskBoardWorkspace />);
 
     expect(host.textContent).toContain('Preparar release');
     expect(host.textContent).toContain('Publicar notas');
-    expect(host.textContent).not.toContain(LEGACY_MISSION.title);
-    expect(host.textContent).not.toMatch(/Retomar missão|Bloquear missão|Remover missão/i);
+    expect(host.textContent).toContain(LEGACY_MISSION.title);
+    expect(host.textContent).not.toMatch(/Remover missão/i);
 
     const replacement: TodoList = {
       id: 'next-list',
@@ -354,6 +381,7 @@ describe('TaskBoardWorkspace contracts', () => {
 
   it('shows one useful empty-state CTA that opens mission creation', () => {
     useOrchStore.setState({
+      missions: [],
       todoLists: [{ id: 'empty-list', items: [], updatedAt: 1 }],
     });
     useMissionSetupStore.setState({

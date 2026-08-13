@@ -10,6 +10,8 @@ import {
   scoreWithQuota,
   sortEntries,
   sortEntriesWithQuota,
+  bandOfEntry,
+  groupEntriesByBand,
 } from './ranking-view';
 
 function entry(
@@ -74,6 +76,13 @@ describe('ranking-view', () => {
 
   it('picks value model among low cost', () => {
     expect(pickValue(pack)?.modelId).toBe('mid');
+  });
+
+  it('classifica faixas por custo, não por score de fixture', () => {
+    expect(bandOfEntry(pack[0]!)).toBe('deep');
+    expect(bandOfEntry(pack[1]!)).toBe('fast');
+    expect(bandOfEntry(pack[2]!)).toBe('fast');
+    expect(groupEntriesByBand(pack).deep.map((e) => e.modelId)).toEqual(['opus']);
   });
 
   it('scores cost efficiency higher for cheap models', () => {

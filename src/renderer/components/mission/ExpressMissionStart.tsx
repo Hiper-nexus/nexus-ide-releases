@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { MISSION_INTENT_GOAL_MAX_CHARS } from '../../../shared/mission-intent';
 import type { WorkspaceInfo } from '../../../shared/workspace-types';
 import type { MissionSetupDraft } from '../../state/mission-setup-store';
+import { MissionAttachmentPicker } from './MissionAttachmentPicker';
 
 interface ExpressMissionStartProps {
   workspace: WorkspaceInfo | null;
@@ -19,6 +20,7 @@ interface ExpressMissionStartProps {
   error: string | null;
   onPickWorkspace(): void;
   onObjectiveChange(objective: string): void;
+  onContextPathsChange(paths: readonly string[]): void;
   onStart(): void;
   onAdvanced(): void;
 }
@@ -42,6 +44,7 @@ export function ExpressMissionStart({
   error,
   onPickWorkspace,
   onObjectiveChange,
+  onContextPathsChange,
   onStart,
   onAdvanced,
 }: ExpressMissionStartProps) {
@@ -146,6 +149,12 @@ export function ExpressMissionStart({
             Escreva em linguagem comum. A missão começa assim que você confirmar.
           </span>
         </div>
+
+        <MissionAttachmentPicker
+          contextPaths={draft.contextPaths}
+          disabled={draftEditingDisabled || busy}
+          onContextPathsChange={onContextPathsChange}
+        />
 
         {draft.roster.length > 0 ? (
           <div className="mission-setup__section-heading">

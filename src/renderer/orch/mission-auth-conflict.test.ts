@@ -1,14 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
+  hardReopenWouldKillAgents,
   isExclusiveOrchestratorAdapter,
   sharedAuthFamily,
 } from './mission-auth-conflict';
 
 describe('sharedAuthFamily', () => {
-  it('marks Claude adapters as exclusive shared login', () => {
+  it('marks Claude adapters as a shared login family without requiring a kill', () => {
     expect(sharedAuthFamily('claude')).toBe('claude-shared-login');
     expect(sharedAuthFamily('claude-code')).toBe('claude-shared-login');
     expect(isExclusiveOrchestratorAdapter('claude')).toBe(true);
+    expect(hardReopenWouldKillAgents('claude')).toBe(false);
   });
 
   it('allows parallel non-Claude orchestrators', () => {

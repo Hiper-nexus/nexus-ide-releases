@@ -1,7 +1,8 @@
 /**
- * Provider login surfaces that cannot safely host two live orchestrators.
- * Renderer conflict UX is advisory; main uses the same exact family at the
- * physical process boundary.
+ * Provider login surfaces that share a process-level credential (Claude CLI
+ * rewrites the same keychain item). Concurrent missions each keep their own
+ * Maestro; main only refuses a second orchestrator for the SAME mission until
+ * that process proves physical exit. Renderer UX may still name the family.
  */
 export function sharedAgentAuthFamily(
   adapterId: string | undefined,

@@ -307,7 +307,7 @@ describe('reopenMission soft / multi', () => {
     expect(resumeMissionBootstrap).not.toHaveBeenCalled();
   });
 
-  it('fails closed on exclusive-auth conflict without renderer-side kill', async () => {
+  it('merges a second Claude mission instead of failing closed on exclusive-auth', async () => {
     layoutPanes = [
       {
         id: 'claude-live',
@@ -341,11 +341,17 @@ describe('reopenMission soft / multi', () => {
     });
 
     expect(result).toMatchObject({
-      ok: false,
-      error: expect.stringMatching(/credencial exclusiva|saída/i),
+      ok: true,
+      multi: true,
+      panes: 1,
     });
-    expect(setPanes).not.toHaveBeenCalled();
-    expect(terminalMocks.prepareMissionPaneResume).not.toHaveBeenCalled();
+    expect(setPanes).toHaveBeenCalled();
+    const merged = setPanes.mock.calls[0]![0] as Array<{ id: string }>;
+    expect(merged.map((pane) => pane.id)).toEqual([
+      'claude-live',
+      'orch-conflict',
+    ]);
+    expect(window.nexus.pty.kill).not.toHaveBeenCalled();
   });
 
   it('fails before rearm or spawn preparation when the complete mission would exceed grid capacity', async () => {
@@ -763,7 +769,7 @@ describe('reopenMission soft / multi', () => {
     expect(terminalMocks.prepareMissionPaneResume).not.toHaveBeenCalled();
   });
 
-  it('rejects a Claude conflict instead of killing only its visible pane', async () => {
+  it('merges a Claude mission beside another live Claude Maestro without killing panes', async () => {
     layoutPanes = [
       {
         id: 'claude-orch',
@@ -795,7 +801,15 @@ describe('reopenMission soft / multi', () => {
       createdAt: 1,
       updatedAt: 2,
     });
-    expect(result.ok).toBe(false);
-    expect(setPanes).not.toHaveBeenCalled();
+    expect(result.ok).toBe(true);
+    expect(result.multi).toBe(true);
+    expect(setPanes).toHaveBeenCalled();
+    const merged = setPanes.mock.calls[0]![0] as Array<{ id: string }>;
+    expect(merged.map((pane) => pane.id)).toEqual([
+      'claude-orch',
+      'worker-x',
+      'orch-b',
+    ]);
+    expect(window.nexus.pty.kill).not.toHaveBeenCalled();
   });
 });

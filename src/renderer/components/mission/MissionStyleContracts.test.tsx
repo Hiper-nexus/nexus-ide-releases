@@ -214,6 +214,23 @@ describe('Mission Setup and Mission Board style contracts', () => {
     },
   );
 
+  it('does not size setup steps against the viewport or a percentage of the scroller', () => {
+    expect(missionSetupCss).not.toMatch(/min-height:\s*calc\(100vh/);
+    expect(missionSetupCss).not.toMatch(
+      /\.mission-setup__canvas\s*\{[^}]*min-height:\s*calc\(100%/,
+    );
+    expect(missionSetupCss).toMatch(
+      /\.mission-setup\s*\{[^}]*overflow:\s*hidden/,
+    );
+    expect(missionSetupCss).toMatch(
+      /\.mission-setup__canvas\s*\{[^}]*overflow:\s*auto/,
+    );
+    expect(missionSetupCss).toMatch(/\.mission-setup__step-dock/);
+    expect(missionSetupCss).toMatch(
+      /\.mission-setup__step\s*>\s*\.mission-setup__step-actions/,
+    );
+  });
+
   it('removes active mission motion declarations under reduced motion', () => {
     const motionContracts = [
       { selector: '.mission-setup__step', property: 'animation' },

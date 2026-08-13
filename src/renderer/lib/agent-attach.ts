@@ -5,6 +5,8 @@ import type { PaneModel } from '../../shared/types';
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
 import { listPanes } from './split-tree';
+import { resolveDroppedMissionContextPath } from './mission-shell-file-intake';
+import { getActiveWorkspacePath } from '../state/active-workspace';
 import {
   getPaneSessionId,
   submitPromptToPaneConfirmed,
@@ -14,16 +16,6 @@ import {
 function shellQuote(p: string): string {
   if (/^[A-Za-z0-9_./:@+-]+$/.test(p)) return p;
   return `'${p.replace(/'/g, `'\\''`)}'`;
-}
-
-function bufferToBase64(buf: ArrayBuffer): string {
-  const bytes = new Uint8Array(buf);
-  let binary = '';
-  const CHUNK = 0x8000;
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
-  }
-  return btoa(binary);
 }
 
 export function focusedAgentPaneId(): string | null {
@@ -130,20 +122,11 @@ export async function attachFilesToAgent(
   const target = paneId ?? focusedAgentPaneId();
   if (!target) return { ok: false, count: 0, error: 'no agent pane focused' };
 
+  const workspace = getActiveWorkspacePath();
   const paths: string[] = [];
   for (const file of list) {
-    const real = window.nexus.files.pathForFile(file);
-    if (real) {
-      paths.push(real);
-      continue;
-    }
-    try {
-      const base64 = bufferToBase64(await file.arrayBuffer());
-      const res = await window.nexus.files.saveDropped(file.name || 'drop', base64);
-      if (res.ok && res.path) paths.push(res.path);
-    } catch {
-      // skip bad file
-    }
+    const resolved = await resolveDroppedMissionContextPath(workspace, file);
+    if (resolved) paths.push(resolved);
   }
   if (paths.length === 0) return { ok: false, count: 0, error: 'could not resolve paths' };
   const ok = injectPathsToAgent(paths, target);

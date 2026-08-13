@@ -1044,6 +1044,7 @@ export function MissionSetup() {
             error={expressError}
             onPickWorkspace={() => void pickProjectFolder()}
             onObjectiveChange={changeObjective}
+            onContextPathsChange={setContextPaths}
             onStart={() => void startExpress()}
             onAdvanced={() => setStep('team')}
           />

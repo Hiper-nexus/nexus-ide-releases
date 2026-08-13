@@ -5,6 +5,7 @@ import {
   classifyRouteSpecialty,
   preferAdapterOrder,
   resolveSpecialtyPolicy,
+  specialtyBenchmarkIsMeasured,
 } from './mission-route-specialty';
 
 describe('classifyRouteSpecialty', () => {
@@ -71,6 +72,25 @@ describe('resolveSpecialtyPolicy', () => {
     expect(policy.source).toBe('benchmark');
     expect(policy.preferAdapterIds).toEqual(['codex', 'agy']);
     expect(policy.effortFloor).toBe('high');
+  });
+
+  it('ignora linhas de fixture/estimativa — não vira benchmark mentiroso', () => {
+    expect(specialtyBenchmarkIsMeasured('nexus-benchmark/unpublished')).toBe(
+      false,
+    );
+    expect(specialtyBenchmarkIsMeasured('nexus-eval/v1/fixture')).toBe(false);
+    expect(specialtyBenchmarkIsMeasured('nexus-benchmark/estimate')).toBe(false);
+    expect(specialtyBenchmarkIsMeasured('nexus-benchmark/v1')).toBe(true);
+
+    const policy = resolveSpecialtyPolicy('visual', {
+      schemaVersion: 1,
+      source: 'nexus-eval/v1/fixture',
+      specialties: {
+        visual: [{ adapterId: 'codex', score: 99 }],
+      },
+    });
+    expect(policy.source).toBe('heuristic');
+    expect(policy.preferAdapterIds[0]).toBe('agy');
   });
 });
 

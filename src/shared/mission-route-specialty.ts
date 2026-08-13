@@ -263,16 +263,38 @@ export function isRouteSpecialty(value: unknown): value is RouteSpecialty {
 }
 
 /**
+ * Rows only count as a measured prior when the table source is not a
+ * placeholder or fixture dump. `unpublished` / `fixture` / `estimate` fall
+ * through to the heuristic — otherwise Settings estimates would start
+ * steering live routing under a `benchmark` label.
+ */
+export function specialtyBenchmarkIsMeasured(
+  source: string | undefined,
+): boolean {
+  if (typeof source !== 'string' || source.trim().length === 0) return false;
+  const segments = source.toLowerCase().split(/[\/._-]+/);
+  return (
+    !segments.includes('unpublished') &&
+    !segments.includes('fixture') &&
+    !segments.includes('estimate')
+  );
+}
+
+/**
  * Resolve the adapter prior for a specialty. Benchmark rows, when present
- * for THAT specialty, win. Otherwise the heuristic prior. Never invents
- * scores.
+ * for THAT specialty AND measured, win. Otherwise the heuristic prior.
+ * Never invents scores.
  */
 export function resolveSpecialtyPolicy(
   specialty: RouteSpecialty,
   benchmark: SpecialtyBenchmark | null | undefined = EMPTY_SPECIALTY_BENCHMARK,
 ): SpecialtyRoutePolicy {
   const rows = benchmark?.specialties[specialty];
-  if (rows && rows.length > 0) {
+  if (
+    rows &&
+    rows.length > 0 &&
+    specialtyBenchmarkIsMeasured(benchmark?.source)
+  ) {
     const preferAdapterIds = uniqueAdapterIds(rows);
     const topEffort = rows
       .slice()

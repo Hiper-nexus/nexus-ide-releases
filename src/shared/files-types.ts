@@ -43,4 +43,5 @@ export const FILES_CHANNELS = {
   read: 'files:read',
   write: 'files:write',
   saveDropped: 'files:saveDropped',
+  importMissionAttachment: 'files:importMissionAttachment',
 } as const;

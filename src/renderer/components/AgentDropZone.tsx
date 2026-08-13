@@ -3,7 +3,7 @@ import { attachFilesToAgent } from '../lib/agent-attach';
 
 /**
  * Drop zone: drag files/images onto an agent (Sprint A1).
- * Uses the same saveDropped/path injection path as the terminal.
+ * Uses the same workspace mission-context import path as the terminal.
  */
 export function AgentDropZone({ compact = false }: { compact?: boolean }) {
   const [active, setActive] = useState(false);

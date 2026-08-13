@@ -122,7 +122,8 @@ const COPY: Readonly<
   },
   'runtime-closed': {
     headline: 'A execução foi encerrada pelo operador; histórico preservado.',
-    action: 'Retome a missão para recomeçar de onde parou.',
+    action:
+      'Retome só se ainda falta trabalho. Se já terminou, marque a missão como concluída.',
   },
   'human-decision': {
     headline: 'A missão está esperando uma resposta sua.',

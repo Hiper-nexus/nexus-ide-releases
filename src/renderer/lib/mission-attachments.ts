@@ -1,3 +1,10 @@
+export const MISSION_CONTEXT_ATTACHMENT_PREFIX =
+  '.nexus/attachments/mission-context/';
+
+export function isMissionContextAttachmentPath(value: string): boolean {
+  return value.replaceAll('\\', '/').startsWith(MISSION_CONTEXT_ATTACHMENT_PREFIX);
+}
+
 export type MissionAttachmentKind = 'image' | 'audio' | 'file';
 
 export type MissionAttachment = {
@@ -118,7 +125,7 @@ export function filesFromClipboardData(
     }
   }
 
-  if (collected.length === 0 && data.files) {
+  if (data.files) {
     for (let index = 0; index < data.files.length; index += 1) {
       pushIfAttachable(data.files[index]);
     }
@@ -162,7 +169,7 @@ export async function stageMissionAttachment(
 ): Promise<MissionAttachment> {
   const kind = classifyMissionAttachment(file);
   if (!kind) throw new Error('Formato de anexo não suportado.');
-  const result = await window.nexus.files.saveDropped(
+  const result = await window.nexus.files.importMissionAttachment(
     fileName(file),
     bufferToBase64(await file.arrayBuffer()),
   );

@@ -72,6 +72,7 @@ import {
   HANDOFF_PROMPT_SETTLE_MS,
   onHandoffSubmitted,
 } from './idle-delivery';
+import { promoteObservedPtyHandoffs } from './pty-stream-handoff';
 
 /** Carência para o worker submeter sozinho depois de ficar idle. */
 export const WORKER_QUIET_GRACE_MS = 20_000;
@@ -146,6 +147,15 @@ export interface WorkerHandoffEnforcementDeps {
     input: SyntheticHandoffInput,
   ) => void;
   readonly readTail: (sessionId: string) => string;
+  /**
+   * Overclock Stop-hook parity: promote a NEXUS_HANDOFF block already on
+   * screen before nudging or synthesizing a blocked handoff. Return true
+   * when at least one real handoff was persisted.
+   */
+  readonly promoteObserved?: (
+    sessionId: string,
+    tail: string,
+  ) => boolean | Promise<boolean>;
   readonly lastInputOrigin: (
     sessionId: string,
   ) => SessionInputOrigin | undefined;
@@ -209,6 +219,13 @@ function productionDeps(): WorkerHandoffEnforcementDeps {
       onHandoffSubmitted(handoff, authority.scope);
     },
     readTail: (sessionId) => readSessionOutput(sessionId, TAIL_LINES),
+    promoteObserved: async (sessionId, tail) => {
+      const promoted = await promoteObservedPtyHandoffs(
+        sessionId,
+        stripAnsi(tail),
+      );
+      return promoted > 0;
+    },
     lastInputOrigin: (sessionId) => getLastSessionInputOrigin(sessionId),
     quietGraceMs: WORKER_QUIET_GRACE_MS,
     enforceGraceMs: WORKER_ENFORCE_GRACE_MS,
@@ -331,6 +348,23 @@ function syntheticSummary(
   return `${header}${boundedTail}`.slice(0, SYNTHETIC_SUMMARY_MAX_CHARS);
 }
 
+function readTailSafe(
+  deps: WorkerHandoffEnforcementDeps,
+  sessionId: string,
+): string {
+  try {
+    return deps.readTail(sessionId);
+  } catch {
+    return '';
+  }
+}
+
+function isPromotePromise(
+  value: boolean | Promise<boolean>,
+): value is Promise<boolean> {
+  return typeof value === 'object' && value !== null && 'then' in value;
+}
+
 /**
  * Re-avalia do zero (autoridade, missão, handoff) e executa a ação devida.
  * `exited` pula a exigência de PTY idle: não há PTY.
@@ -358,6 +392,66 @@ function evaluate(
     exited,
   });
   if (action === 'ignore') return;
+
+  const finish = (): void =>
+    continueQuietAction(deps, sessionId, exited, watch, authority, action);
+
+  if (!deps.promoteObserved) {
+    finish();
+    return;
+  }
+  let result: boolean | Promise<boolean>;
+  try {
+    result = deps.promoteObserved(sessionId, readTailSafe(deps, sessionId));
+  } catch (error) {
+    deps.log(
+      `promoteObserved falhou (session=${sessionId}): ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    finish();
+    return;
+  }
+  if (isPromotePromise(result)) {
+    void result
+      .then((promoted) => {
+        if (promoted) {
+          deps.log(
+            `bloco NEXUS_HANDOFF observado no PTY promovido ` +
+              `(session=${sessionId}, pane=${authority.paneId})`,
+          );
+          return;
+        }
+        finish();
+      })
+      .catch((error) => {
+        deps.log(
+          `promoteObserved falhou (session=${sessionId}): ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+        finish();
+      });
+    return;
+  }
+  if (result) {
+    deps.log(
+      `bloco NEXUS_HANDOFF observado no PTY promovido ` +
+        `(session=${sessionId}, pane=${authority.paneId})`,
+    );
+    return;
+  }
+  finish();
+}
+
+function continueQuietAction(
+  deps: WorkerHandoffEnforcementDeps,
+  sessionId: string,
+  exited: boolean,
+  watch: EnforcementWatch,
+  authority: PaneRuntimeAuthority,
+  action: Exclude<QuietWorkerAction, 'ignore'>,
+): void {
   if ((deps.lastInputOrigin(sessionId) ?? 'system') === 'human') {
     armTimer(watch, deps.enforceGraceMs, () =>
       evaluate(deps, sessionId, exited),

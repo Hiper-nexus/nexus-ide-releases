@@ -1,6 +1,9 @@
 import type { PetEvent, PetEventCause } from '../../shared/pet-types';
 import type { MissionIntentContract } from '../../shared/mission-intent';
-import { hasAutomaticTechnicalRecovery } from '../../shared/mission-recovery-policy';
+import {
+  hasAutomaticTechnicalRecovery,
+  wasMissionRuntimeClosedByOperator,
+} from '../../shared/mission-recovery-policy';
 import { missionBlockCause } from '../../shared/mission-block-cause';
 
 /**
@@ -109,6 +112,10 @@ export class MissionTransitionTracker {
           continue;
         }
         if (hasAutomaticRecovery) continue;
+        // Encerrar é escolha do operador, não um travamento. O balão
+        // "Preciso de você" no restart fazia a missão estacionada parecer
+        // quebrada. Retomar e marcar concluída ficam no quadro.
+        if (wasMissionRuntimeClosedByOperator(mission)) continue;
         // O aviso que mais importa: a missão parou e alguém precisa agir. O
         // título fica sendo o da missão; o PORQUÊ viaja em `cause` para o
         // balão/toast poderem dizer o que aconteceu e o que fazer.

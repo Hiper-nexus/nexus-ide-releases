@@ -7,6 +7,20 @@ import type {
   PublicModelRankingEntry,
   RankingQualityDimension,
 } from '../../../shared/eval-ranking-types';
+import {
+  OPERATIONAL_BAND_LABELS,
+  OPERATIONAL_DOCTRINE,
+  classifyOperationalBand,
+  groupByOperationalBand,
+  type OperationalBand,
+} from '../../../shared/model-operational-bands';
+
+export {
+  OPERATIONAL_BAND_LABELS,
+  OPERATIONAL_DOCTRINE,
+  classifyOperationalBand,
+  type OperationalBand,
+};
 
 export type SortKey = RankingQualityDimension;
 
@@ -204,4 +218,14 @@ export function costLabel(entry: PublicModelRankingEntry): string {
   if (entry.costTier) return entry.costTier;
   if (entry.availability) return entry.availability;
   return '—';
+}
+
+export function bandOfEntry(entry: PublicModelRankingEntry): OperationalBand {
+  return classifyOperationalBand(entry);
+}
+
+export function groupEntriesByBand(
+  entries: readonly PublicModelRankingEntry[],
+): Readonly<Record<OperationalBand, readonly PublicModelRankingEntry[]>> {
+  return groupByOperationalBand(entries, bandOfEntry);
 }

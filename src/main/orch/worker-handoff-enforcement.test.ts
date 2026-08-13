@@ -30,6 +30,10 @@ vi.mock('../pty/pty-manager', () => ({
   orchWriteSession: vi.fn(() => true),
 }));
 
+vi.mock('./pty-stream-handoff', () => ({
+  promoteObservedPtyHandoffs: vi.fn(async () => 0),
+}));
+
 import {
   decideQuietWorker,
   initWorkerHandoffEnforcement,
@@ -384,6 +388,18 @@ describe('worker-handoff-enforcement runtime', () => {
     expect(source).toContain('initWorkerHandoffEnforcement();');
     expect(source).toContain('shutdownWorkerHandoffEnforcement();');
     expect(source).toContain("from \"./worker-handoff-enforcement\"");
+  });
+
+  it('promove NEXUS_HANDOFF já visível no PTY antes de cutucar (paridade Overclock)', () => {
+    const harness = makeHarness({
+      promoteObserved: () => true,
+    });
+    initWorkerHandoffEnforcement(harness.deps);
+
+    emitStatus('s1', 'idle');
+    vi.advanceTimersByTime(WORKER_QUIET_GRACE_MS + WORKER_ENFORCE_GRACE_MS);
+    expect(harness.nudges).toHaveLength(0);
+    expect(harness.submitted).toHaveLength(0);
   });
 
   it('força a entrega imediatamente quando a cutucada não pôde ser escrita', () => {

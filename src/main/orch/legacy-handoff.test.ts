@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   extractJsonObject,
+  extractLegacyHandoffsFromText,
   isPlaceholderSummary,
   LEGACY_DEDUPE_TTL_MS,
   LEGACY_MARKER,
@@ -111,7 +112,46 @@ describe('LegacyHandoffParser', () => {
     },
   );
 
-  it.each(['# NEXUS_HANDOFF v1', 'NEXUS_HANDOFF v1', '## nexus_handoff v1'])(
+  it.each([
+    '# NEXUS_HANDOFF v1',
+    'NEXUS_HANDOFF v1',
+    'NEXUS_HANDOFF',
+    '### NEXUS_HANDOFF',
+  ])('accepts the field/Overclock sentinel %s', (marker) => {
+    const { parser, received } = collect();
+    parser.feed(
+      'agy-plain',
+      `${marker}\n` +
+        '{"status":"success","summary":"Interface implementada no pane sem tool MCP.","artifacts":[]}',
+    );
+    expect(received).toEqual([
+      {
+        sessionId: 'agy-plain',
+        payload: {
+          status: 'success',
+          summary: 'Interface implementada no pane sem tool MCP.',
+          artifacts: [],
+        },
+      },
+    ]);
+  });
+
+  it('maps Overclock Stop-hook status done/error onto the Nexus contract', () => {
+    const { parser, received } = collect();
+    parser.feed(
+      's1',
+      `${LEGACY_MARKER}\n` +
+        '{"status":"done","summary":"Worker finished the turn without calling the tool.","artifacts":[]}',
+    );
+    parser.feed(
+      's2',
+      `NEXUS_HANDOFF\n` +
+        '{"status":"error","summary":"Provider aborted before the worker could ship.","artifacts":[]}',
+    );
+    expect(received.map((r) => r.payload.status)).toEqual(['success', 'failed']);
+  });
+
+  it.each(['## nexus_handoff v1', 'nexus_handoff', 'order_handoff'])(
     'keeps non-contract sentinel %s rejected',
     (marker) => {
       const { parser, received } = collect();
@@ -204,6 +244,28 @@ describe('isPlaceholderSummary', () => {
     expect(
       isPlaceholderSummary('Implementei o formulário de login com validação.'),
     ).toBe(false);
+  });
+});
+
+describe('extractLegacyHandoffsFromText', () => {
+  it('re-lê um snapshot PTY já stripado (idle/exit, não só o stream ao vivo)', () => {
+    const text =
+      'noise\nNEXUS_HANDOFF\n' +
+      '{"status":"success","summary":"Tela de missões renderiza a lista paginada.","artifacts":[]}\n' +
+      'idle prompt';
+    expect(extractLegacyHandoffsFromText(text)).toEqual([
+      {
+        status: 'success',
+        summary: 'Tela de missões renderiza a lista paginada.',
+        artifacts: [],
+      },
+    ]);
+  });
+
+  it('ignora buffer sem o sentinel', () => {
+    expect(extractLegacyHandoffsFromText('worker idle after painting UI')).toEqual(
+      [],
+    );
   });
 });
 

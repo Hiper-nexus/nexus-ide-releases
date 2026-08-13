@@ -855,6 +855,10 @@ const api: NexusApi = {
       ipcRenderer.invoke(ORCH_CHANNELS.missionUpdate, { missionId, patch }),
     closeMissionRuntime: (missionId: string) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionCloseRuntime, { missionId }),
+    completeMissionByOperator: (missionId: string) =>
+      ipcRenderer.invoke(ORCH_CHANNELS.missionCompleteByOperator, {
+        missionId,
+      }),
     removeMission: (missionId: string) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionRemove, { missionId }),
     listHandoffs: () => ipcRenderer.invoke(ORCH_CHANNELS.handoffsList),
@@ -1003,6 +1007,11 @@ const api: NexusApi = {
       ipcRenderer.invoke(FILES_CHANNELS.write, { relPath, content }),
     saveDropped: (name: string, base64: string) =>
       ipcRenderer.invoke(FILES_CHANNELS.saveDropped, { name, base64 }),
+    importMissionAttachment: (name: string, base64: string) =>
+      ipcRenderer.invoke(FILES_CHANNELS.importMissionAttachment, {
+        name,
+        base64,
+      }),
     // webUtils resolves a dragged File to its real filesystem path — the only
     // sandbox-safe way to get it (File.path was removed).
     pathForFile: (file: File): string => {

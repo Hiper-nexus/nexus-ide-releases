@@ -1,5 +1,12 @@
 import fs from 'node:fs';
 import { rankCapabilitiesByNeed } from './capability-need-ranking';
+import {
+  OPERATIONAL_DOCTRINE,
+  classifyOperationalBand,
+  groupByOperationalBand,
+  pickForBandWithDegrade,
+  resolveNeedBand,
+} from '../../shared/model-operational-bands';
 import { scanInstalledPlugins } from './agent-plugin-scan';
 import path from 'node:path';
 import { z } from 'zod';
@@ -14,7 +21,7 @@ import { homeRelativeDirOf, OUTSIDE_HOME_LABEL } from './home-relative-path';
  * merge, generate); these are gauges.
  *
  *   nexus_quota_status      how much fuel is left, per provider/account
- *   nexus_model_ranking     what the product's own radar says about models
+ *   nexus_model_ranking     radar + operational bands (fast/balanced/deep)
  *   nexus_mcp_servers       which third-party MCP servers are configured here
  *   nexus_skills_inventory  which skills this machine actually has
  *   nexus_cli_inventory     which CLIs are installed AND authenticated
@@ -41,6 +48,7 @@ const MAX_QUOTA_ENTRIES = 64;
 const MAX_QUOTA_WINDOWS = 8;
 const MAX_RANKING_ENTRIES = 64;
 const DEFAULT_RANKING_LIMIT = 20;
+const MAX_BAND_ENTRIES = 8;
 const MAX_MCP_SERVERS = 64;
 const MAX_MCP_TOOLS_PER_SERVER = 32;
 const MAX_MCP_KEYS = 32;
@@ -272,6 +280,8 @@ const rankingInputSchema = z
   .object({
     dimension: z.enum(RANKING_DIMENSIONS).default('overall'),
     adapterId: z.string().trim().min(1).max(64).optional(),
+    need: z.string().trim().min(1).max(280).optional(),
+    band: z.enum(['fast', 'balanced', 'deep']).optional(),
     limit: z
       .number()
       .int()
@@ -282,16 +292,60 @@ const rankingInputSchema = z
   })
   .strict();
 
+type RankingRow = {
+  id: string;
+  adapterId: string;
+  modelId: string;
+  overall: number;
+  coding?: number;
+  reasoning?: number;
+  frontend?: number;
+  security?: number;
+  costTier?: string;
+  availability?: string;
+  confidence?: number;
+  estimate?: boolean;
+  sourceLabel?: string;
+  rank?: number;
+};
+
+function bandOfRankingRow(entry: RankingRow) {
+  return classifyOperationalBand(entry);
+}
+
+function compactBandEntry(entry: RankingRow) {
+  return Object.freeze({
+    id: entry.id,
+    adapterId: entry.adapterId,
+    modelId: entry.modelId,
+    band: bandOfRankingRow(entry),
+    ...(entry.costTier !== undefined ? { costTier: entry.costTier } : {}),
+  });
+}
+
+function projectOperationalBands(entries: readonly RankingRow[]) {
+  const grouped = groupByOperationalBand(entries, bandOfRankingRow);
+  return Object.freeze({
+    fast: grouped.fast.slice(0, MAX_BAND_ENTRIES).map(compactBandEntry),
+    balanced: grouped.balanced.slice(0, MAX_BAND_ENTRIES).map(compactBandEntry),
+    deep: grouped.deep.slice(0, MAX_BAND_ENTRIES).map(compactBandEntry),
+  });
+}
+
+const EMPTY_OPERATIONAL_BANDS = projectOperationalBands([]);
+
 const modelRankingTool: McpToolDef = {
   name: 'nexus_model_ranking',
   description:
-    "Read the product's own model ranking (Settings → Ranking LLMs) for a " +
-    'dimension: overall | coding | reasoning | frontend | security. Consult ' +
-    'BEFORE choosing which model does a piece of work. Public data only — no ' +
-    'accounts, no keys. Entries carry `estimate: true` when the score comes ' +
-    'from offline fixtures rather than a real audit; treat those as a hint, ' +
-    'not evidence. Models with no score in the requested dimension are ' +
-    'omitted and counted, never given an invented number.',
+    "Read the product's operational model list: three cost/depth bands " +
+    '(fast / balanced / deep) plus the doctrine default-DOWN, and the ' +
+    'optional score radar (Settings → Ranking LLMs). Consult BEFORE ' +
+    'choosing a model. Pass `need` (what the work is) or `band` to get a ' +
+    'pick; the tool degrades to a cheaper band when the target is empty, ' +
+    'never escalates. Score entries carry `estimate: true` when they come ' +
+    'from offline fixtures — treat those as a hint, not evidence. Bands ' +
+    'come from catalog cost/availability, not from fixture scores. Public ' +
+    'data only — no accounts, no keys.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -304,31 +358,30 @@ const modelRankingTool: McpToolDef = {
         type: 'string',
         description: 'Restrict to one CLI/provider (e.g. claude, codex).',
       },
-      limit: { type: 'number', description: 'Max entries (default 20).' },
+      need: {
+        type: 'string',
+        description:
+          'What the work is (one sentence). Selects a band via specialty: ' +
+          'doc→fast, feature/visual→balanced, security/bug/ops→deep.',
+      },
+      band: {
+        type: 'string',
+        enum: ['fast', 'balanced', 'deep'],
+        description: 'Force a band. Overrides the need-derived target.',
+      },
+      limit: { type: 'number', description: 'Max score entries (default 20).' },
     },
   },
   handler: async (args) => {
     const input = rankingInputSchema.parse(args);
+    const need = resolveNeedBand(input.need, input.band);
+    const askedNeed = Boolean(input.need || input.band);
 
     let snapshot: {
       generatedAt: string;
       suiteId: string;
       suiteRevision: string;
-      entries: ReadonlyArray<{
-        id: string;
-        adapterId: string;
-        modelId: string;
-        overall: number;
-        coding?: number;
-        reasoning?: number;
-        frontend?: number;
-        security?: number;
-        costTier?: string;
-        confidence?: number;
-        estimate?: boolean;
-        sourceLabel?: string;
-        rank?: number;
-      }>;
+      entries: ReadonlyArray<RankingRow>;
     };
     try {
       const { getPublicModelRanking } = await import('../eval/eval-ipc');
@@ -338,6 +391,8 @@ const modelRankingTool: McpToolDef = {
         available: false,
         reason: `model ranking unavailable: ${reasonFrom(error)}`,
         dimension: input.dimension,
+        doctrine: OPERATIONAL_DOCTRINE,
+        bands: EMPTY_OPERATIONAL_BANDS,
         truncated: false,
         entries: [],
       });
@@ -346,10 +401,11 @@ const modelRankingTool: McpToolDef = {
     const pool = input.adapterId
       ? snapshot.entries.filter((e) => e.adapterId === input.adapterId)
       : snapshot.entries;
-    const scoreOf = (e: (typeof pool)[number]): number | undefined =>
+    const scoreOf = (e: RankingRow): number | undefined =>
       e[input.dimension as RankingDimension];
     const scored = pool.filter((e) => typeof scoreOf(e) === 'number');
     const omitted = pool.length - scored.length;
+    const bands = projectOperationalBands(scored);
 
     if (scored.length === 0) {
       return Object.freeze({
@@ -360,6 +416,8 @@ const modelRankingTool: McpToolDef = {
             : 'no ranking entries are available for this filter',
         dimension: input.dimension,
         generatedAt: snapshot.generatedAt,
+        doctrine: OPERATIONAL_DOCTRINE,
+        bands,
         truncated: false,
         entries: [],
       });
@@ -369,6 +427,9 @@ const modelRankingTool: McpToolDef = {
       (a, b) => (scoreOf(b) ?? 0) - (scoreOf(a) ?? 0),
     );
     const capped = ordered.slice(0, Math.min(input.limit, MAX_RANKING_ENTRIES));
+    const pick = askedNeed
+      ? pickForBandWithDegrade(ordered, bandOfRankingRow, need.band)
+      : null;
 
     return Object.freeze({
       available: true,
@@ -376,6 +437,23 @@ const modelRankingTool: McpToolDef = {
       generatedAt: snapshot.generatedAt,
       suiteId: snapshot.suiteId,
       suiteRevision: snapshot.suiteRevision,
+      doctrine: OPERATIONAL_DOCTRINE,
+      bands,
+      ...(askedNeed
+        ? {
+            need: Object.freeze({
+              specialty: need.specialty,
+              band: need.band,
+              pick: pick
+                ? Object.freeze({
+                    ...compactBandEntry(pick.item),
+                    degraded: pick.degraded,
+                    servedBand: pick.band,
+                  })
+                : null,
+            }),
+          }
+        : {}),
       truncated: ordered.length > capped.length,
       omittedForMissingDimension: omitted,
       entries: capped.map((e, index) => ({
@@ -384,6 +462,7 @@ const modelRankingTool: McpToolDef = {
         modelId: e.modelId,
         score: scoreOf(e) as number,
         overall: e.overall,
+        band: bandOfRankingRow(e),
         ...(e.costTier !== undefined ? { costTier: e.costTier } : {}),
         ...(e.confidence !== undefined ? { confidence: e.confidence } : {}),
         estimate: e.estimate === true,
