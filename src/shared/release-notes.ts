@@ -13,58 +13,51 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.32.12',
+  version: '0.32.13',
   date: '2026-08-13',
-  codename: 'A equipe volta depois do restart',
+  codename: 'Pausa honesta',
   summary:
-    'Reabrir panes e o restore após restart deixam de matar Interface, ' +
-    'Motor e Verificar. Gemini 3.7 entra no catálogo; as CLIs que listam ' +
-    'modelos renovam sozinhas.',
+    'Sem runtime o rail deixa de mentir Trabalhando. Missão viva não ' +
+    'converte o pane em shell. O chrome estreito mostra o LLM; a faixa ' +
+    'cafeinada fica mais viva, com um derrame leve na vaga focada.',
   highlights: [
     {
-      title: 'Reabrir panes restaura workers',
+      title: 'Rail honesto',
       detail:
-        'Sem incarnation no spec (comum depois do restart) o Main ' +
-        'reconcilia o dispatch do pane em vez de falhar com missing ' +
-        'pane/incarnation restart authority.',
+        'Status running no banco sem orquestrador nem sessão viva vira ' +
+        'reparo (restore-failed), nunca Trabalhando.',
     },
     {
-      title: 'Teclado no pane morto',
+      title: 'Pane não vira shell',
       detail:
-        'Posse de missão não é mudez. Digitar, Reiniciar ou Acordar ' +
-        'devolve um shell; a missão continua no rail. O coordenador não ' +
-        'aposenta o único leaf num loop.',
+        'unlockRetiredMissionPane preserva o agente pausado enquanto a ' +
+        'missão está pending, running ou blocked. Falha de IPC é ' +
+        'fail-closed. Retomar fica no rail.',
     },
     {
-      title: 'Split do operador sobrevive',
+      title: 'Modelo no chrome estreito',
       detail:
-        'À direita / Abaixo não some quando a missão sincroniza a grade.',
+        'Chip compacto de família/versão quando o badge some (< 380px). ' +
+        'Shell puro não inventa LLM.',
     },
     {
-      title: 'Gemini 3.7 Flash',
+      title: 'Faixa cafeinada',
       detail:
-        'Default do AGY e da rota trivial/easy. Preço de introdução no ledger.',
-    },
-    {
-      title: 'Descoberta viva de modelos',
-      detail:
-        'Grok, AGY, Kimi, OpenCode, Cursor, Qoder, Prime e OMP renovam o ' +
-        'catálogo na abertura e a cada 5 min. Claude/Codex seguem o cache ' +
-        'oficial. IDs passam pelo isModelId.',
+        'Xícara maior no pet e na mesa limpa do Git. Derrame SVG no ' +
+        'pane vago focado, sem roubar clique.',
     },
   ],
   fixes: [
     {
-      title: 'Selo de workflow rotacionado',
+      title: 'Tarefa running sem processo',
       detail:
-        'canRestore não some com a equipe quando só a metade PREVC girou. ' +
-        'Mudança de intent ainda pede replane.',
+        'Pane listado sem sessão física deixa de aparecer working só ' +
+        'porque a tarefa no banco ficou running.',
     },
     {
-      title: 'Digitação recusada deixa de ser silenciosa',
+      title: 'Default AGY no save de squad',
       detail:
-        'Se o main recusar a lane do operador, o pane avisa. Hold de ' +
-        'missão não pede um diálogo que não existe.',
+        'O pin do roster normalizado acompanha Gemini 3.7 Flash.',
     },
   ],
 };

@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.32.13 — Pausa honesta
+
+Data: 2026-08-13
+
+Sem runtime o rail deixa de mentir Trabalhando. Missão viva não
+converte o pane em shell. O chrome estreito mostra o LLM; a faixa
+cafeinada fica mais viva, com um derrame leve na vaga focada.
+
+- **Rail honesto.** Status `running` no banco sem orquestrador nem
+  sessão viva vira reparo (`restore-failed`), nunca Trabalhando.
+- **Pane não vira shell.** `unlockRetiredMissionPane` preserva o
+  agente pausado enquanto a missão está pending/running/blocked.
+  Falha de IPC é fail-closed. Retomar fica no rail.
+- **Modelo no chrome estreito.** Chip compacto de família/versão
+  quando o badge some (< 380px). Shell puro não inventa LLM.
+- **Faixa cafeinada.** Xícara maior no pet e na mesa limpa do Git;
+  derrame SVG no pane vago focado, `pointer-events: none`.
+
 ## 0.32.12 — A equipe volta depois do restart
 
 Data: 2026-08-13
