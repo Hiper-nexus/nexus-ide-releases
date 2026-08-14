@@ -585,7 +585,30 @@ body {
 
 .pane__vacancy .empty-state {
   max-width: 46ch;
+  gap: var(--space-3);
   background: color-mix(in srgb, var(--bg-elevated) 70%, transparent);
+}
+
+.pane__vacancy .empty-state__icon {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: var(--text-dim);
+}
+
+.pane__vacancy .empty-state[role='alert'] .empty-state__icon {
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
+  color: var(--warn);
+}
+
+.pane__vacancy .empty-state__title {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
 }
 
 .pane--skill-target {

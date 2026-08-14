@@ -108,6 +108,10 @@ describe('CoffeeSpillCorner no pane vivo focado', () => {
     expect(spill?.querySelector('.spill__stream'), 'filete do derrame ausente').not.toBeNull();
     expect(spill?.querySelector('.spill__drop'), 'gota do derrame ausente').not.toBeNull();
     expect(spill?.querySelector('.spill__pool'), 'poça do derrame ausente').not.toBeNull();
+    expect(
+      Number(spill?.getAttribute('height') ?? 999),
+      'derrame voltou a ser barra do teto ao chão',
+    ).toBeLessThanOrEqual(80);
 
     act(() => root.unmount());
   });
