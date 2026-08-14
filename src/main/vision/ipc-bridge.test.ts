@@ -224,12 +224,20 @@ describe('registerVisionIpc multi-window authority', () => {
       VISION_CHANNELS.context,
       VISION_CHANNELS.axTree,
       VISION_CHANNELS.ocr,
-      VISION_CHANNELS.permission,
     ]) {
       await expect(invoke(channel, ownerB, {})).rejects.toThrow(
         'authorized workspace scope',
       );
     }
+  });
+
+  it('checks screen permission without a workspace capture lease', async () => {
+    registerTestIpc();
+    harness.scopes.delete(ownerB.id);
+
+    await expect(invoke(VISION_CHANNELS.permission, ownerB)).resolves.toBe(
+      'granted',
+    );
   });
 
   it('rejects a destroyed sender before reading permission or project state', async () => {

@@ -155,6 +155,12 @@ describe('jarvisActionFastPath', () => {
     expect(jarvisActionFastPath('abre configurações de voz', CTX)?.action).toEqual({
       type: 'open_voice_settings',
     });
+    expect(jarvisActionFastPath('abrir voz', CTX)?.action).toEqual({
+      type: 'open_voice_settings',
+    });
+    expect(jarvisActionFastPath('abre a voz', CTX)?.action).toEqual({
+      type: 'open_voice_settings',
+    });
     expect(jarvisActionFastPath('abrir configurações', CTX)?.action).toEqual({
       type: 'open_settings',
     });

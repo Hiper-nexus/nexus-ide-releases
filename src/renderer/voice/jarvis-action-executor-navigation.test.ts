@@ -6,6 +6,7 @@ const {
   claimStructuralPlaceholder,
   closeProfile,
   closeVoiceSettings,
+  openVoiceSettings,
   focusPane,
   layoutState,
   orchState,
@@ -16,6 +17,7 @@ const {
   claimStructuralPlaceholder: vi.fn(),
   closeProfile: vi.fn(),
   closeVoiceSettings: vi.fn(),
+  openVoiceSettings: vi.fn(),
   focusPane: vi.fn(),
   waitForSession: vi.fn(),
   layoutState: {
@@ -62,7 +64,13 @@ vi.mock('../state/gamification-store', () => ({
   useGamificationStore: { getState: () => ({ closeProfile }) },
 }));
 vi.mock('./voice-store', () => ({
-  useVoiceStore: { getState: () => ({ closeSettings: closeVoiceSettings }) },
+  useVoiceStore: {
+    getState: () => ({
+      closeSettings: closeVoiceSettings,
+      openSettings: openVoiceSettings,
+      settingsOpen: true,
+    }),
+  },
 }));
 vi.mock('../state/session-state-store', () => ({
   useSessionStateStore: { getState: () => ({ paneStates: new Map() }) },
@@ -220,5 +228,24 @@ describe('Jarvis product navigation', () => {
       missionId: 'mission-release',
       surface: 'terminals',
     });
+  });
+
+  it('opens Jarvis voice settings without routing to mission-setup', async () => {
+    useProductNavigationStore.setState({
+      destination: { kind: 'settings', section: 'voice' },
+      settingsReturnDestination: { kind: 'mission-setup' },
+    });
+
+    const result = await execute({ type: 'open_voice_settings' });
+
+    expect(result.toolResult?.ok).toBe(true);
+    expect(openVoiceSettings).toHaveBeenCalledTimes(1);
+    expect(useProductNavigationStore.getState().destination).toEqual({
+      kind: 'settings',
+      section: 'voice',
+    });
+    expect(
+      useProductNavigationStore.getState().settingsReturnDestination,
+    ).toEqual({ kind: 'mission-setup' });
   });
 });

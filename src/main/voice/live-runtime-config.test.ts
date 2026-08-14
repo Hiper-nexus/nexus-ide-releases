@@ -16,6 +16,8 @@ describe('live runtime config identity', () => {
           enabled: !DEFAULT_VOICE_CONFIG.jarvisLive.enabled,
         },
       },
+      { jarvisLive: { ...DEFAULT_VOICE_CONFIG.jarvisLive, grokModel: 'new-grok' } },
+      { jarvisLive: { ...DEFAULT_VOICE_CONFIG.jarvisLive, grokVoice: 'eve' } },
       { jarvisLive: { ...DEFAULT_VOICE_CONFIG.jarvisLive, liveModel: 'new-live' } },
       { jarvisLive: { ...DEFAULT_VOICE_CONFIG.jarvisLive, voiceName: 'Aoede' } },
       { persona: { ...DEFAULT_VOICE_CONFIG.persona, customInstructions: 'curto' } },
@@ -43,6 +45,7 @@ describe('live runtime config identity', () => {
   });
 
   it('recognizes only realtime provider credentials', () => {
+    expect(isLiveTransportCredential('XAI_API_KEY')).toBe(true);
     expect(isLiveTransportCredential('GEMINI_API_KEY')).toBe(true);
     expect(isLiveTransportCredential('OPENAI_API_KEY')).toBe(true);
     expect(isLiveTransportCredential('GROQ_API_KEY')).toBe(false);

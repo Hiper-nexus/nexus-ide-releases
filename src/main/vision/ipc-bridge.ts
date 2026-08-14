@@ -152,6 +152,13 @@ function isLive(owner: WebContents): boolean {
   return !owner.isDestroyed() && !owner.isCrashed();
 }
 
+/** Permission / System Settings do not bind a project capture lease. */
+function requireLiveRenderer(event: IpcMainInvokeEvent): WebContents {
+  const owner = event.sender;
+  if (!isLive(owner)) throw new Error('vision_renderer_unavailable');
+  return owner;
+}
+
 function createOwnerState(
   owner: WebContents,
   scope: ProjectExecutionScope,
@@ -429,14 +436,12 @@ export function registerVisionIpc(overrides: Partial<VisionIpcDeps> = {}): void 
   });
 
   ipcMain.handle(VISION_CHANNELS.permission, async (event) => {
-    const authority = requireAuthority(event);
-    const status = deps.getScreenPermissionStatus();
-    assertAuthority(authority);
-    return status;
+    requireLiveRenderer(event);
+    return deps.getScreenPermissionStatus();
   });
 
   ipcMain.handle(VISION_CHANNELS.requestPermission, async (event) => {
-    requireAuthority(event);
+    requireLiveRenderer(event);
     const { requestScreenPermissionRegistration } = await import(
       './screen-capture'
     );
@@ -444,7 +449,7 @@ export function registerVisionIpc(overrides: Partial<VisionIpcDeps> = {}): void 
   });
 
   ipcMain.handle(VISION_CHANNELS.openScreenSettings, async (event) => {
-    requireAuthority(event);
+    requireLiveRenderer(event);
     if (process.platform !== 'darwin') {
       return {
         ok: false,

@@ -1,8 +1,26 @@
 /* Jarvis settings — product UI (Linear/Raycast density).
-   Single source of truth: legacy rules were removed from overlays.css. */
+   Single source of truth: legacy rules were removed from overlays.css.
+   The modal SHELL still lives here: without a fixed fullscreen host the
+   panel is display:contents soup and the operator never sees Jarvis. */
+
+.agent-picker {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-hard-modal);
+  display: grid;
+  place-items: center;
+}
+
+.agent-picker__overlay {
+  position: absolute;
+  inset: 0;
+  background: var(--overlay-scrim);
+}
 
 /* Break agent-picker defaults (max-width: 420px is the readability killer). */
 .agent-picker__panel.agent-picker__panel--voice {
+  position: relative;
+  z-index: 1;
   width: min(920px, calc(100vw - 32px));
   max-width: min(920px, calc(100vw - 32px));
   min-width: min(640px, calc(100vw - 32px));

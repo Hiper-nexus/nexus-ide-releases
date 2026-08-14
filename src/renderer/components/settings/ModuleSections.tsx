@@ -153,7 +153,7 @@ export function TerminalSection() {
   );
 }
 
-export function VoiceSection({ onNavigate }: { onNavigate: () => void }) {
+export function VoiceSection() {
   const openVoice = useVoiceStore((s) => s.openSettings);
   return (
     <section>
@@ -164,9 +164,9 @@ export function VoiceSection({ onNavigate }: { onNavigate: () => void }) {
       </p>
       <AudioDeviceControls />
       <button
+        type="button"
         className="settings-btn settings-btn--primary"
         onClick={() => {
-          onNavigate();
           openVoice();
         }}
       >

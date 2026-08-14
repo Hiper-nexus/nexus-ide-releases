@@ -174,6 +174,9 @@ describe('resolveCoarseVoiceTool', () => {
     expect(resolveCoarseVoiceTool('navegar', { target: 'screen', query: 'voz' })).toMatchObject({
       action: { action: 'open_voice_settings' },
     });
+    expect(resolveCoarseVoiceTool('navegar', { target: 'voz' })).toMatchObject({
+      action: { action: 'open_voice_settings' },
+    });
     // a bare screen name works as the target too
     expect(resolveCoarseVoiceTool('navegar', { target: 'settings' })).toMatchObject({
       action: { action: 'open_settings' },

@@ -117,7 +117,10 @@ export function jarvisActionFastPath(
     /\b(abre|abra|abrir|mostra|mostre|vai|ir)\b.*\b(configuracoes de voz|ajustes de voz|jarvis settings|voice settings)\b/.test(
       t,
     ) ||
-    /\b(configuracoes de voz|ajustes de voz|voice settings)\b$/.test(t)
+    /\b(configuracoes de voz|ajustes de voz|voice settings)\b$/.test(t) ||
+    /\b(abre|abra|abrir|mostra|mostre|vai|ir)\b(?:\s+(?:a|as|o|os))?\s+(?:voz|jarvis)\s*$/.test(
+      t,
+    )
   ) {
     return {
       say: say(ctx, 'Abrindo as configurações de voz.'),

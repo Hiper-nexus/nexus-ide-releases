@@ -110,11 +110,9 @@ function NavRow({
 function SettingsSectionContent({
   section,
   adapters,
-  onNavigateAway,
 }: {
   section: SettingsSection;
   adapters: AdapterInfo[];
-  onNavigateAway: () => void;
 }) {
   switch (section) {
     case 'account':
@@ -126,7 +124,7 @@ function SettingsSectionContent({
     case 'terminal':
       return <TerminalSection />;
     case 'voice':
-      return <VoiceSection onNavigate={onNavigateAway} />;
+      return <VoiceSection />;
     case 'vision':
       return <VisionSection />;
     case 'diagnostics':
@@ -360,7 +358,6 @@ export function SettingsSurface({
             <SettingsSectionContent
               section={section}
               adapters={adapters}
-              onNavigateAway={onBack}
             />
           </SettingsSectionTitleProvider>
         </div>

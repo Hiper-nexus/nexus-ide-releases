@@ -11,6 +11,7 @@ import { useEphemeralDraftStore } from '../../state/ephemeral-draft-store';
 import { useOrchStore } from '../../state/orch-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
 import { useSettingsStore } from '../../state/settings-store';
+import { useVoiceStore } from '../../voice/voice-store';
 import type { SettingsSection } from './settings-nav';
 import { SettingsWorkspace } from './SettingsWorkspace';
 
@@ -145,6 +146,15 @@ beforeEach(() => {
   useProductNavigationStore.setState({
     destination: { kind: 'terminal' },
     settingsReturnDestination: null,
+  });
+  useVoiceStore.setState({ settingsOpen: false });
+  Object.defineProperty(navigator, 'mediaDevices', {
+    configurable: true,
+    value: {
+      enumerateDevices: vi.fn(async () => []),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    },
   });
 });
 
@@ -319,6 +329,36 @@ describe('SettingsWorkspace contracts', () => {
     ).toHaveLength(30);
     expect(scrollingGroups?.contains(brand)).toBe(false);
     expect(scrollingGroups?.contains(search)).toBe(false);
+  });
+
+  it('opens Jarvis voice settings without leaving Settings for mission-setup', async () => {
+    useProductNavigationStore.setState({
+      destination: { kind: 'mission-setup' },
+      settingsReturnDestination: null,
+    });
+    useProductNavigationStore.getState().openSettings('voice');
+    const host = mount(<SettingsWorkspace />);
+    await settleSectionEffects();
+
+    expect(useProductNavigationStore.getState().destination).toEqual({
+      kind: 'settings',
+      section: 'voice',
+    });
+    expect(
+      useProductNavigationStore.getState().settingsReturnDestination,
+    ).toEqual({ kind: 'mission-setup' });
+
+    await act(async () => {
+      findButton(host, /abrir configurações de voz/i).click();
+      await Promise.resolve();
+    });
+
+    expect(useVoiceStore.getState().settingsOpen).toBe(true);
+    expect(useProductNavigationStore.getState().destination).toEqual({
+      kind: 'settings',
+      section: 'voice',
+    });
+    expect(host.querySelector('.settings-workspace')).not.toBeNull();
   });
 
   it('returns to the exact previous product destination from the page back action', async () => {
