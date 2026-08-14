@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.32.21 — Lata certa
+
+Data: 2026-08-14
+
+Gate realtime aceita XAI_API_KEY. O box mini arrasta
+na OverlayLayer. Providers mostram estado e um CTA por
+CLI. Claude usa `claude auth login`. A cafeína vira
+lata energética que se lê como lata. O derrame no pane
+é curto — 76px, sem onda do teto ao chão.
+
+- **Grok no gate realtime.** XAI_API_KEY deixa de ser
+  tratada como Gemini. Jarvis fala com a chave oficial.
+- **Box mini arrasta.** O pill mora na OverlayLayer e
+  o pointer não some no meio do arrasto.
+- **Login das CLIs honesto.** Cada ferramenta mostra
+  conectado / precisa login e um CTA por linha. Claude
+  entra com `claude auth login`.
+- **Lata que se lê como lata.** Xícara vira lata nossa
+  no pet, no HUD e no header da Equipe — corpo, anel
+  e aba. Balança e ferve.
+- **Derrame curto.** O energético no pane focado cai
+  76px e some. Acabou a onda do teto ao chão.
+- **Sem chave visível.** Sem credencial na cadeia, o HUD
+  mostra o erro e abre as configurações no clique.
+
 ## 0.32.20 — Jarvis responde
 
 Data: 2026-08-14

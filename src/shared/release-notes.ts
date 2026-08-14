@@ -13,14 +13,15 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.32.20',
+  version: '0.32.21',
   date: '2026-08-14',
-  codename: 'Jarvis responde',
+  codename: 'Lata certa',
   summary:
     'Gate realtime aceita XAI_API_KEY. O box mini arrasta ' +
     'na OverlayLayer. Providers mostram estado e um CTA ' +
     'por CLI. Claude usa claude auth login. A cafeína vira ' +
-    'lata energética nossa.',
+    'lata energética que se lê como lata. O derrame no ' +
+    'pane é curto — 76px, sem onda do teto ao chão.',
   highlights: [
     {
       title: 'Grok no gate realtime',
@@ -42,15 +43,19 @@ export const CURRENT_RELEASE: AppRelease = {
         'claude auth login.',
     },
     {
-      title: 'Lata energética',
+      title: 'Lata que se lê como lata',
       detail:
         'Xícara vira lata nossa no pet, no HUD e no header ' +
-        'da Equipe — balança e ferve. O pane focado vê o ' +
-        'energético entornar (filete, gotas, poça) e some ' +
-        'sozinho.',
+        'da Equipe — corpo, anel e aba. Balança e ferve.',
     },
   ],
   fixes: [
+    {
+      title: 'Derrame curto',
+      detail:
+        'O energético no pane focado cai 76px e some. ' +
+        'Acabou a onda do teto ao chão.',
+    },
     {
       title: 'Sem chave visível',
       detail:
