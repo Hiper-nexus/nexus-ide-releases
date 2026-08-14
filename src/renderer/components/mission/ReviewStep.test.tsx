@@ -4,7 +4,11 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { MissionReview } from '../../../shared/mission-engine-contract';
 import type { MissionLane } from '../../../shared/mission-intent';
-import { ReviewStep } from './ReviewStep';
+import {
+  excerptReviewText,
+  reviewBriefBody,
+  ReviewStep,
+} from './ReviewStep';
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -126,6 +130,17 @@ function normalizedText(node: Element): string {
   return (node.textContent ?? '').replace(/\s+/g, ' ').trim();
 }
 
+function openTeamDetails(host: HTMLElement): void {
+  const details = host.querySelector<HTMLDetailsElement>(
+    '.mission-review__team-details',
+  );
+  if (!details) throw new Error('Team details not found');
+  act(() => {
+    details.open = true;
+    details.dispatchEvent(new Event('toggle'));
+  });
+}
+
 function detailedRole(host: HTMLElement, name: string): HTMLLIElement {
   const found = Array.from(host.querySelectorAll('li')).find((item) => {
     const roleName = item.querySelector('strong')?.textContent?.trim();
@@ -167,6 +182,8 @@ describe('ReviewStep', () => {
       />,
     );
 
+    openTeamDetails(host);
+
     const coordinator = detailedRole(host, 'Coordenadora de entrega');
     const coordinatorText = normalizedText(coordinator);
     expect(coordinatorText).toContain(
@@ -206,7 +223,9 @@ describe('ReviewStep', () => {
 
     const start = startButton(host);
     for (const role of [coordinator, builder, reviewer]) {
-      expect(role.closest('details')?.open ?? true).toBe(true);
+      expect(
+        role.closest<HTMLDetailsElement>('.mission-review__team-details')?.open,
+      ).toBe(true);
       expect(
         Boolean(role.compareDocumentPosition(start) & Node.DOCUMENT_POSITION_FOLLOWING),
       ).toBe(true);
@@ -215,6 +234,7 @@ describe('ReviewStep', () => {
 
   it('states null grants as honestly unrestricted without claiming a hidden work-type limit', () => {
     const host = renderReadyReview();
+    openTeamDetails(host);
     const coordinatorText = normalizedText(
       detailedRole(host, 'Coordenadora de entrega'),
     );
@@ -234,11 +254,17 @@ describe('ReviewStep', () => {
   });
 
   it.each(REVIEW_LANE_CASES)(
-    'keeps $label and its authority effects outside the advanced review disclosure',
+    'keeps $label on the glance card and authority in Mais detalhes',
     ({ lane, label, authority }) => {
       const host = renderReadyReview(CUSTOM_REVIEW, lane);
       const reviewRegion = host.querySelector<HTMLElement>(
         '[aria-label="Revisão atual da missão"]',
+      );
+      const more = Array.from(
+        reviewRegion?.querySelectorAll('details') ?? [],
+      ).find(
+        (item) =>
+          item.querySelector('summary')?.textContent?.trim() === 'Mais detalhes',
       );
       const advanced = Array.from(
         reviewRegion?.querySelectorAll('details') ?? [],
@@ -252,12 +278,17 @@ describe('ReviewStep', () => {
         disclosure.remove();
       }
       const beginnerText = beginnerReview ? normalizedText(beginnerReview) : '';
+      const moreText = more ? normalizedText(more) : '';
 
       expect(reviewRegion).not.toBeNull();
+      expect(more).not.toBeNull();
+      expect(more?.open).toBe(false);
       expect(advanced?.open).toBe(false);
       expect(beginnerText).toContain(label);
+      expect(beginnerText).not.toMatch(/dentro da pasta autorizada/i);
+      expect(beginnerText).not.toMatch(/ações de infraestrutura autorizadas/i);
       for (const statement of authority) {
-        expect(beginnerText).toMatch(statement);
+        expect(moreText).toMatch(statement);
       }
     },
   );
@@ -272,6 +303,7 @@ describe('ReviewStep', () => {
       ),
     };
     const host = renderReadyReview(authorityReview);
+    openTeamDetails(host);
 
     for (const roleName of [
       'Coordenadora de entrega',
@@ -389,4 +421,47 @@ describe('ReviewStep', () => {
       ).toBe(retry);
     },
   );
+
+  it('keeps a long brief collapsed until Ler tudo and never duplicates the title', () => {
+    const longObjective =
+      'O cliente Care For Men pediu um módulo de bônus do Lead Barber sem quebrar produção. '.repeat(
+        8,
+      );
+    const host = renderReadyReview({
+      ...CUSTOM_REVIEW,
+      title: 'O cliente Care For Men pediu um módulo de bônus do Lead Barber sem quebrar produção.',
+      objective: `${CUSTOM_REVIEW.title} ${longObjective}`,
+    });
+    const objective = host.querySelector('.mission-review__objective');
+    const toggle = Array.from(host.querySelectorAll('button')).find(
+      (item) => item.textContent?.trim() === 'Ler tudo',
+    );
+
+    const collapsed = normalizedText(objective!);
+    const fullBody = reviewBriefBody(
+      'O cliente Care For Men pediu um módulo de bônus do Lead Barber sem quebrar produção.',
+      `${CUSTOM_REVIEW.title} ${longObjective}`,
+    );
+
+    expect(toggle).toBeDefined();
+    expect(collapsed.endsWith('…')).toBe(true);
+    expect(collapsed.length).toBeLessThan(fullBody.length);
+    expect(host.querySelectorAll('.mission-review__objective').length).toBe(1);
+
+    act(() => toggle!.click());
+    expect(normalizedText(host.querySelector('.mission-review__objective')!)).toBe(
+      fullBody,
+    );
+    expect(startButton(host).closest('.mission-setup__step-dock')).not.toBeNull();
+  });
+
+  it('dedupes title repeated as the start of the objective', () => {
+    expect(
+      reviewBriefBody(
+        'Módulo de bônus',
+        'Módulo de bônus. Calcular variável da equipe.',
+      ),
+    ).toBe('Módulo de bônus. Calcular variável da equipe.');
+    expect(excerptReviewText('abc def ghi jkl', 10)).toBe('abc def…');
+  });
 });

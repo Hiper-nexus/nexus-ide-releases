@@ -147,27 +147,47 @@
   flex: 0 0 auto;
 }
 
-/* One scroller. Do not give this (or .mission-setup__step) min-height: 100%
-   / 100vh: percentage min-height against overflow:auto tracks scrollHeight
-   and grows without end, leaving a black void above the CTA. */
+/* Layout: canvas é flex-column que distribui espaço; o step (ou step+dock do
+   ReviewStep) são filhos diretos. O step é o scroller — não o canvas. Isso
+   garante que o dock fique sempre visível sem depender de sticky-bottom dentro
+   de um scroll container (padrão que só sticky quando o usuário já rolou até
+   o fim). */
 .mission-setup__canvas {
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
   min-height: 0;
-  overflow: auto;
-  overflow-anchor: none;
+  overflow: hidden;
 }
 
 .mission-setup__step {
   display: flex;
-  flex: 1 0 auto;
+  flex: 1 1 auto;
   flex-direction: column;
   width: min(100%, 860px);
   margin: 0 auto;
   min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overflow-anchor: none;
   padding: var(--space-6) var(--space-7) var(--space-8);
   animation: mission-setup-enter 180ms var(--ease-out-quart);
+}
+
+.mission-setup__step--review {
+  overflow: hidden;
+  padding-bottom: 0;
+}
+
+.mission-setup__step-scroll {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overflow-anchor: none;
+  padding-bottom: var(--space-4);
 }
 
 @keyframes mission-setup-enter {
@@ -536,7 +556,20 @@
   color: var(--danger);
 }
 
-.mission-setup__step-dock,
+/* Dock do ReviewStep: filho direto de .mission-setup__canvas (via Fragment),
+   sempre visível — não precisa de sticky. */
+.mission-setup__step-dock {
+  flex: 0 0 auto;
+  padding-top: var(--space-3);
+  padding-bottom: var(--space-2);
+  background: color-mix(in srgb, var(--bg) 94%, transparent);
+  backdrop-filter: blur(10px);
+  border-top: 1px solid var(--border);
+}
+
+/* Footer inline dentro do step (ExpressMissionStart, MissionStep, TeamStep):
+   sticky dentro do próprio step scroll. Funciona porque o step é agora o
+   scroll container — e nesses passos o conteúdo raramente excede a viewport. */
 .mission-setup__step > .mission-setup__step-actions {
   position: sticky;
   bottom: 0;
@@ -547,12 +580,6 @@
   border-top: 1px solid var(--border);
 }
 
-.mission-setup__step-dock {
-  flex: 0 0 auto;
-  padding-top: var(--space-3);
-  padding-bottom: var(--space-2);
-}
-
 .mission-setup__step-actions {
   display: flex;
   align-items: center;
@@ -561,6 +588,12 @@
   margin-top: auto;
   padding-top: var(--space-5);
   padding-bottom: var(--space-2);
+}
+
+.mission-setup__step--review > .mission-setup__step-dock {
+  margin-inline: calc(-1 * var(--space-7));
+  padding-inline: var(--space-7);
+  padding-bottom: var(--space-4);
 }
 
 .mission-setup__step-dock .mission-setup__step-actions {
@@ -939,16 +972,187 @@
   color: var(--accent);
 }
 
-/* ---- Review briefing (Bridge-style label|value rows) ---- */
+/* ---- Review briefing (Bridge-style glance cards + collapsed brief) ---- */
+.mission-review__glance {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+  max-width: 760px;
+  margin: var(--space-4) 0 0;
+  padding: 0;
+}
+
+.mission-review__glance-card {
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--border-strong) 70%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-elevated) 70%, transparent);
+}
+
+.mission-review__glance-card dt {
+  margin: 0 0 6px;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.mission-review__glance-card dd {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 550;
+  line-height: 1.4;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.mission-review__mode-guidance {
+  max-width: 760px;
+  margin: 0 0 var(--space-3);
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.mission-review__team-meta,
+.mission-review__context-line {
+  max-width: 760px;
+  margin: 0 0 var(--space-3);
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.mission-review__team-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  max-width: 760px;
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  list-style: none;
+}
+
+.mission-review__team-chips li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-elevated) 80%, transparent);
+}
+
+.mission-review__team-chips strong {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.mission-review__team-chips span {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.mission-review__team-details {
+  max-width: 760px;
+  margin: 0 0 var(--space-3);
+}
+
+.mission-review__team-details > summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.mission-review__team-details[open] > summary {
+  margin-bottom: var(--space-3);
+}
+
+.mission-review__warn-label {
+  margin: 0 0 var(--space-2);
+  color: var(--state-blocked);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 .mission-review__brief {
   padding-bottom: var(--space-3);
 }
 
 .mission-review__brief-title {
-  margin: 0 0 6px;
-  color: var(--text);
-  font-size: 17px;
-  font-weight: 700;
+  margin: var(--space-2) 0 var(--space-3);
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+/* Corpo colapsável do brief: por padrão mostra ~3 linhas com fade no rodapé.
+   Expandido com --open: max-height maior + overflow interno. */
+.mission-review__brief-body {
+  position: relative;
+  max-height: 72px;
+  overflow: hidden;
+  transition: max-height 220ms var(--ease-out-quart);
+}
+
+.mission-review__brief-body--open {
+  max-height: 340px;
+  overflow-y: auto;
+}
+
+/* Gradiente de fade no rodapé quando colapsado */
+.mission-review__brief-body:not(.mission-review__brief-body--open)::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 30px;
+  background: linear-gradient(to bottom, transparent, var(--bg));
+  pointer-events: none;
+}
+
+/* Botão "Ler tudo / Fechar" */
+.mission-review__brief-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: var(--space-2);
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+  line-height: 1.2;
+}
+
+.mission-review__brief-toggle:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.mission-review__brief-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mission-review__brief-body {
+    transition: none;
+  }
 }
 
 .mission-review__briefing {
@@ -1108,8 +1312,10 @@
 }
 
 .mission-setup__continuous-section .mission-review__objective {
+  margin: 0;
   color: var(--text);
-  font-size: var(--text-xl);
+  font-size: var(--text-md);
+  line-height: 1.5;
   white-space: pre-wrap;
 }
 
@@ -1411,4 +1617,41 @@
 .mission-setup__preset:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+/* ── Xícara cafeinada na etapa de Equipe ─────────────────────────────────────
+   Visível à primeira vista no header — ouro quente misturado com Pink City.
+   Pointer-events none; nenhum keyframe novo (o vapor já vive em coffee-cup.css).
+   ──────────────────────────────────────────────────────────────────────────── */
+.mission-setup__team-cafe {
+  color: color-mix(in srgb, var(--gold) 65%, var(--accent));
+  opacity: 1;
+  pointer-events: none;
+  margin-bottom: var(--space-3, 12px);
+}
+
+/* ── Filete cafeinado no topo do card em foco ─────────────────────────────────
+   position: relative suporta o ::before.
+   Apenas background (compositor-only). pointer-events: none.
+   ──────────────────────────────────────────────────────────────────────────── */
+.mission-roster-row__card {
+  position: relative;
+}
+
+.mission-roster-row:focus-within .mission-roster-row__card::before {
+  content: '';
+  position: absolute;
+  top: -1px;
+  left: 20px;
+  right: 20px;
+  height: 2px;
+  border-radius: 2px;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--gold) 55%, var(--accent)) 30%,
+    color-mix(in srgb, var(--gold) 55%, var(--accent)) 70%,
+    transparent
+  );
 }

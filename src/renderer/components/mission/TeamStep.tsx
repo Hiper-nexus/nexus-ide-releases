@@ -10,6 +10,7 @@ import type { ProviderSettingsInfo } from '../../../shared/provider-settings-typ
 import type { OrchSettings } from '../../../shared/settings-types';
 import { PET_STUDIO_SQUAD } from '../../../shared/pet-studio';
 import type { AdapterInfo } from '../../../shared/types';
+import { CoffeeCup } from '../../pet/CoffeeCup';
 import {
   isAdapterModelAuthenticated,
   type MissionRuntimeReadiness,
@@ -452,6 +453,9 @@ export function TeamStep({
     <section className="mission-setup__step" aria-labelledby="mission-team-title">
       <header className="mission-setup__step-header">
         <p className="mission-setup__step-kicker">Etapa 2 · Equipe</p>
+        <div className="mission-setup__team-cafe" aria-hidden="true">
+          <CoffeeCup size={64} />
+        </div>
         <h1 id="mission-team-title" ref={headingRef} tabIndex={-1}>
           Monte a equipe
         </h1>

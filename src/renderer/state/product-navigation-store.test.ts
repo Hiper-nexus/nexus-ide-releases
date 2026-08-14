@@ -158,6 +158,40 @@ describe('product navigation', () => {
     });
   });
 
+  it('openNewMission discards a workspace draft that was already on Equipe', () => {
+    const stale = {
+      ...createEmptyMissionSetupDraft(8),
+      objective: 'Rascunho da equipe anterior',
+      step: 'team' as const,
+      roster: [
+        {
+          id: 'coord',
+          agentName: 'Coordenar',
+          category: 'orchestrator' as const,
+          cli: 'claude',
+        },
+      ],
+    };
+    useMissionSetupStore.setState({
+      workspacePath: '/projects/alpha',
+      draft: stale,
+      persistence: { status: 'saved' },
+      workspaceDrafts: {
+        '/projects/alpha': { draft: stale, persistence: { status: 'saved' } },
+      },
+      entryContext: null,
+    });
+
+    useProductNavigationStore.getState().openNewMission();
+
+    expect(useMissionSetupStore.getState().draft).toMatchObject({
+      objective: '',
+      step: 'mission',
+      roster: [],
+    });
+    expect(useMissionSetupStore.getState().entryContext).toBeNull();
+  });
+
   it('openMissionSetup keeps a prefilled objective for handoff callers', () => {
     useMissionSetupStore.getState().setObjective('Corrigir o login');
     useProductNavigationStore.getState().openMissionSetup();

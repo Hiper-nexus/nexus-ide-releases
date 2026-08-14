@@ -82,7 +82,10 @@ export const useProductNavigationStore = create<ProductNavigationStore>()(
       },
       openNewMission: () => {
         useMissionSetupStore.getState().beginFreshMission();
-        open({ kind: 'mission-setup' });
+        // + Novo precisa do rascunho limpo de beginFreshMission. open() chama
+        // clearEntryContext(); com entryContext de pet-studio isso reidrata o
+        // draft do workspace (muitas vezes ainda em Equipe).
+        set({ destination: { kind: 'mission-setup' }, settingsReturnDestination: null });
       },
       openMission: (missionId) =>
         open({ kind: 'mission', missionId, surface: 'board' }),

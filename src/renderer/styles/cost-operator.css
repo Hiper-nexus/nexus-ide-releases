@@ -383,6 +383,41 @@
   justify-content: center;
   line-height: 0;
 }
+
+/* ── Chrome comum do pet: retrato com xícara cafeinada ───────────────────────
+   Cobre todos os skins (sheet / custom / operator). position: relative garante
+   que o badge absoluto da xícara não escape do flow. overflow: visible permite
+   que a xícara ultrapasse as bordas do retrato sem ser cortada.
+   ─────────────────────────────────────────────────────────────────────────── */
+.chosen-pet-portrait {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+  overflow: visible;
+}
+
+.chosen-pet-portrait__coffee {
+  position: absolute;
+  bottom: -20%;
+  left: -20%;
+  color: color-mix(in srgb, var(--gold) 65%, var(--accent));
+  opacity: 1;
+  pointer-events: none;
+  animation: pet-coffee-in 380ms ease-out;
+}
+
+.chosen-pet-portrait--compact .chosen-pet-portrait__coffee {
+  bottom: -8%;
+  left: -8%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chosen-pet-portrait__coffee {
+    animation: none;
+  }
+}
 .operator-profile__identity {
   display: flex;
   flex-direction: column;

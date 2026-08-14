@@ -12,6 +12,7 @@ import type { AdapterInfo } from '../../../shared/types';
 import {
   missionEffortLabel,
   MissionSetupRosterRow,
+  readyModelsForPicker,
 } from './MissionSetupRosterRow';
 
 (
@@ -189,6 +190,49 @@ describe('MissionSetupRosterRow', () => {
     expect(values.length).toBeGreaterThan(3);
   });
 
+  it('select une provider curto com bundled longo do adapter', () => {
+    const longAdapter: AdapterInfo = {
+      ...adapter,
+      models: {
+        default: 'gpt-5.6-terra',
+        list: ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5'],
+      },
+    };
+    const host = document.createElement('div');
+    document.body.append(host);
+    const root = createRoot(host);
+    mountedRoots.add(root);
+    act(() => {
+      root.render(
+        <MissionSetupRosterRow
+          agent={agent}
+          candidates={[longAdapter]}
+          providers={[
+            { ...provider, models: ['gpt-5.6-sol', 'gpt-5.6-sol-wm'] },
+          ]}
+          accounts={[] satisfies AccountInfo[]}
+          issue={null}
+          removable
+          onChange={vi.fn()}
+          onRemove={vi.fn()}
+        />,
+      );
+    });
+    const model = host.querySelector<HTMLSelectElement>(
+      'select[aria-label^="Modelo para"]',
+    );
+    const values = [...model!.options].map((option) => option.value);
+    expect(values).toEqual(
+      expect.arrayContaining([
+        'gpt-5.6-sol',
+        'gpt-5.6-sol-wm',
+        'gpt-5.6-terra',
+        'gpt-5.6-luna',
+        'gpt-5.5',
+      ]),
+    );
+  });
+
   it('modelo mostra o catálogo INTEIRO no select (datalist filtrava e parecia 2 modelos)', () => {
     const onChange = vi.fn<(next: SquadAgent) => void>();
     const host = renderRow(onChange);
@@ -231,6 +275,55 @@ describe('MissionSetupRosterRow', () => {
       ...agent,
       model: 'modelo-novissimo-1.5',
     });
+  });
+});
+
+describe('readyModelsForPicker', () => {
+  it('une lista curta do provider com o bundled do adapter (AGY 3.7 e 3.1 Pro)', () => {
+    const models = readyModelsForPicker({
+      provider: { models: ['gemini-3.6-flash-high'] },
+      adapter: {
+        models: {
+          default: 'gemini-3.7-flash-high',
+          list: [
+            'gemini-3.7-flash-high',
+            'gemini-3.7-flash-medium',
+            'gemini-3.6-flash-high',
+            'gemini-3.1-pro-high',
+          ],
+        },
+      },
+    });
+    expect(models).toEqual([
+      'gemini-3.6-flash-high',
+      'gemini-3.7-flash-high',
+      'gemini-3.7-flash-medium',
+      'gemini-3.1-pro-high',
+    ]);
+  });
+
+  it('une Codex sol/sol-wm com o resto do bundled', () => {
+    const models = readyModelsForPicker({
+      provider: { models: ['gpt-5.6-sol', 'gpt-5.6-sol-wm'] },
+      adapter: {
+        models: {
+          default: 'gpt-5.6-terra',
+          list: [
+            'gpt-5.6-sol',
+            'gpt-5.6-terra',
+            'gpt-5.6-luna',
+            'gpt-5.5',
+          ],
+        },
+      },
+    });
+    expect(models).toEqual([
+      'gpt-5.6-sol',
+      'gpt-5.6-sol-wm',
+      'gpt-5.6-terra',
+      'gpt-5.6-luna',
+      'gpt-5.5',
+    ]);
   });
 });
 

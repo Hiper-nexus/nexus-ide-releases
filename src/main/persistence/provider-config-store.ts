@@ -896,8 +896,10 @@ function toInfo(
   const custom = getCustomModels(adapterId).filter(
     (m) => !adapter.models.list.includes(m),
   );
-  // Modelos vivos reportados pela própria CLI (ex.: kimi provider list) —
-  // modelo novo lançado aparece sem esperar release do Nexus.
+  // adapter.models.list já passou por applyDiscoveredModelsToAdapter e
+  // applyModelCatalogToAdapter no registry refresh. Mas cache discovered é
+  // volátil: um refresh asyncrono pode esvaziar-se se a CLI não responder.
+  // Adicionamos discovered do cache vivo novamente para garantir união durável.
   const staticIds = [...adapter.models.list, ...custom];
   const discovered = discoveredModelsFor(adapterId).filter(
     (m) => !staticIds.includes(m),

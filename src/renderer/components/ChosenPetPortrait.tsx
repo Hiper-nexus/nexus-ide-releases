@@ -7,6 +7,7 @@ import type {
 import { CustomPetSprite } from '../pet/CustomPetSprite';
 import { SheetPetSprite, type SheetAnim } from '../pet/SheetPetSprite';
 import { OperatorSprite, type OperatorMood } from './OperatorSprite';
+import { CoffeeCup } from '../pet/CoffeeCup';
 
 /**
  * Retrato do pet que o cliente escolheu em Definições (sheet / custom / preset).
@@ -91,6 +92,19 @@ export function ChosenPetPortrait({
       />
     );
 
-  if (!className) return body;
-  return <span className={className}>{body}</span>;
+  const compact = size < 40;
+  const cupSize = compact
+    ? Math.min(14, Math.max(12, Math.round(size * 0.4)))
+    : Math.max(12, Math.round(size * 0.55));
+
+  return (
+    <span
+      className={`chosen-pet-portrait${compact ? ' chosen-pet-portrait--compact' : ''}${className ? ` ${className}` : ''}`}
+    >
+      {body}
+      <span className="chosen-pet-portrait__coffee" aria-hidden="true">
+        <CoffeeCup size={cupSize} />
+      </span>
+    </span>
+  );
 }
