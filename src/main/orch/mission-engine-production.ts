@@ -91,6 +91,7 @@ import {
   type MissionAgentTaskFallback,
   type ProjectMissionSnapshotView,
 } from "./mission-snapshot";
+import { resolveOpenMissionQuestion } from "./mission-open-question";
 import { sameMissionPaneAuthoritySeal } from "./mission-pane-authority";
 
 /**
@@ -903,6 +904,11 @@ function projectMissionEngineSnapshotView(
     });
   }
 
+  const openQuestion = resolveOpenMissionQuestion(
+    mission,
+    stores.handoffs.list({ missionId: mission.id, includeDelivered: true }),
+  );
+
   return {
     mission: {
       id: mission.id,
@@ -926,6 +932,7 @@ function projectMissionEngineSnapshotView(
     handoffs: [],
     panes,
     roster,
+    ...(openQuestion ? { openQuestion } : {}),
   };
 }
 
