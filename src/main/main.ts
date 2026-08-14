@@ -775,21 +775,24 @@ if (!wireDeepLinks()) {
         console.warn("[main] managed agent hooks bootstrap failed:", err);
       }
 
-      // Handoff hooks são essenciais para missão — instalados SEM consentimento.
-      // Eles permitem que workers entreguem resultados automaticamente (≤280 chars)
-      // e que o fallback mecânico capture resultados de CLIs sem hook nativo.
+      // Limpeza dos hooks de handoff da 0.32.x (port do Overclock que nunca
+      // rodou no Nexus — ver docstring do handoff-hook-installer). O
+      // fechamento mecânico real vive no Main: turn-end-handoff, acionado
+      // pelo /hook/status quando o turno do worker encerra.
       try {
-        const {
-          installHandoffHookScripts,
-          registerHandoffStopHook,
-        } = await import('./agent-hooks/handoff-hook-installer');
-        const installed = installHandoffHookScripts();
-        if (installed.length > 0) {
-          console.info('[main] handoff hooks instalados:', installed.join(', '));
-          registerHandoffStopHook();
+        const { cleanupLegacyHandoffHooks } = await import(
+          './agent-hooks/handoff-hook-installer'
+        );
+        const { unregistered, deleted } = cleanupLegacyHandoffHooks();
+        if (unregistered || deleted.length > 0) {
+          console.info(
+            '[main] hooks de handoff legados removidos:',
+            unregistered ? 'settings.json' : '',
+            deleted.join(', '),
+          );
         }
       } catch (err) {
-        console.warn('[main] handoff hook install failed:', err);
+        console.warn('[main] handoff hook cleanup failed:', err);
       }
     }
 

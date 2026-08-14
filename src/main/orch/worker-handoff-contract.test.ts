@@ -64,3 +64,50 @@ describe('deteccao de trabalho de UI no charter do worker', () => {
     ).toBe(false);
   });
 });
+
+// C-194.1 (modelo invertido do Overclock): com fechamento mecânico no Main
+// (turn-end-handoff), o contrato do worker de missão vira CONDICIONAL por
+// tamanho — e precisa concordar com o enum da tool (a contradição
+// "sempre chame" × "não chame se couber" era o bug).
+describe('contrato condicional (systemDelivers, C-194.1)', () => {
+  const adapter = { quirks: { mcpAutoload: false, nexusMcp: 'opencode' } };
+
+  it('ensina a regra ≤280 → nenhuma tool, entrega verbatim pelo sistema', () => {
+    const prompt = withHandoffContract('Corrija o fluxo.', adapter, {
+      systemDelivers: true,
+    });
+    expect(prompt).toContain('280 caracteres');
+    expect(prompt).toContain('entregue ao orquestrador AUTOMATICAMENTE');
+    expect(prompt).toContain('NÃO chame ferramenta nenhuma');
+  });
+
+  it('ensina o vocabulário CANÔNICO da tool — nunca done/error', () => {
+    const prompt = withHandoffContract('Corrija o fluxo.', adapter, {
+      systemDelivers: true,
+    });
+    expect(prompt).toContain('"success"|"blocked"|"failed"');
+    expect(prompt).not.toContain('"done"');
+    expect(prompt).not.toContain('"error"');
+  });
+
+  it('NÃO contém a instrução contraditória do contrato clássico', () => {
+    const prompt = withHandoffContract('Corrija o fluxo.', adapter, {
+      systemDelivers: true,
+    });
+    expect(prompt).not.toContain('finalize chamando a tool nexus_handoff_submit');
+  });
+
+  it('mantém peerRead e aceita nx-mail como fallback no modo condicional', () => {
+    const prompt = withHandoffContract('Corrija o fluxo.', adapter, {
+      systemDelivers: true,
+    });
+    expect(prompt).toContain('nexus_pane_read');
+    expect(prompt).toContain('nx-mail send');
+  });
+
+  it('sem a flag, o contrato clássico permanece intacto (regressão)', () => {
+    const prompt = withHandoffContract('Corrija o fluxo.', adapter);
+    expect(prompt).toContain('finalize chamando a tool nexus_handoff_submit');
+    expect(prompt).not.toContain('NÃO chame ferramenta nenhuma');
+  });
+});

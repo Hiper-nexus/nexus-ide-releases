@@ -221,13 +221,19 @@ export class LegacyHandoffDedupe {
 }
 
 /**
- * Overclock Stop-hooks submit `status: "done" | "error"`. Map those onto the
- * Nexus contract so a worker that copied Overclock muscle memory still lands.
+ * Overclock vocabulary (`done`/`error`) mapped onto the Nexus contract at the
+ * boundary. Shared by the PTY marker parser and the MCP tool handler so a
+ * worker that copied Overclock muscle memory — or a doctrine that still
+ * teaches the old enum — lands instead of bouncing off zod.
  */
-function normalizeObservedHandoffStatus(raw: unknown): HandoffStatus | null {
+export function normalizeHandoffStatusInput(raw: unknown): unknown {
   if (raw === 'done') return 'success';
   if (raw === 'error') return 'failed';
-  const parsed = handoffStatusSchema.safeParse(raw);
+  return raw;
+}
+
+function normalizeObservedHandoffStatus(raw: unknown): HandoffStatus | null {
+  const parsed = handoffStatusSchema.safeParse(normalizeHandoffStatusInput(raw));
   return parsed.success ? parsed.data : null;
 }
 

@@ -677,9 +677,13 @@ export function markHandoffSubmitted(ctx: AgentGateContext): void {
 }
 
 /**
- * Stop-gate decision: a worker may only stop after submitting a handoff, or
- * after MAX_STOP_ATTEMPTS blocked attempts (never trap an
- * agent forever). Non-workers are never blocked.
+ * Stop-gate decision. C-194.1: nunca BLOQUEIA o stop. A doutrina do worker é
+ * condicional (resposta ≤280 chars → NÃO chama tool, só encerre o turno — o
+ * fechamento mecânico em turn-end-handoff entrega verbatim), então exigir a
+ * tool antes do stop contradiria o próprio contrato que ensinamos. O
+ * stopAttempts continua contado puramente como observação de workers que
+ * terminam sem handoff confiável; a garantia de entrega é do Main, não do
+ * bloqueio de turno.
  */
 export function evaluateStop(
   ctx: AgentGateContext,
@@ -688,19 +692,11 @@ export function evaluateStop(
   allow: boolean;
   reason?: string;
 } {
-  if (ctx.role !== "worker") return { allow: true };
   ctx.handoffSubmitted = hasTrustedHandoff;
-  if (hasTrustedHandoff) return { allow: true };
-  ctx.stopAttempts += 1;
-  if (ctx.stopAttempts >= MAX_STOP_ATTEMPTS) return { allow: true };
-  return {
-    allow: false,
-    reason:
-      "You must submit your handoff before finishing: call the " +
-      "nexus_handoff_submit tool with {status, summary, evidenceIds}. " +
-      "Only current Nexus-issued evidence satisfies the stop receipt. " +
-      `(attempt ${ctx.stopAttempts}/${MAX_STOP_ATTEMPTS})`,
-  };
+  if (ctx.role === "worker" && !hasTrustedHandoff) {
+    ctx.stopAttempts += 1;
+  }
+  return { allow: true };
 }
 
 /** Test-only: reset module state. */

@@ -118,9 +118,12 @@ describe('token registry + stop gate', () => {
     expect(getContext(b.token)).not.toBeNull();
   });
 
-  it('blocks a worker stop until handoff, then allows', () => {
+  it('C-194.1: never blocks a worker stop — short answers end the turn', () => {
+    // A doutrina do worker é condicional (≤280 chars → NÃO chama tool); o
+    // fechamento mecânico (turn-end-handoff) garante a entrega. Bloquear o
+    // stop contradiria o contrato que o próprio gate serve.
     const ctx = token('w', 'worker');
-    expect(evaluateStop(ctx).allow).toBe(false);
+    expect(evaluateStop(ctx).allow).toBe(true);
     markHandoffSubmitted(ctx);
     expect(evaluateStop(ctx).allow).toBe(true);
   });
@@ -129,17 +132,19 @@ describe('token registry + stop gate', () => {
     const ctx = token('w-stale', 'worker');
     markHandoffSubmitted(ctx);
 
-    expect(evaluateStop(ctx, false).allow).toBe(false);
+    const verdict = evaluateStop(ctx, false);
+    expect(verdict.allow).toBe(true);
     expect(ctx.handoffSubmitted).toBe(false);
   });
 
-  it('gives up blocking after MAX_STOP_ATTEMPTS (never traps an agent)', () => {
+  it('counts stop attempts for observability but still allows', () => {
     const ctx = token('w', 'worker');
     let allowed = false;
     for (let i = 0; i < MAX_STOP_ATTEMPTS; i++) {
       allowed = evaluateStop(ctx).allow;
     }
     expect(allowed).toBe(true);
+    expect(ctx.stopAttempts).toBe(MAX_STOP_ATTEMPTS);
   });
 
   it('never blocks orchestrators or user panes', () => {

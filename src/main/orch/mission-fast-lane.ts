@@ -22,8 +22,9 @@ import { missionEngineForScope } from './mission-engine-registry';
  *
  * Zero tickRun. Zero wasBusy. Zero markerObserver. Zero nudge. Zero respawn.
  * Zero parsing de PRONTO/BLOQUEADO do terminal. O contrato de handoff já é
- * entregue no prompt (withHandoffContract), e os workers chamam
- * nexus_handoff_submit quando terminam.
+ * entregue no prompt (withHandoffContract, variante C-194.1: curta → não
+ * chama tool, o Main entrega verbatim via turn-end-handoff; longa/bloqueio →
+ * nexus_handoff_submit com vocabulário canônico).
  */
 
 /** Intervalo de observação da missão. */
@@ -147,21 +148,9 @@ export function agentPrompt(
           '## WORKER (modelo PULL)',
           '',
           'Você é um worker. Execute a tarefa e entregue o resultado.',
-          'Sua resposta SERÁ ENTREGUE AUTOMATICAMENTE ao orquestrador.',
-          '',
-          '### Como entregar',
-          '- Resposta CURTA (≤280 caracteres): apenas responda e encerre o turno.',
-          '  O sistema captura e entrega VERBATIM — não chame ferramenta nenhuma.',
-          '- Resposta LONGA ou erro: chame nexus_handoff_submit como ÚLTIMA ação:',
-          '  {summary: "1-2 frases — a CONCLUSÃO, não descrição do trabalho",',
-          '   status: "done"|"blocked"|"error",',
-          '   fullText: "sua resposta completa"}',
-          '- NUNCA escreva a resposta num arquivo (a menos que a tarefa peça).',
-          '- NUNCA duplique a resposta em artifacts.',
-          '',
-          '### Depois de chamar handoff_submit',
-          '- Seu turno ACABOU. Uma linha curta de fechamento e PARE.',
-          '- NÃO re-envie, NÃO expanda. O orquestrador já recebeu.',
+          'Sua resposta SERÁ ENTREGUE AUTOMATICAMENTE ao orquestrador — as regras ',
+          'de entrega (quando responder direto e quando chamar nexus_handoff_submit) ',
+          'estão no contrato de handoff no fim deste prompt. Siga ELAS.',
         ].join('\n'),
     resume ? '(Você foi religado após uma tentativa anterior.)' : '',
   ]

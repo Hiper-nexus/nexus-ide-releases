@@ -23,6 +23,13 @@ import {
   type AgentStatusApplyResult,
   type AgentStatusHookMeta,
 } from './agent-status';
+import { handleTurnEndMechanicalHandoff } from './turn-end-handoff';
+
+/** Turn-end callback seam — the default runs the mechanical handoff closure. */
+export type TurnEndHook = (input: {
+  readonly sessionId: string;
+  readonly body: Record<string, unknown>;
+}) => void;
 
 /** Hook payloads are CLI event metadata — 16 KB is generous, not a file drop. */
 export const HOOK_STATUS_MAX_BODY_BYTES = 16 * 1024;
@@ -101,6 +108,9 @@ export function handleHookStatusRequest(
   ctx: Pick<AgentGateContext, 'sessionId'>,
   rawEnvelope: unknown,
   applyEvent: ApplyEventFn = applyCanonicalHookEvent,
+  onTurnEnd: TurnEndHook = (input) => {
+    void handleTurnEndMechanicalHandoff(input);
+  },
 ): HookStatusHandlerResult {
   const parsed = hookStatusEnvelopeSchema.safeParse(rawEnvelope);
   if (!parsed.success) {
@@ -145,6 +155,16 @@ export function handleHookStatusRequest(
       // canonical event intentionally drops (additive; reducer ignores it).
       hook: { eventType, toolName: extractHookToolName(body) },
     });
+    // C-194.1: o turno do worker acabou. Quem garante que a resposta chega ao
+    // orquestrador quando ele NÃO chamou a tool é o fechamento mecânico —
+    // fire-and-forget, nunca no caminho da resposta HTTP nem do reducer.
+    if (
+      event.kind === 'status' &&
+      event.type === 'stop' &&
+      ctx.sessionId
+    ) {
+      onTurnEnd({ sessionId: ctx.sessionId, body });
+    }
     return {
       statusCode: 200,
       payload: {

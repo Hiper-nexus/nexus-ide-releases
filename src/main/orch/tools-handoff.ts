@@ -20,6 +20,7 @@ import {
   type McpToolInvocation,
 } from "./mcp-protocol";
 import { getProjectDomainStores } from "./project-domain-store-registry";
+import { normalizeHandoffStatusInput } from "./legacy-handoff";
 import { requireStr, str } from "./tool-util";
 import { compactText } from "./session-compaction";
 import type { ScopedHandoff } from "./handoff-store";
@@ -98,16 +99,17 @@ const handoffSubmitTool: McpToolDef = {
   description:
     "Submit your work handoff to the orchestrator: " +
     "{status: success|partial|blocked|failed, summary, artifacts?, " +
-    "evidenceIds?}. Always allowed regardless of allowlists. Status and " +
-    "artifacts are untrusted delivery metadata and never complete a mission. " +
-    "Only evidenceIds already issued and bound by Nexus can satisfy the " +
-    "worker stop receipt.",
+    "evidenceIds?}. The Overclock aliases done/error are accepted at the " +
+    "boundary and mapped (done→success, error→failed). Always allowed " +
+    "regardless of allowlists. Status and artifacts are untrusted delivery " +
+    "metadata and never complete a mission. Only evidenceIds already issued " +
+    "and bound by Nexus can satisfy the worker stop receipt.",
   inputSchema: {
     type: "object",
     properties: {
       status: {
         type: "string",
-        enum: ["success", "partial", "blocked", "failed"],
+        enum: ["success", "partial", "blocked", "failed", "done", "error"],
       },
       summary: { type: "string" },
       artifacts: { type: "array", items: {} },
@@ -221,7 +223,9 @@ const handoffSubmitTool: McpToolDef = {
         worktreeHeadSha,
       });
     }
-    const status = handoffStatusSchema.parse(args.status);
+    const status = handoffStatusSchema.parse(
+      normalizeHandoffStatusInput(args.status),
+    );
     assertMcpInvocationCurrent(invocation);
     const fromAgent = ctx.agentName ?? ctx.label;
     const atSeconds = Math.floor(Date.now() / 1000);

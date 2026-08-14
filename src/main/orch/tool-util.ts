@@ -1061,6 +1061,11 @@ export async function spawnPaneAndMaybePrompt(
       : withHandoffContract(options.prompt, adapter, {
           category: options.agentCategory,
           hints: [options.title, options.agentName],
+          // C-194.1: todo worker de missão com MCP tem fechamento mecânico
+          // (turn-end-handoff colhe o fim de turno via /hook/status) — o
+          // contrato ensina a regra condicional, não "sempre chame a tool".
+          systemDelivers:
+            options.role === 'worker' && Boolean(options.missionId),
         })
     : undefined;
   // coordination parity (12/08): prompt entregue no argv de NASCENÇA para TODA

@@ -308,3 +308,56 @@ describe('extractHookToolName', () => {
     expect(name).toHaveLength(HOOK_TOOL_NAME_MAX_LENGTH);
   });
 });
+
+// C-194.1: o Stop canônico dispara o fechamento mecânico (fire-and-forget),
+// com o body cru que o CanonicalHookEvent descarta (last_assistant_message).
+describe('turn-end mechanical handoff trigger', () => {
+  const ctx = { sessionId: 'pty-turn-end' } as const;
+
+  const envelope = (body: Record<string, unknown>) => ({
+    eventType: 'stop',
+    flavor: 'claude',
+    body,
+  });
+
+  it('status/stop entrega sessionId + body cru ao callback de turno', () => {
+    const seen: Array<{ sessionId: string; body: Record<string, unknown> }> = [];
+    const result = handleHookStatusRequest(
+      ctx,
+      envelope({ last_assistant_message: 'pronto', transcript_path: '/t.jsonl' }),
+      undefined,
+      (input) => seen.push(input),
+    );
+    expect(result.statusCode).toBe(200);
+    expect(seen).toHaveLength(1);
+    expect(seen[0].sessionId).toBe('pty-turn-end');
+    expect(seen[0].body.last_assistant_message).toBe('pronto');
+    expect(seen[0].body.transcript_path).toBe('/t.jsonl');
+  });
+
+  it('eventos que não são stop não disparam o fechamento', () => {
+    for (const eventType of ['start', 'notification', 'tool-use']) {
+      const seen: unknown[] = [];
+      const result = handleHookStatusRequest(
+        ctx,
+        { eventType, flavor: 'claude', body: {} },
+        undefined,
+        (input) => seen.push(input),
+      );
+      expect(result.statusCode).toBe(200);
+      expect(seen).toHaveLength(0);
+    }
+  });
+
+  it('sessão sem binding não dispara (mesma regra do reducer)', () => {
+    const seen: unknown[] = [];
+    const result = handleHookStatusRequest(
+      { sessionId: undefined } as unknown as { sessionId: string },
+      envelope({}),
+      undefined,
+      (input) => seen.push(input),
+    );
+    expect(result.statusCode).toBe(200);
+    expect(seen).toHaveLength(0);
+  });
+});

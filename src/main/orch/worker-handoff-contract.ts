@@ -44,6 +44,16 @@ export interface HandoffContractHints {
   category?: string;
   /** Extra corpus (title, agent name) for the UI-task detection. */
   hints?: Array<string | undefined>;
+  /**
+   * C-194.1 (modelo invertido do Overclock): o Main fecha o turno
+   * mecanicamente (turn-end-handoff) quando o worker termina sem chamar a
+   * tool. Com isso, resposta curta (≤280 chars) NÃO chama ferramenta nenhuma —
+   * o sistema entrega verbatim. A tool fica para resposta longa ou
+   * blocked/failed, com o vocabulário canônico do enum. Só deve ser `true`
+   * onde o fechamento mecânico existe (worker de missão com hook de status);
+   * sem isso, ensinar "apenas encerre" perderia a resposta.
+   */
+  systemDelivers?: boolean;
 }
 
 /** Charters only help roles that produce code/UI; for the rest they are noise. */
@@ -91,7 +101,26 @@ export function withHandoffContract(
     'nexus_pane_read com o número falado ("7" ou "pane 7"). Na mesma missão ' +
     'qualquer pane lê o outro, inclusive o orquestrador; panes de outra missão ' +
     'e o terminal do usuário ficam fora. Uma leitura basta — não entre em loop.';
-  const contract = viaMcp
+  // C-194.1: com fechamento mecânico no Main, a regra muda de "sempre chame a
+  // tool" para CONDICIONAL por tamanho — curta viaja verbatim por cópia de
+  // código; longa ou blocked/failed é onde o resumo do modelo tem valor.
+  const systemDeliversContract =
+    viaMcp && hints.systemDelivers === true
+      ? "Sua resposta é entregue ao orquestrador AUTOMATICAMENTE pelo sistema. " +
+        "Responda normalmente neste pane, exatamente UMA vez (nunca em arquivo " +
+        "ou artifacts, a menos que a tarefa peça). Se a resposta inteira couber " +
+        "em 280 caracteres, apenas RESPONDA e ENCERRE o turno — o sistema " +
+        "entrega verbatim; NÃO chame ferramenta nenhuma e NÃO repita a resposta. " +
+        "SOMENTE quando a resposta NÃO couber em 280 caracteres (ou você " +
+        "estiver bloqueado / tiver batido num erro), chame nexus_handoff_submit " +
+        "como ÚLTIMA ação: " +
+        '{summary: "1-2 frases — sua condensação da resposta (ou do bloqueio), ' +
+        'na língua da tarefa", status: "success"|"blocked"|"failed", ' +
+        'artifacts: [{fullText: "sua resposta completa, inalterada"}]}. ' +
+        "Depois, uma linha curta de fechamento e PARE — não re-envie, não expanda. " +
+        shimFallback
+      : null;
+  const contract = systemDeliversContract ?? (viaMcp
     ? 'Ao concluir sua tarefa, finalize chamando a tool nexus_handoff_submit ' +
       'com {status: "success"|"partial"|"failed", summary, artifacts}. ' +
       shimFallback
@@ -100,7 +129,7 @@ export function withHandoffContract(
       " Se nx-mail também estiver indisponível, imprima EXATAMENTE este bloco " +
       "como texto no terminal (é o fallback físico final):\n" +
       `${LEGACY_MARKER}\n` +
-      '{"status":"success","summary":"<resumo objetivo do que fez>","artifacts":[]}';
+      '{"status":"success","summary":"<resumo objetivo do que fez>","artifacts":[]}');
   // Disciplina em camadas (toggles em Configurações › Squads): a Carta de
   // Engenharia dita o comportamento sênior (stack certa, gates verdes,
   // segurança, spec viva); o ponytail dita o tamanho do diff. O tier por

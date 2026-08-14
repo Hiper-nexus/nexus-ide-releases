@@ -8,6 +8,7 @@ import {
   LegacyHandoffDedupe,
   LegacyHandoffParser,
   type LegacyHandoffPayload,
+  normalizeHandoffStatusInput,
 } from './legacy-handoff';
 
 function collect(): {
@@ -310,5 +311,19 @@ describe('LegacyHandoffDedupe', () => {
     now += 5_000;
     expect(dedupe.isDuplicate('s1', payload)).toBe(false); // limpo
     expect(dedupe.isDuplicate('s2', payload)).toBe(true); // preservado
+  });
+});
+
+describe('normalizeHandoffStatusInput (aliases do Overclock na fronteira)', () => {
+  it('mapeia done→success e error→failed', () => {
+    expect(normalizeHandoffStatusInput('done')).toBe('success');
+    expect(normalizeHandoffStatusInput('error')).toBe('failed');
+  });
+
+  it('preserva o vocabulário canônico e valores inválidos (zod decide)', () => {
+    expect(normalizeHandoffStatusInput('success')).toBe('success');
+    expect(normalizeHandoffStatusInput('partial')).toBe('partial');
+    expect(normalizeHandoffStatusInput('banana')).toBe('banana');
+    expect(normalizeHandoffStatusInput(undefined)).toBe(undefined);
   });
 });

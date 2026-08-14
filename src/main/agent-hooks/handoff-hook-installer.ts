@@ -1,80 +1,37 @@
 /**
- * Instalador dos hooks de handoff no filesystem do usuário.
+ * Limpeza dos hooks de handoff legados (0.32.x) — port decomissionado.
  *
- * Os scripts (handoff-stop.mjs, handoff-deliver.mjs, soft-status.mjs) são
- * copiados do bundle para ~/.nexus/agent-hooks/ e registrados como Stop hooks
- * no ~/.claude/settings.json. Não interfere com o hook-service existente.
+ * Entre a 0.32.x e a substituição pelo fechamento mecânico no Main
+ * (src/main/orch/turn-end-handoff.ts), este módulo INSTALAVA cópias dos
+ * scripts handoff-stop.mjs / handoff-deliver.mjs / soft-status.mjs (port
+ * quase verbatim do Overclock) em ~/.nexus/agent-hooks/ e os registrava
+ * como Stop hooks GLOBAIS no ~/.claude/settings.json do usuário.
  *
- * Modelo: mesmo padrão dos hooks do modelo (~/.nexus/hooks/*.mjs).
+ * O port nunca funcionou no Nexus: os scripts liam env vars que o spawn
+ * não define (NEXUS_PANE_ID/NEXUS_CALLER_PANE_ID), resolviam caminhos com
+ * til literal ("~/.nexus/hooks") e o endpoint MCP com o nome de servidor
+ * do Overclock — saíam exit 0 para todo pane. Em build empacotado nem
+ * chegavam a existir (extraResource nunca copiou "hooks"); só máquinas de
+ * dev receberam os arquivos e o registro global.
  *
- * Shebang polyglot: os hooks usam um wrapper `#!/bin/sh` + linha 2 que
- * re-executa o script sob Node. A fonte mantém o placeholder literal
- * `exec process.execPath` (não-resolvível pelo shell); o installer interpola
- * o caminho absoluto do Node do Electron no momento da cópia, espelhando o
- * sidecar do Overclock (`exec '/Applications/Overclock.app/.../node' "$0"`).
- * Sem essa interpolação o shell tenta `exec` a string literal "process.execPath"
- * e emite `exec: process.execPath: not found` — hook nunca roda.
+ * Este módulo agora é o limpador idempotente daquele estado: remove do
+ * ~/.claude/settings.json qualquer hook cujo comando aponte para
+ * ~/.nexus/agent-hooks/handoff-* e apaga os arquivos. Roda no boot; falha
+ * silenciosa (best-effort) — limpeza nunca bloqueia a missão.
  */
 
-import { app } from 'electron';
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-const HANDOFF_HOOK_FILES = [
+/** Arquivos que a 0.32.x copiava para ~/.nexus/agent-hooks/. */
+export const LEGACY_HANDOFF_HOOK_FILES = [
   'handoff-stop.mjs',
   'handoff-deliver.mjs',
   'soft-status.mjs',
 ] as const;
 
-/**
- * Token literal no shebang polyglot da fonte. O installer o substitui pelo
- * caminho absoluto do Node do Electron em runtime. Manter como string nomeada
- * facilita o grep e o teste unitário da interpolação.
- */
-const SHEBANG_NODE_PLACEHOLDER = 'exec process.execPath';
-
-/**
- * Interpola o caminho absoluto do Node no shebang polyglot de um hook.
- * Espelha o sidecar do Overclock: `exec '/path/to/node' "$0" "$@"`.
- *
- * Puramente funcional (sem I/O nem electron) para ser unit-testável. Retorna
- * o conteúdo inalterado se o placeholder não estiver presente (hook já
- * interpolado, ou conteúdo não-polyglot).
- *
- * Em runtime do Electron empacotado, `process.execPath` é o binário do
- * Electron, não node puro — precisa ser invocado com `ELECTRON_RUN_AS_NODE=1`
- * (mesma convenção de `acp-mcp-stdio-bridge.ts:132`) para rodar um script
- * `.mjs` em vez de abrir uma janela. Quando `runAsNode === true` o shebang
- * interpolado envolve com `env ELECTRON_RUN_AS_NODE=1`.
- */
-export function interpolateHookShebangNodePath(
-  sourceContent: string,
-  nodePath: string,
-  runAsNode = false,
-): string {
-  if (!sourceContent.includes(SHEBANG_NODE_PLACEHOLDER)) {
-    return sourceContent;
-  }
-  // Aspas simples + escape POSIX de aspas internas (compatível com /bin/sh).
-  const quoted = `'${nodePath.replaceAll("'", "'\\''")}'`;
-  const execCommand = runAsNode
-    ? `exec env ELECTRON_RUN_AS_NODE=1 ${quoted}`
-    : `exec ${quoted}`;
-  return sourceContent.replaceAll(SHEBANG_NODE_PLACEHOLDER, execCommand);
-}
-
-/**
- * Detecta em runtime se o processo atual é o Electron (não node puro).
- * `process.versions.electron` só existe dentro do Electron; node puro não o
- * define. Usado para decidir se o shebang interpolado precisa do wrapper
- * `ELECTRON_RUN_AS_NODE=1`.
- */
-function isRunningAsElectron(): boolean {
-  return typeof (process.versions as { electron?: string }).electron === 'string';
-}
-
-function nexusHooksDir(home: string): string {
+function nexusAgentHooksDir(home: string): string {
   return join(home, '.nexus', 'agent-hooks');
 }
 
@@ -82,87 +39,86 @@ function claudeSettingsPath(home: string): string {
   return join(home, '.claude', 'settings.json');
 }
 
-/**
- * Copia os arquivos .mjs do bundle para ~/.nexus/agent-hooks/, interpolando
- * o caminho absoluto do Node no shebang polyglot (necessário — ver docstring
- * do módulo). Não sobrescreve se o conteúdo interpolado for idêntico ao
- * destino (evita invalidar cache e re-interpolar em cada bootstrap).
- */
-export function installHandoffHookScripts(home = homedir()): string[] {
-  const destDir = nexusHooksDir(home);
-  mkdirSync(destDir, { recursive: true, mode: 0o700 });
-
-  // No dev: __dirname aponta pra src/main/orch/hooks/.
-  // No bundle: os hooks estão em resources/hooks/ ou app.asar.
-  const sourceDir = app.isPackaged
-    ? join(process.resourcesPath, 'hooks')
-    : join(app.getAppPath(), 'src', 'main', 'orch', 'hooks');
-
-  const installed: string[] = [];
-  for (const filename of HANDOFF_HOOK_FILES) {
-    const dest = join(destDir, filename);
-    try {
-      const src = join(sourceDir, filename);
-      if (!existsSync(src)) continue;
-      const rawContent = readFileSync(src, 'utf8');
-      const content = interpolateHookShebangNodePath(
-        rawContent,
-        process.execPath,
-        isRunningAsElectron(),
-      );
-      if (existsSync(dest) && readFileSync(dest, 'utf8') === content) continue;
-      writeFileSync(dest, content, { encoding: 'utf8', mode: 0o755 });
-      try { chmodSync(dest, 0o755); } catch { /* best-effort */ }
-      installed.push(filename);
-    } catch {
-      // Best-effort: não bloqueia o bootstrap por causa de hook.
-    }
-  }
-  return installed;
+/** O comando do hook aponta para o nosso diretório legado de agent-hooks? */
+function isLegacyHandoffHookCommand(command: unknown): boolean {
+  if (typeof command !== 'string') return false;
+  const normalized = command.replaceAll('\\', '/');
+  return normalized.includes('.nexus/agent-hooks/handoff-');
 }
 
 /**
- * Registra os hooks de handoff no ~/.claude/settings.json como Stop hooks
- * adicionais. Não remove hooks existentes — só adiciona os de handoff.
+ * Remove do ~/.claude/settings.json os Stop hooks registrados pela 0.32.x.
+ * Aditivo no resto: qualquer outro hook (do usuário, de outros produtos)
+ * permanece intocado. Retorna true quando reescreveu o arquivo.
  */
-export function registerHandoffStopHook(home = homedir()): boolean {
+export function removeLegacyHandoffHookRegistration(
+  home = homedir(),
+): boolean {
   const settingsPath = claudeSettingsPath(home);
-  if (!existsSync(settingsPath)) return false;
-
+  let settings: Record<string, unknown>;
   try {
-    const settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
-    const hooks = settings.hooks ?? {};
-    const stopHooks: Array<Record<string, unknown>> = Array.isArray(hooks.Stop)
-      ? hooks.Stop
-      : [];
-
-    const handoffCmd = join(nexusHooksDir(home), 'handoff-stop.mjs');
-    const deliverCmd = join(nexusHooksDir(home), 'handoff-deliver.mjs');
-
-    // Verifica se já existe um hook de handoff registrado.
-    const hasHandoff = stopHooks.some((def) => {
-      const cmdList = Array.isArray(def.hooks) ? def.hooks : [];
-      return cmdList.some(
-        (h: Record<string, unknown>) =>
-          typeof h.command === 'string' &&
-          (h.command.includes('handoff-stop') || h.command.includes('handoff-deliver')),
-      );
-    });
-
-    if (!hasHandoff) {
-      stopHooks.push({
-        hooks: [
-          { type: 'command', command: handoffCmd, timeout: 15000 },
-          { type: 'command', command: deliverCmd, timeout: 15000 },
-        ],
-      });
-      hooks.Stop = stopHooks;
-      settings.hooks = hooks;
-      writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
-      return true;
-    }
+    settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
   } catch {
-    // Falha silenciosa — hooks não bloqueiam a missão.
+    return false; // ausente ou ilegível — nada registrado para limpar
   }
-  return false;
+  const hooks = settings.hooks as Record<string, unknown> | undefined;
+  const stopGroups = hooks?.Stop;
+  if (!Array.isArray(stopGroups)) return false;
+
+  let removed = false;
+  const cleaned = stopGroups.filter((group) => {
+    if (typeof group !== 'object' || group === null) return true;
+    const entries = (group as { hooks?: unknown }).hooks;
+    if (!Array.isArray(entries)) return true;
+    const kept = entries.filter(
+      (entry: Record<string, unknown>) =>
+        !isLegacyHandoffHookCommand(entry?.command),
+    );
+    if (kept.length !== entries.length) removed = true;
+    if (kept.length === 0) return false; // grupo ficou vazio → sai
+    (group as { hooks: unknown }).hooks = kept;
+    return true;
+  });
+
+  if (!removed) return false;
+  (hooks as Record<string, unknown>).Stop = cleaned;
+  try {
+    writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Apaga os scripts legados de ~/.nexus/agent-hooks/. Retorna os nomes
+ * removidos (vazio quando não havia nada — boot idempotente).
+ */
+export function deleteLegacyHandoffHookScripts(home = homedir()): string[] {
+  const dir = nexusAgentHooksDir(home);
+  const deleted: string[] = [];
+  for (const filename of LEGACY_HANDOFF_HOOK_FILES) {
+    const target = join(dir, filename);
+    try {
+      if (!existsSync(target)) continue;
+      rmSync(target, { force: true });
+      deleted.push(filename);
+    } catch {
+      // best-effort: um arquivo preso não bloqueia os demais nem o boot
+    }
+  }
+  return deleted;
+}
+
+/** Boot-time: uma chamada, idempotente, nunca lança. */
+export function cleanupLegacyHandoffHooks(
+  home = homedir(),
+): { unregistered: boolean; deleted: string[] } {
+  try {
+    const unregistered = removeLegacyHandoffHookRegistration(home);
+    const deleted = deleteLegacyHandoffHookScripts(home);
+    return { unregistered, deleted };
+  } catch {
+    return { unregistered: false, deleted: [] };
+  }
 }

@@ -113,6 +113,7 @@ import {
   initWorkerHandoffTtl,
   shutdownWorkerHandoffTtl,
 } from "./worker-handoff-ttl";
+import { startTurnEndHandoffClosure } from "./turn-end-handoff";
 import {
   initWorkerHandoffEnforcement,
   shutdownWorkerHandoffEnforcement,
@@ -1458,6 +1459,10 @@ export async function initOrchestration(): Promise<void> {
     initIdleDelivery();
     initAgentWaitingBroadcast();
     initWorkerHandoffTtl();
+    // C-194.1: fechamento mecânico de turno (turn-end-handoff) — captura a
+    // fronteira de turno que o dedup por turno precisa, antes do primeiro
+    // Stop chegar. Idempotente.
+    startTurnEndHandoffClosure();
     // Garantia de handoff (Stop-hook do modelo): worker que trabalha e fica
     // mudo não pode matar a missão em silêncio. DEFAULT-OFF: a Via Rápida
     // supervisiona os workers (boot nudge 90s, stall watchdog → blocked) e
