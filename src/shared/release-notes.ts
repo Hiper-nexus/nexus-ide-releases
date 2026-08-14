@@ -18,7 +18,8 @@ export const CURRENT_RELEASE: AppRelease = {
   codename: 'Jarvis responde',
   summary:
     'Gate realtime aceita XAI_API_KEY. O box mini arrasta ' +
-    'na OverlayLayer. Sem chave aparece no HUD.',
+    'na OverlayLayer. Providers mostram estado e um CTA ' +
+    'por CLI. Claude usa claude auth login.',
   highlights: [
     {
       title: 'Grok no gate realtime',
@@ -31,6 +32,13 @@ export const CURRENT_RELEASE: AppRelease = {
       detail:
         'O pill mora na OverlayLayer e o pointer não some ' +
         'no meio do arrasto.',
+    },
+    {
+      title: 'Login das CLIs honesto',
+      detail:
+        'Cada ferramenta mostra conectado / precisa login ' +
+        'e um CTA por linha. Claude entra com ' +
+        'claude auth login.',
     },
   ],
   fixes: [
