@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 /**
- * A lata tem que ler como lata (cilindro, tampa, faixa) — não caneca.
+ * A lata tem que ler como energético (cilindro, tampa, slash, NEXUS) — não caneca.
  * O derrame é pour curto no canto, nunca uma onda do teto ao chão.
  */
 import { act, type ReactNode } from 'react';
@@ -29,10 +29,17 @@ function viewBoxSize(svg: SVGElement | null): { w: number; h: number } {
   return { w: Number(parts[2]), h: Number(parts[3]) };
 }
 
+function pathCoords(d: string): { x: number; y: number }[] {
+  const nums = [...d.matchAll(/-?\d+(?:\.\d+)?/g)].map((match) => Number(match[0]));
+  const pts: { x: number; y: number }[] = [];
+  for (let i = 0; i + 1 < nums.length; i += 2) {
+    pts.push({ x: nums[i], y: nums[i + 1] });
+  }
+  return pts;
+}
+
 function pathYs(d: string): number[] {
-  return [...d.matchAll(/-?\d+(?:\.\d+)?/g)]
-    .map((match, index) => (index % 2 === 1 ? Number(match[0]) : null))
-    .filter((value): value is number => value !== null);
+  return pathCoords(d).map((pt) => pt.y);
 }
 
 afterEach(() => {
@@ -42,7 +49,7 @@ afterEach(() => {
 });
 
 describe('CoffeeCup — silhueta de lata', () => {
-  it('é um cilindro mais alto que largo, com corpo, faixa, tampa e lacre', () => {
+  it('é um cilindro mais alto que largo, com corpo, slash, tampa e lacre', () => {
     const host = render(<CoffeeCup size={52} />);
     const svg = host.querySelector<SVGElement>('svg.pet-coffee');
     expect(svg, 'lata SVG ausente').not.toBeNull();
@@ -64,8 +71,9 @@ describe('CoffeeCup — silhueta de lata', () => {
     const ring = host.querySelector('.pet-coffee__tab-ring');
     expect(ring, 'anel do lacre ausente').not.toBeNull();
     const cx = Number(ring?.getAttribute('cx'));
-    expect(cx, 'lacre deslocado para o lado como alça').toBeGreaterThanOrEqual(11);
-    expect(cx, 'lacre deslocado para o lado como alça').toBeLessThanOrEqual(13);
+    const box = viewBoxSize(host.querySelector('svg.pet-coffee'));
+    expect(cx, 'lacre deslocado para o lado como alça').toBeGreaterThanOrEqual(box.w / 2 - 2);
+    expect(cx, 'lacre deslocado para o lado como alça').toBeLessThanOrEqual(box.w / 2 + 2);
     expect(host.querySelector('.pet-coffee__handle')).toBeNull();
     expect(host.querySelector('.pet-coffee__steam')).toBeNull();
   });
@@ -78,6 +86,29 @@ describe('CoffeeCup — silhueta de lata', () => {
       expect(node.tagName.toLowerCase()).toBe('circle');
     }
     expect(host.querySelector('path.pet-coffee__fizz')).toBeNull();
+  });
+
+  it('faixa operacional é slash diagonal, não rótulo horizontal', () => {
+    const host = render(<CoffeeCup size={52} />);
+    const band = host.querySelector('.pet-coffee__band');
+    expect(band?.tagName.toLowerCase()).toBe('path');
+    const pts = pathCoords(band?.getAttribute('d') ?? '');
+    const dx = Math.max(...pts.map((pt) => pt.x)) - Math.min(...pts.map((pt) => pt.x));
+    const dy = Math.max(...pts.map((pt) => pt.y)) - Math.min(...pts.map((pt) => pt.y));
+    expect(dx, 'slash curto demais no eixo x').toBeGreaterThanOrEqual(16);
+    expect(dy, 'slash não desce na diagonal').toBeGreaterThanOrEqual(12);
+  });
+
+  it('leva wordmark NEXUS e selo energético nosso — sem marca terceira', () => {
+    const host = render(<CoffeeCup size={52} />);
+    const mark = host.querySelector('.pet-coffee__mark');
+    expect(mark, 'wordmark NEXUS ausente').not.toBeNull();
+    expect(mark?.getAttribute('data-word')).toBe('NEXUS');
+    expect(mark?.textContent).toBe('NEXUS');
+    expect(host.querySelector('.pet-coffee__seal-ring'), 'anel do selo ausente').not.toBeNull();
+    expect(host.querySelector('.pet-coffee__seal-bolt'), 'raio do selo ausente').not.toBeNull();
+    expect(host.querySelector('.pet-coffee__claw')).toBeNull();
+    expect(host.textContent ?? '').not.toMatch(/monster/i);
   });
 });
 

@@ -4,17 +4,17 @@
    vivo (estado). A janela do pet @importa este arquivo. */
 
 .pet-coffee__body {
-  fill: color-mix(in srgb, var(--text, #faf7f9) 16%, var(--bg, #080709));
-  stroke: color-mix(in srgb, var(--text, #faf7f9) 34%, var(--bg, #080709));
+  fill: color-mix(in srgb, var(--text, #faf7f9) 5%, var(--bg, #080709));
+  stroke: color-mix(in srgb, var(--text, #faf7f9) 20%, var(--bg, #080709));
   stroke-width: 0.7;
 }
 
 .pet-coffee__shade {
-  fill: color-mix(in srgb, var(--text, #faf7f9) 9%, var(--bg, #080709));
+  fill: color-mix(in srgb, var(--bg, #080709) 72%, transparent);
 }
 
 .pet-coffee__sheen {
-  fill: color-mix(in srgb, var(--text, #faf7f9) 24%, transparent);
+  fill: color-mix(in srgb, var(--text, #faf7f9) 18%, transparent);
 }
 
 .pet-coffee__band {
@@ -22,29 +22,34 @@
 }
 
 .pet-coffee__band-edge {
-  fill: color-mix(in srgb, var(--gold, #ffd166) 42%, var(--ok, #7ee2a8));
+  fill: color-mix(in srgb, var(--text, #faf7f9) 28%, var(--ok, #7ee2a8));
 }
 
-.pet-coffee__seal {
+.pet-coffee__seal-ring {
   fill: none;
-  stroke: var(--bg, #080709);
-  stroke-width: 0.85;
+  stroke: var(--ok, #7ee2a8);
+  stroke-width: 0.7;
 }
 
-.pet-coffee__seal-core {
+.pet-coffee__seal-bolt {
+  fill: var(--ok, #7ee2a8);
+}
+
+.pet-coffee__mark {
   fill: var(--bg, #080709);
+  font-family: var(--font-ui, Inter, ui-sans-serif, sans-serif);
 }
 
 .pet-coffee__base {
-  fill: color-mix(in srgb, var(--bg, #080709) 70%, var(--text, #faf7f9));
+  fill: color-mix(in srgb, var(--text, #faf7f9) 38%, var(--bg, #080709));
 }
 
 .pet-coffee__neck {
-  fill: color-mix(in srgb, var(--text, #faf7f9) 22%, var(--bg, #080709));
+  fill: color-mix(in srgb, var(--text, #faf7f9) 28%, var(--bg, #080709));
 }
 
 .pet-coffee__lid {
-  fill: color-mix(in srgb, var(--text, #faf7f9) 46%, var(--bg, #080709));
+  fill: color-mix(in srgb, var(--text, #faf7f9) 78%, var(--bg, #080709));
   transform-box: fill-box;
   transform-origin: center;
   animation: pet-lid 3.2s ease-in-out infinite;
@@ -52,20 +57,20 @@
 
 .pet-coffee__rim {
   fill: none;
-  stroke: color-mix(in srgb, var(--gold, #ffd166) 48%, var(--text, #faf7f9));
+  stroke: color-mix(in srgb, var(--text, #faf7f9) 88%, var(--gold, #ffd166));
 }
 
 .pet-coffee__mouth {
-  fill: color-mix(in srgb, var(--bg, #080709) 88%, var(--text, #faf7f9));
+  fill: color-mix(in srgb, var(--bg, #080709) 82%, var(--text, #faf7f9));
 }
 
 .pet-coffee__tab-stem {
-  fill: color-mix(in srgb, var(--text, #faf7f9) 62%, var(--bg, #080709));
+  fill: color-mix(in srgb, var(--text, #faf7f9) 86%, var(--bg, #080709));
 }
 
 .pet-coffee__tab-ring {
   fill: none;
-  stroke: color-mix(in srgb, var(--text, #faf7f9) 68%, var(--bg, #080709));
+  stroke: color-mix(in srgb, var(--text, #faf7f9) 90%, var(--bg, #080709));
 }
 
 .pet-coffee__tab {
@@ -222,16 +227,12 @@
 }
 
 .chosen-pet-portrait--compact .pet-coffee__bead,
-.chosen-pet-portrait--compact .pet-coffee__seal,
-.chosen-pet-portrait--compact .pet-coffee__seal-core,
 .chosen-pet-portrait--compact .pet-coffee__shade,
 .chosen-pet-portrait--compact .pet-coffee__band-edge,
 .chosen-pet-portrait--compact .pet-coffee__ground,
 .chosen-pet-portrait--compact .pet-coffee__drip,
 .chosen-pet-portrait--compact .pet-coffee__fizz,
-.chosen-pet-portrait--compact .pet-coffee__tab,
-.chosen-pet-portrait--compact .pet-coffee__neck,
-.chosen-pet-portrait--compact .pet-coffee__base {
+.chosen-pet-portrait--compact .pet-coffee__neck {
   animation: none;
   opacity: 0;
 }
@@ -307,8 +308,8 @@
 }
 
 .spill__can-body {
-  fill: color-mix(in srgb, var(--text, #faf7f9) 16%, var(--bg, #080709));
-  stroke: color-mix(in srgb, var(--text, #faf7f9) 32%, var(--bg, #080709));
+  fill: color-mix(in srgb, var(--text, #faf7f9) 5%, var(--bg, #080709));
+  stroke: color-mix(in srgb, var(--text, #faf7f9) 20%, var(--bg, #080709));
   stroke-width: 0.6;
 }
 
@@ -325,7 +326,7 @@
 }
 
 .spill__can-lid {
-  fill: color-mix(in srgb, var(--text, #faf7f9) 46%, var(--bg, #080709));
+  fill: color-mix(in srgb, var(--text, #faf7f9) 78%, var(--bg, #080709));
 }
 
 .spill__can-mouth {

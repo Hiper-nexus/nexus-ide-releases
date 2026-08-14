@@ -1,12 +1,17 @@
 /**
  * Lata de energético nossa — delight "abre e ferve" do pet.
  * Puro SVG+CSS; sem emoji, sem asset externo. aria-hidden por ser decoração.
- * Cilindro metálico + tampa + faixa operacional (`--ok`). Sem logo, sem
- * garra, sem wordmark de marca terceira. Motion e derrame em coffee-cup.css.
+ * Cilindro preto + tampa prata + slash `--ok` + wordmark NEXUS.
+ * Sem garra, sem wordmark de marca terceira. Motion em coffee-cup.css.
  * Em prefers-reduced-motion a lata fica estática.
  */
 
 import { useId } from 'react';
+
+const CAN_VB_W = 28;
+const CAN_VB_H = 52;
+const CAN_BODY =
+  'M 7.2 11.4 L 5.2 13.8 L 5.2 45.6 L 7.2 48.1 L 20.8 48.1 L 22.8 45.6 L 22.8 13.8 L 20.8 11.4 Z';
 
 /**
  * Derrame de energético no canto do pane focado.
@@ -26,12 +31,12 @@ export function CoffeeSpillCorner({ className }: { className?: string } = {}) {
       aria-hidden="true"
     >
       <g className="spill__can">
-        <rect className="spill__can-body" x="42" y="4" width="14" height="26" rx="2" />
-        <rect className="spill__can-shade" x="51.2" y="5.6" width="3.2" height="22.4" rx="1" />
-        <rect className="spill__can-sheen" x="43.4" y="6" width="1.7" height="20" rx="0.7" />
-        <rect className="spill__can-band" x="42" y="12.4" width="14" height="6.2" />
-        <ellipse className="spill__can-lid" cx="49" cy="4.3" rx="7.2" ry="2.1" />
-        <ellipse className="spill__can-mouth" cx="49" cy="4.5" rx="4.6" ry="1.1" />
+        <rect className="spill__can-body" x="43" y="3.2" width="13" height="27.2" rx="1.6" />
+        <rect className="spill__can-shade" x="51.6" y="4.8" width="3" height="23.6" rx="1" />
+        <rect className="spill__can-sheen" x="44.2" y="5.2" width="1.5" height="21" rx="0.6" />
+        <path className="spill__can-band" d="M 41.6 9.2 L 57.4 18.4 L 57.4 22.2 L 41.6 13 Z" />
+        <ellipse className="spill__can-lid" cx="49.5" cy="3.4" rx="6.8" ry="2.15" />
+        <ellipse className="spill__can-mouth" cx="49.5" cy="3.55" rx="4.2" ry="1.05" />
       </g>
       {/* Um arco da boca à poça — pour curto, não onda vertical. */}
       <path
@@ -64,11 +69,11 @@ interface CoffeeCupProps {
 export function CoffeeCup({ size = 32, celebrating = false }: CoffeeCupProps) {
   const rawId = useId();
   const clipId = `can-body-${rawId.replace(/:/g, '')}`;
-  const w = Math.round(size * (24 / 48));
+  const w = Math.round(size * (CAN_VB_W / CAN_VB_H));
   const h = size;
   return (
     <svg
-      viewBox="0 0 24 48"
+      viewBox={`0 0 ${CAN_VB_W} ${CAN_VB_H}`}
       fill="none"
       width={w}
       height={h}
@@ -77,49 +82,70 @@ export function CoffeeCup({ size = 32, celebrating = false }: CoffeeCupProps) {
     >
       <defs>
         <clipPath id={clipId}>
-          <rect x="5" y="12" width="14" height="32" rx="1.8" />
+          <path d={CAN_BODY} />
         </clipPath>
       </defs>
-      <ellipse className="pet-coffee__ground" cx="12" cy="46.4" rx="8" ry="1.15" />
-      <rect className="pet-coffee__body" x="5" y="12" width="14" height="32" rx="1.8" />
-      <ellipse className="pet-coffee__base" cx="12" cy="43.8" rx="7" ry="1.35" />
+      <ellipse className="pet-coffee__ground" cx="14" cy="50.4" rx="8.4" ry="1.1" />
+      <path className="pet-coffee__body" d={CAN_BODY} />
+      <ellipse className="pet-coffee__base" cx="14" cy="47.9" rx="7.6" ry="1.3" />
       <g clipPath={`url(#${clipId})`}>
-        <rect className="pet-coffee__shade" x="15.4" y="13.2" width="2.8" height="29.2" rx="1" />
-        <rect className="pet-coffee__sheen" x="6.1" y="13.6" width="1.7" height="26.8" rx="0.8" />
-        <rect className="pet-coffee__neck" x="5" y="14.2" width="14" height="1.2" />
-        <rect className="pet-coffee__band" x="5" y="22.4" width="14" height="8.2" />
-        <rect className="pet-coffee__band-edge" x="5" y="22.4" width="14" height="0.85" />
-        <circle className="pet-coffee__seal" cx="12" cy="26.5" r="1.7" />
-        <circle className="pet-coffee__seal-core" cx="12" cy="26.5" r="0.6" />
-        <circle className="pet-coffee__bead pet-coffee__bead--a" cx="7.2" cy="34.2" r="0.7" />
-        <circle className="pet-coffee__bead pet-coffee__bead--b" cx="17" cy="32.4" r="0.5" />
-        <circle className="pet-coffee__bead pet-coffee__bead--c" cx="7.6" cy="39.6" r="0.4" />
+        <rect className="pet-coffee__shade" x="18.6" y="13.4" width="3.4" height="32.4" rx="1" />
+        <rect className="pet-coffee__sheen" x="6.2" y="14" width="1.7" height="29.6" rx="0.7" />
+        <rect className="pet-coffee__neck" x="5.2" y="13.6" width="17.6" height="1.25" />
+        {/* Faixa operacional diagonal — um slash, não garra. */}
+        <path className="pet-coffee__band" d="M 1.4 16.2 L 26.6 35.4 L 26.6 44.8 L 1.4 25.6 Z" />
+        <path className="pet-coffee__band-edge" d="M 1.4 16.2 L 26.6 35.4 L 26.6 36.7 L 1.4 17.5 Z" />
+        {/* Selo energético original: anel + raio. */}
+        <g className="pet-coffee__seal" transform="translate(14 20.2)">
+          <circle className="pet-coffee__seal-ring" r="2.55" />
+          <path
+            className="pet-coffee__seal-bolt"
+            d="M 0.15 -1.7 L 1.05 -1.7 L 0.2 0.05 L 0.95 0.05 L -0.4 1.75 L 0.12 0.48 L -0.85 0.48 Z"
+          />
+        </g>
+        <text
+          className="pet-coffee__mark"
+          data-word="NEXUS"
+          x="14"
+          y="34.8"
+          textAnchor="middle"
+          fontSize="8.6"
+          fontWeight="650"
+          letterSpacing="-0.18"
+          textLength="16.8"
+          lengthAdjust="spacingAndGlyphs"
+        >
+          NEXUS
+        </text>
+        <circle className="pet-coffee__bead pet-coffee__bead--a" cx="7.4" cy="41.2" r="0.65" />
+        <circle className="pet-coffee__bead pet-coffee__bead--b" cx="20.4" cy="39.6" r="0.48" />
+        <circle className="pet-coffee__bead pet-coffee__bead--c" cx="8" cy="44.8" r="0.38" />
       </g>
-      <ellipse className="pet-coffee__lid" cx="12" cy="12.05" rx="7.3" ry="2.25" />
+      <ellipse className="pet-coffee__lid" cx="14" cy="11.35" rx="8.2" ry="2.45" />
       <ellipse
         className="pet-coffee__rim"
-        cx="12"
-        cy="11.9"
-        rx="7.3"
-        ry="2.25"
-        strokeWidth="0.6"
+        cx="14"
+        cy="11.2"
+        rx="8.2"
+        ry="2.45"
+        strokeWidth="0.7"
       />
-      <ellipse className="pet-coffee__mouth" cx="12" cy="12.2" rx="4.6" ry="1.15" />
+      <ellipse className="pet-coffee__mouth" cx="14" cy="11.45" rx="5.1" ry="1.2" />
       <g className="pet-coffee__tab">
         <ellipse
           className="pet-coffee__tab-ring"
-          cx="12"
-          cy="11.15"
-          rx="1.45"
-          ry="0.78"
-          strokeWidth="0.6"
+          cx="14"
+          cy="10.25"
+          rx="2.05"
+          ry="1.05"
+          strokeWidth="0.72"
         />
-        <rect className="pet-coffee__tab-stem" x="11.35" y="11.7" width="1.3" height="0.55" rx="0.25" />
+        <rect className="pet-coffee__tab-stem" x="13.15" y="11.05" width="1.7" height="0.62" rx="0.28" />
       </g>
-      <circle className="pet-coffee__drip" cx="16.6" cy="13.4" r="0.65" />
-      <circle className="pet-coffee__fizz pet-coffee__fizz--a" cx="10.4" cy="8.2" r="0.55" />
-      <circle className="pet-coffee__fizz pet-coffee__fizz--b" cx="12.2" cy="6.6" r="0.42" />
-      <circle className="pet-coffee__fizz pet-coffee__fizz--c" cx="13.5" cy="8" r="0.34" />
+      <circle className="pet-coffee__drip" cx="19.4" cy="12.7" r="0.65" />
+      <circle className="pet-coffee__fizz pet-coffee__fizz--a" cx="12.2" cy="7.4" r="0.55" />
+      <circle className="pet-coffee__fizz pet-coffee__fizz--b" cx="14.1" cy="5.8" r="0.42" />
+      <circle className="pet-coffee__fizz pet-coffee__fizz--c" cx="15.6" cy="7.2" r="0.34" />
     </svg>
   );
 }
