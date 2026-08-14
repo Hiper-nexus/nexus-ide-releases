@@ -260,3 +260,81 @@ describe('submitPromptToPaneOperator — lane do operador (pane governado)', () 
     }
   });
 });
+
+
+// Campo (14/08): Enter comido deixava texto PRESO no composer do claude sem
+// sinal. As lanes confirmadas ganham prova de turno (idle→busy) + UM CR de
+// destravamento — nunca re-paste.
+describe('prova de turno após o Enter (compose unstick)', () => {
+  function createProbePorts(busyAfter: number | null) {
+    let stateCbs: Array<(state: string) => void> = [];
+    let crCount = 0;
+    const writeConfirmed = vi.fn(async (_s: string, data: string) => {
+      if (data === '\r') crCount += 1;
+      if (busyAfter !== null && crCount >= busyAfter) {
+        // macrotask: a assinatura do awaitTurnStart acontece no .then do CR —
+        // disparar síncrono aqui seria PERDER o evento (ninguém inscrito ainda).
+        setTimeout(() => {
+          for (const cb of [...stateCbs]) cb('busy');
+        }, 0);
+      }
+      return true;
+    });
+    const ports: PaneSubmitPorts = {
+      getSessionId: () => 'session-1',
+      write: vi.fn(),
+      writeConfirmed,
+      schedule: (cb, ms) => setTimeout(cb, ms),
+      onSessionState: (_s, cb) => {
+        stateCbs.push(cb);
+        return () => {
+          stateCbs = stateCbs.filter((x) => x !== cb);
+        };
+      },
+    };
+    return { ports, writeConfirmed };
+  }
+
+  it('resolve true quando o turno abre após o Enter — sem CR extra', async () => {
+    vi.useFakeTimers();
+    try {
+      const { ports, writeConfirmed } = createProbePorts(1);
+      const pending = submitPromptToPaneConfirmed('pane-1', 'tarefa simples', 'session-1', ports);
+      const assertion = expect(pending).resolves.toBe(true);
+      await vi.advanceTimersByTimeAsync(3_000);
+      await assertion;
+      expect(writeConfirmed).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('Enter comido → UM CR de destravamento e resolve com o que aconteceu', async () => {
+    vi.useFakeTimers();
+    try {
+      const { ports, writeConfirmed } = createProbePorts(2);
+      const pending = submitPromptToPaneConfirmed('pane-1', 'tarefa simples', 'session-1', ports);
+      const assertion = expect(pending).resolves.toBe(true);
+      await vi.advanceTimersByTimeAsync(15_000);
+      await assertion;
+      expect(writeConfirmed).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('sem sonda de estado: comportamento atual preservado (aceita o Enter)', async () => {
+    vi.useFakeTimers();
+    try {
+      const { ports, writeConfirmed } = createProbePorts(null);
+      const portsSemSonda: PaneSubmitPorts = { ...ports, onSessionState: undefined };
+      const pending = submitPromptToPaneConfirmed('pane-1', 'tarefa', 'session-1', portsSemSonda);
+      const assertion = expect(pending).resolves.toBe(true);
+      await vi.advanceTimersByTimeAsync(3_000);
+      await assertion;
+      expect(writeConfirmed).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

@@ -116,6 +116,8 @@ export function agentPrompt(
           '## ORQUESTRAÇÃO (modelo PULL)',
           '',
           'Você é o ORQUESTRADOR. Você NÃO executa tarefas — você COORDENA.',
+          'Mesmo pedidos triviais (uma pergunta, uma contagem) viram dispatch de worker:',
+          'se está no objetivo da missão, um worker responde — nunca você.',
           '',
           '### Workflow',
           '1. Analise o objetivo e divida em tarefas independentes',

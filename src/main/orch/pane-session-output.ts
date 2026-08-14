@@ -24,6 +24,14 @@ interface IdleWaiter {
 const buffers = new Map<string, RingBuffer>();
 const sessionStates = new Map<string, PaneSessionState>();
 const idleWaiters = new Set<IdleWaiter>();
+/** Marca permanente de sessão morta — o buffer sai em 5min, a marca não. */
+const exitedMarkBySession = new Map<string, number>();
+const EXITED_MARK_CAP = 8_192;
+
+/** Test-only: simula a evicção do ring após o TTL de sessão morta. */
+export function __evictExitedBufferForTests(sessionId: string): void {
+  buffers.delete(sessionId);
+}
 
 function idleWaitAbortFallback(): Error {
   const error = new Error("pane idle wait was aborted");
@@ -84,6 +92,17 @@ export function recordPaneSessionExit(sessionId: string): void {
     buffer.exited = true;
     buffer.exitedAt = Date.now();
   }
+  // A marca de morte é INDEPENDENTE do buffer: o ring sai após
+  // EXITED_BUFFER_TTL_MS (5min) e, sem ela, paneSessionStateForEntry caía de
+  // volta pro último entry.state ('idle') — pane morto ressuscitava como
+  // vivo no snapshot e o watcher da Via Rápida nunca via livePanes===0
+  // (missão "running" pra sempre com processo nenhum). Cap FIFO: uma
+  // timestamp por sessão que já existiu, nunca cresce além disto.
+  exitedMarkBySession.set(sessionId, Date.now());
+  if (exitedMarkBySession.size > EXITED_MARK_CAP) {
+    const oldest = exitedMarkBySession.keys().next().value;
+    if (oldest !== undefined) exitedMarkBySession.delete(oldest);
+  }
   for (const waiter of [...idleWaiters]) {
     if (waiter.sessionId !== sessionId) continue;
     settleIdleWaiter(waiter, "exited");
@@ -97,7 +116,9 @@ export function paneSessionStateForEntry(
   const live =
     sessionStates.get(entry.sessionId) ?? getSessionState(entry.sessionId);
   if (live) return live;
-  return buffers.get(entry.sessionId)?.exited
+  if (buffers.get(entry.sessionId)?.exited) return "exited";
+  // Sobrevive à evicção do buffer: morte de pane é permanente.
+  return exitedMarkBySession.has(entry.sessionId)
     ? "exited"
     : (entry.state ?? "unknown");
 }

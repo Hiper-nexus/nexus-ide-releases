@@ -2,12 +2,85 @@ const BRACKETED_PASTE_START = '\x1b[200~';
 const BRACKETED_PASTE_END = '\x1b[201~';
 const MIN_PASTE_SETTLE_MS = 750;
 const MAX_PASTE_SETTLE_MS = 2_500;
+/**
+ * Janela para o turno abrir depois do Enter (idle→busy). Estourou sem
+ * transição = Enter comido (rascunho empilhado no composer, repaint da TUI) —
+ * o campo (14/08) mostrou texto PRESO no composer do claude com o Enter
+ * virando quebra de linha, sem sinal nenhum pra cima.
+ */
+const SUBMIT_TURN_ACCEPTANCE_MS = 8_000;
+/** Segunda janela, após o ÚNICO CR de destravamento. */
+const SUBMIT_RETRY_ACCEPTANCE_MS = 4_000;
 
 export interface PaneSubmitPorts {
   getSessionId(paneId: string): string | null;
   write(sessionId: string, data: string): void;
   writeConfirmed(sessionId: string, data: string): Promise<boolean>;
   schedule(callback: () => void, delayMs: number): unknown;
+  /**
+   * Sonda opcional de estado da sessão (pty.onStateChange). Presente, o
+   * submit ganha verificação: sem transição para busy dentro da janela, UM
+   * CR de destravamento e mais uma janela — nunca re-paste.
+   */
+  onSessionState?(
+    sessionId: string,
+    cb: (state: string) => void,
+  ): () => void;
+}
+
+/** Espera a prova de que o turno abriu (transição para busy). Aditiva: sem a
+ * sonda de estado, aceita como hoje. */
+function awaitTurnStart(
+  ports: { schedule(callback: () => void, delayMs: number): unknown; onSessionState?(sessionId: string, cb: (state: string) => void): () => void },
+  sessionId: string,
+  timeoutMs: number,
+): Promise<boolean> {
+  // Sem sonda de estado (ports antigas/testes): aceita como hoje — o degrau
+  // de verificação é aditivo, nunca um timeout novo no caminho existente.
+  if (!ports.onSessionState) return Promise.resolve(true);
+  return new Promise<boolean>((resolve) => {
+    let settled = false;
+    const finish = (ok: boolean) => {
+      if (settled) return;
+      settled = true;
+      try {
+        unsubscribe?.();
+      } catch {
+        /* best-effort */
+      }
+      resolve(ok);
+    };
+    const unsubscribe = ports.onSessionState?.(sessionId, (state) => {
+      if (state === 'busy') finish(true);
+    });
+    ports.schedule(() => finish(false), timeoutMs);
+  });
+}
+
+/**
+ * Pós-Enter com verificação: se o turno não abriu, UM CR de destravamento —
+ * nunca re-paste (duplicar o prompt seria pior que o travamento; CR em
+ * composer vazio é no-op). Limitado a uma tentativa.
+ */
+function confirmEnterTookEffect(
+  ports: Parameters<typeof awaitTurnStart>[0] & { getSessionId(paneId: string): string | null },
+  paneId: string,
+  expectedSessionId: string,
+  writeEnter: (sessionId: string) => Promise<boolean>,
+): Promise<boolean> {
+  return awaitTurnStart(ports, expectedSessionId, SUBMIT_TURN_ACCEPTANCE_MS).then(
+    (started) => {
+      if (started) return true;
+      if (ports.getSessionId(paneId) !== expectedSessionId) return false;
+      return writeEnter(expectedSessionId).then(
+        (retryAccepted) =>
+          retryAccepted
+            ? awaitTurnStart(ports, expectedSessionId, SUBMIT_RETRY_ACCEPTANCE_MS)
+            : false,
+        () => false,
+      );
+    },
+  );
 }
 
 function isSafePrompt(text: string): boolean {
@@ -56,6 +129,11 @@ export interface PaneOperatorSubmitPorts {
   /** Escrita pela lane do operador (orch:panes.operatorInput) com recibo real. */
   operatorWrite(sessionId: string, data: string): Promise<boolean>;
   schedule(callback: () => void, delayMs: number): unknown;
+  /** Sonda opcional — mesma semântica aditiva do PaneSubmitPorts. */
+  onSessionState?(
+    sessionId: string,
+    cb: (state: string) => void,
+  ): () => void;
 }
 
 /**
@@ -88,6 +166,16 @@ export function submitPromptToPaneOperator(
             return;
           }
           void ports.operatorWrite(expectedSessionId, '\r')
+            .then((enterAccepted) =>
+              enterAccepted
+                ? confirmEnterTookEffect(
+                    ports,
+                    paneId,
+                    expectedSessionId,
+                    (sessionId) => ports.operatorWrite(sessionId, '\r'),
+                  )
+                : false,
+            )
             .then(resolve, () => resolve(false));
         }, pasteSettleMs(line));
       });
@@ -124,6 +212,16 @@ export function submitPromptToPaneConfirmed(
           return;
         }
         void ports.writeConfirmed(expectedSessionId, '\r')
+          .then((enterAccepted) =>
+            enterAccepted
+              ? confirmEnterTookEffect(
+                  ports,
+                  paneId,
+                  expectedSessionId,
+                  (sessionId) => ports.writeConfirmed(sessionId, '\r'),
+                )
+              : false,
+          )
           .then(resolve, () => resolve(false));
       }, pasteSettleMs(text));
     });

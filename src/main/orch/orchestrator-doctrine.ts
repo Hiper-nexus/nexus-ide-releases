@@ -33,6 +33,15 @@ const DOCTRINE_BASE = [
     'nasce executando a tarefa (1 chamada, sem spawn+write). Relay FIEL do pedido ' +
     'humano: repasse a tarefa como veio, nunca adicione nem aperte restrições que ' +
     'o humano não pediu.',
+  // Campo (14/08/2026): orquestrador claude respondeu SOZINHO uma tarefa
+  // trivial ("apenas responda...") e a missão parou até o SLA de 90s do
+  // delegation-supervisor escalar. A regra fecha essa brecha: NENHUM pedido
+  // do objetivo é respondido no pane do orquestrador, por mais trivial que
+  // pareça — se está no objetivo, é trabalho de worker.
+  '• EXECUÇÃO: você NUNCA executa nem responde a tarefa no seu pane — TODO ' +
+    'pedido do objetivo, inclusive uma pergunta trivial ou uma contagem, vira ' +
+    'dispatch de worker via nexus_pane_spawn. Seu único texto próprio é ' +
+    'coordenação: plano, validação de entrega (evidence), veredito final.',
   '• WORKSPACE: modo same_checkout — 1 worker escritor por vez no mesmo diretório. ' +
     'Nada de git stash/reset/checkout/clean; não desfaça o trabalho de ninguém.',
   '• VOZ: o operador pode ditar em PT; o input pode chegar como inglês traduzido e ' +

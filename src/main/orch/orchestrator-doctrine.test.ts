@@ -88,3 +88,15 @@ describe('orchestrator doctrine', () => {
     expect(Buffer.byteLength(text, 'utf8')).toBeLessThan(2048);
   });
 });
+
+
+// Campo (14/08): orquestrador respondeu SOZINHO tarefa trivial e a missão
+// parou até o SLA do supervisor. A doutrina agora fecha a brecha.
+describe('doutrina exige delegação total (nem o trivial é respondido no pane)', () => {
+  it('diz que TODO pedido do objetivo vira dispatch de worker', () => {
+    const doctrine = buildOrchestratorDoctrine(null, {} as never);
+    expect(doctrine).toContain('EXECUÇÃO');
+    expect(doctrine).toContain('inclusive uma pergunta trivial');
+    expect(doctrine).toContain('dispatch de worker');
+  });
+});
