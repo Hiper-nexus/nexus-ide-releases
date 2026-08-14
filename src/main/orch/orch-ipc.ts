@@ -174,6 +174,7 @@ import {
 } from './operator-review-feedback';
 import {
   persistClarifyAnswer,
+  persistClarifyDismiss,
   prepareClarifyAnswerAuthorityCandidate,
   type ClarifyAnswerAuthorityCandidate,
 } from './clarify-flow';
@@ -1621,6 +1622,10 @@ async function runOperatorClarifyAnswer(
   stores: ProjectDomainStoreSuite,
   rawInput: ClarifyAnswerInput,
 ) {
+  if (rawInput.dismiss === true) {
+    requireLiveRendererWorkspaceScope(owner, scope);
+    return persistClarifyDismiss(stores, scope, rawInput);
+  }
   const candidate = prepareClarifyAnswerAuthorityCandidate(
     stores,
     scope,

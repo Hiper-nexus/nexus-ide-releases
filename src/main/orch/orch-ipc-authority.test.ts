@@ -507,6 +507,7 @@ vi.mock('./agent-waiting-broadcast', () => ({
 vi.mock('./clarify-flow', () => ({
   prepareClarifyAnswerAuthorityCandidate: harness.prepareClarifyAnswer,
   persistClarifyAnswer: harness.persistClarifyAnswer,
+  persistClarifyDismiss: vi.fn(),
 }));
 vi.mock('./operator-review-feedback', () => ({
   prepareOperatorReviewAuthorityCandidate: harness.prepareOperatorReview,

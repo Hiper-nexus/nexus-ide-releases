@@ -38,6 +38,12 @@ export interface ClarifyAnswerArtifact {
   readonly answer: Exclude<ClarifyAnswer, { kind: 'unmatched' }>;
 }
 
+export interface ClarifyDismissArtifact {
+  readonly kind: 'nexus-clarify-dismiss';
+  readonly schemaVersion: 1;
+  readonly questionId: string;
+}
+
 export interface DurableClarifyQuestion extends Clarify {
   readonly questionId: string;
   readonly missionId: string;
@@ -47,7 +53,9 @@ export interface ClarifyAnswerInput {
   readonly missionId: string;
   readonly questionId: string;
   /** Chip id/label/index or bounded free text when the question permits it. */
-  readonly answer: string;
+  readonly answer?: string;
+  /** Operator chose "agora não" — consume without answering. */
+  readonly dismiss?: true;
 }
 
 export interface ClarifyAnswerResult {
@@ -55,7 +63,8 @@ export interface ClarifyAnswerResult {
   readonly missionId: string;
   readonly questionId: string;
   readonly handoffId: string;
-  readonly answer: Exclude<ClarifyAnswer, { kind: 'unmatched' }>;
+  readonly answer?: Exclude<ClarifyAnswer, { kind: 'unmatched' }>;
+  readonly dismissed?: true;
   readonly deliveryState: 'queued' | 'submitted' | 'acknowledged' | 'consumed';
   /** True only after the orchestrator TUI produced the idle→busy acceptance edge. */
   readonly accepted: boolean;
@@ -114,6 +123,19 @@ export type ClarifyAnswer =
   | { kind: 'chip'; chipId: string; value: string }
   | { kind: 'freeform'; value: string }
   | { kind: 'unmatched' };
+
+/** Numbered menu forwarded into the CLI composer (Grok/Codex/Claude). */
+export function formatClarifyForNativeSelector(clarify: Clarify): string {
+  const options = clarify.chips
+    .map((chip, index) => `${index + 1}. ${chip.label}`)
+    .join('\n');
+  return (
+    `[NEXUS_CLARIFY] ${clarify.question}\n${options}\n` +
+    'Responda pelo seletor da CLI ou pelos chips no quadro. ' +
+    '"Agora não" adia sem travar a missão. Não chame nexus_clarify de novo ' +
+    'para a mesma pergunta.'
+  );
+}
 
 /**
  * Route a raw answer to a chip (by id, exact label, or 1-based index) or,
@@ -263,4 +285,28 @@ export function parseClarifyAnswerArtifact(
     };
   }
   return null;
+}
+
+export function parseClarifyDismissArtifact(
+  raw: unknown,
+): ClarifyDismissArtifact | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const candidate = raw as {
+    kind?: unknown;
+    schemaVersion?: unknown;
+    questionId?: unknown;
+  };
+  if (
+    candidate.kind !== 'nexus-clarify-dismiss' ||
+    candidate.schemaVersion !== 1 ||
+    typeof candidate.questionId !== 'string' ||
+    !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/.test(candidate.questionId)
+  ) {
+    return null;
+  }
+  return {
+    kind: 'nexus-clarify-dismiss',
+    schemaVersion: 1,
+    questionId: candidate.questionId,
+  };
 }

@@ -85,9 +85,11 @@ type CommandHandler = (
 function SharedQuestionHarness({
   snapshot,
   onCommand,
+  onDismiss,
 }: {
   readonly snapshot: MissionSnapshot;
   readonly onCommand: CommandHandler;
+  readonly onDismiss?: () => Promise<void>;
 }) {
   const [state, setState] = useState<QuestionAnswerState>(EMPTY_ANSWER);
   const question = snapshot.question;
@@ -100,6 +102,7 @@ function SharedQuestionHarness({
     state,
     onStateChange: setState,
     onCommand,
+    ...(onDismiss ? { onDismiss } : {}),
   };
 
   return (
@@ -514,5 +517,22 @@ describe('MissionQuestion', () => {
 
     expect(view.host.textContent).not.toContain(QUESTION.prompt);
     expect(view.host.querySelectorAll('button')).toHaveLength(0);
+  });
+
+  it('adia com Agora não sem enviar resposta vazia', async () => {
+    const onDismiss = vi.fn().mockResolvedValue(undefined);
+    const onCommand = vi.fn<CommandHandler>();
+    const { host } = render(
+      <SharedQuestionHarness
+        snapshot={canonicalSnapshot()}
+        onCommand={onCommand}
+        onDismiss={onDismiss}
+      />,
+    );
+    const top = region(host, 'Pergunta no topo da missão');
+    click(button(top, 'Agora não'));
+    await flush();
+    expect(onDismiss).toHaveBeenCalledOnce();
+    expect(onCommand).not.toHaveBeenCalled();
   });
 });

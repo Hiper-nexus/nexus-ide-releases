@@ -255,6 +255,17 @@ export function attenuateSkills(
   return requested.filter((skill) => allowed.has(skill.toLowerCase()));
 }
 
+/** Worker may hand off; only orchestrator/maestro/user may create a pane. */
+export function assertCallerMaySpawnPane(
+  role: AgentGateContext['role'],
+): void {
+  if (role === 'worker') {
+    throw new Error(
+      'not authorized: workers cannot create panes — only the orchestrator may spawn',
+    );
+  }
+}
+
 const paneSpawn: McpToolDef = {
   name: 'nexus_pane_spawn',
   description:
@@ -313,6 +324,7 @@ const paneSpawn: McpToolDef = {
   },
   handler: async (args, ctx, invocation) => {
     assertMcpInvocationCurrent(invocation);
+    assertCallerMaySpawnPane(ctx.role);
     const agentRef = str(args, 'agentName');
     const routeReservationId = str(args, 'routeReservationId');
     let options: SpawnToolOptions;

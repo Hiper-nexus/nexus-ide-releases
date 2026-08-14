@@ -26,6 +26,7 @@ interface MissionQuestionProps {
   readonly onCommand: (
     command: MissionEngineCommand,
   ) => Promise<MissionSnapshot>;
+  readonly onDismiss?: () => Promise<void>;
 }
 
 export function MissionQuestion({
@@ -34,6 +35,7 @@ export function MissionQuestion({
   state,
   onStateChange,
   onCommand,
+  onDismiss,
 }: MissionQuestionProps) {
   const promptId = useId();
   const detailId = useId();
@@ -68,6 +70,29 @@ export function MissionQuestion({
 
     try {
       await onCommand(command);
+      onStateChange((current) => ({
+        ...current,
+        pending: false,
+        error: null,
+      }));
+    } catch (reason) {
+      const error = toUserFacingMissionRecovery(reason, ANSWER_ERROR_MESSAGE);
+      onStateChange((current) => ({
+        ...current,
+        pending: false,
+        error,
+      }));
+    } finally {
+      pendingQuestionStates.delete(state);
+    }
+  };
+
+  const dismissQuestion = async (): Promise<void> => {
+    if (!onDismiss || state.pending || pendingQuestionStates.has(state)) return;
+    pendingQuestionStates.add(state);
+    onStateChange({ ...state, pending: true, error: null });
+    try {
+      await onDismiss();
       onStateChange((current) => ({
         ...current,
         pending: false,
@@ -170,6 +195,19 @@ export function MissionQuestion({
       >
         {state.pending ? 'Enviando resposta…' : 'Responder'}
       </button>
+
+      {onDismiss && (
+        <button
+          type="button"
+          className="mission-board__button mission-board__button--secondary"
+          disabled={state.pending}
+          onClick={() => {
+            void dismissQuestion();
+          }}
+        >
+          Agora não
+        </button>
+      )}
 
       {state.error && (
         <p

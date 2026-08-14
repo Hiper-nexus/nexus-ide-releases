@@ -64,6 +64,7 @@ import {
   terminalOutputPolicy,
   terminalScrollbackLines,
 } from './terminal-render-policy';
+import { tuiWheelPageSequence } from './tui-wheel';
 
 /**
  * Persistent terminal manager.
@@ -1112,13 +1113,21 @@ async function injectDroppedFile(host: Host, file: File): Promise<void> {
 function wireInteractions(host: Host, sendJumpKeyOnScroll = false): void {
   const { element, term } = host;
 
-  // Native wheel scrolling can update xterm's viewport without emitting an
-  // onScroll notification on some Chromium/compositor paths. Sample the
-  // authoritative buffer after the wheel frame so the history cue and the
-  // next-input jump never depend on that notification alone.
+  // TUI (alternate screen, Grok/Claude/Codex): wheel → PageUp/PageDown no PTY.
+  // Shell/log (normal buffer): xterm continua rolando o viewport.
   element.addEventListener(
     'wheel',
-    () => {
+    (event: WheelEvent) => {
+      const page = tuiWheelPageSequence({
+        bufferType: term.buffer.active.type,
+        deltaY: event.deltaY,
+      });
+      if (page && host.sessionId) {
+        event.preventDefault();
+        event.stopPropagation();
+        window.nexus.pty.write(host.sessionId, page);
+        return;
+      }
       requestAnimationFrame(() => {
         if (host.disposed) return;
         host.inputVisibility.onScroll(
@@ -1127,7 +1136,7 @@ function wireInteractions(host: Host, sendJumpKeyOnScroll = false): void {
         );
       });
     },
-    { passive: true },
+    { passive: false },
   );
 
   term.attachCustomKeyEventHandler((e) => {

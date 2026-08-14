@@ -1,7 +1,9 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import {
+  formatClarifyForNativeSelector,
   parseClarifyAnswerArtifact,
+  parseClarifyDismissArtifact,
   parseClarifyQuestionArtifact,
   resolveClarifyAnswer,
   type ClarifyAnswer,
@@ -25,6 +27,8 @@ import type { MissionEngine } from './mission-engine';
 import { missionEngineForScope } from './mission-engine-registry';
 import { onHandoffSubmitted } from './idle-delivery';
 import { getProjectDomainStores } from './project-domain-store-registry';
+import { orchWriteSession } from '../pty/pty-manager';
+import { wasMissionRuntimeClosedByOperator } from '../../shared/mission-recovery-policy';
 
 const identifierSchema = z
   .string()
@@ -33,13 +37,29 @@ export const clarifyAnswerInputSchema = z
   .object({
     missionId: identifierSchema,
     questionId: identifierSchema,
-    answer: z.string().trim().min(1).max(4_000),
+    answer: z.string().trim().min(1).max(4_000).optional(),
+    dismiss: z.literal(true).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    if (value.dismiss === true) return;
+    if (!value.answer) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['answer'],
+        message: 'resposta ausente',
+      });
+    }
+  });
 
 interface ClarifyStores {
   readonly missions: {
     get(id: string): Mission | null;
+    transitionLifecycle?(
+      id: string,
+      expectation: { readonly updatedAt: number; readonly intentVersion: number },
+      patch: { readonly status: Mission['status']; readonly intentState: NonNullable<Mission['intentState']> },
+    ): Mission | null;
   };
   readonly handoffs: {
     submit(input: SubmitHandoffInput): Handoff;
@@ -168,6 +188,9 @@ function resolveAnswerCandidate(
       'a pergunta não pertence à sessão atual do orquestrador; reabra a missão',
     );
   }
+  if (!input.answer) {
+    throw new Error('resposta ausente');
+  }
   const answer = resolveClarifyAnswer(clarify, input.answer);
   if (answer.kind === 'unmatched') {
     throw new Error('Escolha uma das opções exibidas para a missão continuar.');
@@ -242,11 +265,87 @@ function deliveryResult(
   };
 }
 
+function questionTextOf(handoff: Handoff): string | null {
+  for (const raw of handoff.artifacts) {
+    const parsed = parseClarifyQuestionArtifact(raw);
+    if (parsed) return parsed.clarify.question;
+  }
+  return null;
+}
+
+function isClosedQuestion(
+  handoffs: readonly Handoff[],
+  questionId: string,
+): 'answered' | 'dismissed' | null {
+  for (const handoff of handoffs) {
+    for (const raw of handoff.artifacts) {
+      const answer = parseClarifyAnswerArtifact(raw);
+      if (answer?.questionId === questionId) return 'answered';
+      const dismiss = parseClarifyDismissArtifact(raw);
+      if (dismiss?.questionId === questionId) return 'dismissed';
+    }
+  }
+  return null;
+}
+
+function findReusableClarifyQuestion(
+  stores: ClarifyStores,
+  missionId: string,
+  sessionId: string,
+  question: string,
+): DurableClarifyQuestion | null {
+  const handoffs = stores.handoffs.list({
+    missionId,
+    includeDelivered: true,
+  });
+  const match = handoffs
+    .filter(
+      (handoff) =>
+        handoff.missionId === missionId &&
+        handoff.sessionId === sessionId &&
+        questionTextOf(handoff) === question,
+    )
+    .sort((left, right) => right.createdAt - left.createdAt)[0];
+  if (!match) return null;
+  const closed = isClosedQuestion(handoffs, match.id);
+  if (closed === 'answered') return null;
+  const artifact = match.artifacts
+    .map((raw) => parseClarifyQuestionArtifact(raw))
+    .find(Boolean);
+  if (!artifact) return null;
+  return {
+    missionId,
+    questionId: match.id,
+    ...artifact.clarify,
+  };
+}
+
+const forwardedNativeClarify = new Set<string>();
+
+export function resetForwardedNativeClarifyForTests(): void {
+  forwardedNativeClarify.clear();
+}
+
+export function forwardClarifyToNativeSelector(
+  sessionId: string,
+  clarify: Clarify,
+): boolean {
+  const key = `${sessionId}:${clarify.question}`;
+  if (forwardedNativeClarify.has(key)) return false;
+  const text = formatClarifyForNativeSelector(clarify);
+  const ok = orchWriteSession(sessionId, `\x1b[200~${text}\x1b[201~`, {
+    markInputBusy: false,
+  });
+  if (ok) forwardedNativeClarify.add(key);
+  return ok;
+}
+
 /**
  * Persist the question before returning its MCP result. The question handoff
  * is marked submitted because its destination is the project-scoped renderer,
  * not the orchestrator PTY. Renderer hydration/broadcast reads the same
- * durable ledger after a reload.
+ * durable ledger after a reload. The same text is also forwarded once into
+ * the CLI composer so Grok/Codex can show their native selector.
  */
 export function persistClarifyQuestion(
   stores: ClarifyStores,
@@ -271,6 +370,16 @@ export function persistClarifyQuestion(
     );
   }
 
+  const reusable = findReusableClarifyQuestion(
+    stores,
+    requestedMissionId,
+    ctx.sessionId,
+    clarify.question,
+  );
+  if (reusable) {
+    return reusable;
+  }
+
   const artifact: ClarifyQuestionArtifact = {
     kind: 'nexus-clarify-question',
     schemaVersion: 1,
@@ -288,6 +397,11 @@ export function persistClarifyQuestion(
   // A crash before this CAS is harmless: includeDelivered hydration still
   // projects the question, and answer persistence retries the CAS.
   stores.handoffs.markSubmitted(handoff.id);
+  try {
+    forwardClarifyToNativeSelector(ctx.sessionId, clarify);
+  } catch {
+    // Composer forward is best-effort; chips remain the durable path.
+  }
   return {
     missionId: requestedMissionId,
     questionId: handoff.id,
@@ -319,6 +433,100 @@ export function emitClarifyQuestion(
  * Scoped stores plus mission/question equality prevent cross-workspace and
  * cross-mission replies even if a renderer replays a stale id.
  */
+export async function persistClarifyDismiss(
+  stores: ClarifyStores,
+  scope: ProjectExecutionScope,
+  rawInput: ClarifyAnswerInput,
+  _missionEngine: Pick<MissionEngine, 'command'> = missionEngineForScope(scope),
+): Promise<ClarifyAnswerResult> {
+  const input = clarifyAnswerInputSchema.parse(rawInput);
+  if (input.dismiss !== true) {
+    throw new Error('adiamento exige dismiss=true');
+  }
+  const mission = activeMission(stores, input.missionId);
+  const question = stores.handoffs.get(input.questionId);
+  const clarify = question ? questionArtifact(question)?.clarify : undefined;
+  if (!question || !clarify) {
+    throw new Error('a pergunta não existe neste workspace');
+  }
+  if (question.missionId !== input.missionId) {
+    throw new Error('a pergunta não pertence a esta missão');
+  }
+  const handoffs = stores.handoffs.list({
+    missionId: input.missionId,
+    includeDelivered: true,
+  });
+  const existingDismiss = handoffs.find((handoff) =>
+    handoff.artifacts.some((raw) => {
+      const parsed = parseClarifyDismissArtifact(raw);
+      return parsed?.questionId === input.questionId;
+    }),
+  );
+  if (existingDismiss) {
+    if (question.deliveryState !== 'consumed') {
+      stores.handoffs.markConsumed(question.id, input.missionId);
+    }
+    return {
+      ok: true,
+      missionId: input.missionId,
+      questionId: input.questionId,
+      handoffId: existingDismiss.id,
+      dismissed: true,
+      deliveryState: existingDismiss.deliveryState,
+      accepted: true,
+      cta: 'Pergunta adiada. A missão segue sem resposta vazia.',
+    };
+  }
+  if (isClosedQuestion(handoffs, input.questionId) === 'answered') {
+    throw new Error('esta pergunta já recebeu outra resposta');
+  }
+  const dismiss = stores.handoffs.submit({
+    missionId: input.missionId,
+    fromAgent: 'Operador Nexus',
+    status: 'progress',
+    summary: `Operador adiou a pergunta "${clarify.question}" (agora não).`,
+    artifacts: [
+      {
+        kind: 'nexus-clarify-dismiss',
+        schemaVersion: 1,
+        questionId: input.questionId,
+      },
+    ],
+    evidenceIds: [],
+  });
+  if (question.deliveryState === 'queued') {
+    stores.handoffs.markSubmitted(question.id);
+  }
+  if (question.deliveryState !== 'consumed') {
+    stores.handoffs.markConsumed(question.id, input.missionId);
+  }
+  if (
+    !wasMissionRuntimeClosedByOperator(mission) &&
+    mission.status === 'blocked' &&
+    mission.intentState === 'blocked_user' &&
+    stores.missions.transitionLifecycle
+  ) {
+    stores.missions.transitionLifecycle(
+      mission.id,
+      {
+        updatedAt: mission.updatedAt,
+        intentVersion: mission.intentVersion ?? 0,
+      },
+      { status: 'running', intentState: 'executing' },
+    );
+  }
+  return {
+    ok: true,
+    missionId: input.missionId,
+    questionId: input.questionId,
+    handoffId: dismiss.id,
+    dismissed: true,
+    deliveryState: dismiss.deliveryState,
+    accepted: true,
+    cta: 'Pergunta adiada. A missão segue sem resposta vazia.',
+  };
+}
+
 export async function persistClarifyAnswer(
   stores: ClarifyStores,
   scope: ProjectExecutionScope,
@@ -327,6 +535,10 @@ export async function persistClarifyAnswer(
   deliver: DeliverClarifyAnswer = onHandoffSubmitted,
   missionEngine: Pick<MissionEngine, 'command'> = missionEngineForScope(scope),
 ): Promise<ClarifyAnswerResult> {
+  const preview = clarifyAnswerInputSchema.parse(rawInput);
+  if (preview.dismiss === true) {
+    return persistClarifyDismiss(stores, scope, preview, missionEngine);
+  }
   if (!/^[a-f0-9]{64}$/.test(expectedFence)) {
     throw new Error('confirmação humana ausente ou inválida');
   }

@@ -195,6 +195,28 @@ describe('resolveOpenMissionQuestion', () => {
     expect(snapshotA.question?.prompt).not.toBe(snapshotB.question?.prompt);
   });
 
+  it('não reabre pergunta adiada com agora não', () => {
+    const dismiss: Handoff = {
+      ...questionHandoff('dismiss-q1', 'm1', 20),
+      sessionId: undefined,
+      fromAgent: 'Operador Nexus',
+      artifacts: [
+        {
+          kind: 'nexus-clarify-dismiss',
+          schemaVersion: 1,
+          questionId: 'q1',
+        },
+      ],
+    };
+
+    expect(
+      resolveOpenMissionQuestion(mission('m1'), [
+        questionHandoff('q1', 'm1', 1),
+        dismiss,
+      ]),
+    ).toBeUndefined();
+  });
+
   it('aceita blocked_user — chips são a saída humana', () => {
     expect(
       resolveOpenMissionQuestion(

@@ -842,6 +842,17 @@ export function MissionBoard({
         state={questionState}
         onStateChange={setQuestionState}
         onCommand={executeCommand}
+        onDismiss={async () => {
+          const questionId = currentSnapshot.question?.id;
+          if (!questionId) return;
+          await window.nexus.orch.answerClarify({
+            missionId,
+            questionId,
+            dismiss: true,
+          });
+          const nextSnapshot = await window.nexus.mission.snapshot(missionId);
+          setSnapshot((current) => preferNewestSnapshot(current, nextSnapshot));
+        }}
       />
     ) : (
       <section

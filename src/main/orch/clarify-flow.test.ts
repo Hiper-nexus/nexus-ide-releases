@@ -1,14 +1,22 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentGateContext } from './gate';
 import type { Handoff, Mission } from '../../shared/orch-types';
 import type { MissionSnapshot } from '../../shared/mission-engine-contract';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { buildClarify } from '../../shared/clarify';
 import { compileIntentContract } from '../../shared/mission-intent';
+
+vi.mock('../pty/pty-manager', () => ({
+  orchWriteSession: vi.fn(() => true),
+}));
+
+import { orchWriteSession } from '../pty/pty-manager';
 import {
   persistClarifyAnswer,
+  persistClarifyDismiss,
   persistClarifyQuestion,
   prepareClarifyAnswerAuthorityCandidate,
+  resetForwardedNativeClarifyForTests,
 } from './clarify-flow';
 
 const scope: ProjectExecutionScope = {
@@ -170,6 +178,19 @@ function storesFixture(missions: Mission[]) {
     stores: {
       missions: {
         get: (id: string) => missions.find((item) => item.id === id) ?? null,
+        transitionLifecycle: vi.fn(
+          (
+            id: string,
+            _expectation: { updatedAt: number; intentVersion: number },
+            patch: { status: Mission['status']; intentState: Mission['intentState'] },
+          ) => {
+            const current = missions.find((item) => item.id === id);
+            if (!current) return null;
+            current.status = patch.status;
+            current.intentState = patch.intentState;
+            return current;
+          },
+        ),
       },
       handoffs: {
         submit,
@@ -209,6 +230,11 @@ async function submitConfirmedAnswer(
 }
 
 describe('durable clarify flow', () => {
+  beforeEach(() => {
+    resetForwardedNativeClarifyForTests();
+    vi.mocked(orchWriteSession).mockClear();
+  });
+
   it('persists a mission-scoped question and marks only its operator delivery', () => {
     const fixture = storesFixture([mission()]);
     const result = persistClarifyQuestion(
@@ -537,5 +563,99 @@ describe('durable clarify flow', () => {
       ),
     ).toThrow(/sessão.*obsoleta/i);
     expect(workspaceB.submit).not.toHaveBeenCalled();
+  });
+
+  it('repassa a pergunta ao seletor nativo da CLI uma vez', () => {
+    vi.mocked(orchWriteSession).mockClear();
+    const fixture = storesFixture([mission()]);
+    persistClarifyQuestion(
+      fixture.stores,
+      context(),
+      buildClarify({
+        question: 'Qual banco?',
+        options: ['Postgres', 'SQLite'],
+      }),
+    );
+    expect(orchWriteSession).toHaveBeenCalledOnce();
+    expect(String(vi.mocked(orchWriteSession).mock.calls[0]?.[1])).toContain(
+      '[NEXUS_CLARIFY]',
+    );
+    persistClarifyQuestion(
+      fixture.stores,
+      context(),
+      buildClarify({
+        question: 'Qual banco?',
+        options: ['Postgres', 'SQLite'],
+      }),
+    );
+    expect(orchWriteSession).toHaveBeenCalledOnce();
+    expect(fixture.submit).toHaveBeenCalledOnce();
+  });
+
+  it('agora não consome sem entregar resposta vazia e não reabre', async () => {
+    const blocked = mission('mission-a', {
+      status: 'blocked',
+      intentState: 'blocked_user',
+    });
+    const fixture = storesFixture([blocked]);
+    const question = persistClarifyQuestion(
+      fixture.stores,
+      context(),
+      buildClarify({
+        question: 'Qual caminho?',
+        options: ['A', 'B'],
+        allowFreeform: false,
+      }),
+    );
+    const deliver = vi.fn();
+    const first = await persistClarifyDismiss(
+      fixture.stores,
+      scope,
+      {
+        missionId: blocked.id,
+        questionId: question.questionId,
+        dismiss: true,
+      },
+      fixture.missionEngine,
+    );
+    const replay = await persistClarifyDismiss(
+      fixture.stores,
+      scope,
+      {
+        missionId: blocked.id,
+        questionId: question.questionId,
+        dismiss: true,
+      },
+      fixture.missionEngine,
+    );
+
+    expect(first).toMatchObject({
+      ok: true,
+      dismissed: true,
+      questionId: question.questionId,
+    });
+    expect(first.cta).toMatch(/adiada|agora não/i);
+    expect(replay.handoffId).toBe(first.handoffId);
+    expect(fixture.markConsumed).toHaveBeenCalledWith(
+      question.questionId,
+      blocked.id,
+    );
+    expect(deliver).not.toHaveBeenCalled();
+    expect(fixture.missionEngine.command).not.toHaveBeenCalled();
+    expect(blocked).toMatchObject({
+      status: 'running',
+      intentState: 'executing',
+    });
+    expect(
+      persistClarifyQuestion(
+        fixture.stores,
+        context(),
+        buildClarify({
+          question: 'Qual caminho?',
+          options: ['A', 'B'],
+          allowFreeform: false,
+        }),
+      ).questionId,
+    ).toBe(question.questionId);
   });
 });

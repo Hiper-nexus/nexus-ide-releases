@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildClarify,
+  formatClarifyForNativeSelector,
   parseClarifyAnswerArtifact,
+  parseClarifyDismissArtifact,
   parseClarifyQuestionArtifact,
   resolveClarifyAnswer,
 } from './clarify';
@@ -140,5 +142,42 @@ describe('resolveClarifyAnswer', () => {
     const strict = buildClarify({ question: 'x', options: ['a', 'b'], allowFreeform: false });
     expect(resolveClarifyAnswer(strict, '9')).toEqual({ kind: 'unmatched' });
     expect(resolveClarifyAnswer(strict, '0')).toEqual({ kind: 'unmatched' });
+  });
+});
+
+describe('formatClarifyForNativeSelector', () => {
+  it('repassa pergunta e opções numeradas ao seletor da CLI', () => {
+    const text = formatClarifyForNativeSelector(
+      buildClarify({ question: 'Qual banco?', options: ['Postgres', 'SQLite'] }),
+    );
+    expect(text).toContain('[NEXUS_CLARIFY]');
+    expect(text).toContain('Qual banco?');
+    expect(text).toContain('1. Postgres');
+    expect(text).toContain('2. SQLite');
+    expect(text).toMatch(/agora não/i);
+    expect(text).toMatch(/não chame nexus_clarify de novo/i);
+  });
+});
+
+describe('parseClarifyDismissArtifact', () => {
+  it('aceita só o envelope de adiamento', () => {
+    expect(
+      parseClarifyDismissArtifact({
+        kind: 'nexus-clarify-dismiss',
+        schemaVersion: 1,
+        questionId: 'q-1',
+      }),
+    ).toEqual({
+      kind: 'nexus-clarify-dismiss',
+      schemaVersion: 1,
+      questionId: 'q-1',
+    });
+    expect(
+      parseClarifyDismissArtifact({
+        kind: 'nexus-clarify-answer',
+        schemaVersion: 1,
+        questionId: 'q-1',
+      }),
+    ).toBeNull();
   });
 });

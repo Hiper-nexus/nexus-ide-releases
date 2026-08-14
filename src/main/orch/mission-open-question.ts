@@ -8,6 +8,7 @@
 
 import {
   parseClarifyAnswerArtifact,
+  parseClarifyDismissArtifact,
   parseClarifyQuestionArtifact,
   type Clarify,
 } from '../../shared/clarify';
@@ -42,13 +43,18 @@ function isAnswerableMission(mission: OpenQuestionMission): boolean {
 function answeredQuestionIds(handoffs: readonly Handoff[]): Set<string> {
   const answered = new Set<string>();
   for (const handoff of handoffs) {
-    if (
-      handoff.sessionId !== undefined ||
-      handoff.fromAgent !== OPERATOR_AGENT
-    ) {
-      continue;
-    }
     for (const rawArtifact of handoff.artifacts) {
+      const dismissed = parseClarifyDismissArtifact(rawArtifact);
+      if (dismissed) {
+        answered.add(dismissed.questionId);
+        continue;
+      }
+      if (
+        handoff.sessionId !== undefined ||
+        handoff.fromAgent !== OPERATOR_AGENT
+      ) {
+        continue;
+      }
       const artifact = parseClarifyAnswerArtifact(rawArtifact);
       if (artifact) answered.add(artifact.questionId);
     }
