@@ -15,19 +15,23 @@ import {
   missionQuestionSchema,
   type MissionQuestion,
 } from '../../shared/mission-engine-contract';
+import { wasMissionRuntimeClosedByOperator } from '../../shared/mission-recovery-policy';
 import type { Handoff, Mission } from '../../shared/orch-types';
 
 const OPERATOR_AGENT = 'Operador Nexus';
 
 export type OpenQuestionMission = Pick<
   Mission,
-  'id' | 'status' | 'intentState' | 'orchestratorSessionId'
+  'id' | 'status' | 'intentState' | 'orchestratorSessionId' | 'description'
 >;
 
 function isAnswerableMission(mission: OpenQuestionMission): boolean {
   // Só missão já parada à espera do operador. Clarify em `running` é
   // fire-and-forget no MCP: projetar openQuestion viraria o rail para
   // blocked_user e tiraria o Direct — atrito no caminho vivo.
+  // Encerrar (runtime-closed) tem precedência: senão o rail mente
+  // "Aguardando sua resposta" sobre uma missão que o operador fechou.
+  if (wasMissionRuntimeClosedByOperator(mission)) return false;
   return (
     mission.status === 'blocked' && mission.intentState === 'blocked_user'
   );

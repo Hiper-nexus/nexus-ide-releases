@@ -123,6 +123,18 @@ describe('resolveOpenMissionQuestion', () => {
     ).toBeUndefined();
   });
 
+  it('não projeta pergunta depois de Encerrar — runtime-closed ganha do clarify', () => {
+    expect(
+      resolveOpenMissionQuestion(
+        {
+          ...mission('m-quit', 'blocked', 'blocked_user'),
+          description: '<!-- nexus:runtime-closed -->\nEncerrada.',
+        },
+        [questionHandoff('q-quit', 'm-quit', 1)],
+      ),
+    ).toBeUndefined();
+  });
+
   it('não projeta pergunta em missão técnica ou encerrada', () => {
     const handoffs = [questionHandoff('q-tech', 'm-tech', 1)];
     expect(
