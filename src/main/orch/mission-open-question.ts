@@ -22,8 +22,10 @@ const OPERATOR_AGENT = 'Operador Nexus';
 
 export type OpenQuestionMission = Pick<
   Mission,
-  'id' | 'status' | 'intentState' | 'orchestratorSessionId' | 'description'
->;
+  'id' | 'status' | 'intentState' | 'orchestratorSessionId'
+> & {
+  readonly description?: string;
+};
 
 function isAnswerableMission(mission: OpenQuestionMission): boolean {
   // Só missão já parada à espera do operador. Clarify em `running` é
