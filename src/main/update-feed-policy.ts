@@ -1,9 +1,10 @@
+import { isTrustedGithubReleasePath } from './update-repos';
+
 const TRUSTED_UPDATE_HOSTS = new Set([
   'nexuside.app',
   'api.nexuside.app',
 ]);
 const GITHUB_UPDATE_HOST = 'github.com';
-const GITHUB_RELEASE_PREFIX = '/cleofasvolarehost/nexus-ide/releases/';
 
 /** Packaged updates execute code; accept only pinned HTTPS product origins. */
 export function validateUpdateFeedUrl(raw: string | undefined): string | null {
@@ -14,7 +15,7 @@ export function validateUpdateFeedUrl(raw: string | undefined): string | null {
     const isTrustedNexusHost = TRUSTED_UPDATE_HOSTS.has(hostname);
     const isTrustedGithubRelease =
       hostname === GITHUB_UPDATE_HOST &&
-      url.pathname.toLowerCase().startsWith(GITHUB_RELEASE_PREFIX);
+      isTrustedGithubReleasePath(url.pathname);
     if (
       url.protocol !== 'https:' ||
       (url.port !== '' && url.port !== '443') ||

@@ -19,8 +19,12 @@ import {
   assertReleaseSecurityManifest,
 } from './release-security-gate.mjs';
 
-export const CANONICAL_RELEASE_REPO = 'cleofasvolarehost/nexus-ide';
-export const PUBLIC_RELEASE_REPO = 'cleofasvolarehost/nexus-ide-releases';
+export const CANONICAL_RELEASE_REPO = 'Hiper-nexus/nexus-ide';
+export const PUBLIC_RELEASE_REPO = 'Hiper-nexus/nexus-ide-releases';
+/** Origin ainda pode apontar ao slug pré-transferência; o GitHub redireciona. */
+export const LEGACY_CANONICAL_RELEASE_REPOS = Object.freeze([
+  'cleofasvolarehost/nexus-ide',
+]);
 const MANUAL_RELEASE_PRODUCTION_AUTHORITY = Symbol(
   'manual-release-production-authority',
 );
@@ -349,6 +353,17 @@ export function verifyRemoteTag(
   return expectedCommitSha;
 }
 
+function githubOriginUrlForms(repo) {
+  return [
+    `https://github.com/${repo}`,
+    `https://github.com/${repo}.git`,
+    `git@github.com:${repo}`,
+    `git@github.com:${repo}.git`,
+    `ssh://git@github.com/${repo}`,
+    `ssh://git@github.com/${repo}.git`,
+  ];
+}
+
 export function verifyCanonicalOrigin(
   fetchUrlsRaw,
   pushUrlsRaw,
@@ -357,14 +372,10 @@ export function verifyCanonicalOrigin(
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(expectedRepo ?? '')) {
     throw new Error('canonical origin repository identity is invalid');
   }
-  const allowed = new Set([
-    `https://github.com/${expectedRepo}`,
-    `https://github.com/${expectedRepo}.git`,
-    `git@github.com:${expectedRepo}`,
-    `git@github.com:${expectedRepo}.git`,
-    `ssh://git@github.com/${expectedRepo}`,
-    `ssh://git@github.com/${expectedRepo}.git`,
-  ]);
+  const acceptedRepos = [expectedRepo, ...LEGACY_CANONICAL_RELEASE_REPOS];
+  const allowed = new Set(
+    acceptedRepos.flatMap((repo) => githubOriginUrlForms(repo)),
+  );
   const parseOne = (raw, kind) => {
     const urls = String(raw)
       .split(/\r?\n/u)

@@ -259,6 +259,13 @@ describe('manual GitHub release publication', () => {
   it('proves fetch and push origin are the canonical GitHub repository', () => {
     expect(
       verifyCanonicalOrigin(
+        'https://github.com/Hiper-nexus/nexus-ide.git\n',
+        'git@github.com:Hiper-nexus/nexus-ide.git\n',
+        CANONICAL_RELEASE_REPO,
+      ),
+    ).toBe(CANONICAL_RELEASE_REPO);
+    expect(
+      verifyCanonicalOrigin(
         'https://github.com/cleofasvolarehost/nexus-ide.git\n',
         'git@github.com:cleofasvolarehost/nexus-ide.git\n',
         CANONICAL_RELEASE_REPO,

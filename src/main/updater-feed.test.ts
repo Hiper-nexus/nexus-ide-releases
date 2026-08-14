@@ -9,10 +9,24 @@ describe('update feed trust policy', () => {
     ).toBe('https://api.nexuside.app/v1/updates/darwin/');
     expect(
       validateUpdateFeedUrl(
+        'https://github.com/Hiper-nexus/nexus-ide/releases/download/v0.32.16/',
+      ),
+    ).toBe(
+      'https://github.com/Hiper-nexus/nexus-ide/releases/download/v0.32.16/',
+    );
+    expect(
+      validateUpdateFeedUrl(
         'https://github.com/cleofasvolarehost/nexus-ide/releases/download/v0.12.0/',
       ),
     ).toBe(
       'https://github.com/cleofasvolarehost/nexus-ide/releases/download/v0.12.0/',
+    );
+    expect(
+      validateUpdateFeedUrl(
+        'https://github.com/cleofasvolarehost/nexus-ide-releases/releases/download/v0.32.16/',
+      ),
+    ).toBe(
+      'https://github.com/cleofasvolarehost/nexus-ide-releases/releases/download/v0.32.16/',
     );
   });
 
@@ -25,6 +39,7 @@ describe('update feed trust policy', () => {
     'https://stale-preview.nexuside.app/updates',
     'https://github.com/example/nexus/releases/download/v9/malware.zip',
     'https://github.com/cleofasvolarehost/nexus-ide/issues/1',
+    'https://github.com/Hiper-nexus/nexus-ide/issues/1',
   ])('rejects untrusted executable update feed %s', (url) => {
     expect(validateUpdateFeedUrl(url)).toBeNull();
   });

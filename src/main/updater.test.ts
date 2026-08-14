@@ -77,6 +77,7 @@ function apiRelease(version: string) {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllGlobals();
   electron.handlers.clear();
   vi.clearAllMocks();
   rmSync(electron.logsPath, { recursive: true, force: true });
@@ -112,6 +113,93 @@ describe('UpdateManager', () => {
       ([args]) => args[0] === 'release' && args[1] === 'download',
     )?.[0];
     expect(downloadArgs).toContain('v0.16.4');
+    expect(downloadArgs).toContain('Hiper-nexus/nexus-ide');
     expect(downloadArgs).not.toContain('v0.16.1');
+  });
+
+  it('cai no slug legado quando o gh da org nova falha', async () => {
+    const runGh = vi.fn(async (args: string[]) => {
+      if (args.join(' ').includes('Hiper-nexus/nexus-ide')) {
+        throw new Error('HTTP 404');
+      }
+      if (args[0] === 'api') return JSON.stringify([apiRelease('0.32.16')]);
+      throw new Error('download interrompido pelo teste');
+    });
+    const manager = new UpdateManager(true, {
+      runGh,
+      runtimeArch: 'arm64',
+      runtimePlatform: 'darwin',
+    });
+    manager.init();
+    const check = electron.handlers.get(UPDATE_CHANNELS.check);
+    await check?.(trustedSenderEvent());
+    expect(manager.getState().available?.version).toBe('0.32.16');
+    const apiRepos = runGh.mock.calls
+      .filter(([args]) => args[0] === 'api')
+      .map(([args]) => args.join(' '));
+    expect(apiRepos[0]).toContain('Hiper-nexus/nexus-ide');
+    expect(apiRepos[1]).toContain('cleofasvolarehost/nexus-ide');
+  });
+
+  it('usa o espelho público da org nova quando gh não está disponível', async () => {
+    const runGh = vi.fn(async () => {
+      throw new Error('ENOENT gh');
+    });
+    const fetchMock = vi.fn(async (url: string) => ({
+      ok: true,
+      status: 200,
+      text: async () => {
+        expect(String(url)).toContain('Hiper-nexus/nexus-ide-releases');
+        return JSON.stringify([apiRelease('0.32.16')]);
+      },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const manager = new UpdateManager(true, {
+      runGh,
+      runtimeArch: 'arm64',
+      runtimePlatform: 'darwin',
+    });
+    manager.init();
+    const check = electron.handlers.get(UPDATE_CHANNELS.check);
+    await check?.(trustedSenderEvent());
+    expect(manager.getState().phase).toBe('available');
+    expect(manager.getState().available?.version).toBe('0.32.16');
+    expect(fetchMock).toHaveBeenCalled();
+  });
+
+  it('segue o 301 JSON do slug legado até o Latest da org nova', async () => {
+    const runGh = vi.fn(async () => {
+      throw new Error('HTTP 404');
+    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 301,
+        text: async () =>
+          JSON.stringify({
+            message: 'Moved Permanently',
+            url: 'https://api.github.com/repositories/1304178302/releases?per_page=100',
+          }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify([apiRelease('0.32.16')]),
+      });
+    vi.stubGlobal('fetch', fetchMock);
+    const manager = new UpdateManager(true, {
+      runGh,
+      runtimeArch: 'arm64',
+      runtimePlatform: 'darwin',
+    });
+    manager.init();
+    const check = electron.handlers.get(UPDATE_CHANNELS.check);
+    await check?.(trustedSenderEvent());
+    expect(manager.getState().available?.version).toBe('0.32.16');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain(
+      'repositories/1304178302',
+    );
   });
 });

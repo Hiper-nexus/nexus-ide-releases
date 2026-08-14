@@ -30,9 +30,9 @@ quando:
 
 O comando publica duas releases com a mesma tag, em ordem fail-closed:
 
-1. `cleofasvolarehost/nexus-ide` recebe DMG, ZIP, manifesto, auditorias,
+1. `Hiper-nexus/nexus-ide` recebe DMG, ZIP, manifesto, auditorias,
    SBOMs, evidência E2E e recibo do candidato;
-2. para `cleofasvolarehost/nexus-ide-releases`, o publicador envia **somente
+2. para `Hiper-nexus/nexus-ide-releases`, o publicador envia **somente
    DMG e ZIP** para o atualizador público; não envia evidências internas nem
    outros assets da release canônica.
 

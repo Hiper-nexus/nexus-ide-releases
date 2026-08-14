@@ -13,6 +13,12 @@ import {
   type ParsedRelease,
 } from './update-source';
 import { validateUpdateFeedUrl } from './update-feed-policy';
+import {
+  CANONICAL_RELEASE_REPO,
+  CANONICAL_RELEASE_REPOS,
+  githubReleasesApiUrl,
+  PUBLIC_RELEASES_REPOS,
+} from './update-repos';
 import { createSingleFlight } from './single-flight';
 
 /**
@@ -20,27 +26,18 @@ import { createSingleFlight } from './single-flight';
  * updater é transmitido ao renderer (badge na WorkspaceBar + modal), com
  * checagem no boot e a cada 6h.
  *
- * Duas fontes, em ordem:
+ * Três fontes, em ordem:
  *  1. NEXUS_UPDATE_FEED — feed Squirrel direto (o caminho do SaaS futuro).
- *  2. `gh` CLI — o repo é PRIVADO, então feed público não existe e token
- *     embutido vazaria; o gh autenticado da máquina escolhe o maior release
- *     compatível e baixa o zip. O zip baixado é servido em 127.0.0.1
- *     para o Squirrel.Mac validar a assinatura e fazer o swap seguro + relaunch
- *     (nunca troque o .app na mão).
+ *  2. `gh` CLI no canônico `Hiper-nexus/nexus-ide`, com fallback no slug
+ *     legado `cleofasvolarehost/nexus-ide` (redirect pós-transferência).
+ *  3. API REST anônima do espelho público `Hiper-nexus/nexus-ide-releases`,
+ *     com o mesmo fallback no slug legado. Sem gh no PATH (app aberto pelo
+ *     Finder) este é o caminho real.
  *
  * Toda borda tem deadline (disciplina do pipeline de voz): gh check 15s,
  * download 10min. Dev (não empacotado) checa mas não instala.
  */
 
-const REPO = 'cleofasvolarehost/nexus-ide';
-/**
- * Espelho PÚBLICO de releases (só artefatos, sem código): máquinas SEM gh
- * logado com acesso ao repo privado (instalações de terceiros) atualizam por
- * aqui via API REST anônima. A receita de release publica nos dois.
- */
-const PUBLIC_RELEASES_REPO = 'cleofasvolarehost/nexus-ide-releases';
-const PUBLIC_API_RELEASES_URL =
-  `https://api.github.com/repos/${PUBLIC_RELEASES_REPO}/releases?per_page=100`;
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const BOOT_CHECK_DELAY_MS = 20_000;
 const GH_CHECK_TIMEOUT_MS = 15_000;
@@ -137,8 +134,28 @@ function ghExec(args: string[], timeoutMs: number): Promise<string> {
 
 type GhExecutor = (args: string[], timeoutMs: number) => Promise<string>;
 
+function githubMovedPermanentlyUrl(raw: string): string | null {
+  try {
+    const parsed = JSON.parse(raw) as { message?: unknown; url?: unknown };
+    if (
+      parsed.message === 'Moved Permanently' &&
+      typeof parsed.url === 'string' &&
+      parsed.url.startsWith('https://api.github.com/')
+    ) {
+      return parsed.url;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 /** GET anônimo na API pública com deadline (mesma disciplina do gh). */
-async function fetchPublicJson(url: string, timeoutMs: number): Promise<string> {
+async function fetchPublicJson(
+  url: string,
+  timeoutMs: number,
+  hop = 0,
+): Promise<string> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -149,10 +166,15 @@ async function fetchPublicJson(url: string, timeoutMs: number): Promise<string> 
       },
       signal: controller.signal,
     });
+    const text = await response.text();
+    const moved = hop < 2 ? githubMovedPermanentlyUrl(text) : null;
+    if (moved && moved !== url) {
+      return fetchPublicJson(moved, timeoutMs, hop + 1);
+    }
     if (!response.ok) {
       throw new Error(`releases públicos: HTTP ${response.status}`);
     }
-    return await response.text();
+    return text;
   } finally {
     clearTimeout(timer);
   }
@@ -196,6 +218,8 @@ export class UpdateManager {
   private release: ParsedRelease | null = null;
   /** De onde veio o release ofertado: gh (repo privado) ou espelho público. */
   private releaseVia: 'gh' | 'public' = 'gh';
+  /** Slug que respondeu na última checagem (org nova ou redirect legado). */
+  private releaseRepo: string = CANONICAL_RELEASE_REPO;
   private server: http.Server | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
   private squirrelWired = false;
@@ -355,27 +379,7 @@ export class UpdateManager {
     }
     this.patch({ phase: 'checking', error: undefined });
     try {
-      let raw: string;
-      try {
-        raw = await this.runGh(
-          [
-            'api',
-            '--method',
-            'GET',
-            `repos/${REPO}/releases?per_page=${GH_RELEASES_PER_PAGE}`,
-          ],
-          GH_CHECK_TIMEOUT_MS,
-        );
-        this.releaseVia = 'gh';
-      } catch (ghErr) {
-        // Sem gh logado com acesso ao repo privado (máquina de terceiro):
-        // cai para o espelho PÚBLICO de releases via API REST anônima.
-        writeUpdateLog('info', 'check:gh-unavailable-try-public', {
-          message: ghErr instanceof Error ? ghErr.message : String(ghErr),
-        });
-        raw = await fetchPublicJson(PUBLIC_API_RELEASES_URL, GH_CHECK_TIMEOUT_MS);
-        this.releaseVia = 'public';
-      }
+      const raw = await this.loadReleaseJson();
       const release = parseGhReleases(
         raw,
         this.state.currentVersion,
@@ -423,6 +427,84 @@ export class UpdateManager {
     }
   }
 
+  private async loadReleaseJson(): Promise<string> {
+    const ghErrors: string[] = [];
+    for (const repo of CANONICAL_RELEASE_REPOS) {
+      try {
+        const raw = await this.runGh(
+          [
+            'api',
+            '--method',
+            'GET',
+            `repos/${repo}/releases?per_page=${GH_RELEASES_PER_PAGE}`,
+          ],
+          GH_CHECK_TIMEOUT_MS,
+        );
+        this.releaseVia = 'gh';
+        this.releaseRepo = repo;
+        return raw;
+      } catch (ghErr) {
+        ghErrors.push(
+          `${repo}: ${ghErr instanceof Error ? ghErr.message : String(ghErr)}`,
+        );
+      }
+    }
+    writeUpdateLog('info', 'check:gh-unavailable-try-public', {
+      message: ghErrors.join('; '),
+    });
+    const publicErrors: string[] = [];
+    for (const repo of PUBLIC_RELEASES_REPOS) {
+      try {
+        const raw = await fetchPublicJson(
+          githubReleasesApiUrl(repo),
+          GH_CHECK_TIMEOUT_MS,
+        );
+        this.releaseVia = 'public';
+        this.releaseRepo = repo;
+        return raw;
+      } catch (pubErr) {
+        publicErrors.push(
+          `${repo}: ${pubErr instanceof Error ? pubErr.message : String(pubErr)}`,
+        );
+      }
+    }
+    throw new Error(
+      publicErrors.at(-1) ?? ghErrors[0] ?? 'nenhuma fonte de release',
+    );
+  }
+
+  private async downloadGhZip(release: ParsedRelease, dir: string): Promise<void> {
+    const repos = [
+      this.releaseRepo,
+      ...CANONICAL_RELEASE_REPOS.filter((repo) => repo !== this.releaseRepo),
+    ];
+    let lastError: unknown;
+    for (const repo of repos) {
+      try {
+        await this.runGh(
+          [
+            'release',
+            'download',
+            release.tag,
+            '--repo',
+            repo,
+            '--pattern',
+            release.zipAsset,
+            '--dir',
+            dir,
+            '--clobber',
+          ],
+          GH_DOWNLOAD_TIMEOUT_MS,
+        );
+        this.releaseRepo = repo;
+        return;
+      } catch (err) {
+        lastError = err;
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error(String(lastError));
+  }
+
   private async install(): Promise<void> {
     if (this.state.phase !== 'available' || !this.release) return;
     if (!this.state.canInstall) {
@@ -464,21 +546,7 @@ export class UpdateManager {
           GH_DOWNLOAD_TIMEOUT_MS,
         );
       } else {
-        await this.runGh(
-          [
-            'release',
-            'download',
-            release.tag,
-            '--repo',
-            REPO,
-            '--pattern',
-            release.zipAsset,
-            '--dir',
-            dir,
-            '--clobber',
-          ],
-          GH_DOWNLOAD_TIMEOUT_MS,
-        );
+        await this.downloadGhZip(release, dir);
       }
       const zipPath = path.join(dir, release.zipAsset);
       if (!fs.existsSync(zipPath)) throw new Error('zip do release não veio');
