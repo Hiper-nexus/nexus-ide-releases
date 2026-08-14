@@ -13,35 +13,45 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.32.14',
+  version: '0.32.15',
   date: '2026-08-13',
-  codename: 'Sair sem religar',
+  codename: '+ Novo na Missão',
   summary:
-    'Sair e encerrar processos sela as missões running antes do quit, ' +
-    'para o restore não religar workers. A faixa cafeinada aparece no ' +
-    'pane vivo focado e some em ~3s.',
+    '+ Novo abre a Missão vazia, sem reidratar Equipe. O picker une o ' +
+    'catálogo vivo com o bundled. Cafeína em todo pet; Revisar no ' +
+    'estilo Bridge, com glance e Iniciar no dock.',
   highlights: [
     {
-      title: 'Selo no quit',
+      title: '+ Novo limpo',
       detail:
-        'O botão Sair e encerrar processos chama ' +
-        'closeMissionRuntimePreservingHistory em paralelo, com teto de ' +
-        '4s, antes de app.quit(). O marker runtime-closed impede o ' +
-        'reopen de religar a frota.',
+        'openNewMission chama beginFreshMission e não passa por ' +
+        'open(), que restaurava o rascunho do workspace ainda em Equipe.',
     },
     {
-      title: 'Cafeína no pane vivo',
+      title: 'Picker une o catálogo',
       detail:
-        'Derrame SVG no pane focado, sem roubar clique, some em ~3s. ' +
-        'Xícara do pet e flash cafe maiores.',
+        'readyModelsForPicker une provider.models com o bundled do ' +
+        'adapter. AGY 3.7/3.1 Pro e Codex além de sol/sol-wm.',
+    },
+    {
+      title: 'Cafeína em todo pet',
+      detail:
+        'Xícara no ChosenPetPortrait, HUD compacto 12–14px e Equipe ' +
+        'a 64px.',
+    },
+    {
+      title: 'Revisar de relance',
+      detail:
+        'Glance cards, brief colapsado, Modo só rótulo, guidance em ' +
+        'Mais detalhes, Iniciar no dock.',
     },
   ],
   fixes: [
     {
-      title: 'Quit não trava no selo',
+      title: 'Lista curta no picker',
       detail:
-        'PTY preso no encerramento não segura o app: o selo tem ' +
-        'orçamento de 4s e o quit segue.',
+        'Cache vivo com 1–2 modelos deixava de mostrar o bundled. A ' +
+        'união das duas fontes devolve o catálogo completo.',
     },
   ],
 };

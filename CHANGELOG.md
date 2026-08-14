@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.32.15 — + Novo na Missão
+
+Data: 2026-08-13
+
++ Novo abre a Missão vazia, sem reidratar Equipe. O picker une o
+catálogo vivo com o bundled. Cafeína em todo pet; Revisar no estilo
+Bridge, com glance e Iniciar no dock.
+
+- **+ Novo limpo.** `openNewMission` chama `beginFreshMission` e não
+  passa por `open()`, que limpava o entry context e restaurava o
+  rascunho do workspace (muitas vezes ainda em Equipe).
+- **Picker une o catálogo.** `readyModelsForPicker` faz
+  `provider.models ∪ adapter.models.list`. AGY mostra 3.7/3.1 Pro
+  mesmo com cache vivo curto; Codex além de sol/sol-wm.
+- **Cafeína em todo pet.** Xícara no `ChosenPetPortrait` (HUD
+  compacto 12–14px) e na Equipe (64px).
+- **Revisar de relance.** Glance cards, brief colapsado, Modo só
+  rótulo, guidance em Mais detalhes, Iniciar no dock. Hex só via
+  `--gold`/`--accent`.
+
 ## 0.32.14 — Sair sem religar
 
 Data: 2026-08-13
