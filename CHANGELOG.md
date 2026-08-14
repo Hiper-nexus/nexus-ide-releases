@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.32.20 — Jarvis responde
+
+Data: 2026-08-14
+
+Gate realtime aceita XAI_API_KEY. O box mini arrasta
+na OverlayLayer. Sem chave aparece no HUD.
+
+- **Grok no gate realtime.** XAI_API_KEY deixa de ser
+  tratada como Gemini. Jarvis fala com a chave oficial.
+- **Box mini arrasta.** O pill mora na OverlayLayer e
+  o pointer não some no meio do arrasto.
+- **Sem chave visível.** Sem credencial na cadeia, o HUD
+  mostra o erro e abre as configurações no clique.
+
 ## 0.32.19 — Sem pane-neto
 
 Data: 2026-08-14

@@ -13,41 +13,32 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.32.19',
+  version: '0.32.20',
   date: '2026-08-14',
-  codename: 'Sem pane-neto',
+  codename: 'Jarvis responde',
   summary:
-    'Só o orquestrador spawna pane. Servidor SSH entra uma vez ' +
-    'pelo apelido. Cotas e ranking deixam de inventar data ou ' +
-    'percentagem. Memória ganha esquecer nota.',
+    'Gate realtime aceita XAI_API_KEY. O box mini arrasta ' +
+    'na OverlayLayer. Sem chave aparece no HUD.',
   highlights: [
     {
-      title: 'Sem pane-neto',
+      title: 'Grok no gate realtime',
       detail:
-        'Worker não abre neto; a rodinha no TUI manda ' +
-        'PageUp/PageDown; clarify vai ao seletor da CLI e ' +
-        '“agora não” adia sem loop.',
+        'XAI_API_KEY deixa de ser tratada como Gemini. ' +
+        'Jarvis fala com a chave oficial.',
     },
     {
-      title: 'SSH pelo apelido',
+      title: 'Box mini arrasta',
       detail:
-        'O operador registra o servidor em Definições → Remoto. ' +
-        'A partir daí só o apelido circula; IP e senha não ' +
-        'voltam ao modelo.',
+        'O pill mora na OverlayLayer e o pointer não some ' +
+        'no meio do arrasto.',
     },
   ],
   fixes: [
     {
-      title: 'Cotas e ranking honestos',
+      title: 'Sem chave visível',
       detail:
-        'Tempo e percentagem só aparecem quando existem. Sem ' +
-        'Invalid Date nem NaN%.',
-    },
-    {
-      title: 'Memória com esquecer',
-      detail:
-        'A nota vive no app, não no repositório. O painel ' +
-        'deixa apagar.',
+        'Sem credencial na cadeia, o HUD mostra o erro e ' +
+        'abre as configurações no clique.',
     },
   ],
 };
