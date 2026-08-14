@@ -29,7 +29,7 @@ describe('account login commands', () => {
     expect(accountLoginCommandFor('desconhecido')).toBeNull();
   });
 
-  it('claude login runs the slash command flow', () => {
-    expect(accountLoginCommandFor('claude')).toBe('claude /login');
+  it('claude login uses the dedicated auth subcommand', () => {
+    expect(accountLoginCommandFor('claude')).toBe('claude auth login');
   });
 });

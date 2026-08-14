@@ -10,7 +10,7 @@
  */
 export const ACCOUNT_LOGIN_COMMANDS: Readonly<Record<string, string>> =
   Object.freeze({
-    claude: 'claude /login',
+    claude: 'claude auth login',
     codex: 'codex login',
     grok: 'grok login',
     kimi: 'kimi login',

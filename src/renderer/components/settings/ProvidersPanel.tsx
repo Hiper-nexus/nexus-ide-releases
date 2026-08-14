@@ -21,6 +21,7 @@ import {
   modelCountLabel,
   pickDefaultSelection,
   PROVIDERS_HUB_TABS,
+  providerRowCta,
   providerStatusLabel,
   selectModelValue,
   tabDetectedLabel,
@@ -28,8 +29,8 @@ import {
 } from './providers-panel-view';
 
 /**
- * Providers hub — ADE libre scan (tiles + detected count + tabs),
- * Nexus-depth underneath (vault multi-conta, Keychain, permissões, routing).
+ * Providers hub — lista de CLIs com estado honesto e um CTA por linha.
+ * Detalhe embaixo: contas, chave, avançado.
  */
 
 function modelLabel(provider: ProviderSettingsInfo, model: string): string {
@@ -324,47 +325,46 @@ function ControlFlags({
 }
 
 /**
- * Uma CLI só ganha atalho de login no cartão quando ela declara o comando E
- * ainda não está autenticada — o botão existe para resolver o "login" vermelho,
- * não para poluir cartão que já está ativo (esse caminho fica no detalhe).
+ * Uma CLI só ganha atalho de login na linha quando ela declara o comando E
+ * ainda não está autenticada — o botão existe para resolver "precisa login",
+ * não para poluir linha que já está conectada (esse caminho fica no detalhe).
  */
 export function tileNeedsLogin(provider: ProviderSettingsInfo): boolean {
-  return (
-    isLocalCliProvider(provider) &&
-    provider.installed &&
-    // CLI desligada pelo operador não pede login: ela não vai ser usada.
-    provider.enabled &&
-    Boolean(provider.loginCommand) &&
-    provider.authStrategy === 'login-needed'
-  );
+  return providerRowCta(provider)?.kind === 'login';
 }
 
-function ProviderTile({
+function ProviderRow({
   provider,
   selected,
   accountCount,
   loginBusy,
+  installBusy,
   onSelect,
   onLogin,
+  onInstall,
 }: {
   provider: ProviderSettingsInfo;
   selected: boolean;
   accountCount: number;
   loginBusy: boolean;
+  installBusy: boolean;
   onSelect: () => void;
   onLogin: () => void;
+  onInstall: () => void;
 }) {
   const status = providerStatusLabel(provider);
   const models = modelCountLabel(provider);
-  const needsLogin = tileNeedsLogin(provider);
+  const cta = providerRowCta(provider);
+  const ctaBusy = cta?.kind === 'login' ? loginBusy : installBusy;
 
-  // Botão dentro de botão é HTML inválido: o atalho de login mora ao LADO do
-  // cartão (mesma célula do grid), sobreposto pelo CSS.
   return (
-    <div className="prov-tile-slot" role="listitem">
+    <div
+      className={`prov-row ${selected ? 'prov-row--selected' : ''} ${provider.enabled ? '' : 'prov-row--off'}`}
+      role="listitem"
+    >
       <button
         type="button"
-        className={`prov-tile ${selected ? 'prov-tile--selected' : ''} ${provider.enabled ? '' : 'prov-tile--off'}`}
+        className="prov-row__select"
         onClick={onSelect}
         aria-pressed={selected}
         aria-label={`${provider.label}, ${status.label}, modelos ${models}`}
@@ -375,32 +375,59 @@ function ProviderTile({
           label={provider.label}
           fallback={provider.icon}
         />
-        <span className="prov-tile__name">{provider.label}</span>
-        <span className={`prov-tile__status prov-tile__status--${status.tone}`}>
-          {status.label}
+        <span className="prov-row__identity">
+          <span className="prov-row__name">{provider.label}</span>
+          <span className={`prov-row__status prov-row__status--${status.tone}`}>
+            {status.label}
+          </span>
         </span>
-        <span className="prov-tile__meta">
-          <span className="prov-tile__models" title="Modelos prontos / no catálogo">
+        <span className="prov-row__meta">
+          <span className="prov-row__models" title="Modelos prontos / no catálogo">
             {models}
           </span>
           {accountCount > 0 && (
-            <span className="prov-tile__accounts" title="Contas no vault">
-              {accountCount} ct
+            <span className="prov-row__accounts" title="Contas guardadas">
+              {accountCount} {accountCount === 1 ? 'conta' : 'contas'}
             </span>
           )}
         </span>
       </button>
-      {needsLogin && (
+      {cta?.kind === 'login' && (
         <button
           type="button"
-          className="prov-tile__login"
-          disabled={loginBusy}
+          className="settings-btn settings-btn--primary prov-row__cta"
+          disabled={ctaBusy}
           onClick={onLogin}
-          title={`Abre um terminal e roda "${provider.loginCommand}" — a própria CLI guarda a sessão`}
-          aria-label={`Fazer login em ${provider.label}`}
+          title="Abre um terminal e roda o login desta CLI. Quem guarda a sessão é a própria ferramenta."
+          aria-label={`Entrar em ${provider.label}`}
           data-testid={`prov-login-${provider.adapterId}`}
         >
-          {loginBusy ? 'abrindo…' : 'entrar'}
+          {ctaBusy ? 'Abrindo…' : cta.label}
+        </button>
+      )}
+      {cta?.kind === 'install' && (
+        <button
+          type="button"
+          className="settings-btn settings-btn--primary prov-row__cta"
+          disabled={ctaBusy}
+          onClick={onInstall}
+          title="Instala a CLI pela fonte oficial (confirmação nativa mostra o comando)"
+          aria-label={`Instalar ${provider.label}`}
+          data-testid={`prov-install-${provider.adapterId}`}
+        >
+          {ctaBusy ? 'Instalando…' : cta.label}
+        </button>
+      )}
+      {cta?.kind === 'key' && (
+        <button
+          type="button"
+          className="settings-btn settings-btn--primary prov-row__cta"
+          onClick={onSelect}
+          title="Abre o campo para colar a chave desta CLI"
+          aria-label={`Colar chave de ${provider.label}`}
+          data-testid={`prov-key-${provider.adapterId}`}
+        >
+          {cta.label}
         </button>
       )}
     </div>
@@ -494,14 +521,14 @@ function ProviderDetail({
               }`}
               disabled={loginBusy}
               onClick={onLogin}
-              title={`Abre um terminal e roda "${provider.loginCommand}"`}
+              title="Abre um terminal e roda o login desta CLI. Quem guarda a sessão é a própria ferramenta."
               data-testid={`prov-detail-login-${provider.adapterId}`}
             >
               {loginBusy
                 ? 'Abrindo terminal…'
                 : provider.authStrategy === 'login-needed'
-                  ? `Fazer login (${provider.loginCommand})`
-                  : `Refazer login (${provider.loginCommand})`}
+                  ? 'Entrar'
+                  : 'Entrar de novo'}
             </button>
           )}
         </div>
@@ -648,7 +675,7 @@ function ProviderDetail({
 
 const TAB_LABELS: Record<ProvidersHubTab, string> = {
   clis: 'CLIs',
-  login: 'Login externo',
+  login: 'Login',
   remote: 'Remotos / API',
 };
 
@@ -724,7 +751,7 @@ export function ProvidersPanel() {
     setLoginBusyId(null);
     setLoginNotice(
       result.ok
-        ? `${provider.label}: login aberto no terminal (${command}). Conclua por lá — quando aquele terminal fechar, o Nexus reexamina as CLIs sozinho.`
+        ? `${provider.label}: terminal aberto. Conclua o login lá. Quando fechar, o Nexus verifica sozinho.`
         : `${provider.label}: ${result.error}`,
     );
   }
@@ -769,6 +796,28 @@ export function ProvidersPanel() {
     );
   }
 
+  async function installOne(provider: ProviderSettingsInfo) {
+    if (provisioning !== null) return;
+    setSelectedId(provider.adapterId);
+    setProvisionSummary(null);
+    setProvisioning(provider.label);
+    try {
+      const result = await window.nexus.providers.installCli(provider.adapterId);
+      setProvisionSummary(
+        result.ok
+          ? `${provider.label} instalada.`
+          : `${provider.label}: ${result.error ?? 'instalação falhou'}`,
+      );
+      await hydrate();
+    } catch (err) {
+      setProvisionSummary(
+        `${provider.label}: ${err instanceof Error ? err.message : 'instalação falhou'}`,
+      );
+    } finally {
+      setProvisioning(null);
+    }
+  }
+
   function onTabKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
     const order = PROVIDERS_HUB_TABS;
     const idx = order.indexOf(tab);
@@ -800,7 +849,7 @@ export function ProvidersPanel() {
         <div>
           <SettingsSectionTitle>Providers</SettingsSectionTitle>
           <p className="settings-detail__hint prov-hub__lede">
-            tokens · modelos · contas
+            Estado de cada CLI e como entrar
           </p>
         </div>
         {missingInstallable.length > 0 && (
@@ -897,7 +946,7 @@ export function ProvidersPanel() {
               <p>Nenhum provider remoto/API configurado neste build.</p>
             ) : (
               <p>
-                Nenhuma CLI de login externo (assinatura/OAuth) nesta lista.
+                Nenhuma CLI com login de assinatura nesta lista.
                 {showAbsent
                   ? ''
                   : ' Ative “Mostrar ausentes” para ver as instaláveis.'}
@@ -905,16 +954,18 @@ export function ProvidersPanel() {
             )}
           </div>
         ) : (
-          <div className="prov-tile-grid" role="list" data-testid="prov-tile-grid">
+          <div className="prov-row-list" role="list" data-testid="prov-tile-grid">
             {visible.map((p) => (
-              <ProviderTile
+              <ProviderRow
                 key={p.adapterId}
                 provider={p}
                 selected={p.adapterId === selectedId}
                 accountCount={accountCountByAdapter.get(p.adapterId) ?? 0}
                 loginBusy={loginBusyId === p.adapterId}
+                installBusy={provisioning === p.label}
                 onSelect={() => setSelectedId(p.adapterId)}
                 onLogin={() => void startLogin(p)}
+                onInstall={() => void installOne(p)}
               />
             ))}
           </div>

@@ -2,12 +2,10 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AccountInfo } from '../../../shared/account-types';
 import { accountLoginCommandFor } from '../../../shared/account-login-commands';
 import { useAccountStore } from '../../state/account-store';
-import { useLayoutStore } from '../../state/layout-store';
-import { useProductNavigationStore } from '../../state/product-navigation-store';
 import { useUsageStore } from '../../state/usage-store';
-import { waitForSession } from '../../terminal/terminal-host';
 import { askConfirm } from '../../state/confirm-store';
 import { PixelIcon } from '../PixelIcon';
+import { openCliLoginTerminal } from './cli-login-terminal';
 import {
   apiKeyChoiceBlurb,
   multiAccountAddCopy,
@@ -55,10 +53,10 @@ function accountState(a: AccountInfo): 'active' | 'cooldown' | 'warn' | 'ready' 
 }
 
 function authStatusLabel(state: string | undefined): string {
-  if (state === 'ok') return 'Login verificado';
-  if (state === 'missing') return 'Login necessário';
-  if (state === 'checking') return 'Verificando…';
-  return 'Não verificado';
+  if (state === 'ok') return 'conectado';
+  if (state === 'missing') return 'precisa login';
+  if (state === 'checking') return 'verificando…';
+  return 'não verificado';
 }
 
 function formatAccountUsd(costUsd: number): string {
@@ -109,8 +107,6 @@ export function AccountsManager({
   const isClaude = adapterId === 'claude';
   const active = accounts.find((a) => a.active) ?? null;
   const standby = accounts.filter((a) => !a.active);
-  const addShellPane = useLayoutStore((s) => s.addShellPane);
-  const focusPane = useLayoutStore((s) => s.focus);
   const loginCommand = accountLoginCommandFor(adapterId);
 
   async function refreshAuth() {
@@ -221,36 +217,27 @@ export function AccountsManager({
   }
 
   /**
-   * Create the login pane without moving focus or leaving Settings. The PTY
-   * session is the readiness authority; only after it exists do we write,
-   * focus the pane, and reveal Terminal.
+   * Mesmo caminho do painel de CLIs: abre um terminal real, roda o comando da
+   * ferramenta e reexamina o login quando aquele terminal fecha.
    */
   async function openLoginTerminal() {
     if (!loginCommand) return;
     setBusy(true);
-    let paneId: string | null = null;
-    try {
-      paneId = addShellPane({ focus: false });
-      const sessionId = await waitForSession(paneId);
-      if (!sessionId) {
-        useLayoutStore
-          .getState()
-          .close(paneId, 'settings-login-terminal-unavailable');
-        showNotice('Não consegui abrir o terminal de login.', 'err');
-        return;
-      }
-      window.nexus.pty.write(sessionId, `${loginCommand}\r`);
-      focusPane(paneId);
-      useProductNavigationStore.getState().openTerminal();
-    } catch {
-      if (paneId) {
-        useLayoutStore
-          .getState()
-          .close(paneId, 'settings-login-terminal-failed');
-      }
-      showNotice('Não consegui abrir o terminal de login.', 'err');
-    } finally {
-      setBusy(false);
+    const result = await openCliLoginTerminal({
+      command: loginCommand,
+      onFinished: () => {
+        void refreshAuth();
+        void hydrate();
+      },
+    });
+    setBusy(false);
+    if (result.ok) {
+      showNotice(
+        'Terminal aberto. Conclua o login lá. Quando fechar, o Nexus verifica sozinho.',
+        'info',
+      );
+    } else {
+      showNotice(result.error, 'err');
     }
   }
 

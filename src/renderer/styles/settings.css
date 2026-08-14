@@ -2777,45 +2777,102 @@
   opacity: 0.85;
 }
 
-.prov-tile-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
-  gap: 8px;
-}
-
-/* Célula do grid: o cartão preenche, e o atalho de login flutua nele. Botão
-   dentro de botão é HTML inválido — por isso o slot, não aninhamento. */
-.prov-tile-slot {
-  position: relative;
+.prov-row-list {
   display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
-.prov-tile__login {
-  position: absolute;
-  right: 6px;
-  bottom: 6px;
-  padding: 2px 8px;
-  border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--border));
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--accent) 18%, var(--bg));
-  color: color-mix(in srgb, var(--accent) 82%, var(--fg));
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
+.prov-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 52px;
+  padding: 6px 8px 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+}
+
+.prov-row--selected {
+  border-color: color-mix(in srgb, var(--accent) 70%, var(--border));
+}
+
+.prov-row--off {
+  opacity: 0.62;
+}
+
+.prov-row__select {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 10px;
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
   cursor: pointer;
-  transition: background 120ms ease, border-color 120ms ease, transform 120ms ease;
 }
 
-.prov-tile__login:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--accent) 32%, var(--bg));
-  border-color: var(--accent);
-  transform: translateY(-1px);
+.prov-row__select .provider-logo {
+  width: 28px;
+  height: 28px;
 }
 
-.prov-tile__login:disabled {
-  opacity: 0.6;
-  cursor: progress;
+.prov-row__identity {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.prov-row__name {
+  font-size: 13px;
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prov-row__status {
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.prov-row__status--ok {
+  color: var(--ok);
+}
+
+.prov-row__status--warn {
+  color: var(--warn);
+}
+
+.prov-row__status--danger {
+  color: var(--danger);
+}
+
+.prov-row__status--muted {
+  color: var(--text-dim);
+}
+
+.prov-row__meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.prov-row__cta {
+  flex: 0 0 auto;
+  min-height: 32px;
+  padding: 0 12px;
+  font-size: 12px;
 }
 
 .prov-detail__login {
@@ -2825,85 +2882,8 @@
 
 .prov-hub__login-notice {
   margin: 8px 0 0;
-  border-left: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  border-left: 2px solid var(--border-strong);
   padding-left: 8px;
-}
-
-.prov-tile {
-  display: grid;
-  flex: 1;
-  grid-template-columns: auto 1fr;
-  grid-template-rows: auto auto auto;
-  column-gap: 8px;
-  row-gap: 2px;
-  align-items: center;
-  min-height: 78px;
-  padding: 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: color-mix(in srgb, var(--bg) 88%, transparent);
-  color: inherit;
-  text-align: left;
-  cursor: pointer;
-  transition: border-color 120ms ease, background 120ms ease, box-shadow 120ms ease;
-}
-
-.prov-tile:hover {
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
-  background: color-mix(in srgb, var(--accent) 6%, var(--bg));
-}
-
-.prov-tile--selected {
-  border-color: color-mix(in srgb, var(--accent) 70%, var(--border));
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
-  background: color-mix(in srgb, var(--accent) 9%, var(--bg));
-}
-
-.prov-tile--off {
-  opacity: 0.62;
-}
-
-.prov-tile .provider-logo {
-  grid-row: 1 / span 3;
-  width: 32px;
-  height: 32px;
-}
-
-.prov-tile__name {
-  grid-column: 2;
-  font-size: 13px;
-  font-weight: 650;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.prov-tile__status {
-  grid-column: 2;
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.prov-tile__status--ok {
-  color: var(--ok, #1a9b5c);
-}
-
-.prov-tile__status--warn {
-  color: var(--warn);
-}
-
-.prov-tile__status--muted {
-  color: var(--text-dim);
-}
-
-.prov-tile__meta {
-  grid-column: 2;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--text-dim);
 }
 
 .prov-detail {

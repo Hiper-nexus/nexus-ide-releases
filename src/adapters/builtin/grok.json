@@ -14,7 +14,7 @@
     "method": "api_key",
     "credentialStore": "keychain",
     "envVarFallback": "XAI_API_KEY",
-    "loginHint": "Run `grok login` for grok.com OAuth, or set XAI_API_KEY in provider settings.",
+    "loginHint": "Rode `grok login` (OAuth) ou cole XAI_API_KEY.",
     "loginCommand": "grok login"
   },
   "spawn": {

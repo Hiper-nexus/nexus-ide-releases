@@ -13,7 +13,8 @@
   "auth": {
     "method": "oauth",
     "credentialStore": "keychain",
-    "loginHint": "Run `agy` and complete Google OAuth in the browser."
+    "loginHint": "Abra `agy` e conclua o login do Google no navegador. AGY não tem subcomando de login.",
+    "loginCommand": "agy"
   },
   "spawn": {
     "interactive": [

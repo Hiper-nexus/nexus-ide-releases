@@ -14,7 +14,7 @@
     "method": "api_key",
     "envVarFallback": "ANTHROPIC_API_KEY",
     "credentialStore": "env",
-    "loginHint": "Set ANTHROPIC_API_KEY or OPENAI_API_KEY in your environment.",
+    "loginHint": "Rode `opencode auth login` ou cole a chave do provedor.",
     "loginCommand": "opencode auth login"
   },
   "spawn": {

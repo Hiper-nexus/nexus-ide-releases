@@ -18,12 +18,19 @@ export function isLocalCliProvider(provider: ProviderSettingsInfo): boolean {
 }
 
 /**
- * CLIs whose primary path is browser/OAuth subscription login — not every
- * local CLI (authMethod "cli" alone would make Login ≈ CLIs).
+ * CLIs with a real login path (OAuth/device/subscription or a declared
+ * terminal command). API-key-only tools stay on CLIs / Remotos.
  */
 export function isExternalLoginProvider(provider: ProviderSettingsInfo): boolean {
   if (!isLocalCliProvider(provider)) return false;
-  if (provider.authMethod === 'oauth') return true;
+  if (provider.loginCommand) return true;
+  if (
+    provider.authMethod === 'oauth' ||
+    provider.authMethod === 'device_code' ||
+    provider.authMethod === 'subscription'
+  ) {
+    return true;
+  }
   return (
     provider.authStrategy === 'subscription' ||
     provider.authStrategy === 'login-needed'
@@ -101,16 +108,45 @@ export function modelCountLabel(provider: ProviderSettingsInfo): string {
 
 export function providerStatusLabel(provider: ProviderSettingsInfo): {
   readonly label: string;
-  readonly tone: 'ok' | 'warn' | 'muted';
+  readonly tone: 'ok' | 'warn' | 'muted' | 'danger';
 } {
   if (!provider.installed && isLocalCliProvider(provider)) {
-    return { label: 'ausente', tone: 'warn' };
+    return { label: 'não instalada', tone: 'warn' };
   }
-  if (!provider.enabled) return { label: 'off', tone: 'muted' };
+  if (!provider.enabled) return { label: 'desligada', tone: 'muted' };
   if (provider.authStrategy === 'login-needed') {
-    return { label: 'login', tone: 'warn' };
+    return { label: 'precisa login', tone: 'warn' };
   }
-  return { label: 'ativo', tone: 'ok' };
+  return { label: 'conectado', tone: 'ok' };
+}
+
+export type ProviderRowCta =
+  | { readonly kind: 'login'; readonly label: string }
+  | { readonly kind: 'key'; readonly label: string }
+  | { readonly kind: 'install'; readonly label: string };
+
+/** One operator action per row — or none when there is nothing to do. */
+export function providerRowCta(
+  provider: ProviderSettingsInfo,
+): ProviderRowCta | null {
+  if (!provider.installed && isLocalCliProvider(provider)) {
+    return provider.canAutoInstall
+      ? { kind: 'install', label: 'Instalar' }
+      : null;
+  }
+  if (!provider.enabled) return null;
+  if (provider.authStrategy === 'login-needed') {
+    if (provider.loginCommand) return { kind: 'login', label: 'Entrar' };
+    if (provider.keyEnvVar) return { kind: 'key', label: 'Colar chave' };
+  }
+  if (
+    !isLocalCliProvider(provider) &&
+    provider.keyEnvVar &&
+    !provider.hasKey
+  ) {
+    return { kind: 'key', label: 'Colar chave' };
+  }
+  return null;
 }
 
 export function pickDefaultSelection(

@@ -11,6 +11,8 @@ vi.mock('../persistence/provider-config-store', () => ({
     { adapterId: 'kimi', installed: true, hasKey: false },
     { adapterId: 'opencode', installed: true, hasKey: false },
     { adapterId: 'aider', installed: true, hasKey: true },
+    { adapterId: 'glm', installed: true, hasKey: false, keyEnvVar: 'ANTHROPIC_AUTH_TOKEN' },
+    { adapterId: 'longcat', installed: true, hasKey: false, keyEnvVar: 'ANTHROPIC_AUTH_TOKEN' },
   ],
 }));
 
@@ -49,6 +51,16 @@ describe('probeAdapterAuth provider-specific diagnostics', () => {
       adapterId: 'aider',
       state: 'ok',
       detail: 'API key no cofre',
+    });
+    expect(byId.glm).toEqual({
+      adapterId: 'glm',
+      state: 'missing',
+      detail: 'precisa colar a chave desta CLI',
+    });
+    expect(byId.longcat).toEqual({
+      adapterId: 'longcat',
+      state: 'missing',
+      detail: 'precisa colar a chave desta CLI',
     });
   });
 });

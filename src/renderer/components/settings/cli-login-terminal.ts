@@ -10,7 +10,7 @@ import { waitForSession, writeToPane } from '../../terminal/terminal-host';
  * assinatura — quem grava a sessão é a própria CLI, igual ao shell do operador.
  *
  * Quando aquele terminal termina, o painel reexamina as CLIs sozinho: é assim
- * que o cartão sai de "login" para "ativo" sem o operador ter que caçar botão.
+ * que a linha sai de "precisa login" para "conectado" sem o operador caçar botão.
  */
 
 export type CliLoginOutcome =

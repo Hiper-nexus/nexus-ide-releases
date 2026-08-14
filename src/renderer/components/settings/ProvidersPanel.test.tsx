@@ -94,7 +94,10 @@ describe('ProvidersPanel hub', () => {
     Object.defineProperty(window, 'nexus', {
       configurable: true,
       value: {
-        providers: { authStatus: vi.fn(async () => []) },
+        providers: {
+          authStatus: vi.fn(async () => []),
+          installCli: vi.fn(async () => ({ ok: true })),
+        },
         adapters: { rescan: vi.fn(async () => []) },
       },
     });
@@ -110,7 +113,7 @@ describe('ProvidersPanel hub', () => {
     const { host, root } = mount();
     expect(host.querySelector('[data-testid="prov-detected-count"]')?.textContent)
       .toMatch(/2 detectados/);
-    const tiles = host.querySelectorAll('[data-testid="prov-tile-grid"] .prov-tile');
+    const tiles = host.querySelectorAll('[data-testid="prov-tile-grid"] .prov-row');
     expect(tiles.length).toBe(2);
     expect(host.textContent).toContain('Claude');
     expect(host.textContent).toContain('Codex');
@@ -143,7 +146,7 @@ describe('ProvidersPanel hub', () => {
     expect(remote).toBeTruthy();
     await act(async () => remote!.click());
     expect(host.textContent).toContain('GLM');
-    expect(host.querySelectorAll('.prov-tile').length).toBe(1);
+    expect(host.querySelectorAll('.prov-row').length).toBe(1);
     act(() => root.unmount());
   });
 
@@ -168,7 +171,7 @@ describe('ProvidersPanel hub', () => {
 
   it('surfaces account chip on the tile and detail accounts block', () => {
     const { host, root } = mount();
-    expect(host.textContent).toContain('1 ct');
+    expect(host.textContent).toContain('1 conta');
     expect(host.textContent).toContain('Principal');
     act(() => root.unmount());
   });
@@ -201,7 +204,7 @@ describe('ProvidersPanel hub', () => {
     );
     expect(
       host.querySelector('[data-testid="prov-login-notice"]')?.textContent,
-    ).toContain('codex login');
+    ).toContain('terminal aberto');
     act(() => root.unmount());
   });
 });

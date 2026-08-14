@@ -14,7 +14,7 @@
     "method": "api_key",
     "credentialStore": "keychain",
     "envVarFallback": "KIMI_MODEL_API_KEY",
-    "loginHint": "Run `kimi login` (Kimi Code CLI / @moonshot-ai/kimi-code). Legacy kimi-cli migrates via `kimi migrate`.",
+    "loginHint": "Rode `kimi login` (fluxo no dispositivo). CLI antiga: `kimi migrate`.",
     "loginCommand": "kimi login"
   },
   "spawn": {

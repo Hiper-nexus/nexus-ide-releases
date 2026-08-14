@@ -14,7 +14,7 @@
     "method": "api_key",
     "envVarFallback": "OPENAI_API_KEY",
     "credentialStore": "keychain",
-    "loginHint": "Set OPENAI_API_KEY in your environment or run `codex login`.",
+    "loginHint": "Rode `codex login` ou cole OPENAI_API_KEY.",
     "loginCommand": "codex login"
   },
   "spawn": {

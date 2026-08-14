@@ -79,7 +79,7 @@ describe('AccountsManager', () => {
     });
 
     expect(host.textContent).toContain('Sessão nativa de claude');
-    expect(host.textContent).toContain('Login verificado');
+    expect(host.textContent).toContain('conectado');
     expect(host.textContent).toContain('API key');
     expect(host.textContent).toMatch(/multi-conta/i);
     // Login verificado + sessão nativa = 1ª já em uso → próximo add é a 2ª.

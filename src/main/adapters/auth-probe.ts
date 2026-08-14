@@ -87,7 +87,7 @@ const OAUTH_PROBES: Record<
           'item Keychain presente mas sem OAuth utilizável — rode `claude auth login`',
       };
     }
-    return { state: 'missing', detail: 'sem sessão — rode a CLI e faça /login' };
+    return { state: 'missing', detail: 'sem sessão — rode `claude auth login`' };
   },
   codex: async () => {
     if (fileExists(path.join(HOME, '.codex', 'auth.json'))) {
@@ -125,7 +125,7 @@ const OAUTH_PROBES: Record<
         },
   aider: async () => ({
     state: 'missing',
-    detail: 'Aider usa API key — configure uma credencial de provider',
+    detail: 'Aider usa API key — cole a chave do provedor',
   }),
 };
 
@@ -151,6 +151,13 @@ export async function probeAdapterAuth(): Promise<AdapterAuthStatus[]> {
       }
       if (!info.installed) {
         return { adapterId: info.adapterId, state: 'unknown', detail: 'CLI não instalada' };
+      }
+      if (info.keyEnvVar) {
+        return {
+          adapterId: info.adapterId,
+          state: 'missing',
+          detail: 'precisa colar a chave desta CLI',
+        };
       }
       return {
         adapterId: info.adapterId,

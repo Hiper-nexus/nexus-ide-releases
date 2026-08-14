@@ -97,7 +97,7 @@ export function registerAccountIpc(): void {
         : {
             ok: false,
             error:
-              'Nenhuma sessão Claude ativa no Keychain. Faça login (`claude` → /login) e tente de novo.',
+              'Nenhuma sessão Claude ativa no Keychain. Rode `claude auth login` e tente de novo.',
           };
     } catch (err) {
       return {
@@ -123,7 +123,7 @@ export function registerAccountIpc(): void {
       );
       if (!account) {
         const hints: Record<string, string> = {
-          claude: 'Faça login (`claude` → /login) e tente de novo.',
+          claude: 'Rode `claude auth login` e tente de novo.',
           codex: 'Rode `codex login` no terminal e tente de novo.',
           grok: 'Rode `grok login` no terminal e tente de novo.',
           kimi: 'Rode `kimi login` no terminal e tente de novo.',

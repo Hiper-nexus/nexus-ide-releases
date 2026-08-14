@@ -129,8 +129,8 @@ export const SETTINGS_GROUPS: NavGroup[] = [
       icon: 'KEY',
       pixelIcon: 'key',
       title: 'Providers',
-      subtitle: 'chaves · modelos',
-      aliases: ['keys', 'models', 'cli', 'clis'],
+      subtitle: 'login · chaves',
+      aliases: ['keys', 'models', 'cli', 'clis', 'login', 'entrar', 'token'],
     },
     {
       id: 'usage-quota',

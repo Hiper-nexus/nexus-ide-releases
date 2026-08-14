@@ -6,6 +6,7 @@ import {
   isExternalLoginProvider,
   modelCountLabel,
   pickDefaultSelection,
+  providerRowCta,
   providerStatusLabel,
   selectModelValue,
   tabDetectedLabel,
@@ -87,6 +88,18 @@ describe('providers-panel-view', () => {
     expect(isExternalLoginProvider(claude)).toBe(true);
     expect(isExternalLoginProvider(shellLike)).toBe(false);
     expect(isExternalLoginProvider(glm)).toBe(false);
+    expect(
+      isExternalLoginProvider(
+        provider({
+          adapterId: 'codex',
+          label: 'Codex',
+          kind: 'cli-pty',
+          authMethod: 'api_key',
+          authStrategy: 'api-key',
+          loginCommand: 'codex login',
+        }),
+      ),
+    ).toBe(true);
   });
 
   it('hides absent CLIs by default and shows them when asked', () => {
@@ -117,10 +130,20 @@ describe('providers-panel-view', () => {
 
   it('formats model readiness, status chips and select value', () => {
     expect(modelCountLabel(claude)).toBe('3/3');
-    expect(providerStatusLabel(claude)).toEqual({ label: 'ativo', tone: 'ok' });
+    expect(providerStatusLabel(claude)).toEqual({
+      label: 'conectado',
+      tone: 'ok',
+    });
     expect(providerStatusLabel(missing)).toEqual({
-      label: 'ausente',
+      label: 'não instalada',
       tone: 'warn',
+    });
+    expect(
+      providerStatusLabel({ ...claude, authStrategy: 'login-needed' }),
+    ).toEqual({ label: 'precisa login', tone: 'warn' });
+    expect(providerStatusLabel({ ...claude, enabled: false })).toEqual({
+      label: 'desligada',
+      tone: 'muted',
     });
     // defaultModel "claude-default" is not in models ['a','b','c'] → first model
     expect(selectModelValue(claude)).toBe('a');
@@ -146,5 +169,29 @@ describe('providers-panel-view', () => {
   it('picks a stable default selection preferring installed providers', () => {
     expect(pickDefaultSelection([missing, claude], null)).toBe('claude');
     expect(pickDefaultSelection([missing, claude], 'kimi')).toBe('kimi');
+  });
+
+  it('offers one honest CTA per row', () => {
+    expect(
+      providerRowCta({
+        ...claude,
+        authStrategy: 'login-needed',
+        loginCommand: 'claude auth login',
+      }),
+    ).toEqual({ kind: 'login', label: 'Entrar' });
+    expect(
+      providerRowCta({
+        ...missing,
+        canAutoInstall: true,
+      }),
+    ).toEqual({ kind: 'install', label: 'Instalar' });
+    expect(
+      providerRowCta({
+        ...glm,
+        keyEnvVar: 'ANTHROPIC_AUTH_TOKEN',
+        hasKey: false,
+      }),
+    ).toEqual({ kind: 'key', label: 'Colar chave' });
+    expect(providerRowCta(claude)).toBeNull();
   });
 });
