@@ -44,15 +44,28 @@ export function realtimeChainEnvVars(transport: RealtimeTransport): string[] {
   );
 }
 
+export function formatRealtimeKeyList(transport: RealtimeTransport): string {
+  const chainKeys = realtimeChainEnvVars(transport);
+  return chainKeys.length > 1
+    ? `${chainKeys.slice(0, -1).join(', ')} ou ${chainKeys.at(-1)}`
+    : (chainKeys[0] ?? '');
+}
+
+/** Copy for the HUD when Live is on but no hop of the chain has a key. */
+export function realtimeMissingCredentialMessage(
+  transport: RealtimeTransport,
+): string {
+  return (
+    `Realtime sem chave: configure ${formatRealtimeKeyList(transport)}. ` +
+    `Sem isso a Jarvis não fala.`
+  );
+}
+
 export function liveSmokeFailureMessage(
   reason: JarvisLiveSmokeFailureReason,
   transport: RealtimeTransport,
 ): string {
-  const chainKeys = realtimeChainEnvVars(transport);
-  const keyList =
-    chainKeys.length > 1
-      ? `${chainKeys.slice(0, -1).join(', ')} ou ${chainKeys.at(-1)}`
-      : chainKeys[0];
+  const keyList = formatRealtimeKeyList(transport);
   const messages: Record<JarvisLiveSmokeFailureReason, string> = {
     busy: 'Já existe um diagnóstico realtime em andamento.',
     invalid_request: 'O diagnóstico realtime recebeu dados inválidos.',

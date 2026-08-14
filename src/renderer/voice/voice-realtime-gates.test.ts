@@ -1,5 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import { shouldIgnoreLiveReWake } from './voice-realtime-gates';
+import type { VoiceRuntimeInfo } from '../../shared/voice-ipc';
+import { canAttemptRealtime, shouldIgnoreLiveReWake } from './voice-realtime-gates';
+
+function infoWithKeys(
+  transport: VoiceRuntimeInfo['jarvisLive']['transport'],
+  present: string[],
+): VoiceRuntimeInfo {
+  return {
+    jarvisLive: { enabled: true, transport },
+    keys: ['XAI_API_KEY', 'OPENAI_API_KEY', 'GEMINI_API_KEY'].map((envVar) => ({
+      envVar,
+      hasEnv: present.includes(envVar),
+      hasStoredKey: false,
+    })),
+  } as VoiceRuntimeInfo;
+}
 
 describe('shouldIgnoreLiveReWake', () => {
   it('allows barge-in re-wake while Live is speaking (full-duplex)', () => {
@@ -98,5 +113,24 @@ describe('shouldIgnoreLiveReWake', () => {
         realtimeTurnActive: true,
       }),
     ).toBe(false);
+  });
+});
+
+describe('canAttemptRealtime', () => {
+  it('engages grok-realtime when only XAI_API_KEY is present', () => {
+    expect(canAttemptRealtime(infoWithKeys('grok-realtime', ['XAI_API_KEY']))).toBe(
+      true,
+    );
+  });
+
+  it('still engages via OpenAI/Gemini fallbacks on the grok chain', () => {
+    expect(
+      canAttemptRealtime(infoWithKeys('grok-realtime', ['OPENAI_API_KEY'])),
+    ).toBe(true);
+  });
+
+  it('refuses realtime when Live is on but the chain has no key', () => {
+    expect(canAttemptRealtime(infoWithKeys('grok-realtime', []))).toBe(false);
+    expect(canAttemptRealtime(infoWithKeys('classic', ['XAI_API_KEY']))).toBe(false);
   });
 });

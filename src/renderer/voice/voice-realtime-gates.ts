@@ -3,6 +3,7 @@
  */
 import { useVoiceStore } from './voice-store';
 import type { VoiceRuntimeInfo } from '../../shared/voice-ipc';
+import { realtimeFallbackHasCredential } from '../../shared/voice-config';
 import {
   REALTIME_ACTION_BRIDGE_ENABLED,
   REALTIME_PROVIDER_AUDIO_ENABLED,
@@ -17,7 +18,7 @@ export function isJarvisLiveEnabled(): boolean {
   return Boolean(info?.jarvisLive.enabled && info.routing === 'jarvis');
 }
 
-/** Transporte realtime (áudio full-duplex OpenAI/Gemini) ligado? */
+/** Transporte realtime (áudio full-duplex Grok/OpenAI/Gemini) ligado? */
 export function isRealtimeLive(): boolean {
   const info = useVoiceStore.getState().info;
   const liveState = useVoiceStore.getState().liveState;
@@ -40,8 +41,9 @@ export function hasCredential(
 
 export function canAttemptRealtime(info: VoiceRuntimeInfo | null | undefined): boolean {
   if (!info?.jarvisLive.enabled || info.jarvisLive.transport === 'classic') return false;
-  // Realtime engages with EITHER key regardless of the configured transport.
-  return hasCredential(info, 'OPENAI_API_KEY') || hasCredential(info, 'GEMINI_API_KEY');
+  return realtimeFallbackHasCredential(info.jarvisLive.transport, (envVar) =>
+    hasCredential(info, envVar),
+  );
 }
 
 /**

@@ -599,6 +599,16 @@ describe('App Nexus V2 cutover', () => {
         host.querySelectorAll(`[data-preserved-overlay="${overlay}"]`),
       ).toHaveLength(1);
     }
+    expect(
+      host.querySelector(
+        '[data-overlay-layer="true"] [data-preserved-overlay="voice-hud"]',
+      ),
+    ).not.toBeNull();
+    expect(
+      host.querySelector(
+        '[data-overlay-layer="true"] [data-preserved-overlay="voice-settings"]',
+      ),
+    ).not.toBeNull();
   });
 
   it('keeps the named mission authoritative across board, terminals and settings deep links', () => {

@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { getVoiceConfig } from './voice-config-store';
-import { resolveActiveJarvisBrain } from '../../shared/voice-config';
+import {
+  REALTIME_PROVIDER_ENV_VAR,
+  resolveActiveJarvisBrain,
+} from '../../shared/voice-config';
 import {
   voiceApiKeySource,
 } from './voice-secrets';
@@ -253,10 +256,9 @@ export class LiveTransportController {
   }
 
   isRealtimeConfigured(): boolean {
-    return resolveRealtimeProviderIds(getVoiceConfig()).some((providerId) => {
-      const envVar = providerId === 'openai' ? 'OPENAI_API_KEY' : 'GEMINI_API_KEY';
-      return voiceApiKeySource(envVar) !== 'missing';
-    });
+    return resolveRealtimeProviderIds(getVoiceConfig()).some(
+      (id) => voiceApiKeySource(REALTIME_PROVIDER_ENV_VAR[id]) !== 'missing',
+    );
   }
 
   beginTurn(turnId: string): void {
@@ -278,7 +280,7 @@ export class LiveTransportController {
     const config = getVoiceConfig();
     const candidates: EngageCandidate[] = resolveRealtimeProviderIds(config).map(
       (id) => {
-        const envVar = id === 'openai' ? 'OPENAI_API_KEY' : 'GEMINI_API_KEY';
+        const envVar = REALTIME_PROVIDER_ENV_VAR[id];
         return { id, envVar, source: voiceApiKeySource(envVar) };
       },
     );

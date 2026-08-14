@@ -6,6 +6,7 @@ import {
   HUD_EDGE_MARGIN,
   HUD_MAX_WIDTH,
   HUD_MIN_WIDTH,
+  clampHudDragPosition,
   hudPositionStyle,
   isHudMini,
   loadHudPrefs,
@@ -67,6 +68,20 @@ describe('hud-prefs', () => {
     expect(anchored.corner).toBe('tl');
     expect(anchored.dx).toBe(HUD_EDGE_MARGIN);
     expect(anchored.dy).toBe(HUD_EDGE_MARGIN);
+  });
+
+  it('clampa o arrasto livre dentro do viewport', () => {
+    const vp = { width: 1000, height: 800 };
+    const size = { width: 200, height: 40 };
+    expect(clampHudDragPosition(40, 60, size, vp)).toEqual({ left: 40, top: 60 });
+    expect(clampHudDragPosition(-500, -20, size, vp)).toEqual({
+      left: -100,
+      top: 0,
+    });
+    expect(clampHudDragPosition(2000, 2000, size, vp)).toEqual({
+      left: 900,
+      top: 776,
+    });
   });
 
   it('gera o estilo de posição fixa correto para cada canto', () => {

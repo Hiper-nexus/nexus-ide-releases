@@ -14,6 +14,7 @@ import {
   keyCodeFromAccelerator,
   normalizeKeyCode,
   legacyVoiceConfigSchema,
+  realtimeFallbackHasCredential,
 } from './voice-config';
 
 describe('voiceConfigSchema', () => {
@@ -228,5 +229,38 @@ describe('push-to-talk key helpers', () => {
     expect(normalizeKeyCode('spacebar')).toBe('Space');
     expect(normalizeKeyCode('f8')).toBe('F8');
     expect(normalizeKeyCode('j')).toBe('J');
+  });
+});
+
+describe('realtimeFallbackHasCredential', () => {
+  it('accepts XAI_API_KEY as the official grok-realtime head', () => {
+    expect(
+      realtimeFallbackHasCredential(
+        'grok-realtime',
+        (envVar) => envVar === 'XAI_API_KEY',
+      ),
+    ).toBe(true);
+  });
+
+  it('accepts an OpenAI or Gemini fallback when xAI is missing', () => {
+    expect(
+      realtimeFallbackHasCredential(
+        'grok-realtime',
+        (envVar) => envVar === 'OPENAI_API_KEY',
+      ),
+    ).toBe(true);
+    expect(
+      realtimeFallbackHasCredential(
+        'grok-realtime',
+        (envVar) => envVar === 'GEMINI_API_KEY',
+      ),
+    ).toBe(true);
+  });
+
+  it('is false when the chain has no key or the transport is classic', () => {
+    expect(realtimeFallbackHasCredential('grok-realtime', () => false)).toBe(false);
+    expect(
+      realtimeFallbackHasCredential('classic', (envVar) => envVar === 'XAI_API_KEY'),
+    ).toBe(false);
   });
 });

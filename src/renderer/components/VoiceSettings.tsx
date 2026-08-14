@@ -291,6 +291,24 @@ export function VoiceSettings() {
     setTestResult(null);
   }, [open, info, draftHydrationBarrier]);
 
+  useEffect(() => {
+    if (!open || info) return;
+    let cancelled = false;
+    void window.nexus.voice
+      .getInfo()
+      .then((next) => {
+        if (!cancelled) setInfo(next);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : String(err));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, info, setInfo]);
+
   // Persist in-progress edits continuously (session only).
   useEffect(() => {
     if (!open) return;
@@ -340,6 +358,24 @@ export function VoiceSettings() {
   ]);
 
   if (!open) return null;
+
+  if (!info) {
+    return (
+      <div
+        className="agent-picker"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Configurações da Jarvis"
+      >
+        <div className="agent-picker__overlay" onClick={close} />
+        <div className="agent-picker__panel agent-picker__panel--voice voice-settings">
+          <p className="agent-picker__empty">
+            {error ?? 'Carregando configurações da Jarvis…'}
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   const save = async () => {
     if (!info) return;

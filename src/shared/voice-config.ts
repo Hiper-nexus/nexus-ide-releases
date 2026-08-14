@@ -126,6 +126,22 @@ export const REALTIME_FALLBACK_CHAIN: Record<
 };
 
 /**
+ * True when any hop of the configured realtime chain has a credential.
+ * Grok (XAI_API_KEY) is the official head — a gate that only looks at
+ * OpenAI/Gemini treats a valid xAI key as "no realtime" and the Jarvis
+ * box stays mute.
+ */
+export function realtimeFallbackHasCredential(
+  transport: JarvisLiveTransport,
+  hasKey: (envVar: string) => boolean,
+): boolean {
+  if (transport === 'classic') return false;
+  return REALTIME_FALLBACK_CHAIN[transport].some((id) =>
+    hasKey(REALTIME_PROVIDER_ENV_VAR[id]),
+  );
+}
+
+/**
  * Grok Voice (xAI) — rota oficial da voz do Nexus. Versão explícita de
  * propósito: o alias `grok-voice-latest` migra sozinho no provedor e trocaria a
  * voz do produto sem ninguém decidir isso.

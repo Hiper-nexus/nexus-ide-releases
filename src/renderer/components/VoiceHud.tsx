@@ -1,8 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { useVoiceStore, type VoiceUiStatus } from '../voice/voice-store';
 import { useDictationMode } from '../voice/use-dictation-mode';
-import { anchorFromDrag, hudPositionStyle, isHudMini } from '../voice/hud-prefs';
+import {
+  anchorFromDrag,
+  clampHudDragPosition,
+  hudPositionStyle,
+  isHudMini,
+} from '../voice/hud-prefs';
 import { requestJarvisWake } from '../voice/manual-wake';
+import { canAttemptRealtime } from '../voice/voice-realtime-gates';
+import { realtimeMissingCredentialMessage } from './voice-settings-helpers';
 import {
   powerOffJarvis,
   setResponseMuted,
@@ -76,6 +83,7 @@ export function VoiceHud() {
   const [dragPos, setDragPos] = useState<{ left: number; top: number } | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<DragState | null>(null);
+  const dragCleanupRef = useRef<(() => void) | null>(null);
   const resizeRef = useRef<{ pointerId: number; startX: number; startWidth: number } | null>(
     null,
   );
@@ -92,6 +100,12 @@ export function VoiceHud() {
   const wakeBlockedPid = info?.wakeLockHolderPid ?? null;
   const wakeBlocked = info?.wakeWordEnabled === true && wakeBlockedPid !== null;
   const canClickWake = status === 'idle' && info?.enabled === true && !wakeBlocked;
+  const missingRealtimeKey =
+    info?.jarvisLive.enabled === true &&
+    info.jarvisLive.transport !== 'classic' &&
+    !canAttemptRealtime(info)
+      ? realtimeMissingCredentialMessage(info.jarvisLive.transport)
+      : null;
   const liveVisible =
     info?.jarvisLive.enabled === true &&
     liveState?.enabled !== false &&
@@ -106,19 +120,31 @@ export function VoiceHud() {
       orbRef.current?.style.setProperty('--voice-amp', s.level.toFixed(3));
     });
   }, []);
+  useEffect(() => () => dragCleanupRef.current?.(), []);
 
   if (hud.mode === 'hidden') return null; // só-áudio: zero visual
-  if (status === 'idle' && !liveVisible && !wakeBlocked && !canClickWake) return null;
+  if (
+    status === 'idle' &&
+    !liveVisible &&
+    !wakeBlocked &&
+    !canClickWake &&
+    !missingRealtimeKey
+  ) {
+    return null;
+  }
 
   const liveLabel = LIVE_LABEL[liveStatus] ?? liveStatus;
-  const label = wakeBlocked
-    ? 'Wake ocupado'
-    : canClickWake
-      ? 'Jarvis pronta'
-      : status === 'idle'
-      ? `Jarvis ${liveLabel}`
-      : PHASE_LABEL[status];
-  const isError = status === 'error';
+  const label = missingRealtimeKey
+    ? 'Sem chave realtime'
+    : wakeBlocked
+      ? 'Wake ocupado'
+      : canClickWake
+        ? 'Jarvis pronta'
+        : status === 'idle'
+          ? `Jarvis ${liveLabel}`
+          : PHASE_LABEL[status];
+  const isError = status === 'error' || Boolean(missingRealtimeKey);
+  const visibleError = error ?? missingRealtimeKey;
   const isMini = isHudMini(hud.mode);
 
   // In toggle mode the send edge is a SECOND keypress — say so, or users
@@ -130,49 +156,13 @@ export function VoiceHud() {
         : `pressione ${info.shortcut} de novo para enviar`
       : null;
 
-  const beginDrag = (e: React.PointerEvent<HTMLElement>) => {
-    const shell = shellRef.current;
-    if (!shell || dragRef.current) return;
-    const rect = shell.getBoundingClientRect();
-    dragRef.current = {
-      pointerId: e.pointerId,
-      offsetX: e.clientX - rect.left,
-      offsetY: e.clientY - rect.top,
-      startX: e.clientX,
-      startY: e.clientY,
-      moved: false,
-    };
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-  };
-
-  const moveDrag = (e: React.PointerEvent<HTMLElement>) => {
+  const finishDrag = (pointerId: number) => {
     const drag = dragRef.current;
     const shell = shellRef.current;
-    if (!drag || drag.pointerId !== e.pointerId || !shell) return;
-    if (
-      Math.abs(e.clientX - drag.startX) > CLICK_SLOP_PX ||
-      Math.abs(e.clientY - drag.startY) > CLICK_SLOP_PX
-    ) {
-      drag.moved = true;
-    }
-    if (!drag.moved) return;
-    const rect = shell.getBoundingClientRect();
-    const left = Math.min(
-      Math.max(e.clientX - drag.offsetX, -rect.width / 2),
-      window.innerWidth - rect.width / 2,
-    );
-    const top = Math.min(
-      Math.max(e.clientY - drag.offsetY, 0),
-      window.innerHeight - 24,
-    );
-    setDragPos({ left, top });
-  };
-
-  const endDrag = (e: React.PointerEvent<HTMLElement>) => {
-    const drag = dragRef.current;
-    const shell = shellRef.current;
-    if (!drag || drag.pointerId !== e.pointerId) return;
+    if (!drag || drag.pointerId !== pointerId) return;
     dragRef.current = null;
+    dragCleanupRef.current?.();
+    dragCleanupRef.current = null;
     if (!shell) {
       setDragPos(null);
       return;
@@ -185,12 +175,68 @@ export function VoiceHud() {
           { width: window.innerWidth, height: window.innerHeight },
         ),
       );
+    } else if (missingRealtimeKey || status === 'error') {
+      useVoiceStore.getState().openSettings();
     } else if (canClickWake) {
       requestJarvisWake();
     } else if (isMini) {
-      setHudMode('expanded'); // clique (sem drag) na pill = expandir
+      setHudMode('expanded');
     }
     setDragPos(null);
+  };
+
+  const beginDrag = (e: React.PointerEvent<HTMLElement>) => {
+    if (e.button !== 0) return;
+    const shell = shellRef.current;
+    if (!shell || dragRef.current) return;
+    e.preventDefault();
+    const rect = shell.getBoundingClientRect();
+    dragRef.current = {
+      pointerId: e.pointerId,
+      offsetX: e.clientX - rect.left,
+      offsetY: e.clientY - rect.top,
+      startX: e.clientX,
+      startY: e.clientY,
+      moved: false,
+    };
+    try {
+      shell.setPointerCapture(e.pointerId);
+    } catch {
+      // Window listeners below are the source of truth — capture is optional.
+    }
+
+    const onMove = (ev: PointerEvent) => {
+      const drag = dragRef.current;
+      if (!drag || drag.pointerId !== ev.pointerId || !shellRef.current) return;
+      if (
+        Math.abs(ev.clientX - drag.startX) > CLICK_SLOP_PX ||
+        Math.abs(ev.clientY - drag.startY) > CLICK_SLOP_PX
+      ) {
+        drag.moved = true;
+      }
+      if (!drag.moved) return;
+      const box = shellRef.current.getBoundingClientRect();
+      setDragPos(
+        clampHudDragPosition(
+          ev.clientX - drag.offsetX,
+          ev.clientY - drag.offsetY,
+          { width: box.width, height: box.height },
+          { width: window.innerWidth, height: window.innerHeight },
+        ),
+      );
+    };
+    const onUp = (ev: PointerEvent) => {
+      if (ev.pointerId !== e.pointerId) return;
+      finishDrag(ev.pointerId);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+    dragCleanupRef.current = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+    };
   };
 
   const beginResize = (e: React.PointerEvent<HTMLElement>) => {
@@ -240,33 +286,34 @@ export function VoiceHud() {
     return (
       <div
         ref={shellRef}
-        className={`voice-hud voice-hud--mini voice-hud--${status} ${dragPos ? 'voice-hud--dragging' : ''}`}
+        className={`voice-hud voice-hud--mini voice-hud--${isError ? 'error' : status} ${dragPos ? 'voice-hud--dragging' : ''}`}
         style={positionStyle}
         role="status"
         aria-live="polite"
         title={
-          canClickWake
-            ? 'JARVIS — clique para acordar, arraste para mover'
-            : 'JARVIS — clique para expandir, arraste para mover'
+          visibleError
+            ? `${visibleError} — clique para abrir as configurações, arraste para mover`
+            : canClickWake
+              ? 'JARVIS — clique para acordar, arraste para mover'
+              : 'JARVIS — clique para expandir, arraste para mover'
         }
         onPointerDown={beginDrag}
-        onPointerMove={moveDrag}
-        onPointerUp={endDrag}
-        onPointerCancel={endDrag}
       >
         {orb}
         <span className="voice-hud__mini-label">
-          {wakeBlocked
-            ? 'wake ocupado'
-            : isError
-              ? 'erro'
-              : responseMuted
-                ? 'muda'
-                : canClickWake
-                  ? 'pronta'
-                  : status === 'idle'
-                  ? liveLabel
-                  : PHASE_LABEL[status]}
+          {missingRealtimeKey
+            ? 'sem chave'
+            : wakeBlocked
+              ? 'wake ocupado'
+              : isError
+                ? 'erro'
+                : responseMuted
+                  ? 'muda'
+                  : canClickWake
+                    ? 'pronta'
+                    : status === 'idle'
+                      ? liveLabel
+                      : PHASE_LABEL[status]}
         </span>
         <span className="voice-hud__ctls" onPointerDown={(e) => e.stopPropagation()}>
           <button
@@ -318,7 +365,7 @@ export function VoiceHud() {
   return (
     <div
       ref={shellRef}
-      className={`voice-hud voice-hud--expanded voice-hud--${status} ${dragPos ? 'voice-hud--dragging' : ''}`}
+      className={`voice-hud voice-hud--expanded voice-hud--${isError ? 'error' : status} ${dragPos ? 'voice-hud--dragging' : ''}`}
       style={{ ...positionStyle, width: hud.width }}
       role="status"
       aria-live="polite"
@@ -327,9 +374,6 @@ export function VoiceHud() {
         className="voice-hud__titlebar"
         title="Arraste para mover — solte perto de um canto para ancorar"
         onPointerDown={beginDrag}
-        onPointerMove={moveDrag}
-        onPointerUp={endDrag}
-        onPointerCancel={endDrag}
       >
         <span className="voice-hud__grip" aria-hidden="true">
           <PixelIcon name="grip" size={12} />
@@ -409,8 +453,8 @@ export function VoiceHud() {
         {orb}
         <div className="voice-hud__body">
           <span className="voice-hud__label">{label}</span>
-          {isError && error ? (
-            <span className="voice-hud__detail voice-hud__detail--error">{error}</span>
+          {visibleError ? (
+            <span className="voice-hud__detail voice-hud__detail--error">{visibleError}</span>
           ) : (
             <>
               {wakeBlocked && (

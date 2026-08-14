@@ -123,6 +123,10 @@ describe('realtime bridge activation', () => {
   it('keeps the runtime degradation-to-Classic guards in shouldStreamToRealtime', () => {
     // Gates are in voice-realtime-gates.ts.
     expect(gatesSource).toContain('canAttemptRealtime(info)');
+    expect(gatesSource).toContain('realtimeFallbackHasCredential');
+    expect(gatesSource).not.toContain(
+      "hasCredential(info, 'OPENAI_API_KEY') || hasCredential(info, 'GEMINI_API_KEY')",
+    );
     expect(gatesSource).toMatch(/liveState\?\.status !== 'error'/);
   });
 });

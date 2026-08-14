@@ -54,6 +54,20 @@ describe('buildRealtimeEngageDecision', () => {
     expect(d.line).toContain('transport=classic');
   });
 
+  it('names XAI_API_KEY when grok is the engaged head', () => {
+    const d = buildRealtimeEngageDecision({
+      transport: 'grok-realtime',
+      candidates: [
+        { id: 'grok', envVar: 'XAI_API_KEY', source: 'stored' },
+        { id: 'openai', envVar: 'OPENAI_API_KEY', source: 'missing' },
+        { id: 'gemini', envVar: 'GEMINI_API_KEY', source: 'missing' },
+      ],
+    });
+    expect(d.engaged).toBe('grok');
+    expect(d.degraded).toBe(false);
+    expect(d.line).toContain('XAI_API_KEY=stored');
+  });
+
   it('is stable across repeated calls (usable as a dedupe key)', () => {
     const input = {
       transport: 'gemini-live' as const,

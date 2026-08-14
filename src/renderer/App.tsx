@@ -953,10 +953,10 @@ export function App() {
         }
         overlays={
           <>
-            <VoiceHud />
-            <VoiceSettings />
             <CloseWorkspaceDialog />
             <OverlayLayer>
+              <VoiceHud />
+              <VoiceSettings />
               {mediaStudioOpen ? (
                 <MediaStudioPanel
                   open={mediaStudioOpen}

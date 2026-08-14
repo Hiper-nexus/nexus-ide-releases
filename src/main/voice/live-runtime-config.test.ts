@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { DEFAULT_VOICE_CONFIG } from '../../shared/voice-config';
@@ -49,5 +51,21 @@ describe('live runtime config identity', () => {
     expect(isLiveTransportCredential('GEMINI_API_KEY')).toBe(true);
     expect(isLiveTransportCredential('OPENAI_API_KEY')).toBe(true);
     expect(isLiveTransportCredential('GROQ_API_KEY')).toBe(false);
+  });
+});
+
+describe('live transport credential mapping', () => {
+  it('does not collapse grok onto GEMINI_API_KEY', () => {
+    const source = fs.readFileSync(
+      path.join(__dirname, 'live-transport-controller.ts'),
+      'utf8',
+    );
+    expect(source).toContain('REALTIME_PROVIDER_ENV_VAR[id]');
+    expect(source).not.toContain(
+      "providerId === 'openai' ? 'OPENAI_API_KEY' : 'GEMINI_API_KEY'",
+    );
+    expect(source).not.toContain(
+      "id === 'openai' ? 'OPENAI_API_KEY' : 'GEMINI_API_KEY'",
+    );
   });
 });

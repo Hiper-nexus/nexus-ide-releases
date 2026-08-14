@@ -100,6 +100,22 @@ export function anchorFromDrag(
   };
 }
 
+/** Clamp do arrasto livre — o pill pode sair até metade da largura, nunca por cima. */
+export function clampHudDragPosition(
+  left: number,
+  top: number,
+  size: { width: number; height: number },
+  viewport: { width: number; height: number },
+): { left: number; top: number } {
+  return {
+    left: Math.min(
+      Math.max(left, -size.width / 2),
+      viewport.width - size.width / 2,
+    ),
+    top: Math.min(Math.max(top, 0), viewport.height - 24),
+  };
+}
+
 /** Estilo de posição fixa (px) a partir da âncora. */
 export function hudPositionStyle(
   prefs: Pick<HudPrefs, 'corner' | 'dx' | 'dy'>,
