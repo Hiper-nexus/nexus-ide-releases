@@ -4,7 +4,9 @@ import type {
   RecipeOverlayResult,
   RemoteBridgeInfo,
   RemoteSpawnResult,
+  RemoteSshHostView,
 } from '../../../shared/types';
+import { RemoteServersSection } from './RemoteServersSection';
 import { useOrchStore } from '../../state/orch-store';
 import { useWorkspaceStore } from '../../state/workspace-store';
 import { useLayoutStore } from '../../state/layout-store';
@@ -321,6 +323,7 @@ export function ShortcutsSection() {
 
 export function RemoteSection() {
   const [info, setInfo] = useState<RemoteBridgeInfo | null>(null);
+  const [hosts, setHosts] = useState<RemoteSshHostView[]>([]);
   const [target, setTarget] = useState('');
   const [cli, setCli] = useState<'claude' | 'codex' | 'agy' | 'kimi'>('claude');
   const [sessionName, setSessionName] = useState('');
@@ -329,7 +332,13 @@ export function RemoteSection() {
   const [terminalError, setTerminalError] = useState<string | null>(null);
 
   async function refresh() {
-    setInfo(await window.nexus.remote.bridgeStatus());
+    const [bridge, list] = await Promise.all([
+      window.nexus.remote.bridgeStatus(),
+      window.nexus.remote.listSshHosts(),
+    ]);
+    setInfo(bridge);
+    setHosts(list);
+    setTarget((current) => current || list[0]?.alias || '');
   }
 
   useEffect(() => {
@@ -377,12 +386,24 @@ export function RemoteSection() {
     <section className="settings-stack">
       <header className="settings-stack__header">
         <div>
-          <SettingsSectionTitle>Remote</SettingsSectionTitle>
+          <SettingsSectionTitle>Remoto</SettingsSectionTitle>
           <p className="settings-detail__hint">
-            Bridge local para o celular e sessões SSH/tmux em máquinas remotas.
+            Conecte um servidor uma vez pelo apelido. O celular (bridge) fica
+            abaixo — é outra porta.
           </p>
         </div>
       </header>
+
+      <RemoteServersSection
+        onHostsChange={(list) => {
+          setHosts([...list]);
+          setTarget((current) =>
+            list.some((host) => host.alias === current)
+              ? current
+              : list[0]?.alias ?? '',
+          );
+        }}
+      />
 
       <section className="settings-card" aria-labelledby="remote-bridge-title">
         <div className="settings-card__head">
@@ -517,14 +538,15 @@ export function RemoteSection() {
               SSH / tmux
             </h3>
             <p className="settings-card__subtitle">
-              Cria ou adota uma sessão remota e anexa num terminal do Nexus.
+              Abre tmux no apelido já conectado. Sem apelido na lista acima,
+              este formulário não tem destino.
             </p>
           </div>
           <button
             type="button"
             className="settings-btn settings-btn--primary"
             onClick={() => void createRemote()}
-            disabled={!target.trim()}
+            disabled={!target.trim() || hosts.length === 0}
           >
             Criar / adotar
           </button>
@@ -532,13 +554,23 @@ export function RemoteSection() {
 
         <div className="settings-form-grid settings-form-grid--remote">
           <label className="settings-field">
-            <span className="settings-field__label">Host</span>
-            <input
+            <span className="settings-field__label">Apelido</span>
+            <select
               className="settings-input"
               value={target}
-              placeholder="user@host"
               onChange={(e) => setTarget(e.target.value)}
-            />
+              disabled={hosts.length === 0}
+            >
+              {hosts.length === 0 ? (
+                <option value="">Conecte um servidor primeiro</option>
+              ) : (
+                hosts.map((host) => (
+                  <option key={host.alias} value={host.alias}>
+                    {host.alias}
+                  </option>
+                ))
+              )}
+            </select>
           </label>
           <label className="settings-field">
             <span className="settings-field__label">CLI</span>

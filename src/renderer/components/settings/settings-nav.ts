@@ -351,9 +351,9 @@ export const SETTINGS_GROUPS: NavGroup[] = [
         id: 'remote',
         icon: 'SSH',
         pixelIcon: 'split-right',
-        title: 'Remote',
-        subtitle: 'bridge · ssh',
-        aliases: ['ssh', 'remote'],
+        title: 'Remoto',
+        subtitle: 'servidores · apelido · ssh',
+        aliases: ['ssh', 'remote', 'servidor', 'vps', 'apelido'],
       },
       {
         id: 'companion-relay',

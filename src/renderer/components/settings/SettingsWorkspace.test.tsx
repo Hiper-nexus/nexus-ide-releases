@@ -100,6 +100,10 @@ function installNexusBoundary(): void {
           tokenCount: 0,
           clientCount: 0,
         })),
+        listSshHosts: vi.fn(async () => []),
+        connectSshHost: vi.fn(),
+        importSshConfig: vi.fn(),
+        removeSshHost: vi.fn(),
       },
     },
   });
@@ -181,7 +185,7 @@ describe('SettingsWorkspace contracts', () => {
       ['account', /minha conta/i, 'Minha conta'],
       ['appearance', /^aparência$/i, 'Aparência'],
       ['terminal', /^terminal$/i, 'Terminal'],
-      ['remote', /^remote$/i, 'Remote'],
+      ['remote', /^remoto$/i, 'Remoto'],
     ];
 
     for (const [section, heading, navTitle] of cases) {

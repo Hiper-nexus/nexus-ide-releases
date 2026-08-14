@@ -45,3 +45,45 @@ export interface RemoteSpawnResult {
   detected?: RemoteCliDetection;
   error?: string;
 }
+
+export type RemoteSshHostSource = 'nexus' | 'imported';
+
+/** Vista do operador: apelido sem IP/hostname. */
+export interface RemoteSshHostView {
+  alias: string;
+  source: RemoteSshHostSource;
+  user?: string;
+  port?: number;
+  ready: boolean;
+  hasNexusKey: boolean;
+}
+
+export interface RemoteSshConnectRequest {
+  alias: string;
+  host: string;
+  user: string;
+  password: string;
+  port?: number;
+}
+
+export type RemoteSshConnectErrorKind =
+  | 'auth'
+  | 'timeout'
+  | 'host_key'
+  | 'unreachable'
+  | 'invalid'
+  | 'unknown';
+
+export interface RemoteSshConnectResult {
+  ok: boolean;
+  alias?: string;
+  error?: string;
+  errorKind?: RemoteSshConnectErrorKind;
+}
+
+export interface RemoteSshImportResult {
+  ok: boolean;
+  imported: RemoteSshHostView[];
+  skipped: number;
+  error?: string;
+}

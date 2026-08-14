@@ -7,6 +7,9 @@ import type {
   RemoteSpawnResult,
   RemoteTmuxSession,
 } from '../../shared/remote-types';
+import { redactSshEndpoint } from './ssh/ssh-alias';
+import { assertKnownSpawnAlias } from './ssh/ssh-bootstrap';
+import { listKnownSshAliases } from './ssh/ssh-host-registry';
 
 const execFileAsync = promisify(execFile);
 
@@ -48,14 +51,15 @@ export interface RemoteSpawnControl {
   readonly assertCurrentAuthority?: () => void;
 }
 
-function validateTarget(target: string): string {
+async function validateTarget(target: string): Promise<string> {
   const clean = target.trim();
   // A value beginning with '-' would be parsed by ssh as an OPTION (e.g.
   // `-Jattacker.host` injects a jump proxy), not a host. The charset also
   // permits a leading dash, so reject it explicitly before it reaches argv.
   if (clean.startsWith('-')) throw new Error('invalid ssh target');
   if (!TARGET_RE.test(clean)) throw new Error('invalid ssh target');
-  return clean;
+  const aliases = await listKnownSshAliases();
+  return assertKnownSpawnAlias(clean, aliases);
 }
 
 function quoteSh(value: string): string {
@@ -159,7 +163,7 @@ export async function detectRemoteClis(
   targetRaw: string,
   control?: RemoteSpawnControl,
 ): Promise<RemoteCliDetection> {
-  const target = validateTarget(targetRaw);
+  const target = await validateTarget(targetRaw);
   try {
     assertRemoteSpawnAuthority(control);
     const script = ALLOWED_CLIS
@@ -185,7 +189,7 @@ export async function detectRemoteClis(
     return {
       target,
       found: [],
-      error: err instanceof Error ? err.message : String(err),
+      error: redactSshEndpoint(err instanceof Error ? err.message : String(err)),
     };
   }
 }
@@ -194,7 +198,7 @@ export async function listRemoteTmuxSessions(
   targetRaw: string,
   control?: RemoteSpawnControl,
 ): Promise<RemoteSpawnResult> {
-  const target = validateTarget(targetRaw);
+  const target = await validateTarget(targetRaw);
   try {
     assertRemoteSpawnAuthority(control);
     const out = await ssh(
@@ -223,7 +227,7 @@ export async function listRemoteTmuxSessions(
     return {
       ok: false,
       target,
-      error: err instanceof Error ? err.message : String(err),
+      error: redactSshEndpoint(err instanceof Error ? err.message : String(err)),
     };
   }
 }
@@ -232,7 +236,7 @@ export async function createRemoteTmuxSession(
   req: RemoteSpawnRequest,
   control?: RemoteSpawnControl,
 ): Promise<RemoteSpawnResult> {
-  const target = validateTarget(req.target);
+  const target = await validateTarget(req.target);
   if (!ALLOWED_CLIS.includes(req.cli)) throw new Error('unsupported remote cli');
   const name = sessionName(req.sessionName);
   const cwd = req.cwd?.trim();
@@ -327,16 +331,17 @@ export async function createRemoteTmuxSession(
         ok: false,
         target,
         sessionName: name,
-        error:
+        error: redactSshEndpoint(
           `${err instanceof Error ? err.message : String(err)}; ` +
-          `effectMayHaveCommitted: ${uncertainty}`,
+            `effectMayHaveCommitted: ${uncertainty}`,
+        ),
       };
     }
     return {
       ok: false,
       target,
       sessionName: name,
-      error: err instanceof Error ? err.message : String(err),
+      error: redactSshEndpoint(err instanceof Error ? err.message : String(err)),
     };
   }
 }

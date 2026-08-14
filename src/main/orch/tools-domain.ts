@@ -731,7 +731,8 @@ const remoteBridgeTool: McpToolDef = {
 
 const remoteCliDetectTool: McpToolDef = {
   name: 'nexus_remote_cli_detect',
-  description: 'SSH into target and detect supported remote CLIs.',
+  description:
+    'SSH into a registered alias from Settings → Remoto (e.g. vps-1). Never pass IP or user@host.',
   inputSchema: {
     type: 'object',
     properties: { target: { type: 'string' } },
@@ -743,7 +744,8 @@ const remoteCliDetectTool: McpToolDef = {
 
 const remoteTmuxListTool: McpToolDef = {
   name: 'nexus_remote_tmux_list',
-  description: 'List tmux sessions on a remote SSH target for adoption/recovery.',
+  description:
+    'List tmux sessions on a registered SSH alias from Settings → Remoto. Never pass IP or user@host.',
   inputSchema: {
     type: 'object',
     properties: { target: { type: 'string' } },
@@ -756,8 +758,8 @@ const remoteTmuxListTool: McpToolDef = {
 const remoteSpawnTool: McpToolDef = {
   name: 'nexus_remote_spawn',
   description:
-    'Create/adopt a remote tmux session running a supported AI CLI over SSH. ' +
-    'Returns the local attach command for a Nexus shell pane.',
+    'Create/adopt a remote tmux session on a registered SSH alias from Settings → Remoto ' +
+    '(e.g. vps-1). Never pass IP or user@host. Returns the local attach command.',
   inputSchema: {
     type: 'object',
     properties: {

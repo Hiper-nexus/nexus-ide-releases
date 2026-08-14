@@ -85,6 +85,12 @@ describe('filterSettingsGroups', () => {
     expect(ids).toContain('voice');
   });
 
+  test('"apelido" encontra Remoto', () => {
+    const result = filterSettingsGroups(SETTINGS_GROUPS, 'apelido');
+    const ids = result.flatMap((g) => g.items.map((i) => i.id));
+    expect(ids).toContain('remote');
+  });
+
   test('"celular" encontra o Companion mobile', () => {
     const result = filterSettingsGroups(SETTINGS_GROUPS, 'celular');
     const ids = result.flatMap((g) => g.items.map((i) => i.id));

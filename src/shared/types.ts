@@ -156,6 +156,11 @@ import type {
   RemoteCliDetection,
   RemoteSpawnRequest,
   RemoteSpawnResult,
+  RemoteSshConnectRequest,
+  RemoteSshConnectResult,
+  RemoteSshHostView,
+  RemoteSshImportResult,
+  RemoteTmuxSession,
 } from './remote-types';
 import type {
   McpConfirmResult,
@@ -215,8 +220,12 @@ export type {
   RemoteCliDetection,
   RemoteSpawnRequest,
   RemoteSpawnResult,
+  RemoteSshConnectRequest,
+  RemoteSshConnectResult,
+  RemoteSshHostView,
+  RemoteSshImportResult,
   RemoteTmuxSession,
-} from './remote-types';
+};
 
 export type * from './surface-payload-types';
 
@@ -725,6 +734,10 @@ export interface NexusApi {
     detectClis(target: string): Promise<RemoteCliDetection>;
     listTmux(target: string): Promise<RemoteSpawnResult>;
     createTmux(req: RemoteSpawnRequest): Promise<RemoteSpawnResult>;
+    listSshHosts(): Promise<RemoteSshHostView[]>;
+    connectSshHost(req: RemoteSshConnectRequest): Promise<RemoteSshConnectResult>;
+    importSshConfig(): Promise<RemoteSshImportResult>;
+    removeSshHost(alias: string): Promise<{ ok: boolean; alias?: string; error?: string }>;
     /**
      * Companion mobile E2E (entrega B2): relay cego + AES-256-GCM. Canais
      * remote:relay.*. Atrás da flag feature.remote.relayTransport.

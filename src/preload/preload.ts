@@ -940,6 +940,11 @@ const api: NexusApi = {
       ipcRenderer.invoke(REMOTE_CHANNELS.remoteSpawnList, { target }),
     createTmux: (req) =>
       ipcRenderer.invoke(REMOTE_CHANNELS.remoteSpawnCreate, req),
+    listSshHosts: () => ipcRenderer.invoke(REMOTE_CHANNELS.sshList),
+    connectSshHost: (req) => ipcRenderer.invoke(REMOTE_CHANNELS.sshConnect, req),
+    importSshConfig: () => ipcRenderer.invoke(REMOTE_CHANNELS.sshImportConfig),
+    removeSshHost: (alias) =>
+      ipcRenderer.invoke(REMOTE_CHANNELS.sshRemove, { alias }),
     relay: {
       status: () => ipcRenderer.invoke(COMPANION_RELAY_CHANNELS.status),
       start: (req) => ipcRenderer.invoke(COMPANION_RELAY_CHANNELS.start, req),

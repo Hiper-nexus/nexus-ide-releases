@@ -26,20 +26,36 @@ import {
   type RemoteSpawnControl,
 } from './remote-spawn';
 import { registerCompanionRelayIpc } from './relay/companion-relay-ipc';
+import {
+  connectSshServer,
+  forgetSshServer,
+  importSshConfigHosts,
+} from './ssh/ssh-bootstrap';
+import { listSshHostViews } from './ssh/ssh-host-registry';
 
 const startSchema = z.object({
   port: z.number().int().min(1).max(65535).optional(),
   host: z.enum(['0.0.0.0', '127.0.0.1', '::1', '::']).optional(),
 });
 const targetSchema = z.object({
-  target: z.string().min(3).max(256),
+  target: z.string().min(1).max(63),
 });
 const spawnSchema = z.object({
-  target: z.string().min(3).max(256),
+  target: z.string().min(1).max(63),
   cwd: z.string().min(1).max(4096).optional(),
   cli: z.enum(['claude', 'codex', 'agy', 'kimi']),
   sessionName: z.string().min(1).max(80).optional(),
   prompt: z.string().max(8192).optional(),
+});
+const sshConnectSchema = z.object({
+  alias: z.string().min(1).max(63),
+  host: z.string().min(1).max(253),
+  user: z.string().min(1).max(64),
+  password: z.string().min(1).max(512),
+  port: z.number().int().min(1).max(65535).optional(),
+});
+const sshAliasSchema = z.object({
+  alias: z.string().min(1).max(63),
 });
 
 const REMOTE_SPAWN_TOOL = 'nexus_remote_spawn';
@@ -228,5 +244,33 @@ export function registerRemoteIpc(): void {
     } finally {
       authority.dispose();
     }
+  });
+
+  ipcMain.handle(REMOTE_CHANNELS.sshList, (event) => {
+    requireLiveRendererWorkspaceScope(event.sender);
+    return listSshHostViews();
+  });
+  ipcMain.handle(REMOTE_CHANNELS.sshConnect, async (event, raw) => {
+    requireLiveRendererWorkspaceScope(event.sender);
+    const parsed = sshConnectSchema.safeParse(raw);
+    if (!parsed.success) {
+      return { ok: false, error: 'Dados de conexão inválidos.', errorKind: 'invalid' };
+    }
+    const request = parsed.data;
+    try {
+      return await connectSshServer(request);
+    } finally {
+      request.password = '';
+    }
+  });
+  ipcMain.handle(REMOTE_CHANNELS.sshImportConfig, async (event) => {
+    requireLiveRendererWorkspaceScope(event.sender);
+    return importSshConfigHosts();
+  });
+  ipcMain.handle(REMOTE_CHANNELS.sshRemove, async (event, raw) => {
+    requireLiveRendererWorkspaceScope(event.sender);
+    const parsed = sshAliasSchema.safeParse(raw);
+    if (!parsed.success) return { ok: false, error: 'apelido inválido' };
+    return forgetSshServer(parsed.data.alias);
   });
 }

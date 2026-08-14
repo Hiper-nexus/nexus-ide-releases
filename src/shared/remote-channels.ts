@@ -7,4 +7,8 @@ export const REMOTE_CHANNELS = {
   remoteSpawnDetect: 'remote:spawn.detect',
   remoteSpawnList: 'remote:spawn.list',
   remoteSpawnCreate: 'remote:spawn.create',
+  sshList: 'remote:ssh.list',
+  sshConnect: 'remote:ssh.connect',
+  sshImportConfig: 'remote:ssh.importConfig',
+  sshRemove: 'remote:ssh.remove',
 } as const;

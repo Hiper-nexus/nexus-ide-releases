@@ -12,6 +12,9 @@ const harness = vi.hoisted(() => ({
 }));
 
 vi.mock('node:child_process', () => ({ execFile: harness.execFile }));
+vi.mock('./ssh/ssh-host-registry', () => ({
+  listKnownSshAliases: vi.fn(async () => ['vps-1']),
+}));
 import {
   createRemoteTmuxSession,
   detectRemoteClis,
@@ -43,7 +46,7 @@ describe('remote-spawn target validation', () => {
   it('rejects an invalid tmux session name before any ssh call', async () => {
     await expect(
       createRemoteTmuxSession({
-        target: 'user@host',
+        target: 'vps-1',
         cli: 'claude',
         sessionName: 'bad name; rm',
       }),
@@ -53,7 +56,7 @@ describe('remote-spawn target validation', () => {
   it('rejects an unsupported cli', async () => {
     await expect(
       createRemoteTmuxSession({
-        target: 'user@host',
+        target: 'vps-1',
         // @ts-expect-error deliberately invalid at the boundary
         cli: 'rm',
       }),
@@ -63,7 +66,7 @@ describe('remote-spawn target validation', () => {
   it('spawns ssh with an allowlisted environment that excludes app secrets', async () => {
     vi.stubEnv('NEXUS_REMOTE_TEST_SECRET', 'must-not-reach-ssh');
 
-    await detectRemoteClis('dev@example.com');
+    await detectRemoteClis('vps-1');
 
     expect(harness.execFile).toHaveBeenCalledOnce();
     const options = harness.execFile.mock.calls[0]?.[2] as {
@@ -116,7 +119,7 @@ describe('remote-spawn target validation', () => {
     await expect(
       createRemoteTmuxSession(
         {
-          target: 'dev@example.com',
+          target: 'vps-1',
           cli: 'codex',
           sessionName: 'nexus-revoked',
         },
@@ -186,7 +189,7 @@ describe('remote-spawn target validation', () => {
     await expect(
       createRemoteTmuxSession(
         {
-          target: 'dev@example.com',
+          target: 'vps-1',
           cli: 'codex',
           sessionName: 'nexus-cleanup-unknown',
         },
@@ -216,7 +219,7 @@ describe('remote-spawn target validation', () => {
       );
 
     await expect(createRemoteTmuxSession({
-      target: 'dev@example.com',
+      target: 'vps-1',
       cli: 'codex',
       sessionName: 'nexus-ack-lost',
     })).resolves.toMatchObject({
@@ -247,7 +250,7 @@ describe('remote-spawn target validation', () => {
       );
 
     await expect(createRemoteTmuxSession({
-      target: 'dev@example.com',
+      target: 'vps-1',
       cli: 'codex',
       sessionName: 'nexus-adopted',
       prompt: 'deploy now',
@@ -258,5 +261,26 @@ describe('remote-spawn target validation', () => {
       ),
     });
     expect(harness.execFile).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects a raw IP so the agent only ever sees an alias', async () => {
+    await expect(detectRemoteClis('10.0.0.8')).rejects.toThrow(
+      'use a registered ssh alias',
+    );
+    expect(harness.execFile).not.toHaveBeenCalled();
+  });
+
+  it('rejects user@host so the agent cannot bypass the alias', async () => {
+    await expect(detectRemoteClis('ubuntu@10.0.0.8')).rejects.toThrow(
+      'use a registered ssh alias',
+    );
+    expect(harness.execFile).not.toHaveBeenCalled();
+  });
+
+  it('spawns ssh with the alias and never puts an IP in argv', async () => {
+    await detectRemoteClis('vps-1');
+    const args = harness.execFile.mock.calls[0]?.[1] as string[];
+    expect(args).toContain('vps-1');
+    expect(args.join(' ')).not.toMatch(/\d{1,3}(?:\.\d{1,3}){3}/);
   });
 });

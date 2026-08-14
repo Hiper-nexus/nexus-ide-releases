@@ -369,6 +369,23 @@
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.remote-servers__steps {
+  margin: 0;
+  padding-left: 1.2em;
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+}
+
+.remote-servers__steps li + li {
+  margin-top: var(--space-2);
+}
+
+.remote-servers__steps code {
+  font-family: var(--font-mono);
+  color: var(--text);
+}
+
 .settings-textarea {
   width: 100%;
   min-height: 96px;
