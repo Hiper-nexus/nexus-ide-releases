@@ -18,9 +18,13 @@
   --pet-accent: #45d7ff;
   --pet-danger: #ff7a90;
   --pet-warn: #e5c07b;
-  /* Espelham --gold / --accent da app: a janela do pet não importa base.css. */
+  /* Espelham tokens da app: a janela do pet não importa base.css. */
   --pet-gold: #ffd166;
   --pet-pink: #ff4f8b;
+  --bg: #080709;
+  --text: #faf7f9;
+  --ok: #7ee2a8;
+  --gold: #ffd166;
   --pet-font: ui-sans-serif, -apple-system, 'SF Pro Text', Segoe UI, system-ui,
     sans-serif;
   --pet-font-pixel: 'VT323', 'Courier New', monospace;
@@ -456,19 +460,16 @@ body,
   animation: pet-attention 0.9s ease-in-out infinite;
 }
 
-/* Posição da xícara no sprite. Vapor/keyframes: coffee-cup.css.
-   Tamanho 52px (de 36) + sombra mais pronunciada = leitura à primeira vista. */
+/* Posição da lata no sprite. Fizz/keyframes: coffee-cup.css.
+   Tamanho 52px + sombra de contato = leitura à primeira vista. */
 .pet__coffee {
   position: absolute;
   bottom: -10px;
   left: -8px;
-  color: var(--pet-gold);
   opacity: 1;
   pointer-events: none;
   animation: pet-coffee-in 380ms ease-out;
-  filter:
-    drop-shadow(0 3px 6px rgb(0 0 0 / 0.65))
-    drop-shadow(0 0 10px color-mix(in srgb, var(--pet-gold) 30%, transparent));
+  filter: drop-shadow(0 3px 6px rgb(0 0 0 / 0.65));
 }
 
 .pet--solid .pet__coffee {
@@ -484,7 +485,7 @@ body,
  */
 
 /* "cafe" em VT323: subiu de 20px→32px e saiu um pouco mais para cima para
-   não colidir com a xícara maior (52px). Opacity 1 na fase estável. */
+   não colidir com a lata maior (52px). Opacity 1 na fase estável. */
 .pet__cafeinando {
   position: absolute;
   top: -22px;
@@ -507,7 +508,7 @@ body,
   100% { opacity: 0; transform: translateY(-16px); }
 }
 
-/* prefers-reduced-motion: vapor estático, sem entradas animadas */
+/* prefers-reduced-motion: fizz estático, sem entradas animadas */
 @media (prefers-reduced-motion: reduce) {
   .pet__coffee {
     animation: none;

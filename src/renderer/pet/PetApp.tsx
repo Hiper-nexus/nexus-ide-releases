@@ -539,8 +539,8 @@ export function PetApp() {
               !
             </span>
           )}
-          {/* Xícara de café: visível quando acordado e sem crise ativa.
-              Vapor acelera brevemente quando o pet comemora (celebrating). */}
+          {/* Lata: visível quando acordado e sem crise ativa.
+              Fizz acelera brevemente quando o pet comemora (celebrating). */}
           {showAsAwake && !needingYou && !balloon?.urgent && (
             <div className="pet__coffee" aria-hidden="true">
               <CoffeeCup size={52} celebrating={celebrating} />

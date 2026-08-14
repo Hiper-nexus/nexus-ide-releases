@@ -410,7 +410,7 @@ describe('a SOLITARY structural placeholder is a vacancy, not a session', () => 
     act(() => root.unmount());
   });
 
-  it('shows the coffee spill overlay on the focused idle vacancy', () => {
+  it('shows the fizz overlay on the focused idle vacancy', () => {
     seedPlaceholderOnly();
     render();
 

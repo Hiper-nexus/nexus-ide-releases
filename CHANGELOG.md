@@ -6,7 +6,8 @@ Data: 2026-08-14
 
 Gate realtime aceita XAI_API_KEY. O box mini arrasta
 na OverlayLayer. Providers mostram estado e um CTA por
-CLI. Claude usa `claude auth login`.
+CLI. Claude usa `claude auth login`. A cafeína vira
+lata energética nossa.
 
 - **Grok no gate realtime.** XAI_API_KEY deixa de ser
   tratada como Gemini. Jarvis fala com a chave oficial.
@@ -15,6 +16,9 @@ CLI. Claude usa `claude auth login`.
 - **Login das CLIs honesto.** Cada ferramenta mostra
   conectado / precisa login e um CTA por linha. Claude
   entra com `claude auth login`.
+- **Lata energética.** Xícara vira lata nossa no pet,
+  no HUD e no header da Equipe. O pane focado ganha
+  spray, bolhas e condensação que somem sozinhos.
 - **Sem chave visível.** Sem credencial na cadeia, o HUD
   mostra o erro e abre as configurações no clique.
 

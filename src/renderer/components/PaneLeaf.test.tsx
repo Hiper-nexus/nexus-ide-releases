@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 /**
- * Predicado do spill de café no pane vivo focado.
+ * Predicado da efervescência no pane vivo focado.
  * Garante que CoffeeSpillCorner (.spill-corner--live) aparece apenas
  * no pane focado e desaparece quando o foco muda.
  */
@@ -104,6 +104,9 @@ describe('CoffeeSpillCorner no pane vivo focado', () => {
     expect(spill).not.toBeNull();
     expect(spill?.classList.contains('spill-corner')).toBe(true);
     expect(spill?.getAttribute('aria-hidden')).toBe('true');
+    expect(spill?.querySelector('.spill__spray'), 'spray ao focar ausente').not.toBeNull();
+    expect(spill?.querySelector('.spill__bubble'), 'bolhas ausentes').not.toBeNull();
+    expect(spill?.querySelector('.spill__flash'), 'brilho de alumínio ausente').not.toBeNull();
 
     act(() => root.unmount());
   });

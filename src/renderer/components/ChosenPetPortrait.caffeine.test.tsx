@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 /**
  * Garante que ChosenPetPortrait — o chrome comum de todo pet —
- * sempre renderiza a xícara cafeinada, independente do skin escolhido.
+ * sempre renderiza a lata cafeinada, independente do skin escolhido.
  */
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -38,34 +38,36 @@ afterEach(() => {
   document.body.replaceChildren();
 });
 
-describe('ChosenPetPortrait — xícara cafeinada em todo pet', () => {
+describe('ChosenPetPortrait — lata cafeinada em todo pet', () => {
   it('renderiza svg.pet-coffee dentro do retrato', () => {
     const host = renderPortrait(96);
     const cup = host.querySelector('svg.pet-coffee');
-    expect(cup, 'xícara SVG ausente no retrato').not.toBeNull();
+    expect(cup, 'lata SVG ausente no retrato').not.toBeNull();
+    expect(cup?.querySelector('.pet-coffee__body'), 'corpo da lata ausente').not.toBeNull();
+    expect(cup?.querySelector('.pet-coffee__band'), 'faixa da lata ausente').not.toBeNull();
   });
 
-  it('xícara é aria-hidden (decorativa)', () => {
+  it('lata é aria-hidden (decorativa)', () => {
     const host = renderPortrait(96);
     const cup = host.querySelector('svg.pet-coffee');
     expect(cup?.getAttribute('aria-hidden')).toBe('true');
   });
 
-  it('xícara escala com size=96: tamanho ≥ 40px', () => {
+  it('lata escala com size=96: tamanho ≥ 40px', () => {
     const host = renderPortrait(96);
     const cup = host.querySelector<SVGElement>('svg.pet-coffee');
     const h = Number(cup?.getAttribute('height') ?? 0);
-    expect(h, 'xícara menor que 40px para retrato 96px').toBeGreaterThanOrEqual(40);
+    expect(h, 'lata menor que 40px para retrato 96px').toBeGreaterThanOrEqual(40);
   });
 
-  it('xícara escala com size=32: entre 12px e 14px, sem vazar o HUD', () => {
+  it('lata escala com size=32: entre 12px e 14px, sem vazar o HUD', () => {
     const host = renderPortrait(32);
     const wrapper = host.querySelector('.chosen-pet-portrait--compact');
     const cup = host.querySelector<SVGElement>('svg.pet-coffee');
     const h = Number(cup?.getAttribute('height') ?? 0);
     expect(wrapper, 'retrato compacto sem classe --compact').not.toBeNull();
-    expect(h, 'xícara menor que 12px para retrato 32px').toBeGreaterThanOrEqual(12);
-    expect(h, 'xícara grande demais no HUD').toBeLessThanOrEqual(14);
+    expect(h, 'lata menor que 12px para retrato 32px').toBeGreaterThanOrEqual(12);
+    expect(h, 'lata grande demais no HUD').toBeLessThanOrEqual(14);
   });
 
   it('wrapper tem classe chosen-pet-portrait + className extra', () => {
@@ -75,11 +77,11 @@ describe('ChosenPetPortrait — xícara cafeinada em todo pet', () => {
     expect(wrapper?.classList.contains('test-portrait')).toBe(true);
   });
 
-  it('xícara está dentro do wrapper .chosen-pet-portrait__coffee', () => {
+  it('lata está dentro do wrapper .chosen-pet-portrait__coffee', () => {
     const host = renderPortrait(96);
     const badge = host.querySelector('.chosen-pet-portrait__coffee');
     expect(badge, 'badge .chosen-pet-portrait__coffee ausente').not.toBeNull();
     const cup = badge?.querySelector('svg.pet-coffee');
-    expect(cup, 'xícara fora do badge de cafeína').not.toBeNull();
+    expect(cup, 'lata fora do badge de cafeína').not.toBeNull();
   });
 });

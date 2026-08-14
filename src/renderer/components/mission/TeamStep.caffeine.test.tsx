@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 /**
  * Garante que a etapa de Equipe exibe presença cafeinada à primeira vista:
- * xícara SVG ≥52px com aria-hidden no header, sem precisar abrir terminal.
+ * lata SVG 64px com aria-hidden no header, sem precisar abrir terminal.
  */
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -67,30 +67,31 @@ afterEach(() => {
 });
 
 describe('TeamStep — cafeína visível na etapa Equipe', () => {
-  it('renderiza xícara de café aria-hidden no header da etapa', () => {
+  it('renderiza lata aria-hidden no header da etapa', () => {
     const host = renderTeamStep();
     const cup = host.querySelector<SVGElement>('svg.pet-coffee');
-    expect(cup, 'xícara SVG ausente no TeamStep').not.toBeNull();
+    expect(cup, 'lata SVG ausente no TeamStep').not.toBeNull();
     expect(cup?.getAttribute('aria-hidden')).toBe('true');
+    expect(cup?.querySelector('.pet-coffee__body'), 'corpo da lata ausente').not.toBeNull();
+    expect(cup?.querySelector('.pet-coffee__band'), 'faixa da lata ausente').not.toBeNull();
   });
 
-  it('xícara tem tamanho de leitura (≥52px)', () => {
+  it('lata tem tamanho de leitura (64px)', () => {
     const host = renderTeamStep();
     const cup = host.querySelector<SVGElement>('svg.pet-coffee');
-    const w = Number(cup?.getAttribute('width') ?? 0);
     const h = Number(cup?.getAttribute('height') ?? 0);
-    expect(Math.max(w, h), 'xícara menor que 52px').toBeGreaterThanOrEqual(52);
+    expect(h, 'lata do header não é 64px').toBe(64);
   });
 
-  it('xícara está dentro do header .mission-setup__step-header', () => {
+  it('lata está dentro do header .mission-setup__step-header', () => {
     const host = renderTeamStep();
     const header = host.querySelector('.mission-setup__step-header');
     expect(header, 'header da etapa ausente').not.toBeNull();
     const cup = header?.querySelector('svg.pet-coffee');
-    expect(cup, 'xícara fora do header da etapa').not.toBeNull();
+    expect(cup, 'lata fora do header da etapa').not.toBeNull();
   });
 
-  it('kicker pill "Etapa 2 · Equipe" continua visível junto com a xícara', () => {
+  it('kicker pill "Etapa 2 · Equipe" continua visível junto com a lata', () => {
     const host = renderTeamStep();
     const kicker = host.querySelector('.mission-setup__step-kicker');
     expect(kicker?.textContent).toContain('Equipe');

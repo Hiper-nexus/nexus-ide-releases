@@ -55,8 +55,8 @@ function AcpPaneLeaf({ pane }: Props) {
     >
       <PaneToolbar pane={pane} isFocused={isFocused} />
       <AcpPaneView missionId={pane.missionId ?? ''} />
-      {/* Filete de café no canto superior direito do chrome — uma vez por foco,
-          fade-out em ~3s. pointer-events: none, compositor-only. */}
+      {/* Efervescência no canto superior direito — uma vez por foco,
+          fade-out em ~3.8s. pointer-events: none, compositor-only. */}
       {isFocused && <CoffeeSpillCorner className="spill-corner--live" />}
     </PaneInteractionSurface>
   );
@@ -138,8 +138,8 @@ function TerminalPaneLeaf({ pane }: Props) {
         ref={slotRef}
         style={isVisible ? undefined : { visibility: 'hidden' }}
       />
-      {/* Filete de café no canto superior direito do chrome — uma vez por foco,
-          fade-out em ~3s. pointer-events: none, compositor-only (opacity/transform).
+      {/* Efervescência no canto superior direito — uma vez por foco,
+          fade-out em ~3.8s. pointer-events: none, compositor-only (opacity/transform).
           Não intercepta input do xterm; montado/desmontado com isFocused. */}
       {isFocused && <CoffeeSpillCorner className="spill-corner--live" />}
     </PaneInteractionSurface>

@@ -1619,15 +1619,22 @@
   outline-offset: 2px;
 }
 
-/* ── Xícara cafeinada na etapa de Equipe ─────────────────────────────────────
-   Visível à primeira vista no header — ouro quente misturado com Pink City.
-   Pointer-events none; nenhum keyframe novo (o vapor já vive em coffee-cup.css).
+/* ── Lata cafeinada na etapa de Equipe ───────────────────────────────────────
+   A lata de 64px é a que o operador vê. Pintura por token no SVG.
+   Pointer-events none; fizz/sheen vivem em coffee-cup.css.
    ──────────────────────────────────────────────────────────────────────────── */
 .mission-setup__team-cafe {
-  color: color-mix(in srgb, var(--gold) 65%, var(--accent));
   opacity: 1;
   pointer-events: none;
   margin-bottom: var(--space-3, 12px);
+}
+
+.mission-setup__team-cafe .pet-coffee {
+  filter: drop-shadow(0 6px 10px color-mix(in srgb, var(--bg) 80%, transparent));
+}
+
+.mission-setup__team-cafe .pet-coffee__sheen {
+  animation: pet-can-sheen 2.8s var(--ease-out-quart, cubic-bezier(.25,1,.5,1)) infinite;
 }
 
 /* ── Filete cafeinado no topo do card em foco ─────────────────────────────────

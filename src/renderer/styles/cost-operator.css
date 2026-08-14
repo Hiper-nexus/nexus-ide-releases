@@ -384,10 +384,10 @@
   line-height: 0;
 }
 
-/* ── Chrome comum do pet: retrato com xícara cafeinada ───────────────────────
+/* ── Chrome comum do pet: retrato com lata cafeinada ─────────────────────────
    Cobre todos os skins (sheet / custom / operator). position: relative garante
-   que o badge absoluto da xícara não escape do flow. overflow: visible permite
-   que a xícara ultrapasse as bordas do retrato sem ser cortada.
+   que o badge absoluto da lata não escape do flow. overflow: visible permite
+   que a lata ultrapasse as bordas do retrato sem ser cortada.
    ─────────────────────────────────────────────────────────────────────────── */
 .chosen-pet-portrait {
   position: relative;
@@ -402,7 +402,6 @@
   position: absolute;
   bottom: -20%;
   left: -20%;
-  color: color-mix(in srgb, var(--gold) 65%, var(--accent));
   opacity: 1;
   pointer-events: none;
   animation: pet-coffee-in 380ms ease-out;

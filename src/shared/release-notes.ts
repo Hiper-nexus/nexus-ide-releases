@@ -19,7 +19,8 @@ export const CURRENT_RELEASE: AppRelease = {
   summary:
     'Gate realtime aceita XAI_API_KEY. O box mini arrasta ' +
     'na OverlayLayer. Providers mostram estado e um CTA ' +
-    'por CLI. Claude usa claude auth login.',
+    'por CLI. Claude usa claude auth login. A cafeína vira ' +
+    'lata energética nossa.',
   highlights: [
     {
       title: 'Grok no gate realtime',
@@ -39,6 +40,13 @@ export const CURRENT_RELEASE: AppRelease = {
         'Cada ferramenta mostra conectado / precisa login ' +
         'e um CTA por linha. Claude entra com ' +
         'claude auth login.',
+    },
+    {
+      title: 'Lata energética',
+      detail:
+        'Xícara vira lata nossa no pet, no HUD e no header ' +
+        'da Equipe. O pane focado ganha spray, bolhas e ' +
+        'condensação que somem sozinhos.',
     },
   ],
   fixes: [
