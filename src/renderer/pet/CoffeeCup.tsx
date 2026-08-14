@@ -11,10 +11,10 @@
  * Animações: só opacity e transform (compositor). Uma única execução (forwards).
  * Em prefers-reduced-motion: mancha estática, sem movimento.
  */
-export function CoffeeSpillCorner() {
+export function CoffeeSpillCorner({ className }: { className?: string } = {}) {
   return (
     <svg
-      className="spill-corner"
+      className={`spill-corner${className ? ` ${className}` : ''}`}
       viewBox="0 0 52 200"
       width="52"
       height="200"

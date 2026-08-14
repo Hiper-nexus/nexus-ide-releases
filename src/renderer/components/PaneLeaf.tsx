@@ -9,6 +9,7 @@ import {
   focusHost,
   setHostVisibility,
 } from '../terminal/terminal-host';
+import { CoffeeSpillCorner } from '../pet/CoffeeCup';
 import { BrowserPane } from './BrowserPane';
 import { PaneActivityStrip } from './PaneActivityStrip';
 import { PaneBirthOverlay } from './PaneBirthOverlay';
@@ -54,6 +55,9 @@ function AcpPaneLeaf({ pane }: Props) {
     >
       <PaneToolbar pane={pane} isFocused={isFocused} />
       <AcpPaneView missionId={pane.missionId ?? ''} />
+      {/* Filete de café no canto superior direito do chrome — uma vez por foco,
+          fade-out em ~3s. pointer-events: none, compositor-only. */}
+      {isFocused && <CoffeeSpillCorner className="spill-corner--live" />}
     </PaneInteractionSurface>
   );
 }
@@ -134,6 +138,10 @@ function TerminalPaneLeaf({ pane }: Props) {
         ref={slotRef}
         style={isVisible ? undefined : { visibility: 'hidden' }}
       />
+      {/* Filete de café no canto superior direito do chrome — uma vez por foco,
+          fade-out em ~3s. pointer-events: none, compositor-only (opacity/transform).
+          Não intercepta input do xterm; montado/desmontado com isFocused. */}
+      {isFocused && <CoffeeSpillCorner className="spill-corner--live" />}
     </PaneInteractionSurface>
   );
 }

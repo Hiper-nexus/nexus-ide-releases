@@ -158,6 +158,24 @@
   to   { opacity: 0.58; transform: scaleX(1); }
 }
 
+/* ── Variante live: pane vivo focado ─────────────────────────────────────────
+   Aparece uma única vez ao ganhar foco (elemento montado/desmontado com
+   isFocused). Compositor-only: opacity + transform. pointer-events: none.
+   Fade-out após ~1.6 s: fluxo visível por ≈ 3 s no total, depois desaparece.
+   Não entra na surface do xterm — SVG fino (52px) no canto superior direito. */
+
+.spill-corner--live {
+  /* Herda pointer-events: none de .spill-corner; reforço explícito. */
+  pointer-events: none;
+  /* opacity: 1 do streaming → 0 depois do stream terminar */
+  animation: spill-live-out 1.5s 1.6s ease-out forwards;
+}
+
+@keyframes spill-live-out {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+
 /* prefers-reduced-motion — mancha estática, sem movimento */
 @media (prefers-reduced-motion: reduce) {
   .spill__stream--body {
@@ -180,5 +198,11 @@
     animation: none;
     opacity: 0.38;
     transform: scaleX(1);
+  }
+
+  /* Reduced-motion live: estático e some imediatamente (sem flash). */
+  .spill-corner--live {
+    animation: none;
+    opacity: 0;
   }
 }

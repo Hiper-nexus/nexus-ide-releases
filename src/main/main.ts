@@ -289,6 +289,7 @@ import {
   shutdownGamificationService,
 } from "./gamification/gamification-service";
 import { requireProjectDomainStoreRegistry } from "./orch/project-domain-store-registry";
+import { closeMissionRuntimePreservingHistory } from "./orch/mission-runtime-termination";
 import {
   configureCronRuntime,
   disposeCronRuntime,
@@ -950,6 +951,69 @@ app.on("window-all-closed", () => {
   }
 });
 
+/** Teto do selo no quit: o diálogo já confirmou sair; PTY preso não segura o app. */
+const QUIT_MISSION_SEAL_BUDGET_MS = 4_000;
+
+/**
+ * Encerra todas as missões ativas quando o operador confirma "Sair e encerrar
+ * processos". Persiste o selo runtime-closed antes do app.quit() para que o
+ * reopen não restaure os workers automaticamente.
+ */
+async function closeAllActiveMissionsForShutdown(): Promise<void> {
+  const seal = (async () => {
+    try {
+      const registry = requireProjectDomainStoreRegistry();
+      const jobs: Promise<void>[] = [];
+      for (const suite of registry.listSuites()) {
+        let runningMissions: ReturnType<typeof suite.missions.list>;
+        try {
+          runningMissions = suite.missions.list('running');
+        } catch (error) {
+          console.error('[quit] Falha ao processar escopo no quit:', error);
+          continue;
+        }
+        for (const mission of runningMissions) {
+          jobs.push(
+            closeMissionRuntimePreservingHistory({
+              scope: suite.scope,
+              suite,
+              missionId: mission.id,
+            }).then(
+              () => undefined,
+              (error: unknown) => {
+                // Falha ao encerrar uma missão não deve travar o quit — o PTY
+                // ainda cai no shutdown normal.
+                console.error(
+                  `[quit] Falha ao selar missão ${mission.id} no quit:`,
+                  error,
+                );
+              },
+            ),
+          );
+        }
+      }
+      await Promise.all(jobs);
+    } catch (error) {
+      // Registry não inicializado ou outro erro estrutural — registra mas não
+      // trava o quit. O shutdown normal mata os PTYs mesmo sem o selo durável.
+      console.error('[quit] Falha ao listar missões ativas no quit:', error);
+    }
+  })();
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      seal,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, QUIT_MISSION_SEAL_BUDGET_MS);
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 function shutdown(): Promise<void> {
   if (shutdownComplete) return Promise.resolve();
   if (shutdownPromise) return shutdownPromise;
@@ -1058,10 +1122,15 @@ app.on("before-quit", (event) => {
     // palco fica invisível e o quit trava sem feedback.
     void dialog
       .showMessageBox(options)
-      .then(({ response }) => {
+      .then(async ({ response }) => {
         quitPromptOpen = false;
         if (response !== 1) return;
         sealRuntimeProcessAdmissionForShutdown();
+        // Encerra todas as missões running antes do quit, persistindo o selo
+        // runtime-closed para que o reopen não restaure os workers. O operador
+        // confirmou "Sair e encerrar processos" — isso deve matar o runtime E
+        // marcar as missões como encerradas, não só os PTYs.
+        await closeAllActiveMissionsForShutdown();
         authorizeAppQuit();
         app.quit();
       })

@@ -543,7 +543,7 @@ export function PetApp() {
               Vapor acelera brevemente quando o pet comemora (celebrating). */}
           {showAsAwake && !needingYou && !balloon?.urgent && (
             <div className="pet__coffee" aria-hidden="true">
-              <CoffeeCup size={36} celebrating={celebrating} />
+              <CoffeeCup size={52} celebrating={celebrating} />
             </div>
           )}
           {/* Flash "cafe" — aparece por ~3 s quando um agente fica idle. */}
