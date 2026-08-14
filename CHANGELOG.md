@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.32.18 — Abrir voz abre Jarvis
+
+Data: 2026-08-14
+
+Abrir voz abre o painel da Jarvis em vez de devolver a
+missão. Vision checa permissão sem workspace. Grok realtime
+reconstrói o socket quando a XAI_API_KEY muda.
+
+- **Painel Jarvis visível.** O overlay de voz volta a ser um
+  modal fixed. Sem o shell, o clique “abria” um painel invisível.
+- **Grok reconhece a key.** Salvar XAI_API_KEY reconstrói o
+  transporte realtime. Mudar modelo ou voz Grok também invalida
+  o fingerprint.
+- **Voz não devolve a missão.** O botão de voz chamava
+  `backFromSettings` e caía na última tela (iniciar missão).
+  Agora só abre o painel Jarvis. “Abrir voz” no fastpath faz
+  o mesmo.
+- **Vision sem lease de projeto.** Checar permissão, pedir
+  registro no TCC e abrir Ajustes de Gravação de Tela não
+  exigem workspace aberto. Captura e consentimento de nuvem
+  continuam com lease.
+
 ## 0.32.17 — Pet desliga o pin
 
 Data: 2026-08-14

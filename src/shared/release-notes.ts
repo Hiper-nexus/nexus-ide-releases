@@ -13,34 +13,41 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.32.17',
+  version: '0.32.18',
   date: '2026-08-14',
-  codename: 'Pet desliga o pin',
+  codename: 'Abrir voz abre Jarvis',
   summary:
-    'Enter no fullscreen desliga o pin do pet antes de esconder. ' +
-    'A 0.32.16 só fazia hide() e o WindowServer ainda trocava o ' +
-    'Space. O updater aponta Hiper-nexus, com fallback legado.',
+    'Abrir voz abre o painel da Jarvis em vez de devolver a ' +
+    'missão. Vision checa permissão sem workspace. Grok realtime ' +
+    'reconstrói o socket quando a XAI_API_KEY muda.',
   highlights: [
     {
-      title: 'Pin off no enter',
+      title: 'Painel Jarvis visível',
       detail:
-        'visibleOnAllWorkspaces(false), alwaysOnTop(false), depois ' +
-        'hide(). visibleOnFullScreen fica sempre false. Silêncio ' +
-        'latched enquanto isFullScreen() no Darwin.',
+        'O overlay de voz volta a ser um modal fixed. Sem o ' +
+        'shell, o clique “abria” um painel invisível.',
     },
     {
-      title: 'Leave restaura depois',
+      title: 'Grok reconhece a key',
       detail:
-        'Re-pin só após ~2,6s, quando a animação do Space já ' +
-        'acabou. Raise/assert continuam no-op no fullscreen.',
+        'Salvar XAI_API_KEY reconstrói o transporte realtime. ' +
+        'Mudar modelo ou voz Grok também invalida o fingerprint.',
     },
   ],
   fixes: [
     {
-      title: 'Updater na org nova',
+      title: 'Voz não devolve a missão',
       detail:
-        'Feed canônico Hiper-nexus/nexus-ide, com fallback no slug ' +
-        'legado para o binário que ainda consulta o repo antigo.',
+        'O botão de voz chamava backFromSettings e caía na última ' +
+        'tela (iniciar missão). Agora só abre o painel Jarvis. ' +
+        '“Abrir voz” no fastpath faz o mesmo.',
+    },
+    {
+      title: 'Vision sem lease de projeto',
+      detail:
+        'Checar permissão, pedir registro no TCC e abrir Ajustes ' +
+        'de Gravação de Tela não exigem workspace aberto. Captura ' +
+        'e consentimento de nuvem continuam com lease.',
     },
   ],
 };
