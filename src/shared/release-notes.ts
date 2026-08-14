@@ -13,34 +13,35 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.32.17',
+  version: '0.32.16',
   date: '2026-08-14',
-  codename: 'A pergunta fica na missão',
+  codename: 'Tela cheia fica',
   summary:
-    'Quando a missão espera uma resposta sua, a pergunta continua ' +
-    'naquela missão ao trocar de cartão. Não vaza para outra. ' +
-    'Fullscreen e picker da 0.32.16 permanecem.',
+    'Fullscreen nativo no macOS deixa de sequestrar o Space. O pet ' +
+    'some ao entrar e só volta depois da animação de saída. O picker ' +
+    'da 0.32.15 (live ∪ bundled) permanece.',
   highlights: [
     {
-      title: 'Pergunta isolada',
+      title: 'Pet some no fullscreen',
       detail:
-        'O snapshot lê o clarify durável só da missão blocked_user. ' +
-        'Trocar de missão não apaga nem empresta a pergunta.',
+        'Enter esconde o companion (hide-and-silence); leave agenda ' +
+        're-pin só após ~2,6s. Enquanto o app está tela cheia no ' +
+        'Darwin, raise/assert viram no-op.',
     },
     {
-      title: 'Rail honesto',
+      title: 'Picker une o catálogo',
       detail:
-        'Missão parada à espera do operador deixa de parecer ' +
-        'bloqueio técnico.',
+        'readyModelsForPicker une provider.models com o bundled do ' +
+        'adapter. AGY 3.7/3.1 Pro e Codex além de sol/sol-wm.',
     },
   ],
   fixes: [
     {
-      title: 'Sem segundo quadro',
+      title: 'Sem sequestro de Space',
       detail:
-        'Não importamos kanban nem .nexus/. Worker isolado fora do ' +
-        'worktree já falhava à vista; o caminho simples na pasta do ' +
-        'projeto permanece.',
+        'O guard antigo re-pinava no enter e no leave. O WindowServer ' +
+        'trocava o Space e o Nexus saía de primeiro plano com slide ' +
+        'abre/fecha.',
     },
   ],
 };
