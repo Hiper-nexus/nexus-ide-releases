@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.32.16 — Tela cheia fica
+
+Data: 2026-08-14
+
+Fullscreen nativo no macOS deixa de sequestrar o Space. O pet some
+ao entrar e só volta depois da animação de saída. O picker da 0.32.15
+(live ∪ bundled) permanece.
+
+- **Pet some no fullscreen.** Enter esconde o companion
+  (`hide-and-silence`); leave agenda re-pin só após ~2,6s. Enquanto
+  o app está tela cheia no Darwin, raise/assert viram no-op.
+- **Sem sequestro de Space.** O guard antigo re-pinava no enter e
+  no leave (1,2s + 1,45s) e o WindowServer trocava o Space — o
+  Nexus saía de primeiro plano com slide abre/fecha.
+
 ## 0.32.15 — + Novo na Missão
 
 Data: 2026-08-13

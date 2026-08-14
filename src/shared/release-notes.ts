@@ -13,19 +13,20 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.32.15',
-  date: '2026-08-13',
-  codename: '+ Novo na Missão',
+  version: '0.32.16',
+  date: '2026-08-14',
+  codename: 'Tela cheia fica',
   summary:
-    '+ Novo abre a Missão vazia, sem reidratar Equipe. O picker une o ' +
-    'catálogo vivo com o bundled. Cafeína em todo pet; Revisar no ' +
-    'estilo Bridge, com glance e Iniciar no dock.',
+    'Fullscreen nativo no macOS deixa de sequestrar o Space. O pet ' +
+    'some ao entrar e só volta depois da animação de saída. O picker ' +
+    'da 0.32.15 (live ∪ bundled) permanece.',
   highlights: [
     {
-      title: '+ Novo limpo',
+      title: 'Pet some no fullscreen',
       detail:
-        'openNewMission chama beginFreshMission e não passa por ' +
-        'open(), que restaurava o rascunho do workspace ainda em Equipe.',
+        'Enter esconde o companion (hide-and-silence); leave agenda ' +
+        're-pin só após ~2,6s. Enquanto o app está tela cheia no ' +
+        'Darwin, raise/assert viram no-op.',
     },
     {
       title: 'Picker une o catálogo',
@@ -33,25 +34,14 @@ export const CURRENT_RELEASE: AppRelease = {
         'readyModelsForPicker une provider.models com o bundled do ' +
         'adapter. AGY 3.7/3.1 Pro e Codex além de sol/sol-wm.',
     },
-    {
-      title: 'Cafeína em todo pet',
-      detail:
-        'Xícara no ChosenPetPortrait, HUD compacto 12–14px e Equipe ' +
-        'a 64px.',
-    },
-    {
-      title: 'Revisar de relance',
-      detail:
-        'Glance cards, brief colapsado, Modo só rótulo, guidance em ' +
-        'Mais detalhes, Iniciar no dock.',
-    },
   ],
   fixes: [
     {
-      title: 'Lista curta no picker',
+      title: 'Sem sequestro de Space',
       detail:
-        'Cache vivo com 1–2 modelos deixava de mostrar o bundled. A ' +
-        'união das duas fontes devolve o catálogo completo.',
+        'O guard antigo re-pinava no enter e no leave. O WindowServer ' +
+        'trocava o Space e o Nexus saía de primeiro plano com slide ' +
+        'abre/fecha.',
     },
   ],
 };
