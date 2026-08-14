@@ -17,8 +17,9 @@ lata energética nossa.
   conectado / precisa login e um CTA por linha. Claude
   entra com `claude auth login`.
 - **Lata energética.** Xícara vira lata nossa no pet,
-  no HUD e no header da Equipe. O pane focado ganha
-  spray, bolhas e condensação que somem sozinhos.
+  no HUD e no header da Equipe — balança e ferve.
+  O pane focado vê o energético entornar (filete,
+  gotas, poça) e some sozinho.
 - **Sem chave visível.** Sem credencial na cadeia, o HUD
   mostra o erro e abre as configurações no clique.
 

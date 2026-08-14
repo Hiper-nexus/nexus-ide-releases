@@ -45,6 +45,8 @@ describe('ChosenPetPortrait — lata cafeinada em todo pet', () => {
     expect(cup, 'lata SVG ausente no retrato').not.toBeNull();
     expect(cup?.querySelector('.pet-coffee__body'), 'corpo da lata ausente').not.toBeNull();
     expect(cup?.querySelector('.pet-coffee__band'), 'faixa da lata ausente').not.toBeNull();
+    expect(cup?.querySelector('.pet-coffee__fizz'), 'fizz da tampa ausente').not.toBeNull();
+    expect(cup?.querySelector('.pet-coffee__tab'), 'lacre da lata ausente').not.toBeNull();
   });
 
   it('lata é aria-hidden (decorativa)', () => {

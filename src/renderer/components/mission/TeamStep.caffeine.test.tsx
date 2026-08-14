@@ -74,6 +74,8 @@ describe('TeamStep — cafeína visível na etapa Equipe', () => {
     expect(cup?.getAttribute('aria-hidden')).toBe('true');
     expect(cup?.querySelector('.pet-coffee__body'), 'corpo da lata ausente').not.toBeNull();
     expect(cup?.querySelector('.pet-coffee__band'), 'faixa da lata ausente').not.toBeNull();
+    expect(cup?.querySelector('.pet-coffee__fizz'), 'fizz da tampa ausente').not.toBeNull();
+    expect(cup?.querySelector('.pet-coffee__tab'), 'lacre da lata ausente').not.toBeNull();
   });
 
   it('lata tem tamanho de leitura (64px)', () => {

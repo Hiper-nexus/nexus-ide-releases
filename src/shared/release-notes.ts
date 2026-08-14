@@ -45,8 +45,9 @@ export const CURRENT_RELEASE: AppRelease = {
       title: 'Lata energética',
       detail:
         'Xícara vira lata nossa no pet, no HUD e no header ' +
-        'da Equipe. O pane focado ganha spray, bolhas e ' +
-        'condensação que somem sozinhos.',
+        'da Equipe — balança e ferve. O pane focado vê o ' +
+        'energético entornar (filete, gotas, poça) e some ' +
+        'sozinho.',
     },
   ],
   fixes: [

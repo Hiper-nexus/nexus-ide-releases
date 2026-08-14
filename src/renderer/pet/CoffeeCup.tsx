@@ -2,73 +2,54 @@
  * Lata de energético nossa — delight "abre e ferve" do pet.
  * Puro SVG+CSS; sem emoji, sem asset externo. aria-hidden por ser decoração.
  * Corpo preto + faixa operacional (`--ok`) + ouro no filete. Sem logo, sem
- * garra, sem wordmark de marca terceira. Efervescência em coffee-cup.css.
- * Em prefers-reduced-motion o fizz fica estático.
+ * garra, sem wordmark de marca terceira. Motion e derrame em coffee-cup.css.
+ * Em prefers-reduced-motion a lata fica estática.
  */
 
 import { useId } from 'react';
 
 /**
- * Overlay de efervescência no canto do pane focado.
- * SVG puro, position absolute, pointer-events none.
- * Animações: só opacity e transform (compositor). Uma única execução (forwards).
- * Em prefers-reduced-motion: condensação estática, sem movimento.
+ * Derrame de energético no canto do pane focado.
+ * A lata entorna: filete cai da boca, gotas, poça espalha e some.
+ * SVG puro, pointer-events none. Anima só opacity e transform (compositor).
+ * Em prefers-reduced-motion: poça estática curta.
  */
 export function CoffeeSpillCorner({ className }: { className?: string } = {}) {
   return (
     <svg
       className={`spill-corner${className ? ` ${className}` : ''}`}
-      viewBox="0 0 84 220"
-      width="84"
-      height="220"
+      viewBox="0 0 96 236"
+      width="96"
+      height="236"
       fill="none"
       aria-hidden="true"
     >
-      {/* Spray curto — o "pssch" de abrir a lata */}
-      <path
-        className="spill__spray spill__spray--a"
-        d="M62 14 C 52 6 44 3 34 8"
-        strokeWidth="2.2"
-        strokeLinecap="round"
-      />
-      <path
-        className="spill__spray spill__spray--b"
-        d="M66 12 C 70 3 78 1 82 8"
-        strokeWidth="1.6"
-        strokeLinecap="round"
-      />
-      <path
-        className="spill__spray spill__spray--c"
-        d="M60 18 C 50 14 40 18 32 28"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-      />
-      <ellipse className="spill__mist" cx="58" cy="24" rx="24" ry="11" />
+      {/* Lata fonte — tomba e o líquido sai da boca */}
+      <g className="spill__can">
+        <rect className="spill__can-body" x="64" y="8" width="16" height="30" rx="3" />
+        <rect className="spill__can-shade" x="75" y="10" width="3.2" height="25" rx="1" />
+        <rect className="spill__can-sheen" x="65.4" y="10.4" width="1.8" height="23" rx="0.8" />
+        <rect className="spill__can-band" x="64" y="18" width="16" height="6" />
+        <ellipse className="spill__can-lid" cx="72" cy="8.4" rx="8.2" ry="2.3" />
+        <ellipse className="spill__can-mouth" cx="72" cy="8.6" rx="5.4" ry="1.25" />
+      </g>
+      {/* Filete — nasce na boca, cai e encontra a poça */}
       <path
         className="spill__stream spill__stream--body"
-        d="M 58 30 C 53 72 64 112 56 158 C 50 192 62 202 57 216"
-        strokeWidth="5"
+        d="M 64 14 C 50 52 70 98 48 154 C 36 192 54 214 44 228"
+        strokeWidth="6.5"
         strokeLinecap="round"
       />
       <path
         className="spill__stream spill__stream--sheen"
-        d="M 60 30 C 55 72 66 112 58 158 C 52 192 64 202 59 216"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-      />
-      <circle className="spill__bubble spill__bubble--1" cx="50" cy="88" r="3.1" />
-      <circle className="spill__bubble spill__bubble--2" cx="67" cy="126" r="2.3" />
-      <circle className="spill__bubble spill__bubble--3" cx="53" cy="160" r="2.7" />
-      <circle className="spill__bubble spill__bubble--4" cx="64" cy="70" r="1.7" />
-      <circle className="spill__bead spill__bead--1" cx="74" cy="50" r="2.1" />
-      <circle className="spill__bead spill__bead--2" cx="78" cy="80" r="1.45" />
-      <circle className="spill__bead spill__bead--3" cx="72" cy="112" r="1.8" />
-      <path
-        className="spill__flash"
-        d="M46 18 L74 54"
+        d="M 66 14 C 52 52 72 98 50 154 C 38 192 56 214 46 228"
         strokeWidth="1.6"
         strokeLinecap="round"
       />
+      <circle className="spill__drop spill__drop--1" cx="58" cy="56" r="3.3" />
+      <circle className="spill__drop spill__drop--2" cx="42" cy="104" r="2.5" />
+      <circle className="spill__drop spill__drop--3" cx="52" cy="148" r="2.9" />
+      <ellipse className="spill__pool" cx="44" cy="230" rx="24" ry="5.2" />
     </svg>
   );
 }
@@ -122,15 +103,18 @@ export function CoffeeCup({ size = 32, celebrating = false }: CoffeeCupProps) {
         strokeWidth="0.55"
       />
       <ellipse className="pet-coffee__mouth" cx="11" cy="11.15" rx="4.5" ry="1.15" />
-      <rect className="pet-coffee__tab-stem" x="11.1" y="8.85" width="1.55" height="0.7" rx="0.3" />
-      <ellipse
-        className="pet-coffee__tab-ring"
-        cx="13.4"
-        cy="8.55"
-        rx="1.55"
-        ry="0.82"
-        strokeWidth="0.65"
-      />
+      <g className="pet-coffee__tab">
+        <rect className="pet-coffee__tab-stem" x="11.1" y="8.85" width="1.55" height="0.7" rx="0.3" />
+        <ellipse
+          className="pet-coffee__tab-ring"
+          cx="13.4"
+          cy="8.55"
+          rx="1.55"
+          ry="0.82"
+          strokeWidth="0.65"
+        />
+      </g>
+      <circle className="pet-coffee__drip" cx="14.2" cy="12.2" r="0.7" />
       <circle className="pet-coffee__fizz pet-coffee__fizz--a" cx="9.1" cy="6.2" r="0.82" />
       <circle className="pet-coffee__fizz pet-coffee__fizz--b" cx="11.7" cy="4.4" r="0.62" />
       <circle className="pet-coffee__fizz pet-coffee__fizz--c" cx="13.4" cy="6.5" r="0.48" />

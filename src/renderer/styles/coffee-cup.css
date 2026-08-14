@@ -1,8 +1,7 @@
-/* Lata SVG — efervescência compartilhada (pet + empty states do Git).
-   O posicionamento no sprite (.pet__coffee) fica em pet.css: a janela do
-   pet não importa o CSS da app, então pet.css também @importa este arquivo.
-   Pintura por token: corpo --bg, faixa --ok, filete --gold. Sem hex solto
-   além do fallback ATUAL do token. Pink City não pinta a lata. */
+/* Lata SVG — motion + derrame (pet, HUD, Equipe, panes).
+   Pintura por token: corpo --bg, faixa --ok, líquido --ok/--accent.
+   Sem hex solto além do fallback ATUAL do token. Pink City só no derrame
+   vivo (estado). A janela do pet @importa este arquivo. */
 
 .pet-coffee__body {
   fill: var(--bg, #080709);
@@ -36,6 +35,9 @@
 
 .pet-coffee__lid {
   fill: color-mix(in srgb, var(--text, #faf7f9) 20%, var(--bg, #080709));
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: pet-lid 3.2s ease-in-out infinite;
 }
 
 .pet-coffee__rim {
@@ -54,6 +56,12 @@
 .pet-coffee__tab-ring {
   fill: none;
   stroke: color-mix(in srgb, var(--text, #faf7f9) 58%, var(--gold, #ffd166));
+}
+
+.pet-coffee__tab {
+  transform-box: fill-box;
+  transform-origin: left center;
+  animation: pet-tab 2.6s ease-in-out infinite;
 }
 
 .pet-coffee__ground {
@@ -90,13 +98,41 @@
   animation: pet-bead 3.2s ease-in-out 2s infinite;
 }
 
-.pet-coffee--celebrating .pet-coffee__fizz {
-  animation-duration: 1.1s;
+.pet-coffee__drip {
+  fill: color-mix(in srgb, var(--ok, #7ee2a8) 62%, var(--accent, #ff4f8b));
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: pet-drip 7.2s ease-in infinite;
+}
+
+/* Balanço + entorna: pressão lenta, um pour por ciclo. Não é tremor. */
+.pet-coffee {
+  animation: pet-can-sway 7.2s ease-in-out infinite;
+  transform-origin: bottom center;
 }
 
 .pet-coffee--celebrating {
   animation: pet-coffee-sip 1s ease-in-out infinite;
   transform-origin: bottom center;
+}
+
+.pet-coffee--celebrating .pet-coffee__fizz {
+  animation-duration: 1.1s;
+}
+
+@keyframes pet-can-sway {
+  0%, 100% { transform: rotate(-1.5deg); }
+  36%      { transform: rotate(2deg); }
+  48%      { transform: rotate(1.6deg); }
+  54%      { transform: rotate(-12deg); }
+  62%      { transform: rotate(-10deg); }
+  72%      { transform: rotate(1.2deg); }
+}
+
+@keyframes pet-can-sway-compact {
+  0%, 100% { transform: rotate(-1.2deg); }
+  50%      { transform: rotate(1.4deg); }
 }
 
 @keyframes pet-coffee-sip {
@@ -129,6 +165,23 @@
   50%      { opacity: 0.62; }
 }
 
+@keyframes pet-lid {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-0.28px); }
+}
+
+@keyframes pet-tab {
+  0%, 100% { transform: rotate(0deg); }
+  50%      { transform: rotate(-9deg) translateY(-0.25px); }
+}
+
+@keyframes pet-drip {
+  0%, 50% { opacity: 0; transform: translate(0, 0) scale(0.35); }
+  54%     { opacity: 0.9; transform: translate(0.6px, 1.4px) scale(1); }
+  72%     { opacity: 0; transform: translate(2.4px, 12px) scale(0.45); }
+  100%    { opacity: 0; transform: translate(2.4px, 12px) scale(0.4); }
+}
+
 @keyframes pet-can-sheen {
   0%, 68%, 100% { opacity: 0.32; }
   80%           { opacity: 0.72; }
@@ -152,20 +205,35 @@
   animation: pet-coffee-in 380ms ease-out;
 }
 
-.chosen-pet-portrait--compact .pet-coffee__fizz,
+/* HUD estreito: silhueta + fizz + balanço curto. Sem pour largo. */
+.chosen-pet-portrait--compact .pet-coffee {
+  animation-name: pet-can-sway-compact;
+  animation-duration: 4.4s;
+}
+
 .chosen-pet-portrait--compact .pet-coffee__bead,
 .chosen-pet-portrait--compact .pet-coffee__seal,
 .chosen-pet-portrait--compact .pet-coffee__seal-core,
-.chosen-pet-portrait--compact .pet-coffee__tab-ring,
-.chosen-pet-portrait--compact .pet-coffee__tab-stem,
 .chosen-pet-portrait--compact .pet-coffee__shade,
 .chosen-pet-portrait--compact .pet-coffee__band-edge,
-.chosen-pet-portrait--compact .pet-coffee__ground {
+.chosen-pet-portrait--compact .pet-coffee__ground,
+.chosen-pet-portrait--compact .pet-coffee__drip {
   animation: none;
   opacity: 0;
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .pet-coffee,
+  .pet-coffee--celebrating,
+  .chosen-pet-portrait--compact .pet-coffee {
+    animation: none;
+    transform: none;
+  }
+
+  .pet-coffee--celebrating {
+    transform: rotate(-6deg);
+  }
+
   .pet-coffee__fizz {
     animation: none;
     opacity: 0.75;
@@ -174,14 +242,22 @@
   .pet-coffee__bead,
   .pet-coffee__bead--a,
   .pet-coffee__bead--b,
-  .pet-coffee__bead--c {
+  .pet-coffee__bead--c,
+  .pet-coffee__lid,
+  .pet-coffee__tab,
+  .pet-coffee__drip {
     animation: none;
+  }
+
+  .pet-coffee__bead,
+  .pet-coffee__bead--a,
+  .pet-coffee__bead--b,
+  .pet-coffee__bead--c {
     opacity: 0.45;
   }
 
-  .pet-coffee--celebrating {
-    animation: none;
-    transform: rotate(-6deg);
+  .pet-coffee__drip {
+    opacity: 0;
   }
 
   .git-scm__empty-coffee {
@@ -195,147 +271,120 @@
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   Overlay de efervescência — canto do pane vago / vivo focado
-   Irmão da PaneToolbar, posição absoluta dentro de .pane (position: relative;
-   overflow: hidden). Nunca toca a surface do terminal; pointer-events: none.
-   Anima só opacity e transform — compositor. Uma única execução (forwards).
+   Derrame no pane — a lata entorna de verdade
+   Irmão da PaneToolbar, absoluto em .pane. pointer-events: none.
+   Física: tomba → filete cai (scaleY) → gotas → poça espalha → some.
+   Só opacity + transform. ~3.8 s no live.
    ───────────────────────────────────────────────────────────────────────── */
 
 .spill-corner {
   position: absolute;
   top: calc(var(--toolbar-height, 28px) + 4px);
-  right: 12px;
+  right: 8px;
   pointer-events: none;
   z-index: 1;
   overflow: visible;
 }
 
+.spill__can {
+  transform-box: fill-box;
+  transform-origin: bottom center;
+  animation: spill-can-tip 0.62s var(--ease-out-quart, cubic-bezier(.25,1,.5,1)) forwards;
+}
+
+.spill__can-body {
+  fill: var(--bg, #080709);
+}
+
+.spill__can-shade {
+  fill: color-mix(in srgb, var(--text, #faf7f9) 10%, var(--bg, #080709));
+}
+
+.spill__can-sheen {
+  fill: color-mix(in srgb, var(--text, #faf7f9) 22%, transparent);
+}
+
+.spill__can-band {
+  fill: var(--ok, #7ee2a8);
+}
+
+.spill__can-lid {
+  fill: color-mix(in srgb, var(--text, #faf7f9) 20%, var(--bg, #080709));
+}
+
+.spill__can-mouth {
+  fill: color-mix(in srgb, var(--bg, #080709) 86%, var(--text, #faf7f9));
+}
+
 .spill__stream--body {
-  stroke: color-mix(in srgb, var(--ok, #7ee2a8) 38%, var(--bg, #080709));
+  stroke: color-mix(in srgb, var(--ok, #7ee2a8) 58%, var(--accent, #ff4f8b));
   opacity: 0;
-  animation: spill-stream 1.55s var(--ease-overlay-smooth, cubic-bezier(.22,.8,.2,1)) 0.12s forwards;
+  transform-box: fill-box;
+  transform-origin: top center;
+  animation: spill-pour 1.15s var(--ease-overlay-smooth, cubic-bezier(.22,.8,.2,1)) 0.2s forwards;
 }
 
 .spill__stream--sheen {
-  stroke: color-mix(in srgb, var(--gold, #ffd166) 50%, var(--ok, #7ee2a8));
-  opacity: 0;
-  animation: spill-stream 1.55s var(--ease-overlay-smooth, cubic-bezier(.22,.8,.2,1)) 0.28s forwards;
-}
-
-.spill__spray {
-  stroke: color-mix(in srgb, var(--ok, #7ee2a8) 58%, var(--text, #faf7f9));
+  stroke: color-mix(in srgb, var(--gold, #ffd166) 42%, var(--ok, #7ee2a8));
   opacity: 0;
   transform-box: fill-box;
-  transform-origin: right center;
+  transform-origin: top center;
+  animation: spill-pour 1.15s var(--ease-overlay-smooth, cubic-bezier(.22,.8,.2,1)) 0.32s forwards;
 }
 
-.spill__spray--a {
-  animation: spill-spray 0.48s var(--ease-out-quart, cubic-bezier(.25,1,.5,1)) 0.02s forwards;
-}
-
-.spill__spray--b {
-  animation: spill-spray 0.42s var(--ease-out-quart, cubic-bezier(.25,1,.5,1)) 0.08s forwards;
-}
-
-.spill__spray--c {
-  animation: spill-spray 0.5s var(--ease-out-quart, cubic-bezier(.25,1,.5,1)) 0.12s forwards;
-}
-
-.spill__mist {
-  fill: color-mix(in srgb, var(--ok, #7ee2a8) 20%, transparent);
-  opacity: 0;
-  transform-box: fill-box;
-  transform-origin: center;
-  animation: spill-mist 0.9s var(--ease-overlay-smooth, cubic-bezier(.22,.8,.2,1)) 0.04s forwards;
-}
-
-.spill__bubble {
-  fill: color-mix(in srgb, var(--ok, #7ee2a8) 42%, var(--text, #faf7f9));
+.spill__drop--1,
+.spill__drop--2,
+.spill__drop--3 {
+  fill: color-mix(in srgb, var(--ok, #7ee2a8) 60%, var(--accent, #ff4f8b));
   opacity: 0;
   transform-box: fill-box;
   transform-origin: center;
 }
 
-.spill__bubble--1 {
-  animation: spill-bubble 1.7s ease-out 0.22s forwards;
+.spill__drop--1 {
+  animation: spill-drop 0.55s ease-out 0.48s forwards;
 }
 
-.spill__bubble--2 {
-  animation: spill-bubble 1.85s ease-out 0.48s forwards;
+.spill__drop--2 {
+  animation: spill-drop 0.58s ease-out 0.78s forwards;
 }
 
-.spill__bubble--3 {
-  animation: spill-bubble 1.6s ease-out 0.7s forwards;
+.spill__drop--3 {
+  animation: spill-drop 0.52s ease-out 1.05s forwards;
 }
 
-.spill__bubble--4 {
-  animation: spill-bubble 1.5s ease-out 0.18s forwards;
-}
-
-.spill__bead {
-  fill: color-mix(in srgb, var(--text, #faf7f9) 30%, transparent);
+.spill__pool {
+  fill: color-mix(in srgb, var(--ok, #7ee2a8) 50%, var(--accent, #ff4f8b));
   opacity: 0;
   transform-box: fill-box;
   transform-origin: center;
+  animation: spill-pool 0.7s ease-out 1.1s forwards;
 }
 
-.spill__bead--1 {
-  animation: spill-bead 0.5s ease-out 0.36s forwards;
+@keyframes spill-can-tip {
+  from { transform: rotate(4deg); }
+  to   { transform: rotate(-18deg); }
 }
 
-.spill__bead--2 {
-  animation: spill-bead 0.5s ease-out 0.58s forwards;
+@keyframes spill-pour {
+  from { opacity: 0; transform: scaleY(0.06); }
+  to   { opacity: 0.88; transform: scaleY(1); }
 }
 
-.spill__bead--3 {
-  animation: spill-bead 0.5s ease-out 0.8s forwards;
+@keyframes spill-drop {
+  from { opacity: 0; transform: translateY(-14px) scale(0.55); }
+  28%  { opacity: 0.82; }
+  to   { opacity: 0.58; transform: translateY(0) scale(1); }
 }
 
-.spill__flash {
-  stroke: color-mix(in srgb, var(--text, #faf7f9) 42%, var(--gold, #ffd166));
-  opacity: 0;
-  transform-box: fill-box;
-  transform-origin: center;
-  animation: spill-flash 0.58s var(--ease-out-quart, cubic-bezier(.25,1,.5,1)) 0.1s forwards;
-}
-
-@keyframes spill-stream {
-  from { opacity: 0; }
-  to   { opacity: 0.78; }
-}
-
-@keyframes spill-spray {
-  0%   { opacity: 0; transform: scale(0.35); }
-  28%  { opacity: 0.8; transform: scale(1); }
-  100% { opacity: 0; transform: scale(1.18); }
-}
-
-@keyframes spill-mist {
-  0%   { opacity: 0; transform: scale(0.55); }
-  32%  { opacity: 0.3; transform: scale(1); }
-  100% { opacity: 0.1; transform: scale(1.06); }
-}
-
-@keyframes spill-bubble {
-  0%   { opacity: 0; transform: translateY(8px) scale(0.55); }
-  16%  { opacity: 0.72; transform: translateY(0) scale(1); }
-  100% { opacity: 0; transform: translateY(-44px) scale(0.8); }
-}
-
-@keyframes spill-bead {
-  from { opacity: 0; transform: scale(0.4); }
-  to   { opacity: 0.55; transform: scale(1); }
-}
-
-@keyframes spill-flash {
-  0%   { opacity: 0; transform: translate(-6px, -6px); }
-  38%  { opacity: 0.62; transform: translate(0, 0); }
-  100% { opacity: 0; transform: translate(8px, 8px); }
+@keyframes spill-pool {
+  from { opacity: 0; transform: scaleX(0.12) scaleY(0.35); }
+  to   { opacity: 0.64; transform: scaleX(1) scaleY(1); }
 }
 
 .spill-corner--live {
   pointer-events: none;
-  animation: spill-live-out 1.6s 2.2s ease-out forwards;
+  animation: spill-live-out 1.5s 2.3s ease-out forwards;
 }
 
 @keyframes spill-live-out {
@@ -344,42 +393,28 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .spill__stream--body {
+  .spill__can {
     animation: none;
-    opacity: 0.45;
+    transform: rotate(-10deg);
   }
 
-  .spill__stream--sheen {
-    animation: none;
-    opacity: 0.2;
-  }
-
-  .spill__spray,
-  .spill__spray--a,
-  .spill__spray--b,
-  .spill__spray--c,
-  .spill__mist,
-  .spill__bubble,
-  .spill__bubble--1,
-  .spill__bubble--2,
-  .spill__bubble--3,
-  .spill__bubble--4,
-  .spill__flash {
+  .spill__stream--body,
+  .spill__stream--sheen,
+  .spill__drop--1,
+  .spill__drop--2,
+  .spill__drop--3 {
     animation: none;
     opacity: 0;
+    transform: none;
   }
 
-  .spill__bead,
-  .spill__bead--1,
-  .spill__bead--2,
-  .spill__bead--3 {
+  .spill__pool {
     animation: none;
-    opacity: 0.4;
-    transform: scale(1);
+    opacity: 0.5;
+    transform: scaleX(1) scaleY(1);
   }
 
   .spill-corner--live {
-    animation: none;
-    opacity: 0;
+    animation: spill-live-out 0.7s 1.1s ease-out forwards;
   }
 }
