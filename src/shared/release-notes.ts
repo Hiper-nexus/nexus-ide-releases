@@ -13,51 +13,35 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.32.13',
+  version: '0.32.14',
   date: '2026-08-13',
-  codename: 'Pausa honesta',
+  codename: 'Sair sem religar',
   summary:
-    'Sem runtime o rail deixa de mentir Trabalhando. Missão viva não ' +
-    'converte o pane em shell. O chrome estreito mostra o LLM; a faixa ' +
-    'cafeinada fica mais viva, com um derrame leve na vaga focada.',
+    'Sair e encerrar processos sela as missões running antes do quit, ' +
+    'para o restore não religar workers. A faixa cafeinada aparece no ' +
+    'pane vivo focado e some em ~3s.',
   highlights: [
     {
-      title: 'Rail honesto',
+      title: 'Selo no quit',
       detail:
-        'Status running no banco sem orquestrador nem sessão viva vira ' +
-        'reparo (restore-failed), nunca Trabalhando.',
+        'O botão Sair e encerrar processos chama ' +
+        'closeMissionRuntimePreservingHistory em paralelo, com teto de ' +
+        '4s, antes de app.quit(). O marker runtime-closed impede o ' +
+        'reopen de religar a frota.',
     },
     {
-      title: 'Pane não vira shell',
+      title: 'Cafeína no pane vivo',
       detail:
-        'unlockRetiredMissionPane preserva o agente pausado enquanto a ' +
-        'missão está pending, running ou blocked. Falha de IPC é ' +
-        'fail-closed. Retomar fica no rail.',
-    },
-    {
-      title: 'Modelo no chrome estreito',
-      detail:
-        'Chip compacto de família/versão quando o badge some (< 380px). ' +
-        'Shell puro não inventa LLM.',
-    },
-    {
-      title: 'Faixa cafeinada',
-      detail:
-        'Xícara maior no pet e na mesa limpa do Git. Derrame SVG no ' +
-        'pane vago focado, sem roubar clique.',
+        'Derrame SVG no pane focado, sem roubar clique, some em ~3s. ' +
+        'Xícara do pet e flash cafe maiores.',
     },
   ],
   fixes: [
     {
-      title: 'Tarefa running sem processo',
+      title: 'Quit não trava no selo',
       detail:
-        'Pane listado sem sessão física deixa de aparecer working só ' +
-        'porque a tarefa no banco ficou running.',
-    },
-    {
-      title: 'Default AGY no save de squad',
-      detail:
-        'O pin do roster normalizado acompanha Gemini 3.7 Flash.',
+        'PTY preso no encerramento não segura o app: o selo tem ' +
+        'orçamento de 4s e o quit segue.',
     },
   ],
 };

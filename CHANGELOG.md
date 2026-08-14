@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.32.14 — Sair sem religar
+
+Data: 2026-08-13
+
+Sair e encerrar processos sela as missões running antes do quit, para
+o restore não religar workers. A faixa cafeinada aparece no pane vivo
+focado e some em ~3s.
+
+- **Selo no quit.** O botão "Sair e encerrar processos" chama
+  `closeMissionRuntimePreservingHistory` em paralelo, com teto de 4s,
+  antes de `app.quit()`. O marker `runtime-closed` impede o reopen de
+  religar a frota.
+- **Cafeína no pane vivo.** Derrame SVG no pane focado
+  (`.spill-corner--live`), `pointer-events: none`, some em ~3s.
+  Xícara do pet e flash "cafe" maiores (52px / 32px).
+
 ## 0.32.13 — Pausa honesta
 
 Data: 2026-08-13
