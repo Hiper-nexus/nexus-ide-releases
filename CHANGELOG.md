@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.32.22 — Turno que fecha sozinho
+
+Data: 2026-08-14
+
+O modelo invertido do Overclock (C-194.1) aterrissa no
+idioma do Nexus: quando um worker encerra o turno sem
+chamar a tool de handoff, o Main entrega a resposta
+verbatim ao orquestrador — o port antigo dos Stop hooks
+nunca tinha rodado e saiu.
+
+- **Fechamento mecânico de turno.** O fim de turno chega
+  pelo /hook/status; o Main colhe a resposta do payload
+  (fallback transcript), aplica as guardas (papel,
+  origem humana, dedup por turno) e submete pela transação
+  durável. Resposta curta viaja inteira; longa viaja a
+  verdade com a íntegra anexada.
+- **Vocabulário único.** A tool aceita os aliases
+  done/error na fronteira e a doutrina passa a ensinar o
+  enum canônico — worker obediente não toma mais erro de
+  validação.
+- **Contrato condicional.** Worker de missão com resposta
+  curta não chama ferramenta nenhuma: responde e encerra.
+  Contradição entre doutrina e contrato eliminada.
+- **Gate não trava mais o stop.** O stop-gate virou
+  observação; a garantia de entrega é do Main.
+- **Limpeza dos hooks legados.** O port .mjs do Overclock
+  (que nunca rodou) é removido; o boot limpa o registro
+  global da 0.32.x no ~/.claude/settings.json.
+- **Orquestrador sempre delega.** Nem pergunta trivial é
+  respondida no pane do orquestrador: tudo vira dispatch
+  de worker.
+- **Enter comido tem cura.** As lanes confirmadas ganham
+  prova de turno e um CR de destravamento — texto não
+  fica mais preso no composer sem sinal.
+- **Pane morto é morto.** Estado "exited" sobrevive à
+  evicção do buffer; o watcher da Via Rápida volta a
+  decidir missão sem processo vivo.
+
 ## 0.32.21 — Lata certa
 
 Data: 2026-08-14

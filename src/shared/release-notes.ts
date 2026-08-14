@@ -13,54 +13,63 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.32.21',
+  version: '0.32.22',
   date: '2026-08-14',
-  codename: 'Lata certa',
+  codename: 'Turno que fecha sozinho',
   summary:
-    'Gate realtime aceita XAI_API_KEY. O box mini arrasta ' +
-    'na OverlayLayer. Providers mostram estado e um CTA ' +
-    'por CLI. Claude usa claude auth login. A cafeína vira ' +
-    'lata energética que se lê como lata. O derrame no ' +
-    'pane é curto — 76px, sem onda do teto ao chão.',
+    'O modelo invertido do Overclock chega ao Nexus: quando um ' +
+    'worker encerra o turno sem chamar a tool de handoff, o Main ' +
+    'entrega a resposta verbatim ao orquestrador. O port antigo ' +
+    'dos Stop hooks nunca tinha rodado — saiu, e o boot limpa o ' +
+    'registro global que a 0.32.x deixou no ~/.claude.',
   highlights: [
     {
-      title: 'Grok no gate realtime',
+      title: 'Fechamento mecânico de turno',
       detail:
-        'XAI_API_KEY deixa de ser tratada como Gemini. ' +
-        'Jarvis fala com a chave oficial.',
+        'O fim de turno chega pelo /hook/status; o Main colhe a ' +
+        'resposta do payload (fallback transcript), aplica as ' +
+        'guardas e submete pela transação durável. Curta viaja ' +
+        'inteira; longa viaja a verdade com a íntegra anexada.',
     },
     {
-      title: 'Box mini arrasta',
+      title: 'Vocabulário único',
       detail:
-        'O pill mora na OverlayLayer e o pointer não some ' +
-        'no meio do arrasto.',
+        'A tool aceita done/error na fronteira e a doutrina ensina ' +
+        'o enum canônico. Worker obediente não toma mais erro de ' +
+        'validação no meio da entrega.',
     },
     {
-      title: 'Login das CLIs honesto',
+      title: 'Contrato condicional',
       detail:
-        'Cada ferramenta mostra conectado / precisa login ' +
-        'e um CTA por linha. Claude entra com ' +
-        'claude auth login.',
+        'Worker de missão com resposta curta não chama ferramenta ' +
+        'nenhuma: responde e encerra. A contradição entre doutrina ' +
+        'e contrato acabou.',
     },
     {
-      title: 'Lata que se lê como lata',
+      title: 'Orquestrador sempre delega',
       detail:
-        'Xícara vira lata nossa no pet, no HUD e no header ' +
-        'da Equipe — corpo, anel e aba. Balança e ferve.',
+        'Nem pergunta trivial é respondida no pane do orquestrador: ' +
+        'se está no objetivo, um worker responde.',
     },
   ],
   fixes: [
     {
-      title: 'Derrame curto',
+      title: 'Enter comido tem cura',
       detail:
-        'O energético no pane focado cai 76px e some. ' +
-        'Acabou a onda do teto ao chão.',
+        'As lanes confirmadas ganham prova de turno e um CR de ' +
+        'destravamento — texto não fica mais preso no composer.',
     },
     {
-      title: 'Sem chave visível',
+      title: 'Pane morto é morto',
       detail:
-        'Sem credencial na cadeia, o HUD mostra o erro e ' +
-        'abre as configurações no clique.',
+        'O estado exited sobrevive à limpeza do buffer; o watcher ' +
+        'volta a decidir missão sem processo vivo.',
+    },
+    {
+      title: 'Gate não trava mais o stop',
+      detail:
+        'O stop-gate vira observação. A garantia de entrega é do ' +
+        'Main, não do bloqueio de turno.',
     },
   ],
 };
