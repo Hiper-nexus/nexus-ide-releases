@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.32.19 — Sem pane-neto
+
+Data: 2026-08-14
+
+Só o orquestrador spawna pane. Servidor SSH entra uma vez
+pelo apelido. Cotas e ranking deixam de inventar data ou
+percentagem. Memória ganha esquecer nota.
+
+- **Sem pane-neto.** Worker não abre neto; a rodinha no TUI
+  manda PageUp/PageDown; clarify vai ao seletor da CLI e
+  “agora não” adia sem loop.
+- **SSH pelo apelido.** O operador registra o servidor em
+  Definições → Remoto. A partir daí só o apelido circula;
+  IP e senha não voltam ao modelo.
+- **Cotas e ranking honestos.** Tempo e percentagem só
+  aparecem quando existem. Sem `Invalid Date` nem `NaN%`.
+- **Memória com esquecer.** A nota vive no app, não no
+  repositório. O painel deixa apagar.
+
 ## 0.32.18 — Abrir voz abre Jarvis
 
 Data: 2026-08-14

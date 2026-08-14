@@ -13,41 +13,41 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.32.18',
+  version: '0.32.19',
   date: '2026-08-14',
-  codename: 'Abrir voz abre Jarvis',
+  codename: 'Sem pane-neto',
   summary:
-    'Abrir voz abre o painel da Jarvis em vez de devolver a ' +
-    'missão. Vision checa permissão sem workspace. Grok realtime ' +
-    'reconstrói o socket quando a XAI_API_KEY muda.',
+    'Só o orquestrador spawna pane. Servidor SSH entra uma vez ' +
+    'pelo apelido. Cotas e ranking deixam de inventar data ou ' +
+    'percentagem. Memória ganha esquecer nota.',
   highlights: [
     {
-      title: 'Painel Jarvis visível',
+      title: 'Sem pane-neto',
       detail:
-        'O overlay de voz volta a ser um modal fixed. Sem o ' +
-        'shell, o clique “abria” um painel invisível.',
+        'Worker não abre neto; a rodinha no TUI manda ' +
+        'PageUp/PageDown; clarify vai ao seletor da CLI e ' +
+        '“agora não” adia sem loop.',
     },
     {
-      title: 'Grok reconhece a key',
+      title: 'SSH pelo apelido',
       detail:
-        'Salvar XAI_API_KEY reconstrói o transporte realtime. ' +
-        'Mudar modelo ou voz Grok também invalida o fingerprint.',
+        'O operador registra o servidor em Definições → Remoto. ' +
+        'A partir daí só o apelido circula; IP e senha não ' +
+        'voltam ao modelo.',
     },
   ],
   fixes: [
     {
-      title: 'Voz não devolve a missão',
+      title: 'Cotas e ranking honestos',
       detail:
-        'O botão de voz chamava backFromSettings e caía na última ' +
-        'tela (iniciar missão). Agora só abre o painel Jarvis. ' +
-        '“Abrir voz” no fastpath faz o mesmo.',
+        'Tempo e percentagem só aparecem quando existem. Sem ' +
+        'Invalid Date nem NaN%.',
     },
     {
-      title: 'Vision sem lease de projeto',
+      title: 'Memória com esquecer',
       detail:
-        'Checar permissão, pedir registro no TCC e abrir Ajustes ' +
-        'de Gravação de Tela não exigem workspace aberto. Captura ' +
-        'e consentimento de nuvem continuam com lease.',
+        'A nota vive no app, não no repositório. O painel ' +
+        'deixa apagar.',
     },
   ],
 };
