@@ -37,6 +37,10 @@ import {
   type AttentionPolicyState,
 } from './pet-attention-policy';
 import { tapAgentHookStatus } from '../agent-hooks/hook-ingest';
+import {
+  petActionForAppFullscreenEvent,
+  shouldRaisePetAboveAll,
+} from './pet-fullscreen-guard';
 import { computeLookDir } from './pet-look';
 import { copyHatchImage } from './pet-hatch-image';
 import { fetchGalleryCatalog, importGalleryPet } from './pet-gallery';
@@ -114,14 +118,13 @@ let petIgnoresMouse = true;
 /**
  * Janela de silêncio durante a transição de fullscreen do macOS: moveTop/
  * showInactive/setVisibleOnAllWorkspaces na janelinha do pet NO MEIO da
- * animação sequestram a troca de Space — o app fullscreen fica num Space que
- * o usuário não está vendo ("o Nexus inteiro sumiu"). Durante o guard, todo
- * raise/assert vira no-op; um único re-pin diferido roda após a animação.
+ * animação sequestram a troca de Space. Durante o guard (e enquanto o app
+ * está fullscreen no Darwin), raise/assert viram no-op. Re-pin só no leave.
  */
 let fullscreenGuardUntil = 0;
 let fullscreenRepinTimer: NodeJS.Timeout | null = null;
-const FULLSCREEN_GUARD_MS = 1_200;
-const FULLSCREEN_REPIN_DELAY_MS = 1_450;
+const FULLSCREEN_GUARD_MS = 2_400;
+const FULLSCREEN_REPIN_DELAY_MS = 2_600;
 
 function inFullscreenTransition(): boolean {
   return Date.now() < fullscreenGuardUntil;
@@ -173,6 +176,16 @@ function mainAppWindows(): BrowserWindow[] {
   return BrowserWindow.getAllWindows().filter(
     (win) => !isPetWindow(win) && !win.isDestroyed(),
   );
+}
+
+function mainAppIsFullScreen(): boolean {
+  return mainAppWindows().some((win) => {
+    try {
+      return win.isFullScreen();
+    } catch {
+      return false;
+    }
+  });
 }
 
 function petUrl(): string {
@@ -394,7 +407,15 @@ function applyIgnoreMouseEvents(ignore: boolean, force = false): void {
  *   debounce + só re-pin quando o flag caiu (ou force=true no boot/urgent).
  */
 function raisePetAboveAll(force = false): void {
-  if (inFullscreenTransition()) return;
+  if (
+    !shouldRaisePetAboveAll({
+      platform: process.platform,
+      inFullscreenTransition: inFullscreenTransition(),
+      appIsFullScreen: mainAppIsFullScreen(),
+    })
+  ) {
+    return;
+  }
   if (!petWindow || petWindow.isDestroyed()) return;
   const now = Date.now();
   const demoted = !petWindow.isAlwaysOnTop() || !petPinnedTop;
@@ -726,7 +747,15 @@ function petNearDisplayEdge(
  * (spam de setIgnoreMouseEvents pisca o compositor).
  */
 function assertPetVisible(force = false): void {
-  if (inFullscreenTransition()) return;
+  if (
+    !shouldRaisePetAboveAll({
+      platform: process.platform,
+      inFullscreenTransition: inFullscreenTransition(),
+      appIsFullScreen: mainAppIsFullScreen(),
+    })
+  ) {
+    return;
+  }
   if (!petWindow || petWindow.isDestroyed()) return;
   if (!getPrefs().enabled) return;
   ensurePetWindowSize(petWindow);
@@ -1366,13 +1395,34 @@ export function initDesktopPet(): void {
     win.on('closed', () => {
       if (mainAppWindows().length === 0) destroyPetWindow();
     });
-    // Fullscreen nativo cria um Space dedicado no macOS — sem re-afirmar o
-    // pin de all-workspaces + topo, o pet fica no Space antigo ("sumiu da
-    // tela"). Reforça na entrada E na saída, e reclampa para área visível.
-    const onFullScreenTransition = () => {
-      // Silêncio já: nada de tocar na janela do pet até a animação acabar.
+    // Fullscreen nativo cria um Space. Re-pin do pet NA ENTRADA rouba o Space
+    // (app some, slide abre/fecha). Esconde o pet ao entrar; só re-pin na saída.
+    const beginFullscreenSilence = (): void => {
       fullscreenGuardUntil = Date.now() + FULLSCREEN_GUARD_MS;
-      if (fullscreenRepinTimer) clearTimeout(fullscreenRepinTimer);
+      if (fullscreenRepinTimer) {
+        clearTimeout(fullscreenRepinTimer);
+        fullscreenRepinTimer = null;
+      }
+    };
+    const hidePetForAppFullscreen = (): void => {
+      if (!petWindow || petWindow.isDestroyed()) return;
+      try {
+        petWindow.hide();
+      } catch {
+        // ignore
+      }
+    };
+    win.on('enter-full-screen', () => {
+      beginFullscreenSilence();
+      if (petActionForAppFullscreenEvent('enter-full-screen') === 'hide-and-silence') {
+        hidePetForAppFullscreen();
+      }
+    });
+    win.on('leave-full-screen', () => {
+      beginFullscreenSilence();
+      if (petActionForAppFullscreenEvent('leave-full-screen') !== 'silence-then-repin') {
+        return;
+      }
       fullscreenRepinTimer = setTimeout(() => {
         fullscreenRepinTimer = null;
         petPinnedTop = false;
@@ -1380,9 +1430,7 @@ export function initDesktopPet(): void {
         assertPetVisible(true);
         scheduleReclampPet();
       }, FULLSCREEN_REPIN_DELAY_MS);
-    };
-    win.on('enter-full-screen', onFullScreenTransition);
-    win.on('leave-full-screen', onFullScreenTransition);
+    });
   };
 
   // A janela principal nasce ANTES deste init (bootstrap): cobrir as vivas e
