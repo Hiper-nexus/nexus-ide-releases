@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.32.17 — Pet desliga o pin
+
+Data: 2026-08-14
+
+A 0.32.16 escondia o pet, mas o pin
+(`visibleOnAllWorkspaces` + `alwaysOnTop`) continuava na coleção de
+Spaces e o WindowServer levava o app para outro desktop. Agora o
+enter desliga o pin antes do `hide()`. O updater aponta
+`Hiper-nexus` e mantém o slug legado.
+
+- **Pin off no enter.** `visibleOnAllWorkspaces(false)` →
+  `alwaysOnTop(false)` → `hide()`. `visibleOnFullScreen` fica sempre
+  false. Silêncio latched enquanto `isFullScreen()`.
+- **Leave restaura depois.** Re-pin só após ~2,6s, quando a
+  animação do Space já acabou.
+- **Updater na org nova.** Feed canônico `Hiper-nexus/nexus-ide`,
+  com fallback no slug legado.
+
 ## 0.32.16 — Tela cheia fica
 
 Data: 2026-08-14

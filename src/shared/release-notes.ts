@@ -13,35 +13,34 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.32.16',
+  version: '0.32.17',
   date: '2026-08-14',
-  codename: 'Tela cheia fica',
+  codename: 'Pet desliga o pin',
   summary:
-    'Fullscreen nativo no macOS deixa de sequestrar o Space. O pet ' +
-    'some ao entrar e só volta depois da animação de saída. O picker ' +
-    'da 0.32.15 (live ∪ bundled) permanece.',
+    'Enter no fullscreen desliga o pin do pet antes de esconder. ' +
+    'A 0.32.16 só fazia hide() e o WindowServer ainda trocava o ' +
+    'Space. O updater aponta Hiper-nexus, com fallback legado.',
   highlights: [
     {
-      title: 'Pet some no fullscreen',
+      title: 'Pin off no enter',
       detail:
-        'Enter esconde o companion (hide-and-silence); leave agenda ' +
-        're-pin só após ~2,6s. Enquanto o app está tela cheia no ' +
-        'Darwin, raise/assert viram no-op.',
+        'visibleOnAllWorkspaces(false), alwaysOnTop(false), depois ' +
+        'hide(). visibleOnFullScreen fica sempre false. Silêncio ' +
+        'latched enquanto isFullScreen() no Darwin.',
     },
     {
-      title: 'Picker une o catálogo',
+      title: 'Leave restaura depois',
       detail:
-        'readyModelsForPicker une provider.models com o bundled do ' +
-        'adapter. AGY 3.7/3.1 Pro e Codex além de sol/sol-wm.',
+        'Re-pin só após ~2,6s, quando a animação do Space já ' +
+        'acabou. Raise/assert continuam no-op no fullscreen.',
     },
   ],
   fixes: [
     {
-      title: 'Sem sequestro de Space',
+      title: 'Updater na org nova',
       detail:
-        'O guard antigo re-pinava no enter e no leave. O WindowServer ' +
-        'trocava o Space e o Nexus saía de primeiro plano com slide ' +
-        'abre/fecha.',
+        'Feed canônico Hiper-nexus/nexus-ide, com fallback no slug ' +
+        'legado para o binário que ainda consulta o repo antigo.',
     },
   ],
 };
