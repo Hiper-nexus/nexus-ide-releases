@@ -3,6 +3,7 @@ import type { PublicModelRankingEntry } from '../../../shared/eval-ranking-types
 import {
   costEfficiency,
   estimateBadge,
+  formatEvalTime,
   pickForDimension,
   pickValue,
   radarPoints,
@@ -156,6 +157,25 @@ describe('ranking-view', () => {
     expect(
       estimateBadge(entry({ id: 'r/false', modelId: 'f', estimate: false })),
     ).toBeNull();
+  });
+
+  it('formatEvalTime renders real timestamps and never echoes junk as a date', () => {
+    // A parseable ISO becomes a locale timestamp, not the raw string.
+    const formatted = formatEvalTime('2026-07-11T21:00:00.000Z');
+    expect(formatted).not.toBe('2026-07-11T21:00:00.000Z');
+    expect(formatted).toBe(new Date('2026-07-11T21:00:00.000Z').toLocaleString());
+
+    // Unparseable payloads are unknown, not a date. `isPublicModelRankingSnapshot`
+    // only checks `typeof generatedAt === 'string'`, so a malformed bundled
+    // model-ranking.json reaches the UI — it must read '—', never pose as time.
+    expect(formatEvalTime('garbage')).toBe('—');
+    expect(formatEvalTime('')).toBe('—');
+    expect(formatEvalTime('   ')).toBe('—');
+
+    // Same honesty across the IPC boundary when the field is missing entirely.
+    expect(formatEvalTime(undefined as unknown as string)).toBe('—');
+    expect(formatEvalTime(null as unknown as string)).toBe('—');
+    expect(formatEvalTime(123 as unknown as string)).toBe('—');
   });
 });
 

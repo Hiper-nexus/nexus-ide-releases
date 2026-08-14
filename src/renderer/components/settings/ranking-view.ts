@@ -199,9 +199,18 @@ export function gridRingPath(
   return pts.join(' ');
 }
 
+/**
+ * Render an evaluation timestamp, or '—' when there is not one.
+ *
+ * `isPublicModelRankingSnapshot` only asserts `typeof x === 'string'`, so a
+ * malformed bundled/user `model-ranking.json` reaches this function with junk.
+ * Echoing it back would print an unparseable string where the UI promises a
+ * date — the same lie `windowDisplay` refuses when `usedRatio` is null.
+ */
 export function formatEvalTime(iso: string): string {
-  const ms = Date.parse(iso);
-  if (Number.isNaN(ms)) return iso;
+  if (typeof iso !== 'string') return '—';
+  const ms = Date.parse(iso.trim());
+  if (Number.isNaN(ms)) return '—';
   return new Date(ms).toLocaleString();
 }
 

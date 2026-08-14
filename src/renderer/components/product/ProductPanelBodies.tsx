@@ -37,6 +37,17 @@ function productApi() {
   return window.nexus?.product;
 }
 
+function memoryApi() {
+  return window.nexus?.memory;
+}
+
+const MEMORY_KIND_LABELS: Record<string, string> = {
+  note: 'nota',
+  decision: 'decisão',
+  mission: 'missão',
+  agent: 'agente',
+};
+
 export function SearchPanelBody() {
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<Hit[]>([]);
@@ -211,7 +222,7 @@ type ProductMemoryNote = {
 };
 
 type ProductMemoryFailure = {
-  operation: 'load' | 'remember';
+  operation: 'load' | 'remember' | 'forget';
   message: string;
 };
 
@@ -229,9 +240,11 @@ export function MemoryPanelBody({
   const [body, setBody] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [forgettingId, setForgettingId] = useState<string | null>(null);
   const [failure, setFailure] = useState<ProductMemoryFailure | null>(null);
   const titleInputRef = useRef<HTMLInputElement | null>(null);
   const savingRef = useRef(false);
+  const forgettingRef = useRef(false);
   const reloadGenerationRef = useRef(0);
   const mountedRef = useRef(false);
 
@@ -320,6 +333,40 @@ export function MemoryPanelBody({
     }
   };
 
+  const forget = async (id: string) => {
+    if (!id || forgettingRef.current) return;
+
+    forgettingRef.current = true;
+    setForgettingId(id);
+    setFailure(null);
+    try {
+      const api = memoryApi();
+      if (!api) throw new Error('workspace memory API unavailable');
+      const result = await api.forget(id);
+      if (!result.enabled) {
+        throw new Error('workspace memory is disabled');
+      }
+      if (!result.forgotten) {
+        throw new Error('memory was not forgotten');
+      }
+      if (!mountedRef.current) return;
+      await reload(
+        'A memória foi apagada, mas não foi possível atualizar a lista. Tente recarregar.',
+      );
+    } catch {
+      if (mountedRef.current) {
+        setFailure({
+          operation: 'forget',
+          message:
+            'Não foi possível apagar esta memória. Tente novamente em instantes.',
+        });
+      }
+    } finally {
+      forgettingRef.current = false;
+      if (mountedRef.current) setForgettingId(null);
+    }
+  };
+
   return (
     <div className="product-pane" data-testid="product-memory">
       {failure ? (
@@ -342,13 +389,13 @@ export function MemoryPanelBody({
         <EmptyState
           icon="file"
           title="Nenhuma memória ainda"
-          body="Registre a primeira memória para guardar uma decisão, contexto ou aprendizado deste workspace."
+          body="Escreva um título e o texto. Ao salvar, a nota entra nesta lista. O Nexus guarda nos dados do app para este workspace — não cria arquivo no git. Missões e agentes podem consultar."
           className="memory-workspace__empty"
           action={
             <ActionCard
               icon="plus"
               title="Escrever primeira memória"
-              subtitle="O conteúdo fica na projeção local deste workspace."
+              subtitle="Título + texto, depois Salvar."
               variant="primary"
               onClick={() => titleInputRef.current?.focus()}
             />
@@ -358,23 +405,23 @@ export function MemoryPanelBody({
 
       <div className="product-pane__form" aria-busy={saving || undefined}>
         <label className="product-pane__field">
-          <span>Título</span>
+          <span>Título da nota</span>
           <input
             ref={titleInputRef}
             className="product-pane__input"
             value={title}
             onChange={(event) => setTitle(event.target.value)}
-            placeholder="Título da memória"
+            placeholder="Ex.: Usar um único banco de domínio"
             aria-label="Título da memória"
           />
         </label>
         <label className="product-pane__field">
-          <span>Corpo</span>
+          <span>O que deve ser lembrado</span>
           <textarea
             className="product-pane__textarea"
             value={body}
             onChange={(event) => setBody(event.target.value)}
-            placeholder="Corpo da memória, com suporte a [[wikilinks]]"
+            placeholder="Decisão, contexto ou aprendizado para a próxima sessão"
             rows={5}
             aria-label="Corpo da memória"
           />
@@ -385,8 +432,12 @@ export function MemoryPanelBody({
           disabled={saving || title.trim().length === 0}
           onClick={() => void remember()}
         >
-          {saving ? 'Guardando…' : 'Lembrar'}
+          {saving ? 'Salvando…' : 'Salvar'}
         </button>
+        <p className="product-pane__hint">
+          Salva neste workspace, nos dados do NexusIDE — não no repositório.
+          Agentes podem buscar estas notas.
+        </p>
       </div>
 
       {loading ? (
@@ -397,12 +448,24 @@ export function MemoryPanelBody({
         <ul className="product-pane__list" aria-label="Memórias salvas">
           {notes.map((note) => {
             const readable = readableMemoryBody(note.body, note.title);
+            const forgetting = forgettingId === note.id;
             return (
               <li key={note.id} className="product-pane__item">
-                <strong>{note.title}</strong>
+                <div className="product-pane__item-head">
+                  <strong>{note.title}</strong>
+                  <button
+                    type="button"
+                    className="product-pane__forget"
+                    disabled={forgettingId !== null}
+                    aria-label={`Apagar memória ${note.title}`}
+                    onClick={() => void forget(note.id)}
+                  >
+                    {forgetting ? 'Apagando…' : 'Apagar'}
+                  </button>
+                </div>
                 {note.kind ? (
                   <span className="product-pane__sub">
-                    {note.kind === 'note' ? 'nota' : note.kind}
+                    {MEMORY_KIND_LABELS[note.kind] ?? note.kind}
                   </span>
                 ) : null}
                 <p

@@ -223,7 +223,10 @@ describe('Mission Setup and Mission Board style contracts', () => {
       /\.mission-setup\s*\{[^}]*overflow:\s*hidden/,
     );
     expect(missionSetupCss).toMatch(
-      /\.mission-setup__canvas\s*\{[^}]*overflow:\s*auto/,
+      /\.mission-setup__canvas\s*\{[^}]*overflow:\s*hidden/,
+    );
+    expect(missionSetupCss).toMatch(
+      /\.mission-setup__step\s*\{[^}]*overflow-y:\s*auto/,
     );
     expect(missionSetupCss).toMatch(/\.mission-setup__step-dock/);
     expect(missionSetupCss).toMatch(

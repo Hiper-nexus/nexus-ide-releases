@@ -41,11 +41,11 @@ export const LABS_FLAG_COPY: Record<string, { title: string; hint?: string }> = 
   },
   'feature.memory.nexusMemory': {
     title: 'Memória Markdown (.nexus-memory/)',
-    hint: 'Notas locais com wikilinks; "Lembrar" escreve arquivos no workspace.',
+    hint: 'Cópia legível das notas deste workspace, guardada no app (não no repositório).',
   },
   'feature.memory.workspaceMemory': {
     title: 'Memória agentic por workspace',
-    hint: 'nexus_memory_retain/recall/stats (FTS5) compartilhada entre CLIs; abre o painel Memória na barra do workspace.',
+    hint: 'Caderno deste workspace. Agentes podem buscar; o painel Memória lista e grava as notas.',
   },
   'feature.autonomy.profiles': {
     title: 'Perfis de autonomia',

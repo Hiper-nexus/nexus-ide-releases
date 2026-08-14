@@ -67,7 +67,7 @@ export const CONTEXTUAL_TAB_COPY: Record<
   },
   memory: {
     title: 'Memória',
-    empty: 'Sem notas de memória. Capture decisões pela Memória do Nexus.',
+    empty: 'Nenhuma nota ainda. Escreva um título e o texto na Memória.',
     loading: 'Carregando memória…',
   },
   mission: {

@@ -19,6 +19,10 @@ const memoryBoundary = {
   memoryRemember: vi.fn(),
 };
 
+const agenticMemoryBoundary = {
+  forget: vi.fn(),
+};
+
 const mountedRoots: Array<{ host: HTMLDivElement; root: Root }> = [];
 type Deferred<T> = {
   promise: Promise<T>;
@@ -59,6 +63,7 @@ function installNexusBoundary(): void {
     configurable: true,
     value: {
       product: memoryBoundary,
+      memory: agenticMemoryBoundary,
     },
   });
 }
@@ -92,6 +97,7 @@ function findButton(host: HTMLElement, name: RegExp): HTMLButtonElement {
 beforeEach(() => {
   memoryBoundary.memoryList.mockReset();
   memoryBoundary.memoryRemember.mockReset();
+  agenticMemoryBoundary.forget.mockReset();
   installNexusBoundary();
 });
 
@@ -111,7 +117,10 @@ describe('MemoryWorkspace contracts', () => {
     await settleMemoryEffects();
 
     expect(host.textContent).toMatch(/nenhuma memória ainda/i);
-    expect(host.textContent).toMatch(/primeira memória|registre|guarde/i);
+    expect(host.textContent).toMatch(/título e o texto|salvar/i);
+    expect(host.textContent).toMatch(/dados do app|não.*repositório|não.*git/i);
+    expect(host.textContent).toMatch(/missões e agentes|agentes podem/i);
+    expect(host.textContent).not.toMatch(/proje[cç][aã]o/i);
 
     const action = findButton(host, /escrever.*primeira memória/i);
     const title = host.querySelector<HTMLInputElement>(
@@ -128,7 +137,7 @@ describe('MemoryWorkspace contracts', () => {
     const note: LocalMemoryNote = {
       id: 'memory-local-1',
       title: 'Decisão de arquitetura',
-      body: 'Manter a projeção local como fonte de leitura.',
+      body: 'Manter uma única camada de domínio.',
       kind: 'note',
     };
     memoryBoundary.memoryList
@@ -149,7 +158,7 @@ describe('MemoryWorkspace contracts', () => {
     setFieldValue(body, note.body);
 
     await act(async () => {
-      findButton(host, /^lembrar$/i).click();
+      findButton(host, /^salvar$/i).click();
       await Promise.resolve();
       await Promise.resolve();
       await Promise.resolve();
@@ -191,7 +200,7 @@ describe('MemoryWorkspace contracts', () => {
     setFieldValue(body, saved.body);
 
     await act(async () => {
-      findButton(host, /^lembrar$/i).click();
+      findButton(host, /^salvar$/i).click();
       await Promise.resolve();
       await Promise.resolve();
       await Promise.resolve();
@@ -240,7 +249,7 @@ describe('MemoryWorkspace contracts', () => {
       setFieldValue(title, 'Disparar recarga mais nova');
 
       await act(async () => {
-        findButton(host, /^lembrar$/i).click();
+        findButton(host, /^salvar$/i).click();
         await Promise.resolve();
         await Promise.resolve();
       });
@@ -310,6 +319,38 @@ describe('MemoryWorkspace contracts', () => {
 
     expect(directBody || nativeDisclosure !== null).toBe(true);
     expect(item.textContent).toContain(longBody);
+  });
+
+  it('forgets a saved note through the workspace memory API and reloads the list', async () => {
+    const note: LocalMemoryNote = {
+      id: 'memory-to-forget',
+      title: 'Regra antiga',
+      body: 'Esta nota deve sair da lista depois de apagar.',
+      kind: 'note',
+    };
+    memoryBoundary.memoryList
+      .mockResolvedValueOnce([note])
+      .mockResolvedValueOnce([]);
+    agenticMemoryBoundary.forget.mockResolvedValue({
+      enabled: true,
+      forgotten: true,
+    });
+    const host = mount(<MemoryWorkspace />);
+    await settleMemoryEffects();
+
+    await act(async () => {
+      findButton(host, /apagar memória regra antiga/i).click();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(agenticMemoryBoundary.forget).toHaveBeenCalledOnce();
+    expect(agenticMemoryBoundary.forget).toHaveBeenCalledWith(note.id);
+    expect(memoryBoundary.memoryList).toHaveBeenCalledTimes(2);
+    expect(host.textContent).not.toContain(note.title);
+    expect(host.textContent).toMatch(/nenhuma memória ainda/i);
   });
 
   it('is an in-flow workspace page rather than a floating or dialog surface', async () => {

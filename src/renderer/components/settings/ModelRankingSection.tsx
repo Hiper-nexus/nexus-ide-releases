@@ -654,7 +654,8 @@ export function ModelRankingSection() {
                   </span>
                 )}{" "}
                 · conf{" "}
-                {selected.confidence !== undefined
+                {typeof selected.confidence === "number" &&
+                Number.isFinite(selected.confidence)
                   ? `${Math.round(selected.confidence * 100)}%`
                   : "—"}{" "}
                 · avaliado {formatEvalTime(selected.evaluatedAt)}

@@ -476,13 +476,17 @@ export class QuotaService {
     if (this.#broadcastTimer || this.#stopped) return;
     this.#broadcastTimer = setTimeout(() => {
       this.#broadcastTimer = null;
-      void this.snapshot().then((snap) => {
-        for (const win of BrowserWindow.getAllWindows()) {
-          if (!win.isDestroyed() && !win.webContents.isCrashed()) {
-            win.webContents.send(QUOTA_CHANNELS.changed, snap);
+      void this.snapshot()
+        .then((snap) => {
+          for (const win of BrowserWindow.getAllWindows()) {
+            if (!win.isDestroyed() && !win.webContents.isCrashed()) {
+              win.webContents.send(QUOTA_CHANNELS.changed, snap);
+            }
           }
-        }
-      });
+        })
+        .catch((err) => {
+          console.warn('[quota] broadcast snapshot failed:', err);
+        });
     }, 750);
     this.#broadcastTimer.unref?.();
   }

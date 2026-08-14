@@ -22,7 +22,8 @@ export function MemoryWorkspace({ className = '' }: MemoryWorkspaceProps = {}) {
           </div>
         </div>
         <p className="product-workspace__summary">
-          Decisões e aprendizados disponíveis neste workspace.
+          Caderno deste workspace. Missões e agentes podem consultar o que
+          você salvar. O Nexus guarda no app, não no repositório.
         </p>
       </header>
       <div className="product-workspace__content memory-workspace__content">

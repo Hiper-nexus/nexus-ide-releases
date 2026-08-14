@@ -108,8 +108,11 @@ function statusLabel(
 ): string {
   if (status === 'loading') return 'a carregar…';
   if (status === 'error') return 'falha ao carregar';
-  if (status === 'ready' && updatedAt) {
-    return `atualizado ${new Date(updatedAt).toLocaleTimeString()}`;
+  if (status === 'ready' && updatedAt && Number.isFinite(updatedAt)) {
+    const d = new Date(updatedAt);
+    if (!Number.isNaN(d.getTime())) {
+      return `atualizado ${d.toLocaleTimeString()}`;
+    }
   }
   if (status === 'idle') return 'ainda não carregado';
   return 'sem dados';

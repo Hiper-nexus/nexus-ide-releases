@@ -467,6 +467,17 @@
   color: var(--btn-primary-ink);
 }
 
+.memory-workspace .product-pane__hint {
+  color: var(--text-faint);
+  font: 500 var(--text-xs)/1.45 var(--font-ui);
+}
+
+.memory-workspace .product-pane__forget {
+  min-block-size: 32px;
+  border-radius: var(--radius-md);
+  font: 600 var(--text-xs)/1 var(--font-ui);
+}
+
 .memory-workspace .product-pane__list,
 .memory-workspace .product-pane__loading {
   grid-column: 2;
@@ -617,6 +628,7 @@
   .product-workspace__back,
   .task-board-workspace__status select,
   .memory-workspace .product-pane__btn,
+  .memory-workspace .product-pane__forget,
   .product-pane__retry,
   .task-board-workspace__retry {
     min-block-size: 44px;
