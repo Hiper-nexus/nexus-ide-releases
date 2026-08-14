@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.32.17 — A pergunta fica na missão
+
+Data: 2026-08-14
+
+Quando a missão espera uma resposta sua, a pergunta continua naquela
+missão ao trocar de cartão. Não vaza para outra. Worktree isolada
+já falhava à vista; não mexemos nisso. Fullscreen e picker da 0.32.16
+permanecem.
+
+- **Pergunta isolada.** O snapshot lê o clarify durável só da missão
+  `blocked_user`. Trocar de missão não apaga nem empresta a pergunta.
+- **Rail honesto.** Missão parada à espera do operador deixa de
+  parecer bloqueio técnico.
+
 ## 0.32.16 — Tela cheia fica
 
 Data: 2026-08-14
