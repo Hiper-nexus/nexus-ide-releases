@@ -39,7 +39,10 @@ import {
 import { tapAgentHookStatus } from '../agent-hooks/hook-ingest';
 import {
   petActionForAppFullscreenEvent,
+  petWorkspacePinForFullscreenEvent,
+  shouldKeepPetFullscreenSilence,
   shouldRaisePetAboveAll,
+  type PetWorkspacePin,
 } from './pet-fullscreen-guard';
 import { computeLookDir } from './pet-look';
 import { copyHatchImage } from './pet-hatch-image';
@@ -116,18 +119,32 @@ let lookLastMoveAt = 0;
 /** Cache: setIgnoreMouseEvents é caro e a alternar no canto pisca o compositor. */
 let petIgnoresMouse = true;
 /**
- * Janela de silêncio durante a transição de fullscreen do macOS: moveTop/
- * showInactive/setVisibleOnAllWorkspaces na janelinha do pet NO MEIO da
- * animação sequestram a troca de Space. Durante o guard (e enquanto o app
- * está fullscreen no Darwin), raise/assert viram no-op. Re-pin só no leave.
+ * Silêncio de fullscreen no macOS: hide() sem desligar o pin ainda deixa o
+ * pet (visibleOnAllWorkspaces + alwaysOnTop) na coleção de Spaces. Latch
+ * do enter até o re-pin do leave; enquanto isFullScreen() no Darwin, nenhum
+ * raise/assert/showInactive. Re-pin só depois da animação de saída.
  */
 let fullscreenGuardUntil = 0;
+let fullscreenSilenceLatched = false;
 let fullscreenRepinTimer: NodeJS.Timeout | null = null;
 const FULLSCREEN_GUARD_MS = 2_400;
 const FULLSCREEN_REPIN_DELAY_MS = 2_600;
 
 function inFullscreenTransition(): boolean {
-  return Date.now() < fullscreenGuardUntil;
+  return shouldKeepPetFullscreenSilence({
+    platform: process.platform,
+    appIsFullScreen: mainAppIsFullScreen(),
+    silenceLatched:
+      fullscreenSilenceLatched || Date.now() < fullscreenGuardUntil,
+  });
+}
+
+function petRaiseAllowed(): boolean {
+  return shouldRaisePetAboveAll({
+    platform: process.platform,
+    inFullscreenTransition: inFullscreenTransition(),
+    appIsFullScreen: mainAppIsFullScreen(),
+  });
 }
 
 /** Cache do nível alwaysOnTop — evita setAlwaysOnTop/moveTop em spam (pisca). */
@@ -406,50 +423,26 @@ function applyIgnoreMouseEvents(ignore: boolean, force = false): void {
  *   superfície transparente no macOS e **pisca nos cantos**. Por isso:
  *   debounce + só re-pin quando o flag caiu (ou force=true no boot/urgent).
  */
-function raisePetAboveAll(force = false): void {
-  if (
-    !shouldRaisePetAboveAll({
-      platform: process.platform,
-      inFullscreenTransition: inFullscreenTransition(),
-      appIsFullScreen: mainAppIsFullScreen(),
-    })
-  ) {
-    return;
-  }
+function applyPetWorkspacePin(pin: PetWorkspacePin): void {
   if (!petWindow || petWindow.isDestroyed()) return;
-  const now = Date.now();
-  const demoted = !petWindow.isAlwaysOnTop() || !petPinnedTop;
-  if (!force && !demoted) return;
-  if (!force && now - lastRaiseAt < RAISE_DEBOUNCE_MS) return;
-  lastRaiseAt = now;
-
-  try {
-    petWindow.setAlwaysOnTop(true, 'screen-saver', 1);
-  } catch {
-    try {
-      petWindow.setAlwaysOnTop(true, 'screen-saver');
-    } catch {
-      petWindow.setAlwaysOnTop(true);
-    }
-  }
   try {
     if (process.platform === 'darwin') {
-      // Without skipTransformProcessType, Electron toggles the process to
-      // UIElementApplication (Dock icon vanishes). Isolated: Foreground stays
-      // only when this flag is true; default options flip to UIElement.
-      petWindow.setVisibleOnAllWorkspaces(true, {
-        visibleOnFullScreen: true,
+      // skipTransformProcessType: sem isto o Electron vira UIElement e o
+      // ícone do Dock some. visibleOnFullScreen fica sempre off — o pet
+      // não acompanha o Space de tela cheia.
+      petWindow.setVisibleOnAllWorkspaces(pin.visibleOnAllWorkspaces, {
+        visibleOnFullScreen: pin.visibleOnFullScreen,
         skipTransformProcessType: true,
       });
     } else {
-      petWindow.setVisibleOnAllWorkspaces(true);
+      petWindow.setVisibleOnAllWorkspaces(pin.visibleOnAllWorkspaces);
     }
   } catch (error) {
     // Never use the option-less fallback on macOS: Electron documents that it
     // transforms the process type and briefly hides both the Dock and window.
     if (process.platform !== 'darwin') {
       try {
-        petWindow.setVisibleOnAllWorkspaces(true);
+        petWindow.setVisibleOnAllWorkspaces(pin.visibleOnAllWorkspaces);
       } catch {
         // Best effort on window managers without all-workspaces support.
       }
@@ -457,6 +450,36 @@ function raisePetAboveAll(force = false): void {
       console.warn('[pet] all-workspaces pin unavailable:', error);
     }
   }
+  try {
+    if (pin.alwaysOnTop) {
+      try {
+        petWindow.setAlwaysOnTop(true, 'screen-saver', 1);
+      } catch {
+        try {
+          petWindow.setAlwaysOnTop(true, 'screen-saver');
+        } catch {
+          petWindow.setAlwaysOnTop(true);
+        }
+      }
+    } else {
+      petWindow.setAlwaysOnTop(false);
+    }
+  } catch {
+    // ignore
+  }
+  petPinnedTop = pin.alwaysOnTop;
+}
+
+function raisePetAboveAll(force = false): void {
+  if (!petRaiseAllowed()) return;
+  if (!petWindow || petWindow.isDestroyed()) return;
+  const now = Date.now();
+  const demoted = !petWindow.isAlwaysOnTop() || !petPinnedTop;
+  if (!force && !demoted) return;
+  if (!force && now - lastRaiseAt < RAISE_DEBOUNCE_MS) return;
+  lastRaiseAt = now;
+
+  applyPetWorkspacePin(petWorkspacePinForFullscreenEvent('leave-full-screen'));
   // moveTop só quando demovido — a cada tick recompõe e pisca.
   if (force || demoted) {
     petWindow.moveTop();
@@ -464,7 +487,6 @@ function raisePetAboveAll(force = false): void {
   if (!petWindow.isVisible()) {
     petWindow.showInactive();
   }
-  petPinnedTop = true;
   // show/moveTop no macOS por vezes dropa o forward do ignore-mouse → pet de vidro.
   if (force || demoted) {
     applyIgnoreMouseEvents(petIgnoresMouse, true);
@@ -482,6 +504,7 @@ function startRaiseWatch(): void {
       return;
     }
     if (!getPrefs().enabled) return;
+    if (!petRaiseAllowed()) return;
     if (!petWindow.isAlwaysOnTop()) {
       petPinnedTop = false;
       raisePetAboveAll(true);
@@ -747,15 +770,7 @@ function petNearDisplayEdge(
  * (spam de setIgnoreMouseEvents pisca o compositor).
  */
 function assertPetVisible(force = false): void {
-  if (
-    !shouldRaisePetAboveAll({
-      platform: process.platform,
-      inFullscreenTransition: inFullscreenTransition(),
-      appIsFullScreen: mainAppIsFullScreen(),
-    })
-  ) {
-    return;
-  }
+  if (!petRaiseAllowed()) return;
   if (!petWindow || petWindow.isDestroyed()) return;
   if (!getPrefs().enabled) return;
   ensurePetWindowSize(petWindow);
@@ -805,6 +820,10 @@ function scheduleBootReassert(): void {
 
 function createPetWindow(): void {
   if (creatingPetWindow) return;
+  if (!petWindow || petWindow.isDestroyed()) {
+    // Não nascer alwaysOnTop no meio do Space de tela cheia.
+    if (!petRaiseAllowed()) return;
+  }
   if (petWindow && !petWindow.isDestroyed()) {
     assertPetVisible(true);
     if (!petReady && !petWindow.webContents.isLoading()) {
@@ -1395,29 +1414,34 @@ export function initDesktopPet(): void {
     win.on('closed', () => {
       if (mainAppWindows().length === 0) destroyPetWindow();
     });
-    // Fullscreen nativo cria um Space. Re-pin do pet NA ENTRADA rouba o Space
-    // (app some, slide abre/fecha). Esconde o pet ao entrar; só re-pin na saída.
+    // Fullscreen nativo cria um Space. Hide() sem desligar o pin ainda
+    // deixa o pet na coleção e o WindowServer troca o desktop depois.
     const beginFullscreenSilence = (): void => {
+      fullscreenSilenceLatched = true;
       fullscreenGuardUntil = Date.now() + FULLSCREEN_GUARD_MS;
       if (fullscreenRepinTimer) {
         clearTimeout(fullscreenRepinTimer);
         fullscreenRepinTimer = null;
       }
     };
-    const hidePetForAppFullscreen = (): void => {
+    const unpinAndHidePetForAppFullscreen = (): void => {
       if (!petWindow || petWindow.isDestroyed()) return;
+      applyPetWorkspacePin(petWorkspacePinForFullscreenEvent('enter-full-screen'));
       try {
         petWindow.hide();
       } catch {
         // ignore
       }
     };
-    win.on('enter-full-screen', () => {
+    const suppressPetForAppFullscreen = (): void => {
       beginFullscreenSilence();
       if (petActionForAppFullscreenEvent('enter-full-screen') === 'hide-and-silence') {
-        hidePetForAppFullscreen();
+        unpinAndHidePetForAppFullscreen();
       }
-    });
+    };
+    // will-enter (se o Electron encaminhar) corre antes da animação do Space.
+    win.on('will-enter-full-screen' as 'enter-full-screen', suppressPetForAppFullscreen);
+    win.on('enter-full-screen', suppressPetForAppFullscreen);
     win.on('leave-full-screen', () => {
       beginFullscreenSilence();
       if (petActionForAppFullscreenEvent('leave-full-screen') !== 'silence-then-repin') {
@@ -1425,7 +1449,12 @@ export function initDesktopPet(): void {
       }
       fullscreenRepinTimer = setTimeout(() => {
         fullscreenRepinTimer = null;
+        fullscreenSilenceLatched = false;
+        fullscreenGuardUntil = 0;
         petPinnedTop = false;
+        if (getPrefs().enabled && mainAppWindows().length > 0) {
+          createPetWindow();
+        }
         raisePetAboveAll(true);
         assertPetVisible(true);
         scheduleReclampPet();
