@@ -13,63 +13,39 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.32.22',
-  date: '2026-08-14',
-  codename: 'Turno que fecha sozinho',
+  version: '0.32.23',
+  date: '2026-08-16',
+  codename: 'GLM-5.3 no z.ai',
   summary:
-    'O modelo invertido do Overclock chega ao Nexus: quando um ' +
-    'worker encerra o turno sem chamar a tool de handoff, o Main ' +
-    'entrega a resposta verbatim ao orquestrador. O port antigo ' +
-    'dos Stop hooks nunca tinha rodado — saiu, e o boot limpa o ' +
-    'registro global que a 0.32.x deixou no ~/.claude.',
+    'O Nexus passa a oferecer o GLM-5.3 que a Z.AI lançou em ' +
+    '14 de agosto. Picker, default e roteador saem do 5.2; o ' +
+    'env do Claude Code segue o guia oficial da Coding Plan.',
   highlights: [
     {
-      title: 'Fechamento mecânico de turno',
+      title: 'GLM-5.3 no picker',
       detail:
-        'O fim de turno chega pelo /hook/status; o Main colhe a ' +
-        'resposta do payload (fallback transcript), aplica as ' +
-        'guardas e submete pela transação durável. Curta viaja ' +
-        'inteira; longa viaja a verdade com a íntegra anexada.',
+        'Default do adapter GLM/z.ai. 5.2, 4.7, 4.6 e 4.5-air ' +
+        'continuam na lista.',
     },
     {
-      title: 'Vocabulário único',
+      title: 'Roteador no 5.3',
       detail:
-        'A tool aceita done/error na fronteira e a doutrina ensina ' +
-        'o enum canônico. Worker obediente não toma mais erro de ' +
-        'validação no meio da entrega.',
+        'Medium, hard e critical delegam para glm-5.3 em vez ' +
+        'de glm-5.2.',
     },
     {
-      title: 'Contrato condicional',
+      title: 'Env oficial da Z.AI',
       detail:
-        'Worker de missão com resposta curta não chama ferramenta ' +
-        'nenhuma: responde e encerra. A contradição entre doutrina ' +
-        'e contrato acabou.',
-    },
-    {
-      title: 'Orquestrador sempre delega',
-      detail:
-        'Nem pergunta trivial é respondida no pane do orquestrador: ' +
-        'se está no objetivo, um worker responde.',
+        'Sonnet/Opus usam glm-5.3[1m] (janela de 1M); Haiku ' +
+        'passa a glm-4.7.',
     },
   ],
   fixes: [
     {
-      title: 'Enter comido tem cura',
+      title: 'Catálogo do z.ai estava no 5.2',
       detail:
-        'As lanes confirmadas ganham prova de turno e um CR de ' +
-        'destravamento — texto não fica mais preso no composer.',
-    },
-    {
-      title: 'Pane morto é morto',
-      detail:
-        'O estado exited sobrevive à limpeza do buffer; o watcher ' +
-        'volta a decidir missão sem processo vivo.',
-    },
-    {
-      title: 'Gate não trava mais o stop',
-      detail:
-        'O stop-gate vira observação. A garantia de entrega é do ' +
-        'Main, não do bloqueio de turno.',
+        'O modelo novo da Z.AI não aparecia no picker nem no roteador. ' +
+        'O default passa a ser 5.3; 5.2 continua na lista.',
     },
   ],
 };

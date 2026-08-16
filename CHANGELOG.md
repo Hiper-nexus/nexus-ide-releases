@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.32.23 — GLM-5.3 no z.ai
+
+Data: 2026-08-16
+
+O Nexus passa a oferecer o GLM-5.3 que a Z.AI lançou em
+14 de agosto. Picker, default e roteador saem do 5.2;
+o env do Claude Code segue o guia oficial da Coding Plan.
+
+- **GLM-5.3 no picker.** Default do adapter GLM/z.ai.
+  5.2, 4.7, 4.6 e 4.5-air continuam na lista.
+- **Roteador no 5.3.** Medium, hard e critical delegam
+  para `glm-5.3` em vez de `glm-5.2`.
+- **Env oficial da Z.AI.** Sonnet/Opus usam `glm-5.3[1m]`
+  (janela de 1M); Haiku passa a `glm-4.7`.
+- **Catálogo do z.ai estava no 5.2.** O modelo novo não
+  aparecia no picker nem no roteador.
+
 ## 0.32.22 — Turno que fecha sozinho
 
 Data: 2026-08-14
