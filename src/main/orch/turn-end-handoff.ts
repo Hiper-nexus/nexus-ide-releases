@@ -40,6 +40,7 @@ import {
   type PtyStreamHandoffPayload,
 } from './pty-stream-handoff';
 import { tapAgentTurnStart, type AgentTurnStartEntry } from './agent-status';
+import type { Handoff } from '../../shared/orch-types';
 
 /** Teto da resposta que viaja inteira (mesma régua do Overclock). */
 export const MECHANICAL_HANDOFF_VERBATIM_LIMIT = 280;
@@ -277,6 +278,8 @@ export interface TurnEndClosureFacts {
   readonly handoffsSinceTurnStart: number;
   /** Este Stop é re-disparo de um já processado (mesma impressão digital). */
   readonly isRedeliveryOfProcessedStop: boolean;
+  /** A consulta de dedup falhou — fail-closed: não fecha na dúvida. */
+  readonly dedupUnavailable: boolean;
 }
 
 export interface TurnEndClosureDecision {
@@ -303,6 +306,12 @@ export function decideTurnEndClosure(
   if (!facts.replyText.trim()) {
     return { close: false, reason: 'sem texto honesto (payload e transcript vazios)' };
   }
+  if (facts.dedupUnavailable) {
+    return {
+      close: false,
+      reason: 'dedup indisponível (fail-closed — fechamento mecânico nunca duplica na dúvida)',
+    };
+  }
   if (facts.handoffsSinceTurnStart > 0) {
     return { close: false, reason: 'worker já entregou handoff neste turno' };
   }
@@ -313,6 +322,35 @@ export function decideTurnEndClosure(
 }
 
 // ── Orquestração (recolhe fatos, decide, submete) ─────────────────────────
+
+export interface WorkerHandoffWindowProbe {
+  /** Sessão física que disparou o Stop. */
+  readonly sessionId: string;
+  /** Encarnação exata do worker (sobrevive a rebind de sessão no turno). */
+  readonly workerIncarnationId?: string;
+  /** Fronteira do turno (observedAt do turn-start; 0 = turno de nascimento). */
+  readonly windowStart: number;
+}
+
+/**
+ * Dedup por encarnação, não só por sessão: um handoff commitado sob OUTRA
+ * sessão da MESMA encarnação física (rebind/respawn no meio do turno) conta
+ * como entregue. A encarnação é o nonce emitido pelo Main para o processo
+ * físico exato — é a identidade que não muda quando o sessionId muda.
+ */
+export function countRecentWorkerHandoffs(
+  handoffs: readonly Handoff[],
+  probe: WorkerHandoffWindowProbe,
+): number {
+  return handoffs.filter((handoff) => {
+    if (handoff.createdAt < probe.windowStart) return false;
+    const sameSession = handoff.sessionId === probe.sessionId;
+    const sameIncarnation =
+      probe.workerIncarnationId !== undefined &&
+      handoff.workerIncarnationId === probe.workerIncarnationId;
+    return sameSession || sameIncarnation;
+  }).length;
+}
 
 /**
  * Entry point: chamado pelo /hook/status quando o evento canônico é
@@ -339,20 +377,26 @@ export async function handleTurnEndMechanicalHandoff(input: {
       lastStopSignatureBySession.get(sessionId) === signature;
 
     let handoffsSinceTurnStart = 0;
+    let dedupUnavailable = false;
     if (ctx?.missionId) {
       try {
         const suite = getProjectDomainStores(ctx.scope);
         const windowStart = turnStart?.observedAt ?? 0;
-        handoffsSinceTurnStart = suite.handoffs
-          .list({ missionId: ctx.missionId, includeDelivered: true })
-          .filter(
-            (handoff) =>
-              handoff.sessionId === sessionId &&
-              handoff.createdAt >= windowStart,
-          ).length;
+        handoffsSinceTurnStart = countRecentWorkerHandoffs(
+          suite.handoffs.list({ missionId: ctx.missionId, includeDelivered: true }),
+          {
+            sessionId,
+            workerIncarnationId: ctx.workerIncarnationId,
+            windowStart,
+          },
+        );
       } catch (error) {
+        // Fail-closed (doutrina Overclock): na dúvida NÃO fecha — um turno
+        // sem fechamento mecânico é recuperável; um handoff duplicado envenena
+        // a fila de entrega e bloqueia a missão inteira.
+        dedupUnavailable = true;
         console.warn(
-          '[turn-end-handoff] dedup query falhou (fail-open, segue):',
+          '[turn-end-handoff] dedup query falhou (fail-closed, pula fechamento):',
           error,
         );
       }
@@ -367,6 +411,7 @@ export async function handleTurnEndMechanicalHandoff(input: {
       replyText,
       handoffsSinceTurnStart,
       isRedeliveryOfProcessedStop: isRedelivery,
+      dedupUnavailable,
     });
     if (!decision.close) {
       console.info(

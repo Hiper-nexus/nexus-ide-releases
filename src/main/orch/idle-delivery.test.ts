@@ -937,10 +937,12 @@ describe('idle delivery authority and lifecycle', () => {
     delivery.shutdownIdleDelivery();
   });
 
-  it('não bloqueia a missão quando a reentrega limitada não é aceita', async () => {
+  it('NUNCA bloqueia a missão por entrega não aceita — pede recuperação de runtime (doutrina Overclock)', async () => {
     const delivery = await import('./idle-delivery');
     const scope = testProjectScope();
     authorizeTarget(scope);
+    const recovery = vi.fn(async () => true);
+    delivery.configureHandoffDeliveryRuntimeRecovery(recovery);
     ptyMocks.state = 'idle';
     delivery.initIdleDelivery();
 
@@ -952,11 +954,14 @@ describe('idle delivery authority and lifecycle', () => {
     );
     expect(deliveries).toHaveLength(2);
     expect(storeMocks.delivered).toEqual([]);
+    // A missão segue viva: nenhum update de status/description, nenhum
+    // marcador de "handoff não entregue" (o toast que mente vem daqui).
     expect(storeMocks.missionUpdates).toEqual([]);
     expect(
       storeMocks.missions.get(`${scope.projectId}:${scope.checkoutId}:mission-a`)
         ?.status,
     ).toBe('running');
+    expect(recovery).toHaveBeenCalled();
     delivery.shutdownIdleDelivery();
   });
 

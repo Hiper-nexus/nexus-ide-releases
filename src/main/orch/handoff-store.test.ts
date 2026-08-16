@@ -397,6 +397,69 @@ describe("scoped handoff store", () => {
     });
   });
 
+  it("rebind NUNCA bloqueia a missão por projeção de entrega inconsistente — re-enfileira para a nova sessão (doutrina Overclock)", () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope();
+    let now = 100;
+    let id = 0;
+    const missions = createScopedMissionStore(runtimeManager, scope, {
+      idFactory: () => "mission-rebind-hold",
+    });
+    const handoffs = createScopedHandoffStore(runtimeManager, scope, {
+      now: () => now,
+      idFactory: (prefix) => `${prefix}-${++id}`,
+    });
+    missions.create({
+      title: "Rebind honesto",
+      orchestratorSessionId: "orchestrator-session",
+    });
+    const handoff = handoffs.submit({
+      missionId: "mission-rebind-hold",
+      sessionId: "worker-session",
+      fromAgent: "worker",
+      status: "success",
+      summary: "Entrega aceita pela sessão antiga.",
+    });
+    const attempt = handoffs.reserveDeliveryAttempt({
+      handoffId: handoff.id,
+      missionId: "mission-rebind-hold",
+      orchestratorSessionId: "orchestrator-session",
+      maxAttempts: 2,
+    });
+    handoffs.markDeliveryAttemptPasted({
+      attemptId: attempt.id,
+      handoffId: handoff.id,
+      acceptDeadlineAt: now + 2_000,
+    });
+    now = 150;
+    expect(
+      handoffs.acceptDeliveryAttempt({
+        attemptId: attempt.id,
+        handoffId: handoff.id,
+      }),
+    ).toBe(true);
+
+    // Corrupção do estado de transporte que o branch antigo tratava como
+    // bloqueio de missão: delivered=1 com submitted_at NULL (escrita parcial
+    // de crash/timeout legacy — o CHECK do schema impede estados fora do
+    // conjunto, mas não impede o par inconsistente).
+    const db = runtimeManager.open(scope).db;
+    db.prepare(
+      `UPDATE handoffs SET submitted_at = NULL WHERE id = ?`,
+    ).run(handoff.id);
+
+    const rebound = missions.rebindOrchestratorSession(
+      "mission-rebind-hold",
+      "orchestrator-session-rebound",
+    );
+    expect(rebound?.status).not.toBe("blocked");
+    expect(rebound?.description).not.toMatch(/NEXUS_HANDOFF_REBIND_BLOCKED/);
+    expect(handoffs.get(handoff.id)).toMatchObject({
+      delivered: false,
+      deliveryState: "queued",
+    });
+  });
+
   it("binds explicit consumption to the exact accepted delivery and current orchestrator", () => {
     const runtimeManager = manager();
     const scope = testProjectScope();

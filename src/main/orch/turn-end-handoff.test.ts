@@ -3,6 +3,7 @@ import {
   __noteTurnStartForTests,
   __resetTurnEndHandoffForTests,
   buildMechanicalHandoffPayload,
+  countRecentWorkerHandoffs,
   decideTurnEndClosure,
   harvestTurnReplyText,
   MECHANICAL_HANDOFF_CLOSED_BY,
@@ -12,6 +13,7 @@ import {
   payloadReplyText,
   readLastAssistantTextFromTranscript,
 } from './turn-end-handoff';
+import type { Handoff } from '../../shared/orch-types';
 
 const baseFacts = {
   hasGateContext: true,
@@ -68,6 +70,72 @@ describe('decideTurnEndClosure (matriz de guardas)', () => {
     });
     expect(decision.close).toBe(false);
     expect(decision.reason).toContain('re-disparo');
+  });
+
+  it('pula quando o dedup está indisponível — fail-closed, nunca duplica na dúvida', () => {
+    const decision = decideTurnEndClosure({
+      ...baseFacts,
+      dedupUnavailable: true,
+    });
+    expect(decision.close).toBe(false);
+    expect(decision.reason).toContain('dedup indisponível');
+  });
+});
+
+describe('countRecentWorkerHandoffs (dedup por encarnação física)', () => {
+  const mk = (over: Partial<Handoff>): Handoff =>
+    ({
+      id: 'h1',
+      missionId: 'm1',
+      status: 'success',
+      summary: 's',
+      artifacts: [],
+      evidenceIds: [],
+      evidenceTrust: 'none',
+      delivered: false,
+      deliveryState: 'queued',
+      createdAt: 1_000,
+      ...over,
+    }) as Handoff;
+
+  it('conta handoff da mesma sessão dentro da janela do turno', () => {
+    const n = countRecentWorkerHandoffs(
+      [mk({ sessionId: 's1', createdAt: 1_500 })],
+      { sessionId: 's1', windowStart: 1_000 },
+    );
+    expect(n).toBe(1);
+  });
+
+  it('conta handoff de OUTRA sessão da MESMA encarnação (rebind/respawn no meio do turno)', () => {
+    const n = countRecentWorkerHandoffs(
+      [mk({ sessionId: 's-antiga', workerIncarnationId: 'inc-1', createdAt: 1_500 })],
+      { sessionId: 's-nova', workerIncarnationId: 'inc-1', windowStart: 1_000 },
+    );
+    expect(n).toBe(1);
+  });
+
+  it('ignora handoff de encarnação e sessão diferentes', () => {
+    const n = countRecentWorkerHandoffs(
+      [mk({ sessionId: 's-outro', workerIncarnationId: 'inc-2', createdAt: 1_500 })],
+      { sessionId: 's1', workerIncarnationId: 'inc-1', windowStart: 1_000 },
+    );
+    expect(n).toBe(0);
+  });
+
+  it('janela 0 (primeiro turno de sessão física nova) conta handoffs anteriores da encarnação', () => {
+    const n = countRecentWorkerHandoffs(
+      [mk({ sessionId: 's-antiga', workerIncarnationId: 'inc-1', createdAt: 500 })],
+      { sessionId: 's-nova', workerIncarnationId: 'inc-1', windowStart: 0 },
+    );
+    expect(n).toBe(1);
+  });
+
+  it('ignora handoff criado antes da fronteira do turno', () => {
+    const n = countRecentWorkerHandoffs(
+      [mk({ sessionId: 's1', createdAt: 900 })],
+      { sessionId: 's1', windowStart: 1_000 },
+    );
+    expect(n).toBe(0);
   });
 });
 

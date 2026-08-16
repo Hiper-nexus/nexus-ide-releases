@@ -49,10 +49,6 @@ import {
   type RecordMissionKickoffAcceptance,
 } from './mission-kickoff-proof-ledger';
 import {
-  HANDOFF_REBIND_BLOCK_CTA,
-  HANDOFF_REBIND_BLOCK_MARKER,
-} from './handoff-delivery-policy';
-import {
   MISSION_ORCHESTRATOR_PRE_DISPATCH_EXIT_MARKER,
   MISSION_ORCHESTRATOR_PRE_DISPATCH_EXIT_REASON,
   missionOrchestratorExitDescription,
@@ -896,7 +892,7 @@ export class ScopedMissionStore {
       if (!mission) return false;
 
       const staleDeliveries = db.prepare(
-        `SELECT h.id, h.delivery_state, h.submitted_at
+        `SELECT h.id
          FROM handoffs AS h
          WHERE h.mission_id = ?
            AND h.status = 'success'
@@ -917,41 +913,13 @@ export class ScopedMissionStore {
                AND current_attempt.accepted_at IS NOT NULL
                AND current_attempt.orchestrator_session_id = ?
            )`,
-      ).all(id, sessionId, sessionId) as Array<{
-        id: string;
-        delivery_state: string;
-        submitted_at: number | null;
-      }>;
+      ).all(id, sessionId, sessionId) as Array<{ id: string }>;
 
-      const blocked = staleDeliveries.some((handoff) =>
-        !['submitted', 'acknowledged', 'consumed'].includes(
-          handoff.delivery_state,
-        ) ||
-        handoff.submitted_at === null,
-      );
-      if (blocked) {
-        const description = mission.description.includes(
-          HANDOFF_REBIND_BLOCK_MARKER,
-        )
-          ? mission.description
-          : (
-              mission.description.trim()
-                ? `${mission.description}\n\n${HANDOFF_REBIND_BLOCK_CTA}`
-                : HANDOFF_REBIND_BLOCK_CTA
-            ).slice(0, 65_536);
-        const updated = db.prepare(
-          `UPDATE missions
-           SET orch_session_id = ?, status = 'blocked',
-               intent_state = 'blocked_technical',
-               description = ?, updated_at = ?
-           WHERE id = ?`,
-        ).run(sessionId, description, now, id);
-        if (updated.changes !== 1) {
-          throw new Error('orchestrator rebind block lost mission CAS');
-        }
-        return true;
-      }
-
+      // Doutrina Overclock (2026-08-16): rebind é um ATO de recuperação —
+      // nunca bloqueia a missão. A projeção de entrega é estado de transporte
+      // de propriedade do Main: entrega aceita por sessão antiga vira fila
+      // para a sessão nova, esteja ela em qualquer estado (inclusive sujo
+      // por crash/timeout de escrita parcial). O outbox re-entrega.
       for (const handoff of staleDeliveries) {
         const requeued = db.prepare(
           `UPDATE handoffs
@@ -959,12 +927,10 @@ export class ScopedMissionStore {
                submitted_at = NULL, acknowledged_at = NULL,
                consumed_at = NULL, consumed_by_session = NULL,
                consumed_delivery_attempt_id = NULL
-           WHERE id = ? AND mission_id = ?
-             AND delivered = 1
-             AND delivery_state IN ('submitted', 'acknowledged', 'consumed')`,
+           WHERE id = ? AND mission_id = ?`,
         ).run(handoff.id, id);
         if (requeued.changes !== 1) {
-          throw new Error('orchestrator rebind lost handoff delivery CAS');
+          throw new Error('orchestrator rebind lost handoff requeue');
         }
       }
 
