@@ -288,8 +288,11 @@ export function resolveMissionAgentLiveState(input: {
   if (sessionState === null) {
     if (taskState === 'failed') return 'failed';
     if (taskState === 'done') return 'done';
-    // Turno encerrado (exit 0) não é Interrompido. Sem processo o agente
-    // volta à fila — Overclock: só o operador para a missão.
+    // Sem processo físico, tarefa "running" no banco é cadáver pós-restart —
+    // não é working, nem interrompido: o orquestrador respawnado vai
+    // re-disparar o trabalho, então o chip honesto é "na fila". Turno
+    // encerrado com handoff entregue NUNCA é Interrupção (doutrina
+    // Overclock — print 2026-08-16). Idle transport continua abaixo.
     return 'queued';
   }
 

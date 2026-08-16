@@ -99,10 +99,12 @@ import {
   configureProjectDomainStoreRegistry,
   disposeProjectDomainStoreRegistry,
   getProjectDomainStores,
+  requireProjectDomainStoreRegistry,
   type ProjectDomainStoreSuite,
   type ProjectDomainStoreName,
 } from "./project-domain-store-registry";
 import { missionEngineForScope } from "./mission-engine-registry";
+import { resurrectRunningMissionsForScope } from "./mission-fast-lane";
 import { broadcastToProject } from "./project-scoped-broadcast";
 import {
   initIdleDelivery,
@@ -246,6 +248,7 @@ let orchestrationReady = false;
 let orchestrationClosing = false;
 let orchestrationShutdownBlocked = false;
 let disposeSquadBroadcast: (() => void) | null = null;
+let disposeMissionResurrection: (() => void) | null = null;
 const SQUAD_DESIGN_DRAFT_TTL_MS = 15 * 60_000;
 const MAX_SQUAD_DESIGN_DRAFTS = 64;
 const squadDesignDrafts = new Map<
@@ -1530,6 +1533,22 @@ export async function initOrchestration(): Promise<void> {
     disposeSquadBroadcast = onSquadsChange(() =>
       broadcast(ORCH_CHANNELS.squadsChanged, listSquads()),
     );
+    // Ressurreição de missões (doutrina Overclock): cada escopo de projeto
+    // que abrir — no boot ou depois — reativa suas missões running: runtime
+    // vivo rearma o watcher; runtime morto respawna o orquestrador. Restart
+    // do app não pode virar zumbi (print 2026-08-16). Missões fechadas pelo
+    // operador explicitamente não são tocadas.
+    disposeMissionResurrection?.();
+    disposeMissionResurrection = requireProjectDomainStoreRegistry().onScope(
+      (scope) => {
+        void resurrectRunningMissionsForScope(scope).catch((error) => {
+          console.warn(
+            '[nexus] mission resurrection sweep failed for scope:',
+            error instanceof Error ? error.message : error,
+          );
+        });
+      },
+    );
     orchestrationReady = true;
   })();
   orchestrationInitFlight = initialize;
@@ -1566,6 +1585,8 @@ export async function closeOrchestration(): Promise<void> {
     await stopOrchestrationCoordinator();
     disposeSquadBroadcast?.();
     disposeSquadBroadcast = null;
+    disposeMissionResurrection?.();
+    disposeMissionResurrection = null;
     shutdownIdleDelivery();
     shutdownAgentWaitingBroadcast();
     shutdownWorkerHandoffTtl();

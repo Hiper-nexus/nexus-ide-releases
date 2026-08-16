@@ -188,28 +188,62 @@ describe('mission fast lane', () => {
   });
 });
 
-describe('fast-lane resume / empty-pane doctrine', () => {
-  it('não fecha a missão só porque os panes esvaziaram após o turno', () => {
-    expect(decideFastLaneEmptyPaneAction()).toBe('keep-running');
+describe('decideFastLaneEmptyPaneAction (doutrina: missão nunca morre sozinha)', () => {
+  it('com orçamento de respawn → respawna o orquestrador', () => {
+    expect(
+      decideFastLaneEmptyPaneAction({
+        status: 'running',
+        pendingHandoffs: 0,
+        respawnBudgetLeft: 3,
+      }),
+    ).toBe('respawn-orchestrator');
   });
 
-  it('retry-kickoff respawna o Maestro quando a missão segue running sem sessão', () => {
+  it('com handoffs pendentes → respawna para consumir as entregas', () => {
     expect(
-      decideFastLaneResumeAction({
+      decideFastLaneEmptyPaneAction({
         status: 'running',
-        liveOrchestrator: false,
+        pendingHandoffs: 2,
+        respawnBudgetLeft: 1,
       }),
-    ).toBe('respawn');
+    ).toBe('respawn-orchestrator');
+  });
+
+  it('sem orçamento → mantém running e observando (NUNCA bloqueia nem completa sozinho)', () => {
+    expect(
+      decideFastLaneEmptyPaneAction({
+        status: 'running',
+        pendingHandoffs: 0,
+        respawnBudgetLeft: 0,
+      }),
+    ).toBe('keep-running-watching');
+  });
+});
+
+describe('decideFastLaneResumeAction (retry-kickoff faz algo de verdade)', () => {
+  it('running + orquestrador vivo → só religa o watcher', () => {
     expect(
       decideFastLaneResumeAction({
         status: 'running',
-        liveOrchestrator: true,
+        liveOrchestratorSession: true,
       }),
     ).toBe('watch');
+  });
+
+  it('running + orquestrador morto → respawna (antes: retorno silencioso = botão morto)', () => {
     expect(
       decideFastLaneResumeAction({
-        status: 'blocked',
-        liveOrchestrator: false,
+        status: 'running',
+        liveOrchestratorSession: false,
+      }),
+    ).toBe('respawn');
+  });
+
+  it('não-running → bootstrap normal', () => {
+    expect(
+      decideFastLaneResumeAction({
+        status: 'pending',
+        liveOrchestratorSession: false,
       }),
     ).toBe('bootstrap');
   });

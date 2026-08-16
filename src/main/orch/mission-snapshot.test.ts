@@ -363,7 +363,10 @@ describe('resolveMissionAgentLiveState', () => {
     ).toBe('working');
   });
 
-  it('marks a listed pane without a live session as queued, not interrupted', () => {
+  it('pane sem sessão viva é fila, não interrupção (doutrina Overclock)', () => {
+    // Turno encerrado / restart: sem processo físico a tarefa volta à fila
+    // para o orquestrador (re-spawnado) re-disparar. "Interrompido" era o
+    // rótulo que fazia o operador achar que a missão tinha quebrado sozinha.
     expect(
       resolveMissionAgentLiveState({
         sessionState: null,
