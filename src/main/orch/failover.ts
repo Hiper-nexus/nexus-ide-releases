@@ -6,6 +6,7 @@ import {
 } from '../../shared/account-types';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { tapSessionData, tapSessionExit, getAgentSessionInfo } from '../pty/pty-manager';
+import { respawnMainOwnedPaneWithAccount } from './failover-mission-respawn';
 import {
   getRendererWorkspaceScope,
   onRendererWorkspaceScopeChange,
@@ -561,6 +562,24 @@ function performSwitch(req: SwitchRequest): void {
     missionId: authority.missionId,
     ...(probe ? { probe } : {}),
   });
+
+  // Pane main-owned (worker headless de missão): o renderer não é dono e
+  // nunca vai consumir o evento acima — o Main respawna com a nova conta.
+  if (!authority.owner) {
+    void respawnMainOwnedPaneWithAccount({
+      paneId,
+      sessionId: authority.sessionId,
+      adapterId,
+      toAccountId: next.id,
+      fromAccountLabel: fromLabel,
+      reason: hit.reason,
+    }).catch((error) => {
+      console.warn(
+        '[failover] main-owned respawn falhou (evento segue para o renderer):',
+        error instanceof Error ? error.message : error,
+      );
+    });
+  }
 }
 
 /** Agenda (ou re-agenda) a espera-pela-irmã de um watch. */
