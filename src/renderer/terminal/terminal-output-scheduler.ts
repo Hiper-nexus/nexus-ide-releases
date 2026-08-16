@@ -90,7 +90,9 @@ const SYNCHRONIZED_OUTPUT_END_SEQUENCE = '\x1b[?2026l';
 // CAN aborts a partial escape sequence before resetting style and showing the
 // lossy-backlog warning — preserves ANSI integrity for subsequent bytes.
 const BACKGROUND_BACKLOG_WARNING =
-  '\x18\x1b[0m\r\n\r\n[Nexus skipped hidden output — backlog > 2 MB]\r\n\r\n';
+  // \x1b[2K apaga a linha do composer do CLI antes do aviso — sem isso o
+  // rodapé mostrava "> [Nexus skipped hidden" cortado (print 2026-08-16).
+  '\x18\x1b[0m\r\x1b[2K\r\n[Nexus skipped hidden output — backlog > 2 MB]\r\n\r\n';
 
 const queuedByTerminal = new Map<TerminalOutputSink, QueueEntry>();
 /**

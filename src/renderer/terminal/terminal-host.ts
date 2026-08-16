@@ -475,6 +475,39 @@ async function requestMissionRuntimeResume(missionId: string): Promise<void> {
   }
 }
 
+/**
+ * Tecla em pane morto de missão viva: revive a missão (retry-kickoff, que
+ * respawna o orquestrador) e, em panes do renderer, religa a própria CLI na
+ * mesma conta — o teclado volta a aceitar input no pane onde o operador
+ * digitou (o trio "dona / pausado / cursor oco" era o beco sem saída).
+ */
+async function requestDeadMissionPaneRevive(
+  pane: PaneModel,
+  host: Host,
+  missionId: string,
+): Promise<void> {
+  try {
+    host.term.writeln(
+      '\r\n\x1b[36m[nexus] tecla recebida — revivendo a missão ' +
+        '(orquestrador + runtime)…\x1b[0m',
+    );
+    await requestMissionRuntimeResume(missionId);
+    if (!isMainControlledMissionPane(pane.id, pane)) {
+      respawnWithResume(
+        pane,
+        '[nexus] pane religado na mesma conta — a missão segue em curso.',
+        { mode: 'same-account-resume' },
+      );
+    }
+  } catch (error) {
+    host.term.writeln(
+      `\r\n\x1b[31m[nexus] revival da missão falhou: ` +
+        `${error instanceof Error ? error.message : String(error)}. ` +
+        'Use Retomar no rail.\x1b[0m',
+    );
+  }
+}
+
 async function routeBlockedMissionToResume(
   host: Host,
   missionId: string,
@@ -1715,7 +1748,7 @@ export async function unlockRetiredMissionPane(
       target.hibernated = false;
       useSessionStateStore.getState().setPaneState(pane.id, 'exited');
       if (missionId) {
-        void requestMissionRuntimeResume(missionId);
+        void requestDeadMissionPaneRevive(pane, target, missionId);
       }
       return;
     }

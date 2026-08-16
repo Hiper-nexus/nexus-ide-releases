@@ -710,6 +710,19 @@ if (!wireDeepLinks()) {
     try {
       await resolveUserPath();
       bootstrap();
+      // MCP boot race (print 2026-08-16): o renderer restaurava panes de
+      // agente enquanto o servidor MCP embutido ainda não tinha feito bind —
+      // os CLIs spawnados imprimiam "MCP startup interrupted …
+      // nexus_<hex> not initialized". initOrchestration é idempotente: aqui
+      // esperamos o voo já em curso (bootstrap dispara fire-and-forget),
+      // com teto: bind travado não pode segurar a janela para sempre (o
+      // supervisor segue retentando em background).
+      await Promise.race([
+        initOrchestration().catch(() => undefined),
+        new Promise<void>((resolve) => {
+          setTimeout(resolve, 4_000);
+        }),
+      ]);
       if (!startMainWindowRenderer(mainWindow)) {
         throw new Error(
           "renderer start authority disappeared before bootstrap completed",
