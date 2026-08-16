@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -294,6 +295,25 @@ async function spawnAgentPane(
 
   if (role === 'orchestrator') {
     stores.missions.setOrchestratorSession(mission.id, spawn.sessionId);
+    // Recibo de kickoff (0.32.23): prova durável do orquestrador desta
+    // encarnação — exigido por missionDirectAuthority e pelo retry do
+    // orientar-missão. Vale para bootstrap E respawn (continuidade).
+    const live = stores.missions.get(mission.id) ?? mission;
+    try {
+      stores.missions.recordKickoffAcceptance({
+        missionId: live.id,
+        intentVersion: live.intentVersion ?? 0,
+        orchestratorSessionId: spawn.sessionId,
+        promptHash: createHash('sha256')
+          .update(initialPrompt ?? '')
+          .digest('hex'),
+      });
+    } catch (error) {
+      console.warn(
+        '[fast-lane] recibo de kickoff não gravou:',
+        error instanceof Error ? error.message : error,
+      );
+    }
   }
 
   return {

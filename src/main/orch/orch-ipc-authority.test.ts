@@ -473,6 +473,7 @@ vi.mock('./project-domain-store-registry', () => ({
   ProjectDomainStoreRegistry: class {},
   configureProjectDomainStoreRegistry: vi.fn(() => harness.projectStores),
   disposeProjectDomainStoreRegistry: vi.fn(),
+  requireProjectDomainStoreRegistry: vi.fn(() => harness.projectStores),
   getProjectDomainStores: vi.fn(() => ({
     missions: {
       get: (missionId: string) => harness.operatorInput.missions.get(missionId),
