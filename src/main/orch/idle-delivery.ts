@@ -120,8 +120,6 @@ export const HANDOFF_PROMPT_SETTLE_MS = 500;
 /** Second CR if the session is still injectable-idle after the first submit. */
 export const HANDOFF_ENTER_RETRY_MS = 400;
 const MAX_DELIVERY_ATTEMPTS = MAX_HANDOFF_DELIVERY_ATTEMPTS;
-const HANDOFF_DELIVERY_CTA =
-  'Handoff não entregue. Clique em Reabrir para retomar o orquestrador e reenviar a entrega.';
 const RUNTIME_RECOVERY_RETRY_BASE_MS = 5_000;
 const RUNTIME_RECOVERY_RETRY_MAX_MS = 60_000;
 
@@ -510,28 +508,6 @@ function isDiagnosticDriverHandoff(handoff: Handoff): boolean {
   );
 }
 
-function missionDispatchesAlreadyTerminal(
-  authority: DeliveryAuthority,
-): boolean {
-  try {
-    const rows = getProjectDomainStores(authority.scope).taskDispatches.list(
-      authority.missionId,
-    );
-    return (
-      rows.length > 0 &&
-      rows.every(
-        (row) =>
-          row.state === 'completed' ||
-          row.state === 'failed' ||
-          row.state === 'blocked' ||
-          row.state === 'superseded',
-      )
-    );
-  } catch {
-    return false;
-  }
-}
-
 function blockDeliveryFailure(
   authority: DeliveryAuthority,
   handoffId: string,
@@ -540,34 +516,13 @@ function blockDeliveryFailure(
   const stores = getProjectDomainStores(authority.scope);
   const mission = stores.missions.get(authority.missionId);
   if (mission && mission.status !== 'done' && mission.status !== 'failed') {
-    if (missionDispatchesAlreadyTerminal(authority)) {
-      requestRuntimeRecovery(authority, handoffId);
-      console.warn(
-        '[idle-delivery] Maestro não aceitou a entrega após retry limitado; ' +
-          `recuperação física foi solicitada e a missão permanece em curso ` +
-          `(mission=${authority.missionId}, ` +
-          `handoff=${handoffId}, session=${authority.sessionId}, ` +
-          `attempts=${attempts})`,
-      );
-      return;
-    }
-    const marker = `<!-- nexus:handoff-delivery-failed:${handoffId} -->`;
-    const description = mission.description.includes(marker)
-      ? mission.description
-      : [mission.description.trim(), `${marker}\n${HANDOFF_DELIVERY_CTA}`]
-          .filter(Boolean)
-          .join('\n\n')
-          .slice(0, 65_536);
-    if (mission.status !== 'blocked' || description !== mission.description) {
-      stores.missions.update(authority.missionId, {
-        status: 'blocked',
-        description,
-      });
-    }
+    requestRuntimeRecovery(authority, handoffId);
     console.warn(
-      '[idle-delivery] handoff não aceito após requeue limitado ' +
-        `(mission=${authority.missionId}, handoff=${handoffId}, ` +
-        `session=${authority.sessionId}, attempts=${attempts})`,
+      '[idle-delivery] Maestro não aceitou a entrega após retry limitado; ' +
+        `recuperação física foi solicitada e a missão permanece em curso ` +
+        `(mission=${authority.missionId}, ` +
+        `handoff=${handoffId}, session=${authority.sessionId}, ` +
+        `attempts=${attempts})`,
     );
   }
 }

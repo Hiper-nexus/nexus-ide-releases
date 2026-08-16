@@ -363,19 +363,19 @@ describe('resolveMissionAgentLiveState', () => {
     ).toBe('working');
   });
 
-  it('marks a listed pane without a live session as stopped', () => {
+  it('marks a listed pane without a live session as queued, not interrupted', () => {
     expect(
       resolveMissionAgentLiveState({
         sessionState: null,
         taskState: 'queued',
       }),
-    ).toBe('stopped');
+    ).toBe('queued');
     expect(
       resolveMissionAgentLiveState({
         sessionState: null,
         taskState: 'working',
       }),
-    ).toBe('stopped');
+    ).toBe('queued');
   });
 
   it('projects hook error as failed and completed idle as done', () => {

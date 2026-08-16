@@ -460,6 +460,20 @@ export function getScrollbackExcerpt(paneId: string, max = 2_400): string {
  * segundo loop concorrente.
  */
 const missionAutoResumeSpent = new Set<string>();
+const missionRuntimeResumeInFlight = new Set<string>();
+
+async function requestMissionRuntimeResume(missionId: string): Promise<void> {
+  if (missionRuntimeResumeInFlight.has(missionId)) return;
+  missionRuntimeResumeInFlight.add(missionId);
+  try {
+    await window.nexus.mission.command({
+      kind: 'retry-kickoff',
+      missionId,
+    });
+  } finally {
+    missionRuntimeResumeInFlight.delete(missionId);
+  }
+}
 
 async function routeBlockedMissionToResume(
   host: Host,
@@ -1696,20 +1710,13 @@ export async function unlockRetiredMissionPane(
     target.spawnStarted = false;
 
     if (disposition === 'keep-paused') {
-      const alreadyPaused =
-        target.hibernated && paneState(pane.id) === 'hibernated';
-      target.hibernated = true;
-      if (!alreadyPaused) {
-        try {
-          target.term.writeln(
-            '\r\n\x1b[90m[nexus] Pane pausado — a missão continua no rail. ' +
-              'Use Retomar no rail para reativar.\x1b[0m',
-          );
-        } catch {
-          // Presentation is best effort
-        }
+      // Overclock: posse ≠ hibernar. Exit 0 deixa o pane exited e o teclado
+      // pede retry-kickoff — o trio "dona / pausado / cursor oco" era o beco.
+      target.hibernated = false;
+      useSessionStateStore.getState().setPaneState(pane.id, 'exited');
+      if (missionId) {
+        void requestMissionRuntimeResume(missionId);
       }
-      useSessionStateStore.getState().setPaneState(pane.id, 'hibernated');
       return;
     }
 
@@ -1727,7 +1734,10 @@ export async function unlockRetiredMissionPane(
   }
 
   if (disposition === 'keep-paused') {
-    useSessionStateStore.getState().setPaneState(pane.id, 'hibernated');
+    useSessionStateStore.getState().setPaneState(pane.id, 'exited');
+    if (missionId) {
+      void requestMissionRuntimeResume(missionId);
+    }
     return;
   }
 

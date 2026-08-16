@@ -152,11 +152,49 @@ interface Harness {
   readonly emitSpy: ReturnType<typeof vi.fn>;
 }
 
+function makeOrchSession(
+  overrides: Partial<OwnedAgentSessionInfo> = {},
+): OwnedAgentSessionInfo {
+  return {
+    sessionId: 'sess-orch-live',
+    paneId: 'pane-orch',
+    adapterId: 'cli',
+    cwd: '/tmp/nexus-workspace',
+    scope: makeScope(),
+    source: 'pending',
+    role: 'orchestrator',
+    missionId: 'mission-1',
+    squadId: 'squad-1',
+    agentName: 'Orquestrador',
+    readOnly: false,
+    allowedTools: null,
+    allowedSkills: null,
+    ...overrides,
+  } as OwnedAgentSessionInfo;
+}
+
+function makeOrchPane(overrides: Partial<MissionPaneSpec> = {}): MissionPaneSpec {
+  return {
+    id: 'pane-orch',
+    paneId: 'pane-orch',
+    missionId: 'mission-1',
+    adapterId: 'cli',
+    title: 'Orquestrador',
+    role: 'orchestrator',
+    agentName: 'Orquestrador',
+    ...overrides,
+  } as MissionPaneSpec;
+}
+
 function makeHarness(options: {
   readonly mission: Mission;
   readonly squad: Squad;
   readonly workers: readonly OwnedAgentSessionInfo[];
   readonly panes?: readonly MissionPaneSpec[];
+  readonly getRuntimeAgentSessionInfo?: (
+    sessionId: string,
+  ) => OwnedAgentSessionInfo | null;
+  readonly resumeOrchestrator?: MissionDirectDeliveryDeps['resumeOrchestrator'];
 }): Harness {
   const deliverSpy = vi.fn(async () => true);
   const emitSpy = vi.fn(() => true);
@@ -170,7 +208,8 @@ function makeHarness(options: {
     },
   } as unknown as Parameters<typeof deliverMissionDirectInstruction>[1];
   const deps: MissionDirectDeliveryDeps = {
-    getRuntimeAgentSessionInfo: () => null,
+    getRuntimeAgentSessionInfo:
+      options.getRuntimeAgentSessionInfo ?? (() => null),
     getAcpDriverSession: () => null,
     getAcpDriverSemanticStatus: () => 'idle',
     getPaneRuntimeAuthorityBySession: () => null,
@@ -178,6 +217,9 @@ function makeHarness(options: {
     listMissionWorkerSessions: () => options.workers.slice(),
     deliverAgentPrompt: deliverSpy as unknown as MissionDirectDeliveryDeps['deliverAgentPrompt'],
     emitMissionEvent: emitSpy as unknown as MissionDirectDeliveryDeps['emitMissionEvent'],
+    ...(options.resumeOrchestrator
+      ? { resumeOrchestrator: options.resumeOrchestrator }
+      : {}),
   };
   return { stores, deps, deliverSpy, emitSpy };
 }
@@ -425,11 +467,10 @@ describe('mission direct — operador como orquestrador', () => {
     expect(deliverSpy).toHaveBeenCalledTimes(1);
   });
 
-  it('squad selada com orquestrador + sessão morta → falha fechada (não desce pro worker)', async () => {
+  it('squad selada com orquestrador + sessão morta sem recover → falha fechada (não desce pro worker)', async () => {
     // Finding 3 do security review: `orchestratorSessionId == null` sozinho
-    // não habilita o caminho operador-como-orquestrador. Missão SELADA com
-    // orquestrador cuja sessão morreu/foi limpa deve exigir orquestrador vivo,
-    // não redirecionar silenciosamente para um worker.
+    // não habilita o caminho operador-como-orquestrador. Sem resume, a
+    // missão SELADA exige orquestrador vivo — não redireciona ao worker.
     const squad = makeSquad([
       makeAgent(),
       makeAgent({
@@ -449,6 +490,62 @@ describe('mission direct — operador como orquestrador', () => {
     await expect(
       deliverMissionDirectInstruction(makeScope(), stores, directCommand(), deps),
     ).rejects.toThrow('mission direct requires a live orchestrator session');
+  });
+
+  it('squad selada com orquestrador + sessão morta → respawna o Maestro e entrega', async () => {
+    const squad = makeSquad([
+      makeAgent(),
+      makeAgent({
+        id: 'ag-orch',
+        agentName: 'Orquestrador',
+        category: 'orchestrator',
+      }),
+    ]);
+    const mission = makeApprovedMission(squad);
+    const orch = makeOrchSession();
+    let live = false;
+    const resume = vi.fn(async () => {
+      live = true;
+      mission.orchestratorSessionId = orch.sessionId;
+    });
+    const { stores, deps, deliverSpy } = makeHarness({
+      mission,
+      squad,
+      workers: [makeWorkerSession()],
+      panes: [makeWorkerPane(), makeOrchPane()],
+      getRuntimeAgentSessionInfo: (sessionId) =>
+        live && sessionId === orch.sessionId ? orch : null,
+      resumeOrchestrator: resume,
+    });
+
+    await deliverMissionDirectInstruction(
+      makeScope(),
+      stores,
+      directCommand(),
+      deps,
+    );
+
+    expect(resume).toHaveBeenCalledTimes(1);
+    expect(deliverSpy).toHaveBeenCalledTimes(1);
+    expect(deliverSpy.mock.calls[0]?.[0]).toBe(orch.sessionId);
+  });
+
+  it('missão pending não pede respawn do Maestro', async () => {
+    const squad = makeSquad();
+    const mission = makeApprovedMission(squad, { status: 'pending' });
+    const resume = vi.fn(async () => {});
+    const { stores, deps } = makeHarness({
+      mission,
+      squad,
+      workers: [makeWorkerSession()],
+      panes: [makeWorkerPane()],
+      resumeOrchestrator: resume,
+    });
+
+    await expect(
+      deliverMissionDirectInstruction(makeScope(), stores, directCommand(), deps),
+    ).rejects.toThrow('mission direct requires live current dispatch authority');
+    expect(resume).not.toHaveBeenCalled();
   });
 
   it('modo livre + worker ad-hoc → direção à missão aceita (exceção ao selo)', async () => {

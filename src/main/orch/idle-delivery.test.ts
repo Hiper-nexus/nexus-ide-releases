@@ -937,7 +937,7 @@ describe('idle delivery authority and lifecycle', () => {
     delivery.shutdownIdleDelivery();
   });
 
-  it('bloqueia com sinal durável após a reentrega limitada também não ser aceita', async () => {
+  it('não bloqueia a missão quando a reentrega limitada não é aceita', async () => {
     const delivery = await import('./idle-delivery');
     const scope = testProjectScope();
     authorizeTarget(scope);
@@ -952,16 +952,11 @@ describe('idle delivery authority and lifecycle', () => {
     );
     expect(deliveries).toHaveLength(2);
     expect(storeMocks.delivered).toEqual([]);
-    expect(storeMocks.missionUpdates).toEqual([
-      {
-        scope,
-        id: 'mission-a',
-        patch: expect.objectContaining({
-          status: 'blocked',
-          description: expect.stringMatching(/Handoff não entregue.*Reabrir/s),
-        }),
-      },
-    ]);
+    expect(storeMocks.missionUpdates).toEqual([]);
+    expect(
+      storeMocks.missions.get(`${scope.projectId}:${scope.checkoutId}:mission-a`)
+        ?.status,
+    ).toBe('running');
     delivery.shutdownIdleDelivery();
   });
 

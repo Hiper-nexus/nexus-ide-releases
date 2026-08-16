@@ -5,7 +5,8 @@ import { testProjectScope } from './__tests__/scope-fixture';
 
 /**
  * Via Rápida no modelo PULL: o motor não lê PRONTO/BLOQUEADO do PTY e não
- * recutuca o pane. Conclui ou bloqueia pelos handoffs quando não há pane vivo.
+ * recutuca o pane. Pane vazio após o turno NÃO conclui nem bloqueia —
+ * Overclock: só o operador para a missão.
  */
 
 const harness = vi.hoisted(() => ({
@@ -28,6 +29,7 @@ const harness = vi.hoisted(() => ({
   blockTechnical: vi.fn(),
   resumeTechnical: vi.fn(),
   spawnCount: 0,
+  recordKickoffAcceptance: vi.fn(),
 }));
 
 vi.mock('../pty/pty-manager', () => ({
@@ -91,7 +93,8 @@ vi.mock('./project-domain-store-registry', () => ({
         return liveMission;
       },
       setOrchestratorSession: () => {},
-      recordKickoffAcceptance: () => {},
+      recordKickoffAcceptance: (...args: unknown[]) =>
+        harness.recordKickoffAcceptance(...args),
     },
     missionPanes: { record: () => {}, list: () => [] },
     handoffs: { list: () => harness.handoffs },
@@ -154,6 +157,7 @@ beforeEach(async () => {
   harness.completeVerified.mockClear();
   harness.blockTechnical.mockClear();
   harness.resumeTechnical.mockClear();
+  harness.recordKickoffAcceptance.mockClear();
   harness.spawnCount = 0;
   liveMission = mission;
   vi.resetModules();
@@ -169,6 +173,7 @@ describe('Via Rápida × modelo PULL', () => {
   it('spawna só o orquestrador; pane idle não é recutucado nem concluído', async () => {
     await bootOrchestratorIdle();
     expect(harness.spawnCount).toBe(1);
+    expect(harness.recordKickoffAcceptance).toHaveBeenCalledTimes(1);
 
     await ticks(4);
 
@@ -177,7 +182,7 @@ describe('Via Rápida × modelo PULL', () => {
     expect(harness.blockTechnical).not.toHaveBeenCalled();
   });
 
-  it('orquestrador morto com handoff de sucesso conclui a missão', async () => {
+  it('orquestrador morto com handoff de sucesso NÃO conclui a missão', async () => {
     await bootOrchestratorIdle();
     harness.handoffs.push({
       status: 'success',
@@ -191,13 +196,8 @@ describe('Via Rápida × modelo PULL', () => {
 
     expect(harness.deliverAgentPrompt).not.toHaveBeenCalled();
     expect(harness.blockTechnical).not.toHaveBeenCalled();
-    expect(harness.completeVerified).toHaveBeenCalledTimes(1);
-    const [, args] = harness.completeVerified.mock.calls[0] as [
-      unknown,
-      { result: { outcome: string; summary: string } },
-    ];
-    expect(args.result.outcome).toBe('success');
-    expect(args.result.summary).toContain('Primeira frase do brief.txt');
+    expect(harness.completeVerified).not.toHaveBeenCalled();
+    expect(liveMission.status).toBe('running');
   });
 
   it('PRONTO no PTY não arma observador nem conclui — entrega é handoff', async () => {
@@ -215,20 +215,15 @@ describe('Via Rápida × modelo PULL', () => {
     expect(harness.blockTechnical).not.toHaveBeenCalled();
   });
 
-  it('orquestrador morto sem handoff bloqueia com causa visível', async () => {
+  it('orquestrador morto sem handoff NÃO bloqueia — missão segue running', async () => {
     await bootOrchestratorIdle();
     harness.sessionStates.set('session-1', 'exited');
 
     await ticks(1);
 
     expect(harness.completeVerified).not.toHaveBeenCalled();
-    expect(harness.blockTechnical).toHaveBeenCalledTimes(1);
-    const [, args] = harness.blockTechnical.mock.calls[0] as [
-      unknown,
-      { description: string },
-    ];
-    expect(args.description).toContain('nenhum worker');
-    expect(args.description).toContain('handoff');
+    expect(harness.blockTechnical).not.toHaveBeenCalled();
+    expect(liveMission.status).toBe('running');
   });
 
   it('pane morto sem handoff continua não sendo sucesso', async () => {
@@ -236,6 +231,21 @@ describe('Via Rápida × modelo PULL', () => {
     harness.sessionStates.set('session-1', 'exited');
     await ticks(2);
 
+    expect(harness.completeVerified).not.toHaveBeenCalled();
+    expect(harness.blockTechnical).not.toHaveBeenCalled();
+  });
+
+  it('retry-kickoff respawna o Maestro quando running sem sessão viva', async () => {
+    await bootOrchestratorIdle();
+    harness.sessionStates.set('session-1', 'exited');
+    await ticks(1);
+    const spawnedBefore = harness.spawnCount;
+
+    liveMission = { ...liveMission, status: 'running', intentState: 'executing' };
+    await fastLane.resumeFastLaneMission(scope, 'mission-1');
+
+    expect(harness.spawnCount).toBe(spawnedBefore + 1);
+    expect(harness.blockTechnical).not.toHaveBeenCalled();
     expect(harness.completeVerified).not.toHaveBeenCalled();
   });
 });

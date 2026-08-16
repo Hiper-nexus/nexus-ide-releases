@@ -18,8 +18,9 @@ export const CURRENT_RELEASE: AppRelease = {
   codename: 'GLM-5.3 no z.ai',
   summary:
     'O Nexus passa a oferecer o GLM-5.3 que a Z.AI lançou em ' +
-    '14 de agosto. Picker, default e roteador saem do 5.2; o ' +
-    'env do Claude Code segue o guia oficial da Coding Plan.',
+    '14 de agosto, e deixa de travar a missão no fim do turno: ' +
+    'orientação religa o Maestro, pane vazio não interrompe, e ' +
+    'Tentar início novamente respawna a sessão.',
   highlights: [
     {
       title: 'GLM-5.3 no picker',
@@ -46,6 +47,45 @@ export const CURRENT_RELEASE: AppRelease = {
       detail:
         'O modelo novo da Z.AI não aparecia no picker nem no roteador. ' +
         'O default passa a ser 5.3; 5.2 continua na lista.',
+    },
+    {
+      title: 'Missão não morre no fim do turno',
+      detail:
+        'Worker com exit 0 e pane vazio deixava de ser Interrompido ' +
+        'e de receber Precisa de reparo. A missão segue running; ' +
+        'só o operador para.',
+    },
+    {
+      title: 'Handoff entregue não mente',
+      detail:
+        'Se o worker já imprimiu o handoffId, o Main não bloqueia ' +
+        'a missão com Handoff não entregue — pede recuperação e ' +
+        'mantém a autoridade de dispatch.',
+    },
+    {
+      title: 'Tentar início novamente respawna',
+      detail:
+        'O botão no-opava quando o status ainda era running sem ' +
+        'sessão. Agora reabre o orquestrador. Digitar no pane ' +
+        'dispara o mesmo caminho.',
+    },
+    {
+      title: 'Orientação religa o Maestro',
+      detail:
+        'Enviar orientação após o exit 0 respawna a sessão e o ' +
+        'recibo de kickoff em vez de falhar com dispatch authority.',
+    },
+    {
+      title: 'Teclado não morre no exit 0',
+      detail:
+        'O pane deixa de hibernar e de escrever o trio dona / ' +
+        'pausado / cursor oco. Digite para religar o Maestro.',
+    },
+    {
+      title: 'Aviso de backlog cabe no pane',
+      detail:
+        'A linha Nexus skipped hidden output não cola mais no ' +
+        'prompt nem some cortada no rodapé estreito.',
     },
   ],
 };

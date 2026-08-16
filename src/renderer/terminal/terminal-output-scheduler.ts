@@ -90,7 +90,7 @@ const SYNCHRONIZED_OUTPUT_END_SEQUENCE = '\x1b[?2026l';
 // CAN aborts a partial escape sequence before resetting style and showing the
 // lossy-backlog warning — preserves ANSI integrity for subsequent bytes.
 const BACKGROUND_BACKLOG_WARNING =
-  '\x18\x1b[0m\r\n[Nexus skipped hidden terminal output because the backlog exceeded 2 MB.]\r\n';
+  '\x18\x1b[0m\r\n\r\n[Nexus skipped hidden output — backlog > 2 MB]\r\n\r\n';
 
 const queuedByTerminal = new Map<TerminalOutputSink, QueueEntry>();
 /**

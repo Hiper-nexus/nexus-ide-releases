@@ -192,8 +192,8 @@ describe('copy alinhada ao caminho real', () => {
   });
 
   it('rodapé e retire apontam para o rail, não para ctrl fictício nem shell mentiroso', () => {
-    expect(MISSION_OWNED_EXIT_NOTICE).toMatch(/Retomar/);
-    expect(MISSION_OWNED_EXIT_NOTICE).not.toMatch(/digite para retomar o teclado/);
+    expect(MISSION_OWNED_EXIT_NOTICE).toMatch(/Digite para religar/);
+    expect(MISSION_OWNED_EXIT_NOTICE).toMatch(/rail/);
     expect(MISSION_OWNED_EXIT_NOTICE).not.toMatch(/ctrl/i);
     expect(STALE_AUTHORITY_SYNC_NOTICE).toMatch(/uma vez/);
     expect(STALE_AUTHORITY_UNLOCK_NOTICE).toMatch(/Digite para um shell/);

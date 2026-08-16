@@ -288,9 +288,9 @@ export function resolveMissionAgentLiveState(input: {
   if (sessionState === null) {
     if (taskState === 'failed') return 'failed';
     if (taskState === 'done') return 'done';
-    // Sem processo físico, tarefa "running" no banco é cadáver pós-restart —
-    // não é working. Idle transport (sessão viva e quieta) continua abaixo.
-    return 'stopped';
+    // Turno encerrado (exit 0) não é Interrompido. Sem processo o agente
+    // volta à fila — Overclock: só o operador para a missão.
+    return 'queued';
   }
 
   if (semantic === 'completed') {

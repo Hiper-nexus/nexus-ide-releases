@@ -171,7 +171,7 @@ describe('terminal output scheduler', () => {
       vi.advanceTimersByTime(16);
     }
     const joined = terminal.written.join('');
-    expect(joined).toContain('Nexus skipped hidden terminal output');
+    expect(joined).toContain('Nexus skipped hidden output');
     // CAN + SGR reset at start of warning keeps ANSI integrity after drop.
     expect(joined.includes('\x18\x1b[0m')).toBe(true);
 

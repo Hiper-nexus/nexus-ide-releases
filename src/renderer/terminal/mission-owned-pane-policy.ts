@@ -77,7 +77,7 @@ export function pruneWouldLeaveOperatorMute(
 }
 
 export const MISSION_OWNED_EXIT_NOTICE =
-  '[nexus] a missão ainda é dona deste pane — clique a missão no rail e use Retomar.';
+  '[nexus] turno encerrado. Digite para religar o Maestro — a missão continua no rail.';
 
 export const STALE_AUTHORITY_SYNC_NOTICE =
   '[nexus] contexto antigo detectado — sincronizando a missão uma vez pela autoridade principal…';

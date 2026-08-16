@@ -5,6 +5,8 @@ import { describe, expect, it } from 'vitest';
 import type { Mission, Squad, SquadAgent } from '../../shared/orch-types';
 import {
   agentPrompt,
+  decideFastLaneEmptyPaneAction,
+  decideFastLaneResumeAction,
   missionDesignContext,
   missionFastLaneEnabled,
 } from './mission-fast-lane';
@@ -183,5 +185,32 @@ describe('mission fast lane', () => {
     // sem squad (default null), o orquestrador ainda recebe instruções Overlock
     expect(prompt).toContain('ORQUESTRAÇÃO');
     expect(prompt).toContain('nexus_pane_spawn');
+  });
+});
+
+describe('fast-lane resume / empty-pane doctrine', () => {
+  it('não fecha a missão só porque os panes esvaziaram após o turno', () => {
+    expect(decideFastLaneEmptyPaneAction()).toBe('keep-running');
+  });
+
+  it('retry-kickoff respawna o Maestro quando a missão segue running sem sessão', () => {
+    expect(
+      decideFastLaneResumeAction({
+        status: 'running',
+        liveOrchestrator: false,
+      }),
+    ).toBe('respawn');
+    expect(
+      decideFastLaneResumeAction({
+        status: 'running',
+        liveOrchestrator: true,
+      }),
+    ).toBe('watch');
+    expect(
+      decideFastLaneResumeAction({
+        status: 'blocked',
+        liveOrchestrator: false,
+      }),
+    ).toBe('bootstrap');
   });
 });

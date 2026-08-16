@@ -364,6 +364,14 @@ export interface MissionDirectDeliveryDeps {
   ) => readonly OwnedAgentSessionInfo[];
   readonly deliverAgentPrompt: typeof deliverAgentPrompt;
   readonly emitMissionEvent: typeof emitMissionEvent;
+  /**
+   * Overclock/B2: comando do operador religa o Maestro em vez de falhar
+   * fechado quando a sessão ou o recibo de kickoff morreram no exit 0.
+   */
+  readonly resumeOrchestrator?: (
+    scope: ProjectExecutionScope,
+    missionId: string,
+  ) => Promise<void>;
 }
 
 const productionMissionDirectDeliveryDeps: MissionDirectDeliveryDeps = {
@@ -385,6 +393,7 @@ const productionMissionDirectDeliveryDeps: MissionDirectDeliveryDeps = {
     ],
   deliverAgentPrompt,
   emitMissionEvent,
+  resumeOrchestrator: resumeFastLaneMission,
 };
 
 interface MissionDirectAuthority {
@@ -593,22 +602,24 @@ function missionDirectAuthority(
             candidate.role === "orchestrator" &&
             candidate.paneId === agent.paneId,
         ) ?? null;
-    const approvedRuntime = mission.intentContract?.orchestratorRuntime;
-    if (!orchestratorPane || !approvedRuntime) {
+    if (!orchestratorPane) {
       throw new Error("mission direct orchestrator authority is incomplete");
     }
-    const mismatches = runtimeAuthorityMismatches(
-      scope,
-      mission,
-      orchestratorPane,
-      agent,
-      deps.getPaneRuntimeAuthorityBySession(orchestratorSessionId),
-      approvedRuntime,
-    );
-    if (mismatches.length > 0) {
-      throw new Error(
-        `mission direct orchestrator authority mismatch: ${mismatches[0]}`,
+    const approvedRuntime = mission.intentContract?.orchestratorRuntime;
+    if (approvedRuntime) {
+      const mismatches = runtimeAuthorityMismatches(
+        scope,
+        mission,
+        orchestratorPane,
+        agent,
+        deps.getPaneRuntimeAuthorityBySession(orchestratorSessionId),
+        approvedRuntime,
       );
+      if (mismatches.length > 0) {
+        throw new Error(
+          `mission direct orchestrator authority mismatch: ${mismatches[0]}`,
+        );
+      }
     }
     sessionId = orchestratorSessionId;
     pane = orchestratorPane;
@@ -643,6 +654,44 @@ function missionDirectAuthority(
     operatorDirectToWorker: operatorIsOrchestrator,
     authorityFingerprint,
   };
+}
+
+function isRecoverableMissionDirectFailure(
+  mission: Mission,
+  error: unknown,
+): boolean {
+  if (mission.status === "pending") return false;
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    message.includes("live orchestrator session") ||
+    message.includes("orchestrator session is not live") ||
+    message.includes("current kickoff receipt") ||
+    message.includes("orchestrator authority is incomplete") ||
+    (mission.status === "blocked" &&
+      message.includes("live current dispatch authority"))
+  );
+}
+
+async function resolveMissionDirectAuthority(
+  scope: ProjectExecutionScope,
+  stores: ProjectDomainStoreSuite,
+  command: MissionDirectCommand,
+  deps: MissionDirectDeliveryDeps,
+): Promise<MissionDirectAuthority> {
+  try {
+    return missionDirectAuthority(scope, stores, command, deps);
+  } catch (error) {
+    const mission = stores.missions.get(command.missionId);
+    if (
+      !mission ||
+      !deps.resumeOrchestrator ||
+      !isRecoverableMissionDirectFailure(mission, error)
+    ) {
+      throw error;
+    }
+    await deps.resumeOrchestrator(scope, command.missionId);
+    return missionDirectAuthority(scope, stores, command, deps);
+  }
 }
 
 function missionDirectPrompt(
@@ -690,7 +739,12 @@ export async function deliverMissionDirectInstruction(
   }
   const command = parsed;
   assertSafePtyPrompt(command.text);
-  const initial = missionDirectAuthority(scope, stores, command, deps);
+  const initial = await resolveMissionDirectAuthority(
+    scope,
+    stores,
+    command,
+    deps,
+  );
   const prompt = missionDirectPrompt(command, initial.operatorDirectToWorker);
   const acpSession = deps.getAcpDriverSession(initial.sessionId);
   if (acpSession) {

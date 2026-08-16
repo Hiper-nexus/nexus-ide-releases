@@ -5,8 +5,9 @@
 Data: 2026-08-16
 
 O Nexus passa a oferecer o GLM-5.3 que a Z.AI lançou em
-14 de agosto. Picker, default e roteador saem do 5.2;
-o env do Claude Code segue o guia oficial da Coding Plan.
+14 de agosto, e deixa de travar a missão no fim do turno:
+orientação religa o Maestro, pane vazio não interrompe, e
+Tentar início novamente respawna a sessão.
 
 - **GLM-5.3 no picker.** Default do adapter GLM/z.ai.
   5.2, 4.7, 4.6 e 4.5-air continuam na lista.
@@ -16,6 +17,24 @@ o env do Claude Code segue o guia oficial da Coding Plan.
   (janela de 1M); Haiku passa a `glm-4.7`.
 - **Catálogo do z.ai estava no 5.2.** O modelo novo não
   aparecia no picker nem no roteador.
+- **Missão não morre no fim do turno.** Worker com exit 0
+  e pane vazio não vira Interrompido nem Precisa de reparo.
+  Só o operador para.
+- **Handoff entregue não mente.** O Main não bloqueia a
+  missão com Handoff não entregue quando o worker já
+  submeteu o handoff — recupera o Maestro e mantém
+  a autoridade de dispatch.
+- **Tentar início novamente respawna.** O botão deixou
+  de no-opar com status running sem sessão. Digitar no
+  pane dispara o mesmo caminho.
+- **Orientação religa o Maestro.** Enviar orientação
+  (`siga` / `@todos`) respawna a sessão e o recibo de
+  kickoff em vez de falhar com dispatch authority.
+- **Teclado não morre no exit 0.** O pane deixa de
+  hibernar e de escrever o trio dona/pausado/cursor oco.
+  Digite para religar o Maestro.
+- **Aviso de backlog cabe no pane.** A linha
+  `Nexus skipped hidden output` não cola no prompt.
 
 ## 0.32.22 — Turno que fecha sozinho
 

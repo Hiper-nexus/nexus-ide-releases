@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -20,11 +21,15 @@ import { missionEngineForScope } from './mission-engine-registry';
  * nexus_mission_set_status). O motor só observa: se a missão foi concluída ou
  * bloqueada, encerra. Se o orquestrador morreu, verifica handoffs e decide.
  *
- * Zero tickRun. Zero wasBusy. Zero markerObserver. Zero nudge. Zero respawn.
+ * Zero tickRun. Zero wasBusy. Zero markerObserver. Zero nudge.
  * Zero parsing de PRONTO/BLOQUEADO do terminal. O contrato de handoff já é
  * entregue no prompt (withHandoffContract, variante C-194.1: curta → não
  * chama tool, o Main entrega verbatim via turn-end-handoff; longa/bloqueio →
  * nexus_handoff_submit com vocabulário canônico).
+ *
+ * Respawn do orquestrador NÃO é automático no watcher (Overclock: a missão
+ * só para se o operador mandar). É o caminho de Retomar / retry-kickoff
+ * quando o runtime morreu no meio do voo.
  */
 
 /** Intervalo de observação da missão. */
@@ -43,6 +48,45 @@ const watchers = new Map<string, WatcherState>();
 
 function watcherKey(scope: ProjectExecutionScope, missionId: string): string {
   return `${scope.rootRealPath}::${missionId}`;
+}
+
+function isLiveSessionState(state: string | null | undefined): boolean {
+  return state === 'busy' || state === 'idle' || state === 'spawning';
+}
+
+function findOrchestratorSnapshot(missionId: string) {
+  return listPaneSnapshots().find(
+    (pane) =>
+      pane.missionId === missionId &&
+      (pane.role === 'orchestrator' ||
+        pane.agentName?.toLowerCase().includes('orquestrador')),
+  );
+}
+
+function liveOrchestratorSessionId(
+  missionId: string,
+  fallbackSessionId?: string,
+): string | null {
+  const sessionId =
+    findOrchestratorSnapshot(missionId)?.sessionId ?? fallbackSessionId;
+  if (!sessionId) return null;
+  return isLiveSessionState(getSessionState(sessionId)) ? sessionId : null;
+}
+
+/** Empty panes after a turn are NOT mission end (Overclock parity). */
+export function decideFastLaneEmptyPaneAction(): 'keep-running' {
+  return 'keep-running';
+}
+
+/** retry-kickoff / resume: watch if Maestro is live, otherwise respawn. */
+export function decideFastLaneResumeAction(input: {
+  readonly status: Mission['status'];
+  readonly liveOrchestrator: boolean;
+}): 'watch' | 'respawn' | 'bootstrap' {
+  if (input.status === 'running') {
+    return input.liveOrchestrator ? 'watch' : 'respawn';
+  }
+  return 'bootstrap';
 }
 
 export function missionFastLaneEnabled(): boolean {
@@ -228,6 +272,22 @@ async function spawnAgentPane(
 
   if (role === 'orchestrator') {
     stores.missions.setOrchestratorSession(mission.id, spawn.sessionId);
+    const live = stores.missions.get(mission.id) ?? mission;
+    try {
+      stores.missions.recordKickoffAcceptance({
+        missionId: live.id,
+        intentVersion: live.intentVersion ?? 0,
+        orchestratorSessionId: spawn.sessionId,
+        promptHash: createHash('sha256')
+          .update(initialPrompt ?? '')
+          .digest('hex'),
+      });
+    } catch (error) {
+      console.warn(
+        '[fast-lane] recibo de kickoff não gravou:',
+        error instanceof Error ? error.message : error,
+      );
+    }
   }
 
   return {
@@ -316,59 +376,18 @@ async function tickWatcher(state: WatcherState): Promise<void> {
   const livePanes = missionPanes.filter(
     (p) => p.state === 'busy' || p.state === 'idle' || p.state === 'spawning',
   );
-  // Se não há NENHUM pane vivo nesta missão, avalia AGORA.
-  // Não espera timeout — a missão está visivelmente terminada.
+  // Workers encerrando o turno (exit 0 + pane vazio) NÃO fecha a missão.
+  // Overclock: só o operador para. O watcher solta o PTY morto; Retomar /
+  // retry-kickoff respawna o Maestro sem marcar Interrompido.
   if (livePanes.length === 0) {
-    try {
-      // Verifica handoffs dos workers como fallback.
-      const handoffs = stores.handoffs.list({
-        missionId: state.missionId,
-        includeDelivered: false,
-      });
-      const doneHandoffs = handoffs.filter((h) => h.status === 'success');
-      const blockedHandoffs = handoffs.filter(
-        (h) => h.status === 'blocked' || h.status === 'failed',
-      );
-
-      const engine = missionEngineForScope(state.scope);
-      if (doneHandoffs.length > 0 || blockedHandoffs.length > 0) {
-        const summaries = [...doneHandoffs, ...blockedHandoffs]
-          .map((h) => `${h.fromAgent ?? h.sessionId ?? 'worker'}: ${h.summary ?? ''}`)
-          .join('; ');
-        engine.completeVerified(state.scope, {
-          missionId: state.missionId,
-          expectedStatus: mission.status,
-          expectedIntentState: mission.intentState ?? 'executing',
-          expectedUpdatedAt: mission.updatedAt,
-          expectedIntentVersion: mission.intentVersion ?? 0,
-          learnings: mission.learnings ?? '',
-          result: {
-            outcome: blockedHandoffs.length > 0 ? 'partial' : 'success',
-            summary: `Missão concluída. Handoffs dos workers: ${summaries}`,
-            evidenceIds: [],
-            artifactRefs: [],
-          },
-        });
-      } else {
-        engine.blockTechnical(state.scope, {
-          missionId: state.missionId,
-          expectedStatus: mission.status,
-          expectedIntentState: mission.intentState ?? 'executing',
-          expectedUpdatedAt: mission.updatedAt,
-          expectedIntentVersion: mission.intentVersion ?? 0,
-          description:
-            'O orquestrador encerrou sem concluir a missão e nenhum worker ' +
-            'entregou handoff. Verifique os terminais e use Retomar.',
-        });
-      }
-    } catch (error) {
+    if (decideFastLaneEmptyPaneAction() === 'keep-running') {
       console.warn(
-        '[fast-lane] avaliação de handoffs falhou:',
-        error instanceof Error ? error.message : error,
+        `[fast-lane] nenhum pane vivo em ${state.missionId}; ` +
+          'missão segue running — Retomar respawna o orquestrador',
       );
+      stopWatcher(state.scope, state.missionId);
+      return;
     }
-    stopWatcher(state.scope, state.missionId);
-    return;
   }
 
   // Orquestrador morreu mas ainda há panes vivos e o timeout não passou →
@@ -407,6 +426,40 @@ function startWatcher(
   watchers.set(key, state);
 }
 
+async function respawnFastLaneOrchestrator(
+  scope: ProjectExecutionScope,
+  mission: Mission,
+): Promise<void> {
+  stopWatcher(scope, mission.id);
+  const squad = mission.squadId ? getSquad(mission.squadId) : null;
+  const roster = orderedRoster(squad?.agents ?? []);
+  const orchestrator = roster.find((agent) => agent.category === 'orchestrator');
+  if (!orchestrator) {
+    throw new Error('o squad não tem um orquestrador definido');
+  }
+  const prompt = agentPrompt(
+    orchestrator,
+    mission,
+    roster.map((agent) => agent.agentName),
+    true,
+    missionDesignContext(scope.rootRealPath),
+    squad,
+  );
+  const spawned = await spawnAgentPane(scope, mission, orchestrator, prompt);
+  if ('error' in spawned) {
+    throw new Error(`orquestrador não reabriu: ${spawned.error}`);
+  }
+  orchPanes.set(mission.id, {
+    paneId: spawned.paneId,
+    sessionId: spawned.sessionId,
+    adapterId: spawned.adapterId,
+    cwd: scope.rootRealPath,
+    title: orchestrator.agentName,
+    agentName: orchestrator.agentName,
+  });
+  startWatcher(scope, mission.id, spawned.sessionId);
+}
+
 // ── Bootstrap ────────────────────────────────────────────────────────────
 
 /**
@@ -425,19 +478,18 @@ export async function fastLaneBootstrap(
   const mission = stores.missions.get(missionId);
   if (!mission) throw new Error('missão não encontrada para a Via Rápida');
 
-  const key = watcherKey(scope, missionId);
-  if (watchers.has(key)) return; // idempotente
+  const liveSession = liveOrchestratorSessionId(
+    missionId,
+    mission.orchestratorSessionId,
+  );
+  if (watchers.has(watcherKey(scope, missionId)) && liveSession) return;
 
   if (mission.status === 'running') {
-    // Já está rodando — só religa o watcher.
-    const orchPane = listPaneSnapshots().find(
-      (p) =>
-        p.missionId === missionId &&
-        (p.role === 'orchestrator' || p.agentName?.toLowerCase().includes('orquestrador')),
-    );
-    if (orchPane?.sessionId) {
-      startWatcher(scope, missionId, orchPane.sessionId);
+    if (liveSession) {
+      startWatcher(scope, missionId, liveSession);
+      return;
     }
+    await respawnFastLaneOrchestrator(scope, mission);
     return;
   }
 
@@ -531,17 +583,20 @@ export async function resumeFastLaneMission(
   const mission = stores.missions.get(missionId);
   if (!mission) throw new Error('missão não encontrada para retomar');
 
-  // Se já está running, só garante que o watcher está ligado.
-  if (mission.status === 'running') {
-    const orchPane = listPaneSnapshots().find(
-      (p) =>
-        p.missionId === missionId &&
-        (p.role === 'orchestrator' ||
-          p.agentName?.toLowerCase().includes('orquestrador')),
-    );
-    if (orchPane?.sessionId) {
-      startWatcher(scope, missionId, orchPane.sessionId);
-    }
+  const liveSession = liveOrchestratorSessionId(
+    missionId,
+    mission.orchestratorSessionId,
+  );
+  const action = decideFastLaneResumeAction({
+    status: mission.status,
+    liveOrchestrator: Boolean(liveSession),
+  });
+  if (action === 'watch' && liveSession) {
+    startWatcher(scope, missionId, liveSession);
+    return;
+  }
+  if (action === 'respawn') {
+    await respawnFastLaneOrchestrator(scope, mission);
     return;
   }
 
@@ -565,7 +620,8 @@ export async function resumeFastLaneMission(
       // Falhou o resumeTechnical, mas o bootstrap ainda pode funcionar
       // se a missão já estiver em running.
     }
-    await fastLaneBootstrap(scope, missionId);
+    const resumed = stores.missions.get(missionId) ?? mission;
+    await respawnFastLaneOrchestrator(scope, resumed);
     return;
   }
 
