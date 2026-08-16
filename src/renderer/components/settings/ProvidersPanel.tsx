@@ -201,7 +201,7 @@ function CustomModels({ provider }: { provider: ProviderSettingsInfo }) {
         <input
           className="settings-input"
           value={draft}
-          placeholder="ex.: glm-5.2, gpt-5.6, claude-sonnet-5…"
+          placeholder="ex.: glm-5.3, gpt-5.6, claude-sonnet-5…"
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && add()}
         />

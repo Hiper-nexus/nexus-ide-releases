@@ -53,11 +53,13 @@
   "models": {
     "flag": "--model",
     "list": [
+      "glm-5.3",
       "glm-5.2",
+      "glm-4.7",
       "glm-4.6",
       "glm-4.5-air"
     ],
-    "default": "glm-5.2"
+    "default": "glm-5.3"
   },
   "promptInjection": {
     "method": "arg",

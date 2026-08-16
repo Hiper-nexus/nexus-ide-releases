@@ -141,13 +141,25 @@
       ]
     },
     "glm": {
-      "default": "glm-5.2",
+      "default": "glm-5.3",
       "models": [
+        {
+          "id": "glm-5.3",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "remote"
+        },
         {
           "id": "glm-5.2",
           "availability": "cheap",
           "costTier": "low",
           "source": "nexus-eval"
+        },
+        {
+          "id": "glm-4.7",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "remote"
         },
         {
           "id": "glm-4.6",

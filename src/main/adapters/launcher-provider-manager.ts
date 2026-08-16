@@ -35,13 +35,15 @@ export interface UpstreamProvider {
 }
 
 // Ported verbatim from the launcher's declare -A PROVIDER_* maps.
+// GLM Coding Plan mapping from Z.AI's latest-model guide (2026-08-14):
+// https://docs.z.ai/devpack/latest-model — sonnet/opus use the 1M route.
 const GLM_EXTRA: Record<string, string> = {
   CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
   API_TIMEOUT_MS: '600000',
   CLAUDE_CODE_AUTO_COMPACT_WINDOW: '1000000',
-  ANTHROPIC_DEFAULT_HAIKU_MODEL: 'glm-4.5-air',
-  ANTHROPIC_DEFAULT_SONNET_MODEL: 'glm-5.2',
-  ANTHROPIC_DEFAULT_OPUS_MODEL: 'glm-5.2',
+  ANTHROPIC_DEFAULT_HAIKU_MODEL: 'glm-4.7',
+  ANTHROPIC_DEFAULT_SONNET_MODEL: 'glm-5.3[1m]',
+  ANTHROPIC_DEFAULT_OPUS_MODEL: 'glm-5.3[1m]',
 };
 
 const THIRD_PARTY_EXTRA: Record<string, string> = {

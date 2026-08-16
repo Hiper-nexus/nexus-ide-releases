@@ -97,6 +97,14 @@ describe('getRichModelMetadata — um modelo real por adapter', () => {
     expect(meta?.contextWindow).toBe(204_800);
   });
 
+  it('glm: resolve janela de 1M de glm-5.3 via zai', () => {
+    const meta = getRichModelMetadata('glm', 'glm-5.3');
+    expect(meta).not.toBeNull();
+    expect(meta?.catalogProvider).toBe('zai');
+    expect(meta?.contextWindow).toBe(1_000_000);
+    expect(meta?.reasoning).toBe(true);
+  });
+
   it('kimi: resolve id com prefixo kimi-code/kimi-for-coding', () => {
     const meta = getRichModelMetadata('kimi', 'kimi-code/kimi-for-coding');
     expect(meta).not.toBeNull();

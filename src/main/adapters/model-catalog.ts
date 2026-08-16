@@ -110,8 +110,11 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
       ],
     },
     glm: {
+      default: 'glm-5.3',
       models: [
+        { id: 'glm-5.3', availability: 'cheap', costTier: 'low', source: 'bundled' },
         { id: 'glm-5.2', availability: 'cheap', costTier: 'low', source: 'bundled' },
+        { id: 'glm-4.7', availability: 'cheap', costTier: 'low', source: 'bundled' },
         { id: 'glm-4.5-air', availability: 'cheap', costTier: 'low', source: 'bundled' },
       ],
     },

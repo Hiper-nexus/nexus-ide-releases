@@ -136,6 +136,16 @@ describe('published catalog JSON', () => {
     }
   });
 
+  it('ships GLM-5.3 as the z.ai default and keeps 5.2 selectable', () => {
+    const glm = PUBLISHED_MODEL_CATALOG.adapters?.glm;
+    const ids = glm?.models?.map((model) => model.id) ?? [];
+
+    expect(glm?.default).toBe('glm-5.3');
+    expect(ids).toEqual(
+      expect.arrayContaining(['glm-5.3', 'glm-5.2', 'glm-4.7']),
+    );
+  });
+
   it('keeps the AGY published default aligned with its current 3.7 family', () => {
     const agy = PUBLISHED_MODEL_CATALOG.adapters?.agy;
     const ids = agy?.models?.map((model) => model.id) ?? [];
@@ -375,6 +385,9 @@ describe('refreshRemoteModelCatalog', () => {
       'api-only',
     );
     // Builtin entries for other adapters still present after merge.
+    expect(modelCatalogInfo(catalog, 'glm', 'glm-5.3')?.availability).toBe(
+      'cheap',
+    );
     expect(modelCatalogInfo(catalog, 'glm', 'glm-5.2')?.availability).toBe(
       'cheap',
     );

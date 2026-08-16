@@ -112,7 +112,7 @@ describe('routeTask', () => {
 
   it('borrows from another tier when the target tier has nothing installed', () => {
     // Only glm installed: glm isn't a trivial/easy candidate, so an easy task
-    // borrows it from the medium tier (where GLM 5.2 leads).
+    // borrows it from the medium tier (where GLM 5.3 leads).
     const decision = routeTask(
       'corrigir typo no README do projeto agora',
       adapters('glm'),
@@ -121,7 +121,7 @@ describe('routeTask', () => {
     expect(decision!.reason).toContain('melhor opção instalada');
   });
 
-  it('leads the medium tier with GLM 5.2 (cheap + strong)', () => {
+  it('leads the medium tier with GLM 5.3 (cheap + strong)', () => {
     const decision = routeTask(
       'tarefa de complexidade média',
       adapters('claude', 'glm', 'codex'),
@@ -129,7 +129,7 @@ describe('routeTask', () => {
       'medium',
     );
     expect(decision!.adapterId).toBe('glm');
-    expect(decision!.model).toBe('glm-5.2');
+    expect(decision!.model).toBe('glm-5.3');
   });
 
   it('uses the configured Kimi model id that exists in kimi-code config.toml', () => {

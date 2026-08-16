@@ -5,7 +5,7 @@ import path from 'node:path';
 /**
  * User-added custom model ids per adapter. Providers ship a curated list, but a
  * CLI can offer more (or newer) models than we bundle — this lets the user add
- * any model id (e.g. "glm-5.2", "gpt-5.6") and have it appear everywhere the
+ * any model id (e.g. "glm-5.3", "gpt-5.6") and have it appear everywhere the
  * adapter's models show (provider settings, Modo Livre picker, squad roster).
  *
  * Standalone (no imports from the registry/config) so the adapter registry can

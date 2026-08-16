@@ -1953,6 +1953,23 @@
         "text"
       ]
     },
+    "glm-5.3": {
+      "id": "glm-5.3",
+      "name": "GLM-5.3",
+      "api": "anthropic-messages",
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "contextWindow": 1000000,
+      "maxTokens": 131072,
+      "reasoning": true,
+      "input": [
+        "text"
+      ]
+    },
     "glm-5v-turbo": {
       "id": "glm-5v-turbo",
       "name": "GLM-5V-Turbo",
@@ -2113,6 +2130,23 @@
     "glm-5.2": {
       "id": "glm-5.2",
       "name": "GLM-5.2",
+      "api": "openai-completions",
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "contextWindow": 1000000,
+      "maxTokens": 131072,
+      "reasoning": true,
+      "input": [
+        "text"
+      ]
+    },
+    "glm-5.3": {
+      "id": "glm-5.3",
+      "name": "GLM-5.3",
       "api": "openai-completions",
       "cost": {
         "input": 0,

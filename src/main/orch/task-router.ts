@@ -89,7 +89,7 @@ export type RankedRouteEntry = {
  * Model ids match the builtin adapter catalogs; a missing/uninstalled adapter
  * (or GLM without its z.ai key) falls through to the next candidate.
  *
- * GLM (z.ai, model 5.2) is a first-class `glm` adapter now — strong AND cheap,
+ * GLM (z.ai, model 5.3) is a first-class `glm` adapter now — strong AND cheap,
  * so it LEADS the medium tier and is an early option on hard. It runs on the
  * Claude binary pointed at the z.ai endpoint (see glm.json). LongCat
  * (Meituan, 1M ctx, agentic) follows the same pattern (longcat.json) and sits
@@ -111,7 +111,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'claude', model: 'claude-sonnet-4-6', effort: 'low' },
   ],
   medium: [
-    { adapterId: 'glm', model: 'glm-5.2', effort: 'medium' },
+    { adapterId: 'glm', model: 'glm-5.3', effort: 'medium' },
     { adapterId: 'longcat', model: 'LongCat-2.0', effort: 'medium' },
     { adapterId: 'kimi', model: 'kimi-code/k3', effort: 'medium' },
     { adapterId: 'grok', model: 'grok-4.1', effort: 'medium' },
@@ -123,7 +123,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
   hard: [
     { adapterId: 'claude', model: 'claude-opus-5', effort: 'high' },
     { adapterId: 'claude', model: 'claude-opus-4-8', effort: 'high' },
-    { adapterId: 'glm', model: 'glm-5.2', effort: 'high' },
+    { adapterId: 'glm', model: 'glm-5.3', effort: 'high' },
     { adapterId: 'longcat', model: 'LongCat-2.0', effort: 'high' },
     { adapterId: 'codex', model: 'gpt-5.6-terra', effort: 'high' },
     { adapterId: 'codex', model: 'gpt-5.6-sol', effort: 'high' },
@@ -136,7 +136,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'claude', model: 'claude-opus-5', effort: 'xhigh' },
     { adapterId: 'claude', model: 'claude-opus-4-8', effort: 'xhigh' },
     { adapterId: 'codex', model: 'gpt-5.6-sol', effort: 'xhigh' },
-    { adapterId: 'glm', model: 'glm-5.2', effort: 'xhigh' },
+    { adapterId: 'glm', model: 'glm-5.3', effort: 'xhigh' },
     // Diversidade também no crítico: sem estes, uma máquina sem claude/codex/
     // glm empresta de outro tier e o worker crítico colapsa num só provider.
     // agy antes de kimi preserva a preferência efetiva anterior (o empréstimo
