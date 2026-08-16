@@ -13,6 +13,87 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.32.24',
+  date: '2026-08-16',
+  codename: 'Missão ininterrupta + troca de conta automática',
+  summary:
+    'A missão vai do início ao fim sem travar: o watcher nunca ' +
+    'interrompe sozinho, respawna o orquestrador com orçamento, ' +
+    'o restart do app ressuscita missões running, e worker de ' +
+    'missão que bate limite de conta troca sozinho para a conta ' +
+    'reserva e continua trabalhando.',
+  highlights: [
+    {
+      title: 'Missão ininterrupta (doutrina Overclock)',
+      detail:
+        'Todos os panes morreram não fecha a missão: o orquestrador ' +
+        'é respawnado com nota de continuidade (até 3 tentativas ' +
+        'por episódio) e consome os handoffs pendentes. Só o ' +
+        'operador para.',
+    },
+    {
+      title: 'Troca de conta automática em missão',
+      detail:
+        'Worker de missão que bate limite (quota/rate-limit/auth) ' +
+        'troca sozinho para a próxima conta do mesmo provider e ' +
+        'continua a tarefa de onde parou. Cadastre 2+ contas em ' +
+        'Configurações → Contas.',
+    },
+    {
+      title: 'Restart não é mais zumbi',
+      detail:
+        'Reabrir o app ressuscita missões running (respawn ou ' +
+        'watcher) a cada escopo aberto, e o servidor MCP faz bind ' +
+        'antes do renderer — acaba o MCP startup interrupted.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Toast Handoff não entregue extinto na raiz',
+      detail:
+        'Falha de entrega virava bloqueio + marcador venenoso na ' +
+        'descrição. Agora é recuperação de runtime + outbox; o ' +
+        'rebind re-enfileira entregas em vez de bloquear; e o dedup ' +
+        'do fechamento mecânico conta por encarnação física com ' +
+        'fail-closed — nunca mais handoff duplicado.',
+    },
+    {
+      title: 'Split-brain de intent curado',
+      detail:
+        'Write status-only deixava intent bloqueado em missão viva, ' +
+        'matando a autoridade de dispatch (o erro em inglês ao ' +
+        'Enviar orientação). Agora a reativação normaliza o intent ' +
+        'e a orientação cura a linha antes de recusar.',
+    },
+    {
+      title: 'Cards Interrompido viram Na fila',
+      detail:
+        'Turno encerrado sem processo físico é fila para o ' +
+        'orquestrador re-disparar — não interrupção.',
+    },
+    {
+      title: 'Tecla em pane morto religa tudo',
+      detail:
+        'Digitar em pane de missão morta revive a missão e religa ' +
+        'a própria CLI na mesma conta — acabou o cursor oco.',
+    },
+    {
+      title: 'Rodapé não corta mais',
+      detail:
+        'O aviso de backlog apaga a linha do composer antes de ' +
+        'escrever (fim do "> [Nexus skipped hidden").',
+    },
+    {
+      title: 'Aviso loop_control do Kimi é upstream',
+      detail:
+        'O próprio Kimi CLI escreve max_retries_per_step no config ' +
+        'dele e o binário novo reclama. O Nexus não edita config de ' +
+        'terceiro; nada quebrou.',
+    },
+  ],
+};
+
+export const RELEASE_03223: AppRelease = {
   version: '0.32.23',
   date: '2026-08-16',
   codename: 'GLM-5.3 no z.ai',
@@ -41,53 +122,7 @@ export const CURRENT_RELEASE: AppRelease = {
         'passa a glm-4.7.',
     },
   ],
-  fixes: [
-    {
-      title: 'Catálogo do z.ai estava no 5.2',
-      detail:
-        'O modelo novo da Z.AI não aparecia no picker nem no roteador. ' +
-        'O default passa a ser 5.3; 5.2 continua na lista.',
-    },
-    {
-      title: 'Missão não morre no fim do turno',
-      detail:
-        'Worker com exit 0 e pane vazio deixava de ser Interrompido ' +
-        'e de receber Precisa de reparo. A missão segue running; ' +
-        'só o operador para.',
-    },
-    {
-      title: 'Handoff entregue não mente',
-      detail:
-        'Se o worker já imprimiu o handoffId, o Main não bloqueia ' +
-        'a missão com Handoff não entregue — pede recuperação e ' +
-        'mantém a autoridade de dispatch.',
-    },
-    {
-      title: 'Tentar início novamente respawna',
-      detail:
-        'O botão no-opava quando o status ainda era running sem ' +
-        'sessão. Agora reabre o orquestrador. Digitar no pane ' +
-        'dispara o mesmo caminho.',
-    },
-    {
-      title: 'Orientação religa o Maestro',
-      detail:
-        'Enviar orientação após o exit 0 respawna a sessão e o ' +
-        'recibo de kickoff em vez de falhar com dispatch authority.',
-    },
-    {
-      title: 'Teclado não morre no exit 0',
-      detail:
-        'O pane deixa de hibernar e de escrever o trio dona / ' +
-        'pausado / cursor oco. Digite para religar o Maestro.',
-    },
-    {
-      title: 'Aviso de backlog cabe no pane',
-      detail:
-        'A linha Nexus skipped hidden output não cola mais no ' +
-        'prompt nem some cortada no rodapé estreito.',
-    },
-  ],
+  fixes: [],
 };
 
 export const RELEASE_03100: AppRelease = {

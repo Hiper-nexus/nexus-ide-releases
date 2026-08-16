@@ -1,5 +1,60 @@
 # Changelog
 
+## 0.32.24 — Missão ininterrupta + troca de conta automática
+
+Data: 2026-08-16
+
+A missão vai do início ao fim sem travar: o watcher nunca
+interrompe sozinho, respawna o orquestrador com orçamento,
+o restart do app ressuscita missões running, e worker de
+missão que bate limite de conta troca sozinho para a conta
+reserva e continua trabalhando.
+
+- **Missão ininterrupta (doutrina Overclock).** Todos os panes
+  morrerem não fecha a missão: o orquestrador é respawnado com
+  nota de continuidade (até 3 tentativas por episódio, recarregado
+  por atividade real) e consome os handoffs pendentes. O watcher
+  NUNCA mais bloqueia nem completa a missão sozinho — só o
+  operador para.
+- **Troca de conta automática em missão.** Worker de missão
+  (main-owned/headless) que bate limite de quota/rate-limit/auth
+  agora troca sozinho para a próxima conta do mesmo provider: o
+  Main mata a sessão exausta, coloca a conta em cooldown e
+  respawna o MESMO agente da MESMA missão com a conta reserva
+  pinada e nota de continuidade. Cadastre 2+ contas em
+  Configurações → Contas (funciona para qualquer CLI).
+- **Restart não é mais zumbi.** Reabrir o app varre as missões
+  running de cada escopo aberto: runtime vivo rearma o watcher,
+  runtime morto respawna o orquestrador. O servidor MCP embutido
+  faz bind antes de o renderer restaurar panes — acaba o
+  "MCP startup interrupted: nexus_…/codex_apps" no boot.
+- **Toast "Handoff não entregue" extinto na raiz.** Falha de
+  entrega é transporte, não missão: vira recuperação de runtime +
+  outbox. O rebind re-enfileira entregas para a sessão nova em
+  vez de bloquear (fim do NEXUS_HANDOFF_REBIND_BLOCKED). E o dedup
+  do fechamento mecânico C-194.1 agora conta handoffs por
+  encarnação física (sobrevive a rebind de sessão) com fail-closed
+  — o handoff duplicado `[auto]` que envenenava a fila de entrega
+  não nasce mais.
+- **Split-brain de intent curado.** Write status-only de reativação
+  deixava intent `blocked_*` numa missão viva, matando
+  `canDispatchWorkers` (o erro em inglês ao Enviar orientação) e
+  fazendo o reconciler de 1s assassinar runtimes respawnados.
+  Agora a reativação normaliza para `executing` e a orientação
+  cura a linha persistida antes de recusar.
+- **Cards "Interrompido" viram "Na fila".** Turno encerrado sem
+  processo físico é fila para o orquestrador re-disparar —
+  interrupção era o rótulo errado.
+- **Tecla em pane morto religa tudo.** Digitar em pane de missão
+  morta revive a missão (retry-kickoff respawna o orquestrador) e
+  religa a própria CLI do pane na mesma conta.
+- **Rodapé não corta mais.** O aviso de backlog apaga a linha do
+  composer antes de escrever (fim do `> [Nexus skipped hidden`).
+- **Aviso `loop_control` é upstream.** O próprio Kimi CLI escreve
+  `max_retries_per_step` no config dele dentro do home gerenciado
+  e o binário novo dele reclama. O Nexus não edita config de
+  terceiro; nada quebrou.
+
 ## 0.32.23 — GLM-5.3 no z.ai
 
 Data: 2026-08-16
