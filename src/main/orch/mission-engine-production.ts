@@ -546,16 +546,50 @@ function resolveDirectWorkerSession(
   return match;
 }
 
+/**
+ * Cura in-place o split-brain de linha persistida (status running + intent
+ * blocked_*): writes status-only legados deixaram o cadáver de intent que
+ * mata a autoridade de dispatch. A reativação passa pelo mission-store.update
+ * — o guard de lá normaliza o intent para 'executing' (semântica do Retomar).
+ * Best-effort: sem update disponível (harness/migração), devolve a linha como
+ * está e o guard de autoridade decide o resto.
+ */
+function healSplitBrainMissionRow(
+  stores: ProjectDomainStoreSuite,
+  mission: NonNullable<ReturnType<ProjectDomainStoreSuite["missions"]["get"]>>,
+): NonNullable<ReturnType<ProjectDomainStoreSuite["missions"]["get"]>> {
+  const isSplit =
+    mission.status === "running" &&
+    (mission.intentState === "blocked_technical" ||
+      mission.intentState === "blocked_user");
+  if (!isSplit) return mission;
+  const update = (
+    stores.missions as unknown as {
+      update?: (
+        id: string,
+        patch: { readonly status: "running" },
+      ) => typeof mission | null;
+    }
+  ).update;
+  if (typeof update !== "function") return mission;
+  try {
+    return update.call(stores.missions, mission.id, { status: "running" }) ?? mission;
+  } catch {
+    return mission;
+  }
+}
+
 function missionDirectAuthority(
   scope: ProjectExecutionScope,
   stores: ProjectDomainStoreSuite,
   command: MissionDirectCommand,
   deps: MissionDirectDeliveryDeps,
 ): MissionDirectAuthority {
-  const mission = stores.missions.get(command.missionId);
-  if (!mission || mission.id !== command.missionId) {
+  const stored = stores.missions.get(command.missionId);
+  if (!stored || stored.id !== command.missionId) {
     throw new Error("mission direct requires a current mission");
   }
+  const mission = healSplitBrainMissionRow(stores, stored);
   if (!hasCurrentDispatchAuthority(mission)) {
     throw new Error("mission direct requires live current dispatch authority");
   }

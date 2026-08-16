@@ -2185,4 +2185,37 @@ describe('scoped mission store', () => {
     reopened.setStatus('mission-ralph', 'running');
     expect(reopened.getDriveRuntimeState('mission-ralph')).toBeNull();
   });
+
+  it('write status-only de reativação nunca deixa intent de bloqueio (split-brain mata a autoridade de dispatch)', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope({ checkoutId: 'split-brain-guard' });
+    const store = createScopedMissionStore(runtimeManager, scope, {
+      idFactory: () => 'mission-split',
+    });
+    store.create({
+      title: 'Split brain',
+      orchestratorSessionId: 'session-1',
+    });
+    // Bloqueio técnico legítimo (os dois campos juntos).
+    store.update('mission-split', {
+      status: 'blocked',
+      intentState: 'blocked_technical',
+    });
+    expect(store.get('mission-split')).toMatchObject({
+      status: 'blocked',
+      intentState: 'blocked_technical',
+    });
+
+    // Reativação por write status-only — o caminho exato do
+    // nexus_mission_set_status / delegation-supervisor / resume parcial.
+    store.setStatus('mission-split', 'running');
+
+    // A missão viva herda intent executável (semântica do Retomar), não o
+    // cadáver blocked_technical que mata canDispatchWorkers e faz o
+    // terminator de 1s assassinar qualquer runtime respawnado.
+    expect(store.get('mission-split')).toMatchObject({
+      status: 'running',
+      intentState: 'executing',
+    });
+  });
 });

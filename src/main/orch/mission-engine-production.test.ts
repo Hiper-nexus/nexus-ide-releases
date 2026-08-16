@@ -195,6 +195,10 @@ function makeHarness(options: {
     sessionId: string,
   ) => OwnedAgentSessionInfo | null;
   readonly resumeOrchestrator?: MissionDirectDeliveryDeps['resumeOrchestrator'];
+  readonly missionsUpdate?: (
+    id: string,
+    patch: { readonly status: Mission['status'] },
+  ) => Mission | null;
 }): Harness {
   const deliverSpy = vi.fn(async () => true);
   const emitSpy = vi.fn(() => true);
@@ -202,6 +206,9 @@ function makeHarness(options: {
     missions: {
       get: () => options.mission,
       hasCurrentKickoffAcceptance: () => true,
+      ...(options.missionsUpdate
+        ? { update: options.missionsUpdate }
+        : {}),
     },
     missionPanes: {
       list: () => (options.panes ?? []).slice(),
@@ -348,6 +355,29 @@ describe('mission direct — operador como orquestrador', () => {
     await expect(
       deliverMissionDirectInstruction(makeScope(), stores, directCommand(), deps),
     ).rejects.toThrow('mission direct requires live current dispatch authority');
+  });
+
+  it('split-brain running+blocked_technical é CURADO antes de recusar a orientação do operador', async () => {
+    const squad = makeSquad();
+    const mission = makeApprovedMission(squad, {
+      status: 'running',
+      intentState: 'blocked_technical',
+    });
+    const { stores, deps, deliverSpy } = makeHarness({
+      mission,
+      squad,
+      workers: [makeWorkerSession()],
+      panes: [makeWorkerPane()],
+      missionsUpdate: (_id, patch) => ({
+        ...mission,
+        ...patch,
+        // O guard do mission-store.update normaliza o intent na reativação.
+        intentState: patch.status === 'running' ? 'executing' : mission.intentState,
+      }),
+    });
+
+    await deliverMissionDirectInstruction(makeScope(), stores, directCommand(), deps);
+    expect(deliverSpy).toHaveBeenCalled();
   });
 
   it('sem worker vivo → rejeitado', async () => {

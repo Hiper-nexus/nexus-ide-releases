@@ -22,6 +22,7 @@ const baseFacts = {
   replyText: 'Feito: testes verdes e commit criado.',
   handoffsSinceTurnStart: 0,
   isRedeliveryOfProcessedStop: false,
+  dedupUnavailable: false,
 };
 
 describe('decideTurnEndClosure (matriz de guardas)', () => {

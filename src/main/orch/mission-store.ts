@@ -1677,6 +1677,21 @@ export class ScopedMissionStore {
         });
         if (blockingIntentState) {
           next = { ...next, intentState: blockingIntentState };
+        } else if (
+          next.status !== 'blocked' &&
+          next.status !== 'failed' &&
+          next.status !== 'done' &&
+          (next.intentState === 'blocked_technical' ||
+            next.intentState === 'blocked_user')
+        ) {
+          // Split-brain guard (2026-08-16): um write status-only de reativação
+          // (nexus_mission_set_status, delegation-supervisor, resume parcial)
+          // não pode deixar intent de bloqueio numa missão viva —
+          // hasCurrentDispatchAuthority morre (canDispatchWorkers=false) e o
+          // reconciler de 1s mata qualquer runtime respawnado. Missão viva
+          // que herda intent de bloqueio volta como 'executing' (a mesma
+          // semântica documentada do Retomar).
+          next = { ...next, intentState: 'executing' };
         }
         if (patch.intentContract === null) {
           delete next.intentContract;

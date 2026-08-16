@@ -120,8 +120,6 @@ export const HANDOFF_PROMPT_SETTLE_MS = 500;
 /** Second CR if the session is still injectable-idle after the first submit. */
 export const HANDOFF_ENTER_RETRY_MS = 400;
 const MAX_DELIVERY_ATTEMPTS = MAX_HANDOFF_DELIVERY_ATTEMPTS;
-const HANDOFF_DELIVERY_CTA =
-  'Handoff não entregue. Clique em Reabrir para retomar o orquestrador e reenviar a entrega.';
 const RUNTIME_RECOVERY_RETRY_BASE_MS = 5_000;
 const RUNTIME_RECOVERY_RETRY_MAX_MS = 60_000;
 
