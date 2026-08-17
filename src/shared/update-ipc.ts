@@ -48,4 +48,12 @@ export interface UpdateState {
   checkedAt?: number;
   /** false em dev (não empacotado): checa, mas não instala. */
   canInstall: boolean;
+  /**
+   * Progresso do download da atualização (fase 'downloading').
+   * Ausente = tamanho desconhecido (a UI mostra apenas "baixando").
+   */
+  downloadProgress?: {
+    receivedBytes: number;
+    totalBytes?: number;
+  };
 }

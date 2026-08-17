@@ -61,6 +61,22 @@ function logRendererError(message: string, err: unknown): void {
   console.error(`[update] ${message}`, err);
 }
 
+function formatMib(bytes: number): string {
+  return `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
+}
+
+function getDownloadLabel(progress: UpdateState['downloadProgress']): string {
+  if (!progress) return 'baixando';
+  if (progress.totalBytes && progress.totalBytes > 0) {
+    const pct = Math.min(
+      100,
+      Math.floor((progress.receivedBytes / progress.totalBytes) * 100),
+    );
+    return `baixando ${pct}%`;
+  }
+  return `baixando ${formatMib(progress.receivedBytes)}`;
+}
+
 function getUpdateButtonLabel(state: UpdateState): string {
   switch (state.phase) {
     case 'unsupported':
@@ -74,7 +90,7 @@ function getUpdateButtonLabel(state: UpdateState): string {
     case 'available':
       return `v${state.available?.version ?? 'nova'}`;
     case 'downloading':
-      return 'baixando';
+      return getDownloadLabel(state.downloadProgress);
     case 'ready':
       return 'reiniciar';
     case 'error':
@@ -94,8 +110,16 @@ function getUpdateButtonTitle(state: UpdateState): string {
       return `NexusIDE v${state.currentVersion} está atualizado — verificar novamente`;
     case 'available':
       return `NexusIDE v${state.available?.version ?? 'nova'} disponível`;
-    case 'downloading':
+    case 'downloading': {
+      const progress = state.downloadProgress;
+      if (progress?.totalBytes) {
+        return `Atualização baixando — ${formatMib(progress.receivedBytes)} de ${formatMib(progress.totalBytes)}`;
+      }
+      if (progress) {
+        return `Atualização baixando — ${formatMib(progress.receivedBytes)} recebidos`;
+      }
       return 'Atualização baixando';
+    }
     case 'ready':
       return 'Atualização pronta — reiniciar para aplicar';
     case 'error':

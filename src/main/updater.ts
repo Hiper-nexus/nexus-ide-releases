@@ -180,14 +180,40 @@ async function fetchPublicJson(
   }
 }
 
-/** Baixa um asset público (redirects seguidos pelo fetch) em stream p/ disco. */
-async function downloadPublicAsset(
+/** Janela sem NENHUM byte novo que caracteriza rede travada (não wall-clock). */
+export const DOWNLOAD_STALL_MS = 90_000;
+
+export interface DownloadProgress {
+  readonly receivedBytes: number;
+  readonly totalBytes?: number;
+}
+
+/**
+ * Baixa um asset público (redirects seguidos pelo fetch) em stream p/ disco.
+ *
+ * Robustez 0.32.25 (a noite do print: "baixando…" pendurado por horas sem
+ * erro): conta bytes e reporta progresso, e arma um watchdog de STALL que
+ * aborta quando a rede para de entregar — timer rearmado a cada chunk, então
+ * mede progresso, não tempo de parede. O deadline total continua valendo.
+ */
+export async function downloadPublicAsset(
   url: string,
   destination: string,
   timeoutMs: number,
+  onProgress?: (progress: DownloadProgress) => void,
 ): Promise<void> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const deadline = setTimeout(() => controller.abort(), timeoutMs);
+  let stallTimer: ReturnType<typeof setTimeout> | null = null;
+  let receivedBytes = 0;
+  let abortedByStall = false;
+  const armStallWatchdog = (): void => {
+    if (stallTimer) clearTimeout(stallTimer);
+    stallTimer = setTimeout(() => {
+      abortedByStall = true;
+      controller.abort();
+    }, DOWNLOAD_STALL_MS);
+  };
   try {
     const response = await fetch(url, {
       headers: { 'user-agent': 'NexusIDE-updater' },
@@ -196,14 +222,42 @@ async function downloadPublicAsset(
     if (!response.ok || !response.body) {
       throw new Error(`download público: HTTP ${response.status}`);
     }
-    const { Readable } = await import('node:stream');
+    const totalHeader = response.headers.get('content-length');
+    const totalBytes = totalHeader ? Number(totalHeader) : undefined;
+    const { Readable, Transform } = await import('node:stream');
     const { pipeline } = await import('node:stream/promises');
+    const counter = new Transform({
+      transform(chunk: Buffer, _enc, callback) {
+        receivedBytes += chunk.length;
+        armStallWatchdog();
+        try {
+          onProgress?.({
+            receivedBytes,
+            ...(Number.isFinite(totalBytes) ? { totalBytes } : {}),
+          });
+        } catch {
+          // progresso é best-effort
+        }
+        callback(null, chunk);
+      },
+    });
+    armStallWatchdog();
     await pipeline(
       Readable.fromWeb(response.body as import('stream/web').ReadableStream),
+      counter,
       fs.createWriteStream(destination),
     );
+  } catch (err) {
+    if (abortedByStall) {
+      throw new Error(
+        `download travou: sem byte novo por ${Math.round(DOWNLOAD_STALL_MS / 1000)}s ` +
+          `(${receivedBytes} bytes recebidos) — rede instável`,
+      );
+    }
+    throw err;
   } finally {
-    clearTimeout(timer);
+    if (stallTimer) clearTimeout(stallTimer);
+    clearTimeout(deadline);
   }
 }
 
@@ -217,7 +271,6 @@ export class UpdateManager {
   private state: UpdateState;
   private release: ParsedRelease | null = null;
   /** De onde veio o release ofertado: gh (repo privado) ou espelho público. */
-  private releaseVia: 'gh' | 'public' = 'gh';
   /** Slug que respondeu na última checagem (org nova ou redirect legado). */
   private releaseRepo: string = CANONICAL_RELEASE_REPO;
   private server: http.Server | null = null;
@@ -440,7 +493,6 @@ export class UpdateManager {
           ],
           GH_CHECK_TIMEOUT_MS,
         );
-        this.releaseVia = 'gh';
         this.releaseRepo = repo;
         return raw;
       } catch (ghErr) {
@@ -459,7 +511,6 @@ export class UpdateManager {
           githubReleasesApiUrl(repo),
           GH_CHECK_TIMEOUT_MS,
         );
-        this.releaseVia = 'public';
         this.releaseRepo = repo;
         return raw;
       } catch (pubErr) {
@@ -473,8 +524,77 @@ export class UpdateManager {
     );
   }
 
-  private async downloadGhZip(release: ParsedRelease, dir: string): Promise<void> {
-    const repos = [
+  /**
+   * Download do zip com progresso visível e tolerância a rede instável
+   * (0.32.25): tenta primeiro o fetch público do espelho (conta bytes,
+   * watchdog de stall, progresso na UI), cai para o gh autenticado e ainda
+   * tem uma segunda tentativa completa antes de errar.
+   */
+  private async downloadWithProgress(
+    release: ParsedRelease,
+    dir: string,
+  ): Promise<void> {
+    const destination = path.join(dir, release.zipAsset);
+    const publicUrls = [
+      ...(release.zipDownloadUrl ? [release.zipDownloadUrl] : []),
+      ...PUBLIC_RELEASES_REPOS.map(
+        (repo) =>
+          `https://github.com/${repo}/releases/download/${release.tag}/${release.zipAsset}`,
+      ),
+    ];
+    let lastError: unknown = null;
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      for (const url of publicUrls) {
+        try {
+          let lastEmittedBytes = -1;
+          await downloadPublicAsset(
+            url,
+            destination,
+            GH_DOWNLOAD_TIMEOUT_MS,
+            (progress) => {
+              // Throttle: patch a cada 8 MiB (ou quando o total chega).
+              const shouldEmit =
+                progress.receivedBytes - lastEmittedBytes >= 8 * 1024 * 1024 ||
+                (progress.totalBytes !== undefined &&
+                  progress.receivedBytes === progress.totalBytes);
+              if (!shouldEmit) return;
+              lastEmittedBytes = progress.receivedBytes;
+              this.patch({
+                phase: 'downloading',
+                downloadProgress: { ...progress },
+              });
+            },
+          );
+          return;
+        } catch (err) {
+          lastError = err;
+          writeUpdateLog('warn', 'install:download-source-failed', {
+            url,
+            attempt,
+            message: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+      // Fonte gh autenticada (canônico privado): sem progresso, mas cobre o
+      // caso do espelho inacessível.
+      try {
+        this.patch({ phase: 'downloading', downloadProgress: undefined });
+        await this.downloadGhZip(release, dir);
+        return;
+      } catch (err) {
+        lastError = err;
+        writeUpdateLog('warn', 'install:download-gh-failed', {
+          attempt,
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    throw lastError instanceof Error
+      ? lastError
+      : new Error(String(lastError ?? 'download falhou'));
+  }
+
+  private async downloadGhZip(release: ParsedRelease, dir: string): Promise<void> {    const repos = [
       this.releaseRepo,
       ...CANONICAL_RELEASE_REPOS.filter((repo) => repo !== this.releaseRepo),
     ];
@@ -536,20 +656,17 @@ export class UpdateManager {
       tag: release.tag,
       zipAsset: release.zipAsset,
     });
-    this.patch({ phase: 'downloading', error: undefined });
+    this.patch({
+      phase: 'downloading',
+      error: undefined,
+      downloadProgress: undefined,
+    });
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-update-'));
     try {
-      if (this.releaseVia === 'public' && release.zipDownloadUrl) {
-        await downloadPublicAsset(
-          release.zipDownloadUrl,
-          path.join(dir, release.zipAsset),
-          GH_DOWNLOAD_TIMEOUT_MS,
-        );
-      } else {
-        await this.downloadGhZip(release, dir);
-      }
+      await this.downloadWithProgress(release, dir);
       const zipPath = path.join(dir, release.zipAsset);
       if (!fs.existsSync(zipPath)) throw new Error('zip do release não veio');
+      this.patch({ downloadProgress: undefined });
       const feedUrl = await this.serveLocalFeed(release, zipPath);
       writeUpdateLog('info', 'install:local-feed-ready', { feedUrl });
       this.wireSquirrel();
@@ -558,7 +675,11 @@ export class UpdateManager {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       writeUpdateLog('warn', 'install:failed', { message });
-      this.patch({ phase: 'error', error: `download falhou: ${message}` });
+      this.patch({
+        phase: 'error',
+        error: `download falhou: ${message}`,
+        downloadProgress: undefined,
+      });
     }
   }
 
