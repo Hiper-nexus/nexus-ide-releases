@@ -13,6 +13,50 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.32.26',
+  date: '2026-08-17',
+  codename: 'Maestro com plano de verdade',
+  summary:
+    'Os três bugs que o próprio Maestro reportou na primeira missão ' +
+    'real: nexus_task plan existe de fato (plano selado com queue e ' +
+    'ownership), revisor read-only roda em paralelo ao executor, e CLI ' +
+    'que trava em prompt de pasta no boot recebe Enter sozinho. E o ' +
+    'painel de detalhes da missão agora fecha — só o time na tela.',
+  highlights: [
+    {
+      title: 'nexus_task plan de verdade',
+      detail:
+        'Description prometia, o gate exigia, o servidor recusava ' +
+        '(unknown action: plan). A action agora existe: sela o plano no ' +
+        'registro de tasks contra o roster real, com replay determinístico ' +
+        'e dependsOn/ownership embutidos. O Maestro volta a ter rastreio ' +
+        'durável de etapas.',
+    },
+    {
+      title: 'Revisor em paralelo ao executor',
+      detail:
+        'Worker read-only não espera mais o escritor terminar no mesmo ' +
+        'checkout. Um escritor por vez continua; leitura acompanha o WIP.',
+    },
+    {
+      title: 'Painel de detalhes fecha',
+      detail:
+        'Botão "detalhes ›" na missão esconde o menu da direita e deixa ' +
+        'só a visão do time (preferência fica salva).',
+    },
+  ],
+  fixes: [
+    {
+      title: 'CLI que pede "trust this folder?" no boot',
+      detail:
+        'O Kimi travava esperando um Enter que ninguém dava e o worker ' +
+        'morria na largada. O watchdog de boot aperta Enter sozinho — ' +
+        'só em pane de missão, só na janela de boot, máx 2 tentativas.',
+    },
+  ],
+};
+
+export const RELEASE_03225: AppRelease = {
   version: '0.32.25',
   date: '2026-08-17',
   codename: 'Atualização que não pendura',

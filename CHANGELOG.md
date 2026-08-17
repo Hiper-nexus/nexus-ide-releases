@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.32.26 — Maestro com plano de verdade
+
+Data: 2026-08-17
+
+Os três bugs que o próprio Maestro reportou na primeira missão real
+da 0.32.24, mais o ajuste de UI pedido pelo operador.
+
+- **nexus_task plan existe de fato.** Deadlock triplo: a description
+  prometia a action, o gate de create exigia "somente UMA chamada
+  nexus_task plan", mas o enum e o servidor só conheciam
+  create/update/list → `unknown action: plan`. Sem plano selado não
+  havia queue, ownership nem dependsOn — o Maestro improvisava na
+  lista visível. Agora a action sela o plano no registro de tasks
+  contra o roster real (createPlanAtomically; replay idêntico devolve
+  os mesmos ids), com mapper puro que valida categoria/agente e embute
+  dependsOn/executionMode/ownership como rodapé `[plan-meta]`.
+- **Revisor read-only em paralelo ao executor.** same-checkout
+  serializava até leitor atrás do escritor ativo. Agora spawn
+  read-only é permitido ao lado do escritor (`decideSameCheckoutSpawn`);
+  a doutrina "1 escritor por vez" permanece intacta.
+- **CLI travada em prompt de pasta recebe Enter sozinho.** O Kimi
+  pedia "Do you trust the files in this folder?" e o worker morria no
+  boot esperando um Enter que nenhum humano daria (etapa 02 da missão
+  HiperGO). boot-prompt-watchdog: aperta Enter em pane de missão, só
+  na janela de boot (5 min), só com prompt estável por 2 ticks, máx 2
+  tentativas. Pane do operador nunca é tocado.
+- **Painel de detalhes da missão fecha.** Botão "detalhes ›" no canto
+  do quadro esconde o menu da direita e deixa só a visão do time;
+  a preferência persiste entre sessões.
+
 ## 0.32.25 — Atualização que não pendura
 
 Data: 2026-08-17
