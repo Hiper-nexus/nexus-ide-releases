@@ -13,6 +13,59 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.32.27',
+  date: '2026-08-17',
+  codename: 'MCP pela lei física do binário',
+  summary:
+    'Worker de adapter de usuário que roda o binário claude (deepseek, ' +
+    'qwen, sakana…) nasce com o MCP do Nexus de novo — a família é do ' +
+    'binário, não do JSON. HEAD do checkout mudando por fora da missão ' +
+    'gera aviso, o orquestrador aprende a despachar revisores em ' +
+    'paralelo, modelos não reconhecidos param de compactar cedo, e o ' +
+    'route_task explica o destino de cada preferAdapters.',
+  highlights: [
+    {
+      title: 'MCP pela lei física do binário',
+      detail:
+        'deepseek/qwen/sakana declaravam nexusMcp none e o worker nascia ' +
+        'sem nexus_handoff_submit. Se o adapter roda o binário claude, é ' +
+        'família Claude: HOME isolado + --mcp-config + --settings.',
+    },
+    {
+      title: 'Sentinela de HEAD (achado #14)',
+      detail:
+        'O lock do same-checkout só serializa a própria missão. Quando o ' +
+        'HEAD muda por um processo de fora, o watcher emite evento e aviso ' +
+        'para o Maestro revalidar o chão — exclusividade falsa vira ' +
+        'observabilidade real.',
+    },
+    {
+      title: 'Paralelismo com inteligência',
+      detail:
+        'Doutrina nova no orquestrador: review/auditoria NUNCA em série — ' +
+        'fatie o escopo e despache os revisores no mesmo turno; um ' +
+        'escritor por vez; leitor acompanha escritor.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Modelo não reconhecido não compacta mais cedo',
+      detail:
+        'deepseek-v4-pro fazia o Claude Code assumir janela 200k. O ramo ' +
+        'third-party exporta a env oficial que devolve a decisão de ' +
+        'janela para a API.',
+    },
+    {
+      title: 'route_task explica os preferAdapters',
+      detail:
+        'Preferido derrubado em silêncio (não instalado/reservado/fora do ' +
+        'ranking) parecia preferência ignorada. O reason agora diz o ' +
+        'destino de cada um.',
+    },
+  ],
+};
+
+export const RELEASE_03226: AppRelease = {
   version: '0.32.26',
   date: '2026-08-17',
   codename: 'Maestro com plano de verdade',

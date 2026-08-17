@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.32.27 — MCP pela lei física do binário
+
+Data: 2026-08-17
+
+Achados D–H da primeira missão real (HiperGO), todos fechados.
+
+- **MCP pela lei física do binário (grave).** Adapter de usuário com bin
+  `claude` (deepseek/qwen/sakana…) contra endpoint terceiro declarava
+  `nexusMcp: none` — o worker nascia SEM o MCP do Nexus e só tinha o
+  bloco NEXUS_HANDOFF de texto. `canUseNexusMcp` e
+  `isThirdPartyClaudeFamily` agora reconhecem `bin === 'claude'`: HOME
+  isolado + `--mcp-config` + `--settings`, igual GLM.
+- **Modelo não reconhecido não compacta cedo.** O ramo third-party
+  exporta `CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT=1`
+  (a própria CLI recomenda): deepseek-v4-pro deixa de ficar preso na
+  janela 200k assumida.
+- **Sentinela de HEAD (achado #14).** O lock do same-checkout só
+  serializa panes da própria missão — 27 commits de outro processo
+  entraram sem barreira. O watcher agora grava o HEAD no início e
+  emite evento `custom` + warn quando muda por fora: o Maestro
+  revalida o chão em vez de confiar em exclusividade falsa.
+- **Paralelismo com inteligência.** Doutrina nova no prompt do
+  orquestrador: trabalho de leitura (review/auditoria/viabilidade)
+  NUNCA em série — fatiar o escopo grande e despachar os revisores no
+  mesmo turno; um escritor por vez no checkout; leitor acompanha
+  escritor (físico desde 0.32.26).
+- **route_task explica os preferAdapters.** O preferido derrubado em
+  silêncio (não instalado/reservado, fora do ranking do tier,
+  preterido no multi-score) parecia preferência ignorada. O `reason`
+  agora diz o destino de cada um.
+
 ## 0.32.26 — Maestro com plano de verdade
 
 Data: 2026-08-17
