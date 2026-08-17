@@ -13,6 +13,44 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.32.29',
+  date: '2026-08-17',
+  codename: 'Nenhuma missão presa',
+  summary:
+    'Missão travada revive de verdade: o respawn do orquestrador termina a ' +
+    'sessão antiga com prova física em vez de ser recusado para sempre, o ' +
+    'erro real do spawn chega até você, e o rail mostra as missões de TODOS ' +
+    'os workspaces — abrir um terceiro workspace não esconde nem derruba ' +
+    'mais nada.',
+  highlights: [
+    {
+      title: 'Fim do deadlock do revival',
+      detail:
+        'Cerca de exclusividade e fast-lane discordavam sobre o orquestrador ' +
+        'estar vivo: todo respawn era recusado para sempre e cada tecla ' +
+        'virava "revival da missão falhou". Agora o respawn termina a sessão ' +
+        'antiga com prova física antes de spawnar a reposição — nunca dois ' +
+        'Maestros, nunca beco sem saída.',
+    },
+    {
+      title: 'Rail de todos os workspaces',
+      detail:
+        'Missão rodando em outro workspace era invisível na sidebar. Agora ' +
+        'cada workspace com missões ativas aparece na seção "Em andamento" ' +
+        'e o clique troca de workspace e navega até a missão.',
+    },
+    {
+      title: 'Orquestrador ocioso não passa mais batido',
+      detail:
+        'Orquestrador idle aguardando workers por 30 minutos sem mudança ' +
+        'escala a missão para bloqueio técnico com motivo visível — nada ' +
+        'mais de missão rodando em silêncio por horas a fio.',
+    },
+  ],
+  fixes: [],
+};
+
+export const RELEASE_03228: AppRelease = {
   version: '0.32.28',
   date: '2026-08-17',
   codename: 'Fechar sem barulho',

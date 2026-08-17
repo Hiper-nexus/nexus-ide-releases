@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.32.29 — Nenhuma missão presa
+
+Data: 2026-08-17
+
+- **Fim do deadlock do revival de missão.** A cerca de exclusividade do
+  pty-manager contava QUALQUER sessão registrada (inclusive em estado
+  exited/hibernated) enquanto o fast-lane só considerava vivo
+  busy/idle/spawning — quando os dois discordavam, todo respawn do
+  orquestrador era recusado para sempre e cada tecla sua virava "revival
+  da missão falhou". Agora o respawn termina as sessões registradas da
+  missão com prova física ANTES de spawnar a reposição, e aborta com
+  motivo acionável se um processo teimoso não provar a morte — nunca
+  cria dois Maestros na mesma missão.
+- **O erro real chega ao operador.** O resultado do spawn reportava um
+  timeout genérico ("session did not start — adapter missing or spawn
+  failed") que escondia a causa verdadeira. O erro concreto do PTY (ex.:
+  a própria cerca de exclusividade) agora é propagado pelo
+  orch-bridge até o main e a UI.
+- **Rail multi-workspace.** Missão rodando em outro workspace era
+  invisível: a seção "Em andamento" só era populada com o workspace
+  corrente. Agora cada workspace conhecido com missões ativas
+  (running/bloqueada/recuperando) aparece com as suas missões, com
+  refresco a cada 60s; clicar numa missão de workspace vizinho troca de
+  workspace e navega até ela.
+- **Missão não fica órfã na troca de workspace.** Os PTYs main-owned
+  sobrevivem à troca de workspace; com o deadlock do respawn resolvido e
+  a visibilidade do rail, abrir um terceiro workspace não derruba nem
+  esconde as missões das outras.
+- **Watchdog do orquestrador ocioso.** Orquestrador idle aguardando
+  workers por 30 minutos sem nenhuma mudança agora escala a missão para
+  bloqueio técnico com motivo visível e acionável (o caso real passou 33
+  horas em silêncio no journal sem ninguém escalar).
+
 ## 0.32.28 — Fechar sem barulho
 
 Data: 2026-08-17
