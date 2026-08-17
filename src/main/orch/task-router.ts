@@ -269,6 +269,38 @@ export interface AdapterAvailability {
   models?: string[];
 }
 
+/**
+ * Explica o resultado da lista de preferência do chamador (bug F): qual
+ * preferido venceu, ou por que cada um ficou de fora — "não instalado",
+ * "reservado/sem modelo", "fora do ranking do tier". Sem isto o Maestro via
+ * um adapter "não verificado" sem entender o que aconteceu com o pedido.
+ */
+export function describePreferAdaptersOutcome(
+  preferAdapters: readonly string[] | undefined,
+  chosenAdapterId: string,
+  availability: readonly AdapterAvailability[],
+  rankedAdapterIds: readonly string[],
+): string {
+  if (!preferAdapters || preferAdapters.length === 0) return '';
+  const available = new Map(availability.map((a) => [a.id, a]));
+  const fates: string[] = [];
+  for (const id of preferAdapters) {
+    if (id === chosenAdapterId) {
+      fates.push(`${id}=preferido escolhido`);
+      continue;
+    }
+    const info = available.get(id);
+    if (!info || !info.installed) {
+      fates.push(`${id}=não instalado/reservado`);
+    } else if (!rankedAdapterIds.includes(id)) {
+      fates.push(`${id}=fora do ranking do tier`);
+    } else {
+      fates.push(`${id}=preterido no multi-score`);
+    }
+  }
+  return `; prefer: ${fates.join(', ')}`;
+}
+
 export interface RouteDecision {
   tier: TaskTier;
   adapterId: string;
@@ -589,6 +621,15 @@ export function routeTask(
       ? '; selecionado por avaliação Nexus por dimensão'
       : '';
     const specialtyNote = `; specialty=${specialtyVerdict.specialty} source=${policySource}`;
+    // Bug F (Maestro 2026-08-17): preferAdapters parecia "ignorado" porque o
+    // preferido era derrubado em silêncio (não instalado, sem candidato no
+    // tier, reservado). A decisão agora DIZ o destino de cada preferido.
+    const preferNote = describePreferAdaptersOutcome(
+      context.preferAdapters,
+      pick.adapterId,
+      adapters,
+      ranked.map((r) => r.c.adapterId),
+    );
     const riskNote =
       skippedRisk.length > 0
         ? `; evitou ${[...new Set(skippedRisk)].slice(0, 3).join(', ')}`
@@ -598,7 +639,7 @@ export function routeTask(
       adapterId: pick.adapterId,
       model: pick.model,
       effort,
-      reason: `${tier}${borrowed}${specialtyNote}; ${why}${costNote}${evaluationNote}${riskNote}${bandNote}${multiScoreNote}`,
+      reason: `${tier}${borrowed}${specialtyNote}; ${why}${costNote}${evaluationNote}${riskNote}${bandNote}${multiScoreNote}${preferNote}`,
       alternatives: ranked.filter((r) => r.c !== pick).map((r) => r.c),
       specialty: specialtyVerdict.specialty,
       policySource,

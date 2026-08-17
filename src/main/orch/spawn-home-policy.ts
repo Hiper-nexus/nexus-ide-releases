@@ -1,6 +1,6 @@
 import type { CliPtyAdapter } from '../../shared/adapter-types';
 
-type SpawnHomeAdapter = Pick<CliPtyAdapter, 'env' | 'quirks'>;
+type SpawnHomeAdapter = Pick<CliPtyAdapter, 'env' | 'quirks'> & { readonly bin?: string };
 
 export type SpawnHomeMode = 'operator-choice' | 'hardened';
 
@@ -39,7 +39,9 @@ export function shouldUseEphemeralHome(
   gated: boolean,
   options: SpawnHomePolicyOptions = {},
 ): boolean {
-  if (!adapter.quirks.mcpAutoload) return false;
+  // Lei física do binário: ver isThirdPartyClaudeFamily — bin `claude`
+  // terceiro precisa do mesmo tratamento de home da família.
+  if (!adapter.quirks.mcpAutoload && adapter.bin !== 'claude') return false;
 
   const isThirdParty = isThirdPartyClaudeFamily(
     adapter,
@@ -75,7 +77,14 @@ export function isThirdPartyClaudeFamily(
     effectiveEnv?.ANTHROPIC_BASE_URL,
     adapter.env.static?.ANTHROPIC_BASE_URL,
   ];
-  return adapter.quirks.mcpAutoload && baseUrls.some(isThirdPartyBaseUrl);
+  // Lei física do binário (bug E, 2026-08-17): adapter de usuário com bin
+  // `claude` apontando para endpoint terceiro (deepseek/qwen/sakana…) podia
+  // declarar mcpAutoload false — nascia sem MCP e sem HOME isolado, e o
+  // binário reescrevia o OAuth da assinatura nativa. Se roda o binário
+  // claude contra terceiro, É família Claude terceira.
+  const isClaudeBinary =
+    adapter.quirks.mcpAutoload || adapter.bin === 'claude';
+  return isClaudeBinary && baseUrls.some(isThirdPartyBaseUrl);
 }
 
 /**

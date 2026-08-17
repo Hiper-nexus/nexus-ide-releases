@@ -4,6 +4,7 @@ import {
   classifyTask,
   routeTask,
   type AdapterAvailability,
+  describePreferAdaptersOutcome,
 } from './task-router';
 import { countAdapterUses } from './route-pipeline';
 
@@ -411,5 +412,37 @@ describe('classifyTask com fronteira de palavra (regressão: TypeScript ≠ crip
     expect(
       classifyTask('tratar acesso não autorizado no painel de administração').tier,
     ).toBe('critical');
+  });
+});
+
+describe('describePreferAdaptersOutcome (bug F — prefer não é silêncio)', () => {
+  const availability = [
+    { id: 'codex', installed: true },
+    { id: 'claude', installed: false },
+    { id: 'kimi', installed: true },
+  ];
+
+  it('preferido escolhido é dito com todas as letras', () => {
+    expect(
+      describePreferAdaptersOutcome(['codex'], 'codex', availability, ['codex', 'kimi']),
+    ).toContain('codex=preferido escolhido');
+  });
+
+  it('preferido não instalado/reservado aparece no motivo', () => {
+    expect(
+      describePreferAdaptersOutcome(['claude'], 'codex', availability, ['codex']),
+    ).toContain('claude=não instalado/reservado');
+  });
+
+  it('preferido fora do ranking do tier aparece', () => {
+    expect(
+      describePreferAdaptersOutcome(['kimi'], 'codex', availability, ['codex']),
+    ).toContain('kimi=fora do ranking do tier');
+  });
+
+  it('sem preferAdapters a nota é vazia (não polui o reason)', () => {
+    expect(
+      describePreferAdaptersOutcome(undefined, 'codex', availability, ['codex']),
+    ).toBe('');
   });
 });

@@ -653,3 +653,23 @@ describe("purgeStaleAgyMcpConfigs", () => {
     );
   });
 });
+
+describe('canUseNexusMcp — lei física do binário (bug E 2026-08-17)', () => {
+  it('adapter de usuário com bin claude usa o MCP mesmo com quirks none', () => {
+    expect(
+      canUseNexusMcp({
+        bin: 'claude',
+        quirks: { mcpAutoload: false, nexusMcp: 'none' },
+      } as never),
+    ).toBe(true);
+  });
+
+  it('quirks none SEM bin claude continua sem MCP (aider etc.)', () => {
+    expect(
+      canUseNexusMcp({
+        bin: 'aider',
+        quirks: { mcpAutoload: false, nexusMcp: 'none' },
+      } as never),
+    ).toBe(false);
+  });
+});

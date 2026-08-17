@@ -920,6 +920,12 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
         const isolatedHome = prepareThirdPartyClaudeHome(adapter.id);
         env.HOME = isolatedHome;
         ephemeralHomeDir = isolatedHome;
+        // Bug D (2026-08-17): o Claude Code não reconhece ids de modelo de
+        // terceiros (deepseek-v4-pro…) e assume janela de 200k, auto-
+        // compactando cedo. Sem inventar janelas que não sabemos aferir,
+        // restauramos o comportamento esperar-a-API decidir (a própria CLI
+        // recomenda esta env). GLM continua com AUTO_COMPACT_WINDOW do adapter.
+        env.CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT = "1";
         extraArgs.push(
           "--mcp-config",
           writeMcpConfigFile(ctx.token, mcpConfig),

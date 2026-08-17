@@ -1,11 +1,14 @@
 import { createHash } from 'node:crypto';
+import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { promisify } from 'node:util';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { Mission, Squad, SquadAgent } from '../../shared/orch-types';
 import { isUiMissionText } from '../../shared/mission-work-kind';
 import { wasMissionRuntimeClosedByOperator } from '../../shared/mission-recovery-policy';
+import { emitMissionEvent } from './mission-event-emit';
 import { buildOrchestratorDoctrine } from './orchestrator-doctrine';
 import { getSessionState } from '../pty/pty-manager';
 import { listPaneSnapshots, requestPaneSpawn } from './pane-registry';
@@ -52,6 +55,38 @@ export function decideFastLaneEmptyPaneAction(input: {
 }
 
 /**
+ * Sentinela de HEAD (achado #14 do Maestro, 2026-08-17): o lock do
+ * same-checkout só serializa panes da PRÓPRIA missão — 27 commits de outro
+ * processo entraram no diretório sem barreira nenhuma, e a missão seguia
+ * achando que tinha exclusividade. Não vamos fingir exclusividade global;
+ * vamos VER o mundo: quando o HEAD do checkout muda por fora no meio da
+ * missão, o watcher emite evento + warn para o Maestro revalidar o chão.
+ */
+export function decideExternalHeadChangeAction(input: {
+  readonly baseline: string | null;
+  readonly current: string | null;
+}): { readonly action: 'ignore' } | { readonly action: 'notify'; readonly from: string; readonly to: string } {
+  if (!input.baseline || !input.current) return { action: 'ignore' };
+  if (input.baseline === input.current) return { action: 'ignore' };
+  return { action: 'notify', from: input.baseline, to: input.current };
+}
+
+const execFileAsync = promisify(execFile);
+
+/** HEAD atual do checkout (null quando não é repo ou git falhou). */
+async function readCheckoutHead(root: string): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync('git', ['rev-parse', 'HEAD'], {
+      cwd: root,
+      timeout: 4_000,
+    });
+    return stdout.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Retry-kickoff tem que FAZER ALGO: running com orquestrador vivo religa o
  * watcher; running com runtime morto respawna (o print 2026-08-16 mostrou o
  * botão "Tentar início novamente" como no-op silencioso exatamente aqui).
@@ -73,6 +108,8 @@ interface WatcherState {
   lastOrchActivityAt: number;
   timer: ReturnType<typeof setInterval> | null;
   stopped: boolean;
+  /** Baseline da sentinela de HEAD (achado #14); null fora de repo. */
+  baselineHeadSha: string | null;
 }
 
 const watchers = new Map<string, WatcherState>();
@@ -192,14 +229,21 @@ export function agentPrompt(
           '   - O prompt vai no argv de NASCENÇA — o worker já acorda executando',
           '   - O model/effort selados no início da missão VENCEM route_task e o default da CLI',
           '   - Uma chamada só. NUNCA spawn + pane_write separados.',
-          '3. Depois de spawnar, ENCERRE SEU TURNO. NÃO faça polling.',
+          '3. PARALELIZE com inteligência (a fila de CLIs é sua vantagem):',
+          '   - Trabalho de LEITURA (code review, auditoria, viabilidade) NUNCA',
+          '     é serial: fatie o escopo grande em pedaços (por área/domínio/',
+          '     diretório) e spawne os revisores NO MESMO TURNO, em paralelo.',
+          '   - ESCRITORES ficam 1 por vez no mesmo checkout; leitores podem',
+          '     acompanhar um escritor ativo. Use o plano (nexus_task plan) para',
+          '     declarar dependsOn e o que é leitura vs escrita.',
+          '4. Depois de spawnar, ENCERRE SEU TURNO. NÃO faça polling.',
           '   - Resultados chegam via nexus_handoff_submit e ACORDAM você',
           '   - re-chamar pane_read/pane_list/handoff_list em loop não ensina nada',
-          '4. Quando acordar com resultados, valide via nexus_handoff_list({full:true})',
+          '5. Quando acordar com resultados, valide via nexus_handoff_list({full:true})',
           '   - Use o campo `evidence` para CONFIRMAR — comandos, exit codes, arquivos',
           '   - NÃO confie cegamente no summary',
-          '5. Se algo errado: re-spawne o worker com correções pontuais',
-          '6. Quando TODOS entregarem: chame nexus_mission_set_status({status:"done"})',
+          '6. Se algo errado: re-spawne o worker com correções pontuais',
+          '7. Quando TODOS entregarem: chame nexus_mission_set_status({status:"done"})',
           '',
           '### Workers disponíveis (use com agentName)',
           ...teamNames
@@ -395,6 +439,43 @@ async function tickWatcher(state: WatcherState): Promise<void> {
     state.lastOrchActivityAt = Date.now();
   }
 
+  // Sentinela de HEAD (achado #14): o mundo pode commitar por fora enquanto
+  // a missão acha que tem exclusividade no checkout. Avisa uma vez por mudança.
+  const currentHead = await readCheckoutHead(state.scope.rootRealPath);
+  const headDecision = decideExternalHeadChangeAction({
+    baseline: state.baselineHeadSha,
+    current: currentHead,
+  });
+  if (headDecision.action === 'notify') {
+    state.baselineHeadSha = headDecision.to;
+    console.warn(
+      `[fast-lane] HEAD do checkout mudou por FORA durante ${state.missionId}: ` +
+        `${headDecision.from.slice(0, 10)} → ${headDecision.to.slice(0, 10)}; ` +
+        'o orquestrador deve revalidar o estado do repo antes de despachar',
+    );
+    try {
+      emitMissionEvent(state.scope, {
+        missionId: state.missionId,
+        runId: `watcher:${state.missionId}`,
+        type: 'custom',
+        origin: 'system',
+        payload: {
+          kind: 'external-head-change',
+          from: headDecision.from,
+          to: headDecision.to,
+          note:
+            'O HEAD do checkout mudou por um processo fora da missão. ' +
+            'Revalide git status/HEAD antes de despachar ou considerar ' +
+            'entregas atuais.',
+        },
+        idempotencyKey: `head-change:${state.missionId}:${headDecision.to.slice(0, 12)}`,
+        occurredAt: Date.now(),
+      });
+    } catch {
+      // Evento é best-effort; o warn no log já registrou.
+    }
+  }
+
   // Verifica se há panes vivos nesta missão.
   const missionPanes = listPaneSnapshots().filter(
     (p) => p.missionId === state.missionId,
@@ -477,7 +558,12 @@ function startWatcher(
     lastOrchActivityAt: Date.now(),
     timer: null,
     stopped: false,
+    baselineHeadSha: null,
   };
+  void readCheckoutHead(scope.rootRealPath).then((head) => {
+    if (!watchers.has(key)) return;
+    state.baselineHeadSha = head;
+  });
 
   state.timer = setInterval(() => {
     void tickWatcher(state).catch((error) => {

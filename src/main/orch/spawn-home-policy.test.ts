@@ -195,3 +195,47 @@ describe('isThirdPartyClaudeFamily', () => {
     ).toBe(true);
   });
 });
+
+describe('isThirdPartyClaudeFamily — lei física do binário (bug E 2026-08-17)', () => {
+  // Adapter de usuário com bin 'claude' apontando para endpoint terceiro
+  // (deepseek/qwen/sakana…) declarava mcpAutoload:false + nexusMcp:none —
+  // o worker nascia SEM o MCP do Nexus e só tinha o bloco NEXUS_HANDOFF.
+  // O binário É Claude Code: a família é uma propriedade física, não uma
+  // declaração do JSON.
+  function claudeBinAdapter(staticEnv: Record<string, string>) {
+    return {
+      bin: 'claude',
+      env: { static: staticEnv, passthrough: [], ephemeralHome: false },
+      quirks: {
+        altScreen: true,
+        requiresNoAutoUpdate: false,
+        mcpAutoload: false,
+        nexusMcp: 'none',
+      },
+    };
+  }
+
+  it('adapter de usuário com bin claude + endpoint terceiro É família Claude', () => {
+    expect(
+      isThirdPartyClaudeFamily(
+        claudeBinAdapter({
+          ANTHROPIC_BASE_URL: 'https://api.deepseek.com/anthropic',
+        }) as never,
+      ),
+    ).toBe(true);
+  });
+
+  it('bin claude sem endpoint terceiro não é isolado (Claude nativo)', () => {
+    expect(
+      isThirdPartyClaudeFamily(claudeBinAdapter({}) as never),
+    ).toBe(false);
+  });
+
+  it('quirks autoload continua valendo sem bin declarado', () => {
+    expect(
+      isThirdPartyClaudeFamily(
+        adapter(true, false, { ANTHROPIC_BASE_URL: 'https://api.z.ai/api/anthropic' }),
+      ),
+    ).toBe(true);
+  });
+});

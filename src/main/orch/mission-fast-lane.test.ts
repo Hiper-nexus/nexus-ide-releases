@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import type { Mission, Squad, SquadAgent } from '../../shared/orch-types';
 import {
   agentPrompt,
+  decideExternalHeadChangeAction,
   decideFastLaneEmptyPaneAction,
   decideFastLaneResumeAction,
   missionDesignContext,
@@ -246,5 +247,30 @@ describe('decideFastLaneResumeAction (retry-kickoff faz algo de verdade)', () =>
         liveOrchestratorSession: false,
       }),
     ).toBe('bootstrap');
+  });
+});
+
+describe('decideExternalHeadChangeAction (sentinela de HEAD — achado #14)', () => {
+  it('HEAD igual → ignora', () => {
+    expect(
+      decideExternalHeadChangeAction({ baseline: 'a1', current: 'a1' }),
+    ).toEqual({ action: 'ignore' });
+  });
+
+  it('HEAD mudou por fora → notifica com from/to', () => {
+    const decision = decideExternalHeadChangeAction({
+      baseline: 'a1',
+      current: 'b2',
+    });
+    expect(decision).toEqual({ action: 'notify', from: 'a1', to: 'b2' });
+  });
+
+  it('sem HEAD legível (não é repo) → ignora', () => {
+    expect(
+      decideExternalHeadChangeAction({ baseline: null, current: 'b2' }),
+    ).toEqual({ action: 'ignore' });
+    expect(
+      decideExternalHeadChangeAction({ baseline: 'a1', current: null }),
+    ).toEqual({ action: 'ignore' });
   });
 });

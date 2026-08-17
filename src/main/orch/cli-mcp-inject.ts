@@ -60,7 +60,13 @@ export function canUseNexusMcp(adapter: NexusMcpAdapterLike): boolean {
   // private HOME/GEMINI_CLI_HOME projection. Advertising it as MCP-capable
   // makes workers wait forever. Its physical completion route is PTY stream.
   if (adapter.quirks.nexusMcp === "agy") return false;
-  return hasNexusMcpCapability(adapter.quirks);
+  if (hasNexusMcpCapability(adapter.quirks)) return true;
+  // Lei física do binário (bug E, 2026-08-17): adapter de usuário que roda o
+  // binário `claude` contra endpoint terceiro (deepseek/qwen/sakana…) podia
+  // declarar nexusMcp none/mcpAutoload false — o worker nascia SEM o MCP do
+  // Nexus (só o bloco NEXUS_HANDOFF de texto). O Claude Code aceita
+  // --mcp-config/--settings em QUALQUER endpoint; a família é do binário.
+  return (adapter as { bin?: string }).bin === "claude";
 }
 
 const CODEX_MCP_SERVER_RANDOM_BYTES = 6;
