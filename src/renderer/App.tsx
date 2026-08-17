@@ -200,6 +200,9 @@ export function App() {
   const recentWorkspaces = useWorkspaceStore((state) => state.recents);
   const destination = useProductNavigationStore((state) => state.destination);
   const missionSummaries = useOrchStore((state) => state.missionSummaries);
+  const crossWorkspaceSummaries = useOrchStore(
+    (state) => state.crossWorkspaceSummaries,
+  );
   const closeWorkspaceOpen = useCloseWorkspaceStore((state) => state.open);
   const voiceSettingsOpen = useVoiceStore((state) => state.settingsOpen);
   const paletteOpen = useCommandPaletteStore((state) => state.open);
@@ -833,9 +836,6 @@ export function App() {
     destinationContent
   );
 
-  const crossWorkspaceSummaries = useOrchStore(
-    (state) => state.crossWorkspaceSummaries,
-  );
   const { activeWorkspaces, recentWorkspaces: projectedRecents } =
     projectRailWorkspaces({
       current: currentWorkspace
