@@ -13,6 +13,38 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.32.25',
+  date: '2026-08-17',
+  codename: 'Atualização que não pendura',
+  summary:
+    'O download de atualização ganhou progresso visível (baixando 42%, ' +
+    '87 MB de 216 MB), watchdog de stall (90s sem byte novo aborta com ' +
+    'erro claro em vez de pendurar a noite inteira) e retry automático ' +
+    'com fallback de fonte — rede instável não trava mais a atualização.',
+  highlights: [
+    {
+      title: 'Progresso de verdade no botão',
+      detail:
+        '"baixando…" vira "baixando 42%" com MB no tooltip. Sem mais ' +
+        'tela congelada sem informação.',
+    },
+    {
+      title: 'Watchdog de stall',
+      detail:
+        '90 segundos sem NENHUM byte novo aborta o download com erro ' +
+        'claro. A madrugada de "baixando…" eterno acabou.',
+    },
+    {
+      title: 'Retry + fallback de fonte',
+      detail:
+        'Tenta o espelho público, cai para o gh autenticado, e ainda tem ' +
+        'uma segunda tentativa completa antes de errar.',
+    },
+  ],
+  fixes: [],
+};
+
+export const RELEASE_03224: AppRelease = {
   version: '0.32.24',
   date: '2026-08-16',
   codename: 'Missão ininterrupta + troca de conta automática',
@@ -122,7 +154,47 @@ export const RELEASE_03223: AppRelease = {
         'passa a glm-4.7.',
     },
   ],
-  fixes: [],
+  fixes: [
+    {
+      title: 'Missão não morre no fim do turno',
+      detail:
+        'Worker com exit 0 e pane vazio deixava de ser Interrompido ' +
+        'e de receber Precisa de reparo. A missão segue running; ' +
+        'só o operador para.',
+    },
+    {
+      title: 'Handoff entregue não mente',
+      detail:
+        'Se o worker já imprimiu o handoffId, o Main não bloqueia ' +
+        'a missão com Handoff não entregue — pede recuperação e ' +
+        'mantém a autoridade de dispatch.',
+    },
+    {
+      title: 'Tentar início novamente respawna',
+      detail:
+        'O botão no-opava quando o status ainda era running sem ' +
+        'sessão. Agora reabre o orquestrador. Digitar no pane ' +
+        'dispara o mesmo caminho.',
+    },
+    {
+      title: 'Orientação religa o Maestro',
+      detail:
+        'Enviar orientação após o exit 0 respawna a sessão e o ' +
+        'recibo de kickoff em vez de falhar com dispatch authority.',
+    },
+    {
+      title: 'Teclado não morre no exit 0',
+      detail:
+        'O pane deixa de hibernar e de escrever o trio dona / ' +
+        'pausado / cursor oco. Digite para religar o Maestro.',
+    },
+    {
+      title: 'Aviso de backlog cabe no pane',
+      detail:
+        'A linha Nexus skipped hidden output não cola mais no ' +
+        'prompt nem some cortada no rodapé estreito.',
+    },
+  ],
 };
 
 export const RELEASE_03100: AppRelease = {

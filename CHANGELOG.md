@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.32.25 — Atualização que não pendura
+
+Data: 2026-08-17
+
+O download de atualização ganhou progresso visível, watchdog de stall
+e retry automático com fallback de fonte — rede instável não trava
+mais a atualização.
+
+- **Progresso de verdade no botão.** "baixando…" vira "baixando 42%"
+  com MB no tooltip (87 MB de 216 MB). Sem mais tela congelada sem
+  informação.
+- **Watchdog de stall.** 90 segundos sem NENHUM byte novo aborta com
+  erro claro (timer rearmado a cada chunk — mede progresso, não tempo
+  de parede; o deadline total de 10min continua valendo). A madrugada
+  de "baixando…" eterno acabou.
+- **Retry + fallback de fonte.** Tenta o fetch público do espelho
+  (observável, com progresso), cai para o gh autenticado, e ainda tem
+  uma segunda tentativa completa antes de errar.
+
 ## 0.32.24 — Missão ininterrupta + troca de conta automática
 
 Data: 2026-08-16
