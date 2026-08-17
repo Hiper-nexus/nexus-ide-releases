@@ -99,6 +99,11 @@ export class MissionTransitionTracker {
           ...mission,
           description: mission.description ?? '',
         });
+        // Bug I (2026-08-17): fechar o app com missão ativa marcava as
+        // missões e o teardown podia deixar intent blocked_technical numa
+        // corrida — cada uma virava balão/toast de falha técnica. Encerrar é
+        // escolha do operador EM QUALQUER intent: shutdown não é alerta.
+        if (wasMissionRuntimeClosedByOperator(mission)) continue;
         if (mission.intentState === 'blocked_technical') {
           if (!hasAutomaticRecovery) {
             events.push({

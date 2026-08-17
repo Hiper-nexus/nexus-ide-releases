@@ -11,9 +11,13 @@ export const MISSION_RUNTIME_CLOSED_MARKER =
 export function wasMissionRuntimeClosedByOperator(
   mission: Pick<RecoverableMission, 'status' | 'intentState' | 'description'>,
 ): boolean {
+  // Bug I (2026-08-17): o teardown do shutdown podia deixar a missão em
+  // blocked_technical com o marcador presente — e o marcador é escrito
+  // APENAS pelo caminho de encerramento pelo operador. A presença dele numa
+  // missão bloqueada é prova suficiente, qualquer que seja o intent final
+  // da corrida. (Antes exigia blocked_user e o shutdown virava alerta.)
   return (
     mission.status === 'blocked' &&
-    mission.intentState === 'blocked_user' &&
     (mission.description ?? '').includes(MISSION_RUNTIME_CLOSED_MARKER)
   );
 }

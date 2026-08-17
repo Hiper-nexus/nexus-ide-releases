@@ -796,15 +796,21 @@ function startSpawn(
           // Linha própria com \r\n em ambos os lados: o aviso de backlog 2 MB
           // pode cair no meio do buffer e colar "process exited" com "output
           // because the backlog…" (print do operador 2026-08-07 HiperGO).
-          host.term.writeln(
-            `\r\n\x1b[90m[nexus] process exited (code ${exitCode})\x1b[0m`,
-          );
           useSessionStateStore.getState().setPaneState(pane.id, 'exited');
-          if (missionStillOwnsPane(pane.id, pane)) {
+          if (terminalShutdownNoticeMode) {
+            // Shutdown: o aviso único do grid já falou; banner por pane é
+            // ruído (bug I).
+          } else if (missionStillOwnsPane(pane.id, pane)) {
+            host.term.writeln(
+              `\r\n\x1b[90m[nexus] process exited (code ${exitCode})\x1b[0m`,
+            );
             host.term.writeln(
               `\x1b[33m${MISSION_OWNED_EXIT_NOTICE}\x1b[0m`,
             );
           } else {
+            host.term.writeln(
+              `\r\n\x1b[90m[nexus] process exited (code ${exitCode})\x1b[0m`,
+            );
             host.term.writeln(
               '\x1b[36m[nexus] sessão encerrada. Digite qualquer tecla para abrir um shell neste pane.\x1b[0m',
             );
@@ -1318,6 +1324,36 @@ export function attachHost(pane: PaneModel, slot: HTMLElement): void {
       restoreAuthorityOnFirstSpawn.delete(pane.id),
     );
   }
+}
+
+/**
+ * Bug I (2026-08-17): fechar o app com missão ativa derrubava todos os
+ * panes de uma vez e CADA um imprimia "process exited" + "a missão ainda é
+ * dona deste pane" (+ toasts de incidente) — uma parede de avisos sem
+ * informação nova. No shutdown o grid inteiro recebe UM aviso calmo e os
+ * banners por pane ficam suprimidos: a missão continua no rail e o boot
+ * seguinte ressuscita (resurrection, 0.32.24).
+ */
+let terminalShutdownNoticeMode = false;
+
+export function setTerminalShutdownNoticeMode(): void {
+  if (terminalShutdownNoticeMode) return;
+  terminalShutdownNoticeMode = true;
+  const message =
+    '\r\n\x1b[36m[nexus] encerrando o app — as missões continuam no rail ' +
+    'e retomam sozinhas no próximo boot.\x1b[0m';
+  for (const host of hosts.values()) {
+    if (host.disposed) continue;
+    try {
+      host.term.writeln(message);
+    } catch {
+      // apresentação é best-effort no shutdown
+    }
+  }
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeunload', setTerminalShutdownNoticeMode);
 }
 
 /**

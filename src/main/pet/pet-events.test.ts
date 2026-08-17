@@ -425,3 +425,38 @@ describe('AgentAttentionTracker', () => {
     expect(t.ingest('s1', 'waiting', at)?.kind).toBe('agent-waiting');
   });
 });
+
+describe('MissionTransitionTracker — shutdown não é alerta (bug I)', () => {
+  it('missão blocked_technical PELO ENCERRAMENTO do app não gera balão de falha técnica', () => {
+    const t = new MissionTransitionTracker();
+    t.ingest(
+      'a',
+      [
+        {
+          id: '1',
+          title: 'HiperGO review',
+          status: 'running',
+        },
+      ],
+      at,
+    );
+    // Shutdown marca a missão com o marcador de runtime fechado pelo
+    // operador — mesmo que o intent termine como blocked_technical numa
+    // corrida de teardown, fechar o app não é falha técnica.
+    const events = t.ingest(
+      'a',
+      [
+        {
+          id: '1',
+          title: 'HiperGO review',
+          status: 'blocked',
+          intentState: 'blocked_technical',
+          description:
+            'Missão em curso.\n<!-- nexus:runtime-closed -->',
+        },
+      ],
+      at + 1,
+    );
+    expect(events).toEqual([]);
+  });
+});
