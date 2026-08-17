@@ -13,6 +13,33 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.32.28',
+  date: '2026-08-17',
+  codename: 'Fechar sem barulho',
+  summary:
+    'Fechar o app no meio da missão não é mais uma parede de avisos: um ' +
+    'aviso calmo único ("as missões continuam no rail e retomam sozinhas ' +
+    'no próximo boot") e nada de banner por pane nem balão de falha.',
+  highlights: [
+    {
+      title: 'Um aviso, não uma parede',
+      detail:
+        'Cada pane imprimia "process exited" + "a missão ainda é dona ' +
+        'deste pane" (e toasts) quando você fechava o app. Agora o grid ' +
+        'inteiro recebe uma linha só, e os banners por pane ficam quietos.',
+    },
+    {
+      title: 'Encerrar não é falha técnica',
+      detail:
+        'O balão do pet tratava missão fechada pelo operador como falha ' +
+        'técnica numa corrida de teardown. O marcador de encerramento é ' +
+        'prova suficiente em qualquer intent — shutdown não é alerta.',
+    },
+  ],
+  fixes: [],
+};
+
+export const RELEASE_03227: AppRelease = {
   version: '0.32.27',
   date: '2026-08-17',
   codename: 'MCP pela lei física do binário',

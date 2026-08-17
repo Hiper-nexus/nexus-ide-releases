@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.32.28 — Fechar sem barulho
+
+Data: 2026-08-17
+
+- **Fim do flood de avisos ao fechar o app com missão ativa.** Todos os
+  panes morriam juntos e cada um imprimia "process exited" + "a missão
+  ainda é dona deste pane" (+ toasts de incidente). Agora: um aviso
+  único no grid — "encerrando o app — as missões continuam no rail e
+  retomam sozinhas no próximo boot" — e os banners por pane ficam
+  suprimidos no shutdown.
+- **Encerrar não é falha técnica.** O guard de runtime-closed-by-operator
+  do pet valia só para `blocked_user`; numa corrida de teardown com
+  `blocked_technical` cada missão virava balão de falha técnica. O
+  marcador `<!-- nexus:runtime-closed -->` só é escrito pelo
+  encerramento do operador — presença dele em missão bloqueada é prova
+  suficiente em qualquer intent (snapshot, rail e fast-lane herdam).
+
 ## 0.32.27 — MCP pela lei física do binário
 
 Data: 2026-08-17
