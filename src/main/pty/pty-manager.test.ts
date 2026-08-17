@@ -204,6 +204,7 @@ import {
   terminateAllSessions,
   orchKillSession,
   orchTerminateSession,
+  registeredOrchestratorSessionsForMission,
   orchWriteSession,
   writeSession,
 } from "./pty-manager";
@@ -2063,6 +2064,54 @@ describe("cli-agent spawn argv hardening", () => {
       listAgentSessions().filter((session) => session.adapterId === "claude"),
     ).toHaveLength(1);
     orchKillSession(first.sessionId);
+  });
+
+  it("terminate-with-proof releases the exclusive fence after the orchestrator turned non-live (2026-08-17 wedge)", async () => {
+    const h = fakeHost();
+    setPtyHost(h.host);
+    const adapter: CliPtyAdapter = {
+      ...makeAdapter({
+        static: {},
+        passthrough: [],
+        ephemeralHome: false,
+      }),
+      id: "claude",
+      label: "Claude",
+    };
+    const spawnOrchestrator = (paneId: string) =>
+      spawnAgentSession(
+        null,
+        { kind: "cli-agent", paneId, cols: 80, rows: 24 },
+        adapter,
+        {},
+        missionGrantFor("mission-wedge"),
+      );
+
+    const first = spawnOrchestrator("pane-wedge-1");
+    // O renderer marcou a CLI como morta ('exited') enquanto o processo seguia
+    // registrado: liveOrchestratorSessionId diz morto, a cerca diz vivo. Era o
+    // beco do 17/08 — todo respawn recusado para sempre.
+    publishSessionActivityState(first.sessionId, "exited");
+
+    const registered = registeredOrchestratorSessionsForMission(
+      "mission-wedge",
+    );
+    expect(registered).toHaveLength(1);
+    expect(registered[0]!.state).toBe("exited");
+    expect(registered[0]!.sessionId).toBe(first.sessionId);
+
+    // A cerca continua recusando enquanto a sessão está registrada…
+    expect(() => spawnOrchestrator("pane-wedge-2")).toThrow(
+      /exclusive auth family.*physical exit proof/i,
+    );
+    // …e o término com prova física é a saída sancionada: depois dele, o
+    // spawn da MESMA missão passa.
+    await expect(orchTerminateSession(first.sessionId)).resolves.toBe(true);
+    expect(getSessionState(first.sessionId)).toBeNull();
+    const second = spawnOrchestrator("pane-wedge-2");
+    expect(getSessionState(second.sessionId)).not.toBeNull();
+    orchKillSession(second.sessionId);
+    await orchTerminateSession(second.sessionId);
   });
 
   it("allows a second exclusive-auth orchestrator for a different mission", () => {

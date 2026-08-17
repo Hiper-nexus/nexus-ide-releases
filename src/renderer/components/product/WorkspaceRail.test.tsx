@@ -261,7 +261,10 @@ describe('WorkspaceRail', () => {
 
     expect(handlers.onCreateNew).toHaveBeenCalledOnce();
     expect(handlers.onSelectWorkspace).toHaveBeenCalledWith('atlas');
-    expect(handlers.onSelectMission).toHaveBeenCalledWith('mission-running');
+    expect(handlers.onSelectMission).toHaveBeenCalledWith(
+      'mission-running',
+      'atlas',
+    );
     expect(handlers.onOpenTaskBoard).toHaveBeenCalledOnce();
     expect(handlers.onOpenMemory).toHaveBeenCalledOnce();
     expect(handlers.onOpenSettings).toHaveBeenCalledOnce();

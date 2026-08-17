@@ -204,12 +204,13 @@ describe('canonical mission preload bridge', () => {
     electronMock.contextBridge.exposeInMainWorld.mockClear();
   });
 
-  it('exposes exactly the six canonical mission methods with no mutation authority', async () => {
+  it('exposes exactly the canonical mission methods with no mutation authority', async () => {
     const api = await loadPreloadApi();
 
     expect(Object.keys(api.mission).sort()).toEqual([
       'command',
       'list',
+      'listForWorkspace',
       'onChanged',
       'prepare',
       'snapshot',

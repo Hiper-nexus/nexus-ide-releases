@@ -22,6 +22,7 @@ export const ORCH_CHANNELS = {
   missionCommand: 'orch:mission.command',
   missionSnapshot: 'orch:mission.snapshot',
   missionList: 'orch:mission.list',
+  workspaceMissionList: 'orch:workspace-missions.list',
   missionsList: 'orch:missions.list',
   missionPanesList: 'orch:missions.panes',
   /** P1-0 slice 1: snapshot único do plano de controle (panes+fila+ownership+blocks). */

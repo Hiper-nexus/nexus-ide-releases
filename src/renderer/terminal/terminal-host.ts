@@ -21,6 +21,10 @@ import { resolveDroppedMissionContextPath } from '../lib/mission-shell-file-inta
 import { listPanes } from '../lib/split-tree';
 import { paneInputLane } from './pane-input-route';
 import {
+  clearPaneSpawnError,
+  recordPaneSpawnError,
+} from './pane-spawn-errors';
+import {
   BLOCKED_RESUME_NOTICE,
   decideExitedPaneKey,
   decideStaleAuthorityRecovery,
@@ -649,6 +653,7 @@ function startSpawn(
           return null;
         }
         host.spawnStarted = false;
+        recordPaneSpawnError(pane.id, res.error);
         host.term.writeln(
           `\r\n\x1b[31m[nexus] failed to start: ${res.error}\x1b[0m`,
         );
@@ -666,6 +671,7 @@ function startSpawn(
         return null;
       }
       setHostSession(host, pane.id, res.sessionId);
+      clearPaneSpawnError(pane.id);
       const spawnedAt = Date.now();
       // Session boundary: a NEW session attaching to a pane that already shows
       // content (restored scrollback, respawn in the same xterm) gets a divider
@@ -939,6 +945,7 @@ function startSpawn(
       if (host.disposed || host.spawnGeneration !== generation) return null;
       host.spawnStarted = false;
       const message = err instanceof Error ? err.message : String(err);
+      recordPaneSpawnError(pane.id, message);
       host.term.writeln(
         `\r\n\x1b[31m[nexus] failed to start: ${message}\x1b[0m`,
       );

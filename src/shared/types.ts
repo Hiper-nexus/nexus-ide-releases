@@ -550,6 +550,12 @@ export interface NexusApi {
     command(command: MissionEngineCommand): Promise<MissionSnapshot>;
     snapshot(missionId: string): Promise<MissionSnapshot>;
     list(): Promise<MissionSummarySnapshot[]>;
+    /**
+     * Summaries de um OUTRO workspace conhecido (para o rail multi-workspace).
+     * Main só aceita roots que ele conhece como corrente/recente e devolve
+     * lista vazia para workspace desconhecido ou ilegível.
+     */
+    listForWorkspace(rootPath: string): Promise<MissionSummarySnapshot[]>;
     onChanged(
       listener: (items: MissionSummarySnapshot[]) => void,
     ): Unsubscribe;

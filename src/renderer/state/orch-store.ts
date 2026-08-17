@@ -31,8 +31,18 @@ interface OrchState {
   boundWorkspacePath: string | null;
   /** Bumps on every reset so in-flight hydrate calls drop their result. */
   workspaceEpoch: number;
+  /**
+   * Summaries de missões ATIVAS de outros workspaces (rail multi-workspace,
+   * 2026-08-17). Key = root path. Não é project-scoped: sobrevive à troca de
+   * workspace para o operador não perder a visão do que roda nos vizinhos.
+   */
+  crossWorkspaceSummaries: Record<string, MissionSummarySnapshot[]>;
+  /** Bumps a cada hydrateCrossWorkspace; resposta atrasada é descartada. */
+  crossWorkspaceEpoch: number;
 
   hydrate(workspacePath: string): Promise<void>;
+  /** Refresca as missões ativas dos workspaces vizinhos (paths conhecidos). */
+  hydrateCrossWorkspace(paths: readonly string[]): Promise<void>;
   resetProjectState(): void;
   bindPaneMission(paneId: string, missionId: string | undefined): void;
   /** Remove bindings de panes que não existem mais no layout. */
@@ -63,6 +73,25 @@ export const useOrchStore = create<OrchState>((set, get) => ({
   paneMissions: {},
   boundWorkspacePath: null,
   workspaceEpoch: 0,
+  crossWorkspaceSummaries: {},
+  crossWorkspaceEpoch: 0,
+
+  hydrateCrossWorkspace: async (paths) => {
+    const epoch = get().crossWorkspaceEpoch + 1;
+    set({ crossWorkspaceEpoch: epoch });
+    const wanted = [...new Set(paths)];
+    const results = await Promise.allSettled(
+      wanted.map((path) => window.nexus.mission.listForWorkspace(path)),
+    );
+    if (get().crossWorkspaceEpoch !== epoch) return;
+    const next: Record<string, MissionSummarySnapshot[]> = {};
+    results.forEach((result, index) => {
+      if (result.status === 'fulfilled') next[wanted[index]!] = result.value;
+    });
+    // Keys fora do pedido atual caem fora (workspace removido dos recentes
+    // não fica preso no rail).
+    set({ crossWorkspaceSummaries: next });
+  },
 
   hydrate: async (workspacePath) => {
     if (getActiveWorkspacePath() !== workspacePath) return;

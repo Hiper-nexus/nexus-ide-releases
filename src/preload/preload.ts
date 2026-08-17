@@ -800,6 +800,8 @@ const api: NexusApi = {
     snapshot: (missionId) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionSnapshot, missionId),
     list: () => ipcRenderer.invoke(ORCH_CHANNELS.missionList),
+    listForWorkspace: (rootPath: string) =>
+      ipcRenderer.invoke(ORCH_CHANNELS.workspaceMissionList, { rootPath }),
     onChanged: (listener) => addListener(missionChangedListeners, listener),
   },
   orch: {

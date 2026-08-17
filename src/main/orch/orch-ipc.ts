@@ -36,6 +36,8 @@ import {
   requireLiveRendererWorkspaceScope,
   requireRendererWorkspaceScope,
 } from "../persistence/renderer-workspace-scope";
+import { resolveProjectExecutionScope } from "../persistence/project-identity";
+import { getWorkspaceState } from "../persistence/workspace-store";
 import {
   initSquadStore,
   listSquads,
@@ -1900,6 +1902,40 @@ export function registerOrchIpc(): void {
     const items = await missionEngineForScope(scope).list(scope);
     return canonicalMissionSummaryListSchema.parse(items);
   });
+  // P1-1 (2026-08-17): o rail lista missões ativas dos OUTROS workspaces —
+  // missão rodando em workspace vizinho era invisível. O root precisa ser um
+  // workspace CONHECIDO (corrente ou recente) do main; path arbitrário do
+  // renderer nunca vira escopo de leitura.
+  ipcMain.handle(
+    ORCH_CHANNELS.workspaceMissionList,
+    async (_event, raw: unknown) => {
+      const parsed = z
+        .object({ rootPath: z.string().min(1).max(1_024) })
+        .strict()
+        .safeParse(raw);
+      if (!parsed.success) return [];
+      const workspaceState = getWorkspaceState();
+      const known =
+        workspaceState.current?.path === parsed.data.rootPath ||
+        workspaceState.recents.some(
+          (workspace) => workspace.path === parsed.data.rootPath,
+        );
+      if (!known) return [];
+      let scope;
+      try {
+        scope = resolveProjectExecutionScope(parsed.data.rootPath);
+      } catch {
+        return [];
+      }
+      try {
+        const items = await missionEngineForScope(scope).list(scope);
+        return canonicalMissionSummaryListSchema.parse(items);
+      } catch {
+        // Workspace antigo/removido com runtime ilegível: sem missões, sem erro.
+        return [];
+      }
+    },
+  );
   ipcMain.handle(ORCH_CHANNELS.missionPanesList, (event, raw) => {
     if (typeof raw !== "string" || raw.length === 0 || raw.length > 128) {
       return [];

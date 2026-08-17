@@ -35,6 +35,8 @@ const harness = vi.hoisted(() => ({
 vi.mock('../pty/pty-manager', () => ({
   getSessionState: (sessionId: string) =>
     harness.sessionStates.get(sessionId) ?? null,
+  registeredOrchestratorSessionsForMission: () => [],
+  orchTerminateSession: () => Promise.resolve(true),
 }));
 
 vi.mock('./tool-util', () => ({

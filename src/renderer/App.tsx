@@ -92,6 +92,7 @@ import {
   WorkspaceRail,
   type WorkspaceRailSelection,
 } from './components/product/WorkspaceRail';
+import { projectRailWorkspaces } from './components/product/rail-workspaces';
 import { MissionSetup } from './components/mission/MissionSetup';
 import { MissionBoard } from './components/mission/MissionBoard';
 import { TerminalWorkspace } from './components/product/TerminalWorkspace';
@@ -272,6 +273,26 @@ export function App() {
     if (destination.kind !== 'project') return;
     useProductNavigationStore.getState().openTerminal();
   }, [destination.kind, productFlags]);
+
+  // Rail multi-workspace (2026-08-17): missão ativa em workspace vizinho
+  // precisa aparecer enquanto o operador está em outro lugar. Refresca quando
+  // os recentes mudam e a cada 60s (missões mudam de estado em background).
+  const recentWorkspaceKey = recentWorkspaces
+    .filter((workspace) => workspace.path !== currentWorkspace?.path)
+    .map((workspace) => workspace.path)
+    .join('|');
+  useEffect(() => {
+    const paths = recentWorkspaceKey ? recentWorkspaceKey.split('|') : [];
+    const refresh = (): void => {
+      const activePath = useWorkspaceStore.getState().current?.path;
+      void useOrchStore
+        .getState()
+        .hydrateCrossWorkspace(paths.filter((path) => path !== activePath));
+    };
+    refresh();
+    const timer = setInterval(refresh, 60_000);
+    return () => clearInterval(timer);
+  }, [recentWorkspaceKey]);
 
   // Each workspace owns its saved pane tree. A workspace identity change may
   // choose Terminal, but ordinary store refreshes never reset the active
@@ -812,27 +833,21 @@ export function App() {
     destinationContent
   );
 
-  const activeWorkspaces = currentWorkspace
-    ? [
-        {
-          id: currentWorkspace.path,
-          name: currentWorkspace.name,
-          missions: missionSummaries.map((mission) => ({
-            id: mission.id,
-            title: mission.title,
-            status: mission.state,
-            needsAttention: mission.needsAttention,
-          })),
-        },
-      ]
-    : [];
-  const projectedRecents = recentWorkspaces
-    .filter((workspace) => workspace.path !== currentWorkspace?.path)
-    .map((workspace) => ({
-      id: workspace.path,
-      name: workspace.name,
-      missions: [],
-    }));
+  const crossWorkspaceSummaries = useOrchStore(
+    (state) => state.crossWorkspaceSummaries,
+  );
+  const { activeWorkspaces, recentWorkspaces: projectedRecents } =
+    projectRailWorkspaces({
+      current: currentWorkspace
+        ? { path: currentWorkspace.path, name: currentWorkspace.name }
+        : null,
+      recents: recentWorkspaces.map((workspace) => ({
+        path: workspace.path,
+        name: workspace.name,
+      })),
+      currentSummaries: missionSummaries,
+      crossWorkspaceSummaries,
+    });
   const projectOverviewEnabled =
     productFlags[FEATURE_FLAG_IDS.uiProjectOverview] !== false;
 
@@ -911,12 +926,37 @@ export function App() {
             selection={selection}
             onCreateNew={navigation.openNewMission}
             onSelectWorkspace={selectWorkspace}
-            onSelectMission={(missionId) =>
+            onSelectMission={(missionId, workspaceId) => {
+              // Missão de workspace VIZINHO: troca de workspace e só então
+              // navega — antes a missão do outro workspace era invisível E
+              // inalcançável pelo rail.
+              if (
+                workspaceId &&
+                workspaceId !== useWorkspaceStore.getState().current?.path
+              ) {
+                void useWorkspaceStore
+                  .getState()
+                  .open(workspaceId)
+                  .then(() => {
+                    routeMissionAttention({
+                      missionId,
+                      cause: 'rail-selection',
+                    });
+                  })
+                  .catch(() => {
+                    useToastStore.getState().push(
+                      'error',
+                      'Workspace não pôde ser aberto',
+                      'Tente abrir o projeto novamente pela lista de recentes.',
+                    );
+                  });
+                return;
+              }
               routeMissionAttention({
                 missionId,
                 cause: 'rail-selection',
-              })
-            }
+              });
+            }}
             projectEnabled={Boolean(currentWorkspace) && projectOverviewEnabled}
             onOpenProject={
               currentWorkspace && projectOverviewEnabled

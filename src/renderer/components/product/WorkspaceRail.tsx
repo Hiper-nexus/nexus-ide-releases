@@ -30,7 +30,11 @@ export interface WorkspaceRailProps {
   selection: WorkspaceRailSelection;
   onCreateNew: () => void;
   onSelectWorkspace: (workspaceId: string) => void;
-  onSelectMission: (missionId: string) => void;
+  /**
+   * workspaceId presente quando a missão mora num workspace vizinho: o
+   * chamador troca de workspace antes de navegar (rail multi-workspace).
+   */
+  onSelectMission: (missionId: string, workspaceId?: string) => void;
   projectEnabled?: boolean;
   onOpenProject?: () => void;
   onOpenTaskBoard: () => void;
@@ -98,7 +102,7 @@ interface WorkspaceGroupProps {
   workspaces: readonly WorkspaceRailWorkspace[];
   selection: WorkspaceRailSelection;
   onSelectWorkspace: (workspaceId: string) => void;
-  onSelectMission: (missionId: string) => void;
+  onSelectMission: (missionId: string, workspaceId?: string) => void;
 }
 
 function WorkspaceGroup({
@@ -176,7 +180,9 @@ function WorkspaceGroup({
                           aria-current={missionSelected ? 'page' : undefined}
                           aria-label={`${mission.title}. ${status.label}`}
                           title={`${mission.title}: ${status.label}`}
-                          onClick={() => onSelectMission(mission.id)}
+                          onClick={() =>
+                            onSelectMission(mission.id, workspace.id)
+                          }
                         >
                           <span
                             className="workspace-rail__mission-indicator"

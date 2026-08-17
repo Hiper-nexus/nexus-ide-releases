@@ -31,6 +31,7 @@ import {
   waitForHealthyPaneSession,
   waitForSession,
 } from '../terminal/terminal-host';
+import { takePaneSpawnError } from '../terminal/pane-spawn-errors';
 import { waitForBrowserPaneCreated } from '../browser/browser-host';
 import { initAgentNotificationBridge } from './agent-notification-bridge';
 import type { Handoff } from '../../shared/orch-types';
@@ -551,11 +552,17 @@ export function useOrchBridge(): void {
             );
             if (!sessionId) {
               cleanupFailedOrchPane(req, paneId);
+              // O erro CONCRETO do pty.spawn (ex.: cerca do pty-manager) vale
+              // mais que o timeout genérico — sem ele o operador lê "adapter
+              // missing" quando o problema era um orquestrador registrado.
+              const detail = takePaneSpawnError(paneId ?? '');
               window.nexus.orch.sendPaneSpawnResult({
                 requestId: req.requestId,
                 ok: false,
                 paneId,
-                error: 'session did not start (adapter missing or spawn failed)',
+                error:
+                  detail ??
+                  'session did not start (adapter missing or spawn failed)',
               });
               return;
             }

@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { Handoff, Mission } from '../../shared/orch-types';
 import {
+  CHEF_IDLE_BLOCK_AFTER_MS,
   DELEGATION_RETRY_MS,
   DELEGATION_SLA_MS,
+  decideChefIdleEscalation,
   delegationRecoveryStage,
   isDelegationSupervisable,
 } from './delegation-supervisor';
@@ -64,6 +66,84 @@ const dispatchedEmpty: Mission = {
 };
 
 describe('delegation supervisor policy', () => {
+  it('chef idle aguardando workers: abaixo do teto só observa', () => {
+    const t0 = 1_000_000;
+    expect(
+      decideChefIdleEscalation({
+        idle: true,
+        workerCount: 1,
+        missionStatus: 'running',
+        trackedSince: t0,
+        trackedWorkerCount: 1,
+        now: t0 + CHEF_IDLE_BLOCK_AFTER_MS - 1,
+      }),
+    ).toEqual({ action: 'watch' });
+  });
+
+  it('chef idle cruza o teto sem mudança de workers: bloqueia com motivo visível', () => {
+    const t0 = 1_000_000;
+    expect(
+      decideChefIdleEscalation({
+        idle: true,
+        workerCount: 1,
+        missionStatus: 'running',
+        trackedSince: t0,
+        trackedWorkerCount: 1,
+        now: t0 + CHEF_IDLE_BLOCK_AFTER_MS,
+      }),
+    ).toEqual({ action: 'block', sinceMs: t0 });
+  });
+
+  it('mudança no número de workers reinicia o relógio (episódio novo)', () => {
+    const t0 = 1_000_000;
+    expect(
+      decideChefIdleEscalation({
+        idle: true,
+        workerCount: 2,
+        missionStatus: 'running',
+        trackedSince: t0,
+        trackedWorkerCount: 1,
+        now: t0 + CHEF_IDLE_BLOCK_AFTER_MS + 5_000,
+      }),
+    ).toEqual({ action: 'reset' });
+  });
+
+  it('chef ocupado ou missão não-running zera o rastreamento', () => {
+    expect(
+      decideChefIdleEscalation({
+        idle: false,
+        workerCount: 1,
+        missionStatus: 'running',
+        trackedSince: 1_000,
+        trackedWorkerCount: 1,
+        now: 9_999_999,
+      }),
+    ).toEqual({ action: 'reset' });
+    expect(
+      decideChefIdleEscalation({
+        idle: true,
+        workerCount: 1,
+        missionStatus: 'blocked',
+        trackedSince: 1_000,
+        trackedWorkerCount: 1,
+        now: 9_999_999,
+      }),
+    ).toEqual({ action: 'reset' });
+  });
+
+  it('primeira observação idle começa a contar, não bloqueia na hora', () => {
+    expect(
+      decideChefIdleEscalation({
+        idle: true,
+        workerCount: 1,
+        missionStatus: 'running',
+        trackedSince: null,
+        trackedWorkerCount: 0,
+        now: 5_000_000,
+      }),
+    ).toEqual({ action: 'watch' });
+  });
+
   it('does NOT recover a squad mission that is only awaiting a goal (NavalhaGO case)', () => {
     const awaiting = {
       mission: {

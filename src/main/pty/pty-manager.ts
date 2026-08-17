@@ -1100,6 +1100,40 @@ function assertExclusiveOrchestratorProcessAvailable(
   }
 }
 
+/**
+ * Toda sessão AINDA REGISTRADA como orquestrador desta missão — incluindo
+ * estados não-vivos (exited/hibernated) e cadáveres sem prova física, que a
+ * cerca acima conta mas liveOrchestratorSessionId (fast-lane) não conta. Era
+ * a discordância do 17/08: fast-lane decidia respawn, a cerca recusava para
+ * sempre. O respawn deve terminar estas sessões (orchTerminateSession) ANTES
+ * de spawnar a reposição.
+ */
+export function registeredOrchestratorSessionsForMission(
+  missionId: string,
+): ReadonlyArray<{
+  readonly sessionId: string;
+  readonly state: PaneSessionState;
+  readonly adapterId: string;
+}> {
+  const wanted = missionId.trim();
+  if (!wanted) return [];
+  return Object.freeze(
+    [...sessions.entries()]
+      .filter(
+        ([, session]) =>
+          session.agent?.role === "orchestrator" &&
+          (session.agent.missionId?.trim() || "") === wanted,
+      )
+      .map(([sessionId, session]) =>
+        Object.freeze({
+          sessionId,
+          state: session.state,
+          adapterId: session.agent?.adapterId ?? "",
+        }),
+      ),
+  );
+}
+
 /** Spawn a cli-agent PTY from a validated adapter. */
 export function spawnAgentSession(
   wc: WebContents | null,

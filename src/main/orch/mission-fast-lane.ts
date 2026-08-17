@@ -10,7 +10,11 @@ import { isUiMissionText } from '../../shared/mission-work-kind';
 import { wasMissionRuntimeClosedByOperator } from '../../shared/mission-recovery-policy';
 import { emitMissionEvent } from './mission-event-emit';
 import { buildOrchestratorDoctrine } from './orchestrator-doctrine';
-import { getSessionState } from '../pty/pty-manager';
+import {
+  getSessionState,
+  orchTerminateSession,
+  registeredOrchestratorSessionsForMission,
+} from '../pty/pty-manager';
 import { listPaneSnapshots, requestPaneSpawn } from './pane-registry';
 import { getProjectDomainStores } from './project-domain-store-registry';
 import { getSquad } from './squad-store';
@@ -628,6 +632,30 @@ async function respawnFastLaneOrchestrator(
   ]
     .filter(Boolean)
     .join('\n');
+
+  // P0-1 (2026-08-17): NUNCA spawnar por cima de um orquestrador registrado.
+  // A cerca do pty-manager conta QUALQUER sessão registrada (exited/
+  // hibernated incluso); liveOrchestratorSessionId conta só busy/idle/
+  // spawning com pane. Quando discordavam, o respawn era recusado para
+  // sempre. A saída sancionada é terminar com prova física antes do spawn —
+  // e abortar (sem split-brain) se o processo teimoso não provar a morte.
+  const staleOrchestrators = registeredOrchestratorSessionsForMission(
+    mission.id,
+  );
+  for (const stale of staleOrchestrators) {
+    const proven = await orchTerminateSession(stale.sessionId, {
+      termTimeoutMs: 5_000,
+      killTimeoutMs: 10_000,
+    });
+    if (!proven) {
+      throw new Error(
+        `orquestrador anterior (${stale.sessionId}, estado ${stale.state}, ` +
+          `${stale.adapterId}) não terminou fisicamente; respawn abortado ` +
+          'para não criar dois Maestros na mesma missão. Feche o pane antigo ' +
+          'ou reinicie o app e use Retomar.',
+      );
+    }
+  }
 
   const spawned = await spawnAgentPane(scope, live, orchestrator, prompt);
   if ('error' in spawned) {
