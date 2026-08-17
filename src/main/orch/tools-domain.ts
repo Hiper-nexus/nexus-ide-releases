@@ -24,7 +24,7 @@ import { loadSpecialtyBenchmark } from './specialty-benchmark';
 import { hasAvailableAccount } from '../persistence/account-store';
 import { authReadyModelsForProvider } from '../adapters/model-auth-readiness';
 import { appendMissionVerdict } from '../../shared/mission-block-cause';
-import { missionStatusSchema } from '../../shared/orch-types';
+import { missionStatusSchema, type SquadAgent } from '../../shared/orch-types';
 import { missionResultSchema } from '../../shared/mission-engine-contract';
 import { buildClarify } from '../../shared/clarify';
 import { emitClarifyQuestion } from './clarify-flow';
@@ -809,7 +809,7 @@ const taskTool: McpToolDef = {
     properties: {
       action: {
         type: 'string',
-        enum: ['create', 'update', 'list'],
+        enum: ['create', 'update', 'list', 'plan'],
       },
       title: { type: 'string' },
       detail: { type: 'string' },
@@ -892,11 +892,142 @@ const taskTool: McpToolDef = {
           : (requestedMission ?? ctx.missionId);
         return tasks.list(missionId);
       }
+      case 'plan': {
+        // 0.32.26: a action que a description promete e o gate exige.
+        // Sela o plano da missão no registro de tasks (rastreio durável:
+        // queue, ownership, dependsOn embutidos no detail) contra o roster
+        // selado real. Só orquestrador; replay idêntico devolve os mesmos
+        // ids (createPlanAtomically é determinístico).
+        if (ctx.role === 'worker') {
+          throw new Error('only an orchestrator can seal the mission plan');
+        }
+        const missionId = str(args, 'missionId') ?? ctx.missionId;
+        if (!missionId) {
+          throw new Error('nexus_task plan exige missionId');
+        }
+        const mission = suite.missions.get(missionId);
+        if (!mission) throw new Error(`mission not found: ${missionId}`);
+        if (mission.status !== 'running') {
+          throw new Error(
+            `nexus_task plan exige missão running (atual: ${mission.status})`,
+          );
+        }
+        const squad = mission.squadId ? getSquad(mission.squadId) : null;
+        if (!squad || squad.agents.length === 0) {
+          throw new Error(
+            'nexus_task plan exige missão vinculada a um squad com roster',
+          );
+        }
+        const rows = mcpPlanTasksToRows(args.tasks, squad.agents);
+        const sealedTasks = tasks.createPlanAtomically({
+          missionId,
+          intentVersion: mission.intentVersion ?? 0,
+          squad: { id: squad.id, agents: squad.agents },
+          rows,
+        });
+        return {
+          sealed: true,
+          missionId,
+          intentVersion: mission.intentVersion ?? 0,
+          tasks: sealedTasks.map((task) => ({
+            id: task.id,
+            plannerId: rows.find((row) => row.title === task.title)?.plannerId,
+            title: task.title,
+            status: task.status,
+          })),
+        };
+      }
       default:
         throw new Error(`unknown action: ${String(args.action)}`);
     }
   },
 };
+
+/**
+ * nexus_task plan (0.32.26): a tool promete selar o plano desde sempre, o
+ * gate exigia "somente UMA chamada nexus_task plan", mas a action não
+ * existia — o Maestro registrava o plano na lista de tarefas visível
+ * ("o rastreio existe, só não no objeto task", print 2026-08-17). Aqui o
+ * mapa puro das tasks do MCP para as rows seladas: valida contra o roster
+ * real (categoria exata, sem task para orquestrador) e embute os campos
+ * extras (dependsOn/executionMode/ownership) como rodapé estruturado no
+ * detail — o rastreio fica durável sem cirurgia no schema do selo.
+ */
+export function mcpPlanTasksToRows(
+  rawTasks: unknown,
+  agents: readonly SquadAgent[],
+): Array<{
+  plannerId: string;
+  title: string;
+  detail: string;
+  agentRef: string;
+  agentCategory: SquadAgent['category'];
+}> {
+  if (!Array.isArray(rawTasks) || rawTasks.length === 0) {
+    throw new Error('nexus_task plan exige ao menos 1 task em tasks[]');
+  }
+  if (rawTasks.length > 64) {
+    throw new Error('nexus_task plan aceita no máximo 64 tasks');
+  }
+  const seen = new Set<string>();
+  return rawTasks.map((raw) => {
+    if (typeof raw !== 'object' || raw === null) {
+      throw new Error('task do plano precisa ser objeto');
+    }
+    const task = raw as Record<string, unknown>;
+    const id = typeof task.id === 'string' && task.id.trim() ? task.id.trim() : '';
+    if (!id) throw new Error('task do plano exige id (plannerId)');
+    if (seen.has(id)) throw new Error(`id de task duplicado no plano: ${id}`);
+    seen.add(id);
+    const title =
+      typeof task.title === 'string' && task.title.trim()
+        ? task.title.trim().slice(0, 1_024)
+        : '';
+    if (!title) throw new Error(`task ${id} exige title`);
+    const agentRef =
+      typeof task.agentRef === 'string' ? task.agentRef.trim() : '';
+    const agent = agents.find((candidate) => candidate.id === agentRef);
+    if (!agent) {
+      throw new Error(
+        `task ${id}: agentRef "${agentRef}" não está no roster selado da missão`,
+      );
+    }
+    if (agent.category === 'orchestrator') {
+      throw new Error(
+        `task ${id}: plano não atribui task de worker ao orquestrador (${agentRef})`,
+      );
+    }
+    const category =
+      typeof task.category === 'string' ? task.category : agent.category;
+    if (category !== agent.category) {
+      throw new Error(
+        `task ${id}: category "${category}" diverge do roster ` +
+          `(${agentRef} é ${agent.category})`,
+      );
+    }
+    const detailBase =
+      typeof task.detail === 'string' ? task.detail.slice(0, 60_000) : '';
+    const meta: Record<string, unknown> = {};
+    if (Array.isArray(task.dependsOn) && task.dependsOn.length > 0) {
+      meta.dependsOn = task.dependsOn;
+    }
+    if (typeof task.executionMode === 'string') meta.executionMode = task.executionMode;
+    if (task.ownership && typeof task.ownership === 'object') {
+      meta.ownership = task.ownership;
+    }
+    const metaFooter =
+      Object.keys(meta).length > 0
+        ? `\n\n[plan-meta]${JSON.stringify(meta)}`
+        : '';
+    return {
+      plannerId: id,
+      title,
+      detail: `${detailBase}${metaFooter}`.slice(0, 65_536),
+      agentRef,
+      agentCategory: agent.category as SquadAgent['category'],
+    };
+  });
+}
 
 const todoManagerTool: McpToolDef = {
   name: 'nexus_todo_manager',

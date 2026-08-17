@@ -48,6 +48,7 @@ import {
 
 const RECENT_EVENT_LIMIT = 40;
 const WORKSPACE_STACK_BREAKPOINT = 1099;
+const MISSION_INSPECTOR_COLLAPSED_KEY = 'nexus.mission.inspector-collapsed';
 const DEFAULT_INSPECTOR_RATIO = 0.4;
 const VERTICAL_MIN_INSPECTOR_SIZE = 320;
 const VERTICAL_MAX_INSPECTOR_RATIO = 0.5;
@@ -220,6 +221,25 @@ export function MissionBoard({
     useState<MissionQuestionState>(emptyQuestionState);
   const [workspaceDimensions, setWorkspaceDimensions] =
     useState<WorkspaceDimensions>({ width: 0, height: 0 });
+  const [inspectorCollapsed, setInspectorCollapsed] = useState(
+    () =>
+      typeof window !== 'undefined' &&
+      window.localStorage.getItem(MISSION_INSPECTOR_COLLAPSED_KEY) === '1',
+  );
+  const toggleInspectorCollapsed = useCallback((): void => {
+    setInspectorCollapsed((current) => {
+      const next = !current;
+      try {
+        window.localStorage.setItem(
+          MISSION_INSPECTOR_COLLAPSED_KEY,
+          next ? '1' : '0',
+        );
+      } catch {
+        // Preferência é best-effort; o estado da sessão já vale.
+      }
+      return next;
+    });
+  }, []);
   const [inspectorRatio, setInspectorRatio] = useState(
     DEFAULT_INSPECTOR_RATIO,
   );
@@ -1045,34 +1065,52 @@ export function MissionBoard({
             onSelectAgent={selectAgent}
             onRetry={() => refreshSnapshotRef.current?.()}
           />
+          <button
+            type="button"
+            className="mission-board__inspector-toggle"
+            onClick={toggleInspectorCollapsed}
+            aria-expanded={!inspectorCollapsed}
+            aria-controls={inspectorRegionId}
+            title={
+              inspectorCollapsed
+                ? 'Mostrar o painel de detalhes da missão'
+                : 'Fechar o painel de detalhes e deixar só o time'
+            }
+          >
+            {inspectorCollapsed ? '‹ detalhes' : 'detalhes ›'}
+          </button>
         </div>
-        <div
-          className="mission-board__splitter"
-          role="separator"
-          tabIndex={0}
-          aria-label="Redimensionar inspetor da missão"
-          aria-controls={inspectorRegionId}
-          aria-orientation={splitterOrientation}
-          aria-valuemin={Math.round(inspectorMinimum)}
-          aria-valuemax={Math.round(inspectorMaximum)}
-          aria-valuenow={inspectorSize}
-          aria-valuetext={`Inspetor ocupa ${inspectorPercent}% da ${
-            splitterOrientation === 'vertical' ? 'largura' : 'altura'
-          } do quadro`}
-          onKeyDown={handleSplitterKeyDown}
-          onMouseDown={handleSplitterMouseDown}
-        />
-        <div
-          id={inspectorRegionId}
-          className="mission-board__inspector-region"
-        >
-          <MissionInspector
-            snapshot={currentSnapshot}
-            events={events}
-            onCommand={executeCommand}
-            question={question}
-          />
-        </div>
+        {!inspectorCollapsed && (
+          <>
+            <div
+              className="mission-board__splitter"
+              role="separator"
+              tabIndex={0}
+              aria-label="Redimensionar inspetor da missão"
+              aria-controls={inspectorRegionId}
+              aria-orientation={splitterOrientation}
+              aria-valuemin={Math.round(inspectorMinimum)}
+              aria-valuemax={Math.round(inspectorMaximum)}
+              aria-valuenow={inspectorSize}
+              aria-valuetext={`Inspetor ocupa ${inspectorPercent}% da ${
+                splitterOrientation === 'vertical' ? 'largura' : 'altura'
+              } do quadro`}
+              onKeyDown={handleSplitterKeyDown}
+              onMouseDown={handleSplitterMouseDown}
+            />
+            <div
+              id={inspectorRegionId}
+              className="mission-board__inspector-region"
+            >
+              <MissionInspector
+                snapshot={currentSnapshot}
+                events={events}
+                onCommand={executeCommand}
+                question={question}
+              />
+            </div>
+          </>
+        )}
       </div>
 
       {currentSnapshot && (

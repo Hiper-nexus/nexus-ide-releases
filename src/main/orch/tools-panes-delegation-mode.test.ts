@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { PaneSnapshot } from '../../shared/orch-types';
 import {
   activeSameCheckoutWorker,
+  decideSameCheckoutSpawn,
   reserveWorkerSpawnSlot,
   shouldReleaseWorkerReservation,
   withSameCheckoutWorkerContract,
@@ -136,5 +137,34 @@ describe('pre-contract same-checkout delegation', () => {
         recordedPaneIds: ['pane-1'],
       }),
     ).toBe(false);
+  });
+});
+
+describe('decideSameCheckoutSpawn (leitor acompanha escritor)', () => {
+  it('spawn read-only é PERMITIDO ao lado de um escritor ativo', () => {
+    expect(
+      decideSameCheckoutSpawn({
+        spawnReadOnly: true,
+        activeWorker: { paneId: 'pane-executor', state: 'busy' },
+      }),
+    ).toEqual({ allowed: true });
+  });
+
+  it('spawn escritor continua serializado atrás de escritor ativo', () => {
+    const decision = decideSameCheckoutSpawn({
+      spawnReadOnly: false,
+      activeWorker: { paneId: 'pane-executor', state: 'busy' },
+    });
+    expect(decision.allowed).toBe(false);
+    if (!decision.allowed) {
+      expect(decision.reason).toContain('serialized');
+      expect(decision.reason).toContain('pane-executor');
+    }
+  });
+
+  it('sem worker ativo, qualquer spawn passa', () => {
+    expect(
+      decideSameCheckoutSpawn({ spawnReadOnly: false, activeWorker: null }),
+    ).toEqual({ allowed: true });
   });
 });

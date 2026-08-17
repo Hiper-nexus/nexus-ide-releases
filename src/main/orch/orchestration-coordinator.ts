@@ -10,6 +10,11 @@ import {
   reconcileLoginStuckWatchdog,
 } from './login-stuck-watchdog';
 import {
+  BOOT_PROMPT_TICK_MS,
+  installBootPromptWatchdog,
+  reconcileBootPromptWatchdog,
+} from './boot-prompt-watchdog';
+import {
   createOrchestrationReconciler,
   type OrchestrationReconciler,
 } from './orchestration-reconciler';
@@ -32,6 +37,7 @@ import { requireProjectDomainStoreRegistry } from './project-domain-store-regist
 
 let coordinator: OrchestrationReconciler | null = null;
 let disposeLoginWatchdog: (() => void) | null = null;
+let disposeBootPromptWatchdog: (() => void) | null = null;
 let coordinatorStopFlight: Promise<void> | null = null;
 const MISSION_RUNTIME_AUTHORITY_RECONCILE_MS = 1_000;
 
@@ -44,12 +50,18 @@ export function startOrchestrationCoordinator(): void {
   prepareDelegationSupervisor();
   configureHandoffDeliveryRuntimeRecovery(recoverHandoffDeliveryRuntime);
   disposeLoginWatchdog = installLoginStuckWatchdog({ autoTick: false });
+  disposeBootPromptWatchdog = installBootPromptWatchdog();
 
   const instance = createOrchestrationReconciler([
     {
       id: 'login-stuck',
       cadenceMs: LOGIN_STUCK_TICK_MS,
       run: () => reconcileLoginStuckWatchdog(),
+    },
+    {
+      id: 'boot-prompt',
+      cadenceMs: BOOT_PROMPT_TICK_MS,
+      run: () => reconcileBootPromptWatchdog(),
     },
     {
       id: 'delegation-supervisor',
@@ -125,6 +137,8 @@ export async function stopOrchestrationCoordinator(): Promise<void> {
     }
     disposeLoginWatchdog?.();
     disposeLoginWatchdog = null;
+    disposeBootPromptWatchdog?.();
+    disposeBootPromptWatchdog = null;
     shutdownDelegationSupervisor();
     configureHandoffDeliveryRuntimeRecovery(null);
     coordinator = null;

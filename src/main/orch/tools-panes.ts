@@ -209,6 +209,27 @@ export function activeSameCheckoutWorker(
   ) ?? null;
 }
 
+/**
+ * 0.32.26: leitor acompanha escritor. Um spawn read-only (readOnly ou
+ * nativeReadOnly) NÃO é recusado por um escritor ativo no mesmo checkout —
+ * o relatório do Maestro (2026-08-17) mostrou o revisor read-only
+ * serializado atrás do executor, atrasando a missão inteira. Leitura não
+ * muta o WIP; a doutrina "1 escritor por vez" permanece intacta.
+ */
+export function decideSameCheckoutSpawn(input: {
+  readonly spawnReadOnly: boolean;
+  readonly activeWorker: { readonly paneId: string; readonly state: string } | null;
+}): { readonly allowed: true } | { readonly allowed: false; readonly reason: string } {
+  if (!input.activeWorker) return { allowed: true };
+  if (input.spawnReadOnly) return { allowed: true };
+  return {
+    allowed: false,
+    reason:
+      `same-checkout delegation is serialized; worker ${input.activeWorker.paneId} ` +
+      `is still ${input.activeWorker.state}`,
+  };
+}
+
 export function withSameCheckoutWorkerContract(prompt: string): string {
   return (
     '## Nexus execution authority\n' +
@@ -660,15 +681,17 @@ const paneSpawn: McpToolDef = {
           }
         } else {
           executionMode = 'same_checkout';
-          const activeWorker = activeSameCheckoutWorker(
-            listPaneSnapshots(),
-            ctx.scope.rootRealPath,
-          );
-          if (activeWorker) {
-            throw new Error(
-              `same-checkout delegation is serialized; worker ${activeWorker.paneId} ` +
-              `is still ${activeWorker.state}`,
-            );
+          const decision = decideSameCheckoutSpawn({
+            spawnReadOnly:
+              options.readOnly === true ||
+              options.executionMode === 'read_only',
+            activeWorker: activeSameCheckoutWorker(
+              listPaneSnapshots(),
+              ctx.scope.rootRealPath,
+            ),
+          });
+          if (!decision.allowed) {
+            throw new Error(decision.reason);
           }
           options = {
             ...options,
