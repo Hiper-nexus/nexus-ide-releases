@@ -43,6 +43,7 @@ const LEGACY_MISSION: Mission = {
 
 const orchBoundary = {
   setTodoStatus: vi.fn(),
+  clearTodoBoard: vi.fn(),
   updateMission: vi.fn(),
   reopenMission: vi.fn(),
   removeMission: vi.fn(),
@@ -131,6 +132,7 @@ async function chooseStatus(
 
 beforeEach(() => {
   orchBoundary.setTodoStatus.mockReset();
+  orchBoundary.clearTodoBoard.mockReset();
   orchBoundary.updateMission.mockReset();
   orchBoundary.reopenMission.mockReset();
   orchBoundary.removeMission.mockReset();
@@ -377,6 +379,86 @@ describe('TaskBoardWorkspace contracts', () => {
         lists.some((list) => list.getAttribute('aria-label')?.includes(id)),
       ).toBe(false);
     }
+  });
+
+  it('limpa concluídas com confirmação em dois cliques e projeta o resultado', async () => {
+    useOrchStore.setState({ todoLists: [TODO_LIST] });
+    const host = mount(<TaskBoardWorkspace />);
+    const clearButton = () =>
+      host.querySelector<HTMLButtonElement>(
+        '.task-board-workspace__clear',
+      );
+    if (!clearButton()) throw new Error('botão limpar ausente com item done');
+
+    // Primeiro clique ARMA a confirmação; nada é escrito.
+    act(() => clearButton()!.click());
+    expect(orchBoundary.clearTodoBoard).not.toHaveBeenCalled();
+    expect(clearButton()!.textContent).toMatch(/confirmar/i);
+
+    const remaining: TodoList = {
+      id: 'release-list',
+      updatedAt: 9,
+      items: TODO_LIST.items.filter((item) => item.status !== 'done'),
+    };
+    orchBoundary.clearTodoBoard.mockResolvedValue({
+      removedLists: 0,
+      removedItems: 1,
+      todoLists: [remaining],
+    });
+
+    await act(async () => {
+      clearButton()!.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(orchBoundary.clearTodoBoard).toHaveBeenCalledOnce();
+    expect(useOrchStore.getState().todoLists).toEqual([remaining]);
+    expect(host.textContent).not.toContain('Publicar notas');
+    // Sem itens concluídos restantes, o botão sai do cabeçalho.
+    expect(clearButton()).toBeNull();
+    expect(orchBoundary.removeMission).not.toHaveBeenCalled();
+  });
+
+  it('falha da limpeza mantém o quadro e mostra erro acionável', async () => {
+    useOrchStore.setState({ todoLists: [TODO_LIST] });
+    const host = mount(<TaskBoardWorkspace />);
+    const clearButton = () =>
+      host.querySelector<HTMLButtonElement>(
+        '.task-board-workspace__clear',
+      );
+
+    act(() => clearButton()!.click());
+    orchBoundary.clearTodoBoard.mockRejectedValue(new Error('boom'));
+
+    await act(async () => {
+      clearButton()!.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(host.textContent).toContain('Não foi possível limpar o quadro');
+    expect(host.textContent).toContain('Publicar notas');
+    expect(useOrchStore.getState().todoLists).toEqual([TODO_LIST]);
+  });
+
+  it('sem itens concluídos o botão de limpar não existe', () => {
+    useOrchStore.setState({
+      todoLists: [
+        {
+          id: 'live-list',
+          updatedAt: 1,
+          items: [
+            { id: 'a', name: 'Só em curso', status: 'in_progress', createdAt: 1 },
+          ],
+        },
+      ],
+    });
+    const host = mount(<TaskBoardWorkspace />);
+
+    expect(
+      host.querySelector('.task-board-workspace__clear'),
+    ).toBeNull();
   });
 
   it('shows one useful empty-state CTA that opens mission creation', () => {

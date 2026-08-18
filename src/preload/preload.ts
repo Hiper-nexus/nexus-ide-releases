@@ -871,6 +871,8 @@ const api: NexusApi = {
     getTodos: () => ipcRenderer.invoke(ORCH_CHANNELS.todosGet),
     setTodoStatus: (listId: string, itemId: string, status: TodoStatus) =>
       ipcRenderer.invoke(ORCH_CHANNELS.todoSetStatus, { listId, itemId, status }),
+    clearTodoBoard: () =>
+      ipcRenderer.invoke(ORCH_CHANNELS.todosClearBoard),
     listSquads: () => ipcRenderer.invoke(ORCH_CHANNELS.squadsList),
     designSquad: (workspacePath: string, intent?: string) =>
       ipcRenderer.invoke(

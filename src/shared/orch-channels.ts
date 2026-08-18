@@ -55,6 +55,7 @@ export const ORCH_CHANNELS = {
   operatorReviewSubmit: 'orch:operatorReview.submit',
   todosGet: 'orch:todos.get',
   todoSetStatus: 'orch:todos.setStatus',
+  todosClearBoard: 'orch:todos.clearBoard',
   squadsList: 'orch:squads.list',
   squadDesign: 'orch:squads.design',
   squadSave: 'orch:squads.save',

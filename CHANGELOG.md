@@ -9,6 +9,10 @@ terminais recusava todo spawn com erro técnico em inglês — terminais mortos
 sem instrução. A recusa continua (segurança correta: o bundle precisa ser
 dono do processo vivo), mas agora o terminal orienta em português.
 
+- **feat(board): "Limpar concluídas" no Quadro** — confirmação em dois
+  cliques no cabeçalho; missão viva perde só itens concluídos, checklist de
+  missão terminal/órfã sai inteiro; política no main (board-clear-plan),
+  store transacional (removeItems/removeList), interface nunca decide.
 - **fix(pty): erro de spawn ganha orientação acionável em PT** — bundle
   trocado com app aberto → "feche e reabra o Nexus para religar os
   terminais; a missão continua no rail"; assinatura quebrada → "reinstale

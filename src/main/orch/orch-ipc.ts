@@ -107,6 +107,7 @@ import {
 } from "./project-domain-store-registry";
 import { missionEngineForScope } from "./mission-engine-registry";
 import { resurrectRunningMissionsForScope } from "./mission-fast-lane";
+import { planBoardClear } from "./board-clear-plan";
 import { broadcastToProject } from "./project-scoped-broadcast";
 import {
   initIdleDelivery,
@@ -2283,6 +2284,29 @@ export function registerOrchIpc(): void {
       throw new Error("todo list or item not found");
     }
     return list;
+  });
+  ipcMain.handle(ORCH_CHANNELS.todosClearBoard, (event) => {
+    // Política no main, decidida contra os stores CORRENTEs no instante da
+    // escrita — o renderer nunca escolhe o que pode sair (board-clear-plan).
+    const stores = requireProjectStores(event.sender);
+    const plan = planBoardClear({
+      missions: stores.missions.list(),
+      todoLists: stores.todos.list(),
+    });
+    for (const listId of plan.listsToRemove) {
+      stores.todos.removeList(listId);
+    }
+    let removedItems = 0;
+    for (const removal of plan.itemsToRemove) {
+      if (stores.todos.removeItems(removal.listId, removal.itemIds)) {
+        removedItems += removal.itemIds.length;
+      }
+    }
+    return {
+      removedLists: plan.listsToRemove.length,
+      removedItems,
+      todoLists: stores.todos.list(),
+    };
   });
   ipcMain.handle(ORCH_CHANNELS.squadsList, (event) => {
     requireLiveRendererWorkspaceScope(event.sender);

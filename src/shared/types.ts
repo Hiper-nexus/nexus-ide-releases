@@ -663,6 +663,15 @@ export interface NexusApi {
       itemId: string,
       status: TodoStatus,
     ): Promise<TodoList>;
+    /**
+     * Limpar concluídas do Quadro — política do main: missão viva perde só
+     * itens concluídos; lista de missão terminal ou órfã sai inteira.
+     */
+    clearTodoBoard(): Promise<{
+      removedLists: number;
+      removedItems: number;
+      todoLists: TodoList[];
+    }>;
     listSquads(): Promise<Squad[]>;
     designSquad(
       workspacePath: string,

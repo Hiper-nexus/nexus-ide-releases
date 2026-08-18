@@ -212,6 +212,50 @@ export class ScopedTodoStore {
     return cloneList(list);
   }
 
+  /**
+   * Remove itens específicos de uma lista (transacional). Ids desconhecidos
+   * são ignorados — o chamador planejou contra um snapshot, itens que sumiram
+   * nesse meio-tempo já atendem o pedido. Lista inexistente → null.
+   */
+  removeItems(
+    rawListId: string,
+    rawItemIds: readonly string[],
+  ): ScopedTodoList | null {
+    const listId = listIdSchema.parse(rawListId);
+    const itemIds = z.array(itemIdSchema).max(256).parse(rawItemIds);
+    const drop = new Set(itemIds);
+    const db = this.#binding.writeDatabase();
+    const list = db.transaction(() => {
+      const current = this.#readList(db, listId);
+      if (!current.exists) return null;
+      const kept = current.list.items.filter((item) => !drop.has(item.id));
+      if (kept.length === current.list.items.length) return current.list;
+      return this.#replaceItems(db, listId, kept, this.#binding.now());
+    })();
+    if (list) this.#binding.emitChange();
+    return list ? cloneList(list) : null;
+  }
+
+  /**
+   * Apaga a lista inteira (todo_lists + todos). Retorna true quando havia
+   * algo; segunda chamada é no-op false. Quem decide SE pode apagar é a
+   * política do main (board-clear-plan) — o store é burro.
+   */
+  removeList(rawListId: string): boolean {
+    const listId = listIdSchema.parse(rawListId);
+    const db = this.#binding.writeDatabase();
+    const removed = db.transaction(() => {
+      const existed = db
+        .prepare('SELECT id FROM todo_lists WHERE id = ?')
+        .get(listId);
+      db.prepare('DELETE FROM todos WHERE list_id = ?').run(listId);
+      db.prepare('DELETE FROM todo_lists WHERE id = ?').run(listId);
+      return existed !== undefined;
+    })();
+    if (removed) this.#binding.emitChange();
+    return removed;
+  }
+
   #readList(db: Database.Database, listId: string): StoredListResult {
     const rawList = db
       .prepare('SELECT id, updated_at FROM todo_lists WHERE id = ?')

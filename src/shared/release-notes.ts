@@ -27,6 +27,16 @@ export const CURRENT_RELEASE: AppRelease = {
     'matar os terminais das missões.',
   highlights: [
     {
+      title: 'Quadro ganha "Limpar concluídas"',
+      detail:
+        'O quadro de tarefas acumulava etapas concluídas sem nenhuma ação de ' +
+        'limpeza. Agora o cabeçalho oferece "Limpar concluídas" com ' +
+        'confirmação em dois cliques: missão viva perde apenas os itens ' +
+        'concluídos (o plano em curso segue intacto); checklist de missão ' +
+        'terminada ou órfã sai inteiro. A política decide no processo ' +
+        'principal — a interface nunca escolhe o que pode sair.',
+    },
+    {
       title: 'Erro de spawn agora orienta em português',
       detail:
         'Classes conhecidas da falha de preflight do supervisor ganham uma ' +

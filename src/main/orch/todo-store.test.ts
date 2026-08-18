@@ -185,4 +185,49 @@ describe('scoped todo store', () => {
     ).toThrow(/read-only/i);
     expect(todos.get().items[0].status).toBe('in_progress');
   });
+
+  it('removeItems apaga só os itens pedidos, transacional, sem tocar o resto', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope();
+    const todos = createScopedTodoStore(runtimeManager, scope);
+    todos.setTasks(['alpha', 'beta', 'gamma'], 'mission-live');
+    todos.setItemStatus('mission-live', 'alpha', 'done');
+    const betaId = todos.get('mission-live').items[1].id;
+    const gammaId = todos.get('mission-live').items[2].id;
+
+    const after = todos.removeItems('mission-live', ['nonexistent', betaId]);
+    expect(after?.items.map((item) => item.name)).toEqual(['alpha', 'gamma']);
+    expect(todos.get('mission-live').items.map((item) => item.id)).toEqual(
+      after?.items.map((item) => item.id),
+    );
+
+    // Ids inválidos rejeitados com erro de validação, nada escrito.
+    expect(() => todos.removeItems('mission-live', [gammaId, ''])).toThrow();
+
+    runtimeManager.close(scope);
+    const restored = createScopedTodoStore(runtimeManager, scope).get('mission-live');
+    expect(restored.items.map((item) => item.name)).toEqual(['alpha', 'gamma']);
+  });
+
+  it('removeList apaga a lista inteira; lista inexistente é idempotente', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope();
+    const todos = createScopedTodoStore(runtimeManager, scope);
+    todos.setTasks(['one', 'two'], 'mission-terminal');
+    todos.setTasks(['stay'], 'mission-other');
+
+    expect(todos.removeList('mission-terminal')).toBe(true);
+    expect(todos.get('mission-terminal').items).toHaveLength(0);
+    expect(todos.get('mission-other').items.map((item) => item.name)).toEqual([
+      'stay',
+    ]);
+
+    // Segunda chamada: nada existe mais, segue ok (idempotente).
+    expect(todos.removeList('mission-terminal')).toBe(false);
+    expect(() => todos.removeList('')).toThrow();
+
+    runtimeManager.close(scope);
+    const restored = createScopedTodoStore(runtimeManager, scope).list();
+    expect(restored.map((list) => list.id)).toEqual(['mission-other']);
+  });
 });

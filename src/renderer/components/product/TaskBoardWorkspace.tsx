@@ -8,6 +8,7 @@ import {
 } from '../../lib/task-board-projection';
 import { useOrchStore } from '../../state/orch-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
+import { useToastStore } from '../../state/toast-store';
 import { ActionCard, EmptyState } from '../ActionCard';
 import { PixelIcon } from '../PixelIcon';
 
@@ -139,6 +140,55 @@ export function TaskBoardWorkspace() {
   const emptyBeat = orchTodosEmptyBeat();
   const boardEmpty = taskBoardIsEmpty(boardEntries);
 
+  // "Limpar concluídas" — a política vive no main (board-clear-plan):
+  // missão viva perde só itens concluídos; lista terminal/órfã sai inteira.
+  const clearableCount = boardEntries.filter(
+    (entry) => entry.kind === 'todo' && entry.status === 'done',
+  ).length;
+  const [clearArmed, setClearArmed] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const [clearError, setClearError] = useState<string | null>(null);
+
+  const clearConcluded = async (): Promise<void> => {
+    if (clearing) return;
+    if (!clearArmed) {
+      setClearArmed(true);
+      setClearError(null);
+      return;
+    }
+    const writeScope = useOrchStore.getState();
+    setClearing(true);
+    setClearError(null);
+    try {
+      const result = await window.nexus.orch.clearTodoBoard();
+      const currentScope = useOrchStore.getState();
+      if (
+        currentScope.workspaceEpoch === writeScope.workspaceEpoch &&
+        currentScope.boundWorkspacePath === writeScope.boundWorkspacePath
+      ) {
+        useOrchStore.setState({ todoLists: result.todoLists });
+      }
+      setClearArmed(false);
+      useToastStore.getState().push(
+        'info',
+        'Quadro limpo',
+        result.removedLists + result.removedItems > 0
+          ? `${result.removedLists} ${result.removedLists === 1 ? 'lista' : 'listas'} e ${result.removedItems} ${result.removedItems === 1 ? 'tarefa concluída' : 'tarefas concluídas'} saíram do quadro.`
+          : 'Nada concluído para limpar agora.',
+      );
+    } catch {
+      const currentScope = useOrchStore.getState();
+      if (
+        currentScope.workspaceEpoch === writeScope.workspaceEpoch &&
+        currentScope.boundWorkspacePath === writeScope.boundWorkspacePath
+      ) {
+        setClearError('Não foi possível limpar o quadro agora.');
+      }
+    } finally {
+      setClearing(false);
+    }
+  };
+
   // Bridge parity: the board reads as status columns, not opaque list ids.
   // Running/blocked missions occupy Em andamento even before any todo exists.
   const columns = TODO_STATUS_OPTIONS.map((option) => ({
@@ -174,6 +224,37 @@ export function TaskBoardWorkspace() {
                 } no fluxo`
               : `${todoCount} ${todoCount === 1 ? 'tarefa' : 'tarefas'} no fluxo`}
           </p>
+        ) : null}
+        {clearableCount > 0 ? (
+          <div className="task-board-workspace__clear-group">
+            {clearError ? (
+              <span
+                className="task-board-workspace__clear-error"
+                role="alert"
+              >
+                {clearError}
+              </span>
+            ) : null}
+            <button
+              type="button"
+              className={`task-board-workspace__clear${
+                clearArmed ? ' task-board-workspace__clear--armed' : ''
+              }`}
+              disabled={clearing}
+              aria-label={
+                clearArmed
+                  ? 'Confirmar: limpar tarefas concluídas do quadro'
+                  : 'Limpar tarefas concluídas do quadro'
+              }
+              onClick={() => void clearConcluded()}
+            >
+              {clearing
+                ? 'Limpando…'
+                : clearArmed
+                  ? 'Confirmar limpeza'
+                  : `Limpar concluídas (${clearableCount})`}
+            </button>
+          </div>
         ) : null}
       </header>
 
