@@ -27,6 +27,7 @@ import {
   isProvenDarwinPtySupervisorExit,
   supervisedPtyCommand,
 } from './darwin-pty-supervisor';
+import { spawnFailureGuidance } from './spawn-failure-guidance';
 import { darwinNodePtyBootstrapLaunch } from './darwin-node-pty-bootstrap';
 
 // Electron injects `parentPort` onto the utilityProcess's `process`. @types/node
@@ -70,11 +71,14 @@ function post(msg: HostEventMsg): void {
 
 function postSpawnFailure(sessionId: string, error: unknown): void {
   const text = error instanceof Error ? error.message : String(error);
-  post({
-    type: 'data',
-    sessionId,
-    data: `\r\n[nexus] falha ao iniciar o processo: ${text}\r\n`,
-  });
+  // Known supervisor preflight classes get one actionable sentence on top;
+  // the raw text always stays as evidence.
+  const guidance = spawnFailureGuidance(text);
+  const lines = [`\r\n[nexus] falha ao iniciar o processo: ${text}\r\n`];
+  if (guidance) {
+    lines.push(`[nexus] ${guidance}\r\n`);
+  }
+  post({ type: 'data', sessionId, data: lines.join('') });
   post({ type: 'exit', sessionId, exitCode: -1 });
 }
 
