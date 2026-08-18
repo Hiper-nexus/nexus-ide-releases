@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.32.30 — Um orquestrador por missão
+
+Data: 2026-08-17
+
+- **Fim do pane de orquestrador morto no revival.** Reabrir o app (ou
+  reviver a missão) após um crash deixava DOIS panes de orquestrador na
+  tela: o novo funcionando e o restaurado da sessão anterior travado,
+  com teclado morto e mensagens de "unknown or expired orchestration
+  spawn grant" a cada tecla. Agora o spawn do orquestrador aposenta na
+  hora os panes de orquestrador da mesma missão que não têm sessão viva
+  — o main só emite o grant depois de provar o exit físico da sessão
+  anterior, então qualquer outro pane do mesmo papel é cadáver por
+  definição. Workers e missões vizinhas seguem intocados.
+- **Tecla em pane de missão morto não tenta mais ressuscitar o grant
+  morto.** Digitar num pane de missão travado disparava um respawn
+  local da CLI carregando o token de spawn da sessão anterior do app —
+  garantido falhar com o erro de grant expirado. O teclado agora só
+  revive pela autoridade do main (que respawna o orquestrador como pane
+  novo); pane avulso do operador, sem missão e sem token, continua
+  religando a própria CLI na mesma conta como antes.
+- **Sem falso aviso de "missão sem pane" na substituição.** Aposentar o
+  cadáver para dar lugar ao sucessor não dispara mais o toast de
+  "Missão continua em execução / Reabrir panes" — o pane novo nasce no
+  mesmo tick.
+
 ## 0.32.29 — Nenhuma missão presa
 
 Data: 2026-08-17

@@ -13,6 +13,45 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.32.30',
+  date: '2026-08-17',
+  codename: 'Um orquestrador por missão',
+  summary:
+    'Reabrir o app depois de um crash não deixa mais dois panes de ' +
+    'orquestrador na tela: o revival aposenta o pane morto da sessão ' +
+    'anterior na hora em que o orquestrador novo nasce, a tecla num pane ' +
+    'de missão travado para de estourar grant expirado, e a substituição ' +
+    'não anuncia "missão sem pane" por engano.',
+  highlights: [
+    {
+      title: 'Fim do pane de orquestrador morto',
+      detail:
+        'O revival spawnava o orquestrador novo mas o pane restaurado do ' +
+        'boot ficava na tela travado, com teclado morto e erro de spawn ' +
+        'grant a cada tecla. Agora vale a lei um-missão-um-orquestrador: o ' +
+        'spawn novo aposenta os panes do mesmo papel sem sessão viva, e o ' +
+        'main só emite o grant após provar o exit físico do antecessor.',
+    },
+    {
+      title: 'Tecla revive pela autoridade certa',
+      detail:
+        'Digitar num pane de missão travado tentava religar a CLI carregando ' +
+        'o token de spawn da sessão anterior — falha garantida. O teclado ' +
+        'agora só dispara o respawn main-owned; pane avulso do operador ' +
+        'continua religando na mesma conta.',
+    },
+    {
+      title: 'Sem toast falso na substituição',
+      detail:
+        'Aposentar o cadáver disparava "Missão continua em execução / ' +
+        'Reabrir panes" nos milissegundos em que o sucessor nascia. O aviso ' +
+        'agora cala quando o fechamento é substituição imediata.',
+    },
+  ],
+  fixes: [],
+};
+
+export const RELEASE_03229: AppRelease = {
   version: '0.32.29',
   date: '2026-08-17',
   codename: 'Nenhuma missão presa',
