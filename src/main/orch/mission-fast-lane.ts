@@ -25,6 +25,7 @@ import {
   recordWorkerDeathWithoutDelivery,
 } from './worker-mortality';
 import { trace } from '../observability/main-trace';
+import { classifySessionLiveness } from '../pty/session-liveness';
 
 /**
  * Via Rápida de missão (2026-08-12) — motor limpo, modelo PULL.
@@ -145,9 +146,7 @@ function watcherKey(scope: ProjectExecutionScope, missionId: string): string {
   return `${scope.rootRealPath}::${missionId}`;
 }
 
-function isLiveSessionState(state: string | null | undefined): boolean {
-  return state === 'busy' || state === 'idle' || state === 'spawning';
-}
+
 
 /**
  * SessionId do orquestrador desta missão SE existir um processo físico vivo
@@ -166,7 +165,10 @@ function liveOrchestratorSessionId(
   );
   const sessionId = snapshot?.sessionId ?? fallbackSessionId;
   if (!sessionId) return null;
-  return isLiveSessionState(getSessionState(sessionId)) ? sessionId : null;
+  // Verdade única de liveness (session-liveness): só 'live' conta como vivo.
+  return classifySessionLiveness(getSessionState(sessionId)) === 'live'
+    ? sessionId
+    : null;
 }
 
 export function missionFastLaneEnabled(): boolean {

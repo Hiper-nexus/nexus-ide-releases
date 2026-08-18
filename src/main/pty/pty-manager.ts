@@ -1077,6 +1077,10 @@ function assertExclusiveOrchestratorProcessAvailable(
   adapter: CliPtyAdapter,
   authority: BoundSpawnAuthority,
 ): void {
+  // Contrato travado em session-liveness.ts (rodada 2 R1): a cerca bloqueia
+  // sobre QUALQUER sessão registrada — live, exited (prova física pendente:
+  // descendente destacado pode segurar a família de auth) e unverifiable.
+  // "Nunca colapse 'não sei' em 'morto'" (doutrina Orca truthful liveness).
   if (authority.context?.role !== "orchestrator") return;
   const family = sharedAgentAuthFamily(adapter.id);
   if (!family) return;
