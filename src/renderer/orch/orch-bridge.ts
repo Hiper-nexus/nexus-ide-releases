@@ -147,6 +147,39 @@ function retireStaleMissionOrchestratorPanes(req: {
   }
 }
 
+/**
+ * Missão terminal (done/failed) não deixa cadáver no grid (campanha 0.50):
+ * o encerramento fecha o runtime no main, mas panes RESTAURADOS de sessões
+ * mortas não têm registro lá — ninguém pedia o fechamento e o layout os
+ * exibia para sempre. Panes SEM sessão viva da missão terminal são
+ * aposentados aqui. `blocked` preserva (Retomar precisa do contexto);
+ * sessão viva é lifecycle do main, o renderer não fecha layout de pane vivo.
+ */
+function retireTerminalMissionPanes(
+  missions: readonly { id: string; status: string }[],
+): void {
+  if (missions.length === 0) return; // hidratação/travessia não varre nada
+  const terminalIds = new Set(
+    missions
+      .filter((m) => m.status === 'done' || m.status === 'failed')
+      .map((m) => m.id),
+  );
+  if (terminalIds.size === 0) return;
+  const paneMissions = useOrchStore.getState().paneMissions;
+  const corpses = listPanes(useLayoutStore.getState().root).filter((pane) => {
+    if (pane.kind !== 'cli-agent') return false;
+    const missionId = pane.missionId ?? paneMissions[pane.id];
+    if (!missionId || !terminalIds.has(missionId)) return false;
+    return !getPaneSessionId(pane.id);
+  });
+  for (const pane of corpses) {
+    useLayoutStore.getState().close(pane.id, 'mission-terminal-cleanup');
+  }
+  if (corpses.length > 0) {
+    syncPanesNow();
+  }
+}
+
 const recoveryInFlight = new Set<string>();
 const recoveryResults = new Map<string, MissionPaneRecoveryResult>();
 const RECOVERY_HEALTH_TIMEOUT_MS = 75_000;
@@ -700,6 +733,7 @@ export function useOrchBridge(): void {
           prev.map((m) => [m.id, m.intentContract?.lane] as const),
         );
         useOrchStore.getState().setMissions(missions);
+        retireTerminalMissionPanes(missions);
         // Plan-lane adoption metric (local only; seen-id dedupe + empty-prev skip).
         const metrics = usePlanLaneMetricsStore.getState();
         for (const id of newlyDispatchedPlanMissionIds(
