@@ -20,6 +20,24 @@ export type ExitedPaneKeyAction =
   | 'reclaim-shell'
   | 'ignore';
 
+export type DeadPaneReviveRespawnAction = 'same-pane-resume' | 'main-only';
+
+/**
+ * Tecla em pane morto: quem renasce a CLI do próprio pane? Pane de missão
+ * NUNCA — o lifecycle é do main (o retry-kickoff que acompanha o revival já
+ * respawna o orquestrador como pane novo, que aposenta este). Pane que carrega
+ * orchRequestId também não: o token é grant do main e morre com a sessão do
+ * app; um respawn local com ele só produz "unknown or expired orchestration
+ * spawn grant" num pane que o operador lê como vivo.
+ */
+export function decideDeadPaneReviveRespawn(input: {
+  readonly missionOwnsPane: boolean;
+  readonly hasOrchRequestId: boolean;
+}): DeadPaneReviveRespawnAction {
+  if (input.missionOwnsPane || input.hasOrchRequestId) return 'main-only';
+  return 'same-pane-resume';
+}
+
 export type UnlockRetiredPaneDisposition = 'keep-paused' | 'reclaim-shell';
 
 /**

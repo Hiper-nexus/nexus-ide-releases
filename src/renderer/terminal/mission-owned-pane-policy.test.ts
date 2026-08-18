@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   BLOCKED_RESUME_NOTICE,
+  decideDeadPaneReviveRespawn,
   decideExitedPaneKey,
   decideStaleAuthorityRecovery,
   decideUnlockRetiredMissionPane,
@@ -129,6 +130,35 @@ describe('decideExitedPaneKey — posse de missão não é mudez', () => {
         missionOwns: true,
       }),
     ).toBe('ignore');
+  });
+});
+
+describe('decideDeadPaneReviveRespawn — tecla em pane morto de missão', () => {
+  it('pane de missão viva nunca renasce no próprio xterm', () => {
+    expect(
+      decideDeadPaneReviveRespawn({
+        missionOwnsPane: true,
+        hasOrchRequestId: false,
+      }),
+    ).toBe('main-only');
+  });
+
+  it('token de grant no pane é lifecycle do main, mesmo sem vínculo vivo', () => {
+    expect(
+      decideDeadPaneReviveRespawn({
+        missionOwnsPane: false,
+        hasOrchRequestId: true,
+      }),
+    ).toBe('main-only');
+  });
+
+  it('pane avulso do operador religa a própria CLI na mesma conta', () => {
+    expect(
+      decideDeadPaneReviveRespawn({
+        missionOwnsPane: false,
+        hasOrchRequestId: false,
+      }),
+    ).toBe('same-pane-resume');
   });
 });
 

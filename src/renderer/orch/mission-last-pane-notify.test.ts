@@ -140,6 +140,17 @@ describe('mission last pane closed → toast de reabertura', () => {
     expect(useToastStore.getState().toasts).toHaveLength(0);
   });
 
+  it('não avisa quando o pane foi aposentado pela substituição do orquestrador', () => {
+    // O successor nasce no mesmo tick do spawn que aposentou o cadáver;
+    // "missão sem pane" seria mentira pelos milissegundos que o toast vive.
+    seedLayout([missionPane]);
+    seedOrch([makeMission('running')], { 'pane-m1': 'mission-1' });
+
+    useLayoutStore.getState().close('pane-m1', 'orchestrator-replaced');
+
+    expect(useToastStore.getState().toasts).toHaveLength(0);
+  });
+
   it('não avisa quando o fechamento já encerrou o runtime da missão (toolbar/rail/board)', () => {
     seedLayout([missionPane]);
     seedOrch([makeMission('running')], { 'pane-m1': 'mission-1' });

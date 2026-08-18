@@ -26,6 +26,7 @@ import {
 } from './pane-spawn-errors';
 import {
   BLOCKED_RESUME_NOTICE,
+  decideDeadPaneReviveRespawn,
   decideExitedPaneKey,
   decideStaleAuthorityRecovery,
   decideUnlockRetiredMissionPane,
@@ -496,7 +497,11 @@ async function requestDeadMissionPaneRevive(
         '(orquestrador + runtime)…\x1b[0m',
     );
     await requestMissionRuntimeResume(missionId);
-    if (!isMainControlledMissionPane(pane.id, pane)) {
+    const reviveRespawn = decideDeadPaneReviveRespawn({
+      missionOwnsPane: isMainControlledMissionPane(pane.id, pane),
+      hasOrchRequestId: pane.orchRequestId !== undefined,
+    });
+    if (reviveRespawn === 'same-pane-resume') {
       respawnWithResume(
         pane,
         '[nexus] pane religado na mesma conta — a missão segue em curso.',

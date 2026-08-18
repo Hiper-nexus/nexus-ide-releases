@@ -28,6 +28,13 @@ const MISSION_TERMINATING_REASONS = new Set([
   'mission-runtime-close',
 ]);
 
+/**
+ * Substituição, não perda: o pane novo do mesmo papel nasce no mesmo tick
+ * (spawn do orquestrador aposentando o cadáver restaurado do boot). Anunciar
+ * "missão sem nenhum pane" aqui é ruído — o successor já está na tela.
+ */
+const PANE_REPLACEMENT_REASONS = new Set(['orchestrator-replaced']);
+
 function missionIdOfPane(
   pane: PaneModel,
   paneMissions: Record<string, string>,
@@ -44,7 +51,13 @@ export function notifyIfLastMissionPaneClosed(
   reason: string | undefined,
   remainingPanes: PaneModel[],
 ): void {
-  if (reason && MISSION_TERMINATING_REASONS.has(reason)) return;
+  if (
+    reason &&
+    (MISSION_TERMINATING_REASONS.has(reason) ||
+      PANE_REPLACEMENT_REASONS.has(reason))
+  ) {
+    return;
+  }
   const orch = useOrchStore.getState();
   const missionId = missionIdOfPane(closedPane, orch.paneMissions);
   if (!missionId) return;

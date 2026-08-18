@@ -113,6 +113,40 @@ function cleanupFailedOrchPane(
   syncPanesNow();
 }
 
+/**
+ * Um orquestrador por missão. O main só emite grant de spawn de orquestrador
+ * DEPOIS de provar o exit físico da sessão anterior (cerca exclusiva de auth
+ * + respawn do fast-lane), então qualquer OUTRO pane de orquestrador da mesma
+ * missão que ainda esteja no layout é cadáver — restaurado do boot com grant
+ * de sessão morta ou sobra de revival. Sem esta aposentadoria o boot deixa
+ * DOIS panes de orquestrador na tela e o morto trava com mensagens de erro
+ * que o operador lê como pane vivo (teclado não responde).
+ */
+function retireStaleMissionOrchestratorPanes(req: {
+  readonly missionId?: string;
+  readonly role?: string;
+  readonly keepPaneId: string | null;
+}): void {
+  if (req.role !== 'orchestrator' || !req.missionId) return;
+  const paneMissions = useOrchStore.getState().paneMissions;
+  const stale = listPanes(useLayoutStore.getState().root).filter((pane) => {
+    if (pane.kind !== 'cli-agent') return false;
+    if (pane.id === req.keepPaneId) return false;
+    if ((pane.role ?? 'worker') !== 'orchestrator') return false;
+    if (getPaneSessionId(pane.id)) return false; // cinto: sessão viva fica
+    const missionId = pane.missionId ?? paneMissions[pane.id];
+    return missionId === req.missionId;
+  });
+  for (const pane of stale) {
+    useLayoutStore.getState().close(pane.id, 'orchestrator-replaced');
+  }
+  if (stale.length > 0) {
+    // O mirror no main precisa perder o cadáver na mesma hora em que o pane
+    // novo nasce — senão nexus_pane_list mostra dois orquestradores.
+    syncPanesNow();
+  }
+}
+
 const recoveryInFlight = new Set<string>();
 const recoveryResults = new Map<string, MissionPaneRecoveryResult>();
 const RECOVERY_HEALTH_TIMEOUT_MS = 75_000;
@@ -526,6 +560,12 @@ export function useOrchBridge(): void {
               throw new Error(
                 `Spawn retry pane id mismatch: ${existing.id} != ${req.paneId}`,
               );
+            }
+            if (!existing) {
+              retireStaleMissionOrchestratorPanes({
+                ...req,
+                keepPaneId: req.paneId,
+              });
             }
             paneId = existing?.id ??
               useLayoutStore.getState().spawnOrchPane({
