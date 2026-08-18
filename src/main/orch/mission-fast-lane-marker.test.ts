@@ -250,4 +250,33 @@ describe('Via Rápida × modelo PULL', () => {
     expect(harness.blockTechnical).not.toHaveBeenCalled();
     expect(harness.completeVerified).not.toHaveBeenCalled();
   });
+
+  it('retomada de missão encerrada tira o selo runtime-closed da description', async () => {
+    harness.resumeTechnical.mockImplementationOnce((_scope, input) => {
+      liveMission = {
+        ...liveMission,
+        status: 'running',
+        intentState: 'executing',
+        description: input.description,
+      } as Mission;
+    });
+    liveMission = {
+      ...mission,
+      status: 'blocked',
+      intentState: 'blocked_user',
+      description:
+        'Leia brief.txt e escreva a primeira frase em resumo.txt.\n\n' +
+        '<!-- nexus:runtime-closed -->\n[NEXUS_RUNTIME_CLOSED] Execução encerrada pelo operador; histórico e receipts preservados.',
+    } as Mission;
+
+    await fastLane.resumeFastLaneMission(scope, 'mission-1');
+
+    expect(harness.resumeTechnical).toHaveBeenCalledWith(
+      scope,
+      expect.objectContaining({
+        description: 'Leia brief.txt e escreva a primeira frase em resumo.txt.',
+      }),
+    );
+    expect(liveMission.description).not.toContain('runtime-closed');
+  });
 });

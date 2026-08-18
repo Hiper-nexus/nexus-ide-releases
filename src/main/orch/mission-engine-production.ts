@@ -14,7 +14,11 @@ import {
   hasCurrentDispatchAuthority,
   type MissionOrchestratorRuntimeSnapshot,
 } from "../../shared/mission-intent";
-import { wasMissionRuntimeClosedByOperator } from "../../shared/mission-recovery-policy";
+import {
+  MISSION_RUNTIME_CLOSED_MARKER,
+  wasMissionRuntimeClosedByOperator,
+} from "../../shared/mission-recovery-policy";
+import { stripMissionVerdictParagraph } from "../../shared/mission-block-cause";
 import type {
   Mission,
   MissionIntentState,
@@ -72,7 +76,6 @@ import { snapshotSquadAuthority } from "./squad-authority-snapshot";
 import { isFreeAgentChoiceContract } from "./free-agent-choice";
 import {
   MainMissionEngine,
-  type MissionBlockInput,
   type MissionStartInput,
   type MissionVerifiedCompletionInput,
 } from "./mission-engine";
@@ -87,6 +90,7 @@ import {
   taskDispatchTechnicalResumeDescription,
 } from "./task-dispatch-persistence";
 import {
+  missionViewHasResidualWork,
   resolveMissionAgentLiveState,
   type MissionAgentTaskFallback,
   type ProjectMissionSnapshotView,
@@ -1034,14 +1038,15 @@ interface MissionEngineLifecyclePatch {
 
 function transitionMissionEngineLifecycle(
   stores: ProjectDomainStoreSuite,
-  input: Pick<
-    MissionBlockInput,
-    | "missionId"
-    | "expectedStatus"
-    | "expectedIntentState"
-    | "expectedUpdatedAt"
-    | "expectedIntentVersion"
-  >,
+  input: {
+    readonly missionId: string;
+    readonly expectedStatus: MissionStatus;
+    // Reabertura cerca contra o estado EXATO atual — linhas legadas podem
+    // ter intentState ausente, e o CAS precisa compará-lo como undefined.
+    readonly expectedIntentState: MissionIntentState | undefined;
+    readonly expectedUpdatedAt: number;
+    readonly expectedIntentVersion: number;
+  },
   patch: MissionEngineLifecyclePatch,
 ): void {
   const current = stores.missions.get(input.missionId);
@@ -1120,6 +1125,46 @@ const productionMissionEngines = new MissionEngineRegistry((scope, stores) =>
         mission.status === "running" &&
         mission.intentState === "executing"
       ) {
+        return;
+      }
+      // Os DOIS estados em que o card anuncia Retomar (mission-snapshot
+      // allowedActions): missão encerrada pelo operador (blocked com selo
+      // runtime-closed) e missão concluída com trabalho residual (done sem
+      // result). Recusar aqui com erro interno era o bug da screenshot
+      // "Mission engine resume requires a technical block" — reabrir limpa
+      // o selo de encerramento (a presença dele numa missão blocked É a
+      // prova de "Encerrada pelo operador"), volta a running/executing e
+      // religa a coordenação pela Via Rápida (respawn + re-entrega).
+      const runtimeClosedByOperator = wasMissionRuntimeClosedByOperator(mission);
+      const residualWork =
+        mission.status === "done" &&
+        !mission.result &&
+        missionViewHasResidualWork(
+          projectMissionEngineSnapshotView(scope, stores, mission.id),
+        );
+      if (runtimeClosedByOperator || residualWork) {
+        const description = runtimeClosedByOperator
+          ? stripMissionVerdictParagraph(
+              mission.description ?? "",
+              MISSION_RUNTIME_CLOSED_MARKER,
+            ) || "Missão reaberta pelo operador."
+          : (mission.description ?? "");
+        transitionMissionEngineLifecycle(
+          stores,
+          {
+            missionId: mission.id,
+            expectedStatus: mission.status,
+            expectedIntentState: mission.intentState,
+            expectedUpdatedAt: mission.updatedAt,
+            expectedIntentVersion: mission.intentVersion ?? 0,
+          },
+          {
+            status: "running",
+            intentState: "executing",
+            description,
+          },
+        );
+        await resumeFastLaneMission(scope, command.missionId);
         return;
       }
       if (

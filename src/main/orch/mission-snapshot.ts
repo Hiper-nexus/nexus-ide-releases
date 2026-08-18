@@ -112,6 +112,19 @@ export type ProjectMissionSnapshotView = z.infer<
 type ParsedView = z.output<typeof projectMissionSnapshotViewSchema>;
 
 function hasResidualWork(view: ParsedView): boolean {
+  return missionViewHasResidualWork(view);
+}
+
+/**
+ * Mesma definição de "ainda tem trabalho" que faz o card anunciar Retomar
+ * (blocked_technical/residual-work). Exportada para o motor decidir o resume
+ * com a MESMA régua que a UI usa para oferecer o botão.
+ */
+export function missionViewHasResidualWork(view: {
+  readonly tasks: readonly { readonly status: string }[];
+  readonly handoffs: readonly { readonly settled?: boolean | null }[];
+  readonly panes: readonly { readonly state: string }[];
+}): boolean {
   return (
     view.tasks.some((task) => task.status !== 'done') ||
     view.handoffs.some((handoff) => !handoff.settled) ||

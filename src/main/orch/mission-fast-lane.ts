@@ -7,7 +7,11 @@ import { join } from 'node:path';
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { Mission, Squad, SquadAgent } from '../../shared/orch-types';
 import { isUiMissionText } from '../../shared/mission-work-kind';
-import { wasMissionRuntimeClosedByOperator } from '../../shared/mission-recovery-policy';
+import {
+  MISSION_RUNTIME_CLOSED_MARKER,
+  wasMissionRuntimeClosedByOperator,
+} from '../../shared/mission-recovery-policy';
+import { stripMissionVerdictParagraph } from '../../shared/mission-block-cause';
 import { emitMissionEvent } from './mission-event-emit';
 import { buildOrchestratorDoctrine } from './orchestrator-doctrine';
 import {
@@ -1001,7 +1005,10 @@ export async function resumeFastLaneMission(
   }
 
   // Se bloqueada, tenta re-assumir E spawna novo orquestrador.
-  // resumeTechnical só muda o status — não abre panes.
+  // resumeTechnical só muda o status — não abre panes. O selo de encerramento
+  // pelo operador sai JUNTO: ele é prova de "Encerrada pelo operador" em
+  // qualquer missão blocked, então sobreviver a uma reabertura mentiria no
+  // próximo bloqueio (mission-recovery-policy Bug I).
   if (mission.status === 'blocked' && mission.intentState) {
     try {
       missionEngineForScope(scope).resumeTechnical(scope, {
@@ -1010,7 +1017,11 @@ export async function resumeFastLaneMission(
         expectedIntentState: mission.intentState ?? 'executing',
         expectedUpdatedAt: mission.updatedAt,
         expectedIntentVersion: mission.intentVersion ?? 0,
-        description: mission.description ?? '',
+        description:
+          stripMissionVerdictParagraph(
+            mission.description ?? '',
+            MISSION_RUNTIME_CLOSED_MARKER,
+          ) || 'Missão reaberta pelo operador.',
       });
     } catch (error) {
       console.warn(

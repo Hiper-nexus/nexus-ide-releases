@@ -5,6 +5,7 @@ import {
   missionBlockCauseText,
   MISSION_BLOCK_CAUSE_TEXT_LIMIT,
   MISSION_DESCRIPTION_LIMIT,
+  stripMissionVerdictParagraph,
 } from './mission-block-cause';
 import { orphanSealedPlanMessage } from './mission-plan-orphan';
 
@@ -524,5 +525,48 @@ describe('missionBlockCauseText — cabe no balão sem perder o acionável', () 
       const text = missionBlockCauseText(missionBlockCause(blocked(description)));
       expect(text.length).toBeLessThanOrEqual(MISSION_BLOCK_CAUSE_TEXT_LIMIT);
     }
+  });
+});
+
+describe('stripMissionVerdictParagraph — reabrir limpa o selo que fecha', () => {
+  const RUNTIME_CLOSED = '<!-- nexus:runtime-closed -->';
+
+  it('remove o parágrafo do veredito e preserva o resto', () => {
+    const description = appendMissionVerdict(
+      'objetivo do operador\n\ntrabalho feito na etapa 1',
+      RUNTIME_CLOSED,
+      '[NEXUS_RUNTIME_CLOSED]',
+      'Execução encerrada pelo operador; histórico e receipts preservados.',
+    );
+
+    const stripped = stripMissionVerdictParagraph(description, RUNTIME_CLOSED);
+
+    expect(stripped).toBe('objetivo do operador\n\ntrabalho feito na etapa 1');
+    expect(stripped.includes(RUNTIME_CLOSED)).toBe(false);
+  });
+
+  it('é idempotente e inofensivo sem o marcador', () => {
+    expect(stripMissionVerdictParagraph('só o objetivo', RUNTIME_CLOSED)).toBe(
+      'só o objetivo',
+    );
+    expect(stripMissionVerdictParagraph('', RUNTIME_CLOSED)).toBe('');
+    const once = stripMissionVerdictParagraph(
+      appendMissionVerdict('base', RUNTIME_CLOSED, '[T]', 'motivo'),
+      RUNTIME_CLOSED,
+    );
+    expect(stripMissionVerdictParagraph(once, RUNTIME_CLOSED)).toBe('base');
+  });
+
+  it('não toca veredito de outro marcador', () => {
+    const description = appendMissionVerdict(
+      'base',
+      '<!-- nexus:outro -->',
+      '[OUTRO]',
+      'motivo',
+    );
+
+    expect(
+      stripMissionVerdictParagraph(description, RUNTIME_CLOSED),
+    ).toBe(description);
   });
 });

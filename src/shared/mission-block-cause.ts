@@ -327,3 +327,23 @@ export function appendMissionVerdict(
     base.length <= room ? base : base.slice(0, Math.max(0, room)).trimEnd();
   return `${kept}\n\n${block}`;
 }
+
+/**
+ * Inverso exato de appendMissionVerdict: remove o PARÁGRAFO que contém o
+ * marcador. Reabrir uma missão encerrada pelo operador tem que tirar o selo
+ * de encerramento — a presença dele numa missão blocked é prova suficiente
+ * de "Encerrada pelo operador" (mission-recovery-policy Bug I), então deixar
+ * o marcador num runtime religado mentiria no próximo bloqueio.
+ */
+export function stripMissionVerdictParagraph(
+  description: string,
+  markerHtml: string,
+): string {
+  if (!description.includes(markerHtml)) return description.trim();
+  const kept = description
+    .split(/\n{2,}/)
+    .filter((paragraph) => !paragraph.includes(markerHtml))
+    .join('\n\n')
+    .trim();
+  return kept.slice(0, MISSION_DESCRIPTION_LIMIT);
+}
