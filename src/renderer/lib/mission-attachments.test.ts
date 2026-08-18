@@ -36,6 +36,24 @@ describe('mission attachments', () => {
     expect(classifyMissionAttachment(file('binario.exe', 'application/x-msdownload'))).toBeNull();
   });
 
+  it('áudio de WhatsApp/Telegram (.opus, MIME vazio do paste do Finder) é áudio', () => {
+    // Screenshot 2026-08-18: colar "WhatsApp Audio ....opus" num pane não
+    // colava NADA — o classificador recusava .opus com MIME ausente e o
+    // paste morria em silêncio ("não cola e não mostra").
+    expect(
+      classifyMissionAttachment(
+        file('WhatsApp Audio 2026-08-17 at 17.18.49 (1).opus', ''),
+      ),
+    ).toBe('audio');
+    expect(classifyMissionAttachment(file('telegram.voice.ogg', ''))).toBe(
+      'audio',
+    );
+    expect(classifyMissionAttachment(file('nota.oga', ''))).toBe('audio');
+    expect(classifyMissionAttachment(file('entrevista.aiff', ''))).toBe(
+      'audio',
+    );
+  });
+
   it('rejects unsupported, oversized, and empty files', () => {
     expect(validateMissionAttachment(file('binario.exe', 'application/x-msdownload'), [])).toMatch(/imagem/);
     expect(validateMissionAttachment(file('erro.png', 'image/png', 0), [])).toMatch(/vazio/);

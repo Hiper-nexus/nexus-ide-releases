@@ -1163,7 +1163,17 @@ async function injectDroppedFile(host: Host, file: File): Promise<void> {
     );
     if (path && host.sessionId) {
       window.nexus.pty.write(host.sessionId, `${shellQuote(path)} `);
+      return;
     }
+    // "Não cola e não mostra" (screenshot 2026-08-18): arquivo que o intake
+    // recusa morria em silêncio — o operador colava e NADA acontecia. Um
+    // aviso toast diz o quê e o porquê sem escrever lixo no pane do agente.
+    useToastStore.getState().push(
+      'warn',
+      'Arquivo não colado no terminal',
+      `"${file.name.trim() || 'anexo'}" não é imagem, áudio nem texto/código ` +
+        'aceito como anexo de missão.',
+    );
   } catch {
     // Ignore — a failed drop should never break the terminal.
   }

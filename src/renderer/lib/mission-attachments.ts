@@ -23,7 +23,9 @@ export const MISSION_ATTACHMENT_LIMITS = {
 } as const;
 
 const IMAGE_EXTENSIONS = /\.(avif|gif|heic|jpeg|jpg|png|webp)$/i;
-const AUDIO_EXTENSIONS = /\.(aac|flac|m4a|mp3|ogg|wav|webm)$/i;
+// opus = áudio de WhatsApp/Telegram (o paste do Finder entrega MIME vazio);
+// oga = ogg de áudio; aiff/wma = gravadores e Windows.
+const AUDIO_EXTENSIONS = /\.(aac|aiff|flac|m4a|mp3|oga|ogg|opus|wav|webm|wma)$/i;
 const TEXT_EXTENSIONS =
   /\.(c|cc|cpp|cs|css|csv|go|html?|java|js|json|jsx|md|mdx|php|py|rb|rs|sh|sql|svelte|toml|ts|tsx|txt|vue|ya?ml)$/i;
 let attachmentSequence = 0;
@@ -61,6 +63,12 @@ function extensionForMime(mime: string, kind: MissionAttachmentKind): string {
   if (normalized === 'audio/mp4' || normalized === 'audio/x-m4a') return 'm4a';
   if (normalized === 'audio/wav' || normalized === 'audio/wave') return 'wav';
   if (normalized === 'audio/webm') return 'webm';
+  if (normalized === 'audio/ogg' || normalized === 'audio/opus') {
+    return 'opus';
+  }
+  if (normalized === 'audio/aiff' || normalized === 'audio/x-aiff') {
+    return 'aiff';
+  }
   if (kind === 'image') return 'png';
   if (kind === 'audio') return 'm4a';
   return 'txt';
