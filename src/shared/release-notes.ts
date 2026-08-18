@@ -13,6 +13,43 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.50.5',
+  date: '2026-08-18',
+  codename: 'O terminal explica',
+  summary:
+    'Quando o app é atualizado em disco enquanto está aberto, o supervisor ' +
+    'de terminais recusava todo spawn com um erro técnico em inglês — ' +
+    'terminais mortos e nenhuma instrução. A recusa continua (é segurança ' +
+    'correta), mas agora o terminal diz em português exatamente o que ' +
+    'fazer: fechar e reabrir o Nexus, com a missão preservada no rail. ' +
+    'Embarca também a Fase 0 do daemon de terminais: o protocolo de posse ' +
+    'de endpoint que vai permitir, nas próximas versões, fechar o app sem ' +
+    'matar os terminais das missões.',
+  highlights: [
+    {
+      title: 'Erro de spawn agora orienta em português',
+      detail:
+        'Classes conhecidas da falha de preflight do supervisor ganham uma ' +
+        'frase acionável no terminal (\"feche e reabra o Nexus para religar ' +
+        'os terminais; a missão continua no rail\"; ou \"reinstale o app\" ' +
+        'quando a assinatura está quebrada). O texto técnico original ' +
+        'permanece como evidência; erro desconhecido segue cru — orientação ' +
+        'nunca é inventada.',
+    },
+    {
+      title: 'Fase 0 do daemon de terminais',
+      detail:
+        'Protocolo de posse de endpoint travado em teste: bind privado com ' +
+        'link exclusivo, incumbente provado por conexão, morte física ' +
+        'provada por recusa, \"não sei\" jamais vira takeover, endpoint ' +
+        'nunca removido no shutdown, zero varredores. Fundação invisível ' +
+        'desta versão — a co-existência (feature.ptyd) vem a seguir.',
+    },
+  ],
+  fixes: [],
+};
+
+export const RELEASE_05004: AppRelease = {
   version: '0.50.4',
   date: '2026-08-18',
   codename: 'O handoff chega',

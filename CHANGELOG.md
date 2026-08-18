@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.50.5 — O terminal explica
+
+_Para atualizar: faça download do DMG/ZIP abaixo e substitua o app (feche o Nexus antes de substituir)._
+
+Quando o app é atualizado em disco enquanto está aberto, o supervisor de
+terminais recusava todo spawn com erro técnico em inglês — terminais mortos
+sem instrução. A recusa continua (segurança correta: o bundle precisa ser
+dono do processo vivo), mas agora o terminal orienta em português.
+
+- **fix(pty): erro de spawn ganha orientação acionável em PT** — bundle
+  trocado com app aberto → "feche e reabra o Nexus para religar os
+  terminais; a missão continua no rail"; assinatura quebrada → "reinstale
+  o app". Texto técnico permanece como evidência; desconhecido segue cru.
+- **feat(ptyd): Fase 0 do protocolo de posse do endpoint** — bind privado +
+  link exclusivo, incumbente provado por conexão, morte provada por recusa,
+  "não sei" nunca vira takeover, endpoint nunca removido no shutdown, sem
+  sweeper. Fundação invisível do daemon cuja co-existência (feature.ptyd)
+  vem na sequência.
+
+
 ## 0.50.4 — O handoff chega
 
 Data: 2026-08-18
