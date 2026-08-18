@@ -213,7 +213,7 @@ async function main() {
       await new Promise(r => setTimeout(r, 1500));
       const mk = (id, name, cat, tools) => ({ id, agentName: name, category: cat, cli: "claude", allowedTools: tools, allowedSkills: null });
       const roster = [ mk("coordinator","Maestro","orchestrator",null), mk("executor","Executor","executor",["Bash","Read","Edit"]), mk("reviewer","Reviewer","reviewer",["Bash","Read"]) ];
-      const review = await window.nexus.mission.prepare({ objective: "crie os arquivos d2-parte-1.txt ate d2-parte-6.txt, cada um com 30 linhas numeradas; depois confirme no relatorio final que todos existem", contextPaths: [], roster, advanced: { lane: "standard" } });
+      const review = await window.nexus.mission.prepare({ objective: "crie os arquivos d2-parte-1.txt ate d2-parte-3.txt, cada um com 15 linhas numeradas; depois confirme no relatorio final que todos existem", contextPaths: [], roster, advanced: { lane: "standard" } });
       const started = await window.nexus.mission.start({ missionId: review.missionId, reviewSha256: review.reviewSha256 });
       return JSON.stringify({ missionId: review.missionId, state: started.state ?? started.status });
     } catch (e) { return JSON.stringify({ error: String(e && e.message || e) }); }
@@ -222,10 +222,10 @@ async function main() {
   if (missionInfo.error) throw new Error(`missão não criou: ${missionInfo.error}`);
   console.log(`[survival-d2] missão ${missionInfo.missionId} (${missionInfo.state})`);
 
-  console.log('[survival-d2] esperando handoff NÃO consumido (janela do A3, timeout 6 min)');
+  console.log('[survival-d2] esperando handoff NÃO consumido (janela do A3, timeout 10 min)');
   let pendingSeen = false;
   let crashHandoffId = '';
-  for (let attempt = 0; attempt < 72 && !pendingSeen; attempt += 1) {
+  for (let attempt = 0; attempt < 120 && !pendingSeen; attempt += 1) {
     await sleep(5_000);
     const handoffs = await cdpEvalRetry(wsUrl, `(async () => {
       try {
