@@ -86,3 +86,42 @@ Support/NexusIDE/ptyd.sock`).
   de PTY com tokens opacos. Toda decisão permanece no main (lição Orca:
   o daemon deles encolheu quanto mais puxavam decisão pra fora).
 - Sem multi-usuário remoto nesta spec (federation é outro documento).
+
+## Fase 0 — contrato de teste do protocolo de posse (socket puro, sem Electron)
+
+Módulo: `src/main/pty-daemon/endpoint-ownership.ts`. Funções puras sobre
+`node:net` com DI de bind/connect para o teste; SEM import de Electron.
+
+```ts
+export type EndpointClaim =
+  | { readonly kind: 'claimed'; readonly socketPath: string }
+  | { readonly kind: 'incumbent-live'; readonly socketPath: string }
+  | { readonly kind: 'unverifiable'; readonly reason: string };
+
+export async function claimDaemonEndpoint(input: {
+  readonly publicPath: string;
+  readonly probeTimeoutMs?: number; // default 1500
+}): Promise<EndpointClaim>;
+```
+
+Algoritmo travado em teste (um `it` por regra gravada):
+
+1. **Posse limpa**: dir vazio → bind privado `.ptyd.<pid>.sock` → `link()`
+   privado→público → `claimed`; o público ACEITA conexão.
+2. **Incumbente vivo**: segundo claim com o primeiro ouvindo → `link` EEXIST
+   → CONNECT no público responde → `incumbent-live` (o nascido se suicida;
+   o público continua do primeiro; socket privado do nascido é limpo).
+3. **Incumbente morto por conexão**: primeiro morre DEIXANDO o arquivo no
+   chão → claim novo → connect ECONNREFUSED/ENOENT em socket legível →
+   `rename()` privado sobre público → `claimed`; conexão vai pro novo.
+4. **Nunca colapsar "não sei" em "morto"**: connect que TIMEOUT ou EACCES
+   → `unverifiable` → NUNCA takeover (simular: socket que aceita e não
+   responde; socket chmod 000).
+5. **Endpoint nunca é removido no shutdown**: `releaseDaemonEndpoint` NÃO
+   faz unlink — contrato da função (o sucessor prova e renomeia).
+6. **Sem sweeper**: sucessão só por evento (nascer→provar→substituir);
+   a inexistência de varredor é propriedade estrutural — nenhum timer no
+   módulo, assert por inspecção de exports.
+
+Guard rails: roda em tmpdir (`mkdtempSync`), sem `app.getPath`, sem
+processo detached na Fase 0 — é o coração do protocolo isolado.
