@@ -13,6 +13,37 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.50.2',
+  date: '2026-08-18',
+  codename: 'Execução instrumentada para o worker',
+  summary:
+    'O worker com Bash na lane ganha o nexus_terminal_run — a execução que ' +
+    'o Nexus observa, registra e usa como prova. Antes o gate de evidência ' +
+    'pedia exatamente a coisa que a allowlist proibia de instrumentar. ' +
+    'Junto, a spec do daemon de PTY: o contrato do destino arquitetural ' +
+    'onde o terminal sobrevive ao fechamento do app.',
+  highlights: [
+    {
+      title: 'Execução que serve de prova',
+      detail:
+        'Execução instrumentada liberada sse a lane do worker libera Bash — ' +
+        'o main vê o comando, confina por sandbox e pode usá-lo como ' +
+        'evidência. Lanes sem execução e o regime do operador seguem ' +
+        'exatamente como antes.',
+    },
+    {
+      title: 'Spec do daemon de PTY',
+      detail:
+        'Documento arquitetural do futuro onde o PTY sobrevive a ' +
+        'quit/update e o main re-anexa por incarnation — fim dos grants ' +
+        'que morrem no restart e das ressurreições caras. Contrato pronto ' +
+        'para o porte em fases.',
+    },
+  ],
+  fixes: [],
+};
+
+export const RELEASE_05001: AppRelease = {
   version: '0.50.1',
   date: '2026-08-18',
   codename: 'A missão termina',

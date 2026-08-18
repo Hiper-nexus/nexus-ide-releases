@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.50.2 — Execução instrumentada para o worker
+
+Data: 2026-08-18
+
+- **`nexus_terminal_run` acompanha o Bash da lane.** Worker de lane
+  `[Bash, Read, Edit]` podia executar pelo Bash NATIVO mas não pela forma
+  INSTRUMENTADA — aquela que o main observa, registra e confina por
+  sandbox profile. O gate de evidência pedia prova justamente da coisa
+  que a allowlist proibia de instrumentar (missão real: workers
+  reportando "nenhum tool capaz de emitir evidence"). Agora a execução
+  instrumentada é liberada sse a lane do worker libera Bash (ou é
+  irrestrita); lane sem execução (consult/read-only) segue sem — nunca
+  escalada silenciosa. O regime do operador/renderer (destructive gate
+  exigindo contexto de missão) permanece intacto e travado em teste.
+- **Spec do daemon de PTY** (`docs/architecture/pty-daemon-spec.md`): o
+  destino arquitetural documentado — PTY sobrevive a quit/update, main
+  re-anexa por incarnation, protocolo de posse de endpoint com as regras
+  "nunca colapse não-sei em morto" e "sem sweeper". Sem efeito runtime
+  nesta versão; é o contrato para o porte futuro.
+
 ## 0.50.1 — A missão termina
 
 Data: 2026-08-18
