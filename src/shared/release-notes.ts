@@ -13,6 +13,67 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.50.0',
+  date: '2026-08-18',
+  codename: 'Imbatível: a missão vai do início ao fim',
+  summary:
+    'A campanha 0.50 cruzou a evidência das suas missões reais com a ' +
+    'doutrina do Overclock e as novidades do Orca upstream: a entrega ' +
+    'que morria "Handoff não entregue" tendo entregue, o worker que ' +
+    'nascia morto invisível e respawna 6×, a sentinela de HEAD que ' +
+    'disparava à toa, o app empacotado sem NENHUM log — tudo com teste, ' +
+    'tudo com cenário de sobrevivência provado ao vivo.',
+  highlights: [
+    {
+      title: 'A missão não mente no fim',
+      detail:
+        'Fechar o app na janela do ack engolia a entrega final e a missão ' +
+        'acordava bloqueada tendo concluído o trabalho. O respawn agora ' +
+        're-entrega os handoffs pendentes ao orquestrador novo: trabalho ' +
+        'pronto é consumido, nunca vira "Handoff não entregue".',
+    },
+    {
+      title: 'Worker morto é visível e o loop acaba',
+      detail:
+        'Todo worker que morre sem entregar vira evento no journal com ' +
+        'adapter e contagem. À terceira morte do mesmo adapter, o circuit ' +
+        'breaker recusa o spawn com motivo e o Maestro reroteia para outro ' +
+        'agente do roster — chega de pane respawnado 6× para morrer igual.',
+    },
+    {
+      title: 'O app empacotado enxerga',
+      detail:
+        'main.trace.ndjson com redactor e rotação grava respawn, ' +
+        'mortalidade e breaker; hang watchdog em worker thread carimba a ' +
+        'DURAÇÃO de qualquer congelamento da main em disco. O pós-mortem ' +
+        'noturno deixou de ser cego.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Sentinela de HEAD calibrada',
+      detail:
+        'Commit do trabalho da própria missão é interno e silencioso; só ' +
+        'processo de fora avisa. O Maestro para de gastar turno ' +
+        'revalidando o próprio trabalho dele.',
+    },
+    {
+      title: 'Missão encerrada não deixa cadáver',
+      detail:
+        'Panes restaurados de missão concluída/failed saem do grid ' +
+        'sozinhos; missão bloqueada preserva o contexto para o Retomar.',
+    },
+    {
+      title: 'Cenário de sobrevivência como artefato',
+      detail:
+        'Crash → revival → exatamente UM orquestrador vivo, zero grant ' +
+        'expirado, zero block falso: o bug real virou script reproduzível ' +
+        'que asserciona na tela, verde ao vivo três vezes.',
+    },
+  ],
+};
+
+export const RELEASE_03230: AppRelease = {
   version: '0.32.30',
   date: '2026-08-17',
   codename: 'Um orquestrador por missão',

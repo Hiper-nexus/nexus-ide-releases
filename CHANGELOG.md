@@ -1,5 +1,52 @@
 # Changelog
 
+## 0.50.0 — Imbatível: a missão vai do início ao fim
+
+Data: 2026-08-18
+
+A campanha 0.50 nasceu da análise profunda das missões REAIS (36h de
+code-review com 13 de 20 workers mortos invisíveis, entrega concluída
+que morria "blocked", sentinela de HEAD disparando 8× à toa, app
+empacotado sem nenhum log) cruzada com a doutrina do Overclock e as 136
+releases recentes do Orca upstream. Sete correções estruturais, todas
+com teste, todas mapeadas em evidência:
+
+- **A missão não mente mais no fim.** Quit na janela do ack engolia a
+  entrega final e a missão acordava "Handoff não entregue" tendo
+  ENTREGUE (caso real: "consolidei os sete code reviews" → block). O
+  respawn do orquestrador agora RE-ENTREGA os handoffs pendentes pela
+  lane de entrega — o trabalho pronto é consumido, nunca viram block.
+- **Worker morto é visível e o loop acaba.** Cada worker que morre sem
+  entregar vira evento no journal (`worker-died-without-delivery`, com
+  adapter e contagem) — o pós-mortem deixa de ser cego. À terceira
+  morte do MESMO adapter na mesma missão, o circuit breaker recusa o
+  spawn com motivo acionável e o Maestro reroteia para outro agente do
+  roster. Fim do pane respawnado 6× para morrer igual.
+- **Sentinela de HEAD calibrada.** Commit do trabalho da própria missão
+  (headSha/baseSha do evidenceBinding) é interno e silencioso; só
+  processo de fora de verdade gera o aviso que gastava turno do
+  Maestro para revalidar o próprio trabalho dele (8 falsos positivos
+  na missão real).
+- **main.trace.ndjson — o app empacotado enxerga.** Log NDJSON
+  persistido com redactor de segredos, rotação 5MB×3 e linha de boot
+  por sessão. Instrumenta respawn, mortalidade, head-change e breaker.
+  Na primeira noite de uso já desambiguou um diagnóstico em segundos.
+- **Hang watchdog em worker thread.** Main pendurada (família keychain:
+  timers mortos, IPC vivo) ganha marker em disco com a DURAÇÃO do
+  hang — "app congelou" deixa de ser mistério. Sem auto-kill.
+- **Missão terminal não deixa cadáver no grid.** Panes restaurados de
+  missão done/failed sem sessão viva saem do layout sozinhos
+  (blocked preserva o contexto para o Retomar).
+- **Cenário de sobrevivência como artefato.** O bug real do operador
+  (crash → revival → dois orquestradores, um travado) virou script
+  reproduzível que ASSERTE NO DOM: boot → missão → SIGKILL → reboot →
+  exatamente UM orquestrador vivo, zero grant expirado, zero block
+  falso. Verde ao vivo, três vezes.
+
+Base herdada da 0.32.30: um orquestrador por missão no revival, rail
+multi-workspace, watchdog de orquestrador ocioso, erro real do spawn
+chegando ao operador.
+
 ## 0.32.30 — Um orquestrador por missão
 
 Data: 2026-08-17
