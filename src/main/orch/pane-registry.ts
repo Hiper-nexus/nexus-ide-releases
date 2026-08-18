@@ -88,6 +88,7 @@ import {
   workerMortalityBreakerMessage,
   workerMortalityCount,
 } from "./worker-mortality";
+import { trace } from "../observability/main-trace";
 
 /**
  * Main-process mirror of the renderer's pane grid plus per-session output ring
@@ -1731,6 +1732,12 @@ export function requestPaneSpawn(
   if (options.role === "worker" && options.missionId && options.adapterId) {
     const deaths = workerMortalityCount(options.missionId, options.adapterId);
     if (shouldTripWorkerMortalityBreaker(deaths)) {
+      trace({
+        kind: "worker-mortality-breaker-trip",
+        missionId: options.missionId,
+        adapterId: options.adapterId,
+        deaths,
+      });
       return Promise.resolve({
         requestId: "",
         ok: false,

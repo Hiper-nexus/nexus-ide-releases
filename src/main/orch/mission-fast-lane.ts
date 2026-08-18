@@ -24,6 +24,7 @@ import {
   recordAdapterProofOfLife,
   recordWorkerDeathWithoutDelivery,
 } from './worker-mortality';
+import { trace } from '../observability/main-trace';
 
 /**
  * Via Rápida de missão (2026-08-12) — motor limpo, modelo PULL.
@@ -487,9 +488,20 @@ async function tickWatcher(state: WatcherState): Promise<void> {
   if (headDecision.action === 'internal') {
     // Trabalho da própria missão: rebaseline silencioso, zero turno gasto.
     state.baselineHeadSha = headDecision.to;
+    trace({
+      kind: 'head-change-internal',
+      missionId: state.missionId,
+      to: headDecision.to.slice(0, 12),
+    });
   }
   if (headDecision.action === 'notify') {
     state.baselineHeadSha = headDecision.to;
+    trace({
+      kind: 'head-change-external',
+      missionId: state.missionId,
+      from: headDecision.from.slice(0, 12),
+      to: headDecision.to.slice(0, 12),
+    });
     console.warn(
       `[fast-lane] HEAD do checkout mudou por FORA durante ${state.missionId}: ` +
         `${headDecision.from.slice(0, 10)} → ${headDecision.to.slice(0, 10)}; ` +
@@ -631,6 +643,13 @@ function recordWorkerMortalityTick(
     if (mortalityCountedPanes.has(pane.paneId)) continue;
     mortalityCountedPanes.add(pane.paneId);
     const deaths = recordWorkerDeathWithoutDelivery(missionId, adapterId);
+    trace({
+      kind: 'worker-died-without-delivery',
+      missionId,
+      paneId: pane.paneId,
+      adapterId,
+      deaths,
+    });
     console.warn(
       `[fast-lane] worker ${pane.paneId} (${adapterId}) morreu sem entregar ` +
         `— mortalidade ${deaths} em ${missionId}`,
@@ -793,6 +812,12 @@ async function respawnFastLaneOrchestrator(
   // precisa RECEBER os handoffs pendentes pela lane de entrega — a sugestão
   // "consulte nexus_handoff_list" do kickoff é prompt, não mecanismo.
   const redelivered = redeliverPendingHandoffs(scope, mission.id);
+  trace({
+    kind: 'orchestrator-respawned',
+    missionId: mission.id,
+    sessionId: spawned.sessionId,
+    redeliveredHandoffs: redelivered,
+  });
   if (redelivered > 0) {
     console.info(
       `[fast-lane] ${redelivered} handoff(s) pendente(s) re-entregue(s) ao ` +

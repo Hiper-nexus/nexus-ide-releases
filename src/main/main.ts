@@ -60,6 +60,14 @@ if (
 // Marker is written by handleChildProcessGone when Windows GPU crashes cluster after launch.
 try {
   const userDataPath = app.getPath("userData");
+  // main.trace.ndjson (campanha 0.50, A7): primeira linha de toda sessão —
+  // o pós-mortem começa sabendo qual versão/boot está lendo.
+  trace({
+    kind: "main-boot",
+    version: app.getVersion(),
+    electron: process.versions.electron ?? "unknown",
+    platform: process.platform,
+  });
   const marker = readActiveGpuFallbackMarker(userDataPath, {
     appVersion: app.getVersion(),
     electronVersion: process.versions.electron ?? "unknown",
@@ -337,6 +345,7 @@ import {
   isAppQuitAuthorized,
   revokeAppQuitAuthorization,
 } from "./close-authorization";
+import { trace } from "./observability/main-trace";
 
 let projectRuntimeManager: ProjectRuntimeManager | null = null;
 
