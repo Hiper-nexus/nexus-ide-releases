@@ -48,7 +48,7 @@ describe('planBoardClear', () => {
       ],
     });
 
-    expect(plan.listsToRemove.sort()).toEqual(['m-done', 'm-fail']);
+    expect([...plan.listsToRemove].sort()).toEqual(['m-done', 'm-fail']);
     expect(plan.itemsToRemove).toEqual([]);
   });
 
