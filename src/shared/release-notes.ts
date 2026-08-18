@@ -13,6 +13,44 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.50.3',
+  date: '2026-08-18',
+  codename: 'O Retomar retoma',
+  summary:
+    'Dois bugs que você viu na tela, mortos na raiz: o Retomar de missão ' +
+    'encerrada que recusava com erro interno (os únicos estados em que o ' +
+    'card oferecia o botão eram os que o motor recusava) e o áudio de ' +
+    'WhatsApp que não colava no terminal nem avisava por quê. Junto, a ' +
+    'jornada do operador — encerrar e retomar — virou cenário reproduzível ' +
+    'que fecha o ciclo ao vivo.',
+  highlights: [
+    {
+      title: 'Missão encerrada volta quando você pede',
+      detail:
+        'Retomar limpa o selo de encerramento, devolve a missão a ' +
+        'execução e religa a coordenação com re-entrega do pendente. ' +
+        'Missão concluída com trabalho residual retoma igual; concluída ' +
+        'com entrega verificada segue intocada.',
+    },
+    {
+      title: 'Áudio cola — e recusa fala',
+      detail:
+        '.opus (WhatsApp/Telegram), .oga, .aiff e .wma entram como anexo ' +
+        'mesmo quando o paste chega sem tipo MIME. E arquivo recusado ' +
+        'aparece num aviso em vez de morrer em silêncio.',
+    },
+    {
+      title: 'Cenário da jornada do operador',
+      detail:
+        'Encerrar missão (diálogo nativo incluso) → card anuncia Retomar → ' +
+        'o clique → rodando de novo com exatamente UM orquestrador: o caminho ' +
+        'que você faz virou prova automatizada ao vivo.',
+    },
+  ],
+  fixes: [],
+};
+
+export const RELEASE_05002: AppRelease = {
   version: '0.50.2',
   date: '2026-08-18',
   codename: 'Execução instrumentada para o worker',

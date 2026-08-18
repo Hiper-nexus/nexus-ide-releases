@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.50.3 — O Retomar retoma
+
+Data: 2026-08-18
+
+- **Missão encerrada volta quando você pede.** Clicar Retomar numa
+  missão "Encerrada pelo operador" explodia com "Mission engine resume
+  requires a technical block" — os DOIS estados em que o card oferece o
+  botão eram exatamente os que o motor recusava. Reabrir agora é
+  religar: o selo de encerramento sai da missão, ela volta a executar e
+  a coordenação renasce com re-entrega do que estava pendente. Missão
+  concluída com trabalho residual retoma pelo mesmo caminho; concluída
+  COM entrega verificada segue intocada.
+- **Áudio de WhatsApp cola no terminal.** Colar um áudio `.opus`
+  (formato de voz de WhatsApp/Telegram) não colava NADA nem avisava — o
+  paste chega sem tipo MIME e o classificador não conhecia a extensão.
+  `.opus`, `.oga`, `.aiff` e `.wma` são aceitos; e arquivo recusado
+  agora aparece num aviso em vez de morrer em silêncio.
+- **A jornada do operador virou cenário.** O teste de sobrevivência
+  provava crash e revival, mas nenhum CLIQUE: encerrar missão → Retomar
+  agora é script reproduzível que asserciona o ciclo inteiro ao vivo
+  (encerrada → Retomar → rodando com UM orquestrador).
+
+
 ## 0.50.2 — Execução instrumentada para o worker
 
 Data: 2026-08-18
