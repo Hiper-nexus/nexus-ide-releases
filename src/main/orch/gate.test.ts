@@ -53,6 +53,18 @@ describe('isToolAllowed', () => {
     expect(isToolAllowed(['pane_read'], 'nexus_pane_read')).toBe(true);
   });
 
+  it('terminal_run segue o Bash da lane: instrumentado quando execução já é permitida (R5)', () => {
+    // Rodada 3 R5: worker de lane [Bash,Read,Edit] podia o Bash NATIVO mas
+    // não o nexus_terminal_run (forma instrumentada que o main observa) —
+    // o gate de evidência pedia prova da coisa que a allowlist proibia de
+    // instrumentar. Regra: terminal_run é liberado sse a lane libera Bash
+    // (ou é irrestrita). Lane sem execução (consult/read-only) segue sem.
+    expect(isToolAllowed(['Bash', 'Read', 'Edit'], 'nexus_terminal_run')).toBe(true);
+    expect(isToolAllowed(null, 'nexus_terminal_run')).toBe(true);
+    expect(isToolAllowed(['Read', 'Grep'], 'nexus_terminal_run')).toBe(false);
+    expect(isToolAllowed([], 'nexus_terminal_run')).toBe(false);
+  });
+
   it('always allows handoff tools, pane observation, and ToolSearch, even with empty allowlist', () => {
     expect(isToolAllowed([], 'nexus_handoff_submit')).toBe(true);
     expect(isToolAllowed([], 'handoff_list')).toBe(true);

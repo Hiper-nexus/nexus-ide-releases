@@ -138,6 +138,16 @@ export function isToolAllowed(
 ): boolean {
   const canonical = canonicalToolName(toolName);
   if (ALWAYS_ALLOWED.has(canonical)) return true;
+  if (canonical === "terminal_run") {
+    // Rodada 3 R5: a execução INSTRUMENTADA (nexus_terminal_run — o main
+    // observa, registra e confina por sandbox profile) acompanha a execução
+    // NATIVA da lane. Worker com Bash ganha a forma observada; lane sem
+    // execução (consult/read-only) segue sem — nunca escalada silenciosa.
+    return (
+      allowedTools === null ||
+      allowedTools.some((allowed) => canonicalToolName(allowed) === "bash")
+    );
+  }
   if (REQUIRES_EXPLICIT_ALLOW.has(canonical)) {
     // Never implicitly available — requires an explicit grant, even when the
     // rest of the toolset is unrestricted.
