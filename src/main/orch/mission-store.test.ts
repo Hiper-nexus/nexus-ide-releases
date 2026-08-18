@@ -2218,4 +2218,34 @@ describe('scoped mission store', () => {
       intentState: 'executing',
     });
   });
+
+  it('updated_at é estritamente monotônico mesmo com duas escritas no mesmo milissegundo (B2)', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope({ checkoutId: 'updated-at-monotonic' });
+    const store = createScopedMissionStore(runtimeManager, scope, {
+      idFactory: () => 'mission-monotonic',
+      now: () => 1_000,
+    });
+    store.create({ title: 'Monotonic', orchestratorSessionId: 'session-1' });
+
+    // transitionLifecycle grava 1_001 (guarda monotônica).
+    const transitioned = store.transitionLifecycle(
+      'mission-monotonic',
+      { updatedAt: 1_000, intentVersion: 0 },
+      { status: 'running', intentState: 'executing' },
+    );
+    expect(transitioned?.updatedAt).toBe(1_001);
+
+    // update()/block() no MESMO milissegundo não pode regredir para 1_000.
+    const blocked = store.block('mission-monotonic', 'technical');
+    expect(blocked?.updatedAt).toBeGreaterThanOrEqual(1_001);
+
+    // E a sequência continua avançando mesmo com o relógio parado.
+    const resumed = store.transitionLifecycle(
+      'mission-monotonic',
+      { updatedAt: blocked!.updatedAt, intentVersion: 0 },
+      { status: 'running', intentState: 'executing' },
+    );
+    expect(resumed?.updatedAt).toBeGreaterThan(blocked!.updatedAt);
+  });
 });
