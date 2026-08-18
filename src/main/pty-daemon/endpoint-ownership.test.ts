@@ -35,7 +35,6 @@ async function realListener(socketPath: string): Promise<{
   return {
     close: () =>
       new Promise<void>((resolve) => {
-        server.closeAllConnections?.();
         server.close(() => resolve());
       }),
   };
@@ -156,7 +155,6 @@ describe('claimDaemonEndpoint (Fase 0)', () => {
     // O endpoint público NÃO foi tomado: continua sendo o socket mudo.
     expect(statSync(publicPath).isSocket()).toBe(true);
 
-    server.closeAllConnections?.();
     server.close();
   });
 

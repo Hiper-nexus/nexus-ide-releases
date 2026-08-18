@@ -87,7 +87,6 @@ async function destroyPrivateEndpoint(
   server: net.Server,
   privatePath: string,
 ): Promise<void> {
-  server.closeAllConnections?.();
   server.close();
   await rm(privatePath, { force: true });
 }
@@ -154,6 +153,5 @@ export async function releaseDaemonEndpoint(claim: {
   const server = listenersByPublicPath.get(claim.socketPath);
   if (!server) return;
   listenersByPublicPath.delete(claim.socketPath);
-  server.closeAllConnections?.();
   server.close();
 }
