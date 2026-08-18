@@ -160,11 +160,19 @@ export function assertMissionIntentAllowsTool(
 
   // Consult lane: hard read-only. Only status transitions (blocked/failed/done
   // with durable note) may mutate mission metadata — never code/worktree/merge.
-  if (contract?.lane === 'consult' && canonical !== 'mission_set_status') {
+  // `handoff_submit` é a entrega canônica do relatório final do orquestrador
+  // consult: negá-la deixava a missão sem caminho de conclusão e alimentava o
+  // loop de respawn do watcher (bug de campo 2026-08-18). A origem segue
+  // validada pelo policy de handoff abaixo.
+  if (
+    contract?.lane === 'consult' &&
+    canonical !== 'mission_set_status' &&
+    canonical !== 'handoff_submit'
+  ) {
     return deny(
       'tool_denied',
       `tool_denied: consult lane is read-only; ${toolName} is not allowed ` +
-        '(use read tools or mission_set_status with a durable note)',
+        '(use read tools, handoff_submit or mission_set_status with a durable note)',
       ctx,
       intentState,
       intentVersion,

@@ -1,4 +1,5 @@
 import { existsSync, mkdtempSync, rmSync, statSync } from 'node:fs';
+import type { Server } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -7,6 +8,14 @@ import {
   claimDaemonEndpoint,
   releaseDaemonEndpoint,
 } from './endpoint-ownership';
+
+/**
+ * Mesma ponte tipada do módulo de produção: `closeAllConnections` existe no
+ * runtime (Node 18.2+) mas @types/node só o declara em http.Server.
+ */
+function closeAllServerConnections(server: Server): void {
+  (server as Server & { closeAllConnections?: () => void }).closeAllConnections?.();
+}
 
 // Fase 0 — contrato de teste do protocolo de posse (spec
 // docs/architecture/pty-daemon-spec.md). Guard rails: tmpdir, sem Electron,
@@ -35,7 +44,7 @@ async function realListener(socketPath: string): Promise<{
   return {
     close: () =>
       new Promise<void>((resolve) => {
-        server.closeAllConnections?.();
+        closeAllServerConnections(server);
         server.close(() => resolve());
       }),
   };
@@ -156,7 +165,7 @@ describe('claimDaemonEndpoint (Fase 0)', () => {
     // O endpoint público NÃO foi tomado: continua sendo o socket mudo.
     expect(statSync(publicPath).isSocket()).toBe(true);
 
-    server.closeAllConnections?.();
+    closeAllServerConnections(server);
     server.close();
   });
 

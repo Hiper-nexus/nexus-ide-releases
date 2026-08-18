@@ -83,11 +83,20 @@ function probeEndpoint(
   });
 }
 
+/**
+ * `net.Server` ganhou `closeAllConnections()` no runtime (Node 18.2+), mas o
+ * tipo em @types/node só o declara em `http.Server`. Ponte tipada local para o
+ * runtime real sem enfraquecer o resto do arquivo.
+ */
+function closeAllServerConnections(server: net.Server): void {
+  (server as net.Server & { closeAllConnections?: () => void }).closeAllConnections?.();
+}
+
 async function destroyPrivateEndpoint(
   server: net.Server,
   privatePath: string,
 ): Promise<void> {
-  server.closeAllConnections?.();
+  closeAllServerConnections(server);
   server.close();
   await rm(privatePath, { force: true });
 }
@@ -154,6 +163,6 @@ export async function releaseDaemonEndpoint(claim: {
   const server = listenersByPublicPath.get(claim.socketPath);
   if (!server) return;
   listenersByPublicPath.delete(claim.socketPath);
-  server.closeAllConnections?.();
+  closeAllServerConnections(server);
   server.close();
 }

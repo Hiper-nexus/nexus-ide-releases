@@ -723,7 +723,7 @@ export class ScopedMissionStore {
       .writeDatabase()
       .prepare(
         `UPDATE missions
-         SET orch_session_id = ?, updated_at = ?
+         SET orch_session_id = ?, updated_at = MAX(updated_at, ?)
          WHERE id = ?`,
       )
       .run(sessionId, this.#binding.now(), id);
@@ -746,7 +746,7 @@ export class ScopedMissionStore {
       .writeDatabase()
       .prepare(
         `UPDATE missions
-         SET orch_session_id = NULL, updated_at = ?
+         SET orch_session_id = NULL, updated_at = MAX(updated_at, ?)
          WHERE id = ? AND orch_session_id = ?`,
       )
       .run(this.#binding.now(), id, expectedSessionId);
@@ -846,7 +846,7 @@ export class ScopedMissionStore {
                 status = ?,
                 intent_state = ?,
                 description = ?,
-                updated_at = ?
+                updated_at = MAX(updated_at, ?)
           WHERE id = ?
             AND orch_session_id = ?
             AND updated_at = ?`,
@@ -935,7 +935,7 @@ export class ScopedMissionStore {
       }
 
       const updated = db.prepare(
-        `UPDATE missions SET orch_session_id = ?, updated_at = ? WHERE id = ?`,
+        `UPDATE missions SET orch_session_id = ?, updated_at = MAX(updated_at, ?) WHERE id = ?`,
       ).run(sessionId, now, id);
       if (updated.changes !== 1) {
         throw new Error('orchestrator rebind lost mission CAS');
@@ -1008,7 +1008,7 @@ export class ScopedMissionStore {
                 SET status = 'blocked',
                     intent_state = 'blocked_technical',
                     description = ?,
-                    updated_at = ?
+                    updated_at = MAX(updated_at, ?)
               WHERE id = ?
                 AND status = 'running'
                 AND intent_state IN ('dispatched', 'executing')
@@ -1153,7 +1153,7 @@ export class ScopedMissionStore {
       const milestones = structuralCoerceMilestones(
         normalizeMilestones(contract.acceptanceCriteria),
       );
-      const updatedAt = this.#binding.now();
+      const updatedAt = this.#monotonicUpdatedAt(existing.updatedAt);
       const result = db.prepare(
         `UPDATE missions
             SET squad_id = ?, status = 'pending', milestones_json = ?,
@@ -1281,7 +1281,7 @@ export class ScopedMissionStore {
         ) {
           throw new Error('mission runtime squad binding CAS changed');
         }
-        const updatedAt = this.#binding.now();
+        const updatedAt = this.#monotonicUpdatedAt(existing.updatedAt);
         const result = db
           .prepare(
             `UPDATE missions
@@ -1441,7 +1441,7 @@ export class ScopedMissionStore {
           );
         }
 
-        const updatedAt = this.#binding.now();
+        const updatedAt = this.#monotonicUpdatedAt(current.updatedAt);
         const result = db
           .prepare(
             `UPDATE missions
@@ -1627,6 +1627,20 @@ export class ScopedMissionStore {
     return this.update(rawId, patch);
   }
 
+  /**
+   * Toda escrita de missão precisa avançar `updated_at` de forma estritamente
+   * monotônica — os fences do MissionEngine CASam por esse campo e uma regressão
+   * (duas escritas no mesmo milissegundo, relógio ajustado) reabriria uma janela
+   * de transição já vencida. A mesma régua do `transitionLifecycle`.
+   */
+  #monotonicUpdatedAt(existingUpdatedAt: number): number {
+    const updatedAt = Math.max(this.#binding.now(), existingUpdatedAt + 1);
+    if (!Number.isSafeInteger(updatedAt)) {
+      throw new Error('mission updatedAt cannot advance monotonically');
+    }
+    return updatedAt;
+  }
+
   update(rawId: string, rawPatch: MissionPatch): ScopedMission | null {
     const id = entityIdSchema.parse(rawId);
     const patch = missionPatchSchema.parse(rawPatch);
@@ -1669,7 +1683,7 @@ export class ScopedMissionStore {
               : { intentContract: undefined }
             : {}),
           milestones: nextMilestones,
-          updatedAt: this.#binding.now(),
+          updatedAt: this.#monotonicUpdatedAt(existing.updatedAt),
         };
         const blockingIntentState = resolveMissionBlockingIntentState({
           status: next.status,
@@ -1849,7 +1863,7 @@ export class ScopedMissionStore {
             }
           : { ...milestone, evidenceIds: [...milestone.evidenceIds] },
       );
-      const updatedAt = this.#binding.now();
+      const updatedAt = this.#monotonicUpdatedAt(existing.updatedAt);
       db.prepare(
         'UPDATE missions SET milestones_json = ?, updated_at = ? WHERE id = ?',
       ).run(JSON.stringify(nextMilestones), updatedAt, id);
@@ -1877,7 +1891,7 @@ export class ScopedMissionStore {
       const nextLearnings = (
         existing.learnings + separator + entry
       ).slice(0, 65_536);
-      const updatedAt = this.#binding.now();
+      const updatedAt = this.#monotonicUpdatedAt(existing.updatedAt);
       db.prepare(
         'UPDATE missions SET learnings = ?, updated_at = ? WHERE id = ?',
       ).run(nextLearnings, updatedAt, id);

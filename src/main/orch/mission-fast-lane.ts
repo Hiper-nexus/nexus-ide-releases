@@ -20,7 +20,10 @@ import {
   registeredOrchestratorSessionsForMission,
 } from '../pty/pty-manager';
 import { listPaneSnapshots, requestPaneSpawn } from './pane-registry';
-import { getProjectDomainStores } from './project-domain-store-registry';
+import {
+  getProjectDomainStores,
+  type ProjectDomainStoreSuite,
+} from './project-domain-store-registry';
 import { getSquad } from './squad-store';
 import { missionEngineForScope } from './mission-engine-registry';
 import { redeliverPendingHandoffs } from './idle-delivery';
@@ -135,19 +138,37 @@ interface WatcherState {
   stopped: boolean;
   /** Baseline da sentinela de HEAD (achado #14); null fora de repo. */
   baselineHeadSha: string | null;
+  /** Assinatura de progresso real da missão; recarrega o orçamento de respawn. */
+  lastProgressSignature: string | null;
 }
 
 const watchers = new Map<string, WatcherState>();
 
 /**
  * Orçamento de respawn do orquestrador POR EPISÓDIO de missão (sobrevive ao
- * watcher que o respawn recria). Recarregado quando um pane vivo reaparece —
- * atividade real significa episódio novo.
+ * watcher que o respawn recria). Recarregado somente com PROGRESSO REAL
+ * (handoffs consumidos ou tarefas concluídas) — nunca com a mera liveness do
+ * orquestrador respawnado, senão o orçamento vira infinito e a missão entra
+ * em loop de respawn (bug de campo 2026-08-18).
  */
 const respawnBudgets = new Map<string, number>();
 
 function watcherKey(scope: ProjectExecutionScope, missionId: string): string {
   return `${scope.rootRealPath}::${missionId}`;
+}
+
+/** Progresso observável que justifica recarregar o orçamento de respawn. */
+function missionProgressSignature(
+  stores: ProjectDomainStoreSuite,
+  missionId: string,
+): string {
+  const consumedHandoffs = stores.handoffs
+    .list({ missionId, includeDelivered: true })
+    .filter((handoff) => handoff.deliveryState === 'consumed').length;
+  const doneTasks = stores.tasks
+    .list(missionId)
+    .filter((task) => task.status === 'done').length;
+  return `${consumedHandoffs}:${doneTasks}`;
 }
 
 
@@ -353,6 +374,8 @@ async function spawnAgentPane(
     missionId: mission.id,
     paneId: spawn.paneId,
     adapterId: agent.cli,
+    model: agent.model,
+    effort: agent.effort,
     cwd: scope.rootRealPath,
     title: agent.agentName,
     agentName: agent.agentName,
@@ -545,9 +568,23 @@ async function tickWatcher(state: WatcherState): Promise<void> {
     (p) => p.state === 'busy' || p.state === 'idle' || p.state === 'spawning',
   );
   const budgetKey = watcherKey(state.scope, state.missionId);
+  // Recarrega o orçamento do episódio somente quando houve progresso REAL
+  // (handoff consumido ou tarefa concluída) desde o último tick. A mera
+  // liveness de um orquestrador respawnado não recarrega — senão o orçamento
+  // nunca esgota e a missão entra em loop de respawn (bug de campo 2026-08-18).
   if (livePanes.length > 0) {
-    // Atividade real recarrega o orçamento do episódio.
-    respawnBudgets.set(budgetKey, ORCHESTRATOR_RESPAWN_BUDGET);
+    try {
+      const signature = missionProgressSignature(stores, state.missionId);
+      if (
+        state.lastProgressSignature !== null &&
+        state.lastProgressSignature !== signature
+      ) {
+        respawnBudgets.set(budgetKey, ORCHESTRATOR_RESPAWN_BUDGET);
+      }
+      state.lastProgressSignature = signature;
+    } catch {
+      // Assinatura ilegível não recarrega orçamento — fail-closed.
+    }
   }
   // Se não há NENHUM pane vivo nesta missão: doutrina Overclock — a missão
   // NUNCA é bloqueada nem completada pelo watcher. Com orçamento, o
@@ -700,6 +737,7 @@ function startWatcher(
     timer: null,
     stopped: false,
     baselineHeadSha: null,
+    lastProgressSignature: null,
   };
   void readCheckoutHead(scope.rootRealPath).then((head) => {
     if (!watchers.has(key)) return;
@@ -734,16 +772,23 @@ async function respawnFastLaneOrchestrator(
 ): Promise<void> {
   const stores = getProjectDomainStores(scope);
 
+  // Re-valida o estado durável antes de spawnar: um Stop do operador (ou
+  // qualquer demotion) pode ter vencido a corrida contra o watcher. Respawnar
+  // por cima de uma missão blocked/failed re-armaria um runtime que o operador
+  // acabou de encerrar (bug de campo 2026-08-18).
+  const current = stores.missions.get(mission.id);
+  if (!current || current.status !== 'running') {
+    throw new Error('missão não está mais running; respawn ignorado');
+  }
+
   // Cura split-brain persistido: write status-only reativação normaliza
   // intent blocked_* → executing (guard do mission-store.update).
-  let live = mission;
+  let live = current;
   if (
-    mission.status === 'running' &&
-    (mission.intentState === 'blocked_technical' ||
-      mission.intentState === 'blocked_user')
+    current.intentState === 'blocked_technical' ||
+    current.intentState === 'blocked_user'
   ) {
-    live =
-      stores.missions.update(mission.id, { status: 'running' }) ?? mission;
+    live = stores.missions.update(mission.id, { status: 'running' }) ?? current;
   }
 
   const squad = mission.squadId ? getSquad(mission.squadId) : null;
@@ -1009,7 +1054,18 @@ export async function resumeFastLaneMission(
   // pelo operador sai JUNTO: ele é prova de "Encerrada pelo operador" em
   // qualquer missão blocked, então sobreviver a uma reabertura mentiria no
   // próximo bloqueio (mission-recovery-policy Bug I).
+  //
+  // Bloqueio de USUÁRIO com pergunta pendente NUNCA é re-armado aqui: a única
+  // saída autorizada é answer-question. Retomar/retry-kickoff que chegasse
+  // nesse estado limparia a pergunta sem resposta (bug de campo 2026-08-18).
   if (mission.status === 'blocked' && mission.intentState) {
+    const runtimeClosedByOperator = wasMissionRuntimeClosedByOperator(mission);
+    if (mission.intentState === 'blocked_user' && !runtimeClosedByOperator) {
+      throw new Error(
+        'missão bloqueada por pergunta do operador exige resposta ' +
+          '(answer-question) antes de retomar',
+      );
+    }
     try {
       missionEngineForScope(scope).resumeTechnical(scope, {
         missionId,
