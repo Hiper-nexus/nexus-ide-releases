@@ -83,6 +83,11 @@ import { isAutomatedReviewerCompositionPane } from "./mission-pane-store";
 import { getOrchSettings } from "../persistence/settings-store";
 import { getAcpDriverSession } from "../acp/acp-harness-driver";
 import { issueAgentIdentityBestEffort } from "./agent-identity-spawn";
+import {
+  shouldTripWorkerMortalityBreaker,
+  workerMortalityBreakerMessage,
+  workerMortalityCount,
+} from "./worker-mortality";
 
 /**
  * Main-process mirror of the renderer's pane grid plus per-session output ring
@@ -1716,6 +1721,22 @@ export function requestPaneSpawn(
           ? options.abortSignal.reason
           : "pane spawn authority was revoked",
     });
+  }
+  // Circuit breaker de mortalidade (campanha 0.50, A1/A2 — doutrina Orca
+  // PR #13927): adapter cujos workers morrem SEM ENTREGAR 3× na mesma missão
+  // para de ganhar spawn de worker. O Maestro recebe o motivo acionável e
+  // escolhe outro agente do roster. Orquestrador NUNCA é recusado por aqui;
+  // prova de vida (entrega do adapter) reabre o circuito. Roda ANTES do
+  // canonical: recusa rápida, sem tocar authority.
+  if (options.role === "worker" && options.missionId && options.adapterId) {
+    const deaths = workerMortalityCount(options.missionId, options.adapterId);
+    if (shouldTripWorkerMortalityBreaker(deaths)) {
+      return Promise.resolve({
+        requestId: "",
+        ok: false,
+        error: workerMortalityBreakerMessage(options.adapterId, deaths),
+      });
+    }
   }
   try {
     options = canonicalMissionPaneSpawnOptions(options);

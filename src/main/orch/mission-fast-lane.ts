@@ -20,6 +20,10 @@ import { getProjectDomainStores } from './project-domain-store-registry';
 import { getSquad } from './squad-store';
 import { missionEngineForScope } from './mission-engine-registry';
 import { redeliverPendingHandoffs } from './idle-delivery';
+import {
+  recordAdapterProofOfLife,
+  recordWorkerDeathWithoutDelivery,
+} from './worker-mortality';
 
 /**
  * Via Rápida de missão (2026-08-12) — motor limpo, modelo PULL.
@@ -466,8 +470,11 @@ async function tickWatcher(state: WatcherState): Promise<void> {
       missionId: state.missionId,
       includeDelivered: true,
     })) {
-      if (handoff.headSha) missionShaLadder.add(handoff.headSha);
-      if (handoff.baseSha) missionShaLadder.add(handoff.baseSha);
+      // Os SHAs do trabalho vivem no binding de evidência (worker que
+      // commitou entrega evidência confiável com base/head do diff).
+      const binding = handoff.evidenceBinding;
+      if (binding?.headSha) missionShaLadder.add(binding.headSha);
+      if (binding?.baseSha) missionShaLadder.add(binding.baseSha);
     }
   } catch {
     // Escada ilegível: segue sem atribuição — o aviso é o default honesto.
@@ -515,6 +522,7 @@ async function tickWatcher(state: WatcherState): Promise<void> {
   const missionPanes = listPaneSnapshots().filter(
     (p) => p.missionId === state.missionId,
   );
+  recordWorkerMortalityTick(state.scope, state.missionId, missionPanes);
   const livePanes = missionPanes.filter(
     (p) => p.state === 'busy' || p.state === 'idle' || p.state === 'spawning',
   );
@@ -574,6 +582,79 @@ async function tickWatcher(state: WatcherState): Promise<void> {
   // Orquestrador morreu mas ainda há panes vivos e o timeout não passou →
   // deixa o delegation-supervisor tentar recovery. Não bloqueia — workers
   // ainda podem estar trabalhando.
+}
+
+/** Panes mortos cuja mortalidade já foi contada (conta 1× por pane). */
+const mortalityCountedPanes = new Set<string>();
+
+/**
+ * Mortalidade de worker no tick do watcher (campanha 0.50, A1): pane morto
+ * que NUNCA entregou handoff = morte sem entrega (conta pro circuit breaker
+ * do adapter); pane com entrega é prova de vida (zera) — exit pós-entrega é
+ * o TTL normal da doutrina, não mortalidade. Cada morte vira evento no
+ * journal: o pós-mortem deixa de ser cego.
+ */
+function recordWorkerMortalityTick(
+  scope: ProjectExecutionScope,
+  missionId: string,
+  missionPanes: readonly {
+    paneId: string;
+    sessionId?: string | null;
+    adapterId?: string | null;
+    role?: 'orchestrator' | 'worker';
+    state?: string;
+    agentName?: string;
+  }[],
+): void {
+  const workers = missionPanes.filter((p) => p.role === 'worker');
+  if (workers.length === 0) return;
+  const deliveredSessions = new Set<string>();
+  try {
+    for (const handoff of getProjectDomainStores(scope).handoffs.list({
+      missionId,
+      includeDelivered: true,
+    })) {
+      if (handoff.sessionId) deliveredSessions.add(handoff.sessionId);
+    }
+  } catch {
+    // Handoffs ilegíveis: segue sem prova de vida — a morte sem entrega é o
+    // default honesto (o breaker precisa de 3 para agir).
+  }
+  for (const pane of workers) {
+    const adapterId = pane.adapterId?.trim() || '';
+    if (!adapterId) continue;
+    if (pane.sessionId && deliveredSessions.has(pane.sessionId)) {
+      recordAdapterProofOfLife(missionId, adapterId);
+      continue;
+    }
+    if (pane.state !== 'exited' && pane.state !== 'hibernated') continue;
+    if (mortalityCountedPanes.has(pane.paneId)) continue;
+    mortalityCountedPanes.add(pane.paneId);
+    const deaths = recordWorkerDeathWithoutDelivery(missionId, adapterId);
+    console.warn(
+      `[fast-lane] worker ${pane.paneId} (${adapterId}) morreu sem entregar ` +
+        `— mortalidade ${deaths} em ${missionId}`,
+    );
+    try {
+      emitMissionEvent(scope, {
+        missionId,
+        runId: `watcher:${missionId}`,
+        type: 'custom',
+        origin: 'system',
+        payload: {
+          kind: 'worker-died-without-delivery',
+          paneId: pane.paneId,
+          adapterId,
+          agentName: pane.agentName ?? '',
+          deaths,
+        },
+        idempotencyKey: `worker-died:${pane.paneId}`,
+        occurredAt: Date.now(),
+      });
+    } catch {
+      // Evento é best-effort; o warn já registrou.
+    }
+  }
 }
 
 function startWatcher(
