@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.50.4 — O handoff chega
+
+Data: 2026-08-18
+
+- **Fim do handoff que nunca chega.** Missão real do HiperGO: worker
+  entrega (handoff success, `ok:true`), a entrega fica `queued` com ZERO
+  tentativas — enquanto o journal registrou o orquestrador idle TODO
+  MINUTO esperando workers. A causa era um aviso velho mandando no
+  físico: o último evento semântico do orquestrador era "working" de
+  DOIS DIAS antes (os hooks daquela sessão morreram), e ele vetava para
+  sempre uma injeção que o terminal idle autorizava. Agora "working"
+  só trava a entrega por 10 minutos sem nenhum evento novo — laço de
+  ferramentas re-pulsa o estado; silêncio de 10 min com terminal idle é
+  hook morto, e o terminal vence. Diálogo aberto (permissão/pergunta)
+  continua travando em qualquer idade.
+- **Re-arm da verdade durável.** A fila em memória é otimização: perde
+  na troca de workspace e no authority nulo do momento do submit. O
+  supervisor agora re-arma: orquestrador idle com entrega pendente no
+  SQLite → re-entrega (idempotente, com janela por missão). O SQLite é
+  a verdade; fila é cache.
+
+
 ## 0.50.3 — O Retomar retoma
 
 Data: 2026-08-18

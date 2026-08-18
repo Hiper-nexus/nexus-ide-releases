@@ -13,6 +13,38 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.50.4',
+  date: '2026-08-18',
+  codename: 'O handoff chega',
+  summary:
+    'O bug mais doloroso da frota morto com prova física: o worker entrega, ' +
+    'o handoff fica queued com ZERO tentativas e o orquestrador espera para ' +
+    'sempre — enquanto o journal registrou ele idle minuto após minuto. Um ' +
+    'aviso semântico de \"working\" de dois dias antes vetava a entrega que ' +
+    'o terminal idle autorizava. Agora o físico vence o hook morto, e a ' +
+    'verdade durável do SQLite re-arma entregas que a fila em memória perdeu.',
+  highlights: [
+    {
+      title: 'Working velho não trava mais',
+      detail:
+        'O estado \"working\" só bloqueia injeção por 10 minutos sem evento ' +
+        'novo — laço de ferramentas re-pulsa; silêncio com terminal idle é ' +
+        'hook morto. Diálogo aberto (permissão/pergunta) segue travando em ' +
+        'qualquer idade: nunca escrever no diálogo errado.',
+    },
+    {
+      title: 'SQLite é a verdade, fila é cache',
+      detail:
+        'Orquestrador idle com entrega pendente no banco → o supervisor ' +
+        're-arma a entrega (idempotente, janela por missão). Troca de ' +
+        'workspace e authority nulo no submit deixaram de perder handoff ' +
+        'para sempre.',
+    },
+  ],
+  fixes: [],
+};
+
+export const RELEASE_05003: AppRelease = {
   version: '0.50.3',
   date: '2026-08-18',
   codename: 'O Retomar retoma',
