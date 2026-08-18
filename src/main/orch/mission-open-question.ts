@@ -83,7 +83,13 @@ function toMissionQuestion(
 
 /**
  * Primeira pergunta ainda sem resposta desta missão. Handoff de outra
- * missão, outra sessão, consumido ou já respondido não entra.
+ * missão, consumido ou já respondido não entra.
+ *
+ * Camadas de preferência (rodada 2 R3): pergunta da SESSÃO CORRENTE do
+ * orquestrador ganha; sem nenhuma, a mais recente de sessão ANTERIOR fica
+ * visível — a missão blocked_user está esperando resposta REAL não importa
+ * qual encarnação perguntou, e sumir do rail era a trava da família
+ * "elicitation não respondida" (rebind pós-respawn/restart).
  */
 export function resolveOpenMissionQuestion(
   mission: OpenQuestionMission,
@@ -96,7 +102,6 @@ export function resolveOpenMissionQuestion(
   const candidates = handoffs
     .filter((handoff) => {
       if (handoff.missionId !== mission.id) return false;
-      if (handoff.sessionId !== mission.orchestratorSessionId) return false;
       if (handoff.deliveryState === 'consumed') return false;
       if (answered.has(handoff.id)) return false;
       return true;
@@ -108,13 +113,26 @@ export function resolveOpenMissionQuestion(
       return left.id.localeCompare(right.id);
     });
 
-  for (const handoff of candidates) {
+  const questionOf = (handoff: Handoff): MissionQuestion | undefined => {
     for (const rawArtifact of handoff.artifacts) {
       const artifact = parseClarifyQuestionArtifact(rawArtifact);
       if (!artifact) continue;
       const question = toMissionQuestion(handoff, artifact.clarify);
       if (question) return question;
     }
+    return undefined;
+  };
+
+  // 1ª camada: sessão corrente (ordem cronológica — a primeira em aberto).
+  for (const handoff of candidates) {
+    if (handoff.sessionId !== mission.orchestratorSessionId) continue;
+    const question = questionOf(handoff);
+    if (question) return question;
+  }
+  // 2ª camada: sessão anterior, a MAIS RECENTE (a vigente da época).
+  for (let i = candidates.length - 1; i >= 0; i -= 1) {
+    const question = questionOf(candidates[i]!);
+    if (question) return question;
   }
   return undefined;
 }

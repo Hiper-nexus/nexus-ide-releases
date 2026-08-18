@@ -86,7 +86,7 @@ describe('resolveOpenMissionQuestion', () => {
     );
   });
 
-  it('descarta respondida, consumida e sessão estrangeira', () => {
+  it('descarta respondida e consumida; sem questão da sessão corrente, a de sessão ANTERIOR fica visível (rebind)', () => {
     const answer: Handoff = {
       ...questionHandoff('answer-q1', 'm1', 20),
       sessionId: undefined,
@@ -101,6 +101,10 @@ describe('resolveOpenMissionQuestion', () => {
       ],
     };
 
+    // q3 veio do orquestrador ANTES do rebind (sessão antiga): a missão segue
+    // blocked_user esperando resposta — sumir do rail é a trava da família
+    // "elicitation não respondida" (rodada 2 R3). Sem questão da sessão
+    // corrente, ela É a pergunta em aberto.
     expect(
       resolveOpenMissionQuestion(mission('m1'), [
         questionHandoff('q1', 'm1', 1),
@@ -111,7 +115,23 @@ describe('resolveOpenMissionQuestion', () => {
           sessionId: 'other-session',
         },
       ]),
-    ).toBeUndefined();
+    ).toMatchObject({ id: 'q3' });
+  });
+
+  it('questão da sessão CORRENTE ganha da antiga; entre antigas, a mais recente', () => {
+    const current: Handoff = {
+      ...questionHandoff('q-new', 'm1', 30),
+    };
+    const oldA = { ...questionHandoff('q-old-a', 'm1', 3), sessionId: 'old-a' };
+    const oldB = { ...questionHandoff('q-old-b', 'm1', 4), sessionId: 'old-b' };
+
+    expect(
+      resolveOpenMissionQuestion(mission('m1'), [oldB, current, oldA]),
+    ).toMatchObject({ id: 'q-new' });
+
+    expect(
+      resolveOpenMissionQuestion(mission('m1'), [oldA, oldB]),
+    ).toMatchObject({ id: 'q-old-b' });
   });
 
   it('não projeta pergunta em missão running — o caminho vivo não vira blocked_user', () => {
