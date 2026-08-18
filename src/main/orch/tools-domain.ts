@@ -382,20 +382,56 @@ const missionSetStatusTool: McpToolDef = {
             );
           }
           if (lane === 'standard' && current.squadId) {
-            // Reporter metadata is intentionally untrusted: even a `success`
-            // handoff plus an idle→busy delivery attempt cannot prove that the
-            // exact current worker/incarnation produced and integrated the
-            // result. Modern missions close atomically in the task-dispatch
-            // authority; PREVC missions close from trusted immutable evidence.
-            // A legacy direct status call has neither authority and must fail
-            // closed instead of reconstructing a weaker third completion path.
-            throw new Error(
-              'main-owned verified completion required: orchestrated mission done requires ' +
-                'a current worker, a success handoff with trusted/current evidence, and an ' +
-                'accepted handoff for the current orchestrator session. Direct status=done ' +
-                'cannot prove worker incarnation, integration, or current intent. Use ' +
-                'status=blocked with one actionable cause when the verified path is unavailable.',
-            );
+            // Via Rápida (rodada 2 R4): fast-lane não congela contrato nem tem
+            // dispatch authority POR CONSTRUÇÃO — exigir isso aqui impedia
+            // QUALQUER done do Maestro (missão real D#2: "2 handoffs success
+            // consumidos" e mesmo assim blocked). Na Via Rápida o ACK do
+            // orquestrador corrente É a verificação: o main testemunhou os
+            // dois lados (worker entregou, Maestro corrente leu e ack'ou a
+            // entrega). Nota durável ≥40 mantém o "nunca verde silencioso".
+            const acceptedByCurrentSession = (() => {
+              try {
+                return stores.handoffs
+                  .list({ missionId, includeDelivered: true })
+                  .some(
+                    (handoff) =>
+                      handoff.status === 'success' &&
+                      (handoff.deliveryState === 'consumed' ||
+                        handoff.deliveryState === 'acknowledged') &&
+                      (
+                        stores.handoffs.listDeliveryAttempts(handoff.id) ??
+                        []
+                      ).some(
+                        (attempt) =>
+                          attempt.state === 'accepted' &&
+                          attempt.acceptedAt !== undefined &&
+                          attempt.orchestratorSessionId ===
+                            current.orchestratorSessionId,
+                      ),
+                  );
+              } catch {
+                // Store ilegível: fail-closed — sem prova de aceite corrente.
+                return false;
+              }
+            })();
+            if (!(hasDurableNote && acceptedByCurrentSession)) {
+              // Reporter metadata is intentionally untrusted: even a `success`
+              // handoff plus an idle→busy delivery attempt cannot prove that the
+              // exact current worker/incarnation produced and integrated the
+              // result. Modern missions close atomically in the task-dispatch
+              // authority; PREVC missions close from trusted immutable evidence.
+              // A legacy direct status call has neither authority and must fail
+              // closed instead of reconstructing a weaker third completion path.
+              throw new Error(
+                'main-owned verified completion required: orchestrated mission done requires ' +
+                  'a current worker, a success handoff with trusted/current evidence, and an ' +
+                  'accepted handoff for the current orchestrator session. Direct status=done ' +
+                  'cannot prove worker incarnation, integration, or current intent. Use ' +
+                  'status=blocked with one actionable cause when the verified path is unavailable.',
+              );
+            }
+            // Sanctioned: consumido+aceito pela sessão corrente com nota
+            // durável — segue para o completeVerified abaixo.
           }
         } else if (
           lane === 'consult' &&

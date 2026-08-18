@@ -413,6 +413,126 @@ describe('mission creation authority', () => {
     expect(setStatus).not.toHaveBeenCalled();
   });
 
+  it('Via Rápida (R4/D#2): done sancionado com handoff success ACEITO pela sessão corrente + nota durável', async () => {
+    // A dor real: fast-lane não congela contrato nem tem dispatch authority
+    // POR CONSTRUÇÃO — o throw incondicional impedia QUALQUER done do
+    // Maestro (missão real: "2 handoffs success consumidos" e mesmo assim
+    // blocked). Na Via Rápida o ack do orquestrador corrente É a verificação:
+    // o main testemunhou os dois lados (worker entregou, Maestro leu e
+    // ack'ou). Nota durável ≥40 mantém o "nunca verde silencioso".
+    let mission: Record<string, unknown> = {
+      id: 'mission-existing',
+      status: 'running',
+      squadId: 'squad-orchestrated',
+      orchestratorSessionId: 'orchestrator-current',
+      learnings: '',
+      milestones: [],
+      intentContract: { lane: 'standard' },
+      intentVersion: 1,
+      intentState: 'executing',
+      updatedAt: 1,
+      title: 'Prova',
+      description: '',
+    };
+    mocks.completeVerified.mockImplementation(() => {
+      mission = {
+        ...mission,
+        status: 'done',
+        result: { outcome: 'success', summary: 'ok', evidenceIds: [], artifactRefs: [] },
+      };
+    });
+    mocks.getProjectDomainStores.mockReturnValue({
+      missions: {
+        get: () => mission,
+        setStatus: vi.fn(),
+        appendLearning: vi.fn(),
+        update: vi.fn(),
+      },
+      handoffs: {
+        list: () => [
+          {
+            id: 'handoff-final',
+            missionId: 'mission-existing',
+            status: 'success',
+            deliveryState: 'consumed',
+          },
+        ],
+        listDeliveryAttempts: () => [
+          {
+            state: 'accepted',
+            acceptedAt: 123,
+            orchestratorSessionId: 'orchestrator-current',
+          },
+        ],
+      },
+    });
+    mocks.getContextWorkflowService.mockReturnValue({
+      isMissionDriverComplete: () => false,
+      getMissionWorkflow: () => ({ contract: null, workflow: null }),
+    });
+
+    const result = (await missionSetStatusTool().handler(
+      {
+        missionId: 'mission-existing',
+        status: 'done',
+        note: 'Entregue e verificado: arquivos criados e handoff consumido pelo orquestrador corrente.',
+      },
+      context('orchestrator'),
+    )) as Record<string, unknown>;
+
+    expect(mocks.completeVerified).toHaveBeenCalled();
+    expect(result.status).toBe('done');
+  });
+
+  it('Via Rápida: sem aceite da sessão CORRENTE o done continua recusado', async () => {
+    mocks.getProjectDomainStores.mockReturnValue({
+      missions: {
+        get: () => ({
+          id: 'mission-existing',
+          status: 'running',
+          squadId: 'squad-orchestrated',
+          orchestratorSessionId: 'orchestrator-current',
+          learnings: '',
+          milestones: [],
+          intentContract: { lane: 'standard' },
+        }),
+        setStatus: vi.fn(),
+        appendLearning: vi.fn(),
+      },
+      handoffs: {
+        list: () => [
+          {
+            id: 'handoff-old',
+            missionId: 'mission-existing',
+            status: 'success',
+            deliveryState: 'consumed',
+          },
+        ],
+        listDeliveryAttempts: () => [
+          {
+            state: 'accepted',
+            acceptedAt: 123,
+            orchestratorSessionId: 'orchestrator-PRE-rebind',
+          },
+        ],
+      },
+    });
+    mocks.getContextWorkflowService.mockReturnValue({
+      isMissionDriverComplete: () => false,
+      getMissionWorkflow: () => ({ contract: null, workflow: null }),
+    });
+
+    await expect(missionSetStatusTool().handler(
+      {
+        missionId: 'mission-existing',
+        status: 'done',
+        note: 'Handoff consumido, mas por sessão anterior do orquestrador — sem prova corrente.',
+      },
+      context('orchestrator'),
+    )).rejects.toThrow(/main-owned verified completion required/i);
+    expect(mocks.completeVerified).not.toHaveBeenCalled();
+  });
+
   it('não deixa o orquestrador antecipar done de missão standard com squad', async () => {
     const setStatus = vi.fn();
     mocks.getProjectDomainStores.mockReturnValue({
