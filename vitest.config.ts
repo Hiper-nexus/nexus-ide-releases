@@ -2,14 +2,6 @@ import { configDefaults, defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    // Rodada 3: vitest respeita NODE_ENV pré-existente do shell — um
-    // ambiente vazando (CI, hook, npm script) faz clearAuditLogForTests
-    // lançar "audit events are append-only outside tests" em 64+ testes
-    // que passam verde no shell limpo (flaky ambiental, reproduzido com
-    // NODE_ENV=production). A suíte é hermética a partir daqui.
-    env: {
-      NODE_ENV: 'test',
-    },
     exclude: [
       ...configDefaults.exclude,
       '.claude/**',
