@@ -68,6 +68,14 @@ try {
     electron: process.versions.electron ?? "unknown",
     platform: process.platform,
   });
+  // Hang watchdog (campanha 0.50, C7): main pendurado vira marker em disco.
+  // Só empacotado — dev pausa em debugger por design (doutrina Orca).
+  if (app.isPackaged) {
+    startMainThreadHangWatchdog({
+      logsDir: path.join(userDataPath, "logs"),
+      version: app.getVersion(),
+    });
+  }
   const marker = readActiveGpuFallbackMarker(userDataPath, {
     appVersion: app.getVersion(),
     electronVersion: process.versions.electron ?? "unknown",
@@ -346,6 +354,7 @@ import {
   revokeAppQuitAuthorization,
 } from "./close-authorization";
 import { trace } from "./observability/main-trace";
+import { startMainThreadHangWatchdog } from "./hang-watchdog/main-thread-hang-watchdog";
 
 let projectRuntimeManager: ProjectRuntimeManager | null = null;
 
