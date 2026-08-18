@@ -273,4 +273,34 @@ describe('decideExternalHeadChangeAction (sentinela de HEAD — achado #14)', ()
       decideExternalHeadChangeAction({ baseline: 'a1', current: null }),
     ).toEqual({ action: 'ignore' });
   });
+
+  it('HEAD que bate na escada de SHAs das entregas da própria missão é interno (A6)', () => {
+    // Worker do same_checkout commitou e entregou handoff com headSha — o
+    // commit É da missão. Avisar gasta um turno do Maestro para "revalidar"
+    // o próprio trabalho dele (8× falsos positivos na missão real).
+    const ladder = new Set(['h-work1', 'h-work2', 'b-work1']);
+    expect(
+      decideExternalHeadChangeAction({
+        baseline: 'old',
+        current: 'h-work2',
+        missionShaLadder: ladder,
+      }),
+    ).toEqual({ action: 'internal', from: 'old', to: 'h-work2' });
+    // baseSha de handoff posterior (worker B construiu sobre o trabalho de A).
+    expect(
+      decideExternalHeadChangeAction({
+        baseline: 'old',
+        current: 'b-work1',
+        missionShaLadder: ladder,
+      }),
+    ).toEqual({ action: 'internal', from: 'old', to: 'b-work1' });
+    // SHA fora da escada segue sendo aviso — a sentinela não pode cegar.
+    expect(
+      decideExternalHeadChangeAction({
+        baseline: 'old',
+        current: 'c-estranho',
+        missionShaLadder: ladder,
+      }),
+    ).toEqual({ action: 'notify', from: 'old', to: 'c-estranho' });
+  });
 });

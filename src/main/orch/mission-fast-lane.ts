@@ -70,9 +70,19 @@ export function decideFastLaneEmptyPaneAction(input: {
 export function decideExternalHeadChangeAction(input: {
   readonly baseline: string | null;
   readonly current: string | null;
-}): { readonly action: 'ignore' } | { readonly action: 'notify'; readonly from: string; readonly to: string } {
+  /**
+   * Escada de SHAs produzida pela PRÓPRIA missão: headSha/baseSha de cada
+   * handoff entregue (worker do same_checkout commita e grava os dois). HEAD
+   * que bate aqui é trabalho interno — avisar gasta um turno do Maestro para
+   * "revalidar" o trabalho dele mesmo (A6: 8 falsos positivos numa missão).
+   */
+  readonly missionShaLadder?: ReadonlySet<string>;
+}): { readonly action: 'ignore' } | { readonly action: 'internal'; readonly from: string; readonly to: string } | { readonly action: 'notify'; readonly from: string; readonly to: string } {
   if (!input.baseline || !input.current) return { action: 'ignore' };
   if (input.baseline === input.current) return { action: 'ignore' };
+  if (input.missionShaLadder?.has(input.current)) {
+    return { action: 'internal', from: input.baseline, to: input.current };
+  }
   return { action: 'notify', from: input.baseline, to: input.current };
 }
 
@@ -445,12 +455,32 @@ async function tickWatcher(state: WatcherState): Promise<void> {
   }
 
   // Sentinela de HEAD (achado #14): o mundo pode commitar por fora enquanto
-  // a missão acha que tem exclusividade no checkout. Avisa uma vez por mudança.
+  // a missão acha que tem exclusividade no checkout. Avisa uma vez por mudança
+  // — MENOS quando o HEAD novo bate na escada de SHAs das entregas da própria
+  // missão (worker do same_checkout commitou): isso é trabalho interno, não
+  // exclusividade violada (A6).
   const currentHead = await readCheckoutHead(state.scope.rootRealPath);
+  const missionShaLadder = new Set<string>();
+  try {
+    for (const handoff of stores.handoffs.list({
+      missionId: state.missionId,
+      includeDelivered: true,
+    })) {
+      if (handoff.headSha) missionShaLadder.add(handoff.headSha);
+      if (handoff.baseSha) missionShaLadder.add(handoff.baseSha);
+    }
+  } catch {
+    // Escada ilegível: segue sem atribuição — o aviso é o default honesto.
+  }
   const headDecision = decideExternalHeadChangeAction({
     baseline: state.baselineHeadSha,
     current: currentHead,
+    missionShaLadder,
   });
+  if (headDecision.action === 'internal') {
+    // Trabalho da própria missão: rebaseline silencioso, zero turno gasto.
+    state.baselineHeadSha = headDecision.to;
+  }
   if (headDecision.action === 'notify') {
     state.baselineHeadSha = headDecision.to;
     console.warn(
