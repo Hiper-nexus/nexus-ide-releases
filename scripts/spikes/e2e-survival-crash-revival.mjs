@@ -40,8 +40,16 @@ function check(name, ok, detail = '') {
   if (!ok) failures.push(name);
 }
 
+async function loadWebSocket() {
+  // CJS interop: import do diretório pode dar { default: { default: Ws } } —
+  // resolver o construtor de forma defensiva (o bug real do run 1/3).
+  const mod = await import(join(ROOT, 'node_modules', 'ws', 'index.js'));
+  const candidate = mod.default ?? mod;
+  return candidate.default ?? candidate;
+}
+
 async function cdpEval(wsUrl, expression, { awaitPromise = true } = {}) {
-  const WebSocket = (await import(join(ROOT, 'node_modules', 'ws'))).default;
+  const WebSocket = await loadWebSocket();
   const ws = new WebSocket(wsUrl);
   await new Promise((resolve, reject) => {
     ws.once('open', resolve);
@@ -58,9 +66,16 @@ async function cdpEval(wsUrl, expression, { awaitPromise = true } = {}) {
       }
     });
     const send = (method, params) =>
-      new Promise((resolve) => {
+      new Promise((resolve, reject) => {
         id += 1;
-        pending.set(id, resolve);
+        const timer = setTimeout(() => {
+          pending.delete(id);
+          reject(new Error(`CDP ${method} sem resposta em 60s`));
+        }, 60_000);
+        pending.set(id, (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        });
         ws.send(JSON.stringify({ id, method, params }));
       });
     const result = await send('Runtime.evaluate', {
@@ -68,10 +83,49 @@ async function cdpEval(wsUrl, expression, { awaitPromise = true } = {}) {
       awaitPromise,
       returnByValue: true,
     });
-    return result?.result?.value;
+    if (result?.exceptionDetails) {
+      throw new Error(
+        `CDP eval lançou: ${result.exceptionDetails.text ?? 'erro'}`,
+      );
+    }
+    const value = result?.result?.value;
+    if (value === undefined) {
+      // Contexto destruído no meio do eval (reload/navegação) devolve CDP sem
+      // result — indistinguível de retorno indefinido; todos os evals deste
+      // script retornam JSON string, então undefined É falha.
+      throw new Error('CDP eval sem resultado (contexto destruído?)');
+    }
+    return value;
   } finally {
     ws.close();
   }
+}
+
+/** Espera o renderer terminar de carregar (window.nexus presente). */
+async function waitForRenderer(wsUrl) {
+  // Vite dev frio compila >2min na primeira carga; orçamento folgado.
+  let firstError = null;
+  for (let attempt = 0; attempt < 150; attempt += 1) {
+    const ready = await cdpEval(
+      wsUrl,
+      'typeof window.nexus !== "undefined" && !!window.nexus.mission',
+      { awaitPromise: false },
+    ).catch((error) => {
+      firstError ??= error;
+      return false;
+    });
+    if (ready === true) return;
+    if (attempt > 0 && attempt % 15 === 0) {
+      console.log(
+        `[survival] aguardando renderer (${attempt * 2}s)` +
+          (firstError ? ` — último erro: ${firstError.message}` : '') +
+          '...',
+      );
+      firstError = null;
+    }
+    await sleep(2_000);
+  }
+  throw new Error('renderer nunca expôs window.nexus (5 min)');
 }
 
 async function pageTarget() {
@@ -102,6 +156,20 @@ async function startApp(logFile) {
   );
   child.stderr.pipe(logFile);
   return child;
+}
+
+/** Retry de eval crítico (contexto destruído é transitório). */
+async function cdpEvalRetry(wsUrl, expression, attempts = 3) {
+  let lastError;
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      return await cdpEval(wsUrl, expression);
+    } catch (error) {
+      lastError = error;
+      await sleep(2_000);
+    }
+  }
+  throw lastError;
 }
 
 function appPid() {
@@ -150,9 +218,32 @@ async function main() {
   console.log(`[survival] boot #1 (log: ${logFile})`);
   let app = await startApp(stream);
   let wsUrl = await pageTarget();
+  await waitForRenderer(wsUrl);
+  console.log('[survival] renderer pronto');
+
+  console.log('[survival] limpando missões running anteriores do scratch');
+  const cleaned = await cdpEvalRetry(
+    wsUrl,
+    `(async () => {
+      try {
+        const missions = await window.nexus.mission.list();
+        const running = missions.filter(m => (m.state ?? m.status) === "running");
+        for (const m of running) {
+          try { await window.nexus.mission.command({ kind: "stop", missionId: m.id }); } catch {}
+        }
+        for (let i = 0; i < 30; i += 1) {
+          await new Promise(r => setTimeout(r, 1000));
+          const fresh = await window.nexus.mission.list();
+          if (!fresh.some(m => (m.state ?? m.status) === "running")) break;
+        }
+        return JSON.stringify({ stopped: running.map(m => m.id.slice(0, 20)) });
+      } catch (e) { return JSON.stringify({ error: String(e && e.message || e) }); }
+    })()`,
+  );
+  console.log('[survival] limpeza:', cleaned);
 
   console.log('[survival] abrindo workspace e criando missão trivial');
-  const mission = await cdpEval(
+  const mission = await cdpEvalRetry(
     wsUrl,
     `(async () => {
       try {
@@ -202,9 +293,10 @@ async function main() {
   console.log('[survival] boot #2 (revival)');
   app = await startApp(stream);
   wsUrl = await pageTarget();
+  await waitForRenderer(wsUrl);
   await sleep(45_000); // ressurreição + cold start do orquestrador
 
-  const verdict = await cdpEval(
+  const verdict = await cdpEvalRetry(
     wsUrl,
     `(async () => {
       const headers = Array.from(document.querySelectorAll(".pane")).map(p => {
@@ -212,22 +304,26 @@ async function main() {
         return (h && h.textContent || p.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 90);
       });
       let status = null;
+      let liveOrchestrators = -1;
       try {
         const cp = await window.nexus.orch.missionControlPlane(${JSON.stringify(missionInfo.missionId)});
         status = cp ? cp.missionStatus : null;
+        liveOrchestrators = (cp?.panes || []).filter(p => p.role === "orchestrator" && p.sessionId).length;
       } catch {}
-      return JSON.stringify({ headers, status });
+      return JSON.stringify({ headers, status, liveOrchestrators });
     })()`,
   );
-  const { headers, status } = JSON.parse(verdict);
+  const { headers, status, liveOrchestrators } = JSON.parse(verdict);
   console.log('[survival] status da missão:', status);
+  console.log('[survival] orquestradores vivos (registry):', liveOrchestrators);
   console.log('[survival] panes:', headers);
 
-  const orchestratorTiles = headers.filter((h) => /\borq\b/.test(h));
+  // O DOM não carrega missionId no header — a contagem por missão vem do
+  // registry (espelho do vivo); o DOM responde pelo ruído visual.
   check(
-    'exatamente UM tile de orquestrador (orq)',
-    orchestratorTiles.length === 1,
-    `tiles=${orchestratorTiles.length}`,
+    'exatamente UM orquestrador vivo para a missão do cenário',
+    liveOrchestrators === 1,
+    `registry=${liveOrchestrators}`,
   );
   check(
     'nenhum erro de grant expirado na tela',
@@ -239,12 +335,24 @@ async function main() {
     `status=${status}`,
   );
 
-  // Limpeza: encerrar a missão de teste e o app.
-  await cdpEval(
+  // Limpeza: encerrar a missão de teste e o app — e ESPERAR o stop assentar
+  // (a lição do run 5: matar o app 8s depois do stop deixa a missão running
+  // no DB e o próximo boot a ressuscita junto).
+  await cdpEvalRetry(
     wsUrl,
-    `(async () => { try { await window.nexus.mission.command({ kind: "stop", missionId: ${JSON.stringify(missionInfo.missionId)} }); } catch {} "ok" })()`,
+    `(async () => {
+      try {
+        await window.nexus.mission.command({ kind: "stop", missionId: ${JSON.stringify(missionInfo.missionId)} });
+        for (let i = 0; i < 30; i += 1) {
+          await new Promise(r => setTimeout(r, 1000));
+          const fresh = await window.nexus.mission.list();
+          const mine = fresh.find(m => m.id === ${JSON.stringify(missionInfo.missionId)});
+          if (mine && (mine.state ?? mine.status) !== "running") return "settled";
+        }
+        return "timeout";
+      } catch { return "erro"; }
+    })()`,
   ).catch(() => {});
-  await sleep(8_000);
   const pid2 = appPid();
   await stopApp(app, pid2);
 
@@ -259,4 +367,12 @@ async function main() {
 main().catch((error) => {
   console.error('[survival] erro fatal:', error);
   process.exitCode = 1;
+}).finally(() => {
+  // Fatal nunca deixa app/processo órfãos (a lição do run 2).
+  const pid = appPid();
+  if (pid) {
+    try {
+      process.kill(Number(pid), 'SIGKILL');
+    } catch {}
+  }
 });
