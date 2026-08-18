@@ -8,7 +8,7 @@ import {
 } from '../../shared/mission-intent';
 import type { ProjectDomainStoreSuite } from './project-domain-store-registry';
 import { requireProjectDomainStoreRegistry } from './project-domain-store-registry';
-import { onHandoffSubmitted } from './idle-delivery';
+import { onHandoffSubmitted, redeliverPendingHandoffs } from './idle-delivery';
 import { getSquad } from './squad-store';
 import { listPaneSnapshots } from './pane-registry';
 import { emitMissionIntentEvent } from './mission-intent-events';
@@ -122,6 +122,80 @@ export const DELEGATION_SUPERVISOR_AGENT = 'nexus-delegation-supervisor';
  * não é estado de missão.
  */
 export const CHEF_IDLE_BLOCK_AFTER_MS = 30 * 60_000;
+
+/**
+ * Re-arm de entrega parada (18/08): handoff durable queued com ZERO tentativas
+ * enquanto o journal dizia chef_idle todo minuto. Fila em memória é
+ * otimização — perde na troca de workspace, authority nulo no submit, semantic
+ * travado. SQLite é a verdade; re-submeter é idempotente (enqueue deduplica,
+ * deliverNow só dispara sem entrega em voo). Janela de throttle por missão.
+ */
+export const HANDOFF_REARM_THROTTLE_MS = 60_000;
+
+export function shouldRearmHandoffDelivery(input: {
+  readonly workerPaneCount: number;
+  readonly orchestratorPaneState: string | undefined;
+  readonly missionStatus: string;
+  readonly pendingDeliverableHandoffs: number;
+  readonly lastRearmAt: number;
+  readonly now: number;
+}): boolean {
+  if (input.pendingDeliverableHandoffs <= 0) return false;
+  if (input.workerPaneCount <= 0) return false;
+  if (input.orchestratorPaneState !== 'idle') return false;
+  if (input.missionStatus !== 'pending' && input.missionStatus !== 'running') {
+    return false;
+  }
+  return input.now - input.lastRearmAt >= HANDOFF_REARM_THROTTLE_MS;
+}
+
+const handoffRearmLastRun = new Map<string, number>();
+
+function rearmStuckHandoffDelivery(
+  suite: ProjectDomainStoreSuite,
+  mission: Mission,
+  workerPaneCount: number,
+  orchestratorPaneState: string | undefined,
+  now: number,
+): void {
+  let pendingDeliverable = 0;
+  try {
+    pendingDeliverable = suite.handoffs
+      .list({ missionId: mission.id, includeDelivered: false })
+      .filter((handoff) => handoff.status === 'success' || handoff.status === 'blocked')
+      .length;
+  } catch {
+    return; // sem leitura confiável não decide
+  }
+  if (
+    !shouldRearmHandoffDelivery({
+      workerPaneCount,
+      orchestratorPaneState,
+      missionStatus: mission.status,
+      pendingDeliverableHandoffs: pendingDeliverable,
+      lastRearmAt: handoffRearmLastRun.get(mission.id) ?? 0,
+      now,
+    })
+  ) {
+    return;
+  }
+  handoffRearmLastRun.set(mission.id, now);
+  try {
+    const rearmed = redeliverPendingHandoffs(suite.scope, mission.id);
+    if (rearmed > 0) {
+      console.warn(
+        `[delegation-supervisor] re-arm de ${rearmed} handoff(s) pendente(s) ` +
+        `para o Maestro idle (mission=${mission.id}) — a fila em memória tinha ` +
+        'se perdido e o SQLite é a verdade',
+      );
+    }
+  } catch (error) {
+    console.warn(
+      '[delegation-supervisor] re-arm de handoff falhou (segue na próxima janela):',
+      error instanceof Error ? error.message : error,
+    );
+  }
+}
 
 export type ChefIdleEscalationDecision =
   | { readonly action: 'watch' }
@@ -321,6 +395,7 @@ function scanSuite(suite: ProjectDomainStoreSuite, now: number): void {
     ) {
       emitChefIdleAwaitingWorkers(suite.scope, mission.id, workerPaneCount);
       trackChefIdleEscalation(suite, mission, workerPaneCount, now);
+      rearmStuckHandoffDelivery(suite, mission, workerPaneCount, orchestratorPaneState, now);
     } else {
       chefIdleTrackers.delete(mission.id);
     }

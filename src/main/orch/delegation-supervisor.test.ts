@@ -7,6 +7,7 @@ import {
   decideChefIdleEscalation,
   delegationRecoveryStage,
   isDelegationSupervisable,
+  shouldRearmHandoffDelivery,
 } from './delegation-supervisor';
 
 const mission: Mission = {
@@ -429,5 +430,36 @@ describe('delegation supervisor policy', () => {
         ),
       ).toBe(0);
     }
+  });
+});
+
+describe('shouldRearmHandoffDelivery — chef idle com pendente durável re-arma', () => {
+  const base = {
+    workerPaneCount: 1,
+    orchestratorPaneState: 'idle' as string | undefined,
+    missionStatus: 'running',
+    pendingDeliverableHandoffs: 1,
+    lastRearmAt: 0,
+    now: 60_000,
+  };
+
+  it('chef idle + handoff não-entregue → re-armar (o caso do banco: queued, 0 tentativas)', () => {
+    expect(shouldRearmHandoffDelivery(base)).toBe(true);
+  });
+
+  it('sem pendente, chef ocupado, missão terminal ou throttle ativo → não re-armar', () => {
+    expect(shouldRearmHandoffDelivery({ ...base, pendingDeliverableHandoffs: 0 })).toBe(false);
+    expect(shouldRearmHandoffDelivery({ ...base, orchestratorPaneState: 'busy' })).toBe(false);
+    expect(shouldRearmHandoffDelivery({ ...base, orchestratorPaneState: undefined })).toBe(false);
+    expect(shouldRearmHandoffDelivery({ ...base, missionStatus: 'blocked' })).toBe(false);
+    expect(
+      shouldRearmHandoffDelivery({ ...base, lastRearmAt: 30_000 }),
+    ).toBe(false);
+  });
+
+  it('throttle libera de novo depois da janela', () => {
+    expect(
+      shouldRearmHandoffDelivery({ ...base, lastRearmAt: 0, now: 61_000 }),
+    ).toBe(true);
   });
 });

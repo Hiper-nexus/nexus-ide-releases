@@ -271,3 +271,58 @@ describe('resetAgentStatusOnExit', () => {
     expect(transitions).toEqual(['working', 'completed', 'idle']);
   });
 });
+
+describe('isSessionInjectableIdle — working velho não trava para sempre (deadlock 18/08)', () => {
+  it('working FRESCO com PTY idle segue travando (não colar no meio do turno)', () => {
+    harness.agentInfo.mockReturnValue({ paneId: 'pane-1' });
+    applyCanonicalHookEvent({ sessionId: 'pty-1', event: userSubmit });
+    harness.state = 'idle';
+    expect(isSessionInjectableIdle('pty-1')).toBe(false);
+  });
+
+  it('working SEM evento por 10+ min com PTY idle LIBERA — o físico vence o hook morto', () => {
+    vi.useFakeTimers();
+    try {
+      harness.agentInfo.mockReturnValue({ paneId: 'pane-1' });
+      applyCanonicalHookEvent({ sessionId: 'pty-1', event: userSubmit });
+      harness.state = 'idle';
+      // Evidência do banco: semantic 'working' de 16/08 10:28 segurando
+      // handoff de 18/08 13:50 — queued, zero tentativas, chef idle no
+      // journal do supervisor no mesmo minuto.
+      vi.advanceTimersByTime(10 * 60_000 + 1_000);
+      expect(isSessionInjectableIdle('pty-1')).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('awaiting-input (latch de interação) trava em qualquer idade', () => {
+    vi.useFakeTimers();
+    try {
+      harness.agentInfo.mockReturnValue({ paneId: 'pane-1' });
+      applyCanonicalHookEvent({ sessionId: 'pty-1', event: permission });
+      harness.state = 'idle';
+      vi.advanceTimersByTime(60 * 60_000);
+      expect(isSessionInjectableIdle('pty-1')).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('tool loop re-pulsa o working: staleness só expira sem eventos novos', () => {
+    vi.useFakeTimers();
+    try {
+      harness.agentInfo.mockReturnValue({ paneId: 'pane-1' });
+      applyCanonicalHookEvent({ sessionId: 'pty-1', event: userSubmit });
+      harness.state = 'idle';
+      vi.advanceTimersByTime(9 * 60_000);
+      applyCanonicalHookEvent({ sessionId: 'pty-1', event: start }); // re-pulso
+      vi.advanceTimersByTime(9 * 60_000);
+      expect(isSessionInjectableIdle('pty-1')).toBe(false); // ainda fresco
+      vi.advanceTimersByTime(2 * 60_000);
+      expect(isSessionInjectableIdle('pty-1')).toBe(true); // 11 min do último
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

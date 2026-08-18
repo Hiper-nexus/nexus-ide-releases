@@ -180,14 +180,34 @@ export function getAgentSemanticStatusBySession(
 }
 
 /**
+ * Semantic 'working' veta injeção só enquanto FRESCO: um turno com tool loop
+ * re-pulsa o status a cada evento (start/tool_call). 'working' sem NENHUM
+ * evento por esta janela com PTY idle é hook morto — o deadlock do handoff
+ * 18/08: semantic 'working' de DOIS DIAS antes segurava a entrega que o
+ * físico (PTY idle + chef_idle no journal) autorizava. Handoff ficava
+ * queued com ZERO tentativas para sempre. O semantic é aviso, não
+ * fechadura perpétua; o PTY é a prova.
+ */
+export const SEMANTIC_WORKING_VETO_MS = 10 * 60_000;
+
+/**
  * PTY `idle` is only a visual/transport state. It is safe to inject input only
  * when no main-owned permission/question latch is active. A session without
  * native status events keeps the legacy quiet-PTY fallback.
  */
 export function isSessionInjectableIdle(sessionId: string): boolean {
   if (getSessionState(sessionId) !== 'idle') return false;
-  const semantic = getAgentSemanticStatusBySession(sessionId)?.status;
-  return semantic === undefined || semantic === 'idle' || semantic === 'completed';
+  const semantic = getAgentSemanticStatusBySession(sessionId);
+  const status = semantic?.status;
+  if (status === undefined || status === 'idle' || status === 'completed') {
+    return true;
+  }
+  if (status === 'working') {
+    return Date.now() - (semantic?.updatedAt ?? 0) > SEMANTIC_WORKING_VETO_MS;
+  }
+  // awaiting-input: latch de interação (permissão/pergunta) — trava em
+  // qualquer idade; injetar num diálogo aberto é escrever no lugar errado.
+  return false;
 }
 
 function resolvePaneId(sessionId: string): string {
