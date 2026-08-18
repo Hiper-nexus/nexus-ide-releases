@@ -19,6 +19,7 @@ import { listPaneSnapshots, requestPaneSpawn } from './pane-registry';
 import { getProjectDomainStores } from './project-domain-store-registry';
 import { getSquad } from './squad-store';
 import { missionEngineForScope } from './mission-engine-registry';
+import { redeliverPendingHandoffs } from './idle-delivery';
 
 /**
  * Via Rápida de missão (2026-08-12) — motor limpo, modelo PULL.
@@ -676,6 +677,17 @@ async function respawnFastLaneOrchestrator(
       `(session=${spawned.sessionId})`,
   );
   startWatcher(scope, mission.id, spawned.sessionId);
+  // Onda 1 (A3, campanha 0.50): a sessão anterior pode ter morrido com
+  // entregas aceitas-não-consumidas (quit na janela do ack). O Maestro novo
+  // precisa RECEBER os handoffs pendentes pela lane de entrega — a sugestão
+  // "consulte nexus_handoff_list" do kickoff é prompt, não mecanismo.
+  const redelivered = redeliverPendingHandoffs(scope, mission.id);
+  if (redelivered > 0) {
+    console.info(
+      `[fast-lane] ${redelivered} handoff(s) pendente(s) re-entregue(s) ao ` +
+        `orquestrador respawnado (mission=${mission.id})`,
+    );
+  }
 }
 
 /**
