@@ -13,6 +13,44 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.50.1',
+  date: '2026-08-18',
+  codename: 'A missão termina',
+  summary:
+    'O destravador final: a missão que entrega, consome e é ack\'ada pelo ' +
+    'orquestrador agora fecha done de verdade — antes o gate recusava ' +
+    'qualquer conclusão do Maestro na Via Rápida e o trabalho pronto ' +
+    'morria "blocked". Pergunta em aberto sobrevive ao rebind, cerca de ' +
+    'exclusividade travada em contrato, e o ciclo completo (crash no meio ' +
+    'da entrega → missão concluída) provado ao vivo.',
+  highlights: [
+    {
+      title: 'A missão termina',
+      detail:
+        'Handoff success consumido com aceite da sessão CORRENTE do ' +
+        'orquestrador + nota durável do que foi entregue = verificação ' +
+        'sancionada. O trabalho pronto nunca mais vira "blocked" por falta ' +
+        'de cerimônia que a Via Rápida nem tem.',
+    },
+    {
+      title: 'Pergunta não some no rebind',
+      detail:
+        'Após respawn/restart a pergunta em aberto ficava invisível enquanto ' +
+        'a missão esperava resposta. Agora a sessão corrente ganha e, sem ' +
+        'nenhuma, a mais recente da anterior permanece visível no rail.',
+    },
+    {
+      title: 'Cerca com contrato escrito',
+      detail:
+        'Liveness tri-state como verdade única e o contrato da cerca de ' +
+        'exclusividade travado em teste — nunca mais colapsar "não sei" em ' +
+        '"morto", nunca deixar dois Maestros na mesma credencial.',
+    },
+  ],
+  fixes: [],
+};
+
+export const RELEASE_05000: AppRelease = {
   version: '0.50.0',
   date: '2026-08-18',
   codename: 'Imbatível: a missão vai do início ao fim',

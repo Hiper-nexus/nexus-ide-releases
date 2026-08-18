@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.50.1 — A missão termina
+
+Data: 2026-08-18
+
+- **Done sancionado na Via Rápida (o destravador).** O gate de conclusão
+  recusava TODO `done` do Maestro em missão com squad sem contrato
+  congelado — mas a Via Rápida não congela contrato nem tem dispatch
+  authority POR CONSTRUÇÃO, então a missão que entregou, teve o handoff
+  consumido e ack'ado pelo orquestrador ainda morria "blocked" (missão
+  real: "2 handoffs success consumidos" e mesmo assim bloqueada, com o
+  próprio Maestro diagnosticando o remédio na description). Agora: handoff
+  success consumido/acknowledged COM aceite da sessão CORRENTE do
+  orquestrador + nota durável do que foi entregue = verificação sancionada
+  (na Via Rápida o ack do Maestro corrente é a autoridade — o Main
+  testemunhou os dois lados). Sem aceite corrente ou sem nota: recusa
+  continua, fail-closed, nunca verde silencioso.
+- **Pergunta em aberto sobrevive ao rebind do orquestrador.** A pergunta
+  exigia a sessão exata do orquestrador — após respawn/restart ela SUMIA
+  do rail enquanto a missão seguia blocked_user esperando resposta que
+  ninguém mais via (família "elicitation não respondida trava"). Agora a
+  pergunta da sessão corrente ganha; sem nenhuma, a mais recente da sessão
+  anterior fica visível.
+- **Cerca de exclusividade com contrato travado em teste.** Liveness
+  tri-state (live/exited/unverifiable) como verdade única consumida pelo
+  fast-lane; o contrato da cerca — bloquear sobre qualquer sessão
+  registrada, porque 'exited' sem prova física significa descendente
+  destacado podendo segurar a credencial — agora está travado em teste
+  com o porquê escrito. A família deadlock cerca×fast-lane não volta por
+  "simplificação".
+- **Cenário de sobrevivência do ciclo completo (prova).** Script
+  reproduzível: crash com SIGKILL na janela entre o worker entregar e o
+  orquestrador consumir → revival → re-entrega → ACK e consumo → missão
+  `completed`. A queixa "missão do início ao fim" executada de ponta a
+  ponta atravessando crash, verde ao vivo.
+
 ## 0.50.0 — Imbatível: a missão vai do início ao fim
 
 Data: 2026-08-18
