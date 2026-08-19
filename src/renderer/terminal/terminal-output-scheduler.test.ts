@@ -393,3 +393,37 @@ describe('terminal output scheduler', () => {
     }
   });
 });
+
+describe('resync pós-drop de backlog (garble do voo real 19/08)', () => {
+  beforeEach(() => {
+    resetTerminalOutputSchedulerForTests();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    resetTerminalOutputSchedulerForTests();
+  });
+
+  it('descarta o rabo da linha cortada e retoma no próximo newline', () => {
+    vi.useFakeTimers();
+    const terminal = createTerminal();
+    const chunk = 'x'.repeat(256 * 1024);
+    for (let i = 0; i < 9; i++) {
+      writeTerminalOutput(terminal, chunk, { foreground: false });
+    }
+    // Pós-drop: chunk começa no MEIO de uma sequência cortada (charset "(B",
+    // SGR "1;2m" e payload Kitty do grok viravam texto na tela).
+    writeTerminalOutput(terminal, '(B1;2mGa=d,d=i,i=1,q=2 sem newline', {
+      foreground: false,
+    });
+    writeTerminalOutput(terminal, 'ainda rabo\nlinha limpa pós-resync', {
+      foreground: false,
+    });
+    for (let i = 0; i < 30; i++) vi.advanceTimersByTime(16);
+
+    const joined = terminal.written.join('');
+    expect(joined).toContain('Nexus skipped hidden output');
+    expect(joined).not.toContain('Ga=d,d=i');
+    expect(joined).not.toContain('ainda rabo');
+    expect(joined).toContain('linha limpa pós-resync');
+  });
+});

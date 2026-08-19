@@ -51,6 +51,12 @@ type QueueEntry = {
   beforeWrite?: TerminalOutputBeforeWrite;
   onBackgroundBacklogDropped?: () => void;
   backgroundBacklogDropped: boolean;
+  /**
+   * Pós-drop de backlog o próximo chunk pode COMEÇAR no meio de uma
+   * sequência ANSI cortada ("(B", "1;2m", payload Kitty do grok — voo real
+   * 19/08 renderizava isso como texto). Até achar um \n, descarta.
+   */
+  resyncToNewlinePending: boolean;
   highPriority: boolean;
   foregroundHold: boolean;
   foregroundHoldSafetyDelayMs: number;
@@ -242,6 +248,7 @@ function createQueueEntry(
     beforeWrite: options.beforeWrite,
     onBackgroundBacklogDropped: options.onBackgroundBacklogDropped,
     backgroundBacklogDropped: false,
+    resyncToNewlinePending: false,
     highPriority: true,
     foregroundHold: false,
     foregroundHoldSafetyDelayMs: FOREGROUND_HOLD_SAFETY_DELAY_MS,
@@ -531,6 +538,22 @@ function enqueueChunk(
     onParsed?: TerminalOutputParsedCallback;
   },
 ): void {
+  if (entry.resyncToNewlinePending) {
+    const newlineAt = data.indexOf('\n');
+    if (newlineAt === -1) {
+      // Ainda no rabo da linha cortada — nada aqui é renderizável com
+      // segurança. O parse settle do chamador (onParsed) ainda precisa
+      // disparar para não vazar o contador de backpressure.
+      options?.onParsed?.();
+      return;
+    }
+    entry.resyncToNewlinePending = false;
+    data = data.slice(newlineAt + 1);
+    if (data.length === 0) {
+      options?.onParsed?.();
+      return;
+    }
+  }
   entry.chunks.push({
     data,
     foreground: options?.foreground === true,
@@ -552,6 +575,7 @@ function replaceBacklogWithWarning(entry: QueueEntry): void {
   entry.chunkIndex = 0;
   entry.queuedChars = BACKGROUND_BACKLOG_WARNING.length;
   entry.backgroundBacklogDropped = true;
+  entry.resyncToNewlinePending = true;
   entry.highPriority = true;
   entry.foregroundHold = false;
   if (shouldNotify) runtimeDroppedBacklogCount += 1;
