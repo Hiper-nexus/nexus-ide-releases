@@ -340,9 +340,21 @@ describe('Iniciar 20-story → first-wave + selo + Pronto', () => {
       },
     };
 
+    // Regra nova (19/08): conclusão FÍSICA sem match arquivo↔story não
+    // avança — o fallback next-open ficou exclusivo do handoff assertado.
     expect(
       advanceFastLaneStoryTaskFromWorkerDone(fakeStores as never, {
         missionId: 'mission-iniciar-20',
+        filesModified: ['server.js'],
+      }),
+    ).toBeNull();
+    expect(boardProgressFromSealedTasks(tasks)).toEqual({ completed: 0, total: 20 });
+
+    // Com identidade de assento (Writer 2 → story 2) o avanço é legítimo.
+    expect(
+      advanceFastLaneStoryTaskFromWorkerDone(fakeStores as never, {
+        missionId: 'mission-iniciar-20',
+        fromAgent: 'Writer 2',
         filesModified: ['server.js'],
       }),
     ).toBeTruthy();
