@@ -118,18 +118,19 @@ function sealBoard(
     readonly sessionId?: string;
     readonly workerIncarnationId?: string;
   }> = [],
+  objective = twentyStoryObjective(),
 ) {
   const runtimeManager = manager();
   const scope = testProjectScope({ rootRealPath: repo });
   const missions = createScopedMissionStore(runtimeManager, scope);
   const tasks = createScopedTaskStore(runtimeManager, scope, { now: () => 200 });
   const contract = compileIntentContract({
-    goal: twentyStoryObjective(),
+    goal: objective,
     intentVersion: 1,
   });
   const mission = missions.create({
     title: 'Waitlist',
-    description: twentyStoryObjective(),
+    description: objective,
     squadId: squad.id,
     intentVersion: 1,
     intentState: 'executing',
@@ -363,5 +364,117 @@ describe('reconcileSealedBoardFromDisk — first-wave sem PTY death', () => {
       completed: 0,
       total: 20,
     });
+  });
+});
+
+describe('reconcileSealedBoardFromDisk — pasta pending-with-file (sem sqlite)', () => {
+  beforeEach(() => {
+    __resetWorkerDeliveryBoardForTests();
+  });
+
+  it('067 unique file já na pasta fecha Landing após recibo SUCCESS', () => {
+    const objective = [
+      '1. Landing',
+      ...Array.from(
+        { length: 15 },
+        (_, index) => `${index + 2}. Story ${index + 2} da waitlist`,
+      ),
+      '17. Admin lista emails',
+      '18. Contador da fila',
+      '19. Extra leftover',
+      '20. Favicon e OG',
+    ].join('\n');
+    const leftover = new Set([
+      'Landing',
+      'Admin lista emails',
+      'Contador da fila',
+      'Favicon e OG',
+    ]);
+    const mission = {
+      id: 'mission-067-pasta',
+      title: 'SaaS 067',
+      description: objective,
+      status: 'running' as const,
+      intentVersion: 1,
+      intentState: 'executing' as const,
+      squadId: squad.id,
+      intentContract: compileIntentContract({ goal: objective, intentVersion: 1 }),
+    };
+    const taskRows: Array<{
+      id: string;
+      title: string;
+      status: string;
+      plannerId: string;
+    }> = [];
+    const stores = {
+      missions: { get: () => mission },
+      tasks: {
+        hasPlan: () => taskRows.length > 0,
+        list: () => taskRows,
+        listPlannedTasks: () =>
+          taskRows.map((task) => ({
+            taskId: task.id,
+            plannerId: task.plannerId,
+            agentRef: 'api-worker',
+            agent: {
+              id: 'api-worker',
+              agentName: 'API Worker',
+              category: 'executor' as const,
+            },
+            agentCategory: 'executor' as const,
+            task,
+          })),
+        createPlanAtomically: (input: {
+          rows: readonly { plannerId: string; title: string }[];
+        }) => {
+          taskRows.length = 0;
+          for (const row of input.rows) {
+            taskRows.push({
+              id: `t-${row.plannerId}`,
+              title: row.title,
+              status: leftover.has(row.title) ? 'pending' : 'done',
+              plannerId: row.plannerId,
+            });
+          }
+          return [...taskRows];
+        },
+        advanceSealedTaskStatus: (id: string, status: string) => {
+          const row = taskRows.find((task) => task.id === id);
+          if (row) row.status = status;
+          return row ?? null;
+        },
+      },
+      handoffs: {
+        list: () => [{ status: 'success', sessionId: 'pty-writer-1' }],
+      },
+    };
+    sealFastLaneListedStoryPlan(stores as never, mission as never, squad);
+    expect(boardProgressFromSealedTasks(taskRows)).toEqual({
+      completed: 16,
+      total: 20,
+    });
+
+    const pastaFiles = ['story-01-landing.html', '05-admin-lista-emails.js'];
+    const result = reconcileSealedBoardFromDisk(
+      { stores: stores as never, missionId: mission.id, cwd: '/tmp/067' },
+      {
+        snapshotBaseline: () =>
+          Object.freeze({
+            cwd: '/tmp/067',
+            headSha: 'abc',
+            dirtyPaths: Object.freeze(pastaFiles),
+            observedAt: 1,
+          }),
+        collectFilesModified: (_cwd, baseline) =>
+          baseline.dirtyPaths.length === 0 ? [...pastaFiles] : [],
+      },
+    );
+
+    expect(result.advancedTaskIds.length).toBeGreaterThan(0);
+    expect(taskRows.find((row) => row.title === 'Landing')?.status).toBe('done');
+    expect(
+      taskRows.find((row) => row.title === 'Admin lista emails')?.status,
+    ).toBe('done');
+    expect(boardProgressFromSealedTasks(taskRows).completed).toBe(18);
   });
 });

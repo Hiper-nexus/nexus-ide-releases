@@ -17,6 +17,7 @@ import {
 import { missionEngineForScope } from './mission-engine-registry';
 import { getSquad } from './squad-store';
 import type { MissionEngine } from './mission-engine';
+import { advanceSealedTasksFromFilesOnDisk } from './mission-story-plan';
 import type { ScopedTaskRecord } from './task-store';
 
 const execFileAsync = promisify(execFile);
@@ -56,6 +57,7 @@ const MAX_WALK_DEPTH = 6;
 export type CivilianDeliveryAction =
   | 'complete'
   | 'spawn-review'
+  | 'reroute'
   | 'wait'
   | 'refuse-empty'
   | 'refuse-fail-closed';
@@ -120,6 +122,10 @@ export interface CivilianDeliveryDependencies {
   ) => Promise<readonly string[]>;
   readonly missionEngine?: Pick<MissionEngine, 'completeVerified'>;
   readonly getSquad?: (squadId: string) => { agents: readonly SquadAgent[] } | null;
+  /** First-wave curto: senta stories seladas ainda pending/never-started. */
+  readonly rerouteUnassigned?: (
+    pendingTitles: readonly string[],
+  ) => Promise<number | void> | number | void;
 }
 
 export type CivilianStores = {
@@ -140,6 +146,10 @@ export type CivilianStores = {
       readonly agent: Pick<SquadAgent, 'id' | 'agentName' | 'category'>;
     }[];
     markLifecycleStatus: (
+      taskId: string,
+      status: 'running' | 'done' | 'failed',
+    ) => ScopedTaskRecord | null;
+    advanceSealedTaskStatus?: (
       taskId: string,
       status: 'running' | 'done' | 'failed',
     ) => ScopedTaskRecord | null;
@@ -298,8 +308,10 @@ export function holdsReviewForLegacyOrRegression(
   );
 }
 
-function skippableRemainder(kind: CivilianRemainderKind): boolean {
-  return kind === 'review' || kind === 'never-started' || kind === 'sat';
+function needsSealedReroute(
+  remaining: readonly CivilianRemainderKind[],
+): boolean {
+  return remaining.includes('never-started') || remaining.includes('sat');
 }
 
 export function decideCivilianDeliveryAction(
@@ -325,6 +337,8 @@ export function decideCivilianDeliveryAction(
       }
       return 'wait';
     }
+    if (needsSealedReroute(input.remainingKinds)) return 'reroute';
+    if (input.remainingKinds.some((kind) => kind !== 'review')) return 'wait';
     return 'complete';
   }
 
@@ -333,9 +347,6 @@ export function decideCivilianDeliveryAction(
   if (input.activeWriterCount > 0) return 'wait';
 
   const remaining = input.remainingKinds;
-  const skippable =
-    remaining.length === 0 || remaining.every((kind) => skippableRemainder(kind));
-  if (!skippable) return 'wait';
   if (input.holdForReview && remaining.includes('review')) {
     if (
       input.oldestReviewQueuedMs !== null &&
@@ -354,6 +365,8 @@ export function decideCivilianDeliveryAction(
   ) {
     return 'spawn-review';
   }
+  if (needsSealedReroute(remaining)) return 'reroute';
+  if (remaining.some((kind) => kind !== 'review')) return 'wait';
   return 'complete';
 }
 
@@ -838,9 +851,10 @@ function emptyResult(
 }
 
 /**
- * Via Rápida: fecha Pronto quando o board selado está N/N, ou quando o cwd
- * tem entrega real e os writers já pararam — sem exigir handoff MCP em cada
- * story. DESIGN.md sozinho e rascunho nunca iniciado não pintam verde.
+ * Via Rápida: fecha Pronto quando o board selado está N/N. Arquivo único
+ * na pasta avança story selada pendente (pending-with-file) antes da
+ * decisão. never-started após first-wave curto → reroute, não toast 16/20.
+ * DESIGN.md sozinho e rascunho nunca iniciado não pintam verde.
  * Fail-closed: sandbox / session_authority_revoked / orchestrator_spawn_forbidden
  * / blocked_technical / failed. Não inventa números do board.
  */
@@ -874,7 +888,6 @@ export async function maybeCompleteFastLaneOnDelivery(
   const panes =
     deps.listPanes?.() ??
     (typeof listPaneSnapshots === 'function' ? listPaneSnapshots() : []);
-  const tasks = stores.tasks.list(missionId);
   let planned: ReturnType<CivilianStores['tasks']['listPlannedTasks']> = [];
   try {
     planned = stores.tasks.listPlannedTasks(
@@ -884,15 +897,6 @@ export async function maybeCompleteFastLaneOnDelivery(
   } catch {
     planned = [];
   }
-
-  const inspection = inspectCivilianDelivery({
-    mission,
-    tasks,
-    planned,
-    handoffs,
-    panes,
-    now,
-  });
 
   const rawFiles = [
     ...new Set(
@@ -911,7 +915,47 @@ export async function maybeCompleteFastLaneOnDelivery(
   const evidence = inspectDeliveryEvidence(rawFiles, mission.description ?? '');
   const productFiles = [...evidence.productFiles];
 
-  const markedDoneTaskIds = markTasksDone(stores, inspection.deliveredWorkerTaskIds);
+  const storyStores = {
+    ...stores,
+    tasks: {
+      ...stores.tasks,
+      advanceSealedTaskStatus:
+        stores.tasks.advanceSealedTaskStatus?.bind(stores.tasks) ??
+        ((taskId: string, status: 'running' | 'done' | 'failed') =>
+          stores.tasks.markLifecycleStatus(taskId, status)),
+    },
+  };
+  let uniqueAdvanced: readonly string[] = [];
+  try {
+    uniqueAdvanced = advanceSealedTasksFromFilesOnDisk(
+      storyStores as ProjectDomainStoreSuite,
+      {
+        missionId,
+        filesModified: productFiles,
+        uniqueMatchesOnly: true,
+      },
+    );
+  } catch (error) {
+    console.warn(
+      '[civilian-delivery] pending-with-file falhou (fail-closed):',
+      error instanceof Error ? error.message : error,
+    );
+  }
+
+  const tasks = stores.tasks.list(missionId);
+  const inspection = inspectCivilianDelivery({
+    mission,
+    tasks,
+    planned,
+    handoffs,
+    panes,
+    now,
+  });
+
+  const markedDoneTaskIds = [
+    ...uniqueAdvanced,
+    ...markTasksDone(stores, inspection.deliveredWorkerTaskIds),
+  ];
 
   const action = decideCivilianDeliveryAction({
     failClosed: inspection.failClosed,
@@ -946,6 +990,28 @@ export async function maybeCompleteFastLaneOnDelivery(
   if (action === 'refuse-empty' || action === 'wait' || action === 'refuse-fail-closed') {
     return {
       action,
+      completed: false,
+      path: null,
+      spawnedReviewers: [],
+      markedDoneTaskIds,
+      productFiles,
+    };
+  }
+
+  if (action === 'reroute') {
+    const pendingTitles = tasks
+      .filter((task) => task.status === 'pending' || task.status === 'running')
+      .map((task) => task.title);
+    try {
+      await deps.rerouteUnassigned?.(pendingTitles);
+    } catch (error) {
+      console.warn(
+        '[civilian-delivery] reroute de stories sem assento falhou:',
+        error instanceof Error ? error.message : error,
+      );
+    }
+    return {
+      action: 'reroute',
       completed: false,
       path: null,
       spawnedReviewers: [],

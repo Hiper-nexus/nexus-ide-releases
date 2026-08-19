@@ -450,12 +450,21 @@ export function reconcileSealedBoardFromDisk(
     }
   }
 
+  const hasPending = tasks.some(
+    (task) => task.status === 'pending' || task.status === 'running',
+  );
   let filesModified: string[] = [];
   try {
-    filesModified = uncreditedMissionFiles(
-      missionId,
-      deps.collectFilesModified(cwd, baseline),
-    );
+    const delta = deps.collectFilesModified(cwd, baseline);
+    const pasta = hasPending
+      ? deps.collectFilesModified(cwd, {
+          ...baseline,
+          dirtyPaths: Object.freeze([]),
+        })
+      : [];
+    filesModified = uncreditedMissionFiles(missionId, [
+      ...new Set([...delta, ...pasta]),
+    ]);
   } catch (error) {
     console.warn(
       '[worker-delivery] colheita da missão falhou:',
