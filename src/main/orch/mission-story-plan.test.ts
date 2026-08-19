@@ -565,3 +565,55 @@ describe('matchSealedTaskForHandoff', () => {
     ).toEqual([]);
   });
 });
+
+describe('settle mecânico não infla o board (voo real 19/08)', () => {
+  // 7 panes settlavam com a MESMA lista de files-modified do workspace e o
+  // board fechou 10/10 com 4 stories sem arquivo — só o gate de revisão
+  // impediu a conclusão errada. Físico exige match; assertado mantém o
+  // fallback next-open da doutrina.
+  it('worker_done físico sem match de arquivo NÃO avança nada', () => {
+    const { mission, stores, tasks } = memorySeal(twentyStoryObjective());
+    sealFastLaneListedStoryPlan(stores, mission as never, squad);
+
+    const advanced = advanceFastLaneStoryTaskFromWorkerDone(stores, {
+      missionId: mission.id,
+      fromAgent: 'Implementar outra parte',
+      filesModified: ['arquivo-que-nao-casa-com-story-nenhuma.xyz'],
+    });
+
+    expect(advanced).toBeNull();
+    expect(boardProgressFromSealedTasks(tasks.list(mission.id)).completed).toBe(0);
+  });
+
+  it('worker_done físico com match de arquivo avança a story certa', () => {
+    const { mission, stores, tasks } = memorySeal(
+      ['Crie o site:', '1. index.html — página inicial', '2. styles.css — estilos'].join('\n'),
+    );
+    const sealed = sealFastLaneListedStoryPlan(stores, mission as never, squad);
+    expect(sealed).toHaveLength(2);
+
+    const advanced = advanceFastLaneStoryTaskFromWorkerDone(stores, {
+      missionId: mission.id,
+      fromAgent: 'Writer 2',
+      filesModified: ['styles.css'],
+    });
+
+    expect(advanced).toBe(sealed[1]!.id);
+    expect(boardProgressFromSealedTasks(tasks.list(mission.id)).completed).toBe(1);
+  });
+
+  it('handoff ASSERTADO sem match mantém o fallback next-open da doutrina', () => {
+    const { mission, stores, tasks } = memorySeal(twentyStoryObjective());
+    const sealed = sealFastLaneListedStoryPlan(stores, mission as never, squad);
+
+    const advanced = advanceFastLaneStoryTaskFromHandoff(stores, {
+      missionId: mission.id,
+      fromAgent: 'Alguém Sem Match',
+      summary: 'Entreguei uma parte do trabalho.',
+      handoffStatus: 'success',
+    });
+
+    expect(advanced).toBe(sealed[0]!.id);
+    expect(boardProgressFromSealedTasks(tasks.list(mission.id)).completed).toBe(1);
+  });
+});

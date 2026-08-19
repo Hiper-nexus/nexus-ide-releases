@@ -172,6 +172,14 @@ export function matchSealedTaskForHandoff(input: {
   readonly summary?: string | null;
   readonly preferredTaskId?: string | null;
   readonly filesModified?: readonly string[] | null;
+  /**
+   * false = settle MECÂNICO (idle/morte com files-modified do workspace
+   * inteiro): sem match real não avança nada. O fallback next-open fica só
+   * para handoff ASSERTADO pelo worker. Voo real 19/08: cada pane settlava
+   * com a MESMA lista de arquivos e o board fechou 10/10 com 4 stories sem
+   * arquivo no disco — o gate de revisão segurou a conclusão errada.
+   */
+  readonly allowNextOpenFallback?: boolean;
 }): string | null {
   const open = input.tasks.filter(
     (task) => task.status === 'pending' || task.status === 'running',
@@ -222,6 +230,7 @@ export function matchSealedTaskForHandoff(input: {
     });
     if (byAgent) return byAgent.id;
   }
+  if (input.allowNextOpenFallback === false) return null;
   return open[0]?.id ?? null;
 }
 
@@ -517,6 +526,8 @@ export function advanceFastLaneStoryTaskFromHandoff(
     readonly preferredTaskId?: string | null;
     readonly filesModified?: readonly string[] | null;
     readonly handoffStatus: string;
+    /** true = settle mecânico: exige match, nunca next-open. */
+    readonly requireMatch?: boolean;
   },
 ): string | null {
   const mission = stores.missions.get(input.missionId);
@@ -534,6 +545,7 @@ export function advanceFastLaneStoryTaskFromHandoff(
     summary: input.summary,
     preferredTaskId: input.preferredTaskId,
     filesModified: input.filesModified,
+    allowNextOpenFallback: input.requireMatch !== true,
   });
   if (!taskId) return null;
   const next = handoffToTaskStatus(input.handoffStatus);
@@ -566,6 +578,8 @@ export function advanceFastLaneStoryTaskFromWorkerDone(
     preferredTaskId: input.preferredTaskId,
     filesModified: input.filesModified,
     handoffStatus: 'success',
+    // Conclusão FÍSICA (não assertada): sem match arquivo↔story não avança.
+    requireMatch: true,
   });
 }
 
