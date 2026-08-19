@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.60.0 — Identidade de release
+
+Esta entrada só fixa a identidade de versão **0.60.0** (Nexus / NexusIDE).
+Não descreve features enviadas e não declara gates funcionais como
+passados.
+
+Os critérios obrigatórios antes da notarização Mac estão no checklist de
+[`RELEASE-0.60.md`](RELEASE-0.60.md). Nenhum item desse checklist está
+marcado como concluído aqui.
+
+`CFBundleShortVersionString` e o payload de update (ZIP / Squirrel.Mac)
+continuam derivados de `package.json` pelo Electron Forge. Não há fonte
+separada `latest.yml` / `app-update.yml` no repositório. Entitlements de
+hardened runtime e o perfil `nexus-notary` não mudam neste bump.
+
 ## 0.50.5 — O terminal explica
 
 _Para atualizar: faça download do DMG/ZIP abaixo e substitua o app (feche o Nexus antes de substituir)._
