@@ -311,7 +311,9 @@ export function titleTokenAlignsFile(
 
 function plannerIdFromStoryFile(file: string): string | null {
   const haystack = file.toLocaleLowerCase('en-US').replace(/\\/g, '/');
-  const match = haystack.match(/(?:^|\/)(?:stories\/)?0*(\d{1,3})[-_]/u);
+  const match = haystack.match(
+    /(?:^|\/)(?:stories\/)?(?:story[-_])?0*(\d{1,3})[-_]/u,
+  );
   if (!match) return null;
   const n = Number(match[1]);
   return Number.isInteger(n) && n > 0 ? `story-${n}` : null;

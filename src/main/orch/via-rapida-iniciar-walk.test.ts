@@ -193,7 +193,7 @@ describe('Iniciar 20-story → first-wave + selo + Pronto', () => {
       remainingKinds: inspection.remaining.map((row) => row.kind),
       oldestReviewQueuedMs: null,
     });
-    expect(action).toBe('complete');
+    expect(action).toBe('reroute');
 
     const cwd = mkdtempSync(join(tmpdir(), 'via-rapida-20-'));
     mkdirSync(join(cwd, 'public'));
@@ -235,6 +235,16 @@ describe('Iniciar 20-story → first-wave + selo + Pronto', () => {
                 liveTasks.set(taskId, next);
                 return next;
               },
+              advanceSealedTaskStatus: (
+                taskId: string,
+                status: 'running' | 'done' | 'failed',
+              ) => {
+                const current = liveTasks.get(taskId);
+                if (!current) return null;
+                const next = { ...current, status };
+                liveTasks.set(taskId, next);
+                return next;
+              },
             },
           }) as never,
         listPanes: () =>
@@ -253,8 +263,8 @@ describe('Iniciar 20-story → first-wave + selo + Pronto', () => {
       },
     );
 
-    expect(result.completed).toBe(true);
-    expect(result.path).toBe('evidence');
+    expect(result.completed).toBe(false);
+    expect(result.action).toBe('reroute');
     expect(result.productFiles.length).toBeGreaterThan(0);
 
     // Guided/legacy ainda segura review — Pronto civil da Via Rápida não
@@ -366,5 +376,28 @@ describe('first-wave writer_circuit_break', () => {
     expect(wave.presentWriters.every((agent) => agent.cli !== 'claude')).toBe(true);
     expect(wave.seats.length).toBeGreaterThan(0);
     expect(wave.seats.every((seat) => seat.agent.cli === 'codex')).toBe(true);
+  });
+
+  it('first-wave curto reroteia só as stories pendentes, não as já done', () => {
+    const pending = [
+      'Landing',
+      'Admin lista emails',
+      'Contador da fila',
+      'Favicon e OG',
+    ];
+    const wave = planFirstWaveSeats({
+      storyCount: pending.length,
+      storyTitles: pending,
+      agents: squadAgents,
+      classifySeat: (agent) =>
+        agent.cli === 'longcat' ? 'no-credential' : 'present',
+      liveWritableWorkers: 2,
+    });
+    expect(wave.seats.length).toBeGreaterThan(0);
+    expect(
+      wave.seats.every(
+        (seat) => seat.storyTitle !== null && pending.includes(seat.storyTitle),
+      ),
+    ).toBe(true);
   });
 });

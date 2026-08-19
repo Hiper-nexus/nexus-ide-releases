@@ -41,20 +41,46 @@ describe('decideCivilianPronto', () => {
     });
   });
 
-  it('files-modified/handoff justifica Pronto com leftover idle (não exige 20/20)', () => {
+  it('16/20 selado pendente espera — header Pronto só em 20/20', () => {
+    const leftover = decideCivilianPronto({
+      ...running,
+      sealedDone: 16,
+      sealedTotal: 20,
+      hasSuccessHandoff: true,
+      productFileCount: 7,
+      liveWriterBusy: false,
+    });
+    expect(leftover.action).toBe('wait');
+    expect(leftover.reason).toBe('sealed-pending');
+    expect(leftover.path).toBeNull();
+
+    const done = decideCivilianPronto({
+      ...running,
+      boardAllDone: true,
+      sealedDone: 20,
+      sealedTotal: 20,
+      hasSuccessHandoff: true,
+      productFileCount: 7,
+    });
+    expect(done).toMatchObject({
+      action: 'pronto',
+      path: 'board',
+      sealedDone: 20,
+      sealedTotal: 20,
+    });
+  });
+
+  it('files-modified/handoff sem plano selado ainda justifica Pronto', () => {
     const decision = decideCivilianPronto({
       ...running,
-      sealedDone: 5,
-      sealedTotal: 20,
+      sealedDone: 0,
+      sealedTotal: 0,
       hasSuccessHandoff: true,
       productFileCount: 67,
       liveWriterBusy: false,
     });
     expect(decision.action).toBe('pronto');
     expect(decision.path).toBe('files-modified/handoff');
-    expect(decision.sealedDone).toBe(5);
-    expect(decision.sealedTotal).toBe(20);
-    expect(decision.reason).toContain('5/20');
   });
 
   it('writer ainda busy espera — não fecha cedo', () => {

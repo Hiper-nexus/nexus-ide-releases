@@ -989,14 +989,17 @@ async function tickWatcher(state: WatcherState): Promise<void> {
     return;
   }
 
-  // P0 civil: Pronto quando o board selado está N/N OU quando o cwd tem
-  // entrega real e os writers já pararam — não só quando cada story ganha
-  // handoff MCP. DESIGN.md sozinho e rascunho nunca iniciado não pintam verde.
+  // P0 civil: Pronto só com board selado N/N. pending-with-file fecha
+  // match único na pasta; never-started após first-wave curto reroteia.
   try {
     const civilian = await maybeCompleteFastLaneOnDelivery(
       state.scope,
       state.missionId,
-      { getStores: () => stores },
+      {
+        getStores: () => stores,
+        rerouteUnassigned: async () =>
+          dispatchFastLaneFirstWave(state.scope, state.missionId),
+      },
     );
     if (civilian.completed) {
       stopWatcher(state.scope, state.missionId);
@@ -1840,7 +1843,16 @@ export async function dispatchFastLaneFirstWave(
     if (!mission || mission.status !== 'running') return 0;
     const squad = mission.squadId ? getSquad(mission.squadId) : null;
     if (!squad) return 0;
-    const titles = sealFastLanePlanTitles(stores, mission, squad);
+    const sealedTasks = stores.tasks.list(missionId);
+    const pendingTitles = sealedTasks
+      .filter(
+        (task) => task.status === 'pending' || task.status === 'running',
+      )
+      .map((task) => task.title);
+    const titles =
+      pendingTitles.length > 0
+        ? pendingTitles
+        : sealFastLanePlanTitles(stores, mission, squad);
     const liveWorkers = listPaneSnapshots().filter(
       (pane) =>
         pane.missionId === missionId &&

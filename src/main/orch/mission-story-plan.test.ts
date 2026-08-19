@@ -430,6 +430,93 @@ describe('matchSealedTaskForHandoff', () => {
     ).toEqual(['s', 'l']);
   });
 
+  it('067 pending-with-file: story-01-landing.html fecha Landing; 05-admin fecha Admin lista emails', () => {
+    const leftover = [
+      {
+        id: 'land',
+        title: 'Landing',
+        status: 'pending',
+        plannerId: 'story-1',
+      },
+      {
+        id: 'admin',
+        title: 'Admin lista emails',
+        status: 'pending',
+        plannerId: 'story-5',
+      },
+      {
+        id: 'cnt',
+        title: 'Contador da fila',
+        status: 'pending',
+        plannerId: 'story-9',
+      },
+      {
+        id: 'fav',
+        title: 'Favicon e OG',
+        status: 'pending',
+        plannerId: 'story-20',
+      },
+    ];
+    const matched = matchOpenSealedTasksForFiles({
+      tasks: leftover,
+      filesModified: [
+        'story-01-landing.html',
+        'subscribe.js',
+        '03-server-4367.js',
+        '04-thank-you.html',
+        '05-admin-lista-emails.js',
+        'rate-limit.js',
+        'unsubscribe.js',
+      ],
+    });
+    expect(matched.uniqueTaskIds).toEqual(expect.arrayContaining(['land', 'admin']));
+    expect(matched.uniqueTaskIds).not.toContain('cnt');
+    expect(matched.uniqueTaskIds).not.toContain('fav');
+  });
+
+  it('16/20 leftover Landing + story-01-landing.html avança para done', () => {
+    const objective = [
+      '1. Landing',
+      ...Array.from({ length: 15 }, (_, index) => `${index + 2}. Story ${index + 2} da waitlist`),
+      '17. Admin lista emails',
+      '18. Contador da fila',
+      '19. Extra leftover',
+      '20. Favicon e OG',
+    ].join('\n');
+    const { mission, stores, tasks } = memorySeal(objective, 'SaaS 067');
+    sealFastLaneListedStoryPlan(stores, mission as never, squad);
+    const leftover = new Set([
+      'Landing',
+      'Admin lista emails',
+      'Contador da fila',
+      'Favicon e OG',
+    ]);
+    const rows = tasks.list(mission.id);
+    expect(rows).toHaveLength(20);
+    for (const row of rows) {
+      if (!leftover.has(row.title)) {
+        stores.tasks.advanceSealedTaskStatus(row.id, 'done');
+      }
+    }
+    expect(boardProgressFromSealedTasks(tasks.list(mission.id))).toEqual({
+      completed: 16,
+      total: 20,
+    });
+
+    const advanced = advanceSealedTasksFromFilesOnDisk(stores, {
+      missionId: mission.id,
+      filesModified: ['story-01-landing.html'],
+      uniqueMatchesOnly: true,
+    });
+    expect(advanced.length).toBe(1);
+    const landing = tasks.list(mission.id).find((row) => row.title === 'Landing');
+    expect(landing?.status).toBe('done');
+    expect(boardProgressFromSealedTasks(tasks.list(mission.id))).toEqual({
+      completed: 17,
+      total: 20,
+    });
+  });
+
   it('064 pending-with-file: count.js fecha Contador da fila; subscribe.js fecha POST /subscribe', () => {
     expect(distinctiveTitleTokens('Contador da fila')).toEqual(['contador', 'fila']);
     expect(distinctiveFileTokens('lib/count.js')).toEqual(['count']);

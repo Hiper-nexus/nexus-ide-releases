@@ -1,7 +1,7 @@
 /**
- * Pronto civil da Via Rápida: quando o motor justifica o fechamento
- * (board N/N ou files-modified/handoff com writers parados), a missão
- * vira `done` com result — o header civil sai de Trabalhando.
+ * Pronto civil da Via Rápida: header Pronto só com board selado N/N.
+ * Story selada pendente + arquivo único na pasta fecha via pending-with-file
+ * antes da decisão. Files-modified/handoff não pinta Pronto em 16/20.
  *
  * Não pinta o board. Não pula Maestro/revisor em guided/legacy.
  * DESIGN.md sozinho e rascunho nunca iniciado não fecham.
@@ -14,6 +14,7 @@ import type { ProjectExecutionScope } from '../../shared/types';
 import type { MissionEngine } from './mission-engine';
 import { missionEngineForScope } from './mission-engine-registry';
 import { listPaneSnapshots } from './pane-registry';
+import { advanceSealedTasksFromFilesOnDisk } from './mission-story-plan';
 import {
   getProjectDomainStores,
   type ProjectDomainStoreSuite,
@@ -102,6 +103,9 @@ export function decideCivilianPronto(input: {
       path: 'board',
       reason: `board ${sealedDone}/${sealedTotal}`,
     };
+  }
+  if (sealedTotal > 0 && sealedDone < sealedTotal) {
+    return { ...base, action: 'wait', reason: 'sealed-pending' };
   }
   if (input.designOnly || input.neverStarted) {
     return { ...base, action: 'refuse', reason: 'empty-or-design-only' };
@@ -264,7 +268,7 @@ export type CivilianProntoDependencies = {
 
 /**
  * Via Rápida: se o motor justifica Pronto, persiste `done` + result.
- * O header civil (estado `completed` → rótulo Pronto) acompanha o status.
+ * O header civil (estado `completed` → rótulo Pronto) só quando N/N.
  * Board N/M permanece honesto — não inventa 20/20.
  */
 export function maybeApplyCivilianPronto(
@@ -292,6 +296,22 @@ export function maybeApplyCivilianPronto(
     handoffs = stores.handoffs.list({ missionId, includeDelivered: true });
   } catch {
     return empty('wait', 'handoffs-unreadable');
+  }
+
+  const files =
+    deps.listProductFiles?.(scope.rootRealPath) ??
+    walkProductFiles(scope.rootRealPath);
+  try {
+    advanceSealedTasksFromFilesOnDisk(stores, {
+      missionId,
+      filesModified: files,
+      uniqueMatchesOnly: true,
+    });
+  } catch (error) {
+    console.warn(
+      '[civilian-pronto] pending-with-file falhou (fail-closed):',
+      error instanceof Error ? error.message : error,
+    );
   }
 
   const tasks = stores.tasks.list(missionId);
@@ -334,9 +354,6 @@ export function maybeApplyCivilianPronto(
     return !live || task.status === 'pending';
   });
 
-  const files =
-    deps.listProductFiles?.(scope.rootRealPath) ??
-    walkProductFiles(scope.rootRealPath);
   const evidence = inspectProductEvidence(files);
   const hasSuccessHandoff = handoffs.some(
     (handoff) => handoff.status === 'success' || handoff.status === 'partial',

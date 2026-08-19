@@ -144,7 +144,7 @@ describe('decideCivilianDeliveryAction', () => {
     ).toBe('complete');
   });
 
-  it('arquivos no disco + writers pararam → Pronto (sem handoff MCP)', () => {
+  it('arquivos no disco + never-started selado → reroute (não Pronto 16/20)', () => {
     expect(
       decideCivilianDeliveryAction(
         decision({
@@ -155,7 +155,19 @@ describe('decideCivilianDeliveryAction', () => {
           remainingKinds: ['sat', 'never-started'],
         }),
       ),
-    ).toBe('complete');
+    ).toBe('reroute');
+  });
+
+  it('entrega + resto sat/never-started (story ainda pending) → reroute, não Pronto', () => {
+    expect(
+      decideCivilianDeliveryAction(
+        decision({
+          hasExpectedDelivery: true,
+          hasRealWorkerDelivery: true,
+          remainingKinds: ['sat'],
+        }),
+      ),
+    ).toBe('reroute');
   });
 
   it('DESIGN.md sozinho → nunca Pronto', () => {
@@ -591,6 +603,13 @@ describe('maybeCompleteFastLaneOnDelivery', () => {
           current.status = status;
           return current;
         },
+        advanceSealedTaskStatus: (taskId: string, status: 'running' | 'done' | 'failed') => {
+          marked.push(taskId);
+          const current = input.tasks.find((item) => item.id === taskId);
+          if (!current) return null;
+          current.status = status;
+          return current;
+        },
       },
     };
     completeVerified.mockImplementation(() => {
@@ -625,7 +644,7 @@ describe('maybeCompleteFastLaneOnDelivery', () => {
     };
   }
 
-  it('files-on-disk + no live writers → Pronto (20 stories, board 0/20 honesto)', async () => {
+  it('files-on-disk + 20 never-started → reroute, não Pronto 0/20', async () => {
     completeVerified.mockClear();
     const planned = storyPlan(20);
     const { marked, reconcile } = harness({
@@ -654,15 +673,85 @@ describe('maybeCompleteFastLaneOnDelivery', () => {
     });
 
     const result = await reconcile();
-    expect(result.action).toBe('complete');
-    expect(result.completed).toBe(true);
-    expect(result.path).toBe('evidence');
-    expect(completeVerified).toHaveBeenCalledOnce();
-    expect(marked).toEqual([]);
+    expect(result.action).toBe('reroute');
+    expect(result.completed).toBe(false);
+    expect(result.path).toBeNull();
+    expect(completeVerified).not.toHaveBeenCalled();
     expect(planned.every((_, index) => {
       void index;
       return true;
     })).toBe(true);
+  });
+
+  it('067 leftover 16/20: Landing + story-01-landing.html vai done; resto pending não tosta Pronto', async () => {
+    completeVerified.mockClear();
+    const titles = [
+      'Landing',
+      ...Array.from({ length: 15 }, (_, index) => `Story ${index + 2} da waitlist`),
+      'Admin lista emails',
+      'Contador da fila',
+      'Extra leftover',
+      'Favicon e OG',
+    ];
+    const planned = titles.map((title, index) => ({
+      taskId: `t-story-${index + 1}`,
+      agentCategory: 'executor' as const,
+      agent: {
+        id: `writer-${index + 1}`,
+        agentName: title,
+        category: 'executor' as const,
+      },
+    }));
+    const { marked, reconcile } = harness({
+      missionId: 'mission-067',
+      files: [
+        'story-01-landing.html',
+        'subscribe.js',
+        '03-server-4367.js',
+        '04-thank-you.html',
+        '05-admin-lista-emails.js',
+        'rate-limit.js',
+        'unsubscribe.js',
+      ],
+      handoffs: [handoff({ missionId: 'mission-067' })],
+      panes: [
+        {
+          missionId: 'mission-067',
+          agentName: 'Writer 1',
+          role: 'worker',
+          state: 'idle',
+        },
+        {
+          missionId: 'mission-067',
+          agentName: 'Writer 2',
+          role: 'worker',
+          state: 'idle',
+        },
+      ],
+      tasks: planned.map((row, index) =>
+        task({
+          id: row.taskId,
+          title: titles[index]!,
+          missionId: 'mission-067',
+          status:
+            titles[index] === 'Landing' ||
+            titles[index] === 'Admin lista emails' ||
+            titles[index] === 'Contador da fila' ||
+            titles[index] === 'Favicon e OG'
+              ? 'pending'
+              : 'done',
+        }),
+      ),
+      planned,
+    });
+
+    const result = await reconcile();
+    expect(marked).toEqual(
+      expect.arrayContaining(['t-story-1', 't-story-17']),
+    );
+    expect(result.completed).toBe(false);
+    expect(result.action).toBe('reroute');
+    expect(completeVerified).not.toHaveBeenCalled();
   });
 
   it('DESIGN-only → not Pronto', async () => {
@@ -879,7 +968,7 @@ describe('maybeCompleteFastLaneOnDelivery', () => {
     expect(completeVerified).not.toHaveBeenCalled();
   });
 
-  it('stress-12: 17 arquivos + smoke + panes idle com nome de roster + board 0/12 → Pronto honesto', async () => {
+  it('stress-12: 17 arquivos + smoke + panes idle + board 0/12 → reroute, não Pronto', async () => {
     completeVerified.mockClear();
     const planned = storyPlan(12);
     const { marked, reconcile } = harness({
@@ -917,14 +1006,12 @@ describe('maybeCompleteFastLaneOnDelivery', () => {
     });
 
     const result = await reconcile();
-    expect(result.action).toBe('complete');
-    expect(result.completed).toBe(true);
-    expect(result.path).toBe('evidence');
-    expect(completeVerified).toHaveBeenCalledOnce();
-    expect(marked).toEqual([]);
+    expect(result.action).toBe('reroute');
+    expect(result.completed).toBe(false);
+    expect(completeVerified).not.toHaveBeenCalled();
   });
 
-  it('stress-waitlist: 12 arquivos + smoke ok + board 1/3 + writers idle → Pronto sem pintar 3/3', async () => {
+  it('stress-waitlist: 12 arquivos + smoke ok + board 1/3 + writers idle → espera/reroute, não Pronto', async () => {
     completeVerified.mockClear();
     const planned = storyPlan(3);
     const { marked, reconcile } = harness({
@@ -963,11 +1050,9 @@ describe('maybeCompleteFastLaneOnDelivery', () => {
     });
 
     const result = await reconcile();
-    expect(result.action).toBe('complete');
-    expect(result.completed).toBe(true);
-    expect(result.path).toBe('evidence');
-    expect(marked).toEqual([]);
-    expect(completeVerified).toHaveBeenCalledOnce();
+    expect(result.completed).toBe(false);
+    expect(['reroute', 'wait']).toContain(result.action);
+    expect(completeVerified).not.toHaveBeenCalled();
   });
 
   it('arquivos no disco + writer ainda busy (nome diferente do board) → espera, não finge Pronto', async () => {
