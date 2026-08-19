@@ -175,7 +175,7 @@ describe('WorkspaceRail', () => {
         id: 'blocked-user',
         state: 'blocked_user',
         needsAttention: true,
-        label: 'Precisa de resposta',
+        label: 'Precisa de você',
         tone: 'blocked',
       },
       {
@@ -210,7 +210,7 @@ describe('WorkspaceRail', () => {
         id: 'completed',
         state: 'completed',
         needsAttention: false,
-        label: 'Concluída',
+        label: 'Pronto',
         tone: 'done',
       },
     ] as const;
@@ -292,11 +292,13 @@ describe('WorkspaceRail', () => {
     ).toContain('Parou');
     expect(
       host.querySelector('[data-mission-id="mission-ask"]')?.textContent,
-    ).toContain('Precisa de resposta');
-    expect(host.textContent).not.toMatch(/Precisa de você/);
+    ).toContain('Precisa de você');
     expect(
       host.querySelector('[data-mission-id="mission-parked"]')?.textContent,
-    ).not.toMatch(/Precisa de resposta|Precisa de você/);
+    ).not.toMatch(/Precisa de você/);
+    expect(
+      host.querySelector('[data-mission-id="mission-encerrar"]')?.textContent,
+    ).not.toMatch(/Precisa de você/);
   });
 
   it('routes Novo, workspaces, missions, fixed destinations and settings', () => {

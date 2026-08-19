@@ -63,19 +63,50 @@ describe('toast store UX policy', () => {
     push(
       'success',
       'Missão pronta',
-      'Fix the API server — a missão está pronta.',
+      'Fix the API server — o resultado final está pronto.',
     );
 
     expect(useToastStore.getState().toasts).toMatchObject([
       {
         kind: 'success',
         title: 'Missão pronta',
-        detail: 'Fix the API server — a missão está pronta.',
+        detail: 'Fix the API server — o resultado final está pronto.',
       },
     ]);
     expect(useToastStore.getState().toasts[0]?.detail).not.toMatch(
       /Não foi possível concluir esta etapa/,
     );
+  });
+
+  it('does not reuse a previous error detail on Missão pronta', () => {
+    const push = useToastStore.getState().push;
+    const ready = 'Fix the API server — o resultado final está pronto.';
+    // 065 shot: title had English residue ("server"). Humanizing that
+    // title as a failure produced DEFAULT_UNKNOWN_ERROR on a success card.
+    expect(humanizeToastDetail('Fix the API server')).toMatch(
+      /^Não foi possível concluir esta etapa/,
+    );
+
+    push('error', 'Falha técnica na missão', {
+      detail:
+        'Não foi possível concluir esta etapa. Tente novamente. Se continuar, abra Operações para ver o diagnóstico.',
+    });
+    push('success', 'Missão pronta', {
+      detail: ready,
+      action: { label: 'Ver resultado', onClick: vi.fn() },
+      dedupeKey: 'mission-completed:mission-f7eb1133',
+    });
+
+    const toasts = useToastStore.getState().toasts;
+    const success = toasts.find((item) => item.title === 'Missão pronta');
+    expect(success).toMatchObject({
+      kind: 'success',
+      title: 'Missão pronta',
+      detail: ready,
+      action: { label: 'Ver resultado' },
+    });
+    expect(success?.detail).not.toMatch(/Não foi possível concluir esta etapa/);
+    expect(toasts.some((item) => item.kind === 'error')).toBe(true);
   });
 
   it('still humanizes only real failure toasts', () => {

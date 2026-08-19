@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   BALLOON_QUEUE_LIMIT,
   EMPTY_BALLOON_QUEUE,
+  balloonContentFor,
   balloonTextFor,
   dismissBalloon,
   enqueueBalloon,
@@ -15,6 +16,14 @@ const ev = (kind: PetEvent['kind'], title = 'Deploy'): PetEvent => ({
 });
 
 describe('balloonTextFor', () => {
+  it('mission-done celebra Missão pronta', () => {
+    expect(balloonContentFor(ev('mission-done'))).toMatchObject({
+      title: 'Missão pronta',
+      text: 'Deploy',
+    });
+    expect(balloonTextFor(ev('mission-done'))).toMatch(/^Missão pronta:/);
+  });
+
   it('nomeia a missão no balão', () => {
     expect(balloonTextFor(ev('mission-done'))).toContain('Deploy');
     expect(balloonTextFor(ev('mission-failed'))).toContain('Deploy');

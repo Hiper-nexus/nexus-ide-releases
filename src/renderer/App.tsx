@@ -636,7 +636,7 @@ export function App() {
           if (!isBlock && !isTechnicalFailure && !isWait && !isDone) return;
           const missionId = event.missionId;
           if (isDone) {
-            const detail = `${event.title} — a missão está pronta.`;
+            const detail = `${event.title} — o resultado final está pronto.`;
             useToastStore.getState().push(
               'success',
               'Missão pronta',

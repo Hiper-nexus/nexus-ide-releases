@@ -568,6 +568,44 @@ describe('MissionBoard canonical controller', () => {
     );
   });
 
+  it('header pedido humano real é Precisa de você', async () => {
+    api.snapshot.mockResolvedValue(
+      canonicalSnapshot({
+        state: 'blocked_user',
+        stateReason: {
+          code: 'open-question',
+          label: 'Aguardando sua resposta',
+        },
+        allowedActions: ['answer-question'],
+      }),
+    );
+    const { host } = mount();
+    await flush();
+
+    expect(host.querySelector('.mission-board__status')?.textContent).toBe(
+      'Precisa de você',
+    );
+  });
+
+  it('header done persist pinta Pronto mesmo com reason session-dead', async () => {
+    api.snapshot.mockResolvedValue(
+      canonicalSnapshot({
+        state: 'completed',
+        stateReason: { code: 'session-dead', label: 'Parou' },
+        allowedActions: [],
+      }),
+    );
+    const { host } = mount();
+    await flush();
+
+    expect(host.querySelector('.mission-board__status')?.textContent).toBe(
+      'Pronto',
+    );
+    expect(host.querySelector('.mission-board__status')?.textContent).not.toBe(
+      'Parou',
+    );
+  });
+
   it('exposes a focusable vertical separator that controls the inspector and changes its bounded split from the keyboard', async () => {
     vi.spyOn(
       HTMLElement.prototype,

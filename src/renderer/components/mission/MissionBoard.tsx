@@ -12,14 +12,13 @@ import {
 import type {
   MissionAllowedAction,
   MissionEngineCommand,
-  MissionLifecycleState,
   MissionSnapshot,
 } from '../../../shared/mission-engine-contract';
 import {
   missionEventSchema,
   type MissionEvent,
 } from '../../../shared/mission-events';
-import { isolationStopLabel } from '../../../shared/session-restore-liveness';
+import { missionLifecycleLabel } from '../../lib/mission-lifecycle-copy';
 import { useMissionInspectorStore } from '../../state/mission-inspector-store';
 import { toUserFacingMissionRecovery } from '../../lib/user-facing-mission-error';
 import { listPanes } from '../../lib/split-tree';
@@ -100,18 +99,6 @@ function clampInspectorSize(
   );
 }
 
-const LIFECYCLE_LABELS: Readonly<Record<MissionLifecycleState, string>> = {
-  draft: 'Preparando',
-  review_ready: 'Pronta para iniciar',
-  starting: 'Iniciando',
-  running: 'Trabalhando',
-  blocked_user: 'Precisa de resposta',
-  blocked_technical: 'Precisa de reparo',
-  recovering: 'Recuperando',
-  stopping: 'Parando',
-  failed: 'Falhou',
-  completed: 'Pronto',
-};
 
 type HeaderAction = Extract<
   MissionAllowedAction,
@@ -920,8 +907,11 @@ export function MissionBoard({
             className="mission-board__status"
             data-state={currentSnapshot.state}
           >
-            {isolationStopLabel(currentSnapshot.stateReason?.code) ??
-              LIFECYCLE_LABELS[currentSnapshot.state]}
+            {missionLifecycleLabel(
+              currentSnapshot.state,
+              false,
+              currentSnapshot.stateReason?.code,
+            )}
           </span>
           <div className="mission-board__progress">
             <span>

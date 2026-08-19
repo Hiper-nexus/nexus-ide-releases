@@ -865,7 +865,10 @@ describe('App Nexus V2 cutover', () => {
       (item) => item.title === 'Missão pronta',
     );
     expect(toast?.kind).toBe('success');
-    expect(toast?.detail).toBe('Fix the API server — a missão está pronta.');
+    expect(toast?.detail).toBe(
+      'Fix the API server — o resultado final está pronto.',
+    );
+    expect(toast?.action?.label).toBe('Ver resultado');
     expect(toast?.detail).not.toMatch(/Não foi possível concluir esta etapa/);
   });
 
