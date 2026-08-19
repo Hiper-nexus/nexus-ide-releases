@@ -420,6 +420,9 @@ export function advanceSealedTasksFromFilesOnDisk(
       fromAgent: input.fromAgent,
       adapterId: input.adapterId,
       filesModified: matched.unmatchedFiles,
+      // Este caminho credita cada arquivo UMA vez (uncreditedMissionFiles)
+      // — o fallback documentado do disco continua valendo.
+      allowNextOpenFallback: true,
     });
     if (fallback && !advanced.includes(fallback)) advanced.push(fallback);
   }
@@ -567,6 +570,13 @@ export function advanceFastLaneStoryTaskFromWorkerDone(
     readonly summary?: string | null;
     readonly preferredTaskId?: string | null;
     readonly filesModified: readonly string[];
+    /**
+     * Fallback next-open é OPT-IN: só quem tem dedup próprio (o reconcile
+     * de disco credita cada arquivo uma vez) pode usá-lo. O settle físico
+     * por-pane fica estrito — era ele que inflava o board (7 panes com a
+     * mesma lista de files-modified, 19/08).
+     */
+    readonly allowNextOpenFallback?: boolean;
   },
 ): string | null {
   if (input.filesModified.length === 0) return null;
@@ -578,8 +588,7 @@ export function advanceFastLaneStoryTaskFromWorkerDone(
     preferredTaskId: input.preferredTaskId,
     filesModified: input.filesModified,
     handoffStatus: 'success',
-    // Conclusão FÍSICA (não assertada): sem match arquivo↔story não avança.
-    requireMatch: true,
+    requireMatch: input.allowNextOpenFallback !== true,
   });
 }
 
