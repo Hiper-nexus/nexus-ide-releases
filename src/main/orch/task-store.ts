@@ -727,11 +727,11 @@ export class ScopedTaskStore {
   }
 
   /** Alias estável para o board da Via Rápida (PRs 89/90). */
-  advanceSealedTaskStatus(
+  advanceSealedStatus(
     rawId: string,
     rawStatus: Extract<TaskStatus, 'running' | 'done' | 'failed'>,
   ): ScopedTaskRecord | null {
-    return this.advanceSealedStatus(rawId, rawStatus);
+    return this.advanceSealedTaskStatus(rawId, rawStatus);
   }
 
   /** Status-only lifecycle for sealed or free tasks. Title/detail never change. */
@@ -741,7 +741,7 @@ export class ScopedTaskStore {
   ): ScopedTaskRecord | null {
     const id = entityIdSchema.parse(rawId);
     if (this.getPlannedTask(id)) {
-      return this.advanceSealedStatus(id, rawStatus);
+      return this.advanceSealedTaskStatus(id, rawStatus);
     }
     return this.update(id, { status: rawStatus });
   }

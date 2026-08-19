@@ -469,6 +469,9 @@ describe('scoped task store', () => {
     expect(() => tasks.update(task!.id, { status: 'running' })).toThrow(
       /sealed planned task|dispatcher/i,
     );
+    expect(typeof tasks.advanceSealedTaskStatus).toBe('function');
+    expect(typeof tasks.advanceSealedStatus).toBe('function');
+    expect(typeof tasks.markLifecycleStatus).toBe('function');
     expect(tasks.advanceSealedTaskStatus(task!.id, 'done')?.status).toBe('done');
     expect(tasks.list(mission.id).find((row) => row.id === task!.id)?.status).toBe(
       'done',
@@ -488,6 +491,65 @@ describe('scoped task store', () => {
     expect(() => tasks.getPlanReceipt(mission.id, 1)).toThrow(
       /invalid task plan receipt/i,
     );
+  });
+
+  it('avança task selada via markLifecycleStatus e o alias advanceSealedStatus', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope();
+    const missions = createScopedMissionStore(runtimeManager, scope);
+    const mission = missions.create({
+      title: 'Handoff selado',
+      squadId: squad.id,
+      intentVersion: 1,
+      intentState: 'dispatched',
+      intentContract: compileIntentContract({
+        goal: 'Board N/N da Via Rápida',
+        intentVersion: 1,
+      }),
+    });
+    missions.setStatus(mission.id, 'running');
+    const tasks = createScopedTaskStore(runtimeManager, scope);
+    const [first, second] = tasks.createPlanAtomically({
+      missionId: mission.id,
+      intentVersion: 1,
+      squad: { id: squad.id, agents: squad.agents },
+      rows: [
+        {
+          plannerId: 'api',
+          title: 'API',
+          detail: 'Implementar',
+          agentRef: 'api-worker',
+          agentCategory: 'executor',
+        },
+        {
+          plannerId: 'test',
+          title: 'Test',
+          detail: 'Cobrir',
+          agentRef: 'test-worker',
+          agentCategory: 'reviewer',
+        },
+      ],
+    });
+
+    expect(first?.status).toBe('pending');
+    expect(second?.status).toBe('pending');
+
+    // Caminho civil (civilian-delivery markTasksDone): não pode cair em
+    // "this.advanceSealedStatus is not a function".
+    expect(typeof tasks.advanceSealedStatus).toBe('function');
+    expect(tasks.markLifecycleStatus(first!.id, 'done')?.status).toBe('done');
+    expect(tasks.list(mission.id).find((row) => row.id === first!.id)?.status).toBe(
+      'done',
+    );
+
+    const viaAlias = tasks.advanceSealedStatus(second!.id, 'done');
+    expect(viaAlias?.status).toBe('done');
+    expect(tasks.list(mission.id).find((row) => row.id === second!.id)?.status).toBe(
+      'done',
+    );
+
+    const rebound = tasks.advanceSealedStatus.bind(tasks);
+    expect(rebound(first!.id, 'done')?.status).toBe('done');
   });
 
   it('rejects roster drift on replay and detects persisted receipt tampering', () => {
