@@ -352,3 +352,45 @@ describe('leitura do veredito do revisor (gate 0.62, 19/08)', () => {
     ).toBe(true);
   });
 });
+
+describe('revisão SUBMITTED com attempt aceito vale — inclusive pós-respawn (0.63)', () => {
+  it('handoff submitted + attempt aceito por sessão ANTERIOR do Maestro passa o gate', () => {
+    const result = evaluateIndependentReviewGate({
+      mission: {
+        id: 'mission-1',
+        squadId: 'squad-1',
+        intentContract: { lane: 'standard' } as never,
+        orchestratorSessionId: 'orch-NOVO-pós-respawn',
+        intentState: 'executing',
+      },
+      squad: {
+        id: 'squad-1',
+        agents: [
+          { id: 'rev', agentName: 'Verificar experiência', category: 'reviewer', cli: 'claude' },
+        ],
+      } as never,
+      handoffs: [
+        {
+          id: 'h-rev',
+          missionId: 'mission-1',
+          fromAgent: 'Verificar experiência',
+          status: 'success',
+          deliveryState: 'submitted',
+          summary:
+            'Validação por story: 1. [VALIDADA] css aplicado com evidência ' +
+            'de computed style. 2. [VALIDADA] navegação clicada no browser. ' +
+            'Nenhuma story reprovada nesta rodada de verificação integral.',
+          evidenceIds: [],
+        } as never,
+      ],
+      deliveryAttemptsOf: () => [
+        {
+          state: 'accepted',
+          acceptedAt: 123,
+          orchestratorSessionId: 'orch-ANTIGO-que-morreu',
+        },
+      ],
+    });
+    expect(result.ok).toBe(true);
+  });
+});

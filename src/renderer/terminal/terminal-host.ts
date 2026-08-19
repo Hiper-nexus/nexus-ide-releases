@@ -520,9 +520,12 @@ async function requestDeadMissionPaneRevive(
     // recusar (missão encerrada pelo operador) lia como promessa quebrada —
     // sucesso ganha UMA linha, recusa ganha só a linha acionável do catch.
     await requestMissionRuntimeResume(missionId);
+    // O Maestro renasce como pane NOVO — dizer só "religada" neste pane
+    // morto lia como promessa quebrada (4× no print de 19/08: nada mudava
+    // AQUI). Uma linha, apontando para onde a ação foi.
     host.term.writeln(
-      '\r\n\x1b[36m[nexus] tecla recebida — missão religada ' +
-        '(orquestrador + runtime).\x1b[0m',
+      '\r\n\x1b[36m[nexus] missão religada — o Maestro abre em outro pane; ' +
+        'este fica como histórico.\x1b[0m',
     );
     const reviveRespawn = decideDeadPaneReviveRespawn({
       missionOwnsPane: isMainControlledMissionPane(pane.id, pane),

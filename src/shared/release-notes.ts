@@ -13,16 +13,17 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.62.0',
+  version: '0.63.0',
   date: '2026-08-19',
   codename: 'O STOP é lei',
   summary:
-    'Forjada por um gate de missão real mãos-livres: encerrou, ficou ' +
-    'encerrado (retry mecânico nunca reabre missão selada — só Retomar); ' +
-    'todo worker governado ganha encarnação e a entrega mecânica C-194.1 ' +
-    'nunca mais se perde; o parser de veredito entende "nenhuma story ' +
-    'reprovada"; o revisor pós-recusa não morre no registro; e toda trava ' +
-    'se nomeia no log em vez de repetir em silêncio.',
+    'Forjada por um gate de missão real mãos-livres — nove raízes num dia: ' +
+    'encerrou, ficou encerrado (só Retomar religa); todo worker governado ' +
+    'ganha encarnação e a entrega mecânica nunca se perde; revisão ' +
+    'ENTREGUE vale sem exigir ack do modelo e sobrevive a respawn do ' +
+    'Maestro; "nenhuma story reprovada" não é reprovação; diálogo de ' +
+    'rate-limit recebe ESC sozinho sem trocar seu modelo; diagnóstico ' +
+    'interno não vaza pra tela; e toda trava se nomeia no log.',
   highlights: [
     {
       title: 'Encerrou, ficou encerrado',
@@ -43,7 +44,15 @@ export const CURRENT_RELEASE: AppRelease = {
       title: 'Vereditos estruturados no gate de revisão',
       detail:
         '[VALIDADA]/[REPROVADA] por story decidem o gate; "Nenhuma story ' +
-        'reprovada" deixou de virar reprovação eterna.',
+        'reprovada" deixou de virar reprovação eterna. Revisão entregue ' +
+        'com prova física de aceite vale sem ack do modelo — e a prova ' +
+        'sobrevive ao respawn do Maestro.',
+    },
+    {
+      title: 'Diálogo de rate-limit não congela worker',
+      detail:
+        '"Switch to gpt-5.6-luna… press enter or esc" mid-turn recebe ESC ' +
+        'sozinho — mantém o modelo que VOCÊ escolheu e o turno continua.',
     },
   ],
   fixes: [

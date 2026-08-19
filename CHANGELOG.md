@@ -1,6 +1,52 @@
 # Changelog
 
-## 0.62.0 — O STOP é lei
+## 0.63.0 — O STOP é lei
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+Uma única release com tudo: a 0.62.0 foi forjada e NUNCA publicada — o
+gate de missão real mãos-livres achou mais quatro raízes em cima dela, e
+tudo saiu junto aqui. Nove raízes cortadas ao vivo no mesmo dia:
+
+- **fix(orch): encerrou, ficou encerrado** — retry-kickoff mecânico (tecla
+  em pane morto, auto-cura de grant, watchdog) NUNCA reabre missão selada
+  pelo operador; só o botão Retomar religa. Era o "encerrei todas e ele
+  iniciando de novo sozinho, pane rodando por vida própria".
+- **fix(orch): encarnação para TODO worker governado** — revisores e
+  segunda onda nasciam sem workerIncarnationId e o fechamento mecânico
+  C-194.1 recusava a entrega ("não é worker de missão"): a resposta curta
+  se perdia e o Maestro esperava para sempre.
+- **fix(review): revisão ENTREGUE vale sem cerimônia** — handoff
+  `submitted` com prova física de aceite (paste+Enter confirmados pelo
+  main) passa o gate; exigir o nexus_handoff_ack do modelo por cima
+  travava missão com revisão lida. E a prova de aceite sobrevive ao
+  respawn do Maestro (antes voltava a review_missing para sempre).
+- **fix(review): "Nenhuma story reprovada" não é reprovação** — vereditos
+  estruturados [VALIDADA]/[REPROVADA] decidem primeiro; menção negada não
+  conta; o prompt do revisor formaliza os marcadores. A melhor revisão do
+  voo (3/3 com HTTP 200 + Chrome + screenshot) virava rejeição eterna.
+- **fix(orch): diálogo de rate-limit não congela worker** — "Switch to
+  gpt-5.6-luna… Press enter to confirm or esc" mid-turn agora recebe ESC
+  sozinho (mantém o modelo do OPERADOR; a ordem dos padrões garante que o
+  Enter genérico nunca troque modelo por conta própria).
+- **fix(orch): revisor pós-recusa não morre no registro** — remint emitia
+  model:'' e o zod min(1) derrubava o loop DEPOIS do pane nascer.
+- **fix(panes): diagnóstico interno não vaza pra tela** — o supervisor
+  nativo só imprime "responsibility inventory incomplete" quando stderr
+  NÃO é o PTY do operador.
+- **fix(logs): travas se NOMEIAM** — entrega pulada diz o motivo, recusa
+  de conclusão carrega missionId, linha idêntica não repete 63×.
+- **ux(panes): mensagens honestas** — religar anuncia ONDE o Maestro
+  abre ("em outro pane; este fica como histórico") e só APÓS o aceite;
+  exit normal é 1 linha muda; resume exato vai pro log.
+
+Validado no voo do gate (ao vivo): worker entrega → board sela → revisor
+abre sozinho → reprova COM evidência forense (querySelectorAll + computed
+style + screenshot pegando CSS órfão de escrita concorrente) → Maestro
+cobra e despacha o conserto → worker re-entrega. Cada raiz desta lista
+tem o teste com a fixture do voo real.
+
+## 0.62.0 — O STOP é lei (interna — nunca publicada)
 
 _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
 

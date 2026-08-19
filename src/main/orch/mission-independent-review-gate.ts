@@ -161,7 +161,13 @@ function acceptedByCurrentOrchestrator(
 ): boolean {
   if (
     handoff.deliveryState !== 'consumed' &&
-    handoff.deliveryState !== 'acknowledged'
+    handoff.deliveryState !== 'acknowledged' &&
+    // 'submitted' com attempt ACEITO conta: a prova física (paste+Enter
+    // confirmados pelo main) já existe — exigir o ack do modelo por cima
+    // era cerimônia que travava a missão com a revisão entregue e lida
+    // (gate 0.62/19-08: Maestro leu o delivery_metadata e nunca chamou
+    // nexus_handoff_ack; redelivery em loop, missão nunca concluía).
+    handoff.deliveryState !== 'submitted'
   ) {
     return false;
   }
@@ -169,8 +175,12 @@ function acceptedByCurrentOrchestrator(
   return attempts.some(
     (attempt) =>
       attempt.state === 'accepted' &&
-      attempt.acceptedAt !== undefined &&
-      attempt.orchestratorSessionId === orchestratorSessionId,
+      attempt.acceptedAt !== undefined,
+    // Nota (gate 0.62): a exigência de orchestratorSessionId === corrente
+    // caiu — attempts são gravados pelo MAIN só para orquestradores
+    // legítimos da missão; o respawn do Maestro (A3) trocava a sessão e
+    // invalidava a prova de uma revisão já aceita, voltando a
+    // review_missing para sempre.
   );
 }
 

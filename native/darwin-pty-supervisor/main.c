@@ -1363,7 +1363,12 @@ static void terminate_and_prove_responsibility_group(
     bool complete = signal_live_targets(api, &list, anchor, SIGTERM);
     if (!complete) {
       incomplete_reports += 1;
-      if (incomplete_reports == 1 || incomplete_reports % 250U == 0) {
+      /* Dentro de um pane o stderr E o PTY sao a mesma coisa: este
+       * diagnostico vazava jargao interno para a tela do operador
+       * (print de campo 19/08). Em TTY, silencio; em pipe (testes,
+       * execucao avulsa) o diagnostico continua. */
+      if ((incomplete_reports == 1 || incomplete_reports % 250U == 0) &&
+          !isatty(STDERR_FILENO)) {
         fputs("nexus-pty-supervisor: responsibility inventory incomplete; "
               "remaining alive fail-closed\n",
               stderr);

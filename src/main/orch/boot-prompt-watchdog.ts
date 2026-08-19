@@ -28,10 +28,33 @@ const TAIL_LINES = 40;
 interface BootPromptPattern {
   readonly re: RegExp;
   readonly label: string;
+  /** Tecla enviada (default Enter). ESC dispensa diálogos de sugestão. */
+  readonly answer?: string;
+  /** true = vale a sessão inteira, não só a janela de boot. */
+  readonly midTurn?: boolean;
 }
 
 // Curadas e específicas: multi-palavra, só prompt de confirmação de boot.
+// ORDEM IMPORTA: os padrões ESPECÍFICOS vêm primeiro — o diálogo de troca
+// de modelo também contém "Press enter to confirm", e o padrão genérico
+// responderia Enter (TROCANDO o modelo do operador por conta própria).
 const BOOT_PROMPT_PATTERNS: readonly BootPromptPattern[] = [
+  // Diálogo MID-TURN de rate-limit/troca de modelo (print do operador,
+  // gate 0.62 19/08: "Switch to gpt-5.6-luna… Keep current model… Press
+  // enter to confirm or esc to go back" congelou o worker para sempre).
+  // Resposta segura é ESC — mantém o modelo que o operador escolheu.
+  {
+    re: /keep current model[\s\S]{0,200}press enter to confirm or esc/i,
+    label: 'model-switch-dialog',
+    answer: '\x1b',
+    midTurn: true,
+  },
+  {
+    re: /switch to [\w.-]+ for lo[\s\S]{0,300}keep current model/i,
+    label: 'model-switch-dialog',
+    answer: '\x1b',
+    midTurn: true,
+  },
   { re: /do you trust (the|this) (files in this )?folder\??/i, label: 'folder-trust' },
   { re: /trust (this|the) (folder|workspace|directory)\??/i, label: 'folder-trust' },
   { re: /press (enter|return) to (continue|confirm|accept|proceed)/i, label: 'press-enter' },
@@ -40,13 +63,29 @@ const BOOT_PROMPT_PATTERNS: readonly BootPromptPattern[] = [
 
 const ANSI_RE = /\x1b\[[0-9;?]*[A-Za-z]/g;
 
-export function matchBootPrompt(rawTail: string): string | null {
+export interface BootPromptMatch {
+  readonly label: string;
+  readonly answer: string;
+  readonly midTurn: boolean;
+}
+
+export function matchBootPromptPattern(rawTail: string): BootPromptMatch | null {
   if (!rawTail) return null;
   const plain = rawTail.replace(ANSI_RE, '');
   for (const pattern of BOOT_PROMPT_PATTERNS) {
-    if (pattern.re.test(plain)) return pattern.label;
+    if (pattern.re.test(plain)) {
+      return {
+        label: pattern.label,
+        answer: pattern.answer ?? '\r',
+        midTurn: pattern.midTurn === true,
+      };
+    }
   }
   return null;
+}
+
+export function matchBootPrompt(rawTail: string): string | null {
+  return matchBootPromptPattern(rawTail)?.label ?? null;
 }
 
 export interface BootPromptWatchdogDeps {
@@ -112,12 +151,15 @@ export function createBootPromptWatchdog(
     tick() {
       const now = deps.now();
       for (const [sessionId, watch] of [...sessions.entries()]) {
-        if (now - watch.firstSeenAt > BOOT_PROMPT_MAX_AGE_MS) {
-          sessions.delete(sessionId);
-          continue;
-        }
-        const label = matchBootPrompt(deps.readTail(sessionId));
-        if (!label) {
+        const match = matchBootPromptPattern(deps.readTail(sessionId));
+        // Padrões de BOOT respeitam a janela de 5 min; diálogos MID-TURN
+        // (rate-limit/troca de modelo) valem a sessão inteira — o do gate
+        // 0.62 apareceu 20+ min depois do spawn e congelou o worker. O mapa
+        // é limpo no exit da sessão (dropSession), não por idade.
+        const inBootWindow =
+          now - watch.firstSeenAt <= BOOT_PROMPT_MAX_AGE_MS;
+        if (match && !match.midTurn && !inBootWindow) continue;
+        if (!match) {
           if (watch.promptTicks > 0 && now - watch.lastPromptAt > BOOT_PROMPT_TICK_MS * 2) {
             watch.promptTicks = 0; // prompt sumiu: reseta a estabilidade.
           }
@@ -129,9 +171,10 @@ export function createBootPromptWatchdog(
         if (watch.attempts >= BOOT_PROMPT_MAX_ATTEMPTS) continue;
         watch.attempts += 1;
         watch.promptTicks = 0;
-        const written = deps.write(sessionId, '\r');
+        const written = deps.write(sessionId, match.answer);
         log(
-          `[boot-prompt] Enter enviado em ${sessionId} (${label}, ` +
+          `[boot-prompt] ${match.answer === '\r' ? 'Enter' : 'ESC'} enviado ` +
+            `em ${sessionId} (${match.label}, ` +
             `tentativa ${watch.attempts}/${BOOT_PROMPT_MAX_ATTEMPTS}` +
             `${written ? '' : ', write recusado'})`,
         );

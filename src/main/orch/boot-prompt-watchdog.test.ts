@@ -105,3 +105,49 @@ describe('createBootPromptWatchdog (aperta Enter sozinho em pane de missão)', (
     expect(h.writes).toHaveLength(0);
   });
 });
+
+describe('diálogo MID-TURN de troca de modelo (gate 0.62, 19/08)', () => {
+  function harness(tails: Record<string, string>) {
+    const writes: Array<{ sessionId: string; data: string }> = [];
+    let clock = 1_000;
+    const wd = createBootPromptWatchdog({
+      now: () => clock,
+      readTail: (sessionId) => tails[sessionId] ?? '',
+      write: (sessionId, data) => {
+        writes.push({ sessionId, data });
+        return true;
+      },
+    });
+    return { wd, writes, advance: (ms: number) => { clock += ms; } };
+  }
+
+  const RATE_LIMIT_DIALOG =
+    'Switch to gpt-5.6-luna for lower cost?\n' +
+    '1. Switch to gpt-5.6-luna — Fast and affordable\n' +
+    '3. Keep current model (never show again)\n' +
+    'Press enter to confirm or esc to go back';
+
+  it('responde ESC (mantém o modelo do operador), mesmo FORA da janela de boot', () => {
+    const tails = { 's-codex': '' };
+    const h = harness(tails);
+    h.wd.trackSession('s-codex', 'pane-7', 'codex', 'mission-1');
+    // 20 min de turno normal — muito além dos 5 min de boot.
+    h.advance(20 * 60_000);
+    tails['s-codex'] = RATE_LIMIT_DIALOG;
+    h.wd.tick();
+    h.advance(4_000);
+    h.wd.tick(); // 2ª janela estável → ESC
+    expect(h.writes).toEqual([{ sessionId: 's-codex', data: '\x1b' }]);
+  });
+
+  it('padrão de BOOT continua respeitando a janela de 5 min', () => {
+    const tails = { 's-old': 'Do you trust the files in this folder?' };
+    const h = harness(tails);
+    h.wd.trackSession('s-old', 'pane-8', 'kimi', 'mission-1');
+    h.advance(20 * 60_000); // janela de boot expirada
+    h.wd.tick();
+    h.advance(4_000);
+    h.wd.tick();
+    expect(h.writes).toHaveLength(0);
+  });
+});
