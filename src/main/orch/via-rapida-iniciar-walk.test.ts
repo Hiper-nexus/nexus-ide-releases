@@ -129,6 +129,7 @@ describe('Iniciar 20-story → first-wave + selo + Pronto', () => {
         seatFailureHint({
           readiness: 'no-credential',
           explicitCivilianPick: false,
+          civilianHint: '',
         }),
       ),
     ).toBe(false);
@@ -340,10 +341,9 @@ describe('Iniciar 20-story → first-wave + selo + Pronto', () => {
     };
 
     expect(
-      advanceFastLaneStoryTaskFromWorkerDone(fakeStores, {
+      advanceFastLaneStoryTaskFromWorkerDone(fakeStores as never, {
         missionId: 'mission-iniciar-20',
         filesModified: ['server.js'],
-        sessionId: 'writer-1',
       }),
     ).toBeTruthy();
     expect(boardProgressFromSealedTasks(tasks)).toEqual({ completed: 1, total: 20 });

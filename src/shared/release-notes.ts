@@ -13,6 +13,60 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.60.1',
+  date: '2026-08-19',
+  codename: 'O 0.60 que funciona',
+  summary:
+    'Completa o stack 0.60 (9 módulos que ficaram fora do merge), atravessa ' +
+    'uma missão real de 10 stories em dev e corrige o que o voo mostrou: ' +
+    'recusa de revisão abre o revisor em vez de loop, revisor sem ' +
+    'credencial reminta pro CLI logado, trust prompt aceita em pane ' +
+    'estreito, workspace quarentenado degrada pro launcher e o orb de voz ' +
+    'sai de cima do Enviar.',
+  highlights: [
+    {
+      title: 'Recusa de revisão vira revisor aberto — nunca loop',
+      detail:
+        'Board N/N sem revisor gerava centenas de recusas por minuto de ' +
+        'completeVerified. Agora a recusa loga uma vez por janela e spawna ' +
+        'o revisor pendente do roster; sem credencial, o assento reminta ' +
+        'pro primeiro CLI com auth present.',
+    },
+    {
+      title: 'Missão real como gate',
+      detail:
+        'First-wave de 7 writers no turno do Maestro, handoffs MCP ' +
+        'consumidos via idle-delivery, mortalidade contada, revive por ' +
+        'tecla sem duplicar Maestro e Encerrar com marcadores — validados ' +
+        'ao vivo em missão de 10 stories no dev.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Trust prompt do Claude casa em pane estreito',
+      detail:
+        'A moldura do TUI quebrava a frase no meio e o worker ficava ' +
+        'eterno no "Yes, I trust this folder". O matching compacto aceita ' +
+        'automaticamente em spawn governado.',
+    },
+    {
+      title: 'Orientação do operador nunca é rejeitada crua',
+      detail:
+        '"orchestrator authority is incomplete" durante revival agora ' +
+        'enfileira a orientação e o tick re-entrega; nada de erro técnico ' +
+        'em inglês no board.',
+    },
+    {
+      title: 'Workspace quarentenado não derruba o hydrate',
+      detail:
+        'Manifesto com lineage divergente no current persistido virava ' +
+        'erro em todo workspace:get. Agora degrada pro launcher com ' +
+        'recents vivos.',
+    },
+  ],
+};
+
+export const RELEASE_06000: AppRelease = {
   version: '0.60.0',
   date: '2026-08-19',
   codename: 'Identidade 0.60',

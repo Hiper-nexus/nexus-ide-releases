@@ -28,6 +28,14 @@ vi.mock("./catalog-installed", () => ({
     listInstalledCatalogItemsMock(...args),
 }));
 vi.mock("../voice/jarvis-brain", () => ({ chatViaBrainChain: vi.fn() }));
+// Probes reais de auth (keychain + `kimi provider list`) não pertencem a
+// teste de unidade: lentos e dependentes do estado da máquina.
+vi.mock("../adapters/subscription-auth", () => ({
+  warmKeychainOnlySubscriptionAuth: async () => {},
+}));
+vi.mock("../adapters/kimi-seat-probe", () => ({
+  refreshKimiSeatReadiness: async () => undefined,
+}));
 vi.mock("../runtime/doctor-diagnostic-engine", () => ({
   diagnoseWithDoctorGrok: vi.fn(),
 }));
@@ -41,6 +49,7 @@ import {
   designSquadFromIntent,
 } from "./squad-architect";
 import { authReadyModelsForProvider } from "../adapters/model-auth-readiness";
+import { rememberKimiSeatReadiness } from "../adapters/seat-auth-readiness";
 
 const chatViaBrainChainMock = vi.mocked(chatViaBrainChain);
 
@@ -220,6 +229,7 @@ describe("designSquadFromIntent — Agêntico desenha do zero por padrão", () =
   });
 
   it("honra o Maestro experimental do roster salvo quando o reuso é pedido", async () => {
+    rememberKimiSeatReadiness("present");
     // Doutrina fluxo-por-padrão (2026-08-10): evidência de orquestração deixou
     // de reprovar o squad salvo. Quem pediu explicitamente o próprio roster
     // recebe o próprio roster; confinamento continua na fronteira de spawn.

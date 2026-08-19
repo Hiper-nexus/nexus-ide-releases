@@ -354,6 +354,7 @@ vi.mock('./harness-enrich', () => ({
   runHarnessEnrichWithBrain: harness.runHarnessEnrichWithBrain,
 }));
 vi.mock('./pane-registry', () => ({
+  readSessionOutput: vi.fn(() => ''),
   getPaneRuntimeAuthorityBySession: vi.fn(),
   initPaneRegistry: vi.fn(),
   listPaneSnapshots: vi.fn(() => [...harness.paneSnapshots]),
@@ -2737,7 +2738,11 @@ describe('mission runtime close IPC authority', () => {
         id: stored.id,
         status: 'blocked',
         orchestratorSessionId: undefined,
-        description: 'Histórico e receipts preservados.',
+        // B1-B7: Encerrar anexa os marcadores de leftover/runtime-closed à
+        // descrição — o texto original é preservado, não substituído.
+        description: expect.stringContaining(
+          'Histórico e receipts preservados.',
+        ),
       },
       terminatedSessionIds: ['pty-stuck-close'],
     });

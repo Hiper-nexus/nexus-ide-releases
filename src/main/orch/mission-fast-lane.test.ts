@@ -68,9 +68,10 @@ describe('mission fast lane', () => {
     );
     expect(prompt).toContain('Implementar motor');
     expect(prompt).toContain('Leia brief.txt');
-    expect(prompt).toContain('WORKER');
-    expect(prompt).toContain('handoff_submit');
-    expect(prompt).toContain('ENTREGUE AUTOMATICAMENTE');
+    expect(prompt).toContain('trabalhador');
+    // C-194.1: as regras de entrega vivem no contrato anexado no spawn —
+    // o corpo do prompt aponta para o contrato em vez de citar a tool.
+    expect(prompt).toMatch(/regras de entrega.*contrato/i);
     expect(prompt.length).toBeLessThan(2000);
   });
 

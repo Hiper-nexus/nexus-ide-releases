@@ -163,7 +163,18 @@ export function registerWorkspaceIpc(): void {
 
   ipcMain.handle(WORKSPACE_CHANNELS.get, (event) => {
     if (state.current) {
-      bindRendererWorkspaceScope(event.sender, state.current.path);
+      try {
+        bindRendererWorkspaceScope(event.sender, state.current.path);
+      } catch (error) {
+        // Um current quarentenado (ex.: manifesto com lineage divergente) não
+        // pode derrubar o hydrate inteiro — o operador precisa do launcher e
+        // dos recents para conseguir abrir OUTRO workspace.
+        console.warn(
+          '[workspace] current quarentenado; degradando para o launcher:',
+          error instanceof Error ? error.message : error,
+        );
+        return { ...state, current: null };
+      }
     }
     return state;
   });

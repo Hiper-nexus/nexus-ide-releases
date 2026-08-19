@@ -219,8 +219,10 @@ describe('Settings terminal-producing actions', () => {
 
       await settleReady('session-login');
 
-      expect(window.nexus.pty.write).toHaveBeenCalledWith(
-        'session-login',
+      // Login operacional (14/08): o comando entra pelo mesmo caminho do
+      // painel de CLIs — terminal.writeToPane no pane de login.
+      expect(terminal.writeToPane).toHaveBeenCalledWith(
+        paneId,
         expect.stringMatching(/claude/i),
       );
       expect(useLayoutStore.getState().focusedPaneId).toBe(paneId);
@@ -253,7 +255,9 @@ describe('Settings terminal-producing actions', () => {
       const announcement = [...host.querySelectorAll('[role="alert"], [role="status"]')]
         .map((node) => node.textContent ?? '')
         .join(' ');
-      expect(announcement).toMatch(/não consegui abrir o terminal de login/i);
+      expect(announcement).toMatch(
+        /terminal não ficou disponível|login não foi iniciado/i,
+      );
     },
   );
 });

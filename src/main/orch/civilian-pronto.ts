@@ -12,6 +12,10 @@ import { missionResultSchema } from '../../shared/mission-engine-contract';
 import type { Handoff, Mission } from '../../shared/orch-types';
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { MissionEngine } from './mission-engine';
+import {
+  isCivilianReviewRefusal,
+  noteCivilianReviewRefusal,
+} from './civilian-delivery-completion';
 import { missionEngineForScope } from './mission-engine-registry';
 import { listPaneSnapshots } from './pane-registry';
 import { advanceSealedTasksFromFilesOnDisk } from './mission-story-plan';
@@ -402,10 +406,20 @@ export function maybeApplyCivilianPronto(
       stores,
     });
   } catch (error) {
-    console.warn(
-      '[civilian-pronto] completeVerified recusou a entrega civil:',
-      error instanceof Error ? error.message : error,
-    );
+    const message = error instanceof Error ? error.message : String(error);
+    // Recusa por revisão: o civilian-delivery é quem abre o revisor; aqui só
+    // não podemos virar loop de log a cada tick.
+    // Chave própria: o pronto NÃO pode consumir a janela do civilian-delivery
+    // (é o delivery quem abre o revisor pós-recusa).
+    if (
+      !isCivilianReviewRefusal(message) ||
+      noteCivilianReviewRefusal(`${mission.id}:pronto`)
+    ) {
+      console.warn(
+        '[civilian-pronto] completeVerified recusou a entrega civil:',
+        message,
+      );
+    }
   }
 
   return { ...decision, completed };

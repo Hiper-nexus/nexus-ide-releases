@@ -1373,7 +1373,7 @@ describe("main-owned mission pane spawn", () => {
     expect(claimPendingSpawnMeta(requestId, owner)).not.toBeNull();
     expect(bindPendingSpawnSession(requestId, owner, "pty-claimed")).toBe(true);
 
-    await vi.advanceTimersByTimeAsync(90_000);
+    await vi.advanceTimersByTimeAsync(15 * 60_000 + 1_000);
     await expect(resultPromise).resolves.toEqual({
       requestId,
       ok: true,

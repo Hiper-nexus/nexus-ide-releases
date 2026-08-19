@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.60.1 — O 0.60 que funciona de verdade
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+A identidade 0.60.0 nunca virou release: o main importava 5 módulos que
+ficaram presos num branch não mergeado e o build não compilava. Esta versão
+completa o stack, atravessa uma missão real de 10 stories de ponta a ponta
+em dev e corrige o que o voo real mostrou.
+
+- **fix(build): stack 0.60 completo** — 9 módulos extraídos do branch
+  fail-closed (maestro-boot-gate, kickoff-direct-queue, zero-delivery
+  watchdog, fail-closed recovery, artifact-gate + 4 deps) com testes;
+  typecheck e suíte inteira verdes.
+- **fix(orch): recusa de revisão abre o revisor — nunca loop quente** —
+  board N/N sem revisor virava 500+ recusas/min de completeVerified; agora
+  a recusa loga 1x/60s e spawna o revisor pendente do roster.
+- **fix(orch): revisor sem credencial reminta pro CLI logado** — squad do
+  wizard com reviewer:cursor-agent sem login não trava mais a conclusão;
+  o assento vai pro primeiro CLI com auth present.
+- **fix(cli): trust prompt casa em pane estreito** — a moldura do TUI
+  quebrava a frase no meio ("is this a --project you created") e o Claude
+  ficava eterno no "Yes, I trust this folder"; matching compacto aceita
+  automaticamente em spawn governado.
+- **fix(workspace): current quarentenado degrada pro launcher** — manifesto
+  com lineage divergente derrubava o hydrate inteiro; agora warn + launcher
+  e recents vivos.
+- **fix(voice): orb não nasce sobre o Enviar da orientação** — âncora
+  padrão sobe pra dy:96; o orb continua arrastável e a preferência salva
+  vence.
+- **fix(security): containment por path.relative no artifact-gate** —
+  startsWith(path.resolve) é bypassável por prefixo.
+- **test: 24 falhas pré-existentes zeradas** — mocks do stack 0.60,
+  probes reais de keychain/kimi isolados (41s→0,9s por arquivo), contrato
+  novo do login operacional e ACK de 15 min do spawn.
+
+Validação: missão real de 10 stories (wizard completo via UI) com
+first-wave de 7 writers, handoffs MCP consumidos, mortalidade contada,
+revive sem duplicar Maestro e Encerrar com marcadores — 2 ciclos de voo
+documentados em memória; pendências conhecidas (composer do Maestro preso
+em injeção não confirmada; board pode inflar antes da revisão — o gate
+segura a conclusão) registradas para a próxima.
+
 ## 0.60.0 — Identidade de release
 
 Esta entrada só fixa a identidade de versão **0.60.0** (Nexus / NexusIDE).

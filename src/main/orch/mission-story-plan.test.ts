@@ -5,8 +5,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { compileIntentContract } from '../../shared/mission-intent';
 import type { Squad } from '../../shared/orch-types';
 import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
-import { testProjectScope } from './__tests__/scope-fixture';
-import { createScopedMissionStore } from './mission-store';
 import {
   advanceFastLaneStoryTaskFromHandoff,
   advanceFastLaneStoryTaskFromWorkerDone,
@@ -25,7 +23,6 @@ import {
   shouldRejectRoleCollapsedPlan,
 } from './mission-story-plan';
 import { projectMissionSnapshot } from './mission-snapshot';
-import { createScopedTaskStore } from './task-store';
 
 let baseDir = '';
 const managers: ProjectRuntimeManager[] = [];
@@ -62,15 +59,6 @@ function twentyStoryObjective(): string {
       (_, index) => `${index + 1}. Story ${index + 1} da waitlist`,
     ),
   ].join('\n');
-}
-
-function manager(): ProjectRuntimeManager {
-  const value = new ProjectRuntimeManager({
-    baseDir,
-    appVersion: '0.12.0-test',
-  });
-  managers.push(value);
-  return value;
 }
 
 beforeEach(() => {
@@ -137,7 +125,7 @@ function memorySeal(objective: string, title = 'Waitlist') {
   const taskRows: Array<{
     id: string;
     title: string;
-    status: string;
+    status: 'pending' | 'running' | 'done' | 'failed' | 'blocked';
     plannerId: string;
   }> = [];
   const stores = {
@@ -170,7 +158,7 @@ function memorySeal(objective: string, title = 'Waitlist') {
         }
         return [...taskRows];
       },
-      advanceSealedTaskStatus: (id: string, status: string) => {
+      advanceSealedTaskStatus: (id: string, status: 'pending' | 'running' | 'done' | 'failed' | 'blocked') => {
         const row = taskRows.find((task) => task.id === id);
         if (row) row.status = status;
         return row ?? null;
@@ -180,7 +168,7 @@ function memorySeal(objective: string, title = 'Waitlist') {
   return {
     mission,
     stores: stores as unknown as Parameters<typeof sealFastLaneListedStoryPlan>[0],
-    tasks: { list: () => taskRows },
+    tasks: { list: (_missionId?: string) => taskRows },
   };
 }
 

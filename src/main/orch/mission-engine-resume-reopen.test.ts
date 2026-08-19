@@ -48,6 +48,7 @@ vi.mock('./mission-event-emit', () => ({
 vi.mock('./pane-registry', () => ({
   listPaneSnapshots: () => [],
   getPaneRuntimeAuthorityBySession: () => null,
+  readSessionOutput: () => '',
 }));
 
 vi.mock('./squad-store', () => ({

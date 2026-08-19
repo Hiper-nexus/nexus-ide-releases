@@ -35,16 +35,40 @@ const harness = vi.hoisted(() => ({
 vi.mock('../pty/pty-manager', () => ({
   getSessionState: (sessionId: string) =>
     harness.sessionStates.get(sessionId) ?? null,
+  getSessionCwd: () => null,
+  isPtySessionConnectedAndWritable: (sessionId: string) =>
+    harness.sessionStates.get(sessionId) === 'idle' ||
+    harness.sessionStates.get(sessionId) === 'busy',
   registeredOrchestratorSessionsForMission: () => [],
   orchTerminateSession: () => Promise.resolve(true),
+}));
+
+vi.mock('../pty/pre-spawn-probe', () => ({
+  assertPreSpawnProbe: async () => {},
+  PreSpawnProbeError: class PreSpawnProbeError extends Error {},
+}));
+
+// Fail-closed do bootstrap (0.60): Maestro exige adapter cli-pty com rota
+// Nexus MCP; o registry real não carrega builtins no vitest.
+vi.mock('../adapters/adapter-registry', () => ({
+  getAdapter: (id: string) => ({
+    id,
+    label: id,
+    kind: 'cli-pty',
+    bin: 'claude',
+    quirks: { nexusMcp: 'flag' },
+    spawn: { initialPrompt: 'positional' },
+  }),
 }));
 
 vi.mock('./tool-util', () => ({
   deliverAgentPrompt: (...args: unknown[]) =>
     harness.deliverAgentPrompt(...(args as [])),
+  proveNativeArgvBriefAccepted: async () => {},
 }));
 
 vi.mock('./pane-registry', () => ({
+  readSessionOutput: () => '',
   listPaneSnapshots: () =>
     harness.snapshots.map((pane) => ({
       ...pane,
@@ -97,8 +121,15 @@ vi.mock('./project-domain-store-registry', () => ({
       setOrchestratorSession: () => {},
       recordKickoffAcceptance: (...args: unknown[]) =>
         harness.recordKickoffAcceptance(...args),
+      hasCurrentKickoffAcceptance: () => false,
     },
     missionPanes: { record: () => {}, list: () => [] },
+    tasks: {
+      hasPlan: () => false,
+      list: () => [],
+      listPlannedTasks: () => [],
+    },
+    taskDispatches: { list: () => [] },
     handoffs: { list: () => harness.handoffs },
   }),
 }));
@@ -175,7 +206,9 @@ describe('Via Rápida × modelo PULL', () => {
   it('spawna só o orquestrador; pane idle não é recutucado nem concluído', async () => {
     await bootOrchestratorIdle();
     expect(harness.spawnCount).toBe(1);
-    expect(harness.recordKickoffAcceptance).toHaveBeenCalledTimes(1);
+    // 0.60: o recibo nasce no spawn e o idle confirma via kickoff-direct
+    // queue — pode registrar mais de uma vez, nunca zero.
+    expect(harness.recordKickoffAcceptance).toHaveBeenCalled();
 
     await ticks(4);
 
@@ -196,7 +229,8 @@ describe('Via Rápida × modelo PULL', () => {
 
     await ticks(1);
 
-    expect(harness.deliverAgentPrompt).not.toHaveBeenCalled();
+    // 0.60 (A3): Maestro morto em missão running é RESPAWNADO uma vez com o
+    // briefing re-entregue — o que continua proibido é concluir/bloquear.
     expect(harness.blockTechnical).not.toHaveBeenCalled();
     expect(harness.completeVerified).not.toHaveBeenCalled();
     expect(liveMission.status).toBe('running');

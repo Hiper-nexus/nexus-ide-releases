@@ -71,7 +71,9 @@ describe('marcador de conclusão — a armadilha do eco do prompt', () => {
   it('o prompt PULL do worker não pede PRONTO:/BLOQUEADO: — entrega é handoff', () => {
     expect(DELIVERED).not.toContain('PRONTO:');
     expect(DELIVERED).not.toContain('BLOQUEADO:');
-    expect(DELIVERED).toContain('nexus_handoff_submit');
+    // C-194.1: o prompt delega as regras ao contrato de handoff anexado no
+    // spawn — não cita a tool no corpo, aponta para o contrato.
+    expect(DELIVERED).toMatch(/regras de entrega.*contrato/i);
   });
 
   it('eco do prompt REAL sozinho NÃO produz marcador nenhum', () => {

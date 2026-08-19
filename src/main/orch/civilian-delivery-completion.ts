@@ -16,6 +16,14 @@ import {
 } from './project-domain-store-registry';
 import { missionEngineForScope } from './mission-engine-registry';
 import { getSquad } from './squad-store';
+import { classifySeatAuth } from '../adapters/seat-auth-readiness';
+import { detectSubscriptionAuthReadiness } from '../adapters/subscription-auth';
+import {
+  hasRuntimeKey,
+  providerAuthStrategy,
+} from '../persistence/provider-config-store';
+import { PREFERRED_AUTO_SEAT_CLIS } from '../../shared/auto-seat-auth';
+import { defaultSquadModelForAdapter } from '../../shared/squad-model-defaults';
 import type { MissionEngine } from './mission-engine';
 import { advanceSealedTasksFromFilesOnDisk } from './mission-story-plan';
 import type { ScopedTaskRecord } from './task-store';
@@ -183,6 +191,73 @@ export function isSatOrTombstonedPaneState(state: string | null | undefined): bo
     state === 'parou' ||
     state === 'tombstoned'
   );
+}
+
+/**
+ * Recusa do gate de revisão (review_missing/without_evidence): responder a
+ * CADA tick re-tentando completeVerified virava loop quente — 163 recusas em
+ * minutos na missão real de 19/08. Uma recusa por missão abre UMA janela:
+ * loga uma vez, spawna o revisor pendente uma vez e silencia até o cooldown.
+ */
+const REVIEW_REFUSAL_COOLDOWN_MS = 60_000;
+const reviewRefusalAt = new Map<string, number>();
+
+export function isCivilianReviewRefusal(message: string): boolean {
+  return /review_(missing|without_evidence)/.test(message);
+}
+
+/** true = primeira recusa desta janela (chamador loga/spawna); false = silencia. */
+export function noteCivilianReviewRefusal(
+  missionId: string,
+  now = Date.now(),
+): boolean {
+  const last = reviewRefusalAt.get(missionId);
+  if (last !== undefined && now - last < REVIEW_REFUSAL_COOLDOWN_MS) {
+    return false;
+  }
+  reviewRefusalAt.set(missionId, now);
+  return true;
+}
+
+export function clearCivilianReviewRefusal(missionId: string): void {
+  reviewRefusalAt.delete(missionId);
+}
+
+/** Auth present real do CLI (mesma classificação do first-wave). */
+function reviewerCliCanSeat(cli: string): boolean {
+  try {
+    const readiness = detectSubscriptionAuthReadiness(cli);
+    return (
+      classifySeatAuth({
+        adapterId: cli,
+        authStrategy: String(providerAuthStrategy(cli) ?? ''),
+        hasKey: hasRuntimeKey(cli),
+        kimiListReadiness: cli === 'kimi' ? readiness : undefined,
+        hasCredentiallessModel: readiness === 'present',
+      }) === 'present'
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Roster com reviewer sem credencial (voo de 19/08: reviewer:cursor-agent
+ * sem login) não pode virar loop de spawn-falha — reminta pro primeiro CLI
+ * present da preferência. Sem candidato present, mantém o original: a falha
+ * fica VISÍVEL no pane em vez de silenciosa.
+ */
+export function remintReviewerForSeat(
+  agent: SquadAgent,
+  canSeat: (cli: string) => boolean = reviewerCliCanSeat,
+): SquadAgent {
+  if (canSeat(agent.cli)) return agent;
+  const successor = (PREFERRED_AUTO_SEAT_CLIS as readonly string[]).find(
+    (cli) => canSeat(cli),
+  );
+  if (!successor) return agent;
+  const model = defaultSquadModelForAdapter(successor);
+  return { ...agent, cli: successor, model: model ?? '' } as SquadAgent;
 }
 
 export function isReviewCategory(category: AgentCategory | string | undefined): boolean {
@@ -1079,6 +1154,7 @@ export async function maybeCompleteFastLaneOnDelivery(
 
   const engine = deps.missionEngine ?? missionEngineForScope(scope);
   let completed = false;
+  let refusalSpawned: readonly string[] = [];
   try {
     completed = completeMission(
       scope,
@@ -1090,17 +1166,62 @@ export async function maybeCompleteFastLaneOnDelivery(
       path ?? 'evidence',
     );
   } catch (error) {
-    console.warn(
-      '[civilian-delivery] completeVerified recusou a entrega civil:',
-      error instanceof Error ? error.message : error,
-    );
+    const message = error instanceof Error ? error.message : String(error);
+    if (!isCivilianReviewRefusal(message)) {
+      console.warn(
+        '[civilian-delivery] completeVerified recusou a entrega civil:',
+        message,
+      );
+    } else if (noteCivilianReviewRefusal(mission.id)) {
+      // Primeira recusa da janela: em vez de re-tentar em loop, abre o
+      // revisor do roster que ainda não tem pane vivo — é ele quem destrava.
+      console.warn(
+        '[civilian-delivery] review pendente — abrindo revisor do roster:',
+        message,
+      );
+      const roster = mission.squadId
+        ? ((deps.getSquad ?? getSquad)(mission.squadId)?.agents ?? [])
+        : [];
+      const liveNames = new Set(
+        panes
+          .filter(
+            (pane) =>
+              pane.missionId === mission.id &&
+              pane.role === 'worker' &&
+              ['busy', 'idle', 'spawning'].includes(pane.state ?? ''),
+          )
+          .map((pane) => paneAgentKey(pane.agentName)),
+      );
+      const toSpawn = roster
+        .filter(
+          (agent) =>
+            isReviewCategory(agent.category) &&
+            !liveNames.has(paneAgentKey(agent.agentName)),
+        )
+        .map((agent) => remintReviewerForSeat(agent));
+      try {
+        refusalSpawned = await (deps.spawnReviewers?.(scope, mission, toSpawn) ??
+          defaultSpawnReviewers(scope, mission, toSpawn, stores));
+        if (refusalSpawned.length > 0) {
+          console.info(
+            `[civilian-delivery] revisor aberto pós-recusa: ${refusalSpawned.join(', ')}`,
+          );
+        }
+      } catch (spawnError) {
+        console.warn(
+          '[civilian-delivery] spawn de revisor pós-recusa falhou:',
+          spawnError instanceof Error ? spawnError.message : spawnError,
+        );
+      }
+    }
   }
+  if (completed) clearCivilianReviewRefusal(mission.id);
 
   return {
     action: completed ? 'complete' : action,
     completed,
     path: completed ? (path ?? 'evidence') : null,
-    spawnedReviewers: [],
+    spawnedReviewers: refusalSpawned,
     markedDoneTaskIds,
     productFiles,
   };

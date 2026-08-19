@@ -111,12 +111,28 @@ function normalizePromptText(output: string): string {
   return output.toLowerCase().replace(/\s+/g, ' ');
 }
 
+/**
+ * Pane estreito quebra a frase no MEIO da palavra e intercala a moldura do
+ * TUI ("is this a --project you created" no voo real de 19/08) — o include
+ * contíguo nunca casa e o trust fica na tela pra sempre. A forma compacta
+ * (só [a-z0-9?]) sobrevive a qualquer wrap/borda mantendo a ordem.
+ */
+function compactPromptText(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9?]/g, '');
+}
+
 export function matchesPromptSignature(
   output: string,
   signature: PromptSignature,
 ): boolean {
   const normalized = normalizePromptText(output);
-  return signature.phrases.every((phrase) => normalized.includes(phrase));
+  if (signature.phrases.every((phrase) => normalized.includes(phrase))) {
+    return true;
+  }
+  const compact = compactPromptText(output);
+  return signature.phrases.every((phrase) =>
+    compact.includes(compactPromptText(phrase)),
+  );
 }
 
 function signaturesFor(adapterId: string): PromptSignature[] {
@@ -198,14 +214,17 @@ export class CliPromptAutoResponder {
   ): PromptSignature | null {
     const signatures = this.watchingSignatures(sessionId, now);
     if (!signatures) return null;
-    const buffer = normalizePromptText(this.buffers.get(sessionId) ?? '');
+    const raw = this.buffers.get(sessionId) ?? '';
+    const buffer = normalizePromptText(raw);
     if (!buffer) return null;
+    const compact = compactPromptText(raw);
     return (
       signatures.find(
         (signature) =>
-          matchesPromptSignature(buffer, signature) ||
+          matchesPromptSignature(raw, signature) ||
           (signature.earlyPhrase !== undefined &&
-            buffer.includes(signature.earlyPhrase)),
+            (buffer.includes(signature.earlyPhrase) ||
+              compact.includes(compactPromptText(signature.earlyPhrase)))),
       ) ?? null
     );
   }

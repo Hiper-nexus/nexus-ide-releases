@@ -67,6 +67,15 @@ const paneDeps = vi.hoisted(() => ({
 vi.mock('../persistence/provider-config-store', () => ({
   listProviderSettings: () => selectionDeps.providers,
 }));
+// 0.60: warmSquadRuntimeSubscriptionAuth passou a rodar keychain +
+// `kimi provider list` reais — probes não pertencem a teste de unidade.
+vi.mock('../adapters/subscription-auth', () => ({
+  warmKeychainOnlySubscriptionAuth: async () => {},
+  detectSubscriptionAuthReadiness: () => 'present',
+}));
+vi.mock('../adapters/kimi-seat-probe', () => ({
+  refreshKimiSeatReadiness: async () => undefined,
+}));
 vi.mock('../persistence/settings-store', () => ({
   getOrchSettings: () => ({ squadCliPolicy: selectionDeps.mode }),
 }));
