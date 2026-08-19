@@ -102,7 +102,9 @@ function remintWriterCli(agent: SquadAgent, cli: string): SquadAgent {
 
 /**
  * Espalha CLIs present pelos papéis do roster e cria Writer N para o
- * restante. Cópias (segundo Codex) vêm depois, em expandFirstWaveSeats.
+ * restante. Preferência: agente do squad com o mesmo CLI (GLM reviewer
+ * senta se present). Papéis executor sobrando são remintados. Cópias
+ * (segundo Codex) vêm depois, em expandFirstWaveSeats.
  */
 export function spreadPresentClisAcrossWriterRoles(
   agents: readonly SquadAgent[],
@@ -116,12 +118,29 @@ export function spreadPresentClisAcrossWriterRoles(
   ];
   if (clis.length === 0) return [];
   const seated: SquadAgent[] = [];
-  const roleCount = Math.min(roles.length, clis.length);
-  for (let index = 0; index < roleCount; index += 1) {
-    seated.push(remintWriterCli(roles[index]!, clis[index]!));
+  const usedIds = new Set<string>();
+
+  for (const cli of clis) {
+    const named = agents.find(
+      (agent) =>
+        agent.category !== 'orchestrator' &&
+        agent.cli === cli &&
+        !usedIds.has(agent.id),
+    );
+    if (!named) continue;
+    seated.push(named);
+    usedIds.add(named.id);
   }
+
   let writerN = 2;
-  for (const cli of clis.slice(roleCount)) {
+  for (const cli of clis) {
+    if (seated.some((row) => row.cli === cli)) continue;
+    const role = roles.find((agent) => !usedIds.has(agent.id));
+    if (role) {
+      seated.push(remintWriterCli(role, cli));
+      usedIds.add(role.id);
+      continue;
+    }
     seated.push(syntheticWriter(cli, `Writer ${writerN}`, `writer-${cli}`));
     writerN += 1;
   }
@@ -138,14 +157,17 @@ export function expandFirstWaveSeats(
   for (let index = 0; index < targetSeats; index += 1) {
     const agent = writers[index % writers.length]!;
     const copy = Math.floor(index / writers.length);
-    const seatedAgent =
-      copy === 0
-        ? agent
-        : ({ ...agent, id: `${agent.id}·${copy + 1}` } as SquadAgent);
+    const title =
+      copy === 0 ? agent.agentName : `${agent.agentName} · ${copy + 1}`;
+    const seatedAgent = Object.freeze({
+      ...agent,
+      id: copy === 0 ? agent.id : `${agent.id}·${copy + 1}`,
+      agentName: title,
+    }) as SquadAgent;
     seats.push(
       Object.freeze({
         agent: seatedAgent,
-        title: copy === 0 ? agent.agentName : `${agent.agentName} · ${copy + 1}`,
+        title,
         seatIndex: index,
         storyTitle: storyTitles[index] ?? null,
       }),

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { SquadAgent } from '../../shared/orch-types';
 import {
   countLiveFirstWaveWriters,
+  expandFirstWaveSeats,
   FIRST_WAVE_OFFER_CLIS,
   FIRST_WAVE_WRITER_SEATS,
   planFirstWaveSeats,
@@ -61,6 +62,26 @@ describe('spreadPresentClisAcrossWriterRoles', () => {
   });
 });
 
+describe('expandFirstWaveSeats — clone-collapse 068', () => {
+  it('7 clones do mesmo Codex ganham título e agentName únicos (· 2 …)', () => {
+    const motor = fullstackRoster[1]!;
+    const seats = expandFirstWaveSeats([motor], 7);
+    const titles = seats.map((seat) => seat.title);
+    expect(titles).toEqual([
+      'Frontend',
+      'Frontend · 2',
+      'Frontend · 3',
+      'Frontend · 4',
+      'Frontend · 5',
+      'Frontend · 6',
+      'Frontend · 7',
+    ]);
+    expect(new Set(titles).size).toBe(7);
+    expect(new Set(seats.map((seat) => seat.agent.agentName)).size).toBe(7);
+    expect(new Set(seats.map((seat) => seat.agent.id)).size).toBe(7);
+  });
+});
+
 describe('planFirstWaveSeats — N present = N assentos vivos, não log-only 7', () => {
   it('20-story com ≥6 CLIs present abre ≥6 assentos (pula agy/LongCat sem auth)', () => {
     const present = new Set(['codex', 'grok', 'glm', 'kimi', 'opencode', 'aider']);
@@ -108,6 +129,54 @@ describe('planFirstWaveSeats — N present = N assentos vivos, não log-only 7',
     expect(wave.skippedNoCredential).toContain('agy');
     expect(wave.skippedNoCredential).toContain('longcat');
     expect(wave.seats.length).toBe(FIRST_WAVE_WRITER_SEATS);
+  });
+
+  it('squad 4 papéis 068: senta kimi/grok/glm present, não 7× Codex; pula agy', () => {
+    const squad068: SquadAgent[] = [
+      agent({
+        id: 'orch',
+        agentName: 'Maestro',
+        category: 'orchestrator',
+        cli: 'claude',
+      }),
+      agent({
+        id: 'motor',
+        agentName: 'Implementar motor',
+        category: 'executor',
+        cli: 'codex',
+      }),
+      agent({
+        id: 'agy',
+        agentName: 'AGY',
+        category: 'executor',
+        cli: 'agy',
+      }),
+      agent({
+        id: 'glm',
+        agentName: 'GLM',
+        category: 'reviewer',
+        cli: 'glm',
+      }),
+    ];
+    const present = new Set(['codex', 'grok', 'kimi', 'glm']);
+    const wave = planFirstWaveSeats({
+      storyCount: 20,
+      agents: squad068,
+      extraPresentClis: ['codex', 'agy', 'grok', 'glm', 'kimi'],
+      orchestratorCli: 'claude',
+      classifySeat: presentOf(present),
+    });
+    const clis = new Set(wave.seats.map((seat) => seat.agent.cli));
+    expect(clis.has('agy')).toBe(false);
+    expect(clis).toEqual(present);
+    expect(wave.seats.some((seat) => seat.agent.agentName === 'GLM')).toBe(true);
+    expect(
+      wave.seats.filter((seat) => seat.agent.cli === 'codex').length,
+    ).toBeLessThan(7);
+    expect(new Set(wave.seats.map((seat) => seat.title)).size).toBe(
+      wave.seats.length,
+    );
+    expect(wave.skippedNoCredential).toContain('agy');
   });
 });
 

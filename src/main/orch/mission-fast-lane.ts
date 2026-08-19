@@ -175,8 +175,9 @@ function bindSpawnedMissionPane(
   mission: Mission,
   agent: SquadAgent,
   role: 'orchestrator' | 'worker',
-  spawn: { paneId: string; sessionId: string },
+  spawn: { paneId: string; sessionId: string; title?: string },
 ): void {
+  const title = spawn.title?.trim() || agent.agentName;
   stores.missionPanes.record({
     missionId: mission.id,
     paneId: spawn.paneId,
@@ -184,7 +185,7 @@ function bindSpawnedMissionPane(
     model: agent.model || undefined,
     effort: agent.effort || undefined,
     cwd: scope.rootRealPath,
-    title: agent.agentName,
+    title,
     agentName: agent.agentName,
     role,
     allowedTools: agent.allowedTools ? [...agent.allowedTools] : null,
@@ -710,7 +711,7 @@ async function spawnWriterWithCircuit(
   console.warn(
     `[fast-lane] writer_circuit_break remint ${writer.cli} → ${successor.cli} (${attempts} attempts)`,
   );
-  return spawnAgentPane(scope, mission, successor, prompt);
+  return spawnAgentPane(scope, mission, successor, prompt, paneTitle);
 }
 
 async function spawnAgentPane(
@@ -753,6 +754,7 @@ async function spawnAgentPane(
   bindSpawnedMissionPane(stores, scope, mission, agent, role, {
     paneId: spawn.paneId,
     sessionId: spawn.sessionId,
+    title,
   });
   if (role === 'orchestrator') {
     stores.missions.setOrchestratorSession(mission.id, spawn.sessionId);
