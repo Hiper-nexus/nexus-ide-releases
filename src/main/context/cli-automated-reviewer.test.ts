@@ -29,6 +29,16 @@ const persistedPaneStore = vi.hoisted(() => ({
   remove: vi.fn<(id: string) => boolean>(() => true),
 }));
 
+// 0.60: warmSquadRuntimeSubscriptionAuth roda keychain + `kimi provider
+// list` reais — sob fake timers o run() trava antes do spawn.
+vi.mock('../adapters/subscription-auth', () => ({
+  warmKeychainOnlySubscriptionAuth: async () => {},
+  detectSubscriptionAuthReadiness: () => 'present',
+}));
+vi.mock('../adapters/kimi-seat-probe', () => ({
+  refreshKimiSeatReadiness: async () => undefined,
+}));
+
 vi.mock('../orch/project-domain-store-registry', () => ({
   getProjectDomainStores: vi.fn(() => ({
     missionPanes: persistedPaneStore,

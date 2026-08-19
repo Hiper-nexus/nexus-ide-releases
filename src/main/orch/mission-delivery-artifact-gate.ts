@@ -46,8 +46,12 @@ function handoffListsFiles(handoff: ArtifactGateHandoff): boolean {
 }
 
 function pathHasContent(rootRealPath: string, relative: string): boolean {
-  const abs = path.resolve(rootRealPath, relative);
-  if (!abs.startsWith(path.resolve(rootRealPath))) return false;
+  const root = path.resolve(rootRealPath);
+  const abs = path.resolve(root, relative);
+  const rootRelative = path.relative(root, abs);
+  if (rootRelative.startsWith('..') || path.isAbsolute(rootRelative)) {
+    return false;
+  }
   try {
     const st = fs.statSync(abs);
     if (st.isFile() && st.size > 0) return true;
