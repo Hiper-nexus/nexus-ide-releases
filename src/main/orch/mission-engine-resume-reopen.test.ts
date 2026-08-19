@@ -80,6 +80,10 @@ function stores(): ProjectDomainStoreSuite {
     missions: {
       get: () => liveMission,
       list: () => [liveMission],
+      update: (_missionId: string, patch: Record<string, unknown>) => {
+        liveMission = { ...liveMission, ...patch } as Mission;
+        return liveMission;
+      },
       transitionLifecycle: (
         _missionId: string,
         _expected: unknown,
@@ -161,6 +165,21 @@ describe('engine resume — os estados em que a UI oferece Retomar', () => {
       scope,
       'mission-1',
     );
+  });
+
+  it('missão leftover parked reabre: limpa o selo e religa sem remontar sozinha no boot', async () => {
+    liveMission = baseMission({
+      description:
+        'objetivo do operador\n\n' +
+        '<!-- nexus:leftover-parked -->\n[NEXUS_LEFTOVER_PARKED] Missão leftover.',
+    });
+
+    await engine.command(scope, { kind: 'resume', missionId: 'mission-1' });
+
+    expect(liveMission.status).toBe('running');
+    expect(liveMission.intentState).toBe('executing');
+    expect(liveMission.description).toBe('objetivo do operador');
+    expect(harness.resumeFastLaneMission).toHaveBeenCalledTimes(1);
   });
 
   it('missão concluída com trabalho residual reabre para terminar o que falta', async () => {

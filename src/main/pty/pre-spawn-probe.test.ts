@@ -6,6 +6,7 @@ import {
   type PreSpawnProbeDeps,
   type ProbeAdapterView,
 } from './pre-spawn-probe';
+import { SILENT_REMINT_HINT } from '../adapters/seat-auth-readiness';
 
 const claudeAdapter: ProbeAdapterView = {
   kind: 'cli-pty',
@@ -320,6 +321,70 @@ describe('probePreSpawn — api-key adapters', () => {
     const deps = makeDeps({ getAdapter: () => ({ kind: 'api-provider' }) });
     const failure = await runProbe('future-http', deps);
     expect(failure?.code).toBe('key-missing');
+  });
+
+  it('autopilot remint de LongCat não tosta Cole sua API key', async () => {
+    const longcat: ProbeAdapterView = {
+      kind: 'cli-pty',
+      auth: {
+        method: 'api_key',
+        loginHint: 'Cole sua API key do LongCat em Configurações › Providers',
+      },
+    };
+    const failure = await probePreSpawn('longcat', {
+      deps: makeDeps({ getAdapter: () => longcat }),
+      silentRemint: true,
+    });
+    expect(failure?.code).toBe('missing-credential');
+    expect(failure?.hint).toBe(SILENT_REMINT_HINT);
+    expect(failure?.hint).not.toMatch(/cole sua api key/i);
+  });
+});
+
+describe('probePreSpawn — kimi 5-state seating', () => {
+  const kimiAdapter: ProbeAdapterView = {
+    kind: 'cli-pty',
+    auth: { method: 'oauth', loginHint: 'rode `kimi login`' },
+  };
+
+  it('arquivo OAuth sem provider list não senta (incomplete)', async () => {
+    const failure = await runProbe(
+      'kimi',
+      makeDeps({
+        getAdapter: () => kimiAdapter,
+        hasNativeFileAuth: () => true,
+        authStrategy: () => 'subscription',
+      }),
+    );
+    expect(failure?.code).toBe('missing-credential');
+    expect(failure?.adapterId).toBe('kimi');
+  });
+
+  it('source=oauth no provider list senta', async () => {
+    expect(
+      await runProbe(
+        'kimi',
+        makeDeps({
+          getAdapter: () => kimiAdapter,
+          authStrategy: () => 'subscription',
+          kimiSeatReadiness: () => 'present',
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  it('disabled / missing / unreadable não sentam', async () => {
+    for (const state of ['no-credential', 'missing', 'unreadable'] as const) {
+      const failure = await runProbe(
+        'kimi',
+        makeDeps({
+          getAdapter: () => kimiAdapter,
+          authStrategy: () => 'subscription',
+          kimiSeatReadiness: () => state,
+        }),
+      );
+      expect(failure?.code).toBe('missing-credential');
+    }
   });
 });
 

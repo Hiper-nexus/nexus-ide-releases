@@ -118,6 +118,10 @@ import {
   initWorkerHandoffTtl,
   shutdownWorkerHandoffTtl,
 } from "./worker-handoff-ttl";
+import {
+  initWorkerDeliveryBoard,
+  shutdownWorkerDeliveryBoard,
+} from "./worker-delivery-board";
 import { startTurnEndHandoffClosure } from "./turn-end-handoff";
 import {
   initWorkerHandoffEnforcement,
@@ -190,6 +194,10 @@ import {
   squadAuthorityReviewStrings,
   type SquadAuthoritySnapshot,
 } from './squad-authority-snapshot';
+import {
+  leftoverIsolationStillLive,
+  persistLeftoverIsolation,
+} from "../../shared/mission-leftover-isolation";
 import {
   closeOrphanedMissionRuntime,
   closeMissionRuntimePreservingHistory,
@@ -1465,6 +1473,7 @@ export async function initOrchestration(): Promise<void> {
     initIdleDelivery();
     initAgentWaitingBroadcast();
     initWorkerHandoffTtl();
+    initWorkerDeliveryBoard();
     // C-194.1: fechamento mecânico de turno (turn-end-handoff) — captura a
     // fronteira de turno que o dedup por turno precisa, antes do primeiro
     // Stop chegar. Idempotente.
@@ -1593,6 +1602,7 @@ export async function closeOrchestration(): Promise<void> {
     shutdownIdleDelivery();
     shutdownAgentWaitingBroadcast();
     shutdownWorkerHandoffTtl();
+    shutdownWorkerDeliveryBoard();
     shutdownWorkerHandoffEnforcement();
     stopAllPreviews();
     stopRemoteBridge();
@@ -1694,18 +1704,42 @@ async function runOperatorMissionStop(
       return closeOrphanedMissionRuntime({ scope, missionId });
     });
   }
-  const candidate = prepareMissionRuntimeTermination({
-    scope,
-    suite,
-    missionId,
-    reason: "operator-close",
-  });
+  const current = suite.missions.get(missionId);
+  let candidate;
+  try {
+    candidate = prepareMissionRuntimeTermination({
+      scope,
+      suite,
+      missionId,
+      reason: "operator-close",
+    });
+  } catch {
+    // Encerrar é park durável. Inventário físico ambíguo no meio do voo
+    // não pode impedir o persist — senão a rail pinta Parou e o SQLite
+    // fica running, e o remount volta como Trabalhando.
+    candidate = {
+      missionId,
+      missionTitle: current?.title ?? missionId,
+      reason: "operator-close" as const,
+      sessionIds: Object.freeze([]) as readonly string[],
+      fence: "encerrar-park-without-inventory",
+    };
+  }
   if (!(await confirmMissionRuntimeClose(owner, scope, candidate))) {
     return {
       ok: false,
       cancelled: true,
       terminatedSessionIds: [],
     };
+  }
+  // Park ANTES do lock/teardown: Encerrar não é só UI. Se o teardown
+  // falhar ou a ressurreição correr na janela, a row já não é running.
+  const parked = persistLeftoverIsolation(suite.missions, missionId, "encerrar");
+  const durable = parked ?? suite.missions.get(missionId);
+  if (leftoverIsolationStillLive(durable)) {
+    throw new Error(
+      "Encerrar não persistiu leftover não-running no SQLite.",
+    );
   }
   return withMissionLifecycleLock(scope, missionId, () => {
     requireLiveRendererWorkspaceScope(owner, scope);

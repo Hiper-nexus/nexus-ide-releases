@@ -3,6 +3,7 @@ import {
   classifySessionLiveness,
   fastLaneResumeForLiveness,
   fenceBlocksOrchestratorSpawn,
+  isConnectedAndWritable,
 } from './session-liveness';
 
 /**
@@ -45,5 +46,14 @@ describe('decisão do fast-lane', () => {
     expect(fastLaneResumeForLiveness('live')).toBe('watch');
     expect(fastLaneResumeForLiveness('exited')).toBe('respawn');
     expect(fastLaneResumeForLiveness('unverifiable')).toBe('respawn');
+  });
+});
+
+describe('isConnectedAndWritable', () => {
+  it('exige live + stdin writable', () => {
+    expect(isConnectedAndWritable('live', true)).toBe(true);
+    expect(isConnectedAndWritable('live', false)).toBe(false);
+    expect(isConnectedAndWritable('exited', true)).toBe(false);
+    expect(isConnectedAndWritable('unverifiable', true)).toBe(false);
   });
 });

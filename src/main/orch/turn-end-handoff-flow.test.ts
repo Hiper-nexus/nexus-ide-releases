@@ -32,6 +32,13 @@ vi.mock('./pty-stream-handoff', () => ({
   terminateStaleReadOnlyPtyStreamSession: mocks.terminateStale,
 }));
 
+vi.mock('./worker-delivery-board', () => ({
+  recordWorkerDeliveryIfDelivered: vi.fn(),
+  markSessionSealedBoardCredited: vi.fn(),
+  initWorkerDeliveryBoard: vi.fn(),
+  shutdownWorkerDeliveryBoard: vi.fn(),
+}));
+
 import {
   __resetTurnEndHandoffForTests,
   handleTurnEndMechanicalHandoff,

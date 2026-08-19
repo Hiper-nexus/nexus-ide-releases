@@ -3,8 +3,9 @@
  *
  * Reúne as projeções vivas — tasks simples da missão, dispatches legados e
  * panes vivos do registry — e delega a fusão ao módulo puro compartilhado.
- * A projeção de plano selado/ondas morreu com o motor cerimonial: a fila
- * agora nasce das linhas simples de task (Via Rápida não sela plano).
+ * A projeção de plano selado/ondas cerimonial morreu: a fila nasce das
+ * linhas de task. Na Via Rápida o Main sela as stories listadas do
+ * objetivo (mission-item-count) para o board contar N/M, não papéis.
  */
 import type { Mission, PaneSnapshot } from "../../shared/orch-types";
 import {

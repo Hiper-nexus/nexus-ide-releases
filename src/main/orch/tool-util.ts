@@ -15,12 +15,19 @@ import {
 import type { AgentGateContext } from './gate';
 import {
   getSessionState,
+  isSessionStdinWritable,
   orchTerminateSession,
   orchWriteSession,
   tapSessionData,
   tapSessionExit,
   tapSessionState,
 } from '../pty/pty-manager';
+import {
+  proveWriterConnectedAndWritable,
+  writerCircuitBreakEvent,
+  writerCircuitBreakers,
+} from './writer-circuit-break';
+import { trace } from '../observability/main-trace';
 import { getAdapter } from '../adapters/adapter-registry';
 import { discoverCliModels } from '../adapters/cli-model-discovery';
 import {
@@ -1029,6 +1036,7 @@ export async function spawnPaneAndMaybePrompt(
     failClosed: !isOperatorChoicePolicy(
       getOrchSettings().squadCliPolicy,
     ),
+    silentRemint: true,
   });
   assertMcpInvocationCurrent(hooks.invocation);
   if (options.missionId && options.role) {
@@ -1135,6 +1143,50 @@ export async function spawnPaneAndMaybePrompt(
     await requestPaneClose(result.paneId);
     throw error;
   }
+  const writerKey = {
+    adapterId: options.adapterId,
+    role: options.role ?? 'worker',
+    missionId: options.missionId,
+  };
+  const writerReady =
+    options.role === 'orchestrator'
+      ? true
+      : await proveWriterConnectedAndWritable(result.sessionId, {
+          deps: {
+            getState: getSessionState,
+            isStdinWritable: (sessionId) =>
+              typeof isSessionStdinWritable === 'function'
+                ? isSessionStdinWritable(sessionId)
+                : true,
+            sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+          },
+        });
+  if (!writerReady) {
+    const failures = writerCircuitBreakers.recordConnectFailure(writerKey);
+    adapterCircuitBreakers.recordFailure(options.adapterId);
+    const action = writerCircuitBreakers.decideAfterFailure(writerKey, []);
+    if (writerCircuitBreakers.isTripped(writerKey)) {
+      trace(
+        writerCircuitBreakEvent({
+          key: writerKey,
+          failures,
+          action,
+          sessionId: result.sessionId,
+        }),
+      );
+    }
+    try {
+      await requestPaneClose(result.paneId);
+    } catch {
+      // original connect failure matters more
+    }
+    throw new Error(
+      writerCircuitBreakers.isTripped(writerKey)
+        ? `writer_circuit_break: ${options.adapterId} não ficou connected+writable`
+        : `${options.adapterId} PTY não ficou connected+writable`,
+    );
+  }
+  writerCircuitBreakers.recordConnectSuccess(writerKey);
   adapterCircuitBreakers.recordSuccess(options.adapterId);
   hooks.onPaneCreated?.(result.paneId, result.sessionId);
   // Remember the mission's composition so it can be reopened from history.

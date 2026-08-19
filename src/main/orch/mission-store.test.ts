@@ -2248,4 +2248,60 @@ describe('scoped mission store', () => {
     );
     expect(resumed?.updatedAt).toBeGreaterThan(blocked!.updatedAt);
   });
+
+  it('persistLeftoverIsolation park grava blocked e não deixa running', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope({ checkoutId: 'leftover-park' });
+    let now = 100;
+    const store = createScopedMissionStore(runtimeManager, scope, {
+      now: () => ++now,
+      idFactory: () => 'mission-leftover-park',
+    });
+    const created = store.create({
+      title: 'Leftover na rail',
+      description: 'Time de 20 stories',
+    });
+    store.setStatus(created.id, 'running');
+    expect(store.get(created.id)?.status).toBe('running');
+
+    const parked = store.persistLeftoverIsolation(created.id, 'park');
+    expect(parked?.status).toBe('blocked');
+    expect(parked?.intentState).toBe('blocked_user');
+    expect(parked?.description).toContain('<!-- nexus:leftover-parked -->');
+    expect(store.list('running')).toEqual([]);
+    expect(store.get(created.id)?.status).toBe('blocked');
+  });
+
+  it('Encerrar persiste leftover blocked no SQLite e reopen não vê running', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope({ checkoutId: 'leftover-encerrar' });
+    let now = 200;
+    const store = createScopedMissionStore(runtimeManager, scope, {
+      now: () => ++now,
+      idFactory: () => 'mission-ebd1c3ee',
+    });
+    const created = store.create({
+      title: 'stress-tiny',
+      description: 'Via Rápida mid-flight',
+    });
+    store.setStatus(created.id, 'running');
+    expect(store.get(created.id)?.status).toBe('running');
+
+    const parked = store.persistLeftoverIsolation(created.id, 'encerrar');
+    expect(parked?.status).toBe('blocked');
+    expect(parked?.intentState).toBe('blocked_user');
+    expect(parked?.description).toContain('<!-- nexus:leftover-parked -->');
+    expect(parked?.description).toContain('<!-- nexus:runtime-closed -->');
+    expect(store.list('running')).toEqual([]);
+
+    runtimeManager.close(scope);
+    const reopened = createScopedMissionStore(runtimeManager, scope);
+    const row = reopened.get(created.id);
+    expect(row?.status).toBe('blocked');
+    expect(row?.status).not.toBe('running');
+    expect(row?.intentState).toBe('blocked_user');
+    expect(row?.description).toContain('<!-- nexus:leftover-parked -->');
+    expect(row?.description).toContain('<!-- nexus:runtime-closed -->');
+    expect(reopened.list('running')).toEqual([]);
+  });
 });

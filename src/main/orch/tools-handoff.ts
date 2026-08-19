@@ -38,6 +38,21 @@ import {
 } from "./agent-attestation-gate";
 import { lookupIssuedHandoffAttestation } from "./agent-attestation-lookup";
 import { getMissionEventRuntimeManager } from "./mission-event-emit";
+import {
+  advanceFastLaneStoryTaskFromHandoff,
+  boardProgressFromSealedTasks,
+} from "./mission-story-plan";
+import {
+  markMissionFilesCredited,
+  markSessionSealedBoardCredited,
+} from "./sealed-board-session-credit";
+import { listDirtyPathsUnderCwd } from "./worker-delivery-evidence";
+import { maybeApplyCivilianPronto } from "./civilian-pronto";
+import {
+  collectFilesModified,
+  maybeCompleteFastLaneOnDelivery,
+  normalizeFilesModified,
+} from "./worker-files-modified";
 
 function requireHandoffMcpEffectIntent(
   invocation: McpToolInvocation | undefined,
@@ -99,7 +114,7 @@ const handoffSubmitTool: McpToolDef = {
   description:
     "Submit your work handoff to the orchestrator: " +
     "{status: success|partial|blocked|failed, summary, artifacts?, " +
-    "evidenceIds?}. The Overclock aliases done/error are accepted at the " +
+    "filesModified?, evidenceIds?}. The Overclock aliases done/error are accepted at the " +
     "boundary and mapped (done→success, error→failed). Always allowed " +
     "regardless of allowlists. Status and artifacts are untrusted delivery " +
     "metadata and never complete a mission. Only evidenceIds already issued " +
@@ -113,6 +128,8 @@ const handoffSubmitTool: McpToolDef = {
       },
       summary: { type: "string" },
       artifacts: { type: "array", items: {} },
+      filesModified: { type: "array", items: { type: "string" } },
+      "files-modified": { type: "array", items: { type: "string" } },
       evidenceIds: { type: "array", items: { type: "string" } },
     },
     required: ["status", "summary"],
@@ -321,6 +338,70 @@ const handoffSubmitTool: McpToolDef = {
       !replayed || handoff.deliveryState === "queued"
         ? onHandoffSubmitted(handoff, ctx.scope)
         : null;
+    if (ctx.missionId && !replayed) {
+      try {
+        const declaredFiles = normalizeFilesModified({
+          filesModified: args.filesModified,
+          "files-modified": args["files-modified"],
+          artifacts: args.artifacts,
+        });
+        const diskFiles = collectFilesModified(ctx.scope.rootRealPath);
+        const filesModified =
+          declaredFiles.length > 0 ? declaredFiles : diskFiles;
+        const advanced = advanceFastLaneStoryTaskFromHandoff(suite, {
+          missionId: ctx.missionId,
+          fromAgent,
+          adapterId: ctx.providerId,
+          summary,
+          preferredTaskId: boundDispatch?.taskId,
+          handoffStatus: status,
+          filesModified,
+        });
+        if (advanced && ctx.sessionId) {
+          markSessionSealedBoardCredited(ctx.sessionId);
+          const cwd =
+            ctx.executionScope?.rootRealPath ?? ctx.scope.rootRealPath;
+          try {
+            markMissionFilesCredited(
+              ctx.missionId,
+              listDirtyPathsUnderCwd(cwd),
+            );
+          } catch {
+            // Credit de arquivos é best-effort; a task já avançou.
+          }
+        }
+        try {
+          const sealed = suite.tasks.list(ctx.missionId);
+          const progress = boardProgressFromSealedTasks(sealed);
+          const delivery = maybeCompleteFastLaneOnDelivery({
+            filesModified,
+            mcpHandoffClosedTask: Boolean(advanced),
+            sealedCompleted: progress.completed,
+            sealedTotal: progress.total,
+          });
+          console.info(
+            `[handoff] worker_done files-modified=${filesModified.length} sealed=${progress.completed}/${progress.total} pronto=${delivery.pronto}`,
+          );
+        } catch (creditErr) {
+          console.warn(
+            "[handoff] files-modified credit falhou:",
+            creditErr instanceof Error ? creditErr.message : creditErr,
+          );
+        }
+      } catch (error) {
+        console.warn(
+          "[handoff] avanço da task selada falhou:",
+          error instanceof Error ? error.message : error,
+        );
+      }
+      try {
+        maybeApplyCivilianPronto(ctx.scope, ctx.missionId);
+      } catch (error) {
+        console.warn(
+          "[handoff] Pronto civil após handoff falhou:",
+          error instanceof Error ? error.message : error,
+        );
+      }    }
     // autoCloseOnHandoff (paridade Bridge): declarado no spawn, dispara SÓ
     // no success — falha preserva pane e scrollback. Fora do caminho da
     // resposta: o fechamento nunca atrasa nem derruba o handoff.

@@ -1,4 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('./worker-delivery-board', () => ({
+  recordWorkerDeliveryIfDelivered: vi.fn(),
+  markSessionSealedBoardCredited: vi.fn(),
+}));
+
 import {
   __noteTurnStartForTests,
   __resetTurnEndHandoffForTests,

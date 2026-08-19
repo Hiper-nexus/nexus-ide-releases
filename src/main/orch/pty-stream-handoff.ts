@@ -30,6 +30,7 @@ import {
   runInsidePtyStreamAgentTransport,
 } from "./http-mcp-boundary";
 import { onHandoffSubmitted } from "./idle-delivery";
+import { advanceFastLaneStoryTaskFromHandoff } from "./mission-story-plan";
 import {
   committedPhysicalWorkerHead,
   assertReadOnlyLaneObservationCurrent,
@@ -418,6 +419,21 @@ async function persistPtyHandoff(
     }
     if (!committed.replayed || committed.handoff.deliveryState === "queued") {
       onHandoffSubmitted(committed.handoff, ctx.scope);
+      try {
+        advanceFastLaneStoryTaskFromHandoff(prepared.suite, {
+          missionId: prepared.missionId,
+          fromAgent: committed.handoff.fromAgent,
+          summary: prepared.summary,
+          preferredTaskId: prepared.dispatch?.taskId,
+          handoffStatus: prepared.payload.status,
+          sessionId,
+        });
+      } catch (error) {
+        console.warn(
+          "[handoff] PTY SUCCESS não avançou o board selado:",
+          error instanceof Error ? error.message : error,
+        );
+      }
     }
     return Object.freeze({
       handoffId: committed.handoff.id,

@@ -127,7 +127,50 @@ describe('projectMissionSnapshot', () => {
 
     const snapshot = projectMissionSnapshot(view);
 
-    expect(snapshot.state).toBe('running');
+    expect(snapshot.state).toBe('blocked_technical');
+    expect(snapshot.stateReason?.code).toBe('session-dead');
+    expect(snapshot.stateReason?.label).toBe('Parou');
+  });
+
+  it('selo leftover parked persiste Parou mesmo com status blocked desta sessão', () => {
+    const view = runningView();
+    view.mission.status = 'blocked';
+    view.mission.updatedAt = Date.now();
+    view.orchestratorLive = false;
+    view.leftoverParked = true;
+    view.panes = [];
+
+    const snapshot = projectMissionSnapshot(view);
+
+    expect(snapshot.state).toBe('blocked_technical');
+    expect(snapshot.stateReason?.label).toBe('Parou');
+  });
+
+  it('leftover blocked de antes do boot também é Parou — não some só o AGY', () => {
+    const view = runningView();
+    view.mission.status = 'blocked';
+    view.mission.updatedAt = 1;
+    view.orchestratorLive = false;
+    view.panes = [];
+
+    const snapshot = projectMissionSnapshot(view);
+
+    expect(snapshot.state).toBe('blocked_technical');
+    expect(snapshot.stateReason?.code).toBe('session-dead');
+    expect(snapshot.stateReason?.label).toBe('Parou');
+  });
+
+  it('leftover pending de antes do boot não fica Pronta para iniciar', () => {
+    const view = runningView();
+    view.mission.status = 'pending';
+    view.mission.updatedAt = 1;
+    view.orchestratorLive = false;
+    view.panes = [];
+
+    const snapshot = projectMissionSnapshot(view);
+
+    expect(snapshot.state).toBe('blocked_technical');
+    expect(snapshot.stateReason?.label).toBe('Parou');
   });
 
   it('runtime-closed tem precedência sobre restore-failed', () => {
@@ -191,6 +234,26 @@ describe('projectMissionSnapshot', () => {
     expect(snapshot.stateReason?.code).toBe('open-question');
     expect(snapshot.question).toEqual(view.openQuestion);
     expect(snapshot.allowedActions).toEqual(['answer-question', 'stop']);
+  });
+
+  it('Pronto justified (done+result) vira completed mesmo com leftover writers', () => {
+    const view = runningView();
+    view.mission.status = 'done';
+    view.mission.result = {
+      outcome: 'success',
+      summary: 'Pronto justified by files-modified/handoff (5/5).',
+      evidenceIds: [],
+      artifactRefs: ['server.js'],
+    };
+    view.tasks[0]!.status = 'done';
+    view.panes = [
+      { paneId: 'generalist', agentId: 'agent-1', state: 'working' },
+      { paneId: 'ux', agentId: 'agent-1', state: 'working' },
+    ];
+
+    const snapshot = projectMissionSnapshot(view);
+
+    expect(snapshot.state).toBe('completed');
   });
 
   it('projects a verified terminal plan as completed', () => {

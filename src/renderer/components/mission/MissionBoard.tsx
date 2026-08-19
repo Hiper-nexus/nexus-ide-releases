@@ -109,7 +109,7 @@ const LIFECYCLE_LABELS: Readonly<Record<MissionLifecycleState, string>> = {
   recovering: 'Recuperando',
   stopping: 'Parando',
   failed: 'Falhou',
-  completed: 'Concluída',
+  completed: 'Pronto',
 };
 
 type HeaderAction = Extract<

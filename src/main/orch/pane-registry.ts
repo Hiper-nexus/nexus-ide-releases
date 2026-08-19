@@ -88,7 +88,17 @@ import {
   workerMortalityBreakerMessage,
   workerMortalityCount,
 } from "./worker-mortality";
+import {
+  writerCircuitBlocksSeat,
+  writerCircuitBreakEvent,
+  writerCircuitBreakMessage,
+  writerCircuitBreakers,
+} from "./writer-circuit-break";
 import { trace } from "../observability/main-trace";
+import {
+  ORCH_SPAWN_GRANT_TTL_MS,
+  ORCH_SPAWN_GRANT_TOMBSTONE_TTL_MS,
+} from "./orch-spawn-grant-recovery";
 
 /**
  * Main-process mirror of the renderer's pane grid plus per-session output ring
@@ -101,7 +111,7 @@ import { trace } from "../observability/main-trace";
 // CLI cold starts can legitimately include login/profile discovery and MCP
 // bootstrap. Thirty seconds was shorter than real Claude/GLM startup on a
 // busy machine and turned a healthy late spawn into a retry storm.
-const SPAWN_TIMEOUT_MS = 90_000;
+const SPAWN_TIMEOUT_MS = ORCH_SPAWN_GRANT_TTL_MS;
 const RECOVERY_TIMEOUT_MS = 90_000;
 
 type OrchMeta = PaneOrchMeta;
@@ -136,6 +146,168 @@ interface PendingSpawn {
   abortCleanup?: () => void;
 }
 const pendingSpawns = new Map<string, PendingSpawn>();
+
+interface OrchSpawnGrantTombstone {
+  readonly requestId: string;
+  readonly owner: WebContents;
+  readonly request: Readonly<OrchPaneSpawnRequest>;
+  readonly meta: OrchMeta;
+  readonly requestedCwd?: string;
+  readonly initialPrompt?: string;
+  readonly sessionId: string | null;
+  readonly kind: "consumed" | "expired";
+  readonly createdAt: number;
+}
+const orchSpawnGrantTombstones = new Map<string, OrchSpawnGrantTombstone>();
+
+function pruneOrchSpawnGrantTombstones(now: number = Date.now()): void {
+  for (const [id, tomb] of orchSpawnGrantTombstones) {
+    if (
+      tomb.createdAt + ORCH_SPAWN_GRANT_TOMBSTONE_TTL_MS <= now ||
+      tomb.owner.isDestroyed()
+    ) {
+      orchSpawnGrantTombstones.delete(id);
+    }
+  }
+}
+
+function rememberOrchSpawnGrantTombstone(
+  requestId: string,
+  pending: PendingSpawn,
+  kind: "consumed" | "expired",
+): void {
+  pruneOrchSpawnGrantTombstones();
+  orchSpawnGrantTombstones.set(requestId, {
+    requestId,
+    owner: pending.owner,
+    request: pending.request,
+    meta: pending.meta,
+    requestedCwd: pending.requestedCwd,
+    initialPrompt: pending.initialPrompt,
+    sessionId: pending.claimedSessionId,
+    kind,
+    createdAt: Date.now(),
+  });
+}
+
+function liveSessionIdForPane(paneId: string): string | null {
+  const owned = getMainOwnedPane(paneId);
+  if (
+    owned?.entry.sessionId &&
+    getSessionState(owned.entry.sessionId) !== null
+  ) {
+    return owned.entry.sessionId;
+  }
+  for (const registered of panes) {
+    if (
+      registered.entry.paneId === paneId &&
+      typeof registered.entry.sessionId === "string" &&
+      getSessionState(registered.entry.sessionId) !== null
+    ) {
+      return registered.entry.sessionId;
+    }
+  }
+  return listAgentSessionsForPane(paneId)[0]?.sessionId ?? null;
+}
+
+export function hasOrchSpawnGrantTombstone(
+  requestId: string,
+  owner: WebContents,
+): boolean {
+  pruneOrchSpawnGrantTombstones();
+  const tomb = orchSpawnGrantTombstones.get(requestId);
+  return Boolean(tomb && tomb.owner === owner);
+}
+
+export function lookupAlreadySpawnedOrchGrant(
+  requestId: string,
+  owner: WebContents,
+  paneId?: string,
+): { readonly sessionId: string; readonly paneId: string } | null {
+  pruneOrchSpawnGrantTombstones();
+  const tomb = orchSpawnGrantTombstones.get(requestId);
+  if (tomb && tomb.owner === owner && tomb.sessionId) {
+    if (getSessionState(tomb.sessionId) !== null) {
+      return { sessionId: tomb.sessionId, paneId: tomb.request.paneId };
+    }
+  }
+  const targetPane = paneId ?? tomb?.request.paneId;
+  if (!targetPane) return null;
+  if (tomb && tomb.owner !== owner) return null;
+  const sessionId = liveSessionIdForPane(targetPane);
+  return sessionId ? { sessionId, paneId: targetPane } : null;
+}
+
+function armPendingSpawnTimer(requestId: string, pending: PendingSpawn): void {
+  clearTimeout(pending.timer);
+  pending.timer = setTimeout(() => {
+    void settlePendingSpawnFailure(
+      requestId,
+      pending,
+      "pane spawn timed out",
+      { allowMainFallback: true },
+    );
+  }, SPAWN_TIMEOUT_MS);
+  pending.lastSentAt = Date.now();
+}
+
+export function refreshPendingOrchSpawnGrantsForMission(
+  missionId: string,
+): void {
+  for (const [id, pending] of pendingSpawns) {
+    if (pending.settled) continue;
+    if (
+      pending.meta.missionId !== missionId &&
+      pending.request.missionId !== missionId
+    ) {
+      continue;
+    }
+    armPendingSpawnTimer(id, pending);
+  }
+}
+
+/**
+ * Recreate a consumed/expired orchspawn grant so a remount can finish
+ * spawning on a still-running civilian mission. Same request id so the
+ * renderer does not need a new token.
+ */
+export function remintOrchSpawnGrant(
+  requestId: string,
+  owner: WebContents,
+): PendingSpawnMeta | null {
+  pruneOrchSpawnGrantTombstones();
+  const existing = pendingSpawns.get(requestId);
+  if (existing && existing.owner === owner && !existing.settled) {
+    if (existing.claimed) return null;
+    return claimPendingSpawn(existing, owner);
+  }
+  const tomb = orchSpawnGrantTombstones.get(requestId);
+  if (!tomb || tomb.owner !== owner) return null;
+  if (tomb.meta.scope) {
+    try {
+      requireLiveRendererWorkspaceScope(owner, tomb.meta.scope);
+    } catch {
+      return null;
+    }
+  }
+  const pending: PendingSpawn = {
+    resolve: () => {},
+    timer: setTimeout(() => undefined, SPAWN_TIMEOUT_MS),
+    owner,
+    initialPrompt: tomb.initialPrompt,
+    claimed: false,
+    claimedSessionId: null,
+    requestedCwd: tomb.requestedCwd,
+    request: tomb.request,
+    lastSentAt: Date.now(),
+    attempts: 1,
+    settled: false,
+    meta: tomb.meta,
+  };
+  armPendingSpawnTimer(requestId, pending);
+  pendingSpawns.set(requestId, pending);
+  return claimPendingSpawn(pending, owner);
+}
 
 interface PendingBrowserOpen {
   resolve: (result: BrowserPaneOpenResult) => void;
@@ -626,6 +798,7 @@ async function settlePendingSpawnFailure(
     // Delete before any physical-exit await. A late renderer ACK cannot win
     // the race and a late bind is rejected by pty-ipc, which then tears down
     // the process it just created.
+    rememberOrchSpawnGrantTombstone(requestId, pending, "expired");
     pendingSpawns.delete(requestId);
   }
 
@@ -1732,16 +1905,48 @@ export function requestPaneSpawn(
   if (options.role === "worker" && options.missionId && options.adapterId) {
     const deaths = workerMortalityCount(options.missionId, options.adapterId);
     if (shouldTripWorkerMortalityBreaker(deaths)) {
+      const writerKey = {
+        adapterId: options.adapterId,
+        role: "worker" as const,
+        missionId: options.missionId,
+      };
       trace({
-        kind: "worker-mortality-breaker-trip",
+        kind: "writer_circuit_break",
         missionId: options.missionId,
         adapterId: options.adapterId,
         deaths,
       });
+      trace(
+        writerCircuitBreakEvent({
+          key: writerKey,
+          failures: deaths,
+          action: "skip-silent",
+        }),
+      );
       return Promise.resolve({
         requestId: "",
         ok: false,
         error: workerMortalityBreakerMessage(options.adapterId, deaths),
+      });
+    }
+    const writerKey = {
+      adapterId: options.adapterId,
+      role: options.role,
+      missionId: options.missionId,
+    };
+    if (writerCircuitBlocksSeat(writerKey)) {
+      const failures = writerCircuitBreakers.failureCount(writerKey);
+      trace(
+        writerCircuitBreakEvent({
+          key: writerKey,
+          failures,
+          action: "skip-silent",
+        }),
+      );
+      return Promise.resolve({
+        requestId: "",
+        ok: false,
+        error: writerCircuitBreakMessage(writerKey),
       });
     }
   }
@@ -1907,6 +2112,9 @@ export function requestPaneSpawn(
       },
     };
     pendingSpawns.set(requestId, pending);
+    if (options.missionId) {
+      refreshPendingOrchSpawnGrantsForMission(options.missionId);
+    }
     if (options.abortSignal) {
       const onAbort = () => {
         void settlePendingSpawnFailure(
@@ -2020,6 +2228,7 @@ export function resolvePaneSpawn(
   pending.settled = true;
   pending.abortCleanup?.();
   pending.abortCleanup = undefined;
+  rememberOrchSpawnGrantTombstone(result.requestId, pending, "consumed");
   pendingSpawns.delete(result.requestId);
   if (result.ok && result.paneId) {
     attachOrchMeta(owner, result.paneId, pending.meta);

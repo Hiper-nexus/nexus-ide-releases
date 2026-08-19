@@ -3,6 +3,11 @@ import { orchestrationEvidenceOf } from "../../shared/adapter-types";
 import type { Squad } from "../../shared/orch-types";
 import { isOperatorChoicePolicy } from "../../shared/squad-cli-policy";
 import { listAdapterInfos } from "../adapters/adapter-registry";
+import { refreshKimiSeatReadiness } from "../adapters/kimi-seat-probe";
+import {
+  classifySeatAuth,
+  peekKimiSeatReadiness,
+} from "../adapters/seat-auth-readiness";
 import { warmKeychainOnlySubscriptionAuth } from "../adapters/subscription-auth";
 import { hasAvailableAccount } from "../persistence/account-store";
 import { listProviderSettings } from "../persistence/provider-config-store";
@@ -44,6 +49,15 @@ export function liveSquadRuntimeInventory(): LiveSquadRuntimeInventory {
       const adapter = adapterById.get(provider.adapterId);
       return Object.freeze({
         ...provider,
+        seatAuthReadiness: classifySeatAuth({
+          adapterId: provider.adapterId,
+          authStrategy: provider.authStrategy,
+          hasKey: provider.hasKey,
+          kimiListReadiness:
+            provider.adapterId === "kimi"
+              ? peekKimiSeatReadiness()
+              : undefined,
+        }),
         adapterLoaded: adapter !== undefined,
         // Worker completion remains independent from Maestro mission control.
         guidedHandoffCapable:
@@ -151,9 +165,12 @@ export async function warmSquadRuntimeSubscriptionAuth(
     (provider) => provider.adapterId,
   ),
 ): Promise<void> {
-  await Promise.all(
-    [...new Set(cliIds)].map((cliId) => warmKeychainOnlySubscriptionAuth(cliId)),
-  );
+  await Promise.all([
+    ...[...new Set(cliIds)].map((cliId) =>
+      warmKeychainOnlySubscriptionAuth(cliId),
+    ),
+    refreshKimiSeatReadiness().catch(() => undefined),
+  ]);
 }
 
 /**

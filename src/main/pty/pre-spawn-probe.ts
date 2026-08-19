@@ -15,6 +15,13 @@ import {
   type AuthStrategy,
 } from '../adapters/subscription-auth';
 import { isCredentiallessOpenCodeModel } from '../adapters/model-auth-readiness';
+import {
+  canSeat,
+  classifySeatAuth,
+  peekKimiSeatReadiness,
+  seatFailureHint,
+  type SeatAuthReadiness,
+} from '../adapters/seat-auth-readiness';
 import { listAccounts } from '../persistence/account-store';
 import {
   hasRuntimeKey,
@@ -91,6 +98,10 @@ export interface PreSpawnProbeDeps {
     adapterId: string,
     model?: string,
   ): AuthStrategy | Promise<AuthStrategy>;
+  /** Test seam for Kimi `provider list` readiness. */
+  kimiSeatReadiness?(
+    adapterId: string,
+  ): SeatAuthReadiness | undefined | Promise<SeatAuthReadiness | undefined>;
 }
 
 export interface PreSpawnProbeOptions {
@@ -101,6 +112,16 @@ export interface PreSpawnProbeOptions {
    * permission. Autopilot/direct terminals retain the unjudged fallback.
    */
   readonly failClosed?: boolean;
+  /**
+   * Autopilot remint / first-wave seating. Suppresses the civilian
+   * "Cole sua API key" toast; LongCat / login-needed stay no-credential.
+   */
+  readonly silentRemint?: boolean;
+  /**
+   * True only when the operator explicitly picked this adapter (settings /
+   * pane spawn). Toast "Cole sua API key" is allowed in that case.
+   */
+  readonly explicitCivilianPick?: boolean;
   /** Test seam; production callers must leave this unset. */
   readonly deps?: PreSpawnProbeDeps;
 }
@@ -161,6 +182,7 @@ async function probe(
   selectedModel: string | undefined,
   deps: PreSpawnProbeDeps,
   failClosed = false,
+  options: Pick<PreSpawnProbeOptions, 'silentRemint' | 'explicitCivilianPick'> = {},
 ): Promise<PreSpawnProbeFailure | null> {
   const adapter = deps.getAdapter(adapterId);
   // Unknown adapters are rejected by the spawn gate itself — not ours to judge.
@@ -190,13 +212,20 @@ async function probe(
     currentAuthStrategy === 'login-needed' &&
     !credentiallessOpenCode
   ) {
+    const civilianHint = hintFor(
+      adapter,
+      'faça login no CLI ou adicione a conta em Configurações › Contas',
+    );
     return {
       code: 'missing-credential',
       adapterId,
-      hint: hintFor(
-        adapter,
-        'faça login no CLI ou adicione a conta em Configurações › Contas',
-      ),
+      hint: seatFailureHint({
+        readiness: 'no-credential',
+        explicitCivilianPick:
+          options.explicitCivilianPick === true ||
+          options.silentRemint !== true,
+        civilianHint,
+      }),
     };
   }
 
@@ -246,6 +275,32 @@ async function probe(
   // File-backed subscription CLIs (codex/grok/kimi/opencode/agy): the native
   // auth file (or a managed account's home, covered above) must exist.
   if (isFileAuthAdapter(adapterId)) {
+    if (adapterId === 'kimi') {
+      const listed =
+        (await deps.kimiSeatReadiness?.(adapterId)) ?? peekKimiSeatReadiness();
+      const readiness = classifySeatAuth({
+        adapterId: 'kimi',
+        authStrategy: currentAuthStrategy,
+        hasKey: deps.hasStoredKey(adapterId, effectiveModel),
+        kimiListReadiness: listed,
+      });
+      if (canSeat(readiness)) return null;
+      const civilianHint = hintFor(
+        adapter,
+        'rode `kimi login` ou confirme `kimi provider list` com source=oauth',
+      );
+      return {
+        code: 'missing-credential',
+        adapterId,
+        hint: seatFailureHint({
+          readiness,
+          explicitCivilianPick:
+            options.explicitCivilianPick === true ||
+            options.silentRemint !== true,
+          civilianHint,
+        }),
+      };
+    }
     // OpenCode's own pinned free catalog is usable without provider auth.
     // The exact model matters: external OpenRouter routes and unreviewed
     // `opencode/*-free` lookalikes must still fail before a pane exists.
@@ -268,10 +323,27 @@ async function probe(
     adapter.kind === 'cli-pty' ? adapter.auth?.method : 'api_key';
   if (authMethod === 'api_key') {
     if (deps.hasStoredKey(adapterId, effectiveModel)) return null;
+    const civilianHint = hintFor(
+      adapter,
+      'cole a API key em Configurações › Providers',
+    );
+    const silentRemint =
+      options.silentRemint === true && options.explicitCivilianPick !== true;
+    if (silentRemint) {
+      return {
+        code: 'missing-credential',
+        adapterId,
+        hint: seatFailureHint({
+          readiness: 'no-credential',
+          explicitCivilianPick: false,
+          civilianHint,
+        }),
+      };
+    }
     return {
       code: 'key-missing',
       adapterId,
-      hint: hintFor(adapter, 'cole a API key em Configurações › Providers'),
+      hint: civilianHint,
     };
   }
 
@@ -293,6 +365,7 @@ export async function probePreSpawn(
       options.model,
       options.deps ?? defaultDeps,
       options.failClosed === true,
+      options,
     );
   } catch (err) {
     if (options.failClosed) {

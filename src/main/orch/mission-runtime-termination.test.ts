@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Mission, MissionPaneSpec } from '../../shared/orch-types';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { compileIntentContract } from '../../shared/mission-intent';
+import { MISSION_RUNTIME_CLOSED_MARKER } from '../../shared/mission-recovery-policy';
+import { NEXUS_LEFTOVER_PARKED_MARKER } from '../../shared/mission-leftover-isolation';
 
 const runtime = vi.hoisted(() => ({
   pty: [] as Array<Record<string, unknown>>,
@@ -794,6 +796,9 @@ describe('operator close preserves durable mission history', () => {
         orchestratorSessionId: undefined,
       },
     });
+    expect(stores.current().status).not.toBe('running');
+    expect(stores.current().description).toContain(NEXUS_LEFTOVER_PARKED_MARKER);
+    expect(stores.current().description).toContain(MISSION_RUNTIME_CLOSED_MARKER);
   });
 
   it('is idempotent when the runtime is already physically absent', async () => {

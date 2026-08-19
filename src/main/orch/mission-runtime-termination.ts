@@ -7,6 +7,10 @@ import {
   missionBlockPatch,
 } from '../../shared/mission-intent';
 import {
+  leftoverIsolationStillLive,
+  persistLeftoverIsolation,
+} from '../../shared/mission-leftover-isolation';
+import {
   hasAutomaticTechnicalRecovery,
   MISSION_RUNTIME_CLOSED_MARKER,
 } from '../../shared/mission-recovery-policy';
@@ -749,7 +753,8 @@ export async function closeMissionRuntimePreservingHistory(input: {
     };
   }
   const blocked =
-    (current.status === 'blocked' || current.status === 'failed') &&
+    persistLeftoverIsolation(input.suite.missions, current.id, 'encerrar') ??
+    ((current.status === 'blocked' || current.status === 'failed') &&
     !hasAutomaticTechnicalRecovery(current)
       ? current
       : input.suite.missions.update(current.id, {
@@ -760,12 +765,20 @@ export async function closeMissionRuntimePreservingHistory(input: {
             '[NEXUS_RUNTIME_CLOSED]',
             'Execução encerrada pelo operador; histórico e receipts preservados.',
           ),
-        });
+        }));
   if (!blocked) {
     return {
       ok: false,
       terminatedSessionIds: [],
       error: 'A missão desapareceu durante o encerramento.',
+    };
+  }
+  if (leftoverIsolationStillLive(blocked)) {
+    return {
+      ok: false,
+      mission: blocked,
+      terminatedSessionIds: [],
+      error: 'Encerrar não persistiu leftover não-running no SQLite.',
     };
   }
   const settled = await settleMissionRuntimeDemotion({
