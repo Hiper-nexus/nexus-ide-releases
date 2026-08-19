@@ -97,6 +97,26 @@ export function pruneWouldLeaveOperatorMute(
 export const MISSION_OWNED_EXIT_NOTICE =
   '[nexus] turno encerrado. Digite para religar o Maestro — a missão continua no rail.';
 
+/**
+ * Exit de pane de missão: SILÊNCIO no normal, instrução só no anormal.
+ *
+ * C-194.1 fecha o turno do worker mecanicamente — exit code 0 é o fim
+ * NORMAL de turno, não um incidente. Imprimir "Digite para religar o
+ * Maestro" em cada worker a cada turno (voo real 19/08, 4 panes gritando
+ * ao mesmo tempo) só cria atrito: o operador lê como quebra e digita à
+ * toa. Uma linha cinza discreta basta. Instrução de ação aparece apenas
+ * quando o processo CAIU (code ≠ 0) — aí digitar religa de verdade.
+ */
+export function missionOwnedExitNotice(exitCode: number): string {
+  if (exitCode === 0) {
+    return `[nexus] turno encerrado — a missão segue no rail.`;
+  }
+  return (
+    `[nexus] processo caiu (code ${exitCode}). ` +
+    'Digite para religar — a missão continua no rail.'
+  );
+}
+
 export const STALE_AUTHORITY_SYNC_NOTICE =
   '[nexus] contexto antigo detectado — sincronizando a missão uma vez pela autoridade principal…';
 

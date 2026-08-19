@@ -7,6 +7,7 @@ import {
   decideUnlockRetiredMissionPane,
   MISSION_HOLD_NOTICE,
   MISSION_OWNED_EXIT_NOTICE,
+  missionOwnedExitNotice,
   pruneWouldLeaveOperatorMute,
   STANDALONE_HOLD_NOTICE,
   STALE_AUTHORITY_SYNC_NOTICE,
@@ -228,5 +229,23 @@ describe('copy alinhada ao caminho real', () => {
     expect(STALE_AUTHORITY_SYNC_NOTICE).toMatch(/uma vez/);
     expect(STALE_AUTHORITY_UNLOCK_NOTICE).toMatch(/Digite para um shell/);
     expect(BLOCKED_RESUME_NOTICE).toMatch(/autoridade principal/);
+  });
+
+  it('exit NORMAL de turno (code 0) é silêncio — nenhuma instrução ao operador', () => {
+    // C-194.1: worker encerra o turno com code 0 a cada entrega. Gritar
+    // "Digite para religar" em cada worker (4 panes ao mesmo tempo, 19/08)
+    // era o atrito que o operador leu como quebra.
+    const normal = missionOwnedExitNotice(0);
+    expect(normal).toMatch(/turno encerrado/);
+    expect(normal).toMatch(/rail/);
+    expect(normal).not.toMatch(/Digite/i);
+    expect(normal).not.toMatch(/Reinici/i);
+  });
+
+  it('processo que CAIU (code ≠ 0) mantém a instrução acionável', () => {
+    const crashed = missionOwnedExitNotice(1);
+    expect(crashed).toMatch(/code 1/);
+    expect(crashed).toMatch(/Digite para religar/);
+    expect(crashed).toMatch(/rail/);
   });
 });

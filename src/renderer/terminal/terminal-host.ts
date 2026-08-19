@@ -34,7 +34,7 @@ import {
   decideStaleAuthorityRecovery,
   decideUnlockRetiredMissionPane,
   MISSION_HOLD_NOTICE,
-  MISSION_OWNED_EXIT_NOTICE,
+  missionOwnedExitNotice,
   STALE_AUTHORITY_SYNC_NOTICE,
   STALE_AUTHORITY_UNLOCK_NOTICE,
   STANDALONE_HOLD_NOTICE,
@@ -683,19 +683,42 @@ function startSpawn(
         }
         host.spawnStarted = false;
         recordPaneSpawnError(pane.id, res.error);
-        host.term.writeln(
-          `\r\n\x1b[31m[nexus] failed to start: ${res.error}\x1b[0m`,
-        );
-        // Spent orch tokens leave a permanent dead pane on Reiniciar — drop them.
+        // Spent orch tokens leave a permanent dead pane on Reiniciar — drop
+        // them. E o operador NÃO é o garbage collector do grant: com missão
+        // conhecida, a autoridade fresca é reemitida SOZINHA pelo mesmo
+        // retry-kickoff do teclado (cooldown de 15s evita loop). Pedir "use
+        // Reiniciar de novo" era atrito puro (voo real 19/08).
         if (
           pane.orchRequestId &&
           /unknown or expired|orchestration spawn request/i.test(res.error)
         ) {
           useLayoutStore.getState().clearOrchRequestId(pane.id);
+          if (missionId && shouldAttemptDeadPaneRevive(missionId)) {
+            host.term.writeln(
+              '\r\n\x1b[36m[nexus] autoridade de spawn expirou — reemitindo e ' +
+                'religando a missão sozinho…\x1b[0m',
+            );
+            useSessionStateStore.getState().setPaneState(pane.id, 'exited');
+            void requestMissionRuntimeResume(missionId).catch(() => {
+              if (!host.disposed) {
+                host.term.writeln(
+                  '\r\n\x1b[33m[nexus] religamento automático falhou — use ' +
+                    'Retomar no rail.\x1b[0m',
+                );
+              }
+            });
+            return null;
+          }
           host.term.writeln(
-            '\r\n\x1b[33m[nexus] token de spawn expirado limpo — use Reiniciar de novo.\x1b[0m',
+            '\r\n\x1b[33m[nexus] token de spawn expirado limpo — Reiniciar ' +
+              'já usa autoridade nova.\x1b[0m',
           );
+          useSessionStateStore.getState().setPaneState(pane.id, 'exited');
+          return null;
         }
+        host.term.writeln(
+          `\r\n\x1b[31m[nexus] failed to start: ${res.error}\x1b[0m`,
+        );
         useSessionStateStore.getState().setPaneState(pane.id, 'exited');
         return null;
       }
@@ -836,11 +859,14 @@ function startSpawn(
             // Shutdown: o aviso único do grid já falou; banner por pane é
             // ruído (bug I).
           } else if (missionStillOwnsPane(pane.id, pane)) {
+            // Fim NORMAL de turno (code 0) = UMA linha cinza, sem instrução —
+            // C-194.1 já processou a entrega; gritar "Digite para religar" em
+            // cada worker era o atrito que o operador leu como quebra (19/08).
+            const notice = missionOwnedExitNotice(exitCode);
             host.term.writeln(
-              `\r\n\x1b[90m[nexus] process exited (code ${exitCode})\x1b[0m`,
-            );
-            host.term.writeln(
-              `\x1b[33m${MISSION_OWNED_EXIT_NOTICE}\x1b[0m`,
+              exitCode === 0
+                ? `\r\n\x1b[90m${notice}\x1b[0m`
+                : `\r\n\x1b[33m${notice}\x1b[0m`,
             );
           } else {
             host.term.writeln(
