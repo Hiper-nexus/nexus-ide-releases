@@ -16,6 +16,14 @@ import {
 } from './project-domain-store-registry';
 import { missionEngineForScope } from './mission-engine-registry';
 import { getSquad } from './squad-store';
+import { classifySeatAuth } from '../adapters/seat-auth-readiness';
+import { detectSubscriptionAuthReadiness } from '../adapters/subscription-auth';
+import {
+  hasRuntimeKey,
+  providerAuthStrategy,
+} from '../persistence/provider-config-store';
+import { PREFERRED_AUTO_SEAT_CLIS } from '../../shared/auto-seat-auth';
+import { defaultSquadModelForAdapter } from '../../shared/squad-model-defaults';
 import type { MissionEngine } from './mission-engine';
 import { advanceSealedTasksFromFilesOnDisk } from './mission-story-plan';
 import type { ScopedTaskRecord } from './task-store';
@@ -213,6 +221,43 @@ export function noteCivilianReviewRefusal(
 
 export function clearCivilianReviewRefusal(missionId: string): void {
   reviewRefusalAt.delete(missionId);
+}
+
+/** Auth present real do CLI (mesma classificação do first-wave). */
+function reviewerCliCanSeat(cli: string): boolean {
+  try {
+    const readiness = detectSubscriptionAuthReadiness(cli);
+    return (
+      classifySeatAuth({
+        adapterId: cli,
+        authStrategy: String(providerAuthStrategy(cli) ?? ''),
+        hasKey: hasRuntimeKey(cli),
+        kimiListReadiness: cli === 'kimi' ? readiness : undefined,
+        hasCredentiallessModel: readiness === 'present',
+      }) === 'present'
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Roster com reviewer sem credencial (voo de 19/08: reviewer:cursor-agent
+ * sem login) não pode virar loop de spawn-falha — reminta pro primeiro CLI
+ * present da preferência. Sem candidato present, mantém o original: a falha
+ * fica VISÍVEL no pane em vez de silenciosa.
+ */
+export function remintReviewerForSeat(
+  agent: SquadAgent,
+  canSeat: (cli: string) => boolean = reviewerCliCanSeat,
+): SquadAgent {
+  if (canSeat(agent.cli)) return agent;
+  const successor = (PREFERRED_AUTO_SEAT_CLIS as readonly string[]).find(
+    (cli) => canSeat(cli),
+  );
+  if (!successor) return agent;
+  const model = defaultSquadModelForAdapter(successor);
+  return { ...agent, cli: successor, model: model ?? '' } as SquadAgent;
 }
 
 export function isReviewCategory(category: AgentCategory | string | undefined): boolean {
@@ -1147,11 +1192,13 @@ export async function maybeCompleteFastLaneOnDelivery(
           )
           .map((pane) => paneAgentKey(pane.agentName)),
       );
-      const toSpawn = roster.filter(
-        (agent) =>
-          isReviewCategory(agent.category) &&
-          !liveNames.has(paneAgentKey(agent.agentName)),
-      );
+      const toSpawn = roster
+        .filter(
+          (agent) =>
+            isReviewCategory(agent.category) &&
+            !liveNames.has(paneAgentKey(agent.agentName)),
+        )
+        .map((agent) => remintReviewerForSeat(agent));
       try {
         refusalSpawned = await (deps.spawnReviewers?.(scope, mission, toSpawn) ??
           defaultSpawnReviewers(scope, mission, toSpawn, stores));

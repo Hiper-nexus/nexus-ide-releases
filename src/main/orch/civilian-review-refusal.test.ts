@@ -48,3 +48,31 @@ describe('recusa civil por revisão — janela única, nunca loop quente', () =>
     expect(noteCivilianReviewRefusal('mission-limpa', 2_000)).toBe(true);
   });
 });
+
+import { remintReviewerForSeat } from './civilian-delivery-completion';
+import type { SquadAgent } from '../../shared/orch-types';
+
+describe('remint do revisor sem credencial (reviewer:cursor-agent, 19/08)', () => {
+  const reviewer = {
+    id: 'rev',
+    agentName: 'Revisor',
+    category: 'reviewer',
+    cli: 'cursor-agent',
+  } as SquadAgent;
+
+  it('reviewer sem auth present vira o primeiro CLI present da preferência', () => {
+    const seated = remintReviewerForSeat(reviewer, (cli) => cli === 'codex');
+    expect(seated.cli).toBe('codex');
+    expect(seated.agentName).toBe('Revisor');
+  });
+
+  it('reviewer já present não é tocado', () => {
+    const seated = remintReviewerForSeat(reviewer, () => true);
+    expect(seated).toBe(reviewer);
+  });
+
+  it('sem candidato present mantém o original — falha visível no pane', () => {
+    const seated = remintReviewerForSeat(reviewer, () => false);
+    expect(seated.cli).toBe('cursor-agent');
+  });
+});

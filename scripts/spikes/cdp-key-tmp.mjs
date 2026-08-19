@@ -1,10 +1,10 @@
-// Clica no terminal do pane alvo e manda Enter TRUSTED via CDP Input.
-// Uso: node cdp-key.mjs <logfile> <paneIndex>
+// Clica dentro do pane cujo header chip diz "pane N" e manda Enter TRUSTED.
+// Uso: node cdp-key-tmp.mjs <logfile> <paneLabel ex: "pane 6">
 import { readFileSync } from 'node:fs';
 import WebSocket from 'ws';
 
 const logPath = process.argv[2];
-const paneIndex = Number(process.argv[3] ?? '0');
+const paneLabel = process.argv[3] ?? 'pane 6';
 const wsUrl = readFileSync(logPath, 'utf8').match(/DevTools listening on (ws:\/\/\S+)/)?.[1];
 if (!wsUrl) { console.log('SEM_WS'); process.exit(1); }
 
@@ -27,25 +27,24 @@ const { targetInfos } = await send('Target.getTargets');
 const page = targetInfos.find((t) => t.type === 'page' && !t.url.includes('pet.html'));
 const { sessionId } = await send('Target.attachToTarget', { targetId: page.targetId, flatten: true });
 
-// rect do terminal do pane alvo
 const evald = await send('Runtime.evaluate', {
   expression: `(() => {
-    const terms = [...document.querySelectorAll('.xterm-screen')];
-    const t = terms[${paneIndex}];
-    if (!t) return JSON.stringify({ err: 'sem xterm ' + terms.length });
-    const r = t.getBoundingClientRect();
-    return JSON.stringify({ x: r.left + r.width / 2, y: r.top + r.height - 30 });
+    const chips = [...document.querySelectorAll('*')].filter(el =>
+      el.children.length === 0 && (el.textContent||'').trim() === ${JSON.stringify(paneLabel)});
+    if (chips.length === 0) return JSON.stringify({ err: 'chip nao achado' });
+    const r = chips[0].getBoundingClientRect();
+    return JSON.stringify({ x: r.left + r.width / 2, y: r.top + r.height + 160 });
   })()`,
   returnByValue: true,
 }, sessionId);
 const pos = JSON.parse(evald.result.value);
 if (pos.err) { console.log(pos.err); process.exit(1); }
 
-const mouse = (type, extra = {}) =>
-  send('Input.dispatchMouseEvent', { type, x: pos.x, y: pos.y, button: 'left', clickCount: 1, ...extra }, sessionId);
+const mouse = (type) =>
+  send('Input.dispatchMouseEvent', { type, x: pos.x, y: pos.y, button: 'left', clickCount: 1 }, sessionId);
 await mouse('mousePressed');
 await mouse('mouseReleased');
-await new Promise((r) => setTimeout(r, 300));
+await new Promise((r) => setTimeout(r, 400));
 
 const key = (type) =>
   send('Input.dispatchKeyEvent', {
@@ -56,5 +55,5 @@ const key = (type) =>
   }, sessionId);
 await key('keyDown');
 await key('keyUp');
-console.log('ENTER_TRUSTED em pane index', paneIndex, 'em', JSON.stringify(pos));
+console.log('ENTER_TRUSTED em', paneLabel, JSON.stringify(pos));
 ws.close();
