@@ -847,6 +847,28 @@ describe('App Nexus V2 cutover', () => {
     ).not.toBeNull();
   });
 
+  it('missão Pronto/done toasta sucesso, nunca a frase de falha', () => {
+    openWorkspace();
+    useProductNavigationStore.getState().openTerminal();
+    mountApp();
+
+    act(() => {
+      attentionHandler?.({
+        kind: 'mission-done',
+        title: 'Fix the API server',
+        at: 1,
+        missionId: 'mission-f7eb1133',
+      });
+    });
+
+    const toast = useToastStore.getState().toasts.find(
+      (item) => item.title === 'Missão pronta',
+    );
+    expect(toast?.kind).toBe('success');
+    expect(toast?.detail).toBe('Fix the API server — a missão está pronta.');
+    expect(toast?.detail).not.toMatch(/Não foi possível concluir esta etapa/);
+  });
+
   it('suppresses browser panes from canonical destination semantics', () => {
     openWorkspace();
     useProductNavigationStore.getState().openTaskBoard();

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   projectMissionSnapshot,
+  projectMissionSummarySnapshot,
   resolveMissionAgentLiveState,
   type ProjectMissionSnapshotView,
 } from './mission-snapshot';
@@ -132,7 +133,7 @@ describe('projectMissionSnapshot', () => {
     expect(snapshot.stateReason?.label).toBe('Parou');
   });
 
-  it('selo leftover parked persiste Parou mesmo com status blocked desta sessão', () => {
+  it('selo leftover parked segue o persist: Dormindo, não Precisa de você', () => {
     const view = runningView();
     view.mission.status = 'blocked';
     view.mission.updatedAt = Date.now();
@@ -141,12 +142,54 @@ describe('projectMissionSnapshot', () => {
     view.panes = [];
 
     const snapshot = projectMissionSnapshot(view);
+    const summary = projectMissionSummarySnapshot(view);
 
-    expect(snapshot.state).toBe('blocked_technical');
-    expect(snapshot.stateReason?.label).toBe('Parou');
+    expect(snapshot.state).toBe('blocked_user');
+    expect(snapshot.stateReason?.code).toBe('session-sleeping');
+    expect(snapshot.stateReason?.label).toBe('Dormindo');
+    expect(summary.needsAttention).toBe(false);
+    expect(snapshot.allowedActions).toEqual(['resume']);
   });
 
-  it('leftover blocked de antes do boot também é Parou — não some só o AGY', () => {
+  it('Encerrar persistido pinta Parou, não session-dead', () => {
+    const view = runningView();
+    view.mission.status = 'blocked';
+    view.mission.updatedAt = Date.now();
+    view.orchestratorLive = false;
+    view.runtimeClosedByOperator = true;
+    view.leftoverParked = true;
+    view.panes = [];
+
+    const snapshot = projectMissionSnapshot(view);
+    const summary = projectMissionSummarySnapshot(view);
+
+    expect(snapshot.state).toBe('blocked_user');
+    expect(snapshot.stateReason?.code).toBe('runtime-closed');
+    expect(snapshot.stateReason?.label).toBe('Parou');
+    expect(summary.needsAttention).toBe(false);
+  });
+
+  it('done + leftover-parked leftover no texto continua Pronto — session-dead não mente', () => {
+    const view = runningView();
+    view.mission.status = 'done';
+    view.mission.result = {
+      outcome: 'success',
+      summary: 'Pronto justified by files-modified/handoff (20/20).',
+      evidenceIds: [],
+      artifactRefs: ['server.js'],
+    };
+    view.leftoverParked = true;
+    view.orchestratorLive = false;
+    view.tasks[0]!.status = 'done';
+    view.panes = [];
+
+    const snapshot = projectMissionSnapshot(view);
+
+    expect(snapshot.state).toBe('completed');
+    expect(snapshot.stateReason).toBeUndefined();
+  });
+
+  it('leftover blocked de antes do boot segue o persist, não session-dead', () => {
     const view = runningView();
     view.mission.status = 'blocked';
     view.mission.updatedAt = 1;
@@ -156,8 +199,8 @@ describe('projectMissionSnapshot', () => {
     const snapshot = projectMissionSnapshot(view);
 
     expect(snapshot.state).toBe('blocked_technical');
-    expect(snapshot.stateReason?.code).toBe('session-dead');
-    expect(snapshot.stateReason?.label).toBe('Parou');
+    expect(snapshot.stateReason?.code).toBe('mission-blocked');
+    expect(snapshot.stateReason?.label).not.toBe('Parou');
   });
 
   it('leftover pending de antes do boot não fica Pronta para iniciar', () => {
@@ -234,6 +277,7 @@ describe('projectMissionSnapshot', () => {
     expect(snapshot.stateReason?.code).toBe('open-question');
     expect(snapshot.question).toEqual(view.openQuestion);
     expect(snapshot.allowedActions).toEqual(['answer-question', 'stop']);
+    expect(projectMissionSummarySnapshot(view).needsAttention).toBe(true);
   });
 
   it('Pronto justified (done+result) vira completed mesmo com leftover writers', () => {

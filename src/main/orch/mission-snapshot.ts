@@ -18,6 +18,15 @@ import {
   missionStatusSchema,
   strictSquadAgentSchema,
 } from '../../shared/orch-types';
+import {
+  NEXUS_PROCESS_STARTED_AT,
+  isIsolationStopReasonCode,
+  leftoverRunningOrPendingIsDead,
+  persistClosedReason,
+  sessionDeadReason,
+  sessionSleepingReason,
+  wasUpdatedBeforeThisProcess,
+} from '../../shared/session-restore-liveness';
 
 function isRootRelativeProjectPath(value: string): boolean {
   if (
@@ -66,7 +75,15 @@ const snapshotMissionViewSchema = missionSnapshotSchema
     version: true,
     updatedAt: true,
   })
-  .extend({ status: missionStatusSchema })
+  .extend({
+    status: missionStatusSchema,
+    createdAt: z
+      .number()
+      .int()
+      .nonnegative()
+      .max(Number.MAX_SAFE_INTEGER)
+      .optional(),
+  })
   .strict();
 
 const snapshotTaskViewSchema = missionUnitSchema
@@ -117,6 +134,34 @@ function hasResidualWork(view: ParsedView): boolean {
 }
 
 /**
+ * Processo de verdade: busy/spawning (orquestrador vivo) ou pane working /
+ * waiting / blocked. queued sem sessão é cadáver pós-restart, não equipe.
+ */
+export function missionViewHasLiveWorkingRuntime(view: {
+  readonly orchestratorLive: boolean;
+  readonly panes: readonly { readonly state: string }[];
+}): boolean {
+  if (view.orchestratorLive) return true;
+  return view.panes.some(
+    (pane) =>
+      pane.state === 'working' ||
+      pane.state === 'waiting' ||
+      pane.state === 'blocked',
+  );
+}
+
+/** Arquivo de verdade — evidence com path. Tarefa vazia não conta. */
+export function missionViewHasFiles(view: {
+  readonly tasks: readonly {
+    readonly evidence: readonly { readonly path?: string }[];
+  }[];
+}): boolean {
+  return view.tasks.some((task) =>
+    task.evidence.some((item) => Boolean(item.path?.trim())),
+  );
+}
+
+/**
  * Mesma definição de "ainda tem trabalho" que faz o card anunciar Retomar
  * (blocked_technical/residual-work). Exportada para o motor decidir o resume
  * com a MESMA régua que a UI usa para oferecer o botão.
@@ -149,23 +194,41 @@ function projectState(view: ParsedView): {
     };
   }
 
+  // Persist terminal is authority. leftover-parked leftover in the
+  // description must never paint Parou over Pronto.
+  if (view.mission.status === 'done') {
+    if (view.mission.result) return { state: 'completed' };
+    return hasResidualWork(view)
+      ? {
+          state: 'blocked_technical',
+          stateReason: {
+            code: 'residual-work',
+            label: 'A missão ainda tem trabalho pendente',
+          },
+        }
+      : { state: 'completed' };
+  }
+
+  if (view.mission.status === 'failed') {
+    return { state: 'failed' };
+  }
+
   if (view.runtimeClosedByOperator) {
     return {
       state: 'blocked_user',
-      stateReason: {
-        code: 'runtime-closed',
-        label: 'Encerrada pelo operador',
-      },
+      stateReason: persistClosedReason(),
     };
   }
 
   if (view.leftoverParked) {
     return {
-      state: 'blocked_technical',
-      stateReason: sessionDeadReason(),
+      state: 'blocked_user',
+      stateReason: sessionSleepingReason(),
     };
   }
 
+  const persistStillLive =
+    view.mission.status === 'running' || view.mission.status === 'pending';
   const staleAcrossRestart = wasUpdatedBeforeThisProcess(
     view.mission.updatedAt,
     NEXUS_PROCESS_STARTED_AT,
@@ -178,7 +241,10 @@ function projectState(view: ParsedView): {
     view.panes.length === 0 &&
     !staleAcrossRestart;
 
+  // session-dead only while SQLite still says running/pending. After Encerrar
+  // or leftover-park persist (blocked / blocked_user), follow that row.
   if (
+    persistStillLive &&
     leftoverRunningOrPendingIsDead({
       status: view.mission.status,
       hasLivePty: hasLiveRuntime,
@@ -197,11 +263,9 @@ function projectState(view: ParsedView): {
   }
 
   if (
+    persistStillLive &&
     staleAcrossRestart &&
-    !hasLiveRuntime &&
-    (view.mission.status === 'pending' ||
-      view.mission.status === 'running' ||
-      view.mission.status === 'blocked')
+    !hasLiveRuntime
   ) {
     return {
       state: 'blocked_technical',
@@ -233,10 +297,7 @@ function projectState(view: ParsedView): {
       if (view.runtimeClosedByOperator) {
         return {
           state: 'blocked_user',
-          stateReason: {
-            code: 'runtime-closed',
-            label: 'Encerrada pelo operador',
-          },
+          stateReason: persistClosedReason(),
         };
       }
       if (view.panes.length === 0) {
@@ -256,19 +317,6 @@ function projectState(view: ParsedView): {
     return { state: 'running' };
   }
 
-  if (view.mission.status === 'done') {
-    if (view.mission.result) return { state: 'completed' };
-    return hasResidualWork(view)
-      ? {
-          state: 'blocked_technical',
-          stateReason: {
-            code: 'residual-work',
-            label: 'A missão ainda tem trabalho pendente',
-          },
-        }
-      : { state: 'completed' };
-  }
-
   switch (view.mission.status) {
     case 'pending':
       return { state: 'review_ready' };
@@ -276,10 +324,7 @@ function projectState(view: ParsedView): {
       if (view.runtimeClosedByOperator) {
         return {
           state: 'blocked_user',
-          stateReason: {
-            code: 'runtime-closed',
-            label: 'Encerrada pelo operador',
-          },
+          stateReason: persistClosedReason(),
         };
       }
       return {
@@ -289,8 +334,6 @@ function projectState(view: ParsedView): {
           label: 'A missão encontrou um bloqueio técnico',
         },
       };
-    case 'failed':
-      return { state: 'failed' };
   }
 }
 
@@ -304,7 +347,7 @@ function allowedActions(
     case 'running':
       return ['direct', 'stop'];
     case 'blocked_user':
-      return stateReason?.code === 'runtime-closed'
+      return isIsolationStopReasonCode(stateReason?.code)
         ? ['resume']
         : ['answer-question', 'stop'];
     case 'blocked_technical':
@@ -457,7 +500,7 @@ export function projectMissionSummarySnapshot(
     ...(snapshot.stateReason ? { stateReason: snapshot.stateReason } : {}),
     progress: snapshot.progress,
     needsAttention:
-      snapshot.stateReason?.code !== 'runtime-closed' &&
+      !isIsolationStopReasonCode(snapshot.stateReason?.code) &&
       [
         'blocked_user',
         'blocked_technical',

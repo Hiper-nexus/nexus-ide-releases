@@ -8,6 +8,10 @@ import {
   hasAutomaticTechnicalRecovery,
   wasMissionRuntimeClosedByOperator,
 } from '../../shared/mission-recovery-policy';
+import {
+  SESSION_DEAD_REASON_LABEL,
+  SESSION_SLEEPING_REASON_LABEL,
+} from '../../shared/session-restore-liveness';
 import type { RailSectionId } from './mission-rail-prefs';
 
 export interface RailSection {
@@ -214,6 +218,10 @@ export interface MissionRuntimeEvidence {
   readonly latestHandoffStatus?: HandoffStatus | null;
   /** Whether Main still owns a retry or already exhausted it. */
   readonly technicalRecovery?: 'recovering' | 'exhausted';
+  /** leftover-park persist — rail shows Dormindo, never Precisa de você. */
+  readonly leftoverParked?: boolean;
+  /** Encerrar persist — rail shows Parou from SQLite, not session-dead. */
+  readonly runtimeClosedByOperator?: boolean;
 }
 
 /** Cor do ponto segue o estado operacional, não só o status persistido. */
@@ -242,6 +250,14 @@ export function railStatusDisplay(
   const terminalStatus = status as string;
   if (terminalStatus === 'done') return { label: 'Concluída', tone: 'done' };
   if (terminalStatus === 'failed') return { label: 'Falhou', tone: 'failed' };
+  // Isolamento leftover / Encerrar: persist blocked_user não é um pedido
+  // humano. A rail diz Dormindo ou Parou — nunca "Precisa de você".
+  if (evidence.runtimeClosedByOperator) {
+    return { label: SESSION_DEAD_REASON_LABEL, tone: 'blocked' };
+  }
+  if (evidence.leftoverParked) {
+    return { label: SESSION_SLEEPING_REASON_LABEL, tone: 'blocked' };
+  }
   // Espera humana merece pill própria: "Na fila" esconde que a missão está
   // parada esperando VOCÊ (aprovar, dar objetivo, retomar) — o glance mais
   // importante do rail é exatamente esse.

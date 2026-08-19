@@ -19,6 +19,7 @@ import {
   missionEventSchema,
   type MissionEvent,
 } from '../../../shared/mission-events';
+import { isolationStopLabel } from '../../../shared/session-restore-liveness';
 import { useMissionInspectorStore } from '../../state/mission-inspector-store';
 import { toUserFacingMissionRecovery } from '../../lib/user-facing-mission-error';
 import { listPanes } from '../../lib/split-tree';
@@ -919,7 +920,8 @@ export function MissionBoard({
             className="mission-board__status"
             data-state={currentSnapshot.state}
           >
-            {LIFECYCLE_LABELS[currentSnapshot.state]}
+            {isolationStopLabel(currentSnapshot.stateReason?.code) ??
+              LIFECYCLE_LABELS[currentSnapshot.state]}
           </span>
           <div className="mission-board__progress">
             <span>

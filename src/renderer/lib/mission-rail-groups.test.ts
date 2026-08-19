@@ -335,6 +335,28 @@ describe('railStatusDisplay', () => {
     );
   });
 
+  it('leftover-parked isolado mostra Dormindo, nunca Precisa de você', () => {
+    expect(
+      railStatusDisplay('blocked', false, 'blocked_user', null, {
+        leftoverParked: true,
+      }),
+    ).toEqual({ label: 'Dormindo', tone: 'blocked' });
+    expect(
+      railStatusDisplay('blocked', false, 'blocked_user', null, {
+        leftoverParked: true,
+      }).label,
+    ).not.toMatch(/Precisa de você|Aguarda você/);
+  });
+
+  it('Encerrar persistido mostra Parou, não session-dead independente do persist', () => {
+    expect(
+      railStatusDisplay('blocked', false, 'blocked_user', null, {
+        leftoverParked: true,
+        runtimeClosedByOperator: true,
+      }),
+    ).toEqual({ label: 'Parou', tone: 'blocked' });
+  });
+
   // Voo real 05/08, mission-3be48989: o worker submeteu um handoff `blocked`,
   // o dispatch ficou terminal, os panes fecharam e a missão voltou para
   // awaiting_approval. O rail mostrava o MESMO "Aguarda você" de uma missão

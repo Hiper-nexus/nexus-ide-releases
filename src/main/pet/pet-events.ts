@@ -4,6 +4,7 @@ import {
   hasAutomaticTechnicalRecovery,
   wasMissionRuntimeClosedByOperator,
 } from '../../shared/mission-recovery-policy';
+import { wasMissionLeftoverParked } from '../../shared/mission-leftover-isolation';
 import { missionBlockCause } from '../../shared/mission-block-cause';
 
 /**
@@ -104,6 +105,7 @@ export class MissionTransitionTracker {
         // corrida — cada uma virava balão/toast de falha técnica. Encerrar é
         // escolha do operador EM QUALQUER intent: shutdown não é alerta.
         if (wasMissionRuntimeClosedByOperator(mission)) continue;
+        if (wasMissionLeftoverParked(mission)) continue;
         if (mission.intentState === 'blocked_technical') {
           if (!hasAutomaticRecovery) {
             events.push({

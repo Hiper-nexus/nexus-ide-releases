@@ -118,7 +118,12 @@ export const useToastStore = create<ToastStore>((set, get) => ({
       typeof detailOrOptions === 'string'
         ? { detail: detailOrOptions }
         : detailOrOptions ?? {};
-    let detail = humanizeToastDetail(opts.detail);
+    // Success/info are not recoveries. Humanizing them as mission errors
+    // replaced "Missão pronta" detail with the generic failure sentence.
+    let detail =
+      kind === 'error' || kind === 'warn'
+        ? humanizeToastDetail(opts.detail)
+        : opts.detail;
     let dedupeKey =
       opts.dedupeKey ?? inferredDedupeKey(kind, title, detail);
 

@@ -1,4 +1,8 @@
-import type { MissionLifecycleState } from '../../../shared/mission-engine-contract';
+import type {
+  MissionLifecycleState,
+  MissionStateReason,
+} from '../../../shared/mission-engine-contract';
+import { isolationStopLabel } from '../../../shared/session-restore-liveness';
 import { NexusMark } from '../NexusMark';
 import { PixelIcon, type PixelIconName } from '../PixelIcon';
 
@@ -7,6 +11,7 @@ export interface WorkspaceRailMission {
   title: string;
   status: MissionLifecycleState;
   needsAttention: boolean;
+  stateReason?: Pick<MissionStateReason, 'code' | 'label'>;
 }
 
 export interface WorkspaceRailWorkspace {
@@ -90,7 +95,16 @@ const RUNNING_WARNING_STATUS: MissionStatusDisplay = {
 function missionStatusDisplay(
   state: MissionLifecycleState,
   needsAttention: boolean,
+  stateReason?: Pick<MissionStateReason, 'code' | 'label'>,
 ): MissionStatusDisplay {
+  const isolation = isolationStopLabel(stateReason?.code);
+  if (isolation) {
+    return {
+      label: isolation,
+      icon: isolation === 'Dormindo' ? 'status-idle' : 'stop',
+      tone: 'blocked',
+    };
+  }
   return state === 'running' && needsAttention
     ? RUNNING_WARNING_STATUS
     : MISSION_STATUS[state];
@@ -161,6 +175,7 @@ function WorkspaceGroup({
                     const status = missionStatusDisplay(
                       mission.status,
                       mission.needsAttention,
+                      mission.stateReason,
                     );
                     const missionSelected =
                       selection?.kind === 'mission' &&

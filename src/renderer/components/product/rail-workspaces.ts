@@ -46,6 +46,7 @@ function toRailMission(summary: MissionSummarySnapshot) {
     title: summary.title,
     status: summary.state,
     needsAttention: summary.needsAttention,
+    ...(summary.stateReason ? { stateReason: summary.stateReason } : {}),
   };
 }
 

@@ -58,6 +58,39 @@ describe('toast store UX policy', () => {
     );
   });
 
+  it('keeps success copy when a done mission title looks like a diagnostic', () => {
+    const push = useToastStore.getState().push;
+    push(
+      'success',
+      'Missão pronta',
+      'Fix the API server — a missão está pronta.',
+    );
+
+    expect(useToastStore.getState().toasts).toMatchObject([
+      {
+        kind: 'success',
+        title: 'Missão pronta',
+        detail: 'Fix the API server — a missão está pronta.',
+      },
+    ]);
+    expect(useToastStore.getState().toasts[0]?.detail).not.toMatch(
+      /Não foi possível concluir esta etapa/,
+    );
+  });
+
+  it('still humanizes only real failure toasts', () => {
+    const push = useToastStore.getState().push;
+    push(
+      'error',
+      'Não deu pra iniciar a execução',
+      "Error invoking remote method 'orch:mission.start': Error: " +
+        'provider temporarily unavailable',
+    );
+    expect(useToastStore.getState().toasts[0]?.detail).toMatch(
+      /^Não foi possível concluir esta etapa/,
+    );
+  });
+
   it('strips presentation and Electron wrappers from unknown launch errors', () => {
     expect(
       humanizeToastDetail(
