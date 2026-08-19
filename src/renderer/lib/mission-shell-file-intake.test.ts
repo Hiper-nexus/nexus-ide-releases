@@ -40,11 +40,15 @@ describe('partitionDroppedMissionFiles', () => {
     const split = partitionDroppedMissionFiles('/workspace', [
       file('src.ts', 'text/plain'),
       file('cliente.m4a', 'audio/mp4'),
+      file('contrato.pdf', 'application/pdf'),
       file('virus.exe', 'application/x-msdownload'),
     ]);
 
     expect(split.inProject).toEqual(['src/app.ts']);
-    expect(split.toImport.map((item) => item.name)).toEqual(['cliente.m4a']);
+    expect(split.toImport.map((item) => item.name)).toEqual([
+      'cliente.m4a',
+      'contrato.pdf',
+    ]);
     expect(split.rejected.map((item) => item.name)).toEqual(['virus.exe']);
   });
 });
@@ -91,13 +95,18 @@ describe('resolveDroppedMissionContextPath', () => {
     expect(importMissionAttachment).toHaveBeenCalledTimes(1);
   });
 
-  it('does not import unsupported binaries', async () => {
-    const importMissionAttachment = vi.fn();
+  it('pane aceita QUALQUER arquivo externo — binário desconhecido é copiado', async () => {
+    // "pane deve sempre aceitar" (19/08): a cópia de bytes é inofensiva e o
+    // agente decide o que fazer. Só o tamanho limita.
+    const importMissionAttachment = vi.fn(async (name: string) => ({
+      ok: true as const,
+      path: `.nexus/attachments/mission-context/token-${name}`,
+    }));
     Object.defineProperty(window, 'nexus', {
       configurable: true,
       value: {
         files: {
-          pathForFile: () => '/Users/me/Desktop/virus.exe',
+          pathForFile: () => '/Users/me/Desktop/dados.bin',
           importMissionAttachment,
         },
       },
@@ -106,8 +115,28 @@ describe('resolveDroppedMissionContextPath', () => {
     await expect(
       resolveDroppedMissionContextPath(
         '/workspace',
-        file('virus.exe', 'application/x-msdownload'),
+        file('dados.bin', 'application/octet-stream'),
       ),
+    ).resolves.toBe('.nexus/attachments/mission-context/token-dados.bin');
+    expect(importMissionAttachment).toHaveBeenCalledTimes(1);
+  });
+
+  it('arquivo acima de 14 MB não é copiado (cap físico do intake)', async () => {
+    const importMissionAttachment = vi.fn();
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        files: {
+          pathForFile: () => '/Users/me/Desktop/filmes.mov',
+          importMissionAttachment,
+        },
+      },
+    });
+    const big = file('filmes.mov', 'video/quicktime');
+    Object.defineProperty(big, 'size', { value: 15 * 1024 * 1024 });
+
+    await expect(
+      resolveDroppedMissionContextPath('/workspace', big),
     ).resolves.toBeNull();
     expect(importMissionAttachment).not.toHaveBeenCalled();
   });

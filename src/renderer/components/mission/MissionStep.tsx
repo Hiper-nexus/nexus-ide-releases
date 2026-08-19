@@ -15,6 +15,7 @@ import {
 } from './mission-lane-presentation';
 import { MissionAttachmentPicker } from './MissionAttachmentPicker';
 import { isMissionContextAttachmentPath } from '../../lib/mission-attachments';
+import { useObjectiveDictation } from './use-objective-dictation';
 
 interface MissionStepProps {
   workspace: WorkspaceInfo | null;
@@ -193,6 +194,20 @@ export function MissionStep({
     useState<PendingRemovalFocus | null>(null);
 
   const draftEditingDisabled = draftFieldsDisabled || !workspace;
+  // Ditado do objetivo: transcript literal APENSA ao texto atual (nunca
+  // substitui o que o operador já digitou) e respeita o teto do campo.
+  const dictation = useObjectiveDictation({
+    enabled: !draftEditingDisabled,
+    onTranscript: (text) => {
+      const current = draft.objective;
+      const next = current.trim().length > 0
+        ? `${current.replace(/\s+$/u, '')} ${text}`
+        : text;
+      onObjectiveChange(next.slice(0, MISSION_INTENT_GOAL_MAX_CHARS));
+      setObjectiveError(null);
+      objectiveRef.current?.focus();
+    },
+  });
   const projectContextPaths = draft.contextPaths.filter(
     (path) => !isMissionContextAttachmentPath(path),
   );
@@ -399,9 +414,35 @@ export function MissionStep({
         </div>
 
         <div className="mission-setup__field mission-setup__objective-field">
-          <label htmlFor="mission-objective">
-            O que você quer que a equipe entregue?
-          </label>
+          <div className="mission-setup__objective-label-row">
+            <label htmlFor="mission-objective">
+              O que você quer que a equipe entregue?
+            </label>
+            {dictation.available && (
+              <button
+                type="button"
+                className={`mission-setup__button mission-setup__button--secondary mission-setup__dictation-button${
+                  dictation.state === 'listening'
+                    ? ' mission-setup__dictation-button--live'
+                    : ''
+                }`}
+                aria-pressed={dictation.state === 'listening'}
+                disabled={draftEditingDisabled || dictation.state === 'busy'}
+                onClick={dictation.toggle}
+                title={
+                  dictation.state === 'listening'
+                    ? 'Clique para parar e transcrever no objetivo'
+                    : 'Fale o objetivo — o Nexus transcreve aqui (ou segure Espaço fora dos campos de texto)'
+                }
+              >
+                {dictation.state === 'listening'
+                  ? '◼ Parar e transcrever'
+                  : dictation.state === 'busy'
+                    ? 'Transcrevendo…'
+                    : '🎙 Ditar objetivo'}
+              </button>
+            )}
+          </div>
           <textarea
             id="mission-objective"
             ref={objectiveRef}

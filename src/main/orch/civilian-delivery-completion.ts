@@ -22,10 +22,12 @@ import {
   hasRuntimeKey,
   providerAuthStrategy,
 } from '../persistence/provider-config-store';
-import { PREFERRED_AUTO_SEAT_CLIS } from '../../shared/auto-seat-auth';
-import { defaultSquadModelForAdapter } from '../../shared/squad-model-defaults';
+import { firstSeatableCli } from '../../shared/seat-chains';
 import type { MissionEngine } from './mission-engine';
-import { advanceSealedTasksFromFilesOnDisk } from './mission-story-plan';
+import {
+  advanceSealedTasksFromFilesOnDisk,
+  storyConfirmationScript,
+} from './mission-story-plan';
 import type { ScopedTaskRecord } from './task-store';
 
 const execFileAsync = promisify(execFile);
@@ -243,21 +245,20 @@ function reviewerCliCanSeat(cli: string): boolean {
 
 /**
  * Roster com reviewer sem credencial (voo de 19/08: reviewer:cursor-agent
- * sem login) não pode virar loop de spawn-falha — reminta pro primeiro CLI
- * present da preferência. Sem candidato present, mantém o original: a falha
- * fica VISÍVEL no pane em vez de silenciosa.
+ * sem login) não pode virar loop de spawn-falha — o assento caminha a CADEIA
+ * de sucessão (primário → escalação → piso, shared/seat-chains) e o primeiro
+ * elo present senta. Sem elo present, mantém o original: a falha fica
+ * VISÍVEL no pane em vez de silenciosa.
  */
 export function remintReviewerForSeat(
   agent: SquadAgent,
   canSeat: (cli: string) => boolean = reviewerCliCanSeat,
 ): SquadAgent {
-  if (canSeat(agent.cli)) return agent;
-  const successor = (PREFERRED_AUTO_SEAT_CLIS as readonly string[]).find(
-    (cli) => canSeat(cli),
-  );
-  if (!successor) return agent;
-  const model = defaultSquadModelForAdapter(successor);
-  return { ...agent, cli: successor, model: model ?? '' } as SquadAgent;
+  const successor = firstSeatableCli({ primaryCli: agent.cli, canSeat });
+  if (!successor || successor === agent.cli) return agent;
+  // Modelo vazio: o spawn resolve provider-default → adapter-default. O
+  // hardcode antigo sombreava o defaultModel configurado pelo usuário.
+  return { ...agent, cli: successor, model: '' } as SquadAgent;
 }
 
 export function isReviewCategory(category: AgentCategory | string | undefined): boolean {
@@ -822,6 +823,45 @@ function markTasksDone(
   return marked;
 }
 
+/**
+ * Prompt do revisor pós-recusa com o board selado e o "como confirmar" de
+ * cada story VERBATIM (herança do overclick, 19/08). O voo real fechou
+ * 10/10 com 4 stories sem arquivo no disco — o gate segurou, mas o revisor
+ * genérico não sabia O QUE verificar. Agora ele valida story por story:
+ * feito ≠ validado.
+ */
+export function buildCivilianReviewerPrompt(
+  mission: Pick<Mission, 'title' | 'description'>,
+  agent: Pick<SquadAgent, 'agentName'>,
+  sealedTasks: readonly Pick<ScopedTaskRecord, 'title' | 'status'>[],
+): string {
+  const board =
+    sealedTasks.length > 0
+      ? [
+          '',
+          `## Board selado (${sealedTasks.length} stories) — valide UMA A UMA`,
+          ...sealedTasks.map(
+            (task, index) =>
+              `${index + 1}. [${task.status}] ${task.title}\n` +
+              `   Como confirmar: ${storyConfirmationScript(task.title)}`,
+          ),
+        ]
+      : [];
+  return [
+    `## Missão: ${mission.title}`,
+    `Objetivo: ${mission.description ?? ''}`,
+    `Você é ${agent.agentName} (reviewer).`,
+    'A implementação DECLAROU entrega — declaração não é evidência.',
+    'Feito ≠ validado: siga o "como confirmar" de cada story antes de',
+    'aprovar qualquer coisa.',
+    ...board,
+    '',
+    'Ao terminar, chame nexus_handoff_submit com um veredito POR STORY',
+    '(validada: evidência citada | reprovada: o que falta, com caminho).',
+    'Não reescreva o produto sem um defeito concreto.',
+  ].join('\n');
+}
+
 async function defaultSpawnReviewers(
   scope: ProjectExecutionScope,
   mission: Mission,
@@ -829,15 +869,15 @@ async function defaultSpawnReviewers(
   stores: CivilianStores,
 ): Promise<string[]> {
   const spawned: string[] = [];
+  const sealedTasks = (() => {
+    try {
+      return stores.tasks.list(mission.id);
+    } catch {
+      return [] as readonly ScopedTaskRecord[];
+    }
+  })();
   for (const agent of reviewers) {
-    const prompt = [
-      `## Missão: ${mission.title}`,
-      `Objetivo: ${mission.description ?? ''}`,
-      `Você é ${agent.agentName} (reviewer).`,
-      'A implementação já entregou arquivos reais. Revise a entrega e',
-      'chame nexus_handoff_submit quando terminar. Não reescreva o produto',
-      'sem um defeito concreto.',
-    ].join('\n');
+    const prompt = buildCivilianReviewerPrompt(mission, agent, sealedTasks);
     const spawn = await requestPaneSpawn({
       adapterId: agent.cli,
       model: agent.model || undefined,

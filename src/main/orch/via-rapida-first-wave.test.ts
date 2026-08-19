@@ -237,3 +237,59 @@ describe('countLiveFirstWaveWriters', () => {
     expect(countLiveFirstWaveWriters(panes, 'm-068', isConnected)).toBe(6);
   });
 });
+
+describe('modelo do assento respeita a escolha do usuário (grok 4.6→4.5, 19/08)', () => {
+  it('writer sintético NÃO carrega modelo hardcoded — spawn resolve provider-default', () => {
+    const seated = spreadPresentClisAcrossWriterRoles(
+      [
+        {
+          id: 'orch',
+          agentName: 'Maestro',
+          category: 'orchestrator',
+          cli: 'claude',
+        } as never,
+      ],
+      ['grok'],
+    );
+    expect(seated).toHaveLength(1);
+    expect(seated[0]!.cli).toBe('grok');
+    // model ausente/vazio: req.model não pode sombrear o defaultModel do
+    // provider configurado pelo usuário.
+    expect(seated[0]!.model ?? '').toBe('');
+  });
+
+  it('remint de papel para outro CLI LIMPA o modelo do CLI antigo', () => {
+    const seated = spreadPresentClisAcrossWriterRoles(
+      [
+        {
+          id: 'w1',
+          agentName: 'Implementar parte',
+          category: 'executor',
+          cli: 'cursor-agent',
+          model: 'cursor-fast',
+        } as never,
+      ],
+      ['codex'],
+    );
+    expect(seated).toHaveLength(1);
+    expect(seated[0]!.cli).toBe('codex');
+    expect(seated[0]!.model ?? '').toBe('');
+  });
+
+  it('agente nomeado do roster PRESERVA o modelo escolhido no wizard', () => {
+    const seated = spreadPresentClisAcrossWriterRoles(
+      [
+        {
+          id: 'w1',
+          agentName: 'Implementar parte',
+          category: 'executor',
+          cli: 'grok',
+          model: 'grok-4.6',
+        } as never,
+      ],
+      ['grok'],
+    );
+    expect(seated).toHaveLength(1);
+    expect(seated[0]!.model).toBe('grok-4.6');
+  });
+});

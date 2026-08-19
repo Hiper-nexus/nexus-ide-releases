@@ -11,7 +11,8 @@ import {
 } from '../../lib/mission-attachments';
 
 const FILE_ACCEPT =
-  'audio/*,image/*,.txt,.md,.mdx,.csv,.json,.ts,.tsx,.js,.jsx,.css,.html,.yml,.yaml';
+  'audio/*,image/*,application/pdf,.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.odt,.rtf,' +
+  '.txt,.md,.mdx,.csv,.json,.ts,.tsx,.js,.jsx,.css,.html,.yml,.yaml';
 
 interface MissionAttachmentPickerProps {
   contextPaths: readonly string[];
@@ -31,6 +32,7 @@ function kindLabel(path: string): string {
   const kind = classifyMissionAttachment({ name: displayName(path), type: '' });
   if (kind === 'audio') return 'Áudio';
   if (kind === 'image') return 'Imagem';
+  if (kind === 'document') return 'Documento';
   return 'Texto';
 }
 
@@ -115,8 +117,8 @@ export function MissionAttachmentPicker({
         <div>
           <h2>Anexos do cliente</h2>
           <p>
-            Áudio, imagem ou texto — mesmo de fora da pasta do projeto. O Nexus
-            copia o arquivo para dentro da missão.
+            Áudio, imagem, documento (PDF/Office) ou texto — mesmo de fora da
+            pasta do projeto. O Nexus copia o arquivo para dentro da missão.
           </p>
         </div>
         <span>
@@ -141,6 +143,14 @@ export function MissionAttachmentPicker({
           event.stopPropagation();
           setDropActive(false);
           if (disabled) return;
+          // Arquivos crus: o filtro de clipboard engolia PDF em silêncio.
+          // validateMissionAttachment (dentro de importFiles) explica o que
+          // não passa em vez de fingir que nada foi solto.
+          const dropped = Array.from(event.dataTransfer?.files ?? []);
+          if (dropped.length > 0) {
+            void importFiles(dropped);
+            return;
+          }
           void importFiles(filesFromClipboardData(event.dataTransfer));
         }}
         onPaste={(event) => {

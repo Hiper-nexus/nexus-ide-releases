@@ -19,6 +19,10 @@ import {
   type MissionEvent,
 } from '../../../shared/mission-events';
 import { missionLifecycleLabel } from '../../lib/mission-lifecycle-copy';
+import {
+  aggregateMissionTelemetry,
+  formatMissionTelemetry,
+} from '../../../shared/handoff-telemetry';
 import { useMissionInspectorStore } from '../../state/mission-inspector-store';
 import { toUserFacingMissionRecovery } from '../../lib/user-facing-mission-error';
 import { listPanes } from '../../lib/split-tree';
@@ -237,6 +241,16 @@ export function MissionBoard({
       state.missions.find((mission) => mission.id === missionId) ?? null,
   );
   const paneMissions = useOrchStore((state) => state.paneMissions);
+  // Telemetria autorrelatada nos handoffs (overclick, 19/08): "34 min · 1.2M
+  // tokens · autorrelato N/M". Ausência declarada — sem autorrelato, sem linha.
+  const missionHandoffs = useOrchStore((state) => state.handoffs);
+  const telemetryLine = useMemo(() => {
+    const ofMission = missionHandoffs.filter(
+      (handoff) => handoff.missionId === missionId,
+    );
+    const aggregate = aggregateMissionTelemetry(ofMission);
+    return aggregate ? formatMissionTelemetry(aggregate) : null;
+  }, [missionHandoffs, missionId]);
   const layoutRoot = useLayoutStore((state) => state.root);
   const hasVisibleMissionPanes = useMemo(
     () =>
@@ -927,6 +941,14 @@ export function MissionBoard({
               {currentSnapshot.progress.total}
             </progress>
           </div>
+          {telemetryLine && (
+            <span
+              className="mission-board__telemetry"
+              title="Duração e tokens autorrelatados pelos agentes nos handoffs desta missão"
+            >
+              {telemetryLine}
+            </span>
+          )}
         </div>
 
         {currentSnapshot.stateReason && (

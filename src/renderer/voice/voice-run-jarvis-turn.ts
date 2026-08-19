@@ -15,6 +15,7 @@ import {
 } from '../terminal/terminal-host';
 import { useLayoutStore } from '../state/layout-store';
 import { listPanes } from '../lib/split-tree';
+import { deliverDictationToClaim } from './dictation-target';
 import {
   deliverDictation,
   type DictationRouteResult,
@@ -363,6 +364,16 @@ export function routePrompt(text: string): string | null {
  * logVoiceEvent, então uma morte silenciosa futura fica rastreável.
  */
 export function routeDictation(text: string): Promise<DictationRouteResult> {
+  // Superfície de UI com claim ativo (wizard de missão) vence o roteamento
+  // de panes: o operador está ditando o formulário, não um terminal.
+  const uiDelivery = deliverDictationToClaim(text);
+  if (uiDelivery) {
+    logVoiceEvent('info', 'dictation.uiTarget', 'ditado entregue à UI', {
+      target: uiDelivery.paneId,
+      chars: text.length,
+    });
+    return Promise.resolve({ ok: true, paneId: uiDelivery.paneId });
+  }
   return deliverDictation(text, {
     getFocusedPaneId: () => useLayoutStore.getState().focusedPaneId,
     listLivePaneIds: () =>

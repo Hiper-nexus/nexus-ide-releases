@@ -17,7 +17,10 @@ import { useOrchStore } from '../state/orch-store';
 import { useToastStore } from '../state/toast-store';
 import { getActiveWorkspacePath } from '../state/active-workspace';
 import { filesFromClipboardData } from '../lib/mission-attachments';
-import { resolveDroppedMissionContextPath } from '../lib/mission-shell-file-intake';
+import {
+  droppedFileRejectionMessage,
+  resolveDroppedMissionContextPath,
+} from '../lib/mission-shell-file-intake';
 import { listPanes } from '../lib/split-tree';
 import { paneInputLane } from './pane-input-route';
 import {
@@ -1189,11 +1192,11 @@ async function injectDroppedFile(host: Host, file: File): Promise<void> {
     // "Não cola e não mostra" (screenshot 2026-08-18): arquivo que o intake
     // recusa morria em silêncio — o operador colava e NADA acontecia. Um
     // aviso toast diz o quê e o porquê sem escrever lixo no pane do agente.
+    // Desde 19/08 o pane aceita QUALQUER tipo; só tamanho/falha física recusa.
     useToastStore.getState().push(
       'warn',
       'Arquivo não colado no terminal',
-      `"${file.name.trim() || 'anexo'}" não é imagem, áudio nem texto/código ` +
-        'aceito como anexo de missão.',
+      droppedFileRejectionMessage(file),
     );
   } catch {
     // Ignore — a failed drop should never break the terminal.

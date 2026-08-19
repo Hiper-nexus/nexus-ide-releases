@@ -13,6 +13,77 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.61.0',
+  date: '2026-08-19',
+  codename: 'Herança do concorrente',
+  summary:
+    'Os três candidatos do overclick entram de vez: cada story selada ganha ' +
+    'um roteiro "como confirmar" que o revisor recebe verbatim, handoffs ' +
+    'carregam telemetria autorrelatada (min · tokens no Quadro) e assentos ' +
+    'caminham cadeias de sucessão. O wizard fala: dite o objetivo por voz. ' +
+    'PDF e documentos anexam em todo caminho, o pane aceita qualquer ' +
+    'arquivo, a seleção de modelo do operador nunca mais é sombreada e o ' +
+    'Maestro cobra worker mudo em vez de esperar.',
+  highlights: [
+    {
+      title: 'Feito ≠ validado — "como confirmar" por story',
+      detail:
+        'O revisor pós-recusa recebe o board selado com um roteiro de ' +
+        'confirmação por story e devolve veredito POR STORY com evidência ' +
+        'citada.',
+    },
+    {
+      title: 'Dite o objetivo da missão',
+      detail:
+        'Botão de microfone na etapa 1: fale, o Nexus transcreve no campo ' +
+        '(mesmo modo CODE/CHAT dos panes). Segurar Espaço fora dos campos ' +
+        'de texto também dita para o wizard.',
+    },
+    {
+      title: 'Telemetria autorrelatada no Quadro',
+      detail:
+        'Worker informa {durationMs, tokens} do próprio transcript no ' +
+        'handoff; o Quadro mostra "34 min · 1.2M tokens · autorrelato N/M". ' +
+        'Estimativa é marcada; ausência é declarada, nunca zero.',
+    },
+    {
+      title: 'Maestro cobra, não espera',
+      detail:
+        'Doutrina COBRANÇA (modelo overclock): worker parado sem handoff ' +
+        'leva nexus_pane_read + cobrança direta — fim do "aguardando ' +
+        'handoffs" com worker mudo.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Sua seleção de modelo vale',
+      detail:
+        'Assentos sintéticos/remintados não escrevem mais default hardcoded ' +
+        '(grok subia em 4.5 com 4.6 configurado); o spawn resolve ' +
+        'roster → defaultModel do provider → default do adapter.',
+    },
+    {
+      title: 'PDF e documentos anexam em todo caminho',
+      detail:
+        'Wizard, drop em qualquer lugar da tela e pane aceitam ' +
+        'PDF/Office; o pane aceita QUALQUER arquivo até 14 MB. Rejeição ' +
+        'nunca é silêncio — sempre toast com o motivo.',
+    },
+    {
+      title: 'Pane não abre mais em branco pós-corte de backlog',
+      detail:
+        'O resync agora retoma no próximo ESC além do newline — TUI em ' +
+        'alternate screen redesenha sem \\n e ficava invisível.',
+    },
+    {
+      title: 'Efforts no vocabulário das CLIs',
+      detail:
+        'Low/Medium/High/XHigh no wizard — mesmo idioma do rodapé do pane.',
+    },
+  ],
+};
+
+export const RELEASE_06002: AppRelease = {
   version: '0.60.2',
   date: '2026-08-19',
   codename: 'O operador manda',

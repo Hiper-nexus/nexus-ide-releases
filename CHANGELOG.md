@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.61.0 — Herança do concorrente
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+Os três candidatos herdados do overclick, voz no wizard e os cinco bugs que
+o voo real de 19/08 mostrou — tudo validado ao vivo em dev antes do corte:
+
+- **feat(review): "como confirmar" por story selada** — o revisor
+  pós-recusa recebe o board com um roteiro de confirmação determinístico
+  por story (mesmo texto do selo) e devolve veredito POR STORY com
+  evidência citada. Feito ≠ validado.
+- **feat(handoff): telemetria autorrelatada** — `telemetry: {durationMs,
+  tokensTotal, tokensByModel?, estimated?}` no nexus_handoff_submit; viaja
+  como metadado untrusted em artifacts (zero migração) e o Quadro mostra
+  "34 min · 1.2M tokens · autorrelato N/M". Estimativa marcada; ausência
+  declarada, nunca zero.
+- **feat(squad): cadeias de sucessão de assento** — primário → escalação →
+  piso em `shared/seat-chains`; o remint do revisor caminha a cadeia e o
+  spawn-fail pode adotar a mesma regra.
+- **feat(wizard): dite o objetivo por voz** — botão de microfone na etapa
+  1 (mesmo pipeline do Space hold-to-talk, modo CODE/CHAT dos panes);
+  enquanto o wizard está aberto, qualquer ditado vai pro campo do
+  objetivo, nunca pra um pane oculto.
+- **feat(orch): doutrina COBRANÇA** — modelo overclock: worker parado sem
+  handoff leva nexus_pane_read + cobrança via nexus_pane_write; o Maestro
+  não fica mais em "aguardando handoffs" com worker mudo.
+- **fix(spawn): a seleção de modelo do operador vale** — assentos
+  sintéticos/remintados não escrevem mais default hardcoded como
+  req.model (grok subia em 4.5 com 4.6 configurado); a cadeia
+  roster → defaultModel do provider → default do adapter decide.
+- **fix(anexos): PDF/Office anexam em todo caminho** — wizard, drop em
+  qualquer lugar e pane; o pane aceita QUALQUER arquivo até 14 MB;
+  rejeição sempre vira toast com motivo, nunca silêncio.
+- **fix(terminal): pane não abre em branco pós-corte de backlog** — o
+  resync retoma no próximo ESC além do newline; TUI em alternate screen
+  redesenha sem `\n` e ficava invisível.
+- **fix(wizard): efforts em inglês** — Low/Medium/High/XHigh, mesmo
+  vocabulário das CLIs e do rodapé do pane.
+
 ## 0.60.2 — O operador manda
 
 _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._

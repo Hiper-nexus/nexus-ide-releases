@@ -60,6 +60,43 @@ describe('mission attachments', () => {
     expect(validateMissionAttachment(file('erro.png', 'image/png', 15 * 1024 * 1024), [])).toMatch(/14 MB/);
   });
 
+  it('PDF e documentos de escritório são documento (drop real 19/08)', () => {
+    // Voo real: "Cópia de [Versão limpa] Contrato Parceria BaaS Asaas.pdf"
+    // arrastado no wizard e no pane morria em silêncio — PDF não era imagem,
+    // áudio nem texto e o classificador devolvia null em todo caminho.
+    expect(
+      classifyMissionAttachment(
+        file('Cópia de [Versão limpa] Contrato Parceria BaaS Asaas.pdf', ''),
+      ),
+    ).toBe('document');
+    expect(
+      classifyMissionAttachment(file('contrato.pdf', 'application/pdf')),
+    ).toBe('document');
+    expect(classifyMissionAttachment(file('proposta.docx', ''))).toBe('document');
+    expect(classifyMissionAttachment(file('planilha.xlsx', ''))).toBe('document');
+    expect(classifyMissionAttachment(file('slides.pptx', ''))).toBe('document');
+    expect(validateMissionAttachment(file('contrato.pdf', '', 1000), [])).toBeNull();
+  });
+
+  it('drop de PDF entra pelo clipboard/dataTransfer', () => {
+    const files = filesFromClipboardData({
+      files: [realFile('contrato.pdf', 'application/pdf', 'pdf-bytes')],
+    });
+    expect(files).toHaveLength(1);
+    expect(files[0]!.name).toBe('contrato.pdf');
+  });
+
+  it('context block rotula documento como documento', () => {
+    const doc: MissionAttachment = {
+      ...attachment,
+      name: 'contrato.pdf',
+      kind: 'document',
+      mime: 'application/pdf',
+      path: '.nexus/attachments/mission-context/x-contrato.pdf',
+    };
+    expect(buildMissionAttachmentsContext([doc])).toContain('documento:');
+  });
+
   it('builds a bounded context block for the mission agents', () => {
     expect(buildMissionAttachmentsContext([attachment])).toContain('erro.png');
     expect(buildMissionAttachmentsContext([])).toBe('');

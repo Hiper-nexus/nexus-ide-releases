@@ -4,7 +4,6 @@
  * AuthReadiness=present senta — LongCat sem chave não tosta.
  */
 import type { SquadAgent } from '../../shared/orch-types';
-import { defaultSquadModelForAdapter } from '../../shared/squad-model-defaults';
 import {
   canSeat,
   classifySeatAuth,
@@ -75,28 +74,34 @@ export function filterPresentWriterAgents(
   return writableRosterAgents(agents).filter((agent) => canSeat(classify(agent)));
 }
 
+/**
+ * Assento sem modelo EXPLÍCITO fica sem modelo: o spawn resolve na cadeia
+ * req.model → defaultModel do provider (escolha do usuário em Configurações
+ * › Providers) → default do adapter. O hardcode antigo
+ * (defaultSquadModelForAdapter) entrava como req.model e SOMBREAVA a escolha
+ * do usuário — Writer 2 grok subia em grok-4.5 com grok-4.6 configurado
+ * (voo real 19/08).
+ */
 function syntheticWriter(
   cli: string,
   agentName: string,
   id: string,
 ): SquadAgent {
-  const model = defaultSquadModelForAdapter(cli);
   return {
     id,
     agentName,
     category: 'executor',
     cli,
-    ...(model ? { model } : {}),
   } as SquadAgent;
 }
 
 function remintWriterCli(agent: SquadAgent, cli: string): SquadAgent {
   if (agent.cli === cli) return agent;
-  const model = defaultSquadModelForAdapter(cli);
+  // O modelo do papel pertence ao CLI antigo — nunca viaja para o novo.
   return {
     ...agent,
     cli,
-    model: model ?? '',
+    model: '',
   } as SquadAgent;
 }
 

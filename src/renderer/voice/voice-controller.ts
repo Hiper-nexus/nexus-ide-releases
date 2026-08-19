@@ -121,6 +121,7 @@ import { PassiveWakeDeadline } from './passive-wake-deadline';
 import { PassiveWakeAdmission } from './passive-wake-admission';
 import { pttStartAction } from './ptt-barge-in';
 import { attachWindowPtt } from './voice-window-ptt';
+import { onDictationRequest } from './manual-dictation';
 import { writeToPane } from '../terminal/terminal-host';
 import { isWindowScopedShortcut } from '../../shared/voice-config';
 import { shouldOfferLiveMicFrame } from './live-mic-offer-gate';
@@ -1442,6 +1443,12 @@ export function useVoiceController(active = true): void {
         },
       },
     );
+    // Botão de microfone em UI (wizard de missão): MESMO caminho do Space
+    // hold-to-talk — captura de ditado pura, nunca turno Jarvis.
+    const disposeManualDictation = onDictationRequest({
+      start: onDictationStart,
+      stop: onDictationStop,
+    });
     const unsubWake = window.nexus.voice.onWakeDetected(() => onWake('voice'));
     const unsubClickWake = onJarvisWakeRequest(() => {
       const reactivated = reactivateJarvisInput();
@@ -1484,6 +1491,7 @@ export function useVoiceController(active = true): void {
       unsubStop();
       unsubToggle();
       disposeWindowPtt();
+      disposeManualDictation();
       unsubWake();
       unsubClickWake();
       unsubNarrate();

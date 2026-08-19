@@ -29,6 +29,16 @@ const DOCTRINE_BASE = [
     'confirmar o boot de um pane recém-aberto. Se o humano pedir para olhar o ' +
     'que o pane N está fazendo, chame nexus_pane_read UMA vez (número falado: ' +
     '"7" ou "pane 7") — qualquer pane da missão lê o outro, inclusive você.',
+  // Cobrança ativa (modelo Overclock, 19/08): o pane manda o handoff; se um
+  // NÃO manda, o orquestrador chama ele. Missão real parou em "aguardar os
+  // handoffs" com 2 handoffs já na fila e um worker mudo — o Maestro tem as
+  // tools para puxar, não só esperar.
+  '• COBRANÇA: entrega que não chega não é espera. Ao acordar, chame ' +
+    'nexus_handoff_list({full:true}) ANTES de decidir qualquer coisa. Worker ' +
+    'que já PAROU (idle/exited) sem handoff: leia o pane dele UMA vez ' +
+    '(nexus_pane_read) e cobre a entrega com nexus_pane_write ' +
+    '("finalize com nexus_handoff_submit"). Vale só para worker PARADO — ' +
+    'worker vivo continua fora de vigília.',
   '• DELEGAÇÃO: abra cada worker com nexus_pane_spawn passando `prompt` — o pane ' +
     'nasce executando a tarefa (1 chamada, sem spawn+write). Relay FIEL do pedido ' +
     'humano: repasse a tarefa como veio, nunca adicione nem aperte restrições que ' +
@@ -100,7 +110,10 @@ export function buildMaestroKickoffBrief(
           : 'Equipe: abra trabalhadores conforme o objetivo pedir.',
         '1. Para cada tarefa: nexus_pane_spawn({agentName, prompt}) — uma chamada só. NUNCA spawn + write.',
         '2. Encerre o turno. Quando acordar, valide via nexus_handoff_list({full:true}).',
-        '3. Quando todos entregarem: nexus_mission_set_status({status:"done"}).',
+        '3. Worker parado sem handoff? Cobre: nexus_pane_read no pane dele + ' +
+          'nexus_pane_write pedindo o nexus_handoff_submit. Nunca fique em ' +
+          '"aguardando handoffs" com worker mudo já parado.',
+        '4. Quando todos entregarem: nexus_mission_set_status({status:"done"}).',
         sealedHint,
       ]
         .filter(Boolean)

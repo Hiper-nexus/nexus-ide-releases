@@ -472,6 +472,23 @@ export function sealFastLaneListedStoryPlan(
   );
 }
 
+/**
+ * "Como confirmar" (herança do board do overclick, 19/08): cada story selada
+ * carrega um roteiro de confirmação em linguagem comum, DETERMINÍSTICO a
+ * partir do título — mesma função no selo e no spawn do revisor, então o
+ * texto que o revisor recebe é exatamente o que o selo definiu, sem coluna
+ * nova no schema. Feito ≠ validado: o roteiro exige evidência física.
+ */
+export function storyConfirmationScript(title: string): string {
+  const clean = title.trim().replace(/\s+/gu, ' ');
+  return (
+    `Localize no disco os arquivos que implementam "${clean}" e cite os ` +
+    'caminhos. Depois prove o comportamento: execute o código ou o teste ' +
+    'que cobre essa story e relate o resultado observado. Sem arquivo real ' +
+    'OU sem comportamento observável, a story NÃO está validada.'
+  );
+}
+
 function handoffToTaskStatus(
   handoffStatus: string,
 ): Extract<TaskStatus, 'done' | 'failed'> {

@@ -250,6 +250,9 @@ export async function finishAndProcess(
             : {}),
           // Ditado: o modo configurado viaja EXPLÍCITO por turno — o default
           // por plugin varia entre engines (fallback caía em PT literal).
+          // Alvo de UI (wizard de missão) segue o MESMO modo dos panes:
+          // CODE traduz PT→EN otimizado p/ execução, CHAT fica literal
+          // (decisão do operador, 19/08 — o chip CODE/CHAT governa os dois).
           ...(dictationTurn
             ? dictationSttRequestParams(
                 useVoiceStore.getState().info?.dictationOutputMode,

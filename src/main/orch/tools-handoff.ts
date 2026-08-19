@@ -6,6 +6,10 @@ import {
   resolveEffectiveIntentState,
 } from "../../shared/mission-intent";
 import { handoffStatusSchema } from "../../shared/orch-types";
+import {
+  embedTelemetryArtifact,
+  sanitizeHandoffTelemetry,
+} from "../../shared/handoff-telemetry";
 import { markHandoffSubmitted, type GateRole } from "./gate";
 import { onHandoffSubmitted } from "./idle-delivery";
 import {
@@ -131,6 +135,19 @@ const handoffSubmitTool: McpToolDef = {
       filesModified: { type: "array", items: { type: "string" } },
       "files-modified": { type: "array", items: { type: "string" } },
       evidenceIds: { type: "array", items: { type: "string" } },
+      telemetry: {
+        type: "object",
+        description:
+          "Autorrelato do SEU transcript: {durationMs, tokensTotal, " +
+          "tokensByModel?, estimated?}. Números reais do turno; estimativa " +
+          "marca estimated:true; sem dados, OMITA (nunca invente zero).",
+        properties: {
+          durationMs: { type: "number" },
+          tokensTotal: { type: "number" },
+          tokensByModel: { type: "object" },
+          estimated: { type: "boolean" },
+        },
+      },
     },
     required: ["status", "summary"],
   },
@@ -276,10 +293,18 @@ const handoffSubmitTool: McpToolDef = {
         }
       }
     }
+    // Telemetria autorrelatada (overclick, 19/08): viaja DENTRO de artifacts
+    // (metadado untrusted já persistido) — nada disso é evidência de
+    // conclusão, e payload inválido é simplesmente ignorado.
+    const telemetry = sanitizeHandoffTelemetry(args.telemetry);
+    const artifacts = [
+      ...(Array.isArray(args.artifacts) ? args.artifacts : []),
+      ...(telemetry ? [embedTelemetryArtifact(telemetry)] : []),
+    ];
     const handoffInput = {
       status,
       summary,
-      artifacts: Array.isArray(args.artifacts) ? args.artifacts : [],
+      artifacts,
       evidenceIds: rawEvidenceIds as string[] | undefined,
       missionId: ctx.missionId,
       sessionId: ctx.sessionId,

@@ -539,8 +539,17 @@ function enqueueChunk(
   },
 ): void {
   if (entry.resyncToNewlinePending) {
+    // Fronteiras seguras de retomada: logo APÓS um '\n' ou EXATAMENTE num ESC
+    // (início de sequência nova). TUIs em alternate screen redesenham só com
+    // CSI — esperar '\n' descartava o repaint inteiro e o pane ficava em
+    // branco até o próximo newline literal.
     const newlineAt = data.indexOf('\n');
-    if (newlineAt === -1) {
+    const escAt = data.indexOf('\x1b');
+    let resumeAt = newlineAt === -1 ? -1 : newlineAt + 1;
+    if (escAt !== -1 && (resumeAt === -1 || escAt < resumeAt)) {
+      resumeAt = escAt;
+    }
+    if (resumeAt === -1) {
       // Ainda no rabo da linha cortada — nada aqui é renderizável com
       // segurança. O parse settle do chamador (onParsed) ainda precisa
       // disparar para não vazar o contador de backpressure.
@@ -548,7 +557,7 @@ function enqueueChunk(
       return;
     }
     entry.resyncToNewlinePending = false;
-    data = data.slice(newlineAt + 1);
+    data = data.slice(resumeAt);
     if (data.length === 0) {
       options?.onParsed?.();
       return;

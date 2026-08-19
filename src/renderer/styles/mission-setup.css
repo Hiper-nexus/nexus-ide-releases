@@ -320,6 +320,42 @@
   font-weight: 600;
 }
 
+/* Ditado do objetivo: rótulo + microfone na mesma linha. */
+.mission-setup__objective-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.mission-setup__dictation-button {
+  flex: none;
+  white-space: nowrap;
+}
+
+.mission-setup__dictation-button--live {
+  border-color: var(--accent, #e3335f);
+  color: var(--accent, #e3335f);
+  animation: mission-dictation-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes mission-dictation-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mission-setup__dictation-button--live {
+    animation: none;
+  }
+}
+
 .mission-setup__field input,
 .mission-setup__field textarea,
 .mission-setup__field select {

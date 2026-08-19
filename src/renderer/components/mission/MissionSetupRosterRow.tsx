@@ -16,15 +16,18 @@ const CATEGORY_LABELS: Record<SquadAgent['category'], string> = {
   architect: 'Arquitetura',
 };
 
+// Efforts em INGLÊS, como as próprias CLIs mostram (low/medium/high/xhigh):
+// traduzir criava dois vocabulários para o mesmo botão — o operador via
+// "Muito alto" aqui e "xhigh" no rodapé do pane (pedido do operador, 19/08).
 const EFFORT_LABELS: Readonly<Record<string, string>> = {
-  auto: 'Automático',
-  none: 'Nenhum',
-  minimal: 'Mínimo',
-  low: 'Baixo',
-  medium: 'Médio',
-  high: 'Alto',
-  xhigh: 'Muito alto',
-  max: 'Máximo',
+  auto: 'Auto',
+  none: 'None',
+  minimal: 'Minimal',
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  xhigh: 'XHigh',
+  max: 'Max',
   ultra: 'Ultra',
 };
 

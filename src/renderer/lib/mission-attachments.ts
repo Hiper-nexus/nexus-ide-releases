@@ -5,7 +5,7 @@ export function isMissionContextAttachmentPath(value: string): boolean {
   return value.replaceAll('\\', '/').startsWith(MISSION_CONTEXT_ATTACHMENT_PREFIX);
 }
 
-export type MissionAttachmentKind = 'image' | 'audio' | 'file';
+export type MissionAttachmentKind = 'image' | 'audio' | 'file' | 'document';
 
 export type MissionAttachment = {
   id: string;
@@ -28,6 +28,11 @@ const IMAGE_EXTENSIONS = /\.(avif|gif|heic|jpeg|jpg|png|webp)$/i;
 const AUDIO_EXTENSIONS = /\.(aac|aiff|flac|m4a|mp3|oga|ogg|opus|wav|webm|wma)$/i;
 const TEXT_EXTENSIONS =
   /\.(c|cc|cpp|cs|css|csv|go|html?|java|js|json|jsx|md|mdx|php|py|rb|rs|sh|sql|svelte|toml|ts|tsx|txt|vue|ya?ml)$/i;
+// PDF/Office arrastados do Finder chegam com MIME vazio — extensão decide.
+// Voo real 19/08: contrato .pdf morria em silêncio no wizard E no pane.
+const DOCUMENT_EXTENSIONS = /\.(pdf|docx?|pptx?|xlsx?|odt|ods|odp|rtf|epub)$/i;
+const DOCUMENT_MIMES =
+  /^application\/(pdf|msword|rtf|epub\+zip|vnd\.(openxmlformats-officedocument\.[\w.-]+|ms-(word|excel|powerpoint)|oasis\.opendocument\.[\w-]+))$/i;
 let attachmentSequence = 0;
 
 function fileName(file: Pick<File, 'name'>): string {
@@ -46,6 +51,9 @@ export function classifyMissionAttachment(
   }
   if (mime.startsWith('text/') || TEXT_EXTENSIONS.test(fileName(file))) {
     return 'file';
+  }
+  if (DOCUMENT_MIMES.test(mime) || DOCUMENT_EXTENSIONS.test(fileName(file))) {
+    return 'document';
   }
   return null;
 }
@@ -69,8 +77,10 @@ function extensionForMime(mime: string, kind: MissionAttachmentKind): string {
   if (normalized === 'audio/aiff' || normalized === 'audio/x-aiff') {
     return 'aiff';
   }
+  if (normalized === 'application/pdf') return 'pdf';
   if (kind === 'image') return 'png';
   if (kind === 'audio') return 'm4a';
+  if (kind === 'document') return 'pdf';
   return 'txt';
 }
 
@@ -147,7 +157,9 @@ export function validateMissionAttachment(
   current: readonly MissionAttachment[],
 ): string | null {
   const kind = classifyMissionAttachment(file);
-  if (!kind) return 'Use uma imagem, um áudio ou um arquivo de código/texto.';
+  if (!kind) {
+    return 'Use uma imagem, um áudio, um documento (PDF/Office) ou um arquivo de código/texto.';
+  }
   if (current.length >= MISSION_ATTACHMENT_LIMITS.maxCount) {
     return `Você pode anexar no máximo ${MISSION_ATTACHMENT_LIMITS.maxCount} arquivos.`;
   }
@@ -174,8 +186,13 @@ function bufferToBase64(buffer: ArrayBuffer): string {
 
 export async function stageMissionAttachment(
   file: File,
+  options: { allowAnyKind?: boolean } = {},
 ): Promise<MissionAttachment> {
-  const kind = classifyMissionAttachment(file);
+  // O pane aceita QUALQUER arquivo (allowAnyKind): a cópia de bytes para
+  // .nexus/attachments/ é inofensiva e o agente decide o que fazer com ela.
+  const kind =
+    classifyMissionAttachment(file) ??
+    (options.allowAnyKind ? 'file' : null);
   if (!kind) throw new Error('Formato de anexo não suportado.');
   const result = await window.nexus.files.importMissionAttachment(
     fileName(file),
@@ -189,7 +206,15 @@ export async function stageMissionAttachment(
     id: `${Date.now().toString(36)}-${attachmentSequence}`,
     name: fileName(file),
     kind,
-    mime: file.type || (kind === 'image' ? 'image/*' : 'audio/*'),
+    mime:
+      file.type ||
+      (kind === 'image'
+        ? 'image/*'
+        : kind === 'audio'
+          ? 'audio/*'
+          : kind === 'document'
+            ? 'application/pdf'
+            : 'text/plain'),
     size: file.size,
     path: result.path,
   };
@@ -205,7 +230,13 @@ export function buildMissionAttachmentsContext(
 ): string {
   if (attachments.length === 0) return '';
   const labelFor = (kind: MissionAttachmentKind): string =>
-    kind === 'image' ? 'print' : kind === 'audio' ? 'áudio' : 'arquivo';
+    kind === 'image'
+      ? 'print'
+      : kind === 'audio'
+        ? 'áudio'
+        : kind === 'document'
+          ? 'documento'
+          : 'arquivo';
   return [
     '## Evidências anexadas pelo usuário',
     'Consulte estes arquivos durante a missão. Eles podem conter prints de erro, gravações de áudio ou arquivos de código relevantes ao objetivo:',

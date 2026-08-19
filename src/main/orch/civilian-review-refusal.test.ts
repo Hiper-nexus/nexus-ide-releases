@@ -76,3 +76,44 @@ describe('remint do revisor sem credencial (reviewer:cursor-agent, 19/08)', () =
     expect(seated.cli).toBe('cursor-agent');
   });
 });
+
+import { buildCivilianReviewerPrompt } from './civilian-delivery-completion';
+import { storyConfirmationScript } from './mission-story-plan';
+
+describe('prompt do revisor com "como confirmar" por story (overclick, 19/08)', () => {
+  const mission = {
+    title: 'HiperGO',
+    description: 'Entregar 3 páginas do produto',
+  };
+  const agent = { agentName: 'Revisor' };
+  const tasks = [
+    { title: 'Implementar página de login', status: 'done' },
+    { title: 'Criar API de sessão', status: 'done' },
+  ] as const;
+
+  it('inclui o board selado com o roteiro VERBATIM de cada story', () => {
+    const prompt = buildCivilianReviewerPrompt(mission, agent, [...tasks]);
+    expect(prompt).toContain('Board selado (2 stories)');
+    for (const task of tasks) {
+      expect(prompt).toContain(task.title);
+      expect(prompt).toContain(storyConfirmationScript(task.title));
+    }
+    expect(prompt).toContain('Feito ≠ validado');
+    expect(prompt).toContain('veredito POR STORY');
+  });
+
+  it('sem board selado degrada para o prompt de revisão simples', () => {
+    const prompt = buildCivilianReviewerPrompt(mission, agent, []);
+    expect(prompt).not.toContain('Board selado');
+    expect(prompt).toContain('nexus_handoff_submit');
+  });
+
+  it('o roteiro é determinístico — selo e spawn geram o MESMO texto', () => {
+    expect(storyConfirmationScript('  Implementar   login  ')).toBe(
+      storyConfirmationScript('Implementar login'),
+    );
+    expect(storyConfirmationScript('Implementar login')).toContain(
+      '"Implementar login"',
+    );
+  });
+});

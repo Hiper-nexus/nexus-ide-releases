@@ -71,10 +71,7 @@ import {
   SearchPanelBody,
   SkillsPanelBody,
 } from './components/product/ProductPanelBodies';
-import {
-  filesFromClipboardData,
-  stageMissionAttachment,
-} from './lib/mission-attachments';
+import { stageMissionAttachment } from './lib/mission-attachments';
 import {
   partitionDroppedMissionFiles,
   shellClaimsMissionFileDrop,
@@ -519,10 +516,23 @@ export function App() {
 
       const workspace = useWorkspaceStore.getState().current;
       if (!workspace) return;
-      const files = filesFromClipboardData(event.dataTransfer);
+      // Arquivos CRUS do drop: o filtro de clipboard descartava PDF/documento
+      // em silêncio ("arrastei e não ficou anexado", 19/08). A partição decide
+      // o destino e o que ela rejeitar ganha um toast — nunca silêncio.
+      const files = Array.from(event.dataTransfer?.files ?? []);
       if (files.length === 0) return;
 
       const split = partitionDroppedMissionFiles(workspace.path, files);
+      if (split.rejected.length > 0) {
+        useToastStore.getState().push(
+          'warn',
+          'Anexo não suportado no wizard',
+          `${split.rejected
+            .map((item) => item.name.trim() || 'anexo')
+            .slice(0, 4)
+            .join(', ')} — use imagem, áudio, documento (PDF/Office) ou texto/código.`,
+        );
+      }
       const setup = useMissionSetupStore.getState();
       if (destination.kind === 'launcher') {
         setup.clearEntryContext();
@@ -547,14 +557,9 @@ export function App() {
           }
         }
         const contextPaths = [...split.inProject, ...imported];
-        if (contextPaths.length === 0) {
-          useToastStore.getState().push(
-            'warn',
-            'Arquivo não suportado',
-            'Anexe áudio, imagem ou texto — mesmo de fora da pasta do projeto.',
-          );
-          return;
-        }
+        // Rejeitados e falhas de import já ganharam toast específico acima —
+        // um segundo aviso genérico aqui era só ruído.
+        if (contextPaths.length === 0) return;
         const current = useMissionSetupStore.getState();
         current.setContextPaths([
           ...current.draft.contextPaths,

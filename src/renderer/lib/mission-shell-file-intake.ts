@@ -2,6 +2,7 @@ import type { ProductDestination } from '../state/product-navigation-store';
 import { normalizeProjectContextPath } from '../state/mission-setup-store';
 import {
   classifyMissionAttachment,
+  MISSION_ATTACHMENT_LIMITS,
   stageMissionAttachment,
 } from './mission-attachments';
 
@@ -68,9 +69,14 @@ export function partitionDroppedMissionFiles(
 }
 
 /**
- * In-project files stay as relative context. External audio/image/text is
- * copied into `.nexus/attachments/mission-context/` so agents can read it
- * without a sandbox grant on `~/.nexus/dropped`.
+ * In-project files stay as relative context. External files are copied into
+ * `.nexus/attachments/mission-context/` so agents can read them without a
+ * sandbox grant on `~/.nexus/dropped`.
+ *
+ * O PANE aceita QUALQUER tipo ("pane deve sempre aceitar", 19/08): a cópia de
+ * bytes é inofensiva e o agente decide o que fazer com o arquivo. O único
+ * limite é físico — o cap de 14 MB por arquivo evita ler um blob gigante na
+ * memória do renderer (o main já recusa payloads acima do teto dele).
  */
 export async function resolveDroppedMissionContextPath(
   workspacePath: string | null,
@@ -80,10 +86,19 @@ export async function resolveDroppedMissionContextPath(
     const relative = droppedProjectContextPath(workspacePath, file);
     if (relative) return relative;
   }
-  if (!classifyMissionAttachment(file)) return null;
+  if (file.size > MISSION_ATTACHMENT_LIMITS.maxBytesPerFile) return null;
   try {
-    return (await stageMissionAttachment(file)).path;
+    return (await stageMissionAttachment(file, { allowAnyKind: true })).path;
   } catch {
     return null;
   }
+}
+
+/** Mensagem honesta do toast quando o intake do pane recusa um drop. */
+export function droppedFileRejectionMessage(file: Pick<File, 'name' | 'size'>): string {
+  const name = file.name.trim() || 'anexo';
+  if (file.size > MISSION_ATTACHMENT_LIMITS.maxBytesPerFile) {
+    return `"${name}" excede o limite de 14 MB por arquivo.`;
+  }
+  return `"${name}" não pôde ser copiado para a missão.`;
 }

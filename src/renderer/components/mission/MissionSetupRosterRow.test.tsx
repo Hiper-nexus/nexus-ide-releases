@@ -154,20 +154,23 @@ describe('MissionSetupRosterRow', () => {
     expect(onChange.mock.lastCall?.[0].allowedTools).toEqual(['Read']);
   });
 
-  it('esforço inline no cartão: PT-BR na tela, valor de wire original no onChange', () => {
+  it('esforço inline no cartão: vocabulário das CLIs (inglês), wire original no onChange', () => {
     const onChange = vi.fn<(next: SquadAgent) => void>();
     const host = renderRow(onChange);
     const effort = [...host.querySelectorAll('select')].find((item) =>
       item.getAttribute('aria-label')?.startsWith('Esforço do modelo'),
     );
 
+    // Efforts em INGLÊS como as próprias CLIs (pedido do operador, 19/08):
+    // "Muito alto" aqui + "xhigh" no rodapé do pane eram dois vocabulários
+    // para o mesmo botão.
     expect([...effort!.options].map((option) => [option.value, option.textContent]))
       .toEqual([
         ['', 'Padrão'],
-        ['low', 'Baixo'],
-        ['medium', 'Médio'],
-        ['high', 'Alto'],
-        ['xhigh', 'Muito alto'],
+        ['low', 'Low'],
+        ['medium', 'Medium'],
+        ['high', 'High'],
+        ['xhigh', 'XHigh'],
         ['ultra', 'Ultra'],
       ]);
 

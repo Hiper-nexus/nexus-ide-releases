@@ -97,6 +97,14 @@ export function withHandoffContract(
     'nexus_handoff_submit --status success --summary "<resumo objetivo>" ' +
     "(alias: nx-mail send …). Esse comando entra no mesmo dispatcher e na " +
     "mesma cadeia de receipts.";
+  // Telemetria autorrelatada (overclick, 19/08): o agente é o único que vê o
+  // próprio transcript — duração e tokens do turno. Honestidade em 3 regras:
+  // números reais, estimativa marcada, ausência omitida (nunca zero).
+  const telemetryContract =
+    "Se o seu transcript mostrar duração e consumo do SEU turno, inclua " +
+    "telemetry: {durationMs, tokensTotal, tokensByModel?, estimated?} no " +
+    "nexus_handoff_submit — números REAIS do transcript; estimativa marca " +
+    "estimated: true; sem dados, OMITA o campo (nunca invente zero).";
   const peerRead =
     'Quando o operador pedir para olhar o que outro pane está fazendo, chame ' +
     'nexus_pane_read com o número falado ("7" ou "pane 7"). Na mesma missão ' +
@@ -119,11 +127,15 @@ export function withHandoffContract(
         'na língua da tarefa", status: "success"|"blocked"|"failed", ' +
         'artifacts: [{fullText: "sua resposta completa, inalterada"}]}. ' +
         "Depois, uma linha curta de fechamento e PARE — não re-envie, não expanda. " +
+        telemetryContract +
+        " " +
         shimFallback
       : null;
   const contract = systemDeliversContract ?? (viaMcp
     ? 'Ao concluir sua tarefa, finalize chamando a tool nexus_handoff_submit ' +
       'com {status: "success"|"partial"|"failed", summary, artifacts}. ' +
+      telemetryContract +
+      ' ' +
       shimFallback
     : "Ao concluir sua tarefa, tente primeiro o canal canônico em disco. " +
       shimFallback +

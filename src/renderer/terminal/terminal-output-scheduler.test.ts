@@ -426,4 +426,26 @@ describe('resync pós-drop de backlog (garble do voo real 19/08)', () => {
     expect(joined).not.toContain('ainda rabo');
     expect(joined).toContain('linha limpa pós-resync');
   });
+
+  it('TUI sem newline retoma no próximo ESC (pane não fica em branco)', () => {
+    vi.useFakeTimers();
+    const terminal = createTerminal();
+    const chunk = 'x'.repeat(256 * 1024);
+    for (let i = 0; i < 9; i++) {
+      writeTerminalOutput(terminal, chunk, { foreground: false });
+    }
+    // Alternate screen (Claude/Grok/Codex): o repaint reposiciona cursor com
+    // CSI, SEM newline. Esperar '\n' descartava o frame inteiro e o pane
+    // abria em branco (voo real 19/08, pane "Implementar int…").
+    writeTerminalOutput(
+      terminal,
+      'rabo-cortado-sem-esc\x1b[2J\x1b[Hframe TUI redesenhado',
+      { foreground: false },
+    );
+    for (let i = 0; i < 30; i++) vi.advanceTimersByTime(16);
+
+    const joined = terminal.written.join('');
+    expect(joined).not.toContain('rabo-cortado-sem-esc');
+    expect(joined).toContain('\x1b[2J\x1b[Hframe TUI redesenhado');
+  });
 });
