@@ -7,6 +7,10 @@ import {
   readActiveClaudeCredential,
 } from './claude-credential';
 import { realUserHome } from '../path-resolver';
+import {
+  peekKimiSeatReadiness,
+  type AuthReadiness,
+} from './seat-auth-readiness';
 
 /**
  * Subscription-auth priority (user directive): CLIs signed in via their own
@@ -691,6 +695,23 @@ export function detectSubscriptionAuth(
       // prevents a false positive from suppressing a valid API key.
       return false;
   }
+}
+
+/**
+ * Five-state view of subscription/OAuth proof for first-wave seating.
+ * Kimi file tokens alone are `incomplete` — `present` needs the live
+ * `kimi provider list` probe. Other adapters: live session → `present`.
+ */
+export function detectSubscriptionAuthReadiness(
+  adapterId: string,
+): AuthReadiness {
+  if (adapterId === 'kimi') {
+    return (
+      peekKimiSeatReadiness() ??
+      (detectSubscriptionAuth(adapterId) ? 'incomplete' : 'no-credential')
+    );
+  }
+  return detectSubscriptionAuth(adapterId) ? 'present' : 'no-credential';
 }
 
 /** Whether the CLI has a live subscription/OAuth session (cached 60s). */
