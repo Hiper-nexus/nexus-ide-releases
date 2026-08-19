@@ -20,6 +20,9 @@ export const SESSION_DEAD_REASON_LABEL = 'Parou';
 export const SESSION_SLEEPING_REASON_CODE = 'session-sleeping' as const;
 export const SESSION_SLEEPING_REASON_LABEL = 'Dormindo';
 
+/** Encerrar persistido: blocked + blocked_user + runtime-closed. */
+export const RUNTIME_CLOSED_REASON_CODE = 'runtime-closed' as const;
+
 /** Preload/main injects this when a PTY hole is accepted. */
 export const SKIPPED_TERMINAL_OUTPUT_MARKER =
   'skipped terminal output that could not be recovered';
@@ -202,11 +205,12 @@ export function leftoverRunningOrPendingIsDead(input: {
 
 export function sessionDeadReason(): {
   readonly code: typeof SESSION_DEAD_REASON_CODE;
-  readonly label: typeof SESSION_DEAD_REASON_LABEL;
+  readonly label: typeof SESSION_SLEEPING_REASON_LABEL;
 } {
+  // Leftover cadáver sem Encerrar. Parou-as-stop is runtime-closed only.
   return {
     code: SESSION_DEAD_REASON_CODE,
-    label: SESSION_DEAD_REASON_LABEL,
+    label: SESSION_SLEEPING_REASON_LABEL,
   };
 }
 
@@ -220,6 +224,17 @@ export function sessionSleepingReason(): {
   };
 }
 
+/** Encerrar persistido — Parou vem do SQLite, não de session-dead. */
+export function persistClosedReason(): {
+  readonly code: typeof RUNTIME_CLOSED_REASON_CODE;
+  readonly label: typeof SESSION_DEAD_REASON_LABEL;
+} {
+  return {
+    code: RUNTIME_CLOSED_REASON_CODE,
+    label: SESSION_DEAD_REASON_LABEL,
+  };
+}
+
 export function isSessionDeadReasonCode(code: string | undefined): boolean {
   return (
     code === SESSION_DEAD_REASON_CODE ||
@@ -227,4 +242,31 @@ export function isSessionDeadReasonCode(code: string | undefined): boolean {
     code === 'restore-failed' ||
     code === 'never-started-draft'
   );
+}
+
+/**
+ * Isolamento (leftover-park / Encerrar) e cadáver session-dead: a missão
+ * parou. Não é um pedido de decisão humana — a rail não pode dizer
+ * "Precisa de você".
+ */
+export function isIsolationStopReasonCode(code: string | undefined): boolean {
+  return (
+    code === SESSION_DEAD_REASON_CODE ||
+    code === SESSION_SLEEPING_REASON_CODE ||
+    code === RUNTIME_CLOSED_REASON_CODE
+  );
+}
+
+/** Rótulo civil do chip: Dormindo (park / leftover) ou Parou (Encerrar). */
+export function isolationStopLabel(code: string | undefined): string | null {
+  if (
+    code === SESSION_SLEEPING_REASON_CODE ||
+    code === SESSION_DEAD_REASON_CODE
+  ) {
+    return SESSION_SLEEPING_REASON_LABEL;
+  }
+  if (code === RUNTIME_CLOSED_REASON_CODE) {
+    return SESSION_DEAD_REASON_LABEL;
+  }
+  return null;
 }

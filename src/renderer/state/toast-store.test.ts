@@ -58,6 +58,95 @@ describe('toast store UX policy', () => {
     );
   });
 
+  it('EXATAMENTE no título de sucesso não vira a frase de falha', () => {
+    const ready =
+      'SaaS lista de espera com EXATAMENTE — o resultado final está pronto.';
+    // 065 live: /\bE[A-Z]{3,}\b/ treated EXATAMENTE as errno before authored PT.
+    expect(humanizeToastDetail('SaaS lista de espera com EXATAMENTE')).toMatch(
+      /^Não foi possível concluir esta etapa/,
+    );
+    const push = useToastStore.getState().push;
+    push('success', 'Missão pronta', {
+      detail: ready,
+      action: { label: 'Ver resultado', onClick: vi.fn() },
+    });
+    expect(useToastStore.getState().toasts).toMatchObject([
+      {
+        kind: 'success',
+        title: 'Missão pronta',
+        detail: ready,
+        action: { label: 'Ver resultado' },
+      },
+    ]);
+    expect(useToastStore.getState().toasts[0]?.detail).not.toMatch(
+      /Não foi possível concluir esta etapa/,
+    );
+  });
+
+  it('keeps success copy when a done mission title looks like a diagnostic', () => {
+    const push = useToastStore.getState().push;
+    push(
+      'success',
+      'Missão pronta',
+      'Fix the API server — o resultado final está pronto.',
+    );
+
+    expect(useToastStore.getState().toasts).toMatchObject([
+      {
+        kind: 'success',
+        title: 'Missão pronta',
+        detail: 'Fix the API server — o resultado final está pronto.',
+      },
+    ]);
+    expect(useToastStore.getState().toasts[0]?.detail).not.toMatch(
+      /Não foi possível concluir esta etapa/,
+    );
+  });
+
+  it('does not reuse a previous error detail on Missão pronta', () => {
+    const push = useToastStore.getState().push;
+    const ready = 'Fix the API server — o resultado final está pronto.';
+    // 065 shot: title had English residue ("server"). Humanizing that
+    // title as a failure produced DEFAULT_UNKNOWN_ERROR on a success card.
+    expect(humanizeToastDetail('Fix the API server')).toMatch(
+      /^Não foi possível concluir esta etapa/,
+    );
+
+    push('error', 'Falha técnica na missão', {
+      detail:
+        'Não foi possível concluir esta etapa. Tente novamente. Se continuar, abra Operações para ver o diagnóstico.',
+    });
+    push('success', 'Missão pronta', {
+      detail: ready,
+      action: { label: 'Ver resultado', onClick: vi.fn() },
+      dedupeKey: 'mission-completed:mission-f7eb1133',
+    });
+
+    const toasts = useToastStore.getState().toasts;
+    const success = toasts.find((item) => item.title === 'Missão pronta');
+    expect(success).toMatchObject({
+      kind: 'success',
+      title: 'Missão pronta',
+      detail: ready,
+      action: { label: 'Ver resultado' },
+    });
+    expect(success?.detail).not.toMatch(/Não foi possível concluir esta etapa/);
+    expect(toasts.some((item) => item.kind === 'error')).toBe(true);
+  });
+
+  it('still humanizes only real failure toasts', () => {
+    const push = useToastStore.getState().push;
+    push(
+      'error',
+      'Não deu pra iniciar a execução',
+      "Error invoking remote method 'orch:mission.start': Error: " +
+        'provider temporarily unavailable',
+    );
+    expect(useToastStore.getState().toasts[0]?.detail).toMatch(
+      /^Não foi possível concluir esta etapa/,
+    );
+  });
+
   it('strips presentation and Electron wrappers from unknown launch errors', () => {
     expect(
       humanizeToastDetail(

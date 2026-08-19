@@ -537,6 +537,75 @@ describe('MissionBoard canonical controller', () => {
     expect(progress!.max).toBe(5);
   });
 
+  it('header Encerrar/leftover pinta Parou/Dormindo, não Precisa de você', async () => {
+    api.snapshot.mockResolvedValue(
+      canonicalSnapshot({
+        state: 'blocked_user',
+        stateReason: { code: 'runtime-closed', label: 'Parou' },
+        allowedActions: ['resume'],
+      }),
+    );
+    const { host } = mount();
+    await flush();
+
+    const status = host.querySelector('.mission-board__status');
+    expect(status?.textContent).toBe('Parou');
+    expect(host.querySelector('header')?.textContent).not.toMatch(
+      /Precisa de resposta|Precisa de você/,
+    );
+
+    api.snapshot.mockResolvedValue(
+      canonicalSnapshot({
+        state: 'blocked_user',
+        stateReason: { code: 'session-sleeping', label: 'Dormindo' },
+        allowedActions: ['resume'],
+      }),
+    );
+    const remount = mount();
+    await flush();
+    expect(remount.host.querySelector('.mission-board__status')?.textContent).toBe(
+      'Dormindo',
+    );
+  });
+
+  it('header pedido humano real é Precisa de você', async () => {
+    api.snapshot.mockResolvedValue(
+      canonicalSnapshot({
+        state: 'blocked_user',
+        stateReason: {
+          code: 'open-question',
+          label: 'Aguardando sua resposta',
+        },
+        allowedActions: ['answer-question'],
+      }),
+    );
+    const { host } = mount();
+    await flush();
+
+    expect(host.querySelector('.mission-board__status')?.textContent).toBe(
+      'Precisa de você',
+    );
+  });
+
+  it('header done persist pinta Pronto mesmo com reason session-dead', async () => {
+    api.snapshot.mockResolvedValue(
+      canonicalSnapshot({
+        state: 'completed',
+        stateReason: { code: 'session-dead', label: 'Parou' },
+        allowedActions: [],
+      }),
+    );
+    const { host } = mount();
+    await flush();
+
+    expect(host.querySelector('.mission-board__status')?.textContent).toBe(
+      'Pronto',
+    );
+    expect(host.querySelector('.mission-board__status')?.textContent).not.toBe(
+      'Parou',
+    );
+  });
+
   it('exposes a focusable vertical separator that controls the inspector and changes its bounded split from the keyboard', async () => {
     vi.spyOn(
       HTMLElement.prototype,

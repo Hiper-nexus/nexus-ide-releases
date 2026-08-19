@@ -59,6 +59,19 @@ describe("user-facing mission errors", () => {
     );
   });
 
+  it("does not treat authored EXATAMENTE as an errno token", () => {
+    expect(
+      humanizeMissionErrorDetail(
+        "SaaS lista de espera com EXATAMENTE — o resultado final está pronto.",
+      ),
+    ).toBe(
+      "SaaS lista de espera com EXATAMENTE — o resultado final está pronto.",
+    );
+    expect(
+      humanizeMissionErrorDetail("spawn git ENOENT"),
+    ).toMatch(/^Não foi possível concluir esta etapa/);
+  });
+
   it("shows authored Portuguese copy that mentions a technical noun", () => {
     // Field trap (28/07): this message already told the operator what to do,
     // but "bootstrap" put it on the internal-diagnostic list and it was

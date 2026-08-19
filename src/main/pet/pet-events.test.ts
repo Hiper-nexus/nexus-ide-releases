@@ -54,6 +54,27 @@ describe('MissionTransitionTracker', () => {
     ]);
   });
 
+  it('leftover-parked isolado não pede Precisa de você', () => {
+    const t = new MissionTransitionTracker();
+    t.ingest('a', [{ id: '1', title: 'Waitlist', status: 'running' }], at);
+    expect(
+      t.ingest(
+        'a',
+        [
+          {
+            id: '1',
+            title: 'Waitlist',
+            status: 'blocked',
+            intentState: 'blocked_user',
+            description:
+              '<!-- nexus:leftover-parked -->\n[NEXUS_LEFTOVER_PARKED] Missão leftover.',
+          },
+        ],
+        at + 1,
+      ),
+    ).toEqual([]);
+  });
+
   it('não pede intervenção durante retry técnico, mas avisa se virar espera humana', () => {
     const t = new MissionTransitionTracker();
     t.ingest(

@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   classifySessionRestore,
+  isolationStopLabel,
+  isIsolationStopReasonCode,
   isSessionDeadReasonCode,
   leftoverRunningOrPendingIsDead,
+  persistClosedReason,
   leftoverScrollbackLooksUnreadable,
   scrollbackLooksLikeRecoveredMarkdown,
   missionHasLivePlan,
@@ -185,15 +188,27 @@ describe('restore grid / rail / pet gates', () => {
 });
 
 describe('session-dead copy', () => {
-  it('rótulo civil Parou cobre a classe inteira', () => {
+  it('Parou-as-stop é Encerrar; leftover session-dead é Dormindo', () => {
     expect(sessionDeadReason()).toEqual({
       code: 'session-dead',
-      label: 'Parou',
+      label: 'Dormindo',
     });
     expect(isSessionDeadReasonCode('session-dead')).toBe(true);
     expect(isSessionDeadReasonCode('restore-failed')).toBe(true);
     expect(isSessionDeadReasonCode('never-started-draft')).toBe(true);
     expect(isSessionDeadReasonCode('open-question')).toBe(false);
+    expect(persistClosedReason()).toEqual({
+      code: 'runtime-closed',
+      label: 'Parou',
+    });
+    expect(isIsolationStopReasonCode('runtime-closed')).toBe(true);
+    expect(isIsolationStopReasonCode('session-sleeping')).toBe(true);
+    expect(isIsolationStopReasonCode('session-dead')).toBe(true);
+    expect(isIsolationStopReasonCode('open-question')).toBe(false);
+    expect(isolationStopLabel('session-sleeping')).toBe('Dormindo');
+    expect(isolationStopLabel('runtime-closed')).toBe('Parou');
+    expect(isolationStopLabel('session-dead')).toBe('Dormindo');
+    expect(isolationStopLabel('open-question')).toBeNull();
   });
 
   it('updatedAt anterior ao boot é leftover desta sessão', () => {

@@ -636,10 +636,10 @@ export function App() {
           if (!isBlock && !isTechnicalFailure && !isWait && !isDone) return;
           const missionId = event.missionId;
           if (isDone) {
-            const detail = `${event.title} — o resultado final foi validado.`;
+            const detail = `${event.title} — o resultado final está pronto.`;
             useToastStore.getState().push(
               'success',
-              'Missão concluída',
+              'Missão pronta',
               missionId
                 ? {
                     detail,

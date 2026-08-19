@@ -28,7 +28,7 @@ function causeText(cause: PetEventCause | undefined): string | null {
 export interface Balloon {
   id: number;
   kind: PetEventKind;
-  /** Título curto e forte (ex.: "Missão concluída"). */
+  /** Título curto e forte (ex.: "Missão pronta"). */
   title: string;
   /** Detalhe: nome da missão / dica de ação. */
   text: string;
@@ -64,7 +64,7 @@ export function balloonContentFor(
   switch (event.kind) {
     case 'mission-done':
       return {
-        title: 'Missão concluída',
+        title: 'Missão pronta',
         text: event.title,
         cta: 'Abrir o painel',
       };

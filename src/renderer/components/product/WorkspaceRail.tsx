@@ -1,4 +1,12 @@
-import type { MissionLifecycleState } from '../../../shared/mission-engine-contract';
+import type {
+  MissionLifecycleState,
+  MissionStateReason,
+} from '../../../shared/mission-engine-contract';
+import {
+  MISSION_LIFECYCLE_LABELS,
+  MISSION_RUNNING_ATTENTION_LABEL,
+  missionLifecycleLabel,
+} from '../../lib/mission-lifecycle-copy';
 import { NexusMark } from '../NexusMark';
 import { PixelIcon, type PixelIconName } from '../PixelIcon';
 
@@ -7,6 +15,7 @@ export interface WorkspaceRailMission {
   title: string;
   status: MissionLifecycleState;
   needsAttention: boolean;
+  stateReason?: Pick<MissionStateReason, 'code' | 'label'>;
 }
 
 export interface WorkspaceRailWorkspace {
@@ -57,32 +66,56 @@ interface MissionStatusDisplay {
 }
 
 const MISSION_STATUS: Record<MissionLifecycleState, MissionStatusDisplay> = {
-  draft: { label: 'Preparando', icon: 'file', tone: 'pending' },
+  draft: { label: MISSION_LIFECYCLE_LABELS.draft, icon: 'file', tone: 'pending' },
   review_ready: {
-    label: 'Pronta para iniciar',
+    label: MISSION_LIFECYCLE_LABELS.review_ready,
     icon: 'status-idle',
     tone: 'ready',
   },
-  starting: { label: 'Iniciando', icon: 'status-spawning', tone: 'pending' },
-  running: { label: 'Trabalhando', icon: 'status-busy', tone: 'running' },
+  starting: {
+    label: MISSION_LIFECYCLE_LABELS.starting,
+    icon: 'status-spawning',
+    tone: 'pending',
+  },
+  running: {
+    label: MISSION_LIFECYCLE_LABELS.running,
+    icon: 'status-busy',
+    tone: 'running',
+  },
   blocked_user: {
-    label: 'Precisa de resposta',
+    label: MISSION_LIFECYCLE_LABELS.blocked_user,
     icon: 'user',
     tone: 'blocked',
   },
   blocked_technical: {
-    label: 'Precisa de reparo',
+    label: MISSION_LIFECYCLE_LABELS.blocked_technical,
     icon: 'warn',
     tone: 'blocked',
   },
-  recovering: { label: 'Recuperando', icon: 'restart', tone: 'running' },
-  stopping: { label: 'Parando', icon: 'stop', tone: 'pending' },
-  failed: { label: 'Falhou', icon: 'status-exited', tone: 'failed' },
-  completed: { label: 'Concluída', icon: 'check', tone: 'done' },
+  recovering: {
+    label: MISSION_LIFECYCLE_LABELS.recovering,
+    icon: 'restart',
+    tone: 'running',
+  },
+  stopping: {
+    label: MISSION_LIFECYCLE_LABELS.stopping,
+    icon: 'stop',
+    tone: 'pending',
+  },
+  failed: {
+    label: MISSION_LIFECYCLE_LABELS.failed,
+    icon: 'status-exited',
+    tone: 'failed',
+  },
+  completed: {
+    label: MISSION_LIFECYCLE_LABELS.completed,
+    icon: 'check',
+    tone: 'done',
+  },
 };
 
 const RUNNING_WARNING_STATUS: MissionStatusDisplay = {
-  label: 'Trabalhando · aviso',
+  label: MISSION_RUNNING_ATTENTION_LABEL,
   icon: 'warn',
   tone: 'blocked',
 };
@@ -90,10 +123,19 @@ const RUNNING_WARNING_STATUS: MissionStatusDisplay = {
 function missionStatusDisplay(
   state: MissionLifecycleState,
   needsAttention: boolean,
+  stateReason?: Pick<MissionStateReason, 'code' | 'label'>,
 ): MissionStatusDisplay {
+  const label = missionLifecycleLabel(state, needsAttention, stateReason?.code);
+  if (label === 'Dormindo' || label === 'Parou') {
+    return {
+      label,
+      icon: label === 'Dormindo' ? 'status-idle' : 'stop',
+      tone: 'blocked',
+    };
+  }
   return state === 'running' && needsAttention
     ? RUNNING_WARNING_STATUS
-    : MISSION_STATUS[state];
+    : { ...MISSION_STATUS[state], label };
 }
 
 interface WorkspaceGroupProps {
@@ -161,6 +203,7 @@ function WorkspaceGroup({
                     const status = missionStatusDisplay(
                       mission.status,
                       mission.needsAttention,
+                      mission.stateReason,
                     );
                     const missionSelected =
                       selection?.kind === 'mission' &&
