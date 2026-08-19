@@ -1110,7 +1110,9 @@ describe('worker handoff capability contract', () => {
       quirks: { nexusMcp: 'none' },
     });
     expect(prompt).toContain('marker');
-    expect(prompt).not.toContain('nexus_handoff_submit');
+    // 19/08: nexus_handoff_submit agora EXISTE como comando de shell no PATH
+    // do pane (shim) — o contrato do worker sem MCP cita a forma shell.
+    expect(prompt).toContain('nexus_handoff_submit --status');
   });
 
   it('does not append handoff_submit to merge-council reviewer briefs', async () => {

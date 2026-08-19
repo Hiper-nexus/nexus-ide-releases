@@ -485,6 +485,19 @@ async function injectWithBusyProof(
     if (!orchWriteSession(sessionId, input, { markInputBusy: false })) {
       return false;
     }
+    // Voo real 19/08: colagem sem prova de Enter deixava o briefing LARGADO
+    // no composer ("checa o pane 5…" eterno) e o retry re-colava por cima.
+    // Toda saída sem aceite após a colagem limpa a linha (Ctrl-U) — em TUI
+    // readline isso mata o strand; num turno vivo é um control char inócuo.
+    const clearStrandedComposer = () => {
+      if (input.length === 0) return;
+      if (getSessionState(sessionId) === null) return;
+      try {
+        orchWriteSession(sessionId, '\x15', { markInputBusy: false });
+      } catch {
+        // Best-effort: sessão pode ter morrido entre o check e o write.
+      }
+    };
     await submitEnter(
       sessionId,
       invocation,
@@ -498,7 +511,10 @@ async function injectWithBusyProof(
       },
       true,
     );
-    if (!submitted) return false;
+    if (!submitted) {
+      clearStrandedComposer();
+      return false;
+    }
     if (getAgentTurnStartSequence(sessionId) > turnStartBaseline) {
       turnStartObserved = true;
     }
@@ -525,6 +541,7 @@ async function injectWithBusyProof(
     if (submitted && getSessionState(sessionId) !== null) {
       await assertAcceptedPromptAuthority(sessionId, invocation);
     }
+    if (!accepted) clearStrandedComposer();
     return accepted;
   } finally {
     settle = null;
