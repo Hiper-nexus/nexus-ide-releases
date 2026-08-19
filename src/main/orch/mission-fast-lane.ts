@@ -992,6 +992,11 @@ async function tickWatcher(state: WatcherState): Promise<void> {
     return;
   }
 
+  // Orientação enfileirada (kickoff/autoridade incompleta) tenta de novo a
+  // cada tick — o flush pós-spawn pode rodar antes da autoridade fechar e a
+  // fila ficava órfã (19/08: "authority is incomplete" cru pro operador).
+  void flushQueuedKickoffDirects(state.scope, stores, state.missionId);
+
   // P0 civil: Pronto só com board selado N/N. pending-with-file fecha
   // match único na pasta; never-started após first-wave curto reroteia.
   try {

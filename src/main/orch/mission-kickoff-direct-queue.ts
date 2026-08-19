@@ -99,11 +99,14 @@ export function isKickoffInProgressMessage(
   hasCurrentKickoffAcceptance: boolean,
 ): boolean {
   if (isKickoffReceiptMessage(message)) return true;
+  // Autoridade incompleta enfileira MESMO com recibo: o revival grava o
+  // recibo já no spawn e a autoridade só fecha depois — rejeitar aqui
+  // vazava "orchestrator authority is incomplete" cru pro operador (19/08).
+  if (/orchestrator authority is incomplete/i.test(message)) return true;
   if (hasCurrentKickoffAcceptance) return false;
   return (
     /live orchestrator session/i.test(message) ||
-    /orchestrator session is not live/i.test(message) ||
-    /orchestrator authority is incomplete/i.test(message)
+    /orchestrator session is not live/i.test(message)
   );
 }
 
