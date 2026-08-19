@@ -409,7 +409,12 @@ export function maybeApplyCivilianPronto(
     const message = error instanceof Error ? error.message : String(error);
     // Recusa por revisão: o civilian-delivery é quem abre o revisor; aqui só
     // não podemos virar loop de log a cada tick.
-    if (!isCivilianReviewRefusal(message) || noteCivilianReviewRefusal(mission.id)) {
+    // Chave própria: o pronto NÃO pode consumir a janela do civilian-delivery
+    // (é o delivery quem abre o revisor pós-recusa).
+    if (
+      !isCivilianReviewRefusal(message) ||
+      noteCivilianReviewRefusal(`${mission.id}:pronto`)
+    ) {
       console.warn(
         '[civilian-pronto] completeVerified recusou a entrega civil:',
         message,
