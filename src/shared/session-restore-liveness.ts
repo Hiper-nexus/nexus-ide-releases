@@ -205,11 +205,12 @@ export function leftoverRunningOrPendingIsDead(input: {
 
 export function sessionDeadReason(): {
   readonly code: typeof SESSION_DEAD_REASON_CODE;
-  readonly label: typeof SESSION_DEAD_REASON_LABEL;
+  readonly label: typeof SESSION_SLEEPING_REASON_LABEL;
 } {
+  // Leftover cadáver sem Encerrar. Parou-as-stop is runtime-closed only.
   return {
     code: SESSION_DEAD_REASON_CODE,
-    label: SESSION_DEAD_REASON_LABEL,
+    label: SESSION_SLEEPING_REASON_LABEL,
   };
 }
 
@@ -256,15 +257,15 @@ export function isIsolationStopReasonCode(code: string | undefined): boolean {
   );
 }
 
-/** Rótulo civil do chip: Dormindo (park) ou Parou (Encerrar / session-dead). */
+/** Rótulo civil do chip: Dormindo (park / leftover) ou Parou (Encerrar). */
 export function isolationStopLabel(code: string | undefined): string | null {
-  if (code === SESSION_SLEEPING_REASON_CODE) {
+  if (
+    code === SESSION_SLEEPING_REASON_CODE ||
+    code === SESSION_DEAD_REASON_CODE
+  ) {
     return SESSION_SLEEPING_REASON_LABEL;
   }
-  if (
-    code === SESSION_DEAD_REASON_CODE ||
-    code === RUNTIME_CLOSED_REASON_CODE
-  ) {
+  if (code === RUNTIME_CLOSED_REASON_CODE) {
     return SESSION_DEAD_REASON_LABEL;
   }
   return null;

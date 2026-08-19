@@ -20,7 +20,7 @@ describe('missionLifecycleLabel', () => {
       'Parou',
     );
     expect(missionLifecycleLabel('blocked_user', false, 'session-dead')).toBe(
-      'Parou',
+      'Dormindo',
     );
   });
 

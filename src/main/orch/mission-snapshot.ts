@@ -184,16 +184,6 @@ function projectState(view: ParsedView): {
   readonly state: MissionLifecycleState;
   readonly stateReason?: MissionStateReason;
 } {
-  if (view.openQuestion) {
-    return {
-      state: 'blocked_user',
-      stateReason: {
-        code: 'open-question',
-        label: 'Aguardando sua resposta',
-      },
-    };
-  }
-
   // Persist terminal is authority. leftover-parked leftover in the
   // description must never paint Parou over Pronto.
   if (view.mission.status === 'done') {
@@ -224,6 +214,18 @@ function projectState(view: ParsedView): {
     return {
       state: 'blocked_user',
       stateReason: sessionSleepingReason(),
+    };
+  }
+
+  // Precisa de você only for a live human ask — leftover-park / Encerrar
+  // persist the same blocked_user row and must not inherit this label.
+  if (view.openQuestion) {
+    return {
+      state: 'blocked_user',
+      stateReason: {
+        code: 'open-question',
+        label: 'Aguardando sua resposta',
+      },
     };
   }
 
@@ -497,7 +499,11 @@ export function projectMissionSnapshot(
       ...task,
       evidenceIds: evidence.map(({ id }) => id),
     })),
-    ...(view.openQuestion ? { question: view.openQuestion } : {}),
+    ...(view.openQuestion &&
+    !view.leftoverParked &&
+    !view.runtimeClosedByOperator
+      ? { question: view.openQuestion }
+      : {}),
     ...(view.mission.result ? { result: view.mission.result } : {}),
     allowedActions: allowedActions(state, stateReason),
     version: view.mission.version,

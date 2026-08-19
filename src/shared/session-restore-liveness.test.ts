@@ -188,10 +188,10 @@ describe('restore grid / rail / pet gates', () => {
 });
 
 describe('session-dead copy', () => {
-  it('rótulo civil Parou cobre a classe inteira', () => {
+  it('Parou-as-stop é Encerrar; leftover session-dead é Dormindo', () => {
     expect(sessionDeadReason()).toEqual({
       code: 'session-dead',
-      label: 'Parou',
+      label: 'Dormindo',
     });
     expect(isSessionDeadReasonCode('session-dead')).toBe(true);
     expect(isSessionDeadReasonCode('restore-failed')).toBe(true);
@@ -207,7 +207,7 @@ describe('session-dead copy', () => {
     expect(isIsolationStopReasonCode('open-question')).toBe(false);
     expect(isolationStopLabel('session-sleeping')).toBe('Dormindo');
     expect(isolationStopLabel('runtime-closed')).toBe('Parou');
-    expect(isolationStopLabel('session-dead')).toBe('Parou');
+    expect(isolationStopLabel('session-dead')).toBe('Dormindo');
     expect(isolationStopLabel('open-question')).toBeNull();
   });
 

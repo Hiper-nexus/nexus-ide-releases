@@ -855,7 +855,7 @@ describe('App Nexus V2 cutover', () => {
     act(() => {
       attentionHandler?.({
         kind: 'mission-done',
-        title: 'Fix the API server',
+        title: 'SaaS lista de espera com EXATAMENTE',
         at: 1,
         missionId: 'mission-f7eb1133',
       });
@@ -866,7 +866,7 @@ describe('App Nexus V2 cutover', () => {
     );
     expect(toast?.kind).toBe('success');
     expect(toast?.detail).toBe(
-      'Fix the API server — o resultado final está pronto.',
+      'SaaS lista de espera com EXATAMENTE — o resultado final está pronto.',
     );
     expect(toast?.action?.label).toBe('Ver resultado');
     expect(toast?.detail).not.toMatch(/Não foi possível concluir esta etapa/);

@@ -288,6 +288,9 @@ describe('WorkspaceRail', () => {
       host.querySelector('[data-mission-id="mission-parked"]')?.textContent,
     ).toContain('Dormindo');
     expect(
+      host.querySelector('[data-mission-id="mission-parked"]')?.textContent,
+    ).not.toContain('Parou');
+    expect(
       host.querySelector('[data-mission-id="mission-encerrar"]')?.textContent,
     ).toContain('Parou');
     expect(

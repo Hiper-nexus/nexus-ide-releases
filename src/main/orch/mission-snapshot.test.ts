@@ -130,7 +130,33 @@ describe('projectMissionSnapshot', () => {
 
     expect(snapshot.state).toBe('blocked_technical');
     expect(snapshot.stateReason?.code).toBe('session-dead');
-    expect(snapshot.stateReason?.label).toBe('Parou');
+    expect(snapshot.stateReason?.label).toBe('Dormindo');
+  });
+
+  it('leftover-park sem Encerrar é Dormindo mesmo com openQuestion', () => {
+    const view = runningView();
+    view.mission.status = 'blocked';
+    view.mission.updatedAt = Date.now();
+    view.orchestratorLive = false;
+    view.leftoverParked = true;
+    view.panes = [];
+    view.openQuestion = {
+      id: 'question-stale',
+      prompt: 'Qual canal de publicação?',
+      options: [{ id: 'stable', label: 'Stable' }],
+      allowFreeText: false,
+    };
+
+    const snapshot = projectMissionSnapshot(view);
+    const summary = projectMissionSummarySnapshot(view);
+
+    expect(snapshot.state).toBe('blocked_user');
+    expect(snapshot.stateReason?.code).toBe('session-sleeping');
+    expect(snapshot.stateReason?.label).toBe('Dormindo');
+    expect(snapshot.stateReason?.code).not.toBe('open-question');
+    expect(snapshot.stateReason?.code).not.toBe('runtime-closed');
+    expect(snapshot.question).toBeUndefined();
+    expect(summary.needsAttention).toBe(false);
   });
 
   it('selo leftover parked segue o persist: Dormindo, não Precisa de você', () => {
@@ -151,6 +177,30 @@ describe('projectMissionSnapshot', () => {
     expect(snapshot.allowedActions).toEqual(['resume']);
   });
 
+  it('Encerrar + openQuestion continua Parou, não Precisa de você', () => {
+    const view = runningView();
+    view.mission.status = 'blocked';
+    view.mission.updatedAt = Date.now();
+    view.orchestratorLive = false;
+    view.runtimeClosedByOperator = true;
+    view.leftoverParked = true;
+    view.panes = [];
+    view.openQuestion = {
+      id: 'question-stale',
+      prompt: 'Qual canal de publicação?',
+      options: [{ id: 'stable', label: 'Stable' }],
+      allowFreeText: false,
+    };
+
+    const snapshot = projectMissionSnapshot(view);
+
+    expect(snapshot.stateReason?.code).toBe('runtime-closed');
+    expect(snapshot.stateReason?.label).toBe('Parou');
+    expect(snapshot.stateReason?.code).not.toBe('session-dead');
+    expect(snapshot.stateReason?.code).not.toBe('open-question');
+    expect(snapshot.question).toBeUndefined();
+  });
+
   it('Encerrar persistido pinta Parou, não session-dead', () => {
     const view = runningView();
     view.mission.status = 'blocked';
@@ -166,6 +216,7 @@ describe('projectMissionSnapshot', () => {
     expect(snapshot.state).toBe('blocked_user');
     expect(snapshot.stateReason?.code).toBe('runtime-closed');
     expect(snapshot.stateReason?.label).toBe('Parou');
+    expect(snapshot.stateReason?.code).not.toBe('session-dead');
     expect(summary.needsAttention).toBe(false);
   });
 
@@ -213,7 +264,9 @@ describe('projectMissionSnapshot', () => {
     const snapshot = projectMissionSnapshot(view);
 
     expect(snapshot.state).toBe('blocked_technical');
-    expect(snapshot.stateReason?.label).toBe('Parou');
+    expect(snapshot.stateReason?.code).toBe('session-dead');
+    expect(snapshot.stateReason?.label).toBe('Dormindo');
+    expect(snapshot.stateReason?.code).not.toBe('runtime-closed');
   });
 
   it('runtime-closed tem precedência sobre restore-failed', () => {

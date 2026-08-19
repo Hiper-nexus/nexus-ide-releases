@@ -58,6 +58,31 @@ describe('toast store UX policy', () => {
     );
   });
 
+  it('EXATAMENTE no título de sucesso não vira a frase de falha', () => {
+    const ready =
+      'SaaS lista de espera com EXATAMENTE — o resultado final está pronto.';
+    // 065 live: /\bE[A-Z]{3,}\b/ treated EXATAMENTE as errno before authored PT.
+    expect(humanizeToastDetail('SaaS lista de espera com EXATAMENTE')).toMatch(
+      /^Não foi possível concluir esta etapa/,
+    );
+    const push = useToastStore.getState().push;
+    push('success', 'Missão pronta', {
+      detail: ready,
+      action: { label: 'Ver resultado', onClick: vi.fn() },
+    });
+    expect(useToastStore.getState().toasts).toMatchObject([
+      {
+        kind: 'success',
+        title: 'Missão pronta',
+        detail: ready,
+        action: { label: 'Ver resultado' },
+      },
+    ]);
+    expect(useToastStore.getState().toasts[0]?.detail).not.toMatch(
+      /Não foi possível concluir esta etapa/,
+    );
+  });
+
   it('keeps success copy when a done mission title looks like a diagnostic', () => {
     const push = useToastStore.getState().push;
     push(

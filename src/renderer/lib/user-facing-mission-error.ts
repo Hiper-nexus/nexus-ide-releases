@@ -144,12 +144,17 @@ function stripTransportWrappers(raw: string): string {
  * Machine residue that is never operator copy in any language: internal snake
  * codes, stack frames, URLs, filesystem paths and errno-style constants.
  */
+function containsErrnoStyleToken(value: string): boolean {
+  // ENOENT/EACCES — not authored caps like EXATAMENTE (065 title).
+  return /\bE[A-Z]{3,}\b/.test(value);
+}
+
 function containsMachineResidue(value: string): boolean {
   return (
     /(?:^|\s)[a-z][a-z0-9]*(?:_[a-z0-9]+){2,}(?=[:\s]|$)/i.test(value) ||
     /\b(?:stack trace|typeerror|referenceerror)\b/i.test(value) ||
     /https?:\/\/|\bwww\./i.test(value) ||
-    /\bE[A-Z]{3,}\b|(?:\/[^/\s]+){2,}/.test(value) ||
+    /(?:\/[^/\s]+){2,}/.test(value) ||
     /\bat\s+\S+\s+\([^)]*:\d+:\d+\)/i.test(value)
   );
 }
@@ -181,6 +186,7 @@ function looksLikeAuthoredPortuguese(value: string): boolean {
 function looksLikeInternalDiagnostic(value: string): boolean {
   if (containsMachineResidue(value)) return true;
   if (looksLikeAuthoredPortuguese(value)) return false;
+  if (containsErrnoStyleToken(value)) return true;
   return (
     /\b(?:ipc|preflight|bootstrap|worktree)\b/i.test(value) ||
     /\b(?:failed|failure|unavailable|invalid|missing|not authorized|not found|cannot|did not|timed? out|timeout|temporarily)\b/i.test(
