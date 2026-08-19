@@ -1534,7 +1534,7 @@ const productionMissionEngines = new MissionEngineRegistry((scope, stores) =>
       }),
     completeVerified: (input: MissionVerifiedCompletionInput) => {
       const current = stores.missions.get(input.missionId);
-      if (current) {
+      if (current && input.operatorOverride !== true) {
         const handoffs =
           stores.handoffs?.list?.({
             missionId: input.missionId,

@@ -63,6 +63,10 @@ describe('completeMissionByOperator', () => {
         evidenceIds: [],
         artifactRefs: [],
       },
+      // 19/08: missão Parou 0/0 ficava presa — "Marcar concluída" batia em
+      // review_missing sem caminho de saída. A palavra do operador vence o
+      // gate; só este IPC main-side seta a flag.
+      operatorOverride: true,
     });
   });
 

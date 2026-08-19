@@ -72,6 +72,9 @@ export function completeMissionByOperator(
         evidenceIds: [],
         artifactRefs: [],
       },
+      // A palavra do operador vence o gate de revisão — este caminho só é
+      // alcançável pelo IPC do operador, nunca pelo Maestro/MCP.
+      operatorOverride: true,
     });
   } catch (error) {
     return {

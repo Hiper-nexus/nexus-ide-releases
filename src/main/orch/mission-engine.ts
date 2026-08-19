@@ -96,6 +96,14 @@ const missionVerifiedCompletionInputSchema = missionLifecycleFenceSchema
   .extend({
     learnings: z.string().max(65_536),
     result: missionResultSchema,
+    /**
+     * Autoridade do OPERADOR sobre o gate de revisão independente (19/08:
+     * missão Parou 0/0 sem saída — "Marcar concluída" batia em review_missing
+     * e não havia cancelar). Só o IPC main-side do operador seta esta flag;
+     * o caminho MCP (nexus_mission_set_status) nunca — o Maestro continua
+     * incapaz de se autoconcluir sem revisor.
+     */
+    operatorOverride: z.literal(true).optional(),
   })
   .strict();
 

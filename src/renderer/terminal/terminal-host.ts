@@ -466,6 +466,26 @@ export function getScrollbackExcerpt(paneId: string, max = 2_400): string {
  */
 const missionAutoResumeSpent = new Set<string>();
 const missionRuntimeResumeInFlight = new Set<string>();
+/**
+ * Voo real 19/08: cada tecla num pane morto imprimia "tecla recebida —
+ * revivendo a missão" e disparava retry-kickoff de novo (12+ linhas seguidas
+ * sem mudança de estado). Uma tentativa por janela; teclas repetidas dentro
+ * dela são no-op silencioso.
+ */
+const DEAD_PANE_REVIVE_COOLDOWN_MS = 15_000;
+const deadPaneReviveAt = new Map<string, number>();
+
+export function shouldAttemptDeadPaneRevive(
+  missionId: string,
+  now = Date.now(),
+): boolean {
+  const last = deadPaneReviveAt.get(missionId);
+  if (last !== undefined && now - last < DEAD_PANE_REVIVE_COOLDOWN_MS) {
+    return false;
+  }
+  deadPaneReviveAt.set(missionId, now);
+  return true;
+}
 
 async function requestMissionRuntimeResume(missionId: string): Promise<void> {
   if (missionRuntimeResumeInFlight.has(missionId)) return;
@@ -491,6 +511,7 @@ async function requestDeadMissionPaneRevive(
   host: Host,
   missionId: string,
 ): Promise<void> {
+  if (!shouldAttemptDeadPaneRevive(missionId)) return;
   try {
     host.term.writeln(
       '\r\n\x1b[36m[nexus] tecla recebida — revivendo a missão ' +
