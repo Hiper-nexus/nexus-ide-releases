@@ -1883,6 +1883,23 @@ export function spawnMainOwnedMissionPaneAsync(
   }
 }
 
+/**
+ * Encarnação nasce NO SPAWN para TODO worker governado. Sem ela o
+ * fechamento mecânico C-194.1 recusa "não é worker de missão" e a resposta
+ * curta do worker (revisores da Via Rápida, segunda onda) se PERDE — o
+ * Maestro espera para sempre (gate 0.62, 19/08: 4 sessões recusadas, board
+ * 3/3, missão presa). Dispatch que já traz a própria encarnação vence.
+ */
+function mintedWorkerIncarnationId(
+  options: Pick<PaneSpawnOptions, 'role' | 'missionId' | 'workerIncarnationId'>,
+): string | undefined {
+  if (options.workerIncarnationId) return options.workerIncarnationId;
+  if (options.role === 'worker' && options.missionId) {
+    return makeId('workerinc');
+  }
+  return undefined;
+}
+
 export function requestPaneSpawn(
   options: PaneSpawnOptions & { readonly abortSignal?: AbortSignal },
 ): Promise<OrchPaneSpawnResult> {
@@ -2040,6 +2057,7 @@ export function requestPaneSpawn(
           ...options,
           missionId: options.missionId,
           role: options.role,
+          workerIncarnationId: mintedWorkerIncarnationId(options),
         });
     }
     return Promise.resolve({
@@ -2097,7 +2115,7 @@ export function requestPaneSpawn(
         missionId: options.missionId,
         contextRevision: options.contextRevision,
         agentName: options.agentName,
-        workerIncarnationId: options.workerIncarnationId,
+        workerIncarnationId: mintedWorkerIncarnationId(options),
         allowedTools: options.allowedTools,
         allowedSkills: options.allowedSkills,
         role: options.role,

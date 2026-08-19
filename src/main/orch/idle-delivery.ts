@@ -520,14 +520,21 @@ function blockDeliveryFailure(
   // recuperação de runtime + outbox — jamais bloquear a missão, jamais
   // escrever marcador de "handoff não entregue" (o toast que mente).
   requestRuntimeRecovery(authority, handoffId);
-  console.warn(
-    '[idle-delivery] Maestro não aceitou a entrega após retry limitado; ' +
-      'recuperação física foi solicitada e a missão permanece em curso ' +
-      `(mission=${authority.missionId}, ` +
-      `handoff=${handoffId}, session=${authority.sessionId}, ` +
-      `attempts=${attempts})`,
-  );
+  // O ciclo re-arma a cada janela — o MESMO handoff repetia esta linha 63×
+  // no voo do gate 0.62 e afogava o diagnóstico real. Uma linha por handoff.
+  if (!blockedDeliveryWarned.has(handoffId)) {
+    blockedDeliveryWarned.add(handoffId);
+    console.warn(
+      '[idle-delivery] Maestro não aceitou a entrega após retry limitado; ' +
+        'recuperação física foi solicitada e a missão permanece em curso ' +
+        `(mission=${authority.missionId}, ` +
+        `handoff=${handoffId}, session=${authority.sessionId}, ` +
+        `attempts=${attempts})`,
+    );
+  }
 }
+
+const blockedDeliveryWarned = new Set<string>();
 
 function handleSubmitNotAccepted(
   pending: PendingEnter,
@@ -897,6 +904,23 @@ export function shutdownIdleDelivery(): void {
 }
 
 /** Resolve the exact owner/scope/mission authority for the orchestrator. */
+/**
+ * Entrega pulada NUNCA é silêncio (gate 0.62, 19/08): o re-arm repetia a
+ * cada 45s e ninguém dizia POR QUÊ o handoff não descia. Um warn por
+ * missão+motivo (dedup até o motivo mudar) nomeia a próxima trava.
+ */
+const deliverySkipReasonByMission = new Map<string, string>();
+
+function noteDeliverySkip(missionId: string, reason: string): null {
+  if (deliverySkipReasonByMission.get(missionId) !== reason) {
+    deliverySkipReasonByMission.set(missionId, reason);
+    console.warn(
+      `[idle-delivery] entrega pendente sem alvo (mission=${missionId}): ${reason}`,
+    );
+  }
+  return null;
+}
+
 function targetAuthority(
   handoff: Handoff,
   scope: ProjectExecutionScope,
@@ -908,24 +932,41 @@ function targetAuthority(
   const sessionId = stores.missions.get(
     missionId,
   )?.orchestratorSessionId;
-  if (!sessionId) return null;
+  if (!sessionId) {
+    return noteDeliverySkip(missionId, 'missão sem orchestratorSessionId');
+  }
   const pane = getPaneRuntimeAuthorityBySession(sessionId);
   const rendererScope = pane?.owner
     ? getRendererWorkspaceScope(pane.owner)
     : null;
+  if (!pane || pane.sessionId !== sessionId) {
+    return noteDeliverySkip(
+      missionId,
+      `orchestratorSessionId=${sessionId} não tem pane runtime vivo (Maestro morto/respawn sem rebind?)`,
+    );
+  }
   if (
-    !pane ||
-    pane.sessionId !== sessionId ||
     pane.kind !== 'cli-agent' ||
     pane.role !== 'orchestrator' ||
     pane.missionId !== missionId ||
     !pane.scope ||
-    !sameProjectScope(pane.scope, scope) ||
-    (pane.owner !== null &&
-      (!rendererScope || !sameProjectScope(rendererScope, scope)))
+    !sameProjectScope(pane.scope, scope)
   ) {
-    return null;
+    return noteDeliverySkip(
+      missionId,
+      `pane do Maestro não confere (kind=${pane.kind} role=${pane.role} mission=${pane.missionId ?? 'none'})`,
+    );
   }
+  if (
+    pane.owner !== null &&
+    (!rendererScope || !sameProjectScope(rendererScope, scope))
+  ) {
+    return noteDeliverySkip(
+      missionId,
+      'workspace do renderer difere do escopo da missão (operador olhando outro projeto?)',
+    );
+  }
+  deliverySkipReasonByMission.delete(missionId);
   return Object.freeze({
     owner: pane.owner,
     paneId: pane.paneId,

@@ -13,6 +13,57 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.62.0',
+  date: '2026-08-19',
+  codename: 'O STOP é lei',
+  summary:
+    'Forjada por um gate de missão real mãos-livres: encerrou, ficou ' +
+    'encerrado (retry mecânico nunca reabre missão selada — só Retomar); ' +
+    'todo worker governado ganha encarnação e a entrega mecânica C-194.1 ' +
+    'nunca mais se perde; o parser de veredito entende "nenhuma story ' +
+    'reprovada"; o revisor pós-recusa não morre no registro; e toda trava ' +
+    'se nomeia no log em vez de repetir em silêncio.',
+  highlights: [
+    {
+      title: 'Encerrou, ficou encerrado',
+      detail:
+        'Tecla em pane morto, auto-cura de grant e watchdogs NUNCA reabrem ' +
+        'missão encerrada pelo operador. Só o botão Retomar religa — e diz ' +
+        'isso na tela em uma linha.',
+    },
+    {
+      title: 'A entrega do revisor nunca mais se perde',
+      detail:
+        'Workers da segunda onda nasciam sem encarnação e o fechamento ' +
+        'mecânico recusava a resposta deles. Agora todo worker governado ' +
+        'entrega — provado em voo real com reprovação forense e rework ' +
+        'despachado sozinho.',
+    },
+    {
+      title: 'Vereditos estruturados no gate de revisão',
+      detail:
+        '[VALIDADA]/[REPROVADA] por story decidem o gate; "Nenhuma story ' +
+        'reprovada" deixou de virar reprovação eterna.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Travas se nomeiam',
+      detail:
+        'Entrega pulada diz o motivo, recusa de conclusão carrega o ' +
+        'missionId, linha idêntica não repete 63× — silêncio deixou de ' +
+        'ser diagnóstico.',
+    },
+    {
+      title: 'Pane morto fala menos e mais certo',
+      detail:
+        'Religamento só é anunciado após o aceite do main; reasseguramento ' +
+        'de resume exato foi para o log.',
+    },
+  ],
+};
+
+export const RELEASE_06100: AppRelease = {
   version: '0.61.0',
   date: '2026-08-19',
   codename: 'Herança do concorrente',

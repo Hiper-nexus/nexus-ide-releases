@@ -55,6 +55,29 @@ const REVIEWER_NAME_HINT =
 const NEGATIVE_SUMMARY =
   /\b(reprovad[oa]?|não\s+aprov|nao\s+aprov|reject(?:ed)?|incorrect|veredito\s+negativ)\b/i;
 
+/**
+ * Vereditos ESTRUTURADOS por story ("[VALIDADA]"/"[REPROVADA]", pedidos pelo
+ * prompt do revisor) decidem antes de qualquer heurística de texto. Gate 0.62
+ * (19/08): o revisor entregou 3/3 "[VALIDADA] ... Nenhuma story reprovada" e
+ * a regex crua leu "reprovada" como reprovação — a melhor revisão do voo
+ * virou review_rejected em loop e a missão nunca concluiu. Menção NEGADA
+ * ("nenhuma/sem/zero/0 ... reprovad...") tampouco conta como negativa.
+ */
+const STORY_VERDICT_REJECTED = /\[\s*reprovad[ao]?\s*\]/i;
+const STORY_VERDICT_APPROVED = /\[\s*validad[ao]?\s*\]/i;
+const NEGATED_REJECTION_MENTION =
+  /\b(nenhum[a]?|sem|zero|0)\b[^.\n]{0,60}?\breprovad\w*/gi;
+
+export function reviewSummaryLooksNegative(summary: string): boolean {
+  if (STORY_VERDICT_REJECTED.test(summary)) return true;
+  if (STORY_VERDICT_APPROVED.test(summary)) return false;
+  const withoutNegatedMentions = summary.replace(
+    NEGATED_REJECTION_MENTION,
+    ' ',
+  );
+  return NEGATIVE_SUMMARY.test(withoutNegatedMentions);
+}
+
 function laneOf(mission: Pick<Mission, 'intentContract'>): string {
   return mission.intentContract?.lane ?? 'standard';
 }
@@ -178,7 +201,7 @@ export function reviewerHandoffHasEvidence(handoff: ReviewGateHandoff): boolean 
   }
   const summary = (handoff.summary ?? '').trim();
   if (summary.length < 80) return false;
-  if (NEGATIVE_SUMMARY.test(summary)) return false;
+  if (reviewSummaryLooksNegative(summary)) return false;
   return true;
 }
 
@@ -189,7 +212,7 @@ function isNegativeReviewHandoff(handoff: ReviewGateHandoff): boolean {
   const findings = tryParseFindings(handoff);
   if (findings && hasBlockingFindings(findings)) return true;
   const summary = (handoff.summary ?? '').trim();
-  return summary.length > 0 && NEGATIVE_SUMMARY.test(summary);
+  return summary.length > 0 && reviewSummaryLooksNegative(summary);
 }
 
 /**

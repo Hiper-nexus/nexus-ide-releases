@@ -223,6 +223,23 @@ export function noteCivilianReviewRefusal(
 
 export function clearCivilianReviewRefusal(missionId: string): void {
   reviewRefusalAt.delete(missionId);
+  refusalLogReasonByMission.delete(missionId);
+}
+
+/**
+ * Recusa idêntica repetida a cada tick vira UMA linha nomeada com missionId
+ * (gate 0.62: dezenas de "review_rejected" anônimos afogavam o log e ninguém
+ * sabia de QUAL missão). Loga de novo só quando o motivo MUDA.
+ */
+const refusalLogReasonByMission = new Map<string, string>();
+
+export function shouldLogCivilianRefusal(
+  missionId: string,
+  reason: string,
+): boolean {
+  if (refusalLogReasonByMission.get(missionId) === reason) return false;
+  refusalLogReasonByMission.set(missionId, reason);
+  return true;
 }
 
 /** Auth present real do CLI (mesma classificação do first-wave). */
@@ -256,9 +273,12 @@ export function remintReviewerForSeat(
 ): SquadAgent {
   const successor = firstSeatableCli({ primaryCli: agent.cli, canSeat });
   if (!successor || successor === agent.cli) return agent;
-  // Modelo vazio: o spawn resolve provider-default → adapter-default. O
-  // hardcode antigo sombreava o defaultModel configurado pelo usuário.
-  return { ...agent, cli: successor, model: '' } as SquadAgent;
+  // SEM modelo (chave ausente): o spawn resolve provider-default →
+  // adapter-default. String vazia explodia o zod min(1) do
+  // missionPanes.record NO MEIO do loop de spawn (gate 0.62: revisor
+  // nasceu e o registro morreu — missão presa com trabalho pronto).
+  const { model: _dropped, ...rest } = agent;
+  return { ...rest, cli: successor } as SquadAgent;
 }
 
 export function isReviewCategory(category: AgentCategory | string | undefined): boolean {
@@ -857,8 +877,10 @@ export function buildCivilianReviewerPrompt(
     ...board,
     '',
     'Ao terminar, chame nexus_handoff_submit com um veredito POR STORY',
-    '(validada: evidência citada | reprovada: o que falta, com caminho).',
-    'Não reescreva o produto sem um defeito concreto.',
+    'usando EXATAMENTE os marcadores "[VALIDADA]" ou "[REPROVADA]" no início',
+    'de cada item (ex.: "1. [VALIDADA] <story> — evidência citada" |',
+    '"2. [REPROVADA] <story> — o que falta, com caminho"). O gate lê esses',
+    'marcadores. Não reescreva o produto sem um defeito concreto.',
   ].join('\n');
 }
 
@@ -899,8 +921,10 @@ async function defaultSpawnReviewers(
       missionId: mission.id,
       paneId: spawn.paneId,
       adapterId: agent.cli,
-      model: agent.model,
-      effort: agent.effort,
+      // Coerção obrigatória: o schema do record exige min(1) — '' derruba o
+      // loop inteiro depois do pane já ter nascido (gate 0.62).
+      model: agent.model || undefined,
+      effort: agent.effort || undefined,
       cwd: scope.rootRealPath,
       title: agent.agentName,
       agentName: agent.agentName,
@@ -1208,10 +1232,12 @@ export async function maybeCompleteFastLaneOnDelivery(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (!isCivilianReviewRefusal(message)) {
-      console.warn(
-        '[civilian-delivery] completeVerified recusou a entrega civil:',
-        message,
-      );
+      if (shouldLogCivilianRefusal(mission.id, message)) {
+        console.warn(
+          `[civilian-delivery] completeVerified recusou (mission=${mission.id}):`,
+          message,
+        );
+      }
     } else if (noteCivilianReviewRefusal(mission.id)) {
       // Primeira recusa da janela: em vez de re-tentar em loop, abre o
       // revisor do roster que ainda não tem pane vivo — é ele quem destrava.

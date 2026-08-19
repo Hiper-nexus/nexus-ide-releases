@@ -98,11 +98,10 @@ function syntheticWriter(
 function remintWriterCli(agent: SquadAgent, cli: string): SquadAgent {
   if (agent.cli === cli) return agent;
   // O modelo do papel pertence ao CLI antigo — nunca viaja para o novo.
-  return {
-    ...agent,
-    cli,
-    model: '',
-  } as SquadAgent;
+  // Chave AUSENTE (nunca ''): string vazia estoura o zod min(1) do
+  // missionPanes.record depois do pane nascer (gate 0.62).
+  const { model: _dropped, ...rest } = agent;
+  return { ...rest, cli } as SquadAgent;
 }
 
 /**

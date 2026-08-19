@@ -294,3 +294,61 @@ describe('reviewerHandoffHasEvidence', () => {
     ).toBe(true);
   });
 });
+
+import { reviewSummaryLooksNegative } from './mission-independent-review-gate';
+
+describe('leitura do veredito do revisor (gate 0.62, 19/08)', () => {
+  it('"Nenhuma story reprovada" NUNCA é reprovação — fixture do voo real', () => {
+    // Resumo VERBATIM (truncado) da revisão 3/3 validada que o gate leu como
+    // review_rejected e travou a missão em loop eterno.
+    const flightSummary =
+      'Validação por story (evidência em disco + comportamento observado ' +
+      'via servidor local + Chrome):\n\n' +
+      '1. [VALIDADA] Criar arquivo estilos-sobre.css com estilo básico — ' +
+      'servido com HTTP 200; screenshot confirma.\n' +
+      '2. [VALIDADA] Adicionar na index.html um link de navegação — cliquei ' +
+      'no link e a aba navegou; confirmado por screenshot.\n' +
+      '3. [VALIDADA] Criar página sobre.html — renderizado no Chrome.\n\n' +
+      'Nenhuma story reprovada. Servidor de teste encerrado após a verificação.';
+    expect(reviewSummaryLooksNegative(flightSummary)).toBe(false);
+  });
+
+  it('marcador estruturado [REPROVADA] decide reprovação mesmo com elogios', () => {
+    expect(
+      reviewSummaryLooksNegative(
+        'Revisão story-a-story: 1. [VALIDADA] login ok com testes verdes. ' +
+          '2. [REPROVADA] API de sessão — arquivo ausente no disco.',
+      ),
+    ).toBe(true);
+  });
+
+  it('menção negada ("0 reprovadas", "sem reprovação") não é negativa', () => {
+    expect(
+      reviewSummaryLooksNegative(
+        'Board verificado por completo: 10/10 validadas, 0 reprovadas. ' +
+          'Evidência de execução anexada para cada story do plano selado.',
+      ),
+    ).toBe(false);
+    expect(
+      reviewSummaryLooksNegative(
+        'Auditoria integral sem reprovação: todas as entregas têm arquivo ' +
+          'real e comportamento demonstrado por teste automatizado local.',
+      ),
+    ).toBe(false);
+  });
+
+  it('reprovação textual clara continua sendo reprovação', () => {
+    expect(
+      reviewSummaryLooksNegative(
+        'Revisão concluída: a story de checkout foi reprovada — o fluxo ' +
+          'quebra no submit e não há arquivo de teste cobrindo o caso.',
+      ),
+    ).toBe(true);
+    expect(
+      reviewSummaryLooksNegative(
+        'Review finished: the delivery is rejected because the sealed board ' +
+          'claims files that do not exist on disk anywhere in the project.',
+      ),
+    ).toBe(true);
+  });
+});

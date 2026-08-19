@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.62.0 — O STOP é lei
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+Release forjada por um gate novo: missão real rodando mãos-livres em dev,
+e cada travada NOMEANDO uma raiz. Cinco raízes cortadas ao vivo:
+
+- **fix(orch): encerrou, ficou encerrado** — retry-kickoff mecânico (tecla
+  em pane morto, auto-cura de grant, watchdog) NUNCA mais reabre missão
+  selada pelo operador; só o botão Retomar religa. Era o "encerrei todas e
+  ele iniciando de novo sozinho, pane rodando por vida própria".
+- **fix(orch): encarnação para TODO worker governado** — revisores e
+  segunda onda da Via Rápida nasciam sem workerIncarnationId e o
+  fechamento mecânico C-194.1 recusava a entrega com "não é worker de
+  missão": a resposta curta se perdia e o Maestro esperava para sempre.
+  Provado ao vivo: no voo do gate só o Maestro é recusado (correto).
+- **fix(review): "Nenhuma story reprovada" não é reprovação** — o parser
+  de veredito lia a palavra "reprovada" sem entender negação e a MELHOR
+  revisão do voo (3/3 validada com HTTP 200 + Chrome + screenshot) virava
+  review_rejected em loop eterno. Vereditos estruturados
+  [VALIDADA]/[REPROVADA] decidem primeiro; menção negada não conta; o
+  prompt do revisor formaliza os marcadores.
+- **fix(orch): revisor pós-recusa não morre no registro** — remint emitia
+  model:'' e o zod min(1) do missionPanes.record derrubava o loop DEPOIS
+  do pane nascer (revisor vivo, registro morto, missão presa).
+- **fix(logs): travas se NOMEIAM** — entrega pulada diz o motivo
+  (Maestro morto? workspace trocado?), recusa de conclusão carrega o
+  missionId, e linhas idênticas não repetem 63× (dedup por
+  missão/handoff/motivo). Silêncio deixou de ser diagnóstico.
+- **ux(panes): tecla em pane morto só anuncia religamento APÓS o aceite**
+  — nada de "revivendo…" seguido de recusa; e "sessão exata recuperada"
+  virou log (só estado surpreendente fala na tela).
+
+Validado no voo do gate (mesma release, ao vivo): worker entrega → board
+sela → gate exige revisão → revisor abre sozinho → reprova COM evidência
+forense (querySelectorAll + computed style + screenshot pegando CSS órfão
+de escrita concorrente) → Maestro cobra o worker e despacha o conserto →
+worker re-entrega. O ciclo reprovação→rework inteiro sem um toque humano.
+
 ## 0.61.0 — Herança do concorrente
 
 _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._

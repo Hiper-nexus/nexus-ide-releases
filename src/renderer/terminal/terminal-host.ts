@@ -516,11 +516,14 @@ async function requestDeadMissionPaneRevive(
 ): Promise<void> {
   if (!shouldAttemptDeadPaneRevive(missionId)) return;
   try {
-    host.term.writeln(
-      '\r\n\x1b[36m[nexus] tecla recebida — revivendo a missão ' +
-        '(orquestrador + runtime)…\x1b[0m',
-    );
+    // Fala DEPOIS do aceite: anunciar "revivendo…" antes da cerca do main
+    // recusar (missão encerrada pelo operador) lia como promessa quebrada —
+    // sucesso ganha UMA linha, recusa ganha só a linha acionável do catch.
     await requestMissionRuntimeResume(missionId);
+    host.term.writeln(
+      '\r\n\x1b[36m[nexus] tecla recebida — missão religada ' +
+        '(orquestrador + runtime).\x1b[0m',
+    );
     const reviveRespawn = decideDeadPaneReviveRespawn({
       missionOwnsPane: isMainControlledMissionPane(pane.id, pane),
       hasOrchRequestId: pane.orchRequestId !== undefined,
@@ -739,15 +742,20 @@ function startSpawn(
       }
       host.hasVisibleContent = true;
       if (resume && !res.adopted) {
-        const message =
-          res.resumeMode === 'fresh-context'
-            ? '[nexus] a sessão anterior morreu com o app — a missão continuará em contexto novo.'
-            : res.resumeMode === 'exact'
-              ? '[nexus] sessão exata recuperada para este pane.'
+        // Teste do silêncio (0.62): só fala no pane o que explica um estado
+        // SURPREENDENTE (histórico sumiu / conversa aproximada). Sucesso
+        // exato é o esperado — reasseguramento vai pro log, não pra tela.
+        if (res.resumeMode === 'exact') {
+          console.log(`[nexus] sessão exata recuperada para o pane ${pane.id}`);
+        } else {
+          const message =
+            res.resumeMode === 'fresh-context'
+              ? '[nexus] a sessão anterior morreu com o app — a missão continuará em contexto novo.'
               : res.resumeMode === 'latest'
                 ? '[nexus] retomada aproximada: a CLI abriu a conversa mais recente deste workspace.'
                 : '[nexus] nova sessão: esta CLI não oferece recuperação nativa.';
-        host.term.writeln(`\r\n\x1b[${res.resumeMode === 'exact' ? '32' : '33'}m${message}\x1b[0m`);
+          host.term.writeln(`\r\n\x1b[33m${message}\x1b[0m`);
+        }
       }
 
       host.cleanups.push(

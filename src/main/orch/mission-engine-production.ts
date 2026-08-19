@@ -1344,6 +1344,22 @@ const productionMissionEngines = new MissionEngineRegistry((scope, stores) =>
       await fastLaneBootstrap(scope, missionId, { waitForFirstPane: false });
     },
     retryKickoff: async (command) => {
+      // O STOP do operador é lei (print de campo 19/08: "encerrei todas as
+      // missões e ele iniciando de novo sozinho"). retry-kickoff é gatilho
+      // MECÂNICO (tecla em pane morto, auto-cura de grant, watchdogs) — ele
+      // NUNCA pode quebrar o selo de encerramento. Só o comando `resume`
+      // (botão Retomar, decisão explícita) reabre missão selada.
+      const mission = stores.missions.get(command.missionId);
+      if (
+        mission &&
+        (wasMissionRuntimeClosedByOperator(mission) ||
+          wasMissionLeftoverParked(mission))
+      ) {
+        throw new Error(
+          "mission_closed_by_operator: missão encerrada pelo operador — " +
+            "só Retomar no rail religa",
+        );
+      }
       await resumeFastLaneMission(scope, command.missionId);
     },
     resume: async (command) => {

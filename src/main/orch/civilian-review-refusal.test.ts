@@ -117,3 +117,21 @@ describe('prompt do revisor com "como confirmar" por story (overclick, 19/08)', 
     );
   });
 });
+
+describe('remint nunca emite model vazio (gate 0.62: record min(1))', () => {
+  const reviewer = {
+    id: 'rev',
+    agentName: 'Revisor',
+    category: 'reviewer',
+    cli: 'cursor-agent',
+    model: 'cursor-fast',
+  } as SquadAgent;
+
+  it('sucessor NÃO carrega model — chave ausente, nunca string vazia', () => {
+    const seated = remintReviewerForSeat(reviewer, (cli) => cli === 'codex');
+    expect(seated.cli).toBe('codex');
+    // '' estourava o zod min(1) do missionPanes.record DEPOIS do pane
+    // nascer — revisor vivo, registro morto, missão presa (gate 0.62).
+    expect('model' in seated ? seated.model : undefined).toBeUndefined();
+  });
+});

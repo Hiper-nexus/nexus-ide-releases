@@ -15,6 +15,7 @@ import type { MissionEngine } from './mission-engine';
 import {
   isCivilianReviewRefusal,
   noteCivilianReviewRefusal,
+  shouldLogCivilianRefusal,
 } from './civilian-delivery-completion';
 import { missionEngineForScope } from './mission-engine-registry';
 import { listPaneSnapshots } from './pane-registry';
@@ -412,11 +413,12 @@ export function maybeApplyCivilianPronto(
     // Chave própria: o pronto NÃO pode consumir a janela do civilian-delivery
     // (é o delivery quem abre o revisor pós-recusa).
     if (
-      !isCivilianReviewRefusal(message) ||
-      noteCivilianReviewRefusal(`${mission.id}:pronto`)
+      isCivilianReviewRefusal(message)
+        ? noteCivilianReviewRefusal(`${mission.id}:pronto`)
+        : shouldLogCivilianRefusal(`${mission.id}:pronto`, message)
     ) {
       console.warn(
-        '[civilian-pronto] completeVerified recusou a entrega civil:',
+        `[civilian-pronto] completeVerified recusou (mission=${mission.id}):`,
         message,
       );
     }
