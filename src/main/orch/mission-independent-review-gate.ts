@@ -71,7 +71,7 @@ export function isCivilianViaRapidaReviewExempt(
   if (mode === 'guided') return false;
   if (mission.intentState === 'legacy') return false;
   if (mission.intentContract?.freeAgentChoice === true) return true;
-  return mode === 'livre' || mode === 'yolo';
+  return mode === 'livre';
 }
 
 function missionRequiresIndependentReview(

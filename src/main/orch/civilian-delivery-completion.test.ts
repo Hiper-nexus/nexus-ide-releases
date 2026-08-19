@@ -647,7 +647,7 @@ describe('maybeCompleteFastLaneOnDelivery', () => {
   it('files-on-disk + 20 never-started → reroute, não Pronto 0/20', async () => {
     completeVerified.mockClear();
     const planned = storyPlan(20);
-    const { marked, reconcile } = harness({
+    const { reconcile } = harness({
       missionId: 'mission-20stories-c',
       files: [
         'package.json',
@@ -971,7 +971,7 @@ describe('maybeCompleteFastLaneOnDelivery', () => {
   it('stress-12: 17 arquivos + smoke + panes idle + board 0/12 → reroute, não Pronto', async () => {
     completeVerified.mockClear();
     const planned = storyPlan(12);
-    const { marked, reconcile } = harness({
+    const { reconcile } = harness({
       missionId: 'mission-stress-12',
       files: [
         'package.json',
@@ -1014,7 +1014,7 @@ describe('maybeCompleteFastLaneOnDelivery', () => {
   it('stress-waitlist: 12 arquivos + smoke ok + board 1/3 + writers idle → espera/reroute, não Pronto', async () => {
     completeVerified.mockClear();
     const planned = storyPlan(3);
-    const { marked, reconcile } = harness({
+    const { reconcile } = harness({
       missionId: 'mission-stress-waitlist',
       files: [
         'server.js',

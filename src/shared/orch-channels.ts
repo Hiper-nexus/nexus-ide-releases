@@ -95,6 +95,11 @@ export const ORCH_CHANNELS = {
   /** Login-stuck watchdog: pane stuck on a CLI login screen (or recovered). */
   paneLoginStuck: 'orch:pane.loginStuck',
   /**
+   * Worker CLI failed to boot (kimi/agy/…); main already retried or needs
+   * Claude/Codex. Renderer shows a civilian PT toast — not pet geometry.
+   */
+  workerSpawnFailed: 'orch:worker.spawnFailed',
+  /**
    * Hook plane → renderer: agent is waiting for Enter / permission.
    * Transition-only on each source (semantic + orca); the renderer ORs them.
    */

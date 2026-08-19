@@ -426,7 +426,6 @@ async function persistPtyHandoff(
           summary: prepared.summary,
           preferredTaskId: prepared.dispatch?.taskId,
           handoffStatus: prepared.payload.status,
-          sessionId,
         });
       } catch (error) {
         console.warn(
