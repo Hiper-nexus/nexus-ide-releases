@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.60.2 — O operador manda
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+Quatro feridas do voo real de 19/08 fechadas no mesmo dia, mais o beco sem
+saída que o operador flagrou na tela:
+
+- **fix(orch): "Marcar concluída" vence o gate de revisão** — missão Parou
+  0/0 ficava presa entre review_missing e nenhum botão de cancelar. A
+  palavra do operador agora atravessa o gate (operatorOverride só no IPC
+  main-side); o Maestro continua incapaz de se autoconcluir sem revisor.
+- **fix(board): settle mecânico exige match arquivo↔story** — 7 panes
+  settlavam com a mesma lista de files-modified e o board fechava N/N com
+  stories sem arquivo. Conclusão física sem match não avança; o fallback
+  next-open ficou exclusivo do handoff assertado pelo worker.
+- **fix(inject): colagem sem prova de Enter limpa o composer** — briefing
+  não ficava mais largado no input do Maestro travando a missão inteira.
+- **fix(terminal): resync pós-drop de backlog** — o corte de 2 MB deixava
+  o chunk seguinte começar no meio de sequência ANSI e a tela mostrava
+  lixo ('(B', '1;2m', payload Kitty do grok). Pós-drop descarta até o
+  próximo newline.
+- **fix(ui): tecla em pane morto revive UMA vez por janela** — sem as 12
+  linhas seguidas de "tecla recebida — revivendo".
+
 ## 0.60.1 — O 0.60 que funciona de verdade
 
 _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._

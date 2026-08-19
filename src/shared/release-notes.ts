@@ -13,6 +13,47 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.60.2',
+  date: '2026-08-19',
+  codename: 'O operador manda',
+  summary:
+    'Fecha as quatro feridas do voo real de 19/08 no mesmo dia: Marcar ' +
+    'concluída vence o gate de revisão (missão presa tinha zero saída), o ' +
+    'board não infla mais sem arquivo no disco, briefing não fica largado ' +
+    'no composer, a tela não mostra lixo ANSI pós-corte de backlog e tecla ' +
+    'em pane morto revive uma vez, não doze.',
+  highlights: [
+    {
+      title: 'A palavra do operador atravessa o gate',
+      detail:
+        'Marcar concluída agora conclui — o gate de revisão independente ' +
+        'continua barrando o Maestro, nunca o humano. O beco "review_missing ' +
+        'sem botão de cancelar" acabou.',
+    },
+    {
+      title: 'Board honesto',
+      detail:
+        'Conclusão física de worker só avança story com match real de ' +
+        'arquivo/identidade; o fallback next-open ficou exclusivo do ' +
+        'handoff assertado.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Composer nunca fica com briefing largado',
+      detail:
+        'Colagem sem prova de Enter limpa a linha; o retry recomeça limpo.',
+    },
+    {
+      title: 'Tela limpa pós-corte de backlog',
+      detail:
+        'Resync até o próximo newline elimina o lixo ANSI ("(B", "1;2m", ' +
+        'payload Kitty) que aparecia no pane do grok.',
+    },
+  ],
+};
+
+export const RELEASE_06001: AppRelease = {
   version: '0.60.1',
   date: '2026-08-19',
   codename: 'O 0.60 que funciona',
