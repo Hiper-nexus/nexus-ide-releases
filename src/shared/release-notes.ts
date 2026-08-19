@@ -13,6 +13,36 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.60.0',
+  date: '2026-08-19',
+  codename: 'Identidade 0.60',
+  summary:
+    'Esta entrada só alinha a identidade de versão 0.60.0 do Nexus / ' +
+    'NexusIDE. Não declara features enviadas. Os gates funcionais ' +
+    'obrigatórios antes da notarização Mac estão no checklist de ' +
+    'RELEASE-0.60.md e nenhum item está marcado como passado.',
+  highlights: [
+    {
+      title: 'Identidade de pacote, não changelog de entrega',
+      detail:
+        'package.json, server/package.json, lockfile e estas notas internas ' +
+        'passam a 0.60.0. CFBundleShortVersionString e o feed de update ' +
+        'continuam derivados dessa versão no Electron Forge. Nome do ' +
+        'produto permanece Nexus / NexusIDE.',
+    },
+    {
+      title: 'Gates de notarização ainda em aberto',
+      detail:
+        'Via Rápida de 20 stories sozinha, incrementos no quadro, Pronto ' +
+        'com evidência em disco, leftovers Dormindo persistidos, nenhum ' +
+        'toast de CLI não autenticada, nenhum pane zumbi — tudo listado ' +
+        'em RELEASE-0.60.md como checklist, não como feito.',
+    },
+  ],
+  fixes: [],
+};
+
+export const RELEASE_05005: AppRelease = {
   version: '0.50.5',
   date: '2026-08-18',
   codename: 'O terminal explica',

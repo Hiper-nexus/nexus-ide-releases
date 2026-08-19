@@ -1,5 +1,8 @@
 # Publicar uma nova versão
 
+Checklist funcional da candidata **0.60** (ainda em aberto):
+[`RELEASE-0.60.md`](../RELEASE-0.60.md).
+
 O caminho vigente é **manual e local**, sem GitHub Actions. O Mac de release
 assina com Developer ID, notariza com o perfil exato `"nexus-notary"`, executa
 os gates no mesmo commit da tag e envia os artefatos diretamente pelo alvo
