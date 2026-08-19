@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.64.0 — List é recibo
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+O que faltava para o Maestro ocupado nunca mais travar entrega:
+
+- **feat(handoff): list = recibo** — o Maestro que chama
+  `nexus_handoff_list` na PRÓPRIA missão já recebeu o conteúdo (a resposta
+  carrega summary+artifacts): os handoffs pendentes listados viram
+  `acknowledged` mecanicamente. Fim do "mesmo handoff antigo sendo
+  redelivered" e da recuperação física pesada quando o Maestro está
+  ocupado — ele lê pela via do pull (doutrina COBRANÇA) e a fila reconhece
+  sozinha. Leitura cross-mission é auditoria e nunca reconhece nada;
+  `consumed` continua exclusivo do nexus_handoff_ack.
+- **fix(review): recibo do main vale por si** — `acknowledged`/`consumed`
+  passam o gate sem exigir attempt digitado (handoff reconhecido via list
+  nunca teve paste+Enter e voltava a travar em review_missing).
+- **fix(delivery): nunca digitar o que o Maestro já leu** — o caminho de
+  digitação re-checa o estado fresco e pula handoffs reconhecidos no
+  meio-tempo.
+
+Pendência NOMEADA para a 0.65 (não escondida): garble visual de repaint
+em pane estreito (frames intercalados / payload Kitty no título) — exige
+harness de repro dedicado antes de mexer no caminho mais quente do
+terminal; e a flake ambiental de worktree-runtime-registry sob carga.
+
 ## 0.63.0 — O STOP é lei
 
 _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._

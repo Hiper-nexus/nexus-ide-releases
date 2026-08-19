@@ -1602,6 +1602,32 @@ export class ScopedHandoffStore {
       .map((row) => this.#deliveryAttemptFromRow(row));
   }
 
+  /**
+   * List = recibo (0.64): o orquestrador que LISTOU handoffs pendentes da
+   * PRÓPRIA missão já recebeu o conteúdo (a resposta do list carrega
+   * summary+artifacts). Marca queued/submitted → acknowledged + delivered=1
+   * para o redelivery/re-arm parar de digitar o que o Maestro já leu —
+   * era o loop attempts=2 + recuperação física do gate 0.62/0.63.
+   * `consumed` continua exclusivo do nexus_handoff_ack.
+   */
+  acknowledgeSeenByOrchestratorList(rawMissionId: string): number {
+    const missionId = identifierSchema.parse(rawMissionId);
+    const now = this.#binding.now();
+    const result = this.#binding
+      .writeDatabase()
+      .prepare(
+        `UPDATE handoffs
+       SET delivery_state = 'acknowledged',
+           delivered = 1,
+           acknowledged_at = ?,
+           submitted_at = COALESCE(submitted_at, ?)
+       WHERE mission_id = ? AND delivery_state IN ('queued', 'submitted')`,
+      )
+      .run(now, now, missionId);
+    if (result.changes > 0) this.#binding.emitChange();
+    return result.changes;
+  }
+
   acknowledgeMission(rawMissionId: string): number {
     const missionId = identifierSchema.parse(rawMissionId);
     const result = this.#binding

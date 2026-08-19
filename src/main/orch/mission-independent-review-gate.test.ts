@@ -394,3 +394,72 @@ describe('revisão SUBMITTED com attempt aceito vale — inclusive pós-respawn 
     expect(result.ok).toBe(true);
   });
 });
+
+describe('list-ack: acknowledged/consumed valem SEM attempt digitado (0.64)', () => {
+  it('revisão reconhecida via nexus_handoff_list passa o gate sem paste+Enter', () => {
+    const result = evaluateIndependentReviewGate({
+      mission: {
+        id: 'mission-1',
+        squadId: 'squad-1',
+        intentContract: { lane: 'standard' } as never,
+        orchestratorSessionId: 'orch-atual',
+        intentState: 'executing',
+      },
+      squad: {
+        id: 'squad-1',
+        agents: [
+          { id: 'rev', agentName: 'Verificar experiência', category: 'reviewer', cli: 'claude' },
+        ],
+      } as never,
+      handoffs: [
+        {
+          id: 'h-rev-list',
+          missionId: 'mission-1',
+          fromAgent: 'Verificar experiência',
+          status: 'success',
+          deliveryState: 'acknowledged',
+          summary:
+            'Verificação integral por story com evidência de execução: ' +
+            '1. [VALIDADA] página renderizada. 2. [VALIDADA] css aplicado.',
+          evidenceIds: [],
+        } as never,
+      ],
+      // O Maestro leu via list — NUNCA houve delivery digitado.
+      deliveryAttemptsOf: () => [],
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it('queued continua NÃO valendo — sem recibo nenhum não há revisão', () => {
+    const result = evaluateIndependentReviewGate({
+      mission: {
+        id: 'mission-1',
+        squadId: 'squad-1',
+        intentContract: { lane: 'standard' } as never,
+        orchestratorSessionId: 'orch-atual',
+        intentState: 'executing',
+      },
+      squad: {
+        id: 'squad-1',
+        agents: [
+          { id: 'rev', agentName: 'Verificar experiência', category: 'reviewer', cli: 'claude' },
+        ],
+      } as never,
+      handoffs: [
+        {
+          id: 'h-rev-q',
+          missionId: 'mission-1',
+          fromAgent: 'Verificar experiência',
+          status: 'success',
+          deliveryState: 'queued',
+          summary:
+            'Verificação integral por story com evidência de execução: ' +
+            '1. [VALIDADA] página renderizada e navegação clicada no browser.',
+          evidenceIds: [],
+        } as never,
+      ],
+      deliveryAttemptsOf: () => [],
+    });
+    expect(result.ok).toBe(false);
+  });
+});

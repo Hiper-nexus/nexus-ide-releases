@@ -13,18 +13,24 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.63.0',
+  version: '0.64.0',
   date: '2026-08-19',
-  codename: 'O STOP é lei',
+  codename: 'List é recibo',
   summary:
-    'Forjada por um gate de missão real mãos-livres — nove raízes num dia: ' +
-    'encerrou, ficou encerrado (só Retomar religa); todo worker governado ' +
-    'ganha encarnação e a entrega mecânica nunca se perde; revisão ' +
-    'ENTREGUE vale sem exigir ack do modelo e sobrevive a respawn do ' +
-    'Maestro; "nenhuma story reprovada" não é reprovação; diálogo de ' +
-    'rate-limit recebe ESC sozinho sem trocar seu modelo; diagnóstico ' +
-    'interno não vaza pra tela; e toda trava se nomeia no log.',
+    'O Maestro que lista handoffs da própria missão já os recebeu — a ' +
+    'fila reconhece sozinha (acknowledged mecânico), o redelivery para de ' +
+    'digitar o que ele já leu e a recuperação física pesada some. O gate ' +
+    'de revisão aceita o recibo do main sem attempt digitado. Em cima da ' +
+    '0.63.0 do gate histórico: missão real completou 100% sozinha.',
   highlights: [
+    {
+      title: 'List é recibo',
+      detail:
+        'nexus_handoff_list na própria missão marca os pendentes como ' +
+        'acknowledged — o conteúdo viaja na resposta. Fim do "mesmo ' +
+        'handoff antigo sendo redelivered" com Maestro ocupado; leitura ' +
+        'cross-mission continua auditoria pura.',
+    },
     {
       title: 'Encerrou, ficou encerrado',
       detail:

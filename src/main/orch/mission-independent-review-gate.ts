@@ -159,9 +159,17 @@ function acceptedByCurrentOrchestrator(
   attempts: readonly ReviewGateDeliveryAttempt[],
   orchestratorSessionId: string | undefined,
 ): boolean {
+  // consumed (nexus_handoff_ack com recibo físico) e acknowledged (list-ack:
+  // o Maestro da missão LISTOU e recebeu summary+artifacts na resposta) são
+  // recibos gravados pelo MAIN — valem por si, sem attempt digitado (0.64:
+  // handoff reconhecido via list nunca teve paste+Enter e travava aqui).
   if (
-    handoff.deliveryState !== 'consumed' &&
-    handoff.deliveryState !== 'acknowledged' &&
+    handoff.deliveryState === 'consumed' ||
+    handoff.deliveryState === 'acknowledged'
+  ) {
+    return true;
+  }
+  if (
     // 'submitted' com attempt ACEITO conta: a prova física (paste+Enter
     // confirmados pelo main) já existe — exigir o ack do modelo por cima
     // era cerimônia que travava a missão com a revisão entregue e lida

@@ -615,6 +615,10 @@ function deliverNow(authority: DeliveryAuthority, handoff: Handoff): boolean {
   const stores = getProjectDomainStores(authority.scope);
   const current = stores.handoffs.get(handoff.id);
   if (!current) return false;
+  // List-ack (0.64): o Maestro pode ter LISTADO este handoff enquanto a
+  // entrega esperava na fila — digitar de novo o que ele já leu era o
+  // "mesmo handoff antigo sendo redelivered" do gate. Só 'queued' digita.
+  if (current.deliveryState !== 'queued') return true;
   let attempt: HandoffDeliveryAttempt;
   try {
     attempt = stores.handoffs.reserveDeliveryAttempt({

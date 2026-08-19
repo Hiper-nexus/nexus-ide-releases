@@ -486,10 +486,38 @@ const handoffListTool: McpToolDef = {
       ctx.role === "orchestrator"
         ? (requestedMission ?? ctx.missionId)
         : ctx.missionId;
-    return getProjectDomainStores(ctx.scope).handoffs.list({
+    const rows = getProjectDomainStores(ctx.scope).handoffs.list({
       missionId,
       includeDelivered: resolveHandoffListIncludeDelivered(args, ctx.role),
     });
+    // List = recibo (0.64): a resposta carrega summary+artifacts — o Maestro
+    // da PRÓPRIA missão que listou já recebeu. Marca acknowledged e o
+    // redelivery para de digitar o que ele já leu (loop do gate 0.62/0.63).
+    // Leitura cross-mission é auditoria: nunca reconhece nada.
+    if (
+      ctx.role === "orchestrator" &&
+      ctx.missionId &&
+      missionId === ctx.missionId &&
+      rows.length > 0
+    ) {
+      try {
+        const acked = getProjectDomainStores(
+          ctx.scope,
+        ).handoffs.acknowledgeSeenByOrchestratorList(ctx.missionId);
+        if (acked > 0) {
+          console.info(
+            `[handoff] list-ack: ${acked} handoff(s) reconhecido(s) pela ` +
+              `leitura do Maestro (mission=${ctx.missionId})`,
+          );
+        }
+      } catch (error) {
+        console.warn(
+          "[handoff] list-ack falhou (segue sem recibo):",
+          error instanceof Error ? error.message : error,
+        );
+      }
+    }
+    return rows;
   },
 };
 
