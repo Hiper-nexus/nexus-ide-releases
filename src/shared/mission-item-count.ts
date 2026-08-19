@@ -217,3 +217,18 @@ export function extractListedMissionItems(
 export function countMissionItems(objective: string): number {
   return extractListedMissionItems(objective).length;
 }
+
+/** Alias estável usado pelo fast-lane (PR 98). */
+export function countEnumeratedMissionItems(objective: string): number {
+  return countMissionItems(objective);
+}
+
+/**
+ * Quantos writers a first-wave tenta abrir para um plano listado.
+ * Plano pequeno = 1; plano grande sobe até 7.
+ */
+export function targetParallelWriters(storyCount: number): number {
+  const n = Math.max(0, Math.floor(storyCount));
+  if (n <= 1) return 1;
+  return Math.min(n, 7);
+}

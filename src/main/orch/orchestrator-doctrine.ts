@@ -49,6 +49,79 @@ const DOCTRINE_BASE = [
     'responda em PT-BR.',
 ].join('\n');
 
+export interface MaestroKickoffBriefInput {
+  readonly title: string;
+  readonly objective: string;
+  readonly orchestratorName: string;
+  readonly teamNames: readonly string[];
+  readonly playbook?: string | null;
+  readonly resume?: boolean;
+  readonly uiNote?: string;
+  readonly designContext?: string;
+  readonly lane?: string | null;
+  readonly maxWorkers?: number | null;
+  readonly executorCount?: number | null;
+  readonly sealedPlanTitles?: readonly string[];
+}
+
+/**
+ * Kickoff vivo do Maestro. Cabeçalho da missão + doutrina + playbook.
+ * O plano selado já vem no `objective` quando o fast-lane o montou.
+ */
+export function buildMaestroKickoffBrief(
+  input: MaestroKickoffBriefInput,
+): string {
+  const workers = input.teamNames.filter(
+    (name) => name !== input.orchestratorName,
+  );
+  const playbook = input.playbook?.trim() ?? '';
+  const planOnly =
+    input.lane === 'plan' ||
+    input.lane === 'consult' ||
+    input.maxWorkers === 0;
+  const sealedCount = input.sealedPlanTitles?.length ?? 0;
+  const sealedHint =
+    sealedCount > 0
+      ? `Spawne UM worker por task selada pendente (first-wave). São ${sealedCount} entregas — não colapse em papéis.`
+      : '';
+
+  const coordination = planOnly
+    ? [
+        '## ORQUESTRAÇÃO (modelo PULL)',
+        `Papel: você é ${input.orchestratorName}. Esta missão é só documentação — ` +
+          'escreva o plano em docs/plan.md (ou plan.md). Não abra trabalhadores.',
+        'Quando o plano estiver pronto, chame nexus_mission_set_status({status:"done"}).',
+      ].join('\n')
+    : [
+        '## ORQUESTRAÇÃO (modelo PULL)',
+        `Papel: você é ${input.orchestratorName}, o coordenador. Não execute o pedido — delegue.`,
+        workers.length > 0
+          ? `Equipe para abrir: ${workers.join(', ')}.`
+          : 'Equipe: abra trabalhadores conforme o objetivo pedir.',
+        '1. Para cada tarefa: nexus_pane_spawn({agentName, prompt}) — uma chamada só. NUNCA spawn + write.',
+        '2. Encerre o turno. Quando acordar, valide via nexus_handoff_list({full:true}).',
+        '3. Quando todos entregarem: nexus_mission_set_status({status:"done"}).',
+        sealedHint,
+      ]
+        .filter(Boolean)
+        .join('\n');
+
+  return [
+    `## Missão: ${input.title}`,
+    `Objetivo: ${input.objective}`,
+    input.uiNote?.trim() || '',
+    input.designContext?.trim() || '',
+    coordination,
+    DOCTRINE_BASE,
+    playbook
+      ? `PLAYBOOK DO SQUAD (autoridade do operador, verbatim):\n${playbook}`
+      : '',
+    input.resume ? '(Você foi religado após uma tentativa anterior.)' : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
 /**
  * Monta a doutrina do orquestrador + (quando existir) o playbook do squad.
  * Nunca lança: squad ausente/instruções vazias degradam para a doutrina base.

@@ -783,6 +783,19 @@ async function ensureNativeArgvPromptAccepted(
   await deliverAgentPrompt(sessionId, finalPrompt, invocation, { adapterId });
 }
 
+/**
+ * Fast-lane Maestro argv brief: same physical acceptance proof as a
+ * provider-native spawn (`ensureNativeArgvPromptAccepted`). Throws if the
+ * pane never opens a turn so the caller can tear it down.
+ */
+export async function proveNativeArgvBriefAccepted(
+  sessionId: string,
+  finalPrompt: string,
+  adapterId: string,
+): Promise<void> {
+  await ensureNativeArgvPromptAccepted(sessionId, finalPrompt, adapterId);
+}
+
 export interface SpawnToolOptions {
   adapterId: string;
   /** Main-only provider-native first turn; never accepted from renderer IPC. */

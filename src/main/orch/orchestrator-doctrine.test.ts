@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { Mission, Squad } from '../../shared/orch-types';
-import { buildOrchestratorDoctrine } from './orchestrator-doctrine';
+import {
+  buildMaestroKickoffBrief,
+  buildOrchestratorDoctrine,
+} from './orchestrator-doctrine';
 
 function mission(overrides: Partial<Mission> = {}): Mission {
   return {
@@ -92,6 +95,34 @@ describe('orchestrator doctrine', () => {
 
 // Campo (14/08): orquestrador respondeu SOZINHO tarefa trivial e a missão
 // parou até o SLA do supervisor. A doutrina agora fecha a brecha.
+describe('buildMaestroKickoffBrief', () => {
+  it('exporta o kickoff com tools de coordenação e a equipe', () => {
+    const text = buildMaestroKickoffBrief({
+      title: 'Prova',
+      objective: 'Leia brief.txt',
+      orchestratorName: 'Coordenar e revisar',
+      teamNames: ['Coordenar e revisar', 'Implementar motor'],
+    });
+    expect(text).toContain('ORQUESTRAÇÃO');
+    expect(text).toContain('nexus_pane_spawn');
+    expect(text).toContain('nexus_handoff_list');
+    expect(text).toContain('nexus_mission_set_status');
+    expect(text).toContain('Implementar motor');
+  });
+
+  it('cita first-wave quando há plano selado', () => {
+    const text = buildMaestroKickoffBrief({
+      title: 'Prova',
+      objective: '### Plano selado\nO board já rastreia 20 tasks do objetivo.',
+      orchestratorName: 'Maestro',
+      teamNames: ['Maestro'],
+      sealedPlanTitles: Array.from({ length: 20 }, (_, i) => `Story ${i + 1}`),
+    });
+    expect(text).toContain('task selada pendente');
+    expect(text).toContain('first-wave');
+  });
+});
+
 describe('doutrina exige delegação total (nem o trivial é respondido no pane)', () => {
   it('diz que TODO pedido do objetivo vira dispatch de worker', () => {
     const doctrine = buildOrchestratorDoctrine(null, {} as never);

@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  countEnumeratedMissionItems,
   countMissionItems,
   extractListedMissionItems,
   listedItemsLookLikeRoleCollapse,
   MAX_SEALED_MISSION_ITEMS,
   requestedMissionItemCount,
+  targetParallelWriters,
 } from './mission-item-count';
 
 function twentyStoryList(): string {
@@ -119,5 +121,19 @@ describe('extractListedMissionItems', () => {
     expect(extractListedMissionItems(lines)).toHaveLength(
       MAX_SEALED_MISSION_ITEMS,
     );
+  });
+});
+
+describe('aliases do fast-lane', () => {
+  it('countEnumeratedMissionItems espelha countMissionItems', () => {
+    const objective = twentyStoryList();
+    expect(countEnumeratedMissionItems(objective)).toBe(
+      countMissionItems(objective),
+    );
+  });
+
+  it('targetParallelWriters sobe até 7 em plano grande', () => {
+    expect(targetParallelWriters(1)).toBe(1);
+    expect(targetParallelWriters(20)).toBe(7);
   });
 });

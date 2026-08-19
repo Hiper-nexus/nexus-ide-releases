@@ -10,6 +10,7 @@ import {
   claudeKeychainHasAsync,
   claudeOauthEmail,
   detectSubscriptionAuth,
+  detectSubscriptionAuthReadiness,
   resetAgyKeychainCache,
   hasSubscriptionAuthForStatus,
   kimiCredentialsBlobIsUsable,
@@ -884,5 +885,24 @@ describe('warmKeychainOnlySubscriptionAuth', () => {
     await warmKeychainOnlySubscriptionAuth('codex', asyncKeychainProbe);
 
     expect(asyncKeychainProbe).not.toHaveBeenCalled();
+  });
+});
+
+describe('detectSubscriptionAuthReadiness', () => {
+  it('devolve um dos cinco estados do contrato', () => {
+    expect([
+      'present',
+      'incomplete',
+      'missing',
+      'unreadable',
+      'no-credential',
+    ]).toContain(detectSubscriptionAuthReadiness('codex'));
+    expect([
+      'present',
+      'incomplete',
+      'missing',
+      'unreadable',
+      'no-credential',
+    ]).toContain(detectSubscriptionAuthReadiness('kimi'));
   });
 });

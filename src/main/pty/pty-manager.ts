@@ -16,6 +16,10 @@ import {
 import { ensureUtf8Locale } from "./pty-env-locale";
 import { PTY_CHANNELS } from "../../shared/channels";
 import type { SpawnRequest, PaneSessionState } from "../../shared/types";
+import {
+  classifySessionLiveness,
+  isConnectedAndWritable,
+} from "./session-liveness";
 import type { ProjectExecutionScope } from "../../shared/types";
 import type { SquadCliPolicy } from "../../shared/settings-types";
 import { sharedAgentAuthFamily } from "../../shared/agent-auth-family";
@@ -3081,6 +3085,18 @@ export function isSessionStdinWritable(sessionId: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Writer liveness used by Via Rápida: session is physically connected
+ * (`live`) AND stdin accepts a write. `spawning` without a writable PTY
+ * is not a live writer.
+ */
+export function isPtySessionConnectedAndWritable(sessionId: string): boolean {
+  return isConnectedAndWritable(
+    classifySessionLiveness(getSessionState(sessionId)),
+    isSessionStdinWritable(sessionId),
+  );
 }
 
 /** Spawn cwd of a live session — the caller's workspace dir. */
