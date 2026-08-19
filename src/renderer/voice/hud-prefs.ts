@@ -35,7 +35,10 @@ export const DEFAULT_HUD_PREFS: HudPrefs = {
   mode: 'mini',
   corner: 'br',
   dx: 20,
-  dy: 20,
+  // 96px livra a barra de orientação da missão (input + botão Enviar vivem
+  // no rodapé direito do board — o orb em dy:20 cobria o botão). O orb
+  // continua arrastável; preferência salva do usuário vence.
+  dy: 96,
   width: 300,
 };
 
