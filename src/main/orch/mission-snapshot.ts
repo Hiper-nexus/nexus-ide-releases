@@ -243,13 +243,18 @@ function projectState(view: ParsedView): {
 
   // session-dead only while SQLite still says running/pending. After Encerrar
   // or leftover-park persist (blocked / blocked_user), follow that row.
+  const kickoffThisProcess =
+    view.mission.status === 'running' &&
+    view.hasCurrentKickoffReceipt &&
+    view.panes.length === 0;
+
   if (
     persistStillLive &&
     leftoverRunningOrPendingIsDead({
       status: view.mission.status,
       hasLivePty: hasLiveRuntime,
       hasFiles,
-      isFreshKickoff: freshKickoff,
+      isFreshKickoff: freshKickoff || kickoffThisProcess,
       isFreshPending:
         view.mission.status === 'pending' &&
         !staleAcrossRestart &&
@@ -262,10 +267,23 @@ function projectState(view: ParsedView): {
     };
   }
 
+  // Stale running/pending without a live process is leftover until persist
+  // lands. Stopped/done/failed panes are restore-failed (running branch),
+  // not session-dead painted over persist.
+  const restoreFailedWitness =
+    view.panes.length > 0 &&
+    view.panes.every(
+      (pane) =>
+        pane.state === 'stopped' ||
+        pane.state === 'done' ||
+        pane.state === 'failed',
+    );
   if (
     persistStillLive &&
     staleAcrossRestart &&
-    !hasLiveRuntime
+    !hasLiveRuntime &&
+    !kickoffThisProcess &&
+    !restoreFailedWitness
   ) {
     return {
       state: 'blocked_technical',
