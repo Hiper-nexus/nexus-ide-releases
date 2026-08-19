@@ -31,8 +31,25 @@ const harness = vi.hoisted(() => ({
 vi.mock('../pty/pty-manager', () => ({
   getSessionState: (sessionId: string) =>
     harness.sessionStates.get(sessionId) ?? null,
+  getSessionCwd: () => null,
+  isPtySessionConnectedAndWritable: (sessionId: string) =>
+    harness.sessionStates.get(sessionId) === 'idle' ||
+    harness.sessionStates.get(sessionId) === 'busy',
   registeredOrchestratorSessionsForMission: () => [],
   orchTerminateSession: () => Promise.resolve(true),
+}));
+
+// Fail-closed do bootstrap (0.60): o Maestro precisa de adapter cli-pty com
+// rota Nexus MCP; o registry real não carrega builtins no vitest.
+vi.mock('../adapters/adapter-registry', () => ({
+  getAdapter: (id: string) => ({
+    id,
+    label: id,
+    kind: 'cli-pty',
+    bin: 'claude',
+    quirks: { nexusMcp: 'flag' },
+    spawn: {},
+  }),
 }));
 
 vi.mock('./tool-util', () => ({
@@ -40,6 +57,7 @@ vi.mock('./tool-util', () => ({
 }));
 
 vi.mock('./pane-registry', () => ({
+  readSessionOutput: () => '',
   listPaneSnapshots: () =>
     harness.snapshots.map((pane) => ({
       ...pane,
@@ -90,8 +108,15 @@ vi.mock('./project-domain-store-registry', () => ({
       },
       setOrchestratorSession: () => {},
       recordKickoffAcceptance: () => {},
+      hasCurrentKickoffAcceptance: () => false,
     },
     missionPanes: { record: () => {}, list: () => [] },
+    tasks: {
+      hasPlan: () => false,
+      list: () => [],
+      listPlannedTasks: () => [],
+    },
+    taskDispatches: { list: () => [] },
     handoffs: {
       list: () =>
         harness.handoffsOfSession
@@ -125,7 +150,7 @@ const squadAgents: SquadAgent[] = [
     id: 'coord',
     agentName: 'Coordenar e revisar',
     category: 'orchestrator',
-    cli: 'agy',
+    cli: 'codex',
   } as SquadAgent,
   {
     id: 'exec-1',

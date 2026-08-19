@@ -59,6 +59,14 @@ vi.mock('./project-domain-store-registry', () => ({
       },
       hasCurrentKickoffAcceptance: () => harness.hasKickoffReceipt,
     },
+    tasks: {
+      hasPlan: () => false,
+      list: () => [],
+      listPlannedTasks: () => [],
+    },
+    taskDispatches: { list: () => [] },
+    handoffs: { list: () => [] },
+    missionPanes: { record: () => {}, list: () => [] },
   }),
 }));
 

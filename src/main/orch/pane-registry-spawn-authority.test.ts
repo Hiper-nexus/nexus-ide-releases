@@ -124,7 +124,7 @@ describe("pending pane spawn authority", () => {
     const request = owner.send.mock.calls[0]?.[1] as BrowserPaneOpenRequest;
     expect(request.paneId).toMatch(/^browser-/);
 
-    await vi.advanceTimersByTimeAsync(90_000);
+    await vi.advanceTimersByTimeAsync(15 * 60_000 + 1_000);
     await expect(pending).resolves.toMatchObject({
       ok: false,
       error: "browser open timed out",
@@ -317,7 +317,7 @@ describe("pending pane spawn authority", () => {
     });
     const request = owner.send.mock.calls[0]?.[1] as OrchPaneSpawnRequest;
 
-    await vi.advanceTimersByTimeAsync(90_000);
+    await vi.advanceTimersByTimeAsync(15 * 60_000 + 1_000);
 
     await expect(resultPromise).resolves.toMatchObject({
       ok: false,
