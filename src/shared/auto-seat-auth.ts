@@ -22,6 +22,7 @@ export const PREFERRED_AUTO_SEAT_CLIS = [
   'agy',
   'grok',
   'glm',
+  'kimi',
 ] as const;
 
 export type AutoSeatAuthStrategy =

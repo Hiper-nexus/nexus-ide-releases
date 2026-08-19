@@ -78,18 +78,14 @@ import {
 import { assertPreSpawnProbe, PreSpawnProbeError } from '../pty/pre-spawn-probe';
 import {
   hasRuntimeKey,
+  listProviderSettings,
   providerAuthStrategy,
 } from '../persistence/provider-config-store';
 import {
   PREFERRED_AUTO_SEAT_CLIS,
   remintWriterCliForAutoSeat,
-  selectFirstWaveWriters,
   type AutoSeatProviderView,
 } from '../../shared/auto-seat-auth';
-import {
-  countEnumeratedMissionItems,
-  targetParallelWriters,
-} from '../../shared/mission-item-count';
 import { listPaneSnapshots, requestPaneSpawn, waitForIdle, readSessionOutput } from './pane-registry';
 import {
   peekKickoffDirects,
@@ -98,7 +94,12 @@ import {
 } from './mission-kickoff-direct-queue';
 import { reconcileSealedBoardFromDisk } from './worker-delivery-board';
 import { classifySeatAuth } from '../adapters/seat-auth-readiness';
-import { planFirstWaveSeats } from './via-rapida-first-wave';
+import { warmSquadRuntimeSubscriptionAuth } from './squad-runtime-inventory';
+import {
+  countLiveFirstWaveWriters,
+  FIRST_WAVE_OFFER_CLIS,
+  planFirstWaveSeats,
+} from './via-rapida-first-wave';
 import { firstWaveWorkerPrompt } from './via-rapida-walk';
 import { maybeApplyCivilianPronto } from './civilian-pronto';
 
@@ -1853,14 +1854,11 @@ export async function dispatchFastLaneFirstWave(
       pendingTitles.length > 0
         ? pendingTitles
         : sealFastLanePlanTitles(stores, mission, squad);
-    const liveWorkers = listPaneSnapshots().filter(
-      (pane) =>
-        pane.missionId === missionId &&
-        pane.role === 'worker' &&
-        (pane.state === 'busy' ||
-          pane.state === 'idle' ||
-          pane.state === 'spawning'),
-    ).length;
+    const liveWorkers = countLiveFirstWaveWriters(
+      listPaneSnapshots(),
+      missionId,
+      writerIsConnectedAndWritable,
+    );
     const blockedAdapterIds = [
       ...new Set(
         squad.agents
@@ -1868,23 +1866,38 @@ export async function dispatchFastLaneFirstWave(
           .filter((cli) => writerCliIsCircuitDead(missionId, cli)),
       ),
     ];
+    const orchestratorCli =
+      squad.agents.find((agent) => agent.category === 'orchestrator')?.cli ??
+      '';
+    const extraPresentClis = [
+      ...new Set([
+        ...FIRST_WAVE_OFFER_CLIS,
+        ...listProviderSettings().map((provider) => provider.adapterId),
+      ]),
+    ].filter((cli) => cli !== 'shell');
+    await warmSquadRuntimeSubscriptionAuth([
+      ...squad.agents.map((agent) => agent.cli),
+      ...extraPresentClis,
+    ]);
+    const classifySeat = (agent: SquadAgent) => {
+      const readiness = detectSubscriptionAuthReadiness(agent.cli);
+      return classifySeatAuth({
+        adapterId: agent.cli,
+        authStrategy: String(providerAuthStrategy(agent.cli) ?? ''),
+        hasKey: hasRuntimeKey(agent.cli),
+        kimiListReadiness: agent.cli === 'kimi' ? readiness : undefined,
+        hasCredentiallessModel: readiness === 'present',
+      });
+    };
     const wave = planFirstWaveSeats({
       storyCount: titles.length,
       storyTitles: titles,
       agents: squad.agents,
       liveWritableWorkers: liveWorkers,
       blockedAdapterIds,
-      classifySeat: (agent) => {
-        const readiness = detectSubscriptionAuthReadiness(agent.cli);
-        return classifySeatAuth({
-          adapterId: agent.cli,
-          authStrategy: String(providerAuthStrategy(agent.cli) ?? ''),
-          hasKey: hasRuntimeKey(agent.cli),
-          kimiListReadiness:
-            agent.cli === 'kimi' ? readiness : undefined,
-          hasCredentiallessModel: readiness === 'present',
-        });
-      },
+      extraPresentClis,
+      orchestratorCli,
+      classifySeat,
     });
     if (blockedAdapterIds.length > 0) {
       console.warn(
@@ -1896,7 +1909,6 @@ export async function dispatchFastLaneFirstWave(
         `[fast-lane] first-wave pulou CLI sem auth present: ${wave.skippedNoCredential.join(', ')}`,
       );
     }
-    let spawned = 0;
     for (const seat of wave.seats) {
       const prompt = firstWaveWorkerPrompt({
         mission,
@@ -1917,10 +1929,13 @@ export async function dispatchFastLaneFirstWave(
           `[fast-lane] first-wave ${seat.title} não abriu:`,
           result.error,
         );
-        continue;
       }
-      spawned += 1;
     }
+    const spawned = countLiveFirstWaveWriters(
+      listPaneSnapshots(),
+      missionId,
+      writerIsConnectedAndWritable,
+    );
     if (spawned > 0) {
       trace({
         kind: 'fast-lane-first-wave',
