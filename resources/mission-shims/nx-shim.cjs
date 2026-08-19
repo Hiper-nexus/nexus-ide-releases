@@ -93,6 +93,68 @@ function assertAllowedFlags(values, allowed) {
   }
 }
 
+/**
+ * Alias canônico (padrão invokta; voo real 19/08): worker sem rota MCP chuta
+ * o NOME DA TOOL no shell. `nexus_handoff_submit` aceita flags OU um único
+ * argumento JSON {status, summary, artifacts?, evidenceIds?} e roteia para
+ * mail/send — mesmo dispatcher, mesma cadeia de receipts.
+ */
+function parseHandoffSubmitAlias(argv) {
+  const first = argv[0];
+  if (typeof first === "string" && first.trimStart().startsWith("{")) {
+    let payload;
+    try {
+      payload = JSON.parse(argv.join(" "));
+    } catch {
+      throw new Error("JSON inválido para nexus_handoff_submit");
+    }
+    const status = payload && payload.status;
+    const summary = payload && payload.summary;
+    if (typeof status !== "string" || typeof summary !== "string") {
+      throw new Error("nexus_handoff_submit exige status e summary");
+    }
+    const artifacts = Array.isArray(payload.artifacts) ? payload.artifacts : [];
+    const evidenceIds = Array.isArray(payload.evidenceIds)
+      ? payload.evidenceIds.filter((value) => typeof value === "string")
+      : [];
+    return {
+      command: "mail",
+      operation: "send",
+      args: {
+        status,
+        summary,
+        ...(artifacts.length > 0 ? { artifacts } : {}),
+        ...(evidenceIds.length > 0 ? { evidenceIds } : {}),
+      },
+    };
+  }
+  const flags = parseFlags(argv);
+  assertAllowedFlags(
+    flags,
+    new Set(["status", "summary", "artifact", "evidence"]),
+  );
+  const status = flags.get("status");
+  const summary = flags.get("summary");
+  if (typeof status !== "string" || typeof summary !== "string") {
+    throw new Error(
+      'uso: nexus_handoff_submit --status success|partial|blocked|failed ' +
+        '--summary "<resumo objetivo>"',
+    );
+  }
+  const artifacts = repeated(flags, "artifact").map(parseArtifact);
+  const evidenceIds = repeated(flags, "evidence");
+  return {
+    command: "mail",
+    operation: "send",
+    args: {
+      status,
+      summary,
+      ...(artifacts.length > 0 ? { artifacts } : {}),
+      ...(evidenceIds.length > 0 ? { evidenceIds } : {}),
+    },
+  };
+}
+
 function parseCommand(argv) {
   const executable = path.basename(process.argv[1]).replace(/\.cmd$/i, "");
   const commandFromName = {
@@ -100,11 +162,19 @@ function parseCommand(argv) {
     "nx-task": "task",
     "nx-notify": "notify",
   }[executable];
+  if (executable === "nexus_handoff_submit") {
+    return parseHandoffSubmitAlias(argv);
+  }
   const command = commandFromName || argv.shift();
+  // `nexus handoff-submit …` e o passthrough `nx-shim.cjs handoff-submit …`.
+  if (!commandFromName && command === "handoff-submit") {
+    return parseHandoffSubmitAlias(argv);
+  }
   const operation = argv.shift();
   if (!command || !operation) {
     throw new Error(
-      "uso: nx-mail send|list, nx-task list, ou nx-notify heartbeat",
+      "uso: nexus_handoff_submit --status … --summary …, nx-mail send|list, " +
+        "nx-task list, ou nx-notify heartbeat",
     );
   }
   const flags = parseFlags(argv);

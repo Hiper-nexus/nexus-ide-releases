@@ -430,4 +430,61 @@ describe("mission shim filesystem transport", () => {
     ).toMatchObject({ ok: true });
     expect(invocations).toHaveLength(1);
   });
+
+  // ── alias canônico nexus_handoff_submit (padrão invokta, 19/08) ──
+  // O voo real: worker qwen sem MCP rodou `nexus_handoff_submit` como
+  // comando de shell e recebeu command-not-found. Agora o nome canônico da
+  // ação existe no PATH do pane e roteia pro MESMO dispatcher.
+  it("nexus_handoff_submit com flags roteia como mail send", async () => {
+    const result = await execFileAsync(
+      path.join(
+        runtime.binDir,
+        process.platform === "win32"
+          ? "nexus_handoff_submit.cmd"
+          : "nexus_handoff_submit",
+      ),
+      ["--status", "success", "--summary", "Entrega da story com evidência."],
+      { env: { ...process.env, ...runtime.env } },
+    );
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: true,
+      tool: "nexus_handoff_submit",
+    });
+    expect(invocations.at(-1)).toMatchObject({
+      toolName: "nexus_handoff_submit",
+      args: { status: "success", summary: "Entrega da story com evidência." },
+    });
+  });
+
+  it("nexus_handoff_submit aceita um único argumento JSON (estilo tool-call)", async () => {
+    await execFileAsync(
+      path.join(
+        runtime.binDir,
+        process.platform === "win32"
+          ? "nexus_handoff_submit.cmd"
+          : "nexus_handoff_submit",
+      ),
+      ['{"status":"blocked","summary":"Faltou credencial do provedor X."}'],
+      { env: { ...process.env, ...runtime.env } },
+    );
+    expect(invocations.at(-1)).toMatchObject({
+      toolName: "nexus_handoff_submit",
+      args: { status: "blocked", summary: "Faltou credencial do provedor X." },
+    });
+  });
+
+  it("`nexus handoff-submit` roteia pelo subcomando", async () => {
+    await execFileAsync(
+      path.join(
+        runtime.binDir,
+        process.platform === "win32" ? "nexus.cmd" : "nexus",
+      ),
+      ["handoff-submit", "--status", "partial", "--summary", "Metade entregue."],
+      { env: { ...process.env, ...runtime.env } },
+    );
+    expect(invocations.at(-1)).toMatchObject({
+      toolName: "nexus_handoff_submit",
+      args: { status: "partial", summary: "Metade entregue." },
+    });
+  });
 });

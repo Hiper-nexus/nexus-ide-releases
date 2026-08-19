@@ -93,9 +93,10 @@ export function withHandoffContract(
 ): string {
   const viaMcp = canUseNexusMcp(adapter);
   const shimFallback =
-    "Se a tool MCP não estiver disponível, use no shell: " +
-    'nx-mail send --status success --summary "<resumo objetivo>". ' +
-    "Esse comando entra no mesmo dispatcher e na mesma cadeia de receipts.";
+    "Se a tool MCP não estiver disponível, rode no shell: " +
+    'nexus_handoff_submit --status success --summary "<resumo objetivo>" ' +
+    "(alias: nx-mail send …). Esse comando entra no mesmo dispatcher e na " +
+    "mesma cadeia de receipts.";
   const peerRead =
     'Quando o operador pedir para olhar o que outro pane está fazendo, chame ' +
     'nexus_pane_read com o número falado ("7" ou "pane 7"). Na mesma missão ' +

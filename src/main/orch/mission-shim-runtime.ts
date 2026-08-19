@@ -236,11 +236,23 @@ function installClients(binDir: string, sourcePath: string): void {
   }
   const sharedClient = path.join(binDir, "nx-shim.cjs");
   writePrivateFileAtomic(sharedClient, source, 0o700);
-  for (const command of ["nx-mail", "nx-task", "nx-notify"] as const) {
+  // Aliases canônicos (padrão invokta, voo real 19/08): quando o worker sem
+  // MCP chuta o NOME DA TOOL no shell, o comando existe e entra no mesmo
+  // dispatcher. No Windows o basename visível é o .cmd, então o prefixo do
+  // argv faz o papel do basename.
+  const commandPrefixByName: Record<string, string> = {
+    "nx-mail": "mail",
+    "nx-task": "task",
+    "nx-notify": "notify",
+    nexus: "",
+    nexus_handoff_submit: "handoff-submit",
+  };
+  for (const [command, prefix] of Object.entries(commandPrefixByName)) {
     if (process.platform === "win32") {
+      const forwarded = prefix ? `${prefix} %*` : "%*";
       writePrivateFileAtomic(
         path.join(binDir, `${command}.cmd`),
-        `@echo off\r\nnode "%~dp0\\nx-shim.cjs" ${command.slice(3)} %*\r\n`,
+        `@echo off\r\nnode "%~dp0\\nx-shim.cjs" ${forwarded}\r\n`,
         0o700,
       );
     } else {
