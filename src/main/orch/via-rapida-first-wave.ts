@@ -4,10 +4,12 @@
  * AuthReadiness=present senta — LongCat sem chave não tosta.
  */
 import type { SquadAgent } from '../../shared/orch-types';
+import { defaultSquadModelForAdapter } from '../../shared/squad-model-defaults';
 import {
   canSeat,
   classifySeatAuth,
   seatFailureHint,
+  SILENT_REMINT_HINT,
   type SeatAuthReadiness,
   type SeatAuthInput,
 } from '../adapters/seat-auth-readiness';
@@ -15,6 +17,18 @@ import { MAX_LIVE_PANES_SOFT } from '../../shared/pane-limits';
 
 export const LARGE_MISSION_STORY_THRESHOLD = 6;
 export const FIRST_WAVE_WRITER_SEATS = 7;
+
+/**
+ * CLIs oferecidas além do roster quando AuthReadiness=present.
+ * Claude fica no Maestro; LongCat/unauth nunca entram por aqui.
+ */
+export const FIRST_WAVE_OFFER_CLIS = [
+  'codex',
+  'agy',
+  'grok',
+  'glm',
+  'kimi',
+] as const;
 
 export type FirstWaveSeat = {
   readonly agent: SquadAgent;
@@ -54,11 +68,83 @@ export function filterPresentWriterAgents(
   classify: (agent: SquadAgent) => SeatAuthReadiness = (agent) =>
     classifySeatAuth({
       adapterId: agent.cli,
-      authStrategy: (agent as { authStrategy?: string }).authStrategy,
+      authStrategy: (agent as { authStrategy?: string }).authStrategy ?? '',
       hasKey: (agent as { hasKey?: boolean }).hasKey,
     }),
 ): SquadAgent[] {
   return writableRosterAgents(agents).filter((agent) => canSeat(classify(agent)));
+}
+
+function syntheticWriter(
+  cli: string,
+  agentName: string,
+  id: string,
+): SquadAgent {
+  const model = defaultSquadModelForAdapter(cli);
+  return {
+    id,
+    agentName,
+    category: 'executor',
+    cli,
+    ...(model ? { model } : {}),
+  } as SquadAgent;
+}
+
+function remintWriterCli(agent: SquadAgent, cli: string): SquadAgent {
+  if (agent.cli === cli) return agent;
+  const model = defaultSquadModelForAdapter(cli);
+  return {
+    ...agent,
+    cli,
+    model: model ?? '',
+  } as SquadAgent;
+}
+
+/**
+ * Espalha CLIs present pelos papéis do roster e cria Writer N para o
+ * restante. Preferência: agente do squad com o mesmo CLI (GLM reviewer
+ * senta se present). Papéis executor sobrando são remintados. Cópias
+ * (segundo Codex) vêm depois, em expandFirstWaveSeats.
+ */
+export function spreadPresentClisAcrossWriterRoles(
+  agents: readonly SquadAgent[],
+  presentCliIds: readonly string[],
+): SquadAgent[] {
+  const roles = writableRosterAgents(agents);
+  const clis = [
+    ...new Set(
+      presentCliIds.map((cli) => cli.trim()).filter((cli) => cli.length > 0),
+    ),
+  ];
+  if (clis.length === 0) return [];
+  const seated: SquadAgent[] = [];
+  const usedIds = new Set<string>();
+
+  for (const cli of clis) {
+    const named = agents.find(
+      (agent) =>
+        agent.category !== 'orchestrator' &&
+        agent.cli === cli &&
+        !usedIds.has(agent.id),
+    );
+    if (!named) continue;
+    seated.push(named);
+    usedIds.add(named.id);
+  }
+
+  let writerN = 2;
+  for (const cli of clis) {
+    if (seated.some((row) => row.cli === cli)) continue;
+    const role = roles.find((agent) => !usedIds.has(agent.id));
+    if (role) {
+      seated.push(remintWriterCli(role, cli));
+      usedIds.add(role.id);
+      continue;
+    }
+    seated.push(syntheticWriter(cli, `Writer ${writerN}`, `writer-${cli}`));
+    writerN += 1;
+  }
+  return seated;
 }
 
 export function expandFirstWaveSeats(
@@ -71,16 +157,55 @@ export function expandFirstWaveSeats(
   for (let index = 0; index < targetSeats; index += 1) {
     const agent = writers[index % writers.length]!;
     const copy = Math.floor(index / writers.length);
+    const title =
+      copy === 0 ? agent.agentName : `${agent.agentName} · ${copy + 1}`;
+    const seatedAgent = Object.freeze({
+      ...agent,
+      id: copy === 0 ? agent.id : `${agent.id}·${copy + 1}`,
+      agentName: title,
+    }) as SquadAgent;
     seats.push(
       Object.freeze({
-        agent,
-        title: copy === 0 ? agent.agentName : `${agent.agentName} · ${copy + 1}`,
+        agent: seatedAgent,
+        title,
         seatIndex: index,
         storyTitle: storyTitles[index] ?? null,
       }),
     );
   }
   return Object.freeze(seats);
+}
+
+function defaultClassify(agent: SquadAgent): SeatAuthReadiness {
+  return classifySeatAuth({
+    adapterId: agent.cli,
+    authStrategy: (agent as { authStrategy?: string }).authStrategy ?? '',
+    hasKey: (agent as { hasKey?: boolean }).hasKey,
+  });
+}
+
+/**
+ * Panes que realmente sentam: worker com PTY conectado+writable.
+ * Tile de grafo / spawning sem stdin não come o orçamento nem conta
+ * como despacho.
+ */
+export function countLiveFirstWaveWriters(
+  panes: readonly {
+    readonly missionId?: string | null;
+    readonly role?: string | null;
+    readonly sessionId?: string | null;
+  }[],
+  missionId: string,
+  isConnectedAndWritable: (sessionId: string) => boolean,
+): number {
+  return panes.filter(
+    (pane) =>
+      pane.missionId === missionId &&
+      pane.role === 'worker' &&
+      typeof pane.sessionId === 'string' &&
+      pane.sessionId.length > 0 &&
+      isConnectedAndWritable(pane.sessionId),
+  ).length;
 }
 
 export function planFirstWaveSeats(input: {
@@ -91,6 +216,13 @@ export function planFirstWaveSeats(input: {
   readonly liveWritableWorkers?: number;
   /** CLI already at writer_circuit_break / mortality 3 — do not remint. */
   readonly blockedAdapterIds?: readonly string[];
+  /**
+   * CLIs present fora do roster (kimi oauth, grok, glm, segundo Codex).
+   * Ausente = só o roster, como nos walks que não carregam inventário.
+   */
+  readonly extraPresentClis?: readonly string[];
+  /** CLI do Maestro — não ganha assento de writer extra. */
+  readonly orchestratorCli?: string;
 }): {
   readonly targetSeats: number;
   readonly presentWriters: readonly SquadAgent[];
@@ -99,19 +231,59 @@ export function planFirstWaveSeats(input: {
 } {
   const target = Math.max(
     0,
-    targetFirstWaveWriterSeats(input.storyCount) - (input.liveWritableWorkers ?? 0),
+    targetFirstWaveWriterSeats(input.storyCount) -
+      (input.liveWritableWorkers ?? 0),
   );
+  const classify = input.classifySeat ?? defaultClassify;
   const allWriters = writableRosterAgents(input.agents);
   const blocked = new Set(
     (input.blockedAdapterIds ?? []).map((id) => id.trim()).filter(Boolean),
   );
-  const present = filterPresentWriterAgents(
-    input.agents,
-    input.classifySeat,
-  ).filter((agent) => !blocked.has(agent.cli));
-  const skipped = allWriters
-    .filter((agent) => !present.some((row) => row.id === agent.id))
-    .map((agent) => agent.cli);
+  const orchestratorCli = input.orchestratorCli?.trim().toLowerCase() ?? '';
+
+  const isPresentCli = (cli: string): boolean =>
+    canSeat(classify(syntheticWriter(cli, cli, `probe-${cli}`)));
+
+  const considerCli = (cli: string): boolean => {
+    if (!cli || blocked.has(cli)) return false;
+    if (orchestratorCli && cli === orchestratorCli) return false;
+    return isPresentCli(cli);
+  };
+
+  const skipped: string[] = [];
+  const recordUnauth = (cli: string): void => {
+    if (!cli || blocked.has(cli)) return;
+    if (orchestratorCli && cli === orchestratorCli) return;
+    if (isPresentCli(cli)) return;
+    skipped.push(cli);
+  };
+
+  let present: SquadAgent[];
+  if (input.extraPresentClis) {
+    const ordered: string[] = [];
+    const seen = new Set<string>();
+    const offer = (cli: string): void => {
+      const id = cli.trim();
+      if (!id || seen.has(id)) return;
+      recordUnauth(id);
+      if (!considerCli(id)) return;
+      seen.add(id);
+      ordered.push(id);
+    };
+    for (const agent of allWriters) offer(agent.cli);
+    for (const cli of input.extraPresentClis) offer(cli);
+    present = spreadPresentClisAcrossWriterRoles(input.agents, ordered);
+  } else {
+    present = filterPresentWriterAgents(input.agents, classify).filter(
+      (agent) => !blocked.has(agent.cli),
+    );
+    for (const agent of allWriters) {
+      if (!present.some((row) => row.id === agent.id)) {
+        recordUnauth(agent.cli);
+      }
+    }
+  }
+
   return {
     targetSeats: target,
     presentWriters: present,
@@ -124,5 +296,6 @@ export function firstWaveSilentSkipHint(input: SeatAuthInput): string {
   return seatFailureHint({
     readiness: classifySeatAuth(input),
     explicitCivilianPick: false,
+    civilianHint: SILENT_REMINT_HINT,
   });
 }

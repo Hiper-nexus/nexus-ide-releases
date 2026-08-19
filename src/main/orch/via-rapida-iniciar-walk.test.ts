@@ -378,6 +378,24 @@ describe('first-wave writer_circuit_break', () => {
     expect(wave.seats.every((seat) => seat.agent.cli === 'codex')).toBe(true);
   });
 
+  it('20-story com 6 CLIs present (agy sem auth) senta as 6, não só Codex', () => {
+    const present = new Set(['codex', 'grok', 'glm', 'kimi', 'opencode', 'aider']);
+    const wave = planFirstWaveSeats({
+      storyCount: 20,
+      storyTitles: Array.from({ length: 20 }, (_, i) => `Story ${i + 1}`),
+      agents: squadAgents,
+      extraPresentClis: ['codex', 'agy', 'grok', 'glm', 'kimi', 'opencode', 'aider', 'longcat'],
+      orchestratorCli: 'claude',
+      classifySeat: (row) => (present.has(row.cli) ? 'present' : 'no-credential'),
+    });
+    expect(wave.seats.length).toBe(FIRST_WAVE_WRITER_SEATS);
+    expect(wave.seats.length).toBeGreaterThanOrEqual(6);
+    const clis = new Set(wave.seats.map((seat) => seat.agent.cli));
+    expect(clis.has('agy')).toBe(false);
+    expect(clis.has('longcat')).toBe(false);
+    for (const cli of present) expect(clis.has(cli)).toBe(true);
+  });
+
   it('first-wave curto reroteia só as stories pendentes, não as já done', () => {
     const pending = [
       'Landing',

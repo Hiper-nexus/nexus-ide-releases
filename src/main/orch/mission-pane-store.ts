@@ -16,6 +16,7 @@ import {
   type ScopedStoreChangeListener,
   type ScopedStoreOptions,
 } from './scoped-store';
+import { sameMissionPaneComposition } from './mission-pane-identity';
 
 const capabilityListSchema = z.array(z.string().min(1).max(128)).max(256);
 const nullableCapabilityListSchema = capabilityListSchema.nullable();
@@ -297,13 +298,15 @@ export class ScopedMissionPaneStore {
     const result = db.transaction(() => {
       const existing = this.#listFromDatabase(db, input.missionId).find(
         (spec) =>
-          spec.adapterId === input.adapterId &&
-          spec.model === input.model &&
-          spec.accountId === input.accountId &&
-          spec.cwd === input.cwd &&
-          spec.title === title &&
-          spec.role === role &&
-          spec.workerIncarnationId === input.workerIncarnationId,
+          sameMissionPaneComposition(spec, {
+            adapterId: input.adapterId,
+            model: input.model,
+            accountId: input.accountId,
+            cwd: input.cwd,
+            title,
+            role,
+            workerIncarnationId: input.workerIncarnationId,
+          }),
       );
       if (input.paneId !== undefined) {
         const owners = this.#findRowsByPaneId(db, input.paneId);
