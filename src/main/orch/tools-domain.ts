@@ -23,6 +23,11 @@ import { recordRouteLog, recentRouteLog } from './route-log';
 import { loadSpecialtyBenchmark } from './specialty-benchmark';
 import { hasAvailableAccount } from '../persistence/account-store';
 import { authReadyModelsForProvider } from '../adapters/model-auth-readiness';
+import {
+  firstWaveCanSeat,
+  peekKimiSeatReadiness,
+} from '../adapters/seat-auth-readiness';
+import { writerCircuitBlocksSeat } from './writer-circuit-break';
 import { appendMissionVerdict } from '../../shared/mission-block-cause';
 import { missionStatusSchema, type SquadAgent } from '../../shared/orch-types';
 import { missionResultSchema } from '../../shared/mission-engine-contract';
@@ -61,6 +66,11 @@ import {
 import { buildHandoffTools } from './tools-handoff';
 import { canCompleteConsultLane, canCompleteOpsLane } from '../../shared/mission-intent';
 import { isTaskQueueManagedMission } from './task-dispatch-authority';
+import {
+  countMissionItems,
+  fastLaneObjectiveText,
+  shouldRejectRoleCollapsedPlan,
+} from './mission-story-plan';
 import {
   liveSquadRuntimeInventory,
   warmSquadRuntimeSubscriptionAuth,
@@ -955,6 +965,19 @@ const taskTool: McpToolDef = {
           );
         }
         const rows = mcpPlanTasksToRows(args.tasks, squad.agents);
+        const objective = fastLaneObjectiveText(mission);
+        if (
+          shouldRejectRoleCollapsedPlan({
+            objective,
+            planTitles: rows.map((row) => row.title),
+          })
+        ) {
+          throw new Error(
+            `nexus_task plan recusou colapso em ${rows.length} papéis: ` +
+              `o objetivo sela ${countMissionItems(objective)} stories. ` +
+              'Use uma task por story listada — não Frontend/Backend/UX.',
+          );
+        }
         const sealedTasks = tasks.createPlanAtomically({
           missionId,
           intentVersion: mission.intentVersion ?? 0,
@@ -1303,7 +1326,20 @@ const routeTaskTool: McpToolDef = {
             !skip.has(a.adapterId) &&
             a.enabled &&
             a.installed &&
-            (a.authStrategy !== 'login-needed' || models.length > 0),
+            firstWaveCanSeat({
+              adapterId: a.adapterId,
+              authStrategy: a.authStrategy,
+              hasKey: a.hasKey,
+              kimiListReadiness:
+                a.adapterId === 'kimi' ? peekKimiSeatReadiness() : undefined,
+              hasCredentiallessModel:
+                a.adapterId === 'opencode' && models.length > 0,
+            }) &&
+            !writerCircuitBlocksSeat({
+              adapterId: a.adapterId,
+              role: 'worker',
+              missionId: missionId ?? undefined,
+            }),
           models,
         };
       });

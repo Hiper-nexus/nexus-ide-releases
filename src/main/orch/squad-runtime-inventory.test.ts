@@ -26,6 +26,9 @@ vi.mock("../persistence/account-store", () => ({
 vi.mock("../persistence/settings-store", () => ({
   getOrchSettings: (...args: unknown[]) => getOrchSettingsMock(...args),
 }));
+vi.mock("../adapters/kimi-seat-probe", () => ({
+  refreshKimiSeatReadiness: vi.fn(async () => "missing"),
+}));
 
 import {
   assertLiveGuidedSquadReadiness,

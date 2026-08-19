@@ -2,6 +2,12 @@ import {
   authReadyModelsForProvider,
   isCredentiallessOpenCodeModel,
 } from "../adapters/model-auth-readiness";
+import {
+  canSeat,
+  classifySeatAuth,
+  peekKimiSeatReadiness,
+  type SeatAuthReadiness,
+} from "../adapters/seat-auth-readiness";
 
 /**
  * Main-owned squad readiness policy.
@@ -36,6 +42,12 @@ export interface SquadRuntimeProviderSnapshot {
   readonly defaultModel?: string;
   readonly models?: readonly string[];
   readonly authReadyModels?: readonly string[];
+  readonly hasKey?: boolean;
+  /**
+   * When set, only `present` enters the roster. Absent keeps the legacy
+   * authStrategy gate so focused policy tests stay isolated.
+   */
+  readonly seatAuthReadiness?: SeatAuthReadiness;
 }
 
 export interface SquadRuntimeCliPolicy {
@@ -231,6 +243,20 @@ export function buildSquadRuntimeCliPolicy(
       isCredentiallessOpenCodeModel(provider.adapterId, model),
     );
     const modelAuthReady = authReadyModels.length > 0;
+    const seatReadiness =
+      provider.seatAuthReadiness ??
+      classifySeatAuth({
+        adapterId: provider.adapterId,
+        authStrategy: provider.authStrategy,
+        hasKey: provider.hasKey,
+        kimiListReadiness:
+          provider.adapterId === "kimi" ? peekKimiSeatReadiness() : undefined,
+      });
+    if (!canSeat(seatReadiness) && credentiallessModels.length === 0) {
+      unroutableReasonByCliId[provider.adapterId] =
+        `auth: ${seatReadiness} (só present senta — remint silencioso)`;
+      continue;
+    }
     if (!modelAuthReady) {
       unroutableReasonByCliId[provider.adapterId] =
         provider.authStrategy === "login-needed"

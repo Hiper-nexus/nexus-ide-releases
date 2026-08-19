@@ -12,14 +12,32 @@ import {
   wasMissionRuntimeClosedByOperator,
 } from '../../shared/mission-recovery-policy';
 import { stripMissionVerdictParagraph } from '../../shared/mission-block-cause';
+import { wasUpdatedBeforeThisProcess } from '../../shared/session-restore-liveness';
+import {
+  initialPromptChannel,
+  type InitialPromptChannel,
+} from '../../shared/cli-initial-prompt';
+import {
+  persistLeftoverIsolation,
+  pickFocusedRunningMission,
+  shouldSkipLeftoverRemount,
+  wasMissionLeftoverParked,
+  isFreshIniciarKickoff,
+  NEXUS_LEFTOVER_PARKED_MARKER,
+  type LeftoverRemountKind,
+} from '../../shared/mission-leftover-isolation';
 import { emitMissionEvent } from './mission-event-emit';
-import { buildOrchestratorDoctrine } from './orchestrator-doctrine';
+import { buildMaestroKickoffBrief } from './orchestrator-doctrine';
 import {
   getSessionState,
+  getSessionCwd,
+  isPtySessionConnectedAndWritable,
   orchTerminateSession,
   registeredOrchestratorSessionsForMission,
 } from '../pty/pty-manager';
-import { listPaneSnapshots, requestPaneSpawn } from './pane-registry';
+import { getAdapter } from '../adapters/adapter-registry';
+import { deliverAgentPrompt, proveNativeArgvBriefAccepted } from './tool-util';
+import { canUseNexusMcp } from './cli-mcp-inject';
 import {
   getProjectDomainStores,
   type ProjectDomainStoreSuite,
@@ -27,12 +45,62 @@ import {
 import { getSquad } from './squad-store';
 import { missionEngineForScope } from './mission-engine-registry';
 import { redeliverPendingHandoffs } from './idle-delivery';
+import { maybeCompleteFastLaneOnDelivery } from './civilian-delivery-completion';
 import {
   recordAdapterProofOfLife,
   recordWorkerDeathWithoutDelivery,
+  shouldTripWorkerMortalityBreaker,
+  workerMortalityCount,
+  workerPaneHasDelivery,
 } from './worker-mortality';
 import { trace } from '../observability/main-trace';
 import { classifySessionLiveness } from '../pty/session-liveness';
+import { waitOutBootPrompts } from './boot-prompt-hold';
+import { maestroKickoffBlockReason } from './maestro-boot-gate';
+import { missionBlockPatch, type MissionBlockPatch } from '../../shared/mission-intent';
+import { detectSubscriptionAuthReadiness } from '../adapters/subscription-auth';
+import {
+  decideWriterCircuitAction,
+  logWriterCircuitBreak,
+  recordWriterConnectFailure,
+  writerCircuitBroken,
+} from './writer-circuit-breaker';
+import { writerCircuitBlocksSeat, writerCircuitBreakers } from './writer-circuit-break';
+import {
+  collectFilesModified,
+  maybeCompleteFastLaneOnDelivery as maybeCompleteFromFilesModified,
+} from './worker-files-modified';
+import {
+  boardProgressFromSealedTasks,
+  sealFastLaneListedStoryPlan,
+  advanceFastLaneStoryTaskFromWorkerDone,
+} from './mission-story-plan';
+import { assertPreSpawnProbe, PreSpawnProbeError } from '../pty/pre-spawn-probe';
+import {
+  hasRuntimeKey,
+  providerAuthStrategy,
+} from '../persistence/provider-config-store';
+import {
+  PREFERRED_AUTO_SEAT_CLIS,
+  remintWriterCliForAutoSeat,
+  selectFirstWaveWriters,
+  type AutoSeatProviderView,
+} from '../../shared/auto-seat-auth';
+import {
+  countEnumeratedMissionItems,
+  targetParallelWriters,
+} from '../../shared/mission-item-count';
+import { listPaneSnapshots, requestPaneSpawn, waitForIdle, readSessionOutput } from './pane-registry';
+import {
+  peekKickoffDirects,
+  rememberKickoffBrief,
+  tryRecordIdleKickoffAcceptance,
+} from './mission-kickoff-direct-queue';
+import { reconcileSealedBoardFromDisk } from './worker-delivery-board';
+import { classifySeatAuth } from '../adapters/seat-auth-readiness';
+import { planFirstWaveSeats } from './via-rapida-first-wave';
+import { firstWaveWorkerPrompt } from './via-rapida-walk';
+import { maybeApplyCivilianPronto } from './civilian-pronto';
 
 /**
  * Via Rápida de missão (2026-08-12) — motor limpo, modelo PULL.
@@ -54,6 +122,131 @@ import { classifySessionLiveness } from '../pty/session-liveness';
 const WATCHER_INTERVAL_MS = 15_000;
 /** Tentativas de respawn do orquestrador por geração de watcher. */
 const ORCHESTRATOR_RESPAWN_BUDGET = 3;
+/** Boot do Maestro antes da colagem do briefing (paridade tool-util). */
+const ORCHESTRATOR_BOOT_TIMEOUT_MS = 60_000;
+
+/**
+ * Canal de entrega do briefing do Maestro na Via Rápida.
+ *
+ * `pty-manager` só coloca `initialPrompt` no argv para orquestrador
+ * **posicional**. One-shot (AGY `--print`, OpenCode `run`) mata o pane —
+ * só worker. Paste não tem argv. Sem colagem pós-boot o Maestro sobe mudo,
+ * o kickoff é marcado aceito e a missão fica "running" sem nunca chamar
+ * `nexus_pane_spawn`.
+ */
+export function orchestratorBriefDelivery(
+  channel: InitialPromptChannel,
+): 'argv' | 'paste' {
+  return channel.kind === 'positional' ? 'argv' : 'paste';
+}
+
+/**
+ * Via Rápida exige Maestro com rota Nexus MCP: o briefing instrui
+ * `nexus_pane_spawn` / `nexus_handoff_*` / `nexus_mission_set_status`.
+ * AGY/aider (`nexusMcp: none`) podem ser workers via PTY-stream, mas como
+ * Maestro ficam "running" sem poder orquestrar. Fail-closed no bootstrap.
+ */
+export function assertFastLaneMaestroMcp(adapterId: string): void {
+  const adapter = getAdapter(adapterId);
+  if (!adapter || adapter.kind !== 'cli-pty') {
+    throw new Error(
+      `Maestro \`${adapterId}\` não é um adapter PTY carregado — ` +
+        'escolha claude/codex/opencode/kimi/grok (ou família Claude).',
+    );
+  }
+  if (!canUseNexusMcp(adapter)) {
+    throw new Error(
+      `${adapter.label ?? adapterId} não pode coordenar esta missão — ` +
+        'escolha Claude ou Codex.',
+    );
+  }
+}
+
+function kickoffPromptHash(initialPrompt: string | undefined): string {
+  return createHash('sha256')
+    .update(initialPrompt ?? '')
+    .digest('hex');
+}
+
+function bindSpawnedMissionPane(
+  stores: ProjectDomainStoreSuite,
+  scope: ProjectExecutionScope,
+  mission: Mission,
+  agent: SquadAgent,
+  role: 'orchestrator' | 'worker',
+  spawn: { paneId: string; sessionId: string },
+): void {
+  stores.missionPanes.record({
+    missionId: mission.id,
+    paneId: spawn.paneId,
+    adapterId: agent.cli,
+    model: agent.model || undefined,
+    effort: agent.effort || undefined,
+    cwd: scope.rootRealPath,
+    title: agent.agentName,
+    agentName: agent.agentName,
+    role,
+    allowedTools: agent.allowedTools ? [...agent.allowedTools] : null,
+    allowedSkills: agent.allowedSkills ? [...agent.allowedSkills] : null,
+    readOnly: false,
+    executionScope: scope,
+  });
+}
+
+async function flushQueuedKickoffDirects(
+  scope: ProjectExecutionScope,
+  stores: ProjectDomainStoreSuite,
+  missionId: string,
+): Promise<void> {
+  if (peekKickoffDirects(missionId).length === 0) return;
+  const { flushQueuedKickoffDirectsForMission } = await import(
+    './mission-engine-production'
+  );
+  await flushQueuedKickoffDirectsForMission(scope, stores, missionId);
+}
+
+function tryAcceptIdleOrchestratorKickoff(
+  stores: ProjectDomainStoreSuite,
+  mission: Mission,
+  sessionId: string,
+  initialPrompt: string | undefined,
+): boolean {
+  const live = stores.missions.get(mission.id) ?? mission;
+  const promptHash = kickoffPromptHash(initialPrompt);
+  rememberKickoffBrief({
+    missionId: live.id,
+    orchestratorSessionId: sessionId,
+    intentVersion: live.intentVersion ?? 0,
+    promptHash,
+  });
+  return tryRecordIdleKickoffAcceptance({
+    missionId: live.id,
+    sessionId,
+    intentVersion: live.intentVersion ?? 0,
+    promptHash,
+    sessionIdle: getSessionState(sessionId) === 'idle',
+    sessionOutput: readSessionOutput(sessionId, 80),
+    hasCurrentKickoffAcceptance: stores.missions.hasCurrentKickoffAcceptance(
+      live.id,
+    ),
+    recordKickoffAcceptance: (raw) => stores.missions.recordKickoffAcceptance(raw),
+  });
+}
+
+function resolveOrchestratorBriefDelivery(adapterId: string): 'argv' | 'paste' {
+  const adapter = getAdapter(adapterId);
+  if (!adapter || adapter.kind !== 'cli-pty') {
+    // Fail-closed: sem contrato de argv confiável, cola.
+    return 'paste';
+  }
+  return orchestratorBriefDelivery(
+    initialPromptChannel({
+      declared: adapter.spawn.initialPrompt,
+      oneshotArgs: adapter.spawn.initialPromptArgs,
+      interactive: adapter.spawn.interactive,
+    }),
+  );
+}
 
 /**
  * Doutrina Overclock: quando todos os panes morreram e a missão segue
@@ -128,6 +321,38 @@ export function decideFastLaneResumeAction(input: {
   }
   return 'bootstrap';
 }
+
+export { pickFocusedRunningMission, shouldSkipLeftoverRemount };
+
+function thisProcessLiveMaestroByMissionId(
+  missionIds: readonly string[],
+): Map<string, string> {
+  const live = new Map<string, string>();
+  for (const missionId of missionIds) {
+    const sessionId = liveOrchestratorSessionId(missionId);
+    if (sessionId) live.set(missionId, sessionId);
+  }
+  return live;
+}
+
+function isThisProcessFreshKickoff(
+  stores: ProjectDomainStoreSuite,
+  mission: Mission,
+  liveMaestroSessionId: string | null,
+): boolean {
+  const sealedCount = stores.tasks?.list?.(mission.id)?.length ?? 0;
+  const paneCount = listPaneSnapshots().filter(
+    (pane) => pane.missionId === mission.id,
+  ).length;
+  return isFreshIniciarKickoff({
+    status: mission.status,
+    createdAt: mission.createdAt,
+    updatedAt: mission.updatedAt,
+    sealedCount,
+    paneCount,
+    hasLiveMaestro: liveMaestroSessionId != null,
+  });
+}
 interface WatcherState {
   readonly scope: ProjectExecutionScope;
   readonly missionId: string;
@@ -196,6 +421,22 @@ function liveOrchestratorSessionId(
     : null;
 }
 
+export { maybeCompleteFastLaneOnDelivery };
+
+export function leftoverIsolationPersistPatch(): MissionBlockPatch {
+  return missionBlockPatch('technical');
+}
+
+export function shouldPersistLeftoverIsolation(input: {
+  readonly updatedAt: number;
+  readonly processStartedAt?: number;
+  readonly operatorClosed: boolean;
+  readonly orchestratorLive: boolean;
+  readonly focusedLiveMission?: boolean;
+}): boolean {
+  return !shouldResurrectPersistedRunningMission(input);
+}
+
 export function missionFastLaneEnabled(): boolean {
   return true;
 }
@@ -234,8 +475,8 @@ export function missionDesignContext(
 // ── Construção de prompt ────────────────────────────────────────────────
 
 /**
- * Prompt completo de um agente do squad, com doutrina de coordenação para o
- * orquestrador e contrato de handoff para todos.
+ * Prompt do kickoff. Maestro: briefing curto (objetivo / equipe / fim).
+ * Worker: papel + objetivo. Contrato de handoff continua anexado à parte.
  */
 export function agentPrompt(
   agent: SquadAgent,
@@ -244,78 +485,88 @@ export function agentPrompt(
   resume: boolean,
   designContext = '',
   squad: Squad | null = null,
+  sealedPlanTitles: readonly string[] = [],
 ): string {
   const objective = mission.description ?? '';
-  const doctrine = agent.category === 'orchestrator' && squad
-    ? buildOrchestratorDoctrine(squad, mission)
-    : '';
-
+  const title = mission.title ?? objective.slice(0, 80);
+  const sealedPlanBlock =
+    agent.category === 'orchestrator' && sealedPlanTitles.length > 0
+      ? [
+          '### Plano selado (não colapse em papéis do squad)',
+          `Não colapse em 7 papéis. São ${sealedPlanTitles.length} entregas.`,
+          `O board já rastreia ${sealedPlanTitles.length} tasks do objetivo. ` +
+            'Spawne UM worker por task pendente — NÃO reduza a lista a 5 papéis.',
+          ...sealedPlanTitles.map(
+            (storyTitle, index) => `${index + 1}. ${storyTitle}`,
+          ),
+        ].join('\n')
+      : '';
   const uiNote = isUiMissionText(objective)
-    ? 'Este pedido envolve UI. Use o DESIGN.md do projeto e o catálogo de ' +
-      'design como autoridade de estilo — nunca gere Tailwind/shadcn genérico.'
+    ? 'Este pedido envolve interface. Use o DESIGN.md do projeto e o catálogo de design como guia de estilo.'
     : '';
+  const designBlock = uiNote && designContext ? designContext : '';
+  const executorCount = (squad?.agents ?? []).filter(
+    (row) => row.category === 'executor',
+  ).length;
+
+  if (agent.category === 'orchestrator') {
+    return buildMaestroKickoffBrief({
+      title,
+      objective: [
+        objective,
+        mission.learnings
+          ? `Aprendizados anteriores: ${mission.learnings}`
+          : '',
+        sealedPlanBlock,
+      ]
+        .filter(Boolean)
+        .join('\n'),
+      orchestratorName: agent.agentName,
+      teamNames,
+      playbook: squad?.orchestratorInstructions,
+      resume,
+      uiNote,
+      designContext: designBlock,
+      lane: mission.intentContract?.lane,
+      maxWorkers: mission.intentContract?.budgets?.maxWorkers,
+      executorCount: executorCount ?? 3,
+      sealedPlanTitles,
+    });
+  }
 
   return [
-    `## Missão: ${mission.title ?? objective.slice(0, 80)}`,
+    `## Missão: ${title}`,
     `Objetivo: ${objective}`,
     mission.learnings ? `Aprendizados anteriores: ${mission.learnings}` : '',
     uiNote,
-    uiNote ? designContext : '',
-    `Você é ${agent.agentName} (${agent.category === 'orchestrator' ? 'orquestrador' : 'worker'})`,
-    agent.category === 'orchestrator'
-      ? [
-          '## ORQUESTRAÇÃO (modelo PULL)',
-          '',
-          'Você é o ORQUESTRADOR. Você NÃO executa tarefas — você COORDENA.',
-          'Mesmo pedidos triviais (uma pergunta, uma contagem) viram dispatch de worker:',
-          'se está no objetivo da missão, um worker responde — nunca você.',
-          '',
-          '### Workflow',
-          '1. Analise o objetivo e divida em tarefas independentes',
-          '2. Para CADA tarefa: chame nexus_pane_spawn({agentName, prompt})',
-          '   - O prompt vai no argv de NASCENÇA — o worker já acorda executando',
-          '   - O model/effort selados no início da missão VENCEM route_task e o default da CLI',
-          '   - Uma chamada só. NUNCA spawn + pane_write separados.',
-          '3. PARALELIZE com inteligência (a fila de CLIs é sua vantagem):',
-          '   - Trabalho de LEITURA (code review, auditoria, viabilidade) NUNCA',
-          '     é serial: fatie o escopo grande em pedaços (por área/domínio/',
-          '     diretório) e spawne os revisores NO MESMO TURNO, em paralelo.',
-          '   - ESCRITORES ficam 1 por vez no mesmo checkout; leitores podem',
-          '     acompanhar um escritor ativo. Use o plano (nexus_task plan) para',
-          '     declarar dependsOn e o que é leitura vs escrita.',
-          '4. Depois de spawnar, ENCERRE SEU TURNO. NÃO faça polling.',
-          '   - Resultados chegam via nexus_handoff_submit e ACORDAM você',
-          '   - re-chamar pane_read/pane_list/handoff_list em loop não ensina nada',
-          '5. Quando acordar com resultados, valide via nexus_handoff_list({full:true})',
-          '   - Use o campo `evidence` para CONFIRMAR — comandos, exit codes, arquivos',
-          '   - NÃO confie cegamente no summary',
-          '6. Se algo errado: re-spawne o worker com correções pontuais',
-          '7. Quando TODOS entregarem: chame nexus_mission_set_status({status:"done"})',
-          '',
-          '### Workers disponíveis (use com agentName)',
-          ...teamNames
-            .filter((n) => n !== agent.agentName)
-            .map((n) => `  - ${n}`),
-          '',
-          '### Regras',
-          '- pane_wait_idle é SÓ confirmação de boot (15s). NUNCA espere resultado nele.',
-          '- Worker parado sem handoff? Pergunte via pane_write. NÃO leia o terminal dele.',
-          '- BLOQUEADO de um worker não trava a missão. Re-spawne com outro ou ajuste.',
-          '',
-          doctrine,
-        ].join('\n')
-      : [
-          '## WORKER (modelo PULL)',
-          '',
-          'Você é um worker. Execute a tarefa e entregue o resultado.',
-          'Sua resposta SERÁ ENTREGUE AUTOMATICAMENTE ao orquestrador — as regras ',
-          'de entrega (quando responder direto e quando chamar nexus_handoff_submit) ',
-          'estão no contrato de handoff no fim deste prompt. Siga ELAS.',
-        ].join('\n'),
+    designBlock,
+    `Você é ${agent.agentName} (trabalhador).`,
+    'Execute a tarefa e entregue o resultado ao coordenador.',
+    'Nunca pergunte ao operador cor, fonte ou preferência de design — se faltar, leia DESIGN.md, escolha e entregue arquivos.',
+    'As regras de entrega estão no contrato no fim deste prompt — siga-as.',
     resume ? '(Você foi religado após uma tentativa anterior.)' : '',
   ]
     .filter(Boolean)
     .join('\n');
+}
+
+function sealFastLanePlanTitles(
+  stores: ProjectDomainStoreSuite,
+  mission: Mission,
+  squad: Squad | null,
+): readonly string[] {
+  if (!squad) return [];
+  try {
+    return sealFastLaneListedStoryPlan(stores, mission, squad).map(
+      (task) => task.title,
+    );
+  } catch (error) {
+    console.warn(
+      '[fast-lane] selo do plano de stories falhou:',
+      error instanceof Error ? error.message : error,
+    );
+    return [];
+  }
 }
 
 function orderedRoster(agents: readonly SquadAgent[]): SquadAgent[] {
@@ -337,25 +588,153 @@ interface SpawnedAgent {
   sessionId: string;
 }
 
+function liveAutoSeatProviderViews(
+  adapterIds: readonly string[],
+): AutoSeatProviderView[] {
+  const seen = new Set<string>();
+  const views: AutoSeatProviderView[] = [];
+  for (const adapterId of adapterIds) {
+    const id = adapterId.trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    views.push({
+      adapterId: id,
+      authStrategy: String(providerAuthStrategy(id) ?? ''),
+      hasKey: hasRuntimeKey(id),
+      readiness: detectSubscriptionAuthReadiness(id),
+      enabled: true,
+    });
+  }
+  return views;
+}
+
+function writerIsConnectedAndWritable(sessionId: string | undefined): boolean {
+  if (!sessionId) return false;
+  return isPtySessionConnectedAndWritable(sessionId);
+}
+
+function writerCliIsCircuitDead(missionId: string, adapterId: string): boolean {
+  const key = { missionId, adapterId, role: 'worker' as const };
+  return (
+    writerCircuitBroken(key) ||
+    writerCircuitBlocksSeat(key) ||
+    shouldTripWorkerMortalityBreaker(workerMortalityCount(missionId, adapterId))
+  );
+}
+
+async function spawnWriterWithCircuit(
+  scope: ProjectExecutionScope,
+  mission: Mission,
+  writer: SquadAgent,
+  prompt: string,
+  paneTitle?: string,
+): Promise<SpawnedAgent | { error: string }> {
+  const key = {
+    missionId: mission.id,
+    role: 'worker',
+    adapterId: writer.cli,
+  };
+  if (writerCliIsCircuitDead(mission.id, writer.cli)) {
+    const attempts = Math.max(
+      3,
+      workerMortalityCount(mission.id, writer.cli),
+    );
+    logWriterCircuitBreak({
+      adapterId: writer.cli,
+      attempts,
+      role: 'worker',
+      missionId: mission.id,
+    });
+    const providers = liveAutoSeatProviderViews(
+      [writer.cli, ...PREFERRED_AUTO_SEAT_CLIS],
+    );
+    const reminted = remintWriterCliForAutoSeat(
+      { id: writer.id, cli: writer.cli, model: writer.model },
+      providers.filter((item) => item.adapterId !== writer.cli),
+    );
+    if (!reminted || reminted.cli === writer.cli) {
+      return {
+        error: `writer_circuit_break ${writer.cli} after ${attempts} attempts`,
+      };
+    }
+    const successor: SquadAgent = {
+      ...writer,
+      cli: reminted.cli,
+      model: reminted.model ?? '',
+    };
+    console.warn(
+      `[fast-lane] writer_circuit_break remint ${writer.cli} → ${successor.cli} (${attempts} attempts)`,
+    );
+    return spawnAgentPane(scope, mission, successor, prompt, paneTitle);
+  }
+  const spawned = await spawnAgentPane(scope, mission, writer, prompt, paneTitle);
+  const connected =
+    !('error' in spawned) &&
+    writerIsConnectedAndWritable(spawned.sessionId);
+  if (connected) return spawned;
+  const attempts = recordWriterConnectFailure(key);
+  writerCircuitBreakers.recordConnectFailure(key);
+  if (!writerCircuitBroken(key)) {
+    return 'error' in spawned
+      ? spawned
+      : { error: `${writer.agentName} (${writer.cli}): PTY not connected+writable` };
+  }
+  logWriterCircuitBreak({
+    adapterId: writer.cli,
+    attempts,
+    role: writer.id,
+    missionId: mission.id,
+  });
+  const providers = liveAutoSeatProviderViews(
+    [writer.cli, ...PREFERRED_AUTO_SEAT_CLIS],
+  );
+  const reminted = remintWriterCliForAutoSeat(
+    { id: writer.id, cli: writer.cli, model: writer.model },
+    providers.filter((item) => item.adapterId !== writer.cli),
+  );
+  const action = decideWriterCircuitAction({
+    attempts,
+    successorAuthed: reminted !== null && reminted.cli !== writer.cli,
+  });
+  if (action === 'skip-silent' || !reminted || reminted.cli === writer.cli) {
+    return {
+      error: `writer_circuit_break ${writer.cli} after ${attempts} attempts`,
+    };
+  }
+  const successor: SquadAgent = {
+    ...writer,
+    cli: reminted.cli,
+    model: reminted.model ?? '',
+  };
+  console.warn(
+    `[fast-lane] writer_circuit_break remint ${writer.cli} → ${successor.cli} (${attempts} attempts)`,
+  );
+  return spawnAgentPane(scope, mission, successor, prompt);
+}
+
 async function spawnAgentPane(
   scope: ProjectExecutionScope,
   mission: Mission,
   agent: SquadAgent,
   initialPrompt?: string,
+  paneTitle?: string,
 ): Promise<SpawnedAgent | { error: string }> {
   const role: 'orchestrator' | 'worker' =
     agent.category === 'orchestrator' ? 'orchestrator' : 'worker';
+  const title = paneTitle?.trim() || agent.agentName;
 
   const spawn = await requestPaneSpawn({
     adapterId: agent.cli,
     model: agent.model || undefined,
     effort: agent.effort || undefined,
     cwd: scope.rootRealPath,
-    title: agent.agentName,
+    title,
     missionId: mission.id,
     agentName: agent.agentName,
     allowedTools: agent.allowedTools ? [...agent.allowedTools] : null,
-    allowedSkills: agent.allowedSkills ? [...agent.allowedSkills] : [],
+    // null = irrestrito (paridade tools / spawn-authority). `[]` nega todas
+    // as skills e ainda arma requiresSpawnGate — não confundir com ausente.
+    allowedSkills: agent.allowedSkills ? [...agent.allowedSkills] : null,
     role,
     scope,
     executionScope: scope,
@@ -370,43 +749,171 @@ async function spawnAgentPane(
   }
 
   const stores = getProjectDomainStores(scope);
-  stores.missionPanes.record({
-    missionId: mission.id,
+  bindSpawnedMissionPane(stores, scope, mission, agent, role, {
     paneId: spawn.paneId,
-    adapterId: agent.cli,
-    model: agent.model,
-    effort: agent.effort,
-    cwd: scope.rootRealPath,
-    title: agent.agentName,
-    agentName: agent.agentName,
-    role,
-    allowedTools: agent.allowedTools ? [...agent.allowedTools] : null,
-    allowedSkills: agent.allowedSkills ? [...agent.allowedSkills] : [],
-    readOnly: false,
-    executionScope: scope,
+    sessionId: spawn.sessionId,
   });
-
   if (role === 'orchestrator') {
     stores.missions.setOrchestratorSession(mission.id, spawn.sessionId);
+    rememberKickoffBrief({
+      missionId: mission.id,
+      orchestratorSessionId: spawn.sessionId,
+      intentVersion: (stores.missions.get(mission.id) ?? mission).intentVersion ?? 0,
+      promptHash: kickoffPromptHash(initialPrompt),
+    });
+  }
+
+  // Maestro paste/oneshot: pty-manager NÃO coloca o briefing no argv (one-shot
+  // mataria o pane; paste não tem canal). Sem colagem o Maestro fica mudo e
+  // a Via Rápida marca kickoff aceito — missão "running" que nunca despacha.
+  // Maestro positional: argv sem recibo — NÃO gravar kickoff até first-run/
+  // OAuth sumirem. Se o pane já está idle com o briefing injetado, o recibo
+  // pode ser aceito antes da prova de Enter (poke do operador não espera 70s).
+  if (role === 'orchestrator' && initialPrompt) {
+    const delivery = resolveOrchestratorBriefDelivery(agent.cli);
+    if (delivery === 'paste') {
+      const boot =
+        getSessionState(spawn.sessionId) === 'idle'
+          ? 'idle'
+          : await waitForIdle(
+              spawn.sessionId,
+              ORCHESTRATOR_BOOT_TIMEOUT_MS,
+            );
+      if (boot === 'exited') {
+        return {
+          error: `${agent.agentName} (${agent.cli}): pane saiu antes do briefing`,
+        };
+      }
+      try {
+        const accepted = await deliverAgentPrompt(
+          spawn.sessionId,
+          initialPrompt,
+          undefined,
+          { adapterId: agent.cli },
+        );
+        if (!accepted) {
+          return {
+            error: `${agent.agentName} (${agent.cli}): briefing não foi aceito pelo pane`,
+          };
+        }
+        tryAcceptIdleOrchestratorKickoff(
+          stores,
+          mission,
+          spawn.sessionId,
+          initialPrompt,
+        );
+      } catch (error) {
+        return {
+          error: `${agent.agentName} (${agent.cli}): falha ao colar briefing — ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        };
+      }
+    } else {
+      // positional argv: Claude often only preloads the composer. Force
+      // Enter (then paste) so the first turn starts without a human keystroke.
+      const boot =
+        getSessionState(spawn.sessionId) === 'idle'
+          ? 'idle'
+          : await waitForIdle(
+              spawn.sessionId,
+              ORCHESTRATOR_BOOT_TIMEOUT_MS,
+            );
+      if (boot === 'exited') {
+        return {
+          error: `${agent.agentName} (${agent.cli}): pane saiu antes de consumir o briefing`,
+        };
+      }
+      try {
+        // Theme picker / trust / bypass — autoresponder; não injectar no modal.
+        await waitOutBootPrompts(spawn.sessionId, 20_000);
+      } catch (error) {
+        return {
+          error: `${agent.agentName} (${agent.cli}): falha ao limpar boot menus — ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        };
+      }
+      const tail = readSessionOutput(spawn.sessionId, 80);
+      const blocked = maestroKickoffBlockReason(tail);
+      if (blocked?.kind === 'auth') {
+        return {
+          error: `${agent.agentName} (${agent.cli}): ${blocked.reason}`,
+        };
+      }
+      if (blocked?.kind === 'onboarding') {
+        // Uma segunda passagem: o autoresponder pode ainda estar a meio.
+        await waitOutBootPrompts(spawn.sessionId, 10_000);
+        const tail2 = readSessionOutput(spawn.sessionId, 80);
+        const still = maestroKickoffBlockReason(tail2);
+        if (still) {
+          return {
+            error: `${agent.agentName} (${agent.cli}): ${still.reason}`,
+          };
+        }
+      }
+      // Recibo quando idle + briefing no argv + sem auth. Não espera a prova
+      // de Enter — o poke do operador e o primeiro turno deixam de ficar
+      // atrás de 60s+ de waitForIdle/prove.
+      tryAcceptIdleOrchestratorKickoff(
+        stores,
+        mission,
+        spawn.sessionId,
+        initialPrompt,
+      );
+      try {
+        await proveNativeArgvBriefAccepted(
+          spawn.sessionId,
+          initialPrompt,
+          agent.cli,
+        );
+      } catch (error) {
+        const after = maestroKickoffBlockReason(
+          readSessionOutput(spawn.sessionId, 80),
+        );
+        return {
+          error: `${agent.agentName} (${agent.cli}): ${
+            after?.reason ??
+            (error instanceof Error
+              ? error.message
+              : 'briefing argv não abriu um turno')
+          }`,
+        };
+      }
+      // Recusa kickoff se, após a prova, o TUI voltou a auth/onboarding.
+      const finalBlock = maestroKickoffBlockReason(
+        readSessionOutput(spawn.sessionId, 80),
+      );
+      if (finalBlock) {
+        return {
+          error: `${agent.agentName} (${agent.cli}): ${finalBlock.reason}`,
+        };
+      }
+    }
+  }
+
+  if (role === 'orchestrator') {
     // Recibo de kickoff (0.32.23): prova durável do orquestrador desta
     // encarnação — exigido por missionDirectAuthority e pelo retry do
     // orientar-missão. Vale para bootstrap E respawn (continuidade).
+    // Idle + briefing já injetado (e sem auth) pode ter gravado antes da prova.
     const live = stores.missions.get(mission.id) ?? mission;
-    try {
-      stores.missions.recordKickoffAcceptance({
-        missionId: live.id,
-        intentVersion: live.intentVersion ?? 0,
-        orchestratorSessionId: spawn.sessionId,
-        promptHash: createHash('sha256')
-          .update(initialPrompt ?? '')
-          .digest('hex'),
-      });
-    } catch (error) {
-      console.warn(
-        '[fast-lane] recibo de kickoff não gravou:',
-        error instanceof Error ? error.message : error,
-      );
+    if (!stores.missions.hasCurrentKickoffAcceptance(live.id)) {
+      try {
+        stores.missions.recordKickoffAcceptance({
+          missionId: live.id,
+          intentVersion: live.intentVersion ?? 0,
+          orchestratorSessionId: spawn.sessionId,
+          promptHash: kickoffPromptHash(initialPrompt),
+        });
+      } catch (error) {
+        console.warn(
+          '[fast-lane] recibo de kickoff não gravou:',
+          error instanceof Error ? error.message : error,
+        );
+      }
     }
+    void flushQueuedKickoffDirects(scope, stores, live.id);
   }
 
   return {
@@ -480,6 +987,31 @@ async function tickWatcher(state: WatcherState): Promise<void> {
   if (mission.status !== 'running') {
     stopWatcher(state.scope, state.missionId);
     return;
+  }
+
+  // P0 civil: Pronto quando o board selado está N/N OU quando o cwd tem
+  // entrega real e os writers já pararam — não só quando cada story ganha
+  // handoff MCP. DESIGN.md sozinho e rascunho nunca iniciado não pintam verde.
+  try {
+    const civilian = await maybeCompleteFastLaneOnDelivery(
+      state.scope,
+      state.missionId,
+      { getStores: () => stores },
+    );
+    if (civilian.completed) {
+      stopWatcher(state.scope, state.missionId);
+      return;
+    }
+    const pronto = maybeApplyCivilianPronto(state.scope, state.missionId);
+    if (pronto.completed) {
+      stopWatcher(state.scope, state.missionId);
+      return;
+    }
+  } catch (error) {
+    console.warn(
+      '[fast-lane] avaliação de Pronto civil falhou:',
+      error instanceof Error ? error.message : error,
+    );
   }
 
   // Atualiza timestamp de atividade se o orquestrador está busy.
@@ -564,6 +1096,25 @@ async function tickWatcher(state: WatcherState): Promise<void> {
     (p) => p.missionId === state.missionId,
   );
   recordWorkerMortalityTick(state.scope, state.missionId, missionPanes);
+  try {
+    const disk = reconcileSealedBoardFromDisk({
+      stores,
+      missionId: state.missionId,
+      cwd: state.scope.rootRealPath,
+    });
+    if (disk.advancedTaskIds.length > 0) {
+      console.info(
+        `[fast-lane] board selado +${disk.advancedTaskIds.length} ` +
+          `via files-modified (${disk.filesModified.length} arquivos) ` +
+          `em ${state.missionId}`,
+      );
+    }
+  } catch (error) {
+    console.warn(
+      '[fast-lane] reconcile files-modified falhou:',
+      error instanceof Error ? error.message : error,
+    );
+  }
   const livePanes = missionPanes.filter(
     (p) => p.state === 'busy' || p.state === 'idle' || p.state === 'spawning',
   );
@@ -641,6 +1192,8 @@ async function tickWatcher(state: WatcherState): Promise<void> {
 
 /** Panes mortos cuja mortalidade já foi contada (conta 1× por pane). */
 const mortalityCountedPanes = new Set<string>();
+/** Idle/exited writers already settled from files-modified (1× per pane). */
+const filesModifiedSettledPanes = new Set<string>();
 
 /**
  * Mortalidade de worker no tick do watcher (campanha 0.50, A1): pane morto
@@ -649,6 +1202,62 @@ const mortalityCountedPanes = new Set<string>();
  * o TTL normal da doutrina, não mortalidade. Cada morte vira evento no
  * journal: o pós-mortem deixa de ser cego.
  */
+function settleFastLaneWriterDone(input: {
+  readonly scope: ProjectExecutionScope;
+  readonly missionId: string;
+  readonly fromAgent?: string | null;
+  readonly preferredTaskId?: string | null;
+  readonly filesModified: readonly string[];
+  readonly mcpHandoffClosedTask: boolean;
+}): void {
+  let stores: ProjectDomainStoreSuite;
+  try {
+    stores = getProjectDomainStores(input.scope);
+  } catch {
+    return;
+  }
+  const mission = stores.missions.get(input.missionId);
+  const sealed = mission
+    ? stores.tasks.list(input.missionId)
+    : [];
+  const progress = boardProgressFromSealedTasks(sealed);
+  const decision = maybeCompleteFromFilesModified({
+    filesModified: input.filesModified,
+    mcpHandoffClosedTask: input.mcpHandoffClosedTask,
+    sealedCompleted: progress.completed,
+    sealedTotal: progress.total,
+  });
+  if (!decision.countsAsDelivery) {
+    console.warn(
+      `[fast-lane] worker_done ignored — 0 files-modified and no MCP handoff ` +
+        `(mission=${input.missionId})`,
+    );
+    return;
+  }
+  if (!input.mcpHandoffClosedTask && input.filesModified.length > 0) {
+    try {
+      advanceFastLaneStoryTaskFromWorkerDone(stores, {
+        missionId: input.missionId,
+        fromAgent: input.fromAgent,
+        preferredTaskId: input.preferredTaskId,
+        summary: `files-modified: ${input.filesModified.slice(0, 20).join(', ')}`,
+        filesModified: input.filesModified,
+      });
+    } catch (error) {
+      console.warn(
+        '[fast-lane] files-modified board advance failed:',
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }
+  if (decision.pronto) {
+    console.info(
+      `[fast-lane] Pronto justified by files-modified/handoff ` +
+        `(${progress.completed}/${progress.total}) mission=${input.missionId}`,
+    );
+  }
+}
+
 function recordWorkerMortalityTick(
   scope: ProjectExecutionScope,
   missionId: string,
@@ -659,18 +1268,20 @@ function recordWorkerMortalityTick(
     role?: 'orchestrator' | 'worker';
     state?: string;
     agentName?: string;
+    title?: string;
   }[],
 ): void {
   const workers = missionPanes.filter((p) => p.role === 'worker');
   if (workers.length === 0) return;
-  const deliveredSessions = new Set<string>();
+  let deliveredHandoffs: readonly {
+    sessionId?: string | null;
+    fromAgent?: string | null;
+  }[] = [];
   try {
-    for (const handoff of getProjectDomainStores(scope).handoffs.list({
+    deliveredHandoffs = getProjectDomainStores(scope).handoffs.list({
       missionId,
       includeDelivered: true,
-    })) {
-      if (handoff.sessionId) deliveredSessions.add(handoff.sessionId);
-    }
+    });
   } catch {
     // Handoffs ilegíveis: segue sem prova de vida — a morte sem entrega é o
     // default honesto (o breaker precisa de 3 para agir).
@@ -678,20 +1289,56 @@ function recordWorkerMortalityTick(
   for (const pane of workers) {
     const adapterId = pane.adapterId?.trim() || '';
     if (!adapterId) continue;
-    if (pane.sessionId && deliveredSessions.has(pane.sessionId)) {
+    if (workerPaneHasDelivery(pane, deliveredHandoffs)) {
       recordAdapterProofOfLife(missionId, adapterId);
       continue;
+    }
+    const cwd =
+      (pane.sessionId ? getSessionCwd(pane.sessionId) : null) ??
+      scope.rootRealPath;
+    const filesModified = collectFilesModified(cwd);
+    const idleOrDead =
+      pane.state === 'idle' ||
+      pane.state === 'exited' ||
+      pane.state === 'hibernated';
+    // worker_done --files-modified: a live idle writer that actually wrote
+    // files must advance the sealed board. Death-only settlement left
+    // 20stories-e at 0/20 with files on disk.
+    if (
+      idleOrDead &&
+      filesModified.length > 0 &&
+      !filesModifiedSettledPanes.has(pane.paneId)
+    ) {
+      filesModifiedSettledPanes.add(pane.paneId);
+      settleFastLaneWriterDone({
+        scope,
+        missionId,
+        fromAgent: pane.agentName ?? pane.title ?? adapterId,
+        filesModified,
+        mcpHandoffClosedTask: false,
+      });
     }
     if (pane.state !== 'exited' && pane.state !== 'hibernated') continue;
     if (mortalityCountedPanes.has(pane.paneId)) continue;
     mortalityCountedPanes.add(pane.paneId);
     const deaths = recordWorkerDeathWithoutDelivery(missionId, adapterId);
+    if (!filesModifiedSettledPanes.has(pane.paneId)) {
+      filesModifiedSettledPanes.add(pane.paneId);
+      settleFastLaneWriterDone({
+        scope,
+        missionId,
+        fromAgent: pane.agentName ?? pane.title ?? adapterId,
+        filesModified,
+        mcpHandoffClosedTask: false,
+      });
+    }
     trace({
       kind: 'worker-died-without-delivery',
       missionId,
       paneId: pane.paneId,
       adapterId,
       deaths,
+      filesModified,
     });
     console.warn(
       `[fast-lane] worker ${pane.paneId} (${adapterId}) morreu sem entregar ` +
@@ -797,7 +1444,9 @@ async function respawnFastLaneOrchestrator(
   if (!orchestrator) {
     throw new Error('o squad não tem um orquestrador definido');
   }
+  assertFastLaneMaestroMcp(orchestrator.cli);
 
+  const sealedPlanTitles = sealFastLanePlanTitles(stores, live, squad);
   const prompt = [
     agentPrompt(
       orchestrator,
@@ -806,6 +1455,7 @@ async function respawnFastLaneOrchestrator(
       true,
       missionDesignContext(scope.rootRealPath),
       squad,
+      sealedPlanTitles,
     ),
     options.note
       ? `## CONTINUIDADE\nVocê foi religado automaticamente. ${options.note} ` +
@@ -858,6 +1508,14 @@ async function respawnFastLaneOrchestrator(
       `(session=${spawned.sessionId})`,
   );
   startWatcher(scope, mission.id, spawned.sessionId);
+  void maybeRedispatchFastLaneFirstWave(scope, live, {
+    focusedLiveMission: true,
+  }).catch((error) => {
+    console.warn(
+      '[fast-lane] first-wave after orchestrator respawn falhou:',
+      error instanceof Error ? error.message : error,
+    );
+  });
   // Onda 1 (A3, campanha 0.50): a sessão anterior pode ter morrido com
   // entregas aceitas-não-consumidas (quit na janela do ack). O Maestro novo
   // precisa RECEBER os handoffs pendentes pela lane de entrega — a sugestão
@@ -878,10 +1536,26 @@ async function respawnFastLaneOrchestrator(
 }
 
 /**
- * Ressurreição de boot: missões running de um escopo recém-aberto voltam a
- * voar (restart do app não pode virar zumbi — print 2026-08-16). Missões
- * fechadas pelo operador explícitamente NÃO são ressuscitadas.
- */
+ * Ressurreição de boot: só a missão focused COM Maestro vivo neste processo
+ * volta a voar. Rows leftover `running` no disco NÃO remontam PTY — persistem
+ * isolamento e ficam card na rail (restart restaura o card, não a equipe). */
+export function shouldResurrectPersistedRunningMission(input: {
+  readonly updatedAt: number;
+  readonly processStartedAt?: number;
+  readonly operatorClosed: boolean;
+  readonly orchestratorLive: boolean;
+  /** Rail-selected / civilian-focused mission — resume even if leftover. */
+  readonly focusedLiveMission?: boolean;
+}): boolean {
+  if (input.operatorClosed) return false;
+  if (input.orchestratorLive) return true;
+  if (input.focusedLiveMission === true) return true;
+  return !wasUpdatedBeforeThisProcess(
+    input.updatedAt,
+    input.processStartedAt,
+  );
+}
+
 export async function resurrectRunningMissionsForScope(
   scope: ProjectExecutionScope,
 ): Promise<void> {
@@ -892,10 +1566,50 @@ export async function resurrectRunningMissionsForScope(
   } catch {
     return;
   }
+  const liveById = thisProcessLiveMaestroByMissionId(
+    running.map((mission) => mission.id),
+  );
+  const focused = pickFocusedRunningMission(running, liveById);
   for (const mission of running) {
     if (wasMissionRuntimeClosedByOperator(mission)) continue;
+    const liveMaestroSessionId = liveById.get(mission.id) ?? null;
+    const freshKickoff = isThisProcessFreshKickoff(
+      stores,
+      mission,
+      liveMaestroSessionId,
+    );
+    const ageMs = Date.now() - (mission.createdAt ?? mission.updatedAt ?? 0);
+    const sealedCount = stores.tasks.list(mission.id).length;
+    const paneCount = listPaneSnapshots().filter(
+      (pane) => pane.missionId === mission.id,
+    ).length;
+    const isNewIniciar =
+      ageMs < 1000 ||
+      freshKickoff ||
+      (sealedCount >= 20 &&
+        paneCount === 0 &&
+        !wasUpdatedBeforeThisProcess(mission.updatedAt));
+    if (
+      shouldSkipLeftoverRemount({
+        mission,
+        liveMaestroSessionId,
+        remountKind: 'automatic',
+        isFreshKickoff: freshKickoff || isNewIniciar,
+        isLeftover:
+          !isNewIniciar && (!focused || mission.id !== focused.id),
+      })
+    ) {
+      persistLeftoverIsolation(
+        stores.missions,
+        mission.id,
+        focused && mission.id !== focused.id ? 'unfocus' : 'leftover',
+      );
+      continue;
+    }
     try {
-      await resumeFastLaneMission(scope, mission.id);
+      await resumeFastLaneMission(scope, mission.id, {
+        remountKind: 'automatic',
+      });
     } catch (error) {
       console.warn(
         `[fast-lane] ressurreição de ${mission.id} falhou (missão permanece running):`,
@@ -918,13 +1632,26 @@ export async function resurrectRunningMissionsForScope(
 export async function fastLaneBootstrap(
   scope: ProjectExecutionScope,
   missionId: string,
+  options?: { readonly waitForFirstPane?: boolean },
 ): Promise<void> {
   const stores = getProjectDomainStores(scope);
   const mission = stores.missions.get(missionId);
   if (!mission) throw new Error('missão não encontrada para a Via Rápida');
 
   const key = watcherKey(scope, missionId);
-  if (watchers.has(key)) return; // idempotente
+  if (watchers.has(key)) {
+    // Watcher already up (Maestro remounted). Iniciar / religado must still
+    // self-walk if writers are gone — otherwise the civilian sees 1 pane.
+    void maybeRedispatchFastLaneFirstWave(scope, mission, {
+      focusedLiveMission: true,
+    }).catch((error) => {
+      console.warn(
+        '[fast-lane] first-wave on remount/Iniciar falhou:',
+        error instanceof Error ? error.message : error,
+      );
+    });
+    return;
+  }
 
   if (mission.status === 'running') {
     // Já está rodando: orquestrador vivo → watcher; morto → respawn. O
@@ -936,6 +1663,14 @@ export async function fastLaneBootstrap(
     if (action === 'watch') {
       const sessionId = liveOrchestratorSessionId(missionId);
       if (sessionId) startWatcher(scope, missionId, sessionId);
+      void maybeRedispatchFastLaneFirstWave(scope, mission, {
+        focusedLiveMission: true,
+      }).catch((error) => {
+        console.warn(
+          '[fast-lane] first-wave on resume/watch falhou:',
+          error instanceof Error ? error.message : error,
+        );
+      });
       return;
     }
     if (action === 'respawn') {
@@ -960,6 +1695,33 @@ export async function fastLaneBootstrap(
     throw new Error('a missão não tem equipe salva para abrir terminais');
   }
 
+  // Spawna APENAS o orquestrador. Workers são spawnados sob demanda por ele.
+  const orchestrator = roster.find((a) => a.category === 'orchestrator');
+  if (!orchestrator) {
+    throw new Error('o squad não tem um orquestrador definido');
+  }
+  // Fail-closed ANTES de marcar running — senão AGY/aider viram "running"
+  // eterno sem MCP.
+  assertFastLaneMaestroMcp(orchestrator.cli);
+
+  // Auth pre-gate: CLI sem credencial não sobe como fake-run.
+  try {
+    await assertPreSpawnProbe(orchestrator.cli, {
+      model: orchestrator.model || undefined,
+      failClosed: true,
+    });
+  } catch (error) {
+    const hint =
+      error instanceof PreSpawnProbeError
+        ? error.hint
+        : error instanceof Error
+          ? error.message
+          : String(error);
+    throw new Error(
+      `Maestro \`${orchestrator.cli}\` não está autenticado para missões: ${hint}`,
+    );
+  }
+
   const dispatched = stores.missions.transitionLifecycle(
     missionId,
     { updatedAt: mission.updatedAt, intentVersion: mission.intentVersion ?? 0 },
@@ -981,12 +1743,7 @@ export async function fastLaneBootstrap(
 
   const teamNames = roster.map((agent) => agent.agentName);
   const designContext = missionDesignContext(scope.rootRealPath);
-
-  // Spawna APENAS o orquestrador. Workers são spawnados sob demanda por ele.
-  const orchestrator = roster.find((a) => a.category === 'orchestrator');
-  if (!orchestrator) {
-    throw new Error('o squad não tem um orquestrador definido');
-  }
+  const sealedPlanTitles = sealFastLanePlanTitles(stores, live, squad);
 
   const prompt = agentPrompt(
     orchestrator,
@@ -995,34 +1752,184 @@ export async function fastLaneBootstrap(
     false,
     designContext,
     squad,
+    sealedPlanTitles,
   );
 
-  const spawned = await spawnAgentPane(scope, live, orchestrator, prompt);
-  if ('error' in spawned) {
-    const current = stores.missions.get(missionId);
-    if (current && current.status === 'running' && current.intentState) {
-      missionEngineForScope(scope).blockTechnical(scope, {
-        missionId,
-        expectedStatus: current.status,
-        expectedIntentState: current.intentState,
-        expectedUpdatedAt: current.updatedAt,
-        expectedIntentVersion: current.intentVersion ?? 0,
-        description: `Orquestrador não abriu: ${spawned.error}`,
-      });
+  const finishFirstPane = async (): Promise<void> => {
+    const wave = dispatchFastLaneFirstWave(scope, missionId);
+    const spawned = await spawnAgentPane(scope, live, orchestrator, prompt);
+    if ('error' in spawned) {
+      const current = stores.missions.get(missionId);
+      if (current && current.status === 'running' && current.intentState) {
+        missionEngineForScope(scope).blockTechnical(scope, {
+          missionId,
+          expectedStatus: current.status,
+          expectedIntentState: current.intentState,
+          expectedUpdatedAt: current.updatedAt,
+          expectedIntentVersion: current.intentVersion ?? 0,
+          description: `Orquestrador não abriu: ${spawned.error}`,
+        });
+      }
+      throw new Error(`orquestrador não abriu: ${spawned.error}`);
     }
-    throw new Error(`orquestrador não abriu: ${spawned.error}`);
+
+    orchPanes.set(missionId, {
+      paneId: spawned.paneId,
+      sessionId: spawned.sessionId,
+      adapterId: spawned.adapterId,
+      cwd: scope.rootRealPath,
+      title: orchestrator.agentName,
+      agentName: orchestrator.agentName,
+    });
+
+    startWatcher(scope, missionId, spawned.sessionId);
+    void wave.then((n) => {
+      if (n > 0) {
+        console.info(
+          `[fast-lane] first-wave auto-dispatch ${n} writers for ${sealedPlanTitles.length} sealed stories`,
+        );
+      }
+    }).catch((error) => {
+      console.warn(
+        '[fast-lane] first-wave auto-dispatch falhou:',
+        error instanceof Error ? error.message : error,
+      );
+    });
+  };
+
+  // Via Rápida start IPC must return once the mission is running (rail
+  // item exists). Waiting for Maestro boot/idle can hang 60s+ and leaves
+  // the civilian on "Iniciando…" with the dialog stuck open.
+  if (options?.waitForFirstPane === false) {
+    void finishFirstPane().catch((error) => {
+      console.warn(
+        '[fast-lane] first pane after start (mission already running):',
+        error instanceof Error ? error.message : error,
+      );
+    });
+    return;
   }
 
-  orchPanes.set(missionId, {
-    paneId: spawned.paneId,
-    sessionId: spawned.sessionId,
-    adapterId: spawned.adapterId,
-    cwd: scope.rootRealPath,
-    title: orchestrator.agentName,
-    agentName: orchestrator.agentName,
-  });
+  await finishFirstPane();
+}
 
-  startWatcher(scope, missionId, spawned.sessionId);
+
+export async function maybeRedispatchFastLaneFirstWave(
+  scope: ProjectExecutionScope,
+  mission: Mission,
+  _opts?: { readonly focusedLiveMission?: boolean },
+): Promise<number> {
+  return dispatchFastLaneFirstWave(scope, mission.id);
+}
+
+const firstWaveInFlight = new Set<string>();
+
+/**
+ * First-wave no mesmo turno do Maestro. Só CLI AuthReadiness=present
+ * ganha assento; LongCat sem chave é skip silencioso (sem toast).
+ */
+export async function dispatchFastLaneFirstWave(
+  scope: ProjectExecutionScope,
+  missionId: string,
+): Promise<number> {
+  if (firstWaveInFlight.has(missionId)) return 0;
+  firstWaveInFlight.add(missionId);
+  try {
+    const stores = getProjectDomainStores(scope);
+    const mission = stores.missions.get(missionId);
+    if (!mission || mission.status !== 'running') return 0;
+    const squad = mission.squadId ? getSquad(mission.squadId) : null;
+    if (!squad) return 0;
+    const titles = sealFastLanePlanTitles(stores, mission, squad);
+    const liveWorkers = listPaneSnapshots().filter(
+      (pane) =>
+        pane.missionId === missionId &&
+        pane.role === 'worker' &&
+        (pane.state === 'busy' ||
+          pane.state === 'idle' ||
+          pane.state === 'spawning'),
+    ).length;
+    const blockedAdapterIds = [
+      ...new Set(
+        squad.agents
+          .map((agent) => agent.cli)
+          .filter((cli) => writerCliIsCircuitDead(missionId, cli)),
+      ),
+    ];
+    const wave = planFirstWaveSeats({
+      storyCount: titles.length,
+      storyTitles: titles,
+      agents: squad.agents,
+      liveWritableWorkers: liveWorkers,
+      blockedAdapterIds,
+      classifySeat: (agent) => {
+        const readiness = detectSubscriptionAuthReadiness(agent.cli);
+        return classifySeatAuth({
+          adapterId: agent.cli,
+          authStrategy: String(providerAuthStrategy(agent.cli) ?? ''),
+          hasKey: hasRuntimeKey(agent.cli),
+          kimiListReadiness:
+            agent.cli === 'kimi' ? readiness : undefined,
+          hasCredentiallessModel: readiness === 'present',
+        });
+      },
+    });
+    if (blockedAdapterIds.length > 0) {
+      console.warn(
+        `[fast-lane] writer_circuit_break first-wave pulou CLI: ${blockedAdapterIds.join(', ')}`,
+      );
+    }
+    if (wave.skippedNoCredential.length > 0) {
+      console.info(
+        `[fast-lane] first-wave pulou CLI sem auth present: ${wave.skippedNoCredential.join(', ')}`,
+      );
+    }
+    let spawned = 0;
+    for (const seat of wave.seats) {
+      const prompt = firstWaveWorkerPrompt({
+        mission,
+        agentName: seat.agent.agentName,
+        storyTitle: seat.storyTitle,
+        storyIndex: seat.seatIndex,
+        storyTotal: titles.length,
+      });
+      const result = await spawnWriterWithCircuit(
+        scope,
+        mission,
+        seat.agent,
+        prompt,
+        seat.title,
+      );
+      if ('error' in result) {
+        console.warn(
+          `[fast-lane] first-wave ${seat.title} não abriu:`,
+          result.error,
+        );
+        continue;
+      }
+      spawned += 1;
+    }
+    if (spawned > 0) {
+      trace({
+        kind: 'fast-lane-first-wave',
+        missionId,
+        spawned,
+        target: wave.targetSeats,
+      });
+      console.info(
+        `[fast-lane] first-wave despachou ${spawned} writer(s) no mesmo turno do Maestro (${missionId})`,
+      );
+    }
+    return spawned;
+  } catch (error) {
+    console.warn(
+      '[fast-lane] first-wave falhou; Maestro segue:',
+      error instanceof Error ? error.message : error,
+    );
+    return 0;
+  } finally {
+    firstWaveInFlight.delete(missionId);
+  }
 }
 
 // ── Resume ───────────────────────────────────────────────────────────────
@@ -1030,19 +1937,37 @@ export async function fastLaneBootstrap(
 export async function resumeFastLaneMission(
   scope: ProjectExecutionScope,
   missionId: string,
+  options: { readonly remountKind?: LeftoverRemountKind } = {},
 ): Promise<void> {
   const stores = getProjectDomainStores(scope);
   const mission = stores.missions.get(missionId);
   if (!mission) throw new Error('missão não encontrada para retomar');
 
+  const remountKind = options.remountKind ?? 'operator';
+  const liveMaestroSessionId = liveOrchestratorSessionId(missionId);
+  const freshKickoff = isThisProcessFreshKickoff(
+    stores,
+    mission,
+    liveMaestroSessionId,
+  );
+  if (
+    shouldSkipLeftoverRemount({
+      mission,
+      liveMaestroSessionId,
+      remountKind,
+      isFreshKickoff: freshKickoff,
+    })
+  ) {
+    persistLeftoverIsolation(stores.missions, mission.id, 'leftover');
+    return;
+  }
+
   const action = decideFastLaneResumeAction({
     status: mission.status,
-    liveOrchestratorSession: liveOrchestratorSessionId(missionId) !== null,
+    liveOrchestratorSession: liveMaestroSessionId !== null,
   });
   if (action === 'watch') {
-    const sessionId = liveOrchestratorSessionId(missionId);
-    if (sessionId) startWatcher(scope, missionId, sessionId);
-    return;
+    if (liveMaestroSessionId) startWatcher(scope, missionId, liveMaestroSessionId);    return;
   }
   if (action === 'respawn') {
     await respawnFastLaneOrchestrator(scope, mission);
@@ -1058,14 +1983,23 @@ export async function resumeFastLaneMission(
   // Bloqueio de USUÁRIO com pergunta pendente NUNCA é re-armado aqui: a única
   // saída autorizada é answer-question. Retomar/retry-kickoff que chegasse
   // nesse estado limparia a pergunta sem resposta (bug de campo 2026-08-18).
+  // Leftover parked é isolamento de rail, não pergunta — Retomar religa.
   if (mission.status === 'blocked' && mission.intentState) {
     const runtimeClosedByOperator = wasMissionRuntimeClosedByOperator(mission);
-    if (mission.intentState === 'blocked_user' && !runtimeClosedByOperator) {
+    const leftoverParked = wasMissionLeftoverParked(mission);
+    if (
+      mission.intentState === 'blocked_user' &&
+      !runtimeClosedByOperator &&
+      !leftoverParked
+    ) {
       throw new Error(
         'missão bloqueada por pergunta do operador exige resposta ' +
           '(answer-question) antes de retomar',
       );
     }
+    const sealedMarker = leftoverParked
+      ? NEXUS_LEFTOVER_PARKED_MARKER
+      : MISSION_RUNTIME_CLOSED_MARKER;
     try {
       missionEngineForScope(scope).resumeTechnical(scope, {
         missionId,
@@ -1076,7 +2010,7 @@ export async function resumeFastLaneMission(
         description:
           stripMissionVerdictParagraph(
             mission.description ?? '',
-            MISSION_RUNTIME_CLOSED_MARKER,
+            sealedMarker,
           ) || 'Missão reaberta pelo operador.',
       });
     } catch (error) {

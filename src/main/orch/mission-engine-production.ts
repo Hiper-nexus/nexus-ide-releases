@@ -19,6 +19,17 @@ import {
   wasMissionRuntimeClosedByOperator,
 } from "../../shared/mission-recovery-policy";
 import { stripMissionVerdictParagraph } from "../../shared/mission-block-cause";
+import {
+  persistLeftoverIsolation,
+  shouldPersistLeftoverIsolation,
+  wasMissionLeftoverParked,
+  isFreshIniciarKickoff,
+  NEXUS_LEFTOVER_PARKED_MARKER,
+} from "../../shared/mission-leftover-isolation";
+import {
+  leftoverRunningOrPendingIsDead,
+  wasUpdatedBeforeThisProcess,
+} from "../../shared/session-restore-liveness";
 import type {
   Mission,
   MissionIntentState,
@@ -31,6 +42,8 @@ import {
   PET_STUDIO_SQUAD,
   PET_STUDIO_SQUAD_ID,
 } from "../../shared/pet-studio";
+import { assertIndependentReviewForDone } from "./mission-independent-review-gate";
+import { assertDeliveryArtifactsForDone } from "./mission-delivery-artifact-gate";
 import { requireRendererWorkspaceScope } from "../persistence/renderer-workspace-scope";
 import {
   revalidateSealedAttachmentSnapshots,
@@ -59,8 +72,17 @@ import { emitMissionEvent } from "./mission-event-emit";
 import {
   getPaneRuntimeAuthorityBySession,
   listPaneSnapshots,
+  readSessionOutput,
   type PaneRuntimeAuthority,
 } from "./pane-registry";
+import {
+  enqueueKickoffDirect,
+  isKickoffInProgressError,
+  rememberedKickoffBrief,
+  takeKickoffDirects,
+  tryRecordIdleKickoffAcceptance,
+} from "./mission-kickoff-direct-queue";
+import { maestroKickoffBlockReason } from "./maestro-boot-gate";
 import {
   getProjectDomainStores,
   type ProjectDomainStoreSuite,
@@ -90,6 +112,8 @@ import {
   taskDispatchTechnicalResumeDescription,
 } from "./task-dispatch-persistence";
 import {
+  missionViewHasFiles,
+  missionViewHasLiveWorkingRuntime,
   missionViewHasResidualWork,
   resolveMissionAgentLiveState,
   type MissionAgentTaskFallback,
@@ -376,6 +400,13 @@ export interface MissionDirectDeliveryDeps {
     scope: ProjectExecutionScope,
     missionId: string,
   ) => Promise<void>;
+  readonly getSessionState?: (sessionId: string) => string | null;
+  readonly readSessionOutput?: (sessionId: string, maxLines?: number) => string;
+}
+
+export interface MissionDirectDeliveryOptions {
+  /** Flush da fila já emitiu a orientação na conversa. */
+  readonly conversationAlreadyAccepted?: boolean;
 }
 
 const productionMissionDirectDeliveryDeps: MissionDirectDeliveryDeps = {
@@ -398,6 +429,8 @@ const productionMissionDirectDeliveryDeps: MissionDirectDeliveryDeps = {
   deliverAgentPrompt,
   emitMissionEvent,
   resumeOrchestrator: resumeFastLaneMission,
+  getSessionState,
+  readSessionOutput,
 };
 
 interface MissionDirectAuthority {
@@ -764,11 +797,75 @@ function missionDirectPrompt(
  * method resolves only after PTY acceptance proof (or the ACP turn boundary),
  * revalidates that exact authority, then emits the bounded conversation event.
  */
+function tryAcceptIdleKickoffForDirect(
+  stores: ProjectDomainStoreSuite,
+  mission: Mission,
+  deps: MissionDirectDeliveryDeps,
+): boolean {
+  if (stores.missions.hasCurrentKickoffAcceptance(mission.id)) return true;
+  const sessionId = mission.orchestratorSessionId;
+  const brief = rememberedKickoffBrief(mission.id);
+  if (!sessionId || !brief) return false;
+  if (brief.orchestratorSessionId !== sessionId) return false;
+  const record = (
+    stores.missions as {
+      recordKickoffAcceptance?: (raw: {
+        readonly missionId: string;
+        readonly intentVersion: number;
+        readonly orchestratorSessionId: string;
+        readonly promptHash: string;
+      }) => unknown;
+    }
+  ).recordKickoffAcceptance;
+  if (typeof record !== "function") return false;
+  return tryRecordIdleKickoffAcceptance({
+    missionId: mission.id,
+    sessionId,
+    intentVersion: brief.intentVersion,
+    promptHash: brief.promptHash,
+    sessionIdle: deps.getSessionState?.(sessionId) === "idle",
+    sessionOutput: deps.readSessionOutput?.(sessionId, 80) ?? "",
+    hasCurrentKickoffAcceptance: false,
+    recordKickoffAcceptance: record,
+  });
+}
+
+function emitOperatorDirectionAccepted(
+  scope: ProjectExecutionScope,
+  command: MissionDirectCommand,
+  deps: MissionDirectDeliveryDeps,
+  fingerprint: string,
+): void {
+  deps.emitMissionEvent(scope, {
+    missionId: command.missionId,
+    runId: "operator-direction",
+    type: "custom",
+    origin: "main",
+    idempotencyKey: `operator_direction:${fingerprint}`,
+    payload: {
+      kind: "operator_direction" as const,
+      targetAgentId: command.targetAgentId,
+      text: command.text,
+    },
+  });
+}
+
+/**
+ * Main-owned canonical direct path. Renderer input selects neither a session
+ * nor a transport: both are rederived from the current sealed mission. The
+ * method resolves only after PTY acceptance proof (or the ACP turn boundary),
+ * revalidates that exact authority, then emits the bounded conversation event.
+ *
+ * Durante o kickoff (recibo ainda ausente) a linha do operador entra na fila
+ * ou o recibo é aceito se o pane já está idle com o briefing injetado — nunca
+ * um erro técnico em inglês.
+ */
 export async function deliverMissionDirectInstruction(
   scope: ProjectExecutionScope,
   stores: ProjectDomainStoreSuite,
   rawCommand: MissionDirectCommand,
   deps: MissionDirectDeliveryDeps = productionMissionDirectDeliveryDeps,
+  options: MissionDirectDeliveryOptions = {},
 ): Promise<void> {
   assertSafePtyPrompt(rawCommand.text);
   const parsed = missionEngineCommandSchema.parse(rawCommand);
@@ -777,12 +874,66 @@ export async function deliverMissionDirectInstruction(
   }
   const command = parsed;
   assertSafePtyPrompt(command.text);
-  const initial = await resolveMissionDirectAuthority(
-    scope,
-    stores,
-    command,
-    deps,
-  );
+  const storedForKickoff = stores.missions.get(command.missionId);
+  if (storedForKickoff) {
+    tryAcceptIdleKickoffForDirect(stores, storedForKickoff, deps);
+  }
+  let initial: MissionDirectAuthority;
+  try {
+    initial = await resolveMissionDirectAuthority(
+      scope,
+      stores,
+      command,
+      deps,
+    );
+  } catch (error) {
+    const mission = stores.missions.get(command.missionId);
+    const hasReceipt = mission
+      ? stores.missions.hasCurrentKickoffAcceptance(mission.id)
+      : false;
+    if (
+      mission &&
+      isKickoffInProgressError(error, hasReceipt) &&
+      sealedSquadHasOrchestrator(mission, deps)
+    ) {
+      const sessionId = mission.orchestratorSessionId;
+      const bootBlock = sessionId
+        ? maestroKickoffBlockReason(
+            deps.readSessionOutput?.(sessionId, 80) ?? "",
+          )
+        : null;
+      if (bootBlock) {
+        throw new Error(
+          "A coordenação ainda está no login. Conclua a autenticação e envie de novo.",
+        );
+      }
+      const queuedFingerprint = createHash("sha256")
+        .update(
+          JSON.stringify({
+            missionId: command.missionId,
+            targetAgentId: command.targetAgentId,
+            text: command.text,
+            phase: "kickoff-queue",
+          }),
+        )
+        .digest("hex");
+      enqueueKickoffDirect({
+        missionId: command.missionId,
+        targetAgentId: command.targetAgentId,
+        text: command.text,
+      });
+      if (!options.conversationAlreadyAccepted) {
+        emitOperatorDirectionAccepted(
+          scope,
+          command,
+          deps,
+          queuedFingerprint,
+        );
+      }
+      return;
+    }
+    throw error;
+  }
   const prompt = missionDirectPrompt(command, initial.operatorDirectToWorker);
   const acpSession = deps.getAcpDriverSession(initial.sessionId);
   if (acpSession) {
@@ -820,19 +971,43 @@ export async function deliverMissionDirectInstruction(
   ) {
     throw new Error("mission direct authority changed during delivery");
   }
-  const payload = {
-    kind: "operator_direction" as const,
-    targetAgentId: command.targetAgentId,
-    text: command.text,
-  };
-  deps.emitMissionEvent(scope, {
-    missionId: command.missionId,
-    runId: "operator-direction",
-    type: "custom",
-    origin: "main",
-    idempotencyKey: `operator_direction:${initial.authorityFingerprint}`,
-    payload,
-  });
+  if (!options.conversationAlreadyAccepted) {
+    emitOperatorDirectionAccepted(
+      scope,
+      command,
+      deps,
+      initial.authorityFingerprint,
+    );
+  }
+}
+
+export async function flushQueuedKickoffDirectsForMission(
+  scope: ProjectExecutionScope,
+  stores: ProjectDomainStoreSuite,
+  missionId: string,
+): Promise<void> {
+  const queued = takeKickoffDirects(missionId);
+  for (const item of queued) {
+    try {
+      await deliverMissionDirectInstruction(
+        scope,
+        stores,
+        {
+          kind: "direct",
+          missionId: item.missionId,
+          targetAgentId: item.targetAgentId,
+          text: item.text,
+        },
+        productionMissionDirectDeliveryDeps,
+        { conversationAlreadyAccepted: true },
+      );
+    } catch (error) {
+      console.warn(
+        "[mission-direct] orientação enfileirada no kickoff não entregue:",
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }
 }
 
 function projectMissionEngineSnapshotView(
@@ -853,9 +1028,7 @@ function projectMissionEngineSnapshotView(
   const orchestratorLive = Boolean(
     sessionId &&
       orchestratorPane &&
-      (sessionState === "spawning" ||
-        sessionState === "busy" ||
-        sessionState === "idle"),
+      (sessionState === "spawning" || sessionState === "busy"),
   );
   const squad = mission.squadId ? getSquad(mission.squadId) : null;
   const roster = (squad?.agents ?? []).map((agent) => ({
@@ -1012,6 +1185,7 @@ function projectMissionEngineSnapshotView(
       workspaceLabel: `${scope.projectId}/${scope.checkoutId}`,
       status: mission.status,
       version: mission.intentVersion ?? 0,
+      createdAt: mission.createdAt,
       updatedAt: mission.updatedAt,
       ...(mission.result ? { result: mission.result } : {}),
     },
@@ -1020,12 +1194,65 @@ function projectMissionEngineSnapshotView(
       stores.missions.hasCurrentKickoffAcceptance(mission.id),
     orchestratorLive,
     runtimeClosedByOperator: wasMissionRuntimeClosedByOperator(mission),
+    leftoverParked: wasMissionLeftoverParked(mission),
     tasks,
     handoffs: [],
     panes,
     roster,
     ...(openQuestion ? { openQuestion } : {}),
   };
+}
+
+function persistLeftoverIsolationFromSnapshotView(
+  stores: ProjectDomainStoreSuite,
+  mission: Mission,
+  view: ProjectMissionSnapshotView,
+): void {
+  const stale = wasUpdatedBeforeThisProcess(view.mission.updatedAt);
+  const hasLive = missionViewHasLiveWorkingRuntime(view);
+  const hasFiles = missionViewHasFiles(view);
+  const freshKickoff = isFreshIniciarKickoff({
+    status: view.mission.status,
+    createdAt: view.mission.createdAt ?? mission.createdAt,
+    updatedAt: view.mission.updatedAt,
+    sealedCount: view.tasks.length,
+    paneCount: view.panes.length,
+    hasLiveMaestro: hasLive,
+    hasKickoffReceipt: view.hasCurrentKickoffReceipt,
+  });
+  const freshPending =
+    view.mission.status === "pending" &&
+    !stale &&
+    view.panes.length === 0;
+  const leftoverPainted = leftoverRunningOrPendingIsDead({
+    status: view.mission.status,
+    hasLivePty: hasLive,
+    hasFiles,
+    isFreshKickoff: freshKickoff,
+    isFreshPending: freshPending,
+  });
+  if (mission.status !== "running" && mission.status !== "pending") {
+    return;
+  }
+  if (
+    !leftoverPainted &&
+    !(stale && !hasLive)
+  ) {
+    return;
+  }
+  if (
+    !shouldPersistLeftoverIsolation({
+      status: mission.status,
+      alreadyClosedByOperator: wasMissionRuntimeClosedByOperator(mission),
+      alreadyLeftoverParked: wasMissionLeftoverParked(mission),
+      hasThisProcessLiveMaestro: hasLive,
+      isFreshKickoff: freshKickoff,
+      isFreshPending: freshPending,
+    })
+  ) {
+    return;
+  }
+  persistLeftoverIsolation(stores.missions, mission.id, "leftover");
 }
 
 interface MissionEngineLifecyclePatch {
@@ -1113,7 +1340,8 @@ const productionMissionEngines = new MissionEngineRegistry((scope, stores) =>
     },
     bootstrap: async (missionId) => {
       // Via Rápida: terminais interativos direto no workspace — caminho único.
-      await fastLaneBootstrap(scope, missionId);
+      // Do not block mission.start on first pane / Maestro boot idle.
+      await fastLaneBootstrap(scope, missionId, { waitForFirstPane: false });
     },
     retryKickoff: async (command) => {
       await resumeFastLaneMission(scope, command.missionId);
@@ -1136,19 +1364,26 @@ const productionMissionEngines = new MissionEngineRegistry((scope, stores) =>
       // prova de "Encerrada pelo operador"), volta a running/executing e
       // religa a coordenação pela Via Rápida (respawn + re-entrega).
       const runtimeClosedByOperator = wasMissionRuntimeClosedByOperator(mission);
+      const leftoverParked = wasMissionLeftoverParked(mission);
       const residualWork =
         mission.status === "done" &&
         !mission.result &&
         missionViewHasResidualWork(
           projectMissionEngineSnapshotView(scope, stores, mission.id),
         );
-      if (runtimeClosedByOperator || residualWork) {
-        const description = runtimeClosedByOperator
-          ? stripMissionVerdictParagraph(
-              mission.description ?? "",
-              MISSION_RUNTIME_CLOSED_MARKER,
-            ) || "Missão reaberta pelo operador."
-          : (mission.description ?? "");
+      if (runtimeClosedByOperator || leftoverParked || residualWork) {
+        const description =
+          leftoverParked
+            ? stripMissionVerdictParagraph(
+                mission.description ?? "",
+                NEXUS_LEFTOVER_PARKED_MARKER,
+              ) || "Missão reaberta pelo operador."
+            : runtimeClosedByOperator
+              ? stripMissionVerdictParagraph(
+                  mission.description ?? "",
+                  MISSION_RUNTIME_CLOSED_MARKER,
+                ) || "Missão reaberta pelo operador."
+              : (mission.description ?? "");
         transitionMissionEngineLifecycle(
           stores,
           {
@@ -1297,21 +1532,44 @@ const productionMissionEngines = new MissionEngineRegistry((scope, stores) =>
         intentState: "executing",
         description: input.description,
       }),
-    completeVerified: (input: MissionVerifiedCompletionInput) =>
-      transitionMissionEngineLifecycle(stores, input, {
+    completeVerified: (input: MissionVerifiedCompletionInput) => {
+      const current = stores.missions.get(input.missionId);
+      if (current) {
+        const handoffs =
+          stores.handoffs?.list?.({
+            missionId: input.missionId,
+            includeDelivered: true,
+          }) ?? [];
+        assertIndependentReviewForDone({
+          mission: current,
+          squad: current.squadId ? getSquad(current.squadId) : null,
+          handoffs,
+          deliveryAttemptsOf: (handoffId) =>
+            stores.handoffs?.listDeliveryAttempts?.(handoffId) ?? [],
+          dispatches: stores.taskDispatches?.list?.(input.missionId) ?? [],
+        });
+        assertDeliveryArtifactsForDone({
+          lane: current.intentContract?.lane,
+          goal: current.description?.trim() || current.title?.trim() || '',
+          rootRealPath: scope.rootRealPath,
+          handoffs,
+        });
+      }
+      return transitionMissionEngineLifecycle(stores, input, {
         status: "done",
         intentState: "done",
         learnings: input.learnings,
         result: input.result,
-      }),
+      });
+    },
     readSnapshotView: async (missionId) =>
       projectMissionEngineSnapshotView(scope, stores, missionId),
     listSnapshotViews: async () =>
-      stores.missions
-        .list()
-        .map((mission) =>
-          projectMissionEngineSnapshotView(scope, stores, mission.id),
-        ),
+      stores.missions.list().map((mission) => {
+        const view = projectMissionEngineSnapshotView(scope, stores, mission.id);
+        persistLeftoverIsolationFromSnapshotView(stores, mission, view);
+        return projectMissionEngineSnapshotView(scope, stores, mission.id);
+      }),
   }),
 );
 configureMissionEngineForScope((scope) =>

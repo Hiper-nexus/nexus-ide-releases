@@ -73,6 +73,7 @@ vi.mock('../pty/pty-manager', () => ({
   orchWriteSession: stubs.writeSession,
   orchTerminateSession: stubs.terminateSession,
   getSessionState: stubs.sessionState,
+  isSessionStdinWritable: vi.fn(() => true),
   tapSessionState: vi.fn((tap: (sessionId: string, state: string) => void) => {
     stubs.stateTaps.push(tap);
     return () => {
@@ -266,6 +267,7 @@ describe('agent pane workspace confinement', () => {
     expect(stubs.preSpawnProbe).toHaveBeenCalledWith('codex', {
       model: 'provider/model',
       failClosed: false,
+      silentRemint: true,
     });
   });
 
@@ -420,6 +422,7 @@ describe('agent pane workspace confinement', () => {
     expect(stubs.preSpawnProbe).toHaveBeenCalledWith('kimi', {
       model: undefined,
       failClosed: false,
+      silentRemint: true,
     });
     expect(stubs.requestPaneSpawn).toHaveBeenCalledWith(
       expect.objectContaining({ adapterId: 'kimi' }),
@@ -437,6 +440,7 @@ describe('agent pane workspace confinement', () => {
     expect(stubs.preSpawnProbe).toHaveBeenCalledWith('claude', {
       model: undefined,
       failClosed: false,
+      silentRemint: true,
     });
     expect(stubs.requestPaneSpawn).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -877,6 +881,7 @@ describe('agent pane workspace confinement', () => {
     expect(stubs.preSpawnProbe).toHaveBeenCalledWith('claude', {
       model: undefined,
       failClosed: true,
+      silentRemint: true,
     });
   });
 

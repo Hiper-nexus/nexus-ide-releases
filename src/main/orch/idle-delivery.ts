@@ -24,6 +24,7 @@ import {
   completePetStudioHandoff,
   type PetStudioCompletionResult,
 } from './pet-studio-completion';
+import { maybeCompleteFastLaneOnDelivery } from './civilian-delivery-completion';
 import { MAX_HANDOFF_DELIVERY_ATTEMPTS } from './handoff-delivery-policy';
 import {
   isSessionInjectableIdle,
@@ -766,7 +767,10 @@ export function initIdleDelivery(): void {
   untapState = tapSessionState((sessionId, state) => {
     if (state === 'busy') acceptPendingEnters(sessionId);
     if (state !== 'idle') requeuePendingDeliveryStarts(sessionId);
-    if (state === 'idle') flushQueue(sessionId);
+    if (state === 'idle') {
+      flushQueue(sessionId);
+      scheduleFastLaneDeliveryCheck(sessionId);
+    }
   });
   untapSemanticStatus = tapAgentSemanticStatus((entry) => {
     if (
@@ -779,6 +783,7 @@ export function initIdleDelivery(): void {
     }
   });
   untapExit = tapSessionExit((sessionId) => {
+    scheduleFastLaneDeliveryCheck(sessionId);
     // Capture durable recovery targets BEFORE dropping the in-memory queue.
     // SQLite keeps handoffs as `queued`; without this the Maestro exit would
     // strand reviewer/QA deliveries with zero attempts until an operator CTA.
@@ -930,6 +935,19 @@ function targetAuthority(
   });
 }
 
+function scheduleFastLaneDeliveryCheck(sessionId: string): void {
+  const pane = getPaneRuntimeAuthorityBySession(sessionId);
+  const missionId = pane?.missionId;
+  const deliveryScope = pane?.executionScope ?? pane?.scope;
+  if (!missionId || !deliveryScope || pane.role === 'orchestrator') return;
+  void maybeCompleteFastLaneOnDelivery(deliveryScope, missionId).catch((error) => {
+    console.warn(
+      '[civilian-delivery] reconcile após pane idle/exit falhou:',
+      error instanceof Error ? error.message : error,
+    );
+  });
+}
+
 /** Called by nexus_handoff_submit (and the legacy stream parser). */
 export function onHandoffSubmitted(
   handoff: Handoff,
@@ -944,6 +962,21 @@ export function onHandoffSubmitted(
   // Pet Studio has no worker/orchestrator loop: its sole Codex session submits
   // its own validated result. Never queue that message back into the same PTY.
   if (petCompletion) return petCompletion;
+  if (handoff.status === 'success' && handoff.missionId) {
+    // Via Rápida civil: handoff, pane idle/exit ou evidência no disco fecha
+    // Pronto. Fail-closed (zero arquivos / DESIGN.md / fail-closed) nunca pinta verde.
+    // Fire-and-forget: idle-delivery é síncrono; o watcher cobre o timeout.
+    void maybeCompleteFastLaneOnDelivery(
+      scope,
+      handoff.missionId,
+      overrideStores ? { getStores: () => overrideStores } : {},
+    ).catch((error) => {
+      console.warn(
+        '[civilian-delivery] reconcile após handoff falhou:',
+        error instanceof Error ? error.message : error,
+      );
+    });
+  }
   if (isDiagnosticDriverHandoff(handoff)) return null;
   const authority = targetAuthority(handoff, scope, overrideStores);
   if (!authority) return null; // No trusted orchestrator — stays listed as pending.

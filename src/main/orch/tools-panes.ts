@@ -55,7 +55,10 @@ import {
   uniqueSealedRuntimeForAdapter,
 } from '../../shared/sealed-agent-runtime';
 import { getContextWorkflowService } from '../context/context-workflow-registry';
-import { isTaskQueueManagedMission } from './task-dispatch-authority';
+import {
+  isTaskQueueManagedMission,
+  viaRapidaAllowsOrchestratorWorkerSpawn,
+} from './task-dispatch-authority';
 import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
 import { getProjectDomainStores } from './project-domain-store-registry';
 import { missionControlPlaneSnapshot } from './mission-control-plane-ipc';
@@ -518,10 +521,31 @@ const paneSpawn: McpToolDef = {
           options.role === 'worker' &&
           isTaskQueueManagedMission(missionSuite, options.missionId)
         ) {
-          throw new Error(
-            'task_dispatcher_authority: workers de uma missão planejada só podem ser ' +
-              'criados pelo dispatcher durável do main; aguarde o Nexus despachar a task',
-          );
+          // Plano selado + PREVC/worktree congelado: o dispatcher main-owned
+          // materializa o worker. Via Rápida (sem freeze) precisa que o
+          // Maestro continue spawnando — senão ele sela 20 stories e o
+          // board fica 0/20 sem worker.
+          let frozen = false;
+          try {
+            frozen = Boolean(
+              getContextWorkflowService(ctx.scope).getMissionWorkflow(
+                options.missionId,
+              ).contract,
+            );
+          } catch {
+            frozen = false;
+          }
+          if (
+            !viaRapidaAllowsOrchestratorWorkerSpawn({
+              isTaskQueueManaged: true,
+              hasFrozenPrevContract: frozen,
+            })
+          ) {
+            throw new Error(
+              'task_dispatcher_authority: workers de uma missão planejada só podem ser ' +
+                'criados pelo dispatcher durável do main; aguarde o Nexus despachar a task',
+            );
+          }
         }
         // Gate (b) — vínculo do squad no caminho agêntico: um worker ad-hoc
         // (sem agentName) só pode rodar numa CLI que o roster do squad selado da

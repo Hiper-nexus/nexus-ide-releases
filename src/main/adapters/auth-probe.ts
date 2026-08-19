@@ -12,6 +12,7 @@ import {
   hasSubscriptionAuth,
   refreshAgySubscriptionAuthCache,
 } from './subscription-auth';
+import { refreshKimiSeatReadiness } from './kimi-seat-probe';
 
 /**
  * Sonda de login das CLIs — SEM navegador. Cada CLI guarda a sessão OAuth
@@ -112,10 +113,22 @@ const OAUTH_PROBES: Record<
     hasSubscriptionAuth('grok')
       ? { state: 'ok', detail: 'sessão Grok OAuth local' }
       : { state: 'missing', detail: 'sem sessão — rode `grok login`' },
-  kimi: async () =>
-    hasSubscriptionAuth('kimi')
-      ? { state: 'ok', detail: 'sessão Kimi Code OAuth local' }
-      : { state: 'missing', detail: 'sem sessão — rode `kimi login`' },
+  kimi: async () => {
+    // File OAuth alone was the 19 Aug false positive (CLI 0.37.2 half-dead
+    // after folder-trust). Only a live `kimi provider list` with source=oauth
+    // (or an API key in the vault, applied below) is a seat.
+    const readiness = await refreshKimiSeatReadiness();
+    if (readiness === 'present') {
+      return {
+        state: 'ok',
+        detail: 'sessão Kimi Code OAuth (provider list, source=oauth)',
+      };
+    }
+    return {
+      state: 'missing',
+      detail: 'sem source=oauth em `kimi provider list` — rode `kimi login`',
+    };
+  },
   opencode: async () =>
     hasSubscriptionAuth('opencode')
       ? { state: 'ok', detail: 'credencial OpenCode local' }

@@ -1,4 +1,5 @@
 import type { Handoff, Mission, PaneRuntimeState } from '../../shared/orch-types';
+import { wasUpdatedBeforeThisProcess } from '../../shared/session-restore-liveness';
 import {
   hasCurrentApprovedDispatchContract,
   isRecoveryEligibleIntentState,
@@ -17,6 +18,17 @@ import {
   emitMissionEvent,
 } from './mission-event-emit';
 import { missionEngineForScope } from './mission-engine-registry';
+import {
+  decideZeroDeliveryWatchdog,
+  zeroDeliveryEscalateSummary,
+  zeroDeliveryPokeSummary,
+} from './zero-delivery-watchdog';
+import { flushAllNexusTaskFailClosedRetries } from './nexus-task-fail-closed-recovery';
+import {
+  persistLeftoverIsolation,
+  shouldSkipLeftoverRemount,
+  isFreshIniciarKickoff,
+} from '../../shared/mission-leftover-isolation';
 
 /** Estado do watchdog chef-idle por missão (mesma vida do supervisor). */
 interface ChefIdleTracker {
@@ -24,6 +36,11 @@ interface ChefIdleTracker {
   workerCount: number;
 }
 const chefIdleTrackers = new Map<string, ChefIdleTracker>();
+
+/** Zero-entrega: Maestro dormiu esperando handoff com disco vazio. */
+const zeroDeliveryPoked = new Set<string>();
+const zeroDeliveryEscalated = new Set<string>();
+const leftoverSkipLogged = new Set<string>();
 
 function trackChefIdleEscalation(
   suite: ProjectDomainStoreSuite,
@@ -110,6 +127,8 @@ function trackChefIdleEscalation(
  * SLA clocks use approvedAt/dispatchedAt — never arm/createdAt.
  */
 export const DELEGATION_SLA_MS = 90_000;
+/** Recovery handoff stuck in queued longer than this no longer blocks stages. */
+export const RECOVERY_QUEUED_TTL_MS = 5 * 60_000;
 export const DELEGATION_RETRY_MS = 90_000;
 export const DELEGATION_SCAN_MS = 15_000;
 export const DELEGATION_SUPERVISOR_AGENT = 'nexus-delegation-supervisor';
@@ -133,7 +152,6 @@ export const CHEF_IDLE_BLOCK_AFTER_MS = 30 * 60_000;
 export const HANDOFF_REARM_THROTTLE_MS = 60_000;
 
 export function shouldRearmHandoffDelivery(input: {
-  readonly workerPaneCount: number;
   readonly orchestratorPaneState: string | undefined;
   readonly missionStatus: string;
   readonly pendingDeliverableHandoffs: number;
@@ -141,7 +159,10 @@ export function shouldRearmHandoffDelivery(input: {
   readonly now: number;
 }): boolean {
   if (input.pendingDeliverableHandoffs <= 0) return false;
-  if (input.workerPaneCount <= 0) return false;
+  // Workers vivos NÃO são requisito: o TTL pós-handoff fecha o pane do
+  // worker (~30s) e o caso clássico de fila perdida é Maestro idle +
+  // handoff durable queued com ZERO workers. Exigir workerPaneCount>0
+  // (8c3580c1) deixava o re-arm morto exatamente depois da entrega limpa.
   if (input.orchestratorPaneState !== 'idle') return false;
   if (input.missionStatus !== 'pending' && input.missionStatus !== 'running') {
     return false;
@@ -154,7 +175,6 @@ const handoffRearmLastRun = new Map<string, number>();
 function rearmStuckHandoffDelivery(
   suite: ProjectDomainStoreSuite,
   mission: Mission,
-  workerPaneCount: number,
   orchestratorPaneState: string | undefined,
   now: number,
 ): void {
@@ -169,7 +189,6 @@ function rearmStuckHandoffDelivery(
   }
   if (
     !shouldRearmHandoffDelivery({
-      workerPaneCount,
       orchestratorPaneState,
       missionStatus: mission.status,
       pendingDeliverableHandoffs: pendingDeliverable,
@@ -251,6 +270,29 @@ export interface DelegationProgress {
 }
 
 /**
+ * Leftover running rows from a previous process must not enter recovery
+ * (stage-1 poke or stage-2 fast-lane remount). Snapshot already projects
+ * them as Parou. A Maestro that is actually busy/spawning in THIS process
+ * is not leftover.
+ */
+export function shouldSkipLeftoverDelegationRecovery(input: {
+  readonly updatedAt: number;
+  readonly processStartedAt?: number;
+  readonly orchestratorState?: PaneRuntimeState;
+}): boolean {
+  if (
+    input.orchestratorState === 'busy' ||
+    input.orchestratorState === 'spawning'
+  ) {
+    return false;
+  }
+  return wasUpdatedBeforeThisProcess(
+    input.updatedAt,
+    input.processStartedAt,
+  );
+}
+
+/**
  * Only missions with real dispatch authorization enter recovery. Empty squad
  * selection (no goal, no tasks, no workers) is a normal wait, not an incident.
  * Requires a bound orchestrator — recovery cannot invent a pane.
@@ -305,7 +347,15 @@ export function delegationRecoveryStage(
   // After dispatch authorization, zero tasks/workers for SLA is the signal.
   // Pre-dispatch emptiness is already filtered by isDelegationSupervisable.
   if (progress.workerPanes > 0 || progress.tasks > 0) return 0;
-  if (progress.recoveries.some((item) => item.deliveryState === 'queued')) return 0;
+  // Queued recovery that never left the outbox used to freeze the supervisor
+  // forever (hello-file leftover). Only a FRESH queued row blocks; stale ones
+  // are ignored so stage-2 / re-arm can proceed.
+  const freshQueued = progress.recoveries.some(
+    (item) =>
+      item.deliveryState === 'queued' &&
+      now - item.createdAt < RECOVERY_QUEUED_TTL_MS,
+  );
+  if (freshQueued) return 0;
   const deliveredRecoveries = progress.recoveries.filter(
     (item) => item.deliveryState !== 'queued',
   );
@@ -372,10 +422,36 @@ function scanSuite(suite: ProjectDomainStoreSuite, now: number): void {
     const panes = listPaneSnapshots().filter(
       (pane) => pane.missionId === mission.id && liveStates.has(pane.state),
     );
-    const recoveries = suite.handoffs
+    let recoveries = suite.handoffs
       .list({ missionId: mission.id, includeDelivered: true })
       .filter((handoff) => handoff.fromAgent === DELEGATION_SUPERVISOR_AGENT)
       .sort((left, right) => left.createdAt - right.createdAt);
+    // Expire leftover queued recoveries (hello-file / prior mission) so they
+    // stop freezing the supervisor and stop idle-delivery spam forever.
+    let expiredStale = false;
+    for (const recovery of recoveries) {
+      if (
+        recovery.deliveryState === 'queued' &&
+        now - recovery.createdAt >= RECOVERY_QUEUED_TTL_MS
+      ) {
+        try {
+          suite.handoffs.markSubmitted(recovery.id);
+          expiredStale = true;
+        } catch (error) {
+          console.warn(
+            `[delegation-supervisor] falha ao expirar recovery enfileirado ` +
+              `${recovery.id}:`,
+            error instanceof Error ? error.message : error,
+          );
+        }
+      }
+    }
+    if (expiredStale) {
+      recoveries = suite.handoffs
+        .list({ missionId: mission.id, includeDelivered: true })
+        .filter((handoff) => handoff.fromAgent === DELEGATION_SUPERVISOR_AGENT)
+        .sort((left, right) => left.createdAt - right.createdAt);
+    }
     const hasBoundOrchestrator = Boolean(
       mission.orchestratorSessionId ||
         panes.some((pane) => pane.role === 'orchestrator'),
@@ -384,6 +460,19 @@ function scanSuite(suite: ProjectDomainStoreSuite, now: number): void {
     const orchestratorPaneState = panes.find(
       (pane) => pane.role === 'orchestrator',
     )?.state;
+
+    if (mission.status === 'pending' || mission.status === 'running') {
+      flushAllNexusTaskFailClosedRetries(suite.scope, mission.id);
+    }
+
+    // Re-arm de handoff: Maestro idle + pendente durable, COM OU SEM workers.
+    // Independente do chef-idle (que exige workers vivos para o watchdog).
+    if (
+      orchestratorPaneState === 'idle' &&
+      (mission.status === 'pending' || mission.status === 'running')
+    ) {
+      rearmStuckHandoffDelivery(suite, mission, orchestratorPaneState, now);
+    }
 
     // Chef-idle: orchestrator is idle while workers are present. This state is
     // indistinguishable from a stall without an explicit marker — emit one so
@@ -395,9 +484,97 @@ function scanSuite(suite: ProjectDomainStoreSuite, now: number): void {
     ) {
       emitChefIdleAwaitingWorkers(suite.scope, mission.id, workerPaneCount);
       trackChefIdleEscalation(suite, mission, workerPaneCount, now);
-      rearmStuckHandoffDelivery(suite, mission, workerPaneCount, orchestratorPaneState, now);
     } else {
       chefIdleTrackers.delete(mission.id);
+    }
+
+    // Zero-entrega: workers vivos, 0 handoffs de worker, Maestro não busy —
+    // o caso saas-waitlist (pull-model deadlock). Poke curto; escalate depois.
+    {
+      let workerHandoffCount = 0;
+      try {
+        workerHandoffCount = suite.handoffs
+          .list({ missionId: mission.id, includeDelivered: true })
+          .filter(
+            (handoff) =>
+              handoff.fromAgent !== DELEGATION_SUPERVISOR_AGENT &&
+              !String(handoff.fromAgent ?? '').startsWith('nexus-'),
+          ).length;
+      } catch {
+        workerHandoffCount = 0;
+      }
+      if (workerHandoffCount > 0) {
+        zeroDeliveryPoked.delete(mission.id);
+        zeroDeliveryEscalated.delete(mission.id);
+      }
+      const executingSinceMs = resolveDispatchAuthorizedAt(mission);
+      const zd = decideZeroDeliveryWatchdog({
+        missionStatus: mission.status,
+        lane: lane ?? null,
+        workerPanes: workerPaneCount,
+        workerHandoffCount,
+        orchestratorState: orchestratorPaneState,
+        executingSinceMs,
+        now,
+        alreadyPoked: zeroDeliveryPoked.has(mission.id),
+      });
+      if (zd.action === 'poke' && !zeroDeliveryPoked.has(mission.id)) {
+        zeroDeliveryPoked.add(mission.id);
+        try {
+          const handoff = suite.handoffs.submit({
+            missionId: mission.id,
+            status: 'progress',
+            summary: zeroDeliveryPokeSummary(mission.id, zd.sinceMs),
+            fromAgent: DELEGATION_SUPERVISOR_AGENT,
+          });
+          onHandoffSubmitted(handoff, suite.scope);
+          console.warn(
+            `[delegation-supervisor] zero-delivery poke for ${mission.id}`,
+          );
+        } catch (error) {
+          console.warn(
+            `[delegation-supervisor] zero-delivery poke falhou:`,
+            error instanceof Error ? error.message : error,
+          );
+        }
+      } else if (
+        zd.action === 'escalate' &&
+        !zeroDeliveryEscalated.has(mission.id)
+      ) {
+        zeroDeliveryEscalated.add(mission.id);
+        try {
+          const handoff = suite.handoffs.submit({
+            missionId: mission.id,
+            status: 'stalled',
+            summary: zeroDeliveryEscalateSummary(mission.id),
+            fromAgent: DELEGATION_SUPERVISOR_AGENT,
+          });
+          onHandoffSubmitted(handoff, suite.scope);
+          console.warn(
+            `[delegation-supervisor] zero-delivery escalate for ${mission.id}`,
+          );
+        } catch (error) {
+          console.warn(
+            `[delegation-supervisor] zero-delivery escalate falhou:`,
+            error instanceof Error ? error.message : error,
+          );
+        }
+      }
+    }
+
+    if (
+      shouldSkipLeftoverDelegationRecovery({
+        updatedAt: mission.updatedAt,
+        orchestratorState: orchestratorPaneState,
+      })
+    ) {
+      if (!leftoverSkipLogged.has(mission.id)) {
+        leftoverSkipLogged.add(mission.id);
+        console.warn(
+          `[delegation-supervisor] leftover ${mission.id} skipped — Parou (no live Maestro)`,
+        );
+      }
+      continue;
     }
 
     const stage = delegationRecoveryStage({
@@ -444,10 +621,40 @@ function scanSuite(suite: ProjectDomainStoreSuite, now: number): void {
         reason: 'delegation_supervisor_stage_2_recovery_active',
         meta: { stage: 2, deliveredToPty: false, deliveryState: 'submitted' },
       });
+      // Leftover running no disco sem Maestro deste processo NÃO remonta.
+      // Persist isolamento e deixa o card na rail — o orçamento focused
+      // fica para a missão viva deste processo.
+      const leftoverLiveMaestro =
+        orchestratorPaneState === 'busy' || orchestratorPaneState === 'spawning'
+          ? mission.orchestratorSessionId ?? 'this-process-live'
+          : null;
+      if (
+        shouldSkipLeftoverRemount({
+          mission,
+          liveMaestroSessionId: leftoverLiveMaestro,
+          remountKind: 'automatic',
+          isFreshKickoff: isFreshIniciarKickoff({
+            status: mission.status,
+            createdAt: mission.createdAt,
+            updatedAt: mission.updatedAt,
+            sealedCount: suite.tasks.list(mission.id).length,
+            paneCount: panes.length,
+            hasLiveMaestro: leftoverLiveMaestro != null,
+          }),
+        })
+      ) {
+        persistLeftoverIsolation(suite.missions, mission.id, 'leftover');
+        console.warn(
+          `[delegation-supervisor] leftover ${mission.id} isolado — remount skip`,
+        );
+        continue;
+      }
       // Acorda a Via Rápida: o orquestrador morreu, spawna um novo.
       // Antes ficava parado esperando "Mission Driver recovery" que nunca vinha.
       void import('./mission-fast-lane').then(({ resumeFastLaneMission }) =>
-        resumeFastLaneMission(suite.scope, mission.id).catch((err) =>
+        resumeFastLaneMission(suite.scope, mission.id, {
+          remountKind: 'automatic',
+        }).catch((err) =>
           console.warn('[delegation-supervisor] resume falhou:', err),
         ),
       );
@@ -528,4 +735,8 @@ export function shutdownDelegationSupervisor(): void {
   unsubscribeScopes?.();
   unsubscribeScopes = null;
   suites.clear();
+  chefIdleTrackers.clear();
+  zeroDeliveryPoked.clear();
+  zeroDeliveryEscalated.clear();
+  handoffRearmLastRun.clear();
 }

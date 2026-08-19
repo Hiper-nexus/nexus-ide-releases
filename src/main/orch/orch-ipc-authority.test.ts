@@ -383,6 +383,9 @@ vi.mock('../pty/pty-manager', () => ({
   // session exits desde 869c08f7; espelha o contrato real
   // tapSessionExit(cb) => unsubscribe (pty-manager.ts:257).
   tapSessionExit: vi.fn((_cb: (sessionId: string) => void) => () => {}),
+  tapSessionState: vi.fn((_cb: (sessionId: string) => void) => () => {}),
+  getSessionCwd: vi.fn(() => null),
+  getAgentSessionInfo: vi.fn(() => null),
 }));
 vi.mock('./renderer-mission-authority', () => ({
   RendererMissionAuthority: class {
@@ -498,6 +501,12 @@ vi.mock('./mission-engine-registry', async (importOriginal) => {
 vi.mock('./idle-delivery', () => ({
   initIdleDelivery: vi.fn(),
   shutdownIdleDelivery: vi.fn(),
+}));
+vi.mock('./worker-delivery-board', () => ({
+  initWorkerDeliveryBoard: vi.fn(),
+  shutdownWorkerDeliveryBoard: vi.fn(),
+  recordWorkerDeliveryIfDelivered: vi.fn(),
+  markSessionSealedBoardCredited: vi.fn(),
 }));
 vi.mock('./agent-waiting-broadcast', () => ({
   initAgentWaitingBroadcast: vi.fn(),

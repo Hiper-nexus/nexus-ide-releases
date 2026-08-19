@@ -469,6 +469,10 @@ describe('scoped task store', () => {
     expect(() => tasks.update(task!.id, { status: 'running' })).toThrow(
       /sealed planned task|dispatcher/i,
     );
+    expect(tasks.advanceSealedTaskStatus(task!.id, 'done')?.status).toBe('done');
+    expect(tasks.list(mission.id).find((row) => row.id === task!.id)?.status).toBe(
+      'done',
+    );
     expect(() => tasks.update(task!.id, { title: 'Changed' })).toThrow(
       /sealed planned task|dispatcher/i,
     );

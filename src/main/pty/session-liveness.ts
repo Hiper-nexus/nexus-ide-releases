@@ -71,3 +71,15 @@ export function fastLaneResumeForLiveness(
 ): 'watch' | 'respawn' {
   return liveness === 'live' ? 'watch' : 'respawn';
 }
+
+/**
+ * Writer liveness after spawn: the session must be physically connected
+ * (liveness `live`) AND stdin must be writable. `spawning` alone is not a
+ * live writer if the PTY cannot accept input.
+ */
+export function isConnectedAndWritable(
+  liveness: SessionLiveness,
+  stdinWritable: boolean,
+): boolean {
+  return liveness === 'live' && stdinWritable === true;
+}

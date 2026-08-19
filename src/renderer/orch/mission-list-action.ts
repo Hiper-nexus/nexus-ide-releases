@@ -66,7 +66,7 @@ export function missionListAction(
 }
 
 /**
- * Board header authority. The Concluída/Falhou badge comes from the engine
+ * Board header authority. The Pronto/Falhou badge comes from the engine
  * snapshot; Encerrar used to follow a stale orch row (leftover panes or a
  * session pointer) and Main then refused Encerrar on a done mission.
  */

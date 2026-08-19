@@ -39,3 +39,16 @@ export function assertMainTaskDispatcherAuthority(
       'o orquestrador deve somente propor/listar tasks e aguardar o dispatcher durável',
   );
 }
+
+/**
+ * Via Rápida não congela PREVC: depois do plano de stories selado o Maestro
+ * ainda precisa spawnar workers. Contrato congelado (caminho cerimonial)
+ * continua exclusivo do dispatcher.
+ */
+export function viaRapidaAllowsOrchestratorWorkerSpawn(input: {
+  readonly isTaskQueueManaged: boolean;
+  readonly hasFrozenPrevContract: boolean;
+}): boolean {
+  if (!input.isTaskQueueManaged) return true;
+  return !input.hasFrozenPrevContract;
+}

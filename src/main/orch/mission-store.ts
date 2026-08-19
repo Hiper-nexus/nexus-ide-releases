@@ -57,6 +57,10 @@ import {
 } from './mission-orchestrator-exit-policy';
 import { hashMissionIntentAuthority } from './mission-pane-authority';
 import {
+  persistLeftoverIsolation as persistLeftoverIsolationWrite,
+  type LeftoverIsolationReason,
+} from '../../shared/mission-leftover-isolation';
+import {
   ScopedStoreBinding,
   ScopedStoreCorruptionError,
   type ScopedEntity,
@@ -1965,6 +1969,17 @@ export class ScopedMissionStore {
   block(rawId: string, rawKind: MissionBlockKind): ScopedMission | null {
     const kind = missionBlockKindSchema.parse(rawKind);
     return this.update(rawId, missionBlockPatch(kind));
+  }
+
+  /**
+   * Park / leftover / Encerrar / unfocus: status durável não-running para
+   * reopen não remountar PTY nem contar contra maxWorkers.
+   */
+  persistLeftoverIsolation(
+    rawId: string,
+    reason: LeftoverIsolationReason = 'leftover',
+  ): ScopedMission | null {
+    return persistLeftoverIsolationWrite(this, rawId, reason);
   }
 
   #fromRow(rawRow: unknown): ScopedMission {

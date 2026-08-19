@@ -89,6 +89,32 @@ describe('mission fast lane', () => {
     expect(prompt).toContain('Implementar motor');
   });
 
+  it('plano selado de 20 stories entra no kickoff e proíbe colapso em papéis', () => {
+    const titles = Array.from(
+      { length: 20 },
+      (_, index) => `Story ${index + 1} da waitlist`,
+    );
+    const prompt = agentPrompt(
+      agent({
+        id: 'coord',
+        agentName: 'Coordenar e revisar',
+        category: 'orchestrator',
+      }),
+      mission(),
+      ['Coordenar e revisar', 'Implementar motor'],
+      false,
+      '',
+      squad(),
+      titles,
+    );
+    expect(prompt).toContain('Plano selado');
+    expect(prompt).toContain('20 tasks');
+    expect(prompt).toContain('Não colapse em 7 papéis. São 20 entregas.');
+    expect(prompt).toContain('NÃO reduza a lista a 5 papéis');
+    expect(prompt).toContain('Story 20 da waitlist');
+    expect(prompt).toContain('task selada pendente');
+  });
+
   it('retomada avisa que foi religado', () => {
     const prompt = agentPrompt(agent(), mission(), [], true);
     expect(prompt).toContain('religado');
@@ -164,6 +190,28 @@ describe('mission fast lane', () => {
     expect(prompt).not.toContain('nexus_pane_spawn');
     expect(prompt).not.toContain('nexus_handoff_list');
     expect(prompt).not.toContain('Rode os gates verdes.');
+  });
+
+  it('kickoff do Maestro cita o plano selado de 20 stories', () => {
+    const titles = Array.from({ length: 20 }, (_, i) => `Story ${i + 1}`);
+    const prompt = agentPrompt(
+      agent({
+        id: 'coord',
+        agentName: 'Coordenar e revisar',
+        category: 'orchestrator',
+      }),
+      mission({ description: '20 stories listadas no objetivo' }),
+      ['Coordenar e revisar', 'Implementar motor'],
+      false,
+      '',
+      squad(),
+      titles,
+    );
+    expect(prompt).toContain('Plano selado');
+    expect(prompt).toContain('20 tasks');
+    expect(prompt).toContain('Story 1');
+    expect(prompt).toContain('Story 20');
+    expect(prompt).toContain('first-wave');
   });
 
   it('orquestrador sem orchestratorInstructions (ou sem squad) não quebra', () => {

@@ -3062,6 +3062,27 @@ export function getSessionState(sessionId: string): PaneSessionState | null {
   return sessions.get(sessionId)?.state ?? null;
 }
 
+/**
+ * Stdin is writable when the session is still in the map, not in a
+ * physical-termination flight, and `proc.write` accepts a no-op. Used with
+ * session-liveness to decide whether a just-spawned writer is actually live.
+ */
+export function isSessionStdinWritable(sessionId: string): boolean {
+  const session = sessions.get(sessionId);
+  if (!session) return false;
+  if (physicalTerminationFlights.get(sessionId)?.session === session) {
+    return false;
+  }
+  const proc = session.proc as PtyProcHandle & { writable?: boolean };
+  if (proc.writable === false) return false;
+  try {
+    proc.write("");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Spawn cwd of a live session — the caller's workspace dir. */
 export function getSessionCwd(sessionId: string): string | null {
   return sessions.get(sessionId)?.cwd ?? null;

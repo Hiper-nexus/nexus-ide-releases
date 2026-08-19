@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentGateContext } from './gate';
 import { testProjectScope } from './__tests__/scope-fixture';
 
@@ -24,6 +24,7 @@ vi.mock('../persistence/account-store', async () => {
   return { ...actual, hasAvailableAccount: mocks.hasAvailableAccount };
 });
 
+import { rememberKimiSeatReadiness } from '../adapters/seat-auth-readiness';
 import { buildDomainTools } from './tools-domain';
 import { clearRouteProvenance, hasRecentRouteMatch } from './route-provenance';
 import { clearRouteLog, recentRouteLog } from './route-log';
@@ -52,6 +53,7 @@ function tool(name: string) {
 beforeEach(() => {
   clearRouteProvenance();
   clearRouteLog();
+  rememberKimiSeatReadiness('present');
   mocks.listProviderSettings.mockReset();
   mocks.isProviderEnabled.mockReset();
   mocks.isProviderEnabled.mockReturnValue(true);
@@ -59,6 +61,10 @@ beforeEach(() => {
   mocks.providerReadiness.mockReturnValue({ ready: true, reason: 'ready' });
   mocks.hasAvailableAccount.mockReset();
   mocks.hasAvailableAccount.mockReturnValue(true);
+});
+
+afterEach(() => {
+  rememberKimiSeatReadiness(undefined);
 });
 
 describe('nexus_route_task wiring', () => {
@@ -160,6 +166,36 @@ describe('nexus_route_log handler', () => {
       decisions: unknown[];
     };
     expect(all.decisions.length).toBe(3);
+  });
+});
+
+describe('nexus_route_task first-wave AuthReadiness', () => {
+  it('não senta Kimi quando AuthReadiness não é present', async () => {
+    rememberKimiSeatReadiness('incomplete');
+    mocks.listProviderSettings.mockReturnValue([
+      {
+        adapterId: 'kimi',
+        enabled: true,
+        installed: true,
+        authStrategy: 'oauth',
+        models: ['kimi-code/k3'],
+      },
+      {
+        adapterId: 'codex',
+        enabled: true,
+        installed: true,
+        authStrategy: 'oauth',
+        models: ['gpt-5.5'],
+      },
+    ]);
+    const decision = (await tool('nexus_route_task').handler(
+      { task: 'tarefa de complexidade média' },
+      context(),
+    )) as { adapterId: string; alternatives: Array<{ adapterId: string }> };
+    expect(decision.adapterId).toBe('codex');
+    expect(decision.alternatives.map((row) => row.adapterId)).not.toContain(
+      'kimi',
+    );
   });
 });
 

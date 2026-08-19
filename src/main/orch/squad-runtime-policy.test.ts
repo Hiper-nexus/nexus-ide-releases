@@ -54,7 +54,7 @@ describe("buildSquadRuntimeCliPolicy", () => {
         provider("claude"),
         provider("aider", { guidedHandoffCapable: false }),
         provider("codex"),
-        provider("kimi"),
+        provider("kimi", { seatAuthReadiness: "present" }),
         provider("opencode"),
         provider("grok"),
         provider("agy"),
@@ -71,11 +71,40 @@ describe("buildSquadRuntimeCliPolicy", () => {
     }
   });
 
+  it("Kimi sem provider list (file-only) não entra no roster", () => {
+    const policy = buildSquadRuntimeCliPolicy(
+      [provider("codex"), provider("kimi")],
+      () => true,
+    );
+    expect(policy.routableCliIds.has("codex")).toBe(true);
+    expect(policy.routableCliIds.has("kimi")).toBe(false);
+    expect(policy.unroutableReasonByCliId?.kimi).toMatch(/incomplete/);
+  });
+
+  it("first-wave só senta AuthReadiness=present", () => {
+    const policy = buildSquadRuntimeCliPolicy(
+      [
+        provider("codex", { seatAuthReadiness: "present" }),
+        provider("kimi", { seatAuthReadiness: "incomplete" }),
+        provider("longcat", {
+          authStrategy: "api-key",
+          seatAuthReadiness: "no-credential",
+        }),
+      ],
+      () => true,
+    );
+    expect(policy.routableCliIds.has("codex")).toBe(true);
+    expect(policy.routableCliIds.has("kimi")).toBe(false);
+    expect(policy.routableCliIds.has("longcat")).toBe(false);
+    expect(policy.unroutableReasonByCliId?.kimi).toMatch(/incomplete/);
+  });
+
   it("under operator-choice promotes handoff-capable CLIs into workers", () => {
     const policy = buildSquadRuntimeCliPolicy(
       [
         provider("codex"),
         provider("kimi", {
+          seatAuthReadiness: "present",
           guidedHandoffCapable: true,
           autonomousWorkspaceWriteCapable: false,
         }),
@@ -97,6 +126,7 @@ describe("buildSquadRuntimeCliPolicy", () => {
       [
         provider("codex"),
         provider("kimi", {
+          seatAuthReadiness: "present",
           guidedHandoffCapable: true,
           autonomousWorkspaceWriteCapable: true,
         }),

@@ -25,9 +25,9 @@ import {
  * Este arquivo prova o comportamento nos CONSUMIDORES reais. O contrato de
  * persistência (as três leituras sobre SQLite) vive em `task-store.test.ts`.
  *
- * ATUALIZAÇÃO (remoção do motor cerimonial): nada em produção sela plano hoje
- * — `createPlanAtomically` ficou sem chamador. O estado órfão é inalcançável e
- * as provas do ROTEADOR sobre órfão foram removidas. Os helpers puros
+ * ATUALIZAÇÃO: a Via Rápida volta a selar o plano das stories listadas
+ * (`sealFastLaneListedStoryPlan`). O estado órfão continua coberto; o
+ * spawn do Maestro sem PREVC congelado não é bloqueado. Os helpers puros
  * (`sealedPlanPresence`, `OrphanSealedPlanError`) e o gargalo de leitura
  * continuam cobertos aqui porque continuam exportados e vivos.
  */
@@ -86,6 +86,7 @@ import { buildDomainTools } from './tools-domain';
 import {
   assertMainTaskDispatcherAuthority,
   isTaskQueueManagedMission,
+  viaRapidaAllowsOrchestratorWorkerSpawn,
 } from './task-dispatch-authority';
 import { clearRouteLog } from './route-log';
 import { clearRouteProvenance } from './route-provenance';
@@ -258,6 +259,27 @@ describe('consumidor DISPATCHER: a autoridade não volta para o LLM', () => {
     const suite = storesWith([LIVE_VERSION], LIVE_VERSION) as never;
 
     expect(isTaskQueueManagedMission(suite, MISSION_ID)).toBe(true);
+  });
+
+  it('Via Rápida (sem PREVC congelado) deixa o Maestro spawnar após o selo', () => {
+    expect(
+      viaRapidaAllowsOrchestratorWorkerSpawn({
+        isTaskQueueManaged: true,
+        hasFrozenPrevContract: false,
+      }),
+    ).toBe(true);
+    expect(
+      viaRapidaAllowsOrchestratorWorkerSpawn({
+        isTaskQueueManaged: true,
+        hasFrozenPrevContract: true,
+      }),
+    ).toBe(false);
+    expect(
+      viaRapidaAllowsOrchestratorWorkerSpawn({
+        isTaskQueueManaged: false,
+        hasFrozenPrevContract: false,
+      }),
+    ).toBe(true);
   });
 });
 

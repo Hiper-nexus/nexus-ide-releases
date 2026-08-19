@@ -1,0 +1,404 @@
+/**
+ * Pronto civil da Via Rápida: quando o motor justifica o fechamento
+ * (board N/N ou files-modified/handoff com writers parados), a missão
+ * vira `done` com result — o header civil sai de Trabalhando.
+ *
+ * Não pinta o board. Não pula Maestro/revisor em guided/legacy.
+ * DESIGN.md sozinho e rascunho nunca iniciado não fecham.
+ */
+import { existsSync, readdirSync, statSync } from 'node:fs';
+import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { missionResultSchema } from '../../shared/mission-engine-contract';
+import type { Handoff, Mission } from '../../shared/orch-types';
+import type { ProjectExecutionScope } from '../../shared/types';
+import type { MissionEngine } from './mission-engine';
+import { missionEngineForScope } from './mission-engine-registry';
+import { listPaneSnapshots } from './pane-registry';
+import {
+  getProjectDomainStores,
+  type ProjectDomainStoreSuite,
+} from './project-domain-store-registry';
+
+const JUNK_DIR = new Set([
+  '.git',
+  'node_modules',
+  '.nexus',
+  'dist',
+  'coverage',
+  '.cursor',
+  '__pycache__',
+  '.vite',
+  '.next',
+  'build',
+]);
+
+const FAIL_CLOSED_TOKEN =
+  /session_authority_revoked|orchestrator_spawn_forbidden|sandbox_denied|sandbox_forbidden|process sandbox recusou/iu;
+
+const MAX_WALK_FILES = 400;
+const MAX_WALK_VISITS = 2_000;
+const MAX_WALK_DEPTH = 6;
+
+export type CivilianProntoPath = 'board' | 'files-modified/handoff';
+
+export type CivilianProntoAction = 'pronto' | 'wait' | 'refuse';
+
+export type CivilianProntoDecision = {
+  readonly action: CivilianProntoAction;
+  readonly path: CivilianProntoPath | null;
+  readonly reason: string;
+  readonly sealedDone: number;
+  readonly sealedTotal: number;
+};
+
+export type CivilianProntoApplyResult = CivilianProntoDecision & {
+  readonly completed: boolean;
+};
+
+export function isDesignOnlyFile(rel: string): boolean {
+  const base = basename(rel).toLowerCase();
+  return base === 'design.md' || base === 'product.md';
+}
+
+export function isLiveWriterPaneState(state: string | null | undefined): boolean {
+  return state === 'busy' || state === 'spawning';
+}
+
+export function holdsGuidedOrLegacyReview(input: {
+  readonly orchestrationMode?: string | null;
+  readonly intentState?: string | null;
+  readonly pendingReviewer: boolean;
+}): boolean {
+  const guided = input.orchestrationMode === 'guided';
+  const legacy = input.intentState === 'legacy';
+  if (!guided && !legacy) return false;
+  return input.pendingReviewer;
+}
+
+export function decideCivilianPronto(input: {
+  readonly missionStatus: string;
+  readonly failClosed: boolean;
+  readonly boardAllDone: boolean;
+  readonly sealedDone: number;
+  readonly sealedTotal: number;
+  readonly hasSuccessHandoff: boolean;
+  readonly productFileCount: number;
+  readonly designOnly: boolean;
+  readonly neverStarted: boolean;
+  readonly liveWriterBusy: boolean;
+  readonly holdForGuidedReview: boolean;
+}): CivilianProntoDecision {
+  const sealedDone = Math.max(0, Math.floor(input.sealedDone));
+  const sealedTotal = Math.max(0, Math.floor(input.sealedTotal));
+  const base = { sealedDone, sealedTotal, path: null as CivilianProntoPath | null };
+
+  if (input.missionStatus !== 'running' || input.failClosed) {
+    return { ...base, action: 'refuse', reason: 'fail-closed' };
+  }
+  if (input.boardAllDone && sealedTotal > 0) {
+    return {
+      ...base,
+      action: 'pronto',
+      path: 'board',
+      reason: `board ${sealedDone}/${sealedTotal}`,
+    };
+  }
+  if (input.designOnly || input.neverStarted) {
+    return { ...base, action: 'refuse', reason: 'empty-or-design-only' };
+  }
+  if (input.liveWriterBusy) {
+    return { ...base, action: 'wait', reason: 'writer-busy' };
+  }
+  if (input.holdForGuidedReview) {
+    return { ...base, action: 'wait', reason: 'guided-legacy-review' };
+  }
+
+  const startedWork = input.hasSuccessHandoff || sealedDone > 0;
+  const deliveryEvidence =
+    input.hasSuccessHandoff || input.productFileCount > 0;
+  if (startedWork && deliveryEvidence) {
+    return {
+      ...base,
+      action: 'pronto',
+      path: 'files-modified/handoff',
+      reason: `files-modified/handoff (${sealedDone}/${sealedTotal})`,
+    };
+  }
+  return { ...base, action: 'wait', reason: 'no-delivery' };
+}
+
+function isJunkRelative(rel: string): boolean {
+  return rel.split(/[/\\]/u).some((segment) => JUNK_DIR.has(segment));
+}
+
+function isWithin(root: string, candidate: string): boolean {
+  const child = relative(root, candidate);
+  return child === '' || (!child.startsWith('..') && !isAbsolute(child));
+}
+
+function isNonEmptyFile(absolute: string): boolean {
+  try {
+    const stat = statSync(absolute);
+    return stat.isFile() && stat.size > 0;
+  } catch {
+    return false;
+  }
+}
+
+export function walkProductFiles(root: string): readonly string[] {
+  if (!existsSync(root)) return Object.freeze([]);
+  const found: string[] = [];
+  const stack: Array<{ dir: string; depth: number }> = [{ dir: root, depth: 0 }];
+  let visits = 0;
+  while (stack.length > 0 && found.length < MAX_WALK_FILES && visits < MAX_WALK_VISITS) {
+    const current = stack.pop();
+    if (!current) break;
+    let entries;
+    try {
+      entries = readdirSync(current.dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      visits += 1;
+      const absolute = join(current.dir, String(entry.name));
+      const rel = relative(root, absolute);
+      if (!rel || isJunkRelative(rel)) continue;
+      if (entry.isDirectory()) {
+        if (current.depth < MAX_WALK_DEPTH) {
+          stack.push({ dir: absolute, depth: current.depth + 1 });
+        }
+        continue;
+      }
+      if (entry.isFile() && isNonEmptyFile(absolute) && !isDesignOnlyFile(rel)) {
+        found.push(rel);
+      }
+      if (found.length >= MAX_WALK_FILES) break;
+    }
+  }
+  return Object.freeze(found);
+}
+
+export function inspectProductEvidence(files: readonly string[]): {
+  readonly productFileCount: number;
+  readonly designOnly: boolean;
+} {
+  const product = files.filter((file) => !isDesignOnlyFile(file));
+  const design = files.filter((file) => isDesignOnlyFile(file));
+  return {
+    productFileCount: product.length,
+    designOnly: product.length === 0 && design.length > 0,
+  };
+}
+
+function failClosedHaystack(
+  mission: Pick<Mission, 'status' | 'intentState' | 'description' | 'learnings'>,
+  handoffs: readonly Pick<Handoff, 'summary' | 'status'>[],
+): boolean {
+  if (mission.status === 'failed' || mission.status === 'blocked') return true;
+  if (mission.intentState === 'blocked_technical') return true;
+  const haystack = [
+    mission.description ?? '',
+    mission.learnings ?? '',
+    ...handoffs.map((handoff) => `${handoff.status} ${handoff.summary}`),
+  ].join('\n');
+  return FAIL_CLOSED_TOKEN.test(haystack);
+}
+
+function paneAgentKey(name: string | null | undefined): string {
+  return (name ?? '').trim().toLowerCase();
+}
+
+export function applyCivilianProntoDecision(input: {
+  readonly scope: ProjectExecutionScope;
+  readonly mission: Mission;
+  readonly decision: CivilianProntoDecision;
+  readonly productFiles: readonly string[];
+  readonly engine: Pick<MissionEngine, 'completeVerified'>;
+  readonly stores: Pick<ProjectDomainStoreSuite, 'missions'>;
+}): boolean {
+  if (input.decision.action !== 'pronto') return false;
+  const files = input.productFiles
+    .map((file) => file.split(sep).join('/').slice(0, 256))
+    .filter((file) => file.length > 0)
+    .slice(0, 64);
+  const summary = (
+    `Pronto justified by ${input.decision.reason}. ` +
+    `${files.length} arquivo(s) no disco.`
+  ).slice(0, 65_536);
+  const result = missionResultSchema.parse({
+    outcome: 'success',
+    summary,
+    evidenceIds: [],
+    artifactRefs: files,
+  });
+  const learnings = (
+    input.mission.learnings.trim()
+      ? `${input.mission.learnings}\n\n## Pronto (entrega civil)\n${summary}`
+      : `## Pronto (entrega civil)\n${summary}`
+  ).slice(-65_536);
+  input.engine.completeVerified(input.scope, {
+    missionId: input.mission.id,
+    expectedStatus: 'running',
+    expectedIntentState: input.mission.intentState ?? 'legacy',
+    expectedUpdatedAt: input.mission.updatedAt,
+    expectedIntentVersion: input.mission.intentVersion ?? 0,
+    learnings,
+    result,
+  });
+  const completed = input.stores.missions.get(input.mission.id);
+  return completed?.status === 'done' && Boolean(completed.result);
+}
+
+export type CivilianProntoDependencies = {
+  readonly getStores?: (scope: ProjectExecutionScope) => ProjectDomainStoreSuite;
+  readonly listPanes?: () => readonly {
+    readonly missionId?: string | null;
+    readonly agentName?: string | null;
+    readonly role?: string;
+    readonly state?: string | null;
+  }[];
+  readonly listProductFiles?: (root: string) => readonly string[];
+  readonly missionEngine?: Pick<MissionEngine, 'completeVerified'>;
+};
+
+/**
+ * Via Rápida: se o motor justifica Pronto, persiste `done` + result.
+ * O header civil (estado `completed` → rótulo Pronto) acompanha o status.
+ * Board N/M permanece honesto — não inventa 20/20.
+ */
+export function maybeApplyCivilianPronto(
+  scope: ProjectExecutionScope,
+  missionId: string | undefined,
+  deps: CivilianProntoDependencies = {},
+): CivilianProntoApplyResult {
+  const empty = (action: CivilianProntoAction, reason: string): CivilianProntoApplyResult => ({
+    action,
+    path: null,
+    reason,
+    sealedDone: 0,
+    sealedTotal: 0,
+    completed: false,
+  });
+  if (!missionId) return empty('refuse', 'no-mission');
+
+  const stores = deps.getStores?.(scope) ?? getProjectDomainStores(scope);
+  const mission = stores.missions.get(missionId);
+  if (!mission) return empty('refuse', 'missing');
+  if (mission.status !== 'running') return empty('refuse', 'not-running');
+
+  let handoffs: readonly Handoff[] = [];
+  try {
+    handoffs = stores.handoffs.list({ missionId, includeDelivered: true });
+  } catch {
+    return empty('wait', 'handoffs-unreadable');
+  }
+
+  const tasks = stores.tasks.list(missionId);
+  const sealedDone = tasks.filter((task) => task.status === 'done').length;
+  const sealedTotal = tasks.length;
+  const boardAllDone =
+    sealedTotal > 0 && tasks.every((task) => task.status === 'done');
+
+  let planned: ReturnType<ProjectDomainStoreSuite['tasks']['listPlannedTasks']> =
+    [];
+  try {
+    planned = stores.tasks.listPlannedTasks(
+      missionId,
+      mission.intentVersion ?? 0,
+    );
+  } catch {
+    planned = [];
+  }
+
+  const panes =
+    deps.listPanes?.() ??
+    (typeof listPaneSnapshots === 'function' ? listPaneSnapshots() : []);
+  const missionPanes = panes.filter((pane) => pane.missionId === mission.id);
+  const liveWriterBusy = missionPanes.some(
+    (pane) =>
+      pane.role !== 'orchestrator' && isLiveWriterPaneState(pane.state),
+  );
+
+  const pendingReviewer = planned.some((row) => {
+    if (row.agentCategory !== 'reviewer' && row.agent.category !== 'reviewer') {
+      return false;
+    }
+    const task = tasks.find((candidate) => candidate.id === row.taskId);
+    if (!task || task.status === 'done') return false;
+    const live = missionPanes.some(
+      (pane) =>
+        paneAgentKey(pane.agentName) === paneAgentKey(row.agent.agentName) &&
+        (pane.state === 'busy' || pane.state === 'spawning' || pane.state === 'idle'),
+    );
+    return !live || task.status === 'pending';
+  });
+
+  const files =
+    deps.listProductFiles?.(scope.rootRealPath) ??
+    walkProductFiles(scope.rootRealPath);
+  const evidence = inspectProductEvidence(files);
+  const hasSuccessHandoff = handoffs.some(
+    (handoff) => handoff.status === 'success' || handoff.status === 'partial',
+  );
+  const neverStarted =
+    !hasSuccessHandoff &&
+    evidence.productFileCount === 0 &&
+    sealedDone === 0 &&
+    !liveWriterBusy;
+
+  const decision = decideCivilianPronto({
+    missionStatus: mission.status,
+    failClosed: failClosedHaystack(mission, handoffs),
+    boardAllDone,
+    sealedDone,
+    sealedTotal,
+    hasSuccessHandoff,
+    productFileCount: evidence.productFileCount,
+    designOnly: evidence.designOnly,
+    neverStarted,
+    liveWriterBusy,
+    holdForGuidedReview: holdsGuidedOrLegacyReview({
+      orchestrationMode: mission.intentContract?.orchestrationMode,
+      intentState: mission.intentState,
+      pendingReviewer,
+    }),
+  });
+
+  if (decision.action !== 'pronto') {
+    return { ...decision, completed: false };
+  }
+
+  console.info(
+    `[fast-lane] Pronto justified by ${decision.reason}`,
+  );
+
+  const engine = deps.missionEngine ?? missionEngineForScope(scope);
+  let completed = false;
+  try {
+    completed = applyCivilianProntoDecision({
+      scope,
+      mission,
+      decision,
+      productFiles: files,
+      engine,
+      stores,
+    });
+  } catch (error) {
+    console.warn(
+      '[civilian-pronto] completeVerified recusou a entrega civil:',
+      error instanceof Error ? error.message : error,
+    );
+  }
+
+  return { ...decision, completed };
+}
+
+/** @internal — resolve workspace path for tests. */
+export function resolveWorkspaceFile(root: string, rawPath: string): string | null {
+  const trimmed = rawPath.trim();
+  if (!trimmed || trimmed.includes('\0')) return null;
+  const absolute = isAbsolute(trimmed) ? resolve(trimmed) : resolve(root, trimmed);
+  if (!isWithin(root, absolute)) return null;
+  return absolute;
+}

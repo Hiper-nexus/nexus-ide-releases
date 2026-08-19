@@ -687,6 +687,65 @@ export class ScopedTaskStore {
     return { ...updated };
   }
 
+  /**
+   * Via Rápida: o handoff do worker avança só o status da task selada.
+   * Título/detalhe permanecem imutáveis. Sem dispatcher cerimonial.
+   */
+  advanceSealedTaskStatus(
+    rawId: string,
+    status: Extract<TaskStatus, 'running' | 'done' | 'failed'>,
+  ): ScopedTaskRecord | null {
+    const id = entityIdSchema.parse(rawId);
+    const nextStatus = z.enum(['running', 'done', 'failed']).parse(status);
+    const db = this.#binding.writeDatabase();
+    const updated = db.transaction(() => {
+      const existing = this.#getFromDatabase(db, id);
+      if (!existing) return null;
+      if (!this.#getPlannedTaskFromDatabase(db, id)) {
+        throw new Error('advanceSealedTaskStatus exige task selada do plano');
+      }
+      if (existing.status === 'done' || existing.status === 'failed') {
+        return existing;
+      }
+      const next: ScopedTaskRecord = {
+        ...existing,
+        status: nextStatus,
+        updatedAt: this.#binding.now(),
+      };
+      const result = db
+        .prepare(
+          `UPDATE tasks
+           SET status = ?, updated_at = ?
+           WHERE id = ?`,
+        )
+        .run(next.status, next.updatedAt, id);
+      return result.changes === 1 ? next : null;
+    })();
+    if (!updated) return null;
+    this.#binding.emitChange();
+    return { ...updated };
+  }
+
+  /** Alias estável para o board da Via Rápida (PRs 89/90). */
+  advanceSealedTaskStatus(
+    rawId: string,
+    rawStatus: Extract<TaskStatus, 'running' | 'done' | 'failed'>,
+  ): ScopedTaskRecord | null {
+    return this.advanceSealedStatus(rawId, rawStatus);
+  }
+
+  /** Status-only lifecycle for sealed or free tasks. Title/detail never change. */
+  markLifecycleStatus(
+    rawId: string,
+    rawStatus: Extract<TaskStatus, 'running' | 'done' | 'failed'>,
+  ): ScopedTaskRecord | null {
+    const id = entityIdSchema.parse(rawId);
+    if (this.getPlannedTask(id)) {
+      return this.advanceSealedStatus(id, rawStatus);
+    }
+    return this.update(id, { status: rawStatus });
+  }
+
   list(rawMissionId?: string): ScopedTaskRecord[] {
     const missionId =
       rawMissionId === undefined ? undefined : entityIdSchema.parse(rawMissionId);

@@ -97,6 +97,7 @@ export const projectMissionSnapshotViewSchema = z
     hasCurrentKickoffReceipt: z.boolean(),
     orchestratorLive: z.boolean(),
     runtimeClosedByOperator: z.boolean().optional(),
+    leftoverParked: z.boolean().optional(),
     tasks: z.array(snapshotTaskViewSchema).max(256),
     handoffs: z.array(snapshotHandoffViewSchema).max(256),
     panes: z.array(snapshotPaneViewSchema).max(64),
@@ -145,6 +146,66 @@ function projectState(view: ParsedView): {
         code: 'open-question',
         label: 'Aguardando sua resposta',
       },
+    };
+  }
+
+  if (view.runtimeClosedByOperator) {
+    return {
+      state: 'blocked_user',
+      stateReason: {
+        code: 'runtime-closed',
+        label: 'Encerrada pelo operador',
+      },
+    };
+  }
+
+  if (view.leftoverParked) {
+    return {
+      state: 'blocked_technical',
+      stateReason: sessionDeadReason(),
+    };
+  }
+
+  const staleAcrossRestart = wasUpdatedBeforeThisProcess(
+    view.mission.updatedAt,
+    NEXUS_PROCESS_STARTED_AT,
+  );
+  const hasLiveRuntime = missionViewHasLiveWorkingRuntime(view);
+  const hasFiles = missionViewHasFiles(view);
+  const freshKickoff =
+    view.mission.status === 'running' &&
+    view.hasCurrentKickoffReceipt &&
+    view.panes.length === 0 &&
+    !staleAcrossRestart;
+
+  if (
+    leftoverRunningOrPendingIsDead({
+      status: view.mission.status,
+      hasLivePty: hasLiveRuntime,
+      hasFiles,
+      isFreshKickoff: freshKickoff,
+      isFreshPending:
+        view.mission.status === 'pending' &&
+        !staleAcrossRestart &&
+        view.panes.length === 0,
+    })
+  ) {
+    return {
+      state: 'blocked_technical',
+      stateReason: sessionDeadReason(),
+    };
+  }
+
+  if (
+    staleAcrossRestart &&
+    !hasLiveRuntime &&
+    (view.mission.status === 'pending' ||
+      view.mission.status === 'running' ||
+      view.mission.status === 'blocked')
+  ) {
+    return {
+      state: 'blocked_technical',
+      stateReason: sessionDeadReason(),
     };
   }
 
