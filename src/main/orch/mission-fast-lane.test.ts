@@ -362,10 +362,20 @@ describe('isPaneMetaTask — meta-de-pane fica com o Maestro', () => {
     expect(isPaneMetaTask('cada pane responda quanto é 1+1 e reporte')).toBe(true);
   });
 
+  it('ditado com typo no verbo ainda é meta-de-pane (destinatário + interrogação)', () => {
+    // Caso de campo 20/08: "oergunta aos panes quwnto e 1+1" derrotou o
+    // padrão por verbo e a task foi para um worker que saiu grepando o
+    // código atrás de "panes".
+    expect(isPaneMetaTask('oergunta  aos panes quwnto e 1+1')).toBe(true);
+    expect(isPaneMetaTask('fala aos panes: qual o status?')).toBe(true);
+  });
+
   it('task de CÓDIGO que menciona pane continua indo para worker', () => {
     expect(isPaneMetaTask('corrigir o pane-close-guard do renderer')).toBe(false);
     expect(isPaneMetaTask('refatorar PaneToolbar para o novo layout')).toBe(false);
     expect(isPaneMetaTask('implementar dashboard de vendas')).toBe(false);
+    // "aos panes" SEM carga interrogativa é feature de código, não pergunta.
+    expect(isPaneMetaTask('adicionar suporte de drag aos panes')).toBe(false);
   });
 });
 
@@ -395,6 +405,7 @@ describe('kickoff meta-de-pane — um pane por integrante, TODOS respondem', () 
     expect(prompt).toContain('Implementar motor');
     expect(prompt).toContain('TODOS os panes');
     expect(prompt).toContain('Nenhum pane sem resposta');
+    expect(prompt).toContain('EXTRAIA do objetivo apenas a PERGUNTA');
   });
 
   it('missão sem meta-de-pane não carrega a diretiva', () => {

@@ -519,6 +519,10 @@ export function agentPrompt(
     agent.category === 'orchestrator' &&
     sealedPlanTitles.some((storyTitle) => isPaneMetaTask(storyTitle))
       ? 'META-DE-PANE: esta missão pergunta aos próprios panes — VOCÊ executa. ' +
+        'EXTRAIA do objetivo apenas a PERGUNTA (ex.: "quanto é 1+1?") — quem é ' +
+        'perguntado recebe SÓ a pergunta, nunca a instrução "pergunte aos ' +
+        'panes" nem papel/missão (relay fiel vale para trabalho delegado, não ' +
+        'para perguntas). ' +
         `Abra UM pane por integrante (${teamWorkerNames.join(', ') || 'equipe'}) ` +
         'via nexus_pane_spawn com a pergunta no prompt, aguarde a resposta de ' +
         'TODOS os panes, e só então FECHO: nexus_handoff_submit success citando ' +
@@ -1875,7 +1879,16 @@ export function isPaneMetaTask(title: string): boolean {
   return (
     /\b(?:pergunt|respond|cham)\w*\b[^.\n]{0,40}\bpanes?\b/iu.test(text) ||
     /\bpanes?\b[^\n]{0,40}\b(?:pergunt|respond|cham)\w*/iu.test(text) ||
-    /\bcada\s+pane\b/iu.test(text)
+    /\bcada\s+pane\b/iu.test(text) ||
+    // Ditado por voz vem com typo no verbo ("oergunta aos panes quwnto e
+    // 1+1" derrotou o padrão acima em campo, 20/08). A construção de
+    // destinatário ("aos panes") + carga interrogativa é evidência
+    // suficiente sem o verbo; task de código fala "do pane"/"o pane X" e
+    // não carrega interrogação.
+    (/\baos?\s+(?:todos\s+(?:os\s+)?)?panes\b/iu.test(text) &&
+      /\?|\bquanto|\bqual|\bquem\b|\bonde\b|\bquando\b|\d\s*\+\s*\d/iu.test(
+        text,
+      ))
   );
 }
 
