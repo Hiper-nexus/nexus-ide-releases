@@ -1844,6 +1844,22 @@ const firstWaveInFlight = new Set<string>();
  * First-wave no mesmo turno do Maestro. Só CLI AuthReadiness=present
  * ganha assento; LongCat sem chave é skip silencioso (sem toast).
  */
+/**
+ * Task cujo destinatário são os PRÓPRIOS panes da missão (perguntar/chamar/
+ * responder aos panes). Worker não tem ferramenta de pane — despachar essa
+ * classe gera papelada honesta no lugar do efeito ("workers cannot create
+ * panes", nota do próprio worker em 20/08). Ela fica com o Maestro, que tem
+ * as ferramentas e a doutrina EXCEÇÃO/FECHO para executar e concluir.
+ */
+export function isPaneMetaTask(title: string): boolean {
+  const text = title.normalize('NFC');
+  return (
+    /\b(?:pergunt|respond|cham)\w*\b[^.\n]{0,40}\bpanes?\b/iu.test(text) ||
+    /\bpanes?\b[^\n]{0,40}\b(?:pergunt|respond|cham)\w*/iu.test(text) ||
+    /\bcada\s+pane\b/iu.test(text)
+  );
+}
+
 export async function dispatchFastLaneFirstWave(
   scope: ProjectExecutionScope,
   missionId: string,
@@ -1862,10 +1878,21 @@ export async function dispatchFastLaneFirstWave(
         (task) => task.status === 'pending' || task.status === 'running',
       )
       .map((task) => task.title);
-    const titles =
+    const allTitles =
       pendingTitles.length > 0
         ? pendingTitles
         : sealFastLanePlanTitles(stores, mission, squad);
+    // Meta-de-pane fica com o Maestro (EXCEÇÃO): worker sem ferramenta de
+    // pane entregaria papelada em vez do efeito pedido.
+    const titles = allTitles.filter((title) => !isPaneMetaTask(title));
+    const maestroKept = allTitles.length - titles.length;
+    if (maestroKept > 0) {
+      console.info(
+        `[fast-lane] first-wave deixou ${maestroKept} task(s) meta-de-pane ` +
+          `para o Maestro executar (${missionId})`,
+      );
+    }
+    if (titles.length === 0) return 0;
     const liveWorkers = countLiveFirstWaveWriters(
       listPaneSnapshots(),
       missionId,

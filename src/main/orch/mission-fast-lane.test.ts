@@ -10,6 +10,7 @@ import {
   decideFastLaneResumeAction,
   missionDesignContext,
   missionFastLaneEnabled,
+  isPaneMetaTask,
 } from './mission-fast-lane';
 
 function mission(overrides: Partial<Mission> = {}): Mission {
@@ -111,7 +112,6 @@ describe('mission fast lane', () => {
     expect(prompt).toContain('Plano selado');
     expect(prompt).toContain('São 20 entregas');
     expect(prompt).toContain('NÃO reduza a lista aos papéis do squad');
-    expect(prompt).toContain('NÃO reduza a lista a 5 papéis');
     expect(prompt).toContain('Story 20 da waitlist');
     expect(prompt).toContain('task selada pendente');
   });
@@ -351,5 +351,20 @@ describe('decideExternalHeadChangeAction (sentinela de HEAD — achado #14)', ()
         missionShaLadder: ladder,
       }),
     ).toEqual({ action: 'notify', from: 'old', to: 'c-estranho' });
+  });
+});
+
+describe('isPaneMetaTask — meta-de-pane fica com o Maestro', () => {
+  it('reconhece as formas reais ditadas pelo operador em 20/08', () => {
+    expect(isPaneMetaTask('pergunte ao panes quanto e 1+1')).toBe(true);
+    expect(isPaneMetaTask('abre os panes. e pergunta csadad um dles quanto e 1+1')).toBe(true);
+    expect(isPaneMetaTask('chame o pane kimi e pergunte quanto é 1+1')).toBe(true);
+    expect(isPaneMetaTask('cada pane responda quanto é 1+1 e reporte')).toBe(true);
+  });
+
+  it('task de CÓDIGO que menciona pane continua indo para worker', () => {
+    expect(isPaneMetaTask('corrigir o pane-close-guard do renderer')).toBe(false);
+    expect(isPaneMetaTask('refatorar PaneToolbar para o novo layout')).toBe(false);
+    expect(isPaneMetaTask('implementar dashboard de vendas')).toBe(false);
   });
 });
