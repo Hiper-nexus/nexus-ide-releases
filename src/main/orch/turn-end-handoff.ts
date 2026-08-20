@@ -55,6 +55,7 @@ export const MECHANICAL_HANDOFF_CLOSED_BY = 'turn-end';
 
 const turnStartBySession = new Map<string, AgentTurnStartEntry>();
 const lastStopSignatureBySession = new Map<string, string>();
+const handoffPendingBySession = new Set<string>();
 
 let turnStartTap: (() => void) | null = null;
 
@@ -75,6 +76,21 @@ export function startTurnEndHandoffClosure(): void {
 export function __resetTurnEndHandoffForTests(): void {
   turnStartBySession.clear();
   lastStopSignatureBySession.clear();
+  handoffPendingBySession.clear();
+}
+
+/** O orquestrador acabou de delegar para este pane; não fechar mecanicamente enquanto espera. */
+export function setHandoffPending(sessionId: string): void {
+  handoffPendingBySession.add(sessionId);
+}
+
+/** Worker entregou o handoff; liberta o marcador de espera. */
+export function clearHandoffPending(sessionId: string): void {
+  handoffPendingBySession.delete(sessionId);
+}
+
+export function isHandoffPending(sessionId: string): boolean {
+  return handoffPendingBySession.has(sessionId);
 }
 
 /** Test-only: injeta uma fronteira de turno. */
@@ -280,6 +296,8 @@ export interface TurnEndClosureFacts {
   readonly isRedeliveryOfProcessedStop: boolean;
   /** A consulta de dedup falhou — fail-closed: não fecha na dúvida. */
   readonly dedupUnavailable: boolean;
+  /** O orquestrador delegou e ainda não recebeu o handoff desta sessão. */
+  readonly isHandoffPending: boolean;
 }
 
 export interface TurnEndClosureDecision {
@@ -311,6 +329,9 @@ export function decideTurnEndClosure(
       close: false,
       reason: 'dedup indisponível (fail-closed — fechamento mecânico nunca duplica na dúvida)',
     };
+  }
+  if (facts.isHandoffPending) {
+    return { close: false, reason: 'orquestrador ainda aguarda handoff deste pane' };
   }
   if (facts.handoffsSinceTurnStart > 0) {
     return { close: false, reason: 'worker já entregou handoff neste turno' };
@@ -412,6 +433,7 @@ export async function handleTurnEndMechanicalHandoff(input: {
       handoffsSinceTurnStart,
       isRedeliveryOfProcessedStop: isRedelivery,
       dedupUnavailable,
+      isHandoffPending: isHandoffPending(sessionId),
     });
     if (!decision.close) {
       console.info(
@@ -426,6 +448,7 @@ export async function handleTurnEndMechanicalHandoff(input: {
       transcriptPath,
     });
     const committed = await submitPtyStreamHandoff(sessionId, payload);
+    clearHandoffPending(sessionId);
     lastStopSignatureBySession.set(sessionId, signature);
     console.info(
       `[turn-end-handoff] ${sessionId}: fechado mecanicamente ` +

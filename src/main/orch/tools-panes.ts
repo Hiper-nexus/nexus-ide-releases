@@ -4,6 +4,7 @@ import {
 } from './mcp-protocol';
 import type { PaneSnapshot } from '../../shared/orch-types';
 import {
+  getPaneRuntimeAuthorityBySession,
   listPaneSnapshots,
   listVisiblePaneSnapshots,
   readSessionOutput,
@@ -42,6 +43,7 @@ import {
 import { isMissionWorkerWriteEligibleCli } from './squad-runtime-policy';
 import { isOperatorChoicePolicy } from '../../shared/squad-cli-policy';
 import { CODEX_MCP_TOOL_TIMEOUT_SEC } from './cli-mcp-inject';
+import { setHandoffPending } from './turn-end-handoff';
 import {
   assertCurrentMissionOrchestratorSession,
   canonicalToolName,
@@ -126,6 +128,28 @@ const SAME_CHECKOUT_ACTIVE_STATES = new Set<PaneSnapshot['state']>([
   'spawning',
   'busy',
 ]);
+
+/** Footer anexado a prompts de worker para lembrar o nexus_handoff_submit. */
+const WORKER_HANDOFF_FOOTER =
+  '[Ao terminar, chame nexus_handoff_submit uma vez com status, summary, artifacts e evidenceIds.]';
+
+function withWorkerHandoffFooter(
+  sessionId: string,
+  text: string,
+): string {
+  const authority = getPaneRuntimeAuthorityBySession(sessionId);
+  if (authority?.role !== 'worker' || text.includes('nexus_handoff_submit')) {
+    return text;
+  }
+  return `${text}\n\n${WORKER_HANDOFF_FOOTER}`;
+}
+
+function markWorkerHandoffPending(sessionId: string): void {
+  const authority = getPaneRuntimeAuthorityBySession(sessionId);
+  if (authority?.role === 'worker') {
+    setHandoffPending(sessionId);
+  }
+}
 
 const pendingWorkerSpawns = new Map<string, number>();
 
@@ -743,6 +767,9 @@ const paneSpawn: McpToolDef = {
         },
         invocation,
       });
+      if (options.role === 'worker' && spawned.sessionId) {
+        setHandoffPending(spawned.sessionId);
+      }
       // Declarado no nascimento (registro, não pergunta): o pane se fecha
       // sozinho no handoff SUCCESS — paridade Bridge, libera a vaga sem
       // segurar slot da onda seguinte; falha preserva pane para diagnóstico.
@@ -996,7 +1023,11 @@ const paneWrite: McpToolDef = {
   handler: async (args, ctx, invocation) => {
     assertMcpInvocationCurrent(invocation);
     const sessionId = authorizedSessionIdOf(ctx, requireStr(args, 'paneId'), 'write');
-    const text = typeof args.text === 'string' ? args.text : '';
+    markWorkerHandoffPending(sessionId);
+    const text = withWorkerHandoffFooter(
+      sessionId,
+      typeof args.text === 'string' ? args.text : '',
+    );
     if (args.submit === false) {
       assertMcpInvocationCurrent(invocation);
       orchWriteSession(sessionId, text);
@@ -1053,11 +1084,13 @@ const paneWriteMany: McpToolDef = {
       }
       try {
         const sessionId = authorizedSessionIdOf(ctx, write.paneId, 'write');
+        markWorkerHandoffPending(sessionId);
+        const text = withWorkerHandoffFooter(sessionId, write.text ?? '');
         if (write.submit === false) {
           assertMcpInvocationCurrent(invocation);
-          orchWriteSession(sessionId, write.text);
+          orchWriteSession(sessionId, text);
         } else {
-          await injectPrompt(sessionId, write.text, invocation);
+          await injectPrompt(sessionId, text, invocation);
         }
         results.push({ paneId: write.paneId, ok: true });
       } catch (err) {

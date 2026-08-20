@@ -24,6 +24,7 @@ vi.mock('./pane-registry', () => ({
     missionId: 'mission-a',
     role: 'worker',
   })),
+  getPaneRuntimeAuthorityBySession: vi.fn(() => null),
   listPaneSnapshots: vi.fn(() => []),
   listVisiblePaneSnapshots: vi.fn(() => []),
   readSessionOutput: vi.fn(() => ''),

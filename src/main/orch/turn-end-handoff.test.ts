@@ -29,6 +29,7 @@ const baseFacts = {
   handoffsSinceTurnStart: 0,
   isRedeliveryOfProcessedStop: false,
   dedupUnavailable: false,
+  isHandoffPending: false,
 };
 
 describe('decideTurnEndClosure (matriz de guardas)', () => {
@@ -86,6 +87,15 @@ describe('decideTurnEndClosure (matriz de guardas)', () => {
     });
     expect(decision.close).toBe(false);
     expect(decision.reason).toContain('dedup indisponível');
+  });
+
+  it('pula enquanto o orquestrador aguarda handoff deste pane (paridade Overclock)', () => {
+    const decision = decideTurnEndClosure({
+      ...baseFacts,
+      isHandoffPending: true,
+    });
+    expect(decision.close).toBe(false);
+    expect(decision.reason).toContain('aguarda handoff');
   });
 });
 
