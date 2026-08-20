@@ -45,6 +45,7 @@ export interface WorkspaceRailProps {
    */
   onSelectMission: (missionId: string, workspaceId?: string) => void;
   onRemoveWorkspace?: (workspaceId: string) => void;
+  onRemoveMission?: (missionId: string) => void;
   projectEnabled?: boolean;
   onOpenProject?: () => void;
   onOpenTaskBoard: () => void;
@@ -147,6 +148,7 @@ interface WorkspaceGroupProps {
   onSelectWorkspace: (workspaceId: string) => void;
   onSelectMission: (missionId: string, workspaceId?: string) => void;
   onRemoveWorkspace?: (workspaceId: string) => void;
+  onRemoveMission?: (missionId: string) => void;
 }
 
 function WorkspaceGroup({
@@ -157,6 +159,7 @@ function WorkspaceGroup({
   onSelectWorkspace,
   onSelectMission,
   onRemoveWorkspace,
+  onRemoveMission,
 }: WorkspaceGroupProps) {
   if (workspaces.length === 0) return null;
   const labelId = `workspace-rail-${group}-label`;
@@ -232,37 +235,55 @@ function WorkspaceGroup({
 
                     return (
                       <li key={mission.id}>
-                        <button
-                          type="button"
-                          className={`workspace-rail__row workspace-rail__mission workspace-rail__mission--${status.tone}${
-                            missionSelected
-                              ? ' workspace-rail__row--selected'
-                              : ''
-                          }`}
-                          data-mission-id={mission.id}
-                          data-mission-state={mission.status}
-                          aria-current={missionSelected ? 'page' : undefined}
-                          aria-label={`${mission.title}. ${status.label}`}
-                          title={`${mission.title}: ${status.label}`}
-                          onClick={() =>
-                            onSelectMission(mission.id, workspace.id)
-                          }
-                        >
-                          <span
-                            className="workspace-rail__mission-indicator"
-                            aria-hidden="true"
+                        <div className="workspace-rail__workspace-row">
+                          <button
+                            type="button"
+                            className={`workspace-rail__row workspace-rail__mission workspace-rail__mission--${status.tone}${
+                              missionSelected
+                                ? ' workspace-rail__row--selected'
+                                : ''
+                            }`}
+                            data-mission-id={mission.id}
+                            data-mission-state={mission.status}
+                            aria-current={missionSelected ? 'page' : undefined}
+                            aria-label={`${mission.title}. ${status.label}`}
+                            title={`${mission.title}: ${status.label}`}
+                            onClick={() =>
+                              onSelectMission(mission.id, workspace.id)
+                            }
                           >
-                            <PixelIcon name={status.icon} size={11} />
-                          </span>
-                          <span className="workspace-rail__mission-copy">
-                            <span className="workspace-rail__row-label">
-                              {mission.title}
+                            <span
+                              className="workspace-rail__mission-indicator"
+                              aria-hidden="true"
+                            >
+                              <PixelIcon name={status.icon} size={11} />
                             </span>
-                            <span className="workspace-rail__mission-status">
-                              {status.label}
+                            <span className="workspace-rail__mission-copy">
+                              <span className="workspace-rail__row-label">
+                                {mission.title}
+                              </span>
+                              <span className="workspace-rail__mission-status">
+                                {status.label}
+                              </span>
                             </span>
-                          </span>
-                        </button>
+                          </button>
+                          {onRemoveMission ? (
+                            <button
+                              type="button"
+                              className="workspace-rail__workspace-action"
+                              data-action="remove-mission"
+                              data-mission-id={mission.id}
+                              aria-label={`Remover missão ${mission.title}`}
+                              title={`Remover "${mission.title}" — apaga a missão e o histórico`}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onRemoveMission(mission.id);
+                              }}
+                            >
+                              <PixelIcon name="trash" size={11} />
+                            </button>
+                          ) : null}
+                        </div>
                       </li>
                     );
                   })}
@@ -292,6 +313,7 @@ export function WorkspaceRail({
   onSelectWorkspace,
   onSelectMission,
   onRemoveWorkspace,
+  onRemoveMission,
   projectEnabled = false,
   onOpenProject,
   onOpenTaskBoard,
@@ -332,6 +354,7 @@ export function WorkspaceRail({
           onSelectWorkspace={onSelectWorkspace}
           onSelectMission={onSelectMission}
           onRemoveWorkspace={onRemoveWorkspace}
+          onRemoveMission={onRemoveMission}
         />
         <WorkspaceGroup
           label="Recentes"
@@ -341,6 +364,7 @@ export function WorkspaceRail({
           onSelectWorkspace={onSelectWorkspace}
           onSelectMission={onSelectMission}
           onRemoveWorkspace={onRemoveWorkspace}
+          onRemoveMission={onRemoveMission}
         />
       </div>
 

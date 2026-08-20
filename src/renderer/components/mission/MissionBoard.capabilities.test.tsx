@@ -302,7 +302,7 @@ describe('state-aware mission actions in the canonical mission board', () => {
       }),
       snapshotState: 'running' as const,
       expected: /Encerrar/i,
-      forbidden: /Descartar|Remover|Parar|concluída/i,
+      forbidden: /Descartar|Parar|concluída/i,
     },
     {
       label: 'automatic recovery',
@@ -314,14 +314,14 @@ describe('state-aware mission actions in the canonical mission board', () => {
       }),
       snapshotState: 'recovering' as const,
       expected: /Parar/i,
-      forbidden: /Descartar|Remover|Encerrar|concluída/i,
+      forbidden: /Descartar|Encerrar|concluída/i,
     },
     {
       label: 'eligible draft',
       current: mission({ status: 'pending', intentState: 'draft' }),
       snapshotState: 'draft' as const,
       expected: /Descartar/i,
-      forbidden: /Remover|Encerrar|Parar|concluída/i,
+      forbidden: /Encerrar|Parar|concluída/i,
     },
     {
       label: 'terminal history',
@@ -363,7 +363,7 @@ describe('state-aware mission actions in the canonical mission board', () => {
       }),
       snapshotState: 'blocked_user' as const,
       expected: /Marcar concluída/i,
-      forbidden: /Descartar|Remover|Encerrar|Parar/i,
+      forbidden: /Descartar|Encerrar|Parar/i,
     },
   ])('offers only the safe $label action', async (testCase) => {
     if ('seedTranscriptPanes' in testCase && testCase.seedTranscriptPanes) {
@@ -384,6 +384,9 @@ describe('state-aware mission actions in the canonical mission board', () => {
 
     expect(buttonByName(host, testCase.expected)).not.toBeNull();
     expect(buttonByName(host, testCase.forbidden)).toBeNull();
+    // Ordem do operador (20/08): Remover é SEMPRE oferecido — o main encerra
+    // o runtime antes de apagar; a escada Encerrar→Concluir→Remover caiu.
+    expect(buttonByName(host, /Remover/i)).not.toBeNull();
   });
 
   it('offers Remover for a completed board even when the orch row is missing', async () => {
@@ -452,8 +455,11 @@ describe('state-aware mission actions in the canonical mission board', () => {
     await settle();
 
     expect(
-      buttonByName(host, /Descartar|Remover|Encerrar|Parar|concluída/i),
+      buttonByName(host, /Descartar|Encerrar|Parar|concluída/i),
     ).toBeNull();
+    // Remover continua disponível mesmo aqui (ordem do operador, 20/08):
+    // o confirm de perigo é a proteção, não a ausência do botão.
+    expect(buttonByName(host, /Remover/i)).not.toBeNull();
   });
 
   it('marca concluída a missão estacionada pelo Encerrar sem remover o histórico', async () => {

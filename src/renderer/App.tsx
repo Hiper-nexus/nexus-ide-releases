@@ -806,6 +806,43 @@ export function App() {
       });
   }
 
+  function removeMissionFromRail(missionId: string): void {
+    const mission = useOrchStore
+      .getState()
+      .missions.find((entry) => entry.id === missionId);
+    const title = mission?.title ?? 'missão';
+    void (async () => {
+      const { askConfirm } = await import('./state/confirm-store');
+      const { removeMissionPrompt } = await import(
+        './orch/mission-list-action'
+      );
+      const confirmed = await askConfirm({
+        ...removeMissionPrompt({ title }),
+        danger: true,
+      });
+      if (!confirmed) return;
+      try {
+        // O main encerra o runtime (inclusive missão running) antes de apagar.
+        const result = await window.nexus.orch.removeMission(missionId);
+        if (result && result.removed === false) {
+          useToastStore
+            .getState()
+            .push('error', 'Não deu pra remover a missão', 'Tente de novo.');
+          return;
+        }
+        useToastStore
+          .getState()
+          .push('info', 'Missão removida', `“${title}” e o histórico foram apagados.`);
+      } catch (err) {
+        useToastStore.getState().push(
+          'error',
+          'Não deu pra remover a missão',
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    })();
+  }
+
   if (!workspaceHydrated) return <BootScreen />;
   if (currentWorkspace && !hydrated) return <BootScreen />;
 
@@ -972,6 +1009,7 @@ export function App() {
             onCreateNew={navigation.openNewMission}
             onSelectWorkspace={selectWorkspace}
             onRemoveWorkspace={removeWorkspace}
+            onRemoveMission={removeMissionFromRail}
             onSelectMission={(missionId, workspaceId) => {
               // Missão de workspace VIZINHO: troca de workspace e só então
               // navega — antes a missão do outro workspace era invisível E

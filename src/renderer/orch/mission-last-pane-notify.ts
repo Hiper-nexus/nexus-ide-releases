@@ -26,7 +26,16 @@ const MISSION_TERMINATING_REASONS = new Set([
   'ops-board-close',
   'orch-panel-close',
   'mission-runtime-close',
+  'last-pane-closed',
 ]);
+
+/**
+ * Fechamentos iniciados pelo OPERADOR (✕ do pane, com ou sem confirm). Só
+ * eles encerram a missão junto com o último pane — aposentadoria pelo
+ * runtime (worker-ttl, substituição) não é decisão humana e mantém a missão
+ * viva em segundo plano com o toast de reabertura.
+ */
+const OPERATOR_CLOSE_REASONS = new Set(['user', 'user-confirm']);
 
 /**
  * Substituição, não perda: o pane novo do mesmo papel nasce no mesmo tick
@@ -67,6 +76,36 @@ export function notifyIfLastMissionPaneClosed(
     (pane) => missionIdOfPane(pane, orch.paneMissions) === missionId,
   );
   if (stillOpen) return;
+
+  if (reason && OPERATOR_CLOSE_REASONS.has(reason)) {
+    // Ordem do operador (20/08): fechar o último pane É encerrar a missão —
+    // nada de "segue rodando em segundo plano" com revival surpresa depois.
+    void (async () => {
+      const { closeMissionRuntimeAndPanes, closeMissionNote } = await import(
+        './close-mission-runtime'
+      );
+      const result = await closeMissionRuntimeAndPanes(
+        missionId,
+        'last-pane-closed',
+      );
+      const toast = useToastStore.getState();
+      if (result.ok) {
+        toast.push('info', 'Missão encerrada', {
+          detail: `"${mission.title}": ${closeMissionNote(
+            result.terminatedSessionIds.length,
+          )}`,
+          dedupeKey: `mission-last-pane-closed:${missionId}`,
+        });
+      } else {
+        toast.push('error', 'Não deu pra encerrar a missão', {
+          detail:
+            result.error ?? 'Tente pelo botão Encerrar no Quadro da missão.',
+          dedupeKey: `mission-last-pane-closed:${missionId}`,
+        });
+      }
+    })();
+    return;
+  }
 
   useToastStore.getState().push('info', 'Missão continua em execução', {
     detail: `"${mission.title}" segue rodando em segundo plano, sem nenhum pane aberto.`,

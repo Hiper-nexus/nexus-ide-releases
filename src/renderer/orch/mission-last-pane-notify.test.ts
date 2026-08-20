@@ -12,6 +12,18 @@ const confirmAndReopenMission = vi.hoisted(() =>
 
 vi.mock('./confirm-reopen-mission', () => ({ confirmAndReopenMission }));
 
+const closeMissionRuntimeAndPanes = vi.hoisted(() =>
+  vi.fn(async () => ({
+    ok: true as const,
+    terminatedSessionIds: ['pty-1'],
+  })),
+);
+
+vi.mock('./close-mission-runtime', () => ({
+  closeMissionRuntimeAndPanes,
+  closeMissionNote: (count: number) => `nota(${count})`,
+}));
+
 function makeMission(status: MissionStatus, id = 'mission-1'): Mission {
   return {
     id,
@@ -52,16 +64,62 @@ const missionPane: PaneModel = {
 
 beforeEach(() => {
   confirmAndReopenMission.mockClear();
+  closeMissionRuntimeAndPanes.mockClear();
   useToastStore.setState({ toasts: [] });
   seedOrch([], {});
 });
 
-describe('mission last pane closed → toast de reabertura', () => {
-  it('avisa com ação "Reabrir panes" quando o último pane de uma missão running fecha', () => {
+describe('mission last pane closed', () => {
+  it('operador fecha o último pane → a missão É encerrada (ordem de 20/08)', async () => {
     seedLayout([missionPane]);
     seedOrch([makeMission('running')], { 'pane-m1': 'mission-1' });
 
     useLayoutStore.getState().close('pane-m1', 'user');
+    await vi.waitFor(() => {
+      expect(closeMissionRuntimeAndPanes).toHaveBeenCalledWith(
+        'mission-1',
+        'last-pane-closed',
+      );
+    });
+
+    await vi.waitFor(() => {
+      const toasts = useToastStore.getState().toasts;
+      expect(toasts).toHaveLength(1);
+      expect(toasts[0]).toMatchObject({
+        kind: 'info',
+        title: 'Missão encerrada',
+      });
+      expect(toasts[0]?.detail).toContain('Refatorar checkout');
+    });
+  });
+
+  it('falha no encerramento vira toast de erro acionável, nunca silêncio', async () => {
+    closeMissionRuntimeAndPanes.mockResolvedValueOnce({
+      ok: false as never,
+      terminatedSessionIds: [],
+      error: 'cerca de autoridade',
+    } as never);
+    seedLayout([missionPane]);
+    seedOrch([makeMission('running')], { 'pane-m1': 'mission-1' });
+
+    useLayoutStore.getState().close('pane-m1', 'user-confirm');
+
+    await vi.waitFor(() => {
+      const toasts = useToastStore.getState().toasts;
+      expect(toasts).toHaveLength(1);
+      expect(toasts[0]).toMatchObject({
+        kind: 'error',
+        title: 'Não deu pra encerrar a missão',
+      });
+    });
+  });
+
+  it('runtime aposenta o último pane → missão segue viva com toast de reabertura', async () => {
+    const mission = makeMission('running');
+    seedLayout([missionPane]);
+    seedOrch([mission], { 'pane-m1': 'mission-1' });
+
+    useLayoutStore.getState().close('pane-m1', 'orch-close-request');
 
     const toasts = useToastStore.getState().toasts;
     expect(toasts).toHaveLength(1);
@@ -70,33 +128,12 @@ describe('mission last pane closed → toast de reabertura', () => {
       title: 'Missão continua em execução',
       action: { label: 'Reabrir panes' },
     });
-    expect(toasts[0]?.detail).toContain('Refatorar checkout');
-    expect(toasts[0]?.detail).not.toContain('mission-1');
-  });
+    expect(closeMissionRuntimeAndPanes).not.toHaveBeenCalled();
 
-  it('a ação do toast segue a mesma rota de retomada do card da missão', async () => {
-    const mission = makeMission('running');
-    seedLayout([missionPane]);
-    seedOrch([mission], { 'pane-m1': 'mission-1' });
-
-    useLayoutStore.getState().close('pane-m1', 'user');
-    const action = useToastStore.getState().toasts[0]?.action;
-    expect(action).toBeDefined();
-
-    await action!.onClick();
-
+    await toasts[0]!.action!.onClick();
     // Mesma entrada usada pelo "Retomar panes salvos" do MissionRail.
     expect(confirmAndReopenMission).toHaveBeenCalledTimes(1);
     expect(confirmAndReopenMission).toHaveBeenCalledWith(mission);
-  });
-
-  it('também dispara quando o runtime aposenta o último pane (sem ação do operador)', () => {
-    seedLayout([missionPane]);
-    seedOrch([makeMission('running')], { 'pane-m1': 'mission-1' });
-
-    useLayoutStore.getState().close('pane-m1', 'orch-close-request');
-
-    expect(useToastStore.getState().toasts).toHaveLength(1);
   });
 
   it.each(['done', 'failed', 'blocked'] as const)(

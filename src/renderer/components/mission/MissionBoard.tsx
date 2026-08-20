@@ -686,9 +686,12 @@ export function MissionBoard({
     })();
   };
 
-  const runLifecycleAction = (invoker: HTMLButtonElement): void => {
+  const runLifecycleAction = (
+    invoker: HTMLButtonElement,
+    actionOverride?: MissionListAction,
+  ): void => {
     const mission = currentMission;
-    const action = lifecycleAction;
+    const action = actionOverride ?? lifecycleAction;
     if (action === 'none') return;
     if (!mission && action !== 'remove') return;
 
@@ -1007,6 +1010,24 @@ export function MissionBoard({
               onClick={(event) => runLifecycleAction(event.currentTarget)}
             >
               {lifecycleCopy.verb}
+            </button>
+          )}
+          {/* Ordem do operador (20/08): Remover SEMPRE disponível — o main já
+              encerra o runtime antes de apagar, a escada Encerrar→Concluir→
+              Remover era cerimônia de UI. Confirm de perigo continua. */}
+          {currentMission && lifecycleAction !== 'remove' && (
+            <button
+              type="button"
+              className="mission-board__button mission-board__button--secondary mission-board__button--danger"
+              title="Apagar missão e todo o histórico desta execução"
+              aria-label="Remover: apagar missão e todo o histórico desta execução"
+              disabled={pendingAction !== null}
+              aria-busy={pendingAction === 'remove'}
+              onClick={(event) =>
+                runLifecycleAction(event.currentTarget, 'remove')
+              }
+            >
+              Remover
             </button>
           )}
         </div>
