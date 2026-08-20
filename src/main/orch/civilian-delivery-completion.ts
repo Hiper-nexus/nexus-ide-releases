@@ -201,7 +201,7 @@ export function isSatOrTombstonedPaneState(state: string | null | undefined): bo
  * minutos na missão real de 19/08. Uma recusa por missão abre UMA janela:
  * loga uma vez, spawna o revisor pendente uma vez e silencia até o cooldown.
  */
-const REVIEW_REFUSAL_COOLDOWN_MS = 1_000;
+const REVIEW_REFUSAL_COOLDOWN_MS = 60_000;
 const reviewRefusalAt = new Map<string, number>();
 
 export function isCivilianReviewRefusal(message: string): boolean {
