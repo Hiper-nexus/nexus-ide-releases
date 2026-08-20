@@ -109,7 +109,7 @@ const MAX_DELIVERY_SUMMARY = 4000;
  * submitted: um modal que engoliu o paste deixava o handoff entregue para
  * sempre (markSubmitted é durável e o replay só olha não-entregues).
  */
-const SUBMIT_ACCEPTANCE_WINDOW_MS = 12_000;
+export const SUBMIT_ACCEPTANCE_WINDOW_MS = 12_000;
 /** Idle must hold this long before paste — a one-frame idle flicker is not injectable. */
 export const DELIVERY_IDLE_STABILITY_MS = 150;
 /**
@@ -540,7 +540,38 @@ function handleSubmitNotAccepted(
   pending: PendingEnter,
   failureCode = 'accept_timeout',
 ): void {
-  getProjectDomainStores(pending.authority.scope).handoffs.failDeliveryAttempt({
+  const stores = getProjectDomainStores(pending.authority.scope);
+  // O busy edge do TUI não é a ÚNICA prova de aceite. Se o handoff já saiu de
+  // `queued` — list-ack de `nexus_handoff_list`, `nexus_handoff_ack` ou
+  // consumo — o Maestro comprovadamente recebeu, e o único registro possível
+  // é sucesso. Campo 20/08: a única tentativa de entrega da história do banco
+  // morreu de `accept_timeout` porque o heurístico de busy não pintou dentro
+  // dos 12 s, apesar do texto ter sido colado e submetido.
+  if (failureCode === 'accept_timeout') {
+    const current = stores.handoffs.get(pending.handoffId);
+    if (current && current.deliveryState !== 'queued') {
+      let accepted = false;
+      try {
+        accepted = stores.handoffs.acceptDeliveryAttempt({
+          attemptId: pending.attemptId,
+          handoffId: pending.handoffId,
+        });
+      } catch {
+        accepted = false;
+      }
+      if (!accepted) {
+        stores.handoffs.failDeliveryAttempt({
+          attemptId: pending.attemptId,
+          handoffId: pending.handoffId,
+          failureCode: 'accept_superseded',
+        });
+      }
+      // Entregue de qualquer forma: nunca redigitar o que ele já leu.
+      clearPendingEnter(pending);
+      return;
+    }
+  }
+  stores.handoffs.failDeliveryAttempt({
     attemptId: pending.attemptId,
     handoffId: pending.handoffId,
     failureCode,
@@ -780,6 +811,7 @@ export function initIdleDelivery(): void {
     if (state !== 'idle') requeuePendingDeliveryStarts(sessionId);
     if (state === 'idle') {
       flushQueue(sessionId);
+      drainDurableMailbox(sessionId);
       scheduleFastLaneDeliveryCheck(sessionId);
     }
   });
@@ -789,11 +821,13 @@ export function initIdleDelivery(): void {
       isSessionInjectableIdle(entry.sessionId)
     ) {
       flushQueue(entry.sessionId);
+      drainDurableMailbox(entry.sessionId);
     } else {
       requeuePendingDeliveryStarts(entry.sessionId);
     }
   });
   untapExit = tapSessionExit((sessionId) => {
+    lastMailboxDrainAt.delete(sessionId);
     scheduleFastLaneDeliveryCheck(sessionId);
     // Capture durable recovery targets BEFORE dropping the in-memory queue.
     // SQLite keeps handoffs as `queued`; without this the Maestro exit would
@@ -900,6 +934,7 @@ export function shutdownIdleDelivery(): void {
   untapSemanticStatus = null;
   unsubscribeScopeChanges = null;
   queues.clear();
+  lastMailboxDrainAt.clear();
   configureHandoffDeliveryRuntimeRecovery(null);
   for (const pending of [...pendingEnters]) clearPendingEnter(pending);
   for (const pending of [...pendingDeliveryStarts]) {
@@ -978,6 +1013,58 @@ function targetAuthority(
     missionId,
     scope: Object.freeze({ ...scope }),
   });
+}
+
+/**
+ * Caixa postal durável do Maestro.
+ *
+ * `flushQueue` drena apenas a fila EM MEMÓRIA. Quando o handoff é submetido
+ * sem alvo vivo (`targetAuthority` → null: Maestro ainda não vinculado, morto
+ * ou em respawn), NADA é enfileirado — a linha fica `queued` no SQLite e
+ * nenhum idle posterior a relê. Só respawn/recovery/resume chamavam
+ * `redeliverPendingHandoffs`, e nenhum deles dispara no caso comum de um
+ * Maestro vivo que simplesmente ficou ocioso depois.
+ *
+ * Campo 20/08 (missão "quanto é 1+1"): 4 de 5 handoffs do banco morreram
+ * exatamente assim — `delivery_state=queued` com ZERO linha em
+ * `handoff_delivery_attempts`. Ao ficar idle, o Maestro agora puxa a própria
+ * caixa: o SQLite é a fonte da verdade, a fila em memória é só atalho.
+ */
+const MAILBOX_DRAIN_THROTTLE_MS = 3_000;
+const lastMailboxDrainAt = new Map<string, number>();
+
+function drainDurableMailbox(sessionId: string): void {
+  const pane = getPaneRuntimeAuthorityBySession(sessionId);
+  if (!pane || pane.kind !== 'cli-agent' || pane.role !== 'orchestrator') {
+    return;
+  }
+  const missionId = pane.missionId;
+  const scope = pane.scope;
+  if (!missionId || !scope) return;
+  // Uma entrega já em voo nesta sessão é dona da vez: reenfileirar por cima
+  // duplicaria o mesmo handoff na fila em memória.
+  for (const inflight of pendingEnters) {
+    if (inflight.authority.sessionId === sessionId) return;
+  }
+  const now = Date.now();
+  if (now - (lastMailboxDrainAt.get(sessionId) ?? 0) < MAILBOX_DRAIN_THROTTLE_MS) {
+    return;
+  }
+  lastMailboxDrainAt.set(sessionId, now);
+  try {
+    const drained = redeliverPendingHandoffs(scope, missionId);
+    if (drained > 0) {
+      console.info(
+        `[idle-delivery] caixa durável drenada no idle do Maestro: ` +
+          `${drained} handoff(s) (mission=${missionId}, session=${sessionId})`,
+      );
+    }
+  } catch (error) {
+    console.warn(
+      '[idle-delivery] dreno da caixa durável falhou:',
+      error instanceof Error ? error.message : error,
+    );
+  }
 }
 
 function scheduleFastLaneDeliveryCheck(sessionId: string): void {

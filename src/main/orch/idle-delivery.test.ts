@@ -1170,4 +1170,80 @@ describe('idle delivery authority and lifecycle', () => {
     expect(storeMocks.delivered).toEqual([]);
     delivery.shutdownIdleDelivery();
   });
+
+  it('entrega no idle um handoff represado que nasceu sem Maestro vinculado', async () => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    // Maestro ainda não vinculado: o pane não está no registro, então
+    // `targetAuthority` devolve null e NADA é enfileirado em memória.
+    storeMocks.missions.set(
+      `${scope.projectId}:${scope.checkoutId}:mission-a`,
+      {
+        id: 'mission-a',
+        orchestratorSessionId: 'orchestrator-session',
+        status: 'running',
+        description: 'Objetivo original',
+      },
+    );
+    const pending = handoff();
+    storeMocks.handoffs.set(pending.id, pending);
+    delivery.initIdleDelivery();
+
+    expect(delivery.onHandoffSubmitted(pending, scope)).toBeNull();
+    await vi.advanceTimersByTimeAsync(2_000);
+    // Campo 20/08: era aqui que 4 de 5 handoffs morriam — `queued` para sempre,
+    // sem uma única linha em handoff_delivery_attempts.
+    expect(ptyMocks.writes).not.toHaveBeenCalled();
+    expect(storeMocks.deliveryAttempts.size).toBe(0);
+
+    // O Maestro vincula e fica ocioso: a caixa durável é drenada.
+    authorizeTarget(scope);
+    ptyMocks.state = 'idle';
+    ptyMocks.stateTaps[0]('orchestrator-session', 'idle');
+    await advanceUntilPasted(delivery);
+
+    expect(ptyMocks.writes).toHaveBeenCalledWith(
+      'orchestrator-session',
+      expect.stringContaining('handoff_id=handoff-a'),
+      { markInputBusy: false },
+    );
+    expect(storeMocks.deliveryAttempts.size).toBe(1);
+    delivery.shutdownIdleDelivery();
+  });
+
+  it('não redigita nem falha quando o Maestro já leu o handoff sem borda busy', async () => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    authorizeTarget(scope);
+    const pending = handoff();
+    storeMocks.handoffs.set(pending.id, pending);
+    ptyMocks.state = 'idle';
+    delivery.initIdleDelivery();
+
+    delivery.onHandoffSubmitted(pending, scope);
+    await advanceUntilSubmitted(delivery);
+    expect(ptyMocks.writes).toHaveBeenCalledTimes(2);
+    const pastesBefore = ptyMocks.writes.mock.calls.filter((call) =>
+      String(call[1]).includes('handoff_id=handoff-a'),
+    ).length;
+
+    // list-ack de `nexus_handoff_list`: o Maestro leu, mas o heurístico de
+    // busy do TUI nunca pintou. Antes isso virava accept_timeout + reentrega.
+    storeMocks.handoffs.set(pending.id, {
+      ...pending,
+      deliveryState: 'acknowledged',
+    });
+    await vi.advanceTimersByTimeAsync(
+      delivery.SUBMIT_ACCEPTANCE_WINDOW_MS + 1_000,
+    );
+
+    const attempts = [...storeMocks.deliveryAttempts.values()];
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0].state).toBe('accepted');
+    const pastesAfter = ptyMocks.writes.mock.calls.filter((call) =>
+      String(call[1]).includes('handoff_id=handoff-a'),
+    ).length;
+    expect(pastesAfter).toBe(pastesBefore);
+    delivery.shutdownIdleDelivery();
+  });
 });
