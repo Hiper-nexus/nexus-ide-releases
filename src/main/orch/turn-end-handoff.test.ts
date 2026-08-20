@@ -220,6 +220,26 @@ describe('payloadReplyText (F-355 — payload antes do transcript)', () => {
     expect(payloadReplyText({})).toBe('');
     expect(payloadReplyText({ last_assistant_message: 42 })).toBe('');
   });
+
+  it('lê o dialeto do codex-rs (last_agent_message) e o notify com hífen', () => {
+    expect(payloadReplyText({ last_agent_message: '2' })).toBe('2');
+    expect(payloadReplyText({ 'last-assistant-message': ' 2 ' })).toBe('2');
+    expect(payloadReplyText({ lastAgentMessage: 'ok' })).toBe('ok');
+  });
+
+  it('acha o texto aninhado no envelope do evento', () => {
+    expect(
+      payloadReplyText({
+        type: 'agent-turn-complete',
+        payload: { 'last-assistant-message': '1+1 = 2' },
+      }),
+    ).toBe('1+1 = 2');
+  });
+
+  it('ignora campo vazio e não confunde chave desconhecida com resposta', () => {
+    expect(payloadReplyText({ last_agent_message: '   ' })).toBe('');
+    expect(payloadReplyText({ session_id: 'pty-1', cwd: '/tmp' })).toBe('');
+  });
 });
 
 describe('readLastAssistantTextFromTranscript (varredura tolerante)', () => {

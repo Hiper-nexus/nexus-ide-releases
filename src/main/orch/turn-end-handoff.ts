@@ -101,20 +101,57 @@ export function __noteTurnStartForTests(entry: AgentTurnStartEntry): void {
 // ── Colheita do texto da resposta ─────────────────────────────────────────
 
 /**
+ * Nomes de campo que carregam a última fala do agente, normalizados (minúsculo,
+ * sem `-`/`_`). Cada CLI usa um dialeto: Claude Code manda
+ * `last_assistant_message`, o `stop` do codex-rs manda `last_agent_message`, e
+ * o notify do Codex manda `last-assistant-message` com hífen.
+ */
+const REPLY_TEXT_KEYS = new Set([
+  'lastassistantmessage',
+  'lastagentmessage',
+  'promptresponse',
+  'assistantmessage',
+  'agentmessage',
+]);
+
+/** Envelopes onde um CLI pode aninhar o corpo do evento. */
+const REPLY_ENVELOPE_KEYS = ['payload', 'data', 'turn', 'result', 'event'];
+
+function normalizeReplyKey(key: string): string {
+  return key.toLowerCase().replace(/[-_\s]/g, '');
+}
+
+/**
  * Texto da resposta pelo payload do hook. O Stop do Claude Code traz
  * `last_assistant_message` montado EM MEMÓRIA (imune à corrida de flush do
- * transcript — F-355); outros sabores trazem `prompt_response`. String vazia
- * quando o payload não carrega texto.
+ * transcript — F-355); outros sabores trazem `prompt_response`,
+ * `last_agent_message` (codex-rs) ou `last-assistant-message` (notify do
+ * Codex). Casar só o dialeto do Claude perdia a resposta INTEIRA de todo pane
+ * não-Claude: o contrato manda o worker responder e NÃO chamar ferramenta
+ * quando cabe em 280 chars, então sem esta captura o texto some de vez.
+ * Campo 20/08: "sem texto honesto (payload e transcript vazios)" em dois panes
+ * Codex que tinham respondido `2` na tela.
+ *
+ * String vazia quando o payload não carrega texto.
  */
 export function payloadReplyText(
   body: Record<string, unknown>,
 ): string {
-  const raw =
-    body.last_assistant_message ??
-    body.lastAssistantMessage ??
-    body.prompt_response ??
-    body.promptResponse;
-  return typeof raw === 'string' ? raw.trim() : '';
+  for (const [key, value] of Object.entries(body)) {
+    if (typeof value !== 'string') continue;
+    if (!REPLY_TEXT_KEYS.has(normalizeReplyKey(key))) continue;
+    const text = value.trim();
+    if (text) return text;
+  }
+  for (const envelope of REPLY_ENVELOPE_KEYS) {
+    const nested = body[envelope];
+    if (typeof nested !== 'object' || nested === null || Array.isArray(nested)) {
+      continue;
+    }
+    const text = payloadReplyText(nested as Record<string, unknown>);
+    if (text) return text;
+  }
+  return '';
 }
 
 function partsToText(content: unknown): string {
