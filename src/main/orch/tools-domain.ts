@@ -38,6 +38,7 @@ import { pinUniqueSealedRosterOnDecision } from '../../shared/sealed-agent-runti
 import { DEFAULT_TODO_LIST } from './todo-store';
 import { getProjectDomainStores } from './project-domain-store-registry';
 import { getContextWorkflowService } from '../context/context-workflow-registry';
+import { ProcessGitRunner } from '../runtime/git-command';
 import { missionEngineForScope } from './mission-engine-registry';
 import { saveCatalogOverlay, proposeRecipes } from './catalog-overlay';
 import {
@@ -309,6 +310,32 @@ const missionListTool: McpToolDef = {
   },
 };
 
+const gitRunner = new ProcessGitRunner();
+
+function safeGitPush(
+  scope: ProjectExecutionScope,
+  push: { remote?: string; branch?: string },
+): { ok: boolean; output?: string; error?: string } {
+  const remote = (push.remote ?? 'origin').trim();
+  const branch = push.branch?.trim();
+  if (!remote || /[;&|`$(){}[\]\\]/.test(remote)) {
+    return { ok: false, error: 'unsafe git remote' };
+  }
+  if (branch && /[;&|`$(){}[\]\\]/.test(branch)) {
+    return { ok: false, error: 'unsafe git branch' };
+  }
+  const args = branch ? ['push', remote, branch] : ['push', remote];
+  const cwd = scope.rootRealPath;
+  try {
+    const result = gitRunner.run(cwd, args, { timeoutMs: 60_000 });
+    return result.status === 0
+      ? { ok: true, output: result.stdout.trim() }
+      : { ok: false, error: result.stderr.trim() || result.stdout.trim() };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 const missionSetStatusTool: McpToolDef = {
   name: 'nexus_mission_set_status',
   description:
@@ -335,6 +362,16 @@ const missionSetStatusTool: McpToolDef = {
         type: 'string',
         description:
           'Justification or consult learning note. Appended to mission learnings when provided.',
+      },
+      push: {
+        type: 'object',
+        description:
+          'Optional git push to run after the mission reaches done. ' +
+          'Only plain push is supported; force flags are rejected.',
+        properties: {
+          remote: { type: 'string', description: 'Remote name (default: origin)' },
+          branch: { type: 'string', description: 'Branch name (default: current branch)' },
+        },
       },
     },
     required: ['missionId', 'status'],
@@ -505,6 +542,23 @@ const missionSetStatusTool: McpToolDef = {
         throw new Error(
           'MissionEngine did not persist the canonical verified completion result',
         );
+      }
+      if (
+        typeof args.push === 'object' &&
+        args.push !== null &&
+        !Array.isArray(args.push)
+      ) {
+        const push = args.push as { remote?: string; branch?: string };
+        const pushResult = safeGitPush(ctx.scope, push);
+        if (pushResult.ok) {
+          console.info(
+            `[mission-set-status] git push concluído para ${missionId}: ${pushResult.output}`,
+          );
+        } else {
+          console.warn(
+            `[mission-set-status] git push falhou para ${missionId}: ${pushResult.error}`,
+          );
+        }
       }
       return completed;
     }
