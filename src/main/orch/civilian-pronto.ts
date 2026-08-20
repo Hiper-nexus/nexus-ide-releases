@@ -93,6 +93,7 @@ export function decideCivilianPronto(input: {
   readonly neverStarted: boolean;
   readonly liveWriterBusy: boolean;
   readonly holdForGuidedReview: boolean;
+  readonly hasQueuedHandoffs: boolean;
 }): CivilianProntoDecision {
   const sealedDone = Math.max(0, Math.floor(input.sealedDone));
   const sealedTotal = Math.max(0, Math.floor(input.sealedTotal));
@@ -123,8 +124,10 @@ export function decideCivilianPronto(input: {
   }
 
   const startedWork = input.hasSuccessHandoff || sealedDone > 0;
-  const deliveryEvidence =
-    input.hasSuccessHandoff || input.productFileCount > 0;
+  const deliveryEvidence = input.hasSuccessHandoff;
+  if (input.hasQueuedHandoffs) {
+    return { ...base, action: 'wait', reason: 'queued-handoffs' };
+  }
   if (startedWork && deliveryEvidence) {
     return {
       ...base,
@@ -369,6 +372,10 @@ export function maybeApplyCivilianPronto(
     sealedDone === 0 &&
     !liveWriterBusy;
 
+  const hasQueuedHandoffs = handoffs.some(
+    (h) => h.deliveryState === 'queued' || h.deliveryState === 'submitted',
+  );
+
   const decision = decideCivilianPronto({
     missionStatus: mission.status,
     failClosed: failClosedHaystack(mission, handoffs),
@@ -385,6 +392,7 @@ export function maybeApplyCivilianPronto(
       intentState: mission.intentState,
       pendingReviewer,
     }),
+    hasQueuedHandoffs,
   });
 
   if (decision.action !== 'pronto') {

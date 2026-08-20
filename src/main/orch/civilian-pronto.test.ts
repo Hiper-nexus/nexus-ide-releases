@@ -21,6 +21,7 @@ const running = {
   neverStarted: false,
   liveWriterBusy: false,
   holdForGuidedReview: false,
+  hasQueuedHandoffs: false,
 } as const;
 
 describe('decideCivilianPronto', () => {
