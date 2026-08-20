@@ -131,3 +131,22 @@ describe('doutrina exige delegação total (nem o trivial é respondido no pane)
     expect(doctrine).toContain('dispatch de worker');
   });
 });
+
+describe('meta-tarefas e fecho por evidência (missão 1+1 de 20/08)', () => {
+  it('meta-tarefa sobre os próprios panes é do Maestro — workers não têm ferramenta de pane', () => {
+    // Campo: worker entregou handoff partial "não há ferramenta para
+    // perguntar a outro pane" — a delegação era estruturalmente impossível.
+    const doctrine = buildOrchestratorDoctrine(null, {} as never);
+    expect(doctrine).toContain('meta-tarefa');
+    expect(doctrine).toContain('nexus_pane_write');
+  });
+
+  it('missão-informação fecha com handoff final do próprio Maestro', () => {
+    // Campo: resposta validada nos panes mas missão eterna em running porque
+    // ninguém tinha slot de handoff sobrando — exceto o Maestro, que pode
+    // (canSubmitMissionHandoff aceita orchestrator) e nunca soube.
+    const doctrine = buildOrchestratorDoctrine(null, {} as never);
+    expect(doctrine).toContain('FECHO');
+    expect(doctrine).toContain('submeta VOCÊ o handoff final');
+  });
+});
