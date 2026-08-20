@@ -59,8 +59,20 @@ npm run rebuild:node           # rebuild native modules for Node (CI/tests)
 - **Visual design tokens and component styles**: `DESIGN.md`
 - **Architecture and module boundaries**: `docs/ARCHITECTURE.md`
 - **Security boundaries and threat model**: `docs/SECURITY.md`
+- **QA bug workflow**: `docs/QA-PROTOCOL.md`
+- **Release readiness gate**: `docs/RELEASE-CHECKLIST.md`
 - **Co-located tests**: every source file has a `.test.ts` sibling — run it
   after editing the source.
+
+## QA and Release Process (from Overclock adaptation)
+
+- Register bugs as `docs/qa/items/F-XXX.md` using the format in
+  `docs/QA-PROTOCOL.md`. 1 bug = 1 file, never append to a single ledger.
+- Validate fixes with `npx tsc --noEmit` and `npx vitest run path/to/file.test.ts`
+  before marking `corrigido`.
+- For renderer or IPC changes, also run `npm run security:renderer-sinks`.
+- Use `git add` per finding, never `git add -A` or `git add .`.
+- Before declaring a release ready, walk through `docs/RELEASE-CHECKLIST.md`.
 
 ## Resolução de Travamentos e Paridade Overclock
 
