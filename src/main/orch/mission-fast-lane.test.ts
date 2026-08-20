@@ -407,6 +407,8 @@ describe('kickoff meta-de-pane — um pane por integrante, TODOS respondem', () 
     expect(prompt).toContain('Nenhum pane sem resposta');
     expect(prompt).toContain('EXTRAIA do objetivo apenas a PERGUNTA');
     expect(prompt).toContain('readOnly: true');
+    expect(prompt).toContain('artifacts');
+    expect(prompt).toContain('não chame set_status done');
   });
 
   it('missão sem meta-de-pane não carrega a diretiva', () => {

@@ -527,8 +527,12 @@ export function agentPrompt(
         'via nexus_pane_spawn com a pergunta no prompt e readOnly: true — ' +
         'pergunta não escreve arquivo, e SEM readOnly a serialização de 1 ' +
         'escritor por checkout bloqueia o leque no 2º pane. Aguarde a resposta de ' +
-        'TODOS os panes, e só então FECHO: nexus_handoff_submit success citando ' +
-        'a resposta de CADA pane. Nenhum pane sem resposta = missão não fecha. ' +
+        'TODOS os panes, e só então FECHO: nexus_handoff_submit success com ' +
+        'summary citando a resposta de CADA pane E artifacts: [{fullText: ' +
+        '"pane X → resposta; pane Y → resposta"}] — success com artifacts ' +
+        'vazio NÃO conclui a missão (o gate exige prova listada), e o slot de ' +
+        'handoff é ÚNICO: não chame set_status done, o motor conclui sozinho. ' +
+        'Nenhum pane sem resposta = missão não fecha. ' +
         'Para perguntar a um pane JÁ aberto use nexus_pane_ask (envia, espera ' +
         'e devolve só a resposta) — qualquer pane da missão pode usar.'
       : '';
