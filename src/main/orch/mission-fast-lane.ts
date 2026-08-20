@@ -524,7 +524,9 @@ export function agentPrompt(
         'panes" nem papel/missão (relay fiel vale para trabalho delegado, não ' +
         'para perguntas). ' +
         `Abra UM pane por integrante (${teamWorkerNames.join(', ') || 'equipe'}) ` +
-        'via nexus_pane_spawn com a pergunta no prompt, aguarde a resposta de ' +
+        'via nexus_pane_spawn com a pergunta no prompt e readOnly: true — ' +
+        'pergunta não escreve arquivo, e SEM readOnly a serialização de 1 ' +
+        'escritor por checkout bloqueia o leque no 2º pane. Aguarde a resposta de ' +
         'TODOS os panes, e só então FECHO: nexus_handoff_submit success citando ' +
         'a resposta de CADA pane. Nenhum pane sem resposta = missão não fecha. ' +
         'Para perguntar a um pane JÁ aberto use nexus_pane_ask (envia, espera ' +
