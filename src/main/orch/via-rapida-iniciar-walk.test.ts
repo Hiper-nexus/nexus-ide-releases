@@ -190,6 +190,7 @@ describe('Iniciar 20-story → first-wave + selo + Pronto', () => {
       productFileCount: evidence.productFiles.length,
       activeWriterCount: inspection.activeWriterCount,
       workersDelivered: inspection.workersDelivered,
+      hasQueuedHandoffs: inspection.hasQueuedHandoffs,
       remainingKinds: inspection.remaining.map((row) => row.kind),
       oldestReviewQueuedMs: null,
     });
@@ -281,6 +282,7 @@ describe('Iniciar 20-story → first-wave + selo + Pronto', () => {
       productFileCount: files.length,
       activeWriterCount: 0,
       workersDelivered: false,
+      hasQueuedHandoffs: false,
       remainingKinds: ['review'],
       oldestReviewQueuedMs: 1_000,
     });
