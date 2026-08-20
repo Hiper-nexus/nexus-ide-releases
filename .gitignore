@@ -153,3 +153,7 @@ scripts/codesign-retry-bin/
 
 # Maquinário do IDE host (Overclock) gravado na raiz do workspace — não é fonte do Nexus
 /.agents/
+
+# Dump da engenharia reversa do Overclock.app (skills oc-*, sidecar) — material
+# de análise local, regenerável a partir do bundle; não é fonte do Nexus
+/overclock-extracted/
