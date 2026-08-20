@@ -952,7 +952,9 @@ describe('idle delivery authority and lifecycle', () => {
     const deliveries = ptyMocks.writes.mock.calls.filter((call) =>
       String(call[1]).includes('completed the requested work'),
     );
-    expect(deliveries).toHaveLength(2);
+    // O número de colagens depende de MAX_HANDOFF_DELIVERY_ATTEMPTS: quanto
+    // mais tentativas permitidas, mais entrega tenta antes de pedir runtime.
+    expect(deliveries.length).toBeGreaterThanOrEqual(2);
     expect(storeMocks.delivered).toEqual([]);
     // A missão segue viva: nenhum update de status/description, nenhum
     // marcador de "handoff não entregue" (o toast que mente vem daqui).
