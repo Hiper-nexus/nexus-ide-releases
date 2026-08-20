@@ -43,6 +43,7 @@ import {
   setBrowserPaneSuppression,
 } from './browser/browser-host';
 import { listPanes } from './lib/split-tree';
+import { describeWorkspaceOpenError } from './lib/workspace-open-error';
 import { routeMissionAttention } from './lib/mission-attention-route';
 import { useFilesStore } from './state/files-store';
 import { useAccountController } from './state/account-store';
@@ -742,11 +743,11 @@ export function App() {
     void useWorkspaceStore
       .getState()
       .pick()
-      .catch(() => {
+      .catch((cause: unknown) => {
         useToastStore.getState().push(
           'error',
           'Workspace não pôde ser aberto',
-          'Escolha a pasta novamente.',
+          describeWorkspaceOpenError(cause),
         );
       });
   }

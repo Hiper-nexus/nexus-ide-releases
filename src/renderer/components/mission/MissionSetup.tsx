@@ -13,6 +13,7 @@ import {
   DEFAULT_ORCH_SETTINGS,
   type OrchSettings,
 } from '../../../shared/settings-types';
+import { describeWorkspaceOpenError } from '../../lib/workspace-open-error';
 import { missionRuntimeReadiness } from '../../orch/mission-runtime-readiness';
 import {
   isExactPetStudioEntryContext,
@@ -645,8 +646,8 @@ export function MissionSetup() {
     setExpressError(null);
     try {
       await pickWorkspace();
-    } catch {
-      setWorkspaceActionError('Não foi possível abrir a pasta escolhida.');
+    } catch (cause) {
+      setWorkspaceActionError(describeWorkspaceOpenError(cause));
     } finally {
       pickingWorkspaceRef.current = false;
       setPickingWorkspace(false);
