@@ -15,7 +15,7 @@ import {
 import { MAX_LIVE_PANES_SOFT } from '../../shared/pane-limits';
 
 export const LARGE_MISSION_STORY_THRESHOLD = 6;
-export const FIRST_WAVE_WRITER_SEATS = 7;
+export const FIRST_WAVE_WRITER_SEATS = 15;
 
 /**
  * CLIs oferecidas além do roster quando AuthReadiness=present.

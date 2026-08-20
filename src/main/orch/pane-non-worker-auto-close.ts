@@ -22,8 +22,8 @@ import {
 } from './pane-registry';
 import { isSessionInjectableIdle, tapAgentSemanticStatus } from './agent-status';
 
-/** 5 minutos de idle antes de auto-fechar um pane não-worker. */
-export const NON_WORKER_AUTO_CLOSE_TTL_MS = 300_000;
+/** 30 minutos de idle antes de auto-fechar um pane não-worker. */
+export const NON_WORKER_AUTO_CLOSE_TTL_MS = 30 * 60_000;
 
 export interface NonWorkerPaneRef {
   readonly paneId: string;

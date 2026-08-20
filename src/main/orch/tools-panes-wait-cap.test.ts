@@ -80,7 +80,7 @@ describe('pane wait timeout cap', () => {
       context(),
     )) as { state: string; output: string };
 
-    expect(PANE_BOOT_TIMEOUT_MS).toBe(15_000);
+    expect(PANE_BOOT_TIMEOUT_MS).toBe(30_000);
     expect(PANE_BOOT_TIMEOUT_MS).toBeLessThan(PANE_WAIT_TIMEOUT_CAP_MS);
     expect(harness.waitForIdle).toHaveBeenCalledWith(
       'session-1',

@@ -23,12 +23,12 @@ import {
 describe('shouldTripWorkerMortalityBreaker', () => {
   it('abaixo do limite não corta', () => {
     expect(shouldTripWorkerMortalityBreaker(0)).toBe(false);
-    expect(shouldTripWorkerMortalityBreaker(2)).toBe(false);
+    expect(shouldTripWorkerMortalityBreaker(WORKER_MORTALITY_CIRCUIT_BREAK - 1)).toBe(false);
   });
 
   it('no limite corta', () => {
     expect(shouldTripWorkerMortalityBreaker(WORKER_MORTALITY_CIRCUIT_BREAK)).toBe(true);
-    expect(shouldTripWorkerMortalityBreaker(6)).toBe(true);
+    expect(shouldTripWorkerMortalityBreaker(WORKER_MORTALITY_CIRCUIT_BREAK + 1)).toBe(true);
   });
 });
 
@@ -64,33 +64,21 @@ describe('estado de mortalidade por (missão, adapter)', () => {
     expect(message).toMatch(/outro agente|roster/i);
   });
 
-  it('mortalidade 3 loga writer_circuit_break e recusa remint do CLI', () => {
+  it('mortalidade no limite loga writer_circuit_break e recusa remint do CLI', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const key = {
+      missionId: 'mission-1',
+      adapterId: 'kimi',
+      role: 'worker' as const,
+    };
+    for (let i = 0; i < WORKER_MORTALITY_CIRCUIT_BREAK - 1; i += 1) {
+      recordWorkerDeathWithoutDelivery('mission-1', 'kimi');
+      expect(writerCircuitBroken(key)).toBe(false);
+    }
     recordWorkerDeathWithoutDelivery('mission-1', 'kimi');
-    recordWorkerDeathWithoutDelivery('mission-1', 'kimi');
-    expect(
-      writerCircuitBroken({
-        missionId: 'mission-1',
-        adapterId: 'kimi',
-        role: 'worker',
-      }),
-    ).toBe(false);
-    recordWorkerDeathWithoutDelivery('mission-1', 'kimi');
-    expect(workerMortalityCount('mission-1', 'kimi')).toBe(3);
-    expect(
-      writerCircuitBreakers.canSeat({
-        adapterId: 'kimi',
-        role: 'worker',
-        missionId: 'mission-1',
-      }),
-    ).toBe(false);
-    expect(
-      writerCircuitBroken({
-        missionId: 'mission-1',
-        adapterId: 'kimi',
-        role: 'worker',
-      }),
-    ).toBe(true);
+    expect(workerMortalityCount('mission-1', 'kimi')).toBe(WORKER_MORTALITY_CIRCUIT_BREAK);
+    expect(writerCircuitBreakers.canSeat(key)).toBe(false);
+    expect(writerCircuitBroken(key)).toBe(true);
     expect(
       warn.mock.calls.some((args) =>
         args.some((arg) => String(arg).includes('writer_circuit_break')),

@@ -1,8 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  WORKER_MORTALITY_CIRCUIT_BREAK,
+  recordAdapterProofOfLife,
+  recordWorkerDeathWithoutDelivery,
+  resetMissionWorkerMortality,
+  workerMortalityCount,
+} from './worker-mortality';
 
 /**
  * Campanha 0.50 (A1/A2): integração do circuit breaker de mortalidade.
- * O watcher conta worker morto-sem-entrega; a 3, o spawn de worker daquele
+ * O watcher conta worker morto-sem-entrega; a N, o spawn de worker daquele
  * adapter é recusado com motivo acionável — fim do loop de respawn do
  * missão real (pane 6× morto, 13/20 workers sem um turno).
  */
@@ -30,12 +37,6 @@ vi.mock('../pty/pty-manager', () => ({
 }));
 
 import { requestPaneSpawn } from './pane-registry';
-import {
-  recordAdapterProofOfLife,
-  recordWorkerDeathWithoutDelivery,
-  resetMissionWorkerMortality,
-  workerMortalityCount,
-} from './worker-mortality';
 
 function spawnRequest(overrides: Record<string, unknown> = {}) {
   const request: Record<string, unknown> = {
@@ -55,17 +56,18 @@ beforeEach(() => {
 });
 
 describe('circuit breaker de mortalidade no spawn de worker', () => {
-  it('abaixo de 3 mortes o spawn segue o caminho normal', async () => {
-    recordWorkerDeathWithoutDelivery('mission-breaker', 'glm');
-    recordWorkerDeathWithoutDelivery('mission-breaker', 'glm');
+  it('abaixo de N mortes o spawn segue o caminho normal', async () => {
+    for (let i = 0; i < WORKER_MORTALITY_CIRCUIT_BREAK - 1; i += 1) {
+      recordWorkerDeathWithoutDelivery('mission-breaker', 'glm');
+    }
     const result = await spawnRequest();
     expect(result.error).not.toMatch(/circuit breaker/);
   });
 
-  it('com 3 mortes sem entrega o spawn é recusado com motivo acionável', async () => {
-    recordWorkerDeathWithoutDelivery('mission-breaker', 'glm');
-    recordWorkerDeathWithoutDelivery('mission-breaker', 'glm');
-    recordWorkerDeathWithoutDelivery('mission-breaker', 'glm');
+  it('com N mortes sem entrega o spawn é recusado com motivo acionável', async () => {
+    for (let i = 0; i < WORKER_MORTALITY_CIRCUIT_BREAK; i += 1) {
+      recordWorkerDeathWithoutDelivery('mission-breaker', 'glm');
+    }
     const result = await spawnRequest();
     expect(result.ok).toBe(false);
     expect(result.error).toMatch(/circuit breaker de mortalidade/);
@@ -74,15 +76,15 @@ describe('circuit breaker de mortalidade no spawn de worker', () => {
   });
 
   it('orquestrador nunca é recusado pelo breaker', async () => {
-    recordWorkerDeathWithoutDelivery('mission-breaker', 'glm');
-    recordWorkerDeathWithoutDelivery('mission-breaker', 'glm');
-    recordWorkerDeathWithoutDelivery('mission-breaker', 'glm');
+    for (let i = 0; i < WORKER_MORTALITY_CIRCUIT_BREAK; i += 1) {
+      recordWorkerDeathWithoutDelivery('mission-breaker', 'glm');
+    }
     const result = await spawnRequest({ role: 'orchestrator' });
     expect(result.error).not.toMatch(/circuit breaker/);
   });
 
   it('prova de vida (entrega) reabre o circuito', async () => {
-    for (let i = 0; i < 3; i += 1) {
+    for (let i = 0; i < WORKER_MORTALITY_CIRCUIT_BREAK; i += 1) {
       recordWorkerDeathWithoutDelivery('mission-breaker', 'glm');
     }
     recordAdapterProofOfLife('mission-breaker', 'glm');
@@ -92,7 +94,7 @@ describe('circuit breaker de mortalidade no spawn de worker', () => {
   });
 
   it('outra missão não herda o breaker', async () => {
-    for (let i = 0; i < 3; i += 1) {
+    for (let i = 0; i < WORKER_MORTALITY_CIRCUIT_BREAK; i += 1) {
       recordWorkerDeathWithoutDelivery('mission-breaker', 'glm');
     }
     const result = await spawnRequest({ missionId: 'mission-vizinha' });

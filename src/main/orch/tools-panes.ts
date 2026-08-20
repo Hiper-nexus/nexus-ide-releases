@@ -640,19 +640,20 @@ const paneSpawn: McpToolDef = {
           throw new Error('approval_required: current mission contract unavailable');
         }
         // Slots contam só workers VIVOS: linha durável de worker morto/fechado
-        // não pode segurar maxWorkers para sempre (deadlock de campo). Um pane
-        // sem snapshot ainda conta como vivo (recém-spawnado, pré-bind).
+        // não pode segurar maxWorkers para sempre (deadlock de campo). A
+        // reserva `pendingWorkerSpawns` cobre o período de pré-bind; depois de
+        // gravado o pane precisa aparecer nos snapshots — se sumiu, é morto.
         const liveSnapshotStates = new Map(
           listPaneSnapshots().map((pane) => [pane.paneId, pane.state] as const),
         );
         const liveWorkerCount = suite.missionPanes
           .list(missionId)
           .filter((row) => row.role === 'worker')
-          .filter(
-            (row) =>
-              !row.paneId ||
-              liveSnapshotStates.get(row.paneId) !== 'exited',
-          ).length;
+          .filter((row) => {
+            if (!row.paneId) return true; // reserva de pré-bind
+            const state = liveSnapshotStates.get(row.paneId);
+            return state !== undefined && state !== 'exited';
+          }).length;
         const policy = reserveWorkerSpawnSlot({
           scope: ctx.scope,
           missionId,
@@ -1139,13 +1140,13 @@ const paneClose: McpToolDef = {
   },
 };
 
-/** Timeout máximo para confirmação de boot — 15s, igual concorrente. */
-export const PANE_BOOT_TIMEOUT_MS = 15_000;
+/** Timeout máximo para confirmação de boot — 30s, abaixo do cap MCP. */
+export const PANE_BOOT_TIMEOUT_MS = 30_000;
 
 const paneWaitIdle: McpToolDef = {
   name: 'nexus_pane_wait_idle',
   description:
-    'Boot confirmation only — hard-capped at 15s. Confirms a pane came up ' +
+    'Boot confirmation only — hard-capped at 30s. Confirms a pane came up ' +
     'and its CLI is ready. NEVER use this to wait for worker RESULTS ' +
     '(results arrive via nexus_handoff_submit and wake you automatically). ' +
     'Returns {state}. On timeout the pane is still booting — call again or ' +
@@ -1160,7 +1161,7 @@ const paneWaitIdle: McpToolDef = {
       },
       timeoutMs: {
         type: 'number',
-        description: `Max wait in ms. Default ${PANE_BOOT_TIMEOUT_MS} (15s). Hard cap ${PANE_BOOT_TIMEOUT_MS}.`,
+        description: `Max wait in ms. Default ${PANE_BOOT_TIMEOUT_MS} (30s). Hard cap ${PANE_BOOT_TIMEOUT_MS}.`,
       },
       poll: {
         type: 'boolean',

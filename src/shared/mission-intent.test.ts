@@ -636,18 +636,19 @@ describe('budget and parent/child ceilings', () => {
       goal: 'small task',
       intentVersion: 1,
     });
-    // default maxWorkers for normal is 12 (multi-pane-scale fan-out)
-    expect(assertWorkerBudget(contract, 11).ok).toBe(true);
-    expect(assertWorkerBudget(contract, 12).ok).toBe(false);
+    // default maxWorkers for normal is 64 (schema ceiling, free operation)
+    expect(assertWorkerBudget(contract, 63).ok).toBe(true);
+    expect(assertWorkerBudget(contract, 64).ok).toBe(false);
     // No contract = no ceiling (legacy mid-migration).
     expect(assertWorkerBudget(null, 99).ok).toBe(true);
   });
 
   it('risk gates the approval surface, not parallelism', () => {
-    // Normal e sensitive dividem o mesmo teto de workers; destructive fica 1.
-    expect(defaultBudgetsForRisk('normal').maxWorkers).toBe(12);
-    expect(defaultBudgetsForRisk('sensitive').maxWorkers).toBe(12);
-    expect(defaultBudgetsForRisk('destructive').maxWorkers).toBe(1);
+    // No modo livre todos os riscos usam o teto do schema; a aprovação é que
+    // controla o risco, não o paralelismo.
+    expect(defaultBudgetsForRisk('normal').maxWorkers).toBe(64);
+    expect(defaultBudgetsForRisk('sensitive').maxWorkers).toBe(64);
+    expect(defaultBudgetsForRisk('destructive').maxWorkers).toBe(64);
   });
 
   it('synthesizes an approved contract for immediate legacy/pet shells', () => {

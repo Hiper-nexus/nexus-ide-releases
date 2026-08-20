@@ -70,7 +70,7 @@ export interface AgentGateContext {
   handoffSubmitted: boolean;
 }
 
-export const MAX_STOP_ATTEMPTS = 3;
+export const MAX_STOP_ATTEMPTS = 10;
 
 /** Tools that must work regardless of any allowlist. */
 const ALWAYS_ALLOWED = new Set([

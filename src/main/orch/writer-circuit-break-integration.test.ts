@@ -29,8 +29,9 @@ vi.mock('../pty/pty-manager', () => ({
 }));
 
 import { requestPaneSpawn } from './pane-registry';
-import { writerCircuitBreakers } from './writer-circuit-break';
+import { WRITER_CIRCUIT_BREAK_FAILURES, writerCircuitBreakers } from './writer-circuit-break';
 import {
+  WORKER_MORTALITY_CIRCUIT_BREAK,
   recordWorkerDeathWithoutDelivery,
   resetMissionWorkerMortality,
 } from './worker-mortality';
@@ -62,49 +63,50 @@ afterEach(() => {
   writerCircuitBreakers.reset();
 });
 
-describe('circuit-break 3 — Kimi não é re-sentada', () => {
-  it('abaixo de 3 falhas o spawn de worker segue', async () => {
-    writerCircuitBreakers.recordConnectFailure(kimiWorker);
-    writerCircuitBreakers.recordConnectFailure(kimiWorker);
+describe('circuit-break — Kimi não é re-sentada', () => {
+  it('abaixo de N falhas o spawn de worker segue', async () => {
+    for (let i = 0; i < WRITER_CIRCUIT_BREAK_FAILURES - 1; i += 1) {
+      writerCircuitBreakers.recordConnectFailure(kimiWorker);
+    }
     const result = await spawnKimi();
     expect(result.error).not.toMatch(/writer_circuit_break/);
   });
 
-  it('na 3ª morte recusa o 4º assento com writer_circuit_break', async () => {
-    writerCircuitBreakers.recordConnectFailure(kimiWorker);
-    writerCircuitBreakers.recordConnectFailure(kimiWorker);
-    writerCircuitBreakers.recordConnectFailure(kimiWorker);
-    const fourth = await spawnKimi();
-    expect(fourth.ok).toBe(false);
-    expect(fourth.error).toMatch(/writer_circuit_break/);
-    expect(fourth.error).toMatch(/kimi/);
+  it('na N-ésima falha recusa o próximo assento com writer_circuit_break', async () => {
+    for (let i = 0; i < WRITER_CIRCUIT_BREAK_FAILURES; i += 1) {
+      writerCircuitBreakers.recordConnectFailure(kimiWorker);
+    }
+    const next = await spawnKimi();
+    expect(next.ok).toBe(false);
+    expect(next.error).toMatch(/writer_circuit_break/);
+    expect(next.error).toMatch(/kimi/);
     const again = await spawnKimi();
     expect(again.ok).toBe(false);
     expect(again.error).toMatch(/writer_circuit_break/);
   });
 
   it('orquestrador nunca é recusado por este breaker', async () => {
-    writerCircuitBreakers.recordConnectFailure(kimiWorker);
-    writerCircuitBreakers.recordConnectFailure(kimiWorker);
-    writerCircuitBreakers.recordConnectFailure(kimiWorker);
+    for (let i = 0; i < WRITER_CIRCUIT_BREAK_FAILURES; i += 1) {
+      writerCircuitBreakers.recordConnectFailure(kimiWorker);
+    }
     const result = await spawnKimi({ role: 'orchestrator' });
     expect(result.error).not.toMatch(/writer_circuit_break/);
   });
 
-  it('mortalidade 3 recusa o 4º assento Kimi com writer_circuit_break', async () => {
-    recordWorkerDeathWithoutDelivery(kimiWorker.missionId, 'kimi');
-    recordWorkerDeathWithoutDelivery(kimiWorker.missionId, 'kimi');
-    recordWorkerDeathWithoutDelivery(kimiWorker.missionId, 'kimi');
-    const fourth = await spawnKimi();
-    expect(fourth.ok).toBe(false);
-    expect(fourth.error).toMatch(/writer_circuit_break/);
-    expect(fourth.error).toMatch(/kimi/);
+  it('mortalidade N recusa o próximo assento Kimi com writer_circuit_break', async () => {
+    for (let i = 0; i < WORKER_MORTALITY_CIRCUIT_BREAK; i += 1) {
+      recordWorkerDeathWithoutDelivery(kimiWorker.missionId, 'kimi');
+    }
+    const next = await spawnKimi();
+    expect(next.ok).toBe(false);
+    expect(next.error).toMatch(/writer_circuit_break/);
+    expect(next.error).toMatch(/kimi/);
   });
 
   it('outro adapter autenticado ainda pode sentar', async () => {
-    writerCircuitBreakers.recordConnectFailure(kimiWorker);
-    writerCircuitBreakers.recordConnectFailure(kimiWorker);
-    writerCircuitBreakers.recordConnectFailure(kimiWorker);
+    for (let i = 0; i < WRITER_CIRCUIT_BREAK_FAILURES; i += 1) {
+      writerCircuitBreakers.recordConnectFailure(kimiWorker);
+    }
     const result = await spawnKimi({ adapterId: 'codex', agentName: 'Codex' });
     expect(result.error).not.toMatch(/writer_circuit_break/);
   });

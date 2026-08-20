@@ -8,8 +8,8 @@
  * a live civilian mission behind "use Reiniciar".
  */
 
-export const ORCH_SPAWN_GRANT_TTL_MS = 15 * 60_000;
-export const ORCH_SPAWN_GRANT_TOMBSTONE_TTL_MS = 30 * 60_000;
+export const ORCH_SPAWN_GRANT_TTL_MS = 30 * 60_000;
+export const ORCH_SPAWN_GRANT_TOMBSTONE_TTL_MS = 60 * 60_000;
 
 export type LiveCivilianMissionStatus =
   | "pending"

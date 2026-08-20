@@ -11,7 +11,7 @@
  * so Kimi is not reseated forever.
  */
 
-export const WRITER_CIRCUIT_BREAK_FAILURES = 3;
+export const WRITER_CIRCUIT_BREAK_FAILURES = 10;
 
 export type WriterCircuitKey = {
   readonly missionId: string;

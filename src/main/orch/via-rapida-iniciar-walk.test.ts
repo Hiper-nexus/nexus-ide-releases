@@ -119,7 +119,6 @@ describe('Iniciar 20-story → first-wave + selo + Pronto', () => {
     expect(walk.stories).toHaveLength(20);
     expect(walk.sealedRows).toHaveLength(20);
     expect(walk.firstWaveSeats.length).toBe(FIRST_WAVE_WRITER_SEATS);
-    expect(walk.firstWaveSeats.length).toBe(7);
     expect(walk.firstWaveSeats.every((seat) => seat.agent.cli !== 'longcat')).toBe(
       true,
     );

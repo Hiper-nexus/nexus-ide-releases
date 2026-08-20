@@ -490,6 +490,17 @@ export function shouldAttemptDeadPaneRevive(
   return true;
 }
 
+function missionReviveRecoveryCopy(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/pergunta do operador exige resposta/i.test(message)) {
+    return 'A missão aguarda uma resposta. Responda no board da missão para continuar.';
+  }
+  if (/encerrada pelo operador/i.test(message)) {
+    return 'Use Retomar no rail.';
+  }
+  return 'Use Retomar no rail.';
+}
+
 async function requestMissionRuntimeResume(missionId: string): Promise<void> {
   if (missionRuntimeResumeInFlight.has(missionId)) return;
   missionRuntimeResumeInFlight.add(missionId);
@@ -516,6 +527,21 @@ async function requestDeadMissionPaneRevive(
 ): Promise<void> {
   if (!shouldAttemptDeadPaneRevive(missionId)) return;
   try {
+    // Pergunta pendente: não faz o remote call que vira erro vermelho no
+    // terminal. A missão só volta quando o operador responde no board.
+    const snapshot = await window.nexus.mission
+      .snapshot(missionId)
+      .catch(() => null);
+    if (
+      snapshot?.question &&
+      snapshot.allowedActions.includes('answer-question')
+    ) {
+      host.term.writeln(
+        '\r\n\x1b[36m[nexus] missão aguarda uma resposta. ' +
+          'Responda no board para continuar; este pane fica como histórico.\x1b[0m',
+      );
+      return;
+    }
     // Fala DEPOIS do aceite: anunciar "revivendo…" antes da cerca do main
     // recusar (missão encerrada pelo operador) lia como promessa quebrada —
     // sucesso ganha UMA linha, recusa ganha só a linha acionável do catch.
@@ -539,10 +565,10 @@ async function requestDeadMissionPaneRevive(
       );
     }
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     host.term.writeln(
-      `\r\n\x1b[31m[nexus] revival da missão falhou: ` +
-        `${error instanceof Error ? error.message : String(error)}. ` +
-        'Use Retomar no rail.\x1b[0m',
+      `\r\n\x1b[31m[nexus] revival da missão falhou: ${message}. ` +
+        `${missionReviveRecoveryCopy(error)}\x1b[0m`,
     );
   }
 }
@@ -705,11 +731,11 @@ function startSpawn(
                 'religando a missão sozinho…\x1b[0m',
             );
             useSessionStateStore.getState().setPaneState(pane.id, 'exited');
-            void requestMissionRuntimeResume(missionId).catch(() => {
+            void requestMissionRuntimeResume(missionId).catch((error) => {
               if (!host.disposed) {
                 host.term.writeln(
-                  '\r\n\x1b[33m[nexus] religamento automático falhou — use ' +
-                    'Retomar no rail.\x1b[0m',
+                  `\r\n\x1b[33m[nexus] religamento automático falhou — ` +
+                    `${missionReviveRecoveryCopy(error)}\x1b[0m`,
                 );
               }
             });

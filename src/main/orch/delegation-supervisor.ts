@@ -128,7 +128,7 @@ function trackChefIdleEscalation(
  */
 export const DELEGATION_SLA_MS = 90_000;
 /** Recovery handoff stuck in queued longer than this no longer blocks stages. */
-export const RECOVERY_QUEUED_TTL_MS = 5 * 60_000;
+export const RECOVERY_QUEUED_TTL_MS = 15 * 60_000;
 export const DELEGATION_RETRY_MS = 90_000;
 export const DELEGATION_SCAN_MS = 15_000;
 export const DELEGATION_SUPERVISOR_AGENT = 'nexus-delegation-supervisor';
@@ -140,7 +140,7 @@ export const DELEGATION_SUPERVISOR_AGENT = 'nexus-delegation-supervisor';
  * Bloquear com motivo visível entrega o Retomar ao operador; silêncio eterno
  * não é estado de missão.
  */
-export const CHEF_IDLE_BLOCK_AFTER_MS = 30 * 60_000;
+export const CHEF_IDLE_BLOCK_AFTER_MS = 60 * 60_000;
 
 /**
  * Re-arm de entrega parada (18/08): handoff durable queued com ZERO tentativas

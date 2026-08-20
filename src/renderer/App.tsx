@@ -757,13 +757,52 @@ export function App() {
       useProductNavigationStore.getState().openTerminal();
       return;
     }
-    void workspace.open(workspaceId).catch(() => {
+    void workspace.open(workspaceId).catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      const isMissing =
+        message.includes('inaccessible') ||
+        message.includes('invalid') ||
+        message.includes('não foi encontrada') ||
+        message.includes('ENOENT');
       useToastStore.getState().push(
         'error',
         'Workspace não pôde ser aberto',
-        'Tente abrir o projeto novamente pela lista de recentes.',
+        isMissing
+          ? 'A pasta não existe mais no disco ou está inacessível. Você pode removê-la dos recentes no ícone de lixeira.'
+          : `Erro ao abrir: ${message}`,
       );
     });
+  }
+
+  function removeWorkspace(workspaceId: string): void {
+    const workspace = useWorkspaceStore.getState();
+    const isCurrent = workspace.current?.path === workspaceId;
+    const targetName =
+      (isCurrent ? workspace.current?.name : null) ??
+      workspace.recents.find((w) => w.path === workspaceId)?.name ??
+      workspaceId;
+
+    if (isCurrent) {
+      useCloseWorkspaceStore.getState().ask();
+      return;
+    }
+
+    void workspace
+      .remove(workspaceId)
+      .then(() => {
+        useToastStore.getState().push(
+          'info',
+          'Workspace removido',
+          `“${targetName}” foi removido da lista de recentes.`,
+        );
+      })
+      .catch((err) => {
+        useToastStore.getState().push(
+          'error',
+          'Erro ao remover workspace',
+          err instanceof Error ? err.message : String(err),
+        );
+      });
   }
 
   if (!workspaceHydrated) return <BootScreen />;
@@ -931,6 +970,7 @@ export function App() {
             selection={selection}
             onCreateNew={navigation.openNewMission}
             onSelectWorkspace={selectWorkspace}
+            onRemoveWorkspace={removeWorkspace}
             onSelectMission={(missionId, workspaceId) => {
               // Missão de workspace VIZINHO: troca de workspace e só então
               // navega — antes a missão do outro workspace era invisível E

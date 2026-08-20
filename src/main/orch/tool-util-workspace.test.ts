@@ -485,7 +485,7 @@ describe('agent pane workspace confinement', () => {
     expect(spawnOptions?.initialPrompt).toContain('marker');
     expect(stubs.waitForIdle).toHaveBeenCalledWith(
       'session-1',
-      60_000,
+      120_000,
       undefined,
     );
     expect(stubs.writeSession).not.toHaveBeenCalled();

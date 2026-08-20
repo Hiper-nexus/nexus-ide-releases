@@ -122,9 +122,9 @@ import { maybeApplyCivilianPronto } from './civilian-pronto';
 /** Intervalo de observação da missão. */
 const WATCHER_INTERVAL_MS = 15_000;
 /** Tentativas de respawn do orquestrador por geração de watcher. */
-const ORCHESTRATOR_RESPAWN_BUDGET = 3;
+const ORCHESTRATOR_RESPAWN_BUDGET = 10;
 /** Boot do Maestro antes da colagem do briefing (paridade tool-util). */
-const ORCHESTRATOR_BOOT_TIMEOUT_MS = 60_000;
+const ORCHESTRATOR_BOOT_TIMEOUT_MS = 120_000;
 
 /**
  * Canal de entrega do briefing do Maestro na Via Rápida.

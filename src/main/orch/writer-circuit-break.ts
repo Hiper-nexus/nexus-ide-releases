@@ -16,7 +16,7 @@ import {
 import type { PaneSessionState } from '../../shared/types';
 import { canSeat, type SeatAuthReadiness } from '../adapters/seat-auth-readiness';
 
-export const WRITER_CIRCUIT_BREAK_FAILURES = 3;
+export const WRITER_CIRCUIT_BREAK_FAILURES = 10;
 
 export const WRITER_CIRCUIT_BREAK_KIND = 'writer_circuit_break' as const;
 

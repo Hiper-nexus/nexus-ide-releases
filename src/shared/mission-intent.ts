@@ -707,38 +707,25 @@ const DESTRUCTIVE_GOAL_RE =
 export function defaultBudgetsForRisk(
   risk: MissionIntentRisk,
 ): MissionIntentContract['budgets'] {
-  if (risk === 'destructive') {
-    return {
-      planningTokens: 1_200,
-      executionTokens: 8_000,
-      maxWorkers: 1,
-      maxSteps: 80,
-    };
-  }
-  if (risk === 'sensitive') {
-    return {
-      planningTokens: 1_200,
-      // executionTokens é ledger (não bloqueia — ver assertStepAndTokenBudget);
-      // o limite real é maxWorkers/maxSteps. Presets subidos: os antigos
-      // (2 workers/200 steps) foram calibrados na era do teto de token que já
-      // não existe e sufocavam missões reais (caso de campo 17/07).
-      executionTokens: 200_000,
-      // Risco restringe a SUPERFÍCIE DE APROVAÇÃO (modal nativo), não o
-      // paralelismo: sensitive recebe o mesmo teto de workers que normal —
-      // goals comuns como "corrija o login" não podem encolher a wave.
-      maxWorkers: 12,
-      maxSteps: 400,
-    };
-  }
-  return {
+  // Modo livre de operação: o risco restringe a superfície de aprovação e as
+  // ferramentas negadas, não o paralelismo. maxWorkers e maxSteps usam o teto
+  // do schema para evitar que missões reais parem prematuramente. O controle de
+  // paralelismo real ainda vem do catálogo/squad e do orçamento de panes vivo.
+  const highCap = {
     planningTokens: 1_200,
     executionTokens: 800_000,
-    // ADEs sobem ~12 panes do mesmo LLM em fan-out; o spawn já aceita o
-    // mesmo adapterId N vezes — o teto útil era 8 e engessava a paridade
-    // visual/operacional. Schema permite até 64.
-    maxWorkers: 12,
-    maxSteps: 600,
+    maxWorkers: 64,
+    maxSteps: 100_000,
   };
+  if (risk === 'destructive') {
+    // destructive mantém tokens menores para não incentivar planejamento longo,
+    // mas workers/steps são libertos.
+    return { ...highCap, planningTokens: 1_200, executionTokens: 8_000 };
+  }
+  if (risk === 'sensitive') {
+    return { ...highCap, executionTokens: 200_000 };
+  }
+  return highCap;
 }
 
 export function classifyGoalRisk(goal: string): MissionIntentRisk {

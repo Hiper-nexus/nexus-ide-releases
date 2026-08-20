@@ -47,21 +47,23 @@ describe('writerIsLive — connected + stdin writable', () => {
   });
 });
 
-describe('WriterCircuitRegistry — 3 falhas → remint / skip-silent', () => {
-  it('abaixo de 3 ainda pode sentar o mesmo adapter', () => {
+describe('WriterCircuitRegistry — N falhas → remint / skip-silent', () => {
+  it('abaixo de N ainda pode sentar o mesmo adapter', () => {
     const b = new WriterCircuitRegistry();
-    b.recordConnectFailure(kimiWorker);
-    b.recordConnectFailure(kimiWorker);
+    for (let i = 0; i < WRITER_CIRCUIT_BREAK_FAILURES - 1; i += 1) {
+      b.recordConnectFailure(kimiWorker);
+    }
     expect(b.canSeat(kimiWorker)).toBe(true);
     expect(b.isTripped(kimiWorker)).toBe(false);
     expect(b.decideAfterFailure(kimiWorker, ['codex'])).toBe('seat');
   });
 
-  it('3 falhas remintam para o próximo adapter autenticado — sem 4º assento', () => {
+  it('N falhas remintam para o próximo adapter autenticado — sem próximo assento', () => {
     const b = new WriterCircuitRegistry();
-    b.recordConnectFailure(kimiWorker);
-    b.recordConnectFailure(kimiWorker);
-    expect(b.recordConnectFailure(kimiWorker)).toBe(3);
+    for (let i = 0; i < WRITER_CIRCUIT_BREAK_FAILURES - 1; i += 1) {
+      b.recordConnectFailure(kimiWorker);
+    }
+    expect(b.recordConnectFailure(kimiWorker)).toBe(WRITER_CIRCUIT_BREAK_FAILURES);
     expect(b.isTripped(kimiWorker)).toBe(true);
     expect(b.canSeat(kimiWorker)).toBe(false);
     expect(b.decideAfterFailure(kimiWorker, ['kimi', 'codex', 'glm'])).toBe(
@@ -70,11 +72,11 @@ describe('WriterCircuitRegistry — 3 falhas → remint / skip-silent', () => {
     expect(b.canSeat(kimiWorker)).toBe(false);
   });
 
-  it('3 falhas sem próximo adapter autenticado = skip-silent', () => {
+  it('N falhas sem próximo adapter autenticado = skip-silent', () => {
     const b = new WriterCircuitRegistry();
-    b.recordConnectFailure(kimiWorker);
-    b.recordConnectFailure(kimiWorker);
-    b.recordConnectFailure(kimiWorker);
+    for (let i = 0; i < WRITER_CIRCUIT_BREAK_FAILURES; i += 1) {
+      b.recordConnectFailure(kimiWorker);
+    }
     expect(b.decideAfterFailure(kimiWorker, ['kimi'])).toBe('skip-silent');
     expect(b.decideAfterFailure(kimiWorker, [])).toBe('skip-silent');
   });
@@ -90,9 +92,9 @@ describe('WriterCircuitRegistry — 3 falhas → remint / skip-silent', () => {
 
   it('não vaza entre missões nem papéis', () => {
     const b = new WriterCircuitRegistry();
-    b.recordConnectFailure(kimiWorker);
-    b.recordConnectFailure(kimiWorker);
-    b.recordConnectFailure(kimiWorker);
+    for (let i = 0; i < WRITER_CIRCUIT_BREAK_FAILURES; i += 1) {
+      b.recordConnectFailure(kimiWorker);
+    }
     expect(
       b.canSeat({
         adapterId: 'kimi',
@@ -116,12 +118,12 @@ describe('WriterCircuitRegistry — 3 falhas → remint / skip-silent', () => {
     ).toBe(true);
   });
 
-  it('registry global recusa o 4º assento após 3 mortes', () => {
-    writerCircuitBreakers.recordConnectFailure(kimiWorker);
-    writerCircuitBreakers.recordConnectFailure(kimiWorker);
-    writerCircuitBreakers.recordConnectFailure(kimiWorker);
+  it('registry global recusa o assento após N mortes', () => {
+    for (let i = 0; i < WRITER_CIRCUIT_BREAK_FAILURES; i += 1) {
+      writerCircuitBreakers.recordConnectFailure(kimiWorker);
+    }
     expect(writerCircuitBreakers.canSeat(kimiWorker)).toBe(false);
-    expect(WRITER_CIRCUIT_BREAK_FAILURES).toBe(3);
+    expect(WRITER_CIRCUIT_BREAK_FAILURES).toBe(10);
   });
 });
 
@@ -205,8 +207,8 @@ describe('proveWriterConnectedAndWritable', () => {
   });
 });
 
-describe('3 mortes do mesmo adapter não geram 4º assento', () => {
-  it('first-wave não re-senta Kimi morta após circuit-break 3', () => {
+describe('N mortes do mesmo adapter não geram assento extra', () => {
+  it('first-wave não re-senta Kimi morta após circuit-break', () => {
     const b = new WriterCircuitRegistry();
     const kimiPresent = {
       adapterId: 'kimi',
@@ -214,9 +216,9 @@ describe('3 mortes do mesmo adapter não geram 4º assento', () => {
       kimiListReadiness: 'present' as const,
     };
     expect(firstWaveCanSeat(kimiPresent)).toBe(true);
-    b.recordConnectFailure(kimiWorker);
-    b.recordConnectFailure(kimiWorker);
-    b.recordConnectFailure(kimiWorker);
+    for (let i = 0; i < WRITER_CIRCUIT_BREAK_FAILURES; i += 1) {
+      b.recordConnectFailure(kimiWorker);
+    }
     expect(b.canSeat(kimiWorker)).toBe(false);
     expect(b.decideAfterFailure(kimiWorker, ['codex'])).toBe('remint');
     expect(
@@ -224,14 +226,17 @@ describe('3 mortes do mesmo adapter não geram 4º assento', () => {
     ).toBe(false);
   });
 
-  it('decide remint e recusa o 4º seat de Kimi', () => {
+  it('decide remint e recusa o próximo seat de Kimi', () => {
     const b = new WriterCircuitRegistry();
     const seats: boolean[] = [];
-    for (let i = 0; i < 4; i += 1) {
+    for (let i = 0; i <= WRITER_CIRCUIT_BREAK_FAILURES; i += 1) {
       seats.push(b.canSeat(kimiWorker));
       if (b.canSeat(kimiWorker)) b.recordConnectFailure(kimiWorker);
     }
-    expect(seats).toEqual([true, true, true, false]);
+    expect(seats).toEqual([
+      ...new Array(WRITER_CIRCUIT_BREAK_FAILURES).fill(true),
+      false,
+    ]);
     expect(b.decideAfterFailure(kimiWorker, ['codex'])).toBe('remint');
     expect(b.canSeat(kimiWorker)).toBe(false);
   });

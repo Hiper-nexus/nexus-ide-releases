@@ -33,8 +33,8 @@ import {
 import { getProjectDomainStores } from './project-domain-store-registry';
 import { isSessionInjectableIdle, tapAgentSemanticStatus } from './agent-status';
 
-/** ~30s, espelhando o TTL observado no modelo 1.2.4. */
-export const WORKER_POST_HANDOFF_TTL_MS = 30_000;
+/** 5 minutos — evita matar workers que ainda podem ser reutilizados. */
+export const WORKER_POST_HANDOFF_TTL_MS = 5 * 60_000;
 
 export interface WorkerHandoffTtlDeps {
   readonly isEnabled: () => boolean;

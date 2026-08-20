@@ -44,6 +44,7 @@ export interface WorkspaceRailProps {
    * chamador troca de workspace antes de navegar (rail multi-workspace).
    */
   onSelectMission: (missionId: string, workspaceId?: string) => void;
+  onRemoveWorkspace?: (workspaceId: string) => void;
   projectEnabled?: boolean;
   onOpenProject?: () => void;
   onOpenTaskBoard: () => void;
@@ -145,6 +146,7 @@ interface WorkspaceGroupProps {
   selection: WorkspaceRailSelection;
   onSelectWorkspace: (workspaceId: string) => void;
   onSelectMission: (missionId: string, workspaceId?: string) => void;
+  onRemoveWorkspace?: (workspaceId: string) => void;
 }
 
 function WorkspaceGroup({
@@ -154,6 +156,7 @@ function WorkspaceGroup({
   selection,
   onSelectWorkspace,
   onSelectMission,
+  onRemoveWorkspace,
 }: WorkspaceGroupProps) {
   if (workspaces.length === 0) return null;
   const labelId = `workspace-rail-${group}-label`;
@@ -175,24 +178,42 @@ function WorkspaceGroup({
 
           return (
             <li className="workspace-rail__workspace-item" key={workspace.id}>
-              <button
-                type="button"
-                className={`workspace-rail__row workspace-rail__workspace${
-                  workspaceSelected ? ' workspace-rail__row--selected' : ''
-                }`}
-                data-workspace-id={workspace.id}
-                aria-current={workspaceSelected ? 'page' : undefined}
-                aria-label={`Abrir workspace ${workspace.name}`}
-                title={workspace.name}
-                onClick={() => onSelectWorkspace(workspace.id)}
-              >
-                <span className="workspace-rail__workspace-icon" aria-hidden>
-                  <PixelIcon name="files" size={12} />
-                </span>
-                <span className="workspace-rail__row-label">
-                  {workspace.name}
-                </span>
-              </button>
+              <div className="workspace-rail__workspace-row-wrapper">
+                <button
+                  type="button"
+                  className={`workspace-rail__row workspace-rail__workspace${
+                    workspaceSelected ? ' workspace-rail__row--selected' : ''
+                  }`}
+                  data-workspace-id={workspace.id}
+                  aria-current={workspaceSelected ? 'page' : undefined}
+                  aria-label={`Abrir workspace ${workspace.name}`}
+                  title={workspace.name}
+                  onClick={() => onSelectWorkspace(workspace.id)}
+                >
+                  <span className="workspace-rail__workspace-icon" aria-hidden>
+                    <PixelIcon name="files" size={12} />
+                  </span>
+                  <span className="workspace-rail__row-label">
+                    {workspace.name}
+                  </span>
+                </button>
+                {onRemoveWorkspace ? (
+                  <button
+                    type="button"
+                    className="workspace-rail__workspace-action"
+                    data-action="remove-workspace"
+                    data-workspace-id={workspace.id}
+                    aria-label={`Remover workspace ${workspace.name} dos recentes`}
+                    title={`Remover ${workspace.name} dos recentes`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onRemoveWorkspace(workspace.id);
+                    }}
+                  >
+                    <PixelIcon name="trash" size={11} />
+                  </button>
+                ) : null}
+              </div>
 
               {workspace.missions.length > 0 ? (
                 <ul
@@ -270,6 +291,7 @@ export function WorkspaceRail({
   onCreateNew,
   onSelectWorkspace,
   onSelectMission,
+  onRemoveWorkspace,
   projectEnabled = false,
   onOpenProject,
   onOpenTaskBoard,
@@ -309,6 +331,7 @@ export function WorkspaceRail({
           selection={selection}
           onSelectWorkspace={onSelectWorkspace}
           onSelectMission={onSelectMission}
+          onRemoveWorkspace={onRemoveWorkspace}
         />
         <WorkspaceGroup
           label="Recentes"
@@ -317,6 +340,7 @@ export function WorkspaceRail({
           selection={selection}
           onSelectWorkspace={onSelectWorkspace}
           onSelectMission={onSelectMission}
+          onRemoveWorkspace={onRemoveWorkspace}
         />
       </div>
 
