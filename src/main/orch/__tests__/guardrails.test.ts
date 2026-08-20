@@ -95,6 +95,48 @@ describe('isDestructive', () => {
     expect(isDestructive('echo hello')).toBe(false);
     expect(isDestructive('cat file.txt')).toBe(false);
   });
+
+  // Sob Autopiloto este piso é o ÚNICO gate de shell (sem sandbox de SO) e
+  // também decide o snapshot de reversibilidade — prefixo benigno não pode
+  // lavar o comando (security review 20/08, finding 2).
+  describe('encadeamento e variantes — piso do Autopiloto', () => {
+    it('prefixo encadeado não lava comando destrutivo', () => {
+      expect(isDestructive('true && sudo shutdown -h now')).toBe(true);
+      expect(isDestructive('echo x; kill -9 1234')).toBe(true);
+      expect(isDestructive('ls; chown -R root:root /')).toBe(true);
+      expect(isDestructive('cd /tmp && dd if=/dev/zero of=/dev/disk0')).toBe(true);
+      expect(isDestructive('npm i && npm unpublish pkg')).toBe(true);
+      expect(isDestructive('true; docker system prune -a')).toBe(true);
+      expect(isDestructive('a && kubectl delete ns prod')).toBe(true);
+      expect(isDestructive('x; reboot')).toBe(true);
+      expect(isDestructive('y && chmod -R 777 /var')).toBe(true);
+    });
+
+    it('case não lava — APFS resolve SUDO como sudo', () => {
+      expect(isDestructive('SUDO rm file')).toBe(true);
+      expect(isDestructive('Shutdown -h now')).toBe(true);
+    });
+
+    it('rm destrutivo em qualquer grafia de flags', () => {
+      expect(isDestructive('rm -fr /tmp/x')).toBe(true);
+      expect(isDestructive('rm -r -f /tmp/x')).toBe(true);
+      expect(isDestructive('foo && rm -rf /x')).toBe(true);
+      expect(isDestructive('rm -r /tmp/soft')).toBe(false);
+    });
+
+    it('/dev/null benigno flui; clobber e block device travam', () => {
+      expect(isDestructive('grep foo bar 2>/dev/null')).toBe(false);
+      expect(isDestructive('echo ok >/dev/null')).toBe(false);
+      expect(isDestructive('cat /dev/null > important.log')).toBe(true);
+      expect(isDestructive('echo x > /dev/disk0')).toBe(true);
+    });
+
+    it('menções em texto não disparam o piso', () => {
+      expect(isDestructive('git commit -m "kill -9 the bug"')).toBe(false);
+      expect(isDestructive('ls -la && git status')).toBe(false);
+      expect(isDestructive('ddgr minha busca')).toBe(false);
+    });
+  });
 });
 
 describe('requiresConfirmation', () => {

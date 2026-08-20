@@ -11,29 +11,40 @@
 
 import { requiresHumanConfirmationForTool } from '../orch/mcp-effect-policy';
 
+/**
+ * Âncora chain-aware: início do comando OU logo após `;`, `&`, `|`. Sem ela,
+ * "true && sudo ..." lava o padrão ancorado em `^` — e sob Autopiloto esta
+ * lista é o ÚNICO piso de shell (sem sandbox de SO) e também decide o
+ * snapshot de reversibilidade. `i` em comandos de shell porque APFS resolve
+ * SUDO→sudo. Mesma disciplina de REMOTE_OR_DEPLOY_PATTERNS abaixo.
+ */
+const CHAIN = String.raw`(?:^|[;&|]\s*)`;
+
 export const DESTRUCTIVE_PATTERNS: RegExp[] = [
-  /^rm\s+.*-rf/,
-  /\brm\s+-rf\b/,
-  /git\s+push\s+.*--force/,
-  /git\s+push\s+.*-f\b/,
-  /git\s+reset\s+--hard/,
-  /^sudo\s/,
-  /^dd\s/,
+  // rm com -r e -f no MESMO segmento, em qualquer grafia (-rf, -fr, -r -f).
+  new RegExp(`${CHAIN}rm(?=[^;&|\\n]*\\s-[a-z]*r)(?=[^;&|\\n]*\\s-[a-z]*f)\\s`, 'i'),
+  /git\s+push\s+.*--force/i,
+  /git\s+push\s+.*-f\b/i,
+  /git\s+reset\s+--hard/i,
+  new RegExp(`${CHAIN}sudo\\s`, 'i'),
+  new RegExp(`${CHAIN}dd\\s`, 'i'),
   /\bdrop\s+(table|database)\b/i,
   /\bdelete\s+from\b/i,
-  /^chmod\s+777/,
-  /^chmod\s+-R\s+777/,
-  /^chown\s+-R\b/,
-  /\/dev\/null/,
-  /mkfs\./,
+  new RegExp(`${CHAIN}chmod\\s+(?:-r\\s+)?0?777\\b`, 'i'),
+  new RegExp(`${CHAIN}chown\\s+-r\\b`, 'i'),
+  // /dev/null como fonte de clobber (cat /dev/null > arquivo). Redirect
+  // benigno PARA /dev/null (2>/dev/null) flui — não é destrutivo.
+  /\/dev\/null\s*>\s*\S/,
+  // Escrita direta em block device.
+  /(?:>|\bof=)\s*\/dev\/(?:r?disk|sd[a-z]|hd[a-z]|nvme|mmcblk)/i,
+  /mkfs\./i,
   /\bformat\s+C:\b/i,
-  /^shutdown\b/,
-  /^reboot\b/,
-  /^kill\s+-9\b/,
-  /^docker\s+rm\s+-f\b/,
-  /^docker\s+system\s+prune\b/,
-  /^kubectl\s+delete\b/,
-  /^npm\s+unpublish\b/,
+  new RegExp(`${CHAIN}(?:shutdown|reboot|halt|poweroff)\\b`, 'i'),
+  new RegExp(`${CHAIN}kill\\s+-9\\b`, 'i'),
+  new RegExp(`${CHAIN}docker\\s+rm\\s+-f\\b`, 'i'),
+  new RegExp(`${CHAIN}docker\\s+system\\s+prune\\b`, 'i'),
+  new RegExp(`${CHAIN}kubectl\\s+delete\\b`, 'i'),
+  new RegExp(`${CHAIN}(?:npm|pnpm|yarn)\\s+unpublish\\b`, 'i'),
   /\bTRUNCATE\s+(TABLE\s+)?/i,
   /\bALTER\s+TABLE\s+.*\bDROP\b/i,
 ];
