@@ -64,6 +64,7 @@ import {
 import {
   SCROLLBACK_WIDTH_MISMATCH_NOTICE,
   SESSION_BOUNDARY_NOTICE,
+  TERMINAL_INPUT_MODE_RESET,
   terminalBufferHasContent,
 } from './session-boundary-notice';
 import {
@@ -770,6 +771,10 @@ function startSpawn(
         (host.hasVisibleContent ||
           terminalBufferHasContent(host.term.buffer.active))
       ) {
+        // A sessão anterior pode ter morrido com mouse-tracking/paste-mode
+        // ligados — desliga os modos de input ANTES do divisor, senão o novo
+        // shell recebe cada movimento de mouse como ^[[<35;…M.
+        host.term.write(TERMINAL_INPUT_MODE_RESET);
         host.term.writeln(SESSION_BOUNDARY_NOTICE);
       }
       host.hasVisibleContent = true;
@@ -895,6 +900,9 @@ function startSpawn(
           // pode cair no meio do buffer e colar "process exited" com "output
           // because the backlog…" (print do operador 2026-08-07 HiperGO).
           useSessionStateStore.getState().setPaneState(pane.id, 'exited');
+          // TUI morta com mouse-tracking ligado deixaria o xterm emitindo
+          // SGR de mouse como input durante a fase "digite qualquer tecla".
+          host.term.write(TERMINAL_INPUT_MODE_RESET);
           if (terminalShutdownNoticeMode) {
             // Shutdown: o aviso único do grid já falou; banner por pane é
             // ruído (bug I).

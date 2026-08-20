@@ -16,6 +16,20 @@ export const SESSION_BOUNDARY_NOTICE =
   '\r\n\x1b[90m── sessão anterior encerrada · nova sessão iniciada ──\x1b[0m\r\n';
 
 /**
+ * Reset dos modos de INPUT do xterm na morte/troca de sessão. Uma TUI que
+ * morre com mouse-tracking ligado deixa o xterm traduzindo cada movimento de
+ * mouse em sequências SGR (`^[[<35;64;19M…`) que viram input do shell herdado
+ * — o lixo na tela do operador em 20/08. Desliga mouse (todos os sabores),
+ * encodings SGR/urxvt, focus reporting, bracketed paste, application cursor
+ * keys e sai do alt-screen. Escrito COMO SAÍDA no xterm: é assim que o
+ * emulador atualiza seus modos; o processo morto não recebe nada.
+ */
+export const TERMINAL_INPUT_MODE_RESET =
+  '\x1b[?9l\x1b[?1000l\x1b[?1002l\x1b[?1003l' +
+  '\x1b[?1006l\x1b[?1015l' +
+  '\x1b[?1004l\x1b[?2004l\x1b[?1l\x1b[?1049l';
+
+/**
  * Escrito quando o histórico salvo é descartado por ter sido capturado em
  * outra largura. Sem essa linha o pane volta vazio e o operador acha que
  * perdeu a sessão — quando a sessão está viva, só o histórico ficou de fora.
