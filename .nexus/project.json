@@ -5,7 +5,8 @@
   "repository": {
     "vcs": "git",
     "originHashes": [
-      "origin-sha256-0dde8b1c56b8ab8563aa4b7d7ea183fd2b468eee2a7a4061fc4e580431a0db5b"
+      "origin-sha256-0dde8b1c56b8ab8563aa4b7d7ea183fd2b468eee2a7a4061fc4e580431a0db5b",
+      "origin-sha256-e919b8b83eb7e7ce28c55618983a8a74680f9246c59b9d68e4d4bf0f5f0e64d0"
     ],
     "rootCommits": [
       "d9523e7f9ea33004f2616d07904c2d858a03d1cd"
