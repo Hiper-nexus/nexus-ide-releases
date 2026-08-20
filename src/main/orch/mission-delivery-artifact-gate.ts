@@ -42,7 +42,7 @@ function handoffListsFiles(handoff: ArtifactGateHandoff): boolean {
     const files = (artifacts as { files?: unknown }).files;
     if (Array.isArray(files) && files.length > 0) return true;
   }
-  return /\b[\w./-]+\.[A-Za-z0-9]{1,8}\b/.test(handoff.summary ?? '');
+  return false;
 }
 
 function pathHasContent(rootRealPath: string, relative: string): boolean {
@@ -114,6 +114,17 @@ export function evaluateDeliveryArtifactsForDone(input: {
       handoff.status === 'success' && handoffListsFiles(handoff),
   );
   if (successWithFiles) return { ok: true };
+
+  // Informational delivery: handoff success com resposta textual basta —
+  // missão "quanto é 1+1?" não produz arquivo.
+  const hasTextualDelivery = input.handoffs.some(
+    (handoff) =>
+      handoff.status === 'success' &&
+      !handoffListsFiles(handoff) &&
+      typeof handoff.summary === 'string' &&
+      handoff.summary.trim().length > 0,
+  );
+  if (hasTextualDelivery) return { ok: true };
 
   const objectivePaths = extractObjectivePaths(input.goal);
   if (
