@@ -916,6 +916,13 @@ function startSpawn(
                 ? `\r\n\x1b[90m${notice}\x1b[0m`
                 : `\r\n\x1b[33m${notice}\x1b[0m`,
             );
+          } else if (exitCode === 0 && missionOfPaneIsDone(pane.id, pane)) {
+            host.term.writeln(
+              '\r\n\x1b[32m[nexus] ✔ missão concluída — este pane cumpriu o papel.\x1b[0m',
+            );
+            host.term.writeln(
+              '\x1b[90m[nexus] as respostas ficam acima; feche o pane ou digite para abrir um shell.\x1b[0m',
+            );
           } else {
             host.term.writeln(
               `\r\n\x1b[90m[nexus] process exited (code ${exitCode})\x1b[0m`,
@@ -1787,6 +1794,25 @@ function missionIdOfPane(paneId: string, pane?: PaneModel): string | undefined {
  * deixa teclado no-op para sempre (HiperGO 2026-08-07: exit code 0 + backlog
  * 2 MB, terminal "não deixa digitar").
  */
+/**
+ * Pane de missão CONCLUÍDA: o exit é vitória, não morte. "process exited /
+ * digite qualquer tecla" fazia o pós-Pronto parecer velório (operador 20/08:
+ * "só bug na tela" com a missão fechada e as respostas visíveis).
+ */
+function missionOfPaneIsDone(paneId: string, pane?: PaneModel): boolean {
+  const resolved =
+    pane ??
+    listPanes(useLayoutStore.getState().root).find(
+      (candidate) => candidate.id === paneId,
+    );
+  const missionId = missionIdOfPane(paneId, resolved);
+  if (!missionId) return false;
+  const mission = useOrchStore
+    .getState()
+    .missions.find((candidate) => candidate.id === missionId);
+  return mission?.status === 'done';
+}
+
 function missionStillOwnsPane(paneId: string, pane?: PaneModel): boolean {
   const resolved =
     pane ??
