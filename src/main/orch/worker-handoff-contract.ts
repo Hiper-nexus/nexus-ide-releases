@@ -8,6 +8,7 @@ import { ENGINEERING_CHARTER } from './engineering-charter';
 import { composeDesignCharter } from './design-profile';
 import { getOrchSettings } from '../persistence/settings-store';
 import { canUseNexusMcp } from './cli-mcp-inject';
+import { isPaneMetaTask } from './mission-fast-lane';
 
 /**
  * UI-shaped work, detectado no brief da tarefa + título do pane/nome do agente.
@@ -69,6 +70,12 @@ export function charterTierForWorker(
   const corpus = [input.prompt, ...(input.hints ?? [])]
     .filter(Boolean)
     .join('\n');
+  // Pergunta aos panes / meta-de-pane: entrega é RESPOSTA, não diff — as três
+  // cartas (~8 KB sobre stack, UI e tamanho de diff) são ruído puro (prompt
+  // de 1+1 carregava Design Charter; operador 20/08).
+  if (isPaneMetaTask(corpus)) {
+    return { engineering: false, design: false, lean: false };
+  }
   const uiTask = isUiShapedWork(corpus);
   if (category === 'reviewer') {
     // Reviewers judge against the engineering bar (and may refine code), but

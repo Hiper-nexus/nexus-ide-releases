@@ -111,3 +111,21 @@ describe('contrato condicional (systemDelivers, C-194.1)', () => {
     expect(prompt).not.toContain('NÃO chame ferramenta nenhuma');
   });
 });
+
+describe('charter tier — pergunta aos panes não paga carta nenhuma', () => {
+  it('meta-de-pane zera engineering/design/lean', () => {
+    expect(
+      charterTierForWorker({
+        prompt: 'quanto e 1+1 pergunte a todos panes — responda: quanto é 1+1?',
+      }),
+    ).toEqual({ engineering: false, design: false, lean: false });
+  });
+
+  it('task de código continua com as cartas', () => {
+    const tier = charterTierForWorker({
+      prompt: 'implementar cache LRU no serviço de sessões',
+    });
+    expect(tier.engineering).toBe(true);
+    expect(tier.lean).toBe(true);
+  });
+});
