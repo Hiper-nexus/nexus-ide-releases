@@ -213,6 +213,7 @@ const EXECUTION_EFFECT_TOOLS = new Set([
   'editor_apply_patch',
   'editor_insert',
   'editor_replace_selection',
+  'pane_ask',
   'file_write',
   'plan_write',
   'git_add',

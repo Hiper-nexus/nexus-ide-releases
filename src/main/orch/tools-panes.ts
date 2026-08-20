@@ -7,6 +7,7 @@ import {
   getPaneRuntimeAuthorityBySession,
   listPaneSnapshots,
   listVisiblePaneSnapshots,
+  newOutputSince,
   readSessionOutput,
   requestPaneClose,
   waitForIdle,
@@ -1038,6 +1039,78 @@ const paneWrite: McpToolDef = {
   },
 };
 
+/** Uma pergunta em voo por sessão: evita tempestade de asks cruzados. */
+const paneAskInFlight = new Set<string>();
+
+const paneAsk: McpToolDef = {
+  name: 'nexus_pane_ask',
+  description:
+    'Converse com outro pane da missão: envia a pergunta para o terminal ' +
+    'dele, aguarda a resposta (idle) e devolve APENAS o texto novo. ' +
+    'Qualquer pane pode perguntar a qualquer worker da missão (pane-authz ' +
+    'continua a fronteira: worker não escreve no orquestrador nem toca ' +
+    'shell/browser). Prefira isto a write+wait+read manuais.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      paneId: {
+        type: 'string',
+        description:
+          'Pane alvo: paneId, sessionId ou o número do cabeçalho ("7").',
+      },
+      question: { type: 'string', description: 'Pergunta (até 4000 chars).' },
+      timeoutMs: {
+        type: 'number',
+        description: 'Espera máxima pela resposta (default 60000, máx 120000).',
+      },
+    },
+    required: ['paneId', 'question'],
+  },
+  handler: async (args, ctx, invocation) => {
+    assertMcpInvocationCurrent(invocation);
+    const question = requireStr(args, 'question');
+    if (question.length > 4_000) {
+      throw new Error('pergunta longa demais (máx 4000 chars)');
+    }
+    const timeoutMs = Math.min(
+      Math.max(Math.round(num(args, 'timeoutMs') ?? 60_000), 1_000),
+      120_000,
+    );
+    const sessionId = authorizedSessionIdOf(
+      ctx,
+      requireStr(args, 'paneId'),
+      'write',
+    );
+    if (ctx.sessionId && sessionId === ctx.sessionId) {
+      throw new Error('pergunte a OUTRO pane — este é o seu próprio');
+    }
+    const asker = ctx.sessionId ?? 'anon';
+    if (paneAskInFlight.has(asker)) {
+      throw new Error(
+        'você já tem uma pergunta em voo — aguarde a resposta antes de outra',
+      );
+    }
+    paneAskInFlight.add(asker);
+    try {
+      const before = readSessionOutput(sessionId, 200);
+      await injectPrompt(sessionId, question, invocation);
+      const state = await waitForIdle(sessionId, timeoutMs);
+      const after = readSessionOutput(sessionId, 400);
+      const answer = newOutputSince(before, after).trim();
+      return {
+        ok: state === 'idle' && answer.length > 0,
+        state,
+        answer:
+          answer.length > 0
+            ? answer.slice(0, 8_000)
+            : '(o pane não produziu texto novo dentro do prazo)',
+      };
+    } finally {
+      paneAskInFlight.delete(asker);
+    }
+  },
+};
+
 const paneWriteMany: McpToolDef = {
   name: 'nexus_pane_write_many',
   description:
@@ -1275,6 +1348,7 @@ export function buildPaneTools(): McpToolDef[] {
     paneReadMany,
     paneWrite,
     paneWriteMany,
+    paneAsk,
     paneClose,
     paneWaitIdle,
     paneWaitMany,

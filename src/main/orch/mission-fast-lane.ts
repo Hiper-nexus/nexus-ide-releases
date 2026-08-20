@@ -522,7 +522,9 @@ export function agentPrompt(
         `Abra UM pane por integrante (${teamWorkerNames.join(', ') || 'equipe'}) ` +
         'via nexus_pane_spawn com a pergunta no prompt, aguarde a resposta de ' +
         'TODOS os panes, e só então FECHO: nexus_handoff_submit success citando ' +
-        'a resposta de CADA pane. Nenhum pane sem resposta = missão não fecha.'
+        'a resposta de CADA pane. Nenhum pane sem resposta = missão não fecha. ' +
+        'Para perguntar a um pane JÁ aberto use nexus_pane_ask (envia, espera ' +
+        'e devolve só a resposta) — qualquer pane da missão pode usar.'
       : '';
   const uiNote = isUiMissionText(objective)
     ? 'Este pedido envolve interface. Use o DESIGN.md do projeto e o catálogo de design como guia de estilo.'

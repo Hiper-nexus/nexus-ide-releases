@@ -141,6 +141,25 @@ export function stripAnsi(raw: string): string {
     .replace(CONTROL_PATTERN, "");
 }
 
+/**
+ * Texto NOVO de uma sessão entre duas leituras de tail (nexus_pane_ask):
+ * ancora na última linha não-vazia do `before` e devolve o que veio depois
+ * da sua última ocorrência no `after`. Janela que rolou além do marco (tail
+ * limitado) devolve o `after` inteiro — melhor resposta com eco do que
+ * resposta perdida.
+ */
+export function newOutputSince(before: string, after: string): string {
+  const anchor = before
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .filter((line) => line.trim().length > 0)
+    .at(-1);
+  if (!anchor) return after;
+  const index = after.lastIndexOf(anchor);
+  if (index < 0) return after;
+  return after.slice(index + anchor.length).replace(/^\r?\n/, '');
+}
+
 export function readSessionOutput(sessionId: string, lines = 200): string {
   const buffer = buffers.get(sessionId);
   if (!buffer) return "";

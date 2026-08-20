@@ -10,6 +10,7 @@ vi.mock("../pty/pty-manager", () => ({
 
 import {
   __evictExitedBufferForTests,
+  newOutputSince,
   paneSessionStateForEntry,
   recordPaneSessionExit,
   recordPaneSessionState,
@@ -53,5 +54,27 @@ describe("marca de exit persiste além do TTL do buffer", () => {
     expect(paneSessionStateForEntry(entry)).toBe("exited");
     __evictExitedBufferForTests("pane-morto");
     expect(paneSessionStateForEntry(entry)).toBe("exited");
+  });
+});
+
+describe('newOutputSince — resposta do nexus_pane_ask', () => {
+  it('devolve só o texto depois da âncora (última linha do before)', () => {
+    const before = 'boot banner\n> prompt anterior\nresposta velha\n';
+    const after = 'boot banner\n> prompt anterior\nresposta velha\nQuanto é 1+1?\n2\n';
+    expect(newOutputSince(before, after)).toBe('Quanto é 1+1?\n2\n');
+  });
+
+  it('janela que rolou além da âncora devolve o after inteiro', () => {
+    expect(newOutputSince('linha antiga\n', 'só coisa nova\n2\n')).toBe('só coisa nova\n2\n');
+  });
+
+  it('before vazio devolve o after inteiro', () => {
+    expect(newOutputSince('', 'primeira resposta\n')).toBe('primeira resposta\n');
+  });
+
+  it('âncora repetida usa a ÚLTIMA ocorrência', () => {
+    const before = 'ok\nfim\n';
+    const after = 'fim\nmeio\nfim\nnovo\n';
+    expect(newOutputSince(before, after)).toBe('novo\n');
   });
 });

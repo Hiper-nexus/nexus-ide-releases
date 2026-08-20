@@ -87,6 +87,10 @@ const ALWAYS_ALLOWED = new Set([
   "pane_read_many",
   "pane_list",
   "pane_whoami",
+  // Conversa entre panes (ordem do operador, 20/08): qualquer pane pergunta
+  // a outro e recebe a resposta. pane-authz continua a fronteira real —
+  // worker não escreve no orquestrador, nunca no shell/browser do usuário.
+  "pane_ask",
   // Observation: any pane can read GitHub merge-queue state for the branch PR.
   "pr_inspect",
 ]);

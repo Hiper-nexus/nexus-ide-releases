@@ -64,6 +64,7 @@ import {
   recordPaneSessionState,
 } from "./pane-session-output";
 export {
+  newOutputSince,
   readSessionOutput,
   sessionOutputExitedAt,
   stripAnsi,
