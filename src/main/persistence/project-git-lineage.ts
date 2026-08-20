@@ -353,13 +353,9 @@ export function compareRepositoryLineage(
     expected.originHashes,
     actual.originHashes,
   );
-  if (hasExpectedOrigin && hasActualOrigin && !hasMatchingOrigin) {
-    return {
-      ok: false,
-      reason: 'mismatch',
-      detail: 'repository origin does not match the manifest',
-    };
-  }
+  // Anchors decidem antes do origin: a história é prova de conteúdo, o origin
+  // é só a URL. Um rename de repo/org muda a URL preservando a história; um
+  // manifesto copiado para repo alheio nunca tem o anchor alcançável.
   if (!actual.isShallow && expected.anchorCommits.length > 0) {
     if (!isCommitReachable) {
       return {
@@ -375,6 +371,13 @@ export function compareRepositoryLineage(
           reason: 'mismatch',
           detail: 'repository does not contain a manifest lineage anchor',
         };
+  }
+  if (hasExpectedOrigin && hasActualOrigin && !hasMatchingOrigin) {
+    return {
+      ok: false,
+      reason: 'mismatch',
+      detail: 'repository origin does not match the manifest',
+    };
   }
 
   if (actual.originHashes.length === 0) {
