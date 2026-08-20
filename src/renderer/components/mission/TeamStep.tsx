@@ -31,6 +31,13 @@ import {
   readyModelForAdapter,
 } from './MissionSetupRosterRow';
 
+/**
+ * CLIs cujo spawn de worker é one-shot (`initialPrompt: oneshot`): trabalham
+ * mudas e saem no fim — o pane fantasma de 20/08. Fora da rotação automática
+ * de seats até o motor ganhar o contrato one-shot (exit+output = entrega).
+ */
+export const ONE_SHOT_ONLY_WORKER_CLIS: ReadonlySet<string> = new Set(['agy']);
+
 export interface MissionTeamInventory {
   status: 'loading' | 'ready' | 'error';
   adapters: readonly AdapterInfo[];
@@ -133,7 +140,13 @@ export function buildRecommendedMissionRoster({
   // abaixo `return null` e a tela morre com a mensagem genérica.
   const readyWorkers = workers.filter(
     (adapter) =>
-      readyModelForAdapter({ adapter, providers, accounts }) !== null,
+      readyModelForAdapter({ adapter, providers, accounts }) !== null &&
+      // Quarentena de seat (20/08): o AGY só spawna worker em modo one-shot
+      // (`--print`) — pane mudo por minutos, boot-gate reprova o exit com a
+      // entrega dentro, turn-end nunca dispara. O motor de missão assume pane
+      // interativo; até o contrato one-shot existir, AGY não senta em seat de
+      // worker por rotação (uso explícito pelo operador continua livre).
+      !ONE_SHOT_ONLY_WORKER_CLIS.has(adapter.id),
   );
   if (readyWorkers.length === 0) return null;
 

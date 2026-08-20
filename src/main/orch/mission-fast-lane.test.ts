@@ -109,8 +109,8 @@ describe('mission fast lane', () => {
       titles,
     );
     expect(prompt).toContain('Plano selado');
-    expect(prompt).toContain('20 tasks');
-    expect(prompt).toContain('Não colapse em 7 papéis. São 20 entregas.');
+    expect(prompt).toContain('São 20 entregas');
+    expect(prompt).toContain('NÃO reduza a lista aos papéis do squad');
     expect(prompt).toContain('NÃO reduza a lista a 5 papéis');
     expect(prompt).toContain('Story 20 da waitlist');
     expect(prompt).toContain('task selada pendente');
@@ -209,7 +209,7 @@ describe('mission fast lane', () => {
       titles,
     );
     expect(prompt).toContain('Plano selado');
-    expect(prompt).toContain('20 tasks');
+    expect(prompt).toContain('São 20 entregas');
     expect(prompt).toContain('Story 1');
     expect(prompt).toContain('Story 20');
     expect(prompt).toContain('first-wave');

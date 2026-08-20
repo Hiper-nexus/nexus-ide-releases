@@ -491,18 +491,23 @@ export function agentPrompt(
 ): string {
   const objective = mission.description ?? '';
   const title = mission.title ?? objective.slice(0, 80);
+  // A doutrina anti-colapso existe para planos com VÁRIAS entregas (11
+  // stories viravam 5 papéis). Para 1 entrega ela é ruído puro no kickoff
+  // ("Não colapse em 7 papéis. São 1 entregas." — operador 20/08): 1 task =
+  // uma linha só.
   const sealedPlanBlock =
-    agent.category === 'orchestrator' && sealedPlanTitles.length > 0
+    agent.category === 'orchestrator' && sealedPlanTitles.length > 1
       ? [
           '### Plano selado (não colapse em papéis do squad)',
-          `Não colapse em 7 papéis. São ${sealedPlanTitles.length} entregas.`,
-          `O board já rastreia ${sealedPlanTitles.length} tasks do objetivo. ` +
-            'Spawne UM worker por task pendente — NÃO reduza a lista a 5 papéis.',
+          `São ${sealedPlanTitles.length} entregas — spawne UM worker por ` +
+            'task pendente; NÃO reduza a lista aos papéis do squad.',
           ...sealedPlanTitles.map(
             (storyTitle, index) => `${index + 1}. ${storyTitle}`,
           ),
         ].join('\n')
-      : '';
+      : agent.category === 'orchestrator' && sealedPlanTitles.length === 1
+        ? `Plano selado (1 entrega): ${sealedPlanTitles[0]}`
+        : '';
   const uiNote = isUiMissionText(objective)
     ? 'Este pedido envolve interface. Use o DESIGN.md do projeto e o catálogo de design como guia de estilo.'
     : '';

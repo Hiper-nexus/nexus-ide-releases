@@ -2283,6 +2283,9 @@ export async function respawnMissionPaneFresh(
   return healthy;
 }
 
+const INPUT_REFUSAL_NOTICE_THROTTLE_MS = 2_000;
+const inputRefusalNoticeAt = new Map<string, number>();
+
 function sendOperatorInputOrNotify(
   paneId: string,
   sessionId: string,
@@ -2293,6 +2296,13 @@ function sendOperatorInputOrNotify(
       if (accepted) return;
       const target = hosts.get(paneId);
       if (!target || target.disposed) return;
+      // Uma recusa POR RAJADA, não por tecla: digitação corrida e eventos de
+      // mouse SGR viravam dezenas de linhas iguais ("centenas de erro",
+      // operador 20/08) — o aviso afogava o próprio conteúdo do pane.
+      const now = Date.now();
+      const last = inputRefusalNoticeAt.get(paneId) ?? 0;
+      if (now - last < INPUT_REFUSAL_NOTICE_THROTTLE_MS) return;
+      inputRefusalNoticeAt.set(paneId, now);
       try {
         target.term.writeln(
           '\r\n\x1b[33m[nexus] o main recusou a digitação neste pane.\x1b[0m',
