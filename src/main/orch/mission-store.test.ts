@@ -1186,7 +1186,7 @@ describe('scoped mission store', () => {
       intentVersion: 1,
       decision,
       createdAt: 1_000,
-      expiresAt: 301_000,
+      expiresAt: 1_801_000,
     });
     expect(store.get(mission.id)?.latestRoute).toMatchObject({
       reservationId: reserved.id,
