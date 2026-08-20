@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   canReplayScrollback,
+  escalateRefitReason,
+  shouldRepaintOnRefit,
   terminalGridChanged,
   terminalOutputPolicy,
   terminalScrollbackLines,
@@ -127,5 +129,43 @@ describe('canReplayScrollback', () => {
 
   it('permite fitas antigas sem largura gravada', () => {
     expect(canReplayScrollback(undefined, 80)).toBe(true);
+  });
+});
+
+describe('shouldRepaintOnRefit', () => {
+  // Forma do bug herdado do Overclock: refit global redesenhava TODO pane a
+  // cada resize de janela, mesmo com a grade idêntica — N panes parados =
+  // N repaints de pixels iguais por ciclo.
+  it('resize de janela não repinta pane cuja grade não mudou', () => {
+    expect(
+      shouldRepaintOnRefit({ reason: 'window-resize', gridChanged: false }),
+    ).toBe(false);
+  });
+
+  it('resize de janela repinta apenas quem mudou de grade', () => {
+    expect(
+      shouldRepaintOnRefit({ reason: 'window-resize', gridChanged: true }),
+    ).toBe(true);
+  });
+
+  it('mudança de escala (DPR) repinta todos — glifos mudam sem mudar a grade', () => {
+    expect(
+      shouldRepaintOnRefit({ reason: 'display-scale', gridChanged: false }),
+    ).toBe(true);
+    expect(
+      shouldRepaintOnRefit({ reason: 'display-scale', gridChanged: true }),
+    ).toBe(true);
+  });
+});
+
+describe('escalateRefitReason', () => {
+  it('display-scale vence window-resize dentro do mesmo debounce', () => {
+    expect(escalateRefitReason('window-resize', 'display-scale')).toBe(
+      'display-scale',
+    );
+    expect(escalateRefitReason('display-scale', 'window-resize')).toBe(
+      'display-scale',
+    );
+    expect(escalateRefitReason(null, 'window-resize')).toBe('window-resize');
   });
 });

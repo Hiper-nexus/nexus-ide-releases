@@ -41,6 +41,34 @@ export function terminalScrollbackLines(
   return kind === 'cli-agent' ? 3_000 : 6_000;
 }
 
+/**
+ * Por que um refit global está rodando. `display-scale` (zoom/monitor) muda
+ * o desenho dos glifos SEM mudar cols/rows — repaint é obrigatório em todo
+ * pane. `window-resize` é só backstop do ResizeObserver por host: pane cuja
+ * grade não mudou produziria pixels idênticos — repaint é desperdício puro
+ * (forma do bug herdado do Overclock: N panes parados = N repaints/ciclo).
+ */
+export type RefitReason = 'window-resize' | 'display-scale';
+
+export function shouldRepaintOnRefit(input: {
+  readonly reason: RefitReason;
+  readonly gridChanged: boolean;
+}): boolean {
+  if (input.reason === 'display-scale') return true;
+  return input.gridChanged;
+}
+
+/** Dois gatilhos no mesmo debounce: o motivo mais caro governa a rodada. */
+export function escalateRefitReason(
+  pending: RefitReason | null,
+  next: RefitReason,
+): RefitReason {
+  if (pending === 'display-scale' || next === 'display-scale') {
+    return 'display-scale';
+  }
+  return next;
+}
+
 export function terminalGridChanged(
   previous: { readonly cols: number; readonly rows: number } | null,
   next: { readonly cols: number; readonly rows: number },

@@ -68,9 +68,12 @@ import {
 } from './session-boundary-notice';
 import {
   canReplayScrollback,
+  escalateRefitReason,
+  shouldRepaintOnRefit,
   terminalGridChanged,
   terminalOutputPolicy,
   terminalScrollbackLines,
+  type RefitReason,
 } from './terminal-render-policy';
 import { tuiWheelPageSequence } from './tui-wheel';
 
@@ -1081,17 +1084,27 @@ function makeResizeObserver(paneId: string, host: Host): ResizeObserver {
   });
 }
 
-/** Re-measure every live terminal: fit, propagate cols/rows, repaint. */
-function refitAllHosts(): void {
+/**
+ * Re-measure every live terminal. Repaint é POR MOTIVO (shouldRepaintOnRefit):
+ * resize de janela só repinta pane cuja grade realmente mudou; mudança de
+ * escala repinta todos. Antes o refresh era incondicional — N panes parados
+ * viravam N repaints de pixels idênticos a cada resize (forma do bug de GPU
+ * do Overclock: 1 pane 5%, 24 panes 84%).
+ */
+function refitAllHosts(reason: RefitReason): void {
   for (const host of hosts.values()) {
     if (host.disposed || !host.opened) continue;
+    const before = { cols: host.term.cols, rows: host.term.rows };
     try {
       host.fit.fit();
     } catch {
       continue; // Not measurable right now; the ResizeObserver will settle it.
     }
-    flushPendingScrollback(host);
+    const gridChanged =
+      host.term.cols !== before.cols || host.term.rows !== before.rows;
+    if (gridChanged) flushPendingScrollback(host);
     propagateHostSize(host);
+    if (!shouldRepaintOnRefit({ reason, gridChanged })) continue;
     try {
       host.term.refresh(0, Math.max(0, host.term.rows - 1));
     } catch {
@@ -1101,11 +1114,15 @@ function refitAllHosts(): void {
 }
 
 let refitAllTimer: ReturnType<typeof setTimeout> | null = null;
-function scheduleRefitAll(): void {
+let pendingRefitReason: RefitReason | null = null;
+function scheduleRefitAll(reason: RefitReason): void {
+  pendingRefitReason = escalateRefitReason(pendingRefitReason, reason);
   if (refitAllTimer) clearTimeout(refitAllTimer);
   refitAllTimer = setTimeout(() => {
     refitAllTimer = null;
-    refitAllHosts();
+    const effective = pendingRefitReason ?? reason;
+    pendingRefitReason = null;
+    refitAllHosts(effective);
   }, RESIZE_DEBOUNCE_MS);
 }
 
@@ -1118,11 +1135,11 @@ function scheduleRefitAll(): void {
  */
 function watchDisplayScale(): void {
   if (typeof window === 'undefined') return;
-  window.addEventListener('resize', scheduleRefitAll);
+  window.addEventListener('resize', () => scheduleRefitAll('window-resize'));
   if (typeof window.matchMedia !== 'function') return;
   let media: MediaQueryList | null = null;
   const onChange = (): void => {
-    scheduleRefitAll();
+    scheduleRefitAll('display-scale');
     rebind();
   };
   const rebind = (): void => {
