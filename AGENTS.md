@@ -92,3 +92,11 @@ npm run rebuild:node           # rebuild native modules for Node (CI/tests)
 - Run `npm run typecheck` after any source change.
 - The build chain (`premake` / `prepackage`) enforces typecheck, renderer-sink
   security, and native checks before build or package.
+
+## Project Skills
+
+- **Landing page / marketing UI**: Whenever a request involves landing pages,
+  marketing sites, web UI, page sections, components, prototypes, or UI copy,
+  invoke the `landing-page-design` skill from `.devin/skills/landing-page-design/SKILL.md`
+  before designing or writing a single line of code. Do not ask the user to point
+  to it manually.
