@@ -50,7 +50,8 @@ export type HostControlMsg =
       requestId: string;
       termTimeoutMs: number;
       killTimeoutMs: number;
-    };
+    }
+  | { type: 'liveness-probe'; requestId: string; sessionIds: string[] };
 
 /** host → main (events). */
 export type HostEventMsg =
@@ -61,7 +62,8 @@ export type HostEventMsg =
       sessionId: string;
       requestId: string;
       proof: PtyProcessTreeTerminationProof;
-    };
+    }
+  | { type: 'liveness-report'; requestId: string; live: string[] };
 
 export interface PtySessionHandlers {
   onData: (data: string) => void;
@@ -85,6 +87,14 @@ export interface PtyProcHandle {
 
 export interface PtyHost {
   spawn(spec: PtySpawnSpec, handlers: PtySessionHandlers): PtyProcHandle;
+  /**
+   * Pergunta ao host quais destas sessões têm handle vivo no seu mapa.
+   * `null` = host não respondeu (mudo/timeout) — unverifiable, NUNCA morte.
+   * Opcional: fakes de teste sem mortalidade não precisam implementar.
+   */
+  probeLiveness?(
+    sessionIds: readonly string[],
+  ): Promise<ReadonlySet<string> | null>;
 }
 
 /** Transport over the utilityProcess. `ensure()` lazily (re)forks the child. */
@@ -109,6 +119,8 @@ export interface PtyHostBridge {
 
 const TERMINATION_PROCESS_SCAN_BUDGET_MS = 4_000;
 const TERMINATION_TRANSPORT_MARGIN_MS = 500;
+/** Janela do probe de mortalidade; estourou = unverifiable, nunca morte. */
+const LIVENESS_PROBE_TIMEOUT_MS = 3_000;
 export const PRE_SPAWN_FAILURE_TOMBSTONE_TTL_MS = 120_000;
 export const PRE_SPAWN_FAILURE_TOMBSTONE_LIMIT = 256;
 export const PHYSICAL_EXIT_RECEIPT_TTL_MS = 300_000;
@@ -393,6 +405,14 @@ export function createPtyHostBridge(
     }
   >();
   let terminationCounter = 0;
+  const pendingLivenessProbes = new Map<
+    string,
+    {
+      readonly resolve: (live: ReadonlySet<string> | null) => void;
+      readonly timer: ReturnType<typeof setTimeout> | null;
+    }
+  >();
+  let livenessProbeCounter = 0;
 
   const host: PtyHost = {
     spawn(spec, h) {
@@ -469,6 +489,29 @@ export function createPtyHostBridge(
         },
       };
     },
+    probeLiveness(sessionIds) {
+      const requestId = `pty-liveness-${++livenessProbeCounter}`;
+      return new Promise<ReadonlySet<string> | null>((resolve) => {
+        const timer = setTimeout(() => {
+          if (!pendingLivenessProbes.delete(requestId)) return;
+          resolve(null); // host mudo = unverifiable, nunca morte
+        }, LIVENESS_PROBE_TIMEOUT_MS);
+        timer.unref?.();
+        pendingLivenessProbes.set(requestId, { resolve, timer });
+        try {
+          transport.post({
+            type: 'liveness-probe',
+            requestId,
+            sessionIds: [...sessionIds],
+          });
+        } catch {
+          if (pendingLivenessProbes.delete(requestId)) {
+            clearTimeout(timer);
+            resolve(null);
+          }
+        }
+      });
+    },
   };
 
   function dispatchEvent(msg: HostEventMsg): void {
@@ -478,6 +521,14 @@ export function createPtyHostBridge(
       if (pending.timer) clearTimeout(pending.timer);
       pendingTerminations.delete(msg.requestId);
       pending.resolve(msg.proof);
+      return;
+    }
+    if (msg.type === 'liveness-report') {
+      const pending = pendingLivenessProbes.get(msg.requestId);
+      if (!pending) return;
+      if (pending.timer) clearTimeout(pending.timer);
+      pendingLivenessProbes.delete(msg.requestId);
+      pending.resolve(new Set(msg.live));
       return;
     }
     const h = handlers.get(msg.sessionId);
@@ -491,6 +542,14 @@ export function createPtyHostBridge(
   }
 
   function handleHostDown(): void {
+    // Probes pendentes: host morto = resposta nenhuma → unverifiable. As
+    // sessões órfãs recebem onExit(-1) logo abaixo, pela via de host-down.
+    const probes = [...pendingLivenessProbes.values()];
+    pendingLivenessProbes.clear();
+    for (const probe of probes) {
+      if (probe.timer) clearTimeout(probe.timer);
+      probe.resolve(null);
+    }
     const pending = [...pendingTerminations.values()];
     pendingTerminations.clear();
     for (const operation of pending) {

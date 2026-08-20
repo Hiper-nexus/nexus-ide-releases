@@ -23,6 +23,7 @@ import {
   acknowledgeSessionOutput,
   recoverSessionOutput,
   setPtyHost,
+  startSessionMortalityReconciler,
 } from "./pty-manager";
 import { createRealPtyHost } from "./pty-host-client";
 import {
@@ -424,6 +425,9 @@ export function registerPtyIpc(): void {
   // Route every PTY through the isolated utilityProcess host (node-pty never
   // loads in the main process — docs/ARCHITECTURE.md §B.2).
   setPtyHost(createRealPtyHost());
+  // Exit perdido entre host e main não pode virar sessão imortal (pane
+  // fantasma) — o reconciliador sintetiza a morte com prova do host.
+  startSessionMortalityReconciler();
 
   // Sync for every legacy path; the renderer's invoke still receives a promise.
   ipcMain.handle(PTY_CHANNELS.spawn, (event, raw): SpawnResult | Promise<SpawnResult> => {

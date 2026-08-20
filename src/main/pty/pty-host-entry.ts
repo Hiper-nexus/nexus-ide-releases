@@ -339,5 +339,15 @@ parentPort.on('message', (e) => {
     case 'terminate':
       handleTerminate(msg);
       return;
+    case 'liveness-probe':
+      // Verdade física do host: handle presente no mapa = sessão viva aqui.
+      // Ausente = nenhum processo atende a sessão neste host (morto ou nunca
+      // nascido) — o main decide com strikes + graça, nunca num probe só.
+      post({
+        type: 'liveness-report',
+        requestId: msg.requestId,
+        live: msg.sessionIds.filter((sessionId) => procs.has(sessionId)),
+      });
+      return;
   }
 });

@@ -552,4 +552,62 @@ describe('createPtyHostBridge', () => {
     bridge.dispatchEvent({ type: 'exit', sessionId: 's1', exitCode: 0 });
     expect(a).toHaveBeenCalledTimes(1);
   });
+
+  describe('probeLiveness (reconciliador de mortalidade)', () => {
+    it('resolve com o conjunto exato que o host reportou vivo', async () => {
+      const t = fakeTransport();
+      const bridge = createPtyHostBridge(t.transport);
+      const pending = bridge.host.probeLiveness!(['s1', 's2', 's3']);
+      const request = t.posted[0];
+      expect(request).toMatchObject({
+        type: 'liveness-probe',
+        sessionIds: ['s1', 's2', 's3'],
+      });
+      const requestId = (request as { requestId: string }).requestId;
+      bridge.dispatchEvent({
+        type: 'liveness-report',
+        requestId,
+        live: ['s2'],
+      });
+      await expect(pending).resolves.toEqual(new Set(['s2']));
+    });
+
+    it('host mudo estoura a janela e resolve null (unverifiable)', async () => {
+      vi.useFakeTimers();
+      try {
+        const t = fakeTransport();
+        const bridge = createPtyHostBridge(t.transport);
+        const pending = bridge.host.probeLiveness!(['s1']);
+        vi.advanceTimersByTime(3_100);
+        await expect(pending).resolves.toBeNull();
+        // Report atrasado depois do timeout é no-op, não explode.
+        const requestId = (t.posted[0] as { requestId: string }).requestId;
+        bridge.dispatchEvent({
+          type: 'liveness-report',
+          requestId,
+          live: ['s1'],
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('host down resolve probes pendentes com null, nunca com morte', async () => {
+      const t = fakeTransport();
+      const bridge = createPtyHostBridge(t.transport);
+      const pending = bridge.host.probeLiveness!(['s1']);
+      bridge.handleHostDown();
+      await expect(pending).resolves.toBeNull();
+    });
+
+    it('transporte quebrado resolve null em vez de rejeitar', async () => {
+      const bridge = createPtyHostBridge({
+        ensure: () => {},
+        post: () => {
+          throw new Error('transport down');
+        },
+      });
+      await expect(bridge.host.probeLiveness!(['s1'])).resolves.toBeNull();
+    });
+  });
 });

@@ -100,6 +100,7 @@ vi.mock("./pty-manager", () => ({
   orchTerminateSession: ptyDeps.orchTerminateSession,
   resizeSession: vi.fn(),
   setPtyHost: ptyDeps.setPtyHost,
+  startSessionMortalityReconciler: vi.fn(),
   spawnAgentSession: ptyDeps.spawnAgentSession,
   spawnSession: ptyDeps.spawnSession,
   writeSession: ptyDeps.writeSession,

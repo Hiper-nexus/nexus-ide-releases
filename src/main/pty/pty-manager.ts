@@ -20,6 +20,7 @@ import {
   classifySessionLiveness,
   isConnectedAndWritable,
 } from "./session-liveness";
+import { createMortalityReconciler } from "./session-mortality-reconciler";
 import type { ProjectExecutionScope } from "../../shared/types";
 import type { SquadCliPolicy } from "../../shared/settings-types";
 import { sharedAgentAuthFamily } from "../../shared/agent-auth-family";
@@ -141,6 +142,8 @@ interface Session {
   hookBusyTimer: ReturnType<typeof setTimeout> | null;
   /** Spawn cwd — workspace attribution (media output, telemetry). */
   cwd: string;
+  /** Criação no main — período de graça do reconciliador de mortalidade. */
+  spawnedAtMs: number;
   /** Main-owned identity for cli-agent panes; never sourced from pane sync. */
   agent: OwnedAgentSessionInfo | null;
   missionOrchestratorGrantAvailable: boolean;
@@ -238,6 +241,55 @@ export function configureAgentHookEndpointPath(
 /** Wire the utilityProcess-backed host (called once at IPC bootstrap). */
 export function setPtyHost(host: PtyHost): void {
   ptyHost = host;
+}
+
+/**
+ * Reconciliador de mortalidade (caso de campo 20/08, "pane fantasma"): um
+ * exit perdido entre host e main deixava a sessão eternamente 'live' —
+ * pane preto, chef esperando worker morto, missão travada. O reconciliador
+ * pergunta ao host quais sessões têm handle vivo; ausência confirmada
+ * (strikes consecutivos, após graça) sintetiza o exit perdido via
+ * finalizeSession e o pipeline de morte existente roda inteiro. Host mudo é
+ * unverifiable e nunca condena (doutrina session-liveness).
+ */
+const MORTALITY_TICK_MS = 10_000;
+let mortalityTimer: ReturnType<typeof setInterval> | null = null;
+
+export function startSessionMortalityReconciler(): void {
+  if (mortalityTimer) return;
+  const reconciler = createMortalityReconciler({
+    listCandidates: () =>
+      [...sessions.entries()]
+        .filter(
+          ([sessionId, session]) =>
+            classifySessionLiveness(session.state) === "live" &&
+            !physicalTerminationFlights.has(sessionId) &&
+            // tmux: o handle do host é só o cliente de attach; a vida real
+            // está na sessão tmux e tem recuperação própria.
+            !session.persistentTmuxName,
+        )
+        .map(([sessionId, session]) => ({
+          sessionId,
+          spawnedAtMs: session.spawnedAtMs,
+        })),
+    probeLiveness: (sessionIds) => {
+      const probe = ptyHost?.probeLiveness;
+      if (!probe) return Promise.resolve(null);
+      return probe.call(ptyHost, sessionIds);
+    },
+    condemn: (sessionId) => finalizeSession(sessionId, -1),
+    log: (message) => console.error(message),
+    now: Date.now,
+  });
+  mortalityTimer = setInterval(() => {
+    void reconciler.tick();
+  }, MORTALITY_TICK_MS);
+  mortalityTimer.unref?.();
+}
+
+export function stopSessionMortalityReconciler(): void {
+  if (mortalityTimer) clearInterval(mortalityTimer);
+  mortalityTimer = null;
 }
 
 function requireHost(): PtyHost {
@@ -975,6 +1027,7 @@ export function spawnSession(
       idleTimeoutMs: 0,
       state: "spawning",
       cwd,
+      spawnedAtMs: Date.now(),
       agent: null,
       missionOrchestratorGrantAvailable: false,
       missionOrchestratorGrantExpiresAt: null,
@@ -2124,6 +2177,7 @@ export function spawnAgentSession(
     idleTimeoutMs: idleMs,
     state: "spawning",
     cwd,
+    spawnedAtMs: Date.now(),
     agent: {
       sessionId,
       paneId: req.paneId,
