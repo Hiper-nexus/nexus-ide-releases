@@ -126,10 +126,10 @@ function trackChefIdleEscalation(
  * never stalls. Recovery only runs after work is actually dispatched.
  * SLA clocks use approvedAt/dispatchedAt — never arm/createdAt.
  */
-export const DELEGATION_SLA_MS = 90_000;
+export const DELEGATION_SLA_MS = 5 * 60_000;
 /** Recovery handoff stuck in queued longer than this no longer blocks stages. */
 export const RECOVERY_QUEUED_TTL_MS = 15 * 60_000;
-export const DELEGATION_RETRY_MS = 90_000;
+export const DELEGATION_RETRY_MS = 30_000;
 export const DELEGATION_SCAN_MS = 15_000;
 export const DELEGATION_SUPERVISOR_AGENT = 'nexus-delegation-supervisor';
 
