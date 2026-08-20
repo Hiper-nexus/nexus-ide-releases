@@ -224,6 +224,25 @@ export function noteCivilianReviewRefusal(
 export function clearCivilianReviewRefusal(missionId: string): void {
   reviewRefusalAt.delete(missionId);
   refusalLogReasonByMission.delete(missionId);
+  reviewerRespawnUsed.delete(missionId);
+}
+
+/**
+ * Disjuntor do respawn de revisor (caso de campo 20/08): o revisor do roster
+ * (AGY) morria no spawn e a janela de 1s reabria OUTRO a cada tick — 17 panes
+ * vazios "abrindo do nada" numa missão de 1+1. Um orçamento por missão limita
+ * o total de tentativas; esgotado, o chamador loga UMA instrução acionável e
+ * para de fabricar pane. O orçamento zera quando a missão completa.
+ */
+const REVIEWER_RESPAWN_BUDGET = 3;
+const reviewerRespawnUsed = new Map<string, number>();
+
+/** true = ainda há orçamento (e consome 1); false = disjuntor aberto. */
+export function takeReviewerRespawnBudget(missionId: string): boolean {
+  const used = reviewerRespawnUsed.get(missionId) ?? 0;
+  if (used >= REVIEWER_RESPAWN_BUDGET) return false;
+  reviewerRespawnUsed.set(missionId, used + 1);
+  return true;
 }
 
 /**
@@ -1265,6 +1284,26 @@ export async function maybeCompleteFastLaneOnDelivery(
             !liveNames.has(paneAgentKey(agent.agentName)),
         )
         .map((agent) => remintReviewerForSeat(agent));
+      if (toSpawn.length > 0 && !takeReviewerRespawnBudget(mission.id)) {
+        if (
+          shouldLogCivilianRefusal(mission.id, 'reviewer_respawn_exhausted')
+        ) {
+          console.error(
+            `[civilian-delivery] disjuntor: revisor do roster morreu no spawn ` +
+              `repetidas vezes (mission=${mission.id}); parei de reabrir. ` +
+              `Troque o revisor do squad para uma CLI saudável ou conclua ` +
+              `pela via de evidência.`,
+          );
+        }
+        return {
+          action,
+          completed: false,
+          path: null,
+          spawnedReviewers: [],
+          markedDoneTaskIds,
+          productFiles,
+        };
+      }
       try {
         refusalSpawned = await (deps.spawnReviewers?.(scope, mission, toSpawn) ??
           defaultSpawnReviewers(scope, mission, toSpawn, stores));

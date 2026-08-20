@@ -5,6 +5,9 @@ import {
   type MissionPermission,
   type MissionPrepareRequest,
 } from '../../shared/mission-engine-contract';
+import { defaultFreeAgentChoice } from './free-agent-choice';
+import { isOperatorChoicePolicy } from '../../shared/squad-cli-policy';
+import { getOrchSettings } from '../persistence/settings-store';
 import {
   compileIntentContract,
   missionLaneAllowsTools,
@@ -484,9 +487,16 @@ export function createMissionEnginePreparationPorts(input: {
         source: 'typed',
         intentVersion: 1,
         lane: request.advanced?.lane ?? 'standard',
-        // Opt-in por missão: o Pet Studio reescreve `advanced` (lane standard,
-        // sem este flag) — modo livre só chega por escolha explícita do fluxo.
-        ...(request.advanced?.freeAgentChoice
+        // Sob Autopiloto o modo livre é o DEFAULT do selo (ordem do operador,
+        // 20/08: "tirar o cabresto"); Hardened e Pet Studio continuam opt-in
+        // explícito — ver defaultFreeAgentChoice.
+        ...(defaultFreeAgentChoice({
+          requested: request.advanced?.freeAgentChoice,
+          operatorChoicePolicy: isOperatorChoicePolicy(
+            getOrchSettings().squadCliPolicy,
+          ),
+          petStudio,
+        })
           ? { freeAgentChoice: true }
           : {}),
         contextPolicy:

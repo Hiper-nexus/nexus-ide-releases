@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  defaultFreeAgentChoice,
   isFreeAgentChoiceContract,
   requiresRouteReservation,
   squadBindingViolationError,
@@ -116,6 +117,55 @@ describe('gate (c) route_reservation — bypass de modo livre', () => {
         missionRunning: false,
         rosterRouteAuthorized: false,
         freeAgentChoice: false,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe('defaultFreeAgentChoice', () => {
+  it('Autopiloto: missão nova nasce em modo livre por default', () => {
+    expect(
+      defaultFreeAgentChoice({
+        requested: undefined,
+        operatorChoicePolicy: true,
+        petStudio: false,
+      }),
+    ).toBe(true);
+  });
+
+  it('Hardened: modo livre continua opt-in explícito', () => {
+    expect(
+      defaultFreeAgentChoice({
+        requested: undefined,
+        operatorChoicePolicy: false,
+        petStudio: false,
+      }),
+    ).toBe(false);
+    expect(
+      defaultFreeAgentChoice({
+        requested: true,
+        operatorChoicePolicy: false,
+        petStudio: false,
+      }),
+    ).toBe(true);
+  });
+
+  it('escolha explícita do fluxo vence o default nas duas direções', () => {
+    expect(
+      defaultFreeAgentChoice({
+        requested: false,
+        operatorChoicePolicy: true,
+        petStudio: false,
+      }),
+    ).toBe(false);
+  });
+
+  it('Pet Studio só entra em modo livre por escolha explícita', () => {
+    expect(
+      defaultFreeAgentChoice({
+        requested: undefined,
+        operatorChoicePolicy: true,
+        petStudio: true,
       }),
     ).toBe(false);
   });

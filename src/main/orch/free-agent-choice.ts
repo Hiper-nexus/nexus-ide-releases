@@ -25,6 +25,26 @@ export function isFreeAgentChoiceContract(
   return contract?.freeAgentChoice === true;
 }
 
+/**
+ * Default do modo livre no SELO do contrato (decisão de 20/08, ordem do
+ * operador: "tirar o cabresto"). Sob Autopiloto (squadCliPolicy ≠ governed)
+ * uma missão nova nasce em modo livre, a menos que o fluxo peça o contrário;
+ * sob Hardened continua opt-in explícito. Pet Studio reescreve `advanced` e
+ * só entra em modo livre por escolha explícita do próprio fluxo — preservado.
+ *
+ * Os guardrails que não são cerimônia (containment de workspace, allowlists,
+ * 1 escritor por checkout, maxWorkers) não passam por aqui e seguem valendo.
+ */
+export function defaultFreeAgentChoice(input: {
+  readonly requested: boolean | undefined;
+  readonly operatorChoicePolicy: boolean;
+  readonly petStudio: boolean;
+}): boolean {
+  if (input.petStudio) return input.requested === true;
+  if (input.requested !== undefined) return input.requested;
+  return input.operatorChoicePolicy;
+}
+
 export interface SquadBindingGateInput {
   /** Spawn de agente NOMEADO do roster (agentName) já é vinculado por identidade. */
   readonly hasNamedAgent: boolean;
