@@ -508,6 +508,22 @@ export function agentPrompt(
       : agent.category === 'orchestrator' && sealedPlanTitles.length === 1
         ? `Plano selado (1 entrega): ${sealedPlanTitles[0]}`
         : '';
+  // Critério do operador (20/08): missão que pergunta aos panes só termina
+  // quando TODOS os panes endereçados responderam — um pane por integrante,
+  // e o FECHO cita a resposta de cada um. Sem isto o Maestro abria 1 pane
+  // genérico e fechava com papelada.
+  const teamWorkerNames = (squad?.agents ?? [])
+    .filter((member) => member.category !== 'orchestrator')
+    .map((member) => member.agentName);
+  const metaPaneBlock =
+    agent.category === 'orchestrator' &&
+    sealedPlanTitles.some((storyTitle) => isPaneMetaTask(storyTitle))
+      ? 'META-DE-PANE: esta missão pergunta aos próprios panes — VOCÊ executa. ' +
+        `Abra UM pane por integrante (${teamWorkerNames.join(', ') || 'equipe'}) ` +
+        'via nexus_pane_spawn com a pergunta no prompt, aguarde a resposta de ' +
+        'TODOS os panes, e só então FECHO: nexus_handoff_submit success citando ' +
+        'a resposta de CADA pane. Nenhum pane sem resposta = missão não fecha.'
+      : '';
   const uiNote = isUiMissionText(objective)
     ? 'Este pedido envolve interface. Use o DESIGN.md do projeto e o catálogo de design como guia de estilo.'
     : '';
@@ -525,6 +541,7 @@ export function agentPrompt(
           ? `Aprendizados anteriores: ${mission.learnings}`
           : '',
         sealedPlanBlock,
+        metaPaneBlock,
       ]
         .filter(Boolean)
         .join('\n'),

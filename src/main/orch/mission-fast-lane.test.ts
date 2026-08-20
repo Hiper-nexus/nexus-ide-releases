@@ -368,3 +368,45 @@ describe('isPaneMetaTask — meta-de-pane fica com o Maestro', () => {
     expect(isPaneMetaTask('implementar dashboard de vendas')).toBe(false);
   });
 });
+
+describe('kickoff meta-de-pane — um pane por integrante, TODOS respondem', () => {
+  it('injeta a diretiva com os nomes da equipe e o critério N/N', () => {
+    const prompt = agentPrompt(
+      agent({
+        id: 'coord',
+        agentName: 'Coordenar e revisar',
+        category: 'orchestrator',
+      }),
+      mission({ description: 'pergunte aos panes quanto é 1+1' }),
+      ['Coordenar e revisar', 'Implementar motor'],
+      false,
+      '',
+      squad({
+        agents: [
+          agent({ id: 'coord', agentName: 'Coordenar e revisar', category: 'orchestrator' }),
+          agent({ id: 'w1', agentName: 'Implementar interface', category: 'executor' }),
+          agent({ id: 'w2', agentName: 'Implementar motor', category: 'executor' }),
+        ],
+      }),
+      ['pergunte aos panes quanto é 1+1'],
+    );
+    expect(prompt).toContain('META-DE-PANE');
+    expect(prompt).toContain('UM pane por integrante');
+    expect(prompt).toContain('Implementar motor');
+    expect(prompt).toContain('TODOS os panes');
+    expect(prompt).toContain('Nenhum pane sem resposta');
+  });
+
+  it('missão sem meta-de-pane não carrega a diretiva', () => {
+    const prompt = agentPrompt(
+      agent({ category: 'orchestrator' }),
+      mission(),
+      [],
+      false,
+      '',
+      squad(),
+      ['implementar dashboard de vendas'],
+    );
+    expect(prompt).not.toContain('META-DE-PANE');
+  });
+});
