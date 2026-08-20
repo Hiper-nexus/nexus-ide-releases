@@ -15,7 +15,28 @@ import {
 const entityIdSchema = z.string().min(1).max(256);
 const sessionIdSchema = z.string().min(1).max(256);
 const timestampSchema = z.number().int().nonnegative();
-const routeReservationTtlSchema = z.number().int().min(1_000).max(30 * 60_000);
+export const ROUTE_RESERVATION_TTL_MIN_MS = 1_000;
+export const ROUTE_RESERVATION_TTL_MAX_MS = 30 * 60_000;
+const routeReservationTtlSchema = z
+  .number()
+  .int()
+  .min(ROUTE_RESERVATION_TTL_MIN_MS)
+  .max(ROUTE_RESERVATION_TTL_MAX_MS);
+
+/**
+ * TTL é proteção, não contrato: um pedido fora da faixa (Maestro chutou 1h,
+ * NaN, float) vira o limite mais próximo em vez de derrubar a reserva. Caso
+ * de campo 20/08: o PRÓPRIO default (60min) violava o teto do schema (30min,
+ * b34907b3) e TODO nexus_route_task falhava com erro zod sem nome de campo —
+ * missão inteira presa em route_reservation_required.
+ */
+export function clampRouteReservationTtlMs(raw: number): number {
+  if (!Number.isFinite(raw)) return ROUTE_RESERVATION_TTL_MAX_MS;
+  return Math.min(
+    ROUTE_RESERVATION_TTL_MAX_MS,
+    Math.max(ROUTE_RESERVATION_TTL_MIN_MS, Math.round(raw)),
+  );
+}
 
 const routeCandidateSchema = z
   .object({
@@ -77,7 +98,8 @@ const routeReservationMissionSchema = z
   })
   .strict();
 
-export const ROUTE_RESERVATION_TTL_MS = 60 * 60_000;
+/** Default = teto do schema; um default acima do teto brickava toda rota. */
+export const ROUTE_RESERVATION_TTL_MS = ROUTE_RESERVATION_TTL_MAX_MS;
 
 export interface MissionRouteReservation {
   readonly id: string;
@@ -237,7 +259,9 @@ export class MissionRouteReservationLedger {
     const missionId = entityIdSchema.parse(rawMissionId);
     const task = z.string().min(1).max(65_536).parse(rawTask);
     const decision = routeDecisionSchema.parse(rawDecision) as RouteDecision;
-    const ttlMs = routeReservationTtlSchema.parse(rawTtlMs);
+    const ttlMs = routeReservationTtlSchema.parse(
+      clampRouteReservationTtlMs(rawTtlMs),
+    );
     const createdAt = this.#binding.now();
     const expiresAt = createdAt + ttlMs;
     if (!Number.isSafeInteger(expiresAt)) {
