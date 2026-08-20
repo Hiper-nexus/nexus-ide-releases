@@ -77,7 +77,7 @@ const routeReservationMissionSchema = z
   })
   .strict();
 
-export const ROUTE_RESERVATION_TTL_MS = 5 * 60_000;
+export const ROUTE_RESERVATION_TTL_MS = 60 * 60_000;
 
 export interface MissionRouteReservation {
   readonly id: string;

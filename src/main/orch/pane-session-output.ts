@@ -3,7 +3,7 @@ import type { PaneSessionState } from "../../shared/types";
 import { getSessionState } from "../pty/pty-manager";
 
 const RING_BUFFER_CAP = 262_144;
-const EXITED_BUFFER_TTL_MS = 5 * 60_000;
+const EXITED_BUFFER_TTL_MS = 30 * 60_000;
 
 interface RingBuffer {
   chunks: string[];

@@ -182,7 +182,7 @@ export function isPlaceholderSummary(summary: string): boolean {
  * repaint virava outra entrega ao orquestrador. Um handoff idêntico (mesma
  * sessão + status + summary) dentro da janela é repaint, não reentrega.
  */
-export const LEGACY_DEDUPE_TTL_MS = 10 * 60_000;
+export const LEGACY_DEDUPE_TTL_MS = 60 * 60_000;
 
 export class LegacyHandoffDedupe {
   private seen = new Map<string, number>(); // sessionId\nstatus\nsummary → at

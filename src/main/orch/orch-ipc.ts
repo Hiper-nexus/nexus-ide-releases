@@ -243,7 +243,7 @@ const harnessEnrichPool = new BoundedAsyncOperationPool<unknown>({
   ttlMs: 0,
 });
 let squadFileOperationPending = false;
-export const ASYNC_ENRICHMENT_TIMEOUT_MS = 120_000;
+export const ASYNC_ENRICHMENT_TIMEOUT_MS = 300_000;
 const designSystemsSearchPool = new BoundedAsyncOperationPool<unknown>({
   maxConcurrent: 1,
   maxCacheEntries: 32,
@@ -260,7 +260,7 @@ let orchestrationClosing = false;
 let orchestrationShutdownBlocked = false;
 let disposeSquadBroadcast: (() => void) | null = null;
 let disposeMissionResurrection: (() => void) | null = null;
-const SQUAD_DESIGN_DRAFT_TTL_MS = 15 * 60_000;
+const SQUAD_DESIGN_DRAFT_TTL_MS = 60 * 60_000;
 const MAX_SQUAD_DESIGN_DRAFTS = 64;
 const squadDesignDrafts = new Map<
   string,

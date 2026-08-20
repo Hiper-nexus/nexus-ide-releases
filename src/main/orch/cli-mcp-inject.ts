@@ -84,7 +84,7 @@ const CODEX_MCP_TOKEN_ENV_VAR = "NEXUS_MCP_TOKEN";
  * from Codex `exec`) fails closed instead of parking the orchestrator forever
  * and starving handoff delivery / plan sealing.
  */
-export const CODEX_MCP_TOOL_TIMEOUT_SEC = 45;
+export const CODEX_MCP_TOOL_TIMEOUT_SEC = 120;
 
 export interface CodexMcpArgsOptions {
   /**

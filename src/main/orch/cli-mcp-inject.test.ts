@@ -105,7 +105,7 @@ describe("codexMcpArgs", () => {
     expect(args[3]).toBe(
       `mcp_servers.${serverName}.bearer_token_env_var="NEXUS_MCP_TOKEN"`,
     );
-    expect(args[5]).toBe(`mcp_servers.${serverName}.tool_timeout_sec=45`);
+    expect(args[5]).toBe(`mcp_servers.${serverName}.tool_timeout_sec=120`);
     expect(serialized).not.toContain(token);
     expect(serialized).not.toContain("Bearer ");
     expect(serialized).not.toContain("http_headers");
