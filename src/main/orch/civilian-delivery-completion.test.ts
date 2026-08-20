@@ -63,6 +63,7 @@ function decision(
     workersDelivered: true,
     remainingKinds: [],
     oldestReviewQueuedMs: null,
+    hasQueuedHandoffs: false,
     ...overrides,
   };
 }

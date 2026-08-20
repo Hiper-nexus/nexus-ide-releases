@@ -1,7 +1,6 @@
 import { execFile } from 'node:child_process';
 import {
   existsSync,
-  readdirSync,
   statSync,
 } from 'node:fs';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -60,9 +59,6 @@ const REVIEW_HOLD_TASK =
 const KICKOFF_FILE =
   /(?:^|[^\w./-])((?:[\w.-]+\/)*[\w.-]+\.[A-Za-z][A-Za-z0-9]{0,7})/gu;
 
-const MAX_WALK_FILES = 400;
-const MAX_WALK_VISITS = 2_000;
-const MAX_WALK_DEPTH = 6;
 
 export type CivilianDeliveryAction =
   | 'complete'
@@ -88,6 +84,7 @@ export interface CivilianDeliveryDecisionInput {
   readonly productFileCount: number;
   readonly activeWriterCount: number;
   readonly workersDelivered: boolean;
+  readonly hasQueuedHandoffs: boolean;
   readonly remainingKinds: readonly CivilianRemainderKind[];
   readonly oldestReviewQueuedMs: number | null;
 }
@@ -433,6 +430,7 @@ export function decideCivilianDeliveryAction(
   input: CivilianDeliveryDecisionInput,
 ): CivilianDeliveryAction {
   if (input.failClosed) return 'refuse-fail-closed';
+  if (input.hasQueuedHandoffs && !input.boardAllDone) return 'wait';
   if (input.boardAllDone) return 'complete';
   if (input.designOnly || input.neverStartedDraft) return 'refuse-empty';
 
@@ -563,38 +561,6 @@ async function listGitProductFiles(root: string): Promise<string[]> {
   return [...found];
 }
 
-function walkWorkspaceFiles(root: string): string[] {
-  if (!existsSync(root)) return [];
-  const found: string[] = [];
-  const stack: Array<{ dir: string; depth: number }> = [{ dir: root, depth: 0 }];
-  let visits = 0;
-  while (stack.length > 0 && found.length < MAX_WALK_FILES && visits < MAX_WALK_VISITS) {
-    const current = stack.pop();
-    if (!current) break;
-    let entries;
-    try {
-      entries = readdirSync(current.dir, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      visits += 1;
-      const absolute = join(current.dir, String(entry.name));
-      const rel = relative(root, absolute);
-      if (!rel || isJunkRelative(rel)) continue;
-      if (entry.isDirectory()) {
-        if (current.depth < MAX_WALK_DEPTH) {
-          stack.push({ dir: absolute, depth: current.depth + 1 });
-        }
-        continue;
-      }
-      if (entry.isFile() && isNonEmptyFile(absolute)) found.push(rel);
-      if (found.length >= MAX_WALK_FILES) break;
-    }
-  }
-  return found;
-}
-
 export async function listDeliveredProductFiles(
   root: string,
   handoffs: readonly Handoff[],
@@ -603,7 +569,6 @@ export async function listDeliveredProductFiles(
   const found = new Set<string>([
     ...collectArtifactFiles(root, handoffs),
     ...(await listGitProductFiles(root)),
-    ...walkWorkspaceFiles(root),
   ]);
   for (const requested of extractKickoffRequestedFiles(kickoffText)) {
     const absolute = resolveWorkspaceFile(root, requested);
@@ -666,6 +631,7 @@ export function inspectCivilianDelivery(input: {
   readonly failClosed: boolean;
   readonly holdForReview: boolean;
   readonly activeWriterCount: number;
+  readonly hasQueuedHandoffs: boolean;
   readonly remaining: CivilianRemainderTask[];
   readonly deliveredWorkerTaskIds: string[];
 } {
@@ -797,6 +763,10 @@ export function inspectCivilianDelivery(input: {
       activeWriterCount === 0) ||
     (boardAllDone && activeWriterCount === 0);
 
+  const hasQueuedHandoffs = input.handoffs.some(
+    (h) => h.deliveryState === 'queued' || h.deliveryState === 'submitted',
+  );
+
   return {
     hasSuccessHandoff: successHandoffs.length > 0,
     workersDelivered,
@@ -810,6 +780,7 @@ export function inspectCivilianDelivery(input: {
       remaining,
     ),
     activeWriterCount,
+    hasQueuedHandoffs,
     remaining,
     deliveredWorkerTaskIds,
   };
@@ -1123,6 +1094,7 @@ export async function maybeCompleteFastLaneOnDelivery(
     neverStartedDraft: inspection.neverStartedDraft,
     hasSuccessHandoff: inspection.hasSuccessHandoff,
     hasRealWorkerDelivery: inspection.hasRealWorkerDelivery,
+    hasQueuedHandoffs: inspection.hasQueuedHandoffs,
     holdForReview: inspection.holdForReview,
     productFileCount: productFiles.length,
     activeWriterCount: inspection.activeWriterCount,
