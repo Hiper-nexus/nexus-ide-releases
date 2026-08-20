@@ -296,6 +296,10 @@ export interface HandoffAgentAttestationBinding {
 export interface ListHandoffsFilter {
   missionId?: string;
   includeDelivered?: boolean;
+  /** Filter by exact handoff ids (Overclock `ids`). */
+  ids?: string[];
+  /** Filter by worker PTY session ids (Overclock `panes`). */
+  sessionIds?: string[];
 }
 
 interface ResolvedEvidence {
@@ -1327,6 +1331,8 @@ export class ScopedHandoffStore {
       .object({
         missionId: identifierSchema.optional(),
         includeDelivered: z.boolean().optional(),
+        ids: z.array(identifierSchema).max(256).optional(),
+        sessionIds: z.array(identifierSchema).max(256).optional(),
       })
       .strict()
       .parse(rawFilter);
@@ -1335,6 +1341,16 @@ export class ScopedHandoffStore {
     if (filter.missionId !== undefined) {
       clauses.push("mission_id = ?");
       params.push(filter.missionId);
+    }
+    if (filter.ids !== undefined && filter.ids.length > 0) {
+      const placeholders = filter.ids.map(() => "?").join(",");
+      clauses.push(`id IN (${placeholders})`);
+      params.push(...filter.ids);
+    }
+    if (filter.sessionIds !== undefined && filter.sessionIds.length > 0) {
+      const placeholders = filter.sessionIds.map(() => "?").join(",");
+      clauses.push(`session_id IN (${placeholders})`);
+      params.push(...filter.sessionIds);
     }
     if (!filter.includeDelivered) clauses.push("delivered = 0");
     const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";

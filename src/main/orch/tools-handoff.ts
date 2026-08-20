@@ -18,7 +18,7 @@ import {
   disarmAutoCloseOnHandoff,
   shouldAutoCloseAfterHandoff,
 } from "./pane-close-scopes";
-import { requestPaneClose } from "./pane-registry";
+import { listPaneSnapshots, requestPaneClose } from "./pane-registry";
 import {
   assertMcpInvocationCurrent,
   type McpToolDef,
@@ -58,6 +58,28 @@ import {
   maybeCompleteFastLaneOnDelivery,
   normalizeFilesModified,
 } from "./worker-files-modified";
+
+function buildOverclockArtifacts(
+  args: Record<string, unknown>,
+): Array<{ readonly kind: string; readonly payload: unknown }> {
+  const artifacts: Array<{ readonly kind: string; readonly payload: unknown }> = [];
+  if (typeof args.briefId === "string" && args.briefId.length > 0) {
+    artifacts.push({ kind: "overclock.briefId", payload: args.briefId });
+  }
+  if (typeof args.to === "string" && args.to.length > 0) {
+    artifacts.push({ kind: "overclock.to", payload: args.to });
+  }
+  if (typeof args.fullText === "string" && args.fullText.length > 0) {
+    const text = args.fullText.length > 60_000
+      ? `${args.fullText.slice(0, 60_000)}\n[...]`
+      : args.fullText;
+    artifacts.push({ kind: "overclock.fullText", payload: text });
+  }
+  if (args.evidence !== undefined) {
+    artifacts.push({ kind: "overclock.evidence", payload: args.evidence });
+  }
+  return artifacts;
+}
 
 function requireHandoffMcpEffectIntent(
   invocation: McpToolInvocation | undefined,
@@ -136,6 +158,10 @@ const handoffSubmitTool: McpToolDef = {
       filesModified: { type: "array", items: { type: "string" } },
       "files-modified": { type: "array", items: { type: "string" } },
       evidenceIds: { type: "array", items: { type: "string" } },
+      briefId: { type: "string", description: "Optional task/brief id (Overclock parity)." },
+      to: { type: "string", description: "Optional target pane id (Overclock parity)." },
+      fullText: { type: "string", description: "Optional full worker response (Overclock parity)." },
+      evidence: { type: "object", description: "Optional untrusted evidence blob (Overclock parity)." },
       telemetry: {
         type: "object",
         description:
@@ -298,8 +324,10 @@ const handoffSubmitTool: McpToolDef = {
     // (metadado untrusted já persistido) — nada disso é evidência de
     // conclusão, e payload inválido é simplesmente ignorado.
     const telemetry = sanitizeHandoffTelemetry(args.telemetry);
+    const overclockArtifacts = buildOverclockArtifacts(args);
     const artifacts = [
       ...(Array.isArray(args.artifacts) ? args.artifacts : []),
+      ...overclockArtifacts,
       ...(telemetry ? [embedTelemetryArtifact(telemetry)] : []),
     ];
     const handoffInput = {
@@ -479,6 +507,8 @@ const handoffListTool: McpToolDef = {
       missionId: { type: "string" },
       includeDelivered: { type: "boolean" },
       full: { type: "boolean" },
+      panes: { type: "array", items: { type: "string" }, description: "Optional pane ids/sessions to limit results (Overclock parity)." },
+      ids: { type: "array", items: { type: "string" }, description: "Optional exact handoff ids to fetch (Overclock parity)." },
     },
   },
   handler: async (args, ctx) => {
@@ -490,9 +520,31 @@ const handoffListTool: McpToolDef = {
       ctx.role === "orchestrator"
         ? (requestedMission ?? ctx.missionId)
         : ctx.missionId;
+    const rawPanes = Array.isArray(args.panes)
+      ? args.panes.filter((p) => typeof p === "string")
+      : [];
+    const paneSessionIds = rawPanes.length > 0
+      ? listPaneSnapshots()
+          .filter(
+            (s) =>
+              rawPanes.includes(s.paneId) ||
+              (s.sessionId !== null && rawPanes.includes(s.sessionId)) ||
+              (s.paneNumber !== undefined &&
+                rawPanes.includes(String(s.paneNumber))),
+          )
+          .map((s) => s.sessionId)
+          .filter((s): s is string => s !== null)
+      : undefined;
+    const rawIds = Array.isArray(args.ids)
+      ? args.ids.filter((i) => typeof i === "string")
+      : [];
     const rows = getProjectDomainStores(ctx.scope).handoffs.list({
       missionId,
       includeDelivered: resolveHandoffListIncludeDelivered(args, ctx.role),
+      ...(paneSessionIds !== undefined && paneSessionIds.length > 0
+        ? { sessionIds: paneSessionIds }
+        : {}),
+      ...(rawIds.length > 0 ? { ids: rawIds } : {}),
     });
     // List = recibo (0.64): a resposta carrega summary+artifacts — o Maestro
     // da PRÓPRIA missão que listou já recebeu. Marca acknowledged e o
