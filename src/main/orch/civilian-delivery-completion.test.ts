@@ -42,6 +42,7 @@ import {
   inspectDeliveryEvidence,
   listDeliveredProductFiles,
   maybeCompleteFastLaneOnDelivery,
+  toArtifactRefs,
 } from './civilian-delivery-completion';
 import type { ScopedTaskRecord } from './task-store';
 
@@ -420,6 +421,21 @@ describe('hasUnsettledQueuedHandoffs — settlement idempotente', () => {
     });
     expect(inspected.hasQueuedHandoffs).toBe(false);
     expect(inspected.workersDelivered).toBe(true);
+  });
+});
+
+describe('toArtifactRefs — resultado sem lixo do workspace', () => {
+  it('filtra dotfiles (.env é SEGREDO), logs e mantém entrega real', () => {
+    expect(
+      toArtifactRefs([
+        'landing.html',
+        '.DS_Store',
+        '.env',
+        'out-dev.log',
+        'src/app.ts',
+        'docs/.gitignore',
+      ]),
+    ).toEqual(['landing.html', 'src/app.ts']);
   });
 });
 

@@ -7,7 +7,7 @@
  * DESIGN.md sozinho e rascunho nunca iniciado não fecham.
  */
 import { existsSync, readdirSync, statSync } from 'node:fs';
-import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 import { missionResultSchema } from '../../shared/mission-engine-contract';
 import type { Handoff, Mission } from '../../shared/orch-types';
 import type { ProjectExecutionScope } from '../../shared/types';
@@ -19,6 +19,7 @@ import {
   matchHandoffToAgent,
   noteCivilianReviewRefusal,
   shouldLogCivilianRefusal,
+  toArtifactRefs,
 } from './civilian-delivery-completion';
 import { missionEngineForScope } from './mission-engine-registry';
 import { listPaneSnapshots } from './pane-registry';
@@ -297,10 +298,7 @@ export function applyCivilianProntoDecision(input: {
   readonly stores: Pick<ProjectDomainStoreSuite, 'missions' | 'handoffs' | 'missionPanes'>;
 }): boolean {
   if (input.decision.action !== 'pronto') return false;
-  const files = input.productFiles
-    .map((file) => file.split(sep).join('/').slice(0, 256))
-    .filter((file) => file.length > 0)
-    .slice(0, 64);
+  const files = toArtifactRefs(input.productFiles);
   const orchestratorSummary = findOrchestratorHandoffSummary(
     input.mission,
     input.stores,

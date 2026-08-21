@@ -849,6 +849,21 @@ function buildConsolidatedSummary(
   }
 }
 
+/** Lixo que o walk do workspace pinta como artefato mas não é entrega:
+ * dotfiles (.DS_Store, .env — SEGREDO, .gitignore, .cdp-*) e logs. */
+export function isJunkArtifactRef(rel: string): boolean {
+  const base = basename(rel).toLowerCase();
+  return base.startsWith('.') || base.endsWith('.log');
+}
+
+/** Normaliza caminhos para artifactRefs (sep→/, cap 256) sem lixo, máx 64. */
+export function toArtifactRefs(files: readonly string[], max = 64): string[] {
+  return files
+    .map((file) => file.split(sep).join('/').slice(0, 256))
+    .filter((file) => file.length > 0 && !isJunkArtifactRef(file))
+    .slice(0, max);
+}
+
 function completionSummary(
   mission: Mission,
   files: readonly string[],
@@ -1032,10 +1047,7 @@ function completeMission(
     outcome: 'success',
     summary,
     evidenceIds: [],
-    artifactRefs: files
-      .map((file) => file.split(sep).join('/').slice(0, 256))
-      .filter((file) => file.length > 0)
-      .slice(0, 64),
+    artifactRefs: toArtifactRefs(files),
   });
   const learnings = (
     mission.learnings.trim()
