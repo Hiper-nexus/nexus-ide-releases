@@ -184,13 +184,15 @@ const READ_ONLY_CONTEXT_METADATA_TOOLS = new Set([
 
 /**
  * Basic tools that must remain reachable even from a read-only gate context.
- * A read-only reviewer/orchestrator still needs to spawn panes, run tests,
- * read files and diagnose the workspace. The handlers enforce containment.
+ * A read-only reviewer/orchestrator still needs to spawn panes, read files
+ * and diagnose the workspace. The handlers enforce containment.
+ *
+ * Shell execution (terminal_run / terminal_input) is deliberately excluded:
+ * there is no reliable mechanical way to classify an arbitrary shell command
+ * as read-only, so read-only tokens must not reach the terminal at all.
  */
 const READ_ONLY_BASIC_TOOLS = new Set([
   'pane_spawn',
-  'terminal_run',
-  'terminal_input',
   'file_read',
   'context_doctor',
   'pane_ask',

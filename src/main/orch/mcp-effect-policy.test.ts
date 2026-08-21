@@ -166,6 +166,8 @@ describe('MCP effect policy', () => {
       'nexus_route_task',
       'nexus_context_draft_apply',
       'nexus_merge_task',
+      'terminal_run',
+      'terminal_input',
       'nexus_future_unknown_tool',
     ]) {
       expect(isToolAllowedForReadOnlyContext(tool), tool).toBe(false);
@@ -186,6 +188,16 @@ describe('MCP effect policy', () => {
     expect(
       isHookMcpToolAllowedForReadOnlyContext(
         'mcp__nexus__nexus_file_write',
+      ),
+    ).toBe(false);
+    expect(
+      isHookMcpToolAllowedForReadOnlyContext(
+        'mcp__nexus__nexus_terminal_run',
+      ),
+    ).toBe(false);
+    expect(
+      isHookMcpToolAllowedForReadOnlyContext(
+        'mcp__nexus__nexus_terminal_input',
       ),
     ).toBe(false);
     // Native CLI authority is enforced separately from the Nexus MCP boundary.

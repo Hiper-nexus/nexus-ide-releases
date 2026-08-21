@@ -390,7 +390,6 @@ describe('handleMcpMessage', () => {
       'nexus_context_draft_review',
       'nexus_handoff_submit',
       'nexus_worker_heartbeat',
-      'nexus_terminal_run',
       'nexus_pane_spawn',
     ]);
     expect(handler).not.toHaveBeenCalled();
