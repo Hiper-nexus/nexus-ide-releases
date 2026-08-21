@@ -284,16 +284,15 @@ export function handleWorkerPaneDone(
 
   let baseline = baselines.get(sessionId);
   if (!baseline) {
-    // Sem snapshot de spawn: contar o dirty atual, não um snapshot tardio
-    // que tornaria o delta vazio depois que os arquivos já estão no disco.
-    // Não varrer mtime do passado — observedAt ≈ agora só pega o que nascer
-    // depois; o git dirty com dirtyPaths=[] cobre o que já está no disco.
+    // Sem snapshot de spawn: usar o dirty-state ACTUAL como baseline para
+    // não contar arquivos pré-existentes do workspace como produzidos pelo
+    // worker — caso contrário, arquivos sujos irrelevantes avançam o board.
     try {
       const late = deps.snapshotBaseline(cwd);
       baseline = Object.freeze({
         cwd: late.cwd,
         headSha: late.headSha,
-        dirtyPaths: Object.freeze([] as string[]),
+        dirtyPaths: late.dirtyPaths,
         observedAt: late.observedAt,
       });
       baselines.set(sessionId, baseline);
@@ -426,14 +425,10 @@ export function reconcileSealedBoardFromDisk(
   if (!baseline) {
     try {
       const snap = deps.snapshotBaseline(cwd);
-      const progress = boardProgressFromSealedTasks(tasks);
       baseline = Object.freeze({
         cwd: snap.cwd,
         headSha: snap.headSha,
-        dirtyPaths:
-          progress.completed === 0
-            ? Object.freeze([] as string[])
-            : snap.dirtyPaths,
+        dirtyPaths: snap.dirtyPaths,
         observedAt: snap.observedAt,
       });
       missionBaselines.set(missionId, baseline);
@@ -450,18 +445,23 @@ export function reconcileSealedBoardFromDisk(
     }
   }
 
-  const hasPending = tasks.some(
-    (task) => task.status === 'pending' || task.status === 'running',
-  );
   let filesModified: string[] = [];
   try {
     const delta = deps.collectFilesModified(cwd, baseline);
-    const pasta = hasPending
-      ? deps.collectFilesModified(cwd, {
-          ...baseline,
-          dirtyPaths: Object.freeze([]),
-        })
-      : [];
+    const progress = boardProgressFromSealedTasks(tasks);
+    const hasPending = tasks.some(
+      (task) => task.status === 'pending' || task.status === 'running',
+    );
+    // Re-include baseline dirty files only when workers already advanced the
+    // board (completed > 0). At progress 0, pre-existing workspace dirt must
+    // NOT count — otherwise unrelated dirty files trigger a false "Pronto".
+    const pasta =
+      hasPending && progress.completed > 0
+        ? deps.collectFilesModified(cwd, {
+            ...baseline,
+            dirtyPaths: Object.freeze([]),
+          })
+        : [];
     filesModified = uncreditedMissionFiles(missionId, [
       ...new Set([...delta, ...pasta]),
     ]);

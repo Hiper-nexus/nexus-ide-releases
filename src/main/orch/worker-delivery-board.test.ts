@@ -314,6 +314,14 @@ describe('reconcileSealedBoardFromDisk — first-wave sem PTY death', () => {
   it('17 arquivos no disco com board 0/N incrementa sem pane exit', () => {
     const { mission, tasks, stores } = sealBoard();
     const deps = depsFor(stores);
+
+    // First tick: sets baseline while repo is clean.
+    reconcileSealedBoardFromDisk(
+      { stores, missionId: mission.id, cwd: repo },
+      deps,
+    );
+
+    // Worker creates 17 files between ticks.
     fs.mkdirSync(path.join(repo, 'public'), { recursive: true });
     fs.writeFileSync(path.join(repo, 'server.js'), 'listen(4341)\n');
     fs.writeFileSync(path.join(repo, 'public', 'index.html'), '<html></html>\n');
@@ -321,6 +329,7 @@ describe('reconcileSealedBoardFromDisk — first-wave sem PTY death', () => {
       fs.writeFileSync(path.join(repo, `file-${i}.txt`), 'ok\n');
     }
 
+    // Second tick: detects newly dirty files.
     const result = reconcileSealedBoardFromDisk(
       { stores, missionId: mission.id, cwd: repo },
       deps,
@@ -351,11 +360,21 @@ describe('reconcileSealedBoardFromDisk — first-wave sem PTY death', () => {
     const { mission, tasks, stores } = sealBoard([
       { status: 'success', sessionId: 'pty-writer-1' },
     ]);
+    const deps = depsFor(stores);
+
+    // First tick: sets baseline while repo is clean.
+    reconcileSealedBoardFromDisk(
+      { stores, missionId: mission.id, cwd: repo },
+      deps,
+    );
+
+    // File appears between ticks.
     fs.writeFileSync(path.join(repo, 'server.js'), 'listen(4341)\n');
 
+    // Second tick: detects new file but SUCCESS receipt blocks advancement.
     const result = reconcileSealedBoardFromDisk(
       { stores, missionId: mission.id, cwd: repo },
-      depsFor(stores),
+      deps,
     );
 
     expect(result.advancedTaskIds).toEqual([]);
