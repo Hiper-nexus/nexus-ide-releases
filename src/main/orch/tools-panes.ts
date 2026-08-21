@@ -44,7 +44,6 @@ import {
 import { isMissionWorkerWriteEligibleCli } from './squad-runtime-policy';
 import { isOperatorChoicePolicy } from '../../shared/squad-cli-policy';
 import { CODEX_MCP_TOOL_TIMEOUT_SEC } from './cli-mcp-inject';
-import { setHandoffPending } from './turn-end-handoff';
 import {
   assertCurrentMissionOrchestratorSession,
   canonicalToolName,
@@ -153,13 +152,6 @@ function withWorkerHandoffFooter(
     return text;
   }
   return `${text}\n\n${WORKER_HANDOFF_FOOTER}`;
-}
-
-function markWorkerHandoffPending(sessionId: string): void {
-  const authority = getPaneRuntimeAuthorityBySession(sessionId);
-  if (authority?.role === 'worker') {
-    setHandoffPending(sessionId);
-  }
 }
 
 const pendingWorkerSpawns = new Map<string, number>();
@@ -781,9 +773,9 @@ const paneSpawn: McpToolDef = {
         },
         invocation,
       });
-      if (options.role === 'worker' && spawned.sessionId) {
-        setHandoffPending(spawned.sessionId);
-      }
+      // F-104: sem marcação de "handoff pendente" no spawn — o marcador só
+      // era limpo por um submit do próprio worker e vetava o fechamento
+      // mecânico para sempre. A dedup por janela de turno basta.
       // Declarado no nascimento (registro, não pergunta): o pane se fecha
       // sozinho no handoff SUCCESS — paridade Bridge, libera a vaga sem
       // segurar slot da onda seguinte; falha preserva pane para diagnóstico.
@@ -1037,7 +1029,6 @@ const paneWrite: McpToolDef = {
   handler: async (args, ctx, invocation) => {
     assertMcpInvocationCurrent(invocation);
     const sessionId = authorizedSessionIdOf(ctx, requireStr(args, 'paneId'), 'write');
-    markWorkerHandoffPending(sessionId);
     const text = withWorkerHandoffFooter(
       sessionId,
       typeof args.text === 'string' ? args.text : '',
@@ -1170,7 +1161,6 @@ const paneWriteMany: McpToolDef = {
       }
       try {
         const sessionId = authorizedSessionIdOf(ctx, write.paneId, 'write');
-        markWorkerHandoffPending(sessionId);
         const text = withWorkerHandoffFooter(sessionId, write.text ?? '');
         if (write.submit === false) {
           assertMcpInvocationCurrent(invocation);

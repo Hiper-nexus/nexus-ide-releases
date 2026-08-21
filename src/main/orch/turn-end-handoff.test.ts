@@ -29,7 +29,6 @@ const baseFacts = {
   handoffsSinceTurnStart: 0,
   isRedeliveryOfProcessedStop: false,
   dedupUnavailable: false,
-  isHandoffPending: false,
 };
 
 describe('decideTurnEndClosure (matriz de guardas)', () => {
@@ -89,13 +88,14 @@ describe('decideTurnEndClosure (matriz de guardas)', () => {
     expect(decision.reason).toContain('dedup indisponível');
   });
 
-  it('pula enquanto o orquestrador aguarda handoff deste pane (paridade Overclock)', () => {
-    const decision = decideTurnEndClosure({
-      ...baseFacts,
-      isHandoffPending: true,
-    });
-    expect(decision.close).toBe(false);
-    expect(decision.reason).toContain('aguarda handoff');
+  it('fecha mesmo com delegação recente — espera do Maestro NÃO veta o fechamento (F-104)', () => {
+    // Campo 21/08: o veto "aguarda handoff" lacrava workers que nunca chamam
+    // nexus_handoff_submit — o marcador só era limpo pelo próprio submit.
+    // O fechamento mecânico É a resolução da espera; dedup fica por conta da
+    // janela do turno e da impressão digital do Stop.
+    const decision = decideTurnEndClosure(baseFacts);
+    expect(decision.close).toBe(true);
+    expect(decision.reason).toContain('fechamento mecânico');
   });
 });
 

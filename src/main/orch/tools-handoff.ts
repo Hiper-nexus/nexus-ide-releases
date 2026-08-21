@@ -11,7 +11,6 @@ import {
   sanitizeHandoffTelemetry,
 } from "../../shared/handoff-telemetry";
 import { markHandoffSubmitted, type GateRole } from "./gate";
-import { clearHandoffPending } from "./turn-end-handoff";
 import { onHandoffSubmitted } from "./idle-delivery";
 import {
   armedAutoClosePaneId,
@@ -378,9 +377,6 @@ const handoffSubmitTool: McpToolDef = {
     }
     if (handoff.evidenceTrust === "nexus-trusted") {
       markHandoffSubmitted(ctx);
-    }
-    if (ctx.sessionId) {
-      clearHandoffPending(ctx.sessionId);
     }
     // Wake is exclusively `onHandoffSubmitted` → idle-delivery (bracketed
     // paste + 500 ms settle + Enter). A raw PTY dump here (commit 2b8b4e1d)
