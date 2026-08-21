@@ -1433,7 +1433,8 @@ export class ScopedHandoffStore {
    * em voo (queued/submitted) sem veredito terminal e sem movimento há mais
    * de `olderThanMs` ganha status `stalled` — continua unsettled (não fecha
    * missão sozinha), mas fica VISÍVEL para cobrança/doctor em vez de pendente
-   * anônima para sempre. Retorna ids afetados.
+   * anônima para sempre. Retorna os ids SOLICITADOS (o WHERE pode consumir
+   * menos se algum virou terminal na corrida).
    */
   markStalled(rawIds: readonly string[]): string[] {
     const ids = rawIds.map((raw) => identifierSchema.parse(raw));

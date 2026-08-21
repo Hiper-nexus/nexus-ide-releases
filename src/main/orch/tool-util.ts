@@ -1133,6 +1133,19 @@ export async function spawnPaneAndMaybePrompt(
     if (!swapped || swapped.kind !== 'cli-pty') {
       throw new Error(`unknown adapter: ${activeAdapterId}`);
     }
+    // Review 21/08: o guard de sandbox roda no probe original; o fallback
+    // NÃO pode herdar permissão de worktree isolado que o novo adapter
+    // não oferece (fail-closed aqui, fail-open só na credencial).
+    if (
+      revisionBoundWritableWorker &&
+      requiresDistinctWorktree &&
+      !isRevisionBoundWritableWorkerAdapterAllowed(swapped.id)
+    ) {
+      throw new Error(
+        `workspace_write_unsupported: ${swapped.id} não oferece sandbox ` +
+          'confiável para worker autônomo isolado (ative Escolha livre ou use Codex)',
+      );
+    }
     resolvedAdapter = swapped;
     adapter = swapped;
   }
