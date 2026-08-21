@@ -17,7 +17,7 @@ describe('consult lane end-to-end', () => {
     vi.clearAllMocks();
   });
 
-  it('submit → contract → consult prompt → mutable tools denied → done needs learning', () => {
+  it('submit → contract → consult prompt → basic mission tools allowed → done needs learning', () => {
     // 1) Contract persisted by the canonical MissionEngine prepare/start path.
     const contract = compileIntentContract({
       goal: 'Ler logs da Vercel e resumir os erros de deploy de ontem',
@@ -46,18 +46,29 @@ describe('consult lane end-to-end', () => {
       updatedAt: 1,
     };
 
-    // 2) Mutable tools rejected; reads allowed
+    // 2) Basic mission tools allowed; explicit contract denies still block
     expect(
       assertMissionIntentAllowsTool('nexus_git_status', { mission }).ok,
     ).toBe(true);
     expect(
       assertMissionIntentAllowsTool('nexus_worktree_create', { mission }).ok,
-    ).toBe(false);
+    ).toBe(true);
     expect(
       assertMissionIntentAllowsTool('nexus_pane_spawn', { mission }).ok,
-    ).toBe(false);
+    ).toBe(true);
     expect(
       assertMissionIntentAllowsTool('nexus_merge_task', { mission }).ok,
+    ).toBe(true);
+
+    const denied: Mission = {
+      ...mission,
+      intentContract: {
+        ...mission.intentContract!,
+        deniedTools: ['nexus_git_commit'],
+      },
+    };
+    expect(
+      assertMissionIntentAllowsTool('nexus_git_commit', { mission: denied }).ok,
     ).toBe(false);
 
     // 4) Done path: short learnings insufficient; durable note required

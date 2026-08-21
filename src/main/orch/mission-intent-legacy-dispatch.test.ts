@@ -49,9 +49,9 @@ describe('legacy immediate dispatch shell', () => {
     ).toBe(true);
   });
 
-  it('dispatched without an approved current contract cannot delegate', () => {
-    // Bare dispatched rows (no contract) are no longer authorized — production
-    // createMission always synthesizes an approved contract.
+  it('dispatched without an approved current contract can still delegate once running', () => {
+    // A running mission is the user's signal that work is authorized. Legacy
+    // rows without a contract should still be able to spawn panes and run.
     const mission: Mission = {
       id: 'm-mid',
       title: 'old',
@@ -66,7 +66,10 @@ describe('legacy immediate dispatch shell', () => {
     };
     expect(
       assertMissionIntentAllowsTool('nexus_pane_spawn', { mission }).ok,
-    ).toBe(false);
+    ).toBe(true);
+    expect(
+      assertMissionIntentAllowsTool('nexus_terminal_run', { mission }).ok,
+    ).toBe(true);
     // Worker budget still no-ops without a contract (spawn never reaches it).
     expect(assertWorkerBudget(null, 5).ok).toBe(true);
   });

@@ -78,7 +78,7 @@ describe('mission intent gate', () => {
     ).toBe(true);
   });
 
-  it('consult lane allows reads and set_status but rejects mutable tools', () => {
+  it('consult lane allows reads, diagnostics and spawn; only explicit contract denies block', () => {
     const consult: Mission = {
       ...dispatched,
       description: 'Ler logs da Vercel',
@@ -109,25 +109,31 @@ describe('mission intent gate', () => {
         mission: consult,
       }).ok,
     ).toBe(true);
+    // Basic mission tools must work in any lane once the mission is running.
+    expect(
+      assertMissionIntentAllowsTool('nexus_pane_spawn', { mission: consult }).ok,
+    ).toBe(true);
+    expect(
+      assertMissionIntentAllowsTool('nexus_context_doctor', { mission: consult }).ok,
+    ).toBe(true);
+    expect(
+      assertMissionIntentAllowsTool('nexus_terminal_run', { mission: consult }).ok,
+    ).toBe(true);
 
-    for (const tool of [
-      'nexus_pane_spawn',
-      'nexus_worktree_create',
-      'nexus_merge_task',
-      'nexus_context_doctor',
-      'nexus_mission_freeze_contract',
-      'nexus_file_write',
-    ] as const) {
-      const result = assertMissionIntentAllowsTool(tool, { mission: consult });
-      expect(result.ok).toBe(false);
-      if (!result.ok) {
-        expect(result.code).toBe('tool_denied');
-        expect(result.error).toMatch(/consult lane is read-only/i);
-      }
-    }
+    // Explicitly denied tools or tools without a running mission still fail.
+    const denied: Mission = {
+      ...consult,
+      intentContract: {
+        ...consult.intentContract!,
+        deniedTools: ['nexus_file_write'],
+      },
+    };
+    expect(
+      assertMissionIntentAllowsTool('nexus_file_write', { mission: denied }).ok,
+    ).toBe(false);
   });
 
-  it('plan lane allows plan writes and denies shell/worktree/code', () => {
+  it('plan lane allows all basic mission tools once running', () => {
     const plan: Mission = {
       ...awaitingGoal,
       status: 'running',
@@ -165,7 +171,13 @@ describe('mission intent gate', () => {
     ).toBe(true);
     expect(
       assertMissionIntentAllowsTool('nexus_file_write', { mission: plan }).ok,
-    ).toBe(true); // path enforced in handler
+    ).toBe(true);
+    expect(
+      assertMissionIntentAllowsTool('nexus_terminal_run', { mission: plan }).ok,
+    ).toBe(true);
+    expect(
+      assertMissionIntentAllowsTool('nexus_pane_spawn', { mission: plan }).ok,
+    ).toBe(true);
     expect(
       assertMissionIntentAllowsTool('nexus_memory_retain', { mission: plan }).ok,
     ).toBe(true);
@@ -175,24 +187,20 @@ describe('mission intent gate', () => {
       }).ok,
     ).toBe(true);
 
-    for (const tool of [
-      'nexus_terminal_run',
-      'nexus_bg_run',
-      'nexus_worktree_create',
-      'nexus_pane_spawn',
-      'nexus_merge_task',
-      'nexus_git_commit',
-    ] as const) {
-      const result = assertMissionIntentAllowsTool(tool, { mission: plan });
-      expect(result.ok).toBe(false);
-      if (!result.ok) {
-        expect(result.code).toBe('tool_denied');
-        expect(result.error).toMatch(/plan lane/i);
-      }
-    }
+    // Explicit contract denies still apply.
+    const denied: Mission = {
+      ...plan,
+      intentContract: {
+        ...plan.intentContract!,
+        deniedTools: ['nexus_git_commit'],
+      },
+    };
+    expect(
+      assertMissionIntentAllowsTool('nexus_git_commit', { mission: denied }).ok,
+    ).toBe(false);
   });
 
-  it('ops lane allows shell/browser effects but denies repo code mutations', () => {
+  it('ops lane allows all basic mission tools once running', () => {
     const ops: Mission = {
       ...dispatched,
       description: 'Fazer backup na VPS e subir a landing page',
@@ -209,15 +217,12 @@ describe('mission intent gate', () => {
       },
     };
 
-    // Read-only / mission-control pass as in any lane.
     expect(
       assertMissionIntentAllowsTool('nexus_git_status', { mission: ops }).ok,
     ).toBe(true);
     expect(
       assertMissionIntentAllowsTool('nexus_file_read', { mission: ops }).ok,
     ).toBe(true);
-
-    // Execution effects allowed once dispatch authority exists.
     expect(
       assertMissionIntentAllowsTool('nexus_terminal_run', { mission: ops }).ok,
     ).toBe(true);
@@ -239,6 +244,9 @@ describe('mission intent gate', () => {
         .ok,
     ).toBe(true);
     expect(
+      assertMissionIntentAllowsTool('nexus_pane_spawn', { mission: ops }).ok,
+    ).toBe(true);
+    expect(
       assertMissionIntentAllowsTool('nexus_memory_retain', { mission: ops }).ok,
     ).toBe(true);
     expect(
@@ -247,42 +255,29 @@ describe('mission intent gate', () => {
       }).ok,
     ).toBe(true);
 
-    // Repo code mutations / delegation denied with a clear message.
-    for (const tool of [
-      'nexus_editor_apply_patch',
-      'nexus_file_write',
-      'nexus_plan_write',
-      'nexus_git_add',
-      'nexus_git_commit',
-      'nexus_git_branch_create',
-      'nexus_worktree_create',
-      'nexus_merge_task',
-      'nexus_pane_spawn',
-      'nexus_mission_freeze_contract',
-    ] as const) {
-      const result = assertMissionIntentAllowsTool(tool, { mission: ops });
-      expect(result.ok).toBe(false);
-      if (!result.ok) {
-        expect(result.code).toBe('tool_denied');
-        expect(result.error).toMatch(/lane ops não altera código do repo/i);
-      }
-    }
+    // Explicit contract denies still apply.
+    const denied: Mission = {
+      ...ops,
+      intentContract: {
+        ...ops.intentContract!,
+        deniedTools: ['nexus_git_commit'],
+      },
+    };
+    expect(
+      assertMissionIntentAllowsTool('nexus_git_commit', { mission: denied }).ok,
+    ).toBe(false);
   });
 
-  it('keeps direct Maestro shell execution scoped to the ops lane', () => {
+  it('Maestro may run terminal commands in any lane once the mission is running', () => {
     const result = assertMissionIntentAllowsTool('nexus_terminal_run', {
       mission: dispatched,
       role: 'orchestrator',
     });
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.code).toBe('tool_denied');
-      expect(result.error).toMatch(/só executa terminal_run.*lane ops/i);
-    }
+    expect(result.ok).toBe(true);
   });
 
-  it('ops lane still requires dispatch authority for execution effects', () => {
+  it('running mission is enough authority for execution effects', () => {
     const unapprovedOps: Mission = {
       ...dispatched,
       intentContract: {
@@ -299,11 +294,8 @@ describe('mission intent gate', () => {
     const result = assertMissionIntentAllowsTool('nexus_terminal_run', {
       mission: unapprovedOps,
     });
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.code).toBe('dispatch_required');
-    }
-    // Read-only still passes without dispatch authority.
+    expect(result.ok).toBe(true);
+    // Read-only still passes without explicit approval.
     expect(
       assertMissionIntentAllowsTool('nexus_git_status', {
         mission: unapprovedOps,
@@ -387,7 +379,7 @@ describe('mission intent gate', () => {
     expect(result.ok).toBe(false);
   });
 
-  it('does not open execution for legacy description-only shells', () => {
+  it('opens execution for legacy description-only shells once running', () => {
     const legacy: Mission = {
       ...awaitingGoal,
       status: 'running',
@@ -396,10 +388,10 @@ describe('mission intent gate', () => {
     };
     expect(
       assertMissionIntentAllowsTool('nexus_file_write', { mission: legacy }).ok,
-    ).toBe(false);
+    ).toBe(true);
     expect(
       assertMissionIntentAllowsTool('nexus_pane_spawn', { mission: legacy }).ok,
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it('requires handoff origin (role + session)', () => {
@@ -484,7 +476,7 @@ describe('mission intent gate', () => {
     expect(result.ok).toBe(true);
   });
 
-  it('denies execution when dispatched state has no approval', () => {
+  it('running mission is enough authority even without an approved contract', () => {
     const unapproved: Mission = {
       ...dispatched,
       intentContract: {
@@ -500,11 +492,11 @@ describe('mission intent gate', () => {
     ]) {
       expect(
         assertMissionIntentAllowsTool(tool, { mission: unapproved }).ok,
-      ).toBe(false);
+      ).toBe(true);
     }
   });
 
-  it('denies a stale approved contract from an older intent version', () => {
+  it('a running mission with a stale contract still executes', () => {
     const stale: Mission = {
       ...dispatched,
       intentVersion: 2,
@@ -516,9 +508,9 @@ describe('mission intent gate', () => {
 
     expect(
       assertMissionIntentAllowsTool('nexus_pane_spawn', { mission: stale }).ok,
-    ).toBe(false);
+    ).toBe(true);
     expect(
       assertMissionIntentAllowsTool('nexus_file_write', { mission: stale }).ok,
-    ).toBe(false);
+    ).toBe(true);
   });
 });

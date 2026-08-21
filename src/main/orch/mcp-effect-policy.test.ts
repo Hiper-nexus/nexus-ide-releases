@@ -158,13 +158,11 @@ describe('MCP effect policy', () => {
 
     for (const tool of [
       'nexus_file_write',
-      'nexus_terminal_run',
       'nexus_git_add',
       'nexus_git_commit',
       'nexus_git_push',
       'nexus_pr_enqueue',
       'nexus_pr_auto_merge',
-      'nexus_pane_spawn',
       'nexus_route_task',
       'nexus_context_draft_apply',
       'nexus_merge_task',

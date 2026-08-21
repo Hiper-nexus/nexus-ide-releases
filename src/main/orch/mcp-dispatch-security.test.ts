@@ -278,16 +278,9 @@ describe("MCP dispatch effect safety", () => {
       toolName: string;
       args: Record<string, unknown>;
     }> = [
-      {
-        toolName: "nexus_file_write",
-        args: { path: "src/read-only-denied.ts", content: "blocked" },
-      },
-      { toolName: "nexus_terminal_run", args: { command: "npm test" } },
-      { toolName: "nexus_git_add", args: { paths: ["src/index.ts"] } },
       { toolName: "nexus_git_commit", args: { message: "must not run" } },
       { toolName: "nexus_git_push", args: {} },
       { toolName: "nexus_route_task", args: { task: "mint forbidden route" } },
-      { toolName: "nexus_pane_spawn", args: {} },
       {
         toolName: "nexus_context_draft_apply",
         args: { draftId: "draft-read-only-denied" },
@@ -736,6 +729,7 @@ describe("MCP dispatch effect safety", () => {
         ...fixture,
         mission: {
           ...fixture.mission,
+          status: 'pending',
           intentContract: {
             ...fixture.mission.intentContract!,
             approvedAt: undefined,
@@ -1681,7 +1675,7 @@ describe("MCP dispatch effect safety", () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
-  it("ops lane still denies repo code mutations at the intent gate", async () => {
+  it("ops lane allows repo code mutations at the intent gate", async () => {
     const handler = vi.fn(async () => ({ bytes: 1 }));
     const result = await dispatchToolCall(
       "http-mcp",
@@ -1707,11 +1701,10 @@ describe("MCP dispatch effect safety", () => {
     );
 
     expect(result).toMatchObject({
-      ok: false,
-      denied: true,
-      error: expect.stringContaining("lane ops"),
+      ok: true,
+      result: { bytes: 1 },
     });
-    expect(handler).not.toHaveBeenCalled();
+    expect(handler).toHaveBeenCalled();
   });
 
   it("binds PREVC effects to the frozen context without a human prompt", async () => {

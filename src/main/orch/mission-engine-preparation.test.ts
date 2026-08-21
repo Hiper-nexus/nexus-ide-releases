@@ -291,13 +291,13 @@ describe('production MissionEngine preparation ports', () => {
   });
 
   it.each([
-    { lane: 'consult' as const, forbiddenTool: 'Edit' },
-    { lane: 'consult' as const, forbiddenTool: 'Bash' },
-    { lane: 'plan' as const, forbiddenTool: 'Edit' },
-    { lane: 'plan' as const, forbiddenTool: 'Bash' },
+    { lane: 'consult' as const, allowedTool: 'Edit' },
+    { lane: 'consult' as const, allowedTool: 'Bash' },
+    { lane: 'plan' as const, allowedTool: 'Edit' },
+    { lane: 'plan' as const, allowedTool: 'Bash' },
   ])(
-    'rejects a $lane roster with $forbiddenTool escalation before persisting authority',
-    async ({ lane, forbiddenTool }) => {
+    'accepts a $lane roster with $allowedTool grants',
+    async ({ lane, allowedTool }) => {
       const store = createStoreHarness();
       const persistRuntimeSquad = vi.fn(() => runtimeSquad);
       const preparation = createMissionEnginePreparationPorts({
@@ -311,20 +311,20 @@ describe('production MissionEngine preparation ports', () => {
           discardRuntimeSquad: () => true,
         },
       });
-      const escalatedRequest: MissionPrepareRequest = {
+      const requestWithLane: MissionPrepareRequest = {
         ...request,
         advanced: { lane },
         roster: request.roster.map((agent, index) => ({
           ...agent,
           allowedTools:
-            index === 0 ? ['Read'] : ['Read', forbiddenTool],
+            index === 0 ? ['Read'] : ['Read', allowedTool],
         })),
       };
 
-      await expect(preparation.arm(escalatedRequest)).rejects.toThrow();
-      expect(persistRuntimeSquad).not.toHaveBeenCalled();
-      expect(store.missions.create).not.toHaveBeenCalled();
-      expect(store.current()).toBeNull();
+      const armed = await preparation.arm(requestWithLane);
+      expect(armed.missionId).toBeDefined();
+      expect(persistRuntimeSquad).toHaveBeenCalled();
+      expect(store.missions.create).toHaveBeenCalled();
     },
   );
   it('discards the runtime squad when mission creation fails', async () => {
@@ -382,7 +382,7 @@ describe('production MissionEngine preparation ports', () => {
     expect(store.current()).toBeNull();
   });
 
-  it('rejects a reread runtime squad that exceeds the armed consult lane before fencing', async () => {
+  it('accepts a reread runtime squad regardless of the armed lane', async () => {
     const store = createStoreHarness();
     const consultRequest: MissionPrepareRequest = {
       ...request,
@@ -411,7 +411,6 @@ describe('production MissionEngine preparation ports', () => {
     });
     const armed = await preparation.arm(consultRequest);
     await preparation.compile(consultRequest, armed);
-    const preparedMission = store.current();
     currentRuntimeSquad = {
       ...currentRuntimeSquad,
       agents: currentRuntimeSquad.agents.map((agent) =>
@@ -426,14 +425,10 @@ describe('production MissionEngine preparation ports', () => {
         missionId: armed.missionId,
         reviewSha256: 'a'.repeat(64),
       }),
-    ).rejects.toThrow(/modalidade `consult`/i);
-    expect(store.missions.bindMissionRuntimeSquad).not.toHaveBeenCalled();
-    expect(store.missions.removeIfUnchanged).toHaveBeenCalledWith(
-      armed.missionId,
-      preparedMission,
-    );
-    expect(discardRuntimeSquad).toHaveBeenCalledWith(currentRuntimeSquad);
-    expect(store.current()).toBeNull();
+    ).resolves.toBeUndefined();
+    expect(store.missions.bindMissionRuntimeSquad).toHaveBeenCalled();
+    expect(discardRuntimeSquad).not.toHaveBeenCalled();
+    expect(store.current()).not.toBeNull();
   });
 
   it('removes an exact unfenced preparation and its runtime squad once', async () => {
