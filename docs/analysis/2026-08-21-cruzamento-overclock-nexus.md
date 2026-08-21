@@ -58,9 +58,19 @@ PARCIAL/AUSENTE na data:
 - **F-102**: settlement idempotente via `hasUnsettledQueuedHandoffs`
   (civilian-delivery-completion + civilian-pronto); veredito terminal settle,
   ack físico best-effort.
+- **E2E REAL EM DEV ABERTO (21/08 ~17:50)**: missão
+  `mission-9c9a44a7-9917-4640-b217-062f0f8ad2d6` ("pergunte a cada pane quanto
+  é 1+1 e consolide") criada via bridge do renderer em `npm run start` com
+  roster real (Maestro codex, Pane A codex, Pane B deepseek, QA codex).
+  Deepseek falhou boot uma vez e foi re-spawnado (resiliência ok); resposta do
+  Pane B capturada por FECHAMENTO MECÂNICO `[auto]` (turn-end-handoff);
+  list-ack por leitura funcionou; missão convergiu para `completed` com
+  summary = consolidado citando as DUAS respostas ("2"). Marco 7.3 do
+  HANDOFF-MANAGER batido pela primeira vez sem intervenção humana pós-start.
+  Dívida cosmética observada: artifactRefs lista walk inteiro do workspace
+  (causa raiz #5 — gate de artefato ainda não filtra lixo tipo .DS_Store).
 - Próximos (Onda 2): auto-submit fail-open universal, estados de morte
-  nomeados + TTL stalled, mortalidade ≤3, nexus-doctor.mjs, E2E real
-  "pergunte 1+1" fechando com `"2"` no result_json.
+  nomeados + TTL stalled, mortalidade ≤3, nexus-doctor.mjs.
 
 ## 5. Achados de segurança
 
