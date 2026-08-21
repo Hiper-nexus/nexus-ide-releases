@@ -151,9 +151,28 @@ export function isToolAllowed(
     );
   }
   if (allowedTools === null) return true;
-  return allowedTools.some(
-    (allowed) => canonicalToolName(allowed) === canonical,
-  );
+  return allowedTools.some((allowed) => {
+    const allowedCanonical = canonicalToolName(allowed);
+    if (allowedCanonical === canonical) return true;
+    // Squad allowlists speak native CLI tool names (Bash/Read/Edit). Map the
+    // corresponding nexus_* instrumented forms so a squad that grants Bash
+    // also grants nexus_terminal_run, and one that grants Edit also grants
+    // nexus file/editor writes. Read is already covered by the read-only
+    // boundary, but we keep the mapping symmetric.
+    if (canonical === 'terminal_run' && allowedCanonical === 'bash') return true;
+    if (canonical === 'bg_run' && allowedCanonical === 'bash') return true;
+    if (canonical === 'file_read' && allowedCanonical === 'read') return true;
+    if (canonical === 'file_search' && allowedCanonical === 'read') return true;
+    if (canonical === 'file_write' && allowedCanonical === 'edit') return true;
+    if (canonical === 'editor_insert' && allowedCanonical === 'edit') return true;
+    if (canonical === 'editor_replace_selection' && allowedCanonical === 'edit') {
+      return true;
+    }
+    if (canonical === 'editor_apply_patch' && allowedCanonical === 'edit') {
+      return true;
+    }
+    return false;
+  });
 }
 
 /** Role boundary applied after the squad allowlist. A coordinator may inspect,
@@ -171,18 +190,6 @@ export function isToolAllowedForRole(
     !(petStudioMediaAuthority && canonical === "image_generate")
   ) {
     return false;
-  }
-  if (canonical === "terminal_run" && role === "worker") {
-    // Rodada 3 R5: a execução INSTRUMENTADA (nexus_terminal_run — o main
-    // observa, registra e confina por sandbox profile) acompanha a execução
-    // NATIVA da lane do WORKER. Worker com Bash ganha a forma observada;
-    // lane sem execução (consult/read-only) segue sem. Só worker: o
-    // operador/renderer tem o próprio regime (destructive gate exige
-    // contexto de missão — travado em teste) e orquestrador não executa.
-    return (
-      allowedTools === null ||
-      allowedTools.some((allowed) => canonicalToolName(allowed) === "bash")
-    );
   }
   return isToolAllowed(allowedTools, toolName);
 }
