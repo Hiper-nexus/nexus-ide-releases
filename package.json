@@ -28,6 +28,7 @@
     "postmake": "npm run rebuild:node",
     "make": "electron-forge make",
     "make:release": "node scripts/make-release.mjs",
+    "notary": "node scripts/nexus-notary.mjs",
     "rebuild": "npm run rebuild:electron",
     "rebuild:electron": "node scripts/rebuild-electron-natives.mjs && node scripts/patch-node-pty-darwin.mjs",
     "rebuild:node": "node scripts/rebuild-node-natives.mjs && node scripts/check-node-natives.mjs",
