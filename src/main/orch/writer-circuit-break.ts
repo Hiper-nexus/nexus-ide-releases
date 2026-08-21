@@ -83,6 +83,14 @@ export class WriterCircuitRegistry {
     return next;
   }
 
+  /** Trip explícito por veredito externo (ex.: mortalidade ≤3 sem entrega). */
+  trip(key: WriterCircuitKey): void {
+    this.#failures.set(
+      writerCircuitKey(key),
+      Math.max(this.failureCount(key), WRITER_CIRCUIT_BREAK_FAILURES),
+    );
+  }
+
   /**
    * After a connect/writable failure: remint to the next authed adapter, or
    * skip-silent when the roster is exhausted.

@@ -15,6 +15,7 @@ import {
   logWriterCircuitBreak,
   recordWriterConnectFailure,
   clearWriterConnectFailures,
+  tripWriterCircuit,
 } from './writer-circuit-breaker';
 import {
   writerCircuitBreakEvent,
@@ -22,8 +23,10 @@ import {
 } from './writer-circuit-break';
 
 
-/** Mortes sem entrega que cortam o circuito (régua do Orca #13927). */
-export const WORKER_MORTALITY_CIRCUIT_BREAK = 10;
+/** Mortes sem entrega que cortam o circuito (régua do Orca #13927 = 3;
+ * docs da campanha 0.50 prometiam ≤3 e a régua 10 notava tarde demais —
+ * missão real: 13/20 panes mortos antes de alguém perceber). */
+export const WORKER_MORTALITY_CIRCUIT_BREAK = 3;
 
 export function shouldTripWorkerMortalityBreaker(
   deathsWithoutDelivery: number,
@@ -99,6 +102,10 @@ export function recordWorkerDeathWithoutDelivery(
   writerCircuitBreakers.recordConnectFailure(circuit);
   recordWriterConnectFailure(circuit);
   if (shouldTripWorkerMortalityBreaker(next) && next === WORKER_MORTALITY_CIRCUIT_BREAK) {
+    // Trip explícito: a régua de mortalidade (3) é menor que a de connect
+    // failures (10) — sem isto, o adapter morto continuava sentando.
+    writerCircuitBreakers.trip(circuit);
+    tripWriterCircuit(circuit);
     logWriterCircuitBreak({
       adapterId,
       attempts: next,

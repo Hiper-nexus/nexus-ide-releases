@@ -50,6 +50,15 @@ export function clearWriterConnectFailures(input: WriterCircuitKey): void {
   failures.delete(writerCircuitKey(input));
 }
 
+/** Trip explícito por veredito externo (ex.: mortalidade ≤3 sem entrega). */
+export function tripWriterCircuit(input: WriterCircuitKey): void {
+  const key = writerCircuitKey(input);
+  failures.set(
+    key,
+    Math.max(failures.get(key) ?? 0, WRITER_CIRCUIT_BREAK_FAILURES),
+  );
+}
+
 export function resetWriterCircuitForTests(): void {
   failures.clear();
 }
