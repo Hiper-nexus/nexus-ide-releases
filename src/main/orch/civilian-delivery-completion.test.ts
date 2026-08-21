@@ -37,6 +37,7 @@ import { testProjectScope } from './__tests__/scope-fixture';
 import {
   CIVILIAN_REVIEW_QUEUE_GRACE_MS,
   decideCivilianDeliveryAction,
+  hasUnsettledQueuedHandoffs,
   inspectCivilianDelivery,
   inspectDeliveryEvidence,
   listDeliveredProductFiles,
@@ -64,6 +65,7 @@ function decision(
     remainingKinds: [],
     oldestReviewQueuedMs: null,
     hasQueuedHandoffs: false,
+    idleWorkersWithoutHandoff: 0,
     orchestratorBusy: false,
     ...overrides,
   };
@@ -374,6 +376,50 @@ describe('inspectDeliveryEvidence', () => {
     ]);
     expect(evidence.expected).toBe(true);
     expect(evidence.designOnly).toBe(false);
+  });
+});
+
+describe('hasUnsettledQueuedHandoffs — settlement idempotente', () => {
+  it('veredito terminal settle mesmo com transporte queued/submitted', () => {
+    expect(
+      hasUnsettledQueuedHandoffs([
+        handoff({ deliveryState: 'queued', status: 'success' }),
+        handoff({ id: 'h2', deliveryState: 'submitted', status: 'partial' }),
+      ]),
+    ).toBe(false);
+  });
+
+  it('entrega em voo sem veredito segura a conclusão', () => {
+    expect(
+      hasUnsettledQueuedHandoffs([
+        handoff({ deliveryState: 'submitted', status: 'progress' }),
+      ]),
+    ).toBe(true);
+    expect(
+      hasUnsettledQueuedHandoffs([
+        handoff({ deliveryState: 'queued', status: 'failed' }),
+      ]),
+    ).toBe(true);
+    expect(hasUnsettledQueuedHandoffs([])).toBe(false);
+  });
+
+  it('handoff success ainda queued não bloqueia decisão de entrega', () => {
+    const inspected = inspectCivilianDelivery({
+      mission: mission(),
+      tasks: [task({ id: 't-front', title: 'UI', status: 'pending' })],
+      planned: [
+        {
+          taskId: 't-front',
+          agentCategory: 'executor',
+          agent: { id: 'frontend', agentName: 'Frontend', category: 'executor' },
+        },
+      ],
+      handoffs: [handoff({ deliveryState: 'queued', status: 'success' })],
+      panes: [],
+      now: 20_000,
+    });
+    expect(inspected.hasQueuedHandoffs).toBe(false);
+    expect(inspected.workersDelivered).toBe(true);
   });
 });
 

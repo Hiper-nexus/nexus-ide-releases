@@ -13,7 +13,10 @@ import type { Handoff, Mission } from '../../shared/orch-types';
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { MissionEngine } from './mission-engine';
 import {
+  hasUnsettledQueuedHandoffs,
   isCivilianReviewRefusal,
+  isSatOrTombstonedPaneState,
+  matchHandoffToAgent,
   noteCivilianReviewRefusal,
   shouldLogCivilianRefusal,
 } from './civilian-delivery-completion';
@@ -45,7 +48,7 @@ const MAX_WALK_FILES = 400;
 const MAX_WALK_VISITS = 2_000;
 const MAX_WALK_DEPTH = 6;
 
-export type CivilianProntoPath = 'board' | 'files-modified/handoff';
+export type CivilianProntoPath = 'board' | 'files-modified/handoff' | 'handoffs';
 
 export type CivilianProntoAction = 'pronto' | 'wait' | 'refuse';
 
@@ -94,6 +97,9 @@ export function decideCivilianPronto(input: {
   readonly liveWriterBusy: boolean;
   readonly holdForGuidedReview: boolean;
   readonly hasQueuedHandoffs: boolean;
+  readonly idleWorkersWithoutHandoff: number;
+  readonly workersDelivered: boolean;
+  readonly orchestratorBusy: boolean;
 }): CivilianProntoDecision {
   const sealedDone = Math.max(0, Math.floor(input.sealedDone));
   const sealedTotal = Math.max(0, Math.floor(input.sealedTotal));
@@ -101,6 +107,20 @@ export function decideCivilianPronto(input: {
 
   if (input.missionStatus !== 'running' || input.failClosed) {
     return { ...base, action: 'refuse', reason: 'fail-closed' };
+  }
+  if (input.hasQueuedHandoffs) {
+    return { ...base, action: 'wait', reason: 'queued-handoffs' };
+  }
+  if (input.idleWorkersWithoutHandoff > 0) {
+    return { ...base, action: 'wait', reason: 'idle-workers-without-handoff' };
+  }
+  if (input.workersDelivered && !input.orchestratorBusy) {
+    return {
+      ...base,
+      action: 'pronto',
+      path: 'handoffs',
+      reason: `all-workers-delivered (${sealedDone}/${sealedTotal})`,
+    };
   }
   if (input.boardAllDone && sealedTotal > 0) {
     return {
@@ -125,9 +145,6 @@ export function decideCivilianPronto(input: {
 
   const startedWork = input.hasSuccessHandoff || sealedDone > 0;
   const deliveryEvidence = input.hasSuccessHandoff;
-  if (input.hasQueuedHandoffs) {
-    return { ...base, action: 'wait', reason: 'queued-handoffs' };
-  }
   if (startedWork && deliveryEvidence) {
     return {
       ...base,
@@ -221,23 +238,83 @@ function paneAgentKey(name: string | null | undefined): string {
   return (name ?? '').trim().toLowerCase();
 }
 
+function findOrchestratorHandoffSummary(
+  mission: Mission,
+  stores: Pick<ProjectDomainStoreSuite, 'missions' | 'handoffs' | 'missionPanes'>,
+): string | null {
+  try {
+    const panes = stores.missionPanes?.list(mission.id) ?? [];
+    const orchestratorNames = new Set(
+      panes
+        .filter((pane) => pane.role === 'orchestrator')
+        .flatMap((pane) => [
+          paneAgentKey(pane.agentName),
+          paneAgentKey(pane.title),
+        ])
+        .filter((name) => name.length > 0),
+    );
+    if (orchestratorNames.size === 0) return null;
+    const handoffs = stores.handoffs?.list({ missionId: mission.id, includeDelivered: true }) ?? [];
+    const orchestratorHandoff = handoffs
+      .reverse()
+      .find(
+        (handoff) =>
+          (handoff.status === 'success' || handoff.status === 'partial') &&
+          orchestratorNames.has(paneAgentKey(handoff.fromAgent)),
+      );
+    return orchestratorHandoff?.summary?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function buildConsolidatedSummary(
+  mission: Mission,
+  stores: Pick<ProjectDomainStoreSuite, 'handoffs'>,
+): string | null {
+  try {
+    const handoffs = stores.handoffs?.list({ missionId: mission.id, includeDelivered: true }) ?? [];
+    const workerSummaries = handoffs
+      .filter(
+        (handoff) =>
+          (handoff.status === 'success' || handoff.status === 'partial') &&
+          handoff.summary?.trim(),
+      )
+      .map((handoff) => `- ${handoff.fromAgent}: ${handoff.summary!.trim()}`);
+    if (workerSummaries.length === 0) return null;
+    return `Consolidado das respostas dos panes para "${mission.title}":\n${workerSummaries.join('\n')}`;
+  } catch {
+    return null;
+  }
+}
+
 export function applyCivilianProntoDecision(input: {
   readonly scope: ProjectExecutionScope;
   readonly mission: Mission;
   readonly decision: CivilianProntoDecision;
   readonly productFiles: readonly string[];
   readonly engine: Pick<MissionEngine, 'completeVerified'>;
-  readonly stores: Pick<ProjectDomainStoreSuite, 'missions'>;
+  readonly stores: Pick<ProjectDomainStoreSuite, 'missions' | 'handoffs' | 'missionPanes'>;
 }): boolean {
   if (input.decision.action !== 'pronto') return false;
   const files = input.productFiles
     .map((file) => file.split(sep).join('/').slice(0, 256))
     .filter((file) => file.length > 0)
     .slice(0, 64);
-  const summary = (
-    `Pronto justified by ${input.decision.reason}. ` +
-    `${files.length} arquivo(s) no disco.`
-  ).slice(0, 65_536);
+  const orchestratorSummary = findOrchestratorHandoffSummary(
+    input.mission,
+    input.stores,
+  );
+  const consolidatedSummary = buildConsolidatedSummary(
+    input.mission,
+    input.stores,
+  );
+  const baseSummary = orchestratorSummary
+    ? `${orchestratorSummary} (Pronto justified by ${input.decision.reason}.)`
+    : consolidatedSummary
+      ? `${consolidatedSummary} (Pronto justified by ${input.decision.reason}.)`
+      : `Pronto justified by ${input.decision.reason}. ${files.length} arquivo(s) no disco.`;
+  const summary = baseSummary.slice(0, 65_536);
   const result = missionResultSchema.parse({
     outcome: 'success',
     summary,
@@ -347,6 +424,9 @@ export function maybeApplyCivilianPronto(
     (pane) =>
       pane.role !== 'orchestrator' && isLiveWriterPaneState(pane.state),
   );
+  const orchestratorBusy = missionPanes.some(
+    (pane) => pane.role === 'orchestrator' && isLiveWriterPaneState(pane.state),
+  );
 
   const pendingReviewer = planned.some((row) => {
     if (row.agentCategory !== 'reviewer' && row.agent.category !== 'reviewer') {
@@ -372,9 +452,20 @@ export function maybeApplyCivilianPronto(
     sealedDone === 0 &&
     !liveWriterBusy;
 
-  const hasQueuedHandoffs = handoffs.some(
-    (h) => h.deliveryState === 'queued' || h.deliveryState === 'submitted',
+  const hasQueuedHandoffs = hasUnsettledQueuedHandoffs(handoffs);
+
+  const successHandoffs = handoffs.filter(
+    (handoff) => handoff.status === 'success' || handoff.status === 'partial',
   );
+  const idleWorkersWithoutHandoff = missionPanes.filter(
+    (pane) =>
+      pane.role !== 'orchestrator' &&
+      isSatOrTombstonedPaneState(pane.state) &&
+      !successHandoffs.some((handoff) =>
+        matchHandoffToAgent(handoff, pane.agentName ?? '', ''),
+      ),
+  ).length;
+  const workersDelivered = successHandoffs.length > 0 && !liveWriterBusy;
 
   const decision = decideCivilianPronto({
     missionStatus: mission.status,
@@ -393,6 +484,9 @@ export function maybeApplyCivilianPronto(
       pendingReviewer,
     }),
     hasQueuedHandoffs,
+    idleWorkersWithoutHandoff,
+    workersDelivered,
+    orchestratorBusy,
   });
 
   if (decision.action !== 'pronto') {

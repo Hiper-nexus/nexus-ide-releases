@@ -85,6 +85,7 @@ export interface CivilianDeliveryDecisionInput {
   readonly activeWriterCount: number;
   readonly workersDelivered: boolean;
   readonly hasQueuedHandoffs: boolean;
+  readonly idleWorkersWithoutHandoff: number;
   readonly remainingKinds: readonly CivilianRemainderKind[];
   readonly oldestReviewQueuedMs: number | null;
   readonly orchestratorBusy?: boolean;
@@ -162,7 +163,7 @@ export type CivilianStores = {
       status: 'running' | 'done' | 'failed',
     ) => ScopedTaskRecord | null;
   };
-  readonly missionPanes?: Pick<ProjectDomainStoreSuite['missionPanes'], 'record'>;
+  readonly missionPanes?: Pick<ProjectDomainStoreSuite['missionPanes'], 'record' | 'list'>;
 };
 
 function storesReady(stores: Partial<CivilianStores> | null | undefined): stores is CivilianStores {
@@ -432,6 +433,7 @@ export function decideCivilianDeliveryAction(
 ): CivilianDeliveryAction {
   if (input.failClosed) return 'refuse-fail-closed';
   if (input.hasQueuedHandoffs && !input.boardAllDone) return 'wait';
+  if (input.idleWorkersWithoutHandoff > 0 && input.boardAllDone) return 'wait';
   // Orchestrator busy: ele pode spawnar mais workers — não fechar a missão
   // só porque o board selado está N/N (tasks marcadas done pelo handoff do
   // primeiro worker antes de o Maestro pedir o segundo).
@@ -606,7 +608,7 @@ function classifyTaskKind(input: {
   return 'blocking';
 }
 
-function matchHandoffToAgent(
+export function matchHandoffToAgent(
   handoff: Handoff,
   agentName: string,
   agentId: string,
@@ -616,6 +618,24 @@ function matchHandoffToAgent(
     return true;
   }
   return false;
+}
+
+/**
+ * Settlement idempotente: handoff com veredito terminal (success/partial) já
+ * É o resultado — o ack físico é best-effort e nunca apodrece (paridade
+ * Overclock: registro em disco é a autoridade). Só entrega EM VOO
+ * (queued/submitted sem veredito) segura a conclusão da missão.
+ */
+export function hasUnsettledQueuedHandoffs(
+  handoffs: readonly Pick<Handoff, 'deliveryState' | 'status'>[],
+): boolean {
+  return handoffs.some(
+    (handoff) =>
+      (handoff.deliveryState === 'queued' ||
+        handoff.deliveryState === 'submitted') &&
+      handoff.status !== 'success' &&
+      handoff.status !== 'partial',
+  );
 }
 
 export function inspectCivilianDelivery(input: {
@@ -639,6 +659,7 @@ export function inspectCivilianDelivery(input: {
   readonly holdForReview: boolean;
   readonly activeWriterCount: number;
   readonly hasQueuedHandoffs: boolean;
+  readonly idleWorkersWithoutHandoff: number;
   readonly remaining: CivilianRemainderTask[];
   readonly deliveredWorkerTaskIds: string[];
   readonly orchestratorBusy: boolean;
@@ -653,6 +674,14 @@ export function inspectCivilianDelivery(input: {
   const satWorkerPanes = workerPanes.filter((pane) =>
     isSatOrTombstonedPaneState(pane.state),
   );
+  const idleWorkersWithoutHandoff = workerPanes.filter(
+    (pane) =>
+      pane.role !== 'orchestrator' &&
+      isSatOrTombstonedPaneState(pane.state) &&
+      !successHandoffs.some((handoff) =>
+        matchHandoffToAgent(handoff, pane.agentName ?? '', ''),
+      ),
+  ).length;
   const liveByAgent = new Map<string, LivePane[]>();
   for (const pane of missionPanes) {
     const key = paneAgentKey(pane.agentName);
@@ -771,9 +800,7 @@ export function inspectCivilianDelivery(input: {
       activeWriterCount === 0) ||
     (boardAllDone && activeWriterCount === 0);
 
-  const hasQueuedHandoffs = input.handoffs.some(
-    (h) => h.deliveryState === 'queued' || h.deliveryState === 'submitted',
-  );
+  const hasQueuedHandoffs = hasUnsettledQueuedHandoffs(input.handoffs);
 
   const orchestratorPanes = missionPanes.filter(
     (pane) => pane.role === 'orchestrator',
@@ -796,10 +823,30 @@ export function inspectCivilianDelivery(input: {
     ),
     activeWriterCount,
     hasQueuedHandoffs,
+    idleWorkersWithoutHandoff,
     remaining,
     deliveredWorkerTaskIds,
     orchestratorBusy,
   };
+}
+
+function buildConsolidatedSummary(
+  mission: Mission,
+  handoffs: readonly Handoff[],
+): string | null {
+  try {
+    const workerSummaries = handoffs
+      .filter(
+        (handoff) =>
+          (handoff.status === 'success' || handoff.status === 'partial') &&
+          handoff.summary?.trim(),
+      )
+      .map((handoff) => `- ${handoff.fromAgent}: ${handoff.summary!.trim()}`);
+    if (workerSummaries.length === 0) return null;
+    return `Consolidado das respostas dos panes para "${mission.title}":\n${workerSummaries.join('\n')}`;
+  } catch {
+    return null;
+  }
 }
 
 function completionSummary(
@@ -807,6 +854,7 @@ function completionSummary(
   files: readonly string[],
   remaining: readonly CivilianRemainderTask[],
   path: CivilianCompletionPath,
+  orchestratorSummary?: string | null,
 ): string {
   const fileList = files.slice(0, 12).join(', ');
   const leftover = remaining
@@ -819,13 +867,14 @@ function completionSummary(
       : path === 'evidence'
         ? 'evidência no disco (writers pararam)'
         : 'handoff + entrega';
-  const note =
-    `Entrega civil da Via Rápida (${mission.title}): ${files.length} arquivo(s) no disco` +
-    (fileList ? ` (${fileList})` : '') +
-    ` via ${via}` +
-    (leftover
-      ? `. Assentos restantes não bloqueiam Pronto: ${leftover}.`
-      : '. Nenhuma task residual de implementação.');
+  const note = orchestratorSummary?.trim()
+    ? `${orchestratorSummary} (Entrega civil da Via Rápida: ${files.length} arquivo(s) no disco via ${via}.)`
+    : `Entrega civil da Via Rápida (${mission.title}): ${files.length} arquivo(s) no disco` +
+      (fileList ? ` (${fileList})` : '') +
+      ` via ${via}` +
+      (leftover
+        ? `. Assentos restantes não bloqueiam Pronto: ${leftover}.`
+        : '. Nenhuma task residual de implementação.');
   return note.slice(0, 65_536);
 }
 
@@ -953,8 +1002,32 @@ function completeMission(
   remaining: readonly CivilianRemainderTask[],
   engine: Pick<MissionEngine, 'completeVerified'>,
   path: CivilianCompletionPath,
+  handoffs?: readonly Handoff[],
 ): boolean {
-  const summary = completionSummary(mission, files, remaining, path);
+  const orchestratorNames = new Set(
+    (stores.missionPanes?.list(mission.id) ?? [])
+      .filter((pane) => pane.role === 'orchestrator')
+      .flatMap((pane) => [paneAgentKey(pane.agentName), paneAgentKey(pane.title)])
+      .filter((name) => name.length > 0),
+  );
+  const orchestratorSummary =
+    orchestratorNames.size === 0
+      ? null
+      : [...(handoffs ?? [])]
+          .reverse()
+          .find(
+            (handoff) =>
+              (handoff.status === 'success' || handoff.status === 'partial') &&
+              orchestratorNames.has(paneAgentKey(handoff.fromAgent)),
+          )?.summary ?? null;
+  const consolidatedSummary = buildConsolidatedSummary(mission, handoffs ?? []);
+  const summary = completionSummary(
+    mission,
+    files,
+    remaining,
+    path,
+    orchestratorSummary ?? consolidatedSummary,
+  );
   const result = missionResultSchema.parse({
     outcome: 'success',
     summary,
@@ -1111,6 +1184,7 @@ export async function maybeCompleteFastLaneOnDelivery(
     hasSuccessHandoff: inspection.hasSuccessHandoff,
     hasRealWorkerDelivery: inspection.hasRealWorkerDelivery,
     hasQueuedHandoffs: inspection.hasQueuedHandoffs,
+    idleWorkersWithoutHandoff: inspection.idleWorkersWithoutHandoff,
     holdForReview: inspection.holdForReview,
     productFileCount: productFiles.length,
     activeWriterCount: inspection.activeWriterCount,
@@ -1236,6 +1310,7 @@ export async function maybeCompleteFastLaneOnDelivery(
       inspection.remaining,
       engine,
       path ?? 'evidence',
+      handoffs,
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
