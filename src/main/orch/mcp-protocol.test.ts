@@ -23,6 +23,7 @@ import {
   type McpToolDef,
   type McpToolInvocation,
 } from './mcp-protocol';
+import { buildToolset } from './tools';
 import { testProjectScope } from './__tests__/scope-fixture';
 import { clearAll as clearAllPermissions } from '../jarvis/permissions';
 import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
@@ -78,6 +79,20 @@ function opsMissionCtx() {
     role: 'worker',
     missionId: TEST_MISSION_ID,
     scope: auditScope,
+  });
+}
+
+function orchestratorMissionCtx(overrides?: Partial<Parameters<typeof mintToken>[0]>) {
+  resetGateForTests();
+  return mintToken({
+    label: 'maestro',
+    role: 'orchestrator',
+    missionId: TEST_MISSION_ID,
+    contextRevision: TEST_CONTEXT_REVISION,
+    readOnly: false,
+    allowedTools: null,
+    scope: auditScope,
+    ...overrides,
   });
 }
 
@@ -287,6 +302,34 @@ describe('handleMcpMessage', () => {
       'nexus_pane_read_many',
       'nexus_file_read',
     ]);
+  });
+
+  it('advertises pane_spawn to a running mission orchestrator', async () => {
+    resetGateForTests();
+    const ctx = orchestratorMissionCtx();
+    const registry: McpRegistry = {
+      tools: buildToolset(),
+      serverName: 'nexus-test',
+      serverVersion: '0.0.1',
+    };
+    const res = await handleMcpMessage(registry, ctx, req('tools/list'));
+    const tools = (res?.result as { tools: Array<{ name: string }> }).tools;
+    const names = tools.map((t) => t.name);
+    expect(names).toContain('nexus_pane_spawn');
+  });
+
+  it('advertises pane_spawn to a running mission orchestrator even with empty squad allowlist', async () => {
+    resetGateForTests();
+    const ctx = orchestratorMissionCtx({ allowedTools: [] });
+    const registry: McpRegistry = {
+      tools: buildToolset(),
+      serverName: 'nexus-test',
+      serverVersion: '0.0.1',
+    };
+    const res = await handleMcpMessage(registry, ctx, req('tools/list'));
+    const tools = (res?.result as { tools: Array<{ name: string }> }).tools;
+    const names = tools.map((t) => t.name);
+    expect(names).toContain('nexus_pane_spawn');
   });
 
   it('advertises image generation only to the exact main-owned Pet marker', async () => {

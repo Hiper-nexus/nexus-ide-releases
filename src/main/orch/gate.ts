@@ -191,6 +191,10 @@ export function isToolAllowedForRole(
   ) {
     return false;
   }
+  // Mission orchestrators must always be able to delegate to workers, even
+  // when the squad roster expresses that as an empty allowlist. pane_spawn
+  // itself enforces role/mission/authority downstream.
+  if (role === "orchestrator" && canonical === "pane_spawn") return true;
   return isToolAllowed(allowedTools, toolName);
 }
 
