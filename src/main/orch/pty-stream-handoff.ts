@@ -14,6 +14,7 @@ import {
   auditSuccess,
   type AuditContext,
 } from "../jarvis/audit-log";
+import { MECHANICAL_HANDOFF_MARK } from "./turn-end-handoff";
 import {
   getContextBySession,
   markHandoffSubmitted,
@@ -426,6 +427,9 @@ async function persistPtyHandoff(
           summary: prepared.summary,
           preferredTaskId: prepared.dispatch?.taskId,
           handoffStatus: prepared.payload.status,
+          requireMatch:
+            typeof prepared.summary === "string" &&
+            prepared.summary.startsWith(MECHANICAL_HANDOFF_MARK),
         });
       } catch (error) {
         console.warn(
