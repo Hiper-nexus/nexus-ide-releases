@@ -3,6 +3,7 @@ import type { AgentGateContext } from './gate';
 import { testProjectScope } from './__tests__/scope-fixture';
 import {
   assertCallerMaySpawnPane,
+  coerceSpawnReadOnly,
   paneSpawnTool,
 } from './tools-panes';
 
@@ -62,5 +63,26 @@ describe('nexus_pane_spawn recusa worker antes de qualquer spawn', () => {
         /workers cannot create panes/i,
       );
     }
+  });
+});
+
+describe('coerceSpawnReadOnly', () => {
+  it('preserva readOnly=false quando o chamador não é read-only', () => {
+    expect(coerceSpawnReadOnly({ readOnly: false }, false)).toEqual({
+      readOnly: false,
+    });
+    expect(coerceSpawnReadOnly({ readOnly: false }, undefined)).toEqual({
+      readOnly: false,
+    });
+  });
+
+  it('força readOnly=true quando o chamador é read-only', () => {
+    expect(coerceSpawnReadOnly({}, true)).toEqual({ readOnly: true });
+    expect(coerceSpawnReadOnly({ readOnly: false }, true)).toEqual({
+      readOnly: true,
+    });
+    expect(coerceSpawnReadOnly({ readOnly: true }, true)).toEqual({
+      readOnly: true,
+    });
   });
 });

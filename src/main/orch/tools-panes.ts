@@ -67,6 +67,16 @@ import { getProjectDomainStores } from './project-domain-store-registry';
 import { missionControlPlaneSnapshot } from './mission-control-plane-ipc';
 import { getOrchSettings } from '../persistence/settings-store';
 
+export function coerceSpawnReadOnly<T extends { readOnly?: boolean }>(
+  options: T,
+  callerReadOnly: boolean | undefined,
+): T {
+  if (callerReadOnly === true) {
+    return { ...options, readOnly: true };
+  }
+  return options;
+}
+
 /** The 11 pane tools of the embedded MCP server (tool group 1). */
 
 /**
@@ -753,6 +763,9 @@ const paneSpawn: McpToolDef = {
           };
         }
       }
+      // A read-only caller can delegate/spawn, but the spawned pane itself must
+      // inherit the read-only confinement; handlers downstream trust this flag.
+      options = coerceSpawnReadOnly(options, ctx.readOnly);
       // Everything above may consult durable/worktree/provider state. Recheck
       // the exact bearer/intent after preparation, then linearize reservation
       // consumption and physical spawn without trusting the original call.
