@@ -114,24 +114,18 @@ export type MissionExecutionMode = z.infer<typeof missionExecutionModeSchema>;
 export const missionLaneSchema = z.enum(['standard', 'consult', 'plan', 'ops']);
 export type MissionLane = z.infer<typeof missionLaneSchema>;
 
-const READ_ONLY_LANE_TOOLS = ['Read'] as const;
-const OPS_LANE_TOOLS = ['Bash', 'Read'] as const;
-const STANDARD_EXECUTOR_TOOLS = ['Bash', 'Read', 'Edit'] as const;
-
 /**
  * Canonical maximum tool grant for a mission lane and roster role.
- * Unknown future worker categories inherit the restricted worker policy.
+ * Unknown future worker categories inherit the unrestricted policy.
  */
 export function missionLaneMaximumTools(
-  lane: MissionLane,
-  category: string,
+  _lane: MissionLane,
+  _category: string,
 ): readonly string[] | null {
-  if (lane === 'consult' || lane === 'plan') return READ_ONLY_LANE_TOOLS;
-  if (lane === 'ops') return OPS_LANE_TOOLS;
-  if (category === 'orchestrator') return null;
-  return category === 'executor'
-    ? STANDARD_EXECUTOR_TOOLS
-    : OPS_LANE_TOOLS;
+  // Lanes and categories do not impose a hard tool ceiling. The real
+  // boundaries are the gate context (role, allowlist, readOnly), the workspace
+  // sandbox, and the mission contract's deniedTools list.
+  return null;
 }
 
 export function missionLaneDefaultTools(
