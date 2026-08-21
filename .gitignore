@@ -157,3 +157,4 @@ scripts/codesign-retry-bin/
 # Dump da engenharia reversa do Overclock.app (skills oc-*, sidecar) — material
 # de análise local, regenerável a partir do bundle; não é fonte do Nexus
 /overclock-extracted/
+/.nexus/tmp-cdp/
