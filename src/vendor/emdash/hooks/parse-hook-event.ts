@@ -31,9 +31,17 @@ export function isInteractiveQuestionTool(value: unknown): boolean {
   ].includes(normalized);
 }
 
+/**
+ * F-104 (21/08): a frase "waiting for your input" é o aviso de IDLE do CLI
+ * (disparado ~60s após o fim do turno), não um diálogo interativo. Promovê-la
+ * a elicitation_dialog lacrava o pane em awaiting-input para sempre em
+ * missões — onde ninguém digita o próximo turno. Elicitação REAL chega por
+ * tool interativa (AskUserQuestion/request_user_input via PreToolUse,
+ * isInteractiveQuestionTool) ou por frases que nomeiam pergunta/aprovação.
+ */
 export function looksLikeAwaitingInput(value: unknown): boolean {
   if (typeof value !== 'string') return false;
-  return /\b(?:waiting|waits?|awaiting)\s+(?:for\s+)?(?:your\s+)?input\b|\b(?:ask|needs?)\s+(?:the\s+)?user\b|\buser\s+(?:question|approval|permission)\b/i.test(
+  return /\b(?:asks?|needs?)\s+(?:the\s+)?user\b|\buser\s+(?:question|approval|permission)\b|\b(?:awaiting|awaits?)\s+(?:user\s+)?(?:question|answer|response|decision)\b/i.test(
     value,
   );
 }

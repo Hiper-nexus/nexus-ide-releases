@@ -30,13 +30,25 @@ describe('parseClaudeHookEvent', () => {
     ).toMatchObject({ notificationType: 'permission_prompt' });
   });
 
-  it('classifies explicit waiting text as elicitation and ordinary notices as idle', () => {
+  it('classifies the idle nudge as idle_prompt and ordinary notices as idle (F-104)', () => {
+    // "Claude is waiting for your input" é o aviso de idle pós-turno — NÃO um
+    // diálogo. Promovê-lo a elicitation lacrava panes de missão em
+    // awaiting-input permanente (F-104, campo 21/08).
     expect(
       parseClaudeHookEvent('notification', { message: 'Claude is waiting for your input' }),
-    ).toMatchObject({ notificationType: 'elicitation_dialog' });
+    ).toMatchObject({ notificationType: 'idle_prompt' });
     expect(
       parseClaudeHookEvent('notification', { message: 'Task completed' }),
     ).toMatchObject({ notificationType: 'idle_prompt' });
+  });
+
+  it('still classifies question/approval phrasing as elicitation', () => {
+    expect(
+      parseClaudeHookEvent('notification', { message: 'Claude asks the user which database to use' }),
+    ).toMatchObject({ notificationType: 'elicitation_dialog' });
+    expect(
+      parseClaudeHookEvent('notification', { message: 'awaiting user decision on migration plan' }),
+    ).toMatchObject({ notificationType: 'elicitation_dialog' });
   });
 
   it('falls back to the default parser for non-notification events', () => {
