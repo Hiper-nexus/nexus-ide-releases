@@ -45,6 +45,16 @@ import {
 import { waitOutBootPrompts } from './boot-prompt-hold';
 import { adapterCircuitBreakers } from './circuit-breaker';
 import { assertPreSpawnProbe } from '../pty/pre-spawn-probe';
+import { classifySeatAuth } from '../adapters/seat-auth-readiness';
+import { detectSubscriptionAuthReadiness } from '../adapters/subscription-auth';
+import {
+  hasRuntimeKey,
+  providerAuthStrategy,
+} from '../persistence/provider-config-store';
+import {
+  isCredentialProbeFailure,
+  settleSeatAfterCredentialFailure,
+} from './spawn-seat-fallback';
 import { assertSafePtyPrompt } from './pty-prompt-safety';
 import {
   getAgentTurnStartSequence,
@@ -965,19 +975,37 @@ export {
 
 export { assertReleaseQualifiedMissionWorkerSpawn } from './mission-worker-spawn-authority';
 
+/** Auth present real do CLI (mesma classificação do first-wave/revisor). */
+function cliHasPresentAuth(cli: string): boolean {
+  try {
+    const readiness = detectSubscriptionAuthReadiness(cli);
+    return (
+      classifySeatAuth({
+        adapterId: cli,
+        authStrategy: String(providerAuthStrategy(cli) ?? ''),
+        hasKey: hasRuntimeKey(cli),
+        kimiListReadiness: cli === 'kimi' ? readiness : undefined,
+        hasCredentiallessModel: readiness === 'present',
+      }) === 'present'
+    );
+  } catch {
+    return false;
+  }
+}
+
 export async function spawnPaneAndMaybePrompt(
   options: SpawnToolOptions,
   hooks: SpawnPaneHooks = {},
 ): Promise<{ paneId: string; sessionId: string }> {
   assertMcpInvocationCurrent(hooks.invocation);
-  const resolvedAdapter = getAdapter(options.adapterId);
+  let resolvedAdapter = getAdapter(options.adapterId);
   if (!resolvedAdapter) throw new Error(`unknown adapter: ${options.adapterId}`);
   if (resolvedAdapter.kind !== 'cli-pty') {
     // spawnPaneAndMaybePrompt only ever spawns terminal panes; API providers
     // have no pane representation.
     throw new Error(`adapter ${options.adapterId} is not spawnable as a pane`);
   }
-  const adapter = resolvedAdapter;
+  let adapter = resolvedAdapter;
   const authoritySeal = requireMissionPaneAuthoritySeal(options);
   assertReleaseQualifiedMissionWorkerSpawn(options);
   const contextRevision =
@@ -1061,13 +1089,53 @@ export async function spawnPaneAndMaybePrompt(
   // infrastructure itself is fail-closed only in explicit Hardened mode:
   // autopilot and direct terminals must not stall because an optional local
   // readiness reader failed while the CLI can authenticate from its own HOME.
-  await assertPreSpawnProbe(options.adapterId, {
-    model: effectiveModel,
-    failClosed: !isOperatorChoicePolicy(
-      getOrchSettings().squadCliPolicy,
-    ),
-    silentRemint: true,
-  });
+  const probeFailClosed = !isOperatorChoicePolicy(
+    getOrchSettings().squadCliPolicy,
+  );
+  let activeAdapterId = options.adapterId;
+  try {
+    await assertPreSpawnProbe(activeAdapterId, {
+      model: effectiveModel,
+      failClosed: probeFailClosed,
+      silentRemint: true,
+    });
+  } catch (error) {
+    // F-101: assento sem credencial caminha a CADEIA de sucessão
+    // (shared/seat-chains, mesma regra do remint do revisor) em vez de morrer
+    // silencioso e prender a missão num pane que nunca nasce.
+    if (!isCredentialProbeFailure(error)) throw error;
+    const successor = await settleSeatAfterCredentialFailure({
+      failedCli: activeAdapterId,
+      probe: (cli) =>
+        assertPreSpawnProbe(cli, {
+          failClosed: probeFailClosed,
+          silentRemint: true,
+        }),
+      deps: {
+        isSpawnableCli: (cli) => {
+          const candidate = getAdapter(cli);
+          return Boolean(candidate && candidate.kind === 'cli-pty');
+        },
+        hasPresentAuth: cliHasPresentAuth,
+      },
+    });
+    if (!successor) throw error;
+    console.warn(
+      `[pane-spawn] ${error.message} — assento remapeado para \`${successor}\`` +
+        ` (role=${options.role ?? '?'} mission=${options.missionId ?? '?'})`,
+    );
+    activeAdapterId = successor;
+    options = { ...options, adapterId: successor, model: undefined };
+  }
+  if (activeAdapterId !== resolvedAdapter.id) {
+    effectiveModel = undefined;
+    const swapped = getAdapter(activeAdapterId);
+    if (!swapped || swapped.kind !== 'cli-pty') {
+      throw new Error(`unknown adapter: ${activeAdapterId}`);
+    }
+    resolvedAdapter = swapped;
+    adapter = swapped;
+  }
   assertMcpInvocationCurrent(hooks.invocation);
   if (options.missionId && options.role) {
     // Best-effort only: never block spawn on attestation vault (pre-PTY slim).
