@@ -67,6 +67,10 @@ import {
 } from './writer-circuit-breaker';
 import { writerCircuitBlocksSeat, writerCircuitBreakers } from './writer-circuit-break';
 import {
+  HANDOFF_STALL_TTL_MS,
+  findStalledHandoffIds,
+} from './handoff-stall-ttl';
+import {
   collectFilesModified,
   maybeCompleteFastLaneOnDelivery as maybeCompleteFromFilesModified,
 } from './worker-files-modified';
@@ -1030,6 +1034,27 @@ async function tickWatcher(state: WatcherState): Promise<void> {
   // cada tick — o flush pós-spawn pode rodar antes da autoridade fechar e a
   // fila ficava órfã (19/08: "authority is incomplete" cru pro operador).
   void flushQueuedKickoffDirects(state.scope, stores, state.missionId);
+
+  // TTL de stalled (paridade OC): entrega em voo sem veredito há 30min+
+  // ganha status `stalled` — visível para cobrança/doctor em vez de
+  // pendente anônima para sempre (evidência A4/B4: 16h paradas sem dono).
+  try {
+    const inFlight = stores.handoffs.list({
+      missionId: state.missionId,
+      includeDelivered: false,
+    });
+    const stalledIds = findStalledHandoffIds(inFlight, Date.now());
+    if (stalledIds.length > 0) {
+      stores.handoffs.markStalled(stalledIds);
+      console.warn(
+        `[fast-lane] ${stalledIds.length} handoff(s) stalled ` +
+          `(TTL ${Math.round(HANDOFF_STALL_TTL_MS / 60_000)}min) ` +
+          `mission=${state.missionId}: ${stalledIds.join(',')}`,
+      );
+    }
+  } catch {
+    // Diagnóstico best-effort; nunca bloqueia o tick por isso.
+  }
 
   // P0 civil: Pronto só com board selado N/N. pending-with-file fecha
   // match único na pasta; never-started após first-wave curto reroteia.

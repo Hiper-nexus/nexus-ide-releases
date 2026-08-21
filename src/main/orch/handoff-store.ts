@@ -1428,6 +1428,32 @@ export class ScopedHandoffStore {
     return true;
   }
 
+  /**
+   * TTL de stalled (paridade Overclock: estados de morte nomeados). Entrega
+   * em voo (queued/submitted) sem veredito terminal e sem movimento há mais
+   * de `olderThanMs` ganha status `stalled` — continua unsettled (não fecha
+   * missão sozinha), mas fica VISÍVEL para cobrança/doctor em vez de pendente
+   * anônima para sempre. Retorna ids afetados.
+   */
+  markStalled(rawIds: readonly string[]): string[] {
+    const ids = rawIds.map((raw) => identifierSchema.parse(raw));
+    if (ids.length === 0) return [];
+    const placeholders = ids.map(() => "?").join(",");
+    const result = this.#binding
+      .writeDatabase()
+      .prepare(
+        `UPDATE handoffs
+         SET status = 'stalled'
+         WHERE id IN (${placeholders})
+           AND delivery_state IN ('queued','submitted')
+           AND status NOT IN ('success','partial','failed','blocked','stalled')`,
+      )
+      .run(...ids);
+    if (result.changes === 0) return [];
+    this.#binding.emitChange();
+    return ids;
+  }
+
   reserveDeliveryAttempt(input: {
     readonly handoffId: string;
     readonly missionId: string;
