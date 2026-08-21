@@ -191,6 +191,7 @@ describe('Iniciar 20-story → first-wave + selo + Pronto', () => {
       activeWriterCount: inspection.activeWriterCount,
       workersDelivered: inspection.workersDelivered,
       hasQueuedHandoffs: inspection.hasQueuedHandoffs,
+      idleWorkersWithoutHandoff: inspection.idleWorkersWithoutHandoff,
       remainingKinds: inspection.remaining.map((row) => row.kind),
       oldestReviewQueuedMs: null,
     });
@@ -283,6 +284,7 @@ describe('Iniciar 20-story → first-wave + selo + Pronto', () => {
       activeWriterCount: 0,
       workersDelivered: false,
       hasQueuedHandoffs: false,
+      idleWorkersWithoutHandoff: 0,
       remainingKinds: ['review'],
       oldestReviewQueuedMs: 1_000,
     });
