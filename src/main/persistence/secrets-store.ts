@@ -40,18 +40,20 @@ export function isSecureStorageBackendAllowed(
 }
 
 /**
- * Dev-only escape hatch for unattended sessions: the dev Electron binary is
- * not the signature the Keychain ACL trusts, so ANY vault access raises a
- * synchronous SecurityAgent prompt that freezes the main thread (and CDP)
- * until a human types the login password. With the vault disabled, reads
- * fail closed (null) and writes stay in-memory — CLIs keep their own native
- * auth. Never honored in a packaged build.
+ * Dev-only fail-closed doctrine (F-105, campo 21/08): o binário de dev NÃO é
+ * a assinatura que o ACL do Keychain confia — QUALQUER acesso ao vault pode
+ * abrir um prompt síncrono do SecurityAgent que congela o main do Electron
+ * (SecItemCopyMatching sem timeout; main, gate HTTP, supervisor e CDP morrem
+ * juntos). Em dev o vault fica DESLIGADO por padrão: leituras falham fechado
+ * (null), writes ficam em memória — os CLIs usam auth nativa de qualquer
+ * forma. Opt-in explícito: NEXUS_DEV_VAULT=1. Kill-switch extra:
+ * NEXUS_DEV_NO_VAULT=1 vale até em sessão empacotada de teste. Nunca afeta
+ * build empacotada real.
  */
 function isDevVaultDisabled(): boolean {
-  return (
-    process.env.NEXUS_DEV_NO_VAULT === '1' &&
-    process.defaultApp !== undefined
-  );
+  if (process.env.NEXUS_DEV_NO_VAULT === '1') return true;
+  const isDevCliSession = process.defaultApp !== undefined;
+  return isDevCliSession && process.env.NEXUS_DEV_VAULT !== '1';
 }
 
 export function isSecureStorageAvailable(options?: { probe?: boolean }): boolean {
