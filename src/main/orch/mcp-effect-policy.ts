@@ -182,6 +182,20 @@ const READ_ONLY_CONTEXT_METADATA_TOOLS = new Set([
   'review_submit',
 ]);
 
+/**
+ * Basic tools that must remain reachable even from a read-only gate context.
+ * A read-only reviewer/orchestrator still needs to spawn panes, run tests,
+ * read files and diagnose the workspace. The handlers enforce containment.
+ */
+const READ_ONLY_BASIC_TOOLS = new Set([
+  'pane_spawn',
+  'terminal_run',
+  'terminal_input',
+  'file_read',
+  'context_doctor',
+  'pane_ask',
+]);
+
 /** Bounded local controls that do not change workspace or external data. */
 const MISSION_CONTROL_TOOLS = new Set([
   'editor_focus',
@@ -264,7 +278,8 @@ export function isToolAllowedForReadOnlyContext(toolName: string): boolean {
   const canonical = canonicalToolName(toolName);
   return (
     effectPolicyForTool(canonical) === 'read-only' ||
-    READ_ONLY_CONTEXT_METADATA_TOOLS.has(canonical)
+    READ_ONLY_CONTEXT_METADATA_TOOLS.has(canonical) ||
+    READ_ONLY_BASIC_TOOLS.has(canonical)
   );
 }
 
