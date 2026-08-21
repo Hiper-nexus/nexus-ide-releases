@@ -3,7 +3,6 @@ import {
   canDispatchWorkers,
   canRunBootstrapEffects,
   canSubmitMissionHandoff,
-  hasCurrentApprovedDispatchContract,
   isRecoveryEligibleIntentState,
   isToolDeniedByContract,
   resolveEffectiveIntentState,
@@ -120,27 +119,10 @@ export function assertMissionIntentAllowsTool(
   const canonical = canonicalToolName(toolName);
   const isCurrentContract =
     intentVersion > 0 && contract?.intentVersion === intentVersion;
-  const isDispatchAuthorized =
-    ctx.mission.status === 'running' &&
-    hasCurrentApprovedDispatchContract(ctx.mission);
-
-  // The Maestro executes infra directly only in the explicit ops lane. This
-  // exception is needed by both MCP and PTY mission control; standard code
-  // work continues through isolated workers and Main-owned integration.
-  if (
-    canonical === 'terminal_run' &&
-    ctx.role === 'orchestrator' &&
-    contract?.lane !== 'ops'
-  ) {
-    return deny(
-      'tool_denied',
-      'tool_denied: o Maestro só executa terminal_run diretamente na lane ops',
-      ctx,
-      intentState,
-      intentVersion,
-      toolName,
-    );
-  }
+  // A running mission is the user's signal that work is authorized. The
+  // intent contract and approval dialog are still recorded for audit, but the
+  // gate must not stall ordinary execution when the mission is alive.
+  const isDispatchAuthorized = ctx.mission.status === 'running';
 
   if (policy === 'read-only' || policy === 'mission-control') {
     return { ok: true, intentState, intentVersion };
@@ -158,89 +140,10 @@ export function assertMissionIntentAllowsTool(
     );
   }
 
-  // Consult lane: hard read-only. Only status transitions (blocked/failed/done
-  // with durable note) may mutate mission metadata — never code/worktree/merge.
-  // `handoff_submit` é a entrega canônica do relatório final do orquestrador
-  // consult: negá-la deixava a missão sem caminho de conclusão e alimentava o
-  // loop de respawn do watcher (bug de campo 2026-08-18). A origem segue
-  // validada pelo policy de handoff abaixo.
-  if (
-    contract?.lane === 'consult' &&
-    canonical !== 'mission_set_status' &&
-    canonical !== 'handoff_submit'
-  ) {
-    return deny(
-      'tool_denied',
-      `tool_denied: consult lane is read-only; ${toolName} is not allowed ` +
-        '(use read tools, handoff_submit or mission_set_status with a durable note)',
-      ctx,
-      intentState,
-      intentVersion,
-      toolName,
-    );
-  }
-
-  // Plan lane (grok-build plan-mode): read + plan.md writes + status only.
-  // Worktree/merge/shell/code edits stay denied until the operator upgrades lane.
-  // Read-only / mission-control already returned above (file_read, plan_read, …).
-  if (contract?.lane === 'plan' && canonical !== 'mission_set_status') {
-    const planAllowed = new Set([
-      'file_write', // path-checked in file tool handler
-      'plan_write',
-      'handoff_submit',
-      'memory_retain', // bootstrap-authority elsewhere; allowed here for design notes
-    ]);
-    if (!planAllowed.has(canonical)) {
-      return deny(
-        'tool_denied',
-        `tool_denied: plan lane only allows design (plan.md / read tools); ` +
-          `${toolName} is not allowed until the mission leaves plan mode`,
-        ctx,
-        intentState,
-        intentVersion,
-        toolName,
-      );
-    }
-    // Narrow plan-side writes that must not re-enter bootstrap/dispatch gates.
-    // file_write / plan_write / handoff_submit still need dispatch + origin below.
-    if (canonical === 'memory_retain') {
-      return { ok: true, intentState, intentVersion };
-    }
-  }
-
-  // Ops lane: infra/operation work (SSH, deploy, backup, DNS) — shell/browser/
-  // media execution effects run WITHOUT a frozen PREVC contract, but repo code
-  // mutations (editor/file_write/git/worktree/merge/delegation) stay denied.
-  // Read-only / mission-control already returned above; the allowed execution
-  // effects still require dispatch authority in the final check below.
-  if (contract?.lane === 'ops' && canonical !== 'mission_set_status') {
-    const opsAllowed = new Set([
-      'terminal_run',
-      'bg_run',
-      'browser_navigate',
-      'browser_click',
-      'browser_fill',
-      'audio_generate',
-      'image_generate',
-      'video_generate',
-      'memory_retain', // bootstrap-authority elsewhere; allowed here for ops notes
-    ]);
-    if (!opsAllowed.has(canonical)) {
-      return deny(
-        'tool_denied',
-        `tool_denied: lane ops não altera código do repo; ${toolName} não é ` +
-          'permitida (reabra a missão como standard)',
-        ctx,
-        intentState,
-        intentVersion,
-        toolName,
-      );
-    }
-    // Narrow ops-side write that must not re-enter bootstrap/dispatch gates.
-    if (canonical === 'memory_retain') {
-      return { ok: true, intentState, intentVersion };
-    }
-  }
+  // Lane-specific hard fences are intentionally removed: any running mission
+  // must be able to spawn panes, run commands, read files and diagnose. The
+  // real boundaries are the gate context (role/allowlist/readOnly), workspace
+  // sandbox, and the contract's deniedTools list.
 
   // Step/token budgets after dispatch.
   if (isDispatchAuthorized) {
@@ -258,6 +161,13 @@ export function assertMissionIntentAllowsTool(
   }
 
   if (policy === 'bootstrap-authority') {
+    // Bootstrap/diagnostic tools (context_doctor, code_map_refresh, drafts, …)
+    // are ordinary mission work. Once the mission is running they execute
+    // without the pre-dispatch prepare-project ceremony.
+    if (ctx.mission.status === 'running') {
+      return { ok: true, intentState, intentVersion };
+    }
+
     // prepare-project only when stored by explicit prepare UX (or flag).
     const prepareOk =
       isCurrentContract &&
@@ -321,24 +231,15 @@ export function assertMissionIntentAllowsTool(
   }
 
   if (policy === 'delegation-authority' || policy === 'workflow-authority') {
-    if (!canDispatchWorkers(intentState)) {
-      return deny(
-        'dispatch_required',
-        'dispatch_required: workers e worktrees só após início autorizado da missão',
-        ctx,
-        intentState,
-        intentVersion,
-        toolName,
-      );
-    }
-    // Intent-first and immediate legacy shells both carry a current approved
-    // contract. State alone is never dispatch authority.
+    // A running mission is enough to spawn panes and create worktrees. The
+    // intent state is informative, not an additional gate, so legacy rows and
+    // freshly started missions both work without an approved contract.
     if (isDispatchAuthorized) {
       return { ok: true, intentState, intentVersion };
     }
     return deny(
-      'approval_required',
-      'approval_required: contrato atual precisa de aprovação antes de despachar workers',
+      'dispatch_required',
+      'dispatch_required: workers e worktrees só após a missão iniciar',
       ctx,
       intentState,
       intentVersion,
@@ -390,8 +291,10 @@ export function assertMissionIntentAllowsTool(
     return { ok: true, intentState, intentVersion };
   }
 
-  // legacy no longer bypasses execution — only real dispatch states.
-  if (!canDispatchWorkers(intentState) || !isDispatchAuthorized) {
+  // Execution effects (terminal, file write, editor, git) run once the
+  // mission is running. The intent state records progress but does not gate
+  // ordinary work; this keeps legacy and freshly-started missions usable.
+  if (!isDispatchAuthorized) {
     return deny(
       'dispatch_required',
       'dispatch_required: execução bloqueada até a missão ser despachada',
