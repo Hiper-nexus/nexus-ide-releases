@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { Handoff, Mission } from '../../shared/orch-types';
 import { testProjectScope } from './__tests__/scope-fixture';
 import {
@@ -7,6 +10,7 @@ import {
   holdsGuidedOrLegacyReview,
   inspectProductEvidence,
   maybeApplyCivilianPronto,
+  walkProductFiles,
 } from './civilian-pronto';
 import { hasUnsettledQueuedHandoffs } from './civilian-delivery-completion';
 import { projectMissionSnapshot } from './mission-snapshot';
@@ -261,6 +265,18 @@ describe('Pronto justified → mission status pronto', () => {
     });
     expect(snapshot.state).toBe('completed');
     expect(snapshot.progress).toEqual({ completed: 5, total: 5 });
+  });
+});
+
+describe('walkProductFiles — evidência sem lixo', () => {
+  it('dotfiles e logs não são prova de entrega (.env é segredo, não artefato)', () => {
+    const root = mkdtempSync(join(tmpdir(), 'nexus-walk-'));
+    writeFileSync(join(root, '.env'), 'SECRET=1');
+    writeFileSync(join(root, '.DS_Store'), 'junk');
+    writeFileSync(join(root, 'debug.log'), 'log');
+    writeFileSync(join(root, 'landing.html'), '<h1>oi</h1>');
+    const files = walkProductFiles(root);
+    expect(files).toEqual(['landing.html']);
   });
 });
 

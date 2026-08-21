@@ -15,6 +15,7 @@ import type { MissionEngine } from './mission-engine';
 import {
   hasUnsettledQueuedHandoffs,
   isCivilianReviewRefusal,
+  isJunkArtifactRef,
   isSatOrTombstonedPaneState,
   matchHandoffToAgent,
   noteCivilianReviewRefusal,
@@ -200,7 +201,12 @@ export function walkProductFiles(root: string): readonly string[] {
         }
         continue;
       }
-      if (entry.isFile() && isNonEmptyFile(absolute) && !isDesignOnlyFile(rel)) {
+      if (
+        entry.isFile() &&
+        isNonEmptyFile(absolute) &&
+        !isDesignOnlyFile(rel) &&
+        !isJunkArtifactRef(rel)
+      ) {
         found.push(rel);
       }
       if (found.length >= MAX_WALK_FILES) break;
