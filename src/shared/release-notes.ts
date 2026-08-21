@@ -13,67 +13,62 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.64.0',
-  date: '2026-08-19',
-  codename: 'List é recibo',
+  version: '0.65.0',
+  date: '2026-08-21',
+  codename: 'Loop redondo',
   summary:
-    'O Maestro que lista handoffs da própria missão já os recebeu — a ' +
-    'fila reconhece sozinha (acknowledged mecânico), o redelivery para de ' +
-    'digitar o que ele já leu e a recuperação física pesada some. O gate ' +
-    'de revisão aceita o recibo do main sem attempt digitado. Em cima da ' +
-    '0.63.0 do gate histórico: missão real completou 100% sozinha.',
+    'O ciclo completo — dispatch, orquestração, panes, prompts entre panes, ' +
+    'handoffs e conclusão — fechou de ponta a ponta em missões reais: uma ' +
+    'simples (consolidação de respostas) e uma complexa (artefato físico no ' +
+    'disco + verificação independente por outro agente) completaram sozinhas ' +
+    'no dev aberto. Os dois travamentos crônicos que impediam a conclusão ' +
+    'foram erradicados na raiz.',
   highlights: [
     {
-      title: 'List é recibo',
+      title: 'Fechamento mecânico nunca mais fica refém do worker',
       detail:
-        'nexus_handoff_list na própria missão marca os pendentes como ' +
-        'acknowledged — o conteúdo viaja na resposta. Fim do "mesmo ' +
-        'handoff antigo sendo redelivered" com Maestro ocupado; leitura ' +
-        'cross-mission continua auditoria pura.',
+        'Quando o orquestrador delega, o marcador de espera vetava o próprio ' +
+        'fechamento que a resolveria — worker sem nexus_handoff_submit ficava ' +
+        'mudo para sempre e o chef-idle virava loop. Agora o Stop com resposta ' +
+        'honesta fecha a entrega; dedup continua pela janela do turno.',
     },
     {
-      title: 'Encerrou, ficou encerrado',
+      title: 'Missão completa com prova física',
       detail:
-        'Tecla em pane morto, auto-cura de grant e watchdogs NUNCA reabrem ' +
-        'missão encerrada pelo operador. Só o botão Retomar religa — e diz ' +
-        'isso na tela em uma linha.',
+        'E2E real: criar arquivo em disco, segundo agente lê e verifica, ' +
+        'Maestro consolida — completed em minutos sem intervenção. A via de ' +
+        'evidência e a caixa postal durável do Maestro trabalharam juntas.',
     },
     {
-      title: 'A entrega do revisor nunca mais se perde',
+      title: 'nexus-notary: versão nova em um comando',
       detail:
-        'Workers da segunda onda nasciam sem encarnação e o fechamento ' +
-        'mecânico recusava a resposta deles. Agora todo worker governado ' +
-        'entrega — provado em voo real com reprovação forense e rework ' +
-        'despachado sozinho.',
-    },
-    {
-      title: 'Vereditos estruturados no gate de revisão',
-      detail:
-        '[VALIDADA]/[REPROVADA] por story decidem o gate; "Nenhuma story ' +
-        'reprovada" deixou de virar reprovação eterna. Revisão entregue ' +
-        'com prova física de aceite vale sem ack do modelo — e a prova ' +
-        'sobrevive ao respawn do Maestro.',
-    },
-    {
-      title: 'Diálogo de rate-limit não congela worker',
-      detail:
-        '"Switch to gpt-5.6-luna… press enter or esc" mid-turn recebe ESC ' +
-        'sozinho — mantém o modelo que VOCÊ escolheu e o turno continua.',
+        'typecheck → sinks → build limpo assinado → notarização (perfil ' +
+        'keychain) → staple → smoke do ZIP → receipt → gate do candidato, ' +
+        'na ordem, falhando rápido.',
     },
   ],
   fixes: [
     {
-      title: 'Travas se nomeiam',
+      title: '"Aguardando você" fantasma acabou',
       detail:
-        'Entrega pulada diz o motivo, recusa de conclusão carrega o ' +
-        'missionId, linha idêntica não repete 63× — silêncio deixou de ' +
-        'ser diagnóstico.',
+        'A notificação idle do CLI ("waiting for your input") era promovida a ' +
+        'elicitação e lacrava o pane em awaiting-input eterno — agentes ' +
+        'prontos apareciam como perguntando algo e injeções eram vetadas. ' +
+        'Só diálogo real (pergunta/aprovação/ferramenta interativa) lacra.',
     },
     {
-      title: 'Pane morto fala menos e mais certo',
+      title: 'Dev não congela mais no Keychain',
       detail:
-        'Religamento só é anunciado após o aceite do main; reasseguramento ' +
-        'de resume exato foi para o log.',
+        'Leitura fria de segredo no binário de dev abria SecItemCopyMatching ' +
+        'síncrono atrás de prompt oculto — main, gate de hooks, supervisor e ' +
+        'CDP morriam juntos e a missão parava sem um log. Vault desligado por ' +
+        'padrão no dev (NEXUS_DEV_VAULT=1 para optar), empacotado intacto.',
+    },
+    {
+      title: '+ Novo com missão finalizada em foco funciona',
+      detail:
+        'Relato F-103 era sintoma do congelamento (F-105): validação dirigida ' +
+        'por CDP mostra navegação e MissionSetup frescos nos dois cenários.',
     },
   ],
 };

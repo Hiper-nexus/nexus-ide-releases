@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.65.0 — Loop redondo
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+O ciclo completo fechou de ponta a ponta em missões reais no dev aberto:
+uma simples (consolidação de respostas entre panes) e uma complexa
+(artefato físico criado, verificado por segundo agente e consolidada)
+completaram sozinhas. As raízes que impediam a conclusão:
+
+- **fix(orch): fechamento mecânico resolve a espera** — a marcação de
+  "handoff pendente" no spawn vetava exatamente o fechamento que a
+  resolveria: worker que não chamava `nexus_handoff_submit` ficava mudo
+  para sempre (sem `[auto]`, chef-idle em loop, missão sem fim). O Stop
+  com resposta honesta agora fecha; dedup segue pela janela do turno e
+  pela impressão digital do Stop.
+- **fix(hooks): "Aguardando você" fantasma acabou** — a notificação idle
+  do CLI ("waiting for your input", ~60s após o turno) era promovida a
+  `elicitation_dialog` e lacrava claude/deepseek em `awaiting-input`
+  eterno (pane "Pronto" na tela, injeção vetada). Só diálogo real —
+  pergunta/aprovação/ferramenta interativa — lacra.
+- **fix(persistence): dev não congela mais no Keychain** — leitura fria de
+  segredo no binário de dev entrava em `SecItemCopyMatching` síncrono atrás
+  de prompt oculto do SecurityAgent: main, gate de hooks, supervisor,
+  entregas e CDP morriam juntos e a missão parava sem UM log (F-105,
+  diagnosticado com `sample`). Vault desligado por padrão no dev;
+  `NEXUS_DEV_VAULT=1` para optar; empacotado intacto.
+- **docs(qa): F-103 encerrado** — "+ Novo" com missão finalizada em foco
+  sempre funcionou na build sã; o sintoma era o congelamento acima.
+- **feat(release): nexus-notary** — um comando roda typecheck → sinks →
+  build limpo assinado → notarização (perfil keychain) → staple → smoke do
+  ZIP → receipt → gate do candidato.
+
 ## 0.64.0 — List é recibo
 
 _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
