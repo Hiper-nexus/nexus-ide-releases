@@ -87,6 +87,7 @@ export interface CivilianDeliveryDecisionInput {
   readonly hasQueuedHandoffs: boolean;
   readonly remainingKinds: readonly CivilianRemainderKind[];
   readonly oldestReviewQueuedMs: number | null;
+  readonly orchestratorBusy?: boolean;
 }
 
 export interface CivilianDeliveryResult {
@@ -431,7 +432,11 @@ export function decideCivilianDeliveryAction(
 ): CivilianDeliveryAction {
   if (input.failClosed) return 'refuse-fail-closed';
   if (input.hasQueuedHandoffs && !input.boardAllDone) return 'wait';
-  if (input.boardAllDone) return 'complete';
+  // Orchestrator busy: ele pode spawnar mais workers — não fechar a missão
+  // só porque o board selado está N/N (tasks marcadas done pelo handoff do
+  // primeiro worker antes de o Maestro pedir o segundo).
+  if (input.boardAllDone && !input.orchestratorBusy) return 'complete';
+  if (input.boardAllDone && input.orchestratorBusy) return 'wait';
   if (input.designOnly || input.neverStartedDraft) return 'refuse-empty';
 
   if (
@@ -452,6 +457,7 @@ export function decideCivilianDeliveryAction(
     }
     if (needsSealedReroute(input.remainingKinds)) return 'reroute';
     if (input.remainingKinds.some((kind) => kind !== 'review')) return 'wait';
+    if (input.orchestratorBusy) return 'wait';
     return 'complete';
   }
 
@@ -480,6 +486,7 @@ export function decideCivilianDeliveryAction(
   }
   if (needsSealedReroute(remaining)) return 'reroute';
   if (remaining.some((kind) => kind !== 'review')) return 'wait';
+  if (input.orchestratorBusy) return 'wait';
   return 'complete';
 }
 
@@ -634,6 +641,7 @@ export function inspectCivilianDelivery(input: {
   readonly hasQueuedHandoffs: boolean;
   readonly remaining: CivilianRemainderTask[];
   readonly deliveredWorkerTaskIds: string[];
+  readonly orchestratorBusy: boolean;
 } {
   const plannedById = new Map(input.planned.map((row) => [row.taskId, row]));
   const successHandoffs = input.handoffs.filter((handoff) => handoff.status === 'success');
@@ -767,6 +775,13 @@ export function inspectCivilianDelivery(input: {
     (h) => h.deliveryState === 'queued' || h.deliveryState === 'submitted',
   );
 
+  const orchestratorPanes = missionPanes.filter(
+    (pane) => pane.role === 'orchestrator',
+  );
+  const orchestratorBusy = orchestratorPanes.some((pane) =>
+    isLiveWriterPaneState(pane.state),
+  );
+
   return {
     hasSuccessHandoff: successHandoffs.length > 0,
     workersDelivered,
@@ -783,6 +798,7 @@ export function inspectCivilianDelivery(input: {
     hasQueuedHandoffs,
     remaining,
     deliveredWorkerTaskIds,
+    orchestratorBusy,
   };
 }
 
@@ -1099,6 +1115,7 @@ export async function maybeCompleteFastLaneOnDelivery(
     productFileCount: productFiles.length,
     activeWriterCount: inspection.activeWriterCount,
     workersDelivered: inspection.workersDelivered,
+    orchestratorBusy: inspection.orchestratorBusy,
     remainingKinds: inspection.remaining.map((task) => task.kind),
     oldestReviewQueuedMs: inspection.remaining
       .filter((task) => task.kind === 'review')

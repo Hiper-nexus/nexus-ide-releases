@@ -64,6 +64,7 @@ function decision(
     remainingKinds: [],
     oldestReviewQueuedMs: null,
     hasQueuedHandoffs: false,
+    orchestratorBusy: false,
     ...overrides,
   };
 }
@@ -143,6 +144,49 @@ describe('decideCivilianDeliveryAction', () => {
         }),
       ),
     ).toBe('complete');
+  });
+
+  it('board all-done + orchestrator busy → wait (Maestro pode spawnar mais workers)', () => {
+    expect(
+      decideCivilianDeliveryAction(
+        decision({
+          boardAllDone: true,
+          orchestratorBusy: true,
+          hasSuccessHandoff: false,
+          hasExpectedDelivery: false,
+          productFileCount: 0,
+          workersDelivered: false,
+        }),
+      ),
+    ).toBe('wait');
+  });
+
+  it('board all-done + orchestrator idle → Pronto', () => {
+    expect(
+      decideCivilianDeliveryAction(
+        decision({
+          boardAllDone: true,
+          orchestratorBusy: false,
+          hasSuccessHandoff: true,
+          hasExpectedDelivery: true,
+          productFileCount: 3,
+          workersDelivered: true,
+        }),
+      ),
+    ).toBe('complete');
+  });
+
+  it('evidence path + orchestrator busy → wait', () => {
+    expect(
+      decideCivilianDeliveryAction(
+        decision({
+          hasExpectedDelivery: true,
+          hasRealWorkerDelivery: true,
+          activeWriterCount: 0,
+          orchestratorBusy: true,
+        }),
+      ),
+    ).toBe('wait');
   });
 
   it('arquivos no disco + never-started selado → reroute (não Pronto 16/20)', () => {
@@ -521,6 +565,50 @@ describe('inspectCivilianDelivery', () => {
     expect(inspected.neverStartedDraft).toBe(false);
     expect(inspected.boardAllDone).toBe(false);
     expect(inspected.activeWriterCount).toBe(0);
+  });
+
+  it('orchestratorBusy true quando Maestro está busy', () => {
+    const inspected = inspectCivilianDelivery({
+      mission: mission({ id: 'mission-orch-busy' }),
+      tasks: [
+        task({ id: 't-story-1', title: 'Story 01', missionId: 'mission-orch-busy', status: 'done' }),
+      ],
+      planned: storyPlan(1),
+      handoffs: [handoff({ missionId: 'mission-orch-busy' })],
+      panes: [
+        {
+          missionId: 'mission-orch-busy',
+          agentName: 'Maestro',
+          role: 'orchestrator',
+          state: 'busy',
+        },
+      ],
+      now: 20_000,
+    });
+    expect(inspected.orchestratorBusy).toBe(true);
+    expect(inspected.boardAllDone).toBe(true);
+  });
+
+  it('orchestratorBusy false quando Maestro está idle ou ausente', () => {
+    const inspected = inspectCivilianDelivery({
+      mission: mission({ id: 'mission-orch-idle' }),
+      tasks: [
+        task({ id: 't-story-1', title: 'Story 01', missionId: 'mission-orch-idle', status: 'done' }),
+      ],
+      planned: storyPlan(1),
+      handoffs: [handoff({ missionId: 'mission-orch-idle' })],
+      panes: [
+        {
+          missionId: 'mission-orch-idle',
+          agentName: 'Maestro',
+          role: 'orchestrator',
+          state: 'idle',
+        },
+      ],
+      now: 20_000,
+    });
+    expect(inspected.orchestratorBusy).toBe(false);
+    expect(inspected.boardAllDone).toBe(true);
   });
 });
 
