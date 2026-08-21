@@ -18,6 +18,8 @@ export const ORCH_CHANNELS = {
   browserOpenResult: 'orch:browser.openResult',
   /** Strict canonical MissionEngine surface; scope is always derived in main. */
   missionPrepare: 'orch:mission.prepare',
+  /** Router de intenção (Onda 3): classifica objetivo antes do prepare. */
+  intentRoute: 'orch:intent.route',
   missionStart: 'orch:mission.start',
   missionCommand: 'orch:mission.command',
   missionSnapshot: 'orch:mission.snapshot',

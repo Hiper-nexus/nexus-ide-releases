@@ -795,6 +795,8 @@ const api: NexusApi = {
     prepare: (request) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionPrepare, request),
     start: (input) => ipcRenderer.invoke(ORCH_CHANNELS.missionStart, input),
+    routeIntent: (objective: string) =>
+      ipcRenderer.invoke(ORCH_CHANNELS.intentRoute, objective),
     command: (command) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionCommand, command),
     snapshot: (missionId) =>

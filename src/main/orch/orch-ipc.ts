@@ -176,6 +176,7 @@ import { importDesignContractWithKeylessFallback } from "./design-system-import-
 import type { AgentGateContext } from "./gate";
 import { reconcileCompletedPetStudioMissions } from "./pet-studio-completion";
 import { z } from "zod";
+import { routeIntent } from './intent-router';
 import { PET_STUDIO_SQUAD_ID } from '../../shared/pet-studio';
 import {
   persistOperatorReviewFeedback,
@@ -1824,6 +1825,10 @@ export function registerOrchIpc(): void {
   ipcMain.handle(ORCH_CHANNELS.missionsList, (event) =>
     requireProjectStores(event.sender).missions.list(),
   );
+  ipcMain.handle(ORCH_CHANNELS.intentRoute, async (_event, raw) => {
+    const objective = z.string().trim().min(1).max(4_000).parse(raw);
+    return routeIntent(objective);
+  });
   ipcMain.handle(ORCH_CHANNELS.missionPrepare, async (event, raw) => {
     const request = missionPrepareRequestSchema.parse(raw);
     const scope = requireLiveRendererWorkspaceScope(event.sender);
