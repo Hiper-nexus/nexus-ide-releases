@@ -152,6 +152,39 @@ export function buildPanePickerEntries(
   return entries;
 }
 
+/** Por que uma CLI conhecida ficou de fora da lista. */
+export interface PanePickerUnavailable {
+  readonly adapterId: string;
+  readonly label: string;
+  readonly reason: string;
+}
+
+/**
+ * O filtro da lista principal é deliberado (provider desligado à mão não
+ * volta pela porta dos fundos), mas filtrar EM SILÊNCIO lê como bug: "o
+ * picker não mostra todas as minhas CLIs". Esta lista é a resposta visível —
+ * cada exclusão nomeada com o motivo e a ação cabível (Contas / instalação).
+ */
+export function buildPanePickerUnavailable(
+  providers: readonly ProviderSettingsInfo[],
+): PanePickerUnavailable[] {
+  return providers
+    .filter(
+      (provider) =>
+        provider.kind === 'cli-pty' &&
+        (!provider.installed || provider.enabled === false),
+    )
+    .map((provider) => ({
+      adapterId: provider.adapterId,
+      label: provider.label,
+      reason:
+        provider.enabled === false
+          ? 'desligada em Configurações › Contas'
+          : 'CLI não encontrada no PATH',
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label, 'pt-BR'));
+}
+
 /** Abre o pane pela ação que JÁ existe na store — o picker não cria panes. */
 export function runPanePickerIntent(intent: PanePickerIntent): void {
   const layout = useLayoutStore.getState();
@@ -196,6 +229,10 @@ export function PanePicker() {
   const hasCli = useMemo(
     () => entries.some((entry) => entry.section === 'clis'),
     [entries],
+  );
+  const unavailable = useMemo(
+    () => buildPanePickerUnavailable(providers),
+    [providers],
   );
 
   /** Fecha devolvendo o foco ao gatilho — teclado nunca fica órfão. */
@@ -372,6 +409,33 @@ export function PanePicker() {
             <p className="pane-picker__hint">
               Nenhuma CLI detectada — instale uma em Configurações › Providers.
             </p>
+          )}
+
+          {unavailable.length > 0 && (
+            <div
+              className="pane-picker__unavailable"
+              aria-label="CLIs indisponíveis"
+            >
+              <div className="pane-picker__section" aria-hidden="true">
+                Indisponíveis
+              </div>
+              {unavailable.map((item) => (
+                <p
+                  key={item.adapterId}
+                  className="pane-picker__unavailable-row"
+                >
+                  <ProviderLogo
+                    adapterId={item.adapterId}
+                    label={item.label}
+                    size="xs"
+                  />
+                  <span className="pane-picker__item-label">{item.label}</span>
+                  <span className="pane-picker__unavailable-reason">
+                    {item.reason}
+                  </span>
+                </p>
+              ))}
+            </div>
           )}
         </div>
       )}

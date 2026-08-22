@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { Mission } from '../../shared/orch-types';
+import { NEXUS_PROCESS_STARTED_AT } from '../../shared/session-restore-liveness';
 import { paneVacancyIntent, paneVacancyMission } from './pane-vacancy-intent';
 
+/** Timestamps frescos POR PADRÃO: leftover pré-boot não narra mais a vacancy.
+ *  Date.now() na HORA do teste — na carga do módulo a constante de boot ainda
+ *  não nasceu e offsets pequenos cairiam do lado errado da fronteira. */
 function mission(patch: Partial<Mission>): Mission {
   return {
     id: 'mission',
@@ -10,8 +14,8 @@ function mission(patch: Partial<Mission>): Mission {
     status: 'pending',
     milestones: [],
     learnings: '',
-    createdAt: 1,
-    updatedAt: 1,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
     ...patch,
   };
 }
@@ -28,22 +32,51 @@ describe('paneVacancyMission — who owns an empty grid', () => {
   });
 
   /**
+   * Leftover de um boot anterior (status cru do SQLite, processo morto) não
+   * pode abrir o workspace narrando uma missão que o operador não pediu —
+   * cockpit limpo no reopen; trabalho velho mora na rail.
+   */
+  it('ignora leftover atualizado antes deste processo nascer', () => {
+    const stale = NEXUS_PROCESS_STARTED_AT - 60_000;
+    expect(
+      paneVacancyMission([
+        mission({ id: 'velha', status: 'blocked', updatedAt: stale }),
+        mission({ id: 'velha-running', status: 'running', updatedAt: stale }),
+      ]),
+    ).toBeNull();
+  });
+
+  it('missão desta sessão continua dona da vacancy', () => {
+    const picked = paneVacancyMission([
+      mission({
+        id: 'velha',
+        status: 'blocked',
+        updatedAt: NEXUS_PROCESS_STARTED_AT - 60_000,
+      }),
+      mission({ id: 'nova', status: 'blocked', updatedAt: Date.now() }),
+    ]);
+    expect(picked?.id).toBe('nova');
+  });
+
+  /**
    * A blocked mission is the one waiting on a HUMAN. A running one that has
    * not presented yet is seconds away from replacing this vacancy outright
    * (I1), so it must not out-shout the mission that needs a decision.
    */
   it('prefers the blocked mission over a running one', () => {
+    const base = Date.now();
     const picked = paneVacancyMission([
-      mission({ id: 'running', status: 'running', updatedAt: 99 }),
-      mission({ id: 'blocked', status: 'blocked', updatedAt: 2 }),
+      mission({ id: 'running', status: 'running', updatedAt: base + 1_000 }),
+      mission({ id: 'blocked', status: 'blocked', updatedAt: base }),
     ]);
     expect(picked?.id).toBe('blocked');
   });
 
   it('breaks ties on the most recent update', () => {
+    const base = Date.now();
     const picked = paneVacancyMission([
-      mission({ id: 'old', status: 'blocked', updatedAt: 5 }),
-      mission({ id: 'new', status: 'blocked', updatedAt: 9 }),
+      mission({ id: 'old', status: 'blocked', updatedAt: base }),
+      mission({ id: 'new', status: 'blocked', updatedAt: base + 1_000 }),
     ]);
     expect(picked?.id).toBe('new');
   });

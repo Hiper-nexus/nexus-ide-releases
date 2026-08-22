@@ -107,8 +107,10 @@ function mission(patch: Partial<Mission> = {}): Mission {
     status: 'blocked',
     milestones: [],
     learnings: '',
-    createdAt: 1,
-    updatedAt: 2,
+    // Timestamps frescos: a vacancy só narra trabalho tocado por ESTA sessão
+    // — leftover de boot anterior vira rail, não dono do grid.
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
     ...patch,
   };
 }

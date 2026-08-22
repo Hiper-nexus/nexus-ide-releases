@@ -202,9 +202,28 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
       true,
     );
     expect(groupHeadings()).toEqual(['Bare CLI', 'Claude', 'Codex']);
-    expect(host.textContent).not.toContain('Kimi');
+    // Fora da lista principal, mas NOMEADAS na seção de indisponíveis.
+    expect(optionLabels().some((label) => label.includes('Kimi'))).toBe(false);
+    expect(optionLabels().some((label) => label.includes('Grok'))).toBe(false);
     expect(host.textContent).not.toContain('GLM');
-    expect(host.textContent).not.toContain('Grok');
+  });
+
+  it('nomeia as CLIs indisponíveis com o motivo — nunca filtra em silêncio', () => {
+    mount();
+    openMenu();
+
+    const rows = [
+      ...host.querySelectorAll('.pane-picker__unavailable-row'),
+    ].map((node) => node.textContent ?? '');
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toContain('Grok');
+    expect(rows[0]).toContain('desligada em Configurações › Contas');
+    expect(rows[1]).toContain('Kimi');
+    expect(rows[1]).toContain('CLI não encontrada no PATH');
+    // Indisponível não é clicável: não vira opção navegável.
+    expect(options().some((o) => (o.textContent ?? '').includes('Grok'))).toBe(
+      false,
+    );
   });
 
   it('filtra por texto digitado em CLI, conta e modelo', () => {

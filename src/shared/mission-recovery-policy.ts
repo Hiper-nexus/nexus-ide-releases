@@ -2,6 +2,7 @@ import {
   hasCurrentApprovedDispatchContract,
   type MissionIntentContract,
 } from './mission-intent';
+import { wasUpdatedBeforeThisProcess } from './session-restore-liveness';
 
 export const TERMINAL_OPERATIONAL_FAILURE_MARKER =
   '[NEXUS_FAILURE:terminal]';
@@ -32,6 +33,13 @@ interface RecoverableMission {
   readonly description?: string;
   readonly intentVersion?: number | null;
   readonly intentContract?: MissionIntentContract | null;
+  /**
+   * Última escrita da linha. Uma missão bloqueada cujo updatedAt é anterior ao
+   * boot DESTE processo não tem dono vivo de retry — nada re-hidrata recovery
+   * no boot, então sem este guarda-chuva ela dizia "Recuperando"/"Trabalhando"
+   * para sempre (caso real: "teste sistenma" 28/07, 25 dias ativa na rail).
+   */
+  readonly updatedAt?: number | null;
 }
 
 const AUTOMATIC_RECOVERY_INTENT_STATES = new Set([
@@ -45,7 +53,10 @@ const AUTOMATIC_RECOVERY_INTENT_STATES = new Set([
 /**
  * Exact durable condition owned by the automatic bootstrap recovery loop.
  * A technical-looking legacy row without current approval is a human stop,
- * not work that the UI may promise will resume by itself.
+ * not work that the UI may promise will resume by itself. A leftover row from
+ * before this process booted has no living retry owner either — if Main
+ * resumes the retry it touches the row and the mission becomes current again,
+ * truthfully.
  */
 export function hasAutomaticTechnicalRecovery(
   mission: RecoverableMission,
@@ -53,6 +64,7 @@ export function hasAutomaticTechnicalRecovery(
   return (
     mission.status === 'blocked' &&
     AUTOMATIC_RECOVERY_INTENT_STATES.has(mission.intentState ?? '') &&
+    !wasUpdatedBeforeThisProcess(mission.updatedAt ?? NaN) &&
     hasCurrentApprovedDispatchContract(mission) &&
     !hasTerminalOperationalFailureMarker(mission.description ?? '')
   );

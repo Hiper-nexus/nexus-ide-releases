@@ -256,6 +256,9 @@ describe("renderer mission authority", () => {
       status: "blocked" as const,
       orchestratorSessionId: undefined,
       intentState: "blocked_technical" as const,
+      // Recovery viva é dona-deste-processo: updatedAt fresco, senão a linha
+      // é leftover de boot anterior e ninguém está recuperando coisa alguma.
+      updatedAt: Date.now(),
     };
     const revoked = {
       ...automatic,

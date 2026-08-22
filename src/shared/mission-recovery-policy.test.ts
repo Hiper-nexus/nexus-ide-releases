@@ -64,6 +64,26 @@ describe('hasAutomaticTechnicalRecovery', () => {
       }),
     ).toBe(false);
   });
+
+  it('rejects pre-boot leftovers — nenhum retry vivo é dono delas', () => {
+    const base = {
+      status: 'blocked',
+      intentState: 'blocked_technical',
+      description: 'Falha transitória.',
+      intentVersion: 3,
+      intentContract: approvedContract(),
+    };
+    // Linha tocada por ESTE processo: recovery continua de pé.
+    expect(
+      hasAutomaticTechnicalRecovery({ ...base, updatedAt: Date.now() }),
+    ).toBe(true);
+    // Linha de um boot anterior: sem dono vivo, não prometer "Recuperando".
+    expect(
+      hasAutomaticTechnicalRecovery({ ...base, updatedAt: 1 }),
+    ).toBe(false);
+    // Quem não sabe a idade da linha falha aberto (comportamento anterior).
+    expect(hasAutomaticTechnicalRecovery(base)).toBe(true);
+  });
 });
 
 describe('bloco de tentativa de recuperação automática', () => {

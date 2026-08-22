@@ -1,5 +1,6 @@
 import type { Mission } from '../../shared/orch-types';
 import { missionBlockCause } from '../../shared/mission-block-cause';
+import { wasUpdatedBeforeThisProcess } from '../../shared/session-restore-liveness';
 import {
   isInFlightStatus,
   missionIsOperationallyActive,
@@ -46,14 +47,21 @@ export type PaneVacancyIntent =
  *
  * `hasVisiblePanes` is false by construction — the caller only reaches here
  * when the whole tree is one vacancy, so no pane is bound to any mission.
+ *
+ * Leftover de boot anterior NÃO narra a vacancy: o espelho legado carrega o
+ * status cru do SQLite, então uma missão que morreu com o app anterior (ou há
+ * dias, noutra sessão) abriria o workspace já "falando de missão" como se o
+ * operador tivesse pedido algo. Reabrir é cockpit limpo — trabalho velho mora
+ * na rail, não no grid. A vacancy só pertence ao que ESTA sessão tocou.
  */
 export function paneVacancyMission(
   missions: readonly Mission[],
 ): Mission | null {
   const candidates = missions.filter(
     (mission) =>
-      isInFlightStatus(mission.status) ||
-      missionIsOperationallyActive(mission, false),
+      (isInFlightStatus(mission.status) ||
+        missionIsOperationallyActive(mission, false)) &&
+      !wasUpdatedBeforeThisProcess(mission.updatedAt),
   );
   if (candidates.length === 0) return null;
   const rank = (mission: Mission): number =>

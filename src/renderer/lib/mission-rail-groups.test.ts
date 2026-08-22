@@ -155,7 +155,9 @@ describe('groupMissionsForRail', () => {
       status: 'blocked',
       intentState: 'blocked_technical',
       ...automaticRecoveryAuthority,
-      updatedAt: 40,
+      // Retry dono-deste-processo: updatedAt fresco é o que separa uma
+      // recuperação viva de um leftover de boot anterior.
+      updatedAt: Date.now(),
     });
     const sections = groupMissionsForRail({
       missions: [...missions, recovering],
@@ -255,6 +257,7 @@ describe('missionIsOperationallyActive', () => {
           status: 'blocked',
           intentState: 'blocked_technical',
           ...automaticRecoveryAuthority,
+          updatedAt: Date.now(),
         }),
         false,
       ),

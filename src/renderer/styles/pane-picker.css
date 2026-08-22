@@ -247,6 +247,29 @@
   font-size: var(--text-xs);
 }
 
+.pane-picker__unavailable {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--border);
+  padding-bottom: 6px;
+}
+
+.pane-picker__unavailable-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 4px 12px;
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+}
+
+.pane-picker__unavailable-reason {
+  margin-left: auto;
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+  text-align: right;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .pane-picker__panel {
     animation: none;

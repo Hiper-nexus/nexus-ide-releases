@@ -135,6 +135,9 @@ describe('mission list action policy', () => {
       status: 'blocked',
       intentState: 'blocked_technical',
       ...automaticRecoveryAuthority,
+      // Retry vivo é dono-deste-processo: updatedAt fresco; linha de boot
+      // anterior não tem quem a retome e não oferece stop-recovery.
+      updatedAt: Date.now(),
     });
 
     expect(missionListAction(recovering, false)).toBe('stop-recovery');
