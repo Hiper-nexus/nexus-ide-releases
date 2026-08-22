@@ -1,0 +1,23 @@
+{
+  "kind": "api-provider",
+  "id": "deepseek",
+  "label": "DeepSeek",
+  "version": "1.0.0",
+  "icon": "🌐",
+  "endpoint": "https://api.deepseek.com/models",
+  "protocol": "openai-chat",
+  "auth": {
+    "method": "api_key",
+    "header": "authorization",
+    "scheme": "Bearer",
+    "envVar": "DEEPSEEK_API_KEY",
+    "keychainKey": "deepseek"
+  },
+  "models": {
+    "flag": "--model",
+    "list": ["deepseek-chat", "deepseek-reasoner"],
+    "default": "deepseek-chat"
+  },
+  "streaming": true,
+  "quirks": {}
+}

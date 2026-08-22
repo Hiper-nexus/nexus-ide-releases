@@ -1,0 +1,23 @@
+{
+  "kind": "api-provider",
+  "id": "qwen",
+  "label": "Qwen / Alibaba",
+  "version": "1.0.0",
+  "icon": "🌐",
+  "endpoint": "https://dashscope.aliyuncs.com/compatible-mode/v1/models",
+  "protocol": "openai-chat",
+  "auth": {
+    "method": "api_key",
+    "header": "authorization",
+    "scheme": "Bearer",
+    "envVar": "DASHSCOPE_API_KEY",
+    "keychainKey": "qwen"
+  },
+  "models": {
+    "flag": "--model",
+    "list": ["qwen3-coder", "qwen-max", "qwen-plus"],
+    "default": "qwen3-coder"
+  },
+  "streaming": true,
+  "quirks": {}
+}
