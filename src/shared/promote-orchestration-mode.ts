@@ -11,7 +11,8 @@ export type PromoteOrchestrationModeInput = Extract<
 >;
 
 /**
- * How many BMAD stories the physical plan summary exposes for Pack.
+ * How many plan stories/tasks (Superpowers Task N ou BMAD Story N.M) the
+ * physical plan summary exposes for Pack.
  * Renderer UX only — Main re-extracts at seal time.
  */
 export function countPromotableStories(summary: string | null | undefined): number {
@@ -21,7 +22,7 @@ export function countPromotableStories(summary: string | null | undefined): numb
 
 /**
  * Whether the promote flow should ask Pack vs Guiado before native review.
- * Always ask — Wave 2 templates allow Pack even without BMAD markdown stories.
+ * Always ask — Wave 2 templates allow Pack even without markdown stories/tasks.
  */
 export function shouldAskPromoteOrchestrationMode(_storyCount: number): boolean {
   return true;

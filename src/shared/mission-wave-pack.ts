@@ -1,8 +1,9 @@
 /**
  * Mission Wave Pack — pure authority for Livre / Pack / Guiado.
  *
- * Pack turns an approved promoted plan with ≥2 BMAD stories into N disjoint
+ * Pack turns an approved promoted plan with ≥2 stories/tasks into N disjoint
  * mutation tasks (topology `wave-pack`) so the scheduler can fan out panes.
+ * Headings aceitos: `### Task N:` (Superpowers) e `Story N.M:` (BMAD legado).
  * See docs/design/mission-wave-pack.md.
  */
 
@@ -69,6 +70,14 @@ export const wavePackTemplateIdSchema = z.enum(["landing", "saas", "fix"]);
 
 const STORY_HEADING_RE =
   /^(#{1,3})\s*Story\s+(\d+)\.(\d+)\s*:\s*(.+?)\s*$/gim;
+
+/**
+ * Superpowers writing-plans usa `### Task N: title` (numeração única, sem
+ * épico). Aceito como cidadão de primeira classe: vira epicStoryId `1.N` —
+ * um épico implícito — para conviver com o contrato Story N.M legado.
+ */
+const TASK_HEADING_RE =
+  /^(#{1,3})\s*Task\s+(\d+)\s*:\s*(.+?)\s*$/gim;
 
 /**
  * A path token: one or more directory segments (so a version like `3.2` or a
@@ -203,8 +212,8 @@ export function decomposeGoalByRepositoryAreas(input: {
 
 /**
  * BMAD epics template uses `### Story N.M: title`. Standalone story files use
- * `# Story N.M: title`. Both are accepted; body runs until the next story
- * heading or end of document.
+ * `# Story N.M: title`. Superpowers plans use `### Task N: title`. All are
+ * accepted; body runs until the next story/task heading or end of document.
  */
 export function extractStoriesFromPromotedPlanSummary(
   summary: string,
@@ -212,21 +221,42 @@ export function extractStoriesFromPromotedPlanSummary(
   const text = summary.trim();
   if (!text) return Object.freeze([]);
 
-  const matches = [...text.matchAll(STORY_HEADING_RE)];
-  if (matches.length === 0) return Object.freeze([]);
+  type Heading = {
+    readonly index: number;
+    readonly length: number;
+    readonly epic: string;
+    readonly story: string;
+    readonly title: string;
+  };
+  const headings: Heading[] = [
+    ...[...text.matchAll(STORY_HEADING_RE)].map((match) => ({
+      index: match.index ?? 0,
+      length: match[0]!.length,
+      epic: match[2]!,
+      story: match[3]!,
+      title: match[4]!.trim(),
+    })),
+    ...[...text.matchAll(TASK_HEADING_RE)].map((match) => ({
+      index: match.index ?? 0,
+      length: match[0]!.length,
+      epic: '1',
+      story: match[2]!,
+      title: match[3]!.trim(),
+    })),
+  ].sort((a, b) => a.index - b.index);
+  if (headings.length === 0) return Object.freeze([]);
 
   const stories: ExtractedWavePackStory[] = [];
   // First-owner-wins across stories guarantees the emitted partition is
   // pairwise-disjoint by construction: a file named by two stories is owned by
   // the first that declared it, so the fan-out never puts two writers on it.
   const claimedFiles = new Set<string>();
-  for (let i = 0; i < matches.length; i += 1) {
-    const match = matches[i]!;
-    const epic = match[2]!;
-    const story = match[3]!;
-    const title = match[4]!.trim().slice(0, 256);
-    const start = (match.index ?? 0) + match[0]!.length;
-    const end = i + 1 < matches.length ? (matches[i + 1]!.index ?? text.length) : text.length;
+  for (let i = 0; i < headings.length; i += 1) {
+    const heading = headings[i]!;
+    const { epic, story } = heading;
+    const title = heading.title.slice(0, 256);
+    const start = heading.index + heading.length;
+    const end = i + 1 < headings.length ? headings[i + 1]!.index : text.length;
     const body = text.slice(start, end).trim().slice(0, 8_192);
     const epicStoryId = `${epic}.${story}`;
     const ownershipFiles = extractStoryOwnershipFiles(body).filter((file) => {
@@ -302,7 +332,8 @@ export function assertWavePackStoriesReady(
   if (stories.length < 2) {
     throw new Error(
       `wave_pack_insufficient_stories: ${context} — Pack exige ≥2 stories ` +
-        "(BMAD no plano ou template Landing/SaaS/Fix)",
+        "(tasks `### Task N:` do Superpowers, stories `Story N.M` do BMAD " +
+        "legado, ou template Landing/SaaS/Fix)",
     );
   }
 }

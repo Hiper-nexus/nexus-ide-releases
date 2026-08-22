@@ -85,6 +85,23 @@ describe('ensureSkillsForCli', () => {
     ).toBe(true);
     expect(
       fs.existsSync(
+        path.join(home, '.codex', 'skills', 'superpowers', 'SKILL.md'),
+      ),
+    ).toBe(true);
+    expect(
+      fs.existsSync(
+        path.join(
+          home,
+          '.codex',
+          'skills',
+          'superpowers',
+          'writing-plans',
+          'SKILL.md',
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      fs.existsSync(
         path.join(home, '.codex', 'skills', 'grilling', 'SKILL.md'),
       ),
     ).toBe(true);

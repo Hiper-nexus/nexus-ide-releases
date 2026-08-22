@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  assertWavePackStoriesReady,
   assertWavePackStoryFilesDisjoint,
   decomposeGoalByRepositoryAreas,
   decomposeGuidedGoalIntoStories,
@@ -726,5 +727,50 @@ describe("leque PARCIAL — uma incógnita não afunda o plano (06/08)", () => {
         WAVE_PACK_DISJOINT_FILES_DOMAIN,
       );
     }
+  });
+});
+
+describe("extractStoriesFromPromotedPlanSummary — formato Superpowers (### Task N:)", () => {
+  const SUPERPOWERS_PLAN = `
+# Plano de implementação
+
+### Task 1: Criar o modelo de dados
+- [ ] escreva src/models/order.ts com o schema
+- [ ] verifique com npm run typecheck
+
+### Task 2: Ligar o endpoint
+- [ ] escreva src/routes/order.ts chamando o modelo
+- [ ] verifique com npx vitest run src/routes/order.test.ts
+`;
+
+  it("fatia tasks ### Task N: como stories de epicStoryId 1.N", () => {
+    const stories = extractStoriesFromPromotedPlanSummary(SUPERPOWERS_PLAN);
+    expect(stories.map((s) => s.epicStoryId)).toEqual(["1.1", "1.2"]);
+    expect(stories[0]?.title).toBe("Criar o modelo de dados");
+    expect(stories[1]?.title).toBe("Ligar o endpoint");
+  });
+
+  it("ownership por arquivo sai do corpo da task, primeiro dono vence", () => {
+    const stories = extractStoriesFromPromotedPlanSummary(SUPERPOWERS_PLAN);
+    expect(stories[0]?.ownershipFiles).toEqual(["src/models/order.ts"]);
+    expect(stories[1]?.ownershipFiles).toEqual([
+      "src/routes/order.ts",
+      "src/routes/order.test.ts",
+    ]);
+  });
+
+  it("plano híbrido (Story BMAD + Task Superpowers) fatia em ordem de aparição", () => {
+    const hybrid = `### Story 2.1: legado\n\nbody a\n\n### Task 3: novo\n\nbody b\n`;
+    const stories = extractStoriesFromPromotedPlanSummary(hybrid);
+    expect(stories.map((s) => s.epicStoryId)).toEqual(["2.1", "1.3"]);
+    expect(stories[0]?.body).toBe("body a");
+    expect(stories[1]?.body).toBe("body b");
+  });
+
+  it("assertWavePackStoriesReady aceita ≥2 tasks Superpowers", () => {
+    const stories = extractStoriesFromPromotedPlanSummary(SUPERPOWERS_PLAN);
+    expect(() =>
+      assertWavePackStoriesReady(stories, "plano superpowers"),
+    ).not.toThrow();
   });
 });

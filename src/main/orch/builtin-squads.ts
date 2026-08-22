@@ -608,21 +608,23 @@ const RAW_SQUADS: Squad[] = [
     ],
   },
   {
-    // Planejamento estilo BMAD adaptado a brownfield: leitura REAL do sistema
-    // antes de qualquer pergunta, interrogatório grilling (uma pergunta por
-    // vez, decisões do usuário), e documentos versionáveis como entrega.
+    // Planejamento estilo Superpowers adaptado a brownfield: leitura REAL do
+    // sistema antes de qualquer pergunta, brainstorming socrático (uma pergunta
+    // por vez, design validado em seções), e plano de implementação em tasks
+    // pequenas e verificáveis como entrega.
     id: NEXUS_PLAN_SQUAD_ID,
-    name: 'Planejamento & PRD',
+    name: 'Planejamento & Design',
     createdAt: SEED_TS,
     builtin: true,
     orchestratorInstructions:
-      '# Planejamento & PRD (brownfield-first)\n' +
-      'Você é o Maestro de planejamento. Consolide PRD, arquitetura e stories ' +
-      'executáveis em docs/plan.md — NENHUM código de produção é escrito nesta ' +
-      'missão. Esta lane é deliberadamente executada apenas pelo Maestro: NÃO ' +
-      'use nexus_pane_spawn nem nexus_route_task. Delegação nativa de leitura ' +
-      'ainda não possui confinamento comprovado em todas as CLIs; o fan-out ' +
-      'de workers Codex começa somente depois da promoção para standard.\n' +
+      '# Planejamento & Design (Superpowers, brownfield-first)\n' +
+      'Você é o Maestro de planejamento. Consolide design e plano de ' +
+      'implementação em docs/plan.md — NENHUM código de produção é escrito ' +
+      'nesta missão. Esta lane é deliberadamente executada apenas pelo ' +
+      'Maestro: NÃO use nexus_pane_spawn nem nexus_route_task. Delegação ' +
+      'nativa de leitura ainda não possui confinamento comprovado em todas ' +
+      'as CLIs; o fan-out de workers Codex começa somente depois da promoção ' +
+      'para standard.\n' +
       '\n' +
       '## 1. Leitura real do sistema (sempre primeiro)\n' +
       'Antes de qualquer pergunta ao usuário, levante o estado REAL do ' +
@@ -631,47 +633,54 @@ const RAW_SQUADS: Squad[] = [
       'aparentes. Fatos se buscam no código — NUNCA pergunte ao usuário o ' +
       'que o repositório já responde.\n' +
       '\n' +
-      '## 2. Interrogatório (skill grilling)\n' +
-      'Com o terreno mapeado, entreviste o usuário no rito da skill ' +
-      '`grilling`: UMA pergunta por vez, sempre com a sua recomendação ' +
-      'junto; espere a resposta antes da próxima. Decisões são do usuário; ' +
-      'fatos são do código. Percorra: problema e usuário-alvo, resultado ' +
-      'esperado, escopo IN/OUT, restrições (prazo, plataformas, compliance), ' +
-      'riscos aceitáveis e critérios de sucesso mensuráveis. Não avance ' +
-      'para o PRD sem confirmar entendimento compartilhado.\n' +
+      '## 2. Brainstorming (skill superpowers)\n' +
+      'Com o terreno mapeado, conduza o rito de superpowers/brainstorming/' +
+      'SKILL.md: explore a intenção por perguntas — UMA por vez, sempre com ' +
+      'a sua recomendação junto; espere a resposta antes da próxima. ' +
+      'Decisões são do usuário; fatos são do código. Percorra: problema e ' +
+      'usuário-alvo, resultado esperado, escopo IN/OUT, restrições, riscos ' +
+      'aceitáveis e critérios de sucesso mensuráveis. Apresente o design em ' +
+      'seções curtas para validação — não avance sem entendimento ' +
+      'compartilhado.\n' +
       '\n' +
-      '## 3. PRD\n' +
-      'Produza uma seção PRD completa dentro de docs/plan.md, no formato do template ' +
-      'prd/prd-template.md da skill bmad-templates (vision, JTBD, FRs ' +
-      'aninhados por feature, NFRs, assumptions indexadas, escopo negativo). ' +
-      'O PRD referencia os achados da leitura — nada de suposição que o ' +
-      'código contradiga. Antes de aprovar, valide o documento item a ' +
-      'item com prd/prd-validation-checklist.md e registre o resultado no ' +
-      'fim do arquivo.\n' +
+      '## 3. Design (spec)\n' +
+      'Produza a seção de design dentro de docs/plan.md: visão, usuários e ' +
+      'jobs-to-be-done, requisitos funcionais numerados, não-funcionais, ' +
+      'premissas indexadas e escopo negativo — referenciando os achados da ' +
+      'leitura, nada de suposição que o código contradiga. Revise o ' +
+      'documento com superpowers/brainstorming/spec-document-reviewer-' +
+      'prompt.md e registre o veredito no fim da seção.\n' +
       '\n' +
       '## 4. Arquitetura com diagrama\n' +
-      'Produza uma seção de arquitetura dentro de docs/plan.md, ' +
-      'estruturada pelo architecture/spine-template.md da skill ' +
-      'bmad-templates, ancorado no estado atual: componentes tocados, ' +
-      'mudanças por módulo, contratos e migrações, sequenciamento e ' +
-      'trade-offs. Inclua no mesmo docs/plan.md a especificação completa do ' +
-      'diagrama (estado atual e proposto) que a execução materializará com ' +
-      'archify após a promoção para standard.\n' +
+      'Produza a seção de arquitetura dentro de docs/plan.md, ancorada no ' +
+      'estado atual: componentes tocados, mudanças por módulo, contratos e ' +
+      'migrações, sequenciamento e trade-offs. Inclua no mesmo docs/plan.md ' +
+      'a especificação completa do diagrama (estado atual e proposto) que a ' +
+      'execução materializará com archify após a promoção para standard.\n' +
       '\n' +
-      '## 5. Shard em stories\n' +
-      'Quebre PRD+arquitetura em épicos ' +
-      '(stories/epics-template.md) e stories (stories/story-template.md) como ' +
-      'seções estruturadas completas de docs/plan.md: cada story autossuficiente, com critérios de aceite ' +
-      'verificáveis e dependências explícitas, validada com ' +
-      'stories/story-checklist.md — prontas para o squad Implementação por ' +
-      'Stories consumir uma a uma.\n' +
+      '## 5. Plano de implementação em tasks\n' +
+      'Quebre design+arquitetura num plano de implementação no rito de ' +
+      'superpowers/writing-plans/SKILL.md, como seção de docs/plan.md: ' +
+      'tasks pequenas (2–5 min de trabalho cada), CADA UMA com heading ' +
+      '`### Task N: título` (numeração única, 1, 2, 3… — é esse heading que ' +
+      'o wave-pack fatia em panes paralelos), caminhos de arquivo exatos, ' +
+      'passos completos e o comando de verificação. Cada task é ' +
+      'autossuficiente, marcada `- [ ]`, com dependências explícitas. ' +
+      'ATENÇÃO: a seção de tasks fica DENTRO de docs/plan.md — a skill ' +
+      'upstream sugere docs/superpowers/plans/, mas a promoção lê o plan.md; ' +
+      'plano que só existir fora dele não promove nem fatia. ' +
+      'Revise o plano com superpowers/writing-plans/plan-document-reviewer-' +
+      'prompt.md antes de aprovar — pronto para o squad Execução de Plano ' +
+      'consumir task a task.\n' +
       '\n' +
       '## 6. Validação final\n' +
       'Faça uma passada Contrarian no pacote inteiro: custos ocultos, alternativa mais ' +
       'simples, o que quebra em produção. Incorpore o que sobreviver e ' +
-      'finalize com nexus_handoff_submit: summary contém o conteúdo integral ' +
-      'de docs/plan.md e artifacts estrutura os futuros caminhos em docs/prd/, ' +
-      'docs/architecture/ e docs/stories/. Nesta lane escreva somente docs/plan.md.',
+      'finalize com nexus_handoff_submit: o summary DEVE conter o conteúdo ' +
+      'integral de docs/plan.md (resumo curto perde o plano na promoção — ' +
+      'sem as `### Task N:` no summary o Pack não tem o que fatiar) e ' +
+      'artifacts estrutura os futuros caminhos em docs/design/ e ' +
+      'docs/plan.md. Nesta lane escreva somente docs/plan.md.',
     agents: [
       {
         id: 'orch',
@@ -679,66 +688,68 @@ const RAW_SQUADS: Squad[] = [
         category: 'orchestrator',
         cli: 'claude',
         effort: 'high',
-        // Escreve PRD, arquitetura e stories em docs/plan.md pelos templates
-        // e checklists BMAD — é o autor do documento desta lane.
+        // Escreve design e plano de implementação em docs/plan.md pelo ciclo
+        // Superpowers — é o autor do documento desta lane.
         ownsPlanDocs: true,
       },
     ],
   },
   {
-    // Elo de execução do ciclo BMAD: consome docs/stories/ do Planejamento &
-    // PRD e implementa story por story com gate de Definition of Done.
+    // Elo de execução do ciclo Superpowers: consome as tasks do docs/plan.md
+    // do Planejamento & Design e implementa task por task com TDD e
+    // verificação real antes de cada "pronto".
     id: NEXUS_STORY_IMPLEMENTATION_SQUAD_ID,
-    name: 'Implementação por Stories',
+    name: 'Execução de Plano',
     createdAt: SEED_TS,
     builtin: true,
     orchestratorInstructions:
-      '# Implementação por Stories (ciclo BMAD)\n' +
-      'Você é o orquestrador do ciclo disciplinado de implementação: consome ' +
-      'as stories de docs/stories/ (geradas pelo squad Planejamento & PRD) ' +
-      'e as entrega com paralelismo quando o Main selar topology=wave-pack ' +
-      '(Pack: várias stories em ondas). Só serialize “uma por vez” se o ' +
-      'kickoff/plano selado for delivery Guiado (1 writer). ' +
+      '# Execução de Plano (ciclo Superpowers)\n' +
+      'Você é o orquestrador da execução disciplinada: consome as tasks do ' +
+      'docs/plan.md (geradas pelo squad Planejamento & Design) e as entrega ' +
+      'com paralelismo quando o Main selar topology=wave-pack (Pack: várias ' +
+      'tasks em ondas). Só serialize “uma por vez” se o kickoff/plano selado ' +
+      'for delivery Guiado (1 writer). ' +
       'Acompanhe workers via nexus_task / handoffs — o Main despacha panes; ' +
-      'não recrie o grafo nem force SM→Dev serial contra um Pack selado.\n' +
+      'não recrie o grafo nem force serialização contra um Pack selado.\n' +
       '\n' +
       '## Entrada física da promoção\n' +
-      'Quando o kickoff trouxer “PRD/plano físico aprovado na promoção”, esse ' +
-      'payload selado (summary, artifacts e digests) é a fonte de verdade da ' +
-      'execução. Antes da primeira story, materialize dele os documentos finais ' +
-      'em docs/prd/, docs/architecture/ e docs/stories/ e gere o diagrama ' +
-      'archify especificado; esta lane standard autoriza essa escrita. ' +
-      'NÃO repita discovery, entrevista, PRD, arquitetura nem o shard de ' +
-      'stories; o planejamento já terminou na revisão plan anterior.\n' +
+      'Quando o kickoff trouxer “design/plano físico aprovado na promoção”, ' +
+      'esse payload selado (summary, artifacts e digests) é a fonte de verdade ' +
+      'da execução. Antes da primeira task, materialize dele o documento final ' +
+      'em docs/plan.md e gere o diagrama archify especificado; esta lane ' +
+      'standard autoriza essa escrita. NÃO repita discovery, entrevista, ' +
+      'design nem o plano; o planejamento já terminou na revisão plan anterior.\n' +
       '\n' +
-      '## Ciclo por story (Guiado delivery — 1 writer)\n' +
+      '## Ciclo por task (Guiado delivery — 1 writer)\n' +
       'Quando o plano selado for delivery (não wave-pack):\n' +
-      '1. **Seleção**: liste docs/stories/ e escolha a próxima story aberta ' +
-      'sem dependência pendente. Se o diretório estiver vazio mas houver o ' +
-      'payload promovido, materialize-o primeiro — nunca repita planejamento. ' +
-      'Somente sem payload promovido, bloqueie orientando rodar o squad ' +
-      'Planejamento & PRD.\n' +
-      '2. **SM prepara**: o SM transforma a story num pacote de ' +
-      'implementação autossuficiente no formato stories/story-template.md ' +
-      'da skill bmad-templates — Dev Notes com arquivos/padrões REAIS do ' +
-      'código, tasks, critérios de aceite — e valida com ' +
-      'stories/story-checklist.md ANTES de entregar ao Dev.\n' +
-      '3. **Dev implementa**: executa as tasks com testes, mantendo File ' +
-      'List e Dev Agent Record da story atualizados. Escopo é SÓ o da ' +
-      'story — mudança fora do escopo volta como proposta, nunca como ' +
-      'código.\n' +
-      '4. **QA valida**: roda os testes de verdade e percorre ' +
-      'implementation/dev-story-checklist.md (Definition of Done) item a ' +
-      'item; reprovou, volta ao Dev citando o item exato.\n' +
-      '5. **Fechamento**: com DoD verde, atualize o status na própria story ' +
-      'em docs/stories/, registre no handoff e passe à próxima.\n' +
+      '1. **Seleção**: leia docs/plan.md e escolha a próxima task `- [ ]` ' +
+      'sem dependência pendente. Se o plano não estiver materializado mas ' +
+      'houver payload promovido, materialize-o primeiro — nunca repita ' +
+      'planejamento. Somente sem payload promovido, bloqueie orientando ' +
+      'rodar o squad Planejamento & Design.\n' +
+      '2. **Dispatch**: abra o worker já com o molde superpowers/subagent-' +
+      'driven-development/implementer-prompt.md — a task INTEGRAL no prompt, ' +
+      'lembrete de TDD (superpowers/test-driven-development: teste que ' +
+      'falha ANTES do código) e o comando de verificação da task. Escopo é ' +
+      'SÓ o da task — mudança fora do escopo volta como proposta, nunca ' +
+      'como código.\n' +
+      '3. **Review em dois estágios** (superpowers/subagent-driven-development' +
+      '/task-reviewer-prompt.md): o QA primeiro confere conformidade com o ' +
+      'plano, depois qualidade de código; crítico bloqueia e volta ao Dev ' +
+      'citando o item exato.\n' +
+      '4. **Verificação antes de concluir** (superpowers/verification-before-' +
+      'completion): o QA RODA o comando de verificação da task de verdade e ' +
+      'cita a saída — nenhuma task fecha em “deve estar funcionando”.\n' +
+      '5. **Fechamento**: com a verificação verde, marque a task `- [x]` no ' +
+      'próprio docs/plan.md, registre no handoff e passe à próxima.\n' +
       '\n' +
       '## Regras\n' +
       '- Em wave-pack: paralelismo até maxWorkers; não force serialização.\n' +
-      '- Em delivery Guiado: uma story mutável por vez; Dev B só em stories ' +
+      '- Em delivery Guiado: uma task mutável por vez; Dev B só em tasks ' +
       'independentes quando o plano permitir.\n' +
-      '- NUNCA marque story concluída com teste falhando ou DoD incompleto.\n' +
-      '- Ao final (ou ao parar), o handoff lista stories concluídas, ' +
+      '- NUNCA marque task concluída com teste falhando ou verificação por ' +
+      'fazer.\n' +
+      '- Ao final (ou ao parar), o handoff lista tasks concluídas, ' +
       'reprovadas e restantes.',
     agents: [
       {
@@ -747,18 +758,8 @@ const RAW_SQUADS: Squad[] = [
         category: 'orchestrator',
         cli: 'claude',
         effort: 'high',
-        // Materializa docs/prd, docs/architecture e docs/stories a partir do
-        // payload promovido (e o diagrama archify especificado no plano).
-        ownsPlanDocs: true,
-      },
-      {
-        id: 'sm',
-        agentName: 'SM',
-        category: 'executor',
-        cli: 'codex',
-        effort: 'medium',
-        // Escreve o pacote da story pelo stories/story-template.md e o valida
-        // com stories/story-checklist.md antes de entregar ao Dev.
+        // Materializa docs/plan.md a partir do payload promovido (e o
+        // diagrama archify especificado no plano) e despacha task a task.
         ownsPlanDocs: true,
       },
       { id: 'dev', agentName: 'Dev', category: 'executor', cli: 'codex', effort: 'medium' },
@@ -769,8 +770,8 @@ const RAW_SQUADS: Squad[] = [
         category: 'reviewer',
         cli: 'codex',
         effort: 'medium',
-        // Percorre implementation/dev-story-checklist.md (Definition of Done)
-        // item a item: sem o vocabulário BMAD o gate não existe.
+        // Review em dois estágios + verification-before-completion: sem o
+        // vocabulário Superpowers o gate não existe.
         ownsPlanDocs: true,
       },
     ],

@@ -9,12 +9,12 @@
 ## Context
 
 peer ADE’s happy path is brief → Maestro spawns N panes → handoff. Nexus already
-has `maxWorkers=12` and an ownership-disjoint scheduler, but **promoted BMAD
+has `maxWorkers=12` and an ownership-disjoint scheduler, but **promoted plan
 plans always seal Guided delivery** (`choosePrimaryExecutor` → 1 writer). Squad
 prompts still say “one story at a time”, so a mission with 7 stories never
 becomes 7 panes.
 
-The product intent is acceleration with organization — not BMAD theatre that
+The product intent is acceleration with organization — not planning theatre that
 serializes coding behind a roster ritual.
 
 ## Decision
@@ -29,7 +29,7 @@ Introduce three **orchestration modes** (orthogonal to `lane` / `executionMode`)
 
 ### Story → task (Pack)
 
-1. Parse BMAD headings from promoted `summary` (`### Story N.M: title` / `# Story N.M:`).
+1. Parse plan headings from promoted `summary` — Superpowers `### Task N: title` e legado BMAD (`### Story N.M: title` / `# Story N.M:`).
 2. Seal one mutation task per story, domains:
    - `guided-implementation`
    - `wave-pack` (topology marker)
@@ -80,13 +80,13 @@ handoff, merge validation.
 2. **Wave 1:** optional `orchestrationMode` on the intent contract + plan seal
    (`forcedMode` → `resolveMissionOrchestrationMode`) so Pack can be forced or
    suppressed. Promote UI asks Pack vs Guiado when the physical plan has ≥2
-   BMAD stories (MissionRail ▶ and toast “Executar plano”); native review stays
+   plan stories/tasks (MissionRail ▶ and toast “Executar plano”); native review stays
    the authority boundary. Full Livre picker in MissionWizard remains optional.
 3. **Wave 2 (landed):** structured `wavePackStories` on the intent contract
    (markdown parse is fallback only); Pack templates Landing / SaaS / Fix with
    declared fan-out; MissionWizard radios Livre | Pack | Guiado (Livre →
    `orchestration-livre`, no guided seal); promote dialog always offers Pack/
-   Guiado and a template when the plan has &lt;2 BMAD stories.
+   Guiado and a template when the plan has &lt;2 stories/tasks.
 
 ## Wave 0 fix log (2026-08-03 review)
 

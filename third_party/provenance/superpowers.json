@@ -1,0 +1,106 @@
+{
+  "source": "obra/superpowers",
+  "upstreamRepository": "https://github.com/obra/superpowers",
+  "upstreamCommit": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+  "license": "MIT",
+  "copyright": "Copyright (c) 2025 Jesse Vincent",
+  "licenseFile": "third_party/licenses/superpowers-MIT.txt",
+  "importedAt": "2026-08-22",
+  "type": "vendored-verbatim",
+  "nexusPath": "assets/skills/superpowers",
+  "files": [
+    {
+      "originalPath": "skills/brainstorming/SKILL.md",
+      "nexusPath": "assets/skills/superpowers/brainstorming/SKILL.md"
+    },
+    {
+      "originalPath": "skills/brainstorming/spec-document-reviewer-prompt.md",
+      "nexusPath": "assets/skills/superpowers/brainstorming/spec-document-reviewer-prompt.md"
+    },
+    {
+      "originalPath": "skills/dispatching-parallel-agents/SKILL.md",
+      "nexusPath": "assets/skills/superpowers/dispatching-parallel-agents/SKILL.md"
+    },
+    {
+      "originalPath": "skills/executing-plans/SKILL.md",
+      "nexusPath": "assets/skills/superpowers/executing-plans/SKILL.md"
+    },
+    {
+      "originalPath": "skills/finishing-a-development-branch/SKILL.md",
+      "nexusPath": "assets/skills/superpowers/finishing-a-development-branch/SKILL.md"
+    },
+    {
+      "originalPath": "skills/receiving-code-review/SKILL.md",
+      "nexusPath": "assets/skills/superpowers/receiving-code-review/SKILL.md"
+    },
+    {
+      "originalPath": "skills/requesting-code-review/SKILL.md",
+      "nexusPath": "assets/skills/superpowers/requesting-code-review/SKILL.md"
+    },
+    {
+      "originalPath": "skills/requesting-code-review/code-reviewer.md",
+      "nexusPath": "assets/skills/superpowers/requesting-code-review/code-reviewer.md"
+    },
+    {
+      "originalPath": "skills/subagent-driven-development/SKILL.md",
+      "nexusPath": "assets/skills/superpowers/subagent-driven-development/SKILL.md"
+    },
+    {
+      "originalPath": "skills/subagent-driven-development/implementer-prompt.md",
+      "nexusPath": "assets/skills/superpowers/subagent-driven-development/implementer-prompt.md"
+    },
+    {
+      "originalPath": "skills/subagent-driven-development/re-review-prompt.md",
+      "nexusPath": "assets/skills/superpowers/subagent-driven-development/re-review-prompt.md"
+    },
+    {
+      "originalPath": "skills/subagent-driven-development/task-reviewer-prompt.md",
+      "nexusPath": "assets/skills/superpowers/subagent-driven-development/task-reviewer-prompt.md"
+    },
+    {
+      "originalPath": "skills/systematic-debugging/SKILL.md",
+      "nexusPath": "assets/skills/superpowers/systematic-debugging/SKILL.md"
+    },
+    {
+      "originalPath": "skills/systematic-debugging/condition-based-waiting-example.ts",
+      "nexusPath": "assets/skills/superpowers/systematic-debugging/condition-based-waiting-example.ts"
+    },
+    {
+      "originalPath": "skills/systematic-debugging/condition-based-waiting.md",
+      "nexusPath": "assets/skills/superpowers/systematic-debugging/condition-based-waiting.md"
+    },
+    {
+      "originalPath": "skills/systematic-debugging/defense-in-depth.md",
+      "nexusPath": "assets/skills/superpowers/systematic-debugging/defense-in-depth.md"
+    },
+    {
+      "originalPath": "skills/systematic-debugging/root-cause-tracing.md",
+      "nexusPath": "assets/skills/superpowers/systematic-debugging/root-cause-tracing.md"
+    },
+    {
+      "originalPath": "skills/test-driven-development/SKILL.md",
+      "nexusPath": "assets/skills/superpowers/test-driven-development/SKILL.md"
+    },
+    {
+      "originalPath": "skills/test-driven-development/writing-good-tests.md",
+      "nexusPath": "assets/skills/superpowers/test-driven-development/writing-good-tests.md"
+    },
+    {
+      "originalPath": "skills/using-git-worktrees/SKILL.md",
+      "nexusPath": "assets/skills/superpowers/using-git-worktrees/SKILL.md"
+    },
+    {
+      "originalPath": "skills/verification-before-completion/SKILL.md",
+      "nexusPath": "assets/skills/superpowers/verification-before-completion/SKILL.md"
+    },
+    {
+      "originalPath": "skills/writing-plans/SKILL.md",
+      "nexusPath": "assets/skills/superpowers/writing-plans/SKILL.md"
+    },
+    {
+      "originalPath": "skills/writing-plans/plan-document-reviewer-prompt.md",
+      "nexusPath": "assets/skills/superpowers/writing-plans/plan-document-reviewer-prompt.md"
+    }
+  ],
+  "notes": "Ciclo central do Superpowers vendorado verbatim (12 skills). Poda intencional: brainstorming/scripts + visual-companion.md (telemetria), subagent-driven-development/scripts (harness externo), writing-skills e using-superpowers (meta/bootstrap de harness), fixtures de desenvolvimento de systematic-debugging. Bundle via scripts/bundle-skills.mjs; materializado pelo skill-mirror."
+}

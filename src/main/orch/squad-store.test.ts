@@ -525,8 +525,10 @@ describe('squad-store save path', () => {
     const byId = Object.fromEntries(
       prepared.squad.agents.map((agent) => [agent.id, agent.allowedSkills]),
     );
-    expect(byId.sm).toContain('bmad-templates');
-    expect(byId.qa).toContain('bmad-templates');
+    // Ciclo Superpowers: quem é dono de documento de plano recebe o
+    // vocabulário; executor comum segue só com o piso de papel.
+    expect(byId.orch).toContain('superpowers');
+    expect(byId.qa).toContain('superpowers');
     expect(byId.dev).toEqual(['ponytail']);
     expect(
       prepared.squad.agents.every((agent) => agent.allowedSkills !== undefined),

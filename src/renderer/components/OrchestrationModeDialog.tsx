@@ -10,7 +10,8 @@ import {
 
 /**
  * Pack vs Guiado before ▶ Executar plano. Escape = cancel (no promote).
- * Pack may require a Landing/SaaS/Fix template when the plan has &lt;2 BMAD stories.
+ * Pack may require a Landing/SaaS/Fix template when the plan has &lt;2
+ * stories/tasks (`### Task N:` Superpowers ou `Story N.M` BMAD legado).
  */
 export function OrchestrationModeDialog() {
   const pending = useOrchestrationModeStore((s) => s.pending);
@@ -81,14 +82,14 @@ export function OrchestrationModeDialog() {
           label: "Wave Pack",
           hint:
             pending.storyCount >= 2
-              ? `${pending.storyCount} stories em panes paralelos`
+              ? `${pending.storyCount} tasks em panes paralelos`
               : "Template declara o fan-out (Landing / SaaS / Fix)",
           primary: true,
         },
         {
           mode: "guided",
           label: "Guiado",
-          hint: "Uma story por vez, cerca PREVC quando sensível",
+          hint: "Uma task por vez, cerca PREVC quando sensível",
           primary: false,
         },
       ]
@@ -96,7 +97,7 @@ export function OrchestrationModeDialog() {
         {
           mode: "guided",
           label: "Guiado",
-          hint: "Uma story por vez, cerca PREVC quando sensível",
+          hint: "Uma task por vez, cerca PREVC quando sensível",
           primary: true,
         },
         {
@@ -104,7 +105,7 @@ export function OrchestrationModeDialog() {
           label: "Wave Pack",
           hint:
             pending.storyCount >= 2
-              ? `${pending.storyCount} stories em panes paralelos`
+              ? `${pending.storyCount} tasks em panes paralelos`
               : "Template declara o fan-out (Landing / SaaS / Fix)",
           primary: false,
         },
@@ -187,7 +188,7 @@ export function OrchestrationModeDialog() {
           ))}
         </div>
         <label className="confirm__orch-template">
-          Template Pack (opcional se o plano já tem ≥2 stories)
+          Template Pack (opcional se o plano já tem ≥2 tasks)
           <select
             className="confirm__orch-template-select"
             value={templateId}
@@ -197,7 +198,7 @@ export function OrchestrationModeDialog() {
             aria-required={pending.templateRequiredForPack}
           >
             {!pending.templateRequiredForPack ? (
-              <option value="">Usar stories do plano</option>
+              <option value="">Usar tasks do plano</option>
             ) : null}
             {WAVE_PACK_TEMPLATES.map((template) => (
               <option key={template.id} value={template.id}>

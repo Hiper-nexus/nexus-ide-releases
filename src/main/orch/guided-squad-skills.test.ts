@@ -93,7 +93,7 @@ describe('guided squad deterministic skill policy', () => {
             'check-work',
             'bridgesecurity',
             'archify',
-            'bmad-templates',
+            'superpowers',
           ],
         ],
         ['research', ['bridgesecurity', 'bridgeward']],
@@ -258,15 +258,15 @@ describe('guided squad deterministic skill policy', () => {
  * papéis explícitos do roster e pelo orquestrador de uma missão de lane plan —
  * nunca por adivinhação de id de squad. Estes testes fixam o contrato.
  */
-describe('guided squad policy — vocabulário BMAD', () => {
-  /** Espelho do roster builtin "Implementação por Stories". */
-  function storySquad(): Squad {
+describe('guided squad policy — vocabulário Superpowers', () => {
+  /** Espelho do roster builtin "Execução de Plano". */
+  function planExecSquad(): Squad {
     return {
-      id: 'story-policy',
-      name: 'Implementação por Stories',
+      id: 'plan-exec-policy',
+      name: 'Execução de Plano',
       createdAt: '1',
       builtin: false,
-      orchestratorInstructions: '# Ciclo por story',
+      orchestratorInstructions: '# Ciclo por task',
       agents: [
         {
           id: 'orch',
@@ -275,14 +275,8 @@ describe('guided squad policy — vocabulário BMAD', () => {
           cli: 'claude',
           ownsPlanDocs: true,
         },
-        {
-          id: 'sm',
-          agentName: 'SM',
-          category: 'executor',
-          cli: 'codex',
-          ownsPlanDocs: true,
-        },
         { id: 'dev', agentName: 'Dev', category: 'executor', cli: 'codex' },
+        { id: 'dev-b', agentName: 'Dev B', category: 'executor', cli: 'codex' },
         {
           id: 'qa',
           agentName: 'QA',
@@ -294,10 +288,10 @@ describe('guided squad policy — vocabulário BMAD', () => {
     };
   }
 
-  it('entrega bmad-templates ao orquestrador de uma missão de plano (PRD)', () => {
+  it('entrega superpowers ao orquestrador de uma missão de plano (design)', () => {
     const squad = applyGuidedSquadSkillPolicy(
       {
-        ...storySquad(),
+        ...planExecSquad(),
         agents: [
           {
             id: 'orch',
@@ -309,7 +303,7 @@ describe('guided squad policy — vocabulário BMAD', () => {
       },
       {
         objective:
-          'Escrever o PRD e o plano de arquitetura do módulo de billing',
+          'Escrever o design e o plano de arquitetura do módulo de billing',
         availableSkillNames: NEXUS_GUIDED_SKILL_ORDER,
       },
     );
@@ -317,45 +311,46 @@ describe('guided squad policy — vocabulário BMAD', () => {
     expect(squad.agents[0]?.allowedSkills).toEqual([
       'ponytail',
       'check-work',
-      'bmad-templates',
+      // "design" no objetivo caracteriza missão de UI — dembrandt vem junto.
+      'dembrandt',
+      'superpowers',
     ]);
   });
 
   it('não entrega archify na lane plan: só docs/plan.md é gravável ali', () => {
-    const squad = applyGuidedSquadSkillPolicy(storySquad(), {
+    const squad = applyGuidedSquadSkillPolicy(planExecSquad(), {
       objective: 'Planejar a migração do vault sem escrever código',
       lane: 'plan',
       availableSkillNames: NEXUS_GUIDED_SKILL_ORDER,
     });
 
     const orch = squad.agents.find((agent) => agent.id === 'orch');
-    expect(orch?.allowedSkills).toContain('bmad-templates');
+    expect(orch?.allowedSkills).toContain('superpowers');
     expect(orch?.allowedSkills).not.toContain('archify');
   });
 
-  it('entrega o vocabulário BMAD a quem escreve/valida stories e a mais ninguém', () => {
-    const squad = applyGuidedSquadSkillPolicy(storySquad(), {
-      objective: 'Implementar as stories abertas do plano aprovado',
+  it('entrega o vocabulário Superpowers a quem escreve/valida o plano e a mais ninguém', () => {
+    const squad = applyGuidedSquadSkillPolicy(planExecSquad(), {
+      objective: 'Implementar as tasks abertas do plano aprovado',
       availableSkillNames: NEXUS_GUIDED_SKILL_ORDER,
     });
 
     expect(squad.agents.map((agent) => [agent.id, agent.allowedSkills])).toEqual(
       [
-        // Materializa docs/prd, docs/architecture, docs/stories + diagrama.
-        ['orch', ['ponytail', 'check-work', 'archify', 'bmad-templates']],
-        // Escreve o pacote da story pelo story-template.
-        ['sm', ['ponytail', 'bmad-templates']],
+        // Materializa docs/plan.md + diagrama.
+        ['orch', ['ponytail', 'check-work', 'archify', 'superpowers']],
         // Executor comum: a política continua restritiva.
         ['dev', ['ponytail']],
-        // Percorre implementation/dev-story-checklist.md (Definition of Done).
-        ['qa', ['check-work', 'bmad-templates']],
+        ['dev-b', ['ponytail']],
+        // Review em dois estágios + verification-before-completion.
+        ['qa', ['check-work', 'superpowers']],
       ],
     );
   });
 
   it('mantém a lane plan inferida do objetivo quando o chamador não a informa', () => {
-    const squad = applyGuidedSquadSkillPolicy(storySquad(), {
-      objective: 'Escrever o PRD do novo onboarding',
+    const squad = applyGuidedSquadSkillPolicy(planExecSquad(), {
+      objective: 'Escrever o design do novo onboarding',
       availableSkillNames: NEXUS_GUIDED_SKILL_ORDER,
     });
 
@@ -367,13 +362,13 @@ describe('guided squad policy — vocabulário BMAD', () => {
   it('deriva o piso determinístico de papel sem objetivo nem inventário', () => {
     expect(
       defaultGuidedSkillsForAgent({
-        id: 'sm',
-        agentName: 'SM',
-        category: 'executor',
+        id: 'qa',
+        agentName: 'QA',
+        category: 'reviewer',
         cli: 'codex',
         ownsPlanDocs: true,
       }),
-    ).toEqual(['ponytail', 'bmad-templates']);
+    ).toEqual(['check-work', 'superpowers']);
     expect(
       defaultGuidedSkillsForAgent({
         id: 'dev',
@@ -414,18 +409,27 @@ describe('guided squad policy — vocabulário BMAD', () => {
     const filled = withGuidedSkillDefaults(
       [
         {
-          id: 'sm',
-          agentName: 'SM',
-          category: 'executor',
+          id: 'qa',
+          agentName: 'QA',
+          category: 'reviewer',
           cli: 'codex',
           // Bytes forjados pedindo autoridade de documento.
           ownsPlanDocs: true,
         },
       ],
-      [{ id: 'sm', agentName: 'SM', category: 'executor', cli: 'codex' }],
+      [{ id: 'qa', agentName: 'QA', category: 'reviewer', cli: 'codex' }],
     );
 
-    expect(filled[0]?.allowedSkills).toEqual(['ponytail']);
+    expect(filled[0]?.allowedSkills).toEqual(['check-work']);
+  });
+
+  it('bmad-templates saiu do vocabulário padrão de grants', () => {
+    const squad = applyGuidedSquadSkillPolicy(planExecSquad(), {
+      objective: 'Escrever o design e o plano do módulo de billing',
+      availableSkillNames: NEXUS_GUIDED_SKILL_ORDER,
+    });
+    const granted = squad.agents.flatMap((agent) => agent.allowedSkills ?? []);
+    expect(granted).not.toContain('bmad-templates');
   });
 });
 
@@ -487,5 +491,101 @@ describe('vocabulário de missão visual', () => {
       .toEqual(['ponytail', 'check-work', 'dembrandt']);
     expect(squad.agents.find((agent) => agent.id === 'qa')?.allowedSkills)
       .toEqual(['check-work', 'impeccable']);
+  });
+});
+
+describe('roster do Caminho Expresso (allowedSkills: []) sob a política de missão', () => {
+  /**
+   * Regressão 22/08: o roster montado pelo renderer no expresso declara
+   * allowedSkills: [] — autoridade explícita que o piso (withGuidedSkill-
+   * Defaults) nunca reescreve — e a missão nascia sem NENHUMA skill do motor.
+   * O prepare agora aplica a política papel × objetivo × lane no main.
+   */
+  function expressRosterSquad(
+    objective: string,
+    executorRole: { id: string; agentName: string } = {
+      id: 'implementar-interface',
+      agentName: 'Implementar interface',
+    },
+  ): Squad {
+    return {
+      id: 'express-runtime',
+      name: 'Equipe — teste',
+      createdAt: '1',
+      builtin: false,
+      orchestratorInstructions: `# Missão\n${objective}`,
+      agents: [
+        {
+          id: 'coordenar-e-revisar',
+          agentName: 'Coordenar e revisar',
+          category: 'orchestrator',
+          cli: 'codex',
+          allowedSkills: [],
+          allowedTools: null,
+        },
+        {
+          id: executorRole.id,
+          agentName: executorRole.agentName,
+          category: 'executor',
+          cli: 'claude',
+          allowedSkills: [],
+          allowedTools: [],
+        },
+        {
+          id: 'verificar-o-resultado',
+          agentName: 'Verificar o resultado',
+          category: 'reviewer',
+          cli: 'glm',
+          allowedSkills: [],
+          allowedTools: [],
+        },
+      ],
+    };
+  }
+
+  it('missão de UI pelo expresso nasce COM as skills do motor Nexus', () => {
+    const squad = applyGuidedSquadSkillPolicy(
+      expressRosterSquad('refaça a landing page do produto com visual premium'),
+      {
+        objective: 'refaça a landing page do produto com visual premium',
+        availableSkillNames: NEXUS_GUIDED_SKILL_ORDER,
+      },
+    );
+
+    expect(
+      squad.agents.find((agent) => agent.id === 'coordenar-e-revisar')
+        ?.allowedSkills,
+    ).toContain('dembrandt');
+    expect(
+      squad.agents.find((agent) => agent.id === 'implementar-interface')
+        ?.allowedSkills,
+    ).toContain('impeccable');
+    expect(
+      squad.agents.find((agent) => agent.id === 'verificar-o-resultado')
+        ?.allowedSkills,
+    ).toContain('impeccable');
+  });
+
+  it('missão não-visual pelo expresso não ganha skill de design', () => {
+    // Papel não-visual: o grant de design segue papel × objetivo, então um
+    // executor de motor numa missão de sync não pode receber impeccable.
+    const squad = applyGuidedSquadSkillPolicy(
+      expressRosterSquad('corrija o deadlock no worker de sync', {
+        id: 'implementar-motor',
+        agentName: 'Implementar motor',
+      }),
+      {
+        objective: 'corrija o deadlock no worker de sync',
+        availableSkillNames: NEXUS_GUIDED_SKILL_ORDER,
+      },
+    );
+    const granted = squad.agents.flatMap((agent) => agent.allowedSkills ?? []);
+    expect(granted).not.toContain('dembrandt');
+    expect(granted).not.toContain('impeccable');
+    // Mas o piso de papel continua de pé.
+    expect(
+      squad.agents.find((agent) => agent.id === 'coordenar-e-revisar')
+        ?.allowedSkills,
+    ).toContain('ponytail');
   });
 });

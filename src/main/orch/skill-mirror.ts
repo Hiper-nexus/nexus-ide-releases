@@ -6,6 +6,7 @@ import { BUILTIN_BRIDGEMIND_SKILLS } from './bridge-mind-skills';
 import { IMPECCABLE_MANIFEST } from './impeccable-manifest';
 import { ARCHIFY_MANIFEST } from './archify-manifest';
 import { BMAD_TEMPLATES_MANIFEST } from './bmad-templates-manifest';
+import { SUPERPOWERS_MANIFEST } from './superpowers-manifest';
 import { DEMBRANDT_MANIFEST } from './dembrandt-manifest';
 import type { SkillAsset } from './impeccable-manifest';
 import {
@@ -247,6 +248,7 @@ function writeGeneratedSkills(root: string): string {
   materializeManifestSkill(root, 'impeccable', IMPECCABLE_MANIFEST);
   materializeManifestSkill(root, 'archify', ARCHIFY_MANIFEST);
   materializeManifestSkill(root, 'bmad-templates', BMAD_TEMPLATES_MANIFEST);
+  materializeManifestSkill(root, 'superpowers', SUPERPOWERS_MANIFEST);
   materializeManifestSkill(root, 'dembrandt', DEMBRANDT_MANIFEST);
   return root;
 }

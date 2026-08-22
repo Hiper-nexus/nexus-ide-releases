@@ -30,7 +30,7 @@ const ITEM_01_RE =
 const STORY_FILE_RE = /^\s*stories\/0*\d{1,3}(?:\.md)?\b/i;
 
 const STORY_HEADING_RE =
-  /^\s*(?:#{1,3}\s*)?(?:Story|História|Item)\s+\d+(?:\.\d+)?\s*:\s+\S/i;
+  /^\s*(?:#{1,3}\s*)?(?:Story|História|Item|Task|Tarefa)\s+\d+(?:\.\d+)?\s*:\s+\S/i;
 
 const REQUESTED_STORY_COUNT_RE =
   /\b(?:exatamente|exactly|precisamente)?\s*(\d{1,3})\s+(?:user\s+)?(?:stories|story|hist[oó]rias?(?:\s+de\s+usu[aá]rio)?|entregas?)\b/giu;
@@ -169,12 +169,15 @@ export function extractListedMissionItems(
 
   const requested = requestedMissionItemCount(text);
 
-  const bmad = extractStoriesFromPromotedPlanSummary(text)
+  // Headings estruturados (### Task N: Superpowers ou Story N.M BMAD legado).
+  const structured = extractStoriesFromPromotedPlanSummary(text)
     .map((story) => story.title.trim())
     .filter((title) => title.length > 0)
     .slice(0, MAX_SEALED_MISSION_ITEMS);
-  if (bmad.length >= 2) {
-    return Object.freeze(preferRequestedOverRoles(bmad, requested) ?? bmad);
+  if (structured.length >= 2) {
+    return Object.freeze(
+      preferRequestedOverRoles(structured, requested) ?? structured,
+    );
   }
 
   const lines = nonEmptyLines(text);

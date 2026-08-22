@@ -20,7 +20,7 @@ export const NEXUS_GUIDED_SKILL_ORDER = [
   'impeccable',
   'dembrandt',
   'archify',
-  'bmad-templates',
+  'superpowers',
   'nexus-visual-media',
 ] as const;
 
@@ -43,7 +43,7 @@ export const BUNDLED_GUIDED_SKILLS = [
   'impeccable',
   'dembrandt',
   'archify',
-  'bmad-templates',
+  'superpowers',
   'nexus-visual-media',
 ] as const;
 
@@ -180,20 +180,21 @@ function policyForAgent(input: {
       requested.add('ponytail');
       requested.add('check-work');
       requested.add('archify');
-      requested.add('bmad-templates');
+      requested.add('superpowers');
       break;
     case 'scout':
       requested.add('bridgeward');
       break;
   }
 
-  // Documento de plano (PRD, spine de arquitetura, épicos, stories). Dois
+  // Documento de plano (design, plano de implementação, tasks). Dois
   // caminhos main-owned, nenhum por id de squad: o papel que o roster declara
   // como dono do documento, e o orquestrador de uma missão de lane plan —
-  // cuja ÚNICA saída gravável é justamente o plano.
+  // cuja ÚNICA saída gravável é justamente o plano. O ciclo é Superpowers
+  // (brainstorm → writing-plans → executing-plans); BMAD saiu do padrão.
   const ownsPlanDocs = agent.ownsPlanDocs === true;
   if (ownsPlanDocs || (agent.category === 'orchestrator' && planLane)) {
-    requested.add('bmad-templates');
+    requested.add('superpowers');
   }
   // archify materializa um HTML de diagrama no repositório. Vai só para o
   // dono de documento que também conduz a arquitetura (orquestrador; o ramo

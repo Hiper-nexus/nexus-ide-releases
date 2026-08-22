@@ -60,7 +60,7 @@ describe('built-in squads (invariantes gerais)', () => {
     }
   });
 
-  it('encadeia plan → stories sem escrever fora da lane nem repetir planejamento', () => {
+  it('encadeia plan → execução sem escrever fora da lane nem repetir planejamento', () => {
     const planning = BUILTIN_SQUADS.find(
       (squad) => squad.id === 'nexus-plan',
     );
@@ -90,7 +90,7 @@ describe('built-in squads (invariantes gerais)', () => {
       delivery?.agents
         .filter((agent) => agent.category !== 'orchestrator')
         .map((agent) => agent.cli),
-    ).toEqual(['codex', 'codex', 'codex', 'codex']);
+    ).toEqual(['codex', 'codex', 'codex']);
     expect(
       delivery?.agents.some(
         (agent) =>
@@ -101,10 +101,10 @@ describe('built-in squads (invariantes gerais)', () => {
       ),
     ).toBe(false);
     expect(delivery?.orchestratorInstructions).toMatch(
-      /materialize dele os documentos finais/i,
+      /materialize dele o documento final/i,
     );
     expect(delivery?.orchestratorInstructions).toMatch(
-      /diretório estiver vazio.*payload promovido.*materialize-o primeiro/is,
+      /plano não estiver materializado.*payload promovido.*materialize-o primeiro/is,
     );
     expect(delivery?.orchestratorInstructions).toMatch(
       /nunca repita planejamento/i,
@@ -125,10 +125,15 @@ describe('built-in squads (invariantes gerais)', () => {
     }
   });
 
-  it('entrega bmad-templates a quem escreve PRD/stories e a mais ninguém', () => {
+  it('entrega superpowers a quem escreve/valida o plano e a mais ninguém', () => {
     const planning = BUILTIN_SQUADS.find((squad) => squad.id === 'nexus-plan');
     const delivery = BUILTIN_SQUADS.find(
       (squad) => squad.id === 'nexus-story-impl',
+    );
+    const superpowersOwners = BUILTIN_SQUADS.flatMap((squad) =>
+      squad.agents
+        .filter((agent) => agent.allowedSkills?.includes('superpowers'))
+        .map((agent) => `${squad.id}/${agent.id}`),
     );
     const bmadOwners = BUILTIN_SQUADS.flatMap((squad) =>
       squad.agents
@@ -136,27 +141,25 @@ describe('built-in squads (invariantes gerais)', () => {
         .map((agent) => `${squad.id}/${agent.id}`),
     );
 
-    expect(planning?.agents[0]?.allowedSkills).toContain('bmad-templates');
-    expect(
-      delivery?.agents.find((agent) => agent.id === 'sm')?.allowedSkills,
-    ).toContain('bmad-templates');
+    expect(planning?.agents[0]?.allowedSkills).toContain('superpowers');
     expect(
       delivery?.agents.find((agent) => agent.id === 'qa')?.allowedSkills,
-    ).toContain('bmad-templates');
+    ).toContain('superpowers');
     expect(
       delivery?.agents.find((agent) => agent.id === 'dev')?.allowedSkills,
-    ).not.toContain('bmad-templates');
-    expect(bmadOwners).toEqual([
+    ).not.toContain('superpowers');
+    expect(superpowersOwners).toEqual([
       // Architects já recebiam o vocabulário (regra pré-existente da política).
       'outcome-landing-page/ux-content',
       'nexus-research/architect',
-      // Novos donos explícitos de documento de plano.
+      // Donos explícitos de documento de plano.
       'nexus-plan/orch',
       'nexus-story-impl/orch',
-      'nexus-story-impl/sm',
       'nexus-story-impl/qa',
       'kimi-code-cell/planner',
     ]);
+    // BMAD saiu do padrão: nenhum builtin concede mais bmad-templates.
+    expect(bmadOwners).toEqual([]);
   });
 
   it('preserva allowedSkills explícito dos rosters que já declaravam política', () => {

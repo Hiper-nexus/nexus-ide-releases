@@ -29,6 +29,11 @@ const SKILLS = [
     outFile: 'bmad-templates-manifest.ts',
   },
   {
+    dir: 'superpowers',
+    constName: 'SUPERPOWERS_MANIFEST',
+    outFile: 'superpowers-manifest.ts',
+  },
+  {
     dir: 'dembrandt',
     constName: 'DEMBRANDT_MANIFEST',
     outFile: 'dembrandt-manifest.ts',
