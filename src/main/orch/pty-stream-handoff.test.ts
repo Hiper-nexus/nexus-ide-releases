@@ -218,4 +218,71 @@ describe("submitPtyStreamHandoff MCP parity", () => {
     );
     expect(mocks.assertReadOnlyLaneObservationCurrent).toHaveBeenCalledOnce();
   });
+
+  it("Via Rápida: missão VIVA sem contrato cerimonial aprovado aceita o fechamento mecânico", async () => {
+    // Campo 22/08 ("nenhum pane entrega handoffs"): pane ad-hoc do
+    // nexus_pane_spawn (meta-de-pane/revisor) não tem dispatch selado —
+    // exigir contrato aprovado aqui matava a resposta curta C-194.1.
+    const submitWithReplay = vi.fn(() => ({
+      handoff: {
+        id: "hoff-fastlane",
+        evidenceTrust: "nexus-trusted",
+        deliveryState: "queued",
+      },
+      replayed: false,
+    }));
+    mocks.getContextBySession.mockReturnValue(workerCtx());
+    mocks.getStores.mockReturnValue({
+      missions: {
+        get: () => ({
+          id: "mission-a",
+          status: "running",
+          intentState: "executing",
+          intentVersion: 3,
+          // Sem contrato (ou com contrato de revisão antiga): a autoridade
+          // vem do gate ctx físico, não de cerimônia que a Via Rápida
+          // não tem.
+          intentContract: null,
+        }),
+      },
+      tasks: { list: () => [] },
+      missionPanes: { list: () => [] },
+      taskDispatches: { list: () => [] },
+      handoffs: {
+        submitFromPhysicalAgentBoundaryWithReplay: submitWithReplay,
+        submitFromPhysicalAgentBoundaryAndTransitionDispatch: vi.fn(),
+      },
+    });
+
+    const result = await submitPtyStreamHandoff("agy-session", payload);
+
+    expect(result.handoffId).toBe("hoff-fastlane");
+    expect(submitWithReplay).toHaveBeenCalledOnce();
+  });
+
+  it("missão encerrada sem autoridade cerimonial recusa o stream (nada entra depois do fim)", async () => {
+    mocks.getContextBySession.mockReturnValue(workerCtx());
+    mocks.getStores.mockReturnValue({
+      missions: {
+        get: () => ({
+          id: "mission-a",
+          status: "done",
+          intentState: "executing",
+          intentVersion: 3,
+          intentContract: null,
+        }),
+      },
+      tasks: { list: () => [] },
+      missionPanes: { list: () => [] },
+      taskDispatches: { list: () => [] },
+      handoffs: {
+        submitFromPhysicalAgentBoundaryWithReplay: vi.fn(),
+        submitFromPhysicalAgentBoundaryAndTransitionDispatch: vi.fn(),
+      },
+    });
+
+    await expect(submitPtyStreamHandoff("agy-session", payload)).rejects.toThrow(
+      /handoff_origin: mission is not live/u,
+    );
+  });
 });

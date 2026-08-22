@@ -258,8 +258,21 @@ async function preparePtyHandoff(
   const ctx = requireCurrentPtyWorkerContext(sessionId);
   const suite = getProjectDomainStores(ctx.scope);
   const mission = suite.missions.get(ctx.missionId!);
-  if (!mission || !hasCurrentApprovedDispatchContract(mission)) {
+  if (!mission) {
     throw new Error("handoff_origin: current approved mission unavailable");
+  }
+  // Via Rápida (C-194.1): o fechamento mecânico é a RESOLUÇÃO da espera do
+  // Maestro. Para worker sem dispatch da era cerimonial (pane ad-hoc do
+  // nexus_pane_spawn — revisores, segunda onda, meta-de-pane), a autoridade
+  // já foi provada a montante: gate ctx com role+missionId+encarnação,
+  // turno não-humano e dedup limpo. Exigir aqui contrato selado aprovado
+  // matava TODA resposta curta ("nenhum pane entrega handoffs", campo
+  // 22/08) porque o env varreu esse módulo como legado INERTE — mas o
+  // /hook/status o mantém VIVO no caminho do fechamento mecânico.
+  // Missão que já encerrou segue recusada (nada entra depois do fim).
+  const ceremonialAuthority = hasCurrentApprovedDispatchContract(mission);
+  if (!ceremonialAuthority && mission.status !== "running") {
+    throw new Error("handoff_origin: mission is not live");
   }
   const dispatch = findBoundDispatch(
     suite,
