@@ -9,7 +9,13 @@ import {
   runCandidateQualityAnalysis,
   type CandidateQualityAnalysis,
 } from '../context/candidate-quality-scanner';
-import type { ReviewFindingInput } from '../context/review-council';
+import {
+  runDependencyAuditSensor,
+  runTypecheckSensor,
+  type MechanicalCheckResult,
+  type MechanicalFinding,
+} from '../context/mechanical-sensors';
+import type { ReviewCategory, ReviewFindingInput } from '../context/review-council';
 import { deliverAgentPrompt } from './tool-util';
 
 /**
@@ -62,6 +68,10 @@ export interface CivilianAutoReviewInput {
 export interface CivilianAutoReviewDependencies {
   readonly git?: AsyncGitRunner;
   readonly analyze?: typeof runCandidateQualityAnalysis;
+  readonly typecheck?: (
+    root: string,
+  ) => Promise<MechanicalCheckResult>;
+  readonly audit?: (root: string) => Promise<MechanicalCheckResult>;
   readonly deliverRepair?: (
     sessionId: string,
     prompt: string,
@@ -204,6 +214,35 @@ export function civilianAutoReviewEvidenceNote(
     : `Scanner determinístico ${analysis.version}: aprovado com ressalvas (evidência ${shortHash}; análise parcial).`;
 }
 
+/** Achados mecânicos (tsc/audit) no mesmo formato dos findings de review. */
+function mechanicalToReviewFindings(
+  results: readonly MechanicalCheckResult[],
+): readonly ReviewFindingInput[] {
+  return results.flatMap((result) =>
+    result.findings.map((finding: MechanicalFinding): ReviewFindingInput => ({
+      severity: finding.severity,
+      category:
+        result.kind === 'dependency-audit'
+          ? ('security' as ReviewCategory)
+          : ('correctness' as ReviewCategory),
+      file: finding.file,
+      criterionRefs: [],
+      invariantRefs: [],
+      evidence: finding.evidence,
+      recommendation: finding.recommendation,
+    })),
+  );
+}
+
+function sensorSummaries(
+  results: readonly MechanicalCheckResult[],
+): string {
+  return results
+    .map((result) => result.summary)
+    .filter(Boolean)
+    .join('\n');
+}
+
 /**
  * Executa o gate de revisão automática civil. Git, scanner e entrega de
  * reparo são injetáveis — o caminho de produção usa os defaults main-owned.
@@ -261,12 +300,20 @@ export async function enforceCivilianAutoReview(
     return { kind: 'defer-to-roster-review' };
   }
 
-  const blocking = blockingFindingsOf(analysis);
+  // Etapa 2 — sensores mecânicos Nexus-owned: typecheck + auditoria de
+  // dependências quando o projeto permite (tsconfig/lockfile). Não dependem
+  // de scripts no alvo; falha de infraestrutura é indisponível, não bloqueio.
+  const mechanical = await Promise.all([
+    (dependencies.typecheck ?? runTypecheckSensor)(root),
+    (dependencies.audit ?? runDependencyAuditSensor)(root),
+  ]);
+  const mechanicalBlocking = mechanicalToReviewFindings(mechanical);
+  const blocking = [...blockingFindingsOf(analysis), ...mechanicalBlocking];
   if (blocking.length === 0) {
     const outcome: CivilianAutoReviewOutcome = {
       kind: 'approved',
       evidenceId: `nexus-auto-review:${analysis.analysisHash}`,
-      note: civilianAutoReviewEvidenceNote(analysis),
+      note: `${civilianAutoReviewEvidenceNote(analysis)}\n${sensorSummaries(mechanical)}`,
     };
     approvedMemo.set(input.mission.id, { headSha, outcome });
     return outcome;

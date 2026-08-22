@@ -112,22 +112,39 @@ function deps(overrides: {
   const deliverRepair =
     overrides.deliverRepair ?? (async () => true);
   const calls = { analyzeCalls: 0, repairs: [] as string[] };
-  return {
-    calls,
-    dependencies: {
-      git: overrides.git ?? fakeGit({ priorCommit: BASE_SHA }),
-      analyze: async (input: unknown) => {
-        calls.analyzeCalls += 1;
-        return analyze(input);
+    return {
+      calls,
+      dependencies: {
+        ...healthySensors,
+        git: overrides.git ?? fakeGit({ priorCommit: BASE_SHA }),
+        analyze: async (input: unknown) => {
+          calls.analyzeCalls += 1;
+          return analyze(input);
+        },
+        deliverRepair: async (sessionId: string, prompt: string) => {
+          calls.repairs.push(prompt);
+          return deliverRepair(sessionId, prompt);
+        },
+        ...(overrides.now ? { now: overrides.now } : {}),
       },
-      deliverRepair: async (sessionId: string, prompt: string) => {
-        calls.repairs.push(prompt);
-        return deliverRepair(sessionId, prompt);
-      },
-      ...(overrides.now ? { now: overrides.now } : {}),
-    },
-  };
-}
+    };
+  }
+
+/** Sensores mecânicos verdes por padrão nos testes de fluxo. */
+const healthySensors = {
+  typecheck: async () => ({
+    kind: 'typecheck' as const,
+    status: 'passed' as const,
+    summary: 'Typecheck: ✓ compila sem erros.',
+    findings: [],
+  }),
+  audit: async () => ({
+    kind: 'dependency-audit' as const,
+    status: 'passed' as const,
+    summary: 'Auditoria: ✓ nenhuma vulnerabilidade conhecida.',
+    findings: [],
+  }),
+};
 
 describe('resolveAutoReviewBaseSha', () => {
   it('usa o último commit anterior ao nascimento da missão', async () => {
@@ -328,5 +345,105 @@ describe('civilianAutoReviewEvidenceNote', () => {
     expect(full).not.toContain('ressalvas');
     const partial = civilianAutoReviewEvidenceNote(analysis([], false));
     expect(partial).toContain('ressalvas');
+  });
+});
+
+describe('enforceCivilianAutoReview — sensores mecânicos (Etapa 2)', () => {
+  const baseInput = () => ({
+    mission: missionFixture(),
+    scope,
+    productFiles: ['src/app.ts'],
+  });
+
+  it('aprovado inclui resumo do typecheck e da auditoria no laudo', async () => {
+    __resetCivilianAutoReviewForTests();
+    const { dependencies } = deps();
+    const outcome = await enforceCivilianAutoReview(
+      baseInput(),
+      dependencies,
+    );
+    expect(outcome.kind).toBe('approved');
+    if (outcome.kind !== 'approved') return;
+    expect(outcome.note).toContain('Typecheck: ✓');
+    expect(outcome.note).toContain('Auditoria: ✓');
+  });
+
+  it('erro de compilação bloqueia como finding high — vira reparo com Maestro vivo', async () => {
+    __resetCivilianAutoReviewForTests();
+    const { dependencies, calls } = deps({
+      analyze: async () => analysis([]),
+    });
+    const outcome = await enforceCivilianAutoReview(
+      {
+        ...baseInput(),
+        liveOrchestratorSessionId: 'orch-session-1',
+      },
+      {
+        ...dependencies,
+        typecheck: async () => ({
+          kind: 'typecheck',
+          status: 'failed',
+          summary: 'Typecheck: ✗ 1 erro(s) de compilação.',
+          findings: [
+            {
+              severity: 'high',
+              file: 'src/app.ts',
+              evidence: 'TS2304: Cannot find name "x".',
+              recommendation: 'Corrija o erro de compilação.',
+            },
+          ],
+        }),
+      },
+    );
+    expect(outcome.kind).toBe('repair-dispatched');
+    expect(calls.repairs[0]).toContain('TS2304');
+  });
+
+  it('vulnerabilidade crítica de dependência bloqueia mesmo sem Maestro vivo', async () => {
+    __resetCivilianAutoReviewForTests();
+    const { dependencies } = deps({ analyze: async () => analysis([]) });
+    const outcome = await enforceCivilianAutoReview(baseInput(), {
+      ...dependencies,
+      audit: async () => ({
+        kind: 'dependency-audit',
+        status: 'failed',
+        summary: 'Auditoria: ✗ 1 crítica(s) em produção.',
+        findings: [
+          {
+            severity: 'critical',
+            file: '(dependência) lib-malvada',
+            evidence: 'Dependência "lib-malvada" com vulnerabilidade CRÍTICA em produção.',
+            recommendation: 'Atualize ou substitua "lib-malvada".',
+          },
+        ],
+      }),
+    });
+    expect(outcome.kind).toBe('blocked');
+    if (outcome.kind !== 'blocked') return;
+    expect(outcome.description).toContain('GRAVE');
+    expect(outcome.description).toContain('lib-malvada');
+  });
+
+  it('sensor indisponível (sem tsconfig/lockfile) não bloqueia — fail-open', async () => {
+    __resetCivilianAutoReviewForTests();
+    const { dependencies } = deps({ analyze: async () => analysis([]) });
+    const outcome = await enforceCivilianAutoReview(baseInput(), {
+      ...dependencies,
+      typecheck: async () => ({
+        kind: 'typecheck',
+        status: 'unavailable',
+        summary: 'Typecheck indisponível (sem tsconfig.json no projeto).',
+        findings: [],
+      }),
+      audit: async () => ({
+        kind: 'dependency-audit',
+        status: 'unavailable',
+        summary: 'Auditoria de dependências indisponível (sem lockfile).',
+        findings: [],
+      }),
+    });
+    expect(outcome.kind).toBe('approved');
+    if (outcome.kind !== 'approved') return;
+    expect(outcome.note).toContain('indisponível');
   });
 });
