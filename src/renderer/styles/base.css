@@ -1448,6 +1448,12 @@ body {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--state-running) 20%, transparent);
 }
 
+/* Missão em estado terminal: o ponto vivo mentiria — fica neutro. */
+.pane-activity__pulse--done {
+  background: var(--text-faint);
+  box-shadow: none;
+}
+
 .pane-activity__text {
   min-width: 0;
   overflow: hidden;

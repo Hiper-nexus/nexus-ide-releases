@@ -1,6 +1,8 @@
 import { CanvasView } from '../CanvasView';
 import { PaneGrid } from '../PaneGrid';
 import { useLayoutStore } from '../../state/layout-store';
+import { useOrchStore } from '../../state/orch-store';
+import { MISSION_LIFECYCLE_LABELS } from '../../lib/mission-lifecycle-copy';
 import { PixelIcon } from '../PixelIcon';
 
 export interface TerminalWorkspaceProps {
@@ -20,6 +22,17 @@ export function TerminalWorkspace({
 }: TerminalWorkspaceProps) {
   const viewKind = useLayoutStore((state) => state.viewKind);
   const inMission = missionId !== undefined;
+  // O rótulo segue a projeção canônica da missão — "Missão ativa" fixo mentia
+  // em missão já concluída/falha.
+  const missionState = useOrchStore((state) =>
+    missionId
+      ? (state.missionSummaries.find((m) => m.id === missionId)?.state ??
+        null)
+      : null,
+  );
+  const contextLabel = missionState
+    ? `Missão · ${MISSION_LIFECYCLE_LABELS[missionState]}`
+    : 'Missão';
 
   return (
     <section
@@ -35,7 +48,7 @@ export function TerminalWorkspace({
               <PixelIcon name="terminal" size={16} />
             </span>
             <div className="product-workspace__heading">
-              <span className="product-workspace__context">Missão ativa</span>
+              <span className="product-workspace__context">{contextLabel}</span>
               <h1>Terminais</h1>
             </div>
           </div>

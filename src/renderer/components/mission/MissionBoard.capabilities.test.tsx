@@ -311,6 +311,9 @@ describe('state-aware mission actions in the canonical mission board', () => {
         intentState: 'blocked_technical',
         intentVersion: 1,
         intentContract: approvedContract(),
+        // Recovery viva é dona-deste-processo: updatedAt fresco, senão a
+        // linha é leftover de boot anterior e nada está recuperando.
+        updatedAt: Date.now(),
       }),
       snapshotState: 'recovering' as const,
       expected: /Parar/i,
@@ -414,6 +417,93 @@ describe('state-aware mission actions in the canonical mission board', () => {
 
     expect(buttonByName(host, /Remover/i)).not.toBeNull();
     expect(buttonByName(host, /Encerrar/i)).toBeNull();
+  });
+
+  it('esconde Terminais em missão terminal sem panes vivos (nunca shell órfão)', async () => {
+    useLayoutStore.setState({ root: buildGridTree([]) });
+    useOrchStore.setState({
+      missions: [mission({ status: 'done', intentState: 'done' })],
+      handoffs: [],
+      paneMissions: {},
+    });
+    const host = renderMissionBoard(
+      mission({ status: 'done', intentState: 'done' }),
+      'completed',
+    );
+    await settle();
+
+    expect(buttonByName(host, /Terminais/i)).toBeNull();
+    expect(buttonByName(host, /Remover/i)).not.toBeNull();
+  });
+
+  it('esconde Terminais em missão DORMINDO/bloqueada sem panes vivos', async () => {
+    // Caso real 22/08: leftover parked (Dormindo) — o clique abria shell órfão.
+    useLayoutStore.setState({ root: buildGridTree([]) });
+    useOrchStore.setState({
+      missions: [
+        mission({ status: 'blocked', intentState: 'blocked_user' }),
+      ],
+      handoffs: [],
+      paneMissions: {},
+    });
+    const host = renderMissionBoard(
+      mission({ status: 'blocked', intentState: 'blocked_user' }),
+      'blocked_user',
+    );
+    await settle();
+
+    expect(buttonByName(host, /Terminais/i)).toBeNull();
+  });
+
+  it('mantém Terminais em missão viva mesmo antes do primeiro pane', async () => {
+    useLayoutStore.setState({ root: buildGridTree([]) });
+    useOrchStore.setState({
+      missions: [mission({ status: 'running', intentState: 'executing' })],
+      handoffs: [],
+      paneMissions: {},
+    });
+    const host = renderMissionBoard(
+      mission({ status: 'running', intentState: 'executing' }),
+      'running',
+    );
+    await settle();
+
+    expect(buttonByName(host, /Terminais/i)).not.toBeNull();
+  });
+
+  it('mostra e foca o pane vivo da missão terminal ao abrir Terminais', async () => {
+    const focus = vi.fn();
+    useLayoutStore.setState({
+      root: buildGridTree([
+        {
+          id: 'pane-transcript',
+          kind: 'cli-agent',
+          title: 'claude',
+          adapterId: 'claude',
+          missionId: 'mission-capability',
+        },
+      ]),
+      focus,
+    });
+    const onOpenTerminals = vi.fn();
+    const host = mount(
+      <MissionBoard
+        missionId="mission-capability"
+        onOpenTerminals={onOpenTerminals}
+      />,
+    );
+    useOrchStore.setState({
+      missions: [mission({ status: 'done', intentState: 'done' })],
+      handoffs: [],
+      paneMissions: { 'pane-transcript': 'mission-capability' },
+    });
+    await settle();
+
+    const button = buttonByName(host, /Terminais/i);
+    expect(button).not.toBeNull();
+    act(() => button!.click());
+    expect(onOpenTerminals).toHaveBeenCalledWith('mission-capability');
+    expect(focus).toHaveBeenCalledWith('pane-transcript');
   });
 
   it('deletes a completed snapshot instead of calling Encerrar on a stale orch row', async () => {

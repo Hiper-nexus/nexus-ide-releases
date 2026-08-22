@@ -10,6 +10,13 @@ const REFRESH_MS = 30_000;
 
 export function PaneActivityStrip({ paneId }: { paneId: string }) {
   const missionId = useOrchStore((state) => state.paneMissions[paneId]);
+  // O ponto "running" numa missão terminal lê como trabalho vivo — com a
+  // missão concluída/falha o indicador fica neutro e só o texto informa.
+  const missionTerminal = useOrchStore((state) => {
+    if (!missionId) return false;
+    const summary = state.missionSummaries.find((m) => m.id === missionId);
+    return summary?.state === 'completed' || summary?.state === 'failed';
+  });
   const [activity, setActivity] = useState<PaneActivitySummary | null>(null);
 
   useEffect(() => {
@@ -42,7 +49,10 @@ export function PaneActivityStrip({ paneId }: { paneId: string }) {
   if (!display) return null;
   return (
     <div className="pane-activity" role="status" title={display.title}>
-      <span className="pane-activity__pulse" aria-hidden="true" />
+      <span
+        className={`pane-activity__pulse${missionTerminal ? ' pane-activity__pulse--done' : ''}`}
+        aria-hidden="true"
+      />
       <span className="pane-activity__text">{display.text}</span>
     </div>
   );

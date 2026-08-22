@@ -692,6 +692,13 @@ function startSpawn(
           // cota de auto-resume gasta — NÃO dispara outra onda: era o loop
           // que aposentava o único pane do Maestro e deixava o teclado mudo.
           host.spawnStarted = false;
+          // Missão terminal não precisa de resume/sync/unlock: sem este guard
+          // o fim de turno de uma missão JÁ concluída entrava na máquina de
+          // restore e despejava sync-notice → unlock → shell em cascata.
+          if (await missionTerminalAuthoritative(missionId!)) {
+            useSessionStateStore.getState().setPaneState(pane.id, 'exited');
+            return null;
+          }
           console.warn(
             `[mission-restore] stale pane ${pane.id} was not restarted:`,
             res.error,
@@ -923,6 +930,29 @@ function startSpawn(
             host.term.writeln(
               '\x1b[90m[nexus] as respostas ficam acima; feche o pane ou digite para abrir um shell.\x1b[0m',
             );
+          } else if (missionId && exitCode === 0) {
+            // Corrida done×exit: o espelho local ainda não viu o término.
+            // Uma checagem autoritativa decide o banner — missão concluída
+            // nunca pode cair no "process exited / digite qualquer tecla".
+            void (async () => {
+              const terminal = await missionTerminalAuthoritative(missionId);
+              if (host.disposed) return;
+              if (terminal) {
+                host.term.writeln(
+                  '\r\n\x1b[32m[nexus] ✔ missão concluída — este pane cumpriu o papel.\x1b[0m',
+                );
+                host.term.writeln(
+                  '\x1b[90m[nexus] as respostas ficam acima; feche o pane ou digite para abrir um shell.\x1b[0m',
+                );
+              } else {
+                host.term.writeln(
+                  `\r\n\x1b[90m[nexus] process exited (code ${exitCode})\x1b[0m`,
+                );
+                host.term.writeln(
+                  '\x1b[36m[nexus] sessão encerrada. Digite qualquer tecla para abrir um shell neste pane.\x1b[0m',
+                );
+              }
+            })();
           } else {
             host.term.writeln(
               `\r\n\x1b[90m[nexus] process exited (code ${exitCode})\x1b[0m`,
@@ -1827,6 +1857,39 @@ function missionStillOwnsPane(paneId: string, pane?: PaneModel): boolean {
   // Vínculo órfão (missão sumiu do store) ou missão terminal: operador reclama.
   if (!mission) return false;
   return mission.status === 'running' || mission.status === 'blocked';
+}
+
+/** Os dois espelhos locais: status cru do SQLite + projeção canônica. */
+function missionStoresSayTerminal(missionId: string): boolean {
+  const orch = useOrchStore.getState();
+  const legacy = orch.missions.find((m) => m.id === missionId);
+  if (legacy?.status === 'done' || legacy?.status === 'failed') return true;
+  const summary = orch.missionSummaries.find((m) => m.id === missionId);
+  return summary?.state === 'completed' || summary?.state === 'failed';
+}
+
+/**
+ * Corrida done×exit: o término persiste no main e o broadcast é assíncrono,
+ * então no instante do exit NENHUM espelho local pode ter visto o done —
+ * era aí que um pane de missão concluída caía no banner genérico "process
+ * exited / digite qualquer tecla" e na cascata de restore (sync-once →
+ * unlock → shell) em vez do fecho verde. Uma leitura autoritativa decide;
+ * falha/timeout ⇒ false (comportamento anterior).
+ */
+async function missionTerminalAuthoritative(
+  missionId: string,
+): Promise<boolean> {
+  if (missionStoresSayTerminal(missionId)) return true;
+  try {
+    const snapshot = await Promise.race([
+      window.nexus.mission.snapshot(missionId),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 1_500)),
+    ]);
+    const state = (snapshot as { state?: string } | null)?.state;
+    return state === 'completed' || state === 'failed';
+  } catch {
+    return false;
+  }
 }
 
 function isMainControlledMissionPane(

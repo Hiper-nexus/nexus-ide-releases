@@ -252,14 +252,15 @@ export function MissionBoard({
     return aggregate ? formatMissionTelemetry(aggregate) : null;
   }, [missionHandoffs, missionId]);
   const layoutRoot = useLayoutStore((state) => state.root);
-  const hasVisibleMissionPanes = useMemo(
+  const firstVisibleMissionPaneId = useMemo(
     () =>
-      listPanes(layoutRoot).some(
+      listPanes(layoutRoot).find(
         (pane) =>
           (pane.missionId ?? paneMissions[pane.id]) === missionId,
-      ),
+      )?.id ?? null,
     [layoutRoot, missionId, paneMissions],
   );
+  const hasVisibleMissionPanes = firstVisibleMissionPaneId !== null;
   const lifecycleAction: MissionListAction = missionBoardLifecycleAction(
     snapshot?.id === missionId ? snapshot.state : null,
     currentMission,
@@ -930,20 +931,24 @@ export function MissionBoard({
               currentSnapshot.stateReason?.code,
             )}
           </span>
-          <div className="mission-board__progress">
-            <span>
-              {currentSnapshot.progress.completed} /{' '}
-              {currentSnapshot.progress.total}
-            </span>
-            <progress
-              aria-label={`Progresso da missão: ${currentSnapshot.progress.completed} de ${currentSnapshot.progress.total}`}
-              value={currentSnapshot.progress.completed}
-              max={currentSnapshot.progress.total}
-            >
-              {currentSnapshot.progress.completed} de{' '}
-              {currentSnapshot.progress.total}
-            </progress>
-          </div>
+          {/* Sem tasks planejadas (Via Rápida), "0 / 0" é ruído e
+              <progress max={0}> é inválido — esconde o contador. */}
+          {currentSnapshot.progress.total > 0 && (
+            <div className="mission-board__progress">
+              <span>
+                {currentSnapshot.progress.completed} /{' '}
+                {currentSnapshot.progress.total}
+              </span>
+              <progress
+                aria-label={`Progresso da missão: ${currentSnapshot.progress.completed} de ${currentSnapshot.progress.total}`}
+                value={currentSnapshot.progress.completed}
+                max={currentSnapshot.progress.total}
+              >
+                {currentSnapshot.progress.completed} de{' '}
+                {currentSnapshot.progress.total}
+              </progress>
+            </div>
+          )}
           {telemetryLine && (
             <span
               className="mission-board__telemetry"
@@ -964,14 +969,29 @@ export function MissionBoard({
         )}
 
         <div className="mission-board__actions" aria-label="Ações da missão">
-          <button
-            type="button"
-            className="mission-board__button mission-board__button--secondary"
-            disabled={pendingAction !== null}
-            onClick={() => onOpenTerminals(missionId)}
-          >
-            Terminais
-          </button>
+          {/* "Terminais" só existe quando há o que mostrar: pane vivo da
+              missão, ou missão genuinamente viva (starting/running/
+              recovering — os panes nascem ali). Concluída, falha, bloqueada
+              ou DORMINDO sem panes → o clique caía num shell órfão do grid
+              global; o que restou da missão mora na aba Resultado. */}
+          {(hasVisibleMissionPanes ||
+            currentSnapshot.state === 'starting' ||
+            currentSnapshot.state === 'running' ||
+            currentSnapshot.state === 'recovering') && (
+            <button
+              type="button"
+              className="mission-board__button mission-board__button--secondary"
+              disabled={pendingAction !== null}
+              onClick={() => {
+                onOpenTerminals(missionId);
+                if (firstVisibleMissionPaneId) {
+                  useLayoutStore.getState().focus(firstVisibleMissionPaneId);
+                }
+              }}
+            >
+              Terminais
+            </button>
+          )}
           {HEADER_ACTIONS.filter(
             (action) =>
               currentSnapshot.allowedActions.includes(action) &&
@@ -1153,7 +1173,9 @@ export function MissionBoard({
           <DirectionComposer
             missionId={currentSnapshot.id}
             agents={currentSnapshot.agents}
-            disabled={currentSnapshot.state === 'completed'}
+            // O engine rejeita `direct` fora das ações permitidas (failed
+            // incluso) — desabilitar só em completed gerava erro de comando.
+            disabled={!currentSnapshot.allowedActions.includes('direct')}
             onCommand={executeCommand}
           />
         </div>
