@@ -91,31 +91,22 @@ function provider(adapterId: string): ProviderSettingsInfo {
   };
 }
 
+// Sem teto de ferramentas por lane, papéis custom recebem allowedTools null
+// em qualquer combinação de lane × categoria — a cerca real é o gate context,
+// o sandbox e os deniedTools do contrato.
 const customRoleLaneCases = [
-  { lane: 'consult', category: 'executor', allowedTools: ['Read'] },
-  { lane: 'consult', category: 'reviewer', allowedTools: ['Read'] },
-  { lane: 'consult', category: 'scout', allowedTools: ['Read'] },
-  { lane: 'plan', category: 'executor', allowedTools: ['Read'] },
-  { lane: 'plan', category: 'reviewer', allowedTools: ['Read'] },
-  { lane: 'plan', category: 'scout', allowedTools: ['Read'] },
-  { lane: 'ops', category: 'executor', allowedTools: ['Bash', 'Read'] },
-  { lane: 'ops', category: 'reviewer', allowedTools: ['Bash', 'Read'] },
-  { lane: 'ops', category: 'scout', allowedTools: ['Bash', 'Read'] },
-  {
-    lane: 'standard',
-    category: 'executor',
-    allowedTools: ['Bash', 'Read', 'Edit'],
-  },
-  {
-    lane: 'standard',
-    category: 'reviewer',
-    allowedTools: ['Bash', 'Read'],
-  },
-  {
-    lane: 'standard',
-    category: 'scout',
-    allowedTools: ['Bash', 'Read'],
-  },
+  { lane: 'consult', category: 'executor' },
+  { lane: 'consult', category: 'reviewer' },
+  { lane: 'consult', category: 'scout' },
+  { lane: 'plan', category: 'executor' },
+  { lane: 'plan', category: 'reviewer' },
+  { lane: 'plan', category: 'scout' },
+  { lane: 'ops', category: 'executor' },
+  { lane: 'ops', category: 'reviewer' },
+  { lane: 'ops', category: 'scout' },
+  { lane: 'standard', category: 'executor' },
+  { lane: 'standard', category: 'reviewer' },
+  { lane: 'standard', category: 'scout' },
 ] as const;
 
 describe('mission-roster-customize', () => {
@@ -133,7 +124,8 @@ describe('mission-roster-customize', () => {
     if (!result.ok) return;
     expect(result.agent.cli).toBe('kimi');
     expect(result.agent.category).toBe('executor');
-    expect(result.agent.allowedTools).toEqual(['Bash', 'Read', 'Edit']);
+    // Sem teto de lane: allowedTools null (irrestrito).
+    expect(result.agent.allowedTools).toBeNull();
   });
 
   it('skips a CLI without a declared catalog instead of aborting the whole add', () => {
@@ -170,8 +162,8 @@ describe('mission-roster-customize', () => {
   });
 
   it.each(customRoleLaneCases)(
-    'grants a custom $category only the $lane lane tool policy',
-    ({ lane, category, allowedTools }) => {
+    'sem teto de lane, $category em $lane recebe allowedTools null',
+    ({ lane, category }) => {
       const input = {
         category,
         lane,
@@ -190,7 +182,7 @@ describe('mission-roster-customize', () => {
         category,
         cli: 'kimi',
         model: 'kimi-model',
-        allowedTools,
+        allowedTools: null,
       });
     },
   );

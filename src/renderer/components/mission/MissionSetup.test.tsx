@@ -638,7 +638,7 @@ describe('mission prepare request boundary', () => {
     });
   });
 
-  it('clamps stale consult grants without changing customized role identity', () => {
+  it('passes declared grants through without a lane ceiling, keeping customized role identity', () => {
     const request = missionPrepareRequestFromDraft({
       objective: 'Investigar a integração sem alterar arquivos',
       title: '',
@@ -664,6 +664,8 @@ describe('mission prepare request boundary', () => {
       revision: 5,
     });
 
+    // Sem teto de lane, os grants declarados passam adiante: o coordenador
+    // fica irrestrito (null) e o executor mantém ['Bash', 'Read', 'Edit'].
     expect(request.roster).toEqual([
       {
         id: 'mission-coordinator',
@@ -674,7 +676,7 @@ describe('mission prepare request boundary', () => {
         model: 'sonnet-enterprise',
         instructions: 'Consolide somente evidências verificadas.',
         allowedSkills: [],
-        allowedTools: ['Read'],
+        allowedTools: null,
       },
       {
         id: 'interface-executor',
@@ -686,7 +688,7 @@ describe('mission prepare request boundary', () => {
         effort: 'high',
         instructions: 'Inspecione o contrato de pagamentos sem modificá-lo.',
         allowedSkills: [],
-        allowedTools: ['Read'],
+        allowedTools: ['Bash', 'Read', 'Edit'],
       },
     ]);
   });
@@ -1473,17 +1475,18 @@ describe('MissionSetup', () => {
         ({ agentName, allowedTools }) => ({ agentName, allowedTools }),
       ),
     ).toEqual([
+      // Sem teto de lane: papéis recomendados chegam irrestritos (null).
       {
         agentName: 'Coordenar consulta',
-        allowedTools: ['Read'],
+        allowedTools: null,
       },
       {
         agentName: 'Auditar interface',
-        allowedTools: ['Read'],
+        allowedTools: null,
       },
       {
         agentName: 'Sintetizar recomendações',
-        allowedTools: ['Read'],
+        allowedTools: null,
       },
     ]);
     for (const role of [
@@ -1558,7 +1561,7 @@ describe('MissionSetup', () => {
     }
   });
 
-  it('clamps an existing customized standard roster when the lane changes before prepare', async () => {
+  it('passes a customized standard roster through unchanged when the lane changes before prepare', async () => {
     const customCodex = adapter('codex', {
       models: {
         list: ['gpt-5.6-sol', 'gpt-enterprise'],
@@ -1614,13 +1617,15 @@ describe('MissionSetup', () => {
     expect(api.prepare).toHaveBeenCalledTimes(1);
     const prepared = api.prepare.mock.calls[0]![0];
     expect(prepared.advanced).toEqual({ lane: 'consult' });
+    // Sem teto de lane, trocar para 'consult' não altera os grants: eles
+    // passam adiante como declarados no roster customizado.
     expect(
       prepared.roster.map(({ id, allowedTools }) => ({ id, allowedTools })),
     ).toEqual([
-      { id: 'mission-coordinator', allowedTools: ['Read'] },
-      { id: 'interface-executor', allowedTools: ['Read'] },
-      { id: 'engine-executor', allowedTools: ['Read'] },
-      { id: 'result-reviewer', allowedTools: ['Read'] },
+      { id: 'mission-coordinator', allowedTools: null },
+      { id: 'interface-executor', allowedTools: ['Bash', 'Read', 'Edit'] },
+      { id: 'engine-executor', allowedTools: ['Bash', 'Read', 'Edit'] },
+      { id: 'result-reviewer', allowedTools: ['Bash', 'Read'] },
     ]);
     expect(prepared.roster[1]).toMatchObject({
       id: 'interface-executor',
@@ -1632,7 +1637,7 @@ describe('MissionSetup', () => {
       effort: 'high',
       instructions: 'Inspecione o contrato de pagamentos sem modificá-lo.',
       allowedSkills: ['react-best-practices'],
-      allowedTools: ['Read'],
+      allowedTools: ['Bash', 'Read', 'Edit'],
     });
     expect(useMissionSetupStore.getState().draft.roster).toEqual(
       prepared.roster,

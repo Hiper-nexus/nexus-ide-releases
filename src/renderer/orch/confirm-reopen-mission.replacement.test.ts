@@ -115,10 +115,9 @@ describe('legacy intent-shell replacement', () => {
         title: legacyShell.title,
         objective: legacyShell.intentContract?.goal,
         contextPaths: legacyShell.intentContract?.contextPaths,
-        roster: squad.agents.map((agent) => ({
-          ...agent,
-          allowedTools: ['Read'],
-        })),
+        // Sem teto de lane, o seed preserva os grants declarados no squad
+        // salvo; a cerca real é o gate context + sandbox + deniedTools.
+        roster: squad.agents.map((agent) => ({ ...agent })),
         advanced: { lane: 'consult' },
         step: 'review',
       },

@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { recommendMissionRosterRoles } from './mission-roster-customize';
 
 describe('recommendMissionRosterRoles', () => {
-  it('keeps the standard delivery roster and write scope explicit', () => {
+  it('keeps the standard delivery roster stable, with no lane tool ceiling (allowedTools null)', () => {
     const roles = recommendMissionRosterRoles({
       objective: 'Implementar uma nova tela de missões',
       lane: 'standard',
     });
 
+    // Sem teto de ferramentas por lane: todos os papéis recomendados chegam
+    // irrestritos (null); a cerca real é o gate context + sandbox + deniedTools.
     expect(roles.map(({ id, category, allowedTools }) => ({
       id,
       category,
@@ -21,23 +23,23 @@ describe('recommendMissionRosterRoles', () => {
       {
         id: 'interface-executor',
         category: 'executor',
-        allowedTools: ['Bash', 'Read', 'Edit'],
+        allowedTools: null,
       },
       {
         id: 'engine-executor',
         category: 'executor',
-        allowedTools: ['Bash', 'Read', 'Edit'],
+        allowedTools: null,
       },
       {
         id: 'result-reviewer',
         category: 'reviewer',
-        allowedTools: ['Bash', 'Read'],
+        allowedTools: null,
       },
     ]);
   });
 
   it.each(['consult', 'plan'] as const)(
-    'keeps every %s role mechanically free of write-capable grants',
+    '%s roles carry no lane tool ceiling; the fence is the gate context + sandbox',
     (lane) => {
       const roles = recommendMissionRosterRoles({
         objective: 'Analisar a arquitetura de autenticação e recomendar melhorias',
@@ -45,8 +47,7 @@ describe('recommendMissionRosterRoles', () => {
       });
 
       expect(roles).toHaveLength(3);
-      expect(roles.every((role) => role.allowedTools?.every((tool) => tool === 'Read')))
-        .toBe(true);
+      expect(roles.every((role) => role.allowedTools === null)).toBe(true);
       expect(roles.some((role) => role.category === 'executor')).toBe(false);
     },
   );
@@ -67,7 +68,8 @@ describe('recommendMissionRosterRoles', () => {
     );
     expect(roles.find((role) => role.id === 'ops-operator')).toMatchObject({
       category: 'executor',
-      allowedTools: ['Bash', 'Read'],
+      // Sem teto de lane: irrestrito; a cerca é o gate context + sandbox.
+      allowedTools: null,
     });
   });
 
