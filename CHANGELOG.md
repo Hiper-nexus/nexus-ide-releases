@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.66.0 — Revisão sempre-on
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+A promessa central do plano dev-sênior (docs/PLANO-DEV-SENIOR.md) entrou no
+caminho vivo: missão civil NÃO conclui mais "N/N" sem nenhuma verificação
+independente — o operador leigo não valida código, então o Nexus valida.
+
+- **feat(orch): revisão automática main-owned** — o scanner determinístico
+  (`candidate-quality-v1`) roda sobre a entrega ANTES do `completeVerified`
+  civil. Aprovado: evidência anexada ao resultado. Reprovado: até 2 ciclos de
+  reparo com os findings entregues ao Maestro vivo; orçamento esgotado →
+  bloqueio VISÍVEL com resumo em linguagem simples (Retomar e "Marcar
+  concluída" seguem disponíveis — nunca trava muda). Scanner indisponível
+  (workspace sem git): revisor do squad assume; sem revisor, conclui com nota
+  honesta. Missões guiadas seguem no gate próprio — sem gate duplo.
+- **feat(context): sensores mecânicos Nexus-owned** — `tsc --noEmit` (quando
+  há tsconfig) e `npm audit --omit=dev` (quando há lockfile) rodam mesmo sem
+  nenhum script no projeto-alvo. Erro de compilação = finding high;
+  vulnerabilidade crítica/alta de dependência = finding security — ambos
+  passam pelo mesmo fluxo reparo→bloqueio. Fail-open: ferramenta ausente,
+  timeout ou registry offline é indisponível, nunca bloqueio.
+- **fix(orch): kickoff meta-de-pane proporcional** — missão-pergunta aos
+  panes levava doutrina pesada mandando delegar na mesma respiração em que
+  mandava executar ("VOCÊ executa"): o Maestro gastava minutos reconciliando
+  contradição. Agora recebe o contrato META-DE-PANE + doutrina mínima
+  (espera/fecho/voz), sem plano selado redundante.
+
+Gates da release: typecheck limpo, 11.137 testes verdes, 0 sinks executáveis
+no renderer.
+
 ## 0.65.0 — Loop redondo
 
 _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
