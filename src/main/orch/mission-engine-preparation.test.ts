@@ -7,7 +7,10 @@ import type { Mission, Squad } from '../../shared/orch-types';
 import type { MissionPrepareRequest } from '../../shared/mission-engine-contract';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { MainMissionEngine, type MainMissionEnginePorts } from './mission-engine';
-import { createMissionEnginePreparationPorts } from './mission-engine-preparation';
+import {
+  createMissionEnginePreparationPorts,
+  rosterIdentityMatches,
+} from './mission-engine-preparation';
 import { snapshotSquadAuthority } from './squad-authority-snapshot';
 
 const scope: ProjectExecutionScope = {
@@ -524,4 +527,36 @@ describe('production MissionEngine preparation ports', () => {
     expect(discardRuntimeSquad).not.toHaveBeenCalled();
   });
 
+});
+
+describe('rosterIdentityMatches — selo de equipe sem bytes de capacidade', () => {
+  const base = {
+    id: 'a1',
+    agentName: 'Executor',
+    category: 'executor' as const,
+    cli: 'codex',
+    model: 'gpt-5.6-terra',
+  };
+
+  it('ignora allowedSkills/allowedTools (autoridade main-owned)', () => {
+    expect(
+      rosterIdentityMatches(
+        [{ ...base, allowedSkills: ['impeccable'], allowedTools: [] }],
+        [{ ...base, allowedSkills: [], allowedTools: null }],
+      ),
+    ).toBe(true);
+  });
+
+  it('detecta troca de identidade — CLI, papel ou modelo', () => {
+    expect(
+      rosterIdentityMatches([{ ...base }], [{ ...base, cli: 'claude' }]),
+    ).toBe(false);
+    expect(
+      rosterIdentityMatches(
+        [{ ...base }],
+        [{ ...base, category: 'reviewer' as const }],
+      ),
+    ).toBe(false);
+    expect(rosterIdentityMatches([{ ...base }], [])).toBe(false);
+  });
 });

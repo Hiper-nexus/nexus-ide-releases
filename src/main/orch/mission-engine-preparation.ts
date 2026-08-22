@@ -36,6 +36,7 @@ import type {
   MissionReviewFence,
 } from './mission-engine';
 import { resolveProductionMissionOrchestratorRuntime } from './mission-orchestrator-runtime';
+import { applyGuidedSquadSkillPolicy } from './guided-squad-skills';
 import {
   applyPreparedSquadSave,
   discardMissionRuntimeSquadIfUnchanged,
@@ -43,6 +44,27 @@ import {
   prepareMissionRuntimeSquadSave,
 } from './squad-store';
 import { snapshotSquadAuthority } from './squad-authority-snapshot';
+
+/**
+ * Identidade da equipe SEM os bytes de capacidade. allowedSkills/allowedTools
+ * são autoridade main-owned (a política determinística papel × objetivo ×
+ * lane concede); o selo protege QUEM entra na equipe — id, papel, CLI,
+ * modelo — não as cartas que o próprio main distribui.
+ */
+function stripCapabilityBytes(agent: SquadAgent): Omit<SquadAgent, 'allowedSkills' | 'allowedTools'> {
+  const { allowedSkills: _skills, allowedTools: _tools, ...identity } = agent;
+  return identity;
+}
+
+export function rosterIdentityMatches(
+  left: readonly SquadAgent[],
+  right: readonly SquadAgent[],
+): boolean {
+  return isDeepStrictEqual(
+    left.map(stripCapabilityBytes),
+    right.map(stripCapabilityBytes),
+  );
+}
 
 interface MissionPreparationStore {
   create(input: {
@@ -220,21 +242,31 @@ function persistRuntimeSquad(request: MissionPrepareRequest): Squad {
     return saved;
   }
   const source = sourceSquadForRequest(request);
-  const sourceSnapshot = snapshotSquadAuthority(source);
+  // O roster do renderer declara `allowedSkills: []` — e bytes de renderer
+  // nunca são autoridade de capacidade. Sem este passo a missão nascia SEM
+  // NENHUMA skill do motor Nexus: uma missão de UI pelo Caminho Expresso
+  // rodava sem impeccable/dembrandt (o piso objetivo-cego não concede e lista
+  // explícita nunca é reescrita). A política determinística papel × objetivo
+  // × lane concede aqui, main-owned, como já acontece no caminho guiado.
+  const governed = applyGuidedSquadSkillPolicy(source, {
+    objective: request.objective,
+    lane: request.advanced?.lane ?? undefined,
+  });
+  const sourceSnapshot = snapshotSquadAuthority(governed);
   const candidate = prepareMissionRuntimeSquadSave(
     {
-      ...source,
+      ...governed,
       id: `agentic-runtime-${randomUUID()}`,
       createdAt: String(Date.now()),
-      runtimeSourceSquadId: source.id,
+      runtimeSourceSquadId: governed.id,
       runtimeSourceSquadRevisionHash: sourceSnapshot.hash,
-      agents: source.agents.map((agent) => ({ ...agent })),
+      agents: governed.agents.map((agent) => ({ ...agent })),
     },
-    source,
+    governed,
     false,
     'ephemeral',
   );
-  if (!isDeepStrictEqual(candidate.squad.agents, request.roster)) {
+  if (!rosterIdentityMatches(candidate.squad.agents, request.roster)) {
     throw new Error(
       'A autoridade da equipe mudou durante a preparação da missão.',
     );
