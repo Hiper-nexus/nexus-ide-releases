@@ -13,38 +13,41 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.65.0',
-  date: '2026-08-21',
-  codename: 'Loop redondo',
+  version: '0.66.0',
+  date: '2026-08-22',
+  codename: 'Revisão sempre-on',
   summary:
-    'O ciclo completo — dispatch, orquestração, panes, prompts entre panes, ' +
-    'handoffs e conclusão — fechou de ponta a ponta em missões reais: uma ' +
-    'simples (consolidação de respostas) e uma complexa (artefato físico no ' +
-    'disco + verificação independente por outro agente) completaram sozinhas ' +
-    'no dev aberto. Os dois travamentos crônicos que impediam a conclusão ' +
-    'foram erradicados na raiz.',
+    'A promessa central do plano dev-sênior entrou no caminho vivo: missão ' +
+    'civil NÃO conclui mais sem nenhuma verificação independente. O scanner ' +
+    'determinístico roda sobre a entrega antes do fechamento; reprovação vira ' +
+    'ciclo de reparo automático e, esgotado, bloqueio visível em linguagem ' +
+    'simples. Sensores mecânicos (typecheck + auditoria de dependências) agora ' +
+    'funcionam mesmo sem scripts no projeto-alvo.',
   highlights: [
     {
-      title: 'Fechamento mecânico nunca mais fica refém do worker',
+      title: 'Missão civil fecha com prova, não com papelada',
       detail:
-        'Quando o orquestrador delega, o marcador de espera vetava o próprio ' +
-        'fechamento que a resolveria — worker sem nexus_handoff_submit ficava ' +
-        'mudo para sempre e o chef-idle virava loop. Agora o Stop com resposta ' +
-        'honesta fecha a entrega; dedup continua pela janela do turno.',
+        'O scanner determinístico (candidate-quality-v1) inspeciona a entrega ' +
+        'ANTES do completeVerified. Aprovado: evidência anexada ao resultado. ' +
+        'Reprovado: até 2 ciclos de reparo com os findings entregues ao ' +
+        'Maestro; orçamento esgotado → bloqueio visível com resumo simples — ' +
+        'Retomar e Marcar concluída seguem disponíveis.',
     },
     {
-      title: 'Missão completa com prova física',
+      title: 'Typecheck e auditoria funcionam em QUALQUER projeto',
       detail:
-        'E2E real: criar arquivo em disco, segundo agente lê e verifica, ' +
-        'Maestro consolida — completed em minutos sem intervenção. A via de ' +
-        'evidência e a caixa postal durável do Maestro trabalharam juntas.',
+        'Os novos sensores mecânicos não dependem de scripts no package.json ' +
+        'do alvo: com tsconfig presente o Nexus compila sozinho; com lockfile ' +
+        'audita dependências de produção. Vulnerabilidade crítica/alta ou ' +
+        'erro de compilação bloqueiam a conclusão na mesma esteira de reparo.',
     },
     {
-      title: 'nexus-notary: versão nova em um comando',
+      title: 'Missão-pergunta recebe brief proporcional',
       detail:
-        'typecheck → sinks → build limpo assinado → notarização (perfil ' +
-        'keychain) → staple → smoke do ZIP → receipt → gate do candidato, ' +
-        'na ordem, falhando rápido.',
+        'Meta-de-pane ("pergunte aos panes...") chegava ao Maestro com a ' +
+        'doutrina pesada mandando delegar na mesma respiração em que mandava ' +
+        'executar. Agora: contrato META-DE-PANE + doutrina mínima, sem plano ' +
+        'selado redundante.',
     },
   ],
   fixes: [
