@@ -78,7 +78,23 @@ export interface MaestroKickoffBriefInput {
   readonly maxWorkers?: number | null;
   readonly executorCount?: number | null;
   readonly sealedPlanTitles?: readonly string[];
+  /**
+   * Missão-pergunta aos panes (meta-de-pane): o contrato completo já vai no
+   * objetivo — doutrina de delegação aqui é CONTRADIÇÃO ("VOCÊ executa" vs
+   * "delegue") e custava minutos de mull no kickoff real (1+1, 22/08).
+   */
+  readonly metaPane?: boolean;
 }
+
+/** Doutrina mínima da missão-pergunta — só o que NÃO está no meta bloco. */
+const META_PANE_DOCTRINE = [
+  'DOUTRINA (missão de pergunta):',
+  '• ESPERA sem loop: nexus_pane_ask envia, espera e devolve a resposta; ' +
+    'wait serve só para confirmar boot de pane recém-aberto.',
+  '• FECHO único: um só nexus_handoff_submit com as respostas de TODOS os ' +
+    'panes citadas; não chame set_status done — o motor conclui sozinho.',
+  '• VOZ: ditado pode chegar traduzido para inglês; responda em PT-BR.',
+].join('\n');
 
 /**
  * Kickoff vivo do Maestro. Cabeçalho da missão + doutrina + playbook.
@@ -101,7 +117,17 @@ export function buildMaestroKickoffBrief(
       ? `Spawne UM worker por task selada pendente (first-wave). São ${sealedCount} entregas — não colapse em papéis.`
       : '';
 
-  const coordination = planOnly
+  const metaPane = input.metaPane === true;
+  const coordination = metaPane
+    ? [
+        '## ORQUESTRAÇÃO (missão de pergunta aos panes)',
+        `Você é ${input.orchestratorName}. Aqui VOCÊ executa: abra os panes ` +
+          `da equipe (${workers.join(', ') || 'equipe'}), colete TODAS as ` +
+          'respostas e feche com o handoff final.',
+        'O contrato completo está no bloco META-DE-PANE do objetivo — ele ' +
+          'VENCE qualquer regra geral de delegação.',
+      ].join('\n')
+    : planOnly
     ? [
         '## ORQUESTRAÇÃO (modelo PULL)',
         `Papel: você é ${input.orchestratorName}. Esta missão é só documentação — ` +
@@ -131,7 +157,7 @@ export function buildMaestroKickoffBrief(
     input.uiNote?.trim() || '',
     input.designContext?.trim() || '',
     coordination,
-    DOCTRINE_BASE,
+    metaPane ? META_PANE_DOCTRINE : DOCTRINE_BASE,
     playbook
       ? `PLAYBOOK DO SQUAD (autoridade do operador, verbatim):\n${playbook}`
       : '',

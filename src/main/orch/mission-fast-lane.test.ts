@@ -116,6 +116,51 @@ describe('mission fast lane', () => {
     expect(prompt).toContain('task selada pendente');
   });
 
+  it('missão-pergunta aos panes recebe brief PROPORCIONAL, sem doutrina de delegação contraditória', () => {
+    const orchestrator = agent({
+      id: 'coord',
+      agentName: 'Coordenar e revisar',
+      category: 'orchestrator',
+    });
+    const team = squad({
+      agents: [
+        {
+          id: 'w1',
+          agentName: 'Implementar interface',
+          category: 'executor',
+          cli: 'codex',
+        },
+        {
+          id: 'w2',
+          agentName: 'Implementar motor',
+          category: 'executor',
+          cli: 'codex',
+        },
+      ],
+    });
+    const prompt = agentPrompt(
+      orchestrator,
+      mission({ description: 'pergunte aos panes quanto é 1+1' }),
+      ['Coordenar e revisar', 'Implementar interface', 'Implementar motor'],
+      false,
+      '',
+      team,
+      ['pergunte aos panes quanto é 1+1'],
+    );
+
+    // Contrato operacional completo no prompt…
+    expect(prompt).toContain('META-DE-PANE');
+    expect(prompt).toContain('quanto é 1+1');
+    expect(prompt).toContain('nexus_pane_ask');
+    // …sem a contradição "delegue" nem a doutrina pesada de execução.
+    expect(prompt).not.toContain('Não execute o pedido — delegue');
+    expect(prompt).not.toContain('DOUTRINA DE ORQUESTRAÇÃO (só para a coordenação)');
+    // Sem plano selado redundante repetindo o objetivo.
+    expect(prompt).not.toContain('Plano selado (1 entrega)');
+    // Proporcional ao pedido: cabe em ~2 KB.
+    expect(prompt.length).toBeLessThan(2_000);
+  });
+
   it('retomada avisa que foi religado', () => {
     const prompt = agentPrompt(agent(), mission(), [], true);
     expect(prompt).toContain('religado');

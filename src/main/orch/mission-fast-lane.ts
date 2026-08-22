@@ -495,23 +495,31 @@ export function agentPrompt(
 ): string {
   const objective = mission.description ?? '';
   const title = mission.title ?? objective.slice(0, 80);
+  // Missão-pergunta aos panes: contrato META-DE-PANE no lugar do plano selado
+  // (redundância "1 entrega" repetindo o objetivo custava contexto sem
+  // informação — 22/08, missão 1+1).
+  const isMetaPaneMission =
+    agent.category === 'orchestrator' &&
+    sealedPlanTitles.some((storyTitle) => isPaneMetaTask(storyTitle));
   // A doutrina anti-colapso existe para planos com VÁRIAS entregas (11
   // stories viravam 5 papéis). Para 1 entrega ela é ruído puro no kickoff
   // ("Não colapse em 7 papéis. São 1 entregas." — operador 20/08): 1 task =
   // uma linha só.
   const sealedPlanBlock =
-    agent.category === 'orchestrator' && sealedPlanTitles.length > 1
-      ? [
-          '### Plano selado (não colapse em papéis do squad)',
-          `São ${sealedPlanTitles.length} entregas — spawne UM worker por ` +
-            'task pendente; NÃO reduza a lista aos papéis do squad.',
-          ...sealedPlanTitles.map(
-            (storyTitle, index) => `${index + 1}. ${storyTitle}`,
-          ),
-        ].join('\n')
-      : agent.category === 'orchestrator' && sealedPlanTitles.length === 1
-        ? `Plano selado (1 entrega): ${sealedPlanTitles[0]}`
-        : '';
+    agent.category === 'orchestrator' && !isMetaPaneMission
+      ? sealedPlanTitles.length > 1
+        ? [
+            '### Plano selado (não colapse em papéis do squad)',
+            `São ${sealedPlanTitles.length} entregas — spawne UM worker por ` +
+              'task pendente; NÃO reduza a lista aos papéis do squad.',
+            ...sealedPlanTitles.map(
+              (storyTitle, index) => `${index + 1}. ${storyTitle}`,
+            ),
+          ].join('\n')
+        : sealedPlanTitles.length === 1
+          ? `Plano selado (1 entrega): ${sealedPlanTitles[0]}`
+          : ''
+      : '';
   // Critério do operador (20/08): missão que pergunta aos panes só termina
   // quando TODOS os panes endereçados responderam — um pane por integrante,
   // e o FECHO cita a resposta de cada um. Sem isto o Maestro abria 1 pane
@@ -519,9 +527,7 @@ export function agentPrompt(
   const teamWorkerNames = (squad?.agents ?? [])
     .filter((member) => member.category !== 'orchestrator')
     .map((member) => member.agentName);
-  const metaPaneBlock =
-    agent.category === 'orchestrator' &&
-    sealedPlanTitles.some((storyTitle) => isPaneMetaTask(storyTitle))
+  const metaPaneBlock = isMetaPaneMission
       ? 'META-DE-PANE: esta missão pergunta aos próprios panes — VOCÊ executa. ' +
         'EXTRAIA do objetivo apenas a PERGUNTA (ex.: "quanto é 1+1?") — quem é ' +
         'perguntado recebe SÓ a pergunta, nunca a instrução "pergunte aos ' +
@@ -571,6 +577,7 @@ export function agentPrompt(
       maxWorkers: mission.intentContract?.budgets?.maxWorkers,
       executorCount: executorCount ?? 3,
       sealedPlanTitles,
+      metaPane: isMetaPaneMission,
     });
   }
 
