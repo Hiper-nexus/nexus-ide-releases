@@ -298,11 +298,39 @@ function manifestError(file: string, issues: z.core.$ZodIssue[]): Error {
       .join('; ')}`,
   );
 }
+/** Origens portáteis presentes nos dois lados e sem interseção. */
+function originProofsDiverge(
+  expected: { readonly originHashes: readonly string[] },
+  actual: { readonly originHashes: readonly string[] },
+): boolean {
+  return (
+    expected.originHashes.length > 0 &&
+    actual.originHashes.length > 0 &&
+    !expected.originHashes.some((hash) => actual.originHashes.includes(hash))
+  );
+}
+
+/**
+ * O manifesto portátil é versionado por design (.nexus/project.json). Se
+ * nenhum commit do repositório toca o arquivo, ele chegou por cópia
+ * fora de banda — não por clone.
+ */
+function manifestInGitHistory(
+  rootRealPath: string,
+  runner: ProjectGitRunner,
+): boolean {
+  const result = runner.run(
+    rootRealPath,
+    ['log', '--format=%H', '-1', '--', PROJECT_MANIFEST_PATH],
+    { allowFailure: true },
+  );
+  return result.status === 0 && result.stdout.trim().length > 0;
+}
+
 function projectIdentity(
   rootRealPath: string,
   runner: ProjectGitRunner,
-): ResolvedProjectIdentity {
-  const manifestFile = path.join(rootRealPath, PROJECT_MANIFEST_PATH);
+): ResolvedProjectIdentity {  const manifestFile = path.join(rootRealPath, PROJECT_MANIFEST_PATH);
   if (!fs.existsSync(manifestFile)) {
     return {
       projectId: digestId('local', rootRealPath),
@@ -343,6 +371,22 @@ function projectIdentity(
         : 'repository-lineage-unverifiable',
       `project manifest is incompatible with this repository: ${compatibility.detail}`,
       `Não reutilize o manifesto copiado. Confirme a origem/histórico e regenere ${PROJECT_MANIFEST_PATH} para este repositório, ou abra o clone correto.`,
+    );
+  }
+  // F-107: anchor alcançável sozinho NÃO basta quando as origens portáteis
+  // divergem explicitamente. O clone local carrega o anchor da vítima, então
+  // "anchor decide" aceitava manifesto copiado para repo alheio (clone +
+  // set-url + cp do project.json). O rename legítimo (org/repo renomeado)
+  // chega com o manifesto COMMITADO na história — é o discriminador local
+  // entre os dois casos.
+  if (
+    originProofsDiverge(parsed.data.repository, repository.proof) &&
+    !manifestInGitHistory(rootRealPath, runner)
+  ) {
+    quarantine(
+      'repository-lineage-mismatch',
+      `project manifest was copied out-of-band into a repository with a divergent origin: ${manifestFile}`,
+      `O manifesto não consta no histórico deste repositório e o origin diverge do registrado. Regenere ${PROJECT_MANIFEST_PATH} para este repositório, ou abra o clone correto.`,
     );
   }
   return Object.freeze({
