@@ -1,5 +1,5 @@
 import { PET_STUDIO_SQUAD_ID } from '../../shared/pet-studio';
-import type { Mission, Squad, SquadAgent } from '../../shared/orch-types';
+import type { Mission, SquadAgent } from '../../shared/orch-types';
 import {
   parseReviewFindings,
   type ReviewFindings,
@@ -40,6 +40,15 @@ export type ReviewGateDispatch = {
   readonly sessionId?: string;
   readonly workerId?: string;
   readonly agentCategory?: SquadAgent['category'] | string;
+};
+
+/**
+ * Visão estrutural mínima de squad para o gate — produção passa o Squad
+ * completo; o caminho civil pode passar projeções leves ({agents, id?}).
+ */
+export type ReviewGateSquadView = {
+  readonly id?: string;
+  readonly agents: readonly SquadAgent[];
 };
 
 export type ReviewGateDeliveryAttempt = {
@@ -97,9 +106,14 @@ export function isCivilianViaRapidaReviewExempt(
   return mode === 'livre';
 }
 
-function missionRequiresIndependentReview(
+/**
+ * Exportada para o caminho civil (civilian-delivery-completion) saber se a
+ * missão já é coberta pelo gate de revisão independente — a revisão
+ * automática main-owned só entra onde este gate NÃO cobre.
+ */
+export function missionRequiresIndependentReview(
   mission: Pick<Mission, 'squadId' | 'intentContract' | 'intentState'>,
-  squad: Squad | null | undefined,
+  squad: ReviewGateSquadView | null | undefined,
 ): boolean {
   if (mission.squadId === PET_STUDIO_SQUAD_ID) return false;
   if (squad?.id === PET_STUDIO_SQUAD_ID) return false;
@@ -112,7 +126,7 @@ function missionRequiresIndependentReview(
 
 function categoryOfAgentName(
   name: string | undefined,
-  squad: Squad | null | undefined,
+  squad: ReviewGateSquadView | null | undefined,
 ): SquadAgent['category'] | undefined {
   if (!name) return undefined;
   const hit = squad?.agents.find(
@@ -124,7 +138,7 @@ function categoryOfAgentName(
 function resolveHandoffCategory(
   handoff: ReviewGateHandoff,
   dispatches: readonly ReviewGateDispatch[],
-  squad: Squad | null | undefined,
+  squad: ReviewGateSquadView | null | undefined,
 ): SquadAgent['category'] | 'unknown' {
   const byHandoff = dispatches.find(
     (dispatch) =>
@@ -241,7 +255,7 @@ export function evaluateIndependentReviewGate(input: {
     Mission,
     'id' | 'squadId' | 'intentContract' | 'orchestratorSessionId' | 'intentState'
   >;
-  readonly squad: Squad | null | undefined;
+  readonly squad: ReviewGateSquadView | null | undefined;
   readonly handoffs: readonly ReviewGateHandoff[];
   readonly deliveryAttemptsOf: (
     handoffId: string,

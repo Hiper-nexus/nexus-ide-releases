@@ -6,8 +6,14 @@ import {
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import type { AgentCategory, Handoff, Mission, SquadAgent } from '../../shared/orch-types';
+import { PET_STUDIO_SQUAD_ID } from '../../shared/pet-studio';
 import { missionResultSchema } from '../../shared/mission-engine-contract';
 import type { ProjectExecutionScope } from '../../shared/types';
+import {
+  enforceCivilianAutoReview,
+  type CivilianAutoReviewOutcome,
+} from './civilian-auto-review';
+import { missionRequiresIndependentReview } from './mission-independent-review-gate';
 import { listPaneSnapshots, requestPaneSpawn } from './pane-registry';
 import {
   getProjectDomainStores,
@@ -113,6 +119,7 @@ type LivePane = {
   readonly agentName?: string | null;
   readonly role?: 'orchestrator' | 'worker' | string;
   readonly state?: string | null;
+  readonly sessionId?: string | null;
 };
 
 export interface CivilianDeliveryDependencies {
@@ -129,12 +136,23 @@ export interface CivilianDeliveryDependencies {
     mission: Mission,
     reviewers: readonly SquadAgent[],
   ) => Promise<readonly string[]>;
-  readonly missionEngine?: Pick<MissionEngine, 'completeVerified'>;
-  readonly getSquad?: (squadId: string) => { agents: readonly SquadAgent[] } | null;
+  readonly missionEngine?: Pick<MissionEngine, 'completeVerified' | 'blockUser'>;
+  readonly getSquad?: (squadId: string) => {
+    readonly id?: string;
+    agents: readonly SquadAgent[];
+  } | null;
   /** First-wave curto: senta stories seladas ainda pending/never-started. */
   readonly rerouteUnassigned?: (
     pendingTitles: readonly string[],
   ) => Promise<number | void> | number | void;
+  /** Revisão automática main-owned (injetável para testes). */
+  readonly runAutoReviewGate?: (
+    input: {
+      mission: Mission;
+      scope: ProjectExecutionScope;
+      productFiles: readonly string[];
+    },
+  ) => Promise<CivilianAutoReviewOutcome>;
 }
 
 export type CivilianStores = {
@@ -1009,6 +1027,121 @@ async function defaultSpawnReviewers(
   return spawned;
 }
 
+function liveOrchestratorSessionIdOf(
+  panes: readonly LivePane[],
+  missionId: string,
+): string | null {
+  const hit = panes.find(
+    (pane) =>
+      pane.missionId === missionId &&
+      pane.role === 'orchestrator' &&
+      typeof pane.sessionId === 'string' &&
+      pane.sessionId.length > 0 &&
+      ['busy', 'idle'].includes(pane.state ?? ''),
+  );
+  return hit?.sessionId ?? null;
+}
+
+/**
+ * Etapa 1 do plano dev-sênior: missão civil não fecha sem verificação
+ * independente. Onde o gate de revisão NÃO cobre (civil), o scanner
+ * determinístico main-owned decide ANTES do completeVerified.
+ */
+async function civilianAutoReviewGate(
+  scope: ProjectExecutionScope,
+  stores: CivilianStores,
+  mission: Mission,
+  productFiles: readonly string[],
+  panes: readonly LivePane[],
+  deps: CivilianDeliveryDependencies,
+): Promise<
+  | { readonly action: 'proceed'; readonly extras?: { note?: string; evidenceIds?: readonly string[] } }
+  | { readonly action: 'wait'; readonly spawnedReviewers: readonly string[] }
+  | { readonly action: 'block'; readonly description: string }
+> {
+  const squad = mission.squadId
+    ? ((deps.getSquad ?? getSquad)(mission.squadId) ?? null)
+    : null;
+  // Cobertos pelo gate de revisão independente (guided/legacy/standard+ops):
+  // o fluxo existente de recusa + revisor do roster já cuida deles.
+  if (missionRequiresIndependentReview(mission, squad)) {
+    return { action: 'proceed' };
+  }
+  if (
+    mission.squadId === PET_STUDIO_SQUAD_ID ||
+    squad?.id === PET_STUDIO_SQUAD_ID
+  ) {
+    return { action: 'proceed' };
+  }
+
+  const outcome =
+    (await deps.runAutoReviewGate?.({
+      mission,
+      scope,
+      productFiles,
+    })) ??
+    (await enforceCivilianAutoReview({
+      mission,
+      scope,
+      productFiles,
+      liveOrchestratorSessionId: liveOrchestratorSessionIdOf(
+        panes,
+        mission.id,
+      ),
+    }));
+
+  switch (outcome.kind) {
+    case 'approved':
+      return {
+        action: 'proceed',
+        extras: { note: outcome.note, evidenceIds: [outcome.evidenceId] },
+      };
+    case 'repair-dispatched':
+      return { action: 'wait', spawnedReviewers: [] };
+    case 'blocked':
+      return { action: 'block', description: outcome.description };
+    case 'defer-to-roster-review': {
+      // Scanner indisponível (sem git etc.): revisor do roster assume; sem
+      // revisor no roster, conclui com nota honesta — nunca beco sem saída.
+      const roster = mission.squadId ? squad?.agents ?? [] : [];
+      const reviewers = roster.filter((agent) =>
+        isReviewCategory(agent.category),
+      );
+      if (reviewers.length > 0 && takeReviewerRespawnBudget(mission.id)) {
+        const liveNames = new Set(
+          panes
+            .filter(
+              (pane) =>
+                pane.missionId === mission.id &&
+                pane.role === 'worker' &&
+                ['busy', 'idle', 'spawning'].includes(pane.state ?? ''),
+            )
+            .map((pane) => paneAgentKey(pane.agentName)),
+        );
+        const toSpawn = reviewers
+          .filter((agent) => !liveNames.has(paneAgentKey(agent.agentName)))
+          .map((agent) => remintReviewerForSeat(agent));
+        try {
+          const spawned = await (deps.spawnReviewers?.(scope, mission, toSpawn) ??
+            defaultSpawnReviewers(scope, mission, toSpawn, stores));
+          if (spawned.length > 0) {
+            return { action: 'wait', spawnedReviewers: spawned };
+          }
+        } catch {
+          // spawn falhou → conclui com nota honesta abaixo
+        }
+      }
+      return {
+        action: 'proceed',
+        extras: {
+          note:
+            'Scanner determinístico indisponível (workspace sem repositório git ou leitura falhou); conclusão sem varredura automática.',
+        },
+      };
+    }
+  }
+}
+
 function completeMission(
   scope: ProjectExecutionScope,
   stores: CivilianStores,
@@ -1018,6 +1151,10 @@ function completeMission(
   engine: Pick<MissionEngine, 'completeVerified'>,
   path: CivilianCompletionPath,
   handoffs?: readonly Handoff[],
+  extras?: {
+    readonly note?: string;
+    readonly evidenceIds?: readonly string[];
+  },
 ): boolean {
   const orchestratorNames = new Set(
     (stores.missionPanes?.list(mission.id) ?? [])
@@ -1046,7 +1183,7 @@ function completeMission(
   const result = missionResultSchema.parse({
     outcome: 'success',
     summary,
-    evidenceIds: [],
+    evidenceIds: (extras?.evidenceIds ?? []).slice(0, 64),
     artifactRefs: toArtifactRefs(files),
   });
   const learnings = (
@@ -1060,7 +1197,12 @@ function completeMission(
     expectedIntentState: mission.intentState ?? 'legacy',
     expectedUpdatedAt: mission.updatedAt,
     expectedIntentVersion: mission.intentVersion ?? 0,
-    learnings,
+    learnings:
+      extras?.note
+        ? `${learnings}\n\n## Revisão automática (main-owned)\n${extras.note}`.slice(
+            -65_536,
+          )
+        : learnings,
     result,
   });
   const completed = stores.missions.get(mission.id);
@@ -1310,6 +1452,51 @@ export async function maybeCompleteFastLaneOnDelivery(
     }
   }
 
+  const autoReview = await civilianAutoReviewGate(
+    scope,
+    stores,
+    mission,
+    productFiles,
+    panes,
+    deps,
+  );
+  if (autoReview.action === 'wait') {
+    return {
+      action: inspection.holdForReview ? 'spawn-review' : 'wait',
+      completed: false,
+      path: null,
+      spawnedReviewers: autoReview.spawnedReviewers,
+      markedDoneTaskIds,
+      productFiles,
+    };
+  }
+  if (autoReview.action === 'block') {
+    const engine = deps.missionEngine ?? missionEngineForScope(scope);
+    try {
+      engine.blockUser(scope, {
+        missionId: mission.id,
+        expectedStatus: 'running',
+        expectedIntentState: mission.intentState ?? 'legacy',
+        expectedUpdatedAt: mission.updatedAt,
+        expectedIntentVersion: mission.intentVersion ?? 0,
+        description: autoReview.description,
+      });
+    } catch (error) {
+      console.warn(
+        '[civilian-delivery] bloqueio por revisão automática falhou:',
+        error instanceof Error ? error.message : error,
+      );
+    }
+    return {
+      action: 'refuse-fail-closed',
+      completed: false,
+      path: null,
+      spawnedReviewers: [],
+      markedDoneTaskIds,
+      productFiles,
+    };
+  }
+
   const engine = deps.missionEngine ?? missionEngineForScope(scope);
   let completed = false;
   let refusalSpawned: readonly string[] = [];
@@ -1323,6 +1510,7 @@ export async function maybeCompleteFastLaneOnDelivery(
       engine,
       path ?? 'evidence',
       handoffs,
+      autoReview.extras,
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

@@ -261,6 +261,7 @@ describe('Iniciar 20-story → first-wave + selo + Pronto', () => {
           completeVerified: () => {
             completed = true;
           },
+          blockUser: () => {},
         },
       },
     );

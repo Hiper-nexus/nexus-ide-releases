@@ -32,6 +32,14 @@ vi.mock('./squad-store', () => ({
   getSquad: () => null,
 }));
 
+vi.mock('./civilian-auto-review', () => ({
+  enforceCivilianAutoReview: async () => ({
+    kind: 'approved',
+    evidenceId: 'nexus-auto-review:test-hash',
+    note: 'Scanner determinístico candidate-quality-v1: aprovado (teste).',
+  }),
+}));
+
 import type { Handoff, Mission } from '../../shared/orch-types';
 import { testProjectScope } from './__tests__/scope-fixture';
 import {
@@ -701,6 +709,7 @@ describe('listDeliveredProductFiles', () => {
 
 describe('maybeCompleteFastLaneOnDelivery', () => {
   const completeVerified = vi.fn();
+  const blockUser = vi.fn();
 
   function harness(input: {
     files: string[];
@@ -714,6 +723,8 @@ describe('maybeCompleteFastLaneOnDelivery', () => {
     intentState?: Mission['intentState'];
     description?: string;
     missionId?: string;
+    missionOverrides?: Partial<Mission>;
+    depsExtras?: Record<string, unknown>;
   }) {
     const marked: string[] = [];
     const liveMission = mission({
@@ -721,6 +732,7 @@ describe('maybeCompleteFastLaneOnDelivery', () => {
       status: input.missionStatus ?? 'running',
       intentState: input.intentState ?? 'executing',
       description: input.description ?? mission().description,
+      ...input.missionOverrides,
     });
     const stores = {
       missions: {
@@ -782,7 +794,7 @@ describe('maybeCompleteFastLaneOnDelivery', () => {
           listProductFiles: () => input.files,
           now: () => input.now ?? 10_000,
           spawnReviewers: async () => input.spawn ?? [],
-          missionEngine: { completeVerified },
+          missionEngine: { completeVerified, blockUser },
           getSquad: () => ({
             agents: input.planned.map((row) => ({
               id: row.agent.id,
@@ -791,6 +803,7 @@ describe('maybeCompleteFastLaneOnDelivery', () => {
               cli: 'codex',
             })),
           }),
+          ...(input.depsExtras ?? {}),
         }),
     };
   }
@@ -1257,5 +1270,164 @@ describe('maybeCompleteFastLaneOnDelivery', () => {
     expect(result.completed).toBe(false);
     expect(result.action).toBe('refuse-empty');
     expect(completeVerified).not.toHaveBeenCalled();
+  });
+
+  describe('revisão automática civil (Etapa 1)', () => {
+  const civilianContract = {
+    version: 1 as const,
+    source: 'typed' as const,
+    goal: 'criar uma landing simples',
+    acceptanceCriteria: [] as string[],
+    risk: 'normal' as const,
+    executionMode: 'autopilot' as const,
+    orchestrationMode: 'livre' as const,
+  } as unknown as Mission['intentContract'];
+
+  function boardDoneHarness(
+    extras: {
+      missionOverrides?: Record<string, unknown>;
+      depsExtras?: Record<string, unknown>;
+      panes?: Parameters<typeof inspectCivilianDelivery>[0]['panes'];
+    } = {},
+  ) {
+    const planned = storyPlan(2);
+    return harness({
+      missionId: 'mission-civil-review',
+      files: ['server.js'],
+      handoffs: [],
+      tasks: planned.map((row) =>
+        task({ id: row.taskId, title: row.agent.agentName, status: 'done' }),
+      ),
+      planned,
+      panes: extras.panes ?? [],
+      missionOverrides: extras.missionOverrides as Partial<Mission>,
+      depsExtras: extras.depsExtras,
+    });
+  }
+
+  it('civil aprovada pelo scanner → completa com nota e evidência main-owned', async () => {
+    completeVerified.mockClear();
+    blockUser.mockClear();
+    const runAutoReviewGate = vi.fn(async () => ({
+      kind: 'approved' as const,
+      evidenceId: 'nexus-auto-review:abc123',
+      note: 'Scanner determinístico candidate-quality-v1: aprovado.',
+    }));
+    const { reconcile } = boardDoneHarness({
+      missionOverrides: { intentContract: civilianContract },
+      depsExtras: { runAutoReviewGate },
+    });
+
+    const result = await reconcile();
+    expect(runAutoReviewGate).toHaveBeenCalledOnce();
+    expect(result.completed).toBe(true);
+    expect(blockUser).not.toHaveBeenCalled();
+    const call = completeVerified.mock.calls[0]![1];
+    expect(call.learnings).toContain('Revisão automática (main-owned)');
+    expect(call.result.evidenceIds).toContain('nexus-auto-review:abc123');
+  });
+
+  it('civil reprovada sem saída de reparo → bloqueia VISÍVEL com resumo simples', async () => {
+    completeVerified.mockClear();
+    blockUser.mockClear();
+    const description =
+      'A revisão automática encontrou 1 problema grave no código entregue.';
+    const runAutoReviewGate = vi.fn(async () => ({
+      kind: 'blocked' as const,
+      description,
+    }));
+    const { reconcile } = boardDoneHarness({
+      missionOverrides: { intentContract: civilianContract },
+      depsExtras: { runAutoReviewGate },
+    });
+
+    const result = await reconcile();
+    expect(result.completed).toBe(false);
+    expect(result.action).toBe('refuse-fail-closed');
+    expect(completeVerified).not.toHaveBeenCalled();
+    expect(blockUser).toHaveBeenCalledOnce();
+    expect(blockUser.mock.calls[0]![1]!.description).toBe(description);
+  });
+
+  it('civil com reparo despachado ao Maestro → espera, não completa', async () => {
+    completeVerified.mockClear();
+    blockUser.mockClear();
+    const runAutoReviewGate = vi.fn(async () => ({
+      kind: 'repair-dispatched' as const,
+    }));
+    const { reconcile } = boardDoneHarness({
+      missionOverrides: { intentContract: civilianContract },
+      depsExtras: { runAutoReviewGate },
+    });
+
+    const result = await reconcile();
+    expect(result.completed).toBe(false);
+    expect(result.action).toBe('wait');
+    expect(completeVerified).not.toHaveBeenCalled();
+    expect(blockUser).not.toHaveBeenCalled();
+  });
+
+  it('scanner indisponível + revisor no roster → abre revisor e espera', async () => {
+    completeVerified.mockClear();
+    blockUser.mockClear();
+    const planned = storyPlan(2);
+    const spawnReviewers = vi.fn(async () => ['QA']);
+    const { reconcile } = harness({
+      missionId: 'mission-civil-defer',
+      files: ['server.js'],
+      handoffs: [],
+      tasks: planned.map((row) =>
+        task({ id: row.taskId, title: row.agent.agentName, status: 'done' }),
+      ),
+      planned: [
+        ...planned,
+        {
+          taskId: 't-qa',
+          agentCategory: 'reviewer' as const,
+          agent: { id: 'qa', agentName: 'QA', category: 'reviewer' as const },
+        },
+      ],
+      missionOverrides: { intentContract: civilianContract },
+      depsExtras: {
+        spawnReviewers,
+        runAutoReviewGate: async () => ({
+          kind: 'defer-to-roster-review' as const,
+        }),
+      },
+    });
+
+    const result = await reconcile();
+    expect(spawnReviewers).toHaveBeenCalledOnce();
+    expect(result.action).toBe('wait');
+    expect(result.spawnedReviewers).toEqual(['QA']);
+    expect(completeVerified).not.toHaveBeenCalled();
+  });
+
+  it('missão guiada (gate próprio) NÃO passa pela revisão automática — sem gate duplo', async () => {
+    completeVerified.mockClear();
+    blockUser.mockClear();
+    const runAutoReviewGate = vi.fn();
+    const planned = storyPlan(2);
+    const { reconcile } = harness({
+      missionId: 'mission-guided-board',
+      files: ['server.js'],
+      handoffs: [],
+      tasks: planned.map((row) =>
+        task({ id: row.taskId, title: row.agent.agentName, status: 'done' }),
+      ),
+      planned,
+      missionOverrides: {
+        intentContract: {
+          ...civilianContract,
+          orchestrationMode: 'guided',
+        } as Mission['intentContract'],
+      },
+      depsExtras: { runAutoReviewGate },
+    });
+
+    const result = await reconcile();
+    expect(runAutoReviewGate).not.toHaveBeenCalled();
+    expect(result.completed).toBe(true);
+  });
   });
 });
