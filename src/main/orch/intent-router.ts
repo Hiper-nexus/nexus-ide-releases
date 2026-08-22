@@ -2,9 +2,12 @@
  * Onda 3 — Router de intenção (o "cérebro barato" antes do motor).
  *
  * Regra de ouro (dossiê Overclock 21/08): inteligência decide O QUÊ,
- * mecânica garante QUE termina. Este módulo só CLASSIFICA e propõe rota;
- * fechamento/settlement/watchdogs continuam main-owned. Fail-open total:
- * sem key, timeout ou JSON inválido devolve null e o fluxo atual segue.
+ * mecânica garante QUE termina. Este módulo CLASSIFICA, propõe rota e
+ * RESPONDE perguntas triviais; fechamento/settlement/watchdogs continuam
+ * main-owned. Dois tiers: Tier 0 determinístico (0ms) e Tier 1 na cadeia de
+ * provedores baratos já configurados (deepseek → glm → qwen). Fail-open
+ * total: sem key, timeout ou JSON inválido devolve null e o fluxo atual
+ * segue — o router nunca pode derrubar o caminho de missão que já existia.
  */
 import { loadLauncherProviderKey } from '../adapters/launcher-provider-manager';
 import { hasRuntimeKey } from '../persistence/provider-config-store';
@@ -47,7 +50,8 @@ export function extractQuestion(objective: string): string | null {
   );
 }
 
-export type DeepSeekDeps = {
+/** Dependências de rede/key do router — injetáveis para teste. */
+export type RouterDeps = {
   readonly fetchImpl?: typeof fetch;
   readonly apiKey?: string | null;
   readonly model?: string;
@@ -61,14 +65,17 @@ const ROUTER_SYSTEM_PROMPT = [
   '{"kind":"mission-work","skills":string[]}.',
   'direct-answer: pergunta trivial respondível sem arquivos/panes.',
   'mission-question: missão cujo trabalho é perguntar aos panes e consolidar.',
-  'mission-work: tarefa real de código/design/produto; skills do catálogo Nexus',
-  '(ex.: oc-design-dna, oc-site-premium, oc-game-build). Sem inventar skills.',
+  'mission-work: tarefa real de código/design/produto; skills SOMENTE do',
+  'vocabulário Nexus: impeccable e dembrandt (UI/design), archify',
+  '(diagramas), superpowers (planejamento/execução), bridgesecurity',
+  '(segurança), bridgeward (web não confiável), nexus-visual-media (mídia).',
+  'Sem inventar skills; na dúvida, devolva skills vazio.',
 ].join('\n');
 
 /** Tier 1: classifica com LLM barata; qualquer falha ⇒ null (fail-open). */
 export async function routeWithDeepSeek(
   objective: string,
-  deps: DeepSeekDeps = {},
+  deps: RouterDeps = {},
 ): Promise<IntentRoute | null> {
   const apiKey = deps.apiKey ?? null;
   if (!apiKey) return null;
@@ -144,18 +151,231 @@ export function parseRouteJson(raw: string): IntentRoute | null {
 }
 
 /**
- * Ponto único de decisão: Tier 0 determinístico primeiro (0ms), Tier 1
- * DeepSeek para o que heurística não resolve. Sem key → só Tier 0.
+ * Ponto único de decisão: Tier 0 determinístico primeiro (0ms), Tier 1 na
+ * PRIMEIRA key barata configurada (deepseek → glm → qwen) para o que a
+ * heurística não resolve. Sem nenhuma key → só Tier 0. Fail-open total:
+ * classificador fora do ar nunca derruba o fluxo de missão que já existia.
  */
 export async function routeIntent(
   objective: string,
-  deps: DeepSeekDeps & { readonly hasKey?: boolean } = {},
+  deps: RouterDeps & {
+    readonly hasKeyFor?: (providerId: string) => boolean;
+    readonly loadKeyFor?: (providerId: string) => string | null;
+  } = {},
 ): Promise<IntentRoute | null> {
   if (looksLikePureQuestion(objective)) {
     return { kind: 'direct-answer', question: extractQuestion(objective) ?? objective };
   }
-  const hasKey = deps.hasKey ?? hasRuntimeKey('deepseek');
-  if (!hasKey) return null;
-  const apiKey = deps.apiKey ?? loadLauncherProviderKey('deepseek');
-  return routeWithDeepSeek(objective, { ...deps, apiKey });
+  const hasKeyFor = deps.hasKeyFor ?? hasRuntimeKey;
+  const loadKeyFor = deps.loadKeyFor ?? loadLauncherProviderKey;
+  for (const provider of ROUTER_PROVIDER_CHAIN) {
+    if (!hasKeyFor(provider.id)) continue;
+    const apiKey = deps.apiKey ?? loadKeyFor(provider.id);
+    if (!apiKey) continue;
+    const route = await classifyWithProvider(provider, objective, apiKey, deps);
+    if (route) return route;
+  }
+  return null;
+}
+
+/** Extrai o objeto JSON mesmo se o modelo embrulhar em prosa/markdown. */
+function extractJsonObject(text: string): string | null {
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start < 0 || end <= start) return null;
+  return text.slice(start, end + 1);
+}
+
+/**
+ * Classifica com um provedor da cadeia. DeepSeek fala OpenAI (com
+ * response_format); glm/qwen falam Anthropic e dependem de extração
+ * defensiva — parseRouteJson continua fail-closed com o conteúdo.
+ */
+async function classifyWithProvider(
+  provider: RouterProvider,
+  objective: string,
+  apiKey: string,
+  deps: RouterDeps,
+): Promise<IntentRoute | null> {
+  if (provider.style === 'openai') {
+    return routeWithDeepSeek(objective, {
+      ...deps,
+      apiKey,
+      model: provider.model,
+    });
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), deps.timeoutMs ?? 6_000);
+  try {
+    const response = await (deps.fetchImpl ?? fetch)(provider.endpoint, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: provider.model,
+        system: ROUTER_SYSTEM_PROMPT,
+        messages: [{ role: 'user', content: objective }],
+        max_tokens: 220,
+        temperature: 0,
+      }),
+      signal: controller.signal,
+    });
+    if (!response.ok) return null;
+    const payload = (await response.json()) as {
+      content?: { type?: string; text?: string }[];
+    };
+    const text = (payload.content ?? [])
+      .filter((block) => block.type === 'text')
+      .map((block) => block.text ?? '')
+      .join('');
+    const json = extractJsonObject(text);
+    return json ? parseRouteJson(json) : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/* ------------------------------------------------------------------------- */
+/* Resposta direta — o router CLASSIFICA; quem responde é o provedor barato   */
+/* já configurado pelo operador. Fail-open como o resto do módulo: qualquer   */
+/* falha devolve null e o fluxo normal de missão segue.                        */
+/* ------------------------------------------------------------------------- */
+
+const ANSWER_SYSTEM_PROMPT = [
+  'Você responde a pergunta do usuário de forma direta e curta, em',
+  'português. Sem preâmbulo, sem disclaimers, sem oferecer passos extras.',
+  'Se a pergunta exigir arquivos ou ações no computador, responda apenas',
+  'com o JSON {"unanswerable":true}.',
+].join('\n');
+
+type RouterProvider = {
+  readonly id: string;
+  readonly style: 'openai' | 'anthropic';
+  readonly endpoint: string;
+  readonly model: string;
+};
+
+/**
+ * Cadeia de provedores baratos, na ordem de custo — usada tanto para
+ * CLASSIFICAR (Tier 1) quanto para RESPONDER perguntas diretas. As chaves
+ * vêm do mesmo vault/launcher que o operador já configurou — nenhuma
+ * credencial nova é pedida. Endpoints espelham os baseUrl de
+ * UPSTREAM_PROVIDERS (launcher-provider-manager): deepseek fala OpenAI,
+ * glm/qwen falam Anthropic.
+ */
+const ROUTER_PROVIDER_CHAIN: readonly RouterProvider[] = [
+  {
+    id: 'deepseek',
+    style: 'openai',
+    endpoint: 'https://api.deepseek.com/chat/completions',
+    model: 'deepseek-chat',
+  },
+  {
+    id: 'glm',
+    style: 'anthropic',
+    endpoint: 'https://api.z.ai/api/anthropic/v1/messages',
+    model: 'glm-4.7',
+  },
+  {
+    id: 'qwen',
+    style: 'anthropic',
+    endpoint: 'https://dashscope.aliyuncs.com/api/anthropic/v1/messages',
+    model: 'qwen3-coder',
+  },
+];
+
+async function answerWithProvider(
+  provider: RouterProvider,
+  question: string,
+  apiKey: string,
+  deps: RouterDeps,
+): Promise<string | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), deps.timeoutMs ?? 10_000);
+  try {
+    const response = await (deps.fetchImpl ?? fetch)(provider.endpoint, {
+      method: 'POST',
+      headers:
+        provider.style === 'openai'
+          ? {
+              'content-type': 'application/json',
+              authorization: `Bearer ${apiKey}`,
+            }
+          : {
+              'content-type': 'application/json',
+              'x-api-key': apiKey,
+              'anthropic-version': '2023-06-01',
+            },
+      body: JSON.stringify(
+        provider.style === 'openai'
+          ? {
+              model: provider.model,
+              messages: [
+                { role: 'system', content: ANSWER_SYSTEM_PROMPT },
+                { role: 'user', content: question },
+              ],
+              max_tokens: 300,
+              temperature: 0,
+            }
+          : {
+              model: provider.model,
+              system: ANSWER_SYSTEM_PROMPT,
+              messages: [{ role: 'user', content: question }],
+              max_tokens: 300,
+              temperature: 0,
+            },
+      ),
+      signal: controller.signal,
+    });
+    if (!response.ok) return null;
+    const payload = (await response.json()) as {
+      choices?: { message?: { content?: string } }[];
+      content?: { type?: string; text?: string }[];
+    };
+    const text =
+      provider.style === 'openai'
+        ? (payload.choices?.[0]?.message?.content ?? '')
+        : (payload.content ?? [])
+            .filter((block) => block.type === 'text')
+            .map((block) => block.text ?? '')
+            .join('');
+    const answer = text.trim();
+    if (!answer || answer.includes('"unanswerable"')) return null;
+    return answer;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Responde uma pergunta trivial sem criar missão, squad ou pane. Primeiro
+ * provedor com key configurada que responder ganha; sem key/falha ⇒ null e
+ * quem chamou segue o fluxo normal (fail-open, como routeIntent).
+ */
+export async function answerDirectQuestion(
+  question: string,
+  deps: RouterDeps & {
+    readonly hasKeyFor?: (providerId: string) => boolean;
+    readonly loadKeyFor?: (providerId: string) => string | null;
+  } = {},
+): Promise<string | null> {
+  const text = question.trim();
+  if (!text) return null;
+  const hasKeyFor = deps.hasKeyFor ?? hasRuntimeKey;
+  const loadKeyFor = deps.loadKeyFor ?? loadLauncherProviderKey;
+  for (const provider of ROUTER_PROVIDER_CHAIN) {
+    if (!hasKeyFor(provider.id)) continue;
+    const apiKey = deps.apiKey ?? loadKeyFor(provider.id);
+    if (!apiKey) continue;
+    const answer = await answerWithProvider(provider, text, apiKey, deps);
+    if (answer) return answer;
+  }
+  return null;
 }

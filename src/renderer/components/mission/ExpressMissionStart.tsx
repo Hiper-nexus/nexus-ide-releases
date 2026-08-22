@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { MISSION_INTENT_GOAL_MAX_CHARS } from '../../../shared/mission-intent';
 import type { WorkspaceInfo } from '../../../shared/workspace-types';
 import type { MissionSetupDraft } from '../../state/mission-setup-store';
+import type { DirectAnswer } from '../../lib/direct-answer';
 import { MissionAttachmentPicker } from './MissionAttachmentPicker';
 
 interface ExpressMissionStartProps {
@@ -18,6 +19,11 @@ interface ExpressMissionStartProps {
   inventoryLoading: boolean;
   busy: boolean;
   error: string | null;
+  /** Pergunta trivial já respondida pelo router — nenhuma missão nasceu. */
+  directAnswer: DirectAnswer | null;
+  onDismissDirectAnswer(): void;
+  /** O operador insiste que aquilo é missão — bypass de 1 clique do router. */
+  onStartMissionAnyway(): void;
   onPickWorkspace(): void;
   onObjectiveChange(objective: string): void;
   onContextPathsChange(paths: readonly string[]): void;
@@ -42,6 +48,9 @@ export function ExpressMissionStart({
   inventoryLoading,
   busy,
   error,
+  directAnswer,
+  onDismissDirectAnswer,
+  onStartMissionAnyway,
   onPickWorkspace,
   onObjectiveChange,
   onContextPathsChange,
@@ -181,6 +190,42 @@ export function ExpressMissionStart({
           )
         )}
       </div>
+
+      {directAnswer && (
+        <div
+          className="mission-setup__direct-answer"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          <p className="mission-setup__direct-answer-kicker">
+            Resposta direta — nenhuma missão foi criada
+          </p>
+          <p className="mission-setup__direct-answer-question">
+            {directAnswer.question}
+          </p>
+          <p className="mission-setup__direct-answer-body">
+            {directAnswer.answer}
+          </p>
+          <div className="mission-setup__direct-answer-actions">
+            <button
+              type="button"
+              className="mission-setup__button mission-setup__button--secondary"
+              onClick={onDismissDirectAnswer}
+            >
+              Entendido
+            </button>
+            <button
+              type="button"
+              className="mission-setup__button mission-setup__button--quiet"
+              onClick={onStartMissionAnyway}
+              disabled={busy}
+            >
+              Criar missão mesmo assim
+            </button>
+          </div>
+        </div>
+      )}
 
       {error && (
         <div

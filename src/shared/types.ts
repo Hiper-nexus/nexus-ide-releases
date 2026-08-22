@@ -544,6 +544,7 @@ export interface NexusApi {
   mission: {
     prepare(request: MissionPrepareRequest): Promise<MissionReview>;
     routeIntent(objective: string): Promise<unknown>;
+    answerDirect(question: string): Promise<string | null>;
     start(input: {
       missionId: string;
       reviewSha256: string;

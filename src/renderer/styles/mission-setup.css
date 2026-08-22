@@ -1316,6 +1316,43 @@
   scroll-margin-block: var(--space-5);
 }
 
+/* Resposta direta do router (Onda 3) — sucesso inline, não é erro. */
+.mission-setup__direct-answer {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  max-width: 760px;
+  margin: var(--space-5) 0 0;
+  padding: var(--space-4);
+  border: 1px solid color-mix(in srgb, var(--accent, var(--border)) 38%, var(--border));
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised, transparent);
+  color: var(--text);
+  line-height: 1.5;
+}
+
+.mission-setup__direct-answer-kicker {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.mission-setup__direct-answer-question {
+  font-weight: 600;
+}
+
+.mission-setup__direct-answer-body {
+  white-space: pre-wrap;
+}
+
+.mission-setup__direct-answer-actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
 .mission-setup__error-summary:focus-visible {
   outline-offset: var(--space-1);
 }

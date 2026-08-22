@@ -20,6 +20,8 @@ export const ORCH_CHANNELS = {
   missionPrepare: 'orch:mission.prepare',
   /** Router de intenção (Onda 3): classifica objetivo antes do prepare. */
   intentRoute: 'orch:intent.route',
+  /** Resposta direta (Onda 3): responde pergunta trivial sem criar missão. */
+  intentAnswer: 'orch:intent.answer',
   missionStart: 'orch:mission.start',
   missionCommand: 'orch:mission.command',
   missionSnapshot: 'orch:mission.snapshot',

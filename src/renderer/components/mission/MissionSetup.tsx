@@ -14,6 +14,10 @@ import {
   type OrchSettings,
 } from '../../../shared/settings-types';
 import { describeWorkspaceOpenError } from '../../lib/workspace-open-error';
+import {
+  requestDirectAnswer,
+  type DirectAnswer,
+} from '../../lib/direct-answer';
 import { missionRuntimeReadiness } from '../../orch/mission-runtime-readiness';
 import {
   isExactPetStudioEntryContext,
@@ -246,6 +250,10 @@ export function MissionSetup() {
   );
   const [expressError, setExpressError] = useState<string | null>(null);
   const expressBusyRef = useRef(false);
+  /** Pergunta trivial respondida inline pelo router — nenhuma missão nasceu. */
+  const [directAnswer, setDirectAnswer] = useState<DirectAnswer | null>(null);
+  /** Bypass de 1 clique: "criar missão mesmo assim" não reclassifica. */
+  const bypassDirectAnswerRef = useRef(false);
 
   const pickingWorkspaceRef = useRef(false);
   const authorityGenerationRef = useRef(0);
@@ -576,6 +584,9 @@ export function MissionSetup() {
   const changeObjective = (objective: string): void => {
     if (objective === draft.objective) return;
     setExpressError(null);
+    // Objetivo novo invalida a resposta inline — ela era da pergunta anterior.
+    setDirectAnswer(null);
+    bypassDirectAnswerRef.current = false;
     const currentFingerprint = missionRosterFingerprint(draft.roster);
     if (
       draft.roster.length > 0 &&
@@ -824,6 +835,22 @@ export function MissionSetup() {
       setExpressError('Descreva o que você quer que a missão entregue.');
       return;
     }
+    // Router de intenção (Onda 3): pergunta pura é respondida inline por um
+    // provedor barato já configurado — nenhuma missão, squad ou pane nasce
+    // para "quanto é 1+1?". Fail-open: sem resposta, o fluxo normal segue.
+    if (!bypassDirectAnswerRef.current) {
+      expressBusyRef.current = true;
+      setExpressStatus('loading');
+      setExpressError(null);
+      const direct = await requestDirectAnswer(setupState.draft.objective);
+      expressBusyRef.current = false;
+      setExpressStatus('idle');
+      if (direct) {
+        setDirectAnswer(direct);
+        return;
+      }
+    }
+    bypassDirectAnswerRef.current = false;
     if (!inventoryReadyForReview) {
       setExpressError(
         inventory.status === 'loading'
@@ -1043,6 +1070,13 @@ export function MissionSetup() {
             inventoryLoading={inventory.status === 'loading'}
             busy={expressStatus === 'loading'}
             error={expressError}
+            directAnswer={directAnswer}
+            onDismissDirectAnswer={() => setDirectAnswer(null)}
+            onStartMissionAnyway={() => {
+              bypassDirectAnswerRef.current = true;
+              setDirectAnswer(null);
+              void startExpress();
+            }}
             onPickWorkspace={() => void pickProjectFolder()}
             onObjectiveChange={changeObjective}
             onContextPathsChange={setContextPaths}

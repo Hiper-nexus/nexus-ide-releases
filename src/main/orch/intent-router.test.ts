@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  answerDirectQuestion,
   extractQuestion,
   looksLikePureQuestion,
   parseRouteJson,
@@ -108,25 +109,145 @@ describe('routeWithDeepSeek / routeIntent — fail-open', () => {
   });
 
   it('routeIntent: Tier 0 ganha antes de qualquer rede', async () => {
-    expect(await routeIntent('quanto é 1+1?', { hasKey: true })).toEqual({
+    expect(await routeIntent('quanto é 1+1?', { hasKeyFor: () => true })).toEqual({
       kind: 'direct-answer',
       question: 'quanto é 1+1?',
     });
   });
 
-  it('routeIntent: sem key e fora do Tier 0 ⇒ null (fluxo atual segue)', async () => {
-    expect(await routeIntent('crie uma landing page', { hasKey: false })).toBeNull();
+  it('routeIntent: sem nenhuma key e fora do Tier 0 ⇒ null (fluxo atual segue)', async () => {
+    expect(
+      await routeIntent('crie uma landing page', { hasKeyFor: () => false }),
+    ).toBeNull();
   });
 
   it('routeIntent: nunca usa key do ambiente em teste — fetch injetado que falha ⇒ null', async () => {
     expect(
       await routeIntent('crie uma landing page', {
-        hasKey: true,
-        apiKey: 'test-key',
+        hasKeyFor: () => true,
+        loadKeyFor: () => 'test-key',
         fetchImpl: (async () => {
           throw new Error('rede proibida em teste');
         }) as unknown as typeof fetch,
       }),
     ).toBeNull();
+  });
+
+  it('routeIntent: Tier 1 classifica via anthropic (glm) extraindo JSON de prosa', async () => {
+    const seen: string[] = [];
+    const route = await routeIntent('me explique o que é um deadlock', {
+      hasKeyFor: (id) => id === 'glm',
+      loadKeyFor: () => 'k',
+      fetchImpl: (async (url: any) => {
+        seen.push(String(url));
+        return {
+          ok: true,
+          json: async () => ({
+            content: [
+              {
+                type: 'text',
+                text: 'Claro! {"kind":"direct-answer","question":"me explique o que é um deadlock"} aqui está.',
+              },
+            ],
+          }),
+        };
+      }) as unknown as typeof fetch,
+    });
+    expect(route).toEqual({
+      kind: 'direct-answer',
+      question: 'me explique o que é um deadlock',
+    });
+    expect(seen).toEqual(['https://api.z.ai/api/anthropic/v1/messages']);
+  });
+
+  it('routeIntent: primeiro provedor fora do ar cai para o próximo da cadeia', async () => {
+    let calls = 0;
+    const route = await routeIntent('crie uma landing page', {
+      hasKeyFor: () => true,
+      loadKeyFor: () => 'k',
+      fetchImpl: (async () => {
+        calls += 1;
+        if (calls === 1) return { ok: false, json: async () => ({}) };
+        return {
+          ok: true,
+          json: async () => ({
+            content: [
+              { type: 'text', text: '{"kind":"mission-work","skills":[]}' },
+            ],
+          }),
+        };
+      }) as unknown as typeof fetch,
+    });
+    // deepseek fora (HTTP erro) → glm responde mission-work.
+    expect(route).toEqual({ kind: 'mission-work', skills: [] });
+    expect(calls).toBe(2);
+  });
+});
+
+describe('answerDirectQuestion — responde sem missão, fail-open total', () => {
+  it('sem nenhuma key configurada ⇒ null sem chamar rede', async () => {
+    let called = false;
+    const answer = await answerDirectQuestion('quanto é 1+1?', {
+      hasKeyFor: () => false,
+      fetchImpl: (async () => {
+        called = true;
+        throw new Error('nunca');
+      }) as unknown as typeof fetch,
+    });
+    expect(answer).toBeNull();
+    expect(called).toBe(false);
+  });
+
+  it('primeiro provedor com key que responde ganha (deepseek, estilo OpenAI)', async () => {
+    const seen: string[] = [];
+    const answer = await answerDirectQuestion('quanto é 1+1?', {
+      hasKeyFor: (id) => id === 'deepseek',
+      loadKeyFor: () => 'k',
+      fetchImpl: (async (url: any) => {
+        seen.push(String(url));
+        return {
+          ok: true,
+          json: async () => ({
+            choices: [{ message: { content: '2' } }],
+          }),
+        };
+      }) as unknown as typeof fetch,
+    });
+    expect(answer).toBe('2');
+    expect(seen).toEqual(['https://api.deepseek.com/chat/completions']);
+  });
+
+  it('cai para o próximo provedor quando o primeiro falha (glm, estilo Anthropic)', async () => {
+    const seen: string[] = [];
+    const answer = await answerDirectQuestion('quanto é 1+1?', {
+      hasKeyFor: () => true,
+      loadKeyFor: () => 'k',
+      fetchImpl: (async (url: any) => {
+        seen.push(String(url));
+        if (seen.length === 1) return { ok: false, json: async () => ({}) };
+        return {
+          ok: true,
+          json: async () => ({ content: [{ type: 'text', text: '2' }] }),
+        };
+      }) as unknown as typeof fetch,
+    });
+    expect(answer).toBe('2');
+    expect(seen).toHaveLength(2);
+  });
+
+  it('resposta "unanswerable" ou vazia não é resposta — segue o fluxo normal', async () => {
+    expect(
+      await answerDirectQuestion('apaga minha pasta', {
+        hasKeyFor: () => true,
+        loadKeyFor: () => 'k',
+        fetchImpl: (async () => ({
+          ok: true,
+          json: async () => ({
+            choices: [{ message: { content: '{"unanswerable":true}' } }],
+          }),
+        })) as unknown as typeof fetch,
+      }),
+    ).toBeNull();
+    expect(await answerDirectQuestion('   ')).toBeNull();
   });
 });

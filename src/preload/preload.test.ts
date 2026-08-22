@@ -208,11 +208,13 @@ describe('canonical mission preload bridge', () => {
     const api = await loadPreloadApi();
 
     expect(Object.keys(api.mission).sort()).toEqual([
+      'answerDirect',
       'command',
       'list',
       'listForWorkspace',
       'onChanged',
       'prepare',
+      'routeIntent',
       'snapshot',
       'start',
     ]);
