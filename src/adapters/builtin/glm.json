@@ -102,6 +102,15 @@
       ],
       "default": ""
     },
+    "effort": {
+      "arg": "--effort ",
+      "levels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ]
+    },
     "verbose": "--verbose"
   }
 }
