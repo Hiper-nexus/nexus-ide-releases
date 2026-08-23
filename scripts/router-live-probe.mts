@@ -30,7 +30,7 @@ const MISSIONS = [
   // [objetivo, classificação ESPERADA]
   ['quanto é 17% de 340?', 'direct-answer'],
   ['qual a diferença entre MySQL e PostgreSQL?', 'direct-answer'],
-  ['pergunte aos panes quem é melhor: react ou vue', 'mission-question'],
+  ['pergunte aos panes quem é melhor: react ou vue', 'mission-question (guarda determinística ⇒ null)'],
   ['crie uma landing page para meu buffet com formulário de contato', 'mission-work'],
   ['construa um ecommerce completo com carrinho e pagamento', 'mission-work'],
   ['corrija o bug do login que dá erro 500', 'mission-work'],
@@ -41,7 +41,8 @@ console.log('\n=== CLASSIFICAÇÃO AO VIVO (routeIntent) ===');
 for (const [objective, esperado] of MISSIONS) {
   const route = await routeIntent(objective);
   const got = route?.kind ?? 'null→vira missão normal';
-  const ok = got === esperado ? 'OK ' : 'DIF';
+  const esperadoOk = got === esperado || (esperado.startsWith('mission-question') && got === 'null→vira missão normal');
+  const ok = esperadoOk ? 'OK ' : 'DIF';
   console.log(`[${ok}] "${objective.slice(0, 52)}"`);
   console.log(`       esperado=${esperado} · router=${got}${
     route?.kind === 'mission-work' && route.skills.length ? ` skills=[${route.skills.join(',')}]` : ''

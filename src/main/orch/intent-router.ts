@@ -11,6 +11,7 @@
  */
 import { loadLauncherProviderKey } from '../adapters/launcher-provider-manager';
 import { hasRuntimeKey } from '../persistence/provider-config-store';
+import { isPaneMetaTask } from './mission-fast-lane';
 
 export type IntentRoute =
   | { readonly kind: 'direct-answer'; readonly question: string }
@@ -155,7 +156,7 @@ export function parseRouteJson(raw: string): IntentRoute | null {
     const skills = Array.isArray(route.skills)
       ? route.skills.filter(
           (skill): skill is string =>
-            typeof skill === 'string' && /^[a-z0-9-]{1,64}$/iu.test(skill),
+            typeof skill === 'string' && /^[a-z0-9-]{1,64}$/u.test(skill),
         )
       : [];
     return { kind: 'mission-work', skills };
@@ -176,6 +177,11 @@ export async function routeIntent(
     readonly loadKeyFor?: (providerId: string) => string | null;
   } = {},
 ): Promise<IntentRoute | null> {
+  // Guarda determinística ANTES de tudo: meta-de-pane ("pergunte aos panes…")
+  // nunca é resposta direta — o operador pediu OS PANES, não uma resposta.
+  // Com typo de ditado ("oergunta aos panes quwnto e 1+1") o Tier 0/1 pode
+  // errar; este predicado (mesmo do kickoff) é a autoridade. Null = missão.
+  if (isPaneMetaTask(objective)) return null;
   if (looksLikePureQuestion(objective)) {
     return { kind: 'direct-answer', question: extractQuestion(objective) ?? objective };
   }
