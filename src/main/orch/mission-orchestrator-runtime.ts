@@ -301,11 +301,25 @@ export function resolveProductionMissionOrchestratorRuntime(
     if (!readiness.ready) throw new Error(readiness.reason);
   }
 
+  // Cap de effort (doutrina "selo vence, cap protege"): sem selo do roster,
+  // o orquestrador NÃO herda a config global da CLI — o operador com
+  // xhigh/max no ~/.claude queimava quota em missão básica sem ter pedido
+  // nada para ESTA missão. 'medium' é o teto do default; selo explícito do
+  // roster (TeamStep/painel) sempre vence.
+  const sealedEffort = runtimeComesFromRoster
+    ? present(orchestrator.effort)
+    : undefined;
+  const defaultCappedEffort = adapter.control?.effort?.levels.includes(
+    "medium",
+  )
+    ? "medium"
+    : undefined;
+
   return canonicalMissionOrchestratorRuntime({
     adapterId,
     model,
     accountId: account?.id,
-    effort: runtimeComesFromRoster ? orchestrator.effort : undefined,
+    effort: sealedEffort ?? defaultCappedEffort,
     readOnly: false,
     nativeReadOnly: !operatorChoice,
   });

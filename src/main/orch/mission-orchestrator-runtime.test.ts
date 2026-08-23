@@ -211,6 +211,67 @@ describe('mission orchestrator runtime authority', () => {
     });
   });
 
+  it('cap de effort: sem selo do roster o orquestrador recebe medium, nunca a config global da CLI', () => {
+    const effortAdapter = {
+      ...customAdapter,
+      control: { effort: { arg: '--effort ', levels: ['low', 'medium', 'high', 'xhigh'] } },
+    };
+    const deps = productionDeps('operator-choice');
+    const capped = {
+      ...deps,
+      getAdapter: () => effortAdapter,
+      listAdapterInfos: () =>
+        deps.listAdapterInfos().map((info) => ({
+          ...info,
+          capabilities: { ...info.capabilities },
+        })),
+    };
+
+    // Sem selo → cap medium (protege contra xhigh global do ~/.claude).
+    const unsealed = resolveProductionMissionOrchestratorRuntime(
+      squad,
+      {
+        id: 'maestro',
+        agentName: 'Maestro',
+        category: 'orchestrator',
+        cli: 'custom-cli',
+        model: 'custom-model',
+      },
+      capped,
+    );
+    expect(unsealed.effort).toBe('medium');
+
+    // Selo explícito do roster SEMPRE vence o cap.
+    const sealed = resolveProductionMissionOrchestratorRuntime(
+      squad,
+      {
+        id: 'maestro',
+        agentName: 'Maestro',
+        category: 'orchestrator',
+        cli: 'custom-cli',
+        model: 'custom-model',
+        effort: 'xhigh',
+      },
+      capped,
+    );
+    expect(sealed.effort).toBe('xhigh');
+
+    // Adapter sem níveis declarados não recebe cap (CLI decide).
+    expect(
+      resolveProductionMissionOrchestratorRuntime(
+        squad,
+        {
+          id: 'maestro',
+          agentName: 'Maestro',
+          category: 'orchestrator',
+          cli: 'custom-cli',
+          model: 'custom-model',
+        },
+        deps,
+      ).effort,
+    ).toBeUndefined();
+  });
+
   it.each(['omp', 'omp-rpc'] as const)(
     'preserves a retired %s orchestrator seal and requires explicit replanning',
     (retiredId) => {
