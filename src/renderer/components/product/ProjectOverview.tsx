@@ -7,15 +7,15 @@ import { useProductNavigationStore } from '../../state/product-navigation-store'
 import { useSessionStateStore } from '../../state/session-state-store';
 import { useWorkspaceStore } from '../../state/workspace-store';
 import { requestPaneClose } from '../../terminal/pane-close-guard';
+import { paneSessionView } from '../../../shared/pane-session-view';
 import { PixelIcon } from '../PixelIcon';
 
-const STATUS_LABEL: Record<PaneSessionState, string> = {
-  spawning: 'Iniciando',
-  busy: 'Trabalhando',
-  idle: 'Idle',
-  exited: 'Encerrado',
-  hibernated: 'Hibernado',
-};
+// O vocabulário de estado tem UMA fonte (`pane-session-view`). Este arquivo
+// mantinha um terceiro mapa próprio — e nele `idle` era "Idle", em inglês,
+// enquanto a fonte dizia outra coisa. Mapa local de enum é como o produto
+// passa a falar dois idiomas na mesma tela.
+const statusLabel = (state: PaneSessionState): string =>
+  paneSessionView(state).chip;
 
 export interface ProjectOverviewProps {
   workspaceName: string;
@@ -116,7 +116,7 @@ export function ProjectOverview({
                         {pane.title || pane.adapterId || pane.id}
                       </span>
                       <span className="project-overview__session-meta">
-                        {STATUS_LABEL[state]}
+                        {statusLabel(state)}
                         {pane.adapterId ? ` · ${pane.adapterId}` : ''}
                       </span>
                     </span>

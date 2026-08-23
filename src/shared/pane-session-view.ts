@@ -26,12 +26,18 @@ export interface PaneSessionOutcome {
 
 const VIEWS: Record<PaneSessionState, Omit<PaneSessionView, 'state'>> = {
   idle: {
-    chip: 'Pronto',
+    // "Pronto" significava DUAS coisas na mesma tela e com a mesma cor:
+    // missão entregue e agente parado. Um estado, uma palavra — "Pronto"
+    // fica reservado à entrega; o agente parado AGUARDA.
+    chip: 'Aguardando',
     tip: 'Agente pronto — aguardando trabalho',
     mod: 'idle',
   },
   busy: {
-    chip: 'Trabalho',
+    // Um estado, uma palavra: a missão em curso já se chama "Trabalhando"
+    // (mission-lifecycle-copy). O agente ocupado dizia "Trabalho" —
+    // substantivo, e um segundo idioma para o mesmo fato.
+    chip: 'Trabalhando',
     tip: 'Agente trabalhando',
     mod: 'busy',
   },

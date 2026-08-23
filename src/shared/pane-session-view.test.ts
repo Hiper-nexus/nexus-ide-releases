@@ -18,7 +18,7 @@ describe('paneSessionView', () => {
   });
 
   it('usa palavras humanas (não glifos)', () => {
-    expect(paneSessionView('busy').chip).toBe('Trabalho');
+    expect(paneSessionView('busy').chip).toBe('Trabalhando');
     expect(paneSessionView('exited').chip).toBe('Encerrado');
   });
 
@@ -29,6 +29,11 @@ describe('paneSessionView', () => {
     expect(paneSessionView('exited', { outcome: 'failed' }).chip).toBe(
       'Falhou',
     );
-    expect(paneSessionView('idle', { outcome: 'failed' }).chip).toBe('Pronto');
+    // Agente PARADO nunca herda o desfecho da missão: ele aguarda. "Pronto"
+    // ficou reservado à entrega (mission-lifecycle-copy), para a mesma
+    // palavra não significar duas coisas na mesma tela.
+    expect(paneSessionView('idle', { outcome: 'failed' }).chip).toBe(
+      'Aguardando',
+    );
   });
 });
