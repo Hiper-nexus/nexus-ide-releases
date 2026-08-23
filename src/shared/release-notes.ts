@@ -13,15 +13,15 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.68.0',
+  version: '0.68.1',
   date: '2026-08-23',
-  codename: 'Fechos à prova de corrida',
+  codename: 'Jarvis acordado',
   summary:
-    'O encerramento de missão ficou à prova de corrida: a disputa done×exit ' +
-    'do PTY do orquestrador não trava mais o teardown — retry idempotente com ' +
-    're-avaliação completa. E o processo de release passou a se auto-curar: ' +
-    'o notary restaura o ABI do Node no fim da cadeia, então o dev/teste local ' +
-    'nunca mais acorda vermelho depois de um PASS.',
+    'O Jarvis agora ACORDA por padrão: wake word local (onnx, sem nuvem) ' +
+    'ligada de fábrica — diga "Hey Jarvis"/"Ei Jarvis" e o companheiro ' +
+    'responde. Privacidade intacta: a política de captura continua dona do ' +
+    'kill-switch, a detecção roda 100% na máquina e o preset de ditado puro ' +
+    'segue desligando o wake explicitamente.',
   highlights: [
     {
       title: 'Done×exit não trava mais',

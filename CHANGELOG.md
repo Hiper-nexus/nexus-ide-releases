@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.68.1 — Jarvis acordado
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+- **feat(voice): wake word ON por padrão** — "Hey Jarvis"/"Ei Jarvis"
+  funciona de fábrica: detecção 100% local via onnx, sem nuvem, modelos EN +
+  PT-BR instalados e validados no boot. Desligar continua um clique
+  (Configurações › Voz); política de captura segue dona do kill-switch e o
+  preset de ditado puro desliga o wake explicitamente.
+
 ## 0.68.0 — Fechos à prova de corrida
 
 _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
