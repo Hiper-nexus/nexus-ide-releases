@@ -928,7 +928,9 @@ function startSpawn(
               '\r\n\x1b[32m[nexus] ✔ missão concluída — este pane cumpriu o papel.\x1b[0m',
             );
             host.term.writeln(
-              '\x1b[90m[nexus] as respostas ficam acima; feche o pane ou digite para abrir um shell.\x1b[0m',
+              pane.role === 'orchestrator'
+                ? '\x1b[90m[nexus] a missão continua aberta para sua revisão; digite aqui para pedir um ajuste.\x1b[0m'
+                : '\x1b[90m[nexus] as respostas ficam acima; feche o pane ou digite para abrir um shell.\x1b[0m',
             );
           } else if (missionId && exitCode === 0) {
             // Corrida done×exit: o espelho local ainda não viu o término.
@@ -942,7 +944,9 @@ function startSpawn(
                   '\r\n\x1b[32m[nexus] ✔ missão concluída — este pane cumpriu o papel.\x1b[0m',
                 );
                 host.term.writeln(
-                  '\x1b[90m[nexus] as respostas ficam acima; feche o pane ou digite para abrir um shell.\x1b[0m',
+                  pane.role === 'orchestrator'
+                    ? '\x1b[90m[nexus] a missão continua aberta para sua revisão; digite aqui para pedir um ajuste.\x1b[0m'
+                    : '\x1b[90m[nexus] as respostas ficam acima; feche o pane ou digite para abrir um shell.\x1b[0m',
                 );
               } else {
                 host.term.writeln(
@@ -1061,6 +1065,9 @@ function startSpawn(
             paneState: paneState(pane.id),
             missionOwns: missionStillOwnsPane(pane.id, pane),
             spawnHeld: heldSpawnPanes.has(pane.id),
+            doneOrchestrator:
+              pane.role === 'orchestrator' &&
+              missionOfPaneIsDone(pane.id, pane),
           });
           if (keyAction === 'resume-keyboard') {
             void unlockRetiredMissionPane(pane, host);
@@ -1995,6 +2002,7 @@ export async function unlockRetiredMissionPane(
   const disposition = decideUnlockRetiredMissionPane({
     missionStatus,
     lookupFailed,
+    isOrchestrator: pane.role === 'orchestrator',
   });
 
   if (target && !target.disposed) {

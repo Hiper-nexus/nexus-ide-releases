@@ -249,3 +249,49 @@ describe('copy alinhada ao caminho real', () => {
     expect(crashed).toMatch(/rail/);
   });
 });
+
+describe('coordenador de missão concluída continua sendo o canal da revisão', () => {
+  it('não troca o pane do coordenador por shell no done', () => {
+    // A entrega ainda espera revisão humana e o operador pode não aprovar:
+    // virar shell apagaria o histórico da coordenação bem na hora da revisão.
+    expect(
+      decideUnlockRetiredMissionPane({
+        missionStatus: 'done',
+        isOrchestrator: true,
+      }),
+    ).toBe('keep-paused');
+  });
+
+  it('worker de missão concluída ainda pode virar shell', () => {
+    expect(
+      decideUnlockRetiredMissionPane({
+        missionStatus: 'done',
+        isOrchestrator: false,
+      }),
+    ).toBe('reclaim-shell');
+  });
+
+  it('a tecla no coordenador do done religa o agente em vez de abrir shell', () => {
+    expect(
+      decideExitedPaneKey({
+        hasSession: false,
+        spawnStarted: false,
+        paneState: 'exited',
+        // missionOwns é falso em missão terminal — era por isso que caía em shell.
+        missionOwns: false,
+        doneOrchestrator: true,
+      }),
+    ).toBe('resume-keyboard');
+  });
+
+  it('pane sem missão continua virando shell', () => {
+    expect(
+      decideExitedPaneKey({
+        hasSession: false,
+        spawnStarted: false,
+        paneState: 'exited',
+        missionOwns: false,
+      }),
+    ).toBe('reclaim-shell');
+  });
+});

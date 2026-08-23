@@ -22,6 +22,7 @@
  * - qualquer condição que mude entre armar e disparar re-avalia do zero.
  */
 
+import fs from 'node:fs';
 import type { Mission, PaneSnapshot } from '../../shared/orch-types';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
@@ -37,6 +38,10 @@ import {
 import { getProjectDomainStores } from './project-domain-store-registry';
 import { sameProjectScope } from './project-scoped-broadcast';
 import { isSessionInjectableIdle, tapAgentSemanticStatus } from './agent-status';
+import {
+  openMissionDeliverable,
+  scanHtmlCandidates,
+} from './mission-deliverable-open';
 
 /** 30 segundos — paridade Overclock 1.2.4: janela de reutilização pós-done. */
 export const WORKER_POST_DONE_TTL_MS = 30_000;
@@ -64,6 +69,14 @@ export interface MissionDoneTeardownDeps {
   readonly closePane: (
     request: MissionPaneCloseRequest,
   ) => Promise<boolean> | boolean;
+  /**
+   * Abre a entrega no navegador quando o objetivo pediu. Opcional: ausente
+   * em teste e no E2E. Falha aqui NUNCA pode derrubar o teardown.
+   */
+  readonly openDeliverable?: (
+    scope: ProjectExecutionScope,
+    missionId: string,
+  ) => void;
   readonly ttlMs: number;
   /** Espera entre tentativas de close (a recusa conservadora é transitória). */
   readonly retryDelayMs: number;
@@ -97,6 +110,31 @@ export function productionMissionDoneTeardownDeps(): Omit<
     missionStatus: (scope, missionId) =>
       getProjectDomainStores(scope).missions.get(missionId)?.status ?? null,
     isIdle: (sessionId) => isSessionInjectableIdle(sessionId),
+    openDeliverable: (scope, missionId) => {
+      const mission = getProjectDomainStores(scope).missions.get(missionId);
+      if (!mission) return;
+      openMissionDeliverable(
+        {
+          listHtmlCandidates: (root) =>
+            scanHtmlCandidates(root, {
+              readdirSync: (p, o) => fs.readdirSync(p, o),
+              statSync: (p) => fs.statSync(p),
+            }),
+          openPath: (absolutePath) => {
+            void import('electron').then(({ shell }) =>
+              shell.openPath(absolutePath),
+            );
+          },
+          log: (message) => console.warn(message),
+        },
+        {
+          missionId,
+          objective: mission.intentContract?.goal ?? '',
+          workspaceRoot: scope.rootRealPath,
+          missionStartedAtMs: mission.createdAt,
+        },
+      );
+    },
     closePane: (request) => requestMissionPaneClose(request),
     ttlMs: WORKER_POST_DONE_TTL_MS,
     retryDelayMs: CLOSE_RETRY_DELAY_MS,
@@ -251,6 +289,18 @@ function handleMissionsBroadcast(
     if (mission.status !== 'done') continue;
     const scope = deps.parseScope(scopeKey);
     if (!scope) continue;
+    // Mecânica antes do teardown: abrir a entrega não pode depender de a LLM
+    // ter obedecido a um pedido no prompt (voo do operador 23/08 — a landing
+    // não abriu). Best-effort: nunca derruba o teardown.
+    try {
+      deps.openDeliverable?.(scope, mission.id);
+    } catch (error) {
+      deps.log(
+        `[mission-done] abrir entrega falhou: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
     handleMissionDone(deps, scope, mission.id);
   }
 }

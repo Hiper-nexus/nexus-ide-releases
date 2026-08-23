@@ -48,6 +48,7 @@ export type UnlockRetiredPaneDisposition = 'keep-paused' | 'reclaim-shell';
 export function decideUnlockRetiredMissionPane(input: {
   readonly missionStatus?: 'pending' | 'running' | 'blocked' | 'done' | 'failed';
   readonly lookupFailed?: boolean;
+  readonly isOrchestrator?: boolean;
 }): UnlockRetiredPaneDisposition {
   if (input.lookupFailed) return 'keep-paused';
   if (
@@ -55,6 +56,14 @@ export function decideUnlockRetiredMissionPane(input: {
     input.missionStatus === 'running' ||
     input.missionStatus === 'blocked'
   ) {
+    return 'keep-paused';
+  }
+  // Missão concluída NÃO encerra a conversa: a entrega ainda espera revisão
+  // humana e o operador pode não aprovar. O pane do coordenador é onde ele
+  // pede o ajuste, então virar shell comum apagaria o histórico da
+  // coordenação justamente no momento da revisão. Workers, que já cumpriram
+  // o papel, seguem podendo virar shell.
+  if (input.missionStatus === 'done' && input.isOrchestrator) {
     return 'keep-paused';
   }
   return 'reclaim-shell';
@@ -66,6 +75,8 @@ export function decideExitedPaneKey(input: {
   readonly paneState: string | undefined;
   readonly missionOwns: boolean;
   readonly spawnHeld?: boolean;
+  /** Pane do coordenador de uma missão já concluída. */
+  readonly doneOrchestrator?: boolean;
 }): ExitedPaneKeyAction {
   if (input.hasSession || input.spawnStarted) return 'ignore';
   if (input.spawnHeld && input.missionOwns) return 'resume-keyboard';
@@ -73,7 +84,11 @@ export function decideExitedPaneKey(input: {
     return 'resume-keyboard';
   }
   if (input.paneState !== 'exited') return 'ignore';
-  return input.missionOwns ? 'resume-keyboard' : 'reclaim-shell';
+  if (input.missionOwns) return 'resume-keyboard';
+  // `missionOwns` é falso em missão terminal, mas o coordenador de uma
+  // missão concluída ainda é o canal da revisão humana — a tecla tenta
+  // religá-lo, nunca troca por um shell vazio.
+  return input.doneOrchestrator ? 'resume-keyboard' : 'reclaim-shell';
 }
 
 function isTypableOperatorLeaf(pane: {
