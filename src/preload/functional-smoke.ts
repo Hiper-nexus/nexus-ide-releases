@@ -217,15 +217,13 @@ function parseFunctionalSmokeReview(value: unknown): MissionReview | null {
         agent.effort === expected.effort &&
         agent.instructions === expected.instructions &&
         agent.ownsPlanDocs === expected.ownsPlanDocs &&
-        agent.persona === expected.persona &&
-        // Capacidade (skills/tools) é autoridade MAIN-owned desde
-        // d86637d9: a política determinística papel × objetivo × lane
-        // concede no prepare, mesmo com roster do renderer trazendo listas
-        // vazias. O smoke valida a IDENTIDADE da equipe; exigir listas
-        // vazias aqui era expectativa da era pré-concessão e derrubava o
-        // gate de release ("mission-prepare", 22/08).
-        Array.isArray(agent.allowedSkills) &&
-        Array.isArray(agent.allowedTools)
+        agent.persona === expected.persona
+        // Capacidade (skills/tools) é autoridade MAIN-owned desde d86637d9:
+        // a política papel × objetivo × lane concede no prepare (inclusive
+        // null/"ponytail" com lane standard) e o schema Zod do review já
+        // valida a forma. O smoke valida a IDENTIDADE da equipe; exigir
+        // listas vazias/array aqui era expectativa da era pré-concessão e
+        // derrubava o gate de release ("mission-prepare", 22/08).
       );
     });
   if (
@@ -383,19 +381,13 @@ export async function runFunctionalSmokeProbes(
     !(await probe(
       'mission-prepare',
       async () => {
-        const rawPrepare = await api.mission.prepare(FUNCTIONAL_SMOKE_MISSION_REQUEST);
-        // eslint-disable-next-line no-console -- DEBUG RELEASE GATE
-        console.warn('[smoke-debug] prepare raw:', JSON.stringify(rawPrepare).slice(0, 2500));
-        const review = parseFunctionalSmokeReview(rawPrepare);
-        if (!review) {
-          console.warn('[smoke-debug] parse REPROVADO');
-          return { review: null, panes: null };
-        }
-        const panes = await api.orch.listMissionPanes(review.missionId);
-        console.warn('[smoke-debug] paneCount:', panes.length);
+        const review = parseFunctionalSmokeReview(
+          await api.mission.prepare(FUNCTIONAL_SMOKE_MISSION_REQUEST),
+        );
+        if (!review) return { review: null, panes: null };
         return {
           review,
-          panes,
+          panes: await api.orch.listMissionPanes(review.missionId),
         };
       },
       (value) =>
