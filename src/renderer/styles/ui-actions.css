@@ -23,9 +23,14 @@
   gap: 10px;
 }
 
+/* DESIGN.md §2: a ação primária é a coisa mais clara da tela (branco neutro);
+   o acento fica reservado a ESTADO. Derivar o primário de --accent fazia o
+   rosa virar decoração e, com o hover abaixo, tornava primário e neutro
+   indistinguíveis. Mesmo idioma de .launcher-action--primary. */
 .action-card--primary {
-  border-color: color-mix(in srgb, var(--accent) 55%, var(--border-strong));
-  background: var(--accent-soft);
+  border-color: var(--btn-primary);
+  background: var(--btn-primary);
+  color: var(--btn-primary-ink);
 }
 
 .action-card--danger {
@@ -37,10 +42,17 @@
   background: transparent;
 }
 
+/* Realce neutro: o hover de um cartão qualquer não pode reproduzir o repouso
+   do primário. */
 .action-card:hover:not(:disabled) {
-  border-color: var(--accent);
-  background: var(--accent-soft);
+  border-color: var(--border-strong);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
   transform: translateY(-1px);
+}
+
+.action-card--primary:hover:not(:disabled) {
+  border-color: var(--btn-primary);
+  background: color-mix(in srgb, var(--btn-primary) 88%, var(--bg));
 }
 
 .action-card:disabled {
@@ -55,9 +67,14 @@
   width: 36px;
   height: 36px;
   border-radius: 10px;
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
-  color: var(--accent);
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+  color: var(--text-dim);
   flex-shrink: 0;
+}
+
+.action-card--primary .action-card__icon {
+  background: color-mix(in srgb, var(--btn-primary-ink) 12%, transparent);
+  color: var(--btn-primary-ink);
 }
 
 .action-card--sm .action-card__icon {

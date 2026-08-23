@@ -5,6 +5,7 @@ import { useCheatsheetStore } from '../state/cheatsheet-store';
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
 import { useSessionStateStore } from '../state/session-state-store';
+import { useMissionSetupStore } from '../state/mission-setup-store';
 import { useProductNavigationStore } from '../state/product-navigation-store';
 import { listPanes } from '../lib/split-tree';
 import { filterPaletteActions } from '../lib/command-palette-filter';
@@ -117,6 +118,21 @@ export function CommandPalette() {
       () => useProductNavigationStore.getState().openNewMission(),
       shortcutKeys('mission-new'),
       'missão objetivo equipe',
+    );
+    // Saída do operador: o + Novo e o Launcher levam ao Caminho Expresso; o
+    // wizard completo continua a um comando de distância.
+    tool(
+      'mission-new-advanced',
+      'Missão avançada · escolher a equipe',
+      'mission',
+      () => {
+        useMissionSetupStore
+          .getState()
+          .beginFreshMission(undefined, { step: 'mission' });
+        useProductNavigationStore.getState().openMissionSetup();
+      },
+      undefined,
+      'missão avançado wizard equipe etapas operador',
     );
     tool(
       'attention',

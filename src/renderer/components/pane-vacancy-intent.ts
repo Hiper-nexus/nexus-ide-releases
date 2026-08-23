@@ -74,9 +74,9 @@ export function paneVacancyMission(
 }
 
 const PREPARING_HEADLINE =
-  'A missão está preparando os agentes — nenhum pane foi aberto ainda.';
+  'A missão está montando a equipe — ainda não há nada para ver aqui.';
 const PREPARING_NEXT_STEP =
-  'Abra o diagnóstico se ela não abrir nenhum agente em instantes.';
+  'Se em alguns instantes nada aparecer, toque em “Ver a missão”.';
 
 /**
  * `progress` is the live bootstrap step polled from the mission journal.
@@ -102,7 +102,7 @@ export function paneVacancyIntent(
       )}`;
     } else if (chefIdle && chefIdle.missionId === mission.id) {
       const n = chefIdle.workerCount;
-      headline = `Orquestrador aguardando ${n} worker${n !== 1 ? 's' : ''} · ${progressAgeLabel(chefIdle.occurredAt, now)}`;
+      headline = `Coordenador aguardando ${n} ajudante${n !== 1 ? 's' : ''} · ${progressAgeLabel(chefIdle.occurredAt, now)}`;
     } else {
       headline = PREPARING_HEADLINE;
     }

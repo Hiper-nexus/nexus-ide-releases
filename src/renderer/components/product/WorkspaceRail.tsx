@@ -25,6 +25,7 @@ export interface WorkspaceRailWorkspace {
 }
 
 export type WorkspaceRailSelection =
+  | { kind: 'launcher' }
   | { kind: 'workspace'; workspaceId: string }
   | { kind: 'mission'; missionId: string }
   | { kind: 'project' }
@@ -51,6 +52,15 @@ export interface WorkspaceRailProps {
   onOpenTaskBoard: () => void;
   onOpenMemory: () => void;
   onOpenSettings: () => void;
+  /**
+   * Volta ao Início. Sem isto, quem clica em Quadro ou Memória perde para
+   * sempre a tela que responde "o que você quer fazer agora?" — e o único
+   * botão de abrir pasta da interface.
+   */
+  onOpenLauncher?: () => void;
+  /** Quantos itens esperam a pessoa. Zero esconde a linha por completo. */
+  attentionCount?: number;
+  onOpenAttention?: () => void;
 }
 
 type MissionStatusTone =
@@ -299,7 +309,7 @@ function WorkspaceGroup({
 
 function isSelected(
   selection: WorkspaceRailSelection,
-  kind: 'project' | 'task-board' | 'memory' | 'settings',
+  kind: 'launcher' | 'project' | 'task-board' | 'memory' | 'settings',
 ): boolean {
   return selection?.kind === kind;
 }
@@ -319,7 +329,11 @@ export function WorkspaceRail({
   onOpenTaskBoard,
   onOpenMemory,
   onOpenSettings,
+  onOpenLauncher,
+  attentionCount = 0,
+  onOpenAttention,
 }: WorkspaceRailProps) {
+  const launcherSelected = isSelected(selection, 'launcher');
   const projectSelected = isSelected(selection, 'project');
   const taskBoardSelected = isSelected(selection, 'task-board');
   const memorySelected = isSelected(selection, 'memory');
@@ -369,6 +383,22 @@ export function WorkspaceRail({
       </div>
 
       <ul className="workspace-rail__fixed" aria-label="Destinos fixos">
+        {onOpenLauncher ? (
+          <li>
+            <button
+              type="button"
+              className={`workspace-rail__row workspace-rail__fixed-row${
+                launcherSelected ? ' workspace-rail__row--selected' : ''
+              }`}
+              aria-current={launcherSelected ? 'page' : undefined}
+              aria-label="Voltar ao Início"
+              onClick={onOpenLauncher}
+            >
+              <PixelIcon name="grid" size={12} />
+              <span className="workspace-rail__row-label">Início</span>
+            </button>
+          </li>
+        ) : null}
         {projectEnabled && onOpenProject ? (
           <li>
             <button
@@ -416,6 +446,18 @@ export function WorkspaceRail({
       </ul>
 
       <footer className="workspace-rail__footer">
+        {onOpenAttention && attentionCount > 0 ? (
+          <button
+            type="button"
+            className="workspace-rail__row workspace-rail__fixed-row"
+            aria-label={`Abrir a lista do que precisa de você (${attentionCount})`}
+            onClick={onOpenAttention}
+          >
+            <PixelIcon name="warn" size={12} />
+            <span className="workspace-rail__row-label">Precisa de você</span>
+            <span className="workspace-rail__row-count">{attentionCount}</span>
+          </button>
+        ) : null}
         <button
           type="button"
           className={`workspace-rail__row workspace-rail__settings${

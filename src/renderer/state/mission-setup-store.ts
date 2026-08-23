@@ -126,11 +126,20 @@ export interface MissionSetupStore {
   /** Reseta o draft para vazio — usado ao abrir uma nova missão. */
   clearDraft(): void;
   /**
-   * Começa uma missão nova na etapa Missão, no workspace ativo.
-   * Apaga rascunho persistido (Equipe/Revisar) para o + Novo não reabrir
-   * a etapa seguinte da execução anterior.
+   * Começa uma missão nova no workspace ativo, no Caminho Expresso — a etapa
+   * em que `createEmptyMissionSetupDraft` já nasce. Apaga rascunho persistido
+   * (Equipe/Revisar) para o + Novo não reabrir a etapa seguinte da execução
+   * anterior: a ETAPA nunca é herdada.
+   *
+   * Um objetivo já escrito NÃO é descartado. Dez portas chamam esta função e
+   * reabrir a missão pelo único botão que o usuário reconhece não pode apagar
+   * o texto dele. Quem precisa mesmo zerar passa `force` (é o que `clearDraft`
+   * faz); `step` existe para a camada de operador entrar direto no wizard.
    */
-  beginFreshMission(workspacePath?: string | null): void;
+  beginFreshMission(
+    workspacePath?: string | null,
+    options?: { force?: boolean; step?: MissionSetupStep },
+  ): void;
   retryPersistence(): void;
   resetWorkspace(workspacePath?: string): void;
 }
@@ -769,15 +778,27 @@ export const useMissionSetupStore = create<MissionSetupStore>((set, get) => {
       return true;
     },
 
-    beginFreshMission: (workspacePath) => {
+    beginFreshMission: (workspacePath, options) => {
       const current = get();
       const target =
         workspacePath ?? current.workspacePath ?? getActiveWorkspacePath();
+      const empty = createEmptyMissionSetupDraft(
+        Math.min(Number.MAX_SAFE_INTEGER, current.draft.revision + 1),
+      );
+      const keepObjective =
+        !options?.force && current.draft.objective.trim().length > 0;
+      // A etapa NUNCA atravessa: o + Novo não pode reabrir a Equipe da
+      // execução anterior. Só o texto que a pessoa escreveu sobrevive.
       const draft: MissionSetupDraft = {
-        ...createEmptyMissionSetupDraft(
-          Math.min(Number.MAX_SAFE_INTEGER, current.draft.revision + 1),
-        ),
-        step: 'mission',
+        ...empty,
+        ...(keepObjective
+          ? {
+              objective: current.draft.objective,
+              title: current.draft.title,
+              contextPaths: [...current.draft.contextPaths],
+            }
+          : {}),
+        ...(options?.step ? { step: options.step } : {}),
       };
       const entryAuthorityRevision = Math.min(
         Number.MAX_SAFE_INTEGER,
@@ -806,7 +827,7 @@ export const useMissionSetupStore = create<MissionSetupStore>((set, get) => {
       });
     },
     clearDraft: () => {
-      get().beginFreshMission();
+      get().beginFreshMission(undefined, { force: true });
     },
     clearEntryContext: () => {
       const current = get();

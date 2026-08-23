@@ -48,7 +48,7 @@ describe('MissionTransitionTracker', () => {
         cause: {
           code: 'unknown',
           headline: 'Motivo não registrado.',
-          action: 'Abra o diagnóstico da missão para ver o que aconteceu.',
+          action: 'Abra a missão e veja a aba Atividade para entender o que aconteceu.',
         },
       },
     ]);
@@ -120,7 +120,7 @@ describe('MissionTransitionTracker', () => {
         cause: {
           code: 'unknown',
           headline: 'Motivo não registrado.',
-          action: 'Abra o diagnóstico da missão para ver o que aconteceu.',
+          action: 'Abra a missão e veja a aba Atividade para entender o que aconteceu.',
         },
       },
     ]);
@@ -152,7 +152,7 @@ describe('MissionTransitionTracker', () => {
         cause: {
           code: 'unknown',
           headline: 'Motivo não registrado.',
-          action: 'Abra o diagnóstico da missão para ver o que aconteceu.',
+          action: 'Abra a missão e veja a aba Atividade para entender o que aconteceu.',
         },
       },
     ]);
@@ -207,7 +207,7 @@ describe('MissionTransitionTracker', () => {
           code: 'terminal-failure',
           headline: 'A recuperação automática se esgotou nesta falha.',
           action:
-            'Abra o diagnóstico da missão, corrija a causa e retome a missão.',
+            'Abra a aba Atividade, corrija a causa e clique em Retomar.',
         },
       },
     ]);
@@ -239,7 +239,7 @@ describe('MissionTransitionTracker', () => {
         cause: {
           code: 'unknown',
           headline: 'Motivo não registrado.',
-          action: 'Abra o diagnóstico da missão para ver o que aconteceu.',
+          action: 'Abra a missão e veja a aba Atividade para entender o que aconteceu.',
         },
       },
     ]);
@@ -289,8 +289,8 @@ describe('MissionTransitionTracker', () => {
         missionId: '1',
         cause: {
           code: 'handoff-not-delivered',
-          headline: 'O worker terminou, mas a entrega não chegou ao orquestrador.',
-          action: 'Abra o diagnóstico da missão e reenvie a entrega pendente.',
+          headline: 'O integrante terminou, mas a entrega não chegou ao coordenador.',
+          action: 'Abra a missão e reenvie a entrega pendente.',
         },
       },
     ]);

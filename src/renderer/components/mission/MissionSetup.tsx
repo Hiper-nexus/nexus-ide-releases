@@ -28,6 +28,7 @@ import {
   type MissionSetupStore,
   useMissionSetupStore,
 } from '../../state/mission-setup-store';
+import { toUserFacingMissionError } from '../../lib/user-facing-mission-error';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
 import { useProviderStore } from '../../state/provider-store';
 import { useWorkspaceStore } from '../../state/workspace-store';
@@ -179,7 +180,7 @@ function isStaleReviewStartError(message: string): boolean {
 function humanizeMissionStartError(message: string): string {
   const trimmed = message.trim();
   if (/kickoff-session_exited|terminal encerrou antes/i.test(trimmed)) {
-    return 'O agente de coordenação encerrou antes de aceitar o início. A missão foi preservada — abra-a e use Retomar missão.';
+    return 'O coordenador encerrou antes de aceitar o início. A missão foi preservada — abra-a e clique em Retomar.';
   }
   if (/kickoff-|materialization_failed|spawn_failed|provider_exited/i.test(trimmed)) {
     return 'O início da missão falhou ao subir o coordenador. A missão foi preservada com o diagnóstico real para retomar.';
@@ -187,10 +188,14 @@ function humanizeMissionStartError(message: string): string {
   if (/exclusive auth family/i.test(trimmed)) {
     return 'Já existe um coordenador vivo com a mesma conta. Encerre a sessão antiga ou aguarde a saída física antes de iniciar outra missão.';
   }
-  if (trimmed.length > 0 && trimmed.length <= 280 && !/^\s*Error:/i.test(trimmed)) {
-    return trimmed;
-  }
-  return 'Não foi possível iniciar a missão. A preparação foi preservada quando seguro; veja o diagnóstico da missão ou tente novamente.';
+  // Sem passagem livre: qualquer diagnóstico cru de IPC, provider ou rede em
+  // inglês ia inteiro para o role="alert" da tela onde a pessoa acabou de
+  // escrever a ideia dela. O saneador da casa já remove stack, errno,
+  // snake_case, URLs e caminhos.
+  return toUserFacingMissionError(
+    trimmed,
+    'Não foi possível iniciar a missão. A preparação foi preservada quando seguro; abra a aba Atividade ou tente novamente.',
+  );
 }
 
 
@@ -854,8 +859,8 @@ export function MissionSetup() {
     if (!inventoryReadyForReview) {
       setExpressError(
         inventory.status === 'loading'
-          ? 'Aguarde a verificação dos provedores conectados.'
-          : 'Conecte um provedor em Configurações antes de iniciar a missão.',
+          ? 'Aguarde a verificação das ferramentas de IA conectadas.'
+          : 'Falta conectar uma ferramenta de IA — use o botão “Conectar uma ferramenta de IA” logo acima.',
       );
       return;
     }
@@ -1082,6 +1087,9 @@ export function MissionSetup() {
             onContextPathsChange={setContextPaths}
             onStart={() => void startExpress()}
             onAdvanced={() => setStep('team')}
+            onConnectProvider={() =>
+              useProductNavigationStore.getState().openSettings('providers')
+            }
           />
         )}
 

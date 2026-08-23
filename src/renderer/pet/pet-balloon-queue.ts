@@ -89,7 +89,7 @@ export function balloonContentFor(
       // decisão", que não deixa o operador entender, resolver nem ajustar.
       const why =
         causeText(event.cause) ??
-        'Motivo não registrado. Abra o diagnóstico da missão para ver o que aconteceu.';
+        'Motivo não registrado. Abra a missão e veja a aba Atividade.';
       return {
         title: 'Preciso de você',
         // Texto completo; a UI do balão faz wrap (sem line-clamp).

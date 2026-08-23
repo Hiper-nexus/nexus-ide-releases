@@ -43,7 +43,7 @@ describe('balloonTextFor', () => {
     // ("a missão parou esperando uma decisão") prometia uma decisão que
     // ninguém sabia qual era, e deixava o operador sem ação.
     expect(text).toContain('Motivo não registrado');
-    expect(text).toContain('Abra o diagnóstico');
+    expect(text).toContain('Abra a missão');
     expect(text).not.toContain('esperando uma decisão');
     // Não pode sair truncado no conteúdo (ellipsis era só CSS; string é integral).
     expect(text).not.toContain('…');
@@ -57,19 +57,19 @@ describe('balloonTextFor', () => {
       cause: {
         code: 'orphan-plan',
         headline: 'O plano selado ficou numa versão anterior da intenção.',
-        action: 'Retome a missão para re-selar o plano na versão atual.',
+        action: 'Clique em Retomar para refazer o plano na versão atual.',
       },
     });
 
     expect(text).toBe(
       'Preciso de você: Execução + QA — O plano selado ficou numa versão ' +
-        'anterior da intenção. Retome a missão para re-selar o plano na ' +
+        'anterior da intenção. Clique em Retomar para refazer o plano na ' +
         'versão atual.',
     );
   });
 
   it('causa longa é cortada no PORQUÊ, nunca no acionável', () => {
-    const action = 'Retome a missão para re-selar o plano na versão atual.';
+    const action = 'Clique em Retomar para refazer o plano na versão atual.';
     const text = balloonTextFor({
       kind: 'mission-blocked',
       title: 'M',

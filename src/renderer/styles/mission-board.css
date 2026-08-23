@@ -1868,7 +1868,7 @@
   border: 1px solid var(--border-strong);
   border-radius: 999px;
   background: var(--bg-elevated);
-  color: var(--text-muted);
+  color: var(--text-dim);
   font-size: var(--text-xs, 12px);
   cursor: pointer;
   opacity: 0.65;

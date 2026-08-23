@@ -29,6 +29,8 @@ interface ExpressMissionStartProps {
   onContextPathsChange(paths: readonly string[]): void;
   onStart(): void;
   onAdvanced(): void;
+  /** Leva direto a Providers: o pré-requisito deixa de ser texto morto. */
+  onConnectProvider(): void;
 }
 
 /**
@@ -56,6 +58,7 @@ export function ExpressMissionStart({
   onContextPathsChange,
   onStart,
   onAdvanced,
+  onConnectProvider,
 }: ExpressMissionStartProps) {
   const headingRef = useRef<HTMLHeadingElement>(null);
 
@@ -184,9 +187,26 @@ export function ExpressMissionStart({
           </p>
         ) : (
           !inventoryReady && (
-            <p className="mission-setup__hint">
-              Conecte um provedor em Configurações para a missão poder começar.
-            </p>
+            <div
+              className="mission-setup__section-heading"
+              id="express-provider-block"
+            >
+              <div>
+                <h2>Falta conectar uma ferramenta de IA</h2>
+                <p>
+                  O Nexus precisa de pelo menos uma ferramenta de IA (Claude,
+                  Codex, Gemini…) para trabalhar por você.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="mission-setup__button mission-setup__button--primary"
+                onClick={onConnectProvider}
+                disabled={busy}
+              >
+                Conectar uma ferramenta de IA
+              </button>
+            </div>
           )
         )}
       </div>

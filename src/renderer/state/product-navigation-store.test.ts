@@ -145,20 +145,20 @@ describe('product navigation', () => {
     ).toBeNull();
   });
 
-  it('openNewMission starts on Missão instead of restoring Equipe', () => {
+  it('openNewMission starts on Caminho Expresso instead of restoring Equipe', () => {
     useProductNavigationStore.getState().openNewMission();
 
     expect(useProductNavigationStore.getState().destination).toEqual({
       kind: 'mission-setup',
     });
     expect(useMissionSetupStore.getState().draft).toMatchObject({
-      objective: '',
-      step: 'mission',
+      objective: 'Rascunho da equipe anterior',
+      step: 'express',
       roster: [],
     });
   });
 
-  it('openNewMission discards a workspace draft that was already on Equipe', () => {
+  it('openNewMission volta ao Expresso e nunca restaura a Equipe anterior', () => {
     const stale = {
       ...createEmptyMissionSetupDraft(8),
       objective: 'Rascunho da equipe anterior',
@@ -184,9 +184,10 @@ describe('product navigation', () => {
 
     useProductNavigationStore.getState().openNewMission();
 
+    // A equipe e a etapa da execução anterior morrem; o texto escrito fica.
     expect(useMissionSetupStore.getState().draft).toMatchObject({
-      objective: '',
-      step: 'mission',
+      objective: 'Rascunho da equipe anterior',
+      step: 'express',
       roster: [],
     });
     expect(useMissionSetupStore.getState().entryContext).toBeNull();

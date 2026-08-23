@@ -44,16 +44,16 @@ describe('Launcher', () => {
 
     expect(buttons).toHaveLength(4);
     expect(buttons.map((button) => button.getAttribute('aria-label'))).toEqual([
-      'Abrir workspace',
       'Missão em equipe',
+      'Abrir uma pasta de projeto',
       'Abrir Quadro',
       'Abrir Memória',
     ]);
     expect(host.textContent).toContain(
-      'Abra um projeto e trabalhe direto no terminal e nos arquivos.',
+      'Já tenho arquivos no computador e quero trabalhar em cima deles.',
     );
     expect(host.textContent).toContain(
-      'Descreva uma entrega e deixe o Nexus organizar o trabalho.',
+      'Descreva o que você quer entregar e o Nexus organiza o trabalho.',
     );
     expect(host.textContent).toContain(
       'Acompanhe tarefas e organize o que vem a seguir.',

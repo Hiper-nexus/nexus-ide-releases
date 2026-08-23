@@ -34,7 +34,7 @@ describe('missionBlockCause — uma causa nomeada por caso', () => {
       'O despacho da tarefa abortou antes de o worker começar.',
     );
     expect(cause.action).toBe(
-      'Abra o diagnóstico da missão e clique em Retomar missão.',
+      'Abra a missão e clique em Retomar.',
     );
   });
 
@@ -67,7 +67,7 @@ describe('missionBlockCause — uma causa nomeada por caso', () => {
     expect(cause.headline).toBe(
       'O Maestro abriu, mas o kickoff não foi aceito a tempo.',
     );
-    expect(cause.action).toMatch(/pane do Maestro|retome a missão/i);
+    expect(cause.action).toMatch(/janela do coordenador|Retomar/i);
     expect(cause.action).not.toMatch(/cota/i);
   });
 
@@ -84,7 +84,7 @@ describe('missionBlockCause — uma causa nomeada por caso', () => {
     expect(cause.headline).toBe(
       'O Maestro encerrou antes de delegar a primeira tarefa.',
     );
-    expect(cause.action).toMatch(/diagnóstico|Retomar missão/i);
+    expect(cause.action).toMatch(/aba Atividade|Retomar/i);
     expect(cause.action).not.toMatch(/cota/i);
   });
 
@@ -98,10 +98,10 @@ describe('missionBlockCause — uma causa nomeada por caso', () => {
 
     expect(cause.code).toBe('worker-no-handoff');
     expect(cause.headline).toBe(
-      'O worker encerrou sem entregar o resultado da tarefa.',
+      'Um integrante da equipe encerrou sem entregar o resultado.',
     );
     expect(cause.action).toBe(
-      'Confira login e cota do provider em Providers e retome a missão.',
+      'Confira login e limite da ferramenta de IA em Configurações › Providers e clique em Retomar.',
     );
   });
 
@@ -114,10 +114,10 @@ describe('missionBlockCause — uma causa nomeada por caso', () => {
 
     expect(cause.code).toBe('provider-unavailable');
     expect(cause.headline).toBe(
-      'A CLI selada no roster não está disponível para esta tarefa.',
+      'A ferramenta de IA escolhida não está disponível para esta tarefa.',
     );
     expect(cause.action).toBe(
-      'Abra Providers, corrija instalação ou login, e retome a missão.',
+      'Abra Configurações › Providers, corrija a instalação ou o login, e clique em Retomar.',
     );
   });
 
@@ -133,7 +133,7 @@ describe('missionBlockCause — uma causa nomeada por caso', () => {
       'Outra tarefa já reservou os mesmos arquivos desta missão.',
     );
     expect(cause.action).toBe(
-      'Abra o diagnóstico, libere a reserva presa e retome a missão.',
+      'Abra a aba Atividade, libere a reserva presa e clique em Retomar.',
     );
   });
 
@@ -144,10 +144,10 @@ describe('missionBlockCause — uma causa nomeada por caso', () => {
 
     expect(cause.code).toBe('handoff-not-delivered');
     expect(cause.headline).toBe(
-      'O worker terminou, mas a entrega não chegou ao orquestrador.',
+      'O integrante terminou, mas a entrega não chegou ao coordenador.',
     );
     expect(cause.action).toBe(
-      'Abra o diagnóstico da missão e reenvie a entrega pendente.',
+      'Abra a missão e reenvie a entrega pendente.',
     );
   });
 
@@ -192,7 +192,7 @@ describe('missionBlockCause — plano selado órfão', () => {
       'O plano selado ficou numa versão anterior da intenção.',
     );
     expect(cause.action).toBe(
-      'Retome a missão para re-selar o plano na versão atual.',
+      'Clique em Retomar para refazer o plano na versão atual.',
     );
   });
 
@@ -229,8 +229,8 @@ describe('missionBlockCause — descrição real de campo', () => {
 
     expect(cause.code).toBe('worker-no-handoff');
     expect(missionBlockCauseText(cause)).toBe(
-      'O worker encerrou sem entregar o resultado da tarefa. ' +
-        'Confira login e cota do provider em Providers e retome a missão.',
+      'Um integrante da equipe encerrou sem entregar o resultado. ' +
+        'Confira login e limite da ferramenta de IA em Configurações › Providers e clique em Retomar.',
     );
   });
 
@@ -251,7 +251,7 @@ describe('missionBlockCause — honestidade quando a causa não existe', () => {
 
     expect(cause.code).toBe('unknown');
     expect(cause.headline).toBe('Motivo não registrado.');
-    expect(cause.action).toBe('Abra o diagnóstico da missão para ver o que aconteceu.');
+    expect(cause.action).toBe('Abra a missão e veja a aba Atividade para entender o que aconteceu.');
     expect(cause.detail).toBeNull();
   });
 
@@ -373,7 +373,7 @@ describe('missionBlockCause — vereditos do lado humano (fechamento sem silênc
 
     expect(cause.code).toBe('agent-status-block');
     expect(cause.headline).toBe(
-      'O próprio orquestrador encerrou a missão com um motivo registrado.',
+      'O próprio coordenador encerrou a missão com um motivo registrado.',
     );
     expect(cause.detail).toContain('bloqueio ambiental comprovado');
   });
@@ -388,7 +388,7 @@ describe('missionBlockCause — vereditos do lado humano (fechamento sem silênc
     );
 
     expect(cause.code).toBe('exclusive-replacement');
-    expect(cause.action).toBe('Retome a missão para reabrir o Maestro.');
+    expect(cause.action).toBe('Clique em Retomar para reabrir o coordenador.');
   });
 
   it('runtime-closed: o operador encerrou preservando histórico', () => {
@@ -487,8 +487,8 @@ describe('missionBlockCauseText — cabe no balão sem perder o acionável', () 
     );
 
     expect(missionBlockCauseText(cause)).toBe(
-      'O worker terminou, mas a entrega não chegou ao orquestrador. ' +
-        'Abra o diagnóstico da missão e reenvie a entrega pendente.',
+      'O integrante terminou, mas a entrega não chegou ao coordenador. ' +
+        'Abra a missão e reenvie a entrega pendente.',
     );
   });
 

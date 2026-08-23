@@ -115,7 +115,7 @@ export function PaneVacancyBody({ pane }: { readonly pane: PaneModel }) {
     <ActionCard
       icon="terminal"
       size="sm"
-      variant={intent.kind === 'idle' ? 'primary' : 'ghost'}
+      variant="ghost"
       title="Abrir terminal aqui"
       subtitle="Esta vaga vira um terminal seu"
       onClick={(event) => {
@@ -145,7 +145,7 @@ export function PaneVacancyBody({ pane }: { readonly pane: PaneModel }) {
                 <ActionCard
                   icon="mission"
                   size="sm"
-                  variant="ghost"
+                  variant="primary"
                   title="Começar uma missão"
                   subtitle="Descrever o objetivo no início"
                   onClick={(event) => {

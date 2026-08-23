@@ -1931,7 +1931,7 @@ describe('MissionSetup', () => {
     expect(api.start).toHaveBeenCalledTimes(1);
     expect(api.removeMission).not.toHaveBeenCalledWith(REVIEW.missionId);
     expect(host.textContent).toContain(
-      'O agente de coordenação encerrou antes de aceitar o início',
+      'O coordenador encerrou antes de aceitar o início',
     );
     expect(host.textContent).not.toContain(
       'A revisão pode ter ficado desatualizada e foi descartada',
@@ -2189,9 +2189,9 @@ describe('Caminho Expresso', () => {
     api.listProviders.mockResolvedValue([]);
     const host = await renderAtExpress();
 
-    expect(host.textContent).toContain(
-      'Conecte um provedor em Configurações para a missão poder começar.',
-    );
+    expect(host.textContent).toContain('Falta conectar uma ferramenta de IA');
+    // O pré-requisito deixou de ser texto morto: existe um botão que resolve.
+    expect(button(host, 'Conectar uma ferramenta de IA')).toBeDefined();
 
     enterText(
       fieldByLabel<HTMLTextAreaElement>(
@@ -2206,7 +2206,7 @@ describe('Caminho Expresso', () => {
 
     expect(api.prepare).not.toHaveBeenCalled();
     expect(host.textContent).toContain(
-      'Conecte um provedor em Configurações antes de iniciar a missão.',
+      'Falta conectar uma ferramenta de IA — use o botão “Conectar uma ferramenta de IA” logo acima.',
     );
   });
 

@@ -353,8 +353,9 @@
 }
 
 .git-scm__commit-btn:hover:not(:disabled) {
-  color: #dcfce7;
-  border-color: #4ade80;
+  color: var(--btn-primary-ink);
+  background: var(--btn-primary);
+  border-color: var(--btn-primary);
 }
 
 .git-scm__history {
@@ -408,7 +409,7 @@
 }
 
 .git-scm__pr-tone--muted {
-  color: var(--text-muted, #8b95a8);
+  color: var(--text-dim);
 }
 
 .git-scm__pr-tone--success {

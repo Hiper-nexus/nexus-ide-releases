@@ -147,13 +147,13 @@
   border-radius: 10px;
   padding: var(--space-2) var(--space-3);
   background: color-mix(in srgb, var(--bg-elevated) 82%, transparent);
-  color: var(--text-muted);
+  color: var(--text-dim);
   font: 550 var(--text-sm)/1.2 var(--font-ui);
   cursor: pointer;
   transition:
-    border-color var(--duration-fast) ease,
-    color var(--duration-fast) ease,
-    background-color var(--duration-fast) ease;
+    border-color var(--duration-fast, 150ms) ease,
+    color var(--duration-fast, 150ms) ease,
+    background-color var(--duration-fast, 150ms) ease;
 }
 
 .task-board-workspace__clear:hover:not(:disabled),
@@ -708,7 +708,7 @@
 
 .project-overview__path {
   margin: var(--space-1) 0 0;
-  color: var(--text-muted);
+  color: var(--text-dim);
   font-size: 0.85rem;
   word-break: break-all;
 }
@@ -720,7 +720,7 @@
 
 .project-overview__goal-label {
   font-size: 0.85rem;
-  color: var(--text-muted);
+  color: var(--text-dim);
 }
 
 .project-overview__goal-input {
@@ -757,7 +757,7 @@
 
 .project-overview__empty {
   margin: 0;
-  color: var(--text-muted);
+  color: var(--text-dim);
 }
 
 .project-overview__list {
@@ -800,7 +800,7 @@
 
 .project-overview__session-meta {
   font-size: 0.8rem;
-  color: var(--text-muted);
+  color: var(--text-dim);
 }
 
 .project-overview__close {
@@ -810,6 +810,6 @@
   border: 1px solid var(--border);
   border-radius: 8px;
   background: transparent;
-  color: var(--text-muted);
+  color: var(--text-dim);
   cursor: pointer;
 }

@@ -81,6 +81,11 @@ export function AttentionInbox() {
     [notifications, waitingSnapshot, pr, missions, providers],
   );
 
+  const setCount = useAttentionInboxStore((s) => s.setCount);
+  useEffect(() => {
+    setCount(items.length);
+  }, [items.length, setCount]);
+
   if (!open) return null;
 
   return (

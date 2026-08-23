@@ -114,7 +114,7 @@ describe('toast store UX policy', () => {
 
     push('error', 'Falha técnica na missão', {
       detail:
-        'Não foi possível concluir esta etapa. Tente novamente. Se continuar, abra Operações para ver o diagnóstico.',
+        'Não foi possível concluir esta etapa. Tente novamente. Se continuar, abra a missão e veja a aba Atividade.',
     });
     push('success', 'Missão pronta', {
       detail: ready,
@@ -154,7 +154,7 @@ describe('toast store UX policy', () => {
           "'orch:mission.start': Error: provider temporarily unavailable",
       ),
     ).toMatch(
-      /^Não foi possível concluir esta etapa\. Tente novamente\. Se continuar, abra Operações para ver o diagnóstico\. Detalhe técnico: /,
+      /^Não foi possível concluir esta etapa\. Tente novamente\. Se continuar, abra a missão e veja a aba Atividade\. Detalhe técnico: /,
     );
   });
 

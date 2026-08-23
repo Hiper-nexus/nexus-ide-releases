@@ -933,8 +933,12 @@ export function App() {
   const projectOverviewEnabled =
     productFlags[FEATURE_FLAG_IDS.uiProjectOverview] !== false;
 
+  const attentionCount = useAttentionInboxStore((s) => s.count);
+
   let selection: WorkspaceRailSelection = null;
-  if (destination.kind === 'mission') {
+  if (destination.kind === 'launcher') {
+    selection = { kind: 'launcher' };
+  } else if (destination.kind === 'mission') {
     selection = { kind: 'mission', missionId: destination.missionId };
   } else if (destination.kind === 'project' && projectOverviewEnabled) {
     selection = { kind: 'project' };
@@ -1007,6 +1011,11 @@ export function App() {
             recentWorkspaces={projectedRecents}
             selection={selection}
             onCreateNew={navigation.openNewMission}
+            onOpenLauncher={navigation.openLauncher}
+            attentionCount={attentionCount}
+            onOpenAttention={() =>
+              useAttentionInboxStore.getState().setOpen(true)
+            }
             onSelectWorkspace={selectWorkspace}
             onRemoveWorkspace={removeWorkspace}
             onRemoveMission={removeMissionFromRail}

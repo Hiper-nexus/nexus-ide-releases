@@ -519,7 +519,7 @@ describe('mission setup draft store', () => {
     });
   });
 
-  it('Novo começa na etapa Missão e não restaura Equipe do rascunho persistido', () => {
+  it('Novo começa no Caminho Expresso e não restaura Equipe do rascunho persistido', () => {
     const path = '/projects/saasbarbearia';
     setActiveWorkspacePath(path);
     localStorage.setItem(
@@ -544,18 +544,65 @@ describe('mission setup draft store', () => {
       draft: {
         objective: '',
         roster: [],
-        step: 'mission',
+        step: 'express',
       },
     });
     expect(
       JSON.parse(localStorage.getItem(missionSetupStorageKey(path)) ?? '{}'),
     ).toMatchObject({
-      draft: { objective: '', step: 'mission', roster: [] },
+      draft: { objective: '', step: 'express', roster: [] },
     });
 
     useMissionSetupStore.getState().setWorkspace(path);
-    expect(useMissionSetupStore.getState().draft.step).toBe('mission');
+    expect(useMissionSetupStore.getState().draft.step).toBe('express');
     expect(useMissionSetupStore.getState().draft.objective).toBe('');
+  });
+
+  it('Novo preserva o objetivo escrito, mata a Equipe e só zera com force', () => {
+    const path = '/projects/preserva';
+    setActiveWorkspacePath(path);
+    const store = useMissionSetupStore.getState();
+    store.setWorkspace(path);
+    store.setObjective('Refazer o cadastro para funcionar no celular');
+    store.setRoster([coordinator, implementer]);
+    store.setStep('team');
+
+    useMissionSetupStore.getState().beginFreshMission();
+    expect(useMissionSetupStore.getState().draft).toMatchObject({
+      objective: 'Refazer o cadastro para funcionar no celular',
+      step: 'express',
+      roster: [],
+    });
+
+    useMissionSetupStore
+      .getState()
+      .beginFreshMission(undefined, { force: true });
+    expect(useMissionSetupStore.getState().draft.objective).toBe('');
+  });
+
+  it('clearDraft zera de verdade mesmo com objetivo escrito', () => {
+    const path = '/projects/clear';
+    setActiveWorkspacePath(path);
+    const store = useMissionSetupStore.getState();
+    store.setWorkspace(path);
+    store.setObjective('Texto que precisa sumir');
+
+    useMissionSetupStore.getState().clearDraft();
+
+    expect(useMissionSetupStore.getState().draft.objective).toBe('');
+    expect(useMissionSetupStore.getState().draft.step).toBe('express');
+  });
+
+  it('a camada de operador entra direto no wizard pelo step explícito', () => {
+    const path = '/projects/operador';
+    setActiveWorkspacePath(path);
+    useMissionSetupStore.getState().setWorkspace(path);
+
+    useMissionSetupStore
+      .getState()
+      .beginFreshMission(undefined, { step: 'mission' });
+
+    expect(useMissionSetupStore.getState().draft.step).toBe('mission');
   });
 });
 

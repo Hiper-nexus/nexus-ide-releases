@@ -17,18 +17,23 @@ export interface PaneVacancyProgress {
   readonly occurredAt: number;
 }
 
+/**
+ * Este é o único texto que se move na tela entre "Iniciar missão" e o primeiro
+ * agente — o momento de maior ansiedade de quem não programa. As etiquetas são
+ * escritas em português de gente; o token interno do motor fica no `title`.
+ */
 const STEP_LABELS: Record<BootstrapProgressStep, string> = {
-  authority_checked: 'Autoridade da missão verificada',
+  authority_checked: 'Conferindo permissões',
   subscription_auth: 'Confirmando sua assinatura',
-  plan_baseline: 'Plano base selado',
-  squad_sealed: 'Squad selado',
-  prevc_freeze: 'Congelando o contexto preventivo',
-  runtime_checked: 'Runtime do orquestrador confirmado',
-  drift_retired: 'Sessões antigas aposentadas',
-  attachments_verified: 'Anexos verificados',
-  pane_spawned: 'Agente orquestrador iniciado',
-  kickoff_submitted: 'Kickoff enviado ao orquestrador',
-  kickoff_accepted: 'Kickoff aceito',
+  plan_baseline: 'Fechando o plano de trabalho',
+  squad_sealed: 'Equipe definida',
+  prevc_freeze: 'Lendo o projeto',
+  runtime_checked: 'Preparando o coordenador',
+  drift_retired: 'Limpando execuções antigas',
+  attachments_verified: 'Conferindo os anexos',
+  pane_spawned: 'Abrindo o coordenador',
+  kickoff_submitted: 'Enviando o objetivo à equipe',
+  kickoff_accepted: 'A equipe recebeu o objetivo',
 };
 
 export function bootstrapStepLabel(step: BootstrapProgressStep): string {

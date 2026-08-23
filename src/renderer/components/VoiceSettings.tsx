@@ -449,6 +449,7 @@ export function VoiceSettings() {
   const persistLive = async (patch: {
     jarvisLiveEnabled?: boolean;
     jarvisLiveTransport?: JarvisLiveTransport;
+    wakeWordEnabled?: boolean;
   }) => {
     try {
       const next = await window.nexus.voice.setConfig(patch);
@@ -817,7 +818,16 @@ return (
                       <input
                         type="checkbox"
                         checked={wakeWordOn}
-                        onChange={(e) => setWakeWordOn(e.target.checked)}
+                        onChange={(e) => {
+                          // Grava na hora, como os toggles vizinhos. Sem isto
+                          // a pessoa desliga o microfone, fecha o modal no X e
+                          // sai com a escuta ativa — ela acredita ter feito uma
+                          // ação de privacidade que não aconteceu.
+                          setWakeWordOn(e.target.checked);
+                          void persistLive({
+                            wakeWordEnabled: e.target.checked,
+                          });
+                        }}
                       />
                     </label>
 

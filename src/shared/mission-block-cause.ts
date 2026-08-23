@@ -67,58 +67,58 @@ const COPY: Readonly<
 > = Object.freeze({
   'dispatch-failed': {
     headline: 'O despacho da tarefa abortou antes de o worker começar.',
-    action: 'Abra o diagnóstico da missão e clique em Retomar missão.',
+    action: 'Abra a missão e clique em Retomar.',
   },
   'kickoff-failed': {
     headline: 'O Maestro abriu, mas o kickoff não foi aceito a tempo.',
     action:
-      'Abra o pane do Maestro, confira se a CLI ficou ociosa, e retome a missão.',
+      'Abra a janela do coordenador, veja se a ferramenta parou, e clique em Retomar.',
   },
   'maestro-pre-dispatch-exit': {
     headline: 'O Maestro encerrou antes de delegar a primeira tarefa.',
     action:
-      'Abra o diagnóstico, confira a saída do Maestro e clique em Retomar missão.',
+      'Abra a aba Atividade, veja a saída do coordenador e clique em Retomar.',
   },
   'worker-no-handoff': {
-    headline: 'O worker encerrou sem entregar o resultado da tarefa.',
-    action: 'Confira login e cota do provider em Providers e retome a missão.',
+    headline: 'Um integrante da equipe encerrou sem entregar o resultado.',
+    action: 'Confira login e limite da ferramenta de IA em Configurações › Providers e clique em Retomar.',
   },
   'worker-decision': {
-    headline: 'O worker parou e pediu uma decisão sua — a missão não falhou.',
+    headline: 'Um integrante da equipe parou e pediu uma decisão sua — a missão não falhou.',
     action:
-      'Leia o motivo na pane/diagnóstico e diga o que fazer: mudar objetivo, autorizar, ou encerrar.',
+      'Leia o motivo na janela de trabalho e diga o que fazer: mudar o objetivo, autorizar, ou encerrar.',
   },
   'provider-unavailable': {
-    headline: 'A CLI selada no roster não está disponível para esta tarefa.',
-    action: 'Abra Providers, corrija instalação ou login, e retome a missão.',
+    headline: 'A ferramenta de IA escolhida não está disponível para esta tarefa.',
+    action: 'Abra Configurações › Providers, corrija a instalação ou o login, e clique em Retomar.',
   },
   'ownership-conflict': {
     headline: 'Outra tarefa já reservou os mesmos arquivos desta missão.',
-    action: 'Abra o diagnóstico, libere a reserva presa e retome a missão.',
+    action: 'Abra a aba Atividade, libere a reserva presa e clique em Retomar.',
   },
   'handoff-not-delivered': {
-    headline: 'O worker terminou, mas a entrega não chegou ao orquestrador.',
-    action: 'Abra o diagnóstico da missão e reenvie a entrega pendente.',
+    headline: 'O integrante terminou, mas a entrega não chegou ao coordenador.',
+    action: 'Abra a missão e reenvie a entrega pendente.',
   },
   'orphan-plan': {
     headline: 'O plano selado ficou numa versão anterior da intenção.',
-    action: 'Retome a missão para re-selar o plano na versão atual.',
+    action: 'Clique em Retomar para refazer o plano na versão atual.',
   },
   'terminal-failure': {
     headline: 'A recuperação automática se esgotou nesta falha.',
-    action: 'Abra o diagnóstico da missão, corrija a causa e retome a missão.',
+    action: 'Abra a aba Atividade, corrija a causa e clique em Retomar.',
   },
   'driver-block-human': {
     headline: 'O piloto automático parou a missão num ponto que precisa de você.',
-    action: 'Abra o diagnóstico, leia o motivo registrado e retome a missão.',
+    action: 'Abra a aba Atividade, leia o motivo registrado e clique em Retomar.',
   },
   'agent-status-block': {
-    headline: 'O próprio orquestrador encerrou a missão com um motivo registrado.',
-    action: 'Leia o motivo e retome a missão com o objetivo mais preciso.',
+    headline: 'O próprio coordenador encerrou a missão com um motivo registrado.',
+    action: 'Leia o motivo e clique em Retomar com o objetivo mais preciso.',
   },
   'exclusive-replacement': {
-    headline: 'O orquestrador exclusivo foi assumido por outra missão.',
-    action: 'Retome a missão para reabrir o Maestro.',
+    headline: 'O coordenador exclusivo foi assumido por outra missão.',
+    action: 'Clique em Retomar para reabrir o coordenador.',
   },
   'runtime-closed': {
     headline: 'A execução foi encerrada pelo operador; histórico preservado.',
@@ -131,7 +131,7 @@ const COPY: Readonly<
   },
   unknown: {
     headline: 'Motivo não registrado.',
-    action: 'Abra o diagnóstico da missão para ver o que aconteceu.',
+    action: 'Abra a missão e veja a aba Atividade para entender o que aconteceu.',
   },
 });
 

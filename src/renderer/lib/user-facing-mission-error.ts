@@ -1,5 +1,5 @@
 const DEFAULT_UNKNOWN_ERROR =
-  "Não foi possível concluir esta etapa. Tente novamente. Se continuar, abra Operações para ver o diagnóstico.";
+  "Não foi possível concluir esta etapa. Tente novamente. Se continuar, abra a missão e veja a aba Atividade.";
 const MAX_USER_FACING_DETAIL_LENGTH = 180;
 
 function normalizeWhitespace(value: string): string {
@@ -37,7 +37,7 @@ function refusedGoalRecovery(raw: string): string | null {
     case "done":
       return "Esta missão já foi concluída. Abra uma nova missão para continuar.";
     default:
-      return "Esta missão não aceita um novo objetivo no estado atual. Abra Operações para ver o diagnóstico.";
+      return "Esta missão não aceita um novo objetivo no estado atual. Abra a missão e veja a aba Atividade.";
   }
 }
 
@@ -71,9 +71,9 @@ function knownMissionRecovery(raw: string): string | null {
     if (
       /invalid-context-attestation|missing-context-attestation/i.test(raw)
     ) {
-      return "O contexto do projeto precisa de revisão (documentos/.context). Abra Operações › Contexto ou remova attestations inválidas e tente de novo.";
+      return "O contexto do projeto precisa de revisão: remova os arquivos inválidos em .context e tente de novo.";
     }
-    return "O contexto governado não ficou pronto antes de iniciar. Abra Operações › Contexto e tente novamente.";
+    return "O contexto do projeto não ficou pronto a tempo. Tente iniciar novamente.";
   }
   if (
     /workflow binding requires a clean committed checkout of the evidence surface/i.test(
@@ -118,7 +118,7 @@ function knownMissionRecovery(raw: string): string | null {
     return "A missão mudou durante a validação. Reabra a missão para continuar com a revisão atual.";
   }
   if (/workspace path was not authorized by the folder picker/i.test(raw)) {
-    return 'Autorize esta pasta em “Procurar” e tente novamente.';
+    return 'Escolha a pasta de novo em “Escolher pasta” — o Nexus precisa da sua autorização para abri-la.';
   }
   if (/mission runtime source squad is unavailable/i.test(raw)) {
     return "A equipe preparada perdeu o vínculo com esta pasta. Prepare a missão novamente.";

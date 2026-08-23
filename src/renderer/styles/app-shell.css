@@ -360,6 +360,24 @@
   white-space: nowrap;
 }
 
+/* Contador de "Precisa de você": só aparece com item pendente, então nunca é
+   cromo em repouso. --warn porque é atenção, não falha. */
+.workspace-rail__row-count {
+  margin-left: auto;
+  flex-shrink: 0;
+  min-width: 18px;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-round);
+  background: color-mix(in srgb, var(--warn) 22%, transparent);
+  color: var(--warn);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
 .workspace-rail__mission-list {
   margin: var(--space-1) 0 0 var(--space-4);
 }

@@ -77,21 +77,21 @@ export function Launcher({
           aria-label="Ações iniciais"
         >
           <LauncherAction
-            id="workspace"
-            label="Abrir workspace"
-            accessibleLabel="Abrir workspace"
-            description="Abra um projeto e trabalhe direto no terminal e nos arquivos."
-            icon="files"
-            onClick={onOpenWorkspace}
-          />
-          <LauncherAction
             id="mission"
             label="Missão em equipe"
             accessibleLabel="Missão em equipe"
-            description="Descreva uma entrega e deixe o Nexus organizar o trabalho."
+            description="Descreva o que você quer entregar e o Nexus organiza o trabalho."
             icon="mission"
             primary
             onClick={onStartMission}
+          />
+          <LauncherAction
+            id="workspace"
+            label="Abrir uma pasta de projeto"
+            accessibleLabel="Abrir uma pasta de projeto"
+            description="Já tenho arquivos no computador e quero trabalhar em cima deles."
+            icon="files"
+            onClick={onOpenWorkspace}
           />
           <LauncherAction
             id="task-board"

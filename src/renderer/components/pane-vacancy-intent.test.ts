@@ -104,7 +104,7 @@ describe('paneVacancyIntent — what the vacancy says', () => {
     });
     if (intent.kind !== 'mission-unstaged') throw new Error('unreachable');
     expect(intent.headline).toContain('despacho');
-    expect(intent.nextStep).toContain('Retomar missão');
+    expect(intent.nextStep).toContain('Retomar');
   });
 
   /** Unknown must ADMIT it is unknown instead of inventing a cause. */
@@ -122,7 +122,7 @@ describe('paneVacancyIntent — what the vacancy says', () => {
       mission({ id: 'm3', status: 'running', title: 'Refatorar o grid' }),
     ]);
     if (intent.kind !== 'mission-unstaged') throw new Error('unreachable');
-    expect(intent.headline).toContain('preparando');
+    expect(intent.headline).toContain('montando a equipe');
     expect(intent.nextStep.length).toBeGreaterThan(0);
   });
 
@@ -140,7 +140,7 @@ describe('paneVacancyIntent — what the vacancy says', () => {
         13_000,
       );
       if (intent.kind !== 'mission-unstaged') throw new Error('unreachable');
-      expect(intent.headline).toBe('Squad selado · há 12s');
+      expect(intent.headline).toBe('Equipe definida · há 12s');
       expect(intent.nextStep.length).toBeGreaterThan(0);
     });
 
@@ -152,7 +152,7 @@ describe('paneVacancyIntent — what the vacancy says', () => {
       );
       if (intent.kind !== 'mission-unstaged') throw new Error('unreachable');
       expect(intent.headline).toBe(
-        'A missão está preparando os agentes — nenhum pane foi aberto ainda.',
+        'A missão está montando a equipe — ainda não há nada para ver aqui.',
       );
     });
 
@@ -189,7 +189,7 @@ describe('paneVacancyIntent — what the vacancy says', () => {
         chefIdle,
       );
       if (intent.kind !== 'mission-unstaged') throw new Error('unreachable');
-      expect(intent.headline).toBe('Orquestrador aguardando 2 workers · há 12s');
+      expect(intent.headline).toBe('Coordenador aguardando 2 ajudantes · há 12s');
     });
 
     it('uses singular form for 1 worker', () => {
@@ -200,7 +200,7 @@ describe('paneVacancyIntent — what the vacancy says', () => {
         { ...chefIdle, workerCount: 1 },
       );
       if (intent.kind !== 'mission-unstaged') throw new Error('unreachable');
-      expect(intent.headline).toBe('Orquestrador aguardando 1 worker · há 12s');
+      expect(intent.headline).toBe('Coordenador aguardando 1 ajudante · há 12s');
     });
 
     it('bootstrap progress takes priority over chef-idle', () => {
@@ -211,7 +211,7 @@ describe('paneVacancyIntent — what the vacancy says', () => {
         chefIdle,
       );
       if (intent.kind !== 'mission-unstaged') throw new Error('unreachable');
-      expect(intent.headline).toBe('Squad selado · há 12s');
+      expect(intent.headline).toBe('Equipe definida · há 12s');
     });
 
     it('ignores chef-idle from another mission', () => {
@@ -222,7 +222,7 @@ describe('paneVacancyIntent — what the vacancy says', () => {
         { ...chefIdle, missionId: 'outra' },
       );
       if (intent.kind !== 'mission-unstaged') throw new Error('unreachable');
-      expect(intent.headline).toContain('preparando');
+      expect(intent.headline).toContain('montando a equipe');
     });
 
     it('never overrides the durable cause of a blocked mission', () => {
