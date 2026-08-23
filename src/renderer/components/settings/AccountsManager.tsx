@@ -4,6 +4,7 @@ import { accountLoginCommandFor } from '../../../shared/account-login-commands';
 import { useAccountStore } from '../../state/account-store';
 import { useUsageStore } from '../../state/usage-store';
 import { askConfirm } from '../../state/confirm-store';
+import { defaultAccountLabel } from './account-default-label';
 import { PixelIcon } from '../PixelIcon';
 import { openCliLoginTerminal } from './cli-login-terminal';
 import {
@@ -209,7 +210,11 @@ export function AccountsManager({
   }
 
   async function snapshotSession() {
-    const name = label.trim() || `Conta ${adapterId}`;
+    const name = defaultAccountLabel({
+      typed: label,
+      adapterId,
+      authDetail: auth?.detail,
+    });
     setBusy(true);
     const res = await addActiveSession(adapterId, name);
     await hydrate();

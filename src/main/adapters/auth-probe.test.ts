@@ -27,6 +27,14 @@ vi.mock('./subscription-auth', () => ({
   }),
 }));
 
+// A sonda do Kimi executa `kimi provider list --json` de verdade. Sem este
+// mock o teste passava a depender de a máquina de quem roda estar deslogada:
+// depois do fix de 0.68.4 (o JSON de mapa do CLI 0.38 é reconhecido), uma
+// máquina COM kimi logado devolvia `ok` e o caso quebrava sozinho.
+vi.mock('./kimi-seat-probe', () => ({
+  refreshKimiSeatReadiness: async () => 'missing',
+}));
+
 import { probeAdapterAuth } from './auth-probe';
 
 describe('probeAdapterAuth provider-specific diagnostics', () => {

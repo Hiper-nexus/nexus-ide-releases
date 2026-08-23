@@ -340,3 +340,55 @@ describe('canSeatFromProvider usa o cache Kimi quando aquecido', () => {
     ).toBe(false);
   });
 });
+
+describe('classifyKimiProviderList — formato real do Kimi CLI 0.38', () => {
+  // Payload capturado da máquina do operador (23/08) com `kimi login` feito:
+  // `providers` é MAPA e o assento OAuth é objeto aninhado, sem campo `source`.
+  const REAL_038 = JSON.stringify({
+    providers: {
+      'managed:kimi-code': {
+        baseUrl: 'https://api.kimi.com/coding/v1',
+        type: 'kimi',
+        apiKey: '',
+        oauth: { storage: 'file', key: 'oauth/kimi-code' },
+      },
+    },
+    models: { 'kimi-code/k3': { provider: 'managed:kimi-code' } },
+  });
+
+  it('reconhece o assento logado que o produto dizia estar deslogado', () => {
+    expect(classifyKimiProviderList(REAL_038)).toBe('present');
+  });
+
+  it('providers como mapa sem oauth não é assento', () => {
+    expect(
+      classifyKimiProviderList(
+        JSON.stringify({
+          providers: { 'managed:kimi-code': { type: 'kimi', apiKey: '' } },
+        }),
+      ),
+    ).not.toBe('present');
+  });
+
+  it('objeto oauth VAZIO não conta como assento', () => {
+    expect(
+      classifyKimiProviderList(
+        JSON.stringify({
+          providers: { 'managed:kimi-code': { type: 'kimi', oauth: {} } },
+        }),
+      ),
+    ).not.toBe('present');
+  });
+
+  it('a saída de TEXTO com source=oauth continua valendo', () => {
+    expect(
+      classifyKimiProviderList(
+        'managed:kimi-code  type=kimi  models=4  source=oauth',
+      ),
+    ).toBe('present');
+  });
+
+  it('"No providers configured" continua sendo ausência', () => {
+    expect(classifyKimiProviderList('No providers configured')).toBe('missing');
+  });
+});

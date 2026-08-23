@@ -252,6 +252,16 @@ function collectKimiProviderRows(parsed: unknown): KimiProviderRow[] | null {
         Boolean(row) && typeof row === 'object',
     );
   }
+  // Kimi CLI 0.38 emite `providers` como MAPA (chave = nome do provider),
+  // não como array — o operador logava, `kimi provider list` mostrava
+  // `source=oauth`, e Providers insistia em "não logado" porque este ramo
+  // devolvia vazio (campo 23/08).
+  if (nested && typeof nested === 'object') {
+    return Object.values(nested as Record<string, unknown>).filter(
+      (row): row is KimiProviderRow =>
+        Boolean(row) && typeof row === 'object',
+    );
+  }
   if (kimiLooksLikeProviderRow(rec)) return [rec];
   return [];
 }
@@ -259,6 +269,8 @@ function collectKimiProviderRows(parsed: unknown): KimiProviderRow[] | null {
 function kimiLooksLikeProviderRow(row: Record<string, unknown>): boolean {
   return (
     'source' in row ||
+    'oauth' in row ||
+    'baseUrl' in row ||
     'enabled' in row ||
     'disabled' in row ||
     'status' in row
@@ -266,8 +278,21 @@ function kimiLooksLikeProviderRow(row: Record<string, unknown>): boolean {
 }
 
 function kimiSourceIsOauth(row: KimiProviderRow): boolean {
+  if (
+    typeof row.source === 'string' &&
+    row.source.trim().toLowerCase() === 'oauth'
+  ) {
+    return true;
+  }
+  // 0.38 não tem campo `source` no JSON: o assento OAuth aparece como objeto
+  // aninhado — `"oauth": { "storage": "file", "key": "oauth/kimi-code" }`.
+  // Objeto vazio não é assento.
+  const oauth = (row as { oauth?: unknown }).oauth;
   return (
-    typeof row.source === 'string' && row.source.trim().toLowerCase() === 'oauth'
+    Boolean(oauth) &&
+    typeof oauth === 'object' &&
+    !Array.isArray(oauth) &&
+    Object.keys(oauth as Record<string, unknown>).length > 0
   );
 }
 
