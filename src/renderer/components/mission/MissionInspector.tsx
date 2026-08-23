@@ -280,6 +280,34 @@ function SealedPlan({ missionId }: { readonly missionId: string }) {
   );
 }
 
+/**
+ * Por que não dá para orientar agora — e o que fazer em vez disso.
+ *
+ * "Esta missão não aceita novas orientações no estado atual" nomeava a
+ * recusa e escondia a saída: a pessoa ficava sem saber se esperava, clicava
+ * em algo, ou tinha perdido o trabalho.
+ */
+export function directionUnavailableReason(
+  state: string | null | undefined,
+): string {
+  switch (state) {
+    case 'completed':
+      return 'A entrega está aguardando a sua revisão. Para pedir uma mudança, use "Pedir um ajuste" no topo — a missão reabre e você volta a orientar aqui.';
+    case 'failed':
+      return 'A missão falhou. Use "Tentar de novo" no topo para reabrir a coordenação; o histórico fica.';
+    case 'blocked_user':
+      return 'A missão está esperando a sua resposta — responda a pergunta acima para ela seguir.';
+    case 'starting':
+    case 'draft':
+    case 'review_ready':
+      return 'A missão ainda está começando. Assim que a equipe abrir, você poderá orientar por aqui.';
+    case 'stopping':
+      return 'A missão está encerrando. Aguarde o fim para decidir o próximo passo.';
+    default:
+      return 'Não dá para orientar neste estado. Veja a aba Atividade para entender o que está acontecendo.';
+  }
+}
+
 function PlanProjection({ snapshot }: { readonly snapshot: MissionSnapshot }) {
   if (snapshot.units.length === 0) {
     return (
@@ -457,7 +485,7 @@ function ConversationProjection({
         />
       ) : (
         <p className="mission-inspector__empty" role="status">
-          Esta missão não aceita novas orientações no estado atual.
+          {directionUnavailableReason(snapshot.state)}
         </p>
       )}
     </div>

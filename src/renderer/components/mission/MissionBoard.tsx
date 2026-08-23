@@ -24,6 +24,17 @@ import {
 } from '../../lib/mission-lifecycle-copy';
 import { missionAwaitsOperatorReview } from '../../../shared/mission-recovery-policy';
 import {
+  MISSION_BACKGROUND_NOTICE,
+  qualitativeProgress,
+} from '../../lib/mission-progress-line';
+
+/** Estados em que a missão está de fato trabalhando agora. */
+const MISSION_LIVE_STATES: ReadonlySet<string> = new Set([
+  'running',
+  'starting',
+  'recovering',
+]);
+import {
   aggregateMissionTelemetry,
   formatMissionTelemetry,
 } from '../../../shared/handoff-telemetry';
@@ -959,8 +970,17 @@ export function MissionBoard({
                   currentSnapshot.stateReason?.code,
                 )}
           </span>
-          {/* Sem tasks planejadas (Via Rápida), "0 / 0" é ruído e
-              <progress max={0}> é inválido — esconde o contador. */}
+          {/* Sem tasks planejadas (Via Rápida) o contador some — correto, mas
+              deixava a pessoa sem NENHUM sinal durante todo o trabalho, e a
+              missão parecia travada. A contagem vem dos agentes, que existem
+              sempre. */}
+          {currentSnapshot.progress.total === 0 &&
+            MISSION_LIVE_STATES.has(currentSnapshot.state) && (
+              <span className="mission-board__progress-line">
+                {qualitativeProgress(currentSnapshot.agents)?.line ??
+                  'A equipe está começando'}
+              </span>
+            )}
           {currentSnapshot.progress.total > 0 && (
             <div className="mission-board__progress">
               <span>
@@ -976,6 +996,11 @@ export function MissionBoard({
                 {currentSnapshot.progress.total}
               </progress>
             </div>
+          )}
+          {MISSION_LIVE_STATES.has(currentSnapshot.state) && (
+            <span className="mission-board__background-notice">
+              {MISSION_BACKGROUND_NOTICE}
+            </span>
           )}
           {telemetryLine && (
             <span

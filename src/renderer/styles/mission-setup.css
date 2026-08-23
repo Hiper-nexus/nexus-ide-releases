@@ -1735,3 +1735,38 @@
     transparent
   );
 }
+
+
+/* Exemplos de objetivo: régua, não decoração. Ficam na tela depois da
+   primeira tecla — quem não programa usa para calibrar o tamanho do pedido. */
+.mission-setup__examples {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+}
+
+.mission-setup__example {
+  appearance: none;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-round);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+  transition:
+    border-color 150ms var(--ease-out-quart),
+    color 150ms var(--ease-out-quart);
+}
+
+.mission-setup__example:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.mission-setup__example:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

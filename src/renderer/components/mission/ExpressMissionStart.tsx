@@ -41,6 +41,29 @@ interface ExpressMissionStartProps {
  * vem ligado; o wizard de 3 passos continua acessível em "Avançado". Zero novo
  * canal IPC — reusa prepare+start.
  */
+/**
+ * Três pedidos reais, de tamanhos diferentes: uma correção pequena, uma tela
+ * nova e uma publicação. Cobrem as três formas mais comuns de trabalho e
+ * mostram o nível de detalhe que ajuda a equipe.
+ */
+const OBJECTIVE_EXAMPLES: ReadonlyArray<{
+  readonly label: string;
+  readonly text: string;
+}> = [
+  {
+    label: 'Corrigir algo',
+    text: 'o botão de enviar do formulário não funciona no celular; corrija e confirme que dá para enviar do começo ao fim',
+  },
+  {
+    label: 'Criar uma tela',
+    text: 'crie uma página de contato simples com nome, e-mail e mensagem, no mesmo estilo do resto do site',
+  },
+  {
+    label: 'Publicar',
+    text: 'publique o site e me diga o endereço para eu abrir no navegador',
+  },
+];
+
 export function ExpressMissionStart({
   workspace,
   draft,
@@ -163,6 +186,29 @@ export function ExpressMissionStart({
           <span id="express-objective-hint" className="mission-setup__hint">
             Escreva em linguagem comum. A missão começa assim que você confirmar.
           </span>
+          {/* O produto nunca mostrava um objetivo que FUNCIONOU. Quem não
+              programa trava na folha em branco: não sabe o tamanho, o nível de
+              detalhe, nem o tipo de pedido que cabe. Os exemplos continuam na
+              tela depois da primeira tecla — servem de régua, não só de
+              partida. */}
+          <div
+            className="mission-setup__examples"
+            role="group"
+            aria-label="Exemplos de objetivo"
+          >
+            {OBJECTIVE_EXAMPLES.map((example) => (
+              <button
+                key={example.label}
+                type="button"
+                className="mission-setup__example"
+                disabled={draftEditingDisabled || busy}
+                onClick={() => onObjectiveChange(example.text)}
+                title={example.text}
+              >
+                {example.label}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className="mission-setup__field">

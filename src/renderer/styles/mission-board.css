@@ -1978,3 +1978,16 @@
   line-height: 1.6;
   color: var(--text);
 }
+
+
+/* Sinal de progresso sem contador, e a frase que tira a ansiedade de ficar
+   olhando a tela. Discretos de propósito: são estado, não alarme. */
+.mission-board__progress-line {
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+}
+
+.mission-board__background-notice {
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}
