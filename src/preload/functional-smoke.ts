@@ -218,10 +218,14 @@ function parseFunctionalSmokeReview(value: unknown): MissionReview | null {
         agent.instructions === expected.instructions &&
         agent.ownsPlanDocs === expected.ownsPlanDocs &&
         agent.persona === expected.persona &&
+        // Capacidade (skills/tools) é autoridade MAIN-owned desde
+        // d86637d9: a política determinística papel × objetivo × lane
+        // concede no prepare, mesmo com roster do renderer trazendo listas
+        // vazias. O smoke valida a IDENTIDADE da equipe; exigir listas
+        // vazias aqui era expectativa da era pré-concessão e derrubava o
+        // gate de release ("mission-prepare", 22/08).
         Array.isArray(agent.allowedSkills) &&
-        agent.allowedSkills.length === 0 &&
-        Array.isArray(agent.allowedTools) &&
-        agent.allowedTools.length === 0
+        Array.isArray(agent.allowedTools)
       );
     });
   if (
