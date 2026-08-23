@@ -44,7 +44,10 @@ import {
 } from './browser/browser-host';
 import { listPanes } from './lib/split-tree';
 import { describeWorkspaceOpenError } from './lib/workspace-open-error';
-import { routeMissionAttention } from './lib/mission-attention-route';
+import {
+  attentionCauseForMissionState,
+  routeMissionAttention,
+} from './lib/mission-attention-route';
 import { useFilesStore } from './state/files-store';
 import { useAccountController } from './state/account-store';
 import { useCostController } from './state/cost-store';
@@ -211,6 +214,17 @@ export function App() {
   // ("Rendered more hooks than during the previous render") — tela branca no
   // primeiro boot, quando workspaceHydrated ainda é false.
   const attentionCount = useAttentionInboxStore((s) => s.count);
+  /**
+   * Clicar numa missão no rail abre a aba que responde o estado dela: entrega
+   * concluída no Resultado, pergunta pendente na Conversa, falha na
+   * Atividade. Antes era sempre Atividade.
+   */
+  const railAttentionCause = (missionId: string) =>
+    attentionCauseForMissionState(
+      useOrchStore
+        .getState()
+        .missionSummaries.find((mission) => mission.id === missionId)?.state,
+    );
   const orchestrationModeOpen = useOrchestrationModeStore(
     (state) => state.pending !== null,
   );
@@ -1015,6 +1029,7 @@ export function App() {
             selection={selection}
             onCreateNew={navigation.openNewMission}
             onOpenLauncher={navigation.openLauncher}
+            currentWorkspaceId={currentWorkspace?.path}
             attentionCount={attentionCount}
             onOpenAttention={() =>
               useAttentionInboxStore.getState().setOpen(true)
@@ -1036,7 +1051,7 @@ export function App() {
                   .then(() => {
                     routeMissionAttention({
                       missionId,
-                      cause: 'rail-selection',
+                      cause: railAttentionCause(missionId),
                     });
                   })
                   .catch(() => {
@@ -1050,7 +1065,7 @@ export function App() {
               }
               routeMissionAttention({
                 missionId,
-                cause: 'rail-selection',
+                cause: railAttentionCause(missionId),
               });
             }}
             projectEnabled={Boolean(currentWorkspace) && projectOverviewEnabled}

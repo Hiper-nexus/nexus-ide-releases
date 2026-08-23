@@ -5,7 +5,11 @@ import { useLayoutStore } from '../state/layout-store';
 import { useMissionInspectorStore } from '../state/mission-inspector-store';
 import { useOrchStore } from '../state/orch-store';
 import { useProductNavigationStore } from '../state/product-navigation-store';
-import { routeMissionAttention } from './mission-attention-route';
+import {
+  attentionCauseForMissionState,
+  MISSION_ATTENTION_ROUTE_MATRIX,
+  routeMissionAttention,
+} from './mission-attention-route';
 
 const livePane: PaneModel = {
   id: 'pane-live',
@@ -156,5 +160,39 @@ describe('shared cause-aware mission attention route', () => {
       tab: 'chat',
     });
     expect(useLayoutStore.getState().focusedPaneId).toBe('shell-old');
+  });
+});
+
+describe('attentionCauseForMissionState — a aba vem do estado real', () => {
+  it('entrega concluída abre o Resultado, não o log de eventos', () => {
+    expect(attentionCauseForMissionState('completed')).toBe('completed');
+    expect(MISSION_ATTENTION_ROUTE_MATRIX.completed.tab).toBe('result');
+  });
+
+  it('pergunta pendente abre a Conversa', () => {
+    expect(attentionCauseForMissionState('blocked_user')).toBe(
+      'human-question',
+    );
+  });
+
+  it('falha e bloqueio técnico abrem a Atividade — nunca uma Conversa vazia', () => {
+    expect(attentionCauseForMissionState('failed')).toBe('technical-failure');
+    expect(attentionCauseForMissionState('blocked_technical')).toBe(
+      'technical-failure',
+    );
+    expect(MISSION_ATTENTION_ROUTE_MATRIX['technical-failure'].tab).toBe(
+      'activity',
+    );
+  });
+
+  it('recuperando tem rota própria', () => {
+    expect(attentionCauseForMissionState('recovering')).toBe(
+      'technical-recovery',
+    );
+  });
+
+  it('estado desconhecido cai na rota neutra do rail', () => {
+    expect(attentionCauseForMissionState(undefined)).toBe('rail-selection');
+    expect(attentionCauseForMissionState('running')).toBe('rail-selection');
   });
 });

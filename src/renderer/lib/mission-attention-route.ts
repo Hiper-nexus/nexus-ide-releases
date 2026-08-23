@@ -41,6 +41,33 @@ export const MISSION_ATTENTION_ROUTE_MATRIX = {
   Record<MissionAttentionRouteKey, MissionAttentionRoute>
 >;
 
+/**
+ * Deriva a causa a partir do ESTADO real da missão.
+ *
+ * Sem isto, um item da lista de atenção ou uma seleção no rail caía sempre na
+ * mesma aba: o produto dizia "preciso de você" e depositava a pessoa numa
+ * tela onde a pergunta não estava — e conferir uma entrega abria o log de
+ * eventos. `mission-stuck` cobre blocked_user, failed E recovering, então uma
+ * causa fixa erra em dois dos três.
+ */
+export function attentionCauseForMissionState(
+  state: string | undefined,
+): MissionAttentionCause {
+  switch (state) {
+    case 'completed':
+      return 'completed';
+    case 'blocked_user':
+      return 'human-question';
+    case 'failed':
+    case 'blocked_technical':
+      return 'technical-failure';
+    case 'recovering':
+      return 'technical-recovery';
+    default:
+      return 'rail-selection';
+  }
+}
+
 export interface RouteMissionAttentionInput {
   readonly missionId: string;
   readonly cause: MissionAttentionCause;

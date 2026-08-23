@@ -380,7 +380,10 @@ describe('projectMissionSnapshot', () => {
     expect(snapshot.stateReason).toBeUndefined();
     expect(snapshot.progress).toEqual({ completed: 1, total: 1 });
     expect(snapshot.result).toEqual(view.mission.result);
-    expect(snapshot.allowedActions).toEqual([]);
+    // Concluída oferece `resume`: a entrega ainda espera a revisão humana
+    // e o operador pode não aprovar. É a decisão explícita que reabre a
+    // coordenação para o ajuste ("Pedir um ajuste" no board).
+    expect(snapshot.allowedActions).toEqual(['resume']);
   });
 
   it('marks every roster member done after verified completion closes their panes', () => {
@@ -438,7 +441,10 @@ describe('projectMissionSnapshot', () => {
 
     expect(snapshot.state).toBe('completed');
     expect(snapshot.stateReason).toBeUndefined();
-    expect(snapshot.allowedActions).toEqual([]);
+    // Concluída oferece `resume`: a entrega ainda espera a revisão humana
+    // e o operador pode não aprovar. É a decisão explícita que reabre a
+    // coordenação para o ajuste ("Pedir um ajuste" no board).
+    expect(snapshot.allowedActions).toEqual(['resume']);
     expect(snapshot.result).toEqual(view.mission.result);
     expect(snapshot.agents.map((agent) => agent.state)).toEqual(['done']);
   });

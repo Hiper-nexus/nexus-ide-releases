@@ -1387,7 +1387,20 @@ const productionMissionEngines = new MissionEngineRegistry((scope, stores) =>
         missionViewHasResidualWork(
           projectMissionEngineSnapshotView(scope, stores, mission.id),
         );
-      if (runtimeClosedByOperator || leftoverParked || residualWork) {
+      // Concluída COM resultado: a entrega existe, mas ainda não foi aprovada
+      // pelo humano. `resume` é a decisão explícita do operador ("pedir um
+      // ajuste") e é o ÚNICO comando autorizado a reabrir missão selada — o
+      // retry-kickoff mecânico continua recusando. Reabrir religa a
+      // coordenação pela Via Rápida (respawn + re-entrega), que é o que faz o
+      // pane do coordenador voltar a aceitar digitação.
+      const completedAwaitingReview =
+        mission.status === "done" && Boolean(mission.result);
+      if (
+        runtimeClosedByOperator ||
+        leftoverParked ||
+        residualWork ||
+        completedAwaitingReview
+      ) {
         const description =
           leftoverParked
             ? stripMissionVerdictParagraph(

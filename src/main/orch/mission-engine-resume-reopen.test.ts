@@ -198,7 +198,12 @@ describe('engine resume — os estados em que a UI oferece Retomar', () => {
     expect(harness.resumeFastLaneMission).toHaveBeenCalledTimes(1);
   });
 
-  it('missão concluída COM resultado não reabre — Retomar não é anunciado', async () => {
+  it('missão concluída COM resultado reabre para o ajuste da revisão humana', async () => {
+    // 0.68.4: o snapshot passou a anunciar `resume` em `completed` ("Pedir um
+    // ajuste"), porque a entrega existe mas ainda não foi APROVADA — o
+    // operador pode não aprovar. O invariante deste arquivo é o pareamento
+    // "o que a UI anuncia, o motor aceita"; a versão anterior deste caso
+    // existia só porque `completed` não anunciava nada.
     liveMission = baseMission({
       status: 'done',
       intentState: 'done',
@@ -210,11 +215,13 @@ describe('engine resume — os estados em que a UI oferece Retomar', () => {
       },
     });
 
-    await expect(
-      engine.command(scope, { kind: 'resume', missionId: 'mission-1' }),
-    ).rejects.toThrow('mission engine resume requires a technical block');
-    expect(harness.resumeFastLaneMission).not.toHaveBeenCalled();
-    expect(transitionCount).toBe(0);
+    await engine.command(scope, { kind: 'resume', missionId: 'mission-1' });
+
+    expect(liveMission.status).toBe('running');
+    expect(liveMission.intentState).toBe('executing');
+    // Reabrir precisa RELIGAR o runtime — é isso que devolve um coordenador
+    // digitável para o operador pedir o ajuste.
+    expect(harness.resumeFastLaneMission).toHaveBeenCalledTimes(1);
   });
 
   it('bloqueio técnico sem dispatch block continua recusado (regressão do caminho cerimonial)', async () => {

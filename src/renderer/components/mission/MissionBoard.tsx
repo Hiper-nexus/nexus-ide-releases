@@ -131,6 +131,21 @@ const HEADER_ACTION_LABELS: Readonly<Record<HeaderAction, string>> = {
   stop: 'Parar',
 };
 
+/**
+ * Em missão concluída, `resume` não é "retomar de onde parou": é o operador
+ * dizendo que a entrega ainda não está aprovada. O rótulo precisa nomear a
+ * ação real, senão a única ação de uma missão pronta lê como repetir trabalho.
+ */
+export function headerActionLabel(
+  action: HeaderAction,
+  missionState: string,
+): string {
+  if (action === 'resume' && missionState === 'completed') {
+    return 'Pedir um ajuste';
+  }
+  return HEADER_ACTION_LABELS[action];
+}
+
 export interface MissionBoardProps {
   readonly missionId: string;
   readonly onOpenTerminals: (missionId: string) => void;
@@ -1011,7 +1026,7 @@ export function MissionBoard({
                 runHeaderAction(action, event.currentTarget)
               }
             >
-              {HEADER_ACTION_LABELS[action]}
+              {headerActionLabel(action, currentSnapshot.state)}
             </button>
           ))}
           {(currentMission || lifecycleAction === 'remove') &&

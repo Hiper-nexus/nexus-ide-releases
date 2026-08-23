@@ -376,11 +376,16 @@ function allowedActions(
         : ['retry-kickoff', 'stop'];
     case 'recovering':
       return ['stop'];
+    // Concluída NÃO é o fim da conversa: a entrega ainda espera a revisão
+    // humana e o operador pode não aprovar. `resume` é a decisão explícita
+    // que reabre a coordenação para o ajuste — o mesmo caminho já usado por
+    // missão concluída com trabalho residual.
+    case 'completed':
+      return ['resume'];
     case 'draft':
     case 'starting':
     case 'stopping':
     case 'failed':
-    case 'completed':
       return [];
   }
 }

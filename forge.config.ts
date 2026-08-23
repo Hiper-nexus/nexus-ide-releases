@@ -95,6 +95,13 @@ export function createMacNotarizeCredentials(
   environment: NodeJS.ProcessEnv,
 ): MacNotarizeCredentials | undefined {
   if (!isAppleReleaseSigning(environment.APPLE_TEAM_ID)) return undefined;
+  // APPLE_TEAM_ID mora no perfil de shell de quem publica. Sem o opt-in
+  // explícito de release, isto é uma sessão de desenvolvimento: `forge start`
+  // e qualquer teste que importe este arquivo morriam com
+  // "NEXUS_MAC_PUBLISH_RELEASE must be exactly 1" só por causa da variável
+  // ambiente. O gate real de release continua duplo — aqui, quando a variável
+  // EXISTE mas está errada, e em make-release.mjs, que exige "1" sempre.
+  if (environment.NEXUS_MAC_PUBLISH_RELEASE === undefined) return undefined;
   const { keychainProfile } =
     assertMacPublishReleaseEnvironment(environment);
   return { keychainProfile };

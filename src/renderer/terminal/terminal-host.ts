@@ -509,13 +509,25 @@ async function requestMissionRuntimeResume(missionId: string): Promise<void> {
   if (missionRuntimeResumeInFlight.has(missionId)) return;
   missionRuntimeResumeInFlight.add(missionId);
   try {
-    await window.nexus.mission.command({
-      kind: 'retry-kickoff',
-      missionId,
-    });
+    // Missão CONCLUÍDA só reabre por decisão humana explícita. retry-kickoff é
+    // o gatilho MECÂNICO (watchdog, auto-cura de grant) e o motor o recusa em
+    // missão selada — mandar ele aqui deixaria a tecla do operador sem efeito.
+    // Digitar no pane do coordenador É a decisão: vira `resume`.
+    const kind = missionOfPaneIsDoneById(missionId)
+      ? ('resume' as const)
+      : ('retry-kickoff' as const);
+    await window.nexus.mission.command({ kind, missionId });
   } finally {
     missionRuntimeResumeInFlight.delete(missionId);
   }
+}
+
+/** Espelho local: a missão desta id está concluída? */
+function missionOfPaneIsDoneById(missionId: string): boolean {
+  return (
+    useOrchStore.getState().missions.find((m) => m.id === missionId)?.status ===
+    'done'
+  );
 }
 
 /**

@@ -317,3 +317,36 @@ describe('packaged legal notices', () => {
     ).toBe(true);
   });
 });
+
+describe('createMacNotarizeCredentials — ambiente de dev não é release', () => {
+  it('APPLE_TEAM_ID no perfil do shell não quebra o dev', () => {
+    // Regressão: com APPLE_TEAM_ID exportado no ~/.zshrc, `npm start` e três
+    // suítes morriam em "NEXUS_MAC_PUBLISH_RELEASE must be exactly 1".
+    expect(
+      createMacNotarizeCredentials({
+        APPLE_TEAM_ID: '35P5XL3JN6',
+        APPLE_KEYCHAIN_PROFILE: 'nexus-notary',
+      }),
+    ).toBeUndefined();
+  });
+
+  it('mas opt-in de release COM valor errado continua explodindo', () => {
+    expect(() =>
+      createMacNotarizeCredentials({
+        APPLE_TEAM_ID: '35P5XL3JN6',
+        APPLE_KEYCHAIN_PROFILE: 'nexus-notary',
+        NEXUS_MAC_PUBLISH_RELEASE: '0',
+      }),
+    ).toThrow('NEXUS_MAC_PUBLISH_RELEASE must be exactly "1"');
+  });
+
+  it('release bem configurado segue devolvendo o profile', () => {
+    expect(
+      createMacNotarizeCredentials({
+        APPLE_TEAM_ID: '35P5XL3JN6',
+        APPLE_KEYCHAIN_PROFILE: 'nexus-notary',
+        NEXUS_MAC_PUBLISH_RELEASE: '1',
+      }),
+    ).toEqual({ keychainProfile: 'nexus-notary' });
+  });
+});

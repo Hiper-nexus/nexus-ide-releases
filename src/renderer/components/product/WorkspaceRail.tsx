@@ -58,6 +58,12 @@ export interface WorkspaceRailProps {
    * botão de abrir pasta da interface.
    */
   onOpenLauncher?: () => void;
+  /**
+   * Workspace aberto agora. A lixeira dele NÃO remove dos recentes: o main
+   * desvia para o diálogo de fechar projeto (App.tsx), que encerra todas as
+   * sessões. O rótulo precisa prometer o que de fato acontece.
+   */
+  currentWorkspaceId?: string;
   /** Quantos itens esperam a pessoa. Zero esconde a linha por completo. */
   attentionCount?: number;
   onOpenAttention?: () => void;
@@ -151,6 +157,7 @@ function missionStatusDisplay(
 }
 
 interface WorkspaceGroupProps {
+  currentWorkspaceId?: string;
   label: string;
   group: 'active' | 'recent';
   workspaces: readonly WorkspaceRailWorkspace[];
@@ -162,6 +169,7 @@ interface WorkspaceGroupProps {
 }
 
 function WorkspaceGroup({
+  currentWorkspaceId,
   label,
   group,
   workspaces,
@@ -216,8 +224,16 @@ function WorkspaceGroup({
                     className="workspace-rail__workspace-action"
                     data-action="remove-workspace"
                     data-workspace-id={workspace.id}
-                    aria-label={`Remover workspace ${workspace.name} dos recentes`}
-                    title={`Remover ${workspace.name} dos recentes`}
+                    aria-label={
+                      workspace.id === currentWorkspaceId
+                        ? `Fechar o projeto ${workspace.name}`
+                        : `Remover workspace ${workspace.name} dos recentes`
+                    }
+                    title={
+                      workspace.id === currentWorkspaceId
+                        ? `Fechar este projeto (encerra as sessões abertas)`
+                        : `Remover ${workspace.name} dos recentes`
+                    }
                     onClick={(event) => {
                       event.stopPropagation();
                       onRemoveWorkspace(workspace.id);
@@ -330,6 +346,7 @@ export function WorkspaceRail({
   onOpenMemory,
   onOpenSettings,
   onOpenLauncher,
+  currentWorkspaceId,
   attentionCount = 0,
   onOpenAttention,
 }: WorkspaceRailProps) {
@@ -368,6 +385,7 @@ export function WorkspaceRail({
           onSelectWorkspace={onSelectWorkspace}
           onSelectMission={onSelectMission}
           onRemoveWorkspace={onRemoveWorkspace}
+          currentWorkspaceId={currentWorkspaceId}
           onRemoveMission={onRemoveMission}
         />
         <WorkspaceGroup
@@ -378,6 +396,7 @@ export function WorkspaceRail({
           onSelectWorkspace={onSelectWorkspace}
           onSelectMission={onSelectMission}
           onRemoveWorkspace={onRemoveWorkspace}
+          currentWorkspaceId={currentWorkspaceId}
           onRemoveMission={onRemoveMission}
         />
       </div>

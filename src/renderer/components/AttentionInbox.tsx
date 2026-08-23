@@ -1,7 +1,10 @@
 import { useEffect, useMemo } from 'react';
 import { collectAttentionItems, type AttentionItem } from '../../shared/attention-inbox';
 import { listPanes } from '../lib/split-tree';
-import { routeMissionAttention } from '../lib/mission-attention-route';
+import {
+  attentionCauseForMissionState,
+  routeMissionAttention,
+} from '../lib/mission-attention-route';
 import { useAttentionInboxStore } from '../state/attention-inbox-store';
 import { useAgentNotificationStore } from '../state/agent-notification-store';
 import { useAgentWaitingStore } from '../state/agent-waiting-store';
@@ -35,7 +38,15 @@ function jump(item: AttentionItem): void {
     return;
   }
   if (item.kind === 'mission-stuck') {
-    useProductNavigationStore.getState().openMission(item.targetId);
+    // A causa vem do estado: missão falhada não pode abrir numa aba Conversa
+    // vazia, nem entrega concluída no log de eventos.
+    const state = useOrchStore
+      .getState()
+      .missionSummaries.find((mission) => mission.id === item.targetId)?.state;
+    routeMissionAttention({
+      missionId: item.targetId,
+      cause: attentionCauseForMissionState(state),
+    });
     return;
   }
   useProductNavigationStore.getState().openSettings('providers');
