@@ -65,6 +65,8 @@ export interface MissionDoneTeardownDeps {
     request: MissionPaneCloseRequest,
   ) => Promise<boolean> | boolean;
   readonly ttlMs: number;
+  /** Espera entre tentativas de close (a recusa conservadora é transitória). */
+  readonly retryDelayMs: number;
   readonly log: (message: string) => void;
 }
 
@@ -97,10 +99,45 @@ export function productionMissionDoneTeardownDeps(): Omit<
     isIdle: (sessionId) => isSessionInjectableIdle(sessionId),
     closePane: (request) => requestMissionPaneClose(request),
     ttlMs: WORKER_POST_DONE_TTL_MS,
+    retryDelayMs: CLOSE_RETRY_DELAY_MS,
     log: (message) => console.warn(`[mission-done-teardown] ${message}`),
   };
 
 
+}
+
+/**
+ * A autoridade do pane revalida a identidade DEPOIS de terminar a sessão —
+ * e a saída (natural ou induzida) dispara um re-sync do renderer que troca
+ * o objeto do registro no meio do caminho ("alvo-mudou-durante-termino",
+ * voo real 23/08). A recusa é conservadora e transitória: nada foi fechado.
+ * Re-tentar a chamada selada é seguro e idempotente.
+ */
+const CLOSE_RETRY_ATTEMPTS = 3;
+const CLOSE_RETRY_DELAY_MS = 400;
+
+async function closePaneWithRetry(
+  deps: MissionDoneTeardownDeps,
+  request: MissionPaneCloseRequest,
+  label: string,
+): Promise<boolean> {
+  for (let attempt = 1; attempt <= CLOSE_RETRY_ATTEMPTS; attempt += 1) {
+    let closed = false;
+    try {
+      closed = await deps.closePane(request);
+    } catch (error) {
+      deps.log(
+        `falha ao ${label} (tentativa ${attempt}/${CLOSE_RETRY_ATTEMPTS}): ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+    if (closed) return true;
+    if (attempt < CLOSE_RETRY_ATTEMPTS) {
+      await new Promise((resolve) => setTimeout(resolve, deps.retryDelayMs));
+    }
+  }
+  return false;
 }
 
 const armed = new Map<string, ReturnType<typeof setTimeout>>();
@@ -145,8 +182,9 @@ function armTimer(deps: MissionDoneTeardownDeps, sessionId: string): void {
         `(pane=${authority.paneId}, session=${sessionId}, ` +
         `mission=${authority.missionId})`,
     );
-    void Promise.resolve(
-      deps.closePane({
+    void closePaneWithRetry(
+      deps,
+      {
         paneId: authority.paneId,
         missionId: authority.missionId!,
         scope: authority.scope!,
@@ -155,24 +193,17 @@ function armTimer(deps: MissionDoneTeardownDeps, sessionId: string): void {
         ...(authority.workerIncarnationId
           ? { workerIncarnationId: authority.workerIncarnationId }
           : {}),
-      }),
-    ).then(
-      (closed) => {
-        if (!closed) {
-          deps.log(
-            `fechamento recusado pela autoridade do pane ` +
-              `(pane=${authority.paneId}, session=${sessionId})`,
-          );
-        }
       },
-      (error) => {
+      `encerrar worker (session=${sessionId})`,
+    ).then((closed) => {
+      if (!closed) {
         deps.log(
-          `falha ao encerrar worker (session=${sessionId}): ${
-            error instanceof Error ? error.message : String(error)
-          }`,
+          `fechamento do worker recusado pela autoridade após ` +
+            `${CLOSE_RETRY_ATTEMPTS} tentativas ` +
+            `(pane=${authority.paneId}, session=${sessionId})`,
         );
-      },
-    );
+      }
+    });
   }, deps.ttlMs);
   if (typeof timer.unref === 'function') timer.unref();
   armed.set(sessionId, timer);
@@ -194,36 +225,30 @@ function handleMissionDone(
       // SEM sessionId: no done o PTY do orquestrador tipicamente JÁ saiu — a
       // identidade exata do pedido é pane+missão+escopo+role; um sessionId
       // defasado faz a autoridade recusar o fechamento (voo real 23/08).
-      void Promise.resolve(
-        deps.closePane({
+      void closePaneWithRetry(
+        deps,
+        {
           paneId: pane.paneId,
           missionId,
           scope: pane.scope ?? scope,
           role: 'orchestrator',
-        }),
-      ).then(
-        (closed) => {
-          if (!closed) {
-            const atual = deps
-              .listMissionPanes(scope, missionId)
-              .map((p) =>
-                `pane=${p.paneId} role=${p.role ?? '?'} session=${p.sessionId ?? 'null'} state=${p.state}`,
-              )
-              .join(' | ');
-            deps.log(
-              `fechamento do orquestrador recusado pela autoridade ` +
-                `(pane=${pane.paneId}, mission=${missionId}); registro atual: ${atual || 'vazio'}`,
-            );
-          }
         },
-        (error) => {
+        `encerrar orquestrador (pane=${pane.paneId})`,
+      ).then((closed) => {
+        if (!closed) {
+          const atual = deps
+            .listMissionPanes(scope, missionId)
+            .map((p) =>
+              `pane=${p.paneId} role=${p.role ?? '?'} session=${p.sessionId ?? 'null'} state=${p.state}`,
+            )
+            .join(' | ');
           deps.log(
-            `falha ao encerrar orquestrador (pane=${pane.paneId}): ${
-              error instanceof Error ? error.message : String(error)
-            }`,
+            `fechamento do orquestrador recusado pela autoridade após ` +
+              `${CLOSE_RETRY_ATTEMPTS} tentativas ` +
+              `(pane=${pane.paneId}, mission=${missionId}); registro atual: ${atual || 'vazio'}`,
           );
-        },
-      );
+        }
+      });
       continue;
     }
     if (pane.role === 'worker' && pane.sessionId && deps.isIdle(pane.sessionId)) {

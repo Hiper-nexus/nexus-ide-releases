@@ -133,6 +133,7 @@ function harness(overrides: Partial<Harness['state']> = {}): Harness {
       return true;
     },
     ttlMs: WORKER_POST_DONE_TTL_MS,
+    retryDelayMs: 100,
     log: () => {},
   };
   return {
@@ -332,5 +333,54 @@ describe('mission-done-teardown (F-106: orquestrador morre no done, worker idle 
     shutdownMissionDoneTeardown();
     vi.advanceTimersByTime(WORKER_POST_DONE_TTL_MS * 2);
     expect(h.closed).toHaveLength(0);
+  });
+
+  it('re-tenta o close quando a autoridade recusa de forma transitória', async () => {
+    // Voo real 23/08: o exit dispara re-sync do renderer que troca o objeto
+    // do registro no meio do close ("alvo-mudou-durante-termino"). A recusa
+    // é conservadora e transitória — a chamada selada é idempotente.
+    const h = harness({
+      panes: [paneFor('pane-maestro', 'orchestrator', 'pty-maestro')],
+    });
+    let attempts = 0;
+    (h.deps as unknown as Record<string, unknown>).closePane = (
+      request: MissionPaneCloseRequest,
+    ) => {
+      attempts += 1;
+      if (attempts === 1) return false; // corrida do re-sync
+      h.closed.push(request);
+      return true;
+    };
+    initMissionDoneTeardown(h.deps);
+    transitionToDone(h);
+
+    expect(attempts).toBe(1); // tentativa imediata
+    expect(h.closed).toHaveLength(0);
+
+    await vi.advanceTimersByTimeAsync(100); // retryDelayMs do harness
+    expect(attempts).toBe(2);
+    expect(h.closed).toHaveLength(1);
+    expect(h.closed[0]!.paneId).toBe('pane-maestro');
+  });
+
+  it('desiste após 3 recusas seguidas (fail-closed, sem loop)', async () => {
+    const h = harness({
+      panes: [paneFor('pane-maestro', 'orchestrator', 'pty-maestro')],
+    });
+    let attempts = 0;
+    (h.deps as unknown as Record<string, unknown>).closePane = () => {
+      attempts += 1;
+      return false;
+    };
+    initMissionDoneTeardown(h.deps);
+    transitionToDone(h);
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(attempts).toBe(3);
+    expect(h.closed).toHaveLength(0);
+
+    // Sem nova tentativa depois de esgotar o orçamento.
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(attempts).toBe(3);
   });
 });
