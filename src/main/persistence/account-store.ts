@@ -938,8 +938,39 @@ export function addAccount(input: AddAccountInput): Account {
 }
 
 /**
+ * Conta subscription do adapter que JÁ representa esta sessão:
+ * mesmo e-mail (identidade estável atravessa rotações de token) ou, sem
+ * e-mail de nenhum lado, blob idêntico.
+ */
+function findSessionDuplicate(
+  adapterId: string,
+  email: string | undefined,
+  blob: string,
+): Account | null {
+  const normalized = email?.trim().toLowerCase();
+  for (const account of listAccounts(adapterId)) {
+    if (account.mode !== 'subscription') continue;
+    if (
+      normalized &&
+      account.email &&
+      account.email.trim().toLowerCase() === normalized
+    ) {
+      return account;
+    }
+    if (!normalized || !account.email) {
+      if (getSecret(CRED_PREFIX + account.id) === blob) return account;
+    }
+  }
+  return null;
+}
+
+/**
  * Snapshot the CURRENTLY signed-in CLI session into a subscription account.
  * Claude → Keychain blob; Codex/Grok/Kimi/… → native auth.json (Orca-style).
+ *
+ * Re-login da MESMA conta atualiza a entrada existente (blob fresco + email
+ * se antes faltava) e a reativa — nunca empilha duplicata do assinante. Sem
+ * isto, cada ciclo login→salvar criava "mais uma conta" da mesma pessoa.
  */
 export function addActiveSessionAccount(
   adapterId: string,
@@ -968,6 +999,44 @@ export function addActiveSessionAccount(
     return null;
   }
   if (!blob) return null;
+
+  const existing = findSessionDuplicate(adapterId, email, blob);
+  if (existing) {
+    const secretKey = CRED_PREFIX + existing.id;
+    const previousSecret = getSecret(secretKey);
+    const saved = setSecret(secretKey, blob);
+    if (!saved.ok) {
+      throw new PersistenceUnavailableError(
+        saved.error ?? 'failed to persist account credential',
+      );
+    }
+    try {
+      if (isFileAuthAdapter(adapterId)) {
+        materializeManagedHome(adapterId as FileAuthAdapterId, existing.id, blob);
+      }
+      const nextAccounts = new Map(accounts);
+      // Identidade pode ter chegado agora (capture antigo sem e-mail).
+      const refreshed: Account = { ...existing, email: email ?? existing.email };
+      nextAccounts.set(existing.id, refreshed);
+      const nextActive = new Map(activeByAdapter);
+      nextActive.set(adapterId, existing.id);
+      persistSnapshot(nextAccounts, nextActive, 'refresh subscription');
+      replaceMap(accounts, nextAccounts);
+      replaceMap(activeByAdapter, nextActive);
+      emit();
+      return refreshed;
+    } catch (error) {
+      if (previousSecret !== null) {
+        const restore = setSecret(secretKey, previousSecret);
+        if (!restore.ok) {
+          throw new PersistenceUnavailableError(
+            'session refresh failed and credential rollback was not durable',
+          );
+        }
+      }
+      throw error;
+    }
+  }
 
   const account: Account = {
     id: makeId(),

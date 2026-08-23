@@ -4,7 +4,7 @@ import { accountLoginCommandFor } from '../../../shared/account-login-commands';
 import { useAccountStore } from '../../state/account-store';
 import { useUsageStore } from '../../state/usage-store';
 import { askConfirm } from '../../state/confirm-store';
-import { defaultAccountLabel } from './account-default-label';
+import { defaultAccountLabel, emailFromAuthDetail } from './account-default-label';
 import { PixelIcon } from '../PixelIcon';
 import { openCliLoginTerminal } from './cli-login-terminal';
 import {
@@ -109,20 +109,82 @@ export function AccountsManager({
   const active = accounts.find((a) => a.active) ?? null;
   const standby = accounts.filter((a) => !a.active);
   const loginCommand = accountLoginCommandFor(adapterId);
+  // E-mail da sessão viva da CLI (quando a sonda expõe). Identifica QUAL
+  // conta está logada no CLI agora — distingue as linhas do vault e alimenta
+  // o auto-save pós-login.
+  const liveEmail = useMemo(
+    () => (auth?.state === 'ok' ? emailFromAuthDetail(auth.detail) : null),
+    [auth],
+  );
+  const liveEmailNormalized = liveEmail?.trim().toLowerCase() ?? null;
+  const vaultHasLiveSession = useMemo(
+    () =>
+      Boolean(
+        liveEmailNormalized &&
+          accounts.some(
+            (a) => a.email?.trim().toLowerCase() === liveEmailNormalized,
+          ),
+      ),
+    [accounts, liveEmailNormalized],
+  );
 
   /**
    * Disparado por `onFinished` do terminal de login — um evento EXTERNO que
    * pode chegar depois que a pessoa saiu de Configurações (ou, em teste,
    * depois do teardown). Sem a guarda, virava rejection não tratada.
+   * Devolve o status deste adapter para quem precisa decidir em cima dele.
    */
-  async function refreshAuth() {
+  async function refreshAuth(): Promise<{
+    state: string;
+    detail: string;
+  } | null> {
     try {
       const list = await window.nexus?.providers?.authStatus();
-      if (!list) return;
+      if (!list) return null;
       const mine = list.find((s) => s.adapterId === adapterId);
-      setAuth(mine ? { state: mine.state, detail: mine.detail } : null);
+      const next = mine
+        ? { state: mine.state, detail: mine.detail }
+        : null;
+      setAuth(next);
+      return next;
     } catch {
       // Refresh de fundo: falhar aqui não pode derrubar a tela nem gritar.
+      return null;
+    }
+  }
+
+  /**
+   * Auto-save pós-login. O modelo é de duas etapas: o CLI guarda UMA sessão
+   * por vez; a conta só existe no Nexus depois de salva. Se o operador loga a
+   * 2ª conta antes de salvar a 1ª, o CLI sobrescreve o arquivo e a 1ª some
+   * para sempre (o bug "não mostra as duas contas"). Aqui a armadilha fecha
+   * sozinha: terminal de login fechou com sessão NOVA (e-mail fora do vault)
+   * → a conta entra sem ninguém apertar nada. Best-effort; o caminho manual
+   * segue no botão.
+   */
+  async function autoSaveSessionAfterLogin() {
+    try {
+      const status = await refreshAuth();
+      if (!status || status.state !== 'ok') return;
+      const email = emailFromAuthDetail(status.detail);
+      if (!email) return; // sonda sem identidade: não há como dedupar
+      const known = useAccountStore
+        .getState()
+        .accounts.some(
+          (a) =>
+            a.adapterId === adapterId &&
+            a.email?.trim().toLowerCase() === email.trim().toLowerCase(),
+        );
+      if (known) return;
+      const res = await addActiveSession(adapterId, email);
+      if (!res.ok) return;
+      await hydrate();
+      showNotice(
+        `Conta ${email} salva no Nexus. Troque de conta no CLI e repita para juntar mais.`,
+        'ok',
+      );
+    } catch {
+      // Auto-save é conveniência: falha silenciosa, o login já está feito.
     }
   }
 
@@ -209,12 +271,8 @@ export function AccountsManager({
     }
   }
 
-  async function snapshotSession() {
-    const name = defaultAccountLabel({
-      typed: label,
-      adapterId,
-      authDetail: auth?.detail,
-    });
+  /** Salva a sessão logada da CLI como conta no Nexus (nome já resolvido). */
+  async function saveSessionToVault(name: string) {
     setBusy(true);
     const res = await addActiveSession(adapterId, name);
     await hydrate();
@@ -223,7 +281,7 @@ export function AccountsManager({
     if (res.ok) {
       closeForm();
       showNotice(
-        `Sessão salva e ativada${res.email ? ` · ${res.email}` : ''}. Reinicie panes abertos para aplicar.`,
+        `Conta salva e ativada${res.email ? ` · ${res.email}` : ''}. Reinicie panes abertos para aplicar.`,
         'ok',
       );
     } else {
@@ -231,9 +289,20 @@ export function AccountsManager({
     }
   }
 
+  async function snapshotSession() {
+    const name = defaultAccountLabel({
+      typed: label,
+      adapterId,
+      adapterLabel: displayName,
+      authDetail: auth?.detail,
+    });
+    await saveSessionToVault(name);
+  }
+
   /**
    * Mesmo caminho do painel de CLIs: abre um terminal real, roda o comando da
-   * ferramenta e reexamina o login quando aquele terminal fecha.
+   * ferramenta e, quando aquele terminal fecha, o Nexus reexamina o login e
+   * salva a conta nova sozinho (auto-save acima).
    */
   async function openLoginTerminal() {
     if (!loginCommand) return;
@@ -241,8 +310,7 @@ export function AccountsManager({
     const result = await openCliLoginTerminal({
       command: loginCommand,
       onFinished: () => {
-        void refreshAuth();
-        void hydrate();
+        void autoSaveSessionAfterLogin();
       },
     });
     setBusy(false);
@@ -303,6 +371,12 @@ export function AccountsManager({
     const state = accountState(account);
     const isRenaming = renamingId === account.id;
     const realUsage = usageByAccount[account.id];
+    // Esta conta É o login vivo da CLI agora (e-mail da sessão bate)? Distinção
+    // que faltava: com 2 contas Claude salvas, saber qual está logada no CLI.
+    const isLiveCliSession = Boolean(
+      liveEmailNormalized &&
+        account.email?.trim().toLowerCase() === liveEmailNormalized,
+    );
 
     return (
       <li
@@ -353,6 +427,14 @@ export function AccountsManager({
                 <span className="acct__name">{account.label}</span>
                 {role === 'active' && (
                   <span className="acct__pill">Em uso</span>
+                )}
+                {isLiveCliSession && (
+                  <span
+                    className="acct__pill acct__pill--quiet"
+                    title="O CLI desta máquina está logado nesta conta agora"
+                  >
+                    sessão do CLI
+                  </span>
                 )}
                 <span className="acct__badge">{accountKindLabel(account)}</span>
               </div>
@@ -462,9 +544,10 @@ export function AccountsManager({
           </div>
           <p className="acct__hint">
             Guarde <strong>várias contas</strong> de {displayName} (trabalho,
-            pessoal, API key…). A em uso abre o próximo terminal; as reserva
-            entram no failover quando o limite bater. Mesmo fluxo em todas as
-            CLIs.
+            pessoal, API key…). <strong>1 ·</strong> entre com a conta abaixo —{' '}
+            <strong>2 ·</strong> o Nexus salva sozinho quando o terminal de
+            login fecha. Repita para a 2ª conta. A em uso abre o próximo
+            terminal; as reserva entram no failover quando o limite bater.
           </p>
         </div>
         {auth && (
@@ -491,6 +574,24 @@ export function AccountsManager({
         </p>
       )}
 
+      {/* O risco real do modelo de 2 etapas, dito em voz alta — sem trava:
+          o CLI guarda UMA sessão; entrar com outra substitui esta. */}
+      {canSnapshot && liveEmail && !vaultHasLiveSession && (
+        <p className="acct__auth-detail" role="status">
+          A sessão atual ({liveEmail}) ainda não está salva no Nexus.
+          Se entrar com outra conta, o CLI substitui esta.
+          <button
+            type="button"
+            className="settings-btn acct__login-now"
+            onClick={() => void saveSessionToVault(liveEmail)}
+            disabled={busy}
+            title="Salva a sessão logada agora como conta no Nexus"
+          >
+            Salvar esta conta
+          </button>
+        </p>
+      )}
+
       <div className="acct__roster">
         <div className="acct__section-head">
           <span className="acct__section-kicker">1 · Em uso</span>
@@ -510,9 +611,9 @@ export function AccountsManager({
                 <span className="acct__pill acct__pill--quiet">Implícita</span>
               </div>
               <p className="acct__meta-line">
-                Login do terminal, ainda sem entrada no vault. Salve esta
-                sessão (ou uma API key) abaixo — pode repetir para 2ª, 3ª…
-                conta.
+                Login do terminal, ainda sem conta salva no Nexus. Entre com
+                uma conta abaixo — ela entra aqui sozinha quando o terminal de
+                login fechar. Pode repetir para 2ª, 3ª… conta.
               </p>
             </div>
           </div>
@@ -574,7 +675,8 @@ export function AccountsManager({
                   <strong>Entrar com nova conta</strong>
                   <span>
                     Dispara o login de {displayName} — o navegador abre na
-                    página do provider. Depois volte e salve a sessão no vault.
+                    página do provider. Quando o terminal fechar, a conta entra
+                    no Nexus sozinha.
                   </span>
                 </span>
                 <span className="acct__add-plus" aria-hidden="true">
@@ -587,13 +689,13 @@ export function AccountsManager({
                 type="button"
                 className="settings-btn settings-btn--primary acct__add-choice"
                 onClick={() => setAddMode('subscription')}
-                title={`Salva a sessão OAuth/login atual de ${displayName} como mais uma conta no vault`}
+                title={`Salva a sessão OAuth/login atual de ${displayName} como mais uma conta no Nexus`}
               >
                 <span className="acct__add-choice-icon" aria-hidden="true">
                   <PixelIcon name="id-badge" size={14} />
                 </span>
                 <span className="acct__add-choice-text">
-                  <strong>Sessão logada</strong>
+                  <strong>Salvar conta logada</strong>
                   <span>
                     {sessionChoiceBlurb({
                       adapterLabel: displayName,
@@ -630,12 +732,12 @@ export function AccountsManager({
         )}
 
         {addMode === 'subscription' && (
-          <div className="acct__form" role="group" aria-label="Salvar sessão logada">
+          <div className="acct__form" role="group" aria-label="Salvar conta logada">
             <p className="acct__form-title">
               Nomeie esta conta (ex.: <em>trabalho</em>, <em>pessoal</em>) e
-              salve o login atual de <strong>{adapterId}</strong> no vault.
-              Depois pode adicionar mais. Panes abertos mantêm a conta antiga
-              até reiniciar.
+              salve o login atual de <strong>{displayName}</strong> no Nexus.
+              Sem nome, o e-mail da sessão vira o nome. Depois troque de conta
+              no CLI e repita para juntar mais.
             </p>
             <div className="acct__add">
               <input
@@ -656,7 +758,7 @@ export function AccountsManager({
                 onClick={() => void snapshotSession()}
                 disabled={busy}
               >
-                Salvar no vault
+                Salvar no Nexus
               </button>
               <button type="button" className="settings-btn" onClick={closeForm} disabled={busy}>
                 Cancelar
@@ -668,9 +770,10 @@ export function AccountsManager({
         {addMode === 'api-key' && (
           <div className="acct__form" role="group" aria-label="Adicionar API key">
             <p className="acct__form-title">
-              Nova entrada no vault com key nativa ou roteada (GLM, LongCat,
-              OpenRouter…). Segredo no Keychain; a UI só mostra máscara. Pode
-              adicionar várias keys com nomes diferentes.
+              Nova conta com key nativa ou roteada (GLM, LongCat,
+              OpenRouter…). O segredo fica criptografado no cofre do Nexus; a
+              UI só mostra máscara. Pode adicionar várias keys com nomes
+              diferentes.
             </p>
             <div className="acct__add">
               <input
@@ -717,7 +820,7 @@ export function AccountsManager({
                 onClick={() => void addApiKey()}
                 disabled={busy || !label.trim() || !key.trim()}
               >
-                Adicionar ao vault
+                Adicionar ao Nexus
               </button>
               <button type="button" className="settings-btn" onClick={closeForm} disabled={busy}>
                 Cancelar
@@ -728,9 +831,9 @@ export function AccountsManager({
 
         {addMode === null && (
           <p className="acct__add-footnote">
-            Fluxo típico: salve a sessão atual → mude de conta no CLI ou cole
-            outra key → <strong>adicione de novo</strong> como reserva. Quantas
-            quiser no mesmo provider.
+            Fluxo: entre com a conta → o Nexus salva quando o terminal fecha →
+            troque de conta no CLI (ou cole outra key) e{' '}
+            <strong>repita</strong>. Quantas quiser no mesmo provider.
           </p>
         )}
       </div>

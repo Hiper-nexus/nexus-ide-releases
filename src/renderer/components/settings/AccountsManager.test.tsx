@@ -11,6 +11,19 @@ import { AccountsManager } from './AccountsManager';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
   .IS_REACT_ACT_ENVIRONMENT = true;
 
+/** Terminal de login mockado: captura o onFinished para dispará-lo no teste. */
+const loginTerminal = vi.hoisted(() => ({
+  finish: null as null | (() => void),
+}));
+vi.mock('./cli-login-terminal', () => ({
+  openCliLoginTerminal: vi.fn(
+    async (input: { onFinished?: () => void }) => {
+      loginTerminal.finish = input.onFinished ?? null;
+      return { ok: true as const, paneId: 'pane-login' };
+    },
+  ),
+}));
+
 function account(patch: Partial<AccountInfo> = {}): AccountInfo {
   return {
     id: 'acct-1',
@@ -46,9 +59,12 @@ describe('AccountsManager', () => {
       quota: [],
       restartAdapterId: null,
       restartLabel: null,
+      addActiveSession: vi.fn(async () => ({ ok: true, email: 'dev@example.com' })),
+      hydrate: vi.fn(async () => undefined),
     });
     useConfirmStore.setState({ pending: null, queue: [] });
     useUsageStore.setState({ snapshot: EMPTY_USAGE_SNAPSHOT });
+    loginTerminal.finish = null;
     Object.defineProperty(window, 'nexus', {
       configurable: true,
       value: {
@@ -87,7 +103,126 @@ describe('AccountsManager', () => {
     expect(host.textContent).not.toMatch(/adicionar a 1ª conta/i);
     expect(host.textContent).toMatch(/nenhuma conta reserva/i);
     // Snapshot button appears after supportsSnapshot resolves.
-    expect(host.textContent).toMatch(/sessão logada/i);
+    expect(host.textContent).toMatch(/salvar conta logada/i);
+    act(() => root.unmount());
+  });
+
+  it('auto-salva a conta nova quando o terminal de login fecha (bug das 2 contas)', async () => {
+    const addActiveSession = vi.fn(async () => ({ ok: true, email: 'dev@example.com' }));
+    useAccountStore.setState({
+      accounts: [
+        account({ label: 'Outra', email: 'other@example.com', active: true }),
+      ],
+      addActiveSession,
+    } as never);
+
+    const { host, root } = mount();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const enterBtn = [...host.querySelectorAll('button')].find((b) =>
+      b.textContent?.includes('Entrar com nova conta'),
+    );
+    expect(enterBtn).toBeTruthy();
+    await act(async () => {
+      enterBtn!.click();
+      await Promise.resolve();
+    });
+    expect(loginTerminal.finish).not.toBeNull();
+
+    // Terminal de login fechou → a sessão viva (dev@example.com) não está no
+    // vault → entra sozinha, sem o operador achar o botão "salvar".
+    await act(async () => {
+      loginTerminal.finish!();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(addActiveSession).toHaveBeenCalledWith('claude', 'dev@example.com');
+    act(() => root.unmount());
+  });
+
+  it('não auto-salva quando a sessão viva já é conta conhecida', async () => {
+    const addActiveSession = vi.fn(async () => ({ ok: true }));
+    useAccountStore.setState({
+      accounts: [account()],
+      addActiveSession,
+    } as never);
+
+    const { host, root } = mount();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const enterBtn = [...host.querySelectorAll('button')].find((b) =>
+      b.textContent?.includes('Entrar com nova conta'),
+    );
+    await act(async () => {
+      enterBtn!.click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      loginTerminal.finish!();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(addActiveSession).not.toHaveBeenCalled();
+    act(() => root.unmount());
+  });
+
+  it('avisa sessão viva não salva com botão direto de salvar (sem trava)', async () => {
+    const { host, root } = mount();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(host.textContent).toContain('ainda não está salva no Nexus');
+    const saveBtn = [...host.querySelectorAll('button')].find((b) =>
+      b.textContent === 'Salvar esta conta',
+    );
+    expect(saveBtn).toBeTruthy();
+
+    const addActiveSession = useAccountStore.getState()
+      .addActiveSession as ReturnType<typeof vi.fn>;
+    await act(async () => {
+      saveBtn!.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(addActiveSession).toHaveBeenCalledWith('claude', 'dev@example.com');
+    act(() => root.unmount());
+  });
+
+  it('marca qual linha é a sessão logada no CLI agora', async () => {
+    useAccountStore.setState({
+      accounts: [
+        account(),
+        account({
+          id: 'acct-2',
+          label: 'Pessoal',
+          active: false,
+          email: 'home@example.com',
+        }),
+      ],
+    });
+
+    const { host, root } = mount();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // dev@example.com é a sessão viva → a linha dela carrega o badge.
+    const rows = [...host.querySelectorAll('.acct__row')];
+    const liveRow = rows.find((r) => r.textContent?.includes('Trabalho'));
+    expect(liveRow?.textContent).toContain('sessão do CLI');
+    const otherRow = rows.find((r) => r.textContent?.includes('Pessoal'));
+    expect(otherRow?.textContent).not.toContain('sessão do CLI');
     act(() => root.unmount());
   });
 

@@ -271,9 +271,14 @@ describe('prepareAccountForSpawn', () => {
 
   it('keeps two concurrent pane preparations isolated to their selected accounts', () => {
     accountDeps.activeCredential = oauthCredential('oauth-personal');
+    accountDeps.activeEmail = 'personal@example.test';
     const personal = addActiveClaudeAccount('Pessoal');
     accountDeps.activeCredential = oauthCredential('oauth-work');
+    accountDeps.activeEmail = 'work@example.test';
     const work = addActiveClaudeAccount('Trabalho');
+    // Contas distintas (e-mails distintos) permanecem entradas distintas —
+    // o dedupe por e-mail do addActiveSessionAccount não pode colapsá-las.
+    expect(work!.id).not.toBe(personal!.id);
     // Nenhuma das duas é o login nativo atual → ambas process-scoped.
     accountDeps.activeEmail = 'someone-else@example.test';
 

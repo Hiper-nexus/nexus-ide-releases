@@ -81,6 +81,22 @@ export const CURRENT_RELEASE: AppRelease = {
         'padrão é o e-mail da sessão, então cada conta aparece com identidade.',
     },
     {
+      title: 'Entrar com a 2ª conta apagava a 1ª',
+      detail:
+        'O CLI guarda uma sessão por vez e a conta só existia depois de ' +
+        'salvar — logar em outra antes de salvar perdia a primeira em ' +
+        'silêncio. Agora o Nexus salva a conta sozinho quando o terminal de ' +
+        'login fecha, e re-login da mesma conta não cria linha duplicada.',
+    },
+    {
+      title: 'Limites de uso triplicavam a mesma conta',
+      detail:
+        'Com duas contas salvas, "Uso e cotas" mostrava três linhas: a linha ' +
+        '"CLI nativo" repetia a conta que já estava salva. Agora ela dobra ' +
+        'para dentro da linha da conta — e cada linha diz qual é a sessão ' +
+        'logada no CLI agora.',
+    },
+    {
       title: 'Tela branca no primeiro boot',
       detail:
         'Um hook declarado depois do BootScreen mudava a contagem de hooks ' +

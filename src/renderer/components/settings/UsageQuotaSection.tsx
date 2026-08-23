@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuotaStore } from '../../state/quota-store';
 import { useAccountStore } from '../../state/account-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
@@ -6,6 +6,7 @@ import { windowDisplay } from '../../lib/quota-display';
 import type { ProviderQuotaEntry } from '../../../shared/quota-types';
 import { ProviderLogo } from '../ProviderLogo';
 import { SettingsSectionTitle } from './SettingsSectionTitle';
+import { emailFromAuthDetail } from './account-default-label';
 
 /**
  * Settings → Uso e cotas: fleet list of provider quota windows.
@@ -127,14 +128,55 @@ export function UsageQuotaSection() {
   const openSettings = useProductNavigationStore((s) => s.openSettings);
   // Já hidratado no boot via useAccountController (App.tsx) — aqui é só lookup.
   const accounts = useAccountStore((s) => s.accounts);
-  const entries = snapshot.entries;
   const loaded = status === 'ready' && snapshot.updatedAt > 0;
+
+  // E-mail da sessão viva por adapter (sonda de login — arquivo/subprocesso,
+  // nunca Keychain na main thread). É o que permite dobrar a linha "CLI
+  // nativo" para dentro da conta salva: com 2 contas Claude logadas, o
+  // operador via TRÊS linhas e lia "limites errados".
+  const [nativeEmailByAdapter, setNativeEmailByAdapter] = useState<
+    Record<string, string>
+  >({});
+  const probeNativeEmails = async () => {
+    try {
+      const list = await window.nexus?.providers?.authStatus();
+      if (!list) return;
+      const byAdapter: Record<string, string> = {};
+      for (const s of list) {
+        const email =
+          s.state === 'ok' ? emailFromAuthDetail(s.detail) : null;
+        if (email) byAdapter[s.adapterId] = email.trim().toLowerCase();
+      }
+      setNativeEmailByAdapter(byAdapter);
+    } catch {
+      // Sonda best-effort: sem ela, a linha nativa segue aparecendo.
+    }
+  };
 
   // Always re-fetch when this settings panel is opened (boot hydrate can race
   // before main IPC is ready, or the process was an old build).
   useEffect(() => {
     void hydrate();
+    void probeNativeEmails();
   }, [hydrate]);
+
+  // A linha "CLI nativo" de um adapter é REDUNDANTE quando a sessão viva já é
+  // uma conta salva: os mesmos limites estão na linha da conta (com e-mail).
+  const entries = snapshot.entries.filter((e) => {
+    if (e.accountId) return true;
+    const native = nativeEmailByAdapter[e.adapterId];
+    if (!native) return true;
+    return !accounts.some(
+      (a) =>
+        a.adapterId === e.adapterId &&
+        a.email?.trim().toLowerCase() === native,
+    );
+  });
+
+  /** Atualizar refaz cota E sonda de sessão viva (a conta pode ter trocado). */
+  const refreshAll = async (): Promise<void> => {
+    await Promise.all([refresh(), probeNativeEmails()]);
+  };
 
   return (
     <section className="quota-panel" aria-labelledby="quota-title">
@@ -177,7 +219,7 @@ export function UsageQuotaSection() {
           type="button"
           className="settings-btn quota-panel__refresh"
           disabled={status === 'loading'}
-          onClick={() => void refresh()}
+          onClick={() => void refreshAll()}
         >
           {status === 'loading' ? 'A carregar…' : 'Atualizar'}
         </button>
@@ -197,7 +239,7 @@ export function UsageQuotaSection() {
           <button
             type="button"
             className="settings-btn settings-btn--primary"
-            onClick={() => void refresh()}
+            onClick={() => void refreshAll()}
           >
             Tentar de novo
           </button>

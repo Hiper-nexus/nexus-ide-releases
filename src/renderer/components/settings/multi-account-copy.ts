@@ -39,14 +39,14 @@ export function multiAccountAddCopy(input: {
   let sub: string;
   if (vault === 0 && hasEmUso) {
     sub =
-      'A sessão em uso já é a 1ª. Grave outra assinatura ou API key no vault como reserva (2ª, 3ª…).';
+      'A sessão em uso já é a 1ª. Salve outra assinatura ou API key no Nexus como reserva (2ª, 3ª…).';
   } else if (vault === 0) {
     sub =
-      'Primeira entrada no vault deste provider. Depois pode repetir para multi-conta.';
+      'Primeira conta deste provider no Nexus. Depois pode repetir para multi-conta.';
   } else {
     const reserve =
       standby > 0 ? ` (${standby} reserva)` : '';
-    sub = `Já há ${vault} no vault${reserve}. Cada nova entrada vira mais um slot para failover.`;
+    sub = `Já há ${vault} salvas no Nexus${reserve}. Cada nova entrada vira mais um slot para failover.`;
   }
 
   // Failover real: ≥2 no vault. "Em uso + 1 vault" já é multi-path.
@@ -55,18 +55,18 @@ export function multiAccountAddCopy(input: {
   let chipTitle: string;
   if (vault >= 2) {
     chip = `Multi-conta · ${vault}`;
-    chipTitle = `${vault} contas no vault — failover e troca manual ativos`;
+    chipTitle = `${vault} contas salvas no Nexus — failover e troca manual ativos`;
   } else if (hasEmUso && vault === 0) {
     chip = 'Multi-conta · falta reserva';
     chipTitle =
-      'Sessão em uso conta como 1ª. Adicione a 2ª conta ao vault para failover';
+      'Sessão em uso conta como 1ª. Adicione a 2ª conta para failover';
   } else if (vault === 1) {
     chip = 'Multi-conta · falta reserva';
-    chipTitle = '1 conta no vault. Adicione outra para failover automático';
+    chipTitle = '1 conta salva. Adicione outra para failover automático';
   } else {
     chip = 'Multi-conta';
     chipTitle =
-      'Adicione 2 ou mais contas no vault para multi-conta e failover';
+      'Salve 2 ou mais contas no Nexus para multi-conta e failover';
   }
 
   return { title, sub, nextOrdinal, chip, chipOn, chipTitle };
@@ -79,9 +79,9 @@ export function sessionChoiceBlurb(input: {
 }): string {
   const name = input.adapterLabel.trim() || 'esta CLI';
   if (input.hasEmUso && input.vaultCount === 0) {
-    return `Guarda o login de ${name} no vault como 2ª conta (ou troca de conta no CLI e salva de novo)`;
+    return `Salva o login de ${name} no Nexus como 2ª conta (ou troca de conta no CLI e salva de novo)`;
   }
-  return `Grava o login atual de ${name} no vault — sem re-login no hot-swap`;
+  return `Salva o login atual de ${name} como conta no Nexus — sem re-login na troca`;
 }
 
 export function apiKeyChoiceBlurb(input: {

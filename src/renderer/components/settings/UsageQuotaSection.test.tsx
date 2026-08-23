@@ -258,6 +258,117 @@ describe('UsageQuotaSection', () => {
     act(() => root.unmount());
   });
 
+  it('dobra a linha "CLI nativo" para dentro da conta salva da mesma sessão', async () => {
+    useAccountStore.setState({
+      accounts: [
+        {
+          id: 'acc-1',
+          adapterId: 'codex',
+          label: 'Plus',
+          mode: 'subscription',
+          upstream: 'codex',
+          email: 'user@example.com',
+          active: true,
+          createdAt: 1723630000000,
+          onCooldown: true,
+          hasCredential: true,
+        },
+        {
+          id: 'acc-2',
+          adapterId: 'claude',
+          label: 'Trabalho',
+          mode: 'subscription',
+          upstream: 'anthropic',
+          email: 'dev@example.com',
+          active: true,
+          createdAt: 1723630000000,
+          onCooldown: false,
+          hasCredential: true,
+        },
+      ],
+    });
+    // Sonda de login: a sessão Claude viva É a conta dev@example.com do vault.
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        quota: {
+          snapshot: vi.fn(async () => sampleSnapshot),
+          refresh: vi.fn(async () => sampleSnapshot),
+        },
+        providers: {
+          authStatus: vi.fn(async () => [
+            {
+              adapterId: 'claude',
+              state: 'ok',
+              detail: 'sessão Claude viva: dev@example.com',
+            },
+          ]),
+        },
+      },
+    });
+
+    const { host, root } = mount();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // A linha nativa do Claude sumiu (redundante com a conta salva)…
+    expect(host.textContent).not.toContain('Claude · CLI nativo');
+    // …as contas e adapters independentes continuam lá.
+    expect(host.querySelectorAll('.quota-entry').length).toBe(2);
+    expect(host.textContent).toContain('2 entradas');
+    act(() => root.unmount());
+  });
+
+  it('mantém a linha "CLI nativo" quando a sessão viva NÃO é conta salva', async () => {
+    useAccountStore.setState({
+      accounts: [
+        {
+          id: 'acc-1',
+          adapterId: 'codex',
+          label: 'Plus',
+          mode: 'subscription',
+          upstream: 'codex',
+          email: 'user@example.com',
+          active: true,
+          createdAt: 1723630000000,
+          onCooldown: true,
+          hasCredential: true,
+        },
+      ],
+    });
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        quota: {
+          snapshot: vi.fn(async () => sampleSnapshot),
+          refresh: vi.fn(async () => sampleSnapshot),
+        },
+        providers: {
+          authStatus: vi.fn(async () => [
+            {
+              adapterId: 'claude',
+              state: 'ok',
+              detail: 'sessão Claude viva: stranger@example.com',
+            },
+          ]),
+        },
+      },
+    });
+
+    const { host, root } = mount();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(host.textContent).toContain('Claude · CLI nativo');
+    act(() => root.unmount());
+  });
+
   it('triggers refresh when clicking the refresh button', async () => {
     const refreshSpy = vi.fn(async () => sampleSnapshot);
     Object.defineProperty(window, 'nexus', {

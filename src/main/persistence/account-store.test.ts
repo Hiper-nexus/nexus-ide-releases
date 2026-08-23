@@ -277,6 +277,62 @@ describe('read-back Keychain → vault (linhagem Claude nativa)', () => {
   });
 });
 
+describe('addActiveSessionAccount não duplica o mesmo assinante', () => {
+  it('re-login da mesma conta atualiza o blob e reativa — não cria 2ª linha', () => {
+    const a = addClaudeAccount('Trabalho', 'a@example.test', oauthBlob('a-old'));
+    // Operador re-loga a MESMA conta; o CLI rotacionou o blob.
+    deps.activeEmail = 'a@example.test';
+    deps.keychain = oauthBlob('a-rotated');
+
+    const again = addActiveSessionAccount('claude', 'a@example.test');
+
+    expect(again).not.toBeNull();
+    expect(again!.id).toBe(a.id); // mesma entrada, não uma nova
+    expect(deps.secrets.get(`acctcred:${a.id}`)).toBe(oauthBlob('a-rotated'));
+    expect(
+      [...deps.secrets.keys()].filter((k) => k.startsWith('acctcred:')).length,
+    ).toBe(1);
+  });
+
+  it('e-mail difere em caixa/ espaço: ainda é a mesma conta', () => {
+    const a = addClaudeAccount('Trabalho', 'a@example.test', oauthBlob('a-old'));
+    deps.activeEmail = '  A@Example.TEST ';
+    deps.keychain = oauthBlob('a-rotated');
+
+    const again = addActiveSessionAccount('claude', 'qualquer');
+
+    expect(again!.id).toBe(a.id);
+  });
+
+  it('segunda conta REAL entra como nova linha e vira a ativa', () => {
+    const a = addClaudeAccount('Trabalho', 'a@example.test', oauthBlob('a-old'));
+    deps.activeEmail = 'b@example.test';
+    deps.keychain = oauthBlob('b-live');
+
+    const b = addActiveSessionAccount('claude', 'Pessoal');
+
+    expect(b).not.toBeNull();
+    expect(b!.id).not.toBe(a.id);
+    expect(
+      [...deps.secrets.keys()].filter((k) => k.startsWith('acctcred:')).length,
+    ).toBe(2);
+  });
+
+  it('entrada antiga sem e-mail ganha a identidade no re-login da mesma sessão', () => {
+    // Conta legada gravada sem email no capture (keychain vivo, sem identidade).
+    deps.keychain = oauthBlob('same-session');
+    const legacy = addActiveSessionAccount('claude', 'Conta claude');
+    expect(legacy).not.toBeNull();
+    expect(legacy!.email).toBeUndefined();
+    // Mesma SESSÃO re-logada, agora com e-mail detectável: o blob no keychain
+    // não mudou, então o caminho "sem e-mail na entrada → compara blob" casa.
+    deps.activeEmail = 'who@example.test';
+    const again = addActiveSessionAccount('claude', 'who@example.test');
+    expect(again!.id).toBe(legacy!.id);
+    expect(again!.email).toBe('who@example.test');
+  });
+});
+
 describe('contrato de env OAuth de pane pinado', () => {
   it('não emite CLAUDE_CODE_OAUTH_REFRESH_TOKEN; emite TOKEN e SCOPES', () => {
     const a = addClaudeAccount('Conta A', 'a@example.test', oauthBlob('a-access'));

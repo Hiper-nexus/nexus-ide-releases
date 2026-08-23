@@ -83,6 +83,20 @@ _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes).
 - **fix(contas): duas contas do mesmo provedor eram indistinguíveis** — salvar
   a sessão sem digitar nome gravava "Conta Claude". O padrão passa a ser o
   e-mail da sessão viva.
+- **fix(contas): entrar com a 2ª conta apagava a 1ª** — o CLI guarda uma
+  sessão por vez e a conta só existia depois do "salvar": logar em outra
+  antes de salvar perdia a primeira em silêncio (o bug "não mostra as duas
+  contas"). Agora o Nexus salva a conta sozinho quando o terminal de login
+  fecha; a linha da conta ganha o e-mail e um selo "sessão do CLI" diz qual
+  está logada agora; re-login da mesma conta atualiza em vez de duplicar; e
+  a sessão não salva aparece com aviso e botão "Salvar esta conta" — sem
+  trava nova (doutrina: explicar ≠ bloquear).
+- **fix(quota): limites de uso triplicavam a mesma conta** — com duas contas
+  salvas, "Uso e cotas" listava "CLI nativo" + as duas contas = três linhas
+  para dois assinantes. A linha nativa agora dobra para dentro da conta cujo
+  e-mail é a sessão viva (sonda de login, sem tocar o Keychain na main
+  thread). Copy do multi-conta sem jargão: "vault" virou Nexus, o fluxo é
+  passo-a-passo explícito.
 
 Gates: tsc limpo, `security:renderer-sinks` 0 sinks, **1190/1190 arquivos e
 11317/11317 testes**, `design-system-sensor` sem findings. Verificado no app

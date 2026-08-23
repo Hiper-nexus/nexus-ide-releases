@@ -2,6 +2,7 @@
 
 Escrito em 23/08/2026, a partir de bugs reportados em voo pelo operador.
 Base: `main` em `708f7650` (0.68.4 não publicada).
+**Atualizado em 23/08/2026 (tarde): as três frentes abaixo foram resolvidas.**
 
 ## O que o operador relatou, nas palavras dele
 
@@ -15,7 +16,9 @@ Base: `main` em `708f7650` (0.68.4 não publicada).
 Print do seletor de pane (⌘K) mostrava, lado a lado:
 `Conta Claude › claude-opus-5` e `retorno › claude-opus-5`.
 
-## O que JÁ foi corrigido nesta sessão (não refazer)
+## O que JÁ foi corrigido (não refazer)
+
+### Primeira sessão (commit `708f7650`)
 
 - **Kimi aparecia deslogado estando logado** — `seat-auth-readiness.ts`. A
   sonda roda `kimi provider list --json` e o classificador procurava a string
@@ -28,56 +31,51 @@ Print do seletor de pane (⌘K) mostrava, lado a lado:
   saiu). Nome digitado continua vencendo.
 - `auth-probe.test.ts` deixou de depender do estado real da máquina.
 
-## O que investigar — hipótese principal do "não mostra as duas contas"
+### Segunda sessão (este trabalho)
 
-O modelo exige DOIS passos por conta, e a ordem importa:
+- **Bug "não mostra as duas contas" (relato 2) — auto-save pós-login.** A
+  hipótese do modelo de 2 etapas estava certa: logar a conta 2 antes de
+  salvar a conta 1 perdia a 1ª para sempre, em silêncio. Agora
+  `AccountsManager.autoSaveSessionAfterLogin` roda quando o terminal de
+  login fecha: sessão viva com e-mail fora do vault → entra sozinha
+  (`addActiveSession` com o e-mail como nome). Best-effort; sonda sem
+  identidade (Codex etc.) continua no caminho manual.
+- **Dedupe no main** — `addActiveSessionAccount` ganhou
+  `findSessionDuplicate`: mesmo e-mail (case/space-insensitive) ou, sem
+  e-mail de nenhum lado, blob idêntico → ATUALIZA o blob, reativa e devolve
+  a conta existente; nunca cria duplicata do mesmo assinante. Conta legada
+  sem e-mail ganha a identidade no re-login da mesma sessão.
+- **UI do multi-conta (relato 3)** — sem jargão ("vault" → Nexus; "Sessão
+  logada" → "Salvar conta logada"), passo-a-passo explícito no hint e no
+  footnote, selo **"sessão do CLI"** na linha cujo e-mail é o login vivo,
+  aviso inline "sessão atual ainda não está salva" com botão
+  **"Salvar esta conta"** (texto + ação; zero trava — doutrina `886e9f4d`).
+- **Limites por conta (relato 1)** — a projeção por conta já existia; o
+  problema era a linha `CLI nativo` duplicar a conta salva (3 linhas para 2
+  assinantes). `UsageQuotaSection` agora sonda `authStatus` (arquivo/subprocesso,
+  NUNCA Keychain na main thread) e dobra a linha nativa para dentro da conta
+  de mesmo e-mail. Botão Atualizar refaz cota + sonda.
+- **CHANGELOG + release-notes 0.68.4** atualizados (fixes novos).
 
-1. logar a conta no CLI (`claude auth login`) — o CLI tem **um** arquivo de
-   sessão;
-2. **salvar/snapshot** essa sessão no cofre do Nexus
-   (`ACCOUNT_CHANNELS.addActiveSession` → `addActiveSessionAccount`).
+## Validação da segunda sessão
 
-Se o operador loga a conta 2 **antes** de dar snapshot na conta 1, o CLI já
-sobrescreveu o arquivo e a conta 1 nunca entra no cofre. O produto não avisa
-nada disso. Suspeita forte de ser a causa do relato 2.
+- `npx tsc --noEmit` limpo.
+- `npx vitest run src/main/quota src/main/persistence
+  src/renderer/components/settings` → **541/541** (após `npm run rebuild:node`
+  — nativos estavam na ABI do Electron).
+- `npm run security:renderer-sinks` → 0 sinks.
+- Fixture do `account-store-spawn.test.ts` ajustado: criava duas contas
+  Claude com o MESMO e-mail (irreal) — agora e-mails distintos, como contas
+  reais; o contrato de isolamento de env entre contas segue testado.
 
-**Confirmar antes de mexer:** rodar o app empacotado (o dev usa
-`.dev-user-data` isolado e não tem as contas reais), fazer o ciclo
-login→snapshot→login→snapshot e comparar com login→login→snapshot.
+## Pendência (só dá para confirmar em voo)
 
-Arquivos: `src/main/persistence/account-ipc.ts` (handler, linhas ~110-146),
-`src/main/persistence/account-store.ts` (schema e `addActiveSessionAccount`),
-`src/renderer/components/settings/AccountsManager.tsx` (UI).
+Rodar o app **empacotado** (dev usa `.dev-user-data` isolado) e fazer o ciclo
+login→(fecha terminal)→login→(fecha terminal): as duas contas devem aparecer
+sozinhas em Contas, e "Uso e cotas" deve listar uma linha por conta sem a
+"CLI nativo" redundante. Re-login da mesma conta não pode criar 2ª linha.
 
-## O que a UI precisa (relato 3)
-
-O que existe hoje em `AccountsManager.tsx` é um formulário de operador:
-adicionar, renomear, ativar, remover — sem explicar o modelo de duas etapas
-acima. Proposta:
-
-- **Nomear o fluxo, não o mecanismo.** O passo 2 chama-se "snapshot de
-  sessão"; para quem usa, é "salvar esta conta no Nexus".
-- **Uma linha por conta, com identidade real**: e-mail + qual está ativa +
-  estado do login. Hoje uma conta sem rótulo vira texto genérico (corrigido)
-  mas a linha ainda não mostra e-mail nem estado.
-- **Tornar a sequência explícita**: um passo-a-passo curto ("1. entre na
-  conta pelo botão · 2. salve no Nexus · repita para a segunda conta"), em
-  vez de o operador descobrir a ordem por tentativa.
-- **Avisar o risco real**: se o operador clicar em "entrar" com uma conta já
-  salva pendente de snapshot, dizer que a sessão anterior será substituída.
-- **Não adicionar trava.** Doutrina da casa (commits `886e9f4d`, `bba8e6aa`,
-  `943bf47b`, `97ef2b0a`): remover atrito, nunca acrescentar confirmação,
-  gate ou aviso novo. Explicar ≠ bloquear.
-
-## Limites de uso por conta (relato 1)
-
-Verificar `UsageQuotaSection.tsx` + `src/main/persistence/account-quota.ts`
-(já projeta `label` por conta) e `quota-service.ts`. O relato é que os limites
-não aparecem "de forma correta quando logadas" — checar se a projeção é por
-conta ou agregada, e se conta sem uso registrado some da lista em vez de
-aparecer zerada.
-
-## Como verificar
+## Como verificar (para futuras mudanças)
 
 - `npx tsc --noEmit`, `npx vitest run <arquivo>`, e
   `npm run security:renderer-sinks` para qualquer mudança de renderer/IPC.
