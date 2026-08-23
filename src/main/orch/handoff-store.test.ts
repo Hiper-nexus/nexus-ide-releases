@@ -799,4 +799,80 @@ describe("scoped handoff store", () => {
     });
     expect(listenerB).not.toHaveBeenCalled();
   });
+
+  it("SUCCESS real da sessão consome failure sintético do watchdog ainda na fila", () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope();
+    let nextId = 0;
+    const missions = createScopedMissionStore(runtimeManager, scope, {
+      idFactory: () => "mission-ghost",
+    });
+    const handoffs = createScopedHandoffStore(runtimeManager, scope, {
+      now: () => Date.now() + 10_000,
+      idFactory: () => `handoff-${++nextId}`,
+    });
+    missions.create({ title: "Fantasma do watchdog" });
+
+    // Watchdog sintetiza FAILED (queued) para o worker que "travou no MCP".
+    const ghost = handoffs.submit({
+      missionId: "mission-ghost",
+      sessionId: "session-codex",
+      status: "failed",
+      fromAgent: "nexus-watchdog",
+      summary:
+        'watchdog: o worker "Implementar interface" travou no bootstrap de MCP.',
+    });
+    expect(ghost.deliveryState).toBe("queued");
+
+    // Worker se recupera e entrega SUCCESS pela mesma sessão física.
+    handoffs.submit({
+      missionId: "mission-ghost",
+      sessionId: "session-codex",
+      status: "success",
+      fromAgent: "Implementar interface",
+      summary: "Resposta: 2.",
+    });
+
+    const states = new Map(
+      handoffs
+        .list({ missionId: "mission-ghost", includeDelivered: true })
+        .map((handoff) => [handoff.id, handoff.deliveryState]),
+    );
+    expect(states.get(ghost.id)).toBe("consumed");
+  });
+
+  it("failure de OUTRA sessão não é consumido pelo sucesso alheio", () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope();
+    let nextId = 10;
+    const missions = createScopedMissionStore(runtimeManager, scope, {
+      idFactory: () => "mission-scoped-ghost",
+    });
+    const handoffs = createScopedHandoffStore(runtimeManager, scope, {
+      now: () => Date.now() + 10_000,
+      idFactory: () => `handoff-${++nextId}`,
+    });
+    missions.create({ title: "Fantasma de outro worker" });
+
+    const otherWorkerGhost = handoffs.submit({
+      missionId: "mission-scoped-ghost",
+      sessionId: "session-outro-worker",
+      status: "failed",
+      fromAgent: "nexus-watchdog",
+      summary: 'watchdog: o worker "Outro" travou no bootstrap de MCP.',
+    });
+
+    handoffs.submit({
+      missionId: "mission-scoped-ghost",
+      sessionId: "session-primario",
+      status: "success",
+      fromAgent: "Primário",
+      summary: "Entrega do primário.",
+    });
+
+    const stillQueued = handoffs
+      .list({ missionId: "mission-scoped-ghost", includeDelivered: true })
+      .find((handoff) => handoff.id === otherWorkerGhost.id);
+    expect(stillQueued?.deliveryState).toBe("queued");
+  });
 });

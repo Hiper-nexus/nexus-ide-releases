@@ -814,6 +814,31 @@ export class ScopedHandoffStore {
     const committed = insert.immediate();
     if (!committed.replayed) {
       if (
+        committed.handoff.status === "success" &&
+        committed.handoff.missionId &&
+        committed.handoff.sessionId
+      ) {
+        try {
+          const ghosts =
+            this.consumeSyntheticWatchdogFailures(
+              committed.handoff.missionId,
+              committed.handoff.sessionId,
+              committed.handoff.id,
+            );
+          if (ghosts > 0) {
+            console.warn(
+              `[handoff-store] ${ghosts} failure(s) sintético(s) do watchdog ` +
+                `consumidos pelo SUCCESS real (${committed.handoff.id})`,
+            );
+          }
+        } catch (error) {
+          console.warn(
+            "[handoff-store] supersede de watchdog-failure falhou (best-effort):",
+            error instanceof Error ? error.message : error,
+          );
+        }
+      }
+      if (
         mcpBoundary?.dispatchTransition &&
         committed.handoff.status !== "success" &&
         committed.taskDispatch
@@ -1411,6 +1436,43 @@ export class ScopedHandoffStore {
   markDelivered(rawId: string): boolean {
     return this.markSubmitted(rawId);
   }
+
+  /**
+   * Antídoto do fantasma do login-stuck-watchdog (campo 23/08): o watchdog
+   * sintetiza um handoff FAILED quando o worker "trava no bootstrap de MCP",
+   * mas o worker pode se recuperar e entregar SUCCESS depois — o failed
+   * antigo fica QUEUED na fila representando um outcome que não existe,
+   * e o Maestro queima turnos de cobrança para resolver um fantasma.
+   * Um SUCCESS físico da mesma sessão consome os failures sintéticos
+   * anteriores: prova real vence diagnóstico antigo.
+   */
+  consumeSyntheticWatchdogFailures(
+    rawMissionId: string,
+    rawSessionId: string,
+    keepHandoffId: string,
+  ): number {
+    const missionId = identifierSchema.parse(rawMissionId);
+    const sessionId = identifierSchema.parse(rawSessionId);
+    const keepId = identifierSchema.parse(keepHandoffId);
+    const result = this.#binding
+      .writeDatabase()
+      .prepare(
+        `UPDATE handoffs
+         SET delivery_state = 'consumed',
+             acknowledged_at = COALESCE(acknowledged_at, ?),
+             consumed_at = ?
+         WHERE mission_id = ? AND session_id = ?
+           AND from_agent = 'nexus-watchdog'
+           AND status = 'failed'
+           AND id != ?
+           AND delivery_state IN ('queued', 'submitted')`,
+      )
+      .run(this.#binding.now(), this.#binding.now(), missionId, sessionId, keepId);
+    if (result.changes === 0) return 0;
+    this.#binding.emitChange();
+    return result.changes;
+  }
+
 
   markSubmitted(rawId: string): boolean {
     const id = identifierSchema.parse(rawId);
