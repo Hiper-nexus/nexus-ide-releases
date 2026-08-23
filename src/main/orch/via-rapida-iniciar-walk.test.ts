@@ -11,7 +11,7 @@ import {
   maybeCompleteFastLaneOnDelivery,
 } from './civilian-delivery-completion';
 import { FIRST_WAVE_WRITER_SEATS, planFirstWaveSeats } from './via-rapida-first-wave';
-import { planViaRapidaIniciarWalk } from './via-rapida-walk';
+import { firstWaveWorkerPrompt, planViaRapidaIniciarWalk } from './via-rapida-walk';
 import {
   advanceFastLaneStoryTaskFromWorkerDone,
   boardProgressFromSealedTasks,
@@ -433,5 +433,21 @@ describe('first-wave writer_circuit_break', () => {
         (seat) => seat.storyTitle !== null && pending.includes(seat.storyTitle),
       ),
     ).toBe(true);
+  });
+
+  it('firstWaveWorkerPrompt inclui instrução de abrir no navegador quando o objetivo pede', () => {
+    const prompt = firstWaveWorkerPrompt({
+      mission: {
+        title: 'Landing Mario Kart',
+        description: 'crie uma landing page e já abra ela no navegador para eu ver',
+      },
+      agentName: 'Frontend',
+      storyTitle: 'Criar landing',
+      storyIndex: 0,
+      storyTotal: 1,
+    });
+    expect(prompt).toContain('open <arquivo>');
+    expect(prompt).toContain('xdg-open');
+    expect(prompt).toContain('Tarefa selada (1/1): Criar landing');
   });
 });

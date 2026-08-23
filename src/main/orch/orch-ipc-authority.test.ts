@@ -3968,10 +3968,22 @@ describe('teclado do operador em pane de missão', () => {
     expect(harness.operatorInput.writes).toEqual([]);
   });
 
-  it('recusa missão encerrada', async () => {
+  it('permite digitação mesmo com missão no estado done (ajustes pós-entrega)', async () => {
     const { handler, sender } = setup();
     const sessionId = livePane(sender);
     harness.operatorInput.missions.set('mission-1', { status: 'done' });
+    expect(
+      handler({ sender }, { sessionId, data: 'ajuste o titulo\r' }),
+    ).toBe(true);
+    expect(harness.operatorInput.writes).toEqual([
+      { sessionId, data: 'ajuste o titulo\r' },
+    ]);
+  });
+
+  it('recusa missão em estado failed', async () => {
+    const { handler, sender } = setup();
+    const sessionId = livePane(sender);
+    harness.operatorInput.missions.set('mission-1', { status: 'failed' });
     expect(
       handler({ sender }, { sessionId, data: 'x' }),
     ).toBe(false);

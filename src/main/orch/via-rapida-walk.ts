@@ -73,15 +73,24 @@ export function firstWaveWorkerPrompt(input: {
     input.storyIndex !== undefined && input.storyTotal
       ? ` (${input.storyIndex + 1}/${input.storyTotal})`
       : '';
+  const browserNote =
+    /\b(abr[aeiou]|navegador|browser|preview|mostr(?:ar|e)|ver\s+no\s+navegador)\b/iu.test(
+      objective,
+    )
+      ? 'Se o objetivo pede para ABRIR no navegador: após gerar os arquivos, abra o HTML no navegador do SO (macOS: `open <arquivo>`; Linux: `xdg-open <arquivo>`) ANTES do handoff e cite o arquivo/comando no summary.'
+      : '';
   return [
     `## Missão: ${input.mission.title}`,
     `Objetivo: ${objective}`,
+    browserNote,
     `Você é ${input.agentName} (writer). Execute agora — não espere o Maestro.`,
     input.storyTitle
       ? `Tarefa selada${index}: ${input.storyTitle}`
       : 'Pegue a próxima story pendente do plano selado e implemente.',
     'Ao terminar, chame nexus_handoff_submit com evidência (arquivos, comandos).',
-  ].join('\n');
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 
 export { FIRST_WAVE_WRITER_SEATS, fastLaneObjectiveText };

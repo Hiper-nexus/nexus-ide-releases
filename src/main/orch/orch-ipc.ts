@@ -1786,7 +1786,11 @@ export function registerOrchIpc(): void {
     const scope = requireLiveRendererWorkspaceScope(event.sender);
     const missions = getProjectDomainStores(scope).missions;
     const mission = missions.get(info.missionId);
-    if (!mission || mission.status === "done" || mission.status === "failed") {
+    // Voo real 23/08: no done o operador PODE continuar digitando no pane para
+    // pedir ajustes ("termina isso", "corrige X"). Recusar no done deixava o
+    // pane com o erro "o main recusou a digitação" e impedia qualquer ajuste
+    // pós-entrega. Apenas missões 'failed' ou inexistentes são recusadas.
+    if (!mission || mission.status === "failed") {
       return false;
     }
     return orchWriteSession(sessionId, data, { markInputBusy: true });
