@@ -13,29 +13,29 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.68.1',
+  version: '0.68.2',
   date: '2026-08-23',
-  codename: 'Jarvis acordado',
+  codename: 'Orquestrador fica, navegador abre',
   summary:
-    'O Jarvis agora ACORDA por padrão: wake word local (onnx, sem nuvem) ' +
-    'ligada de fábrica — diga "Hey Jarvis"/"Ei Jarvis" e o companheiro ' +
-    'responde. Privacidade intacta: a política de captura continua dona do ' +
-    'kill-switch, a detecção roda 100% na máquina e o preset de ditado puro ' +
-    'segue desligando o wake explicitamente.',
+    'O orquestrador não morre mais no done — fica vivo para você pedir ' +
+    'ajustes ("termina", "corrige X") sem recomeçar a missão. E quando o ' +
+    'objetivo pede para abrir no navegador, o worker abre o HTML gerado com ' +
+    '`open`/`xdg-open` antes do handoff e cita o arquivo no summary.',
   highlights: [
     {
-      title: 'Done×exit não trava mais',
+      title: 'Orquestrador permanece após o done',
       detail:
-        'Quando a sessão do orquestrador sai no instante exato em que o ' +
-        'teardown pede o fechamento, o pedido é reavaliado e repetido com ' +
-        'segurança — idempotente por identidade física (pane+missão+escopo+role).',
+        'Reversão parcial do F-106 (voo 23/08): matar o Maestro no done ' +
+        'lacrava a superfície de refinamento — missão imperfeita sem a quem ' +
+        'pedir correção. Agora só workers idle 30s encerram; o pane do ' +
+        'Maestro é seu até você fechar.',
     },
     {
-      title: 'Release que não quebra o dev',
+      title: 'Landing abre sozinha quando pedida',
       detail:
-        'Depois de qualquer nexus-notary, os nativos voltam ao ABI do Node ' +
-        'automaticamente. Fim do suite inteiro vermelho por ERR_DLOPEN_FAILED '
-        + 'logo após um PASS de release.',
+        'Objetivo com "abra no navegador" / "mostrar" / "preview" agora ' +
+        'instrui o worker a abrir o arquivo gerado no navegador do SO antes ' +
+        'do handoff. Nada para clicar manualmente.',
     },
   ],
   fixes: [],

@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.68.2 — Orquestrador fica, navegador abre
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+- **fix(orch): orquestrador permanece no done** — reversão parcial do F-106
+  (voo 23/08): o Maestro não morre mais no done; fica vivo como superfície
+  de ajuste ("termina isso", "corrige X") até você fechar. Workers idle
+  30s continuam encerrando sozinhos. Flag `missionDoneTeardown` atualizada.
+- **feat(orch): 'abra no navegador' abre de verdade** — objetivos pedindo
+  para abrir/mostrar no navegador agora instruem o worker a rodar
+  `open <arquivo>` / `xdg-open <arquivo>` antes do handoff e citar o
+  arquivo no summary. Era o que faltava para a landing do Mario Kart
+  aparecer sozinha.
+
+Gates: tsc limpo, orquestrador permanece no done 14/14, browser-note no
+prompt, suite orch 3157/3157.
+
 ## 0.68.1 — Jarvis acordado
 
 _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
