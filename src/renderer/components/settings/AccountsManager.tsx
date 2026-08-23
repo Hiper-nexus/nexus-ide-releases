@@ -109,10 +109,20 @@ export function AccountsManager({
   const standby = accounts.filter((a) => !a.active);
   const loginCommand = accountLoginCommandFor(adapterId);
 
+  /**
+   * Disparado por `onFinished` do terminal de login — um evento EXTERNO que
+   * pode chegar depois que a pessoa saiu de Configurações (ou, em teste,
+   * depois do teardown). Sem a guarda, virava rejection não tratada.
+   */
   async function refreshAuth() {
-    const list = await window.nexus.providers.authStatus();
-    const mine = list.find((s) => s.adapterId === adapterId);
-    setAuth(mine ? { state: mine.state, detail: mine.detail } : null);
+    try {
+      const list = await window.nexus?.providers?.authStatus();
+      if (!list) return;
+      const mine = list.find((s) => s.adapterId === adapterId);
+      setAuth(mine ? { state: mine.state, detail: mine.detail } : null);
+    } catch {
+      // Refresh de fundo: falhar aqui não pode derrubar a tela nem gritar.
+    }
   }
 
   useEffect(() => {

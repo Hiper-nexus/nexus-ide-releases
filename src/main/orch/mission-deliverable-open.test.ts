@@ -4,6 +4,7 @@ import {
   scanHtmlCandidates,
   objectiveWantsBrowserOpen,
   openMissionDeliverable,
+  pickFromArtifactRefs,
   pickOpenableDeliverable,
   resetMissionDeliverableOpenState,
   type DeliverableCandidate,
@@ -250,5 +251,74 @@ describe('scanHtmlCandidates', () => {
         statSync: () => ({ mtimeMs: 1 }),
       }),
     ).not.toThrow();
+  });
+});
+
+describe('pickFromArtifactRefs — a missão declara o que entregou', () => {
+  it('usa o index.html declarado, resolvido contra a pasta do projeto', () => {
+    // Formato real observado no app rodando (mission.result.artifactRefs).
+    expect(
+      pickFromArtifactRefs(ROOT, [
+        'docs/plan.md',
+        'index.html',
+        'docs/superpowers/plans/2026-08-22-secao.md',
+      ]),
+    ).toBe(`${ROOT}/index.html`);
+  });
+
+  it('sem index.html, pega o HTML de caminho mais curto', () => {
+    expect(
+      pickFromArtifactRefs(ROOT, ['site/paginas/sobre.html', 'site/home.html']),
+    ).toBe(`${ROOT}/site/home.html`);
+  });
+
+  it('recusa artefato que escapa da pasta do projeto', () => {
+    expect(pickFromArtifactRefs(ROOT, ['../fora/evil.html'])).toBeNull();
+    expect(pickFromArtifactRefs(ROOT, ['/etc/evil.html'])).toBeNull();
+  });
+
+  it('sem HTML entre os artefatos devolve null e deixa a varredura decidir', () => {
+    expect(pickFromArtifactRefs(ROOT, ['docs/plan.md', 'server.js'])).toBeNull();
+  });
+});
+
+describe('openMissionDeliverable — artefatos declarados vencem a varredura', () => {
+  beforeEach(() => resetMissionDeliverableOpenState());
+
+  it('abre o artefato declarado sem varrer o disco', () => {
+    const openPath = vi.fn();
+    const listHtmlCandidates = vi.fn(() => []);
+    const opened = openMissionDeliverable(
+      { listHtmlCandidates, openPath },
+      {
+        missionId: 'm-decl',
+        objective: 'crie a landing e abra no navegador',
+        workspaceRoot: ROOT,
+        missionStartedAtMs: 100,
+        artifactRefs: ['index.html', 'docs/plan.md'],
+      },
+    );
+    expect(opened).toBe(`${ROOT}/index.html`);
+    expect(listHtmlCandidates).not.toHaveBeenCalled();
+  });
+
+  it('cai na varredura quando a missão não declarou HTML', () => {
+    const openPath = vi.fn();
+    const opened = openMissionDeliverable(
+      {
+        listHtmlCandidates: () => [
+          { absolutePath: `${ROOT}/achado.html`, modifiedAtMs: 300 },
+        ],
+        openPath,
+      },
+      {
+        missionId: 'm-scan',
+        objective: 'abra no navegador',
+        workspaceRoot: ROOT,
+        missionStartedAtMs: 100,
+        artifactRefs: ['docs/plan.md'],
+      },
+    );
+    expect(opened).toBe(`${ROOT}/achado.html`);
   });
 });

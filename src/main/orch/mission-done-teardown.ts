@@ -130,6 +130,7 @@ export function productionMissionDoneTeardownDeps(): Omit<
         {
           missionId,
           objective: mission.intentContract?.goal ?? '',
+          artifactRefs: mission.result?.artifactRefs,
           workspaceRoot: scope.rootRealPath,
           missionStartedAtMs: mission.createdAt,
         },

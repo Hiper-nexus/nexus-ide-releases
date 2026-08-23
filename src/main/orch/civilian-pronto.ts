@@ -295,6 +295,31 @@ function buildConsolidatedSummary(
   }
 }
 
+/**
+ * Traduz o motivo técnico do Pronto para uma frase que o leigo entende.
+ * Desconhecido cai numa frase neutra e verdadeira — nunca no token cru.
+ */
+export function civilProntoReason(reason: string): string {
+  const board = reason.match(/^board (\d+)\/(\d+)$/u);
+  if (board) {
+    const total = Number(board[2]);
+    return total === 1
+      ? 'A única etapa do quadro foi concluída.'
+      : `As ${total} etapas do quadro foram concluídas.`;
+  }
+  const delivered = reason.match(/^all-workers-delivered \((\d+)\/(\d+)\)$/u);
+  if (delivered) {
+    const total = Number(delivered[2]);
+    return total === 1
+      ? 'O integrante da equipe entregou.'
+      : `Os ${total} integrantes da equipe entregaram.`;
+  }
+  if (reason.startsWith('files-modified')) {
+    return 'Os arquivos do projeto foram alterados e a entrega foi registrada.';
+  }
+  return 'A entrega foi verificada.';
+}
+
 export function applyCivilianProntoDecision(input: {
   readonly scope: ProjectExecutionScope;
   readonly mission: Mission;
@@ -313,11 +338,16 @@ export function applyCivilianProntoDecision(input: {
     input.mission,
     input.stores,
   );
+  // O `reason` é token de motor em inglês ("board 1/1",
+  // "files-modified/handoff") e vazava para o ÚNICO texto que o leigo lê na
+  // aba Resultado. Ele continua inteiro no log (linha do fast-lane); aqui vai
+  // a versão civil.
+  const civilReason = civilProntoReason(input.decision.reason);
   const baseSummary = orchestratorSummary
-    ? `${orchestratorSummary} (Pronto justified by ${input.decision.reason}.)`
+    ? `${orchestratorSummary} (${civilReason})`
     : consolidatedSummary
-      ? `${consolidatedSummary} (Pronto justified by ${input.decision.reason}.)`
-      : `Pronto justified by ${input.decision.reason}. ${files.length} arquivo(s) no disco.`;
+      ? `${consolidatedSummary} (${civilReason})`
+      : `${civilReason} ${files.length} arquivo(s) no disco.`;
   const summary = baseSummary.slice(0, 65_536);
   const result = missionResultSchema.parse({
     outcome: 'success',

@@ -6,11 +6,11 @@
  * que o worker rodasse `open <arquivo>` antes do handoff — obediência de LLM
  * é probabilística, e no voo real do operador (23/08) a landing não abriu.
  *
- * A causa raiz é de contrato: `missionResultSchema` carrega `evidenceIds` e
- * `artifactRefs` (IDs), nunca um caminho. Nem o main nem a UI sabem QUAL
- * arquivo foi entregue. Enquanto o contrato não ganhar os caminhos, este
- * módulo fecha o buraco de forma determinística e contida: no done, procura
- * o HTML que a missão de fato produziu DENTRO do workspace e abre.
+ * Fonte da verdade: `mission.result.artifactRefs`. O schema os TIPA como
+ * `idSchema`, mas o motor grava CAMINHOS relativos ao projeto (verificado no
+ * app rodando: ["index.html", "docs/plan.md", ...]). Usar a declaração da
+ * própria missão é preciso; a varredura do disco fica só como rede de
+ * segurança para missão antiga que não registrou artefatos.
  *
  * Invariantes:
  * - só abre quando o objetivo pediu navegador (nunca surpreende o operador);
@@ -164,6 +164,36 @@ export interface MissionDeliverableOpenInput {
   readonly objective: string;
   readonly workspaceRoot: string;
   readonly missionStartedAtMs: number;
+  /** O que a missão declarou ter entregue (caminhos relativos ao projeto). */
+  readonly artifactRefs?: readonly string[];
+}
+
+/**
+ * Escolhe o HTML entre os artefatos declarados pela missão.
+ * `index.html` na raiz ganha; depois o caminho mais curto.
+ */
+export function pickFromArtifactRefs(
+  workspaceRoot: string,
+  artifactRefs: readonly string[],
+): string | null {
+  const eligible = artifactRefs
+    .filter((ref) => OPENABLE_EXT.has(path.extname(ref).toLowerCase()))
+    .map((ref) =>
+      path.isAbsolute(ref) ? ref : path.resolve(workspaceRoot, ref),
+    )
+    .filter(
+      (absolute) =>
+        isContainedInWorkspace(workspaceRoot, absolute) &&
+        !isIgnoredPath(workspaceRoot, absolute),
+    );
+  if (eligible.length === 0) return null;
+  const index = eligible.find(
+    (absolute) => path.basename(absolute).toLowerCase() === 'index.html',
+  );
+  if (index) return index;
+  return eligible.reduce((best, current) =>
+    current.length < best.length ? current : best,
+  );
 }
 
 /**
@@ -178,17 +208,25 @@ export function openMissionDeliverable(
   if (!objectiveWantsBrowserOpen(input.objective)) return null;
   if (!input.workspaceRoot) return null;
 
-  let candidates: readonly DeliverableCandidate[];
-  try {
-    candidates = deps.listHtmlCandidates(input.workspaceRoot);
-  } catch {
-    return null;
+  // 1) O que a missão DECLAROU ter entregue — preciso, sem heurística.
+  let target = input.artifactRefs?.length
+    ? pickFromArtifactRefs(input.workspaceRoot, input.artifactRefs)
+    : null;
+
+  // 2) Rede de segurança: missão que não registrou artefatos.
+  if (!target) {
+    let candidates: readonly DeliverableCandidate[];
+    try {
+      candidates = deps.listHtmlCandidates(input.workspaceRoot);
+    } catch {
+      return null;
+    }
+    target = pickOpenableDeliverable(
+      input.workspaceRoot,
+      candidates,
+      input.missionStartedAtMs,
+    );
   }
-  const target = pickOpenableDeliverable(
-    input.workspaceRoot,
-    candidates,
-    input.missionStartedAtMs,
-  );
   if (!target) return null;
 
   openedMissions.add(input.missionId);
