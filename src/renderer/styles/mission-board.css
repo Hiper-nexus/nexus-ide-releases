@@ -190,12 +190,20 @@
   margin: 0;
 }
 
-.mission-board__reason strong,
-.mission-board__reason span {
+/* O rótulo é curto e pode ser cortado; o DETALHE é a orientação do que fazer
+   agora — cortá-lo com ellipsis apagava exatamente a parte acionável. */
+.mission-board__reason strong {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.mission-board__reason span {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
 }
 
 .mission-board__reason strong {

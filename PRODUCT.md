@@ -61,7 +61,7 @@ evocar controle e prontidão (aviônica, mission control), nunca fantasia gamer.
 7. **Complexidade sob demanda.** O caminho iniciante segue
    ideia → escopo → aprovação única → progresso → entrega. Squads, providers,
    panes e telemetria aparecem quando explicam uma decisão ou quando o usuário
-   abre “Operações”.
+   abre a missão e olha as abas Plano, Atividade e Equipe.
 8. **Uma decisão, um gate.** Editar ou salvar rascunhos não pede confirmação.
    A aprovação humana acontece imediatamente antes do primeiro efeito externo
    relevante e fixa o contrato exato que será executado.

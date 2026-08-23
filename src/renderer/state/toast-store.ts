@@ -56,7 +56,7 @@ function normalizeWhitespace(value: string): string {
 /**
  * Toasts are a brief recovery surface, not a transport log. Electron wraps
  * useful copy in IPC method names and internal error codes; strip those while
- * keeping the actionable part. Full diagnostics remain in Operações/journals.
+ * keeping the actionable part. Full diagnostics remain in the mission Activity tab and journals.
  */
 export function humanizeToastDetail(
   detail: string | undefined,
