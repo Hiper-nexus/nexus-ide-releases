@@ -13,30 +13,78 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.68.3',
+  version: '0.68.4',
   date: '2026-08-23',
-  codename: 'Ajustes pós-done e navegador real',
+  codename: 'Porta certa e entrega que abre',
   summary:
-    'Digitação liberada no done: você pode conversar com o agente vivo e ' +
-    'pedir ajustes pós-entrega ("termina isso", "corrige X") sem a mensagem ' +
-    '"o main recusou a digitação". E a instrução de abrir no navegador com ' +
-    '`open`/`xdg-open` agora entra também nos workers da primeira onda.',
+    'Quem não programa entrava pela porta errada: uma linha de código ' +
+    'desviava do Caminho Expresso para o wizard de três etapas. O caminho ' +
+    'padrão cai de 7 telas para 2. A entrega que pede navegador agora abre ' +
+    'de verdade — pelo Nexus, não por pedido no prompt. E a missão não morre ' +
+    'no done: o coordenador continua ali para o ajuste que a sua revisão pedir.',
   highlights: [
     {
-      title: 'Digitação liberada no pane após a missão concluir',
+      title: 'O Caminho Expresso vira a porta da frente',
       detail:
-        'O lane de entrada do operador agora aceita digitação em missões no ' +
-        'estado done — você não fica mais travado com "o main recusou a ' +
-        'digitação" quando quer continuar a conversa com o agente.',
+        'O rascunho vazio sempre nasceu no Expresso; era beginFreshMission ' +
+        'que sobrescrevia para o wizard. Corrigido: 2 telas e 1 decisão até ' +
+        'a missão rodar. O wizard completo continua em "Avançado" e em ⌘K.',
     },
     {
-      title: 'Browser note entra na primeira onda',
+      title: 'A entrega abre no navegador de verdade',
       detail:
-        'Workers iniciados na primeira onda (first-wave) agora recebem ' +
-        'a instrução de abrir o HTML no navegador do SO antes do handoff.',
+        'Abrir arquivo é mecânica, não inteligência: o Nexus abre o HTML ' +
+        'que a missão produziu, contido na pasta do projeto, quando o ' +
+        'objetivo pediu navegador. Antes só existia um pedido no prompt.',
+    },
+    {
+      title: 'A missão continua aberta para a sua revisão',
+      detail:
+        'O pane do coordenador não vira mais shell vazio quando a missão ' +
+        'conclui — a entrega ainda espera você aprovar, e o histórico da ' +
+        'coordenação fica onde o ajuste é pedido.',
+    },
+    {
+      title: 'O Nexus entende a pergunta de quem não é dev',
+      detail:
+        '"tem como", "vale a pena", "para que serve", "não entendi" e até ' +
+        '"o que é preciso para criar um site?" eram tratados como missão ' +
+        'com equipe. Agora viram resposta direta, sem gastar uma missão.',
+    },
+    {
+      title: 'O pré-requisito virou botão',
+      detail:
+        '"Conecte um provedor em Configurações" era texto morto em três ' +
+        'telas. Agora é um botão que abre Providers — e o Iniciar continua ' +
+        'clicável, sem trava nova.',
     },
   ],
-  fixes: [],
+  fixes: [
+    {
+      title: 'Tela branca no primeiro boot',
+      detail:
+        'Um hook declarado depois do BootScreen mudava a contagem de hooks ' +
+        'entre renders e derrubava o renderer na primeira abertura.',
+    },
+    {
+      title: 'Copy que mandava procurar tela inexistente',
+      detail:
+        '"Operações" virou "aba Atividade", "Procurar" virou "Escolher ' +
+        'pasta" e "Retomar missão" virou "Retomar" — os rótulos reais.',
+    },
+    {
+      title: 'Desligar a wake word agora grava',
+      detail:
+        'Antes você desligava o microfone, fechava o modal no X e saía com ' +
+        'a escuta ativa: a preferência não era persistida.',
+    },
+    {
+      title: 'Início e Precisa de você no rail',
+      detail:
+        'Clicar em Quadro ou Memória perdia para sempre a tela inicial. A ' +
+        'lista de atenção deixa de abrir só por atalho.',
+    },
+  ],
 };
 export const RELEASE_06100: AppRelease = {
   version: '0.61.0',

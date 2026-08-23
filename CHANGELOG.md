@@ -1,5 +1,56 @@
 # Changelog
 
+## 0.68.4 — Porta certa e entrega que abre
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+- **feat(ux): o Caminho Expresso vira a porta da frente** — `beginFreshMission`
+  forçava `step: 'mission'` e jogava quem não programa no wizard de 3 etapas.
+  O rascunho vazio já nascia em `express`; a linha era o desvio. O caminho
+  padrão cai de 7 telas / 4 decisões para 2 telas / 1 decisão. O wizard
+  completo continua em "Avançado" e em ⌘K → "Missão avançada".
+- **feat(ux): o objetivo escrito não é mais apagado** — as dez portas que
+  chamam `beginFreshMission` preservam o texto. A ETAPA nunca é herdada: o
+  "+ Novo" não reabre a Equipe da execução anterior.
+- **feat(orch): a entrega abre no navegador de verdade** — abrir arquivo é
+  mecânica, não inteligência. Até agora o produto só PEDIA no prompt que a
+  LLM rodasse `open`. Novo `mission-deliverable-open`: no done, o main abre
+  o HTML que a missão produziu — contido no workspace por `path.relative`,
+  só quando o objetivo pediu navegador, uma vez por missão.
+- **feat(ux): a missão não morre no done** — o pane do coordenador deixa de
+  virar shell vazio quando a missão conclui: a entrega ainda espera sua
+  revisão e você pode não aprovar. O banner para de prometer shell e passa a
+  dizer que a missão continua aberta para ajuste.
+- **fix(orch): o router reconhece a pergunta que o leigo faz** — sonda com 12
+  perguntas reais: 8 viravam missão com squad. O veto por verbo de trabalho
+  matava até pergunta canônica ("o que é preciso para criar um site?"). Agora
+  o veto só vale na abertura imperativa, e "tem como / vale a pena / para que
+  serve / não entendi / preciso saber" são reconhecidos. Zero falso-positivo.
+- **fix(ui): crash de boot** — um hook declarado depois dos early returns de
+  BootScreen mudava a contagem de hooks entre renders ("Rendered more hooks
+  than during the previous render") e dava tela branca no primeiro boot.
+- **fix(ui): copy que mandava procurar tela inexistente** — "Operações" →
+  "aba Atividade", "Procurar" → "Escolher pasta", "Retomar missão" →
+  "Retomar" (o rótulo real). Jargão traduzido nas 16 causas de bloqueio:
+  worker → integrante, Maestro/orquestrador → coordenador, pane → janela de
+  trabalho, CLI/provider → ferramenta de IA.
+- **fix(ui): "Conecte um provedor" vira botão** — o pré-requisito de tudo era
+  texto morto em três telas. Agora abre Providers. O Iniciar NÃO foi travado.
+- **fix(ui): "Início" e "Precisa de você" no rail** — fim do beco em que
+  clicar Quadro/Memória perdia para sempre a tela que abre pasta; a lista de
+  atenção deixa de existir só por ⌘J.
+- **fix(ui): as 11 etapas do boot da missão em português de gente** —
+  `squad_sealed` → "Equipe definida", `prevc_freeze` → "Lendo o projeto".
+- **fix(voice): desligar a wake word passa a gravar** — antes você desligava
+  o microfone, fechava o modal no X e saía com a escuta ativa.
+- **fix(ui): ActionCard volta ao DESIGN.md** — o primário derivava de
+  `--accent` e o hover neutro reproduzia o repouso do primário, tornando os
+  dois cartões da vaga indistinguíveis. Tokens `--text-muted` e
+  `--duration-fast` eram usados 8× e nunca declarados.
+
+Gates: tsc limpo, `security:renderer-sinks` 0 sinks, 11232 testes passando,
+`design-system-sensor` sem findings.
+
 ## 0.68.3 — Ajustes pós-done e navegador real
 
 _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
