@@ -6,6 +6,7 @@ import {
   resolveMissionAgentLiveState,
   type ProjectMissionSnapshotView,
 } from './mission-snapshot';
+import { allowedActionsForState } from './mission-snapshot';
 
 function runningView(): ProjectMissionSnapshotView {
   return {
@@ -583,5 +584,18 @@ describe('projectMissionSnapshot live pane preference', () => {
       paneId: 'pane-1',
       currentUnitId: 'task-1',
     });
+  });
+});
+
+describe('missão falhada não pode ter apagar como única saída', () => {
+  it('failed oferece resume — a segunda chance', () => {
+    // Antes: allowedActions vazio, então o board só mostrava "Remover".
+    expect(allowedActionsForState('failed', undefined)).toEqual(['resume']);
+  });
+
+  it('estados de transição continuam sem ação', () => {
+    for (const state of ['draft', 'starting', 'stopping'] as const) {
+      expect(allowedActionsForState(state, undefined)).toEqual([]);
+    }
   });
 });

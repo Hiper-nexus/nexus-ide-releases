@@ -1395,11 +1395,15 @@ const productionMissionEngines = new MissionEngineRegistry((scope, stores) =>
       // pane do coordenador voltar a aceitar digitação.
       const completedAwaitingReview =
         mission.status === "done" && Boolean(mission.result);
+      // Falha não pode ter apagar como única saída: `resume` é o "tentar de
+      // novo" que o snapshot passou a anunciar em `failed`.
+      const failedRetry = mission.status === "failed";
       if (
         runtimeClosedByOperator ||
         leftoverParked ||
         residualWork ||
-        completedAwaitingReview
+        completedAwaitingReview ||
+        failedRetry
       ) {
         const description =
           leftoverParked

@@ -1,9 +1,12 @@
-import { useEffect, useId, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useId, useMemo, type KeyboardEvent, type ReactNode } from 'react';
 import type {
   MissionAgentSnapshot, MissionEngineCommand, MissionSnapshot, MissionUnit,
 } from '../../../shared/mission-engine-contract';
 import type { MissionEvent } from '../../../shared/mission-events';
 import { useMissionInspectorStore, type InspectorTab } from '../../state/mission-inspector-store';
+import { projectChangedFiles } from '../../lib/mission-changed-files';
+import { useFilesStore } from '../../state/files-store';
+import { useContextualPanelNavStore } from '../../state/contextual-panel-nav-store';
 import { DirectionComposer } from './DirectionComposer';
 
 interface MissionInspectorProps {
@@ -635,21 +638,88 @@ function ResultProjection({ snapshot }: { readonly snapshot: MissionSnapshot }) 
         <h2>{RESULT_OUTCOME_LABELS[result.outcome]}</h2>
       </header>
       <p className="mission-inspector__result-summary">{result.summary}</p>
-      <section aria-label="Evidências do resultado">
-        <h3>Evidências</h3>
-        <CanonicalStringList
-          values={result.evidenceIds}
-          empty="Nenhuma evidência foi persistida no resultado."
-        />
-      </section>
-      <section aria-label="Artefatos do resultado">
-        <h3>Artefatos</h3>
-        <CanonicalStringList
-          values={result.artifactRefs}
-          empty="Nenhum artefato foi persistido no resultado."
-        />
-      </section>
+      <ChangedFiles artifactRefs={result.artifactRefs} />
+      <details className="mission-inspector__technical">
+        <summary>Detalhes técnicos</summary>
+        <section aria-label="Evidências do resultado">
+          <h3>Evidências</h3>
+          <CanonicalStringList
+            values={result.evidenceIds}
+            empty="Nenhuma evidência foi persistida no resultado."
+          />
+        </section>
+        <section aria-label="Artefatos do resultado">
+          <h3>Artefatos</h3>
+          <CanonicalStringList
+            values={result.artifactRefs}
+            empty="Nenhum artefato foi persistido no resultado."
+          />
+        </section>
+      </details>
     </article>
+  );
+}
+
+/**
+ * "O que mudou" — a única resposta que quem pediu a missão procura na tela
+ * final. Antes a aba mostrava só listas de caminhos em monoespaçada, sem
+ * link e sem dizer o que cada arquivo é.
+ */
+function ChangedFiles({
+  artifactRefs,
+}: {
+  readonly artifactRefs: readonly string[];
+}) {
+  const projection = useMemo(
+    () => projectChangedFiles(artifactRefs),
+    [artifactRefs],
+  );
+
+  if (projection.files.length === 0) {
+    return (
+      <section
+        className="mission-inspector__changed"
+        aria-label="O que mudou no projeto"
+      >
+        <h3>O que mudou</h3>
+        <p className="mission-inspector__changed-empty">
+          Nenhum arquivo do projeto foi alterado nesta missão.
+        </p>
+      </section>
+    );
+  }
+
+  return (
+    <section
+      className="mission-inspector__changed"
+      aria-label="O que mudou no projeto"
+    >
+      <h3>O que mudou</h3>
+      <ul className="mission-inspector__changed-list">
+        {projection.files.map((file) => (
+          <li key={file.path}>
+            <button
+              type="button"
+              className="mission-inspector__changed-file"
+              aria-label={`Abrir ${file.path}`}
+              onClick={() => {
+                void useFilesStore.getState().selectFile(file.path);
+                useContextualPanelNavStore
+                  .getState()
+                  .openTab('editor', { focus: true });
+              }}
+            >
+              <span className="mission-inspector__changed-role">
+                {file.role}
+              </span>
+              <span className="mission-inspector__changed-path">
+                {file.path}
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

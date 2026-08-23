@@ -6,6 +6,7 @@ import {
   type MissionSnapshot,
 } from '../../shared/mission-engine-contract';
 import { useMissionInspectorStore } from './mission-inspector-store';
+import { inspectorTabForState } from './mission-inspector-store';
 
 const INSPECTOR_TABS = [
   'agent',
@@ -180,5 +181,32 @@ describe('ephemeral mission inspector store', () => {
     expect(useMissionInspectorStore.getState().selectedAgentId).toBe(
       expectedAgentId,
     );
+  });
+});
+
+describe('inspectorTabForState — a aba de abertura responde o estado', () => {
+  it('entrega concluída abre no Resultado, não no log de eventos', () => {
+    expect(inspectorTabForState('completed')).toBe('result');
+  });
+
+  it('pergunta pendente abre na Conversa', () => {
+    expect(inspectorTabForState('blocked_user')).toBe('chat');
+  });
+
+  it('falha e recuperação abrem na Atividade', () => {
+    expect(inspectorTabForState('failed')).toBe('activity');
+    expect(inspectorTabForState('blocked_technical')).toBe('activity');
+    expect(inspectorTabForState('recovering')).toBe('activity');
+  });
+
+  it('estado desconhecido cai na aba que nunca mente', () => {
+    expect(inspectorTabForState(undefined)).toBe('activity');
+    expect(inspectorTabForState('running')).toBe('activity');
+  });
+
+  it('nunca abre na aba Agente — ficha técnica não é a pergunta de quem chega', () => {
+    for (const state of ['completed', 'blocked_user', 'failed', 'running']) {
+      expect(inspectorTabForState(state)).not.toBe('agent');
+    }
   });
 });

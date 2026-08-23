@@ -147,6 +147,11 @@ export function headerActionLabel(
   if (action === 'resume' && missionState === 'completed') {
     return 'Pedir um ajuste';
   }
+  // Em falha, "Retomar" lê como continuar de onde parou — e não há de onde.
+  // O que o operador quer ali é uma segunda chance.
+  if (action === 'resume' && missionState === 'failed') {
+    return 'Tentar de novo';
+  }
   return HEADER_ACTION_LABELS[action];
 }
 

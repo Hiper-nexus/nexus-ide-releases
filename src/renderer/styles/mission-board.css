@@ -1884,3 +1884,75 @@
   border-color: var(--accent);
   outline: none;
 }
+
+
+/* "O que mudou" — a resposta que quem pediu a missão procura na tela final.
+   Arquivo é ação: linha inteira clicável, papel antes do caminho. */
+.mission-inspector__changed {
+  margin-top: var(--space-4);
+}
+
+.mission-inspector__changed-empty {
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  margin: var(--space-2) 0 0;
+}
+
+.mission-inspector__changed-list {
+  list-style: none;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.mission-inspector__changed-file {
+  appearance: none;
+  width: 100%;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 150ms var(--ease-out-quart),
+    background-color 150ms var(--ease-out-quart);
+}
+
+.mission-inspector__changed-file:hover {
+  border-color: var(--border-strong);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+.mission-inspector__changed-role {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+}
+
+.mission-inspector__changed-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-sm);
+}
+
+/* Detalhe técnico recolhido: evidências e refs crus deixam de ser a
+   primeira coisa que a pessoa vê no fim da missão. */
+.mission-inspector__technical > summary {
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+  margin-top: var(--space-3);
+}

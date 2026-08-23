@@ -357,7 +357,8 @@ function projectState(view: ParsedView): {
   }
 }
 
-function allowedActions(
+/** Exportada para teste: contrato "o que a UI anuncia, o motor aceita". */
+export function allowedActionsForState(
   state: MissionLifecycleState,
   stateReason: MissionStateReason | undefined,
 ): MissionAllowedAction[] {
@@ -382,10 +383,15 @@ function allowedActions(
     // missão concluída com trabalho residual.
     case 'completed':
       return ['resume'];
+    // Missão falhada oferecia SÓ ação destrutiva ("Remover"): a pessoa que
+    // pediu o trabalho ficava com apagar como única saída. `resume` é a
+    // decisão explícita de tentar de novo — o caminho já existe e religa a
+    // coordenação pela Via Rápida.
+    case 'failed':
+      return ['resume'];
     case 'draft':
     case 'starting':
     case 'stopping':
-    case 'failed':
       return [];
   }
 }
@@ -510,7 +516,7 @@ export function projectMissionSnapshot(
       ? { question: view.openQuestion }
       : {}),
     ...(view.mission.result ? { result: view.mission.result } : {}),
-    allowedActions: allowedActions(state, stateReason),
+    allowedActions: allowedActionsForState(state, stateReason),
     version: view.mission.version,
     updatedAt: view.mission.updatedAt,
   };
