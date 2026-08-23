@@ -381,8 +381,8 @@ export const voiceConfigSchema = z.object({
   speakMode: z.enum(['summary', 'full', 'off']).default('summary'),
   /** Wake word ("Jarvis") — always-on local detection via Porcupine. */
   wakeWord: z
-    .object({ enabled: z.boolean().default(false) })
-    .default({ enabled: false }),
+    .object({ enabled: z.boolean().default(true) })
+    .default({ enabled: true }),
   persona: voicePersonaSchema,
   jarvisLive: jarvisLiveConfigSchema,
   jarvisBrain: jarvisBrainProviderSchema.default({
@@ -428,7 +428,7 @@ export const DEFAULT_VOICE_CONFIG: VoiceConfig = {
   },
   routing: 'jarvis',
   speakMode: 'summary',
-  wakeWord: { enabled: false },
+  wakeWord: { enabled: true },
   persona: { assistantName: 'Jarvis' },
   jarvisLive: {
     enabled: false,
