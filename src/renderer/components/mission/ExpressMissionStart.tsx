@@ -183,10 +183,14 @@ export function ExpressMissionStart({
           </div>
         ) : inventoryLoading ? (
           <p className="mission-setup__hint">
-            Verificando os provedores conectados…
+            Verificando as ferramentas de IA conectadas…
           </p>
-        ) : (
-          !inventoryReady && (
+        ) : null}
+
+        {/* Independente do roster: um rascunho antigo com equipe salva e o
+            login vencido caía num beco — "Equipe automática" na tela, nenhuma
+            rota para Providers, e o Iniciar apontando para um botão ausente. */}
+        {!inventoryLoading && !inventoryReady ? (
             <div
               className="mission-setup__section-heading"
               id="express-provider-block"
@@ -207,8 +211,7 @@ export function ExpressMissionStart({
                 Conectar uma ferramenta de IA
               </button>
             </div>
-          )
-        )}
+        ) : null}
       </div>
 
       {directAnswer && (

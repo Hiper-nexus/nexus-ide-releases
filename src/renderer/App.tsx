@@ -206,6 +206,11 @@ export function App() {
   const paletteOpen = useCommandPaletteStore((state) => state.open);
   const confirmOpen = useConfirmStore((state) => state.pending !== null);
   const cheatsheetOpen = useCheatsheetStore((state) => state.open);
+  // Precisa ficar AQUI, com os demais hooks: abaixo há dois early returns de
+  // BootScreen, e um hook depois deles muda a contagem entre renders
+  // ("Rendered more hooks than during the previous render") — tela branca no
+  // primeiro boot, quando workspaceHydrated ainda é false.
+  const attentionCount = useAttentionInboxStore((s) => s.count);
   const orchestrationModeOpen = useOrchestrationModeStore(
     (state) => state.pending !== null,
   );
@@ -932,8 +937,6 @@ export function App() {
     });
   const projectOverviewEnabled =
     productFlags[FEATURE_FLAG_IDS.uiProjectOverview] !== false;
-
-  const attentionCount = useAttentionInboxStore((s) => s.count);
 
   let selection: WorkspaceRailSelection = null;
   if (destination.kind === 'launcher') {

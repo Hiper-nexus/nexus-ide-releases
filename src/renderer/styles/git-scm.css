@@ -353,9 +353,9 @@
 }
 
 .git-scm__commit-btn:hover:not(:disabled) {
-  color: var(--btn-primary-ink);
-  background: var(--btn-primary);
-  border-color: var(--btn-primary);
+  color: var(--ok);
+  background: color-mix(in srgb, var(--live) 22%, transparent);
+  border-color: var(--ok);
 }
 
 .git-scm__history {

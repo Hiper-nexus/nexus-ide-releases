@@ -449,7 +449,6 @@ export function VoiceSettings() {
   const persistLive = async (patch: {
     jarvisLiveEnabled?: boolean;
     jarvisLiveTransport?: JarvisLiveTransport;
-    wakeWordEnabled?: boolean;
   }) => {
     try {
       const next = await window.nexus.voice.setConfig(patch);
@@ -823,10 +822,20 @@ return (
                           // a pessoa desliga o microfone, fecha o modal no X e
                           // sai com a escuta ativa — ela acredita ter feito uma
                           // ação de privacidade que não aconteceu.
-                          setWakeWordOn(e.target.checked);
-                          void persistLive({
-                            wakeWordEnabled: e.target.checked,
-                          });
+                          const next = e.target.checked;
+                          setWakeWordOn(next);
+                          void window.nexus.voice
+                            .setConfig({ wakeWordEnabled: next })
+                            .then(setInfo)
+                            .catch((err: unknown) => {
+                              // Sem o rollback o checkbox mostraria OFF com o
+                              // microfone ainda ativo — a mesma falsa
+                              // confirmação que esta mudança veio remover.
+                              setWakeWordOn(!next);
+                              setError(
+                                err instanceof Error ? err.message : String(err),
+                              );
+                            });
                         }}
                       />
                     </label>

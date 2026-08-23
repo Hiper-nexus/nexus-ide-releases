@@ -872,6 +872,30 @@ describe('App Nexus V2 cutover', () => {
     expect(toast?.detail).not.toMatch(/Não foi possível concluir esta etapa/);
   });
 
+  it('monta pelo BootScreen e hidrata depois sem quebrar a ordem dos hooks', () => {
+    // Regressão: um hook declarado ABAIXO dos early returns de BootScreen
+    // muda a contagem de hooks entre renders assim que `hydrated` vira true —
+    // "Rendered more hooks than during the previous render", tela branca no
+    // primeiro boot real. Os demais testes montam já hidratados e não veem.
+    useWorkspaceStore.setState({ current: null, recents: [], hydrated: false });
+
+    const host = mountApp();
+    expect(host.textContent).toContain('Ligando instrumentos');
+
+    act(() => {
+      useWorkspaceStore.setState({
+        current: null,
+        recents: [],
+        hydrated: true,
+      });
+    });
+
+    // Se a ordem dos hooks quebrasse, este segundo render lançaria e o host
+    // ficaria vazio. Ele renderiza o shell — o rail está na tela.
+    expect(host.textContent).not.toContain('Ligando instrumentos');
+    expect(host.textContent).toContain('Novo');
+  });
+
   it('suppresses browser panes from canonical destination semantics', () => {
     openWorkspace();
     useProductNavigationStore.getState().openTaskBoard();

@@ -51,8 +51,8 @@
 }
 
 .action-card--primary:hover:not(:disabled) {
-  border-color: var(--btn-primary);
-  background: color-mix(in srgb, var(--btn-primary) 88%, var(--bg));
+  border-color: var(--btn-primary-hover);
+  background: var(--btn-primary-hover);
 }
 
 .action-card:disabled {
@@ -109,6 +109,13 @@
   font-weight: 500;
   color: var(--text-dim);
   line-height: 1.25;
+}
+
+/* O primário pinta uma superfície sólida --btn-primary; --text-dim ali dava
+   2,34:1 (pink-city) e 3,16:1 (light). A tinta do próprio botão, rebaixada,
+   fica bem acima de AA nos dois temas. */
+.action-card--primary .action-card__sub {
+  color: color-mix(in srgb, var(--btn-primary-ink) 72%, var(--btn-primary));
 }
 
 .action-card-row {

@@ -231,6 +231,7 @@ export function MissionSetup() {
   const clearEntryContext = useMissionSetupStore(
     (state) => state.clearEntryContext,
   );
+  const clearDraft = useMissionSetupStore((state) => state.clearDraft);
 
   const [inventoryAttempt, setInventoryAttempt] = useState(0);
   const [inventory, setInventory] = useState<MissionTeamInventory>(
@@ -759,6 +760,10 @@ export function MissionSetup() {
         return;
       }
       clearEntryContext();
+      // O rascunho já virou missão: preservá-lo faria o próximo + Novo abrir
+      // o Expresso pré-preenchido com o objetivo da missão em execução, a um
+      // clique de despachar uma duplicata na mesma pasta.
+      clearDraft();
       useProductNavigationStore.getState().openMission(snapshot.id);
     } catch (error) {
       const rawMessage =
@@ -860,7 +865,9 @@ export function MissionSetup() {
       setExpressError(
         inventory.status === 'loading'
           ? 'Aguarde a verificação das ferramentas de IA conectadas.'
-          : 'Falta conectar uma ferramenta de IA — use o botão “Conectar uma ferramenta de IA” logo acima.',
+          : inventory.status === 'error'
+            ? 'Não foi possível verificar suas ferramentas de IA. Tente novamente em instantes.'
+            : 'Falta conectar uma ferramenta de IA — use o botão “Conectar uma ferramenta de IA” logo acima.',
       );
       return;
     }
@@ -936,6 +943,10 @@ export function MissionSetup() {
         return;
       }
       clearEntryContext();
+      // O rascunho já virou missão: preservá-lo faria o próximo + Novo abrir
+      // o Expresso pré-preenchido com o objetivo da missão em execução, a um
+      // clique de despachar uma duplicata na mesma pasta.
+      clearDraft();
       useProductNavigationStore.getState().openMission(snapshot.id);
     } catch (error) {
       if (generation !== startGenerationRef.current) return;

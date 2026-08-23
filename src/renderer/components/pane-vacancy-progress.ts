@@ -20,7 +20,9 @@ export interface PaneVacancyProgress {
 /**
  * Este é o único texto que se move na tela entre "Iniciar missão" e o primeiro
  * agente — o momento de maior ansiedade de quem não programa. As etiquetas são
- * escritas em português de gente; o token interno do motor fica no `title`.
+ * escritas em português de gente. O identificador cru da etapa não aparece
+ * na tela: para diagnosticar um bootstrap preso, use o journal da missão, não
+ * o screenshot do usuário.
  */
 const STEP_LABELS: Record<BootstrapProgressStep, string> = {
   authority_checked: 'Conferindo permissões',
