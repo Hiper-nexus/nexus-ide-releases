@@ -68,6 +68,8 @@ export const FEATURE_FLAG_IDS = {
   missionEventJournal: 'feature.mission.eventJournal',
   missionWarmupAdvisories: 'feature.mission.warmupAdvisories',
   missionWorkerHandoffTtl: 'feature.mission.workerHandoffTtl',
+  /** Teardown híbrido no done (F-106): orquestrador morre, worker idle ~30s. */
+  missionDoneTeardown: 'feature.mission.doneTeardown',
   /** Nudge + handoff sintético do enforcement global (coordination parity). */
   workerHandoffEnforcement: 'feature.mission.workerHandoffEnforcement',
   searchMixer: 'feature.search.mixer',
@@ -152,6 +154,18 @@ export const BUILTIN_FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
       'Worker TTL pós-handoff (paridade Bridge §a#1): worker idle com todos os handoffs consumidos é encerrado ~30s depois, liberando o pane. DEFAULT-ON — restaura a aresta close→wake incondicional. Opt-out via override de flag para E2E real-mission (ancora workers a PTYs vivos).',
     channel: 'dev',
     createdAt: '2026-08-04',
+    removeAfter: '2027-03-31',
+    killSwitch: false,
+    telemetry: false,
+    defaultEnabled: true,
+  },
+  {
+    id: FEATURE_FLAG_IDS.missionDoneTeardown,
+    owner: 'orch',
+    description:
+      'Teardown híbrido no done da missão (F-106): orquestrador encerra no done; workers idle encerram ~30s depois, cancelados por qualquer trabalho novo. DEFAULT-ON. Opt-out via override de flag para E2E real-mission (ancora workers a PTYs vivos), igual workerHandoffTtl.',
+    channel: 'dev',
+    createdAt: '2026-08-23',
     removeAfter: '2027-03-31',
     killSwitch: false,
     telemetry: false,

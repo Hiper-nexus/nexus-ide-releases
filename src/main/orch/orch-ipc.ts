@@ -119,6 +119,11 @@ import {
   shutdownWorkerHandoffTtl,
 } from "./worker-handoff-ttl";
 import {
+  initMissionDoneTeardown,
+  productionMissionDoneTeardownDeps,
+  shutdownMissionDoneTeardown,
+} from "./mission-done-teardown";
+import {
   initWorkerDeliveryBoard,
   shutdownWorkerDeliveryBoard,
 } from "./worker-delivery-board";
@@ -1474,6 +1479,12 @@ export async function initOrchestration(): Promise<void> {
     initIdleDelivery();
     initAgentWaitingBroadcast();
     initWorkerHandoffTtl();
+    // F-106 (decisão 23/08): no done, orquestrador morre já e workers idle
+    // encerram ~30s depois — o tap do broadcast de missões vive aqui.
+    initMissionDoneTeardown({
+      ...productionMissionDoneTeardownDeps(),
+      tapMissions: tapMissionsBroadcast,
+    });
     initWorkerDeliveryBoard();
     // C-194.1: fechamento mecânico de turno (turn-end-handoff) — captura a
     // fronteira de turno que o dedup por turno precisa, antes do primeiro
@@ -1603,6 +1614,7 @@ export async function closeOrchestration(): Promise<void> {
     shutdownIdleDelivery();
     shutdownAgentWaitingBroadcast();
     shutdownWorkerHandoffTtl();
+    shutdownMissionDoneTeardown();
     shutdownWorkerDeliveryBoard();
     shutdownWorkerHandoffEnforcement();
     stopAllPreviews();
