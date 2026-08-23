@@ -115,12 +115,15 @@ export function missionPrepareRequestFromDraft(
       lane: draft.advanced.lane,
       ...(draft.advanced.freeAgentChoice ? { freeAgentChoice: true } : {}),
     },
-    ...(entryContext?.kind === 'legacy-replacement' &&
-    entryContext.acceptanceCriteria.length > 0
-      ? {
-          acceptanceCriteria: [...entryContext.acceptanceCriteria],
-        }
-      : {}),
+    // O critério do operador vence: quando ele escreveu "como vou saber que
+    // ficou pronto", é ISSO que sela o contrato. Sem ele, o critério herdado
+    // de uma missão substituída continua valendo.
+    ...(draft.acceptance?.trim()
+      ? { acceptanceCriteria: [draft.acceptance.trim()] }
+      : entryContext?.kind === 'legacy-replacement' &&
+          entryContext.acceptanceCriteria.length > 0
+        ? { acceptanceCriteria: [...entryContext.acceptanceCriteria] }
+        : {}),
     ...(entryContext?.kind === 'pet-studio'
       ? {
           profile: {
@@ -210,6 +213,7 @@ export function MissionSetup() {
   const entryContext = useMissionSetupStore((state) => state.entryContext);
   const setWorkspace = useMissionSetupStore((state) => state.setWorkspace);
   const setObjective = useMissionSetupStore((state) => state.setObjective);
+  const setAcceptance = useMissionSetupStore((state) => state.setAcceptance);
   const setTitle = useMissionSetupStore((state) => state.setTitle);
   const setContextPaths = useMissionSetupStore(
     (state) => state.setContextPaths,
@@ -1095,6 +1099,7 @@ export function MissionSetup() {
             }}
             onPickWorkspace={() => void pickProjectFolder()}
             onObjectiveChange={changeObjective}
+            onAcceptanceChange={(value) => setAcceptance(value)}
             onContextPathsChange={setContextPaths}
             onStart={() => void startExpress()}
             onAdvanced={() => setStep('team')}

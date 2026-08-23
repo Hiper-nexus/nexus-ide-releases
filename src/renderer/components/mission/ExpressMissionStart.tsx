@@ -26,6 +26,8 @@ interface ExpressMissionStartProps {
   onStartMissionAnyway(): void;
   onPickWorkspace(): void;
   onObjectiveChange(objective: string): void;
+  /** "Como vou saber que ficou pronto?" — definição de pronto do operador. */
+  onAcceptanceChange(acceptance: string): void;
   onContextPathsChange(paths: readonly string[]): void;
   onStart(): void;
   onAdvanced(): void;
@@ -55,6 +57,7 @@ export function ExpressMissionStart({
   onStartMissionAnyway,
   onPickWorkspace,
   onObjectiveChange,
+  onAcceptanceChange,
   onContextPathsChange,
   onStart,
   onAdvanced,
@@ -159,6 +162,29 @@ export function ExpressMissionStart({
           />
           <span id="express-objective-hint" className="mission-setup__hint">
             Escreva em linguagem comum. A missão começa assim que você confirmar.
+          </span>
+        </div>
+
+        <div className="mission-setup__field">
+          <label htmlFor="express-acceptance">
+            Como vou saber que ficou pronto?
+          </label>
+          <input
+            id="express-acceptance"
+            type="text"
+            value={draft.acceptance ?? ''}
+            maxLength={2048}
+            placeholder="Exemplo: a página abre no celular e o botão de contato funciona."
+            disabled={draftEditingDisabled || busy}
+            aria-describedby="express-acceptance-hint"
+            onChange={(event) => {
+              if (draftEditingDisabled) return;
+              onAcceptanceChange(event.target.value);
+            }}
+          />
+          <span id="express-acceptance-hint" className="mission-setup__hint">
+            Opcional, mas é o que a equipe usa para conferir a entrega antes de
+            dizer que terminou.
           </span>
         </div>
 

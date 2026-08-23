@@ -1956,3 +1956,25 @@
   font-size: var(--text-xs);
   margin-top: var(--space-3);
 }
+
+
+/* "O que vamos construir" — o escopo que o motor selava e nunca mostrava.
+   Prosa do agente, largura de leitura; o selo fica no detalhe técnico. */
+.mission-inspector__sealed-plan {
+  margin-bottom: var(--space-4);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+
+.mission-inspector__sealed-plan h2 {
+  font-size: var(--text-md);
+  margin: 0 0 var(--space-2);
+}
+
+.mission-inspector__sealed-plan-body {
+  margin: 0;
+  max-width: 68ch;
+  white-space: pre-wrap;
+  line-height: 1.6;
+  color: var(--text);
+}

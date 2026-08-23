@@ -628,3 +628,44 @@ describe('normalizeProjectContextPath', () => {
     expect(normalizeProjectContextPath(path)).toBeNull();
   });
 });
+
+describe('critério de aceite — "como vou saber que ficou pronto"', () => {
+  it('grava o critério no rascunho', () => {
+    const path = '/projects/aceite';
+    setActiveWorkspacePath(path);
+    const store = useMissionSetupStore.getState();
+    store.setWorkspace(path);
+    store.setAcceptance('a página abre no celular e o botão funciona');
+    expect(useMissionSetupStore.getState().draft.acceptance).toBe(
+      'a página abre no celular e o botão funciona',
+    );
+  });
+
+  it('sobrevive ao + Novo junto com o objetivo', () => {
+    const path = '/projects/aceite2';
+    setActiveWorkspacePath(path);
+    const store = useMissionSetupStore.getState();
+    store.setWorkspace(path);
+    store.setObjective('refazer o cadastro');
+    store.setAcceptance('consigo me cadastrar pelo celular');
+
+    useMissionSetupStore.getState().beginFreshMission();
+
+    expect(useMissionSetupStore.getState().draft).toMatchObject({
+      objective: 'refazer o cadastro',
+      acceptance: 'consigo me cadastrar pelo celular',
+    });
+  });
+
+  it('force zera o critério junto com o resto', () => {
+    const path = '/projects/aceite3';
+    setActiveWorkspacePath(path);
+    const store = useMissionSetupStore.getState();
+    store.setWorkspace(path);
+    store.setAcceptance('algum critério');
+    useMissionSetupStore
+      .getState()
+      .beginFreshMission(undefined, { force: true });
+    expect(useMissionSetupStore.getState().draft.acceptance ?? '').toBe('');
+  });
+});

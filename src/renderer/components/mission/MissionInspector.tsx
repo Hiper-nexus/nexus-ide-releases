@@ -6,6 +6,7 @@ import type { MissionEvent } from '../../../shared/mission-events';
 import { useMissionInspectorStore, type InspectorTab } from '../../state/mission-inspector-store';
 import { projectChangedFiles } from '../../lib/mission-changed-files';
 import { useFilesStore } from '../../state/files-store';
+import { useOrchStore } from '../../state/orch-store';
 import { useContextualPanelNavStore } from '../../state/contextual-panel-nav-store';
 import { DirectionComposer } from './DirectionComposer';
 
@@ -241,16 +242,59 @@ function AgentProjection({
   );
 }
 
+/**
+ * O plano que o agente escreveu, em prosa — não a projeção de unidades.
+ *
+ * `intentContract.promotedPlan.summary` é o PRD/plano físico selado pelo
+ * motor, com SHA. Tinha 25 referências no main e ZERO no renderer: o produto
+ * produzia o escopo e nunca mostrava. Dos cinco elos do princípio 7 (ideia →
+ * escopo → aprovação → progresso → entrega), "escopo" não tinha superfície.
+ */
+function SealedPlan({ missionId }: { readonly missionId: string }) {
+  const plan = useOrchStore(
+    (state) =>
+      state.missions.find((mission) => mission.id === missionId)?.intentContract
+        ?.promotedPlan,
+  );
+  if (!plan?.summary?.trim()) return null;
+
+  return (
+    <section
+      className="mission-inspector__sealed-plan"
+      aria-label="O que vamos construir"
+    >
+      <h2>O que vamos construir</h2>
+      <p className="mission-inspector__sealed-plan-body">{plan.summary}</p>
+      <details className="mission-inspector__technical">
+        <summary>Detalhes técnicos</summary>
+        <dl className="mission-inspector__details">
+          <CanonicalField label="Selo do plano">
+            <code>{plan.summarySha256.slice(0, 12)}</code>
+          </CanonicalField>
+          <CanonicalField label="Artefatos anexados">
+            {String(plan.artifacts.length)}
+          </CanonicalField>
+        </dl>
+      </details>
+    </section>
+  );
+}
+
 function PlanProjection({ snapshot }: { readonly snapshot: MissionSnapshot }) {
   if (snapshot.units.length === 0) {
     return (
-      <p className="mission-inspector__empty" role="status">
-        Nenhuma unidade de plano foi persistida para esta missão.
-      </p>
+      <>
+        <SealedPlan missionId={snapshot.id} />
+        <p className="mission-inspector__empty" role="status">
+          Nenhuma unidade de plano foi persistida para esta missão.
+        </p>
+      </>
     );
   }
 
   return (
+    <>
+    <SealedPlan missionId={snapshot.id} />
     <ol className="mission-inspector__plan-list">
       {snapshot.units.map((unit) => {
         const owner = unit.agentId
@@ -296,6 +340,7 @@ function PlanProjection({ snapshot }: { readonly snapshot: MissionSnapshot }) {
         );
       })}
     </ol>
+    </>
   );
 }
 

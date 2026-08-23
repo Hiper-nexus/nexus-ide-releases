@@ -22,6 +22,13 @@ export type MissionSetupStep = 'mission' | 'express' | 'team' | 'review';
 
 export interface MissionSetupDraft {
   objective: string;
+  /**
+   * "Como vou saber que ficou pronto?" — o critério de aceite em linguagem de
+   * gente. É campo tipado do contrato desde sempre (`missionIntentContract`)
+   * e nunca teve um input: a missão nascia sem definição de pronto e o
+   * princípio 7 perdia o elo do escopo.
+   */
+  acceptance?: string;
   title: string;
   contextPaths: string[];
   roster: SquadAgent[];
@@ -110,6 +117,7 @@ export interface MissionSetupStore {
   entryAuthorityRevision: number;
   setWorkspace(workspacePath: string | null): void;
   setObjective(objective: string): void;
+  setAcceptance(acceptance: string): void;
   setTitle(title: string): void;
   setContextPaths(contextPaths: readonly string[]): void;
   setRoster(roster: readonly SquadAgent[]): void;
@@ -161,6 +169,7 @@ const missionSetupContextPathSchema = z
 const missionSetupDraftSchema = z
   .object({
     objective: z.string().max(MISSION_INTENT_GOAL_MAX_CHARS),
+    acceptance: z.string().max(2_048).default(''),
     title: z.string().max(MISSION_PREPARE_TITLE_MAX_CHARS),
     contextPaths: z
       .array(missionSetupContextPathSchema)
@@ -196,6 +205,7 @@ export function createEmptyMissionSetupDraft(
 ): MissionSetupDraft {
   return {
     objective: '',
+    acceptance: '',
     title: '',
     contextPaths: [],
     roster: [],
@@ -601,6 +611,12 @@ export const useMissionSetupStore = create<MissionSetupStore>((set, get) => {
       revise((draft) => ({ ...draft, objective: nextObjective }));
     },
 
+    setAcceptance: (acceptance) => {
+      const next = acceptance.slice(0, 2_048);
+      if (next === (get().draft.acceptance ?? '')) return;
+      revise((draft) => ({ ...draft, acceptance: next }));
+    },
+
     setTitle: (title) => {
       const nextTitle = title.slice(0, MISSION_PREPARE_TITLE_MAX_CHARS);
       if (nextTitle === get().draft.title) return;
@@ -794,6 +810,7 @@ export const useMissionSetupStore = create<MissionSetupStore>((set, get) => {
         ...(keepObjective
           ? {
               objective: current.draft.objective,
+              acceptance: current.draft.acceptance ?? '',
               title: current.draft.title,
               contextPaths: [...current.draft.contextPaths],
             }
