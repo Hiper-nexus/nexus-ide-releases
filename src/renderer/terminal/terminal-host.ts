@@ -505,18 +505,24 @@ function missionReviveRecoveryCopy(error: unknown): string {
   return 'Use Retomar no rail.';
 }
 
-async function requestMissionRuntimeResume(missionId: string): Promise<void> {
+async function requestMissionRuntimeResume(
+  missionId: string,
+  operatorInitiated = false,
+): Promise<void> {
   if (missionRuntimeResumeInFlight.has(missionId)) return;
   missionRuntimeResumeInFlight.add(missionId);
   try {
-    // Missão CONCLUÍDA só reabre por decisão humana explícita. retry-kickoff é
-    // o gatilho MECÂNICO (watchdog, auto-cura de grant) e o motor o recusa em
-    // missão selada — mandar ele aqui deixaria a tecla do operador sem efeito.
-    // Digitar no pane do coordenador É a decisão: vira `resume`.
-    const kind = missionOfPaneIsDoneById(missionId)
-      ? ('resume' as const)
-      : ('retry-kickoff' as const);
-    await window.nexus.mission.command({ kind, missionId });
+    // Missão CONCLUÍDA só reabre por decisão humana explícita, e SÓ ela pode
+    // virar `resume`: retry-kickoff é o gatilho mecânico (watchdog, auto-cura
+    // de grant) e o motor o recusa em missão selada. Sem `operatorInitiated`
+    // uma missão pronta NUNCA é reaberta daqui — foi assim que abrir
+    // "Terminais" relançava a missão sozinho (bug de campo 23/08).
+    const done = missionOfPaneIsDoneById(missionId);
+    if (done && !operatorInitiated) return;
+    await window.nexus.mission.command({
+      kind: done ? 'resume' : 'retry-kickoff',
+      missionId,
+    });
   } finally {
     missionRuntimeResumeInFlight.delete(missionId);
   }
@@ -540,6 +546,7 @@ async function requestDeadMissionPaneRevive(
   pane: PaneModel,
   host: Host,
   missionId: string,
+  operatorInitiated = false,
 ): Promise<void> {
   if (!shouldAttemptDeadPaneRevive(missionId)) return;
   try {
@@ -561,7 +568,7 @@ async function requestDeadMissionPaneRevive(
     // Fala DEPOIS do aceite: anunciar "revivendo…" antes da cerca do main
     // recusar (missão encerrada pelo operador) lia como promessa quebrada —
     // sucesso ganha UMA linha, recusa ganha só a linha acionável do catch.
-    await requestMissionRuntimeResume(missionId);
+    await requestMissionRuntimeResume(missionId, operatorInitiated);
     // O Maestro renasce como pane NOVO — dizer só "religada" neste pane
     // morto lia como promessa quebrada (4× no print de 19/08: nada mudava
     // AQUI). Uma linha, apontando para onde a ação foi.
@@ -1082,7 +1089,9 @@ function startSpawn(
               missionOfPaneIsDone(pane.id, pane),
           });
           if (keyAction === 'resume-keyboard') {
-            void unlockRetiredMissionPane(pane, host);
+            void unlockRetiredMissionPane(pane, host, {
+              operatorInitiated: true,
+            });
           } else if (keyAction === 'reclaim-shell') {
             void reclaimExitedPaneAsShell(pane, host);
           }
@@ -1980,6 +1989,7 @@ async function reclaimExitedPaneAsShell(
 export async function unlockRetiredMissionPane(
   pane: PaneModel,
   host?: Host,
+  options?: { readonly operatorInitiated?: boolean },
 ): Promise<void> {
   heldSpawnPanes.delete(pane.id);
   const target = host ?? hosts.get(pane.id);
@@ -2015,7 +2025,17 @@ export async function unlockRetiredMissionPane(
     missionStatus,
     lookupFailed,
     isOrchestrator: pane.role === 'orchestrator',
+    operatorInitiated: options?.operatorInitiated === true,
   });
+
+  // Histórico: nem revive nem vira shell. É o estado do pane do coordenador
+  // de uma missão pronta enquanto o operador só está OLHANDO — abrir
+  // "Terminais" não pode relançar a missão.
+  if (disposition === 'keep-history') {
+    useSessionStateStore.getState().setPaneState(pane.id, 'exited');
+    if (target && !target.disposed) target.spawnStarted = false;
+    return;
+  }
 
   if (target && !target.disposed) {
     if (target.sessionId) return;
@@ -2027,7 +2047,12 @@ export async function unlockRetiredMissionPane(
       target.hibernated = false;
       useSessionStateStore.getState().setPaneState(pane.id, 'exited');
       if (missionId) {
-        void requestDeadMissionPaneRevive(pane, target, missionId);
+        void requestDeadMissionPaneRevive(
+          pane,
+          target,
+          missionId,
+          options?.operatorInitiated === true,
+        );
       }
       return;
     }

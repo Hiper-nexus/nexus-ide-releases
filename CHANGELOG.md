@@ -48,8 +48,36 @@ _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes).
   dois cartões da vaga indistinguíveis. Tokens `--text-muted` e
   `--duration-fast` eram usados 8× e nunca declarados.
 
-Gates: tsc limpo, `security:renderer-sinks` 0 sinks, 11232 testes passando,
-`design-system-sensor` sem findings.
+- **feat(mission): a missão só encerra quando VOCÊ encerra** — o motor
+  concluir deixa de encerrar a missão. Ela aparece como **"Aguardando você"**
+  com **"Pedir um ajuste"** e **"Marcar como feito"**; só o seu carimbo a dá
+  por concluída. "Remover" continua sempre disponível.
+- **feat(orch): o coordenador continua digitável depois do done** — o pane
+  dele não vira mais shell vazio quando a missão termina, e o banner deixa de
+  prometer shell. Reabrir usa `resume` (decisão humana explícita); o gatilho
+  mecânico segue recusando missão selada.
+- **fix(router): missão de UI volta a receber DESIGN.md** — "refaça a tela pra
+  ficar bonita no celular" saía com confiança baixa (faltava o verbo de
+  retrabalho) e "deixa a tela mais bonita" também (traço + superfície não
+  formavam quórum). Os dois agora aplicam a doutrina de design.
+- **fix(router): "sem escrever código" era lido como "escrever código"** — a
+  missão de planejamento virava implementação, o oposto do pedido. E
+  "auditoria de segurança **e corrija**" caía em somente-leitura, proibida de
+  consertar o que foi mandada consertar.
+- **feat(router): o Nexus escolhe a referência de design** — em vez de mandar
+  o agente vasculhar `~/.design-references`, o próprio Nexus casa o objetivo
+  e nomeia o arquivo. Determinístico e mais barato em tokens.
+- **feat(orch): missão de segurança ganha doutrina** — segredo nunca em
+  código/log, entrada externa validada no servidor, nada de afrouxar permissão
+  para "fazer funcionar", e o risco fechado nomeado no summary.
+- **fix(dev): `APPLE_TEAM_ID` no shell não quebra mais o dev** — com a
+  variável de release exportada no perfil, `npm start` e três suítes morriam
+  em "NEXUS_MAC_PUBLISH_RELEASE must be exactly 1".
+
+Gates: tsc limpo, `security:renderer-sinks` 0 sinks, **1189/1189 arquivos e
+11304/11304 testes**, `design-system-sensor` sem findings. Verificado no app
+rodando por CDP: missão real de landing criada, aberta no navegador pelo
+Nexus, e o board mostrando "Aguardando você".
 
 ## 0.68.3 — Ajustes pós-done e navegador real
 

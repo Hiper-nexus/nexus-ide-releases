@@ -38,7 +38,11 @@ export function decideDeadPaneReviveRespawn(input: {
   return 'same-pane-resume';
 }
 
-export type UnlockRetiredPaneDisposition = 'keep-paused' | 'reclaim-shell';
+export type UnlockRetiredPaneDisposition =
+  | 'keep-paused'
+  | 'reclaim-shell'
+  /** Preserva o pane como histórico: não revive a missão nem vira shell. */
+  | 'keep-history';
 
 /**
  * Missão viva (pending/running/blocked) NÃO vira shell. Falha ao consultar
@@ -49,6 +53,8 @@ export function decideUnlockRetiredMissionPane(input: {
   readonly missionStatus?: 'pending' | 'running' | 'blocked' | 'done' | 'failed';
   readonly lookupFailed?: boolean;
   readonly isOrchestrator?: boolean;
+  /** True somente quando o operador agiu (tecla no pane), nunca em montagem. */
+  readonly operatorInitiated?: boolean;
 }): UnlockRetiredPaneDisposition {
   if (input.lookupFailed) return 'keep-paused';
   if (
@@ -63,8 +69,13 @@ export function decideUnlockRetiredMissionPane(input: {
   // pede o ajuste, então virar shell comum apagaria o histórico da
   // coordenação justamente no momento da revisão. Workers, que já cumpriram
   // o papel, seguem podendo virar shell.
+  //
+  // MAS reviver é decisão HUMANA: esta função também roda no restore/montagem
+  // do pane, e sem esta cerca abrir "Terminais" numa missão pronta relançava
+  // a missão sozinho (bug de campo 23/08) — a mesma "revival surpresa" que a
+  // casa tirou fora. Sem gesto do operador, o pane fica como histórico.
   if (input.missionStatus === 'done' && input.isOrchestrator) {
-    return 'keep-paused';
+    return input.operatorInitiated ? 'keep-paused' : 'keep-history';
   }
   return 'reclaim-shell';
 }

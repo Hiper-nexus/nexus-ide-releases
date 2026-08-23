@@ -254,10 +254,18 @@ describe('coordenador de missão concluída continua sendo o canal da revisão',
   it('não troca o pane do coordenador por shell no done', () => {
     // A entrega ainda espera revisão humana e o operador pode não aprovar:
     // virar shell apagaria o histórico da coordenação bem na hora da revisão.
+    // Sem gesto do operador o pane fica como histórico; com gesto, revive.
     expect(
       decideUnlockRetiredMissionPane({
         missionStatus: 'done',
         isOrchestrator: true,
+      }),
+    ).not.toBe('reclaim-shell');
+    expect(
+      decideUnlockRetiredMissionPane({
+        missionStatus: 'done',
+        isOrchestrator: true,
+        operatorInitiated: true,
       }),
     ).toBe('keep-paused');
   });
@@ -293,5 +301,50 @@ describe('coordenador de missão concluída continua sendo o canal da revisão',
         missionOwns: false,
       }),
     ).toBe('reclaim-shell');
+  });
+});
+
+describe('abrir Terminais numa missão pronta NÃO pode relançar a missão', () => {
+  it('sem gesto do operador o pane do coordenador vira histórico', () => {
+    // Bug de campo 23/08: clicar em "Terminais" numa missão Pronta montava o
+    // pane, o restore chamava unlockRetiredMissionPane e a missão voltava
+    // para "Trabalhando" sozinha — a "revival surpresa" que a casa removeu.
+    expect(
+      decideUnlockRetiredMissionPane({
+        missionStatus: 'done',
+        isOrchestrator: true,
+      }),
+    ).toBe('keep-history');
+  });
+
+  it('com gesto do operador (tecla no pane) revive para o ajuste', () => {
+    expect(
+      decideUnlockRetiredMissionPane({
+        missionStatus: 'done',
+        isOrchestrator: true,
+        operatorInitiated: true,
+      }),
+    ).toBe('keep-paused');
+  });
+
+  it('histórico nunca vira shell — o registro da coordenação fica', () => {
+    expect(
+      decideUnlockRetiredMissionPane({
+        missionStatus: 'done',
+        isOrchestrator: true,
+      }),
+    ).not.toBe('reclaim-shell');
+  });
+
+  it('missão viva segue pausada, com ou sem gesto', () => {
+    for (const operatorInitiated of [true, false]) {
+      expect(
+        decideUnlockRetiredMissionPane({
+          missionStatus: 'running',
+          isOrchestrator: true,
+          operatorInitiated,
+        }),
+      ).toBe('keep-paused');
+    }
   });
 });
