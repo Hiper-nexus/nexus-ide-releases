@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.67.0 — Router desperto e sem fantasmas
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+O router de intenção provado AO VIVO nesta máquina: com keys glm/qwen
+configuradas, classificou 7/7 missões reais — pergunta pura vira resposta
+direta ("15% de 800?" → **120**, sem missão nem pane), meta-de-pane vira
+missão-pergunta, landing/ecommerce/bugfix viram trabalho com as skills certas
+por tipo. E o fechamento de missão ficou limpo por trás:
+
+- **feat(router): guarda determinística anti-meta-de-pane** — "pergunte aos
+  panes…" com typo de ditado ("oergunta…") nunca mais pode escorregar para
+  resposta direta: `isPaneMetaTask` veta ANTES do Tier 0/1, sem rede. Matriz
+  de 39 casos cobrindo híbridos, acentos, injeção de skill (flag `/i`
+  removida do validador) e fail-open provado em campo.
+- **feat(orch): cap de effort** — orquestrador sem selo nasce `medium`, não
+  herda xhigh/max da config global da CLI; selo explícito do roster sempre
+  vence. Com o fix anterior de `--effort` no adapter claude, o esforço agora
+  é controlável de ponta a ponta.
+- **fix(orch): fantasma do watchdog enterrado** — SUCCESS físico da mesma
+  sessão consome failures sintéticos 'nexus-watchdog' ainda na fila; fim da
+  cobrança a worker que já respondeu.
+- **feat(orch): F-106 teardown híbrido no done** — orquestrador encerra no
+  done; workers idle saem em 30s, cancelados por qualquer trabalho novo;
+  shells fora de missão intocados; opt-out por flag para E2E.
+
+Gates: 11.187 testes verdes, tsc limpo, 0 sinks executáveis no renderer.
+
 ## 0.66.0 — Revisão sempre-on
 
 _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._

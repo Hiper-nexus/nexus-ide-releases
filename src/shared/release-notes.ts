@@ -13,69 +13,61 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.66.0',
-  date: '2026-08-22',
-  codename: 'Revisão sempre-on',
+  version: '0.67.0',
+  date: '2026-08-23',
+  codename: 'Router desperto e sem fantasmas',
   summary:
-    'A promessa central do plano dev-sênior entrou no caminho vivo: missão ' +
-    'civil NÃO conclui mais sem nenhuma verificação independente. O scanner ' +
-    'determinístico roda sobre a entrega antes do fechamento; reprovação vira ' +
-    'ciclo de reparo automático e, esgotado, bloqueio visível em linguagem ' +
-    'simples. Sensores mecânicos (typecheck + auditoria de dependências) agora ' +
-    'funcionam mesmo sem scripts no projeto-alvo.',
+    'O router de intenção provado ao vivo — lê a missão, entende a intenção, ' +
+    'classifica 7/7 rotas reais e escolhe as skills por tipo de trabalho — ' +
+    'agora com guarda determinística contra typo de ditado em meta-de-pane. ' +
+    'O fantasma do watchdog morre: SUCCESS real consome failure sintético na ' +
+    'hora. Effort de orquestrador ganha cap (medium) quando ninguém selou ' +
+    'nada; selo do roster sempre vence. No done da missão, orquestrador ' +
+    'encerra já e workers idle saem em 30s (F-106).',
   highlights: [
     {
-      title: 'Missão civil fecha com prova, não com papelada',
+      title: 'Router testado ao extremo — e à prova de ditado',
       detail:
-        'O scanner determinístico (candidate-quality-v1) inspeciona a entrega ' +
-        'ANTES do completeVerified. Aprovado: evidência anexada ao resultado. ' +
-        'Reprovado: até 2 ciclos de reparo com os findings entregues ao ' +
-        'Maestro; orçamento esgotado → bloqueio visível com resumo simples — ' +
-        'Retomar e Marcar concluída seguem disponíveis.',
+        '39 casos cobrindo pergunta pura, trabalho real, híbridos, acentos, ' +
+        'typo de voz e injeção de skill. "Pergunte aos panes…" nunca vira ' +
+        'resposta direta: guarda determinística ANTES da LLM barata, nem ' +
+        'chama rede. Fail-open provado: glm flakeou → missão normal.',
     },
     {
-      title: 'Typecheck e auditoria funcionam em QUALQUER projeto',
+      title: 'Fim do xhigh fantasma e do worker zumbi',
       detail:
-        'Os novos sensores mecânicos não dependem de scripts no package.json ' +
-        'do alvo: com tsconfig presente o Nexus compila sozinho; com lockfile ' +
-        'audita dependências de produção. Vulnerabilidade crítica/alta ou ' +
-        'erro de compilação bloqueiam a conclusão na mesma esteira de reparo.',
+        'Sem selo no roster, o orquestrador nasce com effort medium em vez ' +
+        'de herder a config global da CLI; selo explícito sempre vence. No ' +
+        'done, panes de missão encerram sozinhos (híbrido F-106), sem sinais ' +
+        '"vivos" numa missão Pronto.',
     },
     {
-      title: 'Missão-pergunta recebe brief proporcional',
+      title: 'SUCCESS real enterra o failure sintético do watchdog',
       detail:
-        'Meta-de-pane ("pergunte aos panes...") chegava ao Maestro com a ' +
-        'doutrina pesada mandando delegar na mesma respiração em que mandava ' +
-        'executar. Agora: contrato META-DE-PANE + doutrina mínima, sem plano ' +
-        'selado redundante.',
+        'Worker que "travou no MCP" e depois se recuperava deixava um FAILED ' +
+        'fantasma na fila — o Maestro queimava turnos de cobrança com um ' +
+        'fantasma. Agora todo SUCCESS físico da mesma sessão consome o ' +
+        'ghost na hora do commit.',
     },
   ],
   fixes: [
     {
-      title: '"Aguardando você" fantasma acabou',
+      title: '"listagem" não despencava a tarefa para trivial',
       detail:
-        'A notificação idle do CLI ("waiting for your input") era promovida a ' +
-        'elicitação e lacrava o pane em awaiting-input eterno — agentes ' +
-        'prontos apareciam como perguntando algo e injeções eram vetadas. ' +
-        'Só diálogo real (pergunta/aprovação/ferramenta interativa) lacra.',
+        "Prefixo 'list' casava dentro de li(sta)gem e dava a feature mais "
+        + 'complexa ao modelo mais barato do ladder. Imperativo de inspeção '
+        + "('liste') fica no trivial.",
     },
     {
-      title: 'Dev não congela mais no Keychain',
+      title: "'me explique…' não abre mais squad",
       detail:
-        'Leitura fria de segredo no binário de dev abria SecItemCopyMatching ' +
-        'síncrono atrás de prompt oculto — main, gate de hooks, supervisor e ' +
-        'CDP morriam juntos e a missão parava sem um log. Vault desligado por ' +
-        'padrão no dev (NEXUS_DEV_VAULT=1 para optar), empacotado intacto.',
-    },
-    {
-      title: '+ Novo com missão finalizada em foco funciona',
-      detail:
-        'Relato F-103 era sintoma do congelamento (F-105): validação dirigida ' +
-        'por CDP mostra navegação e MissionSetup frescos nos dois cenários.',
+        'Pedidos de conhecimento sem "?" escapavam do Tier 0 e viravam '
+        + 'missão completa por falta de interrogação. Anchors de conhecimento '
+        + 'resolvem; verbo de trabalho dentro da frase continua mandando '
+        + 'para missão.',
     },
   ],
 };
-
 export const RELEASE_06100: AppRelease = {
   version: '0.61.0',
   date: '2026-08-19',
