@@ -145,8 +145,15 @@ attempt=0
 timestamp_failure_seen=0
 command_args=("$@")
 # Esperas antes das tentativas: a primeira é imediata; as seguintes têm
-# backoff finito (máximo total de 207 s) e nunca escondem uma falha definitiva.
-for delay in 0 4 8 15 30 60 90; do
+# backoff finito (máximo total de 747 s ≈ 12 min) e nunca escondem uma falha
+# definitiva.
+#
+# O teto era 207 s e NÃO bastava: em três releases seguidas (23/08) o TSA da
+# Apple recusou o contêiner DMG nas sete tentativas, esgotando a escada em
+# ~3,5 min — enquanto uma assinatura avulsa feita logo depois passava. A
+# janela de limitação por rajada dura mais que isso, e cada falha custa um
+# `make:release` inteiro (~8 min) refeito do zero. Esperar é mais barato.
+for delay in 0 4 8 15 30 60 90 120 180 240; do
   attempt=$((attempt + 1))
   retryable_failure=0
   if (( delay > 0 )); then
@@ -196,7 +203,7 @@ for delay in 0 4 8 15 30 60 90; do
   else
     exit "$last"
   fi
-  if (( attempt < 7 )); then
+  if (( attempt < 10 )); then
     target="${command_args[$((${#command_args[@]} - 1))]}"
     if is_dmg_container "$target"; then
       if ! has_force_flag "${command_args[@]}"; then

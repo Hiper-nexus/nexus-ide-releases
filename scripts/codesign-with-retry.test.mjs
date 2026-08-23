@@ -69,8 +69,8 @@ exit 0
     chmodSync(fakeCodesignPath, 0o755);
     const source = readFileSync(scriptPath, 'utf8')
       .replaceAll('/usr/bin/codesign', fakeCodesignPath)
-      .replace('for delay in 0 4 8 15 30 60 90; do', 'for delay in 0 0 0; do')
-      .replace('if (( attempt < 7 )); then', 'if (( attempt < 3 )); then');
+      .replace('for delay in 0 4 8 15 30 60 90 120 180 240; do', 'for delay in 0 0 0; do')
+      .replace('if (( attempt < 10 )); then', 'if (( attempt < 3 )); then');
     writeFileSync(wrapperPath, source);
     chmodSync(wrapperPath, 0o755);
 
@@ -117,8 +117,8 @@ exit 0
     chmodSync(fakeCodesignPath, 0o755);
     const source = readFileSync(scriptPath, 'utf8')
       .replaceAll('/usr/bin/codesign', fakeCodesignPath)
-      .replace('for delay in 0 4 8 15 30 60 90; do', 'for delay in 0 0; do')
-      .replace('if (( attempt < 7 )); then', 'if (( attempt < 2 )); then');
+      .replace('for delay in 0 4 8 15 30 60 90 120 180 240; do', 'for delay in 0 0; do')
+      .replace('if (( attempt < 10 )); then', 'if (( attempt < 2 )); then');
     writeFileSync(wrapperPath, source);
     chmodSync(wrapperPath, 0o755);
 
@@ -173,8 +173,8 @@ exit 1
     chmodSync(fakeCodesignPath, 0o755);
     const source = readFileSync(scriptPath, 'utf8')
       .replaceAll('/usr/bin/codesign', fakeCodesignPath)
-      .replace('for delay in 0 4 8 15 30 60 90; do', 'for delay in 0 0; do')
-      .replace('if (( attempt < 7 )); then', 'if (( attempt < 2 )); then');
+      .replace('for delay in 0 4 8 15 30 60 90 120 180 240; do', 'for delay in 0 0; do')
+      .replace('if (( attempt < 10 )); then', 'if (( attempt < 2 )); then');
     writeFileSync(wrapperPath, source);
     chmodSync(wrapperPath, 0o755);
 
