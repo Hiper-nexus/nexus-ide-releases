@@ -22,7 +22,18 @@ export type IntentRoute =
   | { readonly kind: 'mission-work'; readonly skills: readonly string[] };
 
 const QUESTION_VERBS =
-  /\b(crie|criar|construa|construir|implemente|implementar|escreva|escrever|desenvolva|refatore|migre|adicione|corrija|corrigir|integre|deploy|configure)\b/iu;
+  /\b(crie|criar|crio|construa|construir|implemente|implementar|escreva|escrever|desenvolva|refatore|migre|adicione|corrija|corrigir|integre|deploy|configure|monte|montar)\b/iu;
+
+/**
+ * Pedidos de CONHECIMENTO sem '?' nem começo interrogativo canônico — a
+ * forma mais comum de pergunta de operador leigo ("me explique o que é git",
+ * "como faço para trocar um pneu"). Sem estes anchors eles viravam missão
+ * completa com squad por falta de '?' (matriz 23/08: 3 buracos).
+ */
+const KNOWLEDGE_REQUEST_RE =
+  /^(?:me\s+)?(?:pode\s+|poderia\s+|consegue\s+)?(?:expli(?:ca|que)|diga|descreva|resum[ae]|cont[ae])\b/iu;
+const KNOWLEDGE_QUESTION_RE =
+  /^(?:o\s+que\s+(?:é|e|são|sao|significa)|quem\s+(?:foi|é|e|são|sao)|por\s*que|porque|porquê|qual\s+a\s+diferen|como\s+(?:faç[oa]|faco|posso|funciona|surge|nasceu|foi|era))/iu;
 
 /** Tier 0 determinístico: pergunta pura curta nem vira missão. */
 export function looksLikePureQuestion(objective: string): boolean {
@@ -31,7 +42,9 @@ export function looksLikePureQuestion(objective: string): boolean {
   if (QUESTION_VERBS.test(text)) return false;
   return (
     text.includes('?') ||
-    /^(quanto|qual|quais|quem|quando|onde|quantos|quantas)\b/iu.test(text)
+    /^(quanto|qual|quais|quem|quando|onde|quantos|quantas)\b/iu.test(text) ||
+    KNOWLEDGE_REQUEST_RE.test(text) ||
+    KNOWLEDGE_QUESTION_RE.test(text)
   );
 }
 

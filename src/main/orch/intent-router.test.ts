@@ -135,7 +135,10 @@ describe('routeWithDeepSeek / routeIntent — fail-open', () => {
 
   it('routeIntent: Tier 1 classifica via anthropic (glm) extraindo JSON de prosa', async () => {
     const seen: string[] = [];
-    const route = await routeIntent('me explique o que é um deadlock', {
+    // Objetivo ambíguo SEM marcador de conhecimento: escapa do Tier 0 de
+    // propósito para exercitar a cadeia barata ("me explique…" virou
+    // direct-answer determinístico na matriz 23/08).
+    const route = await routeIntent('melhore o desempenho do site', {
       hasKeyFor: (id) => id === 'glm',
       loadKeyFor: () => 'k',
       fetchImpl: (async (url: any) => {
@@ -146,17 +149,14 @@ describe('routeWithDeepSeek / routeIntent — fail-open', () => {
             content: [
               {
                 type: 'text',
-                text: 'Claro! {"kind":"direct-answer","question":"me explique o que é um deadlock"} aqui está.',
+                text: 'Claro! {"kind":"mission-work","skills":[]} aqui está.',
               },
             ],
           }),
         };
       }) as unknown as typeof fetch,
     });
-    expect(route).toEqual({
-      kind: 'direct-answer',
-      question: 'me explique o que é um deadlock',
-    });
+    expect(route).toEqual({ kind: 'mission-work', skills: [] });
     expect(seen).toEqual(['https://api.z.ai/api/anthropic/v1/messages']);
   });
 
