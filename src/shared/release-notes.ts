@@ -61,6 +61,26 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
   fixes: [
     {
+      title: 'Abrir Terminais numa missão pronta relançava a missão',
+      detail:
+        'A missão concluída voltava sozinha para "Trabalhando" ao abrir os ' +
+        'terminais. Agora reabrir exige o seu gesto — digitar no pane do ' +
+        'coordenador; olhar não mexe em nada.',
+    },
+    {
+      title: 'Kimi logado aparecia como não logado',
+      detail:
+        'A verificação pedia o formato JSON e procurava um texto que só ' +
+        'existe na saída antiga. O formato do Kimi CLI 0.38 agora é ' +
+        'reconhecido e a conta aparece conectada.',
+    },
+    {
+      title: 'Duas contas do mesmo provedor ficavam indistinguíveis',
+      detail:
+        'Salvar a sessão sem digitar um nome gravava "Conta Claude". Agora o ' +
+        'padrão é o e-mail da sessão, então cada conta aparece com identidade.',
+    },
+    {
       title: 'Tela branca no primeiro boot',
       detail:
         'Um hook declarado depois do BootScreen mudava a contagem de hooks ' +

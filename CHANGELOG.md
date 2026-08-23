@@ -74,8 +74,18 @@ _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes).
   variável de release exportada no perfil, `npm start` e três suítes morriam
   em "NEXUS_MAC_PUBLISH_RELEASE must be exactly 1".
 
-Gates: tsc limpo, `security:renderer-sinks` 0 sinks, **1189/1189 arquivos e
-11304/11304 testes**, `design-system-sensor` sem findings. Verificado no app
+- **fix(mission): abrir Terminais numa missão pronta não a relança** — a
+  missão voltava sozinha para "Trabalhando". Reabrir agora exige gesto seu
+  (digitar no pane); montar o pane só mostra o histórico.
+- **fix(providers): Kimi logado aparecia como não logado** — a sonda pedia
+  JSON e procurava uma string que só existe na saída de texto. O formato do
+  Kimi CLI 0.38 (mapa de providers, OAuth aninhado) agora é reconhecido.
+- **fix(contas): duas contas do mesmo provedor eram indistinguíveis** — salvar
+  a sessão sem digitar nome gravava "Conta Claude". O padrão passa a ser o
+  e-mail da sessão viva.
+
+Gates: tsc limpo, `security:renderer-sinks` 0 sinks, **1190/1190 arquivos e
+11317/11317 testes**, `design-system-sensor` sem findings. Verificado no app
 rodando por CDP: missão real de landing criada, aberta no navegador pelo
 Nexus, e o board mostrando "Aguardando você".
 
