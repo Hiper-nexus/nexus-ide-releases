@@ -383,13 +383,19 @@ export async function runFunctionalSmokeProbes(
     !(await probe(
       'mission-prepare',
       async () => {
-        const review = parseFunctionalSmokeReview(
-          await api.mission.prepare(FUNCTIONAL_SMOKE_MISSION_REQUEST),
-        );
-        if (!review) return { review: null, panes: null };
+        const rawPrepare = await api.mission.prepare(FUNCTIONAL_SMOKE_MISSION_REQUEST);
+        // eslint-disable-next-line no-console -- DEBUG RELEASE GATE
+        console.warn('[smoke-debug] prepare raw:', JSON.stringify(rawPrepare).slice(0, 2500));
+        const review = parseFunctionalSmokeReview(rawPrepare);
+        if (!review) {
+          console.warn('[smoke-debug] parse REPROVADO');
+          return { review: null, panes: null };
+        }
+        const panes = await api.orch.listMissionPanes(review.missionId);
+        console.warn('[smoke-debug] paneCount:', panes.length);
         return {
           review,
-          panes: await api.orch.listMissionPanes(review.missionId),
+          panes,
         };
       },
       (value) =>
