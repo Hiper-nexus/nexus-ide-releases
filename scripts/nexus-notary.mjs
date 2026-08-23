@@ -111,4 +111,19 @@ if (isDirectRun) {
   for (const step of steps) {
     if (!runStep(step)) break;
   }
+  // A cadeia de release deixa os nativos no ABI do ELECTRON — e o dev/teste
+  // local quebra até um `rebuild:node` manual (mordeu 2× em 23/08: suite
+  // inteira vermelha por ERR_DLOPEN_FAILED logo após o PASS da release).
+  // Restaura o ABI do Node SEMPRE, passe a cadeia verde ou vermelha.
+  const rebuild = spawnSync('npm', ['run', 'rebuild:node'], {
+    cwd: root,
+    stdio: 'inherit',
+    env: process.env,
+  });
+  if (rebuild.status !== 0) {
+    process.stderr.write(
+      '[nexus-notary] aviso: rebuild:node pós-release falhou — ' +
+        ' rode `npm run rebuild:node` antes de testar no dev.\n',
+    );
+  }
 }
