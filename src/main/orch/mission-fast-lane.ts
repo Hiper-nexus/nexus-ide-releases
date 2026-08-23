@@ -549,6 +549,12 @@ export function agentPrompt(
   const uiNote = isUiMissionText(objective)
     ? 'Este pedido envolve interface. Use o DESIGN.md do projeto e o catálogo de design como guia de estilo.'
     : '';
+  const browserNote =
+    /\b(abr[aeiou]|navegador|browser|preview|mostr(?:ar|e)|ver\s+no\s+navegador)\b/iu.test(
+      objective,
+    )
+      ? 'Se o objetivo pede para ABRIR no navegador: após gerar os arquivos, abra o HTML no navegador do SO (macOS: `open <arquivo>`; Linux: `xdg-open <arquivo>`) ANTES do handoff e cite o arquivo/comando no summary.'
+      : '';
   const designBlock = uiNote && designContext ? designContext : '';
   const executorCount = (squad?.agents ?? []).filter(
     (row) => row.category === 'executor',
@@ -564,6 +570,7 @@ export function agentPrompt(
           : '',
         sealedPlanBlock,
         metaPaneBlock,
+        browserNote,
       ]
         .filter(Boolean)
         .join('\n'),
@@ -586,6 +593,7 @@ export function agentPrompt(
     `Objetivo: ${objective}`,
     mission.learnings ? `Aprendizados anteriores: ${mission.learnings}` : '',
     uiNote,
+    browserNote,
     designBlock,
     `Você é ${agent.agentName} (trabalhador).`,
     'Execute a tarefa e entregue o resultado ao coordenador.',

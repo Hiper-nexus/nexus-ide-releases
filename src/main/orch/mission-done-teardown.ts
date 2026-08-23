@@ -113,33 +113,6 @@ export function productionMissionDoneTeardownDeps(): Omit<
  * voo real 23/08). A recusa é conservadora e transitória: nada foi fechado.
  * Re-tentar a chamada selada é seguro e idempotente.
  */
-const CLOSE_RETRY_ATTEMPTS = 3;
-const CLOSE_RETRY_DELAY_MS = 400;
-
-async function closePaneWithRetry(
-  deps: MissionDoneTeardownDeps,
-  request: MissionPaneCloseRequest,
-  label: string,
-): Promise<boolean> {
-  for (let attempt = 1; attempt <= CLOSE_RETRY_ATTEMPTS; attempt += 1) {
-    let closed = false;
-    try {
-      closed = await deps.closePane(request);
-    } catch (error) {
-      deps.log(
-        `falha ao ${label} (tentativa ${attempt}/${CLOSE_RETRY_ATTEMPTS}): ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-    }
-    if (closed) return true;
-    if (attempt < CLOSE_RETRY_ATTEMPTS) {
-      await new Promise((resolve) => setTimeout(resolve, deps.retryDelayMs));
-    }
-  }
-  return false;
-}
-
 const armed = new Map<string, ReturnType<typeof setTimeout>>();
 /** Último status visto por missão (escopo|missão) — diff do broadcast. */
 const lastStatusByMission = new Map<string, string>();
@@ -169,6 +142,36 @@ function workerIsClosablePostDone(
     return null;
   }
   return authority;
+}
+
+const CLOSE_RETRY_ATTEMPTS = 3;
+const CLOSE_RETRY_DELAY_MS = 400;
+
+async function closePaneWithRetry(
+  deps: MissionDoneTeardownDeps,
+  request: MissionPaneCloseRequest,
+  label: string,
+): Promise<boolean> {
+  for (let attempt = 1; attempt <= CLOSE_RETRY_ATTEMPTS; attempt += 1) {
+    let closed: boolean;
+    try {
+      closed = await deps.closePane(request);
+    } catch (error) {
+      closed = false;
+      deps.log(
+        `falha ao ${label} (tentativa ${attempt}/${CLOSE_RETRY_ATTEMPTS}): ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+    if (closed) return true;
+    if (attempt < CLOSE_RETRY_ATTEMPTS) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, deps.retryDelayMs ?? CLOSE_RETRY_DELAY_MS),
+      );
+    }
+  }
+  return false;
 }
 
 function armTimer(deps: MissionDoneTeardownDeps, sessionId: string): void {
@@ -209,7 +212,14 @@ function armTimer(deps: MissionDoneTeardownDeps, sessionId: string): void {
   armed.set(sessionId, timer);
 }
 
-/** Done observado: orquestrador morre já; workers idle armam o TTL. */
+/**
+ * Done observado: WORKERS idle armam o TTL; o ORQUESTRADOR PERMANECE.
+ * Reversão parcial do F-106 (voo 23/08, decisão do operador): matar o
+ * Maestro no done lacrava o ajuste pós-entrega — missão imperfeita sem a
+ * quem pedir correção/continuação. O resultado já é durável; o pane do
+ * Maestro é a superfície de refinamento ("termina", "ajusta X"), e o
+ * operador o fecha quando quiser.
+ */
 function handleMissionDone(
   deps: MissionDoneTeardownDeps,
   scope: ProjectExecutionScope,
@@ -217,40 +227,7 @@ function handleMissionDone(
 ): void {
   if (!deps.isEnabled()) return;
   for (const pane of deps.listMissionPanes(scope, missionId)) {
-    if (pane.role === 'orchestrator') {
-      deps.log(
-        `encerrando orquestrador no done ` +
-          `(pane=${pane.paneId}, mission=${missionId})`,
-      );
-      // SEM sessionId: no done o PTY do orquestrador tipicamente JÁ saiu — a
-      // identidade exata do pedido é pane+missão+escopo+role; um sessionId
-      // defasado faz a autoridade recusar o fechamento (voo real 23/08).
-      void closePaneWithRetry(
-        deps,
-        {
-          paneId: pane.paneId,
-          missionId,
-          scope: pane.scope ?? scope,
-          role: 'orchestrator',
-        },
-        `encerrar orquestrador (pane=${pane.paneId})`,
-      ).then((closed) => {
-        if (!closed) {
-          const atual = deps
-            .listMissionPanes(scope, missionId)
-            .map((p) =>
-              `pane=${p.paneId} role=${p.role ?? '?'} session=${p.sessionId ?? 'null'} state=${p.state}`,
-            )
-            .join(' | ');
-          deps.log(
-            `fechamento do orquestrador recusado pela autoridade após ` +
-              `${CLOSE_RETRY_ATTEMPTS} tentativas ` +
-              `(pane=${pane.paneId}, mission=${missionId}); registro atual: ${atual || 'vazio'}`,
-          );
-        }
-      });
-      continue;
-    }
+    if (pane.role === 'orchestrator') continue;
     if (pane.role === 'worker' && pane.sessionId && deps.isIdle(pane.sessionId)) {
       if (workerIsClosablePostDone(deps, pane.sessionId)) {
         armTimer(deps, pane.sessionId);

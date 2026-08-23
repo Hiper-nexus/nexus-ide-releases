@@ -151,7 +151,7 @@ function transitionToDone(h: Harness): void {
   h.emitMissions([missionFor('done')]);
 }
 
-describe('mission-done-teardown (F-106: orquestrador morre no done, worker idle ~30s)', () => {
+describe('mission-done-teardown (F-106: orquestrador permanece, worker idle 30s — reversão 23/08)', () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -163,22 +163,16 @@ describe('mission-done-teardown (F-106: orquestrador morre no done, worker idle 
     vi.useRealTimers();
   });
 
-  it('encerra o orquestrador imediatamente na transição para done', () => {
+  it('orquestrador PERMANECE no done (superfície de ajuste pós-entrega)', () => {
     const h = harness({
       panes: [paneFor('pane-maestro', 'orchestrator', 'pty-maestro')],
     });
     initMissionDoneTeardown(h.deps);
     transitionToDone(h);
 
-    expect(h.closed).toHaveLength(1);
-    expect(h.closed[0]).toMatchObject({
-      paneId: 'pane-maestro',
-      missionId: 'mission-1',
-      role: 'orchestrator',
-    });
-    // Sem sessionId: no done o PTY do orquestrador pode já ter saído — um
-    // sessionId defasado faria a autoridade recusar o fechamento.
-    expect(h.closed[0]!.sessionId).toBeUndefined();
+    expect(h.closed).toHaveLength(0);
+    vi.advanceTimersByTime(WORKER_POST_DONE_TTL_MS * 2);
+    expect(h.closed).toHaveLength(0);
   });
 
   it('worker idle no done é encerrado após o TTL', () => {
@@ -339,8 +333,9 @@ describe('mission-done-teardown (F-106: orquestrador morre no done, worker idle 
     // Voo real 23/08: o exit dispara re-sync do renderer que troca o objeto
     // do registro no meio do close ("alvo-mudou-durante-termino"). A recusa
     // é conservadora e transitória — a chamada selada é idempotente.
+    // Agora o retry vale só para workers (orquestrador permanece).
     const h = harness({
-      panes: [paneFor('pane-maestro', 'orchestrator', 'pty-maestro')],
+      panes: [paneFor('pane-w1', 'worker', 'pty-w1')],
     });
     let attempts = 0;
     (h.deps as unknown as Record<string, unknown>).closePane = (
@@ -354,18 +349,18 @@ describe('mission-done-teardown (F-106: orquestrador morre no done, worker idle 
     initMissionDoneTeardown(h.deps);
     transitionToDone(h);
 
-    expect(attempts).toBe(1); // tentativa imediata
+    expect(attempts).toBe(0);
     expect(h.closed).toHaveLength(0);
 
-    await vi.advanceTimersByTimeAsync(100); // retryDelayMs do harness
+    await vi.advanceTimersByTimeAsync(WORKER_POST_DONE_TTL_MS + 300);
     expect(attempts).toBe(2);
     expect(h.closed).toHaveLength(1);
-    expect(h.closed[0]!.paneId).toBe('pane-maestro');
+    expect(h.closed[0]!.paneId).toBe('pane-pty-w1');
   });
 
   it('desiste após 3 recusas seguidas (fail-closed, sem loop)', async () => {
     const h = harness({
-      panes: [paneFor('pane-maestro', 'orchestrator', 'pty-maestro')],
+      panes: [paneFor('pane-w1', 'worker', 'pty-w1')],
     });
     let attempts = 0;
     (h.deps as unknown as Record<string, unknown>).closePane = () => {
@@ -375,7 +370,7 @@ describe('mission-done-teardown (F-106: orquestrador morre no done, worker idle 
     initMissionDoneTeardown(h.deps);
     transitionToDone(h);
 
-    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.advanceTimersByTimeAsync(WORKER_POST_DONE_TTL_MS + 1_000);
     expect(attempts).toBe(3);
     expect(h.closed).toHaveLength(0);
 
