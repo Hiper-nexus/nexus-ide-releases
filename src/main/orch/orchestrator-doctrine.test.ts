@@ -4,7 +4,6 @@ import {
   buildMaestroKickoffBrief,
   buildOrchestratorDoctrine,
 } from './orchestrator-doctrine';
-import { buildMaestroKickoffBrief } from './orchestrator-doctrine';
 
 function mission(overrides: Partial<Mission> = {}): Mission {
   return {
