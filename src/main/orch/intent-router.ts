@@ -36,17 +36,57 @@ const KNOWLEDGE_REQUEST_RE =
 const KNOWLEDGE_QUESTION_RE =
   /^(?:o\s+que\s+(?:é|e|são|sao|significa)|quem\s+(?:foi|é|e|são|sao)|por\s*que|porque|porquê|qual\s+a\s+diferen|como\s+(?:faç[oa]|faco|posso|funciona|surge|nasceu|foi|era))/iu;
 
-/** Tier 0 determinístico: pergunta pura curta nem vira missão. */
-export function looksLikePureQuestion(objective: string): boolean {
-  const text = objective.trim();
-  if (!text || text.length > 160) return false;
-  if (QUESTION_VERBS.test(text)) return false;
+/**
+ * Aberturas de pergunta que o leigo usa e que não começam por pronome
+ * interrogativo nem por verbo de explicação (matriz 23/08: 8 de 12 perguntas
+ * reais viravam missão com squad por não casarem em nenhum anchor).
+ *
+ * Todas ANCORADAS no início: "para que serve" no meio de uma frase é
+ * descrição de trabalho ("quero uma página que explique para que serve o
+ * produto"), não pergunta.
+ */
+const KNOWLEDGE_OPENER_RE =
+  /^(?:tem\s+como|d[áa]\s+p(?:ra|ara)|[ée]\s+poss[íi]vel|vale\s+a\s+pena|p(?:ra|ara)\s+que\s+serve|n[ãa]o\s+entendi|me\s+ajuda\s+a\s+entender|preciso\s+saber|queria\s+saber|gostaria\s+de\s+saber|qual\s+a\s+diferen)/iu;
+
+/** Toda abertura canônica de pergunta/conhecimento, num lugar só. */
+function hasQuestionOpener(text: string): boolean {
   return (
-    text.includes('?') ||
     /^(quanto|qual|quais|quem|quando|onde|quantos|quantas)\b/iu.test(text) ||
     KNOWLEDGE_REQUEST_RE.test(text) ||
-    KNOWLEDGE_QUESTION_RE.test(text)
+    KNOWLEDGE_QUESTION_RE.test(text) ||
+    KNOWLEDGE_OPENER_RE.test(text)
   );
+}
+
+/** Verbo de trabalho logo na abertura = ordem imperativa, nunca pergunta. */
+const IMPERATIVE_OPENER_RE =
+  /^(?:me\s+|pode\s+|poderia\s+|por\s+favor\s+)*(?:crie|criar|crio|construa|construir|implemente|implementar|escreva|escrever|desenvolva|refatore|migre|adicione|corrija|corrigir|integre|deploy|configure|monte|montar)\b/iu;
+
+/**
+ * Tier 0 determinístico: pergunta pura nem vira missão.
+ *
+ * O veto por verbo de trabalho NÃO se aplica quando a frase abre com uma
+ * pergunta canônica: "o que é preciso para criar um site?" tem '?', abre em
+ * "o que é" e ainda assim virava missão porque continha "criar". O veto
+ * agora só vale para o verbo NA ABERTURA (ordem imperativa) ou para frases
+ * sem abertura de pergunta.
+ */
+export function looksLikePureQuestion(objective: string): boolean {
+  const text = objective.trim();
+  if (!text) return false;
+  const opener = hasQuestionOpener(text);
+  // Pergunta canônica pode ser longa (o leigo explica o contexto antes de
+  // perguntar); sem abertura, o teto curto continua valendo.
+  if (text.length > (opener ? 400 : 160)) return false;
+  if (IMPERATIVE_OPENER_RE.test(text)) return false;
+  if (!opener && QUESTION_VERBS.test(text)) return false;
+  // Uma pergunta pura TERMINA no ponto de interrogação. Texto substancial
+  // depois dele é pedido de trabalho embrulhado em cortesia — "tem como você
+  // fazer isso? quero um ecommerce com carrinho e painel" — e continua sendo
+  // missão.
+  const mark = text.indexOf('?');
+  if (mark >= 0 && text.slice(mark + 1).trim().length > 12) return false;
+  return mark >= 0 || opener;
 }
 
 /** Extrai a PERGUNTA limpa de um objetivo meta-de-pane ("pergunte aos panes X"). */

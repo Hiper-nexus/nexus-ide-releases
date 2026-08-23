@@ -36,6 +36,31 @@ describe('MATRIZ: router com missões reais de operador', () => {
     { objective: 'corrija o bug do login', esperado: null, porQue: 'verbo de correção' },
     { objective: 'implemente autenticação OAuth', esperado: null, porQue: 'verbo de implementação + sinal security' },
     { objective: 'quanto é 1+1? Depois crie um site sobre matemática', esperado: null, porQue: 'híbrido: tem trabalho depois da pergunta' },
+
+    // ── Aberturas de leigo que o Tier 0 não reconhecia (sonda 23/08: 8 de
+    //    12 perguntas reais viravam missão COM SQUAD) ────────────────────
+    { objective: 'tem como colocar meu site no ar de graça?', esperado: 'direct-answer', porQue: 'tem como + ?' },
+    { objective: 'dá para usar isso sem saber programar?', esperado: 'direct-answer', porQue: 'dá para + ?' },
+    { objective: 'é possível fazer isso sozinho', esperado: 'direct-answer', porQue: 'é possível, sem ?' },
+    { objective: 'vale a pena usar wordpress', esperado: 'direct-answer', porQue: 'vale a pena' },
+    { objective: 'para que serve o github', esperado: 'direct-answer', porQue: 'para que serve' },
+    { objective: 'não entendi o que é um servidor', esperado: 'direct-answer', porQue: 'não entendi' },
+    { objective: 'me ajuda a entender o que é um banco de dados', esperado: 'direct-answer', porQue: 'me ajuda a entender' },
+    { objective: 'preciso saber o que é hospedagem', esperado: 'direct-answer', porQue: 'preciso saber (≠ "preciso de um app")' },
+    { objective: 'qual a diferença entre site e aplicativo', esperado: 'direct-answer', porQue: 'qual a diferença sem ?' },
+
+    // ── O veto por verbo não pode matar pergunta canônica ───────────────
+    { objective: 'o que é preciso para criar um site?', esperado: 'direct-answer', porQue: 'abre em "o que é" e tem ?; "criar" no meio não é ordem' },
+    { objective: 'como faço para criar uma conta no google', esperado: 'direct-answer', porQue: 'abre em "como faço"; verbo não está na abertura' },
+    { objective: 'me explique detalhadamente como funciona o agendamento de um site de barbearia, porque eu não entendi a parte de horários, bloqueios, encaixes e a regra de cancelamento com antecedência mínima', esperado: 'direct-answer', porQue: 'pergunta canônica longa: o leigo dá contexto antes de perguntar' },
+
+    // ── Âncoras novas NO MEIO da frase continuam sendo trabalho ─────────
+    { objective: 'quero uma página que explique para que serve o produto', esperado: null, porQue: '"para que serve" no meio = descrição de trabalho' },
+    { objective: 'monte uma seção "vale a pena?" comparando os planos', esperado: null, porQue: 'verbo na abertura vence a âncora e o ?' },
+    { objective: 'corrija o bug onde não entendi o erro', esperado: null, porQue: '"não entendi" no meio de uma ordem' },
+    { objective: 'me crie um site', esperado: null, porQue: 'imperativo com "me" na frente' },
+    { objective: 'pode criar uma landing page pra mim', esperado: null, porQue: 'cortesia não transforma ordem em pergunta' },
+    { objective: 'tem como você criar isso pra mim? quero um site completo de ecommerce com carrinho e painel admin', esperado: null, porQue: 'híbrido: pergunta de cortesia embrulhando pedido de trabalho' },
   ];
 
   for (const caso of cases) {
