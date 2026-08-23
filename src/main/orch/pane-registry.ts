@@ -2599,6 +2599,15 @@ function matchesMissionPaneCloseAuthority(
 export async function requestMissionPaneClose(
   expected: MissionPaneCloseRequest,
 ): Promise<boolean> {
+  // Recusas são fail-closed por design, mas silenciosas custaram duas
+  // sessões de depuração do F-106 (23/08) — nomeie o motivo uma vez por chamada.
+  const refuse = (reason: string): false => {
+    console.warn(
+      `[pane-registry] mission close recusado (${reason}) ` +
+        `pane=${expected.paneId} mission=${expected.missionId} role=${expected.role ?? '?'}`,
+    );
+    return false;
+  };
   const detached = getMainOwnedPane(expected.paneId);
   const renderedTargets = panes.filter(
     (candidate) =>
@@ -2607,7 +2616,7 @@ export async function requestMissionPaneClose(
   );
 
   if (detached) {
-    if (renderedTargets.length > 0) return false;
+    if (renderedTargets.length > 0) return refuse('detached-com-alvo-renderizado');
     if (
       !matchesMissionPaneCloseAuthority(
         {
@@ -2621,12 +2630,12 @@ export async function requestMissionPaneClose(
         expected,
       )
     ) {
-      return false;
+      return refuse('detached-identidade-divergente');
     }
     const sessionId = detached.entry.sessionId;
     if (sessionId) {
       const exited = await terminateOwnedMissionSession(sessionId);
-      if (!exited) return false;
+      if (!exited) return refuse('detached-sessao-nao-terminou');
     }
     const current = getMainOwnedPane(expected.paneId);
     if (
@@ -2644,26 +2653,26 @@ export async function requestMissionPaneClose(
         expected,
       )
     ) {
-      return false;
+      return refuse('detached-mudou-durante-termino');
     }
-    if (!deleteMainOwnedPane(expected.paneId)) return false;
+    if (!deleteMainOwnedPane(expected.paneId)) return refuse('detached-delete-falhou');
     panesVersion += 1;
     return true;
   }
 
-  if (renderedTargets.length !== 1) return false;
+  if (renderedTargets.length !== 1) return refuse(`alvos-renderizados=${renderedTargets.length}`);
   const target = renderedTargets[0]!;
   const owner = target.owner;
-  if (owner.isDestroyed() || owner.isCrashed()) return false;
+  if (owner.isDestroyed() || owner.isCrashed()) return refuse('owner-morto');
   try {
     requireLiveRendererWorkspaceScope(owner, expected.scope);
   } catch {
-    return false;
+    return refuse('escopo-do-renderer-divergente');
   }
   const sessionId = target.entry.sessionId;
   if (sessionId) {
     const exited = await terminateOwnedMissionSession(sessionId);
-    if (!exited) return false;
+    if (!exited) return refuse('sessao-nao-terminou');
   }
   try {
     requireLiveRendererWorkspaceScope(owner, expected.scope);
@@ -2683,7 +2692,7 @@ export async function requestMissionPaneClose(
     current[0]!.entry.sessionId !== sessionId ||
     !matchesMissionPaneCloseAuthority(authzInfoOf(current[0]!), expected)
   ) {
-    return false;
+    return refuse('alvo-mudou-durante-termino');
   }
   owner.send(ORCH_CHANNELS.paneCloseRequest, expected.paneId);
   return true;

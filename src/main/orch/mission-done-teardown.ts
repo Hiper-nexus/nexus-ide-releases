@@ -191,20 +191,28 @@ function handleMissionDone(
         `encerrando orquestrador no done ` +
           `(pane=${pane.paneId}, mission=${missionId})`,
       );
+      // SEM sessionId: no done o PTY do orquestrador tipicamente JÁ saiu — a
+      // identidade exata do pedido é pane+missão+escopo+role; um sessionId
+      // defasado faz a autoridade recusar o fechamento (voo real 23/08).
       void Promise.resolve(
         deps.closePane({
           paneId: pane.paneId,
           missionId,
           scope: pane.scope ?? scope,
-          ...(pane.sessionId ? { sessionId: pane.sessionId } : {}),
           role: 'orchestrator',
         }),
       ).then(
         (closed) => {
           if (!closed) {
+            const atual = deps
+              .listMissionPanes(scope, missionId)
+              .map((p) =>
+                `pane=${p.paneId} role=${p.role ?? '?'} session=${p.sessionId ?? 'null'} state=${p.state}`,
+              )
+              .join(' | ');
             deps.log(
               `fechamento do orquestrador recusado pela autoridade ` +
-                `(pane=${pane.paneId}, mission=${missionId})`,
+                `(pane=${pane.paneId}, mission=${missionId}); registro atual: ${atual || 'vazio'}`,
             );
           }
         },

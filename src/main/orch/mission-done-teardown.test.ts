@@ -173,9 +173,11 @@ describe('mission-done-teardown (F-106: orquestrador morre no done, worker idle 
     expect(h.closed[0]).toMatchObject({
       paneId: 'pane-maestro',
       missionId: 'mission-1',
-      sessionId: 'pty-maestro',
       role: 'orchestrator',
     });
+    // Sem sessionId: no done o PTY do orquestrador pode já ter saído — um
+    // sessionId defasado faria a autoridade recusar o fechamento.
+    expect(h.closed[0]!.sessionId).toBeUndefined();
   });
 
   it('worker idle no done é encerrado após o TTL', () => {
