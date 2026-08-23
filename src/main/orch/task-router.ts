@@ -183,8 +183,11 @@ const EASY_SIGNALS = [
 ];
 
 const TRIVIAL_SIGNALS = [
-  'list', 'listar', 'read', 'ler', 'check', 'verificar', 'status', 'mostrar',
-  'show', 'contar', 'count', 'buscar arquivo', 'find file',
+  // 'list'/'listar' como prefixo casavam DENTRO de "li(sta)gem" —
+  // "implemente a página de listagem" ia para trivial (modelo mais barato
+  // construindo feature; matriz 23/08). Imperativo de inspeção fica:
+  'liste', 'leitura', 'read', 'ler', 'check', 'verificar', 'status',
+  'mostrar', 'show', 'contar', 'count', 'buscar arquivo', 'find file',
 ];
 
 const TIER_ORDER: TaskTier[] = ['trivial', 'easy', 'medium', 'hard', 'critical'];
