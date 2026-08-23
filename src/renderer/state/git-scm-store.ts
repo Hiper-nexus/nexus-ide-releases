@@ -1,3 +1,4 @@
+import { gitErrorCopy } from '../lib/git-error-copy';
 import { create } from 'zustand';
 import type {
   GitFileChange,
@@ -178,7 +179,7 @@ export const useGitScmStore = create<GitScmStore>((set, get) => ({
       if (seq !== refreshSeq) return;
       set({
         loading: false,
-        error: err instanceof Error ? err.message : 'falha ao ler git status',
+        error: gitErrorCopy(err, 'status').message,
         ...emptyLists(),
       });
     }
@@ -214,7 +215,7 @@ export const useGitScmStore = create<GitScmStore>((set, get) => ({
     } catch (err) {
       if (seq !== selectSeq) return;
       set({
-        error: err instanceof Error ? err.message : 'falha ao ler diff',
+        error: gitErrorCopy(err, 'diff').message,
       });
     }
   },
@@ -228,7 +229,7 @@ export const useGitScmStore = create<GitScmStore>((set, get) => ({
       if (!r.ok) set({ error: r.error });
     } catch (err) {
       set({
-        error: err instanceof Error ? err.message : 'falha ao fazer stage',
+        error: gitErrorCopy(err, 'stage').message,
       });
     } finally {
       set({ mutating: false });
@@ -245,7 +246,7 @@ export const useGitScmStore = create<GitScmStore>((set, get) => ({
       if (!r.ok) set({ error: r.error });
     } catch (err) {
       set({
-        error: err instanceof Error ? err.message : 'falha ao remover do stage',
+        error: gitErrorCopy(err, 'unstage').message,
       });
     } finally {
       set({ mutating: false });
@@ -286,7 +287,7 @@ export const useGitScmStore = create<GitScmStore>((set, get) => ({
       }
     } catch (err) {
       set({
-        error: err instanceof Error ? err.message : 'falha ao fazer stage',
+        error: gitErrorCopy(err, 'stage').message,
       });
     } finally {
       set({ mutating: false });
@@ -304,7 +305,7 @@ export const useGitScmStore = create<GitScmStore>((set, get) => ({
       if (!r.ok) set({ error: r.error });
     } catch (err) {
       set({
-        error: err instanceof Error ? err.message : 'falha ao remover do stage',
+        error: gitErrorCopy(err, 'unstage').message,
       });
     } finally {
       set({ mutating: false });
@@ -336,7 +337,7 @@ export const useGitScmStore = create<GitScmStore>((set, get) => ({
     } catch (err) {
       set({
         committing: false,
-        error: err instanceof Error ? err.message : 'falha no commit',
+        error: gitErrorCopy(err, 'commit').message,
       });
       return false;
     }
@@ -361,7 +362,7 @@ export const useGitScmStore = create<GitScmStore>((set, get) => ({
     } catch (err) {
       set({
         remoteBusy: false,
-        error: err instanceof Error ? err.message : 'falha ao enviar a branch',
+        error: gitErrorCopy(err).message,
       });
       return false;
     }
@@ -395,7 +396,7 @@ export const useGitScmStore = create<GitScmStore>((set, get) => ({
       await get().refresh();
       return true;
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'falha ao abrir PR';
+      const message = gitErrorCopy(err).message;
       set({ remoteBusy: false, error: message, prError: message });
       return false;
     }
@@ -454,7 +455,7 @@ export const useGitScmStore = create<GitScmStore>((set, get) => ({
       set({
         issuesLoading: false,
         issues: [],
-        issuesError: err instanceof Error ? err.message : 'falha ao listar issues',
+        issuesError: gitErrorCopy(err).message,
       });
     }
   },
@@ -478,7 +479,7 @@ export const useGitScmStore = create<GitScmStore>((set, get) => ({
     } catch (err) {
       set({
         prBusy: false,
-        prError: err instanceof Error ? err.message : 'falha ao enfileirar PR',
+        prError: gitErrorCopy(err).message,
       });
       return false;
     }
@@ -503,7 +504,7 @@ export const useGitScmStore = create<GitScmStore>((set, get) => ({
     } catch (err) {
       set({
         prBusy: false,
-        prError: err instanceof Error ? err.message : 'falha no auto-merge',
+        prError: gitErrorCopy(err).message,
       });
       return false;
     }

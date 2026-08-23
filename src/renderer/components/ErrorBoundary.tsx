@@ -80,8 +80,29 @@ export class ErrorBoundary extends Component<Props, State> {
               wordBreak: 'break-word',
             }}
           >
-            {error.message || 'Erro desconhecido no boot.'}
+            O Nexus não conseguiu abrir a tela. Seu trabalho continua salvo —
+            recarregar costuma resolver.
           </p>
+          <details
+            style={{
+              margin: '0 0 20px',
+              fontSize: 12,
+              color: 'var(--text-faint, #7c8798)',
+              maxWidth: 520,
+            }}
+          >
+            <summary style={{ cursor: 'pointer' }}>Detalhes técnicos</summary>
+            <p
+              style={{
+                margin: '8px 0 0',
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+                textAlign: 'left',
+              }}
+            >
+              {error.message || 'Erro desconhecido no boot.'}
+            </p>
+          </details>
           <button
             type="button"
             onClick={this.handleReload}

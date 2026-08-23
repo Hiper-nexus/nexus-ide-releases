@@ -22,6 +22,7 @@ import {
 import { useGitScmStore, type SelectedGitFile } from '../state/git-scm-store';
 import { useWorkspaceStore } from '../state/workspace-store';
 import { CoffeeCup } from '../pet/CoffeeCup';
+import { gitErrorCopy } from '../lib/git-error-copy';
 
 function basename(path: string): string {
   const i = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
@@ -176,7 +177,7 @@ function GitDiffAnnotator({
         setSelected(null);
       }
     } catch (err) {
-      setStatus(err instanceof Error ? err.message : 'falha ao enviar comentário');
+      setStatus(gitErrorCopy(err, 'comment').message);
     } finally {
       setSending(false);
     }
