@@ -520,6 +520,36 @@ function listDesignReferences(catalogRoot: string): DesignReferenceCandidate[] {
   }
 }
 
+/**
+ * Pedido de SEGURANÇA — auditoria, vulnerabilidade, permissão, segredo.
+ *
+ * `classifyWorkKind` não tem um kind 'security' (sonda 23/08: "auditoria de
+ * segurança no login" sai `feature`; "proteja as rotas de admin" sai
+ * `unknown`), então a missão de segurança não recebia doutrina nenhuma.
+ * Detectar aqui é aditivo: não mexe na precedência do classificador.
+ */
+export function isSecurityMissionText(text: string): boolean {
+  const canonical = text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/gu, '')
+    .toLowerCase();
+  return /\b(seguranca|vulnerabilidad|vulneravel|auditoria\s+de\s+seguranca|pentest|owasp|xss|csrf|sql\s*injection|injecao\s+de\s+sql|autenticacao|autorizacao|permissoes?|credencial|credenciais|segredo|secrets?|token\s+de\s+acesso|criptografi|hardening|proteg(?:er|e)|proteja)\b/u.test(
+    canonical,
+  );
+}
+
+/**
+ * O que um agente precisa saber ANTES de mexer em segurança. Curta de
+ * propósito: prompt longo é token queimado em toda missão que casar.
+ */
+export const SECURITY_DOCTRINE_NOTE =
+  'Este pedido envolve SEGURANÇA. Regras: (1) nunca escreva segredo, chave ou ' +
+  'token em código, log ou summary — use variável de ambiente e cite só o ' +
+  'NOME; (2) toda entrada externa é hostil: valide no servidor, nunca só no ' +
+  'cliente; (3) não afrouxe permissão, CORS ou verificação para "fazer ' +
+  'funcionar" — se travar, relate o bloqueio; (4) corrija a causa, não o ' +
+  'sintoma, e diga no summary qual risco cada mudança fecha.';
+
 // ── Construção de prompt ────────────────────────────────────────────────
 
 /**
@@ -591,11 +621,22 @@ export function agentPrompt(
   const uiNote = isUiMissionText(objective)
     ? 'Este pedido envolve interface. Use o DESIGN.md do projeto e o catálogo de design como guia de estilo.'
     : '';
+  // Missão de segurança não tinha doutrina nenhuma: `WORK_KINDS` não tem um
+  // kind 'security' (ela sai como feature/unknown) e `resources/doctrines/`
+  // ainda não existe. Em vez de mexer na precedência do classificador no meio
+  // de uma release, o pedido de segurança ganha a mesma coisa que o de UI
+  // ganha — uma nota de doutrina anexada ao prompt.
+  const securityNote = isSecurityMissionText(objective)
+    ? SECURITY_DOCTRINE_NOTE
+    : '';
   const browserNote =
     /\b(abr[aeiou]|navegador|browser|preview|mostr(?:ar|e)|ver\s+no\s+navegador)\b/iu.test(
       objective,
     )
-      ? 'Se o objetivo pede para ABRIR no navegador: após gerar os arquivos, abra o HTML no navegador do SO (macOS: `open <arquivo>`; Linux: `xdg-open <arquivo>`) ANTES do handoff e cite o arquivo/comando no summary.'
+      // O Nexus abre a entrega sozinho no done (mission-deliverable-open).
+      // Este prompt também pedia `open` e o resultado no voo real foram DUAS
+      // abas no Chrome. O agente registra o arquivo; quem abre é o main.
+      ? 'O objetivo pede para abrir no navegador: o próprio Nexus abre a entrega quando a missão concluir — NÃO rode `open`/`xdg-open`. Garanta apenas que o HTML final esteja salvo no projeto e citado no summary do handoff.'
       : '';
   const designBlock = uiNote && designContext ? designContext : '';
   const executorCount = (squad?.agents ?? []).filter(
@@ -635,6 +676,7 @@ export function agentPrompt(
     `Objetivo: ${objective}`,
     mission.learnings ? `Aprendizados anteriores: ${mission.learnings}` : '',
     uiNote,
+    securityNote,
     browserNote,
     designBlock,
     `Você é ${agent.agentName} (trabalhador).`,

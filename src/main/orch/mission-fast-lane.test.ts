@@ -11,6 +11,8 @@ import {
   missionDesignContext,
   missionFastLaneEnabled,
   isPaneMetaTask,
+  isSecurityMissionText,
+  SECURITY_DOCTRINE_NOTE,
 } from './mission-fast-lane';
 
 function mission(overrides: Partial<Mission> = {}): Mission {
@@ -467,5 +469,36 @@ describe('kickoff meta-de-pane — um pane por integrante, TODOS respondem', () 
       ['implementar dashboard de vendas'],
     );
     expect(prompt).not.toContain('META-DE-PANE');
+  });
+});
+
+describe('doutrina de segurança — a missão que o classificador não vê', () => {
+  it('reconhece o pedido de segurança que sai como feature/unknown', () => {
+    // Sonda 23/08: classifyWorkKind devolve `feature` para o primeiro e
+    // `unknown` para o segundo — nenhum dos dois recebia doutrina.
+    for (const goal of [
+      'faça uma auditoria de segurança no login e corrija o que estiver vulnerável',
+      'revise as permissões de acesso e proteja as rotas de admin',
+      'guarde as credenciais do banco fora do código',
+      'corrija o XSS do campo de comentário',
+    ]) {
+      expect(isSecurityMissionText(goal)).toBe(true);
+    }
+  });
+
+  it('não dispara em missão comum', () => {
+    for (const goal of [
+      'crie uma landing page para minha barbearia',
+      'corrija o botão de salvar no celular',
+      'escreva a documentação da api de pedidos',
+    ]) {
+      expect(isSecurityMissionText(goal)).toBe(false);
+    }
+  });
+
+  it('a nota é curta — prompt longo é token queimado em toda missão', () => {
+    expect(SECURITY_DOCTRINE_NOTE.length).toBeLessThan(600);
+    expect(SECURITY_DOCTRINE_NOTE).toContain('segredo');
+    expect(SECURITY_DOCTRINE_NOTE).toContain('valide no servidor');
   });
 });
