@@ -13,9 +13,9 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.68.4',
+  version: '0.68.5',
   date: '2026-08-23',
-  codename: 'Porta certa e entrega que abre',
+  codename: 'Duas contas, um coordenador informado',
   summary:
     'Quem não programa entrava pela porta errada: uma linha de código ' +
     'desviava do Caminho Expresso para o wizard de três etapas. O caminho ' +
@@ -60,6 +60,25 @@ export const CURRENT_RELEASE: AppRelease = {
     },
   ],
   fixes: [
+    {
+      title: 'A segunda conta apagava a primeira',
+      detail:
+        'Entrar na 2ª conta antes de salvar a 1ª fazia a primeira sumir em ' +
+        'silêncio. Agora a sessão é salva sozinha quando o terminal de login ' +
+        'fecha, e reentrar na mesma conta atualiza em vez de duplicar.',
+    },
+    {
+      title: '"Uso e cotas" mostrava uma linha a mais',
+      detail:
+        'A linha "CLI nativo" duplicava a conta já salva. Ela agora se dobra ' +
+        'para dentro da conta cujo e-mail é a sessão logada no momento.',
+    },
+    {
+      title: 'A tela de multi-conta falava em cofre',
+      detail:
+        'Passo-a-passo à vista, selo na conta logada agora e um aviso com ' +
+        'botão quando a sessão atual ainda não foi salva — sem trava nova.',
+    },
     {
       title: 'Abrir Terminais numa missão pronta relançava a missão',
       detail:

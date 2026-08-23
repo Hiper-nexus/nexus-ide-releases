@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.68.5 — Duas contas, um coordenador informado
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+- **fix(contas): a segunda conta deixava de apagar a primeira** — o modelo
+  pedia dois passos (entrar no CLI, depois salvar no Nexus) e, se você
+  entrasse na 2ª conta antes de salvar a 1ª, a primeira sumia em silêncio.
+  Agora a sessão é salva sozinha quando o terminal de login fecha, e entrar
+  de novo na mesma conta atualiza a entrada em vez de empilhar duplicata.
+- **fix(contas): "Uso e cotas" parou de triplicar** — a linha "CLI nativo"
+  duplicava a conta salva (três linhas para dois assinantes). Ela agora se
+  dobra para dentro da conta cujo e-mail é a sessão viva.
+- **feat(contas): a tela de multi-conta ficou legível** — sem jargão de
+  cofre, com o passo-a-passo à vista, selo "sessão do CLI" na conta que está
+  logada agora e um aviso com botão quando a sessão atual ainda não foi
+  salva. Nenhuma trava nova.
+- **fix(orch): quem delega recebe a doutrina de segurança** — a nota chegava
+  ao trabalhador e não ao coordenador, que é justamente quem escreve a tarefa.
+
+Gates: tsc limpo, `security:renderer-sinks` 0 sinks, **1190/1190 arquivos e
+11329/11329 testes**.
+
 ## 0.68.4 — Porta certa e entrega que abre
 
 _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
