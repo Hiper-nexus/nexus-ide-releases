@@ -1,7 +1,11 @@
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { promisify } from 'node:util';
+import {
+  pickDesignReference,
+  type DesignReferenceCandidate,
+} from './design-reference-pick';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { ProjectExecutionScope } from '../../shared/types';
@@ -456,6 +460,7 @@ export function missionFastLaneEnabled(): boolean {
 export function missionDesignContext(
   workspaceRoot: string,
   home: string = homedir(),
+  objective = '',
 ): string {
   try {
     const parts: string[] = [];
@@ -466,15 +471,52 @@ export function missionDesignContext(
     }
     const catalogRoot = join(home, '.design-references');
     if (existsSync(catalogRoot)) {
+      // Escolher a referência é MECÂNICA: mandar "consulte o que combinar"
+      // obrigava o agente a listar o catálogo e abrir arquivos para descobrir
+      // o que era relevante — caro em tokens e não determinístico. Quando o
+      // Nexus consegue decidir, ele NOMEIA o arquivo; ambiguidade volta a
+      // apontar a pasta, nunca inventa.
+      const picked = objective
+        ? pickDesignReference(objective, listDesignReferences(catalogRoot))
+        : null;
       parts.push(
-        `Catálogo de referências de design do operador: ${catalogRoot} ` +
-          '(índice em README.md; um .md por marca/estilo). Consulte o que ' +
-          'combinar com o pedido e siga os tokens/composição de lá.',
+        picked
+          ? `Referência de design que combina com este pedido: ` +
+              `${join(catalogRoot, picked.fileName)} — leia ESTE arquivo e ` +
+              'siga os tokens/composição dele. Só abra outros do catálogo se ' +
+              'ele não cobrir o pedido.'
+          : `Catálogo de referências de design do operador: ${catalogRoot} ` +
+              '(índice em README.md; um .md por marca/estilo). Consulte o que ' +
+              'combinar com o pedido e siga os tokens/composição de lá.',
       );
     }
     return parts.join(' ');
   } catch {
     return '';
+  }
+}
+
+/** Lê nome e título de cada `.md` do catálogo. Falha vira catálogo vazio. */
+function listDesignReferences(catalogRoot: string): DesignReferenceCandidate[] {
+  try {
+    return readdirSync(catalogRoot)
+      .filter((name) => /\.mdx?$/iu.test(name))
+      .slice(0, 200)
+      .map((fileName) => {
+        let title: string | undefined;
+        try {
+          const head = readFileSync(join(catalogRoot, fileName), 'utf8').slice(
+            0,
+            400,
+          );
+          title = head.split(/\r?\n/u).find((line) => line.startsWith('#'));
+        } catch {
+          title = undefined;
+        }
+        return { fileName, title };
+      });
+  } catch {
+    return [];
   }
 }
 
@@ -1827,7 +1869,11 @@ export async function fastLaneBootstrap(
   const live = executing ?? dispatched;
 
   const teamNames = roster.map((agent) => agent.agentName);
-  const designContext = missionDesignContext(scope.rootRealPath);
+  const designContext = missionDesignContext(
+    scope.rootRealPath,
+    undefined,
+    mission.description ?? '',
+  );
   const sealedPlanTitles = sealFastLanePlanTitles(stores, live, squad);
 
   const prompt = agentPrompt(
