@@ -444,6 +444,97 @@ function main() {
     }
   }
 
+  // ── Regras aprendidas na auditoria de UI (23/08) ─────────────────────
+  // O validador só conferia hex e valor de token documentado. Estas duas
+  // classes passavam em silêncio e custaram defeitos reais na tela.
+
+  // 1) `var(--x)` sem fallback quando `--x` NUNCA é declarado.
+  //    `--text-muted` e `--duration-fast` eram usados 8x cada e não existiam:
+  //    a cor virava herdada e a transição, ignorada.
+  // Escopo: SÓ o estilo próprio da aplicação. Manifests de skills
+  // empacotadas (assets/skills) carregam CSS de terceiros como string e não
+  // respondem à doutrina desta casa.
+  const ownStyleFiles = styleFiles.filter((file) => {
+    const relative = path.relative(root, file);
+    return (
+      relative.startsWith(`src${path.sep}`) &&
+      !relative.includes(`${path.sep}assets${path.sep}`) &&
+      !/manifest\.ts$/u.test(relative)
+    );
+  });
+
+  const usedTokens = new Map();
+  for (const file of ownStyleFiles) {
+    const text = fs.readFileSync(file, 'utf8');
+    for (const match of text.matchAll(/var\(\s*(--[A-Za-z0-9_-]+)\s*\)/gu)) {
+      const token = match[1];
+      if (!usedTokens.has(token)) {
+        usedTokens.set(token, path.relative(root, file));
+      }
+    }
+  }
+  // Um token também pode ser declarado INLINE pelo componente
+  // (`style={{ '--mission-agent-x': ... }}`) — é assim que posição e medida
+  // calculadas em runtime chegam ao CSS. Isso é declaração legítima.
+  const inlineDeclared = new Set();
+  const componentDirs = [path.join(root, 'src')];
+  const collectInline = (dir) => {
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const absolute = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (SKIP_DIRS.has(entry.name) || entry.name === 'assets') continue;
+        collectInline(absolute);
+        continue;
+      }
+      if (!/\.tsx?$/u.test(entry.name)) continue;
+      const text = fs.readFileSync(absolute, 'utf8');
+      for (const match of text.matchAll(/['"](--[A-Za-z0-9_-]+)['"]\s*:/gu)) {
+        inlineDeclared.add(match[1]);
+      }
+    }
+  };
+  for (const dir of componentDirs) collectInline(dir);
+
+  const undeclared = [...usedTokens.keys()]
+    .filter((token) => !declared.has(token) && !inlineDeclared.has(token))
+    .sort();
+  if (undeclared.length > 0) {
+    findings.push({
+      severity: 'high',
+      message:
+        `${undeclared.length} token(s) used with no fallback are declared ` +
+        `nowhere: ${listed(undeclared)}. An invalid var() silently inherits ` +
+        '(color) or drops the declaration (duration) — the hierarchy the ' +
+        'author wrote never reaches the screen. Declare the token, or give ' +
+        'the usage an explicit fallback.',
+    });
+  }
+
+  // 2) Keyframe sem guarda de prefers-reduced-motion no MESMO arquivo.
+  //    DESIGN.md §4 exige a guarda em todo keyframe.
+  const unguarded = [];
+  for (const file of ownStyleFiles) {
+    const text = fs.readFileSync(file, 'utf8');
+    if (!/@keyframes\s/u.test(text)) continue;
+    if (/prefers-reduced-motion/u.test(text)) continue;
+    unguarded.push(path.relative(root, file));
+  }
+  if (unguarded.length > 0) {
+    findings.push({
+      severity: 'medium',
+      message:
+        `${unguarded.length} style file(s) declare @keyframes with no ` +
+        `prefers-reduced-motion guard: ${listed(unguarded)}. DESIGN.md §4 ` +
+        'requires the guard on every keyframe.',
+    });
+  }
+
   const report = {
     ok: findings.length === 0,
     designPath: design.relative,

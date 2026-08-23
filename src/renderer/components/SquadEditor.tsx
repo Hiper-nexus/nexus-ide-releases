@@ -5,6 +5,7 @@ import type { AdapterInfo } from '../../shared/adapter-types';
 import { applySquadEdit, type EditableAgent } from '../../shared/squad-edit';
 import { CloseButton } from './CloseButton';
 import { PixelIcon } from './PixelIcon';
+import { useFocusTrap } from '../lib/use-focus-trap';
 
 const CATEGORIES: AgentCategory[] = [
   'orchestrator',
@@ -57,6 +58,9 @@ export function SquadEditor({
 
   const installed = useMemo(() => adapters.filter((a) => a.installed), [adapters]);
   const nameInputRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  // Tab preso no diálogo: sem isto o foco passeava pela app atrás do scrim.
+  useFocusTrap(dialogRef, true);
 
   // Modal centralizado: foco entra no primeiro campo ao abrir (também faz o
   // Esc funcionar sem precisar clicar dentro antes).
@@ -131,6 +135,7 @@ export function SquadEditor({
     <div
       className="squad-editor"
       role="dialog"
+      ref={dialogRef}
       aria-modal="true"
       aria-label={creating ? 'Criar squad' : `Editar ${squad.name}`}
       aria-busy={busy}
