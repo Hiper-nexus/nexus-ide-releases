@@ -4,6 +4,7 @@ import {
   buildMaestroKickoffBrief,
   buildOrchestratorDoctrine,
 } from './orchestrator-doctrine';
+import { buildMaestroKickoffBrief } from './orchestrator-doctrine';
 
 function mission(overrides: Partial<Mission> = {}): Mission {
   return {
@@ -148,5 +149,29 @@ describe('meta-tarefas e fecho por evidência (missão 1+1 de 20/08)', () => {
     const doctrine = buildOrchestratorDoctrine(null, {} as never);
     expect(doctrine).toContain('FECHO');
     expect(doctrine).toContain('submeta VOCÊ o handoff final');
+  });
+});
+
+describe('doutrina de segurança chega ao coordenador', () => {
+  const base = {
+    title: 'Proteger o admin',
+    objective: 'revise as permissões e proteja as rotas de admin',
+    orchestratorName: 'Coordenar',
+    teamNames: ['Coordenar', 'Executar'],
+  };
+
+  it('quem delega recebe a doutrina ANTES de escrever o prompt do worker', () => {
+    // A nota ia só para o worker: o coordenador montava a tarefa sem saber
+    // das regras que ela precisa respeitar.
+    const brief = buildMaestroKickoffBrief({
+      ...base,
+      securityNote: 'Este pedido envolve SEGURANÇA. Regras: segredo nunca...',
+    });
+    expect(brief).toContain('envolve SEGURANÇA');
+  });
+
+  it('missão comum não carrega doutrina de segurança', () => {
+    const brief = buildMaestroKickoffBrief(base);
+    expect(brief).not.toContain('SEGURANÇA');
   });
 });

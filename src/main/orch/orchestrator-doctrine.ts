@@ -73,6 +73,8 @@ export interface MaestroKickoffBriefInput {
   readonly playbook?: string | null;
   readonly resume?: boolean;
   readonly uiNote?: string;
+  /** Doutrina de segurança — o coordenador precisa dela ANTES de delegar. */
+  readonly securityNote?: string;
   readonly designContext?: string;
   readonly lane?: string | null;
   readonly maxWorkers?: number | null;
@@ -155,6 +157,7 @@ export function buildMaestroKickoffBrief(
     `## Missão: ${input.title}`,
     `Objetivo: ${input.objective}`,
     input.uiNote?.trim() || '',
+    input.securityNote?.trim() || '',
     input.designContext?.trim() || '',
     coordination,
     metaPane ? META_PANE_DOCTRINE : DOCTRINE_BASE,

@@ -662,6 +662,9 @@ export function agentPrompt(
       playbook: squad?.orchestratorInstructions,
       resume,
       uiNote,
+      // O coordenador delega — precisa da doutrina de segurança ANTES de
+      // escrever o prompt do worker, não só depois dele.
+      securityNote,
       designContext: designBlock,
       lane: mission.intentContract?.lane,
       maxWorkers: mission.intentContract?.budgets?.maxWorkers,
