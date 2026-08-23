@@ -33,6 +33,7 @@ import {
   transitionIntentState,
   type MissionIntentContract,
 } from './mission-intent';
+import { suggestMissionLaneFromGoal } from './mission-intent';
 import type { Mission } from './orch-types';
 
 const baseMission = (over: Partial<Mission> = {}): Mission => ({
@@ -829,5 +830,52 @@ describe('documentation write fence', () => {
     ]) {
       expect(isDocumentWritablePath(file)).toBe(false);
     }
+  });
+});
+
+describe('suggestMissionLaneFromGoal — o que o leigo pede de verdade', () => {
+  it('recusa explícita de código vence o detector de implementação', () => {
+    // Sonda 23/08: "sem escrever código" casava em "escrever código" e a
+    // missão de planejamento virava implementação — o oposto do pedido.
+    expect(
+      suggestMissionLaneFromGoal(
+        'planeje adicionar uma seção de contato no rodapé, só o plano, sem escrever código',
+      ),
+    ).toBe('plan');
+    expect(
+      suggestMissionLaneFromGoal('planeje o módulo de pix, sem código'),
+    ).toBe('plan');
+    expect(
+      suggestMissionLaneFromGoal('não implemente ainda, só desenhe a solução'),
+    ).toBe('plan');
+  });
+
+  it('"antes de implementar" é planejamento, não implementação', () => {
+    expect(
+      suggestMissionLaneFromGoal(
+        'me ajude a decidir a arquitetura do módulo de relatórios antes de implementar',
+      ),
+    ).toBe('plan');
+  });
+
+  it('auditoria QUE PEDE CONSERTO não pode cair em somente-leitura', () => {
+    // `consult` é "investigar sem alterar arquivos": uma missão que pede o
+    // conserto ficaria proibida de consertar.
+    expect(
+      suggestMissionLaneFromGoal(
+        'faça uma auditoria de segurança no login e corrija o que estiver vulnerável',
+      ),
+    ).not.toBe('consult');
+    expect(
+      suggestMissionLaneFromGoal(
+        'revise as permissões de acesso e proteja as rotas de admin',
+      ),
+    ).not.toBe('consult');
+  });
+
+  it('investigação pura continua somente-leitura', () => {
+    expect(
+      suggestMissionLaneFromGoal('investigue por que o login está lento'),
+    ).toBe('consult');
   });
 });

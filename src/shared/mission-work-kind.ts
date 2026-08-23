@@ -185,6 +185,25 @@ const OPS_SURFACE =
  * make|create|build|develop`). `make` carries a lookahead so the English filler
  * "make sure ..." never reads as a creation order.
  */
+/**
+ * Verbos de RETRABALHO — o que o leigo mais usa quando já existe uma tela.
+ *
+ * "refaça a tela de cadastro pra ficar bonita no celular" não casava em
+ * CREATION_VERB nem em REPAIR_VERB (sonda 23/08), então `visual.surface`
+ * ficava FRACO e a missão de UI mais óbvia do mundo saía com confiança baixa
+ * — sem autoridade de design, ou seja, sem DESIGN.md.
+ *
+ * Fica SEPARADO de CREATION_VERB de propósito: aqui ele só decide se um
+ * substantivo de superfície é governado por um verbo.
+ *
+ * Deliberadamente ESTREITO: só verbos que significam refazer A COISA. Incluir
+ * "melhorar"/"ajustar" quebraria o invariante correto da casa — "melhorar a
+ * performance do dashboard" é trabalho de performance, não de design, e o
+ * substantivo ali é apenas locativo.
+ */
+const REWORK_VERB =
+  /\b(refaz(?:er|e)|refac[ao]|redesenh(?:ar|e|a)|remodel(?:ar|e|a)|reformul(?:ar|e|a)|redo|rework|redesign)\b/;
+
 const CREATION_VERB =
   /\b(implement(?:ar|e|a|acao|ing|ed)?|criar|crie|cria|construir|construa|desenvolv(?:er|a)|adicion(?:ar|e|a)|ger(?:ar|e|a)|faz(?:er|a)|faca|nov[ao]s?|suporte\s+a|habilitar|introduzir|create|build|develop|generate|make(?!\s+sure)|add|new|support\s+for|enable|introduce)\b/;
 
@@ -265,7 +284,8 @@ function collectSignals(canonical: string): WorkKindSignal[] {
 
   const ui = collectUiWorkEvidence(canonical);
   const creation = CREATION_VERB.exec(canonical);
-  const governingVerb = creation !== null || repair !== null;
+  const rework = REWORK_VERB.exec(canonical);
+  const governingVerb = creation !== null || repair !== null || rework !== null;
 
   const visual = (
     rule: string,
@@ -287,7 +307,24 @@ function collectSignals(canonical: string): WorkKindSignal[] {
       ),
     );
   } else if (ui.traits.length === 1) {
-    push(visual('visual.trait', 'weak', ui.traits[0].match));
+    // Um traço SOZINHO é fraco ("implementar o tema do relatório mensal").
+    // Mas traço + superfície visual são DOIS sinais visuais distintos
+    // caracterizando a missão — o mesmo raciocínio do quórum de dois traços.
+    // Sem isto, "deixa a tela inicial mais bonita" (o jeito mais comum de
+    // quem não é dev pedir trabalho de UI) saía com confiança baixa e sem
+    // DESIGN.md. A superfície sozinha continua locativa: "a performance do
+    // dashboard" não tem traço e segue fraca.
+    if (ui.locative) {
+      push(
+        visual(
+          'visual.quorum',
+          'strong',
+          `${ui.traits[0].match} + ${ui.locative.match}`,
+        ),
+      );
+    } else {
+      push(visual('visual.trait', 'weak', ui.traits[0].match));
+    }
   }
 
   // A surface noun only proves visual WORK when a creation or repair verb acts

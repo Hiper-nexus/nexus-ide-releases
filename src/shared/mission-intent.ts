@@ -956,8 +956,22 @@ export function isDocumentWritablePath(relativePath: string): boolean {
 export function suggestMissionLaneFromGoal(goal: string): MissionLane | null {
   const g = goal.trim();
   if (g.length < 8) return null;
+  // Recusa explícita de escrever código vence o detector de implementação.
+  // Sem isto, "só o plano, SEM escrever código" casava em "escrever código" e
+  // "decidir a arquitetura ANTES DE implementar" casava em "implementar" —
+  // os dois viravam missão de implementação, o oposto do que foi pedido
+  // (sonda 23/08; a segunda existe de verdade no rail do operador).
+  const planOnly =
+    /\b(?:sem|nao|não)\s+(?:escrever\s+)?(?:c[oó]digo|implement(?:ar|e|a)|codar|mexer\s+no\s+c[oó]digo)\b|\b(?:s[oó]|apenas|somente)\s+o\s+plano\b|\bantes\s+de\s+implementar\b|\bn[aã]o\s+escreva\s+c[oó]digo\b/i.test(
+      g,
+    );
+  if (planOnly) return 'plan';
   const implement =
-    /\b(implementar|implementa[cç][aã]o|codar|escrever\s+c[oó]digo|fix(ar)?\s|corrigir|bug|feature|refator|merge|worktree|testes?\s+e\s+c[oó]digo)\b/i.test(
+    // Imperativos de correção entram junto com o infinitivo: "auditoria de
+    // segurança E CORRIJA o que estiver vulnerável" caía em `consult` (=
+    // investigar SEM alterar arquivos) por casar só "auditoria" — a missão
+    // pedia o conserto e a lane proibia mexer (sonda 23/08).
+    /\b(implementar|implementa[cç][aã]o|codar|escrever\s+c[oó]digo|fix(ar)?\s|corrig(?:ir|e|em)|corrija|arrum(?:ar|e|a)|consert(?:ar|e|a)|proteg(?:er|e)|proteja|bug|feature|refator|merge|worktree|testes?\s+e\s+c[oó]digo)\b/i.test(
       g,
     );
   if (implement) return null;

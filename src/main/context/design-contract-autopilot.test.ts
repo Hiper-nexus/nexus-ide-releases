@@ -406,7 +406,12 @@ describe('every design decision is explained to the operator', () => {
   });
 
   it('explains the low-confidence policy and names both ends of it', async () => {
-    const result = await run({ goal: 'trocar a cor do botão de aprovar da fila' });
+    // 0.68.4: "trocar a cor do botão" virou alta confiança — traço visual
+    // ("cor") + superfície ("botão") formam quórum, e mudar a cor de um botão
+    // É trabalho de design. Este caso continua provando a POLÍTICA de baixa
+    // confiança, agora com um objetivo genuinamente ambíguo: um substantivo
+    // locativo sem nenhum traço de aparência.
+    const result = await run({ goal: 'melhorar a performance do dashboard' });
 
     const design = result.designContract!;
     expect(design.status).toBe('skipped');

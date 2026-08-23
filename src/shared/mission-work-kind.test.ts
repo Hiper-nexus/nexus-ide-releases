@@ -509,3 +509,47 @@ describe('design authority is strictly stricter than the skill grant', () => {
     expect(uiWork.length).toBeGreaterThan(authority.length);
   });
 });
+
+describe('verbo de retrabalho governa a superfície visual', () => {
+  it('"refaça a tela" é missão de UI com autoridade de design', () => {
+    // Sonda 23/08: nem CREATION_VERB nem REPAIR_VERB tinham "refaça", então
+    // visual.surface ficava FRACO e a missão de UI mais óbvia saía com
+    // confiança baixa — sem DESIGN.md.
+    const v = classifyWorkKind(
+      'refaça a tela de cadastro para ficar bonita e simples no celular',
+    );
+    expect(v.kind).toBe('visual');
+    expect(v.confidence).toBe('high');
+    expect(decideDesignAuthority(
+      'refaça a tela de cadastro para ficar bonita e simples no celular',
+    ).required).toBe(true);
+  });
+
+  it('traço visual + superfície formam quórum, como dois traços', () => {
+    // "deixa a tela inicial mais bonita" é o jeito mais comum de quem não é
+    // dev pedir UI: um traço ("bonita") e uma superfície ("tela"). Antes saía
+    // fraco+fraco = confiança baixa, ou seja, sem DESIGN.md.
+    for (const goal of [
+      'melhore o layout da página de preços',
+      'ajuste o espaçamento da tela de login',
+      'deixa a tela inicial mais bonita',
+    ]) {
+      const verdict = classifyWorkKind(goal);
+      expect(verdict.kind).toBe('visual');
+      expect(verdict.confidence).toBe('high');
+      expect(decideDesignAuthority(goal).required).toBe(true);
+    }
+  });
+
+  it('superfície SEM traço continua locativa — não vira design', () => {
+    // O invariante da casa: "a performance do dashboard" fala de performance,
+    // não de aparência. Alargar o quórum não pode atropelar isso.
+    const verdict = classifyWorkKind(
+      'melhore a performance da consulta de pedidos',
+    );
+    expect(verdict.kind).not.toBe('visual');
+    expect(
+      decideDesignAuthority('melhorar a performance do dashboard').required,
+    ).toBe(false);
+  });
+});
