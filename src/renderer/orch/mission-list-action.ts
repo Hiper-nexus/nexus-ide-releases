@@ -7,6 +7,7 @@ import {
 } from '../lib/mission-rail-groups';
 import {
   hasAutomaticTechnicalRecovery,
+  missionAwaitsOperatorReview,
   wasMissionRuntimeClosedByOperator,
 } from '../../shared/mission-recovery-policy';
 
@@ -51,8 +52,11 @@ export function missionListAction(
   hasVisiblePanes: boolean,
 ): MissionListAction {
   if (hasAutomaticTechnicalRecovery(mission)) return 'stop-recovery';
-  // Completed missions have nothing to Encerrar — Main rejects that path.
-  // Offer Remover even when transcript panes or a stale session pointer remain.
+  // O motor concluir NÃO encerra a missão: a entrega espera a revisão de quem
+  // pediu, que pode não aprovar. Enquanto não houver o carimbo humano, a ação
+  // é "Marcar como feito" — Remover continua disponível ao lado (bba8e6aa).
+  if (missionAwaitsOperatorReview(mission)) return 'complete';
+  // Aprovada: nada a Encerrar — o Main recusa esse caminho.
   if (mission.status === 'done') return 'remove';
   if (wasMissionRuntimeClosedByOperator(mission)) {
     if (mission.orchestratorSessionId !== undefined) return 'close-runtime';
@@ -76,6 +80,15 @@ export function missionBoardLifecycleAction(
   hasVisiblePanes: boolean,
 ): MissionListAction {
   if (snapshotState && TERMINAL_BOARD_STATES.has(snapshotState)) {
+    // Concluída pelo motor mas ainda não aprovada por quem pediu: o botão
+    // primário é "Marcar como feito", não "Remover".
+    if (
+      snapshotState === 'completed' &&
+      mission &&
+      missionAwaitsOperatorReview(mission)
+    ) {
+      return 'complete';
+    }
     return 'remove';
   }
   if (!mission) return 'none';
@@ -100,8 +113,10 @@ export function missionActionCopy(action: MissionListAction): {
       };
     case 'complete':
       return {
-        verb: 'Marcar concluída',
-        title: 'Arquivar esta missão como concluída. Histórico permanece.',
+        verb: 'Marcar como feito',
+        title:
+          'Aprovar a entrega e dar a missão por concluída. Até você fazer ' +
+          'isso ela fica aguardando a sua revisão; o histórico permanece.',
       };
     case 'discard':
       return { verb: 'Descartar', title: 'Descartar este rascunho' };

@@ -11,6 +11,7 @@ import type {
   MissionOperatorCompleteResult,
   MissionRuntimeCloseResult,
 } from '../../../shared/orch-types';
+import { MISSION_OPERATOR_APPROVED_MARKER } from '../../../shared/mission-recovery-policy';
 import { MISSION_RUNTIME_CLOSED_MARKER } from '../../../shared/mission-recovery-policy';
 import { buildGridTree } from '../../lib/split-tree';
 import { useLayoutStore } from '../../state/layout-store';
@@ -327,11 +328,24 @@ describe('state-aware mission actions in the canonical mission board', () => {
       forbidden: /Encerrar|Parar|concluída/i,
     },
     {
-      label: 'terminal history',
+      // O motor concluir não encerra a missão: falta a aprovação de quem
+      // pediu. Só depois do carimbo humano a ação vira Remover.
+      label: 'concluída pelo motor, aguardando revisão humana',
       current: mission({ status: 'done', intentState: 'done' }),
       snapshotState: 'completed' as const,
+      expected: /Marcar como feito/i,
+      forbidden: /Descartar|Encerrar|Parar/i,
+    },
+    {
+      label: 'terminal history já aprovada pelo humano',
+      current: mission({
+        status: 'done',
+        intentState: 'done',
+        description: `entrega\n\n${MISSION_OPERATOR_APPROVED_MARKER}`,
+      }),
+      snapshotState: 'completed' as const,
       expected: /Remover/i,
-      forbidden: /Descartar|Encerrar|Parar|concluída/i,
+      forbidden: /Descartar|Encerrar|Parar/i,
     },
     {
       label: 'completed mission with leftover transcript panes',
@@ -339,10 +353,11 @@ describe('state-aware mission actions in the canonical mission board', () => {
         status: 'done',
         intentState: 'done',
         orchestratorSessionId: 'pty-stale',
+        description: `entrega\n\n${MISSION_OPERATOR_APPROVED_MARKER}`,
       }),
       snapshotState: 'completed' as const,
       expected: /Remover/i,
-      forbidden: /Descartar|Encerrar|Parar|concluída/i,
+      forbidden: /Descartar|Encerrar|Parar/i,
       seedTranscriptPanes: true,
     },
     {
@@ -365,7 +380,7 @@ describe('state-aware mission actions in the canonical mission board', () => {
         description: `${MISSION_RUNTIME_CLOSED_MARKER}\nEncerrada.`,
       }),
       snapshotState: 'blocked_user' as const,
-      expected: /Marcar concluída/i,
+      expected: /Marcar como feito/i,
       forbidden: /Descartar|Encerrar|Parar/i,
     },
   ])('offers only the safe $label action', async (testCase) => {
@@ -561,7 +576,7 @@ describe('state-aware mission actions in the canonical mission board', () => {
     const host = renderMissionBoard(parked, 'blocked_user');
     await settle();
 
-    act(() => requiredButton(host, /Marcar concluída/i).click());
+    act(() => requiredButton(host, /Marcar como feito/i).click());
     await settle();
 
     expect(api.completeMissionByOperator).toHaveBeenCalledTimes(1);

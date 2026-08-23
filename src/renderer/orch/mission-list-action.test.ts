@@ -1,3 +1,4 @@
+import { MISSION_OPERATOR_APPROVED_MARKER } from '../../shared/mission-recovery-policy';
 import { describe, expect, it } from 'vitest';
 
 describe('missionListAction — missão encalhada', () => {
@@ -100,8 +101,10 @@ describe('mission list action policy', () => {
     expect(missionListAction(closed, false)).toBe('complete');
     expect(missionListAction(closed, true)).toBe('complete');
     expect(missionActionCopy('complete')).toEqual({
-      verb: 'Marcar concluída',
-      title: 'Arquivar esta missão como concluída. Histórico permanece.',
+      verb: 'Marcar como feito',
+      title:
+        'Aprovar a entrega e dar a missão por concluída. Até você fazer ' +
+        'isso ela fica aguardando a sua revisão; o histórico permanece.',
     });
   });
 
@@ -156,24 +159,42 @@ describe('mission list action policy', () => {
     expect(missionListAction(stale, false)).toBe('remove');
   });
 
-  it('missão concluída também pode ser removida quando parada', () => {
+  it('missão concluída pelo motor aguarda a APROVAÇÃO humana antes de encerrar', () => {
+    // O motor concluir não encerra a missão: quem pediu pode não aprovar.
+    // Até o carimbo humano existir, a ação é "Marcar como feito".
     expect(missionListAction(mission({ status: 'done' }), false)).toBe(
-      'remove',
+      'complete',
     );
     expect(canDiscardMission(mission({ status: 'done' }))).toBe(false);
+  });
+
+  it('depois de aprovada pelo humano, a missão volta a oferecer Remover', () => {
+    expect(
+      missionListAction(
+        mission({
+          status: 'done',
+          description: `entrega\n\n${MISSION_OPERATOR_APPROVED_MARKER}`,
+        }),
+        false,
+      ),
+    ).toBe('remove');
   });
 
   it('missão concluída oferece Remover mesmo com transcripts ou session pointer', () => {
     // Field trap: leftover grid panes and orch_session_id made Encerrar the
     // only action. Clicking it failed ("não possui execução encerrável") and
     // Remover never appeared.
-    expect(missionListAction(mission({ status: 'done' }), true)).toBe('remove');
+    const aprovada = { description: `entrega\n\n${MISSION_OPERATOR_APPROVED_MARKER}` };
+    expect(
+      missionListAction(mission({ status: 'done', ...aprovada }), true),
+    ).toBe('remove');
     expect(
       missionListAction(
         mission({
           status: 'done',
           intentState: 'done',
           orchestratorSessionId: 'pty-stale',
+          ...aprovada,
         }),
         true,
       ),

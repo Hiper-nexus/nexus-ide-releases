@@ -24,6 +24,12 @@ export const MISSION_LIFECYCLE_LABELS: Readonly<
   completed: 'Pronto',
 };
 
+/**
+ * Concluída pelo motor, ainda não aprovada por quem pediu. "Pronto" ali dizia
+ * que a missão acabou — e ela não acabou: falta a sua revisão.
+ */
+export const MISSION_AWAITING_REVIEW_LABEL = 'Aguardando você';
+
 /** Running mission that still needs a human look — rail chip only. */
 export const MISSION_RUNNING_ATTENTION_LABEL = 'Trabalhando · aviso';
 

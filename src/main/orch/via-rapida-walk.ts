@@ -77,7 +77,12 @@ export function firstWaveWorkerPrompt(input: {
     /\b(abr[aeiou]|navegador|browser|preview|mostr(?:ar|e)|ver\s+no\s+navegador)\b/iu.test(
       objective,
     )
-      ? 'Se o objetivo pede para ABRIR no navegador: após gerar os arquivos, abra o HTML no navegador do SO (macOS: `open <arquivo>`; Linux: `xdg-open <arquivo>`) ANTES do handoff e cite o arquivo/comando no summary.'
+      // NÃO peça `open` ao agente: o Nexus abre a entrega sozinho no done
+      // (mission-deliverable-open), de forma determinística e contida ao
+      // projeto. Pedir aqui também abria DUAS abas — verificado no voo real
+      // 23/08. O que o agente precisa fazer é REGISTRAR o arquivo, que é o
+      // que o main usa para saber o que abrir.
+      ? 'O objetivo pede para abrir no navegador: o próprio Nexus abre a entrega quando a missão concluir — NÃO rode `open`/`xdg-open`. Garanta apenas que o HTML final esteja salvo no projeto e citado no summary do handoff.'
       : '';
   return [
     `## Missão: ${input.mission.title}`,

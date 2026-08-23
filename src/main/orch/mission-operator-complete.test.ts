@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Mission } from '../../shared/orch-types';
+import { MISSION_OPERATOR_APPROVED_MARKER } from '../../shared/mission-recovery-policy';
 import { completeMissionByOperator } from './mission-operator-complete';
 import { MISSION_RUNTIME_CLOSED_MARKER } from '../../shared/mission-recovery-policy';
 import { testProjectScope } from './__tests__/scope-fixture';
@@ -48,7 +49,12 @@ describe('completeMissionByOperator', () => {
       { completeVerified },
     );
 
-    expect(result).toEqual({ ok: true, mission: done });
+    // O carimbo de aprovação humana entra na descrição: é ele que tira a
+    // missão de "Aguardando você".
+    expect(result.ok).toBe(true);
+    expect(result.mission?.description).toContain(
+      MISSION_OPERATOR_APPROVED_MARKER,
+    );
     expect(completeVerified).toHaveBeenCalledWith(scope, {
       missionId: 'mission-1',
       expectedStatus: 'blocked',
@@ -79,7 +85,12 @@ describe('completeMissionByOperator', () => {
       'mission-1',
       { completeVerified },
     );
-    expect(result).toEqual({ ok: true, mission: done });
+    // O carimbo de aprovação humana entra na descrição: é ele que tira a
+    // missão de "Aguardando você".
+    expect(result.ok).toBe(true);
+    expect(result.mission?.description).toContain(
+      MISSION_OPERATOR_APPROVED_MARKER,
+    );
     expect(completeVerified).not.toHaveBeenCalled();
   });
 

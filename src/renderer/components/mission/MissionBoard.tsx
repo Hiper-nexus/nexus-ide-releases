@@ -18,7 +18,11 @@ import {
   missionEventSchema,
   type MissionEvent,
 } from '../../../shared/mission-events';
-import { missionLifecycleLabel } from '../../lib/mission-lifecycle-copy';
+import {
+  MISSION_AWAITING_REVIEW_LABEL,
+  missionLifecycleLabel,
+} from '../../lib/mission-lifecycle-copy';
+import { missionAwaitsOperatorReview } from '../../../shared/mission-recovery-policy';
 import {
   aggregateMissionTelemetry,
   formatMissionTelemetry,
@@ -940,11 +944,15 @@ export function MissionBoard({
             className="mission-board__status"
             data-state={currentSnapshot.state}
           >
-            {missionLifecycleLabel(
-              currentSnapshot.state,
-              false,
-              currentSnapshot.stateReason?.code,
-            )}
+            {currentSnapshot.state === 'completed' &&
+            currentMission &&
+            missionAwaitsOperatorReview(currentMission)
+              ? MISSION_AWAITING_REVIEW_LABEL
+              : missionLifecycleLabel(
+                  currentSnapshot.state,
+                  false,
+                  currentSnapshot.stateReason?.code,
+                )}
           </span>
           {/* Sem tasks planejadas (Via Rápida), "0 / 0" é ruído e
               <progress max={0}> é inválido — esconde o contador. */}

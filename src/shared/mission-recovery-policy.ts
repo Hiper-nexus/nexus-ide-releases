@@ -9,6 +9,33 @@ export const TERMINAL_OPERATIONAL_FAILURE_MARKER =
 export const MISSION_RUNTIME_CLOSED_MARKER =
   '<!-- nexus:runtime-closed -->';
 
+/**
+ * O humano aprovou a entrega.
+ *
+ * O motor concluir NÃO encerra a missão: a entrega ainda precisa passar pela
+ * revisão de quem pediu, que pode não aprovar. Enquanto este marcador não
+ * existir, a missão fica "Aguardando você" — com "Pedir um ajuste" e "Marcar
+ * como feito" na tela. Marcador durável na descrição, mesmo padrão de
+ * MISSION_RUNTIME_CLOSED_MARKER: sem migração de schema.
+ */
+export const MISSION_OPERATOR_APPROVED_MARKER =
+  '<!-- nexus:operator-approved -->';
+
+export function wasMissionApprovedByOperator(
+  mission: Pick<RecoverableMission, 'description'>,
+): boolean {
+  return (mission.description ?? '').includes(
+    MISSION_OPERATOR_APPROVED_MARKER,
+  );
+}
+
+/** Concluída pelo motor, ainda não aprovada por quem pediu. */
+export function missionAwaitsOperatorReview(
+  mission: Pick<RecoverableMission, 'status' | 'description'>,
+): boolean {
+  return mission.status === 'done' && !wasMissionApprovedByOperator(mission);
+}
+
 export function wasMissionRuntimeClosedByOperator(
   mission: Pick<RecoverableMission, 'status' | 'intentState' | 'description'>,
 ): boolean {

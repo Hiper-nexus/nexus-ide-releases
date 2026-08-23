@@ -435,7 +435,7 @@ describe('first-wave writer_circuit_break', () => {
     ).toBe(true);
   });
 
-  it('firstWaveWorkerPrompt inclui instrução de abrir no navegador quando o objetivo pede', () => {
+  it('firstWaveWorkerPrompt manda o agente NÃO abrir — quem abre é o Nexus', () => {
     const prompt = firstWaveWorkerPrompt({
       mission: {
         title: 'Landing Mario Kart',
@@ -446,8 +446,12 @@ describe('first-wave writer_circuit_break', () => {
       storyIndex: 0,
       storyTotal: 1,
     });
-    expect(prompt).toContain('open <arquivo>');
-    expect(prompt).toContain('xdg-open');
+    // 0.68.4: o main abre a entrega no done (mission-deliverable-open).
+    // Pedir `open` ao agente também abria DUAS abas no voo real 23/08 — e
+    // dependia de a LLM obedecer, que é justamente o que falhava antes.
+    expect(prompt).toContain('o próprio Nexus abre a entrega');
+    expect(prompt).toContain('NÃO rode `open`');
+    expect(prompt).not.toContain('xdg-open <arquivo>');
     expect(prompt).toContain('Tarefa selada (1/1): Criar landing');
   });
 });

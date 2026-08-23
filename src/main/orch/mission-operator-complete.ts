@@ -1,6 +1,10 @@
 import type { MissionEngine } from './mission-engine';
 import type { ProjectDomainStoreSuite } from './project-domain-store-registry';
 import type { Mission, MissionOperatorCompleteResult } from '../../shared/orch-types';
+import {
+  MISSION_OPERATOR_APPROVED_MARKER,
+  wasMissionApprovedByOperator,
+} from '../../shared/mission-recovery-policy';
 
 const OPERATOR_COMPLETE_SUMMARY = 'Concluída pelo operador.';
 const OPERATOR_COMPLETE_LEARNINGS =
@@ -25,6 +29,25 @@ export interface OperatorCompletePorts {
 }
 
 /**
+ * Carimba a APROVAÇÃO do humano na descrição.
+ *
+ * O motor concluir não encerra a missão: a entrega ainda espera a revisão de
+ * quem pediu. Só este carimbo faz a missão sair de "Aguardando você".
+ */
+function stampOperatorApproval(
+  suite: Pick<ProjectDomainStoreSuite, 'missions'>,
+  mission: Mission,
+): Mission {
+  if (wasMissionApprovedByOperator(mission)) return mission;
+  const description = `${mission.description ?? ''}\n\n${MISSION_OPERATOR_APPROVED_MARKER}`.trim();
+  // `updateContent` é opcional aqui de propósito: dublês de store em teste e
+  // caminhos legados não precisam saber carimbar. Falhar aqui NUNCA pode
+  // impedir o operador de concluir a missão dele.
+  const updated = suite.missions.updateContent?.(mission.id, { description });
+  return updated ?? { ...mission, description };
+}
+
+/**
  * Archives a mission the operator already finished. Encerrar only parks the
  * runtime (`blocked_user` + runtime-closed). Done still requires MissionEngine
  * verified completion — this is that path, with an operator result instead of
@@ -41,7 +64,9 @@ export function completeMissionByOperator(
     return { ok: false, error: 'Missão não encontrada.' };
   }
   if (current.status === 'done') {
-    return { ok: true, mission: current };
+    // Idempotente e, agora, o caminho normal do "Marcar como feito": a missão
+    // já está done pelo motor e o que falta é a APROVAÇÃO do humano.
+    return { ok: true, mission: stampOperatorApproval(suite, current) };
   }
   if (current.status === 'failed') {
     return {
@@ -95,5 +120,5 @@ export function completeMissionByOperator(
       error: 'O motor não persistiu a conclusão. Tente novamente.',
     };
   }
-  return { ok: true, mission: next };
+  return { ok: true, mission: stampOperatorApproval(suite, next) };
 }
