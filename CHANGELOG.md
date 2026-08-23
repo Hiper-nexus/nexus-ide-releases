@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.68.3 — Ajustes pós-done e navegador real
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+- **fix(orch): digitação no pane liberada no done** — o lane de entrada do
+  operador aceita digitação em missões `done`. Você pode continuar conversando
+  com o agente vivo para pedir refinamentos ("ajusta a cor", "adiciona X")
+  sem ser bloqueado por "[nexus] o main recusou a digitação".
+- **fix(orch): browser-note embutida na primeira onda** — `firstWaveWorkerPrompt`
+  agora inclui a instrução de abrir com `open`/`xdg-open` antes do handoff
+  quando o objetivo pedir para abrir no navegador.
+
+Gates: tsc limpo, testes de autoridade IPC 103/103, smoke empacotado PASS.
+
 ## 0.68.2 — Orquestrador fica, navegador abre
 
 _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._

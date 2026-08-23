@@ -13,29 +13,27 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.68.2',
+  version: '0.68.3',
   date: '2026-08-23',
-  codename: 'Orquestrador fica, navegador abre',
+  codename: 'Ajustes pós-done e navegador real',
   summary:
-    'O orquestrador não morre mais no done — fica vivo para você pedir ' +
-    'ajustes ("termina", "corrige X") sem recomeçar a missão. E quando o ' +
-    'objetivo pede para abrir no navegador, o worker abre o HTML gerado com ' +
-    '`open`/`xdg-open` antes do handoff e cita o arquivo no summary.',
+    'Digitação liberada no done: você pode conversar com o agente vivo e ' +
+    'pedir ajustes pós-entrega ("termina isso", "corrige X") sem a mensagem ' +
+    '"o main recusou a digitação". E a instrução de abrir no navegador com ' +
+    '`open`/`xdg-open` agora entra também nos workers da primeira onda.',
   highlights: [
     {
-      title: 'Orquestrador permanece após o done',
+      title: 'Digitação liberada no pane após a missão concluir',
       detail:
-        'Reversão parcial do F-106 (voo 23/08): matar o Maestro no done ' +
-        'lacrava a superfície de refinamento — missão imperfeita sem a quem ' +
-        'pedir correção. Agora só workers idle 30s encerram; o pane do ' +
-        'Maestro é seu até você fechar.',
+        'O lane de entrada do operador agora aceita digitação em missões no ' +
+        'estado done — você não fica mais travado com "o main recusou a ' +
+        'digitação" quando quer continuar a conversa com o agente.',
     },
     {
-      title: 'Landing abre sozinha quando pedida',
+      title: 'Browser note entra na primeira onda',
       detail:
-        'Objetivo com "abra no navegador" / "mostrar" / "preview" agora ' +
-        'instrui o worker a abrir o arquivo gerado no navegador do SO antes ' +
-        'do handoff. Nada para clicar manualmente.',
+        'Workers iniciados na primeira onda (first-wave) agora recebem ' +
+        'a instrução de abrir o HTML no navegador do SO antes do handoff.',
     },
   ],
   fixes: [],
