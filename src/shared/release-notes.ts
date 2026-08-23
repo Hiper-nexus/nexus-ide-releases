@@ -13,60 +13,32 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.67.0',
+  version: '0.68.0',
   date: '2026-08-23',
-  codename: 'Router desperto e sem fantasmas',
+  codename: 'Fechos à prova de corrida',
   summary:
-    'O router de intenção provado ao vivo — lê a missão, entende a intenção, ' +
-    'classifica 7/7 rotas reais e escolhe as skills por tipo de trabalho — ' +
-    'agora com guarda determinística contra typo de ditado em meta-de-pane. ' +
-    'O fantasma do watchdog morre: SUCCESS real consome failure sintético na ' +
-    'hora. Effort de orquestrador ganha cap (medium) quando ninguém selou ' +
-    'nada; selo do roster sempre vence. No done da missão, orquestrador ' +
-    'encerra já e workers idle saem em 30s (F-106).',
+    'O encerramento de missão ficou à prova de corrida: a disputa done×exit ' +
+    'do PTY do orquestrador não trava mais o teardown — retry idempotente com ' +
+    're-avaliação completa. E o processo de release passou a se auto-curar: ' +
+    'o notary restaura o ABI do Node no fim da cadeia, então o dev/teste local ' +
+    'nunca mais acorda vermelho depois de um PASS.',
   highlights: [
     {
-      title: 'Router testado ao extremo — e à prova de ditado',
+      title: 'Done×exit não trava mais',
       detail:
-        '39 casos cobrindo pergunta pura, trabalho real, híbridos, acentos, ' +
-        'typo de voz e injeção de skill. "Pergunte aos panes…" nunca vira ' +
-        'resposta direta: guarda determinística ANTES da LLM barata, nem ' +
-        'chama rede. Fail-open provado: glm flakeou → missão normal.',
+        'Quando a sessão do orquestrador sai no instante exato em que o ' +
+        'teardown pede o fechamento, o pedido é reavaliado e repetido com ' +
+        'segurança — idempotente por identidade física (pane+missão+escopo+role).',
     },
     {
-      title: 'Fim do xhigh fantasma e do worker zumbi',
+      title: 'Release que não quebra o dev',
       detail:
-        'Sem selo no roster, o orquestrador nasce com effort medium em vez ' +
-        'de herder a config global da CLI; selo explícito sempre vence. No ' +
-        'done, panes de missão encerram sozinhos (híbrido F-106), sem sinais ' +
-        '"vivos" numa missão Pronto.',
-    },
-    {
-      title: 'SUCCESS real enterra o failure sintético do watchdog',
-      detail:
-        'Worker que "travou no MCP" e depois se recuperava deixava um FAILED ' +
-        'fantasma na fila — o Maestro queimava turnos de cobrança com um ' +
-        'fantasma. Agora todo SUCCESS físico da mesma sessão consome o ' +
-        'ghost na hora do commit.',
+        'Depois de qualquer nexus-notary, os nativos voltam ao ABI do Node ' +
+        'automaticamente. Fim do suite inteiro vermelho por ERR_DLOPEN_FAILED '
+        + 'logo após um PASS de release.',
     },
   ],
-  fixes: [
-    {
-      title: '"listagem" não despencava a tarefa para trivial',
-      detail:
-        "Prefixo 'list' casava dentro de li(sta)gem e dava a feature mais "
-        + 'complexa ao modelo mais barato do ladder. Imperativo de inspeção '
-        + "('liste') fica no trivial.",
-    },
-    {
-      title: "'me explique…' não abre mais squad",
-      detail:
-        'Pedidos de conhecimento sem "?" escapavam do Tier 0 e viravam '
-        + 'missão completa por falta de interrogação. Anchors de conhecimento '
-        + 'resolvem; verbo de trabalho dentro da frase continua mandando '
-        + 'para missão.',
-    },
-  ],
+  fixes: [],
 };
 export const RELEASE_06100: AppRelease = {
   version: '0.61.0',

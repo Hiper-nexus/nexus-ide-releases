@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.68.0 — Fechos à prova de corrida
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+- **fix(orch): F-106 retry idempotente no close do done** — a corrida
+  done×exit do PTY (sessão que sai no instante em que o teardown pede o
+  fechamento) não trava mais o encerramento: retry com re-avaliação completa,
+  QA F-106 corrigido e verificado.
+- **chore(release): notary restaura o ABI do Node ao fim da cadeia** — a
+  release deixava os nativos no ABI do Electron e o dev/teste local morria
+  (`ERR_DLOPEN_FAILED`) até rebuild manual. Agora o próprio notary roda
+  `rebuild:node` sempre, verde ou vermelha a cadeia.
+
+Gates: tsc limpo, suíte de teardown 14/14, smoke empacotado PASS.
+
 ## 0.67.0 — Router desperto e sem fantasmas
 
 _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
