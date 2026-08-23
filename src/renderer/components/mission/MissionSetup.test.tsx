@@ -2210,6 +2210,52 @@ describe('Caminho Expresso', () => {
     );
   });
 
+  it('objetivo de planejamento sela a lane plan', async () => {
+    // Voo real 23/08: o Expresso fixava `standard`, então "só o plano, sem
+    // escrever código" rodava como implementação — o coordenador abria
+    // trabalhadores para escrever código, o oposto do pedido.
+    const host = await renderAtExpress();
+    enterText(
+      fieldByLabel<HTMLTextAreaElement>(
+        host,
+        'O que você quer que a missão entregue?',
+      ),
+      'planeje como adicionar um formulario de contato, só o plano, sem escrever codigo',
+    );
+    await flush();
+    await flush();
+    act(() => button(host, 'Iniciar missão').click());
+    await flush();
+    await flush();
+
+    expect(api.prepare).toHaveBeenCalled();
+    const request = api.prepare.mock.calls.at(-1)?.[0] as {
+      advanced?: { lane?: string };
+    };
+    expect(request?.advanced?.lane).toBe('plan');
+  });
+
+  it('objetivo de trabalho comum continua em standard', async () => {
+    const host = await renderAtExpress();
+    enterText(
+      fieldByLabel<HTMLTextAreaElement>(
+        host,
+        'O que você quer que a missão entregue?',
+      ),
+      'crie uma landing page para minha barbearia',
+    );
+    await flush();
+    await flush();
+    act(() => button(host, 'Iniciar missão').click());
+    await flush();
+    await flush();
+
+    const request = api.prepare.mock.calls.at(-1)?.[0] as {
+      advanced?: { lane?: string };
+    };
+    expect(request?.advanced?.lane).toBe('standard');
+  });
+
   it('Avançado revela o wizard completo na etapa Equipe', async () => {
     const host = await renderAtExpress();
     enterText(

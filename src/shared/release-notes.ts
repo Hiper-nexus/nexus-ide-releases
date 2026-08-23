@@ -13,131 +13,81 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.68.5',
+  version: '0.70.0',
   date: '2026-08-23',
-  codename: 'Duas contas, um coordenador informado',
+  codename: 'A missão fala com você',
   summary:
-    'Quem não programa entrava pela porta errada: uma linha de código ' +
-    'desviava do Caminho Expresso para o wizard de três etapas. O caminho ' +
-    'padrão cai de 7 telas para 2. A entrega que pede navegador agora abre ' +
-    'de verdade — pelo Nexus, não por pedido no prompt. E a missão não morre ' +
-    'no done: o coordenador continua ali para o ajuste que a sua revisão pedir.',
+    'Auditoria da interface inteira pela ótica de quem não programa: 159 ' +
+    'achados verificados contra o código, em três ondas — e as três fecham ' +
+    'aqui. O fim da missão responde o que mudou, a missão só encerra quando ' +
+    'você encerra, e o produto para de falar difícil.',
   highlights: [
     {
-      title: 'O Caminho Expresso vira a porta da frente',
+      title: 'O fim da missão responde "o que mudou"',
       detail:
-        'O rascunho vazio sempre nasceu no Expresso; era beginFreshMission ' +
-        'que sobrescrevia para o wizard. Corrigido: 2 telas e 1 decisão até ' +
-        'a missão rodar. O wizard completo continua em "Avançado" e em ⌘K.',
+        'A tela final mostrava duas listas de identificadores em fonte de ' +
+        'código, sem link. Agora lista os arquivos entregues, diz o que cada ' +
+        'um é (página, estilo, documento…) e abre cada um com um clique.',
     },
     {
-      title: 'A entrega abre no navegador de verdade',
+      title: 'A missão só encerra quando você encerra',
       detail:
-        'Abrir arquivo é mecânica, não inteligência: o Nexus abre o HTML ' +
-        'que a missão produziu, contido na pasta do projeto, quando o ' +
-        'objetivo pediu navegador. Antes só existia um pedido no prompt.',
+        'Concluída fica "Aguardando você", com "Pedir um ajuste" e "Marcar ' +
+        'como feito". O coordenador continua ali para o ajuste que a sua ' +
+        'revisão pedir — e abrir os terminais não relança a missão.',
     },
     {
-      title: 'A missão continua aberta para a sua revisão',
+      title: 'O plano e a definição de pronto viraram tela',
       detail:
-        'O pane do coordenador não vira mais shell vazio quando a missão ' +
-        'conclui — a entrega ainda espera você aprovar, e o histórico da ' +
-        'coordenação fica onde o ajuste é pedido.',
+        '"O que vamos construir" mostra o plano que o motor já escrevia e ' +
+        'nunca exibia. E existe um campo para você dizer como saberá que ' +
+        'ficou pronto — a missão nascia sem isso.',
     },
     {
-      title: 'O Nexus entende a pergunta de quem não é dev',
+      title: 'Enquanto trabalha, você vê',
       detail:
-        '"tem como", "vale a pena", "para que serve", "não entendi" e até ' +
-        '"o que é preciso para criar um site?" eram tratados como missão ' +
-        'com equipe. Agora viram resposta direta, sem gastar uma missão.',
+        'Sinal de progresso mesmo sem tarefas planejadas ("2 de 3 ' +
+        'trabalhando agora") e a frase que faltava: pode fechar esta tela.',
     },
     {
-      title: 'O pré-requisito virou botão',
+      title: 'O router entende o que você pede',
       detail:
-        '"Conecte um provedor em Configurações" era texto morto em três ' +
-        'telas. Agora é um botão que abre Providers — e o Iniciar continua ' +
-        'clicável, sem trava nova.',
+        '"Sem escrever código" era lido como "escrever código" e o ' +
+        'planejamento virava implementação. Missão de UI recebe o DESIGN.md, ' +
+        'auditoria que pede conserto não cai em somente-leitura, e segurança ' +
+        'ganhou doutrina própria.',
     },
   ],
   fixes: [
     {
+      title: 'Uma palavra por estado',
+      detail:
+        '"Pronto" significava entrega E agente parado, com a mesma cor. Havia ' +
+        'três listas paralelas de rótulos, uma com texto em inglês.',
+    },
+    {
+      title: 'Erro cru na tela',
+      detail:
+        'O Git despejava a mensagem original em inglês. Agora nomeia a causa ' +
+        'e o próximo passo; o texto técnico fica recolhido.',
+    },
+    {
+      title: 'Criar uma landing page virava missão de infraestrutura',
+      detail:
+        'A palavra "landing page" classificava o pedido como operação de ' +
+        'servidor. Publicar continua sendo; criar voltou a ser trabalho comum.',
+    },
+    {
       title: 'A segunda conta apagava a primeira',
       detail:
         'Entrar na 2ª conta antes de salvar a 1ª fazia a primeira sumir em ' +
-        'silêncio. Agora a sessão é salva sozinha quando o terminal de login ' +
-        'fecha, e reentrar na mesma conta atualiza em vez de duplicar.',
-    },
-    {
-      title: '"Uso e cotas" mostrava uma linha a mais',
-      detail:
-        'A linha "CLI nativo" duplicava a conta já salva. Ela agora se dobra ' +
-        'para dentro da conta cujo e-mail é a sessão logada no momento.',
-    },
-    {
-      title: 'A tela de multi-conta falava em cofre',
-      detail:
-        'Passo-a-passo à vista, selo na conta logada agora e um aviso com ' +
-        'botão quando a sessão atual ainda não foi salva — sem trava nova.',
-    },
-    {
-      title: 'Abrir Terminais numa missão pronta relançava a missão',
-      detail:
-        'A missão concluída voltava sozinha para "Trabalhando" ao abrir os ' +
-        'terminais. Agora reabrir exige o seu gesto — digitar no pane do ' +
-        'coordenador; olhar não mexe em nada.',
-    },
-    {
-      title: 'Kimi logado aparecia como não logado',
-      detail:
-        'A verificação pedia o formato JSON e procurava um texto que só ' +
-        'existe na saída antiga. O formato do Kimi CLI 0.38 agora é ' +
-        'reconhecido e a conta aparece conectada.',
-    },
-    {
-      title: 'Duas contas do mesmo provedor ficavam indistinguíveis',
-      detail:
-        'Salvar a sessão sem digitar um nome gravava "Conta Claude". Agora o ' +
-        'padrão é o e-mail da sessão, então cada conta aparece com identidade.',
-    },
-    {
-      title: 'Entrar com a 2ª conta apagava a 1ª',
-      detail:
-        'O CLI guarda uma sessão por vez e a conta só existia depois de ' +
-        'salvar — logar em outra antes de salvar perdia a primeira em ' +
-        'silêncio. Agora o Nexus salva a conta sozinho quando o terminal de ' +
-        'login fecha, e re-login da mesma conta não cria linha duplicada.',
-    },
-    {
-      title: 'Limites de uso triplicavam a mesma conta',
-      detail:
-        'Com duas contas salvas, "Uso e cotas" mostrava três linhas: a linha ' +
-        '"CLI nativo" repetia a conta que já estava salva. Agora ela dobra ' +
-        'para dentro da linha da conta — e cada linha diz qual é a sessão ' +
-        'logada no CLI agora.',
+        'silêncio. E o Kimi logado aparecia como deslogado.',
     },
     {
       title: 'Tela branca no primeiro boot',
       detail:
-        'Um hook declarado depois do BootScreen mudava a contagem de hooks ' +
-        'entre renders e derrubava o renderer na primeira abertura.',
-    },
-    {
-      title: 'Copy que mandava procurar tela inexistente',
-      detail:
-        '"Operações" virou "aba Atividade", "Procurar" virou "Escolher ' +
-        'pasta" e "Retomar missão" virou "Retomar" — os rótulos reais.',
-    },
-    {
-      title: 'Desligar a wake word agora grava',
-      detail:
-        'Antes você desligava o microfone, fechava o modal no X e saía com ' +
-        'a escuta ativa: a preferência não era persistida.',
-    },
-    {
-      title: 'Início e Precisa de você no rail',
-      detail:
-        'Clicar em Quadro ou Memória perdia para sempre a tela inicial. A ' +
-        'lista de atenção deixa de abrir só por atalho.',
+        'Um hook declarado depois da tela de carregamento derrubava o ' +
+        'renderer na primeira abertura.',
     },
   ],
 };

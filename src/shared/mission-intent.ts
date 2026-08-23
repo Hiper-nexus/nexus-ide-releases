@@ -989,7 +989,11 @@ export function suggestMissionLaneFromGoal(goal: string): MissionLane | null {
     );
   if (plan) return 'plan';
   const ops =
-    /\b(deploy|backups?|ssh|vps|servidor(es)?|landing\s*page|dns|subir|pausar|migrar|restart(ar)?|publicar)\b/i.test(
+    // `landing page` NÃO é ops: criar uma é trabalho de produto/UI. Estava
+    // aqui e fazia "crie uma landing page" virar missão de infraestrutura —
+    // visível só quando o Caminho Expresso passou a consultar a lane (voo
+    // 23/08). Publicar uma continua sendo ops por `publicar`/`deploy`/`subir`.
+    /\b(deploy|backups?|ssh|vps|servidor(es)?|dns|subir|pausar|migrar|restart(ar)?|publi(?:car|ca|que|quem)|hosped(?:ar|e))\b/i.test(
       g,
     );
   if (ops) return 'ops';

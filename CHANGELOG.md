@@ -1,5 +1,66 @@
 # Changelog
 
+## 0.70.0 — A missão fala com você
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+Auditoria senior da interface inteira pela ótica de quem **não programa**:
+159 achados verificados contra o código, organizados em três ondas. Esta
+versão fecha as três.
+
+### O fim da missão finalmente responde
+
+- **"O que mudou"** — a aba Resultado mostrava duas listas de identificadores
+  em fonte monoespaçada, sem link. Agora lista os arquivos entregues, diz o
+  que cada um é (página, estilo, documento…) e abre cada um com um clique.
+- **"O que vamos construir"** — o plano que o motor já escrevia e selava
+  nunca aparecia em tela nenhuma. Agora abre na aba Plano.
+- **"Como vou saber que ficou pronto?"** — campo novo no início. A missão
+  nascia sem definição de pronto.
+- **"Tentar de novo"** em missão falhada. Antes a única ação era apagar.
+
+### A missão não morre — e não ressuscita sozinha
+
+- Concluída fica **"Aguardando você"** com **"Pedir um ajuste"** e **"Marcar
+  como feito"**. Só o seu carimbo encerra.
+- Abrir "Terminais" numa missão pronta **não a relança** mais.
+- O coordenador continua digitável para o ajuste que a sua revisão pedir.
+
+### Enquanto trabalha, você vê
+
+- Sinal de progresso mesmo sem tarefas planejadas ("2 de 3 trabalhando
+  agora") e a frase que faltava: **"pode fechar esta tela"**.
+- A aba de abertura responde o estado: entrega no Resultado, pergunta na
+  Conversa, falha na Atividade.
+
+### O produto para de falar difícil
+
+- Uma palavra por estado: "Pronto" é da entrega; agente parado **aguarda**.
+  Havia três mapas paralelos, um com texto em inglês.
+- Erro do Git vira causa e próximo passo, não `stderr`.
+- A tela branca deixa de mostrar jargão como texto principal.
+- Copy que mandava procurar telas inexistentes ("Operações", "Procurar")
+  morreu — inclusive na doutrina do produto.
+
+### O router entende o que você pede
+
+- Missão de UI recebe o DESIGN.md (antes, "refaça a tela pra ficar bonita"
+  saía com confiança baixa e sem doutrina).
+- **"sem escrever código"** era lido como "escrever código" — planejamento
+  virava implementação. Corrigido.
+- Auditoria que pede conserto não cai mais em modo somente-leitura.
+- Missão de segurança ganhou doutrina; o Nexus escolhe a referência de design
+  em vez de mandar o agente vasculhar a pasta.
+
+### Contas
+
+- A segunda conta deixava de apagar a primeira; "Uso e cotas" parou de
+  triplicar; Kimi logado aparecia como deslogado.
+
+Gates: tsc limpo, `security:renderer-sinks` 0 sinks, `design-system-sensor`
+0 findings (com duas regras novas), **1195/1195 arquivos e 11364/11364
+testes**.
+
 ## 0.68.5 — Duas contas, um coordenador informado
 
 _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._

@@ -6,6 +6,7 @@ import {
 } from '../../../shared/mission-engine-contract';
 import {
   clampMissionLaneTools,
+  suggestMissionLaneFromGoal,
   type MissionLane,
 } from '../../../shared/mission-intent';
 import type { SquadAgent } from '../../../shared/orch-types';
@@ -875,13 +876,21 @@ export function MissionSetup() {
       );
       return;
     }
+    // A lane vem do OBJETIVO, não de um padrão fixo. O Expresso é o caminho
+    // default de quem não programa e fixava `standard`: uma missão que dizia
+    // "só o plano, sem escrever código" rodava como implementação e o
+    // coordenador abria trabalhadores para escrever código — o oposto do
+    // pedido (voo real 23/08). `suggestMissionLaneFromGoal` já existia e
+    // tinha ZERO consumidores no renderer.
+    const expressLane =
+      suggestMissionLaneFromGoal(setupState.draft.objective) ?? 'standard';
     const recommended = buildRecommendedMissionRoster({
       readiness: inventory.readiness,
       providers: inventory.providers,
       accounts: inventory.accounts,
       settings: inventory.settings,
       objective: setupState.draft.objective,
-      lane: 'standard',
+      lane: expressLane,
     });
     if (!recommended) {
       setExpressError(
@@ -896,7 +905,7 @@ export function MissionSetup() {
     const expressDraft: MissionSetupDraft = {
       ...setupState.draft,
       roster: recommended,
-      advanced: { lane: 'standard', freeAgentChoice: true },
+      advanced: { lane: expressLane, freeAgentChoice: true },
     };
     const requestResult = missionPrepareRequestSchema.safeParse(
       missionPrepareRequestFromDraft(expressDraft, setupState.entryContext),
