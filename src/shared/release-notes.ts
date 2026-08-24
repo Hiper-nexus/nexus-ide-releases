@@ -13,36 +13,31 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.70.7',
+  version: '0.70.8',
   date: '2026-08-24',
-  codename: 'Uma de cada vez',
+  codename: 'OpenClaude no seletor',
   summary:
-    'Uma missão viva por vez. Encerrar vale na hora. Terminais mostra só ' +
-    'a missão. Fechar pane em Aguardando você não reinicia o time.',
+    'OpenClaude no Iniciar, no + Agent e em Provedores. Instala e entra ' +
+    'como as outras CLIs. Sessão em ~/.openclaude, não no Claude.',
   highlights: [
     {
-      title: 'Iniciar estaciona as outras',
+      title: 'OpenClaude de primeira classe',
       detail:
-        'A missão nova ganha o orçamento. As irmãs dormem na rail sem PTY. ' +
-        'Retomar religa.',
+        'Ferramenta/Modelo, + Agent e Configurações › Provedores (CLIs e ' +
+        'Login). Instalar e Entrar no hub, sem JSON de plugin.',
     },
     {
-      title: 'Encerrar sem modal preso',
+      title: 'Login próprio, não o do Claude',
       detail:
-        'O diálogo nativo deixava uma confirmação pendente e as outras ' +
-        'Encerrar falhavam. O botão no Quadro já é o gesto.',
+        '`openclaude auth login` ou `/provider`. API key OpenAI no cofre. ' +
+        'Não compartilha o Keychain da Anthropic.',
     },
   ],
   fixes: [
     {
-      title: 'Terminais da missão, não o mosaico das 15',
+      title: 'Watcher de login não quebra o painel de contas',
       detail:
-        'A vista filtra panes. Hosts das outras não são destruídos à toa.',
-    },
-    {
-      title: 'Hybrid pergunta-depois-trabalho continua missão',
-      detail:
-        '"quanto é 1+1? Depois crie um site" não vira resposta direta.',
+        'onData opcional e unsubscribe declarado antes do finish.',
     },
   ],
 };

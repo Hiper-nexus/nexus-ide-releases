@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.70.8 — OpenClaude no seletor
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+**OpenClaude** entra como CLI de primeira classe — Iniciar missão, + Agent,
+Configurações › Provedores (CLIs e Login) e o vault de contas. No Overclock
+não dava para colar como terminal customizado; aqui escolhe e instala.
+
+- Instalar: `npm install -g @gitlawb/openclaude` (botão Instalar no hub).
+- Entrar: `openclaude auth login` ou `/provider` (OpenAI, OpenRouter, Ollama).
+- Sessão em `~/.openclaude`, **não** no Keychain do Claude.
+- MCP no HOME real. Não é Maestro verificado.
+
+Gates: testes das superfícies CLI/Providers verdes. Suite 11645 testes
+passados. tsc limpo.
+
 ## 0.70.7 — Uma de cada vez
 
 _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
