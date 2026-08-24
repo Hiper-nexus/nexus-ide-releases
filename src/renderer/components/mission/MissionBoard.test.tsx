@@ -21,6 +21,7 @@ import {
   missionEventSchema,
   type MissionEvent,
 } from '../../../shared/mission-events';
+import { useMissionInspectorStore } from '../../state/mission-inspector-store';
 
 interface ControlledQuestionState {
   readonly optionId: string | null;
@@ -212,6 +213,8 @@ const subscriptions: ChangeSubscription[] = [];
 const HEADER_ACTION_LABELS: Readonly<Partial<Record<string, true>>> = {
   'Tentar início novamente': true,
   Retomar: true,
+  'Pedir um ajuste': true,
+  'Tentar de novo': true,
   Parar: true,
 };
 
@@ -584,6 +587,43 @@ describe('MissionBoard canonical controller', () => {
 
     expect(host.querySelector('.mission-board__status')?.textContent).toBe(
       'Precisa de você',
+    );
+  });
+
+  it('Pedir um ajuste numa missão concluída reabre e vai para a Conversa', async () => {
+    api.snapshot.mockResolvedValue(
+      canonicalSnapshot({
+        state: 'completed',
+        stateReason: undefined,
+        allowedActions: ['resume'],
+      }),
+    );
+    api.command.mockResolvedValue(
+      canonicalSnapshot({
+        state: 'running',
+        stateReason: undefined,
+        allowedActions: ['direct', 'stop'],
+        version: 9,
+      }),
+    );
+    useMissionInspectorStore.setState({
+      missionId: 'mission-alpha',
+      tab: 'plan',
+      selectedAgentId: null,
+    });
+    const { host } = mount();
+    await flush();
+
+    await click(buttonByName(host, 'Pedir um ajuste'));
+    await flush();
+
+    expect(api.command).toHaveBeenCalledWith({
+      kind: 'resume',
+      missionId: 'mission-alpha',
+    });
+    expect(useMissionInspectorStore.getState().tab).toBe('chat');
+    expect(host.textContent).toContain(
+      'Diga o ajuste embaixo. A missão não fecha até você orientar.',
     );
   });
 

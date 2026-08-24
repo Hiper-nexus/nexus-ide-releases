@@ -703,6 +703,12 @@ export function MissionBoard({
       let restoreFocus = false;
       try {
         await executeCommand({ kind: action, missionId });
+        if (action === 'resume' && isCurrentBoardAction(attempt)) {
+          useMissionInspectorStore.getState().selectTab('chat');
+          setActionAnnouncement(
+            'Diga o ajuste embaixo. A missão não fecha até você orientar.',
+          );
+        }
       } catch (reason) {
         if (isCurrentBoardAction(attempt)) {
           setCommandError(

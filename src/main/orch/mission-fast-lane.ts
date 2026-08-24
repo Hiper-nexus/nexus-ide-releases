@@ -2205,7 +2205,10 @@ export async function dispatchFastLaneFirstWave(
 export async function resumeFastLaneMission(
   scope: ProjectExecutionScope,
   missionId: string,
-  options: { readonly remountKind?: LeftoverRemountKind } = {},
+  options: {
+    readonly remountKind?: LeftoverRemountKind;
+    readonly note?: string;
+  } = {},
 ): Promise<void> {
   const stores = getProjectDomainStores(scope);
   const mission = stores.missions.get(missionId);
@@ -2238,7 +2241,9 @@ export async function resumeFastLaneMission(
     if (liveMaestroSessionId) startWatcher(scope, missionId, liveMaestroSessionId);    return;
   }
   if (action === 'respawn') {
-    await respawnFastLaneOrchestrator(scope, mission);
+    await respawnFastLaneOrchestrator(scope, mission, {
+      note: options.note,
+    });
     return;
   }
 

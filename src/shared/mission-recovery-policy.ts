@@ -21,12 +21,43 @@ export const MISSION_RUNTIME_CLOSED_MARKER =
 export const MISSION_OPERATOR_APPROVED_MARKER =
   '<!-- nexus:operator-approved -->';
 
+/**
+ * O operador clicou "Pedir um ajuste". Enquanto este marcador existir, o
+ * Pronto civil NÃO pode resecar a missão só porque os handoffs antigos
+ * ainda dizem sucesso — senão o botão é um no-op.
+ */
+export const MISSION_AWAITING_ADJUSTMENT_MARKER =
+  '<!-- nexus:awaiting-adjustment -->';
+
 export function wasMissionApprovedByOperator(
   mission: Pick<RecoverableMission, 'description'>,
 ): boolean {
   return (mission.description ?? '').includes(
     MISSION_OPERATOR_APPROVED_MARKER,
   );
+}
+
+export function missionAwaitsAdjustment(
+  mission: Pick<RecoverableMission, 'description'>,
+): boolean {
+  return (mission.description ?? '').includes(
+    MISSION_AWAITING_ADJUSTMENT_MARKER,
+  );
+}
+
+export function withAwaitingAdjustmentMarker(description: string): string {
+  if (description.includes(MISSION_AWAITING_ADJUSTMENT_MARKER)) {
+    return description;
+  }
+  return `${description.trim()}\n\n${MISSION_AWAITING_ADJUSTMENT_MARKER}`.trim();
+}
+
+export function stripAwaitingAdjustmentMarker(description: string): string {
+  return description
+    .split(MISSION_AWAITING_ADJUSTMENT_MARKER)
+    .join('')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 /** Concluída pelo motor, ainda não aprovada por quem pediu. */

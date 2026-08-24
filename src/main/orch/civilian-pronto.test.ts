@@ -94,6 +94,17 @@ describe('decideCivilianPronto', () => {
     expect(decision.path).toBe('files-modified/handoff');
   });
 
+  it('Pedir um ajuste não reseca a missão com os handoffs antigos', () => {
+    const decision = decideCivilianPronto({
+      ...running,
+      workersDelivered: true,
+      boardAllDone: true,
+      awaitingOperatorAdjustment: true,
+    });
+    expect(decision.action).toBe('wait');
+    expect(decision.reason).toBe('awaiting-operator-adjustment');
+  });
+
   it('writer ainda busy espera — não fecha cedo', () => {
     expect(
       decideCivilianPronto({ ...running, liveWriterBusy: true }).action,

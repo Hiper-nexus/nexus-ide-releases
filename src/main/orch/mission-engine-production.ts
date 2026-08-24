@@ -16,6 +16,9 @@ import {
 } from "../../shared/mission-intent";
 import {
   MISSION_RUNTIME_CLOSED_MARKER,
+  missionAwaitsAdjustment,
+  stripAwaitingAdjustmentMarker,
+  withAwaitingAdjustmentMarker,
   wasMissionRuntimeClosedByOperator,
 } from "../../shared/mission-recovery-policy";
 import { stripMissionVerdictParagraph } from "../../shared/mission-block-cause";
@@ -877,6 +880,13 @@ export async function deliverMissionDirectInstruction(
   const storedForKickoff = stores.missions.get(command.missionId);
   if (storedForKickoff) {
     tryAcceptIdleKickoffForDirect(stores, storedForKickoff, deps);
+    if (missionAwaitsAdjustment(storedForKickoff)) {
+      stores.missions.updateContent?.(command.missionId, {
+        description: stripAwaitingAdjustmentMarker(
+          storedForKickoff.description ?? "",
+        ),
+      });
+    }
   }
   let initial: MissionDirectAuthority;
   try {
@@ -1405,7 +1415,7 @@ const productionMissionEngines = new MissionEngineRegistry((scope, stores) =>
         completedAwaitingReview ||
         failedRetry
       ) {
-        const description =
+        const reopened =
           leftoverParked
             ? stripMissionVerdictParagraph(
                 mission.description ?? "",
@@ -1417,6 +1427,9 @@ const productionMissionEngines = new MissionEngineRegistry((scope, stores) =>
                   MISSION_RUNTIME_CLOSED_MARKER,
                 ) || "Missão reaberta pelo operador."
               : (mission.description ?? "");
+        const description = completedAwaitingReview
+          ? withAwaitingAdjustmentMarker(reopened)
+          : reopened;
         transitionMissionEngineLifecycle(
           stores,
           {
@@ -1432,7 +1445,15 @@ const productionMissionEngines = new MissionEngineRegistry((scope, stores) =>
             description,
           },
         );
-        await resumeFastLaneMission(scope, command.missionId);
+        if (completedAwaitingReview) {
+          await resumeFastLaneMission(scope, command.missionId, {
+            remountKind: "operator",
+            note:
+              "O operador reabriu para PEDIR UM AJUSTE. Não conclua a missão. Espere a orientação dele no chat.",
+          });
+        } else {
+          await resumeFastLaneMission(scope, command.missionId);
+        }
         return;
       }
       if (

@@ -3,6 +3,7 @@ import type { ProjectDomainStoreSuite } from './project-domain-store-registry';
 import type { Mission, MissionOperatorCompleteResult } from '../../shared/orch-types';
 import {
   MISSION_OPERATOR_APPROVED_MARKER,
+  stripAwaitingAdjustmentMarker,
   wasMissionApprovedByOperator,
 } from '../../shared/mission-recovery-policy';
 
@@ -39,7 +40,7 @@ function stampOperatorApproval(
   mission: Mission,
 ): Mission {
   if (wasMissionApprovedByOperator(mission)) return mission;
-  const description = `${mission.description ?? ''}\n\n${MISSION_OPERATOR_APPROVED_MARKER}`.trim();
+  const description = `${stripAwaitingAdjustmentMarker(mission.description ?? '')}\n\n${MISSION_OPERATOR_APPROVED_MARKER}`.trim();
   // `updateContent` é opcional aqui de propósito: dublês de store em teste e
   // caminhos legados não precisam saber carimbar. Falhar aqui NUNCA pode
   // impedir o operador de concluir a missão dele.

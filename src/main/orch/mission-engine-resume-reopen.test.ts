@@ -219,9 +219,17 @@ describe('engine resume — os estados em que a UI oferece Retomar', () => {
 
     expect(liveMission.status).toBe('running');
     expect(liveMission.intentState).toBe('executing');
+    expect(liveMission.description).toContain(
+      '<!-- nexus:awaiting-adjustment -->',
+    );
     // Reabrir precisa RELIGAR o runtime — é isso que devolve um coordenador
     // digitável para o operador pedir o ajuste.
     expect(harness.resumeFastLaneMission).toHaveBeenCalledTimes(1);
+    expect(harness.resumeFastLaneMission).toHaveBeenCalledWith(
+      scope,
+      'mission-1',
+      expect.objectContaining({ remountKind: 'operator' }),
+    );
   });
 
   it('bloqueio técnico sem dispatch block continua recusado (regressão do caminho cerimonial)', async () => {

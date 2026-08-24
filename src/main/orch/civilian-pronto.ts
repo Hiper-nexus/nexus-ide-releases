@@ -9,6 +9,7 @@
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 import { missionResultSchema } from '../../shared/mission-engine-contract';
+import { missionAwaitsAdjustment } from '../../shared/mission-recovery-policy';
 import type { Handoff, Mission } from '../../shared/orch-types';
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { MissionEngine } from './mission-engine';
@@ -102,6 +103,7 @@ export function decideCivilianPronto(input: {
   readonly idleWorkersWithoutHandoff: number;
   readonly workersDelivered: boolean;
   readonly orchestratorBusy: boolean;
+  readonly awaitingOperatorAdjustment?: boolean;
 }): CivilianProntoDecision {
   const sealedDone = Math.max(0, Math.floor(input.sealedDone));
   const sealedTotal = Math.max(0, Math.floor(input.sealedTotal));
@@ -121,6 +123,12 @@ export function decideCivilianPronto(input: {
   // o turno" e o renderer varre o orquestrador. F-108.
   if (input.liveWriterBusy) {
     return { ...base, action: 'wait', reason: 'writer-busy' };
+  }
+  // Pedir um ajuste reabre running com os handoffs antigos ainda "success".
+  // Sem esta espera o Pronto reseca a missão no mesmo tick — o botão
+  // parece morto e o operador nunca chega a orientar.
+  if (input.awaitingOperatorAdjustment) {
+    return { ...base, action: 'wait', reason: 'awaiting-operator-adjustment' };
   }
   if (input.workersDelivered && !input.orchestratorBusy) {
     return {
@@ -524,6 +532,7 @@ export function maybeApplyCivilianPronto(
     idleWorkersWithoutHandoff,
     workersDelivered,
     orchestratorBusy,
+    awaitingOperatorAdjustment: missionAwaitsAdjustment(mission),
   });
 
   if (decision.action !== 'pronto') {
