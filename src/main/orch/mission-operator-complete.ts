@@ -54,6 +54,20 @@ function stampOperatorApproval(
  * verified completion — this is that path, with an operator result instead of
  * a fabricated agent receipt.
  */
+/**
+ * IPC de "Marcar como feito": missão já `done` pelo motor ainda precisa do
+ * carimbo humano. O early-return `ok: true` sem stamp deixava o chip em
+ * "Aguardando você" para sempre (DEV 24/08).
+ */
+export function planOperatorCompleteIpc(input: {
+  readonly found: boolean;
+  readonly status?: string;
+}): 'missing' | 'stamp-done' | 'engine-complete' {
+  if (!input.found) return 'missing';
+  if (input.status === 'done') return 'stamp-done';
+  return 'engine-complete';
+}
+
 export function completeMissionByOperator(
   scope: Parameters<MissionEngine['completeVerified']>[0],
   suite: Pick<ProjectDomainStoreSuite, 'missions'>,

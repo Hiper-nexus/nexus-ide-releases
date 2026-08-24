@@ -214,7 +214,10 @@ import {
 } from './mission-runtime-termination';
 import { BoundedAsyncOperationPool } from './bounded-async-operation-pool';
 import { missionControlPlaneSnapshot } from "./mission-control-plane-ipc";
-import { completeMissionByOperator } from "./mission-operator-complete";
+import {
+  completeMissionByOperator,
+  planOperatorCompleteIpc,
+} from "./mission-operator-complete";
 
 /**
  * Renderer-facing IPC for the orchestration domain, plus the domain
@@ -2193,8 +2196,22 @@ export function registerOrchIpc(): void {
       if (!current) {
         return { ok: false, error: "Missão não encontrada." };
       }
-      if (current.status === "done") {
-        return { ok: true, mission: current };
+      const completePlan = planOperatorCompleteIpc({
+        found: true,
+        status: current.status,
+      });
+      if (completePlan === "stamp-done") {
+        // Motor done ≠ humano aprovou. Sem o stamp o chip fica
+        // "Aguardando você" e Marcar como feito é um no-op (DEV 24/08).
+        return withMissionLifecycleLock(scope, missionId, () =>
+          completeMissionByOperator(scope, suite, missionId, {
+            completeVerified: (completeScope, input) =>
+              missionEngineForScope(completeScope).completeVerified(
+                completeScope,
+                input,
+              ),
+          }),
+        );
       }
       if (missionHasLivePhysicalSession(scope, missionId)) {
         return {

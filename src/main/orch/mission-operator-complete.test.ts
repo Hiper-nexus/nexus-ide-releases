@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Mission } from '../../shared/orch-types';
 import { MISSION_OPERATOR_APPROVED_MARKER } from '../../shared/mission-recovery-policy';
-import { completeMissionByOperator } from './mission-operator-complete';
+import {
+  completeMissionByOperator,
+  planOperatorCompleteIpc,
+} from './mission-operator-complete';
 import { MISSION_RUNTIME_CLOSED_MARKER } from '../../shared/mission-recovery-policy';
 import { testProjectScope } from './__tests__/scope-fixture';
 
@@ -20,6 +23,21 @@ function mission(patch: Partial<Mission> = {}): Mission {
     ...patch,
   };
 }
+
+describe('planOperatorCompleteIpc', () => {
+  it('missão done pelo motor ainda precisa do carimbo — não é no-op', () => {
+    expect(planOperatorCompleteIpc({ found: false })).toBe('missing');
+    expect(planOperatorCompleteIpc({ found: true, status: 'done' })).toBe(
+      'stamp-done',
+    );
+    expect(planOperatorCompleteIpc({ found: true, status: 'blocked' })).toBe(
+      'engine-complete',
+    );
+    expect(planOperatorCompleteIpc({ found: true, status: 'running' })).toBe(
+      'engine-complete',
+    );
+  });
+});
 
 describe('completeMissionByOperator', () => {
   const scope = testProjectScope();
