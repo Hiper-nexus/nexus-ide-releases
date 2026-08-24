@@ -1115,6 +1115,8 @@ export function MissionSetup() {
             onConnectProvider={() =>
               useProductNavigationStore.getState().openSettings('providers')
             }
+            inventory={inventory}
+            onRosterChange={changeRoster}
           />
         )}
 

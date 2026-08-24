@@ -2004,7 +2004,7 @@ describe('Caminho Expresso', () => {
     expect(objective.value).toBe('');
     expect(objective.disabled).toBe(false);
     expect(button(host, 'Iniciar missão').type).toBe('button');
-    expect(button(host, 'Avançado').type).toBe('button');
+    expect(button(host, 'Mais papéis e tamanho').type).toBe('button');
     expect(host.textContent).toContain('Anexos do cliente');
     expect(
       host.querySelector('input[type="file"][accept*="audio"]'),
@@ -2175,7 +2175,13 @@ describe('Caminho Expresso', () => {
     );
     await flush();
     await flush();
-    expect(host.textContent).toContain('Equipe automática');
+    expect(host.textContent).toContain('Quem faz o quê');
+    expect(
+      host.querySelector('[aria-label="Quem faz o quê"]'),
+    ).not.toBeNull();
+    expect(
+      host.querySelector('select[aria-label^="Ferramenta de IA"]'),
+    ).not.toBeNull();
 
     act(() => button(host, 'Iniciar missão').click());
     await flush();
@@ -2361,7 +2367,7 @@ describe('Caminho Expresso', () => {
     expect(request?.advanced?.lane).toBe('standard');
   });
 
-  it('Avançado revela o wizard completo na etapa Equipe', async () => {
+  it('Mais papéis e tamanho revela o wizard completo na etapa Equipe', async () => {
     const host = await renderAtExpress();
     enterText(
       fieldByLabel<HTMLTextAreaElement>(
@@ -2373,7 +2379,7 @@ describe('Caminho Expresso', () => {
     await flush();
     await flush();
 
-    act(() => button(host, 'Avançado').click());
+    act(() => button(host, 'Mais papéis e tamanho').click());
     await flush();
 
     expect(host.querySelector('nav[aria-label="Etapas da missão"]')).not.toBeNull();

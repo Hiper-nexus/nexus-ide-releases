@@ -233,7 +233,7 @@ export function missionRosterIssue(input: {
   return null;
 }
 
-function issueForAgent(
+export function issueForAgent(
   agent: SquadAgent,
   inventory: MissionTeamInventory,
 ): string | null {

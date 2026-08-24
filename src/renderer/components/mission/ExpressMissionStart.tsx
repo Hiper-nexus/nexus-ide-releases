@@ -1,9 +1,12 @@
 import { useEffect, useRef } from 'react';
 import { MISSION_INTENT_GOAL_MAX_CHARS } from '../../../shared/mission-intent';
+import type { SquadAgent } from '../../../shared/orch-types';
 import type { WorkspaceInfo } from '../../../shared/workspace-types';
 import type { MissionSetupDraft } from '../../state/mission-setup-store';
 import type { DirectAnswer } from '../../lib/direct-answer';
 import { MissionAttachmentPicker } from './MissionAttachmentPicker';
+import { MissionSetupRosterRow } from './MissionSetupRosterRow';
+import { issueForAgent, type MissionTeamInventory } from './TeamStep';
 
 interface ExpressMissionStartProps {
   workspace: WorkspaceInfo | null;
@@ -33,6 +36,8 @@ interface ExpressMissionStartProps {
   onAdvanced(): void;
   /** Leva direto a Providers: o pré-requisito deixa de ser texto morto. */
   onConnectProvider(): void;
+  inventory: MissionTeamInventory;
+  onRosterChange(roster: readonly SquadAgent[]): void;
 }
 
 /**
@@ -85,6 +90,8 @@ export function ExpressMissionStart({
   onStart,
   onAdvanced,
   onConnectProvider,
+  inventory,
+  onRosterChange,
 }: ExpressMissionStartProps) {
   const headingRef = useRef<HTMLHeadingElement>(null);
 
@@ -113,9 +120,8 @@ export function ExpressMissionStart({
           Descreva e pronto
         </h1>
         <p>
-          Escreva o que você quer entregar. A equipe é escolhida
-          automaticamente com a ferramenta conectada e a revisão acontece sem
-          tela extra.
+          Escreva o que você quer entregar. Em seguida escolha qual ferramenta
+          faz cada papel — Iniciar usa exatamente o que estiver aqui.
         </p>
       </header>
 
@@ -241,18 +247,47 @@ export function ExpressMissionStart({
         />
 
         {draft.roster.length > 0 ? (
-          <div className="mission-setup__section-heading">
-            <div>
-              <h2>Equipe automática</h2>
-              <p>
-                Papéis escolhidos com a ferramenta conectada. O modo livre já
-                vem ligado.
-              </p>
+          <>
+            <div className="mission-setup__section-heading">
+              <div>
+                <h2>Quem faz o quê</h2>
+                <p>
+                  Troque a ferramenta e o modelo de cada papel. O Iniciar não
+                  escolhe sozinho por cima disto.
+                </p>
+              </div>
+              <span className="mission-setup__count-chip">
+                {teamNames.length} {teamNames.length === 1 ? 'papel' : 'papéis'}
+              </span>
             </div>
-            <span className="mission-setup__count-chip">
-              {teamNames.length} {teamNames.length === 1 ? 'papel' : 'papéis'}
-            </span>
-          </div>
+            {inventory.status === 'ready' ? (
+              <ul className="mission-roster" aria-label="Quem faz o quê">
+                {draft.roster.map((agent) => (
+                  <MissionSetupRosterRow
+                    key={agent.id}
+                    agent={agent}
+                    candidates={
+                      agent.category === 'orchestrator'
+                        ? inventory.readiness.verifiedMaestros
+                        : inventory.readiness.qualifiedWorkers
+                    }
+                    providers={inventory.providers}
+                    accounts={inventory.accounts}
+                    issue={issueForAgent(agent, inventory)}
+                    removable={false}
+                    onChange={(next) =>
+                      onRosterChange(
+                        draft.roster.map((item) =>
+                          item.id === next.id ? next : item,
+                        ),
+                      )
+                    }
+                    onRemove={() => undefined}
+                  />
+                ))}
+              </ul>
+            ) : null}
+          </>
         ) : inventoryLoading ? (
           <p className="mission-setup__hint">
             Verificando as ferramentas de IA conectadas…
@@ -348,7 +383,7 @@ export function ExpressMissionStart({
           onClick={onAdvanced}
           disabled={busy}
         >
-          Avançado
+          Mais papéis e tamanho
         </button>
       </footer>
     </section>
