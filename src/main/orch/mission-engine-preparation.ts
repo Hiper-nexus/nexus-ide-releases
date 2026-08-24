@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import {
   missionPrepareRequestSchema,
@@ -102,6 +103,10 @@ export interface MissionEnginePreparationDeps {
     scope: ProjectExecutionScope,
     sourcePath: string,
   ) => MissionAttachmentSnapshot;
+  readonly sealMissionContextAttachment?: (
+    scope: ProjectExecutionScope,
+    contextPath: string,
+  ) => MissionAttachmentSnapshot;
   readonly releasePetStudioAttachments?: (
     scope: ProjectExecutionScope,
     snapshots: readonly MissionAttachmentSnapshot[],
@@ -141,6 +146,12 @@ function isExactPetStudioSquad(squad: Squad): boolean {
   );
 }
 
+function isMissionContextAttachmentPath(value: string): boolean {
+  return value
+    .replaceAll('\\', '/')
+    .startsWith('.nexus/attachments/mission-context/');
+}
+
 function requireSealedPetStudioSnapshot(
   snapshot: MissionAttachmentSnapshot,
 ): MissionAttachmentSnapshot {
@@ -153,6 +164,12 @@ function requireSealedPetStudioSnapshot(
     throw new Error('Pet Studio requires a complete sealed image identity');
   }
   return snapshot;
+}
+
+function requireSealedMissionAttachmentSnapshots(
+  snapshots: readonly MissionAttachmentSnapshot[],
+): MissionAttachmentSnapshot[] {
+  return snapshots.map((snapshot) => requireSealedPetStudioSnapshot(snapshot));
 }
 
 
@@ -305,6 +322,11 @@ const productionDeps: MissionEnginePreparationDeps = {
       workspaceRootAuthority: workspaceRootAuthorityFromScope(scope),
       checkoutId: scope.checkoutId,
     }),
+  sealMissionContextAttachment: (scope, contextPath) =>
+    sealGovernedAttachmentPath(path.join(scope.rootRealPath, contextPath), {
+      workspaceRootAuthority: workspaceRootAuthorityFromScope(scope),
+      checkoutId: scope.checkoutId,
+    }),
   releasePetStudioAttachments: (scope, snapshots) =>
     releaseSealedAttachmentSnapshots(snapshots, {
       checkoutId: scope.checkoutId,
@@ -410,6 +432,9 @@ export function createMissionEnginePreparationPorts(input: {
   const deps = input.deps ?? productionDeps;
   const sealPetStudioImage =
     deps.sealPetStudioImage ?? productionDeps.sealPetStudioImage!;
+  const sealMissionContextAttachment =
+    deps.sealMissionContextAttachment ??
+    productionDeps.sealMissionContextAttachment!;
   const releasePetStudioAttachments =
     deps.releasePetStudioAttachments ??
     productionDeps.releasePetStudioAttachments!;
@@ -492,6 +517,16 @@ export function createMissionEnginePreparationPorts(input: {
               ),
             )
           : null;
+      const missionAttachmentSnapshots = petSnapshot
+        ? []
+        : requireSealedMissionAttachmentSnapshots(
+            parsedRequest.contextPaths
+              .filter(isMissionContextAttachmentPath)
+              .slice(0, 6)
+              .map((contextPath) =>
+                sealMissionContextAttachment(scope, contextPath),
+              ),
+          );
       const request = petSnapshot
         ? missionPrepareRequestSchema.parse({
             ...parsedRequest,
@@ -549,6 +584,16 @@ export function createMissionEnginePreparationPorts(input: {
               attachmentPaths: [petSnapshot.path],
               attachmentSnapshots: [{ ...petSnapshot }],
             }
+          : missionAttachmentSnapshots.length > 0
+            ? {
+                ...baseContract,
+                attachmentPaths: missionAttachmentSnapshots.map(
+                  (snapshot) => snapshot.path,
+                ),
+                attachmentSnapshots: missionAttachmentSnapshots.map(
+                  (snapshot) => ({ ...snapshot }),
+                ),
+              }
           : baseContract,
       );
       let mission: Mission;
@@ -634,9 +679,9 @@ export function createMissionEnginePreparationPorts(input: {
             ? [...agent.allowedSkills]
             : agent.allowedSkills,
         })),
-        ...(petStudio
+        ...(mission.intentContract.attachmentSnapshots?.length
           ? {
-              attachments: mission.intentContract.attachmentSnapshots!.map(
+              attachments: mission.intentContract.attachmentSnapshots.map(
                 (snapshot) => ({ ...snapshot }),
               ),
             }

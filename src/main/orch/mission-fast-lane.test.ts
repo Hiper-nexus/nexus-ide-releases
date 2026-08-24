@@ -93,6 +93,53 @@ describe('mission fast lane', () => {
     expect(prompt).toContain('Implementar motor');
   });
 
+  it('prompt do orquestrador lista anexos selados da missão', () => {
+    const prompt = agentPrompt(
+      agent({
+        id: 'coord',
+        agentName: 'Coordenar e revisar',
+        category: 'orchestrator',
+      }),
+      mission({
+        intentContract: {
+          version: 1,
+          source: 'typed',
+          goal: 'Corrigir a UI usando o print anexado.',
+          acceptanceCriteria: ['A correção considera o print anexado.'],
+          risk: 'normal',
+          executionMode: 'autopilot',
+          contextPolicy: 'minimal',
+          intentVersion: 1,
+          budgets: {
+            planningTokens: 1,
+            executionTokens: 1,
+            maxWorkers: 1,
+            maxSteps: 1,
+          },
+          attachmentPaths: ['/sealed/checkout-a/print.png'],
+          attachmentSnapshots: [
+            {
+              path: '/sealed/checkout-a/print.png',
+              sourcePath:
+                '/workspace/.nexus/attachments/mission-context/print.png',
+              sha256: 'b'.repeat(64),
+              size: 5,
+              sealId: 'c'.repeat(32),
+              device: '10',
+              inode: '20',
+            },
+          ],
+        },
+      }),
+      ['Coordenar e revisar'],
+      false,
+    );
+
+    expect(prompt).toContain('Anexos da missão');
+    expect(prompt).toContain('/sealed/checkout-a/print.png');
+    expect(prompt).toContain('mission-context/print.png');
+  });
+
   it('plano selado de 20 stories entra no kickoff e proíbe colapso em papéis', () => {
     const titles = Array.from(
       { length: 20 },

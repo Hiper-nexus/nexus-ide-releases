@@ -691,7 +691,6 @@ function missionAttachmentReadPathsForSpawn(
   authority: Parameters<AgentSpawnHook>[2],
   hasPetStudioAuthority: boolean,
 ): readonly string[] | undefined {
-  if (!hasPetStudioAuthority) return undefined;
   const missionId = authority.context?.missionId;
   if (!missionId) return undefined;
   let mission: Mission | null;
@@ -703,22 +702,25 @@ function missionAttachmentReadPathsForSpawn(
     // hook through the configured project-domain registry.
     return undefined;
   }
-  const attachment = mission?.intentContract?.attachmentSnapshots?.[0];
+  const attachments = mission?.intentContract?.attachmentSnapshots ?? [];
+  if (!mission) return undefined;
+  if (attachments.length === 0) return undefined;
   if (
-    mission?.intentContract?.attachmentSnapshots?.length !== 1 ||
-    !attachment ||
-    attachment.sourcePath === undefined ||
-    attachment.sealId === undefined ||
-    attachment.device === undefined ||
-    attachment.inode === undefined
+    attachments.some(
+      (attachment) =>
+        attachment.sourcePath === undefined ||
+        attachment.sealId === undefined ||
+        attachment.device === undefined ||
+        attachment.inode === undefined,
+    )
   ) {
     return undefined;
   }
   if (
-    mission.squadId !== PET_STUDIO_SQUAD_ID ||
+    (hasPetStudioAuthority && mission.squadId !== PET_STUDIO_SQUAD_ID) ||
     !hasCurrentApprovedDispatchContract(mission)
   ) {
-    throw new Error("Pet Studio mission attachment authority is not current");
+    throw new Error("mission attachment authority is not current");
   }
   assertMissionSpawnAuthorityCurrent({
     missionId,
@@ -726,16 +728,19 @@ function missionAttachmentReadPathsForSpawn(
     contextRevision: authority.context?.contextRevision,
     authoritySeal: authority.context?.authoritySeal,
   });
-  const snapshots = revalidateSealedAttachmentSnapshots([attachment], {
+  const snapshots = revalidateSealedAttachmentSnapshots(attachments, {
     workspaceRootAuthority: workspaceRootAuthorityFromScope(authority.scope),
     checkoutId: authority.scope.checkoutId,
   });
   if (
-    snapshots.length !== 1 ||
-    mission.intentContract?.attachmentPaths?.length !== 1 ||
-    mission.intentContract.attachmentPaths[0] !== snapshots[0]?.path
+    snapshots.length !== attachments.length ||
+    mission.intentContract?.attachmentPaths?.length !== snapshots.length ||
+    snapshots.some(
+      (snapshot, index) =>
+        mission.intentContract?.attachmentPaths?.[index] !== snapshot.path,
+    )
   ) {
-    throw new Error("Pet Studio sealed attachment grant is invalid");
+    throw new Error("sealed attachment grant is invalid");
   }
   return Object.freeze(snapshots.map((snapshot) => snapshot.path));
 }

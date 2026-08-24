@@ -36,6 +36,15 @@ function kindLabel(path: string): string {
   return 'Texto';
 }
 
+function fileSignature(file: File): string {
+  return [
+    file.name.trim().toLowerCase(),
+    file.size,
+    file.type.toLowerCase(),
+    file.lastModified,
+  ].join('\0');
+}
+
 export function MissionAttachmentPicker({
   contextPaths,
   disabled,
@@ -46,12 +55,14 @@ export function MissionAttachmentPicker({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dropActive, setDropActive] = useState(false);
+  const importingFileKeysRef = useRef(new Set<string>());
 
   const importFiles = async (files: readonly File[]): Promise<void> => {
     if (disabled || files.length === 0) return;
     setBusy(true);
     setError(null);
     const next = [...contextPaths];
+    const nextPathSet = new Set(next);
     const currentAttachments: MissionAttachment[] = importedPaths(next).map(
       (path, index) => ({
         id: `${index}`,
@@ -64,14 +75,26 @@ export function MissionAttachmentPicker({
     );
     try {
       for (const file of files) {
+        const key = fileSignature(file);
+        if (importingFileKeysRef.current.has(key)) {
+          continue;
+        }
         const invalid = validateMissionAttachment(file, currentAttachments);
         if (invalid) {
           setError(invalid);
           break;
         }
-        const staged = await stageMissionAttachment(file);
-        currentAttachments.push(staged);
-        next.push(staged.path);
+        importingFileKeysRef.current.add(key);
+        try {
+          const staged = await stageMissionAttachment(file);
+          currentAttachments.push(staged);
+          if (!nextPathSet.has(staged.path)) {
+            nextPathSet.add(staged.path);
+            next.push(staged.path);
+          }
+        } finally {
+          importingFileKeysRef.current.delete(key);
+        }
       }
       if (next.length !== contextPaths.length) {
         onContextPathsChange(next);
@@ -197,8 +220,12 @@ export function MissionAttachmentPicker({
         <ul className="mission-attachment-picker__list" aria-label="Anexos importados">
           {currentImported.map((path) => (
             <li key={path}>
-              <span>
-                {kindLabel(path)} · {displayName(path)}
+              <span className="mission-attachment-picker__kind">
+                {kindLabel(path)}
+              </span>
+              <span className="mission-attachment-picker__file">
+                <strong>{displayName(path)}</strong>
+                <small>Copiado para a missão</small>
               </span>
               <button
                 type="button"

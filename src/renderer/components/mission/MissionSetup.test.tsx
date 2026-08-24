@@ -2030,6 +2030,59 @@ describe('Caminho Expresso', () => {
     expect(host.textContent).toContain('cliente.m4a');
   });
 
+  it('não duplica imagem colada enquanto o mesmo arquivo ainda está importando', async () => {
+    const pendingImport = deferred<{ ok: true; path: string }>();
+    api.importMissionAttachment.mockImplementationOnce(
+      async () => pendingImport.promise,
+    );
+    const host = await renderAtExpress();
+    const dropZone = host.querySelector<HTMLElement>(
+      '.mission-attachment-picker__drop',
+    );
+    expect(dropZone).not.toBeNull();
+    const image = new File(['bytes'], 'print.png', {
+      type: 'image/png',
+      lastModified: 10,
+    });
+    const clipboardData = {
+      items: [
+        {
+          kind: 'file',
+          type: 'image/png',
+          getAsFile: () => image,
+        },
+      ],
+      files: [image],
+    };
+
+    act(() => {
+      dropZone!.dispatchEvent(
+        Object.assign(new Event('paste', { bubbles: true }), {
+          clipboardData,
+        }),
+      );
+      dropZone!.dispatchEvent(
+        Object.assign(new Event('paste', { bubbles: true }), {
+          clipboardData,
+        }),
+      );
+    });
+    await flush();
+
+    expect(api.importMissionAttachment).toHaveBeenCalledTimes(1);
+    pendingImport.resolve({
+      ok: true,
+      path: '.nexus/attachments/mission-context/token-print.png',
+    });
+    await flush();
+    await flush();
+
+    expect(useMissionSetupStore.getState().draft.contextPaths).toEqual([
+      '.nexus/attachments/mission-context/token-print.png',
+    ]);
+    expect(host.textContent).toContain('print.png');
+  });
+
   it('mostra anexos do cliente no wizard avançado e importa áudio externo', async () => {
     const host = render(<MissionSetup />);
     await flush();

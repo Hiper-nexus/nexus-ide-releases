@@ -643,6 +643,19 @@ export function agentPrompt(
       ? 'O objetivo pede para abrir no navegador: o próprio Nexus abre a entrega quando a missão concluir — NÃO rode `open`/`xdg-open`. Garanta apenas que o HTML final esteja salvo no projeto e citado no summary do handoff.'
       : '';
   const designBlock = uiNote && designContext ? designContext : '';
+  const attachmentBlock =
+    mission.intentContract?.attachmentSnapshots?.length
+      ? [
+          '### Anexos da missão',
+          'Leia estes arquivos antes de decidir ou delegar. Eles foram anexados pelo operador na tela de início:',
+          ...mission.intentContract.attachmentSnapshots.map((snapshot, index) => {
+            const origin = snapshot.sourcePath
+              ? ` (origem: ${snapshot.sourcePath})`
+              : '';
+            return `${index + 1}. ${snapshot.path}${origin}`;
+          }),
+        ].join('\n')
+      : '';
   const executorCount = (squad?.agents ?? []).filter(
     (row) => row.category === 'executor',
   ).length;
@@ -655,6 +668,7 @@ export function agentPrompt(
         mission.learnings
           ? `Aprendizados anteriores: ${mission.learnings}`
           : '',
+        attachmentBlock,
         sealedPlanBlock,
         metaPaneBlock,
         browserNote,
@@ -682,6 +696,7 @@ export function agentPrompt(
     `## Missão: ${title}`,
     `Objetivo: ${objective}`,
     mission.learnings ? `Aprendizados anteriores: ${mission.learnings}` : '',
+    attachmentBlock,
     uiNote,
     securityNote,
     browserNote,

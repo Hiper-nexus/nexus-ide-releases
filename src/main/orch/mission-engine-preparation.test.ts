@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type {
+  MissionAttachmentSnapshot,
   MissionIntentContract,
   MissionOrchestratorRuntimeSnapshot,
 } from '../../shared/mission-intent';
@@ -78,6 +79,16 @@ const runtime: MissionOrchestratorRuntimeSnapshot = {
   accountId: 'account-codex',
   readOnly: false,
   nativeReadOnly: true,
+};
+
+const sealedScreenshot: MissionAttachmentSnapshot = {
+  path: '/sealed/checkout-a/print.png',
+  sourcePath: '/workspace/a/.nexus/attachments/mission-context/print.png',
+  sha256: 'b'.repeat(64),
+  size: 5,
+  sealId: 'c'.repeat(32),
+  device: '10',
+  inode: '20',
 };
 
 function createStoreHarness() {
@@ -264,6 +275,81 @@ describe('production MissionEngine preparation ports', () => {
     expect(bootstrap).toHaveBeenCalledWith(review.missionId);
     expect(discardRuntimeSquad).not.toHaveBeenCalled();
     expect(snapshot.id).toBe(review.missionId);
+  });
+
+  it('seals wizard mission-context attachments into the review and persisted contract', async () => {
+    const store = createStoreHarness();
+    const sealMissionContextAttachment = vi.fn(() => sealedScreenshot);
+    const preparation = createMissionEnginePreparationPorts({
+      scope,
+      missions: store.missions,
+      deps: {
+        now: () => 200,
+        persistRuntimeSquad: () => runtimeSquad,
+        getSquad: (id) => (id === runtimeSquad.id ? runtimeSquad : null),
+        resolveRuntime: () => runtime,
+        discardRuntimeSquad: () => true,
+        sealMissionContextAttachment,
+      },
+    });
+    const engine = new MainMissionEngine(scope, {
+      ...preparation,
+      readReviewFence: async (missionId) => {
+        const reviewSha256 =
+          store.current()?.intentContract?.approvalReviewSha256;
+        return reviewSha256 ? { missionId, reviewSha256 } : null;
+      },
+      seal: async () => undefined,
+      bootstrap: async () => undefined,
+      retryKickoff: async () => undefined,
+      resume: async () => undefined,
+      stop: async () => undefined,
+      direct: async () => undefined,
+      answerQuestion: async () => undefined,
+      blockUser: () => undefined,
+      blockTechnical: () => undefined,
+      resumeTechnical: () => undefined,
+      completeVerified: () => undefined,
+      readSnapshotView: async (missionId) => ({
+        mission: {
+          id: missionId,
+          title: request.title!,
+          objective: request.objective,
+          workspaceLabel: 'project-a/checkout-a',
+          status: 'pending',
+          version: 1,
+          updatedAt: store.current()!.updatedAt,
+        },
+        hasDispatchAuthority: true,
+        hasCurrentKickoffReceipt: true,
+        orchestratorLive: true,
+        tasks: [],
+        handoffs: [],
+        panes: [],
+        roster: runtimeSquad.agents,
+      }),
+      listSnapshotViews: async () => [],
+    });
+    const requestWithImage = {
+      ...request,
+      contextPaths: [
+        ...request.contextPaths,
+        '.nexus/attachments/mission-context/print.png',
+      ],
+    };
+
+    const review = await engine.prepare(scope, requestWithImage);
+
+    expect(sealMissionContextAttachment).toHaveBeenCalledWith(
+      scope,
+      '.nexus/attachments/mission-context/print.png',
+    );
+    expect(review.attachments).toEqual([sealedScreenshot]);
+    expect(store.current()?.intentContract).toMatchObject({
+      contextPaths: requestWithImage.contextPaths,
+      attachmentPaths: [sealedScreenshot.path],
+      attachmentSnapshots: [sealedScreenshot],
+    });
   });
 
   it('rejects a roster without one unique coordinator before writing a mission', async () => {
