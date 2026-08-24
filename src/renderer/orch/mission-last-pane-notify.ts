@@ -1,8 +1,5 @@
 import type { PaneModel } from '../../shared/types';
-import {
-  missionAwaitsAdjustment,
-  missionAwaitsOperatorReview,
-} from '../../shared/mission-recovery-policy';
+import { missionAwaitsAdjustment } from '../../shared/mission-recovery-policy';
 import { useOrchStore } from '../state/orch-store';
 import { useToastStore } from '../state/toast-store';
 
@@ -86,11 +83,7 @@ export function notifyIfLastMissionPaneClosed(
     // Pedir um ajuste / Precisa de você) não pode Encerrar nem Reabrir:
     // o diálogo nativo cancela no default e o watcher respawna o time
     // inteiro (bug de campo 24/08). Fechar UM pane fecha UM pane.
-    if (
-      mission.status === 'blocked' ||
-      missionAwaitsOperatorReview(mission) ||
-      missionAwaitsAdjustment(mission)
-    ) {
+    if (missionAwaitsAdjustment(mission)) {
       return;
     }
     // Ordem do operador (20/08): fechar o último pane É encerrar a missão —
