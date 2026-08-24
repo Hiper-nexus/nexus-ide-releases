@@ -533,7 +533,11 @@ export function isSecurityMissionText(text: string): boolean {
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/gu, '')
     .toLowerCase();
-  return /\b(seguranca|vulnerabilidad|vulneravel|auditoria\s+de\s+seguranca|pentest|owasp|xss|csrf|sql\s*injection|injecao\s+de\s+sql|autenticacao|autorizacao|permissoes?|credencial|credenciais|segredo|secrets?|token\s+de\s+acesso|criptografi|hardening|proteg(?:er|e)|proteja)\b/u.test(
+  // Sonda 23/08 (89 objetivos reais): o leigo não diz "segredo" nem
+  // "credencial" — ele diz "as senhas que estão no código", "as chaves de
+  // api", "valide os dados do formulário", "coloque https". Todas são
+  // decisões de segurança e nenhuma casava.
+  return /\b(seguranca|vulnerabilidad|vulneravel|auditoria\s+de\s+seguranca|pentest|owasp|xss|csrf|sql\s*injection|injecao\s+de\s+sql|autenticacao|autorizacao|permissoes?|credencial|credenciais|segredo|secrets?|senhas?|token\s+de\s+acesso|chaves?\s+de\s+api|api\s*keys?|variavel\s+de\s+ambiente|https?\b|ssl|tls|criptografi|sanitiz|escap(?:ar|e)|hardening|proteg(?:er|e)|proteja|valid(?:ar|e|a)\s+(?:os\s+)?dados)\b/u.test(
     canonical,
   );
 }

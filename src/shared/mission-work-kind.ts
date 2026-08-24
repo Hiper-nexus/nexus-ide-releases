@@ -205,7 +205,7 @@ const REWORK_VERB =
   /\b(refaz(?:er|e)|refac[ao]|redesenh(?:ar|e|a)|remodel(?:ar|e|a)|reformul(?:ar|e|a)|redo|rework|redesign)\b/;
 
 const CREATION_VERB =
-  /\b(implement(?:ar|e|a|acao|ing|ed)?|criar|crie|cria|construir|construa|desenvolv(?:er|a)|adicion(?:ar|e|a)|ger(?:ar|e|a)|faz(?:er|a)|faca|nov[ao]s?|suporte\s+a|habilitar|introduzir|create|build|develop|generate|make(?!\s+sure)|add|new|support\s+for|enable|introduce)\b/;
+  /\b(implement(?:ar|e|a|acao|ing|ed)?|criar|crie|cria|construir|construa|mont(?:ar|e|a)|desenvolv(?:er|a)|adicion(?:ar|e|a)|ger(?:ar|e|a)|faz(?:er|a)|faca|nov[ao]s?|suporte\s+a|habilitar|introduzir|create|build|develop|generate|make(?!\s+sure)|add|new|support\s+for|enable|introduce)\b/;
 
 /** Bare mention of a feature; never decides on its own at strong tier. */
 const FEATURE_NOUN = /\b(features?|funcionalidades?)\b/;

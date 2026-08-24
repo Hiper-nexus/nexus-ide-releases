@@ -953,41 +953,78 @@ export function isDocumentWritablePath(relativePath: string): boolean {
  * worker budget and would otherwise silently collapse the requested round.
  * Then consult (investigation), plan (design-only), and ops (infra).
  */
+/**
+ * A lane que o objetivo pede.
+ *
+ * A ordem AQUI é a regra do produto, não detalhe de implementação. Sonda de
+ * 89 objetivos reais (23/08) mostrou que os erros graves eram todos de
+ * PRECEDÊNCIA: um sinal fraco vencia uma recusa explícita, ou um substantivo
+ * de investigação vencia um verbo de conserto. A hierarquia é:
+ *
+ *   1. recusa explícita de ALTERAR  → consult   (a pessoa disse "não mexa")
+ *   2. recusa explícita de CODAR    → plan      (a pessoa disse "só o plano")
+ *   3. artefato de planejamento     → plan      (escrever um PRD é planejar)
+ *   4. qualquer verbo que ESCREVE   → standard  (numa missão mista, escrever
+ *                                                vence: a lane excludente
+ *                                                destruiria essa metade)
+ *   5. investigação                 → consult
+ *   6. planejamento                 → plan
+ *   7. operação                     → ops
+ */
 export function suggestMissionLaneFromGoal(goal: string): MissionLane | null {
   const g = goal.trim();
   if (g.length < 8) return null;
-  // Recusa explícita de escrever código vence o detector de implementação.
-  // Sem isto, "só o plano, SEM escrever código" casava em "escrever código" e
-  // "decidir a arquitetura ANTES DE implementar" casava em "implementar" —
-  // os dois viravam missão de implementação, o oposto do que foi pedido
-  // (sonda 23/08; a segunda existe de verdade no rail do operador).
-  const planOnly =
-    /\b(?:sem|nao|não)\s+(?:escrever\s+)?(?:c[oó]digo|implement(?:ar|e|a)|codar|mexer\s+no\s+c[oó]digo)\b|\b(?:s[oó]|apenas|somente)\s+o\s+plano\b|\bantes\s+de\s+implementar\b|\bn[aã]o\s+escreva\s+c[oó]digo\b/i.test(
-      g,
-    );
-  if (planOnly) return 'plan';
-  const implement =
-    // Imperativos de correção entram junto com o infinitivo: "auditoria de
-    // segurança E CORRIJA o que estiver vulnerável" caía em `consult` (=
-    // investigar SEM alterar arquivos) por casar só "auditoria" — a missão
-    // pedia o conserto e a lane proibia mexer (sonda 23/08).
-    // Missão MISTA: quando o pedido tem duas naturezas, a lane escolhida não
-    // pode PROIBIR a outra metade. Faltavam as formas imperativas e os verbos
-    // de construção — "construa o login E audite" caía em somente-leitura
-    // (não podia construir) e "planeje E depois implemente" virava só-plano
-    // (não abria trabalhadores). Sonda 23/08.
-    /\b(implement(?:ar|e|a|em)|implementa[cç][aã]o|codar|escrever\s+c[oó]digo|constru(?:ir|a|am)|mont(?:ar|e|a)|fix(ar)?\s|corrig(?:ir|e|em)|corrija|arrum(?:ar|e|a)|consert(?:ar|e|a)|proteg(?:er|e)|proteja|bug|feature|refator|merge|worktree|testes?\s+e\s+c[oó]digo)\b/i.test(
-      g,
-    );
-  if (implement) return null;
+
+  // 0. Leque de perguntas à equipe é uma FORMA de missão, não uma lane: ele
+  //    precisa da standard para abrir os panes, mesmo dizendo "sem editar".
+  //    Tem que vir antes da recusa de alteração, senão a própria frase que
+  //    descreve o leque o manda para somente-leitura.
   if (classifyStandardMissionTopology(g) === 'team-read-only-fanout') {
     return null;
   }
+
+  // 1. "sem alterar nada", "não mexa", "só me diga", "somente leitura".
+  //    Vence TUDO: é a pessoa proibindo a escrita com todas as letras.
+  const readOnlyRefusal =
+    /\b(?:sem|n[aã]o)\s+(?:alterar|mexer|mudar|modificar|editar|tocar)\b|\bn[aã]o\s+(?:mexa|altere|mude|modifique|edite|toque)\b|\b(?:s[oó]|apenas|somente)\s+(?:me\s+)?(?:diga|dize|olhe|leia|analise|revise|verifique)\b|\bsomente\s+leitura\b|\bread-?only\b/i.test(
+      g,
+    );
+  if (readOnlyRefusal) return 'consult';
+
+  // 2. "só o plano", "sem escrever código", "antes de implementar".
+  const planOnly =
+    /\b(?:sem|nao|não)\s+(?:escrever\s+)?(?:c[oó]digo|implement(?:ar|e|a)|codar|mexer\s+no\s+c[oó]digo)\b|\b(?:s[oó]|apenas|somente)\s+(?:o\s+)?(?:plano|an[aá]lise)\b|\bantes\s+de\s+implementar\b|\bn[aã]o\s+escreva\s+c[oó]digo\b/i.test(
+      g,
+    );
+  if (planOnly) return 'plan';
+
+  // 3. Escrever um PRD/documento de arquitetura É planejar, mesmo com verbo
+  //    de escrita: a lane `plan` faz o coordenador produzir o documento sem
+  //    abrir trabalhadores, que é exatamente o certo aqui.
+  const planArtifact =
+    /\b(?:prd|documento\s+de\s+arquitetura|plano\s+de\s+arquitetura|especifica[cç][aã]o\s+t[eé]cnica)\b/i.test(
+      g,
+    );
+  if (planArtifact) return 'plan';
+
+  // 4. Qualquer verbo que escreve. Em missão MISTA ("analise E refatore",
+  //    "diagnostique E otimize"), escrever vence — a lane excludente
+  //    proibiria justamente a metade que produz a entrega.
+  const writes =
+    /\b(implement(?:ar|e|a|em)|implementa[cç][aã]o|codar|escrever\s+c[oó]digo|cri(?:ar|e|a)|constru(?:ir|a|am)|mont(?:ar|e|a)|desenvolv(?:er|a)|refator(?:ar|e|a|ando)?|otimiz(?:ar|e|a)|adicion(?:ar|e|a)|integr(?:ar|e|a)|traduz(?:ir|a)|fix(ar)?\s|corrig(?:ir|e|em)|corrija|arrum(?:ar|e|a)|consert(?:ar|e|a)|resolv(?:er|a|e)|proteg(?:er|e)|proteja|bug|feature|merge|worktree|testes?\s+e\s+c[oó]digo)\b/i.test(
+      g,
+    );
+  if (writes) return null;
+
+  // 5. Investigação. Inclui as formas que o leigo usa para pedir um
+  //    diagnóstico: "descubra o motivo", "meça", "onde está o gargalo".
   const consult =
-    /\b(consultar|consulta\b|somente\s+leitura|read-?only|ler\s+logs?|status\s+de|investigar|investigue|diagn[oó]stico|diagnosticar|doctor|o\s+que\s+est[aá]\s+acontecendo|analis(?:e|a|ar|em)|an[aá]lise|analy(?:ze|sis)|audit(?:e|ar|oria)?\b|mapea(?:r|m)|mapeie|entend(?:er|a)|explique|explicar|avali(?:e|ar)|como\s+funciona|por\s*que\s+(?:o|a|isso|ele|ela)\b)\b/i.test(
+    /\b(consultar|consulta\b|somente\s+leitura|read-?only|ler\s+logs?|status\s+de|investigar|investigue|diagn[oó]stico|diagnosticar|doctor|descubr(?:a|ir)|me[cç]a|medir|gargalo|motivo\s+d|causa\s+d|o\s+que\s+est[aá]\s+acontecendo|analis(?:e|a|ar|em)|an[aá]lise|analy(?:ze|sis)|audit(?:e|ar|oria)?\b|mapea(?:r|m)|mapeie|entend(?:er|a)|explique|explicar|avali(?:e|ar)|como\s+funciona|por\s*que\s+(?:o|a|isso|ele|ela)\b)\b/i.test(
       g,
     );
   if (consult) return 'consult';
+
+  // 6. Planejamento.
   const plan =
     /\b(planejar|planejamento|plano\s+de|arquitet(ura|ar)|desenhar|design\s+(da|do|de|system)|escrever\s+(o\s+)?prd|especificar\s+abordagem|documentar\s+arquitetura|s[oó]\s+o\s+plano|sem\s+c[oó]digo)\b/i.test(
       g,

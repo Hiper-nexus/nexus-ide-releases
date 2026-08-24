@@ -160,7 +160,9 @@ const UI_TERMS: readonly UiWorkTerm[] = Object.freeze([
   },
   {
     rule: 'ui.accessibility',
-    pattern: /\b(?:acessibilidade|accessibility)\b/,
+    // "deixe o site acessível para leitor de tela" é trabalho de interface
+    // por definição — só "acessibilidade" (o substantivo) casava.
+    pattern: /\b(?:acessibilidade|acessive(?:l|is)|accessibility|accessible)\b/,
     selfEvident: true,
     authority: 'craft',
   },
@@ -194,7 +196,8 @@ const UI_TERMS: readonly UiWorkTerm[] = Object.freeze([
   { rule: 'ui.css', pattern: /\bcss\b/, selfEvident: true, authority: 'craft' },
   {
     rule: 'ui.typography',
-    pattern: /\b(?:tipografia|typography)\b/,
+    // "padronize as cores e FONTES" tinha um traço só (cores) e ficava fraco.
+    pattern: /\b(?:tipografia|typography|fontes?|fonts?)\b/,
     selfEvident: true,
     authority: 'craft',
   },
@@ -287,6 +290,20 @@ const UI_TERMS: readonly UiWorkTerm[] = Object.freeze([
   {
     rule: 'ui.button',
     pattern: /\b(?:bot(?:ao|oes)|buttons?)\b/,
+    selfEvident: false,
+    authority: 'locative',
+  },
+  {
+    // Lugares que o leigo nomeia o tempo todo e não estavam aqui: o
+    // formulário de contato, o rodapé, o cabeçalho.
+    rule: 'ui.form',
+    pattern: /\b(?:formularios?|forms?)\b/,
+    selfEvident: false,
+    authority: 'locative',
+  },
+  {
+    rule: 'ui.chrome',
+    pattern: /\b(?:rodape|footers?|cabecalhos?|headers?)\b/,
     selfEvident: false,
     authority: 'locative',
   },
