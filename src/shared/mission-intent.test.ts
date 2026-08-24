@@ -879,3 +879,39 @@ describe('suggestMissionLaneFromGoal — o que o leigo pede de verdade', () => {
     ).toBe('consult');
   });
 });
+
+describe('missão MISTA — a lane não pode proibir a outra metade', () => {
+  it('construir E auditar não vira somente-leitura', () => {
+    // Sonda 23/08: caía em `consult` por causa de "auditoria", e a missão
+    // ficava proibida de construir o que foi mandada construir.
+    expect(
+      suggestMissionLaneFromGoal(
+        'construa a area de login do sistema e faça uma auditoria de seguranca nela',
+      ),
+    ).not.toBe('consult');
+  });
+
+  it('planejar E depois implementar não vira só-plano', () => {
+    // `plan` faz o coordenador escrever o plano e NÃO abrir trabalhadores:
+    // o "depois implemente" nunca aconteceria.
+    expect(
+      suggestMissionLaneFromGoal(
+        'planeje a arquitetura do modulo de relatorios e depois implemente',
+      ),
+    ).not.toBe('plan');
+  });
+
+  it('mas a recusa EXPLÍCITA de código continua valendo', () => {
+    expect(
+      suggestMissionLaneFromGoal(
+        'planeje o formulario de contato, só o plano, sem escrever codigo',
+      ),
+    ).toBe('plan');
+  });
+
+  it('investigação pura continua somente-leitura', () => {
+    expect(
+      suggestMissionLaneFromGoal('investigue por que o login esta lento'),
+    ).toBe('consult');
+  });
+});

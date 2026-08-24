@@ -971,7 +971,12 @@ export function suggestMissionLaneFromGoal(goal: string): MissionLane | null {
     // segurança E CORRIJA o que estiver vulnerável" caía em `consult` (=
     // investigar SEM alterar arquivos) por casar só "auditoria" — a missão
     // pedia o conserto e a lane proibia mexer (sonda 23/08).
-    /\b(implementar|implementa[cç][aã]o|codar|escrever\s+c[oó]digo|fix(ar)?\s|corrig(?:ir|e|em)|corrija|arrum(?:ar|e|a)|consert(?:ar|e|a)|proteg(?:er|e)|proteja|bug|feature|refator|merge|worktree|testes?\s+e\s+c[oó]digo)\b/i.test(
+    // Missão MISTA: quando o pedido tem duas naturezas, a lane escolhida não
+    // pode PROIBIR a outra metade. Faltavam as formas imperativas e os verbos
+    // de construção — "construa o login E audite" caía em somente-leitura
+    // (não podia construir) e "planeje E depois implemente" virava só-plano
+    // (não abria trabalhadores). Sonda 23/08.
+    /\b(implement(?:ar|e|a|em)|implementa[cç][aã]o|codar|escrever\s+c[oó]digo|constru(?:ir|a|am)|mont(?:ar|e|a)|fix(ar)?\s|corrig(?:ir|e|em)|corrija|arrum(?:ar|e|a)|consert(?:ar|e|a)|proteg(?:er|e)|proteja|bug|feature|refator|merge|worktree|testes?\s+e\s+c[oó]digo)\b/i.test(
       g,
     );
   if (implement) return null;
