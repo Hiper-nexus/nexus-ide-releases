@@ -11,7 +11,16 @@ export type AttentionItem = {
   detail: string;
   /** Pane / mission / provider / PR number — used by the UI to jump. */
   targetId: string;
+  /** Botão: diz a CLI/ação, não um "Ir" genérico. */
+  actionLabel: string;
 };
+
+export function attentionKindBadge(kind: AttentionKind): string {
+  if (kind === 'cli-login') return 'Login';
+  if (kind === 'enter') return 'Enter';
+  if (kind === 'mission-stuck') return 'Missão';
+  return 'PR';
+}
 
 export type AttentionInboxInput = {
   notifications: ReadonlyArray<{
@@ -62,9 +71,10 @@ export function collectAttentionItems(
     items.push({
       id: `enter:${n.paneId}`,
       kind: 'enter',
-      title: `${n.agentLabel} pede Enter`,
-      detail: 'O agente está esperando você confirmar no terminal.',
+      title: n.agentLabel,
+      detail: `${n.agentLabel} está esperando você confirmar no terminal (Enter).`,
       targetId: n.paneId,
+      actionLabel: `Ir ao pane de ${n.agentLabel}`,
     });
   }
   const pr = input.pr;
@@ -77,6 +87,7 @@ export function collectAttentionItems(
         : `PR #${pr.number} pode entrar na fila`,
       detail: pr.title,
       targetId: String(pr.number),
+      actionLabel: `Abrir PR #${pr.number}`,
     });
   }
   for (const mission of input.missions) {
@@ -84,9 +95,10 @@ export function collectAttentionItems(
     items.push({
       id: `mission:${mission.id}`,
       kind: 'mission-stuck',
-      title: `Missão travada: ${mission.title}`,
-      detail: 'A missão precisa da sua decisão para continuar.',
+      title: mission.title,
+      detail: `A missão "${mission.title}" precisa da sua decisão para continuar.`,
       targetId: mission.id,
+      actionLabel: 'Abrir missão',
     });
   }
   for (const provider of input.providers) {
@@ -100,9 +112,10 @@ export function collectAttentionItems(
     items.push({
       id: `cli:${provider.adapterId}`,
       kind: 'cli-login',
-      title: `${provider.label} sem login`,
-      detail: 'Entre na CLI para os agentes desta conta funcionarem.',
+      title: provider.label,
+      detail: `${provider.label} precisa do seu login. Sem isso os agentes desta CLI não sobem.`,
       targetId: provider.adapterId,
+      actionLabel: `Entrar no ${provider.label}`,
     });
   }
   return items;

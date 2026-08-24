@@ -1,5 +1,10 @@
 import { useEffect, useMemo } from 'react';
-import { collectAttentionItems, type AttentionItem } from '../../shared/attention-inbox';
+import {
+  attentionKindBadge,
+  collectAttentionItems,
+  type AttentionItem,
+  type AttentionKind,
+} from '../../shared/attention-inbox';
 import { listPanes } from '../lib/split-tree';
 import {
   attentionCauseForMissionState,
@@ -14,9 +19,34 @@ import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
 import { useProductNavigationStore } from '../state/product-navigation-store';
 import { useProviderStore } from '../state/provider-store';
-import { PixelIcon } from './PixelIcon';
+import { PixelIcon, type PixelIconName } from './PixelIcon';
+import { ProviderLogo } from './ProviderLogo';
+import { openCliLoginTerminal } from './settings/cli-login-terminal';
+
+function kindIcon(kind: AttentionKind): PixelIconName {
+  if (kind === 'cli-login') return 'key';
+  if (kind === 'enter') return 'terminal';
+  if (kind === 'mission-stuck') return 'mission';
+  return 'files';
+}
 
 function jump(item: AttentionItem): void {
+  if (item.kind === 'cli-login') {
+    const provider = useProviderStore
+      .getState()
+      .providers.find((candidate) => candidate.adapterId === item.targetId);
+    if (provider?.loginCommand) {
+      void openCliLoginTerminal({
+        command: provider.loginCommand,
+        onFinished: () => {
+          void useProviderStore.getState().hydrate();
+        },
+      });
+      return;
+    }
+    useProductNavigationStore.getState().openSettings('providers');
+    return;
+  }
   if (item.kind === 'enter') {
     const pane = listPanes(useLayoutStore.getState().root).find(
       (candidate) => candidate.id === item.targetId,
@@ -101,10 +131,16 @@ export function AttentionInbox() {
 
   return (
       <div
-        className="agent-notif__panel overlay-enter"
+        className="agent-notif__panel agent-notif__panel--rail overlay-enter"
         role="dialog"
         aria-label="Lista de atenção"
-        style={{ position: 'fixed', top: 56, right: 16, left: 'auto' }}
+        style={{
+          position: 'fixed',
+          top: 'auto',
+          right: 'auto',
+          bottom: 16,
+          left: 'calc(var(--nexus-shell-rail-width, 184px) + 12px)',
+        }}
       >
         <header className="agent-notif__head">
           <div className="agent-notif__head-left">
@@ -129,21 +165,36 @@ export function AttentionInbox() {
           <ul className="agent-notif__list">
             {items.map((item) => (
               <li key={item.id} className="agent-notif__item agent-notif__item--unread">
+                <span className="agent-notif__status-icon" aria-hidden="true">
+                  {item.kind === 'cli-login' ? (
+                    <ProviderLogo
+                      adapterId={item.targetId}
+                      label={item.title}
+                      size="xs"
+                    />
+                  ) : (
+                    <PixelIcon name={kindIcon(item.kind)} size={12} />
+                  )}
+                </span>
                 <div className="agent-notif__body">
                   <div className="agent-notif__row-top">
-                    <span className="agent-notif__agent">{item.title}</span>
+                    <span className="agent-notif__agent" title={item.title}>
+                      {item.title}
+                    </span>
+                    <span className="agent-notif__badge">{attentionKindBadge(item.kind)}</span>
                   </div>
-                  <p className="agent-notif__ago">{item.detail}</p>
+                  <p className="agent-notif__detail">{item.detail}</p>
                   <div className="agent-notif__actions">
                     <button
                       type="button"
                       className="agent-notif__action agent-notif__action--primary"
+                      aria-label={item.actionLabel}
                       onClick={() => {
                         jump(item);
                         setOpen(false);
                       }}
                     >
-                      Ir
+                      {item.kind === 'cli-login' ? 'Entrar' : 'Abrir'}
                     </button>
                   </div>
                 </div>

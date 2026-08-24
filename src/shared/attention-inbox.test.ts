@@ -41,8 +41,14 @@ describe('collectAttentionItems', () => {
       'mission-stuck',
       'cli-login',
     ]);
-    expect(items[0]?.title).toContain('Enter');
+    expect(items[0]?.title).toBe('Claude');
+    expect(items[0]?.detail).toContain('Claude');
+    expect(items[0]?.actionLabel).toBe('Ir ao pane de Claude');
     expect(items[1]?.title).toContain('#4');
+    const cli = items.find((item) => item.kind === 'cli-login');
+    expect(cli?.title).toBe('Claude Code');
+    expect(cli?.detail).toContain('Claude Code');
+    expect(cli?.actionLabel).toBe('Entrar no Claude Code');
   });
 
   it('waitingAgents vivo substitui needs_input histórico', () => {
@@ -59,9 +65,10 @@ describe('collectAttentionItems', () => {
       {
         id: 'enter:live',
         kind: 'enter',
-        title: 'Claude pede Enter',
-        detail: 'O agente está esperando você confirmar no terminal.',
+        title: 'Claude',
+        detail: 'Claude está esperando você confirmar no terminal (Enter).',
         targetId: 'live',
+        actionLabel: 'Ir ao pane de Claude',
       },
     ]);
   });
