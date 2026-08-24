@@ -11,6 +11,7 @@ const ARGV_IDS = [
   'codex',
   'gemini',
   'opencode',
+  'openclaude',
   'kimi',
   'grok',
 ] as const;
@@ -52,6 +53,18 @@ describe('cli install recipes', () => {
     // Windows do agy usa PowerShell (irm|iex) — sem receita até termos um
     // caminho sem pipe de shell.
     expect(cliInstallRecipeFor('agy', 'win32')).toBeNull();
+  });
+
+  it('installs OpenClaude from the official gitlawb npm package', () => {
+    const recipe = cliInstallRecipeFor('openclaude', 'darwin');
+    expect(recipe?.kind).toBe('argv');
+    if (recipe?.kind !== 'argv') return;
+    expect(recipe.argv).toEqual([
+      'npm',
+      'install',
+      '-g',
+      '@gitlawb/openclaude',
+    ]);
   });
 
   it('never invents recipes for CLIs without a verified channel', () => {

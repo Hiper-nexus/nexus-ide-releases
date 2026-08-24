@@ -1243,7 +1243,7 @@ describe('canonical MissionEngine IPC boundary', () => {
     expect(engine.snapshot).not.toHaveBeenCalled();
   });
 
-  it('confirms and physically closes canonical stop before reading the stopped snapshot', async () => {
+  it('auto-confirms Encerrar and physically closes before reading the stopped snapshot', async () => {
     configureRendererMissionAuthority({} as never);
     const sender = owner(910);
     harness.scopes.set(sender.id, SCOPE_A);
@@ -1290,13 +1290,10 @@ describe('canonical MissionEngine IPC boundary', () => {
 
     expect(engine.command).not.toHaveBeenCalled();
     expect(engine.snapshot).toHaveBeenCalledWith(SCOPE_A, mission.id);
-    expect(harness.dialog.showMessageBox).toHaveBeenCalledTimes(1);
-    expect(
-      harness.dialog.showMessageBox.mock.invocationCallOrder[0],
-    ).toBeLessThan(engine.snapshot.mock.invocationCallOrder[0]!);
+    expect(harness.dialog.showMessageBox).not.toHaveBeenCalled();
   });
 
-  it('does not terminate or snapshot canonical stop before confirmation', async () => {
+  it('Encerrar does not open a native dialog and parks a running mission', async () => {
     configureRendererMissionAuthority({} as never);
     const sender = owner(911);
     harness.scopes.set(sender.id, SCOPE_A);
@@ -1313,13 +1310,19 @@ describe('canonical MissionEngine IPC boundary', () => {
       createdAt: 1,
       updatedAt: 2,
     };
+    const missions = {
+      get: (missionId: string) =>
+        missionId === mission.id ? mission : null,
+      list: () => [mission],
+      update: vi.fn((missionId: string, patch: Record<string, unknown>) => {
+        if (missionId !== mission.id) return null;
+        Object.assign(mission, patch);
+        return mission;
+      }),
+    };
     harness.projectStores.forScope.mockReturnValue({
       scope: SCOPE_A,
-      missions: {
-        get: (missionId: string) =>
-          missionId === mission.id ? mission : null,
-        list: () => [mission],
-      },
+      missions,
       missionPanes: { list: () => [] },
     });
     const engine = installCanonicalEngine(SCOPE_A);
@@ -1330,11 +1333,11 @@ describe('canonical MissionEngine IPC boundary', () => {
         { sender },
         { kind: 'stop', missionId: mission.id },
       ),
-    ).rejects.toThrow(/user_denied/i);
+    ).resolves.toMatchObject({ state: expect.any(String) });
 
-    expect(harness.terminatePty).not.toHaveBeenCalled();
+    expect(harness.dialog.showMessageBox).not.toHaveBeenCalled();
+    expect(missions.update).toHaveBeenCalled();
     expect(engine.command).not.toHaveBeenCalled();
-    expect(engine.snapshot).not.toHaveBeenCalled();
   });
 
   it('refuses a canonical stopped snapshot when physical exit is not proven', async () => {
@@ -3019,7 +3022,14 @@ describe('mission complete by operator IPC authority', () => {
 
     await expect(
       handler({ sender }, { missionId: stored.id }),
-    ).resolves.toEqual({ ok: true, mission: stored });
+    ).resolves.toMatchObject({
+      ok: true,
+      mission: expect.objectContaining({
+        id: stored.id,
+        status: 'done',
+        intentState: 'done',
+      }),
+    });
     expect(harness.dialog.showMessageBox).not.toHaveBeenCalled();
     expect(engine.completeVerified).not.toHaveBeenCalled();
   });

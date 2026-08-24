@@ -19,6 +19,10 @@ export const CLI_MODEL_CACHE_SOURCES: CliModelCacheSource[] = [
   { adapterId: 'codex', files: [path.join(home, '.codex', 'models_cache.json')] },
   { adapterId: 'grok', files: [path.join(home, '.grok', 'models_cache.json')] },
   { adapterId: 'claude', files: [path.join(home, '.claude', 'models_cache.json')] },
+  {
+    adapterId: 'openclaude',
+    files: [path.join(home, '.openclaude', 'models_cache.json')],
+  },
   { adapterId: 'agy', files: [path.join(home, '.gemini', 'models_cache.json')] },
   { adapterId: 'kimi', files: [path.join(home, '.kimi', 'models_cache.json')] },
   {

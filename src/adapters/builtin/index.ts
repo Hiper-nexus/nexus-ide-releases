@@ -7,6 +7,7 @@ import longcatRaw from './longcat.json';
 import aiderRaw from './aider.json';
 import agyRaw from './agy.json';
 import opencodeRaw from './opencode.json';
+import openclaudeRaw from './openclaude.json';
 import deepseekRaw from './deepseek.json';
 import qwenRaw from './qwen.json';
 
@@ -21,6 +22,7 @@ export const BUILTIN_ADAPTERS: unknown[] = [
   aiderRaw,
   agyRaw,
   opencodeRaw,
+  openclaudeRaw,
   // api-provider: sem binário — existem para gestão de key na aba Remotos
   // (router de intenção lê o vault/launcher por esses mesmos ids).
   deepseekRaw,

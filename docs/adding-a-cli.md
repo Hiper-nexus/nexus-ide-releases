@@ -173,6 +173,19 @@ The builtin Aider adapter intentionally uses `nexusMcp:"none"`: current Aider
 does not expose an official MCP client integration. It remains usable as a
 terminal/worker CLI, but is not advertised as a Nexus MCP orchestrator.
 
+### OpenClaude (`openclaude`) notes
+
+- **Package:** `@gitlawb/openclaude` (bin `openclaude`). Community Claude Code
+  fork — config and credentials live in `~/.openclaude`, not `~/.claude`.
+- **Install:** `npm install -g @gitlawb/openclaude@latest`.
+- **Auth:** `openclaude auth login`, or `/provider` for OpenAI / OpenRouter /
+  Ollama / GitHub Models. Env: `OPENAI_API_KEY`, `CLAUDE_CODE_USE_OPENAI=1`.
+- **Headless:** `openclaude -p "{{PROMPT}}"`. Resume: `--continue` / `--resume`.
+- **MCP:** `--mcp-config` like Claude. Nexus injects on the **real HOME** —
+  never a Claude-layout ephemeral overlay (that would drop `~/.openclaude` auth).
+- **Not** a verified Maestro. Worker / experimental MCP only until the
+  read-only confinement probe exists for this binary.
+
 ### Kimi Code (`kimi`) notes
 
 - **Package:** `@moonshot-ai/kimi-code` (bin `kimi`). Legacy

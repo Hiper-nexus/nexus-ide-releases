@@ -221,6 +221,35 @@ export function claudeCredentialsFileIsUsable(home = os.homedir()): boolean {
   }
 }
 
+function openclaudeConfigDir(home: string): string {
+  const override = process.env.OPENCLAUDE_CONFIG_DIR?.trim();
+  if (override) return override;
+  return path.join(home, '.openclaude');
+}
+
+/**
+ * OpenClaude fork of Claude Code credentials. Same blob shape, different
+ * home (`~/.openclaude` or `$OPENCLAUDE_CONFIG_DIR`). File presence alone
+ * after logout is not a seat.
+ */
+export function openclaudeCredentialsFileIsUsable(
+  home = os.homedir(),
+): boolean {
+  try {
+    const raw = fs.readFileSync(
+      path.join(openclaudeConfigDir(home), '.credentials.json'),
+      'utf8',
+    );
+    const parsed = JSON.parse(raw) as {
+      claudeAiOauth?: { accessToken?: unknown };
+    };
+    const token = parsed.claudeAiOauth?.accessToken;
+    return typeof token === 'string' && token.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 /** True when ~/.gemini/oauth_creds.json has a non-empty access or refresh token. */
 export function agyOauthCredsFileIsUsable(home = os.homedir()): boolean {
   const candidates = [
@@ -745,6 +774,10 @@ export function detectSubscriptionAuth(
         exists('.local', 'share', 'opencode', 'auth.json') ||
         exists('Library', 'Application Support', 'opencode', 'auth.json')
       );
+    case 'openclaude':
+      // Fork of Claude Code with a separate config home. Presence of
+      // ~/.openclaude.json is identity/theme, not a live session.
+      return openclaudeCredentialsFileIsUsable(home);
     case 'aider':
       // Aider has no native OAuth/subscription session; it consumes provider
       // API keys. Treating its config directory as login would suppress every

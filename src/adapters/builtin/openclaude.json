@@ -1,0 +1,129 @@
+{
+  "kind": "cli-pty",
+  "id": "openclaude",
+  "label": "OpenClaude",
+  "version": "1.0.0",
+  "icon": "◇",
+  "bin": "openclaude",
+  "detect": "openclaude --version",
+  "install": {
+    "method": "npm",
+    "command": "npm install -g @gitlawb/openclaude@latest"
+  },
+  "auth": {
+    "method": "api_key",
+    "envVarFallback": "OPENAI_API_KEY",
+    "credentialStore": "env",
+    "loginHint": "Rode `openclaude auth login` ou `/provider` (OpenAI, OpenRouter, Ollama), ou cole OPENAI_API_KEY. Sessão em ~/.openclaude, não em ~/.claude.",
+    "loginCommand": "openclaude auth login"
+  },
+  "spawn": {
+    "interactive": [
+      "openclaude",
+      "--model",
+      "{{MODEL}}"
+    ],
+    "headless": [
+      "openclaude",
+      "--model",
+      "{{MODEL}}",
+      "-p",
+      "{{PROMPT}}"
+    ],
+    "ptyRequired": true,
+    "resumeArgs": [
+      "--continue"
+    ],
+    "resumeIdArgs": [
+      "--resume"
+    ],
+    "extraArgs": [
+      "--disallowed-tools",
+      "Task"
+    ],
+    "sessionIdArg": "--session-id"
+  },
+  "env": {
+    "static": {
+      "MCP_TIMEOUT": "15000",
+      "MCP_TOOL_TIMEOUT": "120000"
+    },
+    "passthrough": [
+      "ANTHROPIC_API_KEY",
+      "ANTHROPIC_AUTH_TOKEN",
+      "ANTHROPIC_BASE_URL",
+      "OPENAI_API_KEY",
+      "OPENAI_BASE_URL",
+      "OPENAI_MODEL",
+      "CLAUDE_CODE_USE_OPENAI",
+      "OPENGATEWAY_API_KEY",
+      "OPENCLAUDE_CONFIG_DIR",
+      "CLAUDE_CONFIG_DIR"
+    ],
+    "ephemeralHome": false
+  },
+  "models": {
+    "flag": "--model",
+    "list": [
+      "sonnet",
+      "opus",
+      "haiku"
+    ],
+    "default": "sonnet"
+  },
+  "promptInjection": {
+    "method": "arg",
+    "trailingNewline": false,
+    "bracketedPaste": false
+  },
+  "stateParsing": {
+    "idle": {
+      "type": "timeout",
+      "ms": 800
+    },
+    "shellIntegration": false,
+    "exitCodes": {
+      "0": "ok",
+      "1": "error",
+      "2": "usage"
+    }
+  },
+  "quirks": {
+    "altScreen": true,
+    "requiresNoAutoUpdate": false,
+    "mcpAutoload": true,
+    "nexusMcp": "autoload"
+  },
+  "control": {
+    "permission": {
+      "arg": "--permission-mode",
+      "modes": {
+        "default": "default",
+        "auto": "acceptEdits",
+        "plan": "plan",
+        "bypass": "bypassPermissions"
+      },
+      "yolo": [
+        "--allow-dangerously-skip-permissions",
+        "--dangerously-skip-permissions"
+      ],
+      "safe": [
+        "--permission-mode",
+        "default"
+      ],
+      "default": ""
+    },
+    "effort": {
+      "arg": "--effort ",
+      "levels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultracode"
+      ]
+    },
+    "verbose": "--verbose"
+  }
+}

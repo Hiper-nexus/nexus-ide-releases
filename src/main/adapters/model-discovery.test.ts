@@ -15,8 +15,8 @@ import {
 } from './model-discovery';
 
 describe('model discovery', () => {
-  it('covers all 18 catalog CLIs and only wires live exec where a list command exists', () => {
-    expect(Object.keys(MODEL_DISCOVERY_INVENTORY)).toHaveLength(18);
+  it('covers all catalog CLIs and only wires live exec where a list command exists', () => {
+    expect(Object.keys(MODEL_DISCOVERY_INVENTORY)).toHaveLength(19);
     const live = Object.entries(MODEL_DISCOVERY_INVENTORY)
       .filter(([, entry]) => entry.kind === 'cli')
       .map(([id]) => id)

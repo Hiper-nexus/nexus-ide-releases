@@ -19,4 +19,10 @@ describe('sharedAuthFamily', () => {
     expect(sharedAuthFamily('grok')).toBeNull();
     expect(isExclusiveOrchestratorAdapter('codex')).toBe(false);
   });
+
+  it('does not put OpenClaude on the Anthropic keychain family', () => {
+    expect(sharedAuthFamily('openclaude')).toBeNull();
+    expect(sharedAuthFamily('openclaude-custom')).toBeNull();
+    expect(isExclusiveOrchestratorAdapter('openclaude')).toBe(false);
+  });
 });

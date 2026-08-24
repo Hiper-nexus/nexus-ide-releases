@@ -16,6 +16,7 @@ const USER_ADAPTER_DIR = path.join(
 
 const MCP_BUILTIN_IDS = new Set([
   "claude",
+  "openclaude",
   "glm",
   "longcat",
   "codex",
@@ -73,7 +74,7 @@ describe("handoffTransportForAdapter catalog", () => {
     expect(builtins.map((adapter) => adapter.id).sort()).toEqual(
       [...MCP_BUILTIN_IDS, ...PTY_FALLBACK_BUILTIN_IDS].sort(),
     );
-    expect(builtins).toHaveLength(9);
+    expect(builtins).toHaveLength(10);
   });
 
   it.each(builtins)(

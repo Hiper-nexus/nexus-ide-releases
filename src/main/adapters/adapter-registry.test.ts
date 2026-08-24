@@ -162,13 +162,19 @@ describe('builtin adapters', () => {
     BUILTIN_ADAPTERS.find(
       (adapter) => (adapter as { id?: string }).id === id,
     ) as {
+      bin?: string;
       install?: { method?: string; command?: string };
       spawn?: {
+        interactive?: string[];
         headless?: string[];
+        extraArgs?: string[];
         resumeArgs?: string[];
         resumeIdArgs?: string[];
         sessionIdArg?: string;
       };
+      env?: { ephemeralHome?: boolean };
+      models?: { default?: string };
+      auth?: { loginCommand?: string };
       control?: { permission?: { safe?: string[]; yolo?: string[] } };
     } | undefined;
 
@@ -253,6 +259,7 @@ describe('builtin adapters', () => {
 
     expect(integration('aider')).toBe('none');
     expect(integration('claude')).toBe('autoload');
+    expect(integration('openclaude')).toBe('autoload');
     expect(integration('glm')).toBe('autoload');
     expect(integration('longcat')).toBe('autoload');
     expect(integration('codex')).toBe('codex');
@@ -356,6 +363,23 @@ describe('builtin adapters', () => {
       method: 'npm',
       command: 'npm install -g @moonshot-ai/kimi-code',
     });
+    expect(builtin('openclaude')?.install).toEqual({
+      method: 'npm',
+      command: 'npm install -g @gitlawb/openclaude@latest',
+    });
+  });
+
+  it('ships OpenClaude as its own binary, not a Claude overlay', () => {
+    const openclaude = builtin('openclaude');
+    expect(openclaude?.bin).toBe('openclaude');
+    expect(openclaude?.spawn?.interactive?.[0]).toBe('openclaude');
+    expect(openclaude?.spawn?.extraArgs).toEqual([
+      '--disallowed-tools',
+      'Task',
+    ]);
+    expect(openclaude?.env?.ephemeralHome).toBe(false);
+    expect(openclaude?.models?.default).toBe('sonnet');
+    expect(openclaude?.auth?.loginCommand).toBe('openclaude auth login');
   });
 
   it('uses Kimi Code transient-model env instead of ignored legacy key vars', () => {
@@ -491,6 +515,9 @@ describe('builtin adapters', () => {
     expect(orchestrationEvidenceForAdapter(parsed('aider'), 'builtin')).toBe(
       'unsupported',
     );
+    expect(orchestrationEvidenceForAdapter(parsed('openclaude'), 'builtin')).toBe(
+      'unsupported',
+    );
     expect(orchestrationEvidenceForAdapter(parsed('claude'), 'user')).toBe(
       'experimental',
     );
@@ -614,6 +641,7 @@ describe('builtin adapters', () => {
     ['kimi', ['--continue'], ['--session']],
     ['longcat', ['--continue'], ['--resume']],
     ['opencode', ['--continue'], ['--session']],
+    ['openclaude', ['--continue'], ['--resume']],
   ])(
     '%s resumes the latest or an exact provider session with current flags',
     (id, latest, exact) => {
@@ -622,7 +650,7 @@ describe('builtin adapters', () => {
     },
   );
 
-  it.each(['claude', 'glm', 'longcat', 'grok'])(
+  it.each(['claude', 'openclaude', 'glm', 'longcat', 'grok'])(
     '%s dictates a fresh provider session id for exact per-pane recovery',
     (id) => {
       expect(builtin(id)?.spawn?.sessionIdArg).toBe('--session-id');

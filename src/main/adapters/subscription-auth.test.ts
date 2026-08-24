@@ -11,6 +11,7 @@ import {
   claudeOauthEmail,
   detectSubscriptionAuth,
   detectSubscriptionAuthReadiness,
+  openclaudeCredentialsFileIsUsable,
   resetAgyKeychainCache,
   hasSubscriptionAuthForStatus,
   kimiCredentialsBlobIsUsable,
@@ -682,6 +683,25 @@ describe('detectSubscriptionAuth', () => {
     expect(detectSubscriptionAuth('opencode', home)).toBe(false);
     touch(home, '.local', 'share', 'opencode', 'auth.json');
     expect(detectSubscriptionAuth('opencode', home)).toBe(true);
+  });
+
+  it('detects OpenClaude only with a usable ~/.openclaude credentials token', () => {
+    const home = tempHome();
+    fs.mkdirSync(path.join(home, '.openclaude'), { recursive: true });
+    fs.writeFileSync(path.join(home, '.openclaude.json'), '{"theme":"dark"}');
+    expect(detectSubscriptionAuth('openclaude', home)).toBe(false);
+    expect(openclaudeCredentialsFileIsUsable(home)).toBe(false);
+    fs.writeFileSync(
+      path.join(home, '.openclaude', '.credentials.json'),
+      JSON.stringify({ claudeAiOauth: { accessToken: '' } }),
+    );
+    expect(detectSubscriptionAuth('openclaude', home)).toBe(false);
+    fs.writeFileSync(
+      path.join(home, '.openclaude', '.credentials.json'),
+      JSON.stringify({ claudeAiOauth: { accessToken: 'oc-live' } }),
+    );
+    expect(detectSubscriptionAuth('openclaude', home)).toBe(true);
+    expect(openclaudeCredentialsFileIsUsable(home)).toBe(true);
   });
 
   it('does not treat a merely installed Grok directory as authenticated', () => {

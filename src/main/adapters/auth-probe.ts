@@ -136,6 +136,13 @@ const OAUTH_PROBES: Record<
           state: 'missing',
           detail: 'sem credencial — rode `opencode auth login`',
         },
+  openclaude: async () =>
+    hasSubscriptionAuth('openclaude')
+      ? { state: 'ok', detail: 'sessão OpenClaude em ~/.openclaude' }
+      : {
+          state: 'missing',
+          detail: 'sem sessão — rode `openclaude auth login` ou `/provider`',
+        },
   aider: async () => ({
     state: 'missing',
     detail: 'Aider usa API key — cole a chave do provedor',

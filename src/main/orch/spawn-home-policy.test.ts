@@ -196,6 +196,42 @@ describe('isThirdPartyClaudeFamily', () => {
   });
 });
 
+describe('OpenClaude is not Claude-layout HOME', () => {
+  function openclaudeAdapter(staticEnv: Record<string, string> = {}) {
+    return {
+      bin: 'openclaude' as const,
+      env: { static: staticEnv, passthrough: [], ephemeralHome: false },
+      quirks: {
+        altScreen: true,
+        requiresNoAutoUpdate: false,
+        mcpAutoload: true,
+        nexusMcp: 'autoload' as const,
+      },
+    };
+  }
+
+  it('never stages a ~/.claude ephemeral overlay for OpenClaude', () => {
+    expect(
+      shouldUseEphemeralHome(openclaudeAdapter(), true, { mode: 'hardened' }),
+    ).toBe(false);
+    expect(
+      shouldUseEphemeralHome(openclaudeAdapter(), true, {
+        mode: 'operator-choice',
+      }),
+    ).toBe(false);
+  });
+
+  it('does not treat OpenClaude as third-party Claude-family isolation', () => {
+    expect(
+      isThirdPartyClaudeFamily(
+        openclaudeAdapter({
+          ANTHROPIC_BASE_URL: 'https://api.z.ai/api/anthropic',
+        }),
+      ),
+    ).toBe(false);
+  });
+});
+
 describe('isThirdPartyClaudeFamily — lei física do binário (bug E 2026-08-17)', () => {
   // Adapter de usuário com bin 'claude' apontando para endpoint terceiro
   // (deepseek/qwen/sakana…) declarava mcpAutoload:false + nexusMcp:none —

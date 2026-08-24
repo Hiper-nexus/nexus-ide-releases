@@ -18,7 +18,8 @@ import {
  * Always answers "which account runs on the next terminal", including the
  * implicit native CLI session when nothing is vaulted yet.
  * Mesma UX para todas as CLIs (Claude, Codex, AGY, Grok, Kimi, OpenCode,
- * GLM, LongCat, Aider): só muda o label e se snapshot OAuth está disponível.
+ * OpenClaude, GLM, LongCat, Aider): só muda o label e se snapshot OAuth
+ * está disponível.
  */
 
 const UPSTREAMS = [

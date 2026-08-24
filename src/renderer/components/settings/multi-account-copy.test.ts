@@ -106,6 +106,7 @@ describe('supportsSessionSnapshot matrix (main vault)', () => {
     grok: true,
     kimi: true,
     opencode: true,
+    openclaude: false,
     glm: false,
     longcat: false,
     aider: false,

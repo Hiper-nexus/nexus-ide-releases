@@ -133,7 +133,7 @@ beforeEach(() => {
       accounts: {
         supportsSnapshot: vi.fn(async () => ({ ok: true, supported: false })),
       },
-      pty: { write: vi.fn() },
+      pty: { write: vi.fn(), onData: vi.fn(() => vi.fn()) },
     },
   });
 });

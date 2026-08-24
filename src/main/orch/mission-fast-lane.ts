@@ -169,7 +169,7 @@ export function assertFastLaneMaestroMcp(adapterId: string): void {
   if (!adapter || adapter.kind !== 'cli-pty') {
     throw new Error(
       `Maestro \`${adapterId}\` não é um adapter PTY carregado — ` +
-        'escolha claude/codex/opencode/kimi/grok (ou família Claude).',
+        'escolha claude/openclaude/codex/opencode/kimi/grok (ou família Claude).',
     );
   }
   if (!canUseNexusMcp(adapter)) {

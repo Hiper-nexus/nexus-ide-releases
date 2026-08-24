@@ -5,12 +5,14 @@
  * nunca é hardcodeada aqui (o CLI é a fonte de verdade do seu fluxo OAuth).
  *
  * Cobre exatamente os adapters com snapshot de sessão suportado
- * (supportsSessionSnapshot): claude + os file-auth de MANAGED_PROVIDER_SPECS.
+ * (supportsSessionSnapshot): claude + os file-auth de MANAGED_PROVIDER_SPECS
+ * + OpenClaude (OAuth próprio em ~/.openclaude).
  * GLM/LongCat autenticam por token injetado (API key) e ficam de fora.
  */
 export const ACCOUNT_LOGIN_COMMANDS: Readonly<Record<string, string>> =
   Object.freeze({
     claude: 'claude auth login',
+    openclaude: 'openclaude auth login',
     codex: 'codex login',
     grok: 'grok login',
     kimi: 'kimi login',

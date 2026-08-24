@@ -7,6 +7,7 @@ import longcatLogo from '../assets/provider-logos/longcat.svg';
 import aiderLogo from '../assets/provider-logos/aider.png';
 import antigravityLogo from '../assets/provider-logos/agy.svg';
 import opencodeLogo from '../assets/provider-logos/opencode.svg';
+import openclaudeLogo from '../assets/provider-logos/openclaude.svg';
 import qwenLogo from '../assets/provider-logos/qwen.svg';
 import geminiLogo from '../assets/provider-logos/gemini.svg';
 import deepseekLogo from '../assets/provider-logos/deepseek.svg';
@@ -27,6 +28,7 @@ const PROVIDER_LOGOS: Record<string, { src: string; mono?: boolean }> = {
   aider: { src: aiderLogo },
   agy: { src: antigravityLogo },
   opencode: { src: opencodeLogo, mono: true },
+  openclaude: { src: openclaudeLogo },
   // Marcas geométricas originais do Nexus (ver NOTICE.md): cada uma carrega a
   // cor de acento do provider, então nenhuma delas é `mono` — o filtro mono
   // pinta o glifo de branco e apagaria justamente o que as distingue.

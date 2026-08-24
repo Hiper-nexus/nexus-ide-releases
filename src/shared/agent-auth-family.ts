@@ -9,6 +9,9 @@ export function sharedAgentAuthFamily(
 ): string | null {
   if (!adapterId) return null;
   const id = adapterId.toLowerCase();
+  // OpenClaude is a separate binary (`~/.openclaude`). The substring
+  // "claude" must not put it on the Anthropic keychain family.
+  if (id === 'openclaude' || id.startsWith('openclaude-')) return null;
   if (id.includes('claude')) return 'claude-shared-login';
   return null;
 }

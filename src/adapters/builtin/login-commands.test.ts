@@ -11,6 +11,7 @@ const SESSION_LOGIN_IDS = [
   'grok',
   'kimi',
   'opencode',
+  'openclaude',
 ] as const;
 
 const KEY_ONLY_IDS = ['aider', 'glm', 'longcat'] as const;
@@ -73,5 +74,9 @@ describe('builtin CLI login commands', () => {
 
   it('Claude uses the dedicated auth subcommand, not a slash prompt', () => {
     expect(accountLoginCommandFor('claude')).toBe('claude auth login');
+  });
+
+  it('OpenClaude logs in with its own binary, not claude auth login', () => {
+    expect(accountLoginCommandFor('openclaude')).toBe('openclaude auth login');
   });
 });

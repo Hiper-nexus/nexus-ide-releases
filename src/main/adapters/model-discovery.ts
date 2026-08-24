@@ -161,6 +161,11 @@ export const MODEL_DISCOVERY_INVENTORY: Readonly<
     kind: 'cache',
     reason: 'sem subcomando list; usa ~/.claude/models_cache.json + bundled',
   },
+  openclaude: {
+    kind: 'cache',
+    reason:
+      'sem subcomando list; usa ~/.openclaude/models_cache.json + bundled',
+  },
   codex: {
     kind: 'cache',
     reason: 'sem subcomando list; usa ~/.codex/models_cache.json + bundled',

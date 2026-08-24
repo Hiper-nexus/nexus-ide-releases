@@ -7,13 +7,14 @@ import {
 describe('account login commands', () => {
   it('covers every session-snapshot adapter with its own login command', () => {
     // Alinhado a supportsSessionSnapshot: claude + file-auth de
-    // MANAGED_PROVIDER_SPECS (codex, grok, kimi, opencode, agy).
+    // MANAGED_PROVIDER_SPECS (codex, grok, kimi, opencode, agy) + OpenClaude.
     expect(Object.keys(ACCOUNT_LOGIN_COMMANDS).sort()).toEqual([
       'agy',
       'claude',
       'codex',
       'grok',
       'kimi',
+      'openclaude',
       'opencode',
     ]);
     for (const command of Object.values(ACCOUNT_LOGIN_COMMANDS)) {
@@ -31,5 +32,9 @@ describe('account login commands', () => {
 
   it('claude login uses the dedicated auth subcommand', () => {
     expect(accountLoginCommandFor('claude')).toBe('claude auth login');
+  });
+
+  it('openclaude login uses its own auth subcommand, not claude', () => {
+    expect(accountLoginCommandFor('openclaude')).toBe('openclaude auth login');
   });
 });

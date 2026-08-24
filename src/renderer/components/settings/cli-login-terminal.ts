@@ -88,6 +88,7 @@ function watchLoginPane(input: {
 }): void {
   let done = false;
   let output = '';
+  let unsubscribeData: (() => void) | undefined;
   const finish = () => {
     if (done) return;
     done = true;
@@ -127,7 +128,7 @@ function watchLoginPane(input: {
 
   const unsubscribeState = useSessionStateStore.subscribe(consider);
   const unsubscribeLayout = useLayoutStore.subscribe(consider);
-  const unsubscribeData = window.nexus?.pty?.onData(
+  unsubscribeData = window.nexus?.pty?.onData?.(
     input.sessionId,
     (chunk) => {
       output = (output + chunk).slice(-8_000);

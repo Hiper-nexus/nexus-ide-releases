@@ -16,6 +16,7 @@
  * - codex:    npm @openai/codex (pacote oficial OpenAI)
  * - gemini:   npm @google/gemini-cli (pacote oficial Google)
  * - opencode: brew opencode / npm opencode-ai
+ * - openclaude: npm @gitlawb/openclaude (docs gitlawb)
  * - kimi:     brew kimi-code / npm @moonshot-ai/kimi-code (platform.kimi.ai)
  * - grok:     npm @xai-official/grok (pacote oficial xAI)
  * - agy:      script oficial https://antigravity.google/cli/install.sh
@@ -111,6 +112,11 @@ const RECIPES: Readonly<Record<string, PlatformRecipes>> = Object.freeze({
     darwin: [brewRecipe('opencode'), npmRecipe('opencode-ai')],
     linux: [npmRecipe('opencode-ai')],
     win32: [npmRecipe('opencode-ai')],
+  },
+  openclaude: {
+    darwin: [npmRecipe('@gitlawb/openclaude')],
+    linux: [npmRecipe('@gitlawb/openclaude')],
+    win32: [npmRecipe('@gitlawb/openclaude')],
   },
   kimi: {
     darwin: [brewRecipe('kimi-code'), npmRecipe('@moonshot-ai/kimi-code')],

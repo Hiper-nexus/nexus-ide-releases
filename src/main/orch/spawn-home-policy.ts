@@ -28,11 +28,21 @@ export function requiresSpawnGate(meta: {
 }
 
 /**
+ * HOME com layout `~/.claude.json` / `.claude/`. mcpAutoload still means
+ * Claude Code for fixtures and GLM/LongCat. OpenClaude autoloads MCP too
+ * but stores session in `~/.openclaude` — a Claude overlay logs it out.
+ */
+function usesClaudeHomeLayout(adapter: SpawnHomeAdapter): boolean {
+  if (adapter.bin === 'openclaude') return false;
+  return adapter.quirks.mcpAutoload === true || adapter.bin === 'claude';
+}
+
+/**
  * HOME efêmero é uma técnica do adapter Claude-like no modo Hardened e para
  * endpoints de terceiro: ele enxerga settings/MCP do Nexus sem herdar hooks
  * globais. No autopiloto, o Claude nativo mantém HOME/Keychain reais; MCP e
- * autoridade continuam confinados à sessão. CLIs como Codex, AGY, Kimi e Grok
- * guardam login no HOME real; trocar HOME nelas quebra auth.
+ * autoridade continuam confinados à sessão. CLIs como Codex, AGY, Kimi, Grok
+ * e OpenClaude guardam login no HOME real; trocar HOME nelas quebra auth.
  */
 export function shouldUseEphemeralHome(
   adapter: SpawnHomeAdapter,
@@ -41,7 +51,7 @@ export function shouldUseEphemeralHome(
 ): boolean {
   // Lei física do binário: ver isThirdPartyClaudeFamily — bin `claude`
   // terceiro precisa do mesmo tratamento de home da família.
-  if (!adapter.quirks.mcpAutoload && adapter.bin !== 'claude') return false;
+  if (!usesClaudeHomeLayout(adapter)) return false;
 
   const isThirdParty = isThirdPartyClaudeFamily(
     adapter,
@@ -81,10 +91,9 @@ export function isThirdPartyClaudeFamily(
   // `claude` apontando para endpoint terceiro (deepseek/qwen/sakana…) podia
   // declarar mcpAutoload false — nascia sem MCP e sem HOME isolado, e o
   // binário reescrevia o OAuth da assinatura nativa. Se roda o binário
-  // claude contra terceiro, É família Claude terceira.
-  const isClaudeBinary =
-    adapter.quirks.mcpAutoload || adapter.bin === 'claude';
-  return isClaudeBinary && baseUrls.some(isThirdPartyBaseUrl);
+  // claude contra terceiro, É família Claude terceira. mcpAutoload sozinho
+  // não basta: OpenClaude também autoload MCP e NÃO é layout ~/.claude.
+  return usesClaudeHomeLayout(adapter) && baseUrls.some(isThirdPartyBaseUrl);
 }
 
 /**
