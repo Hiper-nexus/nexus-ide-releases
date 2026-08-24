@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.70.1 — O router entende o que você pediu
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+Sonda com **89 objetivos reais** de e-commerce, SaaS, login, pagamentos, API,
+dados, mobile, marketing, infraestrutura, testes, acessibilidade, legado e
+missões mistas. Encontrou **17 defeitos de roteamento** — todos corrigidos.
+
+### A missão fazia o oposto do que você pediu
+
+- **"analise o código e já refatore"** e **"diagnostique a lentidão e
+  otimize"** entravam em modo somente-leitura: a missão era **proibida de
+  consertar** o que você mandou consertar.
+- **"sem alterar nada, só me diga"** e **"não mexa em nada"** não eram lidos
+  como recusa — a missão **saía com permissão de escrever**.
+- **"escreva o PRD"** virava implementação. Escrever um PRD é planejar.
+- **"descubra o motivo"** e **"meça onde está o gargalo"** não eram
+  reconhecidos como investigação.
+
+### O produto só entendia palavra de programador
+
+Segurança respondia a "segredo" e "credencial" — que ninguém fala. Agora
+entende **"as senhas que estão no código"**, **"chaves de api"**, **"variável
+de ambiente"**, **https**, **"valide os dados do formulário"**.
+
+Em interface faltavam **formulário**, **rodapé**, **cabeçalho**, **fontes** e
+**"acessível"** (só existia "acessibilidade"). *"Coloque um formulário de
+contato no rodapé"* não recebia o DESIGN.md.
+
+### Missão com mais de uma natureza
+
+Quando o pedido tem duas metades ("construa o login **e** audite a
+segurança"), a lane deixa de proibir uma delas: vence a que entrega.
+
+Gates: tsc limpo, `security:renderer-sinks` 0 sinks, `design-system-sensor`
+0 findings, **1196/1196 arquivos e 11558/11558 testes** — incluindo a matriz
+de 188 asserções que trava os 17 defeitos.
+
 ## 0.70.0 — A missão fala com você
 
 _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._

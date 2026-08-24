@@ -13,9 +13,9 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.70.0',
+  version: '0.70.1',
   date: '2026-08-23',
-  codename: 'A missão fala com você',
+  codename: 'O router entende o que você pediu',
   summary:
     'Auditoria da interface inteira pela ótica de quem não programa: 159 ' +
     'achados verificados contra o código, em três ondas — e as três fecham ' +
@@ -59,6 +59,26 @@ export const CURRENT_RELEASE: AppRelease = {
     },
   ],
   fixes: [
+    {
+      title: 'A missão era proibida de consertar o que você mandou consertar',
+      detail:
+        '"Analise o código e já refatore" e "diagnostique e otimize" entravam ' +
+        'em modo somente-leitura. E o inverso também falhava: "sem alterar ' +
+        'nada, só me diga" saía com permissão de escrever.',
+    },
+    {
+      title: 'Segurança só entendia palavra de programador',
+      detail:
+        'Respondia a "segredo" e "credencial". Agora entende "as senhas que ' +
+        'estão no código", "chaves de api", "variável de ambiente", https e ' +
+        '"valide os dados do formulário".',
+    },
+    {
+      title: 'Formulário, rodapé e fontes não eram interface',
+      detail:
+        '"Coloque um formulário de contato no rodapé" não recebia o ' +
+        'DESIGN.md. Faltavam também cabeçalho, fontes e a palavra "acessível".',
+    },
     {
       title: 'Uma palavra por estado',
       detail:
