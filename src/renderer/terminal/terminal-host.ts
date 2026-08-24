@@ -34,8 +34,10 @@ import {
   decideExitedPaneKey,
   decideStaleAuthorityRecovery,
   decideUnlockRetiredMissionPane,
+  latestCivilianDeliverySummary,
   MISSION_HOLD_NOTICE,
   missionOwnedExitNotice,
+  orchestratorOwnedExitLines,
   STALE_AUTHORITY_SYNC_NOTICE,
   STALE_AUTHORITY_UNLOCK_NOTICE,
   STANDALONE_HOLD_NOTICE,
@@ -937,15 +939,39 @@ function startSpawn(
             // Shutdown: o aviso único do grid já falou; banner por pane é
             // ruído (bug I).
           } else if (missionStillOwnsPane(pane.id, pane)) {
-            // Fim NORMAL de turno (code 0) = UMA linha cinza, sem instrução —
-            // C-194.1 já processou a entrega; gritar "Digite para religar" em
-            // cada worker era o atrito que o operador leu como quebra (19/08).
-            const notice = missionOwnedExitNotice(exitCode);
-            host.term.writeln(
-              exitCode === 0
-                ? `\r\n\x1b[90m${notice}\x1b[0m`
-                : `\r\n\x1b[33m${notice}\x1b[0m`,
-            );
+            // Worker code 0 = entrega do AGENTE, não fim da missão. Maestro
+            // nunca diz "turno encerrado": o operador lia como missão
+            // fechada e perdia o resultado (print 24/08, 2+2=4 no JSON).
+            if (pane.role === 'orchestrator') {
+              const missionId = missionIdOfPane(pane.id, pane);
+              const orch = useOrchStore.getState();
+              const summary = missionId
+                ? latestCivilianDeliverySummary({
+                    missionId,
+                    resultSummary: orch.missions.find(
+                      (candidate) => candidate.id === missionId,
+                    )?.result?.summary,
+                    handoffs: orch.handoffs,
+                  })
+                : null;
+              const lines = orchestratorOwnedExitLines({
+                exitCode,
+                deliverySummary: summary,
+              });
+              lines.forEach((line, index) => {
+                const color = exitCode === 0 ? '36' : '33';
+                host.term.writeln(
+                  `${index === 0 ? '\r\n' : ''}\x1b[${color}m${line}\x1b[0m`,
+                );
+              });
+            } else {
+              const notice = missionOwnedExitNotice(exitCode);
+              host.term.writeln(
+                exitCode === 0
+                  ? `\r\n\x1b[90m${notice}\x1b[0m`
+                  : `\r\n\x1b[33m${notice}\x1b[0m`,
+              );
+            }
           } else if (exitCode === 0 && missionOfPaneIsDone(pane.id, pane)) {
             host.term.writeln(
               '\r\n\x1b[32m[nexus] ✔ missão concluída — este pane cumpriu o papel.\x1b[0m',

@@ -127,26 +127,71 @@ export function pruneWouldLeaveOperatorMute(
 }
 
 export const MISSION_OWNED_EXIT_NOTICE =
-  '[nexus] turno encerrado. Digite para religar o Maestro — a missão continua no rail.';
+  '[nexus] agente entregou. Digite no Maestro para pedir um ajuste — a missão não encerrou.';
+
+function clampDeliverySummary(raw: string): string | null {
+  const line = raw.replace(/\s+/g, ' ').trim();
+  if (line.length === 0 || line.startsWith('{')) return null;
+  return line.length > 280 ? `${line.slice(0, 277)}…` : line;
+}
+
+export function latestCivilianDeliverySummary(input: {
+  readonly missionId: string;
+  readonly resultSummary?: string | null;
+  readonly handoffs: readonly {
+    readonly missionId?: string;
+    readonly status?: string;
+    readonly summary?: string;
+    readonly createdAt?: number;
+  }[];
+}): string | null {
+  const fromResult = clampDeliverySummary(input.resultSummary ?? '');
+  if (fromResult) return fromResult;
+  const successes = input.handoffs.filter(
+    (handoff) =>
+      handoff.missionId === input.missionId &&
+      handoff.status === 'success' &&
+      typeof handoff.summary === 'string',
+  );
+  if (successes.length === 0) return null;
+  const latest = successes.reduce((winner, candidate) =>
+    (candidate.createdAt ?? 0) >= (winner.createdAt ?? 0) ? candidate : winner,
+  );
+  return clampDeliverySummary(latest.summary ?? '');
+}
 
 /**
- * Exit de pane de missão: SILÊNCIO no normal, instrução só no anormal.
- *
- * C-194.1 fecha o turno do worker mecanicamente — exit code 0 é o fim
- * NORMAL de turno, não um incidente. Imprimir "Digite para religar o
- * Maestro" em cada worker a cada turno (voo real 19/08, 4 panes gritando
- * ao mesmo tempo) só cria atrito: o operador lê como quebra e digita à
- * toa. Uma linha cinza discreta basta. Instrução de ação aparece apenas
- * quando o processo CAIU (code ≠ 0) — aí digitar religa de verdade.
+ * Exit de worker: o turno do AGENTE acabou, a missão não. "turno encerrado"
+ * em 4 panes lia como missão fechada (print 24/08: resultado 2+2=4 no JSON
+ * e Maestro morto). Instrução de tecla só quando o processo CAIU.
  */
 export function missionOwnedExitNotice(exitCode: number): string {
   if (exitCode === 0) {
-    return `[nexus] turno encerrado — a missão segue no rail.`;
+    return `[nexus] agente entregou — a missão segue no Maestro.`;
   }
   return (
     `[nexus] processo caiu (code ${exitCode}). ` +
     'Digite para religar — a missão continua no rail.'
   );
+}
+
+/**
+ * O coordenador NUNCA anuncia que a missão encerrou. Só o humano fecha.
+ * Se houver entrega, ela aparece aqui — o operador não precisa caçar JSON
+ * noutro pane.
+ */
+export function orchestratorOwnedExitLines(input: {
+  readonly exitCode: number;
+  readonly deliverySummary?: string | null;
+}): readonly string[] {
+  if (input.exitCode !== 0) {
+    return [missionOwnedExitNotice(input.exitCode)];
+  }
+  const summary = clampDeliverySummary(input.deliverySummary ?? '');
+  return [
+    ...(summary ? [`[nexus] resultado: ${summary}`] : []),
+    '[nexus] a missão NÃO encerrou. Digite aqui para pedir um ajuste.',
+  ];
 }
 
 export const STALE_AUTHORITY_SYNC_NOTICE =

@@ -5,9 +5,11 @@ import {
   decideExitedPaneKey,
   decideStaleAuthorityRecovery,
   decideUnlockRetiredMissionPane,
+  latestCivilianDeliverySummary,
   MISSION_HOLD_NOTICE,
   MISSION_OWNED_EXIT_NOTICE,
   missionOwnedExitNotice,
+  orchestratorOwnedExitLines,
   pruneWouldLeaveOperatorMute,
   STANDALONE_HOLD_NOTICE,
   STALE_AUTHORITY_SYNC_NOTICE,
@@ -232,24 +234,90 @@ describe('copy alinhada ao caminho real', () => {
     expect(STANDALONE_HOLD_NOTICE).toMatch(/Confirme o diálogo/);
   });
 
-  it('rodapé e retire apontam para o rail, não para ctrl fictício nem shell mentiroso', () => {
-    expect(MISSION_OWNED_EXIT_NOTICE).toMatch(/Digite para religar/);
-    expect(MISSION_OWNED_EXIT_NOTICE).toMatch(/rail/);
+  it('rodapé e retire apontam para o Maestro, não para ctrl fictício nem shell mentiroso', () => {
+    expect(MISSION_OWNED_EXIT_NOTICE).toMatch(/Digite no Maestro/);
+    expect(MISSION_OWNED_EXIT_NOTICE).toMatch(/não encerrou/);
     expect(MISSION_OWNED_EXIT_NOTICE).not.toMatch(/ctrl/i);
     expect(STALE_AUTHORITY_SYNC_NOTICE).toMatch(/uma vez/);
     expect(STALE_AUTHORITY_UNLOCK_NOTICE).toMatch(/Digite para um shell/);
     expect(BLOCKED_RESUME_NOTICE).toMatch(/autoridade principal/);
   });
 
-  it('exit NORMAL de turno (code 0) é silêncio — nenhuma instrução ao operador', () => {
-    // C-194.1: worker encerra o turno com code 0 a cada entrega. Gritar
-    // "Digite para religar" em cada worker (4 panes ao mesmo tempo, 19/08)
-    // era o atrito que o operador leu como quebra.
+  it('exit NORMAL de worker não diz que a missão encerrou', () => {
+    // C-194.1: worker code 0 a cada entrega. "turno encerrado" em 4 panes
+    // lia como missão fechada (print 24/08: 2+2=4 no JSON, Maestro morto).
     const normal = missionOwnedExitNotice(0);
-    expect(normal).toMatch(/turno encerrado/);
-    expect(normal).toMatch(/rail/);
+    expect(normal).toMatch(/agente entregou/);
+    expect(normal).toMatch(/Maestro/);
+    expect(normal).not.toMatch(/turno encerrado/);
     expect(normal).not.toMatch(/Digite/i);
     expect(normal).not.toMatch(/Reinici/i);
+  });
+
+  it('Maestro no exit 0 mostra o resultado e diz que a missão NÃO encerrou', () => {
+    const lines = orchestratorOwnedExitLines({
+      exitCode: 0,
+      deliverySummary: 'Resposta calculada: 2+2 = 4.',
+    });
+    expect(lines.join('\n')).toMatch(/2\+2 = 4/);
+    expect(lines.join('\n')).toMatch(/NÃO encerrou/);
+    expect(lines.join('\n')).toMatch(/Digite/i);
+    expect(lines.join('\n')).not.toMatch(/turno encerrado/);
+  });
+
+  it('Maestro sem resumo ainda deixa o canal de ajuste aberto', () => {
+    const lines = orchestratorOwnedExitLines({ exitCode: 0 });
+    expect(lines.join('\n')).toMatch(/NÃO encerrou/);
+    expect(lines.join('\n')).not.toMatch(/resultado:/);
+  });
+
+  it('pega o resumo civil da missão, senão o último handoff de sucesso', () => {
+    expect(
+      latestCivilianDeliverySummary({
+        missionId: 'm1',
+        resultSummary: 'Pronto: 4.',
+        handoffs: [
+          {
+            missionId: 'm1',
+            status: 'success',
+            summary: 'Resposta calculada: 2+2 = 4.',
+            createdAt: 2,
+          },
+        ],
+      }),
+    ).toBe('Pronto: 4.');
+    expect(
+      latestCivilianDeliverySummary({
+        missionId: 'm1',
+        handoffs: [
+          {
+            missionId: 'm1',
+            status: 'failed',
+            summary: 'caiu',
+            createdAt: 3,
+          },
+          {
+            missionId: 'm1',
+            status: 'success',
+            summary: 'Resposta calculada: 2+2 = 4.',
+            createdAt: 2,
+          },
+          {
+            missionId: 'm0',
+            status: 'success',
+            summary: 'outra missão',
+            createdAt: 9,
+          },
+        ],
+      }),
+    ).toBe('Resposta calculada: 2+2 = 4.');
+    expect(
+      latestCivilianDeliverySummary({
+        missionId: 'm1',
+        resultSummary: '{"ok":true}',
+        handoffs: [],
+      }),
+    ).toBeNull();
   });
 
   it('processo que CAIU (code ≠ 0) mantém a instrução acionável', () => {
