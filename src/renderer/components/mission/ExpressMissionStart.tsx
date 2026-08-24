@@ -7,6 +7,7 @@ import type { DirectAnswer } from '../../lib/direct-answer';
 import { MissionAttachmentPicker } from './MissionAttachmentPicker';
 import { MissionSetupRosterRow } from './MissionSetupRosterRow';
 import { issueForAgent, type MissionTeamInventory } from './TeamStep';
+import { useObjectiveDictation } from './use-objective-dictation';
 
 interface ExpressMissionStartProps {
   workspace: WorkspaceInfo | null;
@@ -108,6 +109,18 @@ export function ExpressMissionStart({
     .map((agent) => agent.agentName)
     .filter(Boolean);
 
+  const dictation = useObjectiveDictation({
+    enabled: !draftEditingDisabled && !busy,
+    onTranscript: (text) => {
+      const current = draft.objective;
+      const next =
+        current.trim().length > 0
+          ? `${current.replace(/\s+$/u, '')} ${text}`
+          : text;
+      onObjectiveChange(next.slice(0, MISSION_INTENT_GOAL_MAX_CHARS));
+    },
+  });
+
   return (
     <section
       className="mission-setup__step mission-setup__step--express"
@@ -172,9 +185,40 @@ export function ExpressMissionStart({
         </div>
 
         <div className="mission-setup__field mission-setup__objective-field">
-          <label htmlFor="express-objective">
-            O que você quer que a missão entregue?
-          </label>
+          <div className="mission-setup__objective-label-row">
+            <label htmlFor="express-objective">
+              O que você quer que a missão entregue?
+            </label>
+            <button
+              type="button"
+              className={`mission-setup__button mission-setup__button--secondary mission-setup__dictation-button${
+                dictation.state === 'listening'
+                  ? ' mission-setup__dictation-button--live'
+                  : ''
+              }`}
+              aria-pressed={dictation.state === 'listening'}
+              disabled={
+                !dictation.available ||
+                draftEditingDisabled ||
+                busy ||
+                dictation.state === 'busy'
+              }
+              onClick={dictation.toggle}
+              title={
+                !dictation.available
+                  ? 'Ligue o microfone em Configurações › Voz para ditar o objetivo'
+                  : dictation.state === 'listening'
+                    ? 'Clique para parar e transcrever no objetivo'
+                    : 'Fale o objetivo — o Nexus transcreve aqui (ou segure Espaço fora dos campos de texto)'
+              }
+            >
+              {dictation.state === 'listening'
+                ? '◼ Parar e transcrever'
+                : dictation.state === 'busy'
+                  ? 'Transcrevendo…'
+                  : 'Ditar objetivo'}
+            </button>
+          </div>
           <textarea
             id="express-objective"
             value={draft.objective}
@@ -215,6 +259,12 @@ export function ExpressMissionStart({
             ))}
           </div>
         </div>
+
+        <MissionAttachmentPicker
+          contextPaths={draft.contextPaths}
+          disabled={draftEditingDisabled || busy}
+          onContextPathsChange={onContextPathsChange}
+        />
 
         {draft.roster.length > 0 ? (
           <>
@@ -380,12 +430,6 @@ export function ExpressMissionStart({
             dizer que terminou.
           </span>
         </div>
-
-        <MissionAttachmentPicker
-          contextPaths={draft.contextPaths}
-          disabled={draftEditingDisabled || busy}
-          onContextPathsChange={onContextPathsChange}
-        />
       </div>
     </section>
   );

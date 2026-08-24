@@ -2005,6 +2005,7 @@ describe('Caminho Expresso', () => {
     expect(objective.disabled).toBe(false);
     expect(button(host, 'Iniciar missão').type).toBe('button');
     expect(button(host, 'Mais papéis e tamanho').type).toBe('button');
+    expect(button(host, 'Ditar objetivo').type).toBe('button');
     await flush();
     await flush();
     expect(host.textContent).toContain('Quem faz o quê');
