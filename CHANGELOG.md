@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.70.3 — Peça o ajuste de verdade
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+Pedir um ajuste **espera você orientar**. O print colado entra **uma vez** e
+o Maestro lê o arquivo do projeto. A lista Atenção diz **qual CLI** pede login.
+
+### Pedir um ajuste não era um no-op à toa
+
+O botão reabria `running` e o Pronto, no mesmo instante, via os handoffs
+antigos e pintava de novo “Aguardando você”. Sem campo para escrever.
+
+- Resume da revisão **segura o Pronto** até o ajuste no chat.
+- O quadro abre a aba **Conversa** com o campo embaixo.
+- Só depois o Maestro trabalha de novo.
+
+### Print na tela Iniciar
+
+- Cola no drop + na janela **não duplica** a mesma imagem.
+- O kickoff manda `.nexus/attachments/mission-context/…` e pede a
+  ferramenta Read — não o selo fora do checkout.
+
+### Lista Atenção
+
+Cards “C…” e o botão Ir virado círculo: o layout esmagava o nome da CLI.
+Agora: logo, **Cursor Agent / Gemini CLI / …**, selo Login, **Entrar**
+abre o login daquela ferramenta.
+
+F-109 e o hold de ajuste. Verificado no app DEV via CDP.
+
+Gates: tsc limpo, `security:renderer-sinks` 0 sinks, testes focados verdes.
+
 ## 0.70.2 — O Maestro fica até você encerrar
 
 _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._

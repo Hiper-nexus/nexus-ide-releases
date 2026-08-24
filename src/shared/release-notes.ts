@@ -13,43 +13,41 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.70.2',
+  version: '0.70.3',
   date: '2026-08-24',
-  codename: 'O Maestro fica até você encerrar',
+  codename: 'Peça o ajuste de verdade',
   summary:
-    'Quando a missão termina, o orquestrador não some mais. O header diz ' +
-    '"Aguardando você", o pane do coordenador permanece, e só você marca ' +
-    'como feito — para ver se deu certo e pedir ajuste.',
+    'Pedir um ajuste agora abre a Conversa e espera você orientar. O print ' +
+    'colado entra uma vez e o Maestro lê o arquivo do projeto. A lista ' +
+    'Atenção mostra qual CLI pede login.',
   highlights: [
     {
-      title: 'O orquestrador fica até você encerrar',
+      title: 'Pedir um ajuste de verdade',
       detail:
-        'O motor concluir pintava Pronto e varria o pane do Maestro quando ' +
-        'a sessão já tinha saído. Agora o coordenador permanece: ' +
-        '"Aguardando você", "Pedir um ajuste", "Marcar como feito".',
+        'O botão reabria a missão e o motor pintava Pronto no mesmo instante, ' +
+        'porque os handoffs antigos ainda diziam sucesso. Agora segura até ' +
+        'você escrever o ajuste no chat.',
     },
     {
-      title: 'Não fecha cedo com o worker ainda trabalhando',
+      title: 'O print colado chega no Maestro',
       detail:
-        'Se um agente ainda está "Working", a missão não vira Pronto. O ' +
-        'atalho "todos entregaram" esperava o Maestro parar e ignorava o ' +
-        'worker vivo.',
+        'A cola duplicava a imagem na tela Iniciar e o briefing mandava o ' +
+        'caminho selado fora do checkout. Uma linha na UI; o Read abre ' +
+        '.nexus/attachments/mission-context.',
     },
   ],
   fixes: [
     {
-      title: 'Tecla no Maestro morto abria outro pane e apagava este',
+      title: 'Atenção mostrava C… e um círculo Ir',
       detail:
-        'Pedir um ajuste no coordenador de uma missão concluída nascia noutro ' +
-        'leaf; este virava histórico e a varredura o fechava. Agora revive no ' +
-        'mesmo pane.',
+        'O card cabia em 22px sem o ícone. Agora cada item traz o nome da ' +
+        'CLI, o selo Login e Entrar abre o login daquela ferramenta.',
     },
     {
-      title: 'Imagem colada duas vezes e o Maestro não lia o anexo',
+      title: 'O orquestrador continua até você encerrar',
       detail:
-        'Colar a mesma imagem na tela Iniciar inseria o path duplicado, e o ' +
-        'orquestrador ignorava o arquivo. Agora deduplica e o Maestro lê o ' +
-        'anexo antes de decidir.',
+        'Herdado do 0.70.2: missão concluída fica Aguardando você; só o ' +
+        'humano marca como feito.',
     },
   ],
 };
