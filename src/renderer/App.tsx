@@ -87,6 +87,7 @@ import { applyProgressiveLaunchIfPending } from './lib/progressive-launch';
 import { useProductFlags } from './lib/use-product-flags';
 import { FEATURE_FLAG_IDS } from '../shared/feature-flags';
 import { bootGreeting } from '../shared/endorphin';
+import { missionAwaitsOperatorReview } from '../shared/mission-recovery-policy';
 import { AppShell } from './components/product/AppShell';
 import { Launcher } from './components/product/Launcher';
 import {
@@ -201,6 +202,7 @@ export function App() {
   const recentWorkspaces = useWorkspaceStore((state) => state.recents);
   const destination = useProductNavigationStore((state) => state.destination);
   const missionSummaries = useOrchStore((state) => state.missionSummaries);
+  const orchMissions = useOrchStore((state) => state.missions);
   const crossWorkspaceSummaries = useOrchStore(
     (state) => state.crossWorkspaceSummaries,
   );
@@ -947,6 +949,9 @@ export function App() {
         name: workspace.name,
       })),
       currentSummaries: missionSummaries,
+      currentAwaitingReviewIds: orchMissions
+        .filter((mission) => missionAwaitsOperatorReview(mission))
+        .map((mission) => mission.id),
       crossWorkspaceSummaries,
     });
   const projectOverviewEnabled =

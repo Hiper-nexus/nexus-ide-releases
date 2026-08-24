@@ -100,6 +100,29 @@ describe('decideCivilianPronto', () => {
     ).toBe('wait');
   });
 
+  it('writer ainda busy espera mesmo quando todos os workers já entregaram', () => {
+    expect(
+      decideCivilianPronto({
+        ...running,
+        workersDelivered: true,
+        orchestratorBusy: false,
+        liveWriterBusy: true,
+      }).action,
+    ).toBe('wait');
+  });
+
+  it('board N/N com writer busy não pinta Pronto', () => {
+    expect(
+      decideCivilianPronto({
+        ...running,
+        boardAllDone: true,
+        sealedDone: 20,
+        sealedTotal: 20,
+        liveWriterBusy: true,
+      }).action,
+    ).toBe('wait');
+  });
+
   it('todos os workers entregaram handoff e Maestro parou → Pronto', () => {
     const decision = decideCivilianPronto({
       ...running,

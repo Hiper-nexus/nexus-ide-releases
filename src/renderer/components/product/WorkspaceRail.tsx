@@ -3,6 +3,7 @@ import type {
   MissionStateReason,
 } from '../../../shared/mission-engine-contract';
 import {
+  MISSION_AWAITING_REVIEW_LABEL,
   MISSION_LIFECYCLE_LABELS,
   MISSION_RUNNING_ATTENTION_LABEL,
   missionLifecycleLabel,
@@ -16,6 +17,8 @@ export interface WorkspaceRailMission {
   status: MissionLifecycleState;
   needsAttention: boolean;
   stateReason?: Pick<MissionStateReason, 'code' | 'label'>;
+  /** Motor done, humano ainda não aprovou — o rail não pode dizer Pronto. */
+  awaitsOperatorReview?: boolean;
 }
 
 export interface WorkspaceRailWorkspace {
@@ -142,8 +145,17 @@ function missionStatusDisplay(
   state: MissionLifecycleState,
   needsAttention: boolean,
   stateReason?: Pick<MissionStateReason, 'code' | 'label'>,
+  awaitsOperatorReview = false,
 ): MissionStatusDisplay {
-  const label = missionLifecycleLabel(state, needsAttention, stateReason?.code);
+  const label = missionLifecycleLabel(
+    state,
+    needsAttention,
+    stateReason?.code,
+    awaitsOperatorReview,
+  );
+  if (label === MISSION_AWAITING_REVIEW_LABEL) {
+    return { label, icon: 'user', tone: 'blocked' };
+  }
   if (label === 'Dormindo' || label === 'Parou') {
     return {
       label,
@@ -254,6 +266,7 @@ function WorkspaceGroup({
                       mission.status,
                       mission.needsAttention,
                       mission.stateReason,
+                      mission.awaitsOperatorReview === true,
                     );
                     const missionSelected =
                       selection?.kind === 'mission' &&

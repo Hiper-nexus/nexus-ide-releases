@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PaneModel } from '../../../shared/types';
 import { buildGridTree } from '../../lib/split-tree';
 import { useLayoutStore } from '../../state/layout-store';
+import { useOrchStore } from '../../state/orch-store';
 import { TerminalWorkspace } from './TerminalWorkspace';
 
 const terminalRuntime = vi.hoisted(() => ({
@@ -146,6 +147,7 @@ beforeEach(() => {
 afterEach(() => {
   for (const mounted of mountedRoots.splice(0).reverse()) unmount(mounted);
   document.body.replaceChildren();
+  useOrchStore.setState({ missions: [], missionSummaries: [] });
   Reflect.deleteProperty(window, 'nexus');
   vi.clearAllMocks();
 });
@@ -210,6 +212,43 @@ describe('TerminalWorkspace contracts', () => {
     }
     expect(terminalRuntime.reconcileHosts).toHaveBeenCalledTimes(1);
     expect(ptySpawn).not.toHaveBeenCalled();
+  });
+
+  it('missão done sem aprovação humana mostra Aguardando você, não Pronto', () => {
+    useOrchStore.setState({
+      missions: [
+        {
+          id: 'mission-release',
+          title: 'Landing',
+          description: '',
+          status: 'done',
+          milestones: [],
+          learnings: '',
+          createdAt: 1,
+          updatedAt: 2,
+        },
+      ],
+      missionSummaries: [
+        {
+          id: 'mission-release',
+          title: 'Landing',
+          state: 'completed',
+          progress: { completed: 1, total: 1 },
+          needsAttention: false,
+          updatedAt: 2,
+        },
+      ],
+    });
+    const { host } = mount(
+      <TerminalWorkspace
+        missionId="mission-release"
+        onBackToBoard={vi.fn()}
+      />,
+    );
+    const context = host.querySelector(
+      '.product-workspace__context',
+    )?.textContent;
+    expect(context).toBe('Missão · Aguardando você');
   });
 
   it('exposes exactly one return-to-board action only in mission context', () => {

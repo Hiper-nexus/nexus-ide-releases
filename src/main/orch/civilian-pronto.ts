@@ -116,6 +116,12 @@ export function decideCivilianPronto(input: {
   if (input.idleWorkersWithoutHandoff > 0) {
     return { ...base, action: 'wait', reason: 'idle-workers-without-handoff' };
   }
+  // Writer ainda no teclado (Codex "Working") vence qualquer atalho de
+  // Pronto — senão o motor sela done com o worker vivo, o Maestro "encerra
+  // o turno" e o renderer varre o orquestrador. F-108.
+  if (input.liveWriterBusy) {
+    return { ...base, action: 'wait', reason: 'writer-busy' };
+  }
   if (input.workersDelivered && !input.orchestratorBusy) {
     return {
       ...base,
@@ -137,9 +143,6 @@ export function decideCivilianPronto(input: {
   }
   if (input.designOnly || input.neverStarted) {
     return { ...base, action: 'refuse', reason: 'empty-or-design-only' };
-  }
-  if (input.liveWriterBusy) {
-    return { ...base, action: 'wait', reason: 'writer-busy' };
   }
   if (input.holdForGuidedReview) {
     return { ...base, action: 'wait', reason: 'guided-legacy-review' };

@@ -161,6 +161,16 @@ describe('decideDeadPaneReviveRespawn — tecla em pane morto de missão', () =>
       }),
     ).toBe('same-pane-resume');
   });
+
+  it('coordenador done revive no MESMO pane — não abre outro e aposenta este', () => {
+    expect(
+      decideDeadPaneReviveRespawn({
+        missionOwnsPane: true,
+        hasOrchRequestId: false,
+        isOrchestrator: true,
+      }),
+    ).toBe('same-pane-resume');
+  });
 });
 
 describe('pruneWouldLeaveOperatorMute', () => {

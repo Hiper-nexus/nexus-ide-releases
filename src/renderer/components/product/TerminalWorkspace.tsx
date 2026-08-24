@@ -2,7 +2,8 @@ import { CanvasView } from '../CanvasView';
 import { PaneGrid } from '../PaneGrid';
 import { useLayoutStore } from '../../state/layout-store';
 import { useOrchStore } from '../../state/orch-store';
-import { MISSION_LIFECYCLE_LABELS } from '../../lib/mission-lifecycle-copy';
+import { missionLifecycleLabel } from '../../lib/mission-lifecycle-copy';
+import { missionAwaitsOperatorReview } from '../../../shared/mission-recovery-policy';
 import { PixelIcon } from '../PixelIcon';
 
 export interface TerminalWorkspaceProps {
@@ -23,15 +24,22 @@ export function TerminalWorkspace({
   const viewKind = useLayoutStore((state) => state.viewKind);
   const inMission = missionId !== undefined;
   // O rótulo segue a projeção canônica da missão — "Missão ativa" fixo mentia
-  // em missão já concluída/falha.
+  // em missão já concluída/falha. Done SEM carimbo do humano é revisão, não
+  // Pronto: senão o header dos Terminais declara encerrado o canal que ainda
+  // precisa ficar aberto (F-108).
   const missionState = useOrchStore((state) =>
     missionId
       ? (state.missionSummaries.find((m) => m.id === missionId)?.state ??
         null)
       : null,
   );
+  const awaitsReview = useOrchStore((state) => {
+    if (!missionId) return false;
+    const mission = state.missions.find((item) => item.id === missionId);
+    return mission ? missionAwaitsOperatorReview(mission) : false;
+  });
   const contextLabel = missionState
-    ? `Missão · ${MISSION_LIFECYCLE_LABELS[missionState]}`
+    ? `Missão · ${missionLifecycleLabel(missionState, false, undefined, awaitsReview)}`
     : 'Missão';
 
   return (

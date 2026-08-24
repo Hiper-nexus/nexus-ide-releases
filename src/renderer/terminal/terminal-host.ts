@@ -22,6 +22,7 @@ import {
   resolveDroppedMissionContextPath,
 } from '../lib/mission-shell-file-intake';
 import { listPanes } from '../lib/split-tree';
+import { missionAwaitsOperatorReview } from '../../shared/mission-recovery-policy';
 import { paneInputLane } from './pane-input-route';
 import {
   clearPaneSpawnError,
@@ -569,22 +570,25 @@ async function requestDeadMissionPaneRevive(
     // recusar (missão encerrada pelo operador) lia como promessa quebrada —
     // sucesso ganha UMA linha, recusa ganha só a linha acionável do catch.
     await requestMissionRuntimeResume(missionId, operatorInitiated);
-    // O Maestro renasce como pane NOVO — dizer só "religada" neste pane
-    // morto lia como promessa quebrada (4× no print de 19/08: nada mudava
-    // AQUI). Uma linha, apontando para onde a ação foi.
-    host.term.writeln(
-      '\r\n\x1b[36m[nexus] missão religada — o Maestro abre em outro pane; ' +
-        'este fica como histórico.\x1b[0m',
-    );
     const reviveRespawn = decideDeadPaneReviveRespawn({
       missionOwnsPane: isMainControlledMissionPane(pane.id, pane),
       hasOrchRequestId: pane.orchRequestId !== undefined,
+      isOrchestrator: pane.role === 'orchestrator',
     });
     if (reviveRespawn === 'same-pane-resume') {
+      host.term.writeln(
+        '\r\n\x1b[36m[nexus] religando o Maestro neste pane — a missão segue aberta para revisão.\x1b[0m',
+      );
       respawnWithResume(
         pane,
         '[nexus] pane religado na mesma conta — a missão segue em curso.',
         { mode: 'same-account-resume' },
+      );
+    } else {
+      // Worker / grant: o main respawna noutro leaf e este vira histórico.
+      host.term.writeln(
+        '\r\n\x1b[36m[nexus] missão religada — o Maestro abre em outro pane; ' +
+          'este fica como histórico.\x1b[0m',
       );
     }
   } catch (error) {
@@ -1882,9 +1886,12 @@ function missionStillOwnsPane(paneId: string, pane?: PaneModel): boolean {
   const mission = useOrchStore
     .getState()
     .missions.find((candidate) => candidate.id === missionId);
-  // Vínculo órfão (missão sumiu do store) ou missão terminal: operador reclama.
+  // Vínculo órfão (missão sumiu do store) ou missão terminal APROVADA:
+  // operador reclama. Done sem carimbo do humano ainda é revisão — o
+  // coordenador continua dono do pane (F-108).
   if (!mission) return false;
-  return mission.status === 'running' || mission.status === 'blocked';
+  if (mission.status === 'running' || mission.status === 'blocked') return true;
+  return missionAwaitsOperatorReview(mission);
 }
 
 /** Os dois espelhos locais: status cru do SQLite + projeção canônica. */

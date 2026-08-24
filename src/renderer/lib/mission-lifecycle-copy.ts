@@ -37,7 +37,13 @@ export function missionLifecycleLabel(
   state: MissionLifecycleState,
   needsAttention = false,
   stateReasonCode?: string,
+  awaitsOperatorReview = false,
 ): string {
+  // Motor concluído ≠ humano aprovou. "Pronto" no header dos Terminais
+  // lia como missão fechada — e o orquestrador sumia em seguida (F-108).
+  if (state === 'completed' && awaitsOperatorReview) {
+    return MISSION_AWAITING_REVIEW_LABEL;
+  }
   // Persist done/failed is authority. session-dead leftover on the reason
   // must never paint Parou over Pronto.
   if (state === 'completed' || state === 'failed') {

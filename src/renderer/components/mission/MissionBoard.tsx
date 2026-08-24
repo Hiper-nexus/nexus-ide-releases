@@ -18,10 +18,7 @@ import {
   missionEventSchema,
   type MissionEvent,
 } from '../../../shared/mission-events';
-import {
-  MISSION_AWAITING_REVIEW_LABEL,
-  missionLifecycleLabel,
-} from '../../lib/mission-lifecycle-copy';
+import { missionLifecycleLabel } from '../../lib/mission-lifecycle-copy';
 import { missionAwaitsOperatorReview } from '../../../shared/mission-recovery-policy';
 import {
   MISSION_BACKGROUND_NOTICE,
@@ -960,15 +957,14 @@ export function MissionBoard({
             className="mission-board__status"
             data-state={currentSnapshot.state}
           >
-            {currentSnapshot.state === 'completed' &&
-            currentMission &&
-            missionAwaitsOperatorReview(currentMission)
-              ? MISSION_AWAITING_REVIEW_LABEL
-              : missionLifecycleLabel(
-                  currentSnapshot.state,
-                  false,
-                  currentSnapshot.stateReason?.code,
-                )}
+            {missionLifecycleLabel(
+              currentSnapshot.state,
+              false,
+              currentSnapshot.stateReason?.code,
+              Boolean(
+                currentMission && missionAwaitsOperatorReview(currentMission),
+              ),
+            )}
           </span>
           {/* Sem tasks planejadas (Via Rápida) o contador some — correto, mas
               deixava a pessoa sem NENHUM sinal durante todo o trabalho, e a

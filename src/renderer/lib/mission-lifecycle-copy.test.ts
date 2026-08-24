@@ -31,6 +31,15 @@ describe('missionLifecycleLabel', () => {
     );
   });
 
+  it('missão completed ainda aguardando revisão humana não diz Pronto', () => {
+    expect(
+      missionLifecycleLabel('completed', false, undefined, true),
+    ).toBe('Aguardando você');
+    expect(
+      missionLifecycleLabel('completed', false, 'session-dead', true),
+    ).toBe('Aguardando você');
+  });
+
   it('failed civil é Falhou mesmo se um reason session-dead sobrar', () => {
     expect(missionLifecycleLabel('failed', false, 'session-dead')).toBe(
       'Falhou',

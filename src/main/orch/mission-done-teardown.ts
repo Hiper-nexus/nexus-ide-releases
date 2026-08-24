@@ -1,14 +1,12 @@
 /**
  * Teardown híbrido no done da missão (F-106, decisão de produto 23/08).
  *
- * Quando a missão vira 'done' o resultado já é durável no SQLite — manter o
- * runtime vivo só consome pane, memória e sessão de CLI (e pintava sinais
- * "vivos" numa missão "Pronto"). Regra híbrida (paridade Overclock 1.2.4):
- * - o ORQUESTRADOR morre no done: o resumo pós-completion é ruído e o pane
- *   não tem mais função;
- * - WORKERS ficam vivos por WORKER_POST_DONE_TTL_MS: qualquer trabalho novo
- *   (o operador mandou algo no pane → transição busy) cancela o timer; se
- *   voltar a ficar idle, o timer rearma. Sem interação, encerra sozinho.
+ * Quando a missão vira 'done' o resultado já é durável no SQLite. Workers
+ * idle encerram após WORKER_POST_DONE_TTL_MS (paridade Overclock 1.2.4):
+ * qualquer trabalho novo (o operador mandou algo no pane → busy) cancela o
+ * timer; voltar a idle rearma. O ORQUESTRADOR PERMANECE — matá-lo no done
+ * lacrava o ajuste pós-entrega (F-106 revertido, F-108). Quem fecha o
+ * Maestro é só o humano.
  *
  * Fail-safe por construção:
  * - opt-out via feature.mission.doneTeardown (default ON; E2E real-mission

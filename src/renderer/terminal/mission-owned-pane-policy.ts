@@ -23,17 +23,23 @@ export type ExitedPaneKeyAction =
 export type DeadPaneReviveRespawnAction = 'same-pane-resume' | 'main-only';
 
 /**
- * Tecla em pane morto: quem renasce a CLI do próprio pane? Pane de missão
- * NUNCA — o lifecycle é do main (o retry-kickoff que acompanha o revival já
- * respawna o orquestrador como pane novo, que aposenta este). Pane que carrega
- * orchRequestId também não: o token é grant do main e morre com a sessão do
- * app; um respawn local com ele só produz "unknown or expired orchestration
- * spawn grant" num pane que o operador lê como vivo.
+ * Tecla em pane morto: quem renasce a CLI do próprio pane?
+ * Coordenador: no mesmo xterm (revisão humana pós-done, F-108).
+ * Worker de missão / grant orchRequestId: main-only — o token morre com a
+ * sessão do app; respawn local produz "unknown or expired orchestration
+ * spawn grant".
  */
 export function decideDeadPaneReviveRespawn(input: {
   readonly missionOwnsPane: boolean;
   readonly hasOrchRequestId: boolean;
+  /** Pane do coordenador: o ajuste pós-done acontece AQUI, não noutro leaf. */
+  readonly isOrchestrator?: boolean;
 }): DeadPaneReviveRespawnAction {
+  // F-108: tecla no Maestro morto abria um pane novo e este virava
+  // histórico — a varredura done em seguida apagava a conversa. O
+  // coordenador revive no mesmo xterm. Grant órfão em worker segue
+  // main-only (token morre com a sessão do app).
+  if (input.isOrchestrator) return 'same-pane-resume';
   if (input.missionOwnsPane || input.hasOrchRequestId) return 'main-only';
   return 'same-pane-resume';
 }

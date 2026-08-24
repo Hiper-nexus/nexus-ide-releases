@@ -247,6 +247,31 @@ describe('WorkspaceRail', () => {
     }
   });
 
+  it('missão completed aguardando revisão humana não diz Pronto no rail', () => {
+    const { host } = renderRail({
+      activeWorkspaces: [
+        {
+          id: 'review',
+          name: 'Review',
+          missions: [
+            {
+              id: 'mission-awaiting',
+              title: 'Landing',
+              status: 'completed',
+              needsAttention: false,
+              awaitsOperatorReview: true,
+            },
+          ],
+        },
+      ],
+      recentWorkspaces: [],
+    });
+    const row = host.querySelector('[data-mission-id="mission-awaiting"]');
+    expect(row?.textContent).toContain('Aguardando você');
+    expect(row?.textContent).not.toContain('Pronto');
+    expect(row?.getAttribute('aria-label')).toBe('Landing. Aguardando você');
+  });
+
   it('leftover isolado e Encerrar pintam Dormindo/Parou, nunca Precisa de você', () => {
     const { host } = renderRail({
       activeWorkspaces: [

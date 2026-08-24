@@ -31,6 +31,8 @@ export interface ProjectRailWorkspacesInput {
   readonly current: RailWorkspaceInput | null;
   readonly recents: readonly RailWorkspaceInput[];
   readonly currentSummaries: readonly MissionSummarySnapshot[];
+  /** Missões do workspace corrente cujo motor concluiu e o humano ainda não. */
+  readonly currentAwaitingReviewIds?: readonly string[];
   /**
    * Summaries de OUTROS workspaces, key = path. Só os ativos são usados; a
    * chave ausente significa "sem missão ativa lá".
@@ -40,13 +42,19 @@ export interface ProjectRailWorkspacesInput {
   >;
 }
 
-function toRailMission(summary: MissionSummarySnapshot) {
+function toRailMission(
+  summary: MissionSummarySnapshot,
+  awaitingReviewIds?: ReadonlySet<string>,
+) {
   return {
     id: summary.id,
     title: summary.title,
     status: summary.state,
     needsAttention: summary.needsAttention,
     ...(summary.stateReason ? { stateReason: summary.stateReason } : {}),
+    ...(awaitingReviewIds?.has(summary.id)
+      ? { awaitsOperatorReview: true as const }
+      : {}),
   };
 }
 
@@ -59,11 +67,14 @@ export function projectRailWorkspaces(
   const currentPath = input.current?.path ?? null;
   const activeWorkspaces: WorkspaceRailWorkspace[] = [];
 
+  const awaitingReviewIds = new Set(input.currentAwaitingReviewIds ?? []);
   if (input.current) {
     activeWorkspaces.push({
       id: input.current.path,
       name: input.current.name,
-      missions: input.currentSummaries.map(toRailMission),
+      missions: input.currentSummaries.map((summary) =>
+        toRailMission(summary, awaitingReviewIds),
+      ),
     });
   }
 
@@ -77,7 +88,7 @@ export function projectRailWorkspaces(
       activeWorkspaces.push({
         id: workspace.path,
         name: workspace.name,
-        missions: active.map(toRailMission),
+        missions: active.map((summary) => toRailMission(summary)),
       });
     }
   }

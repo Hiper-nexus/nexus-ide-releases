@@ -154,6 +154,11 @@ function retireStaleMissionOrchestratorPanes(req: {
  * exibia para sempre. Panes SEM sessão viva da missão terminal são
  * aposentados aqui. `blocked` preserva (Retomar precisa do contexto);
  * sessão viva é lifecycle do main, o renderer não fecha layout de pane vivo.
+ *
+ * F-108: o ORQUESTRADOR nunca entra nesta varredura. O motor marcar done
+ * (CLI já saiu) apagava o Maestro e o operador perdia o canal para revisar
+ * e pedir ajuste. Quem fecha o coordenador é só o humano (Encerrar/Remover
+ * / último pane). Workers mortos de missão terminal continuam saindo.
  */
 function retireTerminalMissionPanes(
   missions: readonly { id: string; status: string }[],
@@ -168,6 +173,7 @@ function retireTerminalMissionPanes(
   const paneMissions = useOrchStore.getState().paneMissions;
   const corpses = listPanes(useLayoutStore.getState().root).filter((pane) => {
     if (pane.kind !== 'cli-agent') return false;
+    if ((pane.role ?? 'worker') === 'orchestrator') return false;
     const missionId = pane.missionId ?? paneMissions[pane.id];
     if (!missionId || !terminalIds.has(missionId)) return false;
     return !getPaneSessionId(pane.id);

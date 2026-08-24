@@ -63,16 +63,35 @@ describe('cleanup de panes de missão terminal (campanha 0.50)', () => {
         direction: 'row',
         children: [
           {
-            kind: 'leaf',
-            id: 'leaf-done',
-            pane: {
-              id: 'pane-done-mission',
-              kind: 'cli-agent',
-              title: 'orq da missão encerrada',
-              adapterId: 'claude',
-              missionId: 'mission-done',
-              role: 'orchestrator',
-            },
+            kind: 'split',
+            id: 'split-done',
+            direction: 'row',
+            children: [
+              {
+                kind: 'leaf',
+                id: 'leaf-done',
+                pane: {
+                  id: 'pane-done-mission',
+                  kind: 'cli-agent',
+                  title: 'orq da missão encerrada',
+                  adapterId: 'claude',
+                  missionId: 'mission-done',
+                  role: 'orchestrator',
+                },
+              },
+              {
+                kind: 'leaf',
+                id: 'leaf-done-worker',
+                pane: {
+                  id: 'pane-done-worker',
+                  kind: 'cli-agent',
+                  title: 'worker da missão encerrada',
+                  adapterId: 'claude',
+                  missionId: 'mission-done',
+                  role: 'worker',
+                },
+              },
+            ],
           },
           {
             kind: 'split',
@@ -160,7 +179,9 @@ describe('cleanup de panes de missão terminal (campanha 0.50)', () => {
     terminal.waitForSession.mockReset().mockResolvedValue('session-new');
   });
 
-  it('fecha pane morto de missão done; running e blocked preservados', () => {
+  it('orquestrador de missão done NÃO fecha — só o humano encerra; worker morto sai', () => {
+    // F-108: o motor marcar done (CLI já saiu) varria o pane do Maestro e
+    // o operador perdia o canal para ver se deu certo e pedir ajuste.
     act(() => {
       missionsHandler?.([
         makeMission('mission-done', 'done'),
@@ -170,7 +191,8 @@ describe('cleanup de panes de missão terminal (campanha 0.50)', () => {
     });
 
     const panes = listPanes(useLayoutStore.getState().root).map((p) => p.id);
-    expect(panes).not.toContain('pane-done-mission');
+    expect(panes).toContain('pane-done-mission');
+    expect(panes).not.toContain('pane-done-worker');
     expect(panes).toContain('pane-running-mission');
     expect(panes).toContain('pane-blocked-mission');
     expect(panes).toContain('pane-shell');
