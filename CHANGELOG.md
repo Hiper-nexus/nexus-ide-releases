@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.70.4 — O ajuste segura nos dois fechos
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+Review senior do 0.70.3: **Pedir um ajuste** ainda podia resecar a missão, e o
+sandbox concedia o arquivo vivo do anexo.
+
+- Hold vale no Pronto civil **e** no closer de entrega (board N/N).
+- Só solta com handoff **mais novo** que o clique — a primeira mensagem
+  no chat não derruba o hold.
+- `extraReadPaths` de anexo: **só o selo**. O Read continua no path
+  relativo do checkout.
+
+O print único e a lista Atenção com nome da CLI vêm do 0.70.3.
+
+Gates: tsc limpo, testes dos closers e do path do anexo verdes.
+
 ## 0.70.3 — Peça o ajuste de verdade
 
 _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._

@@ -13,41 +13,34 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.70.3',
+  version: '0.70.4',
   date: '2026-08-24',
-  codename: 'Peça o ajuste de verdade',
+  codename: 'O ajuste segura nos dois fechos',
   summary:
-    'Pedir um ajuste agora abre a Conversa e espera você orientar. O print ' +
-    'colado entra uma vez e o Maestro lê o arquivo do projeto. A lista ' +
-    'Atenção mostra qual CLI pede login.',
+    'Pedir um ajuste não reseca mais a missão: os dois closers esperam ' +
+    'trabalho novo. O sandbox não concede o arquivo vivo do anexo. O ' +
+    'print e a lista Atenção do 0.70.3 continuam.',
   highlights: [
     {
-      title: 'Pedir um ajuste de verdade',
+      title: 'Pedir um ajuste segura os dois fechos',
       detail:
-        'O botão reabria a missão e o motor pintava Pronto no mesmo instante, ' +
-        'porque os handoffs antigos ainda diziam sucesso. Agora segura até ' +
-        'você escrever o ajuste no chat.',
-    },
-    {
-      title: 'O print colado chega no Maestro',
-      detail:
-        'A cola duplicava a imagem na tela Iniciar e o briefing mandava o ' +
-        'caminho selado fora do checkout. Uma linha na UI; o Read abre ' +
-        '.nexus/attachments/mission-context.',
+        'O 0.70.3 travava só o Pronto civil. O closer de entrega (board N/N) ' +
+        'fechava no mesmo tick. Agora os dois esperam um handoff mais novo ' +
+        'que o clique.',
     },
   ],
   fixes: [
     {
-      title: 'Atenção mostrava C… e um círculo Ir',
+      title: 'Sandbox não lê o origin mutável do anexo',
       detail:
-        'O card cabia em 22px sem o ícone. Agora cada item traz o nome da ' +
-        'CLI, o selo Login e Entrar abre o login daquela ferramenta.',
+        'O grant extra do sourcePath seguia symlink no checkout. O Read usa ' +
+        'o path relativo do projeto; o selo continua o único extra-read.',
     },
     {
-      title: 'O orquestrador continua até você encerrar',
+      title: 'A primeira mensagem não derruba o hold',
       detail:
-        'Herdado do 0.70.2: missão concluída fica Aguardando você; só o ' +
-        'humano marca como feito.',
+        'O marcador agora leva timestamp. Handoff antigo não conta como ' +
+        'entrega do ajuste.',
     },
   ],
 };
