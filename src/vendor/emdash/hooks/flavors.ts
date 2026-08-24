@@ -12,8 +12,9 @@
 //    (loopback gate endpoint + per-pane bearer), not emdash's transport.
 //  - Codex gains a UserPromptSubmit -> start spec (emdash wires only
 //    Stop/PermissionRequest/SessionStart); without it a Codex pane could
-//    never report `working` semantically. Codex supports UserPromptSubmit
-//    hooks (also used by the legacy Nexus hooks.json installer).
+//    never report `working` semantically. Codex Stop pipes stdin so
+//    `last_agent_message` reaches turn-end-handoff (a stub idle_prompt
+//    discarded short answers the worker was taught not to tool-submit).
 //  - Kimi/Grok are covered by the default parser upstream; kept that way.
 
 import type { CanonicalHookEvent } from './hooks-types';
@@ -94,9 +95,10 @@ function makeCodexSessionStartCommand(opts: HookCommandOptions = {}): string {
 }
 
 /**
- * Codex sends `{ type: 'agent-turn-complete' }` as its stop signal instead
- * of a plain 'stop' event type, and uses fixed `notification_type` values
- * in its hook payloads rather than piping JSON.
+ * Codex Stop pipes JSON on stdin (`last_agent_message`). PermissionRequest
+ * has no useful stdin, so that hook still posts a fixed notification_type.
+ * Older notify-shaped payloads (`agent-turn-complete` / idle_prompt) still
+ * parse as stop so leftover `-c` overrides keep completing the turn.
  */
 export function parseCodexHookEvent(
   eventType: string,
@@ -134,7 +136,7 @@ export function codexHookSpecs(opts: HookCommandOptions = {}): FlavorHookSpec[] 
     { hookKey: 'PreToolUse', command: makeStdinHookCommand('tool-use', withFlavor) },
     { hookKey: 'PostToolUse', command: makeStdinHookCommand('tool-complete', withFlavor) },
     { hookKey: 'PostToolUseFailure', command: makeStdinHookCommand('tool-use-failure', withFlavor) },
-    { hookKey: 'Stop', command: makeNotificationHookCommand('idle_prompt', withFlavor) },
+    { hookKey: 'Stop', command: makeStdinHookCommand('stop', withFlavor) },
     {
       hookKey: 'PermissionRequest',
       command: makeNotificationHookCommand('permission_prompt', withFlavor),

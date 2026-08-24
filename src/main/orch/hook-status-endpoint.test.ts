@@ -320,6 +320,23 @@ describe('turn-end mechanical handoff trigger', () => {
     body,
   });
 
+  it('codex Stop com last_agent_message entrega o body cru ao fechamento', () => {
+    const seen: Array<{ sessionId: string; body: Record<string, unknown> }> = [];
+    const result = handleHookStatusRequest(
+      ctx,
+      {
+        eventType: 'stop',
+        flavor: 'codex',
+        body: { last_agent_message: '3', cwd: '/proj' },
+      },
+      undefined,
+      (input) => seen.push(input),
+    );
+    expect(result.statusCode).toBe(200);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.body.last_agent_message).toBe('3');
+  });
+
   it('status/stop entrega sessionId + body cru ao callback de turno', () => {
     const seen: Array<{ sessionId: string; body: Record<string, unknown> }> = [];
     const result = handleHookStatusRequest(

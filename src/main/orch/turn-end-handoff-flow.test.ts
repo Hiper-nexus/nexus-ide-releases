@@ -75,6 +75,18 @@ beforeEach(() => {
 });
 
 describe('handleTurnEndMechanicalHandoff (fluxo)', () => {
+  it('Codex last_agent_message curto vira handoff [auto] verbatim', async () => {
+    await handleTurnEndMechanicalHandoff({
+      sessionId: 'pty-w1',
+      body: { last_agent_message: '3' },
+    });
+    expect(mocks.submitPtyStreamHandoff).toHaveBeenCalledTimes(1);
+    const payload = mocks.submitPtyStreamHandoff.mock.calls[0]![1] as {
+      summary: string;
+    };
+    expect(payload.summary).toBe('[auto] Resposta do worker: 3');
+  });
+
   it('worker encerra sem tool → submete [auto] com o texto verbatim do payload', async () => {
     await handleTurnEndMechanicalHandoff({
       sessionId: 'pty-w1',

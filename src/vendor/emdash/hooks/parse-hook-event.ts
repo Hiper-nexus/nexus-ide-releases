@@ -46,6 +46,23 @@ export function looksLikeAwaitingInput(value: unknown): boolean {
   );
 }
 
+/** Last assistant/agent reply on a hook body — Claude, Codex, and notify spell it differently. */
+export function hookAssistantReplyText(
+  body: Record<string, unknown>,
+): string | undefined {
+  const candidates = [
+    body.last_assistant_message,
+    body.lastAssistantMessage,
+    body.last_agent_message,
+    body.lastAgentMessage,
+    body['last-assistant-message'],
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim()) return candidate;
+  }
+  return undefined;
+}
+
 function hookToolName(body: Record<string, unknown>): unknown {
   const nested = body.tool;
   return body.tool_name ?? body.toolName ?? body.name ??
@@ -124,11 +141,10 @@ export function defaultHookEventParser(
   }
 
   if (eventType === 'start' || eventType === 'stop' || eventType === 'error') {
-    const rawLam = body.last_assistant_message ?? body.lastAssistantMessage;
     return {
       kind: 'status',
       type: eventType,
-      lastAssistantMessage: typeof rawLam === 'string' ? rawLam : undefined,
+      lastAssistantMessage: hookAssistantReplyText(body),
       title: typeof body.title === 'string' ? body.title : undefined,
       message: typeof body.message === 'string' ? body.message : undefined,
     };
@@ -148,10 +164,7 @@ export function defaultHookEventParser(
       kind: 'status',
       type: 'notification',
       notificationType,
-      lastAssistantMessage:
-        typeof (body.last_assistant_message ?? body.lastAssistantMessage) === 'string'
-          ? String(body.last_assistant_message ?? body.lastAssistantMessage)
-          : undefined,
+      lastAssistantMessage: hookAssistantReplyText(body),
       title,
       message,
     };

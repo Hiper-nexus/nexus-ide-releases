@@ -8,6 +8,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   defaultHookEventParser,
+  hookAssistantReplyText,
   extractProviderSessionId,
 } from './parse-hook-event';
 
@@ -79,6 +80,19 @@ describe('defaultHookEventParser', () => {
       message: 'm',
       lastAssistantMessage: 'done here',
     });
+    expect(
+      defaultHookEventParser('stop', { last_agent_message: '3' }),
+    ).toMatchObject({
+      kind: 'status',
+      type: 'stop',
+      lastAssistantMessage: '3',
+    });
+    expect(
+      defaultHookEventParser('notification', {
+        last_agent_message: '3',
+        notification_type: 'idle_prompt',
+      }),
+    ).toMatchObject({ lastAssistantMessage: '3' });
   });
 
   it('routes notification with a known notification_type', () => {
@@ -107,5 +121,14 @@ describe('defaultHookEventParser', () => {
   it('ignores unknown event types', () => {
     expect(defaultHookEventParser('unknown-event', {})).toEqual({ kind: 'ignore' });
     expect(defaultHookEventParser('', {})).toEqual({ kind: 'ignore' });
+  });
+});
+
+describe('hookAssistantReplyText', () => {
+  it('reads Claude, Codex and hyphenated notify dialects', () => {
+    expect(hookAssistantReplyText({ last_assistant_message: 'a' })).toBe('a');
+    expect(hookAssistantReplyText({ last_agent_message: '3' })).toBe('3');
+    expect(hookAssistantReplyText({ 'last-assistant-message': 'b' })).toBe('b');
+    expect(hookAssistantReplyText({ last_agent_message: '   ' })).toBeUndefined();
   });
 });

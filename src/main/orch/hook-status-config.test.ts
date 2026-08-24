@@ -103,6 +103,16 @@ describe('codexStatusHookArgs (Codex TOML -c overrides)', () => {
   it('is deterministic — a second spawn produces identical argv (no accumulation)', () => {
     expect(codexStatusHookArgs()).toEqual(codexStatusHookArgs());
   });
+
+  it('Stop pipes Codex stdin instead of a stub idle_prompt', () => {
+    const args = codexStatusHookArgs();
+    const stop = args.find(
+      (arg, index) => index % 2 === 1 && arg.startsWith('hooks.Stop='),
+    );
+    expect(stop).toContain('-d @-');
+    expect(stop).toContain('X-Nexus-Hook-Event: stop');
+    expect(stop).not.toContain('idle_prompt');
+  });
 });
 
 describe('mergeKimiStatusHooks (Kimi TOML flat array)', () => {

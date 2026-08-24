@@ -31,8 +31,10 @@ export type TurnEndHook = (input: {
   readonly body: Record<string, unknown>;
 }) => void;
 
-/** Hook payloads are CLI event metadata — 16 KB is generous, not a file drop. */
-export const HOOK_STATUS_MAX_BODY_BYTES = 16 * 1024;
+/** Hook payloads are CLI event metadata. Codex Stop stdin carries
+ *  `last_agent_message` (up to the 60k mechanical fullText cap) plus cwd /
+ *  transcript_path; 16 KB 400'd that POST and skipped turn-end entirely. */
+export const HOOK_STATUS_MAX_BODY_BYTES = 64 * 1024;
 
 export const HOOK_STATUS_FLAVORS = [
   'claude',

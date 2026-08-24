@@ -182,11 +182,15 @@ export function ExpressMissionStart({
             maxLength={MISSION_INTENT_GOAL_MAX_CHARS}
             placeholder="Exemplo: refaça o fluxo de cadastro para ficar simples no celular e confirme que ele funciona do início ao fim."
             disabled={draftEditingDisabled || busy}
+            aria-describedby="express-objective-hint"
             onChange={(event) => {
               if (draftEditingDisabled) return;
               onObjectiveChange(event.target.value);
             }}
           />
+          <span id="express-objective-hint" className="mission-setup__sr-only">
+            Escreva em linguagem comum. A missão começa assim que você confirmar.
+          </span>
           {/* O produto nunca mostrava um objetivo que FUNCIONOU. Quem não
               programa trava na folha em branco: não sabe o tamanho, o nível de
               detalhe, nem o tipo de pedido que cabe. Os exemplos continuam na

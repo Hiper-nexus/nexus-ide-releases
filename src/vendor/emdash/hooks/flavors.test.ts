@@ -72,6 +72,13 @@ describe('parseCodexHookEvent', () => {
     });
   });
 
+  it('maps a Stop stdin payload with last_agent_message to stop', () => {
+    expect(parseCodexHookEvent('stop', { last_agent_message: '3' })).toMatchObject({
+      kind: 'status',
+      type: 'stop',
+    });
+  });
+
   it('maps fixed permission_prompt notifications to a permission notification', () => {
     expect(
       parseCodexHookEvent('notification', { notification_type: 'permission_prompt' }),
@@ -152,6 +159,14 @@ describe('flavor hook spec tables', () => {
       'Stop',
       'PermissionRequest',
     ]);
+    const codexStop = codexHookSpecs(linux).find((spec) => spec.hookKey === 'Stop');
+    expect(codexStop?.command).toContain('-d @-');
+    expect(codexStop?.command).toContain('X-Nexus-Hook-Event: stop');
+    expect(codexStop?.command).not.toContain('idle_prompt');
+    const permission = codexHookSpecs(linux).find(
+      (spec) => spec.hookKey === 'PermissionRequest',
+    );
+    expect(permission?.command).toContain('permission_prompt');
     expect(kimiHookSpecs(linux).map((s) => s.hookKey)).toContain('SessionEnd');
     expect(grokHookSpecs(linux).map((s) => s.hookKey)).toContain('SessionEnd');
   });
