@@ -5,6 +5,7 @@ import {
   classifyMissionAttachment,
   filesFromClipboardData,
   isMissionContextAttachmentPath,
+  missionAttachmentContentKey,
   namePastedMissionFile,
   validateMissionAttachment,
   type MissionAttachment,
@@ -149,6 +150,17 @@ describe('mission attachments', () => {
     expect(blank.name).toMatch(/^print-.*\.png$/);
     const kept = namePastedMissionFile(realFile('stack-trace.png', 'image/png'), 'image');
     expect(kept.name).toBe('stack-trace.png');
+  });
+
+  it('content key is stable across renamed clipboard dumps of the same bytes', async () => {
+    const first = realFile('a.png', 'image/png', 'same-png-bytes');
+    const second = realFile('b.png', 'image/png', 'same-png-bytes');
+    expect(await missionAttachmentContentKey(first)).toBe(
+      await missionAttachmentContentKey(second),
+    );
+    expect(
+      await missionAttachmentContentKey(realFile('other.png', 'image/png', 'other')),
+    ).not.toBe(await missionAttachmentContentKey(first));
   });
 
   it('dedupes the same clipboard file exposed via items and files', () => {

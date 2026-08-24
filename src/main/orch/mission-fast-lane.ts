@@ -557,6 +557,23 @@ export const SECURITY_DOCTRINE_NOTE =
 // ── Construção de prompt ────────────────────────────────────────────────
 
 /**
+ * Caminho que o CLI no checkout consegue abrir com Read. O snapshot.path é
+ * o artefato selado FORA do workspace — o Maestro colava isso no brief e
+ * nunca via a imagem no pane.
+ */
+export function readableMissionAttachmentPath(snapshot: {
+  readonly path: string;
+  readonly sourcePath?: string;
+}): string {
+  const source = (snapshot.sourcePath ?? '').replaceAll('\\', '/');
+  const marker = '/.nexus/attachments/mission-context/';
+  const indexed = source.indexOf(marker);
+  if (indexed >= 0) return source.slice(indexed + 1);
+  if (source.startsWith('.nexus/attachments/mission-context/')) return source;
+  return snapshot.path;
+}
+
+/**
  * Prompt do kickoff. Maestro: briefing curto (objetivo / equipe / fim).
  * Worker: papel + objetivo. Contrato de handoff continua anexado à parte.
  */
@@ -647,12 +664,9 @@ export function agentPrompt(
     mission.intentContract?.attachmentSnapshots?.length
       ? [
           '### Anexos da missão',
-          'Leia estes arquivos antes de decidir ou delegar. Eles foram anexados pelo operador na tela de início:',
+          'PRIMEIRO ATO: abra cada arquivo abaixo com a ferramenta Read ANTES de planejar ou delegar. São prints/áudios/documentos que o operador colou na tela de início — o caminho selado fora do checkout é invisível para você; use só estes caminhos do projeto:',
           ...mission.intentContract.attachmentSnapshots.map((snapshot, index) => {
-            const origin = snapshot.sourcePath
-              ? ` (origem: ${snapshot.sourcePath})`
-              : '';
-            return `${index + 1}. ${snapshot.path}${origin}`;
+            return `${index + 1}. ${readableMissionAttachmentPath(snapshot)}`;
           }),
         ].join('\n')
       : '';

@@ -2083,6 +2083,58 @@ describe('Caminho Expresso', () => {
     expect(host.textContent).toContain('print.png');
   });
 
+  it('não duplica a mesma imagem colada duas vezes depois do import terminar', async () => {
+    const host = await renderAtExpress();
+    const dropZone = host.querySelector<HTMLElement>(
+      '.mission-attachment-picker__drop',
+    );
+    expect(dropZone).not.toBeNull();
+    const image = new File(['same-png-bytes'], 'image.png', {
+      type: 'image/png',
+      lastModified: 10,
+    });
+    const clipboardData = {
+      items: [
+        {
+          kind: 'file',
+          type: 'image/png',
+          getAsFile: () => image,
+        },
+      ],
+      files: [image],
+    };
+
+    act(() => {
+      dropZone!.dispatchEvent(
+        Object.assign(new Event('paste', { bubbles: true }), {
+          clipboardData,
+        }),
+      );
+    });
+    await flush();
+    await flush();
+    act(() => {
+      dropZone!.dispatchEvent(
+        Object.assign(new Event('paste', { bubbles: true }), {
+          clipboardData,
+        }),
+      );
+      window.dispatchEvent(
+        Object.assign(new Event('paste', { bubbles: true }), {
+          clipboardData,
+        }),
+      );
+    });
+    await flush();
+    await flush();
+
+    expect(api.importMissionAttachment).toHaveBeenCalledTimes(1);
+    expect(useMissionSetupStore.getState().draft.contextPaths).toHaveLength(1);
+    expect(
+      host.querySelectorAll('.mission-attachment-picker__list li'),
+    ).toHaveLength(1);
+  });
+
   it('mostra anexos do cliente no wizard avançado e importa áudio externo', async () => {
     const host = render(<MissionSetup />);
     await flush();

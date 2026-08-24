@@ -7,6 +7,7 @@ import {
   stageMissionAttachment,
   validateMissionAttachment,
   filesFromClipboardData,
+  missionAttachmentContentKey,
   type MissionAttachment,
 } from '../../lib/mission-attachments';
 
@@ -55,7 +56,9 @@ export function MissionAttachmentPicker({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dropActive, setDropActive] = useState(false);
+  const dropRef = useRef<HTMLDivElement>(null);
   const importingFileKeysRef = useRef(new Set<string>());
+  const importedContentKeysRef = useRef(new Map<string, string>());
 
   const importFiles = async (files: readonly File[]): Promise<void> => {
     if (disabled || files.length === 0) return;
@@ -63,7 +66,11 @@ export function MissionAttachmentPicker({
     setError(null);
     const next = [...contextPaths];
     const nextPathSet = new Set(next);
-    const currentAttachments: MissionAttachment[] = importedPaths(next).map(
+    const currentImported = importedPaths(next);
+    for (const [key, path] of [...importedContentKeysRef.current]) {
+      if (!currentImported.includes(path)) importedContentKeysRef.current.delete(key);
+    }
+    const currentAttachments: MissionAttachment[] = currentImported.map(
       (path, index) => ({
         id: `${index}`,
         name: displayName(path),
@@ -75,8 +82,13 @@ export function MissionAttachmentPicker({
     );
     try {
       for (const file of files) {
-        const key = fileSignature(file);
-        if (importingFileKeysRef.current.has(key)) {
+        const contentKey = await missionAttachmentContentKey(file);
+        const signature = fileSignature(file);
+        if (
+          importingFileKeysRef.current.has(signature) ||
+          importingFileKeysRef.current.has(contentKey) ||
+          importedContentKeysRef.current.has(contentKey)
+        ) {
           continue;
         }
         const invalid = validateMissionAttachment(file, currentAttachments);
@@ -84,16 +96,19 @@ export function MissionAttachmentPicker({
           setError(invalid);
           break;
         }
-        importingFileKeysRef.current.add(key);
+        importingFileKeysRef.current.add(signature);
+        importingFileKeysRef.current.add(contentKey);
         try {
           const staged = await stageMissionAttachment(file);
           currentAttachments.push(staged);
+          importedContentKeysRef.current.set(contentKey, staged.path);
           if (!nextPathSet.has(staged.path)) {
             nextPathSet.add(staged.path);
             next.push(staged.path);
           }
         } finally {
-          importingFileKeysRef.current.delete(key);
+          importingFileKeysRef.current.delete(signature);
+          importingFileKeysRef.current.delete(contentKey);
         }
       }
       if (next.length !== contextPaths.length) {
@@ -123,6 +138,10 @@ export function MissionAttachmentPicker({
   useEffect(() => {
     const onPaste = (event: ClipboardEvent) => {
       if (disabledRef.current || event.defaultPrevented) return;
+      const target = event.target;
+      // Cola no drop zone já é tratada no onPaste do elemento. Sem este
+      // skip, o listener de window importa de novo (duas linhas na UI).
+      if (target instanceof Node && dropRef.current?.contains(target)) return;
       const files = filesFromClipboardData(event.clipboardData);
       if (files.length === 0) return;
       event.preventDefault();
@@ -150,6 +169,7 @@ export function MissionAttachmentPicker({
       </div>
 
       <div
+        ref={dropRef}
         className={`mission-attachment-picker__drop${
           dropActive ? ' mission-attachment-picker__drop--active' : ''
         }`}

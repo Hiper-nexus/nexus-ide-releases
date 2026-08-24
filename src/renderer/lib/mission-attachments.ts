@@ -117,6 +117,20 @@ type ClipboardFileSource = {
  * Dedupes by name+size+type+lastModified so items/files dual listing and
  * multi-item paste of the same blob don't double-attach.
  */
+/**
+ * Identity of a pasted/dropped blob that survives rename (`image.png` →
+ * `print-…png`) and a second paste event of the same clipboard bytes.
+ */
+export async function missionAttachmentContentKey(file: File): Promise<string> {
+  const slice = await file.slice(0, 8192).arrayBuffer();
+  const bytes = new Uint8Array(slice);
+  let hash = file.size >>> 0;
+  for (let index = 0; index < bytes.length; index += 1) {
+    hash = (Math.imul(hash, 33) + bytes[index]!) >>> 0;
+  }
+  return `${file.size}:${hash.toString(16)}`;
+}
+
 export function filesFromClipboardData(
   data: ClipboardFileSource | DataTransfer | null | undefined,
 ): File[] {

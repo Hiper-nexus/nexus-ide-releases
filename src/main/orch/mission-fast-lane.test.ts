@@ -12,6 +12,7 @@ import {
   missionFastLaneEnabled,
   isPaneMetaTask,
   isSecurityMissionText,
+  readableMissionAttachmentPath,
   SECURITY_DOCTRINE_NOTE,
 } from './mission-fast-lane';
 
@@ -93,6 +94,15 @@ describe('mission fast lane', () => {
     expect(prompt).toContain('Implementar motor');
   });
 
+  it('readableMissionAttachmentPath prefere o caminho do checkout, não o selo fora do workspace', () => {
+    expect(
+      readableMissionAttachmentPath({
+        path: '/sealed/checkout-a/print.png',
+        sourcePath: '/workspace/.nexus/attachments/mission-context/print.png',
+      }),
+    ).toBe('.nexus/attachments/mission-context/print.png');
+  });
+
   it('prompt do orquestrador lista anexos selados da missão', () => {
     const prompt = agentPrompt(
       agent({
@@ -136,8 +146,9 @@ describe('mission fast lane', () => {
     );
 
     expect(prompt).toContain('Anexos da missão');
-    expect(prompt).toContain('/sealed/checkout-a/print.png');
-    expect(prompt).toContain('mission-context/print.png');
+    expect(prompt).toContain('.nexus/attachments/mission-context/print.png');
+    expect(prompt).toMatch(/ferramenta Read/i);
+    expect(prompt).not.toContain('/sealed/checkout-a/print.png');
   });
 
   it('plano selado de 20 stories entra no kickoff e proíbe colapso em papéis', () => {
