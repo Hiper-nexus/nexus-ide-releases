@@ -12,6 +12,7 @@ import {
   maybeApplyCivilianPronto,
   walkProductFiles,
 } from './civilian-pronto';
+import { holdsAwaitingOperatorAdjustment } from '../../shared/mission-recovery-policy';
 import { hasUnsettledQueuedHandoffs } from './civilian-delivery-completion';
 import { projectMissionSnapshot } from './mission-snapshot';
 import type { ProjectDomainStoreSuite } from './project-domain-store-registry';
@@ -103,6 +104,22 @@ describe('decideCivilianPronto', () => {
     });
     expect(decision.action).toBe('wait');
     expect(decision.reason).toBe('awaiting-operator-adjustment');
+  });
+
+  it('hold de ajuste solta só com handoff mais novo que o pedido', () => {
+    const description = 'objetivo\n\n<!-- nexus:awaiting-adjustment:100 -->';
+    expect(
+      holdsAwaitingOperatorAdjustment(description, [{ createdAt: 50 }]),
+    ).toBe(true);
+    expect(
+      holdsAwaitingOperatorAdjustment(description, [{ createdAt: 150 }]),
+    ).toBe(false);
+    expect(
+      holdsAwaitingOperatorAdjustment(
+        'objetivo\n\n<!-- nexus:awaiting-adjustment -->',
+        [{ createdAt: 9_999_999 }],
+      ),
+    ).toBe(true);
   });
 
   it('writer ainda busy espera — não fecha cedo', () => {

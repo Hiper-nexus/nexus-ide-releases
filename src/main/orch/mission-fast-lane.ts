@@ -568,8 +568,19 @@ export function readableMissionAttachmentPath(snapshot: {
   const source = (snapshot.sourcePath ?? '').replaceAll('\\', '/');
   const marker = '/.nexus/attachments/mission-context/';
   const indexed = source.indexOf(marker);
-  if (indexed >= 0) return source.slice(indexed + 1);
-  if (source.startsWith('.nexus/attachments/mission-context/')) return source;
+  const relative =
+    indexed >= 0
+      ? source.slice(indexed + 1)
+      : source.startsWith('.nexus/attachments/mission-context/')
+        ? source
+        : '';
+  if (
+    relative.length > 0 &&
+    !relative.includes('..') &&
+    !relative.startsWith('/')
+  ) {
+    return relative;
+  }
   return snapshot.path;
 }
 

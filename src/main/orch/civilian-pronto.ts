@@ -9,7 +9,7 @@
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 import { missionResultSchema } from '../../shared/mission-engine-contract';
-import { missionAwaitsAdjustment } from '../../shared/mission-recovery-policy';
+import { holdsAwaitingOperatorAdjustment } from '../../shared/mission-recovery-policy';
 import type { Handoff, Mission } from '../../shared/orch-types';
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { MissionEngine } from './mission-engine';
@@ -532,7 +532,10 @@ export function maybeApplyCivilianPronto(
     idleWorkersWithoutHandoff,
     workersDelivered,
     orchestratorBusy,
-    awaitingOperatorAdjustment: missionAwaitsAdjustment(mission),
+    awaitingOperatorAdjustment: holdsAwaitingOperatorAdjustment(
+      mission.description ?? '',
+      successHandoffs,
+    ),
   });
 
   if (decision.action !== 'pronto') {

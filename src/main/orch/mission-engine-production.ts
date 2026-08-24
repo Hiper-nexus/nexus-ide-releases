@@ -16,8 +16,6 @@ import {
 } from "../../shared/mission-intent";
 import {
   MISSION_RUNTIME_CLOSED_MARKER,
-  missionAwaitsAdjustment,
-  stripAwaitingAdjustmentMarker,
   withAwaitingAdjustmentMarker,
   wasMissionRuntimeClosedByOperator,
 } from "../../shared/mission-recovery-policy";
@@ -880,13 +878,6 @@ export async function deliverMissionDirectInstruction(
   const storedForKickoff = stores.missions.get(command.missionId);
   if (storedForKickoff) {
     tryAcceptIdleKickoffForDirect(stores, storedForKickoff, deps);
-    if (missionAwaitsAdjustment(storedForKickoff)) {
-      stores.missions.updateContent?.(command.missionId, {
-        description: stripAwaitingAdjustmentMarker(
-          storedForKickoff.description ?? "",
-        ),
-      });
-    }
   }
   let initial: MissionDirectAuthority;
   try {

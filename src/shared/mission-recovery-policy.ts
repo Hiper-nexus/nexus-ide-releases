@@ -29,6 +29,9 @@ export const MISSION_OPERATOR_APPROVED_MARKER =
 export const MISSION_AWAITING_ADJUSTMENT_MARKER =
   '<!-- nexus:awaiting-adjustment -->';
 
+const AWAITING_ADJUSTMENT_RE =
+  /<!-- nexus:awaiting-adjustment(?::(\d+))? -->/g;
+
 export function wasMissionApprovedByOperator(
   mission: Pick<RecoverableMission, 'description'>,
 ): boolean {
@@ -40,24 +43,50 @@ export function wasMissionApprovedByOperator(
 export function missionAwaitsAdjustment(
   mission: Pick<RecoverableMission, 'description'>,
 ): boolean {
-  return (mission.description ?? '').includes(
-    MISSION_AWAITING_ADJUSTMENT_MARKER,
-  );
+  AWAITING_ADJUSTMENT_RE.lastIndex = 0;
+  return AWAITING_ADJUSTMENT_RE.test(mission.description ?? '');
 }
 
-export function withAwaitingAdjustmentMarker(description: string): string {
-  if (description.includes(MISSION_AWAITING_ADJUSTMENT_MARKER)) {
-    return description;
-  }
-  return `${description.trim()}\n\n${MISSION_AWAITING_ADJUSTMENT_MARKER}`.trim();
+/**
+ * Instante em que o operador pediu o ajuste, ou `null` se não há hold.
+ * Marcador legado (sem timestamp) devolve +Infinity: o Pronto não pode
+ * contar handoff antigo como entrega nova.
+ */
+export function awaitingAdjustmentSince(
+  description: string,
+): number | null {
+  AWAITING_ADJUSTMENT_RE.lastIndex = 0;
+  const match = AWAITING_ADJUSTMENT_RE.exec(description);
+  if (!match) return null;
+  if (match[1] === undefined) return Number.POSITIVE_INFINITY;
+  const since = Number(match[1]);
+  return Number.isSafeInteger(since) ? since : Number.POSITIVE_INFINITY;
+}
+
+export function withAwaitingAdjustmentMarker(
+  description: string,
+  now = Date.now(),
+): string {
+  const stamp = Number.isSafeInteger(now) ? now : Date.now();
+  return `${stripAwaitingAdjustmentMarker(description)}\n\n<!-- nexus:awaiting-adjustment:${stamp} -->`.trim();
 }
 
 export function stripAwaitingAdjustmentMarker(description: string): string {
+  AWAITING_ADJUSTMENT_RE.lastIndex = 0;
   return description
-    .split(MISSION_AWAITING_ADJUSTMENT_MARKER)
-    .join('')
+    .replace(AWAITING_ADJUSTMENT_RE, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+}
+
+/** Hold Pronto until a success/partial handoff is newer than Pedir um ajuste. */
+export function holdsAwaitingOperatorAdjustment(
+  description: string,
+  successHandoffs: ReadonlyArray<{ readonly createdAt: number }>,
+): boolean {
+  const since = awaitingAdjustmentSince(description);
+  if (since === null) return false;
+  return !successHandoffs.some((handoff) => handoff.createdAt > since);
 }
 
 /** Concluída pelo motor, ainda não aprovada por quem pediu. */

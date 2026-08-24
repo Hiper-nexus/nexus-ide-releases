@@ -702,12 +702,16 @@ export function MissionBoard({
     void (async () => {
       let restoreFocus = false;
       try {
+        const reopenForAdjustment =
+          action === 'resume' && snapshotRef.current?.state === 'completed';
         await executeCommand({ kind: action, missionId });
         if (action === 'resume' && isCurrentBoardAction(attempt)) {
           useMissionInspectorStore.getState().selectTab('chat');
-          setActionAnnouncement(
-            'Diga o ajuste embaixo. A missão não fecha até você orientar.',
-          );
+          if (reopenForAdjustment) {
+            setActionAnnouncement(
+              'Diga o ajuste embaixo. A missão não fecha até você orientar.',
+            );
+          }
         }
       } catch (reason) {
         if (isCurrentBoardAction(attempt)) {

@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { holdsAwaitingOperatorAdjustment } from '../../shared/mission-recovery-policy';
 import {
   existsSync,
   statSync,
@@ -95,6 +96,7 @@ export interface CivilianDeliveryDecisionInput {
   readonly remainingKinds: readonly CivilianRemainderKind[];
   readonly oldestReviewQueuedMs: number | null;
   readonly orchestratorBusy?: boolean;
+  readonly awaitingOperatorAdjustment?: boolean;
 }
 
 export interface CivilianDeliveryResult {
@@ -450,6 +452,7 @@ export function decideCivilianDeliveryAction(
   input: CivilianDeliveryDecisionInput,
 ): CivilianDeliveryAction {
   if (input.failClosed) return 'refuse-fail-closed';
+  if (input.awaitingOperatorAdjustment) return 'wait';
   if (input.hasQueuedHandoffs && !input.boardAllDone) return 'wait';
   if (input.idleWorkersWithoutHandoff > 0 && input.boardAllDone) return 'wait';
   // Orchestrator busy: ele pode spawnar mais workers — não fechar a missão
@@ -1256,6 +1259,15 @@ export async function maybeCompleteFastLaneOnDelivery(
     return emptyResult();
   }
 
+  const successHandoffs = handoffs.filter(
+    (handoff) => handoff.status === 'success' || handoff.status === 'partial',
+  );
+  if (
+    holdsAwaitingOperatorAdjustment(mission.description ?? '', successHandoffs)
+  ) {
+    return emptyResult('wait');
+  }
+
   const now = deps.now?.() ?? Date.now();
   const panes =
     deps.listPanes?.() ??
@@ -1345,6 +1357,10 @@ export async function maybeCompleteFastLaneOnDelivery(
     workersDelivered: inspection.workersDelivered,
     orchestratorBusy: inspection.orchestratorBusy,
     remainingKinds: inspection.remaining.map((task) => task.kind),
+    awaitingOperatorAdjustment: holdsAwaitingOperatorAdjustment(
+      mission.description ?? '',
+      successHandoffs,
+    ),
     oldestReviewQueuedMs: inspection.remaining
       .filter((task) => task.kind === 'review')
       .reduce<number | null>((oldest, task) => {

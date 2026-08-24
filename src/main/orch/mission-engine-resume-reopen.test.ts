@@ -219,8 +219,8 @@ describe('engine resume — os estados em que a UI oferece Retomar', () => {
 
     expect(liveMission.status).toBe('running');
     expect(liveMission.intentState).toBe('executing');
-    expect(liveMission.description).toContain(
-      '<!-- nexus:awaiting-adjustment -->',
+    expect(liveMission.description).toMatch(
+      /<!-- nexus:awaiting-adjustment:\d+ -->/,
     );
     // Reabrir precisa RELIGAR o runtime — é isso que devolve um coordenador
     // digitável para o operador pedir o ajuste.

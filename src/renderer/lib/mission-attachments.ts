@@ -122,8 +122,15 @@ type ClipboardFileSource = {
  * `print-…png`) and a second paste event of the same clipboard bytes.
  */
 export async function missionAttachmentContentKey(file: File): Promise<string> {
-  const slice = await file.slice(0, 8192).arrayBuffer();
-  const bytes = new Uint8Array(slice);
+  const buffer = await file.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  if (globalThis.crypto?.subtle) {
+    const digest = await globalThis.crypto.subtle.digest('SHA-256', buffer);
+    const hex = [...new Uint8Array(digest)]
+      .map((value) => value.toString(16).padStart(2, '0'))
+      .join('');
+    return `${file.size}:${hex}`;
+  }
   let hash = file.size >>> 0;
   for (let index = 0; index < bytes.length; index += 1) {
     hash = (Math.imul(hash, 33) + bytes[index]!) >>> 0;

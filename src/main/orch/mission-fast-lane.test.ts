@@ -101,6 +101,13 @@ describe('mission fast lane', () => {
         sourcePath: '/workspace/.nexus/attachments/mission-context/print.png',
       }),
     ).toBe('.nexus/attachments/mission-context/print.png');
+    expect(
+      readableMissionAttachmentPath({
+        path: '/sealed/checkout-a/print.png',
+        sourcePath:
+          '/workspace/.nexus/attachments/mission-context/../../secret.png',
+      }),
+    ).toBe('/sealed/checkout-a/print.png');
   });
 
   it('prompt do orquestrador lista anexos selados da missão', () => {

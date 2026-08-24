@@ -742,12 +742,7 @@ function missionAttachmentReadPathsForSpawn(
   ) {
     throw new Error("sealed attachment grant is invalid");
   }
-  const granted: string[] = [];
-  for (const snapshot of snapshots) {
-    granted.push(snapshot.path);
-    if (snapshot.sourcePath) granted.push(snapshot.sourcePath);
-  }
-  return Object.freeze([...new Set(granted)]);
+  return Object.freeze(snapshots.map((snapshot) => snapshot.path));
 }
 
 /**

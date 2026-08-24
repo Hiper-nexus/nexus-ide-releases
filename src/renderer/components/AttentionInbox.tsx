@@ -35,9 +35,10 @@ function jump(item: AttentionItem): void {
     const provider = useProviderStore
       .getState()
       .providers.find((candidate) => candidate.adapterId === item.targetId);
-    if (provider?.loginCommand) {
+    const command = provider?.loginCommand?.trim() ?? '';
+    if (command.length > 0 && command.length <= 200 && !/[\r\n]/.test(command)) {
       void openCliLoginTerminal({
-        command: provider.loginCommand,
+        command,
         onFinished: () => {
           void useProviderStore.getState().hydrate();
         },

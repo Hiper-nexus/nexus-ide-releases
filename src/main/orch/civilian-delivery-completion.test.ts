@@ -157,6 +157,17 @@ describe('decideCivilianDeliveryAction', () => {
     ).toBe('complete');
   });
 
+  it('Pedir um ajuste segura o closer de board N/N até handoff novo', () => {
+    expect(
+      decideCivilianDeliveryAction(
+        decision({
+          boardAllDone: true,
+          awaitingOperatorAdjustment: true,
+        }),
+      ),
+    ).toBe('wait');
+  });
+
   it('board all-done + orchestrator busy → wait (Maestro pode spawnar mais workers)', () => {
     expect(
       decideCivilianDeliveryAction(
