@@ -147,7 +147,11 @@ beforeEach(() => {
 afterEach(() => {
   for (const mounted of mountedRoots.splice(0).reverse()) unmount(mounted);
   document.body.replaceChildren();
-  useOrchStore.setState({ missions: [], missionSummaries: [] });
+  useOrchStore.setState({
+    missions: [],
+    missionSummaries: [],
+    paneMissions: {},
+  });
   Reflect.deleteProperty(window, 'nexus');
   vi.clearAllMocks();
 });
@@ -165,16 +169,16 @@ describe('TerminalWorkspace contracts', () => {
     expect(host.querySelector('.grid')).toBeNull();
   });
 
-  it('mounts every pane host while hidden and reveals the same canonical grid without reattaching', () => {
+  it('mounts every pane host while hidden and does not dispose them when the mission view filters the mosaic', () => {
     const mounted = mount(<TerminalWorkspace hidden />);
     const workspace = mounted.host.querySelector<HTMLElement>(
       '.terminal-workspace',
     );
-    const grid = mounted.host.querySelector('.grid');
 
     expect(workspace?.hidden).toBe(true);
     expect(workspace?.getAttribute('aria-hidden')).toBe('true');
-    expect(grid).not.toBeNull();
+    expect(mounted.host.querySelector('.grid')).not.toBeNull();
+    expect(mounted.host.querySelector('.grid--mission-empty')).toBeNull();
 
     const attachedWhileHidden = terminalRuntime.attachHost.mock.calls.map(
       ([pane]) => (pane as PaneModel).id,
@@ -185,6 +189,9 @@ describe('TerminalWorkspace contracts', () => {
       ).toHaveLength(1);
     }
     expect(terminalRuntime.reconcileHosts).toHaveBeenCalledTimes(1);
+    expect([...terminalRuntime.reconcileHosts.mock.calls[0]![0]].sort()).toEqual(
+      CANONICAL_IDS,
+    );
 
     act(() =>
       mounted.root.render(
@@ -198,20 +205,55 @@ describe('TerminalWorkspace contracts', () => {
     expect(
       mounted.host.querySelector<HTMLElement>('.terminal-workspace'),
     ).toBe(workspace);
-    expect(mounted.host.querySelector('.grid')).toBe(grid);
+    expect(mounted.host.querySelector('.grid--mission-empty')).not.toBeNull();
     expect(workspace?.hidden).toBe(false);
     expect(workspace?.hasAttribute('aria-hidden')).toBe(false);
 
-    const attachedAfterReveal = terminalRuntime.attachHost.mock.calls.map(
-      ([pane]) => (pane as PaneModel).id,
-    );
-    for (const paneId of CANONICAL_IDS) {
-      expect(
-        attachedAfterReveal.filter((id) => id === paneId),
-      ).toHaveLength(1);
-    }
     expect(terminalRuntime.reconcileHosts).toHaveBeenCalledTimes(1);
     expect(ptySpawn).not.toHaveBeenCalled();
+  });
+
+  it('Terminais da missão mostra só os panes dela, não o mosaico das 15', () => {
+    useLayoutStore.setState({
+      root: buildGridTree([
+        {
+          id: 'pane-maestro',
+          kind: 'shell',
+          title: 'Maestro',
+          missionId: 'mission-release',
+        },
+        {
+          id: 'pane-other',
+          kind: 'shell',
+          title: 'Outra',
+          missionId: 'mission-other',
+        },
+      ]),
+      focusedPaneId: 'pane-maestro',
+    });
+    useOrchStore.setState({
+      paneMissions: {
+        'pane-maestro': 'mission-release',
+        'pane-other': 'mission-other',
+      },
+    });
+
+    const { host } = mount(
+      <TerminalWorkspace
+        missionId="mission-release"
+        onBackToBoard={vi.fn()}
+      />,
+    );
+
+    expect(host.querySelector('.grid--mission-empty')).toBeNull();
+    const attached = terminalRuntime.attachHost.mock.calls.map(
+      ([pane]) => (pane as PaneModel).id,
+    );
+    expect(attached).toEqual(['pane-maestro']);
+    expect(terminalRuntime.reconcileHosts).toHaveBeenCalledTimes(1);
+    expect(
+      [...terminalRuntime.reconcileHosts.mock.calls[0]![0]].sort(),
+    ).toEqual(['pane-maestro', 'pane-other'].sort());
   });
 
   it('missão done sem aprovação humana mostra Aguardando você, não Pronto', () => {

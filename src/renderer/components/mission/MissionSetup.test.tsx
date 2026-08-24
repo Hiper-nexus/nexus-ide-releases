@@ -2003,7 +2003,7 @@ describe('Caminho Expresso', () => {
     );
     expect(objective.value).toBe('');
     expect(objective.disabled).toBe(false);
-    expect(button(host, 'Iniciar missão').type).toBe('button');
+    expect(button(host, 'Iniciar missão').type).toBe('submit');
     expect(button(host, 'Mais papéis e tamanho').type).toBe('button');
     expect(button(host, 'Ditar objetivo').type).toBe('button');
     await flush();
@@ -2215,6 +2215,34 @@ describe('Caminho Expresso', () => {
       missionId: SNAPSHOT.id,
       surface: 'board',
     });
+  });
+
+  it('Iniciar missão também funciona pela submissão nativa do formulário', async () => {
+    const host = await renderAtExpress();
+    enterText(
+      fieldByLabel<HTMLTextAreaElement>(
+        host,
+        'O que você quer que a missão entregue?',
+      ),
+      'Construir uma página de contato com formulário funcionando',
+    );
+    await flush();
+    await flush();
+
+    const form = host.querySelector<HTMLFormElement>(
+      '.mission-setup__step--express',
+    );
+    expect(form).not.toBeNull();
+
+    act(() => {
+      form!.dispatchEvent(
+        new Event('submit', { bubbles: true, cancelable: true }),
+      );
+    });
+    await flush();
+
+    expect(api.prepare).toHaveBeenCalledTimes(1);
+    expect(api.start).toHaveBeenCalledTimes(1);
   });
 
   it('Iniciar missão despacha a CLI que o operador escolheu em cada papel', async () => {

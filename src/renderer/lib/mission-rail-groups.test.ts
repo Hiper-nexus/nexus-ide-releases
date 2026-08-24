@@ -231,6 +231,27 @@ describe('groupMissionsForRail', () => {
     expect(missionHasLiveRuntime(completed, true)).toBe(false);
   });
 
+  it('leftover parked não é runtime vivo mesmo com panes no grid', () => {
+    const parked = mission({
+      id: 'parked',
+      title: 'Dormindo',
+      status: 'blocked',
+      intentState: 'blocked_user',
+      description: 'card na rail <!-- nexus:leftover-parked -->',
+    });
+    expect(missionHasLiveRuntime(parked, true)).toBe(false);
+    const sections = groupMissionsForRail({
+      missions: [parked],
+      openMissionIds: new Set(['parked']),
+      pinnedIds: [],
+      query: '',
+    });
+    const map = Object.fromEntries(
+      sections.map((s) => [s.id, s.missions.map((m) => m.id)]),
+    );
+    expect(map.active ?? []).not.toContain('parked');
+  });
+
   it('keeps pinned out of other sections even if active', () => {
     const sections = groupMissionsForRail({
       missions,

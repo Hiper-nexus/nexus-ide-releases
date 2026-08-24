@@ -1,4 +1,8 @@
 import type { PaneModel } from '../../shared/types';
+import {
+  missionAwaitsAdjustment,
+  missionAwaitsOperatorReview,
+} from '../../shared/mission-recovery-policy';
 import { useOrchStore } from '../state/orch-store';
 import { useToastStore } from '../state/toast-store';
 
@@ -78,6 +82,17 @@ export function notifyIfLastMissionPaneClosed(
   if (stillOpen) return;
 
   if (reason && OPERATOR_CLOSE_REASONS.has(reason)) {
+    // ✕ num pane de missão que AINDA espera o humano (Aguardando você /
+    // Pedir um ajuste / Precisa de você) não pode Encerrar nem Reabrir:
+    // o diálogo nativo cancela no default e o watcher respawna o time
+    // inteiro (bug de campo 24/08). Fechar UM pane fecha UM pane.
+    if (
+      mission.status === 'blocked' ||
+      missionAwaitsOperatorReview(mission) ||
+      missionAwaitsAdjustment(mission)
+    ) {
+      return;
+    }
     // Ordem do operador (20/08): fechar o último pane É encerrar a missão —
     // nada de "segue rodando em segundo plano" com revival surpresa depois.
     void (async () => {

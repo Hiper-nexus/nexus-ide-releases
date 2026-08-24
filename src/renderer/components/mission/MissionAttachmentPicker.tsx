@@ -18,6 +18,7 @@ const FILE_ACCEPT =
 interface MissionAttachmentPickerProps {
   contextPaths: readonly string[];
   disabled: boolean;
+  compact?: boolean;
   onContextPathsChange(paths: readonly string[]): void;
 }
 
@@ -49,6 +50,7 @@ function fileSignature(file: File): string {
 export function MissionAttachmentPicker({
   contextPaths,
   disabled,
+  compact = false,
   onContextPathsChange,
 }: MissionAttachmentPickerProps) {
   const inputId = useId();
@@ -154,14 +156,22 @@ export function MissionAttachmentPicker({
   const currentImported = importedPaths(contextPaths);
 
   return (
-    <div className="mission-attachment-picker">
+    <div
+      className={
+        compact
+          ? 'mission-attachment-picker mission-attachment-picker--compact'
+          : 'mission-attachment-picker'
+      }
+    >
       <div className="mission-setup__section-heading">
         <div>
           <h2>Anexos do cliente</h2>
+          {compact ? null : (
           <p>
             Áudio, imagem, documento (PDF/Office) ou texto — mesmo de fora da
             pasta do projeto. O Nexus copia o arquivo para dentro da missão.
           </p>
+          )}
         </div>
         <span>
           {currentImported.length}/{MISSION_ATTACHMENT_LIMITS.maxCount}

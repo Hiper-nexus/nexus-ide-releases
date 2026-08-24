@@ -25,6 +25,7 @@ import {
   persistLeftoverIsolation,
   pickFocusedRunningMission,
   shouldSkipLeftoverRemount,
+  siblingRunningMissionIds,
   wasMissionLeftoverParked,
   isFreshIniciarKickoff,
   NEXUS_LEFTOVER_PARKED_MARKER,
@@ -36,6 +37,7 @@ import {
   getSessionState,
   getSessionCwd,
   isPtySessionConnectedAndWritable,
+  listAgentSessions,
   orchTerminateSession,
   registeredOrchestratorSessionsForMission,
 } from '../pty/pty-manager';
@@ -94,7 +96,14 @@ import {
   remintWriterCliForAutoSeat,
   type AutoSeatProviderView,
 } from '../../shared/auto-seat-auth';
-import { listPaneSnapshots, requestPaneSpawn, waitForIdle, readSessionOutput } from './pane-registry';
+import {
+  clearOperatorDismissedPanes,
+  listPaneSnapshots,
+  requestPaneSpawn,
+  waitForIdle,
+  readSessionOutput,
+  wasOrchestratorOperatorDismissed,
+} from './pane-registry';
 import {
   peekKickoffDirects,
   rememberKickoffBrief,
@@ -268,11 +277,27 @@ export function decideFastLaneEmptyPaneAction(input: {
   readonly status: Mission['status'];
   readonly pendingHandoffs: number;
   readonly respawnBudgetLeft: number;
+  /** Operador fechou o Maestro (✕ do pane). Não relança a missão inteira. */
+  readonly operatorDismissedOrchestrator?: boolean;
 }): 'respawn-orchestrator' | 'keep-running-watching' {
   if (input.status !== 'running') return 'keep-running-watching';
+  if (input.operatorDismissedOrchestrator) return 'keep-running-watching';
   return input.respawnBudgetLeft > 0
     ? 'respawn-orchestrator'
     : 'keep-running-watching';
+}
+
+/**
+ * ✕ no Maestro não é Retomar. Resume automático / retry-kickoff / supervisor
+ * não podem limpar o tombstone e relançar o time. Só remountKind operator
+ * (Retomar no rail, Pedir um ajuste) volta a spawnar.
+ */
+export function mayResumeAfterOperatorDismiss(input: {
+  readonly remountKind: LeftoverRemountKind;
+  readonly operatorDismissedOrchestrator: boolean;
+}): boolean {
+  if (!input.operatorDismissedOrchestrator) return true;
+  return input.remountKind === 'operator';
 }
 
 /**
@@ -1372,6 +1397,9 @@ async function tickWatcher(state: WatcherState): Promise<void> {
       status: mission.status,
       pendingHandoffs,
       respawnBudgetLeft: respawnBudgets.get(budgetKey) ?? ORCHESTRATOR_RESPAWN_BUDGET,
+      operatorDismissedOrchestrator: wasOrchestratorOperatorDismissed(
+        state.missionId,
+      ),
     });
     if (action === 'respawn-orchestrator') {
       respawnBudgets.set(
@@ -1752,6 +1780,103 @@ async function respawnFastLaneOrchestrator(
 }
 
 /**
+ * Uma missão focused neste processo. Iniciar em rajada não empilha 15
+ * first-waves: a próxima estaciona a anterior e mata o PTY.
+ */
+let focusedLiveMissionId: string | null = null;
+let focusedLiveClaim: Promise<void> = Promise.resolve();
+const firstWaveInFlight = new Set<string>();
+
+export function isFocusedLiveMission(missionId: string): boolean {
+  return focusedLiveMissionId === null || focusedLiveMissionId === missionId;
+}
+
+function listMissionLiveSessionIds(missionId: string): readonly string[] {
+  const sessionIds = new Set<string>();
+  for (const snapshot of listPaneSnapshots()) {
+    if (snapshot.missionId === missionId && snapshot.sessionId) {
+      sessionIds.add(snapshot.sessionId);
+    }
+  }
+  const orch = orchPanes.get(missionId);
+  if (orch?.sessionId) sessionIds.add(orch.sessionId);
+  try {
+    for (const session of listAgentSessions()) {
+      if (session.missionId === missionId) sessionIds.add(session.sessionId);
+    }
+  } catch {
+    // Testes sem inventário PTY completo.
+  }
+  return [...sessionIds];
+}
+
+async function releaseMissionLiveRuntime(
+  scope: ProjectExecutionScope,
+  missionId: string,
+): Promise<void> {
+  stopWatcher(scope, missionId);
+  firstWaveInFlight.delete(missionId);
+  const sessionIds = listMissionLiveSessionIds(missionId);
+  orchPanes.delete(missionId);
+  for (const sessionId of sessionIds) {
+    try {
+      await orchTerminateSession(sessionId);
+    } catch (error) {
+      console.warn(
+        `[fast-lane] unfocus não terminou ${sessionId} (${missionId}):`,
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }
+}
+
+/**
+ * Iniciar / Retomar desta missão: as outras `running` dormem na rail sem PTY.
+ * Encerrar não — o operador ainda vê o card e pode Retomar.
+ */
+export async function parkSiblingRunningMissions(
+  scope: ProjectExecutionScope,
+  startingMissionId: string,
+): Promise<readonly string[]> {
+  const stores = getProjectDomainStores(scope);
+  let running: readonly Mission[] = [];
+  try {
+    running = stores.missions.list('running');
+  } catch {
+    return [];
+  }
+  const siblings = siblingRunningMissionIds(startingMissionId, running);
+  const parked: string[] = [];
+  for (const siblingId of siblings) {
+    persistLeftoverIsolation(stores.missions, siblingId, 'unfocus');
+    await releaseMissionLiveRuntime(scope, siblingId);
+    parked.push(siblingId);
+  }
+  return parked;
+}
+
+export async function claimFocusedLiveMission(
+  scope: ProjectExecutionScope,
+  missionId: string,
+  duringLock?: () => void | Promise<void>,
+): Promise<readonly string[]> {
+  const previous = focusedLiveClaim;
+  let release!: () => void;
+  focusedLiveClaim = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await previous;
+  focusedLiveMissionId = missionId;
+  try {
+    const parked = await parkSiblingRunningMissions(scope, missionId);
+    await duringLock?.();
+    return parked;
+  } finally {
+    release();
+  }
+}
+
+/**
  * Ressurreição de boot: só a missão focused COM Maestro vivo neste processo
  * volta a voar. Rows leftover `running` no disco NÃO remontam PTY — persistem
  * isolamento e ficam card na rail (restart restaura o card, não a equipe). */
@@ -1786,6 +1911,7 @@ export async function resurrectRunningMissionsForScope(
     running.map((mission) => mission.id),
   );
   const focused = pickFocusedRunningMission(running, liveById);
+  if (focused) focusedLiveMissionId = focused.id;
   for (const mission of running) {
     if (wasMissionRuntimeClosedByOperator(mission)) continue;
     const liveMaestroSessionId = liveById.get(mission.id) ?? null;
@@ -1820,6 +1946,7 @@ export async function resurrectRunningMissionsForScope(
         mission.id,
         focused && mission.id !== focused.id ? 'unfocus' : 'leftover',
       );
+      await releaseMissionLiveRuntime(scope, mission.id);
       continue;
     }
     try {
@@ -1856,6 +1983,7 @@ export async function fastLaneBootstrap(
 
   const key = watcherKey(scope, missionId);
   if (watchers.has(key)) {
+    await claimFocusedLiveMission(scope, missionId);
     // Watcher already up (Maestro remounted). Iniciar / religado must still
     // self-walk if writers are gone — otherwise the civilian sees 1 pane.
     void maybeRedispatchFastLaneFirstWave(scope, mission, {
@@ -1870,6 +1998,7 @@ export async function fastLaneBootstrap(
   }
 
   if (mission.status === 'running') {
+    await claimFocusedLiveMission(scope, missionId);
     // Já está rodando: orquestrador vivo → watcher; morto → respawn. O
     // retorno silencioso antigo deixava missões zumbis pós-restart.
     const action = decideFastLaneResumeAction({
@@ -1938,24 +2067,27 @@ export async function fastLaneBootstrap(
     );
   }
 
-  const dispatched = stores.missions.transitionLifecycle(
-    missionId,
-    { updatedAt: mission.updatedAt, intentVersion: mission.intentVersion ?? 0 },
-    { status: 'running', intentState: 'dispatched' },
-  );
-  if (!dispatched) {
-    throw new Error('a missão mudou durante o início — tente de novo');
-  }
+  let live = mission;
+  await claimFocusedLiveMission(scope, missionId, () => {
+    const dispatched = stores.missions.transitionLifecycle(
+      missionId,
+      { updatedAt: mission.updatedAt, intentVersion: mission.intentVersion ?? 0 },
+      { status: 'running', intentState: 'dispatched' },
+    );
+    if (!dispatched) {
+      throw new Error('a missão mudou durante o início — tente de novo');
+    }
 
-  const executing = stores.missions.transitionLifecycle(
-    missionId,
-    {
-      updatedAt: dispatched.updatedAt,
-      intentVersion: dispatched.intentVersion ?? 0,
-    },
-    { status: 'running', intentState: 'executing' },
-  );
-  const live = executing ?? dispatched;
+    const executing = stores.missions.transitionLifecycle(
+      missionId,
+      {
+        updatedAt: dispatched.updatedAt,
+        intentVersion: dispatched.intentVersion ?? 0,
+      },
+      { status: 'running', intentState: 'executing' },
+    );
+    live = executing ?? dispatched;
+  });
 
   const teamNames = roster.map((agent) => agent.agentName);
   const designContext = missionDesignContext(
@@ -2002,6 +2134,12 @@ export async function fastLaneBootstrap(
       agentName: orchestrator.agentName,
     });
 
+    if (!isFocusedLiveMission(missionId)) {
+      persistLeftoverIsolation(stores.missions, missionId, 'unfocus');
+      await releaseMissionLiveRuntime(scope, missionId);
+      return;
+    }
+
     startWatcher(scope, missionId, spawned.sessionId);
     void wave.then((n) => {
       if (n > 0) {
@@ -2042,8 +2180,6 @@ export async function maybeRedispatchFastLaneFirstWave(
   return dispatchFastLaneFirstWave(scope, mission.id);
 }
 
-const firstWaveInFlight = new Set<string>();
-
 /**
  * First-wave no mesmo turno do Maestro. Só CLI AuthReadiness=present
  * ganha assento; LongCat sem chave é skip silencioso (sem toast).
@@ -2078,6 +2214,7 @@ export async function dispatchFastLaneFirstWave(
   missionId: string,
 ): Promise<number> {
   if (firstWaveInFlight.has(missionId)) return 0;
+  if (!isFocusedLiveMission(missionId)) return 0;
   firstWaveInFlight.add(missionId);
   try {
     const stores = getProjectDomainStores(scope);
@@ -2162,6 +2299,14 @@ export async function dispatchFastLaneFirstWave(
       );
     }
     for (const seat of wave.seats) {
+      const current = stores.missions.get(missionId);
+      if (
+        !current ||
+        current.status !== 'running' ||
+        !isFocusedLiveMission(missionId)
+      ) {
+        break;
+      }
       const prompt = firstWaveWorkerPrompt({
         mission,
         agentName: seat.agent.agentName,
@@ -2226,6 +2371,18 @@ export async function resumeFastLaneMission(
   if (!mission) throw new Error('missão não encontrada para retomar');
 
   const remountKind = options.remountKind ?? 'operator';
+  if (
+    !mayResumeAfterOperatorDismiss({
+      remountKind,
+      operatorDismissedOrchestrator:
+        wasOrchestratorOperatorDismissed(missionId),
+    })
+  ) {
+    return;
+  }
+  if (remountKind === 'operator') {
+    clearOperatorDismissedPanes(missionId);
+  }
   const liveMaestroSessionId = liveOrchestratorSessionId(missionId);
   const freshKickoff = isThisProcessFreshKickoff(
     stores,
@@ -2249,9 +2406,12 @@ export async function resumeFastLaneMission(
     liveOrchestratorSession: liveMaestroSessionId !== null,
   });
   if (action === 'watch') {
-    if (liveMaestroSessionId) startWatcher(scope, missionId, liveMaestroSessionId);    return;
+    await claimFocusedLiveMission(scope, missionId);
+    if (liveMaestroSessionId) startWatcher(scope, missionId, liveMaestroSessionId);
+    return;
   }
   if (action === 'respawn') {
+    await claimFocusedLiveMission(scope, missionId);
     await respawnFastLaneOrchestrator(scope, mission, {
       note: options.note,
     });

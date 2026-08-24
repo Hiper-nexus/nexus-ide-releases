@@ -762,34 +762,16 @@ async function confirmMissionRuntimeClose(
   scope: ProjectExecutionScope,
   candidate: ReturnType<typeof prepareMissionRuntimeTermination>,
 ): Promise<boolean> {
-  const window = BrowserWindow.fromWebContents(owner);
-  if (!window || window.isDestroyed()) {
-    throw new Error("renderer window is unavailable");
-  }
-  if (missionAuthorityConfirmations.has(owner)) {
-    throw new Error("mission authority confirmation is already pending");
-  }
-  missionAuthorityConfirmations.add(owner);
-  try {
-    const result = await dialog.showMessageBox(window, {
-      type: "warning",
-      title: "Nexus IDE — encerrar missão",
-      buttons: ["Cancelar", "Encerrar missão"],
-      defaultId: 0,
-      cancelId: 0,
-      noLink: true,
-      message: `Encerrar "${safeDialogLabel(candidate.missionTitle, 512)}"?`,
-      detail:
-        `Workspace: ${safeDialogLabel(scope.rootRealPath, 4_096)}\n` +
-        `Missão: ${safeDialogLabel(candidate.missionId, 128)}\n` +
-        `Sessões físicas: ${candidate.sessionIds.length}\n\n` +
-        "Os processos e panes desta missão serão encerrados. Tasks, entregas, " +
-        "receipts e histórico permanecem salvos, e a missão poderá ser retomada depois.",
-    });
-    return result.response === 1;
-  } finally {
-    missionAuthorityConfirmations.delete(owner);
-  }
+  // Mesma régua do demotion (06/08): Encerrar no Quadro já é o gesto.
+  // O diálogo nativo deixava UMA confirmação pendente e TODAS as outras
+  // Encerrar falhavam com "already pending" — lote de 5 missões travava o Mac.
+  void owner;
+  console.log(
+    `[orch] mission runtime close auto-confirmed ` +
+      `project=${scope.projectId} mission=${candidate.missionId} ` +
+      `sessions=${candidate.sessionIds.length}`,
+  );
+  return true;
 }
 
 async function confirmMissionOperatorComplete(

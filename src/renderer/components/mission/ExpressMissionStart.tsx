@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type FormEvent } from 'react';
 import { MISSION_INTENT_GOAL_MAX_CHARS } from '../../../shared/mission-intent';
 import type { SquadAgent } from '../../../shared/orch-types';
 import type { WorkspaceInfo } from '../../../shared/workspace-types';
@@ -105,6 +105,11 @@ export function ExpressMissionStart({
     if (!suppressHeadingAutofocus) headingRef.current?.focus();
   }, [suppressHeadingAutofocus]);
 
+  const handleSubmit = (event: FormEvent<HTMLFormElement>): void => {
+    event.preventDefault();
+    if (!busy) onStart();
+  };
+
   const teamNames = draft.roster
     .map((agent) => agent.agentName)
     .filter(Boolean);
@@ -122,9 +127,10 @@ export function ExpressMissionStart({
   });
 
   return (
-    <section
+    <form
       className="mission-setup__step mission-setup__step--express"
       aria-labelledby="express-mission-title"
+      onSubmit={handleSubmit}
     >
       <header className="mission-setup__step-header">
         <p className="mission-setup__step-kicker">Caminho Expresso</p>
@@ -263,6 +269,7 @@ export function ExpressMissionStart({
         <MissionAttachmentPicker
           contextPaths={draft.contextPaths}
           disabled={draftEditingDisabled || busy}
+          compact
           onContextPathsChange={onContextPathsChange}
         />
 
@@ -390,9 +397,8 @@ export function ExpressMissionStart({
 
       <footer className="mission-setup__step-actions mission-setup__step-actions--end mission-setup__step-actions--after-content">
         <button
-          type="button"
-          className="mission-setup__button mission-setup__button--primary"
-          onClick={onStart}
+          type="submit"
+          className="mission-setup__button mission-setup__button--primary mission-setup__button--start"
           disabled={busy}
         >
           {busy ? 'Iniciando missão…' : 'Iniciar missão'}
@@ -431,6 +437,6 @@ export function ExpressMissionStart({
           </span>
         </div>
       </div>
-    </section>
+    </form>
   );
 }

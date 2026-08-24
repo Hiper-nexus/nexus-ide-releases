@@ -55,6 +55,17 @@ export type UnlockRetiredPaneDisposition =
  * o status também preserva o pane — fail-closed, nunca destrói o histórico
  * do agente porque o IPC piscou.
  */
+/**
+ * Restore/montagem do pane NÃO dispara retry-kickoff. Só tecla do operador
+ * ou Retomar no rail. Sem isto, leftover/Encerrar reimprimia
+ * "revival da missão falhou" em vermelho no histórico.
+ */
+export function shouldReviveDeadMissionFromPane(input: {
+  readonly operatorInitiated?: boolean;
+}): boolean {
+  return input.operatorInitiated === true;
+}
+
 export function decideUnlockRetiredMissionPane(input: {
   readonly missionStatus?: 'pending' | 'running' | 'blocked' | 'done' | 'failed';
   readonly lookupFailed?: boolean;

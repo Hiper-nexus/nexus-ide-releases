@@ -210,6 +210,19 @@ export function parseRouteJson(raw: string): IntentRoute | null {
  * heurística não resolve. Sem nenhuma key → só Tier 0. Fail-open total:
  * classificador fora do ar nunca derruba o fluxo de missão que já existia.
  */
+/**
+ * "quanto é 1+1? Depois crie um site" — a pergunta é isca. Trabalho DEPOIS
+ * do ? é missão. Sem esta guarda o Tier 1 (LLM) devolve direct-answer.
+ */
+export function hasTrailingWorkAfterQuestion(objective: string): boolean {
+  const text = objective.trim();
+  const mark = text.indexOf('?');
+  if (mark < 0) return false;
+  const rest = text.slice(mark + 1).trim();
+  if (rest.length <= 12) return false;
+  return QUESTION_VERBS.test(rest) || IMPERATIVE_OPENER_RE.test(rest);
+}
+
 export async function routeIntent(
   objective: string,
   deps: RouterDeps & {
@@ -222,6 +235,7 @@ export async function routeIntent(
   // Com typo de ditado ("oergunta aos panes quwnto e 1+1") o Tier 0/1 pode
   // errar; este predicado (mesmo do kickoff) é a autoridade. Null = missão.
   if (isPaneMetaTask(objective)) return null;
+  if (hasTrailingWorkAfterQuestion(objective)) return null;
   if (looksLikePureQuestion(objective)) {
     return { kind: 'direct-answer', question: extractQuestion(objective) ?? objective };
   }

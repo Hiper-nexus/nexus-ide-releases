@@ -178,7 +178,11 @@ function CanvasCommandBar({
  *  - "edges que conversam": dragging a connection between two panes pipes the
  *    source pane's output into the target pane's input (see pane-pipe.ts).
  */
-export function CanvasView() {
+export function CanvasView({
+  visiblePaneIds,
+}: {
+  readonly visiblePaneIds?: ReadonlySet<string>;
+} = {}) {
   const root = useLayoutStore((s) => s.root);
   const focusedPaneId = useLayoutStore((s) => s.focusedPaneId);
   const canvasNodeLayouts = useLayoutStore((s) => s.canvasNodeLayouts);
@@ -198,7 +202,14 @@ export function CanvasView() {
   const removePipe = usePipeStore((s) => s.remove);
 
   const panes = useMemo(() => listPanes(root), [root]);
-  const paneIdsKey = panes.map((p) => p.id).join(',');
+  const displayPanes = useMemo(
+    () =>
+      visiblePaneIds
+        ? panes.filter((pane) => visiblePaneIds.has(pane.id))
+        : panes,
+    [panes, visiblePaneIds],
+  );
+  const paneIdsKey = displayPanes.map((p) => p.id).join(',');
 
   const layoutsRef = useRef(canvasNodeLayouts);
   layoutsRef.current = canvasNodeLayouts;
@@ -206,37 +217,42 @@ export function CanvasView() {
   focusedRef.current = focusedPaneId;
 
   const [nodes, setNodes] = useState<Node[]>(() =>
-    buildNodes(panes, canvasNodeLayouts, focusedPaneId),
+    buildNodes(displayPanes, canvasNodeLayouts, focusedPaneId),
   );
   const flowRef = useRef<ReactFlowInstance<Node, Edge> | null>(null);
   const [pipeMotionNow, setPipeMotionNow] = useState(() => Date.now());
 
   // Memoize derived counts to avoid O(n) iteration on every render.
   const busyCount = useMemo(
-    () => panes.filter((pane) => paneStates.get(pane.id) === 'busy').length,
-    [panes, paneStates],
+    () => displayPanes.filter((pane) => paneStates.get(pane.id) === 'busy').length,
+    [displayPanes, paneStates],
   );
   const startingCount = useMemo(
     () =>
-      panes.filter((pane) => {
+      displayPanes.filter((pane) => {
         if (pane.kind === 'browser') return false;
         const state = paneStates.get(pane.id);
         return state === undefined || state === 'spawning';
       }).length,
-    [panes, paneStates],
+    [displayPanes, paneStates],
   );
   const unavailableCount = useMemo(
     () =>
-      panes.filter((pane) => {
+      displayPanes.filter((pane) => {
         const state = paneStates.get(pane.id);
         return state === 'exited' || state === 'hibernated';
       }).length,
-    [panes, paneStates],
+    [displayPanes, paneStates],
   );
-  const activeMissionCount = useMemo(
-    () => new Set(Object.values(paneMissions)).size,
-    [paneMissions],
-  );
+  const activeMissionCount = useMemo(() => {
+    if (!visiblePaneIds) return new Set(Object.values(paneMissions)).size;
+    const ids = new Set<string>();
+    for (const pane of displayPanes) {
+      const missionId = pane.missionId ?? paneMissions[pane.id];
+      if (missionId) ids.add(missionId);
+    }
+    return ids.size;
+  }, [displayPanes, paneMissions, visiblePaneIds]);
 
   const centerPanes = useCallback(() => {
     const reduceMotion = window.matchMedia?.(
@@ -292,7 +308,7 @@ export function CanvasView() {
   // Sync when pane set changes (panes added or removed). Note nodes live in the
   // same array and must be preserved across a pane-set rebuild.
   useEffect(() => {
-    const currentPanes = listPanes(root);
+    const currentPanes = displayPanes;
     setNodes((prev) => {
       const prevMap = new Map(prev.map((n) => [n.id, n]));
       const paneNodes = currentPanes.map((pane, i) => {
@@ -332,7 +348,8 @@ export function CanvasView() {
     );
   }, [focusedPaneId, canvasNodeLayouts]);
 
-  // Reconcile terminal hosts when pane set changes.
+  // Dispose only when the pane left the CANONICAL tree — never because the
+  // vista da missão escondeu o mosaico das outras.
   useEffect(() => {
     const liveIds = new Set(panes.map((p) => p.id));
     reconcileHosts(liveIds);
@@ -380,23 +397,28 @@ export function CanvasView() {
   );
 
   // "Edges que conversam": one edge per pipe; drawing one pipes source→target.
-  const edges: Edge[] = useMemo(
-    () =>
-      pipes.map((p) => {
-        const count = p.deliveryCount ?? 0;
-        const badge = count > 0 ? ` (${count})` : '';
-        return {
-          id: p.id,
-          source: p.sourcePaneId,
-          target: p.targetPaneId,
-          animated: isPipeRecentlyActive(p.lastDeliveredAt, pipeMotionNow),
-          label: (p.mode === 'stream' ? 'stream' : 'ao ficar idle') + badge,
-          style: { stroke: 'var(--accent)', strokeWidth: 2 },
-          labelStyle: { fill: 'var(--text-dim)', fontSize: 10 },
-        };
-      }),
-    [pipes, pipeMotionNow],
-  );
+  const edges: Edge[] = useMemo(() => {
+    const visible = visiblePaneIds
+      ? pipes.filter(
+          (p) =>
+            visiblePaneIds.has(p.sourcePaneId) &&
+            visiblePaneIds.has(p.targetPaneId),
+        )
+      : pipes;
+    return visible.map((p) => {
+      const count = p.deliveryCount ?? 0;
+      const badge = count > 0 ? ` (${count})` : '';
+      return {
+        id: p.id,
+        source: p.sourcePaneId,
+        target: p.targetPaneId,
+        animated: isPipeRecentlyActive(p.lastDeliveredAt, pipeMotionNow),
+        label: (p.mode === 'stream' ? 'stream' : 'ao ficar idle') + badge,
+        style: { stroke: 'var(--accent)', strokeWidth: 2 },
+        labelStyle: { fill: 'var(--text-dim)', fontSize: 10 },
+      };
+    });
+  }, [pipes, pipeMotionNow, visiblePaneIds]);
 
   const onConnect = useCallback(
     (conn: Connection) => {
@@ -418,12 +440,12 @@ export function CanvasView() {
   return (
     <div className="canvas-container">
       <CanvasCommandBar
-        paneCount={panes.length}
+        paneCount={displayPanes.length}
         busyCount={busyCount}
         startingCount={startingCount}
         unavailableCount={unavailableCount}
         activeMissionCount={activeMissionCount}
-        pipeCount={pipes.length}
+        pipeCount={edges.length}
         onCenter={centerPanes}
         onAddTerminal={addShellPane}
       />

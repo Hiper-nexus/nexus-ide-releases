@@ -1361,7 +1361,9 @@ const productionMissionEngines = new MissionEngineRegistry((scope, stores) =>
             "só Retomar no rail religa",
         );
       }
-      await resumeFastLaneMission(scope, command.missionId);
+      await resumeFastLaneMission(scope, command.missionId, {
+        remountKind: "automatic",
+      });
     },
     resume: async (command) => {
       const mission = stores.missions.get(command.missionId);

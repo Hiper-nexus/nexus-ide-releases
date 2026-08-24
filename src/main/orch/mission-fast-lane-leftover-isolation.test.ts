@@ -20,17 +20,25 @@ const harness = vi.hoisted(() => ({
     sessionId: string;
   }>,
   sessionStates: new Map<string, string>(),
+  agentSessions: [] as Array<{ sessionId: string; missionId: string }>,
+  terminated: [] as string[],
 }));
 
 vi.mock('../pty/pty-manager', () => ({
   getSessionState: (sessionId: string) =>
     harness.sessionStates.get(sessionId) ?? null,
   registeredOrchestratorSessionsForMission: () => [],
-  orchTerminateSession: async () => true,
+  listAgentSessions: () => harness.agentSessions,
+  orchTerminateSession: async (sessionId: string) => {
+    harness.terminated.push(sessionId);
+    return true;
+  },
 }));
 
 vi.mock('./pane-registry', () => ({
   listPaneSnapshots: () => harness.snapshots,
+  wasOrchestratorOperatorDismissed: () => false,
+  clearOperatorDismissedPanes: () => {},
   requestPaneSpawn: async () => {
     harness.spawnCount += 1;
     return {
@@ -82,6 +90,7 @@ vi.mock('./squad-store', () => ({
 }));
 
 import {
+  parkSiblingRunningMissions,
   pickFocusedRunningMission,
   resurrectRunningMissionsForScope,
 } from './mission-fast-lane';
@@ -112,6 +121,8 @@ describe('persist leftover + reopen não remonta', () => {
     harness.hasKickoffReceipt = false;
     harness.snapshots = [];
     harness.sessionStates.clear();
+    harness.agentSessions = [];
+    harness.terminated = [];
   });
 
   it('park persiste blocked (não running) com selo leftover', () => {
@@ -248,6 +259,40 @@ describe('persist leftover + reopen não remonta', () => {
       )?.id,
     ).toBe('this-process');
     expect(pickFocusedRunningMission([disk], new Map())).toBeNull();
+  });
+
+  it('Iniciar uma missão nova estaciona as outras running e mata o PTY delas', async () => {
+    const nova = leftoverRunning({
+      id: 'mission-nova',
+      title: 'nova',
+      updatedAt: Date.now(),
+    });
+    const velha = leftoverRunning({
+      id: 'mission-velha',
+      title: 'velha',
+      updatedAt: Date.now() - 10_000,
+    });
+    harness.missions.set(nova.id, nova);
+    harness.missions.set(velha.id, velha);
+    harness.snapshots = [
+      { missionId: velha.id, role: 'orchestrator', sessionId: 'sess-velha' },
+    ];
+    harness.agentSessions = [
+      { sessionId: 'sess-velha', missionId: velha.id },
+      { sessionId: 'sess-velha-writer', missionId: velha.id },
+    ];
+
+    const parked = await parkSiblingRunningMissions(scope, nova.id);
+
+    expect(parked).toEqual([velha.id]);
+    expect(harness.missions.get(velha.id)?.status).toBe('blocked');
+    expect(harness.missions.get(velha.id)?.description).toContain(
+      NEXUS_LEFTOVER_PARKED_MARKER,
+    );
+    expect(harness.missions.get(nova.id)?.status).toBe('running');
+    expect(harness.terminated.sort()).toEqual(
+      ['sess-velha', 'sess-velha-writer'].sort(),
+    );
   });
 
   it('kickoff fresco com recibo desta sessão ainda pode nascer — não é leftover', async () => {

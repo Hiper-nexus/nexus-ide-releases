@@ -2,7 +2,7 @@ import { useEffect, useMemo } from 'react';
 import { Group, Panel, Separator } from 'react-resizable-panels';
 import type { LayoutNode } from '../../shared/types';
 import { useLayoutStore } from '../state/layout-store';
-import { listPanes } from '../lib/split-tree';
+import { buildGridTree, listPanes } from '../lib/split-tree';
 import { reconcileHosts } from '../terminal/terminal-host';
 import { reconcileBrowserPanes } from '../browser/browser-host';
 import { PaneLeaf } from './PaneLeaf';
@@ -37,27 +37,45 @@ function renderNode(node: LayoutNode): React.ReactNode {
   );
 }
 
-export function PaneGrid() {
+export function PaneGrid({
+  visiblePaneIds,
+}: {
+  readonly visiblePaneIds?: ReadonlySet<string>;
+} = {}) {
   const root = useLayoutStore((s) => s.root);
   const maximizedPaneId = useLayoutStore((s) => s.maximizedPaneId);
-  const maximizedPane = useMemo(
-    () =>
-      maximizedPaneId
-        ? listPanes(root).find((pane) => pane.id === maximizedPaneId) ?? null
-        : null,
-    [root, maximizedPaneId],
-  );
+  const displayRoot = useMemo(() => {
+    if (!visiblePaneIds) return root;
+    const visible = listPanes(root).filter((pane) => visiblePaneIds.has(pane.id));
+    return visible.length === 0 ? null : buildGridTree(visible);
+  }, [root, visiblePaneIds]);
+  const maximizedPane = useMemo(() => {
+    if (!maximizedPaneId || !displayRoot) return null;
+    return (
+      listPanes(displayRoot).find((pane) => pane.id === maximizedPaneId) ?? null
+    );
+  }, [displayRoot, maximizedPaneId]);
 
-  // Dispose terminals for panes that have left the tree (after close).
+  // Dispose only when the pane left the CANONICAL tree — never because the
+  // vista da missão escondeu o mosaico das outras.
   useEffect(() => {
     const liveIds = new Set(listPanes(root).map((p) => p.id));
     reconcileHosts(liveIds);
     reconcileBrowserPanes(liveIds);
   }, [root]);
 
+  if (!displayRoot) {
+    return (
+      <div
+        className="grid grid--mission-empty"
+        aria-label="Nenhum terminal desta missão"
+      />
+    );
+  }
+
   return (
     <div className={`grid${maximizedPane ? ' grid--pane-maximized' : ''}`}>
-      {maximizedPane ? <PaneLeaf pane={maximizedPane} /> : renderNode(root)}
+      {maximizedPane ? <PaneLeaf pane={maximizedPane} /> : renderNode(displayRoot)}
       {/* Controle flutuante da grelha: abrir um pane novo sem sair do trabalho. */}
       <PanePicker />
     </div>

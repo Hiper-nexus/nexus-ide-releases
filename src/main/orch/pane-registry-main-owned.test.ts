@@ -257,6 +257,7 @@ import {
   resolvePaneSpawn,
   syncPanes,
   unregisterOrchRenderer,
+  wasOrchestratorOperatorDismissed,
 } from "./pane-registry";
 
 describe("main-owned mission pane spawn", () => {
@@ -500,6 +501,125 @@ describe("main-owned mission pane spawn", () => {
     syncPanes([], owner, "renderer-generation-b");
     unregisterOrchRenderer(owner);
     clearRendererWorkspaceScope(owner);
+  });
+
+  it("operator dropping a mission pane on the same generation does not re-present it", async () => {
+    const result = await requestPaneSpawn({
+      adapterId: "codex",
+      model: "gpt-5.6-sol",
+      cwd: executionScope.rootRealPath,
+      missionId: "mission-headless",
+      agentName: "Worker Headless",
+      workerIncarnationId: "worker-incarnation-main",
+      role: "worker",
+      allowedTools: [],
+      allowedSkills: null,
+      scope,
+      executionScope,
+    });
+    const owner = {
+      id: 940,
+      isDestroyed: () => false,
+      isCrashed: () => false,
+      send: vi.fn(),
+    } as unknown as WebContents & { send: ReturnType<typeof vi.fn> };
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    registerOrchRenderer(owner);
+
+    syncPanes(
+      [
+        {
+          paneId: result.paneId!,
+          sessionId: "pty-headless-1",
+          title: "Worker Headless",
+          kind: "cli-agent",
+          adapterId: "codex",
+          model: "gpt-5.6-sol",
+          state: "idle",
+        },
+      ],
+      owner,
+      "renderer-generation-op-close",
+    );
+    attachOrchMeta(owner, result.paneId!, {
+      missionId: "mission-headless",
+      role: "worker",
+      workerIncarnationId: "worker-incarnation-main",
+      scope,
+      executionScope,
+    });
+    owner.send.mockClear();
+    pty.terminate.mockClear();
+
+    try {
+      syncPanes([], owner, "renderer-generation-op-close");
+
+      expect(owner.send).not.toHaveBeenCalledWith(
+        ORCH_CHANNELS.panePresentationRequest,
+        expect.anything(),
+      );
+      await vi.waitFor(() => {
+        expect(pty.terminate).toHaveBeenCalledWith("pty-headless-1");
+      });
+    } finally {
+      unregisterOrchRenderer(owner);
+      clearRendererWorkspaceScope(owner);
+    }
+  });
+
+  it("requestPaneSpawn does not clear an operator-dismissed Maestro", async () => {
+    const owner = {
+      id: 941,
+      isDestroyed: () => false,
+      isCrashed: () => false,
+      send: vi.fn(),
+    } as unknown as WebContents & { send: ReturnType<typeof vi.fn> };
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    registerOrchRenderer(owner);
+    pty.live.add("pty-maestro-dismiss");
+    syncPanes(
+      [
+        {
+          paneId: "pane-maestro-dismiss",
+          sessionId: "pty-maestro-dismiss",
+          title: "Maestro",
+          kind: "cli-agent",
+          adapterId: "claude",
+          state: "idle",
+        },
+      ],
+      owner,
+      "renderer-generation-orch-dismiss",
+    );
+    attachOrchMeta(owner, "pane-maestro-dismiss", {
+      missionId: "mission-headless",
+      role: "orchestrator",
+      scope,
+      executionScope,
+    });
+    syncPanes([], owner, "renderer-generation-orch-dismiss");
+    expect(wasOrchestratorOperatorDismissed("mission-headless")).toBe(true);
+
+    try {
+      const abort = new AbortController();
+      abort.abort("test");
+      await requestPaneSpawn({
+        adapterId: "codex",
+        cwd: executionScope.rootRealPath,
+        missionId: "mission-headless",
+        agentName: "Worker extra",
+        role: "worker",
+        allowedTools: [],
+        allowedSkills: null,
+        scope,
+        executionScope,
+        abortSignal: abort.signal,
+      });
+      expect(wasOrchestratorOperatorDismissed("mission-headless")).toBe(true);
+    } finally {
+      unregisterOrchRenderer(owner);
+      clearRendererWorkspaceScope(owner);
+    }
   });
 
   it("does not present and retires a main-owned pane whose durable authority rotated", async () => {

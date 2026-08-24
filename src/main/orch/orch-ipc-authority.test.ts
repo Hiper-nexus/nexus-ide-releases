@@ -2719,17 +2719,7 @@ describe('mission runtime close IPC authority', () => {
     });
     const handler = configureAndGetHandler();
 
-    harness.dialog.showMessageBox.mockResolvedValueOnce({ response: 0 });
-    await expect(
-      handler({ sender }, { missionId: stored.id }),
-    ).resolves.toEqual({
-      ok: false,
-      cancelled: true,
-      terminatedSessionIds: [],
-    });
-    expect(harness.terminatePty).not.toHaveBeenCalled();
-
-    harness.dialog.showMessageBox.mockResolvedValueOnce({ response: 1 });
+    expect(harness.dialog.showMessageBox).not.toHaveBeenCalled();
     await expect(
       handler({ sender }, { missionId: stored.id }),
     ).resolves.toMatchObject({
@@ -2748,13 +2738,7 @@ describe('mission runtime close IPC authority', () => {
     });
     expect(harness.terminatePty).toHaveBeenCalledWith('pty-stuck-close');
     expect(stored.id).toBe('mission-stuck');
-    const options = harness.dialog.showMessageBox.mock.calls.at(-1)?.[1];
-    expect(options).toMatchObject({
-      defaultId: 0,
-      cancelId: 0,
-      noLink: true,
-    });
-    expect(options?.detail).toContain('Tasks, entregas');
+    expect(harness.dialog.showMessageBox).not.toHaveBeenCalled();
   });
 
   it('encerra mesmo quando a missão recebe escrita durável enquanto o modal está aberto', async () => {

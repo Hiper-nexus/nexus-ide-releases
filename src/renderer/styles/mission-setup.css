@@ -491,6 +491,18 @@
   gap: var(--space-3);
 }
 
+.mission-attachment-picker--compact {
+  gap: 6px;
+}
+
+.mission-attachment-picker--compact .mission-setup__section-heading {
+  margin-bottom: 0;
+}
+
+.mission-attachment-picker--compact .mission-attachment-picker__drop {
+  padding: 8px 12px;
+}
+
 .mission-attachment-picker__drop {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

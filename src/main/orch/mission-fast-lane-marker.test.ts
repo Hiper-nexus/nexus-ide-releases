@@ -40,6 +40,7 @@ vi.mock('../pty/pty-manager', () => ({
     harness.sessionStates.get(sessionId) === 'idle' ||
     harness.sessionStates.get(sessionId) === 'busy',
   registeredOrchestratorSessionsForMission: () => [],
+  listAgentSessions: () => [],
   orchTerminateSession: () => Promise.resolve(true),
 }));
 
@@ -69,6 +70,8 @@ vi.mock('./tool-util', () => ({
 
 vi.mock('./pane-registry', () => ({
   readSessionOutput: () => '',
+  wasOrchestratorOperatorDismissed: () => false,
+  clearOperatorDismissedPanes: () => {},
   listPaneSnapshots: () =>
     harness.snapshots.map((pane) => ({
       ...pane,
@@ -110,6 +113,12 @@ vi.mock('./project-domain-store-registry', () => ({
   getProjectDomainStores: () => ({
     missions: {
       get: () => liveMission,
+      list: (status?: string) =>
+        !status || liveMission.status === status ? [liveMission] : [],
+      update: (_id: string, patch: Partial<Mission>) => {
+        liveMission = { ...liveMission, ...patch } as Mission;
+        return liveMission;
+      },
       transitionLifecycle: (
         _id: string,
         _expected: unknown,

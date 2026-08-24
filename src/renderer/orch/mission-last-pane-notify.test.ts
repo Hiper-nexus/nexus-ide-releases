@@ -196,4 +196,35 @@ describe('mission last pane closed', () => {
 
     expect(useToastStore.getState().toasts).toHaveLength(0);
   });
+
+  it('operador fecha pane de missão Aguardando você (ajuste) — não encerra nem reabre', async () => {
+    seedLayout([missionPane]);
+    seedOrch(
+      [
+        {
+          ...makeMission('running'),
+          description: '<!-- nexus:awaiting-adjustment:1 -->',
+        },
+      ],
+      { 'pane-m1': 'mission-1' },
+    );
+
+    useLayoutStore.getState().close('pane-m1', 'user');
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    expect(closeMissionRuntimeAndPanes).not.toHaveBeenCalled();
+    expect(useToastStore.getState().toasts).toHaveLength(0);
+    expect(confirmAndReopenMission).not.toHaveBeenCalled();
+  });
+
+  it('operador fecha pane de missão Precisa de você — não encerra nem reabre', async () => {
+    seedLayout([missionPane]);
+    seedOrch([makeMission('blocked')], { 'pane-m1': 'mission-1' });
+
+    useLayoutStore.getState().close('pane-m1', 'user');
+    await Promise.resolve();
+
+    expect(closeMissionRuntimeAndPanes).not.toHaveBeenCalled();
+    expect(confirmAndReopenMission).not.toHaveBeenCalled();
+  });
 });

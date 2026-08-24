@@ -8,6 +8,7 @@ import {
   decideExternalHeadChangeAction,
   decideFastLaneEmptyPaneAction,
   decideFastLaneResumeAction,
+  mayResumeAfterOperatorDismiss,
   missionDesignContext,
   missionFastLaneEnabled,
   isPaneMetaTask,
@@ -379,6 +380,46 @@ describe('decideFastLaneEmptyPaneAction (doutrina: missão nunca morre sozinha)'
         respawnBudgetLeft: 0,
       }),
     ).toBe('keep-running-watching');
+  });
+
+  it('orquestrador fechado pelo operador → não respawna a missão inteira', () => {
+    expect(
+      decideFastLaneEmptyPaneAction({
+        status: 'running',
+        pendingHandoffs: 2,
+        respawnBudgetLeft: 3,
+        operatorDismissedOrchestrator: true,
+      }),
+    ).toBe('keep-running-watching');
+  });
+});
+
+describe('mayResumeAfterOperatorDismiss (✕ do Maestro não é Retomar)', () => {
+  it('sem dismiss → resume segue', () => {
+    expect(
+      mayResumeAfterOperatorDismiss({
+        remountKind: 'automatic',
+        operatorDismissedOrchestrator: false,
+      }),
+    ).toBe(true);
+  });
+
+  it('dismiss + remount automático / retry-kickoff → NÃO resume', () => {
+    expect(
+      mayResumeAfterOperatorDismiss({
+        remountKind: 'automatic',
+        operatorDismissedOrchestrator: true,
+      }),
+    ).toBe(false);
+  });
+
+  it('dismiss + Retomar explícito do operador → resume (e limpa o tombstone)', () => {
+    expect(
+      mayResumeAfterOperatorDismiss({
+        remountKind: 'operator',
+        operatorDismissedOrchestrator: true,
+      }),
+    ).toBe(true);
   });
 });
 

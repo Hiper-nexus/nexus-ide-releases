@@ -16,16 +16,22 @@ const harness = vi.hoisted(() => ({
 
 vi.mock('../pty/pty-manager', () => ({
   getSessionState: () => null,
+  listAgentSessions: () => [],
+  orchTerminateSession: async () => true,
 }));
 
 vi.mock('./pane-registry', () => ({
   listPaneSnapshots: () => [],
+  wasOrchestratorOperatorDismissed: () => false,
+  clearOperatorDismissedPanes: () => {},
 }));
 
 vi.mock('./project-domain-store-registry', () => ({
   getProjectDomainStores: () => ({
     missions: {
       get: () => harness.mission,
+      list: () => (harness.mission ? [harness.mission] : []),
+      update: () => harness.mission,
     },
   }),
 }));

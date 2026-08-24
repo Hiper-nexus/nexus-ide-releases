@@ -66,6 +66,19 @@ describe("MissionBoard layout system invariants (RED test)", () => {
     expect(missionCss).toMatch(/\.mission-graph__edge--[^:]+\s*\{[^}]*stroke-dasharray:/);
   });
 
+  it("keeps the mission title column from shrinking to a single letter", () => {
+    const headerRule = cssRule(missionCss, ".mission-board__header");
+    expect(headerRule).toMatch(
+      /grid-template-columns:\s*minmax\(\s*(1[2-9]rem|[2-9]\drem)/,
+    );
+  });
+
+  it("mission title wraps instead of collapsing to q…", () => {
+    const titleRule = cssRule(missionCss, ".mission-board__identity h1");
+    expect(titleRule).not.toMatch(/white-space:\s*nowrap/);
+    expect(titleRule).not.toMatch(/text-overflow:\s*ellipsis/);
+  });
+
   it("wraps compact actions and ensures reason text is not ellipsized in compact rules", () => {
     // Compact action rules within container queries should have flex-wrap: wrap
     expect(missionCss).toMatch(/@container[^{]*\{[\s\S]*?\.mission-board__actions\s*\{[^}]*flex-wrap:\s*wrap/);

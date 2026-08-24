@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   answerDirectQuestion,
   extractQuestion,
+  hasTrailingWorkAfterQuestion,
   looksLikePureQuestion,
   parseRouteJson,
   routeIntent,
@@ -18,6 +19,20 @@ describe('Tier 0 — heurística determinística', () => {
     expect(looksLikePureQuestion('crie uma landing page')).toBe(false);
     expect(looksLikePureQuestion(`${'a'.repeat(200)}?`)).toBe(false);
     expect(looksLikePureQuestion('')).toBe(false);
+  });
+
+  it('trabalho DEPOIS do ? não é pergunta pura', () => {
+    expect(
+      looksLikePureQuestion(
+        'quanto é 1+1? Depois crie um site sobre matemática',
+      ),
+    ).toBe(false);
+    expect(
+      hasTrailingWorkAfterQuestion(
+        'quanto é 1+1? Depois crie um site sobre matemática',
+      ),
+    ).toBe(true);
+    expect(hasTrailingWorkAfterQuestion('quanto é 1+1?')).toBe(false);
   });
 
   it('extrai a pergunta limpa do wrapper meta-de-pane', () => {
@@ -106,6 +121,23 @@ describe('routeWithDeepSeek / routeIntent — fail-open', () => {
         })) as unknown as typeof fetch,
       }),
     ).toEqual({ kind: 'direct-answer', question: 'quanto é 2+2?' });
+  });
+
+  it('híbrido depois do ? nunca chama a LLM (DEV vivo classificava como 1+1)', async () => {
+    let called = false;
+    const route = await routeIntent(
+      'quanto é 1+1? Depois crie um site sobre matemática',
+      {
+        hasKeyFor: () => true,
+        loadKeyFor: () => 'k',
+        fetchImpl: (async () => {
+          called = true;
+          throw new Error('não deveria chamar rede');
+        }) as unknown as typeof fetch,
+      },
+    );
+    expect(route).toBeNull();
+    expect(called).toBe(false);
   });
 
   it('routeIntent: Tier 0 ganha antes de qualquer rede', async () => {

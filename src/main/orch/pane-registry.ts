@@ -615,6 +615,67 @@ const mirroredOwners = new Map<number, WebContents>();
 const paneSyncGenerationByOwner = new Map<number, string>();
 
 /**
+ * Pane que o operador (ou o runtime no mesmo documento) tirou do grid.
+ * HMR/Cmd+R troca generation e retém headless; drop na MESMA generation é
+ * fechamento de folha — não reapresentar, não respawnar o time inteiro.
+ */
+const operatorDismissedPanes = new Map<
+  string,
+  { readonly missionId: string; readonly role: string }
+>();
+
+export function wasOrchestratorOperatorDismissed(missionId: string): boolean {
+  for (const record of operatorDismissedPanes.values()) {
+    if (record.missionId === missionId && record.role === "orchestrator") {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function isMissionPaneOperatorDismissed(paneId: string): boolean {
+  return operatorDismissedPanes.has(paneId);
+}
+
+export function clearOperatorDismissedPanes(missionId: string): void {
+  for (const [paneId, record] of operatorDismissedPanes) {
+    if (record.missionId === missionId) operatorDismissedPanes.delete(paneId);
+  }
+}
+
+function noteOperatorDismissedPane(
+  paneId: string,
+  missionId: string,
+  role: string,
+): void {
+  operatorDismissedPanes.set(paneId, { missionId, role });
+}
+
+function retireOperatorDismissedRendererPane(
+  owner: WebContents,
+  registered: RegisteredPane,
+): void {
+  const paneId = registered.entry.paneId;
+  const meta = orchMetaByPane.get(paneMetaKey(owner, paneId));
+  const agent = registered.entry.sessionId
+    ? getAgentSessionInfo(registered.entry.sessionId)
+    : null;
+  const missionId = meta?.missionId ?? agent?.missionId;
+  const role = meta?.role ?? agent?.role;
+  if (!missionId || (role !== "orchestrator" && role !== "worker")) return;
+  noteOperatorDismissedPane(paneId, missionId, role);
+  const sessionId = registered.entry.sessionId;
+  if (!sessionId) return;
+  void orchTerminateSession(sessionId).catch((error) => {
+    console.warn(
+      `[pane-registry] operator-dismiss terminate failed pane=${paneId} ` +
+        `session=${sessionId}:`,
+      error instanceof Error ? error.message : error,
+    );
+  });
+}
+
+/**
  * True once any live renderer bound to this workspace scope has synced its
  * pane layout at least once (even `syncPanes([])`).
  */
@@ -1021,6 +1082,7 @@ function resolveMainOwnedPanePresentation(
   const missionId = meta.missionId;
   const role = meta.role;
   if (meta.transient === true) return { kind: "skip" };
+  if (isMissionPaneOperatorDismissed(entry.paneId)) return { kind: "skip" };
   if (!meta.scope || !sameExactProjectScope(ownerScope, meta.scope)) {
     return { kind: "skip" };
   }
@@ -1200,6 +1262,18 @@ export function syncPanes(
       (!entry.sessionId ||
         isSessionOwnedBy(owner, entry.sessionId)),
   );
+  const previousGeneration = paneSyncGenerationByOwner.get(owner.id);
+  const generationUnchanged =
+    Boolean(generationId) && previousGeneration === generationId;
+  const previousForOwner = panes.filter(
+    (registered) => registered.owner === owner,
+  );
+  const acceptedIds = new Set(accepted.map((entry) => entry.paneId));
+  const dropped = generationUnchanged
+    ? previousForOwner.filter(
+        (registered) => !acceptedIds.has(registered.entry.paneId),
+      )
+    : [];
   beginRendererPaneGeneration(owner, generationId, accepted);
   for (const entry of accepted) {
     const detached = getMainOwnedPane(entry.paneId);
@@ -1215,6 +1289,9 @@ export function syncPanes(
     ...panes.filter((registered) => registered.owner !== owner),
     ...accepted.map((entry) => ({ entry, owner })),
   ];
+  for (const registered of dropped) {
+    retireOperatorDismissedRendererPane(owner, registered);
+  }
   const liveIds = new Set(accepted.map((entry) => entry.paneId));
   for (const key of [...orchMetaByPane.keys()]) {
     const prefix = `${owner.id}:`;

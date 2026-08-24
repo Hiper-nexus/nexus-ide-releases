@@ -436,6 +436,10 @@ body {
     0 14px 42px rgba(0, 0, 0, 0.42);
 }
 
+.grid--mission-empty {
+  min-height: 12rem;
+}
+
 
 /* Panel inner div (library applies our class to the nested element). */
 .panel {

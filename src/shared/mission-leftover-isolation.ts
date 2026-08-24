@@ -258,6 +258,19 @@ export function shouldSkipLeftoverRemount(input: {
  * Só missão com Maestro vivo NESTE processo. Row leftover do disco nunca
  * vira focused só porque o SQLite ainda diz `running`.
  */
+/**
+ * Iniciar uma missão nova: as outras `running` saem do orçamento focused.
+ * Sem isto o Mac acumula 15 first-waves no mesmo checkout.
+ */
+export function siblingRunningMissionIds(
+  startingMissionId: string,
+  running: readonly { readonly id: string }[],
+): readonly string[] {
+  return running
+    .map((mission) => mission.id)
+    .filter((id) => id !== startingMissionId);
+}
+
 export function pickFocusedRunningMission<T extends LeftoverIsolationMission>(
   missions: readonly T[],
   liveMaestroByMissionId: ReadonlyMap<string, string>,

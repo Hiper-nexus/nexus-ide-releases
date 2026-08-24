@@ -5,6 +5,7 @@ import {
   NEXUS_LEFTOVER_PARKED_MARKER,
   persistLeftoverIsolation,
   pickFocusedRunningMission,
+  siblingRunningMissionIds,
   shouldPersistLeftoverIsolation,
   shouldSkipLeftoverRemount,
   wasMissionLeftoverParked,
@@ -196,6 +197,18 @@ describe('shouldSkipLeftoverRemount — reopen não remonta leftover', () => {
         remountKind: 'operator',
       }),
     ).toBe(false);
+  });
+});
+
+describe('siblingRunningMissionIds — Iniciar não empilha times', () => {
+  it('não inclui a missão que está nascendo', () => {
+    expect(
+      siblingRunningMissionIds('nova', [{ id: 'nova' }, { id: 'velha-a' }, { id: 'velha-b' }]),
+    ).toEqual(['velha-a', 'velha-b']);
+  });
+
+  it('lista vazia quando só existe a que inicia', () => {
+    expect(siblingRunningMissionIds('só', [{ id: 'só' }])).toEqual([]);
   });
 });
 

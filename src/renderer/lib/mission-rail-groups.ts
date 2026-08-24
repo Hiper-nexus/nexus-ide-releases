@@ -8,6 +8,7 @@ import {
   hasAutomaticTechnicalRecovery,
   wasMissionRuntimeClosedByOperator,
 } from '../../shared/mission-recovery-policy';
+import { wasMissionLeftoverParked } from '../../shared/mission-leftover-isolation';
 import {
   SESSION_DEAD_REASON_LABEL,
   SESSION_SLEEPING_REASON_LABEL,
@@ -39,6 +40,7 @@ export function missionHasLiveRuntime(
   // instant the mission is no longer active work, even if the retired session
   // pointer and transcript panes remain visible during teardown.
   if (wasMissionRuntimeClosedByOperator(mission)) return false;
+  if (wasMissionLeftoverParked(mission)) return false;
   // Durable completion is authoritative even while transcripts remain in the
   // grid or a stale orchestratorSessionId is still on the row. Main refuses
   // Encerrar on done ("não possui execução encerrável"), so treating leftover

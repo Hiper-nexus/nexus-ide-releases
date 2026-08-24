@@ -1,13 +1,16 @@
+import { useMemo } from 'react';
 import { CanvasView } from '../CanvasView';
 import { PaneGrid } from '../PaneGrid';
 import { useLayoutStore } from '../../state/layout-store';
 import { useOrchStore } from '../../state/orch-store';
+import { listPanes } from '../../lib/split-tree';
+import { selectMissionTerminalPanes } from '../../lib/mission-terminal-panes';
 import { missionLifecycleLabel } from '../../lib/mission-lifecycle-copy';
 import { missionAwaitsOperatorReview } from '../../../shared/mission-recovery-policy';
 import { PixelIcon } from '../PixelIcon';
 
 export interface TerminalWorkspaceProps {
-  /** Mission context is chrome only. The canonical layout always stays intact. */
+  /** Quando presente, a vista mostra só os panes desta missão. Hosts das outras ficam vivos. */
   missionId?: string;
   onBackToBoard?: () => void;
   /** Keeps pane/session hosts mounted while removing the surface from navigation. */
@@ -41,6 +44,17 @@ export function TerminalWorkspace({
   const contextLabel = missionState
     ? `Missão · ${missionLifecycleLabel(missionState, false, undefined, awaitsReview)}`
     : 'Missão';
+  const paneMissions = useOrchStore((state) => state.paneMissions);
+  const layoutRoot = useLayoutStore((state) => state.root);
+  const visiblePaneIds = useMemo(() => {
+    if (!missionId) return undefined;
+    const visible = selectMissionTerminalPanes(
+      listPanes(layoutRoot),
+      missionId,
+      paneMissions,
+    );
+    return new Set(visible.map((pane) => pane.id));
+  }, [layoutRoot, missionId, paneMissions]);
 
   return (
     <section
@@ -76,7 +90,11 @@ export function TerminalWorkspace({
       ) : null}
 
       <div className="terminal-workspace__surface">
-        {viewKind === 'canvas' ? <CanvasView /> : <PaneGrid />}
+        {viewKind === 'canvas' ? (
+          <CanvasView visiblePaneIds={visiblePaneIds} />
+        ) : (
+          <PaneGrid visiblePaneIds={visiblePaneIds} />
+        )}
       </div>
     </section>
   );

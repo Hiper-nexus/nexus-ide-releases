@@ -22,7 +22,11 @@ import {
   resolveDroppedMissionContextPath,
 } from '../lib/mission-shell-file-intake';
 import { listPanes } from '../lib/split-tree';
-import { missionAwaitsOperatorReview } from '../../shared/mission-recovery-policy';
+import {
+  missionAwaitsOperatorReview,
+  wasMissionRuntimeClosedByOperator,
+} from '../../shared/mission-recovery-policy';
+import { wasMissionLeftoverParked } from '../../shared/mission-leftover-isolation';
 import { paneInputLane } from './pane-input-route';
 import {
   clearPaneSpawnError,
@@ -41,6 +45,7 @@ import {
   STALE_AUTHORITY_SYNC_NOTICE,
   STALE_AUTHORITY_UNLOCK_NOTICE,
   STANDALONE_HOLD_NOTICE,
+  shouldReviveDeadMissionFromPane,
 } from './mission-owned-pane-policy';
 import { TERMINAL_THEMES } from '../styles/terminal-theme';
 import {
@@ -520,10 +525,17 @@ async function requestMissionRuntimeResume(
     // de grant) e o motor o recusa em missão selada. Sem `operatorInitiated`
     // uma missão pronta NUNCA é reaberta daqui — foi assim que abrir
     // "Terminais" relançava a missão sozinho (bug de campo 23/08).
+    const row = useOrchStore
+      .getState()
+      .missions.find((mission) => mission.id === missionId);
+    const leftover =
+      row != null &&
+      (wasMissionLeftoverParked(row) ||
+        wasMissionRuntimeClosedByOperator(row));
     const done = missionOfPaneIsDoneById(missionId);
-    if (done && !operatorInitiated) return;
+    if ((done || leftover) && !operatorInitiated) return;
     await window.nexus.mission.command({
-      kind: done ? 'resume' : 'retry-kickoff',
+      kind: done || leftover ? 'resume' : 'retry-kickoff',
       missionId,
     });
   } finally {
@@ -551,6 +563,7 @@ async function requestDeadMissionPaneRevive(
   missionId: string,
   operatorInitiated = false,
 ): Promise<void> {
+  if (!shouldReviveDeadMissionFromPane({ operatorInitiated })) return;
   if (!shouldAttemptDeadPaneRevive(missionId)) return;
   try {
     // Pergunta pendente: não faz o remote call que vira erro vermelho no
@@ -594,6 +607,7 @@ async function requestDeadMissionPaneRevive(
       );
     }
   } catch (error) {
+    if (!operatorInitiated) return;
     const message = error instanceof Error ? error.message : String(error);
     host.term.writeln(
       `\r\n\x1b[31m[nexus] revival da missão falhou: ${message}. ` +
@@ -2079,12 +2093,17 @@ export async function unlockRetiredMissionPane(
       // pede retry-kickoff — o trio "dona / pausado / cursor oco" era o beco.
       target.hibernated = false;
       useSessionStateStore.getState().setPaneState(pane.id, 'exited');
-      if (missionId) {
+      if (
+        missionId &&
+        shouldReviveDeadMissionFromPane({
+          operatorInitiated: options?.operatorInitiated === true,
+        })
+      ) {
         void requestDeadMissionPaneRevive(
           pane,
           target,
           missionId,
-          options?.operatorInitiated === true,
+          true,
         );
       }
       return;
@@ -2105,8 +2124,13 @@ export async function unlockRetiredMissionPane(
 
   if (disposition === 'keep-paused') {
     useSessionStateStore.getState().setPaneState(pane.id, 'exited');
-    if (missionId) {
-      void requestMissionRuntimeResume(missionId);
+    if (
+      missionId &&
+      shouldReviveDeadMissionFromPane({
+        operatorInitiated: options?.operatorInitiated === true,
+      })
+    ) {
+      void requestMissionRuntimeResume(missionId, true);
     }
     return;
   }

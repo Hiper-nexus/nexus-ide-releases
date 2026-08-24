@@ -11,6 +11,7 @@ import {
   missionOwnedExitNotice,
   orchestratorOwnedExitLines,
   pruneWouldLeaveOperatorMute,
+  shouldReviveDeadMissionFromPane,
   STANDALONE_HOLD_NOTICE,
   STALE_AUTHORITY_SYNC_NOTICE,
   STALE_AUTHORITY_UNLOCK_NOTICE,
@@ -379,6 +380,21 @@ describe('coordenador de missão concluída continua sendo o canal da revisão',
         missionOwns: false,
       }),
     ).toBe('reclaim-shell');
+  });
+});
+
+describe('shouldReviveDeadMissionFromPane', () => {
+  it('montagem automática não revive leftover/Encerrar', () => {
+    expect(shouldReviveDeadMissionFromPane({})).toBe(false);
+    expect(shouldReviveDeadMissionFromPane({ operatorInitiated: false })).toBe(
+      false,
+    );
+  });
+
+  it('tecla do operador ainda pode religar', () => {
+    expect(shouldReviveDeadMissionFromPane({ operatorInitiated: true })).toBe(
+      true,
+    );
   });
 });
 
