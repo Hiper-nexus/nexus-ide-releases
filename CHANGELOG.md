@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.70.6 — Só você encerra
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+A missão **não acaba** quando o Maestro sai do turno. O resultado aparece no
+pane. **Marcar como feito** de verdade tira o Aguardando você.
+
+- Maestro no exit 0: `resultado: …` e `a missão NÃO encerrou. Digite aqui
+  para pedir um ajuste.`
+- Worker: `agente entregou — a missão segue no Maestro`, não
+  `turno encerrado`.
+- IPC de Marcar como feito carimba missão já `done` pelo motor. Sem isso o
+  chip ficava eterno em Aguardando você (visto no DEV).
+
+A lista Atenção do 0.70.5 continua.
+
+Gates: tsc limpo, testes do exit e do carimbo verdes. CDP: chip Pronto
+depois de Marcar como feito.
+
 ## 0.70.5 — Logado some da lista
 
 _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._

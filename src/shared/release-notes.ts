@@ -13,26 +13,26 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.70.5',
+  version: '0.70.6',
   date: '2026-08-24',
-  codename: 'Logado some da lista',
+  codename: 'Só você encerra',
   summary:
-    'Depois do login, a lista Atenção tira o card. Cursor, Gemini, Muse, ' +
-    'omp, Qoder e Prime já tinham sessão — a lista não olhava.',
+    'A missão não acaba quando o Maestro sai do turno. O resultado aparece ' +
+    'no pane. Marcar como feito de verdade tira o Aguardando você.',
   highlights: [
     {
-      title: 'Atenção vê a sessão real',
+      title: 'Maestro não diz que a missão encerrou',
       detail:
-        'A sonda lê o login dessas CLIs. Miss de login não fica preso 60s ' +
-        'no cache.',
+        'Exit code 0 no coordenador mostra o resumo civil e pede o ajuste. ' +
+        'Worker fala "agente entregou", não "turno encerrado".',
     },
   ],
   fixes: [
     {
-      title: 'Entrar não espera o pane morrer',
+      title: 'Marcar como feito carimba o done do motor',
       detail:
-        'O comando vai num shell: a CLI sai, o prompt volta. O card some no ' +
-        '"Logged in as" ou quando a sonda vira sessão.',
+        'O IPC devolvia ok sem o carimbo humano. O chip ficava em ' +
+        'Aguardando você. Agora vira Pronto. Verificado no DEV via CDP.',
     },
   ],
 };
