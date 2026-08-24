@@ -13,34 +13,26 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.70.4',
+  version: '0.70.5',
   date: '2026-08-24',
-  codename: 'O ajuste segura nos dois fechos',
+  codename: 'Logado some da lista',
   summary:
-    'Pedir um ajuste não reseca mais a missão: os dois closers esperam ' +
-    'trabalho novo. O sandbox não concede o arquivo vivo do anexo. O ' +
-    'print e a lista Atenção do 0.70.3 continuam.',
+    'Depois do login, a lista Atenção tira o card. Cursor, Gemini, Muse, ' +
+    'omp, Qoder e Prime já tinham sessão — a lista não olhava.',
   highlights: [
     {
-      title: 'Pedir um ajuste segura os dois fechos',
+      title: 'Atenção vê a sessão real',
       detail:
-        'O 0.70.3 travava só o Pronto civil. O closer de entrega (board N/N) ' +
-        'fechava no mesmo tick. Agora os dois esperam um handoff mais novo ' +
-        'que o clique.',
+        'A sonda lê o login dessas CLIs. Miss de login não fica preso 60s ' +
+        'no cache.',
     },
   ],
   fixes: [
     {
-      title: 'Sandbox não lê o origin mutável do anexo',
+      title: 'Entrar não espera o pane morrer',
       detail:
-        'O grant extra do sourcePath seguia symlink no checkout. O Read usa ' +
-        'o path relativo do projeto; o selo continua o único extra-read.',
-    },
-    {
-      title: 'A primeira mensagem não derruba o hold',
-      detail:
-        'O marcador agora leva timestamp. Handoff antigo não conta como ' +
-        'entrega do ajuste.',
+        'O comando vai num shell: a CLI sai, o prompt volta. O card some no ' +
+        '"Logged in as" ou quando a sonda vira sessão.',
     },
   ],
 };

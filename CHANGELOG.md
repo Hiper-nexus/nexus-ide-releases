@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.70.5 — Logado some da lista
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+Depois do login, a lista **Atenção** tira o card. Cursor Agent, Gemini, Muse,
+omp, Qoder e Prime já tinham sessão — a lista não olhava.
+
+- Sonda lê a sessão real dessas CLIs, não um `login-needed` eterno.
+- O **Entrar** digita no shell: a CLI termina, o prompt volta, o pane
+  continua. O card some no "Logged in as …" ou quando a sonda vira sessão.
+- Miss de login não fica preso 60s no cache.
+
+Gates: tsc limpo, testes da sonda e do watcher verdes.
+
 ## 0.70.4 — O ajuste segura nos dois fechos
 
 _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
