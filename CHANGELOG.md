@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.70.7 — Uma de cada vez
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+O Mac não empilha 15 times. **Iniciar** estaciona as outras. **Encerrar**
+vale na hora. Terminais mostra só a missão. Fechar um pane em Aguardando
+você **não** reinicia o time.
+
+- Iniciar missão: **Ditar objetivo** e Ferramenta/Modelo de cada papel.
+- Hybrid `quanto é 1+1? Depois crie um site` continua missão, não resposta
+  direta.
+- Encerrar sem diálogo nativo — o modal preso bloqueava as outras Encerrar.
+- Pane em Aguardando você / Precisa de você: fechar fecha o pane, não a
+  missão.
+- Título do quadro não vira `q…`.
+
+Gates: testes do recorte verdes. DEV: 15 missões em lotes de 5, Encerrar
+matou 1–2 sessões, zero revival vermelho.
+
 ## 0.70.6 — Só você encerra
 
 _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._

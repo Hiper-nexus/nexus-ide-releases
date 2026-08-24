@@ -13,26 +13,36 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.70.6',
+  version: '0.70.7',
   date: '2026-08-24',
-  codename: 'Só você encerra',
+  codename: 'Uma de cada vez',
   summary:
-    'A missão não acaba quando o Maestro sai do turno. O resultado aparece ' +
-    'no pane. Marcar como feito de verdade tira o Aguardando você.',
+    'Uma missão viva por vez. Encerrar vale na hora. Terminais mostra só ' +
+    'a missão. Fechar pane em Aguardando você não reinicia o time.',
   highlights: [
     {
-      title: 'Maestro não diz que a missão encerrou',
+      title: 'Iniciar estaciona as outras',
       detail:
-        'Exit code 0 no coordenador mostra o resumo civil e pede o ajuste. ' +
-        'Worker fala "agente entregou", não "turno encerrado".',
+        'A missão nova ganha o orçamento. As irmãs dormem na rail sem PTY. ' +
+        'Retomar religa.',
+    },
+    {
+      title: 'Encerrar sem modal preso',
+      detail:
+        'O diálogo nativo deixava uma confirmação pendente e as outras ' +
+        'Encerrar falhavam. O botão no Quadro já é o gesto.',
     },
   ],
   fixes: [
     {
-      title: 'Marcar como feito carimba o done do motor',
+      title: 'Terminais da missão, não o mosaico das 15',
       detail:
-        'O IPC devolvia ok sem o carimbo humano. O chip ficava em ' +
-        'Aguardando você. Agora vira Pronto. Verificado no DEV via CDP.',
+        'A vista filtra panes. Hosts das outras não são destruídos à toa.',
+    },
+    {
+      title: 'Hybrid pergunta-depois-trabalho continua missão',
+      detail:
+        '"quanto é 1+1? Depois crie um site" não vira resposta direta.',
     },
   ],
 };
