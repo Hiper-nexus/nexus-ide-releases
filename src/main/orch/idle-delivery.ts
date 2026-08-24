@@ -459,7 +459,7 @@ function canPasteHandoff(sessionId: string): boolean {
   const status = getProjectDomainStores(pane.scope).missions.get(
     pane.missionId,
   )?.status;
-  return status === 'done' || status === 'completed';
+  return status === 'done';
 }
 
 function hasPendingDelivery(authority: DeliveryAuthority): boolean {

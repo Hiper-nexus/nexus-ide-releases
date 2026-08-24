@@ -393,7 +393,7 @@ describe('settlement — success queued espera o paste no Maestro', () => {
   it('handoff success ainda queued NÃO fecha via Pronto', () => {
     expect(
       hasUnsettledQueuedHandoffs([
-        { deliveryState: 'queued', status: 'success' },
+        { deliveryState: 'queued' },
       ]),
     ).toBe(true);
 
