@@ -5,6 +5,9 @@ const harness = vi.hoisted(() => ({
   waitForIdle: vi.fn(async (_sessionId: string, _timeoutMs?: number) =>
     'timeout' as const,
   ),
+  waitForNextIdle: vi.fn(async (_sessionId: string, _timeoutMs?: number) =>
+    'timeout' as const,
+  ),
   readSessionOutput: vi.fn(() => ''),
   authorizedSessionIdOf: vi.fn(() => 'session-1'),
 }));
@@ -13,6 +16,7 @@ vi.mock('./pane-registry', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./pane-registry')>()),
   readSessionOutput: harness.readSessionOutput,
   waitForIdle: harness.waitForIdle,
+  waitForNextIdle: harness.waitForNextIdle,
 }));
 
 vi.mock('./tool-util', async (importOriginal) => ({

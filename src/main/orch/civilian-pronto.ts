@@ -115,7 +115,10 @@ export function decideCivilianPronto(input: {
   if (input.hasQueuedHandoffs) {
     return { ...base, action: 'wait', reason: 'queued-handoffs' };
   }
-  if (input.idleWorkersWithoutHandoff > 0) {
+  if (
+    input.idleWorkersWithoutHandoff > 0 &&
+    !(input.workersDelivered && input.productFileCount === 0)
+  ) {
     return { ...base, action: 'wait', reason: 'idle-workers-without-handoff' };
   }
   // Writer ainda no teclado (Codex "Working") vence qualquer atalho de
@@ -130,7 +133,7 @@ export function decideCivilianPronto(input: {
   if (input.awaitingOperatorAdjustment) {
     return { ...base, action: 'wait', reason: 'awaiting-operator-adjustment' };
   }
-  if (input.workersDelivered && !input.orchestratorBusy) {
+  if (input.workersDelivered) {
     return {
       ...base,
       action: 'pronto',

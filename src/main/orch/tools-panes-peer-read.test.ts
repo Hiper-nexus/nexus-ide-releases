@@ -20,6 +20,7 @@ const h = vi.hoisted(() => {
     requestMissionPaneClose: vi.fn(async () => true),
     requestPaneSpawn: vi.fn(),
     waitForIdle: vi.fn(async () => 'idle' as const),
+    waitForNextIdle: vi.fn(async () => 'idle' as const),
   };
 });
 
@@ -33,6 +34,7 @@ vi.mock('./pane-registry', () => ({
   requestPaneClose: h.requestPaneClose,
   requestPaneSpawn: h.requestPaneSpawn,
   waitForIdle: h.waitForIdle,
+  waitForNextIdle: h.waitForNextIdle,
 }));
 
 vi.mock('../pty/pty-manager', () => ({

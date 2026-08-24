@@ -69,6 +69,7 @@ export {
   sessionOutputExitedAt,
   stripAnsi,
   waitForIdle,
+  waitForNextIdle,
 } from "./pane-session-output";
 import {
   createDevServerScanner,

@@ -21,9 +21,18 @@ interface IdleWaiter {
   abortCleanup?: () => void;
 }
 
+interface BusyWaiter {
+  sessionId: string;
+  resolve: (state: "busy" | "exited" | "timeout") => void;
+  reject: (reason?: unknown) => void;
+  timer?: ReturnType<typeof setTimeout>;
+  abortCleanup?: () => void;
+}
+
 const buffers = new Map<string, RingBuffer>();
 const sessionStates = new Map<string, PaneSessionState>();
 const idleWaiters = new Set<IdleWaiter>();
+const busyWaiters = new Set<BusyWaiter>();
 /** Marca permanente de sessão morta — o buffer sai em 5min, a marca não. */
 const exitedMarkBySession = new Map<string, number>();
 const EXITED_MARK_CAP = 8_192;
@@ -44,6 +53,16 @@ function settleIdleWaiter(
   state: "idle" | "exited" | "timeout",
 ): void {
   if (!idleWaiters.delete(waiter)) return;
+  if (waiter.timer) clearTimeout(waiter.timer);
+  waiter.abortCleanup?.();
+  waiter.resolve(state);
+}
+
+function settleBusyWaiter(
+  waiter: BusyWaiter,
+  state: "busy" | "exited" | "timeout",
+): void {
+  if (!busyWaiters.delete(waiter)) return;
   if (waiter.timer) clearTimeout(waiter.timer);
   waiter.abortCleanup?.();
   waiter.resolve(state);
@@ -78,6 +97,13 @@ export function recordPaneSessionState(
   state: PaneSessionState,
 ): void {
   sessionStates.set(sessionId, state);
+  if (state === "busy" || state === "spawning") {
+    for (const waiter of [...busyWaiters]) {
+      if (waiter.sessionId !== sessionId) continue;
+      settleBusyWaiter(waiter, "busy");
+    }
+    return;
+  }
   if (state !== "idle") return;
   for (const waiter of [...idleWaiters]) {
     if (waiter.sessionId !== sessionId) continue;
@@ -106,6 +132,10 @@ export function recordPaneSessionExit(sessionId: string): void {
   for (const waiter of [...idleWaiters]) {
     if (waiter.sessionId !== sessionId) continue;
     settleIdleWaiter(waiter, "exited");
+  }
+  for (const waiter of [...busyWaiters]) {
+    if (waiter.sessionId !== sessionId) continue;
+    settleBusyWaiter(waiter, "exited");
   }
 }
 
@@ -210,4 +240,82 @@ export function waitForIdle(
       if (signal.aborted) onAbort();
     }
   });
+}
+
+function liveSessionState(
+  sessionId: string,
+): PaneSessionState | "exited" | null {
+  const current = sessionStates.get(sessionId) ?? getSessionState(sessionId);
+  if (current) return current;
+  if (buffers.get(sessionId)?.exited || exitedMarkBySession.has(sessionId)) {
+    return "exited";
+  }
+  return null;
+}
+
+/**
+ * Espera o pane FICAR busy. Se já está busy, resolve já.
+ */
+export function waitUntilBusy(
+  sessionId: string,
+  timeoutMs = 15_000,
+  signal?: AbortSignal,
+): Promise<"busy" | "exited" | "timeout"> {
+  if (signal?.aborted) {
+    return Promise.reject(signal.reason ?? idleWaitAbortFallback());
+  }
+  const current = liveSessionState(sessionId);
+  if (current === "busy" || current === "spawning") {
+    return Promise.resolve("busy");
+  }
+  if (current === "exited") return Promise.resolve("exited");
+  return new Promise((resolve, reject) => {
+    const waiter: BusyWaiter = { sessionId, resolve, reject };
+    busyWaiters.add(waiter);
+    waiter.timer = setTimeout(() => {
+      settleBusyWaiter(waiter, "timeout");
+    }, timeoutMs);
+    if (signal) {
+      const onAbort = () => {
+        if (!busyWaiters.delete(waiter)) return;
+        if (waiter.timer) clearTimeout(waiter.timer);
+        waiter.abortCleanup?.();
+        waiter.reject(signal.reason ?? idleWaitAbortFallback());
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+      waiter.abortCleanup = () =>
+        signal.removeEventListener("abort", onAbort);
+      if (signal.aborted) onAbort();
+    }
+  });
+}
+
+/**
+ * Espera o FIM do turno depois de um prompt: se o pane já está busy, idle;
+ * se já está idle (caso do pane_ask num worker parado), espera busy→idle
+ * para não devolver a tela antiga antes da resposta.
+ */
+export async function waitForNextIdle(
+  sessionId: string,
+  timeoutMs = 120_000,
+  signal?: AbortSignal,
+): Promise<"idle" | "exited" | "timeout"> {
+  const current = liveSessionState(sessionId);
+  if (current === "busy" || current === "spawning") {
+    return waitForIdle(sessionId, timeoutMs, signal);
+  }
+  if (current === "exited") return "exited";
+  const busyBudget = Math.min(15_000, Math.max(1_000, timeoutMs));
+  const started = Date.now();
+  const busy = await waitUntilBusy(sessionId, busyBudget, signal);
+  if (busy === "exited") return "exited";
+  if (busy === "timeout") {
+    // O TUI pode ter respondido tão rápido que o busy passou; colhe o idle.
+    return waitForIdle(sessionId, Math.max(1, timeoutMs - (Date.now() - started)), signal);
+  }
+  return waitForIdle(
+    sessionId,
+    Math.max(1, timeoutMs - (Date.now() - started)),
+    signal,
+  );
 }

@@ -32,6 +32,7 @@ vi.mock('./pane-registry', () => ({
   requestPaneClose: vi.fn(async () => true),
   requestPaneSpawn: vi.fn(),
   waitForIdle: vi.fn(async () => 'idle'),
+  waitForNextIdle: vi.fn(async () => 'idle'),
 }));
 
 vi.mock('./pane-authz', () => ({

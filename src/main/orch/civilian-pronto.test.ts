@@ -167,6 +167,32 @@ describe('decideCivilianPronto', () => {
     });
   });
 
+  it('workers já entregaram e Maestro ainda está em loop → Pronto (não trava 1+2)', () => {
+    const decision = decideCivilianPronto({
+      ...running,
+      boardAllDone: false,
+      sealedDone: 0,
+      sealedTotal: 1,
+      productFileCount: 0,
+      workersDelivered: true,
+      orchestratorBusy: true,
+    });
+    expect(decision.action).toBe('pronto');
+    expect(decision.path).toBe('handoffs');
+  });
+
+  it('pergunta textual: worker idle sem handoff não segura Pronto se outro já entregou', () => {
+    expect(
+      decideCivilianPronto({
+        ...running,
+        productFileCount: 0,
+        workersDelivered: true,
+        idleWorkersWithoutHandoff: 1,
+        orchestratorBusy: true,
+      }).action,
+    ).toBe('pronto');
+  });
+
   it('worker idle sem handoff bloqueia Pronto mesmo com board N/N', () => {
     expect(
       decideCivilianPronto({

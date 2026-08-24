@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 const stubs = vi.hoisted(() => ({
-  getSessionState: vi.fn(() => "busy" as const),
+  getSessionState: vi.fn((): "busy" | "idle" | null => "busy"),
 }));
 
 vi.mock("../pty/pty-manager", () => ({
@@ -15,6 +15,7 @@ import {
   recordPaneSessionExit,
   recordPaneSessionState,
   waitForIdle,
+  waitForNextIdle,
 } from "./pane-session-output";
 
 describe("pane session idle wait cancellation", () => {
@@ -54,6 +55,33 @@ describe("marca de exit persiste além do TTL do buffer", () => {
     expect(paneSessionStateForEntry(entry)).toBe("exited");
     __evictExitedBufferForTests("pane-morto");
     expect(paneSessionStateForEntry(entry)).toBe("exited");
+  });
+});
+
+describe('waitForNextIdle — pane_ask não colhe a tela antiga', () => {
+  it('pane já idle só resolve depois de busy→idle', async () => {
+    stubs.getSessionState.mockReturnValue('idle');
+    recordPaneSessionState('ask-idle', 'idle');
+    let resolved: string | undefined;
+    const pending = waitForNextIdle('ask-idle', 5_000).then((state) => {
+      resolved = state;
+      return state;
+    });
+    await Promise.resolve();
+    expect(resolved).toBeUndefined();
+    recordPaneSessionState('ask-idle', 'busy');
+    await Promise.resolve();
+    expect(resolved).toBeUndefined();
+    recordPaneSessionState('ask-idle', 'idle');
+    await expect(pending).resolves.toBe('idle');
+  });
+
+  it('pane já busy resolve no próximo idle (sem esperar outro busy)', async () => {
+    stubs.getSessionState.mockReturnValue('busy');
+    recordPaneSessionState('ask-busy', 'busy');
+    const pending = waitForNextIdle('ask-busy', 5_000);
+    recordPaneSessionState('ask-busy', 'idle');
+    await expect(pending).resolves.toBe('idle');
   });
 });
 

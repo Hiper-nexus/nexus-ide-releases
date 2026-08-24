@@ -11,6 +11,7 @@ import {
   readSessionOutput,
   requestPaneClose,
   waitForIdle,
+  waitForNextIdle,
 } from './pane-registry';
 import { orchWriteSession } from '../pty/pty-manager';
 import {
@@ -1098,7 +1099,9 @@ const paneAsk: McpToolDef = {
     try {
       const before = readSessionOutput(sessionId, 200);
       await injectPrompt(sessionId, question, invocation);
-      const state = await waitForIdle(sessionId, timeoutMs);
+      // Worker já idle (Codex no prompt) não pode resolver na hora — senão o
+      // Maestro colhe a tela antiga, chama nexus 6 vezes e o "3" nasce depois.
+      const state = await waitForNextIdle(sessionId, timeoutMs);
       const after = readSessionOutput(sessionId, 400);
       const answer = newOutputSince(before, after).trim();
       return {
