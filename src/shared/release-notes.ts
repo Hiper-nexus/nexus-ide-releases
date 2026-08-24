@@ -13,101 +13,43 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.70.1',
-  date: '2026-08-23',
-  codename: 'O router entende o que você pediu',
+  version: '0.70.2',
+  date: '2026-08-24',
+  codename: 'O Maestro fica até você encerrar',
   summary:
-    'Auditoria da interface inteira pela ótica de quem não programa: 159 ' +
-    'achados verificados contra o código, em três ondas — e as três fecham ' +
-    'aqui. O fim da missão responde o que mudou, a missão só encerra quando ' +
-    'você encerra, e o produto para de falar difícil.',
+    'Quando a missão termina, o orquestrador não some mais. O header diz ' +
+    '"Aguardando você", o pane do coordenador permanece, e só você marca ' +
+    'como feito — para ver se deu certo e pedir ajuste.',
   highlights: [
     {
-      title: 'O fim da missão responde "o que mudou"',
+      title: 'O orquestrador fica até você encerrar',
       detail:
-        'A tela final mostrava duas listas de identificadores em fonte de ' +
-        'código, sem link. Agora lista os arquivos entregues, diz o que cada ' +
-        'um é (página, estilo, documento…) e abre cada um com um clique.',
+        'O motor concluir pintava Pronto e varria o pane do Maestro quando ' +
+        'a sessão já tinha saído. Agora o coordenador permanece: ' +
+        '"Aguardando você", "Pedir um ajuste", "Marcar como feito".',
     },
     {
-      title: 'A missão só encerra quando você encerra',
+      title: 'Não fecha cedo com o worker ainda trabalhando',
       detail:
-        'Concluída fica "Aguardando você", com "Pedir um ajuste" e "Marcar ' +
-        'como feito". O coordenador continua ali para o ajuste que a sua ' +
-        'revisão pedir — e abrir os terminais não relança a missão.',
-    },
-    {
-      title: 'O plano e a definição de pronto viraram tela',
-      detail:
-        '"O que vamos construir" mostra o plano que o motor já escrevia e ' +
-        'nunca exibia. E existe um campo para você dizer como saberá que ' +
-        'ficou pronto — a missão nascia sem isso.',
-    },
-    {
-      title: 'Enquanto trabalha, você vê',
-      detail:
-        'Sinal de progresso mesmo sem tarefas planejadas ("2 de 3 ' +
-        'trabalhando agora") e a frase que faltava: pode fechar esta tela.',
-    },
-    {
-      title: 'O router entende o que você pede',
-      detail:
-        '"Sem escrever código" era lido como "escrever código" e o ' +
-        'planejamento virava implementação. Missão de UI recebe o DESIGN.md, ' +
-        'auditoria que pede conserto não cai em somente-leitura, e segurança ' +
-        'ganhou doutrina própria.',
+        'Se um agente ainda está "Working", a missão não vira Pronto. O ' +
+        'atalho "todos entregaram" esperava o Maestro parar e ignorava o ' +
+        'worker vivo.',
     },
   ],
   fixes: [
     {
-      title: 'A missão era proibida de consertar o que você mandou consertar',
+      title: 'Tecla no Maestro morto abria outro pane e apagava este',
       detail:
-        '"Analise o código e já refatore" e "diagnostique e otimize" entravam ' +
-        'em modo somente-leitura. E o inverso também falhava: "sem alterar ' +
-        'nada, só me diga" saía com permissão de escrever.',
+        'Pedir um ajuste no coordenador de uma missão concluída nascia noutro ' +
+        'leaf; este virava histórico e a varredura o fechava. Agora revive no ' +
+        'mesmo pane.',
     },
     {
-      title: 'Segurança só entendia palavra de programador',
+      title: 'Imagem colada duas vezes e o Maestro não lia o anexo',
       detail:
-        'Respondia a "segredo" e "credencial". Agora entende "as senhas que ' +
-        'estão no código", "chaves de api", "variável de ambiente", https e ' +
-        '"valide os dados do formulário".',
-    },
-    {
-      title: 'Formulário, rodapé e fontes não eram interface',
-      detail:
-        '"Coloque um formulário de contato no rodapé" não recebia o ' +
-        'DESIGN.md. Faltavam também cabeçalho, fontes e a palavra "acessível".',
-    },
-    {
-      title: 'Uma palavra por estado',
-      detail:
-        '"Pronto" significava entrega E agente parado, com a mesma cor. Havia ' +
-        'três listas paralelas de rótulos, uma com texto em inglês.',
-    },
-    {
-      title: 'Erro cru na tela',
-      detail:
-        'O Git despejava a mensagem original em inglês. Agora nomeia a causa ' +
-        'e o próximo passo; o texto técnico fica recolhido.',
-    },
-    {
-      title: 'Criar uma landing page virava missão de infraestrutura',
-      detail:
-        'A palavra "landing page" classificava o pedido como operação de ' +
-        'servidor. Publicar continua sendo; criar voltou a ser trabalho comum.',
-    },
-    {
-      title: 'A segunda conta apagava a primeira',
-      detail:
-        'Entrar na 2ª conta antes de salvar a 1ª fazia a primeira sumir em ' +
-        'silêncio. E o Kimi logado aparecia como deslogado.',
-    },
-    {
-      title: 'Tela branca no primeiro boot',
-      detail:
-        'Um hook declarado depois da tela de carregamento derrubava o ' +
-        'renderer na primeira abertura.',
+        'Colar a mesma imagem na tela Iniciar inseria o path duplicado, e o ' +
+        'orquestrador ignorava o arquivo. Agora deduplica e o Maestro lê o ' +
+        'anexo antes de decidir.',
     },
   ],
 };

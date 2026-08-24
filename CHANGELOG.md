@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.70.2 — O Maestro fica até você encerrar
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+Quando a missão termina, o orquestrador **não some**. Quem fecha é só você.
+
+### O bug que não saía
+
+Sessões anteriores mudaram o recado na tela ("digite para pedir um ajuste")
+mas o renderer **fechava o pane do Maestro** assim que o motor marcava
+`done` e a sessão CLI já tinha saído. Sem o coordenador, não dava para
+ver se deu certo nem pedir ajuste.
+
+- Varredura `mission-terminal-cleanup` **não toca o orquestrador**.
+- Header dos Terminais e o rail dizem **"Aguardando você"**, não Pronto.
+- Writer ainda busy **bloqueia Pronto** (Codex "Working" não é missão
+  encerrada).
+- Tecla no Maestro morto **revive no mesmo pane**, não abre outro e
+  aposenta este.
+
+No quadro: **Pedir um ajuste**, **Marcar como feito**, **Remover**.
+
+F-108. Verificado no app DEV via CDP (header, rail, pane, botões).
+
+Gates: tsc limpo, `security:renderer-sinks` 0 sinks, testes focados verdes.
+
 ## 0.70.1 — O router entende o que você pediu
 
 _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
