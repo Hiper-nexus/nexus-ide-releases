@@ -2005,6 +2005,12 @@ describe('Caminho Expresso', () => {
     expect(objective.disabled).toBe(false);
     expect(button(host, 'Iniciar missão').type).toBe('button');
     expect(button(host, 'Mais papéis e tamanho').type).toBe('button');
+    await flush();
+    await flush();
+    expect(host.textContent).toContain('Quem faz o quê');
+    expect(
+      host.querySelectorAll('select[aria-label^="Ferramenta de IA"]').length,
+    ).toBeGreaterThanOrEqual(2);
     expect(host.textContent).toContain('Anexos do cliente');
     expect(
       host.querySelector('input[type="file"][accept*="audio"]'),
@@ -2208,6 +2214,64 @@ describe('Caminho Expresso', () => {
       missionId: SNAPSHOT.id,
       surface: 'board',
     });
+  });
+
+  it('Iniciar missão despacha a CLI que o operador escolheu em cada papel', async () => {
+    const gemini = adapter('gemini', {
+      label: 'Gemini',
+      models: { list: ['gemini-2.5-pro'], default: 'gemini-2.5-pro' },
+      orchestratorCapable: false,
+      missionControlCapable: false,
+    });
+    api.listAdapters.mockResolvedValue([CLAUDE, CODEX, gemini]);
+    api.listProviders.mockResolvedValue([
+      provider(CLAUDE),
+      provider(CODEX),
+      provider(gemini),
+    ]);
+
+    const host = await renderAtExpress();
+    enterText(
+      fieldByLabel<HTMLTextAreaElement>(
+        host,
+        'O que você quer que a missão entregue?',
+      ),
+      'Construir uma landing page com formulário de contato',
+    );
+    await flush();
+    await flush();
+
+    const tool = host.querySelector<HTMLSelectElement>(
+      'select[aria-label="Ferramenta de IA para Implementar interface"]',
+    );
+    expect(tool).not.toBeNull();
+    expect([...tool!.options].map((option) => option.value)).toEqual(
+      expect.arrayContaining(['codex', 'gemini']),
+    );
+
+    act(() => {
+      tool!.value = 'gemini';
+      tool!.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await flush();
+
+    expect(
+      useMissionSetupStore
+        .getState()
+        .draft.roster.find((agent) => agent.agentName === 'Implementar interface')
+        ?.cli,
+    ).toBe('gemini');
+
+    act(() => button(host, 'Iniciar missão').click());
+    await flush();
+    await flush();
+
+    expect(api.prepare).toHaveBeenCalledTimes(1);
+    const prepared = api.prepare.mock.calls[0]![0];
+    expect(
+      prepared.roster.find((agent) => agent.agentName === 'Implementar interface')
+        ?.cli,
+    ).toBe('gemini');
   });
 
   it('pula workers sem modelo configurado na rotação em vez de devolver null', () => {

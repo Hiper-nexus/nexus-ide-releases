@@ -42,6 +42,8 @@ interface MissionSetupRosterRowProps {
   accounts: readonly AccountInfo[];
   issue: string | null;
   removable: boolean;
+  /** Expresso: Ferramenta/Modelo visíveis, sem o bloco de instruções. */
+  compact?: boolean;
   onChange(next: SquadAgent): void;
   onRemove(): void;
 }
@@ -101,6 +103,7 @@ export function MissionSetupRosterRow({
   accounts,
   issue,
   removable,
+  compact = false,
   onChange,
   onRemove,
 }: MissionSetupRosterRowProps) {
@@ -142,7 +145,11 @@ export function MissionSetupRosterRow({
 
   return (
     <li
-      className="mission-roster-row"
+      className={
+        compact
+          ? 'mission-roster-row mission-roster-row--compact'
+          : 'mission-roster-row'
+      }
       data-state={issue ? 'needs-attention' : 'ready'}
       data-category={agent.category}
     >
@@ -278,9 +285,11 @@ export function MissionSetupRosterRow({
               </label>
             </div>
           </div>
+          {!compact && (
           <span className="mission-roster-row__status">
             {issue ? 'Precisa de ajuste' : 'Pronto'}
           </span>
+          )}
           {removable && (
             <button
               type="button"
@@ -299,6 +308,8 @@ export function MissionSetupRosterRow({
           </p>
         )}
 
+        {!compact && (
+          <>
         <details className="mission-setup__disclosure mission-roster-row__details">
           <summary>Instruções para {agent.agentName}</summary>
           <div className="mission-setup__field">
@@ -353,6 +364,8 @@ export function MissionSetupRosterRow({
 
           </div>
         </details>
+          </>
+        )}
       </div>
     </li>
   );

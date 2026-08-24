@@ -656,6 +656,13 @@
   border-top: 1px solid var(--border);
 }
 
+/* Expresso: Iniciar fica DEPOIS de "Quem faz o quê", não por cima dos selects. */
+.mission-setup__step > .mission-setup__step-actions--after-content {
+  position: static;
+  z-index: auto;
+  margin-top: var(--space-5);
+}
+
 .mission-setup__step-actions {
   display: flex;
   align-items: center;
@@ -768,6 +775,90 @@
   gap: 12px;
   border-top: none;
   padding-top: 4px;
+}
+
+.mission-setup__step--express .mission-setup__step-header {
+  padding: var(--space-2) 0 var(--space-3);
+}
+
+.mission-setup__step--express .mission-setup__step-header h1 {
+  font-size: 24px;
+}
+
+.mission-setup__step--express .mission-setup__step-header > p:last-child {
+  margin-top: 8px;
+  font-size: 13px;
+}
+
+.mission-setup__step--express .mission-setup__continuous-section {
+  padding: var(--space-3) 0;
+}
+
+.mission-setup__step--express .mission-setup__objective-field textarea {
+  min-height: 72px;
+  padding: var(--space-3);
+}
+
+.mission-setup__step--express .mission-setup__section-heading {
+  margin-bottom: var(--space-2);
+  align-items: center;
+}
+
+.mission-setup__step--express .mission-setup__section-heading h2 {
+  margin-bottom: 0;
+  font-size: var(--text-lg);
+}
+
+.mission-roster--compact {
+  gap: 6px;
+}
+
+.mission-roster-row--compact .mission-roster-row__card {
+  padding: 8px 10px;
+  gap: 0;
+}
+
+.mission-roster-row--compact .mission-roster-row__summary {
+  align-items: center;
+  gap: 10px;
+  min-height: 0;
+}
+
+.mission-roster-row--compact .mission-roster-row__avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.mission-roster-row--compact .mission-roster-row__identity {
+  display: grid;
+  grid-template-columns: minmax(132px, 180px) minmax(0, 1fr);
+  grid-template-areas:
+    'name controls'
+    'role controls';
+  align-items: center;
+  column-gap: 12px;
+  row-gap: 0;
+}
+
+.mission-roster-row--compact .mission-roster-row__identity > strong {
+  grid-area: name;
+  font-size: 13px;
+}
+
+.mission-roster-row--compact .mission-roster-row__meta {
+  grid-area: role;
+}
+
+.mission-roster-row--compact .mission-roster-row__role {
+  font-size: 11px;
+}
+
+.mission-roster-row--compact .mission-roster-row__controls {
+  grid-area: controls;
+  margin-top: 0;
+  flex-wrap: nowrap;
 }
 
 .mission-roster-row {

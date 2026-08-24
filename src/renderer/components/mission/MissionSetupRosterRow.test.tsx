@@ -90,6 +90,7 @@ const mountedRoots = new Set<Root>();
 function renderRow(
   onChange: (next: SquadAgent) => void,
   providerOverrides: Partial<typeof provider> = {},
+  compact = false,
 ): HTMLElement {
   const host = document.createElement('div');
   document.body.append(host);
@@ -103,7 +104,8 @@ function renderRow(
         providers={[{ ...provider, ...providerOverrides }]}
         accounts={[] satisfies AccountInfo[]}
         issue={null}
-        removable
+        removable={!compact}
+        compact={compact}
         onChange={onChange}
         onRemove={vi.fn()}
       />,
@@ -129,6 +131,20 @@ describe('MissionSetupRosterRow', () => {
     expect(host.textContent).toContain(
       'As instruções não concedem novas ferramentas nem permissões.',
     );
+  });
+
+  it('compact keeps Ferramenta/Modelo and hides the bulky details', () => {
+    const host = renderRow(vi.fn(), {}, true);
+
+    expect(
+      host.querySelector('select[aria-label="Ferramenta de IA para Revisar segurança"]'),
+    ).not.toBeNull();
+    expect(
+      host.querySelector('select[aria-label="Modelo para Revisar segurança"]'),
+    ).not.toBeNull();
+    expect(host.querySelectorAll('details')).toHaveLength(0);
+    expect(host.textContent).not.toContain('Instruções para Revisar segurança');
+    expect(host.textContent).not.toContain('Configurações técnicas');
   });
 
   it('keeps instruction text separate from tool authority', () => {

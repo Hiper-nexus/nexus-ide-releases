@@ -405,8 +405,7 @@ export function MissionSetup() {
       entryContext !== null ||
       !workspacePath ||
       hasUnreadDraft ||
-      inventory.status !== 'ready' ||
-      !draft.objective.trim()
+      inventory.status !== 'ready'
     ) {
       return;
     }
@@ -884,27 +883,34 @@ export function MissionSetup() {
     // tinha ZERO consumidores no renderer.
     const expressLane =
       suggestMissionLaneFromGoal(setupState.draft.objective) ?? 'standard';
-    const recommended = buildRecommendedMissionRoster({
-      readiness: inventory.readiness,
-      providers: inventory.providers,
-      accounts: inventory.accounts,
-      settings: inventory.settings,
-      objective: setupState.draft.objective,
-      lane: expressLane,
-    });
-    if (!recommended) {
+    // Releitura depois do router de intenção: o operador pode ter trocado a
+    // Ferramenta enquanto a pergunta trivial era avaliada.
+    const latestDraft = useMissionSetupStore.getState().draft;
+    const operatorRoster = latestDraft.roster;
+    const roster =
+      operatorRoster.length > 0
+        ? operatorRoster
+        : buildRecommendedMissionRoster({
+            readiness: inventory.readiness,
+            providers: inventory.providers,
+            accounts: inventory.accounts,
+            settings: inventory.settings,
+            objective: latestDraft.objective,
+            lane: expressLane,
+          });
+    if (!roster || roster.length === 0) {
       setExpressError(
-        'Não foi possível montar uma equipe automática. Use o modo Avançado para escolher os agentes.',
+        'Não foi possível montar a equipe. Escolha as ferramentas acima ou use Mais papéis e tamanho.',
       );
       return;
     }
     // Override local do draft — NUNCA setRoster/setFreeAgentChoice no store:
     // ambos bumpam `revision` → `authorityKey` muda → o efeito de autoridade
-    // invalida o start em voo. O request enviado usa a equipe recomendada e o
-    // modo livre selados só nesta chamada.
+    // invalida o start em voo. O request enviado usa o roster que está na
+    // tela (Ferramenta/Modelo de cada papel) e o modo livre só nesta chamada.
     const expressDraft: MissionSetupDraft = {
-      ...setupState.draft,
-      roster: recommended,
+      ...latestDraft,
+      roster,
       advanced: { lane: expressLane, freeAgentChoice: true },
     };
     const requestResult = missionPrepareRequestSchema.safeParse(

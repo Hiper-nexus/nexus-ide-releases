@@ -41,10 +41,9 @@ interface ExpressMissionStartProps {
 }
 
 /**
- * Caminho Expresso (Parte C, dossiê 2026-08-11): uma tela só de "Descreva →
- * Iniciar". A equipe é auto-recomendada pelo motor existente e o modo livre já
- * vem ligado; o wizard de 3 passos continua acessível em "Avançado". Zero novo
- * canal IPC — reusa prepare+start.
+ * Caminho Expresso: descreva o objetivo, escolha a Ferramenta de cada papel,
+ * Iniciar. O wizard de 3 passos continua em "Mais papéis e tamanho". Zero
+ * novo canal IPC — reusa prepare+start com o roster que está na tela.
  */
 /**
  * Três pedidos reais, de tamanhos diferentes: uma correção pequena, uma tela
@@ -111,7 +110,7 @@ export function ExpressMissionStart({
 
   return (
     <section
-      className="mission-setup__step"
+      className="mission-setup__step mission-setup__step--express"
       aria-labelledby="express-mission-title"
     >
       <header className="mission-setup__step-header">
@@ -179,19 +178,15 @@ export function ExpressMissionStart({
           <textarea
             id="express-objective"
             value={draft.objective}
-            rows={8}
+            rows={2}
             maxLength={MISSION_INTENT_GOAL_MAX_CHARS}
             placeholder="Exemplo: refaça o fluxo de cadastro para ficar simples no celular e confirme que ele funciona do início ao fim."
             disabled={draftEditingDisabled || busy}
-            aria-describedby="express-objective-hint"
             onChange={(event) => {
               if (draftEditingDisabled) return;
               onObjectiveChange(event.target.value);
             }}
           />
-          <span id="express-objective-hint" className="mission-setup__hint">
-            Escreva em linguagem comum. A missão começa assim que você confirmar.
-          </span>
           {/* O produto nunca mostrava um objetivo que FUNCIONOU. Quem não
               programa trava na folha em branco: não sabe o tamanho, o nível de
               detalhe, nem o tipo de pedido que cabe. Os exemplos continuam na
@@ -217,51 +212,21 @@ export function ExpressMissionStart({
           </div>
         </div>
 
-        <div className="mission-setup__field">
-          <label htmlFor="express-acceptance">
-            Como vou saber que ficou pronto?
-          </label>
-          <input
-            id="express-acceptance"
-            type="text"
-            value={draft.acceptance ?? ''}
-            maxLength={2048}
-            placeholder="Exemplo: a página abre no celular e o botão de contato funciona."
-            disabled={draftEditingDisabled || busy}
-            aria-describedby="express-acceptance-hint"
-            onChange={(event) => {
-              if (draftEditingDisabled) return;
-              onAcceptanceChange(event.target.value);
-            }}
-          />
-          <span id="express-acceptance-hint" className="mission-setup__hint">
-            Opcional, mas é o que a equipe usa para conferir a entrega antes de
-            dizer que terminou.
-          </span>
-        </div>
-
-        <MissionAttachmentPicker
-          contextPaths={draft.contextPaths}
-          disabled={draftEditingDisabled || busy}
-          onContextPathsChange={onContextPathsChange}
-        />
-
         {draft.roster.length > 0 ? (
           <>
             <div className="mission-setup__section-heading">
               <div>
                 <h2>Quem faz o quê</h2>
-                <p>
-                  Troque a ferramenta e o modelo de cada papel. O Iniciar não
-                  escolhe sozinho por cima disto.
-                </p>
               </div>
               <span className="mission-setup__count-chip">
                 {teamNames.length} {teamNames.length === 1 ? 'papel' : 'papéis'}
               </span>
             </div>
             {inventory.status === 'ready' ? (
-              <ul className="mission-roster" aria-label="Quem faz o quê">
+              <ul
+                className="mission-roster mission-roster--compact"
+                aria-label="Quem faz o quê"
+              >
                 {draft.roster.map((agent) => (
                   <MissionSetupRosterRow
                     key={agent.id}
@@ -275,6 +240,7 @@ export function ExpressMissionStart({
                     accounts={inventory.accounts}
                     issue={issueForAgent(agent, inventory)}
                     removable={false}
+                    compact
                     onChange={(next) =>
                       onRosterChange(
                         draft.roster.map((item) =>
@@ -368,7 +334,7 @@ export function ExpressMissionStart({
         </div>
       )}
 
-      <footer className="mission-setup__step-actions mission-setup__step-actions--end">
+      <footer className="mission-setup__step-actions mission-setup__step-actions--end mission-setup__step-actions--after-content">
         <button
           type="button"
           className="mission-setup__button mission-setup__button--primary"
@@ -386,6 +352,37 @@ export function ExpressMissionStart({
           Mais papéis e tamanho
         </button>
       </footer>
+
+      <div className="mission-setup__continuous-section">
+        <div className="mission-setup__field">
+          <label htmlFor="express-acceptance">
+            Como vou saber que ficou pronto?
+          </label>
+          <input
+            id="express-acceptance"
+            type="text"
+            value={draft.acceptance ?? ''}
+            maxLength={2048}
+            placeholder="Exemplo: a página abre no celular e o botão de contato funciona."
+            disabled={draftEditingDisabled || busy}
+            aria-describedby="express-acceptance-hint"
+            onChange={(event) => {
+              if (draftEditingDisabled) return;
+              onAcceptanceChange(event.target.value);
+            }}
+          />
+          <span id="express-acceptance-hint" className="mission-setup__hint">
+            Opcional, mas é o que a equipe usa para conferir a entrega antes de
+            dizer que terminou.
+          </span>
+        </div>
+
+        <MissionAttachmentPicker
+          contextPaths={draft.contextPaths}
+          disabled={draftEditingDisabled || busy}
+          onContextPathsChange={onContextPathsChange}
+        />
+      </div>
     </section>
   );
 }
