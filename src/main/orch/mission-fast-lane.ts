@@ -116,8 +116,9 @@ import {
   countLiveFirstWaveWriters,
   FIRST_WAVE_OFFER_CLIS,
   planFirstWaveSeats,
+  planMetaPaneAskSeats,
 } from './via-rapida-first-wave';
-import { firstWaveWorkerPrompt } from './via-rapida-walk';
+import { firstWaveWorkerPrompt, metaPaneAskPrompt } from './via-rapida-walk';
 import { maybeApplyCivilianPronto } from './civilian-pronto';
 
 /**
@@ -192,7 +193,12 @@ function bindSpawnedMissionPane(
   mission: Mission,
   agent: SquadAgent,
   role: 'orchestrator' | 'worker',
-  spawn: { paneId: string; sessionId: string; title?: string },
+  spawn: {
+    paneId: string;
+    sessionId: string;
+    title?: string;
+    readOnly?: boolean;
+  },
 ): void {
   const title = spawn.title?.trim() || agent.agentName;
   stores.missionPanes.record({
@@ -207,7 +213,7 @@ function bindSpawnedMissionPane(
     role,
     allowedTools: agent.allowedTools ? [...agent.allowedTools] : null,
     allowedSkills: agent.allowedSkills ? [...agent.allowedSkills] : null,
-    readOnly: false,
+    readOnly: spawn.readOnly === true,
     executionScope: scope,
   });
 }
@@ -629,7 +635,9 @@ export function agentPrompt(
   // informação — 22/08, missão 1+1).
   const isMetaPaneMission =
     agent.category === 'orchestrator' &&
-    sealedPlanTitles.some((storyTitle) => isPaneMetaTask(storyTitle));
+    (isPaneMetaTask(objective) ||
+      isPaneMetaTask(title) ||
+      sealedPlanTitles.some((storyTitle) => isPaneMetaTask(storyTitle)));
   // A doutrina anti-colapso existe para planos com VÁRIAS entregas (11
   // stories viravam 5 papéis). Para 1 entrega ela é ruído puro no kickoff
   // ("Não colapse em 7 papéis. São 1 entregas." — operador 20/08): 1 task =
@@ -657,21 +665,21 @@ export function agentPrompt(
     .filter((member) => member.category !== 'orchestrator')
     .map((member) => member.agentName);
   const metaPaneBlock = isMetaPaneMission
-      ? 'META-DE-PANE: esta missão pergunta aos próprios panes — VOCÊ executa. ' +
-        'EXTRAIA do objetivo apenas a PERGUNTA (ex.: "quanto é 1+1?") — quem é ' +
-        'perguntado recebe SÓ a pergunta, nunca a instrução "pergunte aos ' +
-        'panes" nem papel/missão (relay fiel vale para trabalho delegado, não ' +
-        'para perguntas). ' +
-        `Abra UM pane por integrante (${teamWorkerNames.join(', ') || 'equipe'}) ` +
-        'via nexus_pane_spawn com a pergunta no prompt e readOnly: true — ' +
-        'pergunta não escreve arquivo, e SEM readOnly a serialização de 1 ' +
-        'escritor por checkout bloqueia o leque no 2º pane. Aguarde a resposta de ' +
-        'TODOS os panes, e só então FECHO: nexus_handoff_submit success com ' +
-        'summary citando a resposta de CADA pane E artifacts: [{fullText: ' +
-        '"pane X → resposta; pane Y → resposta"}] — success com artifacts ' +
-        'vazio NÃO conclui a missão (o gate exige prova listada), e o slot de ' +
-        'handoff é ÚNICO: não chame set_status done, o motor conclui sozinho. ' +
-        'Nenhum pane sem resposta = missão não fecha. ' +
+      ? 'META-DE-PANE: esta missão pergunta aos próprios panes — VOCÊ fecha ' +
+        'com a evidência, a first-wave pergunta. ' +
+        `A first-wave já abriu UM pane por integrante (${teamWorkerNames.join(', ') || 'equipe'}) ` +
+        'com a pergunta limpa e readOnly: true. NÃO spawne de novo o mesmo ' +
+        'integrante. Se faltar alguém da lista, EXTRAIA do objetivo apenas a ' +
+        'PERGUNTA (ex.: "quanto é 1+1?") — quem é perguntado recebe SÓ a ' +
+        'pergunta, nunca a instrução "pergunte aos panes" nem papel/missão — ' +
+        'e abra via nexus_pane_spawn com readOnly: true. SEM readOnly a ' +
+        'serialização de 1 escritor por checkout bloqueia o leque no 2º pane. ' +
+        'Aguarde a resposta de TODOS os panes, e só então FECHO: ' +
+        'nexus_handoff_submit success com summary citando a resposta de CADA ' +
+        'pane E artifacts: [{fullText: "pane X → resposta; pane Y → resposta"}] ' +
+        '— success com artifacts vazio NÃO conclui a missão (o gate exige prova ' +
+        'listada), e o slot de handoff é ÚNICO: não chame set_status done, o ' +
+        'motor conclui sozinho. Nenhum pane sem resposta = missão não fecha. ' +
         'Para perguntar a um pane JÁ aberto use nexus_pane_ask (envia, espera ' +
         'e devolve só a resposta) — qualquer pane da missão pode usar.'
       : '';
@@ -839,6 +847,7 @@ async function spawnWriterWithCircuit(
   writer: SquadAgent,
   prompt: string,
   paneTitle?: string,
+  spawnOpts?: { readonly readOnly?: boolean },
 ): Promise<SpawnedAgent | { error: string }> {
   const key = {
     missionId: mission.id,
@@ -876,9 +885,16 @@ async function spawnWriterWithCircuit(
     console.warn(
       `[fast-lane] writer_circuit_break remint ${writer.cli} → ${successor.cli} (${attempts} attempts)`,
     );
-    return spawnAgentPane(scope, mission, successor, prompt, paneTitle);
+    return spawnAgentPane(scope, mission, successor, prompt, paneTitle, spawnOpts);
   }
-  const spawned = await spawnAgentPane(scope, mission, writer, prompt, paneTitle);
+  const spawned = await spawnAgentPane(
+    scope,
+    mission,
+    writer,
+    prompt,
+    paneTitle,
+    spawnOpts,
+  );
   const connected =
     !('error' in spawned) &&
     writerIsConnectedAndWritable(spawned.sessionId);
@@ -920,7 +936,7 @@ async function spawnWriterWithCircuit(
   console.warn(
     `[fast-lane] writer_circuit_break remint ${writer.cli} → ${successor.cli} (${attempts} attempts)`,
   );
-  return spawnAgentPane(scope, mission, successor, prompt, paneTitle);
+  return spawnAgentPane(scope, mission, successor, prompt, paneTitle, spawnOpts);
 }
 
 async function spawnAgentPane(
@@ -929,10 +945,12 @@ async function spawnAgentPane(
   agent: SquadAgent,
   initialPrompt?: string,
   paneTitle?: string,
+  spawnOpts?: { readonly readOnly?: boolean },
 ): Promise<SpawnedAgent | { error: string }> {
   const role: 'orchestrator' | 'worker' =
     agent.category === 'orchestrator' ? 'orchestrator' : 'worker';
   const title = paneTitle?.trim() || agent.agentName;
+  const readOnly = spawnOpts?.readOnly === true;
 
   const spawn = await requestPaneSpawn({
     adapterId: agent.cli,
@@ -949,7 +967,9 @@ async function spawnAgentPane(
     role,
     scope,
     executionScope: scope,
-    executionMode: 'same_checkout',
+    executionMode: readOnly ? 'read_only' : 'same_checkout',
+    ...(readOnly ? { readOnly: true, nativeReadOnly: true } : {}),
+    resume: false,
     ...(initialPrompt ? { initialPrompt } : {}),
   });
 
@@ -964,6 +984,7 @@ async function spawnAgentPane(
     paneId: spawn.paneId,
     sessionId: spawn.sessionId,
     title,
+    readOnly,
   });
   if (role === 'orchestrator') {
     stores.missions.setOrchestratorSession(mission.id, spawn.sessionId);
@@ -2205,8 +2226,35 @@ export function isPaneMetaTask(title: string): boolean {
     (/\baos?\s+(?:todos\s+(?:os\s+)?)?panes\b/iu.test(text) &&
       /\?|\bquanto|\bqual|\bquem\b|\bonde\b|\bquando\b|\d\s*\+\s*\d/iu.test(
         text,
-      ))
+      )) ||
+    // VOZ traduz para inglês: "How much is 2x2 and they have to answer you."
+    // Sem "pane" no texto a first-wave selava 1 entrega e abria só 1 writer.
+    /\bthey have to answer\b/iu.test(text) ||
+    /\bhave (?:them|everyone) answer\b/iu.test(text) ||
+    /\bask (?:the )?(?:panes?|team|workers?|agents?)\b/iu.test(text) ||
+    /\beach (?:one|pane|agent|worker)\b[^.\n]{0,60}\banswer/iu.test(text)
   );
+}
+
+/** Pergunta que o worker recebe — sem o wrapper "pergunte aos panes / they have to answer". */
+export function extractMetaPaneQuestion(objective: string): string {
+  const text = objective.normalize('NFC').trim();
+  if (!text) return '';
+  const withoutAnswerTail = text
+    .replace(
+      /\s+and (?:they|everyone|each one) (?:must|should|have to) answer(?: you)?[.\s]*$/iu,
+      '',
+    )
+    .replace(/\bhave (?:them|everyone) answer[.\s]*$/iu, '')
+    .trim();
+  const ask = withoutAnswerTail.match(
+    /(?:pergunte|perguntar|ask)\b(?:\s+(?:the\s+|aos?\s+|a\s+)?(?:todos\s+(?:os\s+)?)?(?:panes?|team|workers?|agents?|cada\s+(?:um|pane)))?\s*[:.]?\s*(.+)/iu,
+  );
+  const extracted = (ask?.[1] ?? withoutAnswerTail)
+    .replace(/\s*[,.]?\s*(?:e\s+)?(?:aguarde|consolide|responda).*$/iu, '')
+    .replace(/[,\s]+$/u, '')
+    .trim();
+  return extracted || text;
 }
 
 export async function dispatchFastLaneFirstWave(
@@ -2232,17 +2280,6 @@ export async function dispatchFastLaneFirstWave(
       pendingTitles.length > 0
         ? pendingTitles
         : sealFastLanePlanTitles(stores, mission, squad);
-    // Meta-de-pane fica com o Maestro (EXCEÇÃO): worker sem ferramenta de
-    // pane entregaria papelada em vez do efeito pedido.
-    const titles = allTitles.filter((title) => !isPaneMetaTask(title));
-    const maestroKept = allTitles.length - titles.length;
-    if (maestroKept > 0) {
-      console.info(
-        `[fast-lane] first-wave deixou ${maestroKept} task(s) meta-de-pane ` +
-          `para o Maestro executar (${missionId})`,
-      );
-    }
-    if (titles.length === 0) return 0;
     const liveWorkers = countLiveFirstWaveWriters(
       listPaneSnapshots(),
       missionId,
@@ -2278,6 +2315,85 @@ export async function dispatchFastLaneFirstWave(
         hasCredentiallessModel: readiness === 'present',
       });
     };
+    const missionIsMeta =
+      isPaneMetaTask(mission.description ?? '') ||
+      isPaneMetaTask(mission.title ?? '') ||
+      allTitles.some((storyTitle) => isPaneMetaTask(storyTitle));
+    if (missionIsMeta) {
+      const seatedKeys = listPaneSnapshots()
+        .filter((pane) => pane.missionId === missionId && pane.role === 'worker')
+        .flatMap((pane) =>
+          [pane.agentName, pane.title].filter(
+            (key): key is string => typeof key === 'string' && key.length > 0,
+          ),
+        );
+      const question = extractMetaPaneQuestion(
+        mission.description || mission.title || allTitles[0] || '',
+      );
+      const wave = planMetaPaneAskSeats({
+        agents: squad.agents,
+        classifySeat,
+        blockedAdapterIds,
+        seatedKeys,
+      });
+      if (blockedAdapterIds.length > 0) {
+        console.warn(
+          `[fast-lane] writer_circuit_break first-wave pulou CLI: ${blockedAdapterIds.join(', ')}`,
+        );
+      }
+      if (wave.skippedNoCredential.length > 0) {
+        console.info(
+          `[fast-lane] first-wave pulou CLI sem auth present: ${wave.skippedNoCredential.join(', ')}`,
+        );
+      }
+      for (const seat of wave.seats) {
+        const current = stores.missions.get(missionId);
+        if (
+          !current ||
+          current.status !== 'running' ||
+          !isFocusedLiveMission(missionId)
+        ) {
+          break;
+        }
+        const result = await spawnWriterWithCircuit(
+          scope,
+          mission,
+          seat.agent,
+          metaPaneAskPrompt({
+            agentName: seat.agent.agentName,
+            question,
+          }),
+          seat.title,
+          { readOnly: true },
+        );
+        if ('error' in result) {
+          console.warn(
+            `[fast-lane] first-wave ${seat.title} não abriu:`,
+            result.error,
+          );
+        }
+      }
+      const spawned = countLiveFirstWaveWriters(
+        listPaneSnapshots(),
+        missionId,
+        writerIsConnectedAndWritable,
+      );
+      if (spawned > 0) {
+        trace({
+          kind: 'fast-lane-first-wave',
+          missionId,
+          spawned,
+          target: wave.targetSeats,
+        });
+        console.info(
+          `[fast-lane] first-wave pergunta abriu ${spawned} pane(s) ` +
+            `read-only no mesmo turno do Maestro (${missionId})`,
+        );
+      }
+      return spawned;
+    }
+    const titles = allTitles.filter((title) => !isPaneMetaTask(title));
+    if (titles.length === 0) return 0;
     const wave = planFirstWaveSeats({
       storyCount: titles.length,
       storyTitles: titles,

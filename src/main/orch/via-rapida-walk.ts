@@ -61,6 +61,17 @@ export function sealViaRapidaStoriesOnIniciar(
   }
 }
 
+export function metaPaneAskPrompt(input: {
+  readonly agentName: string;
+  readonly question: string;
+}): string {
+  const question = input.question.trim();
+  return [
+    `Responda só isto, em uma linha: ${question}`,
+    'Não escreva arquivos. Não explique o papel. Apenas a resposta.',
+  ].join('\n');
+}
+
 export function firstWaveWorkerPrompt(input: {
   readonly mission: Pick<Mission, 'title' | 'description'>;
   readonly agentName: string;

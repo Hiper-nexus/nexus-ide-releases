@@ -2,6 +2,7 @@ import type { Handoff } from '../../shared/orch-types';
 import type { StandardMissionTopology } from '../../shared/mission-topology';
 import type { ProjectExecutionScope } from '../../shared/types';
 import {
+  getSessionState,
   orchWriteSession,
   tapSessionExit,
   tapSessionState,
@@ -27,6 +28,7 @@ import {
 import { maybeCompleteFastLaneOnDelivery } from './civilian-delivery-completion';
 import { MAX_HANDOFF_DELIVERY_ATTEMPTS } from './handoff-delivery-policy';
 import {
+  getAgentSemanticStatusBySession,
   isSessionInjectableIdle,
   tapAgentSemanticStatus,
 } from './agent-status';
@@ -434,6 +436,32 @@ function clearPendingDeliveryStart(pending: PendingDeliveryStart): void {
   pendingDeliveryStarts.delete(pending);
 }
 
+/**
+ * Cola no PTY idle do Maestro. Semantic `working` veta enquanto a missão
+ * corre (não escrever no meio de um pane_ask). Depois do Pronto o operador
+ * ainda precisa VER o handoff: PTY idle + missão done cola mesmo com o hook
+ * preso em working (DEV 24/08: drain de 3 queued, zero paste).
+ */
+function canPasteHandoff(sessionId: string): boolean {
+  if (isSessionInjectableIdle(sessionId)) return true;
+  if (getSessionState(sessionId) !== 'idle') return false;
+  if (getAgentSemanticStatusBySession(sessionId)?.status === 'awaiting-input') {
+    return false;
+  }
+  const pane = getPaneRuntimeAuthorityBySession(sessionId);
+  if (
+    pane?.role !== 'orchestrator' ||
+    !pane.missionId ||
+    !pane.scope
+  ) {
+    return false;
+  }
+  const status = getProjectDomainStores(pane.scope).missions.get(
+    pane.missionId,
+  )?.status;
+  return status === 'done' || status === 'completed';
+}
+
 function hasPendingDelivery(authority: DeliveryAuthority): boolean {
   const key = authorityKey(authority);
   return (
@@ -444,6 +472,31 @@ function hasPendingDelivery(authority: DeliveryAuthority): boolean {
       (pending) => authorityKey(pending.authority) === key,
     )
   );
+}
+
+const INJECTABLE_WAKE_MS = 500;
+const injectableWakeTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function clearInjectableWake(sessionId: string): void {
+  const timer = injectableWakeTimers.get(sessionId);
+  if (timer) clearTimeout(timer);
+  injectableWakeTimers.delete(sessionId);
+}
+
+function armInjectableWake(sessionId: string): void {
+  if (injectableWakeTimers.has(sessionId)) return;
+  const timer = setTimeout(() => {
+    injectableWakeTimers.delete(sessionId);
+    if (canPasteHandoff(sessionId)) {
+      drainDurableMailbox(sessionId);
+      flushQueue(sessionId);
+      return;
+    }
+    if (getSessionState(sessionId) === 'idle') {
+      armInjectableWake(sessionId);
+    }
+  }, INJECTABLE_WAKE_MS);
+  injectableWakeTimers.set(sessionId, timer);
 }
 
 function enqueueHandoff(authority: DeliveryAuthority, handoff: Handoff): void {
@@ -463,6 +516,11 @@ function enqueueHandoff(authority: DeliveryAuthority, handoff: Handoff): void {
   ) return;
   queue.push({ handoff, authority });
   queues.set(key, queue);
+  // Já idle: flushQueue só corre na BORDA idle. Sem este wake o queued
+  // fica para sempre se o Maestro já estava no prompt.
+  if (getSessionState(authority.sessionId) === 'idle') {
+    armInjectableWake(authority.sessionId);
+  }
 }
 
 function requeuePendingDeliveryStarts(sessionId: string): void {
@@ -629,7 +687,7 @@ function submitDelivery(
   pending.retryTimer = setTimeout(() => {
     if (
       isCurrentAuthority(authority) &&
-      isSessionInjectableIdle(authority.sessionId)
+      canPasteHandoff(authority.sessionId)
     ) {
       orchWriteSession(authority.sessionId, '\r', {
         markInputBusy: false,
@@ -641,7 +699,7 @@ function submitDelivery(
 function deliverNow(authority: DeliveryAuthority, handoff: Handoff): boolean {
   if (
     !isCurrentAuthority(authority) ||
-    !isSessionInjectableIdle(authority.sessionId)
+    !canPasteHandoff(authority.sessionId)
   ) return false;
   const stores = getProjectDomainStores(authority.scope);
   const current = stores.handoffs.get(handoff.id);
@@ -725,13 +783,13 @@ function scheduleStableDelivery(
 ): boolean {
   if (
     !isCurrentAuthority(authority) ||
-    !isSessionInjectableIdle(authority.sessionId)
+    !canPasteHandoff(authority.sessionId)
   ) return false;
   let pending: PendingDeliveryStart;
   const timer = setTimeout(() => {
     clearPendingDeliveryStart(pending);
     if (!isCurrentAuthority(authority)) return;
-    if (!isSessionInjectableIdle(authority.sessionId)) {
+    if (!canPasteHandoff(authority.sessionId)) {
       enqueueHandoff(authority, handoff);
       return;
     }
@@ -763,7 +821,7 @@ function recoverQueuedAuthorities(
 }
 
 function flushQueue(sessionId: string): void {
-  if (!isSessionInjectableIdle(sessionId)) return;
+  if (!canPasteHandoff(sessionId)) return;
   const matches = [...queues.entries()].filter(
     ([, queue]) => queue[0]?.authority.sessionId === sessionId,
   );
@@ -810,24 +868,27 @@ export function initIdleDelivery(): void {
     if (state === 'busy') acceptPendingEnters(sessionId);
     if (state !== 'idle') requeuePendingDeliveryStarts(sessionId);
     if (state === 'idle') {
-      flushQueue(sessionId);
+      // Drain first: mailbox enqueue used to land AFTER flushQueue, so a
+      // queued SQLite row never left the Maestro's already-idle prompt.
       drainDurableMailbox(sessionId);
+      flushQueue(sessionId);
       scheduleFastLaneDeliveryCheck(sessionId);
     }
   });
   untapSemanticStatus = tapAgentSemanticStatus((entry) => {
     if (
       (entry.status === 'idle' || entry.status === 'completed') &&
-      isSessionInjectableIdle(entry.sessionId)
+      canPasteHandoff(entry.sessionId)
     ) {
-      flushQueue(entry.sessionId);
       drainDurableMailbox(entry.sessionId);
+      flushQueue(entry.sessionId);
     } else {
       requeuePendingDeliveryStarts(entry.sessionId);
     }
   });
   untapExit = tapSessionExit((sessionId) => {
     lastMailboxDrainAt.delete(sessionId);
+    clearInjectableWake(sessionId);
     scheduleFastLaneDeliveryCheck(sessionId);
     // Capture durable recovery targets BEFORE dropping the in-memory queue.
     // SQLite keeps handoffs as `queued`; without this the Maestro exit would
@@ -935,6 +996,9 @@ export function shutdownIdleDelivery(): void {
   unsubscribeScopeChanges = null;
   queues.clear();
   lastMailboxDrainAt.clear();
+  for (const sessionId of [...injectableWakeTimers.keys()]) {
+    clearInjectableWake(sessionId);
+  }
   configureHandoffDeliveryRuntimeRecovery(null);
   for (const pending of [...pendingEnters]) clearPendingEnter(pending);
   for (const pending of [...pendingDeliveryStarts]) {
@@ -1112,8 +1176,12 @@ export function onHandoffSubmitted(
   if (isDiagnosticDriverHandoff(handoff)) return null;
   const authority = targetAuthority(handoff, scope, overrideStores);
   if (!authority) return null; // No trusted orchestrator — stays listed as pending.
+  // Maestro's own submit must not paste back into the same PTY.
+  if (handoff.sessionId && handoff.sessionId === authority.sessionId) {
+    return null;
+  }
   if (
-    isSessionInjectableIdle(authority.sessionId) &&
+    canPasteHandoff(authority.sessionId) &&
     !hasPendingDelivery(authority)
   ) {
     scheduleStableDelivery(authority, handoff);

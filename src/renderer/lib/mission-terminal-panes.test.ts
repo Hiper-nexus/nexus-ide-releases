@@ -35,4 +35,20 @@ describe('selectMissionTerminalPanes', () => {
       }).map((pane) => pane.id),
     ).toEqual(['pane-a', 'pane-b']);
   });
+
+  it('shell morto com missionId não ocupa o grid da missão', () => {
+    const dead: PaneModel = {
+      id: 'pane-dead',
+      kind: 'shell',
+      title: 'shell',
+      missionId: 'mission-nova',
+    };
+    expect(
+      selectMissionTerminalPanes(
+        [maestro, dead, other],
+        'mission-nova',
+        {},
+      ).map((pane) => pane.id),
+    ).toEqual(['pane-a']);
+  });
 });

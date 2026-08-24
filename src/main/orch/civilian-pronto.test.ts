@@ -12,7 +12,10 @@ import {
   maybeApplyCivilianPronto,
   walkProductFiles,
 } from './civilian-pronto';
-import { holdsAwaitingOperatorAdjustment } from '../../shared/mission-recovery-policy';
+import {
+  holdsAwaitingOperatorAdjustment,
+  MISSION_OPERATOR_APPROVED_MARKER,
+} from '../../shared/mission-recovery-policy';
 import { hasUnsettledQueuedHandoffs } from './civilian-delivery-completion';
 import { projectMissionSnapshot } from './mission-snapshot';
 import type { ProjectDomainStoreSuite } from './project-domain-store-registry';
@@ -149,6 +152,35 @@ describe('decideCivilianPronto', () => {
         liveWriterBusy: true,
       }).action,
     ).toBe('wait');
+  });
+
+  it('Pronto civil não carimba aprovação do humano', () => {
+    expect(MISSION_OPERATOR_APPROVED_MARKER).toContain('nexus:operator-approved');
+    const decision = decideCivilianPronto({
+      ...running,
+      workersDelivered: true,
+    });
+    expect(decision.action).toBe('pronto');
+    expect(JSON.stringify(decision)).not.toContain(
+      MISSION_OPERATOR_APPROVED_MARKER,
+    );
+  });
+
+  it('success queued espera o paste — não pinta Pronto', () => {
+    expect(
+      decideCivilianPronto({
+        ...running,
+        workersDelivered: true,
+        hasQueuedHandoffs: true,
+      }).action,
+    ).toBe('wait');
+    expect(
+      decideCivilianPronto({
+        ...running,
+        workersDelivered: true,
+        hasQueuedHandoffs: true,
+      }).reason,
+    ).toBe('queued-handoffs');
   });
 
   it('todos os workers entregaram handoff e Maestro parou → Pronto', () => {
@@ -357,13 +389,13 @@ describe('walkProductFiles — evidência sem lixo', () => {
   });
 });
 
-describe('settlement idempotente — success em voo não prende o Pronto', () => {
-  it('handoff success ainda queued fecha via handoffs citando a resposta', () => {
+describe('settlement — success queued espera o paste no Maestro', () => {
+  it('handoff success ainda queued NÃO fecha via Pronto', () => {
     expect(
       hasUnsettledQueuedHandoffs([
         { deliveryState: 'queued', status: 'success' },
       ]),
-    ).toBe(false);
+    ).toBe(true);
 
     const scope = testProjectScope();
     const mission = {
@@ -433,13 +465,9 @@ describe('settlement idempotente — success em voo não prende o Pronto', () =>
       missionEngine: { completeVerified },
     };
     const completed = maybeApplyCivilianPronto(scope, mission.id, deps);
-    expect(completed.action).toBe('pronto');
-    expect(completed.path).toBe('handoffs');
-    expect(completed.completed).toBe(true);
-    expect(completeVerified).toHaveBeenCalledOnce();
-    const call = completeVerified.mock.calls[0]?.[1] as
-      | { result: { summary: string } }
-      | undefined;
-    expect(call?.result.summary).toContain('2');
+    expect(completed.action).toBe('wait');
+    expect(completed.reason).toBe('queued-handoffs');
+    expect(completed.completed).toBe(false);
+    expect(completeVerified).not.toHaveBeenCalled();
   });
 });

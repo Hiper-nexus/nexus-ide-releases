@@ -11,7 +11,11 @@ import {
   maybeCompleteFastLaneOnDelivery,
 } from './civilian-delivery-completion';
 import { FIRST_WAVE_WRITER_SEATS, planFirstWaveSeats } from './via-rapida-first-wave';
-import { firstWaveWorkerPrompt, planViaRapidaIniciarWalk } from './via-rapida-walk';
+import {
+  firstWaveWorkerPrompt,
+  metaPaneAskPrompt,
+  planViaRapidaIniciarWalk,
+} from './via-rapida-walk';
 import {
   advanceFastLaneStoryTaskFromWorkerDone,
   boardProgressFromSealedTasks,
@@ -453,5 +457,16 @@ describe('first-wave writer_circuit_break', () => {
     expect(prompt).toContain('NÃO rode `open`');
     expect(prompt).not.toContain('xdg-open <arquivo>');
     expect(prompt).toContain('Tarefa selada (1/1): Criar landing');
+  });
+
+  it('metaPaneAskPrompt manda só a pergunta, sem papel de writer', () => {
+    const prompt = metaPaneAskPrompt({
+      agentName: 'Implementar interface',
+      question: 'How much is 2x2',
+    });
+    expect(prompt).toContain('How much is 2x2');
+    expect(prompt).toContain('Não escreva arquivos');
+    expect(prompt).not.toContain('Execute agora');
+    expect(prompt).not.toContain('Tarefa selada');
   });
 });

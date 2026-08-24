@@ -115,6 +115,11 @@ vi.mock('./agent-status', () => ({
   isSessionInjectableIdle: vi.fn(
     () => ptyMocks.state === 'idle' && semanticMocks.injectable,
   ),
+  getAgentSemanticStatusBySession: vi.fn(() =>
+    semanticMocks.injectable
+      ? { status: 'idle' }
+      : { status: 'working' },
+  ),
   tapAgentSemanticStatus: vi.fn((tap: (entry: {
     sessionId: string;
     status: 'idle' | 'completed' | 'awaiting-input' | 'working';
@@ -1208,6 +1213,78 @@ describe('idle delivery authority and lifecycle', () => {
       { markInputBusy: false },
     );
     expect(storeMocks.deliveryAttempts.size).toBe(1);
+    delivery.shutdownIdleDelivery();
+  });
+
+  it('cola um queued que chegou com o Maestro já idle depois do semantic liberar', async () => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    authorizeTarget(scope);
+    ptyMocks.state = 'idle';
+    semanticMocks.injectable = false;
+    delivery.initIdleDelivery();
+
+    delivery.onHandoffSubmitted(handoff(), scope);
+    expect(ptyMocks.writes).not.toHaveBeenCalled();
+
+    semanticMocks.injectable = true;
+    await vi.advanceTimersByTimeAsync(500);
+    await advanceUntilPasted(delivery);
+
+    expect(ptyMocks.writes).toHaveBeenCalledWith(
+      'orchestrator-session',
+      expect.stringContaining('handoff_id=handoff-a'),
+      { markInputBusy: false },
+    );
+    delivery.shutdownIdleDelivery();
+  });
+
+  it('missão já done: cola queued no PTY idle mesmo com semantic working', async () => {
+    // Campo 24/08: first-wave 2x2 drenou 3 handoffs no idle do Maestro e
+    // zero paste — Pronto já tinha fechado, o hook ficou em working.
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    authorizeTarget(scope);
+    storeMocks.missions.set(
+      `${scope.projectId}:${scope.checkoutId}:mission-a`,
+      {
+        id: 'mission-a',
+        orchestratorSessionId: 'orchestrator-session',
+        status: 'done',
+        description: 'How much is 2x2',
+      },
+    );
+    ptyMocks.state = 'idle';
+    semanticMocks.injectable = false;
+    delivery.initIdleDelivery();
+
+    delivery.onHandoffSubmitted(handoff(), scope);
+    await advanceUntilPasted(delivery);
+
+    expect(ptyMocks.writes).toHaveBeenCalledWith(
+      'orchestrator-session',
+      expect.stringContaining('handoff_id=handoff-a'),
+      { markInputBusy: false },
+    );
+    delivery.shutdownIdleDelivery();
+  });
+
+  it('não cola o handoff do próprio Maestro de volta no PTY dele', async () => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    authorizeTarget(scope);
+    ptyMocks.state = 'idle';
+    delivery.initIdleDelivery();
+
+    delivery.onHandoffSubmitted(
+      handoff({
+        sessionId: 'orchestrator-session',
+        fromAgent: 'Coordenar e revisar',
+      }),
+      scope,
+    );
+    await advanceUntilPasted(delivery);
+    expect(ptyMocks.writes).not.toHaveBeenCalled();
     delivery.shutdownIdleDelivery();
   });
 

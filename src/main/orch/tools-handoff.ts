@@ -542,9 +542,9 @@ const handoffListTool: McpToolDef = {
         : {}),
       ...(rawIds.length > 0 ? { ids: rawIds } : {}),
     });
-    // List = recibo (0.64): a resposta carrega summary+artifacts — o Maestro
-    // da PRÓPRIA missão que listou já recebeu. Marca acknowledged e o
-    // redelivery para de digitar o que ele já leu (loop do gate 0.62/0.63).
+    // List = recibo só de `submitted` (já colado no PTY). `queued` segue
+    // para o idle-delivery: o Maestro que lista um queued ainda não recebeu
+    // o paste — ack prematuro comia a fila (campo 24/08, 2x2).
     // Leitura cross-mission é auditoria: nunca reconhece nada.
     if (
       ctx.role === "orchestrator" &&

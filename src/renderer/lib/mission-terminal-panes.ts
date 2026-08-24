@@ -10,7 +10,8 @@ export function selectMissionTerminalPanes(
   paneMissions: Readonly<Record<string, string>>,
 ): PaneModel[] {
   if (!missionId) return [...panes];
-  return panes.filter(
-    (pane) => (pane.missionId ?? paneMissions[pane.id]) === missionId,
-  );
+  return panes.filter((pane) => {
+    if (pane.kind === 'shell') return false;
+    return (pane.missionId ?? paneMissions[pane.id]) === missionId;
+  });
 }

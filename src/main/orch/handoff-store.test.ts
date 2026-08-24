@@ -251,6 +251,37 @@ describe("scoped handoff store", () => {
     ).toHaveLength(1);
   });
 
+  it("list-ack does not steal queued handoffs from idle-delivery", () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope();
+    const missions = createScopedMissionStore(runtimeManager, scope, {
+      idFactory: () => "mission-list-ack",
+    });
+    const handoffs = createScopedHandoffStore(runtimeManager, scope, {
+      idFactory: (prefix) => `${prefix}-list-ack`,
+    });
+    missions.create({ title: "List ack" });
+    const queued = handoffs.submit({
+      missionId: "mission-list-ack",
+      sessionId: "worker-session",
+      fromAgent: "worker",
+      status: "success",
+      summary: "2x2 = 4",
+    });
+    expect(queued.deliveryState).toBe("queued");
+    expect(handoffs.acknowledgeSeenByOrchestratorList("mission-list-ack")).toBe(
+      0,
+    );
+    expect(handoffs.get(queued.id)?.deliveryState).toBe("queued");
+
+    expect(handoffs.markDelivered(queued.id)).toBe(true);
+    expect(handoffs.get(queued.id)?.deliveryState).toBe("submitted");
+    expect(handoffs.acknowledgeSeenByOrchestratorList("mission-list-ack")).toBe(
+      1,
+    );
+    expect(handoffs.get(queued.id)?.deliveryState).toBe("acknowledged");
+  });
+
   it("persists bounded delivery attempts and accepts the exact attempt atomically", () => {
     const runtimeManager = manager();
     const scope = testProjectScope();

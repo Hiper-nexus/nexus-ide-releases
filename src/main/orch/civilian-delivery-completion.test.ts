@@ -399,31 +399,38 @@ describe('inspectDeliveryEvidence', () => {
   });
 });
 
-describe('hasUnsettledQueuedHandoffs — settlement idempotente', () => {
-  it('veredito terminal settle mesmo com transporte queued/submitted', () => {
+describe('hasUnsettledQueuedHandoffs — paste no Maestro ainda não aconteceu', () => {
+  it('success queued é unsettled — Pronto não pode pular o idle-delivery', () => {
     expect(
       hasUnsettledQueuedHandoffs([
         handoff({ deliveryState: 'queued', status: 'success' }),
-        handoff({ id: 'h2', deliveryState: 'submitted', status: 'partial' }),
+      ]),
+    ).toBe(true);
+    expect(
+      hasUnsettledQueuedHandoffs([
+        handoff({ deliveryState: 'submitted', status: 'success' }),
       ]),
     ).toBe(false);
-  });
-
-  it('entrega em voo sem veredito segura a conclusão', () => {
-    expect(
-      hasUnsettledQueuedHandoffs([
-        handoff({ deliveryState: 'submitted', status: 'progress' }),
-      ]),
-    ).toBe(true);
-    expect(
-      hasUnsettledQueuedHandoffs([
-        handoff({ deliveryState: 'queued', status: 'failed' }),
-      ]),
-    ).toBe(true);
     expect(hasUnsettledQueuedHandoffs([])).toBe(false);
   });
 
-  it('handoff success ainda queued não bloqueia decisão de entrega', () => {
+  it('queued do próprio Maestro não prende o Pronto', () => {
+    expect(
+      hasUnsettledQueuedHandoffs(
+        [
+          handoff({
+            deliveryState: 'queued',
+            status: 'success',
+            sessionId: 'maestro-pty',
+            fromAgent: 'Coordenar e revisar',
+          }),
+        ],
+        { orchestratorSessionId: 'maestro-pty' },
+      ),
+    ).toBe(false);
+  });
+
+  it('handoff success ainda queued bloqueia decisão até o paste', () => {
     const inspected = inspectCivilianDelivery({
       mission: mission(),
       tasks: [task({ id: 't-front', title: 'UI', status: 'pending' })],
@@ -438,7 +445,7 @@ describe('hasUnsettledQueuedHandoffs — settlement idempotente', () => {
       panes: [],
       now: 20_000,
     });
-    expect(inspected.hasQueuedHandoffs).toBe(false);
+    expect(inspected.hasQueuedHandoffs).toBe(true);
     expect(inspected.workersDelivered).toBe(true);
   });
 });

@@ -6,7 +6,9 @@ import {
   FIRST_WAVE_OFFER_CLIS,
   FIRST_WAVE_WRITER_SEATS,
   planFirstWaveSeats,
+  planMetaPaneAskSeats,
   spreadPresentClisAcrossWriterRoles,
+  targetFirstWaveWriterSeats,
 } from './via-rapida-first-wave';
 
 function agent(
@@ -177,6 +179,81 @@ describe('planFirstWaveSeats — N present = N assentos vivos, não log-only 7',
       wave.seats.length,
     );
     expect(wave.skippedNoCredential).toContain('agy');
+  });
+});
+
+describe('planMetaPaneAskSeats — pergunta abre o roster, não 1 writer', () => {
+  const askRoster: SquadAgent[] = [
+    agent({
+      id: 'orch',
+      agentName: 'Coordenar e revisar',
+      category: 'orchestrator',
+      cli: 'claude',
+    }),
+    agent({
+      id: 'ui',
+      agentName: 'Implementar interface',
+      category: 'executor',
+      cli: 'codex',
+    }),
+    agent({
+      id: 'motor',
+      agentName: 'Implementar motor',
+      category: 'executor',
+      cli: 'cursor',
+    }),
+    agent({
+      id: 'review',
+      agentName: 'Verificar o resultado',
+      category: 'reviewer',
+      cli: 'glm',
+    }),
+  ];
+  const presentOf = (present: ReadonlySet<string>) => (row: SquadAgent) =>
+    present.has(row.cli) ? 'present' : 'no-credential';
+
+  it('1 entrega selada não vira 1 Codex: senta os 3 papéis, inclusive o revisor', () => {
+    // Campo 24/08: "How much is 2x2 and they have to answer you." selou 1
+    // título → targetFirstWaveWriterSeats(1)=1 → só Implementar interface.
+    expect(targetFirstWaveWriterSeats(1)).toBe(1);
+    const writerWave = planFirstWaveSeats({
+      storyCount: 1,
+      storyTitles: ['How much is 2x2 and they have to answer you.'],
+      agents: askRoster,
+      classifySeat: presentOf(new Set(['codex', 'cursor', 'glm'])),
+    });
+    expect(writerWave.seats.map((seat) => seat.title)).toEqual([
+      'Implementar interface',
+    ]);
+
+    const askWave = planMetaPaneAskSeats({
+      agents: askRoster,
+      classifySeat: presentOf(new Set(['codex', 'cursor', 'glm'])),
+    });
+    expect(askWave.seats.map((seat) => seat.title)).toEqual([
+      'Implementar interface',
+      'Implementar motor',
+      'Verificar o resultado',
+    ]);
+    expect(askWave.seats.some((seat) => seat.agent.category === 'reviewer')).toBe(
+      true,
+    );
+    expect(askWave.seats.some((seat) => seat.agent.category === 'orchestrator')).toBe(
+      false,
+    );
+  });
+
+  it('não inventa Writer N extra e pula quem já sentou ou está sem auth', () => {
+    const wave = planMetaPaneAskSeats({
+      agents: askRoster,
+      classifySeat: presentOf(new Set(['codex', 'glm'])),
+      seatedKeys: ['Implementar interface'],
+    });
+    expect(wave.seats.map((seat) => seat.title)).toEqual(['Verificar o resultado']);
+    expect(wave.skippedNoCredential).toContain('cursor');
+    expect(wave.seats.every((seat) => !seat.title.startsWith('Writer'))).toBe(
+      true,
+    );
   });
 });
 

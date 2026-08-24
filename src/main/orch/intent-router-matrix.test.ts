@@ -84,6 +84,17 @@ describe('MATRIZ: router com missões reais de operador', () => {
     });
     expect(route).toBeNull();
   });
+
+  it('ditado inglês "they have to answer you" também não vira resposta direta', async () => {
+    const route = await routeIntent(
+      'How much is 2x2 and they have to answer you.',
+      {
+        hasKeyFor: () => false,
+        loadKeyFor: () => null,
+      },
+    );
+    expect(route).toBeNull();
+  });
 });
 
 describe('EXTREMO: router sob ditado, typo e adversário', () => {

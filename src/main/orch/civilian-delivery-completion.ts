@@ -648,15 +648,15 @@ export function matchHandoffToAgent(
  * (queued/submitted sem veredito) segura a conclusão da missão.
  */
 export function hasUnsettledQueuedHandoffs(
-  handoffs: readonly Pick<Handoff, 'deliveryState' | 'status'>[],
+  handoffs: readonly Pick<Handoff, 'deliveryState' | 'sessionId'>[],
+  opts?: { readonly orchestratorSessionId?: string | null },
 ): boolean {
-  return handoffs.some(
-    (handoff) =>
-      (handoff.deliveryState === 'queued' ||
-        handoff.deliveryState === 'submitted') &&
-      handoff.status !== 'success' &&
-      handoff.status !== 'partial',
-  );
+  const orch = opts?.orchestratorSessionId?.trim() ?? '';
+  return handoffs.some((handoff) => {
+    if (handoff.deliveryState !== 'queued') return false;
+    if (orch && handoff.sessionId && handoff.sessionId === orch) return false;
+    return true;
+  });
 }
 
 export function inspectCivilianDelivery(input: {
@@ -821,7 +821,9 @@ export function inspectCivilianDelivery(input: {
       activeWriterCount === 0) ||
     (boardAllDone && activeWriterCount === 0);
 
-  const hasQueuedHandoffs = hasUnsettledQueuedHandoffs(input.handoffs);
+  const hasQueuedHandoffs = hasUnsettledQueuedHandoffs(input.handoffs, {
+    orchestratorSessionId: input.mission.orchestratorSessionId,
+  });
 
   const orchestratorPanes = missionPanes.filter(
     (pane) => pane.role === 'orchestrator',

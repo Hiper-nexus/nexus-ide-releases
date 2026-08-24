@@ -12,6 +12,7 @@ import {
   missionDesignContext,
   missionFastLaneEnabled,
   isPaneMetaTask,
+  extractMetaPaneQuestion,
   isSecurityMissionText,
   readableMissionAttachmentPath,
   SECURITY_DOCTRINE_NOTE,
@@ -523,6 +524,33 @@ describe('isPaneMetaTask — meta-de-pane fica com o Maestro', () => {
     expect(isPaneMetaTask('fala aos panes: qual o status?')).toBe(true);
   });
 
+  it('ditado traduzido para inglês ainda é pergunta a todos os panes', () => {
+    // Campo 24/08: "How much is 2x2 and they have to answer you."
+    // A first-wave selou 1 entrega e abriu só o Codex — o VOZ já avisa
+    // que o objetivo chega em inglês.
+    expect(
+      isPaneMetaTask('How much is 2x2 and they have to answer you.'),
+    ).toBe(true);
+    expect(
+      isPaneMetaTask('ask the team how much is 2+2'),
+    ).toBe(true);
+    expect(
+      isPaneMetaTask('each worker should answer: what is 1+1?'),
+    ).toBe(true);
+  });
+
+  it('extrai a pergunta limpa do wrapper inglês e do "pergunte aos panes"', () => {
+    expect(
+      extractMetaPaneQuestion('How much is 2x2 and they have to answer you.'),
+    ).toBe('How much is 2x2');
+    expect(extractMetaPaneQuestion('pergunte aos panes quanto é 1+1')).toBe(
+      'quanto é 1+1',
+    );
+    expect(extractMetaPaneQuestion('ask the team how much is 2+2')).toBe(
+      'how much is 2+2',
+    );
+  });
+
   it('task de CÓDIGO que menciona pane continua indo para worker', () => {
     expect(isPaneMetaTask('corrigir o pane-close-guard do renderer')).toBe(false);
     expect(isPaneMetaTask('refatorar PaneToolbar para o novo layout')).toBe(false);
@@ -562,6 +590,63 @@ describe('kickoff meta-de-pane — um pane por integrante, TODOS respondem', () 
     expect(prompt).toContain('readOnly: true');
     expect(prompt).toContain('artifacts');
     expect(prompt).toContain('não chame set_status done');
+    expect(prompt).toContain('first-wave já abriu');
+    expect(prompt).toContain('NÃO spawne de novo');
+    expect(prompt).not.toContain('1 entrega');
+    expect(prompt).not.toContain('São 1 entregas');
+  });
+
+  it('ditado inglês ainda é META-DE-PANE — não colapsa em 1 entrega Codex', () => {
+    const prompt = agentPrompt(
+      agent({
+        id: 'coord',
+        agentName: 'Coordenar e revisar',
+        category: 'orchestrator',
+      }),
+      mission({
+        title: 'How much is 2x2 and they have to answer you.',
+        description: 'How much is 2x2 and they have to answer you.',
+      }),
+      [
+        'Coordenar e revisar',
+        'Implementar interface',
+        'Implementar motor',
+        'Verificar o resultado',
+      ],
+      false,
+      '',
+      squad({
+        agents: [
+          agent({
+            id: 'coord',
+            agentName: 'Coordenar e revisar',
+            category: 'orchestrator',
+          }),
+          agent({
+            id: 'w1',
+            agentName: 'Implementar interface',
+            category: 'executor',
+          }),
+          agent({
+            id: 'w2',
+            agentName: 'Implementar motor',
+            category: 'executor',
+          }),
+          agent({
+            id: 'w3',
+            agentName: 'Verificar o resultado',
+            category: 'reviewer',
+          }),
+        ],
+      }),
+      ['How much is 2x2 and they have to answer you.'],
+    );
+    expect(prompt).toContain('META-DE-PANE');
+    expect(prompt).toContain('Implementar interface');
+    expect(prompt).toContain('Implementar motor');
+    expect(prompt).toContain('Verificar o resultado');
+    expect(prompt).not.toContain('Plano selado (1 entrega)');
+    expect(prompt).not.toContain('São 1 entregas');
   });
 
   it('missão sem meta-de-pane não carrega a diretiva', () => {

@@ -13,31 +13,30 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.70.8',
+  version: '0.70.9',
   date: '2026-08-24',
-  codename: 'OpenClaude no seletor',
+  codename: 'O time responde',
   summary:
-    'OpenClaude no Iniciar, no + Agent e em Provedores. Instala e entra ' +
-    'como as outras CLIs. Sessão em ~/.openclaude, não no Claude.',
+    'Pergunta ao time abre um pane por integrante. O handoff cola no Maestro. ' +
+    'Pronto não fecha a missão — só o operador.',
   highlights: [
     {
-      title: 'OpenClaude de primeira classe',
+      title: 'Um pane por papel',
       detail:
-        'Ferramenta/Modelo, + Agent e Configurações › Provedores (CLIs e ' +
-        'Login). Instalar e Entrar no hub, sem JSON de plugin.',
+        '“They have to answer you” abre interface, motor e revisor. Não ' +
+        'colapsa em um Codex.',
     },
     {
-      title: 'Login próprio, não o do Claude',
+      title: 'Handoff cola no Maestro',
       detail:
-        '`openclaude auth login` ou `/provider`. API key OpenAI no cofre. ' +
-        'Não compartilha o Keychain da Anthropic.',
+        'Listar não come a fila. Queued cola no PTY idle. Pronto espera o paste.',
     },
   ],
   fixes: [
     {
-      title: 'Watcher de login não quebra o painel de contas',
+      title: 'Grid da missão sem shell morto nem pane alheio',
       detail:
-        'onData opcional e unsubscribe declarado antes do finish.',
+        'Terminais esconde shell. Spawn de missão não retoma sessão velha.',
     },
   ],
 };

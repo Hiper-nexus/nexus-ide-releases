@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.70.9 — O time responde
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+Pergunta ao time abre **um pane por integrante**, não um Codex só. O worker
+entrega, o Maestro cola. Pronto do motor **não** fecha a missão — só você.
+
+- Ditado em inglês (`they have to answer you`) ainda é pergunta a todos.
+- Handoff `queued` não some no `nexus_handoff_list`; cola no Maestro idle.
+- Pronto espera o paste. Shell morto e pane de outra missão saem do grid.
+- Spawn de missão é sessão nova — não retoma papo velho.
+
+Gates: testes de idle-delivery, first-wave e Pronto verdes. DEV: 5 missões
+(2x2, 1+1, dois arquivos, landing, 3x3), Encerrar entre cada uma, nenhuma
+fechou sozinha.
+
 ## 0.70.8 — OpenClaude no seletor
 
 _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._

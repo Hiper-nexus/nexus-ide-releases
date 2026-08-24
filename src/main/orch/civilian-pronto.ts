@@ -500,7 +500,9 @@ export function maybeApplyCivilianPronto(
     sealedDone === 0 &&
     !liveWriterBusy;
 
-  const hasQueuedHandoffs = hasUnsettledQueuedHandoffs(handoffs);
+  const hasQueuedHandoffs = hasUnsettledQueuedHandoffs(handoffs, {
+    orchestratorSessionId: mission.orchestratorSessionId,
+  });
 
   const successHandoffs = handoffs.filter(
     (handoff) => handoff.status === 'success' || handoff.status === 'partial',

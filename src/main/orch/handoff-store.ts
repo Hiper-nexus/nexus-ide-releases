@@ -1708,11 +1708,11 @@ export class ScopedHandoffStore {
   }
 
   /**
-   * List = recibo (0.64): o orquestrador que LISTOU handoffs pendentes da
-   * PRÓPRIA missão já recebeu o conteúdo (a resposta do list carrega
-   * summary+artifacts). Marca queued/submitted → acknowledged + delivered=1
-   * para o redelivery/re-arm parar de digitar o que o Maestro já leu —
-   * era o loop attempts=2 + recuperação física do gate 0.62/0.63.
+   * List = recibo só do que JÁ foi colado no PTY (`submitted`).
+   * `queued` continua na fila do idle-delivery: listar não é receber.
+   * Campo 24/08: o Maestro via `queued` no list, o ack comia a fila, e o
+   * paste nunca descia — "vou esperar o idle-delivery" para sempre.
+   * O loop 0.62/0.63 era re-paste de `submitted`; esse continua coberto.
    * `consumed` continua exclusivo do nexus_handoff_ack.
    */
   acknowledgeSeenByOrchestratorList(rawMissionId: string): number {
@@ -1726,7 +1726,7 @@ export class ScopedHandoffStore {
            delivered = 1,
            acknowledged_at = ?,
            submitted_at = COALESCE(submitted_at, ?)
-       WHERE mission_id = ? AND delivery_state IN ('queued', 'submitted')`,
+       WHERE mission_id = ? AND delivery_state = 'submitted'`,
       )
       .run(now, now, missionId);
     if (result.changes > 0) this.#binding.emitChange();

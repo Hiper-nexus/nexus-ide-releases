@@ -62,6 +62,55 @@ export function writableRosterAgents(
   return agents.filter((agent) => agent.category !== 'orchestrator');
 }
 
+/** Integrantes a quem se pergunta — inclui revisor. Maestro fica de fora. */
+export function rosterAskAgents(
+  agents: readonly SquadAgent[],
+): SquadAgent[] {
+  return agents.filter((agent) => agent.category !== 'orchestrator');
+}
+
+/**
+ * Missão-pergunta: UM pane por integrante do roster, sem Writer N extra e
+ * sem colapsar em 1 escritor porque o plano selado tem 1 título.
+ */
+export function planMetaPaneAskSeats(input: {
+  readonly agents: readonly SquadAgent[];
+  readonly classifySeat?: (agent: SquadAgent) => SeatAuthReadiness;
+  readonly blockedAdapterIds?: readonly string[];
+  readonly seatedKeys?: readonly string[];
+}): {
+  readonly targetSeats: number;
+  readonly seats: readonly FirstWaveSeat[];
+  readonly skippedNoCredential: readonly string[];
+} {
+  const classify = input.classifySeat ?? defaultClassify;
+  const blocked = new Set(
+    (input.blockedAdapterIds ?? []).map((id) => id.trim()).filter(Boolean),
+  );
+  const seated = new Set(
+    (input.seatedKeys ?? []).map((key) => key.trim()).filter(Boolean),
+  );
+  const skipped: string[] = [];
+  const present: SquadAgent[] = [];
+  for (const agent of rosterAskAgents(input.agents)) {
+    if (seated.has(agent.id) || seated.has(agent.agentName)) continue;
+    if (blocked.has(agent.cli) || !canSeat(classify(agent))) {
+      skipped.push(agent.cli);
+      continue;
+    }
+    present.push(agent);
+  }
+  return {
+    targetSeats: present.length,
+    seats: expandFirstWaveSeats(
+      present,
+      present.length,
+      present.map((agent) => agent.agentName),
+    ),
+    skippedNoCredential: [...new Set(skipped)],
+  };
+}
+
 export function filterPresentWriterAgents(
   agents: readonly SquadAgent[],
   classify: (agent: SquadAgent) => SeatAuthReadiness = (agent) =>
