@@ -744,6 +744,7 @@ export function ProvidersPanel() {
     setLoginNotice(null);
     const result = await openCliLoginTerminal({
       command,
+      adapterId: provider.adapterId,
       onFinished: () => {
         void refreshCatalog();
       },
@@ -751,7 +752,7 @@ export function ProvidersPanel() {
     setLoginBusyId(null);
     setLoginNotice(
       result.ok
-        ? `${provider.label}: terminal aberto. Conclua o login lá. Quando fechar, o Nexus verifica sozinho.`
+        ? `${provider.label}: terminal aberto. Conclua o login lá. Quando a CLI confirmar, o card some sozinho.`
         : `${provider.label}: ${result.error}`,
     );
   }

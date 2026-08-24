@@ -98,7 +98,10 @@ describe('AttentionInbox', () => {
     expect(claudeBtn).toBeTruthy();
     act(() => claudeBtn!.click());
     expect(openCliLoginTerminal).toHaveBeenCalledWith(
-      expect.objectContaining({ command: 'claude /login' }),
+      expect.objectContaining({
+        command: 'claude /login',
+        adapterId: 'claude',
+      }),
     );
   });
 });

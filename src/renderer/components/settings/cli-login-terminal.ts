@@ -1,6 +1,8 @@
+import { shouldFinishCliLoginWatch } from '../../../shared/cli-login';
 import { listPanes } from '../../lib/split-tree';
 import { useLayoutStore } from '../../state/layout-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
+import { useProviderStore } from '../../state/provider-store';
 import { useSessionStateStore } from '../../state/session-state-store';
 import { waitForSession, writeToPane } from '../../terminal/terminal-host';
 
@@ -9,8 +11,9 @@ import { waitForSession, writeToPane } from '../../terminal/terminal-host';
  * login DA FERRAMENTA. O Nexus nunca pede senha nem guarda credencial de
  * assinatura — quem grava a sessão é a própria CLI, igual ao shell do operador.
  *
- * Quando aquele terminal termina, o painel reexamina as CLIs sozinho: é assim
- * que a linha sai de "precisa login" para "conectado" sem o operador caçar botão.
+ * O comando é digitado num shell. A CLI sai, o prompt volta, o pane continua
+ * vivo — então o watcher olha a linha de sucesso e a sonda de sessão, não a
+ * morte do processo. Só assim a lista Atenção tira o card "Login" na hora.
  */
 
 export type CliLoginOutcome =
@@ -19,10 +22,13 @@ export type CliLoginOutcome =
 
 /** Tempo máximo observando o terminal de login antes de soltar o watcher. */
 const LOGIN_WATCH_TIMEOUT_MS = 15 * 60 * 1000;
+const LOGIN_AUTH_POLL_MS = 2_000;
 
 export async function openCliLoginTerminal(input: {
   readonly command: string;
-  /** Chamado quando o terminal de login encerra (sucesso ou desistência). */
+  /** Adapter cuja sessão deve sair de "login-needed" quando o login pegar. */
+  readonly adapterId?: string;
+  /** Chamado quando o login conclui, o pane some, ou o tempo esgota. */
   readonly onFinished?: () => void;
 }): Promise<CliLoginOutcome> {
   const command = input.command.trim();
@@ -52,33 +58,82 @@ export async function openCliLoginTerminal(input: {
   useLayoutStore.getState().focus(paneId);
   useProductNavigationStore.getState().openTerminal();
 
-  if (input.onFinished) watchLoginPane(paneId, input.onFinished);
+  if (input.onFinished) {
+    watchLoginPane({
+      paneId,
+      sessionId,
+      adapterId: input.adapterId,
+      onFinished: input.onFinished,
+    });
+  }
   return { ok: true, paneId };
 }
 
-/**
- * Observa UM pane de login até ele morrer ou sumir do layout. Sem polling de
- * credencial: o fim do processo é o sinal, e o painel decide o que reexaminar.
- */
-function watchLoginPane(paneId: string, onFinished: () => void): void {
+function adapterAuthReady(adapterId: string | undefined): boolean {
+  if (!adapterId) return false;
+  const provider = useProviderStore
+    .getState()
+    .providers.find((candidate) => candidate.adapterId === adapterId);
+  return (
+    provider !== undefined &&
+    provider.authStrategy !== 'login-needed'
+  );
+}
+
+function watchLoginPane(input: {
+  readonly paneId: string;
+  readonly sessionId: string;
+  readonly adapterId?: string;
+  readonly onFinished: () => void;
+}): void {
   let done = false;
+  let output = '';
   const finish = () => {
     if (done) return;
     done = true;
     clearTimeout(timer);
+    clearInterval(poll);
     unsubscribeState();
     unsubscribeLayout();
-    onFinished();
+    unsubscribeData?.();
+    input.onFinished();
+  };
+
+  const consider = () => {
+    const stillOpen = listPanes(useLayoutStore.getState().root).some(
+      (pane) => pane.id === input.paneId,
+    );
+    if (
+      shouldFinishCliLoginWatch({
+        output,
+        paneStillOpen: stillOpen,
+        paneExited:
+          useSessionStateStore.getState().paneStates.get(input.paneId) ===
+          'exited',
+        authReady: adapterAuthReady(input.adapterId),
+      })
+    ) {
+      finish();
+    }
   };
 
   const timer = setTimeout(finish, LOGIN_WATCH_TIMEOUT_MS);
+  const poll = setInterval(() => {
+    void useProviderStore
+      .getState()
+      .hydrate()
+      .then(consider);
+  }, LOGIN_AUTH_POLL_MS);
 
-  const unsubscribeState = useSessionStateStore.subscribe((state) => {
-    if (state.paneStates.get(paneId) === 'exited') finish();
-  });
+  const unsubscribeState = useSessionStateStore.subscribe(consider);
+  const unsubscribeLayout = useLayoutStore.subscribe(consider);
+  const unsubscribeData = window.nexus?.pty?.onData(
+    input.sessionId,
+    (chunk) => {
+      output = (output + chunk).slice(-8_000);
+      consider();
+    },
+  );
 
-  const unsubscribeLayout = useLayoutStore.subscribe((state) => {
-    const stillOpen = listPanes(state.root).some((pane) => pane.id === paneId);
-    if (!stillOpen) finish();
-  });
+  consider();
 }

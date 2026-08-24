@@ -200,7 +200,7 @@ describe('ProvidersPanel hub', () => {
     await act(async () => pill!.click());
 
     expect(loginTerminal.openCliLoginTerminal).toHaveBeenCalledWith(
-      expect.objectContaining({ command: 'codex login' }),
+      expect.objectContaining({ command: 'codex login', adapterId: 'codex' }),
     );
     expect(
       host.querySelector('[data-testid="prov-login-notice"]')?.textContent,

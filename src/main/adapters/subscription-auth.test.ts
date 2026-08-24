@@ -814,6 +814,101 @@ describe('detectSubscriptionAuth', () => {
     expect(detectSubscriptionAuth('unknown-provider', tempHome())).toBe(false);
   });
 
+  it('detects Cursor Agent from cli-config identity written at login', () => {
+    const home = tempHome();
+    expect(detectSubscriptionAuth('cursor-agent', home)).toBe(false);
+    const config = path.join(home, '.cursor', 'cli-config.json');
+    fs.mkdirSync(path.dirname(config), { recursive: true });
+    fs.writeFileSync(config, JSON.stringify({ version: 1 }));
+    expect(detectSubscriptionAuth('cursor-agent', home)).toBe(false);
+    fs.writeFileSync(
+      config,
+      JSON.stringify({
+        authInfo: { email: 'admin@volarehost.com.br', authId: 'acc_1' },
+      }),
+    );
+    expect(detectSubscriptionAuth('cursor-agent', home)).toBe(true);
+  });
+
+  it('detects Gemini CLI from the same Google session files as AGY', () => {
+    const home = tempHome();
+    expect(
+      detectSubscriptionAuth('gemini', home, undefined, {
+        probeAgyKeychain: false,
+      }),
+    ).toBe(false);
+    fs.mkdirSync(path.join(home, '.gemini'), { recursive: true });
+    fs.writeFileSync(
+      path.join(home, '.gemini', 'google_accounts.json'),
+      JSON.stringify({ active: 'retornoja@gmail.com', old: [] }),
+    );
+    expect(
+      detectSubscriptionAuth('gemini', home, undefined, {
+        probeAgyKeychain: false,
+      }),
+    ).toBe(true);
+  });
+
+  it('detects Muse Spark only when auth.json holds a live token', () => {
+    const home = tempHome();
+    const authFile = path.join(home, '.config', 'muse', 'auth.json');
+    fs.mkdirSync(path.dirname(authFile), { recursive: true });
+    fs.writeFileSync(
+      authFile,
+      JSON.stringify({
+        schema_version: 1,
+        providers: { meta: { access_token: '', user_email: 'a@b.c' } },
+      }),
+    );
+    expect(detectSubscriptionAuth('muse', home)).toBe(false);
+    fs.writeFileSync(
+      authFile,
+      JSON.stringify({
+        schema_version: 1,
+        providers: {
+          meta: { access_token: 'atok', user_email: 'a@b.c' },
+        },
+      }),
+    );
+    expect(detectSubscriptionAuth('muse', home)).toBe(true);
+  });
+
+  it('detects oh-my-pi from a populated agent env, not an empty shell', () => {
+    const home = tempHome();
+    const envFile = path.join(home, '.omp', 'agent', '.env');
+    fs.mkdirSync(path.dirname(envFile), { recursive: true });
+    fs.writeFileSync(envFile, '# comment\nZAI_API_KEY=\n');
+    expect(detectSubscriptionAuth('omp', home)).toBe(false);
+    fs.writeFileSync(envFile, 'ZAI_API_KEY=sk-live\n');
+    expect(detectSubscriptionAuth('omp', home)).toBe(true);
+  });
+
+  it('detects Qoder from a nonempty .auth/user blob', () => {
+    const home = tempHome();
+    const user = path.join(home, '.qoder', '.auth', 'user');
+    fs.mkdirSync(path.dirname(user), { recursive: true });
+    fs.writeFileSync(user, '');
+    expect(detectSubscriptionAuth('qoder', home)).toBe(false);
+    fs.writeFileSync(user, 'encrypted-session-blob');
+    expect(detectSubscriptionAuth('qoder', home)).toBe(true);
+  });
+
+  it('detects Prime Agent from any provider access token in auth.json', () => {
+    const home = tempHome();
+    const authFile = path.join(home, '.prime', 'agent', 'auth.json');
+    fs.mkdirSync(path.dirname(authFile), { recursive: true });
+    fs.writeFileSync(
+      authFile,
+      JSON.stringify({ anthropic: { type: 'oauth', access: '' } }),
+    );
+    expect(detectSubscriptionAuth('prime-agent', home)).toBe(false);
+    fs.writeFileSync(
+      authFile,
+      JSON.stringify({ anthropic: { type: 'oauth', access: 'atok' } }),
+    );
+    expect(detectSubscriptionAuth('prime-agent', home)).toBe(true);
+  });
+
   it('reads Claude email as identity only — not a live session', () => {
     const home = tempHome();
     expect(claudeOauthEmail(home)).toBeNull();

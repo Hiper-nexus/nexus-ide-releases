@@ -57,3 +57,28 @@ export function resolveCliLoginCommand(source: CliLoginSource): string | null {
   if (bin.length === 0) return null;
   return isSafeLoginCommand(bin) ? bin : null;
 }
+
+/**
+ * Login is typed into a shell pane: the CLI exits, the shell stays. The
+ * watcher cannot wait for process death — it has to recognize the CLI's own
+ * success line (Cursor: "Logged in as …" / "Authentication tokens stored").
+ */
+export function cliLoginLooksComplete(output: string): boolean {
+  const text = output.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
+  if (/logged in as\s+\S+/i.test(text)) return true;
+  if (/authentication tokens stored/i.test(text)) return true;
+  if (/successfully (?:logged|signed) in/i.test(text)) return true;
+  return false;
+}
+
+export function shouldFinishCliLoginWatch(input: {
+  readonly output: string;
+  readonly paneStillOpen: boolean;
+  readonly paneExited: boolean;
+  readonly authReady: boolean;
+}): boolean {
+  if (!input.paneStillOpen) return true;
+  if (input.paneExited) return true;
+  if (input.authReady) return true;
+  return cliLoginLooksComplete(input.output);
+}

@@ -608,6 +608,66 @@ function kimiHasUsableCredentials(home: string): boolean {
   return candidates.some((file) => kimiCredentialsFileIsUsable(file));
 }
 
+/** Cursor Agent writes identity into ~/.cursor/cli-config.json at login. */
+export function cursorCliConfigHasSession(home = os.homedir()): boolean {
+  try {
+    const parsed = JSON.parse(
+      fs.readFileSync(path.join(home, '.cursor', 'cli-config.json'), 'utf8'),
+    ) as { authInfo?: { email?: unknown } };
+    const email = parsed.authInfo?.email;
+    return typeof email === 'string' && email.includes('@');
+  } catch {
+    return false;
+  }
+}
+
+/** Muse Spark `~/.config/muse/auth.json` — any provider with a live token. */
+export function museAuthBlobIsUsable(blob: string): boolean {
+  try {
+    const parsed = JSON.parse(blob) as { providers?: unknown };
+    if (!parsed.providers || typeof parsed.providers !== 'object') return false;
+    return Object.values(parsed.providers as Record<string, unknown>).some(
+      (provider) =>
+        hasNonEmptyString(provider, 'access_token', 'refresh_token', 'api_key'),
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Prime Agent `~/.prime/agent/auth.json` — oauth access or stored key. */
+export function primeAuthBlobIsUsable(blob: string): boolean {
+  try {
+    const parsed = JSON.parse(blob) as Record<string, unknown>;
+    return Object.values(parsed).some(
+      (provider) => hasNonEmptyString(provider, 'access', 'refresh', 'key'),
+    );
+  } catch {
+    return false;
+  }
+}
+
+function nonemptyFile(home: string, ...segments: string[]): boolean {
+  try {
+    return fs.statSync(path.join(home, ...segments)).size > 0;
+  } catch {
+    return false;
+  }
+}
+
+/** oh-my-pi keeps provider keys in ~/.omp/agent/.env — presence of a value. */
+function ompAgentEnvHasKey(home: string): boolean {
+  try {
+    const raw = fs.readFileSync(
+      path.join(home, '.omp', 'agent', '.env'),
+      'utf8',
+    );
+    return raw.split(/\r?\n/).some((line) => /^[A-Z][A-Z0-9_]+=\S+/.test(line));
+  } catch {
+    return false;
+  }
+}
+
 export function detectSubscriptionAuth(
   adapterId: string,
   home = os.homedir(),
@@ -690,6 +750,38 @@ export function detectSubscriptionAuth(
       // API keys. Treating its config directory as login would suppress every
       // injected key and leave the freshly installed CLI unusable.
       return false;
+    case 'cursor-agent':
+      // Plugin CLI. Login writes ~/.cursor/cli-config.json authInfo.email
+      // and a keychain access token. Identity in the file is the inbox
+      // signal — the Attention list cannot wait on a Keychain probe.
+      return cursorCliConfigHasSession(home);
+    case 'gemini':
+      // Official Gemini CLI shares ~/.gemini with AGY/antigravity.
+      return (
+        agyOauthCredsFileIsUsable(home) || agyGoogleAccountIsActive(home)
+      );
+    case 'muse': {
+      try {
+        return museAuthBlobIsUsable(
+          fs.readFileSync(path.join(home, '.config', 'muse', 'auth.json'), 'utf8'),
+        );
+      } catch {
+        return false;
+      }
+    }
+    case 'omp':
+      return ompAgentEnvHasKey(home);
+    case 'qoder':
+      return nonemptyFile(home, '.qoder', '.auth', 'user');
+    case 'prime-agent': {
+      try {
+        return primeAuthBlobIsUsable(
+          fs.readFileSync(path.join(home, '.prime', 'agent', 'auth.json'), 'utf8'),
+        );
+      } catch {
+        return false;
+      }
+    }
     default:
       // Unknown is not evidence of an authenticated session. Failing closed
       // prevents a false positive from suppressing a valid API key.
@@ -727,7 +819,9 @@ export function hasSubscriptionAuth(
     model,
     adapterId === 'agy' ? { probeAgyKeychain: false } : {},
   );
-  cacheSubscriptionAuth(adapterId, value, model);
+  // Never cache a miss: login in a live shell writes the session seconds
+  // later and the Attention list must see it without waiting out the TTL.
+  if (value) cacheSubscriptionAuth(adapterId, value, model);
   return value;
 }
 

@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { resolveCliLoginCommand } from './cli-login';
+import {
+  cliLoginLooksComplete,
+  resolveCliLoginCommand,
+  shouldFinishCliLoginWatch,
+} from './cli-login';
 
 describe('resolveCliLoginCommand', () => {
   it('uses the command declared by the adapter, whatever the auth method is', () => {
@@ -64,5 +68,54 @@ describe('resolveCliLoginCommand', () => {
     expect(
       resolveCliLoginCommand({ loginCommand: `login ${'x'.repeat(300)}` }),
     ).toBeNull();
+  });
+});
+
+describe('cliLoginLooksComplete', () => {
+  it('recognizes Cursor Agent finishing inside a live shell', () => {
+    expect(
+      cliLoginLooksComplete(
+        '✓ Logged in as admin@volarehost.com.br\nAuthentication tokens stored securely.\n%',
+      ),
+    ).toBe(true);
+  });
+
+  it('ignores a CLI merely talking about login', () => {
+    expect(cliLoginLooksComplete('Select login method')).toBe(false);
+    expect(cliLoginLooksComplete('waiting for authentication')).toBe(false);
+    expect(cliLoginLooksComplete('cursor-agent login')).toBe(false);
+  });
+});
+
+describe('shouldFinishCliLoginWatch', () => {
+  const idle = {
+    output: '',
+    paneStillOpen: true,
+    paneExited: false,
+    authReady: false,
+  };
+
+  it('keeps watching a live shell that has not logged in yet', () => {
+    expect(shouldFinishCliLoginWatch(idle)).toBe(false);
+  });
+
+  it('finishes when the CLI prints success, even if the shell stays open', () => {
+    expect(
+      shouldFinishCliLoginWatch({
+        ...idle,
+        output: 'Logged in as admin@volarehost.com.br',
+      }),
+    ).toBe(true);
+  });
+
+  it('finishes when the session probe flips to ready', () => {
+    expect(shouldFinishCliLoginWatch({ ...idle, authReady: true })).toBe(true);
+  });
+
+  it('finishes when the pane dies or is closed', () => {
+    expect(shouldFinishCliLoginWatch({ ...idle, paneExited: true })).toBe(true);
+    expect(shouldFinishCliLoginWatch({ ...idle, paneStillOpen: false })).toBe(
+      true,
+    );
   });
 });

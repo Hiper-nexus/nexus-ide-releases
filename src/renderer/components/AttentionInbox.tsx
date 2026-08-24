@@ -39,6 +39,7 @@ function jump(item: AttentionItem): void {
     if (command.length > 0 && command.length <= 200 && !/[\r\n]/.test(command)) {
       void openCliLoginTerminal({
         command,
+        adapterId: item.targetId,
         onFinished: () => {
           void useProviderStore.getState().hydrate();
         },

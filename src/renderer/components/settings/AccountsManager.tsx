@@ -309,6 +309,7 @@ export function AccountsManager({
     setBusy(true);
     const result = await openCliLoginTerminal({
       command: loginCommand,
+      adapterId,
       onFinished: () => {
         void autoSaveSessionAfterLogin();
       },
@@ -316,7 +317,7 @@ export function AccountsManager({
     setBusy(false);
     if (result.ok) {
       showNotice(
-        'Terminal aberto. Conclua o login lá. Quando fechar, o Nexus verifica sozinho.',
+        'Terminal aberto. Conclua o login lá. Quando a CLI confirmar, o Nexus verifica sozinho.',
         'info',
       );
     } else {

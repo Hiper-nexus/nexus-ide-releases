@@ -97,4 +97,40 @@ describe('collectAttentionItems', () => {
       }),
     ).toEqual([]);
   });
+
+  it('some o card de login quando a CLI já tem sessão', () => {
+    const loggedIn = [
+      'cursor-agent',
+      'gemini',
+      'muse',
+      'omp',
+      'qoder',
+      'prime-agent',
+    ].map((adapterId) => ({
+      adapterId,
+      label: adapterId,
+      enabled: true,
+      installed: true,
+      authStrategy: 'subscription' as const,
+    }));
+    expect(
+      collectAttentionItems({
+        notifications: [],
+        pr: null,
+        missions: [],
+        providers: loggedIn,
+      }),
+    ).toEqual([]);
+    expect(
+      collectAttentionItems({
+        notifications: [],
+        pr: null,
+        missions: [],
+        providers: loggedIn.map((provider) => ({
+          ...provider,
+          authStrategy: 'login-needed',
+        })),
+      }).map((item) => item.targetId),
+    ).toEqual(loggedIn.map((provider) => provider.adapterId));
+  });
 });
