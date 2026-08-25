@@ -969,6 +969,11 @@ export function App() {
   let selection: WorkspaceRailSelection = null;
   if (destination.kind === 'launcher') {
     selection = { kind: 'launcher' };
+  } else if (
+    destination.kind === 'terminal' ||
+    (destination.kind === 'mission' && destination.surface === 'terminals')
+  ) {
+    selection = { kind: 'terminals' };
   } else if (destination.kind === 'mission') {
     selection = { kind: 'mission', missionId: destination.missionId };
   } else if (destination.kind === 'project' && projectOverviewEnabled) {
@@ -981,8 +986,7 @@ export function App() {
     selection = { kind: 'settings' };
   } else if (
     currentWorkspace &&
-    (destination.kind === 'terminal' ||
-      destination.kind === 'mission-setup' ||
+    (destination.kind === 'mission-setup' ||
       (destination.kind === 'project' && !projectOverviewEnabled))
   ) {
     selection = {
@@ -1088,6 +1092,14 @@ export function App() {
                 ? navigation.openProject
                 : undefined
             }
+            onOpenTerminals={() => {
+              const current = useProductNavigationStore.getState().destination;
+              if (current.kind === 'mission') {
+                useProductNavigationStore.getState().showMissionTerminals();
+                return;
+              }
+              useProductNavigationStore.getState().openTerminal();
+            }}
             onOpenTaskBoard={navigation.openTaskBoard}
             onOpenMemory={navigation.openMemory}
             onOpenSettings={() => navigation.openSettings()}

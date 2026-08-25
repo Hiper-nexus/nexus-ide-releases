@@ -39,6 +39,7 @@ export interface MissionGraphProps {
   readonly snapshot: MissionSnapshot;
   readonly selectedAgentId: string | null;
   readonly onSelectAgent: (agentId: string) => void;
+  readonly onOpenAgentPane?: (paneId: string) => void;
   readonly onRetry: () => void;
 }
 
@@ -129,6 +130,7 @@ export function MissionGraph({
   snapshot,
   selectedAgentId,
   onSelectAgent,
+  onOpenAgentPane,
   onRetry,
 }: MissionGraphProps) {
   const layout = layoutMissionGraph(snapshot.agents);
@@ -249,7 +251,11 @@ export function MissionGraph({
                 currentUnit={currentUnit}
                 selected={selectedAgentId === agent.id}
                 position={position}
-                onSelectAgent={onSelectAgent}
+                onSelectAgent={(agentId) => {
+                  onSelectAgent(agentId);
+                  const paneId = agent.paneId;
+                  if (paneId) onOpenAgentPane?.(paneId);
+                }}
               />
             );
           })}

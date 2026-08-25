@@ -71,6 +71,7 @@ function ProductShellFixture() {
           onOpenTaskBoard={vi.fn()}
           onOpenMemory={vi.fn()}
           onOpenSettings={vi.fn()}
+          onOpenTerminals={vi.fn()}
         />
       }
       content={<section className="product-workspace">Canvas do destino</section>}

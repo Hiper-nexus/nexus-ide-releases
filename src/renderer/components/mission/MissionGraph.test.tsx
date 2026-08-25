@@ -131,6 +131,7 @@ const mountedRoots = new Set<Root>();
 interface RenderGraphOptions {
   readonly snapshot?: MissionSnapshot;
   readonly onSelectAgent?: (agentId: string) => void;
+  readonly onOpenAgentPane?: (paneId: string) => void;
   readonly onRetry?: () => void;
 }
 
@@ -139,11 +140,13 @@ function renderGraph(
   {
     snapshot: graphSnapshot = snapshot,
     onSelectAgent = vi.fn<(agentId: string) => void>(),
+    onOpenAgentPane = vi.fn<(paneId: string) => void>(),
     onRetry = vi.fn<() => void>(),
   }: RenderGraphOptions = {},
 ): {
   host: HTMLElement;
   onSelectAgent: typeof onSelectAgent;
+  onOpenAgentPane: typeof onOpenAgentPane;
   onRetry: typeof onRetry;
 } {
   const host = document.createElement('div');
@@ -157,12 +160,13 @@ function renderGraph(
         snapshot={graphSnapshot}
         selectedAgentId={selectedAgentId}
         onSelectAgent={onSelectAgent}
+        onOpenAgentPane={onOpenAgentPane}
         onRetry={onRetry}
       />,
     );
   });
 
-  return { host, onSelectAgent, onRetry };
+  return { host, onSelectAgent, onOpenAgentPane, onRetry };
 }
 
 function positionById(
@@ -435,6 +439,26 @@ describe('MissionGraph', () => {
     act(() => selected.click());
     expect(onSelectAgent).toHaveBeenCalledTimes(1);
     expect(onSelectAgent).toHaveBeenCalledWith('worker-implementation');
+  });
+
+  it('abre o terminal do agente que já tem pane (F-005)', () => {
+    const seated = {
+      ...snapshot,
+      agents: snapshot.agents.map((agent) =>
+        agent.id === 'coordinator'
+          ? { ...agent, paneId: 'pane-maestro' }
+          : agent,
+      ),
+    } satisfies MissionSnapshot;
+    const { host, onSelectAgent, onOpenAgentPane } = renderGraph(
+      'coordinator',
+      { snapshot: seated },
+    );
+    act(() =>
+      agentButton(host, 'Coordenação principal da missão canônica').click(),
+    );
+    expect(onSelectAgent).toHaveBeenCalledWith('coordinator');
+    expect(onOpenAgentPane).toHaveBeenCalledWith('pane-maestro');
   });
 
   it('teaches recovery and invokes onRetry from Tentar carregar novamente when no agents are available', () => {

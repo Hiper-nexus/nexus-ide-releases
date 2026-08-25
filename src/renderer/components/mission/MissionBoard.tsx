@@ -1180,6 +1180,10 @@ export function MissionBoard({
             snapshot={currentSnapshot}
             selectedAgentId={selectedAgentId}
             onSelectAgent={selectAgent}
+            onOpenAgentPane={(paneId) => {
+              openMountedMissionTerminals();
+              useLayoutStore.getState().focus(paneId);
+            }}
             onRetry={() => refreshSnapshotRef.current?.()}
           />
           <button

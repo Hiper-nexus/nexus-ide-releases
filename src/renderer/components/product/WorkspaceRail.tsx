@@ -31,6 +31,7 @@ export type WorkspaceRailSelection =
   | { kind: 'launcher' }
   | { kind: 'workspace'; workspaceId: string }
   | { kind: 'mission'; missionId: string }
+  | { kind: 'terminals' }
   | { kind: 'project' }
   | { kind: 'task-board' }
   | { kind: 'memory' }
@@ -55,6 +56,8 @@ export interface WorkspaceRailProps {
   onOpenTaskBoard: () => void;
   onOpenMemory: () => void;
   onOpenSettings: () => void;
+  /** Destino explícito do grid. Não é o nome do workspace. */
+  onOpenTerminals: () => void;
   /**
    * Volta ao Início. Sem isto, quem clica em Quadro ou Memória perde para
    * sempre a tela que responde "o que você quer fazer agora?" — e o único
@@ -338,7 +341,13 @@ function WorkspaceGroup({
 
 function isSelected(
   selection: WorkspaceRailSelection,
-  kind: 'launcher' | 'project' | 'task-board' | 'memory' | 'settings',
+  kind:
+    | 'launcher'
+    | 'project'
+    | 'task-board'
+    | 'memory'
+    | 'settings'
+    | 'terminals',
 ): boolean {
   return selection?.kind === kind;
 }
@@ -358,6 +367,7 @@ export function WorkspaceRail({
   onOpenTaskBoard,
   onOpenMemory,
   onOpenSettings,
+  onOpenTerminals,
   onOpenLauncher,
   currentWorkspaceId,
   attentionCount = 0,
@@ -365,6 +375,7 @@ export function WorkspaceRail({
 }: WorkspaceRailProps) {
   const launcherSelected = isSelected(selection, 'launcher');
   const projectSelected = isSelected(selection, 'project');
+  const terminalsSelected = isSelected(selection, 'terminals');
   const taskBoardSelected = isSelected(selection, 'task-board');
   const memorySelected = isSelected(selection, 'memory');
   const settingsSelected = isSelected(selection, 'settings');
@@ -447,6 +458,20 @@ export function WorkspaceRail({
             </button>
           </li>
         ) : null}
+        <li>
+          <button
+            type="button"
+            className={`workspace-rail__row workspace-rail__fixed-row${
+              terminalsSelected ? ' workspace-rail__row--selected' : ''
+            }`}
+            aria-current={terminalsSelected ? 'page' : undefined}
+            aria-label="Abrir Terminais"
+            onClick={onOpenTerminals}
+          >
+            <PixelIcon name="terminal" size={12} />
+            <span className="workspace-rail__row-label">Terminais</span>
+          </button>
+        </li>
         <li>
           <button
             type="button"

@@ -74,6 +74,7 @@ function renderRail(overrides: Partial<WorkspaceRailProps> = {}) {
     onOpenTaskBoard: vi.fn(),
     onOpenMemory: vi.fn(),
     onOpenSettings: vi.fn(),
+    onOpenTerminals: vi.fn(),
   };
   const props: WorkspaceRailProps = {
     activeWorkspaces,
@@ -127,6 +128,7 @@ describe('WorkspaceRail', () => {
         onOpenTaskBoard={vi.fn()}
         onOpenMemory={vi.fn()}
         onOpenSettings={vi.fn()}
+        onOpenTerminals={vi.fn()}
       />,
     );
     expect(emptyHost.querySelector('[data-rail-group="active"]')).toBeNull();
@@ -336,6 +338,7 @@ describe('WorkspaceRail', () => {
       host.querySelector<HTMLButtonElement>('[aria-label="Criar nova missão"]')?.click();
       host.querySelector<HTMLButtonElement>('[data-workspace-id="atlas"]')?.click();
       host.querySelector<HTMLButtonElement>('[data-mission-id="mission-running"]')?.click();
+      host.querySelector<HTMLButtonElement>('[aria-label="Abrir Terminais"]')?.click();
       host.querySelector<HTMLButtonElement>('[aria-label="Abrir Quadro"]')?.click();
       host.querySelector<HTMLButtonElement>('[aria-label="Abrir Memória"]')?.click();
       host.querySelector<HTMLButtonElement>('[aria-label="Abrir Configurações"]')?.click();
@@ -347,9 +350,24 @@ describe('WorkspaceRail', () => {
       'mission-running',
       'atlas',
     );
+    expect(handlers.onOpenTerminals).toHaveBeenCalledOnce();
     expect(handlers.onOpenTaskBoard).toHaveBeenCalledOnce();
     expect(handlers.onOpenMemory).toHaveBeenCalledOnce();
     expect(handlers.onOpenSettings).toHaveBeenCalledOnce();
+  });
+
+  it('oferece Terminais como destino fixo, sem adivinhar o workspace (F-005)', () => {
+    const { host, handlers } = renderRail({
+      selection: { kind: 'terminals' },
+    });
+    const button = host.querySelector<HTMLButtonElement>(
+      '[aria-label="Abrir Terminais"]',
+    );
+    expect(button).not.toBeNull();
+    expect(button?.textContent).toContain('Terminais');
+    expect(button?.getAttribute('aria-current')).toBe('page');
+    act(() => button?.click());
+    expect(handlers.onOpenTerminals).toHaveBeenCalledOnce();
   });
 
   it('exposes selected state, full names and keyboard-focusable native controls', () => {

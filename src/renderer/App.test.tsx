@@ -110,14 +110,17 @@ vi.mock('./components/product/WorkspaceRail', () => ({
     onOpenTaskBoard,
     onOpenMemory,
     onOpenSettings,
+    onOpenTerminals,
   }: {
     onCreateNew: () => void;
     onOpenTaskBoard: () => void;
     onOpenMemory: () => void;
     onOpenSettings: () => void;
+    onOpenTerminals: () => void;
   }) => (
     <nav aria-label="Destinos do Nexus">
       <button type="button" onClick={onCreateNew}>Novo</button>
+      <button type="button" onClick={onOpenTerminals}>Terminais</button>
       <button type="button" onClick={onOpenTaskBoard}>Quadro</button>
       <button type="button" onClick={onOpenMemory}>Memória</button>
       <button type="button" onClick={onOpenSettings}>Configurações</button>
@@ -658,6 +661,22 @@ describe('App Nexus V2 cutover', () => {
 
     act(() => useProductNavigationStore.getState().backFromSettings());
     expect(currentDestination(host)).toBe('mission-board:mission-release');
+  });
+
+  it('rail Terminais abre o grid da missão, sem clique no workspace (F-005)', () => {
+    openWorkspace();
+    useProductNavigationStore.getState().openMission('mission-release');
+    const host = mountApp();
+    const railTerminals = Array.from(
+      host.querySelectorAll<HTMLButtonElement>('aside.workspace-rail button'),
+    ).find((button) => button.textContent === 'Terminais');
+    expect(railTerminals).toBeTruthy();
+    act(() => railTerminals?.click());
+    expect(useProductNavigationStore.getState().destination).toEqual({
+      kind: 'mission',
+      missionId: 'mission-release',
+      surface: 'terminals',
+    });
   });
 
   it.each([
