@@ -8,6 +8,7 @@ import {
   MISSION_RUNNING_ATTENTION_LABEL,
   missionLifecycleLabel,
 } from '../../lib/mission-lifecycle-copy';
+import { missionChromeTitle } from '../../../shared/mission-identity';
 import { NexusMark } from '../NexusMark';
 import { PixelIcon, type PixelIconName } from '../PixelIcon';
 
@@ -274,6 +275,7 @@ function WorkspaceGroup({
                     const missionSelected =
                       selection?.kind === 'mission' &&
                       selection.missionId === mission.id;
+                    const chromeTitle = missionChromeTitle(mission.title);
 
                     return (
                       <li key={mission.id}>
@@ -288,7 +290,7 @@ function WorkspaceGroup({
                             data-mission-id={mission.id}
                             data-mission-state={mission.status}
                             aria-current={missionSelected ? 'page' : undefined}
-                            aria-label={`${mission.title}. ${status.label}`}
+                            aria-label={`${chromeTitle}. ${status.label}`}
                             title={`${mission.title}: ${status.label}`}
                             onClick={() =>
                               onSelectMission(mission.id, workspace.id)
@@ -302,7 +304,7 @@ function WorkspaceGroup({
                             </span>
                             <span className="workspace-rail__mission-copy">
                               <span className="workspace-rail__row-label">
-                                {mission.title}
+                                {chromeTitle}
                               </span>
                               <span className="workspace-rail__mission-status">
                                 {status.label}

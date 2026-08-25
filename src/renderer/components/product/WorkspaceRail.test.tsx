@@ -395,12 +395,40 @@ describe('WorkspaceRail', () => {
     const controls = [...host.querySelectorAll<HTMLButtonElement>('button')];
 
     expect(mission?.getAttribute('aria-current')).toBe('page');
-    expect(mission?.getAttribute('aria-label')).toContain(longTitle);
+    expect(mission?.getAttribute('aria-label')).toContain(
+      'Entregar uma experiência',
+    );
     expect(mission?.title).toContain(longTitle);
     expect(controls.every((control) => control.tabIndex === 0)).toBe(true);
 
     mission?.focus();
     expect(document.activeElement).toBe(mission);
+  });
+
+  it('objetivo com URL no rail é hostname, não o dump (F-012)', () => {
+    const dump =
+      'https://admin.wordnet.com.vc/admin/conteudo aqui dentro deste painel. nao ta legal a ui';
+    const { host } = renderRail({
+      activeWorkspaces: [
+        {
+          ...activeWorkspaces[0]!,
+          missions: [
+            {
+              id: 'mission-url',
+              title: dump,
+              status: 'running',
+              needsAttention: false,
+            },
+          ],
+        },
+      ],
+    });
+    const mission = host.querySelector<HTMLButtonElement>(
+      '[data-mission-id="mission-url"]',
+    );
+    expect(mission?.textContent).toContain('admin.wordnet.com.vc');
+    expect(mission?.textContent).not.toMatch(/https:\/\//u);
+    expect(mission?.title).toContain(dump);
   });
 
   it('keeps forbidden telemetry and implementation jargon out of the rail', () => {

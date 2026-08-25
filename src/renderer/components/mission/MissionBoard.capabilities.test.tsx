@@ -434,7 +434,7 @@ describe('state-aware mission actions in the canonical mission board', () => {
     expect(buttonByName(host, /Encerrar/i)).toBeNull();
   });
 
-  it('esconde Terminais em missão terminal sem panes vivos (nunca shell órfão)', async () => {
+  it('oferece Terminais em missão concluída sem panes (F-013)', async () => {
     useLayoutStore.setState({ root: buildGridTree([]) });
     useOrchStore.setState({
       missions: [mission({ status: 'done', intentState: 'done' })],
@@ -447,12 +447,11 @@ describe('state-aware mission actions in the canonical mission board', () => {
     );
     await settle();
 
-    expect(buttonByName(host, /Terminais/i)).toBeNull();
+    expect(buttonByName(host, /Terminais/i)).not.toBeNull();
     expect(buttonByName(host, /Remover/i)).not.toBeNull();
   });
 
-  it('esconde Terminais em missão DORMINDO/bloqueada sem panes vivos', async () => {
-    // Caso real 22/08: leftover parked (Dormindo) — o clique abria shell órfão.
+  it('oferece Terminais em missão DORMINDO/bloqueada sem panes (F-013)', async () => {
     useLayoutStore.setState({ root: buildGridTree([]) });
     useOrchStore.setState({
       missions: [
@@ -467,7 +466,7 @@ describe('state-aware mission actions in the canonical mission board', () => {
     );
     await settle();
 
-    expect(buttonByName(host, /Terminais/i)).toBeNull();
+    expect(buttonByName(host, /Terminais/i)).not.toBeNull();
   });
 
   it('mantém Terminais em missão viva mesmo antes do primeiro pane', async () => {

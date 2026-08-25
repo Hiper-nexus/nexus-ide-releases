@@ -1,3 +1,5 @@
+import { missionChromeTitle } from './mission-identity';
+
 export type AttentionKind =
   | 'enter'
   | 'pr-queue'
@@ -92,11 +94,12 @@ export function collectAttentionItems(
   }
   for (const mission of input.missions) {
     if (!mission.needsAttention) continue;
+    const chromeTitle = missionChromeTitle(mission.title);
     items.push({
       id: `mission:${mission.id}`,
       kind: 'mission-stuck',
-      title: mission.title,
-      detail: `A missão "${mission.title}" precisa da sua decisão para continuar.`,
+      title: chromeTitle,
+      detail: `A missão "${chromeTitle}" precisa da sua decisão para continuar.`,
       targetId: mission.id,
       actionLabel: 'Abrir missão',
     });

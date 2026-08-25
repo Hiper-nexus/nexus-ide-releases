@@ -66,15 +66,20 @@ export function PaneVacancyBody({ pane }: { readonly pane: PaneModel }) {
     vacancyMission && vacancyMission.status !== 'blocked'
       ? vacancyMission.id
       : null;
+  const destination = useProductNavigationStore((state) => state.destination);
+  const vacancySurfaceLive =
+    destination.kind === 'terminal' ||
+    (destination.kind === 'mission' && destination.surface === 'terminals');
   const [progress, setProgress] = useState<PaneVacancyProgress | null>(null);
 
   useEffect(() => {
-    if (!pollingMissionId) {
+    if (!pollingMissionId || !vacancySurfaceLive) {
       setProgress(null);
       return;
     }
     let cancelled = false;
     const poll = async (): Promise<void> => {
+      if (document.hidden) return;
       try {
         const eventsRecent = window.nexus?.orch?.missionEventsRecent;
         if (!eventsRecent) return;
@@ -95,11 +100,16 @@ export function PaneVacancyBody({ pane }: { readonly pane: PaneModel }) {
     };
     void poll();
     const timer = setInterval(() => void poll(), 5_000);
+    const onVisibility = (): void => {
+      if (!document.hidden) void poll();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
     return () => {
       cancelled = true;
       clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [pollingMissionId]);
+  }, [pollingMissionId, vacancySurfaceLive]);
 
   const intent = useMemo(
     () => paneVacancyIntent(missions, progress),

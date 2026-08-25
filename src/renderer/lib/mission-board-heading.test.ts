@@ -8,13 +8,13 @@ describe('missionBoardHeading', () => {
     );
   });
 
-  it('objetivo colado com URL não vira cartaz no header (F-010)', () => {
+  it('objetivo colado com URL não vira cartaz no header (F-010/F-012)', () => {
     const raw =
       'https://admin.wordnet.com.vc/admin/conteudo aqui dentro deste painel. nao ta legal a ui nao ta. de forma facil de entender tipo e aqui que vai ter toda parte de gestao';
     const heading = missionBoardHeading(raw);
-    expect(heading).not.toMatch(/^https?:\/\//u);
-    expect(heading.length).toBeLessThanOrEqual(96);
-    expect(heading).toMatch(/painel/i);
+    expect(heading).toBe('admin.wordnet.com.vc');
+    expect(heading).not.toMatch(/https?:\/\//u);
+    expect(heading).not.toMatch(/painel/i);
   });
 
   it('colapsa quebras de linha do objetivo', () => {

@@ -1,8 +1,35 @@
 import { describe, expect, it } from 'vitest';
 import {
+  missionChromeTitle,
   missionTitleFromGoal,
   retargetSquadInstructions,
 } from './mission-identity';
+
+describe('missionChromeTitle', () => {
+  it('título curto sobrevive', () => {
+    expect(missionChromeTitle('Publicar o Nexus canônico')).toBe(
+      'Publicar o Nexus canônico',
+    );
+  });
+
+  it('objetivo colado com URL vira o hostname, não o dump (F-012)', () => {
+    const raw =
+      'https://admin.wordnet.com.vc/admin/conteudo aqui dentro deste painel. nao ta legal a ui nao ta. de forma facil de entender tipo e aqui que vai ter toda parte de gestao';
+    expect(missionChromeTitle(raw)).toBe('admin.wordnet.com.vc');
+    expect(missionChromeTitle(raw)).not.toMatch(/https?:\/\//u);
+    expect(missionChromeTitle(raw)).not.toMatch(/painel/i);
+  });
+
+  it('URL no meio do pedido sai; o pedido curto fica', () => {
+    expect(
+      missionChromeTitle('Corrigir login em https://app.example.com/settings'),
+    ).toBe('Corrigir login em');
+  });
+
+  it('vazio vira Missão', () => {
+    expect(missionChromeTitle('   ')).toBe('Missão');
+  });
+});
 
 describe('missionTitleFromGoal', () => {
   it('usa a primeira linha com conteúdo do objetivo', () => {

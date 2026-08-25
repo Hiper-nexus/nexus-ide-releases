@@ -1,4 +1,5 @@
 import type { Mission, TodoItem, TodoList, TodoStatus } from '../../shared/orch-types';
+import { missionChromeTitle } from '../../shared/mission-identity';
 
 export type TaskBoardColumnStatus = TodoStatus;
 
@@ -48,7 +49,7 @@ export function projectTaskBoardEntries(input: {
       {
         kind: 'mission',
         key: `mission\u0000${mission.id}`,
-        name: mission.title.trim() || 'Missão sem título',
+        name: missionChromeTitle(mission.title) || 'Missão sem título',
         status,
         mission,
       },

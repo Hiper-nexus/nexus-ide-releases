@@ -9,6 +9,47 @@
  */
 
 const MISSION_TITLE_MAX = 72;
+const MISSION_CHROME_MAX = 48;
+const MISSION_CHROME_FALLBACK = 'Missão';
+const URL_IN_TEXT = /https?:\/\/[^\s]+/giu;
+
+function clipMissionLabel(text: string, max: number): string {
+  if (text.length <= max) return text;
+  return `${text.slice(0, max - 1).trimEnd()}…`;
+}
+
+function hostnameFromUrl(raw: string): string | null {
+  try {
+    const host = new URL(raw).hostname.replace(/^www\./u, '');
+    return host.length > 0 ? host : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Chrome da missão (rail, quadro, paleta): nunca o briefing colado.
+ * Objetivo que começa com URL vira o hostname; o resto clipa numa linha.
+ */
+export function missionChromeTitle(
+  raw: string,
+  max: number = MISSION_CHROME_MAX,
+): string {
+  const collapsed = raw.replace(/\s+/g, ' ').trim();
+  if (!collapsed) return MISSION_CHROME_FALLBACK;
+  const urls = collapsed.match(URL_IN_TEXT) ?? [];
+  const withoutUrls = collapsed.replace(URL_IN_TEXT, ' ').replace(/\s+/g, ' ').trim();
+  if (urls.length > 0 && /^https?:\/\//iu.test(collapsed)) {
+    const host = hostnameFromUrl(urls[0]!);
+    if (host) return clipMissionLabel(host, max);
+  }
+  if (withoutUrls) return clipMissionLabel(withoutUrls, max);
+  if (urls[0]) {
+    const host = hostnameFromUrl(urls[0]);
+    if (host) return clipMissionLabel(host, max);
+  }
+  return MISSION_CHROME_FALLBACK;
+}
 
 /**
  * Título de missão derivado do objetivo do usuário: primeira linha com
@@ -22,8 +63,7 @@ export function missionTitleFromGoal(goal: string, fallback: string): string {
       .map((line) => line.trim())
       .find((line) => line.length > 0) ?? '';
   if (!firstLine) return fallback;
-  if (firstLine.length <= MISSION_TITLE_MAX) return firstLine;
-  return `${firstLine.slice(0, MISSION_TITLE_MAX - 1).trimEnd()}…`;
+  return missionChromeTitle(firstLine, MISSION_TITLE_MAX);
 }
 
 const STALE_MISSION_HEADING = /^#{1,6}\s*miss(?:ão|ao|ion)\b/i;

@@ -7,6 +7,7 @@ import { useOrchStore } from '../state/orch-store';
 import { useSessionStateStore } from '../state/session-state-store';
 import { useMissionSetupStore } from '../state/mission-setup-store';
 import { useProductNavigationStore } from '../state/product-navigation-store';
+import { missionChromeTitle } from '../../shared/mission-identity';
 import { listPanes } from '../lib/split-tree';
 import { filterPaletteActions } from '../lib/command-palette-filter';
 import { formatShortcut } from '../lib/platform';
@@ -85,7 +86,7 @@ export function CommandPalette() {
       out.push({
         id: `mission:${mission.id}`,
         group: 'Missões',
-        label: `Abrir missão: ${mission.title}`,
+        label: `Abrir missão: ${missionChromeTitle(mission.title)}`,
         icon: 'mission',
         keywords: `missao ${mission.state}`,
         run: () =>

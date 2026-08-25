@@ -294,11 +294,6 @@ export function MissionBoard({
     [layoutRoot, missionId, paneMissions],
   );
   const hasVisibleMissionPanes = firstVisibleMissionPaneId !== null;
-  const canOpenMissionTerminals =
-    hasVisibleMissionPanes ||
-    snapshot?.state === 'starting' ||
-    snapshot?.state === 'running' ||
-    snapshot?.state === 'recovering';
   const openMountedMissionTerminals = () => {
     onOpenTerminals(missionId);
     if (firstVisibleMissionPaneId) {
@@ -1042,21 +1037,16 @@ export function MissionBoard({
         )}
 
         <div className="mission-board__actions" aria-label="Ações da missão">
-          {/* "Terminais" só existe quando há o que mostrar: pane vivo da
-              missão, ou missão genuinamente viva (starting/running/
-              recovering — os panes nascem ali). Concluída, falha, bloqueada
-              ou DORMINDO sem panes → o clique caía num shell órfão do grid
-              global; o que restou da missão mora na aba Resultado. */}
-          {canOpenMissionTerminals && (
-            <button
-              type="button"
-              className="mission-board__button mission-board__button--secondary"
-              disabled={pendingAction !== null}
-              onClick={openMountedMissionTerminals}
-            >
-              Terminais
-            </button>
-          )}
+          {/* Sempre no quadro: o destino é a superfície da missão, nunca o
+              grid global. Sem pane, o mosaico vazio ensina; com pane, foca. */}
+          <button
+            type="button"
+            className="mission-board__button mission-board__button--secondary"
+            disabled={pendingAction !== null}
+            onClick={openMountedMissionTerminals}
+          >
+            Terminais
+          </button>
           {HEADER_ACTIONS.filter(
             (action) =>
               currentSnapshot.allowedActions.includes(action) &&
@@ -1231,11 +1221,7 @@ export function MissionBoard({
                 events={events}
                 onCommand={executeCommand}
                 question={question}
-                onOpenTerminals={
-                  canOpenMissionTerminals
-                    ? openMountedMissionTerminals
-                    : undefined
-                }
+                onOpenTerminals={openMountedMissionTerminals}
               />
             </div>
           </>

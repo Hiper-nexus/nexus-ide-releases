@@ -1084,8 +1084,7 @@ describe('MissionBoard canonical controller', () => {
   );
 
   it('opens Terminais with the exact mounted mission id', async () => {
-    // O botão existe em missão viva mesmo sem panes (eles nascem no grid);
-    // em terminal/dormindo sem panes ele nem aparece (regra do órfão).
+    // O botão existe em qualquer estado: o destino é a superfície da missão.
     api.snapshot.mockResolvedValue(canonicalSnapshot({ state: 'running' }));
     const { host, onOpenTerminals } = mount('mission-alpha');
     await flush();
