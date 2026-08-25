@@ -6,6 +6,7 @@ import {
   decideOrchestratorProcessExit,
   decideStaleAuthorityRecovery,
   decideUnlockRetiredMissionPane,
+  shouldInjectResumeContinuation,
   shouldInterruptBusyWorkerAfterMaestroTurnEnd,
   shouldKickMissionEngineOnDeadPaneKey,
   shouldPrintMissionPaneExitNotice,
@@ -224,40 +225,77 @@ describe('Maestro no fim do turno (F-006) — pane vivo, sem recado, sem restart
       shouldInterruptBusyWorkerAfterMaestroTurnEnd({
         workerIsOrchestrator: false,
         paneState: 'busy',
-        missionAwaitingReview: true,
-      }),
-    ).toBe(true);
-    expect(
-      shouldInterruptBusyWorkerAfterMaestroTurnEnd({
-        workerIsOrchestrator: false,
-        paneState: 'spawning',
-        missionAwaitingReview: true,
+        hasSuccessHandoff: true,
+        hasQueuedHandoffs: false,
       }),
     ).toBe(true);
     expect(
       shouldInterruptBusyWorkerAfterMaestroTurnEnd({
         workerIsOrchestrator: false,
         paneState: 'idle',
-        missionAwaitingReview: true,
+        hasSuccessHandoff: true,
+        hasQueuedHandoffs: false,
       }),
     ).toBe(false);
     expect(
       shouldInterruptBusyWorkerAfterMaestroTurnEnd({
         workerIsOrchestrator: true,
         paneState: 'busy',
-        missionAwaitingReview: true,
+        hasSuccessHandoff: true,
+        hasQueuedHandoffs: false,
       }),
     ).toBe(false);
   });
 
-  it('turn-end no meio da missão NÃO manda Ctrl+C no worker (ainda está entregando)', () => {
+  it('turn-end no kickoff NÃO manda Ctrl+C (worker spawning / sem handoff)', () => {
+    expect(
+      shouldInterruptBusyWorkerAfterMaestroTurnEnd({
+        workerIsOrchestrator: false,
+        paneState: 'spawning',
+        hasSuccessHandoff: false,
+        hasQueuedHandoffs: false,
+      }),
+    ).toBe(false);
     expect(
       shouldInterruptBusyWorkerAfterMaestroTurnEnd({
         workerIsOrchestrator: false,
         paneState: 'busy',
-        missionAwaitingReview: false,
+        hasSuccessHandoff: false,
+        hasQueuedHandoffs: false,
       }),
     ).toBe(false);
+  });
+
+  it('handoff ainda na fila: Maestro saiu, worker continua entregando', () => {
+    expect(
+      shouldInterruptBusyWorkerAfterMaestroTurnEnd({
+        workerIsOrchestrator: false,
+        paneState: 'busy',
+        hasSuccessHandoff: true,
+        hasQueuedHandoffs: true,
+      }),
+    ).toBe(false);
+  });
+
+  it('relive silencioso não injeta Continue the current mission (F-006)', () => {
+    expect(
+      shouldInjectResumeContinuation({
+        quietSpawn: true,
+        hasContinuityPack: false,
+        resume: true,
+        adopted: false,
+        resumeMode: 'exact',
+      }),
+    ).toBe(false);
+    expect(
+      shouldInjectResumeContinuation({
+        quietSpawn: false,
+        hasContinuityPack: false,
+        resume: true,
+        adopted: false,
+        resumeMode: 'exact',
+      }),
+    ).toBe(true);
   });
 });
 

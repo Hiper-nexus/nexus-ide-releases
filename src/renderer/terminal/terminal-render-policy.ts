@@ -59,9 +59,16 @@ export function hostSlotIsMeasurable(input: {
   readonly clientWidth: number;
   readonly clientHeight: number;
 }): boolean {
-  // ~10×3 células a 8px. Menor que isso a TUI ainda pinta moldura que
-  // SIGWINCH não desfaz.
-  return input.clientWidth >= 80 && input.clientHeight >= 32;
+  // 2×2 em janela ~1280 é ~500px. Splitter residual / 80×32 ainda pinta
+  // TUI de 10 colunas que SIGWINCH não desfaz.
+  return input.clientWidth >= 200 && input.clientHeight >= 80;
+}
+
+export function hostGridIsUsable(input: {
+  readonly cols: number;
+  readonly rows: number;
+}): boolean {
+  return input.cols >= 24 && input.rows >= 8;
 }
 
 /** Sessão já viva e a grade mudou no attach: bounce de SIGWINCH (paridade adoption). */

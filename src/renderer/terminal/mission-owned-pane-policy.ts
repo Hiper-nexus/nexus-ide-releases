@@ -61,18 +61,38 @@ export function shouldPrintMissionPaneExitNotice(exitCode: number): boolean {
 }
 
 /**
- * Interrupt só quando a missão já espera o humano. O CLI do Maestro sai
- * em TODO turn-end — Ctrl+C nos workers no meio do trabalho matava o
- * pane que ainda estava entregando.
+ * Ctrl+C no worker só quando já existe entrega e nada está na fila.
+ * O CLI do Maestro sai em TODO turn-end: interrupt no kickoff (spawning,
+ * sem handoff) mata o worker antes do trabalho. Pronto espera writer-busy,
+ * então esperar `done` nunca dispara — o sinal é o handoff, não o status.
  */
 export function shouldInterruptBusyWorkerAfterMaestroTurnEnd(input: {
   readonly workerIsOrchestrator: boolean;
   readonly paneState: string | undefined;
-  readonly missionAwaitingReview: boolean;
+  readonly hasSuccessHandoff: boolean;
+  readonly hasQueuedHandoffs: boolean;
 }): boolean {
   if (input.workerIsOrchestrator) return false;
-  if (!input.missionAwaitingReview) return false;
-  return input.paneState === 'busy' || input.paneState === 'spawning';
+  if (input.paneState !== 'busy') return false;
+  if (!input.hasSuccessHandoff || input.hasQueuedHandoffs) return false;
+  return true;
+}
+
+/** Relive silencioso: prompt vivo, sem “Continue the current mission…”. */
+export function shouldInjectResumeContinuation(input: {
+  readonly quietSpawn: boolean;
+  readonly hasContinuityPack: boolean;
+  readonly resume: boolean;
+  readonly adopted: boolean;
+  readonly resumeMode: string | undefined;
+}): boolean {
+  if (input.quietSpawn) return false;
+  if (input.hasContinuityPack) return true;
+  return (
+    input.resume &&
+    !input.adopted &&
+    input.resumeMode !== 'unsupported'
+  );
 }
 
 export function decideDeadPaneReviveRespawn(input: {

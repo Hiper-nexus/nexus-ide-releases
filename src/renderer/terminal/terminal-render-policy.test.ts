@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   canReplayScrollback,
   escalateRefitReason,
+  hostGridIsUsable,
   hostSlotIsMeasurable,
   shouldBouncePtyGridAfterAttach,
   shouldRepaintOnRefit,
@@ -174,21 +175,23 @@ describe('hostSlotIsMeasurable (F-009)', () => {
     expect(hostSlotIsMeasurable({ clientWidth: 0, clientHeight: 0 })).toBe(
       false,
     );
-    expect(hostSlotIsMeasurable({ clientWidth: 16, clientHeight: 8 })).toBe(
-      false,
-    );
-    expect(hostSlotIsMeasurable({ clientWidth: 40, clientHeight: 40 })).toBe(
+    expect(hostSlotIsMeasurable({ clientWidth: 80, clientHeight: 32 })).toBe(
       false,
     );
   });
 
   it('libera o spawn na primeira caixa real (split 2×2 incluso)', () => {
-    expect(hostSlotIsMeasurable({ clientWidth: 80, clientHeight: 32 })).toBe(
+    expect(hostSlotIsMeasurable({ clientWidth: 200, clientHeight: 80 })).toBe(
       true,
     );
-    expect(hostSlotIsMeasurable({ clientWidth: 320, clientHeight: 180 })).toBe(
+    expect(hostSlotIsMeasurable({ clientWidth: 500, clientHeight: 280 })).toBe(
       true,
     );
+  });
+
+  it('recusa grade TUI de 2 colunas mesmo com caixa pequena', () => {
+    expect(hostGridIsUsable({ cols: 2, rows: 1 })).toBe(false);
+    expect(hostGridIsUsable({ cols: 24, rows: 8 })).toBe(true);
   });
 });
 

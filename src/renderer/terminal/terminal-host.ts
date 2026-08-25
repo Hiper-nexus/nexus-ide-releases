@@ -46,6 +46,7 @@ import {
   STALE_AUTHORITY_SYNC_NOTICE,
   STALE_AUTHORITY_UNLOCK_NOTICE,
   STANDALONE_HOLD_NOTICE,
+  shouldInjectResumeContinuation,
   shouldInterruptBusyWorkerAfterMaestroTurnEnd,
   shouldKickMissionEngineOnDeadPaneKey,
   shouldPrintMissionPaneExitNotice,
@@ -82,6 +83,7 @@ import {
 import {
   canReplayScrollback,
   escalateRefitReason,
+  hostGridIsUsable,
   hostSlotIsMeasurable,
   shouldBouncePtyGridAfterAttach,
   shouldRepaintOnRefit,
@@ -1105,9 +1107,13 @@ function startSpawn(
       // After mount: inject either same-account continue or cross-account pack.
       // Cross-account always injects (fresh session). Same-account resume only
       // when the adapter actually restored something.
-      const shouldInjectContinue =
-        Boolean(continuityPack) ||
-        (resume && !res.adopted && res.resumeMode !== 'unsupported');
+      const shouldInjectContinue = shouldInjectResumeContinuation({
+        quietSpawn,
+        hasContinuityPack: Boolean(continuityPack),
+        resume,
+        adopted: Boolean(res.adopted),
+        resumeMode: res.resumeMode,
+      });
       if (shouldInjectContinue) {
         const resumedSessionId = res.sessionId;
         const continuationTimer = setTimeout(() => {
@@ -1212,7 +1218,7 @@ function settleHostGrid(host: Host): boolean {
   } catch {
     return false;
   }
-  return host.term.cols >= 2 && host.term.rows >= 1;
+  return hostGridIsUsable({ cols: host.term.cols, rows: host.term.rows });
 }
 
 function beginPaneSpawn(pane: PaneModel, host: Host): void {
@@ -2263,7 +2269,9 @@ function reportMainOwnedLifecycleOnly(host: Host, action: string): void {
 }
 
 const ORCH_RELIVE_COOLDOWN_MS = 8_000;
+const MAX_AUTO_ORCH_RELIVES = 2;
 const orchReliveAt = new Map<string, number>();
+const orchReliveCount = new Map<string, number>();
 
 /**
  * Maestro no turn-end: a CLI saiu sozinha. Religa a mesma conversa no
@@ -2277,7 +2285,12 @@ function reliveOrchestratorCli(
   if (host.disposed) return;
   const now = Date.now();
   const last = orchReliveAt.get(pane.id) ?? 0;
-  if (!operatorInitiated && now - last < ORCH_RELIVE_COOLDOWN_MS) return;
+  if (!operatorInitiated) {
+    if (now - last < ORCH_RELIVE_COOLDOWN_MS) return;
+    const autoCount = orchReliveCount.get(pane.id) ?? 0;
+    if (autoCount >= MAX_AUTO_ORCH_RELIVES) return;
+    orchReliveCount.set(pane.id, autoCount + 1);
+  }
   orchReliveAt.set(pane.id, now);
 
   host.cleanups.forEach((fn) => fn());
@@ -2302,9 +2315,20 @@ function interruptBusyMissionWorkers(
   missionId: string,
   exceptPaneId: string,
 ): void {
-  const paneMissions = useOrchStore.getState().paneMissions;
+  const orch = useOrchStore.getState();
+  const paneMissions = orch.paneMissions;
   const states = useSessionStateStore.getState().paneStates;
-  const missionAwaitingReview = missionOfPaneIsDoneById(missionId);
+  const missionHandoffs = orch.handoffs.filter(
+    (handoff) => handoff.missionId === missionId,
+  );
+  const hasSuccessHandoff = missionHandoffs.some(
+    (handoff) => handoff.status === 'success' || handoff.status === 'partial',
+  );
+  const hasQueuedHandoffs = missionHandoffs.some(
+    (handoff) =>
+      handoff.deliveryState === 'queued' ||
+      handoff.deliveryState === 'submitted',
+  );
   for (const pane of listPanes(useLayoutStore.getState().root)) {
     if (pane.id === exceptPaneId) continue;
     const paneMission = pane.missionId ?? paneMissions[pane.id];
@@ -2313,7 +2337,8 @@ function interruptBusyMissionWorkers(
       !shouldInterruptBusyWorkerAfterMaestroTurnEnd({
         workerIsOrchestrator: pane.role === 'orchestrator',
         paneState: states.get(pane.id),
-        missionAwaitingReview,
+        hasSuccessHandoff,
+        hasQueuedHandoffs,
       })
     ) {
       continue;
@@ -2486,16 +2511,17 @@ export function waitForSession(
       if (!host.spawnStarted && !host.hibernated) {
         beginPaneSpawn(pane, host);
         if (!host.spawnStarted) {
-          // Pane ainda não está no DOM (ou slot 0×0). O attach/RO spawna na
-          // caixa real. Se o leaf nunca montar (view escondida), o fallback
-          // headless garante que waitForSession não estoura em 75s.
+          // Slot 0×0: o attach/RO spawna na caixa real. Fallback headless
+          // SÓ se o leaf nunca montar (Terminais escondido) — forçar 80×24
+          // com o grid visível é o F-009.
           const generation = host.spawnGeneration;
           setTimeout(() => {
             if (
               host.disposed ||
               host.spawnStarted ||
               host.hibernated ||
-              host.spawnGeneration !== generation
+              host.spawnGeneration !== generation ||
+              host.opened
             ) {
               return;
             }
