@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.70.18 — Chrome da missão
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+Título no rail e no quadro é curto (hostname se colar URL). Terminais
+sempre no quadro, mesmo com a missão dormindo. Poll da vaga só com a
+tela visível.
+
 ## 0.70.17 — Cartão da vaga
 
 _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._

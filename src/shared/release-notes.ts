@@ -13,13 +13,25 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.70.17',
+  version: '0.70.18',
   date: '2026-08-25',
-  codename: 'Cartão da vaga',
+  codename: 'Chrome da missão',
   summary:
-    'O cartão da vaga nos Terminais é um estado curto. O briefing ' +
-    'longo não vira cartaz no empty state.',
+    'Rail e quadro mostram um nome curto. Terminais continua no quadro ' +
+    'quando a missão dorme.',
   highlights: [
+    {
+      title: 'Título curto no rail e no quadro',
+      detail:
+        'Objetivo colado com URL vira o hostname. O dump fica no tooltip. ' +
+        'Paleta e inbox usam o mesmo chrome.',
+    },
+    {
+      title: 'Terminais sempre no quadro',
+      detail:
+        'Missão dormindo ou concluída não esconde o botão. O destino é a ' +
+        'superfície da missão, não um shell órfão.',
+    },
     {
       title: 'Cartão da vaga sem briefing',
       detail:
