@@ -257,8 +257,8 @@ describe('a SOLITARY structural placeholder is a vacancy, not a session', () => 
 
   /**
    * THE REPORTED SCENE: a mission is live in this workspace and has presented
-   * no pane. A shell prompt is the worst possible answer. The area must name
-   * the mission, say WHY it stopped, and offer the action that resolves it.
+   * no pane. A shell prompt is the worst possible answer. The area names the
+   * STATE (not the briefing), says WHY it stopped, and offers the action.
    */
   it('a live mission that presented no pane becomes the content of the grid', () => {
     useOrchStore.setState({
@@ -273,7 +273,9 @@ describe('a SOLITARY structural placeholder is a vacancy, not a session', () => 
 
     render();
 
-    expect(text()).toContain('Publicar a release 0.22.1');
+    expect(host.querySelector('.empty-state__title')?.textContent).toBe(
+      'Missão em pausa',
+    );
     // Ensina o porquê e oferece o próximo passo (DESIGN.md §5).
     expect(text()).toMatch(/despacho|bloque|parou/i);
     const detail = buttonWith('Ver a missão');
@@ -288,7 +290,7 @@ describe('a SOLITARY structural placeholder is a vacancy, not a session', () => 
     act(() => root.unmount());
   });
 
-  it('objetivo com URL não vira cartaz no empty state (F-010)', () => {
+  it('objetivo com URL não vira cartaz no empty state (F-011)', () => {
     useOrchStore.setState({
       missions: [
         mission({
@@ -299,8 +301,26 @@ describe('a SOLITARY structural placeholder is a vacancy, not a session', () => 
     });
     seedPlaceholderOnly();
     render();
+    expect(host.querySelector('.empty-state__title')?.textContent).toBe(
+      'Missão em pausa',
+    );
     expect(text()).not.toMatch(/https:\/\/admin\.wordnet\.com\.vc/u);
-    expect(text()).toMatch(/painel/i);
+    expect(text()).not.toMatch(/Motivo não registrado/u);
+    expect(text()).not.toMatch(/painel/i);
+    expect(text()).toMatch(/Atividade|quadro/i);
+    act(() => root.unmount());
+  });
+
+  it('missão em curso pinta montagem, não o objetivo (F-011)', () => {
+    useOrchStore.setState({
+      missions: [mission({ status: 'running', title: 'Refatorar o grid' })],
+    });
+    seedPlaceholderOnly();
+    render();
+    expect(host.querySelector('.empty-state__title')?.textContent).toBe(
+      'Montando a equipe',
+    );
+    expect(text()).not.toContain('Refatorar o grid');
     act(() => root.unmount());
   });
 

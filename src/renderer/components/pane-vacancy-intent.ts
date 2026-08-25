@@ -128,3 +128,32 @@ export function paneVacancyIntent(
     nextStep: cause.action,
   };
 }
+
+const UNRECORDED_HEADLINE = 'Motivo não registrado.';
+
+/**
+ * Chrome do cartão: estado da vaga, não o briefing. URL + parágrafo no
+ * título era o cartaz do print 25/08.
+ */
+export function paneVacancyCardCopy(
+  intent: Extract<PaneVacancyIntent, { readonly kind: 'mission-unstaged' }>,
+): { readonly title: string; readonly lines: readonly string[] } {
+  const preparing =
+    /montando a equipe|Equipe definida|Coordenador aguardando/u.test(
+      intent.headline,
+    );
+  const title = preparing ? 'Montando a equipe' : 'Missão em pausa';
+  const lines: string[] = [];
+  if (
+    intent.headline &&
+    intent.headline !== UNRECORDED_HEADLINE &&
+    intent.headline !== PREPARING_HEADLINE
+  ) {
+    lines.push(intent.headline);
+  }
+  if (intent.nextStep) lines.push(intent.nextStep);
+  if (lines.length === 0) {
+    lines.push('Abra o quadro para ver o que aconteceu.');
+  }
+  return { title, lines };
+}

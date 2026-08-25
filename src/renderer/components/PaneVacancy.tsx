@@ -8,8 +8,8 @@ import { CoffeeSpillCorner } from '../pet/CoffeeCup';
 import { ActionCard, EmptyState } from './ActionCard';
 import { PaneInteractionSurface } from './PaneInteractionSurface';
 import { PaneToolbar } from './PaneToolbar';
-import { missionBoardHeading } from '../lib/mission-board-heading';
 import {
+  paneVacancyCardCopy,
   paneVacancyIntent,
   paneVacancyMission,
 } from './pane-vacancy-intent';
@@ -105,6 +105,8 @@ export function PaneVacancyBody({ pane }: { readonly pane: PaneModel }) {
     () => paneVacancyIntent(missions, progress),
     [missions, progress],
   );
+  const unstagedCopy =
+    intent.kind === 'mission-unstaged' ? paneVacancyCardCopy(intent) : null;
 
   function claim(): void {
     const layout = useLayoutStore.getState();
@@ -157,15 +159,16 @@ export function PaneVacancyBody({ pane }: { readonly pane: PaneModel }) {
               </>
             }
           />
-        ) : (
+        ) : unstagedCopy ? (
           <EmptyState
             icon={vacancyMission?.status === 'blocked' ? 'warn' : 'mission'}
             role={vacancyMission?.status === 'blocked' ? 'alert' : 'status'}
-            title={missionBoardHeading(intent.missionTitle)}
+            title={unstagedCopy.title}
             body={
               <>
-                <p>{intent.headline}</p>
-                <p>{intent.nextStep}</p>
+                {unstagedCopy.lines.map((line, index) => (
+                  <p key={index}>{line}</p>
+                ))}
               </>
             }
             action={
@@ -191,7 +194,7 @@ export function PaneVacancyBody({ pane }: { readonly pane: PaneModel }) {
               </>
             }
           />
-        )}
+        ) : null}
     </div>
   );
 }

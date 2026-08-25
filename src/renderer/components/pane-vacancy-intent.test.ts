@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { Mission } from '../../shared/orch-types';
 import { NEXUS_PROCESS_STARTED_AT } from '../../shared/session-restore-liveness';
-import { paneVacancyIntent, paneVacancyMission } from './pane-vacancy-intent';
+import {
+  paneVacancyCardCopy,
+  paneVacancyIntent,
+  paneVacancyMission,
+} from './pane-vacancy-intent';
 
 /** Timestamps frescos POR PADRÃO: leftover pré-boot não narra mais a vacancy.
  *  Date.now() na HORA do teste — na carga do módulo a constante de boot ainda
@@ -236,5 +240,42 @@ describe('paneVacancyIntent — what the vacancy says', () => {
       expect(intent.headline).toContain('despacho');
       expect(intent.headline).not.toContain('Orquestrador');
     });
+  });
+});
+
+describe('paneVacancyCardCopy — o cartão não é o briefing', () => {
+  it('missão bloqueada sem causa conhecida: título de estado, sem Motivo não registrado', () => {
+    const intent = paneVacancyIntent([
+      mission({ id: 'm2', status: 'blocked', title: 'https://admin.wordnet.com.vc/admin/conteudo dump enorme' }),
+    ]);
+    if (intent.kind !== 'mission-unstaged') throw new Error('unreachable');
+    const card = paneVacancyCardCopy(intent);
+    expect(card.title).toBe('Missão em pausa');
+    expect(card.lines.join(' ')).not.toMatch(/https?:\/\//u);
+    expect(card.lines.join(' ')).not.toMatch(/Motivo não registrado/u);
+    expect(card.lines.join(' ')).toMatch(/quadro|Atividade/i);
+  });
+
+  it('missão rodando: título de montagem, sem repetir o headline estático', () => {
+    const intent = paneVacancyIntent([
+      mission({ id: 'm3', status: 'running', title: 'Refatorar o grid' }),
+    ]);
+    if (intent.kind !== 'mission-unstaged') throw new Error('unreachable');
+    const card = paneVacancyCardCopy(intent);
+    expect(card.title).toBe('Montando a equipe');
+    expect(card.lines.join(' ')).not.toMatch(/montando a equipe/u);
+    expect(card.lines.join(' ')).toMatch(/Ver a missão/);
+  });
+
+  it('progresso vivo fica no corpo, nunca no título', () => {
+    const intent = paneVacancyIntent(
+      [mission({ id: 'm3', status: 'running', title: 'Refatorar o grid' })],
+      { missionId: 'm3', step: 'squad_sealed' as const, occurredAt: 1_000 },
+      13_000,
+    );
+    if (intent.kind !== 'mission-unstaged') throw new Error('unreachable');
+    const card = paneVacancyCardCopy(intent);
+    expect(card.title).toBe('Montando a equipe');
+    expect(card.lines[0]).toBe('Equipe definida · há 12s');
   });
 });
