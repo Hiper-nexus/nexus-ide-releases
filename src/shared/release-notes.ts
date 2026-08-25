@@ -13,25 +13,24 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.70.14',
+  version: '0.70.15',
   date: '2026-08-25',
-  codename: 'Maestro vivo',
+  codename: 'Título do quadro',
   summary:
-    'Quando o Maestro encerra o turno, o pane continua com a CLI viva. ' +
-    'O quadro avisa; o PTY não vira mural do Nexus. Digitar pede ajuste, ' +
-    'não reinicia a missão.',
+    'O header do quadro é chrome de uma linha. O briefing longo não ' +
+    'vira cartaz por cima do grafo.',
   highlights: [
+    {
+      title: 'Título do quadro em uma linha',
+      detail:
+        'Objetivo com URL e parágrafo vai para o tooltip. O h1 mostra ' +
+        'o pedido, sem wrap de quatro linhas.',
+    },
     {
       title: 'Maestro não morre no done',
       detail:
         'O CLI sai sozinho no turn-end. O Nexus religa a mesma conversa ' +
         'no mesmo pane, sem banner. Rail e quadro: Aguardando você.',
-    },
-    {
-      title: 'Terminais no rail',
-      detail:
-        'Destino fixo ao lado de Início e Projeto. Numa missão, abre o ' +
-        'grid da equipe. Fora dela, o terminal do workspace.',
     },
   ],
   fixes: [

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.70.15 — Título do quadro
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+O header do quadro não é mais o briefing inteiro. Uma linha, ellipsis;
+o texto completo fica no tooltip.
+
 ## 0.70.14 — Maestro vivo
 
 _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
