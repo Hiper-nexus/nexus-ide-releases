@@ -111,6 +111,112 @@ export function planMetaPaneAskSeats(input: {
   };
 }
 
+function normSeatKey(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+/** Non-orchestrator live panes on this mission — extras included. */
+export function liveMissionWorkerCount(
+  panes: readonly {
+    readonly missionId?: string;
+    readonly role?: string;
+    readonly state?: string;
+  }[],
+  missionId: string,
+): number {
+  return panes.filter(
+    (pane) =>
+      pane.missionId === missionId &&
+      pane.state !== 'exited' &&
+      pane.role !== 'orchestrator',
+  ).length;
+}
+
+/** Live worker titles/names that occupy a meta-pane roster seat. */
+export function liveWorkerSeatKeys(
+  panes: readonly {
+    readonly missionId?: string;
+    readonly role?: string;
+    readonly state?: string;
+    readonly agentName?: string;
+    readonly title?: string;
+  }[],
+  missionId: string,
+): string[] {
+  return panes
+    .filter(
+      (pane) =>
+        pane.missionId === missionId &&
+        pane.role === 'worker' &&
+        pane.state !== 'exited',
+    )
+    .flatMap((pane) =>
+      [pane.agentName, pane.title].filter(
+        (key): key is string => typeof key === 'string' && key.length > 0,
+      ),
+    );
+}
+
+/**
+ * Hard seating gate for ask-the-team: first-wave already opened one pane per
+ * roster member. Maestro may fill a missing named seat; ad-hoc / unnamed /
+ * already-seated copies are refused. Prompt-only "NÃO spawne" is not enough
+ * (DEV 24/08: undefined/kimi + undefined/codex on 2x2).
+ */
+export function decideMetaPaneWorkerSpawn(input: {
+  readonly isMetaPaneMission: boolean;
+  readonly requestedAgentName?: string | null;
+  readonly rosterWorkerNames: readonly string[];
+  readonly liveWorkerKeys: readonly string[];
+  readonly liveWorkerCount?: number;
+}):
+  | { readonly allowed: true }
+  | { readonly allowed: false; readonly reason: string } {
+  if (!input.isMetaPaneMission) return { allowed: true };
+  const live = new Set(
+    input.liveWorkerKeys.map(normSeatKey).filter((key) => key.length > 0),
+  );
+  const roster = input.rosterWorkerNames
+    .map((name) => name.trim())
+    .filter((name) => name.length > 0);
+  const liveCount = Math.max(input.liveWorkerCount ?? live.size, live.size);
+  if (roster.length > 0 && liveCount >= roster.length) {
+    return {
+      allowed: false,
+      reason:
+        'meta_pane_spawn_refused: roster seats are already live; ' +
+        'use nexus_pane_ask — do not spawn extra panes',
+    };
+  }
+  const requested = input.requestedAgentName?.trim() ?? '';
+  if (!requested) {
+    return {
+      allowed: false,
+      reason:
+        'meta_pane_spawn_refused: first-wave already seated this ask; ' +
+        'use nexus_pane_ask on an existing pane — ad-hoc spawn is forbidden',
+    };
+  }
+  const requestedNorm = normSeatKey(requested);
+  if (!roster.some((name) => normSeatKey(name) === requestedNorm)) {
+    return {
+      allowed: false,
+      reason:
+        `meta_pane_spawn_refused: "${requested}" is not a roster member; ` +
+        'use nexus_pane_ask on an existing pane',
+    };
+  }
+  if (live.has(requestedNorm)) {
+    return {
+      allowed: false,
+      reason:
+        `meta_pane_spawn_refused: ${requested} already has a live pane; ` +
+        'use nexus_pane_ask — do not spawn again',
+    };
+  }
+  return { allowed: true };
+}
+
 export function filterPresentWriterAgents(
   agents: readonly SquadAgent[],
   classify: (agent: SquadAgent) => SeatAuthReadiness = (agent) =>

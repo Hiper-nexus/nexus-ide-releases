@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.70.10 — Um pane por assento
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+Pergunta ao time **não abre cópia**. First-wave senta o roster; spawn extra
+(ad-hoc, mesmo nome, DeepSeek/Claude no lugar do Kimi) é recusado no seating.
+O Maestro usa `nexus_pane_ask` nos panes já abertos.
+
+- Handoff `queued` cola quando o Maestro idle; a bateria 2x2/3x3 viu
+  `consumed` com 3 workers e zero extra.
+- Pronto **não** fecha a missão.
+
+Gates: `decideMetaPaneWorkerSpawn` + first-wave. DEV: 2x2 e 3x3 com paste
+e sem pane extra.
+
 ## 0.70.9 — O time responde
 
 _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._

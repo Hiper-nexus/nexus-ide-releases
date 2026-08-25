@@ -13,30 +13,30 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.70.9',
+  version: '0.70.10',
   date: '2026-08-24',
-  codename: 'O time responde',
+  codename: 'Um pane por assento',
   summary:
-    'Pergunta ao time abre um pane por integrante. O handoff cola no Maestro. ' +
-    'Pronto não fecha a missão — só o operador.',
+    'Pergunta ao time não abre cópia do integrante. O seating recusa spawn ' +
+    'extra. Handoff cola no Maestro. Pronto não fecha a missão.',
   highlights: [
     {
-      title: 'Um pane por papel',
+      title: 'Seating recusa pane extra',
       detail:
-        '“They have to answer you” abre interface, motor e revisor. Não ' +
-        'colapsa em um Codex.',
+        'Roster já sentado: sem ad-hoc, sem segundo “Implementar motor”, ' +
+        'sem remint DeepSeek/Claude no mesmo assento.',
     },
     {
       title: 'Handoff cola no Maestro',
       detail:
-        'Listar não come a fila. Queued cola no PTY idle. Pronto espera o paste.',
+        'Queued vira consumed no idle. 2x2 e 3x3 no DEV colaram a resposta.',
     },
   ],
   fixes: [
     {
-      title: 'Grid da missão sem shell morto nem pane alheio',
+      title: 'Kickoff não manda o Maestro spawnar de novo',
       detail:
-        'Terminais esconde shell. Spawn de missão não retoma sessão velha.',
+        'First-wave já abriu os panes. Use nexus_pane_ask.',
     },
   ],
 };

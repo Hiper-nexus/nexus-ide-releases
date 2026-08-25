@@ -115,6 +115,9 @@ import { warmSquadRuntimeSubscriptionAuth } from './squad-runtime-inventory';
 import {
   countLiveFirstWaveWriters,
   FIRST_WAVE_OFFER_CLIS,
+  decideMetaPaneWorkerSpawn,
+  liveMissionWorkerCount,
+  liveWorkerSeatKeys,
   planFirstWaveSeats,
   planMetaPaneAskSeats,
 } from './via-rapida-first-wave';
@@ -669,19 +672,16 @@ export function agentPrompt(
         'com a evidência, a first-wave pergunta. ' +
         `A first-wave já abriu UM pane por integrante (${teamWorkerNames.join(', ') || 'equipe'}) ` +
         'com a pergunta limpa e readOnly: true. NÃO spawne de novo o mesmo ' +
-        'integrante. Se faltar alguém da lista, EXTRAIA do objetivo apenas a ' +
-        'PERGUNTA (ex.: "quanto é 1+1?") — quem é perguntado recebe SÓ a ' +
-        'pergunta, nunca a instrução "pergunte aos panes" nem papel/missão — ' +
-        'e abra via nexus_pane_spawn com readOnly: true. SEM readOnly a ' +
-        'serialização de 1 escritor por checkout bloqueia o leque no 2º pane. ' +
+        'integrante. NÃO spawne ad-hoc (sem agentName). Se faltar alguém da ' +
+        'lista, spawne SÓ esse agentName com readOnly: true; senão ' +
+        'nexus_pane_ask. EXTRAIA do objetivo apenas a PERGUNTA (ex.: ' +
+        '"quanto é 1+1?") — quem é perguntado recebe SÓ a pergunta. ' +
         'Aguarde a resposta de TODOS os panes, e só então FECHO: ' +
         'nexus_handoff_submit success com summary citando a resposta de CADA ' +
         'pane E artifacts: [{fullText: "pane X → resposta; pane Y → resposta"}] ' +
         '— success com artifacts vazio NÃO conclui a missão (o gate exige prova ' +
         'listada), e o slot de handoff é ÚNICO: não chame set_status done, o ' +
-        'motor conclui sozinho. Nenhum pane sem resposta = missão não fecha. ' +
-        'Para perguntar a um pane JÁ aberto use nexus_pane_ask (envia, espera ' +
-        'e devolve só a resposta) — qualquer pane da missão pode usar.'
+        'motor conclui sozinho. Nenhum pane sem resposta = missão não fecha.'
       : '';
   const uiNote = isUiMissionText(objective)
     ? 'Este pedido envolve interface. Use o DESIGN.md do projeto e o catálogo de design como guia de estilo.'
@@ -951,6 +951,27 @@ async function spawnAgentPane(
     agent.category === 'orchestrator' ? 'orchestrator' : 'worker';
   const title = paneTitle?.trim() || agent.agentName;
   const readOnly = spawnOpts?.readOnly === true;
+  if (role === 'worker') {
+    const isMeta =
+      isPaneMetaTask(mission.description ?? '') ||
+      isPaneMetaTask(mission.title ?? '');
+    if (isMeta) {
+      const squad = mission.squadId ? getSquad(mission.squadId) : null;
+      const snapshots = listPaneSnapshots();
+      const liveKeys = liveWorkerSeatKeys(snapshots, mission.id);
+      const liveCount = liveMissionWorkerCount(snapshots, mission.id);
+      const decision = decideMetaPaneWorkerSpawn({
+        isMetaPaneMission: true,
+        requestedAgentName: agent.agentName,
+        rosterWorkerNames: (squad?.agents ?? [])
+          .filter((member) => member.category !== 'orchestrator')
+          .map((member) => member.agentName),
+        liveWorkerKeys: liveKeys,
+        liveWorkerCount: liveCount,
+      });
+      if (!decision.allowed) return { error: decision.reason };
+    }
+  }
 
   const spawn = await requestPaneSpawn({
     adapterId: agent.cli,

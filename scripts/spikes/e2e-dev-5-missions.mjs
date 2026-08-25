@@ -14,14 +14,16 @@ const MISSIONS = [
     id: 'ask-2x2',
     kind: 'ask',
     goal: 'How much is 2x2 and they have to answer you.',
-    expectAnswer: /4/,
+    expectAnswer:
+      /2\s*[x×*]\s*2\s*=\s*4|\[nexus\] resultado[^\n]*\b4\b|resposta[^.\n]{0,80}\b4\b/i,
     deadlineMs: 240_000,
   },
   {
     id: 'ask-1plus1',
     kind: 'ask',
     goal: 'pergunte aos panes quanto é 1+1',
-    expectAnswer: /2/,
+    expectAnswer:
+      /1\s*\+\s*1\s*=\s*2|\[nexus\] resultado[^\n]*\b2\b|resposta[^.\n]{0,80}\b2\b/i,
     deadlineMs: 240_000,
   },
   {
@@ -42,7 +44,8 @@ const MISSIONS = [
     id: 'ask-3x3-en',
     kind: 'ask',
     goal: 'How much is 3x3 and they have to answer you.',
-    expectAnswer: /9/,
+    expectAnswer:
+      /3\s*[x×*]\s*3\s*=\s*9|\[nexus\] resultado[^\n]*\b9\b|resposta[^.\n]{0,80}\b9\b/i,
     deadlineMs: 240_000,
   },
 ];
@@ -139,6 +142,16 @@ const roster = [
   role('implementar-motor', 'Implementar motor', 'executor', pick(1)),
   role('verificar-o-resultado', 'Verificar o resultado', 'reviewer', pick(2)),
 ];
+const ROSTER_WORKER_NAMES = new Set(
+  roster.filter((row) => row.category !== 'orchestrator').map((row) => row.agentName),
+);
+const selected = process.env.NEXUS_E2E_ONLY
+  ? MISSIONS.filter((row) => row.id === process.env.NEXUS_E2E_ONLY)
+  : MISSIONS;
+if (process.env.NEXUS_E2E_ONLY && selected.length === 0) {
+  console.error('FAIL: unknown NEXUS_E2E_ONLY', process.env.NEXUS_E2E_ONLY);
+  process.exit(2);
+}
 
 const snapshotOf = (missionId) =>
   evaluate(`(async () => {
@@ -172,6 +185,38 @@ const snapshotOf = (missionId) =>
     };
   })()`);
 
+const maestroPtyOf = () =>
+  evaluate(`(() => {
+    const panes = [...document.querySelectorAll('.pane')];
+    const orchPanes = panes.filter((el) =>
+      el.querySelector('.toolbar__badge--orch'),
+    );
+    const live = orchPanes.filter(
+      (el) => !el.classList.contains('pane--state-exited'),
+    );
+    const orch = live[0] || orchPanes[0] || null;
+    if (!orch) return { text: '', state: null };
+    const rows = orch.querySelector('.xterm-rows, .xterm-screen, .xterm');
+    const stateClass = [...orch.classList].find((c) =>
+      c.startsWith('pane--state-'),
+    );
+    const state = stateClass ? stateClass.replace('pane--state-', '') : null;
+    return {
+      text: String(rows?.innerText || '').slice(-8000),
+      state: live[0] ? state : state,
+    };
+  })()`);
+
+const extraWorkersOf = (workers) => {
+  const seen = new Set();
+  return workers.filter((pane) => {
+    const name = String(pane.agentName || '').trim();
+    if (!name || !ROSTER_WORKER_NAMES.has(name) || seen.has(name)) return true;
+    seen.add(name);
+    return false;
+  });
+};
+
 const encerrar = (missionId) =>
   evaluate(`(async () => {
     try {
@@ -194,7 +239,7 @@ console.log('encerrar leftovers', leftovers);
 
 const results = [];
 
-for (const spec of MISSIONS) {
+for (const spec of selected) {
   console.log(`\n======== ${spec.id} ========`);
   console.log('goal:', spec.goal.split('\n')[0]);
   const started = await evaluate(`(async () => {
@@ -223,11 +268,14 @@ for (const spec of MISSIONS) {
   const missionId = started.missionId;
   const deadline = Date.now() + spec.deadlineMs;
   let last = null;
-  let queuedSince = null;
+  let idleQueuedSince = null;
   let failReason = null;
+  let maestroView = { text: '', state: null };
   while (Date.now() < deadline) {
     last = await snapshotOf(missionId);
+    maestroView = (await maestroPtyOf()) || { text: '', state: null };
     const workers = (last.panes || []).filter((p) => p.role === 'worker');
+    const extras = extraWorkersOf(workers);
     const shells = (last.panes || []).filter((p) => p.kind === 'shell');
     const foreign = (last.panes || []).filter(
       (p) => p.missionId && p.missionId !== missionId,
@@ -237,15 +285,32 @@ for (const spec of MISSIONS) {
     );
     const pasted = workerHandoffs.filter((h) => PASTED.has(h.deliveryState));
     const queued = workerHandoffs.filter((h) => h.deliveryState === 'queued');
-    const maestroText = (last.handoffs || [])
-      .map((h) => h.summary)
-      .join('\n');
-    if (queued.length > 0 && queuedSince == null) queuedSince = Date.now();
-    if (queued.length === 0) queuedSince = null;
+    const maestro = (last.panes || []).find((p) => p.role === 'orchestrator');
+    const maestroState = maestroView.state || maestro?.state || null;
+    const maestroIdle = maestroState === 'idle';
+    const maestroShowsAnswer = Boolean(
+      spec.expectAnswer &&
+        spec.expectAnswer.test(
+          String(maestroView.text || '')
+            .replace(/\d+m\s*\d+s/gi, '')
+            .replace(/\b\d+s\b/gi, ''),
+        ),
+    );
+    if (
+      queued.length > 0 &&
+      pasted.length === 0 &&
+      !maestroShowsAnswer &&
+      maestroIdle
+    ) {
+      if (idleQueuedSince == null) idleQueuedSince = Date.now();
+    } else {
+      idleQueuedSince = null;
+    }
     console.log(
       `[${new Date().toISOString().slice(11, 19)}] ${spec.id} status=${last.status} ` +
-        `panes=${last.panes.length} workers=${workers.length} shells=${shells.length} ` +
-        `queued=${queued.length} pasted=${pasted.length}`,
+        `panes=${last.panes.length} workers=${workers.length} extras=${extras.length} ` +
+        `shells=${shells.length} queued=${queued.length} pasted=${pasted.length} ` +
+        `maestro=${maestroState ?? 'none'} ptyAnswer=${maestroShowsAnswer ? 'yes' : 'no'}`,
     );
     if (shells.length > 0) {
       failReason = 'dead-shell-in-grid';
@@ -255,70 +320,96 @@ for (const spec of MISSIONS) {
       failReason = 'foreign-pane';
       break;
     }
+    if (extras.length > 0 || workers.length > ROSTER_WORKER_NAMES.size) {
+      failReason = 'extra-unnamed-worker';
+      break;
+    }
     if (String(last.description).includes(OPERATOR_MARK)) {
       failReason = 'auto-operator-approved';
       break;
     }
-    const askOk =
-      spec.kind !== 'ask' ||
-      (workers.length >= 2 &&
-        (pasted.length > 0 ||
-          (spec.expectAnswer && spec.expectAnswer.test(maestroText))));
-    const workOk = spec.kind !== 'work' || last.status === 'done' || pasted.length > 0;
-    if (spec.kind === 'ask' && workers.length >= 2 && pasted.length > 0) break;
-    if (spec.kind === 'ask' && workers.length >= 2 && spec.expectAnswer?.test(maestroText) && last.status === 'done')
-      break;
-    if (spec.kind === 'work' && last.status === 'done' && queued.length === 0) break;
-    const maestro = (last.panes || []).find((p) => p.role === 'orchestrator');
-    const maestroIdle =
-      !maestro || maestro.state === 'idle' || maestro.state === 'exited';
     if (
-      queuedSince != null &&
-      Date.now() - queuedSince > 90_000 &&
-      pasted.length === 0 &&
-      maestroIdle
+      spec.kind === 'ask' &&
+      workers.length >= 2 &&
+      (pasted.length > 0 || maestroShowsAnswer)
+    ) {
+      break;
+    }
+    if (
+      spec.kind === 'work' &&
+      queued.length === 0 &&
+      (last.status === 'done' || pasted.length > 0)
+    ) {
+      break;
+    }
+    if (
+      idleQueuedSince != null &&
+      Date.now() - idleQueuedSince > 120_000
     ) {
       failReason = 'queued-stuck';
       break;
     }
-    void askOk;
-    void workOk;
     await new Promise((r) => setTimeout(r, 8_000));
   }
   last = last || (await snapshotOf(missionId));
+  maestroView = maestroView.text
+    ? maestroView
+    : (await maestroPtyOf()) || { text: '', state: null };
   const workers = (last.panes || []).filter((p) => p.role === 'worker');
+  const extras = extraWorkersOf(workers);
   const shells = (last.panes || []).filter((p) => p.kind === 'shell');
   const workerHandoffs = (last.handoffs || []).filter(
     (h) => h.from && h.from !== 'Coordenar e revisar',
   );
   const pasted = workerHandoffs.filter((h) => PASTED.has(h.deliveryState));
-  const maestroText = (last.handoffs || []).map((h) => h.summary).join('\n');
+  const maestro = (last.panes || []).find((p) => p.role === 'orchestrator');
+  const maestroState = maestroView.state || maestro?.state || null;
+  const maestroShowsAnswer = Boolean(
+    spec.expectAnswer &&
+      spec.expectAnswer.test(
+        String(maestroView.text || '')
+          .replace(/\d+m\s*\d+s/gi, '')
+          .replace(/\b\d+s\b/gi, ''),
+      ),
+  );
   const operatorClosed = String(last.description).includes(OPERATOR_MARK);
   if (!failReason) {
     if (shells.length > 0) failReason = 'dead-shell-in-grid';
-    else if (operatorClosed) failReason = 'auto-operator-approved';
+    else if (extras.length > 0 || workers.length > ROSTER_WORKER_NAMES.size) {
+      failReason = 'extra-unnamed-worker';
+    } else if (operatorClosed) failReason = 'auto-operator-approved';
     else if (spec.kind === 'ask' && workers.length < 2) failReason = 'too-few-workers';
     else if (
       spec.kind === 'ask' &&
       pasted.length === 0 &&
-      !(spec.expectAnswer && spec.expectAnswer.test(maestroText)) &&
-      !(spec.expectAnswer && spec.expectAnswer.test(
-        workerHandoffs.map((h) => h.summary).join('\n'),
-      ))
+      !maestroShowsAnswer
     ) {
       failReason = 'no-handoff-paste-or-maestro-answer';
+    } else if (
+      spec.kind === 'work' &&
+      last.status !== 'done' &&
+      pasted.length === 0
+    ) {
+      failReason = 'work-not-delivered';
     }
   }
   const pass = !failReason;
   console.log('SNAP', JSON.stringify({
     status: last.status,
+    maestro: {
+      state: maestroState,
+      adapterId: maestro?.adapterId ?? null,
+      ptyAnswer: maestroShowsAnswer,
+      ptyTail: String(maestroView.text || '').replace(/\s+/g, ' ').slice(-600),
+    },
     workers: workers.map((w) => `${w.agentName}/${w.adapterId}/${w.kind}`),
+    extras: extras.map((w) => `${w.agentName}/${w.adapterId}`),
     handoffs: last.handoffs,
     failReason,
   }, null, 2));
   const closed = await encerrar(missionId);
   console.log('ENCERRAR', closed);
-  await new Promise((r) => setTimeout(r, 4_000));
+  await new Promise((r) => setTimeout(r, 8_000));
   results.push({
     id: spec.id,
     missionId,
@@ -326,14 +417,16 @@ for (const spec of MISSIONS) {
     failReason,
     status: last.status,
     workers: workers.length,
+    extras: extras.length,
     pasted: pasted.length,
+    maestroShowsAnswer,
     operatorClosed,
   });
 }
 
 console.log('\n======== SUMMARY ========');
 console.log(JSON.stringify(results, null, 2));
-const allPass = results.length === MISSIONS.length && results.every((r) => r.pass);
+const allPass = results.length === selected.length && results.every((r) => r.pass);
 console.log(allPass ? 'BATTERY=PASS' : 'BATTERY=FAIL');
 ws.close();
 process.exit(allPass ? 0 : 1);

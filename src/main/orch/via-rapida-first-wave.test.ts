@@ -5,6 +5,9 @@ import {
   expandFirstWaveSeats,
   FIRST_WAVE_OFFER_CLIS,
   FIRST_WAVE_WRITER_SEATS,
+  decideMetaPaneWorkerSpawn,
+  liveMissionWorkerCount,
+  liveWorkerSeatKeys,
   planFirstWaveSeats,
   planMetaPaneAskSeats,
   spreadPresentClisAcrossWriterRoles,
@@ -254,6 +257,130 @@ describe('planMetaPaneAskSeats — pergunta abre o roster, não 1 writer', () =>
     expect(wave.seats.every((seat) => !seat.title.startsWith('Writer'))).toBe(
       true,
     );
+  });
+});
+
+describe('decideMetaPaneWorkerSpawn — seating, not prompt', () => {
+  const roster = [
+    'Implementar interface',
+    'Implementar motor',
+    'Verificar o resultado',
+  ];
+  const seated = [...roster];
+
+  it('não meta-de-pane: spawn segue a política geral', () => {
+    expect(
+      decideMetaPaneWorkerSpawn({
+        isMetaPaneMission: false,
+        requestedAgentName: undefined,
+        rosterWorkerNames: roster,
+        liveWorkerKeys: seated,
+      }),
+    ).toEqual({ allowed: true });
+  });
+
+  it('recusa qualquer spawn extra quando o roster já está sentado', () => {
+    const decision = decideMetaPaneWorkerSpawn({
+      isMetaPaneMission: true,
+      requestedAgentName: 'Implementar motor',
+      rosterWorkerNames: roster,
+      liveWorkerKeys: seated,
+      liveWorkerCount: 3,
+    });
+    expect(decision.allowed).toBe(false);
+    if (decision.allowed) throw new Error('expected refuse');
+    expect(decision.reason).toMatch(/already live/i);
+  });
+
+  it('recusa ad-hoc sem agentName quando a first-wave já sentou', () => {
+    const decision = decideMetaPaneWorkerSpawn({
+      isMetaPaneMission: true,
+      requestedAgentName: undefined,
+      rosterWorkerNames: roster,
+      liveWorkerKeys: ['Implementar interface', 'Implementar motor'],
+    });
+    expect(decision.allowed).toBe(false);
+    if (decision.allowed) throw new Error('expected refuse');
+    expect(decision.reason).toMatch(/ad-hoc/i);
+  });
+
+  it('recusa cópia de integrante já aberto', () => {
+    const decision = decideMetaPaneWorkerSpawn({
+      isMetaPaneMission: true,
+      requestedAgentName: 'Implementar interface',
+      rosterWorkerNames: roster,
+      liveWorkerKeys: ['Implementar interface', 'Implementar motor'],
+    });
+    expect(decision.allowed).toBe(false);
+    if (decision.allowed) throw new Error('expected refuse');
+    expect(decision.reason).toMatch(/already has a live pane/i);
+  });
+
+  it('recusa nome que não está no roster', () => {
+    const decision = decideMetaPaneWorkerSpawn({
+      isMetaPaneMission: true,
+      requestedAgentName: 'Writer 2',
+      rosterWorkerNames: roster,
+      liveWorkerKeys: ['Implementar interface', 'Implementar motor'],
+    });
+    expect(decision.allowed).toBe(false);
+    if (decision.allowed) throw new Error('expected refuse');
+    expect(decision.reason).toMatch(/not a roster member/i);
+  });
+
+  it('liveMissionWorkerCount conta pane sem role como worker', () => {
+    expect(
+      liveMissionWorkerCount(
+        [
+          { missionId: 'm1', role: 'orchestrator', state: 'busy' },
+          { missionId: 'm1', role: 'worker', state: 'busy' },
+          { missionId: 'm1', state: 'idle' },
+          { missionId: 'm1', role: 'worker', state: 'exited' },
+        ],
+        'm1',
+      ),
+    ).toBe(2);
+  });
+
+  it('liveWorkerSeatKeys ignora shell/exited e ocupa o nome vivo', () => {
+    expect(
+      liveWorkerSeatKeys(
+        [
+          {
+            missionId: 'm1',
+            role: 'worker',
+            state: 'busy',
+            agentName: 'Implementar motor',
+            title: 'Implementar motor',
+          },
+          {
+            missionId: 'm1',
+            role: 'worker',
+            state: 'exited',
+            agentName: 'Implementar interface',
+            title: 'Implementar interface',
+          },
+          {
+            missionId: 'm1',
+            role: 'orchestrator',
+            state: 'idle',
+            agentName: 'Coordenar e revisar',
+          },
+        ],
+        'm1',
+      ),
+    ).toEqual(['Implementar motor', 'Implementar motor']);
+  });
+
+  it('permite preencher o único assento que faltou', () => {
+    expect(
+      decideMetaPaneWorkerSpawn({
+        isMetaPaneMission: true,
+        requestedAgentName: 'Verificar o resultado',
+        rosterWorkerNames: roster,
+        liveWorkerKeys: ['Implementar interface', 'Implementar motor'],
+      }),
+    ).toEqual({ allowed: true });
   });
 });
 

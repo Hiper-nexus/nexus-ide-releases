@@ -66,6 +66,12 @@ import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-regi
 import { getProjectDomainStores } from './project-domain-store-registry';
 import { missionControlPlaneSnapshot } from './mission-control-plane-ipc';
 import { getOrchSettings } from '../persistence/settings-store';
+import { isPaneMetaTask } from './mission-fast-lane';
+import {
+  decideMetaPaneWorkerSpawn,
+  liveMissionWorkerCount,
+  liveWorkerSeatKeys,
+} from './via-rapida-first-wave';
 
 export function coerceSpawnReadOnly<T extends { readOnly?: boolean }>(
   options: T,
@@ -667,13 +673,53 @@ const paneSpawn: McpToolDef = {
         if (!missionRow?.intentContract) {
           throw new Error('approval_required: current mission contract unavailable');
         }
+        const liveSnapshotStates = new Map(
+          listPaneSnapshots().map((pane) => [pane.paneId, pane.state] as const),
+        );
+        const metaPaneMission =
+          isPaneMetaTask(missionRow.description ?? '') ||
+          isPaneMetaTask(missionRow.title ?? '');
+        if (metaPaneMission) {
+          const squad = missionRow.squadId
+            ? getSquad(missionRow.squadId)
+            : null;
+          const fromRows = suite
+            .missionPanes.list(missionId)
+            .filter((row) => row.role === 'worker')
+            .filter((row) => {
+              if (!row.paneId) return true;
+              const state = liveSnapshotStates.get(row.paneId);
+              return state !== undefined && state !== 'exited';
+            })
+            .flatMap((row) =>
+              [row.agentName, row.title].filter(
+                (key): key is string =>
+                  typeof key === 'string' && key.length > 0,
+              ),
+            );
+          const liveKeys = [
+            ...liveWorkerSeatKeys(listPaneSnapshots(), missionId),
+            ...fromRows,
+          ];
+          const liveCount = liveMissionWorkerCount(
+            listPaneSnapshots(),
+            missionId,
+          );
+          const decision = decideMetaPaneWorkerSpawn({
+            isMetaPaneMission: true,
+            requestedAgentName: options.agentName,
+            rosterWorkerNames: (squad?.agents ?? [])
+              .filter((agent) => agent.category !== 'orchestrator')
+              .map((agent) => agent.agentName),
+            liveWorkerKeys: liveKeys,
+            liveWorkerCount: Math.max(liveCount, fromRows.length),
+          });
+          if (!decision.allowed) throw new Error(decision.reason);
+        }
         // Slots contam só workers VIVOS: linha durável de worker morto/fechado
         // não pode segurar maxWorkers para sempre (deadlock de campo). A
         // reserva `pendingWorkerSpawns` cobre o período de pré-bind; depois de
         // gravado o pane precisa aparecer nos snapshots — se sumiu, é morto.
-        const liveSnapshotStates = new Map(
-          listPaneSnapshots().map((pane) => [pane.paneId, pane.state] as const),
-        );
         const liveWorkerCount = suite.missionPanes
           .list(missionId)
           .filter((row) => row.role === 'worker')

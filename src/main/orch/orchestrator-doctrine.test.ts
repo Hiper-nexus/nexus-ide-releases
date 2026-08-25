@@ -121,6 +121,26 @@ describe('buildMaestroKickoffBrief', () => {
     expect(text).toContain('task selada pendente');
     expect(text).toContain('first-wave');
   });
+
+  it('missão-pergunta não manda o Maestro abrir pane extra', () => {
+    const text = buildMaestroKickoffBrief({
+      title: 'How much is 2x2',
+      objective: 'How much is 2x2 and they have to answer you.',
+      orchestratorName: 'Coordenar e revisar',
+      teamNames: [
+        'Coordenar e revisar',
+        'Implementar interface',
+        'Implementar motor',
+        'Verificar o resultado',
+      ],
+      metaPane: true,
+    });
+    expect(text).toContain('first-wave JÁ abriu');
+    expect(text).toContain('NÃO chame nexus_pane_spawn');
+    expect(text).toContain('nexus_pane_ask');
+    expect(text).toContain('Implementar interface');
+    expect(text).not.toMatch(/abra os panes da equipe/i);
+  });
 });
 
 describe('doutrina exige delegação total (nem o trivial é respondido no pane)', () => {

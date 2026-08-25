@@ -123,9 +123,10 @@ export function buildMaestroKickoffBrief(
   const coordination = metaPane
     ? [
         '## ORQUESTRAÇÃO (missão de pergunta aos panes)',
-        `Você é ${input.orchestratorName}. Aqui VOCÊ executa: abra os panes ` +
-          `da equipe (${workers.join(', ') || 'equipe'}), colete TODAS as ` +
-          'respostas e feche com o handoff final.',
+        `Você é ${input.orchestratorName}. A first-wave JÁ abriu os panes ` +
+          `da equipe (${workers.join(', ') || 'equipe'}). NÃO chame ` +
+          'nexus_pane_spawn. Colete TODAS as respostas com nexus_handoff_list ' +
+          'e nexus_pane_ask nos panes já abertos, e feche com o handoff final.',
         'O contrato completo está no bloco META-DE-PANE do objetivo — ele ' +
           'VENCE qualquer regra geral de delegação.',
       ].join('\n')

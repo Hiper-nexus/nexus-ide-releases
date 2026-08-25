@@ -592,6 +592,9 @@ describe('kickoff meta-de-pane — um pane por integrante, TODOS respondem', () 
     expect(prompt).toContain('não chame set_status done');
     expect(prompt).toContain('first-wave já abriu');
     expect(prompt).toContain('NÃO spawne de novo');
+    expect(prompt).toContain('NÃO spawne ad-hoc');
+    expect(prompt).toContain('sem agentName');
+    expect(prompt).not.toContain('abra via nexus_pane_spawn');
     expect(prompt).not.toContain('1 entrega');
     expect(prompt).not.toContain('São 1 entregas');
   });
