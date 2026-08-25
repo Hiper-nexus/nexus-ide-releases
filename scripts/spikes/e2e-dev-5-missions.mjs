@@ -6,6 +6,10 @@ import WebSocket from 'ws';
 
 const PORT = process.env.NEXUS_CDP_PORT ?? '9222';
 const PASTED = new Set(['submitted', 'acknowledged', 'consumed']);
+const NOT_WORKER_FROM = new Set([
+  'Coordenar e revisar',
+  'nexus-delegation-supervisor',
+]);
 const PREFERRED_CLIS = ['codex', 'claude', 'glm', 'grok', 'kimi'];
 const OPERATOR_MARK = 'nexus:operator-approved';
 
@@ -16,7 +20,7 @@ const MISSIONS = [
     goal: 'How much is 2x2 and they have to answer you.',
     expectAnswer:
       /2\s*[x×*]\s*2\s*=\s*4|\[nexus\] resultado[^\n]*\b4\b|resposta[^.\n]{0,80}\b4\b/i,
-    deadlineMs: 240_000,
+    deadlineMs: 360_000,
   },
   {
     id: 'ask-1plus1',
@@ -24,7 +28,7 @@ const MISSIONS = [
     goal: 'pergunte aos panes quanto é 1+1',
     expectAnswer:
       /1\s*\+\s*1\s*=\s*2|\[nexus\] resultado[^\n]*\b2\b|resposta[^.\n]{0,80}\b2\b/i,
-    deadlineMs: 240_000,
+    deadlineMs: 360_000,
   },
   {
     id: 'listed-two-files',
@@ -32,13 +36,13 @@ const MISSIONS = [
     goal:
       '1. crie o arquivo e2e-battery/hello.txt contendo exatamente hello\n' +
       '2. crie o arquivo e2e-battery/world.txt contendo exatamente world',
-    deadlineMs: 240_000,
+    deadlineMs: 360_000,
   },
   {
     id: 'ui-landing',
     kind: 'work',
     goal: 'crie e2e-battery/landing.html com um h1 Hello E2E e um parágrafo curto',
-    deadlineMs: 240_000,
+    deadlineMs: 360_000,
   },
   {
     id: 'ask-3x3-en',
@@ -46,7 +50,7 @@ const MISSIONS = [
     goal: 'How much is 3x3 and they have to answer you.',
     expectAnswer:
       /3\s*[x×*]\s*3\s*=\s*9|\[nexus\] resultado[^\n]*\b9\b|resposta[^.\n]{0,80}\b9\b/i,
-    deadlineMs: 240_000,
+    deadlineMs: 360_000,
   },
 ];
 
@@ -90,7 +94,7 @@ await new Promise((resolve, reject) => {
   setTimeout(() => reject(new Error('ws open timeout')), 10_000);
 });
 
-const evaluate = async (expression, timeoutMs = 120_000) => {
+const evaluateOnce = async (expression, timeoutMs = 120_000) => {
   const result = await send(
     'Runtime.evaluate',
     { expression, returnByValue: true, awaitPromise: true },
@@ -103,6 +107,24 @@ const evaluate = async (expression, timeoutMs = 120_000) => {
     );
   }
   return result.result?.value;
+};
+
+const evaluate = async (expression, timeoutMs = 120_000) => {
+  let last = null;
+  for (let i = 0; i < 6; i += 1) {
+    try {
+      return await evaluateOnce(
+        expression,
+        i === 0 ? timeoutMs : Math.min(timeoutMs, 30_000),
+      );
+    } catch (error) {
+      last = error;
+      if (!String(error?.message || error).includes('timeout')) throw error;
+      console.log(`cdp retry ${i}: ${error.message}`);
+      await new Promise((r) => setTimeout(r, 4_000));
+    }
+  }
+  throw last;
 };
 
 const probe = await evaluate(`(async () => {
@@ -124,8 +146,31 @@ if (present.length === 0) {
   console.error('FAIL: sem CLI autenticada');
   process.exit(1);
 }
+for (let i = 0; i < 120; i += 1) {
+  const rootKids = await evaluate(
+    `document.getElementById("root")?.children.length ?? 0`,
+  );
+  if (rootKids > 0) {
+    console.log('renderer root children', rootKids);
+    break;
+  }
+  if (i === 119) {
+    console.error('FAIL: renderer root vazio');
+    process.exit(1);
+  }
+  await new Promise((r) => setTimeout(r, 1_000));
+}
 
-const orchCli = present.includes('claude') ? 'claude' : present[0];
+// Claude often reports authStatus=ok but mission.start rejects
+// "não está autenticado para missões". Prefer grok/glm for Maestro.
+const orchCli = present.includes('grok')
+  ? 'grok'
+  : present.includes('glm')
+    ? 'glm'
+    : present.includes('codex')
+      ? 'codex'
+      : present[0];
+console.log('orchCli', orchCli);
 const workerClis = present.filter((id) => id !== orchCli);
 const pick = (i) => workerClis[i % Math.max(workerClis.length, 1)] || orchCli;
 const role = (id, agentName, category, cli) => ({
@@ -167,6 +212,7 @@ const snapshotOf = (missionId) =>
       intentState: mission?.intentState ?? null,
       description: String(mission?.description || ''),
       panes: panes.map((p) => ({
+        id: p.paneId || p.id,
         role: p.role,
         kind: p.kind,
         title: p.title,
@@ -185,8 +231,10 @@ const snapshotOf = (missionId) =>
     };
   })()`);
 
-const maestroPtyOf = () =>
-  evaluate(`(() => {
+const maestroPtyOf = (missionId) =>
+  evaluate(`(async () => {
+    const listed = (await window.nexus.orch.listMissionPanes(${JSON.stringify(missionId)})) || [];
+    const orchRow = listed.find((p) => p.role === 'orchestrator') || null;
     const panes = [...document.querySelectorAll('.pane')];
     const orchPanes = panes.filter((el) =>
       el.querySelector('.toolbar__badge--orch'),
@@ -195,15 +243,22 @@ const maestroPtyOf = () =>
       (el) => !el.classList.contains('pane--state-exited'),
     );
     const orch = live[0] || orchPanes[0] || null;
-    if (!orch) return { text: '', state: null };
-    const rows = orch.querySelector('.xterm-rows, .xterm-screen, .xterm');
-    const stateClass = [...orch.classList].find((c) =>
-      c.startsWith('pane--state-'),
-    );
-    const state = stateClass ? stateClass.replace('pane--state-', '') : null;
+    const stateClass = orch
+      ? [...orch.classList].find((c) => c.startsWith('pane--state-'))
+      : null;
+    const cssState = stateClass
+      ? stateClass.replace('pane--state-', '')
+      : null;
+    const orchPaneId = orchRow?.paneId || orchRow?.id || null;
+    const excerpt =
+      orchPaneId && typeof window.__nexusGetScrollbackExcerpt === 'function'
+        ? String(window.__nexusGetScrollbackExcerpt(orchPaneId) || '')
+        : '';
+    const rows = orch?.querySelector('.xterm-rows, .xterm-screen, .xterm');
+    const text = (excerpt || String(rows?.innerText || '')).slice(-8000);
     return {
-      text: String(rows?.innerText || '').slice(-8000),
-      state: live[0] ? state : state,
+      text,
+      state: cssState || orchRow?.state || null,
     };
   })()`);
 
@@ -242,24 +297,54 @@ const results = [];
 for (const spec of selected) {
   console.log(`\n======== ${spec.id} ========`);
   console.log('goal:', spec.goal.split('\n')[0]);
-  const started = await evaluate(`(async () => {
+  // Kick off in the renderer without holding CDP awaitPromise on start():
+  // waitForSession + first-wave occupy the same JS thread, so a single
+  // evaluate() around prepare/start used to time out while the mission
+  // actually spawned (DEV 25/08).
+  await evaluateOnce(
+    `(() => {
+      window.__e2eStart = { pending: true };
+      setTimeout(() => {
+        void (async () => {
+          try {
+            const review = await window.nexus.mission.prepare({
+              objective: ${JSON.stringify(spec.goal)},
+              title: ${JSON.stringify(spec.id)},
+              contextPaths: [],
+              roster: ${JSON.stringify(roster)},
+              advanced: { lane: 'standard', freeAgentChoice: true },
+            });
+            const started = await window.nexus.mission.start({
+              missionId: review.missionId,
+              reviewSha256: review.reviewSha256,
+            });
+            window.__e2eStart = {
+              missionId: review.missionId,
+              state: started.state ?? started.status,
+            };
+          } catch (e) {
+            window.__e2eStart = { error: String((e && e.message) || e) };
+          }
+        })();
+      }, 0);
+      return 'kicked';
+    })()`,
+    20_000,
+  );
+  // waitForSession runs on the renderer JS thread. CDP evaluate is
+  // serialized against it — polling during first-wave times out and
+  // queues behind the spawn. Let start finish, then read __e2eStart.
+  await new Promise((r) => setTimeout(r, 90_000));
+  let started = null;
+  for (let i = 0; i < 30; i += 1) {
     try {
-      const review = await window.nexus.mission.prepare({
-        objective: ${JSON.stringify(spec.goal)},
-        title: ${JSON.stringify(spec.id)},
-        contextPaths: [],
-        roster: ${JSON.stringify(roster)},
-        advanced: { lane: 'standard', freeAgentChoice: true },
-      });
-      const started = await window.nexus.mission.start({
-        missionId: review.missionId,
-        reviewSha256: review.reviewSha256,
-      });
-      return { missionId: review.missionId, state: started.state ?? started.status };
-    } catch (e) {
-      return { error: String((e && e.message) || e) };
+      started = await evaluateOnce(`window.__e2eStart`, 15_000);
+      if (started && started.pending !== true) break;
+    } catch (error) {
+      console.log(`start-poll ${i}: ${error.message}`);
     }
-  })()`);
+    await new Promise((r) => setTimeout(r, 3_000));
+  }
   if (started?.error || !started?.missionId) {
     console.log('START_FAIL', started);
     results.push({ id: spec.id, pass: false, reason: started?.error || 'no id' });
@@ -272,8 +357,14 @@ for (const spec of selected) {
   let failReason = null;
   let maestroView = { text: '', state: null };
   while (Date.now() < deadline) {
-    last = await snapshotOf(missionId);
-    maestroView = (await maestroPtyOf()) || { text: '', state: null };
+    try {
+      last = await snapshotOf(missionId);
+      maestroView = (await maestroPtyOf(missionId)) || { text: '', state: null };
+    } catch (error) {
+      console.log(`snapshot timeout: ${error.message}`);
+      await new Promise((r) => setTimeout(r, 8_000));
+      continue;
+    }
     const workers = (last.panes || []).filter((p) => p.role === 'worker');
     const extras = extraWorkersOf(workers);
     const shells = (last.panes || []).filter((p) => p.kind === 'shell');
@@ -281,7 +372,7 @@ for (const spec of selected) {
       (p) => p.missionId && p.missionId !== missionId,
     );
     const workerHandoffs = (last.handoffs || []).filter(
-      (h) => h.from && h.from !== 'Coordenar e revisar',
+      (h) => h.from && !NOT_WORKER_FROM.has(h.from),
     );
     const pasted = workerHandoffs.filter((h) => PASTED.has(h.deliveryState));
     const queued = workerHandoffs.filter((h) => h.deliveryState === 'queued');
@@ -354,7 +445,7 @@ for (const spec of selected) {
   last = last || (await snapshotOf(missionId));
   maestroView = maestroView.text
     ? maestroView
-    : (await maestroPtyOf()) || { text: '', state: null };
+    : (await maestroPtyOf(missionId)) || { text: '', state: null };
   const workers = (last.panes || []).filter((p) => p.role === 'worker');
   const extras = extraWorkersOf(workers);
   const shells = (last.panes || []).filter((p) => p.kind === 'shell');
@@ -362,6 +453,7 @@ for (const spec of selected) {
     (h) => h.from && h.from !== 'Coordenar e revisar',
   );
   const pasted = workerHandoffs.filter((h) => PASTED.has(h.deliveryState));
+  const queued = workerHandoffs.filter((h) => h.deliveryState === 'queued');
   const maestro = (last.panes || []).find((p) => p.role === 'orchestrator');
   const maestroState = maestroView.state || maestro?.state || null;
   const maestroShowsAnswer = Boolean(
@@ -386,11 +478,25 @@ for (const spec of selected) {
     ) {
       failReason = 'no-handoff-paste-or-maestro-answer';
     } else if (
+      queued.length > 0 &&
+      pasted.length === 0 &&
+      !maestroShowsAnswer &&
+      (last.status === 'done' || maestroState === 'exited')
+    ) {
+      failReason = 'queued-after-pronto';
+    } else if (
       spec.kind === 'work' &&
       last.status !== 'done' &&
       pasted.length === 0
     ) {
       failReason = 'work-not-delivered';
+    } else if (
+      spec.kind === 'work' &&
+      last.status === 'done' &&
+      queued.length > 0 &&
+      pasted.length === 0
+    ) {
+      failReason = 'queued-after-pronto';
     }
   }
   const pass = !failReason;
@@ -409,7 +515,16 @@ for (const spec of selected) {
   }, null, 2));
   const closed = await encerrar(missionId);
   console.log('ENCERRAR', closed);
-  await new Promise((r) => setTimeout(r, 8_000));
+  await new Promise((r) => setTimeout(r, 30_000));
+  for (let i = 0; i < 12; i += 1) {
+    try {
+      await evaluateOnce('1', 10_000);
+      break;
+    } catch (error) {
+      console.log(`cdp after encerrar ${i}: ${error.message}`);
+      await new Promise((r) => setTimeout(r, 3_000));
+    }
+  }
   results.push({
     id: spec.id,
     missionId,

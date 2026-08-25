@@ -4,6 +4,7 @@ import {
   switchWorkspaceLayoutWithFallback,
   useLayoutStore,
 } from './state/layout-store';
+import { usePanePickerStore } from './state/pane-picker-store';
 import { VoiceHud } from './components/VoiceHud';
 import { VoiceSettings } from './components/VoiceSettings';
 import { DictationModeChip } from './components/DictationModeChip';
@@ -875,6 +876,14 @@ export function App() {
         <Launcher
           onOpenWorkspace={pickWorkspace}
           onStartMission={navigation.openNewMission}
+          onOpenPane={() => {
+            usePanePickerStore.getState().requestOpen();
+            navigation.openTerminal();
+          }}
+          onOpenShellTerminal={() => {
+            navigation.openTerminal();
+            useLayoutStore.getState().addShellPane();
+          }}
           onOpenTaskBoard={navigation.openTaskBoard}
           onOpenMemory={navigation.openMemory}
         />

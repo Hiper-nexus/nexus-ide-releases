@@ -42,6 +42,7 @@ import {
 } from './ReviewStep';
 import {
   buildRecommendedMissionRoster,
+  issueForAgent,
   TeamStep,
   type MissionTeamInventory,
 } from './TeamStep';
@@ -903,6 +904,14 @@ export function MissionSetup() {
         'Não foi possível montar a equipe. Escolha as ferramentas acima ou use Mais papéis e tamanho.',
       );
       return;
+    }
+    const maestro = roster.find((agent) => agent.category === 'orchestrator');
+    if (maestro && inventory.status === 'ready') {
+      const issue = issueForAgent(maestro, inventory);
+      if (issue) {
+        setExpressError(issue);
+        return;
+      }
     }
     // Override local do draft — NUNCA setRoster/setFreeAgentChoice no store:
     // ambos bumpam `revision` → `authorityKey` muda → o efeito de autoridade

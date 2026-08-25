@@ -437,29 +437,18 @@ function clearPendingDeliveryStart(pending: PendingDeliveryStart): void {
 }
 
 /**
- * Cola no PTY idle do Maestro. Semantic `working` veta enquanto a missão
- * corre (não escrever no meio de um pane_ask). Depois do Pronto o operador
- * ainda precisa VER o handoff: PTY idle + missão done cola mesmo com o hook
- * preso em working (DEV 24/08: drain de 3 queued, zero paste).
+ * Cola no PTY idle do Maestro. O PTY é a prova; semantic `working` é aviso
+ * (hook preso no meio de um pane_ask longo — DEV 1+1: 34s queued com o
+ * compositor já no prompt). `awaiting-input` é latch real: nunca escrever
+ * num diálogo de permissão. A estabilidade de 150ms + requeue no pulso
+ * working ainda evita flicker de um frame.
  */
 function canPasteHandoff(sessionId: string): boolean {
   if (isSessionInjectableIdle(sessionId)) return true;
   if (getSessionState(sessionId) !== 'idle') return false;
-  if (getAgentSemanticStatusBySession(sessionId)?.status === 'awaiting-input') {
-    return false;
-  }
-  const pane = getPaneRuntimeAuthorityBySession(sessionId);
-  if (
-    pane?.role !== 'orchestrator' ||
-    !pane.missionId ||
-    !pane.scope
-  ) {
-    return false;
-  }
-  const status = getProjectDomainStores(pane.scope).missions.get(
-    pane.missionId,
-  )?.status;
-  return status === 'done';
+  return (
+    getAgentSemanticStatusBySession(sessionId)?.status !== 'awaiting-input'
+  );
 }
 
 function hasPendingDelivery(authority: DeliveryAuthority): boolean {
@@ -577,6 +566,10 @@ function blockDeliveryFailure(
   // dele (handoff commitado); se o Maestro não aceitou a tempo, a resposta é
   // recuperação de runtime + outbox — jamais bloquear a missão, jamais
   // escrever marcador de "handoff não entregue" (o toast que mente).
+  // Idle PTY after CR is a TUI modal (Codex PreToolUse hooks, DEV 25/08
+  // 2x2): killing that Maestro dropped orchestratorSessionId. Keep queued
+  // until a real busy→idle edge.
+  if (getSessionState(authority.sessionId) === 'idle') return;
   requestRuntimeRecovery(authority, handoffId);
   // O ciclo re-arma a cada janela — o MESMO handoff repetia esta linha 63×
   // no voo do gate 0.62 e afogava o diagnóstico real. Uma linha por handoff.

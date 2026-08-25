@@ -1,6 +1,6 @@
 import type { ProjectExecutionScope } from '../../shared/types';
 import {
-  resolveProjectExecutionScope,
+  resolveProjectExecutionScopeCached,
   type ProjectIdentityResolveOptions,
 } from './project-identity';
 
@@ -46,7 +46,7 @@ export function bindRendererWorkspaceScope(
   workspaceRoot: string,
   options?: ProjectIdentityResolveOptions,
 ): ProjectExecutionScope {
-  const scope = resolveProjectExecutionScope(workspaceRoot, options);
+  const scope = resolveProjectExecutionScopeCached(workspaceRoot, options);
   const previous = scopesByRenderer.get(owner.id) ?? null;
   scopesByRenderer.set(owner.id, scope);
   publishScopeChange(owner, previous, scope);

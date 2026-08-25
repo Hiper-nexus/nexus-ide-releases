@@ -84,6 +84,24 @@ function providerEffort(
     : undefined;
 }
 
+function providerForAdapter(
+  adapterId: string,
+  providers: readonly ProviderSettingsInfo[],
+): ProviderSettingsInfo | undefined {
+  return providers.find((item) => item.adapterId === adapterId);
+}
+
+/**
+ * Snapshot ausente não reprova (fluxo-por-padrão / cache frio).
+ * `login-needed` é o único estado em que o motor recusa o Maestro no spawn.
+ */
+export function isSeatedMissionCli(
+  adapterId: string,
+  providers: readonly ProviderSettingsInfo[],
+): boolean {
+  return providerForAdapter(adapterId, providers)?.authStrategy !== 'login-needed';
+}
+
 /**
  * Tamanhos prontos de equipe. Total inclui a coordenação, então 4 = 1 coord +
  * 3 execuções. O teto real continua sendo `cores - 2` e o orçamento de panes
@@ -106,10 +124,17 @@ export function buildRecommendedMissionRoster({
   const coordinators = [...readiness.verifiedMaestros].sort((left, right) =>
     left.id.localeCompare(right.id),
   );
-  const configuredCoordinator = coordinators.find(
+  // Claude instalado + defaultAdapterId ganhava o assento mesmo com sessão
+  // expirada; o Iniciar então morria no probe fail-closed (F-002).
+  const seatedCoordinators = coordinators.filter((adapter) =>
+    isSeatedMissionCli(adapter.id, providers),
+  );
+  const pickFrom =
+    seatedCoordinators.length > 0 ? seatedCoordinators : coordinators;
+  const configuredCoordinator = pickFrom.find(
     (adapter) => adapter.id === settings.defaultAdapterId,
   );
-  const coordinator = configuredCoordinator ?? coordinators[0] ?? null;
+  const coordinator = configuredCoordinator ?? pickFrom[0] ?? null;
   const workers = readiness.qualifiedWorkers
     .filter(
       (adapter) =>
@@ -247,6 +272,15 @@ export function issueForAgent(
     !isAdapterModelAuthenticated(adapter, inventory.providers, agent.model)
   ) {
     return 'Ferramenta desligada nas configurações — religue ou troque a ferramenta.';
+  }
+  if (agent.category === 'orchestrator') {
+    const provider = providerForAdapter(agent.cli, inventory.providers);
+    if (provider?.authStrategy === 'login-needed') {
+      return (
+        provider.loginHint ??
+        `O coordenador \`${agent.cli}\` precisa entrar na conta antes de iniciar a missão.`
+      );
+    }
   }
   return null;
 }

@@ -6,6 +6,7 @@ import type { AccountInfo } from '../../shared/account-types';
 import type { ProviderSettingsInfo } from '../../shared/provider-settings-types';
 import { useAccountStore } from '../state/account-store';
 import { useLayoutStore } from '../state/layout-store';
+import { usePanePickerStore } from '../state/pane-picker-store';
 import { useProviderStore } from '../state/provider-store';
 import { PanePicker } from './PanePicker';
 
@@ -179,6 +180,7 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
   afterEach(() => {
     act(() => root.unmount());
     document.body.replaceChildren();
+    usePanePickerStore.setState({ pendingOpen: false });
     if (originalScrollIntoView) {
       Object.defineProperty(
         HTMLElement.prototype,
@@ -250,6 +252,14 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
     type('inexistente');
     expect(options()).toHaveLength(0);
     expect(host.textContent).toContain('Nada com esse nome');
+  });
+
+  it('abre o menu quando o Início pede um pane (pendingOpen)', () => {
+    mount();
+    expect(host.querySelector('[role="dialog"]')).toBeNull();
+    act(() => usePanePickerStore.getState().requestOpen());
+    expect(host.querySelector('[role="dialog"]')).not.toBeNull();
+    expect(usePanePickerStore.getState().pendingOpen).toBe(false);
   });
 
   it('clicar numa linha sobe o pane com adapterId e modelo exatos', () => {

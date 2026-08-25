@@ -107,6 +107,41 @@ describe('AccountsManager', () => {
     act(() => root.unmount());
   });
 
+  it('sem sessão viva não oferece Salvar conta logada e pede login da CLI', async () => {
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        providers: {
+          authStatus: vi.fn(async () => [
+            {
+              adapterId: 'claude',
+              state: 'missing',
+              detail:
+                'identidade Claude (dev@example.com) sem sessão viva — rode `claude auth login`',
+            },
+          ]),
+        },
+        accounts: {
+          supportsSnapshot: vi.fn(async () => ({ ok: true, supported: true })),
+        },
+      },
+    });
+    const { host, root } = mount();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(host.textContent).toContain('precisa login');
+    expect(host.textContent).toMatch(/entrar com nova conta/i);
+    expect(host.textContent).toMatch(/fazer login agora/i);
+    expect(host.textContent).not.toMatch(/salvar conta logada/i);
+    expect(host.textContent).not.toContain('sessão do CLI');
+    expect(host.textContent).toContain('O app Claude no Dock não conta');
+    act(() => root.unmount());
+  });
+
   it('auto-salva a conta nova quando o terminal de login fecha (bug das 2 contas)', async () => {
     const addActiveSession = vi.fn(async () => ({ ok: true, email: 'dev@example.com' }));
     useAccountStore.setState({

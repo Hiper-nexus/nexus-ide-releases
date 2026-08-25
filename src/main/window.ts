@@ -451,6 +451,9 @@ export function createMainWindow(
       showRecoveryScreen(wc);
     },
   });
+  // Vite cold graph on a loaded Mac regularly takes 60–90s (DEV 25/08).
+  // Reloading at 20s aborted the transform and left #root empty forever.
+  const mountDeadlineMs = devServerUrl ? 120_000 : RENDERER_MOUNT_DEADLINE_MS;
   const mountWatchdog = new RendererMountWatchdog(() => {
     if (win.isDestroyed() || mounted) return;
     if (mountPoll) {
@@ -458,7 +461,7 @@ export function createMainWindow(
       mountPoll = null;
     }
     console.warn(
-      `[window] root vazio após ${RENDERER_MOUNT_DEADLINE_MS / 1000}s — recuperação ${bootRecovery.attempts + 1}`,
+      `[window] root vazio após ${mountDeadlineMs / 1000}s — recuperação ${bootRecovery.attempts + 1}`,
     );
     bootRecovery.schedule(0, () => {
       if (win.isDestroyed() || mounted) return;
@@ -466,7 +469,7 @@ export function createMainWindow(
       loadStartedAt = Date.now();
       wc.reload();
     });
-  });
+  }, mountDeadlineMs);
   const stopMountMonitoring = (): void => {
     mountWatchdog.cancel();
     if (!mountPoll) return;
@@ -625,15 +628,17 @@ export function createMainWindow(
       // Exhaustion is terminal until an explicit manual retry starts a new
       // main-frame navigation from the recovery screen.
       if (bootRecovery.isStopped) return;
+      const loadStallMs = devServerUrl ? 180_000 : RENDERER_LOAD_STALL_MS;
       const action = decideRendererLoadWatchdog({
         isFinished: finished,
         isLoading: wc.isLoading(),
         loadAgeMs: Date.now() - loadStartedAt,
+        stallMs: loadStallMs,
       });
       if (action === 'wait') return;
       if (action === 'restart-stalled-load') {
         console.warn(
-          `[window] renderer travado por ${RENDERER_LOAD_STALL_MS / 1000}s — reiniciando carga`,
+          `[window] renderer travado por ${loadStallMs / 1000}s — reiniciando carga`,
         );
         const scheduled = bootRecovery.schedule(
           WATCHDOG_RESTART_DELAY_MS,

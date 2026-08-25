@@ -4,7 +4,7 @@ import {
   orientationSnapshotSchema,
   type OrientationSnapshot,
 } from '../../../shared/orientation-types';
-import { resolveProjectExecutionScope } from '../../persistence/project-identity';
+import { resolveProjectExecutionScopeCached } from '../../persistence/project-identity';
 import { activeWorkspaceOrNull } from '../../persistence/workspace-store';
 import {
   getProjectOrientationService,
@@ -14,7 +14,7 @@ import {
 function requireActiveScope() {
   const workspace = activeWorkspaceOrNull();
   if (!workspace) throw new Error('no workspace is open');
-  return resolveProjectExecutionScope(workspace);
+  return resolveProjectExecutionScopeCached(workspace);
 }
 
 export function registerOrientationIpc(): void {

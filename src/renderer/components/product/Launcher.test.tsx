@@ -30,6 +30,8 @@ function renderLauncher() {
   const handlers = {
     onOpenWorkspace: vi.fn(),
     onStartMission: vi.fn(),
+    onOpenPane: vi.fn(),
+    onOpenShellTerminal: vi.fn(),
     onOpenTaskBoard: vi.fn(),
     onOpenMemory: vi.fn(),
   };
@@ -38,13 +40,15 @@ function renderLauncher() {
 }
 
 describe('Launcher', () => {
-  it('offers exactly four plain-language actions with one explanation each', () => {
+  it('offers the mission path plus pane, shell, folder, board and memory', () => {
     const { host } = renderLauncher();
     const buttons = [...host.querySelectorAll<HTMLButtonElement>('button')];
 
-    expect(buttons).toHaveLength(4);
+    expect(buttons).toHaveLength(6);
     expect(buttons.map((button) => button.getAttribute('aria-label'))).toEqual([
       'Missão em equipe',
+      'Abrir um pane',
+      'Abrir terminal puro',
       'Abrir uma pasta de projeto',
       'Abrir Quadro',
       'Abrir Memória',
@@ -55,6 +59,10 @@ describe('Launcher', () => {
     expect(host.textContent).toContain(
       'Descreva o que você quer entregar e o Nexus organiza o trabalho.',
     );
+    expect(host.textContent).toContain(
+      'Escolha a ferramenta (Claude, Codex…) à mão, sem abrir missão.',
+    );
+    expect(host.textContent).toContain('Shell do sistema, sem assistente.');
     expect(host.textContent).toContain(
       'Acompanhe tarefas e organize o que vem a seguir.',
     );
@@ -73,6 +81,8 @@ describe('Launcher', () => {
 
     expect(handlers.onOpenWorkspace).toHaveBeenCalledOnce();
     expect(handlers.onStartMission).toHaveBeenCalledOnce();
+    expect(handlers.onOpenPane).toHaveBeenCalledOnce();
+    expect(handlers.onOpenShellTerminal).toHaveBeenCalledOnce();
     expect(handlers.onOpenTaskBoard).toHaveBeenCalledOnce();
     expect(handlers.onOpenMemory).toHaveBeenCalledOnce();
   });
@@ -102,7 +112,7 @@ describe('Launcher', () => {
     const { host } = renderLauncher();
 
     expect(host.textContent).not.toMatch(
-      /Autopilot|Free|Squad|PRD|orquestrador|worker|provider|modelo|XP|custo|pane/i,
+      /Autopilot|Free|Squad|PRD|orquestrador|worker|provider|XP|custo/i,
     );
   });
 });

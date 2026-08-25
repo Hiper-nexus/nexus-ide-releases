@@ -113,10 +113,13 @@ export function AccountsManager({
   // E-mail da sessão viva da CLI (quando a sonda expõe). Identifica QUAL
   // conta está logada no CLI agora — distingue as linhas do vault e alimenta
   // o auto-save pós-login.
-  const liveEmail = useMemo(
-    () => (auth?.state === 'ok' ? emailFromAuthDetail(auth.detail) : null),
-    [auth],
-  );
+  const liveEmail = useMemo(() => {
+    if (auth?.state !== 'ok') return null;
+    // Identidade em ~/.claude.json sobrevive ao logout. Não pinta
+    // "sessão do CLI" / "conectado" com detalhe de sessão morta.
+    if (/sem sessão viva|sem OAuth utilizável/i.test(auth.detail)) return null;
+    return emailFromAuthDetail(auth.detail);
+  }, [auth]);
   const liveEmailNormalized = liveEmail?.trim().toLowerCase() ?? null;
   const vaultHasLiveSession = useMemo(
     () =>
@@ -545,11 +548,21 @@ export function AccountsManager({
             </span>
           </div>
           <p className="acct__hint">
-            Guarde <strong>várias contas</strong> de {displayName} (trabalho,
-            pessoal, API key…). <strong>1 ·</strong> entre com a conta abaixo —{' '}
-            <strong>2 ·</strong> o Nexus salva sozinho quando o terminal de
-            login fecha. Repita para a 2ª conta. A em uso abre o próximo
-            terminal; as reserva entram no failover quando o limite bater.
+            {auth?.state === 'missing' ? (
+              <>
+                A CLI <strong>{displayName}</strong> não tem sessão viva.
+                {isClaude
+                  ? ' O app Claude no Dock não conta.'
+                  : ''}{' '}
+                Use <strong>Entrar com nova conta</strong> — abre o terminal
+                de login desta CLI.
+              </>
+            ) : (
+              <>
+                A em uso abre o próximo terminal. Reserva entra no failover.
+                Entre com outra conta para guardar a 2ª.
+              </>
+            )}
           </p>
         </div>
         {auth && (
@@ -686,7 +699,7 @@ export function AccountsManager({
                 </span>
               </button>
             )}
-            {canSnapshot && (
+            {canSnapshot && auth?.state === 'ok' && (
               <button
                 type="button"
                 className="settings-btn settings-btn--primary acct__add-choice"

@@ -3,6 +3,8 @@ import { PixelIcon, type PixelIconName } from '../PixelIcon';
 export interface LauncherProps {
   onOpenWorkspace: () => void;
   onStartMission: () => void;
+  onOpenPane: () => void;
+  onOpenShellTerminal: () => void;
   onOpenTaskBoard: () => void;
   onOpenMemory: () => void;
 }
@@ -55,10 +57,12 @@ function LauncherAction({
   );
 }
 
-/** Quiet entry surface: one prompt, one emphasized path and three alternatives. */
+/** Quiet entry surface: one prompt, one emphasized path, then work without missão. */
 export function Launcher({
   onOpenWorkspace,
   onStartMission,
+  onOpenPane,
+  onOpenShellTerminal,
   onOpenTaskBoard,
   onOpenMemory,
 }: LauncherProps) {
@@ -84,6 +88,22 @@ export function Launcher({
             icon="mission"
             primary
             onClick={onStartMission}
+          />
+          <LauncherAction
+            id="pane"
+            label="Abrir um pane"
+            accessibleLabel="Abrir um pane"
+            description="Escolha a ferramenta (Claude, Codex…) à mão, sem abrir missão."
+            icon="plus"
+            onClick={onOpenPane}
+          />
+          <LauncherAction
+            id="shell"
+            label="Terminal puro"
+            accessibleLabel="Abrir terminal puro"
+            description="Shell do sistema, sem assistente."
+            icon="terminal"
+            onClick={onOpenShellTerminal}
           />
           <LauncherAction
             id="workspace"

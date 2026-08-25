@@ -468,6 +468,15 @@ export function getScrollbackExcerpt(paneId: string, max = 2_400): string {
   }
 }
 
+declare global {
+  interface Window {
+    __nexusGetScrollbackExcerpt?: typeof getScrollbackExcerpt;
+  }
+}
+if (typeof window !== 'undefined') {
+  window.__nexusGetScrollbackExcerpt = getScrollbackExcerpt;
+}
+
 /**
  * Missões que já receberam UMA retomada automática nesta sessão do renderer.
  *
@@ -2293,23 +2302,6 @@ export function waitForSession(
 ): Promise<string | null> {
   const existing = getPaneSessionId(paneId);
   if (existing) return Promise.resolve(existing);
-  let pendingSpawn: Promise<string | null> | null = null;
-  const pane = listPanes(useLayoutStore.getState().root).find(
-    (candidate) => candidate.id === paneId,
-  );
-  if (pane?.kind === 'shell' && pane.isStructuralPlaceholder !== true) {
-    const host = getOrCreateHost(pane);
-    if (!host.spawnStarted && !host.hibernated) {
-      pendingSpawn = startSpawn(
-        pane,
-        host,
-        resumeOnFirstSpawn.delete(pane.id),
-        false,
-        undefined,
-        restoreAuthorityOnFirstSpawn.delete(pane.id),
-      );
-    }
-  }
   return new Promise((resolve) => {
     let settled = false;
     const finish = (value: string | null): void => {
@@ -2323,9 +2315,37 @@ export function waitForSession(
       if (id === paneId && sessionId) finish(sessionId);
     });
     const timer = setTimeout(() => finish(getPaneSessionId(paneId)), timeoutMs);
-    void pendingSpawn?.then((sessionId) => {
-      if (!sessionId) finish(null);
-    });
+    const pane = listPanes(useLayoutStore.getState().root).find(
+      (candidate) => candidate.id === paneId,
+    );
+    // Subscribe first, then spawn: a fast PTY used to resolve before
+    // onPaneSessionChange was attached, so waitForSession sat until timeout
+    // even with a live session. Headless spawn: mission cli-agent panes used
+    // to wait for PaneLeaf attachHost; empty #root timed out as session=none.
+    if (
+      pane &&
+      pane.isStructuralPlaceholder !== true &&
+      !heldSpawnPanes.has(pane.id)
+    ) {
+      const host = getOrCreateHost(pane);
+      if (!host.spawnStarted && !host.hibernated) {
+        void startSpawn(
+          pane,
+          host,
+          resumeOnFirstSpawn.delete(pane.id),
+          false,
+          undefined,
+          restoreAuthorityOnFirstSpawn.delete(pane.id),
+        ).then(
+          (sessionId) => {
+            finish(sessionId ?? getPaneSessionId(paneId));
+          },
+          () => {
+            finish(getPaneSessionId(paneId));
+          },
+        );
+      }
+    }
   });
 }
 

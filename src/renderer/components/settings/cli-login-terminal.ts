@@ -36,6 +36,8 @@ export async function openCliLoginTerminal(input: {
     return { ok: false, error: 'Esta CLI não declara comando de login.' };
   }
 
+  // Espera o PTY (waitForSession spawna headless). Só então sai de
+  // Configurações — senão o operador some da tela antes do login existir.
   const layout = useLayoutStore.getState();
   const paneId = layout.addShellPane({ focus: false });
 
@@ -47,7 +49,7 @@ export async function openCliLoginTerminal(input: {
   }
 
   if (!sessionId) {
-    layout.close(paneId, 'cli-login-terminal-unavailable');
+    useLayoutStore.getState().close(paneId, 'cli-login-terminal-unavailable');
     return {
       ok: false,
       error: 'O terminal não ficou disponível. O login não foi iniciado.',

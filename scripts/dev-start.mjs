@@ -109,12 +109,20 @@ let failure;
 try {
   result = await runDevNativeLifecycle({
     rebuildElectron: async () => {
+      if (env.NEXUS_DEV_SKIP_NATIVE_REBUILD === '1') {
+        console.log('[dev-start] pulando rebuild Electron (NEXUS_DEV_SKIP_NATIVE_REBUILD=1)');
+        return;
+      }
       console.log('[dev-start] preparando módulos nativos para Electron…');
       await runNpmScript('rebuild:electron');
     },
     startForge: () =>
       runChild(forgeBin, ['start', ...process.argv.slice(2)]),
     rebuildNode: async () => {
+      if (env.NEXUS_DEV_SKIP_NATIVE_REBUILD === '1') {
+        console.log('[dev-start] pulando restore Node (NEXUS_DEV_SKIP_NATIVE_REBUILD=1)');
+        return;
+      }
       console.log('[dev-start] restaurando módulos nativos para Node…');
       await runNpmScript('rebuild:node');
     },

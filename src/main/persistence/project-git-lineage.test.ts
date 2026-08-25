@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { compareRepositoryLineage } from './project-git-lineage';
+import {
+  collectGitRepositoryProof,
+  compareRepositoryLineage,
+  projectGitResultFromSpawn,
+} from './project-git-lineage';
 import type { GitRepositoryLineage } from '../../shared/project-identity-types';
-import type { GitRepositoryProof } from './project-git-lineage';
+import type {
+  GitRepositoryProof,
+  ProjectGitRunner,
+} from './project-git-lineage';
 
 const ANCHOR = 'a'.repeat(40);
 const ROOT = 'b'.repeat(40);
@@ -86,5 +93,40 @@ describe('compareRepositoryLineage', () => {
     const result = compareRepositoryLineage(lineage(), proof());
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('unverifiable');
+  });
+});
+
+describe('projectGitResultFromSpawn', () => {
+  it('ETIMEDOUT vira status 1 em vez de throw — optional git não quarentena', () => {
+    const timedOut = Object.assign(new Error('spawnSync git ETIMEDOUT'), {
+      code: 'ETIMEDOUT',
+    });
+    expect(projectGitResultFromSpawn({ error: timedOut })).toEqual({
+      status: 1,
+      stdout: '',
+      stderr: 'spawnSync git ETIMEDOUT',
+    });
+  });
+});
+
+describe('collectGitRepositoryProof', () => {
+  it('rev-list lento (status 1) não aborta a prova', () => {
+    const runner: ProjectGitRunner = {
+      run(_cwd, args) {
+        if (args.includes('rev-list')) {
+          return { status: 1, stdout: '', stderr: 'spawnSync git ETIMEDOUT' };
+        }
+        if (args.includes('--is-inside-work-tree')) {
+          return { status: 0, stdout: 'true\n', stderr: '' };
+        }
+        if (args.includes('--is-shallow-repository')) {
+          return { status: 0, stdout: 'false\n', stderr: '' };
+        }
+        return { status: 0, stdout: '', stderr: '' };
+      },
+    };
+    const collected = collectGitRepositoryProof('/repo', runner);
+    expect(collected.isShallow).toBe(false);
+    expect(collected.rootCommits).toEqual([]);
   });
 });

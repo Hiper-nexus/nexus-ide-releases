@@ -13,7 +13,7 @@
   "auth": {
     "method": "oauth",
     "credentialStore": "keychain",
-    "loginHint": "Rode `claude auth login` no terminal. A sessão fica no Keychain.",
+    "loginHint": "A CLI `claude` (Claude Code) não tem sessão. O app Claude no Dock não conta para missões — no Terminal: `claude auth login`.",
     "loginCommand": "claude auth login"
   },
   "spawn": {

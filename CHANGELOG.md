@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.70.11 — Login na CLI
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+O badge **conectado** no Claude era o e-mail morto e o item do Keychain
+sem token. Missão recusava o Maestro; Contas pintava verde. Agora a
+CLI precisa de sessão viva. **Entrar com nova conta** sai de
+Configurações e abre o terminal de `claude auth login`. O app do Dock
+não conta.
+
+- Início: **Abrir um pane** (escolhe a CLI) e **Terminal puro** (shell).
+- Maestro sem sessão não senta se outra CLI está logada.
+- Handoff cola no Maestro idle; PTY idle depois do CR não mata o Maestro.
+- Boot Vite: watchdog 120s; identity scope em cache 60s; git timeout 30s.
+
+Gates: testes de login-terminal, contas, idle-delivery, identity-cache,
+launcher e seating. `tsc` limpo.
+
 ## 0.70.10 — Um pane por assento
 
 _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._

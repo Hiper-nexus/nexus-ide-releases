@@ -530,6 +530,35 @@ describe('recommended mission team', () => {
     expect(strictSquadAgentSchema.array().safeParse(roster).success).toBe(true);
   });
 
+  it('não recomenda Claude login-needed como Maestro quando outra CLI está sentada', () => {
+    const providers: ProviderSettingsInfo[] = [
+      {
+        ...provider(CLAUDE),
+        authStrategy: 'login-needed',
+        loginHint:
+          'Rode `claude auth login` no terminal. A sessão fica no Keychain.',
+      },
+      provider(CODEX),
+    ];
+    const readiness = missionRuntimeReadiness(
+      [CODEX, CLAUDE],
+      providers,
+      ACCOUNTS,
+      ORCH_SETTINGS.squadCliPolicy,
+    );
+    const roster = buildRecommendedMissionRoster({
+      readiness,
+      providers,
+      accounts: ACCOUNTS,
+      settings: ORCH_SETTINGS,
+      objective: 'Construir a experiência guiada de missão',
+      lane: 'standard',
+    });
+    expect(
+      roster?.find((agent) => agent.category === 'orchestrator')?.cli,
+    ).toBe('codex');
+  });
+
   it('não reprova mais o roster por modelo sem autenticação (doutrina fluxo-por-padrão)', () => {
     // Antes, trocar o modelo para um valor fora de authReadyModels travava o
     // "Continuar para revisão". Agora o modelo é assunto da própria CLI no
@@ -2301,6 +2330,50 @@ describe('Caminho Expresso', () => {
       prepared.roster.find((agent) => agent.agentName === 'Implementar interface')
         ?.cli,
     ).toBe('gemini');
+  });
+
+  it('Iniciar fica bloqueado se o operador escolher Claude sem sessão', async () => {
+    api.listProviders.mockResolvedValue([
+      {
+        ...provider(CLAUDE),
+        authStrategy: 'login-needed',
+        loginHint:
+          'Rode `claude auth login` no terminal. A sessão fica no Keychain.',
+      },
+      provider(CODEX),
+    ]);
+    const host = await renderAtExpress();
+    enterText(
+      fieldByLabel<HTMLTextAreaElement>(
+        host,
+        'O que você quer que a missão entregue?',
+      ),
+      'Construir uma landing page com formulário de contato',
+    );
+    await flush();
+    await flush();
+
+    const tool = host.querySelector<HTMLSelectElement>(
+      'select[aria-label="Ferramenta de IA para Coordenar e revisar"]',
+    );
+    expect(tool).not.toBeNull();
+    act(() => {
+      tool!.value = 'claude';
+      tool!.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await flush();
+
+    expect(
+      host
+        .querySelector('[data-category="orchestrator"]')
+        ?.getAttribute('data-state'),
+    ).toBe('needs-attention');
+    expect(host.textContent).toContain('claude auth login');
+    expect(button(host, 'Iniciar missão').disabled).toBe(true);
+
+    act(() => button(host, 'Iniciar missão').click());
+    await flush();
+    expect(api.prepare).not.toHaveBeenCalled();
   });
 
   it('pula workers sem modelo configurado na rotação em vez de devolver null', () => {

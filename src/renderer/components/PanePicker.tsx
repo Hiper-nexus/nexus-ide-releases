@@ -4,6 +4,7 @@ import type { ProviderSettingsInfo } from '../../shared/provider-settings-types'
 import { filterPaletteActions } from '../lib/command-palette-filter';
 import { useAccountStore } from '../state/account-store';
 import { useLayoutStore } from '../state/layout-store';
+import { usePanePickerStore } from '../state/pane-picker-store';
 import { useProviderStore } from '../state/provider-store';
 import { PixelIcon, type PixelIconName } from './PixelIcon';
 import { ProviderLogo } from './ProviderLogo';
@@ -208,6 +209,10 @@ export function runPanePickerIntent(intent: PanePickerIntent): void {
 export function PanePicker() {
   const providers = useProviderStore((state) => state.providers);
   const accounts = useAccountStore((state) => state.accounts);
+  const pendingOpen = usePanePickerStore((state) => state.pendingOpen);
+  const consumePendingOpen = usePanePickerStore(
+    (state) => state.consumePendingOpen,
+  );
 
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -240,6 +245,14 @@ export function PanePicker() {
     setOpen(false);
     triggerRef.current?.focus();
   }, []);
+
+  // Início → Abrir um pane: o grid pode estar escondido; o pedido fica
+  // até este picker montar/ficar vivo.
+  useEffect(() => {
+    if (!pendingOpen) return;
+    setOpen(true);
+    consumePendingOpen();
+  }, [pendingOpen, consumePendingOpen]);
 
   // Estado limpo a cada abertura; o foco entra na busca (18 CLIs não se
   // navegam com scroll).

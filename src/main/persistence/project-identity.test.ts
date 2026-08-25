@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   PROJECT_MANIFEST_PATH,
   ProjectIdentityQuarantineError,
+  clearProjectExecutionScopeCache,
   createProjectManifest,
   getOrCreateInstallationId,
   resolveProjectExecutionScope,
@@ -85,6 +86,7 @@ describe('project identity', () => {
   });
 
   afterEach(() => {
+    clearProjectExecutionScopeCache();
     fs.rmSync(root, { recursive: true, force: true });
   });
 

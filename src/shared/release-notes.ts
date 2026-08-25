@@ -13,30 +13,37 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.70.10',
-  date: '2026-08-24',
-  codename: 'Um pane por assento',
+  version: '0.70.11',
+  date: '2026-08-25',
+  codename: 'Login na CLI',
   summary:
-    'Pergunta ao time não abre cópia do integrante. O seating recusa spawn ' +
-    'extra. Handoff cola no Maestro. Pronto não fecha a missão.',
+    'Login Claude é a CLI, não o app do Dock. Entrar com nova conta abre o ' +
+    'terminal. Início ganha pane manual e terminal puro.',
   highlights: [
     {
-      title: 'Seating recusa pane extra',
+      title: 'Login na CLI, de verdade',
       detail:
-        'Roster já sentado: sem ad-hoc, sem segundo “Implementar motor”, ' +
-        'sem remint DeepSeek/Claude no mesmo assento.',
+        'Badge conectado exige token no Keychain. Entrar com nova conta ' +
+        'sai de Configurações e dispara claude auth login.',
     },
     {
-      title: 'Handoff cola no Maestro',
+      title: 'Início: pane e terminal puro',
       detail:
-        'Queued vira consumed no idle. 2x2 e 3x3 no DEV colaram a resposta.',
+        'Abrir um pane escolhe a ferramenta. Terminal puro é o shell, sem IA.',
     },
   ],
   fixes: [
     {
-      title: 'Kickoff não manda o Maestro spawnar de novo',
+      title: 'Maestro sem sessão não senta',
       detail:
-        'First-wave já abriu os panes. Use nexus_pane_ask.',
+        'Claude login-needed cede o assento a Codex/Grok logados. Iniciar ' +
+        'não dispara prepare com coordenador morto.',
+    },
+    {
+      title: 'Handoff no idle não mata o Maestro',
+      detail:
+        'PTY idle depois do CR é modal, não processo morto. Identity e git ' +
+        'não congelam mais o main no tick do cron.',
     },
   ],
 };

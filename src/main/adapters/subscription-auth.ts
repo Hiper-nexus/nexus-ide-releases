@@ -922,8 +922,11 @@ export function refreshClaudeSubscriptionAuthCache(
   claudeRefreshInFlight = Promise.resolve()
     .then(async () => {
       if (home === os.homedir()) {
-        const blob = readActiveClaudeCredential();
-        if (claudeCredentialBlobIsUsable(blob)) return true;
+        // Item Keychain presente com accessToken vazio NÃO é sessão
+        // (Claude Code zera o blob após invalid_grant). Metadata-only
+        // pintava "conectado" / authStrategy=subscription e o Maestro
+        // morria no probe fail-closed.
+        return claudeCredentialBlobIsUsable(readActiveClaudeCredential());
       }
       return keychainProbe();
     })

@@ -36,7 +36,7 @@ import {
   requireLiveRendererWorkspaceScope,
   requireRendererWorkspaceScope,
 } from "../persistence/renderer-workspace-scope";
-import { resolveProjectExecutionScope } from "../persistence/project-identity";
+import { resolveProjectExecutionScopeCached } from "../persistence/project-identity";
 import { getWorkspaceState } from "../persistence/workspace-store";
 import {
   initSquadStore,
@@ -1968,7 +1968,7 @@ export function registerOrchIpc(): void {
       if (!known) return [];
       let scope;
       try {
-        scope = resolveProjectExecutionScope(parsed.data.rootPath);
+        scope = resolveProjectExecutionScopeCached(parsed.data.rootPath);
       } catch {
         return [];
       }

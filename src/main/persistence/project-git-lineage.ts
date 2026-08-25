@@ -9,7 +9,28 @@ import type {
 } from '../../shared/types';
 
 const MAX_GIT_OUTPUT_BYTES = 128 * 1024;
-const GIT_TIMEOUT_MS = 5_000;
+/** Slow disks / a loaded Mac used to ETIMEDOUT at 5s and quarantine a valid repo. */
+export const GIT_TIMEOUT_MS = 30_000;
+
+export function projectGitResultFromSpawn(result: {
+  readonly error?: Error | null;
+  readonly status?: number | null;
+  readonly stdout?: string | null;
+  readonly stderr?: string | null;
+}): ProjectGitResult {
+  if (result.error) {
+    return {
+      status: 1,
+      stdout: result.stdout ?? '',
+      stderr: result.error.message || result.stderr || '',
+    };
+  }
+  return {
+    status: result.status ?? 1,
+    stdout: result.stdout ?? '',
+    stderr: result.stderr ?? '',
+  };
+}
 
 export interface ProjectGitResult {
   readonly status: number;
@@ -77,12 +98,7 @@ export const processGitRunner: ProjectGitRunner = Object.freeze({
         GIT_TERMINAL_PROMPT: '0',
       },
     });
-    if (result.error) throw result.error;
-    return {
-      status: result.status ?? 1,
-      stdout: result.stdout ?? '',
-      stderr: result.stderr ?? '',
-    };
+    return projectGitResultFromSpawn(result);
   },
 });
 

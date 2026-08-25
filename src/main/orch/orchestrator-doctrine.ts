@@ -91,6 +91,9 @@ export interface MaestroKickoffBriefInput {
 /** Doutrina mínima da missão-pergunta — só o que NÃO está no meta bloco. */
 const META_PANE_DOCTRINE = [
   'DOUTRINA (missão de pergunta):',
+  '• PRIMEIRO ATO: nexus_pane_ask em cada integrante com SÓ a pergunta. ' +
+    'NÃO liste panes, NÃO leia o grid, NÃO explique o plano — os panes ' +
+    'já estão abertos na first-wave.',
   '• ESPERA sem loop: nexus_pane_ask envia, espera e devolve a resposta; ' +
     'wait serve só para confirmar boot de pane recém-aberto.',
   '• FECHO único: um só nexus_handoff_submit com as respostas de TODOS os ' +
@@ -125,8 +128,9 @@ export function buildMaestroKickoffBrief(
         '## ORQUESTRAÇÃO (missão de pergunta aos panes)',
         `Você é ${input.orchestratorName}. A first-wave JÁ abriu os panes ` +
           `da equipe (${workers.join(', ') || 'equipe'}). NÃO chame ` +
-          'nexus_pane_spawn. Colete TODAS as respostas com nexus_handoff_list ' +
-          'e nexus_pane_ask nos panes já abertos, e feche com o handoff final.',
+          'nexus_pane_spawn. NÃO liste panes. PRIMEIRO ATO: nexus_pane_ask ' +
+          'em cada integrante com a pergunta. Depois colete com ' +
+          'nexus_handoff_list e feche com o handoff final.',
         'O contrato completo está no bloco META-DE-PANE do objetivo — ele ' +
           'VENCE qualquer regra geral de delegação.',
       ].join('\n')

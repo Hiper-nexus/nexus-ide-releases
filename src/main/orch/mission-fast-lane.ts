@@ -672,7 +672,8 @@ export function agentPrompt(
         'com a evidência, a first-wave pergunta. ' +
         `A first-wave já abriu UM pane por integrante (${teamWorkerNames.join(', ') || 'equipe'}) ` +
         'com a pergunta limpa e readOnly: true. NÃO spawne de novo o mesmo ' +
-        'integrante. NÃO spawne ad-hoc (sem agentName). Se faltar alguém da ' +
+        'integrante. NÃO spawne ad-hoc (sem agentName). NÃO liste panes. ' +
+        'PRIMEIRO ATO: nexus_pane_ask em cada integrante. Se faltar alguém da ' +
         'lista, spawne SÓ esse agentName com readOnly: true; senão ' +
         'nexus_pane_ask. EXTRAIA do objetivo apenas a PERGUNTA (ex.: ' +
         '"quanto é 1+1?") — quem é perguntado recebe SÓ a pergunta. ' +

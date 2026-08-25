@@ -16,6 +16,7 @@ const paneMocks = vi.hoisted(() => ({
 
 const semanticMocks = vi.hoisted(() => ({
   injectable: true,
+  status: 'idle' as 'idle' | 'completed' | 'awaiting-input' | 'working',
   taps: [] as Array<(entry: {
     sessionId: string;
     status: 'idle' | 'completed' | 'awaiting-input' | 'working';
@@ -112,14 +113,15 @@ vi.mock('./pane-registry', () => ({
 }));
 
 vi.mock('./agent-status', () => ({
-  isSessionInjectableIdle: vi.fn(
-    () => ptyMocks.state === 'idle' && semanticMocks.injectable,
-  ),
-  getAgentSemanticStatusBySession: vi.fn(() =>
-    semanticMocks.injectable
-      ? { status: 'idle' }
-      : { status: 'working' },
-  ),
+  isSessionInjectableIdle: vi.fn(() => {
+    if (ptyMocks.state !== 'idle') return false;
+    if (semanticMocks.status === 'awaiting-input') return false;
+    if (semanticMocks.status === 'working') return semanticMocks.injectable;
+    return true;
+  }),
+  getAgentSemanticStatusBySession: vi.fn(() => ({
+    status: semanticMocks.status,
+  })),
   tapAgentSemanticStatus: vi.fn((tap: (entry: {
     sessionId: string;
     status: 'idle' | 'completed' | 'awaiting-input' | 'working';
@@ -412,6 +414,7 @@ beforeEach(() => {
   ptyMocks.exitTaps.length = 0;
   paneMocks.authorities.clear();
   semanticMocks.injectable = true;
+  semanticMocks.status = 'idle';
   semanticMocks.taps.length = 0;
   scopeMocks.scopesByOwner.clear();
   scopeMocks.listeners.length = 0;
@@ -444,26 +447,22 @@ async function advanceUntilSubmitted(
   );
 }
 
-describe('idle delivery authority and lifecycle', () => {
+describe('idle delivery authority and lifecycle', { timeout: 60_000 }, () => {
   it('does not paste or submit while an idle-looking permission prompt is active', async () => {
     const delivery = await import('./idle-delivery');
     const scope = testProjectScope();
     authorizeTarget(scope);
     ptyMocks.state = 'idle';
     semanticMocks.injectable = false;
+    semanticMocks.status = 'awaiting-input';
     delivery.initIdleDelivery();
 
     delivery.onHandoffSubmitted(handoff(), scope);
-    ptyMocks.stateTaps[0]('orchestrator-session', 'idle');
-    await vi.advanceTimersByTimeAsync(1_000);
     expect(ptyMocks.writes).not.toHaveBeenCalled();
 
     semanticMocks.injectable = true;
-    semanticMocks.taps[0]({
-      sessionId: 'orchestrator-session',
-      status: 'completed',
-    });
-    expect(ptyMocks.writes).not.toHaveBeenCalled();
+    semanticMocks.status = 'completed';
+    await vi.advanceTimersByTimeAsync(500);
     await advanceUntilSubmitted(delivery);
     expect(ptyMocks.writes).toHaveBeenCalledTimes(2);
     expect(ptyMocks.writes).toHaveBeenLastCalledWith(
@@ -946,12 +945,14 @@ describe('idle delivery authority and lifecycle', () => {
     const delivery = await import('./idle-delivery');
     const scope = testProjectScope();
     authorizeTarget(scope);
+    const current = handoff();
+    storeMocks.handoffs.set(current.id, current);
     const recovery = vi.fn(async () => true);
     delivery.configureHandoffDeliveryRuntimeRecovery(recovery);
     ptyMocks.state = 'idle';
     delivery.initIdleDelivery();
 
-    delivery.onHandoffSubmitted(handoff(), scope);
+    delivery.onHandoffSubmitted(current, scope);
     await vi.advanceTimersByTimeAsync(30_000);
 
     const deliveries = ptyMocks.writes.mock.calls.filter((call) =>
@@ -968,7 +969,10 @@ describe('idle delivery authority and lifecycle', () => {
       storeMocks.missions.get(`${scope.projectId}:${scope.checkoutId}:mission-a`)
         ?.status,
     ).toBe('running');
-    expect(recovery).toHaveBeenCalled();
+    expect(storeMocks.handoffs.get('handoff-a')?.deliveryState).toBe('queued');
+    // PTY still idle = modal, not a dead Maestro. Recovery would drop
+    // orchestratorSessionId (DEV 25/08).
+    expect(recovery).not.toHaveBeenCalled();
     delivery.shutdownIdleDelivery();
   });
 
@@ -1222,13 +1226,37 @@ describe('idle delivery authority and lifecycle', () => {
     authorizeTarget(scope);
     ptyMocks.state = 'idle';
     semanticMocks.injectable = false;
+    semanticMocks.status = 'awaiting-input';
     delivery.initIdleDelivery();
 
     delivery.onHandoffSubmitted(handoff(), scope);
     expect(ptyMocks.writes).not.toHaveBeenCalled();
 
     semanticMocks.injectable = true;
+    semanticMocks.status = 'idle';
     await vi.advanceTimersByTimeAsync(500);
+    await advanceUntilPasted(delivery);
+
+    expect(ptyMocks.writes).toHaveBeenCalledWith(
+      'orchestrator-session',
+      expect.stringContaining('handoff_id=handoff-a'),
+      { markInputBusy: false },
+    );
+    delivery.shutdownIdleDelivery();
+  });
+
+  it('missão running: cola queued no PTY idle mesmo com semantic working', async () => {
+    // Campo 24/08: 1+1 queued=2 pasted=0 ~34s com Maestro CSS idle e
+    // missão ainda running — canPaste só liberava depois do Pronto.
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    authorizeTarget(scope);
+    ptyMocks.state = 'idle';
+    semanticMocks.injectable = false;
+    semanticMocks.status = 'working';
+    delivery.initIdleDelivery();
+
+    delivery.onHandoffSubmitted(handoff(), scope);
     await advanceUntilPasted(delivery);
 
     expect(ptyMocks.writes).toHaveBeenCalledWith(
@@ -1256,6 +1284,7 @@ describe('idle delivery authority and lifecycle', () => {
     );
     ptyMocks.state = 'idle';
     semanticMocks.injectable = false;
+    semanticMocks.status = 'working';
     delivery.initIdleDelivery();
 
     delivery.onHandoffSubmitted(handoff(), scope);

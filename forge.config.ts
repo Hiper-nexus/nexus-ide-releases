@@ -376,7 +376,12 @@ const config: ForgeConfig = {
   },
   // macOS: rebuild paralelo faz módulos nativos compartilharem/removerem
   // `build/node_gyp_bins`, causando ENOENT intermitente no start do Dev.
-  rebuildConfig: { mode: 'sequential' },
+  // @electron/rebuild ignores `{ disable: true }`; empty onlyModules is the
+  // skip that actually prevents sqlite3.c clang on `npm start`.
+  rebuildConfig:
+    process.env.NEXUS_DEV_SKIP_NATIVE_REBUILD === '1'
+      ? { onlyModules: [] }
+      : { mode: 'sequential' },
   makers: [
     // .dmg is the installable macOS artifact; ZIP doubles as the
     // Squirrel.Mac auto-update payload.

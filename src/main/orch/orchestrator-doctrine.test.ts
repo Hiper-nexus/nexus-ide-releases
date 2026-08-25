@@ -137,6 +137,7 @@ describe('buildMaestroKickoffBrief', () => {
     });
     expect(text).toContain('first-wave JÁ abriu');
     expect(text).toContain('NÃO chame nexus_pane_spawn');
+    expect(text).toContain('NÃO liste panes');
     expect(text).toContain('nexus_pane_ask');
     expect(text).toContain('Implementar interface');
     expect(text).not.toMatch(/abra os panes da equipe/i);

@@ -218,14 +218,16 @@ describe('TerminalWorkspace contracts', () => {
       root: buildGridTree([
         {
           id: 'pane-maestro',
-          kind: 'shell',
+          kind: 'cli-agent',
           title: 'Maestro',
+          adapterId: 'codex',
           missionId: 'mission-release',
         },
         {
           id: 'pane-other',
-          kind: 'shell',
+          kind: 'cli-agent',
           title: 'Outra',
+          adapterId: 'codex',
           missionId: 'mission-other',
         },
       ]),

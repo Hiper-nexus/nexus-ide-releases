@@ -253,7 +253,7 @@ import {
 import { configureProjectOrientationService } from "./context/orientation/orientation-service";
 import { registerOrientationIpc } from "./context/orientation/orientation-ipc";
 import { registerContextDraftIpc } from "./context/context-draft-ipc";
-import { resolveProjectExecutionScope } from "./persistence/project-identity";
+import { resolveProjectExecutionScopeCached } from "./persistence/project-identity";
 import {
   registerProviderIpc,
   registerProviderListener,
@@ -367,13 +367,13 @@ function traceBootstrap(phase: string): void {
 function knownCronScopes() {
   const state = getWorkspaceState();
   const paths = [state.current?.path, ...state.recents.map((item) => item.path)];
-  const scopes: ReturnType<typeof resolveProjectExecutionScope>[] = [];
+  const scopes: ReturnType<typeof resolveProjectExecutionScopeCached>[] = [];
   const seen = new Set<string>();
   for (const workspacePath of paths) {
     if (!workspacePath || seen.has(workspacePath)) continue;
     seen.add(workspacePath);
     try {
-      scopes.push(resolveProjectExecutionScope(workspacePath));
+      scopes.push(resolveProjectExecutionScopeCached(workspacePath));
     } catch (error) {
       console.warn("[cron] ignoring invalid known workspace:", error);
     }

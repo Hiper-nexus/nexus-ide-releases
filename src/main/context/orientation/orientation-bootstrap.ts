@@ -1,4 +1,4 @@
-import { resolveProjectExecutionScope } from '../../persistence/project-identity';
+import { resolveProjectExecutionScopeCached } from '../../persistence/project-identity';
 import {
   getProjectOrientationService,
   tryGetProjectOrientationService,
@@ -17,7 +17,7 @@ export function scheduleOrientationForWorkspace(workspacePath: string): void {
   if (!service) return;
   queueMicrotask(() => {
     try {
-      const scope = resolveProjectExecutionScope(workspacePath);
+      const scope = resolveProjectExecutionScopeCached(workspacePath);
       void service.ensure(scope, { reason: 'workspace-open', waitMs: 0 }).catch((error) => {
         console.warn('[orientation] background ensure failed:', error);
       });
@@ -58,7 +58,7 @@ function startHeadWatch(
     const service = tryGetProjectOrientationService();
     if (!service) return;
     try {
-      const scope = resolveProjectExecutionScope(workspacePath);
+      const scope = resolveProjectExecutionScopeCached(workspacePath);
       // ensure() invalidates when HEAD changes; no force rebuild on every tick.
       void service.ensure(scope, { reason: 'head-change', waitMs: 0 }).catch(() => undefined);
     } catch {
@@ -87,7 +87,7 @@ export async function loadOrientationMarkdownForKickoff(
   const service = tryGetProjectOrientationService();
   if (!service) return null;
   try {
-    const scope = resolveProjectExecutionScope(workspacePath);
+    const scope = resolveProjectExecutionScopeCached(workspacePath);
     const map = await service.ensure(scope, {
       reason: 'pre-kickoff',
       waitMs,
@@ -104,7 +104,7 @@ export async function ensureOrientationForScopePath(
   force = false,
 ) {
   const service = getProjectOrientationService();
-  const scope = resolveProjectExecutionScope(workspacePath);
+  const scope = resolveProjectExecutionScopeCached(workspacePath);
   const map = await service.ensure(scope, {
     reason: force ? 'refresh' : 'mcp',
     force,

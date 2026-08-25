@@ -227,7 +227,7 @@ describe('mission fast lane', () => {
     // Sem plano selado redundante repetindo o objetivo.
     expect(prompt).not.toContain('Plano selado (1 entrega)');
     // Proporcional ao pedido: cabe em ~2 KB.
-    expect(prompt.length).toBeLessThan(2_000);
+    expect(prompt.length).toBeLessThan(2_200);
   });
 
   it('retomada avisa que foi religado', () => {

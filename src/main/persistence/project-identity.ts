@@ -886,6 +886,47 @@ function resolveProvisionalCheckoutId(
   }
 }
 
+export const PROJECT_EXECUTION_SCOPE_CACHE_TTL_MS = 60_000;
+type ScopeCacheEntry =
+  | { readonly at: number; readonly kind: 'ok'; readonly scope: ProjectExecutionScope }
+  | { readonly at: number; readonly kind: 'err'; readonly error: unknown };
+const scopeCache = new Map<string, ScopeCacheEntry>();
+
+export function clearProjectExecutionScopeCache(): void {
+  scopeCache.clear();
+}
+
+/**
+ * Same as resolveProjectExecutionScope, but reuses the last result (ok or
+ * throw) for PROJECT_EXECUTION_SCOPE_CACHE_TTL_MS. Cron/goal-driver tick
+ * every 30s used to spawnSync git on the main thread and freeze CDP
+ * (DEV 25/08: json/list hung while rev-list ETIMEDOUT). Negative entries
+ * keep a timed-out git from blocking every subsequent tick.
+ */
+export function resolveProjectExecutionScopeCached(
+  workspaceRoot: string,
+  installationOrOptions?: string | ProjectIdentityResolveOptions,
+  now = Date.now(),
+): ProjectExecutionScope {
+  const key = path.resolve(workspaceRoot);
+  const hit = scopeCache.get(key);
+  if (hit && now - hit.at < PROJECT_EXECUTION_SCOPE_CACHE_TTL_MS) {
+    if (hit.kind === 'ok') return hit.scope;
+    throw hit.error;
+  }
+  try {
+    const scope = resolveProjectExecutionScope(
+      workspaceRoot,
+      installationOrOptions,
+    );
+    scopeCache.set(key, { at: now, kind: 'ok', scope });
+    return scope;
+  } catch (error) {
+    scopeCache.set(key, { at: now, kind: 'err', error });
+    throw error;
+  }
+}
+
 export function resolveProjectExecutionScope(
   workspaceRoot: string,
   installationOrOptions?: string | ProjectIdentityResolveOptions,

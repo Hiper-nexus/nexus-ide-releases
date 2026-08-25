@@ -105,9 +105,18 @@ export function ExpressMissionStart({
     if (!suppressHeadingAutofocus) headingRef.current?.focus();
   }, [suppressHeadingAutofocus]);
 
+  const maestro = draft.roster.find(
+    (agent) => agent.category === 'orchestrator',
+  );
+  const maestroIssue =
+    inventory.status === 'ready' && maestro
+      ? issueForAgent(maestro, inventory)
+      : null;
+  const startBlocked = Boolean(maestroIssue);
+
   const handleSubmit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
-    if (!busy) onStart();
+    if (!busy && !startBlocked) onStart();
   };
 
   const teamNames = draft.roster
@@ -384,14 +393,15 @@ export function ExpressMissionStart({
         </div>
       )}
 
-      {error && (
+      {(error || maestroIssue) && (
         <div
+          id={error ? undefined : 'express-maestro-login'}
           className="mission-setup__error-summary"
           role="alert"
           aria-live="polite"
           aria-atomic="true"
         >
-          {error}
+          {error ?? maestroIssue}
         </div>
       )}
 
@@ -399,7 +409,10 @@ export function ExpressMissionStart({
         <button
           type="submit"
           className="mission-setup__button mission-setup__button--primary mission-setup__button--start"
-          disabled={busy}
+          disabled={busy || startBlocked}
+          aria-describedby={
+            startBlocked && !error ? 'express-maestro-login' : undefined
+          }
         >
           {busy ? 'Iniciando missão…' : 'Iniciar missão'}
         </button>

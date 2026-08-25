@@ -9,6 +9,7 @@ interface RendererLoadWatchdogInput {
   isFinished: boolean;
   isLoading: boolean;
   loadAgeMs: number;
+  stallMs?: number;
 }
 
 /**
@@ -20,10 +21,11 @@ export function decideRendererLoadWatchdog({
   isFinished,
   isLoading,
   loadAgeMs,
+  stallMs,
 }: RendererLoadWatchdogInput): RendererLoadWatchdogAction {
   if (isFinished) return 'wait';
   if (!isLoading) return 'retry';
-  return loadAgeMs >= RENDERER_LOAD_STALL_MS
+  return loadAgeMs >= (stallMs ?? RENDERER_LOAD_STALL_MS)
     ? 'restart-stalled-load'
     : 'wait';
 }
