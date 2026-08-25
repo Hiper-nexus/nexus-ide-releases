@@ -13,7 +13,7 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.70.15',
+  version: '0.70.16',
   date: '2026-08-25',
   codename: 'Título do quadro',
   summary:

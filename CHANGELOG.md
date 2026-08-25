@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.70.16 — Título do quadro
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+Header do quadro em uma linha. O cartão da vaga nos Terminais também
+não pinta o briefing inteiro.
+
 ## 0.70.15 — Título do quadro
 
 _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
