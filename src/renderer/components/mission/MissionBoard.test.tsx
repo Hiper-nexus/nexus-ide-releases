@@ -540,6 +540,21 @@ describe('MissionBoard canonical controller', () => {
     expect(progress!.max).toBe(5);
   });
 
+  it('objetivo longo com URL não vira cartaz no h1 (F-010)', async () => {
+    api.snapshot.mockResolvedValue(
+      canonicalSnapshot({
+        title:
+          'https://admin.wordnet.com.vc/admin/conteudo aqui dentro deste painel. nao ta legal a ui nao ta. de forma facil de entender tipo e aqui que vai ter toda parte de gestao da lacunher dos box',
+      }),
+    );
+    const { host } = mount();
+    await flush();
+    const text = normalizedText(heading(host));
+    expect(text).not.toMatch(/^https?:\/\//u);
+    expect(text.length).toBeLessThanOrEqual(96);
+    expect(heading(host).getAttribute('title')).toMatch(/admin\.wordnet/u);
+  });
+
   it('header Encerrar/leftover pinta Parou/Dormindo, não Precisa de você', async () => {
     api.snapshot.mockResolvedValue(
       canonicalSnapshot({

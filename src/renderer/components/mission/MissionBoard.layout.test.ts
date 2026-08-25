@@ -73,10 +73,11 @@ describe("MissionBoard layout system invariants (RED test)", () => {
     );
   });
 
-  it("mission title wraps instead of collapsing to q…", () => {
+  it("mission title stays one chrome line (F-010)", () => {
     const titleRule = cssRule(missionCss, ".mission-board__identity h1");
-    expect(titleRule).not.toMatch(/white-space:\s*nowrap/);
-    expect(titleRule).not.toMatch(/text-overflow:\s*ellipsis/);
+    expect(titleRule).toMatch(/white-space:\s*nowrap/);
+    expect(titleRule).toMatch(/text-overflow:\s*ellipsis/);
+    expect(titleRule).toMatch(/overflow:\s*hidden/);
   });
 
   it("wraps compact actions at the stacked-graph breakpoint so Terminais stays on-screen (F-005)", () => {

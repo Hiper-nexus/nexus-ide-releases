@@ -63,6 +63,8 @@
   height: var(--mission-board-header-size);
   min-width: 0;
   min-height: var(--mission-board-header-size);
+  max-height: var(--mission-board-header-size);
+  overflow: hidden;
   padding: 0 var(--space-4);
   border-bottom: 1px solid var(--border-strong);
   background: var(--bg-bar);
@@ -78,15 +80,14 @@
 .mission-board__identity h1 {
   min-width: 0;
   margin: 0;
-  overflow: visible;
+  overflow: hidden;
   color: var(--text);
-  font-size: var(--text-2xl);
+  font-size: var(--text-lg);
   font-weight: 650;
-  letter-spacing: -0.015em;
-  line-height: 1.2;
-  overflow-wrap: anywhere;
-  text-wrap: pretty;
-  white-space: normal;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .mission-board__workspace {
@@ -1655,20 +1656,14 @@
   .mission-board__header {
     grid-template-columns: minmax(0, 1fr) auto;
     grid-template-rows: auto;
-    align-items: start;
+    align-items: center;
     flex: 0 0 auto;
     gap: var(--space-2) var(--space-3);
     height: auto;
     min-height: var(--mission-board-header-size);
-    padding-block: var(--space-2);
-  }
-
-  .mission-board__identity h1 {
+    max-height: none;
     overflow: visible;
-    text-overflow: clip;
-    white-space: normal;
-    overflow-wrap: anywhere;
-    text-wrap: pretty;
+    padding-block: var(--space-2);
   }
 
   .mission-board__status-group {

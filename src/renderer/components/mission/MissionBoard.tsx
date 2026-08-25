@@ -19,6 +19,7 @@ import {
   type MissionEvent,
 } from '../../../shared/mission-events';
 import { missionLifecycleLabel } from '../../lib/mission-lifecycle-copy';
+import { missionBoardHeading } from '../../lib/mission-board-heading';
 import { missionAwaitsOperatorReview } from '../../../shared/mission-recovery-policy';
 import {
   MISSION_BACKGROUND_NOTICE,
@@ -962,7 +963,9 @@ export function MissionBoard({
     >
       <header className="mission-board__header">
         <div className="mission-board__identity">
-          <h1 id={headingId}>{currentSnapshot.title}</h1>
+          <h1 id={headingId} title={currentSnapshot.title}>
+            {missionBoardHeading(currentSnapshot.title)}
+          </h1>
           <p className="mission-board__workspace">
             {currentSnapshot.workspaceLabel}
           </p>
