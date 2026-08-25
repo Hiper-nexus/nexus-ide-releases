@@ -8,6 +8,7 @@ import { CoffeeSpillCorner } from '../pet/CoffeeCup';
 import { ActionCard, EmptyState } from './ActionCard';
 import { PaneInteractionSurface } from './PaneInteractionSurface';
 import { PaneToolbar } from './PaneToolbar';
+import { missionBoardHeading } from '../lib/mission-board-heading';
 import {
   paneVacancyIntent,
   paneVacancyMission,
@@ -160,7 +161,7 @@ export function PaneVacancyBody({ pane }: { readonly pane: PaneModel }) {
           <EmptyState
             icon={vacancyMission?.status === 'blocked' ? 'warn' : 'mission'}
             role={vacancyMission?.status === 'blocked' ? 'alert' : 'status'}
-            title={intent.missionTitle}
+            title={missionBoardHeading(intent.missionTitle)}
             body={
               <>
                 <p>{intent.headline}</p>

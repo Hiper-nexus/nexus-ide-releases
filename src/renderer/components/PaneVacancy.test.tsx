@@ -288,6 +288,22 @@ describe('a SOLITARY structural placeholder is a vacancy, not a session', () => 
     act(() => root.unmount());
   });
 
+  it('objetivo com URL não vira cartaz no empty state (F-010)', () => {
+    useOrchStore.setState({
+      missions: [
+        mission({
+          title:
+            'https://admin.wordnet.com.vc/admin/conteudo aqui dentro deste painel. nao ta legal a ui nao ta. de forma facil de entender tipo e aqui que vai ter toda parte de gestao',
+        }),
+      ],
+    });
+    seedPlaceholderOnly();
+    render();
+    expect(text()).not.toMatch(/https:\/\/admin\.wordnet\.com\.vc/u);
+    expect(text()).toMatch(/painel/i);
+    act(() => root.unmount());
+  });
+
   it('with no live mission it teaches what the area is and how to use it', () => {
     seedPlaceholderOnly();
 
