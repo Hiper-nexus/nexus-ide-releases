@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.70.17 — Cartão da vaga
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+O empty state dos Terminais é um estado curto, não o briefing.
+"Missão em pausa" ou "Montando a equipe". Sem URL, sem
+"Motivo não registrado".
+
 ## 0.70.16 — Título do quadro
 
 _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._

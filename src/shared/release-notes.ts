@@ -13,13 +13,19 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.70.16',
+  version: '0.70.17',
   date: '2026-08-25',
-  codename: 'Título do quadro',
+  codename: 'Cartão da vaga',
   summary:
-    'O header do quadro é chrome de uma linha. O briefing longo não ' +
-    'vira cartaz por cima do grafo.',
+    'O cartão da vaga nos Terminais é um estado curto. O briefing ' +
+    'longo não vira cartaz no empty state.',
   highlights: [
+    {
+      title: 'Cartão da vaga sem briefing',
+      detail:
+        'Título "Missão em pausa" ou "Montando a equipe". Sem URL, ' +
+        'sem "Motivo não registrado". O objetivo fica no quadro.',
+    },
     {
       title: 'Título do quadro em uma linha',
       detail:
