@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.70.14 — Maestro vivo
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+O Maestro **não morre** quando a missão termina o turno. A CLI religa no
+mesmo pane; o quadro/rail avisa. Sem mural `[nexus]` no PTY. Digitar é
+ajuste, não restart.
+
+- Worker Working depois do fim: Pronto espera handoff; interrupt só
+  depois da entrega.
+- Grid 2×2: spawn na caixa real, não em 80×24.
+- Terminais continua no rail (0.70.13).
+
+Gates: mission-owned-pane-policy, civilian-pronto, terminal-host,
+terminal-render-policy. `tsc` limpo.
+
 ## 0.70.13 — Terminais no rail
 
 _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._

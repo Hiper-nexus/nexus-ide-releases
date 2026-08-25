@@ -13,38 +13,45 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.70.13',
+  version: '0.70.14',
   date: '2026-08-25',
-  codename: 'Terminais no rail',
+  codename: 'Maestro vivo',
   summary:
-    'Terminais é um destino do rail, ao lado de Início. Não precisa clicar ' +
-    'no workspace. No quadro, o cartão do agente abre o terminal dele.',
+    'Quando o Maestro encerra o turno, o pane continua com a CLI viva. ' +
+    'O quadro avisa; o PTY não vira mural do Nexus. Digitar pede ajuste, ' +
+    'não reinicia a missão.',
   highlights: [
+    {
+      title: 'Maestro não morre no done',
+      detail:
+        'O CLI sai sozinho no turn-end. O Nexus religa a mesma conversa ' +
+        'no mesmo pane, sem banner. Rail e quadro: Aguardando você.',
+    },
     {
       title: 'Terminais no rail',
       detail:
         'Destino fixo ao lado de Início e Projeto. Numa missão, abre o ' +
         'grid da equipe. Fora dela, o terminal do workspace.',
     },
-    {
-      title: 'Cartão do agente abre o pane',
-      detail:
-        'Clique em Coordenar e revisar (ou outro agente com sessão) vai ' +
-        'ao terminal dele. Não precisa achar o workspace.',
-    },
   ],
   fixes: [
     {
-      title: 'Título longo não come o CTA',
+      title: 'Digitar não relança a missão',
       detail:
-        'No quadro empilhado o header compacta e o inspetor ganha o botão ' +
-        'Terminais. ⌘K oferece Terminais da missão.',
+        'Tecla no Maestro morto só religa a CLI. Não dispara resume/' +
+        'retry-kickoff.',
     },
     {
-      title: 'Login na CLI, de verdade',
+      title: 'Worker Working depois do fim',
       detail:
-        'Um botão Abrir login da CLI. Badge conectado exige token. O app ' +
-        'do Dock não conta.',
+        'Pronto espera worker idle sem handoff. Interrupt só depois da ' +
+        'entrega, nunca no kickoff.',
+    },
+    {
+      title: 'Panes deformados no 2×2',
+      detail:
+        'Spawn espera a caixa real do slot. waitForSession não pinta TUI ' +
+        'em 80×24 com o grid visível.',
     },
   ],
 };
