@@ -3,6 +3,7 @@ import {
   canReplayScrollback,
   escalateRefitReason,
   hostSlotIsMeasurable,
+  shouldBouncePtyGridAfterAttach,
   shouldRepaintOnRefit,
   terminalGridChanged,
   terminalOutputPolicy,
@@ -173,18 +174,38 @@ describe('hostSlotIsMeasurable (F-009)', () => {
     expect(hostSlotIsMeasurable({ clientWidth: 0, clientHeight: 0 })).toBe(
       false,
     );
-    expect(hostSlotIsMeasurable({ clientWidth: 8, clientHeight: 40 })).toBe(
+    expect(hostSlotIsMeasurable({ clientWidth: 16, clientHeight: 8 })).toBe(
+      false,
+    );
+    expect(hostSlotIsMeasurable({ clientWidth: 40, clientHeight: 40 })).toBe(
       false,
     );
   });
 
   it('libera o spawn na primeira caixa real (split 2×2 incluso)', () => {
-    expect(hostSlotIsMeasurable({ clientWidth: 16, clientHeight: 8 })).toBe(
+    expect(hostSlotIsMeasurable({ clientWidth: 80, clientHeight: 32 })).toBe(
       true,
     );
     expect(hostSlotIsMeasurable({ clientWidth: 320, clientHeight: 180 })).toBe(
       true,
     );
+  });
+});
+
+describe('shouldBouncePtyGridAfterAttach', () => {
+  it('não bounce se ainda não há PTY', () => {
+    expect(
+      shouldBouncePtyGridAfterAttach({ hasSession: false, gridChanged: true }),
+    ).toBe(false);
+  });
+
+  it('bounce quando a sessão headless pintou numa grade que o slot mudou', () => {
+    expect(
+      shouldBouncePtyGridAfterAttach({ hasSession: true, gridChanged: true }),
+    ).toBe(true);
+    expect(
+      shouldBouncePtyGridAfterAttach({ hasSession: true, gridChanged: false }),
+    ).toBe(false);
   });
 });
 

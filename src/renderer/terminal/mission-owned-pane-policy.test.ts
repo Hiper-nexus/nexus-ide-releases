@@ -224,24 +224,38 @@ describe('Maestro no fim do turno (F-006) — pane vivo, sem recado, sem restart
       shouldInterruptBusyWorkerAfterMaestroTurnEnd({
         workerIsOrchestrator: false,
         paneState: 'busy',
+        missionAwaitingReview: true,
       }),
     ).toBe(true);
     expect(
       shouldInterruptBusyWorkerAfterMaestroTurnEnd({
         workerIsOrchestrator: false,
         paneState: 'spawning',
+        missionAwaitingReview: true,
       }),
     ).toBe(true);
     expect(
       shouldInterruptBusyWorkerAfterMaestroTurnEnd({
         workerIsOrchestrator: false,
         paneState: 'idle',
+        missionAwaitingReview: true,
       }),
     ).toBe(false);
     expect(
       shouldInterruptBusyWorkerAfterMaestroTurnEnd({
         workerIsOrchestrator: true,
         paneState: 'busy',
+        missionAwaitingReview: true,
+      }),
+    ).toBe(false);
+  });
+
+  it('turn-end no meio da missão NÃO manda Ctrl+C no worker (ainda está entregando)', () => {
+    expect(
+      shouldInterruptBusyWorkerAfterMaestroTurnEnd({
+        workerIsOrchestrator: false,
+        paneState: 'busy',
+        missionAwaitingReview: false,
       }),
     ).toBe(false);
   });

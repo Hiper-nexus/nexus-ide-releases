@@ -83,6 +83,7 @@ import {
   canReplayScrollback,
   escalateRefitReason,
   hostSlotIsMeasurable,
+  shouldBouncePtyGridAfterAttach,
   shouldRepaintOnRefit,
   terminalGridChanged,
   terminalOutputPolicy,
@@ -1194,6 +1195,8 @@ function startSpawn(
  * the last resize.
  */
 const RESIZE_DEBOUNCE_MS = 60;
+/** waitForSession: dá tempo do PaneLeaf attachar e medir o slot. */
+const HEADLESS_SPAWN_FALLBACK_MS = 200;
 
 function settleHostGrid(host: Host): boolean {
   if (
@@ -1212,20 +1215,13 @@ function settleHostGrid(host: Host): boolean {
   return host.term.cols >= 2 && host.term.rows >= 1;
 }
 
-function tryDeferredSpawn(host: Host): void {
-  if (
-    !host.spawnWhenMeasurable ||
-    host.spawnStarted ||
-    host.hibernated ||
-    host.disposed
-  ) {
+function beginPaneSpawn(pane: PaneModel, host: Host): void {
+  if (host.spawnStarted || host.hibernated || host.disposed) return;
+  if (heldSpawnPanes.has(pane.id)) return;
+  if (!settleHostGrid(host)) {
+    host.spawnWhenMeasurable = true;
     return;
   }
-  if (!settleHostGrid(host)) return;
-  const pane = listPanes(useLayoutStore.getState().root).find(
-    (candidate) => candidate.id === host.paneId,
-  );
-  if (!pane) return;
   host.spawnWhenMeasurable = false;
   void startSpawn(
     pane,
@@ -1235,6 +1231,32 @@ function tryDeferredSpawn(host: Host): void {
     undefined,
     restoreAuthorityOnFirstSpawn.delete(pane.id),
   );
+}
+
+function bouncePtyGrid(host: Host): void {
+  if (!host.sessionId) return;
+  const cols = host.term.cols;
+  const rows = host.term.rows;
+  if (cols < 2 || rows < 1) return;
+  window.nexus.pty.resize(host.sessionId, cols, Math.max(2, rows - 1));
+  window.nexus.pty.resize(host.sessionId, cols, rows);
+  host.reportedGrid = { cols, rows };
+}
+
+function tryDeferredSpawn(host: Host): void {
+  if (
+    !host.spawnWhenMeasurable ||
+    host.spawnStarted ||
+    host.hibernated ||
+    host.disposed
+  ) {
+    return;
+  }
+  const pane = listPanes(useLayoutStore.getState().root).find(
+    (candidate) => candidate.id === host.paneId,
+  );
+  if (!pane) return;
+  beginPaneSpawn(pane, host);
 }
 
 function makeResizeObserver(paneId: string, host: Host): ResizeObserver {
@@ -1603,6 +1625,7 @@ export function attachHost(pane: PaneModel, slot: HTMLElement): void {
     registerWebglLease(pane.id, host);
   }
 
+  const beforeGrid = host.reportedGrid;
   if (useLayoutStore.getState().focusedPaneId !== pane.id) {
     try {
       host.fit.fit();
@@ -1611,6 +1634,19 @@ export function attachHost(pane: PaneModel, slot: HTMLElement): void {
     } catch {
       // Slot not measurable yet; the ResizeObserver will retry.
     }
+  }
+  // Headless spawn (waitForSession) pinta a TUI em 80×24. No attach, se a
+  // grade real mudou, bounce SIGWINCH — o mesmo truque da adoption.
+  if (
+    shouldBouncePtyGridAfterAttach({
+      hasSession: Boolean(host.sessionId),
+      gridChanged: terminalGridChanged(beforeGrid, {
+        cols: host.term.cols,
+        rows: host.term.rows,
+      }),
+    })
+  ) {
+    bouncePtyGrid(host);
   }
   // The focused path is completed by focusHost in the caller's next layout
   // effect. Keeping it there avoids duplicate fit/SIGWINCH while preserving
@@ -1635,19 +1671,7 @@ export function attachHost(pane: PaneModel, slot: HTMLElement): void {
       }
       return;
     }
-    // TUI em 80×24 num slot ainda 0×0 entrelaça a moldura pra sempre.
-    if (!settleHostGrid(host)) {
-      host.spawnWhenMeasurable = true;
-      return;
-    }
-    void startSpawn(
-      pane,
-      host,
-      resumeOnFirstSpawn.delete(pane.id),
-      false,
-      undefined,
-      restoreAuthorityOnFirstSpawn.delete(pane.id),
-    );
+    beginPaneSpawn(pane, host);
   }
 }
 
@@ -1788,18 +1812,7 @@ function kickHeldSpawnIfReady(paneId: string): void {
   host.hibernated = false;
   const pane = listPanesFromLayout().find((p) => p.id === paneId);
   if (!pane || pane.kind !== 'cli-agent') return;
-  if (!settleHostGrid(host)) {
-    host.spawnWhenMeasurable = true;
-    return;
-  }
-  void startSpawn(
-    pane,
-    host,
-    resumeOnFirstSpawn.delete(paneId),
-    false,
-    undefined,
-    restoreAuthorityOnFirstSpawn.delete(paneId),
-  );
+  beginPaneSpawn(pane, host);
 }
 
 function listPanesFromLayout(): readonly PaneModel[] {
@@ -2291,6 +2304,7 @@ function interruptBusyMissionWorkers(
 ): void {
   const paneMissions = useOrchStore.getState().paneMissions;
   const states = useSessionStateStore.getState().paneStates;
+  const missionAwaitingReview = missionOfPaneIsDoneById(missionId);
   for (const pane of listPanes(useLayoutStore.getState().root)) {
     if (pane.id === exceptPaneId) continue;
     const paneMission = pane.missionId ?? paneMissions[pane.id];
@@ -2299,6 +2313,7 @@ function interruptBusyMissionWorkers(
       !shouldInterruptBusyWorkerAfterMaestroTurnEnd({
         workerIsOrchestrator: pane.role === 'orchestrator',
         paneState: states.get(pane.id),
+        missionAwaitingReview,
       })
     ) {
       continue;
@@ -2469,21 +2484,32 @@ export function waitForSession(
     ) {
       const host = getOrCreateHost(pane);
       if (!host.spawnStarted && !host.hibernated) {
-        void startSpawn(
-          pane,
-          host,
-          resumeOnFirstSpawn.delete(pane.id),
-          false,
-          undefined,
-          restoreAuthorityOnFirstSpawn.delete(pane.id),
-        ).then(
-          (sessionId) => {
-            finish(sessionId ?? getPaneSessionId(paneId));
-          },
-          () => {
-            finish(getPaneSessionId(paneId));
-          },
-        );
+        beginPaneSpawn(pane, host);
+        if (!host.spawnStarted) {
+          // Pane ainda não está no DOM (ou slot 0×0). O attach/RO spawna na
+          // caixa real. Se o leaf nunca montar (view escondida), o fallback
+          // headless garante que waitForSession não estoura em 75s.
+          const generation = host.spawnGeneration;
+          setTimeout(() => {
+            if (
+              host.disposed ||
+              host.spawnStarted ||
+              host.hibernated ||
+              host.spawnGeneration !== generation
+            ) {
+              return;
+            }
+            host.spawnWhenMeasurable = false;
+            void startSpawn(
+              pane,
+              host,
+              resumeOnFirstSpawn.delete(pane.id),
+              false,
+              undefined,
+              restoreAuthorityOnFirstSpawn.delete(pane.id),
+            );
+          }, HEADLESS_SPAWN_FALLBACK_MS);
+        }
       }
     }
   });

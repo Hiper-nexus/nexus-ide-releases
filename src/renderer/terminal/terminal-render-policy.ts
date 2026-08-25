@@ -59,7 +59,17 @@ export function hostSlotIsMeasurable(input: {
   readonly clientWidth: number;
   readonly clientHeight: number;
 }): boolean {
-  return input.clientWidth >= 16 && input.clientHeight >= 8;
+  // ~10×3 células a 8px. Menor que isso a TUI ainda pinta moldura que
+  // SIGWINCH não desfaz.
+  return input.clientWidth >= 80 && input.clientHeight >= 32;
+}
+
+/** Sessão já viva e a grade mudou no attach: bounce de SIGWINCH (paridade adoption). */
+export function shouldBouncePtyGridAfterAttach(input: {
+  readonly hasSession: boolean;
+  readonly gridChanged: boolean;
+}): boolean {
+  return input.hasSession && input.gridChanged;
 }
 
 export function shouldRepaintOnRefit(input: {

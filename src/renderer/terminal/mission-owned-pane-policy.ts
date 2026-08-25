@@ -61,14 +61,17 @@ export function shouldPrintMissionPaneExitNotice(exitCode: number): boolean {
 }
 
 /**
- * Maestro encerrou o turno e o worker ainda pinta Working: Ctrl+C na
- * lane do operador. Idle/histórico ficam quietos.
+ * Interrupt só quando a missão já espera o humano. O CLI do Maestro sai
+ * em TODO turn-end — Ctrl+C nos workers no meio do trabalho matava o
+ * pane que ainda estava entregando.
  */
 export function shouldInterruptBusyWorkerAfterMaestroTurnEnd(input: {
   readonly workerIsOrchestrator: boolean;
   readonly paneState: string | undefined;
+  readonly missionAwaitingReview: boolean;
 }): boolean {
   if (input.workerIsOrchestrator) return false;
+  if (!input.missionAwaitingReview) return false;
   return input.paneState === 'busy' || input.paneState === 'spawning';
 }
 
