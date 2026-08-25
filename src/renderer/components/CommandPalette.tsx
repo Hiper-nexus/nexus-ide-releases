@@ -145,6 +145,24 @@ export function CommandPalette() {
       shortcutKeys('attention-inbox'),
       'atenção enter pr fila missão login',
     );
+    const missionDestination = useProductNavigationStore.getState().destination;
+    if (
+      missionDestination.kind === 'mission' &&
+      missionDestination.surface === 'board'
+    ) {
+      const missionId = missionDestination.missionId;
+      tool(
+        'mission-terminals',
+        'Terminais da missão',
+        'terminal',
+        () => {
+          useProductNavigationStore.getState().openMission(missionId);
+          useProductNavigationStore.getState().showMissionTerminals();
+        },
+        '',
+        'pane grid missão claude',
+      );
+    }
     tool(
       'terminal',
       'Abrir terminal',

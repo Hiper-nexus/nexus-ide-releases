@@ -15,6 +15,7 @@ interface MissionInspectorProps {
   readonly events: readonly MissionEvent[];
   readonly onCommand: (command: MissionEngineCommand) => Promise<MissionSnapshot>;
   readonly question: ReactNode;
+  readonly onOpenTerminals?: () => void;
 }
 
 const TABS = [
@@ -835,6 +836,7 @@ export function MissionInspector({
   events,
   onCommand,
   question,
+  onOpenTerminals,
 }: MissionInspectorProps) {
   const activeTab = useMissionInspectorStore((state) => state.tab);
   const selectedAgentId = useMissionInspectorStore(
@@ -874,6 +876,7 @@ export function MissionInspector({
 
   return (
     <aside className="mission-inspector" aria-label="Inspetor da missão">
+      <div className="mission-inspector__chrome">
       <div
         className="mission-inspector__tabs"
         role="tablist"
@@ -900,6 +903,17 @@ export function MissionInspector({
             </button>
           );
         })}
+      </div>
+      {onOpenTerminals ? (
+        <button
+          type="button"
+          className="mission-inspector__open-terminals"
+          data-testid="mission-inspector-terminals"
+          onClick={onOpenTerminals}
+        >
+          Terminais
+        </button>
+      ) : null}
       </div>
 
       {TABS.map((tab) => {

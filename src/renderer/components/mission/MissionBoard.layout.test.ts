@@ -79,9 +79,19 @@ describe("MissionBoard layout system invariants (RED test)", () => {
     expect(titleRule).not.toMatch(/text-overflow:\s*ellipsis/);
   });
 
-  it("wraps compact actions and ensures reason text is not ellipsized in compact rules", () => {
-    // Compact action rules within container queries should have flex-wrap: wrap
-    expect(missionCss).toMatch(/@container[^{]*\{[\s\S]*?\.mission-board__actions\s*\{[^}]*flex-wrap:\s*wrap/);
+  it("wraps compact actions at the stacked-graph breakpoint so Terminais stays on-screen (F-005)", () => {
+    const stackedAt = missionCss.indexOf(
+      "@container mission-board (max-width: 1099px)",
+    );
+    const nextAt = missionCss.indexOf("@container", stackedAt + 1);
+    const stackedBlock =
+      nextAt === -1
+        ? missionCss.slice(stackedAt)
+        : missionCss.slice(stackedAt, nextAt);
+    expect(stackedBlock).toMatch(/\.mission-board__header\s*\{/);
+    expect(stackedBlock).toMatch(
+      /\.mission-board__actions\s*\{[^}]*flex-wrap:\s*wrap/,
+    );
 
     // Full reason text is not ellipsized in compact container query overrides
     // Check for absence of white-space: nowrap or text-overflow: ellipsis in reason rules inside container query

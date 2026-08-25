@@ -322,6 +322,7 @@ interface MountOptions {
   readonly snapshot?: MissionSnapshot;
   readonly events?: MissionEvent[];
   readonly question?: ReactNode;
+  readonly onOpenTerminals?: () => void;
 }
 
 const mountedRoots = new Set<Root>();
@@ -330,6 +331,7 @@ function mount({
   snapshot = SNAPSHOT,
   events = [],
   question = ACTIVE_QUESTION,
+  onOpenTerminals,
 }: MountOptions = {}): HTMLElement {
   const host = document.createElement('div');
   document.body.appendChild(host);
@@ -346,6 +348,7 @@ function mount({
         events={events}
         onCommand={onCommand}
         question={question}
+        onOpenTerminals={onOpenTerminals}
       />,
     );
   });
@@ -414,6 +417,9 @@ describe('MissionInspector', () => {
       renderedTabs.filter((item) => item.getAttribute('aria-selected') === 'true'),
     ).toHaveLength(1);
     expect(tab(host, 'Agente').getAttribute('aria-selected')).toBe('true');
+    expect(
+      host.querySelector('[data-testid="mission-inspector-terminals"]'),
+    ).toBeNull();
 
     for (const current of renderedTabs) {
       expect(current.tagName).toBe('BUTTON');
@@ -446,6 +452,20 @@ describe('MissionInspector', () => {
         expect(otherPanel?.hidden).toBe(true);
       }
     }
+  });
+
+  it('oferece Terminais fora da tablist (F-005)', () => {
+    const onOpenTerminals = vi.fn();
+    const host = mount({ onOpenTerminals });
+    const cta = host.querySelector<HTMLButtonElement>(
+      '[data-testid="mission-inspector-terminals"]',
+    );
+    expect(cta).not.toBeNull();
+    expect(cta?.getAttribute('role')).not.toBe('tab');
+    expect(cta?.textContent).toMatch(/Terminais/);
+    expect(tabs(host)).toHaveLength(6);
+    act(() => cta!.click());
+    expect(onOpenTerminals).toHaveBeenCalledTimes(1);
   });
 
   it('projects every canonical field for the selected agent without invented metrics', () => {

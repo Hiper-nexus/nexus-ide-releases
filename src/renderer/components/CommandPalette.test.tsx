@@ -179,4 +179,15 @@ describe('CommandPalette product navigation', () => {
     });
     expect(useCommandPaletteStore.getState().open).toBe(false);
   });
+
+  it('oferece Terminais da missão quando o quadro está aberto (F-005)', () => {
+    useProductNavigationStore.getState().openMission('mission-release');
+    const host = render(<CommandPalette />);
+    act(() => actionButton(host, 'Terminais da missão').click());
+    expect(useProductNavigationStore.getState().destination).toEqual({
+      kind: 'mission',
+      missionId: 'mission-release',
+      surface: 'terminals',
+    });
+  });
 });

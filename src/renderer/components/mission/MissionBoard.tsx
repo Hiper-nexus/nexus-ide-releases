@@ -293,6 +293,17 @@ export function MissionBoard({
     [layoutRoot, missionId, paneMissions],
   );
   const hasVisibleMissionPanes = firstVisibleMissionPaneId !== null;
+  const canOpenMissionTerminals =
+    hasVisibleMissionPanes ||
+    snapshot?.state === 'starting' ||
+    snapshot?.state === 'running' ||
+    snapshot?.state === 'recovering';
+  const openMountedMissionTerminals = () => {
+    onOpenTerminals(missionId);
+    if (firstVisibleMissionPaneId) {
+      useLayoutStore.getState().focus(firstVisibleMissionPaneId);
+    }
+  };
   const lifecycleAction: MissionListAction = missionBoardLifecycleAction(
     snapshot?.id === missionId ? snapshot.state : null,
     currentMission,
@@ -1033,20 +1044,12 @@ export function MissionBoard({
               recovering — os panes nascem ali). Concluída, falha, bloqueada
               ou DORMINDO sem panes → o clique caía num shell órfão do grid
               global; o que restou da missão mora na aba Resultado. */}
-          {(hasVisibleMissionPanes ||
-            currentSnapshot.state === 'starting' ||
-            currentSnapshot.state === 'running' ||
-            currentSnapshot.state === 'recovering') && (
+          {canOpenMissionTerminals && (
             <button
               type="button"
               className="mission-board__button mission-board__button--secondary"
               disabled={pendingAction !== null}
-              onClick={() => {
-                onOpenTerminals(missionId);
-                if (firstVisibleMissionPaneId) {
-                  useLayoutStore.getState().focus(firstVisibleMissionPaneId);
-                }
-              }}
+              onClick={openMountedMissionTerminals}
             >
               Terminais
             </button>
@@ -1221,6 +1224,11 @@ export function MissionBoard({
                 events={events}
                 onCommand={executeCommand}
                 question={question}
+                onOpenTerminals={
+                  canOpenMissionTerminals
+                    ? openMountedMissionTerminals
+                    : undefined
+                }
               />
             </div>
           </>
