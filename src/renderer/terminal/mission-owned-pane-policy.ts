@@ -29,6 +29,49 @@ export type DeadPaneReviveRespawnAction = 'same-pane-resume' | 'main-only';
  * sessão do app; respawn local produz "unknown or expired orchestration
  * spawn grant".
  */
+export type OrchestratorProcessExitAction =
+  | 'relive-cli-quietly'
+  | 'print-notice';
+
+/**
+ * Fim do turno do Maestro: a CLI sai sozinha (turn-end). O pane tem que
+ * continuar vivo — religar a mesma conversa, sem banner no PTY e sem
+ * mandar o motor reabrir a missão. O quadro/rail avisa o humano.
+ */
+export function decideOrchestratorProcessExit(input: {
+  readonly isOrchestrator: boolean;
+  readonly exitCode: number;
+}): OrchestratorProcessExitAction {
+  if (input.isOrchestrator && input.exitCode === 0) {
+    return 'relive-cli-quietly';
+  }
+  return 'print-notice';
+}
+
+/** Tecla no Maestro morto religa a CLI. Nunca dispara resume/retry-kickoff. */
+export function shouldKickMissionEngineOnDeadPaneKey(input: {
+  readonly isOrchestrator: boolean;
+}): boolean {
+  return input.isOrchestrator !== true;
+}
+
+/** Exit 0 de missão: o quadro/rail avisa. O PTY não vira mural. */
+export function shouldPrintMissionPaneExitNotice(exitCode: number): boolean {
+  return exitCode !== 0;
+}
+
+/**
+ * Maestro encerrou o turno e o worker ainda pinta Working: Ctrl+C na
+ * lane do operador. Idle/histórico ficam quietos.
+ */
+export function shouldInterruptBusyWorkerAfterMaestroTurnEnd(input: {
+  readonly workerIsOrchestrator: boolean;
+  readonly paneState: string | undefined;
+}): boolean {
+  if (input.workerIsOrchestrator) return false;
+  return input.paneState === 'busy' || input.paneState === 'spawning';
+}
+
 export function decideDeadPaneReviveRespawn(input: {
   readonly missionOwnsPane: boolean;
   readonly hasOrchRequestId: boolean;

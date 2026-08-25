@@ -293,7 +293,7 @@ export function directionUnavailableReason(
 ): string {
   switch (state) {
     case 'completed':
-      return 'A entrega está aguardando a sua revisão. Para pedir uma mudança, use "Pedir um ajuste" no topo — a missão reabre e você volta a orientar aqui.';
+      return 'A entrega está aguardando a sua revisão. Digite no Maestro para continuar a conversa, ou use "Pedir um ajuste" no topo para reabrir o quadro.';
     case 'failed':
       return 'A missão falhou. Use "Tentar de novo" no topo para reabrir a coordenação; o histórico fica.';
     case 'blocked_user':

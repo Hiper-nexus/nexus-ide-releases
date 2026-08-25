@@ -213,7 +213,7 @@ describe('decideCivilianPronto', () => {
     expect(decision.path).toBe('handoffs');
   });
 
-  it('pergunta textual: worker idle sem handoff não segura Pronto se outro já entregou', () => {
+  it('worker idle sem handoff segura Pronto mesmo se outro já entregou (F-007)', () => {
     expect(
       decideCivilianPronto({
         ...running,
@@ -222,7 +222,16 @@ describe('decideCivilianPronto', () => {
         idleWorkersWithoutHandoff: 1,
         orchestratorBusy: true,
       }).action,
-    ).toBe('pronto');
+    ).toBe('wait');
+    expect(
+      decideCivilianPronto({
+        ...running,
+        productFileCount: 0,
+        workersDelivered: true,
+        idleWorkersWithoutHandoff: 1,
+        orchestratorBusy: true,
+      }).reason,
+    ).toBe('idle-workers-without-handoff');
   });
 
   it('worker idle sem handoff bloqueia Pronto mesmo com board N/N', () => {

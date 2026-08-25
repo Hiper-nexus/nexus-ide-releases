@@ -12,7 +12,10 @@ import {
   type MissionEvent,
 } from '../../../shared/mission-events';
 import { useMissionInspectorStore } from '../../state/mission-inspector-store';
-import { MissionInspector } from './MissionInspector';
+import {
+  directionUnavailableReason,
+  MissionInspector,
+} from './MissionInspector';
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -394,6 +397,13 @@ afterEach(() => {
   mountedRoots.clear();
   document.body.replaceChildren();
   vi.restoreAllMocks();
+});
+
+describe('directionUnavailableReason', () => {
+  it('missão completed aponta o Maestro vivo, não só o botão do quadro', () => {
+    expect(directionUnavailableReason('completed')).toMatch(/Digite no Maestro/);
+    expect(directionUnavailableReason('completed')).toMatch(/Pedir um ajuste/);
+  });
 });
 
 describe('MissionInspector', () => {

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   canReplayScrollback,
   escalateRefitReason,
+  hostSlotIsMeasurable,
   shouldRepaintOnRefit,
   terminalGridChanged,
   terminalOutputPolicy,
@@ -155,6 +156,35 @@ describe('shouldRepaintOnRefit', () => {
     expect(
       shouldRepaintOnRefit({ reason: 'display-scale', gridChanged: true }),
     ).toBe(true);
+  });
+
+  it('split/close de pane refita só quem mudou de grade (F-009)', () => {
+    expect(
+      shouldRepaintOnRefit({ reason: 'layout-change', gridChanged: false }),
+    ).toBe(false);
+    expect(
+      shouldRepaintOnRefit({ reason: 'layout-change', gridChanged: true }),
+    ).toBe(true);
+  });
+});
+
+describe('hostSlotIsMeasurable (F-009)', () => {
+  it('recusa o spawn enquanto o slot ainda não tem caixa', () => {
+    expect(hostSlotIsMeasurable({ clientWidth: 0, clientHeight: 0 })).toBe(
+      false,
+    );
+    expect(hostSlotIsMeasurable({ clientWidth: 8, clientHeight: 40 })).toBe(
+      false,
+    );
+  });
+
+  it('libera o spawn na primeira caixa real (split 2×2 incluso)', () => {
+    expect(hostSlotIsMeasurable({ clientWidth: 16, clientHeight: 8 })).toBe(
+      true,
+    );
+    expect(hostSlotIsMeasurable({ clientWidth: 320, clientHeight: 180 })).toBe(
+      true,
+    );
   });
 });
 

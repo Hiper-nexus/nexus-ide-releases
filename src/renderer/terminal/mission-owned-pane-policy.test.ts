@@ -3,8 +3,12 @@ import {
   BLOCKED_RESUME_NOTICE,
   decideDeadPaneReviveRespawn,
   decideExitedPaneKey,
+  decideOrchestratorProcessExit,
   decideStaleAuthorityRecovery,
   decideUnlockRetiredMissionPane,
+  shouldInterruptBusyWorkerAfterMaestroTurnEnd,
+  shouldKickMissionEngineOnDeadPaneKey,
+  shouldPrintMissionPaneExitNotice,
   latestCivilianDeliverySummary,
   MISSION_HOLD_NOTICE,
   MISSION_OWNED_EXIT_NOTICE,
@@ -173,6 +177,73 @@ describe('decideDeadPaneReviveRespawn — tecla em pane morto de missão', () =>
         isOrchestrator: true,
       }),
     ).toBe('same-pane-resume');
+  });
+});
+
+describe('Maestro no fim do turno (F-006) — pane vivo, sem recado, sem restart', () => {
+  it('exit 0 do orquestrador religa a CLI no mesmo pane, sem banner', () => {
+    expect(
+      decideOrchestratorProcessExit({
+        isOrchestrator: true,
+        exitCode: 0,
+      }),
+    ).toBe('relive-cli-quietly');
+  });
+
+  it('worker e crash continuam no aviso curto', () => {
+    expect(
+      decideOrchestratorProcessExit({
+        isOrchestrator: false,
+        exitCode: 0,
+      }),
+    ).toBe('print-notice');
+    expect(
+      decideOrchestratorProcessExit({
+        isOrchestrator: true,
+        exitCode: 1,
+      }),
+    ).toBe('print-notice');
+  });
+
+  it('tecla no Maestro morto NÃO dispara o motor (não reinicia a missão)', () => {
+    expect(
+      shouldKickMissionEngineOnDeadPaneKey({ isOrchestrator: true }),
+    ).toBe(false);
+    expect(
+      shouldKickMissionEngineOnDeadPaneKey({ isOrchestrator: false }),
+    ).toBe(true);
+  });
+
+  it('exit 0 de worker não imprime recado no PTY — o quadro avisa', () => {
+    expect(shouldPrintMissionPaneExitNotice(0)).toBe(false);
+    expect(shouldPrintMissionPaneExitNotice(1)).toBe(true);
+  });
+
+  it('Maestro no fim do turno interrompe worker ainda busy (F-007)', () => {
+    expect(
+      shouldInterruptBusyWorkerAfterMaestroTurnEnd({
+        workerIsOrchestrator: false,
+        paneState: 'busy',
+      }),
+    ).toBe(true);
+    expect(
+      shouldInterruptBusyWorkerAfterMaestroTurnEnd({
+        workerIsOrchestrator: false,
+        paneState: 'spawning',
+      }),
+    ).toBe(true);
+    expect(
+      shouldInterruptBusyWorkerAfterMaestroTurnEnd({
+        workerIsOrchestrator: false,
+        paneState: 'idle',
+      }),
+    ).toBe(false);
+    expect(
+      shouldInterruptBusyWorkerAfterMaestroTurnEnd({
+        workerIsOrchestrator: true,
+        paneState: 'busy',
+      }),
+    ).toBe(false);
   });
 });
 

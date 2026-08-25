@@ -48,7 +48,19 @@ export function terminalScrollbackLines(
  * grade não mudou produziria pixels idênticos — repaint é desperdício puro
  * (forma do bug herdado do Overclock: N panes parados = N repaints/ciclo).
  */
-export type RefitReason = 'window-resize' | 'display-scale';
+export type RefitReason = 'window-resize' | 'display-scale' | 'layout-change';
+
+/**
+ * Slot ainda 0×0: o xterm fica em 80×24 e a TUI desenha a moldura nessa
+ * geometria. SIGWINCH depois não desfaz cursor absoluto — spawn só depois
+ * da primeira medição real (F-009).
+ */
+export function hostSlotIsMeasurable(input: {
+  readonly clientWidth: number;
+  readonly clientHeight: number;
+}): boolean {
+  return input.clientWidth >= 16 && input.clientHeight >= 8;
+}
 
 export function shouldRepaintOnRefit(input: {
   readonly reason: RefitReason;

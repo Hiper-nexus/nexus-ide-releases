@@ -36,6 +36,7 @@ import {
   BLOCKED_RESUME_NOTICE,
   decideDeadPaneReviveRespawn,
   decideExitedPaneKey,
+  decideOrchestratorProcessExit,
   decideStaleAuthorityRecovery,
   decideUnlockRetiredMissionPane,
   latestCivilianDeliverySummary,
@@ -45,6 +46,9 @@ import {
   STALE_AUTHORITY_SYNC_NOTICE,
   STALE_AUTHORITY_UNLOCK_NOTICE,
   STANDALONE_HOLD_NOTICE,
+  shouldInterruptBusyWorkerAfterMaestroTurnEnd,
+  shouldKickMissionEngineOnDeadPaneKey,
+  shouldPrintMissionPaneExitNotice,
   shouldReviveDeadMissionFromPane,
 } from './mission-owned-pane-policy';
 import { TERMINAL_THEMES } from '../styles/terminal-theme';
@@ -78,6 +82,7 @@ import {
 import {
   canReplayScrollback,
   escalateRefitReason,
+  hostSlotIsMeasurable,
   shouldRepaintOnRefit,
   terminalGridChanged,
   terminalOutputPolicy,
@@ -100,12 +105,17 @@ import { tuiWheelPageSequence } from './tui-wheel';
 
 interface Host {
   element: HTMLDivElement;
+  paneId: string;
   term: Terminal;
   fit: FitAddon;
   search: SearchAddon;
   serialize: SerializeAddon;
   ro: ResizeObserver;
   sessionId: string | null;
+  /** Relive do Maestro: não despejar [nexus] no PTY. */
+  quietSpawn?: boolean;
+  /** Spawn adiado até o slot ter caixa real (F-009). */
+  spawnWhenMeasurable?: boolean;
   /** Last grid already propagated to the PTY; avoids duplicate SIGWINCH. */
   reportedGrid: { cols: number; rows: number } | null;
   isVisible: boolean;
@@ -593,6 +603,14 @@ async function requestDeadMissionPaneRevive(
     // Fala DEPOIS do aceite: anunciar "revivendo…" antes da cerca do main
     // recusar (missão encerrada pelo operador) lia como promessa quebrada —
     // sucesso ganha UMA linha, recusa ganha só a linha acionável do catch.
+    if (
+      !shouldKickMissionEngineOnDeadPaneKey({
+        isOrchestrator: pane.role === 'orchestrator',
+      })
+    ) {
+      reliveOrchestratorCli(pane, host, true);
+      return;
+    }
     await requestMissionRuntimeResume(missionId, operatorInitiated);
     const reviveRespawn = decideDeadPaneReviveRespawn({
       missionOwnsPane: isMainControlledMissionPane(pane.id, pane),
@@ -685,6 +703,8 @@ function startSpawn(
   continuityPack?: string,
   restorePersistedAuthority = false,
 ): Promise<string | null> {
+  const quietSpawn = host.quietSpawn === true;
+  host.quietSpawn = false;
   const generation = host.spawnGeneration + 1;
   host.spawnGeneration = generation;
   host.spawnStarted = true;
@@ -830,10 +850,10 @@ function startSpawn(
         // ligados — desliga os modos de input ANTES do divisor, senão o novo
         // shell recebe cada movimento de mouse como ^[[<35;…M.
         host.term.write(TERMINAL_INPUT_MODE_RESET);
-        host.term.writeln(SESSION_BOUNDARY_NOTICE);
+        if (!quietSpawn) host.term.writeln(SESSION_BOUNDARY_NOTICE);
       }
       host.hasVisibleContent = true;
-      if (resume && !res.adopted) {
+      if (resume && !res.adopted && !quietSpawn) {
         // Teste do silêncio (0.62): só fala no pane o que explica um estado
         // SURPREENDENTE (histórico sumiu / conversa aproximada). Sucesso
         // exato é o esperado — reasseguramento vai pro log, não pra tela.
@@ -961,18 +981,35 @@ function startSpawn(
           if (terminalShutdownNoticeMode) {
             // Shutdown: o aviso único do grid já falou; banner por pane é
             // ruído (bug I).
+          } else if (
+            decideOrchestratorProcessExit({
+              isOrchestrator: pane.role === 'orchestrator',
+              exitCode,
+            }) === 'relive-cli-quietly'
+          ) {
+            // Fim de turno: a CLI sai sozinha. Religa no mesmo xterm, sem
+            // mural [nexus]; o quadro/rail avisa. Workers ainda Working
+            // recebem interrupt na lane do operador (F-006/F-007).
+            reliveOrchestratorCli(pane, host);
+            const liveMissionId = missionIdOfPane(pane.id, pane);
+            if (liveMissionId) {
+              interruptBusyMissionWorkers(liveMissionId, pane.id);
+            }
+          } else if (
+            !shouldPrintMissionPaneExitNotice(exitCode) &&
+            (missionStillOwnsPane(pane.id, pane) ||
+              missionOfPaneIsDone(pane.id, pane))
+          ) {
+            // Exit 0 de missão: pane fica como histórico vivo. Sem recado.
           } else if (missionStillOwnsPane(pane.id, pane)) {
-            // Worker code 0 = entrega do AGENTE, não fim da missão. Maestro
-            // nunca diz "turno encerrado": o operador lia como missão
-            // fechada e perdia o resultado (print 24/08, 2+2=4 no JSON).
             if (pane.role === 'orchestrator') {
-              const missionId = missionIdOfPane(pane.id, pane);
+              const crashMissionId = missionIdOfPane(pane.id, pane);
               const orch = useOrchStore.getState();
-              const summary = missionId
+              const summary = crashMissionId
                 ? latestCivilianDeliverySummary({
-                    missionId,
+                    missionId: crashMissionId,
                     resultSummary: orch.missions.find(
-                      (candidate) => candidate.id === missionId,
+                      (candidate) => candidate.id === crashMissionId,
                     )?.result?.summary,
                     handoffs: orch.handoffs,
                   })
@@ -982,52 +1019,25 @@ function startSpawn(
                 deliverySummary: summary,
               });
               lines.forEach((line, index) => {
-                const color = exitCode === 0 ? '36' : '33';
                 host.term.writeln(
-                  `${index === 0 ? '\r\n' : ''}\x1b[${color}m${line}\x1b[0m`,
+                  `${index === 0 ? '\r\n' : ''}\x1b[33m${line}\x1b[0m`,
                 );
               });
             } else {
-              const notice = missionOwnedExitNotice(exitCode);
               host.term.writeln(
-                exitCode === 0
-                  ? `\r\n\x1b[90m${notice}\x1b[0m`
-                  : `\r\n\x1b[33m${notice}\x1b[0m`,
+                `\r\n\x1b[33m${missionOwnedExitNotice(exitCode)}\x1b[0m`,
               );
             }
-          } else if (exitCode === 0 && missionOfPaneIsDone(pane.id, pane)) {
-            host.term.writeln(
-              '\r\n\x1b[32m[nexus] ✔ missão concluída — este pane cumpriu o papel.\x1b[0m',
-            );
-            host.term.writeln(
-              pane.role === 'orchestrator'
-                ? '\x1b[90m[nexus] a missão continua aberta para sua revisão; digite aqui para pedir um ajuste.\x1b[0m'
-                : '\x1b[90m[nexus] as respostas ficam acima; feche o pane ou digite para abrir um shell.\x1b[0m',
-            );
           } else if (missionId && exitCode === 0) {
-            // Corrida done×exit: o espelho local ainda não viu o término.
-            // Uma checagem autoritativa decide o banner — missão concluída
-            // nunca pode cair no "process exited / digite qualquer tecla".
             void (async () => {
               const terminal = await missionTerminalAuthoritative(missionId);
-              if (host.disposed) return;
-              if (terminal) {
-                host.term.writeln(
-                  '\r\n\x1b[32m[nexus] ✔ missão concluída — este pane cumpriu o papel.\x1b[0m',
-                );
-                host.term.writeln(
-                  pane.role === 'orchestrator'
-                    ? '\x1b[90m[nexus] a missão continua aberta para sua revisão; digite aqui para pedir um ajuste.\x1b[0m'
-                    : '\x1b[90m[nexus] as respostas ficam acima; feche o pane ou digite para abrir um shell.\x1b[0m',
-                );
-              } else {
-                host.term.writeln(
-                  `\r\n\x1b[90m[nexus] process exited (code ${exitCode})\x1b[0m`,
-                );
-                host.term.writeln(
-                  '\x1b[36m[nexus] sessão encerrada. Digite qualquer tecla para abrir um shell neste pane.\x1b[0m',
-                );
-              }
+              if (host.disposed || terminal) return;
+              host.term.writeln(
+                `\r\n\x1b[90m[nexus] process exited (code ${exitCode})\x1b[0m`,
+              );
+              host.term.writeln(
+                '\x1b[36m[nexus] sessão encerrada. Digite qualquer tecla para abrir um shell neste pane.\x1b[0m',
+              );
             })();
           } else {
             host.term.writeln(
@@ -1185,6 +1195,48 @@ function startSpawn(
  */
 const RESIZE_DEBOUNCE_MS = 60;
 
+function settleHostGrid(host: Host): boolean {
+  if (
+    !hostSlotIsMeasurable({
+      clientWidth: host.element.clientWidth,
+      clientHeight: host.element.clientHeight,
+    })
+  ) {
+    return false;
+  }
+  try {
+    host.fit.fit();
+  } catch {
+    return false;
+  }
+  return host.term.cols >= 2 && host.term.rows >= 1;
+}
+
+function tryDeferredSpawn(host: Host): void {
+  if (
+    !host.spawnWhenMeasurable ||
+    host.spawnStarted ||
+    host.hibernated ||
+    host.disposed
+  ) {
+    return;
+  }
+  if (!settleHostGrid(host)) return;
+  const pane = listPanes(useLayoutStore.getState().root).find(
+    (candidate) => candidate.id === host.paneId,
+  );
+  if (!pane) return;
+  host.spawnWhenMeasurable = false;
+  void startSpawn(
+    pane,
+    host,
+    resumeOnFirstSpawn.delete(pane.id),
+    false,
+    undefined,
+    restoreAuthorityOnFirstSpawn.delete(pane.id),
+  );
+}
+
 function makeResizeObserver(paneId: string, host: Host): ResizeObserver {
   let timer: ReturnType<typeof setTimeout> | null = null;
   return new ResizeObserver(() => {
@@ -1195,17 +1247,20 @@ function makeResizeObserver(paneId: string, host: Host): ResizeObserver {
       if (host.disposed || !host.opened) return;
       if (useLayoutStore.getState().focusedPaneId === paneId) {
         resumeVisibleHost(paneId, host);
+        tryDeferredSpawn(host);
         return;
       }
       try {
         host.fit.fit();
       } catch {
+        tryDeferredSpawn(host);
         return;
       }
       // Primeira medição real do slot: é aqui que o replay pendente entra, já
       // na largura certa.
       flushPendingScrollback(host);
       propagateHostSize(host);
+      tryDeferredSpawn(host);
     }, RESIZE_DEBOUNCE_MS);
   });
 }
@@ -1230,6 +1285,7 @@ function refitAllHosts(reason: RefitReason): void {
       host.term.cols !== before.cols || host.term.rows !== before.rows;
     if (gridChanged) flushPendingScrollback(host);
     propagateHostSize(host);
+    tryDeferredSpawn(host);
     if (!shouldRepaintOnRefit({ reason, gridChanged })) continue;
     try {
       host.term.refresh(0, Math.max(0, host.term.rows - 1));
@@ -1277,6 +1333,16 @@ function watchDisplayScale(): void {
 }
 watchDisplayScale();
 
+useLayoutStore.subscribe((next, prev) => {
+  if (
+    next.root !== prev.root ||
+    next.maximizedPaneId !== prev.maximizedPaneId ||
+    next.viewKind !== prev.viewKind
+  ) {
+    scheduleRefitAll('layout-change');
+  }
+});
+
 function createShellHost(pane: PaneModel): Host {
   const element = document.createElement('div');
   element.className = 'term-host';
@@ -1289,6 +1355,7 @@ function createShellHost(pane: PaneModel): Host {
 
   const host: Host = {
     element,
+    paneId: pane.id,
     term,
     fit,
     search,
@@ -1343,6 +1410,7 @@ function createCliAgentHost(pane: PaneModel): Host {
 
   const host: Host = {
     element,
+    paneId: pane.id,
     term,
     fit,
     search,
@@ -1567,6 +1635,11 @@ export function attachHost(pane: PaneModel, slot: HTMLElement): void {
       }
       return;
     }
+    // TUI em 80×24 num slot ainda 0×0 entrelaça a moldura pra sempre.
+    if (!settleHostGrid(host)) {
+      host.spawnWhenMeasurable = true;
+      return;
+    }
     void startSpawn(
       pane,
       host,
@@ -1715,6 +1788,10 @@ function kickHeldSpawnIfReady(paneId: string): void {
   host.hibernated = false;
   const pane = listPanesFromLayout().find((p) => p.id === paneId);
   if (!pane || pane.kind !== 'cli-agent') return;
+  if (!settleHostGrid(host)) {
+    host.spawnWhenMeasurable = true;
+    return;
+  }
   void startSpawn(
     pane,
     host,
@@ -2170,6 +2247,69 @@ function reportMainOwnedLifecycleOnly(host: Host, action: string): void {
     'Ação de missão bloqueada',
     message,
   );
+}
+
+const ORCH_RELIVE_COOLDOWN_MS = 8_000;
+const orchReliveAt = new Map<string, number>();
+
+/**
+ * Maestro no turn-end: a CLI saiu sozinha. Religa a mesma conversa no
+ * mesmo xterm, sem banner e sem retry-kickoff (F-006/F-008).
+ */
+function reliveOrchestratorCli(
+  pane: PaneModel,
+  host: Host,
+  operatorInitiated = false,
+): void {
+  if (host.disposed) return;
+  const now = Date.now();
+  const last = orchReliveAt.get(pane.id) ?? 0;
+  if (!operatorInitiated && now - last < ORCH_RELIVE_COOLDOWN_MS) return;
+  orchReliveAt.set(pane.id, now);
+
+  host.cleanups.forEach((fn) => fn());
+  host.cleanups = [];
+  if (host.sessionId) window.nexus.pty.kill(host.sessionId);
+  setHostSession(host, pane.id, null);
+  host.spawnStarted = false;
+  host.hibernated = false;
+  host.quietSpawn = true;
+
+  const spawnPane = pane.orchRequestId
+    ? (() => {
+        useLayoutStore.getState().clearOrchRequestId(pane.id);
+        const { orchRequestId: _drop, ...rest } = pane;
+        return rest as PaneModel;
+      })()
+    : pane;
+  void startSpawn(spawnPane, host, true);
+}
+
+function interruptBusyMissionWorkers(
+  missionId: string,
+  exceptPaneId: string,
+): void {
+  const paneMissions = useOrchStore.getState().paneMissions;
+  const states = useSessionStateStore.getState().paneStates;
+  for (const pane of listPanes(useLayoutStore.getState().root)) {
+    if (pane.id === exceptPaneId) continue;
+    const paneMission = pane.missionId ?? paneMissions[pane.id];
+    if (paneMission !== missionId) continue;
+    if (
+      !shouldInterruptBusyWorkerAfterMaestroTurnEnd({
+        workerIsOrchestrator: pane.role === 'orchestrator',
+        paneState: states.get(pane.id),
+      })
+    ) {
+      continue;
+    }
+    const sessionId = getPaneSessionId(pane.id);
+    if (!sessionId) continue;
+    void window.nexus.orch.sendPaneOperatorInput({
+      sessionId,
+      data: '\x03',
+    });
+  }
 }
 
 /**
