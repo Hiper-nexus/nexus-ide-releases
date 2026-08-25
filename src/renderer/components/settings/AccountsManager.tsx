@@ -5,6 +5,7 @@ import { useAccountStore } from '../../state/account-store';
 import { useUsageStore } from '../../state/usage-store';
 import { askConfirm } from '../../state/confirm-store';
 import { defaultAccountLabel, emailFromAuthDetail } from './account-default-label';
+import { accountsPanelView } from './accounts-login-view';
 import { PixelIcon } from '../PixelIcon';
 import { openCliLoginTerminal } from './cli-login-terminal';
 import {
@@ -54,13 +55,6 @@ function accountState(a: AccountInfo): 'active' | 'cooldown' | 'warn' | 'ready' 
   return 'ready';
 }
 
-function authStatusLabel(state: string | undefined): string {
-  if (state === 'ok') return 'conectado';
-  if (state === 'missing') return 'precisa login';
-  if (state === 'checking') return 'verificando…';
-  return 'não verificado';
-}
-
 function formatAccountUsd(costUsd: number): string {
   return `US$ ${costUsd.toFixed(2).replace('.', ',')}`;
 }
@@ -107,6 +101,7 @@ export function AccountsManager({
   const renameInputRef = useRef<HTMLInputElement>(null);
 
   const isClaude = adapterId === 'claude';
+  const displayName = (adapterLabel?.trim() || adapterId).trim();
   const active = accounts.find((a) => a.active) ?? null;
   const standby = accounts.filter((a) => !a.active);
   const loginCommand = accountLoginCommandFor(adapterId);
@@ -131,6 +126,18 @@ export function AccountsManager({
       ),
     [accounts, liveEmailNormalized],
   );
+  const panel = accountsPanelView({
+    authState: auth?.state,
+    adapterLabel: displayName,
+    isClaude,
+    vaultCount: accounts.length,
+    standbyCount: standby.length,
+    hasActiveVault: Boolean(active),
+    liveEmail,
+    loginCommand,
+    canSnapshot,
+    busy,
+  });
 
   /**
    * Disparado por `onFinished` do terminal de login — um evento EXTERNO que
@@ -194,11 +201,27 @@ export function AccountsManager({
 
   useEffect(() => {
     let alive = true;
-    void window.nexus.providers.authStatus().then((list) => {
-      if (!alive) return;
-      const mine = list.find((s) => s.adapterId === adapterId);
-      setAuth(mine ? { state: mine.state, detail: mine.detail } : null);
-    });
+    void window.nexus.providers.authStatus().then(
+      (list) => {
+        if (!alive) return;
+        const mine = list.find((s) => s.adapterId === adapterId);
+        setAuth(
+          mine
+            ? { state: mine.state, detail: mine.detail }
+            : {
+                state: 'unknown',
+                detail: 'Não deu para verificar a sessão desta CLI.',
+              },
+        );
+      },
+      () => {
+        if (!alive) return;
+        setAuth({
+          state: 'unknown',
+          detail: 'Não deu para verificar a sessão desta CLI.',
+        });
+      },
+    );
     return () => {
       alive = false;
     };
@@ -311,9 +334,11 @@ export function AccountsManager({
   async function openLoginTerminal() {
     if (!loginCommand) return;
     setBusy(true);
+    showNotice('Abrindo o terminal de login…', 'info');
     const result = await openCliLoginTerminal({
       command: loginCommand,
       adapterId,
+      adapterLabel: displayName,
       onFinished: () => {
         void autoSaveSessionAfterLogin();
       },
@@ -321,7 +346,7 @@ export function AccountsManager({
     setBusy(false);
     if (result.ok) {
       showNotice(
-        'Terminal aberto. Conclua o login lá. Quando a CLI confirmar, o Nexus verifica sozinho.',
+        'Terminal de login aberto. Conclua no navegador da CLI.',
         'info',
       );
     } else {
@@ -386,7 +411,7 @@ export function AccountsManager({
     return (
       <li
         key={account.id}
-        className={`acct__row ${role === 'active' ? 'acct__row--active' : ''}`}
+        className={`acct__row ${role === 'active' && panel.showActiveEmUsoPill ? 'acct__row--active' : ''}`}
         data-state={state}
       >
         <span
@@ -430,7 +455,7 @@ export function AccountsManager({
             <>
               <div className="acct__identity">
                 <span className="acct__name">{account.label}</span>
-                {role === 'active' && (
+                {role === 'active' && panel.showActiveEmUsoPill && (
                   <span className="acct__pill">Em uso</span>
                 )}
                 {isLiveCliSession && (
@@ -455,7 +480,10 @@ export function AccountsManager({
                 {!account.hasCredential && (
                   <span className="acct__warn">sem credencial</span>
                 )}
-                {role === 'active' && !account.onCooldown && account.hasCredential && (
+                {role === 'active' &&
+                  panel.showActiveEmUsoPill &&
+                  !account.onCooldown &&
+                  account.hasCredential && (
                   <span className="acct__meta-quiet">próximo terminal</span>
                 )}
                 {realUsage && (
@@ -525,9 +553,7 @@ export function AccountsManager({
   }
 
   const vaultCount = accounts.length;
-  const displayName = (adapterLabel?.trim() || adapterId).trim();
-  // Em uso já conta como 1ª (vault ativa ou sessão nativa/API key ok).
-  const hasEmUso = Boolean(active) || auth?.state === 'ok';
+  const hasEmUso = panel.loggedIn || Boolean(active);
   const addCopy = multiAccountAddCopy({
     vaultCount,
     standbyCount: standby.length,
@@ -540,58 +566,47 @@ export function AccountsManager({
         <div className="acct__head-copy">
           <div className="acct__title-row">
             <h4 className="acct__title">Contas e login · {displayName}</h4>
-            <span
-              className={`acct__multi-chip${addCopy.chipOn ? ' acct__multi-chip--on' : ''}`}
-              title={addCopy.chipTitle}
-            >
-              {addCopy.chip}
-            </span>
-          </div>
-          <p className="acct__hint">
-            {auth?.state === 'missing' ? (
-              <>
-                A CLI <strong>{displayName}</strong> não tem sessão viva.
-                {isClaude
-                  ? ' O app Claude no Dock não conta.'
-                  : ''}{' '}
-                Use <strong>Entrar com nova conta</strong> — abre o terminal
-                de login desta CLI.
-              </>
-            ) : (
-              <>
-                A em uso abre o próximo terminal. Reserva entra no failover.
-                Entre com outra conta para guardar a 2ª.
-              </>
+            {panel.showMultiChip && (
+              <span
+                className={`acct__multi-chip${addCopy.chipOn ? ' acct__multi-chip--on' : ''}`}
+                title={addCopy.chipTitle}
+              >
+                {addCopy.chip}
+              </span>
             )}
-          </p>
+          </div>
+          <p className="acct__hint">{panel.hint}</p>
         </div>
         {auth && (
           <span className={authClass} title={auth.detail}>
-            {authStatusLabel(auth.state)}
+            {panel.statusLabel}
           </span>
         )}
       </div>
 
-      {auth?.detail && auth.state !== 'ok' && (
-        <p className="acct__auth-detail" role="status">
-          {auth.detail}
-          {auth.state === 'missing' && loginCommand && (
-            <button
-              type="button"
-              className="settings-btn acct__login-now"
-              onClick={() => void openLoginTerminal()}
-              disabled={busy}
-              title={`Abre um terminal com “${loginCommand}”`}
-            >
-              Fazer login agora
-            </button>
+      {panel.showLoginHero && (
+        <div className="acct__login-hero" role="status">
+          {auth?.detail && (
+            <p className="acct__login-hero-detail">{auth.detail}</p>
           )}
-        </p>
+          <button
+            type="button"
+            className="settings-btn settings-btn--primary acct__login-cta"
+            onClick={() => void openLoginTerminal()}
+            disabled={busy}
+            data-testid="acct-login-cta"
+            title={
+              loginCommand
+                ? `Abre um terminal com “${loginCommand}”`
+                : undefined
+            }
+          >
+            {panel.loginCta}
+          </button>
+        </div>
       )}
 
-      {/* O risco real do modelo de 2 etapas, dito em voz alta — sem trava:
-          o CLI guarda UMA sessão; entrar com outra substitui esta. */}
-      {canSnapshot && liveEmail && !vaultHasLiveSession && (
+      {panel.showSaveLoggedIn && liveEmail && !vaultHasLiveSession && (
         <p className="acct__auth-detail" role="status">
           A sessão atual ({liveEmail}) ainda não está salva no Nexus.
           Se entrar com outra conta, o CLI substitui esta.
@@ -607,91 +622,118 @@ export function AccountsManager({
         </p>
       )}
 
-      <div className="acct__roster">
-        <div className="acct__section-head">
-          <span className="acct__section-kicker">1 · Em uso</span>
-          <span className="acct__section-hint">próximo terminal / pane</span>
-        </div>
-
-        {active ? (
-          <ul className="acct__list" aria-label="Conta em uso">
-            {renderRow(active, 'active')}
-          </ul>
-        ) : (
-          <div className="acct__implicit" data-state={auth?.state === 'ok' ? 'ok' : 'idle'}>
-            <span className="acct__led" data-state={auth?.state === 'ok' ? 'ready' : 'idle'} aria-hidden="true" />
-            <div className="acct__body">
-              <div className="acct__identity">
-                <span className="acct__name">Sessão nativa de {displayName}</span>
-                <span className="acct__pill acct__pill--quiet">Implícita</span>
+      {(panel.showImplicitNative ||
+        panel.showSplitRoster ||
+        panel.showFlatSavedRoster) && (
+        <div className="acct__roster">
+          {panel.showImplicitNative && (
+            <div
+              className="acct__implicit"
+              data-state="ok"
+            >
+              <span
+                className="acct__led"
+                data-state="ready"
+                aria-hidden="true"
+              />
+              <div className="acct__body">
+                <div className="acct__identity">
+                  <span className="acct__name">
+                    Sessão nativa de {displayName}
+                  </span>
+                  <span className="acct__pill">Em uso</span>
+                </div>
+                <p className="acct__meta-line">
+                  Login da CLI nesta máquina, ainda sem conta salva no Nexus.
+                </p>
               </div>
-              <p className="acct__meta-line">
-                Login do terminal, ainda sem conta salva no Nexus. Entre com
-                uma conta abaixo — ela entra aqui sozinha quando o terminal de
-                login fechar. Pode repetir para 2ª, 3ª… conta.
-              </p>
             </div>
-          </div>
-        )}
+          )}
 
-        <div className="acct__section-head">
-          <span className="acct__section-kicker">
-            2 · Reserva{standby.length > 0 ? ` · ${standby.length}` : ' · vazia'}
-          </span>
-          <span className="acct__section-hint">
-            failover automático no mesmo provider
-          </span>
+          {panel.showFlatSavedRoster && (
+            <>
+              <div className="acct__section-head">
+                <span className="acct__section-title">Contas salvas</span>
+              </div>
+              <ul className="acct__list" aria-label="Contas salvas">
+                {accounts.map((account) =>
+                  renderRow(account, account.active ? 'active' : 'standby'),
+                )}
+              </ul>
+            </>
+          )}
+
+          {panel.showSplitRoster && active && (
+            <>
+              <div className="acct__section-head">
+                <span className="acct__section-title">Em uso</span>
+                <span className="acct__section-hint">próximo terminal</span>
+              </div>
+              <ul className="acct__list" aria-label="Conta em uso">
+                {renderRow(active, 'active')}
+              </ul>
+            </>
+          )}
+
+          {panel.showReserva && (
+            <>
+              <div className="acct__section-head">
+                <span className="acct__section-title">
+                  Reserva
+                  {standby.length > 0 ? ` · ${standby.length}` : ''}
+                </span>
+              </div>
+              {standby.length === 0 && panel.showReservaEmpty ? (
+                <div className="acct__empty" role="status">
+                  Nenhuma reserva. Entre com outra conta ou cole uma API key
+                  para o failover.
+                </div>
+              ) : (
+                <ul className="acct__list" aria-label="Contas reserva">
+                  {standby.map((account) => renderRow(account, 'standby'))}
+                </ul>
+              )}
+            </>
+          )}
         </div>
-
-        {standby.length === 0 ? (
-          <div className="acct__empty acct__empty--cta" role="status">
-            <div className="acct__empty-copy">
-              <strong>Nenhuma conta reserva ainda</strong>
-              <span>
-                Adicione a <em>2ª conta</em> (outra assinatura ou API key) para
-                hot-swap e troca automática quando a em uso esgotar o limite.
-              </span>
-            </div>
-            <span className="acct__empty-steps" aria-hidden="true">
-              <span className="acct__empty-step">1 em uso</span>
-              <span className="acct__empty-arrow">→</span>
-              <span className="acct__empty-step acct__empty-step--need">+ reserva</span>
-            </span>
-          </div>
-        ) : (
-          <ul className="acct__list" aria-label="Contas reserva">
-            {standby.map((a) => renderRow(a, 'standby'))}
-          </ul>
-        )}
-      </div>
+      )}
 
       <div className="acct__add-zone" data-open={addMode !== null ? 'true' : 'false'}>
         <div className="acct__add-head">
           <div className="acct__add-head-copy">
-            <span className="acct__section-kicker">3 · {addCopy.title}</span>
-            <p className="acct__add-sub">{addCopy.sub}</p>
+            <span className="acct__section-title">
+              {panel.needsLogin ? 'Outra forma' : addCopy.title}
+            </span>
+            <p className="acct__add-sub">
+              {panel.needsLogin
+                ? 'Se esta CLI autentica por chave, cole aqui. O login da assinatura é o botão acima.'
+                : addCopy.sub}
+            </p>
           </div>
         </div>
 
         {addMode === null && (
           <div className="acct__add-choices">
-            {loginCommand && (
+            {panel.showAddAnotherLogin && (
               <button
                 type="button"
                 className="settings-btn settings-btn--primary acct__add-choice"
                 onClick={() => void openLoginTerminal()}
                 disabled={busy}
-                title={`Abre um terminal com “${loginCommand}” — o navegador abre na página de login do provider`}
+                title={
+                  loginCommand
+                    ? `Abre um terminal com “${loginCommand}”`
+                    : undefined
+                }
               >
                 <span className="acct__add-choice-icon" aria-hidden="true">
                   <PixelIcon name="user" size={14} />
                 </span>
                 <span className="acct__add-choice-text">
-                  <strong>Entrar com nova conta</strong>
+                  <strong>{panel.loginCta}</strong>
                   <span>
-                    Dispara o login de {displayName} — o navegador abre na
-                    página do provider. Quando o terminal fechar, a conta entra
-                    no Nexus sozinha.
+                    Troca a sessão desta CLI. A conta anterior some do
+                    terminal até ser salva no Nexus.
                   </span>
                 </span>
                 <span className="acct__add-plus" aria-hidden="true">
@@ -699,12 +741,12 @@ export function AccountsManager({
                 </span>
               </button>
             )}
-            {canSnapshot && auth?.state === 'ok' && (
+            {panel.showSaveLoggedIn && (
               <button
                 type="button"
                 className="settings-btn settings-btn--primary acct__add-choice"
                 onClick={() => setAddMode('subscription')}
-                title={`Salva a sessão OAuth/login atual de ${displayName} como mais uma conta no Nexus`}
+                title={`Salva a sessão atual de ${displayName} no Nexus`}
               >
                 <span className="acct__add-choice-icon" aria-hidden="true">
                   <PixelIcon name="id-badge" size={14} />
@@ -844,11 +886,9 @@ export function AccountsManager({
           </div>
         )}
 
-        {addMode === null && (
+        {addMode === null && panel.loggedIn && (
           <p className="acct__add-footnote">
-            Fluxo: entre com a conta → o Nexus salva quando o terminal fecha →
-            troque de conta no CLI (ou cole outra key) e{' '}
-            <strong>repita</strong>. Quantas quiser no mesmo provider.
+            A CLI guarda uma sessão. Salve no Nexus antes de entrar com outra.
           </p>
         )}
       </div>

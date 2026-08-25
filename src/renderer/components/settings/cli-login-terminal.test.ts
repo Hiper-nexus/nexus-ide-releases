@@ -5,6 +5,7 @@ const layout = vi.hoisted(() => ({
   addShellPane: vi.fn(() => 'pane-login'),
   focus: vi.fn(),
   close: vi.fn(),
+  renameTitle: vi.fn(),
 }));
 
 const navigation = vi.hoisted(() => ({
@@ -69,6 +70,7 @@ describe('openCliLoginTerminal', () => {
     layout.addShellPane.mockClear().mockReturnValue('pane-login');
     layout.focus.mockClear();
     layout.close.mockClear();
+    layout.renameTitle.mockClear();
     navigation.openTerminal.mockClear();
     host.waitForSession.mockClear().mockResolvedValue('session-login');
     host.writeToPane.mockClear();
@@ -89,11 +91,13 @@ describe('openCliLoginTerminal', () => {
     const result = await openCliLoginTerminal({
       command: 'claude auth login',
       adapterId: 'claude',
+      adapterLabel: 'Claude',
     });
 
     expect(result).toEqual({ ok: true, paneId: 'pane-login' });
     expect(order).toEqual(['addShellPane', 'waitForSession', 'openTerminal']);
     expect(layout.addShellPane).toHaveBeenCalledWith({ focus: false });
+    expect(layout.renameTitle).toHaveBeenCalledWith('pane-login', 'Login Claude');
     expect(host.writeToPane).toHaveBeenCalledWith(
       'pane-login',
       'claude auth login\n',

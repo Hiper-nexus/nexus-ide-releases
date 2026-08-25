@@ -40,6 +40,7 @@ function jump(item: AttentionItem): void {
       void openCliLoginTerminal({
         command,
         adapterId: item.targetId,
+        adapterLabel: provider?.label,
         onFinished: () => {
           void useProviderStore.getState().hydrate();
         },

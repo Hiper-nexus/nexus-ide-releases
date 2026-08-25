@@ -6,6 +6,7 @@ import type { AccountInfo } from '../../../shared/account-types';
 import { useAccountStore } from '../../state/account-store';
 import { useConfirmStore } from '../../state/confirm-store';
 import { useUsageStore, EMPTY_USAGE_SNAPSHOT } from '../../state/usage-store';
+import { openCliLoginTerminal } from './cli-login-terminal';
 import { AccountsManager } from './AccountsManager';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
@@ -97,13 +98,10 @@ describe('AccountsManager', () => {
     expect(host.textContent).toContain('Sessão nativa de claude');
     expect(host.textContent).toContain('conectado');
     expect(host.textContent).toContain('API key');
-    expect(host.textContent).toMatch(/multi-conta/i);
-    // Login verificado + sessão nativa = 1ª já em uso → próximo add é a 2ª.
-    expect(host.textContent).toMatch(/adicionar a 2ª conta/i);
-    expect(host.textContent).not.toMatch(/adicionar a 1ª conta/i);
-    expect(host.textContent).toMatch(/nenhuma conta reserva/i);
-    // Snapshot button appears after supportsSnapshot resolves.
+    expect(host.textContent).toMatch(/entrar com outra conta/i);
     expect(host.textContent).toMatch(/salvar conta logada/i);
+    expect(host.textContent).not.toMatch(/abrir login da CLI/i);
+    expect(host.textContent).not.toMatch(/1 ·/i);
     act(() => root.unmount());
   });
 
@@ -134,11 +132,105 @@ describe('AccountsManager', () => {
     });
 
     expect(host.textContent).toContain('precisa login');
-    expect(host.textContent).toMatch(/entrar com nova conta/i);
-    expect(host.textContent).toMatch(/fazer login agora/i);
-    expect(host.textContent).not.toMatch(/salvar conta logada/i);
-    expect(host.textContent).not.toContain('sessão do CLI');
+    expect(host.textContent).toMatch(/abrir login da CLI/i);
     expect(host.textContent).toContain('O app Claude no Dock não conta');
+    expect(host.textContent).not.toMatch(/salvar conta logada/i);
+    expect(host.textContent).not.toMatch(/entrar com nova conta/i);
+    expect(host.textContent).not.toMatch(/fazer login agora/i);
+    expect(host.textContent).not.toContain('sessão do CLI');
+    expect(host.textContent).not.toContain('Sessão nativa');
+    expect(host.textContent).not.toMatch(/nenhuma conta reserva/i);
+    expect(host.textContent).not.toMatch(/multi-conta/i);
+    expect(host.querySelectorAll('[data-testid="acct-login-cta"]')).toHaveLength(1);
+    act(() => root.unmount());
+  });
+
+  it('com vault e CLI deslogada lista contas salvas sem fingir Em uso', async () => {
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        providers: {
+          authStatus: vi.fn(async () => [
+            { adapterId: 'claude', state: 'missing', detail: 'sem sessão viva' },
+          ]),
+        },
+        accounts: {
+          supportsSnapshot: vi.fn(async () => ({ ok: true, supported: true })),
+        },
+      },
+    });
+    useAccountStore.setState({
+      accounts: [
+        account(),
+        account({
+          id: 'acct-2',
+          label: 'Pessoal',
+          active: false,
+          email: 'home@example.com',
+        }),
+      ],
+    });
+    const { host, root } = mount();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(host.textContent).toMatch(/contas salvas/i);
+    expect(host.textContent).toContain('Trabalho');
+    expect(host.textContent).toContain('Pessoal');
+    expect(host.textContent).not.toContain('Em uso');
+    expect(host.textContent).not.toContain('próximo terminal');
+    expect(host.textContent).toMatch(/abrir login da CLI/i);
+    act(() => root.unmount());
+  });
+
+  it('no clique anuncia Abrindo terminal… e não some da tela', async () => {
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        providers: {
+          authStatus: vi.fn(async () => [
+            { adapterId: 'claude', state: 'missing', detail: 'precisa login' },
+          ]),
+        },
+        accounts: {
+          supportsSnapshot: vi.fn(async () => ({ ok: true, supported: false })),
+        },
+      },
+    });
+    let release: ((value: { ok: true; paneId: string }) => void) | undefined;
+    vi.mocked(openCliLoginTerminal).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    const { host, root } = mount();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const cta = host.querySelector<HTMLButtonElement>(
+      '[data-testid="acct-login-cta"]',
+    );
+    expect(cta).toBeTruthy();
+    await act(async () => {
+      cta!.click();
+      await Promise.resolve();
+    });
+
+    expect(host.textContent).toMatch(/abrindo (o )?terminal/i);
+    expect(host.textContent).toMatch(/Abrindo terminal…/);
+    expect(useAccountStore.getState().addActiveSession).toBeDefined();
+
+    await act(async () => {
+      release?.({ ok: true, paneId: 'pane-login' });
+      await Promise.resolve();
+    });
     act(() => root.unmount());
   });
 
@@ -158,7 +250,7 @@ describe('AccountsManager', () => {
     });
 
     const enterBtn = [...host.querySelectorAll('button')].find((b) =>
-      b.textContent?.includes('Entrar com nova conta'),
+      b.textContent?.includes('Entrar com outra conta'),
     );
     expect(enterBtn).toBeTruthy();
     await act(async () => {
@@ -193,7 +285,7 @@ describe('AccountsManager', () => {
     });
 
     const enterBtn = [...host.querySelectorAll('button')].find((b) =>
-      b.textContent?.includes('Entrar com nova conta'),
+      b.textContent?.includes('Entrar com outra conta'),
     );
     await act(async () => {
       enterBtn!.click();

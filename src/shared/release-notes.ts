@@ -13,18 +13,18 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.70.11',
+  version: '0.70.12',
   date: '2026-08-25',
-  codename: 'Login na CLI',
+  codename: 'Abrir login da CLI',
   summary:
-    'Login Claude é a CLI, não o app do Dock. Entrar com nova conta abre o ' +
-    'terminal. Início ganha pane manual e terminal puro.',
+    'Contas Claude deixa de misturar vault com sessão. Um botão só abre o ' +
+    'login da CLI, com o terminal titulado e aviso no clique.',
   highlights: [
     {
-      title: 'Login na CLI, de verdade',
+      title: 'Um clique, um login',
       detail:
-        'Badge conectado exige token no Keychain. Entrar com nova conta ' +
-        'sai de Configurações e dispara claude auth login.',
+        'Sem sessão: Abrir login da CLI. O botão vira Abrindo terminal… ' +
+        'e o pane nasce como Login Claude. O app do Dock não conta.',
     },
     {
       title: 'Início: pane e terminal puro',
@@ -34,16 +34,16 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
   fixes: [
     {
+      title: 'Em uso some quando a CLI está deslogada',
+      detail:
+        'Contas salvas continuam na lista. Multi-conta e reserva só depois ' +
+        'do login. Badge conectado ainda exige token no Keychain.',
+    },
+    {
       title: 'Maestro sem sessão não senta',
       detail:
         'Claude login-needed cede o assento a Codex/Grok logados. Iniciar ' +
         'não dispara prepare com coordenador morto.',
-    },
-    {
-      title: 'Handoff no idle não mata o Maestro',
-      detail:
-        'PTY idle depois do CR é modal, não processo morto. Identity e git ' +
-        'não congelam mais o main no tick do cron.',
     },
   ],
 };

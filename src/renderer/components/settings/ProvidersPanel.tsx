@@ -436,12 +436,8 @@ function ProviderRow({
 
 function ProviderDetail({
   provider,
-  loginBusy,
-  onLogin,
 }: {
   provider: ProviderSettingsInfo;
-  loginBusy: boolean;
-  onLogin: () => void;
 }) {
   const setConfig = useProviderStore((s) => s.setConfig);
   const hydrateProviders = useProviderStore((s) => s.hydrate);
@@ -510,26 +506,6 @@ function ProviderDetail({
             <p className="prov-detail__install-error" role="alert">
               <PixelIcon name="warn" size={11} /> {installError}
             </p>
-          )}
-          {provider.installed && provider.loginCommand && (
-            <button
-              type="button"
-              className={`settings-btn prov-detail__login ${
-                provider.authStrategy === 'login-needed'
-                  ? 'settings-btn--primary'
-                  : ''
-              }`}
-              disabled={loginBusy}
-              onClick={onLogin}
-              title="Abre um terminal e roda o login desta CLI. Quem guarda a sessão é a própria ferramenta."
-              data-testid={`prov-detail-login-${provider.adapterId}`}
-            >
-              {loginBusy
-                ? 'Abrindo terminal…'
-                : provider.authStrategy === 'login-needed'
-                  ? 'Entrar'
-                  : 'Entrar de novo'}
-            </button>
           )}
         </div>
         <label className="prov__toggle" title="Habilitar/desabilitar">
@@ -745,6 +721,7 @@ export function ProvidersPanel() {
     const result = await openCliLoginTerminal({
       command,
       adapterId: provider.adapterId,
+      adapterLabel: provider.label,
       onFinished: () => {
         void refreshCatalog();
       },
@@ -986,8 +963,6 @@ export function ProvidersPanel() {
           <ProviderDetail
             key={selected.adapterId}
             provider={selected}
-            loginBusy={loginBusyId === selected.adapterId}
-            onLogin={() => void startLogin(selected)}
           />
         )}
       </div>

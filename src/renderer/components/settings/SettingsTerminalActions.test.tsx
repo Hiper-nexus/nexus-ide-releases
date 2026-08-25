@@ -209,7 +209,7 @@ describe('Settings terminal-producing actions', () => {
         await Promise.resolve();
       });
 
-      act(() => button(host, 'Fazer login agora').click());
+      act(() => button(host, 'Abrir login da CLI').click());
 
       expect(useProductNavigationStore.getState().destination).toEqual({
         kind: 'settings',
@@ -244,7 +244,7 @@ describe('Settings terminal-producing actions', () => {
         await Promise.resolve();
         await Promise.resolve();
       });
-      act(() => button(host, 'Fazer login agora').click());
+      act(() => button(host, 'Abrir login da CLI').click());
 
       await settleReady(null);
 

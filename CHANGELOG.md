@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.70.12 — Abrir login da CLI
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+O painel de contas misturava vault, sessão nativa, multi-conta e três
+botões de login. Sem sessão viva agora há **um** CTA: **Abrir login da
+CLI**. O clique avisa na hora, o pane nasce com título `Login Claude` e
+o comando `claude auth login` só entra quando o terminal existe.
+
+- Contas salvas não pintam **Em uso** com a CLI deslogada.
+- Reserva e chip multi-conta só depois do login.
+- O app Claude no Dock continua não contando.
+
+Gates: testes de accounts-login-view, AccountsManager, login-terminal e
+SettingsTerminalActions. `tsc` limpo.
+
 ## 0.70.11 — Login na CLI
 
 _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._

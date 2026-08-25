@@ -28,6 +28,8 @@ export async function openCliLoginTerminal(input: {
   readonly command: string;
   /** Adapter cuja sessão deve sair de "login-needed" quando o login pegar. */
   readonly adapterId?: string;
+  /** Nome visível no título do pane (Claude, Codex…). */
+  readonly adapterLabel?: string;
   /** Chamado quando o login conclui, o pane some, ou o tempo esgota. */
   readonly onFinished?: () => void;
 }): Promise<CliLoginOutcome> {
@@ -40,6 +42,8 @@ export async function openCliLoginTerminal(input: {
   // Configurações — senão o operador some da tela antes do login existir.
   const layout = useLayoutStore.getState();
   const paneId = layout.addShellPane({ focus: false });
+  const paneTitle = `Login ${input.adapterLabel?.trim() || input.adapterId || 'CLI'}`;
+  layout.renameTitle(paneId, paneTitle);
 
   let sessionId: string | null = null;
   try {

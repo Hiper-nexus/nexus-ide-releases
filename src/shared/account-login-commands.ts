@@ -1,5 +1,5 @@
 /**
- * Comando de login por CLI para o fluxo "Entrar com nova conta" do vault de
+ * Comando de login por CLI para o fluxo "Abrir login da CLI" do vault de
  * contas. O app abre um terminal e dispara este comando; o PRÓPRIO CLI abre o
  * navegador na URL de autenticação do provider — cada um tem a sua, e ela
  * nunca é hardcodeada aqui (o CLI é a fonte de verdade do seu fluxo OAuth).
