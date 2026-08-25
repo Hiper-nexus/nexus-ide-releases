@@ -13,37 +13,38 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.70.12',
+  version: '0.70.13',
   date: '2026-08-25',
-  codename: 'Abrir login da CLI',
+  codename: 'Terminais no rail',
   summary:
-    'Contas Claude deixa de misturar vault com sessão. Um botão só abre o ' +
-    'login da CLI, com o terminal titulado e aviso no clique.',
+    'Terminais é um destino do rail, ao lado de Início. Não precisa clicar ' +
+    'no workspace. No quadro, o cartão do agente abre o terminal dele.',
   highlights: [
     {
-      title: 'Um clique, um login',
+      title: 'Terminais no rail',
       detail:
-        'Sem sessão: Abrir login da CLI. O botão vira Abrindo terminal… ' +
-        'e o pane nasce como Login Claude. O app do Dock não conta.',
+        'Destino fixo ao lado de Início e Projeto. Numa missão, abre o ' +
+        'grid da equipe. Fora dela, o terminal do workspace.',
     },
     {
-      title: 'Início: pane e terminal puro',
+      title: 'Cartão do agente abre o pane',
       detail:
-        'Abrir um pane escolhe a ferramenta. Terminal puro é o shell, sem IA.',
+        'Clique em Coordenar e revisar (ou outro agente com sessão) vai ' +
+        'ao terminal dele. Não precisa achar o workspace.',
     },
   ],
   fixes: [
     {
-      title: 'Em uso some quando a CLI está deslogada',
+      title: 'Título longo não come o CTA',
       detail:
-        'Contas salvas continuam na lista. Multi-conta e reserva só depois ' +
-        'do login. Badge conectado ainda exige token no Keychain.',
+        'No quadro empilhado o header compacta e o inspetor ganha o botão ' +
+        'Terminais. ⌘K oferece Terminais da missão.',
     },
     {
-      title: 'Maestro sem sessão não senta',
+      title: 'Login na CLI, de verdade',
       detail:
-        'Claude login-needed cede o assento a Codex/Grok logados. Iniciar ' +
-        'não dispara prepare com coordenador morto.',
+        'Um botão Abrir login da CLI. Badge conectado exige token. O app ' +
+        'do Dock não conta.',
     },
   ],
 };

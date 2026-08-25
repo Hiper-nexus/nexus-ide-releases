@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.70.13 — Terminais no rail
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+O grid de terminais **não se adivinha** no nome do workspace. O rail ganha
+o destino **Terminais**, o inspetor ganha o botão branco, e o cartão do
+agente que já tem pane abre o terminal dele.
+
+- Header do quadro compacta junto com o grafo empilhado (título longo
+  não come mais o CTA).
+- ⌘K: **Terminais da missão**.
+
+Gates: WorkspaceRail, MissionGraph, MissionInspector, App. `tsc` limpo.
+
 ## 0.70.12 — Abrir login da CLI
 
 _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
