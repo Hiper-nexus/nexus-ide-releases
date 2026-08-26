@@ -274,21 +274,30 @@
   stroke-width: 3;
 }
 
-/* ---- Sticky notes ---- */
+/* ---- Sticky notes ----
+   Matizes pastel são a arte do post-it (tinta clara sobre papel), não paleta
+   de tema: vivem como custom properties escopadas no .note, declaradas uma
+   única vez — nota e swatch só consomem. */
 .note {
+  --note-yellow: #f7e07c;
+  --note-blue: #9ecbf5;
+  --note-green: #a8dfa5;
+  --note-pink: #f5b3cd;
+  --note-purple: #cdb4f0;
+  --note-ink: #1f2430;
   display: flex;
   flex-direction: column;
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-1);
   overflow: hidden;
-  color: #1f2430;
+  color: var(--note-ink);
   font-size: 13px;
 }
-.note--yellow { background: #f7e07c; }
-.note--blue   { background: #9ecbf5; }
-.note--green  { background: #a8dfa5; }
-.note--pink   { background: #f5b3cd; }
-.note--purple { background: #cdb4f0; }
+.note--yellow { background: var(--note-yellow); }
+.note--blue   { background: var(--note-blue); }
+.note--green  { background: var(--note-green); }
+.note--pink   { background: var(--note-pink); }
+.note--purple { background: var(--note-purple); }
 .note--linked { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 .note-drag-handle {
@@ -315,11 +324,11 @@
   border-color: rgba(0, 0, 0, 0.7);
   box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.6);
 }
-.note-color-swatch--yellow { background: #f7e07c; }
-.note-color-swatch--blue   { background: #9ecbf5; }
-.note-color-swatch--green  { background: #a8dfa5; }
-.note-color-swatch--pink   { background: #f5b3cd; }
-.note-color-swatch--purple { background: #cdb4f0; }
+.note-color-swatch--yellow { background: var(--note-yellow); }
+.note-color-swatch--blue   { background: var(--note-blue); }
+.note-color-swatch--green  { background: var(--note-green); }
+.note-color-swatch--pink   { background: var(--note-pink); }
+.note-color-swatch--purple { background: var(--note-purple); }
 
 .note-link-badge { font-size: 11px; opacity: 0.7; }
 
