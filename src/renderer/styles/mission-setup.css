@@ -29,8 +29,8 @@
   z-index: var(--z-app-chrome);
   flex: 0 0 auto;
   border-bottom: 1px solid var(--border);
-  background: color-mix(in srgb, var(--bg) 94%, transparent);
-  backdrop-filter: blur(10px);
+  /* Barra sticky é opaca: vidro só na camada de overlay (§4). */
+  background: var(--bg);
 }
 
 .mission-setup__progress ol {
@@ -650,8 +650,7 @@
   flex: 0 0 auto;
   padding-top: var(--space-3);
   padding-bottom: var(--space-2);
-  background: color-mix(in srgb, var(--bg) 94%, transparent);
-  backdrop-filter: blur(10px);
+  background: var(--bg);
   border-top: 1px solid var(--border);
 }
 
@@ -663,8 +662,7 @@
   bottom: 0;
   z-index: var(--z-app-chrome);
   margin-top: auto;
-  background: color-mix(in srgb, var(--bg) 94%, transparent);
-  backdrop-filter: blur(10px);
+  background: var(--bg);
   border-top: 1px solid var(--border);
 }
 
@@ -1140,11 +1138,6 @@
 .mission-setup__role-chip:hover {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 18%, transparent);
-}
-
-.mission-setup__role-chip:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
 }
 
 .mission-setup__role-chip span[aria-hidden='true'] {
@@ -1828,11 +1821,6 @@
 
 .mission-setup__preset[aria-pressed='true'] strong {
   color: var(--accent);
-}
-
-.mission-setup__preset:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
 }
 
 /* ── Lata cafeinada na etapa de Equipe ───────────────────────────────────────

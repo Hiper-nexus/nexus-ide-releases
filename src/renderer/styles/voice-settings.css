@@ -489,16 +489,6 @@
   border-color: color-mix(in srgb, var(--border-strong) 50%, var(--accent) 50%);
 }
 
-.voice-settings .agent-picker__select:focus-visible,
-.voice-settings .settings-input:focus-visible,
-.voice-settings button:focus-visible,
-.voice-settings input:focus-visible,
-.voice-settings select:focus-visible,
-.voice-settings textarea:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
 .voice-settings__voice-primary {
   display: flex;
   flex-direction: column;

@@ -163,9 +163,9 @@
   padding: 18px 18px 20px;
   border: 1px solid color-mix(in srgb, var(--border-strong) 60%, transparent);
   border-radius: 14px;
-  background: color-mix(in srgb, var(--bg-elevated) 72%, transparent);
+  /* Card interno é opaco: vidro só na camada de overlay (§4). */
+  background: var(--bg-elevated);
   box-shadow: 0 2px 12px color-mix(in srgb, #000 8%, transparent);
-  backdrop-filter: blur(8px);
 }
 
 .empty-state[role='alert'] {

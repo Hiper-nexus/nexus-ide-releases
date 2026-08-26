@@ -51,11 +51,6 @@
   transform: translateY(0.5px);
 }
 
-.pane-picker__trigger:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
 .pane-picker__trigger[aria-expanded='true'] {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, var(--bg-elevated));

@@ -1765,8 +1765,8 @@
   flex: 0 0 auto;
   padding: 10px 16px 14px;
   border-top: 1px solid var(--border);
-  background: color-mix(in srgb, var(--bg) 90%, transparent);
-  backdrop-filter: blur(10px);
+  /* Barra fixa é opaca: vidro só na camada de overlay (§4). */
+  background: var(--bg);
 }
 
 .mission-board__direct-bar .mission-board__direction-composer {

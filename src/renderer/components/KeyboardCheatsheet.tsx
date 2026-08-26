@@ -39,7 +39,10 @@ export function KeyboardCheatsheet() {
 
   return (
     <div className="cheatsheet" role="dialog" aria-label="Atalhos do teclado">
-      <div className="cheatsheet__overlay" onClick={close} />
+      <div
+        className="cheatsheet__overlay overlay-scrim-glass overlay-scrim-enter"
+        onClick={close}
+      />
       <div className="cheatsheet__panel">
         <header className="cheatsheet__head">
           <span className="cheatsheet__eyebrow">Atalhos</span>

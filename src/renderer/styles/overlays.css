@@ -234,30 +234,12 @@
   z-index: var(--z-hard-modal);
 }
 
+/* Vidro e fade vêm das classes canônicas da camada de overlay
+   (.overlay-scrim-glass/.overlay-scrim-enter em overlay-layer.css):
+   o scrim do ⌘K é modal curto e focal, doutrina §4. Aqui só o posicionamento. */
 .palette__overlay {
   position: absolute;
   inset: 0;
-  background: var(--overlay-scrim);
-  /* Vidro no SCRIM, nunca no painel nem em ancestral do canvas do xterm.
-     Modal curto e focal: o operador não está lendo o terminal enquanto o ⌘K
-     está aberto, então o custo de reamostragem é limitado no tempo. */
-  backdrop-filter: blur(var(--overlay-blur)) saturate(var(--overlay-saturate));
-  -webkit-backdrop-filter: blur(var(--overlay-blur)) saturate(var(--overlay-saturate));
-  animation: overlay-fade-in var(--dur-overlay-modal) var(--ease-overlay-smooth) both;
-}
-
-@media (prefers-reduced-transparency: reduce) {
-  .palette__overlay {
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
-    background: color-mix(in srgb, var(--overlay-scrim) 100%, var(--bg) 30%);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .palette__overlay {
-    animation: none;
-  }
 }
 
 .palette__panel {
@@ -416,27 +398,10 @@
   z-index: var(--z-hard-modal);
 }
 
+/* Mesma receita do ⌘K: vidro e fade das classes canônicas da camada. */
 .cheatsheet__overlay {
   position: absolute;
   inset: 0;
-  background: var(--overlay-scrim);
-  backdrop-filter: blur(var(--overlay-blur)) saturate(var(--overlay-saturate));
-  -webkit-backdrop-filter: blur(var(--overlay-blur)) saturate(var(--overlay-saturate));
-  animation: overlay-fade-in var(--dur-overlay-modal) var(--ease-overlay-smooth) both;
-}
-
-@media (prefers-reduced-transparency: reduce) {
-  .cheatsheet__overlay {
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
-    background: color-mix(in srgb, var(--overlay-scrim) 100%, var(--bg) 30%);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .cheatsheet__overlay {
-    animation: none;
-  }
 }
 
 .cheatsheet__panel {
@@ -580,7 +545,9 @@
   line-height: 1.4;
 }
 
-/* Global file-drop overlay (arrastar arquivo do Finder sobre o app). */
+/* Global file-drop overlay (arrastar arquivo do Finder sobre o app).
+   É scrim da camada de overlay, então pode ter vidro (§4) — mas 2px e não
+   --overlay-blur: o operador ainda lê o terminal enquanto arrasta. */
 .global-drop-overlay {
   position: fixed;
   inset: 0;
@@ -591,6 +558,13 @@
   background: color-mix(in srgb, var(--bg) 78%, transparent);
   backdrop-filter: blur(2px);
   pointer-events: none;
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .global-drop-overlay {
+    background: var(--bg);
+    backdrop-filter: none;
+  }
 }
 
 .global-drop-overlay__inner {

@@ -321,7 +321,10 @@ export function CommandPalette() {
 
   return (
     <div className="palette" role="dialog" aria-label="Command palette">
-      <div className="palette__overlay" onClick={close} />
+      <div
+        className="palette__overlay overlay-scrim-glass overlay-scrim-enter"
+        onClick={close}
+      />
       <div className="palette__panel" onKeyDown={onKeyDown}>
         <div className="palette__head">
           <PixelIcon name="search" size={14} />

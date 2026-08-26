@@ -13,25 +13,8 @@
   border: 0;
 }
 
-/* Restore the operating-system scrollbar on this long-form control surface. */
-.settings-workspace,
-.settings-workspace * {
-  scrollbar-color: auto;
-  scrollbar-width: auto;
-}
-
-.settings-workspace::-webkit-scrollbar,
-.settings-workspace::-webkit-scrollbar-track,
-.settings-workspace::-webkit-scrollbar-thumb,
-.settings-workspace::-webkit-scrollbar-thumb:hover,
-.settings-workspace::-webkit-scrollbar-corner,
-.settings-workspace *::-webkit-scrollbar,
-.settings-workspace *::-webkit-scrollbar-track,
-.settings-workspace *::-webkit-scrollbar-thumb,
-.settings-workspace *::-webkit-scrollbar-thumb:hover,
-.settings-workspace *::-webkit-scrollbar-corner {
-  all: revert;
-}
+/* Scrollbar: idioma único da app (base.css, §7) — o reset nativo que existia
+   aqui devolvia a barra clara do SO no meio de um produto escuro. */
 
 .settings-input {
   min-height: 32px;

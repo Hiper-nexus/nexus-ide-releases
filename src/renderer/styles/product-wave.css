@@ -361,11 +361,6 @@
   border-color: var(--danger, #f85149);
 }
 
-.product-pane__forget:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
 .product-pane__forget:disabled {
   opacity: 0.4;
   cursor: not-allowed;
@@ -969,11 +964,6 @@
   color: var(--accent);
 }
 
-.product-editor__retry:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
 .product-editor__workspace {
   flex: 1 1 auto;
   display: flex;
@@ -1016,11 +1006,6 @@
   border-color: var(--btn-primary-hover);
   background: var(--btn-primary-hover);
   color: var(--btn-primary-ink);
-}
-
-.product-editor__save:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
 }
 
 .product-editor__empty,

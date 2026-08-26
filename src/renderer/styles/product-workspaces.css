@@ -99,11 +99,6 @@
   background: var(--accent-soft);
 }
 
-.product-workspace__back:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
 /* Terminal: React surfaces only provide slots; terminal-host owns each PTY. */
 .terminal-workspace[hidden] {
   display: none;
@@ -350,11 +345,6 @@
   cursor: pointer;
 }
 
-.task-board-workspace__mission-open:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
 .task-board-workspace__mission-badge {
   color: var(--text-dim);
   font: 500 var(--text-xs)/1.2 var(--font-ui);
@@ -376,11 +366,6 @@
   background: var(--bg-bar);
   color: var(--text);
   font: 500 var(--text-sm)/1.2 var(--font-ui);
-}
-
-.task-board-workspace__status select:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
 }
 
 .task-board-workspace__status select:disabled {
@@ -430,11 +415,6 @@
 
 .task-board-workspace__retry:hover {
   background: color-mix(in srgb, var(--danger) 10%, transparent);
-}
-
-.task-board-workspace__retry:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
 }
 
 /* Memory: one local-first body, expanded into a readable in-flow workspace. */
