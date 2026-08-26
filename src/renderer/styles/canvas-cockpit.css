@@ -95,7 +95,7 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  padding: 4px var(--space-2);
+  padding: var(--space-1) var(--space-2);
   background: var(--bg-bar);
   border-bottom: 1px solid var(--border);
 }
@@ -142,7 +142,7 @@
 .canvas-command__actions {
   display: flex;
   align-items: center;
-  gap: 3px;
+  gap: var(--space-1);
   padding-left: var(--space-1);
   border-left: 1px solid var(--border);
 }
@@ -151,7 +151,7 @@
   min-height: 30px;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-1-5);
   padding: 0 var(--space-2);
   border: 1px solid transparent;
   border-radius: var(--radius-md);
@@ -193,7 +193,7 @@
 .canvas-command__actions kbd {
   color: inherit;
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: var(--text-2xs);
   opacity: 0.75;
 }
 
@@ -218,13 +218,13 @@
   flex: 1 1 auto;
   min-height: 0;
   position: relative;
-  padding: 6px 8px 4px;
+  padding: var(--space-1-5) var(--space-2) var(--space-1);
 }
 
 .canvas-pane .acp-pane {
   flex: 1 1 auto;
   min-height: 0;
-  margin: 0 8px 8px;
+  margin: 0 var(--space-2) var(--space-2);
   border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
   border-radius: var(--radius-xl);
   overflow: hidden;
@@ -286,7 +286,7 @@
   box-shadow: var(--shadow-1);
   overflow: hidden;
   color: var(--note-ink);
-  font-size: 13px;
+  font-size: var(--text-md);
 }
 .note--yellow { background: var(--note-yellow); }
 .note--blue   { background: var(--note-blue); }
@@ -298,15 +298,15 @@
 .note-drag-handle {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 6px;
+  gap: var(--space-1-5);
+  padding: var(--space-1) var(--space-1-5);
   cursor: grab;
   background: rgba(0, 0, 0, 0.08);
   user-select: none;
 }
 .note-drag-handle:active { cursor: grabbing; }
 
-.note-colors { display: flex; gap: 4px; margin-right: auto; }
+.note-colors { display: flex; gap: var(--space-1); margin-right: auto; }
 .note-color-swatch {
   width: 12px;
   height: 12px;
@@ -325,12 +325,12 @@
 .note-color-swatch--pink   { background: var(--note-pink); }
 .note-color-swatch--purple { background: var(--note-purple); }
 
-.note-link-badge { font-size: 11px; opacity: 0.7; }
+.note-link-badge { font-size: var(--text-xs); opacity: 0.7; }
 
 .note-remove {
   border: none;
   background: transparent;
-  font-size: 15px;
+  font-size: var(--text-lg);
   line-height: 1;
   cursor: pointer;
   color: rgba(0, 0, 0, 0.55);
@@ -345,7 +345,7 @@
   border: none;
   outline: none;
   background: transparent;
-  padding: 8px;
+  padding: var(--space-2);
   font: inherit;
   color: inherit;
 }
@@ -353,12 +353,12 @@
 
 /* Botão de nova nota (Panel top-left do xyflow) */
 .add-note-button {
-  padding: 4px 10px;
+  padding: var(--space-1) var(--space-2-5);
   border-radius: var(--radius-md);
   border: 1px solid var(--border);
   background: var(--bg-bar);
   color: inherit;
-  font-size: 12px;
+  font-size: var(--text-sm);
   cursor: pointer;
 }
 .add-note-button:hover { border-color: var(--accent); }
@@ -379,7 +379,7 @@
 .canvas-pane__snapshot-state {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-1-5);
   color: var(--text-dim);
   font-size: var(--text-xs);
 }

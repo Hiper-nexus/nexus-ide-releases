@@ -59,8 +59,8 @@
 .voice-hud__titlebar {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 8px 5px 10px;
+  gap: var(--space-2);
+  padding: var(--space-1-5) var(--space-2) var(--space-1) var(--space-2-5);
   border-bottom: 1px solid color-mix(in srgb, var(--accent) 16%, transparent);
   cursor: grab;
   touch-action: none;
@@ -72,7 +72,7 @@
 
 .voice-hud__grip {
   color: color-mix(in srgb, var(--accent) 55%, transparent);
-  font-size: 9px;
+  font-size: var(--text-2xs);
   letter-spacing: 0.1em;
   line-height: 1;
   display: inline-flex;
@@ -82,7 +82,7 @@
 .voice-hud__ctls {
   margin-left: auto;
   display: flex;
-  gap: 4px;
+  gap: var(--space-1);
 }
 
 .voice-hud__ctl {
@@ -92,7 +92,7 @@
   border-radius: var(--radius-sm);
   color: var(--text-dim);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--text-2xs);
   line-height: 1;
   width: 20px;
   height: 18px;
@@ -120,9 +120,9 @@
 /* Chip textual CODE/CHAT — mesmo chassi dos ctls, largura pelo conteúdo. */
 .voice-hud__ctl--mode {
   width: auto;
-  padding: 0 6px;
+  padding: 0 var(--space-1-5);
   letter-spacing: 0.06em;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 /* Chip CODE/CHAT da barra superior (paridade Overclock: sempre visível). */
@@ -134,18 +134,18 @@
 .dictation-mode-chip {
   appearance: none;
   margin-left: auto;
-  margin-right: 10px;
+  margin-right: var(--space-2-5);
   flex-shrink: 0;
   background: transparent;
   border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
   border-radius: var(--radius-sm);
   color: var(--text-dim);
   font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 700;
+  font-size: var(--text-2xs);
+  font-weight: 600;
   letter-spacing: 0.08em;
   line-height: 1;
-  padding: 4px 8px;
+  padding: var(--space-1) var(--space-2);
   cursor: pointer;
 }
 
@@ -162,7 +162,7 @@
 }
 
 .voice-hud--mini .voice-hud__ctls {
-  margin-left: 4px;
+  margin-left: var(--space-1);
   flex-shrink: 0;
 }
 
@@ -195,23 +195,23 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
-  padding: 14px 16px 12px;
+  gap: var(--space-2-5);
+  padding: var(--space-3) var(--space-4) var(--space-3);
 }
 
 /* ---- Modo mini: pill orb + fase ---- */
 .voice-hud--mini {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
+  gap: var(--space-2);
+  padding: var(--space-1-5) var(--space-2);
   cursor: grab;
   touch-action: none;
 }
 
 .voice-hud__mini-label {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--text-2xs);
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--text-dim);
@@ -405,7 +405,7 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-1-5);
   min-width: 0;
   width: 100%;
   text-align: center;
@@ -414,20 +414,20 @@
 .voice-hud__eyebrow {
   color: var(--accent);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--text-2xs);
   letter-spacing: 0.24em;
   text-transform: uppercase;
 }
 
 .voice-hud__label {
-  font-size: 16px;
+  font-size: var(--text-xl);
   font-weight: 600;
   letter-spacing: 0.04em;
   color: var(--text);
 }
 
 .voice-hud__detail {
-  font-size: 12px;
+  font-size: var(--text-sm);
   color: var(--text-dim);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -447,13 +447,13 @@
 
 .voice-hud__action {
   font: inherit;
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--accent);
   background: transparent;
   border: 1px solid var(--accent);
-  border-radius: 2px;
-  padding: 1px 6px;
-  margin-left: 6px;
+  border-radius: var(--radius-xs);
+  padding: 1px var(--space-1-5);
+  margin-left: var(--space-1-5);
   cursor: pointer;
   text-transform: uppercase;
   letter-spacing: 0.04em;
