@@ -13,13 +13,36 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.70.18',
-  date: '2026-08-25',
-  codename: 'Chrome da missão',
+  version: '0.70.19',
+  date: '2026-08-26',
+  codename: 'Casa pintada',
   summary:
-    'Rail e quadro mostram um nome curto. Terminais continua no quadro ' +
-    'quando a missão dorme.',
+    'O app inteiro sob a mesma régua. Nenhuma tela parece de outro ' +
+    'produto: uma paleta, uma escala de espaço e tipografia, a mesma ' +
+    'profundidade de sombra — conferido nos 5 temas e no Modo Pixel.',
   highlights: [
+    {
+      title: 'Uma paleta só, do Launcher ao inspector',
+      detail:
+        'Avatares, Minha Conta e voz usam as cores da casa. Índigo ' +
+        'legado, verdes Tailwind e ciano antigo saíram; matizes de ' +
+        'personagem viraram tokens (--role-*), arte de post-it e neon ' +
+        'deliberado seguem documentados como exceção.',
+    },
+    {
+      title: 'Escala de verdade em toda parte',
+      detail:
+        'Os degraus fantasma de 6/10px viraram tokens da escala; fontes, ' +
+        'raios e sombras caíram na régua do DESIGN.md. Nada muda de ' +
+        'tamanho — a densidade do cockpit é a mesma, agora nomeada.',
+    },
+    {
+      title: 'Hierarquia no primeiro contato',
+      detail:
+        'Launcher com título em escala hero e ação primária no alvo de ' +
+        '40px; settings com títulos de seção, eyebrows e nav ativa em ' +
+        'hairline; ⌘K, ⌘/ e overlays dividindo o mesmo scrim.',
+    },
     {
       title: 'Título curto no rail e no quadro',
       detail:

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.70.19 — Casa pintada
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+O app inteiro sob a mesma régua: avatares, Minha Conta e voz na paleta da
+casa (índigo legado, verdes Tailwind e ciano antigo saíram); espaçamentos,
+fontes, raios e sombras na escala de tokens. Launcher com título hero e
+ação primária de 40px, settings com hierarquia de seção, um scrim só para
+⌘K, ⌘/ e overlays. Conferido tela por tela nos 5 temas e no Modo Pixel.
+
 ## 0.70.18 — Chrome da missão
 
 _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
