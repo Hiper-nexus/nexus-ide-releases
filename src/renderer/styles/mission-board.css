@@ -1273,7 +1273,8 @@
 .mission-inspector__tab {
   min-width: 0;
   min-height: var(--mission-board-control-size);
-  padding: 0 var(--space-1);
+  /* Ritmo 6/10px do cockpit (§2): a tab respira no degrau 6px lateral. */
+  padding: 0 var(--space-1-5);
   overflow: hidden;
   border: 0;
   border-bottom: var(--radius-xs) solid transparent;
@@ -1297,8 +1298,10 @@
 }
 
 .mission-inspector__tab[aria-selected='true'] {
+  /* Acento é sinal (hairline embaixo), não wallpaper — mesma doutrina da nav
+     do settings e da tab do prov-hub: fundo fica neutro, texto acende. */
   border-bottom-color: var(--accent);
-  background: var(--accent-soft);
+  background: transparent;
   color: var(--text);
 }
 
