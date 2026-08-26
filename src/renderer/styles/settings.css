@@ -336,10 +336,12 @@
 
 .settings-nav__section {
   color: var(--text-faint);
-  font-family: var(--font-ui);
-  font-size: 11px;
+  /* Eyebrow da nav: mono caixa-alta, o mesmo idioma dos grupos do ⌘K
+     (overlays.css) — hierarquia por família+escala, não por cor. */
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
   font-weight: 600;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   margin: 12px 4px 5px;
 }
@@ -361,15 +363,29 @@
   transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
 }
 
-.settings-nav__item:hover {
+.settings-nav__item:hover:not(.settings-nav__item--active) {
   background: color-mix(in srgb, var(--text) 5%, transparent);
   border-color: transparent;
 }
 
+/* Item ativo: neutro um degrau acima do hover + hairline de acento — o rosa
+   é sinal (a barra), não wallpaper (o bloco inteiro pintado). Stripe lateral
+   grossa continua proibida pelo contrato (settings-style.test.ts). */
 .settings-nav__item--active {
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-  border-color: transparent;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  border-color: var(--border);
   box-shadow: none;
+}
+
+.settings-nav__item--active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 7px;
+  bottom: 7px;
+  width: 2px;
+  border-radius: var(--radius-round);
+  background: var(--accent);
 }
 
 .settings-nav__icon {
@@ -386,9 +402,11 @@
   color: var(--text-dim);
 }
 
+/* O sinal vivo do item ativo é a hairline; o glifo acende para --text em
+   vez de repetir o acento (um toque de cor por tela). */
 .settings-nav__item--active .settings-nav__icon {
-  color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--text);
+  background: transparent;
 }
 
 .settings-nav__text {
@@ -405,12 +423,20 @@
   font-weight: 600;
 }
 
-.settings-nav__item--active .settings-nav__title {
-  color: var(--accent);
-}
+/* Título do item ativo fica em --text (herdado): o acento da seleção mora
+   só na hairline (::before). */
 
 .settings-nav__subtitle {
   display: none;
+}
+
+[data-theme-pixel='on'] .settings-nav__section {
+  /* VT323 não desce abaixo do piso de 12px (§3) — o eyebrow sobe um degrau
+     no pixel mode, como os grupos do ⌘K e do rail. */
+  font-family: var(--font-pixel);
+  font-size: var(--text-sm);
+  font-weight: 400;
+  letter-spacing: 0.12em;
 }
 
 [data-theme-pixel='on'] .settings-nav__icon,
@@ -554,8 +580,11 @@
 
 .settings-detail__title {
   margin: 0 0 6px;
+  /* Display da casa: 650 e tracking levemente negativo (como o título do
+     ⌘/), em vez do bold-700 e +0.02em que o heading herda do UA. */
   font-size: var(--text-xl);
-  letter-spacing: 0.02em;
+  font-weight: 650;
+  letter-spacing: -0.01em;
 }
 
 .settings-detail__hint {

@@ -1,13 +1,10 @@
 /* Settings — aparência (extraído para respeitar limite Akita). */
 
-/* Polish: sentence-case nav, sem side-stripe, focus visível. */
+/* Polish: sentence-case nav, seleção por hairline (settings.css), focus
+   visível. */
 .settings-nav__title {
   letter-spacing: 0.04em;
   text-transform: none;
-}
-
-.settings-nav__item--active {
-  box-shadow: none;
 }
 
 /* :focus-visible dos controles vem da regra global de base.css; aqui só o
@@ -513,6 +510,8 @@
 
 .settings-pet-catalog__chip {
   appearance: none;
+  /* Alvo de toque no piso da régua (§6): chips de filtro são controles. */
+  min-height: 32px;
   padding: 4px 10px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-round);
