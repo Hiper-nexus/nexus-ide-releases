@@ -682,14 +682,14 @@
 
 .project-overview__title {
   margin: 0;
-  font-size: 1.5rem;
+  font-size: var(--text-3xl);
   font-weight: 600;
 }
 
 .project-overview__path {
   margin: var(--space-1) 0 0;
   color: var(--text-dim);
-  font-size: 0.85rem;
+  font-size: var(--text-lg);
   word-break: break-all;
 }
 
@@ -699,7 +699,7 @@
 }
 
 .project-overview__goal-label {
-  font-size: 0.85rem;
+  font-size: var(--text-lg);
   color: var(--text-dim);
 }
 
@@ -732,7 +732,7 @@
 
 .project-overview__flock-title {
   margin: 0 0 var(--space-2);
-  font-size: 0.95rem;
+  font-size: var(--text-lg);
 }
 
 .project-overview__empty {
@@ -779,7 +779,7 @@
 }
 
 .project-overview__session-meta {
-  font-size: 0.8rem;
+  font-size: var(--text-md);
   color: var(--text-dim);
 }
 

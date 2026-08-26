@@ -447,7 +447,7 @@
   letter-spacing: 0.12em;
 }
 .operator-profile__tier {
-  font-size: 1.125rem;
+  font-size: var(--text-2xl);
   font-weight: 600;
   letter-spacing: 0.06em;
   line-height: 1.25;
@@ -455,7 +455,8 @@
 }
 .operator-profile__power {
   font-family: var(--font-mono);
-  font-size: clamp(1.75rem, 5vw, 2rem);
+  font-size: clamp(var(--text-3xl), 5vw, var(--text-hero));
+  /* Número de exibição fluido com limites nos degraus da régua (22→34px). */
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   line-height: 1.15;

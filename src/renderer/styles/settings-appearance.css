@@ -390,9 +390,9 @@
 
 .settings-pet-library__delete:hover,
 .settings-pet-library__delete:focus-visible {
-  color: var(--danger, #f85149);
-  border-color: var(--danger, #f85149);
-  background: color-mix(in srgb, var(--danger, #f85149) 14%, var(--bg));
+  color: var(--danger, #ff6b4a);
+  border-color: var(--danger, #ff6b4a);
+  background: color-mix(in srgb, var(--danger, #ff6b4a) 14%, var(--bg));
   outline: none;
 }
 

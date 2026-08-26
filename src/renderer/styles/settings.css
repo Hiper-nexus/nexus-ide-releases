@@ -2623,14 +2623,14 @@
 
 /* CATALOG › LLMs·CLIs: "Disponíveis para Instalação" (CLIs ausentes + botão). */
 .settings-installable {
-  margin-top: 1.5rem;
+  margin-top: var(--space-5);
 }
 
 .settings-installable__title {
-  font-size: 0.85rem;
+  font-size: var(--text-lg);
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  margin-bottom: 0.5rem;
+  margin-bottom: var(--space-2);
 }
 
 .settings-installable__item {
@@ -2642,8 +2642,8 @@
 }
 
 .settings-btn--sm {
-  padding: 0.2rem 0.6rem;
-  font-size: 0.75rem;
+  padding: var(--space-1) var(--space-2-5);
+  font-size: var(--text-sm);
   gap: var(--space-1);
 }
 
@@ -2665,8 +2665,8 @@
    aqui só o que é específico da seção. */
 .labs-flag__reset {
   margin-top: var(--space-1-5);
-  padding: 0.15rem 0.5rem;
-  font-size: 0.72rem;
+  padding: 2px var(--space-2);
+  font-size: var(--text-sm);
   background: transparent;
   color: var(--text-dim);
   border: 1px solid var(--border);
@@ -2678,7 +2678,7 @@
 }
 .labs-flags__error {
   color: var(--danger);
-  font-size: 0.8rem;
+  font-size: var(--text-md);
 }
 
 /* ---- Providers hub (restored after launch-wizard cutover) ---- */

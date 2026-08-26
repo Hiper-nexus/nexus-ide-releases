@@ -295,8 +295,8 @@
 }
 
 .workspace-rail__workspace-action:hover {
-  background: color-mix(in srgb, var(--danger, #f43f5e) 15%, transparent);
-  color: var(--danger, #f43f5e);
+  background: color-mix(in srgb, var(--danger, #ff6b4a) 15%, transparent);
+  color: var(--danger, #ff6b4a);
 }
 
 .workspace-rail__workspace-action:active {

@@ -34,8 +34,8 @@
 }
 
 .action-card--danger {
-  border-color: color-mix(in srgb, var(--danger, #f07178) 45%, var(--border-strong));
-  color: var(--danger, #f07178);
+  border-color: color-mix(in srgb, var(--danger, #ff6b4a) 45%, var(--border-strong));
+  color: var(--danger, #ff6b4a);
 }
 
 .action-card--ghost {
@@ -83,8 +83,8 @@
 }
 
 .action-card--danger .action-card__icon {
-  background: color-mix(in srgb, var(--danger, #f07178) 16%, transparent);
-  color: var(--danger, #f07178);
+  background: color-mix(in srgb, var(--danger, #ff6b4a) 16%, transparent);
+  color: var(--danger, #ff6b4a);
 }
 
 .action-card__copy {

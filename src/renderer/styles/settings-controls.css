@@ -279,9 +279,9 @@
 }
 
 .settings-status-pill--ok {
-  border-color: color-mix(in srgb, var(--ok, #3dba7a) 45%, transparent);
-  background: color-mix(in srgb, var(--ok, #3dba7a) 12%, transparent);
-  color: var(--ok, #3dba7a);
+  border-color: color-mix(in srgb, var(--ok, #7ee2a8) 45%, transparent);
+  background: color-mix(in srgb, var(--ok, #7ee2a8) 12%, transparent);
+  color: var(--ok, #7ee2a8);
 }
 
 .settings-status-pill--warn {

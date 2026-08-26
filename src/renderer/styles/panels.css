@@ -555,7 +555,7 @@
 
 .confirm__reason-hint {
   font-size: var(--text-xs);
-  color: var(--danger, #f7768e);
+  color: var(--danger, #ff6b4a);
 }
 
 .confirm__btn:disabled {
@@ -957,9 +957,9 @@
   font-size: var(--text-xs);
   line-height: 1.45;
   overflow-wrap: anywhere;
-  border: 1px solid color-mix(in srgb, var(--warn, #e0af68) 40%, var(--border));
+  border: 1px solid color-mix(in srgb, var(--warn, #e5c07b) 40%, var(--border));
   border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--warn, #e0af68) 8%, transparent);
+  background: color-mix(in srgb, var(--warn, #e5c07b) 8%, transparent);
 }
 
 .acct__login-hero {
@@ -967,9 +967,9 @@
   flex-direction: column;
   gap: var(--space-2-5);
   padding: var(--space-3) var(--space-3);
-  border: 1px solid color-mix(in srgb, var(--warn, #e0af68) 40%, var(--border));
+  border: 1px solid color-mix(in srgb, var(--warn, #e5c07b) 40%, var(--border));
   border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--warn, #e0af68) 8%, transparent);
+  background: color-mix(in srgb, var(--warn, #e5c07b) 8%, transparent);
 }
 
 .acct__login-hero-detail {
@@ -1068,12 +1068,12 @@
 
 .acct__led[data-state="active"],
 .acct__led[data-state="ready"] {
-  background: var(--ok, #5fd38d);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok, #5fd38d) 18%, transparent);
+  background: var(--ok, #7ee2a8);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok, #7ee2a8) 18%, transparent);
 }
 
 .acct__led[data-state="cooldown"] {
-  background: var(--warn, #e0af68);
+  background: var(--warn, #e5c07b);
 }
 
 .acct__led[data-state="warn"] {
@@ -1166,9 +1166,9 @@
 }
 
 .acct__status--ok {
-  color: var(--ok, #5fd38d);
-  border-color: color-mix(in srgb, var(--ok, #5fd38d) 45%, transparent);
-  background: color-mix(in srgb, var(--ok, #5fd38d) 10%, transparent);
+  color: var(--ok, #7ee2a8);
+  border-color: color-mix(in srgb, var(--ok, #7ee2a8) 45%, transparent);
+  background: color-mix(in srgb, var(--ok, #7ee2a8) 10%, transparent);
 }
 
 .acct__status--missing {
@@ -1194,7 +1194,7 @@
 
 .acct__cooldown {
   font-size: var(--text-xs);
-  color: var(--warn, #e0af68);
+  color: var(--warn, #e5c07b);
   font-weight: 600;
 }
 
@@ -1497,9 +1497,9 @@
 }
 
 .acct__notice--ok {
-  color: var(--ok, #5fd38d);
-  border-color: color-mix(in srgb, var(--ok, #5fd38d) 40%, var(--border));
-  background: color-mix(in srgb, var(--ok, #5fd38d) 8%, transparent);
+  color: var(--ok, #7ee2a8);
+  border-color: color-mix(in srgb, var(--ok, #7ee2a8) 40%, var(--border));
+  background: color-mix(in srgb, var(--ok, #7ee2a8) 8%, transparent);
 }
 
 .acct__notice--err {

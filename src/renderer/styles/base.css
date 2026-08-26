@@ -906,7 +906,7 @@ body {
   padding: 0 2px;
   color: var(--text-dim);
   opacity: 0.55;
-  font-size: 9px;
+  font-size: var(--text-2xs);
   line-height: 15px;
   font-variant-numeric: tabular-nums;
   cursor: default;
@@ -1540,7 +1540,7 @@ body {
   height: 20px;
   padding: 0 8px;
   border: 1px solid color-mix(in srgb, var(--live) 45%, var(--border));
-  border-radius: 999px;
+  border-radius: var(--radius-round);
   background: color-mix(in srgb, var(--live) 14%, transparent);
   color: var(--text);
   font-size: 11px;
@@ -1936,8 +1936,8 @@ body {
   background: color-mix(in srgb, var(--bg) 92%, transparent);
   color: var(--warn);
   font-family: var(--font-mono);
-  font-size: 9px;
-  font-weight: 700;
+  font-size: var(--text-2xs);
+  font-weight: 600;
   letter-spacing: 0.04em;
   pointer-events: none;
 }
@@ -2272,7 +2272,7 @@ body {
 }
 
 .agent-notif__badge {
-  font-size: 9.5px;
+  font-size: var(--text-2xs);
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;

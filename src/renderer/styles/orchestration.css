@@ -5,10 +5,10 @@
   flex-direction: column;
   gap: var(--space-2);
   border: 1px solid
-    color-mix(in oklab, var(--danger, #e5484d) 35%, transparent);
+    color-mix(in oklab, var(--danger, #ff6b4a) 35%, transparent);
   border-radius: var(--radius-lg);
   padding: var(--space-3);
-  background: color-mix(in oklab, var(--danger, #e5484d) 6%, transparent);
+  background: color-mix(in oklab, var(--danger, #ff6b4a) 6%, transparent);
 }
 
 .mission-wave-schedule > h3 {
@@ -16,7 +16,7 @@
   font-size: var(--text-sm);
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: var(--danger, #e5484d);
+  color: var(--danger, #ff6b4a);
 }
 /* Plano de controle (P1-0 · slice 2) — espelho humano do que o piloto vê. */
 .mission-control-board {

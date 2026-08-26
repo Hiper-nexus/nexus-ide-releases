@@ -53,7 +53,7 @@
 }
 
 .update-status-btn--ready {
-  color: var(--ok, #9ece6a);
+  color: var(--ok, #7ee2a8);
   border-color: currentColor;
 }
 
@@ -133,7 +133,7 @@
 
 .update-modal__phase--available,
 .update-modal__phase--ready {
-  color: var(--ok, #9ece6a);
+  color: var(--ok, #7ee2a8);
 }
 
 /* Único estado VIVO desta superfície: o download em curso. Pulso de 2.2s

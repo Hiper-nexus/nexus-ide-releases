@@ -44,5 +44,5 @@
   font-weight: 700;
 }
 .provider-logo--xs .provider-logo__fallback {
-  font-size: 9px;
+  font-size: var(--text-2xs);
 }
