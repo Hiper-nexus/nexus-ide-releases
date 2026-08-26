@@ -26,6 +26,12 @@
  *   1. TABLE ROW — first cell is the custom property (backticks optional),
  *      second cell is a code span holding the value:
  *          | `--color-accent` | `#7c86ff` | the single interactive accent |
+ *      Both leading cells may list SEVERAL entries separated by ` / `, every
+ *      entry in its own code span, names paired to values by position:
+ *          | `--border` / `--border-strong` | `#fff1` / `#fff2` | ... |
+ *      Because each value is a span, the `/` inside `rgb(255 255 255 / .08)`
+ *      can never be read as a separator. A row whose cells disagree on count
+ *      declares nothing and is reported as malformed instead.
  *   2. CSS CODE FENCE — a `--name: value` inside a fenced block marked
  *      css/scss/less/styl (or unmarked):
  *          ```css
@@ -122,10 +128,28 @@ const CUSTOM_PROPERTY = '--[A-Za-z0-9][A-Za-z0-9_-]*';
 /** Fence info strings whose body is read as CSS. Anything else is ignored. */
 const CSS_FENCE_INFO = new Set(['', 'css', 'scss', 'less', 'styl', 'stylus']);
 
-/** A table row declares a token: `| --name | `value` | ... */
+/** A table row declares tokens: `| `--a` / `--b` | `v1` / `v2` | ...` — the
+ *  two leading cells, paired positionally. A row whose first cell names no
+ *  custom property (a glossary row) declares nothing and is skipped. */
 const TOKEN_TABLE_ROW = new RegExp(
-  `^ {0,3}\\|\\s*\`?(${CUSTOM_PROPERTY})\`?\\s*\\|\\s*\`([^\`]+)\`\\s*(?:\\||$)`,
+  `^ {0,3}\\|\\s*([^|]+?)\\s*\\|\\s*([^|]+?)\\s*(?:\\||$)`,
 );
+
+/** One backtick-delimited span — a value cell lists one per token. */
+const CODE_SPAN = /`([^`]+)`/g;
+
+/**
+ * Custom properties named by a table cell: spans first (`--a` / `--b`);
+ * bare names (no backticks) only when the cell spans none — so the original
+ * single-token shape `| --accent | `#hex` |` keeps working.
+ */
+function declaredNamesIn(cell) {
+  const spanned = [...cell.matchAll(new RegExp(`\`(${CUSTOM_PROPERTY})\``, 'g'))]
+    .map((match) => match[1]);
+  if (spanned.length > 0) return spanned;
+  const bare = new RegExp(`(?:^|\\s)(${CUSTOM_PROPERTY})(?=\\s|/|$)`, 'g');
+  return [...cell.matchAll(bare)].map((match) => match[1]);
+}
 
 /** `--name: value`, terminated by `;`, a brace, or end of input. */
 const CSS_DECLARATION = new RegExp(`(${CUSTOM_PROPERTY})\\s*:\\s*([^;{}]+)`, 'g');
@@ -278,10 +302,12 @@ function splitMarkdownFences(markdown) {
 
 /**
  * @returns {{ tokens: Map<string, Map<string, string>>, tableRows: number,
- *             fenceDeclarations: number }}
+ *             fenceDeclarations: number, malformedRows: string[] }}
  *   tokens maps a property name to normalized-value -> value as written. A
  *   token legitimately carries several values (a light table and a dark one);
- *   every documented value must exist in the code.
+ *   every documented value must exist in the code. malformedRows are rows
+ *   that name tokens but pair them with a different number of values —
+ *   ambiguous, so they declare nothing and surface as a finding.
  */
 function designDeclarations(markdown) {
   const withoutHtmlComments = markdown.replace(/<!--[\s\S]*?-->/g, '\n');
@@ -296,11 +322,20 @@ function designDeclarations(markdown) {
   };
 
   let tableRows = 0;
+  const malformedRows = [];
   for (const line of prose.split('\n')) {
     const row = TOKEN_TABLE_ROW.exec(line);
     if (!row) continue;
+    const names = declaredNamesIn(row[1]);
+    if (names.length === 0) continue;
+    const values = [...row[2].matchAll(CODE_SPAN)].map((match) => match[1].trim());
+    if (values.length === 0) continue;
+    if (names.length !== values.length) {
+      malformedRows.push(line.trim());
+      continue;
+    }
     tableRows += 1;
-    add(row[1], row[2]);
+    for (let i = 0; i < names.length; i += 1) add(names[i], values[i]);
   }
 
   let fenceDeclarations = 0;
@@ -311,7 +346,7 @@ function designDeclarations(markdown) {
     }
   }
 
-  return { tokens, tableRows, fenceDeclarations };
+  return { tokens, tableRows, fenceDeclarations, malformedRows };
 }
 
 /**
@@ -392,6 +427,17 @@ function main() {
   }
 
   const documented = designDeclarations(content);
+  if (documented.malformedRows.length > 0) {
+    findings.push({
+      severity: 'high',
+      message:
+        `${documented.malformedRows.length} token table row(s) in ` +
+        `${design.relative} name a different number of tokens and values, so ` +
+        'the pairing is ambiguous and the row was skipped: ' +
+        `${listed(documented.malformedRows)}. One value per name, each entry ` +
+        'in its own code span, separated by " / ".',
+    });
+  }
   const styleFiles = [];
   walk(root, root, styleFiles);
   const declared = styleDeclarations(root, styleFiles);

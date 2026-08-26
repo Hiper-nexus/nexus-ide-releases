@@ -70,7 +70,7 @@ tokens. Estado nunca viaja só em cor: sempre com glifo/palavra
   `--shadow-inset-hi` (filete de luz interno) aplicado com elas em superfícies
   elevadas — menus, modais, painéis. z-index: ladder nomeada
   (`--z-soft-overlay:45 … --z-confirm:1300`) — nunca valor solto.
-- `--bar-height: 44px`, `--toolbar-height: 28px`.
+- `--bar-height: 44px`, `--toolbar-height: 30px`.
 
 ### Camada de overlay — a escada inteira, ancorada no topo
 
@@ -215,7 +215,9 @@ já o desliga sozinho e compensa em opacidade.
 ## 8. Temas
 
 `ui-theme.ts`: `nexus-pink-city` (default), `nexus-dark`, `nexus-light`,
-`dracula`, `solarized-dark`. Tema = 14 vars de paleta; derivados de acento
+`dracula`, `solarized-dark`. Tema = 14 vars de paleta, aplicadas **inline no
+`<html>` por `applyUiTheme`**; os blocos `[data-theme]` do `base.css` são
+fallback estático parcial (pré-JS) — o inline vence. Derivados de acento
 seguem via `color-mix`. Troca ao vivo deve substituir todos os tokens sem
 herdar fallback/valor inline do tema anterior. A paleta xterm de Pink City é
 deliberadamente a mesma paleta escura não tingida de Nexus Dark. Tema claro
