@@ -294,7 +294,7 @@
 
 .spill-corner {
   position: absolute;
-  top: calc(var(--toolbar-height, 28px) + 4px);
+  top: calc(var(--toolbar-height, 30px) + 4px);
   right: 8px;
   pointer-events: none;
   z-index: 1;

@@ -112,9 +112,9 @@
 }
 
 .voice-hud__ctl--active {
-  color: #f0c674;
-  border-color: rgba(240, 198, 116, 0.7);
-  background: rgba(240, 198, 116, 0.14);
+  color: var(--gold);
+  border-color: color-mix(in srgb, var(--gold) 70%, transparent);
+  background: color-mix(in srgb, var(--gold) 14%, transparent);
 }
 
 /* Chip textual CODE/CHAT — mesmo chassi dos ctls, largura pelo conteúdo. */
@@ -156,9 +156,9 @@
 }
 
 .dictation-mode-chip--code {
-  color: #f0c674;
-  border-color: rgba(240, 198, 116, 0.7);
-  background: rgba(240, 198, 116, 0.14);
+  color: var(--gold);
+  border-color: color-mix(in srgb, var(--gold) 70%, transparent);
+  background: color-mix(in srgb, var(--gold) 14%, transparent);
 }
 
 .voice-hud--mini .voice-hud__ctls {
