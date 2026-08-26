@@ -681,7 +681,7 @@
   flex-direction: column;
   background: var(--bg-elevated);
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
+  border-radius: var(--radius-xl);
   box-shadow: var(--shadow-inset-hi), var(--shadow-2);
   z-index: 25;
 }

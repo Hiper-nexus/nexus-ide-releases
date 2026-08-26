@@ -49,7 +49,7 @@
 
 /* xyflow minimap */
 .canvas-container .react-flow__minimap {
-  border-radius: var(--radius);
+  border-radius: var(--radius-xl);
   overflow: hidden;
   width: 148px;
   height: 104px;
@@ -65,7 +65,7 @@
 
 /* xyflow controls */
 .canvas-container .react-flow__controls {
-  border-radius: var(--radius);
+  border-radius: var(--radius-xl);
   overflow: hidden;
   opacity: 0.7;
   transition: opacity 160ms var(--ease-out-quart);
@@ -201,7 +201,7 @@
 .canvas-pane {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-xl);
   overflow: hidden;
   transition: border-color 160ms var(--ease-out-quart), background-color 160ms var(--ease-out-quart);
   cursor: default;
@@ -231,7 +231,7 @@
   min-height: 0;
   margin: 0 8px 8px;
   border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
-  border-radius: var(--radius);
+  border-radius: var(--radius-xl);
   overflow: hidden;
 }
 

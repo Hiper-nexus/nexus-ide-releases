@@ -53,7 +53,6 @@
   --accent-ink: #080709;
   --accent-soft: color-mix(in srgb, var(--accent) 15%, transparent);
   --accent-strong: color-mix(in srgb, var(--accent) 30%, transparent);
-  --accent-hover: color-mix(in srgb, var(--accent) 82%, #ffffff);
   /* Glow stays dormant: depth comes from neutral layers and shadows. */
   --accent-glow: transparent;
   /* The neutral-white primary action remains the clearest control. It does
@@ -74,7 +73,6 @@
   /* Pixel grid is dormant by default; product workspaces keep their layered
      gradients without the drawing. Pixel mode restores the grid explicitly. */
   --pixel-grid: transparent;
-  --radius: 10px;
   --bar-height: 44px;
   --toolbar-height: 30px;
   --font-ui: 'Inter', ui-sans-serif, -apple-system, "SF Pro Text", Segoe UI,
@@ -125,9 +123,13 @@
   --overlay-saturate: 160%;
 
   /* Escalas — fonte única de espaçamento, tipo, raio e sombra. Valores fora
-     da escala são exceção deliberada, não default. */
+     da escala são exceção deliberada, não default. Os meios-degraus 6/10px
+     formalizam a densidade real do cockpit (eram os literais mais usados
+     fora da escala; agora são tokens, não migram de valor). */
   --space-1: 4px;
+  --space-1-5: 6px;
   --space-2: 8px;
+  --space-2-5: 10px;
   --space-3: 12px;
   --space-4: 16px;
   --space-5: 24px;
@@ -180,6 +182,17 @@
   --state-blocked: var(--warn);
   --state-failed: var(--danger);
   --state-pending: var(--text-dim);
+
+  /* Cores de papel — identidade de PERSONAGEM (avatares Nexling), fora da
+     doutrina de sinal: estado continua sendo --state-*, o papel é quem o
+     agente É, não o que está acontecendo. Não entram na paleta de tema: o
+     avatar carrega o próprio fundo escuro em qualquer tema (claro incluso).
+     Derivados de superfície ficam em color-mix destes tokens. */
+  --role-orchestrator: #818cf8;
+  --role-scout: #f472b6;
+  --role-architect: #38bdf8;
+  --role-reviewer: #fbbf24;
+  --role-executor: #34d399;
 }
 
 /* Per-theme fallbacks for values that previously inherited from the Nexus
@@ -298,7 +311,6 @@ body {
      e vira só "cantos retos + fonte bitmap". Deriva do acento do tema atual,
      então Dracula/Solarized/claro herdam a versão correta de graça. */
   --pixel-grid: color-mix(in srgb, var(--accent) 5%, transparent);
-  --radius: 0px;
   --radius-xs: 0px;
   --radius-sm: 0px;
   --radius-md: 0px;
@@ -338,7 +350,7 @@ body {
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background-color: var(--accent);
+  background-color: var(--scrollbar-thumb-hover);
 }
 
 ::-webkit-scrollbar-corner {
@@ -421,7 +433,7 @@ body {
 
 .grid--pane-maximized {
   padding: 1px;
-  border-radius: var(--radius);
+  border-radius: var(--radius-xl);
   background:
     linear-gradient(
       135deg,
@@ -497,7 +509,7 @@ body {
   width: 100%;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-xl);
   /* Em superfície escura a elevação se lê por LUMINOSIDADE, não por sombra:
      mais claro = mais alto (--bg → --bg-elevated). Sombra difusa sobre preto
      não projeta nada, só embaça a borda — e aqui ainda repintava o canvas do
@@ -532,7 +544,7 @@ body {
   position: absolute;
   inset: 0;
   border: 1px solid color-mix(in srgb, var(--accent) 70%, transparent);
-  border-radius: var(--radius);
+  border-radius: var(--radius-xl);
   opacity: 0.25;
   animation: pane-breathe 2.6s var(--ease-out-quart) infinite;
   pointer-events: none;
@@ -1266,7 +1278,7 @@ body {
   margin: var(--space-3) var(--space-3) var(--space-2);
   padding: var(--space-2) var(--space-3);
   border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--border));
-  border-radius: var(--radius);
+  border-radius: var(--radius-xl);
   background: color-mix(in srgb, var(--accent) 6%, var(--bg-elevated));
 }
 
@@ -1371,7 +1383,7 @@ body {
   gap: 0 var(--space-2);
   padding: var(--space-2) var(--space-3);
   border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--border));
-  border-radius: var(--radius);
+  border-radius: var(--radius-xl);
   background: color-mix(in srgb, var(--bg-elevated) 88%, var(--accent) 4%);
   box-shadow: 0 6px 20px -12px rgba(0, 0, 0, 0.6);
   pointer-events: none;

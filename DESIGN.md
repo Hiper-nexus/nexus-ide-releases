@@ -50,7 +50,7 @@ a derivar de `--accent`, o rosa deixa de comunicar estado e vira decoração.
 O ciano permanece apenas em `LEGACY_NEXUS_CYAN_PALETTE` para integrações
 legadas. Não é default nem opção do picker atual.
 
-Derivados do acento (`--accent-soft/strong/hover/glow`) são `color-mix` do
+Derivados do acento (`--accent-soft/strong/glow`) são `color-mix` do
 `--accent` — **nunca** sobrescreva por tema. Cada tema fornece apenas sua
 paleta-base, CTA e perigo; componentes consomem tokens, nunca hex de tema.
 
@@ -62,9 +62,19 @@ Mission Board, inspetor, toolbar de pane, FleetChip e bordas de pane consomem S�
 tokens. Estado nunca viaja só em cor: sempre com glifo/palavra
 (`paneSessionView` em `src/shared/pane-session-view.ts`).
 
+### Cores de papel — personagem, não sinal
+
+`--role-{orchestrator,scout,architect,reviewer,executor}` são os matizes de
+personagem dos avatares Nexling: quem o agente **é**, não o que está
+acontecendo (isso continua em `--state-*`). Fora da paleta de tema — o avatar
+carrega o próprio fundo escuro em qualquer tema. Superfícies e bordas derivam
+via `color-mix` destes tokens; hex de papel em componente é dívida.
+
 ### Escalas
 
-- Espaço: `--space-1..8` (4→64px). Tipo: `--text-2xs..hero` (10→34px).
+- Espaço: `--space-1..8` (4→64px) com meios-degraus `--space-1-5`/`--space-2-5`
+  (6/10px — a densidade real do cockpit, agora token, não literal).
+  Tipo: `--text-2xs..hero` (10→34px).
 - Raio: `--radius-xs..2xl` (2→18px) + `--radius-round`. Cards ≤ `--radius-xl`.
 - Sombra: `--shadow-1..3` em duas camadas (contato curto + difusão larga) e
   `--shadow-inset-hi` (filete de luz interno) aplicado com elas em superfícies
@@ -186,6 +196,11 @@ já o desliga sozinho e compensa em opacidade.
   uma missão, que usa confirmação nativa compacta e recibo auditável.
 - `PixelIcon` — set proprietário 11×11; ícone novo entra nele, não glifo Unicode
   solto (🎬 ★ ↻ são dívida).
+- **Card da casa** (receita, não componente): fundo `--bg-elevated`, borda
+  `--border`, `--radius-xl`, `--shadow-1` + `--shadow-inset-hi`. Sem
+  `backdrop-filter` (vidro é exclusivo do scrim da camada de overlay, §4),
+  sem gradiente próprio, sem hex local. Seleção/destaque via `color-mix` do
+  `--accent` — o toque de acento da superfície, quando ela merece um.
 - Chips da bar: altura 26px, `border-radius: 999px`, um idioma só
   (`.workspace-bar__zone--status > *`).
 - Botões icon-only sempre com `aria-label` (title sozinho não basta).
