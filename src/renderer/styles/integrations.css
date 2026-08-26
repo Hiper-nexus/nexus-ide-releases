@@ -4,13 +4,13 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  margin: 6px 10px 4px;
-  padding: 7px 10px;
+  margin: var(--space-1-5) var(--space-2-5) var(--space-1);
+  padding: var(--space-1-5) var(--space-2-5);
   border: 1px dashed color-mix(in srgb, var(--border-strong) 55%, transparent);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   background: color-mix(in srgb, var(--bg) 40%, transparent);
   color: var(--text-dim);
-  font-size: 10px;
+  font-size: var(--text-2xs);
   text-align: center;
   opacity: 0.65;
   transition:
@@ -20,8 +20,8 @@
 }
 
 .agent-drop--compact {
-  margin: 6px 10px 2px;
-  padding: 6px 8px;
+  margin: var(--space-1-5) var(--space-2-5) 2px;
+  padding: var(--space-1-5) var(--space-2);
   opacity: 0.7;
   min-height: 28px;
   justify-content: center;
@@ -31,7 +31,7 @@
 }
 
 .agent-drop--compact .agent-drop__label {
-  font-size: 10.5px;
+  font-size: var(--text-xs);
   font-weight: 500;
   letter-spacing: 0.01em;
 }
@@ -49,7 +49,7 @@
 }
 
 .agent-drop__note {
-  font-size: 10px;
+  font-size: var(--text-2xs);
   color: var(--accent);
 }
 @media (prefers-reduced-motion: reduce) {
