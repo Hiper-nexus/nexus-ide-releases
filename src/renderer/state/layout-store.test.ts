@@ -858,3 +858,27 @@ describe('layout-store números de pane', () => {
     expect(numbersOf()).toEqual([1]);
   });
 });
+
+describe('layout-store spawnAgent continuity', () => {
+  beforeEach(() => {
+    useLayoutStore.getState().hydrate(null);
+  });
+
+  it('stashes the handoff pack on the new pane without binding missionId', async () => {
+    const { takePendingContinuity } = await import(
+      '../orch/stranded-mission-handoff'
+    );
+    const paneId = useLayoutStore.getState().spawnAgent('claude', 'opus', {
+      accountId: 'acc-good',
+      continuityPack: '[NEXUS FAILOVER HANDOFF]\ncontinue Radar BI',
+    });
+    expect(paneId).toBeTruthy();
+    const pane = listPanes(useLayoutStore.getState().root).find(
+      (candidate) => candidate.id === paneId,
+    );
+    expect(pane?.accountId).toBe('acc-good');
+    expect(pane?.missionId).toBeUndefined();
+    expect(takePendingContinuity(paneId!)).toContain('Radar BI');
+    expect(takePendingContinuity(paneId!)).toBeUndefined();
+  });
+});

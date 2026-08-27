@@ -69,6 +69,8 @@ interface StuckPattern {
 const STUCK_PATTERNS: StuckPattern[] = [
   // Claude Code OAuth menu shown when no readable session exists.
   { flavor: 'claude', re: /select login method/i, label: 'claude login menu', kind: 'cli-login' },
+  { flavor: 'claude', re: /please run \/login/i, label: 'claude please-run-login', kind: 'cli-login' },
+  { flavor: '*', re: /oauth access token has expired/i, label: 'oauth token expired login', kind: 'cli-login' },
   // Grok's OAuth spinner ("Signing in…") repaints forever on a dead flow.
   { flavor: 'grok', re: /signing in/i, label: 'grok signing-in spinner', kind: 'cli-login' },
   // Device-flow prompts that wait for a keypress nobody will send.

@@ -2,10 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AccountInfo } from '../../shared/account-types';
 import type { ProviderSettingsInfo } from '../../shared/provider-settings-types';
 import { filterPaletteActions } from '../lib/command-palette-filter';
+import { listPanes } from '../lib/split-tree';
+import { planOperatorAgentSpawn } from '../orch/stranded-mission-handoff';
 import { useAccountStore } from '../state/account-store';
 import { useLayoutStore } from '../state/layout-store';
+import { useOrchStore } from '../state/orch-store';
 import { usePanePickerStore } from '../state/pane-picker-store';
 import { useProviderStore } from '../state/provider-store';
+import { useSessionStateStore } from '../state/session-state-store';
 import { PixelIcon, type PixelIconName } from './PixelIcon';
 import { ProviderLogo } from './ProviderLogo';
 
@@ -186,6 +190,31 @@ export function buildPanePickerUnavailable(
     .sort((a, b) => a.label.localeCompare(b.label, 'pt-BR'));
 }
 
+function recentExcerpt(paneId: string): string {
+  const excerpt = (
+    window as Window & {
+      __nexusGetScrollbackExcerpt?: (id: string, max?: number) => string;
+    }
+  ).__nexusGetScrollbackExcerpt;
+  return excerpt?.(paneId) ?? '';
+}
+
+function accountLabelOf(accountId: string | undefined, fallback: string): string {
+  if (!accountId) return fallback;
+  return (
+    useAccountStore.getState().accounts.find((account) => account.id === accountId)
+      ?.label ?? fallback
+  );
+}
+
+function paneStateRecord(): Record<string, string | undefined> {
+  const record: Record<string, string | undefined> = {};
+  for (const [paneId, state] of useSessionStateStore.getState().paneStates) {
+    record[paneId] = state;
+  }
+  return record;
+}
+
 /** Abre o pane pela ação que JÁ existe na store — o picker não cria panes. */
 export function runPanePickerIntent(intent: PanePickerIntent): void {
   const layout = useLayoutStore.getState();
@@ -197,10 +226,26 @@ export function runPanePickerIntent(intent: PanePickerIntent): void {
     layout.addBrowserPane();
     return;
   }
-  if (intent.accountId) {
-    layout.spawnAgent(intent.adapterId, intent.model, {
-      accountId: intent.accountId,
-    });
+  const orch = useOrchStore.getState();
+  const panes = listPanes(layout.root);
+  const recentOutputByPane: Record<string, string> = {};
+  for (const pane of panes) {
+    recentOutputByPane[pane.id] = recentExcerpt(pane.id);
+  }
+  const focused = panes.find((pane) => pane.id === layout.focusedPaneId);
+  const planned = planOperatorAgentSpawn({
+    accountId: intent.accountId,
+    focusedPaneId: layout.focusedPaneId,
+    panes,
+    paneMissions: orch.paneMissions,
+    paneStates: paneStateRecord(),
+    recentOutputByPane,
+    missions: orch.missions,
+    fromAccountLabel: accountLabelOf(focused?.accountId, 'conta anterior'),
+    toAccountLabel: accountLabelOf(intent.accountId, DEFAULT_ACCOUNT_LABEL),
+  });
+  if (planned.accountId || planned.continuityPack) {
+    layout.spawnAgent(intent.adapterId, intent.model, planned);
     return;
   }
   layout.spawnAgent(intent.adapterId, intent.model);

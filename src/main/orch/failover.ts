@@ -19,6 +19,7 @@ import {
   type OwnedPaneAuthzInfo,
 } from './pane-registry';
 import { detectLimit, tierScopeFromModelId, type LimitHit } from './limit-detector';
+import { retryTargetMsForLimit } from './failover-retry-policy';
 import {
   hasFreshProviderApiWindowForLimit,
   longCooldownNeedsFreshProviderApi,
@@ -26,6 +27,7 @@ import {
 } from './limit-refutation';
 import type { ProviderQuotaEntry } from '../../shared/quota-types';
 import {
+  adoptNativeAccountForFailover,
   getAccount,
   getActiveAccount,
   isAccountBlockedForScope,
@@ -469,15 +471,32 @@ function performSwitch(req: SwitchRequest): void {
   }
 
   if (!next) {
+    const adopted = adoptNativeAccountForFailover(adapterId, req.excludeId);
+    if (adopted) {
+      const prepared = prepareAccountForSpawn(adapterId, adopted.id, now);
+      if (prepared.ok) {
+        next = adopted;
+        probe = false;
+        prepareError = undefined;
+      } else {
+        prepareError = prepared.error;
+      }
+    }
+  }
+
+  if (!next) {
     // Espera-pela-irmã (política do omp): retry automático em
     // min(fim do cooldown da própria conta, menor blockedUntil das irmãs)+1s
     // em vez de desistir ou esperar a janela multi-hora do provedor.
-    const retryTarget = Math.min(
-      req.ownUnblockAtMs ?? Number.POSITIVE_INFINITY,
-      nextUnblockAtMs ?? Number.POSITIVE_INFINITY,
-    );
+    // Auth: nunca retenta a MESMA credencial morta (1s ticker / 15min
+    // cooldown fingiam "Sessão recuperada" e injetavam continue no /login).
+    const retryTarget = retryTargetMsForLimit({
+      kind: hit.kind,
+      ownUnblockAtMs: req.ownUnblockAtMs,
+      nextUnblockAtMs,
+    });
     let scheduledRetryAtMs: number | undefined;
-    if (Number.isFinite(retryTarget) && attempt < MAX_SCHEDULED_RETRIES) {
+    if (retryTarget !== undefined && attempt < MAX_SCHEDULED_RETRIES) {
       scheduledRetryAtMs = retryTarget + RETRY_BUFFER_MS;
       scheduleFailoverRetry(key, authority, hit, scheduledRetryAtMs, attempt + 1);
     }

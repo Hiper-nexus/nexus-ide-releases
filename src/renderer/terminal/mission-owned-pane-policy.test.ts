@@ -296,6 +296,16 @@ describe('Maestro no fim do turno (F-006) — pane vivo, sem recado, sem restart
         resumeMode: 'exact',
       }),
     ).toBe(true);
+    expect(
+      shouldInjectResumeContinuation({
+        quietSpawn: false,
+        hasContinuityPack: false,
+        resume: true,
+        adopted: false,
+        resumeMode: 'exact',
+        skipContinuation: true,
+      }),
+    ).toBe(false);
   });
 });
 

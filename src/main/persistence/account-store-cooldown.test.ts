@@ -300,6 +300,47 @@ describe('probe-after (sondagem last-resort)', () => {
     ).toBe(true);
   });
 
+  it('spawn pinado do operador pode retentar uma conta em cooldown de auth', () => {
+    const a = addAcct('adm');
+    setCooldown(a.id, NOW + 15 * MINUTE, 'Error: 401 OAuth access token has expired');
+    expect(prepareAccountForSpawn('claude', a.id, NOW + MINUTE).ok).toBe(true);
+    expect(
+      pickAvailableForFailover('claude', null, NOW + MINUTE).account,
+    ).toBeNull();
+  });
+
+  it('conta 1 em auth roteia para a irmã com credencial pronta', () => {
+    const adm = addAcct('adm');
+    const pessoal = addAcct('pessoal');
+    setCooldown(
+      adm.id,
+      NOW + 15 * MINUTE,
+      'Error: 401 OAuth access token has expired',
+    );
+    const pick = pickAvailableForFailover('claude', adm.id, NOW);
+    expect(pick.account?.id).toBe(pessoal.id);
+    expect(pick.probe).toBe(false);
+    expect(prepareAccountForSpawn('claude', pessoal.id, NOW).ok).toBe(true);
+  });
+
+  it('pula irmã sem credencial e escolhe a que tem chave', () => {
+    const adm = addAcct('adm');
+    const pessoal = addAcct('pessoal');
+    // Casca sem chave vira a ativa — o pick antigo a preferia e o prepare falhava.
+    addAccount({ adapterId: 'claude', label: 'vazia', mode: 'api-key' });
+    setCooldown(adm.id, NOW + 15 * MINUTE, '401 OAuth access token has expired');
+    expect(pickAvailableForFailover('claude', adm.id, NOW).account?.id).toBe(
+      pessoal.id,
+    );
+  });
+
+  it('sem irmã spawnable não devolve casca sem chave', () => {
+    const adm = addAcct('adm');
+    addAccount({ adapterId: 'claude', label: 'vazia', mode: 'api-key' });
+    setCooldown(adm.id, NOW + 15 * MINUTE, '401 OAuth access token has expired');
+    expect(pickAvailableForFailover('claude', adm.id, NOW).account).toBeNull();
+  });
+
   it('sondagem exige opt-in do prepare para conta ainda em cooldown', () => {
     const a = addAcct('a');
     setCooldown(a.id, NOW + 12 * HOUR, 'quota');

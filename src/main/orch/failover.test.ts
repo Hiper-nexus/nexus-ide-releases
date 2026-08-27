@@ -92,6 +92,7 @@ vi.mock('../persistence/account-store', () => ({
     account: accountMocks.next,
     probe: false,
   })),
+  adoptNativeAccountForFailover: vi.fn(() => null),
   isAccountBlockedForScope: vi.fn(() => false),
   setCooldown: accountMocks.setCooldown,
   prepareAccountForSpawn: vi.fn((adapterId: string, id: string) => {
@@ -808,6 +809,126 @@ describe('espera-pela-irmã + cooldown escopado (C1, derivado do oh-my-pi)', () 
       ACCOUNT_CHANNELS.failover,
       expect.objectContaining({ switched: true, toAccountId: 'account-b' }),
     );
+  });
+
+  it('auth com irmã spawnable roteia para a conta 2 (não fica no toast de vazio)', async () => {
+    const { detectLimit } = await import('./limit-detector');
+    const owner = armPane(812);
+    vi.mocked(detectLimit).mockImplementationOnce((buffer: string) =>
+      buffer.includes('LIMIT')
+        ? {
+            kind: 'auth' as const,
+            reason: '401 OAuth access token has expired',
+            cooldownMs: 15 * 60 * 1000,
+          }
+        : null,
+    );
+
+    ptyMocks.dataTaps[0]!('sess-812', 'LIMIT');
+
+    expect(accountMocks.setCooldown).toHaveBeenCalledWith(
+      'account-a',
+      expect.any(Number),
+      '401 OAuth access token has expired',
+      undefined,
+    );
+    expect(owner.send).toHaveBeenCalledWith(
+      ACCOUNT_CHANNELS.failover,
+      expect.objectContaining({
+        paneId: 'pane-812',
+        switched: true,
+        kind: 'auth',
+        crossAccount: true,
+        toAccountId: 'account-b',
+        fromAccountId: 'account-a',
+      }),
+    );
+  });
+
+  it('auth sem irmã no vault adota a sessão nativa de outro e-mail', async () => {
+    const { detectLimit } = await import('./limit-detector');
+    const { pickAvailableForFailover, adoptNativeAccountForFailover } =
+      await import('../persistence/account-store');
+    const owner = armPane(814);
+    vi.mocked(detectLimit).mockImplementationOnce((buffer: string) =>
+      buffer.includes('LIMIT')
+        ? {
+            kind: 'auth' as const,
+            reason: '401 OAuth access token has expired',
+            cooldownMs: 15 * 60 * 1000,
+          }
+        : null,
+    );
+    vi.mocked(pickAvailableForFailover).mockImplementationOnce(() => ({
+      account: null,
+      probe: false,
+    }));
+    vi.mocked(adoptNativeAccountForFailover).mockImplementationOnce(() => ({
+      id: 'account-b',
+      adapterId: 'claude',
+      label: 'pessoal@example.test',
+      mode: 'subscription' as const,
+      upstream: 'anthropic',
+      email: 'pessoal@example.test',
+      createdAt: 2,
+    }));
+
+    ptyMocks.dataTaps[0]!('sess-814', 'LIMIT');
+
+    expect(owner.send).toHaveBeenCalledWith(
+      ACCOUNT_CHANNELS.failover,
+      expect.objectContaining({
+        paneId: 'pane-814',
+        switched: true,
+        kind: 'auth',
+        crossAccount: true,
+        toAccountId: 'account-b',
+      }),
+    );
+  });
+
+  it('auth sem irmã não agenda retry same-account (não finge recuperação)', async () => {
+    const { detectLimit } = await import('./limit-detector');
+    const { pickAvailableForFailover } = await import(
+      '../persistence/account-store'
+    );
+    const owner = armPane(813);
+    vi.mocked(detectLimit).mockImplementationOnce((buffer: string) =>
+      buffer.includes('LIMIT')
+        ? {
+            kind: 'auth' as const,
+            reason: '401 OAuth access token has expired',
+            cooldownMs: 15 * 60 * 1000,
+          }
+        : null,
+    );
+    vi.mocked(pickAvailableForFailover).mockImplementationOnce(() => ({
+      account: null,
+      probe: false,
+    }));
+
+    ptyMocks.dataTaps[0]!('sess-813', 'LIMIT');
+
+    expect(owner.send).toHaveBeenCalledWith(
+      ACCOUNT_CHANNELS.failover,
+      expect.objectContaining({
+        paneId: 'pane-813',
+        switched: false,
+        kind: 'auth',
+      }),
+    );
+    const first = owner.send.mock.calls.find(
+      (c) => c[0] === ACCOUNT_CHANNELS.failover,
+    );
+    expect(
+      (first?.[1] as { scheduledRetryAtMs?: number }).scheduledRetryAtMs,
+    ).toBeUndefined();
+
+    vi.advanceTimersByTime(60_000);
+    const sends = owner.send.mock.calls.filter(
+      (c) => c[0] === ACCOUNT_CHANNELS.failover,
+    );
+    expect(sends).toHaveLength(1);
   });
 });
 

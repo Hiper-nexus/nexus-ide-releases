@@ -196,14 +196,27 @@ const PATTERNS: Pattern[] = [
  * O parser vendorado do omp cobre as variantes extras (hint `retry-after-ms=`,
  * headers ecoados no terminal, prosa "retry in 26.3s").
  */
+/**
+ * Claude/Codex in-process retry ticker ("Retrying in 1s · attempt 1/10").
+ * That is NOT a provider reset time. Feeding it to cooldown turned a 401 into
+ * a 1s same-account "recovery" that immediately 401'd again.
+ */
+const CLIENT_RETRY_TICKER =
+  /\bretrying\s+in\s+\d+(?:\.\d+)?\s*(?:ms|milliseconds?|secs?|seconds?|s)\s*[·|•\-]\s*attempt\s+\d+\s*\/\s*\d+/gi;
+
+function stripClientRetryTicker(text: string): string {
+  return text.replace(CLIENT_RETRY_TICKER, ' ');
+}
+
 function parseResetCooldown(text: string): number | null {
-  const mins = /try again in (\d+)\s*(?:minute|min)/i.exec(text);
+  const cleaned = stripClientRetryTicker(text);
+  const mins = /try again in (\d+)\s*(?:minute|min)/i.exec(cleaned);
   if (mins) return Number(mins[1]) * 60 * 1000;
-  const secs = /try again in (\d+)\s*(?:second|sec)/i.exec(text);
+  const secs = /try again in (\d+)\s*(?:second|sec)/i.exec(cleaned);
   if (secs) return Number(secs[1]) * 1000;
-  const hrs = /(?:resets?|available again) in (\d+)\s*hour/i.exec(text);
+  const hrs = /(?:resets?|available again) in (\d+)\s*hour/i.exec(cleaned);
   if (hrs) return Number(hrs[1]) * HOUR;
-  return parseRetryAfterMsFromText(text);
+  return parseRetryAfterMsFromText(cleaned);
 }
 
 /** Mapeia a taxonomia do omp para os kinds do Nexus. */
@@ -413,10 +426,14 @@ export function detectLimit(rawText: string): LimitHit | null {
     if (!match) continue;
     const parsed = parseResetCooldown(text);
     const scope = extractAnthropicTierScope(text, match.index, match[0].length);
+    const cooldownMs =
+      pattern.kind === 'auth'
+        ? Math.max(parsed ?? pattern.cooldownMs, pattern.cooldownMs)
+        : (parsed ?? pattern.cooldownMs);
     return {
       kind: pattern.kind,
       reason: match[0].trim().slice(0, 120),
-      cooldownMs: parsed ?? pattern.cooldownMs,
+      cooldownMs,
       ...(scope ? { scope } : {}),
     };
   }

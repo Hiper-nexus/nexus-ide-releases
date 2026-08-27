@@ -9,7 +9,10 @@ import {
   isSameAccountFailover,
   resolveContinuityMission,
 } from './failover-decision';
-import { blockedFailoverToastCopy } from './failover-toast-copy';
+import {
+  blockedFailoverToastCopy,
+  recoveredFailoverToastCopy,
+} from './failover-toast-copy';
 
 /**
  * Reacts to main-process failover events.
@@ -53,7 +56,10 @@ export function useFailoverController(): void {
             respawnWithResume(
               updated,
               `[nexus] ${event.reason}; retomando sessão na mesma conta…`,
-              { mode: 'same-account-resume' },
+              {
+                mode: 'same-account-resume',
+                skipContinuation: event.kind === 'auth',
+              },
             );
           } else {
             const orch = useOrchStore.getState();
@@ -84,7 +90,8 @@ export function useFailoverController(): void {
         }
       }
       if (isSameAccountFailover(event)) {
-        push('success', 'Sessão recuperada automaticamente', event.reason);
+        const copy = recoveredFailoverToastCopy(event);
+        push(event.kind === 'auth' ? 'warn' : 'success', copy.title, copy.detail);
         return;
       }
       const coalesceNote = event.coalesced

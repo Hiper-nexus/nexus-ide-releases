@@ -71,6 +71,11 @@ import { WebglLeasePool } from './webgl-lease';
 import { resumeTerminalVisibilityBeforePaint } from './terminal-visibility-resume';
 import { shouldAutoPinPaneAccount } from './pane-account-authority';
 import {
+  cliAcceptsContinuityPrompt,
+  nextContinuityInjectionDelay,
+  takePendingContinuity,
+} from '../orch/stranded-mission-handoff';
+import {
   createAdoptionRepaintTape,
   repaintAdoptedFrame,
 } from './adoption-repaint';
@@ -705,6 +710,7 @@ function startSpawn(
   resumeLatestOnly = false,
   continuityPack?: string,
   restorePersistedAuthority = false,
+  skipContinuation = false,
 ): Promise<string | null> {
   const quietSpawn = host.quietSpawn === true;
   host.quietSpawn = false;
@@ -713,6 +719,7 @@ function startSpawn(
   host.spawnStarted = true;
   host.hibernated = false;
   useSessionStateStore.getState().setPaneState(pane.id, 'spawning');
+  const pack = continuityPack ?? takePendingContinuity(pane.id);
   return (async (): Promise<string | null> => {
     try {
       const missionId =
@@ -1106,21 +1113,46 @@ function startSpawn(
 
       // After mount: inject either same-account continue or cross-account pack.
       // Cross-account always injects (fresh session). Same-account resume only
-      // when the adapter actually restored something.
+      // when the adapter actually restored something. Never type into /login.
       const shouldInjectContinue = shouldInjectResumeContinuation({
         quietSpawn,
-        hasContinuityPack: Boolean(continuityPack),
+        hasContinuityPack: Boolean(pack),
         resume,
         adopted: Boolean(res.adopted),
         resumeMode: res.resumeMode,
+        skipContinuation,
       });
       if (shouldInjectContinue) {
         const resumedSessionId = res.sessionId;
-        const continuationTimer = setTimeout(() => {
-          if (host.disposed || host.sessionId !== resumedSessionId) return;
+        let attempt = 0;
+        let cancelled = false;
+        const tryInject = () => {
+          if (cancelled || host.disposed || host.sessionId !== resumedSessionId) {
+            return;
+          }
+          const decision = nextContinuityInjectionDelay({
+            attempt,
+            cliReady: cliAcceptsContinuityPrompt(getScrollbackExcerpt(pane.id)),
+          });
+          if (decision.action === 'abandon') {
+            host.term.writeln(
+              '\r\n\x1b[33m[nexus] continuidade adiada: a CLI ainda pede /login. ' +
+                'Abra + Pane com outra conta para retomar a missão.\x1b[0m',
+            );
+            return;
+          }
+          if (decision.action === 'wait') {
+            attempt += 1;
+            const waitTimer = setTimeout(tryInject, decision.waitMs);
+            host.cleanups.push(() => {
+              cancelled = true;
+              clearTimeout(waitTimer);
+            });
+            return;
+          }
           const role = pane.role === 'orchestrator' ? 'orchestrator' : 'agent';
           const continuation =
-            continuityPack ??
+            pack ??
             (`Continue the current mission from exactly where you stopped as the ${role}. ` +
               'Preserve existing context and execute the next pending step now.');
           if (
@@ -1133,13 +1165,17 @@ function startSpawn(
             })
           ) {
             host.term.writeln(
-              continuityPack
+              pack
                 ? '\r\n\x1b[36m[nexus] handoff multi-conta submetido (sessão nova nesta conta).\x1b[0m'
                 : '\r\n\x1b[36m[nexus] continuidade submetida automaticamente ao agente.\x1b[0m',
             );
           }
-        }, 1_800);
-        host.cleanups.push(() => clearTimeout(continuationTimer));
+        };
+        const continuationTimer = setTimeout(tryInject, 1_800);
+        host.cleanups.push(() => {
+          cancelled = true;
+          clearTimeout(continuationTimer);
+        });
       }
       const input = host.term.onData((data) => {
         // xterm does not locally echo: the PTY/TUI sends the visible composer
@@ -2364,6 +2400,8 @@ export function respawnWithResume(
   options?: {
     mode?: RespawnMode;
     continuityPack?: string;
+    /** Auth same-account: resume the process, never type into /login. */
+    skipContinuation?: boolean;
   },
 ): void {
   const host = hosts.get(pane.id);
@@ -2411,6 +2449,8 @@ export function respawnWithResume(
     !cross,
     false,
     cross ? options?.continuityPack : undefined,
+    false,
+    options?.skipContinuation === true,
   );
 }
 

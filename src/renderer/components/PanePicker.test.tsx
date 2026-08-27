@@ -4,11 +4,15 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AccountInfo } from '../../shared/account-types';
 import type { ProviderSettingsInfo } from '../../shared/provider-settings-types';
+import { FAILOVER_HANDOFF_HEADER } from '../../shared/failover-handoff';
+import { createLeaf } from '../lib/split-tree';
 import { useAccountStore } from '../state/account-store';
 import { useLayoutStore } from '../state/layout-store';
+import { useOrchStore } from '../state/orch-store';
 import { usePanePickerStore } from '../state/pane-picker-store';
 import { useProviderStore } from '../state/provider-store';
-import { PanePicker } from './PanePicker';
+import { useSessionStateStore } from '../state/session-state-store';
+import { PanePicker, runPanePickerIntent } from './PanePicker';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
   .IS_REACT_ACT_ENVIRONMENT = true;
@@ -170,11 +174,16 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
       ],
     } as never);
     useAccountStore.setState({ accounts: [] } as never);
+    useOrchStore.setState({ missions: [], paneMissions: {} });
+    useSessionStateStore.setState({ paneStates: new Map() });
     useLayoutStore.setState({
       spawnAgent,
       addShellPane,
       addBrowserPane,
     } as never);
+    delete (
+      window as Window & { __nexusGetScrollbackExcerpt?: unknown }
+    ).__nexusGetScrollbackExcerpt;
   });
 
   afterEach(() => {
@@ -367,5 +376,75 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
     });
 
     expect(host.querySelector('[role="listbox"]')).toBeNull();
+  });
+
+  it('+ Pane numa missão 401 entrega o handoff para a conta escolhida', () => {
+    useOrchStore.setState({
+      missions: [
+        {
+          id: 'm-radar',
+          title: 'Radar BI',
+          description: '',
+          status: 'running',
+          milestones: [],
+          learnings: '',
+          createdAt: 1,
+          updatedAt: 2,
+        },
+      ],
+      paneMissions: { 'pane-dead': 'm-radar' },
+    });
+    useSessionStateStore.setState({
+      paneStates: new Map([['pane-dead', 'busy']]),
+    });
+    useAccountStore.setState({
+      accounts: [
+        account('acc-adm', 'claude', 'conta adm'),
+        account('acc-good', 'claude', 'arrumou a baderna', { active: false }),
+      ],
+    } as never);
+    useLayoutStore.setState({
+      spawnAgent,
+      addShellPane,
+      addBrowserPane,
+      focusedPaneId: 'pane-dead',
+      root: createLeaf({
+        id: 'pane-dead',
+        kind: 'cli-agent',
+        title: 'Claude',
+        adapterId: 'claude',
+        accountId: 'acc-adm',
+        role: 'orchestrator',
+        missionId: 'm-radar',
+      }),
+    } as never);
+    (
+      window as Window & {
+        __nexusGetScrollbackExcerpt?: (id: string) => string;
+      }
+    ).__nexusGetScrollbackExcerpt = (paneId) =>
+      paneId === 'pane-dead'
+        ? 'API Error: 401 OAuth access token has expired. Please run /login'
+        : '';
+
+    runPanePickerIntent({
+      kind: 'agent',
+      adapterId: 'claude',
+      model: 'claude-alt',
+      accountId: 'acc-good',
+    });
+
+    expect(spawnAgent).toHaveBeenCalledWith(
+      'claude',
+      'claude-alt',
+      expect.objectContaining({
+        accountId: 'acc-good',
+        continuityPack: expect.stringContaining(FAILOVER_HANDOFF_HEADER),
+      }),
+    );
+    const pack = (spawnAgent.mock.calls[0]?.[2] as { continuityPack?: string })
+      ?.continuityPack;
+    expect(pack).toContain('m-radar');
+    expect(pack).toContain('Radar BI');
   });
 });

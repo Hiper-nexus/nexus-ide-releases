@@ -88,10 +88,12 @@ import {
   addAccount,
   addActiveClaudeAccount,
   addActiveSessionAccount,
+  adoptNativeAccountForFailover,
   getAccount,
   initAccountStore,
   isAccountStoreReadOnly,
   listAccounts,
+  pickAvailableForFailover,
   prepareAccountForSpawn,
   removeAccount,
   renameAccount,
@@ -432,5 +434,71 @@ describe('prepareAccountForSpawn', () => {
 
     expect(isAccountStoreReadOnly()).toBe(true);
     expect(getAccount(account.id)?.label).toBe('Cached account');
+  });
+});
+
+describe('adoptNativeAccountForFailover (conta 1 morta → login nativo vivo)', () => {
+  beforeEach(() => {
+    openDb = makeDb();
+    initAccountStore(openDb);
+    accountDeps.secrets.clear();
+    accountDeps.deleteFailures.clear();
+    accountDeps.activeEmail = 'operator@example.test';
+    accountDeps.activeCredential = oauthCredential('claude-access');
+    accountDeps.writeActiveCredential.mockReset();
+    accountDeps.writeActiveCredential.mockReturnValue(true);
+    managedDeps.homes.clear();
+    managedDeps.materialize.mockClear();
+    managedDeps.capture.mockReset();
+    managedDeps.capture.mockReturnValue(null);
+  });
+
+  afterEach(() => {
+    initAccountStore(null);
+    try {
+      openDb?.close();
+    } catch {
+      // fail-closed tests may close the db
+    }
+    openDb = null;
+  });
+
+  it('não adota o Keychain quando ele é a mesma identidade que acabou', () => {
+    const adm = addActiveClaudeAccount('adm');
+    expect(adm).not.toBeNull();
+    expect(adoptNativeAccountForFailover('claude', adm!.id)).toBeNull();
+  });
+
+  it('adota o login nativo de outro e-mail quando o vault não tem irmã', () => {
+    accountDeps.activeEmail = 'adm@example.test';
+    accountDeps.activeCredential = oauthCredential('adm-token');
+    const adm = addActiveClaudeAccount('adm');
+    expect(adm).not.toBeNull();
+
+    accountDeps.activeEmail = 'pessoal@example.test';
+    accountDeps.activeCredential = oauthCredential('pessoal-token');
+
+    const adopted = adoptNativeAccountForFailover('claude', adm!.id);
+    expect(adopted?.email).toBe('pessoal@example.test');
+    expect(adopted?.id).not.toBe(adm!.id);
+    expect(prepareAccountForSpawn('claude', adopted!.id).ok).toBe(true);
+  });
+
+  it('pick de failover prefere a irmã do vault com blob, não a casca', () => {
+    accountDeps.activeEmail = 'adm@example.test';
+    accountDeps.activeCredential = oauthCredential('adm-token');
+    const adm = addActiveClaudeAccount('adm');
+    accountDeps.activeEmail = 'pessoal@example.test';
+    accountDeps.activeCredential = oauthCredential('pessoal-token');
+    const pessoal = addActiveClaudeAccount('pessoal');
+    expect(adm && pessoal).toBeTruthy();
+    setCooldown(
+      adm!.id,
+      Date.now() + 15 * 60 * 1000,
+      '401 OAuth access token has expired',
+    );
+    expect(pickAvailableForFailover('claude', adm!.id).account?.id).toBe(
+      pessoal!.id,
+    );
   });
 });

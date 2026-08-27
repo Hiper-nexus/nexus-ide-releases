@@ -51,3 +51,25 @@ export function blockedFailoverToastCopy(
       };
   }
 }
+
+/**
+ * Toast after switched=true same-account respawn. Auth must never claim
+ * "Sessão recuperada automaticamente" — the credential is still dead.
+ */
+export function recoveredFailoverToastCopy(
+  event: FailoverEvent,
+): FailoverToastCopy {
+  if (effectiveKind(event) === 'auth') {
+    return {
+      title: `Sessão expirada em "${event.fromAccountLabel}"`,
+      detail:
+        `${event.reason}. Esta conta ainda precisa de login. ` +
+        `Abra + Pane com outra conta para continuar a missão, ` +
+        `ou entre novamente em Configurações → Providers.`,
+    };
+  }
+  return {
+    title: 'Sessão recuperada automaticamente',
+    detail: event.reason,
+  };
+}

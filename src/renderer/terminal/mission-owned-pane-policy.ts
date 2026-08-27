@@ -85,8 +85,11 @@ export function shouldInjectResumeContinuation(input: {
   readonly resume: boolean;
   readonly adopted: boolean;
   readonly resumeMode: string | undefined;
+  /** Auth same-account recovery: never type into /login. */
+  readonly skipContinuation?: boolean;
 }): boolean {
   if (input.quietSpawn) return false;
+  if (input.skipContinuation) return false;
   if (input.hasContinuityPack) return true;
   return (
     input.resume &&

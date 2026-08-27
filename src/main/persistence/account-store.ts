@@ -498,6 +498,41 @@ export function claudeOAuthAccessToken(accountId?: string): string | null {
 }
 
 /**
+ * Auth cooldown excludes the dead credential from AUTOMATIC failover pick.
+ * An operator who pins the account on a new pane (or re-logs in) must still
+ * be able to spawn — 15 min of "cooling down" blocked the only recovery
+ * they had after the 401 storm.
+ */
+function isAuthCooldownReason(reason: string | undefined): boolean {
+  if (!reason) return false;
+  return /401|oauth token (?:expired|revoked)|oauth access token has expired|not logged in|session expired|refresh token (?:expired|invalid|revoked)|authentication[_\s]?error|re-authenticate|please run \/login/i.test(
+    reason,
+  );
+}
+
+function emailsEqual(left: string, right: string): boolean {
+  return left.trim().toLowerCase() === right.trim().toLowerCase();
+}
+
+/**
+ * Automatic failover may only pin an account that can actually spawn.
+ * A Settings row without vault/Keychain material used to win chooseAccount
+ * (it is often the "active" husk) and then prepare failed → toast
+ * "nenhuma credencial alternativa" while a ready sibling sat unused.
+ */
+export function accountHasFailoverCredential(account: Account): boolean {
+  if (account.mode === 'api-key') {
+    return hasSecret(KEY_PREFIX + account.id);
+  }
+  if (hasSecret(CRED_PREFIX + account.id)) return true;
+  if (account.adapterId === 'claude' && account.email) {
+    const nativeEmail = activeClaudeEmail();
+    return Boolean(nativeEmail && emailsEqual(account.email, nativeEmail));
+  }
+  return false;
+}
+
+/**
  * Resolve and activate the exact account pinned to a pane before its PTY is
  * created. This deliberately does not fall back to the provider's active
  * account: a pinned account is an isolation boundary, not a preference hint.
@@ -522,7 +557,8 @@ export function prepareAccountForSpawn(
   if (
     !options?.allowCoolingProbe &&
     account.cooldownUntil &&
-    account.cooldownUntil > now
+    account.cooldownUntil > now &&
+    !isAuthCooldownReason(account.lastError)
   ) {
     return {
       ok: false,
@@ -835,7 +871,10 @@ export function pickAvailableForFailover(
   options?: FailoverPickOptions,
 ): FailoverPick {
   const siblings = listAccounts(adapterId).filter((a) => a.id !== excludeId);
-  const free = siblings.filter((a) => !effectiveBlock(a, now, options?.scope));
+  const free = siblings.filter(
+    (a) =>
+      !effectiveBlock(a, now, options?.scope) && accountHasFailoverCredential(a),
+  );
   const chosen = chooseAccount(
     free,
     activeByAdapter.get(adapterId) ?? null,
@@ -862,8 +901,10 @@ export function pickAvailableForFailover(
   if (options?.allowProbe) {
     const probeCandidate = blocked
       .filter(
-        ({ entry }) =>
-          entry.block.probeAfter <= now && entry.block.probedAt === undefined,
+        ({ account, entry }) =>
+          accountHasFailoverCredential(account) &&
+          entry.block.probeAfter <= now &&
+          entry.block.probedAt === undefined,
       )
       .sort((a, b) => a.account.createdAt - b.account.createdAt)[0];
     if (probeCandidate) {
@@ -1087,6 +1128,85 @@ export function addActiveSessionAccount(
 /** @deprecated Prefer addActiveSessionAccount('claude', label). */
 export function addActiveClaudeAccount(label: string): Account | null {
   return addActiveSessionAccount('claude', label);
+}
+
+function nativeSessionMatchesAccount(
+  adapterId: string,
+  account: Account,
+): boolean {
+  if (account.adapterId !== adapterId) return false;
+  if (adapterId === 'claude') {
+    const nativeEmail = activeClaudeEmail();
+    if (nativeEmail && account.email && emailsEqual(account.email, nativeEmail)) {
+      return true;
+    }
+    const nativeBlob =
+      readActiveClaudeCredentialSlim() ?? readActiveClaudeCredential();
+    return Boolean(
+      nativeBlob && getSecret(CRED_PREFIX + account.id) === nativeBlob,
+    );
+  }
+  if (!isFileAuthAdapter(adapterId)) return false;
+  const capture = captureNativeAuth(adapterId);
+  if (!capture) return false;
+  if (
+    capture.email &&
+    account.email &&
+    emailsEqual(account.email, capture.email)
+  ) {
+    return true;
+  }
+  return getSecret(CRED_PREFIX + account.id) === capture.blob;
+}
+
+/**
+ * When the vault has no spawnable sibling, the live CLI login (Keychain or
+ * native auth.json) may still be a different, ready identity. Snapshot it
+ * into the registry and return it so failover can pin conta 2.
+ * Returns null when the native session is missing or is the exhausted account.
+ */
+export function adoptNativeAccountForFailover(
+  adapterId: string,
+  excludeId: string | null,
+): Account | null {
+  const excluded = excludeId ? getAccount(excludeId) : null;
+  if (excluded && nativeSessionMatchesAccount(adapterId, excluded)) {
+    return null;
+  }
+  try {
+    if (adapterId === 'claude') {
+      const nativeEmail = activeClaudeEmail();
+      if (!nativeEmail) return null;
+      const existing = listAccounts(adapterId).find(
+        (account) =>
+          account.id !== excludeId &&
+          account.email &&
+          emailsEqual(account.email, nativeEmail),
+      );
+      if (existing) {
+        return isAccountBlockedForScope(existing.id) ? null : existing;
+      }
+      return addActiveSessionAccount(adapterId, nativeEmail);
+    }
+    if (!isFileAuthAdapter(adapterId)) return null;
+    const capture = captureNativeAuth(adapterId);
+    if (!capture) return null;
+    const existing = listAccounts(adapterId).find(
+      (account) =>
+        account.id !== excludeId &&
+        ((capture.email &&
+          account.email &&
+          emailsEqual(account.email, capture.email)) ||
+          getSecret(CRED_PREFIX + account.id) === capture.blob),
+    );
+    if (existing) {
+      return isAccountBlockedForScope(existing.id) ? null : existing;
+    }
+    return addActiveSessionAccount(adapterId, capture.email ?? adapterId);
+  } catch (error) {
+    console.warn('[accounts] native failover adopt failed:', error);
+    return null;
+  }
 }
 
 export function renameAccount(id: string, label: string): void {

@@ -177,6 +177,27 @@ describe('detectLimit', () => {
     ).toBe('auth');
   });
 
+  it('does not treat Claude CLI client retry ticker as provider retry-after', () => {
+    // Campo: 401 + "Retrying in 1s · attempt 1/10" no mesmo buffer virava
+    // cooldown de 1s → "Sessão recuperada" → 401 de novo → continuidade no /login.
+    const hit = detectLimit(
+      [
+        '● Please run /login · API Error: 401 OAuth access token has expired. Re-authenticate to continue.',
+        '● API error · Retrying in 1s · attempt 1/10',
+      ].join('\n'),
+    );
+    expect(hit?.kind).toBe('auth');
+    expect(hit?.cooldownMs).toBe(15 * 60 * 1000);
+  });
+
+  it('still honours a real rate-limit window when a client ticker is also present', () => {
+    const hit = detectLimit(
+      'Error: 429 Too Many Requests — try again in 42 minutes. Retrying in 1s · attempt 1/10',
+    );
+    expect(hit?.kind).toBe('rate-limit');
+    expect(hit?.cooldownMs).toBe(42 * 60 * 1000);
+  });
+
   it('detects real 401 spellings (framed number / unauthorized)', () => {
     expect(detectLimit('Error: HTTP 401 Unauthorized')?.kind).toBe('auth');
     expect(detectLimit('API request failed: 401 Unauthorized')?.kind).toBe('auth');

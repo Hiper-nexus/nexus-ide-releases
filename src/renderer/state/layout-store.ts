@@ -34,6 +34,7 @@ import {
 } from '../lib/canvas-layout';
 import { getActiveWorkspacePath } from './active-workspace';
 import { notifyIfLastMissionPaneClosed } from '../orch/mission-last-pane-notify';
+import { stashPendingContinuity } from '../orch/stranded-mission-handoff';
 import { isAutomatedReviewerPaneIdentity } from '../../shared/automated-reviewer-pane';
 
 const DEFAULT_CANVAS_VIEWPORT = { x: 0, y: 0, zoom: 1 };
@@ -56,8 +57,8 @@ interface LayoutState {
   spawnAgent(
     adapterId: string,
     model: string,
-    options?: { readonly accountId?: string },
-  ): void;
+    options?: { readonly accountId?: string; readonly continuityPack?: string },
+  ): string | undefined;
   /** Replace the whole grid with an explicit set of panes (Modo Livre). */
   setPanes(panes: PaneModel[]): void;
   /**
@@ -945,7 +946,7 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
       console.warn(
         `[layout] refuse spawnAgent (hard=${MAX_LIVE_PANES_HARD}) adapter=${adapterId}`,
       );
-      return;
+      return undefined;
     }
     const newPane: PaneModel = {
       ...createPane(
@@ -958,6 +959,11 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
       // no modelo persistido não é a mesma coisa que a chave ausente.
       ...(options?.accountId ? { accountId: options.accountId } : {}),
     };
+    // Continuity is a fresh-session prompt, never missionId on this pane
+    // (Main would reject stale persisted mission authority).
+    if (options?.continuityPack) {
+      stashPendingContinuity(newPane.id, options.continuityPack);
+    }
     const pivotId = targetId ?? firstPaneId(currentRoot);
     const root = pivotId
       ? splitPane(currentRoot, pivotId, 'row', newPane)
@@ -986,6 +992,7 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
       canvasNodeLayouts: updatedLayouts,
     });
     persist();
+    return newPane.id;
   },
 
   close: (paneId, reason = 'unspecified') => {

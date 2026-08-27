@@ -111,6 +111,22 @@ function makeFactoryRig(overrides: Partial<LoginStuckWatchdogDeps> = {}) {
 
 describe('createLoginStuckWatchdog', () => {
 
+  it('declares login-stuck on Please run /login after the quiet windows', () => {
+    const { watchdog, rig } = makeFactoryRig();
+    watchdog.trackSession('s1', 'p1', 'claude');
+    rig.tails.set(
+      's1',
+      '● Please run /login · API Error: 401 OAuth access token has expired. Re-authenticate to continue.',
+    );
+    for (let t = 5_000; t <= 40_000; t += 5_000) {
+      rig.setNow(t);
+      watchdog.tick();
+    }
+    const stuck = rig.events.filter((e) => e.stuck);
+    expect(stuck).toHaveLength(1);
+    expect(stuck[0]?.pattern).toBe('claude please-run-login');
+  });
+
   it('declares login-stuck after 2 quiet 15s windows with the pattern persisting', () => {
     const { watchdog, rig } = makeFactoryRig();
     watchdog.trackSession('s1', 'p1', 'claude');
