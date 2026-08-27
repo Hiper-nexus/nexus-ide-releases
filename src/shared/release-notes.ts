@@ -13,85 +13,46 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.70.19',
-  date: '2026-08-26',
-  codename: 'Casa pintada',
+  version: '0.70.20',
+  date: '2026-08-27',
+  codename: 'Sessão honesta',
   summary:
-    'O app inteiro sob a mesma régua. Nenhuma tela parece de outro ' +
-    'produto: uma paleta, uma escala de espaço e tipografia, a mesma ' +
-    'profundidade de sombra — conferido nos 5 temas e no Modo Pixel.',
+    'Quando a conta 1 acaba (401, cota, rate-limit), o Nexus roteia ' +
+    'sozinho para a conta 2 com credencial pronta. Sem fingir ' +
+    'recuperação em 1s e sem digitar continue no /login.',
   highlights: [
     {
-      title: 'Uma paleta só, do Launcher ao inspector',
+      title: 'Conta 1 morta → conta 2 automática',
       detail:
-        'Avatares, Minha Conta e voz usam as cores da casa. Índigo ' +
-        'legado, verdes Tailwind e ciano antigo saíram; matizes de ' +
-        'personagem viraram tokens (--role-*), arte de post-it e neon ' +
-        'deliberado seguem documentados como exceção.',
+        'Quota, 401 ou token morto pinam a próxima conta spawnable do ' +
+        'mesmo adapter e reinjetam o handoff. Casca sem chave não ' +
+        'rouba o lugar da irmã pronta.',
     },
     {
-      title: 'Escala de verdade em toda parte',
+      title: 'Login nativo vira irmã',
       detail:
-        'Os degraus fantasma de 6/10px viraram tokens da escala; fontes, ' +
-        'raios e sombras caíram na régua do DESIGN.md. Nada muda de ' +
-        'tamanho — a densidade do cockpit é a mesma, agora nomeada.',
+        'Se o vault não tem alternativa mas o Keychain/CLI está em ' +
+        'outro e-mail, essa sessão é adotada e a missão continua.',
     },
     {
-      title: 'Hierarquia no primeiro contato',
+      title: '+ Pane retoma a missão',
       detail:
-        'Launcher com título em escala hero e ação primária no alvo de ' +
-        '40px; settings com títulos de seção, eyebrows e nav ativa em ' +
-        'hairline; ⌘K, ⌘/ e overlays dividindo o mesmo scrim.',
-    },
-    {
-      title: 'Título curto no rail e no quadro',
-      detail:
-        'Objetivo colado com URL vira o hostname. O dump fica no tooltip. ' +
-        'Paleta e inbox usam o mesmo chrome.',
-    },
-    {
-      title: 'Terminais sempre no quadro',
-      detail:
-        'Missão dormindo ou concluída não esconde o botão. O destino é a ' +
-        'superfície da missão, não um shell órfão.',
-    },
-    {
-      title: 'Cartão da vaga sem briefing',
-      detail:
-        'Título "Missão em pausa" ou "Montando a equipe". Sem URL, ' +
-        'sem "Motivo não registrado". O objetivo fica no quadro.',
-    },
-    {
-      title: 'Título do quadro em uma linha',
-      detail:
-        'Objetivo com URL e parágrafo vai para o tooltip. O h1 mostra ' +
-        'o pedido, sem wrap de quatro linhas.',
-    },
-    {
-      title: 'Maestro não morre no done',
-      detail:
-        'O CLI sai sozinho no turn-end. O Nexus religa a mesma conversa ' +
-        'no mesmo pane, sem banner. Rail e quadro: Aguardando você.',
+        'Abrir outra conta no meio do 401 herda o pack de continuidade, ' +
+        'sem colar missionId velho no pane novo.',
     },
   ],
   fixes: [
     {
-      title: 'Digitar não relança a missão',
+      title: 'Ticker Retrying in 1s não é retry-after',
       detail:
-        'Tecla no Maestro morto só religa a CLI. Não dispara resume/' +
-        'retry-kickoff.',
+        'O “attempt 1/10” da CLI deixou de encolher o cooldown de auth ' +
+        'para 1s. Auth tem piso de 15 min.',
     },
     {
-      title: 'Worker Working depois do fim',
+      title: 'Sem “Sessão recuperada” no token morto',
       detail:
-        'Pronto espera worker idle sem handoff. Interrupt só depois da ' +
-        'entrega, nunca no kickoff.',
-    },
-    {
-      title: 'Panes deformados no 2×2',
-      detail:
-        'Spawn espera a caixa real do slot. waitForSession não pinta TUI ' +
-        'em 80×24 com o grid visível.',
+        'Auth sem irmã não agenda retry same-account. Continue não é ' +
+        'digitado na tela de /login.',
     },
   ],
 };

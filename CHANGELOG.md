@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.70.20 — Sessão honesta
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+401/quota na conta 1 troca sozinho para a conta 2 com credencial pronta.
+Sem toast mentiroso de “Sessão recuperada” em 1s, sem “Continue” digitado
+no `/login`. + Pane com outra conta retoma a missão.
+
 ## 0.70.19 — Casa pintada
 
 _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
