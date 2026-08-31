@@ -13,34 +13,35 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.70.21',
+  version: '0.70.22',
   date: '2026-08-31',
-  codename: 'Corrente viva',
+  codename: 'Entrega firme',
   summary:
-    'Missões voltam a iniciar no macOS Tahoe 26.6.2. O update do sistema ' +
-    'passou a matar o supervisor de PTY no detach do exec-trace e todo ' +
-    'pane caía na hora com "processo caiu (code 133)". A corrente sobrevive.',
+    'A entrega do worker ao Maestro ganhou retry de verdade: backoff de ' +
+    '15s entre tentativas, teto de 3 tentativas e re-arm vivo também em ' +
+    'missão done aguardando revisão. Validada em missão real end-to-end.',
   highlights: [
     {
-      title: 'Missão inicia no macOS 26.6.2',
+      title: 'Backoff de 15s entre colagens',
       detail:
-        'O supervisor disclaimado engole o SIGTRAP do exec-trace (ignorado ' +
-        'só na janela do re-exec) e o main restaura o default antes de ' +
-        'qualquer provider nascer.',
+        'As 2 tentativas de entrega disparavam no mesmo segundo contra o ' +
+        'mesmo PTY. Agora cada retry espera sua janela — coordenador que ' +
+        'renasce tem tempo de voltar a aceitar.',
     },
     {
-      title: 'Provider selado solto de verdade',
+      title: 'Re-arm vive depois do done',
       detail:
-        'O detach do CLI autenticado resome a imagem antes do PT_DETACH, ' +
-        'com retry de EBUSY e saída já-exitada tratada como benigna.',
+        'O fast lane marca done no mesmo segundo do handoff; o re-arm do ' +
+        'supervisor agora cobre missão feita aguardando a sua revisão e ' +
+        'para quando você aprova.',
     },
   ],
   fixes: [
     {
-      title: 'Fim do "processo caiu (code 133)" no boot da missão',
+      title: 'Fim do retry fantasma',
       detail:
-        'Kernel 26.6 entregava o SIGTRAP pendente como fatal no PT_DETACH ' +
-        'do exec-trap; cleanup quebrado virava o 159. F-111.',
+        'Tentativa 2 escondida atrás de hasPendingDelivery não duplica mais ' +
+        'colagem, timers de backoff são limpos no shutdown. F-112.',
     },
   ],
 };

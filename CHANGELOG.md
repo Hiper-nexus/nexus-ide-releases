@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.70.22 — Entrega firme
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+Entrega de handoff com retry de verdade: backoff de 15s entre tentativas
+(em vez de 2 colagens no mesmo segundo), teto de 3 tentativas e o re-arm
+do supervisor agora vive também em missão `done` aguardando a sua revisão.
+Validado em missão real end-to-end no modo dev: kickoff, worker, entrega,
+conclusão e aprovação do operador.
+
 ## 0.70.21 — Corrente viva
 
 _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
