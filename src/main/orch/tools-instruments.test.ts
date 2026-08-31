@@ -121,6 +121,7 @@ const INSTRUMENT_NAMES = [
   // que é exatamente o alarme certo.
   'nexus_plugin_inventory',
   'nexus_cli_inventory',
+  'nexus_vault_list',
 ] as const;
 
 describe('buildInstrumentTools', () => {

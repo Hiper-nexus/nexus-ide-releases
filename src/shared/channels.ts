@@ -208,6 +208,14 @@ export const WINDOW_CHANNELS = {
    * a URL de auth. */
   authLogin: 'auth:login',
   /**
+   * invoke: renderer → main. Open a file/directory printed in a terminal
+   * pane in the OS default app (clickable paths). Main validates: absolute
+   * POSIX path, NUL-free, exists on disk, inside the user's home, and a
+   * regular file or directory — a path is TERMINAL CONTENT, never a trusted
+   * instruction, so nothing outside home and no special files ever open.
+   */
+  openTerminalPath: 'app:openTerminalPath',
+  /**
    * invoke: renderer → main. Open packaged THIRD_PARTY_NOTICES.md (or LICENSE)
    * in the OS default app so closed-source builds still surface MIT/third-party
    * attribution without making the GitHub repo public.

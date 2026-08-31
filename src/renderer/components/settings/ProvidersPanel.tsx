@@ -236,7 +236,6 @@ const PERMISSION_LABEL: Record<string, string> = {
   plan: 'Plan',
   bypass: 'Bypass',
   yolo: 'YOLO',
-  untrusted: 'Untrusted',
 };
 
 function ControlFlags({

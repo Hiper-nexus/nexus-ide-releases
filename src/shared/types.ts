@@ -351,6 +351,14 @@ export interface NexusApi {
      * Cumpre atribuição MIT de terceiros sem tornar o código público.
      */
     openLegalNotices(): Promise<{ ok: boolean; path?: string; error?: string }>;
+    /**
+     * Abre um caminho impresso no output de um pane (link clicável). O main
+     * valida: absoluto, existe, arquivo/diretório, dentro do home — texto de
+     * terminal nunca é instrução confiável.
+     */
+    openTerminalPath(
+      path: string,
+    ): Promise<{ ok: boolean; error?: string }>;
     /** Deep link / document open (nexus://open ou abrir-com). */
     onDeepOpenPath(
       cb: (payload: { path: string; isDir: boolean }) => void,

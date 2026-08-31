@@ -90,6 +90,14 @@ export const SHORTCUTS: readonly ShortcutEntry[] = Object.freeze([
     short: 'focar',
   }),
   Object.freeze({
+    id: 'cycle-pane',
+    keys: 'Ctrl+Tab / Ctrl+Shift+Tab',
+    action: 'Cicular para o próximo/anterior pane',
+    group: 'fleet' as const,
+    primary: true,
+    short: 'circular',
+  }),
+  Object.freeze({
     id: 'split-right',
     keys: formatShortcut('mod', 'D'),
     action: 'Dividir o pane à direita',

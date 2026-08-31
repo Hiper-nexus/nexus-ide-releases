@@ -100,6 +100,8 @@ const READ_ONLY_TOOLS = new Set([
   // que exige consentimento exato na UI nativa).
   'plugin_inventory',
   'cli_inventory',
+  // Presença de credencial no cofre com máscara — sem valor, sem label.
+  'vault_list',
 ]);
 
 /**

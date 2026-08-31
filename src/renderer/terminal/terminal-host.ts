@@ -3,6 +3,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { SearchAddon } from '@xterm/addon-search';
 import { SerializeAddon } from '@xterm/addon-serialize';
+import { attachTerminalPathLinks } from './terminal-path-links';
 import '@xterm/xterm/css/xterm.css';
 import type { PaneModel } from '../../shared/types';
 import type { TerminalSettings } from '../../shared/settings-types';
@@ -456,6 +457,7 @@ function buildTerminal(kind: 'shell' | 'cli-agent'): {
   term.loadAddon(fit);
   term.loadAddon(search);
   term.loadAddon(serialize);
+  attachTerminalPathLinks(term);
   return { term, fit, search, serialize };
 }
 

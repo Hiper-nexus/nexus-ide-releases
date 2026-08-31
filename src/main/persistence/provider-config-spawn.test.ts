@@ -32,6 +32,10 @@ const spawnDeps = vi.hoisted(() => ({
   })),
   listAccounts: vi.fn((): Array<Record<string, unknown>> => []),
   getActiveAccount: vi.fn(),
+  pickAvailableForFailover: vi.fn(),
+  quotaSnapshot: vi.fn<() => { entries: Array<Record<string, unknown>> } | null>(
+    () => null,
+  ),
   ensureSubscriptionActive: vi.fn(() => true),
   activeClaudeAuthEnv: vi.fn<() => Record<string, string> | null>(() => ({
     CLAUDE_CODE_OAUTH_TOKEN: 'oauth-active',
@@ -292,10 +296,16 @@ vi.mock('./account-store', () => ({
   ensureSubscriptionActive: spawnDeps.ensureSubscriptionActive,
   getActiveAccount: spawnDeps.getActiveAccount,
   listAccounts: spawnDeps.listAccounts,
+  pickAvailableForFailover: spawnDeps.pickAvailableForFailover,
   prepareAccountForSpawn: spawnDeps.prepareAccount,
 }));
 
+vi.mock('../quota/quota-service', () => ({
+  requireQuotaService: () => ({ lastSnapshot: spawnDeps.quotaSnapshot }),
+}));
+
 import {
+  effectiveDefaultModel,
   listProviderSettings,
   prepareProviderSpawn,
   prepareProviderSpawnAuthoritative,
@@ -322,6 +332,8 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
     });
     spawnDeps.listAccounts.mockReturnValue([]);
     spawnDeps.getActiveAccount.mockReset();
+    spawnDeps.pickAvailableForFailover.mockReturnValue({ account: null });
+    spawnDeps.quotaSnapshot.mockReturnValue(null);
     spawnDeps.ensureSubscriptionActive.mockReturnValue(true);
     spawnDeps.activeClaudeAuthEnv.mockReturnValue({
       CLAUDE_CODE_OAUTH_TOKEN: 'oauth-active',
@@ -902,5 +914,114 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
         suppressEnv: ['ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL'],
       },
     });
+  });
+});
+
+describe('G3 — pane sem conta pinada nasce na conta com folga', () => {
+  const kimiAccount = (id: string, label: string, createdAt: number) => ({
+    id,
+    adapterId: 'kimi',
+    label,
+    mode: 'api_key',
+    upstream: 'anthropic',
+    createdAt,
+  });
+
+  it('usa a irmã mais livre indicada pelo snapshot de quota no lugar da ativa', () => {
+    spawnDeps.listAccounts.mockReturnValue([
+      kimiAccount('kimi-a', 'Conta A', 1),
+      kimiAccount('kimi-b', 'Conta B', 2),
+    ]);
+    spawnDeps.getActiveAccount.mockReturnValue(kimiAccount('kimi-a', 'Conta A', 1));
+    spawnDeps.quotaSnapshot.mockReturnValue({
+      entries: [
+        {
+          adapterId: 'kimi',
+          accountId: 'kimi-a',
+          windows: [{ usedRatio: 0.98 }],
+        },
+        {
+          adapterId: 'kimi',
+          accountId: 'kimi-b',
+          windows: [{ usedRatio: 0.1 }],
+        },
+      ],
+    } as never);
+    // O pick real (chooseAccount + blocos) devolveria a irmã; aqui provamos o
+    // contrato do spawn: o que o pick devolve é o que o pane usa.
+    spawnDeps.pickAvailableForFailover.mockImplementation(
+      (_adapter: string, exclude: string | null, _now: number, scores?: Map<string, number>) => {
+        const freer =
+          scores && (scores.get('kimi-b') ?? 0) > (scores.get('kimi-a') ?? 0)
+            ? kimiAccount('kimi-b', 'Conta B', 2)
+            : null;
+        return { account: freer ?? (exclude ? null : kimiAccount('kimi-a', 'Conta A', 1)) };
+      },
+    );
+
+    const result = prepareProviderSpawn('kimi');
+
+    // api_key path: keyEnv vem do vault da conta escolhida (accountKey mock).
+    expect(result).toMatchObject({ ok: true });
+    expect(spawnDeps.pickAvailableForFailover).toHaveBeenCalledWith(
+      'kimi',
+      null,
+      expect.any(Number),
+      expect.any(Map),
+    );
+    const scores = spawnDeps.pickAvailableForFailover.mock.calls[0]?.[3] as Map<
+      string,
+      number
+    >;
+    expect(scores.get('kimi-b')).toBeGreaterThan(scores.get('kimi-a') ?? 0);
+  });
+
+  it('quota fora do ar abre na ativa e nunca bloqueia o spawn', () => {
+    spawnDeps.quotaSnapshot.mockImplementation(() => {
+      throw new Error('quota service not initialized');
+    });
+    spawnDeps.listAccounts.mockReturnValue([kimiAccount('kimi-a', 'Conta A', 1)]);
+    spawnDeps.getActiveAccount.mockReturnValue(kimiAccount('kimi-a', 'Conta A', 1));
+    spawnDeps.pickAvailableForFailover.mockReturnValue({
+      account: kimiAccount('kimi-a', 'Conta A', 1),
+    });
+
+    expect(prepareProviderSpawn('kimi')).toMatchObject({ ok: true });
+  });
+
+  it('nada livre com credencial cai no caminho legado sem recusar o pane', () => {
+    spawnDeps.listAccounts.mockReturnValue([
+      kimiAccount('kimi-a', 'Conta A', 1),
+      kimiAccount('kimi-b', 'Conta B', 2),
+    ]);
+    spawnDeps.getActiveAccount.mockReturnValue(null);
+    spawnDeps.pickAvailableForFailover.mockReturnValue({ account: null });
+
+    // Sem conta e sem pick: o store resolve pelo providers.conf (runtimeKey).
+    expect(prepareProviderSpawn('kimi')).toMatchObject({ ok: true });
+  });
+});
+
+describe('G9 — modelo salvo desconhecido não desce para o pane', () => {
+  it('default salvo fora da lista viva cai no default do adapter no spawn', () => {
+    spawnDeps.hasSecret.mockReturnValue(true);
+    spawnDeps.resolveAuthStrategy.mockReturnValue({
+      strategy: 'api_key',
+      injectKey: true,
+      suppressKeyEnv: false,
+    });
+
+    // Sem providers.json configurado o cfg.defaultModel vem vazio; o contrato
+    // relevante aqui é o helper puro: slug morto → default do adapter.
+    const known = ['gemini-3.7-flash-high', 'gemini-3.6-flash-low'];
+    expect(
+      effectiveDefaultModel('agy', 'gemini-9-turbo', known, 'gemini-3.7-flash-high'),
+    ).toBe('gemini-3.7-flash-high');
+    expect(
+      effectiveDefaultModel('agy', 'gemini-3.6-flash-low', known, 'gemini-3.7-flash-high'),
+    ).toBe('gemini-3.6-flash-low');
+    expect(
+      effectiveDefaultModel('agy', '', known, 'gemini-3.7-flash-high'),
+    ).toBe('gemini-3.7-flash-high');
   });
 });

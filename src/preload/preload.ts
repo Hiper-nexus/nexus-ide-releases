@@ -606,6 +606,8 @@ const api: NexusApi = {
     authLogin: (provider: 'github' | 'google') =>
       ipcRenderer.invoke(WINDOW_CHANNELS.authLogin, provider),
     openLegalNotices: () => ipcRenderer.invoke(WINDOW_CHANNELS.openLegalNotices),
+    openTerminalPath: (path: string) =>
+      ipcRenderer.invoke(WINDOW_CHANNELS.openTerminalPath, path),
     onDeepOpenPath: (cb: (payload: { path: string; isDir: boolean }) => void) =>
       addListener(deepOpenListeners, cb),
   },

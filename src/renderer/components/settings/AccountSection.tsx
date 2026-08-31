@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   PLANS,
-  type LicenseInfo,
+  type LicenseState,
   type PlanDef,
   type PlanId,
   type TeamInfo,
@@ -39,7 +39,7 @@ function roleLabel(role: string): string {
 }
 
 export function AccountSection() {
-  const [license, setLicense] = useState<LicenseInfo | null>(null);
+  const [license, setLicense] = useState<LicenseState | null>(null);
   const [licenseLoading, setLicenseLoading] = useState(true);
   const [team, setTeam] = useState<TeamInfo | null>(null);
   const [teamLoading, setTeamLoading] = useState(false);
@@ -66,6 +66,13 @@ export function AccountSection() {
   }, []);
 
   const isLoggedIn = Boolean(license?.email);
+  // G7 (paridade 1.3.18): verificação de assinatura que falhou NÃO é falta de
+  // licença. Com conta presente e verified=false, a tela fala "não confirmado
+  // agora" em vez de acusar ausência ou empurrar checkout.
+  const licenseUnconfirmed =
+    isLoggedIn === true &&
+    license?.verified === false &&
+    (license.status !== 'none' || license.plan !== 'free');
   useEffect(() => {
     if (!isLoggedIn) {
       setTeam(null);
@@ -229,12 +236,23 @@ export function AccountSection() {
           </span>
           <span className="account__status">
             Plano <strong>{planName(currentPlan)}</strong>
-            {license?.status === 'active' && license.renewsAt
-              ? ` · renova em ${new Date(license.renewsAt).toLocaleDateString()}`
-              : !isLoggedIn && !licenseLoading
-                ? ' · só nesta máquina'
-                : ''}
+            {licenseUnconfirmed
+              ? ' · não confirmado agora'
+              : license?.status === 'active' && license.renewsAt
+                ? ` · renova em ${new Date(license.renewsAt).toLocaleDateString()}`
+                : !isLoggedIn && !licenseLoading
+                  ? ' · só nesta máquina'
+                  : ''}
           </span>
+          {licenseUnconfirmed && (
+            <span
+              className="account__status"
+              title="A assinatura criptográfica do arquivo local não pôde ser verificada nesta leitura — rede, chave pública ou arquivo. Nada indica que sua conta foi rejeitada."
+            >
+              Não conseguimos confirmar sua assinatura agora; nada de errado
+              com sua conta. Tentaremos de novo.
+            </span>
+          )}
         </div>
         <span
           className={`account__session-pill ${isLoggedIn ? 'account__session-pill--in' : ''}`}

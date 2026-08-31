@@ -139,12 +139,57 @@ export function handleOpenExternalRequest(
   }
 }
 
+/**
+ * Clickable terminal paths (G6): a path printed in pane output is CONTENT,
+ * never a trusted instruction. Only an absolute, NUL-free POSIX path that
+ * exists as a regular file/directory inside the user's home is opened with
+ * the OS default app. Everything else refuses with a reason — no guessing,
+ * no fallback, no symlink escape outside home (realpath is re-checked).
+ */
+export async function handleOpenTerminalPathRequest(
+  event: Pick<IpcMainInvokeEvent, 'sender' | 'senderFrame'>,
+  raw: unknown,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!isLiveTrustedMainWindowSender(event)) {
+    return { ok: false, error: 'renderer não autorizado' };
+  }
+  if (typeof raw !== 'string' || raw.length > 4_096 || raw.includes('\0')) {
+    return { ok: false, error: 'caminho inválido' };
+  }
+  if (!raw.startsWith('/') || raw.includes('..')) {
+    return { ok: false, error: 'só caminhos absolutos dentro do home' };
+  }
+  const fs = await import('node:fs');
+  let real: string;
+  try {
+    real = fs.realpathSync(raw);
+  } catch {
+    return { ok: false, error: 'o caminho não existe mais' };
+  }
+  const home = await import('node:os');
+  const userHome = fs.realpathSync(home.homedir());
+  if (real !== userHome && !real.startsWith(userHome + path.sep)) {
+    return { ok: false, error: 'caminho fora do seu home' };
+  }
+  const stat = fs.statSync(real);
+  if (!stat.isFile() && !stat.isDirectory()) {
+    return { ok: false, error: 'não é um arquivo nem diretório' };
+  }
+  const err = await shell.openPath(real);
+  if (err) return { ok: false, error: err };
+  return { ok: true };
+}
+
 let externalLinkIpcRegistered = false;
 
 export function registerExternalLinkIpc(): void {
   if (externalLinkIpcRegistered) return;
   externalLinkIpcRegistered = true;
   ipcMain.handle(WINDOW_CHANNELS.openExternal, handleOpenExternalRequest);
+  ipcMain.handle(
+    WINDOW_CHANNELS.openTerminalPath,
+    handleOpenTerminalPathRequest,
+  );
   ipcMain.handle(WINDOW_CHANNELS.authLogin, (event, provider: unknown) => {
     if (!isLiveTrustedMainWindowSender(event)) {
       return { ok: false, error: 'renderer não autorizado' };

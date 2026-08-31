@@ -995,6 +995,120 @@ const pluginInventoryTool: McpToolDef = {
   },
 };
 
+/* -------------------------------------------------------------------------- */
+/* 7. Vault — one place for every stored credential (parity: Overclock 1.3)   */
+/* -------------------------------------------------------------------------- */
+
+const MAX_VAULT_ENTRIES = 64;
+
+const vaultListTool: McpToolDef = {
+  name: 'nexus_vault_list',
+  description:
+    'List which credentials the app vault (Keychain/safeStorage-backed) ' +
+    'holds: per CLI provider (adapterId) and per media generation provider. ' +
+    'Reports presence, storage backend availability and a masked preview ' +
+    'shape only — key VALUES are never shaped into the response, by ' +
+    'construction. Labels/e-mails stay out; rows are identified by id. Use ' +
+    'it to know which providers are credential-ready BEFORE promising a ' +
+    'spawn, image or video step. Read-only. Orchestrator/user only.',
+  inputSchema: { type: 'object', properties: {} },
+  handler: async (_args, ctx) => {
+    assertFleetInstrumentRole(ctx, 'nexus_vault_list');
+
+    let backendAvailable = true;
+    let backendReason: string | undefined;
+    try {
+      const { isSecureStorageAvailable } = await import(
+        '../persistence/secrets-store'
+      );
+      backendAvailable = isSecureStorageAvailable();
+      if (!backendAvailable) {
+        backendReason =
+          'secure storage (Keychain/safeStorage) is unavailable — stored credentials cannot be read here';
+      }
+    } catch (error) {
+      backendAvailable = false;
+      backendReason = `secrets store unavailable: ${reasonFrom(error)}`;
+    }
+
+    const cli: Array<{
+      adapterId: string;
+      hasKey: boolean;
+      masked: string | null;
+    }> = [];
+    let truncated = false;
+    try {
+      const { listAdapterInfos } = await import(
+        '../adapters/adapter-registry'
+      );
+      const { hasSecret, maskedKey } = await import(
+        '../persistence/secrets-store'
+      );
+      for (const info of listAdapterInfos()) {
+        if (cli.length >= MAX_VAULT_ENTRIES) {
+          truncated = true;
+          break;
+        }
+        cli.push({
+          adapterId: info.id,
+          hasKey: hasSecret(info.id),
+          masked: maskedKey(info.id),
+        });
+      }
+    } catch (error) {
+      return Object.freeze({
+        available: false,
+        reason: `adapter vault projection failed: ${reasonFrom(error)}`,
+        backendAvailable,
+        truncated: false,
+        cli: [],
+        media: [],
+      });
+    }
+
+    const media: Array<{
+      providerId: string;
+      kind: string;
+      envVar: string;
+      hasKey: boolean;
+    }> = [];
+    try {
+      const { MEDIA_PROVIDERS } = await import('../media/media-providers');
+      const { hasStoredMediaKey } = await import('../media/media-keys');
+      for (const def of MEDIA_PROVIDERS) {
+        if (media.length >= MAX_VAULT_ENTRIES) {
+          truncated = true;
+          break;
+        }
+        media.push({
+          providerId: def.id,
+          kind: def.kind,
+          envVar: def.envVar,
+          hasKey: hasStoredMediaKey(def.id),
+        });
+      }
+    } catch (error) {
+      return Object.freeze({
+        available: false,
+        reason: `media vault projection failed: ${reasonFrom(error)}`,
+        backendAvailable,
+        truncated: false,
+        cli: [],
+        media: [],
+      });
+    }
+
+    return Object.freeze({
+      available: true,
+      backendAvailable,
+      ...(backendReason ? { backendReason } : {}),
+      truncated,
+      cli,
+      media,
+    });
+  },
+};
+
 export function buildInstrumentTools(): McpToolDef[] {
   return [
     quotaStatusTool,
@@ -1003,5 +1117,6 @@ export function buildInstrumentTools(): McpToolDef[] {
     skillsInventoryTool,
     pluginInventoryTool,
     cliInventoryTool,
+    vaultListTool,
   ];
 }

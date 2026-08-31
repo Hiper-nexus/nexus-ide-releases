@@ -95,8 +95,7 @@
       "arg": "--ask-for-approval",
       "modes": {
         "auto": "never",
-        "default": "on-request",
-        "untrusted": "untrusted"
+        "default": "on-request"
       },
       "yolo": [
         "--dangerously-bypass-approvals-and-sandbox"

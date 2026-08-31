@@ -100,8 +100,11 @@ import {
   fileSubscriptionAuthEnv,
   getActiveAccount,
   listAccounts,
+  pickAvailableForFailover,
   prepareAccountForSpawn,
 } from './account-store';
+import { quotaAvailabilityScore } from '../quota/quota-policy';
+import { requireQuotaService } from '../quota/quota-service';
 
 /**
  * Provider configuration hub: per-adapter enable/disable, binary-path
@@ -615,7 +618,19 @@ function buildProviderSpawnOverrides(
       discovered && path.isAbsolute(discovered) && revalidateExecutable(discovered)
         ? discovered
         : null,
-    defaultModel: cfg.defaultModel || null,
+    defaultModel:
+      cfg.defaultModel.trim() && adapter
+        ? effectiveDefaultModel(
+            adapterId,
+            cfg.defaultModel,
+            [
+              ...adapter.models.list,
+              ...getCustomModels(adapterId),
+              ...discoveredModelsFor(adapterId),
+            ],
+            adapter.models.default,
+          )
+        : null,
     extraArgs: [...controlArgsFor(adapterId, perSpawn.effort), ...cfg.extraArgs],
   };
 
@@ -630,7 +645,7 @@ function buildProviderSpawnOverrides(
     !credentiallessOpenCode &&
     adapterId !== 'claude' &&
     listAccounts(adapterId).length > 0
-      ? getActiveAccount(adapterId)
+      ? pickUnpinnedAccountWithHeadroom(adapterId)
       : null);
   if (account) {
     if (account.mode === 'subscription') {
@@ -802,6 +817,82 @@ function prepareProviderSpawnWithDecision(
   }
 }
 
+/**
+ * Pane sem conta pinada nasce na conta com folga (paridade Overclock 1.3.18).
+ * Sem snapshot de quota a ativa legada permanece; com snapshot, a irmã mais
+ * livre com credencial e fora de bloco vence. Nenhuma conta livre (quota fora
+ * do ar, tudo em cooldown) NÃO bloqueia o spawn: abre na ativa e avisa.
+ */
+function pickUnpinnedAccountWithHeadroom(
+  adapterId: string,
+): ReturnType<typeof getActiveAccount> {
+  const active = getActiveAccount(adapterId);
+  let quotaScores: ReadonlyMap<string, number> | undefined;
+  try {
+    const snap = requireQuotaService().lastSnapshot();
+    if (snap) {
+      const scores = new Map<string, number>();
+      for (const entry of snap.entries) {
+        if (entry.adapterId === adapterId && entry.accountId) {
+          scores.set(entry.accountId, quotaAvailabilityScore(entry));
+        }
+      }
+      if (scores.size > 0) quotaScores = scores;
+    }
+  } catch {
+    /* quota service opcional na corrida de boot — ativa segue */
+  }
+  const picked = pickAvailableForFailover(
+    adapterId,
+    null,
+    Date.now(),
+    quotaScores,
+  ).account;
+  if (picked) {
+    if (active && picked.id !== active.id) {
+      console.warn(
+        `[spawn] conta ativa "${active.label}" sem folga; pane nasce em "${picked.label}" (${adapterId})`,
+      );
+    }
+    return picked;
+  }
+  // Nada livre com credencial (quota fora do ar ou tudo em bloco): abre no
+  // caminho legado — ativa quando existir, providers.conf quando não — e avisa.
+  if (active) return active;
+  console.warn(
+    `[spawn] nenhuma conta livre com credencial para ${adapterId}; abrindo no caminho legado`,
+  );
+  return null;
+}
+
+/**
+ * Modelo salvo desconhecido não desce para o pane (paridade Overclock 1.3.18:
+ * "unknown model slug, leaving settings.model untouched"). A preferência do
+ * usuário permanece no disco — o spawn usa o default do adapter até a
+ * descoberta viva voltar a conhecer o slug. Aviso uma vez por slug.
+ */
+const warnedUnknownModelSlugs = new Set<string>();
+
+export function effectiveDefaultModel(
+  adapterId: string,
+  savedDefault: string,
+  knownModels: readonly string[],
+  adapterDefault: string,
+): string {
+  const saved = savedDefault.trim();
+  if (!saved) return adapterDefault;
+  if (knownModels.includes(saved)) return saved;
+  const warnKey = `${adapterId}:${saved}`;
+  if (!warnedUnknownModelSlugs.has(warnKey)) {
+    warnedUnknownModelSlugs.add(warnKey);
+    console.warn(
+      `[${adapterId}] modelo salvo "${saved}" desconhecido pela CLI; ` +
+        `pane usa o default "${adapterDefault}" (preferência mantida)`,
+    );
+  }
+  return adapterDefault;
+}
+
 /** Resolve cached spawn-time auth synchronously, before node-pty is touched. */
 export function prepareProviderSpawn(
   adapterId: string,
@@ -914,7 +1005,12 @@ function toInfo(
       model,
     );
   });
-  const defaultModel = cfg.defaultModel || adapter.models.default;
+  const defaultModel = effectiveDefaultModel(
+    adapterId,
+    cfg.defaultModel,
+    models,
+    adapter.models.default,
+  );
   return {
     adapterId,
     label: adapter.label,

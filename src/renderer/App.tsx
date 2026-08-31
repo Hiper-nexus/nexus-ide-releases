@@ -512,6 +512,44 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [productFlags]);
 
+  // Ctrl/Cmd+Tab cicla panes (G6). Capture-phase: o listener precisa ver a
+  // tecla ANTES do xterm — no bubble o xterm escreveria 	 no PTY e o pane
+  // cicaria junto. Mod+Tab no macOS é do SO (nunca chega); Ctrl+Tab cobre.
+  useEffect(() => {
+    const onCycleKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Tab') return;
+      if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
+      if (useConfirmStore.getState().pending) return;
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+      const target = event.target as HTMLElement | null;
+      if (
+        target?.closest('input, textarea, [contenteditable="true"]')
+      ) {
+        return; // settings/paleta: Tab aqui é navegação de campo
+      }
+      const layout = useLayoutStore.getState();
+      const panes = listPanes(layout.root);
+      if (panes.length < 2) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const currentIdx = panes.findIndex((p) => p.id === layout.focusedPaneId);
+      const dir = event.shiftKey ? -1 : 1;
+      const next =
+        panes[(currentIdx + dir + panes.length) % panes.length] ?? panes[0]!;
+      const navigation = useProductNavigationStore.getState();
+      if (next.missionId) {
+        navigation.openMission(next.missionId);
+        useProductNavigationStore.getState().showMissionTerminals();
+      } else {
+        navigation.openTerminal();
+      }
+      layout.focus(next.id);
+    };
+    window.addEventListener('keydown', onCycleKey, { capture: true });
+    return () =>
+      window.removeEventListener('keydown', onCycleKey, { capture: true });
+  }, []);
+
   // Finder drops on launcher/setup become mission context. An open pane or
   // mission keeps the event — claiming it here used to bounce the operator
   // back to Express with "Arquivo fora do projeto".
