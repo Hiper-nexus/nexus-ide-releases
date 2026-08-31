@@ -438,6 +438,7 @@ describe('shouldRearmHandoffDelivery — chef idle com pendente durável re-arma
     workerPaneCount: 1,
     orchestratorPaneState: 'idle' as string | undefined,
     missionStatus: 'running',
+    missionAwaitingOperatorReview: false,
     pendingDeliverableHandoffs: 1,
     lastRearmAt: 0,
     now: 60_000,
@@ -461,5 +462,24 @@ describe('shouldRearmHandoffDelivery — chef idle com pendente durável re-arma
     expect(
       shouldRearmHandoffDelivery({ ...base, lastRearmAt: 0, now: 61_000 }),
     ).toBe(true);
+  });
+
+  it('F-112: done aguardando revisão do operador re-arma; done aprovado não', () => {
+    // Fast lane marca done no mesmo segundo do handoff — entrega falhada
+    // depois disso não pode ficar presa para sempre em queued.
+    expect(
+      shouldRearmHandoffDelivery({
+        ...base,
+        missionStatus: 'done',
+        missionAwaitingOperatorReview: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldRearmHandoffDelivery({
+        ...base,
+        missionStatus: 'done',
+        missionAwaitingOperatorReview: false,
+      }),
+    ).toBe(false);
   });
 });

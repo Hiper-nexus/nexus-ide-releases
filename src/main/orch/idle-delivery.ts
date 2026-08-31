@@ -26,7 +26,13 @@ import {
   type PetStudioCompletionResult,
 } from './pet-studio-completion';
 import { maybeCompleteFastLaneOnDelivery } from './civilian-delivery-completion';
-import { MAX_HANDOFF_DELIVERY_ATTEMPTS } from './handoff-delivery-policy';
+import {
+  HANDOFF_DELIVERY_RETRY_BACKOFF_MS,
+  MAX_HANDOFF_DELIVERY_ATTEMPTS,
+} from './handoff-delivery-policy';
+
+/** Re-exportado para testes e políticas de re-arm calendarem pelo mesmo valor. */
+export { HANDOFF_DELIVERY_RETRY_BACKOFF_MS };
 import {
   getAgentSemanticStatusBySession,
   isSessionInjectableIdle,
@@ -453,14 +459,42 @@ function canPasteHandoff(sessionId: string): boolean {
 
 function hasPendingDelivery(authority: DeliveryAuthority): boolean {
   const key = authorityKey(authority);
-  return (
+  if (
     [...pendingEnters].some(
       (pending) => authorityKey(pending.authority) === key,
     ) ||
     [...pendingDeliveryStarts].some(
       (pending) => authorityKey(pending.authority) === key,
     )
-  );
+  ) {
+    return true;
+  }
+  for (const entryKey of retryBackoffPending.keys()) {
+    if (entryKey.startsWith(`${key}::`)) return true;
+  }
+  return false;
+}
+
+// Backoff de retry (F-112): tentativas que falharam aguardam esta janela
+// antes de recolar; enquanto espera, conta como entrega pendente para o
+// re-arm do supervisor não duplicar a colagem.
+const retryBackoffTimers = new Set<ReturnType<typeof setTimeout>>();
+const retryBackoffPending = new Map<string, string>();
+
+function trackRetryBackoff(
+  authority: DeliveryAuthority,
+  handoffId: string,
+  backoffMs: number,
+  redeliver: () => void,
+): void {
+  const key = `${authorityKey(authority)}::${handoffId}`;
+  retryBackoffPending.set(key, handoffId);
+  const timer = setTimeout(() => {
+    retryBackoffTimers.delete(timer);
+    retryBackoffPending.delete(key);
+    redeliver();
+  }, backoffMs);
+  retryBackoffTimers.add(timer);
 }
 
 const INJECTABLE_WAKE_MS = 500;
@@ -646,9 +680,20 @@ function retryOrBlockDelivery(
     return;
   }
   const handoff = getProjectDomainStores(authority.scope).handoffs.get(handoffId);
-  if (handoff?.deliveryState === 'queued') {
-    onHandoffSubmitted(handoff, authority.scope);
-  }
+  if (handoff?.deliveryState !== 'queued') return;
+  // Backoff entre tentativas (F-112): retry no mesmo segundo re-colava no
+  // mesmo PTY que acabou de recusar o write. Um coordenador renascendo só
+  // volta a aceitar depois do boot da CLI; a janela cresce com a tentativa.
+  const backoffMs =
+    HANDOFF_DELIVERY_RETRY_BACKOFF_MS * Math.max(1, attemptNo);
+  trackRetryBackoff(authority, handoffId, backoffMs, () => {
+    if (!isCurrentAuthority(authority)) return;
+    const retryHandoff =
+      getProjectDomainStores(authority.scope).handoffs.get(handoffId);
+    if (retryHandoff?.deliveryState === 'queued') {
+      onHandoffSubmitted(retryHandoff, authority.scope);
+    }
+  });
 }
 
 function submitDelivery(
@@ -997,6 +1042,9 @@ export function shutdownIdleDelivery(): void {
   for (const pending of [...pendingDeliveryStarts]) {
     clearPendingDeliveryStart(pending);
   }
+  for (const timer of retryBackoffTimers) clearTimeout(timer);
+  retryBackoffTimers.clear();
+  retryBackoffPending.clear();
 }
 
 /** Resolve the exact owner/scope/mission authority for the orchestrator. */

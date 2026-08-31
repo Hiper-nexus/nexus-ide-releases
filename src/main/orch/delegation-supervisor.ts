@@ -1,5 +1,6 @@
 import type { Handoff, Mission, PaneRuntimeState } from '../../shared/orch-types';
 import { wasUpdatedBeforeThisProcess } from '../../shared/session-restore-liveness';
+import { wasMissionApprovedByOperator } from '../../shared/mission-recovery-policy';
 import {
   hasCurrentApprovedDispatchContract,
   isRecoveryEligibleIntentState,
@@ -154,6 +155,7 @@ export const HANDOFF_REARM_THROTTLE_MS = 60_000;
 export function shouldRearmHandoffDelivery(input: {
   readonly orchestratorPaneState: string | undefined;
   readonly missionStatus: string;
+  readonly missionAwaitingOperatorReview: boolean;
   readonly pendingDeliverableHandoffs: number;
   readonly lastRearmAt: number;
   readonly now: number;
@@ -164,9 +166,15 @@ export function shouldRearmHandoffDelivery(input: {
   // handoff durable queued com ZERO workers. Exigir workerPaneCount>0
   // (8c3580c1) deixava o re-arm morto exatamente depois da entrega limpa.
   if (input.orchestratorPaneState !== 'idle') return false;
-  if (input.missionStatus !== 'pending' && input.missionStatus !== 'running') {
-    return false;
-  }
+  // F-112: o fast lane marca done no MESMO segundo do handoff; se a entrega
+  // ao Maestro falhar depois disso, o gate de pending/running matava o
+  // re-arm para sempre. `done` aguardando revisão do operador re-arma;
+  // aprovada pelo operador, não.
+  const statusEligible =
+    input.missionStatus === 'pending' ||
+    input.missionStatus === 'running' ||
+    (input.missionStatus === 'done' && input.missionAwaitingOperatorReview);
+  if (!statusEligible) return false;
   return input.now - input.lastRearmAt >= HANDOFF_REARM_THROTTLE_MS;
 }
 
@@ -191,6 +199,7 @@ function rearmStuckHandoffDelivery(
     !shouldRearmHandoffDelivery({
       orchestratorPaneState,
       missionStatus: mission.status,
+      missionAwaitingOperatorReview: !wasMissionApprovedByOperator(mission),
       pendingDeliverableHandoffs: pendingDeliverable,
       lastRearmAt: handoffRearmLastRun.get(mission.id) ?? 0,
       now,

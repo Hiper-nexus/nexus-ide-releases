@@ -1,5 +1,14 @@
 /** Durable handoff delivery limits shared by rebind recovery and idle delivery. */
-export const MAX_HANDOFF_DELIVERY_ATTEMPTS = 2;
+export const MAX_HANDOFF_DELIVERY_ATTEMPTS = 3;
+
+/**
+ * Backoff entre tentativas de paste (F-112): a tentativa 2 disparava no
+ * MESMO segundo da 1 — contra o mesmo PTY morto/renascendo (write falhou
+ * 2× em 17:07:23 no banco real, mission-4d14c372). Um coordenador que
+ * reinicia precisa de uma janela real para voltar a aceitar writes antes
+ * da próxima colagem.
+ */
+export const HANDOFF_DELIVERY_RETRY_BACKOFF_MS = 15_000;
 
 export const HANDOFF_REBIND_BLOCK_MARKER =
   '[NEXUS_HANDOFF_REBIND_BLOCKED]';

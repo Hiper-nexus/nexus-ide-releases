@@ -881,9 +881,15 @@ describe('idle delivery authority and lifecycle', { timeout: 60_000 }, () => {
       );
     expect(deliveries()).toHaveLength(1);
 
-    // Janela de aceite estoura sem busy: não marca submitted e re-entrega 1×.
+    // Janela de aceite estoura sem busy: não marca submitted. O retry 2
+    // espera o backoff de F-112 (15s) antes de recolar — nada de retry no
+    // mesmo segundo contra o mesmo PTY.
     await vi.advanceTimersByTimeAsync(13_000);
     expect(storeMocks.delivered).toEqual([]);
+    expect(deliveries()).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(
+      delivery.HANDOFF_DELIVERY_RETRY_BACKOFF_MS,
+    );
     expect(deliveries()).toHaveLength(2);
     delivery.shutdownIdleDelivery();
   });
@@ -897,6 +903,11 @@ describe('idle delivery authority and lifecycle', { timeout: 60_000 }, () => {
     delivery.initIdleDelivery();
 
     delivery.onHandoffSubmitted(handoff(), scope);
+    await advanceUntilPasted(delivery);
+    // A tentativa 2 só cola depois do backoff de F-112.
+    await vi.advanceTimersByTimeAsync(
+      delivery.HANDOFF_DELIVERY_RETRY_BACKOFF_MS,
+    );
     await advanceUntilPasted(delivery);
     await advanceUntilSubmitted(delivery);
 
@@ -929,6 +940,10 @@ describe('idle delivery authority and lifecycle', { timeout: 60_000 }, () => {
 
     delivery.onHandoffSubmitted(handoff(), scope);
     await advanceUntilSubmitted(delivery);
+    // O Enter falhou na tentativa 1; a tentativa 2 espera o backoff de F-112.
+    await vi.advanceTimersByTimeAsync(
+      delivery.HANDOFF_DELIVERY_RETRY_BACKOFF_MS,
+    );
     await advanceUntilSubmitted(delivery);
 
     const attempts = [...storeMocks.deliveryAttempts.values()];
@@ -939,7 +954,7 @@ describe('idle delivery authority and lifecycle', { timeout: 60_000 }, () => {
     ptyMocks.stateTaps[0]('orchestrator-session', 'busy');
     expect(storeMocks.delivered).toEqual([{ scope, id: 'handoff-a' }]);
     delivery.shutdownIdleDelivery();
-  });
+  }, 20_000);
 
   it('NUNCA bloqueia a missão por entrega não aceita — pede recuperação de runtime (doutrina Overclock)', async () => {
     const delivery = await import('./idle-delivery');
