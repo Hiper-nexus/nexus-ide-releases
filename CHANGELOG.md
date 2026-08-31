@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.71.0 — À frente do Overclock
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+Corta os gaps reais do Overclock 1.3.18 (e corrige dois bugs que eles
+tiveram): o modo de aprovação `untrusted` que o Codex atual rejeita sai do
+adapter; pane sem conta escolhida nasce na conta com folga de quota; modelo
+salvo desconhecido pela CLI não derruba o pane; cofre unificado visível ao
+orquestrador (`nexus_vault_list`); caminhos no output do terminal viram
+links clicáveis; Ctrl+Tab circula entre panes; verificação de assinatura
+falhada para de acusar falta de licença.
+
 ## 0.70.22 — Entrega firme
 
 _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._

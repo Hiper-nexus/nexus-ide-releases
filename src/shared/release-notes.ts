@@ -13,35 +13,51 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.70.22',
+  version: '0.71.0',
   date: '2026-08-31',
-  codename: 'Entrega firme',
+  codename: 'À frente do Overclock',
   summary:
-    'A entrega do worker ao Maestro ganhou retry de verdade: backoff de ' +
-    '15s entre tentativas, teto de 3 tentativas e re-arm vivo também em ' +
-    'missão done aguardando revisão. Validada em missão real end-to-end.',
+    'Os gaps reais do Overclock 1.3.18 fechados — incluindo o bug de argv ' +
+    'do Codex que eles próprios corrigiram. Pane nasce na conta com folga, ' +
+    'cofre unificado no orquestrador, terminal com links clicáveis.',
   highlights: [
     {
-      title: 'Backoff de 15s entre colagens',
+      title: 'Modo morto do Codex removido',
       detail:
-        'As 2 tentativas de entrega disparavam no mesmo segundo contra o ' +
-        'mesmo PTY. Agora cada retry espera sua janela — coordenador que ' +
-        'renasce tem tempo de voltar a aceitar.',
+        'O Codex 0.150.1 removeu o valor untrusted de --ask-for-approval. ' +
+        'O adapter oferecia o modo que o CLI rejeita — o pane não abriria.',
     },
     {
-      title: 'Re-arm vive depois do done',
+      title: 'Pane nasce na conta com folga',
       detail:
-        'O fast lane marca done no mesmo segundo do handoff; o re-arm do ' +
-        'supervisor agora cobre missão feita aguardando a sua revisão e ' +
-        'para quando você aprova.',
+        'Sem conta pinada, o spawn consulta o snapshot de quota e escolhe ' +
+        'a irmã mais livre. Quota fora do ar: abre no caminho legado e avisa.',
+    },
+    {
+      title: 'Terminal com links e Ctrl+Tab',
+      detail:
+        'Caminhos absolutos no output viram links clicáveis (main valida: ' +
+        'existe, arquivo/diretório, dentro do home). Ctrl+Tab circula panes.',
+    },
+    {
+      title: 'Cofre unificado no orquestrador',
+      detail:
+        'nexus_vault_list mostra quais credenciais existem antes de o ' +
+        'agente prometer um spawn ou geração de mídia. Valores nunca saem.',
     },
   ],
   fixes: [
     {
-      title: 'Fim do retry fantasma',
+      title: 'Modelo salvo desconhecido não derruba o pane',
       detail:
-        'Tentativa 2 escondida atrás de hasPendingDelivery não duplica mais ' +
-        'colagem, timers de backoff são limpos no shutdown. F-112.',
+        'Slug que a CLI não conhece mais cai no default do adapter — a sua ' +
+        'preferência continua salva para quando a CLI voltar a conhecê-lo.',
+    },
+    {
+      title: 'Licença não confirmada ≠ sem licença',
+      detail:
+        'Verificação de assinatura que falha agora diz “não confirmado ' +
+        'agora” em vez de pintar ausência de conta.',
     },
   ],
 };
