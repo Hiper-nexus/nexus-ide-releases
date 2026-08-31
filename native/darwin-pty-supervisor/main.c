@@ -969,6 +969,22 @@ static int bootstrap_disclaimed_supervisor_mode(int argc, char **argv,
     return NEXUS_EXIT_INTERNAL;
   }
 
+  /*
+   * macOS 26.6 delivers the traced exec SIGTRAP as a fatal signal when the
+   * stage-zero tracer detaches the disclaimed image. Ignored dispositions
+   * survive execve, so the disclaimed image swallows that delivery and the
+   * tracer's detach keeps its pre-26.6 meaning. main restores SIG_DFL before
+   * any provider can be born.
+   */
+  struct sigaction ignore_trap;
+  memset(&ignore_trap, 0, sizeof(ignore_trap));
+  ignore_trap.sa_handler = SIG_IGN;
+  sigemptyset(&ignore_trap.sa_mask);
+  if (sigaction(SIGTRAP, &ignore_trap, NULL) != 0) {
+    perror("nexus-pty-supervisor: cannot ignore traced-exec SIGTRAP");
+    return NEXUS_EXIT_INTERNAL;
+  }
+
   size_t run_argc = (size_t)argc;
   char **run_argv = calloc(run_argc + 1, sizeof(*run_argv));
   if (run_argv == NULL) {
@@ -2054,10 +2070,31 @@ static int spawn_traced_child(pid_t *child, const char *executable,
 }
 
 static int detach_authenticated_child(pid_t child) {
-  if (ptrace(PT_DETACH, child, (caddr_t)1, 0) == 0) {
-    return 0;
+  /*
+   * macOS 26.6 delivers the pending exec SIGTRAP as a fatal signal when
+   * PT_DETACH is taken straight from an exec-trap stop, and answers EBUSY
+   * while the resumed child has not yet reached a detachable state. Resume
+   * explicitly, then retry the detach until the kernel releases the child.
+   * A child that exits inside that window no longer needs a detach; the
+   * reaped status carries the proof from here.
+   */
+  if (ptrace(PT_CONTINUE, child, (caddr_t)1, 0) != 0) {
+    return errno == ESRCH ? 0 : (errno != 0 ? errno : EIO);
   }
-  return errno != 0 ? errno : EIO;
+  for (int attempt = 0; attempt < 100; attempt += 1) {
+    if (ptrace(PT_DETACH, child, (caddr_t)1, 0) == 0) {
+      return 0;
+    }
+    int detach_errno = errno;
+    if (detach_errno == ESRCH) {
+      return 0;
+    }
+    if (detach_errno != EBUSY) {
+      return detach_errno != 0 ? detach_errno : EIO;
+    }
+    sleep_milliseconds(5);
+  }
+  return EBUSY;
 }
 
 static bool restore_stage_zero_provider_path(void) {
@@ -2357,6 +2394,18 @@ static void print_usage(const char *program) {
 }
 
 int main(int argc, char **argv) {
+  /*
+   * Every __run-disclaimed image is born with SIGTRAP ignored so the
+   * stage-zero detach delivery cannot kill it (see the bootstrap re-exec).
+   * Restore the default before any provider spawning begins; the traced
+   * provider child resets its own dispositions as well.
+   */
+  struct sigaction default_trap;
+  memset(&default_trap, 0, sizeof(default_trap));
+  default_trap.sa_handler = SIG_DFL;
+  sigemptyset(&default_trap.sa_mask);
+  (void)sigaction(SIGTRAP, &default_trap, NULL);
+
   if (argc >= 2 && strcmp(argv[1], "supervise") == 0) {
     return bootstrap_disclaimed_supervisor(argc, argv);
   }
