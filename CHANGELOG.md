@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.70.21 — Corrente viva
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+Missões voltam a iniciar no macOS Tahoe 26.6.2. O update do sistema passou a
+entregar o SIGTRAP do exec-trace como sinal fatal no detach do supervisor de
+PTY — todo pane morria na hora com "processo caiu (code 133)". O supervisor
+agora engole essa entrega (SIGTRAP ignorado só na janela do re-exec) e o
+detach do provider selado resome antes de soltar, com retry de EBUSY.
+
 ## 0.70.20 — Sessão honesta
 
 _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._

@@ -13,46 +13,34 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.70.20',
-  date: '2026-08-27',
-  codename: 'Sessão honesta',
+  version: '0.70.21',
+  date: '2026-08-31',
+  codename: 'Corrente viva',
   summary:
-    'Quando a conta 1 acaba (401, cota, rate-limit), o Nexus roteia ' +
-    'sozinho para a conta 2 com credencial pronta. Sem fingir ' +
-    'recuperação em 1s e sem digitar continue no /login.',
+    'Missões voltam a iniciar no macOS Tahoe 26.6.2. O update do sistema ' +
+    'passou a matar o supervisor de PTY no detach do exec-trace e todo ' +
+    'pane caía na hora com "processo caiu (code 133)". A corrente sobrevive.',
   highlights: [
     {
-      title: 'Conta 1 morta → conta 2 automática',
+      title: 'Missão inicia no macOS 26.6.2',
       detail:
-        'Quota, 401 ou token morto pinam a próxima conta spawnable do ' +
-        'mesmo adapter e reinjetam o handoff. Casca sem chave não ' +
-        'rouba o lugar da irmã pronta.',
+        'O supervisor disclaimado engole o SIGTRAP do exec-trace (ignorado ' +
+        'só na janela do re-exec) e o main restaura o default antes de ' +
+        'qualquer provider nascer.',
     },
     {
-      title: 'Login nativo vira irmã',
+      title: 'Provider selado solto de verdade',
       detail:
-        'Se o vault não tem alternativa mas o Keychain/CLI está em ' +
-        'outro e-mail, essa sessão é adotada e a missão continua.',
-    },
-    {
-      title: '+ Pane retoma a missão',
-      detail:
-        'Abrir outra conta no meio do 401 herda o pack de continuidade, ' +
-        'sem colar missionId velho no pane novo.',
+        'O detach do CLI autenticado resome a imagem antes do PT_DETACH, ' +
+        'com retry de EBUSY e saída já-exitada tratada como benigna.',
     },
   ],
   fixes: [
     {
-      title: 'Ticker Retrying in 1s não é retry-after',
+      title: 'Fim do "processo caiu (code 133)" no boot da missão',
       detail:
-        'O “attempt 1/10” da CLI deixou de encolher o cooldown de auth ' +
-        'para 1s. Auth tem piso de 15 min.',
-    },
-    {
-      title: 'Sem “Sessão recuperada” no token morto',
-      detail:
-        'Auth sem irmã não agenda retry same-account. Continue não é ' +
-        'digitado na tela de /login.',
+        'Kernel 26.6 entregava o SIGTRAP pendente como fatal no PT_DETACH ' +
+        'do exec-trap; cleanup quebrado virava o 159. F-111.',
     },
   ],
 };
