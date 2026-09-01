@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.72.0 — Braço externo
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+Nexus Arms: orquestradores que não moram num pane (Grok Bot, Cursor)
+passam a ver o app em JSON e receber eventos com cursor, por MCP stdio.
+Token dedicado em Configurações › Conectores (hash em disco, plaintext
+uma vez); a superfície é observação por construção — sem conteúdo de
+terminal, prompts ou segredos. Também: viewport de tablet no preview,
+temas Cinza e Vermelho, e o adapter Muse Code.
+
 ## 0.71.0 — À frente do Overclock
 
 _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._

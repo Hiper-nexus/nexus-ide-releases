@@ -13,51 +13,48 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.71.0',
+  version: '0.72.0',
   date: '2026-08-31',
-  codename: 'À frente do Overclock',
+  codename: 'Braço externo',
   summary:
-    'Os gaps reais do Overclock 1.3.18 fechados — incluindo o bug de argv ' +
-    'do Codex que eles próprios corrigiram. Pane nasce na conta com folga, ' +
-    'cofre unificado no orquestrador, terminal com links clicáveis.',
+    'Nexus Arms: quem dirige de fora (Grok Bot, Cursor) passa a ver o ' +
+    'app em JSON e receber eventos com cursor por MCP stdio — token ' +
+    'dedicado, observação por construção.',
   highlights: [
     {
-      title: 'Modo morto do Codex removido',
+      title: 'Conector Arms',
       detail:
-        'O Codex 0.150.1 removeu o valor untrusted de --ask-for-approval. ' +
-        'O adapter oferecia o modo que o CLI rejeita — o pane não abriria.',
+        'Token em Configurações › Conectores (hash em disco; o valor ' +
+        'aparece uma vez). O bin nexus-arms fala MCP stdio com qualquer ' +
+        'cliente externo — app fechado responde erro limpo, sem travar.',
     },
     {
-      title: 'Pane nasce na conta com folga',
+      title: 'Eventos com cursor',
       detail:
-        'Sem conta pinada, o spawn consulta o snapshot de quota e escolhe ' +
-        'a irmã mais livre. Quota fora do ar: abre no caminho legado e avisa.',
+        'pane.spawned/exited, handoff.submitted/delivered/consumed e ' +
+        'mission.state numa fila com cursor monotônico — o orquestrador ' +
+        'sabe que aconteceu sem ler terminal.',
     },
     {
-      title: 'Terminal com links e Ctrl+Tab',
+      title: 'Observação mínima por construção',
       detail:
-        'Caminhos absolutos no output viram links clicáveis (main valida: ' +
-        'existe, arquivo/diretório, dentro do home). Ctrl+Tab circula panes.',
-    },
-    {
-      title: 'Cofre unificado no orquestrador',
-      detail:
-        'nexus_vault_list mostra quais credenciais existem antes de o ' +
-        'agente prometer um spawn ou geração de mídia. Valores nunca saem.',
+        'O endpoint Arms só conhece app_observe e app_events: metadado de ' +
+        'missões, panes e handoffs. O token jamais poderia chamar spawn, ' +
+        'write ou files.',
     },
   ],
   fixes: [
     {
-      title: 'Modelo salvo desconhecido não derruba o pane',
+      title: 'Preview com tablet',
       detail:
-        'Slug que a CLI não conhece mais cai no default do adapter — a sua ' +
-        'preferência continua salva para quando a CLI voltar a conhecê-lo.',
+        'Larguras 481–1024 emulam iPad (UA + métricas) no preview ' +
+        'responsivo, não só iPhone.',
     },
     {
-      title: 'Licença não confirmada ≠ sem licença',
+      title: 'Temas Cinza e Vermelho + Muse',
       detail:
-        'Verificação de assinatura que falha agora diz “não confirmado ' +
-        'agora” em vez de pintar ausência de conta.',
+        'Dois temas novos no terminal e na UI, e adapter Muse Code (a CLI ' +
+        'instalada passa a abrir pane).',
     },
   ],
 };
